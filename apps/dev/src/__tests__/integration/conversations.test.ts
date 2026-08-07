@@ -16,7 +16,11 @@ type Env = {
 		db: Database
 		actorId: string
 		actorType: string
-		sessionManager: { createSession: ReturnType<typeof vi.fn> }
+		sessionManager: {
+			createSession: ReturnType<typeof vi.fn>
+			findActiveConversationSession: ReturnType<typeof vi.fn>
+			writeInput: ReturnType<typeof vi.fn>
+		}
 	}
 }
 
@@ -37,7 +41,11 @@ function createConversationsApp(actorId: string, actorType: 'human' | 'agent' = 
 		},
 	})
 
-	const sessionManager = { createSession: vi.fn().mockResolvedValue({ id: 'fake-session-id' }) }
+	const sessionManager = {
+		createSession: vi.fn().mockResolvedValue({ id: 'fake-session-id' }),
+		findActiveConversationSession: vi.fn().mockResolvedValue(null),
+		writeInput: vi.fn().mockResolvedValue(undefined),
+	}
 
 	app.use('*', async (c, next) => {
 		c.set('db', db)
@@ -287,10 +295,10 @@ describe('Conversations Integration', () => {
 	})
 
 	describe('messages.session_id', () => {
-		it('rejects two messages claiming the same session_id (unique constraint)', async () => {
+		it('allows multiple messages to share the same session_id (interactive sessions are reused across replies)', async () => {
 			const agent = await insertActor(db, { type: 'agent' })
 			await addMember(workspaceId, agent.id)
-			const session = await insertSession(db, workspaceId, agent.id, ownerId)
+			const session = await insertSession(db, workspaceId, agent.id, ownerId, { interactive: true })
 
 			const { app: ownerApp } = createConversationsApp(ownerId)
 			const created = await ownerApp.request(
@@ -324,17 +332,78 @@ describe('Conversations Integration', () => {
 			const firstBody = (await first.json()) as { sessionId: string | null }
 			expect(firstBody.sessionId).toBe(session.id)
 
-			// A second message row directly claiming the same session_id must violate
-			// the DB's unique constraint — this is the idempotency guard for the MCP
-			// tool, so it must be enforced at the DB layer, not just app logic.
-			await expect(
-				db.insert(messages).values({
+			// A second message row claiming the same session_id must now succeed —
+			// one interactive session is reused across many replies over its
+			// lifetime, so sessionId is no longer unique (see 0056_messages_session_id_drop_uniq.sql).
+			const [second] = await db
+				.insert(messages)
+				.values({
 					conversationId: conversation.id,
 					actorId: agent.id,
-					content: 'duplicate claim',
+					content: 'second reply, same session',
 					sessionId: session.id,
+				})
+				.returning()
+			expect(second?.sessionId).toBe(session.id)
+		})
+	})
+
+	describe('sessions_conversation_actor_active_uniq', () => {
+		it('rejects a second active interactive session for the same (conversation, agent) pair', async () => {
+			const agent = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, agent.id)
+			const { app: ownerApp } = createConversationsApp(ownerId)
+			const created = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Double spawn guard', participant_actor_ids: [agent.id] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+
+			await insertSession(db, workspaceId, agent.id, ownerId, {
+				interactive: true,
+				status: 'running',
+				conversationId: conversation.id,
+			})
+
+			await expect(
+				insertSession(db, workspaceId, agent.id, ownerId, {
+					interactive: true,
+					status: 'starting',
+					conversationId: conversation.id,
 				}),
 			).rejects.toThrow()
+		})
+
+		it('allows a new active session once the previous one for that pair reached a terminal status', async () => {
+			const agent = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, agent.id)
+			const { app: ownerApp } = createConversationsApp(ownerId)
+			const created = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Dead session reuse', participant_actor_ids: [agent.id] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+
+			await insertSession(db, workspaceId, agent.id, ownerId, {
+				interactive: true,
+				status: 'timeout',
+				conversationId: conversation.id,
+			})
+
+			const fresh = await insertSession(db, workspaceId, agent.id, ownerId, {
+				interactive: true,
+				status: 'running',
+				conversationId: conversation.id,
+			})
+			expect(fresh?.status).toBe('running')
 		})
 	})
 
@@ -412,7 +481,11 @@ describe('Conversations Integration', () => {
 				.returning()
 			if (!triggering) throw new Error('failed to insert triggering message')
 
-			const sessionManager = { createSession: vi.fn().mockResolvedValue({ id: 'x' }) }
+			const sessionManager = {
+				createSession: vi.fn().mockResolvedValue({ id: 'x' }),
+				findActiveConversationSession: vi.fn().mockResolvedValue(null),
+				writeInput: vi.fn().mockResolvedValue(undefined),
+			}
 			await evaluateAndRespond({
 				db,
 				// biome-ignore lint/suspicious/noExplicitAny: test double, real type lives in session-manager.ts
@@ -423,6 +496,148 @@ describe('Conversations Integration', () => {
 			})
 
 			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+
+		it('reuses an existing running interactive session via writeInput instead of spawning', async () => {
+			const agent = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, agent.id)
+			const { app: ownerApp } = createConversationsApp(ownerId)
+			const created = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Reuse test', participant_actor_ids: [agent.id] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+			const [triggering] = await db
+				.insert(messages)
+				.values({
+					conversationId: conversation.id,
+					actorId: ownerId,
+					content: `hey <@${agent.id}>`,
+					metadata: { mentions: [agent.id] },
+				})
+				.returning()
+			if (!triggering) throw new Error('failed to insert triggering message')
+
+			const sessionManager = {
+				createSession: vi.fn().mockResolvedValue({ id: 'should-not-be-used' }),
+				findActiveConversationSession: vi.fn().mockResolvedValue({ id: 'existing-session-id' }),
+				writeInput: vi.fn().mockResolvedValue(undefined),
+			}
+			await evaluateAndRespond({
+				db,
+				// biome-ignore lint/suspicious/noExplicitAny: test double, real type lives in session-manager.ts
+				sessionManager: sessionManager as any,
+				workspaceId,
+				conversationId: conversation.id,
+				messageId: triggering.id,
+			})
+
+			expect(sessionManager.writeInput).toHaveBeenCalledTimes(1)
+			expect(sessionManager.writeInput.mock.calls[0]?.[0]).toBe('existing-session-id')
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+
+		it('spawns a fresh interactive session with inlined history when none is running', async () => {
+			const agent = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, agent.id)
+			const { app: ownerApp } = createConversationsApp(ownerId)
+			const created = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Fresh spawn test', participant_actor_ids: [agent.id] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+			await db.insert(messages).values({
+				conversationId: conversation.id,
+				actorId: ownerId,
+				content: 'earlier context message',
+			})
+			const [triggering] = await db
+				.insert(messages)
+				.values({
+					conversationId: conversation.id,
+					actorId: ownerId,
+					content: `hey <@${agent.id}>`,
+					metadata: { mentions: [agent.id] },
+				})
+				.returning()
+			if (!triggering) throw new Error('failed to insert triggering message')
+
+			const sessionManager = {
+				createSession: vi.fn().mockResolvedValue({ id: 'new-session-id' }),
+				findActiveConversationSession: vi.fn().mockResolvedValue(null),
+				writeInput: vi.fn().mockResolvedValue(undefined),
+			}
+			await evaluateAndRespond({
+				db,
+				// biome-ignore lint/suspicious/noExplicitAny: test double, real type lives in session-manager.ts
+				sessionManager: sessionManager as any,
+				workspaceId,
+				conversationId: conversation.id,
+				messageId: triggering.id,
+			})
+
+			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
+			const [, params] = sessionManager.createSession.mock.calls[0] as [
+				string,
+				Record<string, unknown>,
+			]
+			expect(params).toMatchObject({
+				actorId: agent.id,
+				config: { interactive: true, conversation: { conversation_id: conversation.id } },
+			})
+			expect(params.actionPrompt).toContain('earlier context message')
+			expect(params.actionPrompt).toContain(`hey <@${agent.id}>`)
+		})
+
+		it('falls back to spawning fresh when writeInput to the existing session fails', async () => {
+			const agent = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, agent.id)
+			const { app: ownerApp } = createConversationsApp(ownerId)
+			const created = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Dead session fallback', participant_actor_ids: [agent.id] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+			const [triggering] = await db
+				.insert(messages)
+				.values({
+					conversationId: conversation.id,
+					actorId: ownerId,
+					content: `hey <@${agent.id}>`,
+					metadata: { mentions: [agent.id] },
+				})
+				.returning()
+			if (!triggering) throw new Error('failed to insert triggering message')
+
+			const sessionManager = {
+				createSession: vi.fn().mockResolvedValue({ id: 'new-session-id' }),
+				findActiveConversationSession: vi.fn().mockResolvedValue({ id: 'dead-session-id' }),
+				writeInput: vi.fn().mockRejectedValue(new Error('container gone')),
+			}
+			await evaluateAndRespond({
+				db,
+				// biome-ignore lint/suspicious/noExplicitAny: test double, real type lives in session-manager.ts
+				sessionManager: sessionManager as any,
+				workspaceId,
+				conversationId: conversation.id,
+				messageId: triggering.id,
+			})
+
+			expect(sessionManager.writeInput).toHaveBeenCalledTimes(1)
+			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
+			expect(sessionManager.createSession.mock.calls[0]?.[1]).toMatchObject({ actorId: agent.id })
 		})
 	})
 })

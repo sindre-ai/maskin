@@ -256,6 +256,14 @@ export const sessions = pgTable(
 		actionPrompt: text('action_prompt').notNull(),
 		config: jsonb('config').notNull().default({}),
 		interactive: boolean('interactive').notNull().default(false),
+		// Denormalized from config.conversation.conversation_id — same treatment
+		// `interactive` already got — so the conversation-responder's "does a
+		// running interactive session already exist for this (conversation,
+		// agent)?" lookup can use an indexed column instead of an unindexed
+		// JSONB path scan.
+		conversationId: uuid('conversation_id').references((): AnyPgColumn => conversations.id, {
+			onDelete: 'set null',
+		}),
 		result: jsonb('result').$type<SessionResult>(),
 		snapshotPath: text('snapshot_path'),
 		sourceSessionId: uuid('source_session_id'),
@@ -289,6 +297,19 @@ export const sessions = pgTable(
 		index('sessions_agent_server_active_idx')
 			.on(t.agentServerId, t.status)
 			.where(sql`${t.agentServerId} IS NOT NULL`),
+		// Backs the conversation-responder's "is there already a running
+		// interactive session for this (conversation, agent)?" lookup.
+		index('sessions_conversation_actor_idx')
+			.on(t.conversationId, t.actorId)
+			.where(sql`${t.conversationId} IS NOT NULL`),
+		// Authoritative concurrency guard, not just an optimization: at most one
+		// interactive session may be actively spawning/running for a given
+		// (conversation, agent) pair. Enforced at the DB layer because the
+		// application-level lookup-then-insert in evaluateAndRespond has a race
+		// window between two near-simultaneous replies from the same agent.
+		uniqueIndex('sessions_conversation_actor_active_uniq')
+			.on(t.conversationId, t.actorId)
+			.where(sql`${t.interactive} = true AND ${t.status} IN ('pending','starting','running')`),
 	],
 )
 
@@ -377,11 +398,13 @@ export type NewConversationParticipant = typeof conversationParticipants.$inferI
 // ── Messages ────────────────────────────────────────────────────────────────
 //
 // One row per chat turn in a conversation, human- or agent-authored.
-// `sessionId` links an agent-authored message back to the one-shot session
-// that produced it (NULL for human messages) — cost/token drill-down is a
-// join at read time, same nullable-FK shape as notifications.sessionId and
-// agentFiles.sessionId. The unique constraint on sessionId also acts as the
-// idempotency guard for the post_conversation_message MCP tool.
+// `sessionId` links an agent-authored message back to the session that
+// produced it (NULL for human messages) — cost/token drill-down is a join at
+// read time, same nullable-FK shape as notifications.sessionId and
+// agentFiles.sessionId. sessionId is intentionally NOT unique: an
+// interactive session is long-lived and reused across many replies in the
+// same conversation (see conversation-responder.ts), so many messages
+// legitimately share one session_id over that session's lifetime.
 
 export const messages = pgTable(
 	'messages',
@@ -401,7 +424,7 @@ export const messages = pgTable(
 	},
 	(t) => [
 		index('messages_conversation_id_idx').on(t.conversationId, t.id),
-		unique('messages_session_id_uniq').on(t.sessionId),
+		index('messages_session_id_idx').on(t.sessionId),
 		check('messages_kind_check', sql`${t.kind} IN ('message', 'system')`),
 	],
 )

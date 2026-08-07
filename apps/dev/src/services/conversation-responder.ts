@@ -37,9 +37,13 @@ const RESPOND_DECISION_TOOL: LLMTool = {
  * Fire-and-forget entry point called after a message is committed. For every
  * active agent participant (other than the message's own author), decides
  * whether that agent should respond — via a cheap same-process LLM call, not
- * a full container session — and spawns a real one-shot session only for
- * agents that decide to. Never throws; every failure mode degrades to
- * "stay silent" so a broken relevance check can't spam a conversation.
+ * a full container session. Agents that decide to respond reuse their
+ * existing running interactive session for this conversation if one exists
+ * (a stdin write via writeInput), or spawn a fresh interactive session
+ * seeded with the recent conversation history otherwise — covers both the
+ * first-ever reply and recovery after the previous session died (timeout,
+ * crash, manual stop). Never throws; every failure mode degrades to "stay
+ * silent" so a broken relevance check can't spam a conversation.
  */
 export async function evaluateAndRespond(ctx: {
 	db: Database
@@ -50,7 +54,18 @@ export async function evaluateAndRespond(ctx: {
 }): Promise<void> {
 	const { db, sessionManager, workspaceId, conversationId, messageId } = ctx
 
-	const [message] = await db.select().from(messages).where(eq(messages.id, messageId)).limit(1)
+	const [message] = await db
+		.select({
+			id: messages.id,
+			actorId: messages.actorId,
+			content: messages.content,
+			metadata: messages.metadata,
+			authorName: actors.name,
+		})
+		.from(messages)
+		.innerJoin(actors, eq(actors.id, messages.actorId))
+		.where(eq(messages.id, messageId))
+		.limit(1)
 	if (!message) return
 
 	const candidates = await db
@@ -126,26 +141,153 @@ export async function evaluateAndRespond(ctx: {
 					})
 			if (!shouldRespond) return
 
-			await sessionManager
-				.createSession(workspaceId, {
-					actorId: agent.id,
-					actionPrompt: buildConversationReplyPrompt({
-						conversationId,
-						newMessageContent: message.content,
-						authorActorId: message.actorId,
-					}),
-					config: { conversation: { conversation_id: conversationId, message_id: messageId } },
-					createdBy: message.actorId,
-				})
-				.catch((err: unknown) =>
-					logger.error('Failed to create conversation-responder session', {
-						agentId: agent.id,
-						conversationId,
-						error: String(err),
-					}),
-				)
+			const existing = await sessionManager.findActiveConversationSession(conversationId, agent.id)
+			if (existing) {
+				try {
+					await sessionManager.writeInput(existing.id, {
+						type: 'user',
+						message: {
+							role: 'user',
+							content: buildConversationTurnPrompt({
+								authorName: message.authorName,
+								newMessageContent: message.content,
+							}),
+						},
+					})
+					return
+				} catch (err) {
+					logger.warn(
+						'writeInput to existing interactive conversation session failed — spawning a fresh one',
+						{ agentId: agent.id, conversationId, sessionId: existing.id, error: String(err) },
+					)
+					// Fall through to spawn fresh below — the old session is dead
+					// (detached stdin, container gone), not just momentarily busy.
+				}
+			}
+
+			await spawnOrJoinConversationSession({
+				sessionManager,
+				workspaceId,
+				conversationId,
+				messageId,
+				agentId: agent.id,
+				message,
+				conversationHistory,
+			})
 		}),
 	)
+}
+
+/**
+ * Spawns a fresh interactive session for (conversationId, agentId), seeded
+ * with the recent conversation history as its first turn. If two replies for
+ * the same agent race (both found no existing running session and both try
+ * to spawn), the DB's sessions_conversation_actor_active_uniq partial unique
+ * index rejects the loser's insert — on that specific failure, look up the
+ * race winner's session and join it via writeInput instead of dropping the
+ * reply. A single lookup attempt, not a retry loop: if the winner's session
+ * isn't visible as `running` yet (still starting), this reply is dropped —
+ * an acceptable, rare failure mode rather than blocking on an open-ended
+ * poll.
+ */
+async function spawnOrJoinConversationSession(params: {
+	sessionManager: SessionManager
+	workspaceId: string
+	conversationId: string
+	messageId: number
+	agentId: string
+	message: { actorId: string; content: string; authorName: string }
+	conversationHistory: Array<{ actorName: string; content: string }>
+}): Promise<void> {
+	const {
+		sessionManager,
+		workspaceId,
+		conversationId,
+		messageId,
+		agentId,
+		message,
+		conversationHistory,
+	} = params
+
+	try {
+		await sessionManager.createSession(workspaceId, {
+			actorId: agentId,
+			actionPrompt: buildConversationReplyPrompt({
+				conversationId,
+				conversationHistory,
+				newMessageContent: message.content,
+				authorName: message.authorName,
+				authorActorId: message.actorId,
+			}),
+			config: {
+				interactive: true,
+				conversation: { conversation_id: conversationId, message_id: messageId },
+			},
+			createdBy: message.actorId,
+		})
+		return
+	} catch (err) {
+		if (!isConversationSessionRaceViolation(err)) {
+			logger.error('Failed to create conversation-responder session', {
+				agentId,
+				conversationId,
+				error: String(err),
+			})
+			return
+		}
+	}
+
+	const winner = await sessionManager.findActiveConversationSession(conversationId, agentId)
+	if (!winner) {
+		logger.warn('Conversation session race: no winner visible yet — dropping this reply', {
+			agentId,
+			conversationId,
+		})
+		return
+	}
+	await sessionManager
+		.writeInput(winner.id, {
+			type: 'user',
+			message: {
+				role: 'user',
+				content: buildConversationTurnPrompt({
+					authorName: message.authorName,
+					newMessageContent: message.content,
+				}),
+			},
+		})
+		.catch((err: unknown) =>
+			logger.warn('Failed to join winning conversation session after race', {
+				agentId,
+				conversationId,
+				sessionId: winner.id,
+				error: String(err),
+			}),
+		)
+}
+
+/** Walks err.cause chain for the sessions_conversation_actor_active_uniq unique violation (23505). */
+function isConversationSessionRaceViolation(err: unknown): boolean {
+	for (let cur: unknown = err; cur && typeof cur === 'object'; ) {
+		const e = cur as {
+			code?: string
+			constraint_name?: string
+			constraint?: string
+			message?: string
+			cause?: unknown
+		}
+		if (e.code === '23505') {
+			const name = e.constraint_name ?? e.constraint
+			if (name === 'sessions_conversation_actor_active_uniq') return true
+			if (
+				typeof e.message === 'string' &&
+				e.message.includes('sessions_conversation_actor_active_uniq')
+			)
+				return true
+		}
+		cur = e.cause
+	}
+	return false
 }
 
 async function checkRelevance(params: {
@@ -180,7 +322,7 @@ async function checkRelevance(params: {
 			api_key: credentials.apiKey,
 			base_url: credentials.baseUrl,
 		})
-		const transcript = conversationHistory.map((m) => `${m.actorName}: ${m.content}`).join('\n')
+		const transcript = formatConversationTranscript(conversationHistory)
 		const response = await adapter.chat({
 			model: credentials.model,
 			temperature: 0,
@@ -213,21 +355,56 @@ async function checkRelevance(params: {
 	}
 }
 
+/** Shared `{actorName}: {content}` transcript join, used both for the relevance check and the seed prompt. */
+function formatConversationTranscript(
+	history: Array<{ actorName: string; content: string }>,
+): string {
+	return history.map((m) => `${m.actorName}: ${m.content}`).join('\n')
+}
+
+/**
+ * Builds the seed prompt for a freshly-spawned interactive conversation
+ * session — sent as the first stdin turn (see launchContainer in
+ * session-manager.ts). Unlike the old one-shot prompt, history is inlined
+ * directly rather than telling the agent to go fetch it via MCP tools, since
+ * this only runs once per session (not once per reply).
+ */
 function buildConversationReplyPrompt(ctx: {
 	conversationId: string
+	conversationHistory: Array<{ actorName: string; content: string }>
 	newMessageContent: string
+	authorName: string
 	authorActorId: string
 }): string {
 	return [
-		'A new message was posted in a conversation you are a participant in, and you decided a reply from you may add value. Use the conversation MCP tools (list_conversation_messages, get_conversation) to read the full thread context before replying — the excerpt below is only the triggering message.',
+		'A new message was posted in a conversation you are a participant in, and you decided a reply from you may add value. This session stays open for the rest of this conversation — later messages will arrive as further turns, not new prompts.',
+		'',
+		'Recent conversation history (oldest first):',
+		'"""',
+		formatConversationTranscript(ctx.conversationHistory) || '(no prior messages)',
+		'"""',
 		'',
 		'The response can be any combination of: taking an action, posting a reply via post_conversation_message, or doing nothing if on reflection no response is warranted after all — silence is a valid outcome.',
 		'',
 		`Conversation ID: ${ctx.conversationId}`,
-		`Author of the new message (actor ID): ${ctx.authorActorId}`,
+		`Author of the new message: ${ctx.authorName} (actor ID: ${ctx.authorActorId})`,
 		'New message content:',
 		'"""',
 		ctx.newMessageContent,
 		'"""',
 	].join('\n')
+}
+
+/**
+ * Builds a follow-up turn for an already-running interactive session.
+ * Deliberately minimal — the live CLI process already has every prior turn
+ * in its own context, this only needs to carry the new message and who sent
+ * it (a multi-party room isn't guaranteed to have the same sender turn after
+ * turn).
+ */
+function buildConversationTurnPrompt(ctx: {
+	authorName: string
+	newMessageContent: string
+}): string {
+	return `${ctx.authorName}: ${ctx.newMessageContent}`
 }

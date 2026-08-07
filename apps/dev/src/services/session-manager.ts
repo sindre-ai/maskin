@@ -145,7 +145,14 @@ export interface CreateSessionParams {
 	 *     attached so subsequent user turns can be delivered via
 	 *     `ContainerManager.write()`. The value is also persisted to
 	 *     `sessions.interactive` so downstream routes (e.g. the input route)
-	 *     can gate on it without re-parsing config.
+	 *     can gate on it without re-parsing config. When interactive, the
+	 *     `actionPrompt` string is sent as the first stdin turn once the
+	 *     container's stdin is attached (see `launchContainer`), rather than
+	 *     as the `ACTION_PROMPT` env var used for non-interactive sessions.
+	 *   - `conversation?: { conversation_id: string }` — when present,
+	 *     `conversation_id` is also persisted to `sessions.conversationId` so
+	 *     `findActiveConversationSession` can look sessions up without a
+	 *     JSONB path scan.
 	 *   - everything else is passed through as-is to the container env/runtime.
 	 */
 	config?: Record<string, unknown>
@@ -378,6 +385,8 @@ export class SessionManager extends EventEmitter {
 	): Promise<typeof sessions.$inferSelect> {
 		const config = params.config ?? {}
 		const interactive = config.interactive === true
+		const conversationId =
+			(config.conversation as { conversation_id?: string } | undefined)?.conversation_id ?? null
 
 		const [session] = await this.db
 			.insert(sessions)
@@ -389,6 +398,7 @@ export class SessionManager extends EventEmitter {
 				actionPrompt: params.actionPrompt,
 				config,
 				interactive,
+				conversationId,
 				createdBy: params.createdBy,
 				sourceSessionId: params.sourceSessionId,
 			})
@@ -416,6 +426,35 @@ export class SessionManager extends EventEmitter {
 		}
 
 		return session
+	}
+
+	/**
+	 * Find a currently-usable interactive session for a (conversation, agent)
+	 * pair — i.e. one that can accept a writeInput() call right now. Fast-path
+	 * optimization for the conversation responder; the DB's
+	 * sessions_conversation_actor_active_uniq partial unique index is the
+	 * authoritative guard against double-spawn, this just avoids an
+	 * unnecessary createSession attempt in the common case. Only matches
+	 * `running` (not `pending`/`starting`) since writeInput needs a live
+	 * stdin attachment, which only exists once launchContainer has completed.
+	 */
+	async findActiveConversationSession(
+		conversationId: string,
+		actorId: string,
+	): Promise<typeof sessions.$inferSelect | null> {
+		const [row] = await this.db
+			.select()
+			.from(sessions)
+			.where(
+				and(
+					eq(sessions.conversationId, conversationId),
+					eq(sessions.actorId, actorId),
+					eq(sessions.interactive, true),
+					eq(sessions.status, 'running'),
+				),
+			)
+			.limit(1)
+		return row ?? null
 	}
 
 	async startSession(sessionId: string): Promise<void> {
@@ -1761,6 +1800,27 @@ export class SessionManager extends EventEmitter {
 
 		if (session.interactive) {
 			await this.containers.attachStdin(session.id, containerId)
+			if (session.actionPrompt.trim().length > 0) {
+				// First turn on a freshly-attached interactive stdin. Generalizes
+				// actionPrompt beyond the non-interactive ACTION_PROMPT env var: an
+				// interactive session creator can seed the CLI's first turn this
+				// way — the conversation-responder uses it to inject full
+				// conversation history, since interactive sessions get no
+				// ACTION_PROMPT env var at all.
+				await this.writeInput(session.id, {
+					type: 'user',
+					message: { role: 'user', content: session.actionPrompt },
+				}).catch((err) => {
+					// Don't fail session startup over the seed turn — the session is
+					// still usable via a later /input call, just without its opening
+					// context. Surface loudly since a silently context-less chat
+					// agent is a confusing failure mode for callers relying on this.
+					logger.error('Failed to deliver initial interactive turn', {
+						sessionId: session.id,
+						error: err instanceof Error ? err.message : String(err),
+					})
+				})
+			}
 		}
 
 		return containerId

@@ -241,6 +241,62 @@ describe('SessionManager', () => {
 
 			expect(result.interactive).toBe(false)
 		})
+
+		it('persists conversationId from config.conversation.conversation_id', async () => {
+			const session = buildSession({
+				status: 'pending',
+				interactive: true,
+				conversationId: 'conv-1',
+			})
+			mockResults.insertQueue = [[session], []]
+
+			const result = await manager.createSession('ws-1', {
+				actorId: 'actor-1',
+				actionPrompt: '',
+				config: { interactive: true, conversation: { conversation_id: 'conv-1' } },
+				createdBy: 'creator-1',
+				autoStart: false,
+			})
+
+			expect(result.conversationId).toBe('conv-1')
+		})
+
+		it('leaves conversationId null when config.conversation is absent', async () => {
+			const session = buildSession({ status: 'pending', conversationId: null })
+			mockResults.insertQueue = [[session], []]
+
+			const result = await manager.createSession('ws-1', {
+				actorId: 'actor-1',
+				actionPrompt: 'Do the thing',
+				createdBy: 'creator-1',
+				autoStart: false,
+			})
+
+			expect(result.conversationId).toBeNull()
+		})
+	})
+
+	describe('findActiveConversationSession()', () => {
+		it('queries for a running interactive session matching (conversationId, actorId)', async () => {
+			const session = buildSession({
+				interactive: true,
+				status: 'running',
+				conversationId: 'conv-1',
+			})
+			mockResults.select = [session]
+
+			const result = await manager.findActiveConversationSession('conv-1', session.actorId)
+
+			expect(result?.id).toBe(session.id)
+		})
+
+		it('returns null when no matching session is found', async () => {
+			mockResults.select = []
+
+			const result = await manager.findActiveConversationSession('conv-1', 'actor-1')
+
+			expect(result).toBeNull()
+		})
 	})
 
 	describe('startSession() — interactive launch flow', () => {
@@ -289,6 +345,51 @@ describe('SessionManager', () => {
 			expect(createArgs.env.ACTION_PROMPT).toBeUndefined()
 			expect(createArgs.interactive).toBe(true)
 			expect(mockContainerManager.attachStdin).toHaveBeenCalledWith(session.id, 'container-id-123')
+			// actionPrompt is '' here — no seed turn should be sent once attached.
+			expect(mockContainerManager.write).not.toHaveBeenCalled()
+		})
+
+		it('sends session.actionPrompt as the first stdin turn once interactive stdin is attached', async () => {
+			const session = buildSession({
+				status: 'pending',
+				interactive: true,
+				actionPrompt: 'Full conversation history goes here.',
+				containerId: null,
+			})
+			const agent = {
+				id: session.actorId,
+				type: 'agent',
+				systemPrompt: 'You are Workspace Coach.',
+				llmProvider: null,
+				llmConfig: null,
+				apiKey: 'ank_test_agent_key',
+				tools: null,
+			}
+			const workspace = { id: session.workspaceId, settings: {} }
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+
+			mockResults.selectQueue = [
+				[session], // startSession: load session
+				[workspace], // hasCapacity: workspace lookup
+				[{ count: 0 }], // hasCapacity: running count
+				[agent], // launchContainer: agent lookup
+				[workspace], // launchContainer: workspace lookup (llm keys)
+				[], // launchContainer: integrations lookup
+				[session], // writeInput (seed turn): session lookup
+			]
+
+			await manager.startSession(session.id)
+
+			expect(mockContainerManager.attachStdin).toHaveBeenCalledWith(session.id, 'container-id-123')
+			expect(mockContainerManager.write).toHaveBeenCalledWith(session.id, {
+				type: 'user',
+				message: { role: 'user', content: 'Full conversation history goes here.' },
+			})
 		})
 
 		it('sets ACTION_PROMPT and omits INTERACTIVE for non-interactive sessions', async () => {
