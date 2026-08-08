@@ -22,13 +22,15 @@ files at generation time, so new files aren't picked up automatically.
 
 Start the backend first (`pnpm dev` from the repo root — see root `CLAUDE.md`).
 
-- **Simulator**: works out of the box. `Core/Networking/DevServer.swift` defaults to
-  `localhost`, which the Simulator shares with the host Mac.
-- **Physical device**: edit `DevServer.host` in that same file to your Mac's LAN IP
-  (`ipconfig getifaddr en0`), and make sure the phone and Mac are on the same network.
-  **Don't commit your IP** — it's personal to your network. Also requires signing (next
-  section) and, on the phone, trusting the developer certificate under Settings →
-  General → VPN & Device Management.
+- **Physical device (standard)**: edit `DevServer.host` in
+  `Core/Networking/DevServer.swift` to your Mac's LAN IP (`ipconfig getifaddr en0`), and
+  make sure the phone and Mac are on the same network. **Don't commit your IP** — it's
+  personal to your network, which is why the shipped default is the inert `localhost`
+  rather than anyone's real address. Also requires signing (next section) and, on the
+  phone, trusting the developer certificate under Settings → General → VPN & Device
+  Management.
+- **Simulator**: leave `DevServer.host` as `localhost` — the Simulator shares the host
+  Mac's network stack, so no edit is needed.
 
 ## Signing for a physical device
 
