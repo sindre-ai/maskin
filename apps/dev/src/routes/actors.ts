@@ -88,6 +88,10 @@ const createActorRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Invalid request',
 		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Native-password signup disabled (VAERKSTED_AUTH_REQUIRED)',
+		},
 		409: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Actor with this ID already exists',
@@ -121,6 +125,23 @@ function isEmailUniqueViolation(err: unknown): boolean {
 app.openapi(createActorRoute, async (c) => {
 	const db = c.get('db')
 	const body = c.req.valid('json')
+
+	// Optional, strictly opt-in gate (default unset/false — see .env.example):
+	// once VAERKSTED_AUTH_REQUIRED is explicitly set, new native-password human
+	// signups are rejected in favor of "Continue with vaerksted"
+	// (POST /api/vaerksted-auth/link). Left off by default because this route
+	// is load-bearing for the documented local-dev bootstrap flow in the root
+	// CLAUDE.md (auto-provisions a dev@local actor on a fresh DB) — do not
+	// gate it unconditionally.
+	if (body.type === 'human' && process.env.VAERKSTED_AUTH_REQUIRED === 'true') {
+		return c.json(
+			createApiError(
+				'FORBIDDEN',
+				'Native-password signup is disabled — sign up via "Continue with vaerksted" instead',
+			),
+			403,
+		)
+	}
 
 	// Human users must provide email and password
 	if (body.type === 'human') {

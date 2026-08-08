@@ -34,6 +34,14 @@ export const actors = pgTable('actors', {
 	memory: jsonb('memory'),
 	llmProvider: text('llm_provider'),
 	llmConfig: jsonb('llm_config'),
+	// Optional link to a vaerksted-auth identity (vaerksted-auth-and-sync.md
+	// §4/§8) — set once an actor signs up or logs in via "Continue with
+	// vaerksted". No FK constraint: this is a cross-service reference into
+	// vaerksted-auth's own database (a separate deployable with its own
+	// schema per §4), which Maskin's schema must not depend on — same
+	// precedent as sessions.sourceSessionId in
+	// 0039_sessions_source_session_id.sql.
+	vaerkstedIdentityId: uuid('vaerksted_identity_id'),
 	isSystem: boolean('is_system').notNull().default(false),
 	agentState: text('agent_state').notNull().default('idle').$type<AgentState>(),
 	agentStateUpdatedAt: timestamp('agent_state_updated_at', { withTimezone: true }),

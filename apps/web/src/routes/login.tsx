@@ -1,3 +1,4 @@
+import { VaerkstedAuthButton } from '@/components/shared/vaerksted-auth-button'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -78,6 +79,14 @@ function LoginPage() {
 						{loading ? 'Signing in...' : 'Sign in'}
 					</Button>
 				</form>
+
+				<div className="flex items-center gap-3">
+					<div className="h-px flex-1 bg-border" />
+					<span className="text-xs text-muted-foreground">or</span>
+					<div className="h-px flex-1 bg-border" />
+				</div>
+
+				<VaerkstedAuthButton email={email} />
 
 				<p className="text-center text-xs text-muted-foreground">
 					Don't have an account?{' '}

@@ -62,7 +62,13 @@ export function authMiddleware(db: Database) {
 			return next()
 		}
 
-		// Future: Better Auth session validation
+		// Human/browser sessions are not verified here. That path is
+		// "Continue with vaerksted" (vaerksted-auth-and-sync.md §8,
+		// implementation-plan.md M5) — POST /api/vaerksted-auth/link exchanges a
+		// vaerksted-auth session token for a Maskin `ank_`-prefixed API key,
+		// which then authenticates like any other actor above. This comment
+		// previously described a different, now-superseded "Better Auth"
+		// session-validation plan; that plan was not what shipped.
 		return c.json(
 			createApiError(
 				'UNAUTHORIZED',

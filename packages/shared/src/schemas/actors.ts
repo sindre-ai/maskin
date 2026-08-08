@@ -33,6 +33,14 @@ export const loginSchema = z.object({
 	password: z.string().min(1),
 })
 
+// POST /api/vaerksted-auth/link body — exchanges a vaerksted-auth session
+// token (already minted by vaerksted-auth's own POST /identities or
+// POST /sessions, per vaerksted-auth-and-sync.md §6) for a Maskin actor. See
+// apps/dev/src/routes/vaerksted-auth.ts.
+export const vaerkstedLinkSchema = z.object({
+	session_token: z.string().min(1),
+})
+
 export const updateActorSchema = z.object({
 	name: z.string().min(1).optional(),
 	email: z.string().email().optional(),

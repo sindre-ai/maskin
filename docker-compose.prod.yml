@@ -71,6 +71,53 @@ services:
       agent-base:
         condition: service_completed_successfully
 
+  # vaerksted-auth — design doc docs/design/vaerksted-auth-and-sync.md §4, §10.
+  # Standalone identity service, own Postgres schema, no code-level
+  # dependency on Maskin's own DB package. Deliberately NOT dependent on the
+  # local `postgres` compose service above: VAERKSTED_AUTH_DATABASE_URL
+  # points at the separate, dedicated Supabase-hosted Postgres project
+  # (§6a), not this stack's local dev Postgres container.
+  vaerksted-auth:
+    build:
+      context: .
+      dockerfile: apps/vaerksted-auth/Dockerfile
+    # No host port publish: Coolify's Traefik proxy routes the domain to this
+    # container over the internal network, same as the `app` service above.
+    environment:
+      VAERKSTED_AUTH_DATABASE_URL: ${VAERKSTED_AUTH_DATABASE_URL:-}
+      SUPABASE_URL: ${SUPABASE_URL:-}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
+      VAERKSTED_AUTH_SIGNING_PRIVATE_KEY: ${VAERKSTED_AUTH_SIGNING_PRIVATE_KEY:-}
+      VAERKSTED_AUTH_SIGNING_PUBLIC_KEY: ${VAERKSTED_AUTH_SIGNING_PUBLIC_KEY:-}
+      VAERKSTED_AUTH_SESSION_JWT_SECRET: ${VAERKSTED_AUTH_SESSION_JWT_SECRET:-}
+      PORT: "3001"
+      NODE_ENV: production
+
+  # vaerksted-sync — design doc docs/design/vaerksted-auth-and-sync.md §9, §10.
+  # Standalone relay service, own Postgres schema, no code-level dependency
+  # on Maskin's own DB package or on vaerksted-auth's internals — it
+  # authenticates callers by verifying device certs locally against
+  # VAERKSTED_AUTH_SIGNING_PUBLIC_KEY, never by calling vaerksted-auth over
+  # the network per request (§9). Deliberately NOT dependent on the local
+  # `postgres` compose service above: VAERKSTED_SYNC_DATABASE_URL points at
+  # the same dedicated Supabase-hosted Postgres project vaerksted-auth uses,
+  # under its own logical schema — not this stack's local dev Postgres
+  # container.
+  vaerksted-sync:
+    build:
+      context: .
+      dockerfile: apps/vaerksted-sync/Dockerfile
+    # No host port publish: Coolify's Traefik proxy routes the domain to this
+    # container over the internal network, same as the `app` and
+    # `vaerksted-auth` services above. WebSocket upgrades (GET /sync/ws)
+    # route through the same domain/port as the rest of this service's HTTP
+    # routes — no separate port needed.
+    environment:
+      VAERKSTED_SYNC_DATABASE_URL: ${VAERKSTED_SYNC_DATABASE_URL:-}
+      VAERKSTED_AUTH_SIGNING_PUBLIC_KEY: ${VAERKSTED_AUTH_SIGNING_PUBLIC_KEY:-}
+      PORT: "3002"
+      NODE_ENV: production
+
 volumes:
   pgdata:
   seaweed_data:

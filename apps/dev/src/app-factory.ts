@@ -41,6 +41,7 @@ import subscriptionsRoutes from './routes/subscriptions'
 import telemetryRoutes from './routes/telemetry'
 import triggersRoutes from './routes/triggers'
 import userDisplaySettingsRoutes from './routes/user-display-settings'
+import vaerkstedAuthRoutes from './routes/vaerksted-auth'
 import workspaceSkillsRoutes from './routes/workspace-skills'
 import workspacesRoutes from './routes/workspaces'
 import type { AgentStorageManager } from './services/agent-storage'
@@ -180,6 +181,9 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	//   - /api/health, /api/openapi.json: public discovery endpoints
 	//   - POST /api/actors: signup bootstrap, mints the first API key
 	//   - POST /api/auth/login: pre-auth credential exchange
+	//   - POST /api/vaerksted-auth/link: "Continue with vaerksted" login/signup
+	//     entry point — it verifies identity itself via a server-to-server call
+	//     to vaerksted-auth's GET /sessions/me, never trusting the caller
 	//   - /api/webhooks/*: authenticated via provider HMAC, not our API key
 	//   - /api/integrations/{provider}/callback: OAuth redirect can't carry our header
 	//   - POST /api/public/landing-events: landing-page funnel event ingest
@@ -193,6 +197,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		if (path === '/api/health' || path === '/api/openapi.json') return next()
 		if (path === '/api/actors' && method === 'POST') return next()
 		if (path === '/api/auth/login' && method === 'POST') return next()
+		if (path === '/api/vaerksted-auth/link' && method === 'POST') return next()
 		if (path.startsWith('/api/webhooks/')) return next()
 		if (path.startsWith('/api/internal/agent-servers/')) return next()
 		if (path === '/api/public/landing-events' && method === 'POST') return next()
@@ -212,6 +217,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/admin/landing-funnel', adminLandingFunnelRoutes)
 	app.route('/api/actors', actorsRoutes)
 	app.route('/api/auth', authRoutes)
+	app.route('/api/vaerksted-auth', vaerkstedAuthRoutes)
 	app.route('/api/actors', agentSkillsRoutes)
 	app.route('/api/actors', agentSkillAttachmentsRoutes)
 	app.route('/api/workspaces', workspacesRoutes)
