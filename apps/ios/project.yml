@@ -1,0 +1,95 @@
+name: Maskin
+options:
+  bundleIdPrefix: io.maskin
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    ENABLE_PREVIEWS: true
+    CODE_SIGN_STYLE: Automatic
+    PRODUCT_NAME: "$(TARGET_NAME)"
+    ENABLE_TESTABILITY: true
+    # No DEVELOPMENT_TEAM here on purpose — this is a multi-tenant OSS repo and every
+    # contributor has their own Apple Developer team. The generated .xcodeproj is
+    # gitignored (see apps/ios/README.md) specifically so a team id set locally via
+    # Xcode's Signing & Capabilities tab (or here, for your own machine) never ends up
+    # in a commit. Simulator builds don't need a team at all.
+
+targets:
+  Maskin:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: Maskin
+    resources:
+      - path: Maskin/Resources
+    info:
+      path: Maskin/Info.plist
+      properties:
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UIAppFonts:
+          - SchibstedGrotesk.ttf
+          - JetBrainsMono.ttf
+        CFBundleDisplayName: Maskin
+        ITSAppUsesNonExemptEncryption: false
+        # Dev-only: lets the app reach the Mac's `pnpm dev` backend over plain HTTP on
+        # the LAN (a real deployment would be HTTPS and wouldn't need this).
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        NSLocalNetworkUsageDescription: "Maskin connects to your local development server while building the app."
+    settings:
+      base:
+        PRODUCT_NAME: "$(TARGET_NAME)"
+        PRODUCT_BUNDLE_IDENTIFIER: io.maskin.app
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        TARGETED_DEVICE_FAMILY: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        SWIFT_EMIT_LOC_STRINGS: true
+    dependencies: []
+
+  MaskinTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: MaskinTests
+    dependencies:
+      - target: Maskin
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: true
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Maskin.app/Maskin"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+
+  MaskinUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: MaskinUITests
+    dependencies:
+      - target: Maskin
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: true
+
+schemes:
+  Maskin:
+    build:
+      targets:
+        Maskin: all
+        MaskinTests: [test]
+        MaskinUITests: [test]
+    test:
+      targets:
+        - MaskinTests
+        - MaskinUITests
+    run:
+      config: Debug
