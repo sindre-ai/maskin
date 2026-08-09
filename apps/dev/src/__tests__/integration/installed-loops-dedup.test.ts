@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import {
+	events,
 	actors,
 	installedLoops,
 	marketplaceLoopItems,
@@ -10,7 +11,7 @@ import {
 	workspaceMembers,
 } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
-import { and, eq, sql } from 'drizzle-orm'
+import { and, desc, eq, sql } from 'drizzle-orm'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createApiError, formatZodError } from '../../lib/errors'
 import { AgentStorageManager } from '../../services/agent-storage'
@@ -349,5 +350,195 @@ describe('Loop install dedup guard', () => {
 			.from(installedLoops)
 			.where(eq(installedLoops.sourceLoopId, loopAid))
 		expect(row?.installedVersion).toBe('2.0.0')
+	})
+
+	it('installing the same loop into two workspaces provisions one distinct agent per workspace', async () => {
+		const sourceActorId = randomUUID()
+		const loop = await seedMarketplaceLoop({
+			name: 'Shared Loop',
+			actorItems: [{ sourceItemId: sourceActorId, snapshot: AGENT_SNAPSHOT }],
+		})
+		const otherWorkspace = await insertWorkspace(db, actorId)
+		if (!otherWorkspace) throw new Error('second workspace insert returned no row')
+		const app = makeApp(actorId)
+
+		const first = await install(app, loop.id, workspaceId)
+		expect(first.status).toBe(201)
+		expect(first.body.provisioned.actors).toBe(1)
+
+		// Same loop, second workspace — the workspace_members join scopes the
+		// dedup, so this install mints its own copy instead of reusing the first
+		// workspace's agent across workspace boundaries.
+		const second = await install(app, loop.id, otherWorkspace.id)
+		expect(second.status).toBe(201)
+		expect(second.body.provisioned.actors).toBe(1)
+
+		const inFirst = await countActorsFromSourceItem(workspaceId, sourceActorId)
+		const inSecond = await countActorsFromSourceItem(otherWorkspace.id, sourceActorId)
+		expect(inFirst).toHaveLength(1)
+		expect(inSecond).toHaveLength(1)
+		expect(inFirst[0]?.id).not.toBe(inSecond[0]?.id)
+	})
+
+	it('a v2 push that adds a trigger targeting a reused agent wires the trigger to the reused id and re-snapshots the agent', async () => {
+		const sharedSourceActorId = randomUUID()
+		const triggerSourceId = randomUUID()
+		const v2Snapshot = {
+			...AGENT_SNAPSHOT,
+			systemPrompt: 'Be helpful, now shipping at v2.',
+		}
+		const loopA = await seedMarketplaceLoop({
+			name: 'Loop A',
+			version: '1.0.0',
+			actorItems: [{ sourceItemId: randomUUID(), snapshot: AGENT_SNAPSHOT }],
+		})
+		const loopB = await seedMarketplaceLoop({
+			name: 'Loop B',
+			actorItems: [{ sourceItemId: sharedSourceActorId, snapshot: AGENT_SNAPSHOT }],
+		})
+		const app = makeApp(actorId)
+
+		await install(app, loopA.id, workspaceId)
+		await install(app, loopB.id, workspaceId)
+		const [reused] = await countActorsFromSourceItem(workspaceId, sharedSourceActorId)
+		if (!reused) throw new Error('expected the shared agent provisioned by Loop B')
+
+		// Loop A v2 adds the shared agent (with new config) and a trigger targeting it.
+		await db
+			.update(marketplaceLoops)
+			.set({ version: '2.0.0' })
+			.where(eq(marketplaceLoops.id, loopA.id))
+		await db.insert(marketplaceLoopItems).values({
+			loopId: loopA.id,
+			itemType: 'actor',
+			sourceItemId: sharedSourceActorId,
+			itemSnapshot: v2Snapshot,
+		})
+		await db.insert(marketplaceLoopItems).values({
+			loopId: loopA.id,
+			itemType: 'trigger',
+			sourceItemId: triggerSourceId,
+			itemSnapshot: {
+				name: 'Loop A v2 daily',
+				type: 'cron',
+				config: { expression: '0 11 * * *' },
+				actionPrompt: 'Run A v2.',
+				target_actor_id: sharedSourceActorId,
+				enabled: true,
+			},
+		})
+
+		const pusher = new LoopVersionPusher(
+			db,
+			new AgentStorageManager(createMemoryStorage(), db),
+			60_000,
+		)
+		await pusher.tick()
+
+		// Still exactly one copy — the reused row, not a clone.
+		const copies = await countActorsFromSourceItem(workspaceId, sharedSourceActorId)
+		expect(copies).toHaveLength(1)
+		expect(copies[0]?.id).toBe(reused.id)
+
+		// The reused agent was re-snapshotted to the version being pushed.
+		const [actorRow] = await db
+			.select({ systemPrompt: actors.systemPrompt })
+			.from(actors)
+			.where(eq(actors.id, reused.id))
+		expect(actorRow?.systemPrompt).toBe('Be helpful, now shipping at v2.')
+
+		// The v2 trigger is wired to the reused agent id, not the source id.
+		const [installRow] = await db
+			.select({ id: installedLoops.id })
+			.from(installedLoops)
+			.where(eq(installedLoops.sourceLoopId, loopA.id))
+		if (!installRow) throw new Error('install row not found')
+		const triggerRows = await db
+			.select({ targetActorId: triggers.targetActorId })
+			.from(triggers)
+			.where(sql`${triggers.metadata}->>'installed_loop_id' = ${installRow.id}`)
+		expect(triggerRows).toHaveLength(1)
+		expect(triggerRows[0]?.targetActorId).toBe(reused.id)
+	})
+
+	it('the version-push cron counts a reused agent as a reuse — never an add — and does not phantom-add it on later ticks', async () => {
+		const sharedSourceActorId = randomUUID()
+		const loopA = await seedMarketplaceLoop({
+			name: 'Loop A',
+			version: '1.0.0',
+			actorItems: [{ sourceItemId: randomUUID(), snapshot: AGENT_SNAPSHOT }],
+		})
+		const loopB = await seedMarketplaceLoop({
+			name: 'Loop B',
+			actorItems: [{ sourceItemId: sharedSourceActorId, snapshot: AGENT_SNAPSHOT }],
+		})
+		const app = makeApp(actorId)
+
+		await install(app, loopA.id, workspaceId)
+		await install(app, loopB.id, workspaceId)
+
+		// Loop A v2 adds the agent Loop B already provisioned.
+		await db
+			.update(marketplaceLoops)
+			.set({ version: '2.0.0' })
+			.where(eq(marketplaceLoops.id, loopA.id))
+		await db.insert(marketplaceLoopItems).values({
+			loopId: loopA.id,
+			itemType: 'actor',
+			sourceItemId: sharedSourceActorId,
+			itemSnapshot: AGENT_SNAPSHOT,
+		})
+
+		const pusher = new LoopVersionPusher(
+			db,
+			new AgentStorageManager(createMemoryStorage(), db),
+			60_000,
+		)
+		await pusher.tick()
+
+		const [installRow] = await db
+			.select({ id: installedLoops.id })
+			.from(installedLoops)
+			.where(eq(installedLoops.sourceLoopId, loopA.id))
+		if (!installRow) throw new Error('install row not found')
+
+		// The reuse is accounted as a reuse, not as an add.
+		const [firstPush] = await db
+			.select({ data: events.data })
+			.from(events)
+			.where(
+				and(
+					eq(events.entityType, 'installed_loop'),
+					eq(events.entityId, installRow.id),
+					eq(events.action, 'updated'),
+				),
+			)
+		expect(firstPush?.data).toMatchObject({
+			items: { adds: 0, updates: 0, removes: 0, reuses: 1 },
+		})
+
+		// A later push to a version with identical items must not count the
+		// reused agent again — the re-stamped metadata makes it an owned row
+		// that diffs as unchanged.
+		await db
+			.update(marketplaceLoops)
+			.set({ version: '3.0.0' })
+			.where(eq(marketplaceLoops.id, loopA.id))
+		await pusher.tick()
+
+		const [secondPush] = await db
+			.select({ data: events.data })
+			.from(events)
+			.where(
+				and(
+					eq(events.entityType, 'installed_loop'),
+					eq(events.entityId, installRow.id),
+					eq(events.action, 'updated'),
+				),
+			)
+			.orderBy(desc(events.id))
+		expect(secondPush?.data).toMatchObject({
+			items: { adds: 0, updates: 0, removes: 0, reuses: 0 },
+		})
 	})
 })
