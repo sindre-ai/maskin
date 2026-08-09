@@ -33,6 +33,7 @@ import {
 	buildTriggerInsert,
 	findProvisionedActorBySourceItem,
 	installMetadata,
+	partitionProvisionedActors,
 	rewriteWiring,
 } from './loop-provisioning'
 
@@ -218,6 +219,9 @@ export class LoopVersionPusher {
 		let adds = 0
 		let updates = 0
 		let removes = 0
+		// Actors the dedup guard matched instead of inserting — a separate bucket
+		// so the audit trail tells newly-created rows apart from reused ones.
+		let reuses = 0
 		// Ids of workspace_skills rows deleted by the "removes" pass below,
 		// cleaned up from S3 after the tx commits (see the post-commit loop).
 		const removedSkillIds: string[] = []
@@ -291,6 +295,7 @@ export class LoopVersionPusher {
 					updates++
 				} else {
 					let newId: string | undefined
+					let wasReused = false
 					switch (item.itemType) {
 						case 'actor': {
 							// Dedup guard — mirrors the install endpoint: this workspace may
@@ -303,7 +308,19 @@ export class LoopVersionPusher {
 								item.sourceItemId,
 							)
 							if (existing) {
+								// Re-snapshot the reused agent to the version being pushed and
+								// re-stamp its metadata to this install. A reused agent keeps the
+								// config the creating loop pinned; without this write, this
+								// install's UI reports its own version while the agent runs frozen
+								// divergence. Stamping `installed_loop_id` also ends the per-tick
+								// phantom add — the next tick diffs this row as owned.
+								await tx
+									.update(actors)
+									.set({ ...buildActorUpdate(rewritten), metadata, updatedAt: new Date() })
+									.where(eq(actors.id, existing.id))
 								newId = existing.id
+								wasReused = true
+								reuses++
 								break
 							}
 							const [row] = await tx
@@ -385,20 +402,21 @@ export class LoopVersionPusher {
 						throw new Error(`insert returned no row for ${item.itemType} ${item.sourceItemId}`)
 					}
 					sourceToLocal.set(item.sourceItemId, newId)
-					adds++
+					if (!wasReused) adds++
 				}
 			}
 
 			// Removes — installed elements whose source_item_id is no longer in the
-			// marketplace loop. Collect actor IDs so they can be cascade-deleted as a
-			// batch after the non-actor items are gone; a bare DELETE actors would
-			// violate FK constraints.
-			const removedActorIds: string[] = []
+			// marketplace loop. Collect actor rows so they can be kept (shared with
+			// another installed loop) or cascade-deleted as a batch after the
+			// non-actor items are gone; a bare DELETE actors would violate FK
+			// constraints and would take down a shared agent's triggers with it.
+			const removedActorRows: Array<{ id: string; sourceItemId: string | null }> = []
 			for (const row of installed) {
 				if (row.sourceItemId && loopItemsBySourceId.has(row.sourceItemId)) continue
 				switch (row.type) {
 					case 'actor':
-						removedActorIds.push(row.id)
+						removedActorRows.push({ id: row.id, sourceItemId: row.sourceItemId })
 						break
 					case 'trigger':
 						await tx.delete(triggers).where(eq(triggers.id, row.id))
@@ -414,6 +432,20 @@ export class LoopVersionPusher {
 				}
 				removes++
 			}
+
+			// Ownership-aware partition (mirrors the uninstall route): an agent this
+			// install drops but another live install still references survives the
+			// push, rehomed under that install, so its triggers keep firing. Only the
+			// unreferenced remainder is cascade-deleted below.
+			const { deleted: removedActorIds } = await partitionProvisionedActors(
+				tx,
+				install.workspaceId,
+				install.id,
+				removedActorRows,
+			)
+			// Actors kept because another live loop still references them were not
+			// removed — don't let them inflate the audit trail's removes bucket.
+			removes -= removedActorRows.length - removedActorIds.length
 
 			if (removedActorIds.length > 0) {
 				// Delete triggers targeting or created by removed actors. This covers both
@@ -554,7 +586,7 @@ export class LoopVersionPusher {
 						source_loop_id: install.sourceLoopId,
 						from_version: install.installedVersion,
 						to_version: targetVersion,
-						items: { adds, updates, removes },
+						items: { adds, updates, removes, reuses },
 					},
 				})
 			} else {
@@ -585,6 +617,7 @@ export class LoopVersionPusher {
 			adds,
 			updates,
 			removes,
+			reuses,
 		})
 	}
 

@@ -2,12 +2,14 @@ import { generateApiKey } from '@maskin/auth'
 import type { Database, Transaction } from '@maskin/db'
 import {
 	actors,
+	installedLoops,
 	type integrations,
-	type triggers,
+	marketplaceLoopItems,
+	triggers,
 	workspaceMembers,
 	type workspaceSkills,
 } from '@maskin/db/schema'
-import { and, eq, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm'
 
 /**
  * Shared provisioning helpers for the marketplace. Both the install endpoint
@@ -48,6 +50,170 @@ export async function findProvisionedActorBySourceItem(
 		)
 		.limit(1)
 	return row
+}
+
+export function sourceItemIdOf(metadata: unknown): string | null {
+	const meta = (metadata as Record<string, unknown> | null) ?? {}
+	return typeof meta.source_item_id === 'string' ? meta.source_item_id : null
+}
+
+export type ProvisionedActorRef = {
+	id: string
+	sourceItemId: string | null
+}
+
+/**
+ * Ownership-aware partitioning of an install's provisioned actors, shared by
+ * the full-uninstall route and the version-push cron's removes pass.
+ *
+ * The dedup guard makes one actor row shareable by several installed loops,
+ * but the actor's `metadata.installed_loop_id` only names the loop that first
+ * provisioned it — so removing that loop (uninstall or publisher dropping the
+ * agent from the next version) must not cascade-delete a row another live loop
+ * still references. An actor is KEPT when any other currently-installed loop in
+ * the workspace references it: by bundling the same `source_item_id` (the
+ * dedup identity) or by running a provisioned trigger whose `targetActorId` is
+ * the local row. Kept actors are rehomed to one of those referencing installs
+ * (`installed_loop_id` transferred, `forked_from_installed_loop_id` cleared) so
+ * a later removal of *that* install can still retire the actor once no
+ * references remain. The caller cascade-deletes `deleted` only; the rehome
+ * update is applied here inside `tx` before this returns.
+ */
+export async function partitionProvisionedActors(
+	tx: DbHandle,
+	workspaceId: string,
+	installId: string,
+	actorsToPartition: ProvisionedActorRef[],
+): Promise<{ deleted: string[]; kept: Array<{ id: string; rehomedTo: string }> }> {
+	const deleted: string[] = []
+	const kept: Array<{ id: string; rehomedTo: string }> = []
+
+	if (actorsToPartition.length === 0) return { deleted, kept }
+
+	const sourceItemIds = actorsToPartition
+		.map((a) => a.sourceItemId)
+		.filter((s): s is string => s !== null)
+	const bundleRefs = await findReferencingInstalls(tx, workspaceId, installId, sourceItemIds)
+	const triggerRefs = await findTriggerReferencingInstalls(
+		tx,
+		workspaceId,
+		installId,
+		actorsToPartition.map((a) => a.id),
+	)
+
+	for (const actor of actorsToPartition) {
+		const liveInstallIds = new Set([
+			...(actor.sourceItemId ? (bundleRefs.get(actor.sourceItemId) ?? []) : []),
+			...(triggerRefs.get(actor.id) ?? []),
+		])
+		const [rehomeTo] = [...liveInstallIds]
+		if (!rehomeTo) {
+			deleted.push(actor.id)
+			continue
+		}
+		await rehomeActorOwnership(tx, actor.id, rehomeTo)
+		kept.push({ id: actor.id, rehomedTo: rehomeTo })
+	}
+
+	return { deleted, kept }
+}
+
+/**
+ * Installed loops (other than `installId`) in `workspaceId` whose source loop
+ * bundles any of `sourceItemIds` — the marketplace side of the dedup identity.
+ * A loop that still bundles the item would reach for the same actor row on its
+ * next install/push, so the row must survive this install's removal.
+ */
+async function findReferencingInstalls(
+	db: DbHandle,
+	workspaceId: string,
+	installId: string,
+	sourceItemIds: string[],
+): Promise<Map<string, string[]>> {
+	const refs = new Map<string, string[]>()
+	if (sourceItemIds.length === 0) return refs
+	const rows = await db
+		.select({
+			sourceItemId: marketplaceLoopItems.sourceItemId,
+			installId: installedLoops.id,
+		})
+		.from(installedLoops)
+		.innerJoin(marketplaceLoopItems, eq(marketplaceLoopItems.loopId, installedLoops.sourceLoopId))
+		.where(
+			and(
+				eq(installedLoops.workspaceId, workspaceId),
+				ne(installedLoops.id, installId),
+				inArray(marketplaceLoopItems.sourceItemId, sourceItemIds),
+			),
+		)
+	for (const row of rows) {
+		const list = refs.get(row.sourceItemId) ?? []
+		list.push(row.installId)
+		refs.set(row.sourceItemId, list)
+	}
+	return refs
+}
+
+/**
+ * Installed loops (other than `installId`) in `workspaceId` that run a
+ * provisioned trigger targeting any of `actorIds` — a live dependency on the
+ * local rows even when the referencing loop does not re-bundle the same source
+ * item (e.g. a fork kept its trigger, or a loop whose agent list changed).
+ */
+async function findTriggerReferencingInstalls(
+	db: DbHandle,
+	workspaceId: string,
+	installId: string,
+	actorIds: string[],
+): Promise<Map<string, string[]>> {
+	const refs = new Map<string, string[]>()
+	if (actorIds.length === 0) return refs
+	const rows = await db
+		.select({
+			actorId: triggers.targetActorId,
+			installId: sql<string>`${triggers.metadata}->>'installed_loop_id'`,
+		})
+		.from(triggers)
+		.where(
+			and(
+				inArray(triggers.targetActorId, actorIds),
+				isNotNull(sql`${triggers.metadata}->>'installed_loop_id'`),
+			),
+		)
+	const installIds = [...new Set(rows.map((r) => r.installId))]
+	if (installIds.length === 0) return refs
+	const live = await db
+		.select({ id: installedLoops.id })
+		.from(installedLoops)
+		.where(
+			and(
+				eq(installedLoops.workspaceId, workspaceId),
+				ne(installedLoops.id, installId),
+				inArray(installedLoops.id, installIds),
+			),
+		)
+	const liveSet = new Set(live.map((r) => r.id))
+	for (const row of rows) {
+		if (!liveSet.has(row.installId)) continue
+		const list = refs.get(row.actorId) ?? []
+		list.push(row.installId)
+		refs.set(row.actorId, list)
+	}
+	return refs
+}
+
+/** Transfer an actor's managed-install ownership to `newInstallId`. */
+async function rehomeActorOwnership(
+	db: DbHandle,
+	actorId: string,
+	newInstallId: string,
+): Promise<void> {
+	await db
+		.update(actors)
+		.set({
+			metadata: sql`(${actors.metadata} - 'forked_from_installed_loop_id') || jsonb_build_object('installed_loop_id', ${newInstallId}::text)`,
+		})
+		.where(eq(actors.id, actorId))
 }
 
 /**
