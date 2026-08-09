@@ -599,7 +599,9 @@ describe('Loop install dedup guard', () => {
 
 		// Full uninstall of A — the loop that first provisioned the shared agent.
 		const uninstallRes = await app.request(
-			jsonRequest('DELETE', `/api/installed-loops/${loopAInstall.id}`, {}),
+			jsonRequest('DELETE', `/api/installed-loops/${loopAInstall.id}`, {
+				keepProvisionedItems: false,
+			}),
 		)
 		expect(uninstallRes.status).toBe(200)
 		const uninstallBody = (await uninstallRes.json()) as { removedElements: { actors: number } }
@@ -630,7 +632,9 @@ describe('Loop install dedup guard', () => {
 
 		// Uninstalling B too finally retires the agent.
 		const secondRes = await app.request(
-			jsonRequest('DELETE', `/api/installed-loops/${loopBInstall.id}`, {}),
+			jsonRequest('DELETE', `/api/installed-loops/${loopBInstall.id}`, {
+				keepProvisionedItems: false,
+			}),
 		)
 		expect(secondRes.status).toBe(200)
 		const secondBody = (await secondRes.json()) as { removedElements: { actors: number } }

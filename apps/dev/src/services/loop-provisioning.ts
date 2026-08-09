@@ -211,7 +211,7 @@ async function rehomeActorOwnership(
 	await db
 		.update(actors)
 		.set({
-			metadata: sql`${actors.metadata} - 'forked_from_installed_loop_id' || jsonb_build_object('installed_loop_id', ${newInstallId})`,
+			metadata: sql`(${actors.metadata} - 'forked_from_installed_loop_id') || jsonb_build_object('installed_loop_id', ${newInstallId}::text)`,
 		})
 		.where(eq(actors.id, actorId))
 }
