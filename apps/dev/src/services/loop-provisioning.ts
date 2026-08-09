@@ -2,9 +2,9 @@ import { generateApiKey } from '@maskin/auth'
 import type { Database, Transaction } from '@maskin/db'
 import {
 	actors,
-	workspaceMembers,
 	type integrations,
 	type triggers,
+	workspaceMembers,
 	type workspaceSkills,
 } from '@maskin/db/schema'
 import { and, eq, sql } from 'drizzle-orm'
