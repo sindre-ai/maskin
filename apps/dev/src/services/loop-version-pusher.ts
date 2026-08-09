@@ -218,6 +218,9 @@ export class LoopVersionPusher {
 		let adds = 0
 		let updates = 0
 		let removes = 0
+		// Actors the dedup guard matched instead of inserting — a separate bucket
+		// so the audit trail tells newly-created rows apart from reused ones.
+		let reuses = 0
 		// Ids of workspace_skills rows deleted by the "removes" pass below,
 		// cleaned up from S3 after the tx commits (see the post-commit loop).
 		const removedSkillIds: string[] = []
@@ -303,7 +306,18 @@ export class LoopVersionPusher {
 								item.sourceItemId,
 							)
 							if (existing) {
+								// Re-snapshot the reused agent to the version being pushed and
+								// re-stamp its metadata to this install. A reused agent keeps the
+								// config the creating loop pinned; without this write, this
+								// install's UI reports its own version while the agent runs frozen
+								// divergence. Stamping `installed_loop_id` also ends the per-tick
+								// phantom add — the next tick diffs this row as owned.
+								await tx
+									.update(actors)
+									.set({ ...buildActorUpdate(rewritten), metadata, updatedAt: new Date() })
+									.where(eq(actors.id, existing.id))
 								newId = existing.id
+								reuses++
 								break
 							}
 							const [row] = await tx
@@ -554,7 +568,7 @@ export class LoopVersionPusher {
 						source_loop_id: install.sourceLoopId,
 						from_version: install.installedVersion,
 						to_version: targetVersion,
-						items: { adds, updates, removes },
+						items: { adds, updates, removes, reuses },
 					},
 				})
 			} else {
@@ -585,6 +599,7 @@ export class LoopVersionPusher {
 			adds,
 			updates,
 			removes,
+			reuses,
 		})
 	}
 
