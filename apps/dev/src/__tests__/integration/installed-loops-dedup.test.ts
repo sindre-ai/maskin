@@ -513,6 +513,7 @@ describe('Loop install dedup guard', () => {
 					eq(events.action, 'updated'),
 				),
 			)
+			.orderBy(desc(events.id))
 		expect(firstPush?.data).toMatchObject({
 			items: { adds: 0, updates: 0, removes: 0, reuses: 1 },
 		})
