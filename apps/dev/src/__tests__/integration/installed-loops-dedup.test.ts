@@ -541,4 +541,201 @@ describe('Loop install dedup guard', () => {
 			items: { adds: 0, updates: 0, removes: 0, reuses: 0 },
 		})
 	})
+
+	it("fully uninstalling the loop that first provisioned a shared agent keeps the agent and the other loop's trigger", async () => {
+		const sharedSourceActorId = randomUUID()
+		const loopA = await seedMarketplaceLoop({
+			name: 'Loop A',
+			actorItems: [{ sourceItemId: sharedSourceActorId, snapshot: AGENT_SNAPSHOT }],
+			triggerItems: [
+				{
+					sourceItemId: randomUUID(),
+					snapshot: {
+						name: 'Loop A daily',
+						type: 'cron',
+						config: { expression: '0 9 * * *' },
+						actionPrompt: 'Run A.',
+						target_actor_id: sharedSourceActorId,
+						enabled: true,
+					},
+				},
+			],
+		})
+		const loopB = await seedMarketplaceLoop({
+			name: 'Loop B',
+			actorItems: [{ sourceItemId: sharedSourceActorId, snapshot: AGENT_SNAPSHOT }],
+			triggerItems: [
+				{
+					sourceItemId: randomUUID(),
+					snapshot: {
+						name: 'Loop B daily',
+						type: 'cron',
+						config: { expression: '0 10 * * *' },
+						actionPrompt: 'Run B.',
+						target_actor_id: sharedSourceActorId,
+						enabled: true,
+					},
+				},
+			],
+		})
+		const app = makeApp(actorId)
+
+		await install(app, loopA.id, workspaceId)
+		await install(app, loopB.id, workspaceId)
+
+		const [sharedActor] = await countActorsFromSourceItem(workspaceId, sharedSourceActorId)
+		if (!sharedActor) throw new Error('expected the shared actor row')
+		const sharedActorId = sharedActor.id
+
+		const [loopAInstall] = await db
+			.select({ id: installedLoops.id })
+			.from(installedLoops)
+			.where(eq(installedLoops.sourceLoopId, loopA.id))
+		const [loopBInstall] = await db
+			.select({ id: installedLoops.id })
+			.from(installedLoops)
+			.where(eq(installedLoops.sourceLoopId, loopB.id))
+		if (!loopAInstall || !loopBInstall) throw new Error('expected both install rows')
+
+		// Full uninstall of A — the loop that first provisioned the shared agent.
+		const uninstallRes = await app.request(
+			jsonRequest('DELETE', `/api/installed-loops/${loopAInstall.id}`, {}),
+		)
+		expect(uninstallRes.status).toBe(200)
+		const uninstallBody = (await uninstallRes.json()) as { removedElements: { actors: number } }
+		expect(uninstallBody.removedElements.actors).toBe(0)
+
+		// The shared agent survives and is still a workspace member.
+		const [survivor] = await countActorsFromSourceItem(workspaceId, sharedSourceActorId)
+		expect(survivor?.id).toBe(sharedActorId)
+
+		// Ownership marker moved to loop B, so the agent retires with B's uninstall.
+		const [rehomedMeta] = await db
+			.select({ installedLoopId: sql<string>`${actors.metadata}->>'installed_loop_id'` })
+			.from(actors)
+			.where(eq(actors.id, sharedActorId))
+		expect(rehomedMeta?.installedLoopId).toBe(loopBInstall.id)
+
+		// A's trigger is gone; B's survives and still targets the shared agent.
+		const triggersAfter = await db
+			.select({
+				targetActorId: triggers.targetActorId,
+				installedLoopId: sql<string>`${triggers.metadata}->>'installed_loop_id'`,
+			})
+			.from(triggers)
+			.where(eq(triggers.workspaceId, workspaceId))
+		expect(triggersAfter).toHaveLength(1)
+		expect(triggersAfter[0]?.installedLoopId).toBe(loopBInstall.id)
+		expect(triggersAfter[0]?.targetActorId).toBe(sharedActorId)
+
+		// Uninstalling B too finally retires the agent.
+		const secondRes = await app.request(
+			jsonRequest('DELETE', `/api/installed-loops/${loopBInstall.id}`, {}),
+		)
+		expect(secondRes.status).toBe(200)
+		const secondBody = (await secondRes.json()) as { removedElements: { actors: number } }
+		expect(secondBody.removedElements.actors).toBe(1)
+		const after = await countActorsFromSourceItem(workspaceId, sharedSourceActorId)
+		expect(after).toHaveLength(0)
+	})
+
+	it("publishing a loop version that drops a shared agent keeps the agent and the surviving loop's trigger", async () => {
+		const sharedSourceActorId = randomUUID()
+		const loopA = await seedMarketplaceLoop({
+			name: 'Loop A',
+			version: '1.0.0',
+			actorItems: [{ sourceItemId: sharedSourceActorId, snapshot: AGENT_SNAPSHOT }],
+			triggerItems: [
+				{
+					sourceItemId: randomUUID(),
+					snapshot: {
+						name: 'Loop A daily',
+						type: 'cron',
+						config: { expression: '0 9 * * *' },
+						actionPrompt: 'Run A.',
+						target_actor_id: sharedSourceActorId,
+						enabled: true,
+					},
+				},
+			],
+		})
+		const loopB = await seedMarketplaceLoop({
+			name: 'Loop B',
+			actorItems: [{ sourceItemId: sharedSourceActorId, snapshot: AGENT_SNAPSHOT }],
+			triggerItems: [
+				{
+					sourceItemId: randomUUID(),
+					snapshot: {
+						name: 'Loop B daily',
+						type: 'cron',
+						config: { expression: '0 10 * * *' },
+						actionPrompt: 'Run B.',
+						target_actor_id: sharedSourceActorId,
+						enabled: true,
+					},
+				},
+			],
+		})
+		const app = makeApp(actorId)
+
+		await install(app, loopA.id, workspaceId)
+		await install(app, loopB.id, workspaceId)
+
+		const [sharedActor] = await countActorsFromSourceItem(workspaceId, sharedSourceActorId)
+		if (!sharedActor) throw new Error('expected the shared actor row')
+		const sharedActorId = sharedActor.id
+
+		const [loopAInstall] = await db
+			.select({ id: installedLoops.id })
+			.from(installedLoops)
+			.where(eq(installedLoops.sourceLoopId, loopA.id))
+		const [loopBInstall] = await db
+			.select({ id: installedLoops.id })
+			.from(installedLoops)
+			.where(eq(installedLoops.sourceLoopId, loopB.id))
+		if (!loopAInstall || !loopBInstall) throw new Error('expected both install rows')
+
+		// Publish Loop A v2 that drops the shared agent and A's trigger.
+		const loopAid = loopA.id
+		await db.delete(marketplaceLoopItems).where(eq(marketplaceLoopItems.loopId, loopAid))
+		await db
+			.update(marketplaceLoops)
+			.set({ version: '2.0.0' })
+			.where(eq(marketplaceLoops.id, loopAid))
+
+		const pusher = new LoopVersionPusher(
+			db,
+			new AgentStorageManager(createMemoryStorage(), db),
+			60_000,
+		)
+		await pusher.tick()
+
+		// The shared agent survives the version drop, rehomed under loop B.
+		const [survivor] = await countActorsFromSourceItem(workspaceId, sharedSourceActorId)
+		expect(survivor?.id).toBe(sharedActorId)
+		const [rehomedMeta] = await db
+			.select({ installedLoopId: sql<string>`${actors.metadata}->>'installed_loop_id'` })
+			.from(actors)
+			.where(eq(actors.id, sharedActorId))
+		expect(rehomedMeta?.installedLoopId).toBe(loopBInstall.id)
+
+		// A's trigger is gone; B's still fires at the shared agent.
+		const triggersAfter = await db
+			.select({
+				targetActorId: triggers.targetActorId,
+				installedLoopId: sql<string>`${triggers.metadata}->>'installed_loop_id'`,
+			})
+			.from(triggers)
+			.where(eq(triggers.workspaceId, workspaceId))
+		expect(triggersAfter).toHaveLength(1)
+		expect(triggersAfter[0]?.installedLoopId).toBe(loopBInstall.id)
+		expect(triggersAfter[0]?.targetActorId).toBe(sharedActorId)
+
+		// And loop A's install advanced to v2.
+		const [row] = await db
+			.select({ installedVersion: installedLoops.installedVersion })
+			.from(installedLoops)
+			.where(eq(installedLoops.sourceLoopId, loopAid))
+		expect(row?.installedVersion).toBe('2.0.0')
+	})
 })

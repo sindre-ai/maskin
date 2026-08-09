@@ -33,6 +33,7 @@ import {
 	buildTriggerInsert,
 	findProvisionedActorBySourceItem,
 	installMetadata,
+	partitionProvisionedActors,
 	rewriteWiring,
 } from './loop-provisioning'
 
@@ -406,15 +407,16 @@ export class LoopVersionPusher {
 			}
 
 			// Removes — installed elements whose source_item_id is no longer in the
-			// marketplace loop. Collect actor IDs so they can be cascade-deleted as a
-			// batch after the non-actor items are gone; a bare DELETE actors would
-			// violate FK constraints.
-			const removedActorIds: string[] = []
+			// marketplace loop. Collect actor rows so they can be kept (shared with
+			// another installed loop) or cascade-deleted as a batch after the
+			// non-actor items are gone; a bare DELETE actors would violate FK
+			// constraints and would take down a shared agent's triggers with it.
+			const removedActorRows: Array<{ id: string; sourceItemId: string | null }> = []
 			for (const row of installed) {
 				if (row.sourceItemId && loopItemsBySourceId.has(row.sourceItemId)) continue
 				switch (row.type) {
 					case 'actor':
-						removedActorIds.push(row.id)
+						removedActorRows.push({ id: row.id, sourceItemId: row.sourceItemId })
 						break
 					case 'trigger':
 						await tx.delete(triggers).where(eq(triggers.id, row.id))
@@ -430,6 +432,17 @@ export class LoopVersionPusher {
 				}
 				removes++
 			}
+
+			// Ownership-aware partition (mirrors the uninstall route): an agent this
+			// install drops but another live install still references survives the
+			// push, rehomed under that install, so its triggers keep firing. Only the
+			// unreferenced remainder is cascade-deleted below.
+			const { deleted: removedActorIds } = await partitionProvisionedActors(
+				tx,
+				install.workspaceId,
+				install.id,
+				removedActorRows,
+			)
 
 			if (removedActorIds.length > 0) {
 				// Delete triggers targeting or created by removed actors. This covers both

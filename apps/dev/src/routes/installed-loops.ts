@@ -44,7 +44,9 @@ import {
 	buildTriggerInsert,
 	findProvisionedActorBySourceItem,
 	installMetadata,
+	partitionProvisionedActors,
 	rewriteWiring,
+	sourceItemIdOf,
 } from '../services/loop-provisioning'
 import { autoSubscribe } from '../services/subscriptions'
 
@@ -880,15 +882,33 @@ app.openapi(uninstallLoopRoute, async (c) => {
 				)
 				.returning({ id: integrations.id })
 
-			// Find provisioned actor IDs.
+			// Find provisioned actor IDs. A shared agent — one another installed
+			// loop still references — survives this uninstall (see
+			// partitionProvisionedActors); only the rows nothing else uses are
+			// cascade-deleted below, so a surviving loop's triggers keep firing.
 			const provisionedActorRows = await tx
-				.select({ id: actors.id })
+				.select({ id: actors.id, metadata: actors.metadata })
 				.from(actors)
 				.where(
 					sql`${actors.metadata}->>'installed_loop_id' = ${install.id} OR ${actors.metadata}->>'forked_from_installed_loop_id' = ${install.id}`,
 				)
 
-			const actorIds = provisionedActorRows.map((r) => r.id)
+			const { deleted: actorIds, kept: keptActorIds } = await partitionProvisionedActors(
+				tx,
+				install.workspaceId,
+				install.id,
+				provisionedActorRows.map((r) => ({ id: r.id, sourceItemId: sourceItemIdOf(r.metadata) })),
+			)
+			if (keptActorIds.length > 0) {
+				logger.info(
+					'Kept shared agents on uninstall — another installed loop still references them',
+					{
+						installId: install.id,
+						workspaceId: install.workspaceId,
+						keptActorIds,
+					},
+				)
+			}
 
 			if (actorIds.length > 0) {
 				// Delete triggers that target or were created by provisioned actors.
