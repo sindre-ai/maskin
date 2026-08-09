@@ -42,6 +42,7 @@ import {
 	buildIntegrationInsert,
 	buildSkillInsert,
 	buildTriggerInsert,
+	findProvisionedActorBySourceItem,
 	installMetadata,
 	rewriteWiring,
 } from '../services/loop-provisioning'
@@ -309,6 +310,21 @@ app.openapi(installLoopRoute, async (c) => {
 
 			switch (type) {
 				case 'actor': {
+					// Dedup guard: don't clone an agent the workspace already has. A
+					// workspace may already hold this agent from another loop that bundles
+					// it, or from a previous install kept on uninstall — reuse the existing
+					// row and wire this install's triggers to it instead of creating a
+					// second copy. Reuse means `provisioned.actors` only counts agents this
+					// install actually created.
+					const existing = await findProvisionedActorBySourceItem(
+						tx,
+						workspaceId,
+						item.sourceItemId,
+					)
+					if (existing) {
+						sourceToLocal.set(item.sourceItemId, existing.id)
+						break
+					}
 					const [row] = await tx
 						.insert(actors)
 						.values(buildActorInsert(snapshot, metadata, actorId))

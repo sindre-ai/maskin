@@ -31,6 +31,7 @@ import {
 	buildIntegrationInsert,
 	buildSkillInsert,
 	buildTriggerInsert,
+	findProvisionedActorBySourceItem,
 	installMetadata,
 	rewriteWiring,
 } from './loop-provisioning'
@@ -292,6 +293,19 @@ export class LoopVersionPusher {
 					let newId: string | undefined
 					switch (item.itemType) {
 						case 'actor': {
+							// Dedup guard — mirrors the install endpoint: this workspace may
+							// already hold the agent from another loop that bundles it, so
+							// reuse instead of cloning (a join on workspace_members guarantees
+							// the reused actor is already bound to this workspace).
+							const existing = await findProvisionedActorBySourceItem(
+								tx,
+								install.workspaceId,
+								item.sourceItemId,
+							)
+							if (existing) {
+								newId = existing.id
+								break
+							}
 							const [row] = await tx
 								.insert(actors)
 								.values(buildActorInsert(rewritten, metadata, createdBy))

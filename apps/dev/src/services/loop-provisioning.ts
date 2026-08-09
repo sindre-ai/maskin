@@ -1,5 +1,13 @@
 import { generateApiKey } from '@maskin/auth'
-import type { actors, integrations, triggers, workspaceSkills } from '@maskin/db/schema'
+import type { Database, Transaction } from '@maskin/db'
+import {
+	actors,
+	type integrations,
+	type triggers,
+	workspaceMembers,
+	type workspaceSkills,
+} from '@maskin/db/schema'
+import { and, eq, sql } from 'drizzle-orm'
 
 /**
  * Shared provisioning helpers for the marketplace. Both the install endpoint
@@ -10,6 +18,37 @@ import type { actors, integrations, triggers, workspaceSkills } from '@maskin/db
  */
 
 export type MarketplaceItemType = 'actor' | 'trigger' | 'skill' | 'integration'
+
+type DbHandle = Database | Transaction
+
+/**
+ * Find an actor the workspace already has that was provisioned from the same
+ * marketplace source item (`metadata.source_item_id` keyed on the publisher's
+ * actor id, the same identity the single-item install route uses). Reusing it
+ * instead of inserting a clone is the dedup guard for loop installs: repeat or
+ * overlapping loops that bundle the same agent must leave exactly one copy per
+ * workspace. The workspace-membership join scopes the match — actors are global
+ * identities, so a copy provisioned into another workspace must not be reused
+ * here.
+ */
+export async function findProvisionedActorBySourceItem(
+	db: DbHandle,
+	workspaceId: string,
+	sourceItemId: string,
+): Promise<{ id: string } | undefined> {
+	const [row] = await db
+		.select({ id: actors.id })
+		.from(actors)
+		.innerJoin(workspaceMembers, eq(workspaceMembers.actorId, actors.id))
+		.where(
+			and(
+				eq(workspaceMembers.workspaceId, workspaceId),
+				sql`${actors.metadata}->>'source_item_id' = ${sourceItemId}`,
+			),
+		)
+		.limit(1)
+	return row
+}
 
 /**
  * Build the per-row metadata for an install-provisioned element. Carries the
