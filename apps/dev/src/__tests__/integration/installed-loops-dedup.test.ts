@@ -328,6 +328,51 @@ describe('Loop install dedup guard', () => {
 		}
 	})
 
+	it('reuses an agent provisioned BEFORE the unique index shipped (workspace_id NULL) instead of cloning it on a repeat install', async () => {
+		// The partial unique index actors_ws_source_item_uniq only covers rows
+		// stamped with workspace_id, which installs started setting only with the
+		// migrations in this change. Rows provisioned by earlier versions are NULL
+		// there — invisible to the index — so a claim-first INSERT against one
+		// would "succeed" and clone the agent. The pre-check in
+		// claimProvisionedActor (scoped through workspace_members, which predates
+		// the column) must find and reuse the older row without inserting.
+		const legacySourceActorId = randomUUID()
+		const loop = await seedMarketplaceLoop({
+			name: 'Legacy Loop',
+			actorItems: [{ sourceItemId: legacySourceActorId, snapshot: AGENT_SNAPSHOT }],
+		})
+		const app = makeApp(actorId)
+		// Simulate an actor provisioned before the column existed: omit
+		// workspace_id entirely, bind to the workspace only through members.
+		const [legacyRow] = await db
+			.insert(actors)
+			.values({
+				type: 'agent',
+				name: 'Pre-index agent',
+				systemPrompt: 'Provisioned before the dedup index.',
+				apiKey: `ank_legacy_${randomUUID()}`,
+				metadata: {
+					installed_loop_id: randomUUID(),
+					source_item_id: legacySourceActorId,
+					snapshot: AGENT_SNAPSHOT,
+				},
+			})
+			.returning({ id: actors.id })
+		if (!legacyRow) throw new Error('legacy actor insert returned no row')
+		await db.insert(workspaceMembers).values({
+			workspaceId,
+			actorId: legacyRow.id,
+			role: 'member',
+		})
+		const res = await install(app, loop.id, workspaceId)
+		expect(res.status).toBe(201)
+		// Reuse, not clone: the install created zero actors of its own.
+		expect(res.body.provisioned.actors).toBe(0)
+		const copies = await countActorsFromSourceItem(workspaceId, legacySourceActorId)
+		expect(copies).toHaveLength(1)
+		expect(copies[0]?.id).toBe(legacyRow.id)
+	})
+
 	it('re-installing a loop after a keep-items uninstall reuses the kept agent instead of cloning', async () => {
 		const sharedSourceActorId = randomUUID()
 		const loopA = await seedMarketplaceLoop({

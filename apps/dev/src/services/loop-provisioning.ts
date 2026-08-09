@@ -62,9 +62,9 @@ export async function findProvisionedActorByMetadataKey(
 }
 
 /**
- * Claim-first insert for an install-provisioned actor. Tries the INSERT first;
- * if the workspace already holds an actor for the same source item — the
- * partial unique index `actors_ws_source_item_uniq` on (workspace_id,
+ * Claim-first insert for an install-provisioned actor. The INSERT is the
+ * claim; if the workspace already holds an actor for the same source item —
+ * the partial unique index `actors_ws_source_item_uniq` on (workspace_id,
  * metadata->>'source_item_id') fires — the row stays, and this call returns
  * `{ id, created: false }` with the id of the winner instead. The caller
  * decides what a lost claim means: reuse (loop install / version push) or 409
@@ -77,6 +77,15 @@ export async function findProvisionedActorByMetadataKey(
  * winner back with findProvisionedActorByMetadataKey — at READ COMMITTED the
  * follow-up SELECT in the same transaction sees the winner's committed row, so
  * the loser can never claim-then-clone.
+ *
+ * The pre-check SELECT comes first on purpose. The partial unique index only
+ * covers rows stamped with `workspace_id`, which installs set from this change
+ * onward — rows provisioned before the column existed (migration 0052) carry
+ * NULL and are invisible to it, so a claim INSERT against one never conflicts
+ * and a repeat install would clone the agent. The pre-check scopes through the
+ * workspace_members join (membership predates the column), so those older rows
+ * are found and reused here. A miss leaves the claim INSERT as the arbiter, so
+ * the concurrent guarantee is unchanged for rows the index does cover.
  *
  * No conflict target is passed to ON CONFLICT on purpose: Drizzle 0.45's
  * onConflictDoNothing target only accepts plain PgColumns (not index
@@ -94,6 +103,13 @@ export async function claimProvisionedActor(
 	metadata: Record<string, unknown>,
 	createdBy: string | null,
 ): Promise<{ id: string; created: boolean }> {
+	const existing = await findProvisionedActorByMetadataKey(
+		tx,
+		workspaceId,
+		'source_item_id',
+		sourceItemId,
+	)
+	if (existing) return { id: existing.id, created: false }
 	const rows = await tx
 		.insert(actors)
 		.values(
@@ -107,20 +123,20 @@ export async function claimProvisionedActor(
 		.onConflictDoNothing()
 		.returning({ id: actors.id })
 	if (rows[0]) return { id: rows[0].id, created: true }
-	const existing = await findProvisionedActorByMetadataKey(
+	const winner = await findProvisionedActorByMetadataKey(
 		tx,
 		workspaceId,
 		'source_item_id',
 		sourceItemId,
 	)
-	if (!existing) {
+	if (!winner) {
 		// A conflict was reported but no winner is visible in our transaction.
 		// Resolve loudly rather than cloning the actor to paper over it.
 		throw new Error(
 			`claimProvisionedActor: lost claim for source_item_id ${sourceItemId} in workspace ${workspaceId} but no existing actor found`,
 		)
 	}
-	return { id: existing.id, created: false }
+	return { id: winner.id, created: false }
 }
 
 export function sourceItemIdOf(metadata: unknown): string | null {

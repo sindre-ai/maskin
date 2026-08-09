@@ -161,6 +161,8 @@ describe('POST /api/installed-loops', () => {
 			[loop({ id: loopId })],
 			items,
 			[],
+			// Claim pre-check: nothing installed yet — miss, the INSERT claims.
+			[],
 		]
 		// Inserts fire in this order: installed_loops, actor, workspace_members
 		// (binds the provisioned agent to the workspace), trigger, loop object,
@@ -211,17 +213,21 @@ describe('POST /api/installed-loops', () => {
 		})
 	})
 
-	it('reuses an existing provisioned actor instead of cloning — no actor/member insert, trigger wired to the existing agent', async () => {
+	it('reuses a pre-existing provisioned actor found by the pre-check — no actor insert at all, trigger wired to the existing agent', async () => {
+		// The workspace already holds an actor provisioned from this exact source
+		// item — a row created BEFORE the unique index shipped (workspace_id NULL,
+		// so the index never covers it and a claim INSERT would "succeed" against
+		// it, cloning the agent). The manifest for this test is that the claim
+		// insert is never even attempted: the pre-check (scoped through
+		// workspace_members) short-circuits straight to reuse.
 		const { app, mockResults, calls } = setup()
 		const workspaceId = randomUUID()
 		const loopId = randomUUID()
 		const install = installRow({ workspaceId, sourceLoopId: loopId })
 		const loopObject = loopObjectRow()
-
 		const sourceActorId = '11111111-1111-1111-1111-111111111111'
 		const existingActorId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
 		const newTriggerId = '33333333-3333-3333-3333-333333333333'
-
 		const items = [
 			{
 				id: randomUUID(),
@@ -246,51 +252,110 @@ describe('POST /api/installed-loops', () => {
 				createdAt: new Date(),
 			},
 		]
-
 		mockResults.selectQueue = [
 			[buildWorkspaceMember({ workspaceId, actorId: ACTOR_ID })],
 			[loop({ id: loopId })],
 			items,
 			[],
-			// Claim re-read: the claim insert loses the race because the
-			// workspace already holds an actor provisioned from this exact source
-			// item (another loop, or a kept prior install), so the winner is read
-			// back via the lookup helper.
+			// Claim pre-check HITS: the workspace already holds the agent from a
+			// prior install (another loop, or a kept-as-items uninstall).
 			[{ id: existingActorId }],
 		]
-		// The actor claim insert loses (returns []), so no workspace_members row
-		// is written for a reused agent — only its own install/trigger/object/event rows.
-		mockResults.insertQueue = [[install], [], [{ id: newTriggerId }], [loopObject], [], [], []]
-
+		// 6 inserts: install, trigger, loop object, loop event, installed_loop
+		// event, auto-subscribe. NO actor claim, NO workspace_members row — a
+		// reused agent is already bound to the workspace.
+		mockResults.insertQueue = [[install], [{ id: newTriggerId }], [loopObject], [], [], []]
 		const res = await app.request(
 			jsonRequest('POST', '/api/installed-loops', { loopId, workspaceId }),
 		)
-
 		expect(res.status).toBe(201)
 		const body = await res.json()
 		// Reuse means the install created zero actors of its own.
 		expect(body.provisioned).toEqual({ actors: 0, triggers: 1, skills: 0, integrations: 0 })
-
-		// 7 inserts: install, actor claim (lost), trigger, loop object, loop event,
-		// installed_loop event, auto-subscribe.
-		expect(calls.inserts).toHaveLength(7)
-		// The claim insert attempted the dedup anchor (source_item_id) …
-		const claimInsert = calls.inserts[1] as Record<string, unknown>
-		expect(claimInsert.type).toBe('agent')
-		expect(claimInsert.metadata).toMatchObject({ source_item_id: sourceActorId })
-		// … but because it lost, no workspace_members row binds it — a cloned agent
-		// would have shipped with a membership insert, so its absence is the proof
-		// the row was reused rather than duplicated.
+		expect(calls.inserts).toHaveLength(6)
+		// The no-clone proof: the actor claim INSERT was never attempted — cloning
+		// a legacy row is impossible because there is no insert to clone with.
+		expect(calls.inserts).not.toContainEqual(expect.objectContaining({ type: 'agent' }))
+		// A cloned agent would have shipped with a membership insert; none did.
 		expect(calls.inserts).not.toContainEqual(expect.objectContaining({ role: 'member' }))
-
 		// The trigger wires to the EXISTING actor, not a fresh clone.
-		const triggerInsert = calls.inserts[2] as Record<string, unknown>
+		const triggerInsert = calls.inserts[1] as Record<string, unknown>
 		expect(triggerInsert.targetActorId).toBe(existingActorId)
 		const triggerSnapshot = (triggerInsert.metadata as Record<string, unknown>).snapshot as Record<
 			string,
 			unknown
 		>
 		expect(triggerSnapshot.target_actor_id).toBe(existingActorId)
+	})
+	it('races a concurrent install and reuses the winner after losing the claim — no clone, no member insert', async () => {
+		// Both racing installs probed an empty workspace (pre-check miss); the
+		// claim INSERT loses to the concurrent winner via the unique index, and
+		// the follow-up read (fresh READ COMMITTED snapshot) returns the winner's
+		// row. This is the TOCTOU closure: exactly one caller wins the claim; the
+		// loser reuses instead of cloning.
+		const { app, mockResults, calls } = setup()
+		const workspaceId = randomUUID()
+		const loopId = randomUUID()
+		const install = installRow({ workspaceId, sourceLoopId: loopId })
+		const loopObject = loopObjectRow()
+		const sourceActorId = '11111111-1111-1111-1111-111111111111'
+		const existingActorId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+		const newTriggerId = '33333333-3333-3333-3333-333333333333'
+		const items = [
+			{
+				id: randomUUID(),
+				loopId,
+				itemType: 'actor',
+				sourceItemId: sourceActorId,
+				itemSnapshot: { name: 'Researcher', type: 'agent', systemPrompt: 'Listen.' },
+				createdAt: new Date(),
+			},
+			{
+				id: randomUUID(),
+				loopId,
+				itemType: 'trigger',
+				sourceItemId: '44444444-4444-4444-4444-444444444444',
+				itemSnapshot: {
+					name: 'Daily',
+					type: 'cron',
+					config: { expression: '0 9 * * *' },
+					actionPrompt: 'Run.',
+					target_actor_id: sourceActorId,
+				},
+				createdAt: new Date(),
+			},
+		]
+		mockResults.selectQueue = [
+			[buildWorkspaceMember({ workspaceId, actorId: ACTOR_ID })],
+			[loop({ id: loopId })],
+			items,
+			[],
+			// Claim pre-check: nothing committed yet — miss.
+			[],
+			// Re-read after the lost claim: the winner's committed row.
+			[{ id: existingActorId }],
+		]
+		// 7 inserts: install, actor claim (lost), trigger, loop object, loop event,
+		// installed_loop event, auto-subscribe.
+		mockResults.insertQueue = [[install], [], [{ id: newTriggerId }], [loopObject], [], [], []]
+		const res = await app.request(
+			jsonRequest('POST', '/api/installed-loops', { loopId, workspaceId }),
+		)
+		expect(res.status).toBe(201)
+		const body = await res.json()
+		expect(body.provisioned).toEqual({ actors: 0, triggers: 1, skills: 0, integrations: 0 })
+		expect(calls.inserts).toHaveLength(7)
+		// The claim insert WAS attempted (that's the arbiter) and stamped the
+		// dedup anchor
+		const claimInsert = calls.inserts[1] as Record<string, unknown>
+		expect(claimInsert.type).toBe('agent')
+		expect(claimInsert.metadata).toMatchObject({ source_item_id: sourceActorId })
+		// — but losing it means no workspace_members row — a cloned agent would
+		// have shipped with a membership insert.
+		expect(calls.inserts).not.toContainEqual(expect.objectContaining({ role: 'member' }))
+		// The trigger wires to the winner, not a clone.
+		const triggerInsert = calls.inserts[2] as Record<string, unknown>
+		expect(triggerInsert.targetActorId).toBe(existingActorId)
 	})
 
 	it('returns 403 when the caller is not a member of the workspace', async () => {

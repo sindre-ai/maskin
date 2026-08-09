@@ -149,10 +149,34 @@ describe('claimProvisionedActor', () => {
 		})
 	})
 
+	it('reuses a pre-existing row directly when the pre-check finds one, without attempting an insert', async () => {
+		// A row provisioned before migration 0052 has workspace_id NULL, so the
+		// partial unique index never covers it and a claim INSERT would "succeed"
+		// against it — cloning the agent on a repeat install. The pre-check (scoped
+		// through workspace_members, which predates the column) must find and reuse
+		// the older row WITHOUT firing the insert.
+		const { db, mockResults, calls } = createTestContext()
+		mockResults.select = [{ id: 'legacy-1' }]
+		const claim = await claimProvisionedActor(
+			db,
+			'ws-1',
+			'src-1',
+			{ name: 'A' },
+			{ installed_loop_id: 'i' },
+			'actor-1',
+		)
+		expect(claim).toEqual({ id: 'legacy-1', created: false })
+		// The no-clone proof: the claim INSERT was never executed.
+		expect(calls.inserts).toHaveLength(0)
+	})
+
 	it('loses the claim and re-reads the winner when the insert conflicts', async () => {
 		const { db, mockResults, calls } = createTestContext()
+		// Pre-check misses (both racing installs probed an empty workspace), the
+		// claim INSERT loses to the concurrent winner, and the follow-up read
+		// (a fresh READ COMMITTED snapshot) sees the winner's committed row.
+		mockResults.selectQueue = [[], [{ id: 'winner-1' }]]
 		mockResults.insert = []
-		mockResults.select = [{ id: 'winner-1' }]
 
 		const claim = await claimProvisionedActor(
 			db,

@@ -262,6 +262,8 @@ describe('LoopVersionPusher', () => {
 			[],
 			// resolveWorkspaceActor(): a system actor is a member of the workspace.
 			[{ id: 'system-actor' }],
+			// Actor claim pre-check: nothing installed yet — miss, the INSERT claims.
+			[],
 		]
 		// Inserts fire in order: actor, workspace_members (binds the actor), trigger,
 		// then the audit event.
