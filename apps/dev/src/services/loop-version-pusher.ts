@@ -27,11 +27,10 @@ import { and, eq, inArray, ne, or, sql } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import { type AgentStorageManager, workspaceSkillKey } from './agent-storage'
 import {
-	buildActorInsert,
 	buildIntegrationInsert,
 	buildSkillInsert,
 	buildTriggerInsert,
-	findProvisionedActorBySourceItem,
+	claimProvisionedActor,
 	installMetadata,
 	partitionProvisionedActors,
 	rewriteWiring,
@@ -298,16 +297,31 @@ export class LoopVersionPusher {
 					let wasReused = false
 					switch (item.itemType) {
 						case 'actor': {
-							// Dedup guard — mirrors the install endpoint: this workspace may
-							// already hold the agent from another loop that bundles it, so
-							// reuse instead of cloning (a join on workspace_members guarantees
-							// the reused actor is already bound to this workspace).
-							const existing = await findProvisionedActorBySourceItem(
+							// Dedup guard, claim-first — mirrors the install endpoint: this
+							// workspace may already hold the agent from another loop that
+							// bundles it. The INSERT is the claim; a lost claim means reuse
+							// instead of cloning (the follow-up read joins workspace_members,
+							// so the reused actor is already bound to this workspace).
+							const claim = await claimProvisionedActor(
 								tx,
 								install.workspaceId,
 								item.sourceItemId,
+								rewritten,
+								metadata,
+								createdBy,
 							)
-							if (existing) {
+							if (claim.created) {
+								// Bind the freshly-minted actor to the workspace, exactly as the
+								// install endpoint does. Without a workspace_members row the agent
+								// is orphaned — it never appears in the workspace agent list and its
+								// own X-Workspace-Id calls 403 in authMiddleware, so a trigger
+								// targeting it could never run.
+								await tx.insert(workspaceMembers).values({
+									workspaceId: install.workspaceId,
+									actorId: claim.id,
+									role: 'member',
+								})
+							} else {
 								// Re-snapshot the reused agent to the version being pushed and
 								// re-stamp its metadata to this install. A reused agent keeps the
 								// config the creating loop pinned; without this write, this
@@ -317,29 +331,11 @@ export class LoopVersionPusher {
 								await tx
 									.update(actors)
 									.set({ ...buildActorUpdate(rewritten), metadata, updatedAt: new Date() })
-									.where(eq(actors.id, existing.id))
-								newId = existing.id
+									.where(eq(actors.id, claim.id))
 								wasReused = true
 								reuses++
-								break
 							}
-							const [row] = await tx
-								.insert(actors)
-								.values(buildActorInsert(rewritten, metadata, createdBy))
-								.returning({ id: actors.id })
-							newId = row?.id
-							// Bind the freshly-minted actor to the workspace, exactly as the
-							// install endpoint does. Without a workspace_members row the agent
-							// is orphaned — it never appears in the workspace agent list and its
-							// own X-Workspace-Id calls 403 in authMiddleware, so a trigger
-							// targeting it could never run.
-							if (newId) {
-								await tx.insert(workspaceMembers).values({
-									workspaceId: install.workspaceId,
-									actorId: newId,
-									role: 'member',
-								})
-							}
+							newId = claim.id
 							break
 						}
 						case 'trigger': {

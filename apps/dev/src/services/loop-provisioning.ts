@@ -9,7 +9,7 @@ import {
 	workspaceMembers,
 	type workspaceSkills,
 } from '@maskin/db/schema'
-import { and, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm'
 
 /**
  * Shared provisioning helpers for the marketplace. Both the install endpoint
@@ -24,19 +24,27 @@ export type MarketplaceItemType = 'actor' | 'trigger' | 'skill' | 'integration'
 type DbHandle = Database | Transaction
 
 /**
- * Find an actor the workspace already has that was provisioned from the same
- * marketplace source item (`metadata.source_item_id` keyed on the publisher's
- * actor id, the same identity the single-item install route uses). Reusing it
- * instead of inserting a clone is the dedup guard for loop installs: repeat or
- * overlapping loops that bundle the same agent must leave exactly one copy per
- * workspace. The workspace-membership join scopes the match — actors are global
- * identities, so a copy provisioned into another workspace must not be reused
- * here.
+ * Find an actor the workspace already has that was provisioned from a given
+ * marketplace source entity: an `actors.metadata` row whose `key` equals
+ * `value`, scoped to `workspaceId` through the workspace_members join. Actors
+ * are global identities, so membership is what keeps the match per-workspace —
+ * a copy provisioned into another workspace must never be reused here.
+ *
+ * Which metadata key to pass is the caller's intent:
+ *  - `source_item_id` — the loop install/version-push dedup identity: the
+ *    source item id from the publishing workspace. This is the key the partial
+ *    unique index `actors_ws_source_item_uniq` backstops in Postgres.
+ *  - `marketplace_item_id` — the individual-item install route's marker.
+ *
+ * Rows are ordered newest-first so the `.limit(1)` is deterministic: repeated
+ * overlapping installs (which, before the unique index shipped, could leave
+ * several rows for one source item) resolve to the most recent row.
  */
-export async function findProvisionedActorBySourceItem(
+export async function findProvisionedActorByMetadataKey(
 	db: DbHandle,
 	workspaceId: string,
-	sourceItemId: string,
+	key: string,
+	value: string,
 ): Promise<{ id: string } | undefined> {
 	const [row] = await db
 		.select({ id: actors.id })
@@ -45,11 +53,90 @@ export async function findProvisionedActorBySourceItem(
 		.where(
 			and(
 				eq(workspaceMembers.workspaceId, workspaceId),
-				sql`${actors.metadata}->>'source_item_id' = ${sourceItemId}`,
+				sql`${actors.metadata}->>'${sql.raw(key)}' = ${value}`,
 			),
 		)
+		.orderBy(desc(actors.updatedAt))
 		.limit(1)
 	return row
+}
+
+/**
+ * Claim-first insert for an install-provisioned actor. The INSERT is the
+ * claim; if the workspace already holds an actor for the same source item —
+ * the partial unique index `actors_ws_source_item_uniq` on (workspace_id,
+ * metadata->>'source_item_id') fires — the row stays, and this call returns
+ * `{ id, created: false }` with the id of the winner instead. The caller
+ * decides what a lost claim means: reuse (loop install / version push) or 409
+ * (individual-item install).
+ *
+ * This closes the TOCTOU race in the old reuse check, which was
+ * SELECT-then-INSERT: two concurrent installs of loops that share an agent
+ * could both miss the SELECT and each clone the actor. The INSERT is the
+ * claim; exactly one concurrent caller wins it. A caller that loses reads the
+ * winner back with findProvisionedActorByMetadataKey — at READ COMMITTED the
+ * follow-up SELECT in the same transaction sees the winner's committed row, so
+ * the loser can never claim-then-clone.
+ *
+ * The pre-check SELECT comes first on purpose. The partial unique index only
+ * covers rows stamped with `workspace_id`, which installs set from this change
+ * onward — rows provisioned before the column existed (migration 0052) carry
+ * NULL and are invisible to it, so a claim INSERT against one never conflicts
+ * and a repeat install would clone the agent. The pre-check scopes through the
+ * workspace_members join (membership predates the column), so those older rows
+ * are found and reused here. A miss leaves the claim INSERT as the arbiter, so
+ * the concurrent guarantee is unchanged for rows the index does cover.
+ *
+ * No conflict target is passed to ON CONFLICT on purpose: Drizzle 0.45's
+ * onConflictDoNothing target only accepts plain PgColumns (not index
+ * expressions), and no-target DO NOTHING is still arbiter-gated — Postgres
+ * uses a partial unique index as the arbiter only when the proposed row
+ * satisfies its predicate, which a claim row always does (workspace_id is
+ * set). The table's other unique constraints can't be hit by a claim: api_key
+ * is always a fresh generated key and email is null.
+ */
+export async function claimProvisionedActor(
+	tx: DbHandle,
+	workspaceId: string,
+	sourceItemId: string,
+	snapshot: Record<string, unknown>,
+	metadata: Record<string, unknown>,
+	createdBy: string | null,
+): Promise<{ id: string; created: boolean }> {
+	const existing = await findProvisionedActorByMetadataKey(
+		tx,
+		workspaceId,
+		'source_item_id',
+		sourceItemId,
+	)
+	if (existing) return { id: existing.id, created: false }
+	const rows = await tx
+		.insert(actors)
+		.values(
+			buildActorInsert(
+				workspaceId,
+				snapshot,
+				{ ...metadata, source_item_id: sourceItemId },
+				createdBy,
+			),
+		)
+		.onConflictDoNothing()
+		.returning({ id: actors.id })
+	if (rows[0]) return { id: rows[0].id, created: true }
+	const winner = await findProvisionedActorByMetadataKey(
+		tx,
+		workspaceId,
+		'source_item_id',
+		sourceItemId,
+	)
+	if (!winner) {
+		// A conflict was reported but no winner is visible in our transaction.
+		// Resolve loudly rather than cloning the actor to paper over it.
+		throw new Error(
+			`claimProvisionedActor: lost claim for source_item_id ${sourceItemId} in workspace ${workspaceId} but no existing actor found`,
+		)
+	}
+	return { id: winner.id, created: false }
 }
 
 export function sourceItemIdOf(metadata: unknown): string | null {
@@ -282,6 +369,7 @@ function walk(value: unknown, sourceToLocal: Map<string, string>): unknown {
  * both camelCase and snake_case keys.
  */
 export function buildActorInsert(
+	workspaceId: string,
 	snapshot: Record<string, unknown>,
 	metadata: Record<string, unknown>,
 	createdBy: string | null,
@@ -303,6 +391,10 @@ export function buildActorInsert(
 			null,
 		tools: (snapshot.tools as Record<string, unknown>) ?? null,
 		apiKey: generateApiKey().key,
+		// The per-workspace dedup anchor: the unique index
+		// actors_ws_source_item_uniq is scoped on this column, so only installs
+		// stamp it. Signup and other workspace-created actors leave it NULL.
+		workspaceId,
 		metadata,
 		createdBy,
 	}

@@ -251,6 +251,128 @@ describe('Loop install dedup guard', () => {
 		}
 	})
 
+	it('two CONCURRENT installs of loops sharing an agent leave exactly one copy — the unique index closes the TOCTOU race', async () => {
+		// The old SELECT-then-INSERT dedup raced here: both installs could read
+		// "no existing actor" before either inserted, each cloning the agent. The
+		// claim-first insert + partial unique index (actors_ws_source_item_uniq)
+		// makes the INSERT itself the arbiter — exactly one caller wins it, the
+		// loser re-reads the winner's row.
+		const sharedSourceActorId = randomUUID()
+		const loopA = await seedMarketplaceLoop({
+			name: 'Loop A',
+			actorItems: [{ sourceItemId: sharedSourceActorId, snapshot: AGENT_SNAPSHOT }],
+			triggerItems: [
+				{
+					sourceItemId: randomUUID(),
+					snapshot: {
+						name: 'Loop A daily',
+						type: 'cron',
+						config: { expression: '0 9 * * *' },
+						actionPrompt: 'Run A.',
+						target_actor_id: sharedSourceActorId,
+						enabled: true,
+					},
+				},
+			],
+		})
+		const loopB = await seedMarketplaceLoop({
+			name: 'Loop B',
+			actorItems: [{ sourceItemId: sharedSourceActorId, snapshot: AGENT_SNAPSHOT }],
+			triggerItems: [
+				{
+					sourceItemId: randomUUID(),
+					snapshot: {
+						name: 'Loop B daily',
+						type: 'cron',
+						config: { expression: '0 10 * * *' },
+						actionPrompt: 'Run B.',
+						target_actor_id: sharedSourceActorId,
+						enabled: true,
+					},
+				},
+			],
+		})
+		const app = makeApp(actorId)
+
+		const [first, second] = await Promise.all([
+			install(app, loopA.id, workspaceId),
+			install(app, loopB.id, workspaceId),
+		])
+
+		expect(first.status).toBe(201)
+		expect(second.status).toBe(201)
+		// Exactly one of the two parallel installs created the agent; the other
+		// reused it. One row total, never two.
+		expect(first.body.provisioned.actors + second.body.provisioned.actors).toBe(1)
+
+		const copies = await countActorsFromSourceItem(workspaceId, sharedSourceActorId)
+		expect(copies).toHaveLength(1)
+		const reuseId = copies[0]?.id
+		if (!reuseId) throw new Error('expected the single winner actor row')
+
+		// Both installs committed; both triggers wire to the one surviving agent.
+		const installRows = await db
+			.select({ id: installedLoops.id, sourceLoopId: installedLoops.sourceLoopId })
+			.from(installedLoops)
+			.where(eq(installedLoops.workspaceId, workspaceId))
+		expect(installRows).toHaveLength(2)
+		const triggerRows = await db
+			.select({ targetActorId: triggers.targetActorId })
+			.from(triggers)
+			.where(
+				sql`${triggers.metadata}->>'installed_loop_id' IN (${installRows[0]?.id}, ${installRows[1]?.id})`,
+			)
+		expect(triggerRows).toHaveLength(2)
+		for (const row of triggerRows) {
+			expect(row.targetActorId).toBe(reuseId)
+		}
+	})
+
+	it('reuses an agent provisioned BEFORE the unique index shipped (workspace_id NULL) instead of cloning it on a repeat install', async () => {
+		// The partial unique index actors_ws_source_item_uniq only covers rows
+		// stamped with workspace_id, which installs started setting only with the
+		// migrations in this change. Rows provisioned by earlier versions are NULL
+		// there — invisible to the index — so a claim-first INSERT against one
+		// would "succeed" and clone the agent. The pre-check in
+		// claimProvisionedActor (scoped through workspace_members, which predates
+		// the column) must find and reuse the older row without inserting.
+		const legacySourceActorId = randomUUID()
+		const loop = await seedMarketplaceLoop({
+			name: 'Legacy Loop',
+			actorItems: [{ sourceItemId: legacySourceActorId, snapshot: AGENT_SNAPSHOT }],
+		})
+		const app = makeApp(actorId)
+		// Simulate an actor provisioned before the column existed: omit
+		// workspace_id entirely, bind to the workspace only through members.
+		const [legacyRow] = await db
+			.insert(actors)
+			.values({
+				type: 'agent',
+				name: 'Pre-index agent',
+				systemPrompt: 'Provisioned before the dedup index.',
+				apiKey: `ank_legacy_${randomUUID()}`,
+				metadata: {
+					installed_loop_id: randomUUID(),
+					source_item_id: legacySourceActorId,
+					snapshot: AGENT_SNAPSHOT,
+				},
+			})
+			.returning({ id: actors.id })
+		if (!legacyRow) throw new Error('legacy actor insert returned no row')
+		await db.insert(workspaceMembers).values({
+			workspaceId,
+			actorId: legacyRow.id,
+			role: 'member',
+		})
+		const res = await install(app, loop.id, workspaceId)
+		expect(res.status).toBe(201)
+		// Reuse, not clone: the install created zero actors of its own.
+		expect(res.body.provisioned.actors).toBe(0)
+		const copies = await countActorsFromSourceItem(workspaceId, legacySourceActorId)
+		expect(copies).toHaveLength(1)
+		expect(copies[0]?.id).toBe(legacyRow.id)
+	})
+
 	it('re-installing a loop after a keep-items uninstall reuses the kept agent instead of cloning', async () => {
 		const sharedSourceActorId = randomUUID()
 		const loopA = await seedMarketplaceLoop({

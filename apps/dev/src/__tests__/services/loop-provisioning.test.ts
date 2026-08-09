@@ -3,9 +3,12 @@ import {
 	buildActorInsert,
 	buildSkillInsert,
 	buildTriggerInsert,
+	claimProvisionedActor,
+	findProvisionedActorByMetadataKey,
 	installMetadata,
 	rewriteWiring,
 } from '../../services/loop-provisioning'
+import { createTestContext } from '../setup'
 
 describe('installMetadata', () => {
 	it('packs install id, source id, and snapshot together', () => {
@@ -63,38 +66,147 @@ describe('rewriteWiring', () => {
 describe('buildActorInsert', () => {
 	it('accepts camelCase and snake_case snapshot keys', () => {
 		const camel = buildActorInsert(
+			'ws-1',
 			{ name: 'A', systemPrompt: 'go', llmProvider: 'anthropic' },
 			{ installed_loop_id: 'i', source_item_id: 's', snapshot: {} },
 			'actor-1',
 		)
+		expect(camel.workspaceId).toBe('ws-1')
 		expect(camel.systemPrompt).toBe('go')
 		expect(camel.llmProvider).toBe('anthropic')
 		expect(camel.createdBy).toBe('actor-1')
 
 		const snake = buildActorInsert(
+			'ws-1',
 			{ name: 'A', system_prompt: 'go', llm_provider: 'anthropic' },
 			{ installed_loop_id: 'i', source_item_id: 's', snapshot: {} },
 			'actor-1',
 		)
+		expect(snake.workspaceId).toBe('ws-1')
 		expect(snake.systemPrompt).toBe('go')
 		expect(snake.llmProvider).toBe('anthropic')
 	})
 
 	it('always mints a fresh apiKey, ignoring any value in the snapshot', () => {
 		// Snapshot has no apiKey → mints a fresh one.
-		const fromEmpty = buildActorInsert({ name: 'A' }, { installed_loop_id: 'i' }, null)
+		const fromEmpty = buildActorInsert('ws-1', { name: 'A' }, { installed_loop_id: 'i' }, null)
 		expect(fromEmpty.apiKey).toMatch(/^ank_/)
 
 		// Snapshot carries a publisher apiKey → ignored. Honoring it would
 		// either leak the publisher's bearer token into the installer workspace
 		// or collide on the actors.api_key unique index.
 		const fromPublisherKey = buildActorInsert(
+			'ws-1',
 			{ name: 'A', apiKey: 'ank_publisherleak' },
 			{ installed_loop_id: 'i' },
 			null,
 		)
 		expect(fromPublisherKey.apiKey).toMatch(/^ank_/)
 		expect(fromPublisherKey.apiKey).not.toBe('ank_publisherleak')
+	})
+})
+
+describe('findProvisionedActorByMetadataKey', () => {
+	it('looks up an actor by the given metadata key, scoped to the workspace', async () => {
+		const { db, mockResults } = createTestContext()
+		mockResults.select = [{ id: 'local-1' }]
+
+		const found = await findProvisionedActorByMetadataKey(db, 'ws-1', 'source_item_id', 'src-1')
+
+		expect(found).toEqual({ id: 'local-1' })
+	})
+
+	it('returns undefined when no actor carries the key value', async () => {
+		const { db } = createTestContext()
+
+		const found = await findProvisionedActorByMetadataKey(db, 'ws-1', 'source_item_id', 'src-1')
+
+		expect(found).toBeUndefined()
+	})
+})
+
+describe('claimProvisionedActor', () => {
+	it('wins the claim when nothing conflicts and stamps workspace + source_item_id on the row', async () => {
+		const { db, mockResults, calls } = createTestContext()
+		mockResults.insert = [{ id: 'local-1' }]
+
+		const claim = await claimProvisionedActor(
+			db,
+			'ws-1',
+			'src-1',
+			{ name: 'A' },
+			{ installed_loop_id: 'i' },
+			'actor-1',
+		)
+
+		expect(claim).toEqual({ id: 'local-1', created: true })
+		// The claim row must be scoped per-workspace and carry the dedup identity,
+		// or the partial unique index (workspace_id, metadata->>'source_item_id')
+		// has nothing to arbitrate on.
+		expect(calls.inserts[0]).toMatchObject({
+			workspaceId: 'ws-1',
+			metadata: { installed_loop_id: 'i', source_item_id: 'src-1' },
+		})
+	})
+
+	it('reuses a pre-existing row directly when the pre-check finds one, without attempting an insert', async () => {
+		// A row provisioned before migration 0052 has workspace_id NULL, so the
+		// partial unique index never covers it and a claim INSERT would "succeed"
+		// against it — cloning the agent on a repeat install. The pre-check (scoped
+		// through workspace_members, which predates the column) must find and reuse
+		// the older row WITHOUT firing the insert.
+		const { db, mockResults, calls } = createTestContext()
+		mockResults.select = [{ id: 'legacy-1' }]
+		const claim = await claimProvisionedActor(
+			db,
+			'ws-1',
+			'src-1',
+			{ name: 'A' },
+			{ installed_loop_id: 'i' },
+			'actor-1',
+		)
+		expect(claim).toEqual({ id: 'legacy-1', created: false })
+		// The no-clone proof: the claim INSERT was never executed.
+		expect(calls.inserts).toHaveLength(0)
+	})
+
+	it('loses the claim and re-reads the winner when the insert conflicts', async () => {
+		const { db, mockResults, calls } = createTestContext()
+		// Pre-check misses (both racing installs probed an empty workspace), the
+		// claim INSERT loses to the concurrent winner, and the follow-up read
+		// (a fresh READ COMMITTED snapshot) sees the winner's committed row.
+		mockResults.selectQueue = [[], [{ id: 'winner-1' }]]
+		mockResults.insert = []
+
+		const claim = await claimProvisionedActor(
+			db,
+			'ws-1',
+			'src-1',
+			{ name: 'A' },
+			{ installed_loop_id: 'i' },
+			'actor-1',
+		)
+
+		expect(claim).toEqual({ id: 'winner-1', created: false })
+		// A lost claim still attempted the insert, which is what tripped the index.
+		expect(calls.inserts[0]).toMatchObject({ workspaceId: 'ws-1' })
+	})
+
+	it('fails loudly when the claim is lost but no winner is visible', async () => {
+		const { db, mockResults } = createTestContext()
+		mockResults.insert = []
+		mockResults.select = []
+
+		await expect(
+			claimProvisionedActor(
+				db,
+				'ws-1',
+				'src-1',
+				{ name: 'A' },
+				{ installed_loop_id: 'i' },
+				'actor-1',
+			),
+		).rejects.toThrow(/lost claim for source_item_id src-1/)
 	})
 })
 
