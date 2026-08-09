@@ -32,10 +32,11 @@ import { isWorkspaceMember } from '../lib/workspace-auth'
 import { type AgentStorageManager, workspaceSkillKey } from '../services/agent-storage'
 import {
 	type MarketplaceItemType,
-	buildActorInsert,
 	buildIntegrationInsert,
 	buildSkillInsert,
 	buildTriggerInsert,
+	claimProvisionedActor,
+	findProvisionedActorByMetadataKey,
 } from '../services/loop-provisioning'
 
 type Env = {
@@ -52,6 +53,17 @@ const app = new OpenAPIHono<Env>()
 // Routes are mounted behind the API-key auth middleware in app-factory; no
 // per-workspace membership check is needed (and an X-Workspace-Id header is
 // not required because the marketplace reads identically for every caller).
+
+// Thrown to unwind an individual-item install transaction into a 409 when the
+// claim-first actor insert (see claimProvisionedActor) reports the workspace
+// already holds the agent. Rolling the claim back into an error keeps the
+// membership + event writes and the actor insert in one atomic transaction.
+class ActorAlreadyInstalledError extends Error {
+	constructor() {
+		super('actor already installed in workspace')
+		this.name = 'ActorAlreadyInstalledError'
+	}
+}
 
 const ITEM_TYPES = ['actor', 'trigger', 'skill', 'integration'] as const
 type ItemType = (typeof ITEM_TYPES)[number]
@@ -845,42 +857,51 @@ app.openapi(installItemRoute, (async (c) => {
 
 	switch (type) {
 		case 'actor': {
-			const [existing] = await db
-				.select({ id: actors.id })
-				.from(actors)
-				.innerJoin(workspaceMembers, eq(workspaceMembers.actorId, actors.id))
-				.where(
-					and(
-						eq(workspaceMembers.workspaceId, workspaceId),
-						sql`${actors.metadata}->>'marketplace_item_id' = ${item.id}`,
-					),
-				)
-				.limit(1)
-			if (existing) {
-				return c.json(
-					createApiError('CONFLICT', 'This agent is already installed in the workspace'),
-					409,
-				)
-			}
-			const [row] = await db.transaction(async (tx) => {
-				const [a] = await tx
-					.insert(actors)
-					.values(buildActorInsert(snapshot, meta, actorId))
-					.returning({ id: actors.id, name: actors.name })
-				if (!a) throw new Error('Actor insert returned no row')
-				await tx.insert(workspaceMembers).values({ workspaceId, actorId: a.id, role: 'member' })
-				await tx.insert(events).values({
-					workspaceId,
-					actorId,
-					action: 'created',
-					entityType: 'actor',
-					entityId: a.id,
-					data: { source: 'marketplace_item', marketplace_item_id: item.id },
+			// Claim-first dedup, same backstop as loop installs (the partial unique
+			// index on (workspace_id, metadata->>'source_item_id')): the INSERT is the
+			// claim and a lost claim means the workspace already holds this agent —
+			// whether from a prior individual-item install or a loop that bundles it —
+			// so 409 instead of cloning. The old SELECT-then-INSERT could clone under
+			// concurrency, when two parallel installs both passed the pre-check.
+			try {
+				const claim = await db.transaction(async (tx) => {
+					const claim = await claimProvisionedActor(
+						tx,
+						workspaceId,
+						item.sourceItemId,
+						snapshot,
+						meta,
+						actorId,
+					)
+					if (!claim.created) throw new ActorAlreadyInstalledError()
+					await tx
+						.insert(workspaceMembers)
+						.values({ workspaceId, actorId: claim.id, role: 'member' })
+					await tx.insert(events).values({
+						workspaceId,
+						actorId,
+						action: 'created',
+						entityType: 'actor',
+						entityId: claim.id,
+						data: { source: 'marketplace_item', marketplace_item_id: item.id },
+					})
+					return claim
 				})
-				return [a] as const
-			})
-			logger.info('Marketplace item installed (actor)', { itemId, workspaceId, actorId: row.id })
-			return c.json({ id: row.id, item_type: type, name: row.name ?? name }, 201)
+				logger.info('Marketplace item installed (actor)', {
+					itemId,
+					workspaceId,
+					actorId: claim.id,
+				})
+				return c.json({ id: claim.id, item_type: type, name }, 201)
+			} catch (err) {
+				if (err instanceof ActorAlreadyInstalledError) {
+					return c.json(
+						createApiError('CONFLICT', 'This agent is already installed in the workspace'),
+						409,
+					)
+				}
+				throw err
+			}
 		}
 
 		case 'trigger': {
@@ -902,20 +923,16 @@ app.openapi(installItemRoute, (async (c) => {
 			}
 			// The trigger snapshot's targetActorId is the source actor ID from the
 			// publishing workspace. Find the corresponding installed actor in this
-			// workspace by matching source_item_id in actor metadata.
+			// workspace by matching source_item_id in actor metadata — the same
+			// parameterized lookup the loop-install dedup path uses.
 			const targetSourceId =
 				(snapshot.targetActorId as string) ?? (snapshot.target_actor_id as string)
-			const [localActor] = await db
-				.select({ id: actors.id })
-				.from(actors)
-				.innerJoin(workspaceMembers, eq(workspaceMembers.actorId, actors.id))
-				.where(
-					and(
-						eq(workspaceMembers.workspaceId, workspaceId),
-						sql`${actors.metadata}->>'source_item_id' = ${targetSourceId}`,
-					),
-				)
-				.limit(1)
+			const localActor = await findProvisionedActorByMetadataKey(
+				db,
+				workspaceId,
+				'source_item_id',
+				targetSourceId,
+			)
 			if (!localActor) {
 				return c.json(
 					createApiError(

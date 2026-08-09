@@ -37,6 +37,11 @@ export const actors = pgTable('actors', {
 	isSystem: boolean('is_system').notNull().default(false),
 	agentState: text('agent_state').notNull().default('idle').$type<AgentState>(),
 	agentStateUpdatedAt: timestamp('agent_state_updated_at', { withTimezone: true }),
+	// Set only by marketplace/loop installs, which provision agents on behalf
+	// of a workspace. NULL for signup and other workspace-created actors.
+	// Drives the partial unique dedup index (workspace_id, metadata->>'source_item_id')
+	// that closes the install TOCTOU race.
+	workspaceId: uuid('workspace_id').references(() => workspaces.id),
 	// Per-row marker keys for managed-loop installs. Nullable everywhere;
 	// install-provisioned rows carry { installed_loop_id, source_item_id }
 	// so the T5 version-push cron can find them. See marketplaceLoops comment.
@@ -54,7 +59,9 @@ export const workspaces = pgTable('workspaces', {
 	name: text('name').notNull(),
 	settings: jsonb('settings').notNull().default({}),
 	onboardingEnabled: boolean('onboarding_enabled').notNull().default(true),
-	createdBy: uuid('created_by').references(() => actors.id),
+	// biome-ignore lint/suspicious/noExplicitAny: mutual FK with actors (actors.workspace_id
+	// references workspaces.id) would make both tables circular for type inference.
+	createdBy: uuid('created_by').references((): any => actors.id),
 	createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
 	updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
 })

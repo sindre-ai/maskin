@@ -38,11 +38,10 @@ import { isWorkspaceMember } from '../lib/workspace-auth'
 import { type AgentStorageManager, workspaceSkillKey } from '../services/agent-storage'
 import {
 	type MarketplaceItemType,
-	buildActorInsert,
 	buildIntegrationInsert,
 	buildSkillInsert,
 	buildTriggerInsert,
-	findProvisionedActorBySourceItem,
+	claimProvisionedActor,
 	installMetadata,
 	partitionProvisionedActors,
 	rewriteWiring,
@@ -312,39 +311,37 @@ app.openapi(installLoopRoute, async (c) => {
 
 			switch (type) {
 				case 'actor': {
-					// Dedup guard: don't clone an agent the workspace already has. A
-					// workspace may already hold this agent from another loop that bundles
-					// it, or from a previous install kept on uninstall — reuse the existing
-					// row and wire this install's triggers to it instead of creating a
-					// second copy. Reuse means `provisioned.actors` only counts agents this
-					// install actually created.
-					const existing = await findProvisionedActorBySourceItem(
+					// Dedup guard, claim-first: don't clone an agent the workspace already
+					// has. A workspace may already hold this agent from another loop that
+					// bundles it, or from a previous install kept on uninstall. The INSERT
+					// is the claim — a concurrent install of a loop sharing the same
+					// source agent loses it and reuses the winner's row (the partial
+					// unique index actors_ws_source_item_uniq is the DB backstop). Reuse
+					// means `provisioned.actors` only counts agents this install created.
+					const claim = await claimProvisionedActor(
 						tx,
 						workspaceId,
 						item.sourceItemId,
+						snapshot,
+						metadata,
+						actorId,
 					)
-					if (existing) {
-						sourceToLocal.set(item.sourceItemId, existing.id)
-						break
+					if (claim.created) {
+						// Actors are global identities; a workspace_members row is what binds
+						// one to a workspace. Without it the provisioned agent is orphaned —
+						// it never shows up in the workspace's agent list (those queries join
+						// through workspace_members) and its own MCP/API calls, which carry
+						// X-Workspace-Id, would 403 in authMiddleware, so a trigger targeting
+						// it couldn't run. Mirrors how the seeded Workspace Coach agent is
+						// added on workspace creation.
+						await tx.insert(workspaceMembers).values({
+							workspaceId,
+							actorId: claim.id,
+							role: 'member',
+						})
+						provisioned.actors++
 					}
-					const [row] = await tx
-						.insert(actors)
-						.values(buildActorInsert(snapshot, metadata, actorId))
-						.returning({ id: actors.id })
-					if (!row) throw new Error(`insert returned no row for actor ${item.sourceItemId}`)
-					// Actors are global identities; a workspace_members row is what binds one
-					// to a workspace. Without it the provisioned agent is orphaned — it never
-					// shows up in the workspace's agent list (those queries join through
-					// workspace_members) and its own MCP/API calls, which carry X-Workspace-Id,
-					// would 403 in authMiddleware, so a trigger targeting it couldn't run.
-					// Mirrors how the seeded Workspace Coach agent is added on workspace creation.
-					await tx.insert(workspaceMembers).values({
-						workspaceId,
-						actorId: row.id,
-						role: 'member',
-					})
-					sourceToLocal.set(item.sourceItemId, row.id)
-					provisioned.actors++
+					sourceToLocal.set(item.sourceItemId, claim.id)
 					break
 				}
 				case 'skill': {

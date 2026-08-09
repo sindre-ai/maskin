@@ -251,6 +251,83 @@ describe('Loop install dedup guard', () => {
 		}
 	})
 
+	it('two CONCURRENT installs of loops sharing an agent leave exactly one copy — the unique index closes the TOCTOU race', async () => {
+		// The old SELECT-then-INSERT dedup raced here: both installs could read
+		// "no existing actor" before either inserted, each cloning the agent. The
+		// claim-first insert + partial unique index (actors_ws_source_item_uniq)
+		// makes the INSERT itself the arbiter — exactly one caller wins it, the
+		// loser re-reads the winner's row.
+		const sharedSourceActorId = randomUUID()
+		const loopA = await seedMarketplaceLoop({
+			name: 'Loop A',
+			actorItems: [{ sourceItemId: sharedSourceActorId, snapshot: AGENT_SNAPSHOT }],
+			triggerItems: [
+				{
+					sourceItemId: randomUUID(),
+					snapshot: {
+						name: 'Loop A daily',
+						type: 'cron',
+						config: { expression: '0 9 * * *' },
+						actionPrompt: 'Run A.',
+						target_actor_id: sharedSourceActorId,
+						enabled: true,
+					},
+				},
+			],
+		})
+		const loopB = await seedMarketplaceLoop({
+			name: 'Loop B',
+			actorItems: [{ sourceItemId: sharedSourceActorId, snapshot: AGENT_SNAPSHOT }],
+			triggerItems: [
+				{
+					sourceItemId: randomUUID(),
+					snapshot: {
+						name: 'Loop B daily',
+						type: 'cron',
+						config: { expression: '0 10 * * *' },
+						actionPrompt: 'Run B.',
+						target_actor_id: sharedSourceActorId,
+						enabled: true,
+					},
+				},
+			],
+		})
+		const app = makeApp(actorId)
+
+		const [first, second] = await Promise.all([
+			install(app, loopA.id, workspaceId),
+			install(app, loopB.id, workspaceId),
+		])
+
+		expect(first.status).toBe(201)
+		expect(second.status).toBe(201)
+		// Exactly one of the two parallel installs created the agent; the other
+		// reused it. One row total, never two.
+		expect(first.body.provisioned.actors + second.body.provisioned.actors).toBe(1)
+
+		const copies = await countActorsFromSourceItem(workspaceId, sharedSourceActorId)
+		expect(copies).toHaveLength(1)
+		const reuseId = copies[0]?.id
+		if (!reuseId) throw new Error('expected the single winner actor row')
+
+		// Both installs committed; both triggers wire to the one surviving agent.
+		const installRows = await db
+			.select({ id: installedLoops.id, sourceLoopId: installedLoops.sourceLoopId })
+			.from(installedLoops)
+			.where(eq(installedLoops.workspaceId, workspaceId))
+		expect(installRows).toHaveLength(2)
+		const triggerRows = await db
+			.select({ targetActorId: triggers.targetActorId })
+			.from(triggers)
+			.where(
+				sql`${triggers.metadata}->>'installed_loop_id' IN (${installRows[0]?.id}, ${installRows[1]?.id})`,
+			)
+		expect(triggerRows).toHaveLength(2)
+		for (const row of triggerRows) {
+			expect(row.targetActorId).toBe(reuseId)
+		}
+	})
+
 	it('re-installing a loop after a keep-items uninstall reuses the kept agent instead of cloning', async () => {
 		const sharedSourceActorId = randomUUID()
 		const loopA = await seedMarketplaceLoop({

@@ -252,12 +252,15 @@ describe('POST /api/installed-loops', () => {
 			[loop({ id: loopId })],
 			items,
 			[],
-			// Dedup lookup: the workspace already holds an actor provisioned from
-			// this exact source item (another loop, or a kept prior install).
+			// Claim re-read: the claim insert loses the race because the
+			// workspace already holds an actor provisioned from this exact source
+			// item (another loop, or a kept prior install), so the winner is read
+			// back via the lookup helper.
 			[{ id: existingActorId }],
 		]
-		// No actor insert and no workspace_members insert for the reused agent.
-		mockResults.insertQueue = [[install], [{ id: newTriggerId }], [loopObject], [], [], []]
+		// The actor claim insert loses (returns []), so no workspace_members row
+		// is written for a reused agent — only its own install/trigger/object/event rows.
+		mockResults.insertQueue = [[install], [], [{ id: newTriggerId }], [loopObject], [], [], []]
 
 		const res = await app.request(
 			jsonRequest('POST', '/api/installed-loops', { loopId, workspaceId }),
@@ -268,15 +271,20 @@ describe('POST /api/installed-loops', () => {
 		// Reuse means the install created zero actors of its own.
 		expect(body.provisioned).toEqual({ actors: 0, triggers: 1, skills: 0, integrations: 0 })
 
-		// No actor + workspace_members insert pair — the reused agent was not cloned.
-		expect(calls.inserts).toHaveLength(6)
-		const actorInsert = calls.inserts.find(
-			(ins) => (ins as Record<string, unknown>).type === 'agent',
-		)
-		expect(actorInsert).toBeUndefined()
+		// 7 inserts: install, actor claim (lost), trigger, loop object, loop event,
+		// installed_loop event, auto-subscribe.
+		expect(calls.inserts).toHaveLength(7)
+		// The claim insert attempted the dedup anchor (source_item_id) …
+		const claimInsert = calls.inserts[1] as Record<string, unknown>
+		expect(claimInsert.type).toBe('agent')
+		expect(claimInsert.metadata).toMatchObject({ source_item_id: sourceActorId })
+		// … but because it lost, no workspace_members row binds it — a cloned agent
+		// would have shipped with a membership insert, so its absence is the proof
+		// the row was reused rather than duplicated.
+		expect(calls.inserts).not.toContainEqual(expect.objectContaining({ role: 'member' }))
 
 		// The trigger wires to the EXISTING actor, not a fresh clone.
-		const triggerInsert = calls.inserts[1] as Record<string, unknown>
+		const triggerInsert = calls.inserts[2] as Record<string, unknown>
 		expect(triggerInsert.targetActorId).toBe(existingActorId)
 		const triggerSnapshot = (triggerInsert.metadata as Record<string, unknown>).snapshot as Record<
 			string,

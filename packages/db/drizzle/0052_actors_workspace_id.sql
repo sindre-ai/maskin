@@ -1,0 +1,11 @@
+-- Add a nullable workspace_id column to actors, set only by marketplace/loop
+-- installs, which provision actors on behalf of a workspace. Actors stays a
+-- global identity table — signup and workspace-created actors have NULL here.
+-- This column gives managed installs a per-workspace anchor so the partial
+-- unique dedup index in 0053 can enforce "at most one source agent per
+-- workspace" and close the install TOCTOU race.
+--
+-- Plain ALTER per packages/db/MIGRATIONS.md Rule 3: actors is not on an
+-- external-caller hot path, and the column is nullable with no default, so
+-- no table rewrite occurs.
+ALTER TABLE "actors" ADD COLUMN "workspace_id" uuid REFERENCES "workspaces"("id");
