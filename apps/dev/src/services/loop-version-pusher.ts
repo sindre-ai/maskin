@@ -294,6 +294,9 @@ export class LoopVersionPusher {
 					updates++
 				} else {
 					let newId: string | undefined
+					// True when the dedup guard matched an existing workspace actor
+					// instead of inserting — such items are counted as reuses, not adds.
+					let reusedItem = false
 					switch (item.itemType) {
 						case 'actor': {
 							// Dedup guard — mirrors the install endpoint: this workspace may
@@ -318,6 +321,7 @@ export class LoopVersionPusher {
 									.where(eq(actors.id, existing.id))
 								newId = existing.id
 								reuses++
+								reusedItem = true
 								break
 							}
 							const [row] = await tx
@@ -399,7 +403,7 @@ export class LoopVersionPusher {
 						throw new Error(`insert returned no row for ${item.itemType} ${item.sourceItemId}`)
 					}
 					sourceToLocal.set(item.sourceItemId, newId)
-					adds++
+					if (!reusedItem) adds++
 				}
 			}
 
