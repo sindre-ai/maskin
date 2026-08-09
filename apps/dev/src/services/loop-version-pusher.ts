@@ -443,6 +443,9 @@ export class LoopVersionPusher {
 				install.id,
 				removedActorRows,
 			)
+			// Actors kept because another live loop still references them were not
+			// removed — don't let them inflate the audit trail's removes bucket.
+			removes -= removedActorRows.length - removedActorIds.length
 
 			if (removedActorIds.length > 0) {
 				// Delete triggers targeting or created by removed actors. This covers both
