@@ -41,7 +41,7 @@ export const actors = pgTable('actors', {
 	// of a workspace. NULL for signup and other workspace-created actors.
 	// Drives the partial unique dedup index (workspace_id, metadata->>'source_item_id')
 	// that closes the install TOCTOU race.
-	workspaceId: uuid('workspace_id').references(() => workspaces.id),
+	workspaceId: uuid('workspace_id'),
 	// Per-row marker keys for managed-loop installs. Nullable everywhere;
 	// install-provisioned rows carry { installed_loop_id, source_item_id }
 	// so the T5 version-push cron can find them. See marketplaceLoops comment.
@@ -59,9 +59,7 @@ export const workspaces = pgTable('workspaces', {
 	name: text('name').notNull(),
 	settings: jsonb('settings').notNull().default({}),
 	onboardingEnabled: boolean('onboarding_enabled').notNull().default(true),
-	// biome-ignore lint/suspicious/noExplicitAny: mutual FK with actors (actors.workspace_id
-	// references workspaces.id) would make both tables circular for type inference.
-	createdBy: uuid('created_by').references((): any => actors.id),
+	createdBy: uuid('created_by').references(() => actors.id),
 	createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
 	updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
 })

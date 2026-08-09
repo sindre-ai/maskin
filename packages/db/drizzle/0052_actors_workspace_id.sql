@@ -5,7 +5,14 @@
 -- unique dedup index in 0053 can enforce "at most one source agent per
 -- workspace" and close the install TOCTOU race.
 --
+-- No REFERENCES constraint on purpose: actors.workspace_id -> workspaces.id
+-- plus the existing workspaces.created_by -> actors.id would make TRUNCATE
+-- workspaces CASCADE wipe actors too (the integration reset truncates
+-- workspaces CASCADE on every beforeEach and depends on the shared test
+-- actor surviving). The dedup index in 0053 needs only the column, and
+-- install provisioning validates the workspace membership at the boundary.
+--
 -- Plain ALTER per packages/db/MIGRATIONS.md Rule 3: actors is not on an
 -- external-caller hot path, and the column is nullable with no default, so
 -- no table rewrite occurs.
-ALTER TABLE "actors" ADD COLUMN "workspace_id" uuid REFERENCES "workspaces"("id");
+ALTER TABLE "actors" ADD COLUMN "workspace_id" uuid;
