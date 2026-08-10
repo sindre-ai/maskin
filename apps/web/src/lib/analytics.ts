@@ -198,6 +198,19 @@ export function trackObjectAttachedFile(
 	})
 }
 
+// Ship-metric event for the Mini-apps bet. Fires when a hosted .html mini-app
+// file opens in the workspace Files viewer; the call site gates on
+// `isHtml(mimeType)` so non-mini-app file opens never emit (no regression to
+// existing viewer analytics). The day-7 metric keys off `entity_id` (the file
+// id) to count workspaces where the same mini-app was opened on 7 consecutive
+// days, so exactly-once-per-open emission is enforced at the call site.
+
+export function trackMiniAppFileViewed(
+	p: BaseProps & { entity_type: 'file'; file_name: string },
+): void {
+	trackEvent('mini_app_file_viewed', { ...fillBase(p), file_name: p.file_name })
+}
+
 // For You sparse-state composer. `items_count` is the rendered item count on
 // the For You feed at the moment of the event (0–2 for the sparse range).
 // `workspace_id` rides via PostHog super-properties registered on workspace

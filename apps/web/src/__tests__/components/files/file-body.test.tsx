@@ -6,9 +6,11 @@ import {
 	isPlainText,
 } from '@/components/files/file-body'
 import type { FileDetail } from '@/lib/api'
+import { __setInitializedForTesting } from '@/lib/posthog'
 import { type RenderOptions, fireEvent, render, screen } from '@testing-library/react'
+import posthog from 'posthog-js'
 import type { ReactElement } from 'react'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TestWrapper } from '../../setup'
 
 // FileBody auto-saves annotations via a TanStack Query mutation, so every render
@@ -279,6 +281,96 @@ describe('FileBody', () => {
 			const file = buildFile({ mimeType: 'text/html', content: '<h1>Hi</h1>' })
 			renderBody(<FileBody file={file} />)
 			expect(screen.getByRole('button', { name: 'Annotate' })).toBeInTheDocument()
+		})
+	})
+
+	describe('mini-app view analytics', () => {
+		beforeEach(() => {
+			vi.spyOn(console, 'info').mockImplementation(() => {})
+		})
+
+		afterEach(() => {
+			__setInitializedForTesting(false)
+			vi.restoreAllMocks()
+		})
+
+		function captureSpy() {
+			__setInitializedForTesting(true)
+			return vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+		}
+
+		it('fires mini_app_file_viewed exactly once when an HTML file opens', () => {
+			const capture = captureSpy()
+			const file = buildFile({
+				mimeType: 'text/html',
+				name: 'curriculum.html',
+				content: '<h1>Hi</h1>',
+			})
+			renderBody(<FileBody file={file} />)
+
+			expect(capture).toHaveBeenCalledTimes(1)
+			expect(capture).toHaveBeenCalledWith('mini_app_file_viewed', {
+				entity_id: 'file-1',
+				entity_type: 'file',
+				file_name: 'curriculum.html',
+				source: 'web',
+				flow_id: null,
+			})
+		})
+
+		it('does not re-fire when the same file is re-rendered with a fresh object (refetch semantics)', () => {
+			const capture = captureSpy()
+			const file = buildFile({
+				mimeType: 'text/html',
+				name: 'curriculum.html',
+				content: '<h1>Hi</h1>',
+			})
+			const { rerender } = renderBody(<FileBody file={file} />)
+			// A refetch replaces the file object while keeping the id; the ref guard
+			// must suppress the second emission.
+			rerender(<FileBody file={{ ...file }} />)
+			rerender(<FileBody file={{ ...file }} />)
+
+			expect(capture).toHaveBeenCalledTimes(1)
+		})
+
+		it('fires again when a different file id opens', () => {
+			const capture = captureSpy()
+			const first = buildFile({
+				mimeType: 'text/html',
+				name: 'a.html',
+				content: '<h1>A</h1>',
+			})
+			const second = buildFile({
+				id: 'file-2',
+				workspaceId: 'ws-1',
+				name: 'b.html',
+				mimeType: 'text/html',
+				content: '<h1>B</h1>',
+			})
+			const { rerender } = renderBody(<FileBody file={first} />)
+			rerender(<FileBody file={second} />)
+
+			expect(capture).toHaveBeenCalledTimes(2)
+			expect(capture).toHaveBeenCalledWith(
+				'mini_app_file_viewed',
+				expect.objectContaining({ entity_id: 'file-2', file_name: 'b.html' }),
+			)
+		})
+
+		it.each([
+			['markdown', 'text/markdown', 'doc.md'],
+			['image', 'image/png', 'icon.png'],
+			['plain text', 'text/plain', 'notes.txt'],
+			['javascript', 'application/javascript', 'app.js'],
+			['svg', 'image/svg+xml', 'icon.svg'],
+			['unknown', 'application/pdf', 'doc.pdf'],
+		])('does not emit for a %s file open', (_label, mimeType, name) => {
+			const capture = captureSpy()
+			const file = buildFile({ mimeType, name } as Partial<FileDetail>)
+			renderBody(<FileBody file={file} />)
+
+			expect(capture).not.toHaveBeenCalled()
 		})
 	})
 })

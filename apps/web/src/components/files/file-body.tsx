@@ -4,13 +4,14 @@ import { Button } from '@/components/ui/button'
 import { ButtonGroup } from '@/components/ui/button-group'
 import { useAutoSave } from '@/hooks/use-auto-save'
 import { useUpdateFile } from '@/hooks/use-files'
+import { trackMiniAppFileViewed } from '@/lib/analytics'
 import { compileAnnotations, hydrateAnnotations } from '@/lib/annotations'
 import type { AnnotationJson } from '@/lib/annotations'
 import type { FileAnnotation, FileDetail } from '@/lib/api'
 import { base64ToBytes, decodeBase64Utf8 } from '@/lib/file-utils'
 import { prepareMiniAppHtml } from '@/lib/mini-app'
 import { Bot, Check, Clipboard, Pin } from 'lucide-react'
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { type Annotation, AnnotationOverlay } from './annotation-overlay'
 
 // MIME types whose bytes the browser would happily execute (or interpret as HTML)
@@ -127,6 +128,22 @@ export function FileBody({ file, onReviseWithAnnotations, isRevising = false }: 
 	const [annotations, setAnnotations] = useState<Annotation[]>(() =>
 		hydrateAnnotations(file.annotations),
 	)
+
+	// Mini-apps ship metric: fire a scoped file-view event once per open of a
+	// hosted .html file. HTML-only (mini-apps are html), and the ref guard makes
+	// it exactly-once per file id — window-focus refetches and StrictMode double
+	// effects re-render with the same file object but must not re-fire.
+	const emittedViewFor = useRef<FileDetail['id'] | null>(null)
+	useEffect(() => {
+		if (!isHtml(file.mimeType)) return
+		if (emittedViewFor.current === file.id) return
+		emittedViewFor.current = file.id
+		trackMiniAppFileViewed({
+			entity_id: file.id,
+			entity_type: 'file',
+			file_name: file.name,
+		})
+	}, [file])
 
 	// Persist annotations to the file so other humans and agents see them. The
 	// overlay only exists for HTML files, so auto-save is gated to that case.
