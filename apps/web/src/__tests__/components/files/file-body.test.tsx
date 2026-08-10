@@ -135,9 +135,18 @@ describe('FileBody', () => {
 
 			const iframe = container.querySelector('iframe')
 			expect(iframe).not.toBeNull()
-			// `srcdoc` carries the file bytes — the iframe is the only place the
-			// HTML is parsed. Browser maps the React `srcDoc` prop to lowercase.
-			expect(iframe?.getAttribute('srcdoc')).toBe(html)
+			// `srcdoc` carries the file bytes plus the injected platform seam — the
+			// iframe is the only place the HTML is parsed. Browser maps the React
+			// `srcDoc` prop to lowercase.
+			const srcdoc = iframe?.getAttribute('srcdoc') ?? ''
+			expect(srcdoc).toContain(html)
+			// Platform CSP meta is injected at render time so the frame's own JS
+			// cannot relax it (multiple CSP metas are enforced additively).
+			expect(srcdoc).toContain("default-src 'none'")
+			expect(srcdoc).toContain("connect-src 'none'")
+			// Data-slot bootstrap exposes the declared slot to the app.
+			expect(srcdoc).toContain('__MASKIN_APP_DATA__')
+			expect(srcdoc).toContain(`getElementById('maskin-state')`)
 			// Sandbox isolates the page: scripts may run inside but cannot reach
 			// our origin. `allow-same-origin` must NOT be present.
 			const sandbox = iframe?.getAttribute('sandbox') ?? ''

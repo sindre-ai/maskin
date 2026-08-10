@@ -8,6 +8,7 @@ import { compileAnnotations, hydrateAnnotations } from '@/lib/annotations'
 import type { AnnotationJson } from '@/lib/annotations'
 import type { FileAnnotation, FileDetail } from '@/lib/api'
 import { base64ToBytes, decodeBase64Utf8 } from '@/lib/file-utils'
+import { prepareMiniAppHtml } from '@/lib/mini-app'
 import { Bot, Check, Clipboard, Pin } from 'lucide-react'
 import { useCallback, useState } from 'react'
 import { type Annotation, AnnotationOverlay } from './annotation-overlay'
@@ -86,6 +87,11 @@ function HtmlPreview({ html, name }: { html: string; name: string }) {
 	// omit `allow-same-origin`, so fetch/XHR from the page sees a null origin
 	// and same-origin checks against our app fail closed.
 	//
+	// `prepareMiniAppHtml` injects the platform CSP meta (agents' own CSP metas
+	// are stripped first so only the platform policy holds, with `connect-src
+	// 'none'` closing off network egress from the frame) plus the data-slot
+	// bootstrap that exposes window.__MASKIN_APP_DATA__ to the app.
+	//
 	// The wrapper carries `resize` so the user gets a native CSS drag-handle
 	// in the bottom-right corner that grows it both vertically and horizontally;
 	// the iframe fills it. `overflow-hidden` is required for `resize` to take
@@ -95,7 +101,7 @@ function HtmlPreview({ html, name }: { html: string; name: string }) {
 		<div className="resize overflow-hidden rounded-md border border-border bg-bg-surface w-full h-[60vh] min-h-[20vh] max-h-[200vh] max-w-[calc(100vw-4rem)]">
 			<iframe
 				title={`Preview of ${name}`}
-				srcDoc={html}
+				srcDoc={prepareMiniAppHtml(html)}
 				sandbox="allow-scripts"
 				className="w-full h-full block"
 			/>
