@@ -7,7 +7,7 @@ import {
 	marketplaceLoopItems,
 	triggers,
 	workspaceMembers,
-	type workspaceSkills,
+	workspaceSkills,
 } from '@maskin/db/schema'
 import { and, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm'
 
@@ -55,6 +55,32 @@ export async function findProvisionedActorBySourceItem(
 export function sourceItemIdOf(metadata: unknown): string | null {
 	const meta = (metadata as Record<string, unknown> | null) ?? {}
 	return typeof meta.source_item_id === 'string' ? meta.source_item_id : null
+}
+
+/**
+ * Find a skill the workspace already has that was provisioned from the same
+ * marketplace source item. Mirrors `findProvisionedActorBySourceItem` — two
+ * loops can legitimately bundle the same shared skill (e.g. a common
+ * "consult-knowledge" skill), and `workspace_skills` has a `(workspace_id,
+ * name)` unique index, so a bare insert on the second install would collide.
+ * Reusing the existing row instead of cloning is the dedup guard.
+ */
+export async function findProvisionedSkillBySourceItem(
+	db: DbHandle,
+	workspaceId: string,
+	sourceItemId: string,
+): Promise<{ id: string } | undefined> {
+	const [row] = await db
+		.select({ id: workspaceSkills.id })
+		.from(workspaceSkills)
+		.where(
+			and(
+				eq(workspaceSkills.workspaceId, workspaceId),
+				sql`${workspaceSkills.metadata}->>'source_item_id' = ${sourceItemId}`,
+			),
+		)
+		.limit(1)
+	return row
 }
 
 export type ProvisionedActorRef = {
@@ -113,6 +139,52 @@ export async function partitionProvisionedActors(
 		}
 		await rehomeActorOwnership(tx, actor.id, rehomeTo)
 		kept.push({ id: actor.id, rehomedTo: rehomeTo })
+	}
+
+	return { deleted, kept }
+}
+
+export type ProvisionedSkillRef = {
+	id: string
+	sourceItemId: string | null
+}
+
+/**
+ * Ownership-aware partitioning of an install's provisioned skills, mirroring
+ * `partitionProvisionedActors` for the skill dedup guard above. A skill is
+ * KEPT when another currently-installed loop in the workspace still bundles
+ * the same `source_item_id` — that loop would reach for the same row on its
+ * next install/push. Skills have no trigger-style dependency (unlike actors,
+ * which can be kept alive by a live trigger's `targetActorId` even without a
+ * bundle match), so the bundle check alone is sufficient. Kept skills are
+ * rehomed to one of the referencing installs so a later removal of *that*
+ * install can still retire the skill once no references remain.
+ */
+export async function partitionProvisionedSkills(
+	tx: DbHandle,
+	workspaceId: string,
+	installId: string,
+	skillsToPartition: ProvisionedSkillRef[],
+): Promise<{ deleted: string[]; kept: Array<{ id: string; rehomedTo: string }> }> {
+	const deleted: string[] = []
+	const kept: Array<{ id: string; rehomedTo: string }> = []
+
+	if (skillsToPartition.length === 0) return { deleted, kept }
+
+	const sourceItemIds = skillsToPartition
+		.map((s) => s.sourceItemId)
+		.filter((s): s is string => s !== null)
+	const bundleRefs = await findReferencingInstalls(tx, workspaceId, installId, sourceItemIds)
+
+	for (const skill of skillsToPartition) {
+		const liveInstallIds = skill.sourceItemId ? (bundleRefs.get(skill.sourceItemId) ?? []) : []
+		const [rehomeTo] = liveInstallIds
+		if (!rehomeTo) {
+			deleted.push(skill.id)
+			continue
+		}
+		await rehomeSkillOwnership(tx, skill.id, rehomeTo)
+		kept.push({ id: skill.id, rehomedTo: rehomeTo })
 	}
 
 	return { deleted, kept }
@@ -214,6 +286,20 @@ async function rehomeActorOwnership(
 			metadata: sql`(${actors.metadata} - 'forked_from_installed_loop_id') || jsonb_build_object('installed_loop_id', ${newInstallId}::text)`,
 		})
 		.where(eq(actors.id, actorId))
+}
+
+/** Transfer a skill's managed-install ownership to `newInstallId`. */
+async function rehomeSkillOwnership(
+	db: DbHandle,
+	skillId: string,
+	newInstallId: string,
+): Promise<void> {
+	await db
+		.update(workspaceSkills)
+		.set({
+			metadata: sql`(${workspaceSkills.metadata} - 'forked_from_installed_loop_id') || jsonb_build_object('installed_loop_id', ${newInstallId}::text)`,
+		})
+		.where(eq(workspaceSkills.id, skillId))
 }
 
 /**
