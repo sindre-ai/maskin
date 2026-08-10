@@ -156,6 +156,13 @@ export const workspaceSettingsSchema = z.object({
 	// Staff prototype bet so owner chats route through CoS instead of Workspace
 	// Coach when this is populated.
 	default_agent_id: z.string().uuid().nullable().optional(),
+	// File ids (uuid strings) pinned into the sidebar Favorites group by the
+	// Mini-apps bet. References only — the sidebar resolves each id against the
+	// live file object, so the nightly regen's in-place byte swap flows through
+	// reopen-after-regen, and a deleted file stops appearing instead of
+	// dead-linking. PATCH /api/workspaces/:id shallow-merges top-level keys, so
+	// pin/unpin writes replace the whole array.
+	pinned_files: z.array(z.string().uuid()).default([]),
 	// Public "method site" publishing config (ADR #6 on the Publish bet).
 	// `enabled` is the master switch — false by default so a workspace opts in
 	// before any object metadata surfaces at /method/*. `version` bumps on any

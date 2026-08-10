@@ -259,8 +259,9 @@ export function trackSidebarAgentActivityExpanded(p: { workspaceId: string }): v
 // `item_key` is the stable route-agnostic identifier (`for-you`, `objects`,
 // `marketplace`, …) — never the display label, which is i18n-flexible. `source`
 // distinguishes the top-nav slot from the footer slot so the ratio can be
-// sliced before/after T4 moves Marketplace between them.
-export type NavItemSource = 'top-nav' | 'footer'
+// sliced before/after T4 moves Marketplace between them. `favorites` covers the
+// Mini-apps bet's pinned sidebar group.
+export type NavItemSource = 'top-nav' | 'footer' | 'favorites'
 
 export function trackNavItemClicked(p: { item_key: string; source: NavItemSource }): void {
 	trackEvent('nav_item_clicked', { item_key: p.item_key, source: p.source })
