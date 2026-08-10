@@ -245,6 +245,31 @@ describe('LoopFlow', () => {
 		expect(await screen.findByText('Slack images do not render inline')).toBeInTheDocument()
 	})
 
+	it('wraps long unbroken step-description text inside its container', async () => {
+		const triggers = [
+			buildTriggerResponse({
+				id: 't1',
+				targetActorId: 'relay',
+				type: 'event',
+				actionPrompt:
+					'https://example.com/customer/feedback/very-long-unbroken-url-that-must-wrap-on-mobile',
+				config: {},
+			}),
+		]
+		render(
+			<LoopFlow
+				workspaceId="ws-1"
+				triggers={triggers}
+				actors={[relay]}
+				childObjects={childObjects}
+			/>,
+			{ wrapper: wrapper() },
+		)
+
+		const prompt = await screen.findByText(/customer\/feedback\/very-long-unbroken-url/)
+		expect(prompt.parentElement).toHaveClass('break-words')
+	})
+
 	it('renders nothing when there are no triggers and no child objects', () => {
 		const { container } = render(
 			<LoopFlow workspaceId="ws-1" triggers={[]} actors={[]} childObjects={[]} />,
