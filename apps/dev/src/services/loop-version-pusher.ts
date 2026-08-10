@@ -32,8 +32,10 @@ import {
 	buildSkillInsert,
 	buildTriggerInsert,
 	findProvisionedActorBySourceItem,
+	findProvisionedSkillBySourceItem,
 	installMetadata,
 	partitionProvisionedActors,
+	partitionProvisionedSkills,
 	rewriteWiring,
 } from './loop-provisioning'
 
@@ -357,6 +359,34 @@ export class LoopVersionPusher {
 							break
 						}
 						case 'skill': {
+							// Dedup guard — mirrors the actor case above: this workspace may
+							// already hold the skill from another loop that bundles it (skills
+							// have a `(workspace_id, name)` unique index, so a bare insert would
+							// collide). Reuse instead of cloning.
+							const existingSkill = await findProvisionedSkillBySourceItem(
+								tx,
+								install.workspaceId,
+								item.sourceItemId,
+							)
+							if (existingSkill) {
+								// Re-snapshot + re-stamp, exactly as the actor reuse path does —
+								// keeps the reused skill's content in sync with the version being
+								// pushed and ends the per-tick phantom-add (next tick diffs this
+								// row as owned by this install).
+								await tx
+									.update(workspaceSkills)
+									.set({ ...buildSkillUpdate(rewritten), metadata, updatedAt: new Date() })
+									.where(eq(workspaceSkills.id, existingSkill.id))
+								await this.agentStorage.putWorkspaceSkill(
+									install.workspaceId,
+									existingSkill.id,
+									(rewritten.content as string) ?? '',
+								)
+								newId = existingSkill.id
+								wasReused = true
+								reuses++
+								break
+							}
 							// Fresh id + workspace-scoped S3 key — never reuse the publisher's
 							// storageKey (see buildSkillInsert). Mirrors installed-loops.ts.
 							const skillId = randomUUID()
@@ -412,6 +442,7 @@ export class LoopVersionPusher {
 			// non-actor items are gone; a bare DELETE actors would violate FK
 			// constraints and would take down a shared agent's triggers with it.
 			const removedActorRows: Array<{ id: string; sourceItemId: string | null }> = []
+			const removedSkillRows: Array<{ id: string; sourceItemId: string | null }> = []
 			for (const row of installed) {
 				if (row.sourceItemId && loopItemsBySourceId.has(row.sourceItemId)) continue
 				switch (row.type) {
@@ -423,14 +454,36 @@ export class LoopVersionPusher {
 						removedTriggerIds.push(row.id)
 						break
 					case 'skill':
-						await tx.delete(workspaceSkills).where(eq(workspaceSkills.id, row.id))
-						removedSkillIds.push(row.id)
+						removedSkillRows.push({ id: row.id, sourceItemId: row.sourceItemId })
 						break
 					case 'integration':
 						await tx.delete(integrations).where(eq(integrations.id, row.id))
 						break
 				}
 				removes++
+			}
+
+			// Ownership-aware partition, same rationale as actors below: a skill
+			// this install drops but another live install still bundles survives
+			// the push, rehomed under that install. Only the unreferenced
+			// remainder is deleted.
+			const { deleted: deletedSkillIds, kept: keptSkillRefs } = await partitionProvisionedSkills(
+				tx,
+				install.workspaceId,
+				install.id,
+				removedSkillRows,
+			)
+			removes -= removedSkillRows.length - deletedSkillIds.length
+			if (deletedSkillIds.length > 0) {
+				await tx.delete(workspaceSkills).where(inArray(workspaceSkills.id, deletedSkillIds))
+			}
+			removedSkillIds.push(...deletedSkillIds)
+			if (keptSkillRefs.length > 0) {
+				logger.info('Kept shared skill on version push — another installed loop still bundles it', {
+					installId: install.id,
+					workspaceId: install.workspaceId,
+					keptSkillIds: keptSkillRefs.map((k) => k.id),
+				})
 			}
 
 			// Ownership-aware partition (mirrors the uninstall route): an agent this
