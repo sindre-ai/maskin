@@ -145,17 +145,21 @@ export async function evaluateAndRespond(ctx: {
 	await Promise.allSettled(
 		candidates.map(async (agent) => {
 			const wasMentioned = mentioned.has(agent.id)
-			// @mention fast-path — skip the relevance check entirely, an
-			// explicit @mention is already an unambiguous signal to respond.
-			const shouldRespond = wasMentioned
-				? true
-				: await checkRelevance({
-						agent,
-						wsSettings,
-						conversationHistory,
-						newMessageContent: message.content,
-						isDirectConversation,
-					})
+			// Direct 1:1 conversations and explicit @mentions are unambiguous
+			// signals to respond — skip the relevance heuristic (and its
+			// narrower, non-OAuth credential resolver) entirely and let the
+			// real session launch, whose resolveLlmRoute is the sole authority
+			// on available credentials, be the final word.
+			const shouldRespond =
+				wasMentioned || isDirectConversation
+					? true
+					: await checkRelevance({
+							agent,
+							wsSettings,
+							conversationHistory,
+							newMessageContent: message.content,
+							isDirectConversation,
+						})
 			if (!shouldRespond) return
 
 			const existing = await sessionManager.findActiveConversationSession(conversationId, agent.id)
@@ -343,9 +347,20 @@ async function checkRelevance(params: {
 			model: (llmConfig.model as string | undefined)?.trim() || null,
 		},
 	})
-	// No usable credential (e.g. this agent's only route is Claude OAuth, and
-	// the workspace has no fallback configured either) — fail closed.
-	if (!credentials) return false
+	// No usable credential for this same-process call (e.g. this agent's only
+	// route is Claude OAuth, which resolveChatCredentials intentionally can't
+	// use — see its doc comment). Fail OPEN rather than silently staying
+	// quiet forever: the real session launch consults the broader
+	// resolveLlmRoute (which does support OAuth) and is the actual authority
+	// on whether this agent can respond. Log so an operator can tell this
+	// heuristic was skipped rather than deliberately declining to reply.
+	if (!credentials) {
+		logger.warn(
+			'Conversation relevance check has no chat-callable credentials — defaulting to respond and letting session launch decide',
+			{ agentId: agent.id },
+		)
+		return true
+	}
 
 	try {
 		const adapter = createLLMAdapter(credentials.provider, {

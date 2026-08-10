@@ -284,9 +284,13 @@ export interface ChatCredentials {
  *   5. System fallback (MASKIN_FALLBACK_OPENROUTER_KEY), OpenRouter's
  *      OpenAI-compatible endpoint
  *
- * Returns null if no usable credential exists — callers should fail closed
- * (skip the check, don't respond) rather than error loudly, since this powers
- * a best-effort relevance heuristic, not a user-facing action.
+ * Returns null if no usable credential exists for this narrower, non-OAuth
+ * path — this does NOT mean no credential exists at all: `resolveLlmRoute`
+ * may still succeed via Claude OAuth once a real session launches. Since this
+ * powers a best-effort relevance heuristic rather than a user-facing action,
+ * callers should treat null as "the heuristic itself is unavailable," not as
+ * "this agent has no credentials," and decide accordingly (e.g. fail open and
+ * let the real session launch be the final word) rather than erroring loudly.
  */
 export function resolveChatCredentials(params: {
 	wsSettings: WorkspaceSettings

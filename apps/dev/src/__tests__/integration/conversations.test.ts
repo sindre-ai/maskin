@@ -438,6 +438,97 @@ describe('Conversations Integration', () => {
 			expect(sessionManager.createSession.mock.calls[0]?.[1]).toMatchObject({ actorId: agent.id })
 		})
 
+		it('spawns a session for a direct 1:1 message with no mention and no chat credentials configured', async () => {
+			// Regression test: a fresh 1:1 chat with an agent whose only LLM
+			// route is Claude OAuth (not chat-callable via resolveChatCredentials)
+			// used to silently never spawn a session for a plain, non-mentioning
+			// first message — checkRelevance failed closed and nothing surfaced
+			// it. Direct conversations now skip the relevance heuristic entirely.
+			const agent = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, agent.id)
+			const { app: ownerApp } = createConversationsApp(ownerId)
+			const created = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Direct no-mention test', participant_actor_ids: [agent.id] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+			const [triggering] = await db
+				.insert(messages)
+				.values({ conversationId: conversation.id, actorId: ownerId, content: 'hi' })
+				.returning()
+			if (!triggering) throw new Error('failed to insert triggering message')
+
+			const sessionManager = {
+				createSession: vi.fn().mockResolvedValue({ id: 'new-session-id' }),
+				findActiveConversationSession: vi.fn().mockResolvedValue(null),
+				writeInput: vi.fn().mockResolvedValue(undefined),
+			}
+			await evaluateAndRespond({
+				db,
+				// biome-ignore lint/suspicious/noExplicitAny: test double, real type lives in session-manager.ts
+				sessionManager: sessionManager as any,
+				workspaceId,
+				conversationId: conversation.id,
+				messageId: triggering.id,
+			})
+
+			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
+			expect(sessionManager.createSession.mock.calls[0]?.[1]).toMatchObject({ actorId: agent.id })
+		})
+
+		it('fails open in a group chat with no mention and no chat credentials configured', async () => {
+			// The relevance heuristic itself being uncallable (no chat-callable
+			// credential) is not proof the agent has no credentials at all — the
+			// real session launch supports Claude OAuth. So a missing heuristic
+			// credential should default to responding, not silently declining.
+			const agent = await insertActor(db, { type: 'agent' })
+			const otherAgent = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, agent.id)
+			await addMember(workspaceId, otherAgent.id)
+			const { app: ownerApp } = createConversationsApp(ownerId)
+			const created = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{
+						title: 'Group no-credential test',
+						participant_actor_ids: [agent.id, otherAgent.id],
+					},
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+			const [triggering] = await db
+				.insert(messages)
+				.values({
+					conversationId: conversation.id,
+					actorId: ownerId,
+					content: 'just chatting, no mention here',
+				})
+				.returning()
+			if (!triggering) throw new Error('failed to insert triggering message')
+
+			const sessionManager = {
+				createSession: vi.fn().mockResolvedValue({ id: 'x' }),
+				findActiveConversationSession: vi.fn().mockResolvedValue(null),
+				writeInput: vi.fn().mockResolvedValue(undefined),
+			}
+			await evaluateAndRespond({
+				db,
+				// biome-ignore lint/suspicious/noExplicitAny: test double, real type lives in session-manager.ts
+				sessionManager: sessionManager as any,
+				workspaceId,
+				conversationId: conversation.id,
+				messageId: triggering.id,
+			})
+
+			expect(sessionManager.createSession).toHaveBeenCalledTimes(2)
+		})
+
 		it('skips every agent once the consecutive-agent-reply cap is reached, even a @mentioned one', async () => {
 			const agent = await insertActor(db, { type: 'agent' })
 			const otherAgent = await insertActor(db, { type: 'agent' })
