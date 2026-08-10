@@ -1,5 +1,6 @@
 import { serve } from '@hono/node-server'
 import { Hono } from 'hono'
+import { cors } from 'hono/cors'
 import { createDb } from './db/connection'
 import { type VaerkstedAuthEnv, parseEnv } from './lib/env'
 import { challengeRoute } from './routes/challenge'
@@ -8,8 +9,22 @@ import { identitiesRoute } from './routes/identities'
 import { sessionsRoute } from './routes/sessions'
 import type { AppEnv } from './types'
 
+// POST /identities and POST /sessions are called directly from browser JS
+// (apps/web/src/hooks/use-vaerksted-auth.ts — M5's "Continue with vaerksted"),
+// so this needs real CORS handling, including the preflight OPTIONS request
+// browsers send ahead of a JSON POST. Without it, the browser's preflight
+// has no route to land on (404) and blocks the real request client-side —
+// same CORS_ORIGIN pattern as apps/dev/src/app-factory.ts, for consistency.
+// Skjald's calls to this service happen from Rust (reqwest), which isn't
+// subject to CORS, so this is purely for browser-based callers.
+const allowedOrigins = process.env.CORS_ORIGIN
+	? process.env.CORS_ORIGIN.split(',').map((o) => o.trim())
+	: ['http://localhost:5173', 'http://localhost:5174']
+
 export function buildApp(env: VaerkstedAuthEnv, db: ReturnType<typeof createDb>): Hono<AppEnv> {
 	const app = new Hono<AppEnv>()
+
+	app.use('*', cors({ origin: allowedOrigins }))
 
 	app.use('*', async (c, next) => {
 		c.set('db', db)

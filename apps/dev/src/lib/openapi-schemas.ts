@@ -83,6 +83,11 @@ export const actorResponseSchema = z.object({
 export const actorWithKeySchema = actorResponseSchema.extend({
 	api_key: z.string(),
 	workspace_id: z.string().uuid().optional(),
+	// Only set by POST /api/vaerksted-auth/link — true for the brand-new-actor
+	// branch, so the frontend knows to prompt for name/organization/role
+	// (vaerksted's identity handshake never collects them, unlike the native
+	// signup form) before treating the account as fully onboarded.
+	is_new_actor: z.boolean().optional(),
 })
 
 export const actorWithRoleSchema = actorListItemSchema.extend({

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { events, actors } from '@maskin/db/schema'
+import { events, actors, workspaceMembers, workspaces } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { insertActor, insertWorkspace } from '../factories'
@@ -98,6 +98,26 @@ describe('POST /api/vaerksted-auth/link', () => {
 		expect(row.passwordHash).toBeNull()
 		expect(row.type).toBe('human')
 		expect(row.apiKey).toBe(body.api_key)
+
+		// Regression coverage for the workspace-bootstrap gap: a brand-new
+		// vaerksted-linked actor must get the same starting workspace a
+		// native-password signup gets — otherwise apps/web's "no workspace →
+		// bounce to /signup" guard makes a successful login look broken.
+		expect(typeof body.workspace_id).toBe('string')
+
+		const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, body.workspace_id))
+		expect(ws).toBeDefined()
+		expect(ws.createdBy).toBe(row.id)
+
+		const members = await db
+			.select()
+			.from(workspaceMembers)
+			.where(eq(workspaceMembers.workspaceId, body.workspace_id))
+		expect(members.some((m) => m.actorId === row.id && m.role === 'owner')).toBe(true)
+		// Workspace Coach seeded alongside the workspace itself (synchronous
+		// half of bootstrap — the rest of the default agent roster needs
+		// agentStorage/S3, which this test harness doesn't wire up).
+		expect(members.length).toBeGreaterThanOrEqual(2)
 	})
 
 	it('links an existing native-password actor found by email, and logs an events row', async () => {

@@ -1,6 +1,7 @@
+import { buildSignupCaptureKnowledge } from '@maskin/shared'
 import { useNavigate } from '@tanstack/react-router'
 import { useCallback, useState } from 'react'
-import { api } from '../lib/api'
+import { type ActorWithKey, api } from '../lib/api'
 import { setApiKey, setStoredActor } from '../lib/auth'
 
 /**
@@ -62,6 +63,13 @@ export function isVaerkstedAuthConfigured(): boolean {
 export function useVaerkstedAuth() {
 	const navigate = useNavigate()
 	const [loading, setLoading] = useState(false)
+	// Set when completeFromRedirect() lands on a brand-new actor — the
+	// vaerksted handshake proves identity but never collects name/
+	// organization/role the way the native /signup form does, so navigation
+	// is held here until completeProfile() fills that gap. null in every
+	// other case (login, or link-by-email to an existing actor that already
+	// has this info).
+	const [pendingProfile, setPendingProfile] = useState<ActorWithKey | null>(null)
 
 	/** Step 1 — send the magic-link email. Errors on missing config or a bad email. */
 	const sendMagicLink = useCallback(async (email: string) => {
@@ -124,6 +132,13 @@ export function useVaerkstedAuth() {
 			// don't keep a second, unrelated session sitting in the browser.
 			await client.auth.signOut()
 
+			if (result.is_new_actor) {
+				// Hold here instead of navigating — VaerkstedCompleteProfile
+				// renders next and calls completeProfile() to finish up.
+				setPendingProfile(result)
+				return result
+			}
+
 			navigate({ to: '/' })
 			return result
 		} finally {
@@ -131,5 +146,51 @@ export function useVaerkstedAuth() {
 		}
 	}, [navigate])
 
-	return { loading, sendMagicLink, completeFromRedirect }
+	/**
+	 * Finishes a brand-new-actor signup: renames the actor (it starts out
+	 * named after its email, same fallback the backend uses), and writes the
+	 * same "signup capture" knowledge object the native /signup form writes
+	 * (packages/shared/src/schemas/signup-capture.ts) — org/role never get
+	 * asked for anywhere else, and this is what the Strategist agent's
+	 * research-on-signup trigger reads back. Best-effort on the knowledge
+	 * write: a brand-new actor with a working name but a missing/failed
+	 * knowledge object is still a fully usable account, unlike an actor with
+	 * no workspace at all (the bug this whole flow exists to avoid).
+	 */
+	const completeProfile = useCallback(
+		async (input: { name: string; organization: string; role: string }) => {
+			if (!pendingProfile) return
+
+			const name = input.name.trim()
+			setLoading(true)
+			try {
+				await api.actors.update(pendingProfile.id, { name }, pendingProfile.workspace_id)
+				setStoredActor({
+					id: pendingProfile.id,
+					name,
+					type: pendingProfile.type,
+					email: pendingProfile.email,
+				})
+
+				if (pendingProfile.workspace_id) {
+					const knowledge = buildSignupCaptureKnowledge({
+						name,
+						organization: input.organization.trim(),
+						role: input.role.trim(),
+					})
+					await api.objects.create(pendingProfile.workspace_id, knowledge).catch((err) => {
+						console.error('[maskin] failed to write vaerksted signup capture knowledge', err)
+					})
+				}
+
+				setPendingProfile(null)
+				navigate({ to: '/' })
+			} finally {
+				setLoading(false)
+			}
+		},
+		[pendingProfile, navigate],
+	)
+
+	return { loading, sendMagicLink, completeFromRedirect, pendingProfile, completeProfile }
 }

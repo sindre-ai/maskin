@@ -1,6 +1,7 @@
 import { Button } from '@/components/ui/button'
 import { useVaerkstedAuth } from '@/hooks/use-vaerksted-auth'
 import { useEffect, useState } from 'react'
+import { VaerkstedCompleteProfile } from './vaerksted-complete-profile'
 
 interface VaerkstedAuthButtonProps {
 	/** The email currently typed into the surrounding login/signup form. */
@@ -21,7 +22,8 @@ interface VaerkstedAuthButtonProps {
  * in exactly the two places a "log in" action exists.
  */
 export function VaerkstedAuthButton({ email }: VaerkstedAuthButtonProps) {
-	const { loading, sendMagicLink, completeFromRedirect } = useVaerkstedAuth()
+	const { loading, sendMagicLink, completeFromRedirect, pendingProfile, completeProfile } =
+		useVaerkstedAuth()
 	const [sent, setSent] = useState(false)
 	const [error, setError] = useState('')
 
@@ -66,6 +68,12 @@ export function VaerkstedAuthButton({ email }: VaerkstedAuthButtonProps) {
 				</p>
 			)}
 			{error && <p className="text-center text-xs text-error">{error}</p>}
+			<VaerkstedCompleteProfile
+				open={pendingProfile !== null}
+				email={pendingProfile?.email ?? null}
+				loading={loading}
+				onSubmit={completeProfile}
+			/>
 		</div>
 	)
 }

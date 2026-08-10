@@ -5,6 +5,7 @@ import { events, actors, workspaceMembers } from '@maskin/db/schema'
 import { vaerkstedLinkSchema } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
+import { logger } from '../lib/logger'
 import { actorWithKeySchema, errorSchema } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
 import {
@@ -12,10 +13,13 @@ import {
 	VaerkstedAuthUnreachableError,
 	verifyVaerkstedSession,
 } from '../lib/vaerksted-auth-client'
+import type { AgentStorageManager } from '../services/agent-storage'
+import { bootstrapDefaultAgents, createPersonalWorkspace } from '../services/workspace-bootstrap'
 
 type Env = {
 	Variables: {
 		db: Database
+		agentStorage: AgentStorageManager
 	}
 }
 
@@ -91,7 +95,11 @@ function isEmailUniqueViolation(err: unknown): boolean {
 }
 
 /** Shapes an `actors` row into the same body POST /api/actors returns on signup. */
-function respondWithActor(actor: typeof actors.$inferSelect, status: 200 | 201) {
+function respondWithActor(
+	actor: typeof actors.$inferSelect,
+	status: 200 | 201,
+	workspaceId?: string,
+) {
 	const { apiKey, passwordHash, systemPrompt, llmProvider, llmConfig, ...actorWithoutSecrets } =
 		actor
 	return [
@@ -101,6 +109,11 @@ function respondWithActor(actor: typeof actors.$inferSelect, status: 200 | 201) 
 			llm_provider: llmProvider,
 			llm_config: llmConfig,
 			api_key: apiKey,
+			...(workspaceId && { workspace_id: workspaceId }),
+			// 201 only ever comes from the brand-new-actor branch (step 4) —
+			// 200 covers both the already-linked login and the link-by-email
+			// cases, neither of which needs profile info collected again.
+			is_new_actor: status === 201,
 		} as z.infer<typeof actorWithKeySchema>,
 		status,
 	] as const
@@ -268,19 +281,36 @@ app.openapi(linkRoute, async (c) => {
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create actor'), 500)
 	}
 
-	// No events row for this creation, and no auto-created personal
-	// workspace — deliberately mirrors POST /api/actors' own signup handler
-	// (apps/dev/src/routes/actors.ts createActorRoute), which does not emit
-	// an events row for actor creation either (only /reset, /delete, /pause,
-	// /run do there). This also sidesteps events.workspace_id's NOT NULL
-	// constraint: a brand-new actor created via this path has no workspace
-	// yet. The frontend already tolerates a signup response with no
-	// workspace_id (see apps/web/src/routes/signup.tsx's `if (workspaceId)`
-	// branch) — extending this route to also auto-create a personal
-	// workspace, seed the Workspace Coach, and bootstrap default agents
-	// (actors.ts's ~60-line block) was judged out of scope for this task; a
-	// follow-up could factor that block into a shared helper both routes call.
-	return c.json(...respondWithActor(created, 201))
+	// No events row for this creation — deliberately mirrors POST /api/actors'
+	// own signup handler (apps/dev/src/routes/actors.ts createActorRoute),
+	// which does not emit an events row for actor creation either (only
+	// /reset, /delete, /pause, /run do there).
+	//
+	// Personal workspace + Workspace Coach + default agent roster, via the
+	// same helper POST /api/actors uses (services/workspace-bootstrap.ts) —
+	// without this, a brand-new actor would have zero workspaces, which trips
+	// apps/web/src/routes/_authed/workspaces.tsx's "no workspace → bounce to
+	// /signup" guard immediately after a successful login, making "Continue
+	// with vaerksted" look broken even though the identity/session/actor
+	// linking all worked. Failure here is logged, not fatal to the response —
+	// same tolerance POST /api/actors already has (a workspace-bootstrap
+	// failure shouldn't turn a successful actor creation into a 500).
+	let workspaceId: string | undefined
+	const workspace = await createPersonalWorkspace(db, created)
+	if (workspace) {
+		workspaceId = workspace.id
+		const agentStorage = c.get('agentStorage')
+		if (agentStorage) {
+			await bootstrapDefaultAgents(db, agentStorage, workspace.id, created.id).catch((err) =>
+				logger.error('workspace bootstrap failed (vaerksted-auth link)', {
+					workspaceId: workspace.id,
+					err,
+				}),
+			)
+		}
+	}
+
+	return c.json(...respondWithActor(created, 201, workspaceId))
 })
 
 export default app

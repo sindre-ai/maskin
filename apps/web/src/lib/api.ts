@@ -940,6 +940,10 @@ export interface ActorWithKey extends ActorResponse {
 	// humans on signup). Used by the signup → guest-draft handoff to pick the
 	// workspace to claim into.
 	workspace_id?: string
+	// Only ever set by POST /vaerksted-auth/link — true for a brand-new actor,
+	// so the frontend knows to prompt for name/organization/role (the vaerksted
+	// handshake never collects them, unlike the native signup form).
+	is_new_actor?: boolean
 }
 
 export interface LoginInput {

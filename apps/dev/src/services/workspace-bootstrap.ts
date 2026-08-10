@@ -16,6 +16,7 @@ import {
 	WORKSPACE_COACH_DEFAULT,
 	parseSkillMd,
 	skillNameSchema,
+	workspaceSettingsSchema,
 } from '@maskin/shared'
 import { and, eq } from 'drizzle-orm'
 import { logger } from '../lib/logger'
@@ -107,6 +108,82 @@ function resolveActorSpec(agentId: DefaultAgentId): ActorSpec {
 		llmConfig: (agent.llmConfig ?? null) as Record<string, unknown> | null,
 		tools: (agent.tools ?? null) as Record<string, unknown> | null,
 	}
+}
+
+/**
+ * Creates a personal workspace for `actor` — the workspace row, `actor` as
+ * its owner, and a seeded Workspace Coach actor as a member — all inside one
+ * transaction. This is the synchronous half of "new human actor gets a
+ * workspace"; the caller is expected to follow up with `bootstrapDefaultAgents`
+ * (post-commit, since that hits S3/agent storage) to seed the rest of the
+ * default agent roster.
+ *
+ * Factored out of `POST /api/actors`' inline signup logic so
+ * `POST /api/vaerksted-auth/link` (M5 — "Continue with vaerksted") can give a
+ * brand-new actor the exact same starting workspace a native-password signup
+ * gets, rather than leaving them with zero workspaces (which trips
+ * `apps/web/src/routes/_authed/workspaces.tsx`'s "no workspace → bounce to
+ * /signup" guard, immediately after they just logged in).
+ *
+ * Returns `null` if the workspace insert itself failed to return a row —
+ * callers should treat that as "workspace creation failed" without throwing,
+ * matching the original inline behavior in `actors.ts`.
+ */
+export async function createPersonalWorkspace(
+	db: Database,
+	actor: { id: string; name: string },
+): Promise<{ id: string } | null> {
+	const defaultSettings = workspaceSettingsSchema.parse({
+		enabled_modules: ['work', 'knowledge'],
+	})
+
+	return db.transaction(async (tx) => {
+		const [workspace] = await tx
+			.insert(workspaces)
+			.values({
+				name: `${actor.name}'s Workspace`,
+				settings: defaultSettings,
+				createdBy: actor.id,
+			})
+			.returning()
+
+		if (!workspace) return null
+
+		await tx.insert(workspaceMembers).values({
+			workspaceId: workspace.id,
+			actorId: actor.id,
+			role: 'owner',
+		})
+
+		// Seed Workspace Coach — the built-in meta-agent shipped with every workspace.
+		// apiKey is required: without it, the agent's container boots with an empty
+		// Bearer token and MCP writes either 401 or — worse — fall back to a key
+		// that resolves to a different actor, misattributing every comment.
+		const [coach] = await tx
+			.insert(actors)
+			.values({
+				type: WORKSPACE_COACH_DEFAULT.type,
+				name: WORKSPACE_COACH_DEFAULT.name,
+				isSystem: WORKSPACE_COACH_DEFAULT.isSystem,
+				systemPrompt: WORKSPACE_COACH_DEFAULT.systemPrompt,
+				llmProvider: WORKSPACE_COACH_DEFAULT.llmProvider,
+				llmConfig: WORKSPACE_COACH_DEFAULT.llmConfig,
+				tools: WORKSPACE_COACH_DEFAULT.tools,
+				apiKey: generateApiKey().key,
+				createdBy: actor.id,
+			})
+			.returning()
+
+		if (!coach) throw new Error('Failed to seed Workspace Coach actor')
+
+		await tx.insert(workspaceMembers).values({
+			workspaceId: workspace.id,
+			actorId: coach.id,
+			role: 'member',
+		})
+
+		return workspace
+	})
 }
 
 /**
