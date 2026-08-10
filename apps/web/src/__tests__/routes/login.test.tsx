@@ -2,10 +2,15 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
-const mockLogin = vi.fn()
+const mockSendMagicLink = vi.fn()
+const mockCompleteFromRedirect = vi.fn()
 
-vi.mock('@/hooks/use-auth', () => ({
-	useAuth: () => ({ login: mockLogin }),
+vi.mock('@/hooks/use-vaerksted-auth', () => ({
+	useVaerkstedAuth: () => ({
+		loading: false,
+		sendMagicLink: mockSendMagicLink,
+		completeFromRedirect: mockCompleteFromRedirect,
+	}),
 }))
 
 vi.mock('@tanstack/react-router', async () => {
@@ -23,14 +28,20 @@ const LoginPage = (Route as unknown as { component: React.FC }).component
 describe('LoginPage', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
+		mockCompleteFromRedirect.mockResolvedValue(null)
 	})
 
-	it('renders login form with email and password fields', () => {
+	it('renders a vaerksted-only login form: email only, no password field', () => {
 		render(<LoginPage />)
 		expect(screen.getByText('Welcome back')).toBeInTheDocument()
 		expect(screen.getByPlaceholderText('you@example.com')).toBeInTheDocument()
-		expect(screen.getByPlaceholderText('Your password')).toBeInTheDocument()
+		expect(screen.queryByPlaceholderText('Your password')).not.toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Sign in' })).toBeInTheDocument()
+	})
+
+	it('completes the magic-link redirect handshake on mount', () => {
+		render(<LoginPage />)
+		expect(mockCompleteFromRedirect).toHaveBeenCalledTimes(1)
 	})
 
 	it('renders link to signup page', () => {
@@ -43,58 +54,39 @@ describe('LoginPage', () => {
 		render(<LoginPage />)
 		await user.click(screen.getByRole('button', { name: 'Sign in' }))
 		expect(screen.getByText('Email is required')).toBeInTheDocument()
-		expect(mockLogin).not.toHaveBeenCalled()
+		expect(mockSendMagicLink).not.toHaveBeenCalled()
 	})
 
-	it('shows "Password is required" when submitting with email but no password', async () => {
-		const user = userEvent.setup()
-		render(<LoginPage />)
-		await user.type(screen.getByPlaceholderText('you@example.com'), 'test@example.com')
-		await user.click(screen.getByRole('button', { name: 'Sign in' }))
-		expect(screen.getByText('Password is required')).toBeInTheDocument()
-		expect(mockLogin).not.toHaveBeenCalled()
-	})
-
-	it('calls login with trimmed email and password on valid submit', async () => {
-		mockLogin.mockResolvedValue(undefined)
+	it('calls sendMagicLink with trimmed email (no profile — that is signup-only) on valid submit', async () => {
+		mockSendMagicLink.mockResolvedValue(undefined)
 		const user = userEvent.setup()
 		render(<LoginPage />)
 		await user.type(screen.getByPlaceholderText('you@example.com'), '  test@example.com  ')
-		await user.type(screen.getByPlaceholderText('Your password'), 'secret123')
 		await user.click(screen.getByRole('button', { name: 'Sign in' }))
 		await waitFor(() => {
-			expect(mockLogin).toHaveBeenCalledWith({
-				email: 'test@example.com',
-				password: 'secret123',
-			})
+			expect(mockSendMagicLink).toHaveBeenCalledWith('test@example.com')
 		})
 	})
 
-	it('shows loading state while login is in progress', async () => {
-		let resolveLogin: (() => void) | undefined
-		mockLogin.mockReturnValue(
-			new Promise<void>((r) => {
-				resolveLogin = r
-			}),
-		)
+	it('shows "Check your email" after a successful send', async () => {
+		mockSendMagicLink.mockResolvedValue(undefined)
 		const user = userEvent.setup()
 		render(<LoginPage />)
 		await user.type(screen.getByPlaceholderText('you@example.com'), 'test@example.com')
-		await user.type(screen.getByPlaceholderText('Your password'), 'secret')
-		await user.click(screen.getByRole('button', { name: 'Sign in' }))
-		expect(screen.getByRole('button', { name: 'Signing in...' })).toBeDisabled()
-		resolveLogin?.()
-	})
-
-	it('displays error message when login throws', async () => {
-		mockLogin.mockRejectedValue(new Error('Invalid credentials'))
-		const user = userEvent.setup()
-		render(<LoginPage />)
-		await user.type(screen.getByPlaceholderText('you@example.com'), 'test@example.com')
-		await user.type(screen.getByPlaceholderText('Your password'), 'wrong')
 		await user.click(screen.getByRole('button', { name: 'Sign in' }))
 		await waitFor(() => {
-			expect(screen.getByText('Invalid credentials')).toBeInTheDocument()
+			expect(screen.getByRole('button', { name: 'Check your email' })).toBeDisabled()
+		})
+	})
+
+	it('displays error message when sendMagicLink throws', async () => {
+		mockSendMagicLink.mockRejectedValue(new Error('vaerksted sign-in is not configured'))
+		const user = userEvent.setup()
+		render(<LoginPage />)
+		await user.type(screen.getByPlaceholderText('you@example.com'), 'test@example.com')
+		await user.click(screen.getByRole('button', { name: 'Sign in' }))
+		await waitFor(() => {
+			expect(screen.getByText('vaerksted sign-in is not configured')).toBeInTheDocument()
 		})
 	})
 

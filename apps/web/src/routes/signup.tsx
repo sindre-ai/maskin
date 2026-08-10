@@ -1,11 +1,9 @@
-import { VaerkstedAuthButton } from '@/components/shared/vaerksted-auth-button'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { useAuth } from '@/hooks/use-auth'
+import { useVaerkstedAuth } from '@/hooks/use-vaerksted-auth'
 import { trackEvent } from '@/lib/analytics'
 import { api } from '@/lib/api'
-import { buildSignupCaptureKnowledge } from '@maskin/shared'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
 
@@ -14,15 +12,13 @@ export const Route = createFileRoute('/signup')({
 })
 
 function SignupPage() {
-	const { signup } = useAuth()
+	const { loading, sendMagicLink, completeFromRedirect } = useVaerkstedAuth()
 	const [name, setName] = useState('')
 	const [organization, setOrganization] = useState('')
 	const [role, setRole] = useState('')
 	const [email, setEmail] = useState('')
-	const [password, setPassword] = useState('')
-	const [confirmPassword, setConfirmPassword] = useState('')
+	const [sent, setSent] = useState(false)
 	const [error, setError] = useState('')
-	const [loading, setLoading] = useState(false)
 
 	const startedRef = useRef(false)
 	useEffect(() => {
@@ -56,6 +52,29 @@ function SignupPage() {
 		window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`)
 	}, [])
 
+	// Completes the magic-link round trip (vaerksted-auth-and-sync.md §6/§8).
+	// Only meaningfully fires post-signup side effects (analytics, guest-draft
+	// claim) for a genuinely NEW actor — is_new_actor is false for a returning
+	// user who lands on /signup by mistake (they're just logged in, same as
+	// /login would do).
+	// biome-ignore lint/correctness/useExhaustiveDependencies: intentionally run once on mount only.
+	useEffect(() => {
+		completeFromRedirect()
+			.then((result) => {
+				if (!result?.is_new_actor) return
+				const anonId = localStorage.getItem('maskin_anon_id')
+				trackEvent('signup_form_submitted', { user_id: result.id, completed: true })
+				if (anonId) {
+					api.landingEvents
+						.emit([{ name: 'signup_complete', anonId, props: { fromGuest: true } }])
+						.catch(() => console.error('[maskin] failed to emit signup_complete'))
+				}
+			})
+			.catch((err) => {
+				setError(err instanceof Error ? err.message : 'Failed to complete vaerksted sign-in')
+			})
+	}, [])
+
 	const handleSubmit = async (e: React.FormEvent) => {
 		e.preventDefault()
 		const trimmedName = name.trim()
@@ -77,63 +96,16 @@ function SignupPage() {
 			setError('Email is required')
 			return
 		}
-		if (password.length < 8) {
-			setError('Password must be at least 8 characters')
-			return
-		}
-		if (password !== confirmPassword) {
-			setError('Passwords do not match')
-			return
-		}
-		setLoading(true)
+		setError('')
 		try {
-			const anonId = localStorage.getItem('maskin_anon_id')
-			const result = await signup({
-				type: 'human',
+			await sendMagicLink(email.trim(), {
 				name: trimmedName,
-				email: email.trim(),
-				password,
+				organization: trimmedOrg,
+				role: trimmedRole,
 			})
-			const actorId = result?.id
-			const workspaceId = result?.workspace_id
-			if (workspaceId) {
-				try {
-					const payload = buildSignupCaptureKnowledge({
-						name: trimmedName,
-						organization: trimmedOrg,
-						role: trimmedRole,
-					})
-					await api.objects.create(workspaceId, payload)
-					console.info('[maskin] wrote signup capture knowledge', {
-						workspaceId,
-						actorId,
-					})
-				} catch (err) {
-					console.error('[maskin] failed to write signup capture knowledge', err)
-				}
-			} else {
-				console.warn('[maskin] no workspace_id returned from signup; skipping capture write')
-			}
-			if (!actorId) {
-				console.error(
-					'[maskin] signup succeeded but returned no actor id; skipping submitted event',
-				)
-			} else {
-				trackEvent('signup_form_submitted', {
-					user_id: actorId,
-					completed: true,
-				})
-			}
-			if (anonId) {
-				api.landingEvents
-					.emit([{ name: 'signup_complete', anonId, props: { fromGuest: true } }])
-					.catch(() => console.error('[maskin] failed to emit signup_complete'))
-			}
-			window.location.assign('/')
+			setSent(true)
 		} catch (err) {
-			setError(err instanceof Error ? err.message : 'Signup failed')
-		} finally {
-			setLoading(false)
+			setError(err instanceof Error ? err.message : 'Failed to start sign-in')
 		}
 	}
 
@@ -157,6 +129,7 @@ function SignupPage() {
 							}}
 							placeholder="Your name"
 							autoFocus
+							disabled={sent}
 						/>
 					</div>
 
@@ -170,6 +143,7 @@ function SignupPage() {
 								setError('')
 							}}
 							placeholder="Company name"
+							disabled={sent}
 						/>
 					</div>
 
@@ -183,6 +157,7 @@ function SignupPage() {
 								setError('')
 							}}
 							placeholder="What you do"
+							disabled={sent}
 						/>
 					</div>
 
@@ -196,49 +171,21 @@ function SignupPage() {
 								setError('')
 							}}
 							placeholder="you@example.com"
-						/>
-					</div>
-
-					<div>
-						<Label className="mb-1 text-muted-foreground">Password</Label>
-						<Input
-							type="password"
-							value={password}
-							onChange={(e) => {
-								setPassword(e.target.value)
-								setError('')
-							}}
-							placeholder="At least 8 characters"
-						/>
-					</div>
-
-					<div>
-						<Label className="mb-1 text-muted-foreground">Confirm password</Label>
-						<Input
-							type="password"
-							value={confirmPassword}
-							onChange={(e) => {
-								setConfirmPassword(e.target.value)
-								setError('')
-							}}
-							placeholder="Repeat your password"
+							disabled={sent}
 						/>
 					</div>
 
 					{error && <p className="text-xs text-error">{error}</p>}
 
-					<Button type="submit" disabled={loading} className="w-full">
-						{loading ? 'Creating...' : 'Create account'}
+					<Button type="submit" disabled={loading || sent} className="w-full">
+						{loading ? 'Sending…' : sent ? 'Check your email' : 'Create account'}
 					</Button>
+					{sent && !error && (
+						<p className="text-center text-xs text-muted-foreground">
+							We sent a sign-in link to {email.trim()}.
+						</p>
+					)}
 				</form>
-
-				<div className="flex items-center gap-3">
-					<div className="h-px flex-1 bg-border" />
-					<span className="text-xs text-muted-foreground">or</span>
-					<div className="h-px flex-1 bg-border" />
-				</div>
-
-				<VaerkstedAuthButton email={email} />
 
 				<p className="text-center text-xs text-muted-foreground">
 					Already have an account?{' '}

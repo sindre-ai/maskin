@@ -6,7 +6,10 @@ import { setApiKey, setStoredActor } from '../lib/auth'
 
 /**
  * "Continue with vaerksted" — vaerksted-auth-and-sync.md §6/§8 and the
- * implementation plan's M5. Client-side half of the handshake:
+ * implementation plan's M5. Now the ONLY sign-in/sign-up path in
+ * apps/web (native password auth was removed from the UI — see
+ * routes/login.tsx and routes/signup.tsx). Client-side half of the
+ * handshake:
  *
  *   1. Supabase magic-link sign-in against vaerksted-auth's OWN dedicated
  *      Supabase project (VITE_VAERKSTED_SUPABASE_URL/ANON_KEY — not
@@ -60,19 +63,63 @@ export function isVaerkstedAuthConfigured(): boolean {
 	)
 }
 
+export interface VaerkstedProfileInput {
+	name: string
+	organization: string
+	role: string
+}
+
+// Name/organization/role, collected inline on /signup *before* the magic
+// link is sent (matching the pre-vaerksted native signup form's layout —
+// no post-redirect popup). The magic-link click very often opens in a new
+// tab/window (email clients, OS link handling), so this must survive across
+// tabs on the same origin — sessionStorage would not, localStorage does.
+// Same pattern as the pre-existing maskin_pending_prompt/maskin_anon_id
+// landing-page handoff keys just below in routes/signup.tsx. Cleared as soon
+// as it's consumed (or found irrelevant, e.g. an existing-actor login) so a
+// stale profile never leaks into an unrelated later signup.
+const PENDING_PROFILE_KEY = 'maskin_vaerksted_pending_profile'
+
+function stashPendingProfile(profile: VaerkstedProfileInput): void {
+	try {
+		localStorage.setItem(PENDING_PROFILE_KEY, JSON.stringify(profile))
+	} catch (err) {
+		console.error('[maskin] failed to stash vaerksted signup profile', err)
+	}
+}
+
+function takePendingProfile(): VaerkstedProfileInput | null {
+	try {
+		const raw = localStorage.getItem(PENDING_PROFILE_KEY)
+		localStorage.removeItem(PENDING_PROFILE_KEY)
+		if (!raw) return null
+		const parsed = JSON.parse(raw)
+		if (
+			typeof parsed?.name === 'string' &&
+			typeof parsed?.organization === 'string' &&
+			typeof parsed?.role === 'string'
+		) {
+			return parsed
+		}
+		return null
+	} catch (err) {
+		console.error('[maskin] failed to read stashed vaerksted signup profile', err)
+		return null
+	}
+}
+
 export function useVaerkstedAuth() {
 	const navigate = useNavigate()
 	const [loading, setLoading] = useState(false)
-	// Set when completeFromRedirect() lands on a brand-new actor — the
-	// vaerksted handshake proves identity but never collects name/
-	// organization/role the way the native /signup form does, so navigation
-	// is held here until completeProfile() fills that gap. null in every
-	// other case (login, or link-by-email to an existing actor that already
-	// has this info).
-	const [pendingProfile, setPendingProfile] = useState<ActorWithKey | null>(null)
 
-	/** Step 1 — send the magic-link email. Errors on missing config or a bad email. */
-	const sendMagicLink = useCallback(async (email: string) => {
+	/**
+	 * Step 1 — send the magic-link email. `profile` is only meaningful for a
+	 * signup (routes/signup.tsx) — pass it and it's stashed for
+	 * completeFromRedirect() to apply automatically if this turns out to be a
+	 * brand-new actor; omit it for a plain login (routes/login.tsx), which
+	 * never collects it.
+	 */
+	const sendMagicLink = useCallback(async (email: string, profile?: VaerkstedProfileInput) => {
 		const client = await getVaerkstedSupabaseClient()
 		const baseUrl = getVaerkstedAuthBaseUrl()
 		if (!client || !baseUrl) {
@@ -80,6 +127,9 @@ export function useVaerkstedAuth() {
 		}
 		setLoading(true)
 		try {
+			if (profile) {
+				stashPendingProfile(profile)
+			}
 			const { error } = await client.auth.signInWithOtp({
 				email,
 				options: { emailRedirectTo: window.location.href },
@@ -91,9 +141,48 @@ export function useVaerkstedAuth() {
 	}, [])
 
 	/**
+	 * Applies a brand-new actor's stashed profile (if any survived the
+	 * redirect — see PENDING_PROFILE_KEY's doc comment for when it doesn't):
+	 * renames the actor from its email-placeholder name, and writes the same
+	 * "signup capture" knowledge object the old native /signup form wrote
+	 * (packages/shared/src/schemas/signup-capture.ts) — org/role are
+	 * otherwise never captured anywhere, and this is what the Strategist
+	 * agent's research-on-signup trigger reads back. Best-effort on the
+	 * knowledge write: a brand-new actor with a working name but a missing/
+	 * failed knowledge object is still a fully usable account, unlike an
+	 * actor with no workspace at all (a previously-fixed bug this flow must
+	 * not reintroduce).
+	 */
+	const applyPendingProfile = useCallback(async (actor: ActorWithKey) => {
+		const profile = takePendingProfile()
+		if (!profile) return
+
+		const name = profile.name.trim()
+		if (!name) return
+
+		await api.actors.update(actor.id, { name }, actor.workspace_id)
+		setStoredActor({ id: actor.id, name, type: actor.type, email: actor.email })
+
+		if (actor.workspace_id) {
+			const knowledge = buildSignupCaptureKnowledge({
+				name,
+				organization: profile.organization.trim(),
+				role: profile.role.trim(),
+			})
+			await api.objects.create(actor.workspace_id, knowledge).catch((err) => {
+				console.error('[maskin] failed to write vaerksted signup capture knowledge', err)
+			})
+		}
+	}, [])
+
+	/**
 	 * Steps 2-3 — called on mount of any page that can be a magic-link/OAuth
 	 * redirect target. No-ops (resolves to `null`) when there's no pending
 	 * Supabase session, which is the common case for a normal page load.
+	 * Callers (routes/login.tsx, routes/signup.tsx) can inspect the resolved
+	 * actor's `is_new_actor` for their own page-specific post-signup side
+	 * effects (analytics, landing-page handoff) — this function only owns
+	 * the identity handshake + profile application + navigation.
 	 */
 	const completeFromRedirect = useCallback(async () => {
 		const client = await getVaerkstedSupabaseClient()
@@ -133,10 +222,12 @@ export function useVaerkstedAuth() {
 			await client.auth.signOut()
 
 			if (result.is_new_actor) {
-				// Hold here instead of navigating — VaerkstedCompleteProfile
-				// renders next and calls completeProfile() to finish up.
-				setPendingProfile(result)
-				return result
+				await applyPendingProfile(result)
+			} else {
+				// Not a new actor (login, or link-by-email) — any stashed profile
+				// from an unrelated/earlier signup attempt is stale, discard it
+				// rather than let it leak into a future signup.
+				takePendingProfile()
 			}
 
 			navigate({ to: '/' })
@@ -144,53 +235,7 @@ export function useVaerkstedAuth() {
 		} finally {
 			setLoading(false)
 		}
-	}, [navigate])
+	}, [navigate, applyPendingProfile])
 
-	/**
-	 * Finishes a brand-new-actor signup: renames the actor (it starts out
-	 * named after its email, same fallback the backend uses), and writes the
-	 * same "signup capture" knowledge object the native /signup form writes
-	 * (packages/shared/src/schemas/signup-capture.ts) — org/role never get
-	 * asked for anywhere else, and this is what the Strategist agent's
-	 * research-on-signup trigger reads back. Best-effort on the knowledge
-	 * write: a brand-new actor with a working name but a missing/failed
-	 * knowledge object is still a fully usable account, unlike an actor with
-	 * no workspace at all (the bug this whole flow exists to avoid).
-	 */
-	const completeProfile = useCallback(
-		async (input: { name: string; organization: string; role: string }) => {
-			if (!pendingProfile) return
-
-			const name = input.name.trim()
-			setLoading(true)
-			try {
-				await api.actors.update(pendingProfile.id, { name }, pendingProfile.workspace_id)
-				setStoredActor({
-					id: pendingProfile.id,
-					name,
-					type: pendingProfile.type,
-					email: pendingProfile.email,
-				})
-
-				if (pendingProfile.workspace_id) {
-					const knowledge = buildSignupCaptureKnowledge({
-						name,
-						organization: input.organization.trim(),
-						role: input.role.trim(),
-					})
-					await api.objects.create(pendingProfile.workspace_id, knowledge).catch((err) => {
-						console.error('[maskin] failed to write vaerksted signup capture knowledge', err)
-					})
-				}
-
-				setPendingProfile(null)
-				navigate({ to: '/' })
-			} finally {
-				setLoading(false)
-			}
-		},
-		[pendingProfile, navigate],
-	)
-
-	return { loading, sendMagicLink, completeFromRedirect, pendingProfile, completeProfile }
+	return { loading, sendMagicLink, completeFromRedirect }
 }
