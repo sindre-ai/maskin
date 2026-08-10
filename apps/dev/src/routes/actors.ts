@@ -23,6 +23,7 @@ import {
 } from '@maskin/db/schema'
 import {
 	type AgentState,
+	CHIEF_OF_STAFF_DEFAULT,
 	PLATFORM_MCP_PRESET,
 	WORKSPACE_COACH_DEFAULT,
 	createActorSchema,
@@ -45,7 +46,11 @@ import { serialize, serializeArray } from '../lib/serialize'
 import { isWorkspaceMember } from '../lib/workspace-auth'
 import type { AgentStorageManager } from '../services/agent-storage'
 import type { SessionManager } from '../services/session-manager'
-import { bootstrapDefaultAgents } from '../services/workspace-bootstrap'
+import {
+	bootstrapDefaultAgents,
+	ensureChiefOfStaffActor,
+	pinDefaultAgentIfUnset,
+} from '../services/workspace-bootstrap'
 
 type Env = {
 	Variables: {
@@ -223,32 +228,13 @@ app.openapi(createActorRoute, async (c) => {
 				role: 'owner',
 			})
 
-			// Seed Workspace Coach — the built-in meta-agent shipped with every workspace.
-			// apiKey is required: without it, the agent's container boots with an empty
-			// Bearer token and MCP writes either 401 or — worse — fall back to a key
-			// that resolves to a different actor, misattributing every comment.
-			const [coach] = await tx
-				.insert(actors)
-				.values({
-					type: WORKSPACE_COACH_DEFAULT.type,
-					name: WORKSPACE_COACH_DEFAULT.name,
-					isSystem: WORKSPACE_COACH_DEFAULT.isSystem,
-					systemPrompt: WORKSPACE_COACH_DEFAULT.systemPrompt,
-					llmProvider: WORKSPACE_COACH_DEFAULT.llmProvider,
-					llmConfig: WORKSPACE_COACH_DEFAULT.llmConfig,
-					tools: WORKSPACE_COACH_DEFAULT.tools,
-					apiKey: generateApiKey().key,
-					createdBy: actor.id,
-				})
-				.returning()
-
-			if (!coach) throw new Error('Failed to seed Workspace Coach actor')
-
-			await tx.insert(workspaceMembers).values({
-				workspaceId: workspace.id,
-				actorId: coach.id,
-				role: 'member',
-			})
+			// Seed Chief of Staff — the only agent a new workspace starts with.
+			// apiKey is required (handled inside ensureChiefOfStaffActor): without it,
+			// the agent's container boots with an empty Bearer token and MCP writes
+			// either 401 or — worse — fall back to a key that resolves to a different
+			// actor, misattributing every comment.
+			const chiefId = await ensureChiefOfStaffActor(tx, workspace.id, actor.id)
+			await pinDefaultAgentIfUnset(tx, workspace.id, chiefId)
 
 			return workspace
 		})
@@ -822,7 +808,7 @@ app.openapi(regenerateApiKeyRoute, (async (c) => {
 	return c.json({ api_key: key })
 }) as RouteHandler<typeof regenerateApiKeyRoute, Env>)
 
-// POST /:id/reset - Reset system actor to factory defaults (Workspace Coach)
+// POST /:id/reset - Reset system actor to factory defaults
 const resetActorRoute = createRoute({
 	method: 'post',
 	path: '/{id}/reset',
@@ -872,15 +858,21 @@ app.openapi(resetActorRoute, (async (c) => {
 		return c.json(createApiError('FORBIDDEN', 'Only system actors can be reset to defaults'), 403)
 	}
 
+	// Which factory template this system actor resets to. Chief of Staff is the
+	// agent every workspace is seeded with; Workspace Coach is still installable
+	// (marketplace loops, older workspaces) and stays the fallback.
+	const factory =
+		existing.name === CHIEF_OF_STAFF_DEFAULT.name ? CHIEF_OF_STAFF_DEFAULT : WORKSPACE_COACH_DEFAULT
+
 	const [updated] = await db
 		.update(actors)
 		.set({
-			name: WORKSPACE_COACH_DEFAULT.name,
+			name: factory.name,
 			description: null,
-			systemPrompt: WORKSPACE_COACH_DEFAULT.systemPrompt,
-			llmProvider: WORKSPACE_COACH_DEFAULT.llmProvider,
-			llmConfig: WORKSPACE_COACH_DEFAULT.llmConfig,
-			tools: WORKSPACE_COACH_DEFAULT.tools,
+			systemPrompt: factory.systemPrompt,
+			llmProvider: factory.llmProvider,
+			llmConfig: factory.llmConfig,
+			tools: factory.tools,
 			memory: null,
 			updatedAt: new Date(),
 		})

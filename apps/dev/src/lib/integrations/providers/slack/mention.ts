@@ -1,6 +1,6 @@
 import type { Database } from '@maskin/db'
 import { actors, integrations, slackUserLinks, workspaceMembers } from '@maskin/db/schema'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 import { frontendBaseUrl } from '../../../file-urls'
 import { logger } from '../../../logger'
 import { TokenManager } from '../../oauth/token-manager'
@@ -12,7 +12,11 @@ import { isSlackBotToken } from './mcp-server'
 // escape, and app.css tokens don't reach the Slack client. Matches T7's App
 // Home usage — one hex, one place.
 const FALU_RED = '#7C1F1A'
-const WORKSPACE_COACH_NAME = 'Workspace Coach'
+// The agent that answers Slack mentions, in preference order. Chief of Staff
+// is the agent every workspace is seeded with; Workspace Coach is still around
+// in older workspaces and via marketplace loops.
+const ENTRY_AGENT_NAMES = ['Chief of Staff', 'Workspace Coach'] as const
+const DEFAULT_ENTRY_AGENT_NAME = ENTRY_AGENT_NAMES[0]
 
 // Slack returns one of these on chat.* methods when the bot token is no
 // longer valid — user uninstalled, keys rotated, admin disabled the install.
@@ -78,7 +82,7 @@ function buildSubscriptBlock(label: string): Record<string, unknown> {
 }
 
 export function buildWorkingAckBlocks(
-	label = WORKSPACE_COACH_NAME,
+	label: string = DEFAULT_ENTRY_AGENT_NAME,
 ): Array<Record<string, unknown>> {
 	return [
 		{ type: 'section', text: { type: 'mrkdwn', text: '_Working…_' } },
@@ -87,7 +91,7 @@ export function buildWorkingAckBlocks(
 }
 
 export function buildUnlinkedAckBlocks(
-	label = WORKSPACE_COACH_NAME,
+	label: string = DEFAULT_ENTRY_AGENT_NAME,
 ): Array<Record<string, unknown>> {
 	const linkUrl = `${frontendBaseUrl()}/integrations/slack`
 	return [
@@ -147,7 +151,7 @@ async function markIntegrationRevoked(db: Database, integrationId: string): Prom
 	}
 }
 
-async function findWorkspaceCoach(
+async function findEntryAgent(
 	db: Database,
 	workspaceId: string,
 ): Promise<{ id: string; name: string } | null> {
@@ -156,10 +160,18 @@ async function findWorkspaceCoach(
 		.from(actors)
 		.innerJoin(workspaceMembers, eq(workspaceMembers.actorId, actors.id))
 		.where(
-			and(eq(workspaceMembers.workspaceId, workspaceId), eq(actors.name, WORKSPACE_COACH_NAME)),
+			and(
+				eq(workspaceMembers.workspaceId, workspaceId),
+				inArray(actors.name, [...ENTRY_AGENT_NAMES]),
+			),
 		)
-		.limit(1)
-	return rows[0] ?? null
+		.limit(ENTRY_AGENT_NAMES.length)
+	// Prefer Chief of Staff when a workspace happens to have both.
+	for (const name of ENTRY_AGENT_NAMES) {
+		const match = rows.find((r) => r.name === name)
+		if (match) return match
+	}
+	return null
 }
 
 export interface HandleMentionArgs {
@@ -223,8 +235,8 @@ export async function handleSlackMention(args: HandleMentionArgs): Promise<void>
 		return
 	}
 
-	const coach = link ? await findWorkspaceCoach(db, link.defaultWorkspaceId) : null
-	const agentLabel = coach?.name ?? WORKSPACE_COACH_NAME
+	const coach = link ? await findEntryAgent(db, link.defaultWorkspaceId) : null
+	const agentLabel = coach?.name ?? DEFAULT_ENTRY_AGENT_NAME
 
 	const blocks = link ? buildWorkingAckBlocks(agentLabel) : buildUnlinkedAckBlocks(agentLabel)
 	const text = link

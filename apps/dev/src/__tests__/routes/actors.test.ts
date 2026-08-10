@@ -83,16 +83,16 @@ describe('Actors Routes', () => {
 			expect(inserted.tools?.mcpServers.maskin.url).toBe('https://custom/mcp')
 		})
 
-		it('seeds Workspace Coach with a generated apiKey when auto-creating a workspace', async () => {
+		it('seeds Chief of Staff with a generated apiKey when auto-creating a workspace', async () => {
 			const actor = buildActor({ type: 'human' })
-			const coach = buildActor({ type: 'agent', name: 'Workspace Coach', isSystem: true })
+			const chief = buildActor({ type: 'agent', name: 'Chief of Staff', isSystem: true })
 			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
 			mockResults.insertQueue = [
 				[actor], // human actor insert (already has apiKey via generateApiKey)
 				[{ id: randomUUID(), name: 'ws' }], // workspaces insert
 				[{}], // owner workspaceMembers insert
-				[coach], // Workspace Coach actor insert — must carry apiKey
-				[{}], // Workspace Coach workspaceMembers insert
+				[chief], // Chief of Staff actor insert — must carry apiKey
+				[{}], // Chief of Staff workspaceMembers insert
 			]
 
 			const res = await app.request(
@@ -100,15 +100,23 @@ describe('Actors Routes', () => {
 			)
 
 			expect(res.status).toBe(201)
-			// inserts: [actor, workspace, owner-member, coach, coach-member]
-			const coachInsert = calls.inserts[3] as { apiKey?: string; isSystem?: boolean }
-			expect(coachInsert.isSystem).toBe(true)
-			expect(coachInsert.apiKey).toBeDefined()
-			expect(coachInsert.apiKey).toMatch(/^ank_/)
+			// inserts: [actor, workspace, owner-member, chief, chief-member]
+			const chiefInsert = calls.inserts[3] as {
+				apiKey?: string
+				isSystem?: boolean
+				name?: string
+			}
+			expect(chiefInsert.name).toBe('Chief of Staff')
+			expect(chiefInsert.isSystem).toBe(true)
+			expect(chiefInsert.apiKey).toBeDefined()
+			expect(chiefInsert.apiKey).toMatch(/^ank_/)
 
 			// And it must NOT be the same key as the creator's key
 			const creatorInsert = calls.inserts[0] as { apiKey?: string }
-			expect(coachInsert.apiKey).not.toBe(creatorInsert.apiKey)
+			expect(chiefInsert.apiKey).not.toBe(creatorInsert.apiKey)
+
+			// Only the Chief of Staff is seeded — no other agents.
+			expect(calls.inserts).toHaveLength(5)
 		})
 
 		it('does not default tools when creating a human actor', async () => {

@@ -299,13 +299,13 @@ describe('handleSlackMention', () => {
 		expect(updates).toEqual([])
 	})
 
-	it('falls back to the literal label when the workspace has no Coach actor seeded', async () => {
+	it('falls back to the literal label when the workspace has no entry agent seeded', async () => {
 		getValidTokenMock.mockResolvedValue('xoxb-bot-token')
 		slackPostMock.mockResolvedValue({ ok: true })
 		const { db } = makeFakeDb({ link: { actorId: 'a', defaultWorkspaceId: 'w' }, coach: null })
 		await handleSlackMention({ db: db as never, ...baseArgs() })
 		const [, , body] = slackPostMock.mock.calls[0] as [string, string, Record<string, unknown>]
-		expect(body.username).toBe('Workspace Coach')
-		expect(JSON.stringify(body.blocks)).toContain('↳ Workspace Coach')
+		expect(body.username).toBe('Chief of Staff')
+		expect(JSON.stringify(body.blocks)).toContain('↳ Chief of Staff')
 	})
 })

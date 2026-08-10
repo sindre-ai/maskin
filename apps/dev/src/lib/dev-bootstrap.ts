@@ -7,7 +7,7 @@ import {
 	workspaceMembers,
 	workspaces,
 } from '@maskin/db/schema'
-import { CHIEF_OF_STAFF_DEFAULT, WORKSPACE_COACH_DEFAULT } from '@maskin/shared'
+import { CHIEF_OF_STAFF_DEFAULT } from '@maskin/shared'
 import { and, eq, isNotNull } from 'drizzle-orm'
 import type { AgentStorageManager } from '../services/agent-storage'
 import { bootstrapDefaultAgents } from '../services/workspace-bootstrap'
@@ -361,36 +361,13 @@ export async function maybeBootstrapDev(
 			role: 'owner',
 		})
 
-		// Seed Workspace Coach — the built-in meta-agent shipped with every workspace.
-		// apiKey is required (see comment in actors.ts) — without it the agent's
-		// container has no identity to authenticate MCP writes with.
-		const [coach] = await tx
-			.insert(actors)
-			.values({
-				type: WORKSPACE_COACH_DEFAULT.type,
-				name: WORKSPACE_COACH_DEFAULT.name,
-				isSystem: WORKSPACE_COACH_DEFAULT.isSystem,
-				systemPrompt: WORKSPACE_COACH_DEFAULT.systemPrompt,
-				llmProvider: WORKSPACE_COACH_DEFAULT.llmProvider,
-				llmConfig: WORKSPACE_COACH_DEFAULT.llmConfig,
-				tools: WORKSPACE_COACH_DEFAULT.tools,
-				apiKey: generateApiKey().key,
-				createdBy: actor.id,
-			})
-			.returning()
-
-		if (!coach) throw new Error('dev bootstrap: failed to seed Workspace Coach actor')
-
-		await tx.insert(workspaceMembers).values({
-			workspaceId: ws.id,
-			actorId: coach.id,
-			role: 'member',
-		})
-
-		// Seed Chief of Staff synchronously so we can capture its actor id and
-		// pin it as this workspace's default chat agent in the same tx.
-		// bootstrapDefaultAgents() also has an idempotent CoS name-check so the
-		// post-commit call will simply skip this actor.
+		// Seed Chief of Staff — the only agent a new workspace starts with —
+		// synchronously so we can capture its actor id and pin it as this
+		// workspace's default chat agent in the same tx. bootstrapDefaultAgents()
+		// also has an idempotent CoS name-check so the post-commit call will
+		// simply skip this actor. apiKey is required (see comment in actors.ts) —
+		// without it the agent's container has no identity to authenticate MCP
+		// writes with.
 		const [chief] = await tx
 			.insert(actors)
 			.values({
@@ -426,8 +403,8 @@ export async function maybeBootstrapDev(
 
 	if (!workspace) throw new Error('dev bootstrap: failed to create workspace')
 
-	// Seed Driver and Strategist async (Workspace Coach was already seeded above).
-	// bootstrapDefaultAgents is idempotent — it skips Workspace Coach by name.
+	// Safety net for the default-agent set (Chief of Staff was already seeded
+	// above). bootstrapDefaultAgents is idempotent — it skips actors by name.
 	if (agentStorage) {
 		bootstrapDefaultAgents(db, agentStorage, workspace.id, actor.id).catch((err) =>
 			logger.error('dev bootstrap: default agent seeding failed', {

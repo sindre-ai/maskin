@@ -4,17 +4,19 @@ import { jsonGet, jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
 
 const { default: workspacesRoutes } = await import('../../routes/workspaces')
+const { DEFAULT_AGENT_IDS } = await import('../../services/workspace-bootstrap')
 
-// Ordered actor names for the six default agents. Seed inserts run in this order:
+const FIRST_DEFAULT_AGENT_ID = DEFAULT_AGENT_IDS[0]
+
+// Ordered actor names for the default agents a new workspace is seeded with —
+// deliberately just the Chief of Staff. Seed inserts run in this order:
 // workspaces → owner member → for each agent [actor insert, member insert].
-const DEFAULT_AGENT_NAMES = [
-	'Workspace Coach',
-	'Chief of Staff',
-	'Workspace Driver',
-	'Strategist',
-	'Insights Triage Agent',
-	'Research Agent',
-] as const
+const DEFAULT_AGENT_NAMES = ['Chief of Staff'] as const
+
+// Insert-call indices, derived from the seed order above so the assertions hold
+// whatever the default-agent count is.
+const ACTOR_INSERT_INDEXES = DEFAULT_AGENT_NAMES.map((_, i) => 2 + i * 2)
+const MEMBER_INSERT_INDEXES = ACTOR_INSERT_INDEXES.map((i) => i + 1)
 
 function buildDefaultAgentSeedQueue(ws: ReturnType<typeof buildWorkspace>) {
 	const queue: unknown[][] = [
@@ -30,7 +32,7 @@ function buildDefaultAgentSeedQueue(ws: ReturnType<typeof buildWorkspace>) {
 
 describe('Workspaces Routes', () => {
 	describe('POST /api/workspaces', () => {
-		it('creates a workspace and seeds all 6 default agents, returning 201', async () => {
+		it('creates a workspace and seeds the default agents, returning 201', async () => {
 			const ws = buildWorkspace()
 			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
 			mockResults.insertQueue = buildDefaultAgentSeedQueue(ws)
@@ -56,8 +58,7 @@ describe('Workspaces Routes', () => {
 
 			expect(res.status).toBe(201)
 			// inserts: [workspace, owner-member, agent1-actor, agent1-member, agent2-actor, ...]
-			// The 6 actor inserts are at indices 2, 4, 6, 8, 10, 12.
-			const actorInserts = [2, 4, 6, 8, 10, 12].map(
+			const actorInserts = ACTOR_INSERT_INDEXES.map(
 				(i) => calls.inserts[i] as { apiKey?: string; type?: string; name?: string },
 			)
 			expect(actorInserts.map((a) => a.name)).toEqual([...DEFAULT_AGENT_NAMES])
@@ -65,8 +66,7 @@ describe('Workspaces Routes', () => {
 				expect(insert.type).toBe('agent')
 				expect(insert.apiKey).toMatch(/^ank_/)
 			}
-			// Member roles for the 6 default agents (at 3, 5, 7, 9, 11, 13).
-			const memberInserts = [3, 5, 7, 9, 11, 13].map((i) => calls.inserts[i] as { role?: string })
+			const memberInserts = MEMBER_INSERT_INDEXES.map((i) => calls.inserts[i] as { role?: string })
 			for (const insert of memberInserts) {
 				expect(insert.role).toBe('member')
 			}
@@ -146,10 +146,10 @@ describe('Workspaces Routes', () => {
 			expect(body.error.code).toBe('INTERNAL_ERROR')
 			// The response names the failing agent and the underlying error class,
 			// not a generic "failed to create workspace" message.
-			expect(body.error.message).toContain('workspace_coach')
+			expect(body.error.message).toContain(FIRST_DEFAULT_AGENT_ID)
 			expect(body.error.details).toEqual(
 				expect.arrayContaining([
-					expect.objectContaining({ field: 'agent_id', message: 'workspace_coach' }),
+					expect.objectContaining({ field: 'agent_id', message: FIRST_DEFAULT_AGENT_ID }),
 					expect.objectContaining({ field: 'error_class' }),
 				]),
 			)

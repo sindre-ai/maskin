@@ -21,19 +21,21 @@ import { and, eq } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import { type AgentStorageManager, workspaceSkillKey } from './agent-storage'
 
-export const DEFAULT_AGENT_IDS = [
-	'workspace_coach',
-	'chief_of_staff',
-	'workspace_driver',
-	'strategist',
-	'insights_triage',
-	'research_agent',
-] as const
+/**
+ * Agents every new workspace starts with. Deliberately just the Chief of
+ * Staff — a fresh workspace should not arrive pre-populated with a roster the
+ * owner didn't ask for. Everything else is installed on demand (marketplace
+ * loops, templates via `get_started`, or manual agent creation).
+ */
+export const DEFAULT_AGENT_IDS = ['chief_of_staff'] as const
 
 type DefaultAgentId = (typeof DEFAULT_AGENT_IDS)[number]
 
+// Templated agents (skills + triggers) to seed post-commit. Chief of Staff is
+// not part of DEVELOPMENT_AGENTS — it is handled separately below — so this is
+// empty while CoS is the only default.
 const defaultAgents = DEVELOPMENT_AGENTS.filter((a) =>
-	DEFAULT_AGENT_IDS.includes(a.$id as DefaultAgentId),
+	(DEFAULT_AGENT_IDS as readonly string[]).includes(a.$id),
 )
 
 // A caller can pass either the top-level Database or a Drizzle tx handle —
@@ -73,7 +75,7 @@ type ActorSpec = {
 	tools: Record<string, unknown> | null
 }
 
-function resolveActorSpec(agentId: DefaultAgentId): ActorSpec {
+function resolveActorSpec(agentId: string): ActorSpec {
 	if (agentId === 'workspace_coach') {
 		return {
 			type: WORKSPACE_COACH_DEFAULT.type,
@@ -268,11 +270,10 @@ export async function bootstrapDefaultAgents(
 	// Map from $id → created actor UUID — used to wire triggers after all agents are seeded.
 	const actorIdMap: Record<string, string> = {}
 
-	// Seed system agents that live outside DEVELOPMENT_AGENTS (Chief of Staff).
-	// Workspace Coach is seeded synchronously by the workspace-create paths, so
-	// its name-check would only ever hit "existing" here — Chief of Staff is the
-	// one that actually needs post-commit seeding via this function. Idempotent
-	// per workspace via the actors.name check.
+	// Chief of Staff lives outside DEVELOPMENT_AGENTS and is the only agent a new
+	// workspace starts with. The workspace-create paths seed it synchronously, so
+	// this is a safety net for paths that don't — idempotent per workspace via
+	// the actors.name check.
 	let chiefId: string | null = null
 	try {
 		chiefId = await ensureChiefOfStaffActor(db, workspaceId, createdBy)
@@ -344,8 +345,8 @@ export async function bootstrapDefaultAgents(
 		}
 
 		// Seed skills for this agent. Runs for both newly-created and pre-existing actors so
-		// that Workspace Coach's skills (seeded synchronously in the workspace transaction)
-		// are still attached here. Both inserts use onConflictDoNothing so this is idempotent.
+		// that an agent seeded synchronously in the workspace transaction still gets its
+		// skills attached here. Both inserts use onConflictDoNothing so this is idempotent.
 		for (const skill of agent.skills ?? []) {
 			try {
 				let parsed: ReturnType<typeof parseSkillMd> | null = null

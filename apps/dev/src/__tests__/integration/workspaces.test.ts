@@ -40,14 +40,9 @@ vi.mock('../../services/workspace-bootstrap', async () => {
 const { default: workspacesRoutes } = await import('../../routes/workspaces')
 const { SeedAgentError } = await import('../../services/workspace-bootstrap')
 
-const DEFAULT_AGENT_NAMES = [
-	'Workspace Coach',
-	'Chief of Staff',
-	'Workspace Driver',
-	'Strategist',
-	'Insights Triage Agent',
-	'Research Agent',
-]
+// A new workspace is seeded with the Chief of Staff only — everything else is
+// installed on demand.
+const DEFAULT_AGENT_NAMES = ['Chief of Staff']
 
 function createApp() {
 	return createIntegrationApp({ path: '/api/workspaces', module: workspacesRoutes })
@@ -206,20 +201,12 @@ describe('Workspaces Integration', () => {
 			const listRes = await app.request(jsonGet(`/api/workspaces/${ws.id}/members`))
 			expect(listRes.status).toBe(200)
 			const members = await listRes.json()
-			// Creator (owner) + all 6 default agents (seeded atomically inside the
-			// create transaction) + the newly-added member = 8.
-			expect(members).toHaveLength(8)
+			// Creator (owner) + the default agents (seeded atomically inside the
+			// create transaction) + the newly-added member.
+			const expectedMembers = DEFAULT_AGENT_NAMES.length + 2
+			expect(members).toHaveLength(expectedMembers)
 			const roles = members.map((m: { role: string }) => m.role).sort()
-			expect(roles).toEqual([
-				'member',
-				'member',
-				'member',
-				'member',
-				'member',
-				'member',
-				'member',
-				'owner',
-			])
+			expect(roles).toEqual([...Array(expectedMembers - 1).fill('member'), 'owner'])
 		})
 	})
 
