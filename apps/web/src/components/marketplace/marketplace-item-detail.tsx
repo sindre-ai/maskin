@@ -133,6 +133,11 @@ function snapshotRows(item: MarketplaceLoopItem): [string, string][] {
 			if (provider) rows.push(['Provider', provider])
 			break
 		}
+		case 'extension': {
+			const extensionId = str(snapshot.extensionId) ?? str(snapshot.extension_id)
+			if (extensionId) rows.push(['Extension', extensionId])
+			break
+		}
 	}
 
 	return rows

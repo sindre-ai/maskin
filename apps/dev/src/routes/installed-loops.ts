@@ -38,6 +38,7 @@ import { isWorkspaceMember } from '../lib/workspace-auth'
 import { type AgentStorageManager, workspaceSkillKey } from '../services/agent-storage'
 import {
 	type MarketplaceItemType,
+	applyExtensionSnapshot,
 	buildActorInsert,
 	buildIntegrationInsert,
 	buildSkillInsert,
@@ -120,6 +121,7 @@ const installedLoopResponseSchema = z.object({
 		triggers: z.number(),
 		skills: z.number(),
 		integrations: z.number(),
+		extensions: z.number(),
 	}),
 	metadata: jsonbField.optional(),
 })
@@ -292,7 +294,7 @@ app.openapi(installLoopRoute, async (c) => {
 		return c.json(createApiError('CONFLICT', 'Loop is already installed in this workspace'), 409)
 	}
 
-	const provisioned = { actors: 0, triggers: 0, skills: 0, integrations: 0 }
+	const provisioned = { actors: 0, triggers: 0, skills: 0, integrations: 0, extensions: 0 }
 
 	let installed: typeof installedLoops.$inferSelect
 	try {
@@ -459,6 +461,17 @@ app.openapi(installLoopRoute, async (c) => {
 						if (!row) throw new Error(`insert returned no row for integration ${item.sourceItemId}`)
 						sourceToLocal.set(item.sourceItemId, row.id)
 						provisioned.integrations++
+						break
+					}
+					case 'extension': {
+						// Extensions provision no row — they're enabled by merging their
+						// defaults into workspace settings. Nothing else in the loop can
+						// be wired to one, so this stays out of `sourceToLocal`.
+						// `changed: false` means the workspace already had the extension
+						// enabled (by another loop, or as a workspace default) — a reuse,
+						// not a provision, so it doesn't count.
+						const { changed } = await applyExtensionSnapshot(tx, workspaceId, snapshot)
+						if (changed) provisioned.extensions++
 						break
 					}
 					case 'trigger':
@@ -817,6 +830,14 @@ app.openapi(forkLoopRoute, async (c) => {
 //           non-actor element types. The linked Loop object is deleted too —
 //           its `trigger_ids` would otherwise point at rows that no longer
 //           exist.
+//
+// Extensions are deliberately outside this: neither branch disables an
+// extension the loop enabled. Disabling one hides every object of its types (a
+// workspace that installed the Work Extension loop and later removed it would
+// lose sight of all its insights/bets/tasks) — losing the objects is far worse
+// than leaving an extension enabled, and nothing else about the uninstall is
+// destructive to user data. Disabling an extension is an explicit
+// `PATCH /workspaces/:id` on `settings.enabled_modules`.
 //
 //   true  — for locked (managed) installs: strip `installed_loop_id` from
 //            all element metadata so they become workspace-owned (same outcome

@@ -74,6 +74,31 @@ describe('MarketplaceLoopCard', () => {
 		expect(screen.queryByText(/Forked from/)).not.toBeInTheDocument()
 	})
 
+	// A loop whose only content is an extension isn't a loop in any sense the
+	// user cares about — the CTA names what's actually being installed.
+	it('shows Install extension CTA for an extension-only loop', () => {
+		render(
+			<MarketplaceLoopCard
+				workspaceId={workspaceId}
+				loop={loop({ name: 'CRM Extension', item_types: ['extension'] })}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		expect(screen.getByRole('button', { name: /install extension/i })).toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /install loop/i })).not.toBeInTheDocument()
+	})
+
+	it('keeps Install loop when an extension ships alongside other items', () => {
+		render(
+			<MarketplaceLoopCard
+				workspaceId={workspaceId}
+				loop={loop({ item_types: ['actor', 'extension'] })}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		expect(screen.getByRole('button', { name: /install loop/i })).toBeInTheDocument()
+	})
+
 	it('shows Managed badge and Fork button when locked', () => {
 		render(<MarketplaceLoopCard workspaceId={workspaceId} loop={loop()} install={install()} />, {
 			wrapper: TestWrapper,
@@ -81,6 +106,21 @@ describe('MarketplaceLoopCard', () => {
 		expect(screen.getByText(/Managed · v1.0.0/)).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: /fork/i })).toBeInTheDocument()
 		expect(screen.queryByRole('button', { name: /install loop/i })).not.toBeInTheDocument()
+	})
+
+	// An extension provisions no rows, so there's nothing for a fork to take
+	// ownership of — offering it would only cost the install its version pushes.
+	it('hides Fork for an installed extension-only loop but keeps Remove', () => {
+		render(
+			<MarketplaceLoopCard
+				workspaceId={workspaceId}
+				loop={loop({ name: 'CRM Extension', item_types: ['extension'] })}
+				install={install()}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		expect(screen.queryByRole('button', { name: /fork/i })).not.toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /remove/i })).toBeInTheDocument()
 	})
 
 	it('renders the amber update banner when a locked install trails the marketplace version', () => {

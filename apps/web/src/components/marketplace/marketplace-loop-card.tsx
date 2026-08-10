@@ -96,12 +96,16 @@ export function MarketplaceLoopCard({
 }
 
 // Shape the raw marketplace items into the chip descriptors the row renders:
-// a single chip per integration, plus a count chip for agents and triggers
-// whenever there's more than one — a lone agent still gets its own named chip.
+// one chip per integration and per extension, plus a count chip for agents and
+// triggers whenever there's more than one — a lone agent still gets its own
+// named chip. Extensions get their own chip rather than a count because a
+// module loop's whole composition is that one extension; a bare count would
+// leave the card blank about what it actually installs.
 type CompositionChip =
 	| { key: string; kind: 'actor'; name: string; label: string; initial: string }
 	| { key: string; kind: 'count'; itemKind: 'agent' | 'trigger'; count: number; names: string[] }
 	| { key: string; kind: 'integration'; name: string; label: string; initial: string }
+	| { key: string; kind: 'extension'; name: string; label: string; initial: string }
 
 function itemName(item: MarketplaceLoopItem): string {
 	const raw = (item.item_snapshot as { name?: unknown } | null)?.name
@@ -122,6 +126,15 @@ function buildChips(items: MarketplaceLoopItem[]): CompositionChip[] {
 			chips.push({
 				key: `integration-${item.id}`,
 				kind: 'integration',
+				name,
+				label: name,
+				initial: (name[0] ?? '?').toUpperCase(),
+			})
+		} else if (type === 'extension') {
+			const name = itemName(item)
+			chips.push({
+				key: `extension-${item.id}`,
+				kind: 'extension',
 				name,
 				label: name,
 				initial: (name[0] ?? '?').toUpperCase(),
@@ -180,7 +193,9 @@ function CompositionChipRow({ items }: { items: MarketplaceLoopItem[] }) {
 							? `Agent · ${chip.name}`
 							: chip.kind === 'integration'
 								? `Integration · ${chip.name}`
-								: chip.names.join(' · ')
+								: chip.kind === 'extension'
+									? `Extension · ${chip.name}`
+									: chip.names.join(' · ')
 					const label =
 						chip.kind === 'count'
 							? `${chip.count} ${chip.itemKind}${chip.count === 1 ? '' : 's'}`
@@ -216,7 +231,7 @@ function CompositionGlyph({ chip }: { chip: CompositionChip }) {
 			</span>
 		)
 	}
-	if (chip.kind === 'integration') {
+	if (chip.kind === 'integration' || chip.kind === 'extension') {
 		return (
 			<span
 				className={cn(base, 'border border-border bg-muted text-muted-foreground')}

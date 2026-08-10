@@ -27,6 +27,7 @@ import growthSkillsData from './data/growth-skills.json'
 import growthTriggersData from './data/growth-triggers.json'
 import type {
 	ActorSnapshotSource,
+	ExtensionSnapshotSource,
 	SkillSnapshotSource,
 	TriggerSnapshotSource,
 } from './loop-snapshot'
@@ -49,6 +50,15 @@ export interface SkillData extends SkillSnapshotSource {
 	attachedActorIds: string[]
 }
 
+// An extension a loop installs. Unlike actors/triggers/skills there's no
+// captured JSON to look this up in — an extension is code registered at boot,
+// so the loop config carries the record inline (see ./extension-loops). `id` is
+// the hand-authored, stable EXTENSION_ITEM_ID_* constant used as the item's
+// source_item_id.
+export interface ExtensionData extends ExtensionSnapshotSource {
+	id: string
+}
+
 // Shape shared by every marketplace Loop bundle (./ccd-loop, ./dev-pipeline-loop,
 // ./strategy-growth-loop, ./team-ops-loop) so dev-bootstrap.ts's
 // MARKETPLACE_SEED_CONFIGS and the publish-*.ts scripts can treat them uniformly.
@@ -63,6 +73,9 @@ export interface MarketplaceLoopSeedConfig {
 	actorIds: readonly string[]
 	triggerIds: readonly string[]
 	skillIds: readonly string[]
+	// Extensions this loop enables. Optional — only the loops in
+	// ./extension-loops ship any.
+	extensions?: readonly ExtensionData[]
 }
 
 const actorsById: Record<string, ActorData> = {

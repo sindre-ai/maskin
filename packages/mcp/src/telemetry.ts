@@ -295,10 +295,6 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	create_file: 'file_create',
 	update_file: 'file_update',
 	delete_file: 'file_delete',
-	// Extensions / modules
-	create_extension: 'extension_create',
-	update_extension: 'extension_update',
-	delete_extension: 'extension_delete',
 	// LLM API keys
 	set_llm_api_key: 'llm_key_set',
 	delete_llm_api_key: 'llm_key_delete',

@@ -29,19 +29,6 @@ vi.mock('@/lib/theme', () => ({
 	useTheme: () => ({ theme: 'light', setTheme: vi.fn() }),
 }))
 
-vi.mock('@/hooks/use-enabled-modules', () => ({
-	useEnabledModules: () => [],
-}))
-
-vi.mock('@/hooks/use-custom-extensions', () => ({
-	useCustomExtensions: () => [],
-}))
-
-vi.mock('@maskin/module-sdk', () => ({
-	getAllWebModules: () => [],
-	getWebModule: () => null,
-}))
-
 vi.mock('sonner', () => ({
 	toast: { error: vi.fn() },
 }))
@@ -97,8 +84,10 @@ describe('GeneralPage', () => {
 		expect(screen.getByText('System')).toBeInTheDocument()
 	})
 
-	it('renders extensions section', () => {
+	// Extensions moved to the marketplace — a workspace enables one by installing
+	// the matching module loop, not by toggling it here.
+	it('does not render an extensions section', () => {
 		render(<GeneralPage />)
-		expect(screen.getByText('Extensions')).toBeInTheDocument()
+		expect(screen.queryByText('Extensions')).not.toBeInTheDocument()
 	})
 })

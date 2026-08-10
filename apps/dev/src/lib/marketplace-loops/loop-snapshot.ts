@@ -28,6 +28,15 @@ export interface TriggerSnapshotSource {
 	enabled: boolean | null
 }
 
+export interface ExtensionSnapshotSource {
+	// The extension's id in the registry (`extensions/<id>/`) — 'work',
+	// 'knowledge', 'crm'. This is what gets written into the workspace's
+	// `settings.enabled_modules` on install.
+	extensionId: string
+	name: string
+	description: string
+}
+
 export interface SkillSnapshotSource {
 	name: string | null
 	description: string | null
@@ -73,6 +82,21 @@ export function triggerSnapshot(row: TriggerSnapshotSource): Record<string, unkn
 		// swaps it for the installed actor's local id using the source_item_id → local_id map.
 		targetActorId: row.targetActorId,
 		enabled: row.enabled,
+	}
+}
+
+// An extension is code that ships with the server (`extensions/<id>/`), not a
+// row in a publishing workspace, so there is nothing to strip — the snapshot
+// only names the extension and describes it for the marketplace UI. The object
+// types, statuses, display names and field definitions the extension
+// contributes are read from the live registry at install time (see
+// applyExtensionSnapshot) rather than frozen here, so an installer always gets
+// the extension as the running server defines it.
+export function extensionSnapshot(row: ExtensionSnapshotSource): Record<string, unknown> {
+	return {
+		extensionId: row.extensionId,
+		name: row.name,
+		description: row.description,
 	}
 }
 

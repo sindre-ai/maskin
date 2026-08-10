@@ -25,6 +25,14 @@ import {
 	DEV_PIPELINE_TRIGGER_IDS,
 } from './marketplace-loops/dev-pipeline-loop'
 import {
+	CRM_EXTENSION_ITEMS,
+	CRM_EXTENSION_LOOP,
+	KNOWLEDGE_EXTENSION_ITEMS,
+	KNOWLEDGE_EXTENSION_LOOP,
+	WORK_EXTENSION_ITEMS,
+	WORK_EXTENSION_LOOP,
+} from './marketplace-loops/extension-loops'
+import {
 	GROWTH_BET_ACTOR_IDS,
 	GROWTH_BET_LOOP,
 	GROWTH_BET_SKILL_IDS,
@@ -78,7 +86,12 @@ import {
 	getSkillData,
 	getTriggerData,
 } from './marketplace-loops/loop-data'
-import { actorSnapshot, skillSnapshot, triggerSnapshot } from './marketplace-loops/loop-snapshot'
+import {
+	actorSnapshot,
+	extensionSnapshot,
+	skillSnapshot,
+	triggerSnapshot,
+} from './marketplace-loops/loop-snapshot'
 import {
 	STRATEGY_GROWTH_ACTOR_IDS,
 	STRATEGY_GROWTH_LOOP,
@@ -164,6 +177,30 @@ const MARKETPLACE_SEED_CONFIGS: readonly MarketplaceLoopSeedConfig[] = [
 		actorIds: GROWTH_MEETING_ACTOR_IDS,
 		triggerIds: GROWTH_MEETING_TRIGGER_IDS,
 		skillIds: GROWTH_MEETING_SKILL_IDS,
+	},
+	// Extension loops — the only way a workspace enables an extension now that
+	// the Settings → General toggles are gone. See ./marketplace-loops/
+	// extension-loops.ts for why these ship with no agents yet.
+	{
+		loop: WORK_EXTENSION_LOOP,
+		actorIds: [],
+		triggerIds: [],
+		skillIds: [],
+		extensions: WORK_EXTENSION_ITEMS,
+	},
+	{
+		loop: KNOWLEDGE_EXTENSION_LOOP,
+		actorIds: [],
+		triggerIds: [],
+		skillIds: [],
+		extensions: KNOWLEDGE_EXTENSION_ITEMS,
+	},
+	{
+		loop: CRM_EXTENSION_LOOP,
+		actorIds: [],
+		triggerIds: [],
+		skillIds: [],
+		extensions: CRM_EXTENSION_ITEMS,
 	},
 ]
 
@@ -282,6 +319,12 @@ export async function seedMarketplaceLoops(db: Database): Promise<MarketplaceSyn
 						skillRow,
 						skillRow.attachedActorIds.filter((id) => publishedActorIds.has(id)),
 					),
+				})),
+				...(config.extensions ?? []).map((extensionRow) => ({
+					loopId,
+					itemType: 'extension' as const,
+					sourceItemId: extensionRow.id,
+					itemSnapshot: extensionSnapshot(extensionRow),
 				})),
 			])
 		}

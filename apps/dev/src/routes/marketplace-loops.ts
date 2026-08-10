@@ -53,7 +53,12 @@ const app = new OpenAPIHono<Env>()
 // per-workspace membership check is needed (and an X-Workspace-Id header is
 // not required because the marketplace reads identically for every caller).
 
-const ITEM_TYPES = ['actor', 'trigger', 'skill', 'integration'] as const
+// 'extension' is listable and appears in a loop's item set, but it has no
+// single-item install path: an extension is enabled by merging the module into
+// `workspaces.settings`, which only makes sense as part of installing the loop
+// that ships it (see applyExtensionSnapshot). POST /items/{id}/install falls
+// through to its `default` branch and 400s for one, deliberately.
+const ITEM_TYPES = ['actor', 'trigger', 'skill', 'integration', 'extension'] as const
 type ItemType = (typeof ITEM_TYPES)[number]
 
 // ── Response schemas ──────────────────────────────────────────────────────────
@@ -84,6 +89,7 @@ const countsSchema = z.object({
 		trigger: z.number(),
 		skill: z.number(),
 		integration: z.number(),
+		extension: z.number(),
 	}),
 	by_use_case: z.record(z.string(), z.number()),
 })
@@ -217,7 +223,7 @@ app.openapi(listMarketplaceLoopsRoute, (async (c) => {
 	const allLoopIds = allLoops.map((l) => l.id)
 	const allItemTypes = await loadItemTypesByLoop(db, allLoopIds)
 
-	const byType = { actor: 0, trigger: 0, skill: 0, integration: 0 }
+	const byType = { actor: 0, trigger: 0, skill: 0, integration: 0, extension: 0 }
 	const byUseCase: Record<string, number> = {}
 	for (const loop of allLoops) {
 		const types = allItemTypes.get(loop.id) ?? []

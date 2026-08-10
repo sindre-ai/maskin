@@ -1377,7 +1377,7 @@ export interface ImportMappingInput {
 	csvOptions?: CsvOptions
 }
 
-export type MarketplaceItemType = 'actor' | 'trigger' | 'skill' | 'integration'
+export type MarketplaceItemType = 'actor' | 'trigger' | 'skill' | 'integration' | 'extension'
 
 export interface MarketplaceLoopSummary {
 	id: string

@@ -25,6 +25,7 @@ interface LoopInstalledProps {
 		triggers: number
 		skills: number
 		integrations: number
+		extensions: number
 	}
 }
 
@@ -37,6 +38,7 @@ const PROVISIONED_TO_COMPONENT_TYPE: ReadonlyArray<
 	['triggers', 'trigger'],
 	['skills', 'skill'],
 	['integrations', 'integration'],
+	['extensions', 'extension'],
 ]
 
 export async function trackLoopInstalled(p: LoopInstalledProps): Promise<void> {

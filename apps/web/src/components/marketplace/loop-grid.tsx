@@ -11,13 +11,20 @@ import { cn } from '@/lib/cn'
 
 type TypeFilter = 'all' | 'loops' | MarketplaceItemType
 
-const SECTION_ORDER: MarketplaceItemType[] = ['actor', 'trigger', 'skill', 'integration']
+const SECTION_ORDER: MarketplaceItemType[] = [
+	'actor',
+	'trigger',
+	'skill',
+	'integration',
+	'extension',
+]
 
 const SECTION_TITLE: Record<MarketplaceItemType, string> = {
 	actor: 'Agents',
 	trigger: 'Triggers',
 	skill: 'Skills',
 	integration: 'Integrations',
+	extension: 'Extensions',
 }
 
 export function LoopGrid({

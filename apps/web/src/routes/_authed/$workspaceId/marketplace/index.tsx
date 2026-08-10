@@ -35,7 +35,14 @@ interface FilterItem {
 	label: string
 }
 
-const TYPE_VALUES = new Set<FilterValue>(['loops', 'actor', 'trigger', 'skill', 'integration'])
+const TYPE_VALUES = new Set<FilterValue>([
+	'loops',
+	'actor',
+	'trigger',
+	'skill',
+	'integration',
+	'extension',
+])
 
 const TYPE_ITEMS: FilterItem[] = [
 	{ value: 'loops', label: 'Loops' },
@@ -43,6 +50,7 @@ const TYPE_ITEMS: FilterItem[] = [
 	{ value: 'trigger', label: 'Triggers' },
 	{ value: 'skill', label: 'Skills' },
 	{ value: 'integration', label: 'Integrations' },
+	{ value: 'extension', label: 'Extensions' },
 ]
 
 function buildUseCaseItems(counts: MarketplaceLoopCounts | undefined): FilterItem[] {
@@ -266,7 +274,10 @@ function ChipStrip({
 	)
 }
 
-const ATOM_TYPES: MarketplaceItemType[] = ['actor', 'trigger', 'skill', 'integration']
+// Every installable type, summed for the header total and the "All" chip.
+// Keep in sync with MarketplaceItemType — a type missing here is silently
+// absent from both counts even though its chip shows the right number.
+const ATOM_TYPES: MarketplaceItemType[] = ['actor', 'trigger', 'skill', 'integration', 'extension']
 
 function countForType(
 	type: MarketplaceItemType,

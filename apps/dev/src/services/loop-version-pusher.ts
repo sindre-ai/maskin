@@ -27,6 +27,7 @@ import { and, eq, inArray, ne, or, sql } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import { type AgentStorageManager, workspaceSkillKey } from './agent-storage'
 import {
+	applyExtensionSnapshot,
 	buildActorInsert,
 	buildIntegrationInsert,
 	buildSkillInsert,
@@ -49,7 +50,7 @@ const STARTUP_DELAY_MS = 90_000 // run once shortly after boot
 
 const NOTIFICATION_TYPE = 'loop_update_available'
 
-type ItemType = 'actor' | 'trigger' | 'skill' | 'integration'
+type ItemType = 'actor' | 'trigger' | 'skill' | 'integration' | 'extension'
 
 interface MarketplaceItem {
 	id: string
@@ -466,6 +467,21 @@ export class LoopVersionPusher {
 								.returning({ id: integrations.id })
 							newId = row?.id
 							break
+						}
+						case 'extension': {
+							// Extensions provision no element row, so `installed` never
+							// contains one and this branch runs on every push. That's fine:
+							// applyExtensionSnapshot is additive and skips extensions the
+							// workspace already has, so a repeat push is a no-op that
+							// reports `changed: false` and doesn't inflate `adds`. There is
+							// no `newId` to record — nothing can be wired to an extension.
+							const { changed } = await applyExtensionSnapshot(
+								tx,
+								install.workspaceId,
+								item.itemSnapshot,
+							)
+							if (changed) adds++
+							continue
 						}
 					}
 					if (!newId) {

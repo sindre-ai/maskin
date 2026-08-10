@@ -106,6 +106,7 @@ describe('POST /api/installed-loops', () => {
 			triggers: 0,
 			skills: 0,
 			integrations: 0,
+			extensions: 0,
 		})
 
 		// The install creates an `objects` row of type 'loop' pointing back at the
@@ -182,7 +183,13 @@ describe('POST /api/installed-loops', () => {
 
 		expect(res.status).toBe(201)
 		const body = await res.json()
-		expect(body.provisioned).toEqual({ actors: 1, triggers: 1, skills: 0, integrations: 0 })
+		expect(body.provisioned).toEqual({
+			actors: 1,
+			triggers: 1,
+			skills: 0,
+			integrations: 0,
+			extensions: 0,
+		})
 
 		// 3rd insert binds the freshly-minted actor to the target workspace as a
 		// member — without it the agent is orphaned and its trigger can't run.
@@ -266,7 +273,13 @@ describe('POST /api/installed-loops', () => {
 		expect(res.status).toBe(201)
 		const body = await res.json()
 		// Reuse means the install created zero actors of its own.
-		expect(body.provisioned).toEqual({ actors: 0, triggers: 1, skills: 0, integrations: 0 })
+		expect(body.provisioned).toEqual({
+			actors: 0,
+			triggers: 1,
+			skills: 0,
+			integrations: 0,
+			extensions: 0,
+		})
 
 		// No actor + workspace_members insert pair — the reused agent was not cloned.
 		expect(calls.inserts).toHaveLength(6)
@@ -369,7 +382,7 @@ describe('POST /api/installed-loops', () => {
 			loopVersion: '1.4.2',
 			workspaceId,
 			actorId: ACTOR_ID,
-			provisioned: { actors: 0, triggers: 0, skills: 0, integrations: 0 },
+			provisioned: { actors: 0, triggers: 0, skills: 0, integrations: 0, extensions: 0 },
 		})
 	})
 
@@ -432,7 +445,13 @@ describe('POST /api/installed-loops', () => {
 		await Promise.resolve()
 		expect(trackLoopInstalledMock).toHaveBeenCalledOnce()
 		const call = trackLoopInstalledMock.mock.calls[0]?.[0] as { provisioned: unknown }
-		expect(call.provisioned).toEqual({ actors: 1, triggers: 1, skills: 0, integrations: 0 })
+		expect(call.provisioned).toEqual({
+			actors: 1,
+			triggers: 1,
+			skills: 0,
+			integrations: 0,
+			extensions: 0,
+		})
 	})
 
 	it('does not emit loop_installed when the install fails', async () => {

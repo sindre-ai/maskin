@@ -6,6 +6,11 @@ import {
 } from '../../lib/dev-bootstrap'
 import { CCD_ACTOR_IDS, CCD_LOOP, CCD_TRIGGER_IDS } from '../../lib/marketplace-loops/ccd-loop'
 import { DEV_PIPELINE_LOOP } from '../../lib/marketplace-loops/dev-pipeline-loop'
+import {
+	CRM_EXTENSION_LOOP,
+	KNOWLEDGE_EXTENSION_LOOP,
+	WORK_EXTENSION_LOOP,
+} from '../../lib/marketplace-loops/extension-loops'
 import { GROWTH_BET_LOOP } from '../../lib/marketplace-loops/growth-bet-loop'
 import { GROWTH_BRAND_DEMAND_LOOP } from '../../lib/marketplace-loops/growth-brand-demand-loop'
 import { GROWTH_CONTENT_INSIGHT_LOOP } from '../../lib/marketplace-loops/growth-content-insight-loop'
@@ -31,7 +36,14 @@ const ALL_PACKAGES = [
 	GROWTH_BET_LOOP,
 	GROWTH_OPS_KNOWLEDGE_LOOP,
 	GROWTH_MEETING_LOOP,
+	WORK_EXTENSION_LOOP,
+	KNOWLEDGE_EXTENSION_LOOP,
+	CRM_EXTENSION_LOOP,
 ]
+
+// Derived, not hardcoded — adding a loop to MARKETPLACE_SEED_CONFIGS should
+// mean adding it to ALL_PACKAGES above and nothing else.
+const LOOP_COUNT = ALL_PACKAGES.length
 
 function matchingMarketplaceRows() {
 	return ALL_PACKAGES.map((loop, i) => ({
@@ -178,7 +190,7 @@ describe('seedMarketplaceIfEmpty', () => {
 		expect(calls.updates).toEqual([])
 	})
 
-	it('inserts all 12 loops when the marketplace is empty', async () => {
+	it('inserts every loop when the marketplace is empty', async () => {
 		process.env.NODE_ENV = 'development'
 		process.env.MASKIN_AUTO_BOOTSTRAP = 'true'
 		const { db, mockResults, calls } = createTestContext()
@@ -196,11 +208,11 @@ describe('seedMarketplaceIfEmpty', () => {
 		)
 		const itemInserts = calls.inserts.filter((v): v is unknown[] => Array.isArray(v))
 
-		expect(packageInserts.length).toBe(12)
-		expect(itemInserts.length).toBe(12)
+		expect(packageInserts.length).toBe(LOOP_COUNT)
+		expect(itemInserts.length).toBe(LOOP_COUNT)
 
 		const slugs = packageInserts.map((p) => p.slug)
-		expect(new Set(slugs).size).toBe(12)
+		expect(new Set(slugs).size).toBe(LOOP_COUNT)
 		expect(slugs).toEqual(expect.arrayContaining(ALL_PACKAGES.map((p) => p.slug)))
 
 		// CCD is seeded first — assert its actor/trigger counts match the live bundle.
@@ -226,7 +238,7 @@ describe('seedMarketplaceLoops', () => {
 
 		const result = await seedMarketplaceLoops(db)
 
-		expect(result.inserted.length).toBe(12)
+		expect(result.inserted.length).toBe(LOOP_COUNT)
 		expect(result.updated).toEqual([])
 		expect(result.unchanged).toEqual([])
 		expect(calls.inserts.length).toBeGreaterThan(0)
@@ -241,7 +253,7 @@ describe('seedMarketplaceLoops', () => {
 
 		expect(result.inserted).toEqual([])
 		expect(result.updated).toEqual([])
-		expect(result.unchanged.length).toBe(12)
+		expect(result.unchanged.length).toBe(LOOP_COUNT)
 		expect(calls.inserts).toEqual([])
 	})
 
@@ -257,7 +269,7 @@ describe('seedMarketplaceLoops', () => {
 
 		expect(result.updated).toEqual([CCD_LOOP.slug])
 		expect(result.inserted).toEqual([])
-		expect(result.unchanged.length).toBe(11)
+		expect(result.unchanged.length).toBe(LOOP_COUNT - 1)
 		expect(calls.updates.length).toBe(1)
 
 		const itemInserts = calls.inserts.filter((v): v is unknown[] => Array.isArray(v))

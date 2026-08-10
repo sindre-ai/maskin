@@ -8,7 +8,9 @@ import {
 	triggers,
 	workspaceMembers,
 	workspaceSkills,
+	workspaces,
 } from '@maskin/db/schema'
+import { getEnabledModuleIds, getModuleDefaultSettings } from '@maskin/module-sdk'
 import { and, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm'
 
 /**
@@ -19,7 +21,7 @@ import { and, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm'
  * different shapes on the next tick.
  */
 
-export type MarketplaceItemType = 'actor' | 'trigger' | 'skill' | 'integration'
+export type MarketplaceItemType = 'actor' | 'trigger' | 'skill' | 'integration' | 'extension'
 
 type DbHandle = Database | Transaction
 
@@ -518,6 +520,82 @@ export function buildSkillInsert(
 		metadata,
 		createdBy,
 	}
+}
+
+/**
+ * Enable the extension an 'extension' marketplace item names, merging its
+ * default statuses / display names / field definitions / relationship types
+ * into the workspace's settings.
+ *
+ * Unlike every other item type this provisions no row: a workspace "has" an
+ * extension when its id is in `settings.enabled_modules` (a pre-existing
+ * settings key — the stored data still says "modules"). The defaults come from
+ * the live registry (`@maskin/module-sdk`, likewise named before the wording
+ * settled on "extension") rather than the snapshot, because extensions are code
+ * shipped with the server — the snapshot only carries the extension id and a
+ * display name so the marketplace UI has something to render.
+ *
+ * Every merge is additive and skips keys the workspace already defines, so
+ * re-applying is a no-op — which is what makes the version-push cron's repeat
+ * calls safe. Returns whether anything actually changed.
+ */
+export async function applyExtensionSnapshot(
+	db: DbHandle,
+	workspaceId: string,
+	snapshot: Record<string, unknown>,
+): Promise<{ changed: boolean; extensionId: string }> {
+	const extensionId = (snapshot.extensionId as string) ?? (snapshot.extension_id as string) ?? ''
+	if (!extensionId) throw new Error('extension item snapshot is missing extensionId')
+
+	const [workspace] = await db
+		.select({ settings: workspaces.settings })
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId))
+		.limit(1)
+	if (!workspace) throw new Error(`workspace ${workspaceId} not found`)
+
+	const settings = (workspace.settings as Record<string, unknown> | null) ?? {}
+	const enabled = getEnabledModuleIds(settings)
+	if (enabled.includes(extensionId)) return { changed: false, extensionId }
+
+	const next: Record<string, unknown> = {
+		...settings,
+		enabled_modules: [...enabled, extensionId],
+	}
+
+	// Defaults never overwrite what the workspace already configured — an
+	// installer who renamed "Bets" or added statuses keeps their edits.
+	const defaults = getModuleDefaultSettings(extensionId)
+	if (defaults?.statuses) {
+		next.statuses = { ...defaults.statuses, ...((settings.statuses ?? {}) as object) }
+	}
+	if (defaults?.display_names) {
+		next.display_names = {
+			...defaults.display_names,
+			...((settings.display_names ?? {}) as object),
+		}
+	}
+	if (defaults?.field_definitions) {
+		next.field_definitions = {
+			...defaults.field_definitions,
+			...((settings.field_definitions ?? {}) as object),
+		}
+	}
+	if (defaults?.relationship_types) {
+		next.relationship_types = [
+			...new Set([
+				...((settings.relationship_types ?? []) as string[]),
+				...defaults.relationship_types,
+			]),
+		]
+	}
+
+	await db
+		.update(workspaces)
+		.set({ settings: next, updatedAt: new Date() })
+		.where(eq(workspaces.id, workspaceId))
+
+	return { changed: true, extensionId }
 }
 
 export function buildIntegrationInsert(

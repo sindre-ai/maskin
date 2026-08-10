@@ -18,6 +18,11 @@ export function LoopInstallControls({ workspaceId, loop, install }: LoopInstallC
 	const [uninstallOpen, setUninstallOpen] = useState(false)
 	const locked = install?.isLocked ?? false
 	const forked = install ? !install.isLocked : false
+	// Forking detaches the rows an install provisioned so the workspace can edit
+	// them freely. An extension provisions no rows — it flips a key in workspace
+	// settings — so there is nothing for a fork to take ownership of, and the
+	// resulting install would just stop receiving version pushes for no gain.
+	const canFork = !extensionOnly(loop)
 
 	return (
 		<>
@@ -26,10 +31,10 @@ export function LoopInstallControls({ workspaceId, loop, install }: LoopInstallC
 			    the card's overlay link and catch its own click. */}
 			<div className="flex items-center justify-end gap-2">
 				{!install ? (
-					<InstallButton workspaceId={workspaceId} loopId={loop.id} />
+					<InstallButton workspaceId={workspaceId} loopId={loop.id} label={installLabel(loop)} />
 				) : (
 					<>
-						{locked && (
+						{locked && canFork && (
 							<Button
 								size="sm"
 								variant="outline"
@@ -51,7 +56,7 @@ export function LoopInstallControls({ workspaceId, loop, install }: LoopInstallC
 				)}
 			</div>
 
-			{install && locked ? (
+			{install && locked && canFork ? (
 				<ForkDialog
 					open={forkOpen}
 					onOpenChange={setForkOpen}
@@ -79,6 +84,22 @@ export function LoopInstallControls({ workspaceId, loop, install }: LoopInstallC
 			) : null}
 		</>
 	)
+}
+
+/**
+ * Whether this loop's entire content is extensions. Such a loop isn't a loop in
+ * any sense the user cares about, so it reads as the extension it installs
+ * rather than as a bundle. A loop that ships an extension *alongside* agents or
+ * triggers is a real loop and is treated as one.
+ */
+function extensionOnly(loop: MarketplaceLoopSummary): boolean {
+	return loop.item_types.length > 0 && loop.item_types.every((type) => type === 'extension')
+}
+
+/** "Install loop" on the Work Extension card reads as a mistake — name the
+ * thing actually being installed. */
+function installLabel(loop: MarketplaceLoopSummary): string {
+	return extensionOnly(loop) ? 'Install extension' : 'Install loop'
 }
 
 function forkedHint(install: InstalledLoopRow): string {

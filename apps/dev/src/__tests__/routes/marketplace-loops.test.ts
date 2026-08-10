@@ -84,6 +84,7 @@ describe('Marketplace Loops Routes', () => {
 				trigger: 0,
 				skill: 1,
 				integration: 1,
+				extension: 0,
 			})
 			expect(body.counts.by_use_case).toEqual({
 				discovery: 1,

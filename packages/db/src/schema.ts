@@ -779,6 +779,12 @@ export type NewMarketplaceLoop = typeof marketplaceLoops.$inferInsert
 // the publishing workspace — kept so intra-loop wiring inside `item_snapshot`
 // (e.g. a `target_actor_id` referencing another item in the same loop) can
 // be resolved against this set of rows during install and re-provisioning.
+//
+// `extension` items are the exception: an extension is code registered at boot
+// (`extensions/<id>/`), not a row in a publishing workspace, so its
+// `source_item_id` is a hand-authored constant (EXTENSION_ITEM_ID_* in
+// @maskin/shared) and installing one merges the module's defaults into
+// `workspaces.settings` rather than inserting an element row.
 
 export const marketplaceLoopItems = pgTable(
 	'marketplace_loop_items',
@@ -797,7 +803,7 @@ export const marketplaceLoopItems = pgTable(
 		index('marketplace_loop_items_loop_source_idx').on(t.loopId, t.sourceItemId),
 		check(
 			'marketplace_loop_items_item_type_check',
-			sql`${t.itemType} IN ('actor', 'trigger', 'skill', 'integration')`,
+			sql`${t.itemType} IN ('actor', 'trigger', 'skill', 'integration', 'extension')`,
 		),
 	],
 )

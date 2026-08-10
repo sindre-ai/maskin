@@ -5,4 +5,5 @@ export const ITEM_TYPE_LABEL: Record<MarketplaceItemType, string> = {
 	trigger: 'Trigger',
 	skill: 'Skill',
 	integration: 'Integration',
+	extension: 'Extension',
 }
