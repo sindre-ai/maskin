@@ -19,6 +19,7 @@ import { GROWTH_LEAD_GEN_LOOP } from '../../lib/marketplace-loops/growth-lead-ge
 import { GROWTH_MEETING_LOOP } from '../../lib/marketplace-loops/growth-meeting-loop'
 import { GROWTH_OPS_KNOWLEDGE_LOOP } from '../../lib/marketplace-loops/growth-ops-knowledge-loop'
 import { GROWTH_SDR_OUTREACH_LOOP } from '../../lib/marketplace-loops/growth-sdr-outreach-loop'
+import { MESH_FIRM_GIG_LOOP } from '../../lib/marketplace-loops/mesh-firm-gig-loop'
 import { STRATEGY_GROWTH_LOOP } from '../../lib/marketplace-loops/strategy-growth-loop'
 import { TEAM_OPS_LOOP } from '../../lib/marketplace-loops/team-ops-loop'
 import { createTestContext } from '../setup'
@@ -36,6 +37,7 @@ const ALL_PACKAGES = [
 	GROWTH_BET_LOOP,
 	GROWTH_OPS_KNOWLEDGE_LOOP,
 	GROWTH_MEETING_LOOP,
+	MESH_FIRM_GIG_LOOP,
 	WORK_EXTENSION_LOOP,
 	KNOWLEDGE_EXTENSION_LOOP,
 	CRM_EXTENSION_LOOP,

@@ -93,6 +93,12 @@ import {
 	triggerSnapshot,
 } from './marketplace-loops/loop-snapshot'
 import {
+	MESH_FIRM_GIG_ACTOR_IDS,
+	MESH_FIRM_GIG_LOOP,
+	MESH_FIRM_GIG_SKILL_IDS,
+	MESH_FIRM_GIG_TRIGGER_IDS,
+} from './marketplace-loops/mesh-firm-gig-loop'
+import {
 	STRATEGY_GROWTH_ACTOR_IDS,
 	STRATEGY_GROWTH_LOOP,
 	STRATEGY_GROWTH_SKILL_IDS,
@@ -177,6 +183,12 @@ const MARKETPLACE_SEED_CONFIGS: readonly MarketplaceLoopSeedConfig[] = [
 		actorIds: GROWTH_MEETING_ACTOR_IDS,
 		triggerIds: GROWTH_MEETING_TRIGGER_IDS,
 		skillIds: GROWTH_MEETING_SKILL_IDS,
+	},
+	{
+		loop: MESH_FIRM_GIG_LOOP,
+		actorIds: MESH_FIRM_GIG_ACTOR_IDS,
+		triggerIds: MESH_FIRM_GIG_TRIGGER_IDS,
+		skillIds: MESH_FIRM_GIG_SKILL_IDS,
 	},
 	// Extension loops — the only way a workspace enables an extension now that
 	// the Settings → General toggles are gone. See ./marketplace-loops/

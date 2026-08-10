@@ -25,6 +25,9 @@ import devTriggersData from './data/dev-triggers.json'
 import growthActorsData from './data/growth-actors.json'
 import growthSkillsData from './data/growth-skills.json'
 import growthTriggersData from './data/growth-triggers.json'
+import meshFirmActorsData from './data/mesh-firm-actors.json'
+import meshFirmSkillsData from './data/mesh-firm-skills.json'
+import meshFirmTriggersData from './data/mesh-firm-triggers.json'
 import type {
 	ActorSnapshotSource,
 	ExtensionSnapshotSource,
@@ -81,16 +84,19 @@ export interface MarketplaceLoopSeedConfig {
 const actorsById: Record<string, ActorData> = {
 	...(devActorsData as Record<string, ActorData>),
 	...(growthActorsData as Record<string, ActorData>),
+	...(meshFirmActorsData as Record<string, ActorData>),
 }
 
 const triggersById: Record<string, TriggerData> = {
 	...(devTriggersData as Record<string, TriggerData>),
 	...(growthTriggersData as Record<string, TriggerData>),
+	...(meshFirmTriggersData as Record<string, TriggerData>),
 }
 
 const skillsById: Record<string, SkillData> = {
 	...(devSkillsData as Record<string, SkillData>),
 	...(growthSkillsData as Record<string, SkillData>),
+	...(meshFirmSkillsData as Record<string, SkillData>),
 }
 
 export function getActorData(id: string): ActorData {

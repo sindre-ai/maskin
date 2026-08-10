@@ -1,0 +1,75 @@
+{
+	"d6171a94-f1e7-41fb-82a8-fab012a95e1e": {
+		"id": "d6171a94-f1e7-41fb-82a8-fab012a95e1e",
+		"workspaceId": "369d2e23-d76c-4c71-807e-ab1698f18b1c",
+		"name": "Agency board scan (weekdays 06/11/16)",
+		"type": "cron",
+		"config": {
+			"expression": "0 6,11,16 * * 1-5"
+		},
+		"actionPrompt": "Run this cycle's board scan. **Boards only** — the inbox belongs to Inbox Scout, which scans it once each morning. Do not open mail on this run.\n\nList every `contact` object tagged `freelance-agency` and check each one's open-assignments board. If that list is empty, exit — do not go looking for agencies on your own.\n\nRead the `profile:sebastian` knowledge objects for the fit criteria before scoring anything.\n\nFile genuinely new matches as `gig` objects with status `new` and `metadata.source_type: board`. Deduplicate hard with `search_objects` first — you run three times a day and Inbox Scout may have filed the same assignment from an email this morning, so re-filing is the main failure mode. If a board carries new detail on a gig that already exists — rate, moved deadline, named client — update that gig rather than creating a second one. Move gigs past their application deadline to `expired`.\n\nSilence is the default. Nothing new means file nothing and say nothing. Only when there is something new, close with one plain-language comment on the strongest new gig summarising the run, and @mention the human only if something scores 70+ or has a deadline inside a week. Resolve him via `list_actors`.",
+		"targetActorId": "f64a5297-b422-4e35-a99d-9ec17526bc04",
+		"enabled": true
+	},
+	"06ce58a6-a8c5-4ef0-a402-c84bf8eb2fa2": {
+		"id": "06ce58a6-a8c5-4ef0-a402-c84bf8eb2fa2",
+		"workspaceId": "369d2e23-d76c-4c71-807e-ab1698f18b1c",
+		"name": "Email approved → Gig Scout sends draft",
+		"type": "event",
+		"config": {
+			"action": "status_changed",
+			"to_status": "validated",
+			"entity_type": "task"
+		},
+		"actionPrompt": "A task just moved to `validated`. This is the approval gate for outbound email — you are the only thing that sends, and only from here.\n\n## STEP 1 — Confirm this task is yours\nGet the task with `get_objects` (include metadata). Exit silently unless BOTH are true:\n- `metadata.tag` is `gig-application`\n- a saved draft id is set on the task\n\nAnything else is someone else's task. Do not comment, do not act.\n\n## STEP 2 — Verify the draft is the one that was approved\nFetch the saved draft. Compare its recipient, subject and body against the task content.\n- If the draft is missing, or the content differs in any way from what the task records, **do not send.** Post one comment on the task saying what does not match, @mentioning the human (resolve with `list_actors`). Move the task back to `in_review`. Stop.\n- Never reconstruct, rewrite or \"improve\" a draft at this stage. What he read is what goes out, or nothing does.\n\n## STEP 3 — Send\nSend that exact draft. No edits, no additions, no attachments that were not in the approved version. One send, one time — if the send tool errors, do not retry blindly: check whether the mail actually went before trying again, and if you cannot tell, comment and stop rather than risk sending twice.\n\n## STEP 4 — Record it so the loop can learn\n1. Move the task to `done`, set `metadata.sent_at` to now.\n2. Update the linked gig: status `applied`, `metadata.applied_at` = today, `metadata.outcome` = `awaiting_reply`. These three fields are what the calibration run counts — a sent application with no `applied_at` is invisible to it.\n3. If the mail was not an application (a follow-up, a reply), leave the gig status alone and note it instead.\n4. Post one short comment confirming what went out and to whom. No @mention needed — he approved it.\n\nNothing else. Do not scan boards on this run.",
+		"targetActorId": "f64a5297-b422-4e35-a99d-9ec17526bc04",
+		"enabled": true
+	},
+	"285d2acf-0d9b-46c9-8232-644edf3232a0": {
+		"id": "285d2acf-0d9b-46c9-8232-644edf3232a0",
+		"workspaceId": "369d2e23-d76c-4c71-807e-ab1698f18b1c",
+		"name": "Gig shortlisted → Job Applicant drafts",
+		"type": "event",
+		"config": {
+			"action": "status_changed",
+			"to_status": "shortlisted",
+			"entity_type": "gig"
+		},
+		"actionPrompt": "A gig just moved to `shortlisted` — he has decided to go for it. Draft the application.\n\n1. Read the gig with `get_objects` (content, metadata). If a `gig-application` task already exists for it, exit silently — never draft twice.\n2. Read the `profile:sebastian` knowledge pages before writing a word: positioning angles, proof-point library, application boilerplate. Lead with the angle recorded in `metadata.positioning_angle`; if that angle is wrong for the brief, say so in your comment rather than silently switching.\n3. Create ONE task, status `todo`, `metadata.tag` = `gig-application`, linked `relates_to` the gig. The tag matters: it is what the send gate checks, and an application tagged anything else can never be sent.\n4. Draft the email, save it as a draft, and record the draft id on the task. Move the task to `in_review`.\n5. Post ONE comment on the gig @mentioning him (resolve with `list_actors`): who it goes to, which angle you led with, and anything you had to leave vague because the workspace does not know it.\n\nYou never send. He approves by moving the task to `validated`, and the send trigger takes it from there.\n\nNever invent facts, numbers, clients or quotes.",
+		"targetActorId": "60e39163-ea7d-4774-b87b-a9158d55481e",
+		"enabled": true
+	},
+	"f6fa5541-502e-4a40-9fd2-6c377f6d474a": {
+		"id": "f6fa5541-502e-4a40-9fd2-6c377f6d474a",
+		"workspaceId": "369d2e23-d76c-4c71-807e-ab1698f18b1c",
+		"name": "Task in_progress + tag:outreach → Job Applicant",
+		"type": "event",
+		"config": {
+			"action": "status_changed",
+			"to_status": "in_progress",
+			"conditions": [
+				{
+					"field": "tag",
+					"value": "outreach",
+					"operator": "equals"
+				}
+			],
+			"entity_type": "task"
+		},
+		"actionPrompt": "A task just moved to `in_progress`.\n\n## GUARD — check this first\nRead the task with `get_objects` (include content, metadata, relationships). Proceed ONLY if `metadata.tag` is exactly `outreach`. Anything else — a different tag, no tag at all — exit immediately. No comment, no status change. Another trigger owns it.\n\n## Then do the work\nThis is outbound work: application drafts, agency and recruiter follow-ups, replies to inbound enquiries, connection messages.\n\n1. Read the parent bet via `breaks_into`, and the linked gig or contact if there is one.\n2. Read the `profile:sebastian` knowledge objects before writing a word — positioning angles, proof-point library, application boilerplate. Pitch from what is actually there.\n3. Draft the message. Specific, grounded in real evidence from the profile set, no invented clients or numbers.\n4. Leave the draft on the task and move it to `in_review`. **You never send.** One agent owns the approved send path here, and only from a `validated` task after the human approves it.\n5. Post ONE short comment saying what you drafted and who it is for.\n\nResolve the human with `list_actors` — one human in this workspace — and @mention him when the draft is ready for approval. That is the point of the review gate. Comments only.\n\nNever invent facts, numbers, clients or quotes. A fabricated detail gets found out in the first interview.",
+		"targetActorId": "60e39163-ea7d-4774-b87b-a9158d55481e",
+		"enabled": true
+	},
+	"22b09724-eaff-424a-9c82-39a1333c1a30": {
+		"id": "22b09724-eaff-424a-9c82-39a1333c1a30",
+		"workspaceId": "369d2e23-d76c-4c71-807e-ab1698f18b1c",
+		"name": "Daily inbox scan (weekdays 07:00)",
+		"type": "cron",
+		"config": {
+			"expression": "0 7 * * 1-5"
+		},
+		"actionPrompt": "Run today's inbox scan. **You are the only agent that reads mail** — Gig Scout covers the agency boards and no longer opens the inbox.\n\nRead mail received in the last 24 hours (last 7 days if this is your first run). Read the `profile:sebastian` knowledge objects for the fit criteria before scoring anything.\n\n## STEP 1 — Reconcile replies to gigs we already applied to (do this FIRST)\n\nThis is how the loop learns whether an application worked; skipping it makes everything downstream guesswork.\n\nList gigs with status `applied` or `interviewing`. For each reply in the mail that matches one — by client, role title, agency or sender — update that gig rather than filing anything new:\n- Invited to interview or a call → status `interviewing`, `metadata.outcome` = `interview`.\n- Turned down → status `lost`, `outcome` = `rejected`, and put the stated reason in `outcome_reason` in their words, briefly. If no reason is given, write `none given` — do not guess one.\n- Engagement confirmed → status `won`, `outcome` = `won`.\n- We withdrew or it was pulled → `outcome` = `withdrawn`.\nSet `replied_at` on any gig that got a reply. Never overwrite an outcome already recorded.\n\nThen sweep for silence: any gig `applied` with no `replied_at` and `applied_at` older than 21 days → `outcome` = `no_reply`, status `lost`, `outcome_reason` = `no reply within 21 days`. Silence is data — record it.\n\n## STEP 2 — File genuinely new opportunities\n\nDedup carefully: Gig Scout scanned the boards at 06:00, so `search_objects` on the role title, client name and sender company before creating anything. If an email carries new detail on a gig that already exists — rate, moved deadline, named client — update that gig rather than filing a second one.\n\nFile new inbound as `gig` objects, status `new`, `metadata.source_type: email`, `outcome` = `awaiting_reply` only once an application actually goes out — not at filing. Create a `contact` tagged `freelance-agency` for any recurring agency sender that doesn't have one yet. Move gigs past their application deadline to `expired`.\n\n## Close\n\nOne plain-language comment on the strongest new gig summarising the run. @mention him (resolve with `list_actors`) only if something scores 70+, a deadline falls inside a week, someone is waiting on a reply from him, or a gig came back `interview` or `won`. Nothing worth filing and nothing reconciled means no comment at all — exit silently.\n\nRead-only on the mailbox throughout. Never reply, archive or label anything. Summarise; never paste email bodies into the workspace. Record the timestamp you scanned to in your actor memory so the next run picks up from there.",
+		"targetActorId": "cd359acc-0ba1-40c4-823d-0704212385b5",
+		"enabled": true
+	}
+}
