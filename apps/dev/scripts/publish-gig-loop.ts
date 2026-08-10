@@ -1,15 +1,15 @@
 // One-shot publisher for the Gig Loop marketplace bundle.
 //
 // Snapshots Gig Scout, Job Applicant, and Inbox Scout, plus every trigger
-// they drive, from the checked-in data/mesh-firm-actors.json +
-// data/mesh-firm-triggers.json (captured live from the Mesh Firm workspace)
-// into a single `marketplace_loops` row at version 1.0.0 plus one
+// they drive, from the checked-in data/consulting-actors.json +
+// data/consulting-triggers.json (captured live from a solo-consultancy
+// workspace) into a single `marketplace_loops` row at version 1.0.0 plus one
 // `marketplace_loop_items` row per element. Triggers carry the source
 // `target_actor_id` inside the snapshot — the install path rewrites that
 // against the install's `source_item_id` map.
 //
 // Run once against the target DB:
-//   pnpm --filter @maskin/dev exec tsx scripts/publish-mesh-firm-gig-loop.ts
+//   pnpm --filter @maskin/dev exec tsx scripts/publish-gig-loop.ts
 //
 // Idempotency: the `marketplace_loops.slug` unique constraint blocks a second
 // run at the same slug; pass `--force` to delete and re-create the row plus
@@ -18,20 +18,19 @@
 import { createDb } from '@maskin/db'
 import { installedLoops, marketplaceLoopItems, marketplaceLoops } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
-import { getActorData, getSkillData, getTriggerData } from '../src/lib/marketplace-loops/loop-data'
 import {
-	MESH_FIRM_GIG_ACTOR_IDS,
-	MESH_FIRM_GIG_LOOP,
-	MESH_FIRM_GIG_SKILL_IDS,
-	MESH_FIRM_GIG_SOURCE_WORKSPACE_ID,
-	MESH_FIRM_GIG_TRIGGER_IDS,
+	GIG_LOOP,
+	GIG_LOOP_ACTOR_IDS,
+	GIG_LOOP_SKILL_IDS,
+	GIG_LOOP_SOURCE_WORKSPACE_ID,
+	GIG_LOOP_TRIGGER_IDS,
 	actorSnapshot,
 	skillSnapshot,
 	triggerSnapshot,
-} from '../src/lib/marketplace-loops/mesh-firm-gig-loop'
+} from '../src/lib/marketplace-loops/gig-loop'
+import { getActorData, getSkillData, getTriggerData } from '../src/lib/marketplace-loops/loop-data'
 
-const SOURCE_WORKSPACE_ID =
-	process.env.MESH_FIRM_GIG_SOURCE_WORKSPACE_ID ?? MESH_FIRM_GIG_SOURCE_WORKSPACE_ID
+const SOURCE_WORKSPACE_ID = process.env.GIG_LOOP_SOURCE_WORKSPACE_ID ?? GIG_LOOP_SOURCE_WORKSPACE_ID
 const FORCE = process.argv.includes('--force')
 
 async function main(): Promise<void> {
@@ -45,14 +44,14 @@ async function main(): Promise<void> {
 
 	// Resolve actor/trigger content from the checked-in snapshot data (not the
 	// local DB, which has none). These throw a clear error naming any missing id.
-	const actorRows = MESH_FIRM_GIG_ACTOR_IDS.map(getActorData)
-	const triggerRows = MESH_FIRM_GIG_TRIGGER_IDS.map(getTriggerData)
-	const skillRows = MESH_FIRM_GIG_SKILL_IDS.map(getSkillData)
+	const actorRows = GIG_LOOP_ACTOR_IDS.map(getActorData)
+	const triggerRows = GIG_LOOP_TRIGGER_IDS.map(getTriggerData)
+	const skillRows = GIG_LOOP_SKILL_IDS.map(getSkillData)
 
 	// Every published trigger must fire one of the published actors or the
 	// install will resolve target_actor_id to a stale, unrelated UUID in the
 	// installer workspace.
-	const publishedActorIds = new Set<string>(MESH_FIRM_GIG_ACTOR_IDS)
+	const publishedActorIds = new Set<string>(GIG_LOOP_ACTOR_IDS)
 	for (const t of triggerRows) {
 		if (!publishedActorIds.has(t.targetActorId)) {
 			throw new Error(
@@ -75,12 +74,12 @@ async function main(): Promise<void> {
 	const [existing] = await db
 		.select()
 		.from(marketplaceLoops)
-		.where(eq(marketplaceLoops.slug, MESH_FIRM_GIG_LOOP.slug))
+		.where(eq(marketplaceLoops.slug, GIG_LOOP.slug))
 		.limit(1)
 
 	if (existing && !FORCE) {
 		console.error(
-			`Loop ${MESH_FIRM_GIG_LOOP.slug} is already published as ${existing.id} at v${existing.version}. Pass --force to delete and re-create.`,
+			`Loop ${GIG_LOOP.slug} is already published as ${existing.id} at v${existing.version}. Pass --force to delete and re-create.`,
 		)
 		process.exit(1)
 	}
@@ -93,7 +92,7 @@ async function main(): Promise<void> {
 			.limit(1)
 		if (install) {
 			console.error(
-				`Cannot --force re-publish ${MESH_FIRM_GIG_LOOP.slug}: it has at least one active install (installed_loops.source_loop_id = ${existing.id}). Deleting it would orphan those installs — publish a new version instead.`,
+				`Cannot --force re-publish ${GIG_LOOP.slug}: it has at least one active install (installed_loops.source_loop_id = ${existing.id}). Deleting it would orphan those installs — publish a new version instead.`,
 			)
 			process.exit(1)
 		}
@@ -107,11 +106,11 @@ async function main(): Promise<void> {
 		const [loop] = await tx
 			.insert(marketplaceLoops)
 			.values({
-				slug: MESH_FIRM_GIG_LOOP.slug,
-				name: MESH_FIRM_GIG_LOOP.name,
-				description: MESH_FIRM_GIG_LOOP.description,
-				version: MESH_FIRM_GIG_LOOP.version,
-				useCase: MESH_FIRM_GIG_LOOP.useCase,
+				slug: GIG_LOOP.slug,
+				name: GIG_LOOP.name,
+				description: GIG_LOOP.description,
+				version: GIG_LOOP.version,
+				useCase: GIG_LOOP.useCase,
 			})
 			.returning()
 
@@ -146,7 +145,7 @@ async function main(): Promise<void> {
 	})
 
 	console.log(
-		`Published ${MESH_FIRM_GIG_LOOP.slug} v${MESH_FIRM_GIG_LOOP.version} as ${inserted.loop.id} (${actorRows.length} actors + ${triggerRows.length} triggers + ${skillRows.length} skills = ${inserted.itemCount} items).`,
+		`Published ${GIG_LOOP.slug} v${GIG_LOOP.version} as ${inserted.loop.id} (${actorRows.length} actors + ${triggerRows.length} triggers + ${skillRows.length} skills = ${inserted.itemCount} items).`,
 	)
 	process.exit(0)
 }

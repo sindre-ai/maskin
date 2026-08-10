@@ -1,11 +1,11 @@
-// Static snapshot data for the Development-workspace AND Growth-workspace
-// marketplace loops.
+// Static snapshot data for the Development-workspace, Growth-workspace, AND
+// Consulting-workspace marketplace loops.
 //
 // The local dev Postgres is empty on a fresh clone, and the real actor/trigger
-// content lives in the remote Development and Growth workspaces — not in any
-// table the publish scripts can query locally. So the actor system prompts +
-// trigger action prompts are captured once, live, and checked in as JSON here.
-// The publish-*.ts scripts and seedMarketplaceLoops read this data (by id)
+// content lives in the remote source workspaces — not in any table the
+// publish scripts can query locally. So the actor system prompts + trigger
+// action prompts are captured once, live, and checked in as JSON here. The
+// publish-*.ts scripts and seedMarketplaceLoops read this data (by id)
 // instead of running db.select() against local actors/triggers, and snapshot
 // it into marketplace_loop_items.
 //
@@ -15,19 +15,20 @@
 // redundant runtime guard.
 //
 // Actor/trigger/skill ids are globally unique UUIDs regardless of source
-// workspace, so the dev-* and growth-* snapshots are merged into one lookup
-// per entity type below — every loop config, whichever workspace it was
-// captured from, calls the same getActorData/getTriggerData/getSkillData.
+// workspace, so the dev-*, growth-*, and consulting-* snapshots are merged
+// into one lookup per entity type below — every loop config, whichever
+// workspace it was captured from, calls the same
+// getActorData/getTriggerData/getSkillData.
 
+import consultingActorsData from './data/consulting-actors.json'
+import consultingSkillsData from './data/consulting-skills.json'
+import consultingTriggersData from './data/consulting-triggers.json'
 import devActorsData from './data/dev-actors.json'
 import devSkillsData from './data/dev-skills.json'
 import devTriggersData from './data/dev-triggers.json'
 import growthActorsData from './data/growth-actors.json'
 import growthSkillsData from './data/growth-skills.json'
 import growthTriggersData from './data/growth-triggers.json'
-import meshFirmActorsData from './data/mesh-firm-actors.json'
-import meshFirmSkillsData from './data/mesh-firm-skills.json'
-import meshFirmTriggersData from './data/mesh-firm-triggers.json'
 import type {
 	ActorSnapshotSource,
 	ExtensionSnapshotSource,
@@ -84,19 +85,19 @@ export interface MarketplaceLoopSeedConfig {
 const actorsById: Record<string, ActorData> = {
 	...(devActorsData as Record<string, ActorData>),
 	...(growthActorsData as Record<string, ActorData>),
-	...(meshFirmActorsData as Record<string, ActorData>),
+	...(consultingActorsData as Record<string, ActorData>),
 }
 
 const triggersById: Record<string, TriggerData> = {
 	...(devTriggersData as Record<string, TriggerData>),
 	...(growthTriggersData as Record<string, TriggerData>),
-	...(meshFirmTriggersData as Record<string, TriggerData>),
+	...(consultingTriggersData as Record<string, TriggerData>),
 }
 
 const skillsById: Record<string, SkillData> = {
 	...(devSkillsData as Record<string, SkillData>),
 	...(growthSkillsData as Record<string, SkillData>),
-	...(meshFirmSkillsData as Record<string, SkillData>),
+	...(consultingSkillsData as Record<string, SkillData>),
 }
 
 export function getActorData(id: string): ActorData {
