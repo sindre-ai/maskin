@@ -23,8 +23,14 @@ test.describe('Marketplace composition chip row', () => {
 			const loopsSection = page.getByRole('region', { name: 'Loops' })
 			await expect(loopsSection).toBeVisible({ timeout: 20000 })
 
-			// AC: every bundle card shows the composition chip row.
+			// AC: every bundle card shows the composition chip row. The Loops
+			// section renders as soon as the cheap loop-summary list loads, but
+			// each bundle's chips only appear once its own item-detail query
+			// (fetched separately per bundle) resolves — wait for the first row
+			// rather than counting immediately, or this races the loop-summary
+			// paint and reads 0 chips every time.
 			const chipRows = loopsSection.locator(CHIP_ROW)
+			await expect(chipRows.first()).toBeVisible({ timeout: 20000 })
 			const rowCount = await chipRows.count()
 			expect(rowCount).toBeGreaterThanOrEqual(1)
 			for (let i = 0; i < rowCount; i++) {
