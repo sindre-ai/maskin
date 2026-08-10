@@ -4,6 +4,7 @@ import {
 	injectIntoHtml,
 	prepareMiniAppHtml,
 	stripAgentCsp,
+	stripMetaRefresh,
 } from '@/lib/mini-app'
 import { describe, expect, it } from 'vitest'
 
@@ -49,6 +50,49 @@ describe('injectIntoHtml', () => {
 	it('prepends as last resort when no <head>, doctype, or <body>', () => {
 		expect(injectIntoHtml('<p>bare fragment</p>', 'FRAG').startsWith('FRAG')).toBe(true)
 	})
+
+	it('ignores a <head>-shaped token inside a script string', () => {
+		const html = '<html><head><script>const s = "<head>";</script></head><body></body></html>'
+		const result = injectIntoHtml(html, 'FRAG')
+		// Naive indexOf would place FRAG inside the script string; the real
+		// head is the first <head> open tag, outside raw-text content.
+		expect(result.indexOf('FRAG')).toBe(result.indexOf('<head>') + 6)
+		expect(result.indexOf('FRAG')).toBeLessThan(result.indexOf('<script>'))
+	})
+
+	it('ignores a <head>-shaped token inside a pre/code block', () => {
+		const html = '<html><pre><head></pre><head></head><body></body></html>'
+		const result = injectIntoHtml(html, 'FRAG')
+		expect(result).toContain('<pre><head></pre><head>FRAG</head>')
+	})
+
+	it('ignores a <head>-shaped token inside a textarea', () => {
+		const html = '<html><textarea><head></textarea><head></head><body></body></html>'
+		expect(injectIntoHtml(html, 'FRAG')).toContain('<textarea><head></textarea><head>FRAG')
+	})
+
+	it('inserts after a <head> that carries attributes', () => {
+		const html = '<html><head lang="en" data-x="1"></head><body></body></html>'
+		const result = injectIntoHtml(html, 'FRAG')
+		expect(result.startsWith('<html><head lang="en" data-x="1">FRAG')).toBe(true)
+	})
+
+	it('inserts after an uppercase <HEAD>', () => {
+		const html = '<HTML><HEAD><BODY>x</BODY></HTML>'
+		const result = injectIntoHtml(html, 'FRAG')
+		expect(result.indexOf('FRAG')).toBe(result.indexOf('<HEAD>') + 6)
+	})
+
+	it('does not treat a > inside a quoted attribute value as the end of the head tag', () => {
+		const html = '<html><head data-t="a>b" class="x"></head><body></body></html>'
+		const result = injectIntoHtml(html, 'FRAG')
+		expect(result.startsWith('<html><head data-t="a>b" class="x">FRAG')).toBe(true)
+	})
+
+	it('ignores a <head> inside an HTML comment', () => {
+		const html = '<html><!-- <head> --><head></head><body></body></html>'
+		expect(injectIntoHtml(html, 'FRAG')).toContain('<!-- <head> --><head>FRAG')
+	})
 })
 
 describe('stripAgentCsp', () => {
@@ -73,6 +117,30 @@ describe('stripAgentCsp', () => {
 	it('leaves non-CSP metas untouched', () => {
 		const html = '<meta charset="utf-8"><meta name="description" content="hi"><html></html>'
 		expect(stripAgentCsp(html)).toBe(html)
+	})
+})
+
+describe('stripMetaRefresh', () => {
+	it('removes a refresh meta that would silently navigate the frame', () => {
+		const html =
+			'<html><head><meta http-equiv="refresh" content="0; url=https://evil.example"></head></html>'
+		const result = stripMetaRefresh(html)
+		expect(result).not.toContain('refresh')
+		expect(result).not.toContain('evil.example')
+	})
+
+	it('leaves non-refresh metas untouched', () => {
+		const html =
+			'<meta http-equiv="Content-Security-Policy" content="default-src \'self\'"><meta charset="utf-8">'
+		expect(stripMetaRefresh(html)).toBe(html)
+	})
+
+	it('prepareMiniAppHtml strips refresh metas alongside agent CSP metas', () => {
+		const html =
+			'<html><head><meta http-equiv="refresh" content="0; url=https://evil.example"></head><body>hi</body></html>'
+		const prepared = prepareMiniAppHtml(html)
+		expect(prepared).not.toContain('refresh')
+		expect(prepared).toContain("connect-src 'none'")
 	})
 })
 

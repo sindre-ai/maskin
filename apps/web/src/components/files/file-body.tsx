@@ -11,7 +11,7 @@ import type { FileAnnotation, FileDetail } from '@/lib/api'
 import { base64ToBytes, decodeBase64Utf8 } from '@/lib/file-utils'
 import { prepareMiniAppHtml } from '@/lib/mini-app'
 import { Bot, Check, Clipboard, Pin } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { type Annotation, AnnotationOverlay } from './annotation-overlay'
 
 // MIME types whose bytes the browser would happily execute (or interpret as HTML)
@@ -90,19 +90,22 @@ function HtmlPreview({ html, name }: { html: string; name: string }) {
 	//
 	// `prepareMiniAppHtml` injects the platform CSP meta (agents' own CSP metas
 	// are stripped first so only the platform policy holds, with `connect-src
-	// 'none'` closing off network egress from the frame) plus the data-slot
-	// bootstrap that exposes window.__MASKIN_APP_DATA__ to the app.
+	// 'none'` closing off fetch-class network egress from the frame) plus the
+	// data-slot bootstrap that exposes window.__MASKIN_APP_DATA__ to the app.
+	// Scripted self-navigation is a documented v1 residual; refresh metas are
+	// stripped to remove the one silent, code-free navigation channel.
 	//
 	// The wrapper carries `resize` so the user gets a native CSS drag-handle
 	// in the bottom-right corner that grows it both vertically and horizontally;
 	// the iframe fills it. `overflow-hidden` is required for `resize` to take
 	// effect on a block element. The `max-w` lets the user pull the preview
 	// past the page's narrower container, up to roughly the viewport width.
+	const srcDoc = useMemo(() => prepareMiniAppHtml(html), [html])
 	return (
 		<div className="resize overflow-hidden rounded-md border border-border bg-bg-surface w-full h-[60vh] min-h-[20vh] max-h-[200vh] max-w-[calc(100vw-4rem)]">
 			<iframe
 				title={`Preview of ${name}`}
-				srcDoc={prepareMiniAppHtml(html)}
+				srcDoc={srcDoc}
 				sandbox="allow-scripts"
 				className="w-full h-full block"
 			/>
