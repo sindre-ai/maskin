@@ -31,6 +31,7 @@ import loopsRoutes from './routes/loops'
 import marketplaceLoopsRoutes from './routes/marketplace-loops'
 import mcpRoutes from './routes/mcp'
 import methodRoutes from './routes/method'
+import miniAppRegenRoutes from './routes/mini-app-regen'
 import notificationsRoutes from './routes/notifications'
 import objectsRoutes from './routes/objects'
 import publicBetStrategistRoutes from './routes/public-bet-strategist'
@@ -222,6 +223,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/integrations', integrationsRoutes)
 	app.route('/api/integrations/slack/mcp', integrationsSlackMcpRoutes)
 	app.route('/api/marketplace', marketplaceLoopsRoutes)
+	app.route('/api/mini-apps', miniAppRegenRoutes)
 	app.route('/api/webhooks', webhookApp)
 	app.route('/api/internal/agent-servers', agentServerReconcileRoutes)
 	app.route('/api/events', eventsRoutes)

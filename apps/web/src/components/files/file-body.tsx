@@ -4,12 +4,14 @@ import { Button } from '@/components/ui/button'
 import { ButtonGroup } from '@/components/ui/button-group'
 import { useAutoSave } from '@/hooks/use-auto-save'
 import { useUpdateFile } from '@/hooks/use-files'
+import { trackMiniAppFileViewed } from '@/lib/analytics'
 import { compileAnnotations, hydrateAnnotations } from '@/lib/annotations'
 import type { AnnotationJson } from '@/lib/annotations'
 import type { FileAnnotation, FileDetail } from '@/lib/api'
 import { base64ToBytes, decodeBase64Utf8 } from '@/lib/file-utils'
+import { prepareMiniAppHtml } from '@/lib/mini-app'
 import { Bot, Check, Clipboard, Pin } from 'lucide-react'
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { type Annotation, AnnotationOverlay } from './annotation-overlay'
 
 // MIME types whose bytes the browser would happily execute (or interpret as HTML)
@@ -86,16 +88,24 @@ function HtmlPreview({ html, name }: { html: string; name: string }) {
 	// omit `allow-same-origin`, so fetch/XHR from the page sees a null origin
 	// and same-origin checks against our app fail closed.
 	//
+	// `prepareMiniAppHtml` injects the platform CSP meta (agents' own CSP metas
+	// are stripped first so only the platform policy holds, with `connect-src
+	// 'none'` closing off fetch-class network egress from the frame) plus the
+	// data-slot bootstrap that exposes window.__MASKIN_APP_DATA__ to the app.
+	// Scripted self-navigation is a documented v1 residual; refresh metas are
+	// stripped to remove the one silent, code-free navigation channel.
+	//
 	// The wrapper carries `resize` so the user gets a native CSS drag-handle
 	// in the bottom-right corner that grows it both vertically and horizontally;
 	// the iframe fills it. `overflow-hidden` is required for `resize` to take
 	// effect on a block element. The `max-w` lets the user pull the preview
 	// past the page's narrower container, up to roughly the viewport width.
+	const srcDoc = useMemo(() => prepareMiniAppHtml(html), [html])
 	return (
 		<div className="resize overflow-hidden rounded-md border border-border bg-bg-surface w-full h-[60vh] min-h-[20vh] max-h-[200vh] max-w-[calc(100vw-4rem)]">
 			<iframe
 				title={`Preview of ${name}`}
-				srcDoc={html}
+				srcDoc={srcDoc}
 				sandbox="allow-scripts"
 				className="w-full h-full block"
 			/>
@@ -121,6 +131,22 @@ export function FileBody({ file, onReviseWithAnnotations, isRevising = false }: 
 	const [annotations, setAnnotations] = useState<Annotation[]>(() =>
 		hydrateAnnotations(file.annotations),
 	)
+
+	// Mini-apps ship metric: fire a scoped file-view event once per open of a
+	// hosted .html file. HTML-only (mini-apps are html), and the ref guard makes
+	// it exactly-once per file id — window-focus refetches and StrictMode double
+	// effects re-render with the same file object but must not re-fire.
+	const emittedViewFor = useRef<FileDetail['id'] | null>(null)
+	useEffect(() => {
+		if (!isHtml(file.mimeType)) return
+		if (emittedViewFor.current === file.id) return
+		emittedViewFor.current = file.id
+		trackMiniAppFileViewed({
+			entity_id: file.id,
+			entity_type: 'file',
+			file_name: file.name,
+		})
+	}, [file])
 
 	// Persist annotations to the file so other humans and agents see them. The
 	// overlay only exists for HTML files, so auto-save is gated to that case.
