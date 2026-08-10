@@ -714,8 +714,11 @@ describe('Conversations Integration', () => {
 
 			const sessionManager = {
 				createSession: vi.fn().mockResolvedValue({ id: 'new-session-id' }),
-				findActiveConversationSession: vi.fn().mockResolvedValue({ id: 'dead-session-id' }),
+				findActiveConversationSession: vi
+					.fn()
+					.mockResolvedValue({ id: 'dead-session-id', workspaceId }),
 				writeInput: vi.fn().mockRejectedValue(new Error('container gone')),
+				markSessionFailedAfterContainerLoss: vi.fn().mockResolvedValue(undefined),
 			}
 			await evaluateAndRespond({
 				db,
@@ -729,6 +732,76 @@ describe('Conversations Integration', () => {
 			expect(sessionManager.writeInput).toHaveBeenCalledTimes(1)
 			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
 			expect(sessionManager.createSession.mock.calls[0]?.[1]).toMatchObject({ actorId: agent.id })
+			// Regression: the dead session must be marked failed so it stops
+			// satisfying sessions_conversation_actor_active_uniq — otherwise the
+			// fresh createSession above collides with its own zombie on every
+			// subsequent message (see the race-recovery test below).
+			expect(sessionManager.markSessionFailedAfterContainerLoss).toHaveBeenCalledWith(
+				'dead-session-id',
+				workspaceId,
+			)
+		})
+
+		it('marks the race-winner session failed too when joining it via writeInput also fails', async () => {
+			// Covers the second half of the same bug: spawnOrJoinConversationSession's
+			// unique-constraint race-recovery path re-looks-up the "winner" and tries
+			// writeInput on it. If that winner is itself dead (the same self-heal gap
+			// as the primary reuse path), it used to be logged and dropped forever,
+			// permanently wedging sessions_conversation_actor_active_uniq for this
+			// (conversation, agent) pair until the 2h timeout reaper caught it.
+			const agent = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, agent.id)
+			const { app: ownerApp } = createConversationsApp(ownerId)
+			const created = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Race-winner also dead', participant_actor_ids: [agent.id] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+			const [triggering] = await db
+				.insert(messages)
+				.values({
+					conversationId: conversation.id,
+					actorId: ownerId,
+					content: `hey <@${agent.id}>`,
+					metadata: { mentions: [agent.id] },
+				})
+				.returning()
+			if (!triggering) throw new Error('failed to insert triggering message')
+
+			const raceViolation = Object.assign(new Error('duplicate key value'), {
+				code: '23505',
+				constraint_name: 'sessions_conversation_actor_active_uniq',
+			})
+			const sessionManager = {
+				// No existing session visible on the first lookup — goes straight to
+				// spawnOrJoinConversationSession, whose createSession hits the race
+				// violation simulated above.
+				findActiveConversationSession: vi
+					.fn()
+					.mockResolvedValueOnce(null)
+					.mockResolvedValueOnce({ id: 'winner-session-id', workspaceId }),
+				createSession: vi.fn().mockRejectedValue(raceViolation),
+				writeInput: vi.fn().mockRejectedValue(new Error('container gone')),
+				markSessionFailedAfterContainerLoss: vi.fn().mockResolvedValue(undefined),
+			}
+			await evaluateAndRespond({
+				db,
+				// biome-ignore lint/suspicious/noExplicitAny: test double, real type lives in session-manager.ts
+				sessionManager: sessionManager as any,
+				workspaceId,
+				conversationId: conversation.id,
+				messageId: triggering.id,
+			})
+
+			expect(sessionManager.writeInput).toHaveBeenCalledWith('winner-session-id', expect.anything())
+			expect(sessionManager.markSessionFailedAfterContainerLoss).toHaveBeenCalledWith(
+				'winner-session-id',
+				workspaceId,
+			)
 		})
 	})
 })

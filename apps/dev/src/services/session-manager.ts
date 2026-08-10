@@ -921,10 +921,18 @@ export class SessionManager extends EventEmitter {
 		}
 	}
 
-	private async markSessionFailedAfterContainerLoss(
-		sessionId: string,
-		workspaceId: string,
-	): Promise<void> {
+	/**
+	 * Self-heal a session row that the DB still shows as active but whose
+	 * container/stdin is actually gone — e.g. a local Docker container that
+	 * exited or was reaped while this process wasn't watching it (a backend
+	 * restart drops the in-memory `watchContainerExit` poll and
+	 * `ContainerManager.stdinStreams` entry, leaving the row orphaned at
+	 * `running`). Also used directly by callers (e.g. the conversation
+	 * responder) that already know from a failed `writeInput` that a session
+	 * is dead, so the row stops blocking `sessions_conversation_actor_active_uniq`
+	 * for a fresh session.
+	 */
+	async markSessionFailedAfterContainerLoss(sessionId: string, workspaceId: string): Promise<void> {
 		const [existing] = await this.db
 			.select({ startedAt: sessions.startedAt, createdAt: sessions.createdAt })
 			.from(sessions)

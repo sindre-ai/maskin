@@ -183,8 +183,21 @@ export async function evaluateAndRespond(ctx: {
 						'writeInput to existing interactive conversation session failed — spawning a fresh one',
 						{ agentId: agent.id, conversationId, sessionId: existing.id, error: String(err) },
 					)
-					// Fall through to spawn fresh below — the old session is dead
-					// (detached stdin, container gone), not just momentarily busy.
+					// The old session is dead (detached stdin, container gone), not
+					// just momentarily busy. Mark it failed now — otherwise it keeps
+					// satisfying sessions_conversation_actor_active_uniq and the
+					// fresh createSession() below collides with its own zombie.
+					await sessionManager
+						.markSessionFailedAfterContainerLoss(existing.id, existing.workspaceId)
+						.catch((markErr: unknown) =>
+							logger.warn('Failed to mark dead conversation session as failed', {
+								agentId: agent.id,
+								conversationId,
+								sessionId: existing.id,
+								error: String(markErr),
+							}),
+						)
+					// Fall through to spawn fresh below.
 				}
 			}
 
@@ -289,14 +302,28 @@ async function spawnOrJoinConversationSession(params: {
 				}),
 			},
 		})
-		.catch((err: unknown) =>
+		.catch(async (err: unknown) => {
 			logger.warn('Failed to join winning conversation session after race', {
 				agentId,
 				conversationId,
 				sessionId: winner.id,
 				error: String(err),
-			}),
-		)
+			})
+			// The "winner" is itself dead (same self-heal as the primary reuse
+			// path above) — mark it failed so it stops blocking the unique index
+			// for the *next* message, instead of wedging the conversation until
+			// the 2h timeout reaper catches it.
+			await sessionManager
+				.markSessionFailedAfterContainerLoss(winner.id, winner.workspaceId)
+				.catch((markErr: unknown) =>
+					logger.warn('Failed to mark dead race-winner conversation session as failed', {
+						agentId,
+						conversationId,
+						sessionId: winner.id,
+						error: String(markErr),
+					}),
+				)
+		})
 }
 
 /** Walks err.cause chain for the sessions_conversation_actor_active_uniq unique violation (23505). */
