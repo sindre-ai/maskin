@@ -76,7 +76,7 @@ export interface DailyRegenTriggerParams {
 export interface DailyRegenTriggerBody {
 	name: string
 	type: 'cron'
-	config: { expression: string }
+	config: { expression: string; file_id: string }
 	action_prompt: string
 	target_actor_id: string
 	enabled: true
@@ -93,7 +93,11 @@ export function buildDailyRegenTrigger(params: DailyRegenTriggerParams): DailyRe
 	return {
 		name: params.triggerName ?? dailyRegenTriggerName(appName),
 		type: 'cron',
-		config: { expression: DAILY_REGEN_CRON },
+		// file_id makes the trigger self-describing so the provision route can
+		// upsert per-file instead of per-name — apps routinely share filenames
+		// across folders, and a name-only key would let one trigger silently
+		// take over another app's regen.
+		config: { expression: DAILY_REGEN_CRON, file_id: params.file.id },
 		action_prompt: buildDailyRegenActionPrompt(params.file),
 		target_actor_id: params.targetActorId,
 		enabled: true,

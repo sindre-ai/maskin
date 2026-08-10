@@ -29,7 +29,10 @@ const app = new OpenAPIHono<Env>()
 const regenBodySchema = z.object({
 	file_id: z.string().uuid(),
 	app_name: z.string().min(1).max(255).optional(),
-	target_actor_id: z.string().uuid().optional(),
+	// The actor the daily regen session runs as. Required — the runner creates
+	// a session for this actor on every cron fire, so it must be an agent that
+	// can actually run, never silently defaulted to the caller.
+	target_actor_id: z.string().uuid(),
 })
 
 const regenResponseSchema = z.object({
@@ -94,92 +97,77 @@ app.openapi(regenRoute, (async (c) => {
 
 	const fileRef: MiniAppFileRef = { id: file.id, name: file.name }
 	const appName = body.app_name ?? file.name
-	const targetActorId = body.target_actor_id ?? actorId
 	const triggerBody = buildDailyRegenTrigger({
 		file: fileRef,
 		appName,
-		targetActorId,
+		targetActorId: body.target_actor_id,
 	})
 
-	const name = triggerBody.name
-
-	const [existing] = await db
+	// Same-name triggers for OTHER files are never taken over — apps routinely
+	// share a filename across folders, so the upsert matches on the file the
+	// trigger's config records, not just the display name. A user-made trigger
+	// that happens to be named "Regen X daily" is likewise left untouched.
+	const sameName = await db
 		.select()
 		.from(triggers)
-		.where(and(eq(triggers.workspaceId, workspaceId), eq(triggers.name, name)))
-		.limit(1)
+		.where(and(eq(triggers.workspaceId, workspaceId), eq(triggers.name, triggerBody.name)))
+	const existing = sameName.find(
+		(t) => (t.config as { file_id?: string } | null | undefined)?.file_id === file.id,
+	)
 
-	const now = new Date()
-
-	if (existing) {
-		const [trigger] = await db
-			.update(triggers)
-			.set({
-				config: triggerBody.config,
-				actionPrompt: triggerBody.action_prompt,
-				targetActorId: triggerBody.target_actor_id,
-				enabled: true,
-				updatedAt: now,
-			})
-			.where(eq(triggers.id, existing.id))
-			.returning()
-		if (!trigger) {
-			return c.json(createApiError('INTERNAL_ERROR', 'Failed to update regen trigger'), 500)
-		}
-		await db
-			.insert(events)
-			.values({
+	// The audit event is not best-effort here: the trigger runner hot-reloads
+	// cron schedules from the events channel, so a persisted trigger without
+	// its event row would never get scheduled until the next boot. The
+	// transaction makes the write + event atomic, mirroring the canonical
+	// trigger create route.
+	const trigger = await db.transaction(async (tx) => {
+		if (existing) {
+			const [row] = await tx
+				.update(triggers)
+				.set({
+					config: triggerBody.config,
+					actionPrompt: triggerBody.action_prompt,
+					targetActorId: triggerBody.target_actor_id,
+					enabled: true,
+					updatedAt: new Date(),
+				})
+				.where(eq(triggers.id, existing.id))
+				.returning()
+			if (!row) throw new Error('Failed to update regen trigger')
+			await tx.insert(events).values({
 				workspaceId,
 				actorId,
 				action: 'updated',
 				entityType: 'trigger',
-				entityId: trigger.id,
-				data: { trigger_name: trigger.name, type: 'cron', file_id: file.id },
+				entityId: row.id,
+				data: { trigger_name: row.name, type: 'cron', file_id: file.id },
 			})
-			.catch(() => undefined)
-		return c.json(
-			{
-				trigger: serialize(trigger) as z.infer<typeof triggerResponseSchema>,
-				file: {
-					id: file.id,
-					name: file.name,
-					mime_type: file.mimeType,
-					size_bytes: file.sizeBytes,
-				},
-				slot: { id: MASKIN_STATE_SLOT_ID, window_key: MASKIN_APP_DATA_WINDOW_KEY },
-				cron: triggerBody.config.expression,
-			} satisfies z.infer<typeof regenResponseSchema>,
-			200,
-		)
-	}
-
-	const [trigger] = await db
-		.insert(triggers)
-		.values({
-			workspaceId,
-			name,
-			type: 'cron',
-			config: triggerBody.config,
-			actionPrompt: triggerBody.action_prompt,
-			targetActorId: triggerBody.target_actor_id,
-			enabled: true,
-			createdBy: actorId,
-		})
-		.returning()
-	if (!trigger) {
-		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create regen trigger'), 500)
-	}
-	await db
-		.insert(events)
-		.values({
+			return row
+		}
+		const [row] = await tx
+			.insert(triggers)
+			.values({
+				workspaceId,
+				name: triggerBody.name,
+				type: 'cron',
+				config: triggerBody.config,
+				actionPrompt: triggerBody.action_prompt,
+				targetActorId: triggerBody.target_actor_id,
+				enabled: true,
+				createdBy: actorId,
+			})
+			.returning()
+		if (!row) throw new Error('Failed to create regen trigger')
+		await tx.insert(events).values({
 			workspaceId,
 			actorId,
 			action: 'created',
 			entityType: 'trigger',
-			entityId: trigger.id,
-			data: { trigger_name: trigger.name, type: 'cron', file_id: file.id },
+			entityId: row.id,
+			data: { trigger_name: row.name, type: 'cron', file_id: file.id },
 		})
-		.catch(() => undefined)
+		return row
+	})
 
 	return c.json(
 		{

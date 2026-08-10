@@ -37,6 +37,9 @@ describe('mini-app regen routine', () => {
 		expect(parts[2]).toBe('*')
 		expect(parts[3]).toBe('*')
 		expect(parts[4]).toBe('*')
+		// The config records which file this trigger regens, so the provision
+		// route can upsert per-file even when distinct apps share a filename.
+		expect(body.config.file_id).toBe(file.id)
 	})
 
 	it('DoD-2 — bakes live objects into the maskin-state slot the app reads', () => {

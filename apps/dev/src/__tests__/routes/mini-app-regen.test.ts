@@ -93,7 +93,7 @@ describe('Mini-app regen route', () => {
 			workspaceId,
 			name: dailyRegenTriggerName('Curriculum'),
 			type: 'cron',
-			config: { expression: DAILY_REGEN_CRON },
+			config: { expression: DAILY_REGEN_CRON, file_id: fileId },
 			targetActorId,
 			createdBy: actorId,
 			enabled: false,
@@ -129,7 +129,12 @@ describe('Mini-app regen route', () => {
 		mockResults.selectQueue = [[]]
 
 		const res = await app.request(
-			jsonRequest('POST', '/api/mini-apps/regen', { file_id: fileId }, headers()),
+			jsonRequest(
+				'POST',
+				'/api/mini-apps/regen',
+				{ file_id: fileId, target_actor_id: targetActorId },
+				headers(),
+			),
 		)
 
 		expect(res.status).toBe(403)
@@ -147,9 +152,63 @@ describe('Mini-app regen route', () => {
 		mockResults.selectQueue = [[member], [mdFile]]
 
 		const res = await app.request(
-			jsonRequest('POST', '/api/mini-apps/regen', { file_id: fileId }, headers()),
+			jsonRequest(
+				'POST',
+				'/api/mini-apps/regen',
+				{ file_id: fileId, target_actor_id: targetActorId },
+				headers(),
+			),
 		)
 
 		expect(res.status).toBe(400)
+	})
+
+	it('does not take over a same-named trigger that regens a DIFFERENT file', async () => {
+		const { app, mockResults, calls } = createImportTestApp(miniAppRegenRoutes, '/api/mini-apps')
+		const member = buildWorkspaceMember({ workspaceId, actorId })
+		const otherFileId = '44444444-4444-4444-4444-444444444444'
+		const htmlFile = buildFile({
+			workspaceId,
+			id: fileId,
+			name: 'index.html',
+			mimeType: 'text/html',
+			sizeBytes: 120,
+		})
+		// A pre-existing regen trigger for a DIFFERENT file that shares the name.
+		const other = buildTrigger({
+			id: '55555555-5555-5555-5555-555555555555',
+			workspaceId,
+			name: dailyRegenTriggerName('index.html'),
+			type: 'cron',
+			config: { expression: DAILY_REGEN_CRON, file_id: otherFileId },
+			targetActorId,
+			createdBy: actorId,
+		})
+		// Same-name lookup finds it, but the file_id in config does not match →
+		// the route must provision a fresh trigger, never reconfigure the other.
+		mockResults.selectQueue = [[member], [htmlFile], [other]]
+		const created = buildTrigger({
+			id: '66666666-6666-6666-6666-666666666666',
+			workspaceId,
+			name: dailyRegenTriggerName('index.html'),
+			type: 'cron',
+			config: { expression: DAILY_REGEN_CRON, file_id: fileId },
+			targetActorId,
+			createdBy: actorId,
+		})
+		mockResults.insertQueue = [[created], [{ id: 'evt-2' }]]
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/mini-apps/regen',
+				{ file_id: fileId, app_name: 'index.html', target_actor_id: targetActorId },
+				headers(),
+			),
+		)
+
+		expect(res.status).toBe(200)
+		expect(calls.updates).toHaveLength(0)
+		expect(calls.inserts).toHaveLength(2) // new trigger + audit event, no takeover
 	})
 })
