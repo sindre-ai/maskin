@@ -83,6 +83,29 @@ export async function findProvisionedSkillBySourceItem(
 	return row
 }
 
+/**
+ * Find a skill the workspace already has by name, regardless of provenance.
+ * Two loops published independently (different `source_item_id`s) can still
+ * bundle a skill with the same name — not "the same" shared item by identity,
+ * but the `(workspace_id, name)` unique index treats them as one anyway. This
+ * is the fallback dedup guard for that case: reuse the existing row instead of
+ * refusing the install. Matches on name alone (not scoped to
+ * marketplace-provisioned rows) because the constraint itself isn't scoped —
+ * a manually-created skill with the same name blocks a bare insert too.
+ */
+export async function findWorkspaceSkillByName(
+	db: DbHandle,
+	workspaceId: string,
+	name: string,
+): Promise<{ id: string } | undefined> {
+	const [row] = await db
+		.select({ id: workspaceSkills.id })
+		.from(workspaceSkills)
+		.where(and(eq(workspaceSkills.workspaceId, workspaceId), eq(workspaceSkills.name, name)))
+		.limit(1)
+	return row
+}
+
 export type ProvisionedActorRef = {
 	id: string
 	sourceItemId: string | null
@@ -147,18 +170,22 @@ export async function partitionProvisionedActors(
 export type ProvisionedSkillRef = {
 	id: string
 	sourceItemId: string | null
+	name: string
 }
 
 /**
  * Ownership-aware partitioning of an install's provisioned skills, mirroring
  * `partitionProvisionedActors` for the skill dedup guard above. A skill is
  * KEPT when another currently-installed loop in the workspace still bundles
- * the same `source_item_id` — that loop would reach for the same row on its
- * next install/push. Skills have no trigger-style dependency (unlike actors,
- * which can be kept alive by a live trigger's `targetActorId` even without a
- * bundle match), so the bundle check alone is sufficient. Kept skills are
- * rehomed to one of the referencing installs so a later removal of *that*
- * install can still retire the skill once no references remain.
+ * the same `source_item_id` (the "genuinely the same shared item" case) OR
+ * bundles a *different* skill item with the same `name` (the name-collision
+ * reuse case handled by `findWorkspaceSkillByName` at provisioning time) —
+ * either loop would reach for this same row on its next install/push. Skills
+ * have no trigger-style dependency (unlike actors, which can be kept alive by
+ * a live trigger's `targetActorId` even without a bundle match), so the
+ * bundle checks alone are sufficient. Kept skills are rehomed to one of the
+ * referencing installs so a later removal of *that* install can still retire
+ * the skill once no references remain.
  */
 export async function partitionProvisionedSkills(
 	tx: DbHandle,
@@ -174,11 +201,22 @@ export async function partitionProvisionedSkills(
 	const sourceItemIds = skillsToPartition
 		.map((s) => s.sourceItemId)
 		.filter((s): s is string => s !== null)
-	const bundleRefs = await findReferencingInstalls(tx, workspaceId, installId, sourceItemIds)
+	const [bundleRefs, nameRefs] = await Promise.all([
+		findReferencingInstalls(tx, workspaceId, installId, sourceItemIds),
+		findReferencingInstallsBySkillName(
+			tx,
+			workspaceId,
+			installId,
+			skillsToPartition.map((s) => s.name),
+		),
+	])
 
 	for (const skill of skillsToPartition) {
-		const liveInstallIds = skill.sourceItemId ? (bundleRefs.get(skill.sourceItemId) ?? []) : []
-		const [rehomeTo] = liveInstallIds
+		const liveInstallIds = new Set([
+			...(skill.sourceItemId ? (bundleRefs.get(skill.sourceItemId) ?? []) : []),
+			...(nameRefs.get(skill.name) ?? []),
+		])
+		const [rehomeTo] = [...liveInstallIds]
 		if (!rehomeTo) {
 			deleted.push(skill.id)
 			continue
@@ -222,6 +260,46 @@ async function findReferencingInstalls(
 		const list = refs.get(row.sourceItemId) ?? []
 		list.push(row.installId)
 		refs.set(row.sourceItemId, list)
+	}
+	return refs
+}
+
+/**
+ * Installed loops (other than `installId`) in `workspaceId` whose source loop
+ * bundles a skill item with any of `names` — the name-collision counterpart
+ * to `findReferencingInstalls`. Two loops can each define their own,
+ * independently-sourced skill that happens to share a name; the
+ * `(workspace_id, name)` unique index means only one row can exist for that
+ * name, so a loop that references it by name only (not by `source_item_id`)
+ * still needs to keep the row alive when its original provisioner is removed.
+ */
+async function findReferencingInstallsBySkillName(
+	db: DbHandle,
+	workspaceId: string,
+	installId: string,
+	names: string[],
+): Promise<Map<string, string[]>> {
+	const refs = new Map<string, string[]>()
+	if (names.length === 0) return refs
+	const rows = await db
+		.select({
+			name: sql<string>`${marketplaceLoopItems.itemSnapshot}->>'name'`,
+			installId: installedLoops.id,
+		})
+		.from(installedLoops)
+		.innerJoin(marketplaceLoopItems, eq(marketplaceLoopItems.loopId, installedLoops.sourceLoopId))
+		.where(
+			and(
+				eq(installedLoops.workspaceId, workspaceId),
+				ne(installedLoops.id, installId),
+				eq(marketplaceLoopItems.itemType, 'skill'),
+				inArray(sql`${marketplaceLoopItems.itemSnapshot}->>'name'`, names),
+			),
+		)
+	for (const row of rows) {
+		const list = refs.get(row.name) ?? []
+		list.push(row.installId)
+		refs.set(row.name, list)
 	}
 	return refs
 }

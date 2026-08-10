@@ -44,6 +44,7 @@ import {
 	buildTriggerInsert,
 	findProvisionedActorBySourceItem,
 	findProvisionedSkillBySourceItem,
+	findWorkspaceSkillByName,
 	installMetadata,
 	partitionProvisionedActors,
 	partitionProvisionedSkills,
@@ -369,6 +370,16 @@ app.openapi(installLoopRoute, async (c) => {
 						const attachedActorIds = Array.isArray(snapshot.attachedActorIds)
 							? (snapshot.attachedActorIds as string[])
 							: []
+						const skillName = (snapshot.name as string) ?? 'untitled-skill'
+						const reuseSkill = (id: string) => {
+							sourceToLocal.set(item.sourceItemId, id)
+							if (attachedActorIds.length > 0) {
+								skillActorBindings.push({
+									sourceSkillId: item.sourceItemId,
+									sourceActorIds: attachedActorIds,
+								})
+							}
+						}
 
 						// Dedup guard, mirroring the actor case above: don't clone a skill
 						// the workspace already has. Two loops can legitimately bundle the
@@ -381,13 +392,18 @@ app.openapi(installLoopRoute, async (c) => {
 							item.sourceItemId,
 						)
 						if (existingSkill) {
-							sourceToLocal.set(item.sourceItemId, existingSkill.id)
-							if (attachedActorIds.length > 0) {
-								skillActorBindings.push({
-									sourceSkillId: item.sourceItemId,
-									sourceActorIds: attachedActorIds,
-								})
-							}
+							reuseSkill(existingSkill.id)
+							break
+						}
+
+						// Fallback dedup guard: two loops published independently (different
+						// `source_item_id`s) can still bundle a skill with the same name —
+						// not "the same" shared item by identity, but the unique index treats
+						// them as one anyway. Reuse the existing row by name rather than
+						// refusing the whole install.
+						const existingByName = await findWorkspaceSkillByName(tx, workspaceId, skillName)
+						if (existingByName) {
+							reuseSkill(existingByName.id)
 							break
 						}
 
@@ -407,7 +423,15 @@ app.openapi(installLoopRoute, async (c) => {
 						} catch (err) {
 							const cause = (err as { cause?: { code?: string; table_name?: string } }).cause
 							if (cause?.code === '23505' && cause.table_name === 'workspace_skills') {
-								throw new SkillNameConflictError((snapshot.name as string) ?? 'untitled-skill')
+								// Lost a race against a concurrent install that just created the
+								// same-named row between our check above and this insert — reuse
+								// it instead of failing the whole install.
+								const reconciled = await findWorkspaceSkillByName(tx, workspaceId, skillName)
+								if (reconciled) {
+									reuseSkill(reconciled.id)
+									break
+								}
+								throw new SkillNameConflictError(skillName)
 							}
 							throw err
 						}
@@ -931,11 +955,15 @@ app.openapi(uninstallLoopRoute, async (c) => {
 				.returning({ id: triggers.id })
 
 			// Shared skills (bundled by more than one installed loop, matched by
-			// source_item_id) survive this uninstall — rehomed to a live install
-			// that still references them — mirroring the actor partition below.
-			// Only the unreferenced remainder is deleted.
+			// source_item_id or by name) survive this uninstall — rehomed to a live
+			// install that still references them — mirroring the actor partition
+			// below. Only the unreferenced remainder is deleted.
 			const provisionedSkillRows = await tx
-				.select({ id: workspaceSkills.id, metadata: workspaceSkills.metadata })
+				.select({
+					id: workspaceSkills.id,
+					name: workspaceSkills.name,
+					metadata: workspaceSkills.metadata,
+				})
 				.from(workspaceSkills)
 				.where(
 					sql`${workspaceSkills.metadata}->>'installed_loop_id' = ${install.id} OR ${workspaceSkills.metadata}->>'forked_from_installed_loop_id' = ${install.id}`,
@@ -944,7 +972,11 @@ app.openapi(uninstallLoopRoute, async (c) => {
 				tx,
 				install.workspaceId,
 				install.id,
-				provisionedSkillRows.map((r) => ({ id: r.id, sourceItemId: sourceItemIdOf(r.metadata) })),
+				provisionedSkillRows.map((r) => ({
+					id: r.id,
+					sourceItemId: sourceItemIdOf(r.metadata),
+					name: r.name,
+				})),
 			)
 			if (keptSkillIds.length > 0) {
 				logger.info(

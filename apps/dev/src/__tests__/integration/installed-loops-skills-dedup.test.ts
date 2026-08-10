@@ -313,10 +313,10 @@ describe('Loop install skill dedup guard', () => {
 		})
 	})
 
-	it('installing a loop whose skill genuinely collides by name (different source item) returns a clean 409, not a 500', async () => {
+	it('installing a loop whose skill collides by name only (different, unrelated source item) reuses the existing row instead of refusing the install', async () => {
 		// Two independent source items that happen to share a name — the
-		// source-item dedup guard can't help here (they're not the "same" skill),
-		// so this exercises the DB-level unique-index catch instead.
+		// source-item dedup guard can't help here (they're not "the same" shared
+		// item by identity), so this exercises the name-based fallback guard.
 		const loopA = await seedMarketplaceLoop({
 			name: 'Loop A',
 			skillItems: [{ sourceItemId: randomUUID(), snapshot: SKILL_SNAPSHOT }],
@@ -329,25 +329,92 @@ describe('Loop install skill dedup guard', () => {
 
 		const first = await install(app, loopA.id, workspaceId)
 		expect(first.status).toBe(201)
+		expect(first.body.provisioned.skills).toBe(1)
 
-		const second = await app.request(
-			jsonRequest('POST', '/api/installed-loops', { loopId: loopB.id, workspaceId }),
-		)
-		expect(second.status).toBe(409)
-		const body = (await second.json()) as { error: { code: string; message: string } }
-		expect(body.error.code).toBe('CONFLICT')
+		// Second loop's skill has an unrelated source_item_id but the same
+		// name — it must reuse the existing row, not clone or refuse.
+		const second = await install(app, loopB.id, workspaceId)
+		expect(second.status).toBe(201)
+		expect(second.body.provisioned.skills).toBe(0)
 
-		// Only the first loop's install is left behind — no partial install row,
-		// no orphaned skill from the failed transaction.
 		const installs = await db
 			.select({ id: installedLoops.id })
 			.from(installedLoops)
 			.where(eq(installedLoops.workspaceId, workspaceId))
-		expect(installs).toHaveLength(1)
+		expect(installs).toHaveLength(2)
 		const skillRows = await db
 			.select({ id: workspaceSkills.id })
 			.from(workspaceSkills)
 			.where(eq(workspaceSkills.workspaceId, workspaceId))
 		expect(skillRows).toHaveLength(1)
+	})
+
+	it('fully uninstalling the loop that first provisioned a name-collision skill keeps the skill for the loop that reused it by name', async () => {
+		const loopA = await seedMarketplaceLoop({
+			name: 'Loop A',
+			skillItems: [{ sourceItemId: randomUUID(), snapshot: SKILL_SNAPSHOT }],
+		})
+		const loopB = await seedMarketplaceLoop({
+			name: 'Loop B',
+			skillItems: [{ sourceItemId: randomUUID(), snapshot: SKILL_SNAPSHOT }],
+		})
+		const app = makeApp(actorId)
+
+		await install(app, loopA.id, workspaceId)
+		await install(app, loopB.id, workspaceId)
+
+		const [sharedSkill] = await db
+			.select({ id: workspaceSkills.id })
+			.from(workspaceSkills)
+			.where(eq(workspaceSkills.workspaceId, workspaceId))
+		if (!sharedSkill) throw new Error('expected the shared skill row')
+
+		const [loopAInstall] = await db
+			.select({ id: installedLoops.id })
+			.from(installedLoops)
+			.where(eq(installedLoops.sourceLoopId, loopA.id))
+		const [loopBInstall] = await db
+			.select({ id: installedLoops.id })
+			.from(installedLoops)
+			.where(eq(installedLoops.sourceLoopId, loopB.id))
+		if (!loopAInstall || !loopBInstall) throw new Error('expected both install rows')
+
+		// Full uninstall of A — the loop that first provisioned the skill.
+		const uninstallRes = await app.request(
+			jsonRequest('DELETE', `/api/installed-loops/${loopAInstall.id}`, {
+				keepProvisionedItems: false,
+			}),
+		)
+		expect(uninstallRes.status).toBe(200)
+		const uninstallBody = (await uninstallRes.json()) as { removedElements: { skills: number } }
+		expect(uninstallBody.removedElements.skills).toBe(0)
+
+		// The skill survives, rehomed under loop B, which only ever referenced
+		// it by name.
+		const [survivor] = await db
+			.select({ id: workspaceSkills.id })
+			.from(workspaceSkills)
+			.where(eq(workspaceSkills.workspaceId, workspaceId))
+		expect(survivor?.id).toBe(sharedSkill.id)
+		const [rehomedMeta] = await db
+			.select({ installedLoopId: sql<string>`${workspaceSkills.metadata}->>'installed_loop_id'` })
+			.from(workspaceSkills)
+			.where(eq(workspaceSkills.id, sharedSkill.id))
+		expect(rehomedMeta?.installedLoopId).toBe(loopBInstall.id)
+
+		// Uninstalling B too finally retires the skill.
+		const secondRes = await app.request(
+			jsonRequest('DELETE', `/api/installed-loops/${loopBInstall.id}`, {
+				keepProvisionedItems: false,
+			}),
+		)
+		expect(secondRes.status).toBe(200)
+		const secondBody = (await secondRes.json()) as { removedElements: { skills: number } }
+		expect(secondBody.removedElements.skills).toBe(1)
+		const after = await db
+			.select({ id: workspaceSkills.id })
+			.from(workspaceSkills)
+			.where(eq(workspaceSkills.workspaceId, workspaceId))
+		expect(after).toHaveLength(0)
 	})
 })
