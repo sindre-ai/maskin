@@ -33,9 +33,11 @@ vi.mock('@/lib/api', () => ({
 
 const mockSetApiKey = vi.fn()
 const mockSetStoredActor = vi.fn()
+const mockGetStoredActor = vi.fn()
 vi.mock('@/lib/auth', () => ({
 	setApiKey: (...args: unknown[]) => mockSetApiKey(...args),
 	setStoredActor: (...args: unknown[]) => mockSetStoredActor(...args),
+	getStoredActor: () => mockGetStoredActor(),
 }))
 
 import { useVaerkstedAuth } from '@/hooks/use-vaerksted-auth'
@@ -205,7 +207,7 @@ describe('useVaerkstedAuth', () => {
 			expect(mockNavigate).toHaveBeenCalledWith({ to: '/' })
 		})
 
-		it('is a no-op (does not throw or call actors.update) for a new actor with no stashed profile (e.g. signup from a different browser)', async () => {
+		it('routes to /complete-profile (not "/") for a new actor with no stashed profile — e.g. a never-before-seen email typed into /login', async () => {
 			mockGetSession.mockResolvedValue({ data: { session: { access_token: 'sb-token' } } })
 			mockFetchIdentities()
 			mockLink.mockResolvedValue({
@@ -223,7 +225,11 @@ describe('useVaerkstedAuth', () => {
 
 			expect(mockActorsUpdate).not.toHaveBeenCalled()
 			expect(mockObjectsCreate).not.toHaveBeenCalled()
-			expect(mockNavigate).toHaveBeenCalledWith({ to: '/' })
+			expect(mockNavigate).toHaveBeenCalledWith({
+				to: '/complete-profile',
+				search: { workspace_id: 'ws-3' },
+			})
+			expect(mockNavigate).not.toHaveBeenCalledWith({ to: '/' })
 		})
 
 		it('sets the API key and stores the actor before navigating', async () => {
@@ -249,6 +255,52 @@ describe('useVaerkstedAuth', () => {
 				email: 'existing@example.com',
 			})
 			await waitFor(() => expect(mockSignOut).toHaveBeenCalled())
+		})
+	})
+
+	describe('submitProfile', () => {
+		it('renames the currently-stored actor, writes the knowledge object, and navigates home', async () => {
+			mockGetStoredActor.mockReturnValue({
+				id: 'actor-5',
+				name: 'test@example.com',
+				type: 'human',
+				email: 'test@example.com',
+			})
+			mockActorsUpdate.mockResolvedValue({})
+			mockObjectsCreate.mockResolvedValue({})
+
+			const { result } = renderHook(() => useVaerkstedAuth())
+			await act(async () => {
+				await result.current.submitProfile('ws-5', {
+					name: 'Ada Lovelace',
+					organization: 'Analytical Engines',
+					role: 'Mathematician',
+				})
+			})
+
+			expect(mockActorsUpdate).toHaveBeenCalledWith('actor-5', { name: 'Ada Lovelace' }, 'ws-5')
+			expect(mockObjectsCreate).toHaveBeenCalledTimes(1)
+			const [workspaceId, payload] = mockObjectsCreate.mock.calls[0]
+			expect(workspaceId).toBe('ws-5')
+			expect(payload.metadata.organization).toBe('Analytical Engines')
+			expect(payload.metadata.role).toBe('Mathematician')
+			expect(mockNavigate).toHaveBeenCalledWith({ to: '/' })
+		})
+
+		it('redirects to /login instead of throwing when there is no stored actor', async () => {
+			mockGetStoredActor.mockReturnValue(null)
+
+			const { result } = renderHook(() => useVaerkstedAuth())
+			await act(async () => {
+				await result.current.submitProfile('ws-6', {
+					name: 'Ada Lovelace',
+					organization: 'Analytical Engines',
+					role: 'Mathematician',
+				})
+			})
+
+			expect(mockActorsUpdate).not.toHaveBeenCalled()
+			expect(mockNavigate).toHaveBeenCalledWith({ to: '/login' })
 		})
 	})
 })
