@@ -1,4 +1,5 @@
 import {
+	deriveAgentKind,
 	deriveAgentStatus,
 	getActiveAgentSessions,
 	getLatestSession,
@@ -168,5 +169,26 @@ describe('getLatestSession', () => {
 		// groupSessionsByAgent sorts descending, so second would be first in array
 		const map = new Map([['a1', [second, first]]])
 		expect(getLatestSession('a1', map)).toBe(second)
+	})
+})
+
+describe('deriveAgentKind', () => {
+	it('returns the first line of the description', () => {
+		expect(deriveAgentKind({ description: 'Technical architect\nOwns decisions' })).toBe(
+			'Technical architect',
+		)
+	})
+
+	it('strips surrounding whitespace from the role line', () => {
+		expect(deriveAgentKind({ description: '  Researcher  ' })).toBe('Researcher')
+	})
+
+	it('returns Agent when there is no description', () => {
+		expect(deriveAgentKind({ description: null })).toBe('Agent')
+		expect(deriveAgentKind({})).toBe('Agent')
+	})
+
+	it('returns Agent for a blank description', () => {
+		expect(deriveAgentKind({ description: '   ' })).toBe('Agent')
 	})
 })

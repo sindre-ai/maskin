@@ -31,7 +31,6 @@ export function AgentPortraitCard({
 	const role = agent.system_prompt?.split('\n')[0]?.trim()
 	const focus = describeFocus(status, latestSession)
 
-	const meta = STATUS_META[status]
 	const isRunning = status === 'running'
 
 	return (
@@ -65,20 +64,7 @@ export function AgentPortraitCard({
 			<FocusLine status={status} text={focus} session={latestSession} />
 
 			<div className="relative inline-flex items-center gap-1.5 text-[11px] text-muted-foreground pointer-events-none">
-				<span
-					className={cn(
-						'inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-medium',
-						meta.pillBg,
-						meta.pillText,
-					)}
-				>
-					{isRunning ? (
-						<Spinner className="size-3" aria-hidden="true" />
-					) : (
-						<meta.Icon className="size-3" aria-hidden="true" />
-					)}
-					{meta.label}
-				</span>
+				<AgentStatusPill status={status} />
 			</div>
 
 			<div className="relative mt-auto flex w-full items-center justify-center gap-2 pt-1">
@@ -178,7 +164,7 @@ function AvatarPortrait({
 	)
 }
 
-function describeFocus(status: PortraitStatus, session?: SessionResponse): string {
+export function describeFocus(status: PortraitStatus, session?: SessionResponse): string {
 	if (status === 'failed') {
 		return session?.actionPrompt ? `Failed: ${session.actionPrompt}` : 'Last run failed'
 	}
@@ -192,6 +178,28 @@ function describeFocus(status: PortraitStatus, session?: SessionResponse): strin
 		return session.actionPrompt
 	}
 	return 'Standing by'
+}
+
+/** Pill used by any surface that shows an agent's portrait status as a row/card badge. */
+export function AgentStatusPill({ status }: { status: PortraitStatus }) {
+	const meta = STATUS_META[status]
+	const isRunning = status === 'running'
+	return (
+		<span
+			className={cn(
+				'inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-medium',
+				meta.pillBg,
+				meta.pillText,
+			)}
+		>
+			{isRunning ? (
+				<Spinner className="size-3" aria-hidden="true" />
+			) : (
+				<meta.Icon className="size-3" aria-hidden="true" />
+			)}
+			{meta.label}
+		</span>
+	)
 }
 
 interface StatusMeta {

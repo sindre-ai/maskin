@@ -40,6 +40,10 @@ export interface DisplayPanelProps {
 	columns?: DisplayPanelColumn[]
 	columnVisibility?: VisibilityState
 	onColumnVisibilityChange?: (columnId: string, visible: boolean) => void
+	// Ordering / Grouping pickers can be constrained to a subset of `columns`
+	// (e.g. a non-table surface that shouldn't sort by every property).
+	orderingColumns?: DisplayPanelColumn[]
+	groupingColumns?: DisplayPanelColumn[]
 	// Filters — comma-separated strings for multi-select
 	statusFilter?: string
 	onStatusFilterChange?: (value: string | undefined) => void
@@ -152,6 +156,8 @@ export function DisplayPanel({
 	columns = [],
 	columnVisibility,
 	onColumnVisibilityChange,
+	orderingColumns: orderingColumnsOverride,
+	groupingColumns: groupingColumnsOverride,
 	statusFilter,
 	onStatusFilterChange,
 	statusesByType = {},
@@ -212,13 +218,21 @@ export function DisplayPanel({
 		activeMetadataFilterCount > 0
 	const hideableColumns = columns.filter((col) => col.canHide)
 	const showProperties = !!onColumnVisibilityChange && hideableColumns.length > 0
+	const activeOrderingColumns =
+		orderingColumnsOverride && orderingColumnsOverride.length > 0
+			? orderingColumnsOverride
+			: columns
 	const orderingColumns =
 		view === 'board'
-			? [{ id: BOARD_MANUAL_SORT, label: 'Manual', canHide: false }, ...columns]
+			? [{ id: BOARD_MANUAL_SORT, label: 'Manual', canHide: false }, ...activeOrderingColumns]
+			: activeOrderingColumns
+	const groupingColumns =
+		groupingColumnsOverride && groupingColumnsOverride.length > 0
+			? groupingColumnsOverride
 			: columns
 
 	const sortLabel = orderingColumns.find((c) => c.id === sort)?.label
-	const groupLabel = columns.find((c) => c.id === groupBy)?.label
+	const groupLabel = groupingColumns.find((c) => c.id === groupBy)?.label
 
 	const typeEntries = Object.entries(statusesByType).filter(([, statuses]) => statuses.length > 0)
 	const hasStatuses = typeEntries.length > 0
@@ -424,7 +438,7 @@ export function DisplayPanel({
 												<span className="flex-1">None</span>
 												{!groupBy && <Check size={12} className="opacity-60" />}
 											</DropdownMenuItem>
-											{columns.map((col) => (
+											{groupingColumns.map((col) => (
 												<DropdownMenuItem
 													key={col.id}
 													onClick={() => onGroupByChange?.(col.id)}
