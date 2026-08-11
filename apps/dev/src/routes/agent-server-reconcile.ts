@@ -1,6 +1,6 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { ApiErrorCode, createApiError } from '../lib/errors'
+import { ApiErrorCode, createApiError, validationFailureHook } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { errorSchema } from '../lib/openapi-schemas'
 import type { SessionManager } from '../services/session-manager'
@@ -13,7 +13,13 @@ type Env = {
 	}
 }
 
-const app = new OpenAPIHono<Env>()
+// Mounted into the main app via `app.route(...)` in app-factory.ts, but a
+// route's `defaultHook` binds to whichever OpenAPIHono instance `.openapi()`
+// was called on — `.route()` mounting does not inherit the parent's hook.
+// Passed explicitly here so a validation failure on this internal (agent-
+// server-to-apps/dev) route is actually logged; see validationFailureHook's
+// own comment in lib/errors.ts.
+const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 const reconcileBodySchema = z.object({
 	agent_server_id: z.string().uuid(),
