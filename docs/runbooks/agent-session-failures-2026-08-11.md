@@ -240,6 +240,72 @@ directly observe what's different about the failing condition.
 Finding A — microsandbox's core relay mechanism CLEARED via clean minimal repro; real trigger condition still
 OPEN, now narrowed to concurrency/real-load conditions rather than the relay mechanism itself.
 
+**Follow-up (2026-08-11, later still) — ROOT CAUSE FOUND. Chrome's DevTools HTTP server rejects the `Host`
+header microsandbox's DNS naming produces. Not a microsandbox bug at all.**
+
+*Concurrency test, requested and run with user sign-off ("only crashes those diagnostic browser sidecars," never
+the whole box).* Fired 5 simultaneous real diagnostic sessions (`browserRequired: true`, real agent-base image,
+real Playwright MCP) at 10:41:52–10:42:05 UTC. **All 5 failed, 100%, on the very first navigation attempt** —
+same as every solo test before it. This was the key negative result: concurrency across *separate* sessions
+didn't change the failure rate at all (100% either way), which ruled out "load/contention between sessions" as
+the mechanism, since a lone session already failed identically.
+
+That redirected the hunt toward what's different between the always-failing real stack and the always-succeeding
+minimal repro. Systematically tested every remaining variable against the minimal `alpine`+`nc` repro from the
+prior entry, each isolated on the box directly:
+- Busy background egress traffic on the same guest (simulating a real agent's own concurrent MCP/API calls) —
+  still succeeded 3/3.
+- A 20-second idle gap between tunnel-ready and connection attempt (matching the real ~15-20s gap while the
+  agent loads tools before its first navigate call) — still succeeded.
+- **The real `browser-sidecar` image (genuine Chromium + socat) instead of the `nc`-loop stand-in, queried with
+  a bare HTTP request (no `Host` header) — got a connection that closed with zero bytes returned.** Reproduced
+  identically querying the real Chrome CDP port directly from the host, bypassing the guest entirely — ruling out
+  networking altogether and pointing straight at Chrome itself.
+
+**Confirmed directly:** Chrome's remote-debugging HTTP server enforces DNS-rebinding protection — it rejects any
+request whose `Host` header isn't `localhost` or a raw IP address:
+```
+$ printf 'GET /json/version HTTP/1.1\r\nHost: localhost\r\n...'           → 200 OK, full CDP JSON
+$ printf 'GET /json/version HTTP/1.1\r\nHost: host.microsandbox.internal:29226\r\n...' → 500 Internal Server Error
+                                                                             "Host header is specified and is not
+                                                                              an IP address or localhost."
+$ printf 'GET /json/version HTTP/1.1\r\nHost: 127.0.0.1:29226\r\n...'     → 200 OK, full CDP JSON
+```
+Playwright's HTTP client sets `Host` from the URL it's given — and the URL it's given is
+`http://host.microsandbox.internal:<relayPort>/...` (the whole point of the `allow@host:tcp:<port>` design, so
+the guest can reach the dynamically-allocated host-loopback relay port). `host.microsandbox.internal` is neither
+`localhost` nor an IP literal, so **every single CDP discovery request is rejected by Chrome itself** — as a
+clean `500` (reproduced directly), or, depending on exact timing through the real SSH-relay/socat chain in
+production, as a `ECONNRESET` (the two `500`/`ECONNRESET` variants seen across different sessions in this
+incident are the same rejection surfacing slightly differently depending on whether the 500 body finishes
+flushing before the connection tears down). **This is not a microsandbox bug, not a Maskin orchestration bug,
+and not related to concurrency or load at all** — it is Chrome's own DevTools security check firing on every
+single request, deterministically, because of the hostname `provisionBrowserSidecar` uses to construct `cdpUrl`.
+
+**Why the earlier repros didn't catch this:** the minimal repro's stand-in listener was a plain `nc`/Python HTTP
+server — neither validates the `Host` header, so they were blind to this specific check. Only testing against
+real Chromium surfaced it.
+
+**Fix required:** something between the guest and Chrome needs to rewrite the `Host` header to `localhost` or an
+IP before it reaches Chrome's CDP HTTP server. The current bridge (`docker/browser-sidecar/entrypoint.sh`'s
+`exec socat TCP-LISTEN:9222,fork,reuseaddr TCP:127.0.0.1:9223`) is a dumb TCP-level forwarder with no HTTP
+awareness, so it can't do this as-is. Options, roughly in order of how surgical they are:
+1. Replace the plain `socat` bridge with something HTTP-aware that rewrites the `Host` header before forwarding
+   to `127.0.0.1:9223` (e.g. a tiny local reverse proxy, or a `socat`+stream-editor pipeline).
+2. Have Chrome listen with `--remote-debugging-address` bound such that the guest-visible hostname resolves to
+   something Chrome already accepts — not straightforward given `host.microsandbox.internal` is a fixed internal
+   DNS name required for the `allow@host:tcp:<port>` mechanism to work at all.
+3. Check whether a newer Chromium build (or a documented flag) can disable/relax this specific check — risk:
+   this is a deliberate DNS-rebinding protection, so disabling it outright has security implications worth
+   weighing (low real risk here since access is already gated by the narrow per-session `allow@host:tcp:<port>`
+   rule, but worth a conscious decision rather than a silent bypass).
+
+Option 1 (header-rewriting bridge) is the safest and most surgical — it fixes exactly the mismatch without
+touching Chrome's security posture at all.
+
+**Status:** ROOT CAUSE CONFIRMED, deterministic, 100% reproduced and explained. Fix not yet implemented — needs
+a decision on the bridge approach before implementation.
+
 ---
 
 ## Issue 3 — Inconsistent exit code between msb's own log and Maskin's stored session record
