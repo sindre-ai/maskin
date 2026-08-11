@@ -1,4 +1,4 @@
-import { OpenAPIHono, type RouteHandler, createRoute } from '@hono/zod-openapi'
+import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { events, objects, readState, relationships, triggers } from '@maskin/db/schema'
 import { TERMINAL_BET_STATUSES, listLoopsResponseSchema } from '@maskin/shared'
@@ -81,15 +81,23 @@ function readClosedStatuses(meta: Record<string, unknown>): Record<string, strin
 	return Object.keys(cleaned).length > 0 ? cleaned : null
 }
 
+const listLoopsQuerySchema = z.object({
+	id: z.string().uuid().optional().openapi({
+		description:
+			'Scope the result to a single loop id (used by get_loop). Omit to list every loop in the workspace.',
+	}),
+})
+
 const listLoopsRoute = createRoute({
 	method: 'get',
 	path: '/',
 	tags: ['loops'],
 	summary: 'List loops in workspace with derived stats',
 	description:
-		'Returns every Loop object in the workspace with per-row derived fields (in-progress / closed counts, median close time, agent-actor ids, per-viewer waiting flag) computed from a single request. Returns an empty array — not an error — for workspaces with zero loops.',
+		'Returns every Loop object in the workspace with per-row derived fields (in-progress / closed counts, median close time, agent-actor ids, per-viewer waiting flag) computed from a single request. Returns an empty array — not an error — for workspaces with zero loops. Pass `id` to scope to a single loop (still returns `{loops: [...]}`, empty array if that id is not a loop in this workspace).',
 	request: {
 		headers: workspaceIdHeader,
+		query: listLoopsQuerySchema,
 	},
 	responses: {
 		200: {
@@ -107,15 +115,21 @@ app.openapi(listLoopsRoute, (async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id } = c.req.valid('query')
 
-	// Load every Loop in the workspace. `list_objects`-style read; the derived
-	// per-row fields below fan out to child objects / triggers / read state in
-	// separate batched queries so N stays small (5 queries total regardless
-	// of the number of loops).
+	// Load every Loop in the workspace, or just one when `id` is passed (used
+	// by get_loop) — the derived-stats logic below is unaware of the
+	// difference, it just fans out over whatever rows come back.
 	const loopRows = await db
 		.select()
 		.from(objects)
-		.where(and(eq(objects.workspaceId, workspaceId), eq(objects.type, 'loop')))
+		.where(
+			and(
+				eq(objects.workspaceId, workspaceId),
+				eq(objects.type, 'loop'),
+				...(id ? [eq(objects.id, id)] : []),
+			),
+		)
 	if (loopRows.length === 0) {
 		return c.json({ loops: [] })
 	}

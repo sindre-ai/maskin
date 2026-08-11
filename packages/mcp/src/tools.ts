@@ -164,7 +164,7 @@ export const tools = {
 	// ─── Objects ─────────────────────────────────────────────
 	create_objects: {
 		description:
-			'Create one or more objects (insights, bets, tasks) with optional relationships in a single atomic operation. To create a Loop — a persistent closed-loop agent process — use the dedicated create_loop tool instead, which wires the trigger and membership metadata correctly. For a single object, provide one node with no edges. For multiple related objects, use $id references in edges to link them. Edges can also reference existing object UUIDs to connect new objects to existing ones. Call get_workspace_schema first to discover valid statuses, metadata fields, and relationship types. Status defaults — insight: new|processing|clustered|scored|parked|discarded, bet: signal|qualified|define|active|live|succeeded|failed|paused, task: todo|in_progress|in_review|validated|done|discarded. To attach files to a created object, upload them first with create_file (or pick existing ones with list_files) and pass the returned ids in `file_ids` on the node. Attached files appear under the object in the UI and are returned alongside the object in get_objects. When referring to created or connected objects in human-facing output (comments, summaries, notifications, descriptions), use the object\'s title — not its UUID. Returned nodes include the title; edges include sourceTitle and targetTitle for the same reason. UUIDs should only appear in human-facing text when two objects share a near-identical title and disambiguation is needed — in that case append a short id suffix (e.g. "Bets and Threads v4 (ca957490)"). Use UUIDs freely inside tool arguments.',
+			'Create one or more objects (insights, bets, tasks) with optional relationships in a single atomic operation. To create a Loop — a persistent closed-loop agent process — use the dedicated create_loop tool instead, which wires the trigger and membership metadata correctly. For a single object, provide one node with no edges. For multiple related objects, use $id references in edges to link them. Edges can also reference existing object UUIDs to connect new objects to existing ones. ALWAYS call get_workspace_schema first — it returns the authoritative, live list of valid statuses per object type, metadata fields, and relationship types for this workspace (these are workspace-configurable, so they vary between workspaces and cannot be assumed). To attach files to a created object, upload them first with create_file (or pick existing ones with list_files) and pass the returned ids in `file_ids` on the node. Attached files appear under the object in the UI and are returned alongside the object in get_objects. When referring to created or connected objects in human-facing output (comments, summaries, notifications, descriptions), use the object\'s title — not its UUID. Returned nodes include the title; edges include sourceTitle and targetTitle for the same reason. UUIDs should only appear in human-facing text when two objects share a near-identical title and disambiguation is needed — in that case append a short id suffix (e.g. "Bets and Threads v4 (ca957490)"). Use UUIDs freely inside tool arguments.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			nodes: z
@@ -208,7 +208,9 @@ export const tools = {
 							.describe('A $id from a node in this request, or a UUID of an existing object'),
 						type: z
 							.string()
-							.describe('Relationship type: informs, breaks_into, blocks, relates_to, duplicates'),
+							.describe(
+								"Relationship type. Call get_workspace_schema to see this workspace's configured relationship types — built-ins like informs/breaks_into/blocks/relates_to/duplicates are common defaults, but workspaces can add their own.",
+							),
 					}),
 				)
 				.default([])
@@ -273,7 +275,9 @@ export const tools = {
 						target_id: z.string().uuid().describe('Target object UUID'),
 						type: z
 							.string()
-							.describe('Relationship type: informs, breaks_into, blocks, relates_to, duplicates'),
+							.describe(
+								"Relationship type. Call get_workspace_schema to see this workspace's configured relationship types — built-ins like informs/breaks_into/blocks/relates_to/duplicates are common defaults, but workspaces can add their own.",
+							),
 					}),
 				)
 				.default([])
@@ -1069,6 +1073,22 @@ export const tools = {
 			'List every Loop in the workspace with live derived stats: composite status pill (running / waiting_on_you / paused / archived), entry/close conditions, in-progress and closed member-object counts, median time-to-close, the trigger ids that make up the loop\'s steps, and the distinct agent actor ids those triggers fire. Use this to see the workspace\'s loops and to find loop ids for update_loop. A loop with no feedback step is OPEN — consider closing it via update_loop add_steps. To list the objects currently inside a loop, call list_relationships with source_id=<loop id> and type="in_loop"; to inspect a step, pass its trigger id to list_triggers output or update_trigger.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
+		}),
+	},
+	get_loop: {
+		description:
+			'Get a single Loop by id, with the same live derived stats list_loops returns: composite status pill, entry/close conditions, in-progress and closed member-object counts, median time-to-close, step trigger ids, and the distinct agent actor ids those triggers fire. Use list_loops to discover loop ids first. Fails with a clear error if the id is not a loop in this workspace.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			id: z.string().uuid().describe('Loop object id (from list_loops or create_loop).'),
+		}),
+	},
+	delete_loop: {
+		description:
+			"Delete a Loop: removes the loop object itself and its `in_loop` membership edges. Member objects (bets/tasks/insights/custom types that were flowing through the loop) and the loop's step triggers are NOT deleted — they're just no longer associated with this loop (triggers can be removed separately with delete_trigger if they're not reused elsewhere). Fails with a clear error if the id is not a loop in this workspace. This cannot be undone.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			id: z.string().uuid().describe('Loop object id (from list_loops or create_loop).'),
 		}),
 	},
 

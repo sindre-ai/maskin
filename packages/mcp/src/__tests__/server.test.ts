@@ -1315,6 +1315,89 @@ describe('tool handlers', () => {
 				expect(parsed.removed_object_ids).toEqual(['obj-gone'])
 			})
 		})
+
+		describe('get_loop', () => {
+			it('GETs /api/loops?id= and returns the single loop', async () => {
+				mockFetchSuccess({
+					loops: [{ id: 'loop-1', workspaceId: 'ws-default-123', name: 'Lead loop' }],
+				})
+
+				const handler = getHandler('get_loop')
+				const result = (await handler({ id: 'loop-1' })) as { content: Array<{ text: string }> }
+
+				expect(fetch).toHaveBeenCalledWith(
+					'http://localhost:3000/api/loops?id=loop-1',
+					expect.objectContaining({
+						method: 'GET',
+						headers: expect.objectContaining({ 'X-Workspace-Id': 'ws-default-123' }),
+					}),
+				)
+				const parsed = JSON.parse(result.content[0].text)
+				expect(parsed.loop.id).toBe('loop-1')
+			})
+
+			it('throws a not-found error when the loops array is empty', async () => {
+				mockFetchSuccess({ loops: [] })
+
+				const handler = getHandler('get_loop')
+				await expect(handler({ id: 'missing-loop' })).rejects.toThrow(/not found/)
+			})
+		})
+
+		describe('delete_loop', () => {
+			it('rejects objects that are not loops', async () => {
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+					const u = String(url)
+					if (u.includes('/api/objects/'))
+						return okJson({ id: 'obj-7', type: 'bet', workspaceId: 'ws-default-123' })
+					throw new Error(`Unexpected fetch: ${u}`)
+				})
+
+				const handler = getHandler('delete_loop')
+				await expect(handler({ id: 'obj-7' })).rejects.toThrow(/not 'loop'/)
+			})
+
+			it('deletes every in_loop edge then the loop object, leaving members untouched', async () => {
+				const relationshipDeletes: string[] = []
+				let objectDeleted = false
+				// Two membership rows exist; each GET at offset=0 returns whatever is
+				// left after the previous page's deletes, mirroring how the real API
+				// behaves once rows are removed.
+				const remaining = [
+					{ id: 'rel-1', targetId: 'obj-a' },
+					{ id: 'rel-2', targetId: 'obj-b' },
+				]
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+					const u = String(url)
+					const method = (init as RequestInit | undefined)?.method
+					if (u.endsWith('/api/objects/loop-1') && method === 'GET')
+						return okJson({ id: 'loop-1', type: 'loop', workspaceId: 'ws-default-123' })
+					if (u.includes('/api/relationships?source_id=loop-1')) return okJson([...remaining])
+					if (u.startsWith('http://localhost:3000/api/relationships/') && method === 'DELETE') {
+						const relId = u.split('/').pop() as string
+						relationshipDeletes.push(relId)
+						const idx = remaining.findIndex((r) => r.id === relId)
+						if (idx >= 0) remaining.splice(idx, 1)
+						return okJson({ deleted: true })
+					}
+					if (u.endsWith('/api/objects/loop-1') && method === 'DELETE') {
+						objectDeleted = true
+						return okJson({ deleted: true })
+					}
+					throw new Error(`Unexpected fetch: ${method ?? 'GET'} ${u}`)
+				})
+
+				const handler = getHandler('delete_loop')
+				const result = (await handler({ id: 'loop-1' })) as { content: Array<{ text: string }> }
+
+				expect(relationshipDeletes.sort()).toEqual(['rel-1', 'rel-2'])
+				expect(objectDeleted).toBe(true)
+
+				const parsed = JSON.parse(result.content[0].text)
+				expect(parsed.deleted).toBe(true)
+				expect(parsed.removed_member_object_ids.sort()).toEqual(['obj-a', 'obj-b'])
+			})
+		})
 	})
 
 	describe('create_session handler', () => {

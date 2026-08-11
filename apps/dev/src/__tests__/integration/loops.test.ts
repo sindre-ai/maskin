@@ -125,6 +125,47 @@ describe('Loops read API integration', () => {
 		expect(row.waitingOnViewer).toBe(false)
 	})
 
+	it('scopes to a single loop when `id` is passed (used by get_loop)', async () => {
+		const loop = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'running',
+			title: 'Wanted loop',
+		})
+		await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'running',
+			title: 'Other loop in the same workspace',
+		})
+
+		const app = makeApp(actorId)
+		const res = await app.request(
+			jsonGet(`/api/loops?id=${loop.id}`, { 'x-workspace-id': workspaceId }),
+		)
+		expect(res.status).toBe(200)
+		const body = (await res.json()) as { loops: Array<{ id: string; name: string }> }
+		expect(body.loops).toHaveLength(1)
+		expect(body.loops[0]?.id).toBe(loop.id)
+		expect(body.loops[0]?.name).toBe('Wanted loop')
+	})
+
+	it('returns an empty array — not a 404 — when `id` does not match a loop in this workspace', async () => {
+		const otherActor = await insertActor(db)
+		const otherWs = await insertWorkspace(db, otherActor.id)
+		const foreignLoop = await insertObject(db, otherWs.id, otherActor.id, {
+			type: 'loop',
+			status: 'running',
+			title: 'Foreign loop',
+		})
+
+		const app = makeApp(actorId)
+		const res = await app.request(
+			jsonGet(`/api/loops?id=${foreignLoop.id}`, { 'x-workspace-id': workspaceId }),
+		)
+		expect(res.status).toBe(200)
+		const body = (await res.json()) as { loops: unknown[] }
+		expect(body.loops).toEqual([])
+	})
+
 	it('derives in-progress and closed counts from child objects linked via an in_loop relationship', async () => {
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',

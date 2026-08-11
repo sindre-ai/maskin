@@ -67,6 +67,8 @@ const ALL_TOOL_NAMES = [
 	'create_loop',
 	'update_loop',
 	'list_loops',
+	'get_loop',
+	'delete_loop',
 	'create_session',
 	'list_sessions',
 	'get_session',
@@ -823,6 +825,40 @@ describe('update_loop schema', () => {
 
 	it('requires a uuid loop id', () => {
 		expect(() => schema.parse({ id: 'not-a-uuid', name: 'X' })).toThrow()
+	})
+})
+
+describe('get_loop schema', () => {
+	const schema = tools.get_loop.inputSchema
+
+	it('accepts a uuid id', () => {
+		const result = schema.parse({ id: uuid })
+		expect(result.id).toBe(uuid)
+	})
+
+	it('requires id', () => {
+		expect(() => schema.parse({})).toThrow()
+	})
+
+	it('rejects a non-uuid id', () => {
+		expect(() => schema.parse({ id: 'not-a-uuid' })).toThrow()
+	})
+})
+
+describe('delete_loop schema', () => {
+	const schema = tools.delete_loop.inputSchema
+
+	it('accepts a uuid id', () => {
+		const result = schema.parse({ id: uuid })
+		expect(result.id).toBe(uuid)
+	})
+
+	it('requires id', () => {
+		expect(() => schema.parse({})).toThrow()
+	})
+
+	it('rejects a non-uuid id', () => {
+		expect(() => schema.parse({ id: 'not-a-uuid' })).toThrow()
 	})
 })
 

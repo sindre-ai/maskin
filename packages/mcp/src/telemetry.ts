@@ -284,6 +284,7 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	// Loops
 	create_loop: 'loop_create',
 	update_loop: 'loop_update',
+	delete_loop: 'loop_delete',
 	// Notifications
 	create_notification: 'notification_create',
 	update_notification: 'notification_update',
