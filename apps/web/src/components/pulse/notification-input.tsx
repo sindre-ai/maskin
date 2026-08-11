@@ -7,7 +7,7 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Textarea } from '@/components/ui/textarea'
 import { useState } from 'react'
 
-interface InputOption {
+export interface InputOption {
 	label: string
 	value: string
 	description?: string
@@ -26,7 +26,7 @@ interface NotificationInputProps {
  *   3. Pipe-delimited string like "Yes | No" (labels only)
  * Returns undefined if no usable options can be parsed.
  */
-function coerceOptions(raw: unknown): InputOption[] | undefined {
+export function coerceOptions(raw: unknown): InputOption[] | undefined {
 	if (Array.isArray(raw)) {
 		const valid = raw.filter(
 			(o): o is InputOption =>

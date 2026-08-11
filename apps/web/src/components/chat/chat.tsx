@@ -1,3 +1,4 @@
+import type { Ask } from '@/components/chat/ask-block'
 import { ChatTranscript } from '@/components/chat/chat-transcript'
 import { SelectionChips } from '@/components/chat/selection-chips'
 import {
@@ -5,6 +6,7 @@ import {
 	SlashPicker,
 	type SlashPickerResult,
 } from '@/components/chat/slash-picker'
+import { coerceOptions } from '@/components/pulse/notification-input'
 import { UploadProgress } from '@/components/shared/upload-progress'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -12,6 +14,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { useChatOneShot } from '@/hooks/use-chat-one-shot'
 import { useChatSession } from '@/hooks/use-chat-session'
 import { useUploadFile } from '@/hooks/use-files'
+import { useNotifications } from '@/hooks/use-notifications'
 import {
 	deriveEntryAgentRole,
 	trackChatImageUpload,
@@ -38,6 +41,7 @@ import {
 	useCallback,
 	useEffect,
 	useImperativeHandle,
+	useMemo,
 	useRef,
 	useState,
 } from 'react'
@@ -166,6 +170,26 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function Chat(
 	useEffect(() => {
 		onEventsChange?.(events)
 	}, [events, onEventsChange])
+
+	// Bridge `needs_input` notifications that are bound to this persistent chat
+	// session into the transcript as tappable ask blocks. Only notifications the
+	// session itself created (via `session_id`) belong to this conversation.
+	const { data: sessionNotifications } = useNotifications(workspaceId, { type: 'needs_input' })
+	const asks = useMemo<Ask[]>(() => {
+		if (!session.sessionId || !sessionNotifications) return []
+		return sessionNotifications
+			.filter((n) => n.sessionId === session.sessionId)
+			.map((n) => ({
+				id: n.id,
+				title: n.title,
+				content: n.content,
+				question: typeof n.metadata?.question === 'string' ? n.metadata.question : null,
+				options: coerceOptions(n.metadata?.options) ?? [],
+				suggestion: typeof n.metadata?.suggestion === 'string' ? n.metadata.suggestion : null,
+				status: n.status,
+				response: n.metadata?.response,
+			}))
+	}, [session.sessionId, sessionNotifications])
 
 	useImperativeHandle(
 		ref,
@@ -369,6 +393,7 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function Chat(
 				<ChatTranscript
 					workspaceId={workspaceId}
 					events={events}
+					asks={asks}
 					starting={starting}
 					error={error}
 					className="min-h-0 flex-1"

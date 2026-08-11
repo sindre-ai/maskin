@@ -43,6 +43,7 @@ vi.mock('@/lib/api', () => ({
 	api: {
 		actors: { list: vi.fn().mockResolvedValue([]) },
 		objects: { list: vi.fn().mockResolvedValue([]), search: vi.fn().mockResolvedValue([]) },
+		notifications: { list: vi.fn().mockResolvedValue([]) },
 	},
 }))
 

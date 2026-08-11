@@ -27,7 +27,13 @@ export type UserAttachmentView =
 
 export type ChatEvent =
 	| { kind: 'user'; text: string; attachments?: UserAttachmentView[] }
-	| { kind: 'text'; text: string; sessionId?: string; messageId?: string }
+	| {
+			kind: 'text'
+			text: string
+			attachments?: UserAttachmentView[]
+			sessionId?: string
+			messageId?: string
+	  }
 	| {
 			kind: 'tool_use'
 			id: string
@@ -77,6 +83,7 @@ function parseAssistant(envelope: Record<string, unknown>): ChatEvent[] | null {
 
 	const sessionId = asString(envelope.session_id)
 	const messageId = asString(message.id)
+	const attachments = parseMaskinAttachments(envelope.maskin_attachments)
 	const events: ChatEvent[] = []
 
 	for (const block of content) {
@@ -110,6 +117,18 @@ function parseAssistant(envelope: Record<string, unknown>): ChatEvent[] | null {
 				sessionId,
 				messageId,
 			})
+		}
+	}
+
+	// Attach Maskin-only `maskin_attachments` (same round-trip shape as the
+	// user side) to the assistant's first text block so the transcript can
+	// render agent-referenced items (object cards, files) above the reply.
+	if (attachments.length > 0) {
+		const firstText = events.find(
+			(e): e is Extract<ChatEvent, { kind: 'text' }> => e.kind === 'text',
+		)
+		if (firstText) {
+			firstText.attachments = attachments
 		}
 	}
 
