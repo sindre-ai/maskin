@@ -383,22 +383,36 @@ app.openapi(attachSkillsBatchRoute, (async (c) => {
 		}
 	}
 
-	// Idempotent bulk attach — ON CONFLICT DO NOTHING skips rows already attached,
-	// then a single follow-up select recovers attachedAt for both the newly
-	// inserted rows and the ones that already existed. Insert + read-back run in
-	// one transaction so a read-back failure rolls back the insert too — otherwise
-	// a retry after a mid-request failure would find every row already present,
-	// compute an empty newlyInsertedIds, and silently skip the events write below
-	// for rows that were, in fact, newly attached on the failed attempt.
+	// Idempotent bulk attach — ON CONFLICT DO NOTHING skips rows already attached.
+	// The insert, the audit events for newly-attached skills, and the attachedAt
+	// read-back all run in one transaction: if the events write fails, the whole
+	// attach rolls back instead of leaving attached skills with no audit trail
+	// (see known-pitfalls.md "Missing Events Audit Log on Entity Mutations") —
+	// swallowing that failure here would silently break the SSE feed for rows
+	// that the response reports as successfully attached.
 	let attachedAtById = new Map<string, Date | string>()
-	let newlyInsertedIds = new Set<string>()
 	if (toAttach.length > 0) {
-		const { inserted, attachRows } = await db.transaction(async (tx) => {
+		const { attachRows } = await db.transaction(async (tx) => {
 			const inserted = await tx
 				.insert(agentSkills)
 				.values(toAttach.map((skill) => ({ actorId, workspaceSkillId: skill.id })))
 				.onConflictDoNothing()
 				.returning()
+
+			const newlyInsertedIds = new Set(inserted.map((row) => row.workspaceSkillId))
+			const newlyAttached = toAttach.filter((skill) => newlyInsertedIds.has(skill.id))
+			if (newlyAttached.length > 0) {
+				await tx.insert(events).values(
+					newlyAttached.map((skill) => ({
+						workspaceId: skill.workspaceId,
+						actorId: callerActorId,
+						action: 'attached' as const,
+						entityType: 'agent_skill' as const,
+						entityId: skill.id,
+						data: { actorId, workspaceSkillId: skill.id, skillName: skill.name },
+					})),
+				)
+			}
 
 			const attachRows = await tx
 				.select({
@@ -415,35 +429,9 @@ app.openapi(attachSkillsBatchRoute, (async (c) => {
 						),
 					),
 				)
-			return { inserted, attachRows }
+			return { attachRows }
 		})
-		newlyInsertedIds = new Set(inserted.map((row) => row.workspaceSkillId))
 		attachedAtById = new Map(attachRows.map((row) => [row.workspaceSkillId, row.createdAt]))
-	}
-
-	// Only record audit events for skills that were newly attached, not idempotent
-	// re-attaches. Swallow audit-write failures rather than 500-ing the caller.
-	if (newlyInsertedIds.size > 0) {
-		try {
-			await db.insert(events).values(
-				toAttach
-					.filter((skill) => newlyInsertedIds.has(skill.id))
-					.map((skill) => ({
-						workspaceId: skill.workspaceId,
-						actorId: callerActorId,
-						action: 'attached' as const,
-						entityType: 'agent_skill' as const,
-						entityId: skill.id,
-						data: { actorId, workspaceSkillId: skill.id, skillName: skill.name },
-					})),
-			)
-		} catch (err) {
-			logger.error('Failed to record agent_skill attached audit events (batch)', {
-				actorId,
-				workspaceSkillIds: [...newlyInsertedIds],
-				error: String(err),
-			})
-		}
 	}
 
 	const results = workspaceSkillIds.map((workspaceSkillId) => {

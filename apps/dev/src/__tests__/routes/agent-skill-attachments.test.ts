@@ -333,7 +333,7 @@ describe('Agent Skill Attachments Routes', () => {
 		})
 
 		it('reports a per-skill error when the caller is not a member of the skill workspace', async () => {
-			const { app, mockResults } = createTestApp(agentSkillAttachmentsRoutes, '/api/actors')
+			const { app, mockResults, calls } = createTestApp(agentSkillAttachmentsRoutes, '/api/actors')
 			const skill = buildWorkspaceSkill({ id: workspaceSkillId, workspaceId })
 
 			// Queue order:
@@ -355,7 +355,7 @@ describe('Agent Skill Attachments Routes', () => {
 			expect(body[0].success).toBe(false)
 			expect(body[0].error).toContain("Not a member of the skill's workspace")
 			// Caller-authorization failure must not insert an attachment row.
-			expect(mockResults.calls?.inserts ?? []).toHaveLength(0)
+			expect(calls.inserts).toHaveLength(0)
 		})
 
 		it('returns 400 when workspaceSkillIds contains a duplicate id', async () => {

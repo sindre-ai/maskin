@@ -1141,30 +1141,47 @@ interface BatchAttachResult {
 	error?: string
 }
 
-// Attaches skillIds to actorId in a single batched HTTP call and normalizes the
-// per-skill outcomes into the flat list shape both create_actor and update_actor
-// return under `attached_skills`.
+// Must match the server-side cap in attachSkillsBatchSchema (packages/shared/src/schemas/workspace-skills.ts).
+const ATTACH_SKILLS_BATCH_CHUNK_SIZE = 50
+
+// Attaches skillIds to actorId, chunked into batched HTTP calls, and normalizes
+// the per-skill outcomes into the flat list shape both create_actor and
+// update_actor return under `attached_skills`. Duplicate IDs and chunks over 50
+// entries would otherwise 400 the whole request server-side (attachSkillsBatchSchema
+// rejects both), so dedupe and chunk here rather than pass them through raw.
 async function attachSkillsBatch(
 	config: McpConfig,
 	actorId: string,
 	skillIds: string[],
 ): Promise<unknown[]> {
 	if (skillIds.length === 0) return []
-	try {
-		const rows = (await apiCall(
-			config,
-			'POST',
-			`/api/actors/${actorId}/workspace-skills/batch`,
-			{ workspaceSkillIds: skillIds },
-			{ skipWorkspace: true },
-		)) as BatchAttachResult[]
-		return rows.map((row) =>
-			row.success ? row.skill : { skill_id: row.workspaceSkillId, error: row.error },
-		)
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error)
-		return skillIds.map((skillId) => ({ skill_id: skillId, error: message }))
+	const uniqueIds = [...new Set(skillIds)]
+	const chunks: string[][] = []
+	for (let i = 0; i < uniqueIds.length; i += ATTACH_SKILLS_BATCH_CHUNK_SIZE) {
+		chunks.push(uniqueIds.slice(i, i + ATTACH_SKILLS_BATCH_CHUNK_SIZE))
 	}
+
+	const chunkResults = await Promise.all(
+		chunks.map(async (chunk) => {
+			try {
+				const rows = (await apiCall(
+					config,
+					'POST',
+					`/api/actors/${actorId}/workspace-skills/batch`,
+					{ workspaceSkillIds: chunk },
+					{ skipWorkspace: true },
+				)) as BatchAttachResult[]
+				return rows.map((row) =>
+					row.success ? row.skill : { skill_id: row.workspaceSkillId, error: row.error },
+				)
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error)
+				return chunk.map((skillId) => ({ skill_id: skillId, error: message }))
+			}
+		}),
+	)
+
+	return chunkResults.flat()
 }
 
 interface RawActor {
