@@ -3007,17 +3007,6 @@ export function createMcpServer(config: McpConfig) {
 		})
 	}
 
-	function ensureEnumField(field: FieldDef): asserts field is FieldDef & { values: string[] } {
-		if (field.type !== 'enum') {
-			throw new Error(`Field "${field.name}" is type "${field.type}", not "enum"`)
-		}
-		if (!Array.isArray(field.values)) {
-			throw new Error(
-				`Field "${field.name}" is type "enum" but has no values list. Repair via update_workspace_field with values: [...] before adding or removing values.`,
-			)
-		}
-	}
-
 	registerAppTool(
 		server,
 		'create_workspace_field',
@@ -3083,9 +3072,23 @@ export function createMcpServer(config: McpConfig) {
 				}
 				const nextType = args.field_type ?? existing.type
 				const nextRequired = args.required ?? existing.required ?? false
+				const hasValueOps =
+					(args.add_values?.length ?? 0) > 0 || (args.remove_values?.length ?? 0) > 0
+				if (nextType !== 'enum' && hasValueOps) {
+					throw new Error(`Field "${existing.name}" is type "${nextType}", not "enum".`)
+				}
 				let nextValues: string[] | undefined
 				if (nextType === 'enum') {
 					nextValues = args.values ?? existing.values ?? []
+					if (args.add_values) {
+						for (const value of args.add_values) {
+							if (!nextValues.includes(value)) nextValues.push(value)
+						}
+					}
+					if (args.remove_values && args.remove_values.length > 0) {
+						const toRemove = new Set(args.remove_values)
+						nextValues = nextValues.filter((v) => !toRemove.has(v))
+					}
 					if (nextValues.length === 0) {
 						throw new Error('Enum fields require at least one value in `values`.')
 					}
@@ -3136,74 +3139,6 @@ export function createMcpServer(config: McpConfig) {
 							null,
 							2,
 						),
-					},
-				],
-			}
-		},
-	)
-
-	registerAppTool(
-		server,
-		'add_workspace_enum_value',
-		{
-			description: tools.add_workspace_enum_value.description,
-			inputSchema: tools.add_workspace_enum_value.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.schema, csp: CSP } },
-		},
-		async (args) => {
-			const { wsId, updatedFields } = await patchFieldDefinitions(args, (current) => {
-				const idx = current.findIndex((f) => f.name === args.name)
-				if (idx === -1) {
-					throw new Error(`Field "${args.name}" not found on type "${args.type}".`)
-				}
-				const field = current[idx] as FieldDef
-				ensureEnumField(field)
-				if (field.values.includes(args.value)) return current
-				const copy = [...current]
-				copy[idx] = { ...field, values: [...field.values, args.value] }
-				return copy
-			})
-			const updated = updatedFields.find((f) => f.name === args.name)
-			return {
-				_meta: meta('add_workspace_enum_value', config, wsId),
-				content: [
-					{
-						type: 'text' as const,
-						text: JSON.stringify({ workspace_id: wsId, type: args.type, field: updated }, null, 2),
-					},
-				],
-			}
-		},
-	)
-
-	registerAppTool(
-		server,
-		'remove_workspace_enum_value',
-		{
-			description: tools.remove_workspace_enum_value.description,
-			inputSchema: tools.remove_workspace_enum_value.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.schema, csp: CSP } },
-		},
-		async (args) => {
-			const { wsId, updatedFields } = await patchFieldDefinitions(args, (current) => {
-				const idx = current.findIndex((f) => f.name === args.name)
-				if (idx === -1) {
-					throw new Error(`Field "${args.name}" not found on type "${args.type}".`)
-				}
-				const field = current[idx] as FieldDef
-				ensureEnumField(field)
-				if (!field.values.includes(args.value)) return current
-				const copy = [...current]
-				copy[idx] = { ...field, values: field.values.filter((v) => v !== args.value) }
-				return copy
-			})
-			const updated = updatedFields.find((f) => f.name === args.name)
-			return {
-				_meta: meta('remove_workspace_enum_value', config, wsId),
-				content: [
-					{
-						type: 'text' as const,
-						text: JSON.stringify({ workspace_id: wsId, type: args.type, field: updated }, null, 2),
 					},
 				],
 			}

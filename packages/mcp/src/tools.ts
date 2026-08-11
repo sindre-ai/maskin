@@ -581,7 +581,7 @@ export const tools = {
 	},
 	update_workspace_field: {
 		description:
-			'Update an existing metadata field on a workspace object type. Use this to rename, change the field type, toggle required, or replace the full enum value list. Pass only the fields you want to change.',
+			"Update an existing metadata field on a workspace object type. Use this to rename, change the field type, toggle required, or edit an enum field's allowed values. Pass only the fields you want to change. For enum values, prefer add_values/remove_values to add or remove individual values without disturbing the rest (idempotent — adding an existing value or removing a missing one is a no-op); use values only when replacing the full list wholesale. Existing objects keep any value they previously stored even after it is removed from the allowed list — only new writes are constrained.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			type: z.string().min(1).describe('Object type the field belongs to.'),
@@ -600,7 +600,19 @@ export const tools = {
 				.array(z.string().min(1))
 				.optional()
 				.describe(
-					'Optional full replacement list of enum values. Pass an empty array to clear. Use add/remove_workspace_enum_value to mutate one value without losing others.',
+					'Optional full replacement list of enum values, applied before add_values/remove_values. Pass an empty array to clear (only valid if add_values then supplies at least one value, since enum fields require at least one). Omit to leave the current values as the starting point for add_values/remove_values.',
+				),
+			add_values: z
+				.array(z.string().min(1))
+				.optional()
+				.describe(
+					'Enum values to add, keeping all existing values. Only valid when the field is (or is being changed to, via field_type) an enum.',
+				),
+			remove_values: z
+				.array(z.string().min(1))
+				.optional()
+				.describe(
+					'Enum values to remove, keeping the rest. Only valid when the field is (or is being changed to, via field_type) an enum. Applied after add_values.',
 				),
 		}),
 	},
@@ -611,26 +623,6 @@ export const tools = {
 			workspace_id: optionalWorkspaceId,
 			type: z.string().min(1).describe('Object type the field belongs to.'),
 			name: z.string().min(1).describe('Field name to delete.'),
-		}),
-	},
-	add_workspace_enum_value: {
-		description:
-			'Append an allowed value to an enum field on a workspace object type. Fails if the field is not of type "enum". Idempotent — adding an existing value is a no-op.',
-		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
-			type: z.string().min(1).describe('Object type the field belongs to.'),
-			name: z.string().min(1).describe('Enum field name.'),
-			value: z.string().min(1).describe('Value to add.'),
-		}),
-	},
-	remove_workspace_enum_value: {
-		description:
-			'Remove an allowed value from an enum field on a workspace object type. Fails if the field is not of type "enum". Idempotent — removing a missing value is a no-op. Existing objects that previously stored this value keep their stored value; only new writes are constrained.',
-		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
-			type: z.string().min(1).describe('Object type the field belongs to.'),
-			name: z.string().min(1).describe('Enum field name.'),
-			value: z.string().min(1).describe('Value to remove.'),
 		}),
 	},
 	// ─── Workspace Skills ─────────────────────────────────────

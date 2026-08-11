@@ -2341,6 +2341,146 @@ describe('tool handlers', () => {
 					/Enum fields require at least one value/,
 				)
 			})
+
+			it('appends a value to an enum field via add_values', async () => {
+				const before: Record<string, FieldDef[]> = {
+					task: [{ name: 'priority', type: 'enum', values: ['low'] }],
+				}
+				const after: Record<string, FieldDef[]> = {
+					task: [{ name: 'priority', type: 'enum', values: ['low', 'high'] }],
+				}
+				mockRmwSequence(before, after)
+
+				const handler = getHandler('update_workspace_field')
+				await handler({ type: 'task', name: 'priority', add_values: ['high'] })
+
+				expect(lastPatchBody().settings.field_definitions.task[0]?.values).toEqual(['low', 'high'])
+			})
+
+			it('is a no-op when an added value is already present', async () => {
+				const same: Record<string, FieldDef[]> = {
+					task: [{ name: 'priority', type: 'enum', values: ['low'] }],
+				}
+				mockRmwSequence(same, same)
+
+				const handler = getHandler('update_workspace_field')
+				await handler({ type: 'task', name: 'priority', add_values: ['low'] })
+
+				expect(lastPatchBody().settings.field_definitions.task[0]?.values).toEqual(['low'])
+			})
+
+			it('removes a value from an enum field via remove_values', async () => {
+				const before: Record<string, FieldDef[]> = {
+					task: [{ name: 'priority', type: 'enum', values: ['low', 'high'] }],
+				}
+				const after: Record<string, FieldDef[]> = {
+					task: [{ name: 'priority', type: 'enum', values: ['low'] }],
+				}
+				mockRmwSequence(before, after)
+
+				const handler = getHandler('update_workspace_field')
+				await handler({ type: 'task', name: 'priority', remove_values: ['high'] })
+
+				expect(lastPatchBody().settings.field_definitions.task[0]?.values).toEqual(['low'])
+			})
+
+			it('is a no-op when a removed value is already absent', async () => {
+				const same: Record<string, FieldDef[]> = {
+					task: [{ name: 'priority', type: 'enum', values: ['low'] }],
+				}
+				mockRmwSequence(same, same)
+
+				const handler = getHandler('update_workspace_field')
+				await handler({ type: 'task', name: 'priority', remove_values: ['high'] })
+
+				expect(lastPatchBody().settings.field_definitions.task[0]?.values).toEqual(['low'])
+			})
+
+			it('applies add_values before remove_values in the same call', async () => {
+				const before: Record<string, FieldDef[]> = {
+					task: [{ name: 'priority', type: 'enum', values: ['low'] }],
+				}
+				const after: Record<string, FieldDef[]> = {
+					task: [{ name: 'priority', type: 'enum', values: ['medium'] }],
+				}
+				mockRmwSequence(before, after)
+
+				const handler = getHandler('update_workspace_field')
+				await handler({
+					type: 'task',
+					name: 'priority',
+					add_values: ['medium'],
+					remove_values: ['low'],
+				})
+
+				expect(lastPatchBody().settings.field_definitions.task[0]?.values).toEqual(['medium'])
+			})
+
+			it('applies add_values/remove_values on top of a values replacement in the same call', async () => {
+				const before: Record<string, FieldDef[]> = {
+					task: [{ name: 'priority', type: 'enum', values: ['low'] }],
+				}
+				const after: Record<string, FieldDef[]> = {
+					task: [{ name: 'priority', type: 'enum', values: ['medium', 'high'] }],
+				}
+				mockRmwSequence(before, after)
+
+				const handler = getHandler('update_workspace_field')
+				await handler({
+					type: 'task',
+					name: 'priority',
+					values: ['medium', 'urgent'],
+					add_values: ['high'],
+					remove_values: ['urgent'],
+				})
+
+				expect(lastPatchBody().settings.field_definitions.task[0]?.values).toEqual([
+					'medium',
+					'high',
+				])
+			})
+
+			it('populates a missing values list via add_values instead of throwing', async () => {
+				const before: Record<string, FieldDef[]> = {
+					task: [{ name: 'priority', type: 'enum' }],
+				}
+				const after: Record<string, FieldDef[]> = {
+					task: [{ name: 'priority', type: 'enum', values: ['low'] }],
+				}
+				mockRmwSequence(before, after)
+
+				const handler = getHandler('update_workspace_field')
+				await handler({ type: 'task', name: 'priority', add_values: ['low'] })
+
+				expect(lastPatchBody().settings.field_definitions.task[0]?.values).toEqual(['low'])
+			})
+
+			it('throws when add_values/remove_values are used on a non-enum field', async () => {
+				vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve([buildWorkspace({ task: [{ name: 'tag', type: 'text' }] })]),
+				} as Response)
+
+				const handler = getHandler('update_workspace_field')
+				await expect(handler({ type: 'task', name: 'tag', add_values: ['x'] })).rejects.toThrow(
+					/not "enum"/,
+				)
+			})
+
+			it('throws when clearing all values via remove_values leaves the enum empty', async () => {
+				vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+					ok: true,
+					json: () =>
+						Promise.resolve([
+							buildWorkspace({ task: [{ name: 'priority', type: 'enum', values: ['low'] }] }),
+						]),
+				} as Response)
+
+				const handler = getHandler('update_workspace_field')
+				await expect(
+					handler({ type: 'task', name: 'priority', remove_values: ['low'] }),
+				).rejects.toThrow(/Enum fields require at least one value/)
+			})
 		})
 
 		describe('delete_workspace_field', () => {
@@ -2364,89 +2504,6 @@ describe('tool handlers', () => {
 				expect(lastPatchBody().settings.field_definitions.task).toEqual(after.task)
 				const parsed = JSON.parse(result.content[0].text)
 				expect(parsed).toMatchObject({ deleted: 'tag', success: true })
-			})
-		})
-
-		describe('add_workspace_enum_value', () => {
-			it('appends the value to an enum field', async () => {
-				const before: Record<string, FieldDef[]> = {
-					task: [{ name: 'priority', type: 'enum', values: ['low'] }],
-				}
-				const after: Record<string, FieldDef[]> = {
-					task: [{ name: 'priority', type: 'enum', values: ['low', 'high'] }],
-				}
-				mockRmwSequence(before, after)
-
-				const handler = getHandler('add_workspace_enum_value')
-				await handler({ type: 'task', name: 'priority', value: 'high' })
-
-				expect(lastPatchBody().settings.field_definitions.task[0]?.values).toEqual(['low', 'high'])
-			})
-
-			it('throws when the field is not an enum', async () => {
-				vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
-					ok: true,
-					json: () => Promise.resolve([buildWorkspace({ task: [{ name: 'tag', type: 'text' }] })]),
-				} as Response)
-
-				const handler = getHandler('add_workspace_enum_value')
-				await expect(handler({ type: 'task', name: 'tag', value: 'x' })).rejects.toThrow(
-					/not "enum"/,
-				)
-			})
-
-			it('throws when the field does not exist', async () => {
-				vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
-					ok: true,
-					json: () => Promise.resolve([buildWorkspace({ task: [] })]),
-				} as Response)
-
-				const handler = getHandler('add_workspace_enum_value')
-				await expect(handler({ type: 'task', name: 'missing', value: 'x' })).rejects.toThrow(
-					/not found on type "task"/,
-				)
-			})
-		})
-
-		describe('remove_workspace_enum_value', () => {
-			it('removes the value from the enum field', async () => {
-				const before: Record<string, FieldDef[]> = {
-					task: [{ name: 'priority', type: 'enum', values: ['low', 'high'] }],
-				}
-				const after: Record<string, FieldDef[]> = {
-					task: [{ name: 'priority', type: 'enum', values: ['low'] }],
-				}
-				mockRmwSequence(before, after)
-
-				const handler = getHandler('remove_workspace_enum_value')
-				await handler({ type: 'task', name: 'priority', value: 'high' })
-
-				expect(lastPatchBody().settings.field_definitions.task[0]?.values).toEqual(['low'])
-			})
-
-			it('is a no-op when the value is already absent (still PATCHes once)', async () => {
-				const same: Record<string, FieldDef[]> = {
-					task: [{ name: 'priority', type: 'enum', values: ['low'] }],
-				}
-				mockRmwSequence(same, same)
-
-				const handler = getHandler('remove_workspace_enum_value')
-				await handler({ type: 'task', name: 'priority', value: 'high' })
-
-				expect(lastPatchBody().settings.field_definitions.task[0]?.values).toEqual(['low'])
-			})
-
-			it('throws when the enum field has no values list', async () => {
-				vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
-					ok: true,
-					json: () =>
-						Promise.resolve([buildWorkspace({ task: [{ name: 'priority', type: 'enum' }] })]),
-				} as Response)
-
-				const handler = getHandler('remove_workspace_enum_value')
-				await expect(handler({ type: 'task', name: 'priority', value: 'low' })).rejects.toThrow(
-					/has no values list/,
-				)
 			})
 		})
 

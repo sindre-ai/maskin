@@ -44,8 +44,6 @@ const ALL_TOOL_NAMES = [
 	'create_workspace_field',
 	'update_workspace_field',
 	'delete_workspace_field',
-	'add_workspace_enum_value',
-	'remove_workspace_enum_value',
 	'list_workspace_skills',
 	'get_workspace_skill',
 	'create_workspace_skill',
