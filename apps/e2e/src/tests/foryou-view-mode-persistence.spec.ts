@@ -88,11 +88,13 @@ test.describe('For You view-mode persistence via __chrome__ display settings', (
 			await mockFeed(page, plainFeed(account.workspaceId))
 			await page.goto(`/${account.workspaceId}`)
 
-			// A user who never switched stays on the card queue — no list rows.
+			// A user who never switched stays on the card queue. The queue card
+			// only exists in cards mode, so its presence is what proves we are
+			// not in list mode — card titles render as links too, so link-role
+			// counting cannot distinguish the two modes here.
 			const queueCard = page.getByTestId('foryou-queue-card')
 			await expect(queueCard).toHaveCount(1, { timeout: 10_000 })
 			await expect(queueCard).toContainText('Renewal terms need a read')
-			await expect(page.getByRole('link', { name: 'Renewal terms need a read' })).toHaveCount(0)
 
 			// Choosing List writes through to the per-actor __chrome__ row. The
 			// rail is set up before the click so the PUT response can't be missed.
