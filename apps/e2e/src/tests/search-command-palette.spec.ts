@@ -48,7 +48,7 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			page,
 			account,
 		}) => {
-const analyticsCalls = collectAnalytics(page)
+			const analyticsCalls = collectAnalytics(page)
 			const obj = await account.api.createObject(account.workspaceId, {
 				type: 'insight',
 				title: 'Quasiprime Insight',
