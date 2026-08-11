@@ -2633,7 +2633,7 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.actors, csp: CSP } },
 		},
 		async (args) => {
-			const { id, attach_skill_ids, detach_skill_ids, ...body } = args
+			const { id, attach_skill_ids, detach_skill_ids, workspace_id, role, ...body } = args
 			const attachIds = attach_skill_ids ?? []
 			const detachIds = detach_skill_ids ?? []
 			const hasSkillOps = attachIds.length > 0 || detachIds.length > 0
@@ -2645,20 +2645,41 @@ export function createMcpServer(config: McpConfig) {
 				)
 			}
 
-			// Run actor PATCH first so a failure here throws before any skill ops fire.
+			// Run actor PATCH first so a failure here throws before any skill/membership ops fire.
 			const actor = await apiCall(config, 'PATCH', `/api/actors/${id}`, body, {
 				skipWorkspace: true,
 			})
 
+			// Optionally add the actor to a workspace, mirroring create_actor's
+			// pattern — a membership failure is reported inline rather than thrown,
+			// so a bad workspace_id doesn't discard an otherwise-successful update.
+			let membershipError: string | undefined
+			if (workspace_id) {
+				try {
+					await apiCall(
+						config,
+						'POST',
+						`/api/workspaces/${workspace_id}/members`,
+						{ actor_id: id, role },
+						{ skipWorkspace: true },
+					)
+					;(actor as Record<string, unknown>).workspace_id = workspace_id
+					;(actor as Record<string, unknown>).role = role
+				} catch (error) {
+					membershipError = String(error)
+					;(actor as Record<string, unknown>).workspace_membership_error = membershipError
+				}
+			}
+
 			if (!hasSkillOps) {
-				const wsId = (args as { workspace_id?: string }).workspace_id ?? config.defaultWorkspaceId
+				const wsId = workspace_id ?? config.defaultWorkspaceId
 				const actorId = (actor as { id?: string }).id
 				const withUrl =
 					wsId && actorId
 						? addUrl(actor as Record<string, unknown>, config, wsId, { kind: 'actor', id: actorId })
 						: actor
 				return {
-					_meta: meta('update_actor', config, (args as { workspace_id?: string }).workspace_id),
+					_meta: meta('update_actor', config, workspace_id),
 					content: [{ type: 'text' as const, text: JSON.stringify(withUrl, null, 2) }],
 				}
 			}
@@ -2686,7 +2707,7 @@ export function createMcpServer(config: McpConfig) {
 							error: s.reason instanceof Error ? s.reason.message : String(s.reason),
 						}
 
-			const wsId2 = (args as { workspace_id?: string }).workspace_id ?? config.defaultWorkspaceId
+			const wsId2 = workspace_id ?? config.defaultWorkspaceId
 			const actorId = (actor as { id?: string }).id
 			const actorWithUrl =
 				wsId2 && actorId
@@ -2704,13 +2725,14 @@ export function createMcpServer(config: McpConfig) {
 			}
 			if (
 				attachEntries.some((entry) => (entry as { error?: string })?.error) ||
-				detachSettled.some((s) => s.status === 'rejected')
+				detachSettled.some((s) => s.status === 'rejected') ||
+				membershipError
 			) {
 				output.partial_failure = true
 			}
 
 			return {
-				_meta: meta('update_actor', config, (args as { workspace_id?: string }).workspace_id),
+				_meta: meta('update_actor', config, workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(output, null, 2) }],
 			}
 		},

@@ -480,6 +480,34 @@ describe('update_actor schema', () => {
 		expect(result.attach_skill_ids).toBeUndefined()
 		expect(result.detach_skill_ids).toBeUndefined()
 	})
+
+	it('accepts an optional workspace_id as uuid', () => {
+		const result = schema.parse({ id: uuid, workspace_id: uuid2 })
+		expect(result.workspace_id).toBe(uuid2)
+	})
+
+	it('rejects a non-UUID workspace_id', () => {
+		expect(() => schema.parse({ id: uuid, workspace_id: 'not-a-uuid' })).toThrow()
+	})
+
+	it('defaults role to member', () => {
+		const result = schema.parse({ id: uuid, workspace_id: uuid2 })
+		expect(result.role).toBe('member')
+	})
+
+	it('accepts owner and admin roles', () => {
+		expect(schema.parse({ id: uuid, workspace_id: uuid2, role: 'owner' }).role).toBe('owner')
+		expect(schema.parse({ id: uuid, workspace_id: uuid2, role: 'admin' }).role).toBe('admin')
+	})
+
+	it('rejects an invalid role', () => {
+		expect(() => schema.parse({ id: uuid, workspace_id: uuid2, role: 'viewer' })).toThrow()
+	})
+
+	it('leaves workspace_id undefined when omitted', () => {
+		const result = schema.parse({ id: uuid })
+		expect(result.workspace_id).toBeUndefined()
+	})
 })
 
 describe('create_session schema', () => {

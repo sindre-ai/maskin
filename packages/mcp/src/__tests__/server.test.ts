@@ -3339,6 +3339,99 @@ describe('tool handlers', () => {
 			expect(parsed).toEqual(mockActor)
 		})
 
+		it('adds the actor to a workspace when workspace_id is provided', async () => {
+			const workspaceId = '770e8400-e29b-41d4-a716-446655440003'
+			// A fresh object per test — the handler mutates the actor in place to
+			// attach workspace_id/role, and mockActor is shared across this describe
+			// block, so reusing it here would leak state into later tests.
+			const freshActor = { id: actorId, name: 'Test Actor' }
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve(freshActor),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve({ actorId, workspaceId, role: 'owner' }),
+				} as Response)
+
+			const handler = getHandler('update_actor')
+			// getHandler bypasses the MCP SDK's zod parsing layer, so the schema's
+			// role default('member') never applies here — pass it explicitly, as a
+			// real client's parsed call would.
+			const result = (await handler({
+				id: actorId,
+				workspace_id: workspaceId,
+				role: 'owner',
+			})) as { content: Array<{ text: string }> }
+
+			expect(fetch).toHaveBeenCalledTimes(2)
+			expect(fetch).toHaveBeenLastCalledWith(
+				`http://localhost:3000/api/workspaces/${workspaceId}/members`,
+				expect.objectContaining({ method: 'POST' }),
+			)
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.workspace_id).toBe(workspaceId)
+			expect(parsed.role).toBe('owner')
+			expect(parsed.workspace_membership_error).toBeUndefined()
+		})
+
+		it('records workspace_membership_error without throwing when add-member fails', async () => {
+			const workspaceId = '770e8400-e29b-41d4-a716-446655440003'
+			const freshActor = { id: actorId, name: 'Test Actor' }
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve(freshActor),
+				} as Response)
+				.mockRejectedValueOnce(new Error('workspace not found'))
+
+			const handler = getHandler('update_actor')
+			const result = (await handler({
+				id: actorId,
+				workspace_id: workspaceId,
+				role: 'member',
+			})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.workspace_membership_error).toContain('workspace not found')
+			expect(parsed.workspace_id).toBeUndefined()
+		})
+
+		it('folds a membership failure into partial_failure when combined with skill ops', async () => {
+			const workspaceId = '770e8400-e29b-41d4-a716-446655440003'
+			const freshActor = { id: actorId, name: 'Test Actor' }
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve(freshActor),
+				} as Response)
+				.mockRejectedValueOnce(new Error('workspace not found'))
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () =>
+						Promise.resolve([{ workspaceSkillId: skillId1, success: true, skill: mockSkill }]),
+				} as Response)
+
+			const handler = getHandler('update_actor')
+			const result = (await handler({
+				id: actorId,
+				workspace_id: workspaceId,
+				role: 'member',
+				attach_skill_ids: [skillId1],
+			})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.partial_failure).toBe(true)
+			expect(parsed.actor.workspace_membership_error).toContain('workspace not found')
+			expect(parsed.attached_skills).toHaveLength(1)
+		})
+
 		it('attaches skills via one batched call and wraps response under actor key', async () => {
 			vi.spyOn(globalThis, 'fetch')
 				.mockResolvedValueOnce({

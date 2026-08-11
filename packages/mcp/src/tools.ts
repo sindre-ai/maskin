@@ -437,7 +437,7 @@ export const tools = {
 	},
 	update_actor: {
 		description:
-			'Update an actor by ID. Can change name, email, description (short one-liner, max 80 chars), system_prompt / instructions (for agents and humans), tools configuration, memory (persistent key-value store), LLM provider, LLM config, and workspace skill attachments (attach_skill_ids / detach_skill_ids).',
+			'Update an actor by ID. Can change name, email, description (short one-liner, max 80 chars), system_prompt / instructions (for agents and humans), tools configuration, memory (persistent key-value store), LLM provider, LLM config, workspace skill attachments (attach_skill_ids / detach_skill_ids), and optionally add the actor to a workspace (workspace_id + role) in the same call — equivalent to calling add_workspace_member right after.',
 		inputSchema: z.object({
 			id: z.string().uuid(),
 			name: z.string().min(1).optional(),
@@ -460,6 +460,19 @@ export const tools = {
 				.array(z.string().uuid())
 				.optional()
 				.describe('Workspace skill IDs to detach from this actor.'),
+			workspace_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'Add this actor to the given workspace as part of the update (same effect as calling add_workspace_member separately). Omit to leave workspace membership unchanged.',
+				),
+			role: z
+				.enum(['owner', 'admin', 'member'])
+				.default('member')
+				.describe(
+					'Role to assign when adding to a workspace via workspace_id: owner (full control), admin (manage members), member (read/write). Only applied when workspace_id is set.',
+				),
 		}),
 	},
 	regenerate_api_key: {
