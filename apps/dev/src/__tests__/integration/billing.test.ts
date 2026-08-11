@@ -58,18 +58,32 @@ function createStripeStub(options: { workspaceId?: string; intentStatus?: string
 // it at the `/api/billing` prefix (mirroring app-factory.ts) so specs hit the
 // same paths as production. Without the mount every request 404s and the whole
 // suite fails (or, with lax assertions, passes as false green).
+//
+// The db/actor middleware must live on the OUTER app, registered before the
+// sub-app is mounted (the events.test.ts pattern). Registering it on the inner
+// `billingApp` after `createBillingApp()` has already built its route stack
+// leaves it unbound — Hono snapshots the sub-app at mount time — so `c.get('db')`
+// is undefined and every request 500s.
+type Env = {
+	Variables: {
+		db: unknown
+		actorId: string
+		actorType: string
+	}
+}
+
 function createTestApp(stripe: StripeLike | null) {
 	const billingApp = createBillingApp({
 		stripe,
 		resolvePlan: async () => PRO_PLAN,
 	})
-	billingApp.use('*', async (c, next) => {
+	const app = new OpenAPIHono<Env>()
+	app.use('*', async (c, next) => {
 		c.set('db', db)
 		c.set('actorId', getTestActorId())
 		c.set('actorType', 'human')
 		await next()
 	})
-	const app = new OpenAPIHono()
 	app.route('/api/billing', billingApp)
 	return app
 }
