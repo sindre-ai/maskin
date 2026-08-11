@@ -1,11 +1,13 @@
 import { ChatPanel } from '@/components/chat/chat-panel'
 import { CommandPalette } from '@/components/command-palette'
 import { Header } from '@/components/layout/header'
+import { MobileNav } from '@/components/layout/mobile-nav'
 import { AppSidebar } from '@/components/layout/sidebar'
 import { RouteError } from '@/components/shared/route-error'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
 import { useActors } from '@/hooks/use-actors'
 import { useIsMobile } from '@/hooks/use-mobile'
+import { usePersistedSidebarOpen } from '@/hooks/use-persisted-sidebar-open'
 import { useSSE } from '@/hooks/use-sse'
 import { useWorkspaces } from '@/hooks/use-workspaces'
 import { deriveEntryAgentRole } from '@/lib/analytics'
@@ -13,6 +15,7 @@ import { api } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { ChatProvider, useChat } from '@/lib/chat-context'
 import { CommandPaletteProvider } from '@/lib/command-palette-context'
+import { isHiddenRouteId, migrateLegacySidebarState, viewKeyFromRouteId } from '@/lib/nav-view-keys'
 import { NewConversationProvider } from '@/lib/new-conversation-context'
 import { PageHeaderProvider, usePageHeader } from '@/lib/page-header-context'
 import { PendingCommentsProvider } from '@/lib/pending-comments-context'
@@ -22,28 +25,10 @@ import {
 	setCapturingEnabled,
 } from '@/lib/posthog'
 import { WorkspaceContext } from '@/lib/workspace-context'
-import { Outlet, createFileRoute } from '@tanstack/react-router'
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Outlet, createFileRoute, useMatches } from '@tanstack/react-router'
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 
-const STORAGE_KEY = 'maskin-sidebar-open'
-
-// Migrate old key
-try {
-	const old = localStorage.getItem('ai-native-sidebar-open')
-	if (old && !localStorage.getItem(STORAGE_KEY)) {
-		localStorage.setItem(STORAGE_KEY, old)
-		localStorage.removeItem('ai-native-sidebar-open')
-	}
-} catch {}
-
-function getInitialOpen(): boolean {
-	try {
-		const stored = localStorage.getItem(STORAGE_KEY)
-		return stored === null ? true : stored === 'true'
-	} catch {
-		return true
-	}
-}
+migrateLegacySidebarState()
 
 export const Route = createFileRoute('/_authed/$workspaceId')({
 	component: WorkspaceLayout,
@@ -86,15 +71,13 @@ function WorkspaceLayout() {
 		[defaultAgent],
 	)
 
-	const [open, setOpenState] = useState(getInitialOpen)
-
-	const setOpen = useCallback((value: boolean | ((prev: boolean) => boolean)) => {
-		setOpenState((prev) => {
-			const next = typeof value === 'function' ? value(prev) : value
-			localStorage.setItem(STORAGE_KEY, String(next))
-			return next
-		})
-	}, [])
+	// Collapse state is persisted per view (e.g. objects stays expanded while
+	// object-detail stays collapsed) so the shell remembers each route's state
+	// across navigation and reload.
+	const matches = useMatches()
+	const leafMatch = [...matches].reverse().find((m) => !isHiddenRouteId(m.routeId))
+	const viewKey = leafMatch ? viewKeyFromRouteId(leafMatch.routeId) : null
+	const { open, setOpen } = usePersistedSidebarOpen(viewKey)
 
 	// Pin the Synthesizer's join keys on every analytics event from this workspace,
 	// and apply the workspace's Privacy & data settings — both the share-usage
@@ -142,12 +125,13 @@ function WorkspaceLayout() {
 										<SidebarInset className="min-w-0">
 											<Header />
 											<div
-												className="flex flex-col flex-1 min-w-0 overflow-auto p-4 md:p-8"
+												className="flex flex-col flex-1 min-w-0 overflow-auto px-4 pb-20 pt-4 md:p-8"
 												data-scroll-root
 											>
 												<Outlet />
 											</div>
 										</SidebarInset>
+										<MobileNav />
 									</SidebarProvider>
 								</ChatPinShell>
 							</PageHeaderProvider>

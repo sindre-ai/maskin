@@ -317,6 +317,22 @@ function ObjectsPage() {
 
 	const allObjects = useMemo(() => infiniteQuery.data?.pages.flat() ?? [], [infiniteQuery.data])
 
+	// Per-tab live counts for the type tab strip. Counts reflect the objects
+	// loaded so far (the list paginates via infinite query) — they update as
+	// more pages load, which is the right trade-off vs. a separate count query.
+	const countsByType = useMemo(() => {
+		const counts: Record<string, number> = { all: allObjects.length }
+		for (const tab of tabs) {
+			if (!tab.value) continue
+			counts[tab.value] = allObjects.filter((o) => o.type === tab.value).length
+		}
+		return counts
+	}, [tabs, allObjects])
+	const tabsWithCounts = useMemo(
+		() => tabs.map((t) => ({ ...t, count: t.value ? countsByType[t.value] : countsByType.all })),
+		[tabs, countsByType],
+	)
+
 	// Derive available statuses grouped by type (scoped to enabled types only)
 	const statusesByType = useMemo(() => {
 		const statusMap = settings?.statuses as Record<string, string[]> | undefined
@@ -1042,7 +1058,7 @@ function ObjectsPage() {
 				columns={columnInfo}
 				columnVisibility={effectiveVisibility}
 				onColumnVisibilityChange={handleColumnVisibilityChange}
-				tabs={tabs}
+				tabs={tabsWithCounts}
 				typeFilter={typeFilter}
 				onTypeFilterChange={(value) => {
 					// Clear the outgoing key (real type or `__all__`) so the destination

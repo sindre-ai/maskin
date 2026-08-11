@@ -50,10 +50,10 @@ describe('SidebarActivity', () => {
 		trackExpanded.mockReset()
 	})
 
-	it('renders the "Activity" group label', () => {
+	it('renders the "Live agents" group label', () => {
 		mockUseActiveAgents.mockReturnValue({ agents: [], isLoading: false, isError: false })
 		render(<SidebarActivity workspaceId="ws-1" />)
-		expect(screen.getByText('Activity')).toBeInTheDocument()
+		expect(screen.getByText('Live agents')).toBeInTheDocument()
 	})
 
 	it('renders "No agents running" when list is empty (AC-U6)', () => {

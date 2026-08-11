@@ -278,4 +278,16 @@ describe('Header', () => {
 		const slots = screen.getAllByTestId('sticky-identity')
 		expect(slots.length).toBeGreaterThan(0)
 	})
+
+	it('opens the command palette from the ⌘K trigger', async () => {
+		setPaletteOpen.mockClear()
+		const user = userEvent.setup()
+		render(<Header />)
+
+		const trigger = screen.getByRole('button', { name: 'Search and run commands (⌘K)' })
+		expect(trigger).toBeInTheDocument()
+		await user.click(trigger)
+
+		expect(setPaletteOpen).toHaveBeenCalledWith(true)
+	})
 })

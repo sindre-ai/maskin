@@ -10,9 +10,10 @@ import {
 import { Button } from '@/components/ui/button'
 import { SidebarTrigger } from '@/components/ui/sidebar'
 import { useChat } from '@/lib/chat-context'
+import { useCommandPalette } from '@/lib/command-palette-context'
 import { usePageHeader } from '@/lib/page-header-context'
 import { useMatches, useRouter } from '@tanstack/react-router'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, Search } from 'lucide-react'
 import { Fragment } from 'react'
 
 interface RouteConfig {
@@ -89,6 +90,7 @@ export function Header() {
 	const matches = useMatches()
 	const { actions, stickyIdentity } = usePageHeader()
 	const { setOpen: setChatOpen } = useChat()
+	const { setOpen: setPaletteOpen } = useCommandPalette()
 	const router = useRouter()
 
 	// Find the leaf (last non-hidden) match
@@ -209,6 +211,19 @@ export function Header() {
 					</div>
 				)}
 				<div className="ml-auto flex shrink-0 items-center gap-2">
+					{/* ⌘K command-palette trigger — the palette's own global ⌘K
+						listener already opens it; this button is the always-visible
+						entry point per the shell spec. Hidden below sm so mobile
+						keeps the slim header. */}
+					<button
+						type="button"
+						onClick={() => setPaletteOpen(true)}
+						aria-label="Search and run commands (⌘K)"
+						className="hidden sm:flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-input bg-transparent px-2 text-muted-foreground transition-colors duration-150 hover:text-foreground"
+					>
+						<Search size={13} />
+						<kbd className="font-mono text-[10px] leading-none text-muted-foreground/70">⌘K</kbd>
+					</button>
 					{actions}
 					{!isForYouPage && (
 						<NewMenu onNewChat={() => setChatOpen(true)} hideObjectSection={isObjectDetail} />

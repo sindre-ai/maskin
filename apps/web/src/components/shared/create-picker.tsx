@@ -2,14 +2,15 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import {
-	ResponsiveDialog,
-	ResponsiveDialogContent,
-	ResponsiveDialogDescription,
-	ResponsiveDialogFooter,
-	ResponsiveDialogHeader,
-	ResponsiveDialogTitle,
-} from '@/components/ui/responsive-dialog'
+	Sheet,
+	SheetContent,
+	SheetDescription,
+	SheetFooter,
+	SheetHeader,
+	SheetTitle,
+} from '@/components/ui/sheet'
 import { useCreateActor } from '@/hooks/use-actors'
+import { useIsMobile } from '@/hooks/use-mobile'
 import { useCreateObject } from '@/hooks/use-objects'
 import { useCreateTrigger } from '@/hooks/use-triggers'
 import { trackAgentCreated, trackObjectCreated, trackTriggerCreated } from '@/lib/analytics'
@@ -67,6 +68,7 @@ export function CreatePicker({
 }: CreatePickerProps) {
 	const { workspaceId, workspace } = useWorkspace()
 	const navigate = useNavigate()
+	const isMobile = useIsMobile()
 	const createObject = useCreateObject(workspaceId)
 	const createActor = useCreateActor(workspaceId)
 	const createTrigger = useCreateTrigger(workspaceId)
@@ -208,15 +210,18 @@ export function CreatePicker({
 		: 'Create new'
 
 	return (
-		<ResponsiveDialog open={open} onOpenChange={onOpenChange}>
-			<ResponsiveDialogContent className="sm:max-w-md">
-				<form onSubmit={handleSubmit} className="flex flex-col gap-4">
-					<ResponsiveDialogHeader>
-						<ResponsiveDialogTitle>{dialogTitle}</ResponsiveDialogTitle>
-						<ResponsiveDialogDescription>
+		<Sheet open={open} onOpenChange={onOpenChange}>
+			<SheetContent
+				side={isMobile ? 'bottom' : 'right'}
+				className={isMobile ? 'max-h-[85dvh] rounded-t-lg' : 'w-[min(400px,92vw)] sm:max-w-[400px]'}
+			>
+				<form onSubmit={handleSubmit} className="flex flex-col gap-4 pr-8">
+					<SheetHeader>
+						<SheetTitle>{dialogTitle}</SheetTitle>
+						<SheetDescription>
 							{defaultType ? 'Give it a title to get started.' : 'Pick a type and give it a title.'}
-						</ResponsiveDialogDescription>
-					</ResponsiveDialogHeader>
+						</SheetDescription>
+					</SheetHeader>
 
 					{!defaultType && (
 						<RadioGroup
@@ -263,7 +268,7 @@ export function CreatePicker({
 						/>
 					</div>
 
-					<ResponsiveDialogFooter>
+					<SheetFooter>
 						<Button
 							type="button"
 							variant="ghost"
@@ -275,10 +280,10 @@ export function CreatePicker({
 						<Button type="submit" disabled={submitting || title.trim().length === 0}>
 							{submitting ? 'Creating…' : 'Create'}
 						</Button>
-					</ResponsiveDialogFooter>
+					</SheetFooter>
 				</form>
-			</ResponsiveDialogContent>
-		</ResponsiveDialog>
+			</SheetContent>
+		</Sheet>
 	)
 }
 

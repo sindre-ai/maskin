@@ -87,11 +87,12 @@ describe('WorkspaceSwitcher', () => {
 		await user.click(screen.getByRole('button', { name: /Switch workspace/ }))
 
 		const items = await screen.findAllByRole('menuitem')
-		expect(items.map((i) => i.textContent)).toEqual(
-			expect.arrayContaining(['Workspace Alpha', 'Workspace Beta']),
-		)
-		const alphaItem = items.find((i) => i.textContent === 'Workspace Alpha')
+		const alphaItem = items.find((i) => i.textContent?.includes('Workspace Alpha'))
+		const betaItem = items.find((i) => i.textContent?.includes('Workspace Beta'))
+		expect(alphaItem).toBeTruthy()
+		expect(betaItem).toBeTruthy()
 		expect(alphaItem?.querySelector('svg')).toBeTruthy()
+		expect(betaItem?.querySelector('svg')).toBeFalsy()
 	})
 
 	it('navigates to the selected workspace and drops workspace-scoped caches (AC-U3, AC-T4)', async () => {
@@ -110,7 +111,7 @@ describe('WorkspaceSwitcher', () => {
 		render(<WorkspaceSwitcher />, { wrapper: Wrapper })
 
 		await user.click(screen.getByRole('button', { name: /Switch workspace/ }))
-		await user.click(screen.getByRole('menuitem', { name: 'Workspace Beta' }))
+		await user.click(screen.getByRole('menuitem', { name: /Workspace Beta/ }))
 
 		expect(mockNavigate).toHaveBeenCalledWith({
 			to: '/$workspaceId',
@@ -130,7 +131,7 @@ describe('WorkspaceSwitcher', () => {
 		render(<WorkspaceSwitcher />, { wrapper: Wrapper })
 
 		await user.click(screen.getByRole('button', { name: /Switch workspace/ }))
-		await user.click(screen.getByRole('menuitem', { name: 'Workspace Alpha' }))
+		await user.click(screen.getByRole('menuitem', { name: /Workspace Alpha/ }))
 
 		expect(mockNavigate).not.toHaveBeenCalled()
 	})
@@ -211,6 +212,32 @@ describe('WorkspaceSwitcher', () => {
 		expect(trackOpened).toHaveBeenCalledTimes(1)
 		await user.keyboard('{Escape}')
 		expect(trackOpened).toHaveBeenCalledTimes(1)
+	})
+
+	it('shows the member role as a sub-line on each workspace row', async () => {
+		mockHook({ data: [wsA, wsB], isLoading: false, isError: false })
+		const { Wrapper } = makeWrapper()
+		const user = userEvent.setup()
+		render(<WorkspaceSwitcher />, { wrapper: Wrapper })
+
+		await user.click(screen.getByRole('button', { name: /Switch workspace/ }))
+
+		expect(screen.getAllByText('admin')).toHaveLength(2)
+	})
+
+	it('navigates to Workspace settings from the switcher footer entry', async () => {
+		mockHook({ data: [wsA, wsB], isLoading: false, isError: false })
+		const { Wrapper } = makeWrapper()
+		const user = userEvent.setup()
+		render(<WorkspaceSwitcher />, { wrapper: Wrapper })
+
+		await user.click(screen.getByRole('button', { name: /Switch workspace/ }))
+		await user.click(screen.getByRole('menuitem', { name: /Workspace settings/ }))
+
+		expect(mockNavigate).toHaveBeenCalledWith({
+			to: '/$workspaceId/settings',
+			params: { workspaceId: 'ws-a' },
+		})
 	})
 
 	function _typeCheck(): WorkspaceWithRole {

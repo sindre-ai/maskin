@@ -261,7 +261,7 @@ export function trackSidebarAgentActivityExpanded(p: { workspaceId: string }): v
 // distinguishes the top-nav slot from the footer slot so the ratio can be
 // sliced before/after T4 moves Marketplace between them. `favorites` covers the
 // Mini-apps bet's pinned sidebar group.
-export type NavItemSource = 'top-nav' | 'footer' | 'favorites'
+export type NavItemSource = 'top-nav' | 'footer' | 'favorites' | 'bottom-nav'
 
 export function trackNavItemClicked(p: { item_key: string; source: NavItemSource }): void {
 	trackEvent('nav_item_clicked', { item_key: p.item_key, source: p.source })
