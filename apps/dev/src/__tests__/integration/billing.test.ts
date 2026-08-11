@@ -1,3 +1,4 @@
+import { OpenAPIHono } from '@hono/zod-openapi'
 import { events, billing as billingTable, invoices as invoicesTable } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
 import { describe, expect, it, vi } from 'vitest'
@@ -6,7 +7,7 @@ import { insertWorkspace } from '../factories'
 import { jsonRequest } from '../helpers'
 import { db, getTestActorId } from './global-setup'
 
-const { createBillingApp } = await import('../../routes/billing')
+const { default: createBillingApp } = await import('../../routes/billing')
 
 const PRO_PLAN: ResolvedPlan = {
 	planId: 'pro',
@@ -51,17 +52,23 @@ function createStripeStub(options: { workspaceId?: string; intentStatus?: string
 	} as unknown as StripeLike
 }
 
+// The route module registers at `/`, `/checkout`, `/complete`, `/portal` — mount
+// it at the `/api/billing` prefix (mirroring app-factory.ts) so specs hit the
+// same paths as production. Without the mount every request 404s and the whole
+// suite fails (or, with lax assertions, passes as false green).
 function createTestApp(stripe: StripeLike | null) {
-	const app = createBillingApp({
+	const billingApp = createBillingApp({
 		stripe,
 		resolvePlan: async () => PRO_PLAN,
 	})
-	app.use('*', async (c, next) => {
+	billingApp.use('*', async (c, next) => {
 		c.set('db', db)
 		c.set('actorId', getTestActorId())
 		c.set('actorType', 'human')
 		await next()
 	})
+	const app = new OpenAPIHono()
+	app.route('/api/billing', billingApp)
 	return app
 }
 
