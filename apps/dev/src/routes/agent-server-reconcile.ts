@@ -285,6 +285,11 @@ const sessionCompleteRoute = createRoute({
 			description: 'Invalid bearer token',
 			content: { 'application/json': { schema: errorSchema } },
 		},
+		500: {
+			description:
+				'The outcome could not be confirmed (DB unreachable) — the caller should retry the report',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 		503: {
 			description: 'Endpoint not configured',
 			content: { 'application/json': { schema: errorSchema } },
@@ -310,10 +315,27 @@ app.openapi(sessionCompleteRoute, async (c) => {
 	const { exitCode } = c.req.valid('json')
 	const sessionManager = c.get('sessionManager')
 
+	// markRemoteSessionComplete() itself never throws — every internal failure
+	// is caught and logged inside it — so this try/catch is a backstop, not
+	// the real signal. Its boolean return is: `false` only when the outcome
+	// couldn't be confirmed at all (DB unreachable for both the CAS UPDATE and
+	// the fallback read), which must surface as a non-2xx here so the
+	// agent-server's own retry logic (checking res.ok) actually retries
+	// instead of treating the report as delivered. See
+	// docs/runbooks/agent-session-failures-2026-08-11.md, Issue 3.
+	let confirmed: boolean
 	try {
-		await sessionManager.markRemoteSessionComplete(id, exitCode)
+		confirmed = await sessionManager.markRemoteSessionComplete(id, exitCode)
 	} catch (err) {
 		logger.error('Failed to mark remote session complete', { sessionId: id, error: String(err) })
+		confirmed = false
+	}
+
+	if (!confirmed) {
+		return c.json(
+			createApiError(ApiErrorCode.INTERNAL_ERROR, 'Failed to confirm session completion'),
+			500,
+		)
 	}
 
 	return c.json({ ok: true }, 200)

@@ -292,3 +292,84 @@ describe('POST /api/internal/agent-servers/sessions/:id/logs', () => {
 		expect(res.status).toBe(401)
 	})
 })
+
+describe('POST /api/internal/agent-servers/sessions/:id/complete', () => {
+	beforeEach(() => {
+		vi.stubEnv('AGENT_SERVER_SECRET', SECRET)
+	})
+
+	afterEach(() => {
+		vi.unstubAllEnvs()
+		vi.restoreAllMocks()
+	})
+
+	function completePath(id = sessionId) {
+		return `/api/internal/agent-servers/sessions/${id}/complete`
+	}
+
+	it('returns 200 when markRemoteSessionComplete confirms the outcome', async () => {
+		const { app, sessionManager } = createSessionTestApp(
+			agentServerReconcileRoutes,
+			'/api/internal/agent-servers',
+		)
+		sessionManager.markRemoteSessionComplete = vi.fn().mockResolvedValue(true)
+
+		const res = await app.request(
+			jsonRequest('POST', completePath(), { exitCode: 1 }, { Authorization: `Bearer ${SECRET}` }),
+		)
+
+		expect(res.status).toBe(200)
+		expect(await res.json()).toEqual({ ok: true })
+		expect(sessionManager.markRemoteSessionComplete).toHaveBeenCalledWith(sessionId, 1)
+	})
+
+	// Regression coverage: this route used to report `{ ok: true }`
+	// unconditionally regardless of what markRemoteSessionComplete actually
+	// did. A `false` return means the outcome could not be confirmed at all
+	// (the DB was unreachable for both the CAS update and the fallback read)
+	// — that must surface as a non-2xx so the agent-server's own res.ok check
+	// retries the report instead of treating it as delivered. See
+	// docs/runbooks/agent-session-failures-2026-08-11.md, Issue 3.
+	it('returns 500 when markRemoteSessionComplete could not confirm the outcome', async () => {
+		const { app, sessionManager } = createSessionTestApp(
+			agentServerReconcileRoutes,
+			'/api/internal/agent-servers',
+		)
+		sessionManager.markRemoteSessionComplete = vi.fn().mockResolvedValue(false)
+
+		const res = await app.request(
+			jsonRequest('POST', completePath(), { exitCode: 1 }, { Authorization: `Bearer ${SECRET}` }),
+		)
+
+		expect(res.status).toBe(500)
+		const body = await res.json()
+		expect(body.error.code).toBe('INTERNAL_ERROR')
+	})
+
+	it('returns 500 when markRemoteSessionComplete throws', async () => {
+		const { app, sessionManager } = createSessionTestApp(
+			agentServerReconcileRoutes,
+			'/api/internal/agent-servers',
+		)
+		sessionManager.markRemoteSessionComplete = vi.fn().mockRejectedValue(new Error('db down'))
+		const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {})
+
+		const res = await app.request(
+			jsonRequest('POST', completePath(), { exitCode: 1 }, { Authorization: `Bearer ${SECRET}` }),
+		)
+
+		expect(res.status).toBe(500)
+		expect(errorSpy).toHaveBeenCalledWith(
+			'Failed to mark remote session complete',
+			expect.objectContaining({ sessionId, error: expect.stringContaining('db down') }),
+		)
+	})
+
+	it('returns 401 when the Authorization header is missing', async () => {
+		const { app } = createSessionTestApp(agentServerReconcileRoutes, '/api/internal/agent-servers')
+
+		const res = await app.request(jsonRequest('POST', completePath(), { exitCode: 1 }))
+
+		expect(res.status).toBe(401)
+	})
+})

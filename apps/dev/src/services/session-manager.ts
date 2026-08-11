@@ -770,7 +770,22 @@ export class SessionManager extends EventEmitter {
 			// stoppedByUser marks this row so that later report is allowed to
 			// overwrite it instead of silently losing the race — see
 			// markRemoteSessionComplete's CAS condition below.
-			await this.markRemoteSessionComplete(sessionId, null, { stoppedByUser: true })
+			//
+			// A `false` return means the provisional write couldn't even be
+			// confirmed (DB unreachable) — this method's own caller already
+			// treats the sandbox-level stop as successful (the remote kill
+			// already happened), so there's nothing to retry or rethrow here;
+			// just make the gap visible in logs instead of swallowing it
+			// silently, since the genuine /complete report may also race a
+			// down DB and there'd otherwise be no trace of either write.
+			const confirmed = await this.markRemoteSessionComplete(sessionId, null, {
+				stoppedByUser: true,
+			})
+			if (!confirmed) {
+				logger.warn('Provisional stop write could not be confirmed (DB unreachable)', {
+					sessionId,
+				})
+			}
 			return
 		}
 
@@ -3184,11 +3199,24 @@ export class SessionManager extends EventEmitter {
 		return existing.result?.stopped_by_user === true
 	}
 
+	/**
+	 * Returns `false` only when the outcome could not be confirmed at all —
+	 * the CAS UPDATE failed after retries AND the fallback read-only lookup
+	 * also failed, so we have no idea what state the row is in. Every other
+	 * path (row updated, session not found, already resolved by a concurrent
+	 * call) is a legitimate terminal outcome and returns `true`, even though
+	 * no write happened in the "already resolved" cases — retrying those
+	 * wouldn't change anything. Callers that can meaningfully retry (e.g. the
+	 * `/complete` HTTP route, which can return a non-2xx to trigger the
+	 * agent-server's own retry loop) should surface a `false` return as a
+	 * failure instead of reporting success; see
+	 * docs/runbooks/agent-session-failures-2026-08-11.md, Issue 3.
+	 */
 	async markRemoteSessionComplete(
 		sessionId: string,
 		exitCode: number | null,
 		opts: { stoppedByUser?: boolean } = {},
-	): Promise<void> {
+	): Promise<boolean> {
 		const stoppedByUser = opts.stoppedByUser ?? false
 		const status = exitCode === 0 ? 'completed' : 'failed'
 		const result: SessionResult = stoppedByUser
@@ -3300,7 +3328,10 @@ export class SessionManager extends EventEmitter {
 					sessionId,
 					error: String(err),
 				})
-				return
+				// Unlike the no-op branches below, this means we genuinely don't know
+				// the row's state — the DB is unreachable, not just "already
+				// resolved." A caller that can retry should treat this as a failure.
+				return false
 			}
 			if (!fallback) {
 				logger.warn('Completion signal dropped — session not found (fallback lookup)', {
@@ -3308,7 +3339,7 @@ export class SessionManager extends EventEmitter {
 					droppedExitCode: exitCode,
 					droppedStoppedByUser: stoppedByUser,
 				})
-				return
+				return true
 			}
 			// Another call already resolved this session while our retries were
 			// failing (its own report landed, or a concurrent call won the CAS) —
@@ -3326,7 +3357,7 @@ export class SessionManager extends EventEmitter {
 						currentResult: fallback.result,
 					},
 				)
-				return
+				return true
 			}
 			// Best-effort: try once more to persist the status directly (not
 			// CAS-guarded — the read above just confirmed no other call has
@@ -3392,7 +3423,7 @@ export class SessionManager extends EventEmitter {
 				currentStatus: existing?.status ?? null,
 				currentResult: existing?.result ?? null,
 			})
-			return
+			return true
 		}
 
 		try {
@@ -3451,6 +3482,7 @@ export class SessionManager extends EventEmitter {
 		this.cosThinnessContext.delete(sessionId)
 
 		logger.info(`Remote session ${status}: ${sessionId}`, { exitCode, stoppedByUser })
+		return true
 	}
 
 	/** Clear activeSessionId on any object linked to this session. */

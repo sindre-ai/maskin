@@ -5,7 +5,7 @@ import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
 import { type CsvOptions, importMappingSchema, importQuerySchema } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import { and, desc, eq } from 'drizzle-orm'
-import { createApiError } from '../lib/errors'
+import { createApiError, validationFailureHook } from '../lib/errors'
 import { logger } from '../lib/logger'
 import {
 	errorSchema,
@@ -32,7 +32,7 @@ type Env = {
 	}
 }
 
-const app = new OpenAPIHono<Env>()
+const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 // All import routes require workspace membership
 app.use('*', async (c, next) => {

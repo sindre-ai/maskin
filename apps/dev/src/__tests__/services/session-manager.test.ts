@@ -1899,11 +1899,37 @@ describe('SessionManager', () => {
 			]
 			// The fallback lookup after CAS retries are exhausted finds nothing
 			// (unconfigured select defaults to []) — nothing left to clean up.
+			// This is a legitimate terminal outcome (not a DB failure a caller
+			// could usefully retry), so it still resolves `true`.
 			const initialInsertCount = calls.inserts.length
 
-			await expect(
-				manager.markRemoteSessionComplete('some-session-id', 137),
-			).resolves.toBeUndefined()
+			await expect(manager.markRemoteSessionComplete('some-session-id', 137)).resolves.toBe(true)
+
+			expect(calls.inserts.length).toBe(initialInsertCount)
+		})
+
+		// Regression coverage: the route handler for POST
+		// /sessions/:id/complete (apps/dev/src/routes/agent-server-reconcile.ts)
+		// used to report `{ ok: true }` unconditionally, even when this method
+		// gave up without ever confirming the row's state — silently defeating
+		// the agent-server's own retry-on-failure logic. `false` is reserved
+		// for exactly this "we have no idea what happened" case, distinct from
+		// every other early-return above (already terminal / not found /
+		// resolved by a concurrent call), which are legitimate no-ops and
+		// still resolve `true`.
+		it('gives up and returns false when the fallback lookup after CAS retries also throws', async () => {
+			mockResults.updateErrorQueue = [
+				new Error('connection reset'),
+				new Error('connection reset'),
+				new Error('connection reset'),
+			]
+			// 1st select: usage extraction (empty = no-op). 2nd select: the
+			// fallback lookup itself throws — the DB is still unreachable.
+			mockResults.selectQueue = [[]]
+			mockResults.selectErrorQueue = [undefined, new Error('connection reset')]
+			const initialInsertCount = calls.inserts.length
+
+			await expect(manager.markRemoteSessionComplete('some-session-id', 137)).resolves.toBe(false)
 
 			expect(calls.inserts.length).toBe(initialInsertCount)
 		})

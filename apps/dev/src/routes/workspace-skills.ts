@@ -13,7 +13,7 @@ import AdmZip from 'adm-zip'
 import { and, asc, desc, eq } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
-import { createApiError } from '../lib/errors'
+import { createApiError, validationFailureHook } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { errorSchema } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
@@ -32,7 +32,7 @@ type Env = {
 	}
 }
 
-const app = new OpenAPIHono<Env>()
+const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 function isUniqueViolation(err: unknown, constraintName: string): boolean {
 	// Drizzle wraps the driver's PostgresError as `err.cause`, so inspect both

@@ -25,7 +25,7 @@ import {
 	workspaces,
 } from '@maskin/db/schema'
 import { and, asc, eq, ilike, inArray, or, sql } from 'drizzle-orm'
-import { createApiError } from '../lib/errors'
+import { createApiError, validationFailureHook } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, jsonbField } from '../lib/openapi-schemas'
 import { isWorkspaceMember } from '../lib/workspace-auth'
@@ -46,7 +46,7 @@ type Env = {
 	}
 }
 
-const app = new OpenAPIHono<Env>()
+const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 // The marketplace itself is global — loops aren't scoped to any workspace.
 // Routes are mounted behind the API-key auth middleware in app-factory; no

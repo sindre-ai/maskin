@@ -3,7 +3,7 @@ import type { Database } from '@maskin/db'
 import { objects } from '@maskin/db/schema'
 import { and, eq, gte, sql } from 'drizzle-orm'
 import { z } from 'zod'
-import { createApiError } from '../lib/errors'
+import { createApiError, validationFailureHook } from '../lib/errors'
 import { checkGuestThrottle } from '../lib/guest-throttle'
 import {
 	LANDING_GUESTS_ACTOR_ID,
@@ -216,7 +216,7 @@ const claimBodySchema = z.object({
 // Route
 // ---------------------------------------------------------------------------
 
-const app = new OpenAPIHono<Env>()
+const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 app.post('/drafts', async (c) => {
 	let body: z.infer<typeof draftsBodySchema>

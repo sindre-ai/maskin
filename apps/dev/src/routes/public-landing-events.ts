@@ -3,7 +3,7 @@ import type { Database } from '@maskin/db'
 import { objects } from '@maskin/db/schema'
 import { and, eq, sql } from 'drizzle-orm'
 import { z } from 'zod'
-import { createApiError } from '../lib/errors'
+import { createApiError, validationFailureHook } from '../lib/errors'
 import { LANDING_GUESTS_ACTOR_ID, LANDING_GUESTS_WORKSPACE_ID } from '../lib/landing-guests'
 import { logger } from '../lib/logger'
 import { extractClientIp } from '../lib/trusted-proxy'
@@ -97,7 +97,7 @@ export function _resetLandingEventBuckets(): void {
 	buckets.clear()
 }
 
-const app = new OpenAPIHono<Env>()
+const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 app.post('/', async (c) => {
 	let body: z.infer<typeof bodySchema>

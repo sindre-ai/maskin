@@ -3,7 +3,7 @@ import type { Database } from '@maskin/db'
 import { objects } from '@maskin/db/schema'
 import { and, eq, gte, sql } from 'drizzle-orm'
 import { z } from 'zod'
-import { createApiError } from '../lib/errors'
+import { createApiError, validationFailureHook } from '../lib/errors'
 import { LANDING_GUESTS_WORKSPACE_ID } from '../lib/landing-guests'
 import { logger } from '../lib/logger'
 
@@ -42,7 +42,7 @@ const querySchema = z.object({
 	successWindowDays: z.coerce.number().min(1).max(60).default(7),
 })
 
-const app = new OpenAPIHono<Env>()
+const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 app.get('/', async (c) => {
 	const db = c.get('db')

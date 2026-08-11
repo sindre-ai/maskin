@@ -14,7 +14,7 @@ import {
 	writeFailoverState,
 	writeSlot,
 } from '../lib/claude-oauth-slots'
-import { createApiError } from '../lib/errors'
+import { createApiError, validationFailureHook } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import type { WorkspaceSettings } from '../lib/types'
@@ -27,7 +27,7 @@ type Env = {
 	}
 }
 
-const app = new OpenAPIHono<Env>()
+const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 const slotKindSchema = z.enum(['primary', 'backup'])
 

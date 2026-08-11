@@ -2,7 +2,7 @@ import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openap
 import type { Database } from '@maskin/db'
 import { events, files, triggers } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
-import { createApiError } from '../lib/errors'
+import { createApiError, validationFailureHook } from '../lib/errors'
 import { errorSchema, triggerResponseSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
 import { isWorkspaceMember } from '../lib/workspace-auth'
@@ -24,7 +24,7 @@ type Env = {
 const isHtmlMime = (mime: string): boolean =>
 	mime === 'text/html' || mime === 'application/xhtml+xml'
 
-const app = new OpenAPIHono<Env>()
+const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 const regenBodySchema = z.object({
 	file_id: z.string().uuid(),
