@@ -10,7 +10,18 @@ import type { SessionManager } from './session-manager'
 /** Cap on scope-match rows appended to the action prompt so the payload stays bounded. */
 const SCOPE_MATCH_LIMIT = 100
 
-const OBJECT_ENTITY_TYPES = new Set(['bet', 'task', 'insight'])
+/**
+ * Guards the objects-table hydration lookup: `objects.id` is a uuid column, so
+ * probing it with a non-UUID entity id (e.g. a slack channel key) would raise
+ * a Postgres "invalid input syntax for type uuid" error instead of just
+ * finding no row. Which entity types are objects is deliberately NOT
+ * hardcoded — workspaces define their own object types (extensions,
+ * create_extension), so we attempt hydration for any UUID entity id and let a
+ * missing row mean "not an object". A previous allow-list here
+ * (['bet','task','insight']) silently broke status filters for custom-typed
+ * objects flowing through loops.
+ */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 interface TriggerFailureState {
 	count: number
@@ -193,7 +204,7 @@ export class TriggerRunner {
 			// New `{changes}` shape ships only the diff — hydrate current from the objects
 			// table for object entities and reverse-patch to reconstruct previous.
 			const changes = readChanges(data)
-			if (!changes || !event.entity_id || !OBJECT_ENTITY_TYPES.has(event.entity_type)) return {}
+			if (!changes || !event.entity_id || !UUID_RE.test(event.entity_id)) return {}
 			const [row] = await this.db
 				.select()
 				.from(objects)
@@ -235,9 +246,10 @@ export class TriggerRunner {
 			if (config.filter) {
 				const data = await getEventData()
 				if (!data) continue
-				const isObjectUpdate =
-					(event.action === 'updated' || event.action === 'status_changed') &&
-					OBJECT_ENTITY_TYPES.has(event.entity_type)
+				// Object-ness is resolved dynamically: getObjectContext() hydrates
+				// from the objects table and returns {} for non-object entities, so
+				// custom workspace-defined object types match filters too.
+				const isObjectUpdate = event.action === 'updated' || event.action === 'status_changed'
 				const ctx = isObjectUpdate ? await getObjectContext() : {}
 				const filterRoot = (ctx.current ?? data) as Record<string, unknown>
 				const filter = config.filter as Record<string, unknown>
@@ -260,9 +272,7 @@ export class TriggerRunner {
 			if (Array.isArray(config.conditions) && config.conditions.length > 0) {
 				const data = await getEventData()
 				if (!data) continue
-				const isObjectUpdate =
-					(event.action === 'updated' || event.action === 'status_changed') &&
-					OBJECT_ENTITY_TYPES.has(event.entity_type)
+				const isObjectUpdate = event.action === 'updated' || event.action === 'status_changed'
 				const ctx = isObjectUpdate ? await getObjectContext() : {}
 				const conditionRoot = (ctx.current ?? data) as Record<string, unknown>
 				if (!evaluateConditions(config.conditions, conditionRoot)) continue

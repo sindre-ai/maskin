@@ -49,6 +49,12 @@ const app = new OpenAPIHono<Env>()
  * Kept as a per-type table here rather than shared because the read API is
  * the only consumer today; if a second consumer appears, promote to
  * `packages/shared/src/schemas/objects.ts` alongside `TERMINAL_BET_STATUSES`.
+ *
+ * This table is the FALLBACK only. A loop can carry its own
+ * `metadata.closed_statuses` map (`{ <type>: [statuses...] }`, written by the
+ * MCP create_loop/update_loop tools) that overrides the entry for a type —
+ * that's what makes closed counts work for workspace-defined custom object
+ * types, which by definition can never appear in a hardcoded table.
  */
 const TERMINAL_STATUSES_BY_TYPE: Record<string, string[]> = {
 	bet: [...TERMINAL_BET_STATUSES, 'archived'],
@@ -57,11 +63,23 @@ const TERMINAL_STATUSES_BY_TYPE: Record<string, string[]> = {
 	commitment: [], // commitments never terminate — they're standing state
 }
 
-const TERMINAL_STATUS_LITERAL_LIST = sql.raw(
-	`(${Object.entries(TERMINAL_STATUSES_BY_TYPE)
-		.flatMap(([type, statuses]) => statuses.map((s) => `('${type}','${s}')`))
-		.join(',')})`,
-)
+/**
+ * Extract a loop's `metadata.closed_statuses` override map, shape-validated:
+ * a plain object of type → string[]. Anything malformed (arrays at the top
+ * level, non-string entries) is dropped rather than erroring — same tolerance
+ * as `trigger_ids` above, a hand-edited metadata blob must not 500 the page.
+ */
+function readClosedStatuses(meta: Record<string, unknown>): Record<string, string[]> | null {
+	const raw = meta.closed_statuses
+	if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+	const cleaned: Record<string, string[]> = {}
+	for (const [type, value] of Object.entries(raw as Record<string, unknown>)) {
+		if (Array.isArray(value)) {
+			cleaned[type] = value.filter((s): s is string => typeof s === 'string')
+		}
+	}
+	return Object.keys(cleaned).length > 0 ? cleaned : null
+}
 
 const listLoopsRoute = createRoute({
 	method: 'get',
@@ -127,49 +145,76 @@ app.openapi(listLoopsRoute, (async (c) => {
 	// pointing at unknown ids).
 	const loopIdArray = sql.raw(`ARRAY[${loopIds.map((id) => `'${id}'`).join(',')}]::uuid[]`)
 
-	// Per-loop child-object counts + median close time in a single scan.
-	const childStatsRows = await db.execute<{
+	// Per-loop child-object rows in a single scan. Whether a member counts as
+	// "closed" depends on the loop's own `metadata.closed_statuses` override
+	// (falling back to TERMINAL_STATUSES_BY_TYPE), so the terminal test is
+	// per-loop and computed here rather than in a shared SQL literal list.
+	// Loops hold at most tens of members, so row-level fetch + JS aggregation
+	// stays cheap.
+	const childRows = await db.execute<{
 		loop_id: string
-		in_progress_count: number
-		closed_count: number
-		median_close_ms: number | null
+		type: string
+		status: string
+		created_at: string | Date
+		updated_at: string | Date
 	}>(
 		sql`
-			SELECT
-				r.source_id AS loop_id,
-				COUNT(*) FILTER (
-					WHERE (o.type, o.status) NOT IN ${TERMINAL_STATUS_LITERAL_LIST}
-				)::int AS in_progress_count,
-				COUNT(*) FILTER (
-					WHERE (o.type, o.status) IN ${TERMINAL_STATUS_LITERAL_LIST}
-				)::int AS closed_count,
-				percentile_cont(0.5) WITHIN GROUP (
-					ORDER BY EXTRACT(EPOCH FROM (o.updated_at - o.created_at)) * 1000
-				) FILTER (
-					WHERE (o.type, o.status) IN ${TERMINAL_STATUS_LITERAL_LIST}
-				) AS median_close_ms
+			SELECT r.source_id AS loop_id, o.type, o.status, o.created_at, o.updated_at
 			FROM ${relationships} r
 			JOIN ${objects} o ON o.id = r.target_id
 			WHERE r.type = ${LOOP_MEMBERSHIP_RELATIONSHIP_TYPE}
 				AND r.source_id = ANY(${loopIdArray})
 				AND o.workspace_id = ${workspaceId}
-			GROUP BY r.source_id
 		`,
 	)
+
+	const closedStatusOverridesByLoop = new Map<string, Record<string, string[]>>()
+	for (const l of loopRows) {
+		const meta = (l.metadata as Record<string, unknown> | null) ?? {}
+		const override = readClosedStatuses(meta)
+		if (override) closedStatusOverridesByLoop.set(l.id, override)
+	}
+
+	const isClosedForLoop = (loopId: string, type: string, status: string): boolean => {
+		const override = closedStatusOverridesByLoop.get(loopId)?.[type]
+		const terminal = override ?? TERMINAL_STATUSES_BY_TYPE[type] ?? []
+		return terminal.includes(status)
+	}
 
 	const childStatsByLoop = new Map<
 		string,
 		{ inProgressCount: number; closedCount: number; medianCloseMs: number | null }
 	>()
-	for (const row of childStatsRows) {
-		childStatsByLoop.set(row.loop_id, {
-			inProgressCount: Number(row.in_progress_count) || 0,
-			closedCount: Number(row.closed_count) || 0,
-			medianCloseMs:
-				row.median_close_ms === null || row.median_close_ms === undefined
-					? null
-					: Math.round(Number(row.median_close_ms)),
-		})
+	{
+		const closeDurationsByLoop = new Map<string, number[]>()
+		for (const row of childRows) {
+			const stats = childStatsByLoop.get(row.loop_id) ?? {
+				inProgressCount: 0,
+				closedCount: 0,
+				medianCloseMs: null,
+			}
+			if (isClosedForLoop(row.loop_id, row.type, row.status)) {
+				stats.closedCount += 1
+				const durations = closeDurationsByLoop.get(row.loop_id) ?? []
+				durations.push(new Date(row.updated_at).getTime() - new Date(row.created_at).getTime())
+				closeDurationsByLoop.set(row.loop_id, durations)
+			} else {
+				stats.inProgressCount += 1
+			}
+			childStatsByLoop.set(row.loop_id, stats)
+		}
+		// Median matches percentile_cont(0.5): linear interpolation — for an
+		// even count, the mean of the two middle values.
+		for (const [loopId, durations] of closeDurationsByLoop) {
+			durations.sort((a, b) => a - b)
+			const mid = Math.floor(durations.length / 2)
+			const median =
+				durations.length % 2 === 1
+					? (durations[mid] as number)
+					: ((durations[mid - 1] as number) + (durations[mid] as number)) / 2
+			const stats = childStatsByLoop.get(loopId)
+			if (stats) stats.medianCloseMs = Math.max(0, Math.round(median))
+		}
 	}
 
 	// Trigger → agent lookup (batched across all loops).

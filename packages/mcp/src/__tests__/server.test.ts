@@ -1001,6 +1001,322 @@ describe('tool handlers', () => {
 		})
 	})
 
+	describe('loop tool handlers', () => {
+		const okJson = (data: unknown) =>
+			({ ok: true, headers: new Headers(), json: () => Promise.resolve(data) }) as Response
+
+		const workspaceRow = {
+			id: 'ws-default-123',
+			name: 'WS',
+			settings: {
+				statuses: {
+					task: ['todo', 'done'],
+					lead: ['new', 'qualified', 'won', 'lost'],
+					loop: ['running', 'waiting', 'paused', 'archived'],
+				},
+			},
+		}
+
+		describe('list_loops', () => {
+			it('GETs /api/loops with the workspace header and returns the loops', async () => {
+				mockFetchSuccess({
+					loops: [{ id: 'loop-1', workspaceId: 'ws-default-123', name: 'Lead loop' }],
+				})
+
+				const handler = getHandler('list_loops')
+				const result = (await handler({})) as { content: Array<{ text: string }> }
+
+				expect(fetch).toHaveBeenCalledWith(
+					'http://localhost:3000/api/loops',
+					expect.objectContaining({
+						method: 'GET',
+						headers: expect.objectContaining({ 'X-Workspace-Id': 'ws-default-123' }),
+					}),
+				)
+				const parsed = JSON.parse(result.content[0].text)
+				expect(parsed.loops).toHaveLength(1)
+				expect(parsed.loops[0].id).toBe('loop-1')
+			})
+		})
+
+		describe('create_loop', () => {
+			it('creates inline step triggers and POSTs the loop node + in_loop edges to /api/graph', async () => {
+				let triggerCounter = 0
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+					const u = String(url)
+					const method = (init as RequestInit | undefined)?.method
+					if (u.endsWith('/api/workspaces')) return okJson([workspaceRow])
+					if (u.includes('/api/objects/'))
+						return okJson({
+							id: u.split('/').pop(),
+							workspaceId: 'ws-default-123',
+							type: 'task',
+						})
+					if (u.endsWith('/api/triggers') && method === 'POST') {
+						triggerCounter += 1
+						return okJson({ id: `trig-${triggerCounter}` })
+					}
+					if (u.endsWith('/api/graph'))
+						return okJson({
+							nodes: [{ $id: 'loop', id: 'loop-1', workspaceId: 'ws-default-123', type: 'loop' }],
+							edges: [{ id: 'edge-1', type: 'in_loop' }],
+						})
+					throw new Error(`Unexpected fetch: ${method ?? 'GET'} ${u}`)
+				})
+
+				const handler = getHandler('create_loop')
+				const result = (await handler({
+					name: 'Lead qualification',
+					guarantee: 'Every lead gets an answer',
+					status: 'running',
+					entry_condition: 'A lead is created',
+					close_condition: 'The lead is won or lost',
+					closed_statuses: { lead: ['won', 'lost'] },
+					steps: [
+						{
+							name: 'Qualify',
+							agent_id: 'agent-1',
+							prompt: 'Qualify the lead',
+							when: {
+								object_type: 'lead',
+								action: 'status_changed',
+								filter: { status: 'new' },
+							},
+						},
+						{
+							name: 'Weekly sweep',
+							agent_id: 'agent-2',
+							prompt: 'Sweep stale leads',
+							when: { cron: '0 9 * * 1' },
+						},
+					],
+					trigger_ids: [],
+					object_ids: ['obj-1'],
+				})) as { content: Array<{ text: string }> }
+
+				// Step triggers: one event trigger + one cron trigger.
+				const triggerCalls = vi
+					.mocked(fetch)
+					.mock.calls.filter(
+						(c) =>
+							String(c[0]).endsWith('/api/triggers') &&
+							(c[1] as RequestInit | undefined)?.method === 'POST',
+					)
+				expect(triggerCalls).toHaveLength(2)
+				const triggerBodies = triggerCalls.map((c) =>
+					JSON.parse((c[1] as RequestInit).body as string),
+				)
+				expect(triggerBodies[0]).toMatchObject({
+					name: 'Qualify',
+					type: 'event',
+					target_actor_id: 'agent-1',
+					config: {
+						entity_type: 'lead',
+						action: 'status_changed',
+						filter: { status: 'new' },
+					},
+				})
+				expect(triggerBodies[1]).toMatchObject({
+					name: 'Weekly sweep',
+					type: 'cron',
+					target_actor_id: 'agent-2',
+					config: { expression: '0 9 * * 1' },
+				})
+
+				// Graph body: loop node with the wired metadata + membership edge.
+				const graphCall = vi
+					.mocked(fetch)
+					.mock.calls.find((c) => String(c[0]).endsWith('/api/graph'))
+				expect(graphCall).toBeDefined()
+				const graphBody = JSON.parse((graphCall?.[1] as RequestInit).body as string)
+				expect(graphBody.nodes).toHaveLength(1)
+				expect(graphBody.nodes[0]).toMatchObject({
+					$id: 'loop',
+					type: 'loop',
+					title: 'Lead qualification',
+					content: 'Every lead gets an answer',
+					status: 'running',
+				})
+				expect(graphBody.nodes[0].metadata.trigger_ids).toEqual(['trig-1', 'trig-2'])
+				expect(graphBody.nodes[0].metadata.entry_condition).toBe('A lead is created')
+				expect(graphBody.nodes[0].metadata.closed_statuses).toEqual({
+					lead: ['won', 'lost'],
+				})
+				expect(graphBody.edges).toEqual([{ source: 'loop', target: 'obj-1', type: 'in_loop' }])
+
+				const parsed = JSON.parse(result.content[0].text)
+				expect(parsed.loop.id).toBe('loop-1')
+				expect(parsed.trigger_ids).toEqual(['trig-1', 'trig-2'])
+				expect(parsed.created_step_trigger_ids).toEqual(['trig-1', 'trig-2'])
+			})
+
+			it('rejects unknown trigger ids before creating anything', async () => {
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+					const u = String(url)
+					if (u.endsWith('/api/triggers')) return okJson([{ id: 'trig-known' }])
+					throw new Error(`Unexpected fetch: ${u}`)
+				})
+
+				const handler = getHandler('create_loop')
+				await expect(
+					handler({
+						name: 'Broken loop',
+						trigger_ids: ['trig-unknown'],
+						steps: [],
+						object_ids: [],
+					}),
+				).rejects.toThrow(/Unknown trigger id/)
+
+				// No graph call — nothing was created.
+				const graphCalls = vi
+					.mocked(fetch)
+					.mock.calls.filter((c) => String(c[0]).endsWith('/api/graph'))
+				expect(graphCalls).toHaveLength(0)
+			})
+
+			it('rejects closed_statuses referencing a status the workspace does not define', async () => {
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+					const u = String(url)
+					if (u.endsWith('/api/workspaces')) return okJson([workspaceRow])
+					throw new Error(`Unexpected fetch: ${u}`)
+				})
+
+				const handler = getHandler('create_loop')
+				await expect(
+					handler({
+						name: 'Bad statuses',
+						closed_statuses: { lead: ['exploded'] },
+						steps: [],
+						trigger_ids: [],
+						object_ids: [],
+					}),
+				).rejects.toThrow(/unknown status/)
+			})
+
+			it('deletes just-created step triggers when the graph insert fails', async () => {
+				const deleted: string[] = []
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+					const u = String(url)
+					const method = (init as RequestInit | undefined)?.method
+					if (u.endsWith('/api/triggers') && method === 'POST') return okJson({ id: 'trig-orphan' })
+					if (u.includes('/api/triggers/') && method === 'DELETE') {
+						deleted.push(u.split('/').pop() as string)
+						return okJson({ deleted: true })
+					}
+					if (u.endsWith('/api/graph'))
+						return {
+							ok: false,
+							status: 400,
+							text: () => Promise.resolve('Invalid status'),
+						} as Response
+					throw new Error(`Unexpected fetch: ${method ?? 'GET'} ${u}`)
+				})
+
+				const handler = getHandler('create_loop')
+				await expect(
+					handler({
+						name: 'Rollback loop',
+						steps: [
+							{
+								name: 'Step',
+								agent_id: 'agent-1',
+								prompt: 'Do work',
+								when: { action: 'created' },
+							},
+						],
+						trigger_ids: [],
+						object_ids: [],
+					}),
+				).rejects.toThrow()
+
+				expect(deleted).toEqual(['trig-orphan'])
+			})
+		})
+
+		describe('update_loop', () => {
+			it('rejects objects that are not loops', async () => {
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+					const u = String(url)
+					if (u.includes('/api/objects/'))
+						return okJson({ id: 'obj-7', type: 'bet', workspaceId: 'ws-default-123' })
+					throw new Error(`Unexpected fetch: ${u}`)
+				})
+
+				const handler = getHandler('update_loop')
+				await expect(handler({ id: 'obj-7', name: 'New name' })).rejects.toThrow(/not 'loop'/)
+			})
+
+			it('read-modify-writes trigger_ids and adds/removes in_loop membership edges', async () => {
+				const relationshipDeletes: string[] = []
+				let patchBody: Record<string, unknown> | undefined
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+					const u = String(url)
+					const method = (init as RequestInit | undefined)?.method
+					if (u.endsWith('/api/objects/loop-1') && method === 'GET')
+						return okJson({
+							id: 'loop-1',
+							type: 'loop',
+							workspaceId: 'ws-default-123',
+							metadata: { trigger_ids: ['trig-old'] },
+						})
+					if (u.endsWith('/api/objects/loop-1') && method === 'PATCH') {
+						patchBody = JSON.parse((init as RequestInit).body as string)
+						return okJson({
+							id: 'loop-1',
+							type: 'loop',
+							workspaceId: 'ws-default-123',
+							metadata: patchBody?.metadata,
+						})
+					}
+					if (u.endsWith('/api/objects/obj-new') && method === 'GET')
+						return okJson({ id: 'obj-new', workspaceId: 'ws-default-123', type: 'lead' })
+					if (u.endsWith('/api/triggers') && (method === 'GET' || method === undefined))
+						return okJson([{ id: 'trig-add' }])
+					if (u.endsWith('/api/relationships') && method === 'POST')
+						return okJson({ id: 'rel-new' })
+					if (u.includes('/api/relationships?source_id=loop-1'))
+						return okJson([{ id: 'rel-old', targetId: 'obj-gone' }])
+					if (u.endsWith('/api/relationships/rel-old') && method === 'DELETE') {
+						relationshipDeletes.push('rel-old')
+						return okJson({ deleted: true })
+					}
+					throw new Error(`Unexpected fetch: ${method ?? 'GET'} ${u}`)
+				})
+
+				const handler = getHandler('update_loop')
+				const result = (await handler({
+					id: 'loop-1',
+					add_trigger_ids: ['trig-add'],
+					add_object_ids: ['obj-new'],
+					remove_object_ids: ['obj-gone'],
+				})) as { content: Array<{ text: string }> }
+
+				expect(patchBody?.metadata).toEqual({ trigger_ids: ['trig-old', 'trig-add'] })
+
+				const relPost = vi
+					.mocked(fetch)
+					.mock.calls.find(
+						(c) =>
+							String(c[0]).endsWith('/api/relationships') &&
+							(c[1] as RequestInit | undefined)?.method === 'POST',
+					)
+				expect(relPost).toBeDefined()
+				const relBody = JSON.parse((relPost?.[1] as RequestInit).body as string)
+				expect(relBody).toMatchObject({
+					source_id: 'loop-1',
+					target_id: 'obj-new',
+					type: 'in_loop',
+				})
+				expect(relationshipDeletes).toEqual(['rel-old'])
+
+				const parsed = JSON.parse(result.content[0].text)
+				expect(parsed.trigger_ids).toEqual(['trig-old', 'trig-add'])
+				expect(parsed.added_object_ids).toEqual(['obj-new'])
+				expect(parsed.removed_object_ids).toEqual(['obj-gone'])
+			})
+		})
+	})
+
 	describe('create_session handler', () => {
 		it('POSTs to /api/sessions', async () => {
 			mockFetchSuccess({ id: 'session-1', status: 'pending' })

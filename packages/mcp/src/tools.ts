@@ -1,6 +1,7 @@
 import {
 	COMMENT_MAX_ATTACHMENTS,
 	COMMENT_MAX_LENGTH,
+	LOOP_STATUSES,
 	createCommentSchema,
 	notificationActionSchema,
 	notificationOptionSchema,
@@ -52,6 +53,73 @@ const optionalWorkspaceId = z
 	)
 
 /**
+ * Inline loop-step definition accepted by create_loop / update_loop. Each step
+ * becomes an ordinary trigger (POST /api/triggers) targeting an agent actor,
+ * and its id is appended to the loop's `metadata.trigger_ids`. The `when`
+ * union mirrors the two trigger types: `{ cron }` → a cron trigger,
+ * `{ object_type?, action, filter? }` → an event trigger that fires as objects
+ * change state.
+ */
+const loopStepSchema = z.object({
+	name: z.string().min(1).describe('Step name, e.g. "Qualify new lead" or "Capture learnings".'),
+	agent_id: z
+		.string()
+		.uuid()
+		.describe(
+			"Agent actor that performs this step (create one with create_actor or find one with list_actors). Must be an agent, not a human — a human is put on the loop by having a step's agent notify/@mention them.",
+		),
+	prompt: z
+		.string()
+		.min(1)
+		.describe(
+			'Instruction the agent receives when the step fires. The triggering event (including the changed object) is appended automatically.',
+		),
+	when: z
+		.union([
+			z.object({
+				cron: z
+					.string()
+					.min(1)
+					.describe('Cron expression, e.g. "*/30 * * * *" — the step runs on this schedule.'),
+			}),
+			z.object({
+				object_type: z
+					.string()
+					.min(1)
+					.optional()
+					.describe(
+						'Object type whose events fire this step — any type defined in the workspace, including custom ones (call get_workspace_schema to see them). Omit to match every object type.',
+					),
+				action: z
+					.enum(['created', 'updated', 'status_changed', 'deleted'])
+					.describe('Which mutation fires the step. `status_changed` drives most loop steps.'),
+				filter: z
+					.record(z.unknown())
+					.optional()
+					.describe(
+						'Equality filter evaluated against the current object row, e.g. { "status": "qualified" } or { "metadata.segment": "enterprise" }. Dot paths reach into metadata.',
+					),
+			}),
+		])
+		.describe(
+			'When the step fires: { "cron": "<expression>" } for a schedule, or { "object_type"?, "action", "filter"? } to react to objects changing state.',
+		),
+})
+
+/**
+ * Per-loop map of which statuses mean "done" for objects flowing through the
+ * loop, e.g. { "lead": ["won", "lost"] }. This is what makes loop stats work
+ * for workspace-defined (custom) object types — without it only built-in types
+ * have known terminal statuses.
+ */
+const closedStatusesSchema = z
+	.record(z.array(z.string().min(1)))
+	.optional()
+	.describe(
+		'Map of object type → statuses that count as "done"/closed for THIS loop, e.g. {"lead": ["won", "lost"]}. Required for correct closed counts when custom object types flow through the loop; built-in types (bet/task/insight) have sensible defaults. Types and statuses are validated against the workspace schema.',
+	)
+
+/**
  * Equality filter on custom metadata fields — object types define their own
  * fields at runtime (see `create_workspace_field`), so this is a generic
  * field→value map rather than a static enumeration. Forwarded to the API as
@@ -96,7 +164,7 @@ export const tools = {
 	// ─── Objects ─────────────────────────────────────────────
 	create_objects: {
 		description:
-			'Create one or more objects (insights, bets, tasks) with optional relationships in a single atomic operation. For a single object, provide one node with no edges. For multiple related objects, use $id references in edges to link them. Edges can also reference existing object UUIDs to connect new objects to existing ones. Call get_workspace_schema first to discover valid statuses, metadata fields, and relationship types. Status defaults — insight: new|processing|clustered|scored|parked|discarded, bet: signal|qualified|define|active|live|succeeded|failed|paused, task: todo|in_progress|in_review|validated|done|discarded. To attach files to a created object, upload them first with create_file (or pick existing ones with list_files) and pass the returned ids in `file_ids` on the node. Attached files appear under the object in the UI and are returned alongside the object in get_objects. When referring to created or connected objects in human-facing output (comments, summaries, notifications, descriptions), use the object\'s title — not its UUID. Returned nodes include the title; edges include sourceTitle and targetTitle for the same reason. UUIDs should only appear in human-facing text when two objects share a near-identical title and disambiguation is needed — in that case append a short id suffix (e.g. "Bets and Threads v4 (ca957490)"). Use UUIDs freely inside tool arguments.',
+			'Create one or more objects (insights, bets, tasks) with optional relationships in a single atomic operation. To create a Loop — a persistent closed-loop agent process — use the dedicated create_loop tool instead, which wires the trigger and membership metadata correctly. For a single object, provide one node with no edges. For multiple related objects, use $id references in edges to link them. Edges can also reference existing object UUIDs to connect new objects to existing ones. Call get_workspace_schema first to discover valid statuses, metadata fields, and relationship types. Status defaults — insight: new|processing|clustered|scored|parked|discarded, bet: signal|qualified|define|active|live|succeeded|failed|paused, task: todo|in_progress|in_review|validated|done|discarded. To attach files to a created object, upload them first with create_file (or pick existing ones with list_files) and pass the returned ids in `file_ids` on the node. Attached files appear under the object in the UI and are returned alongside the object in get_objects. When referring to created or connected objects in human-facing output (comments, summaries, notifications, descriptions), use the object\'s title — not its UUID. Returned nodes include the title; edges include sourceTitle and targetTitle for the same reason. UUIDs should only appear in human-facing text when two objects share a near-identical title and disambiguation is needed — in that case append a short id suffix (e.g. "Bets and Threads v4 (ca957490)"). Use UUIDs freely inside tool arguments.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			nodes: z
@@ -858,6 +926,152 @@ export const tools = {
 				),
 		}),
 	},
+	// ─── Loops ───────────────────────────────────────────────
+	// A Loop is a persistent multi-agent process: a goal wrapped around
+	// triggers + agents + objects changing state. Stored as an `objects` row
+	// with `type = 'loop'`; its steps are ordinary triggers referenced via
+	// `metadata.trigger_ids`, and the objects flowing through it are linked
+	// with `in_loop` relationship edges (source = loop, target = member
+	// object). "Open vs closed" is structural — a loop is closed when one of
+	// its steps is a feedback step that fires on end states. These tools are
+	// the supported way to author loops from MCP — they wire that metadata and
+	// those edges correctly, which raw create_objects calls historically got
+	// wrong.
+	create_loop: {
+		description:
+			'Create a Loop — a persistent process where agents (and humans) work toward a goal, with steps that fire as objects change state. A loop wraps: (a) STEPS — triggers that fire an agent, either on a schedule (cron) or when an object of any workspace-defined type changes state (event); (b) AGENTS — each step targets an agent actor that does the work; (c) MEMBER OBJECTS — the objects currently flowing through the loop (any type the workspace defines — call get_workspace_schema to discover types and statuses), linked via `in_loop` relationships. Pass `steps` to define and create the triggers inline in this one call, and/or `trigger_ids` to attach existing triggers. A loop is OPEN when it has no feedback mechanism, CLOSED when one of its steps is a feedback step — an event trigger on the close condition (e.g. when an object reaches a done status) whose agent captures learnings (create an insight/knowledge object linked with `informs`), improves the loop, and/or seeds the next object into it. Prefer closing every loop. To put a human ON the loop, add a step whose agent notifies/@mentions that human at decision points (via create_comment mentions or create_notification) — human participation is a step like any other, and another agent can be on the loop the same way. If custom object types flow through the loop, pass `closed_statuses` so the loop knows which statuses mean done. All ids, types, and statuses are validated against the workspace — unknown ones fail with a clear error instead of silently creating a loop with no working steps. The loop object and its `in_loop` membership edges are created atomically; attach more steps or objects later with update_loop; read loops back (with live stats) via list_loops. NOTE: this creates a custom loop from scratch — to install a pre-packaged marketplace loop template, use get_started instead.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			name: z.string().min(1).describe('Loop name, e.g. "Inbound lead qualification".'),
+			guarantee: z
+				.string()
+				.optional()
+				.describe(
+					'What the loop promises / a full description of the process. Stored as the loop object\'s content and shown as the "guarantee" on the loops page.',
+				),
+			status: z
+				.enum(LOOP_STATUSES)
+				.default('running')
+				.describe(
+					'Lifecycle status. `running` (default) means the loop is live; `waiting` flags it as needing human attention; `paused` and `archived` stop it.',
+				),
+			entry_condition: z
+				.string()
+				.optional()
+				.describe(
+					'Plain-language condition for when an object enters the loop, e.g. "A new insight is created with source=intercom".',
+				),
+			close_condition: z
+				.string()
+				.optional()
+				.describe(
+					'Plain-language condition for when an object is done and leaves the loop, e.g. "The task reaches status done or discarded".',
+				),
+			human_decision_points: z
+				.number()
+				.int()
+				.min(0)
+				.optional()
+				.describe('Number of points in the loop where a human must decide before it continues.'),
+			steps: z
+				.array(loopStepSchema)
+				.max(20)
+				.default([])
+				.describe(
+					'Inline step definitions — each becomes a trigger created in this same call and attached to the loop. Include a feedback step (event `when` on the close condition) to make the loop CLOSED.',
+				),
+			trigger_ids: z
+				.array(z.string().uuid())
+				.max(50)
+				.default([])
+				.describe(
+					"Pre-existing triggers to attach as loop steps (create them with create_trigger, or find them with list_triggers). Combined with any inline `steps` and stored on the loop as metadata.trigger_ids; the agents those triggers target become the loop's agents.",
+				),
+			object_ids: z
+				.array(z.string().uuid())
+				.max(50)
+				.default([])
+				.describe(
+					'Existing objects — of any workspace-defined type — to start running through the loop. Each becomes an `in_loop` relationship (source = loop, target = object). Objects can also be added later with update_loop.',
+				),
+			closed_statuses: closedStatusesSchema,
+		}),
+	},
+	update_loop: {
+		description:
+			"Update a Loop: rename it, change its status or entry/close conditions, add inline steps, attach/detach triggers (the loop's steps), add/remove the objects flowing through it, and set closed_statuses for custom object types. Use add_steps with an event `when` on the close condition to CLOSE an open loop — i.e. add the feedback step that captures learnings and seeds the next object when a member object reaches its end state. Trigger membership is stored on the loop row as metadata.trigger_ids — add_steps/add_trigger_ids/remove_trigger_ids do a safe read-modify-write of that list (added ids are validated against the workspace's triggers). Object membership is an `in_loop` relationship edge — add_object_ids creates edges (idempotent; already-member objects are fine), remove_object_ids deletes them. Find loop ids with list_loops. Fails with a clear error if the target object is not a loop — use update_objects for regular objects.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			id: z.string().uuid().describe('Loop object id (from list_loops or create_loop).'),
+			name: z.string().min(1).optional().describe('New loop name.'),
+			guarantee: z
+				.string()
+				.optional()
+				.describe('New loop guarantee / description (replaces the current content).'),
+			status: z
+				.enum(LOOP_STATUSES)
+				.optional()
+				.describe('New lifecycle status: running | waiting | paused | archived.'),
+			entry_condition: z
+				.string()
+				.optional()
+				.describe('New plain-language entry condition. Pass an empty string to clear.'),
+			close_condition: z
+				.string()
+				.optional()
+				.describe('New plain-language close condition. Pass an empty string to clear.'),
+			human_decision_points: z
+				.number()
+				.int()
+				.min(0)
+				.optional()
+				.describe('New count of human decision points in the loop.'),
+			closed_statuses: closedStatusesSchema,
+			add_steps: z
+				.array(loopStepSchema)
+				.max(20)
+				.optional()
+				.describe(
+					'Inline step definitions to add — each becomes a trigger created in this call and attached to the loop. Add a feedback step (event `when` on the close condition) to close an open loop.',
+				),
+			add_trigger_ids: z
+				.array(z.string().uuid())
+				.max(50)
+				.optional()
+				.describe(
+					'Trigger ids to attach as loop steps. Validated against the workspace — unknown ids fail the call. Already-attached ids are a no-op.',
+				),
+			remove_trigger_ids: z
+				.array(z.string().uuid())
+				.max(50)
+				.optional()
+				.describe(
+					'Trigger ids to detach from the loop. The triggers themselves are NOT deleted (use delete_trigger for that) — they just stop being steps of this loop.',
+				),
+			add_object_ids: z
+				.array(z.string().uuid())
+				.max(50)
+				.optional()
+				.describe(
+					'Object ids to start running through the loop (creates `in_loop` edges). Idempotent for objects already in the loop.',
+				),
+			remove_object_ids: z
+				.array(z.string().uuid())
+				.max(50)
+				.optional()
+				.describe(
+					'Object ids to take out of the loop (deletes their `in_loop` edges). The objects themselves are untouched.',
+				),
+		}),
+	},
+	list_loops: {
+		description:
+			'List every Loop in the workspace with live derived stats: composite status pill (running / waiting_on_you / paused / archived), entry/close conditions, in-progress and closed member-object counts, median time-to-close, the trigger ids that make up the loop\'s steps, and the distinct agent actor ids those triggers fire. Use this to see the workspace\'s loops and to find loop ids for update_loop. A loop with no feedback step is OPEN — consider closing it via update_loop add_steps. To list the objects currently inside a loop, call list_relationships with source_id=<loop id> and type="in_loop"; to inspect a step, pass its trigger id to list_triggers output or update_trigger.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+		}),
+	},
+
 	// ─── Sessions ────────────────────────────────────────────
 	create_session: {
 		description:
