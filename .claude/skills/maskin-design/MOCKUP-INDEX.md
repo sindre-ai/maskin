@@ -1,7 +1,20 @@
-# `maskin-app.dc.html` — screen index
+# The HITL app mockup — which file to open, and where each screen lives
 
-Line map of the HITL mockup, so an agent working one page reads only that page's
-markup instead of the whole 9,043-line file.
+Two copies of the same mockup sit in this directory. Pick by what you need:
+
+- **`maskin-app.html`** — self-contained single file, no external runtime. **Open this
+  one in a browser** to look at the screens. This is the copy for design review and
+  for any judgement about how a page actually reads.
+- **`maskin-app.dc.html`** + `support.js` — the original `.dc` prototype. Does not
+  render standalone. Use it when you want the line map below to jump straight to one
+  screen's markup.
+
+The line numbers in this document refer to `maskin-app.dc.html`.
+
+## Line map
+
+So an agent working one page reads only that page's markup instead of the whole
+9,043-line file.
 
 **Only lines 1–3469 are markup.** Lines 3470–9040 are the prototype's `data-props`
 state blob — fixture data for the prototype runtime, not a source for the rebuild.
