@@ -3,6 +3,7 @@ import { AgentWorkingBadge } from '@/components/shared/agent-working-badge'
 import { IndicatorBadgeRow } from '@/components/shared/indicator-badge'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { StatusBadge } from '@/components/shared/status-badge'
+import { TypeBadge } from '@/components/shared/type-badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import type { ActorListItem, ObjectResponse } from '@/lib/api'
 import type { BetStatusResult } from '@/lib/bet-status'
@@ -78,9 +79,7 @@ export function ListRow({
 				className="shrink-0 touch-none select-none self-center"
 			/>
 			{showType && (
-				<span className="w-14 flex-none truncate font-mono text-[10px] font-medium uppercase tracking-[0.09em] text-muted-foreground">
-					{object.type}
-				</span>
+				<TypeBadge type={object.type} variant="mono" className="w-14 flex-none truncate" />
 			)}
 			<div className="flex min-w-0 flex-1 items-center gap-2">
 				<Link
