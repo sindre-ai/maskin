@@ -1052,6 +1052,115 @@ describe('tool handlers', () => {
 			expect(typeof parsed.attached_skills[0].error).toBe('string')
 		})
 
+		it('chunks more than 50 skill ids into multiple batched calls and merges results in order', async () => {
+			const skillIds = Array.from(
+				{ length: 51 },
+				(_, i) => `00000000-0000-4000-8000-${i.toString(16).padStart(12, '0')}`,
+			)
+			const chunk1 = skillIds.slice(0, 50)
+			const chunk2 = skillIds.slice(50)
+
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve({ id: 'actor-new' }),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve({}),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () =>
+						Promise.resolve(
+							chunk1.map((id) => ({ workspaceSkillId: id, success: true, skill: { id } })),
+						),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () =>
+						Promise.resolve(
+							chunk2.map((id) => ({ workspaceSkillId: id, success: true, skill: { id } })),
+						),
+				} as Response)
+
+			const handler = getHandler('create_actor')
+			const result = (await handler({
+				type: 'agent',
+				name: 'Bot',
+				workspace_id: 'ws-123',
+				attach_skill_ids: skillIds,
+			})) as { content: Array<{ text: string }> }
+
+			// create actor + add member + one batch call per 50-id chunk (51 ids -> 2 chunks).
+			expect(fetch).toHaveBeenCalledTimes(4)
+
+			const batchCalls = vi.mocked(fetch).mock.calls.slice(2)
+			expect(batchCalls).toHaveLength(2)
+			const sentChunks = batchCalls.map(
+				(call) =>
+					(JSON.parse(call[1]?.body as string) as { workspaceSkillIds: string[] })
+						.workspaceSkillIds,
+			)
+			expect(sentChunks[0]).toEqual(chunk1)
+			expect(sentChunks[1]).toEqual(chunk2)
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.attached_skills).toEqual(skillIds.map((id) => ({ id })))
+		})
+
+		it('merges results across chunks when one chunk succeeds and another throws', async () => {
+			const skillIds = Array.from(
+				{ length: 51 },
+				(_, i) => `00000000-0000-4000-8000-${i.toString(16).padStart(12, '0')}`,
+			)
+			const chunk1 = skillIds.slice(0, 50)
+			const chunk2 = skillIds.slice(50)
+
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve({ id: 'actor-new' }),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve({}),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () =>
+						Promise.resolve(
+							chunk1.map((id) => ({ workspaceSkillId: id, success: true, skill: { id } })),
+						),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: false,
+					status: 500,
+					text: () => Promise.resolve('Internal error'),
+				} as Response)
+
+			const handler = getHandler('create_actor')
+			const result = (await handler({
+				type: 'agent',
+				name: 'Bot',
+				workspace_id: 'ws-123',
+				attach_skill_ids: skillIds,
+			})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.partial_failure).toBe(true)
+			expect(parsed.attached_skills.slice(0, 50)).toEqual(chunk1.map((id) => ({ id })))
+			expect(parsed.attached_skills[50].skill_id).toBe(chunk2[0])
+			expect(typeof parsed.attached_skills[50].error).toBe('string')
+		})
+
 		it('skips skill attachment and explains why when auto_create_workspace is combined with attach_skill_ids', async () => {
 			const skillId1 = '660e8400-e29b-41d4-a716-446655440001'
 			vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({

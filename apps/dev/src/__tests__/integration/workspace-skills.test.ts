@@ -13,7 +13,7 @@ import {
 } from '../../services/agent-storage'
 import { insertActor, insertWorkspace } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
-import { db, getTestActorId } from './global-setup'
+import { db, getTestActorId, sql } from './global-setup'
 
 const { default: workspaceSkillsRoutes } = await import('../../routes/workspace-skills')
 const { default: agentSkillAttachmentsRoutes } = await import(
@@ -537,6 +537,73 @@ describe('Workspace Skills Integration', () => {
 				.from(agentSkills)
 				.where(and(eq(agentSkills.actorId, agent.id), eq(agentSkills.workspaceSkillId, skill.id)))
 			expect(attachments).toHaveLength(0)
+		})
+
+		it('rolls back the agentSkills insert when the events insert fails inside the transaction', async () => {
+			// Regression for the transaction guarantee described in the route's own
+			// comment: insert + audit event + read-back run in one db.transaction, so
+			// a failed events write must roll back the agentSkills insert too, rather
+			// than leaving an attached skill with no audit trail. The mocked-DB test
+			// suite can't verify this (its db.transaction() just calls the callback
+			// against the same mock, with no real rollback), so this needs a genuine
+			// Postgres constraint violation inside a real transaction.
+			const app = createSkillsApp(storage)
+			const agent = await insertActor(db, { type: 'agent', name: 'Ops Bot' })
+			await db.insert(workspaceMembers).values({
+				workspaceId,
+				actorId: agent.id,
+				role: 'member',
+			})
+
+			const skill = await (
+				await app.request(
+					jsonRequest('POST', `/api/workspaces/${workspaceId}/skills`, {
+						name: 'deploy-prod',
+						content: SKILL_BODY,
+					}),
+				)
+			).json()
+
+			// NOT VALID skips checking pre-existing rows (earlier tests in this file
+			// already inserted entity_type='agent_skill' events) while still
+			// enforcing the constraint for new inserts made during this test.
+			await sql.unsafe(
+				`ALTER TABLE events ADD CONSTRAINT test_block_agent_skill_events CHECK (entity_type <> 'agent_skill') NOT VALID`,
+			)
+			try {
+				const batchRes = await app.request(
+					jsonRequest('POST', `/api/actors/${agent.id}/workspace-skills/batch`, {
+						workspaceSkillIds: [skill.id],
+					}),
+				)
+				expect(batchRes.status).toBe(500)
+
+				const attachments = await db
+					.select()
+					.from(agentSkills)
+					.where(and(eq(agentSkills.actorId, agent.id), eq(agentSkills.workspaceSkillId, skill.id)))
+				expect(
+					attachments,
+					'agentSkills insert must roll back when the events insert in the same transaction fails',
+				).toHaveLength(0)
+
+				const attachEvents = await db
+					.select()
+					.from(events)
+					.where(
+						and(
+							eq(events.workspaceId, workspaceId),
+							eq(events.entityType, 'agent_skill'),
+							eq(events.action, 'attached'),
+							eq(events.entityId, skill.id),
+						),
+					)
+				expect(attachEvents).toHaveLength(0)
+			} finally {
+				await sql.unsafe(
+					'ALTER TABLE events DROP CONSTRAINT IF EXISTS test_block_agent_skill_events',
+				)
+			}
 		})
 	})
 

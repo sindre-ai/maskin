@@ -1175,6 +1175,7 @@ async function attachSkillsBatch(
 					row.success ? row.skill : { skill_id: row.workspaceSkillId, error: row.error },
 				)
 			} catch (error) {
+				console.error('[MCP] attachSkillsBatch chunk failed:', error)
 				const message = error instanceof Error ? error.message : String(error)
 				return chunk.map((skillId) => ({ skill_id: skillId, error: message }))
 			}

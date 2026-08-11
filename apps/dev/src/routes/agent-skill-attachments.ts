@@ -439,6 +439,13 @@ app.openapi(attachSkillsBatchRoute, (async (c) => {
 		const skill = skillById.get(workspaceSkillId)
 		const attachedAt = attachedAtById.get(workspaceSkillId)
 		if (error || !skill || !attachedAt) {
+			if (!error) {
+				logger.error('agent_skill batch attach missing attachedAt after transaction', {
+					actorId,
+					workspaceSkillId,
+					callerActorId,
+				})
+			}
 			return {
 				workspaceSkillId,
 				success: false as const,
