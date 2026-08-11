@@ -124,8 +124,9 @@ function PrivacySection() {
 					<div className="min-w-0">
 						<span className="text-sm font-medium block">Anonymize this workspace</span>
 						<span className="text-sm text-muted-foreground">
-							Replace workspace and actor IDs with rotating hashes before events leave the browser.
-							Recommended when working with sensitive customer data.
+							Send a SHA-256 hash of the actor id as the PostHog distinct_id so person profiles
+							aren't keyed to your raw id. Workspace/actor IDs still travel as event properties so
+							internal joins keep working.
 						</span>
 					</div>
 					<Switch
