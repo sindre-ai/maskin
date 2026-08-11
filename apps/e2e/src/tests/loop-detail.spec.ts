@@ -62,6 +62,42 @@ test.describe('Loop detail page', () => {
 		})
 	}
 
+	test('long unbroken step-description text does not overflow the viewport on mobile', async ({
+		page,
+		account,
+	}) => {
+		await page.setViewportSize({ width: 375, height: 812 })
+
+		const agent = await account.api.createAgentActor('Relay')
+		await account.api.addWorkspaceMember(account.workspaceId, agent.id)
+		const loop = await account.api.createObject(account.workspaceId, {
+			type: 'loop',
+			title: 'Customer feedback loop',
+			status: 'running',
+		})
+		const actionPrompt =
+			'https://example.com/customer/feedback/some-very-long-unbroken-url-that-must-wrap-and-not-overflow-on-a-mobile-viewport-width'
+		const trigger = await account.api.createTrigger(account.workspaceId, {
+			name: 'Triage feedback',
+			type: 'event',
+			action_prompt: actionPrompt,
+			target_actor_id: agent.id,
+			config: { entity_type: 'object', action: 'created' },
+		})
+		await account.api.updateObject(loop.id, account.workspaceId, {
+			metadata: { trigger_ids: [trigger.id] },
+		})
+
+		await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
+		await expect(page.getByText('The loop, right now')).toBeVisible({ timeout: 10000 })
+		await expect(page.getByText(actionPrompt)).toBeVisible()
+
+		const fitsViewport = await page.evaluate(
+			() => document.documentElement.scrollWidth <= window.innerWidth,
+		)
+		expect(fitsViewport).toBe(true)
+	})
+
 	test('Pause/Resume toggles the loop pill', async ({ page, account }) => {
 		await page.setViewportSize({ width: 1024, height: 768 })
 
