@@ -18,11 +18,11 @@ import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { useBets } from '@/hooks/use-bets'
+import { useMarkRead, useUnread } from '@/hooks/use-subscriptions'
 import {
 	useUpdateUserDisplaySettings,
 	useUserDisplaySettings,
 } from '@/hooks/use-user-display-settings'
-import { useMarkRead, useUnread } from '@/hooks/use-subscriptions'
 import type { DisplaySettingsBody, UnreadItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useNewConversationComposer } from '@/lib/new-conversation-context'
@@ -103,7 +103,11 @@ function ForYouRedesign() {
 				{ objectType: CHROME_KEY, settings: nextSettings },
 				// On failure the optimistic write rolls back, so clear the
 				// dedupe ref and let the user retry the same mode.
-				{ onError: () => (lastWrittenModeRef.current = null) },
+				{
+					onError: () => {
+						lastWrittenModeRef.current = null
+					},
+				},
 			)
 		},
 		[settingsQuery.isFetched, persistedSettings, upsertSettings],
