@@ -306,6 +306,37 @@ touching Chrome's security posture at all.
 **Status:** ROOT CAUSE CONFIRMED, deterministic, 100% reproduced and explained. Fix not yet implemented — needs
 a decision on the bridge approach before implementation.
 
+**Follow-up (2026-08-11, later still) — fix implemented and verified end-to-end, including the full WebSocket
+CDP path, not just the initial discovery request.**
+
+Went with option 1 (header-rewriting bridge). `docker/browser-sidecar/entrypoint.sh`'s final line — previously
+`exec socat TCP-LISTEN:9222,fork,reuseaddr TCP:127.0.0.1:9223` — now launches
+`docker/browser-sidecar/host-rewrite-proxy.py`, a small `asyncio` TCP proxy that reads only the first HTTP
+request's header block per connection (byte-by-byte until `\r\n\r\n`, so it never over-reads into a body or a
+WebSocket frame), rewrites the `Host:` line to `Host: localhost`, forwards the rewritten head + anything already
+buffered past it to Chrome's real CDP port (127.0.0.1:9223), then relays everything else byte-for-byte in both
+directions — including the WebSocket upgrade response and all subsequent binary frames, which need to pass
+through completely untouched. `python3` added to `docker/browser-sidecar/Dockerfile`'s apt install list (the
+image previously had none); `host-rewrite-proxy.py` is `COPY`'d in alongside `entrypoint.sh`. The idempotency
+guard from the earlier follow-up (checking whether something's already listening on 9222) is unaffected — it
+doesn't care what's listening, only whether something is.
+
+**Verified locally**, built + ran the updated image:
+1. The exact bug scenario — `curl` with `Host: host.microsandbox.internal:19222` (matching production's real
+   header) against `/json/version` — now returns `200 OK` with the full CDP JSON, where it previously would have
+   gotten Chrome's `500`.
+2. **Full WebSocket round-trip**, not just the HTTP discovery step: a Node script fetched `/json/version` with
+   the production-matching `Host` header, opened the discovered `webSocketDebuggerUrl` through the same proxy,
+   sent a real CDP command (`Target.getBrowserContexts`), and got a correct, well-formed response back — confirms
+   the byte-for-byte relay doesn't corrupt the WebSocket upgrade or binary frame traffic.
+3. Re-ran the Finding B idempotency check (`docker exec <container> /entrypoint.sh` a second time) against the
+   new proxy setup — still correctly detects the running instance and blocks, and CDP stays reachable throughout.
+4. `pnpm lint` — clean (Biome doesn't touch `.py`/`.sh`/Dockerfile content; no regressions in touched files).
+
+**Status:** FIXED and verified end-to-end (HTTP discovery + full WebSocket CDP protocol + idempotency guard
+interaction), including the concurrency-triggering production scenario reproduced directly. All four issues
+from this incident are now resolved.
+
 ---
 
 ## Issue 3 — Inconsistent exit code between msb's own log and Maskin's stored session record

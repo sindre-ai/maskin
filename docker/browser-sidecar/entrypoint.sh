@@ -35,4 +35,13 @@ chromium \
 # Wait for CDP to come up before accepting external connections.
 until socat /dev/null TCP:127.0.0.1:9223 2>/dev/null; do sleep 0.2; done
 
-exec socat TCP-LISTEN:9222,fork,reuseaddr TCP:127.0.0.1:9223
+# Chrome's DevTools HTTP server rejects any request whose Host header isn't
+# "localhost" or a raw IP (DNS-rebinding protection) — and sessions reach
+# this sidecar via the host.microsandbox.internal DNS name, which is
+# neither, so a plain TCP bridge here gets every CDP request rejected with
+# 500 (or ECONNRESET, depending on timing). host-rewrite-proxy.py rewrites
+# the Host header to "localhost" on each connection's first request, then
+# relays everything else — including the WebSocket upgrade and subsequent
+# binary frames — byte-for-byte. See
+# docs/runbooks/agent-session-failures-2026-08-11.md, Issue 2.
+exec python3 /host-rewrite-proxy.py
