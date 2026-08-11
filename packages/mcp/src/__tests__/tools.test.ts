@@ -428,6 +428,21 @@ describe('create_actor schema', () => {
 		expect(result.workspace_id).toBe(uuid)
 		expect(result.role).toBe('owner')
 	})
+
+	it('accepts optional tools and attach_skill_ids', () => {
+		const result = schema.parse({
+			type: 'agent',
+			name: 'Bot',
+			tools: { mcpServers: { github: { command: 'npx' } } },
+			attach_skill_ids: [uuid],
+		})
+		expect(result.tools).toEqual({ mcpServers: { github: { command: 'npx' } } })
+		expect(result.attach_skill_ids).toEqual([uuid])
+	})
+
+	it('rejects non-uuid attach_skill_ids', () => {
+		expect(() => schema.parse({ type: 'agent', name: 'Bot', attach_skill_ids: ['nope'] })).toThrow()
+	})
 })
 
 describe('update_actor schema', () => {
