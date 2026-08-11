@@ -1,3 +1,4 @@
+import './lib/sentry'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { serve } from '@hono/node-server'
@@ -8,6 +9,7 @@ import { z } from 'zod'
 import { bearerAuth } from './lib/auth'
 import { type AgentServerEnv, parseEnv } from './lib/env'
 import { logger } from './lib/logger'
+import { Sentry } from './lib/sentry'
 import { ImageWarmer } from './services/image-warmer'
 import { InputQueue } from './services/input-queue'
 import {
@@ -378,6 +380,22 @@ async function monitorSession(
 
 export function buildApp(deps: AppDeps): Hono {
 	const app = new Hono()
+	app.onError((err, c) => {
+		// Guarded — this is the last line of defense before a response goes out.
+		// A throwing Sentry call must never suppress the actual error response
+		// or the diagnostic log line below.
+		try {
+			Sentry.captureException(err, { tags: { path: c.req.path, method: c.req.method } })
+		} catch (sentryErr) {
+			process.stderr.write(`[sentry] captureException failed: ${String(sentryErr)}\n`)
+		}
+		logger.error(
+			'unhandled error',
+			{ path: c.req.path, method: c.req.method, error: String(err) },
+			{ skipSentry: true },
+		)
+		return c.json({ error: 'internal_error' }, 500)
+	})
 	const inputQueue = new InputQueue()
 	// Connects the /sessions/:id/logs/ingest endpoint to monitorSession's buffer.
 	// Injectable via deps so main()'s boot-time reconcile pass can reattach
