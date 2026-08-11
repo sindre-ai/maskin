@@ -19,10 +19,22 @@ can be designed on-brand without re-deriving the visual language each time.
 Assets in `assets/` are copied from maskin.io: `logo-mark.svg` (the source SVG), `icon-512.png`,
 `apple-touch-icon.png`, `favicon.ico`, `og-image.svg/.png`.
 
-**Note on the two palettes.** The maskin.io site and the shipped app currently disagree: the site
-is warm (ink `#111110` on paper `#FAFAF8`, blue `#2563EB`), the app ships shadcn's cool zinc
-neutrals with an indigo accent. **The site palette is the brand and is what this system encodes.**
-Product recreations built here re-skin the app in the warm palette.
+**Note on the two palettes.** The maskin.io site and the shipped app disagree: the site is warm
+(ink `#111110` on paper `#FAFAF8`, blue `#2563EB`), the app ships shadcn's cool zinc neutrals with
+an indigo accent. This document was originally written encoding the warm site palette as the brand.
+
+> **DECISION — 2026-08-11, Sebk (owner).** **Cool zinc is the product palette.** The app keeps its
+> zinc neutrals and indigo accent; the warm-paper re-token is not happening. The HITL mockup
+> (`maskin-app.html`) is therefore the source of truth for the product's colour as well as its
+> layout — build what the file contains. Do not re-derive the warm palette from the prose below.
+>
+> Scope of the decision: the neutral trunk and the accent. Semantic colour (status amber, green,
+> red) and the per-type object hues are unaffected, and agent identity colour stays token-driven
+> through `AVATAR_PALETTE`.
+>
+> The warm values below still describe **maskin.io** — the marketing site and docs — which keeps
+> them. Read every colour statement in this document as applying to the marketing surface, not to
+> the product app.
 
 ## Content fundamentals
 
