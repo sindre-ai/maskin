@@ -1,9 +1,10 @@
 import { PageHeader } from '@/components/layout/page-header'
 import { ObjectCreateForm } from '@/components/objects/object-create-form'
-import { ObjectDocument } from '@/components/objects/object-document'
+import { ObjectDetailShell } from '@/components/objects/object-detail-shell'
 import { Skeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
-import { useCreateObject, useObject, useUpdateObject } from '@/hooks/use-objects'
+import { useCreateObject, useDeleteObject, useObject, useUpdateObject } from '@/hooks/use-objects'
+import { useWorkspaceMembers } from '@/hooks/use-workspaces'
 import { useWorkspace } from '@/lib/workspace-context'
 import { getDefaultStatusForType } from '@maskin/module-sdk'
 import { createFileRoute } from '@tanstack/react-router'
@@ -27,6 +28,8 @@ function ObjectDetailPage() {
 	const { data: object, isLoading } = useObject(objectId)
 	const createObject = useCreateObject(workspaceId)
 	const updateObject = useUpdateObject(workspaceId)
+	const deleteObject = useDeleteObject(workspaceId)
+	const { data: members } = useWorkspaceMembers(workspaceId)
 	const isCreatedRef = useRef(false)
 
 	// Once the object exists in cache, mark as created
@@ -62,6 +65,34 @@ function ObjectDetailPage() {
 		[objectId, updateObject],
 	)
 
+	const handleStatusChange = useCallback(
+		(status: string) => {
+			// `archived` on a bet dispatches to the same archive route as the row
+			// ⋯ menu: stamp the current status onto metadata.previous_status.
+			if (status === 'archived' && object?.type === 'bet') {
+				if (!object || object.status === 'archived') return
+				updateObject.mutate({
+					id: objectId,
+					data: { status: 'archived', metadata: { previous_status: object.status } },
+				})
+				return
+			}
+			updateObject.mutate({ id: objectId, data: { status } })
+		},
+		[objectId, object, updateObject],
+	)
+
+	const handleDriverChange = useCallback(
+		(driver: string | null) => {
+			updateObject.mutate({ id: objectId, data: { driver } })
+		},
+		[objectId, updateObject],
+	)
+
+	const handleDelete = useCallback(() => {
+		deleteObject.mutate(objectId)
+	}, [objectId, deleteObject])
+
 	if (isLoading && !isCreated) {
 		return (
 			<div className="max-w-3xl mx-auto space-y-4">
@@ -72,9 +103,21 @@ function ObjectDetailPage() {
 		)
 	}
 
-	// Once fully loaded with object data, render the full document editor
+	// Once fully loaded with object data, render the detail surface
 	if (isCreated && object) {
-		return <ObjectDocument object={object} />
+		const statuses = statusMap[object.type] ?? []
+		return (
+			<ObjectDetailShell
+				object={object}
+				workspaceId={workspaceId}
+				statuses={statuses}
+				members={members ?? []}
+				onStatusChange={handleStatusChange}
+				onDriverChange={handleDriverChange}
+				onDelete={handleDelete}
+				isDeleting={deleteObject.isPending}
+			/>
+		)
 	}
 
 	// Create mode — show form with document-like sections
