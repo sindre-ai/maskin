@@ -66,7 +66,10 @@ describe('groupSessionsByRecency', () => {
 	})
 
 	it('omits empty buckets', () => {
-		const groups = groupSessionsByRecency([buildSessionResponse({ id: 's', createdAt: iso(1) })], NOW)
+		const groups = groupSessionsByRecency(
+			[buildSessionResponse({ id: 's', createdAt: iso(1) })],
+			NOW,
+		)
 		expect(groups.map((g) => g.bucket)).not.toContain('earlier')
 	})
 })
