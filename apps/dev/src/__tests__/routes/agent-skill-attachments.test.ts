@@ -331,6 +331,44 @@ describe('Agent Skill Attachments Routes', () => {
 			expect(body[1].workspaceSkillId).toBe(workspaceSkillId2)
 			expect(body[1].error).toContain('not found')
 		})
+
+		it('reports a per-skill error when the caller is not a member of the skill workspace', async () => {
+			const { app, mockResults } = createTestApp(agentSkillAttachmentsRoutes, '/api/actors')
+			const skill = buildWorkspaceSkill({ id: workspaceSkillId, workspaceId })
+
+			// Queue order:
+			//  1. actor lookup
+			//  2. bulk skill lookup
+			//  3. caller membership (bulk) — caller is NOT a member of `workspaceId`
+			//  4. actor membership (bulk) — target actor IS a member
+			mockResults.selectQueue = [[buildActor({ id: actorId })], [skill], [], [{ workspaceId }]]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${actorId}/workspace-skills/batch`, {
+					workspaceSkillIds: [workspaceSkillId],
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).toHaveLength(1)
+			expect(body[0].success).toBe(false)
+			expect(body[0].error).toContain("Not a member of the skill's workspace")
+			// Caller-authorization failure must not insert an attachment row.
+			expect(mockResults.calls?.inserts ?? []).toHaveLength(0)
+		})
+
+		it('returns 400 when workspaceSkillIds contains a duplicate id', async () => {
+			const { app } = createTestApp(agentSkillAttachmentsRoutes, '/api/actors')
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${actorId}/workspace-skills/batch`, {
+					workspaceSkillIds: [workspaceSkillId, workspaceSkillId],
+				}),
+			)
+
+			expect(res.status).toBe(400)
+		})
 	})
 
 	describe('DELETE /:actorId/workspace-skills/:workspaceSkillId', () => {

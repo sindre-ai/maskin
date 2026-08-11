@@ -109,6 +109,11 @@ describe('attachSkillsBatchSchema', () => {
 	it('rejects a non-uuid entry', () => {
 		expect(() => attachSkillsBatchSchema.parse({ workspaceSkillIds: ['not-a-uuid'] })).toThrow()
 	})
+
+	it('rejects a duplicate id', () => {
+		const id = '11111111-1111-4111-8111-111111111111'
+		expect(() => attachSkillsBatchSchema.parse({ workspaceSkillIds: [id, id] })).toThrow()
+	})
 })
 
 describe('workspaceSkillSchema', () => {

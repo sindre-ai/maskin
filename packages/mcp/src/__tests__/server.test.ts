@@ -986,6 +986,11 @@ describe('tool handlers', () => {
 				.mockResolvedValueOnce({
 					ok: true,
 					headers: new Headers(),
+					json: () => Promise.resolve({}),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
 					json: () =>
 						Promise.resolve([
 							{ workspaceSkillId: skillId1, success: true, skill: mockSkill1 },
@@ -997,11 +1002,11 @@ describe('tool handlers', () => {
 			const result = (await handler({
 				type: 'agent',
 				name: 'Bot',
-				auto_create_workspace: true,
+				workspace_id: 'ws-123',
 				attach_skill_ids: [skillId1, skillId2],
 			})) as { content: Array<{ text: string }> }
 
-			expect(fetch).toHaveBeenCalledTimes(2)
+			expect(fetch).toHaveBeenCalledTimes(3)
 			expect(fetch).toHaveBeenLastCalledWith(
 				'http://localhost:3000/api/actors/actor-new/workspace-skills/batch',
 				expect.objectContaining({ method: 'POST' }),
@@ -1023,6 +1028,11 @@ describe('tool handlers', () => {
 					json: () => Promise.resolve({ id: 'actor-new' }),
 				} as Response)
 				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve({}),
+				} as Response)
+				.mockResolvedValueOnce({
 					ok: false,
 					status: 500,
 					text: () => Promise.resolve('Internal error'),
@@ -1032,7 +1042,7 @@ describe('tool handlers', () => {
 			const result = (await handler({
 				type: 'agent',
 				name: 'Bot',
-				auto_create_workspace: true,
+				workspace_id: 'ws-123',
 				attach_skill_ids: [skillId1],
 			})) as { content: Array<{ text: string }> }
 
@@ -1040,6 +1050,34 @@ describe('tool handlers', () => {
 			expect(parsed.partial_failure).toBe(true)
 			expect(parsed.attached_skills[0].skill_id).toBe(skillId1)
 			expect(typeof parsed.attached_skills[0].error).toBe('string')
+		})
+
+		it('skips skill attachment and explains why when auto_create_workspace is combined with attach_skill_ids', async () => {
+			const skillId1 = '660e8400-e29b-41d4-a716-446655440001'
+			vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+				ok: true,
+				headers: new Headers(),
+				json: () => Promise.resolve({ id: 'actor-new', workspace_id: 'ws-auto' }),
+			} as Response)
+
+			const handler = getHandler('create_actor')
+			const result = (await handler({
+				type: 'agent',
+				name: 'Bot',
+				auto_create_workspace: true,
+				attach_skill_ids: [skillId1],
+			})) as { content: Array<{ text: string }> }
+
+			// Only the create-actor call fires — no membership call (the backend
+			// already added the actor to its auto-created workspace) and no batch
+			// attach call (the requested skills can't live in a workspace that was
+			// just created empty).
+			expect(fetch).toHaveBeenCalledTimes(1)
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.attached_skills).toBeUndefined()
+			expect(parsed.partial_failure).toBeUndefined()
+			expect(parsed.skills_not_attached_reason).toMatch(/auto_create_workspace/)
 		})
 	})
 

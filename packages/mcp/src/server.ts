@@ -2415,10 +2415,21 @@ export function createMcpServer(config: McpConfig) {
 			// that did attach.
 			const skillIds = attach_skill_ids ?? []
 			if (skillIds.length > 0 && result.id) {
-				const attached = await attachSkillsBatch(config, result.id, skillIds)
-				result.attached_skills = attached
-				if (attached.some((entry) => (entry as { error?: string })?.error)) {
-					result.partial_failure = true
+				if (createBody.auto_create_workspace) {
+					// auto_create_workspace mints a brand-new, empty workspace and makes
+					// the actor a member of THAT workspace, not of `targetWorkspace` — the
+					// requested skills live in some other, pre-existing workspace the actor
+					// was never added to, so every attach would fail with "outside the
+					// skill's workspace". Skip the call and say why once, instead of
+					// returning a wall of per-skill errors that all restate the same cause.
+					result.skills_not_attached_reason =
+						'attach_skill_ids was ignored: auto_create_workspace creates a brand-new workspace with no existing skills. Pass workspace_id (an existing workspace) instead of auto_create_workspace to attach skills.'
+				} else {
+					const attached = await attachSkillsBatch(config, result.id, skillIds)
+					result.attached_skills = attached
+					if (attached.some((entry) => (entry as { error?: string })?.error)) {
+						result.partial_failure = true
+					}
 				}
 			}
 

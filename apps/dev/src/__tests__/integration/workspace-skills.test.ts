@@ -462,6 +462,82 @@ describe('Workspace Skills Integration', () => {
 			expect(results[0].success).toBe(false)
 			expect(results[0].error).toContain("outside the skill's workspace")
 		})
+
+		it('returns a per-skill error when the caller is not a member of the skill workspace, and inserts no attachment', async () => {
+			// The target actor IS a member of the skill's workspace — only the
+			// CALLER isn't. This is the only check standing between an arbitrary
+			// caller and attaching a skill from a workspace they can't see.
+			const outsiderCaller = await insertActor(db, { type: 'human', name: 'Outsider Caller' })
+			const app = createSkillsApp(storage, outsiderCaller.id)
+
+			const agent = await insertActor(db, { type: 'agent', name: 'Ops Bot' })
+			await db.insert(workspaceMembers).values({
+				workspaceId,
+				actorId: agent.id,
+				role: 'member',
+			})
+
+			// Skill is created by the workspace owner via a separate app instance so
+			// the outsider caller's app never touches an authorized endpoint.
+			const ownerApp = createSkillsApp(storage, getTestActorId())
+			const skill = await (
+				await ownerApp.request(
+					jsonRequest('POST', `/api/workspaces/${workspaceId}/skills`, {
+						name: 'deploy-prod',
+						content: SKILL_BODY,
+					}),
+				)
+			).json()
+
+			const batchRes = await app.request(
+				jsonRequest('POST', `/api/actors/${agent.id}/workspace-skills/batch`, {
+					workspaceSkillIds: [skill.id],
+				}),
+			)
+			expect(batchRes.status).toBe(200)
+			const results = await batchRes.json()
+			expect(results[0].success).toBe(false)
+			expect(results[0].error).toContain("Not a member of the skill's workspace")
+
+			const attachments = await db
+				.select()
+				.from(agentSkills)
+				.where(and(eq(agentSkills.actorId, agent.id), eq(agentSkills.workspaceSkillId, skill.id)))
+			expect(attachments).toHaveLength(0)
+		})
+
+		it('returns 400 when workspaceSkillIds contains a duplicate id', async () => {
+			const app = createSkillsApp(storage)
+			const agent = await insertActor(db, { type: 'agent', name: 'Ops Bot' })
+			await db.insert(workspaceMembers).values({
+				workspaceId,
+				actorId: agent.id,
+				role: 'member',
+			})
+
+			const skill = await (
+				await app.request(
+					jsonRequest('POST', `/api/workspaces/${workspaceId}/skills`, {
+						name: 'deploy-prod',
+						content: SKILL_BODY,
+					}),
+				)
+			).json()
+
+			const batchRes = await app.request(
+				jsonRequest('POST', `/api/actors/${agent.id}/workspace-skills/batch`, {
+					workspaceSkillIds: [skill.id, skill.id],
+				}),
+			)
+			expect(batchRes.status).toBe(400)
+
+			// No attachment or event was written for the rejected request.
+			const attachments = await db
+				.select()
+				.from(agentSkills)
+				.where(and(eq(agentSkills.actorId, agent.id), eq(agentSkills.workspaceSkillId, skill.id)))
+			expect(attachments).toHaveLength(0)
+		})
 	})
 
 	describe('delete cascade', () => {

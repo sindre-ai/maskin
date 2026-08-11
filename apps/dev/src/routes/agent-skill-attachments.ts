@@ -385,29 +385,39 @@ app.openapi(attachSkillsBatchRoute, (async (c) => {
 
 	// Idempotent bulk attach — ON CONFLICT DO NOTHING skips rows already attached,
 	// then a single follow-up select recovers attachedAt for both the newly
-	// inserted rows and the ones that already existed.
+	// inserted rows and the ones that already existed. Insert + read-back run in
+	// one transaction so a read-back failure rolls back the insert too — otherwise
+	// a retry after a mid-request failure would find every row already present,
+	// compute an empty newlyInsertedIds, and silently skip the events write below
+	// for rows that were, in fact, newly attached on the failed attempt.
 	let attachedAtById = new Map<string, Date | string>()
 	let newlyInsertedIds = new Set<string>()
 	if (toAttach.length > 0) {
-		const inserted = await db
-			.insert(agentSkills)
-			.values(toAttach.map((skill) => ({ actorId, workspaceSkillId: skill.id })))
-			.onConflictDoNothing()
-			.returning()
-		newlyInsertedIds = new Set(inserted.map((row) => row.workspaceSkillId))
+		const { inserted, attachRows } = await db.transaction(async (tx) => {
+			const inserted = await tx
+				.insert(agentSkills)
+				.values(toAttach.map((skill) => ({ actorId, workspaceSkillId: skill.id })))
+				.onConflictDoNothing()
+				.returning()
 
-		const attachRows = await db
-			.select({ workspaceSkillId: agentSkills.workspaceSkillId, createdAt: agentSkills.createdAt })
-			.from(agentSkills)
-			.where(
-				and(
-					eq(agentSkills.actorId, actorId),
-					inArray(
-						agentSkills.workspaceSkillId,
-						toAttach.map((skill) => skill.id),
+			const attachRows = await tx
+				.select({
+					workspaceSkillId: agentSkills.workspaceSkillId,
+					createdAt: agentSkills.createdAt,
+				})
+				.from(agentSkills)
+				.where(
+					and(
+						eq(agentSkills.actorId, actorId),
+						inArray(
+							agentSkills.workspaceSkillId,
+							toAttach.map((skill) => skill.id),
+						),
 					),
-				),
-			)
+				)
+			return { inserted, attachRows }
+		})
+		newlyInsertedIds = new Set(inserted.map((row) => row.workspaceSkillId))
 		attachedAtById = new Map(attachRows.map((row) => [row.workspaceSkillId, row.createdAt]))
 	}
 
