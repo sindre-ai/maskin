@@ -44,6 +44,18 @@ services:
     group_add:
       - "${DOCKER_GID:-999}"
     command: ["sh", "-c", "node packages/db/dist/migrate.js && pnpm --filter @maskin/dev exec tsx scripts/seed-marketplace.ts && node apps/dev/dist/index.js"]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:3000/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      start_period: 40s
+      retries: 6
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-maskin}
       POSTGRES_URL: ${POSTGRES_URL:-}
