@@ -11,7 +11,10 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 	test.describe(`Search + command palette at ${vp.label}`, () => {
 		test.use({ viewport: { width: vp.width, height: vp.height } })
 
-		test('⌘K opens the palette, typing finds an object, Enter opens it', async ({ page, account }) => {
+		test('⌘K opens the palette, typing finds an object, Enter opens it', async ({
+			page,
+			account,
+		}) => {
 			const obj = await account.api.createObject(account.workspaceId, {
 				type: 'insight',
 				title: 'Quasiprime Insight',
@@ -35,7 +38,7 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			page,
 			account,
 		}) => {
-			const insight = await account.api.createObject(account.workspaceId, {
+			await account.api.createObject(account.workspaceId, {
 				type: 'insight',
 				title: 'Asteroid Insight',
 				content: 'asteroid miner survey notes',
@@ -83,9 +86,7 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			// The page itself never overflows horizontally — the chip row scrolls
 			// inside its own box (the scrollable-filter-row contract).
 			const overflow = await page.evaluate(
-				() =>
-					document.documentElement.scrollWidth -
-					document.documentElement.clientWidth,
+				() => document.documentElement.scrollWidth - document.documentElement.clientWidth,
 			)
 			expect(overflow).toBeLessThanOrEqual(1)
 
@@ -93,7 +94,7 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			await expect(page.getByRole('button', { name: /Asteroid Insight/ })).not.toBeVisible()
 			await page.getByRole('button', { name: 'All types' }).click()
 			await expect(page.getByRole('button', { name: /Asteroid Insight/ })).toBeVisible()
-			await expect(page.getByText(`“asteroid”`)).toBeVisible()
+			await expect(page.getByText('“asteroid”')).toBeVisible()
 		})
 
 		test('opened objects surface in /search recents; ⌘F reopens; Esc clears then closes', async ({
