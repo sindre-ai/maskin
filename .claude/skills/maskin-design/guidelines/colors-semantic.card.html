@@ -1,0 +1,21 @@
+<!-- @dsCard group="Colors" viewport="700x140" name="Semantic states" subtitle="Muted terracotta for warnings, green only for done" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body style="margin:0;padding:20px;background:var(--surface);color:var(--ink);font-family:var(--ff-display);font-size:13px">
+<div style="display:flex;gap:12px;align-items:stretch">
+  <div style="flex:1;display:flex;align-items:flex-start;gap:.6rem;padding:.75rem .875rem;border-radius:var(--r-banner);font-size:var(--fs-sm);line-height:1.5;border:var(--bw-hair) solid var(--danger-rule);background:var(--danger-bg);color:var(--ink)">
+    <i style="width:8px;height:8px;border-radius:50%;background:var(--danger);margin-top:5px;flex:none"></i>
+    <span><b style="font-weight:600">Malformed response.</b> The draft came back incomplete — retry.</span>
+  </div>
+  <div style="flex:1;display:flex;align-items:flex-start;gap:.6rem;padding:.75rem .875rem;border-radius:var(--r-banner);font-size:var(--fs-sm);line-height:1.5;border:var(--bw-hair) solid var(--rule);background:var(--linen);color:var(--ink-2)">
+    <i style="width:8px;height:8px;border-radius:50%;background:var(--success);margin-top:5px;flex:none"></i>
+    <span>Done. Draft written to the workspace.</span>
+  </div>
+</div>
+<div style="margin-top:12px;display:flex;gap:18px;font-family:var(--ff-mono);font-size:10.5px;color:var(--ink-3)"><span>--danger #E16464</span><span>--success #4ade80</span></div>
+</body>
+</html>

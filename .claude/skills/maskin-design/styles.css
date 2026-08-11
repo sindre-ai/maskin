@@ -1,0 +1,7 @@
+/* Maskin Design System — global entry point. Consumers link this one file. */
+@import "tokens/fonts.css";
+@import "tokens/colors.css";
+@import "tokens/typography.css";
+@import "tokens/spacing.css";
+@import "tokens/shape.css";
+@import "tokens/motion.css";

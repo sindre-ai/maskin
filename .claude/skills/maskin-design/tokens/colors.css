@@ -1,0 +1,99 @@
+:root {
+  /* ── Ink (foreground ramp) ── */
+  --ink:            #111110;
+  --ink-2:          #5A5751;
+  --ink-3:          #9B958F;
+  --ink-hover:      #2a2925; /* primary button / dark surface hover */
+
+  /* ── Paper (background ramp) ── */
+  --surface:        #FAFAF8;
+  --linen:          #F0EDE7;
+  --rule:           #E2DDD7;
+
+  /* ── Accent ── */
+  --accent:         #2563EB;
+  --accent-dim:     rgba(37,99,235,0.12);
+  --accent-glow:    rgba(37,99,235,0.09); /* hero radial wash */
+
+  /* ── Object types (the Insights → Bets → Tasks pipeline) ── */
+  --obj-insight:    #5B8DD9;
+  --obj-bet:        #E67E22;
+  --obj-task:       #27AE60;
+  --obj-knowledge:  #7C3AED;
+  --obj-insight-bg: rgba(91,141,217,0.10);
+  --obj-bet-bg:     rgba(230,126,34,0.10);
+  --obj-task-bg:    rgba(39,174,96,0.10);
+  --obj-knowledge-bg: rgba(124,58,237,0.10);
+
+  /* ── Role accents (3px card top-borders in the agent marketplace) ── */
+  --role-product:   #5B8DD9;
+  --role-growth:    #27AE60;
+  --role-sales:     #E67E22;
+  --role-cs:        #2563EB;
+  --role-intel:     #7C3AED;
+  --role-eng:       #8E44AD;
+  --role-ops:       #9B958F;
+
+  /* ── Semantic ── */
+  --danger:         #E16464;
+  --danger-bg:      rgba(225,100,100,0.06);
+  --danger-rule:    rgba(225,100,100,0.40);
+  --success:        #4ade80;
+
+  /* ── Semantic aliases (prefer these in components) ── */
+  --text-body:      var(--ink);
+  --text-muted:     var(--ink-2);
+  --text-faint:     var(--ink-3);
+  --surface-page:   var(--surface);
+  --surface-card:   var(--surface);
+  --surface-sunken: var(--linen);
+  --surface-inverse: var(--ink);
+  --text-on-inverse: var(--surface);
+  --border-default: var(--rule);
+  --border-strong:  var(--ink-2);
+  --nav-bg-scrolled: rgba(250,250,248,0.92);
+}
+
+/* Dark by OS preference, unless light is forced */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ink:        #ECEAE4;
+    --ink-2:      #A09A93;
+    --ink-3:      #6B6560;
+    --ink-hover:  #ECEAE4;
+    --surface:    #141412;
+    --linen:      #1C1B18;
+    --rule:       #2A2925;
+    --accent:     #3B74F2;
+    --accent-dim: rgba(59,116,242,0.15);
+    --nav-bg-scrolled: rgba(20,20,18,0.92);
+  }
+}
+
+/* Dark forced by toggle */
+[data-theme="dark"] {
+  --ink:        #ECEAE4;
+  --ink-2:      #A09A93;
+  --ink-3:      #6B6560;
+  --ink-hover:  #ECEAE4;
+  --surface:    #141412;
+  --linen:      #1C1B18;
+  --rule:       #2A2925;
+  --accent:     #3B74F2;
+  --accent-dim: rgba(59,116,242,0.15);
+  --nav-bg-scrolled: rgba(20,20,18,0.92);
+}
+
+/* Light forced by toggle */
+[data-theme="light"] {
+  --ink:        #111110;
+  --ink-2:      #5A5751;
+  --ink-3:      #9B958F;
+  --ink-hover:  #2a2925;
+  --surface:    #FAFAF8;
+  --linen:      #F0EDE7;
+  --rule:       #E2DDD7;
+  --accent:     #2563EB;
+  --accent-dim: rgba(37,99,235,0.10);
+  --nav-bg-scrolled: rgba(250,250,248,0.92);
+}

@@ -1,0 +1,28 @@
+:root {
+  /* Radii */
+  --r-xs:     4px;  /* inline code */
+  --r-tag:    5px;  /* mono object-type tags */
+  --r-sm:     6px;  /* small buttons, object chips */
+  --r-md:     8px;  /* buttons, icon tiles, toggles */
+  --r-banner: 10px; /* inline banners, card badges */
+  --r-lg:     12px; /* cards, tables, faq grid */
+  --r-xl:     14px; /* prompt bar, video frame */
+  --r-chip:   20px; /* agent/actor/example chips, dark agent pills */
+  --r-pill:   999px; /* prompt chips + file pills only */
+
+  /* Borders — 1.5px is the brand's signature weight; 1px for internal rules */
+  --bw:      1.5px;
+  --bw-hair: 1px;
+  --bw-top:  3px; /* role accent top-border on cards */
+
+  /* Elevation — warm-black, low opacity, never colored except on accent state */
+  --shadow-xs:     0 1px 4px rgba(17,17,16,0.05);
+  --shadow-sm:     0 2px 12px rgba(17,17,16,0.06);
+  --shadow-md:     0 4px 16px rgba(17,17,16,0.07);
+  --shadow-lg:     0 8px 32px rgba(17,17,16,0.12);
+  --shadow-btn:    0 4px 16px rgba(17,17,16,0.18);
+  --shadow-accent: 0 4px 24px rgba(37,99,235,0.12);
+
+  /* Blur — nav and video overlays only */
+  --blur-nav: 14px;
+}

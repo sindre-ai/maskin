@@ -1,0 +1,46 @@
+:root {
+  /* ── Families ── */
+  --ff-display: 'Schibsted Grotesk', system-ui, sans-serif; /* everything by default */
+  --ff-serif:   'Newsreader', Georgia, serif;               /* italic pull-quotes only */
+  --ff-mono:    'JetBrains Mono', ui-monospace, monospace;  /* ids, tags, status, specs */
+
+  /* ── Fluid scale (clamped; identical to maskin.io) ── */
+  --step-0: clamp(0.8125rem, 0.79rem + 0.12vw, 0.9375rem); /* body 13→15px */
+  --step-1: clamp(0.9375rem, 0.9rem + 0.2vw, 1.125rem);    /* lead 15→18px */
+  --step-2: clamp(1.125rem, 1rem + 0.6vw, 1.5rem);         /* column title */
+  --step-3: clamp(1.5rem, 1.15rem + 1.5vw, 2.5rem);        /* section title */
+  --step-4: clamp(2rem, 1.4rem + 3vw, 3.75rem);            /* hero headline */
+
+  /* ── Fixed UI sizes (rem values used verbatim across the site) ── */
+  --fs-micro:  0.62rem;   /* badges */
+  --fs-label:  0.68rem;   /* eyebrows, uppercase labels, mono tags */
+  --fs-xs:     0.75rem;   /* meta, captions */
+  --fs-sm:     0.8125rem; /* card body */
+  --fs-base:   0.875rem;  /* nav, links, buttons-sm */
+  --fs-md:     0.9375rem; /* card title, primary button */
+
+  /* ── Weights ── */
+  --fw-regular: 400;
+  --fw-medium:  500;
+  --fw-semibold: 600;
+  --fw-bold:    700;
+
+  /* ── Line heights ── */
+  --lh-hero: 1.04;
+  --lh-title: 1.15;
+  --lh-snug: 1.3;
+  --lh-body: 1.6;
+  --lh-prose: 1.65;
+
+  /* ── Tracking ── */
+  --ls-hero:  -0.03em;
+  --ls-title: -0.025em;
+  --ls-tight: -0.02em;
+  --ls-snug:  -0.015em;
+  --ls-label:  0.10em; /* uppercase eyebrows */
+  --ls-badge:  0.06em;
+
+  /* ── Measure ── */
+  --measure-sub: 44ch;
+  --measure-body: 52ch;
+}

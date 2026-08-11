@@ -1,0 +1,14 @@
+:root {
+  --dur-fast:   0.15s; /* color / border hovers */
+  --dur:        0.2s;  /* shadow, background, transform */
+  --dur-slow:   0.25s; /* nav state, panel entrance */
+  --dur-state:  0.4s;  /* diagram state changes */
+  --dur-reveal: 0.55s; /* scroll reveal */
+
+  --ease:       ease;
+  --ease-out:   cubic-bezier(0.16, 1, 0.3, 1); /* springy: submit buttons */
+
+  --lift:       translateY(-1px);  /* the universal hover on buttons + cards (-2px on cards) */
+  --lift-card:  translateY(-2px);
+  --reveal-from: translateY(20px);
+}

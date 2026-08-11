@@ -1,0 +1,17 @@
+<!-- @dsCard group="Motion" viewport="700x160" name="Hover &amp; press" subtitle="Everything lifts 1px in 150ms; cards lift 2px and gain a border" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body style="margin:0;padding:20px;background:var(--surface);color:var(--ink);font-family:var(--ff-display);font-size:13px">
+<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+  <span style="display:inline-flex;align-items:center;gap:.5rem;padding:.75rem 1.5rem;background:var(--ink);color:var(--surface);border:var(--bw) solid var(--ink);border-radius:var(--r-md);font-weight:600;font-size:var(--fs-md)">Start free</span>
+  <span style="display:inline-flex;align-items:center;gap:.5rem;padding:.75rem 1.5rem;background:var(--ink-hover);color:var(--surface);border:var(--bw) solid var(--ink-hover);border-radius:var(--r-md);font-weight:600;font-size:var(--fs-md);transform:translateY(-1px);box-shadow:var(--shadow-btn)">Start free · hover</span>
+  <span style="display:inline-flex;align-items:center;gap:.5rem;padding:.75rem 1.5rem;background:transparent;color:var(--ink);border:var(--bw) solid var(--rule);border-radius:var(--r-md);font-weight:500;font-size:var(--fs-md)">Read the docs</span>
+  <span style="display:inline-flex;align-items:center;gap:.5rem;padding:.75rem 1.5rem;background:var(--linen);color:var(--ink);border:var(--bw) solid var(--ink-2);border-radius:var(--r-md);font-weight:500;font-size:var(--fs-md);transform:translateY(-1px)">Read the docs · hover</span>
+</div>
+<div style="margin-top:14px;font-family:var(--ff-mono);font-size:10.5px;color:var(--ink-3);line-height:1.7">--dur-fast .15s color/border · --dur .2s shadow+transform · --lift translateY(-1px)<br>--ease-out cubic-bezier(.16,1,.3,1) on submit affordances only</div>
+</body>
+</html>
