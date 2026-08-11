@@ -1,5 +1,7 @@
+import type { Hook } from '@hono/zod-openapi'
 import { z } from '@hono/zod-openapi'
 import type { ZodError, ZodIssue } from 'zod'
+import { logger } from './logger'
 
 // Re-export shared error types and helpers
 export { ApiErrorCode, mapStatusToCode } from '@maskin/shared'
@@ -76,6 +78,29 @@ export function createInvalidTypeError(type: string, field: string, validTypes: 
 			? 'Enable an extension in workspace settings to create objects.'
 			: `Valid types: ${validTypes.join(', ')}`,
 	)
+}
+
+/**
+ * Shared `defaultHook` for `new OpenAPIHono<Env>({ defaultHook: validationFailureHook })`.
+ * Logs a validation failure server-side before returning the 400 — without
+ * this, a caller that never inspects logs (e.g. the agent-server) has no way
+ * to see why its request was rejected. Only needs re-declaring per file
+ * because `OpenAPIHono`'s `defaultHook` is bound at `.openapi()` registration
+ * time on whichever app instance the route was defined on — mounting a
+ * sub-app into a parent via `.route()` does not inherit the parent's hook.
+ */
+// biome-ignore lint/suspicious/noExplicitAny: mirrors @hono/zod-openapi's own OpenAPIHonoOptions['defaultHook'] type (Hook<any, E, any, any>) — this hook is generic across every file's own Env
+export const validationFailureHook: Hook<any, any, any, Response | undefined> = (result, c) => {
+	if (!result.success) {
+		const details = formatZodError(result.error)
+		logger.warn('Request validation failed', {
+			path: c.req.path,
+			method: c.req.method,
+			details,
+		})
+		return c.json(createApiError('VALIDATION_ERROR', 'Request validation failed', details), 400)
+	}
+	return undefined
 }
 
 /** Zod schema for OpenAPI documentation of structured error responses */

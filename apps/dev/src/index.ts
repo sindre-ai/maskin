@@ -1,3 +1,4 @@
+import './lib/sentry'
 import './extensions'
 import path from 'node:path'
 import { serve } from '@hono/node-server'

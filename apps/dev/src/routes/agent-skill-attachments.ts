@@ -3,7 +3,7 @@ import type { Database } from '@maskin/db'
 import { events, actors, agentSkills, workspaceMembers, workspaceSkills } from '@maskin/db/schema'
 import { attachSkillSchema, attachSkillsBatchSchema } from '@maskin/shared'
 import { and, eq, inArray } from 'drizzle-orm'
-import { createApiError } from '../lib/errors'
+import { createApiError, validationFailureHook } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { errorSchema } from '../lib/openapi-schemas'
 import { serializeArray } from '../lib/serialize'
@@ -15,7 +15,7 @@ type Env = {
 	}
 }
 
-const app = new OpenAPIHono<Env>()
+const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 async function isWorkspaceMember(db: Database, workspaceId: string, actorId: string) {
 	const [row] = await db
