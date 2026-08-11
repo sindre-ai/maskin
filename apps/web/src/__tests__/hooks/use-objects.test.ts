@@ -11,6 +11,7 @@ vi.mock('@/lib/api', () => ({
 			update: vi.fn(),
 			delete: vi.fn(),
 			bulkUpdate: vi.fn(),
+			search: vi.fn(),
 		},
 	},
 }))
@@ -27,6 +28,7 @@ import {
 	useObject,
 	useObjectGraph,
 	useObjects,
+	useSearchObjects,
 	useUpdateObject,
 } from '@/hooks/use-objects'
 import type { ObjectResponse } from '@/lib/api'
@@ -173,6 +175,56 @@ describe('useObjectGraph', () => {
 		})
 		expect(result.current.fetchStatus).toBe('idle')
 		expect(api.objects.graph).not.toHaveBeenCalled()
+	})
+})
+
+describe('useSearchObjects', () => {
+	it('fetches ranked results for a workspace query with filters', async () => {
+		const results = [buildObject({ id: 'obj-1', title: 'Alpha', type: 'bet' })]
+		vi.mocked(api.objects.search).mockResolvedValue(results)
+
+		const { result } = renderHook(
+			() => useSearchObjects(workspaceId, { q: 'alpha', type: 'bet', status: 'active' }),
+			{ wrapper: TestWrapper },
+		)
+
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(result.current.data).toEqual(results)
+		expect(api.objects.search).toHaveBeenCalledWith(workspaceId, {
+			q: 'alpha',
+			type: 'bet',
+			status: 'active',
+		})
+	})
+
+	it('stays idle for an empty or whitespace-only query', () => {
+		const { result } = renderHook(() => useSearchObjects(workspaceId, { q: '   ' }), {
+			wrapper: TestWrapper,
+		})
+
+		expect(result.current.fetchStatus).toBe('idle')
+		expect(api.objects.search).not.toHaveBeenCalled()
+	})
+
+	it('omits empty type/status params from the search call', async () => {
+		vi.mocked(api.objects.search).mockResolvedValue([])
+
+		const { result } = renderHook(() => useSearchObjects(workspaceId, { q: 'foo' }), {
+			wrapper: TestWrapper,
+		})
+
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(api.objects.search).toHaveBeenCalledWith(workspaceId, { q: 'foo' })
+	})
+
+	it('does not fetch when enabled is false', () => {
+		const { result } = renderHook(
+			() => useSearchObjects(workspaceId, { q: 'foo' }, { enabled: false }),
+			{ wrapper: TestWrapper },
+		)
+
+		expect(result.current.fetchStatus).toBe('idle')
+		expect(api.objects.search).not.toHaveBeenCalled()
 	})
 })
 

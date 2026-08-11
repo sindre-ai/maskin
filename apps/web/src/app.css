@@ -339,6 +339,16 @@
 		@apply bg-background text-foreground font-sans antialiased;
 	}
 
+	/* Search term highlighting (command palette + /search view). Matches the
+	   approved Direction 1 mockup rule verbatim — the one net-new visual surface
+	   the UX decision allows. */
+	mark {
+		background: oklch(0.94 0.05 90);
+		color: inherit;
+		border-radius: 2px;
+		padding: 0 1px;
+	}
+
 	/* Tabular numerals on mono surfaces — keeps numeric columns column-aligned
 	   without each call site having to remember the utility class (AC-U4). */
 	code,

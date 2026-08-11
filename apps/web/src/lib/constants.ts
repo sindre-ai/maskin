@@ -54,6 +54,36 @@ export function getTypeColor(type: string) {
 	return typeColors[type] ?? defaultTypeColor
 }
 
+// Human-readable labels for the core object types — used by the search
+// surfaces (command palette + /search) to render "Bet" instead of the raw
+// `type` column value next to a result row.
+export const TYPE_LABELS: Record<string, string> = {
+	insight: 'Insight',
+	bet: 'Bet',
+	task: 'Task',
+}
+
+export function typeLabel(type: string): string {
+	return TYPE_LABELS[type] ?? type
+}
+
+// Human-readable labels for the workflow statuses the /search view ships with —
+// mirrors the Designer mockup's STATUS_LABEL map. Custom statuses configured in
+// workspace settings render via `statusLabel`'s humanize fallback.
+export const STATUS_LABELS: Record<string, string> = {
+	active: 'Active',
+	in_progress: 'In progress',
+	todo: 'To do',
+	define: 'Define',
+	in_review: 'In review',
+	done: 'Done',
+	validated: 'Validated',
+}
+
+export function statusLabel(status: string): string {
+	return STATUS_LABELS[status] ?? status.replace(/_/g, ' ')
+}
+
 export function getStatusColor(status: string) {
 	return statusColors[status] ?? defaultStatusColor
 }

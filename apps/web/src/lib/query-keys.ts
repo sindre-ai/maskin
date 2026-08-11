@@ -10,6 +10,8 @@ export const queryKeys = {
 		board: (workspaceId: string, filters?: Record<string, unknown>) =>
 			['objects', workspaceId, 'board', filters] as const,
 		boardPrefix: (workspaceId: string) => ['objects', workspaceId, 'board'] as const,
+		search: (workspaceId: string, params?: Record<string, unknown>) =>
+			['objects', workspaceId, 'search', params] as const,
 		detail: (id: string) => ['objects', 'detail', id] as const,
 		graph: (id: string) => ['objects', 'graph', id] as const,
 		references: (id: string) => ['objects', 'references', id] as const,

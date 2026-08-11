@@ -9,6 +9,7 @@ import {
 	trackBetStatusChanged,
 	trackChatImageUpload,
 	trackChatSessionStarted,
+	trackCommandPaletteOpened,
 	trackCommentPosted,
 	trackEvent,
 	trackForyouCardAction,
@@ -25,6 +26,7 @@ import {
 	trackObjectsListGroupToggled,
 	trackRelationshipCreated,
 	trackScrollToTop,
+	trackSearchResultOpened,
 	trackSidebarAgentActivityExpanded,
 	trackSidebarToggle,
 	trackSidebarWorkspaceSwitcherOpened,
@@ -663,6 +665,60 @@ describe('v1 taxonomy helpers', () => {
 				card_kind: 'decision',
 				card_id: 'bet-1',
 				action_id: 'quick_reply:approved',
+			})
+		})
+	})
+
+	describe('command_palette_opened / search_result_opened (search funnel)', () => {
+		it('command_palette_opened carries the surface and a web source for the denominator', () => {
+			const capture = captureSpy()
+
+			trackCommandPaletteOpened({ surface: 'command_palette' })
+
+			expect(capture).toHaveBeenCalledWith('command_palette_opened', {
+				surface: 'command_palette',
+				source: 'web',
+			})
+		})
+
+		it('command_palette_opened reports the search_view surface when the route mounts', () => {
+			const capture = captureSpy()
+
+			trackCommandPaletteOpened({ surface: 'search_view' })
+
+			expect(capture).toHaveBeenCalledWith('command_palette_opened', {
+				surface: 'search_view',
+				source: 'web',
+			})
+		})
+
+		it('search_result_opened carries the entity contract plus the surface, for both entries', () => {
+			const capture = captureSpy()
+
+			trackSearchResultOpened({
+				entity_id: 'bet-42',
+				entity_type: 'bet',
+				surface: 'command_palette',
+			})
+			trackSearchResultOpened({
+				entity_id: 'task-7',
+				entity_type: 'task',
+				surface: 'search_view',
+			})
+
+			expect(capture).toHaveBeenNthCalledWith(1, 'search_result_opened', {
+				entity_id: 'bet-42',
+				entity_type: 'bet',
+				source: 'web',
+				flow_id: null,
+				surface: 'command_palette',
+			})
+			expect(capture).toHaveBeenNthCalledWith(2, 'search_result_opened', {
+				entity_id: 'task-7',
+				entity_type: 'task',
+				source: 'web',
+				flow_id: null,
+				surface: 'search_view',
 			})
 		})
 	})
