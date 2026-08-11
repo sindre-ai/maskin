@@ -98,6 +98,7 @@ import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import type { StorageProvider } from '@maskin/storage'
 import { getProvider } from '../../lib/integrations/registry'
+import { logger } from '../../lib/logger'
 import { AgentStorageManager } from '../../services/agent-storage'
 import { SessionManager, mergeLaunchRouteConfig } from '../../services/session-manager'
 import { buildIntegration, buildSession } from '../factories'
@@ -1824,6 +1825,34 @@ describe('SessionManager', () => {
 			await manager.markRemoteSessionComplete('some-session-id', 1)
 
 			expect(calls.inserts.length).toBe(initialInsertCount)
+		})
+
+		// Regression coverage for docs/runbooks/agent-session-failures-2026-08-11.md,
+		// Issue 3's suggested fix: the CAS-miss no-op used to be completely
+		// silent (no log at any level), which is exactly why the null-vs-1 exit
+		// code mismatch for session 4d1f3c8b required host log spelunking to
+		// diagnose instead of being visible from app logs alone.
+		it('logs a warning with the dropped exit code and current session state when the CAS update matches no row', async () => {
+			const session = buildSession({ status: 'completed', result: { exit_code: 0 } })
+			mockResults.update = [] // .returning() → no row: UPDATE matched nothing (already terminal)
+			// 1st select: markRemoteSessionComplete's own usage extraction (reads
+			// session_logs) — empty means "no usage found". 2nd select: the new
+			// best-effort lookup used only to enrich the dropped-signal log line.
+			mockResults.selectQueue = [[], [session]]
+			const warnSpy = vi.spyOn(logger, 'warn')
+
+			await manager.markRemoteSessionComplete(session.id, 1)
+
+			expect(warnSpy).toHaveBeenCalledWith(
+				'Completion signal dropped — session already terminal or not found',
+				expect.objectContaining({
+					sessionId: session.id,
+					droppedExitCode: 1,
+					droppedStoppedByUser: false,
+					currentStatus: 'completed',
+					currentResult: { exit_code: 0 },
+				}),
+			)
 		})
 
 		it('inserts exactly one session_failed event when the CAS update matches a row (nonzero exit code)', async () => {

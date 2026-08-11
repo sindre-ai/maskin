@@ -109,14 +109,18 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	const app = new OpenAPIHono<Env>({
 		defaultHook: (result, c) => {
 			if (!result.success) {
-				return c.json(
-					createApiError(
-						'VALIDATION_ERROR',
-						'Request validation failed',
-						formatZodError(result.error),
-					),
-					400,
-				)
+				const details = formatZodError(result.error)
+				// Previously the 400 body carried these details but nothing was
+				// logged server-side, so a validation failure on an internal
+				// (non-browser) caller — e.g. the agent-server log-ingest route —
+				// was invisible in app logs. See
+				// docs/runbooks/agent-session-failures-2026-08-11.md, Issue 1.
+				logger.warn('Request validation failed', {
+					path: c.req.path,
+					method: c.req.method,
+					details,
+				})
+				return c.json(createApiError('VALIDATION_ERROR', 'Request validation failed', details), 400)
 			}
 			return undefined
 		},

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { logger } from '../../lib/logger'
 import { jsonRequest } from '../helpers'
-import { createTestApp } from '../setup'
+import { createSessionTestApp, createTestApp } from '../setup'
 
 const { default: agentServerReconcileRoutes } = await import('../../routes/agent-server-reconcile')
 
@@ -130,5 +131,135 @@ describe('POST /api/internal/agent-servers/reconcile', () => {
 		)
 
 		expect(res.status).toBe(400)
+	})
+})
+
+describe('POST /api/internal/agent-servers/sessions/:id/logs', () => {
+	beforeEach(() => {
+		vi.stubEnv('AGENT_SERVER_SECRET', SECRET)
+	})
+
+	afterEach(() => {
+		vi.unstubAllEnvs()
+		vi.restoreAllMocks()
+	})
+
+	function logsPath(id = sessionId) {
+		return `/api/internal/agent-servers/sessions/${id}/logs`
+	}
+
+	it('accepts a normal-size log batch', async () => {
+		const { app, sessionManager } = createSessionTestApp(
+			agentServerReconcileRoutes,
+			'/api/internal/agent-servers',
+		)
+		sessionManager.appendRemoteSessionLogs = vi.fn().mockResolvedValue(undefined)
+
+		const logs = [
+			{ stream: 'stdout', content: 'agent starting up' },
+			{ stream: 'stderr', content: 'a warning' },
+		]
+		const res = await app.request(
+			jsonRequest('POST', logsPath(), { logs }, { Authorization: `Bearer ${SECRET}` }),
+		)
+
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body.accepted).toBe(2)
+		expect(sessionManager.appendRemoteSessionLogs).toHaveBeenCalledWith(sessionId, logs)
+	})
+
+	it('accepts a line that would have failed the old 64KB cap', async () => {
+		const { app, sessionManager } = createSessionTestApp(
+			agentServerReconcileRoutes,
+			'/api/internal/agent-servers',
+		)
+		sessionManager.appendRemoteSessionLogs = vi.fn().mockResolvedValue(undefined)
+
+		// 100KB — over the old 65536-byte cap, well under the new 1MB cap.
+		const bigLine = 'x'.repeat(100_000)
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				logsPath(),
+				{ logs: [{ stream: 'stdout', content: bigLine }] },
+				{ Authorization: `Bearer ${SECRET}` },
+			),
+		)
+
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body.accepted).toBe(1)
+		expect(sessionManager.appendRemoteSessionLogs).toHaveBeenCalledWith(sessionId, [
+			{ stream: 'stdout', content: bigLine },
+		])
+	})
+
+	it('drops an oversized line but keeps the rest of the batch (partial-failure-tolerant)', async () => {
+		const { app, sessionManager } = createSessionTestApp(
+			agentServerReconcileRoutes,
+			'/api/internal/agent-servers',
+		)
+		sessionManager.appendRemoteSessionLogs = vi.fn().mockResolvedValue(undefined)
+		const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+		// Over the new 1MB cap.
+		const tooLarge = 'x'.repeat(1_100_000)
+		const logs = [
+			{ stream: 'stdout', content: 'a normal line' },
+			{ stream: 'stdout', content: tooLarge },
+		]
+		const res = await app.request(
+			jsonRequest('POST', logsPath(), { logs }, { Authorization: `Bearer ${SECRET}` }),
+		)
+
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body.accepted).toBe(1)
+		expect(sessionManager.appendRemoteSessionLogs).toHaveBeenCalledWith(sessionId, [
+			{ stream: 'stdout', content: 'a normal line' },
+		])
+		expect(warnSpy).toHaveBeenCalledWith(
+			'Rejected oversized log line(s) in remote session log batch',
+			expect.objectContaining({ sessionId, rejectedCount: 1, acceptedCount: 1 }),
+		)
+	})
+
+	it('returns 400 and logs the validation detail when every line in the batch is too large', async () => {
+		const { app, sessionManager } = createSessionTestApp(
+			agentServerReconcileRoutes,
+			'/api/internal/agent-servers',
+		)
+		sessionManager.appendRemoteSessionLogs = vi.fn().mockResolvedValue(undefined)
+		const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+		const tooLarge = 'x'.repeat(1_100_000)
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				logsPath(),
+				{ logs: [{ stream: 'stdout', content: tooLarge }] },
+				{ Authorization: `Bearer ${SECRET}` },
+			),
+		)
+
+		expect(res.status).toBe(400)
+		const body = await res.json()
+		expect(body.error.code).toBe('VALIDATION_ERROR')
+		expect(sessionManager.appendRemoteSessionLogs).not.toHaveBeenCalled()
+		expect(warnSpy).toHaveBeenCalledWith(
+			'Rejected oversized log line(s) in remote session log batch',
+			expect.objectContaining({ sessionId, rejectedCount: 1, acceptedCount: 0 }),
+		)
+	})
+
+	it('returns 401 when the Authorization header is missing', async () => {
+		const { app } = createSessionTestApp(agentServerReconcileRoutes, '/api/internal/agent-servers')
+
+		const res = await app.request(
+			jsonRequest('POST', logsPath(), { logs: [{ stream: 'stdout', content: 'hi' }] }),
+		)
+
+		expect(res.status).toBe(401)
 	})
 })

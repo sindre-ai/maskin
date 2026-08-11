@@ -98,12 +98,40 @@ app.openapi(reconcileRoute, async (c) => {
 	)
 })
 
+// Per-line content cap. `session_logs.content` (packages/db/src/schema.ts)
+// is an unbounded `text` column, so this exists purely as a network-input
+// sanity ceiling (see .claude/rules/input-validation.md) — not a real
+// storage constraint. Previously capped at 64KB, which coding-agent CLIs
+// routinely exceeded with a single NDJSON stdout line (a full tool result,
+// large diff, base64 image) that has no embedded newline, silently dropping
+// the entire batch it was part of. See
+// docs/runbooks/agent-session-failures-2026-08-11.md, Issue 1. Raised well
+// above realistic tool-output sizes — the agent-server client additionally
+// truncates any line over 60KB before sending (MAX_LOG_LINE_BYTES in
+// apps/agent-server/src/index.ts), so a real line should never approach this;
+// it's a backstop against a buggy or compromised client, not a size we
+// expect to hit.
+const MAX_LOG_LINE_BYTES = 1_048_576 // 1MB
+
+const logLineSchema = z.object({
+	stream: z.enum(['stdout', 'stderr', 'system']),
+	content: z.string().max(MAX_LOG_LINE_BYTES),
+})
+
+// The array-item `content` field is intentionally left unbounded at this
+// OpenAPI/Hono request-validation layer (no `.max()`) so a single oversized
+// line can't fail schema validation and drop the ENTIRE batch (up to 500
+// lines) with one 400. The real per-line cap (MAX_LOG_LINE_BYTES, via
+// logLineSchema) is instead enforced manually per-item inside the handler
+// below, so only the offending line is rejected — every other line in the
+// batch still gets stored. See docs/runbooks/agent-session-failures-2026-08-11.md,
+// Issue 1 ("make batch validation partial-failure-tolerant").
 const logIngestBodySchema = z.object({
 	logs: z
 		.array(
 			z.object({
 				stream: z.enum(['stdout', 'stderr', 'system']),
-				content: z.string().max(65536),
+				content: z.string(),
 			}),
 		)
 		.max(500),
@@ -122,8 +150,13 @@ const logIngestRoute = createRoute({
 	},
 	responses: {
 		200: {
-			description: 'Logs accepted',
+			description:
+				'Logs accepted (a partial batch may have some lines rejected — see `accepted` count)',
 			content: { 'application/json': { schema: z.object({ accepted: z.number() }) } },
+		},
+		400: {
+			description: 'Every line in the batch failed per-line validation',
+			content: { 'application/json': { schema: errorSchema } },
 		},
 		401: {
 			description: 'Invalid bearer token',
@@ -154,13 +187,56 @@ app.openapi(logIngestRoute, async (c) => {
 	const { logs } = c.req.valid('json')
 	const sessionManager = c.get('sessionManager')
 
+	// Partial-failure-tolerant: validate each line individually against the
+	// real per-line cap (MAX_LOG_LINE_BYTES) instead of rejecting the whole
+	// batch when one line is oversized. See the comment on logIngestBodySchema
+	// above for why the array-level schema doesn't already enforce this.
+	const validLogs: Array<{ stream: 'stdout' | 'stderr' | 'system'; content: string }> = []
+	const rejected: Array<{ index: number; issues: string[] }> = []
+	logs.forEach((line, index) => {
+		const parsed = logLineSchema.safeParse(line)
+		if (parsed.success) {
+			validLogs.push(parsed.data)
+		} else {
+			rejected.push({ index, issues: parsed.error.issues.map((issue) => issue.message) })
+		}
+	})
+
+	if (rejected.length > 0) {
+		logger.warn('Rejected oversized log line(s) in remote session log batch', {
+			sessionId: id,
+			rejectedCount: rejected.length,
+			acceptedCount: validLogs.length,
+			maxLineBytes: MAX_LOG_LINE_BYTES,
+			rejected,
+		})
+	}
+
+	// Every line in the batch failed — there's nothing to store, so this is a
+	// genuine validation failure worth surfacing as a 400 rather than a silent
+	// no-op 200.
+	if (logs.length > 0 && validLogs.length === 0) {
+		return c.json(
+			createApiError(
+				ApiErrorCode.VALIDATION_ERROR,
+				'All log lines in batch failed validation',
+				rejected.map((r) => ({
+					field: `logs[${r.index}].content`,
+					message: r.issues.join('; '),
+					expected: `string, max ${MAX_LOG_LINE_BYTES} bytes`,
+				})),
+			),
+			400,
+		)
+	}
+
 	try {
-		await sessionManager.appendRemoteSessionLogs(id, logs)
+		await sessionManager.appendRemoteSessionLogs(id, validLogs)
 	} catch (err) {
 		logger.error('Failed to append remote session logs', { sessionId: id, error: String(err) })
 	}
 
-	return c.json({ accepted: logs.length }, 200)
+	return c.json({ accepted: validLogs.length }, 200)
 })
 
 const sessionCompleteBodySchema = z.object({
