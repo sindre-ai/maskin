@@ -151,12 +151,19 @@ app.openapi(createActorRoute, async (c) => {
 	// Agents get the Maskin MCP by default — caller-provided servers win on conflict.
 	const tools =
 		body.type === 'agent'
-			? {
-					mcpServers: {
-						maskin: PLATFORM_MCP_PRESET,
-						...(body.tools?.mcpServers ?? {}),
-					},
-				}
+			? (() => {
+					const merged = {
+						mcpServers: {
+							maskin: PLATFORM_MCP_PRESET,
+							...(body.tools?.mcpServers ?? {}),
+						},
+					}
+					logger.info('Auto-attached Maskin MCP to agent', {
+						actor_name: body.name,
+						has_caller_servers: !!body.tools?.mcpServers,
+					})
+					return merged
+				})()
 			: body.tools
 
 	let actor: typeof actors.$inferSelect | undefined

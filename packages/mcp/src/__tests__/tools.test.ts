@@ -423,6 +423,10 @@ describe('create_actor schema', () => {
 		expect(result.workspace_id).toBe(uuid)
 		expect(result.role).toBe('owner')
 	})
+
+	it('description mentions Maskin MCP auto-attach for agents', () => {
+		expect(tools.create_actor.description).toContain('tools.mcpServers.maskin')
+	})
 })
 
 describe('update_actor schema', () => {
