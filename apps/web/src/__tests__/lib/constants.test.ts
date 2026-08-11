@@ -1,7 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
-	API_BASE,
 	defaultStatusColor,
 	defaultTypeColor,
 	getStatusColor,
@@ -57,7 +56,19 @@ describe('getStatusColor', () => {
 })
 
 describe('API_BASE', () => {
-	it('equals /api', () => {
-		expect(API_BASE).toBe('/api')
+	afterEach(() => {
+		vi.unstubAllEnvs()
+		vi.resetModules()
+	})
+
+	it('defaults to the relative /api path (Vite dev proxy) when VITE_API_BASE_URL is unset', async () => {
+		const mod = await import('@/lib/constants')
+		expect(mod.API_BASE).toBe('/api')
+	})
+
+	it('uses the absolute VITE_API_BASE_URL when set (the iOS shell build)', async () => {
+		vi.stubEnv('VITE_API_BASE_URL', 'https://api.maskin.example')
+		const mod = await import('@/lib/constants')
+		expect(mod.API_BASE).toBe('https://api.maskin.example')
 	})
 })
