@@ -37,9 +37,11 @@ test.describe('Commitment object on the rebuilt detail surface', () => {
 				.first()
 			await expect(statusControl).toHaveText('holding')
 
-			// Metadata renders as body key/value rows (floor, cadence).
-			await expect(page.getByText('<1 day median')).toBeVisible()
-			await expect(page.getByText('weekly')).toBeVisible()
+			// Metadata renders as body key/value rows (floor, cadence). The
+			// values use exact matching — 'weekly' is a substring of the
+			// breached-test title, so non-exact getByText would strict-collide.
+			await expect(page.getByText('<1 day median', { exact: true })).toBeVisible()
+			await expect(page.getByText('weekly', { exact: true })).toBeVisible()
 
 			// The commitment card is not part of the T1 shell yet.
 			await expect(page.getByTestId('commitment-card')).toHaveCount(0)
@@ -73,8 +75,8 @@ test.describe('Commitment object on the rebuilt detail surface', () => {
 			.filter({ hasNotText: /driver/i })
 			.first()
 		await expect(statusControl).toHaveText('breached')
-		await expect(page.getByText('1 ship / week')).toBeVisible()
-		await expect(page.getByText('weekly')).toBeVisible()
+		await expect(page.getByText('1 ship / week', { exact: true })).toBeVisible()
+		await expect(page.getByText('weekly', { exact: true })).toBeVisible()
 
 		// The commitment card is not part of the T1 shell yet.
 		await expect(page.getByTestId('commitment-card')).toHaveCount(0)

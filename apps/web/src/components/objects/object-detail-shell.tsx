@@ -1,5 +1,6 @@
 import { CommentInput } from '@/components/activity/comment-input'
 import { useDeleteObject, useUpdateObject } from '@/hooks/use-objects'
+import { useScrollToTopEmitter } from '@/hooks/use-scroll-to-top-emitter'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
 import type { ObjectResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -24,6 +25,15 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 	const answerRef = useRef<HTMLTextAreaElement>(null)
 	const [confirmDelete, setConfirmDelete] = useState(false)
 	const confirmedDeleteRef = useRef(false)
+
+	// Carried over from the retired ObjectDocument surface: the object page
+	// used to emit scroll_to_top from its body render path. The shell replaces
+	// that body renderer, so the emitter mounts here to keep the telemetry.
+	useScrollToTopEmitter({
+		enabled: object.type === 'bet',
+		objectSubtype: object.type,
+		objectId: object.id,
+	})
 
 	const handleUpdateStatus = useCallback(
 		(status: string) => {

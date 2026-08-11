@@ -4,6 +4,14 @@ test.describe('Objects CRUD', () => {
 	test('can create an object via the header New menu', async ({ page, account }) => {
 		await page.goto(`/${account.workspaceId}/objects`)
 
+		// The app-bar New button lives inside the layout, which only renders
+		// once the workspace resolves. Anchor on a layout element first — on a
+		// cold CI worker the first navigation can outlast the default click
+		// wait while the workspace fetch is still in flight.
+		await expect(page.getByRole('link', { name: 'Objects' }).first()).toBeVisible({
+			timeout: 30000,
+		})
+
 		// Header "New" menu → "New task" opens the CreatePicker dialog pre-seeded
 		// to the task subtype, so no type-selector step is shown.
 		// The objects list toolbar has its own "New" button too — scope to the
@@ -81,6 +89,11 @@ test.describe('Objects CRUD', () => {
 
 	test('can open create form via the header New menu', async ({ page, account }) => {
 		await page.goto(`/${account.workspaceId}/objects`)
+
+		// Same cold-boot anchor as the create test above.
+		await expect(page.getByRole('link', { name: 'Objects' }).first()).toBeVisible({
+			timeout: 30000,
+		})
 
 		// The objects list toolbar has its own "New" button too — scope to the
 		// global header so this exercises the header's New menu specifically.
