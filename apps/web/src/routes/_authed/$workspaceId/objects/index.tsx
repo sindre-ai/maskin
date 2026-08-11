@@ -28,6 +28,13 @@ import { api } from '@/lib/api'
 import type { DisplaySettingsBody, ObjectResponse } from '@/lib/api'
 import { consumeArrivalNavType } from '@/lib/back-nav-tracker'
 import { type BetStatusResult, buildBetStatuses } from '@/lib/bet-status'
+import {
+	fromUrlSearch,
+	toBoardParams,
+	toDisplaySettingsBody,
+	toListParams,
+} from '@/lib/objects-filter-model'
+import type { ObjectsFilterModel } from '@/lib/objects-filter-model'
 import { clearViewState, getViewState, patchViewState } from '@/lib/objects-view-state'
 import { fetchAllPages } from '@/lib/pagination'
 import { queryKeys } from '@/lib/query-keys'
@@ -264,33 +271,46 @@ function ObjectsPage() {
 		return m
 	}, [metadataFiltersKey])
 
-	// Build API filters
-	const filters = useMemo(() => {
-		const f: Record<string, string> = {}
-		if (typeFilter) f.type = typeFilter
-		if (statusFilter) f.status = statusFilter
-		if (driverFilter) f.driver = driverFilter
-		if (idsFilter) f.ids = idsFilter
-		for (const [field, value] of Object.entries(metadataFilters)) {
-			f[`metadata.${field}`] = value
-		}
-		f.sort = sort
-		f.order = order
-		// Opt-in only: pass through when the "Include archived" toggle is on.
-		// Omitting the flag lets T3's route default (hide archived) apply.
-		if (supportsIncludeArchived && includeArchived) f.include_archived = 'true'
-		return f
-	}, [
-		typeFilter,
-		statusFilter,
-		driverFilter,
-		idsFilter,
-		sort,
-		order,
-		metadataFilters,
-		supportsIncludeArchived,
-		includeArchived,
-	])
+	// The single shared filter model. Every view consumer — List params, Board
+	// params, grouping, persistence — derives from this one object, so the two
+	// views cannot drift apart: a filter set once reaches both by construction.
+	const filterModel = useMemo<ObjectsFilterModel>(
+		() =>
+			fromUrlSearch({
+				type: typeFilter,
+				status: statusFilter,
+				driver: driverFilter,
+				sort,
+				order,
+				q,
+				groupBy,
+				ids: idsFilter,
+				includeArchived,
+				metadata: metadataFilters,
+				columnVisibility,
+			}),
+		[
+			typeFilter,
+			statusFilter,
+			driverFilter,
+			sort,
+			order,
+			q,
+			groupBy,
+			idsFilter,
+			includeArchived,
+			metadataFilters,
+			columnVisibility,
+		],
+	)
+
+	// Build API filters for the List query from the shared model. The
+	// include-archived flag is emitted only when the current tab supports it
+	// (bet-only per T5); omitting it lets the route default (hide archived) ride.
+	const filters = useMemo(
+		() => toListParams(filterModel, { includeArchivedAllowed: supportsIncludeArchived }),
+		[filterModel, supportsIncludeArchived],
+	)
 
 	// Infinite query — use search endpoint when q is present
 	const infiniteQuery = useInfiniteQuery({
@@ -335,20 +355,14 @@ function ObjectsPage() {
 	// preference is preserved for when the type becomes board-capable again.
 	const effectiveView: DisplayPanelView = boardSupported ? view : 'list'
 
-	const boardParams = useMemo(() => {
-		if (!typeFilter) return null
-		const params: Record<string, string> = {
-			...filters,
-			type: typeFilter,
-			sort,
-			order,
-			limit: String(BOARD_PAGE_SIZE),
-			offset: '0',
-		}
-		if (q) params.q = q
-		if (groupBy) params.groupBy = groupBy
-		return params
-	}, [filters, groupBy, order, q, sort, typeFilter])
+	const boardParams = useMemo(
+		() =>
+			toBoardParams(filterModel, {
+				pageSize: BOARD_PAGE_SIZE,
+				includeArchivedAllowed: supportsIncludeArchived,
+			}),
+		[filterModel, supportsIncludeArchived],
+	)
 
 	const boardQuery = useQuery({
 		queryKey: queryKeys.objects.board(workspaceId, boardParams ?? {}),
@@ -524,8 +538,8 @@ function ObjectsPage() {
 		return base
 	}, [columns, typeFilter])
 
-	// Grouping state
-	const groupingState: GroupingState = groupBy ? [groupBy] : []
+	// Grouping state derives from the shared model.
+	const groupingState: GroupingState = filterModel.groupBy ? [filterModel.groupBy] : []
 
 	// Hide dynamic columns by default when in "All" tab
 	const effectiveVisibility = useMemo(() => {
@@ -744,17 +758,9 @@ function ObjectsPage() {
 	useEffect(() => {
 		if (!hydratedTypesRef.current.has(displaySettingsKey)) return
 		const settings: DisplaySettingsBody = {
+			...toDisplaySettingsBody(filterModel),
 			view,
-			sort,
-			order,
-			groupBy: groupBy ?? null,
-			columnVisibility,
 		}
-		const filters: { status?: string; driver?: string; metadata?: Record<string, string> } = {}
-		if (statusFilter) filters.status = statusFilter
-		if (driverFilter) filters.driver = driverFilter
-		if (Object.keys(metadataFilters).length > 0) filters.metadata = metadataFilters
-		if (filters.status || filters.driver || filters.metadata) settings.filters = filters
 		// TanStack's ExpandedState can be `true` (all-expanded); that state is
 		// unreachable through the DataTable UI here but we skip persisting it
 		// since it can't round-trip through the schema's Record<string, boolean>.
@@ -772,19 +778,7 @@ function ObjectsPage() {
 			updateMutateRef.current({ objectType: displaySettingsKey, settings })
 		}, 500)
 		return () => clearTimeout(handle)
-	}, [
-		displaySettingsKey,
-		view,
-		sort,
-		order,
-		groupBy,
-		statusFilter,
-		driverFilter,
-		metadataFilters,
-		columnVisibility,
-		expanded,
-		capturedAnchor,
-	])
+	}, [displaySettingsKey, view, filterModel, expanded, capturedAnchor])
 
 	const idsCount = idsFilter ? idsFilter.split(',').length : 0
 
