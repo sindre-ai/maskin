@@ -49,6 +49,17 @@
 	--color-input: var(--input);
 	--color-ring: var(--ring);
 
+	/* Documented base token family (apps/web/CLAUDE.md + .claude/rules/frontend.md) —
+	   was referenced by ~30 components but never registered, so `bg-bg`,
+	   `bg-bg-surface`, `bg-bg-hover`, `text-text`, `text-text-secondary`,
+	   `text-text-muted` silently emitted no CSS. Map onto the existing :root vars. */
+	--color-bg: var(--background);
+	--color-bg-surface: var(--muted);
+	--color-bg-hover: var(--accent);
+	--color-text: var(--foreground);
+	--color-text-secondary: var(--secondary-foreground);
+	--color-text-muted: var(--muted-foreground);
+
 	/* Semantic */
 	--color-success: var(--success);
 	--color-warning: var(--warning);
