@@ -298,10 +298,19 @@ describe('Billing Integration — Stripe checkout lifecycle', () => {
 			),
 		)
 
+		// Re-checkout with no invoiceEmail. Send an explicit empty body: `undefined`
+		// makes jsonRequest omit the body entirely, and the checkout route's
+		// `c.req.valid('json')` then fails zod validation with 400 instead of
+		// reaching the "keep active plan active" branch we're asserting.
 		const res = await app.request(
-			jsonRequest('POST', '/api/billing/checkout', undefined, {
-				'x-workspace-id': workspaceId,
-			}),
+			jsonRequest(
+				'POST',
+				'/api/billing/checkout',
+				{},
+				{
+					'x-workspace-id': workspaceId,
+				},
+			),
 		)
 		expect(res.status).toBe(200)
 		expect((await res.json()).plan.status).toBe('active')
