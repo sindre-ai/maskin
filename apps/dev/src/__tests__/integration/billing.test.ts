@@ -7,7 +7,9 @@ import { insertWorkspace } from '../factories'
 import { jsonRequest } from '../helpers'
 import { db, getTestActorId } from './global-setup'
 
-const { default: createBillingApp } = await import('../../routes/billing')
+// billing.ts default-exports a constructed app instance; the tests need the
+// named factory so they can inject Stripe stubs and a deterministic plan.
+const { createBillingApp } = await import('../../routes/billing')
 
 const PRO_PLAN: ResolvedPlan = {
 	planId: 'pro',
