@@ -52,3 +52,11 @@ CREATE TABLE IF NOT EXISTS "invoices" (
 
 CREATE INDEX IF NOT EXISTS "invoices_ws_billed_at_idx"
 	ON "invoices" ("workspace_id", "billed_at");
+
+-- One invoice per succeeded PaymentIntent. POST /api/billing/complete races
+-- concurrent calls for the same intent (Elements re-confirm, retries); the
+-- active row serializes the race and the ON CONFLICT DO NOTHING insert in the
+-- route takes the idempotent path instead of double-billing.
+CREATE UNIQUE INDEX IF NOT EXISTS "invoices_stripe_payment_intent_id_key"
+	ON "invoices" ("stripe_payment_intent_id")
+	WHERE "stripe_payment_intent_id" IS NOT NULL;

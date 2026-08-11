@@ -230,32 +230,49 @@ export function createBillingApp(deps: BillingDeps = {}) {
 			)
 		}
 
-		// Upsert the plan snapshot in 'pending' state. Preserve the existing
+		// Upsert the plan snapshot. A workspace that already has an active plan
+		// stays active — an abandoned re-checkout must not demote it to 'pending'
+		// or overwrite the live price snapshot. First-time checkouts snapshot the
+		// new plan as 'pending' until completion. Preserve the existing
 		// invoiceEmail across checkouts unless the caller supplied one.
-		const billingValues = {
-			workspaceId,
-			planId: plan.planId,
-			planLabel: plan.planLabel,
-			status: 'pending' as const,
-			priceCents: plan.priceCents,
-			currency: plan.currency,
-			stripePriceId: plan.priceId,
-			...(invoiceEmail ? { invoiceEmail } : {}),
-			updatedAt: new Date(),
-		}
+		const [existingRow] = await db
+			.select()
+			.from(billingTable)
+			.where(eq(billingTable.workspaceId, workspaceId))
+			.limit(1)
+		const alreadyActive = existingRow?.status === 'active'
+		const billingValues = alreadyActive
+			? {
+					workspaceId,
+					status: 'active' as const,
+					...(invoiceEmail ? { invoiceEmail } : {}),
+					updatedAt: new Date(),
+				}
+			: {
+					workspaceId,
+					planId: plan.planId,
+					planLabel: plan.planLabel,
+					status: 'pending' as const,
+					priceCents: plan.priceCents,
+					currency: plan.currency,
+					stripePriceId: plan.priceId,
+					...(invoiceEmail ? { invoiceEmail } : {}),
+					updatedAt: new Date(),
+				}
+		const nextStatus = alreadyActive ? 'active' : 'pending'
 		await db.insert(billingTable).values(billingValues).onConflictDoUpdate({
 			target: billingTable.workspaceId,
 			set: billingValues,
 		})
 
-		// Audit + real-time: the billing row just transitioned to 'pending'.
+		// Audit + real-time: the billing row transitioned to 'pending' (or stayed 'active').
 		await db.insert(events).values({
 			workspaceId,
 			actorId,
 			action: 'updated',
 			entityType: 'billing',
 			entityId: workspaceId,
-			data: { status: 'pending', planId: plan.planId, priceCents: plan.priceCents },
+			data: { status: nextStatus, planId: plan.planId, priceCents: plan.priceCents },
 		})
 
 		capturePosthogEvent('billing_checkout_started', workspaceId, {
@@ -271,7 +288,7 @@ export function createBillingApp(deps: BillingDeps = {}) {
 			plan: {
 				planId: plan.planId,
 				planLabel: plan.planLabel,
-				status: 'pending',
+				status: nextStatus,
 				priceCents: plan.priceCents,
 				currency: plan.currency,
 				nextChargeAt: null,
@@ -338,34 +355,44 @@ export function createBillingApp(deps: BillingDeps = {}) {
 		try {
 			intent = await stripe.paymentIntents.retrieve(paymentIntentId)
 		} catch {
-			return c.json(createApiError('BAD_REQUEST', 'Invalid payment intent'), 400)
+			// One generic message for both "intent does not exist" and "intent
+			// belongs to another workspace" — distinguishing them would let a
+			// member probe arbitrary payment-intent ids.
+			return c.json(createApiError('BAD_REQUEST', 'Unable to verify this payment'), 400)
 		}
 
 		if (intent.metadata.workspace_id !== workspaceId) {
-			return c.json(
-				createApiError('BAD_REQUEST', 'Payment intent does not belong to this workspace'),
-				400,
-			)
+			return c.json(createApiError('BAD_REQUEST', 'Unable to verify this payment'), 400)
 		}
 
 		if (intent.status !== 'succeeded') {
 			// Mark declined so the UI can show the failure reason on the plan card.
-			await db
-				.insert(billingTable)
-				.values({ workspaceId, status: 'declined', updatedAt: new Date() })
-				.onConflictDoUpdate({
-					target: billingTable.workspaceId,
-					set: { status: 'declined', updatedAt: new Date() },
-				})
+			// An active plan must not be demoted by a failed change-plan re-pay --
+			// the decline surfaces as the 400 response either way.
+			const [declineRow] = await db
+				.select()
+				.from(billingTable)
+				.where(eq(billingTable.workspaceId, workspaceId))
+				.limit(1)
 
-			await db.insert(events).values({
-				workspaceId,
-				actorId,
-				action: 'updated',
-				entityType: 'billing',
-				entityId: workspaceId,
-				data: { status: 'declined', paymentIntentId },
-			})
+			if (declineRow?.status !== 'active') {
+				await db
+					.insert(billingTable)
+					.values({ workspaceId, status: 'declined', updatedAt: new Date() })
+					.onConflictDoUpdate({
+						target: billingTable.workspaceId,
+						set: { status: 'declined', updatedAt: new Date() },
+					})
+
+				await db.insert(events).values({
+					workspaceId,
+					actorId,
+					action: 'updated',
+					entityType: 'billing',
+					entityId: workspaceId,
+					data: { status: 'declined', paymentIntentId },
+				})
+			}
 
 			capturePosthogEvent('billing_payment_declined', workspaceId, {
 				workspace_id: workspaceId,
@@ -379,36 +406,33 @@ export function createBillingApp(deps: BillingDeps = {}) {
 			)
 		}
 
-		// Idempotency: a previously-confirmed intent for this workspace already
-		// has an invoice row — return the current summary without double-billing.
-		const [existingInvoice] = await db
+		// Idempotency: the partial unique index on stripe_payment_intent_id
+		// serializes concurrent re-confirms of the same intent — only the first
+		// request inserts. Racing duplicates take the onConflictDoNothing no-op
+		// path, skip the side effects below, and re-read the row the winner
+		// wrote. The pre-check is gone on purpose: the index is the arbiter.
+		const [billingRow] = await db
 			.select()
-			.from(invoicesTable)
-			.where(eq(invoicesTable.stripePaymentIntentId, paymentIntentId))
+			.from(billingTable)
+			.where(eq(billingTable.workspaceId, workspaceId))
 			.limit(1)
 
-		if (!existingInvoice) {
-			const [billingRow] = await db
-				.select()
-				.from(billingTable)
-				.where(eq(billingTable.workspaceId, workspaceId))
-				.limit(1)
+		const planLabel = billingRow?.planLabel ?? FLAT_PLAN.planLabel
+		const [invoice] = await db
+			.insert(invoicesTable)
+			.values({
+				workspaceId,
+				description: `${planLabel} plan — monthly`,
+				amountCents: intent.amount,
+				currency: intent.currency,
+				stripePaymentIntentId: intent.id,
+				status: 'paid',
+				billedAt: new Date(),
+			})
+			.onConflictDoNothing()
+			.returning()
 
-			const planLabel = billingRow?.planLabel ?? FLAT_PLAN.planLabel
-			const [invoice] = await db
-				.insert(invoicesTable)
-				.values({
-					workspaceId,
-					description: `${planLabel} plan — monthly`,
-					amountCents: intent.amount,
-					currency: intent.currency,
-					stripePaymentIntentId: intent.id,
-					status: 'paid',
-					billedAt: new Date(),
-				})
-				.returning()
-			if (!invoice) throw new Error('Failed to insert invoice row')
-
+		if (invoice) {
 			await db.insert(events).values({
 				workspaceId,
 				actorId,
@@ -428,58 +452,61 @@ export function createBillingApp(deps: BillingDeps = {}) {
 				amount_cents: intent.amount,
 				currency: intent.currency,
 			})
+
+			// Activate the plan (preserving invoice email, price + plan snapshot).
+			// A Stripe Customer is created only now — after the payment succeeded —
+			// so abandoned checkouts never leave orphan customers behind.
+			// Best-effort: a customer-create failure must not block an
+			// already-confirmed payment.
+			let stripeCustomerId = billingRow?.stripeCustomerId ?? null
+			if (!stripeCustomerId) {
+				try {
+					const customer = await stripe.customers.create({
+						...(billingRow?.invoiceEmail ? { email: billingRow.invoiceEmail } : {}),
+						metadata: { workspace_id: workspaceId },
+					})
+					stripeCustomerId = customer.id
+				} catch (err) {
+					logger.error('Stripe Customer create failed', { workspaceId, error: String(err) })
+				}
+			}
+
+			const activateValues = {
+				status: 'active' as const,
+				planId: billingRow?.planId ?? FLAT_PLAN.planId,
+				planLabel: billingRow?.planLabel ?? FLAT_PLAN.planLabel,
+				priceCents: billingRow?.priceCents ?? intent.amount,
+				currency: billingRow?.currency ?? intent.currency,
+				stripePriceId: billingRow?.stripePriceId ?? null,
+				stripeCustomerId,
+				invoiceEmail: invoiceEmail ?? billingRow?.invoiceEmail ?? null,
+				updatedAt: new Date(),
+			}
+			await db
+				.insert(billingTable)
+				.values({ workspaceId, ...activateValues })
+				.onConflictDoUpdate({
+					target: billingTable.workspaceId,
+					set: activateValues,
+				})
+
+			await db.insert(events).values({
+				workspaceId,
+				actorId,
+				action: 'updated',
+				entityType: 'billing',
+				entityId: workspaceId,
+				data: { status: 'active', paymentIntentId },
+			})
 		}
 
-		// Activate the plan (preserving invoice email, price + plan snapshot). A
-		// Stripe Customer is created only now — after the payment succeeded — so
-		// abandoned checkouts never leave orphan customers behind. Best-effort: a
-		// customer-create failure must not block an already-confirmed payment.
-		const [billingRow] = await db
+		// Build the response from the post-write row so a racing duplicate reads
+		// the state the winner persisted (active plan, customer id, email).
+		const [currentRow] = await db
 			.select()
 			.from(billingTable)
 			.where(eq(billingTable.workspaceId, workspaceId))
 			.limit(1)
-
-		let stripeCustomerId = billingRow?.stripeCustomerId ?? null
-		if (!stripeCustomerId) {
-			try {
-				const customer = await stripe.customers.create({
-					...(billingRow?.invoiceEmail ? { email: billingRow.invoiceEmail } : {}),
-					metadata: { workspace_id: workspaceId },
-				})
-				stripeCustomerId = customer.id
-			} catch (err) {
-				logger.error('Stripe Customer create failed', { workspaceId, error: String(err) })
-			}
-		}
-
-		const activateValues = {
-			status: 'active' as const,
-			planId: billingRow?.planId ?? FLAT_PLAN.planId,
-			planLabel: billingRow?.planLabel ?? FLAT_PLAN.planLabel,
-			priceCents: billingRow?.priceCents ?? intent.amount,
-			currency: billingRow?.currency ?? intent.currency,
-			stripePriceId: billingRow?.stripePriceId ?? null,
-			stripeCustomerId,
-			invoiceEmail: invoiceEmail ?? billingRow?.invoiceEmail ?? null,
-			updatedAt: new Date(),
-		}
-		await db
-			.insert(billingTable)
-			.values({ workspaceId, ...activateValues })
-			.onConflictDoUpdate({
-				target: billingTable.workspaceId,
-				set: activateValues,
-			})
-
-		await db.insert(events).values({
-			workspaceId,
-			actorId,
-			action: 'updated',
-			entityType: 'billing',
-			entityId: workspaceId,
-			data: { status: 'active', paymentIntentId },
-		})
 
 		const invoiceRows = await db
 			.select()
@@ -487,14 +514,14 @@ export function createBillingApp(deps: BillingDeps = {}) {
 			.where(eq(invoicesTable.workspaceId, workspaceId))
 			.orderBy(desc(invoicesTable.billedAt))
 
-		const plan = billingRow
+		const plan = currentRow
 			? {
-					planId: billingRow.planId,
-					planLabel: billingRow.planLabel,
+					planId: currentRow.planId,
+					planLabel: currentRow.planLabel,
 					status: 'active' as const,
-					priceCents: billingRow.priceCents,
-					currency: billingRow.currency,
-					nextChargeAt: billingRow.nextChargeAt,
+					priceCents: currentRow.priceCents,
+					currency: currentRow.currency,
+					nextChargeAt: currentRow.nextChargeAt,
 				}
 			: FREE_PLAN
 
@@ -503,7 +530,7 @@ export function createBillingApp(deps: BillingDeps = {}) {
 			testMode: isTestMode(getPublishableKey()),
 			publishableKey: getPublishableKey(),
 			plan,
-			invoiceEmail: billingRow?.invoiceEmail ?? null,
+			invoiceEmail: currentRow?.invoiceEmail ?? null,
 			invoices: serializeArray(invoiceRows),
 		})
 	}) as RouteHandler<typeof completeRoute, Env>)

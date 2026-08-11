@@ -104,7 +104,11 @@ export async function resolvePlan(): Promise<ResolvedPlan> {
 			// Fall through to the flat plan below.
 		}
 	}
-	return { ...FLAT_PLAN, priceId }
+	// A configured instance must never charge the FLAT_PLAN placeholder, so an
+	// unresolvable configured price surfaces a null priceId for the route to
+	// reject checkout against. (When Stripe is unconfigured the route already
+	// 400s before resolvePlan runs — the null here is belt-and-braces.)
+	return { ...FLAT_PLAN, priceId: null }
 }
 
 /** True when the publishable key is a test-mode key (pk_test_* prefix). */

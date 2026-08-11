@@ -37,5 +37,10 @@ export function useOpenPortal(workspaceId: string) {
 		onSuccess: (data) => {
 			window.location.href = data.url
 		},
+		// A silent `manage` failure looks broken — surface why (e.g. no Stripe
+		// customer yet) instead of doing nothing.
+		onError: (err) => {
+			toast.error(err instanceof Error ? err.message : 'Could not open the Stripe portal')
+		},
 	})
 }

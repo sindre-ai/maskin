@@ -211,34 +211,36 @@ function InvoicesCard({ invoices }: { invoices: BillingInvoiceResponse[] }) {
 				<CardTitle>Invoices</CardTitle>
 			</CardHeader>
 			<CardContent>
-				<Table>
-					<TableHeader>
-						<TableRow>
-							<TableHead>Date</TableHead>
-							<TableHead>Description</TableHead>
-							<TableHead className="text-right">Amount</TableHead>
-							<TableHead>Status</TableHead>
-						</TableRow>
-					</TableHeader>
-					<TableBody>
-						{invoices.map((invoice) => (
-							<TableRow key={invoice.id}>
-								<TableCell className="whitespace-nowrap">
-									<RelativeTime date={invoice.billedAt} />
-								</TableCell>
-								<TableCell className="min-w-0 max-w-[160px] truncate sm:max-w-[300px]">
-									{invoice.description}
-								</TableCell>
-								<TableCell className="whitespace-nowrap text-right">
-									{formatAmount(invoice.amountCents, invoice.currency)}
-								</TableCell>
-								<TableCell>
-									<StatusBadge status={invoice.status} />
-								</TableCell>
+				<div className="overflow-x-auto">
+					<Table>
+						<TableHeader>
+							<TableRow>
+								<TableHead>Date</TableHead>
+								<TableHead>Description</TableHead>
+								<TableHead className="text-right">Amount</TableHead>
+								<TableHead>Status</TableHead>
 							</TableRow>
-						))}
-					</TableBody>
-				</Table>
+						</TableHeader>
+						<TableBody>
+							{invoices.map((invoice) => (
+								<TableRow key={invoice.id}>
+									<TableCell className="whitespace-nowrap">
+										<RelativeTime date={invoice.billedAt} />
+									</TableCell>
+									<TableCell className="min-w-0 max-w-[160px] truncate sm:max-w-[300px]">
+										{invoice.description}
+									</TableCell>
+									<TableCell className="whitespace-nowrap text-right">
+										{formatAmount(invoice.amountCents, invoice.currency)}
+									</TableCell>
+									<TableCell>
+										<StatusBadge status={invoice.status} />
+									</TableCell>
+								</TableRow>
+							))}
+						</TableBody>
+					</Table>
+				</div>
 			</CardContent>
 		</Card>
 	)
@@ -278,9 +280,13 @@ function CheckoutDialog({
 				onError: (err) =>
 					setServerError(err instanceof Error ? err.message : 'Could not start checkout'),
 			})
+		} else {
+			// Drop the consumed client secret so reopening starts a fresh checkout
+			// instead of remounting Elements on an already-used PaymentIntent.
+			startCheckout.reset()
 		}
 		// New PaymentIntent per open — never reuse a confirmed intent's secret.
-	}, [open, startCheckout.mutate])
+	}, [open, startCheckout.mutate, startCheckout.reset])
 
 	const stripePromise = useMemo(() => loadStripe(publishableKey), [publishableKey])
 	const clientSecret = startCheckout.data?.clientSecret ?? null
@@ -321,10 +327,10 @@ function CheckoutDialog({
 							/>
 						</Elements>
 					) : (
-						<div className="flex items-center gap-2 text-sm text-muted-foreground">
+						<output className="flex items-center gap-2 text-sm text-muted-foreground">
 							<Spinner className="size-4" />
 							Preparing secure checkout…
-						</div>
+						</output>
 					)}
 
 					<p aria-live="polite" className="text-xs text-muted-foreground">
@@ -357,36 +363,56 @@ function CheckoutForm({
 	const complete = useCompleteCheckout(workspaceId)
 	const [error, setError] = useState<string | null>(null)
 	const [paying, setPaying] = useState(false)
+	// An intent confirmPayment produced whose status was not yet 'succeeded'.
+	// Retrying confirms the *completed* payment instead of running confirmPayment
+	// again — Stripe rejects confirming the same intent twice.
+	const [confirmedIntentId, setConfirmedIntentId] = useState<string | null>(null)
 
 	const handleSubmit = async (e: React.FormEvent) => {
 		e.preventDefault()
 		if (!stripe || !elements) return
+
+		// Validate email client-side before any charge: an invalid address would
+		// fail on /complete *after* the payment succeeded, leaving the user
+		// charged with no way to finish.
+		const trimmedEmail = email.trim()
+		if (trimmedEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+			setError('Enter a valid invoice email, or leave it blank to skip invoices.')
+			return
+		}
+
 		setPaying(true)
 		setError(null)
 
-		const { error: confirmError, paymentIntent } = await stripe.confirmPayment({
-			elements,
-			clientSecret,
-			confirmParams: { return_url: window.location.href },
-			redirect: 'if_required',
-		})
-
-		if (confirmError) {
-			setError(confirmError.message ?? 'Payment failed. Please try again.')
-			setPaying(false)
-			return
-		}
-
-		if (paymentIntent?.status !== 'succeeded') {
-			setError('Payment is still processing. Check the payment status and try again.')
-			setPaying(false)
-			return
-		}
-
 		try {
+			let intentId = confirmedIntentId
+			if (!intentId) {
+				const { error: confirmError, paymentIntent } = await stripe.confirmPayment({
+					elements,
+					clientSecret,
+					confirmParams: { return_url: window.location.href },
+					redirect: 'if_required',
+				})
+
+				if (confirmError) {
+					setError(confirmError.message ?? 'Payment failed. Please try again.')
+					setPaying(false)
+					return
+				}
+
+				if (paymentIntent?.status !== 'succeeded') {
+					// Keep the intent so a retry completes it rather than charging twice.
+					setConfirmedIntentId(paymentIntent?.id ?? null)
+					setError('Payment is still processing. Check the payment status and try again.')
+					setPaying(false)
+					return
+				}
+				intentId = paymentIntent.id
+			}
+
 			await complete.mutateAsync({
-				paymentIntentId: paymentIntent.id,
-				invoiceEmail: email.trim() || undefined,
+				paymentIntentId: intentId,
+				invoiceEmail: trimmedEmail || undefined,
 			})
 			onPaid()
 		} catch (err) {
@@ -407,7 +433,7 @@ function CheckoutForm({
 				</Button>
 				<Button type="submit" disabled={!stripe || paying}>
 					{paying && <Spinner className="size-4" />}
-					Pay for {planLabel}
+					{paying ? 'Processing…' : `Pay for ${planLabel}`}
 				</Button>
 			</ResponsiveDialogFooter>
 		</form>

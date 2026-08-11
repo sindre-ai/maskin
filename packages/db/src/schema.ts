@@ -987,7 +987,12 @@ export const invoices = pgTable(
 		billedAt: timestamp('billed_at', { withTimezone: true }).notNull(),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 	},
-	(t) => [index('invoices_ws_billed_at_idx').on(t.workspaceId, t.billedAt)],
+	(t) => [
+		index('invoices_ws_billed_at_idx').on(t.workspaceId, t.billedAt),
+		uniqueIndex('invoices_stripe_payment_intent_id_key')
+			.on(t.stripePaymentIntentId)
+			.where(sql`${t.stripePaymentIntentId} IS NOT NULL`),
+	],
 )
 
 export type Billing = typeof billing.$inferSelect

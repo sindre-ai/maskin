@@ -220,7 +220,103 @@ describe('Billing Integration — Stripe checkout lifecycle', () => {
 			),
 		)
 		expect(res.status).toBe(400)
-		expect((await res.json()).error.message).toContain('does not belong')
+		// One generic message for both unknown-intent and wrong-workspace so a
+		// member cannot probe arbitrary payment-intent ids.
+		expect((await res.json()).error.message).toContain('Unable to verify')
+	})
+
+	it('serializes concurrent confirms of the same intent — exactly one invoice + one customer', async () => {
+		const stub = createStripeStub({ workspaceId })
+		const app = createTestApp(stub)
+
+		// No sequential warm-up: the race is the point. All three run against a
+		// fresh workspace; the partial unique index lets exactly one insert win.
+		const results = await Promise.all(
+			[1, 2, 3].map(() =>
+				app.request(
+					jsonRequest(
+						'POST',
+						'/api/billing/complete',
+						{ paymentIntentId: 'pi_test_1' },
+						{
+							'x-workspace-id': workspaceId,
+						},
+					),
+				),
+			),
+		)
+		for (const res of results) expect(res.status).toBe(200)
+
+		const rows = await db
+			.select()
+			.from(invoicesTable)
+			.where(eq(invoicesTable.workspaceId, workspaceId))
+		expect(rows).toHaveLength(1)
+		expect(stub.customers.create).toHaveBeenCalledTimes(1)
+		expect((await getBillingRow(workspaceId))?.status).toBe('active')
+	})
+
+	it('keeps an active plan active across checkouts — no demotion to pending', async () => {
+		const app = createTestApp(createStripeStub({ workspaceId }))
+		await app.request(
+			jsonRequest(
+				'POST',
+				'/api/billing/checkout',
+				{ invoiceEmail: 'billing@acme.dev' },
+				{ 'x-workspace-id': workspaceId },
+			),
+		)
+		await app.request(
+			jsonRequest(
+				'POST',
+				'/api/billing/complete',
+				{ paymentIntentId: 'pi_test_1' },
+				{ 'x-workspace-id': workspaceId },
+			),
+		)
+
+		const res = await app.request(
+			jsonRequest('POST', '/api/billing/checkout', undefined, {
+				'x-workspace-id': workspaceId,
+			}),
+		)
+		expect(res.status).toBe(200)
+		expect((await res.json()).plan.status).toBe('active')
+		expect((await getBillingRow(workspaceId))?.status).toBe('active')
+	})
+
+	it('does not demote an active plan when a change-plan re-pay is declined', async () => {
+		const app = createTestApp(createStripeStub({ workspaceId }))
+		await app.request(
+			jsonRequest(
+				'POST',
+				'/api/billing/checkout',
+				{ invoiceEmail: 'billing@acme.dev' },
+				{ 'x-workspace-id': workspaceId },
+			),
+		)
+		await app.request(
+			jsonRequest(
+				'POST',
+				'/api/billing/complete',
+				{ paymentIntentId: 'pi_test_1' },
+				{ 'x-workspace-id': workspaceId },
+			),
+		)
+
+		const declineApp = createTestApp(
+			createStripeStub({ workspaceId, intentStatus: 'requires_payment_method' }),
+		)
+		const res = await declineApp.request(
+			jsonRequest(
+				'POST',
+				'/api/billing/complete',
+				{ paymentIntentId: 'pi_test_2' },
+				{ 'x-workspace-id': workspaceId },
+			),
+		)
+		expect(res.status).toBe(400)
+		expect((await getBillingRow(workspaceId))?.status).toBe('active')
 	})
 
 	it('keeps the portal behind a persisted Stripe customer', async () => {
