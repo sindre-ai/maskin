@@ -18,11 +18,16 @@ import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { useBets } from '@/hooks/use-bets'
+import {
+	useUpdateUserDisplaySettings,
+	useUserDisplaySettings,
+} from '@/hooks/use-user-display-settings'
 import { useMarkRead, useUnread } from '@/hooks/use-subscriptions'
-import type { UnreadItem } from '@/lib/api'
+import type { DisplaySettingsBody, UnreadItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useNewConversationComposer } from '@/lib/new-conversation-context'
 import { useWorkspace } from '@/lib/workspace-context'
+import { CHROME_KEY } from '@maskin/shared'
 import { createFileRoute } from '@tanstack/react-router'
 import { Plus } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -39,6 +44,21 @@ function itemKey(item: UnreadItem): string {
 	return `${item.entity_type}:${item.entity_id}`
 }
 
+// The persisted display-setting field spells the card mode as `'card'`, while
+// the feed's internal FeedMode spells it `'cards'`. These two mappings keep the
+// rename in one place so the route and its tests can't drift.
+export function foryouViewModeToFeedMode(
+	persisted: DisplaySettingsBody['foryouViewMode'],
+): FeedMode {
+	return persisted === 'list' ? 'list' : 'cards'
+}
+
+export function feedModeToForyouViewMode(
+	mode: FeedMode,
+): NonNullable<DisplaySettingsBody['foryouViewMode']> {
+	return mode === 'cards' ? 'card' : 'list'
+}
+
 function ForYouRedesign() {
 	const { workspaceId } = useWorkspace()
 	const { data, isLoading } = useUnread(workspaceId, undefined, true)
@@ -48,8 +68,46 @@ function ForYouRedesign() {
 	const { open: composerOpen, setOpen: setComposerOpen } = useNewConversationComposer()
 
 	const [typeFilter, setTypeFilter] = useState<string | undefined>(undefined)
-	const [mode, setMode] = useState<FeedMode>('cards')
 	const [sort, setSort] = useState<FeedSort>('priority')
+
+	// Feed mode (cards/list) is persisted per actor under the `__chrome__`
+	// sentinel display-settings row — the same store the object-detail sidebar
+	// collapse bit uses. First paint defaults to cards, then reconciles to the
+	// persisted `foryouViewMode` once the settings query has fetched.
+	const settingsQuery = useUserDisplaySettings(workspaceId, CHROME_KEY)
+	const upsertSettings = useUpdateUserDisplaySettings(workspaceId)
+	const persistedSettings = settingsQuery.data?.settings
+	const mode: FeedMode = settingsQuery.isFetched
+		? foryouViewModeToFeedMode(persistedSettings?.foryouViewMode)
+		: 'cards'
+
+	// Radix Tabs can fire onValueChange twice for one click on an inactive tab
+	// (mousedown activation plus focus activation before the controlled value
+	// flushes) and fires even when the clicked tab is already active — both
+	// cases would re-upsert the same setting. Dedupe on the last mode written,
+	// and skip outright when the requested mode already matches what's shown.
+	const lastWrittenModeRef = useRef<FeedMode | null>(null)
+	const handleModeChange = useCallback(
+		(next: FeedMode) => {
+			if (lastWrittenModeRef.current === next) return
+			const current: FeedMode = settingsQuery.isFetched
+				? foryouViewModeToFeedMode(persistedSettings?.foryouViewMode)
+				: 'cards'
+			if (current === next) return
+			lastWrittenModeRef.current = next
+			const nextSettings: DisplaySettingsBody = {
+				...(persistedSettings ?? {}),
+				foryouViewMode: feedModeToForyouViewMode(next),
+			}
+			upsertSettings.mutate(
+				{ objectType: CHROME_KEY, settings: nextSettings },
+				// On failure the optimistic write rolls back, so clear the
+				// dedupe ref and let the user retry the same mode.
+				{ onError: () => (lastWrittenModeRef.current = null) },
+			)
+		},
+		[settingsQuery.isFetched, persistedSettings, upsertSettings],
+	)
 
 	const [pendingKeys, setPendingKeys] = useState<Set<string>>(() => new Set())
 	const settledRef = useRef(false)
@@ -241,7 +299,7 @@ function ForYouRedesign() {
 					typeCounts={typeCounts}
 					mentionCount={mentionCount}
 					mode={mode}
-					onModeChange={setMode}
+					onModeChange={handleModeChange}
 					sort={sort}
 					onSortChange={setSort}
 				/>
