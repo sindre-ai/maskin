@@ -328,8 +328,7 @@ describe('POST /api/internal/agent-servers/sessions/:id/complete', () => {
 	// did. A `false` return means the outcome could not be confirmed at all
 	// (the DB was unreachable for both the CAS update and the fallback read)
 	// — that must surface as a non-2xx so the agent-server's own res.ok check
-	// retries the report instead of treating it as delivered. See
-	// docs/runbooks/agent-session-failures-2026-08-11.md, Issue 3.
+	// retries the report instead of treating it as delivered.
 	it('returns 500 when markRemoteSessionComplete could not confirm the outcome', async () => {
 		const { app, sessionManager } = createSessionTestApp(
 			agentServerReconcileRoutes,

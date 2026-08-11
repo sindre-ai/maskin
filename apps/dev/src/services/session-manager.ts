@@ -3209,8 +3209,7 @@ export class SessionManager extends EventEmitter {
 	 * wouldn't change anything. Callers that can meaningfully retry (e.g. the
 	 * `/complete` HTTP route, which can return a non-2xx to trigger the
 	 * agent-server's own retry loop) should surface a `false` return as a
-	 * failure instead of reporting success; see
-	 * docs/runbooks/agent-session-failures-2026-08-11.md, Issue 3.
+	 * failure instead of reporting success.
 	 */
 	async markRemoteSessionComplete(
 		sessionId: string,

@@ -321,8 +321,7 @@ app.openapi(sessionCompleteRoute, async (c) => {
 	// couldn't be confirmed at all (DB unreachable for both the CAS UPDATE and
 	// the fallback read), which must surface as a non-2xx here so the
 	// agent-server's own retry logic (checking res.ok) actually retries
-	// instead of treating the report as delivered. See
-	// docs/runbooks/agent-session-failures-2026-08-11.md, Issue 3.
+	// instead of treating the report as delivered.
 	let confirmed: boolean
 	try {
 		confirmed = await sessionManager.markRemoteSessionComplete(id, exitCode)

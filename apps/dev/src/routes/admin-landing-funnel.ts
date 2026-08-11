@@ -3,7 +3,7 @@ import type { Database } from '@maskin/db'
 import { objects } from '@maskin/db/schema'
 import { and, eq, gte, sql } from 'drizzle-orm'
 import { z } from 'zod'
-import { createApiError, validationFailureHook } from '../lib/errors'
+import { createApiError, formatZodError } from '../lib/errors'
 import { LANDING_GUESTS_WORKSPACE_ID } from '../lib/landing-guests'
 import { logger } from '../lib/logger'
 
@@ -42,7 +42,7 @@ const querySchema = z.object({
 	successWindowDays: z.coerce.number().min(1).max(60).default(7),
 })
 
-const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
+const app = new OpenAPIHono<Env>()
 
 app.get('/', async (c) => {
 	const db = c.get('db')
@@ -50,6 +50,11 @@ app.get('/', async (c) => {
 	const url = new URL(c.req.url)
 	const parsed = querySchema.safeParse(Object.fromEntries(url.searchParams))
 	if (!parsed.success) {
+		logger.warn('Request validation failed', {
+			path: c.req.path,
+			method: c.req.method,
+			details: formatZodError(parsed.error),
+		})
 		return c.json(
 			createApiError(
 				'VALIDATION_ERROR',
