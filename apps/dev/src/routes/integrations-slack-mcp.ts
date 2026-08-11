@@ -121,12 +121,12 @@ app.post('/', async (c) => {
 		)
 	}
 
-	const agentLabel = `${actor.name} · in ${workspace.name}`
 	const machineIconUrl = process.env.MASKIN_MACHINE_ICON_URL?.trim() || undefined
 
 	const mcpServer = createSlackMcpServer({
 		botToken: resolved.botToken,
-		agentLabel,
+		agentTitle: actor.name ?? '',
+		workspaceName: workspace.name ?? '',
 		machineIconUrl,
 		workspaceId,
 		actorId,
