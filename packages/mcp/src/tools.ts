@@ -396,7 +396,7 @@ export const tools = {
 	},
 	create_actor: {
 		description:
-			'Create a new actor (human or agent) and optionally add them to a workspace. Returns the actor details and API key (only shown once). If workspace_id is provided, the actor is added as a member with the given role. If auto_create_workspace is true (default for humans), a new workspace is created instead.',
+			'Create a new actor (human or agent) and optionally add them to a workspace. Returns the actor details and API key (only shown once). If workspace_id is provided, the actor is added as a member with the given role. If auto_create_workspace is true (default for humans), a new, empty workspace is created instead. For agents, set tools.mcpServers and/or attach_skill_ids so the agent has its MCP servers and skills from the start. attach_skill_ids requires workspace_id — with auto_create_workspace the new workspace has no existing skills, so any attach_skill_ids passed alongside it are ignored.',
 		inputSchema: z.object({
 			type: z.enum(['human', 'agent']),
 			name: z.string().min(1),
@@ -421,9 +421,18 @@ export const tools = {
 					'Short one-liner (max 80 chars) summarizing the actor. For agents this is shown on the Agents page list and sub-page so teammates can tell agents apart at a glance.',
 				),
 			system_prompt: z.string().optional(),
-			tools: z.record(z.unknown()).optional(),
+			tools: z
+				.record(z.unknown())
+				.optional()
+				.describe(
+					'MCP server config for agents: { mcpServers: { <name>: { command, args, env } } }.',
+				),
 			llm_provider: z.string().optional(),
 			llm_config: z.record(z.unknown()).optional(),
+			attach_skill_ids: z
+				.array(z.string().uuid())
+				.optional()
+				.describe('Workspace skill IDs to attach to this actor on creation.'),
 		}),
 	},
 	update_actor: {
