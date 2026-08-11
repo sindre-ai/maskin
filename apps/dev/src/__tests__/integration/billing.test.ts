@@ -6,7 +6,7 @@ import { insertWorkspace } from '../factories'
 import { jsonRequest } from '../helpers'
 import { db, getTestActorId } from './global-setup'
 
-const { default: createBillingApp } = await import('../../routes/billing')
+const { createBillingApp } = await import('../../routes/billing')
 
 const PRO_PLAN: ResolvedPlan = {
 	planId: 'pro',
