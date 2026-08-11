@@ -38,3 +38,9 @@ export const attachSkillSchema = z.object({
 })
 
 export type AttachSkillInput = z.infer<typeof attachSkillSchema>
+
+export const attachSkillsBatchSchema = z.object({
+	workspaceSkillIds: z.array(z.string().uuid()).min(1).max(50),
+})
+
+export type AttachSkillsBatchInput = z.infer<typeof attachSkillsBatchSchema>

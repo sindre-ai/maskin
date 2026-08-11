@@ -319,6 +319,151 @@ describe('Workspace Skills Integration', () => {
 		})
 	})
 
+	describe('batch attach', () => {
+		it('attaches multiple skills to an agent in a single request', async () => {
+			const app = createSkillsApp(storage)
+			const agent = await insertActor(db, { type: 'agent', name: 'Ops Bot' })
+			await db.insert(workspaceMembers).values({
+				workspaceId,
+				actorId: agent.id,
+				role: 'member',
+			})
+
+			const skillA = await (
+				await app.request(
+					jsonRequest('POST', `/api/workspaces/${workspaceId}/skills`, {
+						name: 'deploy-prod',
+						content: SKILL_BODY,
+					}),
+				)
+			).json()
+			const skillB = await (
+				await app.request(
+					jsonRequest('POST', `/api/workspaces/${workspaceId}/skills`, {
+						name: 'rollback-prod',
+						content: SKILL_BODY,
+					}),
+				)
+			).json()
+
+			const batchRes = await app.request(
+				jsonRequest('POST', `/api/actors/${agent.id}/workspace-skills/batch`, {
+					workspaceSkillIds: [skillA.id, skillB.id],
+				}),
+			)
+			expect(batchRes.status).toBe(200)
+			const results = await batchRes.json()
+			expect(results).toHaveLength(2)
+			expect(results.every((r: { success: boolean }) => r.success)).toBe(true)
+
+			const listRes = await app.request(jsonGet(`/api/actors/${agent.id}/workspace-skills`))
+			const list = await listRes.json()
+			expect(list.map((s: { id: string }) => s.id).sort()).toEqual([skillA.id, skillB.id].sort())
+
+			// Exactly one `attached` event per skill, even though the batch runs as
+			// a single call server-side.
+			const attachEvents = await db
+				.select()
+				.from(events)
+				.where(
+					and(
+						eq(events.workspaceId, workspaceId),
+						eq(events.entityType, 'agent_skill'),
+						eq(events.action, 'attached'),
+					),
+				)
+			expect(attachEvents).toHaveLength(2)
+		})
+
+		it('is idempotent and reports partial failures without failing the whole batch', async () => {
+			const app = createSkillsApp(storage)
+			const agent = await insertActor(db, { type: 'agent', name: 'Ops Bot' })
+			await db.insert(workspaceMembers).values({
+				workspaceId,
+				actorId: agent.id,
+				role: 'member',
+			})
+
+			const skill = await (
+				await app.request(
+					jsonRequest('POST', `/api/workspaces/${workspaceId}/skills`, {
+						name: 'deploy-prod',
+						content: SKILL_BODY,
+					}),
+				)
+			).json()
+
+			// Attach once up front so the batch call re-attaches it (idempotent branch).
+			await app.request(
+				jsonRequest('POST', `/api/actors/${agent.id}/workspace-skills`, {
+					workspaceSkillId: skill.id,
+				}),
+			)
+
+			const missingSkillId = '00000000-0000-0000-0000-0000000000ff'
+			const batchRes = await app.request(
+				jsonRequest('POST', `/api/actors/${agent.id}/workspace-skills/batch`, {
+					workspaceSkillIds: [skill.id, missingSkillId],
+				}),
+			)
+
+			expect(batchRes.status).toBe(200)
+			const results = await batchRes.json()
+			expect(results).toHaveLength(2)
+			expect(results[0].success).toBe(true)
+			expect(results[0].skill.id).toBe(skill.id)
+			expect(results[1].success).toBe(false)
+			expect(results[1].workspaceSkillId).toBe(missingSkillId)
+			expect(results[1].error).toContain('not found')
+
+			// Still only one `attached` event — the pre-attach plus the idempotent
+			// batch re-attach didn't double up.
+			const attachEvents = await db
+				.select()
+				.from(events)
+				.where(
+					and(
+						eq(events.workspaceId, workspaceId),
+						eq(events.entityType, 'agent_skill'),
+						eq(events.action, 'attached'),
+					),
+				)
+			expect(attachEvents).toHaveLength(1)
+		})
+
+		it('returns a per-skill error when attaching across workspaces', async () => {
+			const app = createSkillsApp(storage)
+			const workspaceB = await insertWorkspace(db, getTestActorId())
+
+			const skill = await (
+				await app.request(
+					jsonRequest('POST', `/api/workspaces/${workspaceId}/skills`, {
+						name: 'deploy-prod',
+						content: SKILL_BODY,
+					}),
+				)
+			).json()
+
+			// Agent is only a member of workspace B, not the skill's workspace.
+			const agent = await insertActor(db, { type: 'agent', name: 'Outsider' })
+			await db.insert(workspaceMembers).values({
+				workspaceId: workspaceB.id,
+				actorId: agent.id,
+				role: 'member',
+			})
+
+			const batchRes = await app.request(
+				jsonRequest('POST', `/api/actors/${agent.id}/workspace-skills/batch`, {
+					workspaceSkillIds: [skill.id],
+				}),
+			)
+			expect(batchRes.status).toBe(200)
+			const results = await batchRes.json()
+			expect(results[0].success).toBe(false)
+			expect(results[0].error).toContain("outside the skill's workspace")
+		})
+	})
+
 	describe('delete cascade', () => {
 		it('removes matching agent_skills rows when a workspace_skills row is deleted', async () => {
 			const app = createSkillsApp(storage)

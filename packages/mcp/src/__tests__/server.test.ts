@@ -973,9 +973,10 @@ describe('tool handlers', () => {
 			expect(parsed.role).toBe('member')
 		})
 
-		it('attaches skills on creation and reports them under attached_skills', async () => {
+		it('attaches skills on creation in a single batched call', async () => {
 			const skillId1 = '660e8400-e29b-41d4-a716-446655440001'
-			const mockSkill = { id: skillId1, name: 'My Skill' }
+			const skillId2 = '660e8400-e29b-41d4-a716-446655440002'
+			const mockSkill1 = { id: skillId1, name: 'My Skill' }
 			vi.spyOn(globalThis, 'fetch')
 				.mockResolvedValueOnce({
 					ok: true,
@@ -985,7 +986,11 @@ describe('tool handlers', () => {
 				.mockResolvedValueOnce({
 					ok: true,
 					headers: new Headers(),
-					json: () => Promise.resolve(mockSkill),
+					json: () =>
+						Promise.resolve([
+							{ workspaceSkillId: skillId1, success: true, skill: mockSkill1 },
+							{ workspaceSkillId: skillId2, success: false, error: 'Workspace skill not found' },
+						]),
 				} as Response)
 
 			const handler = getHandler('create_actor')
@@ -993,20 +998,23 @@ describe('tool handlers', () => {
 				type: 'agent',
 				name: 'Bot',
 				auto_create_workspace: true,
-				attach_skill_ids: [skillId1],
+				attach_skill_ids: [skillId1, skillId2],
 			})) as { content: Array<{ text: string }> }
 
 			expect(fetch).toHaveBeenCalledTimes(2)
 			expect(fetch).toHaveBeenLastCalledWith(
-				'http://localhost:3000/api/actors/actor-new/workspace-skills',
+				'http://localhost:3000/api/actors/actor-new/workspace-skills/batch',
 				expect.objectContaining({ method: 'POST' }),
 			)
 			const parsed = JSON.parse(result.content[0].text)
-			expect(parsed.attached_skills).toEqual([mockSkill])
-			expect(parsed.partial_failure).toBeUndefined()
+			expect(parsed.attached_skills).toEqual([
+				mockSkill1,
+				{ skill_id: skillId2, error: 'Workspace skill not found' },
+			])
+			expect(parsed.partial_failure).toBe(true)
 		})
 
-		it('sets partial_failure and records error string when a skill attach fails', async () => {
+		it('marks all requested skills failed when the batch call itself throws', async () => {
 			const skillId1 = '660e8400-e29b-41d4-a716-446655440001'
 			vi.spyOn(globalThis, 'fetch')
 				.mockResolvedValueOnce({
@@ -1016,8 +1024,8 @@ describe('tool handlers', () => {
 				} as Response)
 				.mockResolvedValueOnce({
 					ok: false,
-					status: 404,
-					text: () => Promise.resolve('Not found'),
+					status: 500,
+					text: () => Promise.resolve('Internal error'),
 				} as Response)
 
 			const handler = getHandler('create_actor')
@@ -3184,7 +3192,7 @@ describe('tool handlers', () => {
 			expect(parsed).toEqual(mockActor)
 		})
 
-		it('attaches skills and wraps response under actor key', async () => {
+		it('attaches skills via one batched call and wraps response under actor key', async () => {
 			vi.spyOn(globalThis, 'fetch')
 				.mockResolvedValueOnce({
 					ok: true,
@@ -3194,7 +3202,8 @@ describe('tool handlers', () => {
 				.mockResolvedValueOnce({
 					ok: true,
 					headers: new Headers(),
-					json: () => Promise.resolve(mockSkill),
+					json: () =>
+						Promise.resolve([{ workspaceSkillId: skillId1, success: true, skill: mockSkill }]),
 				} as Response)
 
 			const handler = getHandler('update_actor')
@@ -3204,6 +3213,10 @@ describe('tool handlers', () => {
 			})) as { content: Array<{ text: string }> }
 
 			expect(fetch).toHaveBeenCalledTimes(2)
+			expect(fetch).toHaveBeenLastCalledWith(
+				`http://localhost:3000/api/actors/${actorId}/workspace-skills/batch`,
+				expect.objectContaining({ method: 'POST' }),
+			)
 			const parsed = JSON.parse(result.content[0].text)
 			expect(parsed.actor).toEqual(mockActor)
 			expect(parsed.attached_skills).toHaveLength(1)
@@ -3248,7 +3261,8 @@ describe('tool handlers', () => {
 				.mockResolvedValueOnce({
 					ok: true,
 					headers: new Headers(),
-					json: () => Promise.resolve(mockSkill),
+					json: () =>
+						Promise.resolve([{ workspaceSkillId: skillId1, success: true, skill: mockSkill }]),
 				} as Response)
 				.mockResolvedValueOnce({
 					ok: true,
@@ -3279,9 +3293,12 @@ describe('tool handlers', () => {
 					json: () => Promise.resolve(mockActor),
 				} as Response)
 				.mockResolvedValueOnce({
-					ok: false,
-					status: 404,
-					text: () => Promise.resolve('Not found'),
+					ok: true,
+					headers: new Headers(),
+					json: () =>
+						Promise.resolve([
+							{ workspaceSkillId: skillId1, success: false, error: 'Workspace skill not found' },
+						]),
 				} as Response)
 
 			const handler = getHandler('update_actor')

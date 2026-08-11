@@ -1,8 +1,8 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { events, actors, agentSkills, workspaceMembers, workspaceSkills } from '@maskin/db/schema'
-import { attachSkillSchema } from '@maskin/shared'
-import { and, eq } from 'drizzle-orm'
+import { attachSkillSchema, attachSkillsBatchSchema } from '@maskin/shared'
+import { and, eq, inArray } from 'drizzle-orm'
 import { createApiError } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { errorSchema } from '../lib/openapi-schemas'
@@ -278,6 +278,197 @@ app.openapi(attachSkillRoute, (async (c) => {
 
 	return c.json(response as z.infer<typeof attachedSkillSchema>, 200)
 }) as RouteHandler<typeof attachSkillRoute, Env>)
+
+// POST /:actorId/workspace-skills/batch — Attach multiple workspace skills in one call
+const batchAttachResultSchema = z.object({
+	workspaceSkillId: z.string().uuid(),
+	success: z.boolean(),
+	skill: attachedSkillSchema.optional(),
+	error: z.string().optional(),
+})
+
+const attachSkillsBatchRoute = createRoute({
+	method: 'post',
+	path: '/{actorId}/workspace-skills/batch',
+	tags: ['Agent Skill Attachments'],
+	summary: 'Attach multiple workspace skills to an agent in one call',
+	request: {
+		params: actorIdParam,
+		body: {
+			content: {
+				'application/json': {
+					schema: attachSkillsBatchSchema,
+				},
+			},
+		},
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: z.array(batchAttachResultSchema) } },
+			description: 'Per-skill result — check `success` on each entry rather than the HTTP status',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Actor not found',
+		},
+	},
+})
+
+app.openapi(attachSkillsBatchRoute, (async (c) => {
+	const db = c.get('db')
+	const callerActorId = c.get('actorId')
+	const { actorId } = c.req.valid('param')
+	const { workspaceSkillIds } = c.req.valid('json')
+
+	const [actor] = await db
+		.select({ id: actors.id })
+		.from(actors)
+		.where(eq(actors.id, actorId))
+		.limit(1)
+	if (!actor) {
+		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
+	}
+
+	const skills = await db
+		.select()
+		.from(workspaceSkills)
+		.where(inArray(workspaceSkills.id, workspaceSkillIds))
+	const skillById = new Map(skills.map((skill) => [skill.id, skill]))
+
+	// One bulk membership check per side instead of per-skill — the caller and the
+	// target actor can each only belong to a handful of distinct workspaces even
+	// when attaching many skills.
+	const workspaceIds = [...new Set(skills.map((skill) => skill.workspaceId))]
+	const [callerMemberships, actorMemberships] =
+		workspaceIds.length === 0
+			? [[], []]
+			: await Promise.all([
+					db
+						.select({ workspaceId: workspaceMembers.workspaceId })
+						.from(workspaceMembers)
+						.where(
+							and(
+								eq(workspaceMembers.actorId, callerActorId),
+								inArray(workspaceMembers.workspaceId, workspaceIds),
+							),
+						),
+					db
+						.select({ workspaceId: workspaceMembers.workspaceId })
+						.from(workspaceMembers)
+						.where(
+							and(
+								eq(workspaceMembers.actorId, actorId),
+								inArray(workspaceMembers.workspaceId, workspaceIds),
+							),
+						),
+				])
+	const callerWorkspaceIds = new Set(callerMemberships.map((row) => row.workspaceId))
+	const actorWorkspaceIds = new Set(actorMemberships.map((row) => row.workspaceId))
+
+	const errorById = new Map<string, string>()
+	const toAttach: (typeof skills)[number][] = []
+	for (const workspaceSkillId of workspaceSkillIds) {
+		const skill = skillById.get(workspaceSkillId)
+		if (!skill) {
+			errorById.set(workspaceSkillId, 'Workspace skill not found')
+		} else if (!callerWorkspaceIds.has(skill.workspaceId)) {
+			errorById.set(workspaceSkillId, "Not a member of the skill's workspace")
+		} else if (!actorWorkspaceIds.has(skill.workspaceId)) {
+			errorById.set(
+				workspaceSkillId,
+				"Cannot attach a skill to an actor outside the skill's workspace",
+			)
+		} else {
+			toAttach.push(skill)
+		}
+	}
+
+	// Idempotent bulk attach — ON CONFLICT DO NOTHING skips rows already attached,
+	// then a single follow-up select recovers attachedAt for both the newly
+	// inserted rows and the ones that already existed.
+	let attachedAtById = new Map<string, Date | string>()
+	let newlyInsertedIds = new Set<string>()
+	if (toAttach.length > 0) {
+		const inserted = await db
+			.insert(agentSkills)
+			.values(toAttach.map((skill) => ({ actorId, workspaceSkillId: skill.id })))
+			.onConflictDoNothing()
+			.returning()
+		newlyInsertedIds = new Set(inserted.map((row) => row.workspaceSkillId))
+
+		const attachRows = await db
+			.select({ workspaceSkillId: agentSkills.workspaceSkillId, createdAt: agentSkills.createdAt })
+			.from(agentSkills)
+			.where(
+				and(
+					eq(agentSkills.actorId, actorId),
+					inArray(
+						agentSkills.workspaceSkillId,
+						toAttach.map((skill) => skill.id),
+					),
+				),
+			)
+		attachedAtById = new Map(attachRows.map((row) => [row.workspaceSkillId, row.createdAt]))
+	}
+
+	// Only record audit events for skills that were newly attached, not idempotent
+	// re-attaches. Swallow audit-write failures rather than 500-ing the caller.
+	if (newlyInsertedIds.size > 0) {
+		try {
+			await db.insert(events).values(
+				toAttach
+					.filter((skill) => newlyInsertedIds.has(skill.id))
+					.map((skill) => ({
+						workspaceId: skill.workspaceId,
+						actorId: callerActorId,
+						action: 'attached' as const,
+						entityType: 'agent_skill' as const,
+						entityId: skill.id,
+						data: { actorId, workspaceSkillId: skill.id, skillName: skill.name },
+					})),
+			)
+		} catch (err) {
+			logger.error('Failed to record agent_skill attached audit events (batch)', {
+				actorId,
+				workspaceSkillIds: [...newlyInsertedIds],
+				error: String(err),
+			})
+		}
+	}
+
+	const results = workspaceSkillIds.map((workspaceSkillId) => {
+		const error = errorById.get(workspaceSkillId)
+		const skill = skillById.get(workspaceSkillId)
+		const attachedAt = attachedAtById.get(workspaceSkillId)
+		if (error || !skill || !attachedAt) {
+			return {
+				workspaceSkillId,
+				success: false as const,
+				error: error ?? 'Failed to attach skill',
+			}
+		}
+		return {
+			workspaceSkillId,
+			success: true as const,
+			skill: {
+				id: skill.id,
+				workspaceId: skill.workspaceId,
+				name: skill.name,
+				description: skill.description,
+				storageKey: skill.storageKey,
+				sizeBytes: skill.sizeBytes,
+				createdBy: skill.createdBy,
+				createdAt:
+					skill.createdAt instanceof Date ? skill.createdAt.toISOString() : skill.createdAt,
+				updatedAt:
+					skill.updatedAt instanceof Date ? skill.updatedAt.toISOString() : skill.updatedAt,
+				attachedAt: attachedAt instanceof Date ? attachedAt.toISOString() : attachedAt,
+			},
+		}
+	})
+
+	return c.json(results as z.infer<typeof batchAttachResultSchema>[], 200)
+}) as RouteHandler<typeof attachSkillsBatchRoute, Env>)
 
 // DELETE /:actorId/workspace-skills/:workspaceSkillId — Detach a skill
 const detachSkillRoute = createRoute({
