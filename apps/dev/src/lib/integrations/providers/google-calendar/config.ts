@@ -8,9 +8,15 @@ import type { ProviderConfig } from '../../types'
  * scope, so the consent screen shows exactly what we use and revoking write
  * access (or future audit) can dial blast-radius down to read-only.
  *
- * MCP wiring uses Google's hosted MCP server at calendarmcp.googleapis.com —
- * same pattern as Gmail. The backend `mcp.envKey` tells session-manager which
- * env var to inject the access token as; no second OAuth flow inside the container.
+ * MCP wiring uses Google's hosted MCP server at calendarmcp.googleapis.com,
+ * but agents route it through the container-local tool-invocation emitter
+ * (`/opt/maskin/mcp-tool-invocation-emitter.mjs` → `mcp-remote` → hosted MCP)
+ * so every tool call fires a PostHog `mcp_tool_invocation` — the event this bet's
+ * ship metric reads. The `mcp.command`/`args` below mirror the frontend preset
+ * in `apps/web/src/components/agents/mcp-servers.tsx` (kept in sync manually —
+ * see `.claude/rules/integrations.md`). The backend `mcp.envKey` tells
+ * session-manager which env var to inject the access token as; no second OAuth
+ * flow inside the container.
  */
 export const config: ProviderConfig = {
 	name: 'google-calendar',
@@ -43,8 +49,11 @@ export const config: ProviderConfig = {
 	},
 
 	mcp: {
-		command: 'npx',
-		args: ['-y', 'mcp-remote', 'https://calendarmcp.googleapis.com/mcp/v1'],
+		command: 'node',
+		args: [
+			'/opt/maskin/mcp-tool-invocation-emitter.mjs',
+			'https://calendarmcp.googleapis.com/mcp/v1',
+		],
 		envKey: 'GOOGLE_CALENDAR_TOKEN',
 	},
 

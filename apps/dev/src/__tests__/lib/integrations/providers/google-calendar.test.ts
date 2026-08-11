@@ -81,8 +81,10 @@ describe('Google Calendar provider config', () => {
 		}
 	})
 
-	it('wires Google Calendar to the hosted MCP endpoint via mcp-remote', () => {
+	it('routes Google Calendar through the tool-invocation emitter so mcp_tool_invocation fires per call', () => {
 		expect(config.mcp).toBeDefined()
+		expect(config.mcp?.command).toBe('node')
+		expect(config.mcp?.args?.[0]).toBe('/opt/maskin/mcp-tool-invocation-emitter.mjs')
 		expect(config.mcp?.args).toContain('https://calendarmcp.googleapis.com/mcp/v1')
 		expect(config.mcp?.envKey).toBe('GOOGLE_CALENDAR_TOKEN')
 	})
