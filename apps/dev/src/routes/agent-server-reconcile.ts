@@ -162,6 +162,11 @@ const logIngestRoute = createRoute({
 			description: 'Invalid bearer token',
 			content: { 'application/json': { schema: errorSchema } },
 		},
+		500: {
+			description:
+				'Failed to persist the batch — the caller should retry the same lines rather than treat them as delivered',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 		503: {
 			description: 'Endpoint not configured',
 			content: { 'application/json': { schema: errorSchema } },
@@ -233,7 +238,18 @@ app.openapi(logIngestRoute, async (c) => {
 	try {
 		await sessionManager.appendRemoteSessionLogs(id, validLogs)
 	} catch (err) {
+		// Must not report success here: previously this caught-and-continued to
+		// a 200 with `accepted: validLogs.length` regardless of whether the
+		// batch actually made it into session_logs — the agent-server's
+		// flushLogs() then treated the batch as delivered and discarded it,
+		// even though a DB failure partway through appendRemoteSessionLogs's
+		// per-line insert loop can leave some or all lines unpersisted. This is
+		// exactly the kind of silent log loss this PR exists to fix. A 500
+		// routes into flushLogs()'s existing retry loop instead — some already-
+		// persisted lines from this batch may be re-inserted on retry, which is
+		// an acceptable duplication tradeoff against permanent, invisible loss.
 		logger.error('Failed to append remote session logs', { sessionId: id, error: String(err) })
+		return c.json(createApiError(ApiErrorCode.INTERNAL_ERROR, 'Failed to persist log batch'), 500)
 	}
 
 	return c.json({ accepted: validLogs.length }, 200)

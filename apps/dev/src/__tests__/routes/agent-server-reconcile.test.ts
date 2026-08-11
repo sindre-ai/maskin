@@ -253,6 +253,35 @@ describe('POST /api/internal/agent-servers/sessions/:id/logs', () => {
 		)
 	})
 
+	it('returns 500 instead of a false-success 200 when persisting the batch fails', async () => {
+		// Regression coverage: this route used to catch appendRemoteSessionLogs
+		// errors and still return 200 with `accepted: validLogs.length` — the
+		// agent-server's flushLogs() reads that as full success and discards
+		// the batch forever, even though nothing (or only part of it) actually
+		// reached session_logs. A DB failure must surface as a non-2xx so the
+		// client's existing retry logic re-sends the batch instead of silently
+		// losing it.
+		const { app, sessionManager } = createSessionTestApp(
+			agentServerReconcileRoutes,
+			'/api/internal/agent-servers',
+		)
+		sessionManager.appendRemoteSessionLogs = vi.fn().mockRejectedValue(new Error('db down'))
+		const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {})
+
+		const logs = [{ stream: 'stdout', content: 'a normal line' }]
+		const res = await app.request(
+			jsonRequest('POST', logsPath(), { logs }, { Authorization: `Bearer ${SECRET}` }),
+		)
+
+		expect(res.status).toBe(500)
+		const body = await res.json()
+		expect(body.error.code).toBe('INTERNAL_ERROR')
+		expect(errorSpy).toHaveBeenCalledWith(
+			'Failed to append remote session logs',
+			expect.objectContaining({ sessionId, error: expect.stringContaining('db down') }),
+		)
+	})
+
 	it('returns 401 when the Authorization header is missing', async () => {
 		const { app } = createSessionTestApp(agentServerReconcileRoutes, '/api/internal/agent-servers')
 

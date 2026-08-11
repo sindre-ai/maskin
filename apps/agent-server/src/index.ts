@@ -253,6 +253,21 @@ async function monitorSession(
 				if (!res.ok) {
 					throw new Error(`Maskin log ingest responded with ${res.status}`)
 				}
+				// A 200 can still mean a partial batch: the server rejects any
+				// individual oversized line rather than failing the whole batch
+				// (see MAX_LOG_LINE_BYTES on the server route). That's not
+				// retryable — the line's already truncated client-side to well
+				// under the server cap — but it must not pass silently, or the
+				// gap is exactly as invisible as the bug this batching logic was
+				// written to fix.
+				const body = (await res.json().catch(() => null)) as { accepted?: number } | null
+				if (body && typeof body.accepted === 'number' && body.accepted < batch.length) {
+					logger.warn('Maskin log ingest accepted fewer lines than sent', {
+						sessionId,
+						sent: batch.length,
+						accepted: body.accepted,
+					})
+				}
 				return
 			} catch (err) {
 				logger.warn('failed to POST logs to Maskin, will retry', {
