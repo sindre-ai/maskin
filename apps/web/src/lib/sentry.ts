@@ -18,8 +18,11 @@ export function initSentry(): void {
 			sendDefaultPii: false,
 		})
 		initialized = true
-	} catch {
-		// Error reporting must never break the UI.
+	} catch (err) {
+		// Error reporting must never break the UI, but a broken config should
+		// still be discoverable — otherwise a bad DSN silently kills 100% of
+		// frontend crash visibility with no signal anywhere.
+		console.error('[sentry] init failed — error reporting is disabled', err)
 	}
 }
 
@@ -27,7 +30,12 @@ export function captureException(error: unknown): void {
 	if (!initialized) return
 	try {
 		Sentry.captureException(error)
-	} catch {
-		// Error reporting must never break the UI.
+	} catch (err) {
+		console.error('[sentry] captureException failed', err)
 	}
+}
+
+// Test-only — lets the sentry test suite simulate the post-init state.
+export function __setInitializedForTesting(value: boolean): void {
+	initialized = value
 }

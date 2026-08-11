@@ -140,10 +140,17 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 					column_name?: string
 			  }
 			| undefined
-		Sentry.captureException(err, {
-			tags: { path: c.req.path, method: c.req.method },
-			extra: { pgCode: cause?.code, pgTable: cause?.table_name },
-		})
+		// Guarded — this is the last line of defense before a response goes out.
+		// A throwing Sentry call must never suppress the actual error response
+		// or the diagnostic log line below.
+		try {
+			Sentry.captureException(err, {
+				tags: { path: c.req.path, method: c.req.method },
+				extra: { pgCode: cause?.code, pgTable: cause?.table_name },
+			})
+		} catch (sentryErr) {
+			console.error('[sentry] captureException failed', sentryErr)
+		}
 		logger.error(
 			'Unhandled error',
 			{

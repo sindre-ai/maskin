@@ -27,11 +27,24 @@ function log(level: LogLevel, msg: string, context?: Record<string, unknown>, op
 	const output = JSON.stringify(entry)
 	if (level === 'error') {
 		console.error(output)
-		if (!opts?.skipSentry) Sentry.captureMessage(msg, { level: 'error', extra: context })
+		// Guarded so a Sentry SDK failure can never turn a logging call into an
+		// unhandled throw/rejection for the caller (logger.error is routinely
+		// called from fire-and-forget .catch() callbacks).
+		if (!opts?.skipSentry) {
+			try {
+				Sentry.captureMessage(msg, { level: 'error', extra: context })
+			} catch (sentryErr) {
+				console.error('[sentry] captureMessage failed', sentryErr)
+			}
+		}
 	} else {
 		console.log(output)
 		if (level === 'warn') {
-			Sentry.addBreadcrumb({ category: 'log', level: 'warning', message: msg, data: context })
+			try {
+				Sentry.addBreadcrumb({ category: 'log', level: 'warning', message: msg, data: context })
+			} catch (sentryErr) {
+				console.error('[sentry] addBreadcrumb failed', sentryErr)
+			}
 		}
 	}
 }

@@ -19,10 +19,23 @@ function emit(level: Level, msg: string, ctx?: Record<string, unknown>, opts?: E
 	} else {
 		process.stdout.write(`${line}\n`)
 	}
+	// Guarded so a Sentry SDK failure can never turn a logging call into an
+	// unhandled throw/rejection for the caller (logger.error is routinely
+	// called from fire-and-forget .catch() callbacks).
 	if (level === 'error') {
-		if (!opts?.skipSentry) Sentry.captureMessage(msg, { level: 'error', extra: ctx })
+		if (!opts?.skipSentry) {
+			try {
+				Sentry.captureMessage(msg, { level: 'error', extra: ctx })
+			} catch (sentryErr) {
+				process.stderr.write(`[sentry] captureMessage failed: ${String(sentryErr)}\n`)
+			}
+		}
 	} else if (level === 'warn') {
-		Sentry.addBreadcrumb({ category: 'log', level: 'warning', message: msg, data: ctx })
+		try {
+			Sentry.addBreadcrumb({ category: 'log', level: 'warning', message: msg, data: ctx })
+		} catch (sentryErr) {
+			process.stderr.write(`[sentry] addBreadcrumb failed: ${String(sentryErr)}\n`)
+		}
 	}
 }
 

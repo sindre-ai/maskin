@@ -381,7 +381,14 @@ async function monitorSession(
 export function buildApp(deps: AppDeps): Hono {
 	const app = new Hono()
 	app.onError((err, c) => {
-		Sentry.captureException(err, { tags: { path: c.req.path, method: c.req.method } })
+		// Guarded — this is the last line of defense before a response goes out.
+		// A throwing Sentry call must never suppress the actual error response
+		// or the diagnostic log line below.
+		try {
+			Sentry.captureException(err, { tags: { path: c.req.path, method: c.req.method } })
+		} catch (sentryErr) {
+			process.stderr.write(`[sentry] captureException failed: ${String(sentryErr)}\n`)
+		}
 		logger.error(
 			'unhandled error',
 			{ path: c.req.path, method: c.req.method, error: String(err) },
