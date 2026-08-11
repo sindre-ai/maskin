@@ -93,7 +93,8 @@
 			"cache": false
 		},
 		"@maskin/mobile#build": {
-			"outputs": []
+			"outputs": [],
+			"dependsOn": ["^build"]
 		},
 		"dev": {
 			"dependsOn": ["^build"],
