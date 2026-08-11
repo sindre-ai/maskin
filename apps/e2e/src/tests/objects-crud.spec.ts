@@ -30,7 +30,10 @@ test.describe('Objects CRUD', () => {
 		await expect(page.getByText('API Created Bet')).toBeVisible({ timeout: 10000 })
 	})
 
-	test('can update an object title', async ({ page, account }) => {
+	test('renders the object title as a static heading on the rebuilt detail surface', async ({
+		page,
+		account,
+	}) => {
 		const obj = await account.api.createObject(account.workspaceId, {
 			type: 'bet',
 			title: 'Original Title',
@@ -38,15 +41,15 @@ test.describe('Objects CRUD', () => {
 		})
 
 		await page.goto(`/${account.workspaceId}/objects/${obj.id}`)
-		await expect(page.getByPlaceholder('Untitled')).toBeVisible({ timeout: 10000 })
+		await expect(page.getByRole('heading', { level: 1, name: 'Original Title' })).toBeVisible({
+			timeout: 10000,
+		})
 
-		// The title textbox is always editable — clear and type new value
-		const titleInput = page.getByPlaceholder('Untitled')
-		await titleInput.fill('Updated Title')
-		await titleInput.press('Tab')
-
-		// Verify the title was updated
-		await expect(page.getByPlaceholder('Untitled')).toHaveValue('Updated Title')
+		// The rebuilt surface (bet/object-detail, T1 static shell) renders the
+		// title read-only — the legacy edit-in-place textarea is gone. Title
+		// editing is out of scope for this surface; nothing else on the page may
+		// masquerade as the title editor.
+		await expect(page.getByPlaceholder('Untitled')).toHaveCount(0)
 	})
 
 	test('can delete an object', async ({ page, account }) => {
