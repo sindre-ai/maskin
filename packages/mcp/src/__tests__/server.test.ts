@@ -972,6 +972,67 @@ describe('tool handlers', () => {
 			expect(parsed.workspace_id).toBe('ws-123')
 			expect(parsed.role).toBe('member')
 		})
+
+		it('attaches skills on creation and reports them under attached_skills', async () => {
+			const skillId1 = '660e8400-e29b-41d4-a716-446655440001'
+			const mockSkill = { id: skillId1, name: 'My Skill' }
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve({ id: 'actor-new' }),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve(mockSkill),
+				} as Response)
+
+			const handler = getHandler('create_actor')
+			const result = (await handler({
+				type: 'agent',
+				name: 'Bot',
+				auto_create_workspace: true,
+				attach_skill_ids: [skillId1],
+			})) as { content: Array<{ text: string }> }
+
+			expect(fetch).toHaveBeenCalledTimes(2)
+			expect(fetch).toHaveBeenLastCalledWith(
+				'http://localhost:3000/api/actors/actor-new/workspace-skills',
+				expect.objectContaining({ method: 'POST' }),
+			)
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.attached_skills).toEqual([mockSkill])
+			expect(parsed.partial_failure).toBeUndefined()
+		})
+
+		it('sets partial_failure and records error string when a skill attach fails', async () => {
+			const skillId1 = '660e8400-e29b-41d4-a716-446655440001'
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve({ id: 'actor-new' }),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: false,
+					status: 404,
+					text: () => Promise.resolve('Not found'),
+				} as Response)
+
+			const handler = getHandler('create_actor')
+			const result = (await handler({
+				type: 'agent',
+				name: 'Bot',
+				auto_create_workspace: true,
+				attach_skill_ids: [skillId1],
+			})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.partial_failure).toBe(true)
+			expect(parsed.attached_skills[0].skill_id).toBe(skillId1)
+			expect(typeof parsed.attached_skills[0].error).toBe('string')
+		})
 	})
 
 	describe('get_objects handler (partial failure)', () => {

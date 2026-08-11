@@ -2355,7 +2355,7 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.actors, csp: CSP } },
 		},
 		async (args) => {
-			const { workspace_id, role, ...createBody } = args
+			const { workspace_id, role, attach_skill_ids, ...createBody } = args
 			const result = (await apiCall(config, 'POST', '/api/actors', createBody, {
 				skipAuth: true,
 				skipWorkspace: true,
@@ -2373,6 +2373,35 @@ export function createMcpServer(config: McpConfig) {
 					;(result as Record<string, unknown>).role = role ?? 'member'
 				} catch (error) {
 					;(result as Record<string, unknown>).workspace_membership_error = String(error)
+				}
+			}
+
+			// Attach skills after the actor exists — allSettled so one bad ID doesn't
+			// discard the actor or the skills that did attach.
+			const skillIds = attach_skill_ids ?? []
+			if (skillIds.length > 0 && result.id) {
+				const skillSettled = await Promise.allSettled(
+					skillIds.map((skillId) =>
+						apiCall(
+							config,
+							'POST',
+							`/api/actors/${result.id}/workspace-skills`,
+							{ workspaceSkillId: skillId },
+							{ skipWorkspace: true },
+						),
+					),
+				)
+				result.attached_skills = skillSettled.map((s, i) =>
+					s.status === 'fulfilled'
+						? s.value
+						: {
+								// biome-ignore lint/style/noNonNullAssertion: index matches skillIds
+								skill_id: skillIds[i]!,
+								error: s.reason instanceof Error ? s.reason.message : String(s.reason),
+							},
+				)
+				if (skillSettled.some((s) => s.status === 'rejected')) {
+					result.partial_failure = true
 				}
 			}
 
