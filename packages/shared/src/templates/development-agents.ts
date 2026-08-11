@@ -11,7 +11,7 @@
  */
 
 import { KNOWLEDGE_NUDGES } from '../prompts'
-import { SIGNUP_CAPTURE_SOURCE } from '../schemas/signup-capture'
+import { SIGNUP_CAPTURE_SOURCE, SIGNUP_RESEARCH_SOURCE } from '../schemas/signup-capture'
 
 export interface SeedSkill {
 	/** Skill name — lowercase letters, numbers, and hyphens only. */
@@ -2315,29 +2315,89 @@ export const DEVELOPMENT_TRIGGERS: SeedTrigger[] = [
 		},
 		targetActor$id: 'strategist',
 		enabled: true,
-		actionPrompt: `A new signup-capture knowledge object just landed in this workspace. The triggering event carries the full object — read it for the user's name, organization, and role under \`data.metadata\`.
+		actionPrompt: `A new signup-capture knowledge object just landed in this workspace. The triggering event carries the full object — read it for the user's name, organization, and role under \`data.metadata\`. The workspace-owner actor id is \`data.created_by\`; the signup-capture object id is \`data.id\`.
 
-Your job: produce 1–3 knowledge objects that capture what the workspace should know about this user's organization to give the rest of the agents real context.
+Your job: act as the orchestrator of a deep-research pass that produces the situational layers a bet-drafting agent actually needs — a structured org profile, a competitor set with CI fields, and a light user profile — then write each finding as a \`knowledge\` object with citations and \`about → actor\` so it's addressable cross-workspace. The bet measures usefulness on \`metadata.source = '${SIGNUP_RESEARCH_SOURCE}'\` — every object you write must carry that tag.
 
-Do the work in this order:
+## Phase 1 — Plan and dedup
 
-1. Read the triggering event. The object id is in \`data.id\`; the structured user context is in \`data.metadata.name\`, \`data.metadata.organization\`, and \`data.metadata.role\`.
-2. Before writing anything, call \`search_objects\` for the organization name. If a knowledge object covering the same ground already exists, extend or supersede it rather than writing a duplicate.
-3. Research the organization on the public web — what they do, who they sell to, the stack they use, named competitors, anything that would shape how the Coach or Driver helps this user. Stop when you have enough to fill 1–3 short, useful knowledge objects. Useful, not exhaustive.
-4. For each finding, create a knowledge object with \`create_objects\`:
-   - \`type: 'knowledge'\`
-   - \`status: 'validated'\`
-   - \`title\`: short, specific (e.g. "Acme — focus on B2B onboarding analytics")
-   - \`content\`: short markdown with sources cited inline
-   - \`metadata.source: 'signup_research'\` — this tag is the ship-metric the bet measures usefulness on; do not skip it
-   - \`metadata.confidence\`: 'high' | 'medium' | 'low' — be honest
-   - \`metadata.tags\`: include 'context:company' so downstream readers find it
-5. Link each new knowledge object back to the source signup-capture object via an \`about\` relationship (\`create_relationships\` with \`type: 'about'\`, source = your new knowledge id, target = \`data.id\`).
-6. Based on your research, suggest one bet: create a bet object (\`type: 'bet'\`, \`status: 'signal'\`) with a clear title and a description grounded in what you found — the most impactful thing this workspace could focus on first. Link it to the signup-capture object via an \`about\` relationship (source = bet id, target = \`data.id\`).
-7. Post a comment on the bet using \`create_comment\`, @mentioning the workspace owner (actor id is \`data.created_by\`) to surface the suggestion. Then stop.
+1. Read the triggering event: name in \`data.metadata.name\`, organization in \`data.metadata.organization\`, role in \`data.metadata.role\`.
+2. Call \`search_objects\` for the organization name and the user's name. If a recent \`${SIGNUP_RESEARCH_SOURCE}\` object covers the same ground, extend or supersede it — do not write a duplicate.
+3. Outline a one-line plan per subagent (what each will look for and the riskiest unknown). Keep it in working memory — do not persist as a knowledge object.
 
-If web research turns up nothing usable (very small or unindexed organization), write one knowledge object naming that fact so downstream agents stop searching, then stop.
+## Phase 2 — Dispatch three parallel subagents
 
-The 24h ship-metric clock starts at the trigger fire — finish in one session.`,
+Use the Task tool to run the org, competitor, and user subagents **in parallel** (one Task call per subagent, sent together). Each subagent returns its findings as structured data — none of them write to the workspace. Isolate failures: if one subagent returns nothing usable, record that fact as a low-confidence knowledge object in Phase 4 and proceed with the others. Do not retry the whole run.
+
+Each subagent must load the \`deep-research\` skill before searching and prefer primary sources (the company's own site, filings, official docs, the person's own writing) over SEO aggregators. Every claim it returns carries a \`source\` URL; multi-source agreement raises confidence.
+
+### Subagent A — Organisation (highest priority)
+
+Produce a structured org profile covering:
+- **Firmographics** — industry, geo/HQ, founded, headcount + recent trend, business model (B2B / B2C / B2B2C, PLG / sales-led).
+- **Stage & funding** — last round, total raised, lead investors, recency. Funding within 90 days is a timing trigger; flag it.
+- **Product & portfolio** — what they sell, pricing/packaging read directly off the actual pricing page (not third-party blogs).
+- **NSM candidates** — infer the likely value metric (e.g. "active workspaces", "messages routed/month"). PLG vs sales-led shapes which.
+- **Tech stack** — technographics each dated; single-source detections are low-confidence.
+- **Timing triggers** — recent funding, leadership hires, new-market entry, hiring-velocity spikes, product launches.
+- **Current-challenge hypothesis** — synthesised from the above. One paragraph, falsifiable.
+
+### Subagent B — Competitors
+
+Identify 3–7 competitors (agentic output, not a single enrichment field). For each, populate the same fixed CI schema:
+- positioning / messaging
+- pricing & packaging
+- funding & stage
+- recent launches (last ~12 months)
+- target personas
+- strengths & weaknesses (from reviews, analyst commentary, public sentiment)
+
+Require multi-signal corroboration. Do not over-react to a single review or datapoint.
+
+### Subagent C — User (keep light)
+
+Role / seniority, tenure, prior companies, public writing — just enough to personalise tone and confirm who owns the bet. Do **not** build an identity dossier — identity enrichment is below the situational-signal relevance threshold ([${'05e18858'}](https://maskin.io/fe944fe6-7b45-478c-afc7-b889cea63c08/objects/05e18858-1a0c-4c52-8f00-00f3b39ca59d)).
+
+## Phase 3 — Citation / verification pass
+
+Run **before** writing anything to the workspace. For every claim returned by the three subagents:
+1. Confirm a primary or independent source. Multi-source agreement → \`confidence: 'high'\`. Single source → \`confidence: 'medium'\` (or \`'low'\` for SEO-only / pattern-guesses).
+2. Contradicted or unverifiable claims do **not** get silently dropped — keep them with \`confidence: 'low'\` and a note. This is the rule from the brief.
+3. Prefer primary over secondary sources. If the only source is an SEO aggregator, mark low-confidence and say so.
+
+## Phase 4 — Write the structured knowledge objects
+
+For each verified finding, call \`create_objects\` with:
+- \`type: 'knowledge'\`
+- \`status: 'validated'\`
+- \`title\`: short, specific (e.g. "Acme — Series B closed 2026-05, $24M led by Foo Capital").
+- \`content\`: short markdown stating the claim, then a "Sources" list with the URLs you cited.
+- \`metadata.source: '${SIGNUP_RESEARCH_SOURCE}'\` — load-bearing ship-metric tag, never skip.
+- \`metadata.subject_kind\`: one of \`'organization'\` | \`'competitor'\` | \`'workspace_owner'\` so downstream readers can filter.
+- \`metadata.category\`: one of \`'firmographics'\` | \`'funding'\` | \`'product'\` | \`'nsm'\` | \`'tech_stack'\` | \`'timing_trigger'\` | \`'current_challenge'\` | \`'competitive_landscape'\` | \`'user_profile'\`.
+- \`metadata.confidence\`: \`'high'\` | \`'medium'\` | \`'low'\` — set by the citation pass.
+- \`metadata.sources\`: array of \`{ url, title }\` for the citations on this claim.
+- \`metadata.tags\`: include \`'context:company'\` for org/competitor findings, \`'context:user'\` for the user-light profile. Add \`'competitor:<name>'\` to each competitor object.
+
+Then create the \`about\` edge with \`create_relationships\`:
+- Every object — owner-targeted user facts, org facts, and competitor facts — gets an \`about → actor\` edge (\`type: 'about'\`, source = your new knowledge id, target = \`data.created_by\`). The actor link is the cross-workspace access path per the ratified data-home decision ([${'c060e6ab'}](https://maskin.io/fe944fe6-7b45-478c-afc7-b889cea63c08/objects/c060e6ab-fdcd-4672-b4d1-acc135c4f516)).
+- Org and competitor facts additionally get an \`about → workspace\` edge (target = the workspace id from \`data.workspace_id\`) so workspace-wide queries surface them without walking through the actor.
+- For each competitor object, also create a \`competes_with\` relationship from the competitor knowledge → an organisation knowledge you wrote in the same pass (so the competitive landscape is traversable as a graph).
+
+Do **not** link back to the signup-capture object — \`about → actor\` is the canonical path; the signup-capture object is just the trigger source.
+
+If a subagent failed or returned nothing usable (very small / unindexed org, no public footprint), write **one** knowledge object naming that fact (\`metadata.subject_kind: 'organization'\`, \`metadata.confidence: 'low'\`, content explains the gap) so downstream agents stop searching. Do not skip the write — a recorded gap is itself signal.
+
+## Phase 5 — Suggest a first bet
+
+Based on the verified findings (especially the current-challenge hypothesis and any timing triggers), create one signal-status bet:
+- \`type: 'bet'\`, \`status: 'signal'\`.
+- Title and description grounded in concrete findings from Phase 4 — reference the relevant knowledge objects by id in the description so the bet's evidence is traceable.
+- \`about → actor\` (source = bet id, target = \`data.created_by\`).
+- \`informs\` edges from each knowledge object that grounded a claim in the bet description.
+
+Then post one \`create_comment\` on the bet, @mentioning the workspace owner (\`data.created_by\`), surfacing the suggestion in one short paragraph. Stop.
+
+The 24h ship-metric clock starts at the trigger fire — finish in one session. Async / non-blocking: the user is already in the product while you run; never block on confirmation.`,
 	},
 ]
