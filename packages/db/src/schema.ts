@@ -937,3 +937,60 @@ export const sessionDispatchAttempts = pgTable(
 
 export type SessionDispatchAttempt = typeof sessionDispatchAttempts.$inferSelect
 export type NewSessionDispatchAttempt = typeof sessionDispatchAttempts.$inferInsert
+
+// ── Billing ────────────────────────────────────────────────────────────────
+//
+// One row per workspace. `status` mirrors the lifecycle of the Stripe
+// PaymentIntent that activated the plan: 'inactive' (never subscribed),
+// 'pending' (checkout started, not yet confirmed), 'active' (payment
+// succeeded, set by POST /api/billing/complete which verifies intent status
+// server-side), 'declined' (the last checkout failed). `priceCents` and the
+// display fields are snapshots resolved from the Stripe Price at checkout
+// time — the Stripe Price object is the source of truth for amount, never a
+// hardcoded number. Card data never persists here (or anywhere Maskin-owned).
+
+export const billing = pgTable(
+	'billing',
+	{
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.primaryKey(),
+		planId: text('plan_id').notNull().default('free'),
+		planLabel: text('plan_label'),
+		status: text('status').notNull().default('inactive'),
+		priceCents: integer('price_cents'),
+		currency: text('currency').notNull().default('usd'),
+		invoiceEmail: text('invoice_email'),
+		stripeCustomerId: text('stripe_customer_id'),
+		stripePriceId: text('stripe_price_id'),
+		nextChargeAt: timestamp('next_charge_at', { withTimezone: true }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		check('billing_status_check', sql`${t.status} IN ('inactive','pending','active','declined')`),
+	],
+)
+
+export const invoices = pgTable(
+	'invoices',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		description: text('description').notNull(),
+		amountCents: integer('amount_cents').notNull(),
+		currency: text('currency').notNull().default('usd'),
+		stripePaymentIntentId: text('stripe_payment_intent_id'),
+		status: text('status').notNull().default('paid'),
+		billedAt: timestamp('billed_at', { withTimezone: true }).notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [index('invoices_ws_billed_at_idx').on(t.workspaceId, t.billedAt)],
+)
+
+export type Billing = typeof billing.$inferSelect
+export type NewBilling = typeof billing.$inferInsert
+export type Invoice = typeof invoices.$inferSelect
+export type NewInvoice = typeof invoices.$inferInsert

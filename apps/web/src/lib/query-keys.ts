@@ -100,6 +100,10 @@ export const queryKeys = {
 	briefing: {
 		current: (workspaceId: string) => ['briefing', workspaceId] as const,
 	},
+	billing: {
+		all: (workspaceId: string) => ['billing', workspaceId] as const,
+		summary: (workspaceId: string) => ['billing', workspaceId, 'summary'] as const,
+	},
 	subscriptions: {
 		subscribers: (entityType: string, entityId: string) =>
 			['subscriptions', 'subscribers', entityType, entityId] as const,
