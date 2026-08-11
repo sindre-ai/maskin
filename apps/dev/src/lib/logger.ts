@@ -1,3 +1,5 @@
+import * as Sentry from '@sentry/node'
+
 type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 
 interface LogEntry {
@@ -17,8 +19,12 @@ function log(level: LogLevel, msg: string, context?: Record<string, unknown>) {
 	const output = JSON.stringify(entry)
 	if (level === 'error') {
 		console.error(output)
+		Sentry.captureMessage(msg, { level: 'error', extra: context })
 	} else {
 		console.log(output)
+		if (level === 'warn') {
+			Sentry.addBreadcrumb({ category: 'log', level: 'warning', message: msg, data: context })
+		}
 	}
 }
 

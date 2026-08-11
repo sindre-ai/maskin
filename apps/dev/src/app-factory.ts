@@ -11,6 +11,7 @@ import { cors } from 'hono/cors'
 import { logger as honoLogger } from 'hono/logger'
 import { ApiErrorCode, createApiError, formatZodError, mapStatusToCode } from './lib/errors'
 import { logger } from './lib/logger'
+import { Sentry } from './lib/sentry'
 import { createIdempotencyMiddleware } from './middleware/idempotency'
 import actorsRoutes from './routes/actors'
 import adminLandingFunnelRoutes from './routes/admin-landing-funnel'
@@ -139,6 +140,10 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 					column_name?: string
 			  }
 			| undefined
+		Sentry.captureException(err, {
+			tags: { path: c.req.path, method: c.req.method },
+			extra: { pgCode: cause?.code, pgTable: cause?.table_name },
+		})
 		logger.error('Unhandled error', {
 			error: String(err),
 			cause: cause?.message ?? (cause ? String(cause) : undefined),

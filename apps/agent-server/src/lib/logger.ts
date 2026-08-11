@@ -1,3 +1,5 @@
+import * as Sentry from '@sentry/node'
+
 type Level = 'debug' | 'info' | 'warn' | 'error'
 
 function emit(level: Level, msg: string, ctx?: Record<string, unknown>): void {
@@ -8,6 +10,11 @@ function emit(level: Level, msg: string, ctx?: Record<string, unknown>): void {
 		process.stderr.write(`${line}\n`)
 	} else {
 		process.stdout.write(`${line}\n`)
+	}
+	if (level === 'error') {
+		Sentry.captureMessage(msg, { level: 'error', extra: ctx })
+	} else if (level === 'warn') {
+		Sentry.addBreadcrumb({ category: 'log', level: 'warning', message: msg, data: ctx })
 	}
 }
 
