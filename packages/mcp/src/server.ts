@@ -1133,6 +1133,58 @@ function pickCollectionResourceUri(_payload: HeroCardPayload): string {
 	return UI_RESOURCES.heroCard
 }
 
+// Response shape of POST /api/actors/:id/workspace-skills/batch.
+interface BatchAttachResult {
+	workspaceSkillId: string
+	success: boolean
+	skill?: unknown
+	error?: string
+}
+
+// Must match the server-side cap in attachSkillsBatchSchema (packages/shared/src/schemas/workspace-skills.ts).
+const ATTACH_SKILLS_BATCH_CHUNK_SIZE = 50
+
+// Attaches skillIds to actorId, chunked into batched HTTP calls, and normalizes
+// the per-skill outcomes into the flat list shape both create_actor and
+// update_actor return under `attached_skills`. Duplicate IDs and chunks over 50
+// entries would otherwise 400 the whole request server-side (attachSkillsBatchSchema
+// rejects both), so dedupe and chunk here rather than pass them through raw.
+async function attachSkillsBatch(
+	config: McpConfig,
+	actorId: string,
+	skillIds: string[],
+): Promise<unknown[]> {
+	if (skillIds.length === 0) return []
+	const uniqueIds = [...new Set(skillIds)]
+	const chunks: string[][] = []
+	for (let i = 0; i < uniqueIds.length; i += ATTACH_SKILLS_BATCH_CHUNK_SIZE) {
+		chunks.push(uniqueIds.slice(i, i + ATTACH_SKILLS_BATCH_CHUNK_SIZE))
+	}
+
+	const chunkResults = await Promise.all(
+		chunks.map(async (chunk) => {
+			try {
+				const rows = (await apiCall(
+					config,
+					'POST',
+					`/api/actors/${actorId}/workspace-skills/batch`,
+					{ workspaceSkillIds: chunk },
+					{ skipWorkspace: true },
+				)) as BatchAttachResult[]
+				return rows.map((row) =>
+					row.success ? row.skill : { skill_id: row.workspaceSkillId, error: row.error },
+				)
+			} catch (error) {
+				console.error('[MCP] attachSkillsBatch chunk failed:', error)
+				const message = error instanceof Error ? error.message : String(error)
+				return chunk.map((skillId) => ({ skill_id: skillId, error: message }))
+			}
+		}),
+	)
+
+	return chunkResults.flat()
+}
+
 interface RawActor {
 	id: string
 	type?: string | null
@@ -2355,7 +2407,7 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.actors, csp: CSP } },
 		},
 		async (args) => {
-			const { workspace_id, role, ...createBody } = args
+			const { workspace_id, role, attach_skill_ids, ...createBody } = args
 			const result = (await apiCall(config, 'POST', '/api/actors', createBody, {
 				skipAuth: true,
 				skipWorkspace: true,
@@ -2373,6 +2425,29 @@ export function createMcpServer(config: McpConfig) {
 					;(result as Record<string, unknown>).role = role ?? 'member'
 				} catch (error) {
 					;(result as Record<string, unknown>).workspace_membership_error = String(error)
+				}
+			}
+
+			// Attach skills after the actor exists — routed through attachSkillsBatch(),
+			// which chunks into ≤50-id calls, so a bad ID doesn't discard the actor or
+			// the skills that did attach.
+			const skillIds = attach_skill_ids ?? []
+			if (skillIds.length > 0 && result.id) {
+				if (createBody.auto_create_workspace) {
+					// auto_create_workspace mints a brand-new, empty workspace and makes
+					// the actor a member of THAT workspace, not of `targetWorkspace` — the
+					// requested skills live in some other, pre-existing workspace the actor
+					// was never added to, so every attach would fail with "outside the
+					// skill's workspace". Skip the call and say why once, instead of
+					// returning a wall of per-skill errors that all restate the same cause.
+					result.skills_not_attached_reason =
+						'attach_skill_ids was ignored: auto_create_workspace creates a brand-new workspace with no existing skills. Pass workspace_id (an existing workspace) instead of auto_create_workspace to attach skills.'
+				} else {
+					const attached = await attachSkillsBatch(config, result.id, skillIds)
+					result.attached_skills = attached
+					if (attached.some((entry) => (entry as { error?: string })?.error)) {
+						result.partial_failure = true
+					}
 				}
 			}
 
@@ -2588,37 +2663,29 @@ export function createMcpServer(config: McpConfig) {
 				}
 			}
 
-			// Skill ops run concurrently but with allSettled so a single failure doesn't
-			// discard the results of operations that already succeeded.
-			const skillSettled = await Promise.allSettled([
-				...attachIds.map((skillId) =>
-					apiCall(
-						config,
-						'POST',
-						`/api/actors/${id}/workspace-skills`,
-						{ workspaceSkillId: skillId },
-						{ skipWorkspace: true },
+			// Attach runs through attachSkillsBatch() (chunked into ≤50-id calls); detach
+			// has no batch endpoint yet so it stays per-skill with allSettled — either way
+			// a single failure doesn't discard the results of operations that already
+			// succeeded.
+			const [attachEntries, detachSettled] = await Promise.all([
+				attachSkillsBatch(config, id, attachIds),
+				Promise.allSettled(
+					detachIds.map((skillId) =>
+						apiCall(config, 'DELETE', `/api/actors/${id}/workspace-skills/${skillId}`, undefined, {
+							skipWorkspace: true,
+						}),
 					),
-				),
-				...detachIds.map((skillId) =>
-					apiCall(config, 'DELETE', `/api/actors/${id}/workspace-skills/${skillId}`, undefined, {
-						skipWorkspace: true,
-					}),
 				),
 			])
 
-			const toErrorEntry = (reason: unknown, skillId: string) => ({
-				skill_id: skillId,
-				error: reason instanceof Error ? reason.message : String(reason),
-			})
-			const toAttachEntry = (s: PromiseSettledResult<unknown>, skillId: string) =>
-				s.status === 'fulfilled' ? s.value : toErrorEntry(s.reason, skillId)
 			const toDetachEntry = (s: PromiseSettledResult<unknown>, skillId: string) =>
 				s.status === 'fulfilled'
 					? { skill_id: skillId, deleted: true }
-					: toErrorEntry(s.reason, skillId)
+					: {
+							skill_id: skillId,
+							error: s.reason instanceof Error ? s.reason.message : String(s.reason),
+						}
 
-			const attachCount = attachIds.length
 			const wsId2 = (args as { workspace_id?: string }).workspace_id ?? config.defaultWorkspaceId
 			const actorId = (actor as { id?: string }).id
 			const actorWithUrl =
@@ -2627,18 +2694,18 @@ export function createMcpServer(config: McpConfig) {
 					: actor
 			const output: Record<string, unknown> = { actor: actorWithUrl }
 			if (attachIds.length) {
-				output.attached_skills = skillSettled
-					.slice(0, attachCount)
-					// biome-ignore lint/style/noNonNullAssertion: slice bounds match attachIds
-					.map((s, i) => toAttachEntry(s, attachIds[i]!))
+				output.attached_skills = attachEntries
 			}
 			if (detachIds.length) {
-				output.detached_skills = skillSettled
-					.slice(attachCount)
-					// biome-ignore lint/style/noNonNullAssertion: slice bounds match detachIds
-					.map((s, i) => toDetachEntry(s, detachIds[i]!))
+				output.detached_skills = detachSettled.map((s, i) =>
+					// biome-ignore lint/style/noNonNullAssertion: index matches detachIds
+					toDetachEntry(s, detachIds[i]!),
+				)
 			}
-			if (skillSettled.some((s) => s.status === 'rejected')) {
+			if (
+				attachEntries.some((entry) => (entry as { error?: string })?.error) ||
+				detachSettled.some((s) => s.status === 'rejected')
+			) {
 				output.partial_failure = true
 			}
 
