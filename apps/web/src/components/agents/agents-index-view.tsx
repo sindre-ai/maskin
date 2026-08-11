@@ -187,10 +187,12 @@ export function AgentsIndexView({
 
 	const groups = useMemo(() => {
 		if (groupBy === 'status') {
-			const buckets: StatusBucket[] =
-				activeStatuses.length > 0
-					? (activeStatuses as StatusBucket[])
-					: ['working', 'idle', 'failed']
+			// Filter the active statuses against the known buckets instead of
+			// casting: a stale persisted filter can't crash the group render
+			// via an undefined STATUS_GROUP_META entry.
+			const buckets: StatusBucket[] = [...AGENT_STATUSES].filter((b) =>
+				activeStatuses.length === 0 ? true : activeStatuses.includes(b),
+			)
 			return buckets.map((bucket) => {
 				const meta = STATUS_GROUP_META[bucket]
 				return {

@@ -1,6 +1,6 @@
 import { trackAgentSessionStarted } from '@/lib/analytics'
 import { api } from '@/lib/api'
-import type { CreateSessionInput } from '@/lib/api'
+import type { CreateSessionInput, SessionResponse } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
@@ -17,7 +17,24 @@ export function useSession(id: string | null, workspaceId: string) {
 export function useWorkspaceSessions(workspaceId: string) {
 	return useQuery({
 		queryKey: queryKeys.sessions.all(workspaceId),
-		queryFn: () => api.sessions.list(workspaceId, { limit: '100' }),
+		queryFn: async () => {
+			// The API clamps a single page at 100 (sessionQuerySchema), but
+			// per-agent session counts and latest-session status on the Agents
+			// index are load-bearing — page until a short page so busy
+			// workspaces are not silently under-counted.
+			const pageSize = 100
+			const all: SessionResponse[] = []
+			let offset = 0
+			for (;;) {
+				const page = await api.sessions.list(workspaceId, {
+					limit: String(pageSize),
+					offset: String(offset),
+				})
+				all.push(...page)
+				if (page.length < pageSize) return all
+				offset += page.length
+			}
+		},
 		enabled: !!workspaceId,
 	})
 }

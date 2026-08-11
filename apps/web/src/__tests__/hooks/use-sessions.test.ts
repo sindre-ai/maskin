@@ -109,8 +109,29 @@ describe('useWorkspaceSessions', () => {
 
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
 		expect(result.current.data).toEqual(mockSessions)
-		expect(api.sessions.list).toHaveBeenCalledWith(workspaceId, { limit: '100' })
+		expect(api.sessions.list).toHaveBeenCalledWith(workspaceId, { limit: '100', offset: '0' })
 	})
+
+	it('pages past the 100-row API cap until a short page', async () => {
+		const fullPage = Array.from({ length: 100 }, (_, i) => buildSession({ id: `s-${i}` }))
+		const tail = [buildSession({ id: 's-100' })]
+		vi.mocked(api.sessions.list).mockResolvedValueOnce(fullPage).mockResolvedValueOnce(tail)
+
+		const { result } = renderHook(() => useWorkspaceSessions(workspaceId), {
+			wrapper: TestWrapper,
+		})
+
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(result.current.data).toHaveLength(101)
+		expect(api.sessions.list).toHaveBeenNthCalledWith(1, workspaceId, {
+			limit: '100',
+			offset: '0',
+		})
+		expect(api.sessions.list).toHaveBeenNthCalledWith(2, workspaceId, {
+			limit: '100',
+			offset: '100',
+		})
+	}, 10_000)
 
 	it('exposes error when API rejects', async () => {
 		vi.mocked(api.sessions.list).mockRejectedValue(new Error('Server error'))

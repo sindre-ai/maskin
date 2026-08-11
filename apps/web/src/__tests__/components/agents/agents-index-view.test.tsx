@@ -110,6 +110,23 @@ async function flushHydrateAndWriteThrough() {
 	})
 }
 
+/** Picks `option` from the picker row labelled `label`, opening the panel first if needed. */
+async function pickFromDisplayPanel(
+	user: ReturnType<typeof userEvent.setup>,
+	label: string,
+	option: string,
+) {
+	// The panel stays open between picks — only open it if it isn't up already.
+	if (!screen.queryByText(label)) {
+		await user.click(screen.getByRole('button', { name: 'Display' }))
+	}
+	const row = screen.getByText(label)
+	// The picker row's first button is the dropdown trigger — the ordering row
+	// also carries an adjacent asc/desc toggle, so don't assume a single one.
+	await user.click(within(row.parentElement as HTMLElement).getAllByRole('button')[0])
+	await user.click(screen.getByRole('menuitem', { name: option }))
+}
+
 function resetMockState() {
 	mockState.__dsUpsertCalls = 0
 	mockState.__dsLastUpsertBody = null
@@ -191,6 +208,44 @@ describe('AgentsIndexView', () => {
 
 			await user.click(screen.getByRole('button', { name: /reset/i }))
 			expect(screen.getByRole('link', { name: 'Ada' })).toBeInTheDocument()
+		})
+
+		it('groups by kind through the Display menu and back to a single list', async () => {
+			const user = userEvent.setup()
+			mount([agentAda(), agentBrian(), agentCy()], [brianRunningSession()])
+
+			await user.click(screen.getByRole('button', { name: 'Display' }))
+			await pickFromDisplayPanel(user, 'Group by', 'Kind')
+
+			// Ada → 'Researcher', Brian → 'Architect', Cy → 'Reviewer'
+			expect(screen.getByRole('heading', { name: 'Researcher' })).toBeInTheDocument()
+			expect(screen.getByRole('heading', { name: 'Architect' })).toBeInTheDocument()
+			expect(screen.getByRole('heading', { name: 'Reviewer' })).toBeInTheDocument()
+
+			await pickFromDisplayPanel(user, 'Group by', 'None')
+			expect(screen.getByRole('link', { name: 'Ada' })).toBeInTheDocument()
+			expect(screen.queryByRole('heading', { name: 'Researcher' })).not.toBeInTheDocument()
+			expect(screen.getAllByRole('listitem')).toHaveLength(3)
+		})
+
+		it('re-sorts rows by session count asc and desc through the Display menu', async () => {
+			const user = userEvent.setup()
+			mount([agentAda(), agentBrian()], [brianRunningSession()])
+
+			// Ada has 0 sessions, Brian has 1 — first make the ordering
+			// visible by collapsing grouping, then sort by Sessions.
+			await user.click(screen.getByRole('button', { name: 'Display' }))
+			await pickFromDisplayPanel(user, 'Group by', 'None')
+			await pickFromDisplayPanel(user, 'Sort by', 'Sessions')
+
+			const links = screen.getAllByRole('link')
+			expect(links[0]).toHaveTextContent('Ada')
+			expect(links[1]).toHaveTextContent('Brian')
+
+			await user.click(screen.getByRole('button', { name: 'Ascending' }))
+			const linksDesc = screen.getAllByRole('link')
+			expect(linksDesc[0]).toHaveTextContent('Brian')
+			expect(linksDesc[1]).toHaveTextContent('Ada')
 		})
 	})
 
