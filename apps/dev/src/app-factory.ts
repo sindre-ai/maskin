@@ -144,19 +144,23 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 			tags: { path: c.req.path, method: c.req.method },
 			extra: { pgCode: cause?.code, pgTable: cause?.table_name },
 		})
-		logger.error('Unhandled error', {
-			error: String(err),
-			cause: cause?.message ?? (cause ? String(cause) : undefined),
-			pgCode: cause?.code,
-			pgDetail: cause?.detail,
-			pgHint: cause?.hint,
-			pgPosition: cause?.position,
-			pgWhere: cause?.where,
-			pgSchema: cause?.schema_name,
-			pgTable: cause?.table_name,
-			pgColumn: cause?.column_name,
-			stack: err.stack,
-		})
+		logger.error(
+			'Unhandled error',
+			{
+				error: String(err),
+				cause: cause?.message ?? (cause ? String(cause) : undefined),
+				pgCode: cause?.code,
+				pgDetail: cause?.detail,
+				pgHint: cause?.hint,
+				pgPosition: cause?.position,
+				pgWhere: cause?.where,
+				pgSchema: cause?.schema_name,
+				pgTable: cause?.table_name,
+				pgColumn: cause?.column_name,
+				stack: err.stack,
+			},
+			{ skipSentry: true },
+		)
 		return c.json(createApiError(ApiErrorCode.INTERNAL_ERROR, 'An unexpected error occurred'), 500)
 	})
 
@@ -207,6 +211,18 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		if (/^\/api\/integrations\/[^/]+\/callback$/.test(path)) return next()
 
 		return auth(c, next)
+	})
+
+	// Tag Sentry events with who hit them — actor/workspace UUIDs only, no
+	// email or IP (see Sentry's `userInfo` data-collection option, which we
+	// deliberately don't enable). Runs after `auth` so actorId is set when
+	// present; unauthenticated routes just skip tagging.
+	app.use('/api/*', async (c, next) => {
+		const actorId = c.get('actorId')
+		if (actorId) Sentry.setUser({ id: actorId })
+		const workspaceId = c.req.header('X-Workspace-Id')
+		if (workspaceId) Sentry.setTag('workspaceId', workspaceId)
+		await next()
 	})
 
 	app.use('/api/*', createIdempotencyMiddleware(db))

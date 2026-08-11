@@ -382,7 +382,11 @@ export function buildApp(deps: AppDeps): Hono {
 	const app = new Hono()
 	app.onError((err, c) => {
 		Sentry.captureException(err, { tags: { path: c.req.path, method: c.req.method } })
-		logger.error('unhandled error', { path: c.req.path, method: c.req.method, error: String(err) })
+		logger.error(
+			'unhandled error',
+			{ path: c.req.path, method: c.req.method, error: String(err) },
+			{ skipSentry: true },
+		)
 		return c.json({ error: 'internal_error' }, 500)
 	})
 	const inputQueue = new InputQueue()
