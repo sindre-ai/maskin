@@ -186,6 +186,60 @@ degrades over time versus being broken from the very first real connection attem
 `allow@host:tcp:<port>` rules; exact trigger condition still OPEN. Finding B — ROOT CAUSE CONFIRMED via direct
 reproduction, fix is straightforward, not yet implemented.
 
+**Follow-up (2026-08-11, later still) — Finding B fixed and verified; Finding A narrowed further with a clean
+minimal repro that rules out microsandbox's core relay mechanism entirely.**
+
+*Finding B fix, implemented and verified.* `docker/browser-sidecar/entrypoint.sh` now checks whether something
+is already listening on `127.0.0.1:9222` (via `socat /dev/null TCP:127.0.0.1:9222`) before attempting to start
+Xvfb/Chromium/socat; if so, it blocks (`exec sleep infinity`) instead of racing the already-running instance.
+Verified locally: built the image, started one instance, confirmed CDP reachable, then manually re-invoked the
+entrypoint against the same running container (`docker exec <container> /entrypoint.sh`) — the second invocation
+correctly detected the running instance, printed the guard message, and blocked; the original instance's CDP
+port remained reachable throughout, confirming the crash this fix prevents no longer occurs.
+
+*Finding A — built a minimal, Maskin-code-free reproduction of the exact production mechanism, directly on
+95.217.231.223, using nothing but raw `msb` CLI commands and generic `alpine` images (no Maskin orchestration
+code involved at all):*
+1. A generic `alpine` sandbox (`repro-test2`) with a loop listener (`nc -l -p 9222`) standing in for the
+   browser sidecar.
+2. `msb ssh serve repro-test2 --host 127.0.0.1 --port <sshPort>` + `ssh -N -L 127.0.0.1:<relayPort>:127.0.0.1:9222
+   -p <sshPort> -i <the real production relay key> ...` — the exact command construction `startSshRelay()` uses,
+   reproduced by hand.
+3. A second generic `alpine` sandbox (`repro-client`) with `--net-rule allow@host:tcp:<relayPort>`, standing in
+   for the session VM, running `nc host.microsandbox.internal <relayPort>` — the exact connection pattern the
+   session's Playwright MCP uses.
+
+**Result: it worked cleanly on the first attempt, no reset, full response received.** This is a clean, decisive
+negative result — the raw `allow@host:tcp:<port>` mechanism, the SSH-relay-tunnel construction, and guest-to-guest
+communication via the host relay **all work correctly** when reproduced exactly as Maskin's own code constructs
+them, with no Maskin orchestration code in the loop at all. This rules out a generic bug in microsandbox's core
+proxy/relay implementation as the explanation.
+
+**This redirects Finding A's open question**: since the mechanism itself is sound in isolation, the real trigger
+must be something specific to actual production conditions that this minimal repro didn't include — most likely
+candidates, roughly in order of suspicion:
+- **Concurrent load**: while running this repro, `msb list` showed 6+ real production sessions and their browser
+  sidecars actively running on the same box at the same time (confirmed timestamps 12:25–12:32 UTC alongside the
+  repro). The minimal repro was the only thing running when it succeeded. Worth testing whether failures
+  correlate with how many concurrent `browserRequired` sessions are active at once (CPU steal, msb's own
+  internal connection/resource limits, or contention in the relay/tunnel machinery under real concurrency).
+- **Real Chromium/socat behavior under actual use**: the repro's stand-in listener was a trivial `nc` loop
+  handling one plain request at a time — not real Chromium serving genuine CDP traffic (WebSocket upgrade,
+  concurrent connections via socat's `fork` option, actual page-load-driven traffic volume). The failure could be
+  specific to Chromium/socat's behavior under real load that a toy listener doesn't exercise.
+- **The main session's own resource usage**: the real session VM is busy running the full Claude Code CLI loop
+  (heavy CPU/memory/I/O) while making the CDP connection attempt, unlike the idle `repro-client` sandbox.
+
+**Suggested next step**: since a clean isolated repro didn't reproduce the bug, the next productive step is
+reproducing it *with realistic concurrent load* — e.g., run several simultaneous `browserRequired` diagnostic
+sessions (matching the earlier live repro pattern) and see if the failure rate changes with concurrency, or
+instrument `provisionBrowserSidecar`/`startSshRelay` with timing/resource metrics during a real failure to
+directly observe what's different about the failing condition.
+
+**Status:** Finding B — FIXED and verified (built, tested double-invocation collision, confirmed resolved).
+Finding A — microsandbox's core relay mechanism CLEARED via clean minimal repro; real trigger condition still
+OPEN, now narrowed to concurrency/real-load conditions rather than the relay mechanism itself.
+
 ---
 
 ## Issue 3 — Inconsistent exit code between msb's own log and Maskin's stored session record
