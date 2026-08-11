@@ -98,6 +98,7 @@ import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import type { StorageProvider } from '@maskin/storage'
 import { getProvider } from '../../lib/integrations/registry'
+import { logger } from '../../lib/logger'
 import { AgentStorageManager } from '../../services/agent-storage'
 import { SessionManager, mergeLaunchRouteConfig } from '../../services/session-manager'
 import { buildIntegration, buildSession } from '../factories'
@@ -1826,6 +1827,34 @@ describe('SessionManager', () => {
 			expect(calls.inserts.length).toBe(initialInsertCount)
 		})
 
+		// Regression coverage for docs/runbooks/agent-session-failures-2026-08-11.md,
+		// Issue 3's suggested fix: the CAS-miss no-op used to be completely
+		// silent (no log at any level), which is exactly why the null-vs-1 exit
+		// code mismatch for session 4d1f3c8b required host log spelunking to
+		// diagnose instead of being visible from app logs alone.
+		it('logs a warning with the dropped exit code and current session state when the CAS update matches no row', async () => {
+			const session = buildSession({ status: 'completed', result: { exit_code: 0 } })
+			mockResults.update = [] // .returning() → no row: UPDATE matched nothing (already terminal)
+			// 1st select: markRemoteSessionComplete's own usage extraction (reads
+			// session_logs) — empty means "no usage found". 2nd select: the new
+			// best-effort lookup used only to enrich the dropped-signal log line.
+			mockResults.selectQueue = [[], [session]]
+			const warnSpy = vi.spyOn(logger, 'warn')
+
+			await manager.markRemoteSessionComplete(session.id, 1)
+
+			expect(warnSpy).toHaveBeenCalledWith(
+				'Completion signal dropped — session already terminal or not found',
+				expect.objectContaining({
+					sessionId: session.id,
+					droppedExitCode: 1,
+					droppedStoppedByUser: false,
+					currentStatus: 'completed',
+					currentResult: { exit_code: 0 },
+				}),
+			)
+		})
+
 		it('inserts exactly one session_failed event when the CAS update matches a row (nonzero exit code)', async () => {
 			const session = buildSession({ status: 'running' })
 			mockResults.updateQueue = [[session], []]
@@ -1870,11 +1899,37 @@ describe('SessionManager', () => {
 			]
 			// The fallback lookup after CAS retries are exhausted finds nothing
 			// (unconfigured select defaults to []) — nothing left to clean up.
+			// This is a legitimate terminal outcome (not a DB failure a caller
+			// could usefully retry), so it still resolves `true`.
 			const initialInsertCount = calls.inserts.length
 
-			await expect(
-				manager.markRemoteSessionComplete('some-session-id', 137),
-			).resolves.toBeUndefined()
+			await expect(manager.markRemoteSessionComplete('some-session-id', 137)).resolves.toBe(true)
+
+			expect(calls.inserts.length).toBe(initialInsertCount)
+		})
+
+		// Regression coverage: the route handler for POST
+		// /sessions/:id/complete (apps/dev/src/routes/agent-server-reconcile.ts)
+		// used to report `{ ok: true }` unconditionally, even when this method
+		// gave up without ever confirming the row's state — silently defeating
+		// the agent-server's own retry-on-failure logic. `false` is reserved
+		// for exactly this "we have no idea what happened" case, distinct from
+		// every other early-return above (already terminal / not found /
+		// resolved by a concurrent call), which are legitimate no-ops and
+		// still resolve `true`.
+		it('gives up and returns false when the fallback lookup after CAS retries also throws', async () => {
+			mockResults.updateErrorQueue = [
+				new Error('connection reset'),
+				new Error('connection reset'),
+				new Error('connection reset'),
+			]
+			// 1st select: usage extraction (empty = no-op). 2nd select: the
+			// fallback lookup itself throws — the DB is still unreachable.
+			mockResults.selectQueue = [[]]
+			mockResults.selectErrorQueue = [undefined, new Error('connection reset')]
+			const initialInsertCount = calls.inserts.length
+
+			await expect(manager.markRemoteSessionComplete('some-session-id', 137)).resolves.toBe(false)
 
 			expect(calls.inserts.length).toBe(initialInsertCount)
 		})

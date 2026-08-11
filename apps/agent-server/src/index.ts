@@ -125,6 +125,36 @@ export type AppDeps = {
 const LOG_FLUSH_INTERVAL_MS = 2_000
 const LOG_FLUSH_MAX_LINES = 100
 
+// Comfortably under the log-ingest route's per-line cap (currently 1MB, see
+// MAX_LOG_LINE_BYTES in apps/dev/src/routes/agent-server-reconcile.ts) so a
+// truncated line is never itself rejected. Coding-agent CLIs routinely emit a
+// single NDJSON stdout line with no embedded newline (a full tool result,
+// large diff, base64 image) that can reach hundreds of KB or more — batching
+// that raw line into a POST used to fail server-side validation for the
+// ENTIRE batch (up to 100 lines), silently destroying visibility into the
+// rest of the session's output. See
+// docs/runbooks/agent-session-failures-2026-08-11.md, Issue 1.
+export const MAX_LOG_LINE_BYTES = 60_000
+
+/**
+ * Truncate a single log line to at most `maxBytes` (measured in UTF-8 bytes,
+ * not JS string length, so multi-byte content like emoji or non-Latin text
+ * isn't undercounted) and append a visible marker noting how much was cut.
+ * Lines within the limit are returned unchanged.
+ */
+export function truncateLogLine(line: string, maxBytes: number = MAX_LOG_LINE_BYTES): string {
+	const bytes = new TextEncoder().encode(line)
+	if (bytes.length <= maxBytes) return line
+
+	const hasTrailingNewline = line.endsWith('\n')
+	const truncatedBytes = bytes.subarray(0, maxBytes)
+	// Lenient decode: a byte-boundary cut can land mid-codepoint. `fatal: false`
+	// drops the partial trailing sequence instead of throwing.
+	const truncated = new TextDecoder('utf-8', { fatal: false }).decode(truncatedBytes)
+	const droppedBytes = bytes.length - maxBytes
+	return `${truncated}...[truncated ${droppedBytes} bytes]${hasTrailingNewline ? '\n' : ''}`
+}
+
 // Delay before stopping a microVM after it signals completion. `msb stop` tears
 // down the VM's (smoltcp) network, so we must let the {ok:true} response flush
 // back to agent-run.sh's report_complete curl FIRST. Stopping synchronously
@@ -225,6 +255,21 @@ async function monitorSession(
 				if (!res.ok) {
 					throw new Error(`Maskin log ingest responded with ${res.status}`)
 				}
+				// A 200 can still mean a partial batch: the server rejects any
+				// individual oversized line rather than failing the whole batch
+				// (see MAX_LOG_LINE_BYTES on the server route). That's not
+				// retryable — the line's already truncated client-side to well
+				// under the server cap — but it must not pass silently, or the
+				// gap is exactly as invisible as the bug this batching logic was
+				// written to fix.
+				const body = (await res.json().catch(() => null)) as { accepted?: number } | null
+				if (body && typeof body.accepted === 'number' && body.accepted < batch.length) {
+					logger.warn('Maskin log ingest accepted fewer lines than sent', {
+						sessionId,
+						sent: batch.length,
+						accepted: body.accepted,
+					})
+				}
 				return
 			} catch (err) {
 				logger.warn('failed to POST logs to Maskin, will retry', {
@@ -262,7 +307,7 @@ async function monitorSession(
 	// deliver lines into this session's log buffer.
 	if (sessionLogRouters && maskinBaseUrl) {
 		sessionLogRouters.set(sessionId, (line: string) => {
-			logBuffer.push({ stream: 'stdout', content: line })
+			logBuffer.push({ stream: 'stdout', content: truncateLogLine(line) })
 			if (logBuffer.length >= LOG_FLUSH_MAX_LINES) {
 				void flushLogs()
 			} else {
@@ -317,14 +362,27 @@ async function monitorSession(
 		let reported = false
 		for (let attempt = 1; attempt <= REPORT_RETRIES; attempt++) {
 			try {
-				await fetch(`${maskinBaseUrl}/api/internal/agent-servers/sessions/${sessionId}/complete`, {
-					method: 'POST',
-					headers: {
-						'Content-Type': 'application/json',
-						Authorization: `Bearer ${agentServerSecret}`,
+				const res = await fetch(
+					`${maskinBaseUrl}/api/internal/agent-servers/sessions/${sessionId}/complete`,
+					{
+						method: 'POST',
+						headers: {
+							'Content-Type': 'application/json',
+							Authorization: `Bearer ${agentServerSecret}`,
+						},
+						body: JSON.stringify({ exitCode }),
 					},
-					body: JSON.stringify({ exitCode }),
-				})
+				)
+				if (!res.ok) {
+					// A non-2xx response (e.g. a transient 5xx, or apps/dev rejecting the
+					// body) must not be logged as a success — it means Maskin's session
+					// row was never updated with this exit code. Throwing here routes
+					// into the same catch/retry path as a network-level failure below.
+					const text = await res.text().catch(() => '<unreadable body>')
+					throw new Error(
+						`Maskin completion endpoint responded with ${res.status}: ${text.slice(0, 200)}`,
+					)
+				}
 				logger.info('session completion reported to Maskin', { sessionId, exitCode })
 				reported = true
 				break

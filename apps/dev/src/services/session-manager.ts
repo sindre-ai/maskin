@@ -19,7 +19,7 @@ import {
 	sessions,
 	workspaces,
 } from '@maskin/db/schema'
-import { githubOwnerLoginToEnvKey } from '@maskin/shared'
+import { type SessionResult, githubOwnerLoginToEnvKey } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import {
 	and,
@@ -761,7 +761,31 @@ export class SessionManager extends EventEmitter {
 			// gone (e.g. after a redeploy), so it can never call back to report
 			// completion. Treat this explicit, successful stop as authoritative
 			// instead of waiting on a callback that might never arrive.
-			await this.markRemoteSessionComplete(sessionId, null)
+			//
+			// This write is provisional, not final: the agent-server's own
+			// monitorSession loop is usually still alive (a stop request doesn't
+			// kill that process) and will independently POST a genuine
+			// /sessions/:id/complete report a few seconds later with a real exit
+			// code (see FORCED_STOP_EXIT_CODE in apps/agent-server/src/index.ts).
+			// stoppedByUser marks this row so that later report is allowed to
+			// overwrite it instead of silently losing the race — see
+			// markRemoteSessionComplete's CAS condition below.
+			//
+			// A `false` return means the provisional write couldn't even be
+			// confirmed (DB unreachable) — this method's own caller already
+			// treats the sandbox-level stop as successful (the remote kill
+			// already happened), so there's nothing to retry or rethrow here;
+			// just make the gap visible in logs instead of swallowing it
+			// silently, since the genuine /complete report may also race a
+			// down DB and there'd otherwise be no trace of either write.
+			const confirmed = await this.markRemoteSessionComplete(sessionId, null, {
+				stoppedByUser: true,
+			})
+			if (!confirmed) {
+				logger.warn('Provisional stop write could not be confirmed (DB unreachable)', {
+					sessionId,
+				})
+			}
 			return
 		}
 
@@ -3146,8 +3170,57 @@ export class SessionManager extends EventEmitter {
 	private static readonly CAS_UPDATE_RETRIES = 3
 	private static readonly CAS_UPDATE_RETRY_DELAY_MS = 150
 
-	async markRemoteSessionComplete(sessionId: string, exitCode: number | null): Promise<void> {
+	/**
+	 * True if a terminal-or-transitional row is still eligible to be
+	 * overwritten by an incoming completion signal.
+	 *
+	 * Normally a terminal row is final — but `stopSession()` writes a
+	 * *provisional* terminal row (marked `result.stopped_by_user`) before the
+	 * agent-server's own async monitor has had a chance to report the real
+	 * exit code. Without this escape hatch, that later genuine report always
+	 * loses the CAS (0 rows match) and is silently dropped — the exact bug
+	 * this method exists to fix (see docs/runbooks/agent-session-failures-2026-08-11.md,
+	 * Issue 3). A genuine report (`stoppedByUser === false`) is allowed to
+	 * overwrite such a row; a stop request is never allowed to clobber an
+	 * already-terminal row (genuine or provisional).
+	 */
+	private static canOverwriteTerminalRow(
+		existing: Pick<typeof sessions.$inferSelect, 'status' | 'result'>,
+		stoppedByUser: boolean,
+	): boolean {
+		if (
+			!(SessionManager.TERMINAL_OR_TRANSITIONAL_STATUSES as readonly string[]).includes(
+				existing.status,
+			)
+		) {
+			return true
+		}
+		if (stoppedByUser) return false
+		return existing.result?.stopped_by_user === true
+	}
+
+	/**
+	 * Returns `false` only when the outcome could not be confirmed at all —
+	 * the CAS UPDATE failed after retries AND the fallback read-only lookup
+	 * also failed, so we have no idea what state the row is in. Every other
+	 * path (row updated, session not found, already resolved by a concurrent
+	 * call) is a legitimate terminal outcome and returns `true`, even though
+	 * no write happened in the "already resolved" cases — retrying those
+	 * wouldn't change anything. Callers that can meaningfully retry (e.g. the
+	 * `/complete` HTTP route, which can return a non-2xx to trigger the
+	 * agent-server's own retry loop) should surface a `false` return as a
+	 * failure instead of reporting success.
+	 */
+	async markRemoteSessionComplete(
+		sessionId: string,
+		exitCode: number | null,
+		opts: { stoppedByUser?: boolean } = {},
+	): Promise<boolean> {
+		const stoppedByUser = opts.stoppedByUser ?? false
 		const status = exitCode === 0 ? 'completed' : 'failed'
+		const result: SessionResult = stoppedByUser
+			? { exit_code: exitCode, stopped_by_user: true }
+			: { exit_code: exitCode }
 
 		// Extract token / cost usage from the remote session's stdout tail.
 		// Unlike the local Docker path, there is no in-memory tail buffer for a
@@ -3183,7 +3256,7 @@ export class SessionManager extends EventEmitter {
 					.update(sessions)
 					.set({
 						status,
-						result: { exit_code: exitCode },
+						result,
 						completedAt: new Date(),
 						updatedAt: new Date(),
 						currentActivity: null,
@@ -3201,7 +3274,17 @@ export class SessionManager extends EventEmitter {
 					.where(
 						and(
 							eq(sessions.id, sessionId),
-							notInArray(sessions.status, [...SessionManager.TERMINAL_OR_TRANSITIONAL_STATUSES]),
+							stoppedByUser
+								? notInArray(sessions.status, [...SessionManager.TERMINAL_OR_TRANSITIONAL_STATUSES])
+								: or(
+										notInArray(sessions.status, [
+											...SessionManager.TERMINAL_OR_TRANSITIONAL_STATUSES,
+										]),
+										// Allow a genuine completion report to overwrite a row
+										// still carrying stopSession()'s provisional marker — see
+										// canOverwriteTerminalRow's comment above.
+										sql`(${sessions.result} ->> 'stopped_by_user') = 'true'`,
+									),
 						),
 					)
 					.returning()
@@ -3244,18 +3327,36 @@ export class SessionManager extends EventEmitter {
 					sessionId,
 					error: String(err),
 				})
-				return
+				// Unlike the no-op branches below, this means we genuinely don't know
+				// the row's state — the DB is unreachable, not just "already
+				// resolved." A caller that can retry should treat this as a failure.
+				return false
 			}
-			if (!fallback) return
+			if (!fallback) {
+				logger.warn('Completion signal dropped — session not found (fallback lookup)', {
+					sessionId,
+					droppedExitCode: exitCode,
+					droppedStoppedByUser: stoppedByUser,
+				})
+				return true
+			}
 			// Another call already resolved this session while our retries were
 			// failing (its own report landed, or a concurrent call won the CAS) —
-			// no-op to avoid a duplicate terminal event.
-			if (
-				(SessionManager.TERMINAL_OR_TRANSITIONAL_STATUSES as readonly string[]).includes(
-					fallback.status,
+			// no-op to avoid a duplicate terminal event, unless this is a genuine
+			// report allowed to overwrite stopSession()'s provisional row (see
+			// canOverwriteTerminalRow's comment above).
+			if (!SessionManager.canOverwriteTerminalRow(fallback, stoppedByUser)) {
+				logger.warn(
+					'Completion signal dropped — session already terminal (fallback lookup after CAS error)',
+					{
+						sessionId,
+						droppedExitCode: exitCode,
+						droppedStoppedByUser: stoppedByUser,
+						currentStatus: fallback.status,
+						currentResult: fallback.result,
+					},
 				)
-			) {
-				return
+				return true
 			}
 			// Best-effort: try once more to persist the status directly (not
 			// CAS-guarded — the read above just confirmed no other call has
@@ -3267,7 +3368,7 @@ export class SessionManager extends EventEmitter {
 					.update(sessions)
 					.set({
 						status,
-						result: { exit_code: exitCode },
+						result,
 						completedAt: new Date(),
 						updatedAt: new Date(),
 						currentActivity: null,
@@ -3293,8 +3394,36 @@ export class SessionManager extends EventEmitter {
 		}
 
 		// No row matched: either the session doesn't exist, or it was already
-		// terminal/transitional (this call lost the race, or is a stale retry).
-		if (!updated) return
+		// terminal/transitional (this call lost the race, or is a stale retry,
+		// or a genuine report arrived after a provisional stop row that this
+		// call wasn't itself eligible to overwrite). Previously this was a
+		// silent no-op — surfacing it here is what makes a dropped exit code
+		// (see docs/runbooks/agent-session-failures-2026-08-11.md, Issue 3)
+		// diagnosable from app logs alone instead of requiring host log
+		// spelunking.
+		if (!updated) {
+			let existing: typeof sessions.$inferSelect | undefined
+			try {
+				;[existing] = await this.db
+					.select()
+					.from(sessions)
+					.where(eq(sessions.id, sessionId))
+					.limit(1)
+			} catch (err) {
+				logger.warn('Failed to look up session while logging a dropped completion signal', {
+					sessionId,
+					error: String(err),
+				})
+			}
+			logger.warn('Completion signal dropped — session already terminal or not found', {
+				sessionId,
+				droppedExitCode: exitCode,
+				droppedStoppedByUser: stoppedByUser,
+				currentStatus: existing?.status ?? null,
+				currentResult: existing?.result ?? null,
+			})
+			return true
+		}
 
 		try {
 			if (!(await this.hasOtherActiveSessions(updated.actorId, sessionId))) {
@@ -3318,7 +3447,7 @@ export class SessionManager extends EventEmitter {
 				action: `session_${status}`,
 				entityType: 'session',
 				entityId: sessionId,
-				data: { exit_code: exitCode },
+				data: { exit_code: exitCode, stopped_by_user: stoppedByUser },
 			})
 		} catch (err) {
 			logger.error('Failed to insert remote session completion event', {
@@ -3328,20 +3457,21 @@ export class SessionManager extends EventEmitter {
 		}
 
 		// Terminal system log is required for SSE /logs/stream clients to close.
-		await this.insertSystemLog(sessionId, `Session ${status} with exit code ${exitCode}`).catch(
-			(err) => {
-				logger.error('Failed to write terminal system log for remote session', {
-					sessionId,
-					error: String(err),
-				})
-				this.emit('log', {
-					sessionId,
-					logId: -Date.now(),
-					stream: 'system',
-					data: `Session ${status} with exit code ${exitCode}`,
-				})
-			},
-		)
+		const terminalLogMessage = stoppedByUser
+			? `Session ${status} — explicitly stopped, exit code not yet known`
+			: `Session ${status} with exit code ${exitCode}`
+		await this.insertSystemLog(sessionId, terminalLogMessage).catch((err) => {
+			logger.error('Failed to write terminal system log for remote session', {
+				sessionId,
+				error: String(err),
+			})
+			this.emit('log', {
+				sessionId,
+				logId: -Date.now(),
+				stream: 'system',
+				data: terminalLogMessage,
+			})
+		})
 
 		await this.clearActiveSession(sessionId)
 		sessionGithubLogClassifier.unregisterSession(sessionId)
@@ -3350,7 +3480,8 @@ export class SessionManager extends EventEmitter {
 		)
 		this.cosThinnessContext.delete(sessionId)
 
-		logger.info(`Remote session ${status}: ${sessionId}`, { exitCode })
+		logger.info(`Remote session ${status}: ${sessionId}`, { exitCode, stoppedByUser })
+		return true
 	}
 
 	/** Clear activeSessionId on any object linked to this session. */

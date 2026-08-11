@@ -5,7 +5,7 @@ import { configSchemaForType, createTriggerSchema, updateTriggerSchema } from '@
 import { Cron } from 'croner'
 import { and, asc, count, desc, eq } from 'drizzle-orm'
 import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
-import { createApiError } from '../lib/errors'
+import { createApiError, validationFailureHook } from '../lib/errors'
 import {
 	errorSchema,
 	idParamSchema,
@@ -23,7 +23,7 @@ type Env = {
 	}
 }
 
-const app = new OpenAPIHono<Env>()
+const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 // POST /api/triggers
 const createTriggerRoute = createRoute({

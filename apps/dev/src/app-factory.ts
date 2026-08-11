@@ -9,7 +9,7 @@ import type { PgNotifyBridge } from '@maskin/realtime'
 import type { StorageProvider } from '@maskin/storage'
 import { cors } from 'hono/cors'
 import { logger as honoLogger } from 'hono/logger'
-import { ApiErrorCode, createApiError, formatZodError, mapStatusToCode } from './lib/errors'
+import { ApiErrorCode, createApiError, mapStatusToCode, validationFailureHook } from './lib/errors'
 import { logger } from './lib/logger'
 import { Sentry } from './lib/sentry'
 import { createIdempotencyMiddleware } from './middleware/idempotency'
@@ -107,21 +107,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 			? process.env.CORS_ORIGIN.split(',').map((o) => o.trim())
 			: ['http://localhost:5173'])
 
-	const app = new OpenAPIHono<Env>({
-		defaultHook: (result, c) => {
-			if (!result.success) {
-				return c.json(
-					createApiError(
-						'VALIDATION_ERROR',
-						'Request validation failed',
-						formatZodError(result.error),
-					),
-					400,
-				)
-			}
-			return undefined
-		},
-	})
+	const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 	app.onError((err, c) => {
 		if ('status' in err && typeof err.status === 'number') {
