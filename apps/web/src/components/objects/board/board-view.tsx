@@ -10,6 +10,7 @@ import type {
 	ObjectResponse,
 } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { NO_VALUE_GROUP, getObjectGroupValue } from '@/lib/objects-grouping'
 import {
 	type CollisionDetection,
 	DndContext,
@@ -116,31 +117,19 @@ function shouldUseDisplaySort(sort?: string, order?: 'asc' | 'desc') {
 	)
 }
 
-function getObjectGroupValue(object: ObjectResponse, groupBy?: string) {
-	if (!groupBy || groupBy === 'status') return object.status
-	if (groupBy.startsWith('metadata.')) {
-		const key = groupBy.slice('metadata.'.length)
-		const metadata = object.metadata as Record<string, unknown> | null
-		const value = metadata?.[key]
-		return value == null || value === '' ? 'No value' : String(value)
-	}
-	const value = object[groupBy as keyof ObjectResponse]
-	return value == null || value === '' ? 'No value' : String(value)
-}
-
 function getGroupPatch(
 	object: ObjectResponse,
 	groupBy: string | undefined,
 	toGroupValue: string,
 ): PendingBoardPatch | null {
 	if (!groupBy || groupBy === 'status') return { status: toGroupValue }
-	if (groupBy === 'driver') return { driver: toGroupValue === 'No value' ? null : toGroupValue }
+	if (groupBy === 'driver') return { driver: toGroupValue === NO_VALUE_GROUP ? null : toGroupValue }
 	if (groupBy.startsWith('metadata.')) {
 		const key = groupBy.slice('metadata.'.length)
 		return {
 			metadata: {
 				...(object.metadata ?? {}),
-				[key]: toGroupValue === 'No value' ? null : toGroupValue,
+				[key]: toGroupValue === NO_VALUE_GROUP ? null : toGroupValue,
 			},
 		}
 	}
