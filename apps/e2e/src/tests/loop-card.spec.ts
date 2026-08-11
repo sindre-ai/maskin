@@ -1,19 +1,19 @@
 import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
-test.describe('Commitment card — object detail', () => {
+// The rebuilt object-detail shell (bet/object-detail, T1) does not yet
+// render the commitment card — commitment metadata surfaces as key/value
+// rows in the body (metadata-badges formatValue path) and the raw status in
+// the identity-row status control. The card itself is pinned as an absence
+// contract until a later task wires it into the shell.
+
+test.describe('Commitment object on the rebuilt detail surface', () => {
 	for (const viewport of SHIP_GATE_VIEWPORTS) {
-		test(`holding commitment renders title, chip, floor, cadence, source-bet link at ${viewport.label}`, async ({
+		test(`holding commitment renders title, status, floor, cadence rows at ${viewport.label}`, async ({
 			page,
 			account,
 		}) => {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
-
-			const sourceBet = await account.api.createObject(account.workspaceId, {
-				type: 'bet',
-				title: 'Customer bugs fixed under 1 day (source)',
-				status: 'succeeded',
-			})
 
 			const commitment = await account.api.createObject(account.workspaceId, {
 				type: 'commitment',
@@ -22,34 +22,31 @@ test.describe('Commitment card — object detail', () => {
 				metadata: {
 					floor: '<1 day median',
 					cadence: 'weekly',
-					source_bet_id: sourceBet.id,
 				},
 			})
 
 			await page.goto(`/${account.workspaceId}/objects/${commitment.id}`)
-			await expect(page.locator('textarea').first()).toHaveValue('Customer bugs fixed <1 day', {
-				timeout: 10000,
-			})
+			await expect(
+				page.getByRole('heading', { level: 1, name: 'Customer bugs fixed <1 day' }),
+			).toBeVisible({ timeout: 10000 })
 
-			const card = page.getByTestId('commitment-card')
-			await expect(card).toBeVisible()
-			await expect(card.getByText('holding')).toBeVisible()
-			await expect(card.getByText('<1 day median')).toBeVisible()
-			await expect(card.getByText('weekly')).toBeVisible()
+			// Raw status in the identity-row status control.
+			const statusControl = page
+				.getByRole('combobox')
+				.filter({ hasNotText: /driver/i })
+				.first()
+			await expect(statusControl).toHaveText('holding')
 
-			const sourceLink = card.getByRole('link', {
-				name: /Customer bugs fixed under 1 day/i,
-			})
-			await expect(sourceLink).toBeVisible()
-			await sourceLink.click()
-			await expect(page.locator('textarea').first()).toHaveValue(
-				'Customer bugs fixed under 1 day (source)',
-				{ timeout: 10000 },
-			)
+			// Metadata renders as body key/value rows (floor, cadence).
+			await expect(page.getByText('<1 day median')).toBeVisible()
+			await expect(page.getByText('weekly')).toBeVisible()
+
+			// The commitment card is not part of the T1 shell yet.
+			await expect(page.getByTestId('commitment-card')).toHaveCount(0)
 		})
 	}
 
-	test('breached commitment renders red chip and last_breach_at at 1024×768', async ({
+	test('breached commitment renders its floor/cadence rows at 1024×768', async ({
 		page,
 		account,
 	}) => {
@@ -67,14 +64,19 @@ test.describe('Commitment card — object detail', () => {
 		})
 
 		await page.goto(`/${account.workspaceId}/objects/${commitment.id}`)
-		await expect(page.locator('textarea').first()).toHaveValue('Weekly ship cadence', {
+		await expect(page.getByRole('heading', { level: 1, name: 'Weekly ship cadence' })).toBeVisible({
 			timeout: 10000,
 		})
 
-		const card = page.getByTestId('commitment-card')
-		await expect(card).toBeVisible()
-		await expect(card.getByText('breached')).toBeVisible()
-		await expect(card.getByText('Last breach')).toBeVisible()
-		await expect(card.locator('time[datetime="2026-07-08T12:00:00.000Z"]')).toBeVisible()
+		const statusControl = page
+			.getByRole('combobox')
+			.filter({ hasNotText: /driver/i })
+			.first()
+		await expect(statusControl).toHaveText('breached')
+		await expect(page.getByText('1 ship / week')).toBeVisible()
+		await expect(page.getByText('weekly')).toBeVisible()
+
+		// The commitment card is not part of the T1 shell yet.
+		await expect(page.getByTestId('commitment-card')).toHaveCount(0)
 	})
 })

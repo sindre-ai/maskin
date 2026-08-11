@@ -71,8 +71,14 @@ test.describe('Object detail — above-title hero (static shell)', () => {
 					.first(),
 			).toBeVisible()
 
-			// Breadcrumb: the Objects crumb is a link back to the list.
-			await expect(page.getByRole('link', { name: 'Objects' })).toBeVisible()
+			// Breadcrumb: the Objects crumb is a link back to the list. At ≥768px
+			// the sidebar nav and the app-bar breadcrumb also render an "Objects"
+			// link, so scope to the shell breadcrumb (the one containing the
+			// current-title crumb) to keep the lookup single-match.
+			const shellBreadcrumb = page
+				.getByRole('navigation', { name: 'breadcrumb' })
+				.filter({ has: page.getByRole('link', { name: HEADER_TITLE }) })
+			await expect(shellBreadcrumb.getByRole('link', { name: 'Objects' })).toBeVisible()
 
 			// Overflow menu hosts the actions (Archive + Delete for bets).
 			const overflow = page.getByRole('button', { name: /more actions/i })

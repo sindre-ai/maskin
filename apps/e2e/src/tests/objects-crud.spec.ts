@@ -14,8 +14,11 @@ test.describe('Objects CRUD', () => {
 		await page.getByPlaceholder('What are you creating?').fill('E2E Test Object')
 		await page.getByRole('button', { name: 'Create' }).click()
 
-		// Should navigate to the object detail page
-		await expect(page.getByText('E2E Test Object')).toBeVisible({ timeout: 10000 })
+		// Should navigate to the object detail page — title renders as the static
+		// <h1> on the rebuilt shell.
+		await expect(page.getByRole('heading', { level: 1, name: 'E2E Test Object' })).toBeVisible({
+			timeout: 10000,
+		})
 	})
 
 	test('can view an object created via API', async ({ page, account }) => {
@@ -27,7 +30,9 @@ test.describe('Objects CRUD', () => {
 
 		await page.goto(`/${account.workspaceId}/objects/${obj.id}`)
 
-		await expect(page.getByText('API Created Bet')).toBeVisible({ timeout: 10000 })
+		await expect(page.getByRole('heading', { level: 1, name: 'API Created Bet' })).toBeVisible({
+			timeout: 10000,
+		})
 	})
 
 	test('renders the object title as a static heading on the rebuilt detail surface', async ({
@@ -60,7 +65,9 @@ test.describe('Objects CRUD', () => {
 		})
 
 		await page.goto(`/${account.workspaceId}/objects/${obj.id}`)
-		await expect(page.getByText('Object To Delete')).toBeVisible({ timeout: 10000 })
+		await expect(page.getByRole('heading', { level: 1, name: 'Object To Delete' })).toBeVisible({
+			timeout: 10000,
+		})
 
 		// Delete is inside the "More actions" dropdown
 		await page.getByRole('button', { name: 'More actions' }).click()

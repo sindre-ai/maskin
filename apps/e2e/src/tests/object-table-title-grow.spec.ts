@@ -97,7 +97,7 @@ test.describe('Object table — Title column grows to fill available width', () 
 		})
 	}
 
-	test('related objects table gives the title link more than the old 300px cap', async ({
+	test('related objects table is not rendered on the rebuilt detail surface', async ({
 		page,
 		account,
 	}) => {
@@ -123,11 +123,13 @@ test.describe('Object table — Title column grows to fill available width', () 
 
 		await page.goto(`/${account.workspaceId}/objects/${parent.id}`)
 
-		const titleLink = page.getByRole('link', { name: LONG_TITLE })
-		await expect(titleLink).toBeVisible({ timeout: 10000 })
-
-		const linkBox = await titleLink.boundingBox()
-		if (!linkBox) throw new Error('related title link has no layout box')
-		expect(linkBox.width).toBeGreaterThan(300)
+		// The Related tab is T4 scope; the T1 shell renders the object without
+		// the related-objects table, so the related row's title link must not
+		// appear on this surface (pinned as an absence contract until the tab
+		// lands, at which point its title-grow assertion returns here).
+		await expect(
+			page.getByRole('heading', { level: 1, name: 'Parent bet with a related row' }),
+		).toBeVisible({ timeout: 10000 })
+		await expect(page.getByRole('link', { name: LONG_TITLE })).toHaveCount(0)
 	})
 })
