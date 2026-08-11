@@ -19,6 +19,13 @@ installGlobalDomMocks()
 
 const mockNavigate = vi.fn()
 const mockSetChatOpen = vi.fn()
+const trackCommandPaletteOpenedMock = vi.fn()
+const trackSearchResultOpenedMock = vi.fn()
+
+vi.mock('@/lib/analytics', () => ({
+	trackCommandPaletteOpened: (p: unknown) => trackCommandPaletteOpenedMock(p),
+	trackSearchResultOpened: (p: unknown) => trackSearchResultOpenedMock(p),
+}))
 
 vi.mock('@/hooks/use-objects', () => ({
 	useObjects: vi.fn(() => ({ data: [] })),
@@ -105,6 +112,40 @@ describe('CommandPalette', () => {
 
 		await user.keyboard('{Control>}k{/Control}')
 		expect(screen.queryByPlaceholderText('Search or jump to…')).not.toBeInTheDocument()
+	})
+
+	it('fires command_palette_opened once per open with the command_palette surface', async () => {
+		const user = userEvent.setup()
+		render(<CommandPalette />)
+
+		// Open via ⌘K from the current route (the keydown listener is global).
+		await user.keyboard('{Control>}k{/Control}')
+		expect(screen.getByPlaceholderText('Search or jump to…')).toBeInTheDocument()
+		expect(trackCommandPaletteOpenedMock).toHaveBeenCalledTimes(1)
+		expect(trackCommandPaletteOpenedMock).toHaveBeenCalledWith({ surface: 'command_palette' })
+
+		// Close, then open again: a new open transition fires, but never twice
+		// while already open.
+		await user.keyboard('{Control>}k{/Control}')
+		await user.keyboard('{Control>}k{/Control}')
+		expect(trackCommandPaletteOpenedMock).toHaveBeenCalledTimes(2)
+	})
+
+	it('fires search_result_opened with the entity contract when a result is opened', async () => {
+		const objects = [buildObjectResponse({ id: 'obj-1', title: 'Alpha Insight', type: 'insight' })]
+		vi.mocked(useObjects).mockReturnValue({ data: objects } as ReturnType<typeof useObjects>)
+		const user = userEvent.setup()
+
+		render(<CommandPalette />)
+		await user.keyboard('{Control>}k{/Control}')
+		await user.click(screen.getByText('Alpha Insight'))
+
+		expect(trackSearchResultOpenedMock).toHaveBeenCalledWith({
+			entity_id: 'obj-1',
+			entity_type: 'insight',
+			surface: 'command_palette',
+		})
+		expect(mockNavigate).toHaveBeenCalledWith({ to: '/ws-1/objects/obj-1' })
 	})
 
 	it('shows navigation items', async () => {

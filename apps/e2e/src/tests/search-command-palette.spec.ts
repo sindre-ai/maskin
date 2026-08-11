@@ -7,6 +7,39 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 // the See-all handoff to /search, filter chips, <mark> highlighting, recents,
 // and keyboard hygiene (⌘F override, Esc clear-then-close).
 
+// On-wire probe for the success-metric funnel. Mirrors the console-fallback
+// approach used by nav-item-clicked.spec.ts / scroll-to-top.spec.ts: the dev
+// stack runs without VITE_POSTHOG_KEY, so posthog-js stays uninitialised and
+// `trackEvent` logs `[analytics] <payload>` to the browser console instead of
+// firing an XHR. The payload shape is identical to the PostHog wire shape, so
+// console-line assertions prove the measurement contract (`command_palette_opened`
+// denominator, `search_result_opened` numerator) without needing PostHog
+// reachable from CI.
+interface AnalyticsPayload {
+	name: string
+	surface?: string
+	entity_id?: string
+	entity_type?: string
+}
+
+function collectAnalytics(page: import('@playwright/test').Page): AnalyticsPayload[] {
+	const calls: AnalyticsPayload[] = []
+	page.on('console', (msg) => {
+		if (msg.type() !== 'info') return
+		const args = msg.args()
+		if (args.length < 2) return
+		Promise.all(args.map((a) => a.jsonValue().catch(() => null)))
+			.then((values) => {
+				const [tag, payload] = values as [unknown, AnalyticsPayload | null]
+				if (tag === '[analytics]' && payload && typeof payload === 'object') {
+					calls.push(payload)
+				}
+			})
+			.catch(() => {})
+	})
+	return calls
+}
+
 for (const vp of SHIP_GATE_VIEWPORTS) {
 	test.describe(`Search + command palette at ${vp.label}`, () => {
 		test.use({ viewport: { width: vp.width, height: vp.height } })
@@ -15,6 +48,7 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			page,
 			account,
 		}) => {
+const analyticsCalls = collectAnalytics(page)
 			const obj = await account.api.createObject(account.workspaceId, {
 				type: 'insight',
 				title: 'Quasiprime Insight',
@@ -32,6 +66,23 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 
 			await page.keyboard.press('Enter')
 			await expect(page).toHaveURL(new RegExp(`/objects/${obj.id}`))
+
+			// Allow the console-fallback microtask to settle.
+			await page.waitForTimeout(200)
+
+			// The success-metric funnel fired on the wire: one palette open on
+			// ⌘K, one result open via Enter — both with the measured event names.
+			const paletteOpens = analyticsCalls.filter((c) => c.name === 'command_palette_opened')
+			expect(paletteOpens).toHaveLength(1)
+			expect(paletteOpens[0]).toMatchObject({ surface: 'command_palette' })
+
+			const resultOpens = analyticsCalls.filter((c) => c.name === 'search_result_opened')
+			expect(resultOpens).toHaveLength(1)
+			expect(resultOpens[0]).toMatchObject({
+				entity_id: obj.id,
+				entity_type: 'insight',
+				surface: 'command_palette',
+			})
 		})
 
 		test('See all hands off to /search; type chips filter; <mark> highlights in light + dark', async ({
@@ -51,6 +102,8 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 				status: 'active',
 			})
 
+			const analyticsCalls = collectAnalytics(page)
+
 			await page.goto(`/${account.workspaceId}`)
 			await page.keyboard.press('Control+KeyK')
 			await page.getByPlaceholder('Search or jump to…').fill('asteroid')
@@ -59,6 +112,15 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			await expect(page).toHaveURL(new RegExp(`/${account.workspaceId}/search`))
 			await expect(page).toHaveURL(/q=asteroid/)
 			await expect(page.getByPlaceholder('Search everything…')).toHaveValue('asteroid')
+
+			// The See-all footer's /search arrival produces its own palette-open
+			// event (search_view surface), per the success-metric funnel's
+			// denominator covering both entry points.
+			await page.waitForTimeout(200)
+			const viewOpens = analyticsCalls.filter(
+				(c) => c.name === 'command_palette_opened' && c.surface === 'search_view',
+			)
+			expect(viewOpens).toHaveLength(1)
 
 			const insightRow = page.getByRole('button', { name: /Asteroid Insight/ })
 			const betRow = page.getByRole('button', { name: /Asteroid Bet/ })
