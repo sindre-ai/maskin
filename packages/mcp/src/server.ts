@@ -2428,9 +2428,9 @@ export function createMcpServer(config: McpConfig) {
 				}
 			}
 
-			// Attach skills after the actor exists — one batched call regardless of
-			// how many skills, so a bad ID doesn't discard the actor or the skills
-			// that did attach.
+			// Attach skills after the actor exists — routed through attachSkillsBatch(),
+			// which chunks into ≤50-id calls, so a bad ID doesn't discard the actor or
+			// the skills that did attach.
 			const skillIds = attach_skill_ids ?? []
 			if (skillIds.length > 0 && result.id) {
 				if (createBody.auto_create_workspace) {
@@ -2663,9 +2663,10 @@ export function createMcpServer(config: McpConfig) {
 				}
 			}
 
-			// Attach runs as one batched call; detach has no batch endpoint yet so it
-			// stays per-skill with allSettled — either way a single failure doesn't
-			// discard the results of operations that already succeeded.
+			// Attach runs through attachSkillsBatch() (chunked into ≤50-id calls); detach
+			// has no batch endpoint yet so it stays per-skill with allSettled — either way
+			// a single failure doesn't discard the results of operations that already
+			// succeeded.
 			const [attachEntries, detachSettled] = await Promise.all([
 				attachSkillsBatch(config, id, attachIds),
 				Promise.allSettled(
