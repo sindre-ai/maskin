@@ -18,7 +18,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/agents/')({
 function AgentsPage() {
 	const { workspaceId } = useWorkspace()
 	const { data: actors, isLoading } = useActors(workspaceId)
-	const { data: sessions } = useWorkspaceSessions(workspaceId)
+	const { data: sessions } = useWorkspaceSessions(workspaceId, { paged: true })
 	const [createPickerOpen, setCreatePickerOpen] = useState(false)
 
 	useEffect(() => {

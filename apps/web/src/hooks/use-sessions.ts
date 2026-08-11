@@ -14,14 +14,23 @@ export function useSession(id: string | null, workspaceId: string) {
 	})
 }
 
-export function useWorkspaceSessions(workspaceId: string) {
+/**
+ * Lists sessions for a workspace. By default fetches a single 100-row page
+ * (cheap; enough for pulse/active-agents consumers). Pass `paged: true` to
+ * page past the API's 100-row clamp (sessionQuerySchema) until a short page —
+ * the Agents index's per-agent counts and latest-session status are
+ * load-bearing on full history.
+ */
+export function useWorkspaceSessions(
+	workspaceId: string,
+	{ paged = false }: { paged?: boolean } = {},
+) {
 	return useQuery({
-		queryKey: queryKeys.sessions.all(workspaceId),
+		queryKey: paged
+			? [...queryKeys.sessions.all(workspaceId), 'paged']
+			: queryKeys.sessions.all(workspaceId),
 		queryFn: async () => {
-			// The API clamps a single page at 100 (sessionQuerySchema), but
-			// per-agent session counts and latest-session status on the Agents
-			// index are load-bearing — page until a short page so busy
-			// workspaces are not silently under-counted.
+			if (!paged) return api.sessions.list(workspaceId, { limit: '100' })
 			const pageSize = 100
 			const all: SessionResponse[] = []
 			let offset = 0

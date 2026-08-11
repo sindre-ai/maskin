@@ -99,7 +99,7 @@ describe('useSession', () => {
 })
 
 describe('useWorkspaceSessions', () => {
-	it('fetches sessions for workspace', async () => {
+	it('fetches a single 100-row page by default', async () => {
 		const mockSessions = [buildSession({ id: 'session-1' }), buildSession({ id: 'session-2' })]
 		vi.mocked(api.sessions.list).mockResolvedValue(mockSessions)
 
@@ -109,15 +109,29 @@ describe('useWorkspaceSessions', () => {
 
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
 		expect(result.current.data).toEqual(mockSessions)
-		expect(api.sessions.list).toHaveBeenCalledWith(workspaceId, { limit: '100', offset: '0' })
+		expect(api.sessions.list).toHaveBeenCalledTimes(1)
+		expect(api.sessions.list).toHaveBeenCalledWith(workspaceId, { limit: '100' })
 	})
 
-	it('pages past the 100-row API cap until a short page', async () => {
+	it('does not page past the first page unless { paged: true }', async () => {
+		const fullPage = Array.from({ length: 100 }, (_, i) => buildSession({ id: `s-${i}` }))
+		vi.mocked(api.sessions.list).mockResolvedValue(fullPage)
+
+		const { result } = renderHook(() => useWorkspaceSessions(workspaceId), {
+			wrapper: TestWrapper,
+		})
+
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(result.current.data).toHaveLength(100)
+		expect(api.sessions.list).toHaveBeenCalledTimes(1)
+	})
+
+	it('pages past the 100-row API cap until a short page when { paged: true }', async () => {
 		const fullPage = Array.from({ length: 100 }, (_, i) => buildSession({ id: `s-${i}` }))
 		const tail = [buildSession({ id: 's-100' })]
 		vi.mocked(api.sessions.list).mockResolvedValueOnce(fullPage).mockResolvedValueOnce(tail)
 
-		const { result } = renderHook(() => useWorkspaceSessions(workspaceId), {
+		const { result } = renderHook(() => useWorkspaceSessions(workspaceId, { paged: true }), {
 			wrapper: TestWrapper,
 		})
 

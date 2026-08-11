@@ -161,6 +161,39 @@ describe('AgentsIndexView', () => {
 		})
 	})
 
+	describe('search', () => {
+		it('filters rows by name, kind, and description text', async () => {
+			const user = userEvent.setup()
+			mount([agentAda(), agentBrian()], [])
+			expect(screen.getAllByRole('listitem')).toHaveLength(2)
+
+			// Kind ('Researcher' from Ada's description first line).
+			await user.type(screen.getByRole('searchbox'), 'research')
+			expect(screen.getByRole('link', { name: 'Ada' })).toBeInTheDocument()
+			expect(screen.queryByRole('link', { name: 'Brian' })).not.toBeInTheDocument()
+
+			// Name.
+			await user.clear(screen.getByRole('searchbox'))
+			await user.type(screen.getByRole('searchbox'), 'bri')
+			expect(screen.getByRole('link', { name: 'Brian' })).toBeInTheDocument()
+			expect(screen.queryByRole('link', { name: 'Ada' })).not.toBeInTheDocument()
+
+			// Description body (not just the first line).
+			await user.clear(screen.getByRole('searchbox'))
+			await user.type(screen.getByRole('searchbox'), 'owns depth')
+			expect(screen.getByRole('link', { name: 'Ada' })).toBeInTheDocument()
+			expect(screen.queryByRole('link', { name: 'Brian' })).not.toBeInTheDocument()
+		})
+
+		it('shows a No matches empty state when the query matches nothing', async () => {
+			const user = userEvent.setup()
+			mount([agentAda()], [])
+			await user.type(screen.getByRole('searchbox'), 'zzz')
+			expect(screen.getByText('No matches')).toBeInTheDocument()
+			expect(screen.getByText('Try a different search term.')).toBeInTheDocument()
+		})
+	})
+
 	describe('rows', () => {
 		it('renders name, kind, activity, session count, and status pill per row', () => {
 			const bob = buildActorListItem({
@@ -247,6 +280,27 @@ describe('AgentsIndexView', () => {
 			expect(linksDesc[0]).toHaveTextContent('Brian')
 			expect(linksDesc[1]).toHaveTextContent('Ada')
 		})
+
+		it('re-sorts rows by status rank asc and desc through the Display menu', async () => {
+			const user = userEvent.setup()
+			mount([agentAda(), agentBrian(), agentCy()], [brianRunningSession()])
+
+			await user.click(screen.getByRole('button', { name: 'Display' }))
+			await pickFromDisplayPanel(user, 'Group by', 'None')
+			await pickFromDisplayPanel(user, 'Sort by', 'Status')
+
+			// STATUS_RANK: running < paused < idle < failed.
+			const linksAsc = screen.getAllByRole('link')
+			expect(linksAsc[0]).toHaveTextContent('Brian') // running
+			expect(linksAsc[1]).toHaveTextContent('Ada') // idle
+			expect(linksAsc[2]).toHaveTextContent('Cy') // failed
+
+			await user.click(screen.getByRole('button', { name: 'Ascending' }))
+			const linksDesc = screen.getAllByRole('link')
+			expect(linksDesc[0]).toHaveTextContent('Cy')
+			expect(linksDesc[1]).toHaveTextContent('Ada')
+			expect(linksDesc[2]).toHaveTextContent('Brian')
+		})
 	})
 
 	describe('display-settings persistence', () => {
@@ -282,6 +336,22 @@ describe('AgentsIndexView', () => {
 				groupBy: 'kind',
 				columnVisibility: { activity: false },
 			})
+		}, 10_000)
+
+		it('does not crash on a stale persisted status filter that is not a known bucket', async () => {
+			// 'paused' is a valid portrait status but not a status-group bucket.
+			// A stale blob must fail closed — empty state, never a crash through
+			// an undefined STATUS_GROUP_META entry.
+			mockState.__dsPersistedSettings = {
+				sort: 'name',
+				order: 'asc',
+				groupBy: 'status',
+				filters: { status: 'paused' },
+			}
+			mount([agentAda(), agentBrian()], [brianRunningSession()])
+			await flushHydrateAndWriteThrough()
+			expect(screen.getByText('No agents match the filters')).toBeInTheDocument()
+			expect(screen.queryByRole('link', { name: 'Ada' })).not.toBeInTheDocument()
 		}, 10_000)
 
 		it('hydrates a persisted status filter and column visibility on mount', async () => {
