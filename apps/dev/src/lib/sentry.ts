@@ -13,12 +13,18 @@ import * as Sentry from '@sentry/node'
 const dsn = process.env.SENTRY_DSN_DEV
 const enabled = process.env.NODE_ENV === 'production' || process.env.SENTRY_FORCE_ENABLE === 'true'
 if (dsn && enabled) {
-	Sentry.init({
-		dsn,
-		environment: process.env.NODE_ENV ?? 'development',
-		tracesSampleRate: 0.1,
-		sendDefaultPii: false,
-	})
+	// Guarded — this runs at module-import time, before the HTTP listener
+	// exists, so an uncaught throw here would crash the process on boot.
+	try {
+		Sentry.init({
+			dsn,
+			environment: process.env.NODE_ENV ?? 'development',
+			tracesSampleRate: 0.1,
+			sendDefaultPii: false,
+		})
+	} catch (err) {
+		console.error('[sentry] init failed — error reporting is disabled', err)
+	}
 }
 
 export { Sentry }

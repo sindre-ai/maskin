@@ -224,11 +224,18 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	// email or IP (see Sentry's `userInfo` data-collection option, which we
 	// deliberately don't enable). Runs after `auth` so actorId is set when
 	// present; unauthenticated routes just skip tagging.
+	// Guarded like every other Sentry call in this file — this runs on every
+	// request, not just the error path, so a throwing Sentry call here must
+	// never block the request from reaching its route handler.
 	app.use('/api/*', async (c, next) => {
-		const actorId = c.get('actorId')
-		if (actorId) Sentry.setUser({ id: actorId })
-		const workspaceId = c.req.header('X-Workspace-Id')
-		if (workspaceId) Sentry.setTag('workspaceId', workspaceId)
+		try {
+			const actorId = c.get('actorId')
+			if (actorId) Sentry.setUser({ id: actorId })
+			const workspaceId = c.req.header('X-Workspace-Id')
+			if (workspaceId) Sentry.setTag('workspaceId', workspaceId)
+		} catch (sentryErr) {
+			console.error('[sentry] setUser/setTag failed', sentryErr)
+		}
 		await next()
 	})
 
