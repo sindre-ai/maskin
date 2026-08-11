@@ -289,9 +289,10 @@ test.describe('Chats list — populated', () => {
 		await expect(list.getByText('Archive old notes')).toBeVisible()
 		await expect(list.getByText('Failed')).toBeVisible()
 
-		// Row leads with the agent avatar resolved from the actors list.
-		await expect(list.getByTitle('Planner')).toBeVisible()
-		await expect(list.getByTitle('Reviewer')).toBeVisible()
+		// Row leads with the agent avatar resolved from the actors list. Two
+		// fixtures are driven by each actor, so both avatars appear twice.
+		await expect(list.getByTitle('Planner')).toHaveCount(2)
+		await expect(list.getByTitle('Reviewer')).toHaveCount(2)
 	})
 
 	test('marks a session unread when an open needs_input notification references it', async ({
@@ -364,6 +365,12 @@ test.describe('Chats list — viewports', () => {
 				actors,
 			})
 			if (viewport.width < 768) {
+				// The mobile drawer trigger only mounts after the app shell
+				// loads — navigate to the workspace root first (matches the
+				// workspace-switcher/sidebar-activity specs), then open the
+				// drawer and take the real user path to Chats.
+				await page.goto(`/${account.workspaceId}`)
+				await expect(page).toHaveURL(new RegExp(account.workspaceId), { timeout: 10_000 })
 				await openSidebarOnMobile(page)
 				await page.getByRole('link', { name: 'Chats' }).click()
 			} else {
