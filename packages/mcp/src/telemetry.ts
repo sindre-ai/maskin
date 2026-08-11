@@ -266,7 +266,6 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	// Workspaces + members
 	create_workspace: 'workspace_create',
 	update_workspace: 'workspace_update',
-	add_workspace_member: 'workspace_member_add',
 	// Workspace schema (fields + enums)
 	create_workspace_field: 'workspace_field_create',
 	update_workspace_field: 'workspace_field_update',

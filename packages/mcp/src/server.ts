@@ -2912,33 +2912,6 @@ export function createMcpServer(config: McpConfig) {
 		},
 	)
 
-	registerAppTool(
-		server,
-		'add_workspace_member',
-		{
-			description: tools.add_workspace_member.description,
-			inputSchema: tools.add_workspace_member.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.workspaces, csp: CSP } },
-		},
-		async (args) => {
-			const result = await apiCall(
-				config,
-				'POST',
-				`/api/workspaces/${args.workspace_id}/members`,
-				{ actor_id: args.actor_id, role: args.role },
-				{ skipWorkspace: true },
-			)
-			return {
-				_meta: meta(
-					'add_workspace_member',
-					config,
-					(args as { workspace_id?: string }).workspace_id,
-				),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-			}
-		},
-	)
-
 	// ─── Workspace Schema Editing (W1) ───────────────────────
 	// Mirrors the web schema editor at
 	// apps/web/src/routes/_authed/$workspaceId/settings/objects/$propertyName.tsx —

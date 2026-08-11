@@ -41,7 +41,6 @@ const ALL_TOOL_NAMES = [
 	'update_workspace',
 	'list_workspaces',
 	'get_workspace_schema',
-	'add_workspace_member',
 	'create_workspace_field',
 	'update_workspace_field',
 	'delete_workspace_field',
@@ -953,26 +952,6 @@ describe('update_workspace schema', () => {
 
 	it('rejects missing id', () => {
 		expect(() => schema.parse({})).toThrow()
-	})
-})
-
-describe('add_workspace_member schema', () => {
-	const schema = tools.add_workspace_member.inputSchema
-
-	it('requires workspace_id and actor_id, defaults role to member', () => {
-		const result = schema.parse({ workspace_id: uuid, actor_id: uuid2 })
-		expect(result.workspace_id).toBe(uuid)
-		expect(result.actor_id).toBe(uuid2)
-		expect(result.role).toBe('member')
-	})
-
-	it('accepts role override', () => {
-		const result = schema.parse({ workspace_id: uuid, actor_id: uuid2, role: 'owner' })
-		expect(result.role).toBe('owner')
-	})
-
-	it('rejects missing workspace_id', () => {
-		expect(() => schema.parse({ actor_id: uuid2 })).toThrow()
 	})
 })
 

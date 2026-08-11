@@ -65,12 +65,6 @@ function WorkspacesApp() {
 			) : (
 				<MessageView message={text} />
 			)
-		case 'add_workspace_member':
-			return isObject<MemberResponse>(data, 'actorId') ? (
-				<MemberAddedView member={data} />
-			) : (
-				<MessageView message={text} />
-			)
 		case 'get_workspace_schema':
 			return isObject<WorkspaceSchema>(data, 'types') ? (
 				<WorkspaceSchemaView schema={data} />
@@ -437,17 +431,6 @@ function MemberListRow({ member }: { member: MemberResponse }) {
 		>
 			{content}
 		</a>
-	)
-}
-
-function MemberAddedView({ member }: { member: MemberResponse }) {
-	return (
-		<div className="p-4 text-center">
-			<p className="text-sm text-muted-foreground">
-				<span className="font-medium text-foreground">{member.name}</span> added as{' '}
-				<span className="capitalize">{member.role}</span>
-			</p>
-		</div>
 	)
 }
 
