@@ -25,7 +25,12 @@ import {
 	useUpdateUserDisplaySettings,
 	useUserDisplaySettings,
 } from '@/hooks/use-user-display-settings'
-import { trackEvent, trackObjectsListArrived, trackObjectsListGroupToggled } from '@/lib/analytics'
+import {
+	trackEvent,
+	trackObjectsBoardArrived,
+	trackObjectsListArrived,
+	trackObjectsListGroupToggled,
+} from '@/lib/analytics'
 import { api } from '@/lib/api'
 import type { DisplaySettingsBody, ObjectResponse } from '@/lib/api'
 import { consumeArrivalNavType } from '@/lib/back-nav-tracker'
@@ -395,6 +400,16 @@ function ObjectsPage() {
 		[boardQuery.data],
 	)
 	const visibleObjects = effectiveView === 'board' ? boardInitialObjects : allObjects
+
+	// Board arrival telemetry, mirroring the List's on-mount event. Fires when
+	// the board becomes the effective view (a list->board switch or a reload
+	// that lands directly on board), not on every type switch while already on it.
+	const prevEffectiveViewRef = useRef(effectiveView)
+	useEffect(() => {
+		const enteredBoard = prevEffectiveViewRef.current !== 'board' && effectiveView === 'board'
+		prevEffectiveViewRef.current = effectiveView
+		if (enteredBoard) trackObjectsBoardArrived({ objectType: typeFilter ?? null })
+	}, [effectiveView, typeFilter])
 
 	// Field definitions for dynamic columns. Layer enabled-module defaults under
 	// workspace overrides so extension-provided types (e.g. knowledge) ship with
