@@ -561,7 +561,7 @@ export const tools = {
 	},
 	update_actor: {
 		description:
-			'Update an actor by ID. Can change name, email, description (short one-liner, max 80 chars), system_prompt / instructions (agents only), tools configuration, memory (persistent key-value store), llm_config (agents only), workspace skill attachments (attach_skill_ids / detach_skill_ids), and optionally add the actor to a workspace (workspace_id + role) in the same call. This is how to add an already-existing actor to a workspace — for adding a brand-new actor to a workspace as part of creating them, use create_actor instead.',
+			'Update an actor by ID. Can change name, email, description (short one-liner, max 80 chars), system_prompt / instructions (agents only), tools configuration, llm_config (agents only), workspace skill attachments (attach_skill_ids / detach_skill_ids), and optionally add the actor to a workspace (workspace_id + role) in the same call. This is how to add an already-existing actor to a workspace — for adding a brand-new actor to a workspace as part of creating them, use create_actor instead.',
 		inputSchema: z.object({
 			id: z.string().uuid(),
 			name: z.string().min(1).optional().describe('New name for the actor.'),
@@ -586,12 +586,6 @@ export const tools = {
 				.optional()
 				.describe(
 					'MCP server config for agents: { mcpServers: { <name>: { command, args, env } } }.',
-				),
-			memory: z
-				.record(z.unknown())
-				.optional()
-				.describe(
-					'Persistent key-value store attached to the actor record — not automatically injected into agent sessions like system_prompt is. Used by either humans or agents as free-form scratch state (e.g. remembered preferences); read it back via get_actor.',
 				),
 			llm_config: actorLlmConfigSchema,
 			attach_skill_ids: z

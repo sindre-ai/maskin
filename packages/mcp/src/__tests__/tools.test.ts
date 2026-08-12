@@ -468,6 +468,11 @@ describe('update_actor schema', () => {
 		expect(result.name).toBe('Updated')
 	})
 
+	it('strips memory — no longer a supported param', () => {
+		const result = schema.parse({ id: uuid, memory: { notes: 'stale' } })
+		expect((result as Record<string, unknown>).memory).toBeUndefined()
+	})
+
 	it('accepts attach_skill_ids as an array of UUIDs', () => {
 		const result = schema.parse({ id: uuid, attach_skill_ids: [uuid2] })
 		expect(result.attach_skill_ids).toEqual([uuid2])
