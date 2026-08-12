@@ -46,15 +46,13 @@ const PUBLIC_EGRESS_RULE = 'allow@public'
 const DNS_UDP_RULE = 'allow@any:udp:53'
 const DNS_TCP_RULE = 'allow@any:tcp:53'
 
-// SSH-relay networking: when a session or the browser sidecar needs to reach
-// a sibling microVM's port (CDP, a dev-server preview port), agent-server
-// opens `msb ssh serve <target> --host 127.0.0.1 --port <sshPort>` plus a
-// real `ssh -L` tunnel from a host-loopback port into the target's own
-// guest-local port — see startSshRelay() below. Verified against production
-// msb 0.5.7 to reach a --no-net guest's own 127.0.0.1 with zero other network
-// exposure. This replaces the old `allow@private` blanket RFC1918 grant: the
-// only net-rule either VM needs now is a single `allow@host:tcp:<relayPort>`
-// scoped to the one relay port it's meant to reach.
+// SSH-relay networking: when the browser sidecar needs to reach a session's
+// own dev-server preview port, agent-server opens `msb ssh serve <target>
+// --host 127.0.0.1 --port <sshPort>` plus a real `ssh -L` tunnel from a
+// host-loopback port into the target's own guest-local port — see
+// startSshRelay() below. Still used for preview-port forwarding
+// (resolvePreviewPortMappings), but no longer for the browser sidecar's own
+// CDP path — see PRIVATE_NET_RULE below for why.
 const SSH_RELAY_BIND_HOST = '127.0.0.1'
 const SSH_RELAY_POLL_INTERVAL_MS = 250
 const SSH_RELAY_CONNECT_TIMEOUT_MS = 1_000
@@ -63,19 +61,30 @@ const SSH_TUNNEL_READY_TIMEOUT_MS = 15_000
 const DEFAULT_SSH_BIN = 'ssh'
 const DEFAULT_SSH_KEYGEN_BIN = 'ssh-keygen'
 
+// Browser sidecar CDP forwarding: publish the sidecar's CDP port on the msb
+// bridge (`-p <bridgeGateway>:<port>:9222`) and grant the session VM
+// `allow@private` to reach it. This was replaced by the SSH-relay +
+// allow@host:tcp mechanism above in PR #1096 purely to narrow the network
+// grant (allow@private opens the whole RFC1918 bridge, not just one port) —
+// not because it was unreliable. Reinstated as a fallback after finding that
+// msb 0.5.7's `allow@host:tcp` guest-to-host forwarding resets 100% of guest
+// connections in production, reproducibly, even on a completely fresh VM and
+// fresh port (see https://github.com/superradcompany/microsandbox/issues/1327).
+// Revert this back to the SSH-relay approach once that's fixed upstream and
+// verified — allow@private is a real trade-off (broader network exposure),
+// kept only because the CDP path must actually work.
+const PRIVATE_NET_RULE = 'allow@private'
+// msb assigns the bridge host 10.0.1.1 by default; override via
+// provisionBrowserSidecar's bridgeGateway option when running a custom msb
+// network config.
+const DEFAULT_BRIDGE_GATEWAY = '10.0.1.1'
+
 // Default Chromium CDP sidecar image. Production can override this with the
 // registry tag published by the browser-sidecar Docker workflow.
 const DEFAULT_BROWSER_SIDECAR_IMAGE = 'browser-sidecar:latest'
 
 // CDP listener inside the browser-sidecar container (socat bridge target).
 const BROWSER_CDP_GUEST_PORT = 9222
-
-// DNS name a session VM (and the browser sidecar) use to reach the physical
-// host over their own allow@host:tcp:<port> net-rule — matches how
-// AGENT_SERVER_URL is constructed in index.ts. Overridden via
-// provisionBrowserSidecar's agentServerInternalHost option when
-// AGENT_SERVER_INTERNAL_HOST is set.
-const DEFAULT_AGENT_SERVER_INTERNAL_HOST = 'host.microsandbox.internal'
 
 // Bigger memory budget than a session VM: Xvfb + headed Chromium is heavier
 // than the agent-base image and Chromium tabs eat into the budget fast.
@@ -132,10 +141,16 @@ export type SpawnSessionInput = {
 	pullPolicy?: PullPolicy
 	maxDuration?: string
 	// Extra host-loopback ports (beyond `hostPort`) this session VM may reach
-	// via `--net-rule allow@host:tcp:<port>`. Used to grant access to the
-	// browser sidecar's CDP SSH-relay port when the session needs browser
-	// capability — the narrow replacement for the old allow@private grant.
+	// via `--net-rule allow@host:tcp:<port>`. Used for the SSH-relay preview-
+	// port mechanism only — the browser sidecar's own CDP path uses
+	// allowPrivateNet below, not this.
 	extraAllowedHostPorts?: readonly number[]
+	// When true, the session VM gets `--net-rule allow@private` so it can
+	// reach the browser sidecar's CDP port on the msb bridge. Off by default —
+	// only sessions with browserRequired pay for the wider network grant. See
+	// PRIVATE_NET_RULE for why this exists instead of a narrower
+	// allow@host:tcp rule.
+	allowPrivateNet?: boolean
 }
 
 export type SpawnSessionResult = {
@@ -250,6 +265,7 @@ export function buildMsbCreateArgs(input: {
 	pullPolicy?: PullPolicy
 	maxDuration?: string
 	extraAllowedHostPorts?: readonly number[]
+	allowPrivateNet?: boolean
 }): string[] {
 	const args: string[] = [
 		'create',
@@ -274,9 +290,14 @@ export function buildMsbCreateArgs(input: {
 		'-v',
 		`${input.sessionDir}:${SESSION_GUEST_PATH}`,
 	]
+	// Reach the browser sidecar's CDP port on the msb bridge — see
+	// PRIVATE_NET_RULE for why this is a blanket grant rather than a narrow
+	// allow@host:tcp rule.
+	if (input.allowPrivateNet) {
+		args.push('--net-rule', PRIVATE_NET_RULE)
+	}
 	// Extra host-loopback ports this session needs beyond its own hostPort —
-	// e.g. the browser sidecar's CDP SSH-relay port — granted narrowly per
-	// port rather than the old allow@private blanket RFC1918 grant.
+	// the SSH-relay preview-port mechanism only.
 	if (input.extraAllowedHostPorts) {
 		for (const port of input.extraAllowedHostPorts) {
 			args.push('--net-rule', `allow@${HOST_RULE_HOST}:tcp:${port}`)
@@ -361,6 +382,7 @@ export async function spawnSession(
 		...(input.extraAllowedHostPorts !== undefined && {
 			extraAllowedHostPorts: input.extraAllowedHostPorts,
 		}),
+		...(input.allowPrivateNet !== undefined && { allowPrivateNet: input.allowPrivateNet }),
 	})
 
 	logger.info('msb create starting', { sessionId: input.sessionId, image: input.image })
@@ -935,11 +957,6 @@ async function defaultPollCdpReady(
 export type BrowserSidecar = {
 	name: string
 	cdpUrl: string
-	// Present only for sidecars provisioned by this process; absent when
-	// reattached via reconcileOnBoot (see index.ts) — SSH relay child
-	// processes are owned by this process (not the msb daemon), so they don't
-	// survive an agent-server restart and cannot be recovered.
-	cdpRelay?: SshRelay
 }
 
 /**
@@ -947,17 +964,18 @@ export type BrowserSidecar = {
  * browser-enabled sessions. Returns the sidecar name and a CDP URL the session
  * VM can hand to `@playwright/mcp`.
  *
- * Strategy: `msb create` boots the sidecar with no CDP port published at all —
- * `msb exec` starts Xvfb + Chromium + socat, then startSshRelay() opens an
- * SSH-relay tunnel (`msb ssh serve` + `ssh -L`) from a host-loopback port into
- * the sidecar's own guest-local CDP port. This replaces the old
- * `-p <bridgeGateway>:<port>:9222` bridge publish + allow@private grant —
- * verified against production msb 0.5.7 to reach a guest's own 127.0.0.1 even
- * with zero other network exposure (no bridge, no --net-rule beyond DNS/public
- * egress). The session VM reaches the relay port via the same
- * `allow@host:tcp:<port>` / `host.microsandbox.internal` mechanism used for
- * AGENT_SERVER_URL, narrowly scoped to exactly that one port (see
- * extraAllowedHostPorts on spawnSession).
+ * Strategy: forward a bridge-only host TCP port to guest port 9222
+ * (`-p <bridgeGateway>:<port>:9222`), then fire `msb exec` to start the
+ * entrypoint. `msb create` boots the VM but does NOT run CMD/ENTRYPOINT —
+ * `msb exec` is required. The session VM reaches the CDP endpoint at
+ * `http://<bridgeGateway>:<port>` via `allow@private`, since the bridge
+ * gateway is a private RFC1918 address (see spawnSession's allowPrivateNet).
+ *
+ * This is the pre-PR-#1096 mechanism, reinstated as a fallback: the
+ * SSH-relay + allow@host:tcp approach that replaced it is currently broken in
+ * production (100% guest-side connection reset, msb 0.5.7 — see
+ * https://github.com/superradcompany/microsandbox/issues/1327). Revert back
+ * once that's fixed upstream and verified.
  *
  * The URL must be http:// (not ws://) — `@playwright/mcp --cdp-endpoint` performs
  * CDP discovery via `GET {url}/json/version` to find the browser's real
@@ -972,19 +990,26 @@ export async function provisionBrowserSidecar(
 	deps: MicrosandboxDeps,
 	options: {
 		image?: string
-		sshKeyPath: string
-		agentServerInternalHost?: string
+		bridgeGateway?: string
 		extraAllowedHostPorts?: readonly number[]
-	},
+	} = {},
 ): Promise<BrowserSidecar | null> {
 	const name = `anko-browser-${prefix}`
 	assertValidSessionId(name)
 	const run = deps.run ?? defaultRunner()
 	const sleep = deps.sleep ?? defaultSleep
 	const now = deps.now ?? Date.now
+	const findPort = deps.findPort ?? findFreeHostPort
 	const image = options.image ?? DEFAULT_BROWSER_SIDECAR_IMAGE
-	const agentServerInternalHost =
-		options.agentServerInternalHost ?? DEFAULT_AGENT_SERVER_INTERNAL_HOST
+	const bridgeGateway = options.bridgeGateway ?? DEFAULT_BRIDGE_GATEWAY
+
+	let hostPort: number
+	try {
+		hostPort = await findPort(bridgeGateway)
+	} catch (err) {
+		logger.error('browser sidecar: failed to allocate host port', { name, error: String(err) })
+		return null
+	}
 
 	const createArgs: string[] = [
 		'create',
@@ -997,6 +1022,10 @@ export async function provisionBrowserSidecar(
 		'--pull',
 		'always',
 		'--quiet',
+		// Forward a bridge-only host port to guest CDP port so the session VM can
+		// reach Chrome without exposing unauthenticated CDP on public interfaces.
+		'-p',
+		`${bridgeGateway}:${hostPort}:${BROWSER_CDP_GUEST_PORT}`,
 		// Sidecar needs public egress (Chromium asset fetches) and DNS.
 		'--net-rule',
 		PUBLIC_EGRESS_RULE,
@@ -1007,8 +1036,8 @@ export async function provisionBrowserSidecar(
 	]
 
 	// Lets the sidecar reach a session's own preview-relay port(s) on the host
-	// loopback — the SSH-relay replacement for the old allow@private blanket
-	// RFC1918 grant. Each entry is scoped to exactly one port.
+	// loopback — unrelated to the CDP bridge-publish above, still uses the
+	// SSH-relay mechanism (see startSshRelay) for preview ports specifically.
 	if (options.extraAllowedHostPorts) {
 		for (const port of options.extraAllowedHostPorts) {
 			createArgs.push('--net-rule', `allow@${HOST_RULE_HOST}:tcp:${port}`)
@@ -1019,6 +1048,7 @@ export async function provisionBrowserSidecar(
 	try {
 		await run(deps.msbBin, createArgs, { timeoutMs: BROWSER_SIDECAR_CREATE_TIMEOUT_MS })
 	} catch (err) {
+		releaseHostPort(hostPort)
 		const e = err as { stderr?: unknown; message?: string }
 		const stderr = e.stderr ? String(e.stderr) : ''
 		logger.error('browser sidecar create failed', {
@@ -1036,6 +1066,9 @@ export async function provisionBrowserSidecar(
 		})
 		return null
 	}
+	// msb create has now claimed the port via `-p` — release our TOCTOU-safe
+	// reservation socket (see findFreeHostPort).
+	releaseHostPort(hostPort)
 
 	try {
 		await waitForRunning(deps.msbBin, name, { run, sleep, now })
@@ -1056,32 +1089,17 @@ export async function provisionBrowserSidecar(
 	// VM kernel but does NOT execute ENTRYPOINT/CMD — `msb exec` is required.
 	launchSidecarExec(name, deps)
 
-	const cdpRelay = await startSshRelay(name, BROWSER_CDP_GUEST_PORT, options.sshKeyPath, deps)
-	if (!cdpRelay) {
-		logger.error('browser sidecar CDP relay failed to establish', { name })
-		await run(deps.msbBin, ['remove', '-f', '--quiet', name], {
-			timeoutMs: BROWSER_SIDECAR_REMOVE_TIMEOUT_MS,
-		}).catch((cleanupErr) => {
-			logger.warn('browser sidecar cleanup after CDP relay failure did not confirm removal', {
-				name,
-				error: String(cleanupErr),
-			})
-		})
-		return null
-	}
-
 	const pollReady =
 		deps.cdpPollReady ??
-		((port: number) => defaultPollCdpReady(SSH_RELAY_BIND_HOST, port, { sleep, now }))
+		((port: number) => defaultPollCdpReady(bridgeGateway, port, { sleep, now }))
 	try {
-		await pollReady(cdpRelay.relayPort)
+		await pollReady(hostPort)
 	} catch (err) {
 		logger.error('browser sidecar CDP did not become ready', {
 			name,
-			port: cdpRelay.relayPort,
+			port: hostPort,
 			error: String(err),
 		})
-		cdpRelay.stop()
 		await run(deps.msbBin, ['remove', '-f', '--quiet', name], {
 			timeoutMs: BROWSER_SIDECAR_REMOVE_TIMEOUT_MS,
 		}).catch((cleanupErr) => {
@@ -1093,16 +1111,16 @@ export async function provisionBrowserSidecar(
 		return null
 	}
 
-	const cdpUrl = `http://${agentServerInternalHost}:${cdpRelay.relayPort}`
+	const cdpUrl = `http://${bridgeGateway}:${hostPort}`
 	logger.info('browser sidecar started', { name, cdpUrl })
-	return { name, cdpUrl, cdpRelay }
+	return { name, cdpUrl }
 }
 
 /**
  * Tear down a sidecar provisioned by `provisionBrowserSidecar`. Idempotent —
  * a missing or already-removed sandbox returns cleanly. Called from
  * `monitorSession` after the session VM exits so we don't leave Chromium VMs
- * (or their SSH relay child processes) orphaned on the host.
+ * orphaned on the host.
  *
  * After firing `msb remove -f` this polls `msb list` until the sidecar row is
  * gone or the AC-T5 SLA elapses. A `remove -f` that returns OK while the row
@@ -1115,7 +1133,6 @@ export async function cleanupBrowserSidecar(
 	deps: MicrosandboxDeps,
 ): Promise<void> {
 	if (!sidecar) return
-	sidecar.cdpRelay?.stop()
 	const run = deps.run ?? defaultRunner()
 	const sleep = deps.sleep ?? defaultSleep
 	const now = deps.now ?? Date.now

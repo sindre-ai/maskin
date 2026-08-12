@@ -457,7 +457,7 @@ describe('POST /sessions browserRequired wiring', () => {
 		return values
 	}
 
-	it('provisions a sidecar, injects BROWSER_CDP_URL, and grants the session a narrow allow@host:tcp:<relayPort> rule when browserRequired=true', async () => {
+	it('provisions a sidecar, injects BROWSER_CDP_URL, and grants the session allow@private when browserRequired=true', async () => {
 		const { run, cdpPollReady, tcpPollReady, calls } = makeSidecarAwareRunner()
 		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
 		const app = buildApp({
@@ -494,20 +494,24 @@ describe('POST /sessions browserRequired wiring', () => {
 		const sessionCreate = creates.find((c) => c.args.includes('sess-betqa1'))
 		expect(sidecarCreate).toBeDefined()
 		expect(sessionCreate).toBeDefined()
-		// findPort call order: sidecar's self-allocated CDP relay reserves
-		// relayPort (39222) before sshPort (39223) — see startSshRelay.
-		const cdpRelayPort = 39222
-		// Session VM must carry a narrow --net-rule reaching only the CDP relay
-		// port on host loopback — never a blanket allow@private RFC1918 grant.
-		expect(netRuleValues(sessionCreate?.args)).toContain(`allow@host:tcp:${cdpRelayPort}`)
-		expect(sessionCreate?.args).not.toContain('allow@private')
-		// Session VM env must include BROWSER_CDP_URL pointing at the SSH-relay port.
+		// findPort call order: the sidecar's own bridge-published CDP port
+		// reserves the first available port — see provisionBrowserSidecar.
+		const sidecarHostPort = 39222
+		// Sidecar publishes its CDP port on the msb bridge.
+		expect(sidecarCreate?.args).toContain('-p')
+		expect(sidecarCreate?.args).toContain(`10.0.1.1:${sidecarHostPort}:9222`)
+		// Session VM must carry allow@private to reach the sidecar on the bridge —
+		// see PRIVATE_NET_RULE in microsandbox.ts for why this is temporarily
+		// broader than a narrow allow@host:tcp grant.
+		expect(sessionCreate?.args).toContain('allow@private')
+		expect(netRuleValues(sessionCreate?.args)).not.toContain(`allow@host:tcp:${sidecarHostPort}`)
+		// Session VM env must include BROWSER_CDP_URL pointing at the bridge.
 		const envFlags =
 			sessionCreate?.args.filter((_a, i) => sessionCreate?.args[i - 1] === '-e') ?? []
-		expect(envFlags).toContain(`BROWSER_CDP_URL=http://host.microsandbox.internal:${cdpRelayPort}`)
+		expect(envFlags).toContain(`BROWSER_CDP_URL=http://10.0.1.1:${sidecarHostPort}`)
 	})
 
-	it('opens a preview SSH relay, grants the sidecar allow@host:tcp:<relayPort>, and returns preview_url', async () => {
+	it('opens a preview SSH relay, grants the sidecar allow@host:tcp:<relayPort>, publishes CDP on the bridge, and returns preview_url', async () => {
 		const { run, cdpPollReady, tcpPollReady, calls } = makeSidecarAwareRunner()
 		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
 		const app = buildApp({
@@ -552,13 +556,16 @@ describe('POST /sessions browserRequired wiring', () => {
 		expect(sessionCreate).toBeDefined()
 
 		// Sidecar needs a route to reach the preview relay's host-loopback port
-		// (Playwright inside the sidecar talks to PREVIEW_URL).
+		// (Playwright inside the sidecar talks to PREVIEW_URL) — unrelated to its
+		// own CDP bridge-publish below, still uses the SSH-relay mechanism.
 		expect(netRuleValues(sidecarCreate?.args)).toContain(`allow@host:tcp:${previewRelayPort}`)
 		expect(sidecarCreate?.args).not.toContain('allow@private')
 
-		// No bridge-publish flags exist in the SSH-relay model.
+		// Sidecar publishes its own CDP port on the bridge; the session reaches
+		// it via allow@private, not a bridge-publish flag of its own.
+		expect(sidecarCreate?.args).toContain('-p')
 		expect(sessionCreate?.args).not.toContain('-p')
-		expect(sidecarCreate?.args).not.toContain('-p')
+		expect(sessionCreate?.args).toContain('allow@private')
 	})
 
 	it('adds no extra allow@host:tcp:<port> rule to the sidecar when no previewGuestPorts are given', async () => {
@@ -805,10 +812,9 @@ describe('POST /sessions browserRequired wiring', () => {
 			.filter((c) => c.args[0] === 'create')
 			.find((c) => c.args.includes('sess-previewfail'))
 		expect(sessionCreate).toBeDefined()
-		// Sidecar still provisions successfully (CDP relay unaffected by the
-		// preview-port failure) — session gets exactly the CDP relay's grant.
-		const cdpRelayPort = 39222
-		expect(netRuleValues(sessionCreate?.args)).toContain(`allow@host:tcp:${cdpRelayPort}`)
+		// Sidecar still provisions successfully (its own bridge-publish is
+		// unaffected by the preview-port failure) — session still gets allow@private.
+		expect(sessionCreate?.args).toContain('allow@private')
 	})
 })
 

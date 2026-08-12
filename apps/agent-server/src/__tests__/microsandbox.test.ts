@@ -21,7 +21,7 @@ import {
 	stopSandbox,
 	waitForCompletion,
 } from '../services/microsandbox'
-import type { ProcessSpawner, SshRelay } from '../services/microsandbox'
+import type { ProcessSpawner } from '../services/microsandbox'
 
 function makePortAllocator(start: number): () => Promise<number> {
 	let next = start
@@ -291,6 +291,41 @@ describe('buildMsbCreateArgs', () => {
 		expect(netRules).toContain('allow@host:tcp:39500')
 		expect(netRules).toContain('allow@host:tcp:39501')
 	})
+
+	it('adds allow@private when allowPrivateNet is true (reach the browser sidecar on the msb bridge)', () => {
+		const args = buildMsbCreateArgs({
+			sessionId: 's',
+			image: 'i',
+			memoryMib: 512,
+			cpus: 1,
+			hostPort: 3001,
+			env: {},
+			sessionDir: '/d',
+			allowPrivateNet: true,
+		})
+		const netRules: string[] = []
+		for (let i = 0; i < args.length - 1; i++) {
+			if (args[i] === '--net-rule') netRules.push(args[i + 1] as string)
+		}
+		expect(netRules).toContain('allow@private')
+	})
+
+	it('omits allow@private when allowPrivateNet is false or omitted', () => {
+		const args = buildMsbCreateArgs({
+			sessionId: 's',
+			image: 'i',
+			memoryMib: 512,
+			cpus: 1,
+			hostPort: 3001,
+			env: {},
+			sessionDir: '/d',
+		})
+		const netRules: string[] = []
+		for (let i = 0; i < args.length - 1; i++) {
+			if (args[i] === '--net-rule') netRules.push(args[i + 1] as string)
+		}
+		expect(netRules).not.toContain('allow@private')
+	})
 })
 
 describe('resolvePreviewPortMappings', () => {
@@ -453,6 +488,29 @@ describe('spawnSession (orchestration)', () => {
 			const createCall = calls.find((c) => c.args[0] === 'create')
 			expect(createCall?.args).toContain('allow@host:tcp:39500')
 			expect(createCall?.args).toContain('allow@host:tcp:39501')
+		} finally {
+			await rm(dir, { recursive: true, force: true })
+		}
+	})
+
+	it('threads allowPrivateNet into the create call as allow@private (reach the browser sidecar)', async () => {
+		const dir = await mkdtemp(join(tmpdir(), 'maskin-msb-private-'))
+		try {
+			const { run, calls } = makeRunner({
+				create: { stdout: '' },
+				list: { stdout: JSON.stringify([{ name: 'orch-private', status: 'Running' }]) },
+			})
+			await spawnSession(
+				{
+					...baseInput,
+					sessionId: 'orch-private',
+					sessionDir: dir,
+					allowPrivateNet: true,
+				},
+				{ msbBin: '/usr/local/bin/msb', run, sleep: async () => {}, now: () => 0 },
+			)
+			const createCall = calls.find((c) => c.args[0] === 'create')
+			expect(createCall?.args).toContain('allow@private')
 		} finally {
 			await rm(dir, { recursive: true, force: true })
 		}
@@ -869,9 +927,8 @@ describe('startSshRelay', () => {
 
 describe('provisionBrowserSidecar', () => {
 	const msbBin = '/usr/local/bin/msb'
-	const sshKeyPath = '/root/.agent-server/ssh/relay_key'
 
-	it('creates the sidecar VM, waits for Running, launches exec, opens an SSH relay, polls CDP, returns the URL', async () => {
+	it('creates the sidecar VM, waits for Running, launches exec, publishes CDP on the bridge, polls CDP, returns the URL', async () => {
 		const calls: Array<readonly string[]> = []
 		const run = async (
 			_bin: string,
@@ -886,29 +943,23 @@ describe('provisionBrowserSidecar', () => {
 			}
 			return { stdout: '', stderr: '' }
 		}
-		const sidecar = await provisionBrowserSidecar(
-			'deadbeef',
-			{
-				msbBin,
-				run,
-				sleep: async () => {},
-				now: () => 0,
-				findPort: makePortAllocator(39222),
-				tcpPollReady: async () => {},
-				cdpPollReady: async () => {},
-				spawnProcess: fakeSpawnProcess(),
-			},
-			{ sshKeyPath },
-		)
+		const sidecar = await provisionBrowserSidecar('deadbeef', {
+			msbBin,
+			run,
+			sleep: async () => {},
+			now: () => 0,
+			findPort: makePortAllocator(39222),
+			cdpPollReady: async () => {},
+		})
 		expect(sidecar?.name).toBe('anko-browser-deadbeef')
-		expect(sidecar?.cdpUrl).toBe('http://host.microsandbox.internal:39222')
-		expect(sidecar?.cdpRelay?.relayPort).toBe(39222)
+		expect(sidecar?.cdpUrl).toBe('http://10.0.1.1:39222')
 		const verbs = calls.map((c) => c[0])
 		expect(verbs).toContain('create')
 		expect(verbs).toContain('list')
 		expect(verbs).not.toContain('inspect')
 		const createCall = calls.find((c) => c[0] === 'create')
-		expect(createCall).not.toContain('-p')
+		expect(createCall).toContain('-p')
+		expect(createCall).toContain('10.0.1.1:39222:9222')
 		expect(createCall?.at(-1)).toBe('browser-sidecar:latest')
 	})
 
@@ -936,19 +987,17 @@ describe('provisionBrowserSidecar', () => {
 				sleep: async () => {},
 				now: () => 0,
 				findPort: makePortAllocator(39222),
-				tcpPollReady: async () => {},
 				cdpPollReady: async () => {},
-				spawnProcess: fakeSpawnProcess(),
 			},
-			{ image: 'maskin/browser-sidecar:latest', sshKeyPath },
+			{ image: 'maskin/browser-sidecar:latest' },
 		)
 
-		expect(sidecar?.cdpUrl).toBe('http://host.microsandbox.internal:39222')
+		expect(sidecar?.cdpUrl).toBe('http://10.0.1.1:39222')
 		const createCall = calls.find((c) => c[0] === 'create')
 		expect(createCall?.at(-1)).toBe('maskin/browser-sidecar:latest')
 	})
 
-	it('uses a configured agentServerInternalHost when provided', async () => {
+	it('uses a configured bridgeGateway when provided', async () => {
 		const calls: Array<readonly string[]> = []
 		const run = async (
 			_bin: string,
@@ -972,14 +1021,14 @@ describe('provisionBrowserSidecar', () => {
 				sleep: async () => {},
 				now: () => 0,
 				findPort: makePortAllocator(40000),
-				tcpPollReady: async () => {},
 				cdpPollReady: async () => {},
-				spawnProcess: fakeSpawnProcess(),
 			},
-			{ sshKeyPath, agentServerInternalHost: 'custom.internal' },
+			{ bridgeGateway: '10.0.2.1' },
 		)
 
-		expect(sidecar?.cdpUrl).toBe('http://custom.internal:40000')
+		expect(sidecar?.cdpUrl).toBe('http://10.0.2.1:40000')
+		const createCall = calls.find((c) => c[0] === 'create')
+		expect(createCall).toContain('10.0.2.1:40000:9222')
 	})
 
 	it('returns null and removes the half-built VM when msb create fails', async () => {
@@ -994,7 +1043,11 @@ describe('provisionBrowserSidecar', () => {
 			}
 			return { stdout: '', stderr: '' }
 		}
-		const sidecar = await provisionBrowserSidecar('failcre8', { msbBin, run }, { sshKeyPath })
+		const sidecar = await provisionBrowserSidecar('failcre8', {
+			msbBin,
+			run,
+			findPort: makePortAllocator(39222),
+		})
 		expect(sidecar).toBeNull()
 		expect(calls.map((c) => c[0])).toEqual(['create', 'remove'])
 	})
@@ -1014,59 +1067,38 @@ describe('provisionBrowserSidecar', () => {
 			}
 			return { stdout: '', stderr: '' }
 		}
-		const sidecar = await provisionBrowserSidecar(
-			'nocdp000',
-			{
-				msbBin,
-				run,
-				sleep: async () => {},
-				now: () => 0,
-				findPort: makePortAllocator(39222),
-				tcpPollReady: async () => {},
-				cdpPollReady: async () => {
-					throw new Error('CDP not ready within timeout')
-				},
-				spawnProcess: fakeSpawnProcess(),
+		const sidecar = await provisionBrowserSidecar('nocdp000', {
+			msbBin,
+			run,
+			sleep: async () => {},
+			now: () => 0,
+			findPort: makePortAllocator(39222),
+			cdpPollReady: async () => {
+				throw new Error('CDP not ready within timeout')
 			},
-			{ sshKeyPath },
-		)
+		})
 		expect(sidecar).toBeNull()
 		expect(calls.map((c) => c[0])).toContain('remove')
 	})
 
-	it('returns null and removes the VM when the SSH relay fails to establish', async () => {
+	it('returns null without touching msb when host port allocation fails', async () => {
 		const calls: Array<readonly string[]> = []
 		const run = async (
 			_bin: string,
 			args: readonly string[],
 		): Promise<{ stdout: string; stderr: string }> => {
 			calls.push(args)
-			if (args[0] === 'list') {
-				return {
-					stdout: JSON.stringify([{ name: 'anko-browser-norelay', status: 'Running' }]),
-					stderr: '',
-				}
-			}
 			return { stdout: '', stderr: '' }
 		}
-		const sidecar = await provisionBrowserSidecar(
-			'norelay',
-			{
-				msbBin,
-				run,
-				sleep: async () => {},
-				now: () => 0,
-				findPort: makePortAllocator(39222),
-				tcpPollReady: async () => {
-					throw new Error('relay never came up')
-				},
-				cdpPollReady: async () => {},
-				spawnProcess: fakeSpawnProcess(),
+		const sidecar = await provisionBrowserSidecar('noport01', {
+			msbBin,
+			run,
+			findPort: async () => {
+				throw new Error('no free ports')
 			},
-			{ sshKeyPath },
-		)
+		})
 		expect(sidecar).toBeNull()
-		expect(calls.map((c) => c[0])).toContain('remove')
+		expect(calls).toEqual([])
 	})
 
 	it('adds no extra allow@host:tcp:<port> rules when extraAllowedHostPorts is omitted', async () => {
@@ -1084,20 +1116,14 @@ describe('provisionBrowserSidecar', () => {
 			}
 			return { stdout: '', stderr: '' }
 		}
-		await provisionBrowserSidecar(
-			'noprv0001',
-			{
-				msbBin,
-				run,
-				sleep: async () => {},
-				now: () => 0,
-				findPort: makePortAllocator(39222),
-				tcpPollReady: async () => {},
-				cdpPollReady: async () => {},
-				spawnProcess: fakeSpawnProcess(),
-			},
-			{ sshKeyPath },
-		)
+		await provisionBrowserSidecar('noprv0001', {
+			msbBin,
+			run,
+			sleep: async () => {},
+			now: () => 0,
+			findPort: makePortAllocator(39222),
+			cdpPollReady: async () => {},
+		})
 		const createCall = calls.find((c) => c[0] === 'create')
 		expect(createCall?.some((a) => a.startsWith('allow@host:tcp:'))).toBe(false)
 	})
@@ -1125,11 +1151,9 @@ describe('provisionBrowserSidecar', () => {
 				sleep: async () => {},
 				now: () => 0,
 				findPort: makePortAllocator(39222),
-				tcpPollReady: async () => {},
 				cdpPollReady: async () => {},
-				spawnProcess: fakeSpawnProcess(),
 			},
-			{ sshKeyPath, extraAllowedHostPorts: [39500, 39501] },
+			{ extraAllowedHostPorts: [39500, 39501] },
 		)
 		const createCall = calls.find((c) => c[0] === 'create')
 		expect(createCall).toContain('allow@host:tcp:39500')
@@ -1179,37 +1203,6 @@ describe('cleanupBrowserSidecar', () => {
 		)
 		expect(calls[0]).toEqual(['remove', '-f', '--quiet', 'anko-browser-feed'])
 		expect(calls[1]?.[0]).toBe('list')
-	})
-
-	it('stops the CDP SSH relay before removing the sidecar VM', async () => {
-		const calls: Array<readonly string[]> = []
-		const run = async (
-			_bin: string,
-			args: readonly string[],
-		): Promise<{ stdout: string; stderr: string }> => {
-			calls.push(args)
-			if (args[0] === 'list') return { stdout: '[]', stderr: '' }
-			return { stdout: '', stderr: '' }
-		}
-		const clock = fakeClock()
-		let stopped = false
-		const cdpRelay: SshRelay = {
-			relayPort: 39222,
-			targetName: 'anko-browser-relaytest',
-			targetGuestPort: 9222,
-			stop: () => {
-				stopped = true
-			},
-		}
-		await cleanupBrowserSidecar(
-			{
-				name: 'anko-browser-relaytest',
-				cdpUrl: 'http://host.microsandbox.internal:39222',
-				cdpRelay,
-			},
-			{ msbBin, run, sleep: clock.sleep, now: clock.now },
-		)
-		expect(stopped).toBe(true)
 	})
 
 	it('no-ops when no sidecar was provisioned (the common path)', async () => {
