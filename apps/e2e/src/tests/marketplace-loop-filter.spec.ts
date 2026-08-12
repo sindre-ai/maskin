@@ -162,7 +162,10 @@ test.describe('Marketplace loop filter', () => {
 		await expect(page.getByText('No matches')).toBeVisible()
 
 		// "Clear filters" resets the search box and returns the catalog to "All".
-		await page.getByRole('button', { name: 'Clear filters' }).click()
+		// exact:true disambiguates from the sidebar workspace-switcher buttons,
+		// whose accessible name embeds the session workspace name ("E2E Clear
+		// filters from the empty state ...'s Workspace").
+		await page.getByRole('button', { name: 'Clear filters', exact: true }).click()
 		await expect(filter).toHaveValue('')
 		await expect(page.getByRole('region', { name: 'Loops' })).toBeVisible()
 		await expect(page.getByRole('region', { name: 'Triggers' })).toBeVisible()
