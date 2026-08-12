@@ -171,8 +171,13 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			)
 			expect(overflow).toBeLessThanOrEqual(1)
 
-			// Confirms the insight is still reachable after filtering.
+			// The reloads above leave the All-types filter active (both rows
+			// visible). Re-select Bet to re-prove the filter contract holds across
+			// the theme reload, then restore All types to confirm the insight stays
+			// reachable.
+			await page.getByRole('button', { name: 'Bet', exact: true }).click()
 			await expect(page.getByRole('button', { name: /Asteroid Insight/ })).not.toBeVisible()
+			await expect(betRow).toBeVisible()
 			await page.getByRole('button', { name: 'All types', exact: true }).click()
 			await expect(page.getByRole('button', { name: /Asteroid Insight/ })).toBeVisible()
 			await expect(page.getByText('“asteroid”')).toBeVisible()
