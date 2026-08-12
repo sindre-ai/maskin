@@ -2,6 +2,7 @@ import { ObjectActivity } from '@/components/activity/object-activity'
 import { PageHeader } from '@/components/layout/page-header'
 import { LoopFlow } from '@/components/loops/loop-flow'
 import { LoopHeader } from '@/components/loops/loop-header'
+import { type LoopPatch, LoopPatchCard } from '@/components/loops/loop-patch-card'
 import { LoopStats } from '@/components/loops/loop-stats'
 import { LoopUtteranceInput } from '@/components/loops/loop-utterance-input'
 import { EmptyState } from '@/components/shared/empty-state'
@@ -13,8 +14,12 @@ import { useLoop } from '@/hooks/use-loops'
 import { useObject, useObjects, useUpdateObject } from '@/hooks/use-objects'
 import { useRelationships } from '@/hooks/use-relationships'
 import { useTriggers } from '@/hooks/use-triggers'
+import type { UpdateObjectInput } from '@/lib/api'
+import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
+import { useQueryClient } from '@tanstack/react-query'
 import { Link, createFileRoute } from '@tanstack/react-router'
+import { useState } from 'react'
 
 /** Relationship type marking loop membership — mirrors
  * `LOOP_MEMBERSHIP_RELATIONSHIP_TYPE` in `apps/dev/src/routes/loops.ts`.
@@ -45,6 +50,28 @@ function LoopDetailPage() {
 	)
 	const { data: events } = useEntityEvents(workspaceId, loopId)
 	const updateObject = useUpdateObject(workspaceId)
+	const queryClient = useQueryClient()
+
+	// A pending plain-language edit awaiting the operator's go-ahead. The card
+	// itself never mutates — "Make the change" applies through the real update
+	// path here, and "Leave it" just clears the proposal.
+	const [pendingPatch, setPendingPatch] = useState<{
+		patch: LoopPatch
+		data: UpdateObjectInput
+	} | null>(null)
+
+	const applyPatch = () => {
+		if (!loop || !pendingPatch) return
+		updateObject.mutate(
+			{ id: loop.id, data: pendingPatch.data },
+			{
+				onSettled: () => {
+					queryClient.invalidateQueries({ queryKey: queryKeys.loops.all(workspaceId) })
+					setPendingPatch(null)
+				},
+			},
+		)
+	}
 
 	if (loopLoading && !loop) {
 		return (
@@ -95,6 +122,15 @@ function LoopDetailPage() {
 					>
 						Installed from marketplace
 					</Link>
+				)}
+
+				{pendingPatch && (
+					<LoopPatchCard
+						patch={pendingPatch.patch}
+						isApplying={updateObject.isPending}
+						onApply={applyPatch}
+						onDismiss={() => setPendingPatch(null)}
+					/>
 				)}
 
 				<LoopUtteranceInput loop={loop} />
