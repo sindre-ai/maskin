@@ -22,7 +22,26 @@ if [ -f "$XVFB_PIDFILE" ] && kill -0 "$(cat "$XVFB_PIDFILE")" 2>/dev/null; then
 	exec sleep infinity
 fi
 
-Xvfb :99 -screen 0 1280x720x24 &
+# Device profile. User-facing verification defaults to a real Chromium mobile
+# viewport profile (iPhone-class ~375x667) so the pass exercises the deployed
+# surface the way a phone user meets it, rather than shrinking a desktop
+# browser at verification time. `MOBILE=0` restores the desktop profile for
+# the general/research browser path. The Xvfb virtual screen stays large in
+# both cases so a pass can still resize up to a desktop width for a layout
+# check (Playwright applies its own CDP viewport override when it drives).
+MOBILE="${MOBILE:-1}"
+MOBILE_WIDTH="${MOBILE_WIDTH:-375}"
+MOBILE_HEIGHT="${MOBILE_HEIGHT:-667}"
+
+if [ "$MOBILE" = "1" ]; then
+	X_SCREEN="1280x720x24"
+	CHROMIUM_PROFILE_FLAGS="--window-size=${MOBILE_WIDTH},${MOBILE_HEIGHT} --use-mobile-user-agent --touch-events=enabled"
+else
+	X_SCREEN="1280x720x24"
+	CHROMIUM_PROFILE_FLAGS="--window-size=1280,720"
+fi
+
+Xvfb :99 -screen 0 "$X_SCREEN" &
 echo $! >"$XVFB_PIDFILE"
 export DISPLAY=:99
 
@@ -41,6 +60,7 @@ chromium \
   --no-first-run \
   --no-default-browser-check \
   --disable-extensions \
+  $CHROMIUM_PROFILE_FLAGS \
   about:blank &
 
 # Wait for CDP to come up before accepting external connections.
