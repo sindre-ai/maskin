@@ -556,6 +556,26 @@ function ObjectsPage() {
 		setColumnVisibility((prev) => ({ ...prev, [columnId]: visible }))
 	}, [])
 
+	// "Reset to default" from the Display menu — restores every display axis on
+	// the shared model: order back to created-desc, no grouping, all filters
+	// (status/driver/metadata) cleared, archived hidden, columns back to the
+	// default set. `view` and `q` are deliberately untouched (separate surfaces).
+	const handleResetToDefault = useCallback(() => {
+		const cleared: Record<string, string | undefined> = {
+			sort: 'createdAt',
+			order: 'desc',
+			groupBy: undefined,
+			status: undefined,
+			driver: undefined,
+			includeArchived: undefined,
+		}
+		for (const key of Object.keys(searchParams)) {
+			if (key.startsWith('metadata.')) cleared[key] = undefined
+		}
+		updateSearch(cleared)
+		setColumnVisibility({ createdBy: false })
+	}, [updateSearch, searchParams])
+
 	// Per-actor display settings (persistence layer from Task 5).
 	// Hydration policy: when the user lands on a tab with persisted settings
 	// and the URL is in its default shape, apply the saved view. Once any
@@ -1118,6 +1138,7 @@ function ObjectsPage() {
 				}}
 				boardSupported={boardSupported}
 				onImportClick={() => setImportOpen(true)}
+				onResetToDefault={handleResetToDefault}
 			/>
 
 			{hasChipFilters && (
