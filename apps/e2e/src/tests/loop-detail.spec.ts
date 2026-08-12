@@ -56,11 +56,42 @@ test.describe('Loop detail page', () => {
 			await expect(page.getByText('closed')).toBeVisible()
 			await expect(page.getByText('median to close')).toBeVisible()
 			await expect(page.getByText('The loop, right now')).toBeVisible()
+			// AC5 — the utterance input is present on loop detail.
+			await expect(
+				page.getByPlaceholder('Listening — speak in plain words'),
+			).toBeVisible()
 			await expect(
 				page.getByText('Normalises the Slack event into the shared source'),
 			).toBeVisible()
 		})
 	}
+
+	test('submitting an utterance opens the chat panel with the loop attached (AC5)', async ({
+		page,
+		account,
+	}) => {
+		await page.setViewportSize({ width: 1024, height: 768 })
+
+		const loop = await account.api.createObject(account.workspaceId, {
+			type: 'loop',
+			title: 'Feedback loop',
+			status: 'running',
+		})
+
+		await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
+		const input = page.getByPlaceholder('Listening — speak in plain words')
+		await expect(input).toBeVisible({ timeout: 10000 })
+
+		await input.fill('Tighten the close timeline')
+		await input.press('Enter')
+
+		// The utterance is forwarded to the chat-driven edit path: the chat
+		// panel opens with the message staged and sent.
+		await expect(page.getByRole('heading', { name: 'Chat' })).toBeVisible({
+			timeout: 10000,
+		})
+		await expect(input).toHaveValue('')
+	})
 
 	test('Pause/Resume toggles the loop pill', async ({ page, account }) => {
 		await page.setViewportSize({ width: 1024, height: 768 })

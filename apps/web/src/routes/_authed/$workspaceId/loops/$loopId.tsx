@@ -3,6 +3,7 @@ import { PageHeader } from '@/components/layout/page-header'
 import { LoopFlow } from '@/components/loops/loop-flow'
 import { LoopHeader } from '@/components/loops/loop-header'
 import { LoopStats } from '@/components/loops/loop-stats'
+import { LoopUtteranceInput } from '@/components/loops/loop-utterance-input'
 import { EmptyState } from '@/components/shared/empty-state'
 import { Skeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
@@ -95,6 +96,8 @@ function LoopDetailPage() {
 						Installed from marketplace
 					</Link>
 				)}
+
+				<LoopUtteranceInput loop={loop} />
 
 				<LoopStats loop={loop} />
 
