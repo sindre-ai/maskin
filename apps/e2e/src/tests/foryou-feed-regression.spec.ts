@@ -92,7 +92,14 @@ function trackErrors(page: Page): { errors: string[] } {
 	const errors: string[] = []
 	page.on('pageerror', (err) => errors.push(`pageerror: ${String(err)}`))
 	page.on('console', (msg) => {
-		if (msg.type() === 'error') errors.push(`console.error: ${msg.text()}`)
+		if (msg.type() !== 'error') return
+		// The browser emits "Failed to load resource: 404/400" console.error for
+		// background resource loads (fonts, images, favicon) on every page in
+		// this harness — they are noise, not app errors, and the feed's own
+		// endpoints are mocked to 200. Filter that single channel; keep real
+		// app-level console.error and uncaught page errors as the signal.
+		if (/failed to load resource/i.test(msg.text())) return
+		errors.push(`console.error: ${msg.text()}`)
 	})
 	return { errors }
 }
