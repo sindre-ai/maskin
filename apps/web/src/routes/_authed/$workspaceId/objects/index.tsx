@@ -875,6 +875,24 @@ function ObjectsPage() {
 		[selectedIds, bulkUpdate, reportBulkResult, retainOnlyFailed],
 	)
 
+	// Archive is a dedicated bulk action because 'archived' is never among the
+	// active status options the picker offers (archived rows are hidden by
+	// default) — mirror the per-row archive semantic on object-document.
+	const handleBulkArchive = useCallback(() => {
+		if (selectedIds.length === 0) return
+		const ids = [...selectedIds]
+		bulkUpdate.mutate(
+			{ ids, patch: { status: 'archived' } },
+			{
+				onSuccess: (data) => {
+					retainOnlyFailed(data)
+					reportBulkResult(data, ids.length, 'updated')
+				},
+				onError: () => toast.error('Failed to archive objects'),
+			},
+		)
+	}, [selectedIds, bulkUpdate, reportBulkResult, retainOnlyFailed])
+
 	// Build the path the app uses for object detail pages — kept relative so we can
 	// resolve to an absolute URL for clipboard payloads but pass the path directly
 	// to window.open for new-tab navigation.
@@ -1245,6 +1263,7 @@ function ObjectsPage() {
 				onOpenLinks={handleOpenLinks}
 				onAnswerAsks={() => setAsksOpen(true)}
 				askCount={askCount}
+				onArchive={handleBulkArchive}
 				onDelete={handleBulkDelete}
 				onClear={clearSelection}
 			/>

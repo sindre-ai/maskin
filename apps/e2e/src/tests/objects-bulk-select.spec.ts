@@ -89,6 +89,43 @@ test.describe('Bulk-select — grouped list selection', () => {
 	}
 })
 
+test.describe('Bulk-select — archive action', () => {
+	// Running a bulk action (T6) through the real list surface: select two rows,
+	// hit Archive, and confirm the action applies to all selected and the bar
+	// clears. Archived rows are hidden from the default list, so the titles
+	// should drop out after the mutation lands.
+	for (const viewport of [VIEWPORTS.tabletPortrait, VIEWPORTS.tabletLandscape]) {
+		test(`archive applies to all selected rows @ ${viewport.label}`, async ({ page, account }) => {
+			await page.setViewportSize({ width: viewport.width, height: viewport.height })
+			await account.api.createObject(account.workspaceId, {
+				type: 'bet',
+				title: 'Archive Bet A',
+				status: 'signal',
+			})
+			await account.api.createObject(account.workspaceId, {
+				type: 'bet',
+				title: 'Archive Bet B',
+				status: 'signal',
+			})
+
+			await page.goto(`/${account.workspaceId}/objects`)
+			await expect(page.getByText('Archive Bet A')).toBeVisible({ timeout: 10000 })
+			await expect(page.getByText('Archive Bet B')).toBeVisible()
+
+			await page.getByRole('checkbox', { name: 'Select row' }).first().click()
+			await page.getByRole('checkbox', { name: 'Select row' }).nth(1).click()
+			await expect(page.getByLabel('2 selected')).toBeVisible()
+
+			await page.getByRole('button', { name: 'Archive selected' }).click()
+
+			// Full success clears the selection and the default list hides archived rows.
+			await expect(page.getByLabel('2 selected')).not.toBeVisible()
+			await expect(page.getByText('Archive Bet A')).not.toBeVisible()
+			await expect(page.getByText('Archive Bet B')).not.toBeVisible()
+		})
+	}
+})
+
 test.describe('Bulk-select — shift-click range selection', () => {
 	// The list's range mechanism is shift-click (the DataTable era used touch
 	// drag-select, out of scope for the T2 list). A plain click anchors the

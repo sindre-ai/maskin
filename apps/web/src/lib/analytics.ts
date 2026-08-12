@@ -301,7 +301,7 @@ export function trackNorthStarPromptResponse(p: { workspace_id: string }): void 
 // `platform_device='ios'` in PostHog. Intentionally lighter than the v1
 // taxonomy helpers above — there's no `entity_id` because the commit spans
 // many objects; `selected_count` carries the n instead.
-export type BulkEditCommitAction = 'status_change' | 'owner_change' | 'copy' | 'delete'
+export type BulkEditCommitAction = 'status_change' | 'owner_change' | 'copy' | 'archive' | 'delete'
 export type PlatformDevice = 'ios' | 'android' | 'desktop'
 
 export function trackBulkEditCommit(p: {
