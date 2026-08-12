@@ -173,8 +173,12 @@ test.describe('For You feed — no-regression surfaces against a real feed', () 
 		await expect(card).toContainText('Approve migration playbook')
 		await expect(card).not.toContainText('Customer call follow-up')
 
-		await page.getByRole('button', { name: /^All/ }).click()
-		await expect(page.getByTestId('foryou-queue-card')).toContainText('Customer call follow-up')
+		// Switching to a mutually-exclusive type chip excludes the pinned task
+		// from the queue, so the queue advances back to the insight item.
+		await page.getByRole('button', { name: /^Insight/ }).click()
+		const cardAfterInsight = page.getByTestId('foryou-queue-card')
+		await expect(cardAfterInsight).toContainText('Customer call follow-up')
+		await expect(cardAfterInsight).not.toContainText('Approve migration playbook')
 
 		expect(errors).toEqual([])
 	})
