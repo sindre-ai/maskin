@@ -41,12 +41,9 @@ const ALL_TOOL_NAMES = [
 	'update_workspace',
 	'list_workspaces',
 	'get_workspace_schema',
-	'add_workspace_member',
 	'create_workspace_field',
 	'update_workspace_field',
 	'delete_workspace_field',
-	'add_workspace_enum_value',
-	'remove_workspace_enum_value',
 	'list_workspace_skills',
 	'get_workspace_skill',
 	'create_workspace_skill',
@@ -429,6 +426,15 @@ describe('create_actor schema', () => {
 		expect(result.role).toBe('owner')
 	})
 
+	it('accepts admin role, matching update_actor', () => {
+		const result = schema.parse({ type: 'agent', name: 'Bot', role: 'admin' })
+		expect(result.role).toBe('admin')
+	})
+
+	it('rejects viewer — not a real workspace role', () => {
+		expect(() => schema.parse({ type: 'agent', name: 'Bot', role: 'viewer' })).toThrow()
+	})
+
 	it('accepts optional tools and attach_skill_ids', () => {
 		const result = schema.parse({
 			type: 'agent',
@@ -462,6 +468,11 @@ describe('update_actor schema', () => {
 		expect(result.name).toBe('Updated')
 	})
 
+	it('strips memory — no longer a supported param', () => {
+		const result = schema.parse({ id: uuid, memory: { notes: 'stale' } })
+		expect((result as Record<string, unknown>).memory).toBeUndefined()
+	})
+
 	it('accepts attach_skill_ids as an array of UUIDs', () => {
 		const result = schema.parse({ id: uuid, attach_skill_ids: [uuid2] })
 		expect(result.attach_skill_ids).toEqual([uuid2])
@@ -484,6 +495,34 @@ describe('update_actor schema', () => {
 		const result = schema.parse({ id: uuid })
 		expect(result.attach_skill_ids).toBeUndefined()
 		expect(result.detach_skill_ids).toBeUndefined()
+	})
+
+	it('accepts an optional workspace_id as uuid', () => {
+		const result = schema.parse({ id: uuid, workspace_id: uuid2 })
+		expect(result.workspace_id).toBe(uuid2)
+	})
+
+	it('rejects a non-UUID workspace_id', () => {
+		expect(() => schema.parse({ id: uuid, workspace_id: 'not-a-uuid' })).toThrow()
+	})
+
+	it('defaults role to member', () => {
+		const result = schema.parse({ id: uuid, workspace_id: uuid2 })
+		expect(result.role).toBe('member')
+	})
+
+	it('accepts owner and admin roles', () => {
+		expect(schema.parse({ id: uuid, workspace_id: uuid2, role: 'owner' }).role).toBe('owner')
+		expect(schema.parse({ id: uuid, workspace_id: uuid2, role: 'admin' }).role).toBe('admin')
+	})
+
+	it('rejects an invalid role', () => {
+		expect(() => schema.parse({ id: uuid, workspace_id: uuid2, role: 'viewer' })).toThrow()
+	})
+
+	it('leaves workspace_id undefined when omitted', () => {
+		const result = schema.parse({ id: uuid })
+		expect(result.workspace_id).toBeUndefined()
 	})
 })
 
@@ -1037,26 +1076,6 @@ describe('update_workspace schema', () => {
 
 	it('rejects missing id', () => {
 		expect(() => schema.parse({})).toThrow()
-	})
-})
-
-describe('add_workspace_member schema', () => {
-	const schema = tools.add_workspace_member.inputSchema
-
-	it('requires workspace_id and actor_id, defaults role to member', () => {
-		const result = schema.parse({ workspace_id: uuid, actor_id: uuid2 })
-		expect(result.workspace_id).toBe(uuid)
-		expect(result.actor_id).toBe(uuid2)
-		expect(result.role).toBe('member')
-	})
-
-	it('accepts role override', () => {
-		const result = schema.parse({ workspace_id: uuid, actor_id: uuid2, role: 'owner' })
-		expect(result.role).toBe('owner')
-	})
-
-	it('rejects missing workspace_id', () => {
-		expect(() => schema.parse({ actor_id: uuid2 })).toThrow()
 	})
 })
 

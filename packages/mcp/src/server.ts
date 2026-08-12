@@ -1440,6 +1440,43 @@ interface RawActor {
 	skills?: Array<{ id: string; name: string }> | null
 }
 
+// create_actor/update_actor accept a single `llm_config: { provider, ... }`
+// param (see actorLlmConfigSchema in tools.ts), but the actors table still
+// stores provider and config as two separate columns. These two helpers do
+// the translation at the MCP boundary only: split the merged param apart
+// before calling the API, then merge the two response columns back together
+// so the tool's response mirrors what was sent in.
+function splitLlmConfig(llmConfig: Record<string, unknown> | undefined): {
+	llm_provider?: string
+	llm_config?: Record<string, unknown>
+} {
+	if (!llmConfig) return {}
+	const { provider, ...rest } = llmConfig
+	return {
+		...(typeof provider === 'string' ? { llm_provider: provider } : {}),
+		...(Object.keys(rest).length > 0 ? { llm_config: rest } : {}),
+	}
+}
+
+function mergeLlmConfig<T extends Record<string, unknown>>(
+	actor: T,
+): Omit<T, 'llm_provider' | 'llm_config'> & { llm_config?: Record<string, unknown> } {
+	const { llm_provider, llm_config, ...rest } = actor as T & {
+		llm_provider?: string | null
+		llm_config?: Record<string, unknown> | null
+	}
+	if (llm_provider == null && llm_config == null) {
+		return rest as Omit<T, 'llm_provider' | 'llm_config'>
+	}
+	return {
+		...rest,
+		llm_config: {
+			...(llm_provider != null ? { provider: llm_provider } : {}),
+			...(llm_config ?? {}),
+		},
+	} as Omit<T, 'llm_provider' | 'llm_config'> & { llm_config?: Record<string, unknown> }
+}
+
 interface RawWorkspace {
 	id: string
 	name?: string | null
@@ -2647,11 +2684,15 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.actors, csp: CSP } },
 		},
 		async (args) => {
-			const { workspace_id, role, attach_skill_ids, ...createBody } = args
-			const result = (await apiCall(config, 'POST', '/api/actors', createBody, {
-				skipAuth: true,
-				skipWorkspace: true,
-			})) as { id: string; [key: string]: unknown }
+			const { workspace_id, role, attach_skill_ids, llm_config, ...createBody } = args
+			const rawResult = (await apiCall(
+				config,
+				'POST',
+				'/api/actors',
+				{ ...createBody, ...splitLlmConfig(llm_config as Record<string, unknown> | undefined) },
+				{ skipAuth: true, skipWorkspace: true },
+			)) as { id: string; [key: string]: unknown }
+			const result = mergeLlmConfig(rawResult) as { id: string; [key: string]: unknown }
 
 			// If workspace_id provided, add the new actor as a member
 			const targetWorkspace = workspace_id ?? config.defaultWorkspaceId
@@ -2873,7 +2914,8 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.actors, csp: CSP } },
 		},
 		async (args) => {
-			const { id, attach_skill_ids, detach_skill_ids, ...body } = args
+			const { id, attach_skill_ids, detach_skill_ids, workspace_id, role, llm_config, ...body } =
+				args
 			const attachIds = attach_skill_ids ?? []
 			const detachIds = detach_skill_ids ?? []
 			const hasSkillOps = attachIds.length > 0 || detachIds.length > 0
@@ -2885,20 +2927,46 @@ export function createMcpServer(config: McpConfig) {
 				)
 			}
 
-			// Run actor PATCH first so a failure here throws before any skill ops fire.
-			const actor = await apiCall(config, 'PATCH', `/api/actors/${id}`, body, {
-				skipWorkspace: true,
-			})
+			// Run actor PATCH first so a failure here throws before any skill/membership ops fire.
+			const rawActor = await apiCall(
+				config,
+				'PATCH',
+				`/api/actors/${id}`,
+				{ ...body, ...splitLlmConfig(llm_config as Record<string, unknown> | undefined) },
+				{ skipWorkspace: true },
+			)
+			const actor = mergeLlmConfig(rawActor as Record<string, unknown>)
+
+			// Optionally add the actor to a workspace, mirroring create_actor's
+			// pattern — a membership failure is reported inline rather than thrown,
+			// so a bad workspace_id doesn't discard an otherwise-successful update.
+			let membershipError: string | undefined
+			if (workspace_id) {
+				try {
+					await apiCall(
+						config,
+						'POST',
+						`/api/workspaces/${workspace_id}/members`,
+						{ actor_id: id, role },
+						{ skipWorkspace: true },
+					)
+					;(actor as Record<string, unknown>).workspace_id = workspace_id
+					;(actor as Record<string, unknown>).role = role
+				} catch (error) {
+					membershipError = String(error)
+					;(actor as Record<string, unknown>).workspace_membership_error = membershipError
+				}
+			}
 
 			if (!hasSkillOps) {
-				const wsId = (args as { workspace_id?: string }).workspace_id ?? config.defaultWorkspaceId
+				const wsId = workspace_id ?? config.defaultWorkspaceId
 				const actorId = (actor as { id?: string }).id
 				const withUrl =
 					wsId && actorId
 						? addUrl(actor as Record<string, unknown>, config, wsId, { kind: 'actor', id: actorId })
 						: actor
 				return {
-					_meta: meta('update_actor', config, (args as { workspace_id?: string }).workspace_id),
+					_meta: meta('update_actor', config, workspace_id),
 					content: [{ type: 'text' as const, text: JSON.stringify(withUrl, null, 2) }],
 				}
 			}
@@ -2926,7 +2994,7 @@ export function createMcpServer(config: McpConfig) {
 							error: s.reason instanceof Error ? s.reason.message : String(s.reason),
 						}
 
-			const wsId2 = (args as { workspace_id?: string }).workspace_id ?? config.defaultWorkspaceId
+			const wsId2 = workspace_id ?? config.defaultWorkspaceId
 			const actorId = (actor as { id?: string }).id
 			const actorWithUrl =
 				wsId2 && actorId
@@ -2944,13 +3012,14 @@ export function createMcpServer(config: McpConfig) {
 			}
 			if (
 				attachEntries.some((entry) => (entry as { error?: string })?.error) ||
-				detachSettled.some((s) => s.status === 'rejected')
+				detachSettled.some((s) => s.status === 'rejected') ||
+				membershipError
 			) {
 				output.partial_failure = true
 			}
 
 			return {
-				_meta: meta('update_actor', config, (args as { workspace_id?: string }).workspace_id),
+				_meta: meta('update_actor', config, workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(output, null, 2) }],
 			}
 		},
@@ -3130,33 +3199,6 @@ export function createMcpServer(config: McpConfig) {
 		},
 	)
 
-	registerAppTool(
-		server,
-		'add_workspace_member',
-		{
-			description: tools.add_workspace_member.description,
-			inputSchema: tools.add_workspace_member.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.workspaces, csp: CSP } },
-		},
-		async (args) => {
-			const result = await apiCall(
-				config,
-				'POST',
-				`/api/workspaces/${args.workspace_id}/members`,
-				{ actor_id: args.actor_id, role: args.role },
-				{ skipWorkspace: true },
-			)
-			return {
-				_meta: meta(
-					'add_workspace_member',
-					config,
-					(args as { workspace_id?: string }).workspace_id,
-				),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-			}
-		},
-	)
-
 	// ─── Workspace Schema Editing (W1) ───────────────────────
 	// Mirrors the web schema editor at
 	// apps/web/src/routes/_authed/$workspaceId/settings/objects/$propertyName.tsx —
@@ -3252,17 +3294,6 @@ export function createMcpServer(config: McpConfig) {
 		})
 	}
 
-	function ensureEnumField(field: FieldDef): asserts field is FieldDef & { values: string[] } {
-		if (field.type !== 'enum') {
-			throw new Error(`Field "${field.name}" is type "${field.type}", not "enum"`)
-		}
-		if (!Array.isArray(field.values)) {
-			throw new Error(
-				`Field "${field.name}" is type "enum" but has no values list. Repair via update_workspace_field with values: [...] before adding or removing values.`,
-			)
-		}
-	}
-
 	registerAppTool(
 		server,
 		'create_workspace_field',
@@ -3328,9 +3359,23 @@ export function createMcpServer(config: McpConfig) {
 				}
 				const nextType = args.field_type ?? existing.type
 				const nextRequired = args.required ?? existing.required ?? false
+				const hasValueOps =
+					(args.add_values?.length ?? 0) > 0 || (args.remove_values?.length ?? 0) > 0
+				if (nextType !== 'enum' && hasValueOps) {
+					throw new Error(`Field "${existing.name}" is type "${nextType}", not "enum".`)
+				}
 				let nextValues: string[] | undefined
 				if (nextType === 'enum') {
 					nextValues = args.values ?? existing.values ?? []
+					if (args.add_values) {
+						for (const value of args.add_values) {
+							if (!nextValues.includes(value)) nextValues.push(value)
+						}
+					}
+					if (args.remove_values && args.remove_values.length > 0) {
+						const toRemove = new Set(args.remove_values)
+						nextValues = nextValues.filter((v) => !toRemove.has(v))
+					}
 					if (nextValues.length === 0) {
 						throw new Error('Enum fields require at least one value in `values`.')
 					}
@@ -3381,74 +3426,6 @@ export function createMcpServer(config: McpConfig) {
 							null,
 							2,
 						),
-					},
-				],
-			}
-		},
-	)
-
-	registerAppTool(
-		server,
-		'add_workspace_enum_value',
-		{
-			description: tools.add_workspace_enum_value.description,
-			inputSchema: tools.add_workspace_enum_value.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.schema, csp: CSP } },
-		},
-		async (args) => {
-			const { wsId, updatedFields } = await patchFieldDefinitions(args, (current) => {
-				const idx = current.findIndex((f) => f.name === args.name)
-				if (idx === -1) {
-					throw new Error(`Field "${args.name}" not found on type "${args.type}".`)
-				}
-				const field = current[idx] as FieldDef
-				ensureEnumField(field)
-				if (field.values.includes(args.value)) return current
-				const copy = [...current]
-				copy[idx] = { ...field, values: [...field.values, args.value] }
-				return copy
-			})
-			const updated = updatedFields.find((f) => f.name === args.name)
-			return {
-				_meta: meta('add_workspace_enum_value', config, wsId),
-				content: [
-					{
-						type: 'text' as const,
-						text: JSON.stringify({ workspace_id: wsId, type: args.type, field: updated }, null, 2),
-					},
-				],
-			}
-		},
-	)
-
-	registerAppTool(
-		server,
-		'remove_workspace_enum_value',
-		{
-			description: tools.remove_workspace_enum_value.description,
-			inputSchema: tools.remove_workspace_enum_value.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.schema, csp: CSP } },
-		},
-		async (args) => {
-			const { wsId, updatedFields } = await patchFieldDefinitions(args, (current) => {
-				const idx = current.findIndex((f) => f.name === args.name)
-				if (idx === -1) {
-					throw new Error(`Field "${args.name}" not found on type "${args.type}".`)
-				}
-				const field = current[idx] as FieldDef
-				ensureEnumField(field)
-				if (!field.values.includes(args.value)) return current
-				const copy = [...current]
-				copy[idx] = { ...field, values: field.values.filter((v) => v !== args.value) }
-				return copy
-			})
-			const updated = updatedFields.find((f) => f.name === args.name)
-			return {
-				_meta: meta('remove_workspace_enum_value', config, wsId),
-				content: [
-					{
-						type: 'text' as const,
-						text: JSON.stringify({ workspace_id: wsId, type: args.type, field: updated }, null, 2),
 					},
 				],
 			}
