@@ -122,7 +122,10 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			await page.keyboard.press('Control+KeyK')
 			await page.getByPlaceholder('Search or jump to…').fill('asteroid')
 
-			await page.getByRole('button', { name: /See all/ }).click()
+			// Anchor to the footer's own label (`See all N results →`) so the
+			// loose /See all/ doesn't also match the sidebar workspace switcher —
+			// the `account` fixture names the workspace after this test title.
+			await page.getByRole('button', { name: /^See all \d+ results?/ }).click()
 			await expect(page).toHaveURL(new RegExp(`/${account.workspaceId}/search`))
 			await expect(page).toHaveURL(/q=asteroid/)
 			await expect(page.getByPlaceholder('Search everything…')).toHaveValue('asteroid')
