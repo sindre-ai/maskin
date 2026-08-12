@@ -21,7 +21,7 @@ import {
 	trackBulkEditCommit,
 } from '@/lib/analytics'
 import { cn } from '@/lib/cn'
-import { Brackets, ExternalLink, Link, MessageSquare, Trash2, Type, X } from 'lucide-react'
+import { Archive, Brackets, ExternalLink, Link, MessageSquare, Trash2, Type, X } from 'lucide-react'
 import * as React from 'react'
 
 export interface BulkActionBarOption {
@@ -46,6 +46,7 @@ export interface BulkActionBarProps {
 	onOpenLinks?: () => void
 	onAnswerAsks?: () => void
 	askCount?: number
+	onArchive?: () => void
 	onDelete?: () => void
 	onClear: () => void
 }
@@ -96,6 +97,7 @@ export function BulkActionBar({
 	onOpenLinks,
 	onAnswerAsks,
 	askCount = 0,
+	onArchive,
 	onDelete,
 	onClear,
 }: BulkActionBarProps) {
@@ -311,6 +313,22 @@ export function BulkActionBar({
 							</TooltipTrigger>
 							<TooltipContent>{openLinksLabel}</TooltipContent>
 						</Tooltip>
+					)}
+					{onArchive && (
+						<Button
+							type="button"
+							variant="outline"
+							size="sm"
+							className="shrink-0"
+							onClick={() => {
+								emitCommit('archive')
+								onArchive()
+							}}
+							aria-label="Archive selected"
+						>
+							<Archive className="size-4" />
+							Archive
+						</Button>
 					)}
 					{onDelete && (
 						<Button
