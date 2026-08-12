@@ -350,6 +350,14 @@ export function trackObjectsListGroupToggled(p: {
 	})
 }
 
+// Board-view arrival, mirroring the List's on-mount event so both surfaces
+// carry the same sliceable telemetry. Diagnostic only — the Objects list-and-
+// board bet treats drag-persist-on-reload (not a behavioral metric) as its
+// observable success, so this fires per board mount just for observability.
+export function trackObjectsBoardArrived(p: { objectType: string | null }): void {
+	trackEvent('objects_board_arrived', { objectType: p.objectType })
+}
+
 // Ship-metric event for the sticky-nav-hero bet. Fires once per completed
 // scroll-to-top gesture on an object-detail page — the user must scroll ≥ 1
 // viewport down inside the app scroll container and return near the top before
