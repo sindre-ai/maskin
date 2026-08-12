@@ -193,7 +193,10 @@ function SearchView() {
 
 	const query = (search.q ?? '').trim()
 	const hasQuery = query.length > 0
-	const searchRequested = hasQuery && !isFetching
+	// Show "Searching…" only while a query is committed and no results have
+	// arrived yet. Folding isFetching out of searchRequested as originally
+	// written made the loading branch dead and flashed "No results" on first search.
+	const searchRequested = hasQuery && !results
 
 	const typeFilterLabel = search.type ? typeLabel(search.type) : undefined
 	const statusFilterLabel = search.status ? statusLabel(search.status) : undefined
