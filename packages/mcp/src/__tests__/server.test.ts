@@ -1268,6 +1268,11 @@ describe('tool handlers', () => {
 							workspaceId: 'ws-default-123',
 							type: 'task',
 						})
+					if (u.includes('/api/actors?ids='))
+						return okJson([
+							{ id: 'agent-1', type: 'agent' },
+							{ id: 'agent-2', type: 'agent' },
+						])
 					if (u.endsWith('/api/triggers') && method === 'POST') {
 						triggerCounter += 1
 						return okJson({ id: `trig-${triggerCounter}` })
@@ -1414,6 +1419,8 @@ describe('tool handlers', () => {
 				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
 					const u = String(url)
 					const method = (init as RequestInit | undefined)?.method
+					if (u.endsWith('/api/workspaces')) return okJson([workspaceRow])
+					if (u.includes('/api/actors?ids=')) return okJson([{ id: 'agent-1', type: 'agent' }])
 					if (u.endsWith('/api/triggers') && method === 'POST') return okJson({ id: 'trig-orphan' })
 					if (u.includes('/api/triggers/') && method === 'DELETE') {
 						deleted.push(u.split('/').pop() as string)
@@ -1437,7 +1444,7 @@ describe('tool handlers', () => {
 								name: 'Step',
 								agent_id: 'agent-1',
 								prompt: 'Do work',
-								when: { action: 'created' },
+								when: { object_type: 'task', action: 'created' },
 							},
 						],
 						trigger_ids: [],

@@ -65,7 +65,7 @@ a loop flowing custom types **must** set `closed_statuses` or its closed counts 
 The MCP server exposes loops as first-class tools (`packages/mcp`):
 
 - **`create_loop`** — one call creates the whole loop: the loop object, inline `steps` (each
-  becomes a trigger — `when: { cron }` or `when: { object_type?, action, filter? }`), attached
+  becomes a trigger — `when: { cron }` or `when: { object_type, action, filter? }`), attached
   pre-existing `trigger_ids`, `in_loop` edges for `object_ids`, and `closed_statuses`. All ids,
   types, and statuses are validated against the workspace before anything is created; if the
   loop insert fails, just-created step triggers are rolled back.

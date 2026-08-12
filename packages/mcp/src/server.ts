@@ -487,6 +487,50 @@ async function assertObjectsExist(
 }
 
 /**
+ * Validate that every id in `agentIds` is a real, workspace-member actor of
+ * type 'agent'. Without this, a step's `agent_id` is only checked for UUID
+ * format — a hallucinated or stale id would create an `enabled: true`
+ * trigger that resolves to no working agent, silently defeating the step.
+ * Uses the workspace-scoped `GET /api/actors?ids=` listing (not
+ * `GET /api/actors/:id`, which is not workspace-scoped) so a real actor from
+ * a different workspace, or one not a member of this one, is correctly
+ * rejected. Throws with the bad ids named and why (missing vs. wrong type).
+ */
+async function assertAgentsExist(
+	config: McpConfig,
+	agentIds: string[],
+	workspaceId?: string,
+): Promise<void> {
+	const ids = [...new Set(agentIds)]
+	if (ids.length === 0) return
+	const rows = (await apiCall(
+		config,
+		'GET',
+		`/api/actors?ids=${ids.map(encodeURIComponent).join(',')}`,
+		undefined,
+		{ workspaceId },
+	)) as Array<{ id: string; type: string }>
+	const byId = new Map((Array.isArray(rows) ? rows : []).map((r) => [r.id, r.type]))
+
+	const missing = ids.filter((id) => !byId.has(id))
+	const wrongType = ids.filter((id) => byId.has(id) && byId.get(id) !== 'agent')
+	if (missing.length === 0 && wrongType.length === 0) return
+
+	const parts: string[] = []
+	if (missing.length > 0) {
+		parts.push(
+			`not found or not a member of this workspace: ${missing.join(', ')} (create one with create_actor, or find one with list_actors)`,
+		)
+	}
+	if (wrongType.length > 0) {
+		parts.push(
+			`not an agent actor: ${wrongType.join(', ')} (a step's agent_id must target an agent — put a human on the loop by having a step's agent notify/@mention them instead)`,
+		)
+	}
+	throw new Error(`Invalid step agent_id(s) — ${parts.join('; ')}.`)
+}
+
+/**
  * Delete every `in_loop` edge for a loop (source = loop, no target filter) —
  * used by delete_loop. `relationships` rows have no FK/cascade from either
  * side, so these are orphaned unless explicitly cleaned up before the loop
@@ -527,7 +571,7 @@ interface LoopStepInput {
 	when:
 		| { cron: string }
 		| {
-				object_type?: string
+				object_type: string
 				action: 'created' | 'updated' | 'status_changed' | 'deleted'
 				filter?: Record<string, unknown>
 		  }
@@ -545,8 +589,10 @@ function buildStepTriggerBody(step: LoopStepInput): Record<string, unknown> {
 			enabled: true,
 		}
 	}
-	const triggerConfig: Record<string, unknown> = { action: step.when.action }
-	if (step.when.object_type) triggerConfig.entity_type = step.when.object_type
+	const triggerConfig: Record<string, unknown> = {
+		action: step.when.action,
+		entity_type: step.when.object_type,
+	}
 	if (step.when.filter) triggerConfig.filter = step.when.filter
 	return {
 		name: step.name,
@@ -4080,6 +4126,11 @@ export function createMcpServer(config: McpConfig) {
 			await Promise.all([
 				assertTriggersExist(config, existingTriggerIds, workspace_id),
 				assertObjectsExist(config, memberObjectIds, workspace_id),
+				assertAgentsExist(
+					config,
+					stepList.map((s) => s.agent_id),
+					workspace_id,
+				),
 				assertLoopTypesValid(
 					config,
 					{ closedStatuses: closed_statuses, steps: stepList },
@@ -4088,7 +4139,13 @@ export function createMcpServer(config: McpConfig) {
 			])
 
 			// Create inline step triggers first; if the loop insert fails we
-			// best-effort delete them so no orphan triggers are left behind.
+			// best-effort delete them so no orphan triggers are left behind. Each
+			// gets its own random Idempotency-Key (not the default derived-from-body
+			// one) so two create_loop calls with byte-identical step bodies (e.g.
+			// reused boilerplate) always create distinct trigger rows — otherwise
+			// the second call's POST would replay the first call's trigger id, and
+			// a later failure here would roll back (delete) a different, already
+			// -successful loop's trigger.
 			const stepTriggerIds: string[] = []
 			let graphResult: {
 				nodes: Array<Record<string, unknown> & { id: string }>
@@ -4101,7 +4158,7 @@ export function createMcpServer(config: McpConfig) {
 						'POST',
 						'/api/triggers',
 						buildStepTriggerBody(step),
-						{ workspaceId: workspace_id },
+						{ workspaceId: workspace_id, idempotencyKey: `mcp:create_loop:step:${randomUUID()}` },
 					)) as { id: string }
 					stepTriggerIds.push(created.id)
 				}
@@ -4210,6 +4267,11 @@ export function createMcpServer(config: McpConfig) {
 				await Promise.all([
 					assertTriggersExist(config, add_trigger_ids ?? [], workspace_id),
 					assertObjectsExist(config, add_object_ids ?? [], workspace_id),
+					assertAgentsExist(
+						config,
+						((add_steps as LoopStepInput[] | undefined) ?? []).map((s) => s.agent_id),
+						workspace_id,
+					),
 					assertLoopTypesValid(
 						config,
 						{ closedStatuses: closed_statuses, steps: add_steps as LoopStepInput[] | undefined },
@@ -4218,51 +4280,72 @@ export function createMcpServer(config: McpConfig) {
 				])
 
 				// Inline steps become new triggers, appended alongside add_trigger_ids.
+				// If the subsequent metadata PATCH fails, best-effort delete the
+				// just-created triggers so they don't survive live and unattached to
+				// any loop — mirrors create_loop's rollback. Each gets its own random
+				// Idempotency-Key so it can't replay another call's trigger (see
+				// create_loop for why).
 				const stepTriggerIds: string[] = []
-				for (const step of (add_steps ?? []) as LoopStepInput[]) {
-					const created = (await apiCall(
-						config,
-						'POST',
-						'/api/triggers',
-						buildStepTriggerBody(step),
-						{ workspaceId: workspace_id },
-					)) as { id: string }
-					stepTriggerIds.push(created.id)
-				}
-
-				// Read-modify-write metadata.trigger_ids. PATCH /api/objects
-				// shallow-merges metadata, so only changed keys are sent.
-				const currentMeta = (existing.metadata ?? {}) as Record<string, unknown>
-				const currentTriggerIds = Array.isArray(currentMeta.trigger_ids)
-					? currentMeta.trigger_ids.filter((v): v is string => typeof v === 'string')
-					: []
-				const removeSet = new Set(remove_trigger_ids ?? [])
-				const mergedTriggerIds = [
-					...new Set([...currentTriggerIds, ...(add_trigger_ids ?? []), ...stepTriggerIds]),
-				].filter((t) => !removeSet.has(t))
-				const triggerIdsChanged =
-					mergedTriggerIds.length !== currentTriggerIds.length ||
-					mergedTriggerIds.some((t, i) => currentTriggerIds[i] !== t)
-
-				const metadataPatch: Record<string, unknown> = {}
-				if (triggerIdsChanged) metadataPatch.trigger_ids = mergedTriggerIds
-				if (entry_condition !== undefined) metadataPatch.entry_condition = entry_condition
-				if (close_condition !== undefined) metadataPatch.close_condition = close_condition
-				if (human_decision_points !== undefined)
-					metadataPatch.human_decision_points = human_decision_points
-				if (closed_statuses !== undefined) metadataPatch.closed_statuses = closed_statuses
-
-				const body: Record<string, unknown> = {}
-				if (name !== undefined) body.title = name
-				if (guarantee !== undefined) body.content = guarantee
-				if (status !== undefined) body.status = status
-				if (Object.keys(metadataPatch).length > 0) body.metadata = metadataPatch
-
 				let loopRow = existing
-				if (Object.keys(body).length > 0) {
-					loopRow = (await apiCall(config, 'PATCH', `/api/objects/${id}`, body, {
-						workspaceId: workspace_id,
-					})) as Record<string, unknown>
+				let mergedTriggerIds: string[] = []
+				let triggerIdsChanged = false
+				try {
+					for (const step of (add_steps ?? []) as LoopStepInput[]) {
+						const created = (await apiCall(
+							config,
+							'POST',
+							'/api/triggers',
+							buildStepTriggerBody(step),
+							{
+								workspaceId: workspace_id,
+								idempotencyKey: `mcp:update_loop:step:${randomUUID()}`,
+							},
+						)) as { id: string }
+						stepTriggerIds.push(created.id)
+					}
+
+					// Read-modify-write metadata.trigger_ids. PATCH /api/objects
+					// shallow-merges metadata, so only changed keys are sent.
+					const currentMeta = (existing.metadata ?? {}) as Record<string, unknown>
+					const currentTriggerIds = Array.isArray(currentMeta.trigger_ids)
+						? currentMeta.trigger_ids.filter((v): v is string => typeof v === 'string')
+						: []
+					const removeSet = new Set(remove_trigger_ids ?? [])
+					mergedTriggerIds = [
+						...new Set([...currentTriggerIds, ...(add_trigger_ids ?? []), ...stepTriggerIds]),
+					].filter((t) => !removeSet.has(t))
+					triggerIdsChanged =
+						mergedTriggerIds.length !== currentTriggerIds.length ||
+						mergedTriggerIds.some((t, i) => currentTriggerIds[i] !== t)
+
+					const metadataPatch: Record<string, unknown> = {}
+					if (triggerIdsChanged) metadataPatch.trigger_ids = mergedTriggerIds
+					if (entry_condition !== undefined) metadataPatch.entry_condition = entry_condition
+					if (close_condition !== undefined) metadataPatch.close_condition = close_condition
+					if (human_decision_points !== undefined)
+						metadataPatch.human_decision_points = human_decision_points
+					if (closed_statuses !== undefined) metadataPatch.closed_statuses = closed_statuses
+
+					const body: Record<string, unknown> = {}
+					if (name !== undefined) body.title = name
+					if (guarantee !== undefined) body.content = guarantee
+					if (status !== undefined) body.status = status
+					if (Object.keys(metadataPatch).length > 0) body.metadata = metadataPatch
+
+					if (Object.keys(body).length > 0) {
+						loopRow = (await apiCall(config, 'PATCH', `/api/objects/${id}`, body, {
+							workspaceId: workspace_id,
+						})) as Record<string, unknown>
+					}
+				} catch (err) {
+					await Promise.all(
+						stepTriggerIds.map((triggerId) =>
+							apiCall(config, 'DELETE', `/api/triggers/${triggerId}`, undefined, {
+								workspaceId: workspace_id,
+							}).catch(() => undefined),
+						),
+					)
+					throw err
 				}
 
 				// Membership adds — POST /api/relationships is idempotent on

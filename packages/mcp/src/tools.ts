@@ -57,8 +57,11 @@ const optionalWorkspaceId = z
  * becomes an ordinary trigger (POST /api/triggers) targeting an agent actor,
  * and its id is appended to the loop's `metadata.trigger_ids`. The `when`
  * union mirrors the two trigger types: `{ cron }` → a cron trigger,
- * `{ object_type?, action, filter? }` → an event trigger that fires as objects
- * change state.
+ * `{ object_type, action, filter? }` → an event trigger that fires as objects
+ * of that type change state. Both branches are `.strict()` so a step can't
+ * mix cron and event fields — the backend's `entity_type` is required on
+ * event triggers, so `object_type` is required here too rather than silently
+ * accepting a shape the backend would reject.
  */
 const loopStepSchema = z.object({
 	name: z.string().min(1).describe('Step name, e.g. "Qualify new lead" or "Capture learnings".'),
@@ -76,33 +79,36 @@ const loopStepSchema = z.object({
 		),
 	when: z
 		.union([
-			z.object({
-				cron: z
-					.string()
-					.min(1)
-					.describe('Cron expression, e.g. "*/30 * * * *" — the step runs on this schedule.'),
-			}),
-			z.object({
-				object_type: z
-					.string()
-					.min(1)
-					.optional()
-					.describe(
-						'Object type whose events fire this step — any type defined in the workspace, including custom ones (call get_workspace_schema to see them). Omit to match every object type.',
-					),
-				action: z
-					.enum(['created', 'updated', 'status_changed', 'deleted'])
-					.describe('Which mutation fires the step. `status_changed` drives most loop steps.'),
-				filter: z
-					.record(z.unknown())
-					.optional()
-					.describe(
-						'Equality filter evaluated against the current object row, e.g. { "status": "qualified" } or { "metadata.segment": "enterprise" }. Dot paths reach into metadata.',
-					),
-			}),
+			z
+				.object({
+					cron: z
+						.string()
+						.min(1)
+						.describe('Cron expression, e.g. "*/30 * * * *" — the step runs on this schedule.'),
+				})
+				.strict(),
+			z
+				.object({
+					object_type: z
+						.string()
+						.min(1)
+						.describe(
+							'Object type whose events fire this step — any type defined in the workspace, including custom ones (call get_workspace_schema to see them).',
+						),
+					action: z
+						.enum(['created', 'updated', 'status_changed', 'deleted'])
+						.describe('Which mutation fires the step. `status_changed` drives most loop steps.'),
+					filter: z
+						.record(z.unknown())
+						.optional()
+						.describe(
+							'Equality filter evaluated against the current object row, e.g. { "status": "qualified" } or { "metadata.segment": "enterprise" }. Dot paths reach into metadata.',
+						),
+				})
+				.strict(),
 		])
 		.describe(
-			'When the step fires: { "cron": "<expression>" } for a schedule, or { "object_type"?, "action", "filter"? } to react to objects changing state.',
+			'When the step fires — exactly one of: { "cron": "<expression>" } for a schedule, or { "object_type", "action", "filter"? } to react to objects changing state. Do not mix fields from both forms; extra/mismatched keys are rejected.',
 		),
 })
 
