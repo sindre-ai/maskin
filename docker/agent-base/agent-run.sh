@@ -125,11 +125,56 @@ build_context() {
 # Configure MCP servers — writes config file and sets MCP_CONFIG_FILE for run_agent
 MCP_CONFIG_FILE=""
 
+CDP_RETRY_PROXY_PORT=9333
+
+# Start a local retry proxy in front of the real CDP endpoint and repoint
+# BROWSER_CDP_URL at it. @playwright/mcp's own CDP client gives up on a
+# single ECONNRESET (see cdp-retry-proxy.js for the full rationale); this
+# gives every CDP connection attempt from this session a few retries with
+# backoff instead of failing the whole browser tool call on one transient
+# guest<->host networking blip. Best-effort: if the proxy fails to start,
+# BROWSER_CDP_URL is left pointing at the real endpoint directly.
+setup_cdp_retry_proxy() {
+  [ -z "$BROWSER_CDP_URL" ] && return
+  local target_host target_port
+  target_host="${BROWSER_CDP_URL#http://}"
+  target_port="${target_host##*:}"
+  target_host="${target_host%%:*}"
+  if [ -z "$target_host" ] || [ -z "$target_port" ]; then
+    echo "[system] WARNING: could not parse BROWSER_CDP_URL ($BROWSER_CDP_URL), skipping retry proxy" >&2
+    return
+  fi
+  node /cdp-retry-proxy.js "$CDP_RETRY_PROXY_PORT" "$target_host" "$target_port" \
+    > /tmp/cdp-retry-proxy.log 2>&1 &
+  local proxy_pid=$!
+  # Give it a moment to bind before handing out the local URL — a failed
+  # bind (port in use, node missing) means BROWSER_CDP_URL should still
+  # point at the real endpoint rather than a proxy that never came up.
+  local deadline=$(( $(date +%s) + 3 ))
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    if ! kill -0 "$proxy_pid" 2>/dev/null; then
+      echo "[system] WARNING: cdp-retry-proxy exited immediately, using BROWSER_CDP_URL directly" >&2
+      cat /tmp/cdp-retry-proxy.log >&2 2>/dev/null || true
+      return
+    fi
+    grep -q "listening on" /tmp/cdp-retry-proxy.log 2>/dev/null && break
+    sleep 0.2
+  done
+  if grep -q "listening on" /tmp/cdp-retry-proxy.log 2>/dev/null; then
+    echo "[system] CDP retry proxy up, routing BROWSER_CDP_URL through 127.0.0.1:${CDP_RETRY_PROXY_PORT}"
+    BROWSER_CDP_URL="http://127.0.0.1:${CDP_RETRY_PROXY_PORT}"
+  else
+    echo "[system] WARNING: cdp-retry-proxy did not confirm startup, using BROWSER_CDP_URL directly" >&2
+  fi
+}
+
 setup_mcps() {
   # Skip if no MCP config provided and no browser CDP endpoint
   if [ -z "$AGENT_MCP_JSON" ] && [ -z "$MCP_SERVERS_JSON" ] && [ -z "$BROWSER_CDP_URL" ]; then
     return
   fi
+
+  setup_cdp_retry_proxy
 
   local mcp_config="/tmp/mcp-config.json"
   local empty='{}'

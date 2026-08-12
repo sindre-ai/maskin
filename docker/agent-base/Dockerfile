@@ -31,6 +31,7 @@ WORKDIR /agent/workspace
 COPY entrypoint.sh /entrypoint.sh
 COPY agent-run.sh /agent-run.sh
 COPY github-credential-helper.sh /agent-github-credential-helper.sh
+COPY cdp-retry-proxy.js /cdp-retry-proxy.js
 RUN chmod +x /entrypoint.sh /agent-run.sh /agent-github-credential-helper.sh
 
 ENTRYPOINT ["/entrypoint.sh"]
