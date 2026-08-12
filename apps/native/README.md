@@ -94,6 +94,17 @@ The new env var is in `turbo.json` `globalPassThroughEnv` so it flows into every
 - `security.csp` is `null` in `tauri.conf.json` — no CSP header is injected, so the custom-header `GET /api/events` SSE fetch and the login flow work from the app origin.
 - `viewport-fit=cover` in `apps/web/index.html` extends the webview under the iPhone notch/home indicator and disables input zoom; the Tauri side does not restrict the inner origin.
 
+## APNs push notifications
+
+The shell registers the official `tauri-plugin-notification` (permission handling + local notifications) and exposes a `register_for_remote_notifications` command that calls `UIApplication.registerForRemoteNotifications` on the main thread via `objc2`. The JS side lives in `apps/web/src/lib/ios-push.ts` and is wired into `apps/web/src/main.tsx`: on the iOS shell it requests notification permission via `@tauri-apps/plugin-notification`, then invokes the Rust command. In a plain browser the module is inert (guarded by `isTauri()`), so web deploys are unaffected.
+
+Two things still need to be hooked into the generated Xcode project on the Mac after `ios:init` — both because `src-tauri/gen/apple/` is git-ignored (same reason as the AppIcon workaround above):
+
+1. **`aps-environment` entitlement.** A template lives at `src-tauri/ios/maskin.entitlements` (`aps-environment = development`). Copy it into `src-tauri/gen/apple/` and reference it from the app target's `CODE_SIGN_ENTITLEMENTS` build setting (add `CODE_SIGN_ENTITLEMENTS: gen/apple/maskin.entitlements` to `targets.maskin-mobile_iOS.settings.base` in `project.yml`, then re-run `xcodegen generate`). Flip the string to `production` before an App Store build. A paid Apple Developer Program membership is required for real APNs — the personal/free team can request permission but the OS won't hand back a token.
+2. **AppDelegate token capture.** The APNs device token is delivered to `application(_:didRegisterForRemoteNotificationsWithDeviceToken:)` on the app delegate. Tauri's generated iOS `AppDelegate` (under `gen/apple/Sources/`) needs an extension that forwards the token to JS via Tauri's event system — e.g. `webview.eval("window.__APNS_TOKEN__ = '<hex>'")` or an emitted event on the main webview. Track that follow-up under task 5 (push → card deep link).
+
+Without step 2 the DoD "device token is obtained from APNs without error" is not testable end-to-end — the OS call succeeds and the delegate fires, but nothing surfaces the token to the shell. That is a scaffold gap, not a WKWebView-inherent failure.
+
 ## Magic-link deep link (login)
 
 The shell registers the `maskin://` custom URL scheme via the `tauri-plugin-deep-link` plugin (`tauri.conf.json` → `plugins.deep-link.mobile`, registered in `src-tauri/src/lib.rs`). A login link such as `maskin://auth#key=ank_...&actor_id=...` opens the app, and `apps/web/src/lib/ios-shell.ts` (`initIosDeepLink`, wired into `apps/web/src/main.tsx`) feeds that fragment into apps/web's existing `applyMagicLinkFragment` — reusing apps/web's auth code unchanged — then reloads so the session bootstraps. In a plain browser the module is inert (guarded by `isTauri()`), so web deploys are unaffected. Verify on device by opening the `maskin://` link on the iPhone and confirming the user lands authenticated without pasting the key.
