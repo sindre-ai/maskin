@@ -58,7 +58,9 @@ test.describe('Trigger detail page', () => {
 		// Default section description is the event one.
 		await expect(page.getByText(/Fires when something happens/i)).toBeVisible({ timeout: 10000 })
 
-		await page.getByRole('radio', { name: /Schedule/i }).click()
+		// Click the visible card (a <label htmlFor> that forwards to the radio),
+		// matching how a real user switches type.
+		await page.getByText('Recurring schedule', { exact: true }).click()
 
 		// The per-type description text updates in place.
 		await expect(page.getByText(/Fires on a recurring schedule/i)).toBeVisible()
