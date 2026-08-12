@@ -4094,9 +4094,12 @@ export function createMcpServer(config: McpConfig) {
 	)
 
 	// ─── Loops ────────────────────────────────────────────────
-	// Composite tools over existing endpoints: the loop object + `in_loop`
-	// edges go through POST /api/graph (atomic), inline steps become ordinary
-	// triggers, and trigger membership lives in the loop's metadata.trigger_ids
+	// There is no dedicated write API for loops — `apps/dev/src/routes/loops.ts`
+	// only implements GET. These tools are composite orchestrations over
+	// existing generic endpoints instead: the loop object + `in_loop` edges go
+	// through POST /api/graph (atomic) or PATCH/DELETE /api/objects/:id,
+	// inline steps become ordinary triggers via POST /api/triggers, and
+	// trigger membership lives in the loop's metadata.trigger_ids
 	// (read-modify-written under the per-workspace lock). See tools.ts for the
 	// loop model these expose.
 	registerAppTool(

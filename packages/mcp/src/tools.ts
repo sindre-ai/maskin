@@ -170,14 +170,18 @@ export const tools = {
 	// ─── Objects ─────────────────────────────────────────────
 	create_objects: {
 		description:
-			'Create one or more objects (insights, bets, tasks) with optional relationships in a single atomic operation. To create a Loop — a persistent closed-loop agent process — use the dedicated create_loop tool instead, which wires the trigger and membership metadata correctly. For a single object, provide one node with no edges. For multiple related objects, use $id references in edges to link them. Edges can also reference existing object UUIDs to connect new objects to existing ones. ALWAYS call get_workspace_schema first — it returns the authoritative, live list of valid statuses per object type, metadata fields, and relationship types for this workspace (these are workspace-configurable, so they vary between workspaces and cannot be assumed). To attach files to a created object, upload them first with create_file (or pick existing ones with list_files) and pass the returned ids in `file_ids` on the node. Attached files appear under the object in the UI and are returned alongside the object in get_objects. When referring to created or connected objects in human-facing output (comments, summaries, notifications, descriptions), use the object\'s title — not its UUID. Returned nodes include the title; edges include sourceTitle and targetTitle for the same reason. UUIDs should only appear in human-facing text when two objects share a near-identical title and disambiguation is needed — in that case append a short id suffix (e.g. "Bets and Threads v4 (ca957490)"). Use UUIDs freely inside tool arguments.',
+			'Create one or more objects — of any type this workspace defines (built-ins like insight/bet/task, or a custom type) — with optional relationships in a single atomic operation. To create a Loop — a persistent closed-loop agent process — use the dedicated create_loop tool instead, which wires the trigger and membership metadata correctly. For a single object, provide one node with no edges. For multiple related objects, use $id references in edges to link them. Edges can also reference existing object UUIDs to connect new objects to existing ones. ALWAYS call get_workspace_schema first — it returns the authoritative, live list of valid statuses per object type, metadata fields, and relationship types for this workspace (these are workspace-configurable, so they vary between workspaces and cannot be assumed). To attach files to a created object, upload them first with create_file (or pick existing ones with list_files) and pass the returned ids in `file_ids` on the node. Attached files appear under the object in the UI and are returned alongside the object in get_objects. When referring to created or connected objects in human-facing output (comments, summaries, notifications, descriptions), use the object\'s title — not its UUID. Returned nodes include the title; edges include sourceTitle and targetTitle for the same reason. UUIDs should only appear in human-facing text when two objects share a near-identical title and disambiguation is needed — in that case append a short id suffix (e.g. "Bets and Threads v4 (ca957490)"). Use UUIDs freely inside tool arguments.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			nodes: z
 				.array(
 					z.object({
 						$id: z.string().describe('Client-side temporary ID for cross-referencing in edges'),
-						type: z.string().describe('Object type (e.g. insight, bet, task, meeting)'),
+						type: z
+							.string()
+							.describe(
+								"Object type — any type this workspace defines (built-ins like insight/bet/task, or a custom type). Call get_workspace_schema first for this workspace's actual configured types; do not assume a fixed set.",
+							),
 						title: z.string().optional(),
 						content: z.string().optional(),
 						status: z.string(),
@@ -302,7 +306,12 @@ export const tools = {
 			'List insights, bets, and/or tasks in the workspace. Filter by type, status, driver, last-updated window, or custom metadata fields. Returns paginated results ordered by creation date unless `sort` is set. Rows with `status = "archived"` are hidden by default — pass `include_archived: true` to see them. When response scoping is enabled the server pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page. `offset` still works for backward compatibility.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			type: z.string().describe('Object type (e.g. insight, bet, task, meeting)').optional(),
+			type: z
+				.string()
+				.describe(
+					'Object type — any type this workspace defines (built-ins like insight/bet/task, or a custom type). Call get_workspace_schema to see the live list.',
+				)
+				.optional(),
 			status: z.string().optional(),
 			driver: z
 				.string()
@@ -355,7 +364,12 @@ export const tools = {
 				.string()
 				.min(1)
 				.describe('Search query — matches against title and content (case-insensitive)'),
-			type: z.string().describe('Object type (e.g. insight, bet, task, meeting)').optional(),
+			type: z
+				.string()
+				.describe(
+					'Object type — any type this workspace defines (built-ins like insight/bet/task, or a custom type). Call get_workspace_schema to see the live list.',
+				)
+				.optional(),
 			status: z.string().optional(),
 			driver_id: z
 				.string()
@@ -609,7 +623,7 @@ export const tools = {
 				.string()
 				.optional()
 				.describe(
-					'Filter schema to a specific object type (e.g. insight, bet, task, meeting). If omitted, returns schema for all types.',
+					'Filter schema to a specific object type — any type this workspace defines (built-ins like insight/bet/task, or a custom type). If omitted, returns schema for all types.',
 				),
 		}),
 	},
@@ -633,7 +647,7 @@ export const tools = {
 	// endpoint shallow-merges `settings`.
 	create_workspace_field: {
 		description:
-			'Add a new metadata field to a workspace object type (e.g. insight, bet, task). Mirrors the web schema editor — once added, the field is available via get_workspace_schema and accepted by create_objects / update_objects metadata. Field names must be unique within a type.',
+			'Add a new metadata field to a workspace object type — any type this workspace defines (built-ins like insight/bet/task, or a custom type). Mirrors the web schema editor — once added, the field is available via get_workspace_schema and accepted by create_objects / update_objects metadata. Field names must be unique within a type.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			type: z

@@ -33,6 +33,18 @@ type Env = {
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 /**
+ * This route only implements GET — there is intentionally no POST/PATCH/DELETE
+ * here. A loop is just an `objects` row with `type = 'loop'`, so creating,
+ * updating, and deleting one is done through the existing generic endpoints
+ * (POST /api/graph, PATCH/DELETE /api/objects/:id, POST /api/triggers,
+ * POST/DELETE /api/relationships) rather than a loop-specific write API.
+ * `create_loop` / `update_loop` / `delete_loop` in `packages/mcp/src/server.ts`
+ * are the supported way to perform those writes correctly (wiring
+ * `metadata.trigger_ids` and `in_loop` edges) — see the comment above their
+ * registration for the full breakdown of which endpoint each step hits.
+ */
+
+/**
  * Terminal statuses per object type — a child object in one of these values
  * counts toward the loop's `closedCount` and drops out of `inProgressCount`.
  * `bet` is `TERMINAL_BET_STATUSES` (`packages/shared/src/schemas/objects.ts`)
