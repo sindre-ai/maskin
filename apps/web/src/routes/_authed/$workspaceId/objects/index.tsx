@@ -1,3 +1,4 @@
+import { AskPanel } from '@/components/asks/ask-panel'
 import { ImportDialog } from '@/components/imports/import-dialog'
 import { PageHeader } from '@/components/layout/page-header'
 import { BoardView } from '@/components/objects/board/board-view'
@@ -18,6 +19,7 @@ import { useActors } from '@/hooks/use-actors'
 import { useCustomExtensions } from '@/hooks/use-custom-extensions'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useImportToast } from '@/hooks/use-imports'
+import { useNotifications, useRespondNotification } from '@/hooks/use-notifications'
 import { useBulkResultHandlers, useBulkUpdateObjects } from '@/hooks/use-objects'
 import {
 	useUpdateUserDisplaySettings,
@@ -223,6 +225,28 @@ function ObjectsPage() {
 	searchParamsRef.current = searchParams
 
 	const { data: actors } = useActors(workspaceId)
+	// Pending asks scoped to the current selection. An ask is a needs_input
+	// notification whose object is one of the selected rows; Approve/Hold
+	// round-trips through the respond endpoint and the panel reflects the done
+	// state via the resolved status.
+	const actorsById = useMemo(() => new Map((actors ?? []).map((a) => [a.id, a])), [actors])
+	const [asksOpen, setAsksOpen] = useState(false)
+	const { data: needsInputNotifications } = useNotifications(workspaceId, {
+		type: 'needs_input',
+	})
+	const selectedAsks = useMemo(() => {
+		if (!needsInputNotifications) return []
+		const selected = new Set(selectedIds)
+		return needsInputNotifications.filter((n) => n.objectId != null && selected.has(n.objectId))
+	}, [needsInputNotifications, selectedIds])
+	const askCount = selectedAsks.length
+	const respondNotification = useRespondNotification(workspaceId)
+	const handleRespond = useCallback(
+		(id: string, response: 'approve' | 'hold') => {
+			respondNotification.mutate({ id, response })
+		},
+		[respondNotification],
+	)
 	const enabledModules = useEnabledModules()
 	const customExtensions = useCustomExtensions()
 	const settings = workspace.settings as Record<string, unknown>
@@ -1198,8 +1222,23 @@ function ObjectsPage() {
 				onCopyTitle={handleCopyTitles}
 				onCopyTitleAsLink={handleCopyTitlesAsLinks}
 				onOpenLinks={handleOpenLinks}
+				onAnswerAsks={() => setAsksOpen(true)}
+				askCount={askCount}
 				onDelete={handleBulkDelete}
 				onClear={clearSelection}
+			/>
+			<AskPanel
+				open={asksOpen}
+				onOpenChange={setAsksOpen}
+				title="Asks"
+				subtitle={
+					askCount > 0
+						? `${askCount} agent${askCount === 1 ? '' : 's'} waiting on a decision`
+						: undefined
+				}
+				asks={selectedAsks}
+				actorsById={actorsById}
+				onRespond={handleRespond}
 			/>
 		</div>
 	)
