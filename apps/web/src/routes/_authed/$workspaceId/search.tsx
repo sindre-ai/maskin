@@ -70,7 +70,12 @@ function SearchView() {
 	// One `command_palette_opened` on mount — the /search half of the funnel
 	// denominator, mirroring the palette's fire-on-open. The palette's See-all
 	// footer navigates here, so footer arrivals produce their own open event.
+	// The ref guard makes it fire exactly once per mount despite StrictMode's
+	// dev double-effect, matching the funnel's exactly-one denominator.
+	const emittedSearchViewOpen = useRef(false)
 	useEffect(() => {
+		if (emittedSearchViewOpen.current) return
+		emittedSearchViewOpen.current = true
 		trackCommandPaletteOpened({ surface: 'search_view' })
 	}, [])
 

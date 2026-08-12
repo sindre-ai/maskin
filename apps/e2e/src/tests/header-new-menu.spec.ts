@@ -112,7 +112,7 @@ test.describe('Header New menu', () => {
 		await headerNewTrigger(page).click()
 		await page.getByRole('menuitem', { name: /find a past conversation/i }).click()
 
-		await expect(page.getByPlaceholder('Search objects, navigate...')).toBeVisible()
+		await expect(page.getByPlaceholder('Search or jump to…')).toBeVisible()
 	})
 
 	test('hides "Create an object" but keeps the menu on an object-detail page', async ({
