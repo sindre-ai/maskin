@@ -8,6 +8,7 @@
 		"dev:external": "bash scripts/dev-external.sh",
 		"dev:external:win": "node scripts/dev-external.mjs",
 		"build": "turbo build",
+		"build:ios": "turbo build:ios",
 		"test": "turbo test --concurrency=4",
 		"test:integration": "turbo test:integration",
 		"test:e2e": "turbo test:e2e",

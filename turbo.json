@@ -49,6 +49,7 @@
 		"PER_COOKIE_DRAFT_CAP",
 		"PER_IP_DRAFT_CAP_DAY",
 		"GUEST_CLAIM_TTL_HOURS",
+		"VITE_API_BASE_URL",
 		"VITE_POSTHOG_KEY",
 		"VITE_POSTHOG_HOST",
 		"AGENT_SERVER_SECRET",
@@ -86,6 +87,14 @@
 		"build:mcp": {
 			"dependsOn": ["^build"],
 			"outputs": ["dist-mcp/**"]
+		},
+		"build:ios": {
+			"dependsOn": ["build"],
+			"cache": false
+		},
+		"@maskin/mobile#build": {
+			"outputs": [],
+			"dependsOn": ["^build"]
 		},
 		"dev": {
 			"dependsOn": ["^build"],

@@ -58,4 +58,6 @@ export function getStatusColor(status: string) {
 	return statusColors[status] ?? defaultStatusColor
 }
 
-export const API_BASE = '/api'
+// Absolute URL when the app runs inside the Tauri iOS shell (set VITE_API_BASE_URL
+// at build time); the relative /api path keeps the Vite dev proxy for web deploys.
+export const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '/api'

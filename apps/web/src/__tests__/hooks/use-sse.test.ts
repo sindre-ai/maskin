@@ -1,5 +1,5 @@
 import { act, renderHook } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 let mockController: AbortController
 const mockConnectSSE = vi.fn((_workspaceId: string, _callbacks: unknown) => {
@@ -21,7 +21,25 @@ import { TestWrapper } from '../setup'
 
 beforeEach(() => {
 	vi.clearAllMocks()
+	setVisibility('visible')
 })
+
+afterEach(() => {
+	setVisibility('visible')
+})
+
+function setVisibility(state: 'visible' | 'hidden') {
+	Object.defineProperty(document, 'visibilityState', {
+		configurable: true,
+		value: state,
+	})
+}
+
+function dispatchVisibilityChange() {
+	act(() => {
+		document.dispatchEvent(new Event('visibilitychange'))
+	})
+}
 
 describe('useSSE', () => {
 	it('returns connecting as initial status', () => {
@@ -99,5 +117,56 @@ describe('useSSE', () => {
 		callbacks.onEvent(event)
 
 		expect(invalidateFromSSE).toHaveBeenCalledWith(expect.anything(), 'ws-1', event)
+	})
+
+	describe('foreground resume (background → foreground)', () => {
+		it('reconnects (aborts and re-establishes) when the document returns to visible', () => {
+			const { result } = renderHook(() => useSSE('ws-1'), { wrapper: TestWrapper })
+			expect(mockConnectSSE).toHaveBeenCalledTimes(1)
+			const firstController = mockController
+
+			setVisibility('hidden')
+			dispatchVisibilityChange()
+			expect(mockConnectSSE).toHaveBeenCalledTimes(1) // no reconnect while hidden
+
+			setVisibility('visible')
+			dispatchVisibilityChange()
+
+			// The fresh connectSSE re-reads the persisted Last-Event-ID, so the
+			// server replays anything missed while the app was backgrounded.
+			expect(firstController.signal.aborted).toBe(true)
+			expect(mockConnectSSE).toHaveBeenCalledTimes(2)
+			expect(mockConnectSSE).toHaveBeenLastCalledWith('ws-1', expect.any(Object))
+			expect(result.current).toBe('connecting')
+		})
+
+		it('reconnects on each background→foreground cycle, never getting stuck', () => {
+			const { result } = renderHook(() => useSSE('ws-1'), { wrapper: TestWrapper })
+			expect(mockConnectSSE).toHaveBeenCalledTimes(1)
+
+			setVisibility('hidden')
+			dispatchVisibilityChange()
+			setVisibility('visible')
+			dispatchVisibilityChange()
+			expect(mockConnectSSE).toHaveBeenCalledTimes(2)
+
+			const secondController = mockController
+			setVisibility('hidden')
+			dispatchVisibilityChange()
+			setVisibility('visible')
+			dispatchVisibilityChange()
+			expect(secondController.signal.aborted).toBe(true)
+			expect(mockConnectSSE).toHaveBeenCalledTimes(3)
+			expect(result.current).toBe('connecting')
+		})
+
+		it('does not reconnect on foreground when there is no active workspace', () => {
+			renderHook(() => useSSE(''), { wrapper: TestWrapper })
+			expect(mockConnectSSE).not.toHaveBeenCalled()
+
+			setVisibility('visible')
+			dispatchVisibilityChange()
+			expect(mockConnectSSE).not.toHaveBeenCalled()
+		})
 	})
 })

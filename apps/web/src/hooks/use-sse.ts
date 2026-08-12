@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { type SSEEvent, type SSEStatus, connectSSE } from '../lib/sse'
 import { invalidateFromSSE } from '../lib/sse-invalidation'
 
@@ -10,8 +10,9 @@ export function useSSE(workspaceId: string): SSEStatus {
 	const controllerRef = useRef<AbortController | null>(null)
 	const [status, setStatus] = useState<SSEStatus>('connecting')
 
-	useEffect(() => {
+	const connect = useCallback(() => {
 		if (!workspaceId) return
+		controllerRef.current?.abort()
 		setStatus('connecting')
 
 		const controller = connectSSE(workspaceId, {
@@ -21,12 +22,26 @@ export function useSSE(workspaceId: string): SSEStatus {
 			onStatusChange: setStatus,
 		})
 		controllerRef.current = controller
+	}, [workspaceId, queryClient])
 
+	useEffect(() => {
+		connect()
 		return () => {
-			controller.abort()
+			controllerRef.current?.abort()
 			controllerRef.current = null
 		}
-	}, [workspaceId, queryClient])
+	}, [connect])
+
+	// On return to the foreground the OS may have severed/suspended the stream;
+	// reconnect so the persisted Last-Event-ID replays anything missed while hidden.
+	useEffect(() => {
+		if (!workspaceId) return
+		const onVisibilityChange = () => {
+			if (document.visibilityState === 'visible') connect()
+		}
+		document.addEventListener('visibilitychange', onVisibilityChange)
+		return () => document.removeEventListener('visibilitychange', onVisibilityChange)
+	}, [connect, workspaceId])
 
 	return status
 }

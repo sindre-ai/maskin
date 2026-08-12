@@ -1,0 +1,28 @@
+[package]
+name = "maskin-mobile"
+version = "0.1.0"
+description = "Maskin iOS shell — Tauri 2 wrapper around the apps/web build"
+authors = ["Maskin"]
+edition = "2021"
+
+# iOS requires a staticlib for the Swift/Xcode side; rlib/cdylib keep desktop
+# (and `cargo check` on any host) working.
+[lib]
+name = "maskin_mobile_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-deep-link = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+keyring = { version = "3", features = ["apple-native"] }
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+strip = true

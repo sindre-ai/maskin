@@ -1,10 +1,13 @@
 import {
+	SessionLogTranscript,
 	buildSessionTranscript,
 	getLatestActivityPreview,
 	getSessionResultDisplay,
 	isSessionIdleAwaitingInput,
 } from '@/components/agents/session-log-transcript'
 import type { SessionLogResponse } from '@/lib/api'
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 
 function log(
@@ -244,5 +247,88 @@ describe('getLatestActivityPreview', () => {
 
 	it('returns null when there is nothing renderable yet', () => {
 		expect(getLatestActivityPreview([])).toBeNull()
+	})
+})
+
+describe('SessionLogTranscript (render)', () => {
+	function stdout(entries: Array<[number, string]>) {
+		return entries.map(([id, content]) => log(id, 'stdout', content))
+	}
+
+	function assistantLine(text: string): string {
+		return JSON.stringify({
+			type: 'assistant',
+			message: { id: 'm', content: [{ type: 'text', text }] },
+		})
+	}
+
+	it('renders assistant text blocks as markdown content', () => {
+		const logs = stdout([[1, assistantLine('Hello from the agent')]])
+		render(<SessionLogTranscript logs={logs} />)
+		expect(screen.getByText('Hello from the agent')).toBeInTheDocument()
+	})
+
+	it('renders a tool_use block with its tool name and an expandable input', async () => {
+		const user = userEvent.setup()
+		const toolUse = JSON.stringify({
+			type: 'assistant',
+			message: {
+				id: 'm',
+				content: [{ type: 'tool_use', id: 'call_1', name: 'Read', input: { path: '/etc/hosts' } }],
+			},
+		})
+		render(<SessionLogTranscript logs={stdout([[1, toolUse]])} />)
+		expect(screen.getByText('Read')).toBeInTheDocument()
+		expect(screen.getByText(/path: \/etc\/hosts/)).toBeInTheDocument()
+		await user.click(screen.getByText('Read'))
+		expect(screen.getByText(/"path": "\/etc\/hosts"/)).toBeInTheDocument()
+	})
+
+	it('renders a thinking block collapsed and expands to its body', async () => {
+		const user = userEvent.setup()
+		const thinking = JSON.stringify({
+			type: 'assistant',
+			message: {
+				id: 'm',
+				content: [{ type: 'thinking', thinking: 'I reason internally before acting' }],
+			},
+		})
+		render(<SessionLogTranscript logs={stdout([[1, thinking]])} />)
+		expect(screen.getByText('Thinking')).toBeInTheDocument()
+		await user.click(screen.getByText('Thinking'))
+		expect(screen.getByText('I reason internally before acting')).toBeInTheDocument()
+	})
+
+	it('labels redacted thinking blocks distinctly', () => {
+		const thinking = JSON.stringify({
+			type: 'assistant',
+			message: {
+				id: 'm',
+				content: [{ type: 'thinking', thinking: '', signature: 'sig' }],
+			},
+		})
+		render(<SessionLogTranscript logs={stdout([[1, thinking]])} />)
+		expect(screen.getByText('Thinking (redacted)')).toBeInTheDocument()
+	})
+
+	it('renders the user message bubble from a real user envelope', () => {
+		const userMsg = JSON.stringify({ type: 'user', message: { content: 'my question' } })
+		render(<SessionLogTranscript logs={stdout([[1, userMsg]])} />)
+		expect(screen.getByText('my question')).toBeInTheDocument()
+	})
+
+	it('wraps the transcript in a scrollable container and renders long logs without truncation', () => {
+		const entries: Array<[number, string]> = []
+		for (let i = 0; i < 30; i++) {
+			entries.push([i + 1, assistantLine(`message number ${i}`)])
+		}
+		const { container } = render(<SessionLogTranscript logs={stdout(entries)} />)
+		const scroll = container.querySelector('.overflow-y-auto')
+		expect(scroll).not.toBeNull()
+		expect(scroll?.className).toContain('max-h-[60vh]')
+		// No app-specific truncation: every block in a long log is present.
+		for (let i = 0; i < 30; i++) {
+			expect(container.textContent).toContain(`message number ${i}`)
+		}
 	})
 })
