@@ -53,7 +53,7 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 				type: 'insight',
 				title: 'Quasiprime Insight',
 				content: 'quasiprime knowledge base draft',
-				status: 'active',
+				status: 'new',
 			})
 
 			await page.goto(`/${account.workspaceId}`)
@@ -93,7 +93,7 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 				type: 'insight',
 				title: 'Asteroid Insight',
 				content: 'asteroid miner survey notes',
-				status: 'active',
+				status: 'new',
 			})
 			await account.api.createObject(account.workspaceId, {
 				type: 'bet',
@@ -167,7 +167,7 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 				type: 'task',
 				title: 'Comet Task',
 				content: 'comet approach tracking task',
-				status: 'active',
+				status: 'todo',
 			})
 
 			await page.goto(`/${account.workspaceId}`)
