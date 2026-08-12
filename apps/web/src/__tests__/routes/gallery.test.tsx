@@ -13,7 +13,7 @@ vi.mock('@tanstack/react-router', async () => {
 import { ThemeProvider } from '@/lib/theme'
 import { Route } from '@/routes/gallery'
 
-const GalleryPage = Route.component
+const GalleryPage = (Route as unknown as { component: React.FC }).component
 
 describe('GalleryPage', () => {
 	it('renders all 23 specimen numbers in the grid', () => {
