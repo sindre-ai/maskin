@@ -677,7 +677,7 @@ function BoardColumn({
 			ref={setNodeRef}
 			data-testid={`board-column-${status}`}
 			className={cn(
-				'relative flex min-h-[28rem] shrink-0 flex-col gap-2 rounded-md transition-colors',
+				'relative flex min-h-[28rem] shrink-0 flex-col gap-2 rounded-xl transition-colors',
 				'w-full sm:w-72 md:w-72 lg:w-80',
 				isValidTarget && 'bg-accent/5',
 			)}
