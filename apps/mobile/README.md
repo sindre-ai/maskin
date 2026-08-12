@@ -69,3 +69,7 @@ The new env var is in `turbo.json` `globalPassThroughEnv` so it flows into every
 
 - `security.csp` is `null` in `tauri.conf.json` — no CSP header is injected, so the custom-header `GET /api/events` SSE fetch and the login flow work from the app origin.
 - `viewport-fit=cover` in `apps/web/index.html` extends the webview under the iPhone notch/home indicator and disables input zoom; the Tauri side does not restrict the inner origin.
+
+## Magic-link deep link (login)
+
+The shell registers the `maskin://` custom URL scheme via the `tauri-plugin-deep-link` plugin (`tauri.conf.json` → `plugins.deep-link.mobile`, registered in `src-tauri/src/lib.rs`). A login link such as `maskin://auth#key=ank_...&actor_id=...` opens the app, and `apps/web/src/lib/ios-shell.ts` (`initIosDeepLink`, wired into `apps/web/src/main.tsx`) feeds that fragment into apps/web's existing `applyMagicLinkFragment` — reusing apps/web's auth code unchanged — then reloads so the session bootstraps. In a plain browser the module is inert (guarded by `isTauri()`), so web deploys are unaffected. Verify on device by opening the `maskin://` link on the iPhone and confirming the user lands authenticated without pasting the key.

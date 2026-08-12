@@ -44,6 +44,7 @@
 		"@tanstack/react-router": "^1.168.23",
 		"@tanstack/react-table": "^8.21.3",
 		"@tanstack/react-virtual": "^3.13.24",
+		"@tauri-apps/plugin-deep-link": "^2.2.1",
 		"class-variance-authority": "^0.7.1",
 		"clsx": "^2.1.1",
 		"cmdk": "^1.0.0",

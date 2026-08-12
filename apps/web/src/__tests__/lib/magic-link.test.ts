@@ -1,5 +1,5 @@
 import { getApiKey } from '@/lib/auth'
-import { consumeMagicLink } from '@/lib/magic-link'
+import { applyMagicLinkFragment, consumeMagicLink } from '@/lib/magic-link'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 describe('consumeMagicLink', () => {
@@ -54,5 +54,36 @@ describe('consumeMagicLink', () => {
 		expect(parsed.name).toBe('Magnus')
 		expect(parsed.email).toBe('m@example.com')
 		expect(parsed.type).toBe('human')
+	})
+})
+
+describe('applyMagicLinkFragment', () => {
+	it('returns false and stores nothing when no fragment is given', () => {
+		expect(applyMagicLinkFragment('')).toBe(false)
+		expect(getApiKey()).toBeNull()
+	})
+
+	it('returns false without a key or a non-ank_ key', () => {
+		expect(applyMagicLinkFragment('#foo=bar')).toBe(false)
+		expect(applyMagicLinkFragment('#key=notanapikey')).toBe(false)
+		expect(getApiKey()).toBeNull()
+	})
+
+	it('accepts a fragment with or without the leading hash', () => {
+		expect(applyMagicLinkFragment('#key=ank_hash')).toBe(true)
+		expect(getApiKey()).toBe('ank_hash')
+		localStorage.clear()
+		expect(applyMagicLinkFragment('key=ank_nohash')).toBe(true)
+		expect(getApiKey()).toBe('ank_nohash')
+	})
+
+	it('stores actor info alongside the key', () => {
+		expect(
+			applyMagicLinkFragment('#key=ank_x&actor_id=a-9&actor_name=Ada&actor_email=a%40b.com'),
+		).toBe(true)
+		const parsed = JSON.parse(localStorage.getItem('maskin-actor') ?? '{}')
+		expect(parsed.id).toBe('a-9')
+		expect(parsed.name).toBe('Ada')
+		expect(parsed.email).toBe('a@b.com')
 	})
 })

@@ -35,6 +35,7 @@ fn delete_api_key() -> Result<(), String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
 	tauri::Builder::default()
+		.plugin(tauri_plugin_deep_link::init())
 		.invoke_handler(tauri::generate_handler![
 			get_api_key,
 			set_api_key,
