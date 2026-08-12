@@ -4,6 +4,7 @@ import { RouterProvider, createRouter } from '@tanstack/react-router'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './app.css'
+import { restoreSession } from './lib/auth'
 import { initBackNavTracker } from './lib/back-nav-tracker'
 import { consumeMagicLink } from './lib/magic-link'
 import { initPosthog } from './lib/posthog'
@@ -34,13 +35,20 @@ declare module '@tanstack/react-router' {
 	}
 }
 
-// biome-ignore lint/style/noNonNullAssertion: root element is guaranteed to exist in index.html
-createRoot(document.getElementById('root')!).render(
-	<StrictMode>
-		<ThemeProvider>
-			<QueryClientProvider client={queryClient}>
-				<RouterProvider router={router} />
-			</QueryClientProvider>
-		</ThemeProvider>
-	</StrictMode>,
-)
+// In the Tauri shell, restore the API key from the iOS Keychain before the
+// router mounts so the `_authed` guard sees a relaunched session. On the web
+// this is a fast no-op.
+async function boot() {
+	await restoreSession()
+	// biome-ignore lint/style/noNonNullAssertion: root element is guaranteed to exist in index.html
+	createRoot(document.getElementById('root')!).render(
+		<StrictMode>
+			<ThemeProvider>
+				<QueryClientProvider client={queryClient}>
+					<RouterProvider router={router} />
+				</QueryClientProvider>
+			</ThemeProvider>
+		</StrictMode>,
+	)
+}
+void boot()
