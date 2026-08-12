@@ -115,8 +115,8 @@ vi.mock('@/components/objects/bulk-action-bar', () => ({ BulkActionBar: () => nu
 vi.mock('@/components/layout/page-header', () => ({
 	PageHeader: ({ title }: { title: string }) => <h1>{title}</h1>,
 }))
-vi.mock('@/components/objects/data-table/data-table', () => ({
-	DataTable: () => <div data-testid="data-table" />,
+vi.mock('@/components/objects/list/list-view', () => ({
+	ListView: () => <div data-testid="list-view" />,
 }))
 vi.mock('@/components/objects/board/board-view', () => ({
 	// Mimic the real board column "load more" behavior closely enough for the
@@ -246,12 +246,12 @@ describe('ObjectsPage view switcher', () => {
 		expect(typeof props.onViewChange).toBe('function')
 	})
 
-	it('swaps DataTable for BoardView when the toolbar reports a Board selection', async () => {
+	it('swaps ListView for BoardView when the toolbar reports a Board selection', async () => {
 		persisted.current = null
 		toolbarProps.current = null
 		renderRoute()
 		await waitFor(() => expect(toolbarProps.current).not.toBeNull())
-		expect(screen.getByTestId('data-table')).toBeInTheDocument()
+		expect(screen.getByTestId('list-view')).toBeInTheDocument()
 		expect(screen.queryByTestId('board-view')).toBeNull()
 
 		act(() => {
@@ -259,7 +259,7 @@ describe('ObjectsPage view switcher', () => {
 		})
 
 		await waitFor(() => expect(screen.getByTestId('board-view')).toBeInTheDocument())
-		expect(screen.queryByTestId('data-table')).toBeNull()
+		expect(screen.queryByTestId('list-view')).toBeNull()
 		expect(screen.getByTestId('board-view')).toHaveAttribute('data-object-type', 'task')
 	})
 

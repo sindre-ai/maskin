@@ -12,4 +12,17 @@ describe('TypeBadge', () => {
 		render(<TypeBadge type="task" />)
 		expect(screen.getByText('task')).toBeInTheDocument()
 	})
+
+	it('renders the mono chip variant (compact uppercase type label)', () => {
+		render(<TypeBadge type="bet" variant="mono" />)
+		const chip = screen.getByText('bet')
+		expect(chip).toBeInTheDocument()
+		expect(chip.className).toContain('uppercase')
+	})
+
+	it('sticks to the badge pill variant by default', () => {
+		render(<TypeBadge type="insight" />)
+		const badge = screen.getByText('insight')
+		expect(badge.className).not.toContain('uppercase')
+	})
 })
