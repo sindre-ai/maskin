@@ -335,4 +335,139 @@ describe('Workspaces Routes', () => {
 			expect(body[0].role).toBe('owner')
 		})
 	})
+
+	describe('PATCH /api/workspaces/:id/members/:actorId', () => {
+		it("changes a member's role and returns 200", async () => {
+			const wsId = randomUUID()
+			const actorId = randomUUID()
+			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [
+				[{ actorId: 'test-actor-id' }], // isWorkspaceMember(caller)
+				[{ role: 'member' }], // existing member row lookup
+			]
+			mockResults.update = [{ actorId, role: 'admin', joinedAt: new Date() }]
+			// After update, the route re-fetches the actor for name/type.
+			// selectQueue is exhausted, so the static `select` supplies the actor row.
+			mockResults.select = [{ name: 'Alice', type: 'human' }]
+			mockResults.insert = [{}]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${wsId}/members/${actorId}`, { role: 'admin' }),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.role).toBe('admin')
+			expect(calls.updates[0]).toEqual({ role: 'admin' })
+		})
+
+		it('returns 403 when caller is not a member', async () => {
+			const wsId = randomUUID()
+			const actorId = randomUUID()
+			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.select = []
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${wsId}/members/${actorId}`, { role: 'admin' }),
+			)
+
+			expect(res.status).toBe(403)
+		})
+
+		it('returns 404 when the target member does not exist', async () => {
+			const wsId = randomUUID()
+			const actorId = randomUUID()
+			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [
+				[{ actorId: 'test-actor-id' }], // isWorkspaceMember
+				[], // existing member lookup — no row
+			]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${wsId}/members/${actorId}`, { role: 'admin' }),
+			)
+
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 400 when demoting the only owner', async () => {
+			const wsId = randomUUID()
+			const actorId = randomUUID()
+			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [
+				[{ actorId: 'test-actor-id' }], // isWorkspaceMember
+				[{ role: 'owner' }], // existing member is the owner
+				[{ actorId }], // owner count = 1 → last owner guard trips
+			]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${wsId}/members/${actorId}`, { role: 'admin' }),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.code).toBe('BAD_REQUEST')
+			expect(calls.updates).toHaveLength(0)
+		})
+	})
+
+	describe('DELETE /api/workspaces/:id/members/:actorId', () => {
+		it('removes a member and returns 200', async () => {
+			const wsId = randomUUID()
+			const actorId = randomUUID()
+			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [
+				[{ actorId: 'test-actor-id' }], // isWorkspaceMember
+				[{ role: 'member' }], // existing member row
+			]
+			mockResults.delete = [{ actorId }]
+			mockResults.insert = [{}]
+
+			const res = await app.request(
+				new Request(`http://localhost/api/workspaces/${wsId}/members/${actorId}`, {
+					method: 'DELETE',
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.removed).toBe(true)
+		})
+
+		it('returns 403 when caller is not a member', async () => {
+			const wsId = randomUUID()
+			const actorId = randomUUID()
+			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.select = []
+
+			const res = await app.request(
+				new Request(`http://localhost/api/workspaces/${wsId}/members/${actorId}`, {
+					method: 'DELETE',
+				}),
+			)
+
+			expect(res.status).toBe(403)
+		})
+
+		it('returns 400 when removing the only owner', async () => {
+			const wsId = randomUUID()
+			const actorId = randomUUID()
+			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [
+				[{ actorId: 'test-actor-id' }], // isWorkspaceMember
+				[{ role: 'owner' }], // existing member is the owner
+				[{ actorId }], // owner count = 1
+			]
+
+			const res = await app.request(
+				new Request(`http://localhost/api/workspaces/${wsId}/members/${actorId}`, {
+					method: 'DELETE',
+				}),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.code).toBe('BAD_REQUEST')
+		})
+	})
 })
