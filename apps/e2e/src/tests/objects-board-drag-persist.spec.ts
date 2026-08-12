@@ -42,42 +42,63 @@ test.describe('Objects board drag-persist', () => {
 			const doneColumn = page.getByTestId('board-column-done')
 			await expect(todoColumn.getByText('Drag Persist Card')).toBeVisible()
 
-			// The Board is horizontally scrollable (overflow-x-auto). At the narrow
-			// ship-gate viewport the "done" column sits entirely off-screen to the
-			// right; a cross-column drag onto it does not register under headless
-			// synthetic pointer input (dnd-kit never records a drop on the off-screen
-			// column even when the pointer is geometrically inside its rect), so the
-			// drag-and-persist assertion runs only where both columns are on-screen.
-			const viewportW = page.viewportSize()?.width ?? 0
-			const doneBox = (await doneColumn.boundingBox()) ?? { x: 0, y: 0, width: 0, height: 0 }
-			// The drop target is the column's center; gauge reachability by whether that
-			// point is on-screen.
-			if (doneBox.x + doneBox.width / 2 > viewportW) {
-				// Narrow viewport: the card renders on the Board (smoke); the persisted
-				// cross-column drag is asserted at the wider viewports below.
-				await expect(doneColumn).toBeVisible()
-				return
-			}
-
-			// Drag the card onto the empty "done" column. dnd-kit's pointer-first
-			// detection needs intermediate pointer moves — a single fast dragTo is
-			// missed, so drive a stepwise mouse drag to the column's center, the
-			// same gesture a user makes.
+			// Drive a stepwise pointer drag to the "done" column. The board is
+			// horizontally scrollable (overflow-x-auto), and at the narrow 375px
+			// viewport the "done" column starts entirely off-screen to the right.
+			// BoardView autoscrolls the container while the pointer sits in the
+			// edge hot zone during a drag — so the gesture below first parks the
+			// pointer at the container's right edge to advance the scroll, then
+			// re-measures the (now on-screen) column and continues to its center.
+			// dnd-kit's `MeasuringStrategy.Always` re-queries droppable rects
+			// during the scroll, so the drop lands on the newly-visible column.
 			const card = page.getByText('Drag Persist Card')
 			const cardBox = (await card.boundingBox()) ?? { x: 0, y: 0, width: 0, height: 0 }
-			const startX = cardBox.x + cardBox.width / 2
-			const startY = cardBox.y + cardBox.height / 2
+			const boardBox = (await board.boundingBox()) ?? { x: 0, y: 0, width: 0, height: 0 }
+			let currentX = cardBox.x + cardBox.width / 2
+			let currentY = cardBox.y + cardBox.height / 2
+			await page.mouse.move(currentX, currentY)
+			await page.mouse.down()
+
+			const stepTo = async (targetX: number, targetY: number, steps = 20) => {
+				const fromX = currentX
+				const fromY = currentY
+				for (let i = 1; i <= steps; i++) {
+					const x = fromX + ((targetX - fromX) * i) / steps
+					const y = fromY + ((targetY - fromY) * i) / steps
+					await page.mouse.move(x, y)
+				}
+				currentX = targetX
+				currentY = targetY
+			}
+
+			// If the target column starts off-screen, park the pointer at the
+			// board container's right edge so BoardView's autoscroll advances
+			// `scrollLeft`, then poll until the column becomes reachable.
+			let doneBox = (await doneColumn.boundingBox()) ?? { x: 0, y: 0, width: 0, height: 0 }
+			const viewportW = page.viewportSize()?.width ?? 0
+			if (doneBox.x + doneBox.width / 2 > viewportW) {
+				const edgeX = boardBox.x + boardBox.width - 4
+				const edgeY = boardBox.y + boardBox.height / 2
+				await stepTo(edgeX, edgeY)
+				// Poll boundingBox as autoscroll pulls the column onto the page.
+				// Autoscroll advances only while pointermove fires — nudge one
+				// pixel back and forth to keep the RAF loop's speed non-zero on
+				// engines that batch stationary moves.
+				const started = Date.now()
+				while (Date.now() - started < 10_000) {
+					const box = (await doneColumn.boundingBox()) ?? { x: 0, width: 0 }
+					if (box.x + box.width / 2 <= viewportW - 8) break
+					await page.mouse.move(edgeX - 1, edgeY)
+					await page.mouse.move(edgeX, edgeY)
+					currentX = edgeX
+					currentY = edgeY
+				}
+				doneBox = (await doneColumn.boundingBox()) ?? { x: 0, y: 0, width: 0, height: 0 }
+			}
+
 			const endX = doneBox.x + doneBox.width / 2
 			const endY = doneBox.y + doneBox.height / 2
-			await page.mouse.move(startX, startY)
-			await page.mouse.down()
-			const steps = 25
-			for (let i = 1; i <= steps; i++) {
-				await page.mouse.move(
-					startX + ((endX - startX) * i) / steps,
-					startY + ((endY - startY) * i) / steps,
-				)
-			}
+			await stepTo(endX, endY)
 			await page.mouse.up()
 
 			// The status change lands optimistically and the card re-renders under
