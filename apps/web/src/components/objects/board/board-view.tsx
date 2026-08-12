@@ -17,6 +17,7 @@ import {
 	type DragEndEvent,
 	type DragOverEvent,
 	DragOverlay,
+	MeasuringStrategy,
 	PointerSensor,
 	closestCenter,
 	pointerWithin,
@@ -65,6 +66,14 @@ const BOARD_MANUAL_SORT = 'boardOrder'
 const SKELETON_CARDS_PER_COLUMN = 2
 const LONG_PRESS_MS = 500
 const LONG_PRESS_MOVE_TOLERANCE = 8
+// Horizontal autoscroll during a card drag. `AUTOSCROLL_EDGE_PX` is the width
+// of the hot zone at each edge of the board container; `AUTOSCROLL_MAX_SPEED`
+// is the peak px-per-frame when the pointer sits at the very edge. dnd-kit's
+// built-in autoscroll only advances under a native scroll observer, which
+// doesn't fire under Playwright's stepwise `mouse.move` — hence a hand-rolled
+// rAF loop that runs while `activeObject` is truthy.
+const AUTOSCROLL_EDGE_PX = 60
+const AUTOSCROLL_MAX_SPEED = 18
 type PendingBoardPatch = Pick<BulkUpdateObjectsInput['patch'], 'status' | 'driver' | 'metadata'>
 interface DragPreview {
 	groupValue: string
@@ -242,6 +251,7 @@ export function BoardView({
 	onManualOrderChange,
 }: BoardViewProps) {
 	const bulkUpdate = useBulkUpdateObjects(workspaceId)
+	const scrollContainerRef = useRef<HTMLDivElement | null>(null)
 	const [activeObject, setActiveObject] = useState<ObjectResponse | null>(null)
 	const [overStatus, setOverStatus] = useState<string | null>(null)
 	const [dragPreview, setDragPreview] = useState<DragPreview | null>(null)
@@ -333,6 +343,68 @@ export function BoardView({
 	}
 
 	const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
+
+	// Horizontal autoscroll while a card is being dragged. At the 375px
+	// viewport the trailing column can start entirely off-screen inside the
+	// `overflow-x-auto` board; dnd-kit's built-in autoscroll doesn't advance
+	// under synthetic pointer input, and even a real touch drag past the
+	// container's right edge doesn't scroll it — the pointer is over a
+	// droppable child, so nothing advances the parent's `scrollLeft`. This
+	// rAF loop reads the last pointer position and nudges `scrollLeft` while
+	// the pointer is inside the edge hot zone; combined with dnd-kit's
+	// `MeasuringStrategy.Always` (below) it lets a card reach a column that
+	// starts off-screen on both touch and mouse.
+	useEffect(() => {
+		if (!activeObject) return
+		const container = scrollContainerRef.current
+		if (!container) return
+
+		let rafId = 0
+		let speed = 0
+
+		const tick = () => {
+			if (speed === 0) {
+				rafId = 0
+				return
+			}
+			container.scrollLeft += speed
+			rafId = requestAnimationFrame(tick)
+		}
+
+		const updateFromPointer = (clientX: number) => {
+			const rect = container.getBoundingClientRect()
+			const leftDist = clientX - rect.left
+			const rightDist = rect.right - clientX
+			let nextSpeed = 0
+			if (leftDist >= 0 && leftDist < AUTOSCROLL_EDGE_PX) {
+				const depth = 1 - leftDist / AUTOSCROLL_EDGE_PX
+				nextSpeed = -AUTOSCROLL_MAX_SPEED * depth * depth
+			} else if (rightDist >= 0 && rightDist < AUTOSCROLL_EDGE_PX) {
+				const depth = 1 - rightDist / AUTOSCROLL_EDGE_PX
+				nextSpeed = AUTOSCROLL_MAX_SPEED * depth * depth
+			}
+			speed = nextSpeed
+			if (speed !== 0 && rafId === 0) rafId = requestAnimationFrame(tick)
+		}
+
+		const onPointerMove = (event: globalThis.PointerEvent) => {
+			updateFromPointer(event.clientX)
+		}
+		const onTouchMove = (event: globalThis.TouchEvent) => {
+			const touch = event.touches[0]
+			if (touch) updateFromPointer(touch.clientX)
+		}
+
+		window.addEventListener('pointermove', onPointerMove, { passive: true })
+		window.addEventListener('touchmove', onTouchMove, { passive: true })
+
+		return () => {
+			window.removeEventListener('pointermove', onPointerMove)
+			window.removeEventListener('touchmove', onTouchMove)
+			if (rafId !== 0) cancelAnimationFrame(rafId)
+			speed = 0
+		}
+	}, [activeObject])
 
 	useEffect(() => {
 		setPendingPatches((current) => {
@@ -473,6 +545,13 @@ export function BoardView({
 	return (
 		<DndContext
 			collisionDetection={pointerFirstCollisionDetection}
+			// Re-measure droppable rects on every collision check. Without this,
+			// dnd-kit caches the rects at drag start — so when the board
+			// horizontally scrolls during a drag (see the autoscroll effect
+			// above), a column that started off-screen still has its original
+			// off-screen rect and `pointerWithin` never fires on it even when
+			// the pointer is geometrically inside its new on-screen position.
+			measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
 			sensors={sensors}
 			onDragStart={({ active }) => {
 				const object = active.data.current?.object as ObjectResponse | undefined
@@ -537,6 +616,7 @@ export function BoardView({
 			onDragEnd={handleDragEnd}
 		>
 			<div
+				ref={scrollContainerRef}
 				data-testid="board-view"
 				className={cn('flex gap-3 overflow-x-auto pb-2', activeObject && 'cursor-grabbing')}
 			>
