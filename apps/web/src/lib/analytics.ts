@@ -91,6 +91,12 @@ export function trackTriggerCreated(p: BaseProps & { entity_type: 'trigger' }): 
 	trackEvent('trigger_created', fillBase(p))
 }
 
+// Success metric for the standalone-trigger detail bet: counts completed
+// standalone-trigger saves through the trigger detail screen per week.
+export function trackTriggerUpdated(p: BaseProps & { entity_type: 'trigger' }): void {
+	trackEvent('trigger_updated', fillBase(p))
+}
+
 export function trackBetStatusChanged(
 	p: BaseProps & { entity_type: 'bet' | 'task' | 'insight'; from: string; to: string },
 ): void {

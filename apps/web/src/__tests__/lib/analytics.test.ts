@@ -31,6 +31,7 @@ import {
 	trackSpecialistSummonedManually,
 	trackTriggerCreated,
 	trackTriggerFired,
+	trackTriggerUpdated,
 } from '@/lib/analytics'
 import { setStoredActor } from '@/lib/auth'
 import { __setInitializedForTesting } from '@/lib/posthog'
@@ -346,6 +347,17 @@ describe('v1 taxonomy helpers', () => {
 		expect(capture).toHaveBeenNthCalledWith(
 			2,
 			'trigger_created',
+			expect.objectContaining({ entity_id: 'trg-2', entity_type: 'trigger', source: 'web' }),
+		)
+	})
+
+	it('trigger_updated fires the standalone-trigger save success metric', () => {
+		const capture = captureSpy()
+
+		trackTriggerUpdated({ entity_id: 'trg-2', entity_type: 'trigger' })
+
+		expect(capture).toHaveBeenCalledWith(
+			'trigger_updated',
 			expect.objectContaining({ entity_id: 'trg-2', entity_type: 'trigger', source: 'web' }),
 		)
 	})

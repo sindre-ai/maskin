@@ -1,5 +1,7 @@
 import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import {
 	Select,
 	SelectContent,
@@ -15,9 +17,10 @@ import { useCustomExtensions } from '@/hooks/use-custom-extensions'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useIntegrations, useProviders } from '@/hooks/use-integrations'
 import type { ProviderEventDefinition, TriggerResponse, WorkspaceWithRole } from '@/lib/api'
+import { cn } from '@/lib/cn'
 import { describeCronSchedule, parseCronExpression } from '@/lib/cron'
 import type { SafeJsonValue } from '@maskin/shared'
-import { Bell, Check, Clock, Info, X, Zap } from 'lucide-react'
+import { Bell, Check, Clock, Plus, X, Zap } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
 	EMPTY_SLACK_FILTER_STATE,
@@ -137,23 +140,26 @@ const DAYS_OF_MONTH = Array.from({ length: 31 }, (_, i) => ({
 
 const TRIGGER_TYPE_INFO: Record<
 	'event' | 'cron' | 'reminder',
-	{ icon: typeof Zap; label: string; description: string }
+	{ icon: typeof Zap; label: string; description: string; tagline: string }
 > = {
 	event: {
 		icon: Zap,
 		label: 'Event',
 		description:
 			'Fires when something happens — e.g., an object is created, updated, or changes status.',
+		tagline: 'Something happens',
 	},
 	cron: {
 		icon: Clock,
 		label: 'Schedule',
 		description: 'Fires on a recurring schedule — e.g., every day at 9 AM or every Monday.',
+		tagline: 'Recurring schedule',
 	},
 	reminder: {
 		icon: Bell,
 		label: 'Reminder',
 		description: 'Fires once at a specific date and time.',
+		tagline: 'Once — date & time',
 	},
 }
 
@@ -557,244 +563,80 @@ export function TriggerForm({
 		setConditions(conditions.filter((_, i) => i !== index))
 	}
 
+	const saveMeta = isCreated
+		? 'Editing — every change saves automatically'
+		: 'New trigger — saved on first change'
+
 	return (
-		<div className="space-y-3">
-			{agents.length === 0 && (
-				<div className="rounded bg-warning/10 px-3 py-2 text-sm text-warning">
-					No agents available. Create an agent first before setting up triggers.
-				</div>
-			)}
+		<>
+			<div className="mx-auto w-full max-w-3xl px-4 pb-14 sm:px-6">
+				{agents.length === 0 && (
+					<div className="rounded bg-warning/10 px-3 py-2 text-sm text-warning">
+						No agents available. Create an agent first before setting up triggers.
+					</div>
+				)}
 
-			<textarea
-				value={name}
-				onChange={(e) => {
-					setName(e.target.value)
-					e.target.style.height = 'auto'
-					e.target.style.height = `${e.target.scrollHeight}px`
-				}}
-				placeholder="Trigger name"
-				// biome-ignore lint/a11y/noAutofocus: focus title on create
-				autoFocus={!initialValues}
-				rows={1}
-				className="w-full text-2xl font-bold tracking-tight bg-transparent border-none outline-none text-foreground mb-2 resize-none overflow-hidden p-0 focus:outline-none"
-				ref={(el) => {
-					if (el) {
-						el.style.height = 'auto'
-						el.style.height = `${el.scrollHeight}px`
-					}
-				}}
-			/>
-
-			<div className="space-y-2">
-				<p className="text-xs font-medium text-muted-foreground">Trigger type</p>
-				<div className="flex gap-2">
-					{(['event', 'cron', 'reminder'] as const).map((t) => {
-						const info = TRIGGER_TYPE_INFO[t]
-						const Icon = info.icon
-						return (
-							<Button
-								key={t}
-								variant={type === t ? 'default' : 'secondary'}
-								size="sm"
-								onClick={() => setType(t)}
+				{/* Header — name + enabled state */}
+				<header className="mb-4 flex flex-wrap items-start gap-3">
+					<div className="min-w-0 flex-1">
+						<textarea
+							value={name}
+							onChange={(e) => {
+								setName(e.target.value)
+								e.target.style.height = 'auto'
+								e.target.style.height = `${e.target.scrollHeight}px`
+							}}
+							placeholder="Trigger name"
+							// biome-ignore lint/a11y/noAutofocus: focus title on create
+							autoFocus={!initialValues}
+							rows={1}
+							className="w-full text-2xl font-bold tracking-tight bg-transparent border-none outline-none text-foreground resize-none overflow-hidden p-0 focus:outline-none"
+							ref={(el) => {
+								if (el) {
+									el.style.height = 'auto'
+									el.style.height = `${el.scrollHeight}px`
+								}
+							}}
+						/>
+					</div>
+					{isCreated && (
+						<div className="flex shrink-0 items-center gap-2 pt-1.5">
+							<span
+								className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${
+									enabled ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'
+								}`}
 							>
-								<Icon size={14} className="mr-1.5" />
-								{info.label}
-							</Button>
-						)
-					})}
-				</div>
-				<p className="text-xs text-muted-foreground">{TRIGGER_TYPE_INFO[type].description}</p>
-			</div>
-
-			{type === 'cron' ? (
-				<div className="space-y-2">
-					<p className="text-xs font-medium text-muted-foreground">Schedule</p>
-					<CronScheduleBuilder
-						frequency={frequency}
-						minute={minute}
-						hour={hour}
-						dayOfWeek={dayOfWeek}
-						dayOfMonth={dayOfMonth}
-						onFrequencyChange={setFrequency}
-						onMinuteChange={setMinute}
-						onHourChange={setHour}
-						onDayOfWeekChange={setDayOfWeek}
-						onDayOfMonthChange={setDayOfMonth}
-					/>
-				</div>
-			) : type === 'reminder' ? (
-				<div className="space-y-2">
-					<p className="text-xs font-medium text-muted-foreground">When to fire</p>
-					<div className="flex flex-col sm:flex-row gap-2">
-						<Input
-							type="date"
-							value={scheduledDate}
-							onChange={(e) => setScheduledDate(e.target.value)}
-							placeholder="Select a date"
-							className="flex-1"
-						/>
-						<Input
-							type="time"
-							value={scheduledTime}
-							onChange={(e) => setScheduledTime(e.target.value)}
-							className="w-full sm:w-[130px]"
-						/>
-					</div>
-					{!scheduledDate && (
-						<p className="text-xs text-muted-foreground">
-							Pick a date and time for this one-time trigger.
-						</p>
-					)}
-				</div>
-			) : (
-				<>
-					<div className="space-y-2">
-						<p className="text-xs font-medium text-muted-foreground">When this happens</p>
-						<div className="flex flex-col sm:flex-row gap-2">
-							<Select value={entityType} onValueChange={handleEntityTypeChange}>
-								<SelectTrigger className="flex-1">
-									<SelectValue placeholder="Select an entity type" />
-								</SelectTrigger>
-								<SelectContent className="max-h-[300px]">
-									{eventGroups.map((group) => (
-										<SelectGroup key={group.label}>
-											<SelectLabel>{group.label}</SelectLabel>
-											{group.events.map((e) => (
-												<SelectItem key={e.entityType} value={e.entityType}>
-													{e.label}
-												</SelectItem>
-											))}
-										</SelectGroup>
-									))}
-								</SelectContent>
-							</Select>
-							<Select value={action} onValueChange={setAction}>
-								<SelectTrigger className="flex-1">
-									<SelectValue placeholder="Select an action" />
-								</SelectTrigger>
-								<SelectContent>
-									{availableActions.map((a) => (
-										<SelectItem key={a} value={a}>
-											{a}
-										</SelectItem>
-									))}
-								</SelectContent>
-							</Select>
-						</div>
-					</div>
-
-					{action === 'status_changed' && statuses.length > 0 && (
-						<div className="space-y-2">
-							<p className="text-xs font-medium text-muted-foreground">Status transition</p>
-							<div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-								<Select value={fromStatus} onValueChange={setFromStatus}>
-									<SelectTrigger className="w-full sm:flex-1">
-										<SelectValue placeholder="From status (any)" />
-									</SelectTrigger>
-									<SelectContent>
-										<SelectItem value="__any__">Any status</SelectItem>
-										{statuses.map((s) => (
-											<SelectItem key={s} value={s}>
-												{s}
-											</SelectItem>
-										))}
-									</SelectContent>
-								</Select>
 								<span
-									aria-hidden="true"
-									className="hidden text-xs text-muted-foreground sm:inline-flex sm:items-center"
-								>
-									→
-								</span>
-								<Select value={toStatus} onValueChange={setToStatus}>
-									<SelectTrigger className="w-full sm:flex-1">
-										<SelectValue placeholder="To status (any)" />
-									</SelectTrigger>
-									<SelectContent>
-										<SelectItem value="__any__">Any status</SelectItem>
-										{statuses.map((s) => (
-											<SelectItem key={s} value={s}>
-												{s}
-											</SelectItem>
-										))}
-									</SelectContent>
-								</Select>
-							</div>
-						</div>
-					)}
-
-					{isSlack && (
-						<SlackFilters
-							entityType={entityType}
-							integrationId={slackIntegrationId}
-							workspaceId={workspaceId}
-							value={slackFilterState}
-							onChange={setSlackFilterState}
-						/>
-					)}
-
-					{isInternal && (
-						<div className="space-y-2">
-							<p className="text-xs font-medium text-muted-foreground">Additional conditions</p>
-							{conditions.map((condition, index) => (
-								<ConditionEditor
-									key={condition.id}
-									condition={condition}
-									fieldDefs={fieldDefs}
-									onChange={(updates) => updateCondition(index, updates)}
-									onRemove={() => removeCondition(index)}
+									className={`h-1.5 w-1.5 rounded-full ${enabled ? 'bg-success' : 'bg-zinc-600'}`}
 								/>
-							))}
-							{fieldDefs.length > 0 ? (
-								<Button variant="ghost" size="sm" onClick={addCondition}>
-									+ Add condition
-								</Button>
-							) : conditions.length === 0 ? (
-								<p className="text-xs text-muted-foreground">
-									No properties defined for {entityType}s. Configure them in{' '}
-									<span className="underline">Properties</span> settings to add conditions.
-								</p>
-							) : null}
+								{enabled ? 'Enabled' : 'Disabled'}
+							</span>
+							<Button
+								variant="outline"
+								size="sm"
+								className="min-h-11 sm:min-h-9"
+								onClick={() => {
+									setEnabled(!enabled)
+									if (isCreated && onToggleEnabled) onToggleEnabled()
+								}}
+							>
+								{enabled ? 'Disable' : 'Enable'}
+							</Button>
 						</div>
 					)}
-				</>
-			)}
+				</header>
 
-			<div className="space-y-2">
-				<p className="text-xs font-medium text-muted-foreground">Do this</p>
-				<Textarea
-					value={prompt}
-					onChange={(e) => setPrompt(e.target.value)}
-					placeholder="Describe what the agent should do when this trigger fires..."
-					className="min-h-[60px]"
-				/>
-			</div>
-
-			{agents.length > 0 && (
-				<div className="space-y-2">
-					<p className="text-xs font-medium text-muted-foreground">Using this agent</p>
-					<Select value={targetActorId} onValueChange={setTargetActorId}>
-						<SelectTrigger>
-							<SelectValue placeholder="Select an agent..." />
-						</SelectTrigger>
-						<SelectContent>
-							{agents.map((a) => (
-								<SelectItem key={a.id} value={a.id}>
-									{a.name}
-								</SelectItem>
-							))}
-						</SelectContent>
-					</Select>
-				</div>
-			)}
-
-			{/* Trigger summary */}
-			{(name.trim() || prompt.trim()) && (
-				<div className="rounded-md border border-border bg-bg-surface px-3 py-2">
-					<div className="flex items-start gap-2">
-						<Info size={14} className="mt-0.5 shrink-0 text-muted-foreground" />
-						<p className="text-xs text-muted-foreground">
+				{/* Pinned plain-language summary — re-renders live on every value change */}
+				<section
+					aria-live="polite"
+					className="mb-5 flex items-start gap-2.5 rounded-lg border border-border bg-muted px-3.5 py-3"
+				>
+					<Zap size={15} className="mt-0.5 shrink-0 text-muted-foreground" />
+					<div>
+						<p className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
+							What happens
+						</p>
+						<p className="text-sm text-foreground">
 							{buildTriggerSummary({
 								type,
 								name,
@@ -813,44 +655,287 @@ export function TriggerForm({
 							})}
 						</p>
 					</div>
-				</div>
-			)}
+				</section>
 
-			{/* Enabled toggle */}
-			<div className="flex items-center gap-3">
-				<span
-					className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium ${
-						enabled ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'
-					}`}
-				>
-					<span className={`h-1.5 w-1.5 rounded-full ${enabled ? 'bg-success' : 'bg-zinc-600'}`} />
-					{enabled ? 'Enabled' : 'Disabled'}
-				</span>
-				<Button
-					variant="outline"
-					size="sm"
-					onClick={() => {
-						setEnabled(!enabled)
-						if (isCreated && onToggleEnabled) onToggleEnabled()
-					}}
-				>
-					{enabled ? 'Disable' : 'Enable'}
-				</Button>
+				{/* When it fires */}
+				<Card className="rounded-lg">
+					<div className="space-y-3 p-4 sm:p-5">
+						<h2 className="flex items-center gap-2 text-[13px] font-bold text-foreground">
+							<Zap size={15} className="text-muted-foreground" />
+							When it fires
+						</h2>
+
+						<RadioGroup
+							value={type}
+							onValueChange={(v) => setType(v as 'cron' | 'event' | 'reminder')}
+							aria-label="Trigger type"
+							className="grid grid-cols-3 gap-2.5"
+						>
+							{(['event', 'cron', 'reminder'] as const).map((t) => {
+								const info = TRIGGER_TYPE_INFO[t]
+								const Icon = info.icon
+								const selected = type === t
+								const id = `trigger-type-${t}`
+								return (
+									<label
+										key={t}
+										htmlFor={id}
+										className={cn(
+											'flex min-h-11 cursor-pointer flex-col gap-1.5 rounded-md border p-2.5 text-left transition-colors sm:min-h-0 sm:p-3',
+											selected
+												? 'border-primary/50 bg-primary/5 ring-1 ring-primary/40'
+												: 'border-border bg-card hover:border-foreground/30',
+										)}
+									>
+										<RadioGroupItem id={id} value={t} className="sr-only" />
+										<span className="grid h-8 w-8 place-items-center rounded-md bg-secondary text-secondary-foreground">
+											<Icon size={15} />
+										</span>
+										<span className="text-sm font-bold text-foreground">{info.label}</span>
+										<span className="text-xs leading-snug text-muted-foreground">
+											{info.tagline}
+										</span>
+									</label>
+								)
+							})}
+						</RadioGroup>
+						<p className="text-xs text-muted-foreground">{TRIGGER_TYPE_INFO[type].description}</p>
+
+						{type === 'cron' ? (
+							<div className="space-y-3">
+								<p className="text-xs font-medium text-muted-foreground">Schedule</p>
+								<CronScheduleBuilder
+									frequency={frequency}
+									minute={minute}
+									hour={hour}
+									dayOfWeek={dayOfWeek}
+									dayOfMonth={dayOfMonth}
+									onFrequencyChange={setFrequency}
+									onMinuteChange={setMinute}
+									onHourChange={setHour}
+									onDayOfWeekChange={setDayOfWeek}
+									onDayOfMonthChange={setDayOfMonth}
+								/>
+							</div>
+						) : type === 'reminder' ? (
+							<div className="space-y-3">
+								<p className="text-xs font-medium text-muted-foreground">When to fire</p>
+								<div className="flex flex-col gap-2 sm:flex-row">
+									<Input
+										type="date"
+										value={scheduledDate}
+										onChange={(e) => setScheduledDate(e.target.value)}
+										placeholder="Select a date"
+										className="min-h-11 flex-1 sm:min-h-10"
+									/>
+									<Input
+										type="time"
+										value={scheduledTime}
+										onChange={(e) => setScheduledTime(e.target.value)}
+										className="min-h-11 w-full sm:min-h-10 sm:w-[130px]"
+									/>
+								</div>
+								{!scheduledDate && (
+									<p className="text-xs text-muted-foreground">
+										Pick a date and time for this one-time trigger.
+									</p>
+								)}
+							</div>
+						) : (
+							<>
+								<div className="grid gap-1.5 sm:grid-cols-2 sm:gap-2">
+									<div className="space-y-1.5">
+										<p className="text-xs font-medium text-muted-foreground">Subject</p>
+										<Select value={entityType} onValueChange={handleEntityTypeChange}>
+											<SelectTrigger className="min-h-11 w-full sm:min-h-8">
+												<SelectValue placeholder="Select an entity type" />
+											</SelectTrigger>
+											<SelectContent className="max-h-[300px]">
+												{eventGroups.map((group) => (
+													<SelectGroup key={group.label}>
+														<SelectLabel>{group.label}</SelectLabel>
+														{group.events.map((e) => (
+															<SelectItem key={e.entityType} value={e.entityType}>
+																{e.label}
+															</SelectItem>
+														))}
+													</SelectGroup>
+												))}
+											</SelectContent>
+										</Select>
+									</div>
+									<div className="space-y-1.5">
+										<p className="text-xs font-medium text-muted-foreground">Changes to</p>
+										<Select value={action} onValueChange={setAction}>
+											<SelectTrigger className="min-h-11 w-full sm:min-h-8">
+												<SelectValue placeholder="Select an action" />
+											</SelectTrigger>
+											<SelectContent>
+												{availableActions.map((a) => (
+													<SelectItem key={a} value={a}>
+														{a}
+													</SelectItem>
+												))}
+											</SelectContent>
+										</Select>
+									</div>
+								</div>
+
+								{action === 'status_changed' && statuses.length > 0 && (
+									<div className="space-y-1.5">
+										<p className="text-xs font-medium text-muted-foreground">Status transition</p>
+										<div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+											<Select value={fromStatus} onValueChange={setFromStatus}>
+												<SelectTrigger className="min-h-11 w-full sm:min-h-8 sm:flex-1">
+													<SelectValue placeholder="From status (any)" />
+												</SelectTrigger>
+												<SelectContent>
+													<SelectItem value="__any__">Any status</SelectItem>
+													{statuses.map((s) => (
+														<SelectItem key={s} value={s}>
+															{s}
+														</SelectItem>
+													))}
+												</SelectContent>
+											</Select>
+											<span
+												aria-hidden="true"
+												className="hidden text-xs text-muted-foreground sm:inline-flex sm:items-center"
+											>
+												→
+											</span>
+											<Select value={toStatus} onValueChange={setToStatus}>
+												<SelectTrigger className="min-h-11 w-full sm:min-h-8 sm:flex-1">
+													<SelectValue placeholder="To status (any)" />
+												</SelectTrigger>
+												<SelectContent>
+													<SelectItem value="__any__">Any status</SelectItem>
+													{statuses.map((s) => (
+														<SelectItem key={s} value={s}>
+															{s}
+														</SelectItem>
+													))}
+												</SelectContent>
+											</Select>
+										</div>
+									</div>
+								)}
+
+								{isInternal && (
+									<div className="space-y-2">
+										<p className="text-xs font-medium text-muted-foreground">
+											Additional conditions
+										</p>
+										{conditions.map((condition, index) => (
+											<ConditionEditor
+												key={condition.id}
+												condition={condition}
+												fieldDefs={fieldDefs}
+												onChange={(updates) => updateCondition(index, updates)}
+												onRemove={() => removeCondition(index)}
+											/>
+										))}
+										{fieldDefs.length > 0 ? (
+											<Button
+												variant="ghost"
+												size="sm"
+												onClick={addCondition}
+												className="min-h-11 sm:min-h-9"
+											>
+												<Plus size={14} className="mr-1.5" />
+												Add condition
+											</Button>
+										) : conditions.length === 0 ? (
+											<p className="text-xs text-muted-foreground">
+												No properties defined for {entityType}s. Configure them in{' '}
+												<span className="underline">Properties</span> settings to add conditions.
+											</p>
+										) : null}
+									</div>
+								)}
+							</>
+						)}
+					</div>
+				</Card>
+
+				{/* Where it listens */}
+				{type === 'event' && isSlack && (
+					<Card className="rounded-lg">
+						<div className="space-y-3 p-4 sm:p-5">
+							<h2 className="text-[13px] font-bold text-foreground">Where it listens</h2>
+							<p className="text-xs text-muted-foreground">
+								Only matching Slack events are forwarded to the agent.
+							</p>
+							<SlackFilters
+								entityType={entityType}
+								integrationId={slackIntegrationId}
+								workspaceId={workspaceId}
+								value={slackFilterState}
+								onChange={setSlackFilterState}
+							/>
+						</div>
+					</Card>
+				)}
+
+				{/* Do this */}
+				<Card className="rounded-lg">
+					<div className="space-y-4 p-4 sm:p-5">
+						<h2 className="text-[13px] font-bold text-foreground">Do this</h2>
+						<div className="space-y-1.5">
+							<p className="text-[13px] font-semibold">Prompt — how the agent acts</p>
+							<Textarea
+								value={prompt}
+								onChange={(e) => setPrompt(e.target.value)}
+								placeholder="Describe what the agent should do when this trigger fires..."
+								className="min-h-[96px]"
+							/>
+						</div>
+						{agents.length > 0 && (
+							<div className="space-y-1.5">
+								<p className="text-[13px] font-semibold">Using this agent</p>
+								<Select value={targetActorId} onValueChange={setTargetActorId}>
+									<SelectTrigger className="min-h-11 w-full sm:min-h-8">
+										<SelectValue placeholder="Select an agent..." />
+									</SelectTrigger>
+									<SelectContent>
+										{agents.map((a) => (
+											<SelectItem key={a.id} value={a.id}>
+												{a.name}
+											</SelectItem>
+										))}
+									</SelectContent>
+								</Select>
+								<p className="text-xs text-muted-foreground">
+									Prompted each time this trigger fires.
+								</p>
+							</div>
+						)}
+					</div>
+				</Card>
+
+				{error && (
+					<div className="mt-4 rounded bg-error/10 px-3 py-2 text-sm text-error">
+						{error.message || 'Something went wrong'}
+					</div>
+				)}
 			</div>
 
-			{error && (
-				<div className="rounded bg-error/10 px-3 py-2 text-sm text-error">
-					{error.message || 'Something went wrong'}
+			{/* Sticky bottom save bar */}
+			<div className="sticky bottom-0 z-10 border-t border-border bg-background/90 backdrop-blur">
+				<div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-3 px-4 pb-[max(0.625rem,env(safe-area-inset-bottom))] pt-2.5 sm:px-6">
+					<span className="text-xs text-muted-foreground">{saveMeta}</span>
+					<span
+						aria-live="polite"
+						className={`inline-flex items-center gap-1.5 text-[13px] font-medium text-success transition-opacity duration-200 motion-reduce:transition-none ${
+							showSaving ? 'opacity-100' : 'opacity-0'
+						}`}
+					>
+						<Check size={14} />
+						Saved
+					</span>
 				</div>
-			)}
-
-			{showSaving && (
-				<p className="flex items-center gap-1 text-xs text-muted-foreground">
-					<Check size={14} />
-					Saved
-				</p>
-			)}
-		</div>
+			</div>
+		</>
 	)
 }
 
@@ -882,7 +967,7 @@ function ConditionEditor({
 	return (
 		<div className="flex flex-wrap items-center gap-1.5">
 			<Select value={condition.field} onValueChange={handleFieldChange}>
-				<SelectTrigger>
+				<SelectTrigger className="min-h-11 sm:min-h-8">
 					<SelectValue />
 				</SelectTrigger>
 				<SelectContent>
@@ -898,7 +983,7 @@ function ConditionEditor({
 				value={condition.operator}
 				onValueChange={(op) => onChange({ operator: op as ConditionOperator, value: '' })}
 			>
-				<SelectTrigger>
+				<SelectTrigger className="min-h-11 sm:min-h-8">
 					<SelectValue />
 				</SelectTrigger>
 				<SelectContent>
@@ -922,7 +1007,7 @@ function ConditionEditor({
 			<Button
 				variant="ghost"
 				size="icon"
-				className="text-muted-foreground hover:text-error shrink-0"
+				className="min-h-11 min-w-11 shrink-0 text-muted-foreground hover:text-error sm:min-h-9 sm:min-w-9"
 				onClick={onRemove}
 			>
 				<X size={14} />
@@ -952,7 +1037,7 @@ function ConditionValueInput({
 				value={String(value ?? '')}
 				onChange={(e) => onChange(Number(e.target.value))}
 				placeholder="days"
-				className="w-20 h-8 text-xs"
+				className="min-h-11 w-20 text-xs sm:min-h-8"
 			/>
 		)
 	}
@@ -960,7 +1045,7 @@ function ConditionValueInput({
 	if (fieldType === 'enum' && fieldDef?.values) {
 		return (
 			<Select value={String(value ?? '')} onValueChange={onChange}>
-				<SelectTrigger>
+				<SelectTrigger className="min-h-11 sm:min-h-8">
 					<SelectValue placeholder="Select..." />
 				</SelectTrigger>
 				<SelectContent>
@@ -977,7 +1062,7 @@ function ConditionValueInput({
 	if (fieldType === 'boolean') {
 		return (
 			<Select value={String(value ?? 'true')} onValueChange={(v) => onChange(v === 'true')}>
-				<SelectTrigger>
+				<SelectTrigger className="min-h-11 sm:min-h-8">
 					<SelectValue />
 				</SelectTrigger>
 				<SelectContent>
@@ -994,7 +1079,7 @@ function ConditionValueInput({
 				type="date"
 				value={String(value ?? '')}
 				onChange={(e) => onChange(e.target.value)}
-				className="w-36 h-8 text-xs"
+				className="min-h-11 w-36 text-xs sm:min-h-8"
 			/>
 		)
 	}
@@ -1005,7 +1090,7 @@ function ConditionValueInput({
 				type="number"
 				value={String(value ?? '')}
 				onChange={(e) => onChange(Number(e.target.value))}
-				className="w-24 h-8 text-xs"
+				className="min-h-11 w-24 text-xs sm:min-h-8"
 			/>
 		)
 	}
@@ -1016,7 +1101,7 @@ function ConditionValueInput({
 			value={String(value ?? '')}
 			onChange={(e) => onChange(e.target.value)}
 			placeholder="value"
-			className="w-32 h-8 text-xs"
+			className="min-h-11 w-32 text-xs sm:min-h-8"
 		/>
 	)
 }
@@ -1052,6 +1137,7 @@ function CronScheduleBuilder({
 						key={f}
 						variant={frequency === f ? 'default' : 'secondary'}
 						size="sm"
+						className="min-h-11 sm:min-h-9"
 						onClick={() => onFrequencyChange(f)}
 					>
 						{f.charAt(0).toUpperCase() + f.slice(1)}
@@ -1064,7 +1150,7 @@ function CronScheduleBuilder({
 					<>
 						<span>on day</span>
 						<Select value={dayOfMonth} onValueChange={onDayOfMonthChange}>
-							<SelectTrigger>
+							<SelectTrigger className="min-h-11 sm:min-h-8">
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent>
@@ -1082,7 +1168,7 @@ function CronScheduleBuilder({
 					<>
 						<span>on</span>
 						<Select value={dayOfWeek} onValueChange={onDayOfWeekChange}>
-							<SelectTrigger>
+							<SelectTrigger className="min-h-11 sm:min-h-8">
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent>
@@ -1100,7 +1186,7 @@ function CronScheduleBuilder({
 					<>
 						<span>at</span>
 						<Select value={hour} onValueChange={onHourChange}>
-							<SelectTrigger>
+							<SelectTrigger className="min-h-11 sm:min-h-8">
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent>
@@ -1118,7 +1204,7 @@ function CronScheduleBuilder({
 					<>
 						<span>at minute</span>
 						<Select value={minute} onValueChange={onMinuteChange}>
-							<SelectTrigger>
+							<SelectTrigger className="min-h-11 sm:min-h-8">
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent>

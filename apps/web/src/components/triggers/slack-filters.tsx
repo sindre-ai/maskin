@@ -154,7 +154,7 @@ export function SlackFilters({
 
 	if (!integrationId) {
 		return (
-			<div className="rounded-md border border-border bg-bg-surface px-3 py-2 text-xs text-muted-foreground">
+			<div className="rounded-md border border-border bg-muted px-3 py-2 text-xs text-muted-foreground">
 				Connect Slack to add channel and user filters.
 			</div>
 		)
