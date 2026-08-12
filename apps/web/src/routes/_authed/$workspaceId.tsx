@@ -125,7 +125,7 @@ function WorkspaceLayout() {
 										<SidebarInset className="min-w-0">
 											<Header />
 											<div
-												className="flex flex-col flex-1 min-w-0 overflow-auto px-4 pb-20 pt-4 md:p-8"
+												className="flex flex-col flex-1 min-w-0 overflow-auto px-4 pb-20 pt-4 scroll-pb-20 md:p-8 md:scroll-pb-0"
 												data-scroll-root
 											>
 												<Outlet />

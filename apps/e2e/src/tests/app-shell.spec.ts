@@ -18,9 +18,16 @@ function newMenu(page: Page) {
 	return page.getByRole('menu', { name: 'New' })
 }
 
+// Two `[data-sidebar="sidebar"]` roots render inside the workspace: the left
+// AppSidebar (this file's target) and the right ChatPanel. Scope through the
+// left sidebar wrapper's `data-side="left"` so the width probe measures the
+// nav sidebar, not the chat panel.
+function leftSidebar(page: Page) {
+	return page.locator('[data-side="left"] [data-sidebar="sidebar"]')
+}
+
 function sidebarWidth(page: Page) {
-	return async () =>
-		Math.round((await page.locator('[data-sidebar="sidebar"]').boundingBox())?.width ?? 0)
+	return async () => Math.round((await leftSidebar(page).boundingBox())?.width ?? 0)
 }
 
 test.describe('App shell', () => {
@@ -49,7 +56,10 @@ test.describe('App shell', () => {
 		await page.setViewportSize({ width: VIEWPORTS.mobile.width, height: VIEWPORTS.mobile.height })
 		await page.emulateMedia({ reducedMotion: 'reduce' })
 		await page.goto(`/${account.workspaceId}`)
-		const drawer = page.locator('[data-sidebar="sidebar"]')
+		// The mobile AppSidebar renders as a Radix Sheet with SheetTitle "Sidebar" —
+		// scoping by role+name isolates it from the right-side ChatPanel, which also
+		// uses the shadcn Sidebar primitive.
+		const drawer = page.getByRole('dialog', { name: 'Sidebar' })
 		await expect(drawer).toBeHidden()
 
 		await page.getByRole('button', { name: /toggle sidebar/i }).click()
@@ -65,7 +75,7 @@ test.describe('App shell', () => {
 	test('mobile drawer links close the drawer and navigate', async ({ page, account }) => {
 		await page.setViewportSize({ width: VIEWPORTS.mobile.width, height: VIEWPORTS.mobile.height })
 		await page.goto(`/${account.workspaceId}`)
-		const drawer = page.locator('[data-sidebar="sidebar"]')
+		const drawer = page.getByRole('dialog', { name: 'Sidebar' })
 
 		await page.getByRole('button', { name: /toggle sidebar/i }).click()
 		await expect(drawer.getByRole('link', { name: /Loops/ })).toBeVisible()
@@ -84,7 +94,7 @@ test.describe('App shell', () => {
 			height: VIEWPORTS.tabletLandscape.height,
 		})
 		await page.goto(`/${account.workspaceId}`)
-		const sidebar = page.locator('[data-sidebar="sidebar"]')
+		const sidebar = leftSidebar(page)
 		const forYou = sidebar.getByText('For You', { exact: true })
 
 		await expect.poll(sidebarWidth(page)).toBe(216)
@@ -159,7 +169,11 @@ test.describe('App shell', () => {
 		await page.goto(`/${account.workspaceId}`)
 
 		await headerNewTrigger(page).click()
-		await newMenu(page).getByText('Create an object').click()
+		// "Create an object" is the group label; the first object menuitem underneath
+		// it opens the CreatePicker seeded to that subtype.
+		await newMenu(page)
+			.getByRole('menuitem', { name: /^new task$/i })
+			.click()
 
 		const sheet = page.getByRole('dialog')
 		await expect(sheet).toBeVisible()
@@ -174,7 +188,9 @@ test.describe('App shell', () => {
 		await expect(sheet).toBeHidden()
 
 		await headerNewTrigger(page).click()
-		await newMenu(page).getByText('Create an object').click()
+		await newMenu(page)
+			.getByRole('menuitem', { name: /^new task$/i })
+			.click()
 		await expect(page.getByRole('dialog')).toBeVisible()
 		await page.keyboard.press('Escape')
 		await expect(page.getByRole('dialog')).toBeHidden()
