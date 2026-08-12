@@ -5,7 +5,7 @@ import { RelativeTime } from '@/components/shared/relative-time'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { Checkbox } from '@/components/ui/checkbox'
-import type { ActorListItem, ObjectResponse } from '@/lib/api'
+import type { ActorListItem, NotificationResponse, ObjectResponse } from '@/lib/api'
 import type { BetStatusResult } from '@/lib/bet-status'
 import { cn } from '@/lib/cn'
 import { Link } from '@tanstack/react-router'
@@ -24,6 +24,10 @@ export interface ListRowProps {
 	onOpen: (objectId: string) => void
 	/** Fired on shift-click so the view can extend the selection to a range. */
 	onShiftClick: (objectId: string) => void
+	/** The workspace's pending needs_input ask targeting this row, if any. The
+	 *  row shows the ask line + "Waiting on you" pill only while the ask is
+	 *  still pending — a resolved/dismissed ask never renders. */
+	ask?: NotificationResponse
 	betStatus?: BetStatusResult
 	showBetStatusIndicator?: boolean
 	columnVisibility: VisibilityState
@@ -37,12 +41,17 @@ export function ListRow({
 	onSelect,
 	onOpen,
 	onShiftClick,
+	ask,
 	betStatus,
 	showBetStatusIndicator,
 	columnVisibility,
 }: ListRowProps) {
 	const driver = object.driver ? actors?.find((a) => a.id === object.driver) : null
 	const isArchived = object.status === 'archived'
+	const hasPendingAsk = ask?.status === 'pending'
+	const askActorName = hasPendingAsk
+		? (actors?.find((a) => a.id === ask.sourceActorId)?.name ?? 'Agent')
+		: null
 	const showType = columnVisibility.type !== false
 	const showTag = columnVisibility.status !== false
 	const showDriver = columnVisibility.driver !== false
@@ -81,20 +90,32 @@ export function ListRow({
 			{showType && (
 				<TypeBadge type={object.type} variant="mono" className="w-14 flex-none truncate" />
 			)}
-			<div className="flex min-w-0 flex-1 items-center gap-2">
-				<Link
-					to="/$workspaceId/objects/$objectId"
-					params={{ workspaceId, objectId: object.id }}
-					onClick={(e) => e.stopPropagation()}
-					className="min-w-0 truncate text-sm font-medium text-foreground hover:underline"
-				>
-					{object.title || 'Untitled'}
-				</Link>
-				{betStatus && showBetStatusIndicator && (
-					<IndicatorBadgeRow result={betStatus} className="shrink-0" />
-				)}
-				{object.activeSessionId && (
-					<AgentWorkingBadge sessionId={object.activeSessionId} workspaceId={workspaceId} />
+			<div className="flex min-w-0 flex-1 flex-col justify-center gap-0.5">
+				<div className="flex min-w-0 items-center gap-2">
+					<Link
+						to="/$workspaceId/objects/$objectId"
+						params={{ workspaceId, objectId: object.id }}
+						onClick={(e) => e.stopPropagation()}
+						className="min-w-0 truncate text-sm font-medium text-foreground hover:underline"
+					>
+						{object.title || 'Untitled'}
+					</Link>
+					{hasPendingAsk && (
+						<span className="shrink-0 rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-medium leading-none text-accent-foreground">
+							Waiting on you
+						</span>
+					)}
+					{betStatus && showBetStatusIndicator && (
+						<IndicatorBadgeRow result={betStatus} className="shrink-0" />
+					)}
+					{object.activeSessionId && (
+						<AgentWorkingBadge sessionId={object.activeSessionId} workspaceId={workspaceId} />
+					)}
+				</div>
+				{hasPendingAsk && (
+					<p className="truncate text-xs leading-snug text-muted-foreground">
+						{askActorName} asks · {ask.content ?? ask.title}
+					</p>
 				)}
 			</div>
 			{showTag && <StatusBadge status={object.status} variant="dot-word" className="shrink-0" />}

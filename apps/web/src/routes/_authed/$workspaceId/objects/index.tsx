@@ -32,7 +32,7 @@ import {
 	trackObjectsListGroupToggled,
 } from '@/lib/analytics'
 import { api } from '@/lib/api'
-import type { DisplaySettingsBody, ObjectResponse } from '@/lib/api'
+import type { DisplaySettingsBody, NotificationResponse, ObjectResponse } from '@/lib/api'
 import { consumeArrivalNavType } from '@/lib/back-nav-tracker'
 import { type BetStatusResult, buildBetStatuses } from '@/lib/bet-status'
 import {
@@ -245,6 +245,17 @@ function ObjectsPage() {
 		return needsInputNotifications.filter((n) => n.objectId != null && selected.has(n.objectId))
 	}, [needsInputNotifications, selectedIds])
 	const askCount = selectedAsks.length
+	// Pending asks keyed by the object they target, for the per-row ask line +
+	// "Waiting on you" pill on the List surface. Only status 'pending' counts as
+	// waiting — a resolved ask drops out of the map (and the row hides the pill).
+	const pendingAsksByObjectId = useMemo(() => {
+		const map = new Map<string, NotificationResponse>()
+		for (const n of needsInputNotifications ?? []) {
+			if (n.status !== 'pending' || !n.objectId) continue
+			if (!map.has(n.objectId)) map.set(n.objectId, n)
+		}
+		return map
+	}, [needsInputNotifications])
 	const respondNotification = useRespondNotification(workspaceId)
 	const handleRespond = useCallback(
 		(id: string, response: 'approve' | 'hold') => {
@@ -1256,6 +1267,7 @@ function ObjectsPage() {
 					grouping={groupingState}
 					betStatuses={betStatuses}
 					showBetStatusIndicator={showBetStatusIndicator}
+					asksByObjectId={pendingAsksByObjectId}
 					hasNextPage={infiniteQuery.hasNextPage}
 					isFetchingNextPage={infiniteQuery.isFetchingNextPage}
 					isError={infiniteQuery.isError}
