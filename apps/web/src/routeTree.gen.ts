@@ -15,6 +15,7 @@ import { Route as AuthedRouteImport } from './routes/_authed'
 import { Route as AuthedIndexRouteImport } from './routes/_authed/index'
 import { Route as PrototypesAboveTitleHeaderRouteImport } from './routes/prototypes/above-title-header'
 import { Route as AuthedWorkspacesRouteImport } from './routes/_authed/workspaces'
+import { Route as AuthedCompleteProfileRouteImport } from './routes/_authed/complete-profile'
 import { Route as AuthedWorkspaceIdRouteImport } from './routes/_authed/$workspaceId'
 import { Route as AuthedWorkspaceIdIndexRouteImport } from './routes/_authed/$workspaceId/index'
 import { Route as AuthedWorkspaceIdSettingsRouteImport } from './routes/_authed/$workspaceId/settings'
@@ -68,6 +69,11 @@ const PrototypesAboveTitleHeaderRoute =
 const AuthedWorkspacesRoute = AuthedWorkspacesRouteImport.update({
   id: '/workspaces',
   path: '/workspaces',
+  getParentRoute: () => AuthedRoute,
+} as any)
+const AuthedCompleteProfileRoute = AuthedCompleteProfileRouteImport.update({
+  id: '/complete-profile',
+  path: '/complete-profile',
   getParentRoute: () => AuthedRoute,
 } as any)
 const AuthedWorkspaceIdRoute = AuthedWorkspaceIdRouteImport.update({
@@ -218,6 +224,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
   '/$workspaceId': typeof AuthedWorkspaceIdRouteWithChildren
+  '/complete-profile': typeof AuthedCompleteProfileRoute
   '/workspaces': typeof AuthedWorkspacesRoute
   '/prototypes/above-title-header': typeof PrototypesAboveTitleHeaderRoute
   '/$workspaceId/briefing': typeof AuthedWorkspaceIdBriefingRoute
@@ -247,6 +254,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
+  '/complete-profile': typeof AuthedCompleteProfileRoute
   '/workspaces': typeof AuthedWorkspacesRoute
   '/prototypes/above-title-header': typeof PrototypesAboveTitleHeaderRoute
   '/': typeof AuthedIndexRoute
@@ -279,6 +287,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
   '/_authed/$workspaceId': typeof AuthedWorkspaceIdRouteWithChildren
+  '/_authed/complete-profile': typeof AuthedCompleteProfileRoute
   '/_authed/workspaces': typeof AuthedWorkspacesRoute
   '/prototypes/above-title-header': typeof PrototypesAboveTitleHeaderRoute
   '/_authed/': typeof AuthedIndexRoute
@@ -313,6 +322,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/signup'
     | '/$workspaceId'
+    | '/complete-profile'
     | '/workspaces'
     | '/prototypes/above-title-header'
     | '/$workspaceId/briefing'
@@ -342,6 +352,7 @@ export interface FileRouteTypes {
   to:
     | '/login'
     | '/signup'
+    | '/complete-profile'
     | '/workspaces'
     | '/prototypes/above-title-header'
     | '/'
@@ -373,6 +384,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/signup'
     | '/_authed/$workspaceId'
+    | '/_authed/complete-profile'
     | '/_authed/workspaces'
     | '/prototypes/above-title-header'
     | '/_authed/'
@@ -450,6 +462,13 @@ declare module '@tanstack/react-router' {
       path: '/workspaces'
       fullPath: '/workspaces'
       preLoaderRoute: typeof AuthedWorkspacesRouteImport
+      parentRoute: typeof AuthedRoute
+    }
+    '/_authed/complete-profile': {
+      id: '/_authed/complete-profile'
+      path: '/complete-profile'
+      fullPath: '/complete-profile'
+      preLoaderRoute: typeof AuthedCompleteProfileRouteImport
       parentRoute: typeof AuthedRoute
     }
     '/_authed/$workspaceId': {
@@ -700,12 +719,14 @@ const AuthedWorkspaceIdRouteWithChildren =
 
 interface AuthedRouteChildren {
   AuthedWorkspaceIdRoute: typeof AuthedWorkspaceIdRouteWithChildren
+  AuthedCompleteProfileRoute: typeof AuthedCompleteProfileRoute
   AuthedWorkspacesRoute: typeof AuthedWorkspacesRoute
   AuthedIndexRoute: typeof AuthedIndexRoute
 }
 
 const AuthedRouteChildren: AuthedRouteChildren = {
   AuthedWorkspaceIdRoute: AuthedWorkspaceIdRouteWithChildren,
+  AuthedCompleteProfileRoute: AuthedCompleteProfileRoute,
   AuthedWorkspacesRoute: AuthedWorkspacesRoute,
   AuthedIndexRoute: AuthedIndexRoute,
 }

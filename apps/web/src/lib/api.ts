@@ -225,6 +225,20 @@ export const api = {
 			request<ActorWithKey>('/auth/login', { method: 'POST', body: data }),
 	},
 
+	// "Continue with vaerksted" — exchanges a vaerksted-auth session token
+	// (already minted by the Supabase magic-link/OAuth flow, see
+	// hooks/use-vaerksted-auth.ts) for a Maskin actor. Public route, same
+	// response shape as auth.login / actors.create in all three of its
+	// branches (new actor / linked-by-email / already-linked) so the caller
+	// doesn't need to special-case them.
+	vaerkstedAuth: {
+		link: (sessionToken: string) =>
+			request<ActorWithKey>('/vaerksted-auth/link', {
+				method: 'POST',
+				body: { session_token: sessionToken },
+			}),
+	},
+
 	landingEvents: {
 		emit: (events: Array<{ name: string; anonId: string; props?: Record<string, unknown> }>) =>
 			request<void>('/public/landing-events', { method: 'POST', body: { events } }),
@@ -926,6 +940,10 @@ export interface ActorWithKey extends ActorResponse {
 	// humans on signup). Used by the signup → guest-draft handoff to pick the
 	// workspace to claim into.
 	workspace_id?: string
+	// Only ever set by POST /vaerksted-auth/link — true for a brand-new actor,
+	// so the frontend knows to prompt for name/organization/role (the vaerksted
+	// handshake never collects them, unlike the native signup form).
+	is_new_actor?: boolean
 }
 
 export interface LoginInput {

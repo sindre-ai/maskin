@@ -27,7 +27,6 @@ import {
 	WORKSPACE_COACH_DEFAULT,
 	createActorSchema,
 	updateActorSchema,
-	workspaceSettingsSchema,
 } from '@maskin/shared'
 import { and, asc, count, countDistinct, desc, eq, inArray, or, sql } from 'drizzle-orm'
 import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
@@ -45,7 +44,7 @@ import { serialize, serializeArray } from '../lib/serialize'
 import { isWorkspaceMember } from '../lib/workspace-auth'
 import type { AgentStorageManager } from '../services/agent-storage'
 import type { SessionManager } from '../services/session-manager'
-import { bootstrapDefaultAgents } from '../services/workspace-bootstrap'
+import { bootstrapDefaultAgents, createPersonalWorkspace } from '../services/workspace-bootstrap'
 
 type Env = {
 	Variables: {
@@ -88,6 +87,10 @@ const createActorRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Invalid request',
 		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Native-password signup disabled (VAERKSTED_AUTH_REQUIRED)',
+		},
 		409: {
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Actor with this ID already exists',
@@ -121,6 +124,23 @@ function isEmailUniqueViolation(err: unknown): boolean {
 app.openapi(createActorRoute, async (c) => {
 	const db = c.get('db')
 	const body = c.req.valid('json')
+
+	// Optional, strictly opt-in gate (default unset/false — see .env.example):
+	// once VAERKSTED_AUTH_REQUIRED is explicitly set, new native-password human
+	// signups are rejected in favor of "Continue with vaerksted"
+	// (POST /api/vaerksted-auth/link). Left off by default because this route
+	// is load-bearing for the documented local-dev bootstrap flow in the root
+	// CLAUDE.md (auto-provisions a dev@local actor on a fresh DB) — do not
+	// gate it unconditionally.
+	if (body.type === 'human' && process.env.VAERKSTED_AUTH_REQUIRED === 'true') {
+		return c.json(
+			createApiError(
+				'FORBIDDEN',
+				'Native-password signup is disabled — sign up via "Continue with vaerksted" instead',
+			),
+			403,
+		)
+	}
 
 	// Human users must provide email and password
 	if (body.type === 'human') {
@@ -202,56 +222,7 @@ app.openapi(createActorRoute, async (c) => {
 	let workspaceId: string | undefined
 
 	if (shouldCreateWorkspace) {
-		const defaultSettings = workspaceSettingsSchema.parse({
-			enabled_modules: ['work', 'knowledge'],
-		})
-		const created = await db.transaction(async (tx) => {
-			const [workspace] = await tx
-				.insert(workspaces)
-				.values({
-					name: `${body.name}'s Workspace`,
-					settings: defaultSettings,
-					createdBy: actor.id,
-				})
-				.returning()
-
-			if (!workspace) return null
-
-			await tx.insert(workspaceMembers).values({
-				workspaceId: workspace.id,
-				actorId: actor.id,
-				role: 'owner',
-			})
-
-			// Seed Workspace Coach — the built-in meta-agent shipped with every workspace.
-			// apiKey is required: without it, the agent's container boots with an empty
-			// Bearer token and MCP writes either 401 or — worse — fall back to a key
-			// that resolves to a different actor, misattributing every comment.
-			const [coach] = await tx
-				.insert(actors)
-				.values({
-					type: WORKSPACE_COACH_DEFAULT.type,
-					name: WORKSPACE_COACH_DEFAULT.name,
-					isSystem: WORKSPACE_COACH_DEFAULT.isSystem,
-					systemPrompt: WORKSPACE_COACH_DEFAULT.systemPrompt,
-					llmProvider: WORKSPACE_COACH_DEFAULT.llmProvider,
-					llmConfig: WORKSPACE_COACH_DEFAULT.llmConfig,
-					tools: WORKSPACE_COACH_DEFAULT.tools,
-					apiKey: generateApiKey().key,
-					createdBy: actor.id,
-				})
-				.returning()
-
-			if (!coach) throw new Error('Failed to seed Workspace Coach actor')
-
-			await tx.insert(workspaceMembers).values({
-				workspaceId: workspace.id,
-				actorId: coach.id,
-				role: 'member',
-			})
-
-			return workspace
-		})
+		const created = await createPersonalWorkspace(db, actor)
 
 		if (created) {
 			workspaceId = created.id
