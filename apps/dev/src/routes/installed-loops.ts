@@ -30,7 +30,7 @@ import {
 	trackLoopInstalled,
 	trackLoopUninstalled,
 } from '../lib/analytics/loop-events'
-import { createApiError } from '../lib/errors'
+import { createApiError, validationFailureHook } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, jsonbField } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
@@ -61,7 +61,7 @@ type Env = {
 	}
 }
 
-const app = new OpenAPIHono<Env>()
+const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 /**
  * A skill provisioned from a marketplace item collided with an unrelated,

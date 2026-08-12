@@ -86,10 +86,13 @@ describe('TriggerRunner', () => {
 	})
 
 	describe('handleEvent()', () => {
+		// entity_id must be a real UUID: the runner guards the objects-table
+		// hydration probe with a UUID check (objects.id is a uuid column, so a
+		// non-UUID probe would raise in Postgres instead of finding no row).
 		const baseEvent: PgEvent = {
 			workspace_id: 'ws-1',
 			entity_type: 'task',
-			entity_id: 'obj-1',
+			entity_id: 'a4f1c9d2-3b58-4e07-9c26-8f5d0a7b1e43',
 			action: 'created',
 			actor_id: 'actor-1',
 			event_id: 'evt-1',
@@ -370,6 +373,35 @@ describe('TriggerRunner', () => {
 			mockResults.insert = []
 
 			bridge.emit('event', { ...baseEvent, action: 'status_changed' })
+			await vi.advanceTimersByTimeAsync(0)
+
+			expect(sessionManager.createSession).toHaveBeenCalled()
+		})
+
+		it('fires status_changed trigger for a CUSTOM object type by hydrating from the objects table', async () => {
+			// Workspaces define their own object types (extensions) — loop steps
+			// filtering on a custom type's status must hydrate the current row the
+			// same way built-in types do. Regression guard for the removed
+			// ['bet','task','insight'] allow-list.
+			const trigger = buildTrigger({
+				workspaceId: 'ws-1',
+				type: 'event',
+				config: {
+					entity_type: 'lead',
+					action: 'status_changed',
+					filter: { status: 'qualified' },
+				},
+			})
+			mockResults.selectQueue = [
+				[trigger], // matching triggers
+				// fetchEventData → new {changes} shape, no previous/updated snapshot
+				[{ data: { changes: [{ field: 'status', old: 'new', new: 'qualified' }] } }],
+				// hydrated current row from `objects` — a custom-typed object
+				[{ type: 'lead', status: 'qualified', driver: null, metadata: null }],
+			]
+			mockResults.insert = []
+
+			bridge.emit('event', { ...baseEvent, entity_type: 'lead', action: 'status_changed' })
 			await vi.advanceTimersByTimeAsync(0)
 
 			expect(sessionManager.createSession).toHaveBeenCalled()
@@ -873,6 +905,76 @@ describe('TriggerRunner backoff', () => {
 			action: 'created',
 			actor_id: 'actor-1',
 			event_id: 'evt-3',
+		} satisfies PgEvent)
+		await vi.advanceTimersByTimeAsync(0)
+
+		expect(sessionManager.createSession).toHaveBeenCalled()
+	})
+
+	it('counts a stop-then-genuine-report pair for the same session as one failure, not two', async () => {
+		// Regression coverage: SessionManager.stopSession() writes a
+		// provisional session_failed row, and the agent-server's own genuine
+		// completion report (the normal path, not a rare race) can overwrite
+		// it moments later — see markRemoteSessionComplete's stoppedByUser
+		// handling in session-manager.ts. Both writes insert their own
+		// session_failed event for the SAME session id. Without dedup by
+		// session id, this would double-count as 2 failures (backoff = 2^2 *
+		// 60s = 4 min) instead of 1 (backoff = 2^1 * 60s = 2 min).
+		mockResults.selectQueue = [[], []]
+		await runner.start()
+
+		mockResults.selectQueue = [
+			[], // eventHandler: no triggers match entity_type=session
+			[{ triggerId: 'trigger-1' }], // sessionEventHandler: session lookup
+		]
+		bridge.emit('event', {
+			workspace_id: 'ws-1',
+			actor_id: 'actor-1',
+			action: 'session_failed',
+			entity_type: 'session',
+			entity_id: 'session-1',
+			event_id: 'evt-stop-provisional',
+		} satisfies PgEvent)
+		await vi.advanceTimersByTimeAsync(0)
+
+		// Genuine report for the SAME session lands moments later. Only one
+		// select is queued here (eventHandler's "no triggers match
+		// entity_type=session" lookup) — sessionEventHandler's own session
+		// lookup must NOT fire for this second event; the dedup guard should
+		// short-circuit handleSessionOutcome before it reaches that select.
+		mockResults.selectQueue = [[]]
+		bridge.emit('event', {
+			workspace_id: 'ws-1',
+			actor_id: 'actor-1',
+			action: 'session_failed',
+			entity_type: 'session',
+			entity_id: 'session-1',
+			event_id: 'evt-genuine-report',
+		} satisfies PgEvent)
+		await vi.advanceTimersByTimeAsync(0)
+
+		const trigger = buildTrigger({
+			id: 'trigger-1',
+			workspaceId: 'ws-1',
+			type: 'event',
+			config: { entity_type: 'task', action: 'created' },
+		})
+
+		// A single failure's backoff (2 min) should have expired; if the
+		// second event were double-counted, backoff would be 4 min and this
+		// would still be blocked.
+		await vi.advanceTimersByTimeAsync(2 * 60_000 + 1000)
+
+		mockResults.select = [trigger]
+		mockResults.insert = []
+
+		bridge.emit('event', {
+			workspace_id: 'ws-1',
+			entity_type: 'task',
+			entity_id: 'obj-1',
+			action: 'created',
+			actor_id: 'actor-1',
+			event_id: 'evt-fire',
 		} satisfies PgEvent)
 		await vi.advanceTimersByTimeAsync(0)
 

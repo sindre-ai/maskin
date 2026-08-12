@@ -9,8 +9,9 @@ import type { PgNotifyBridge } from '@maskin/realtime'
 import type { StorageProvider } from '@maskin/storage'
 import { cors } from 'hono/cors'
 import { logger as honoLogger } from 'hono/logger'
-import { ApiErrorCode, createApiError, formatZodError, mapStatusToCode } from './lib/errors'
+import { ApiErrorCode, createApiError, mapStatusToCode, validationFailureHook } from './lib/errors'
 import { logger } from './lib/logger'
+import { Sentry } from './lib/sentry'
 import { createIdempotencyMiddleware } from './middleware/idempotency'
 import actorsRoutes from './routes/actors'
 import adminLandingFunnelRoutes from './routes/admin-landing-funnel'
@@ -106,21 +107,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 			? process.env.CORS_ORIGIN.split(',').map((o) => o.trim())
 			: ['http://localhost:5173'])
 
-	const app = new OpenAPIHono<Env>({
-		defaultHook: (result, c) => {
-			if (!result.success) {
-				return c.json(
-					createApiError(
-						'VALIDATION_ERROR',
-						'Request validation failed',
-						formatZodError(result.error),
-					),
-					400,
-				)
-			}
-			return undefined
-		},
-	})
+	const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 	app.onError((err, c) => {
 		if ('status' in err && typeof err.status === 'number') {
@@ -139,19 +126,34 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 					column_name?: string
 			  }
 			| undefined
-		logger.error('Unhandled error', {
-			error: String(err),
-			cause: cause?.message ?? (cause ? String(cause) : undefined),
-			pgCode: cause?.code,
-			pgDetail: cause?.detail,
-			pgHint: cause?.hint,
-			pgPosition: cause?.position,
-			pgWhere: cause?.where,
-			pgSchema: cause?.schema_name,
-			pgTable: cause?.table_name,
-			pgColumn: cause?.column_name,
-			stack: err.stack,
-		})
+		// Guarded — this is the last line of defense before a response goes out.
+		// A throwing Sentry call must never suppress the actual error response
+		// or the diagnostic log line below.
+		try {
+			Sentry.captureException(err, {
+				tags: { path: c.req.path, method: c.req.method },
+				extra: { pgCode: cause?.code, pgTable: cause?.table_name },
+			})
+		} catch (sentryErr) {
+			console.error('[sentry] captureException failed', sentryErr)
+		}
+		logger.error(
+			'Unhandled error',
+			{
+				error: String(err),
+				cause: cause?.message ?? (cause ? String(cause) : undefined),
+				pgCode: cause?.code,
+				pgDetail: cause?.detail,
+				pgHint: cause?.hint,
+				pgPosition: cause?.position,
+				pgWhere: cause?.where,
+				pgSchema: cause?.schema_name,
+				pgTable: cause?.table_name,
+				pgColumn: cause?.column_name,
+				stack: err.stack,
+			},
+			{ skipSentry: true },
+		)
 		return c.json(createApiError(ApiErrorCode.INTERNAL_ERROR, 'An unexpected error occurred'), 500)
 	})
 
@@ -202,6 +204,25 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		if (/^\/api\/integrations\/[^/]+\/callback$/.test(path)) return next()
 
 		return auth(c, next)
+	})
+
+	// Tag Sentry events with who hit them — actor/workspace UUIDs only, no
+	// email or IP (see Sentry's `userInfo` data-collection option, which we
+	// deliberately don't enable). Runs after `auth` so actorId is set when
+	// present; unauthenticated routes just skip tagging.
+	// Guarded like every other Sentry call in this file — this runs on every
+	// request, not just the error path, so a throwing Sentry call here must
+	// never block the request from reaching its route handler.
+	app.use('/api/*', async (c, next) => {
+		try {
+			const actorId = c.get('actorId')
+			if (actorId) Sentry.setUser({ id: actorId })
+			const workspaceId = c.req.header('X-Workspace-Id')
+			if (workspaceId) Sentry.setTag('workspaceId', workspaceId)
+		} catch (sentryErr) {
+			console.error('[sentry] setUser/setTag failed', sentryErr)
+		}
+		await next()
 	})
 
 	app.use('/api/*', createIdempotencyMiddleware(db))

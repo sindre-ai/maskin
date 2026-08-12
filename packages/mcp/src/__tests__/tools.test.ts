@@ -61,6 +61,11 @@ const ALL_TOOL_NAMES = [
 	'update_trigger',
 	'delete_trigger',
 	'list_triggers',
+	'create_loop',
+	'update_loop',
+	'list_loops',
+	'get_loop',
+	'delete_loop',
 	'create_session',
 	'list_sessions',
 	'get_session',
@@ -787,6 +792,113 @@ describe('create_trigger schema', () => {
 				target_actor_id: uuid,
 			}),
 		).toThrow()
+	})
+})
+
+describe('create_loop schema', () => {
+	const schema = tools.create_loop.inputSchema
+
+	it('applies defaults: running status, empty steps/trigger_ids/object_ids', () => {
+		const result = schema.parse({ name: 'Lead loop' })
+		expect(result.status).toBe('running')
+		expect(result.steps).toEqual([])
+		expect(result.trigger_ids).toEqual([])
+		expect(result.object_ids).toEqual([])
+	})
+
+	it('accepts an event step and a cron step', () => {
+		const result = schema.parse({
+			name: 'Lead loop',
+			steps: [
+				{
+					name: 'Qualify',
+					agent_id: uuid,
+					prompt: 'Qualify the lead',
+					when: { object_type: 'lead', action: 'status_changed', filter: { status: 'new' } },
+				},
+				{
+					name: 'Sweep',
+					agent_id: uuid2,
+					prompt: 'Sweep stale leads',
+					when: { cron: '0 9 * * 1' },
+				},
+			],
+			closed_statuses: { lead: ['won', 'lost'] },
+		})
+		expect(result.steps).toHaveLength(2)
+		expect(result.closed_statuses).toEqual({ lead: ['won', 'lost'] })
+	})
+
+	it('rejects a step with an invalid event action', () => {
+		expect(() =>
+			schema.parse({
+				name: 'X',
+				steps: [
+					{
+						name: 'Bad',
+						agent_id: uuid,
+						prompt: 'Y',
+						when: { action: 'exploded' },
+					},
+				],
+			}),
+		).toThrow()
+	})
+
+	it('rejects an unknown loop status', () => {
+		expect(() => schema.parse({ name: 'X', status: 'sideways' })).toThrow()
+	})
+})
+
+describe('update_loop schema', () => {
+	const schema = tools.update_loop.inputSchema
+
+	it('accepts a pure membership update', () => {
+		const result = schema.parse({
+			id: uuid,
+			add_object_ids: [uuid2],
+			remove_trigger_ids: [uuid2],
+		})
+		expect(result.add_object_ids).toEqual([uuid2])
+		expect(result.remove_trigger_ids).toEqual([uuid2])
+	})
+
+	it('requires a uuid loop id', () => {
+		expect(() => schema.parse({ id: 'not-a-uuid', name: 'X' })).toThrow()
+	})
+})
+
+describe('get_loop schema', () => {
+	const schema = tools.get_loop.inputSchema
+
+	it('accepts a uuid id', () => {
+		const result = schema.parse({ id: uuid })
+		expect(result.id).toBe(uuid)
+	})
+
+	it('requires id', () => {
+		expect(() => schema.parse({})).toThrow()
+	})
+
+	it('rejects a non-uuid id', () => {
+		expect(() => schema.parse({ id: 'not-a-uuid' })).toThrow()
+	})
+})
+
+describe('delete_loop schema', () => {
+	const schema = tools.delete_loop.inputSchema
+
+	it('accepts a uuid id', () => {
+		const result = schema.parse({ id: uuid })
+		expect(result.id).toBe(uuid)
+	})
+
+	it('requires id', () => {
+		expect(() => schema.parse({})).toThrow()
+	})
+
+	it('rejects a non-uuid id', () => {
+		expect(() => schema.parse({ id: 'not-a-uuid' })).toThrow()
 	})
 })
 

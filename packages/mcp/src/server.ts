@@ -416,6 +416,246 @@ function withWorkspaceLock<T>(workspaceId: string, fn: () => Promise<T>): Promis
 	return result
 }
 
+/** Relationship type marking "this object is a member of this loop's
+ * pipeline" — source is the loop object, target is the member object.
+ * Mirrors LOOP_MEMBERSHIP_RELATIONSHIP_TYPE in apps/dev/src/routes/loops.ts. */
+const LOOP_MEMBERSHIP_TYPE = 'in_loop'
+
+/** Page size when walking a loop's `in_loop` edges — the API's max. */
+const RELATIONSHIP_PAGE_LIMIT = 100
+
+/**
+ * Validate that every id in `triggerIds` is a real trigger in the workspace.
+ * GET /api/triggers returns the complete, unpaginated list when called with no
+ * query params, so a single call covers the whole workspace. Throws with the
+ * unknown ids named — a typo'd trigger id must fail loudly here, because the
+ * loops read API silently drops unknown ids and the loop would otherwise
+ * render with no steps and no agents.
+ */
+async function assertTriggersExist(
+	config: McpConfig,
+	triggerIds: string[],
+	workspaceId?: string,
+): Promise<void> {
+	if (triggerIds.length === 0) return
+	const rows = (await apiCall(config, 'GET', '/api/triggers', undefined, {
+		workspaceId,
+	})) as Array<{ id: string }>
+	const known = new Set(Array.isArray(rows) ? rows.map((r) => r.id) : [])
+	const unknown = triggerIds.filter((id) => !known.has(id))
+	if (unknown.length > 0) {
+		throw new Error(
+			`Unknown trigger id(s): ${unknown.join(', ')}. A loop's steps must be existing triggers in the workspace — create them first with create_trigger, or find them with list_triggers.`,
+		)
+	}
+}
+
+/**
+ * Validate that every id in `objectIds` is a real object in the workspace the
+ * loop lives in. The relationships/graph endpoints only check UUID *format*,
+ * so without this a mistyped id would create a dangling `in_loop` edge that
+ * never shows up in the loop's stats. Throws with the bad ids named.
+ */
+async function assertObjectsExist(
+	config: McpConfig,
+	objectIds: string[],
+	workspaceId?: string,
+): Promise<void> {
+	if (objectIds.length === 0) return
+	const effectiveWs = workspaceId ?? config.defaultWorkspaceId
+	const results = await Promise.all(
+		objectIds.map(async (id) => {
+			try {
+				const obj = (await apiCall(config, 'GET', `/api/objects/${id}`, undefined, {
+					workspaceId,
+				})) as { id?: string; workspaceId?: string }
+				if (effectiveWs && obj.workspaceId && obj.workspaceId !== effectiveWs) {
+					return { id, ok: false }
+				}
+				return { id, ok: true }
+			} catch {
+				return { id, ok: false }
+			}
+		}),
+	)
+	const unknown = results.filter((r) => !r.ok).map((r) => r.id)
+	if (unknown.length > 0) {
+		throw new Error(
+			`Unknown object id(s) in this workspace: ${unknown.join(', ')}. Loop member objects must already exist — find them with list_objects or search_objects, or create them with create_objects first.`,
+		)
+	}
+}
+
+/**
+ * Validate that every id in `agentIds` is a real, workspace-member actor of
+ * type 'agent'. Without this, a step's `agent_id` is only checked for UUID
+ * format — a hallucinated or stale id would create an `enabled: true`
+ * trigger that resolves to no working agent, silently defeating the step.
+ * Uses the workspace-scoped `GET /api/actors?ids=` listing (not
+ * `GET /api/actors/:id`, which is not workspace-scoped) so a real actor from
+ * a different workspace, or one not a member of this one, is correctly
+ * rejected. Throws with the bad ids named and why (missing vs. wrong type).
+ */
+async function assertAgentsExist(
+	config: McpConfig,
+	agentIds: string[],
+	workspaceId?: string,
+): Promise<void> {
+	const ids = [...new Set(agentIds)]
+	if (ids.length === 0) return
+	const rows = (await apiCall(
+		config,
+		'GET',
+		`/api/actors?ids=${ids.map(encodeURIComponent).join(',')}`,
+		undefined,
+		{ workspaceId },
+	)) as Array<{ id: string; type: string }>
+	const byId = new Map((Array.isArray(rows) ? rows : []).map((r) => [r.id, r.type]))
+
+	const missing = ids.filter((id) => !byId.has(id))
+	const wrongType = ids.filter((id) => byId.has(id) && byId.get(id) !== 'agent')
+	if (missing.length === 0 && wrongType.length === 0) return
+
+	const parts: string[] = []
+	if (missing.length > 0) {
+		parts.push(
+			`not found or not a member of this workspace: ${missing.join(', ')} (create one with create_actor, or find one with list_actors)`,
+		)
+	}
+	if (wrongType.length > 0) {
+		parts.push(
+			`not an agent actor: ${wrongType.join(', ')} (a step's agent_id must target an agent — put a human on the loop by having a step's agent notify/@mention them instead)`,
+		)
+	}
+	throw new Error(`Invalid step agent_id(s) — ${parts.join('; ')}.`)
+}
+
+/**
+ * Delete every `in_loop` edge for a loop (source = loop, no target filter) —
+ * used by delete_loop. `relationships` rows have no FK/cascade from either
+ * side, so these are orphaned unless explicitly cleaned up before the loop
+ * object itself is deleted. Returns the member object ids that were detached.
+ */
+async function deleteAllLoopMemberships(
+	config: McpConfig,
+	loopId: string,
+	workspaceId?: string,
+): Promise<string[]> {
+	const removedObjectIds: string[] = []
+	// Always re-fetch at offset 0: deleting a page shifts the remaining rows
+	// down, so a fixed offset would skip rows (the same hazard update_loop's
+	// remove_object_ids avoids by collecting before deleting — this avoids it
+	// by never advancing past what's already been deleted).
+	for (;;) {
+		const page = (await apiCall(
+			config,
+			'GET',
+			`/api/relationships?source_id=${loopId}&type=${LOOP_MEMBERSHIP_TYPE}&limit=${RELATIONSHIP_PAGE_LIMIT}&offset=0`,
+			undefined,
+			{ workspaceId },
+		)) as Array<{ id: string; targetId: string }>
+		if (!Array.isArray(page) || page.length === 0) break
+		for (const rel of page) {
+			await apiCall(config, 'DELETE', `/api/relationships/${rel.id}`, undefined, { workspaceId })
+			removedObjectIds.push(rel.targetId)
+		}
+	}
+	return removedObjectIds
+}
+
+/** Inline loop-step input shape — mirrors `loopStepSchema` in tools.ts. */
+interface LoopStepInput {
+	name: string
+	agent_id: string
+	prompt: string
+	when:
+		| { cron: string }
+		| {
+				object_type: string
+				action: 'created' | 'updated' | 'status_changed' | 'deleted'
+				filter?: Record<string, unknown>
+		  }
+}
+
+/** Map an inline loop step to a `POST /api/triggers` request body. */
+function buildStepTriggerBody(step: LoopStepInput): Record<string, unknown> {
+	if ('cron' in step.when) {
+		return {
+			name: step.name,
+			type: 'cron',
+			config: { expression: step.when.cron },
+			action_prompt: step.prompt,
+			target_actor_id: step.agent_id,
+			enabled: true,
+		}
+	}
+	const triggerConfig: Record<string, unknown> = {
+		action: step.when.action,
+		entity_type: step.when.object_type,
+	}
+	if (step.when.filter) triggerConfig.filter = step.when.filter
+	return {
+		name: step.name,
+		type: 'event',
+		config: triggerConfig,
+		action_prompt: step.prompt,
+		target_actor_id: step.agent_id,
+		enabled: true,
+	}
+}
+
+/**
+ * Validate the workspace-schema-dependent parts of a loop write: the
+ * `closed_statuses` map (types and statuses must exist in the workspace's
+ * settings — the same dynamic source `get_workspace_schema` reads) and any
+ * step `when.object_type`. Skips the workspace fetch entirely when nothing
+ * needs it. Throws with the offending values named and a pointer to
+ * get_workspace_schema, so agents can self-correct.
+ */
+async function assertLoopTypesValid(
+	config: McpConfig,
+	input: {
+		closedStatuses?: Record<string, string[]>
+		steps?: LoopStepInput[]
+	},
+	workspaceId?: string,
+): Promise<void> {
+	const closedEntries = Object.entries(input.closedStatuses ?? {})
+	const stepTypes = (input.steps ?? [])
+		.map((s) => ('object_type' in s.when ? s.when.object_type : undefined))
+		.filter((t): t is string => typeof t === 'string')
+	if (closedEntries.length === 0 && stepTypes.length === 0) return
+
+	const wsId = workspaceId ?? config.defaultWorkspaceId
+	if (!wsId) return // downstream calls raise the standard no-workspace hint
+	const workspace = await getWorkspace(config, wsId)
+	const statuses = (workspace.settings.statuses ?? {}) as Record<string, string[]>
+	const knownTypes = Object.keys(statuses)
+
+	for (const [type, wanted] of closedEntries) {
+		if (!knownTypes.includes(type)) {
+			throw new Error(
+				`closed_statuses references unknown object type '${type}'. Known types: ${knownTypes.join(', ')}. Call get_workspace_schema to see the workspace's types, or add the type first with create_extension.`,
+			)
+		}
+		const valid = statuses[type] ?? []
+		const bad = wanted.filter((s) => !valid.includes(s))
+		if (bad.length > 0) {
+			throw new Error(
+				`closed_statuses for type '${type}' references unknown status(es): ${bad.join(', ')}. Valid statuses for '${type}': ${valid.join(', ')}.`,
+			)
+		}
+	}
+
+	for (const type of stepTypes) {
+		if (!knownTypes.includes(type)) {
+			throw new Error(
+				`A step's when.object_type references unknown object type '${type}'. Known types: ${knownTypes.join(', ')}. Call get_workspace_schema to see the workspace's types.`,
+			)
+		}
+	}
+}
+
 async function getWorkspace(
 	config: McpConfig,
 	workspaceId: string,
@@ -3780,6 +4020,440 @@ export function createMcpServer(config: McpConfig) {
 				_meta: meta('delete_trigger', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
+		},
+	)
+
+	// ─── Loops ────────────────────────────────────────────────
+	// There is no dedicated write API for loops — `apps/dev/src/routes/loops.ts`
+	// only implements GET. These tools are composite orchestrations over
+	// existing generic endpoints instead: the loop object + `in_loop` edges go
+	// through POST /api/graph (atomic) or PATCH/DELETE /api/objects/:id,
+	// inline steps become ordinary triggers via POST /api/triggers, and
+	// trigger membership lives in the loop's metadata.trigger_ids
+	// (read-modify-written under the per-workspace lock). See tools.ts for the
+	// loop model these expose.
+	registerAppTool(
+		server,
+		'create_loop',
+		{
+			description: tools.create_loop.description,
+			inputSchema: tools.create_loop.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const {
+				workspace_id,
+				name,
+				guarantee,
+				status,
+				entry_condition,
+				close_condition,
+				human_decision_points,
+				closed_statuses,
+			} = args
+			const stepList = (args.steps ?? []) as LoopStepInput[]
+			const existingTriggerIds = args.trigger_ids ?? []
+			const memberObjectIds = args.object_ids ?? []
+
+			// Validate everything up-front so nothing is created on a bad request.
+			await Promise.all([
+				assertTriggersExist(config, existingTriggerIds, workspace_id),
+				assertObjectsExist(config, memberObjectIds, workspace_id),
+				assertAgentsExist(
+					config,
+					stepList.map((s) => s.agent_id),
+					workspace_id,
+				),
+				assertLoopTypesValid(
+					config,
+					{ closedStatuses: closed_statuses, steps: stepList },
+					workspace_id,
+				),
+			])
+
+			// Create inline step triggers first; if the loop insert fails we
+			// best-effort delete them so no orphan triggers are left behind. Each
+			// gets its own random Idempotency-Key (not the default derived-from-body
+			// one) so two create_loop calls with byte-identical step bodies (e.g.
+			// reused boilerplate) always create distinct trigger rows — otherwise
+			// the second call's POST would replay the first call's trigger id, and
+			// a later failure here would roll back (delete) a different, already
+			// -successful loop's trigger.
+			const stepTriggerIds: string[] = []
+			let graphResult: {
+				nodes: Array<Record<string, unknown> & { id: string }>
+				edges: unknown[]
+			}
+			try {
+				for (const step of stepList) {
+					const created = (await apiCall(
+						config,
+						'POST',
+						'/api/triggers',
+						buildStepTriggerBody(step),
+						{ workspaceId: workspace_id, idempotencyKey: `mcp:create_loop:step:${randomUUID()}` },
+					)) as { id: string }
+					stepTriggerIds.push(created.id)
+				}
+
+				const allTriggerIds = [...new Set([...existingTriggerIds, ...stepTriggerIds])]
+				const metadata: Record<string, unknown> = { trigger_ids: allTriggerIds }
+				if (entry_condition !== undefined) metadata.entry_condition = entry_condition
+				if (close_condition !== undefined) metadata.close_condition = close_condition
+				if (human_decision_points !== undefined)
+					metadata.human_decision_points = human_decision_points
+				if (closed_statuses !== undefined) metadata.closed_statuses = closed_statuses
+
+				const node: Record<string, unknown> = {
+					$id: 'loop',
+					type: 'loop',
+					title: name,
+					status: status ?? 'running',
+					metadata,
+				}
+				if (guarantee !== undefined) node.content = guarantee
+				const edges = memberObjectIds.map((objectId) => ({
+					source: 'loop',
+					target: objectId,
+					type: LOOP_MEMBERSHIP_TYPE,
+				}))
+
+				graphResult = (await apiCall(
+					config,
+					'POST',
+					'/api/graph',
+					{ nodes: [node], edges },
+					{ workspaceId: workspace_id },
+				)) as typeof graphResult
+			} catch (err) {
+				await Promise.all(
+					stepTriggerIds.map((triggerId) =>
+						apiCall(config, 'DELETE', `/api/triggers/${triggerId}`, undefined, {
+							workspaceId: workspace_id,
+						}).catch(() => undefined),
+					),
+				)
+				throw err
+			}
+
+			const created = graphResult.nodes[0]
+			const wsId =
+				(created?.workspaceId as string | undefined) ?? workspace_id ?? config.defaultWorkspaceId
+			const loopWithUrl =
+				created && wsId
+					? addUrl(created, config, wsId, { kind: 'loop', id: created.id })
+					: (created ?? null)
+			const responseBody: Record<string, unknown> = {
+				loop: loopWithUrl,
+				trigger_ids: [...new Set([...existingTriggerIds, ...stepTriggerIds])],
+				member_edges: graphResult.edges,
+			}
+			if (stepTriggerIds.length > 0) responseBody.created_step_trigger_ids = stepTriggerIds
+
+			return {
+				_meta: meta('create_loop', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(responseBody, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'update_loop',
+		{
+			description: tools.update_loop.description,
+			inputSchema: tools.update_loop.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const {
+				workspace_id,
+				id,
+				name,
+				guarantee,
+				status,
+				entry_condition,
+				close_condition,
+				human_decision_points,
+				closed_statuses,
+				add_steps,
+				add_trigger_ids,
+				remove_trigger_ids,
+				add_object_ids,
+				remove_object_ids,
+			} = args
+
+			// The trigger_ids read-modify-write must not race a concurrent loop
+			// update from this process — same locking discipline as the workspace
+			// schema-editing tools.
+			const lockKey = workspace_id ?? config.defaultWorkspaceId ?? 'default'
+			return withWorkspaceLock(lockKey, async () => {
+				const existing = (await apiCall(config, 'GET', `/api/objects/${id}`, undefined, {
+					workspaceId: workspace_id,
+				})) as Record<string, unknown>
+				if (existing.type !== 'loop') {
+					throw new Error(
+						`Object ${id} has type '${String(existing.type)}', not 'loop'. update_loop only operates on loops — use update_objects for other objects, and list_loops to find loop ids.`,
+					)
+				}
+
+				await Promise.all([
+					assertTriggersExist(config, add_trigger_ids ?? [], workspace_id),
+					assertObjectsExist(config, add_object_ids ?? [], workspace_id),
+					assertAgentsExist(
+						config,
+						((add_steps as LoopStepInput[] | undefined) ?? []).map((s) => s.agent_id),
+						workspace_id,
+					),
+					assertLoopTypesValid(
+						config,
+						{ closedStatuses: closed_statuses, steps: add_steps as LoopStepInput[] | undefined },
+						workspace_id,
+					),
+				])
+
+				// Inline steps become new triggers, appended alongside add_trigger_ids.
+				// If the subsequent metadata PATCH fails, best-effort delete the
+				// just-created triggers so they don't survive live and unattached to
+				// any loop — mirrors create_loop's rollback. Each gets its own random
+				// Idempotency-Key so it can't replay another call's trigger (see
+				// create_loop for why).
+				const stepTriggerIds: string[] = []
+				let loopRow = existing
+				let mergedTriggerIds: string[] = []
+				let triggerIdsChanged = false
+				try {
+					for (const step of (add_steps ?? []) as LoopStepInput[]) {
+						const created = (await apiCall(
+							config,
+							'POST',
+							'/api/triggers',
+							buildStepTriggerBody(step),
+							{
+								workspaceId: workspace_id,
+								idempotencyKey: `mcp:update_loop:step:${randomUUID()}`,
+							},
+						)) as { id: string }
+						stepTriggerIds.push(created.id)
+					}
+
+					// Read-modify-write metadata.trigger_ids. PATCH /api/objects
+					// shallow-merges metadata, so only changed keys are sent.
+					const currentMeta = (existing.metadata ?? {}) as Record<string, unknown>
+					const currentTriggerIds = Array.isArray(currentMeta.trigger_ids)
+						? currentMeta.trigger_ids.filter((v): v is string => typeof v === 'string')
+						: []
+					const removeSet = new Set(remove_trigger_ids ?? [])
+					mergedTriggerIds = [
+						...new Set([...currentTriggerIds, ...(add_trigger_ids ?? []), ...stepTriggerIds]),
+					].filter((t) => !removeSet.has(t))
+					triggerIdsChanged =
+						mergedTriggerIds.length !== currentTriggerIds.length ||
+						mergedTriggerIds.some((t, i) => currentTriggerIds[i] !== t)
+
+					const metadataPatch: Record<string, unknown> = {}
+					if (triggerIdsChanged) metadataPatch.trigger_ids = mergedTriggerIds
+					if (entry_condition !== undefined) metadataPatch.entry_condition = entry_condition
+					if (close_condition !== undefined) metadataPatch.close_condition = close_condition
+					if (human_decision_points !== undefined)
+						metadataPatch.human_decision_points = human_decision_points
+					if (closed_statuses !== undefined) metadataPatch.closed_statuses = closed_statuses
+
+					const body: Record<string, unknown> = {}
+					if (name !== undefined) body.title = name
+					if (guarantee !== undefined) body.content = guarantee
+					if (status !== undefined) body.status = status
+					if (Object.keys(metadataPatch).length > 0) body.metadata = metadataPatch
+
+					if (Object.keys(body).length > 0) {
+						loopRow = (await apiCall(config, 'PATCH', `/api/objects/${id}`, body, {
+							workspaceId: workspace_id,
+						})) as Record<string, unknown>
+					}
+				} catch (err) {
+					await Promise.all(
+						stepTriggerIds.map((triggerId) =>
+							apiCall(config, 'DELETE', `/api/triggers/${triggerId}`, undefined, {
+								workspaceId: workspace_id,
+							}).catch(() => undefined),
+						),
+					)
+					throw err
+				}
+
+				// Membership adds — POST /api/relationships is idempotent on
+				// (source, target, type), so re-adding an existing member is safe.
+				const addedObjectIds: string[] = []
+				for (const objectId of add_object_ids ?? []) {
+					await apiCall(
+						config,
+						'POST',
+						'/api/relationships',
+						{
+							source_type: 'object',
+							source_id: id,
+							target_type: 'object',
+							target_id: objectId,
+							type: LOOP_MEMBERSHIP_TYPE,
+						},
+						{ workspaceId: workspace_id },
+					)
+					addedObjectIds.push(objectId)
+				}
+
+				// Membership removals: collect every matching `in_loop` edge first
+				// (deleting while paging would shift offsets), then delete.
+				const removedObjectIds: string[] = []
+				const notMembers: string[] = []
+				if (remove_object_ids?.length) {
+					const pendingRemove = new Set(remove_object_ids)
+					const matched: Array<{ relId: string; targetId: string }> = []
+					let offset = 0
+					for (;;) {
+						const page = (await apiCall(
+							config,
+							'GET',
+							`/api/relationships?source_id=${id}&type=${LOOP_MEMBERSHIP_TYPE}&limit=${RELATIONSHIP_PAGE_LIMIT}&offset=${offset}`,
+							undefined,
+							{ workspaceId: workspace_id },
+						)) as Array<{ id: string; targetId: string }>
+						if (!Array.isArray(page) || page.length === 0) break
+						for (const rel of page) {
+							if (pendingRemove.has(rel.targetId)) {
+								matched.push({ relId: rel.id, targetId: rel.targetId })
+								pendingRemove.delete(rel.targetId)
+							}
+						}
+						if (page.length < RELATIONSHIP_PAGE_LIMIT || pendingRemove.size === 0) break
+						offset += RELATIONSHIP_PAGE_LIMIT
+					}
+					for (const { relId, targetId } of matched) {
+						await apiCall(config, 'DELETE', `/api/relationships/${relId}`, undefined, {
+							workspaceId: workspace_id,
+						})
+						removedObjectIds.push(targetId)
+					}
+					notMembers.push(...pendingRemove)
+				}
+
+				const wsId =
+					(loopRow.workspaceId as string | undefined) ?? workspace_id ?? config.defaultWorkspaceId
+				const loopWithUrl = wsId ? addUrl(loopRow, config, wsId, { kind: 'loop', id }) : loopRow
+				const responseBody: Record<string, unknown> = { loop: loopWithUrl }
+				if (stepTriggerIds.length > 0) responseBody.created_step_trigger_ids = stepTriggerIds
+				if (triggerIdsChanged) responseBody.trigger_ids = mergedTriggerIds
+				if (addedObjectIds.length > 0) responseBody.added_object_ids = addedObjectIds
+				if (removedObjectIds.length > 0) responseBody.removed_object_ids = removedObjectIds
+				if (notMembers.length > 0) responseBody.not_members_skipped = notMembers
+
+				return {
+					_meta: meta('update_loop', config, (args as { workspace_id?: string }).workspace_id),
+					content: [{ type: 'text' as const, text: JSON.stringify(responseBody, null, 2) }],
+				}
+			})
+		},
+	)
+
+	registerAppTool(
+		server,
+		'list_loops',
+		{
+			description: tools.list_loops.description,
+			inputSchema: tools.list_loops.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const data = (await apiCall(config, 'GET', '/api/loops', undefined, {
+				workspaceId: args.workspace_id,
+			})) as { loops: Array<Record<string, unknown>> }
+			const wsId = args.workspace_id ?? config.defaultWorkspaceId
+			const loops = Array.isArray(data?.loops) ? data.loops : []
+			const enriched = loops.map((loop) =>
+				addUrl(loop, config, (loop.workspaceId as string | undefined) ?? wsId, {
+					kind: 'loop',
+					id: loop.id as string,
+				}),
+			)
+			return {
+				_meta: meta('list_loops', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify({ loops: enriched }, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'get_loop',
+		{
+			description: tools.get_loop.description,
+			inputSchema: tools.get_loop.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, id } = args
+			const data = (await apiCall(
+				config,
+				'GET',
+				`/api/loops?id=${encodeURIComponent(id)}`,
+				undefined,
+				{ workspaceId: workspace_id },
+			)) as { loops: Array<Record<string, unknown>> }
+			const loop = Array.isArray(data?.loops) ? data.loops[0] : undefined
+			if (!loop) {
+				throw new Error(
+					`Loop ${id} not found in this workspace. Use list_loops to find valid loop ids.`,
+				)
+			}
+			const wsId =
+				(loop.workspaceId as string | undefined) ?? workspace_id ?? config.defaultWorkspaceId
+			const loopWithUrl = wsId ? addUrl(loop, config, wsId, { kind: 'loop', id }) : loop
+			return {
+				_meta: meta('get_loop', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify({ loop: loopWithUrl }, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'delete_loop',
+		{
+			description: tools.delete_loop.description,
+			inputSchema: tools.delete_loop.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, id } = args
+			const lockKey = workspace_id ?? config.defaultWorkspaceId ?? 'default'
+			return withWorkspaceLock(lockKey, async () => {
+				const existing = (await apiCall(config, 'GET', `/api/objects/${id}`, undefined, {
+					workspaceId: workspace_id,
+				})) as Record<string, unknown>
+				if (existing.type !== 'loop') {
+					throw new Error(
+						`Object ${id} has type '${String(existing.type)}', not 'loop'. delete_loop only operates on loops — use delete_object for other objects, and list_loops to find loop ids.`,
+					)
+				}
+
+				const removedObjectIds = await deleteAllLoopMemberships(config, id, workspace_id)
+				await apiCall(config, 'DELETE', `/api/objects/${id}`, undefined, {
+					workspaceId: workspace_id,
+				})
+
+				return {
+					_meta: meta('delete_loop', config, (args as { workspace_id?: string }).workspace_id),
+					content: [
+						{
+							type: 'text' as const,
+							text: JSON.stringify(
+								{ deleted: true, removed_member_object_ids: removedObjectIds },
+								null,
+								2,
+							),
+						},
+					],
+				}
+			})
 		},
 	)
 

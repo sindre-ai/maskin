@@ -5,7 +5,7 @@ import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
 import { createGraphSchema } from '@maskin/shared'
 import { and, eq, inArray } from 'drizzle-orm'
 import { maybeEmitKnowledgeReferenceFromEdge } from '../lib/analytics/knowledge-events'
-import { createApiError, createInvalidTypeError } from '../lib/errors'
+import { createApiError, createInvalidTypeError, validationFailureHook } from '../lib/errors'
 import {
 	findKnowledgeDuplicate,
 	isDuplicateTitle,
@@ -31,7 +31,7 @@ type Env = {
 	}
 }
 
-const app = new OpenAPIHono<Env>()
+const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 const graphResponseSchema = z.object({
 	nodes: z.array(objectResponseSchema.extend({ $id: z.string() })),

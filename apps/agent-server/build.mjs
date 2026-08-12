@@ -9,6 +9,6 @@ await build({
 	outfile: 'dist/index.js',
 	sourcemap: true,
 	banner: {
-		js: "import { createRequire } from 'module'; const require = createRequire(import.meta.url);",
+		js: "import { createRequire as __createBannerRequire } from 'module'; const require = __createBannerRequire(import.meta.url);",
 	},
 })
