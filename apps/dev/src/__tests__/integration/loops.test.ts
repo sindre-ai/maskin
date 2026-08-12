@@ -125,6 +125,47 @@ describe('Loops read API integration', () => {
 		expect(row.waitingOnViewer).toBe(false)
 	})
 
+	it('scopes to a single loop when `id` is passed (used by get_loop)', async () => {
+		const loop = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'running',
+			title: 'Wanted loop',
+		})
+		await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'running',
+			title: 'Other loop in the same workspace',
+		})
+
+		const app = makeApp(actorId)
+		const res = await app.request(
+			jsonGet(`/api/loops?id=${loop.id}`, { 'x-workspace-id': workspaceId }),
+		)
+		expect(res.status).toBe(200)
+		const body = (await res.json()) as { loops: Array<{ id: string; name: string }> }
+		expect(body.loops).toHaveLength(1)
+		expect(body.loops[0]?.id).toBe(loop.id)
+		expect(body.loops[0]?.name).toBe('Wanted loop')
+	})
+
+	it('returns an empty array — not a 404 — when `id` does not match a loop in this workspace', async () => {
+		const otherActor = await insertActor(db)
+		const otherWs = await insertWorkspace(db, otherActor.id)
+		const foreignLoop = await insertObject(db, otherWs.id, otherActor.id, {
+			type: 'loop',
+			status: 'running',
+			title: 'Foreign loop',
+		})
+
+		const app = makeApp(actorId)
+		const res = await app.request(
+			jsonGet(`/api/loops?id=${foreignLoop.id}`, { 'x-workspace-id': workspaceId }),
+		)
+		expect(res.status).toBe(200)
+		const body = (await res.json()) as { loops: unknown[] }
+		expect(body.loops).toEqual([])
+	})
+
 	it('derives in-progress and closed counts from child objects linked via an in_loop relationship', async () => {
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
@@ -190,6 +231,117 @@ describe('Loops read API integration', () => {
 		const otherRow = body.loops.find((l) => l.id === otherLoop.id)
 		expect(otherRow?.inProgressCount).toBe(1)
 		expect(otherRow?.closedCount).toBe(0)
+	})
+
+	it("respects the loop's own metadata.closed_statuses for custom object types", async () => {
+		// A loop flowing a workspace-defined type ('lead') that appears in no
+		// hardcoded terminal table. Without the per-loop closed_statuses
+		// override, every lead would count as in-progress forever.
+		const loop = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'running',
+			title: 'Lead qualification',
+			metadata: { closed_statuses: { lead: ['won', 'lost'] } },
+		})
+		const openLoop = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'running',
+			title: 'No override loop',
+		})
+
+		const wonLead = await insertObject(db, workspaceId, actorId, {
+			type: 'lead',
+			status: 'won',
+			title: 'Acme',
+		})
+		const activeLead = await insertObject(db, workspaceId, actorId, {
+			type: 'lead',
+			status: 'contacted',
+			title: 'Globex',
+		})
+		// Same terminal-looking lead in a loop WITHOUT the override — must stay
+		// in-progress, proving the override is per-loop, not global.
+		const wonLeadNoOverride = await insertObject(db, workspaceId, actorId, {
+			type: 'lead',
+			status: 'won',
+			title: 'Initech',
+		})
+
+		for (const target of [wonLead, activeLead]) {
+			await insertRelationship(db, actorId, {
+				sourceType: 'object',
+				sourceId: loop.id,
+				targetType: 'object',
+				targetId: target.id,
+				type: 'in_loop',
+			})
+		}
+		await insertRelationship(db, actorId, {
+			sourceType: 'object',
+			sourceId: openLoop.id,
+			targetType: 'object',
+			targetId: wonLeadNoOverride.id,
+			type: 'in_loop',
+		})
+
+		const app = makeApp(actorId)
+		const res = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
+		const body = (await res.json()) as {
+			loops: Array<{
+				id: string
+				inProgressCount: number
+				closedCount: number
+				medianTimeToCloseMs: number | null
+			}>
+		}
+		const row = body.loops.find((l) => l.id === loop.id)
+		expect(row?.inProgressCount).toBe(1)
+		expect(row?.closedCount).toBe(1)
+		expect(row?.medianTimeToCloseMs).not.toBeNull()
+
+		const noOverrideRow = body.loops.find((l) => l.id === openLoop.id)
+		expect(noOverrideRow?.inProgressCount).toBe(1)
+		expect(noOverrideRow?.closedCount).toBe(0)
+	})
+
+	it("closed_statuses can also override a built-in type's terminal set for one loop", async () => {
+		// The loop declares that only 'validated' means done for tasks — a
+		// task in 'done' therefore still counts as in-progress FOR THIS LOOP,
+		// while the fallback table would have counted it closed.
+		const loop = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'running',
+			title: 'Strict validation loop',
+			metadata: { closed_statuses: { task: ['validated'] } },
+		})
+		const doneTask = await insertObject(db, workspaceId, actorId, {
+			type: 'task',
+			status: 'done',
+			title: 'Done but not validated',
+		})
+		const validatedTask = await insertObject(db, workspaceId, actorId, {
+			type: 'task',
+			status: 'validated',
+			title: 'Validated',
+		})
+		for (const target of [doneTask, validatedTask]) {
+			await insertRelationship(db, actorId, {
+				sourceType: 'object',
+				sourceId: loop.id,
+				targetType: 'object',
+				targetId: target.id,
+				type: 'in_loop',
+			})
+		}
+
+		const app = makeApp(actorId)
+		const res = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
+		const body = (await res.json()) as {
+			loops: Array<{ id: string; inProgressCount: number; closedCount: number }>
+		}
+		const row = body.loops.find((l) => l.id === loop.id)
+		expect(row?.inProgressCount).toBe(1)
+		expect(row?.closedCount).toBe(1)
 	})
 
 	it('computes medianTimeToCloseMs from closed children (updated_at − created_at), null when none are closed', async () => {
