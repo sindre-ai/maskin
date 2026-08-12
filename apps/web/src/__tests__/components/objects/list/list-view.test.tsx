@@ -9,7 +9,11 @@ import {
 	useState,
 } from 'react'
 import { describe, expect, it, vi } from 'vitest'
-import { buildObjectResponse } from '../../../factories'
+import {
+	buildActorListItem,
+	buildNotificationResponse,
+	buildObjectResponse,
+} from '../../../factories'
 
 const mockNavigate = vi.fn()
 
@@ -259,6 +263,49 @@ describe('ListView', () => {
 		await user.click(indexAt(groupHeaders(), 0))
 		expect(screen.queryByText('Alpha')).toBeNull()
 		expect(screen.getByText('Beta')).toBeInTheDocument()
+	})
+
+	it('renders the ask line + "Waiting on you" pill for a pending ask on the row', () => {
+		const ask = buildNotificationResponse({
+			id: 'ask-1',
+			objectId: 'obj-1',
+			status: 'pending',
+			sourceActorId: 'actor-1',
+			content: 'Please approve this shipment',
+		})
+		renderListView({
+			data: [buildObjectResponse({ id: 'obj-1', title: 'Alpha', updatedAt: deployedAt })],
+			actors: [buildActorListItem({ id: 'actor-1', name: 'Alice', type: 'agent' })],
+			asksByObjectId: new Map([['obj-1', ask]]),
+		})
+
+		// Pending-ask pill (bg-accent + text-accent-foreground per the "Needs
+		// you" accent-pairing rule) and the "<Agent> asks · <text>" line.
+		expect(screen.getByText('Waiting on you')).toBeInTheDocument()
+		expect(screen.getByText(/Alice asks/i)).toBeInTheDocument()
+		expect(screen.getByText(/Please approve this shipment/i)).toBeInTheDocument()
+	})
+
+	it('hides the ask pill + line once the row ask is resolved, and never for a row with no ask', () => {
+		const resolvedAsk = buildNotificationResponse({
+			id: 'ask-1',
+			objectId: 'obj-1',
+			status: 'resolved',
+			sourceActorId: 'actor-1',
+			content: 'Please approve this shipment',
+		})
+		renderListView({
+			data: [
+				buildObjectResponse({ id: 'obj-1', title: 'Alpha', updatedAt: deployedAt }),
+				buildObjectResponse({ id: 'obj-2', title: 'Beta', updatedAt: deployedAt }),
+			],
+			actors: [buildActorListItem({ id: 'actor-1', name: 'Alice', type: 'agent' })],
+			// A resolved ask is present in the map for obj-1; obj-2 has none.
+			asksByObjectId: new Map([['obj-1', resolvedAsk]]),
+		})
+
+		expect(screen.queryByText('Waiting on you')).toBeNull()
+		expect(screen.queryByText(/Alice asks/i)).toBeNull()
 	})
 
 	it('composes shared primitives — Checkbox, StatusBadge, RelativeTime — instead of bespoke markup', () => {

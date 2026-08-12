@@ -1,6 +1,6 @@
 import { EmptyState } from '@/components/shared/empty-state'
 import { Spinner } from '@/components/ui/spinner'
-import type { ActorListItem, ObjectResponse } from '@/lib/api'
+import type { ActorListItem, NotificationResponse, ObjectResponse } from '@/lib/api'
 import type { BetStatusResult } from '@/lib/bet-status'
 import { cn } from '@/lib/cn'
 import { getStatusColor } from '@/lib/constants'
@@ -43,6 +43,9 @@ interface ListViewProps {
 	grouping?: GroupingState
 	betStatuses?: Map<string, BetStatusResult>
 	showBetStatusIndicator?: boolean
+	/** Pending asks keyed by the object they target, threaded from the Objects
+	 *  route. The row renders its ask line + pill from the entry for its id. */
+	asksByObjectId?: Map<string, NotificationResponse>
 	hasNextPage?: boolean
 	isFetchingNextPage?: boolean
 	isError?: boolean
@@ -74,6 +77,7 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 		grouping,
 		betStatuses,
 		showBetStatusIndicator,
+		asksByObjectId,
 		hasNextPage,
 		isFetchingNextPage,
 		isError,
@@ -286,6 +290,7 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 				}
 				betStatus={object.type === 'bet' ? betStatuses?.get(object.id) : undefined}
 				showBetStatusIndicator={showBetStatusIndicator}
+				ask={asksByObjectId?.get(object.id)}
 				columnVisibility={columnVisibility}
 			/>
 		))
