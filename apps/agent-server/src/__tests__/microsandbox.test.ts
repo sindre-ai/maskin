@@ -1,6 +1,7 @@
 import type { ChildProcess } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -961,6 +962,66 @@ describe('provisionBrowserSidecar', () => {
 		expect(createCall).toContain('-p')
 		expect(createCall).toContain('10.0.1.1:39222:9222')
 		expect(createCall?.at(-1)).toBe('browser-sidecar:latest')
+	})
+
+	it('releases the host-port reservation before invoking msb create, so msb can actually bind the published port', async () => {
+		// Regression test for a real bug: provisionBrowserSidecar used to hold
+		// its own port-reservation socket open across the whole `msb create`
+		// call and only release it afterward. Since `run()` for `create` blocks
+		// until msb create finishes — unlike startSshRelay's fire-and-forget
+		// spawns — and `-p <gateway>:<port>:9222` requires msb to bind that same
+		// port itself as part of that same call, the held-open reservation made
+		// every real `msb create` fail with EADDRINUSE. A mocked run() that
+		// never touches a real socket can't catch this, so this test uses the
+		// REAL findFreeHostPort (no findPort override) and, inside the fake
+		// run(), attempts a genuine OS-level bind on the exact host:port pulled
+		// out of the '-p' arg — that bind only succeeds if the reservation was
+		// actually released before run() was called.
+		const bridgeGateway = '127.0.0.1'
+		let probeBindSucceeded = false
+		const run = async (
+			_bin: string,
+			args: readonly string[],
+		): Promise<{ stdout: string; stderr: string }> => {
+			if (args[0] === 'create') {
+				const publishArg = args[args.indexOf('-p') + 1] as string
+				const [host, portStr] = publishArg.split(':')
+				const port = Number(portStr)
+				await new Promise<void>((resolve, reject) => {
+					const probe = createServer()
+					probe.once('error', reject)
+					probe.listen(port, host, () => {
+						probeBindSucceeded = true
+						probe.close(() => resolve())
+					})
+				})
+				return { stdout: '', stderr: '' }
+			}
+			if (args[0] === 'list') {
+				return {
+					stdout: JSON.stringify([{ name: 'anko-browser-bindtest', status: 'Running' }]),
+					stderr: '',
+				}
+			}
+			return { stdout: '', stderr: '' }
+		}
+
+		const sidecar = await provisionBrowserSidecar(
+			'bindtest',
+			{
+				msbBin,
+				run,
+				sleep: async () => {},
+				now: () => 0,
+				cdpPollReady: async () => {},
+				// No findPort override — exercises the real findFreeHostPort /
+				// releaseHostPort reservation lifecycle this test is about.
+			},
+			{ bridgeGateway },
+		)
+
+		expect(probeBindSucceeded).toBe(true)
+		expect(sidecar).not.toBeNull()
 	})
 
 	it('uses a configured sidecar image when provided', async () => {

@@ -1045,10 +1045,20 @@ export async function provisionBrowserSidecar(
 	}
 	createArgs.push(image)
 
+	// `msb create` is what actually binds hostPort on the bridge gateway to
+	// publish the CDP port (the `-p` flag above) — unlike startSshRelay's
+	// fire-and-forget spawns, this `run()` call blocks until msb create has
+	// finished, by which point it needs the port free to bind itself. Holding
+	// our own reservation socket open across that call would make every
+	// `msb create` fail with EADDRINUSE against our own probe — release right
+	// before invoking it, not after. (The TOCTOU window this reopens — another
+	// caller grabbing the port between release and msb's own bind — is the
+	// same small window startSshRelay already accepts for its own ports.)
+	releaseHostPort(hostPort)
+
 	try {
 		await run(deps.msbBin, createArgs, { timeoutMs: BROWSER_SIDECAR_CREATE_TIMEOUT_MS })
 	} catch (err) {
-		releaseHostPort(hostPort)
 		const e = err as { stderr?: unknown; message?: string }
 		const stderr = e.stderr ? String(e.stderr) : ''
 		logger.error('browser sidecar create failed', {
@@ -1066,9 +1076,6 @@ export async function provisionBrowserSidecar(
 		})
 		return null
 	}
-	// msb create has now claimed the port via `-p` — release our TOCTOU-safe
-	// reservation socket (see findFreeHostPort).
-	releaseHostPort(hostPort)
 
 	try {
 		await waitForRunning(deps.msbBin, name, { run, sleep, now })
