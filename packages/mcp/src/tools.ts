@@ -52,6 +52,27 @@ const optionalWorkspaceId = z
 		'Workspace ID to operate in. If omitted, uses the default workspace (DEFAULT_WORKSPACE_ID). Call list_workspaces to discover available workspaces.',
 	)
 
+// Single agent-facing param covering everything needed to run an agent on a
+// specific LLM. The actor record still stores provider and config as two
+// separate columns server-side — the MCP layer splits `provider` back out
+// before calling the API, and merges the two columns back into this same
+// shape on the way out, so create_actor/update_actor responses mirror what
+// you send in.
+const actorLlmConfigSchema = z
+	.object({
+		provider: z
+			.string()
+			.optional()
+			.describe('LLM provider to run this agent on, e.g. "anthropic", "openai".'),
+		api_key: z.string().optional().describe('API key for the given provider.'),
+		model: z.string().optional().describe('Model identifier to use, e.g. "claude-opus-4-6".'),
+	})
+	.passthrough()
+	.optional()
+	.describe(
+		'Agents only — not used for humans. Configures which LLM this agent runs on: provider, api_key, and model. Extra provider-specific keys are passed through as-is.',
+	)
+
 /**
  * Inline loop-step definition accepted by create_loop / update_loop. Each step
  * becomes an ordinary trigger (POST /api/triggers) targeting an agent actor,
@@ -491,19 +512,24 @@ export const tools = {
 			'Create a new actor (human or agent) and optionally add them to a workspace. Returns the actor details and API key (only shown once). If workspace_id is provided, the actor is added as a member with the given role — this is how to add a brand-new actor to a workspace as part of creating them. To add an already-existing actor to a workspace, use update_actor with workspace_id/role instead. If auto_create_workspace is true (default for humans), a new, empty workspace is created instead. For agents, set tools.mcpServers and/or attach_skill_ids so the agent has its MCP servers and skills from the start. attach_skill_ids requires workspace_id — with auto_create_workspace the new workspace has no existing skills, so any attach_skill_ids passed alongside it are ignored.',
 		inputSchema: z.object({
 			type: z.enum(['human', 'agent']),
-			name: z.string().min(1),
-			email: z.string().email().optional(),
-			auto_create_workspace: z.boolean().optional(),
+			name: z.string().min(1).describe('Name of actor'),
+			email: z.string().email().optional().describe('Required for humans'),
+			auto_create_workspace: z
+				.boolean()
+				.optional()
+				.describe(
+					'When true (the default for humans), a brand-new empty workspace is created and the actor is automatically added to it as owner — no separate add-to-workspace call needed. When false or omitted for agents, no workspace is created; pass workspace_id instead to add the actor to an existing one.',
+				),
 			workspace_id: z
 				.string()
 				.uuid()
 				.optional()
 				.describe('Add the new actor to this existing workspace'),
 			role: z
-				.enum(['owner', 'member', 'viewer'])
+				.enum(['owner', 'admin', 'member'])
 				.default('member')
 				.describe(
-					'Role when adding to a workspace: owner (full control), member (read/write), viewer (read-only)',
+					'Role when adding to a workspace via workspace_id: owner (full control), admin (manage members), member (read/write).',
 				),
 			description: z
 				.string()
@@ -512,46 +538,74 @@ export const tools = {
 				.describe(
 					'Short one-liner (max 80 chars) summarizing the actor. For agents this is shown on the Agents page list and sub-page so teammates can tell agents apart at a glance.',
 				),
-			system_prompt: z.string().optional(),
+			system_prompt: z
+				.string()
+				.optional()
+				.describe(
+					"Instructions defining the agent's behavior. Only meaningful for agents — not used for humans. If omitted for an agent, sessions fall back to a generic default prompt.",
+				),
 			tools: z
 				.record(z.unknown())
 				.optional()
 				.describe(
 					'MCP server config for agents: { mcpServers: { <name>: { command, args, env } } }.',
 				),
-			llm_provider: z.string().optional(),
-			llm_config: z.record(z.unknown()).optional(),
+			llm_config: actorLlmConfigSchema,
 			attach_skill_ids: z
 				.array(z.string().uuid())
 				.optional()
-				.describe('Workspace skill IDs to attach to this actor on creation.'),
+				.describe(
+					'Workspace skill IDs to attach to this actor on creation. Agents only — skills configure agent behavior and are not used for humans.',
+				),
 		}),
 	},
 	update_actor: {
 		description:
-			'Update an actor by ID. Can change name, email, description (short one-liner, max 80 chars), system_prompt / instructions (for agents and humans), tools configuration, memory (persistent key-value store), LLM provider, LLM config, workspace skill attachments (attach_skill_ids / detach_skill_ids), and optionally add the actor to a workspace (workspace_id + role) in the same call. This is how to add an already-existing actor to a workspace — for adding a brand-new actor to a workspace as part of creating them, use create_actor instead.',
+			'Update an actor by ID. Can change name, email, description (short one-liner, max 80 chars), system_prompt / instructions (agents only), tools configuration, memory (persistent key-value store), llm_config (agents only), workspace skill attachments (attach_skill_ids / detach_skill_ids), and optionally add the actor to a workspace (workspace_id + role) in the same call. This is how to add an already-existing actor to a workspace — for adding a brand-new actor to a workspace as part of creating them, use create_actor instead.',
 		inputSchema: z.object({
 			id: z.string().uuid(),
-			name: z.string().min(1).optional(),
-			email: z.string().email().optional(),
+			name: z.string().min(1).optional().describe('New name for the actor.'),
+			email: z
+				.string()
+				.email()
+				.optional()
+				.describe('New email address for the actor. Only meaningful for humans.'),
 			description: z
 				.string()
 				.max(80)
 				.optional()
 				.describe('Short one-liner (max 80 chars) summarizing the actor.'),
-			system_prompt: z.string().optional(),
-			tools: z.record(z.unknown()).optional(),
-			memory: z.record(z.unknown()).optional(),
-			llm_provider: z.string().optional(),
-			llm_config: z.record(z.unknown()).optional(),
+			system_prompt: z
+				.string()
+				.optional()
+				.describe(
+					"Instructions defining the agent's behavior. Only meaningful for agents — not used for humans.",
+				),
+			tools: z
+				.record(z.unknown())
+				.optional()
+				.describe(
+					'MCP server config for agents: { mcpServers: { <name>: { command, args, env } } }.',
+				),
+			memory: z
+				.record(z.unknown())
+				.optional()
+				.describe(
+					'Persistent key-value store attached to the actor record — not automatically injected into agent sessions like system_prompt is. Used by either humans or agents as free-form scratch state (e.g. remembered preferences); read it back via get_actor.',
+				),
+			llm_config: actorLlmConfigSchema,
 			attach_skill_ids: z
 				.array(z.string().uuid())
 				.optional()
-				.describe('Workspace skill IDs to attach to this actor.'),
+				.describe(
+					'Workspace skill IDs to attach to this actor. Agents only — skills configure agent behavior and are not used for humans.',
+				),
 			detach_skill_ids: z
 				.array(z.string().uuid())
 				.optional()
-				.describe('Workspace skill IDs to detach from this actor.'),
+				.describe(
+					'Workspace skill IDs to detach from this actor. Agents only — skills configure agent behavior and are not used for humans.',
+				),
 			workspace_id: z
 				.string()
 				.uuid()

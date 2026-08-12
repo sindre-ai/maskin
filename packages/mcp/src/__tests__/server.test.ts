@@ -973,6 +973,44 @@ describe('tool handlers', () => {
 			expect(parsed.role).toBe('member')
 		})
 
+		it('splits the merged llm_config into llm_provider + llm_config on the POST body', async () => {
+			// config.defaultWorkspaceId is set, so create_actor also fires a
+			// members POST — isolate the /api/actors call specifically rather
+			// than assuming it's the only (or last) fetch call.
+			let actorsPostBody: unknown
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+				if (String(url) === 'http://localhost:3000/api/actors') {
+					actorsPostBody = JSON.parse(init?.body as string)
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: async () => ({
+							id: 'actor-new',
+							llm_provider: 'anthropic',
+							llm_config: { model: 'claude-opus-4-6' },
+						}),
+					} as Response
+				}
+				return { ok: true, headers: new Headers(), json: async () => ({}) } as Response
+			})
+
+			const handler = getHandler('create_actor')
+			const result = (await handler({
+				type: 'agent',
+				name: 'Bot',
+				llm_config: { provider: 'anthropic', model: 'claude-opus-4-6' },
+			})) as { content: Array<{ text: string }> }
+
+			expect(actorsPostBody).toMatchObject({
+				llm_provider: 'anthropic',
+				llm_config: { model: 'claude-opus-4-6' },
+			})
+			// The two API columns come back merged into one llm_config field, mirroring the input shape.
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.llm_config).toEqual({ provider: 'anthropic', model: 'claude-opus-4-6' })
+			expect(parsed.llm_provider).toBeUndefined()
+		})
+
 		it('attaches skills on creation in a single batched call', async () => {
 			const skillId1 = '660e8400-e29b-41d4-a716-446655440001'
 			const skillId2 = '660e8400-e29b-41d4-a716-446655440002'
@@ -3800,6 +3838,36 @@ describe('tool handlers', () => {
 			expect(fetch).toHaveBeenCalledTimes(1)
 			const parsed = JSON.parse(result.content[0].text)
 			expect(parsed).toEqual(mockActor)
+		})
+
+		it('splits the merged llm_config into llm_provider + llm_config on the PATCH body', async () => {
+			let patchedBody: unknown
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+				patchedBody = JSON.parse(init?.body as string)
+				return {
+					ok: true,
+					headers: new Headers(),
+					json: async () => ({
+						id: actorId,
+						llm_provider: 'openai',
+						llm_config: { api_key: 'sk-test' },
+					}),
+				} as Response
+			})
+
+			const handler = getHandler('update_actor')
+			const result = (await handler({
+				id: actorId,
+				llm_config: { provider: 'openai', api_key: 'sk-test' },
+			})) as { content: Array<{ text: string }> }
+
+			expect(patchedBody).toMatchObject({
+				llm_provider: 'openai',
+				llm_config: { api_key: 'sk-test' },
+			})
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.llm_config).toEqual({ provider: 'openai', api_key: 'sk-test' })
+			expect(parsed.llm_provider).toBeUndefined()
 		})
 
 		it('adds the actor to a workspace when workspace_id is provided', async () => {

@@ -426,6 +426,15 @@ describe('create_actor schema', () => {
 		expect(result.role).toBe('owner')
 	})
 
+	it('accepts admin role, matching update_actor', () => {
+		const result = schema.parse({ type: 'agent', name: 'Bot', role: 'admin' })
+		expect(result.role).toBe('admin')
+	})
+
+	it('rejects viewer — not a real workspace role', () => {
+		expect(() => schema.parse({ type: 'agent', name: 'Bot', role: 'viewer' })).toThrow()
+	})
+
 	it('accepts optional tools and attach_skill_ids', () => {
 		const result = schema.parse({
 			type: 'agent',

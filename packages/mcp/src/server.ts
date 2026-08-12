@@ -1440,6 +1440,43 @@ interface RawActor {
 	skills?: Array<{ id: string; name: string }> | null
 }
 
+// create_actor/update_actor accept a single `llm_config: { provider, ... }`
+// param (see actorLlmConfigSchema in tools.ts), but the actors table still
+// stores provider and config as two separate columns. These two helpers do
+// the translation at the MCP boundary only: split the merged param apart
+// before calling the API, then merge the two response columns back together
+// so the tool's response mirrors what was sent in.
+function splitLlmConfig(llmConfig: Record<string, unknown> | undefined): {
+	llm_provider?: string
+	llm_config?: Record<string, unknown>
+} {
+	if (!llmConfig) return {}
+	const { provider, ...rest } = llmConfig
+	return {
+		...(typeof provider === 'string' ? { llm_provider: provider } : {}),
+		...(Object.keys(rest).length > 0 ? { llm_config: rest } : {}),
+	}
+}
+
+function mergeLlmConfig<T extends Record<string, unknown>>(
+	actor: T,
+): Omit<T, 'llm_provider' | 'llm_config'> & { llm_config?: Record<string, unknown> } {
+	const { llm_provider, llm_config, ...rest } = actor as T & {
+		llm_provider?: string | null
+		llm_config?: Record<string, unknown> | null
+	}
+	if (llm_provider == null && llm_config == null) {
+		return rest as Omit<T, 'llm_provider' | 'llm_config'>
+	}
+	return {
+		...rest,
+		llm_config: {
+			...(llm_provider != null ? { provider: llm_provider } : {}),
+			...(llm_config ?? {}),
+		},
+	} as Omit<T, 'llm_provider' | 'llm_config'> & { llm_config?: Record<string, unknown> }
+}
+
 interface RawWorkspace {
 	id: string
 	name?: string | null
@@ -2647,11 +2684,15 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.actors, csp: CSP } },
 		},
 		async (args) => {
-			const { workspace_id, role, attach_skill_ids, ...createBody } = args
-			const result = (await apiCall(config, 'POST', '/api/actors', createBody, {
-				skipAuth: true,
-				skipWorkspace: true,
-			})) as { id: string; [key: string]: unknown }
+			const { workspace_id, role, attach_skill_ids, llm_config, ...createBody } = args
+			const rawResult = (await apiCall(
+				config,
+				'POST',
+				'/api/actors',
+				{ ...createBody, ...splitLlmConfig(llm_config as Record<string, unknown> | undefined) },
+				{ skipAuth: true, skipWorkspace: true },
+			)) as { id: string; [key: string]: unknown }
+			const result = mergeLlmConfig(rawResult) as { id: string; [key: string]: unknown }
 
 			// If workspace_id provided, add the new actor as a member
 			const targetWorkspace = workspace_id ?? config.defaultWorkspaceId
@@ -2873,7 +2914,8 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.actors, csp: CSP } },
 		},
 		async (args) => {
-			const { id, attach_skill_ids, detach_skill_ids, workspace_id, role, ...body } = args
+			const { id, attach_skill_ids, detach_skill_ids, workspace_id, role, llm_config, ...body } =
+				args
 			const attachIds = attach_skill_ids ?? []
 			const detachIds = detach_skill_ids ?? []
 			const hasSkillOps = attachIds.length > 0 || detachIds.length > 0
@@ -2886,9 +2928,14 @@ export function createMcpServer(config: McpConfig) {
 			}
 
 			// Run actor PATCH first so a failure here throws before any skill/membership ops fire.
-			const actor = await apiCall(config, 'PATCH', `/api/actors/${id}`, body, {
-				skipWorkspace: true,
-			})
+			const rawActor = await apiCall(
+				config,
+				'PATCH',
+				`/api/actors/${id}`,
+				{ ...body, ...splitLlmConfig(llm_config as Record<string, unknown> | undefined) },
+				{ skipWorkspace: true },
+			)
+			const actor = mergeLlmConfig(rawActor as Record<string, unknown>)
 
 			// Optionally add the actor to a workspace, mirroring create_actor's
 			// pattern — a membership failure is reported inline rather than thrown,
