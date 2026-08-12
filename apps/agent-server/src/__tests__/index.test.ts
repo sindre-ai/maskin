@@ -9,6 +9,7 @@ import {
 	reconcileOnBoot,
 } from '../index'
 import type { AgentServerEnv } from '../lib/env'
+import { logger } from '../lib/logger'
 import { ImageWarmer } from '../services/image-warmer'
 
 function makeEnv(overrides: Partial<AgentServerEnv> = {}): AgentServerEnv {
@@ -1592,6 +1593,61 @@ describe('monitorSession — flushLogs retry and drop marker', () => {
 			logs: Array<{ stream: string; content: string }>
 		}
 		expect(body.logs).toEqual([{ stream: 'stdout', content: 'hello world' }])
+	})
+
+	it('warns when the server reports fewer accepted lines than were sent, without retrying', async () => {
+		// Regression coverage: a 200 response can still mean a partial batch —
+		// the server rejects any oversized/invalid line rather than failing the
+		// whole batch — but flushLogs() used to return on any `res.ok` without
+		// ever reading the response body, so a partial accept was silently
+		// indistinguishable from full success. That's the same kind of invisible
+		// log loss this whole batching/truncation mechanism exists to fix.
+		const sessionId = 'sess-flush-partial-accept'
+		const run = makeAlwaysRunningRunner(sessionId)
+		const env = makeEnv({
+			AGENT_SESSION_ROOT: sessionRoot,
+			MASKIN_BASE_URL: 'http://maskin.test',
+			AGENT_SERVER_ID: '123e4567-e89b-12d3-a456-426614174000',
+		})
+		const reconcileFetch = vi.fn(async () => ({
+			ok: true,
+			json: async () => ({ marked_failed: [], orphan_sandboxes: [] }),
+		}))
+		const sessionLogRouters = new Map<string, (line: string) => void>()
+
+		const logsFetch = vi
+			.fn()
+			.mockResolvedValueOnce({ ok: true, json: async () => ({ accepted: 1 }) })
+		vi.stubGlobal('fetch', logsFetch)
+		const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+		vi.useFakeTimers()
+		try {
+			await reconcileOnBoot({
+				env,
+				storage: null,
+				msb: { msbBin: '/usr/local/bin/msb', run },
+				sessionLogRouters,
+				sessionExitCodes: new Map(),
+				fetchImpl: reconcileFetch as unknown as typeof fetch,
+			})
+
+			const push = sessionLogRouters.get(sessionId)
+			expect(push).toBeDefined()
+			push?.('line one')
+			push?.('line two')
+
+			await vi.advanceTimersByTimeAsync(2_000)
+		} finally {
+			vi.useRealTimers()
+		}
+
+		// Accepted (200) on the first attempt — no retry for a partial accept.
+		expect(logsFetch).toHaveBeenCalledTimes(1)
+		expect(warnSpy).toHaveBeenCalledWith(
+			'Maskin log ingest accepted fewer lines than sent',
+			expect.objectContaining({ sessionId, sent: 2, accepted: 1 }),
+		)
 	})
 
 	it('drops a batch after exhausting retries and queues a marker for the next flush', async () => {

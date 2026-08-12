@@ -1,6 +1,6 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { ApiErrorCode, createApiError } from '../lib/errors'
+import { ApiErrorCode, createApiError, validationFailureHook } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { errorSchema } from '../lib/openapi-schemas'
 import type { SessionManager } from '../services/session-manager'
@@ -13,7 +13,13 @@ type Env = {
 	}
 }
 
-const app = new OpenAPIHono<Env>()
+// Mounted into the main app via `app.route(...)` in app-factory.ts, but a
+// route's `defaultHook` binds to whichever OpenAPIHono instance `.openapi()`
+// was called on — `.route()` mounting does not inherit the parent's hook.
+// Passed explicitly here so a validation failure on this internal (agent-
+// server-to-apps/dev) route is actually logged; see validationFailureHook's
+// own comment in lib/errors.ts.
+const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 const reconcileBodySchema = z.object({
 	agent_server_id: z.string().uuid(),
@@ -98,12 +104,40 @@ app.openapi(reconcileRoute, async (c) => {
 	)
 })
 
+// Per-line content cap. `session_logs.content` (packages/db/src/schema.ts)
+// is an unbounded `text` column, so this exists purely as a network-input
+// sanity ceiling (see .claude/rules/input-validation.md) — not a real
+// storage constraint. Previously capped at 64KB, which coding-agent CLIs
+// routinely exceeded with a single NDJSON stdout line (a full tool result,
+// large diff, base64 image) that has no embedded newline, silently dropping
+// the entire batch it was part of. See
+// docs/runbooks/agent-session-failures-2026-08-11.md, Issue 1. Raised well
+// above realistic tool-output sizes — the agent-server client additionally
+// truncates any line over 60KB before sending (MAX_LOG_LINE_BYTES in
+// apps/agent-server/src/index.ts), so a real line should never approach this;
+// it's a backstop against a buggy or compromised client, not a size we
+// expect to hit.
+const MAX_LOG_LINE_BYTES = 1_048_576 // 1MB
+
+const logLineSchema = z.object({
+	stream: z.enum(['stdout', 'stderr', 'system']),
+	content: z.string().max(MAX_LOG_LINE_BYTES),
+})
+
+// The array-item `content` field is intentionally left unbounded at this
+// OpenAPI/Hono request-validation layer (no `.max()`) so a single oversized
+// line can't fail schema validation and drop the ENTIRE batch (up to 500
+// lines) with one 400. The real per-line cap (MAX_LOG_LINE_BYTES, via
+// logLineSchema) is instead enforced manually per-item inside the handler
+// below, so only the offending line is rejected — every other line in the
+// batch still gets stored. See docs/runbooks/agent-session-failures-2026-08-11.md,
+// Issue 1 ("make batch validation partial-failure-tolerant").
 const logIngestBodySchema = z.object({
 	logs: z
 		.array(
 			z.object({
 				stream: z.enum(['stdout', 'stderr', 'system']),
-				content: z.string().max(65536),
+				content: z.string(),
 			}),
 		)
 		.max(500),
@@ -122,11 +156,21 @@ const logIngestRoute = createRoute({
 	},
 	responses: {
 		200: {
-			description: 'Logs accepted',
+			description:
+				'Logs accepted (a partial batch may have some lines rejected — see `accepted` count)',
 			content: { 'application/json': { schema: z.object({ accepted: z.number() }) } },
+		},
+		400: {
+			description: 'Every line in the batch failed per-line validation',
+			content: { 'application/json': { schema: errorSchema } },
 		},
 		401: {
 			description: 'Invalid bearer token',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		500: {
+			description:
+				'Failed to persist the batch — the caller should retry the same lines rather than treat them as delivered',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		503: {
@@ -154,13 +198,67 @@ app.openapi(logIngestRoute, async (c) => {
 	const { logs } = c.req.valid('json')
 	const sessionManager = c.get('sessionManager')
 
-	try {
-		await sessionManager.appendRemoteSessionLogs(id, logs)
-	} catch (err) {
-		logger.error('Failed to append remote session logs', { sessionId: id, error: String(err) })
+	// Partial-failure-tolerant: validate each line individually against the
+	// real per-line cap (MAX_LOG_LINE_BYTES) instead of rejecting the whole
+	// batch when one line is oversized. See the comment on logIngestBodySchema
+	// above for why the array-level schema doesn't already enforce this.
+	const validLogs: Array<{ stream: 'stdout' | 'stderr' | 'system'; content: string }> = []
+	const rejected: Array<{ index: number; issues: string[] }> = []
+	logs.forEach((line, index) => {
+		const parsed = logLineSchema.safeParse(line)
+		if (parsed.success) {
+			validLogs.push(parsed.data)
+		} else {
+			rejected.push({ index, issues: parsed.error.issues.map((issue) => issue.message) })
+		}
+	})
+
+	if (rejected.length > 0) {
+		logger.warn('Rejected oversized log line(s) in remote session log batch', {
+			sessionId: id,
+			rejectedCount: rejected.length,
+			acceptedCount: validLogs.length,
+			maxLineBytes: MAX_LOG_LINE_BYTES,
+			rejected,
+		})
 	}
 
-	return c.json({ accepted: logs.length }, 200)
+	// Every line in the batch failed — there's nothing to store, so this is a
+	// genuine validation failure worth surfacing as a 400 rather than a silent
+	// no-op 200.
+	if (logs.length > 0 && validLogs.length === 0) {
+		return c.json(
+			createApiError(
+				ApiErrorCode.VALIDATION_ERROR,
+				'All log lines in batch failed validation',
+				rejected.map((r) => ({
+					field: `logs[${r.index}].content`,
+					message: r.issues.join('; '),
+					expected: `string, max ${MAX_LOG_LINE_BYTES} bytes`,
+				})),
+			),
+			400,
+		)
+	}
+
+	try {
+		await sessionManager.appendRemoteSessionLogs(id, validLogs)
+	} catch (err) {
+		// Must not report success here: previously this caught-and-continued to
+		// a 200 with `accepted: validLogs.length` regardless of whether the
+		// batch actually made it into session_logs — the agent-server's
+		// flushLogs() then treated the batch as delivered and discarded it,
+		// even though a DB failure partway through appendRemoteSessionLogs's
+		// per-line insert loop can leave some or all lines unpersisted. This is
+		// exactly the kind of silent log loss this PR exists to fix. A 500
+		// routes into flushLogs()'s existing retry loop instead — some already-
+		// persisted lines from this batch may be re-inserted on retry, which is
+		// an acceptable duplication tradeoff against permanent, invisible loss.
+		logger.error('Failed to append remote session logs', { sessionId: id, error: String(err) })
+		return c.json(createApiError(ApiErrorCode.INTERNAL_ERROR, 'Failed to persist log batch'), 500)
+	}
+
+	return c.json({ accepted: validLogs.length }, 200)
 })
 
 const sessionCompleteBodySchema = z.object({
@@ -185,6 +283,11 @@ const sessionCompleteRoute = createRoute({
 		},
 		401: {
 			description: 'Invalid bearer token',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		500: {
+			description:
+				'The outcome could not be confirmed (DB unreachable) — the caller should retry the report',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		503: {
@@ -212,10 +315,26 @@ app.openapi(sessionCompleteRoute, async (c) => {
 	const { exitCode } = c.req.valid('json')
 	const sessionManager = c.get('sessionManager')
 
+	// markRemoteSessionComplete() itself never throws — every internal failure
+	// is caught and logged inside it — so this try/catch is a backstop, not
+	// the real signal. Its boolean return is: `false` only when the outcome
+	// couldn't be confirmed at all (DB unreachable for both the CAS UPDATE and
+	// the fallback read), which must surface as a non-2xx here so the
+	// agent-server's own retry logic (checking res.ok) actually retries
+	// instead of treating the report as delivered.
+	let confirmed: boolean
 	try {
-		await sessionManager.markRemoteSessionComplete(id, exitCode)
+		confirmed = await sessionManager.markRemoteSessionComplete(id, exitCode)
 	} catch (err) {
 		logger.error('Failed to mark remote session complete', { sessionId: id, error: String(err) })
+		confirmed = false
+	}
+
+	if (!confirmed) {
+		return c.json(
+			createApiError(ApiErrorCode.INTERNAL_ERROR, 'Failed to confirm session completion'),
+			500,
+		)
 	}
 
 	return c.json({ ok: true }, 200)

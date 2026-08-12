@@ -48,6 +48,19 @@ export class TriggerRunner {
 	private eventHandler: ((event: PgEvent) => void) | null = null
 	private sessionEventHandler: ((event: PgEvent) => void) | null = null
 	private triggerFailures: Map<string, TriggerFailureState> = new Map()
+	// A session's terminal outcome can be reported more than once: e.g.
+	// SessionManager.stopSession() writes a provisional session_failed row,
+	// and the agent-server's own genuine completion report — if it arrives,
+	// which is the normal case, not a rare race — overwrites it with the real
+	// exit code (see markRemoteSessionComplete's stoppedByUser handling in
+	// session-manager.ts). Both writes insert their own session_failed/
+	// session_completed events row for audit-trail visibility, but they
+	// represent ONE physical session outcome. This map ensures only the first
+	// terminal event for a given session counts toward its trigger's
+	// failure/backoff accounting — otherwise every explicit stop of a
+	// trigger-spawned session double-counts as two failures instead of one.
+	private processedSessionOutcomes: Map<string, NodeJS.Timeout> = new Map()
+	private static readonly SESSION_OUTCOME_DEDUPE_TTL_MS = 10 * 60_000
 
 	constructor(db: Database, bridge: PgNotifyBridge, sessionManager: SessionManager) {
 		this.db = db
@@ -105,6 +118,10 @@ export class TriggerRunner {
 			clearTimeout(timeout)
 		}
 		this.reminderTimeouts.clear()
+		for (const [_, timeout] of this.processedSessionOutcomes) {
+			clearTimeout(timeout)
+		}
+		this.processedSessionOutcomes.clear()
 	}
 
 	private recordTriggerFailure(triggerId: string): void {
@@ -131,6 +148,18 @@ export class TriggerRunner {
 
 	private async handleSessionOutcome(event: PgEvent): Promise<void> {
 		const sessionId = event.entity_id
+		// Dedupe before any `await` so two events for the same session arriving
+		// back-to-back can't both pass this check — see processedSessionOutcomes'
+		// field comment above. A stale entry expires after
+		// SESSION_OUTCOME_DEDUPE_TTL_MS, well past how long a genuine correction
+		// report can realistically lag the provisional stop write.
+		if (this.processedSessionOutcomes.has(sessionId)) return
+		const dedupeTimeout = setTimeout(() => {
+			this.processedSessionOutcomes.delete(sessionId)
+		}, TriggerRunner.SESSION_OUTCOME_DEDUPE_TTL_MS)
+		dedupeTimeout.unref?.()
+		this.processedSessionOutcomes.set(sessionId, dedupeTimeout)
+
 		// Look up the session to find which trigger spawned it
 		const [session] = await this.db
 			.select({ triggerId: sessions.triggerId })

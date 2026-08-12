@@ -911,6 +911,76 @@ describe('TriggerRunner backoff', () => {
 		expect(sessionManager.createSession).toHaveBeenCalled()
 	})
 
+	it('counts a stop-then-genuine-report pair for the same session as one failure, not two', async () => {
+		// Regression coverage: SessionManager.stopSession() writes a
+		// provisional session_failed row, and the agent-server's own genuine
+		// completion report (the normal path, not a rare race) can overwrite
+		// it moments later — see markRemoteSessionComplete's stoppedByUser
+		// handling in session-manager.ts. Both writes insert their own
+		// session_failed event for the SAME session id. Without dedup by
+		// session id, this would double-count as 2 failures (backoff = 2^2 *
+		// 60s = 4 min) instead of 1 (backoff = 2^1 * 60s = 2 min).
+		mockResults.selectQueue = [[], []]
+		await runner.start()
+
+		mockResults.selectQueue = [
+			[], // eventHandler: no triggers match entity_type=session
+			[{ triggerId: 'trigger-1' }], // sessionEventHandler: session lookup
+		]
+		bridge.emit('event', {
+			workspace_id: 'ws-1',
+			actor_id: 'actor-1',
+			action: 'session_failed',
+			entity_type: 'session',
+			entity_id: 'session-1',
+			event_id: 'evt-stop-provisional',
+		} satisfies PgEvent)
+		await vi.advanceTimersByTimeAsync(0)
+
+		// Genuine report for the SAME session lands moments later. Only one
+		// select is queued here (eventHandler's "no triggers match
+		// entity_type=session" lookup) — sessionEventHandler's own session
+		// lookup must NOT fire for this second event; the dedup guard should
+		// short-circuit handleSessionOutcome before it reaches that select.
+		mockResults.selectQueue = [[]]
+		bridge.emit('event', {
+			workspace_id: 'ws-1',
+			actor_id: 'actor-1',
+			action: 'session_failed',
+			entity_type: 'session',
+			entity_id: 'session-1',
+			event_id: 'evt-genuine-report',
+		} satisfies PgEvent)
+		await vi.advanceTimersByTimeAsync(0)
+
+		const trigger = buildTrigger({
+			id: 'trigger-1',
+			workspaceId: 'ws-1',
+			type: 'event',
+			config: { entity_type: 'task', action: 'created' },
+		})
+
+		// A single failure's backoff (2 min) should have expired; if the
+		// second event were double-counted, backoff would be 4 min and this
+		// would still be blocked.
+		await vi.advanceTimersByTimeAsync(2 * 60_000 + 1000)
+
+		mockResults.select = [trigger]
+		mockResults.insert = []
+
+		bridge.emit('event', {
+			workspace_id: 'ws-1',
+			entity_type: 'task',
+			entity_id: 'obj-1',
+			action: 'created',
+			actor_id: 'actor-1',
+			event_id: 'evt-fire',
+		} satisfies PgEvent)
+		await vi.advanceTimersByTimeAsync(0)
+
+		expect(sessionManager.createSession).toHaveBeenCalled()
+	})
+
 	it('increases backoff duration with consecutive failures', async () => {
 		mockResults.selectQueue = [[], []]
 		await runner.start()

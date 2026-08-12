@@ -52,7 +52,7 @@ import {
 	or,
 	sql,
 } from 'drizzle-orm'
-import { createApiError, createInvalidTypeError } from '../lib/errors'
+import { createApiError, createInvalidTypeError, validationFailureHook } from '../lib/errors'
 import { fileViewerUrl, frontendBaseUrl } from '../lib/file-urls'
 import { findKnowledgeDuplicate, isKnowledgeTitleUniqueViolation } from '../lib/knowledge-dedup'
 import { logger } from '../lib/logger'
@@ -83,7 +83,7 @@ type Env = {
 	}
 }
 
-const app = new OpenAPIHono<Env>()
+const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 

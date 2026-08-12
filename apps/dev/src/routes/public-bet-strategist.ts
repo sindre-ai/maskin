@@ -3,7 +3,7 @@ import type { Database } from '@maskin/db'
 import { objects } from '@maskin/db/schema'
 import { and, eq, gte, sql } from 'drizzle-orm'
 import { z } from 'zod'
-import { createApiError } from '../lib/errors'
+import { createApiError, formatZodError } from '../lib/errors'
 import { checkGuestThrottle } from '../lib/guest-throttle'
 import {
 	LANDING_GUESTS_ACTOR_ID,
@@ -224,6 +224,11 @@ app.post('/drafts', async (c) => {
 		const raw = await c.req.json()
 		const parsed = draftsBodySchema.safeParse(raw)
 		if (!parsed.success) {
+			logger.warn('Request validation failed', {
+				path: c.req.path,
+				method: c.req.method,
+				details: formatZodError(parsed.error),
+			})
 			return c.json(
 				createApiError(
 					'VALIDATION_ERROR',
@@ -342,6 +347,11 @@ app.post('/claim', async (c) => {
 		const raw = await c.req.json()
 		const parsed = claimBodySchema.safeParse(raw)
 		if (!parsed.success) {
+			logger.warn('Request validation failed', {
+				path: c.req.path,
+				method: c.req.method,
+				details: formatZodError(parsed.error),
+			})
 			return c.json(
 				createApiError(
 					'VALIDATION_ERROR',
