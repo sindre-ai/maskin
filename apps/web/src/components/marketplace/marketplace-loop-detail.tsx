@@ -1,17 +1,26 @@
-import { ActorAvatar } from '@/components/shared/actor-avatar'
+import { MarketplaceBreadcrumb } from '@/components/marketplace/marketplace-breadcrumb'
 import { describeTrigger } from '@/components/triggers/trigger-row'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuLabel,
+	DropdownMenuSeparator,
+	DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { useUninstallLoop } from '@/hooks/use-installed-loops'
 import type { InstalledLoopRow, MarketplaceLoopItem, MarketplaceLoopSummary } from '@/lib/api'
+import { stepAsksYou } from '@/lib/marketplace-asks'
 import { Link } from '@tanstack/react-router'
+import { MoreHorizontal } from 'lucide-react'
 import { useState } from 'react'
+import { ForkDialog } from './fork-dialog'
+import { InstallButton } from './install-button'
 import { ITEM_TYPE_LABEL } from './item-type-label'
-import { LoopInstallControls } from './loop-install-controls'
 import { MarketplaceDetailHeader } from './marketplace-detail-header'
-
-// A loop can carry dozens of triggers with multi-paragraph action prompts —
-// show a short preview by default so the page doesn't open into a wall of text.
-const HOW_IT_WORKS_PREVIEW_COUNT = 5
+import { AsksSection, FlowSection, PermissionsSection, RunsSection } from './marketplace-disclosure'
 
 interface MarketplaceLoopDetailProps {
 	workspaceId: string
@@ -31,7 +40,12 @@ export function MarketplaceLoopDetail({
 		loop.item_types.length === 1 ? ITEM_TYPE_LABEL[loop.item_types[0]] : 'Loop bundle'
 
 	return (
-		<div className="space-y-6">
+		<div className="space-y-8">
+			<MarketplaceBreadcrumb
+				workspaceId={workspaceId}
+				items={[{ label: 'Loops' }, { label: loop.name }]}
+			/>
+
 			<MarketplaceDetailHeader
 				kindLabel={kindLabel}
 				name={loop.name}
@@ -55,17 +69,10 @@ export function MarketplaceLoopDetail({
 						)
 					) : undefined
 				}
-				actions={
-					<LoopInstallControls
-						workspaceId={workspaceId}
-						loop={loop}
-						install={install}
-						source="detail"
-					/>
-				}
+				actions={<HeaderActions workspaceId={workspaceId} loop={loop} install={install} />}
 			/>
 
-			<LoopHowItWorks items={items} />
+			<LoopFlow loop={loop} items={items} />
 
 			{items.length > 0 && (
 				<div>
@@ -84,6 +91,66 @@ export function MarketplaceLoopDetail({
 	)
 }
 
+function HeaderActions({
+	workspaceId,
+	loop,
+	install,
+}: {
+	workspaceId: string
+	loop: MarketplaceLoopSummary
+	install?: InstalledLoopRow
+}) {
+	const [forkOpen, setForkOpen] = useState(false)
+	const locked = install?.isLocked ?? false
+	const uninstall = useUninstallLoop(workspaceId)
+
+	// Not installed — the primary Install is the only action.
+	if (!install) {
+		return <InstallButton workspaceId={workspaceId} loopId={loop.id} source="detail" />
+	}
+
+	return (
+		<>
+			<DropdownMenu>
+				<DropdownMenuTrigger asChild>
+					<Button variant="ghost" size="icon" className="h-7 w-7" aria-label="Loop actions">
+						<MoreHorizontal size={16} />
+					</Button>
+				</DropdownMenuTrigger>
+				<DropdownMenuContent align="end">
+					{locked ? (
+						<>
+							<DropdownMenuLabel>Loop actions</DropdownMenuLabel>
+							<DropdownMenuItem onSelect={() => setForkOpen(true)}>Fork this loop</DropdownMenuItem>
+							<DropdownMenuSeparator />
+						</>
+					) : null}
+					<DropdownMenuItem
+						className="text-error focus:text-error"
+						onSelect={() =>
+							uninstall.mutate({ installedLoopId: install.id, keepProvisionedItems: false })
+						}
+					>
+						Remove from workspace
+					</DropdownMenuItem>
+				</DropdownMenuContent>
+			</DropdownMenu>
+
+			{locked ? (
+				<ForkDialog
+					open={forkOpen}
+					onOpenChange={setForkOpen}
+					workspaceId={workspaceId}
+					installedLoopId={install.id}
+					loopName={loop.name}
+					installedVersion={install.installedVersion}
+					pendingVersion={install.hasUpdate ? install.availableVersion : null}
+				/>
+			) : null}
+		</>
+	)
+}
+
 interface TriggerSnapshot {
 	name?: unknown
 	type?: unknown
@@ -95,90 +162,128 @@ interface TriggerSnapshot {
 interface ActorSnapshot {
 	name?: unknown
 	type?: unknown
+	systemPrompt?: unknown
 }
 
-/** Real, derived from each trigger item's own snapshot — not per-loop copy.
- * `targetActorId` is validated at publish time to match an actor item's
- * `source_item_id` in the same loop (see dev-bootstrap.ts), so every trigger
- * resolves to a real agent from the bundle. */
-function LoopHowItWorks({ items }: { items: MarketplaceLoopItem[] }) {
-	const [expanded, setExpanded] = useState(false)
+/** The numbered flow plus the two ask-driven sections, all derived from real
+ * trigger + actor snapshots — never per-loop copy. */
+function LoopFlow({
+	loop,
+	items,
+}: {
+	loop: MarketplaceLoopSummary
+	items: MarketplaceLoopItem[]
+}) {
 	const triggers = items.filter((item) => item.item_type === 'trigger')
-	if (triggers.length === 0) return null
-
 	const actorsBySourceId = new Map(
 		items.filter((item) => item.item_type === 'actor').map((item) => [item.source_item_id, item]),
 	)
-	const shown = expanded ? triggers : triggers.slice(0, HOW_IT_WORKS_PREVIEW_COUNT)
-	const remaining = triggers.length - shown.length
+
+	const steps = triggers.map((trigger, i) => {
+		const snapshot = trigger.item_snapshot as TriggerSnapshot
+		const targetActorId = typeof snapshot.targetActorId === 'string' ? snapshot.targetActorId : ''
+		const agentItem = actorsBySourceId.get(targetActorId) as MarketplaceLoopItem | undefined
+		const agentSnapshot = agentItem?.item_snapshot as ActorSnapshot | undefined
+		const agentName =
+			typeof agentSnapshot?.name === 'string' && agentSnapshot.name.trim()
+				? agentSnapshot.name
+				: 'An agent'
+		const agentType = typeof agentSnapshot?.type === 'string' ? agentSnapshot.type : 'agent'
+		const systemPrompt =
+			typeof agentSnapshot?.systemPrompt === 'string' ? agentSnapshot.systemPrompt : ''
+		const type = typeof snapshot.type === 'string' ? snapshot.type : ''
+		const config = (snapshot.config ?? null) as Record<string, unknown> | null
+		const actionPrompt = typeof snapshot.actionPrompt === 'string' ? snapshot.actionPrompt : ''
+
+		return {
+			num: i + 1,
+			agentName,
+			agentType,
+			agentId: agentItem?.id ?? targetActorId,
+			when: type ? describeTrigger({ type, config }) : '',
+			what: actionPrompt,
+			ask: stepAsksYou(systemPrompt),
+		}
+	})
+
+	const askRows = steps.flatMap((step) => {
+		if (!step.ask) return []
+		return [
+			{
+				id: String(step.num),
+				agentName: step.agentName,
+				when: step.when,
+				ask: step.ask.ask,
+				why: step.ask.reason,
+			},
+		]
+	})
 
 	return (
-		<div>
-			<div className="mb-3 flex items-center gap-2">
-				<h2 className="text-sm font-semibold text-foreground">How it works</h2>
-				<span className="text-xs text-muted-foreground">when it acts, and what it does</span>
-			</div>
-			<div className="flex flex-col gap-2">
-				{shown.map((trigger) => (
-					<TriggerFlowRow key={trigger.id} trigger={trigger} actorsBySourceId={actorsBySourceId} />
-				))}
-			</div>
-			{remaining > 0 && (
-				<Button
-					variant="ghost"
-					size="sm"
-					className="mt-2 text-muted-foreground"
-					onClick={() => setExpanded(true)}
-				>
-					Show {remaining} more {remaining === 1 ? 'step' : 'steps'}
-				</Button>
-			)}
-		</div>
+		<>
+			<FlowSection steps={steps} />
+			<AsksSection rows={askRows} />
+			<RunsSection rows={runsRows(loop, items)} />
+			<PermissionsSection rows={permissionsRows(items)} />
+		</>
 	)
 }
 
-function TriggerFlowRow({
-	trigger,
-	actorsBySourceId,
-}: {
-	trigger: MarketplaceLoopItem
-	actorsBySourceId: Map<string, MarketplaceLoopItem>
-}) {
-	const snapshot = trigger.item_snapshot as TriggerSnapshot
-	const type = typeof snapshot.type === 'string' ? snapshot.type : ''
-	const config = (snapshot.config ?? null) as Record<string, unknown> | null
-	const actionPrompt = typeof snapshot.actionPrompt === 'string' ? snapshot.actionPrompt : ''
-	const targetActorId = typeof snapshot.targetActorId === 'string' ? snapshot.targetActorId : ''
+function runsRows(
+	loop: MarketplaceLoopSummary,
+	items: MarketplaceLoopItem[],
+): { label: string; value: string }[] {
+	const agents = items.filter((item) => item.item_type === 'actor')
+	const providers = new Set<string>()
+	const models = new Set<string>()
+	for (const agent of agents) {
+		const snapshot = agent.item_snapshot as Record<string, unknown>
+		const provider = typeof snapshot.llmProvider === 'string' ? snapshot.llmProvider.trim() : ''
+		if (provider) providers.add(provider)
+		const config = (snapshot.llmConfig ?? {}) as Record<string, unknown>
+		const model = typeof config.model === 'string' ? config.model.trim() : ''
+		if (model) models.add(model)
+	}
 
-	const agentItem = actorsBySourceId.get(targetActorId)
-	const agentSnapshot = agentItem?.item_snapshot as ActorSnapshot | undefined
-	const agentName =
-		typeof agentSnapshot?.name === 'string' && agentSnapshot.name.trim()
-			? agentSnapshot.name
-			: 'An agent'
-	const agentType = typeof agentSnapshot?.type === 'string' ? agentSnapshot.type : 'agent'
+	const rows: { label: string; value: string }[] = [{ label: 'Version', value: loop.version }]
+	if (providers.size > 0)
+		rows.push({ label: 'Runtime', value: [...providers].map(capitalize).join(', ') })
+	if (models.size > 0) rows.push({ label: 'Model', value: [...models].join(', ') })
+	rows.push({
+		label: 'Triggers',
+		value: `${items.filter((item) => item.item_type === 'trigger').length} step${
+			items.filter((item) => item.item_type === 'trigger').length === 1 ? '' : 's'
+		}`,
+	})
+	return rows
+}
 
-	const when = type ? describeTrigger({ type, config }) : ''
+function permissionsRows(items: MarketplaceLoopItem[]): { label: string; value: string }[] {
+	const rows: { label: string; value: string }[] = [
+		{ label: 'Scope', value: 'This workspace only' },
+	]
+	const tools = new Set<string>()
+	for (const agent of items.filter((item) => item.item_type === 'actor')) {
+		const snapshot = agent.item_snapshot as Record<string, unknown>
+		const toolConfig = snapshot.tools
+		if (toolConfig && typeof toolConfig === 'object' && !Array.isArray(toolConfig)) {
+			const obj = toolConfig as Record<string, unknown>
+			if (obj.mcpServers && typeof obj.mcpServers === 'object') {
+				for (const key of Object.keys(obj.mcpServers as Record<string, unknown>)) tools.add(key)
+			}
+		}
+	}
+	if (tools.size > 0) rows.push({ label: 'Integrations', value: [...tools].join(', ') })
+	return rows
+}
 
-	return (
-		<div className="flex items-start gap-3 rounded-lg border border-border bg-background p-3">
-			<ActorAvatar
-				id={targetActorId || agentName}
-				name={agentName}
-				type={agentType}
-				className="mt-0.5"
-			/>
-			<div className="min-w-0 flex-1">
-				<div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-					<span className="text-sm font-medium text-foreground">{agentName}</span>
-					{when && <span className="text-xs text-muted-foreground">{when}</span>}
-				</div>
-				{actionPrompt && (
-					<p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{actionPrompt}</p>
-				)}
-			</div>
-		</div>
-	)
+function capitalize(value: string): string {
+	return value ? value.charAt(0).toUpperCase() + value.slice(1) : value
+}
+
+interface LoopItemSnapshot {
+	name?: unknown
+	description?: unknown
 }
 
 function LoopBringsRow({
@@ -190,7 +295,7 @@ function LoopBringsRow({
 	loopId: string
 	item: MarketplaceLoopItem
 }) {
-	const snapshot = item.item_snapshot as { name?: unknown; description?: unknown }
+	const snapshot = item.item_snapshot as LoopItemSnapshot
 	const name =
 		typeof snapshot.name === 'string' && snapshot.name.trim() ? snapshot.name : 'Untitled'
 	const description = typeof snapshot.description === 'string' ? snapshot.description : null

@@ -8,6 +8,7 @@ import type {
 import { Link } from '@tanstack/react-router'
 import { ItemInstallControls } from './item-install-controls'
 import { ITEM_TYPE_LABEL } from './item-type-label'
+import { MarketplaceBreadcrumb } from './marketplace-breadcrumb'
 import { MarketplaceDetailHeader } from './marketplace-detail-header'
 
 interface MarketplaceItemDetailProps {
@@ -32,6 +33,18 @@ export function MarketplaceItemDetail({
 
 	return (
 		<div className="space-y-6">
+			<MarketplaceBreadcrumb
+				workspaceId={workspaceId}
+				items={[
+					{ label: parentLoop.use_case || 'Loops' },
+					{
+						label: parentLoop.name,
+						to: '/$workspaceId/marketplace/$loopId',
+						params: { workspaceId, loopId: parentLoop.id },
+					},
+					{ label: name },
+				]}
+			/>
 			<MarketplaceDetailHeader
 				kindLabel={ITEM_TYPE_LABEL[item.item_type]}
 				name={name}

@@ -37,7 +37,17 @@ test.describe('Marketplace detail pages', () => {
 			await expect(page.getByRole('heading', { name: loopName ?? '', level: 1 })).toBeVisible({
 				timeout: 20000,
 			})
-			await expect(page.getByText('What it brings')).toBeVisible()
+			// Disclosure sections derived from the loop's real item snapshots. The
+			// bundle loops' seeded agents may or may not hand control back to the
+			// operator, so only the sections that always render from real data are
+			// asserted here — the "asks you" classifier is covered by unit tests.
+			const detail = page.getByRole('main')
+			await expect(detail.getByText('The flow')).toBeVisible()
+			await expect(detail.getByText('What it brings')).toBeVisible()
+			await expect(detail.getByText('How it runs')).toBeVisible()
+			await expect(detail.getByText('Version')).toBeVisible()
+			await expect(detail.getByText('Permissions')).toBeVisible()
+			await expect(detail.getByText('This workspace only')).toBeVisible()
 
 			// Layout gate — the detail page must not overflow the viewport.
 			const overflow = await page.evaluate(() => ({
@@ -51,6 +61,22 @@ test.describe('Marketplace detail pages', () => {
 			await expect(loopsSection).toBeVisible()
 		})
 	}
+
+	test('detail surface renders in dark mode with colour tokens', async ({ page, account }) => {
+		await page.setViewportSize({ width: 768, height: 1024 })
+		await page.emulateMedia({ colorScheme: 'dark' })
+		await page.goto(`/${account.workspaceId}/marketplace`)
+
+		const loopsSection = page.getByRole('region', { name: 'Loops' })
+		await expect(loopsSection).toBeVisible({ timeout: 20000 })
+		const firstCard = loopsSection.locator('article').first()
+		await firstCard.getByRole('link').click({ position: { x: 10, y: 10 } })
+
+		const detail = page.getByRole('main')
+		await expect(detail.getByText('The flow')).toBeVisible({ timeout: 20000 })
+		await expect(detail.getByText('How it runs')).toBeVisible()
+		await expect(detail.getByText('Permissions')).toBeVisible()
+	})
 
 	test('opens an item detail page from the Agents section and links back to its loop', async ({
 		page,
