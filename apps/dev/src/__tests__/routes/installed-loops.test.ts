@@ -211,6 +211,80 @@ describe('POST /api/installed-loops', () => {
 		})
 	})
 
+	it('reuses an existing provisioned actor instead of cloning — no actor/member insert, trigger wired to the existing agent', async () => {
+		const { app, mockResults, calls } = setup()
+		const workspaceId = randomUUID()
+		const loopId = randomUUID()
+		const install = installRow({ workspaceId, sourceLoopId: loopId })
+		const loopObject = loopObjectRow()
+
+		const sourceActorId = '11111111-1111-1111-1111-111111111111'
+		const existingActorId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+		const newTriggerId = '33333333-3333-3333-3333-333333333333'
+
+		const items = [
+			{
+				id: randomUUID(),
+				loopId,
+				itemType: 'actor',
+				sourceItemId: sourceActorId,
+				itemSnapshot: { name: 'Researcher', type: 'agent', systemPrompt: 'Listen.' },
+				createdAt: new Date(),
+			},
+			{
+				id: randomUUID(),
+				loopId,
+				itemType: 'trigger',
+				sourceItemId: '44444444-4444-4444-4444-444444444444',
+				itemSnapshot: {
+					name: 'Daily',
+					type: 'cron',
+					config: { expression: '0 9 * * *' },
+					actionPrompt: 'Run.',
+					target_actor_id: sourceActorId,
+				},
+				createdAt: new Date(),
+			},
+		]
+
+		mockResults.selectQueue = [
+			[buildWorkspaceMember({ workspaceId, actorId: ACTOR_ID })],
+			[loop({ id: loopId })],
+			items,
+			[],
+			// Dedup lookup: the workspace already holds an actor provisioned from
+			// this exact source item (another loop, or a kept prior install).
+			[{ id: existingActorId }],
+		]
+		// No actor insert and no workspace_members insert for the reused agent.
+		mockResults.insertQueue = [[install], [{ id: newTriggerId }], [loopObject], [], [], []]
+
+		const res = await app.request(
+			jsonRequest('POST', '/api/installed-loops', { loopId, workspaceId }),
+		)
+
+		expect(res.status).toBe(201)
+		const body = await res.json()
+		// Reuse means the install created zero actors of its own.
+		expect(body.provisioned).toEqual({ actors: 0, triggers: 1, skills: 0, integrations: 0 })
+
+		// No actor + workspace_members insert pair — the reused agent was not cloned.
+		expect(calls.inserts).toHaveLength(6)
+		const actorInsert = calls.inserts.find(
+			(ins) => (ins as Record<string, unknown>).type === 'agent',
+		)
+		expect(actorInsert).toBeUndefined()
+
+		// The trigger wires to the EXISTING actor, not a fresh clone.
+		const triggerInsert = calls.inserts[1] as Record<string, unknown>
+		expect(triggerInsert.targetActorId).toBe(existingActorId)
+		const triggerSnapshot = (triggerInsert.metadata as Record<string, unknown>).snapshot as Record<
+			string,
+			unknown
+		>
+		expect(triggerSnapshot.target_actor_id).toBe(existingActorId)
+	})
+
 	it('returns 403 when the caller is not a member of the workspace', async () => {
 		const { app, mockResults } = setup()
 		const workspaceId = randomUUID()

@@ -253,4 +253,34 @@ describe('LoopFlow', () => {
 
 		expect(container).toBeEmptyDOMElement()
 	})
+
+	it('wraps a step description inside its container at mobile widths', async () => {
+		const triggers = [
+			buildTriggerResponse({
+				id: 't1',
+				targetActorId: 'relay',
+				type: 'event',
+				actionPrompt:
+					'A very long step description that must wrap cleanly instead of spilling past the container on a narrow mobile viewport https://example.com/a/extremely/long/unbroken/url/that/should/never/force/horizontal/overflow',
+				config: {},
+			}),
+		]
+		render(
+			<LoopFlow
+				workspaceId="ws-1"
+				triggers={triggers}
+				actors={[relay]}
+				childObjects={childObjects}
+			/>,
+			{ wrapper: wrapper() },
+		)
+
+		const description = await screen.findByText(/A very long step description/)
+		expect(description).toBeInTheDocument()
+		// The description column must be allowed to shrink (min-w-0) and break
+		// unbreakable tokens (break-words) so nothing overflows horizontally.
+		const container = description.closest('.min-w-0')
+		expect(container?.classList.contains('min-w-0')).toBe(true)
+		expect(container?.classList.contains('break-words')).toBe(true)
+	})
 })

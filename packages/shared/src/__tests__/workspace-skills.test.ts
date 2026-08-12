@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
 	attachSkillSchema,
+	attachSkillsBatchSchema,
 	createWorkspaceSkillSchema,
 	updateWorkspaceSkillSchema,
 	workspaceSkillSchema,
@@ -87,6 +88,31 @@ describe('attachSkillSchema', () => {
 
 	it('rejects missing workspaceSkillId', () => {
 		expect(() => attachSkillSchema.parse({})).toThrow()
+	})
+})
+
+describe('attachSkillsBatchSchema', () => {
+	it('accepts an array of uuids', () => {
+		const ids = ['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222']
+		expect(attachSkillsBatchSchema.parse({ workspaceSkillIds: ids }).workspaceSkillIds).toEqual(ids)
+	})
+
+	it('rejects an empty array', () => {
+		expect(() => attachSkillsBatchSchema.parse({ workspaceSkillIds: [] })).toThrow()
+	})
+
+	it('rejects more than 50 ids', () => {
+		const ids = Array.from({ length: 51 }, () => '11111111-1111-4111-8111-111111111111')
+		expect(() => attachSkillsBatchSchema.parse({ workspaceSkillIds: ids })).toThrow()
+	})
+
+	it('rejects a non-uuid entry', () => {
+		expect(() => attachSkillsBatchSchema.parse({ workspaceSkillIds: ['not-a-uuid'] })).toThrow()
+	})
+
+	it('rejects a duplicate id', () => {
+		const id = '11111111-1111-4111-8111-111111111111'
+		expect(() => attachSkillsBatchSchema.parse({ workspaceSkillIds: [id, id] })).toThrow()
 	})
 })
 

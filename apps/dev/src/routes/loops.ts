@@ -3,6 +3,7 @@ import type { Database } from '@maskin/db'
 import { events, objects, readState, relationships, triggers } from '@maskin/db/schema'
 import { TERMINAL_BET_STATUSES, listLoopsResponseSchema } from '@maskin/shared'
 import { and, eq, inArray, sql } from 'drizzle-orm'
+import { validationFailureHook } from '../lib/errors'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 
 /** Loose UUID match — used to filter free-form `metadata.trigger_ids` entries
@@ -29,7 +30,7 @@ type Env = {
 	}
 }
 
-const app = new OpenAPIHono<Env>()
+const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 /**
  * Terminal statuses per object type — a child object in one of these values

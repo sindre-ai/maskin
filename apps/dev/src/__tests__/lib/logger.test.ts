@@ -1,4 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+vi.mock('@sentry/node', () => ({
+	captureMessage: vi.fn(),
+	addBreadcrumb: vi.fn(),
+}))
+
+import * as Sentry from '@sentry/node'
 import { logger } from '../../lib/logger'
 
 describe('logger', () => {
@@ -8,6 +15,8 @@ describe('logger', () => {
 	beforeEach(() => {
 		logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
 		errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+		vi.mocked(Sentry.captureMessage).mockReset()
+		vi.mocked(Sentry.addBreadcrumb).mockReset()
 	})
 
 	afterEach(() => {
@@ -15,7 +24,7 @@ describe('logger', () => {
 	})
 
 	function parseOutput(spy: ReturnType<typeof vi.spyOn>): Record<string, unknown> {
-		const raw = spy.mock.calls[0][0] as string
+		const raw = spy.mock.calls[0]?.[0] as string
 		return JSON.parse(raw)
 	}
 
@@ -63,6 +72,25 @@ describe('logger', () => {
 			expect(entry.level).toBe('warn')
 			expect(entry.msg).toBe('deprecation notice')
 		})
+
+		it('adds a Sentry breadcrumb', () => {
+			logger.warn('deprecation notice', { feature: 'x' })
+			expect(Sentry.addBreadcrumb).toHaveBeenCalledOnce()
+			expect(Sentry.addBreadcrumb).toHaveBeenCalledWith({
+				category: 'log',
+				level: 'warning',
+				message: 'deprecation notice',
+				data: { feature: 'x' },
+			})
+		})
+
+		it('does not throw and still logs when Sentry.addBreadcrumb itself throws', () => {
+			vi.mocked(Sentry.addBreadcrumb).mockImplementation(() => {
+				throw new Error('sentry down')
+			})
+			expect(() => logger.warn('deprecation notice')).not.toThrow()
+			expect(logSpy).toHaveBeenCalledOnce()
+		})
 	})
 
 	describe('error', () => {
@@ -81,6 +109,31 @@ describe('logger', () => {
 			const entry = parseOutput(errorSpy)
 			expect(entry.code).toBe('ECONNREFUSED')
 			expect(entry.host).toBe('localhost')
+		})
+
+		it('reports to Sentry.captureMessage by default', () => {
+			logger.error('something broke', { code: 'X' })
+			expect(Sentry.captureMessage).toHaveBeenCalledOnce()
+			expect(Sentry.captureMessage).toHaveBeenCalledWith('something broke', {
+				level: 'error',
+				extra: { code: 'X' },
+			})
+		})
+
+		it('does not report to Sentry when skipSentry is set, to avoid double-reporting an error already captured directly', () => {
+			logger.error('something broke', { code: 'X' }, { skipSentry: true })
+			expect(Sentry.captureMessage).not.toHaveBeenCalled()
+		})
+
+		it('does not throw and still logs when Sentry.captureMessage itself throws', () => {
+			vi.mocked(Sentry.captureMessage).mockImplementation(() => {
+				throw new Error('sentry down')
+			})
+			expect(() => logger.error('something broke')).not.toThrow()
+			// First call is the normal JSON error line; a second console.error call
+			// reports the Sentry failure itself so it isn't silently swallowed.
+			const entry = parseOutput(errorSpy)
+			expect(entry.msg).toBe('something broke')
 		})
 	})
 })

@@ -30,7 +30,7 @@ import {
 	trackLoopInstalled,
 	trackLoopUninstalled,
 } from '../lib/analytics/loop-events'
-import { createApiError } from '../lib/errors'
+import { createApiError, validationFailureHook } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, jsonbField } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
@@ -42,8 +42,14 @@ import {
 	buildIntegrationInsert,
 	buildSkillInsert,
 	buildTriggerInsert,
+	findProvisionedActorBySourceItem,
+	findProvisionedSkillBySourceItem,
+	findWorkspaceSkillByName,
 	installMetadata,
+	partitionProvisionedActors,
+	partitionProvisionedSkills,
 	rewriteWiring,
+	sourceItemIdOf,
 } from '../services/loop-provisioning'
 import { autoSubscribe } from '../services/subscriptions'
 
@@ -55,7 +61,21 @@ type Env = {
 	}
 }
 
-const app = new OpenAPIHono<Env>()
+const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
+
+/**
+ * A skill provisioned from a marketplace item collided with an unrelated,
+ * differently-sourced skill that already has the same name in this workspace
+ * — the dedup-by-source-item guard only catches the case where it's genuinely
+ * the same shared item. `workspace_skills` enforces `(workspace_id, name)`
+ * uniqueness at the DB level, so this surfaces as a 23505 on insert; caught
+ * and converted into a clean 409 instead of an unhandled 500.
+ */
+class SkillNameConflictError extends Error {
+	constructor(readonly skillName: string) {
+		super(`A skill named "${skillName}" already exists in this workspace`)
+	}
+}
 
 const installLoopBodySchema = z.object({
 	loopId: z.string().uuid(),
@@ -274,187 +294,272 @@ app.openapi(installLoopRoute, async (c) => {
 
 	const provisioned = { actors: 0, triggers: 0, skills: 0, integrations: 0 }
 
-	const installed = await db.transaction(async (tx) => {
-		const [installRow] = await tx
-			.insert(installedLoops)
-			.values({
-				workspaceId,
-				sourceLoopId: loopId,
-				installedVersion: loop.version,
-				isLocked: true,
-			})
-			.returning()
+	let installed: typeof installedLoops.$inferSelect
+	try {
+		installed = await db.transaction(async (tx) => {
+			const [installRow] = await tx
+				.insert(installedLoops)
+				.values({
+					workspaceId,
+					sourceLoopId: loopId,
+					installedVersion: loop.version,
+					isLocked: true,
+				})
+				.returning()
 
-		if (!installRow) throw new Error('Failed to insert installed_loops row')
+			if (!installRow) throw new Error('Failed to insert installed_loops row')
 
-		// 4. Two-pass provisioning so triggers can reference any actor in the same
-		//    loop even when the actor is inserted later in the marketplace ordering.
-		//
-		//    Pass 1: insert every item, capturing source_item_id → new_local_id.
-		//    Triggers go last so their `target_actor_id` (which the snapshot
-		//    expresses as a source id) can be rewritten against the now-complete
-		//    map. We can't insert a trigger without a real target_actor_id (FK
-		//    NOT NULL), so the pre-pass + ordering is load-bearing.
-		const sourceToLocal = new Map<string, string>()
+			// 4. Two-pass provisioning so triggers can reference any actor in the same
+			//    loop even when the actor is inserted later in the marketplace ordering.
+			//
+			//    Pass 1: insert every item, capturing source_item_id → new_local_id.
+			//    Triggers go last so their `target_actor_id` (which the snapshot
+			//    expresses as a source id) can be rewritten against the now-complete
+			//    map. We can't insert a trigger without a real target_actor_id (FK
+			//    NOT NULL), so the pre-pass + ordering is load-bearing.
+			const sourceToLocal = new Map<string, string>()
 
-		const triggerItems: Array<{ sourceItemId: string; snapshot: Record<string, unknown> }> = []
-		// Skill → source-actor-id bindings, resolved to agent_skills rows once
-		// pass 1 finishes and every actor/skill in the loop has a local id.
-		const skillActorBindings: Array<{ sourceSkillId: string; sourceActorIds: string[] }> = []
+			const triggerItems: Array<{ sourceItemId: string; snapshot: Record<string, unknown> }> = []
+			// Skill → source-actor-id bindings, resolved to agent_skills rows once
+			// pass 1 finishes and every actor/skill in the loop has a local id.
+			const skillActorBindings: Array<{ sourceSkillId: string; sourceActorIds: string[] }> = []
 
-		for (const item of items) {
-			const type = item.itemType as MarketplaceItemType
-			const snapshot = (item.itemSnapshot as Record<string, unknown>) ?? {}
-			const metadata = installMetadata(installRow.id, item.sourceItemId, snapshot)
+			for (const item of items) {
+				const type = item.itemType as MarketplaceItemType
+				const snapshot = (item.itemSnapshot as Record<string, unknown>) ?? {}
+				const metadata = installMetadata(installRow.id, item.sourceItemId, snapshot)
 
-			switch (type) {
-				case 'actor': {
-					const [row] = await tx
-						.insert(actors)
-						.values(buildActorInsert(snapshot, metadata, actorId))
-						.returning({ id: actors.id })
-					if (!row) throw new Error(`insert returned no row for actor ${item.sourceItemId}`)
-					// Actors are global identities; a workspace_members row is what binds one
-					// to a workspace. Without it the provisioned agent is orphaned — it never
-					// shows up in the workspace's agent list (those queries join through
-					// workspace_members) and its own MCP/API calls, which carry X-Workspace-Id,
-					// would 403 in authMiddleware, so a trigger targeting it couldn't run.
-					// Mirrors how the seeded Workspace Coach agent is added on workspace creation.
-					await tx.insert(workspaceMembers).values({
-						workspaceId,
-						actorId: row.id,
-						role: 'member',
-					})
-					sourceToLocal.set(item.sourceItemId, row.id)
-					provisioned.actors++
-					break
-				}
-				case 'skill': {
-					// Fresh id + workspace-scoped S3 key — never reuse the publisher's
-					// storageKey (see buildSkillInsert). The S3 put happens inside the
-					// tx, right after the insert, mirroring workspace-skills.ts's POST.
-					const skillId = randomUUID()
-					const storageKey = workspaceSkillKey(workspaceId, skillId)
-					const [row] = await tx
-						.insert(workspaceSkills)
-						.values(buildSkillInsert(workspaceId, skillId, storageKey, snapshot, metadata, actorId))
-						.returning({ id: workspaceSkills.id })
-					if (!row) throw new Error(`insert returned no row for skill ${item.sourceItemId}`)
-					await agentStorage.putWorkspaceSkill(
-						workspaceId,
-						skillId,
-						(snapshot.content as string) ?? '',
-					)
-					sourceToLocal.set(item.sourceItemId, row.id)
-					provisioned.skills++
-					const attachedActorIds = Array.isArray(snapshot.attachedActorIds)
-						? (snapshot.attachedActorIds as string[])
-						: []
-					if (attachedActorIds.length > 0) {
-						skillActorBindings.push({
-							sourceSkillId: item.sourceItemId,
-							sourceActorIds: attachedActorIds,
+				switch (type) {
+					case 'actor': {
+						// Dedup guard: don't clone an agent the workspace already has. A
+						// workspace may already hold this agent from another loop that bundles
+						// it, or from a previous install kept on uninstall — reuse the existing
+						// row and wire this install's triggers to it instead of creating a
+						// second copy. Reuse means `provisioned.actors` only counts agents this
+						// install actually created.
+						const existing = await findProvisionedActorBySourceItem(
+							tx,
+							workspaceId,
+							item.sourceItemId,
+						)
+						if (existing) {
+							sourceToLocal.set(item.sourceItemId, existing.id)
+							break
+						}
+						const [row] = await tx
+							.insert(actors)
+							.values(buildActorInsert(snapshot, metadata, actorId))
+							.returning({ id: actors.id })
+						if (!row) throw new Error(`insert returned no row for actor ${item.sourceItemId}`)
+						// Actors are global identities; a workspace_members row is what binds one
+						// to a workspace. Without it the provisioned agent is orphaned — it never
+						// shows up in the workspace's agent list (those queries join through
+						// workspace_members) and its own MCP/API calls, which carry X-Workspace-Id,
+						// would 403 in authMiddleware, so a trigger targeting it couldn't run.
+						// Mirrors how the seeded Workspace Coach agent is added on workspace creation.
+						await tx.insert(workspaceMembers).values({
+							workspaceId,
+							actorId: row.id,
+							role: 'member',
 						})
+						sourceToLocal.set(item.sourceItemId, row.id)
+						provisioned.actors++
+						break
 					}
-					break
+					case 'skill': {
+						const attachedActorIds = Array.isArray(snapshot.attachedActorIds)
+							? (snapshot.attachedActorIds as string[])
+							: []
+						const skillName = (snapshot.name as string) ?? 'untitled-skill'
+						const reuseSkill = (id: string) => {
+							sourceToLocal.set(item.sourceItemId, id)
+							if (attachedActorIds.length > 0) {
+								skillActorBindings.push({
+									sourceSkillId: item.sourceItemId,
+									sourceActorIds: attachedActorIds,
+								})
+							}
+						}
+
+						// Dedup guard, mirroring the actor case above: don't clone a skill
+						// the workspace already has. Two loops can legitimately bundle the
+						// same shared skill, and `workspace_skills` has a
+						// `(workspace_id, name)` unique index — a bare insert on the second
+						// install would collide on it (23505) instead of reusing the row.
+						const existingSkill = await findProvisionedSkillBySourceItem(
+							tx,
+							workspaceId,
+							item.sourceItemId,
+						)
+						if (existingSkill) {
+							reuseSkill(existingSkill.id)
+							break
+						}
+
+						// Fallback dedup guard: two loops published independently (different
+						// `source_item_id`s) can still bundle a skill with the same name —
+						// not "the same" shared item by identity, but the unique index treats
+						// them as one anyway. Reuse the existing row by name rather than
+						// refusing the whole install.
+						const existingByName = await findWorkspaceSkillByName(tx, workspaceId, skillName)
+						if (existingByName) {
+							reuseSkill(existingByName.id)
+							break
+						}
+
+						// Fresh id + workspace-scoped S3 key — never reuse the publisher's
+						// storageKey (see buildSkillInsert). The S3 put happens inside the
+						// tx, right after the insert, mirroring workspace-skills.ts's POST.
+						const skillId = randomUUID()
+						const storageKey = workspaceSkillKey(workspaceId, skillId)
+						let row: { id: string } | undefined
+						try {
+							;[row] = await tx
+								.insert(workspaceSkills)
+								.values(
+									buildSkillInsert(workspaceId, skillId, storageKey, snapshot, metadata, actorId),
+								)
+								.returning({ id: workspaceSkills.id })
+						} catch (err) {
+							const cause = (err as { cause?: { code?: string; table_name?: string } }).cause
+							if (cause?.code === '23505' && cause.table_name === 'workspace_skills') {
+								// Lost a race against a concurrent install that just created the
+								// same-named row between our check above and this insert — reuse
+								// it instead of failing the whole install.
+								const reconciled = await findWorkspaceSkillByName(tx, workspaceId, skillName)
+								if (reconciled) {
+									reuseSkill(reconciled.id)
+									break
+								}
+								throw new SkillNameConflictError(skillName)
+							}
+							throw err
+						}
+						if (!row) throw new Error(`insert returned no row for skill ${item.sourceItemId}`)
+						await agentStorage.putWorkspaceSkill(
+							workspaceId,
+							skillId,
+							(snapshot.content as string) ?? '',
+						)
+						sourceToLocal.set(item.sourceItemId, row.id)
+						provisioned.skills++
+						if (attachedActorIds.length > 0) {
+							skillActorBindings.push({
+								sourceSkillId: item.sourceItemId,
+								sourceActorIds: attachedActorIds,
+							})
+						}
+						break
+					}
+					case 'integration': {
+						const [row] = await tx
+							.insert(integrations)
+							.values(buildIntegrationInsert(workspaceId, snapshot, metadata, actorId))
+							.returning({ id: integrations.id })
+						if (!row) throw new Error(`insert returned no row for integration ${item.sourceItemId}`)
+						sourceToLocal.set(item.sourceItemId, row.id)
+						provisioned.integrations++
+						break
+					}
+					case 'trigger':
+						triggerItems.push({ sourceItemId: item.sourceItemId, snapshot })
+						break
 				}
-				case 'integration': {
-					const [row] = await tx
-						.insert(integrations)
-						.values(buildIntegrationInsert(workspaceId, snapshot, metadata, actorId))
-						.returning({ id: integrations.id })
-					if (!row) throw new Error(`insert returned no row for integration ${item.sourceItemId}`)
-					sourceToLocal.set(item.sourceItemId, row.id)
-					provisioned.integrations++
-					break
+			}
+
+			// Bind each provisioned skill to the actor(s) it was attached to in the
+			// source workspace, now that pass 1 has resolved both sides to local ids.
+			// Source actor ids that weren't part of this loop (or weren't resolved
+			// for any reason) are silently skipped rather than treated as an error —
+			// a skill can legitimately be attached to actors outside the loop.
+			for (const { sourceSkillId, sourceActorIds } of skillActorBindings) {
+				const localSkillId = sourceToLocal.get(sourceSkillId)
+				if (!localSkillId) continue
+				for (const sourceActorId of sourceActorIds) {
+					const localActorId = sourceToLocal.get(sourceActorId)
+					if (!localActorId) continue
+					await tx
+						.insert(agentSkills)
+						.values({ actorId: localActorId, workspaceSkillId: localSkillId })
+						.onConflictDoNothing()
 				}
-				case 'trigger':
-					triggerItems.push({ sourceItemId: item.sourceItemId, snapshot })
-					break
 			}
-		}
 
-		// Bind each provisioned skill to the actor(s) it was attached to in the
-		// source workspace, now that pass 1 has resolved both sides to local ids.
-		// Source actor ids that weren't part of this loop (or weren't resolved
-		// for any reason) are silently skipped rather than treated as an error —
-		// a skill can legitimately be attached to actors outside the loop.
-		for (const { sourceSkillId, sourceActorIds } of skillActorBindings) {
-			const localSkillId = sourceToLocal.get(sourceSkillId)
-			if (!localSkillId) continue
-			for (const sourceActorId of sourceActorIds) {
-				const localActorId = sourceToLocal.get(sourceActorId)
-				if (!localActorId) continue
-				await tx
-					.insert(agentSkills)
-					.values({ actorId: localActorId, workspaceSkillId: localSkillId })
-					.onConflictDoNothing()
+			const provisionedTriggerIds: string[] = []
+			for (const { sourceItemId, snapshot } of triggerItems) {
+				const rewritten = rewriteWiring(snapshot, sourceToLocal)
+				const metadata = installMetadata(installRow.id, sourceItemId, rewritten)
+				const [row] = await tx
+					.insert(triggers)
+					.values(buildTriggerInsert(workspaceId, rewritten, metadata, actorId))
+					.returning({ id: triggers.id })
+				if (!row) throw new Error(`insert returned no row for trigger ${sourceItemId}`)
+				sourceToLocal.set(sourceItemId, row.id)
+				provisionedTriggerIds.push(row.id)
+				provisioned.triggers++
 			}
-		}
 
-		const provisionedTriggerIds: string[] = []
-		for (const { sourceItemId, snapshot } of triggerItems) {
-			const rewritten = rewriteWiring(snapshot, sourceToLocal)
-			const metadata = installMetadata(installRow.id, sourceItemId, rewritten)
-			const [row] = await tx
-				.insert(triggers)
-				.values(buildTriggerInsert(workspaceId, rewritten, metadata, actorId))
-				.returning({ id: triggers.id })
-			if (!row) throw new Error(`insert returned no row for trigger ${sourceItemId}`)
-			sourceToLocal.set(sourceItemId, row.id)
-			provisionedTriggerIds.push(row.id)
-			provisioned.triggers++
-		}
+			// Create the Loop object this install represents (see route comment) and
+			// link it back on the install row.
+			const [loopObject] = await tx
+				.insert(objects)
+				.values({
+					workspaceId,
+					type: 'loop',
+					title: loop.name,
+					content: loop.description,
+					status: 'running',
+					createdBy: actorId,
+					metadata: {
+						installed_from_marketplace_loop_id: loopId,
+						trigger_ids: provisionedTriggerIds,
+					},
+				})
+				.returning()
+			if (!loopObject) throw new Error('Failed to insert loop object for install')
 
-		// Create the Loop object this install represents (see route comment) and
-		// link it back on the install row.
-		const [loopObject] = await tx
-			.insert(objects)
-			.values({
+			await tx
+				.update(installedLoops)
+				.set({ objectId: loopObject.id })
+				.where(eq(installedLoops.id, installRow.id))
+
+			await tx.insert(events).values({
 				workspaceId,
-				type: 'loop',
-				title: loop.name,
-				content: loop.description,
-				status: 'running',
-				createdBy: actorId,
-				metadata: {
-					installed_from_marketplace_loop_id: loopId,
-					trigger_ids: provisionedTriggerIds,
+				actorId,
+				action: 'created',
+				entityType: 'loop',
+				entityId: loopObject.id,
+				data: loopObject,
+			})
+
+			await tx.insert(events).values({
+				workspaceId,
+				actorId,
+				action: 'created',
+				entityType: 'installed_loop',
+				entityId: installRow.id,
+				data: {
+					source_loop_id: loopId,
+					installed_version: loop.version,
+					object_id: loopObject.id,
+					items: provisioned,
 				},
 			})
-			.returning()
-		if (!loopObject) throw new Error('Failed to insert loop object for install')
 
-		await tx
-			.update(installedLoops)
-			.set({ objectId: loopObject.id })
-			.where(eq(installedLoops.id, installRow.id))
-
-		await tx.insert(events).values({
-			workspaceId,
-			actorId,
-			action: 'created',
-			entityType: 'loop',
-			entityId: loopObject.id,
-			data: loopObject,
+			return { ...installRow, objectId: loopObject.id }
 		})
-
-		await tx.insert(events).values({
-			workspaceId,
-			actorId,
-			action: 'created',
-			entityType: 'installed_loop',
-			entityId: installRow.id,
-			data: {
-				source_loop_id: loopId,
-				installed_version: loop.version,
-				object_id: loopObject.id,
-				items: provisioned,
-			},
-		})
-
-		return { ...installRow, objectId: loopObject.id }
-	})
+	} catch (err) {
+		if (err instanceof SkillNameConflictError) {
+			return c.json(
+				createApiError(
+					'CONFLICT',
+					`${err.message} and could not be reconciled with the marketplace item automatically`,
+				),
+				409,
+			)
+		}
+		throw err
+	}
 
 	// Auto-subscribe the installer to the new Loop object, same as manually
 	// creating an object (see objects.ts's POST route). Outside the transaction
@@ -849,13 +954,44 @@ app.openapi(uninstallLoopRoute, async (c) => {
 				)
 				.returning({ id: triggers.id })
 
-			const skillRes = await tx
-				.delete(workspaceSkills)
+			// Shared skills (bundled by more than one installed loop, matched by
+			// source_item_id or by name) survive this uninstall — rehomed to a live
+			// install that still references them — mirroring the actor partition
+			// below. Only the unreferenced remainder is deleted.
+			const provisionedSkillRows = await tx
+				.select({
+					id: workspaceSkills.id,
+					name: workspaceSkills.name,
+					metadata: workspaceSkills.metadata,
+				})
+				.from(workspaceSkills)
 				.where(
 					sql`${workspaceSkills.metadata}->>'installed_loop_id' = ${install.id} OR ${workspaceSkills.metadata}->>'forked_from_installed_loop_id' = ${install.id}`,
 				)
-				.returning({ id: workspaceSkills.id })
-			removedSkillIds = skillRes.map((r) => r.id)
+			const { deleted: deletedSkillIds, kept: keptSkillIds } = await partitionProvisionedSkills(
+				tx,
+				install.workspaceId,
+				install.id,
+				provisionedSkillRows.map((r) => ({
+					id: r.id,
+					sourceItemId: sourceItemIdOf(r.metadata),
+					name: r.name,
+				})),
+			)
+			if (keptSkillIds.length > 0) {
+				logger.info(
+					'Kept shared skills on uninstall — another installed loop still references them',
+					{
+						installId: install.id,
+						workspaceId: install.workspaceId,
+						keptSkillIds,
+					},
+				)
+			}
+			if (deletedSkillIds.length > 0) {
+				await tx.delete(workspaceSkills).where(inArray(workspaceSkills.id, deletedSkillIds))
+			}
+			removedSkillIds = deletedSkillIds
 
 			const integrationRes = await tx
 				.delete(integrations)
@@ -864,15 +1000,33 @@ app.openapi(uninstallLoopRoute, async (c) => {
 				)
 				.returning({ id: integrations.id })
 
-			// Find provisioned actor IDs.
+			// Find provisioned actor IDs. A shared agent — one another installed
+			// loop still references — survives this uninstall (see
+			// partitionProvisionedActors); only the rows nothing else uses are
+			// cascade-deleted below, so a surviving loop's triggers keep firing.
 			const provisionedActorRows = await tx
-				.select({ id: actors.id })
+				.select({ id: actors.id, metadata: actors.metadata })
 				.from(actors)
 				.where(
 					sql`${actors.metadata}->>'installed_loop_id' = ${install.id} OR ${actors.metadata}->>'forked_from_installed_loop_id' = ${install.id}`,
 				)
 
-			const actorIds = provisionedActorRows.map((r) => r.id)
+			const { deleted: actorIds, kept: keptActorIds } = await partitionProvisionedActors(
+				tx,
+				install.workspaceId,
+				install.id,
+				provisionedActorRows.map((r) => ({ id: r.id, sourceItemId: sourceItemIdOf(r.metadata) })),
+			)
+			if (keptActorIds.length > 0) {
+				logger.info(
+					'Kept shared agents on uninstall — another installed loop still references them',
+					{
+						installId: install.id,
+						workspaceId: install.workspaceId,
+						keptActorIds,
+					},
+				)
+			}
 
 			if (actorIds.length > 0) {
 				// Delete triggers that target or were created by provisioned actors.
@@ -951,7 +1105,7 @@ app.openapi(uninstallLoopRoute, async (c) => {
 			removedElements = {
 				actors: actorIds.length,
 				triggers: triggerRes.length,
-				skills: skillRes.length,
+				skills: deletedSkillIds.length,
 				integrations: integrationRes.length,
 			}
 		}

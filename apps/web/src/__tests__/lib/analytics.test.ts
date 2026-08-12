@@ -15,6 +15,7 @@ import {
 	trackForyouCardMarkedRead,
 	trackForyouCardMarkedUnread,
 	trackForyouCardShown,
+	trackMiniAppFileViewed,
 	trackNavItemClicked,
 	trackNorthStarPromptImpression,
 	trackNorthStarPromptResponse,
@@ -367,6 +368,38 @@ describe('v1 taxonomy helpers', () => {
 				parent_entity_type: 'bet',
 			}),
 		)
+	})
+
+	it('mini_app_file_viewed carries the fixed property contract for a file open', () => {
+		const capture = captureSpy()
+
+		trackMiniAppFileViewed({
+			entity_id: 'file-1',
+			entity_type: 'file',
+			file_name: 'curriculum.html',
+		})
+
+		expect(capture).toHaveBeenCalledWith('mini_app_file_viewed', {
+			entity_id: 'file-1',
+			entity_type: 'file',
+			file_name: 'curriculum.html',
+			source: 'web',
+			flow_id: null,
+		})
+	})
+
+	it('mini_app_file_viewed defaults source to web and flow_id to null when omitted', () => {
+		const capture = captureSpy()
+
+		trackMiniAppFileViewed({ entity_id: 'file-2', entity_type: 'file', file_name: 'hub.html' })
+
+		expect(capture).toHaveBeenCalledWith('mini_app_file_viewed', {
+			entity_id: 'file-2',
+			entity_type: 'file',
+			file_name: 'hub.html',
+			source: 'web',
+			flow_id: null,
+		})
 	})
 
 	it('sidebar.workspace_switcher.opened carries the workspaceId', () => {

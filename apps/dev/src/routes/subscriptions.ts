@@ -12,7 +12,7 @@ import {
 	unsubscribeBodySchema,
 } from '@maskin/shared'
 import { and, count, desc, eq, gt, inArray, max, ne, or, sql } from 'drizzle-orm'
-import { createApiError } from '../lib/errors'
+import { createApiError, validationFailureHook } from '../lib/errors'
 import { errorSchema, objectResponseSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
 import {
@@ -31,7 +31,7 @@ type Env = {
 	}
 }
 
-const app = new OpenAPIHono<Env>()
+const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 /**
  * Per-entity-type workspace membership check. Returns true if the entity

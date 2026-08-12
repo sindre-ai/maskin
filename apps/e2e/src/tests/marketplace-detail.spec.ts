@@ -24,8 +24,14 @@ test.describe('Marketplace detail pages', () => {
 			expect(loopName).toBeTruthy()
 
 			// The whole card is clickable (except the install controls), so clicking
-			// anywhere on the card body — not just the title — must navigate.
-			await firstCard.getByRole('link').click()
+			// anywhere on the card body — not just the title — must navigate. Click
+			// near the card's top-left (over the title) rather than its default
+			// centroid: bundle cards with many composition chips wrap the chip row
+			// across multiple lines, and those chip buttons paint above the card's
+			// full-bleed overlay link (by design, so they can catch their own
+			// hover/tooltip clicks) — a centroid click can land on a chip instead
+			// of the link on cards with enough items to wrap that far down.
+			await firstCard.getByRole('link').click({ position: { x: 10, y: 10 } })
 
 			await expect(page).toHaveURL(/\/marketplace\/[^/]+\/?$/)
 			await expect(page.getByRole('heading', { name: loopName ?? '', level: 1 })).toBeVisible({
@@ -66,7 +72,10 @@ test.describe('Marketplace detail pages', () => {
 		await expect(page.getByRole('heading', { name: itemName ?? '', level: 1 })).toBeVisible({
 			timeout: 20000,
 		})
-		await expect(page.getByText(/^AGENT$/i)).toBeVisible()
+		// Scoped to `main` — the global chat panel's "Pick an agent" selector
+		// also displays the bare text "Agent" as its current value, and an
+		// unscoped getByText matches both.
+		await expect(page.getByRole('main').getByText(/^AGENT$/i)).toBeVisible()
 
 		const partOfLink = page.getByRole('link', { name: /^Part of / })
 		await expect(partOfLink).toBeVisible()
@@ -99,8 +108,13 @@ test.describe('Marketplace detail pages', () => {
 		// just the title) is clickable. Real mouse coordinates are used (rather
 		// than locator.click()) since the chip itself is pointer-events:none and
 		// would fail Playwright's "receives events" actionability check even
-		// though a real click there lands on the card's link underneath.
+		// though a real click there lands on the card's link underneath. Raw
+		// `page.mouse.click` operates in viewport coordinates and — unlike
+		// locator.click() — never auto-scrolls, so the first "not yet installed"
+		// card must be scrolled into view first: with enough marketplace items
+		// already installed in this workspace, it can sit below the fold.
 		const chip = card.getByText(/^(Agent|Trigger|Skill|Integration)$/)
+		await chip.scrollIntoViewIfNeeded()
 		const chipBox = await chip.boundingBox()
 		if (!chipBox) throw new Error('missing chip bounding box')
 		await page.mouse.click(chipBox.x + chipBox.width / 2, chipBox.y + chipBox.height / 2)
@@ -113,10 +127,19 @@ test.describe('Marketplace detail pages', () => {
 		await page.goBack()
 		await expect(agentsSection).toBeVisible({ timeout: 20000 })
 
+		// Re-scope by the item's name rather than reusing `card`: that locator
+		// filters on "has an Install button", and once the click below flips the
+		// button to "Installed" the same filter stops matching this card — a
+		// live re-evaluation would silently jump to the next not-yet-installed
+		// card instead of observing this one's new state.
+		const stableCard = agentsSection
+			.locator('article')
+			.filter({ has: page.getByRole('heading', { name: itemName ?? '', level: 3 }) })
+
 		// The Install button is the one part of the card that must NOT
 		// navigate — it installs the item in place instead of opening it.
-		await card.getByRole('button', { name: /^install$/i }).click()
-		await expect(card.getByText('Installed')).toBeVisible()
+		await stableCard.getByRole('button', { name: /^install$/i }).click()
+		await expect(stableCard.getByText('Installed')).toBeVisible()
 		await expect(page).toHaveURL(new RegExp(`/${account.workspaceId}/marketplace$`))
 	})
 })

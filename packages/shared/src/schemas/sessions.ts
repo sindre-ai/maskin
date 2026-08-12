@@ -241,5 +241,13 @@ export const sessionResultSchema = z.object({
 	exit_code: z.number().int().nullable().optional(),
 	error: z.string().optional(),
 	failure_reason: sessionResultFailureReasonSchema.nullable().optional(),
+	// Set only by SessionManager.stopSession()'s provisional terminal write —
+	// see markRemoteSessionComplete() in apps/dev/src/services/session-manager.ts.
+	// Distinguishes "we explicitly stopped this session and don't yet know its
+	// real exit code" from "the agent-server told us the exit code was null".
+	// A later genuine completion report (POST /sessions/:id/complete) is allowed
+	// to overwrite a record still carrying this marker with the real exit code;
+	// it is never set on a genuine report itself.
+	stopped_by_user: z.boolean().optional(),
 })
 export type SessionResult = z.infer<typeof sessionResultSchema>

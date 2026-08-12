@@ -1,4 +1,4 @@
-import type { ActorListItem, LoopSummary, TriggerResponse } from '@/lib/api'
+import type { ActorListItem, LoopSummary, SessionResponse, TriggerResponse } from '@/lib/api'
 import { render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -23,6 +23,11 @@ vi.mock('@/hooks/use-triggers', () => ({
 const mockUseActors = vi.fn()
 vi.mock('@/hooks/use-actors', () => ({
 	useActors: () => mockUseActors(),
+}))
+
+const mockUseWorkspaceSessions = vi.fn()
+vi.mock('@/hooks/use-sessions', () => ({
+	useWorkspaceSessions: () => mockUseWorkspaceSessions(),
 }))
 
 vi.mock('@/components/shared/create-picker', () => ({
@@ -93,11 +98,28 @@ function buildTrigger(overrides: Partial<TriggerResponse> = {}): TriggerResponse
 	} as TriggerResponse
 }
 
+function buildSession(overrides: Partial<SessionResponse> = {}): SessionResponse {
+	return {
+		id: 's-1',
+		workspaceId: 'ws-1',
+		actorId: 'actor-1',
+		triggerId: null,
+		status: 'running',
+		actionPrompt: 'Look into the recent churn spike',
+		startedAt: '2026-08-04T00:00:00.000Z',
+		createdAt: '2026-08-04T00:00:00.000Z',
+		updatedAt: '2026-08-04T00:00:00.000Z',
+		currentActivity: 'Drafting a summary',
+		...overrides,
+	} as SessionResponse
+}
+
 beforeEach(() => {
 	vi.clearAllMocks()
 	mockUseLoops.mockReturnValue({ data: [], isLoading: false })
 	mockUseTriggers.mockReturnValue({ data: [] })
 	mockUseActors.mockReturnValue({ data: [] })
+	mockUseWorkspaceSessions.mockReturnValue({ data: [] })
 })
 
 describe('LoopsPage', () => {
@@ -161,6 +183,44 @@ describe('LoopsPage', () => {
 		expect(screen.getByText('Not tied to a loop')).toBeInTheDocument()
 		expect(screen.getByText('Standalone alert')).toBeInTheDocument()
 		expect(screen.queryByText('Nightly sweep')).not.toBeInTheDocument()
+	})
+
+	it('renders the "Assigned in chat" section with chat-assigned rows', () => {
+		const actors = [buildActor({ id: 'actor-1', name: 'Compass' })]
+		mockUseLoops.mockReturnValue({
+			data: [buildLoop({ agentIds: ['actor-1'] })],
+			isLoading: false,
+		})
+		mockUseActors.mockReturnValue({ data: actors })
+		mockUseWorkspaceSessions.mockReturnValue({
+			data: [buildSession({ triggerId: null, actorId: 'actor-1', status: 'running' })],
+		})
+
+		render(<LoopsPage />)
+
+		expect(screen.getByText('Assigned in chat')).toBeInTheDocument()
+		expect(
+			screen.getByText('Work you handed an agent yourself, outside any cycle.'),
+		).toBeInTheDocument()
+		expect(screen.getByText('Compass')).toBeInTheDocument()
+		expect(screen.getByText('Working')).toBeInTheDocument()
+		expect(screen.getByText('Look into the recent churn spike')).toBeInTheDocument()
+	})
+
+	it('does not render "Assigned in chat" when no chat-assigned sessions exist', () => {
+		const actors = [buildActor({ id: 'actor-1', name: 'Compass' })]
+		mockUseLoops.mockReturnValue({
+			data: [buildLoop({ agentIds: ['actor-1'] })],
+			isLoading: false,
+		})
+		mockUseActors.mockReturnValue({ data: actors })
+		mockUseWorkspaceSessions.mockReturnValue({
+			data: [buildSession({ triggerId: 't-1', actorId: 'actor-1', status: 'running' })],
+		})
+
+		render(<LoopsPage />)
+
+		expect(screen.queryByText('Assigned in chat')).not.toBeInTheDocument()
 	})
 
 	it('renders the list skeleton while loops are loading', () => {

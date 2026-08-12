@@ -9,7 +9,7 @@ import {
 import { and, eq, gte, sql } from 'drizzle-orm'
 import { recordMcpMisfire } from '../lib/analytics/mcp-misfire'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
-import { createApiError } from '../lib/errors'
+import { createApiError, validationFailureHook } from '../lib/errors'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { isWorkspaceMember } from '../lib/workspace-auth'
 
@@ -41,7 +41,7 @@ const WIDGET_CTR_KILL_THRESHOLD_PCT = 30
 const WIDGET_RENDER_ERROR_KILL_THRESHOLD_PCT = 10
 const WIDGET_RENDER_ERROR_WINDOW_MS = 48 * 60 * 60 * 1000
 
-const app = new OpenAPIHono<Env>()
+const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 // POST /api/telemetry/mcp — record a single MCP telemetry event.
 const recordRoute = createRoute({

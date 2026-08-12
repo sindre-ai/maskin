@@ -16,6 +16,7 @@ import { Bot, Layers, RefreshCw, Store, Zap } from 'lucide-react'
 import { useMemo } from 'react'
 import { NavUser } from './nav-user'
 import { SidebarActivity } from './sidebar-activity'
+import { SidebarFavorites } from './sidebar-favorites'
 import { SidebarNavItem, type SidebarNavItemDef } from './sidebar-nav-item'
 import { WorkspaceSwitcher } from './workspace-switcher'
 
@@ -73,6 +74,7 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 						))}
 					</SidebarMenu>
 				</SidebarGroup>
+				<SidebarFavorites />
 			</SidebarContent>
 			<SidebarFooter>
 				<SidebarMenu>

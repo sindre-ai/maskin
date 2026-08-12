@@ -60,6 +60,9 @@ test.describe('Loops list page', () => {
 		// default, so this asserts the list itself renders, verifying the
 		// extraction of TriggerRow into a shared component did not regress the
 		// Triggers surface.
-		await expect(page.getByText(/Runs on schedule/).first()).toBeVisible()
+		// describeTrigger() has rendered cron schedules in plain English since
+		// a342963f (e.g. "Runs every Sunday at 5:00 PM"), not the old raw-cron
+		// "Runs on schedule: ..." copy — pin the stable "Runs " prefix instead.
+		await expect(page.getByText(/^Runs /).first()).toBeVisible()
 	})
 })

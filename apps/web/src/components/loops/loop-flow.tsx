@@ -101,7 +101,7 @@ function StepRow({
 				type={agent?.type ?? 'agent'}
 				className="mt-0.5"
 			/>
-			<div className="flex-1 min-w-0 text-[12.5px] leading-relaxed">
+			<div className="flex-1 min-w-0 break-words text-[12.5px] leading-relaxed">
 				<span className="font-semibold text-foreground">{agent?.name ?? 'Unknown agent'}</span>{' '}
 				<span className="text-muted-foreground">{trigger.actionPrompt}</span>
 			</div>

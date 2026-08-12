@@ -18,7 +18,7 @@ import {
 } from '@maskin/shared'
 import { and, eq } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
-import { createApiError } from '../lib/errors'
+import { createApiError, validationFailureHook } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, workspaceResponseSchema } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
@@ -58,7 +58,7 @@ const workspaceWithRoleSchema = workspaceResponseSchema.extend({
 	role: z.string(),
 })
 
-const app = new OpenAPIHono<Env>()
+const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 // POST /api/workspaces
 const createWorkspaceRoute = createRoute({

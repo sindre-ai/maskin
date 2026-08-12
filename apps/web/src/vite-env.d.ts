@@ -3,6 +3,8 @@
 interface ImportMetaEnv {
 	readonly VITE_POSTHOG_KEY?: string
 	readonly VITE_POSTHOG_HOST?: string
+	readonly VITE_SENTRY_DSN?: string
+	readonly VITE_SENTRY_FORCE_ENABLE?: string
 	// vaerksted-auth's dedicated Supabase project (vaerksted-auth-and-sync.md
 	// §6a) — NOT Maskin's own Supabase usage, if any. Used only for the
 	// client-side magic-link/OAuth flow; the resulting Supabase access token
