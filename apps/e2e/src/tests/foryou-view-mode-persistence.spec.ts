@@ -114,6 +114,11 @@ test.describe('For You view-mode persistence via __chrome__ display settings', (
 			const body = putResponse.request().postDataJSON()
 			expect(body.settings.foryouViewMode).toBe('list')
 
+			// Close the popover so the list-row assertions below aren't shadowed —
+			// on mobile it's a modal Sheet, and Radix marks the rest of the page
+			// aria-hidden while a modal Dialog is open.
+			await page.keyboard.press('Escape')
+
 			// List rows replace the card queue.
 			await expect(page.getByRole('link', { name: 'Renewal terms need a read' })).toBeVisible()
 			await expect(page.getByRole('link', { name: 'Follow-up from customer call' })).toBeVisible()
