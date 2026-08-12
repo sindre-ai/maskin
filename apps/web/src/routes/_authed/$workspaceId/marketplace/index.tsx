@@ -3,6 +3,7 @@ import { LoopGrid } from '@/components/marketplace/loop-grid'
 import { MarketplaceHeaderIdentity } from '@/components/marketplace/marketplace-header'
 import { EmptyState } from '@/components/shared/empty-state'
 import { RouteError } from '@/components/shared/route-error'
+import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useInstalledLoops } from '@/hooks/use-installed-loops'
 import { useInstalledMarketplaceItems, useMarketplaceLoops } from '@/hooks/use-marketplace-loops'
@@ -204,6 +205,19 @@ function MarketplacePage() {
 					<EmptyState
 						title="No matches"
 						description="Try a different search term or clear the filters."
+						action={
+							<Button
+								type="button"
+								variant="outline"
+								size="sm"
+								onClick={() => {
+									setQuery('')
+									setActiveFilter('all')
+								}}
+							>
+								Clear filters
+							</Button>
+						}
 					/>
 				) : (
 					<LoopGrid

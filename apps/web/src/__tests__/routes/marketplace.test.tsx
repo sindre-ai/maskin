@@ -312,4 +312,41 @@ describe('MarketplacePage', () => {
 		expect(screen.queryByText(/Showing all/i)).not.toBeInTheDocument()
 		expect(screen.queryByText(/No loops yet/i)).not.toBeInTheDocument()
 	})
+
+	it('clears the search query and chip filter from the empty state', async () => {
+		mockUseMarketplaceLoops.mockReturnValue({
+			data: {
+				loops: [
+					{
+						id: 'p1',
+						name: 'Alpha',
+						slug: 'alpha',
+						description: '',
+						version: '1',
+						use_case: null,
+						item_types: ['actor'],
+						created_at: null,
+						updated_at: null,
+					},
+				],
+				counts: COUNTS,
+			},
+			isLoading: false,
+			isError: false,
+		})
+		render(<MarketplacePage />)
+		const user = userEvent.setup()
+
+		// Filter to a chip with matches, then type a query that matches nothing.
+		const agentsBtn = screen.getByRole('button', { name: /^Agents\s5/ })
+		await user.click(agentsBtn)
+		const input = screen.getByRole('searchbox', { name: 'Filter marketplace' })
+		await user.type(input, 'zzzznomatchxyz')
+		expect(screen.getByText('No matches')).toBeInTheDocument()
+
+		// "Clear filters" resets both the search box and the active chip.
+		await user.click(screen.getByRole('button', { name: 'Clear filters' }))
+		expect(input).toHaveValue('')
+		expect(screen.getByRole('button', { name: /^All\s/ }).className).toMatch(/border-foreground/)
+	})
 })

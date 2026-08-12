@@ -139,6 +139,35 @@ test.describe('Marketplace loop filter', () => {
 		await expect(page.getByText(/Showing all/i)).toHaveCount(0)
 	})
 
+	test('Clear filters from the empty state resets the query and the active chip', async ({
+		page,
+		account,
+	}) => {
+		await page.setViewportSize({
+			width: VIEWPORTS.desktopXl.width,
+			height: VIEWPORTS.desktopXl.height,
+		})
+		await page.goto(`/${account.workspaceId}/marketplace`)
+
+		await expect(page.getByRole('region', { name: 'Loops' })).toBeVisible({ timeout: 20000 })
+
+		// Select the Triggers chip (a section with real seeded items), then drive
+		// the query to "No matches" so the clearable empty state is what shows.
+		const chips = page.getByTestId('marketplace-filter-chips')
+		await chips.getByRole('button', { name: /^Triggers\s/ }).click()
+		await expect(page.getByRole('region', { name: 'Triggers' })).toBeVisible()
+
+		const filter = page.getByRole('searchbox', { name: FILTER_LABEL }).and(page.locator(':visible'))
+		await filter.fill('zzzznomatchxyz')
+		await expect(page.getByText('No matches')).toBeVisible()
+
+		// "Clear filters" resets the search box and returns the catalog to "All".
+		await page.getByRole('button', { name: 'Clear filters' }).click()
+		await expect(filter).toHaveValue('')
+		await expect(page.getByRole('region', { name: 'Loops' })).toBeVisible()
+		await expect(page.getByRole('region', { name: 'Triggers' })).toBeVisible()
+	})
+
 	test('layout holds at 375px across default, typing, and empty states', async ({
 		page,
 		account,
