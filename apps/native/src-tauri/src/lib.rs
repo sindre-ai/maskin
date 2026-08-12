@@ -36,6 +36,7 @@ fn delete_api_key() -> Result<(), String> {
 pub fn run() {
 	tauri::Builder::default()
 		.plugin(tauri_plugin_deep_link::init())
+		.plugin(tauri_plugin_push_notifications::init())
 		.invoke_handler(tauri::generate_handler![
 			get_api_key,
 			set_api_key,
