@@ -973,6 +973,44 @@ describe('tool handlers', () => {
 			expect(parsed.role).toBe('member')
 		})
 
+		it('splits the merged llm_config into llm_provider + llm_config on the POST body', async () => {
+			// config.defaultWorkspaceId is set, so create_actor also fires a
+			// members POST — isolate the /api/actors call specifically rather
+			// than assuming it's the only (or last) fetch call.
+			let actorsPostBody: unknown
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+				if (String(url) === 'http://localhost:3000/api/actors') {
+					actorsPostBody = JSON.parse(init?.body as string)
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: async () => ({
+							id: 'actor-new',
+							llm_provider: 'anthropic',
+							llm_config: { model: 'claude-opus-4-6' },
+						}),
+					} as Response
+				}
+				return { ok: true, headers: new Headers(), json: async () => ({}) } as Response
+			})
+
+			const handler = getHandler('create_actor')
+			const result = (await handler({
+				type: 'agent',
+				name: 'Bot',
+				llm_config: { provider: 'anthropic', model: 'claude-opus-4-6' },
+			})) as { content: Array<{ text: string }> }
+
+			expect(actorsPostBody).toMatchObject({
+				llm_provider: 'anthropic',
+				llm_config: { model: 'claude-opus-4-6' },
+			})
+			// The two API columns come back merged into one llm_config field, mirroring the input shape.
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.llm_config).toEqual({ provider: 'anthropic', model: 'claude-opus-4-6' })
+			expect(parsed.llm_provider).toBeUndefined()
+		})
+
 		it('attaches skills on creation in a single batched call', async () => {
 			const skillId1 = '660e8400-e29b-41d4-a716-446655440001'
 			const skillId2 = '660e8400-e29b-41d4-a716-446655440002'
@@ -1214,6 +1252,412 @@ describe('tool handlers', () => {
 			expect(parsed[0].result).toEqual({ id: 'id-1', title: 'OK' })
 			expect(parsed[1].success).toBe(false)
 			expect(parsed[1].error).toContain('API error 404')
+		})
+	})
+
+	describe('loop tool handlers', () => {
+		const okJson = (data: unknown) =>
+			({ ok: true, headers: new Headers(), json: () => Promise.resolve(data) }) as Response
+
+		const workspaceRow = {
+			id: 'ws-default-123',
+			name: 'WS',
+			settings: {
+				statuses: {
+					task: ['todo', 'done'],
+					lead: ['new', 'qualified', 'won', 'lost'],
+					loop: ['running', 'waiting', 'paused', 'archived'],
+				},
+			},
+		}
+
+		describe('list_loops', () => {
+			it('GETs /api/loops with the workspace header and returns the loops', async () => {
+				mockFetchSuccess({
+					loops: [{ id: 'loop-1', workspaceId: 'ws-default-123', name: 'Lead loop' }],
+				})
+
+				const handler = getHandler('list_loops')
+				const result = (await handler({})) as { content: Array<{ text: string }> }
+
+				expect(fetch).toHaveBeenCalledWith(
+					'http://localhost:3000/api/loops',
+					expect.objectContaining({
+						method: 'GET',
+						headers: expect.objectContaining({ 'X-Workspace-Id': 'ws-default-123' }),
+					}),
+				)
+				const parsed = JSON.parse(result.content[0].text)
+				expect(parsed.loops).toHaveLength(1)
+				expect(parsed.loops[0].id).toBe('loop-1')
+			})
+		})
+
+		describe('create_loop', () => {
+			it('creates inline step triggers and POSTs the loop node + in_loop edges to /api/graph', async () => {
+				let triggerCounter = 0
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+					const u = String(url)
+					const method = (init as RequestInit | undefined)?.method
+					if (u.endsWith('/api/workspaces')) return okJson([workspaceRow])
+					if (u.includes('/api/objects/'))
+						return okJson({
+							id: u.split('/').pop(),
+							workspaceId: 'ws-default-123',
+							type: 'task',
+						})
+					if (u.includes('/api/actors?ids='))
+						return okJson([
+							{ id: 'agent-1', type: 'agent' },
+							{ id: 'agent-2', type: 'agent' },
+						])
+					if (u.endsWith('/api/triggers') && method === 'POST') {
+						triggerCounter += 1
+						return okJson({ id: `trig-${triggerCounter}` })
+					}
+					if (u.endsWith('/api/graph'))
+						return okJson({
+							nodes: [{ $id: 'loop', id: 'loop-1', workspaceId: 'ws-default-123', type: 'loop' }],
+							edges: [{ id: 'edge-1', type: 'in_loop' }],
+						})
+					throw new Error(`Unexpected fetch: ${method ?? 'GET'} ${u}`)
+				})
+
+				const handler = getHandler('create_loop')
+				const result = (await handler({
+					name: 'Lead qualification',
+					guarantee: 'Every lead gets an answer',
+					status: 'running',
+					entry_condition: 'A lead is created',
+					close_condition: 'The lead is won or lost',
+					closed_statuses: { lead: ['won', 'lost'] },
+					steps: [
+						{
+							name: 'Qualify',
+							agent_id: 'agent-1',
+							prompt: 'Qualify the lead',
+							when: {
+								object_type: 'lead',
+								action: 'status_changed',
+								filter: { status: 'new' },
+							},
+						},
+						{
+							name: 'Weekly sweep',
+							agent_id: 'agent-2',
+							prompt: 'Sweep stale leads',
+							when: { cron: '0 9 * * 1' },
+						},
+					],
+					trigger_ids: [],
+					object_ids: ['obj-1'],
+				})) as { content: Array<{ text: string }> }
+
+				// Step triggers: one event trigger + one cron trigger.
+				const triggerCalls = vi
+					.mocked(fetch)
+					.mock.calls.filter(
+						(c) =>
+							String(c[0]).endsWith('/api/triggers') &&
+							(c[1] as RequestInit | undefined)?.method === 'POST',
+					)
+				expect(triggerCalls).toHaveLength(2)
+				const triggerBodies = triggerCalls.map((c) =>
+					JSON.parse((c[1] as RequestInit).body as string),
+				)
+				expect(triggerBodies[0]).toMatchObject({
+					name: 'Qualify',
+					type: 'event',
+					target_actor_id: 'agent-1',
+					config: {
+						entity_type: 'lead',
+						action: 'status_changed',
+						filter: { status: 'new' },
+					},
+				})
+				expect(triggerBodies[1]).toMatchObject({
+					name: 'Weekly sweep',
+					type: 'cron',
+					target_actor_id: 'agent-2',
+					config: { expression: '0 9 * * 1' },
+				})
+
+				// Graph body: loop node with the wired metadata + membership edge.
+				const graphCall = vi
+					.mocked(fetch)
+					.mock.calls.find((c) => String(c[0]).endsWith('/api/graph'))
+				expect(graphCall).toBeDefined()
+				const graphBody = JSON.parse((graphCall?.[1] as RequestInit).body as string)
+				expect(graphBody.nodes).toHaveLength(1)
+				expect(graphBody.nodes[0]).toMatchObject({
+					$id: 'loop',
+					type: 'loop',
+					title: 'Lead qualification',
+					content: 'Every lead gets an answer',
+					status: 'running',
+				})
+				expect(graphBody.nodes[0].metadata.trigger_ids).toEqual(['trig-1', 'trig-2'])
+				expect(graphBody.nodes[0].metadata.entry_condition).toBe('A lead is created')
+				expect(graphBody.nodes[0].metadata.closed_statuses).toEqual({
+					lead: ['won', 'lost'],
+				})
+				expect(graphBody.edges).toEqual([{ source: 'loop', target: 'obj-1', type: 'in_loop' }])
+
+				const parsed = JSON.parse(result.content[0].text)
+				expect(parsed.loop.id).toBe('loop-1')
+				expect(parsed.trigger_ids).toEqual(['trig-1', 'trig-2'])
+				expect(parsed.created_step_trigger_ids).toEqual(['trig-1', 'trig-2'])
+			})
+
+			it('rejects unknown trigger ids before creating anything', async () => {
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+					const u = String(url)
+					if (u.endsWith('/api/triggers')) return okJson([{ id: 'trig-known' }])
+					throw new Error(`Unexpected fetch: ${u}`)
+				})
+
+				const handler = getHandler('create_loop')
+				await expect(
+					handler({
+						name: 'Broken loop',
+						trigger_ids: ['trig-unknown'],
+						steps: [],
+						object_ids: [],
+					}),
+				).rejects.toThrow(/Unknown trigger id/)
+
+				// No graph call — nothing was created.
+				const graphCalls = vi
+					.mocked(fetch)
+					.mock.calls.filter((c) => String(c[0]).endsWith('/api/graph'))
+				expect(graphCalls).toHaveLength(0)
+			})
+
+			it('rejects closed_statuses referencing a status the workspace does not define', async () => {
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+					const u = String(url)
+					if (u.endsWith('/api/workspaces')) return okJson([workspaceRow])
+					throw new Error(`Unexpected fetch: ${u}`)
+				})
+
+				const handler = getHandler('create_loop')
+				await expect(
+					handler({
+						name: 'Bad statuses',
+						closed_statuses: { lead: ['exploded'] },
+						steps: [],
+						trigger_ids: [],
+						object_ids: [],
+					}),
+				).rejects.toThrow(/unknown status/)
+			})
+
+			it('deletes just-created step triggers when the graph insert fails', async () => {
+				const deleted: string[] = []
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+					const u = String(url)
+					const method = (init as RequestInit | undefined)?.method
+					if (u.endsWith('/api/workspaces')) return okJson([workspaceRow])
+					if (u.includes('/api/actors?ids=')) return okJson([{ id: 'agent-1', type: 'agent' }])
+					if (u.endsWith('/api/triggers') && method === 'POST') return okJson({ id: 'trig-orphan' })
+					if (u.includes('/api/triggers/') && method === 'DELETE') {
+						deleted.push(u.split('/').pop() as string)
+						return okJson({ deleted: true })
+					}
+					if (u.endsWith('/api/graph'))
+						return {
+							ok: false,
+							status: 400,
+							text: () => Promise.resolve('Invalid status'),
+						} as Response
+					throw new Error(`Unexpected fetch: ${method ?? 'GET'} ${u}`)
+				})
+
+				const handler = getHandler('create_loop')
+				await expect(
+					handler({
+						name: 'Rollback loop',
+						steps: [
+							{
+								name: 'Step',
+								agent_id: 'agent-1',
+								prompt: 'Do work',
+								when: { object_type: 'task', action: 'created' },
+							},
+						],
+						trigger_ids: [],
+						object_ids: [],
+					}),
+				).rejects.toThrow()
+
+				expect(deleted).toEqual(['trig-orphan'])
+			})
+		})
+
+		describe('update_loop', () => {
+			it('rejects objects that are not loops', async () => {
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+					const u = String(url)
+					if (u.includes('/api/objects/'))
+						return okJson({ id: 'obj-7', type: 'bet', workspaceId: 'ws-default-123' })
+					throw new Error(`Unexpected fetch: ${u}`)
+				})
+
+				const handler = getHandler('update_loop')
+				await expect(handler({ id: 'obj-7', name: 'New name' })).rejects.toThrow(/not 'loop'/)
+			})
+
+			it('read-modify-writes trigger_ids and adds/removes in_loop membership edges', async () => {
+				const relationshipDeletes: string[] = []
+				let patchBody: Record<string, unknown> | undefined
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+					const u = String(url)
+					const method = (init as RequestInit | undefined)?.method
+					if (u.endsWith('/api/objects/loop-1') && method === 'GET')
+						return okJson({
+							id: 'loop-1',
+							type: 'loop',
+							workspaceId: 'ws-default-123',
+							metadata: { trigger_ids: ['trig-old'] },
+						})
+					if (u.endsWith('/api/objects/loop-1') && method === 'PATCH') {
+						patchBody = JSON.parse((init as RequestInit).body as string)
+						return okJson({
+							id: 'loop-1',
+							type: 'loop',
+							workspaceId: 'ws-default-123',
+							metadata: patchBody?.metadata,
+						})
+					}
+					if (u.endsWith('/api/objects/obj-new') && method === 'GET')
+						return okJson({ id: 'obj-new', workspaceId: 'ws-default-123', type: 'lead' })
+					if (u.endsWith('/api/triggers') && (method === 'GET' || method === undefined))
+						return okJson([{ id: 'trig-add' }])
+					if (u.endsWith('/api/relationships') && method === 'POST')
+						return okJson({ id: 'rel-new' })
+					if (u.includes('/api/relationships?source_id=loop-1'))
+						return okJson([{ id: 'rel-old', targetId: 'obj-gone' }])
+					if (u.endsWith('/api/relationships/rel-old') && method === 'DELETE') {
+						relationshipDeletes.push('rel-old')
+						return okJson({ deleted: true })
+					}
+					throw new Error(`Unexpected fetch: ${method ?? 'GET'} ${u}`)
+				})
+
+				const handler = getHandler('update_loop')
+				const result = (await handler({
+					id: 'loop-1',
+					add_trigger_ids: ['trig-add'],
+					add_object_ids: ['obj-new'],
+					remove_object_ids: ['obj-gone'],
+				})) as { content: Array<{ text: string }> }
+
+				expect(patchBody?.metadata).toEqual({ trigger_ids: ['trig-old', 'trig-add'] })
+
+				const relPost = vi
+					.mocked(fetch)
+					.mock.calls.find(
+						(c) =>
+							String(c[0]).endsWith('/api/relationships') &&
+							(c[1] as RequestInit | undefined)?.method === 'POST',
+					)
+				expect(relPost).toBeDefined()
+				const relBody = JSON.parse((relPost?.[1] as RequestInit).body as string)
+				expect(relBody).toMatchObject({
+					source_id: 'loop-1',
+					target_id: 'obj-new',
+					type: 'in_loop',
+				})
+				expect(relationshipDeletes).toEqual(['rel-old'])
+
+				const parsed = JSON.parse(result.content[0].text)
+				expect(parsed.trigger_ids).toEqual(['trig-old', 'trig-add'])
+				expect(parsed.added_object_ids).toEqual(['obj-new'])
+				expect(parsed.removed_object_ids).toEqual(['obj-gone'])
+			})
+		})
+
+		describe('get_loop', () => {
+			it('GETs /api/loops?id= and returns the single loop', async () => {
+				mockFetchSuccess({
+					loops: [{ id: 'loop-1', workspaceId: 'ws-default-123', name: 'Lead loop' }],
+				})
+
+				const handler = getHandler('get_loop')
+				const result = (await handler({ id: 'loop-1' })) as { content: Array<{ text: string }> }
+
+				expect(fetch).toHaveBeenCalledWith(
+					'http://localhost:3000/api/loops?id=loop-1',
+					expect.objectContaining({
+						method: 'GET',
+						headers: expect.objectContaining({ 'X-Workspace-Id': 'ws-default-123' }),
+					}),
+				)
+				const parsed = JSON.parse(result.content[0].text)
+				expect(parsed.loop.id).toBe('loop-1')
+			})
+
+			it('throws a not-found error when the loops array is empty', async () => {
+				mockFetchSuccess({ loops: [] })
+
+				const handler = getHandler('get_loop')
+				await expect(handler({ id: 'missing-loop' })).rejects.toThrow(/not found/)
+			})
+		})
+
+		describe('delete_loop', () => {
+			it('rejects objects that are not loops', async () => {
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+					const u = String(url)
+					if (u.includes('/api/objects/'))
+						return okJson({ id: 'obj-7', type: 'bet', workspaceId: 'ws-default-123' })
+					throw new Error(`Unexpected fetch: ${u}`)
+				})
+
+				const handler = getHandler('delete_loop')
+				await expect(handler({ id: 'obj-7' })).rejects.toThrow(/not 'loop'/)
+			})
+
+			it('deletes every in_loop edge then the loop object, leaving members untouched', async () => {
+				const relationshipDeletes: string[] = []
+				let objectDeleted = false
+				// Two membership rows exist; each GET at offset=0 returns whatever is
+				// left after the previous page's deletes, mirroring how the real API
+				// behaves once rows are removed.
+				const remaining = [
+					{ id: 'rel-1', targetId: 'obj-a' },
+					{ id: 'rel-2', targetId: 'obj-b' },
+				]
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+					const u = String(url)
+					const method = (init as RequestInit | undefined)?.method
+					if (u.endsWith('/api/objects/loop-1') && method === 'GET')
+						return okJson({ id: 'loop-1', type: 'loop', workspaceId: 'ws-default-123' })
+					if (u.includes('/api/relationships?source_id=loop-1')) return okJson([...remaining])
+					if (u.startsWith('http://localhost:3000/api/relationships/') && method === 'DELETE') {
+						const relId = u.split('/').pop() as string
+						relationshipDeletes.push(relId)
+						const idx = remaining.findIndex((r) => r.id === relId)
+						if (idx >= 0) remaining.splice(idx, 1)
+						return okJson({ deleted: true })
+					}
+					if (u.endsWith('/api/objects/loop-1') && method === 'DELETE') {
+						objectDeleted = true
+						return okJson({ deleted: true })
+					}
+					throw new Error(`Unexpected fetch: ${method ?? 'GET'} ${u}`)
+				})
+
+				const handler = getHandler('delete_loop')
+				const result = (await handler({ id: 'loop-1' })) as { content: Array<{ text: string }> }
+
+				expect(relationshipDeletes.sort()).toEqual(['rel-1', 'rel-2'])
+				expect(objectDeleted).toBe(true)
+
+				const parsed = JSON.parse(result.content[0].text)
+				expect(parsed.deleted).toBe(true)
+				expect(parsed.removed_member_object_ids.sort()).toEqual(['obj-a', 'obj-b'])
+			})
 		})
 	})
 
@@ -2341,6 +2785,146 @@ describe('tool handlers', () => {
 					/Enum fields require at least one value/,
 				)
 			})
+
+			it('appends a value to an enum field via add_values', async () => {
+				const before: Record<string, FieldDef[]> = {
+					task: [{ name: 'priority', type: 'enum', values: ['low'] }],
+				}
+				const after: Record<string, FieldDef[]> = {
+					task: [{ name: 'priority', type: 'enum', values: ['low', 'high'] }],
+				}
+				mockRmwSequence(before, after)
+
+				const handler = getHandler('update_workspace_field')
+				await handler({ type: 'task', name: 'priority', add_values: ['high'] })
+
+				expect(lastPatchBody().settings.field_definitions.task[0]?.values).toEqual(['low', 'high'])
+			})
+
+			it('is a no-op when an added value is already present', async () => {
+				const same: Record<string, FieldDef[]> = {
+					task: [{ name: 'priority', type: 'enum', values: ['low'] }],
+				}
+				mockRmwSequence(same, same)
+
+				const handler = getHandler('update_workspace_field')
+				await handler({ type: 'task', name: 'priority', add_values: ['low'] })
+
+				expect(lastPatchBody().settings.field_definitions.task[0]?.values).toEqual(['low'])
+			})
+
+			it('removes a value from an enum field via remove_values', async () => {
+				const before: Record<string, FieldDef[]> = {
+					task: [{ name: 'priority', type: 'enum', values: ['low', 'high'] }],
+				}
+				const after: Record<string, FieldDef[]> = {
+					task: [{ name: 'priority', type: 'enum', values: ['low'] }],
+				}
+				mockRmwSequence(before, after)
+
+				const handler = getHandler('update_workspace_field')
+				await handler({ type: 'task', name: 'priority', remove_values: ['high'] })
+
+				expect(lastPatchBody().settings.field_definitions.task[0]?.values).toEqual(['low'])
+			})
+
+			it('is a no-op when a removed value is already absent', async () => {
+				const same: Record<string, FieldDef[]> = {
+					task: [{ name: 'priority', type: 'enum', values: ['low'] }],
+				}
+				mockRmwSequence(same, same)
+
+				const handler = getHandler('update_workspace_field')
+				await handler({ type: 'task', name: 'priority', remove_values: ['high'] })
+
+				expect(lastPatchBody().settings.field_definitions.task[0]?.values).toEqual(['low'])
+			})
+
+			it('applies add_values before remove_values in the same call', async () => {
+				const before: Record<string, FieldDef[]> = {
+					task: [{ name: 'priority', type: 'enum', values: ['low'] }],
+				}
+				const after: Record<string, FieldDef[]> = {
+					task: [{ name: 'priority', type: 'enum', values: ['medium'] }],
+				}
+				mockRmwSequence(before, after)
+
+				const handler = getHandler('update_workspace_field')
+				await handler({
+					type: 'task',
+					name: 'priority',
+					add_values: ['medium'],
+					remove_values: ['low'],
+				})
+
+				expect(lastPatchBody().settings.field_definitions.task[0]?.values).toEqual(['medium'])
+			})
+
+			it('applies add_values/remove_values on top of a values replacement in the same call', async () => {
+				const before: Record<string, FieldDef[]> = {
+					task: [{ name: 'priority', type: 'enum', values: ['low'] }],
+				}
+				const after: Record<string, FieldDef[]> = {
+					task: [{ name: 'priority', type: 'enum', values: ['medium', 'high'] }],
+				}
+				mockRmwSequence(before, after)
+
+				const handler = getHandler('update_workspace_field')
+				await handler({
+					type: 'task',
+					name: 'priority',
+					values: ['medium', 'urgent'],
+					add_values: ['high'],
+					remove_values: ['urgent'],
+				})
+
+				expect(lastPatchBody().settings.field_definitions.task[0]?.values).toEqual([
+					'medium',
+					'high',
+				])
+			})
+
+			it('populates a missing values list via add_values instead of throwing', async () => {
+				const before: Record<string, FieldDef[]> = {
+					task: [{ name: 'priority', type: 'enum' }],
+				}
+				const after: Record<string, FieldDef[]> = {
+					task: [{ name: 'priority', type: 'enum', values: ['low'] }],
+				}
+				mockRmwSequence(before, after)
+
+				const handler = getHandler('update_workspace_field')
+				await handler({ type: 'task', name: 'priority', add_values: ['low'] })
+
+				expect(lastPatchBody().settings.field_definitions.task[0]?.values).toEqual(['low'])
+			})
+
+			it('throws when add_values/remove_values are used on a non-enum field', async () => {
+				vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve([buildWorkspace({ task: [{ name: 'tag', type: 'text' }] })]),
+				} as Response)
+
+				const handler = getHandler('update_workspace_field')
+				await expect(handler({ type: 'task', name: 'tag', add_values: ['x'] })).rejects.toThrow(
+					/not "enum"/,
+				)
+			})
+
+			it('throws when clearing all values via remove_values leaves the enum empty', async () => {
+				vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+					ok: true,
+					json: () =>
+						Promise.resolve([
+							buildWorkspace({ task: [{ name: 'priority', type: 'enum', values: ['low'] }] }),
+						]),
+				} as Response)
+
+				const handler = getHandler('update_workspace_field')
+				await expect(
+					handler({ type: 'task', name: 'priority', remove_values: ['low'] }),
+				).rejects.toThrow(/Enum fields require at least one value/)
+			})
 		})
 
 		describe('delete_workspace_field', () => {
@@ -2364,89 +2948,6 @@ describe('tool handlers', () => {
 				expect(lastPatchBody().settings.field_definitions.task).toEqual(after.task)
 				const parsed = JSON.parse(result.content[0].text)
 				expect(parsed).toMatchObject({ deleted: 'tag', success: true })
-			})
-		})
-
-		describe('add_workspace_enum_value', () => {
-			it('appends the value to an enum field', async () => {
-				const before: Record<string, FieldDef[]> = {
-					task: [{ name: 'priority', type: 'enum', values: ['low'] }],
-				}
-				const after: Record<string, FieldDef[]> = {
-					task: [{ name: 'priority', type: 'enum', values: ['low', 'high'] }],
-				}
-				mockRmwSequence(before, after)
-
-				const handler = getHandler('add_workspace_enum_value')
-				await handler({ type: 'task', name: 'priority', value: 'high' })
-
-				expect(lastPatchBody().settings.field_definitions.task[0]?.values).toEqual(['low', 'high'])
-			})
-
-			it('throws when the field is not an enum', async () => {
-				vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
-					ok: true,
-					json: () => Promise.resolve([buildWorkspace({ task: [{ name: 'tag', type: 'text' }] })]),
-				} as Response)
-
-				const handler = getHandler('add_workspace_enum_value')
-				await expect(handler({ type: 'task', name: 'tag', value: 'x' })).rejects.toThrow(
-					/not "enum"/,
-				)
-			})
-
-			it('throws when the field does not exist', async () => {
-				vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
-					ok: true,
-					json: () => Promise.resolve([buildWorkspace({ task: [] })]),
-				} as Response)
-
-				const handler = getHandler('add_workspace_enum_value')
-				await expect(handler({ type: 'task', name: 'missing', value: 'x' })).rejects.toThrow(
-					/not found on type "task"/,
-				)
-			})
-		})
-
-		describe('remove_workspace_enum_value', () => {
-			it('removes the value from the enum field', async () => {
-				const before: Record<string, FieldDef[]> = {
-					task: [{ name: 'priority', type: 'enum', values: ['low', 'high'] }],
-				}
-				const after: Record<string, FieldDef[]> = {
-					task: [{ name: 'priority', type: 'enum', values: ['low'] }],
-				}
-				mockRmwSequence(before, after)
-
-				const handler = getHandler('remove_workspace_enum_value')
-				await handler({ type: 'task', name: 'priority', value: 'high' })
-
-				expect(lastPatchBody().settings.field_definitions.task[0]?.values).toEqual(['low'])
-			})
-
-			it('is a no-op when the value is already absent (still PATCHes once)', async () => {
-				const same: Record<string, FieldDef[]> = {
-					task: [{ name: 'priority', type: 'enum', values: ['low'] }],
-				}
-				mockRmwSequence(same, same)
-
-				const handler = getHandler('remove_workspace_enum_value')
-				await handler({ type: 'task', name: 'priority', value: 'high' })
-
-				expect(lastPatchBody().settings.field_definitions.task[0]?.values).toEqual(['low'])
-			})
-
-			it('throws when the enum field has no values list', async () => {
-				vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
-					ok: true,
-					json: () =>
-						Promise.resolve([buildWorkspace({ task: [{ name: 'priority', type: 'enum' }] })]),
-				} as Response)
-
-				const handler = getHandler('remove_workspace_enum_value')
-				await expect(handler({ type: 'task', name: 'priority', value: 'low' })).rejects.toThrow(
-					/has no values list/,
-				)
 			})
 		})
 
@@ -3337,6 +3838,129 @@ describe('tool handlers', () => {
 			expect(fetch).toHaveBeenCalledTimes(1)
 			const parsed = JSON.parse(result.content[0].text)
 			expect(parsed).toEqual(mockActor)
+		})
+
+		it('splits the merged llm_config into llm_provider + llm_config on the PATCH body', async () => {
+			let patchedBody: unknown
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+				patchedBody = JSON.parse(init?.body as string)
+				return {
+					ok: true,
+					headers: new Headers(),
+					json: async () => ({
+						id: actorId,
+						llm_provider: 'openai',
+						llm_config: { api_key: 'sk-test' },
+					}),
+				} as Response
+			})
+
+			const handler = getHandler('update_actor')
+			const result = (await handler({
+				id: actorId,
+				llm_config: { provider: 'openai', api_key: 'sk-test' },
+			})) as { content: Array<{ text: string }> }
+
+			expect(patchedBody).toMatchObject({
+				llm_provider: 'openai',
+				llm_config: { api_key: 'sk-test' },
+			})
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.llm_config).toEqual({ provider: 'openai', api_key: 'sk-test' })
+			expect(parsed.llm_provider).toBeUndefined()
+		})
+
+		it('adds the actor to a workspace when workspace_id is provided', async () => {
+			const workspaceId = '770e8400-e29b-41d4-a716-446655440003'
+			// A fresh object per test — the handler mutates the actor in place to
+			// attach workspace_id/role, and mockActor is shared across this describe
+			// block, so reusing it here would leak state into later tests.
+			const freshActor = { id: actorId, name: 'Test Actor' }
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve(freshActor),
+				} as Response)
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve({ actorId, workspaceId, role: 'owner' }),
+				} as Response)
+
+			const handler = getHandler('update_actor')
+			// getHandler bypasses the MCP SDK's zod parsing layer, so the schema's
+			// role default('member') never applies here — pass it explicitly, as a
+			// real client's parsed call would.
+			const result = (await handler({
+				id: actorId,
+				workspace_id: workspaceId,
+				role: 'owner',
+			})) as { content: Array<{ text: string }> }
+
+			expect(fetch).toHaveBeenCalledTimes(2)
+			expect(fetch).toHaveBeenLastCalledWith(
+				`http://localhost:3000/api/workspaces/${workspaceId}/members`,
+				expect.objectContaining({ method: 'POST' }),
+			)
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.workspace_id).toBe(workspaceId)
+			expect(parsed.role).toBe('owner')
+			expect(parsed.workspace_membership_error).toBeUndefined()
+		})
+
+		it('records workspace_membership_error without throwing when add-member fails', async () => {
+			const workspaceId = '770e8400-e29b-41d4-a716-446655440003'
+			const freshActor = { id: actorId, name: 'Test Actor' }
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve(freshActor),
+				} as Response)
+				.mockRejectedValueOnce(new Error('workspace not found'))
+
+			const handler = getHandler('update_actor')
+			const result = (await handler({
+				id: actorId,
+				workspace_id: workspaceId,
+				role: 'member',
+			})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.workspace_membership_error).toContain('workspace not found')
+			expect(parsed.workspace_id).toBeUndefined()
+		})
+
+		it('folds a membership failure into partial_failure when combined with skill ops', async () => {
+			const workspaceId = '770e8400-e29b-41d4-a716-446655440003'
+			const freshActor = { id: actorId, name: 'Test Actor' }
+			vi.spyOn(globalThis, 'fetch')
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve(freshActor),
+				} as Response)
+				.mockRejectedValueOnce(new Error('workspace not found'))
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () =>
+						Promise.resolve([{ workspaceSkillId: skillId1, success: true, skill: mockSkill }]),
+				} as Response)
+
+			const handler = getHandler('update_actor')
+			const result = (await handler({
+				id: actorId,
+				workspace_id: workspaceId,
+				role: 'member',
+				attach_skill_ids: [skillId1],
+			})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.partial_failure).toBe(true)
+			expect(parsed.actor.workspace_membership_error).toContain('workspace not found')
+			expect(parsed.attached_skills).toHaveLength(1)
 		})
 
 		it('attaches skills via one batched call and wraps response under actor key', async () => {
