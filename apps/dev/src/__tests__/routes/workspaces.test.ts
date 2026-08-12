@@ -409,6 +409,34 @@ describe('Workspaces Routes', () => {
 			expect(body.error.code).toBe('BAD_REQUEST')
 			expect(calls.updates).toHaveLength(0)
 		})
+
+		it('returns 400 when caller targets their own actorId', async () => {
+			const wsId = randomUUID()
+			const selfId = 'test-actor-id'
+			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces', selfId)
+			mockResults.select = [{ actorId: selfId }] // isWorkspaceMember passes
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${wsId}/members/${selfId}`, { role: 'admin' }),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.code).toBe('BAD_REQUEST')
+			expect(calls.updates).toHaveLength(0)
+		})
+
+		it('returns 422 when role is not a valid enum value', async () => {
+			const wsId = randomUUID()
+			const actorId = randomUUID()
+			const { app } = createTestApp(workspacesRoutes, '/api/workspaces')
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${wsId}/members/${actorId}`, { role: 'superuser' }),
+			)
+
+			expect(res.status).toBe(422)
+		})
 	})
 
 	describe('DELETE /api/workspaces/:id/members/:actorId', () => {
@@ -447,6 +475,23 @@ describe('Workspaces Routes', () => {
 			)
 
 			expect(res.status).toBe(403)
+		})
+
+		it('returns 400 when caller targets their own actorId', async () => {
+			const wsId = randomUUID()
+			const selfId = 'test-actor-id'
+			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces', selfId)
+			mockResults.select = [{ actorId: selfId }] // isWorkspaceMember passes
+
+			const res = await app.request(
+				new Request(`http://localhost/api/workspaces/${wsId}/members/${selfId}`, {
+					method: 'DELETE',
+				}),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.code).toBe('BAD_REQUEST')
 		})
 
 		it('returns 400 when removing the only owner', async () => {

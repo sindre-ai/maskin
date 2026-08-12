@@ -55,7 +55,7 @@ const addMemberBodySchema = z.object({
 })
 
 const updateMemberBodySchema = z.object({
-	role: z.string().min(1),
+	role: z.enum(['owner', 'admin', 'member']),
 })
 
 const memberParamSchema = z.object({
@@ -561,6 +561,10 @@ app.openapi(updateMemberRoute, (async (c) => {
 		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
 	}
 
+	if (callerId === actorId) {
+		return c.json(createApiError('BAD_REQUEST', 'Use account settings to manage your own membership'), 400)
+	}
+
 	const [existing] = await db
 		.select({ role: workspaceMembers.role })
 		.from(workspaceMembers)
@@ -587,36 +591,42 @@ app.openapi(updateMemberRoute, (async (c) => {
 		}
 	}
 
-	const [updated] = await db
-		.update(workspaceMembers)
-		.set({ role })
-		.where(
-			and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.actorId, actorId)),
-		)
-		.returning({
-			actorId: workspaceMembers.actorId,
-			role: workspaceMembers.role,
-			joinedAt: workspaceMembers.joinedAt,
+	const [updated, actor] = await db.transaction(async (tx) => {
+		const [u] = await tx
+			.update(workspaceMembers)
+			.set({ role })
+			.where(
+				and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.actorId, actorId)),
+			)
+			.returning({
+				actorId: workspaceMembers.actorId,
+				role: workspaceMembers.role,
+				joinedAt: workspaceMembers.joinedAt,
+			})
+
+		if (!u) return [undefined, undefined] as const
+
+		const [a] = await tx
+			.select({ name: actors.name, type: actors.type })
+			.from(actors)
+			.where(eq(actors.id, actorId))
+			.limit(1)
+
+		await tx.insert(events).values({
+			workspaceId,
+			actorId: callerId,
+			action: 'updated',
+			entityType: 'workspace_member',
+			entityId: actorId,
+			data: { role: { from: existing.role, to: role } },
 		})
+
+		return [u, a] as const
+	})
 
 	if (!updated) {
 		return c.json(createApiError('NOT_FOUND', 'Member not found in this workspace'), 404)
 	}
-
-	const [actor] = await db
-		.select({ name: actors.name, type: actors.type })
-		.from(actors)
-		.where(eq(actors.id, actorId))
-		.limit(1)
-
-	await db.insert(events).values({
-		workspaceId,
-		actorId: callerId,
-		action: 'updated',
-		entityType: 'workspace_member',
-		entityId: actorId,
-		data: { role: { from: existing.role, to: role } },
-	})
 
 	return c.json(
 		serialize({
@@ -667,6 +677,10 @@ app.openapi(removeMemberRoute, (async (c) => {
 		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
 	}
 
+	if (callerId === actorId) {
+		return c.json(createApiError('BAD_REQUEST', 'Use account settings to leave a workspace'), 400)
+	}
+
 	const [existing] = await db
 		.select({ role: workspaceMembers.role })
 		.from(workspaceMembers)
@@ -691,25 +705,31 @@ app.openapi(removeMemberRoute, (async (c) => {
 		}
 	}
 
-	const deleted = await db
-		.delete(workspaceMembers)
-		.where(
-			and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.actorId, actorId)),
-		)
-		.returning({ actorId: workspaceMembers.actorId })
+	const deleted = await db.transaction(async (tx) => {
+		const rows = await tx
+			.delete(workspaceMembers)
+			.where(
+				and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.actorId, actorId)),
+			)
+			.returning({ actorId: workspaceMembers.actorId })
+
+		if (rows.length > 0) {
+			await tx.insert(events).values({
+				workspaceId,
+				actorId: callerId,
+				action: 'deleted',
+				entityType: 'workspace_member',
+				entityId: actorId,
+				data: { role: existing.role },
+			})
+		}
+
+		return rows
+	})
 
 	if (deleted.length === 0) {
 		return c.json(createApiError('NOT_FOUND', 'Member not found in this workspace'), 404)
 	}
-
-	await db.insert(events).values({
-		workspaceId,
-		actorId: callerId,
-		action: 'deleted',
-		entityType: 'workspace_member',
-		entityId: actorId,
-		data: { role: existing.role },
-	})
 
 	return c.json({ removed: true })
 }) as RouteHandler<typeof removeMemberRoute, Env>)

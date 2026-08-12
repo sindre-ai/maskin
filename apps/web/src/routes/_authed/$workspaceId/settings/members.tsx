@@ -182,6 +182,7 @@ function MembersPage() {
 										<Select
 											value={member.role}
 											onValueChange={(value) => handleRoleChange(member, value)}
+											disabled={updateRole.isPending}
 										>
 											<SelectTrigger aria-label={`Role for ${member.name}`}>
 												<SelectValue />
