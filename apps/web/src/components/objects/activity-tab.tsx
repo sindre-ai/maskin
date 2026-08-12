@@ -95,7 +95,7 @@ export function ActivityTab({ object }: { object: ObjectResponse }) {
 		return min
 	}, [unreadEventIds, topLevel])
 
-	const containerRef = useRef<HTMLDivElement>(null)
+	const containerRef = useRef<HTMLUListElement>(null)
 	const [jumpTick, setJumpTick] = useState(0)
 	useEffect(() => {
 		if (jumpTick === 0 || firstUnreadId === null) return
