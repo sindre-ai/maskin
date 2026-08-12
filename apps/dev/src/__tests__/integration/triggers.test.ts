@@ -1,8 +1,15 @@
-import { sessions, triggers } from '@maskin/db/schema'
+import { randomUUID } from 'node:crypto'
+import { EventEmitter } from 'node:events'
+import { events, sessions, triggers } from '@maskin/db/schema'
+import type { PgNotifyBridge } from '@maskin/realtime'
 import { eq } from 'drizzle-orm'
+import { vi } from 'vitest'
+import type { SessionManager } from '../../services/session-manager'
+import { TriggerRunner } from '../../services/trigger-runner'
 import {
 	buildCreateTriggerBody,
 	insertActor,
+	insertObject,
 	insertSession,
 	insertTrigger,
 	insertWorkspace,
@@ -217,6 +224,91 @@ describe('Triggers Integration', () => {
 			const created = await createRes.json()
 			expect(created.config.from_status).toBe('todo')
 			expect(created.config.to_status).toBe('in_progress')
+		})
+	})
+
+	// Loop steps are event triggers, and loops can flow objects of ANY
+	// workspace-defined type. The runner used to gate objects-table hydration
+	// behind a hardcoded ['bet','task','insight'] allow-list, so a filter like
+	// { status: ... } on a custom type never matched. These tests run the real
+	// TriggerRunner against real Postgres to pin the dynamic behavior.
+	describe('event trigger firing for custom object types (TriggerRunner)', () => {
+		async function runEventThroughRunner(opts: {
+			objectStatus: string
+			filter: Record<string, unknown>
+		}) {
+			// A custom-typed object — 'lead' appears in no hardcoded type list.
+			const lead = await insertObject(db, workspaceId, getTestActorId(), {
+				type: 'lead',
+				title: 'Acme Corp',
+				status: opts.objectStatus,
+			})
+			const trigger = await insertTrigger(db, workspaceId, getTestActorId(), targetActorId, {
+				type: 'event',
+				config: { entity_type: 'lead', action: 'status_changed', filter: opts.filter },
+				enabled: true,
+			})
+			// New {changes}-shape event: no previous/updated snapshot, so the
+			// runner must hydrate the current row from the objects table.
+			const [eventRow] = await db
+				.insert(events)
+				.values({
+					workspaceId,
+					actorId: getTestActorId(),
+					action: 'status_changed',
+					entityType: 'lead',
+					entityId: lead?.id,
+					data: { changes: [{ field: 'status', old: 'new', new: opts.objectStatus }] },
+				})
+				.returning()
+
+			const bridge = new EventEmitter() as EventEmitter & PgNotifyBridge
+			const createSession = vi.fn().mockResolvedValue({ id: randomUUID() })
+			const runner = new TriggerRunner(db, bridge, {
+				createSession,
+			} as unknown as SessionManager)
+			await runner.start()
+			try {
+				bridge.emit('event', {
+					workspace_id: workspaceId,
+					entity_type: 'lead',
+					entity_id: lead?.id,
+					action: 'status_changed',
+					actor_id: getTestActorId(),
+					event_id: String(eventRow?.id),
+				})
+				// handleEvent runs fire-and-forget off the bridge listener — poll
+				// briefly instead of asserting on a race.
+				const deadline = Date.now() + 3000
+				while (createSession.mock.calls.length === 0 && Date.now() < deadline) {
+					await new Promise((resolve) => setTimeout(resolve, 50))
+				}
+			} finally {
+				await runner.stop()
+			}
+			return { createSession, trigger }
+		}
+
+		it('fires a status_changed trigger for a custom object type by hydrating the row from Postgres', async () => {
+			const { createSession, trigger } = await runEventThroughRunner({
+				objectStatus: 'qualified',
+				filter: { status: 'qualified' },
+			})
+			expect(createSession).toHaveBeenCalledTimes(1)
+			const [, sessionArgs] = createSession.mock.calls[0] as [
+				string,
+				{ actorId: string; triggerId: string },
+			]
+			expect(sessionArgs.actorId).toBe(targetActorId)
+			expect(sessionArgs.triggerId).toBe(trigger?.id)
+		})
+
+		it('does not fire when the hydrated custom-type row fails the filter', async () => {
+			const { createSession } = await runEventThroughRunner({
+				objectStatus: 'new',
+				filter: { status: 'qualified' },
+			})
+			expect(createSession).not.toHaveBeenCalled()
 		})
 	})
 })
