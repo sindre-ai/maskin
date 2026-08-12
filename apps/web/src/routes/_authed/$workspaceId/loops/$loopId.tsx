@@ -1,9 +1,11 @@
-import { ObjectActivity } from '@/components/activity/object-activity'
 import { PageHeader } from '@/components/layout/page-header'
+import { LoopActivity } from '@/components/loops/loop-activity'
+import { LoopChanges } from '@/components/loops/loop-changes'
 import { LoopFlow } from '@/components/loops/loop-flow'
 import { LoopHeader } from '@/components/loops/loop-header'
 import { type LoopPatch, LoopPatchCard } from '@/components/loops/loop-patch-card'
 import { LoopStats } from '@/components/loops/loop-stats'
+import { LoopSummary } from '@/components/loops/loop-summary'
 import { LoopUtteranceInput } from '@/components/loops/loop-utterance-input'
 import { EmptyState } from '@/components/shared/empty-state'
 import { Skeleton } from '@/components/shared/loading-skeleton'
@@ -135,6 +137,8 @@ function LoopDetailPage() {
 
 				<LoopUtteranceInput loop={loop} />
 
+				<LoopSummary loop={loop} />
+
 				<LoopStats loop={loop} />
 
 				<LoopFlow
@@ -142,13 +146,12 @@ function LoopDetailPage() {
 					triggers={loopTriggers}
 					actors={actors}
 					childObjects={children ?? []}
+					loop={loop}
 				/>
 
-				{object && (
-					<div>
-						<ObjectActivity workspaceId={workspaceId} object={object} events={events} />
-					</div>
-				)}
+				<LoopActivity workspaceId={workspaceId} events={events} />
+
+				<LoopChanges workspaceId={workspaceId} loopId={loop.id} events={events} />
 			</div>
 		</>
 	)
