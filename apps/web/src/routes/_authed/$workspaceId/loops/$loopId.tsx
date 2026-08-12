@@ -21,7 +21,7 @@ import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useQueryClient } from '@tanstack/react-query'
 import { Link, createFileRoute } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 
 /** Relationship type marking loop membership — mirrors
  * `LOOP_MEMBERSHIP_RELATIONSHIP_TYPE` in `apps/dev/src/routes/loops.ts`.
@@ -74,6 +74,29 @@ function LoopDetailPage() {
 			},
 		)
 	}
+
+	// Produce a pending patch from a plain-language utterance submitted via the
+	// utterance bar. Proposes updating the loop's guarantee to the operator's
+	// description — the patch card lets them review before anything is applied.
+	const handleUtterance = useCallback(
+		(utterance: string) => {
+			if (!loop) return
+			setPendingPatch({
+				patch: {
+					title: 'Update loop guarantee',
+					rows: [
+						{
+							label: 'Guarantee',
+							before: loop.guarantee ?? '(not set)',
+							after: utterance,
+						},
+					],
+				},
+				data: { content: utterance },
+			})
+		},
+		[loop],
+	)
 
 	if (loopLoading && !loop) {
 		return (
@@ -135,7 +158,7 @@ function LoopDetailPage() {
 					/>
 				)}
 
-				<LoopUtteranceInput loop={loop} />
+				<LoopUtteranceInput loop={loop} onSubmit={handleUtterance} />
 
 				<LoopSummary loop={loop} />
 
