@@ -10,9 +10,9 @@ const webDist = resolve(import.meta.dirname, '../web/dist')
 
 if (!existsSync(webDist)) {
 	console.error(
-		`@maskin/mobile: web production build not found at ${webDist}\n  The Tauri iOS shell bundles this directory into the app.\n  Run \`pnpm --filter @maskin/web build\` first (turbo does this via \`pnpm build\`).`,
+		`@maskin/native: web production build not found at ${webDist}\n  The Tauri iOS shell bundles this directory into the app.\n  Run \`pnpm --filter @maskin/web build\` first (turbo does this via \`pnpm build\`).`,
 	)
 	process.exit(1)
 }
 
-console.log(`@maskin/mobile: web build present (${webDist}) — shell ready for tauri`)
+console.log(`@maskin/native: web build present (${webDist}) — shell ready for tauri`)

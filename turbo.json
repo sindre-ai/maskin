@@ -92,7 +92,7 @@
 			"dependsOn": ["build"],
 			"cache": false
 		},
-		"@maskin/mobile#build": {
+		"@maskin/native#build": {
 			"outputs": [],
 			"dependsOn": ["^build"]
 		},

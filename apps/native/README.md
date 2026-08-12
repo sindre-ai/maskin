@@ -1,4 +1,4 @@
-# apps/mobile — Maskin iOS shell (Tauri 2)
+# apps/native — Maskin iOS shell (Tauri 2)
 
 A thin [Tauri 2](https://tauri.app) iOS wrapper around the existing `apps/web` frontend. It bundles `apps/web`'s production Vite build into a WKWebView app so Maskin runs on a physical iPhone with full feature parity — the SSE layer, login, and all UI ship unchanged from the web app.
 
@@ -7,7 +7,7 @@ This is the milestone-0 spike deliverable of the ["Maskin iOS app via Tauri 2 wr
 ## Layout
 
 ```
-apps/mobile/
+apps/native/
   build.mjs            # lightweight build task — verifies the web dist the shell bundles
   src-tauri/
     Cargo.toml         # Rust crate (maskin-mobile / maskin_mobile_lib)
@@ -19,7 +19,7 @@ apps/mobile/
 
 ## Non-macOS safety
 
-`apps/mobile` defines **no `dev` script**, so `turbo dev` / `pnpm dev` never touch the Rust or Xcode toolchain on any machine. The root `pnpm build` runs `build.mjs`, which only confirms that `apps/web/dist` exists (turbo builds web first via the workspace dependency) — no Rust/Xcode needed. The heavy compile is the opt-in `build:ios` task below.
+`apps/native` defines **no `dev` script**, so `turbo dev` / `pnpm dev` never touch the Rust or Xcode toolchain on any machine. The root `pnpm build` runs `build.mjs`, which only confirms that `apps/web/dist` exists (turbo builds web first via the workspace dependency) — no Rust/Xcode needed. The heavy compile is the opt-in `build:ios` task below.
 
 ## macOS: run on a physical iPhone
 
@@ -32,18 +32,18 @@ rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
 One-time project generation (creates the native Xcode project under `src-tauri/gen/apple`; the `ios` subcommand only exists on macOS):
 
 ```sh
-pnpm --filter @maskin/mobile ios:init
+pnpm --filter @maskin/native ios:init
 ```
 
 Then either:
 
 - **Development** — starts the web dev server, then the app on the simulator:
   ```sh
-  pnpm --filter @maskin/mobile dev:ios
+  pnpm --filter @maskin/native dev:ios
   ```
 - **On a device** (signed Xcode project, device connected, backend already running — see "Backend for a device run" below):
   ```sh
-  MASKIN_DEV_EXTERNAL=1 pnpm --filter @maskin/mobile exec tauri ios dev "<Device Name>" --host <your-mac-lan-ip>
+  MASKIN_DEV_EXTERNAL=1 pnpm --filter @maskin/native exec tauri ios dev "<Device Name>" --host <your-mac-lan-ip>
   ```
   `<Device Name>` is the name shown by `xcrun devicectl list devices` (e.g. `Nutty`). `--host` must be the Mac's LAN IP (`ipconfig getifaddr en0`) — without it the CLI tries `localhost`, which the phone can't reach. `MASKIN_DEV_EXTERNAL=1` makes Vite bind `0.0.0.0` (see `apps/web/vite.config.ts`) instead of `localhost`, which is required for the same reason. The `dev:ios` package script (`tauri ios dev --target aarch64-apple-ios`) is simulator-oriented — `--target` there selects a build target, not a device, so it won't prompt for or install to a physical device on its own; pass the device name and `--host` explicitly as above.
 - **Production bundle** — builds `apps/web` and compiles the app from `apps/web/dist`:

@@ -20,7 +20,7 @@ export interface StoredActor {
 }
 
 // ---- iOS Keychain backend (Tauri shell) ----
-// Inside apps/mobile the plaintext key must live in the iOS Keychain, never web
+// Inside apps/native the plaintext key must live in the iOS Keychain, never web
 // storage. getApiKey() stays synchronous everywhere, so on relaunch we hydrate
 // this cache from the Keychain (restoreSession) before the router mounts; the
 // plain web app keeps behaving exactly as before, on localStorage.
@@ -34,7 +34,7 @@ type TauriInternals = {
 	__TAURI_INTERNALS__?: { invoke(cmd: string, args?: Record<string, unknown>): Promise<unknown> }
 }
 
-// The shell (apps/mobile) exposes the keychain commands via the injected
+// The shell (apps/native) exposes the keychain commands via the injected
 // __TAURI_INTERNALS__.invoke bridge so no @tauri-apps dependency is added to
 // the web bundle. The bridge only exists in the shell; outside it these calls
 // throw and fall through, leaving the web path untouched.
