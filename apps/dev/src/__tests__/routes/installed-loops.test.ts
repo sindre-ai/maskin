@@ -435,6 +435,49 @@ describe('POST /api/installed-loops', () => {
 		expect(call.provisioned).toEqual({ actors: 1, triggers: 1, skills: 0, integrations: 0 })
 	})
 
+	it('passes a detail-view source through to the emit when the body carries it', async () => {
+		const { app, mockResults } = setup()
+		const workspaceId = randomUUID()
+		const loopId = randomUUID()
+		const install = installRow({ workspaceId, sourceLoopId: loopId })
+
+		mockResults.selectQueue = [
+			[buildWorkspaceMember({ workspaceId, actorId: ACTOR_ID })],
+			[loop({ id: loopId, slug: 'customer-continuous-discovery', version: '1.4.2' })],
+			[],
+			[],
+		]
+		mockResults.insertQueue = [[install], [loopObjectRow()], [], [], []]
+
+		const res = await app.request(
+			jsonRequest('POST', '/api/installed-loops', { loopId, workspaceId, source: 'detail' }),
+		)
+
+		expect(res.status).toBe(201)
+		await Promise.resolve()
+		expect(trackLoopInstalledMock).toHaveBeenCalledWith({
+			loopId,
+			loopSlug: 'customer-continuous-discovery',
+			loopVersion: '1.4.2',
+			workspaceId,
+			actorId: ACTOR_ID,
+			provisioned: { actors: 0, triggers: 0, skills: 0, integrations: 0 },
+			source: 'detail',
+		})
+	})
+
+	it('rejects a source value other than detail', async () => {
+		const { app } = setup()
+		const res = await app.request(
+			jsonRequest('POST', '/api/installed-loops', {
+				loopId: randomUUID(),
+				workspaceId: randomUUID(),
+				source: 'catalog',
+			}),
+		)
+		expect(res.status).toBe(400)
+	})
+
 	it('does not emit loop_installed when the install fails', async () => {
 		const { app, mockResults } = setup()
 		const workspaceId = randomUUID()

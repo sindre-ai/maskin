@@ -562,10 +562,10 @@ export const api = {
 				`/installed-loops?workspaceId=${encodeURIComponent(workspaceId)}`,
 				{ workspaceId },
 			),
-		install: (workspaceId: string, loopId: string) =>
+		install: (workspaceId: string, loopId: string, source?: 'detail') =>
 			request<InstalledLoopInstallResponse>('/installed-loops', {
 				method: 'POST',
-				body: { loopId, workspaceId },
+				body: { loopId, workspaceId, ...(source ? { source } : {}) },
 				workspaceId,
 			}),
 		fork: (workspaceId: string, installedLoopId: string) =>

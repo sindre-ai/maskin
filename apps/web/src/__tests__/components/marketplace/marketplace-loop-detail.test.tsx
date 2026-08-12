@@ -26,6 +26,7 @@ vi.mock('@tanstack/react-router', async () => {
 })
 
 import { MarketplaceLoopDetail } from '@/components/marketplace/marketplace-loop-detail'
+import { api } from '@/lib/api'
 import type { MarketplaceLoopItem, MarketplaceLoopSummary } from '@/lib/api'
 import { TestWrapper } from '../../setup'
 
@@ -63,6 +64,15 @@ beforeEach(() => {
 })
 
 describe('MarketplaceLoopDetail', () => {
+	it('tags an install started from the detail surface with source "detail"', async () => {
+		render(<MarketplaceLoopDetail workspaceId={workspaceId} loop={loop()} items={[]} />, {
+			wrapper: TestWrapper,
+		})
+		fireEvent.click(screen.getByRole('button', { name: /install loop/i }))
+		await screen.findByRole('button', { name: /install loop/i })
+		expect(api.installedLoops.install).toHaveBeenCalledWith('ws-1', 'loop-1', 'detail')
+	})
+
 	it('renders the loop name, description, and Install CTA when not installed', () => {
 		render(<MarketplaceLoopDetail workspaceId={workspaceId} loop={loop()} items={[]} />, {
 			wrapper: TestWrapper,

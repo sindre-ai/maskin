@@ -26,6 +26,12 @@ interface LoopInstalledProps {
 		skills: number
 		integrations: number
 	}
+	// Which marketplace surface started the install. Only the detail view sets
+	// this (`'detail'`); the catalog surface emits without it so the two
+	// populations stay distinguishable in PostHog for the install-from-detail
+	// conversion metric. Deliberately absent elsewhere — never derived
+	// client-side from URL/layout heuristics.
+	source?: 'detail'
 }
 
 // Ordering here is the wire ordering downstream queries will see in
@@ -51,6 +57,7 @@ export async function trackLoopInstalled(p: LoopInstalledProps): Promise<void> {
 		actor_id: p.actorId,
 		component_type_count: componentTypes.length,
 		component_types: componentTypes,
+		...(p.source ? { source: p.source } : {}),
 	})
 }
 

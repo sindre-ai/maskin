@@ -55,7 +55,14 @@ export function MarketplaceLoopDetail({
 						)
 					) : undefined
 				}
-				actions={<LoopInstallControls workspaceId={workspaceId} loop={loop} install={install} />}
+				actions={
+					<LoopInstallControls
+						workspaceId={workspaceId}
+						loop={loop}
+						install={install}
+						source="detail"
+					/>
+				}
 			/>
 
 			<LoopHowItWorks items={items} />

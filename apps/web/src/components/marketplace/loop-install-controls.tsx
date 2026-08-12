@@ -9,11 +9,19 @@ interface LoopInstallControlsProps {
 	workspaceId: string
 	loop: MarketplaceLoopSummary
 	install?: InstalledLoopRow
+	/** Marketplace surface; the detail page passes `'detail'` so its installs
+	 * carry a `source` marker on `loop_installed`. Catalogue default: absent. */
+	source?: 'detail'
 }
 
 /** Install/Fork/Remove action cluster for a marketplace loop — shared by the
  * catalog card and the loop detail page so both stay in sync. */
-export function LoopInstallControls({ workspaceId, loop, install }: LoopInstallControlsProps) {
+export function LoopInstallControls({
+	workspaceId,
+	loop,
+	install,
+	source,
+}: LoopInstallControlsProps) {
 	const [forkOpen, setForkOpen] = useState(false)
 	const [uninstallOpen, setUninstallOpen] = useState(false)
 	const locked = install?.isLocked ?? false
@@ -26,7 +34,7 @@ export function LoopInstallControls({ workspaceId, loop, install }: LoopInstallC
 			    the card's overlay link and catch its own click. */}
 			<div className="flex items-center justify-end gap-2">
 				{!install ? (
-					<InstallButton workspaceId={workspaceId} loopId={loop.id} />
+					<InstallButton workspaceId={workspaceId} loopId={loop.id} source={source} />
 				) : (
 					<>
 						{locked && (
