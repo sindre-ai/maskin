@@ -40,6 +40,18 @@ function collectAnalytics(page: import('@playwright/test').Page): AnalyticsPaylo
 	return calls
 }
 
+// The ⌘K/⌘F/Esc listeners live on <CommandPalette>, which only mounts once the
+// authed layout has loaded the workspace — until then `_authed/$workspaceId.tsx`
+// returns a bare "Loading workspace…" shell with no header and no palette.
+// Playwright's `keyboard.press` is a raw synthetic event with no actionability
+// wait, so firing ⌘K straight after navigation can hit the shell before the
+// listener exists and be silently dropped. Wait for the header (rendered with
+// the layout) before injecting a shortcut, matching the ready-wait pattern used
+// by the other layout-based specs (nav-item-clicked, header-new-menu).
+async function waitForAppReady(page: import('@playwright/test').Page): Promise<void> {
+	await expect(page.locator('header').first()).toBeVisible({ timeout: 15_000 })
+}
+
 for (const vp of SHIP_GATE_VIEWPORTS) {
 	test.describe(`Search + command palette at ${vp.label}`, () => {
 		test.use({ viewport: { width: vp.width, height: vp.height } })
@@ -57,6 +69,7 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			})
 
 			await page.goto(`/${account.workspaceId}`)
+			await waitForAppReady(page)
 			await page.keyboard.press('Control+KeyK')
 
 			const input = page.getByPlaceholder('Search or jump to…')
@@ -105,6 +118,7 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			const analyticsCalls = collectAnalytics(page)
 
 			await page.goto(`/${account.workspaceId}`)
+			await waitForAppReady(page)
 			await page.keyboard.press('Control+KeyK')
 			await page.getByPlaceholder('Search or jump to…').fill('asteroid')
 
@@ -171,6 +185,7 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			})
 
 			await page.goto(`/${account.workspaceId}`)
+			await waitForAppReady(page)
 			await page.keyboard.press('Control+KeyK')
 			await page.getByPlaceholder('Search or jump to…').fill('comet')
 			await expect(page.getByText('Comet Task')).toBeVisible({ timeout: 10000 })
@@ -179,6 +194,7 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 
 			// Empty /search shows the just-opened object under Recent objects.
 			await page.goto(`/${account.workspaceId}/search`)
+			await waitForAppReady(page)
 			await expect(page.getByRole('region', { name: 'Recent objects' })).toBeVisible()
 			await expect(
 				page.getByRole('region', { name: 'Recent objects' }).getByText('Comet Task'),
