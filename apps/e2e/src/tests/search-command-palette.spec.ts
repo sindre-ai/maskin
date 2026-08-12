@@ -144,14 +144,16 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			await expect(insightRow).toBeVisible({ timeout: 10000 })
 			await expect(betRow).toBeVisible()
 
-			// Type chip narrows the result set (T3 filter contract).
-			await page.getByRole('button', { name: 'Bet' }).click()
+			// Type chip narrows the result set (T3 filter contract). The chip's
+			// accessible name is exactly "Bet" (aria-label), so `exact` avoids
+			// colliding with the "Asteroid Bet …" result-row button.
+			await page.getByRole('button', { name: 'Bet', exact: true }).click()
 			await expect(betRow).toBeVisible()
 			await expect(insightRow).not.toBeVisible()
 
 			// <mark> rendering in both themes — the highlight color must never
 			// become invisible (mark styling lives in app.css as a custom token).
-			await page.getByRole('button', { name: 'All types' }).click()
+			await page.getByRole('button', { name: 'All types', exact: true }).click()
 			await expect(betRow).toBeVisible()
 			for (const scheme of ['light', 'dark'] as const) {
 				await page.evaluate((t) => localStorage.setItem('maskin-theme', t), scheme)
@@ -171,7 +173,7 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 
 			// Confirms the insight is still reachable after filtering.
 			await expect(page.getByRole('button', { name: /Asteroid Insight/ })).not.toBeVisible()
-			await page.getByRole('button', { name: 'All types' }).click()
+			await page.getByRole('button', { name: 'All types', exact: true }).click()
 			await expect(page.getByRole('button', { name: /Asteroid Insight/ })).toBeVisible()
 			await expect(page.getByText('“asteroid”')).toBeVisible()
 		})
