@@ -1,8 +1,12 @@
 import { expect, test } from '../fixtures/auth.fixture'
-import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
+import { SHIP_GATE_VIEWPORTS, VIEWPORTS } from '../helpers/viewports'
+
+// The DoD render gate calls out 1280px and 375px; the ship-gate list tops out
+// at 1024px, so add the standard desktop to close the wide-breakpoint gap.
+const RENDER_VIEWPORTS = [...SHIP_GATE_VIEWPORTS, VIEWPORTS.desktopXl]
 
 test.describe('Trigger detail page', () => {
-	for (const viewport of SHIP_GATE_VIEWPORTS) {
+	for (const viewport of RENDER_VIEWPORTS) {
 		test(`renders the one-page trigger form at ${viewport.label}`, async ({ page, account }) => {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
 
