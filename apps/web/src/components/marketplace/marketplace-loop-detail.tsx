@@ -72,21 +72,7 @@ export function MarketplaceLoopDetail({
 				actions={<HeaderActions workspaceId={workspaceId} loop={loop} install={install} />}
 			/>
 
-			<LoopFlow loop={loop} items={items} />
-
-			{items.length > 0 && (
-				<div>
-					<div className="mb-3 flex items-center gap-2">
-						<h2 className="text-sm font-semibold text-foreground">What it brings</h2>
-						<span className="text-xs text-muted-foreground">everything installed in one go</span>
-					</div>
-					<div className="flex flex-col gap-2">
-						{items.map((item) => (
-							<LoopBringsRow key={item.id} workspaceId={workspaceId} loopId={loop.id} item={item} />
-						))}
-					</div>
-				</div>
-			)}
+			<LoopFlow workspaceId={workspaceId} loop={loop} items={items} />
 		</div>
 	)
 }
@@ -165,12 +151,14 @@ interface ActorSnapshot {
 	systemPrompt?: unknown
 }
 
-/** The numbered flow plus the two ask-driven sections, all derived from real
- * trigger + actor snapshots — never per-loop copy. */
+/** The numbered flow, What it brings, and the ask-driven sections, all
+ * derived from real trigger + actor snapshots — never per-loop copy. */
 function LoopFlow({
+	workspaceId,
 	loop,
 	items,
 }: {
+	workspaceId: string
 	loop: MarketplaceLoopSummary
 	items: MarketplaceLoopItem[]
 }) {
@@ -222,6 +210,19 @@ function LoopFlow({
 	return (
 		<>
 			<FlowSection steps={steps} />
+			{items.length > 0 && (
+				<div>
+					<div className="mb-3 flex items-center gap-2">
+						<h2 className="text-sm font-semibold text-foreground">What it brings</h2>
+						<span className="text-xs text-muted-foreground">everything installed in one go</span>
+					</div>
+					<div className="flex flex-col gap-2">
+						{items.map((item) => (
+							<LoopBringsRow key={item.id} workspaceId={workspaceId} loopId={loop.id} item={item} />
+						))}
+					</div>
+				</div>
+			)}
 			<AsksSection rows={askRows} />
 			<RunsSection rows={runsRows(loop, items)} />
 			<PermissionsSection rows={permissionsRows(items)} />
