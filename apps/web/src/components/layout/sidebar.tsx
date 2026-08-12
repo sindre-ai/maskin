@@ -56,7 +56,7 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 
 	return (
 		<Sidebar collapsible="icon" {...props}>
-			<SidebarHeader className="h-11 justify-center">
+			<SidebarHeader className="min-h-11 justify-center">
 				<WorkspaceSwitcher />
 			</SidebarHeader>
 			<SidebarContent>

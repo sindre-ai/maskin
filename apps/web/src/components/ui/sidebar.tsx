@@ -458,7 +458,10 @@ const SidebarHeader = React.forwardRef<HTMLDivElement, React.ComponentProps<'div
 			<div
 				ref={ref}
 				data-sidebar="header"
-				className={cn('flex flex-col gap-2 p-2', className)}
+				// Both the left nav drawer and the right chat panel render this flush
+				// against the top edge of a full-height Sheet (mobile) or a
+				// fixed inset-y-0 rail (desktop) — pad it clear of the iOS status bar.
+				className={cn('flex flex-col gap-2 p-2 pt-[var(--safe-area-inset-top)]', className)}
 				{...props}
 			/>
 		)
@@ -472,7 +475,9 @@ const SidebarFooter = React.forwardRef<HTMLDivElement, React.ComponentProps<'div
 			<div
 				ref={ref}
 				data-sidebar="footer"
-				className={cn('flex flex-col gap-2 p-2', className)}
+				// Mirrors SidebarHeader's top padding — keeps footer actions (e.g.
+				// NavUser) clear of the iOS home indicator.
+				className={cn('flex flex-col gap-2 p-2 pb-[var(--safe-area-inset-bottom)]', className)}
 				{...props}
 			/>
 		)
