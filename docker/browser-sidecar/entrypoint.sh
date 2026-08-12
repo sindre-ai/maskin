@@ -22,6 +22,27 @@ if [ -f "$XVFB_PIDFILE" ] && kill -0 "$(cat "$XVFB_PIDFILE")" 2>/dev/null; then
 	exec sleep infinity
 fi
 
+# Engine support. This sidecar drives a real browser over Chromium's CDP
+# endpoint; the agent attaches via `@playwright/mcp --cdp-endpoint`, which
+# requires CDP, and only Chromium exposes CDP. WebKit (iPhone/Safari device
+# profiles) exposes no CDP, so it cannot be driven through this transport —
+# supporting it means switching the agent to Playwright's JSON-RPC server
+# transport, a separate architecture change (T5 probe finding). The engine is
+# therefore pinned to Chromium; reject any other request up front rather than
+# silently booting a browser nothing can attach to.
+BROWSER_ENGINE="${BROWSER_ENGINE:-chromium}"
+case "$BROWSER_ENGINE" in
+	chromium) ;;
+	webkit|safari)
+		echo "browser sidecar: engine '$BROWSER_ENGINE' unsupported — only Chromium is drivable over the CDP-attached Playwright MCP (WebKit exposes no CDP). Aborting." >&2
+		exit 1
+		;;
+	*)
+		echo "browser sidecar: unknown BROWSER_ENGINE '$BROWSER_ENGINE' (expected 'chromium'). Aborting." >&2
+		exit 1
+		;;
+esac
+
 # Device profile. User-facing verification defaults to a real Chromium mobile
 # viewport profile (iPhone-class ~375x667) so the pass exercises the deployed
 # surface the way a phone user meets it, rather than shrinking a desktop
