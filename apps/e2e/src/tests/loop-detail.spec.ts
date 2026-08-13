@@ -50,17 +50,54 @@ test.describe('Loop detail page', () => {
 				timeout: 10000,
 			})
 			await expect(
-				page.getByText('Every customer who gives feedback hears back within 30 days'),
+				page.getByText('Every customer who gives feedback hears back within 30 days').first(),
 			).toBeVisible()
+			// The four-sentence plain-language summary renders from the same loop.
+			await expect(page.getByTestId('loop-summary')).toContainText(
+				'Every customer who gives feedback hears back within 30 days',
+			)
 			await expect(page.getByText('in progress')).toBeVisible()
 			await expect(page.getByText('closed')).toBeVisible()
 			await expect(page.getByText('median to close')).toBeVisible()
 			await expect(page.getByText('The loop, right now')).toBeVisible()
+			// AC5 — the utterance input is present on loop detail.
+			await expect(page.getByPlaceholder('Listening — speak in plain words')).toBeVisible()
 			await expect(
 				page.getByText('Normalises the Slack event into the shared source'),
 			).toBeVisible()
+			// T2 sections — latest activity and the changes log with undo.
+			await expect(page.getByRole('heading', { name: 'Latest activity' })).toBeVisible()
+			await expect(page.getByRole('heading', { name: 'Changes' })).toBeVisible()
+			await expect(page.getByRole('button', { name: /undo/i }).first()).toBeVisible()
 		})
 	}
+
+	test('submitting an utterance opens the chat panel with the loop attached (AC5)', async ({
+		page,
+		account,
+	}) => {
+		await page.setViewportSize({ width: 1024, height: 768 })
+
+		const loop = await account.api.createObject(account.workspaceId, {
+			type: 'loop',
+			title: 'Feedback loop',
+			status: 'running',
+		})
+
+		await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
+		const input = page.getByPlaceholder('Listening — speak in plain words')
+		await expect(input).toBeVisible({ timeout: 10000 })
+
+		await input.fill('Tighten the close timeline')
+		await input.press('Enter')
+
+		// The utterance is forwarded to the chat-driven edit path: the chat
+		// panel opens with the message staged and sent.
+		await expect(page.getByRole('heading', { name: 'Chat' })).toBeVisible({
+			timeout: 10000,
+		})
+		await expect(input).toHaveValue('')
+	})
 
 	test('Pause/Resume toggles the loop pill', async ({ page, account }) => {
 		await page.setViewportSize({ width: 1024, height: 768 })

@@ -43,6 +43,8 @@ interface DataTableToolbarProps {
 	// Show — per-view visibility flags. Only surfaced when the caller opts in.
 	includeArchived?: boolean
 	onIncludeArchivedChange?: (value: boolean) => void
+	// Reset every display axis to defaults. Only surfaced when the caller opts in.
+	onResetToDefault?: () => void
 	// View switcher
 	view?: DisplayPanelView
 	onViewChange?: (view: DisplayPanelView) => void
@@ -78,6 +80,7 @@ export function DataTableToolbar({
 	onGroupByChange,
 	includeArchived,
 	onIncludeArchivedChange,
+	onResetToDefault,
 	view,
 	onViewChange,
 	boardSupported,
@@ -152,6 +155,7 @@ export function DataTableToolbar({
 				onGroupByChange={onGroupByChange}
 				includeArchived={includeArchived}
 				onIncludeArchivedChange={onIncludeArchivedChange}
+				onResetToDefault={onResetToDefault}
 			/>
 
 			{/* Actions — Import is occasional; New now lives only in the global
