@@ -12,7 +12,7 @@ import { Skeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
 import { useActors } from '@/hooks/use-actors'
 import { useEntityEvents } from '@/hooks/use-events'
-import { useLoop } from '@/hooks/use-loops'
+import { useLoop, useLoopActivity } from '@/hooks/use-loops'
 import { useObject, useObjects, useUpdateObject } from '@/hooks/use-objects'
 import { useRelationships } from '@/hooks/use-relationships'
 import { useTriggers } from '@/hooks/use-triggers'
@@ -51,6 +51,7 @@ function LoopDetailPage() {
 		{ enabled: childIds.length > 0 },
 	)
 	const { data: events } = useEntityEvents(workspaceId, loopId)
+	const { data: activityEvents } = useLoopActivity(loopId, workspaceId)
 	const updateObject = useUpdateObject(workspaceId)
 	const queryClient = useQueryClient()
 
@@ -172,7 +173,7 @@ function LoopDetailPage() {
 					loop={loop}
 				/>
 
-				<LoopActivity workspaceId={workspaceId} events={events} />
+				<LoopActivity workspaceId={workspaceId} events={activityEvents} />
 
 				<LoopChanges workspaceId={workspaceId} loopId={loop.id} events={events} />
 			</div>
