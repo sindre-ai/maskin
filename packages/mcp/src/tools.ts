@@ -509,14 +509,19 @@ export const tools = {
 	},
 	maskin_create_agent: {
 		description:
-			'Generate an opinionated subject-matter-expert (SME) agent spec from a single-line prompt. Runs a deterministic server-side pipeline that (1) parses the prompt into structured intent — domain, job-to-be-done, deliverables, constraints — and (2) synthesizes a stance-bearing persona (name, role, backstory with decision framework + named biases, scope boundaries, delegation description, inferred tool set). If mandatory intent fields are missing, returns { gap_question, missing } instead of a persona — no hallucinated fills. Actor registration and SKILL.md assembly are separate stages and not returned by this call. Sync response, typical p95 ≤15s. Optional examples/references/constraints refine stage 1 parsing.',
+			'Generate an opinionated subject-matter-expert (SME) agent, register it as a named actor in the given workspace, and attach a progressive-disclosure SKILL.md. Runs a deterministic server-side pipeline that (1) parses the prompt into structured intent — domain, job-to-be-done, deliverables, constraints, (2) synthesizes a stance-bearing persona (name, role, backstory with decision framework + named biases, scope boundaries, delegation description, inferred tool set), (3) authors a sectioned system prompt with 2–5 canonical worked examples, and (4) splices in an anti-hedging opinionation clause so the agent ends every in-domain response with a clear recommendation. Returns { actor_id, actor_name, skill_id, skill_name, intent, persona, system_prompt }. If mandatory intent fields are missing at stage 1, short-circuits and returns { gap_question, missing } without touching the workspace — no hallucinated fills. Sync response, typical p95 ≤30s. Optional examples/references/constraints refine stage 1 parsing.',
 		inputSchema: z.object({
 			prompt: z
 				.string()
 				.min(1)
 				.max(4000)
 				.describe('One-line description of the SME agent you want (required).'),
-			workspace_id: optionalWorkspaceId,
+			workspace_id: z
+				.string()
+				.uuid()
+				.describe(
+					'Workspace to register the new actor and SKILL.md into. Required — the route rejects the call without it. Call list_workspaces to discover available workspaces.',
+				),
 			examples: z
 				.array(z.string().min(1).max(2000))
 				.max(10)
