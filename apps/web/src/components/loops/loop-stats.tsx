@@ -18,7 +18,10 @@ export function LoopStats({ loop }: { loop: LoopSummary }) {
 	]
 
 	return (
-		<div className="flex flex-wrap rounded-xl border border-border bg-card overflow-hidden">
+		<div
+			className="flex flex-wrap rounded-xl border border-border bg-card overflow-hidden"
+			data-testid="loop-stats"
+		>
 			{stats.map((stat) => (
 				<div
 					key={stat.label}

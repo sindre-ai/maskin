@@ -126,9 +126,10 @@ test.describe('Header New menu', () => {
 		})
 
 		await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
-		await expect(
-			page.getByRole('heading', { level: 1, name: 'Header New menu object-detail check' }),
-		).toBeVisible({ timeout: 10000 })
+		await expect(page.getByPlaceholder('Untitled')).toHaveValue(
+			'Header New menu object-detail check',
+			{ timeout: 10000 },
+		)
 
 		await expect(headerNewTrigger(page)).toBeVisible()
 		await headerNewTrigger(page).click()
