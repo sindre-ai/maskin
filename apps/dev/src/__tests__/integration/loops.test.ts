@@ -4,7 +4,14 @@ import { events, objects, triggers as triggersTable } from '@maskin/db/schema'
 import { and, sql as drizzleSql, eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createApiError, formatZodError } from '../../lib/errors'
-import { insertActor, insertObject, insertRelationship, insertWorkspace } from '../factories'
+import {
+	insertActor,
+	insertObject,
+	insertRelationship,
+	insertSession,
+	insertTrigger,
+	insertWorkspace,
+} from '../factories'
 import { jsonGet } from '../helpers'
 import { db, getTestActorId, sql } from './global-setup'
 
@@ -125,6 +132,47 @@ describe('Loops read API integration', () => {
 		expect(row.waitingOnViewer).toBe(false)
 	})
 
+	it('scopes to a single loop when `id` is passed (used by get_loop)', async () => {
+		const loop = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'running',
+			title: 'Wanted loop',
+		})
+		await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'running',
+			title: 'Other loop in the same workspace',
+		})
+
+		const app = makeApp(actorId)
+		const res = await app.request(
+			jsonGet(`/api/loops?id=${loop.id}`, { 'x-workspace-id': workspaceId }),
+		)
+		expect(res.status).toBe(200)
+		const body = (await res.json()) as { loops: Array<{ id: string; name: string }> }
+		expect(body.loops).toHaveLength(1)
+		expect(body.loops[0]?.id).toBe(loop.id)
+		expect(body.loops[0]?.name).toBe('Wanted loop')
+	})
+
+	it('returns an empty array — not a 404 — when `id` does not match a loop in this workspace', async () => {
+		const otherActor = await insertActor(db)
+		const otherWs = await insertWorkspace(db, otherActor.id)
+		const foreignLoop = await insertObject(db, otherWs.id, otherActor.id, {
+			type: 'loop',
+			status: 'running',
+			title: 'Foreign loop',
+		})
+
+		const app = makeApp(actorId)
+		const res = await app.request(
+			jsonGet(`/api/loops?id=${foreignLoop.id}`, { 'x-workspace-id': workspaceId }),
+		)
+		expect(res.status).toBe(200)
+		const body = (await res.json()) as { loops: unknown[] }
+		expect(body.loops).toEqual([])
+	})
+
 	it('derives in-progress and closed counts from child objects linked via an in_loop relationship', async () => {
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
@@ -190,6 +238,117 @@ describe('Loops read API integration', () => {
 		const otherRow = body.loops.find((l) => l.id === otherLoop.id)
 		expect(otherRow?.inProgressCount).toBe(1)
 		expect(otherRow?.closedCount).toBe(0)
+	})
+
+	it("respects the loop's own metadata.closed_statuses for custom object types", async () => {
+		// A loop flowing a workspace-defined type ('lead') that appears in no
+		// hardcoded terminal table. Without the per-loop closed_statuses
+		// override, every lead would count as in-progress forever.
+		const loop = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'running',
+			title: 'Lead qualification',
+			metadata: { closed_statuses: { lead: ['won', 'lost'] } },
+		})
+		const openLoop = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'running',
+			title: 'No override loop',
+		})
+
+		const wonLead = await insertObject(db, workspaceId, actorId, {
+			type: 'lead',
+			status: 'won',
+			title: 'Acme',
+		})
+		const activeLead = await insertObject(db, workspaceId, actorId, {
+			type: 'lead',
+			status: 'contacted',
+			title: 'Globex',
+		})
+		// Same terminal-looking lead in a loop WITHOUT the override — must stay
+		// in-progress, proving the override is per-loop, not global.
+		const wonLeadNoOverride = await insertObject(db, workspaceId, actorId, {
+			type: 'lead',
+			status: 'won',
+			title: 'Initech',
+		})
+
+		for (const target of [wonLead, activeLead]) {
+			await insertRelationship(db, actorId, {
+				sourceType: 'object',
+				sourceId: loop.id,
+				targetType: 'object',
+				targetId: target.id,
+				type: 'in_loop',
+			})
+		}
+		await insertRelationship(db, actorId, {
+			sourceType: 'object',
+			sourceId: openLoop.id,
+			targetType: 'object',
+			targetId: wonLeadNoOverride.id,
+			type: 'in_loop',
+		})
+
+		const app = makeApp(actorId)
+		const res = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
+		const body = (await res.json()) as {
+			loops: Array<{
+				id: string
+				inProgressCount: number
+				closedCount: number
+				medianTimeToCloseMs: number | null
+			}>
+		}
+		const row = body.loops.find((l) => l.id === loop.id)
+		expect(row?.inProgressCount).toBe(1)
+		expect(row?.closedCount).toBe(1)
+		expect(row?.medianTimeToCloseMs).not.toBeNull()
+
+		const noOverrideRow = body.loops.find((l) => l.id === openLoop.id)
+		expect(noOverrideRow?.inProgressCount).toBe(1)
+		expect(noOverrideRow?.closedCount).toBe(0)
+	})
+
+	it("closed_statuses can also override a built-in type's terminal set for one loop", async () => {
+		// The loop declares that only 'validated' means done for tasks — a
+		// task in 'done' therefore still counts as in-progress FOR THIS LOOP,
+		// while the fallback table would have counted it closed.
+		const loop = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'running',
+			title: 'Strict validation loop',
+			metadata: { closed_statuses: { task: ['validated'] } },
+		})
+		const doneTask = await insertObject(db, workspaceId, actorId, {
+			type: 'task',
+			status: 'done',
+			title: 'Done but not validated',
+		})
+		const validatedTask = await insertObject(db, workspaceId, actorId, {
+			type: 'task',
+			status: 'validated',
+			title: 'Validated',
+		})
+		for (const target of [doneTask, validatedTask]) {
+			await insertRelationship(db, actorId, {
+				sourceType: 'object',
+				sourceId: loop.id,
+				targetType: 'object',
+				targetId: target.id,
+				type: 'in_loop',
+			})
+		}
+
+		const app = makeApp(actorId)
+		const res = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
+		const body = (await res.json()) as {
+			loops: Array<{ id: string; inProgressCount: number; closedCount: number }>
+		}
+		const row = body.loops.find((l) => l.id === loop.id)
+		expect(row?.inProgressCount).toBe(1)
+		expect(row?.closedCount).toBe(1)
 	})
 
 	it('computes medianTimeToCloseMs from closed children (updated_at − created_at), null when none are closed', async () => {
@@ -354,6 +513,167 @@ describe('Loops read API integration', () => {
 		expect(byId.get(running.id)?.pill).toBe('running')
 		expect(byId.get(waiting.id)?.pill).toBe('waiting_on_you')
 		expect(byId.get(paused.id)?.pill).toBe('paused')
+	})
+
+	describe("GET /api/loops/:id/activity — the agents' own event feed", () => {
+		it("returns session_* + trigger_fired events keyed to the loop's triggers, newest first", async () => {
+			const agent = await insertActor(db, { type: 'agent', name: 'Loop agent' })
+			const trigger = await insertTrigger(db, workspaceId, actorId, agent.id, {
+				name: 'Loop trigger',
+			})
+			const otherTrigger = await insertTrigger(db, workspaceId, actorId, agent.id, {
+				name: 'Unrelated trigger',
+			})
+
+			const loop = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				status: 'running',
+				title: 'Loop with activity',
+				metadata: { trigger_ids: [trigger.id] },
+			})
+
+			// A session launched from the loop's trigger. session events are
+			// keyed to session.id — the join through triggerId is what gets them
+			// on the feed at all.
+			const session = await insertSession(db, workspaceId, agent.id, actorId, {
+				triggerId: trigger.id,
+				status: 'completed',
+			})
+			// A second session from a DIFFERENT trigger — must not leak into
+			// the loop's feed.
+			const otherSession = await insertSession(db, workspaceId, agent.id, actorId, {
+				triggerId: otherTrigger.id,
+				status: 'completed',
+			})
+
+			await db.insert(events).values([
+				{
+					workspaceId,
+					actorId: agent.id,
+					action: 'trigger_fired',
+					entityType: 'trigger',
+					entityId: trigger.id,
+					data: {},
+					createdAt: new Date('2026-08-13T00:00:00.000Z'),
+				},
+				{
+					workspaceId,
+					actorId: agent.id,
+					action: 'session_created',
+					entityType: 'session',
+					entityId: session.id,
+					data: {},
+					createdAt: new Date('2026-08-13T00:00:01.000Z'),
+				},
+				{
+					workspaceId,
+					actorId: agent.id,
+					action: 'session_completed',
+					entityType: 'session',
+					entityId: session.id,
+					data: {},
+					createdAt: new Date('2026-08-13T00:00:02.000Z'),
+				},
+				// From the unrelated trigger — must not surface.
+				{
+					workspaceId,
+					actorId: agent.id,
+					action: 'trigger_fired',
+					entityType: 'trigger',
+					entityId: otherTrigger.id,
+					data: {},
+					createdAt: new Date('2026-08-13T00:00:03.000Z'),
+				},
+				{
+					workspaceId,
+					actorId: agent.id,
+					action: 'session_completed',
+					entityType: 'session',
+					entityId: otherSession.id,
+					data: {},
+					createdAt: new Date('2026-08-13T00:00:04.000Z'),
+				},
+				// Loop-row config event — belongs to the Changes log, not this
+				// feed. Its presence proves the endpoint filters by session/
+				// trigger action + entity id, not just workspace id.
+				{
+					workspaceId,
+					actorId,
+					action: 'updated',
+					entityType: 'object',
+					entityId: loop.id,
+					data: { changes: [{ field: 'title', old: 'x', new: 'y' }] },
+					createdAt: new Date('2026-08-13T00:00:05.000Z'),
+				},
+			])
+
+			const app = makeApp(actorId)
+			const res = await app.request(
+				jsonGet(`/api/loops/${loop.id}/activity`, { 'x-workspace-id': workspaceId }),
+			)
+			expect(res.status).toBe(200)
+			const body = (await res.json()) as {
+				events: Array<{ id: number; action: string; entityType: string; entityId: string }>
+			}
+
+			const actions = body.events.map((e) => e.action)
+			expect(actions).toEqual(['session_completed', 'session_created', 'trigger_fired'])
+			for (const e of body.events) {
+				expect(e.entityId === session.id || e.entityId === trigger.id).toBe(true)
+			}
+			expect(body.events.some((e) => e.action === 'updated')).toBe(false)
+			expect(body.events.some((e) => e.entityId === otherSession.id)).toBe(false)
+			expect(body.events.some((e) => e.entityId === otherTrigger.id)).toBe(false)
+		})
+
+		it('returns { events: [] } — not an error — for a loop with no triggers', async () => {
+			const loop = await insertObject(db, workspaceId, actorId, {
+				type: 'loop',
+				status: 'running',
+				title: 'Empty loop',
+			})
+
+			const app = makeApp(actorId)
+			const res = await app.request(
+				jsonGet(`/api/loops/${loop.id}/activity`, { 'x-workspace-id': workspaceId }),
+			)
+			expect(res.status).toBe(200)
+			const body = (await res.json()) as { events: unknown[] }
+			expect(body.events).toEqual([])
+		})
+
+		it('does not leak events from a loop in a different workspace', async () => {
+			const otherActor = await insertActor(db)
+			const otherWs = await insertWorkspace(db, otherActor.id)
+			const otherAgent = await insertActor(db, { type: 'agent', name: 'Foreign agent' })
+			const otherTrigger = await insertTrigger(db, otherWs.id, otherActor.id, otherAgent.id, {
+				name: 'Foreign trigger',
+			})
+			const foreignLoop = await insertObject(db, otherWs.id, otherActor.id, {
+				type: 'loop',
+				status: 'running',
+				title: 'Foreign loop',
+				metadata: { trigger_ids: [otherTrigger.id] },
+			})
+			await db.insert(events).values({
+				workspaceId: otherWs.id,
+				actorId: otherAgent.id,
+				action: 'trigger_fired',
+				entityType: 'trigger',
+				entityId: otherTrigger.id,
+				data: {},
+			})
+
+			const app = makeApp(actorId)
+			const res = await app.request(
+				jsonGet(`/api/loops/${foreignLoop.id}/activity`, { 'x-workspace-id': workspaceId }),
+			)
+			expect(res.status).toBe(200)
+			const body = (await res.json()) as { events: unknown[] }
+			// Foreign loop id is not visible in this workspace — return empty
+			// rather than leak that the id resolves elsewhere.
+			expect(body.events).toEqual([])
+		})
 	})
 
 	it('flips `waitingOnViewer` true on an unread status-change event on a child object, not just comments', async () => {

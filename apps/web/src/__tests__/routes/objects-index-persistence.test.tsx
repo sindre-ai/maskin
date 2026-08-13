@@ -76,6 +76,7 @@ vi.mock('@/lib/api', () => {
 		ApiError,
 		api: {
 			objects: { list: async () => [], search: async () => [] },
+			notifications: { list: async () => [] },
 			userDisplaySettings: {
 				list: async () => ({ items: [] }),
 				get: async () => ({
@@ -103,15 +104,15 @@ vi.mock('@/components/objects/bulk-action-bar', () => ({ BulkActionBar: () => nu
 vi.mock('@/components/layout/page-header', () => ({
 	PageHeader: ({ title }: { title: string }) => <h1>{title}</h1>,
 }))
-// Record every DataTable prop hand-off so tests can assert what the Objects
+// Record every ListView prop hand-off so tests can assert what the Objects
 // route pushes into it after hydrate + write-through cycles.
-type DataTableCapture = { lastProps: Record<string, unknown> | null }
-const dataTableCapture = globalThis as unknown as { __dtCapture: DataTableCapture }
-dataTableCapture.__dtCapture = { lastProps: null }
-vi.mock('@/components/objects/data-table/data-table', () => ({
-	DataTable: (props: Record<string, unknown>) => {
-		;(globalThis as unknown as { __dtCapture: DataTableCapture }).__dtCapture.lastProps = props
-		return <div data-testid="data-table" />
+type ListViewCapture = { lastProps: Record<string, unknown> | null }
+const listViewCapture = globalThis as unknown as { __lvCapture: ListViewCapture }
+listViewCapture.__lvCapture = { lastProps: null }
+vi.mock('@/components/objects/list/list-view', () => ({
+	ListView: (props: Record<string, unknown>) => {
+		;(globalThis as unknown as { __lvCapture: ListViewCapture }).__lvCapture.lastProps = props
+		return <div data-testid="list-view" />
 	},
 }))
 vi.mock('@/components/objects/data-table/data-table-toolbar', () => ({
@@ -148,7 +149,7 @@ function resetMockState() {
 	mockState.__dsUpsertCalls = 0
 	mockState.__dsLastUpsertBody = null
 	mockState.__dsPersistedSettings = {}
-	dataTableCapture.__dtCapture.lastProps = null
+	listViewCapture.__lvCapture.lastProps = null
 }
 
 describe('ObjectsPage display-settings write-through', () => {
@@ -193,7 +194,7 @@ describe('ObjectsPage group-expansion + scroll-anchor persistence', () => {
 		)
 	}
 
-	it('hydrates the persisted groupExpanded map into the DataTable expanded prop', async () => {
+	it('hydrates the persisted groupExpanded map into the ListView expanded prop', async () => {
 		mockState.__dsPersistedSettings = {
 			view: 'list',
 			columnVisibility: {},
@@ -203,12 +204,12 @@ describe('ObjectsPage group-expansion + scroll-anchor persistence', () => {
 		mount()
 		await flushHydrateAndWriteThrough()
 
-		const props = dataTableCapture.__dtCapture.lastProps
+		const props = listViewCapture.__lvCapture.lastProps
 		expect(props).not.toBeNull()
 		expect(props?.expanded).toEqual({ 'status:active': true, 'status:done': false })
 	}, 10_000)
 
-	it('leaves DataTable at defaults when a legacy blob has no groupExpanded field', async () => {
+	it('leaves ListView at defaults when a legacy blob has no groupExpanded field', async () => {
 		// Legacy row predates T1's schema extension — none of the new fields
 		// are present, so the route must fall through to the empty defaults
 		// without throwing.
@@ -219,15 +220,15 @@ describe('ObjectsPage group-expansion + scroll-anchor persistence', () => {
 		mount()
 		await flushHydrateAndWriteThrough()
 
-		const props = dataTableCapture.__dtCapture.lastProps
+		const props = listViewCapture.__lvCapture.lastProps
 		expect(props).not.toBeNull()
-		// Empty ExpandedState record — all groups collapsed by default.
+		// Empty expansion record — all groups collapsed by default.
 		expect(props?.expanded).toEqual({})
 	}, 10_000)
 
 	it('persists a scroll anchor captured via onCaptureViewState through the 500 ms debounce', async () => {
 		// Fresh mount, no persisted state — hydrate fires the initial write
-		// with firstVisibleRowId=null. Then simulate the DataTable calling
+		// with firstVisibleRowId=null. Then simulate the ListView calling
 		// `onCaptureViewState()` right before a row-click navigate; the route
 		// snapshots into the session store AND updates the persisted blob.
 		mockState.__dsPersistedSettings = {
@@ -246,18 +247,17 @@ describe('ObjectsPage group-expansion + scroll-anchor persistence', () => {
 		mount()
 		await flushHydrateAndWriteThrough()
 
-		const props = dataTableCapture.__dtCapture.lastProps
-		const onExpandedChange = props?.onExpandedChange as ((updater: unknown) => void) | undefined
+		const props = listViewCapture.__lvCapture.lastProps
+		const onExpandedChange = props?.onExpandedChange as
+			| ((next: Record<string, boolean>) => void)
+			| undefined
 		expect(onExpandedChange).toBeDefined()
 
 		const callsBefore = mockState.__dsUpsertCalls
 		await act(async () => {
-			// TanStack Table hands the setter a functional updater in prod;
-			// mimic the shape it forwards from `row.toggleExpanded()`.
-			onExpandedChange?.((prev: Record<string, boolean> | boolean) => {
-				const base = typeof prev === 'boolean' ? {} : (prev ?? {})
-				return { ...base, 'status:active': true }
-			})
+			// ListView hands the setter a plain Record — user toggling a group
+			// header writes `{ [groupKey]: true }` (closing = key absent).
+			onExpandedChange?.({ 'status:active': true })
 		})
 		await act(async () => {
 			await new Promise((r) => setTimeout(r, 700))

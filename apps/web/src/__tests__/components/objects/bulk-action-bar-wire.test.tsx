@@ -73,6 +73,25 @@ function Harness({ selectedIds, onClear }: HarnessProps) {
 		[selectedIds, bulkUpdate, onClear],
 	)
 
+	const handleArchive = useCallback(() => {
+		const ids = [...selectedIds]
+		bulkUpdate.mutate(
+			{ ids, patch: { status: 'archived' } },
+			{
+				onSuccess: (data: BulkUpdateObjectsResponse) => {
+					const okCount = data.results.filter((r) => r.ok).length
+					const failed = ids.length - okCount
+					if (failed === 0) {
+						toast.success(`${okCount} object${okCount === 1 ? '' : 's'} archived`)
+						onClear()
+					} else {
+						toast.error(`${okCount} of ${ids.length} archived; ${failed} failed`)
+					}
+				},
+			},
+		)
+	}, [selectedIds, bulkUpdate, onClear])
+
 	return (
 		<BulkActionBar
 			selectedCount={selectedIds.length}
@@ -82,6 +101,7 @@ function Harness({ selectedIds, onClear }: HarnessProps) {
 			]}
 			ownerOptions={[]}
 			onStatusChange={handleStatus}
+			onArchive={handleArchive}
 			onClear={onClear}
 		/>
 	)
@@ -146,6 +166,47 @@ describe('BulkActionBar wired to bulk-update', () => {
 		const rows = cache?.pages[0] ?? []
 		expect(rows.find((r) => r.id === 'obj-1')?.status).toBe('done')
 		expect(rows.find((r) => r.id === 'obj-2')?.status).toBe('done')
+		expect(rows.find((r) => r.id === 'obj-3')?.status).toBe('todo')
+	})
+
+	it('applies archive to all selected rows and clears selection on full success', async () => {
+		vi.mocked(api.objects.bulkUpdate).mockResolvedValue({
+			results: [
+				{ id: 'obj-1', ok: true },
+				{ id: 'obj-2', ok: true },
+			],
+		})
+		const onClear = vi.fn()
+		const { queryClient } = renderWithClient(
+			<Harness selectedIds={['obj-1', 'obj-2']} onClear={onClear} />,
+		)
+		const key = queryKeys.objects.listInfinite(workspaceId, {})
+		queryClient.setQueryData(key, {
+			pages: [
+				[
+					buildObject({ id: 'obj-1', status: 'todo' }),
+					buildObject({ id: 'obj-2', status: 'todo' }),
+					buildObject({ id: 'obj-3', status: 'todo' }),
+				],
+			],
+			pageParams: [0],
+		})
+
+		fireEvent.click(screen.getByRole('button', { name: 'Archive selected' }))
+
+		await waitFor(() =>
+			expect(api.objects.bulkUpdate).toHaveBeenCalledWith(workspaceId, {
+				ids: ['obj-1', 'obj-2'],
+				patch: { status: 'archived' },
+			}),
+		)
+		await waitFor(() => expect(toast.success).toHaveBeenCalledWith('2 objects archived'))
+		await waitFor(() => expect(onClear).toHaveBeenCalledTimes(1))
+
+		const cache = queryClient.getQueryData<{ pages: ObjectResponse[][] }>(key)
+		const rows = cache?.pages[0] ?? []
+		expect(rows.find((r) => r.id === 'obj-1')?.status).toBe('archived')
+		expect(rows.find((r) => r.id === 'obj-2')?.status).toBe('archived')
 		expect(rows.find((r) => r.id === 'obj-3')?.status).toBe('todo')
 	})
 

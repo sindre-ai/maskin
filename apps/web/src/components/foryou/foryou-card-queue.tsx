@@ -132,7 +132,7 @@ export function ForYouCardQueue({ workspaceId, queue }: ForYouCardQueueProps) {
 			{cards}
 
 			{currentItem ? (
-				<div className="fixed inset-x-0 bottom-0 z-10 flex justify-center border-t border-border bg-background/95 px-4 py-3 backdrop-blur-sm md:sticky md:border-0 md:bg-transparent md:px-0 md:py-0">
+				<div className="fixed inset-x-0 bottom-0 z-10 flex justify-center px-4 py-3 md:sticky md:px-0 md:py-0">
 					<div className="flex w-full max-w-[760px] items-center justify-between gap-3">
 						<Button
 							size="sm"

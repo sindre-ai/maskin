@@ -49,9 +49,9 @@ test('scroll_to_top fires once with the signed-off schema after a full-viewport 
 	})
 
 	await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
-	await expect(page.locator('textarea').first()).toHaveValue('Scroll-to-top probe bet', {
-		timeout: 10000,
-	})
+	await expect(
+		page.getByRole('heading', { level: 1, name: 'Scroll-to-top probe bet' }),
+	).toBeVisible({ timeout: 10000 })
 
 	const scrollRoot = page.locator('[data-scroll-root]')
 	await expect(scrollRoot).toHaveCount(1)

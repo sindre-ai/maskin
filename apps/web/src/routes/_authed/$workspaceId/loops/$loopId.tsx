@@ -1,14 +1,17 @@
-import { ObjectActivity } from '@/components/activity/object-activity'
 import { PageHeader } from '@/components/layout/page-header'
+import { LoopActivity } from '@/components/loops/loop-activity'
+import { LoopChanges } from '@/components/loops/loop-changes'
 import { LoopFlow } from '@/components/loops/loop-flow'
 import { LoopHeader } from '@/components/loops/loop-header'
 import { LoopStats } from '@/components/loops/loop-stats'
+import { LoopSummary } from '@/components/loops/loop-summary'
+import { LoopUtteranceInput } from '@/components/loops/loop-utterance-input'
 import { EmptyState } from '@/components/shared/empty-state'
 import { Skeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
 import { useActors } from '@/hooks/use-actors'
 import { useEntityEvents } from '@/hooks/use-events'
-import { useLoop } from '@/hooks/use-loops'
+import { useLoop, useLoopActivity } from '@/hooks/use-loops'
 import { useObject, useObjects, useUpdateObject } from '@/hooks/use-objects'
 import { useRelationships } from '@/hooks/use-relationships'
 import { useTriggers } from '@/hooks/use-triggers'
@@ -43,6 +46,7 @@ function LoopDetailPage() {
 		{ enabled: childIds.length > 0 },
 	)
 	const { data: events } = useEntityEvents(workspaceId, loopId)
+	const { data: activityEvents } = useLoopActivity(loopId, workspaceId)
 	const updateObject = useUpdateObject(workspaceId)
 
 	if (loopLoading && !loop) {
@@ -96,6 +100,10 @@ function LoopDetailPage() {
 					</Link>
 				)}
 
+				<LoopUtteranceInput loop={loop} />
+
+				<LoopSummary loop={loop} />
+
 				<LoopStats loop={loop} />
 
 				<LoopFlow
@@ -103,13 +111,12 @@ function LoopDetailPage() {
 					triggers={loopTriggers}
 					actors={actors}
 					childObjects={children ?? []}
+					loop={loop}
 				/>
 
-				{object && (
-					<div>
-						<ObjectActivity workspaceId={workspaceId} object={object} events={events} />
-					</div>
-				)}
+				<LoopActivity workspaceId={workspaceId} events={activityEvents} />
+
+				<LoopChanges workspaceId={workspaceId} loopId={loop.id} events={events} />
 			</div>
 		</>
 	)

@@ -70,6 +70,10 @@ export interface DisplayPanelProps {
 	// non-bet surfaces keep their existing panel.
 	includeArchived?: boolean
 	onIncludeArchivedChange?: (value: boolean) => void
+	// "Reset to default" — restores every display axis (filter/group/order/
+	// show-in-list/show-archived) to defaults. Only rendered when wired; hidden
+	// on consumers that don't opt in (same convention as the Show section).
+	onResetToDefault?: () => void
 	// Trigger appearance
 	iconOnly?: boolean
 	// Sections — surfaces that don't have a board view can opt out of the View pills.
@@ -176,6 +180,7 @@ export function DisplayPanel({
 	onGroupByChange,
 	includeArchived = false,
 	onIncludeArchivedChange,
+	onResetToDefault,
 	iconOnly = false,
 	showView = true,
 }: DisplayPanelProps) {
@@ -649,6 +654,23 @@ export function DisplayPanel({
 								})}
 							</div>
 						</div>
+					)}
+
+					{/* Reset to default — restores every display axis. Always the
+						final row, matching the mockup's footer action. */}
+					{onResetToDefault && (
+						<>
+							<Separator />
+							<div className="p-1">
+								<button
+									type="button"
+									onClick={onResetToDefault}
+									className="w-full rounded-lg px-2.5 py-2 text-left text-xs text-text-secondary transition-colors hover:bg-bg-hover hover:text-foreground"
+								>
+									Reset to default
+								</button>
+							</div>
+						</>
 					)}
 				</div>
 			</ResponsivePopoverContent>

@@ -332,6 +332,8 @@ export const api = {
 
 	loops: {
 		list: (workspaceId: string) => request<ListLoopsResponse>('/loops', { workspaceId }),
+		activity: (id: string, workspaceId: string) =>
+			request<{ events: EventResponse[] }>(`/loops/${id}/activity`, { workspaceId }),
 	},
 
 	triggers: {

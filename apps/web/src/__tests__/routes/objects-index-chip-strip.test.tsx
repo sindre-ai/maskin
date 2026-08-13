@@ -54,8 +54,8 @@ vi.mock('@tanstack/react-query', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('@tanstack/react-query')>()
 	return {
 		...actual,
-		useQuery: () => ({
-			data: { columns: [] },
+		useQuery: (options: { queryKey?: readonly unknown[] }) => ({
+			data: options?.queryKey?.[0] === 'notifications' ? [] : { columns: [] },
 			isLoading: false,
 			isSuccess: true,
 			isError: false,
@@ -75,6 +75,7 @@ vi.mock('@tanstack/react-query', async (importOriginal) => {
 			removeQueries: vi.fn(),
 			cancelQueries: vi.fn(),
 		}),
+		useMutation: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
 	}
 })
 
@@ -92,8 +93,8 @@ vi.mock('@/components/objects/bulk-action-bar', () => ({ BulkActionBar: () => nu
 vi.mock('@/components/layout/page-header', () => ({
 	PageHeader: ({ title }: { title: string }) => <h1>{title}</h1>,
 }))
-vi.mock('@/components/objects/data-table/data-table', () => ({
-	DataTable: () => <div data-testid="data-table" />,
+vi.mock('@/components/objects/list/list-view', () => ({
+	ListView: () => <div data-testid="list-view" />,
 }))
 vi.mock('@/components/objects/board/board-view', () => ({
 	BoardView: () => <div data-testid="board-view" />,
@@ -111,7 +112,7 @@ vi.mock('@/components/shared/create-picker', () => ({
 	isCreateShortcut: () => false,
 }))
 vi.mock('@/lib/api', () => ({
-	api: { objects: { list: vi.fn(), search: vi.fn() } },
+	api: { objects: { list: vi.fn(), search: vi.fn() }, notifications: { list: vi.fn() } },
 }))
 vi.mock('@/lib/analytics', () => ({
 	trackEvent: vi.fn(),
@@ -130,7 +131,25 @@ vi.mock('@/lib/query-keys', () => ({
 			board: () => ['objects', 'board'],
 		},
 		relationships: { all: (workspaceId: string) => ['relationships', workspaceId] },
+		notifications: {
+			list: (workspaceId: string, filters?: unknown) => [
+				'notifications',
+				workspaceId,
+				'list',
+				filters,
+			],
+		},
 		imports: { detail: (id: string) => ['imports', 'detail', id] },
+		notifications: {
+			all: (workspaceId: string) => ['notifications', workspaceId],
+			list: (workspaceId: string, filters?: Record<string, unknown>) => [
+				'notifications',
+				workspaceId,
+				'list',
+				filters,
+			],
+			detail: (id: string) => ['notifications', 'detail', id],
+		},
 		userDisplaySettings: {
 			detail: (workspaceId: string, objectType: string) => [
 				'user-display-settings',

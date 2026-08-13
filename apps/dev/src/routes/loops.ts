@@ -1,10 +1,11 @@
-import { OpenAPIHono, type RouteHandler, createRoute } from '@hono/zod-openapi'
+import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, objects, readState, relationships, triggers } from '@maskin/db/schema'
+import { events, objects, readState, relationships, sessions, triggers } from '@maskin/db/schema'
 import { TERMINAL_BET_STATUSES, listLoopsResponseSchema } from '@maskin/shared'
-import { and, eq, inArray, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, or, sql } from 'drizzle-orm'
 import { validationFailureHook } from '../lib/errors'
-import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
+import { errorSchema, eventResponseSchema, workspaceIdHeader } from '../lib/openapi-schemas'
+import { serializeArray } from '../lib/serialize'
 
 /** Loose UUID match — used to filter free-form `metadata.trigger_ids` entries
  * before they reach a query. Guards two things at once: an attacker-controlled
@@ -33,6 +34,18 @@ type Env = {
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 /**
+ * This route only implements GET — there is intentionally no POST/PATCH/DELETE
+ * here. A loop is just an `objects` row with `type = 'loop'`, so creating,
+ * updating, and deleting one is done through the existing generic endpoints
+ * (POST /api/graph, PATCH/DELETE /api/objects/:id, POST /api/triggers,
+ * POST/DELETE /api/relationships) rather than a loop-specific write API.
+ * `create_loop` / `update_loop` / `delete_loop` in `packages/mcp/src/server.ts`
+ * are the supported way to perform those writes correctly (wiring
+ * `metadata.trigger_ids` and `in_loop` edges) — see the comment above their
+ * registration for the full breakdown of which endpoint each step hits.
+ */
+
+/**
  * Terminal statuses per object type — a child object in one of these values
  * counts toward the loop's `closedCount` and drops out of `inProgressCount`.
  * `bet` is `TERMINAL_BET_STATUSES` (`packages/shared/src/schemas/objects.ts`)
@@ -50,6 +63,12 @@ const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
  * Kept as a per-type table here rather than shared because the read API is
  * the only consumer today; if a second consumer appears, promote to
  * `packages/shared/src/schemas/objects.ts` alongside `TERMINAL_BET_STATUSES`.
+ *
+ * This table is the FALLBACK only. A loop can carry its own
+ * `metadata.closed_statuses` map (`{ <type>: [statuses...] }`, written by the
+ * MCP create_loop/update_loop tools) that overrides the entry for a type —
+ * that's what makes closed counts work for workspace-defined custom object
+ * types, which by definition can never appear in a hardcoded table.
  */
 const TERMINAL_STATUSES_BY_TYPE: Record<string, string[]> = {
 	bet: [...TERMINAL_BET_STATUSES, 'archived'],
@@ -58,11 +77,30 @@ const TERMINAL_STATUSES_BY_TYPE: Record<string, string[]> = {
 	commitment: [], // commitments never terminate — they're standing state
 }
 
-const TERMINAL_STATUS_LITERAL_LIST = sql.raw(
-	`(${Object.entries(TERMINAL_STATUSES_BY_TYPE)
-		.flatMap(([type, statuses]) => statuses.map((s) => `('${type}','${s}')`))
-		.join(',')})`,
-)
+/**
+ * Extract a loop's `metadata.closed_statuses` override map, shape-validated:
+ * a plain object of type → string[]. Anything malformed (arrays at the top
+ * level, non-string entries) is dropped rather than erroring — same tolerance
+ * as `trigger_ids` above, a hand-edited metadata blob must not 500 the page.
+ */
+function readClosedStatuses(meta: Record<string, unknown>): Record<string, string[]> | null {
+	const raw = meta.closed_statuses
+	if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+	const cleaned: Record<string, string[]> = {}
+	for (const [type, value] of Object.entries(raw as Record<string, unknown>)) {
+		if (Array.isArray(value)) {
+			cleaned[type] = value.filter((s): s is string => typeof s === 'string')
+		}
+	}
+	return Object.keys(cleaned).length > 0 ? cleaned : null
+}
+
+const listLoopsQuerySchema = z.object({
+	id: z.string().uuid().optional().openapi({
+		description:
+			'Scope the result to a single loop id (used by get_loop). Omit to list every loop in the workspace.',
+	}),
+})
 
 const listLoopsRoute = createRoute({
 	method: 'get',
@@ -70,9 +108,10 @@ const listLoopsRoute = createRoute({
 	tags: ['loops'],
 	summary: 'List loops in workspace with derived stats',
 	description:
-		'Returns every Loop object in the workspace with per-row derived fields (in-progress / closed counts, median close time, agent-actor ids, per-viewer waiting flag) computed from a single request. Returns an empty array — not an error — for workspaces with zero loops.',
+		'Returns every Loop object in the workspace with per-row derived fields (in-progress / closed counts, median close time, agent-actor ids, per-viewer waiting flag) computed from a single request. Returns an empty array — not an error — for workspaces with zero loops. Pass `id` to scope to a single loop (still returns `{loops: [...]}`, empty array if that id is not a loop in this workspace).',
 	request: {
 		headers: workspaceIdHeader,
+		query: listLoopsQuerySchema,
 	},
 	responses: {
 		200: {
@@ -90,15 +129,21 @@ app.openapi(listLoopsRoute, (async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id } = c.req.valid('query')
 
-	// Load every Loop in the workspace. `list_objects`-style read; the derived
-	// per-row fields below fan out to child objects / triggers / read state in
-	// separate batched queries so N stays small (5 queries total regardless
-	// of the number of loops).
+	// Load every Loop in the workspace, or just one when `id` is passed (used
+	// by get_loop) — the derived-stats logic below is unaware of the
+	// difference, it just fans out over whatever rows come back.
 	const loopRows = await db
 		.select()
 		.from(objects)
-		.where(and(eq(objects.workspaceId, workspaceId), eq(objects.type, 'loop')))
+		.where(
+			and(
+				eq(objects.workspaceId, workspaceId),
+				eq(objects.type, 'loop'),
+				...(id ? [eq(objects.id, id)] : []),
+			),
+		)
 	if (loopRows.length === 0) {
 		return c.json({ loops: [] })
 	}
@@ -128,49 +173,76 @@ app.openapi(listLoopsRoute, (async (c) => {
 	// pointing at unknown ids).
 	const loopIdArray = sql.raw(`ARRAY[${loopIds.map((id) => `'${id}'`).join(',')}]::uuid[]`)
 
-	// Per-loop child-object counts + median close time in a single scan.
-	const childStatsRows = await db.execute<{
+	// Per-loop child-object rows in a single scan. Whether a member counts as
+	// "closed" depends on the loop's own `metadata.closed_statuses` override
+	// (falling back to TERMINAL_STATUSES_BY_TYPE), so the terminal test is
+	// per-loop and computed here rather than in a shared SQL literal list.
+	// Loops hold at most tens of members, so row-level fetch + JS aggregation
+	// stays cheap.
+	const childRows = await db.execute<{
 		loop_id: string
-		in_progress_count: number
-		closed_count: number
-		median_close_ms: number | null
+		type: string
+		status: string
+		created_at: string | Date
+		updated_at: string | Date
 	}>(
 		sql`
-			SELECT
-				r.source_id AS loop_id,
-				COUNT(*) FILTER (
-					WHERE (o.type, o.status) NOT IN ${TERMINAL_STATUS_LITERAL_LIST}
-				)::int AS in_progress_count,
-				COUNT(*) FILTER (
-					WHERE (o.type, o.status) IN ${TERMINAL_STATUS_LITERAL_LIST}
-				)::int AS closed_count,
-				percentile_cont(0.5) WITHIN GROUP (
-					ORDER BY EXTRACT(EPOCH FROM (o.updated_at - o.created_at)) * 1000
-				) FILTER (
-					WHERE (o.type, o.status) IN ${TERMINAL_STATUS_LITERAL_LIST}
-				) AS median_close_ms
+			SELECT r.source_id AS loop_id, o.type, o.status, o.created_at, o.updated_at
 			FROM ${relationships} r
 			JOIN ${objects} o ON o.id = r.target_id
 			WHERE r.type = ${LOOP_MEMBERSHIP_RELATIONSHIP_TYPE}
 				AND r.source_id = ANY(${loopIdArray})
 				AND o.workspace_id = ${workspaceId}
-			GROUP BY r.source_id
 		`,
 	)
+
+	const closedStatusOverridesByLoop = new Map<string, Record<string, string[]>>()
+	for (const l of loopRows) {
+		const meta = (l.metadata as Record<string, unknown> | null) ?? {}
+		const override = readClosedStatuses(meta)
+		if (override) closedStatusOverridesByLoop.set(l.id, override)
+	}
+
+	const isClosedForLoop = (loopId: string, type: string, status: string): boolean => {
+		const override = closedStatusOverridesByLoop.get(loopId)?.[type]
+		const terminal = override ?? TERMINAL_STATUSES_BY_TYPE[type] ?? []
+		return terminal.includes(status)
+	}
 
 	const childStatsByLoop = new Map<
 		string,
 		{ inProgressCount: number; closedCount: number; medianCloseMs: number | null }
 	>()
-	for (const row of childStatsRows) {
-		childStatsByLoop.set(row.loop_id, {
-			inProgressCount: Number(row.in_progress_count) || 0,
-			closedCount: Number(row.closed_count) || 0,
-			medianCloseMs:
-				row.median_close_ms === null || row.median_close_ms === undefined
-					? null
-					: Math.round(Number(row.median_close_ms)),
-		})
+	{
+		const closeDurationsByLoop = new Map<string, number[]>()
+		for (const row of childRows) {
+			const stats = childStatsByLoop.get(row.loop_id) ?? {
+				inProgressCount: 0,
+				closedCount: 0,
+				medianCloseMs: null,
+			}
+			if (isClosedForLoop(row.loop_id, row.type, row.status)) {
+				stats.closedCount += 1
+				const durations = closeDurationsByLoop.get(row.loop_id) ?? []
+				durations.push(new Date(row.updated_at).getTime() - new Date(row.created_at).getTime())
+				closeDurationsByLoop.set(row.loop_id, durations)
+			} else {
+				stats.inProgressCount += 1
+			}
+			childStatsByLoop.set(row.loop_id, stats)
+		}
+		// Median matches percentile_cont(0.5): linear interpolation — for an
+		// even count, the mean of the two middle values.
+		for (const [loopId, durations] of closeDurationsByLoop) {
+			durations.sort((a, b) => a - b)
+			const mid = Math.floor(durations.length / 2)
+			const median =
+				durations.length % 2 === 1
+					? (durations[mid] as number)
+					: ((durations[mid - 1] as number) + (durations[mid] as number)) / 2
+			const stats = childStatsByLoop.get(loopId)
+			if (stats) stats.medianCloseMs = Math.max(0, Math.round(median))
+		}
 	}
 
 	// Trigger → agent lookup (batched across all loops).
@@ -323,5 +395,120 @@ app.openapi(listLoopsRoute, (async (c) => {
 
 	return c.json(response)
 }) as RouteHandler<typeof listLoopsRoute, Env>)
+
+/**
+ * `GET /api/loops/:id/activity` — the "Latest activity" feed on the loop detail
+ * screen. Distinct from `/api/events/history?entity_id=<loopId>` (which is
+ * scoped to the loop row itself and drives the Changes log): session and
+ * trigger events carry `entityId = session.id` / `trigger.id`, so filtering by
+ * loop id alone cannot reach them. This endpoint reaches them by joining
+ * through the loop's `metadata.trigger_ids`:
+ *   - `trigger_fired` events for those trigger ids
+ *   - `session_*` lifecycle events for sessions whose `triggerId` is in that
+ *     list (session-manager writes these under `entityType = 'session'`).
+ * Result: the feed shows what the agents actually did on the loop, without any
+ * overlap with the loop-row events the Changes log renders.
+ */
+const loopActivityRoute = createRoute({
+	method: 'get',
+	path: '/{id}/activity',
+	tags: ['loops'],
+	summary: "Agent-work events (session + trigger) scoped to a loop's triggers",
+	description:
+		"Returns the loop's agent-work event feed: `trigger_fired` events for the trigger ids listed in the loop's `metadata.trigger_ids`, plus `session_*` lifecycle events for sessions launched from those triggers. Newest first. Returns `{ events: [] }` — not an error — for a loop with no triggers, no fired triggers, or an unknown id (a foreign loop returns empty without leaking existence).",
+	request: {
+		headers: workspaceIdHeader,
+		params: z.object({ id: z.string().uuid() }),
+	},
+	responses: {
+		200: {
+			description: 'Agent-work events for this loop, newest first',
+			content: {
+				'application/json': { schema: z.object({ events: z.array(eventResponseSchema) }) },
+			},
+		},
+		400: {
+			description: 'Missing workspace ID or malformed loop id',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(loopActivityRoute, (async (c) => {
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id: loopId } = c.req.valid('param')
+
+	const [loop] = await db
+		.select({ metadata: objects.metadata })
+		.from(objects)
+		.where(
+			and(eq(objects.id, loopId), eq(objects.workspaceId, workspaceId), eq(objects.type, 'loop')),
+		)
+		.limit(1)
+
+	if (!loop) {
+		return c.json({ events: [] })
+	}
+
+	const meta = (loop.metadata as Record<string, unknown> | null) ?? {}
+	const raw = meta.trigger_ids
+	const triggerIds = Array.isArray(raw)
+		? raw.filter((v): v is string => typeof v === 'string' && UUID_RE.test(v))
+		: []
+
+	if (triggerIds.length === 0) {
+		return c.json({ events: [] })
+	}
+
+	// Sessions launched from any of the loop's triggers. `triggerId` is
+	// nullable and set to NULL on trigger delete, so a stale metadata.trigger_ids
+	// entry naturally drops out here — no join to the triggers table needed.
+	const loopSessions = await db
+		.select({ id: sessions.id })
+		.from(sessions)
+		.where(and(eq(sessions.workspaceId, workspaceId), inArray(sessions.triggerId, triggerIds)))
+	const sessionIds = loopSessions.map((s) => s.id)
+
+	// `trigger_fired` events are keyed to the trigger; `session_*` events are
+	// keyed to the session. Both are filtered to this workspace so a leaked
+	// id in metadata cannot pull events from another workspace.
+	const sessionActions = [
+		'session_created',
+		'session_running',
+		'session_completed',
+		'session_failed',
+		'session_timeout',
+		'session_paused',
+	]
+
+	const conditions = [
+		and(
+			eq(events.action, 'trigger_fired'),
+			eq(events.entityType, 'trigger'),
+			inArray(events.entityId, triggerIds),
+		),
+	]
+	if (sessionIds.length > 0) {
+		conditions.push(
+			and(
+				inArray(events.action, sessionActions),
+				eq(events.entityType, 'session'),
+				inArray(events.entityId, sessionIds),
+			),
+		)
+	}
+
+	const rows = await db
+		.select()
+		.from(events)
+		.where(and(eq(events.workspaceId, workspaceId), or(...conditions)))
+		.orderBy(desc(events.createdAt))
+		.limit(50)
+
+	return c.json({
+		events: serializeArray(rows) as z.infer<typeof eventResponseSchema>[],
+	})
+}) as RouteHandler<typeof loopActivityRoute, Env>)
 
 export default app

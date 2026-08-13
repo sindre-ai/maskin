@@ -1,24 +1,24 @@
 import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS, VIEWPORTS } from '../helpers/viewports'
 
-// The Title column on the two object-page tables (the DataTable on /objects
-// and the Related Objects table on a detail page) used to cap the title Link
-// at max-w-[150px] sm:max-w-[300px], so long titles were cut off well before
-// the row ran out of horizontal space. The fix marks the title TableHead
-// with `w-full` (via header.column.id === 'title') and the title TableCell
-// with `max-w-0`, so the auto-layout table hands the leftover width to that
-// column and the flex child (min-w-0 flex-1 truncate) fills it and truncates
-// cleanly. Both tables switch to a card layout below md via useIsMobile.
+// Long titles must not be cut off while the row still has empty horizontal
+// space. Two surfaces are covered:
+// - The /objects "list" surface (the List view that replaced the DataTable):
+//   rows are flex boxes — the title Link sits in a `flex-1 min-w-0` container
+//   with `min-w-0 truncate`, so it fills whatever width the fixed-size cells
+//   (checkbox, type, tag, updated, chevron) leave over.
+// - The Related Objects table on a detail page (still a DataTable): its title
+//   TableHead carries `w-full` (via header.column.id === 'title') and the cell
+//   `max-w-0`, so auto-layout hands all leftover width to that column.
 //
 // Coverage is split in two:
 // - Ship-gate viewports (375 / 768 / 1024) get smoke assertions: the page
 //   renders and doesn't introduce a horizontal document scroll. The absolute
 //   "title link > 300px" cap can't be asserted at these viewports without
 //   modelling the layout — at 768 Chromium's scrollbar can drop innerWidth
-//   below useIsMobile's 768 boundary (flipping to the card branch), and at
-//   1024 the sidebar + chat panel are both open by default and eat enough
-//   row width that the title cell ends up well below 300px even with the
-//   fix applied.
+//   below useIsMobile's 768 boundary, and at 1024 the sidebar + chat panel are
+//   both open by default and eat enough row width that the title falls well
+//   below 300px even with the fix applied.
 // - Desktop viewports (1280 / 1440) get the DoD assertion: the title link
 //   exceeds the previous 300px cap. This is what the bet's Definition of
 //   Done actually asks for ("Verified on a normal desktop viewport with a
@@ -29,7 +29,7 @@ const LONG_TITLE =
 
 const DESKTOP_VIEWPORTS = [VIEWPORTS.desktopXl, VIEWPORTS.desktop]
 
-test.describe('Object table — Title column grows to fill available width', () => {
+test.describe('Object title — long titles fill available row width', () => {
 	for (const viewport of SHIP_GATE_VIEWPORTS) {
 		test(`objects list renders without horizontal page scroll at ${viewport.label}`, async ({
 			page,
@@ -45,12 +45,11 @@ test.describe('Object table — Title column grows to fill available width', () 
 
 			await page.goto(`/${account.workspaceId}/objects`)
 
-			// The long-titled row must be reachable at every ship-gate viewport,
-			// whether the DataTable renders as a table (≥ md) or a card (< md).
+			// The long-titled row must be reachable at every ship-gate viewport.
 			const titleLink = page.getByRole('link', { name: LONG_TITLE })
 			await expect(titleLink).toBeVisible({ timeout: 10000 })
 
-			// The table's overflow-auto wrapper must contain any inner overflow,
+			// The list's overflow-auto wrapper must contain any inner overflow,
 			// not push the document itself sideways.
 			const horizScroll = await page.evaluate(
 				() => document.documentElement.scrollWidth > document.documentElement.clientWidth,
@@ -76,13 +75,10 @@ test.describe('Object table — Title column grows to fill available width', () 
 			const titleLink = page.getByRole('link', { name: LONG_TITLE })
 			await expect(titleLink).toBeVisible({ timeout: 10000 })
 
-			// The Title <th> carries w-full so auto-layout gives it all the leftover
-			// width after the fixed-size columns.
-			const titleHead = page.getByRole('columnheader', { name: /^title/i }).first()
-			await expect(titleHead).toBeVisible()
-
-			// The Link truncates via min-w-0 flex-1: its rendered width must be more
-			// than the previous 300px cap (browser rounding tolerated).
+			// The list row is a flex box: the Link lives in a flex-1 min-w-0
+			// container, so it truncates only at the row's actual edge — its
+			// rendered width must be more than the previous 300px cap (browser
+			// rounding tolerated).
 			const linkBox = await titleLink.boundingBox()
 			if (!linkBox) throw new Error('title link has no layout box')
 			expect(
@@ -97,7 +93,7 @@ test.describe('Object table — Title column grows to fill available width', () 
 		})
 	}
 
-	test('related objects table gives the title link more than the old 300px cap', async ({
+	test('related objects table title fills leftover width on the detail surface', async ({
 		page,
 		account,
 	}) => {
@@ -122,12 +118,29 @@ test.describe('Object table — Title column grows to fill available width', () 
 		})
 
 		await page.goto(`/${account.workspaceId}/objects/${parent.id}`)
+		await expect(
+			page.getByRole('heading', { level: 1, name: 'Parent bet with a related row' }),
+		).toBeVisible({ timeout: 10000 })
+
+		// T5 assembled the Related tab into the shell — the related row lives
+		// there. Click into it before asserting the title-grow shape.
+		await page.getByRole('tab', { name: /^Related/ }).click()
 
 		const titleLink = page.getByRole('link', { name: LONG_TITLE })
 		await expect(titleLink).toBeVisible({ timeout: 10000 })
 
+		// The Related Objects table is still a DataTable: its Title <th> carries
+		// w-full so auto-layout gives it all the leftover width.
+		const titleHead = page.getByRole('columnheader', { name: /^title/i }).first()
+		await expect(titleHead).toBeVisible()
+
 		const linkBox = await titleLink.boundingBox()
-		if (!linkBox) throw new Error('related title link has no layout box')
+		if (!linkBox) throw new Error('title link has no layout box')
 		expect(linkBox.width).toBeGreaterThan(300)
+
+		const horizScroll = await page.evaluate(
+			() => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+		)
+		expect(horizScroll).toBe(false)
 	})
 })

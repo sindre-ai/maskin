@@ -83,8 +83,8 @@ vi.mock('@tanstack/react-query', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('@tanstack/react-query')>()
 	return {
 		...actual,
-		useQuery: () => ({
-			data: { columns: [] },
+		useQuery: (options: { queryKey?: readonly unknown[] }) => ({
+			data: options?.queryKey?.[0] === 'notifications' ? [] : { columns: [] },
 			isLoading: false,
 			isSuccess: true,
 			isError: false,
@@ -104,6 +104,7 @@ vi.mock('@tanstack/react-query', async (importOriginal) => {
 			removeQueries: vi.fn(),
 			cancelQueries: vi.fn(),
 		}),
+		useMutation: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
 	}
 })
 
@@ -125,7 +126,7 @@ vi.mock('@/components/shared/create-picker', () => ({
 }))
 
 vi.mock('@/lib/api', () => ({
-	api: { objects: { list: vi.fn(), search: vi.fn() } },
+	api: { objects: { list: vi.fn(), search: vi.fn() }, notifications: { list: vi.fn() } },
 }))
 
 vi.mock('@/lib/query-keys', () => ({
@@ -138,7 +139,25 @@ vi.mock('@/lib/query-keys', () => ({
 		relationships: {
 			all: (workspaceId: string) => ['relationships', workspaceId],
 		},
+		notifications: {
+			list: (workspaceId: string, filters?: unknown) => [
+				'notifications',
+				workspaceId,
+				'list',
+				filters,
+			],
+		},
 		imports: { detail: (id: string) => ['imports', 'detail', id] },
+		notifications: {
+			all: (workspaceId: string) => ['notifications', workspaceId],
+			list: (workspaceId: string, filters?: Record<string, unknown>) => [
+				'notifications',
+				workspaceId,
+				'list',
+				filters,
+			],
+			detail: (id: string) => ['notifications', 'detail', id],
+		},
 		userDisplaySettings: {
 			detail: (workspaceId: string, objectType: string) => [
 				'user-display-settings',
@@ -150,12 +169,12 @@ vi.mock('@/lib/query-keys', () => ({
 	},
 }))
 
-// DataTable stub — reflects the current rowSelection prop into the DOM so
-// tests can observe it, exposes a button to drive onRowSelectionChange, calls
+// ListView stub — reflects the current rowSelection prop into the DOM so tests
+// can observe it, exposes a button to drive onRowSelectionChange, calls
 // onCaptureViewState on row click, and provides an imperative handle whose
 // getFirstVisibleRowId is fixed to the first seed row (mirrors what the real
-// virtualizer would return with all rows on-screen).
-vi.mock('@/components/objects/data-table/data-table', async () => {
+// list's first-visible-row probe would return with all rows on-screen).
+vi.mock('@/components/objects/list/list-view', async () => {
 	const { forwardRef, useImperativeHandle } = await import('react')
 	type Props = {
 		data: Array<{ id: string }>
@@ -165,10 +184,10 @@ vi.mock('@/components/objects/data-table/data-table', async () => {
 		) => void
 		onCaptureViewState?: () => void
 	}
-	const DataTable = forwardRef<
+	const ListView = forwardRef<
 		{ getFirstVisibleRowId: () => string | null; scrollToRowId: (id: string) => void },
 		Props
-	>(function DataTableStub({ data, rowSelection, onRowSelectionChange, onCaptureViewState }, ref) {
+	>(function ListViewStub({ data, rowSelection, onRowSelectionChange, onCaptureViewState }, ref) {
 		useImperativeHandle(
 			ref,
 			() => ({
@@ -193,7 +212,7 @@ vi.mock('@/components/objects/data-table/data-table', async () => {
 			</div>
 		)
 	})
-	return { DataTable }
+	return { ListView }
 })
 
 import { Route } from '@/routes/_authed/$workspaceId/objects/index'
@@ -275,7 +294,7 @@ describe('ObjectsPage — row selection is NOT restored across back-nav (bet AC 
 		// Sanity: fresh mount has no selection.
 		expect(screen.getByTestId('selected-ids').textContent).toBe('')
 
-		// Select the first row — the mocked DataTable drives
+		// Select the first row — the mocked ListView drives
 		// onRowSelectionChange the same way the real checkbox would.
 		await act(async () => {
 			await user.click(screen.getByRole('button', { name: /select row 0/i }))

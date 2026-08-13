@@ -1,0 +1,25 @@
+-- The session_logs_notify trigger + notify_session_log() function were
+-- created directly against the production Supabase database by a PG
+-- NOTIFY-based SSE log-streaming feature (PR #224, migration
+-- 0008_session_logs_notify.sql) that was later superseded by the current
+-- in-process EventEmitter approach (session-manager.ts's `emit('log', ...)`,
+-- consumed by sessions.ts's SSE route). That earlier feature's commit
+-- history is not an ancestor of this repo's current main branch, so the
+-- trigger was never dropped when the feature was replaced — it kept running
+-- in production, orphaned, with nothing left in the codebase listening on
+-- the 'session_logs' NOTIFY channel (packages/realtime only ever listens on
+-- 'events').
+--
+-- Its truncation (`left(NEW.content, 7000)`, added by the original PR to
+-- stay under Postgres's fixed 8000-byte NOTIFY payload limit) truncated by
+-- character count, not byte count — multi-byte UTF-8 content (Nordic
+-- characters, emoji, etc., common in real session log lines) could still
+-- push the payload over the limit, causing pg_notify() to raise "payload
+-- string too long" (22023) inside the trigger and abort the triggering
+-- session_logs INSERT. This silently lost log lines in production (surfaced
+-- as Sentry MASKIN-DEV-5 / MASKIN-AGENT-SERVER-1).
+--
+-- Nothing consumes this NOTIFY anymore, so the fix is to remove it entirely
+-- rather than patch the truncation.
+DROP TRIGGER IF EXISTS session_logs_notify ON "session_logs";
+DROP FUNCTION IF EXISTS notify_session_log();
