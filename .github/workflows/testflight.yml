@@ -1,0 +1,198 @@
+name: iOS TestFlight upload
+
+# Manual-dispatch only: this workflow builds and signs an iOS App Store archive
+# and pushes it to TestFlight. It never runs on push/pull_request, so wiring
+# secrets is the only thing that changes its blast radius from zero.
+#
+# Runbook: apps/native/ios-testflight/README.md
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_notes:
+        description: 'One-line summary attached to the TestFlight build (What to test).'
+        required: false
+        default: 'Internal review build. See apps/native/ios-testflight/test-information.md for the full test plan.'
+
+concurrency:
+  group: testflight-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-upload:
+    runs-on: macos-14
+    timeout-minutes: 90
+    env:
+      APPLE_DEVELOPMENT_TEAM: ${{ secrets.APPLE_DEVELOPMENT_TEAM }}
+      VITE_API_BASE_URL: ${{ vars.MASKIN_MOBILE_API_BASE_URL }}
+    steps:
+      - name: Fail fast if App Store Connect secrets are missing
+        env:
+          APPLE_DEVELOPMENT_TEAM: ${{ secrets.APPLE_DEVELOPMENT_TEAM }}
+          APPSTORE_ISSUER_ID: ${{ secrets.APPSTORE_ISSUER_ID }}
+          APPSTORE_KEY_ID: ${{ secrets.APPSTORE_KEY_ID }}
+          APPSTORE_PRIVATE_KEY_BASE64: ${{ secrets.APPSTORE_PRIVATE_KEY_BASE64 }}
+          IOS_DIST_CERT_P12_BASE64: ${{ secrets.IOS_DIST_CERT_P12_BASE64 }}
+          IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+          IOS_APPSTORE_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_APPSTORE_PROVISIONING_PROFILE_BASE64 }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          MASKIN_MOBILE_API_BASE_URL: ${{ vars.MASKIN_MOBILE_API_BASE_URL }}
+        run: |
+          missing=''
+          for name in APPLE_DEVELOPMENT_TEAM APPSTORE_ISSUER_ID APPSTORE_KEY_ID APPSTORE_PRIVATE_KEY_BASE64 IOS_DIST_CERT_P12_BASE64 IOS_DIST_CERT_PASSWORD IOS_APPSTORE_PROVISIONING_PROFILE_BASE64 KEYCHAIN_PASSWORD; do
+            if [ -z "$(eval echo \$$name)" ]; then
+              missing="$missing $name"
+            fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Missing required secrets:$missing"
+            echo 'See apps/native/ios-testflight/README.md for the full list and where to source each value.'
+            exit 1
+          fi
+          if [ -z "$MASKIN_MOBILE_API_BASE_URL" ]; then
+            echo '::warning::Repository variable MASKIN_MOBILE_API_BASE_URL is not set. The web bundle will fall back to /api and only work behind a Vite dev proxy — the TestFlight build will not reach the backend without this.'
+          fi
+
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install Rust toolchain and iOS target
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup target add aarch64-apple-ios
+
+      - name: Install CocoaPods via Homebrew
+        # `tauri ios init` shells out to CocoaPods. The `gem install` path needs
+        # sudo on macOS runners; Homebrew's package doesn't. Same trap the mobile
+        # README's troubleshooting section calls out for local machines.
+        run: brew install cocoapods
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Import signing certificate into a temporary keychain
+        env:
+          IOS_DIST_CERT_P12_BASE64: ${{ secrets.IOS_DIST_CERT_P12_BASE64 }}
+          IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain-db"
+          CERT_PATH="$RUNNER_TEMP/dist.p12"
+          printf '%s' "$IOS_DIST_CERT_P12_BASE64" | base64 --decode > "$CERT_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -P "$IOS_DIST_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"' | xargs)
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH" >/dev/null
+          rm -f "$CERT_PATH"
+
+      - name: Install App Store provisioning profile
+        env:
+          IOS_APPSTORE_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_APPSTORE_PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          set -euo pipefail
+          PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "$PROFILE_DIR"
+          printf '%s' "$IOS_APPSTORE_PROVISIONING_PROFILE_BASE64" | base64 --decode > "$PROFILE_DIR/maskin-appstore.mobileprovision"
+
+      - name: Generate iOS Xcode project
+        working-directory: apps/native
+        run: pnpm ios:init
+
+      - name: Apply post-init tweaks (AppIcon, production aps-environment)
+        run: bash apps/native/ios-testflight/scripts/apply-gen-apple-tweaks.sh
+
+      - name: Pin marketing and build version
+        # CFBundleShortVersionString tracks the marketing version in tauri.conf.json.
+        # CFBundleVersion (the build number) must strictly increase for every upload
+        # of the same marketing version — GITHUB_RUN_NUMBER is monotonically increasing
+        # per-workflow and satisfies that constraint.
+        run: |
+          set -euo pipefail
+          INFO_PLIST="apps/native/src-tauri/gen/apple/maskin-mobile_iOS/Info.plist"
+          if [ ! -f "$INFO_PLIST" ]; then
+            echo "::error::Expected Info.plist at $INFO_PLIST but it does not exist. Tauri iOS output layout may have changed — inspect apps/native/src-tauri/gen/apple/ to find the target folder."
+            exit 1
+          fi
+          MARKETING_VERSION=$(node -p "require('./apps/native/src-tauri/tauri.conf.json').version")
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $MARKETING_VERSION" "$INFO_PLIST"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $GITHUB_RUN_NUMBER" "$INFO_PLIST"
+
+      - name: Build iOS release archive
+        working-directory: apps/native
+        env:
+          APPLE_DEVELOPMENT_TEAM: ${{ secrets.APPLE_DEVELOPMENT_TEAM }}
+          VITE_API_BASE_URL: ${{ vars.MASKIN_MOBILE_API_BASE_URL }}
+        # `--export-method app-store-connect` produces the .ipa layout App Store
+        # Connect expects. `--target aarch64-apple-ios` matches the existing
+        # `build:ios` script but is spelled out here to avoid relying on the
+        # package.json script staying stable.
+        run: pnpm exec tauri ios build --target aarch64-apple-ios --export-method app-store-connect
+
+      - name: Locate the built .ipa
+        id: locate_ipa
+        run: |
+          set -euo pipefail
+          IPA_PATH=$(find apps/native/src-tauri/gen/apple/build -name '*.ipa' -print -quit || true)
+          if [ -z "$IPA_PATH" ]; then
+            echo '::error::No .ipa produced under apps/native/src-tauri/gen/apple/build. Inspect the build log for xcodebuild failures.'
+            exit 1
+          fi
+          echo "ipa_path=$IPA_PATH" >> "$GITHUB_OUTPUT"
+          echo "Built: $IPA_PATH"
+
+      - name: Validate against App Store Connect
+        env:
+          APPSTORE_KEY_ID: ${{ secrets.APPSTORE_KEY_ID }}
+          APPSTORE_ISSUER_ID: ${{ secrets.APPSTORE_ISSUER_ID }}
+          APPSTORE_PRIVATE_KEY_BASE64: ${{ secrets.APPSTORE_PRIVATE_KEY_BASE64 }}
+          IPA_PATH: ${{ steps.locate_ipa.outputs.ipa_path }}
+        run: |
+          set -euo pipefail
+          # altool reads AuthKey_<KEY_ID>.p8 from ~/private_keys (documented Apple path).
+          mkdir -p "$HOME/private_keys"
+          KEY_PATH="$HOME/private_keys/AuthKey_${APPSTORE_KEY_ID}.p8"
+          printf '%s' "$APPSTORE_PRIVATE_KEY_BASE64" | base64 --decode > "$KEY_PATH"
+          chmod 600 "$KEY_PATH"
+          xcrun altool --validate-app \
+            --type ios \
+            --file "$IPA_PATH" \
+            --apiKey "$APPSTORE_KEY_ID" \
+            --apiIssuer "$APPSTORE_ISSUER_ID"
+
+      - name: Upload to TestFlight
+        env:
+          APPSTORE_KEY_ID: ${{ secrets.APPSTORE_KEY_ID }}
+          APPSTORE_ISSUER_ID: ${{ secrets.APPSTORE_ISSUER_ID }}
+          IPA_PATH: ${{ steps.locate_ipa.outputs.ipa_path }}
+        run: |
+          set -euo pipefail
+          xcrun altool --upload-app \
+            --type ios \
+            --file "$IPA_PATH" \
+            --apiKey "$APPSTORE_KEY_ID" \
+            --apiIssuer "$APPSTORE_ISSUER_ID"
+
+      - name: Upload .ipa as workflow artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: maskin-ios-${{ github.run_number }}
+          path: apps/native/src-tauri/gen/apple/build/**/*.ipa
+          if-no-files-found: warn
+
+      - name: Clean up signing material
+        if: always()
+        run: |
+          rm -f "$HOME/private_keys/AuthKey_${{ secrets.APPSTORE_KEY_ID }}.p8" || true
+          rm -f "$HOME/Library/MobileDevice/Provisioning Profiles/maskin-appstore.mobileprovision" || true
+          security delete-keychain "$RUNNER_TEMP/build.keychain-db" || true
