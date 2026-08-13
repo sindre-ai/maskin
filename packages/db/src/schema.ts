@@ -703,6 +703,35 @@ export const userDisplaySettings = pgTable(
 export type UserDisplaySettings = typeof userDisplaySettings.$inferSelect
 export type NewUserDisplaySettings = typeof userDisplaySettings.$inferInsert
 
+// ── User Starred Objects ────────────────────────────────────────────────────
+//
+// Per-user favourites: one row per (user, object) pair means "this user has
+// starred this object". Powers the object-card star toggle (`/api/objects/:id/star`)
+// and the Starred filter on the objects page. Cascades on both parents so a
+// deleted actor or object doesn't leave orphaned stars behind.
+
+export const userStarredObjects = pgTable(
+	'user_starred_objects',
+	{
+		userId: uuid('user_id')
+			.notNull()
+			.references(() => actors.id, { onDelete: 'cascade' }),
+		objectId: uuid('object_id')
+			.notNull()
+			.references(() => objects.id, { onDelete: 'cascade' }),
+		starredAt: timestamp('starred_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		primaryKey({ columns: [t.userId, t.objectId] }),
+		// Covers the Starred-filter list query: fetch a user's stars ordered by
+		// most-recently-starred, then join to objects to render.
+		index('user_starred_objects_user_starred_at_idx').on(t.userId, t.starredAt),
+	],
+)
+
+export type UserStarredObject = typeof userStarredObjects.$inferSelect
+export type NewUserStarredObject = typeof userStarredObjects.$inferInsert
+
 // ── Workspace Onboarding Prompts ──────────────────────────────────────────────
 //
 // One row per prompt type per workspace. Written when onboarding is enabled;

@@ -39,6 +39,7 @@ import publicBetStrategistRoutes from './routes/public-bet-strategist'
 import publicLandingEventsRoutes from './routes/public-landing-events'
 import relationshipsRoutes from './routes/relationships'
 import sessionsRoutes from './routes/sessions'
+import starObjectsRoutes from './routes/star-objects'
 import subscriptionsRoutes from './routes/subscriptions'
 import telemetryRoutes from './routes/telemetry'
 import triggersRoutes from './routes/triggers'
@@ -228,6 +229,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.use('/api/*', createIdempotencyMiddleware(db))
 
 	app.route('/api/objects', objectsRoutes)
+	app.route('/api/objects', starObjectsRoutes)
 	app.route('/api/briefing', briefingRoutes)
 	app.route('/api/public/landing-events', publicLandingEventsRoutes)
 	app.route('/api/public/bet-strategist', publicBetStrategistRoutes)
