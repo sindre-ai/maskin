@@ -10,15 +10,8 @@ import { useState } from 'react'
  * utterance opens the chat panel with this loop attached and forwards the text
  * as the first message, so the operator edits the loop by describing what
  * should change rather than filling in a builder.
- *
- * `onSubmit` is called with the trimmed utterance text after sending to chat,
- * allowing the loop detail page to surface a proposed patch card from the
- * operator's plain-language description.
  */
-export function LoopUtteranceInput({
-	loop,
-	onSubmit,
-}: { loop: LoopSummary; onSubmit?: (utterance: string) => void }) {
+export function LoopUtteranceInput({ loop }: { loop: LoopSummary }) {
 	const { openWithContext } = useChat()
 	const [value, setValue] = useState('')
 
@@ -26,7 +19,6 @@ export function LoopUtteranceInput({
 		const utterance = value.trim()
 		if (!utterance) return
 		openWithContext([{ kind: 'object', id: loop.id, title: loop.name, type: 'loop' }], utterance)
-		onSubmit?.(utterance)
 		setValue('')
 	}
 
