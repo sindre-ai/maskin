@@ -1,8 +1,18 @@
 import type { Database } from '@maskin/db'
-import { actors, workspaces } from '@maskin/db/schema'
+import { actors, workspaceMembers, workspaces } from '@maskin/db/schema'
 import { EmailSendError, renderTemplate, sendEmail } from '@maskin/email'
-import { eq, inArray } from 'drizzle-orm'
+import { and, asc, eq, inArray } from 'drizzle-orm'
 import { logger } from './logger'
+
+// Placeholder path — the token-backed verify page lands in a follow-up task.
+// Kept as a query-string on the workspace-agnostic `/verify-email` route so
+// links minted today keep working once the real handler ships.
+const VERIFY_EMAIL_PATH = '/verify-email'
+// Same story for the reset-password landing page.
+const RESET_PASSWORD_PATH = '/reset-password'
+// Placeholder expiry surfaced in the email body until the real token issuer
+// lands — keeps the copy accurate for the plumbing round.
+const PASSWORD_RESET_EXPIRES_MINUTES = 60
 
 async function fireAndForget(
 	label: string,
@@ -132,6 +142,93 @@ export function sendBillingReceiptEmail(input: BillingReceiptTriggerInput): Prom
 			})
 		},
 	)
+}
+
+export interface AccountVerificationTriggerInput {
+	workspaceId: string
+	actorId: string
+	name: string
+	email: string
+	webAppBaseUrl: string
+}
+
+export function sendAccountVerificationEmail(
+	input: AccountVerificationTriggerInput,
+): Promise<void> {
+	return fireAndForget(
+		'account_verification',
+		{ workspaceId: input.workspaceId, actorId: input.actorId },
+		async () => {
+			const verificationUrl = `${input.webAppBaseUrl}${VERIFY_EMAIL_PATH}?actor=${input.actorId}`
+			const { html, text } = await renderTemplate('account-verification', {
+				name: input.name,
+				verificationUrl,
+			})
+			await sendEmail({
+				to: input.email,
+				subject: 'Verify your Maskin account',
+				html,
+				text,
+				analytics: {
+					workspaceId: input.workspaceId,
+					emailType: 'account_verification',
+					agentId: null,
+				},
+			})
+		},
+	)
+}
+
+export interface PasswordResetTriggerInput {
+	db: Database
+	email: string
+	webAppBaseUrl: string
+}
+
+export function sendPasswordResetEmail(input: PasswordResetTriggerInput): Promise<void> {
+	return fireAndForget('password_reset', { email: input.email }, async () => {
+		const [actor] = await input.db
+			.select({ id: actors.id, name: actors.name, passwordHash: actors.passwordHash })
+			.from(actors)
+			.where(and(eq(actors.email, input.email), eq(actors.type, 'human')))
+			.limit(1)
+		// Silently drop: unknown email or password-less account. The public
+		// route always responds 200 so this branch stays indistinguishable
+		// from the happy path externally.
+		if (!actor?.passwordHash) return
+
+		// Analytics.workspaceId keys the `email_sent` PostHog event so the
+		// ship metric ("share of active workspaces with ≥1 email") can
+		// aggregate by workspace. Pick the actor's oldest workspace
+		// membership as a stable choice; skip if none exists (shouldn't
+		// happen for a human with a password_hash, but the guard keeps
+		// analytics from crashing on orphaned rows).
+		const [membership] = await input.db
+			.select({ workspaceId: workspaceMembers.workspaceId })
+			.from(workspaceMembers)
+			.where(eq(workspaceMembers.actorId, actor.id))
+			.orderBy(asc(workspaceMembers.joinedAt))
+			.limit(1)
+		if (!membership) return
+
+		const resetUrl = `${input.webAppBaseUrl}${RESET_PASSWORD_PATH}?actor=${actor.id}`
+		const { html, text } = await renderTemplate('password-reset', {
+			name: actor.name,
+			resetUrl,
+			expiresInMinutes: PASSWORD_RESET_EXPIRES_MINUTES,
+		})
+		await sendEmail({
+			to: input.email,
+			subject: 'Reset your Maskin password',
+			html,
+			text,
+			analytics: {
+				workspaceId: membership.workspaceId,
+				emailType: 'password_reset',
+				agentId: null,
+			},
+		})
+	})
 }
 
 export interface OutOfCreditsTriggerInput {

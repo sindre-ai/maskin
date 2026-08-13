@@ -1,9 +1,10 @@
-import { OpenAPIHono, createRoute, type z } from '@hono/zod-openapi'
+import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import { verifyPassword } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import { actors } from '@maskin/db/schema'
-import { loginSchema } from '@maskin/shared'
+import { loginSchema, resolveWebAppBaseUrl } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
+import { sendPasswordResetEmail } from '../lib/email-triggers'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { actorWithKeySchema, errorSchema } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
@@ -72,6 +73,55 @@ app.openapi(loginRoute, async (c) => {
 		} as z.infer<typeof actorWithKeySchema>,
 		200,
 	)
+})
+
+// POST /request-password-reset — unauthenticated. Always returns 200 with
+// { ok: true } so callers cannot enumerate registered emails from the response
+// shape or timing tier. When a matching human account exists, the trigger
+// fires the PasswordReset email fire-and-forget; otherwise it's a no-op.
+const requestPasswordResetSchema = z.object({
+	email: z.string().email(),
+})
+
+const requestPasswordResetRoute = createRoute({
+	method: 'post',
+	path: '/request-password-reset',
+	tags: ['Auth'],
+	summary: 'Request a password-reset email',
+	description:
+		'Always responds 200 to prevent user enumeration. When the email matches a human account with a password, a reset email is dispatched fire-and-forget.',
+	request: {
+		body: {
+			content: {
+				'application/json': {
+					schema: requestPasswordResetSchema,
+				},
+			},
+		},
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: z.object({ ok: z.literal(true) }) } },
+			description: 'Reset email dispatched if the account exists',
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Invalid request',
+		},
+	},
+})
+
+app.openapi(requestPasswordResetRoute, async (c) => {
+	const db = c.get('db')
+	const { email } = c.req.valid('json')
+
+	void sendPasswordResetEmail({
+		db,
+		email,
+		webAppBaseUrl: resolveWebAppBaseUrl(process.env),
+	})
+
+	return c.json({ ok: true as const }, 200)
 })
 
 export default app

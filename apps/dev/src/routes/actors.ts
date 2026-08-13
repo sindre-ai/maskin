@@ -26,11 +26,13 @@ import {
 	PLATFORM_MCP_PRESET,
 	WORKSPACE_COACH_DEFAULT,
 	createActorSchema,
+	resolveWebAppBaseUrl,
 	updateActorSchema,
 	workspaceSettingsSchema,
 } from '@maskin/shared'
 import { and, asc, count, countDistinct, desc, eq, inArray, or, sql } from 'drizzle-orm'
 import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
+import { sendAccountVerificationEmail } from '../lib/email-triggers'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { logger } from '../lib/logger'
 import {
@@ -262,6 +264,19 @@ app.openapi(createActorRoute, async (c) => {
 				)
 			}
 		}
+	}
+
+	// Fire account-verification email for humans who landed in a workspace.
+	// The trigger is fire-and-forget with EmailSendError caught internally —
+	// the 201 signup response must never wait on Resend or fail if it errors.
+	if (actor.type === 'human' && actor.email && workspaceId) {
+		void sendAccountVerificationEmail({
+			workspaceId,
+			actorId: actor.id,
+			name: actor.name,
+			email: actor.email,
+			webAppBaseUrl: resolveWebAppBaseUrl(process.env),
+		})
 	}
 
 	// Return actor WITHOUT api_key, but WITH it in the expected response field.
