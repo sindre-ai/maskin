@@ -128,11 +128,16 @@ export function ForYouCardQueue({ workspaceId, queue }: ForYouCardQueueProps) {
 	// still-running use-swipe-to-mark-read timer. Only the second slot
 	// (action bar vs. empty state) is allowed to swap type.
 	return (
-		<div className="flex flex-1 min-h-0 flex-col gap-4 pb-24">
+		<div className="flex flex-1 min-h-0 flex-col gap-4 pb-[calc(6rem+2.75rem+env(safe-area-inset-bottom))] md:pb-24">
 			{cards}
 
 			{currentItem ? (
-				<div className="fixed inset-x-0 bottom-0 z-10 flex justify-center border-t border-border bg-background/95 px-4 py-3 backdrop-blur-sm md:sticky md:border-0 md:bg-transparent md:px-0 md:py-0">
+				// Mobile bottom nav (h-11 + safe-area) is fixed at bottom-0/z-40; the
+				// action bar has to sit above it or its buttons take clicks through
+				// the nav's tap targets. Offset by the nav height (+ iOS safe area)
+				// on mobile only — desktop keeps `bottom-0` since MobileNav is hidden
+				// at md+.
+				<div className="fixed inset-x-0 bottom-[calc(2.75rem+env(safe-area-inset-bottom))] z-10 flex justify-center border-t border-border bg-background/95 px-4 py-3 backdrop-blur-sm md:sticky md:bottom-0 md:border-0 md:bg-transparent md:px-0 md:py-0">
 					<div className="flex w-full max-w-[760px] items-center justify-between gap-3">
 						<Button
 							size="sm"

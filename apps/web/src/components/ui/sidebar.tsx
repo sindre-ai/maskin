@@ -332,14 +332,23 @@ const Sidebar = React.forwardRef<
 						// Adjust the padding for floating and inset variants.
 						variant === 'floating' || variant === 'inset'
 							? 'p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)_+_theme(spacing.4)_+2px)]'
-							: 'group-data-[collapsible=icon]:w-[var(--sidebar-width-icon)] group-data-[side=left]:border-r group-data-[side=right]:border-l',
+							: 'group-data-[collapsible=icon]:w-[var(--sidebar-width-icon)]',
 						className,
 					)}
 					{...props}
 				>
 					<div
 						data-sidebar="sidebar"
-						className="flex h-full w-full flex-col bg-sidebar group-data-[variant=floating]:rounded-lg group-data-[variant=floating]:border group-data-[variant=floating]:border-sidebar-border group-data-[variant=floating]:shadow"
+						className={cn(
+							'flex h-full w-full flex-col bg-sidebar group-data-[variant=floating]:rounded-lg group-data-[variant=floating]:border group-data-[variant=floating]:border-sidebar-border group-data-[variant=floating]:shadow',
+							// Border sits on the inner div (not the fixed wrapper) so the
+							// measured bounding box of either matches the declared
+							// --sidebar-width — border-box + `w-full` keeps the 1px border
+							// inside the same 216 (or 60) total, instead of shaving it off
+							// the inner content box.
+							variant === 'sidebar' &&
+								'group-data-[side=left]:border-r group-data-[side=right]:border-l',
+						)}
 					>
 						{children}
 					</div>
