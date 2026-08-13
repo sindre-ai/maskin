@@ -36,7 +36,12 @@ function buildUndoData(event: EventResponse): UpdateObjectInput | null {
 		const change = changes.find((c) => c.field === field)
 		if (!change || change.old === undefined || change.old === '') continue
 		if (field === 'metadata') {
+			// The update schema has no `null` case for metadata (unlike `driver`),
+			// so a change whose pre-update value was unset (`old: null` — the
+			// column has no default) can't be restored to null. An empty object
+			// is the closest valid equivalent and round-trips through the schema.
 			if (isRecord(change.old)) data.metadata = change.old as SafeMetadata
+			else if (change.old === null) data.metadata = {}
 			continue
 		}
 		;(data as Record<string, unknown>)[field] = change.old

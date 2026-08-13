@@ -101,7 +101,7 @@ export function ListRow({
 						to="/$workspaceId/objects/$objectId"
 						params={{ workspaceId, objectId: object.id }}
 						onClick={(e) => e.stopPropagation()}
-						className="min-w-0 flex-1 truncate text-sm font-medium text-foreground hover:underline"
+						className="min-w-0 truncate text-sm font-medium text-foreground hover:underline"
 					>
 						{object.title || 'Untitled'}
 					</Link>
