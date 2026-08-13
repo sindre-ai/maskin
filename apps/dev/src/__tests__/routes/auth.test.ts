@@ -12,6 +12,15 @@ vi.mock('@maskin/auth', async (importOriginal) => {
 	}
 })
 
+const mockSendPasswordResetEmail = vi.fn().mockResolvedValue(undefined)
+vi.mock('../../lib/email-triggers', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../lib/email-triggers')>()
+	return {
+		...actual,
+		sendPasswordResetEmail: (...args: unknown[]) => mockSendPasswordResetEmail(...args),
+	}
+})
+
 const { default: authRoutes } = await import('../../routes/auth')
 
 describe('Auth Routes', () => {
@@ -111,6 +120,63 @@ describe('Auth Routes', () => {
 			)
 
 			expect(res.status).toBe(400)
+		})
+	})
+
+	describe('POST /api/auth/request-password-reset', () => {
+		beforeEach(() => {
+			mockSendPasswordResetEmail.mockClear()
+		})
+
+		it('returns 200 { ok: true } and fires the reset trigger exactly once', async () => {
+			const { app } = createTestApp(authRoutes, '/api/auth')
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/auth/request-password-reset', {
+					email: 'someone@test.com',
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).toEqual({ ok: true })
+			expect(mockSendPasswordResetEmail).toHaveBeenCalledTimes(1)
+			const call = mockSendPasswordResetEmail.mock.calls[0]?.[0] as {
+				email: string
+				webAppBaseUrl: string
+			}
+			expect(call.email).toBe('someone@test.com')
+			expect(call.webAppBaseUrl).toMatch(/^https?:\/\//)
+		})
+
+		it('returns 200 without leaking whether the account exists even when the trigger throws', async () => {
+			const { app } = createTestApp(authRoutes, '/api/auth')
+			// Fire-and-forget: even if the trigger rejects the response must
+			// still be 200 { ok: true } and callers cannot enumerate accounts.
+			mockSendPasswordResetEmail.mockRejectedValueOnce(new Error('boom'))
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/auth/request-password-reset', {
+					email: 'ghost@test.com',
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).toEqual({ ok: true })
+		})
+
+		it('returns 400 for an invalid email', async () => {
+			const { app } = createTestApp(authRoutes, '/api/auth')
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/auth/request-password-reset', {
+					email: 'not-an-email',
+				}),
+			)
+
+			expect(res.status).toBe(400)
+			expect(mockSendPasswordResetEmail).not.toHaveBeenCalled()
 		})
 	})
 })

@@ -4,10 +4,23 @@ import { buildActor, buildCreateActorBody, buildSession, buildWorkspaceMember } 
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
 import { createSessionTestApp, createTestApp } from '../setup'
 
+const mockSendAccountVerificationEmail = vi.fn().mockResolvedValue(undefined)
+vi.mock('../../lib/email-triggers', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../lib/email-triggers')>()
+	return {
+		...actual,
+		sendAccountVerificationEmail: (...args: unknown[]) => mockSendAccountVerificationEmail(...args),
+	}
+})
+
 const { default: actorsRoutes } = await import('../../routes/actors')
 
 describe('Actors Routes', () => {
 	describe('POST /api/actors', () => {
+		beforeEach(() => {
+			mockSendAccountVerificationEmail.mockClear()
+		})
+
 		it('creates a human actor and returns 201', async () => {
 			const actor = buildActor()
 			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
@@ -109,6 +122,77 @@ describe('Actors Routes', () => {
 			// And it must NOT be the same key as the creator's key
 			const creatorInsert = calls.inserts[0] as { apiKey?: string }
 			expect(coachInsert.apiKey).not.toBe(creatorInsert.apiKey)
+		})
+
+		it('fires the account-verification email exactly once for a human signup with a workspace', async () => {
+			const actor = buildActor({ type: 'human', email: 'nova@test.com', name: 'Nova' })
+			const coach = buildActor({ type: 'agent', isSystem: true })
+			const workspaceId = randomUUID()
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.insertQueue = [
+				[actor],
+				[{ id: workspaceId, name: 'Nova\u2019s Workspace' }],
+				[{}],
+				[coach],
+				[{}],
+			]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/actors',
+					buildCreateActorBody({ type: 'human', name: 'Nova', email: 'nova@test.com' }),
+				),
+			)
+
+			expect(res.status).toBe(201)
+			expect(mockSendAccountVerificationEmail).toHaveBeenCalledTimes(1)
+			const arg = mockSendAccountVerificationEmail.mock.calls[0]?.[0] as {
+				workspaceId: string
+				actorId: string
+				email: string
+				name: string
+				webAppBaseUrl: string
+			}
+			expect(arg.workspaceId).toBe(workspaceId)
+			expect(arg.actorId).toBe(actor.id)
+			expect(arg.email).toBe('nova@test.com')
+			expect(arg.name).toBe('Nova')
+			expect(arg.webAppBaseUrl).toMatch(/^https?:\/\//)
+		})
+
+		it('does not fire the account-verification email for an agent signup', async () => {
+			const agent = buildActor({ type: 'agent' })
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.insert = [agent]
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/actors', buildCreateActorBody({ type: 'agent' })),
+			)
+
+			expect(res.status).toBe(201)
+			expect(mockSendAccountVerificationEmail).not.toHaveBeenCalled()
+		})
+
+		it('does not fire the account-verification email when auto_create_workspace is disabled for a human', async () => {
+			const actor = buildActor({ type: 'human', email: 'nova@test.com' })
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.insert = [actor]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/actors',
+					buildCreateActorBody({
+						type: 'human',
+						email: 'nova@test.com',
+						auto_create_workspace: false,
+					}),
+				),
+			)
+
+			expect(res.status).toBe(201)
+			expect(mockSendAccountVerificationEmail).not.toHaveBeenCalled()
 		})
 
 		it('does not default tools when creating a human actor', async () => {

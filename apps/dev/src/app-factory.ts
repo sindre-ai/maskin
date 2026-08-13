@@ -184,6 +184,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	//   - /api/health, /api/openapi.json: public discovery endpoints
 	//   - POST /api/actors: signup bootstrap, mints the first API key
 	//   - POST /api/auth/login: pre-auth credential exchange
+	//   - POST /api/auth/request-password-reset: pre-auth reset trigger
+	//     (always 200; no user enumeration)
 	//   - /api/webhooks/*: authenticated via provider HMAC, not our API key
 	//   - /api/integrations/{provider}/callback: OAuth redirect can't carry our header
 	//   - POST /api/public/landing-events: landing-page funnel event ingest
@@ -197,6 +199,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		if (path === '/api/health' || path === '/api/openapi.json') return next()
 		if (path === '/api/actors' && method === 'POST') return next()
 		if (path === '/api/auth/login' && method === 'POST') return next()
+		if (path === '/api/auth/request-password-reset' && method === 'POST') return next()
 		if (path.startsWith('/api/webhooks/')) return next()
 		if (path.startsWith('/api/internal/agent-servers/')) return next()
 		if (path === '/api/public/landing-events' && method === 'POST') return next()
