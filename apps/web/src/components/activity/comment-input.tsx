@@ -23,10 +23,6 @@ interface CommentInputProps {
 	// (e.g. ForYouQueueCard) pass 'above' so the dropdown doesn't render
 	// off-screen.
 	mentionDropdownPlacement?: 'below' | 'above'
-	// Optional external ownership of the textarea node. When set, the composer
-	// forwards its textarea ref so callers can programmatically focus the answer
-	// control (e.g. the ask banner's "Answer it ↓" button).
-	focusRef?: React.Ref<HTMLTextAreaElement>
 }
 
 function randomDraftId(): string {
@@ -47,7 +43,6 @@ export function CommentInput({
 	parentEventId,
 	onSubmitted,
 	mentionDropdownPlacement = 'below',
-	focusRef,
 }: CommentInputProps) {
 	const actor = getStoredActor()
 	const createComment = useCreateComment(workspaceId, objectId)
@@ -64,17 +59,6 @@ export function CommentInput({
 	const inputRef = useRef<HTMLTextAreaElement>(null)
 	const overlayRef = useRef<HTMLDivElement>(null)
 	const fileInputRef = useRef<HTMLInputElement>(null)
-
-	// Merge the internal inputRef (which the resize / mention / scroll logic
-	// reads) with an optional external focusRef so callers own the same node.
-	const setTextareaRef = useCallback(
-		(node: HTMLTextAreaElement | null) => {
-			inputRef.current = node
-			if (typeof focusRef === 'function') focusRef(node)
-			else if (focusRef) focusRef.current = node
-		},
-		[focusRef],
-	)
 
 	// Stable per-mount draft id. The id is also used as the optimistic comment
 	// entry id once submitted, so the activity feed can render its placeholder.
@@ -378,7 +362,7 @@ export function CommentInput({
 							    instead of one runaway line. text-base stays for the iOS
 							    Safari zoom-on-focus guard (#655). */}
 							<textarea
-								ref={setTextareaRef}
+								ref={inputRef}
 								value={content}
 								onChange={handleInput}
 								onKeyDown={handleKeyDown}

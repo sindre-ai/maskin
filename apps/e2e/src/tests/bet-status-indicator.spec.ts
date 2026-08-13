@@ -1,14 +1,11 @@
 import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
-// Verifies the bet status indicator at 375/768/1024 viewports. The objects
-// overview rows keep the read-only derived indicator; the rebuilt detail
-// header (bet/object-detail, T1) renders status as an editable combobox, so
-// the header tests pin the raw-status control and the absence of the
-// derived chip markup (which is not part of the T1 surface).
+// Verifies T3 surface wiring — the read-only bet status indicator on the
+// objects overview row and the bet detail header, at 375/768/1024 viewports.
 
 test.describe('Bet status indicator', () => {
-	test('bet with no children shows its raw status in the header status control', async ({
+	test('bet with no children renders as idle on the detail header, popover opens on click', async ({
 		page,
 		account,
 	}) => {
@@ -22,27 +19,26 @@ test.describe('Bet status indicator', () => {
 		// Scoped to main — the sidebar workspace switcher can render a label
 		// that collides with the bet title (E2E workspace names are derived
 		// from the test title, which often contains the bet title as a substring).
-		await expect(page.getByRole('heading', { level: 1, name: 'Bet with no children' })).toBeVisible(
-			{ timeout: 10000 },
-		)
+		await expect(page.locator('main').getByText('Bet with no children')).toBeVisible({
+			timeout: 10000,
+		})
 
-		// The rebuilt shell (bet/object-detail, T1) renders the header status as
-		// an editable combobox in the identity row — the derived read-only chip
-		// (idle/progressing/waiting on human) remains on the objects overview
-		// rows (tests below) and is not part of the T1 header surface.
-		const statusControl = page
-			.getByRole('combobox')
-			.filter({ hasNotText: /driver/i })
-			.first()
-		await expect(statusControl).toBeVisible()
-		await expect(statusControl).toHaveText('active')
-		await expect(page.locator('main').getByRole('button', { name: /^Status: /i })).toHaveCount(0)
+		const chip = page.getByRole('button', { name: 'Status: idle' })
+		await expect(chip).toBeVisible()
+		await chip.click()
+		await expect(page.getByText(/No open human decisions/i)).toBeVisible()
 	})
 
-	// A stale in_progress child (no live agent session) must not leak a
-	// derived "progressing" chip onto the T1 header — the raw-status
-	// combobox is the only status affordance there.
-	test('header shows the raw status and never the derived chip states', async ({
+	// `activeSessionId` — required for "progressing" since it now gates on a
+	// live agent session, not just task status — is only ever set by a real
+	// triggered container session (trigger-runner.ts) and cleared when that
+	// session ends. There's no public API to fake one, so the "progressing"
+	// chip render itself is covered at the component level instead (see
+	// indicator-badge.test.tsx). This spec instead guards the behavior that
+	// motivated the gate: a task merely marked in_progress (e.g. by a human,
+	// or left stale after its session already ended) must NOT read as
+	// "progressing".
+	test('bet with in-progress child task but no live agent session renders as idle, not progressing', async ({
 		page,
 		account,
 	}) => {
@@ -65,22 +61,15 @@ test.describe('Bet status indicator', () => {
 		})
 
 		await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
-		await expect(
-			page.getByRole('heading', { level: 1, name: 'Bet with stale in_progress task' }),
-		).toBeVisible({ timeout: 10000 })
+		await expect(page.locator('main').getByText('Bet with stale in_progress task')).toBeVisible({
+			timeout: 10000,
+		})
 
-		// Header status is the raw-status combobox on T1; the derived chip states
-		// are not rendered on this surface, so neither "progressing" nor "idle"
-		// chip markup may appear.
-		const statusControl = page
-			.getByRole('combobox')
-			.filter({ hasNotText: /driver/i })
-			.first()
-		await expect(statusControl).toHaveText('active')
-		await expect(page.locator('main').getByRole('button', { name: /^Status: /i })).toHaveCount(0)
+		await expect(page.getByRole('button', { name: 'Status: progressing' })).not.toBeVisible()
+		await expect(page.getByRole('button', { name: 'Status: idle' })).toBeVisible()
 	})
 
-	test('human_decision task keeps the header status raw, with no derived waiting chip', async ({
+	test('open human_decision task flips the state to "waiting on human" and shows the task title in the popover header', async ({
 		page,
 		account,
 	}) => {
@@ -104,19 +93,14 @@ test.describe('Bet status indicator', () => {
 		})
 
 		await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
-		await expect(
-			page.getByRole('heading', { level: 1, name: 'Bet blocked on decision' }),
-		).toBeVisible({ timeout: 10000 })
+		await expect(page.locator('main').getByText('Bet blocked on decision')).toBeVisible({
+			timeout: 10000,
+		})
 
-		// The "waiting on human" derived chip and its popover are not part of the
-		// T1 header surface (status is the editable combobox); the human-decision
-		// state still surfaces as the indicator on the objects overview rows.
-		const statusControl = page
-			.getByRole('combobox')
-			.filter({ hasNotText: /driver/i })
-			.first()
-		await expect(statusControl).toHaveText('active')
-		await expect(page.locator('main').getByRole('button', { name: /^Status: /i })).toHaveCount(0)
+		const chip = page.getByRole('button', { name: 'Status: waiting on human' })
+		await expect(chip).toBeVisible()
+		await chip.click()
+		await expect(page.getByText('Waiting: Approve pricing tier')).toBeVisible()
 	})
 
 	for (const vp of SHIP_GATE_VIEWPORTS) {
