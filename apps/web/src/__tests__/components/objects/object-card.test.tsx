@@ -1,7 +1,9 @@
 import { ObjectCard } from '@/components/objects/data-table/object-card'
-import { render, screen } from '@testing-library/react'
+import { api } from '@/lib/api'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { buildObjectResponse } from '../../factories'
+import { TestWrapper } from '../../setup'
 
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../../mocks/router')
@@ -10,6 +12,19 @@ vi.mock('@tanstack/react-router', async () => {
 
 vi.mock('@/components/shared/agent-working-badge', () => ({
 	AgentWorkingBadge: () => <span>agent working</span>,
+}))
+
+vi.mock('@/lib/api', () => ({
+	api: {
+		objects: {
+			star: vi.fn(),
+			unstar: vi.fn(),
+		},
+	},
+}))
+
+vi.mock('sonner', () => ({
+	toast: { error: vi.fn(), success: vi.fn() },
 }))
 
 function renderCard(object = buildObjectResponse()) {
@@ -21,6 +36,7 @@ function renderCard(object = buildObjectResponse()) {
 			onSelect={() => {}}
 			onClick={() => {}}
 		/>,
+		{ wrapper: TestWrapper },
 	)
 }
 
@@ -67,5 +83,64 @@ describe('ObjectCard archived variant', () => {
 			buildObjectResponse({ status: 'paused', metadata: { previous_status: 'succeeded' } }),
 		)
 		expect(screen.queryByText('was succeeded')).not.toBeInTheDocument()
+	})
+})
+
+describe('ObjectCard star toggle', () => {
+	it('renders an outline star with aria-pressed=false when the object is not starred', () => {
+		renderCard(buildObjectResponse({ isStarred: false }))
+		const btn = screen.getByRole('button', { name: 'Star' })
+		expect(btn).toHaveAttribute('aria-pressed', 'false')
+		expect(btn.querySelector('svg')?.classList.contains('fill-current')).toBe(false)
+	})
+
+	it('renders a filled star with aria-pressed=true when the object is starred', () => {
+		renderCard(buildObjectResponse({ isStarred: true }))
+		const btn = screen.getByRole('button', { name: 'Unstar' })
+		expect(btn).toHaveAttribute('aria-pressed', 'true')
+		expect(btn.querySelector('svg')?.classList.contains('fill-current')).toBe(true)
+	})
+
+	it('treats a missing isStarred field as unstarred', () => {
+		renderCard(buildObjectResponse())
+		expect(screen.getByRole('button', { name: 'Star' })).toHaveAttribute('aria-pressed', 'false')
+	})
+
+	it('optimistically flips to starred on click and calls the star API', async () => {
+		vi.mocked(api.objects.star).mockResolvedValue({ starred: true })
+		renderCard(buildObjectResponse({ isStarred: false }))
+		const btn = screen.getByRole('button', { name: 'Star' })
+		fireEvent.click(btn)
+		await waitFor(() => {
+			expect(screen.getByRole('button', { name: 'Unstar' })).toHaveAttribute('aria-pressed', 'true')
+		})
+		expect(api.objects.star).toHaveBeenCalledWith(expect.any(String))
+	})
+
+	it('rolls back to unstarred when the star request fails', async () => {
+		vi.mocked(api.objects.star).mockRejectedValue(new Error('network'))
+		renderCard(buildObjectResponse({ isStarred: false }))
+		const btn = screen.getByRole('button', { name: 'Star' })
+		fireEvent.click(btn)
+		await waitFor(() => {
+			expect(screen.getByRole('button', { name: 'Star' })).toHaveAttribute('aria-pressed', 'false')
+		})
+	})
+
+	it('does not trigger the card onClick when the star is clicked', () => {
+		vi.mocked(api.objects.star).mockResolvedValue({ starred: true })
+		const onClick = vi.fn()
+		render(
+			<ObjectCard
+				object={buildObjectResponse({ isStarred: false })}
+				workspaceId="ws-1"
+				isSelected={false}
+				onSelect={() => {}}
+				onClick={onClick}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		fireEvent.click(screen.getByRole('button', { name: 'Star' }))
+		expect(onClick).not.toHaveBeenCalled()
 	})
 })

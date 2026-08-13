@@ -16,6 +16,7 @@ import {
 	useState,
 } from 'react'
 import { buildObjectResponse } from '../../factories'
+import { TestWrapper } from '../../setup'
 
 const mockNavigate = vi.fn()
 
@@ -109,7 +110,7 @@ function renderDataTable(overrides: Partial<Parameters<typeof DataTable>[0]> = {
 		onExpandedChange: vi.fn(),
 		...overrides,
 	}
-	return render(<StatefulExpandedHarness {...props} />)
+	return render(<StatefulExpandedHarness {...props} />, { wrapper: TestWrapper })
 }
 
 describe('DataTable', () => {

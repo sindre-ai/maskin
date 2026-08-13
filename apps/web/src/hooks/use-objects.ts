@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 import type { z } from 'zod'
 import { trackBetArchived, trackBetCreated, trackBetStatusChanged } from '../lib/analytics'
 import type {
+	BoardObjectResponse,
 	BulkUpdateObjectsInput,
 	BulkUpdateObjectsResponse,
 	MigrateObjectTypeInput,
@@ -376,6 +377,86 @@ export function useMigrateObjectType(workspaceId: string) {
 		onSettled: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.bets.all(workspaceId) })
+		},
+	})
+}
+
+interface StarSnapshots {
+	flat: Array<[readonly unknown[], ObjectResponse[] | undefined]>
+	infinite: Array<[readonly unknown[], InfiniteData<ObjectResponse[]> | undefined]>
+	board: Array<[readonly unknown[], BoardObjectResponse | undefined]>
+	detail: ObjectResponse | undefined
+}
+
+function applyOptimisticStar(
+	queryClient: ReturnType<typeof useQueryClient>,
+	workspaceId: string,
+	id: string,
+	starred: boolean,
+): StarSnapshots {
+	const stamp = (obj: ObjectResponse): ObjectResponse =>
+		obj.id === id ? { ...obj, isStarred: starred } : obj
+
+	const flat = queryClient.getQueriesData<ObjectResponse[]>({
+		queryKey: queryKeys.objects.listPrefix(workspaceId),
+	})
+	for (const [key, cache] of flat) {
+		if (!cache) continue
+		queryClient.setQueryData<ObjectResponse[]>(key, cache.map(stamp))
+	}
+
+	const infinite = queryClient.getQueriesData<InfiniteData<ObjectResponse[]>>({
+		queryKey: queryKeys.objects.listInfinitePrefix(workspaceId),
+	})
+	for (const [key, cache] of infinite) {
+		if (!cache) continue
+		queryClient.setQueryData<InfiniteData<ObjectResponse[]>>(key, {
+			...cache,
+			pages: cache.pages.map((page) => page.map(stamp)),
+		})
+	}
+
+	const board = queryClient.getQueriesData<BoardObjectResponse>({
+		queryKey: queryKeys.objects.boardPrefix(workspaceId),
+	})
+	for (const [key, cache] of board) {
+		if (!cache) continue
+		queryClient.setQueryData<BoardObjectResponse>(key, {
+			...cache,
+			columns: cache.columns.map((col) => ({ ...col, objects: col.objects.map(stamp) })),
+		})
+	}
+
+	const detailKey = queryKeys.objects.detail(id)
+	const detail = queryClient.getQueryData<ObjectResponse>(detailKey)
+	if (detail) queryClient.setQueryData<ObjectResponse>(detailKey, stamp(detail))
+
+	return { flat, infinite, board, detail }
+}
+
+function rollbackStar(
+	queryClient: ReturnType<typeof useQueryClient>,
+	id: string,
+	snapshots: StarSnapshots,
+) {
+	for (const [key, cache] of snapshots.flat) queryClient.setQueryData(key, cache)
+	for (const [key, cache] of snapshots.infinite) queryClient.setQueryData(key, cache)
+	for (const [key, cache] of snapshots.board) queryClient.setQueryData(key, cache)
+	queryClient.setQueryData(queryKeys.objects.detail(id), snapshots.detail)
+}
+
+export function useToggleStar(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation<{ starred: boolean }, Error, { id: string; starred: boolean }, StarSnapshots>({
+		mutationFn: ({ id, starred }) => (starred ? api.objects.star(id) : api.objects.unstar(id)),
+		onMutate: ({ id, starred }) => applyOptimisticStar(queryClient, workspaceId, id, starred),
+		onError: (_err, { id }, ctx) => {
+			if (ctx) rollbackStar(queryClient, id, ctx)
+			toast.error('Could not update star')
+		},
+		onSettled: (_data, _err, { id }) => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(id) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
 		},
 	})
 }
