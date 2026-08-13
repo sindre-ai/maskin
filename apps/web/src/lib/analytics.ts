@@ -459,11 +459,22 @@ export function deriveSidebarViewport(width: number): SidebarViewport {
 // `@/lib/foryou-card-kind`, which also feeds the DOM `data-card-kind` attribute
 // on the card root — one source of truth so the reading and the rendered
 // weight never drift.
+//
+// `schema_valid` is the "For you with decision support" bet's ship metric —
+// true when the underlying notification carries a valid `request_decision`
+// payload (per `isValidRequestDecisionMetadata` in @maskin/shared), false
+// otherwise. Ratio of true:false on `foryou_card_shown` is the schema-
+// compliance rate the bet's `posthog_query` reads.
 
-export function trackForyouCardShown(p: { card_kind: CardKind; card_id: string }): void {
+export function trackForyouCardShown(p: {
+	card_kind: CardKind
+	card_id: string
+	schema_valid: boolean
+}): void {
 	trackEvent('foryou_card_shown', {
 		card_kind: p.card_kind,
 		card_id: p.card_id,
+		schema_valid: p.schema_valid,
 	})
 }
 
@@ -471,10 +482,12 @@ export function trackForyouCardAction(p: {
 	card_kind: CardKind
 	card_id: string
 	action_id: string
+	schema_valid: boolean
 }): void {
 	trackEvent('foryou_card_action', {
 		card_kind: p.card_kind,
 		card_id: p.card_id,
 		action_id: p.action_id,
+		schema_valid: p.schema_valid,
 	})
 }

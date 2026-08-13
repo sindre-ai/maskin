@@ -170,6 +170,55 @@ describe('ForYouQueueCard', () => {
 		expect(trackForyouCardShownMock).toHaveBeenCalledWith({
 			card_kind: 'decision',
 			card_id: 'obj-1',
+			schema_valid: false,
+		})
+	})
+
+	it('sets schema_valid=true on both events when the item carries a valid request_decision payload', () => {
+		const validItem = {
+			...buildItem({
+				object: buildObjectResponse({
+					id: 'obj-1',
+					title: 'Ship?',
+					type: 'task',
+					status: 'in_review',
+					metadata: { decision_type: 'ux' },
+				}),
+			}),
+			notification_metadata: {
+				asked: 'Ship the checkout flow?',
+				found: 'Green across staging, 0 open bugs.',
+				recommendation: 'Ship — reversible in 24h.',
+				options: [
+					{ label: 'Ship', value: 'ship', default: true },
+					{ label: 'Hold', value: 'hold' },
+				],
+			},
+		}
+		render(
+			<ForYouQueueCard
+				workspaceId="ws-1"
+				item={validItem}
+				onProcessed={vi.fn()}
+				onRestored={vi.fn()}
+				onCommitScheduled={vi.fn()}
+				onCommitSettled={vi.fn()}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+
+		expect(trackForyouCardShownMock).toHaveBeenCalledWith({
+			card_kind: 'decision',
+			card_id: 'obj-1',
+			schema_valid: true,
+		})
+
+		fireEvent.click(screen.getByRole('button', { name: /Approve/ }))
+		expect(trackForyouCardActionMock).toHaveBeenCalledWith({
+			card_kind: 'decision',
+			card_id: 'obj-1',
+			action_id: 'approve',
+			schema_valid: true,
 		})
 	})
 
@@ -209,6 +258,7 @@ describe('ForYouQueueCard', () => {
 				card_kind: 'decision',
 				card_id: 'obj-1',
 				action_id: 'approve',
+				schema_valid: false,
 			})
 			const receipt = screen.getByTestId('decision-receipt')
 			expect(receipt).toHaveTextContent('You chose Approve')
@@ -338,6 +388,7 @@ describe('ForYouQueueCard', () => {
 				card_kind: 'thread',
 				card_id: 'obj-1',
 				action_id: 'on_it',
+				schema_valid: false,
 			})
 			expect(mockCreateCommentMutate).toHaveBeenCalledWith(
 				{ entity_id: 'obj-1', content: 'On it', parent_event_id: undefined },
@@ -509,6 +560,7 @@ describe('ForYouQueueCard', () => {
 				card_kind: 'thread',
 				card_id: 'obj-1',
 				action_id: 'keep_unread',
+				schema_valid: false,
 			})
 			expect(mockMarkReadMutate).not.toHaveBeenCalled()
 			expect(mockCreateCommentMutate).not.toHaveBeenCalled()

@@ -639,30 +639,45 @@ describe('v1 taxonomy helpers', () => {
 	})
 
 	describe('foryou_card_shown / foryou_card_action (Direction A instrumentation)', () => {
-		it('foryou_card_shown carries card_kind + card_id for the denominator', () => {
+		it('foryou_card_shown carries card_kind + card_id + schema_valid for the denominator', () => {
 			const capture = captureSpy()
 
-			trackForyouCardShown({ card_kind: 'decision', card_id: 'bet-1' })
+			trackForyouCardShown({ card_kind: 'decision', card_id: 'bet-1', schema_valid: true })
 
 			expect(capture).toHaveBeenCalledWith('foryou_card_shown', {
 				card_kind: 'decision',
 				card_id: 'bet-1',
+				schema_valid: true,
 			})
 		})
 
-		it('foryou_card_action carries card_kind + card_id + action_id for the numerator', () => {
+		it('foryou_card_action carries card_kind + card_id + action_id + schema_valid for the numerator', () => {
 			const capture = captureSpy()
 
 			trackForyouCardAction({
 				card_kind: 'decision',
 				card_id: 'bet-1',
 				action_id: 'quick_reply:approved',
+				schema_valid: false,
 			})
 
 			expect(capture).toHaveBeenCalledWith('foryou_card_action', {
 				card_kind: 'decision',
 				card_id: 'bet-1',
 				action_id: 'quick_reply:approved',
+				schema_valid: false,
+			})
+		})
+
+		it('schema_valid flows through as false when the notification metadata is missing', () => {
+			const capture = captureSpy()
+
+			trackForyouCardShown({ card_kind: 'thread', card_id: 'obj-42', schema_valid: false })
+
+			expect(capture).toHaveBeenCalledWith('foryou_card_shown', {
+				card_kind: 'thread',
+				card_id: 'obj-42',
+				schema_valid: false,
 			})
 		})
 	})
