@@ -9,28 +9,29 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 echo "Bootstrapping local Postgres + SeaweedFS (no Docker)..."
 source "$REPO_ROOT/scripts/bootstrap-local-devstack.sh"
-# bootstrap-local-devstack.sh writes DATABASE_URL/S3_* to env.sh rather than
-# exporting them directly, so callers that only need infra up (no full dev
-# server) aren't forced to inherit them. Pull them into this shell now.
-source "$MASKIN_DEVSTACK_DIR/env.sh"
 
-# Load .env for DATABASE_URL
+# Load .env first (e.g. for an existing INTEGRATION_ENCRYPTION_KEY), then
+# source env.sh LAST so the devstack's DATABASE_URL/S3_* always win over
+# whatever .env might already contain (a stale docker-compose default, or a
+# leftover value from an earlier failed `pnpm dev` attempt in this sandbox).
 if [ -f .env ]; then
 	set -a
 	source .env
 	set +a
 fi
+source "$MASKIN_DEVSTACK_DIR/env.sh"
 
 # Ensure integration encryption key exists in .env before servers start.
-# --skip-db-default: bootstrap-local-devstack.sh above already exported the
-# real DATABASE_URL for this session — don't let ensure-encryption-key.mjs
-# silently overwrite it with the docker-compose default.
+# --skip-db-default: the devstack's real DATABASE_URL is already exported
+# for this session — don't let ensure-encryption-key.mjs write the
+# docker-compose default over it.
 node scripts/ensure-encryption-key.mjs --skip-db-default
 if [ -f .env ]; then
 	set -a
 	source .env
 	set +a
 fi
+source "$MASKIN_DEVSTACK_DIR/env.sh"
 
 echo "Running database migrations..."
 pnpm db:migrate
