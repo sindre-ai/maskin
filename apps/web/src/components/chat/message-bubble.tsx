@@ -2,9 +2,10 @@ import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { AttachedFileCard } from '@/components/shared/attached-file-card'
 import { MarkdownContent } from '@/components/shared/markdown-content'
 import { RelativeTime } from '@/components/shared/relative-time'
-import type { MessageResponse } from '@/lib/api'
+import type { MessageContextNotification, MessageContextObject, MessageResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
+import { Bell, Box } from 'lucide-react'
 
 interface MessageBubbleProps {
 	workspaceId: string
@@ -22,6 +23,9 @@ export function MessageBubble({ workspaceId, message }: MessageBubbleProps) {
 	const actor = getStoredActor()
 	const isOwn = message.actorId === actor?.id
 	const attachments = message.metadata?.attachments ?? []
+	const contextObjects = message.metadata?.context_objects ?? []
+	const contextNotifications = message.metadata?.context_notifications ?? []
+	const hasContext = contextObjects.length > 0 || contextNotifications.length > 0
 
 	if (message.kind === 'system') {
 		return (
@@ -38,6 +42,13 @@ export function MessageBubble({ workspaceId, message }: MessageBubbleProps) {
 			<div className="flex justify-end">
 				<div className="flex max-w-[85%] flex-col gap-1">
 					<div className="flex flex-col gap-1 rounded-md bg-accent px-3 py-2 text-accent-foreground text-sm">
+						{hasContext ? (
+							<MessageContextChips
+								objects={contextObjects}
+								notifications={contextNotifications}
+								variant="own"
+							/>
+						) : null}
 						{attachments.length > 0 ? (
 							<ul className="flex flex-col gap-1" aria-label="Attached files">
 								{attachments.map((f) => (
@@ -90,6 +101,13 @@ export function MessageBubble({ workspaceId, message }: MessageBubbleProps) {
 						'flex flex-col gap-1 rounded-md border border-border bg-bg-surface px-3 py-2 text-sm',
 					)}
 				>
+					{hasContext ? (
+						<MessageContextChips
+							objects={contextObjects}
+							notifications={contextNotifications}
+							variant="other"
+						/>
+					) : null}
 					{attachments.length > 0 ? (
 						<ul className="flex flex-col gap-1" aria-label="Attached files">
 							{attachments.map((f) => (
@@ -113,5 +131,37 @@ export function MessageBubble({ workspaceId, message }: MessageBubbleProps) {
 				</div>
 			</div>
 		</div>
+	)
+}
+
+interface MessageContextChipsProps {
+	objects: MessageContextObject[]
+	notifications: MessageContextNotification[]
+	/** "own" sits on the accent bubble background, "other" sits on bg-surface. */
+	variant: 'own' | 'other'
+}
+
+/** Renders attached context objects/notifications as a row of pill chips above the message text, instead of the raw "Context objects: — id: ..." text block the composer used to inline into content. */
+function MessageContextChips({ objects, notifications, variant }: MessageContextChipsProps) {
+	const chipClassName =
+		variant === 'own'
+			? 'inline-flex max-w-full items-center gap-1 rounded-full bg-accent-foreground/15 px-2 py-0.5 text-[11px]'
+			: 'inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-bg px-2 py-0.5 text-[11px] text-foreground'
+
+	return (
+		<ul className="flex flex-wrap gap-1" aria-label="Attached context">
+			{objects.map((o) => (
+				<li key={o.id} className={chipClassName}>
+					<Box size={11} aria-hidden />
+					<span className="max-w-[12rem] truncate">{o.title?.trim() || o.id}</span>
+				</li>
+			))}
+			{notifications.map((n) => (
+				<li key={n.id} className={chipClassName}>
+					<Bell size={11} aria-hidden />
+					<span className="max-w-[12rem] truncate">{n.title?.trim() || n.id}</span>
+				</li>
+			))}
+		</ul>
 	)
 }

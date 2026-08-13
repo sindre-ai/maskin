@@ -4,12 +4,9 @@ import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useCreateConversation } from '@/hooks/use-conversations'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
+import type { MessageMetadata } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
-import {
-	EMPTY_CHAT_SELECTION,
-	buildOneShotActionPrompt,
-	chatSelectionReducer,
-} from '@/lib/chat-selection'
+import { EMPTY_CHAT_SELECTION, chatSelectionReducer } from '@/lib/chat-selection'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { Command } from 'cmdk'
@@ -114,22 +111,46 @@ function NewConversationPage() {
 	const handleSend = useCallback(
 		async (content: string) => {
 			setError(null)
-			if (participants.length === 0) {
+			// The Composer's "Agent" button (selection.agent) is a separate entry
+			// point from the "To" field above — fold it into the participant list
+			// so tagging an agent there actually adds them to the conversation,
+			// instead of silently doing nothing.
+			const taggedAgent =
+				selection.agent && !participantIds.has(selection.agent.id)
+					? [{ id: selection.agent.id, name: selection.agent.name ?? 'Agent', type: 'agent' }]
+					: []
+			const allParticipants = [...participants, ...taggedAgent]
+			if (allParticipants.length === 0) {
 				const err = new Error('Add at least one person or agent to start the conversation')
 				setError(err.message)
 				throw err
 			}
 			const objects = seedObject ? [seedObject] : selection.objects
 			const notifications = seedNotification ? [seedNotification] : selection.notifications
-			const hasContext = objects.length > 0 || notifications.length > 0
-			const initialMessage = hasContext
-				? buildOneShotActionPrompt(content, objects, notifications, [])
-				: content
+
+			// Sent as structured metadata (rendered as chips by MessageBubble)
+			// rather than inlined into the message text.
+			const metadata: MessageMetadata = {}
+			if (objects.length > 0) {
+				metadata.context_objects = objects.map((o) => ({
+					id: o.id,
+					...(o.title ? { title: o.title } : {}),
+					...(o.type ? { type: o.type } : {}),
+				}))
+			}
+			if (notifications.length > 0) {
+				metadata.context_notifications = notifications.map((n) => ({
+					id: n.id,
+					...(n.title ? { title: n.title } : {}),
+				}))
+			}
+
 			try {
 				const conversation = await createConversation.mutateAsync({
-					title: deriveTitle(participants, content),
-					participant_actor_ids: participants.map((p) => p.id),
-					initial_message: initialMessage,
+					title: deriveTitle(allParticipants, content),
+					participant_actor_ids: allParticipants.map((p) => p.id),
+					initial_message: content,
+					...(Object.keys(metadata).length > 0 ? { initial_message_metadata: metadata } : {}),
 				})
 				dispatchSelection({ type: 'clear_all' })
 				navigate({
@@ -143,6 +164,7 @@ function NewConversationPage() {
 		},
 		[
 			participants,
+			participantIds,
 			seedObject,
 			seedNotification,
 			selection,

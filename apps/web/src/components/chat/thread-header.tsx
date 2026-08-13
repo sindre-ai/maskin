@@ -1,11 +1,13 @@
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useConversation } from '@/hooks/use-conversation'
-import { useUpdateConversationMe } from '@/hooks/use-conversations'
+import { useUpdateConversation, useUpdateConversationMe } from '@/hooks/use-conversations'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { useNavigate } from '@tanstack/react-router'
-import { Archive, ArchiveRestore, ArrowLeft, Copy, Pin, PinOff } from 'lucide-react'
+import { Archive, ArchiveRestore, ArrowLeft, Copy, Pencil, Pin, PinOff } from 'lucide-react'
+import { useState } from 'react'
 import { toast } from 'sonner'
 import { ParticipantsPopover } from './participants-popover'
 
@@ -19,6 +21,9 @@ export function ThreadHeader({ workspaceId, conversationId }: ThreadHeaderProps)
 	const isMobile = useIsMobile()
 	const navigate = useNavigate()
 	const updateMe = useUpdateConversationMe(workspaceId)
+	const updateConversation = useUpdateConversation(workspaceId)
+	const [isEditingTitle, setIsEditingTitle] = useState(false)
+	const [titleDraft, setTitleDraft] = useState('')
 
 	const handleBack = () => {
 		navigate({ to: '/$workspaceId/chats', params: { workspaceId } })
@@ -31,6 +36,19 @@ export function ThreadHeader({ workspaceId, conversationId }: ThreadHeaderProps)
 		} catch {
 			toast.error('Could not copy link')
 		}
+	}
+
+	const startEditingTitle = () => {
+		if (!conversation) return
+		setTitleDraft(conversation.title)
+		setIsEditingTitle(true)
+	}
+
+	const commitTitle = () => {
+		const next = titleDraft.trim()
+		setIsEditingTitle(false)
+		if (!conversation || next.length === 0 || next === conversation.title) return
+		updateConversation.mutate({ id: conversationId, data: { title: next } })
 	}
 
 	if (!conversation) {
@@ -55,7 +73,45 @@ export function ThreadHeader({ workspaceId, conversationId }: ThreadHeaderProps)
 					<ArrowLeft size={16} />
 				</Button>
 			) : null}
-			<h1 className="min-w-0 flex-1 truncate text-sm font-semibold">{conversation.title}</h1>
+			{isEditingTitle ? (
+				<Input
+					autoFocus
+					value={titleDraft}
+					onChange={(e) => setTitleDraft(e.target.value)}
+					onBlur={commitTitle}
+					onKeyDown={(e) => {
+						if (e.key === 'Enter') {
+							e.preventDefault()
+							commitTitle()
+						} else if (e.key === 'Escape') {
+							e.preventDefault()
+							setIsEditingTitle(false)
+						}
+					}}
+					maxLength={200}
+					aria-label="Conversation title"
+					className="h-7 min-w-0 flex-1 text-sm font-semibold"
+				/>
+			) : (
+				<>
+					<h1 className="min-w-0 flex-1 truncate text-sm font-semibold">{conversation.title}</h1>
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<Button
+								type="button"
+								variant="ghost"
+								size="icon"
+								className="h-7 w-7"
+								onClick={startEditingTitle}
+								aria-label="Rename conversation"
+							>
+								<Pencil size={14} />
+							</Button>
+						</TooltipTrigger>
+						<TooltipContent>Rename</TooltipContent>
+					</Tooltip>
+				</>
+			)}
 			<ParticipantsPopover
 				workspaceId={workspaceId}
 				conversationId={conversationId}

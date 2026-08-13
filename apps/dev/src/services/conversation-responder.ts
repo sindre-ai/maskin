@@ -127,8 +127,16 @@ export async function evaluateAndRespond(ctx: {
 		return
 	}
 
-	const metadata = message.metadata as { mentions?: string[] } | null
+	const metadata = message.metadata as {
+		mentions?: string[]
+		context_objects?: Array<{ id: string; title?: string; type?: string }>
+		context_notifications?: Array<{ id: string; title?: string }>
+	} | null
 	const mentioned = new Set(metadata?.mentions ?? [])
+	// The composer sends attached objects/notifications as structured metadata
+	// (rendered as chips in the UI) rather than inlined into `content` — rebuild
+	// a compact context block here so the agent's prompt still carries it.
+	const messageForPrompt = { ...message, content: appendContextBlock(message.content, metadata) }
 
 	const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
 	const wsSettings = (ws?.settings as WorkspaceSettings) ?? {}
@@ -157,7 +165,7 @@ export async function evaluateAndRespond(ctx: {
 							agent,
 							wsSettings,
 							conversationHistory,
-							newMessageContent: message.content,
+							newMessageContent: messageForPrompt.content,
 							isDirectConversation,
 						})
 			if (!shouldRespond) return
@@ -171,7 +179,7 @@ export async function evaluateAndRespond(ctx: {
 							role: 'user',
 							content: buildConversationTurnPrompt({
 								authorName: message.authorName,
-								newMessageContent: message.content,
+								newMessageContent: messageForPrompt.content,
 								isDirectConversation,
 								wasMentioned,
 							}),
@@ -207,7 +215,7 @@ export async function evaluateAndRespond(ctx: {
 				conversationId,
 				messageId,
 				agentId: agent.id,
-				message,
+				message: messageForPrompt,
 				conversationHistory,
 				isDirectConversation,
 				wasMentioned,
@@ -427,6 +435,42 @@ async function checkRelevance(params: {
 		})
 		return false
 	}
+}
+
+/**
+ * Rebuilds the compact "Context objects:" / "Context notifications:" block
+ * the composer used to inline directly into message content — now that the
+ * composer sends this as structured metadata (so the UI can render chips
+ * instead of literal text), the agent-facing prompt has to reconstruct it.
+ */
+function appendContextBlock(
+	content: string,
+	metadata: {
+		context_objects?: Array<{ id: string; title?: string; type?: string }>
+		context_notifications?: Array<{ id: string; title?: string }>
+	} | null,
+): string {
+	const objects = metadata?.context_objects ?? []
+	const notifications = metadata?.context_notifications ?? []
+	if (objects.length === 0 && notifications.length === 0) return content
+	const lines: string[] = [content, '', '---']
+	if (objects.length > 0) {
+		lines.push('Context objects:')
+		for (const o of objects) {
+			const label = o.title?.trim() || o.id
+			const typeTag = o.type ? ` (${o.type})` : ''
+			lines.push(`- ${label}${typeTag} — id: ${o.id}`)
+		}
+	}
+	if (notifications.length > 0) {
+		if (objects.length > 0) lines.push('')
+		lines.push('Context notifications:')
+		for (const n of notifications) {
+			const label = n.title?.trim() || n.id
+			lines.push(`- ${label} — id: ${n.id}`)
+		}
+	}
+	return lines.join('\n')
 }
 
 /** Shared `{actorName}: {content}` transcript join, used both for the relevance check and the seed prompt. */

@@ -148,6 +148,30 @@ async function loadUnreadCounts(
 	return new Map(rows.map((r) => [r.conversationId, r.unreadCount]))
 }
 
+/**
+ * Inserts (or re-activates, via onConflictDoUpdate) active participant rows.
+ * Re-adding a previously-removed participant clears leftAt but deliberately
+ * keeps their prior pinned/archived/lastReadMessageId — see schema comment on
+ * conversation_participants. Shared by the explicit add-participants route and
+ * the @mention auto-join path in postMessageRoute.
+ */
+async function addParticipantsToConversation(
+	db: Database,
+	conversationId: string,
+	actorIds: string[],
+	addedBy: string,
+): Promise<void> {
+	for (const actorId of actorIds) {
+		await db
+			.insert(conversationParticipants)
+			.values({ conversationId, actorId, addedBy })
+			.onConflictDoUpdate({
+				target: [conversationParticipants.conversationId, conversationParticipants.actorId],
+				set: { leftAt: null, addedBy, updatedAt: new Date() },
+			})
+	}
+}
+
 /** Load a conversation and verify the caller is an active (non-left) participant. */
 async function loadConversationWithAuth(db: Database, conversationId: string, callerId: string) {
 	const [row] = await db
@@ -235,7 +259,12 @@ app.openapi(createConversationRoute, (async (c) => {
 		if (body.initial_message) {
 			const [msg] = await tx
 				.insert(messages)
-				.values({ conversationId: created.id, actorId: callerId, content: body.initial_message })
+				.values({
+					conversationId: created.id,
+					actorId: callerId,
+					content: body.initial_message,
+					metadata: body.initial_message_metadata ?? null,
+				})
 				.returning()
 			initialMessage = msg
 			await tx
@@ -542,18 +571,7 @@ app.openapi(addParticipantsRoute, (async (c) => {
 		)
 	}
 
-	for (const actorId of body.actor_ids) {
-		await db
-			.insert(conversationParticipants)
-			.values({ conversationId: id, actorId, addedBy: callerId })
-			.onConflictDoUpdate({
-				target: [conversationParticipants.conversationId, conversationParticipants.actorId],
-				// Re-adding a previously-removed participant clears leftAt but
-				// deliberately keeps their prior pinned/archived/lastReadMessageId —
-				// see schema comment on conversation_participants.
-				set: { leftAt: null, addedBy: callerId, updatedAt: new Date() },
-			})
-	}
+	await addParticipantsToConversation(db, id, body.actor_ids, callerId)
 
 	await db.insert(events).values({
 		workspaceId,
@@ -769,6 +787,34 @@ app.openapi(postMessageRoute, (async (c) => {
 		entityId: id,
 		data: { message_id: created.id, author_actor_id: callerId },
 	})
+
+	// @mentioning an agent who isn't yet an active participant should actually
+	// pull them into the conversation — otherwise evaluateAndRespond's
+	// candidate query (scoped to active conversationParticipants) never sees
+	// them and the mention silently does nothing. Auto-join here, before
+	// evaluateAndRespond runs, so the freshly-mentioned agent is already a
+	// candidate for this very message.
+	const mentionedIds = body.metadata?.mentions ?? []
+	if (mentionedIds.length > 0) {
+		const activeParticipants = await loadParticipantsByConversation(db, [id])
+		const activeIds = new Set((activeParticipants.get(id) ?? []).map((p) => p.actorId))
+		const notYetJoined = mentionedIds.filter((actorId) => !activeIds.has(actorId))
+		if (notYetJoined.length > 0) {
+			const memberIds = await loadWorkspaceMemberIds(db, workspaceId, notYetJoined)
+			const toAdd = notYetJoined.filter((actorId) => memberIds.has(actorId))
+			if (toAdd.length > 0) {
+				await addParticipantsToConversation(db, id, toAdd, callerId)
+				await db.insert(events).values({
+					workspaceId,
+					actorId: callerId,
+					action: 'conversation_participant_added',
+					entityType: 'conversation',
+					entityId: id,
+					data: { added_actor_ids: toAdd, via: 'mention' },
+				})
+			}
+		}
+	}
 
 	evaluateAndRespond({
 		db,

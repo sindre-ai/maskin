@@ -103,6 +103,41 @@ describe('Conversations Integration', () => {
 			expect(msg?.content).toBe('hey team')
 		})
 
+		it('stores structured metadata on the initial message', async () => {
+			const other = await insertActor(db, { type: 'human' })
+			await addMember(workspaceId, other.id)
+			const { app } = createConversationsApp(ownerId)
+
+			const objectId = crypto.randomUUID()
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{
+						title: 'With context',
+						participant_actor_ids: [other.id],
+						initial_message: 'what does this contain?',
+						initial_message_metadata: {
+							context_objects: [{ id: objectId, title: 'Signup context', type: 'knowledge' }],
+						},
+					},
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(201)
+			const body = (await res.json()) as { id: string }
+
+			const messagesRes = await app.request(
+				jsonGet(`/api/conversations/${body.id}/messages`, { 'x-workspace-id': workspaceId }),
+			)
+			const messagesBody = (await messagesRes.json()) as {
+				messages: Array<{ metadata: { context_objects?: Array<{ id: string; title?: string }> } }>
+			}
+			expect(messagesBody.messages[0]?.metadata?.context_objects).toEqual([
+				{ id: objectId, title: 'Signup context', type: 'knowledge' },
+			])
+		})
+
 		it('rejects a participant who is not a workspace member', async () => {
 			const outsider = await insertActor(db, { type: 'human' })
 			const { app } = createConversationsApp(ownerId)
@@ -242,6 +277,82 @@ describe('Conversations Integration', () => {
 	})
 
 	describe('participants', () => {
+		it('auto-joins an @mentioned agent who is not yet a participant, so they become a responder candidate', async () => {
+			// Regression: @mentioning an agent via the composer used to be a
+			// no-op unless they were already a conversation participant, because
+			// evaluateAndRespond's candidate query only reads active
+			// conversationParticipants rows — the mention itself was never
+			// promoted into one.
+			const other = await insertActor(db, { type: 'human' })
+			const agent = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, other.id)
+			await addMember(workspaceId, agent.id)
+			const { app: ownerApp, sessionManager } = createConversationsApp(ownerId)
+			const created = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'No agent yet', participant_actor_ids: [other.id] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+
+			const messageRes = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${conversation.id}/messages`,
+					{ content: `hey <@${agent.id}>`, metadata: { mentions: [agent.id] } },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(messageRes.status).toBe(201)
+
+			const detail = await ownerApp.request(
+				jsonGet(`/api/conversations/${conversation.id}`, { 'x-workspace-id': workspaceId }),
+			)
+			const detailBody = (await detail.json()) as { participants: Array<{ actorId: string }> }
+			expect(detailBody.participants.map((p) => p.actorId).sort()).toEqual(
+				[ownerId, other.id, agent.id].sort(),
+			)
+
+			// evaluateAndRespond is fire-and-forget from the route (not awaited)
+			// — give the microtask queue a turn before asserting.
+			await new Promise((resolve) => setTimeout(resolve, 50))
+			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
+			expect(sessionManager.createSession.mock.calls[0]?.[1]).toMatchObject({ actorId: agent.id })
+		})
+
+		it('ignores a mention of an actor who is not a workspace member, without failing the message post', async () => {
+			const outsider = await insertActor(db, { type: 'agent' })
+			const { app: ownerApp } = createConversationsApp(ownerId)
+			const created = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Solo', participant_actor_ids: [] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+
+			const messageRes = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${conversation.id}/messages`,
+					{ content: `hey <@${outsider.id}>`, metadata: { mentions: [outsider.id] } },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(messageRes.status).toBe(201)
+
+			const detail = await ownerApp.request(
+				jsonGet(`/api/conversations/${conversation.id}`, { 'x-workspace-id': workspaceId }),
+			)
+			const detailBody = (await detail.json()) as { participants: Array<{ actorId: string }> }
+			expect(detailBody.participants.map((p) => p.actorId)).toEqual([ownerId])
+		})
+
 		it('re-adding a removed participant preserves their pinned/archived state', async () => {
 			const other = await insertActor(db, { type: 'human' })
 			await addMember(workspaceId, other.id)

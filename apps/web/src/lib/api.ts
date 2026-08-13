@@ -1315,9 +1315,22 @@ export interface MessageAttachment {
 	size_bytes?: number
 }
 
+export interface MessageContextObject {
+	id: string
+	title?: string
+	type?: string
+}
+
+export interface MessageContextNotification {
+	id: string
+	title?: string
+}
+
 export interface MessageMetadata {
 	attachments?: MessageAttachment[]
 	mentions?: string[]
+	context_objects?: MessageContextObject[]
+	context_notifications?: MessageContextNotification[]
 }
 
 export interface MessageResponse {
@@ -1342,6 +1355,7 @@ export interface CreateConversationInput {
 	title: string
 	participant_actor_ids: string[]
 	initial_message?: string
+	initial_message_metadata?: MessageMetadata
 }
 
 export interface UpdateConversationInput {
