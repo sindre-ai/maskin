@@ -27,6 +27,7 @@ import graphRoutes from './routes/graph'
 import importsRoutes from './routes/imports'
 import installedLoopsRoutes from './routes/installed-loops'
 import integrationsRoutes, { webhookApp } from './routes/integrations'
+import integrationsEmailMcpRoutes from './routes/integrations-email-mcp'
 import integrationsSlackMcpRoutes from './routes/integrations-slack-mcp'
 import loopsRoutes from './routes/loops'
 import marketplaceLoopsRoutes from './routes/marketplace-loops'
@@ -243,6 +244,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/loops', loopsRoutes)
 	app.route('/api/integrations', integrationsRoutes)
 	app.route('/api/integrations/slack/mcp', integrationsSlackMcpRoutes)
+	app.route('/api/integrations/email/mcp', integrationsEmailMcpRoutes)
 	app.route('/api/marketplace', marketplaceLoopsRoutes)
 	app.route('/api/mini-apps', miniAppRegenRoutes)
 	app.route('/api/webhooks', webhookApp)

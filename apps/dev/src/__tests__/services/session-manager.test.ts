@@ -1239,6 +1239,104 @@ describe('SessionManager', () => {
 			})
 		})
 
+		describe('Email auto-inject', () => {
+			let originalResendApiKey: string | undefined
+			let originalEmailFrom: string | undefined
+
+			beforeEach(() => {
+				originalResendApiKey = process.env.RESEND_API_KEY
+				originalEmailFrom = process.env.EMAIL_FROM
+			})
+
+			afterEach(() => {
+				if (originalResendApiKey === undefined) {
+					// biome-ignore lint/performance/noDelete: assigning undefined coerces to the string "undefined" in Node.js
+					delete process.env.RESEND_API_KEY
+				} else {
+					process.env.RESEND_API_KEY = originalResendApiKey
+				}
+				if (originalEmailFrom === undefined) {
+					// biome-ignore lint/performance/noDelete: assigning undefined coerces to the string "undefined" in Node.js
+					delete process.env.EMAIL_FROM
+				} else {
+					process.env.EMAIL_FROM = originalEmailFrom
+				}
+			})
+
+			it('injects the send_email MCP endpoint into every session when RESEND_API_KEY and EMAIL_FROM are set', async () => {
+				process.env.RESEND_API_KEY = 're_test_key'
+				process.env.EMAIL_FROM = 'no-reply@mail.maskin.ai'
+
+				const fixtures = buildLaunchFixtures([])
+				setupLaunchMocks(fixtures)
+				await manager.startSession(fixtures.session.id)
+
+				const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+					env: Record<string, string>
+				}
+				expect(createArgs.env.MCP_SERVERS_JSON).toBeDefined()
+				const parsed = JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
+					mcpServers: Record<string, { type: string; url: string }>
+				}
+				expect(parsed.mcpServers['integration-email']).toEqual({
+					type: 'http',
+					url: '${MASKIN_API_URL}/api/integrations/email/mcp',
+					headers: {
+						Authorization: 'Bearer ${MASKIN_API_KEY}',
+						'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+					},
+				})
+			})
+
+			it('does not inject the email MCP when RESEND_API_KEY is missing (fail-loud rather than fail-silent send stub)', async () => {
+				// biome-ignore lint/performance/noDelete: assigning undefined coerces to the string "undefined" in Node.js
+				delete process.env.RESEND_API_KEY
+				process.env.EMAIL_FROM = 'no-reply@mail.maskin.ai'
+
+				const fixtures = buildLaunchFixtures([])
+				setupLaunchMocks(fixtures)
+				await manager.startSession(fixtures.session.id)
+
+				const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+					env: Record<string, string>
+				}
+				const mcpKeys = createArgs.env.MCP_SERVERS_JSON
+					? Object.keys(
+							(
+								JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
+									mcpServers: Record<string, unknown>
+								}
+							).mcpServers,
+						)
+					: []
+				expect(mcpKeys).not.toContain('integration-email')
+			})
+
+			it('does not inject the email MCP when EMAIL_FROM is missing', async () => {
+				process.env.RESEND_API_KEY = 're_test_key'
+				// biome-ignore lint/performance/noDelete: assigning undefined coerces to the string "undefined" in Node.js
+				delete process.env.EMAIL_FROM
+
+				const fixtures = buildLaunchFixtures([])
+				setupLaunchMocks(fixtures)
+				await manager.startSession(fixtures.session.id)
+
+				const createArgs = mockContainerManager.create.mock.calls[0]?.[0] as {
+					env: Record<string, string>
+				}
+				const mcpKeys = createArgs.env.MCP_SERVERS_JSON
+					? Object.keys(
+							(
+								JSON.parse(createArgs.env.MCP_SERVERS_JSON) as {
+									mcpServers: Record<string, unknown>
+								}
+							).mcpServers,
+						)
+					: []
+				expect(mcpKeys).not.toContain('integration-email')
+			})
+		})
+
 		it('passes AGENT_MCP_JSON and GITHUB_TOKEN_* together so envsubst can resolve the token reference', async () => {
 			const integration = buildIntegration({
 				provider: 'github',
