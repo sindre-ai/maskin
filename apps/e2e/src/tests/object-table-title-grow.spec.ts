@@ -93,7 +93,7 @@ test.describe('Object title — long titles fill available row width', () => {
 		})
 	}
 
-	test('related objects table gives the title link more than the old 300px cap', async ({
+	test('related objects table title fills leftover width on the detail surface', async ({
 		page,
 		account,
 	}) => {
@@ -118,6 +118,13 @@ test.describe('Object title — long titles fill available row width', () => {
 		})
 
 		await page.goto(`/${account.workspaceId}/objects/${parent.id}`)
+		await expect(
+			page.getByRole('heading', { level: 1, name: 'Parent bet with a related row' }),
+		).toBeVisible({ timeout: 10000 })
+
+		// T5 assembled the Related tab into the shell — the related row lives
+		// there. Click into it before asserting the title-grow shape.
+		await page.getByRole('tab', { name: /^Related/ }).click()
 
 		const titleLink = page.getByRole('link', { name: LONG_TITLE })
 		await expect(titleLink).toBeVisible({ timeout: 10000 })
@@ -128,7 +135,12 @@ test.describe('Object title — long titles fill available row width', () => {
 		await expect(titleHead).toBeVisible()
 
 		const linkBox = await titleLink.boundingBox()
-		if (!linkBox) throw new Error('related title link has no layout box')
+		if (!linkBox) throw new Error('title link has no layout box')
 		expect(linkBox.width).toBeGreaterThan(300)
+
+		const horizScroll = await page.evaluate(
+			() => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+		)
+		expect(horizScroll).toBe(false)
 	})
 })
