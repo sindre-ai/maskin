@@ -48,6 +48,7 @@ type TaxonomyEntityType =
 	| 'trigger'
 	| 'relationship'
 	| 'file'
+	| 'loop'
 
 type EventSource = 'web' | 'mcp' | 'trigger'
 
@@ -477,4 +478,33 @@ export function trackForyouCardAction(p: {
 		card_id: p.card_id,
 		action_id: p.action_id,
 	})
+}
+
+// Ship-metric event for the language-only loop builder bet — fires once when
+// Create lands a loop from a described plan. The success metric counts
+// distinct accepting workspaces, so `workspace_id` is passed on the event (not
+// only via super-properties) and `loop_id` is the loop's `objects` row id —
+// both in the snake_case names the backend's `loop_active_day` event already
+// established, so the two loop streams slice identically in PostHog.
+// `entity_id`/`entity_type` mirror those fields for taxonomy joins. Fires with
+// `send_instantly: true` so the emission is not lost to posthog-js's batching
+// queue — the bet's exit gate keys off this event staying non-zero. Exactly-once
+// per accepted loop is enforced at the call site (the create completion path).
+export function trackLoopCreatedViaLanguage(p: {
+	workspace_id: string
+	loop_id: string
+	flow_id?: string | null
+}): void {
+	trackEvent(
+		'loop_created_via_language',
+		{
+			workspace_id: p.workspace_id,
+			loop_id: p.loop_id,
+			entity_id: p.loop_id,
+			entity_type: 'loop',
+			source: 'web',
+			flow_id: p.flow_id ?? null,
+		},
+		{ send_instantly: true },
+	)
 }

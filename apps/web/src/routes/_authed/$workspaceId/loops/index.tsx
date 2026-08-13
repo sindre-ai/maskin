@@ -93,7 +93,16 @@ function LoopsPage() {
 
 	return (
 		<div>
-			<PageHeader title="Loops" />
+			<PageHeader
+				title="Loops"
+				actions={
+					<Button size="sm" asChild>
+						<Link to="/$workspaceId/loops/new" params={{ workspaceId }}>
+							Start a loop
+						</Link>
+					</Button>
+				}
+			/>
 
 			{loopsLoading ? (
 				<ListSkeleton />

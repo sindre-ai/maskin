@@ -15,6 +15,7 @@ import {
 	trackForyouCardMarkedRead,
 	trackForyouCardMarkedUnread,
 	trackForyouCardShown,
+	trackLoopCreatedViaLanguage,
 	trackMiniAppFileViewed,
 	trackNavItemClicked,
 	trackNorthStarPromptImpression,
@@ -497,6 +498,53 @@ describe('v1 taxonomy helpers', () => {
 		expect(capture).toHaveBeenCalledWith(
 			'north_star_prompt_response',
 			{ workspace_id: 'ws-42' },
+			{ send_instantly: true },
+		)
+	})
+
+	it('loop_created_via_language fires once with workspace_id and loop_id, bypassing the batch queue', () => {
+		// send_instantly is load-bearing: without it, posthog-js batches events
+		// for ~3s, and the create-completion path can navigate away in that
+		// window (same class of loss as north_star_prompt_response). The loop
+		// builder bet's exit gate keys off this event staying non-zero, so the
+		// delivery must not depend on the user staying on the page.
+		const capture = captureSpy()
+
+		trackLoopCreatedViaLanguage({ workspace_id: 'ws-42', loop_id: 'loop-7' })
+
+		expect(capture).toHaveBeenCalledTimes(1)
+		expect(capture).toHaveBeenCalledWith(
+			'loop_created_via_language',
+			{
+				workspace_id: 'ws-42',
+				loop_id: 'loop-7',
+				entity_id: 'loop-7',
+				entity_type: 'loop',
+				source: 'web',
+				flow_id: null,
+			},
+			{ send_instantly: true },
+		)
+	})
+
+	it('loop_created_via_language mirrors loop_id into entity_id/entity_type so the loop streams slice identically', () => {
+		const capture = captureSpy()
+
+		trackLoopCreatedViaLanguage({ workspace_id: 'ws-42', loop_id: 'loop-7', flow_id: 'accept-1' })
+
+		// `loop_id` + `workspace_id` are the fields the backend's loop_active_day
+		// event established; entity_id/entity_type mirror them for taxonomy
+		// joins. flow_id rides when the call site has one, else null.
+		expect(capture).toHaveBeenCalledWith(
+			'loop_created_via_language',
+			{
+				workspace_id: 'ws-42',
+				loop_id: 'loop-7',
+				entity_id: 'loop-7',
+				entity_type: 'loop',
+				source: 'web',
+				flow_id: 'accept-1',
+			},
 			{ send_instantly: true },
 		)
 	})
