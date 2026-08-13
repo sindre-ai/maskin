@@ -2,7 +2,7 @@ import type { Database } from '@maskin/db'
 import { Hono } from 'hono'
 import { describe, expect, it } from 'vitest'
 import { authMiddleware } from '../middleware'
-import { createMockDb } from './helpers'
+import { SELECT_CALL_COUNT, createMockDb } from './helpers'
 
 type Env = {
 	Variables: {
@@ -128,5 +128,10 @@ describe('authMiddleware', () => {
 		expect(res.status).toBe(404)
 		const body = await res.json()
 		expect(body.error.message).toBe('Workspace not found')
+
+		// The mock DB falls back to an empty array for any unconfigured select,
+		// so a 404 alone doesn't prove the guard fired before the membership
+		// query — only the queued validateApiKey select should have run.
+		expect((db as unknown as Record<typeof SELECT_CALL_COUNT, number>)[SELECT_CALL_COUNT]).toBe(1)
 	})
 })
