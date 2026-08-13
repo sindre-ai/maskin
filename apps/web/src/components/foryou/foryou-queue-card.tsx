@@ -283,7 +283,7 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 					data-testid="foryou-queue-card"
 					data-card-kind={cardKind}
 					className={cn(
-						'relative flex h-full max-h-[680px] flex-col overflow-hidden rounded-[18px] border border-border bg-background shadow-md cursor-grab touch-pan-y',
+						'relative flex h-full flex-col overflow-hidden rounded-[18px] border border-border bg-background shadow-md cursor-grab touch-pan-y',
 						exitDir
 							? 'transition-[transform,opacity] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]'
 							: isDragging
