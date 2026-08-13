@@ -516,12 +516,7 @@ export const tools = {
 				.min(1)
 				.max(4000)
 				.describe('One-line description of the SME agent you want (required).'),
-			workspace_id: z
-				.string()
-				.uuid()
-				.describe(
-					'Workspace to register the new actor and SKILL.md into. Required — the route rejects the call without it. Call list_workspaces to discover available workspaces.',
-				),
+			workspace_id: optionalWorkspaceId,
 			examples: z
 				.array(z.string().min(1).max(2000))
 				.max(10)

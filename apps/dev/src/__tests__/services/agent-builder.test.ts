@@ -14,8 +14,20 @@ vi.mock('../../services/llm-call', () => ({
 	callLlm: vi.fn(),
 }))
 
+// PostHog tracking is fired at the actor-registration success point. Mock the
+// wrapper module so we can assert on when it fires (or doesn't) per DoD 5.
+vi.mock('../../lib/analytics/agent-builder-events', () => ({
+	trackAgentCreated: vi.fn().mockResolvedValue(undefined),
+	trackAgentGapReportPosted: vi.fn().mockResolvedValue(undefined),
+}))
+
 const { callLlm: mockedCallLlm } = await import('../../services/llm-call')
 const callLlm = mockedCallLlm as unknown as ReturnType<typeof vi.fn>
+
+const { trackAgentCreated: mockedTrackAgentCreated } = await import(
+	'../../lib/analytics/agent-builder-events'
+)
+const trackAgentCreated = mockedTrackAgentCreated as unknown as ReturnType<typeof vi.fn>
 
 function queueLlmResponses(...contents: string[]) {
 	callLlm.mockReset()
@@ -120,6 +132,7 @@ describe('runAgentBuilder — full pipeline', () => {
 		vi.spyOn(console, 'log').mockImplementation(() => undefined)
 		vi.spyOn(console, 'warn').mockImplementation(() => undefined)
 		vi.spyOn(console, 'error').mockImplementation(() => undefined)
+		trackAgentCreated.mockClear()
 	})
 
 	afterEach(() => {
@@ -203,6 +216,58 @@ describe('runAgentBuilder — full pipeline', () => {
 			CREATED_SKILL_ID,
 			result.skillMd,
 		)
+
+		// agent_created fires with the workspace + created-actor + generation
+		// time properties the ship-metric dashboard queries on.
+		expect(trackAgentCreated).toHaveBeenCalledTimes(1)
+		const trackCall = trackAgentCreated.mock.calls[0][0]
+		expect(trackCall.workspaceId).toBe(WORKSPACE_ID)
+		expect(trackCall.actorId).toBe(CREATED_ACTOR_ID)
+		expect(typeof trackCall.generationTimeMs).toBe('number')
+		expect(trackCall.generationTimeMs).toBeGreaterThanOrEqual(0)
+	})
+
+	it('does not fire agent_created on the underspecified early-return path', async () => {
+		queueLlmResponses(
+			JSON.stringify({
+				domain: '',
+				job_to_be_done: '',
+				deliverables: [],
+				constraints: [],
+				is_underspecified: true,
+				missing: ['domain', 'job_to_be_done'],
+				gap_question: 'What field should this agent specialize in?',
+			}),
+		)
+
+		const result = await runAgentBuilder({ prompt: 'help me build an agent' }, buildContext())
+
+		expect(result.kind).toBe('gap_question')
+		expect(trackAgentCreated).not.toHaveBeenCalled()
+	})
+
+	it('does not fire agent_created when actor registration fails', async () => {
+		queueLlmResponses(buildStage1Well(), buildStage2Well(), buildStage3Well(), buildStage4Well())
+
+		const agentStorage = createMockAgentStorage()
+		const ctxCtx = createTestContext()
+		// First db.insert() (the actor row) throws inside the tx →
+		// registerActorAndSkill catches and wraps as AgentBuilderError.
+		ctxCtx.mockResults.insertError = new Error('simulated actor insert failure')
+
+		await expect(
+			runAgentBuilder(
+				{ prompt: 'plan a zero-downtime add-column migration' },
+				{
+					db: ctxCtx.db,
+					agentStorage,
+					workspaceId: WORKSPACE_ID,
+					actorId: CALLER_ACTOR_ID,
+				},
+			),
+		).rejects.toMatchObject({ name: 'AgentBuilderError' })
+
+		expect(trackAgentCreated).not.toHaveBeenCalled()
 	})
 
 	it('runs stages 3 and 4 in parallel (single Promise.all await)', async () => {

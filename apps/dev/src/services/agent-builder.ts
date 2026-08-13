@@ -4,6 +4,7 @@ import type { Database } from '@maskin/db'
 import { events, actors, agentSkills, workspaceMembers, workspaceSkills } from '@maskin/db/schema'
 import { PLATFORM_MCP_PRESET, serializeSkillMd, skillNameSchema } from '@maskin/shared'
 import { z } from 'zod'
+import { trackAgentCreated } from '../lib/analytics/agent-builder-events'
 import { logger } from '../lib/logger'
 import type { AgentStorageManager } from './agent-storage'
 import { type LlmCallInput, callLlm } from './llm-call'
@@ -543,6 +544,11 @@ export async function runAgentBuilder(
 	input: RunAgentBuilderInput,
 	ctx: AgentBuilderContext,
 ): Promise<RunAgentBuilderResult> {
+	// Wall clock for the bet's generation_time_ms property on agent_created.
+	// Starts at pipeline entry so the metric reflects what the caller waited
+	// for end-to-end, including LLM latency + DB commit + S3 put.
+	const pipelineStartMs = Date.now()
+
 	// ── Stage 1: intent extraction + underspecification gate ────────────────
 	// Must run first; stage 2 depends on its output AND we short-circuit here
 	// when the prompt is underspecified (per bet DoD: no hallucinated fills).
@@ -662,6 +668,15 @@ export async function runAgentBuilder(
 		assembledSystemPrompt,
 		skillName,
 		skillMd,
+	})
+
+	// Ship-metric event. Fires only on successful actor registration — never
+	// on the underspec early return above, never on a thrown stage/tx failure.
+	// Fire-and-forget: capturePosthogEvent never throws.
+	void trackAgentCreated({
+		workspaceId: ctx.workspaceId,
+		actorId: actor.id,
+		generationTimeMs: Date.now() - pipelineStartMs,
 	})
 
 	return {
