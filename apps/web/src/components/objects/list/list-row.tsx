@@ -100,7 +100,28 @@ export function ListRow({
 					<Link
 						to="/$workspaceId/objects/$objectId"
 						params={{ workspaceId, objectId: object.id }}
-						onClick={(e) => e.stopPropagation()}
+						onClick={(e) => {
+							if (e.shiftKey) {
+								e.preventDefault()
+								e.stopPropagation()
+								onShiftClick(object.id)
+								return
+							}
+							if (e.metaKey || e.ctrlKey || e.button === 1) {
+								// Let the browser open the link in a new tab — just stop the
+								// row's own onClick from also navigating the current tab.
+								e.stopPropagation()
+								return
+							}
+							// Route a plain click through the same capture-then-navigate path
+							// as the rest of the row (see ListView.handleOpen) instead of the
+							// Link's own navigation — otherwise clicking the title (the widest
+							// hit target on narrow viewports) skips onCaptureViewState and the
+							// scroll-anchor view-state snapshot never gets taken.
+							e.preventDefault()
+							e.stopPropagation()
+							onOpen(object.id)
+						}}
 						className="min-w-0 truncate text-sm font-medium text-foreground hover:underline"
 					>
 						{object.title || 'Untitled'}
