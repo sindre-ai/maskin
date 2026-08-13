@@ -26,18 +26,6 @@ async function assertNoHorizontalOverflow(page: Page, surface: string, viewport:
 // of which silently fail the parity constraint ("no functionality hidden on
 // iPad"). Each control is asserted by its accessible role/name + the
 // Playwright `toBeVisible` opacity check (ignores opacity:0 and visibility:hidden).
-async function assertReplyButtonVisibleOnObjectDetail(
-	page: Page,
-	surface: string,
-	viewport: NamedViewport,
-) {
-	const replyButton = page.getByRole('button', { name: 'Reply' }).first()
-	await expect(
-		replyButton,
-		`${surface}: reply-to-thread button must be visible at ${viewport.label}`,
-	).toBeVisible({ timeout: 5000 })
-}
-
 // Mirrors useIsMobile()'s 768px boundary (apps/web/src/hooks/use-mobile.tsx) —
 // comment-input.tsx shortens its placeholder below that width.
 function commentPlaceholderFor(viewport: NamedViewport): string {
@@ -82,7 +70,9 @@ const SURFACES: Surface[] = [
 		name: 'Object detail (bet)',
 		path: (ws, ids) => `/${ws}/objects/${ids.betId}`,
 		waitFor: async (page) => {
-			await expect(page.getByText('Mobile QA Bet')).toBeVisible({ timeout: 10000 })
+			await expect(page.getByRole('heading', { level: 1, name: 'Mobile QA Bet' })).toBeVisible({
+				timeout: 10000,
+			})
 		},
 	},
 	{
@@ -177,30 +167,31 @@ test.describe('Mobile + iPad QA — viewport overflow ship gate', () => {
 
 test.describe('Mobile + iPad QA — critical controls ship gate', () => {
 	// Brief: at every ship-gate viewport (375 / 768 / 1024), the comment composer
-	// and the reply-to-thread button must be visible on object detail. The
-	// horizontal-overflow gate caught layout regressions but missed cases where a
-	// control was rendered with opacity:0 and a hover-only reveal — invisible on
-	// touch devices like iPad portrait. Asserting accessible-role visibility here
-	// catches "functionality hidden on iPad" before it ships.
+	// must be visible on object detail. The horizontal-overflow gate caught
+	// layout regressions but missed cases where a control was rendered with
+	// opacity:0 and a hover-only reveal — invisible on touch devices like iPad
+	// portrait. Asserting accessible-role visibility here catches "functionality
+	// hidden on iPad" before it ships.
+	//
+	// The reply-to-thread button renders only on root comments in a thread — the
+	// activity timeline is T2 scope, so the T1 surface must show the composer
+	// and must NOT render a dead Reply affordance (pinned as an absence
+	// contract; the reply path returns with the timeline).
 	for (const viewport of SHIP_GATE_VIEWPORTS) {
-		test(`reply button + composer visible on object detail @ ${viewport.label}`, async ({
+		test(`composer visible, no dead Reply affordance on object detail @ ${viewport.label}`, async ({
 			page,
 			account,
 		}) => {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
 			const ids = await seedObjects(account)
-			// Seed a root comment so the Reply button surfaces (only rendered on root
-			// comments without replies; an empty thread has nothing to reply to).
-			await account.api.createComment(account.workspaceId, {
-				entity_id: ids.betId,
-				content: 'Seeded root comment for control-visibility ship gate',
-			})
 
 			await page.goto(`/${account.workspaceId}/objects/${ids.betId}`)
-			await expect(page.getByText('Mobile QA Bet')).toBeVisible({ timeout: 10000 })
+			await expect(page.getByRole('heading', { level: 1, name: 'Mobile QA Bet' })).toBeVisible({
+				timeout: 10000,
+			})
 
 			await assertCommentComposerVisible(page, 'Object detail', viewport)
-			await assertReplyButtonVisibleOnObjectDetail(page, 'Object detail', viewport)
+			await expect(page.getByRole('button', { name: 'Reply' })).toHaveCount(0)
 		})
 	}
 })
@@ -224,15 +215,19 @@ test.describe('Mobile first-test flow — For You → object → comment', () =>
 		//    the brief's flow is "land → object → comment" and the unread feed depends on
 		//    cross-actor activity that this single-actor fixture can't synthesize).
 		await page.goto(`/${account.workspaceId}/objects/${ids.betId}`)
-		await expect(page.getByText('Mobile QA Bet')).toBeVisible({ timeout: 10000 })
+		await expect(page.getByRole('heading', { level: 1, name: 'Mobile QA Bet' })).toBeVisible({
+			timeout: 10000,
+		})
 		await assertNoHorizontalOverflow(page, 'Object detail (step 2)', VIEWPORTS.mobile)
 
-		// 3. Comment — type and send via the composer
+		// 3. Comment — type and send via the composer. The activity timeline is
+		//    T2 scope, so the send is confirmed by the composer clearing (the
+		//    posted comment row itself returns with the timeline).
 		const composer = page.getByPlaceholder(commentPlaceholderFor(VIEWPORTS.mobile))
 		await composer.click()
 		await composer.fill('QA comment from mobile')
 		await page.getByRole('button', { name: 'Send comment' }).click()
-		await expect(page.getByText('QA comment from mobile').first()).toBeVisible({ timeout: 10000 })
+		await expect(composer).toHaveValue('', { timeout: 10000 })
 		await assertNoHorizontalOverflow(page, 'Object detail after comment (step 3)', VIEWPORTS.mobile)
 	})
 })
