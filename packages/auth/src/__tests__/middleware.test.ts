@@ -88,7 +88,7 @@ describe('authMiddleware', () => {
 		const res = await app.request('/test', {
 			headers: {
 				Authorization: 'Bearer ank_validkey',
-				'X-Workspace-Id': 'ws-123',
+				'X-Workspace-Id': '11111111-1111-1111-1111-111111111111',
 			},
 		})
 		expect(res.status).toBe(200)
@@ -106,7 +106,23 @@ describe('authMiddleware', () => {
 		const res = await app.request('/test', {
 			headers: {
 				Authorization: 'Bearer ank_validkey',
-				'X-Workspace-Id': 'ws-999',
+				'X-Workspace-Id': '22222222-2222-2222-2222-222222222222',
+			},
+		})
+		expect(res.status).toBe(404)
+		const body = await res.json()
+		expect(body.error.message).toBe('Workspace not found')
+	})
+
+	it('returns 404 without querying the database when X-Workspace-Id is not a valid UUID', async () => {
+		const db = createMockDb([
+			[{ id: 'actor-1', type: 'human' }], // validateApiKey finds actor
+		])
+		const app = createTestApp(db)
+		const res = await app.request('/test', {
+			headers: {
+				Authorization: 'Bearer ank_validkey',
+				'X-Workspace-Id': 'not-a-uuid',
 			},
 		})
 		expect(res.status).toBe(404)

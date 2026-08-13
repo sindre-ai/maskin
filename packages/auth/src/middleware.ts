@@ -5,6 +5,8 @@ import { and, eq } from 'drizzle-orm'
 import { createMiddleware } from 'hono/factory'
 import { validateApiKey } from './api-keys'
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 export function authMiddleware(db: Database) {
 	return createMiddleware(async (c, next) => {
 		const authHeader = c.req.header('Authorization')
@@ -44,6 +46,9 @@ export function authMiddleware(db: Database) {
 			// since they derive the workspace from the resource, not the header.
 			const workspaceId = c.req.header('X-Workspace-Id')
 			if (workspaceId) {
+				if (!UUID_RE.test(workspaceId)) {
+					return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+				}
 				const [member] = await db
 					.select({ actorId: workspaceMembers.actorId })
 					.from(workspaceMembers)
