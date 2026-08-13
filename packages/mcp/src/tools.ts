@@ -578,38 +578,38 @@ export const tools = {
 	},
 	maskin_review_work: {
 		description:
-			'Score an agent definition against a rubric using a fresh-context reviewer — no shared conversation with the producer. Pass EITHER object_id (reads the object\'s content as the draft definition — used for reviewing a stored SKILL body or agent spec) OR session_id (reads sessions.result from a terminal container session — used for reviewing an agent-builder run that completed asynchronously). rubric_id is optional; when omitted, resolves to the workspace\'s canonical agent-builder rubric (bootstrapped on first use, editable via update_objects without a deploy). Returns { criteria: [{ name, pass, fix? }], overall: "pass" | "fail" }. This is the same reviewer the agent builder runs internally; call it manually to re-score a definition after edits or to score with a custom rubric.',
-		inputSchema: z
-			.object({
-				object_id: z
-					.string()
-					.uuid()
-					.optional()
-					.describe(
-						'Workspace object whose `content` is the draft definition to review (e.g. a stored SKILL body). Provide exactly one of object_id or session_id.',
-					),
-				session_id: z
-					.string()
-					.uuid()
-					.optional()
-					.describe(
-						'Terminal container session whose `result` payload is the draft definition to review. Provide exactly one of object_id or session_id.',
-					),
-				rubric_id: z
-					.string()
-					.uuid()
-					.optional()
-					.describe(
-						'Rubric object to score against. Omit to use the workspace\'s canonical agent-builder rubric.',
-					),
-				workspace_id: z
-					.string()
-					.uuid()
-					.describe('Workspace to look up the rubric + target object/session in (required).'),
-			})
-			.refine((v) => Boolean(v.object_id) !== Boolean(v.session_id), {
-				message: 'Provide exactly one of object_id or session_id.',
-			}),
+			'Score an agent definition against a rubric using a fresh-context reviewer — no shared conversation with the producer. Pass EXACTLY ONE of object_id (reads the object\'s content as the draft definition — used for reviewing a stored SKILL body or agent spec) OR session_id (reads sessions.result from a terminal container session — used for reviewing an agent-builder run that completed asynchronously). Passing both, or neither, returns a 400 from the route. rubric_id is optional; when omitted, resolves to the workspace\'s canonical agent-builder rubric (bootstrapped on first use, editable via update_objects without a deploy). Returns { criteria: [{ name, pass, fix? }], overall: "pass" | "fail" }. This is the same reviewer the agent builder runs internally; call it manually to re-score a definition after edits or to score with a custom rubric.',
+		// Kept as a plain z.object (no .refine) so `inputSchema instanceof
+		// ZodObject` — the invariant the tools test enforces — holds. Cross-
+		// field validation (exactly one of object_id/session_id) happens at the
+		// route boundary where the response can be a clean 400.
+		inputSchema: z.object({
+			object_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'Workspace object whose `content` is the draft definition to review (e.g. a stored SKILL body). Provide exactly one of object_id or session_id.',
+				),
+			session_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'Terminal container session whose `result` payload is the draft definition to review. Provide exactly one of object_id or session_id.',
+				),
+			rubric_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					"Rubric object to score against. Omit to use the workspace's canonical agent-builder rubric.",
+				),
+			workspace_id: z
+				.string()
+				.uuid()
+				.describe('Workspace to look up the rubric + target object/session in (required).'),
+		}),
 	},
 	maskin_refine_agent: {
 		description:

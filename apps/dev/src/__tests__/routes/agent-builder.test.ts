@@ -1,6 +1,5 @@
 import type { OpenAPIHono } from '@hono/zod-openapi'
 import { OpenAPIHono as CreateOpenAPIHono } from '@hono/zod-openapi'
-import type { Database } from '@maskin/db'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import agentBuilderRoutes from '../../routes/agent-builder'
@@ -12,17 +11,23 @@ vi.mock('../../services/agent-builder', async (importOriginal) => {
 	return {
 		...actual,
 		runAgentBuilder: vi.fn(),
+		reviewWork: vi.fn(),
+		refineAgent: vi.fn(),
 	}
 })
 
-const { runAgentBuilder: mockedRun } = await import('../../services/agent-builder')
-const runAgentBuilder = mockedRun as unknown as ReturnType<typeof vi.fn>
+const service = await import('../../services/agent-builder')
+const runAgentBuilder = service.runAgentBuilder as unknown as ReturnType<typeof vi.fn>
+const reviewWork = service.reviewWork as unknown as ReturnType<typeof vi.fn>
+const refineAgent = service.refineAgent as unknown as ReturnType<typeof vi.fn>
 
 const BASE = '/api/agent-builder'
 const WORKSPACE_ID = '11111111-1111-1111-1111-111111111111'
+const OBJECT_ID = '77777777-7777-7777-7777-777777777777'
+const SESSION_ID = '88888888-8888-8888-8888-888888888888'
+const ACTOR_ID = '33333333-3333-3333-3333-333333333333'
+const RUBRIC_ID = '55555555-5555-5555-5555-555555555555'
 
-// The route needs agentStorage in context — createTestApp does not set it —
-// so mount the route with a local harness that injects it here.
 function createAgentBuilderTestApp() {
 	const app = new CreateOpenAPIHono()
 	const { db, mockResults } = createTestContext()
@@ -51,7 +56,7 @@ describe('POST /api/agent-builder/create', () => {
 		runAgentBuilder.mockReset()
 	})
 
-	it('returns 200 with actor + skill IDs + gap report on happy path (workspace_id via body)', async () => {
+	function stubCreatedResult(overrides: Record<string, unknown> = {}) {
 		runAgentBuilder.mockResolvedValue({
 			kind: 'created',
 			intent: {
@@ -100,7 +105,22 @@ describe('POST /api/agent-builder/create', () => {
 			gapReportMarkdown: '## Gap report for Test\n\n### target segment\n\nname the segment',
 			definitionSummary: 'Test — Growth PM. use when',
 			gapReportCommentPosted: true,
+			reviewerAttempts: [
+				{
+					cycleNumber: 1,
+					overall: 'pass' as const,
+					failingCriteria: [],
+					reviewerSessionId: 'rev-session-uuid',
+					rubricId: RUBRIC_ID,
+				},
+			],
+			reviewerFinalOverall: 'pass' as const,
+			...overrides,
 		})
+	}
+
+	it('returns 200 with actor + skill IDs + reviewer verdict on happy path (workspace_id via body)', async () => {
+		stubCreatedResult()
 
 		const { app } = createAgentBuilderTestApp()
 		const res = await app.request(
@@ -120,18 +140,13 @@ describe('POST /api/agent-builder/create', () => {
 		expect(body.gap_report).toContain('## Gap report for Test')
 		expect(body.gap_report_items).toHaveLength(3)
 		expect(body.gap_report_comment_posted).toBe(true)
+		expect(body.reviewer.final_overall).toBe('pass')
+		expect(body.reviewer.attempts).toHaveLength(1)
+		expect(body.reviewer.attempts[0].reviewer_session_id).toBe('rev-session-uuid')
 	})
 
 	it('accepts workspace_id via X-Workspace-Id header', async () => {
-		runAgentBuilder.mockResolvedValue({
-			kind: 'created',
-			intent: { domain: 'x', job_to_be_done: 'y' } as never,
-			persona: {} as never,
-			systemPrompt: {} as never,
-			opinionation: {} as never,
-			assembledSystemPrompt: '',
-			skillMd: '',
-			skillName: 'test',
+		stubCreatedResult({
 			actor: { id: 'a', name: 'A', description: '' },
 			skill: { id: 's', name: 'test' },
 			gapReport: { gap_items: [] },
@@ -225,5 +240,188 @@ describe('POST /api/agent-builder/create', () => {
 			}),
 		)
 		expect(res.status).toBe(500)
+	})
+})
+
+describe('POST /api/agent-builder/review', () => {
+	beforeEach(() => {
+		vi.spyOn(console, 'log').mockImplementation(() => undefined)
+		vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+		vi.spyOn(console, 'error').mockImplementation(() => undefined)
+	})
+	afterEach(() => {
+		vi.restoreAllMocks()
+		reviewWork.mockReset()
+	})
+
+	it('returns 200 with the structured verdict for an object_id review', async () => {
+		reviewWork.mockResolvedValue({
+			verdict: {
+				overall: 'pass',
+				criteria: [{ name: 'persona_specificity', pass: true, fix: '' }],
+			},
+			reviewerSessionId: 'rev-session-uuid',
+			rubricId: RUBRIC_ID,
+			targetActorId: null,
+		})
+
+		const { app } = createAgentBuilderTestApp()
+		const res = await app.request(
+			jsonRequest('POST', `${BASE}/review`, {
+				object_id: OBJECT_ID,
+				workspace_id: WORKSPACE_ID,
+			}),
+		)
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body.overall).toBe('pass')
+		expect(body.rubric_id).toBe(RUBRIC_ID)
+		expect(body.reviewer_session_id).toBe('rev-session-uuid')
+		expect(body.criteria[0].name).toBe('persona_specificity')
+	})
+
+	it('returns 200 with the structured verdict for a session_id review', async () => {
+		reviewWork.mockResolvedValue({
+			verdict: {
+				overall: 'fail',
+				criteria: [
+					{ name: 'persona_specificity', pass: true, fix: '' },
+					{
+						name: 'no_hedging_enforcement',
+						pass: false,
+						fix: 'Add anti-hedging directive.',
+					},
+				],
+			},
+			reviewerSessionId: 'rev-session-uuid',
+			rubricId: RUBRIC_ID,
+			targetActorId: ACTOR_ID,
+		})
+
+		const { app } = createAgentBuilderTestApp()
+		const res = await app.request(
+			jsonRequest('POST', `${BASE}/review`, {
+				session_id: SESSION_ID,
+				workspace_id: WORKSPACE_ID,
+			}),
+		)
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body.overall).toBe('fail')
+		expect(body.target_actor_id).toBe(ACTOR_ID)
+		expect(body.criteria[1].pass).toBe(false)
+	})
+
+	it('returns 400 when both object_id and session_id are provided', async () => {
+		const { app } = createAgentBuilderTestApp()
+		const res = await app.request(
+			jsonRequest('POST', `${BASE}/review`, {
+				object_id: OBJECT_ID,
+				session_id: SESSION_ID,
+				workspace_id: WORKSPACE_ID,
+			}),
+		)
+		expect(res.status).toBe(400)
+	})
+
+	it('returns 400 when neither object_id nor session_id is provided', async () => {
+		const { app } = createAgentBuilderTestApp()
+		const res = await app.request(
+			jsonRequest('POST', `${BASE}/review`, { workspace_id: WORKSPACE_ID }),
+		)
+		expect(res.status).toBe(400)
+	})
+
+	it('returns 400 when workspace_id is missing', async () => {
+		const { app } = createAgentBuilderTestApp()
+		const res = await app.request(jsonRequest('POST', `${BASE}/review`, { object_id: OBJECT_ID }))
+		expect(res.status).toBe(400)
+	})
+
+	it('returns 404 when the reviewer target is not found', async () => {
+		const { AgentReviewTargetError } = await import('../../services/agent-builder')
+		reviewWork.mockRejectedValue(new AgentReviewTargetError('target_not_found', 'Object not found'))
+		const { app } = createAgentBuilderTestApp()
+		const res = await app.request(
+			jsonRequest('POST', `${BASE}/review`, {
+				object_id: OBJECT_ID,
+				workspace_id: WORKSPACE_ID,
+			}),
+		)
+		expect(res.status).toBe(404)
+	})
+})
+
+describe('POST /api/agent-builder/refine', () => {
+	beforeEach(() => {
+		vi.spyOn(console, 'log').mockImplementation(() => undefined)
+		vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+		vi.spyOn(console, 'error').mockImplementation(() => undefined)
+	})
+	afterEach(() => {
+		vi.restoreAllMocks()
+		refineAgent.mockReset()
+	})
+
+	it('returns 200 with updated_actor_id + diff on a successful refine', async () => {
+		refineAgent.mockResolvedValue({
+			updatedActorId: ACTOR_ID,
+			diff: 'added sections: Response protocol; length changed by +12%',
+			newSystemPrompt: '# updated agent\n\n## Background\n\nnew',
+			previousSystemPrompt: '# old agent',
+		})
+
+		const { app } = createAgentBuilderTestApp()
+		const res = await app.request(
+			jsonRequest('POST', `${BASE}/refine`, {
+				actor_id: ACTOR_ID,
+				context: 'sharpen the bias statement',
+				workspace_id: WORKSPACE_ID,
+			}),
+		)
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body.updated_actor_id).toBe(ACTOR_ID)
+		expect(body.diff).toMatch(/added sections/)
+		expect(body.new_system_prompt).toMatch(/## Background/)
+	})
+
+	it("returns 404 when the actor is not in the caller's workspace", async () => {
+		const { AgentRefineError } = await import('../../services/agent-builder')
+		refineAgent.mockRejectedValue(
+			new AgentRefineError('actor_wrong_workspace', 'Actor not in workspace'),
+		)
+		const { app } = createAgentBuilderTestApp()
+		const res = await app.request(
+			jsonRequest('POST', `${BASE}/refine`, {
+				actor_id: ACTOR_ID,
+				context: 'do a thing',
+				workspace_id: WORKSPACE_ID,
+			}),
+		)
+		expect(res.status).toBe(404)
+	})
+
+	it('returns 400 when context is missing', async () => {
+		const { app } = createAgentBuilderTestApp()
+		const res = await app.request(
+			jsonRequest('POST', `${BASE}/refine`, {
+				actor_id: ACTOR_ID,
+				workspace_id: WORKSPACE_ID,
+			}),
+		)
+		expect(res.status).toBe(400)
+	})
+
+	it('returns 400 when actor_id is not a valid UUID', async () => {
+		const { app } = createAgentBuilderTestApp()
+		const res = await app.request(
+			jsonRequest('POST', `${BASE}/refine`, {
+				actor_id: 'not-a-uuid',
+				context: 'do a thing',
+				workspace_id: WORKSPACE_ID,
+			}),
+		)
+		expect(res.status).toBe(400)
 	})
 })
