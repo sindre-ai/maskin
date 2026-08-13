@@ -32,16 +32,24 @@ describe('SettingsLayout', () => {
 		expect(screen.getByRole('heading', { name: 'Settings' })).toBeInTheDocument()
 	})
 
-	it('renders all navigation links', () => {
+	it('renders the six settings sections in mockup order', () => {
 		render(<SettingsLayout />)
-		expect(screen.getByText('General')).toBeInTheDocument()
-		expect(screen.getByText('Objects')).toBeInTheDocument()
-		expect(screen.getByText('Members')).toBeInTheDocument()
-		expect(screen.getByText('Integrations')).toBeInTheDocument()
-		expect(screen.getByText('Extensions')).toBeInTheDocument()
-		expect(screen.getByText('Skills')).toBeInTheDocument()
-		expect(screen.getByText('LLM')).toBeInTheDocument()
-		expect(screen.getByText('MCP')).toBeInTheDocument()
+		const labels = screen.getAllByRole('link').map((link) => link.textContent)
+		expect(labels).toEqual([
+			'General',
+			'Objects',
+			'Members',
+			'Integrations',
+			'Extensions',
+			'Billing',
+		])
+	})
+
+	it('does not render retired legacy nav labels (Skills, LLM, MCP)', () => {
+		render(<SettingsLayout />)
+		expect(screen.queryByText('Skills')).not.toBeInTheDocument()
+		expect(screen.queryByText('LLM')).not.toBeInTheDocument()
+		expect(screen.queryByText('MCP')).not.toBeInTheDocument()
 	})
 
 	it('renders Outlet for child content', () => {
