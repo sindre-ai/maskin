@@ -2,14 +2,16 @@ import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS, VIEWPORTS } from '../helpers/viewports'
 
 // Long titles must not be cut off while the row still has empty horizontal
-// space. Two surfaces are covered:
-// - The /objects "list" surface (the List view that replaced the DataTable):
-//   rows are flex boxes — the title Link sits in a `flex-1 min-w-0` container
-//   with `min-w-0 truncate`, so it fills whatever width the fixed-size cells
-//   (checkbox, type, tag, updated, chevron) leave over.
-// - The Related Objects table on a detail page (still a DataTable): its title
-//   TableHead carries `w-full` (via header.column.id === 'title') and the cell
-//   `max-w-0`, so auto-layout hands all leftover width to that column.
+// space. The surface covered is the /objects "list" view (which replaced
+// the DataTable): rows are flex boxes — the title Link sits in a
+// `flex-1 min-w-0` container with `min-w-0 truncate`, so it fills whatever
+// width the fixed-size cells (checkbox, type, tag, updated, chevron) leave
+// over.
+//
+// The old third test in this file targeted the DataTable-backed Related
+// Objects table on the object detail page. That table was retired from the
+// detail page in PR #823 (LinkedObjects moved to the create form only), so
+// the surface no longer exists and the assertion can't run.
 //
 // Coverage is split in two:
 // - Ship-gate viewports (375 / 768 / 1024) get smoke assertions: the page
@@ -92,43 +94,4 @@ test.describe('Object title — long titles fill available row width', () => {
 			expect(horizScroll, `document must not horizontally scroll at ${viewport.label}`).toBe(false)
 		})
 	}
-
-	test('related objects table gives the title link more than the old 300px cap', async ({
-		page,
-		account,
-	}) => {
-		await page.setViewportSize({ width: VIEWPORTS.desktop.width, height: VIEWPORTS.desktop.height })
-
-		const parent = await account.api.createObject(account.workspaceId, {
-			type: 'bet',
-			title: 'Parent bet with a related row',
-			status: 'signal',
-		})
-		const related = await account.api.createObject(account.workspaceId, {
-			type: 'task',
-			title: LONG_TITLE,
-			status: 'todo',
-		})
-		await account.api.createRelationship(account.workspaceId, {
-			source_type: 'object',
-			source_id: parent.id,
-			target_type: 'object',
-			target_id: related.id,
-			type: 'relates_to',
-		})
-
-		await page.goto(`/${account.workspaceId}/objects/${parent.id}`)
-
-		const titleLink = page.getByRole('link', { name: LONG_TITLE })
-		await expect(titleLink).toBeVisible({ timeout: 10000 })
-
-		// The Related Objects table is still a DataTable: its Title <th> carries
-		// w-full so auto-layout gives it all the leftover width.
-		const titleHead = page.getByRole('columnheader', { name: /^title/i }).first()
-		await expect(titleHead).toBeVisible()
-
-		const linkBox = await titleLink.boundingBox()
-		if (!linkBox) throw new Error('related title link has no layout box')
-		expect(linkBox.width).toBeGreaterThan(300)
-	})
 })
