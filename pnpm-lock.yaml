@@ -479,6 +479,9 @@ importers:
 
   packages/email:
     dependencies:
+      '@maskin/shared':
+        specifier: workspace:*
+        version: link:../shared
       '@react-email/components':
         specifier: ^1.0.12
         version: 1.0.12(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
