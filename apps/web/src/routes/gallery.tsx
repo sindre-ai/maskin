@@ -363,7 +363,7 @@ function GalleryPage() {
 							<Specimen
 								n={6}
 								title="Chip family"
-								reuse="shared/filter-chip.tsx · ui/badge.tsx · ui/button-group.tsx"
+								reuse="shared/filter-chip.tsx · ui/badge.tsx · ui/button-group.tsx · SuggestChip (net-new)"
 							>
 								<div className="flex flex-col gap-3">
 									<div className="flex flex-wrap items-center gap-2">
@@ -390,6 +390,11 @@ function GalleryPage() {
 											Month
 										</Button>
 									</ButtonGroup>
+									<div className="flex w-full max-w-sm flex-col gap-2">
+										<SuggestChip label="Catch me up on billing" />
+										<SuggestChip label="Draft the Acme follow-up note" />
+										<SuggestChip label="What's on my plate today?" />
+									</div>
 								</div>
 							</Specimen>
 
