@@ -131,14 +131,6 @@ vi.mock('@/lib/query-keys', () => ({
 			board: () => ['objects', 'board'],
 		},
 		relationships: { all: (workspaceId: string) => ['relationships', workspaceId] },
-		notifications: {
-			list: (workspaceId: string, filters?: unknown) => [
-				'notifications',
-				workspaceId,
-				'list',
-				filters,
-			],
-		},
 		imports: { detail: (id: string) => ['imports', 'detail', id] },
 		notifications: {
 			all: (workspaceId: string) => ['notifications', workspaceId],
