@@ -202,7 +202,7 @@ describe('ForYouQueueCard', () => {
 			vi.useFakeTimers()
 			renderDecisionCard()
 
-			fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
+			fireEvent.click(screen.getByRole('button', { name: /Approve/ }))
 
 			expect(screen.queryByTestId('decision-block')).not.toBeInTheDocument()
 			expect(trackForyouCardActionMock).toHaveBeenCalledWith({
@@ -225,7 +225,7 @@ describe('ForYouQueueCard', () => {
 			vi.useFakeTimers()
 			renderDecisionCard()
 
-			fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
+			fireEvent.click(screen.getByRole('button', { name: /Approve/ }))
 			act(() => {
 				vi.advanceTimersByTime(3000)
 			})
@@ -247,7 +247,7 @@ describe('ForYouQueueCard', () => {
 			const onProcessed = vi.fn()
 			const item = renderDecisionCard(onProcessed)
 
-			fireEvent.click(screen.getByRole('button', { name: 'Send back' }))
+			fireEvent.click(screen.getByRole('button', { name: /Send back/ }))
 			act(() => {
 				vi.advanceTimersByTime(6000)
 			})
@@ -268,6 +268,44 @@ describe('ForYouQueueCard', () => {
 
 			fireTransitionEnd(card)
 			expect(onProcessed).toHaveBeenCalledWith(itemQueueKey(item))
+		})
+
+		it('renders the idle block as an in-stream AskCard: "Decision needed" header, and 48px option rows with a one-line rationale plus a trailing kbd affordance on the primary', () => {
+			renderDecisionCard()
+			const block = screen.getByTestId('decision-block')
+			expect(block).toHaveTextContent('Decision needed')
+
+			const approve = screen.getByRole('button', { name: /Approve/i })
+			expect(approve).toHaveTextContent('I agree with the direction — proceed')
+			expect(approve).toHaveClass('min-h-12')
+			expect(approve).toHaveClass('touch-manipulation')
+			expect(block).toHaveTextContent('↵')
+
+			const sendBack = screen.getByRole('button', { name: /Send back/i })
+			expect(sendBack).toHaveTextContent('Needs changes before I sign off')
+		})
+
+		it('renders the reason rows in the receipt only once the choice commits — reply posted, card marked read and advanced', () => {
+			vi.useFakeTimers()
+			mockCreateCommentMutate.mockImplementation((_vars, opts) => opts?.onSuccess?.())
+			renderDecisionCard()
+
+			fireEvent.click(screen.getByRole('button', { name: /Approve/ }))
+
+			// Reversible window still open — no reason rows yet, only the countdown.
+			expect(screen.getByTestId('decision-receipt')).toHaveTextContent('Reversible for')
+			expect(screen.getByTestId('decision-receipt')).not.toHaveTextContent(
+				'Your choice was posted to the thread',
+			)
+
+			act(() => {
+				vi.advanceTimersByTime(6000)
+			})
+
+			const receipt = screen.getByTestId('decision-receipt')
+			expect(receipt).toHaveTextContent('You chose Approve')
+			expect(receipt).toHaveTextContent('Your choice was posted to the thread')
+			expect(receipt).toHaveTextContent('Card marked read and advanced')
 		})
 	})
 

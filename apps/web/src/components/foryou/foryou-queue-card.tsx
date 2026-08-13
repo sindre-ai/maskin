@@ -68,6 +68,9 @@ interface ForYouQueueCardProps {
 type DecisionPhase =
 	| { status: 'idle' }
 	| { status: 'receipt'; action: CardAction; deadline: number }
+	// The reverse window elapsed AND the threaded reply really posted — the
+	// receipt's reason rows render from this real commit, not static JSX.
+	| { status: 'committed'; action: CardAction }
 
 export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCardProps>(
 	function ForYouQueueCard(
@@ -187,6 +190,7 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 						{ entity_id: objectId, content: action.label, parent_event_id: replyTarget },
 						{
 							onSuccess: () => {
+								setDecisionPhase({ status: 'committed', action })
 								handleMarkRead()
 								beginExit('right')
 							},
@@ -400,27 +404,54 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 						{decisionActions && decisionPhase.status === 'idle' && (
 							<div
 								data-testid="decision-block"
-								className="mb-3 flex flex-col gap-2 rounded-md bg-status-in_review-bg p-3 md:flex-row"
+								className="mb-3 rounded-md bg-status-in_review-bg p-2.5"
 							>
-								{decisionActions.map((action) => (
-									<Button
-										key={action.id}
-										size="sm"
-										variant={action.tone === 'primary' ? 'default' : 'outline'}
-										data-action-id={action.id}
-										className={cn(
-											'h-9 flex-1 justify-center text-sm font-medium',
-											action.tone === 'secondary' && 'bg-background',
-										)}
-										onClick={() => chooseDecision(action)}
-									>
-										{action.label}
-									</Button>
-								))}
+								<div className="flex items-center gap-2 px-1 pb-2">
+									<span className="text-[12px] font-semibold text-status-in_review-text">
+										Decision needed
+									</span>
+								</div>
+								<div className="flex flex-col gap-1.5">
+									{decisionActions.map((action) => (
+										<button
+											key={action.id}
+											type="button"
+											data-action-id={action.id}
+											className={cn(
+												'flex min-h-12 w-full touch-manipulation items-center justify-between gap-3 rounded-md px-3 py-2 text-left text-[13.5px] font-medium transition-colors',
+												action.tone === 'primary'
+													? 'bg-foreground text-background hover:bg-foreground/90'
+													: 'border border-border bg-background text-foreground hover:bg-secondary',
+											)}
+											onClick={() => chooseDecision(action)}
+										>
+											<span className="flex min-w-0 flex-col">
+												<span className="truncate">{action.label}</span>
+												{action.rationale && (
+													<span
+														className={cn(
+															'truncate text-[11px] font-normal',
+															action.tone === 'primary'
+																? 'text-background/70'
+																: 'text-muted-foreground',
+														)}
+													>
+														{action.rationale}
+													</span>
+												)}
+											</span>
+											{action.tone === 'primary' && (
+												<kbd className="shrink-0 rounded border border-current px-1.5 py-0.5 font-mono text-[10px] opacity-70">
+													↵
+												</kbd>
+											)}
+										</button>
+									))}
+								</div>
 							</div>
 						)}
 
-						{decisionPhase.status === 'receipt' && (
+						{(decisionPhase.status === 'receipt' || decisionPhase.status === 'committed') && (
 							<div
 								data-testid="decision-receipt"
 								className="mb-3 rounded-md border border-border bg-status-active-bg p-3"
@@ -429,19 +460,32 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 									<CheckIcon size={14} />
 									You chose {decisionPhase.action.label}
 								</div>
-								<div className="mt-2 flex items-center justify-between gap-2">
-									<Button
-										size="sm"
-										variant="outline"
-										className="h-7 bg-background text-xs"
-										onClick={reverseDecision}
-									>
-										Reverse this
-									</Button>
-									<span className="text-xs text-muted-foreground">
-										Reversible for {secondsLeft}s
-									</span>
-								</div>
+								{decisionPhase.status === 'committed' ? (
+									<div className="mt-2 space-y-1 border-t border-status-active-text/20 pt-2 text-xs text-status-active-text/80">
+										<p className="flex items-center gap-1.5">
+											<CheckIcon size={12} />
+											Your choice was posted to the thread
+										</p>
+										<p className="flex items-center gap-1.5">
+											<CheckIcon size={12} />
+											Card marked read and advanced
+										</p>
+									</div>
+								) : (
+									<div className="mt-2 flex items-center justify-between gap-2">
+										<Button
+											size="sm"
+											variant="outline"
+											className="h-7 bg-background text-xs"
+											onClick={reverseDecision}
+										>
+											Reverse this
+										</Button>
+										<span className="text-xs text-muted-foreground">
+											Reversible for {secondsLeft}s
+										</span>
+									</div>
+								)}
 							</div>
 						)}
 
