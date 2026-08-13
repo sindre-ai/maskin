@@ -10,8 +10,11 @@ import { useMemo, useState } from 'react'
 const DEFAULT_LIMIT = 6
 
 // Event actions that represent the loop's agents doing work — the signal
-// behind "what the agents did last". Config-only change actions on the loop
-// row itself belong to the Changes log, not this feed.
+// behind "what the agents did last". Loop-row config actions (updated /
+// status_changed / created / commented / deleted) are the Changes-log feed and
+// live outside this set on purpose; including them would duplicate that log.
+// The endpoint at /api/loops/:id/activity is already scoped to session/trigger
+// events, so this set is a defensive filter, not the primary gate.
 const AGENT_ACTIONS = new Set([
 	'session_created',
 	'session_running',
@@ -20,11 +23,6 @@ const AGENT_ACTIONS = new Set([
 	'session_timeout',
 	'session_paused',
 	'trigger_fired',
-	'commented',
-	'created',
-	'deleted',
-	'updated',
-	'status_changed',
 ])
 
 export function LoopActivity({
