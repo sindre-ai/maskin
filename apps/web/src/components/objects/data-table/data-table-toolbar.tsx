@@ -43,6 +43,8 @@ interface DataTableToolbarProps {
 	// Show — per-view visibility flags. Only surfaced when the caller opts in.
 	includeArchived?: boolean
 	onIncludeArchivedChange?: (value: boolean) => void
+	starredFilter?: boolean
+	onStarredFilterChange?: (value: boolean) => void
 	// Reset every display axis to defaults. Only surfaced when the caller opts in.
 	onResetToDefault?: () => void
 	// View switcher
@@ -80,6 +82,8 @@ export function DataTableToolbar({
 	onGroupByChange,
 	includeArchived,
 	onIncludeArchivedChange,
+	starredFilter,
+	onStarredFilterChange,
 	onResetToDefault,
 	view,
 	onViewChange,
@@ -155,6 +159,8 @@ export function DataTableToolbar({
 				onGroupByChange={onGroupByChange}
 				includeArchived={includeArchived}
 				onIncludeArchivedChange={onIncludeArchivedChange}
+				starredFilter={starredFilter}
+				onStarredFilterChange={onStarredFilterChange}
 				onResetToDefault={onResetToDefault}
 			/>
 

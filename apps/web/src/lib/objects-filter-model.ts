@@ -30,6 +30,7 @@ export interface ObjectsFilterModel {
 	sort: string
 	order: 'asc' | 'desc'
 	includeArchived: boolean
+	starred: boolean
 	q?: string
 	columnVisibility?: VisibilityState
 }
@@ -47,6 +48,7 @@ export interface ObjectsFilterModelInput {
 	groupBy?: string
 	ids?: string
 	includeArchived?: boolean
+	starred?: boolean
 	metadata?: Record<string, string>
 	columnVisibility?: VisibilityState
 }
@@ -55,7 +57,13 @@ export const DEFAULT_SORT = 'createdAt'
 export const DEFAULT_ORDER = 'desc'
 
 export function defaultObjectsFilterModel(): ObjectsFilterModel {
-	return { sort: DEFAULT_SORT, order: DEFAULT_ORDER, metadata: {}, includeArchived: false }
+	return {
+		sort: DEFAULT_SORT,
+		order: DEFAULT_ORDER,
+		metadata: {},
+		includeArchived: false,
+		starred: false,
+	}
 }
 
 export function fromUrlSearch(search: ObjectsFilterModelInput): ObjectsFilterModel {
@@ -69,6 +77,7 @@ export function fromUrlSearch(search: ObjectsFilterModelInput): ObjectsFilterMod
 		sort: search.sort ?? DEFAULT_SORT,
 		order: search.order ?? DEFAULT_ORDER,
 		includeArchived: search.includeArchived ?? false,
+		starred: search.starred ?? false,
 		metadata: { ...(search.metadata ?? {}) },
 		columnVisibility: search.columnVisibility,
 	}
@@ -99,6 +108,7 @@ export function toListParams(
 	if (model.includeArchived && options.includeArchivedAllowed !== false) {
 		params.include_archived = 'true'
 	}
+	if (model.starred) params.starred = 'true'
 	return params
 }
 
