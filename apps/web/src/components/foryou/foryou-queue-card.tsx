@@ -18,6 +18,7 @@ import {
 	QUICK_REPLY_CHIPS,
 	classifyCardKind,
 } from '@/lib/foryou-card-kind'
+import { DECISION_REVERSE_WINDOW_MS } from '@/lib/foryou-decision'
 import { Link } from '@tanstack/react-router'
 import { CheckIcon, X } from 'lucide-react'
 import {
@@ -30,12 +31,6 @@ import {
 	useState,
 } from 'react'
 import { toast } from 'sonner'
-
-// Honest, short reversible window for a decision commit — long enough to read
-// the receipt and change your mind. Not the mockup's fabricated "Reversible
-// for 2h" — a real durable multi-hour window needs a backend pending-decision
-// table this canary doesn't have.
-const DECISION_REVERSE_WINDOW_MS = 6000
 
 export function itemQueueKey(item: UnreadItem): string {
 	return `${item.entity_type}:${item.entity_id}`
