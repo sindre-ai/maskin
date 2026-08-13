@@ -1,19 +1,20 @@
 import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
-// Title fidelity across browser-back / sibling-to-sibling navigation. The
-// rebuilt object-detail surface (bet/object-detail) renders the title as a
-// static <h1> bound straight to the loaded object, so the class of bug this
-// spec originally guarded — a stale useState title-draft left behind by the
-// legacy ObjectDocumentView textarea after an id flip — is structurally
-// impossible now: the root cause (stateful draft surviving the component
-// instance reuse) no longer exists. What still needs guarding: the route must
-// render *the current object's* title at every point in the history walk,
-// with no stale UI from the previous object. Playwright is the only harness
-// that exercises the real router history stack.
-test.describe('Object title fidelity across back/forward navigation', () => {
+// Regression coverage for the customer-reported bug where the page-title
+// textarea in ObjectDocumentView stayed stuck on the previous object's title
+// after browser-back / sibling-to-sibling navigation. The route reuses the
+// same component instance across the object.id change, so a useState
+// initialiser alone can't reset the draft — the fix in
+// apps/web/src/components/objects/object-document.tsx watches the id and
+// resets titleDraft at render time. Playwright is the only harness that
+// exercises the real router history stack, which is what the bug depended on.
+test.describe('Object title back/forward navigation', () => {
 	for (const vp of SHIP_GATE_VIEWPORTS) {
-		test(`static h1 swaps to match the current object @ ${vp.label}`, async ({ page, account }) => {
+		test(`page-title textarea swaps to match the current object @ ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
 
 			const objectA = await account.api.createObject(account.workspaceId, {
@@ -27,33 +28,27 @@ test.describe('Object title fidelity across back/forward navigation', () => {
 				status: 'signal',
 			})
 
-			// Open A first, confirm its title lands in the static heading.
+			// Open A first, confirm its title lands in the header textarea.
 			await page.goto(`/${account.workspaceId}/objects/${objectA.id}`)
-			await expect(
-				page.getByRole('heading', { level: 1, name: 'Back-nav probe object A' }),
-			).toBeVisible({ timeout: 10_000 })
+			const titleInput = page.getByPlaceholder('Untitled')
+			await expect(titleInput).toHaveValue('Back-nav probe object A', { timeout: 10_000 })
 
 			// Forward-nav to B — navigating via URL keeps the same route/component
-			// instance, so this is the exact lifecycle the legacy bug depended on.
+			// instance, so this is the exact lifecycle the fix targets.
 			await page.goto(`/${account.workspaceId}/objects/${objectB.id}`)
-			await expect(
-				page.getByRole('heading', { level: 1, name: 'Back-nav probe object B' }),
-			).toBeVisible({ timeout: 10_000 })
+			await expect(titleInput).toHaveValue('Back-nav probe object B', { timeout: 10_000 })
 
-			// Browser back — the heading must show A again, not a stale draft.
+			// Browser back — pre-fix this stayed on B's title; the fix resets the
+			// draft on the id flip so A's title must reappear.
 			await page.goBack()
 			await expect(page).toHaveURL(new RegExp(`/objects/${objectA.id}$`))
-			await expect(
-				page.getByRole('heading', { level: 1, name: 'Back-nav probe object A' }),
-			).toBeVisible({ timeout: 10_000 })
+			await expect(titleInput).toHaveValue('Back-nav probe object A', { timeout: 10_000 })
 
 			// Browser forward — round-trip the swap once more so a partial fix
-			// (e.g. only clearing on one navigation direction) can't sneak through.
+			// (e.g. only clearing on decreasing id order) can't sneak through.
 			await page.goForward()
 			await expect(page).toHaveURL(new RegExp(`/objects/${objectB.id}$`))
-			await expect(
-				page.getByRole('heading', { level: 1, name: 'Back-nav probe object B' }),
-			).toBeVisible({ timeout: 10_000 })
+			await expect(titleInput).toHaveValue('Back-nav probe object B', { timeout: 10_000 })
 		})
 	}
 })

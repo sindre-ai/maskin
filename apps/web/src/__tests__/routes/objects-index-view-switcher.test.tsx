@@ -201,16 +201,6 @@ vi.mock('@/lib/query-keys', () => ({
 		},
 		bets: { all: () => ['bets'] },
 		imports: { detail: (id: string) => ['imports', 'detail', id] },
-		notifications: {
-			all: (workspaceId: string) => ['notifications', workspaceId],
-			list: (workspaceId: string, filters?: Record<string, unknown>) => [
-				'notifications',
-				workspaceId,
-				'list',
-				filters,
-			],
-			detail: (id: string) => ['notifications', 'detail', id],
-		},
 		userDisplaySettings: {
 			detail: (workspaceId: string, objectType: string) => [
 				'user-display-settings',
