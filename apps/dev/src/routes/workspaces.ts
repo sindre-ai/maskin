@@ -18,6 +18,7 @@ import {
 } from '@maskin/shared'
 import { and, eq } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
+import { sendTeamInviteEmail } from '../lib/email-triggers'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, workspaceResponseSchema } from '../lib/openapi-schemas'
@@ -59,6 +60,15 @@ const workspaceWithRoleSchema = workspaceResponseSchema.extend({
 })
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
+
+// Invite-email link uses the first CORS_ORIGIN entry (the app origin the
+// frontend also uses) and falls back to the dev default so `pnpm dev`
+// works out of the box without a separate env var.
+function buildWorkspaceInviteUrl(workspaceId: string): string {
+	const raw = (process.env.CORS_ORIGIN?.split(',')[0] ?? 'http://localhost:5173').trim()
+	const origin = raw.replace(/\/$/, '')
+	return `${origin}/${workspaceId}`
+}
 
 // POST /api/workspaces
 const createWorkspaceRoute = createRoute({
@@ -465,6 +475,17 @@ app.openapi(addMemberRoute, (async (c) => {
 		workspaceId,
 		actorId: actor_id,
 		role: role || 'member',
+	})
+
+	// Fire-and-forget invite email. Only sends when the invitee actor has a
+	// stored email; skipped silently for agents and header-only accounts.
+	// Errors are caught and logged inside the trigger — never surfaced.
+	void sendTeamInviteEmail({
+		db,
+		workspaceId,
+		inviteeActorId: actor_id,
+		inviterActorId: callerId,
+		inviteUrl: buildWorkspaceInviteUrl(workspaceId),
 	})
 
 	return c.json({ added: true }, 201)
