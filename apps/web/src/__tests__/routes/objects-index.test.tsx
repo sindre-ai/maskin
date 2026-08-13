@@ -106,8 +106,8 @@ vi.mock('@/components/layout/page-header', () => ({
 	PageHeader: ({ title }: { title: string }) => <h1>{title}</h1>,
 }))
 
-vi.mock('@/components/objects/data-table/data-table', () => ({
-	DataTable: () => <div data-testid="data-table" />,
+vi.mock('@/components/objects/list/list-view', () => ({
+	ListView: () => <div data-testid="list-view" />,
 }))
 
 vi.mock('@/components/objects/data-table/data-table-toolbar', () => ({
@@ -236,10 +236,10 @@ describe('validateSearch', () => {
 })
 
 describe('ObjectsPage', () => {
-	it('renders page header and data table', () => {
+	it('renders page header and list view', () => {
 		render(<ObjectsPage />)
 		expect(screen.getByText('Objects')).toBeInTheDocument()
-		expect(screen.getByTestId('data-table')).toBeInTheDocument()
+		expect(screen.getByTestId('list-view')).toBeInTheDocument()
 		expect(screen.getByTestId('data-table-toolbar')).toBeInTheDocument()
 	})
 })

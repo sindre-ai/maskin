@@ -266,13 +266,10 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	// Workspaces + members
 	create_workspace: 'workspace_create',
 	update_workspace: 'workspace_update',
-	add_workspace_member: 'workspace_member_add',
 	// Workspace schema (fields + enums)
 	create_workspace_field: 'workspace_field_create',
 	update_workspace_field: 'workspace_field_update',
 	delete_workspace_field: 'workspace_field_delete',
-	add_workspace_enum_value: 'workspace_enum_add',
-	remove_workspace_enum_value: 'workspace_enum_remove',
 	// Actors
 	create_actor: 'actor_create',
 	update_actor: 'actor_update',
@@ -281,6 +278,10 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	create_trigger: 'trigger_create',
 	update_trigger: 'trigger_update',
 	delete_trigger: 'trigger_delete',
+	// Loops
+	create_loop: 'loop_create',
+	update_loop: 'loop_update',
+	delete_loop: 'loop_delete',
 	// Notifications
 	create_notification: 'notification_create',
 	update_notification: 'notification_update',

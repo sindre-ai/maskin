@@ -51,8 +51,8 @@ until socat /dev/null TCP:127.0.0.1:9223 2>/dev/null; do sleep 0.2; done
 # this sidecar via the host.microsandbox.internal DNS name, which is
 # neither, so a plain TCP bridge here gets every CDP request rejected with
 # 500 (or ECONNRESET, depending on timing). host-rewrite-proxy.py rewrites
-# the Host header to "localhost" on each connection's first request, then
-# relays everything else — including the WebSocket upgrade and subsequent
-# binary frames — byte-for-byte. See
-# docs/runbooks/agent-session-failures-2026-08-11.md, Issue 2.
+# the Host header's hostname to "localhost" (keeping the original port) on
+# every request until the WebSocket upgrade, then relays everything else —
+# including the WebSocket upgrade and subsequent binary frames —
+# byte-for-byte.
 exec python3 /host-rewrite-proxy.py

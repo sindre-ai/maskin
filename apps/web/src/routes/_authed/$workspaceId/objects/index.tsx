@@ -1,14 +1,15 @@
+import { AskPanel } from '@/components/asks/ask-panel'
 import { ImportDialog } from '@/components/imports/import-dialog'
 import { PageHeader } from '@/components/layout/page-header'
 import { BoardView } from '@/components/objects/board/board-view'
 import { BulkActionBar } from '@/components/objects/bulk-action-bar'
-import { type ObjectsTableMeta, getStaticColumns } from '@/components/objects/data-table/columns'
-import { DataTable, type DataTableHandle } from '@/components/objects/data-table/data-table'
+import { getStaticColumns } from '@/components/objects/data-table/columns'
 import type { ColumnInfo } from '@/components/objects/data-table/data-table-controls'
 import { DataTableToolbar } from '@/components/objects/data-table/data-table-toolbar'
 import type { DisplayPanelView } from '@/components/objects/data-table/display-panel'
 import { getDynamicColumns } from '@/components/objects/data-table/dynamic-columns'
 import type { FieldDefinition } from '@/components/objects/field-value-input'
+import { ListView, type ListViewHandle } from '@/components/objects/list/list-view'
 import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picker'
 import { FilterChip } from '@/components/shared/filter-chip'
 import { RouteError } from '@/components/shared/route-error'
@@ -18,16 +19,29 @@ import { useActors } from '@/hooks/use-actors'
 import { useCustomExtensions } from '@/hooks/use-custom-extensions'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useImportToast } from '@/hooks/use-imports'
+import { useNotifications, useRespondNotification } from '@/hooks/use-notifications'
 import { useBulkResultHandlers, useBulkUpdateObjects } from '@/hooks/use-objects'
 import {
 	useUpdateUserDisplaySettings,
 	useUserDisplaySettings,
 } from '@/hooks/use-user-display-settings'
-import { trackEvent, trackObjectsListArrived, trackObjectsListGroupToggled } from '@/lib/analytics'
+import {
+	trackEvent,
+	trackObjectsBoardArrived,
+	trackObjectsListArrived,
+	trackObjectsListGroupToggled,
+} from '@/lib/analytics'
 import { api } from '@/lib/api'
-import type { DisplaySettingsBody, ObjectResponse } from '@/lib/api'
+import type { DisplaySettingsBody, NotificationResponse, ObjectResponse } from '@/lib/api'
 import { consumeArrivalNavType } from '@/lib/back-nav-tracker'
 import { type BetStatusResult, buildBetStatuses } from '@/lib/bet-status'
+import {
+	fromUrlSearch,
+	toBoardParams,
+	toDisplaySettingsBody,
+	toListParams,
+} from '@/lib/objects-filter-model'
+import type { ObjectsFilterModel } from '@/lib/objects-filter-model'
 import { clearViewState, getViewState, patchViewState } from '@/lib/objects-view-state'
 import { fetchAllPages } from '@/lib/pagination'
 import { queryKeys } from '@/lib/query-keys'
@@ -42,13 +56,7 @@ import {
 	useQueryClient,
 } from '@tanstack/react-query'
 import { createFileRoute, useNavigate, useSearch } from '@tanstack/react-router'
-import type {
-	ExpandedState,
-	GroupingState,
-	OnChangeFn,
-	RowSelectionState,
-	VisibilityState,
-} from '@tanstack/react-table'
+import type { GroupingState, RowSelectionState, VisibilityState } from '@tanstack/react-table'
 import { Filter, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
@@ -161,11 +169,12 @@ function ObjectsPage() {
 		setRowSelection({})
 	}, [workspaceId])
 
-	// Group-expansion state is lifted from `DataTable` so a POP landing can
+	// Group-expansion state is lifted from the List view so a POP landing can
 	// silently rehydrate what the user had open before they drilled into a
-	// row. React-table keys the map by row id (object id) — see `getRowId` on
-	// `DataTable`. Route-local: not persisted server-side, dies on tab close.
-	const [expanded, setExpanded] = useState<ExpandedState>({})
+	// row. Keys are react-table's grouped-row ids (`<columnId>:<groupValue>`)
+	// so the map round-trips with blobs persisted by the DataTable era of this
+	// route. Route-local: not persisted server-side, dies on tab close.
+	const [expanded, setExpanded] = useState<Record<string, boolean>>({})
 	// Latest first-visible row anchor captured at navigate-away time. Feeds
 	// the debounced DisplaySettings write-through so a hard reload can bootstrap
 	// the session store from the persisted value.
@@ -199,11 +208,11 @@ function ObjectsPage() {
 		})
 	}, [])
 
-	// Imperative handle for the DataTable. Lets this route read the first-
-	// visible row id at navigate-away and drive `virtualizer.scrollToIndex`
-	// on a POP landing, without lifting the virtualizer or row model out of
-	// DataTable.
-	const dataTableRef = useRef<DataTableHandle>(null)
+	// Imperative handle for the List view. Lets this route read the first-
+	// visible row id at navigate-away and scroll back to it on a POP landing,
+	// without lifting the row model out of the list. Same two-method contract
+	// DataTableHandle exposed, so the capture/restore plumbing is unchanged.
+	const listViewRef = useRef<ListViewHandle>(null)
 
 	// Linear-style `C` shortcut opens the create picker with the active type
 	// tab pre-selected. Guarded so typing into filters/search never triggers it.
@@ -221,6 +230,39 @@ function ObjectsPage() {
 	searchParamsRef.current = searchParams
 
 	const { data: actors } = useActors(workspaceId)
+	// Pending asks scoped to the current selection. An ask is a needs_input
+	// notification whose object is one of the selected rows; Approve/Hold
+	// round-trips through the respond endpoint and the panel reflects the done
+	// state via the resolved status.
+	const actorsById = useMemo(() => new Map((actors ?? []).map((a) => [a.id, a])), [actors])
+	const [asksOpen, setAsksOpen] = useState(false)
+	const { data: needsInputNotifications } = useNotifications(workspaceId, {
+		type: 'needs_input',
+	})
+	const selectedAsks = useMemo(() => {
+		if (!needsInputNotifications) return []
+		const selected = new Set(selectedIds)
+		return needsInputNotifications.filter((n) => n.objectId != null && selected.has(n.objectId))
+	}, [needsInputNotifications, selectedIds])
+	const askCount = selectedAsks.length
+	// Pending asks keyed by the object they target, for the per-row ask line +
+	// "Waiting on you" pill on the List surface. Only status 'pending' counts as
+	// waiting — a resolved ask drops out of the map (and the row hides the pill).
+	const pendingAsksByObjectId = useMemo(() => {
+		const map = new Map<string, NotificationResponse>()
+		for (const n of needsInputNotifications ?? []) {
+			if (n.status !== 'pending' || !n.objectId) continue
+			if (!map.has(n.objectId)) map.set(n.objectId, n)
+		}
+		return map
+	}, [needsInputNotifications])
+	const respondNotification = useRespondNotification(workspaceId)
+	const handleRespond = useCallback(
+		(id: string, response: 'approve' | 'hold') => {
+			respondNotification.mutate({ id, response })
+		},
+		[respondNotification],
+	)
 	const enabledModules = useEnabledModules()
 	const customExtensions = useCustomExtensions()
 	const settings = workspace.settings as Record<string, unknown>
@@ -264,33 +306,46 @@ function ObjectsPage() {
 		return m
 	}, [metadataFiltersKey])
 
-	// Build API filters
-	const filters = useMemo(() => {
-		const f: Record<string, string> = {}
-		if (typeFilter) f.type = typeFilter
-		if (statusFilter) f.status = statusFilter
-		if (driverFilter) f.driver = driverFilter
-		if (idsFilter) f.ids = idsFilter
-		for (const [field, value] of Object.entries(metadataFilters)) {
-			f[`metadata.${field}`] = value
-		}
-		f.sort = sort
-		f.order = order
-		// Opt-in only: pass through when the "Include archived" toggle is on.
-		// Omitting the flag lets T3's route default (hide archived) apply.
-		if (supportsIncludeArchived && includeArchived) f.include_archived = 'true'
-		return f
-	}, [
-		typeFilter,
-		statusFilter,
-		driverFilter,
-		idsFilter,
-		sort,
-		order,
-		metadataFilters,
-		supportsIncludeArchived,
-		includeArchived,
-	])
+	// The single shared filter model. Every view consumer — List params, Board
+	// params, grouping, persistence — derives from this one object, so the two
+	// views cannot drift apart: a filter set once reaches both by construction.
+	const filterModel = useMemo<ObjectsFilterModel>(
+		() =>
+			fromUrlSearch({
+				type: typeFilter,
+				status: statusFilter,
+				driver: driverFilter,
+				sort,
+				order,
+				q,
+				groupBy,
+				ids: idsFilter,
+				includeArchived,
+				metadata: metadataFilters,
+				columnVisibility,
+			}),
+		[
+			typeFilter,
+			statusFilter,
+			driverFilter,
+			sort,
+			order,
+			q,
+			groupBy,
+			idsFilter,
+			includeArchived,
+			metadataFilters,
+			columnVisibility,
+		],
+	)
+
+	// Build API filters for the List query from the shared model. The
+	// include-archived flag is emitted only when the current tab supports it
+	// (bet-only per T5); omitting it lets the route default (hide archived) ride.
+	const filters = useMemo(
+		() => toListParams(filterModel, { includeArchivedAllowed: supportsIncludeArchived }),
+		[filterModel, supportsIncludeArchived],
+	)
 
 	// Infinite query — use search endpoint when q is present
 	const infiniteQuery = useInfiniteQuery({
@@ -335,20 +390,14 @@ function ObjectsPage() {
 	// preference is preserved for when the type becomes board-capable again.
 	const effectiveView: DisplayPanelView = boardSupported ? view : 'list'
 
-	const boardParams = useMemo(() => {
-		if (!typeFilter) return null
-		const params: Record<string, string> = {
-			...filters,
-			type: typeFilter,
-			sort,
-			order,
-			limit: String(BOARD_PAGE_SIZE),
-			offset: '0',
-		}
-		if (q) params.q = q
-		if (groupBy) params.groupBy = groupBy
-		return params
-	}, [filters, groupBy, order, q, sort, typeFilter])
+	const boardParams = useMemo(
+		() =>
+			toBoardParams(filterModel, {
+				pageSize: BOARD_PAGE_SIZE,
+				includeArchivedAllowed: supportsIncludeArchived,
+			}),
+		[filterModel, supportsIncludeArchived],
+	)
 
 	const boardQuery = useQuery({
 		queryKey: queryKeys.objects.board(workspaceId, boardParams ?? {}),
@@ -362,6 +411,16 @@ function ObjectsPage() {
 		[boardQuery.data],
 	)
 	const visibleObjects = effectiveView === 'board' ? boardInitialObjects : allObjects
+
+	// Board arrival telemetry, mirroring the List's on-mount event. Fires when
+	// the board becomes the effective view (a list->board switch or a reload
+	// that lands directly on board), not on every type switch while already on it.
+	const prevEffectiveViewRef = useRef(effectiveView)
+	useEffect(() => {
+		const enteredBoard = prevEffectiveViewRef.current !== 'board' && effectiveView === 'board'
+		prevEffectiveViewRef.current = effectiveView
+		if (enteredBoard) trackObjectsBoardArrived({ objectType: typeFilter ?? null })
+	}, [effectiveView, typeFilter])
 
 	// Field definitions for dynamic columns. Layer enabled-module defaults under
 	// workspace overrides so extension-provided types (e.g. knowledge) ship with
@@ -409,19 +468,7 @@ function ObjectsPage() {
 		[navigate, workspaceId],
 	)
 
-	// Sort handler for column headers
-	const handleSort = useCallback(
-		(columnId: string) => {
-			if (sort === columnId) {
-				updateSearch({ order: order === 'asc' ? 'desc' : 'asc' })
-			} else {
-				updateSearch({ sort: columnId, order: 'desc' })
-			}
-		},
-		[sort, order, updateSearch],
-	)
-
-	// Bet status indicator wiring — the Title cell renders `IndicatorBadgeRow`
+	// Bet status indicator wiring — the row renders `IndicatorBadgeRow`
 	// beside each bet's title. It classifies over child tasks; the overview
 	// only loads a flat page of objects, so pull the workspace's full task
 	// list and `breaks_into` relationships once and group them here. Both
@@ -463,24 +510,13 @@ function ObjectsPage() {
 		return buildBetStatuses(bets, workspaceTasks, breaksIntoRels, new Date())
 	}, [hasVisibleBets, workspaceTasks, breaksIntoRels, visibleObjects])
 
-	// Bet status is rendered inside the Title cell (not as its own column), so
+	// Bet status is rendered beside the title (not as its own column), so
 	// its show/hide toggle lives in the same `columnVisibility` map as the real
-	// columns and is threaded into the cell via `showBetStatusIndicator`.
+	// columns and is threaded into the row via `showBetStatusIndicator`.
 	const showBetStatusIndicator = columnVisibility.betStatusIndicator !== false
 
-	// Table meta — sort state passed via meta to avoid re-creating columns on every sort change
-	const tableMeta: ObjectsTableMeta = useMemo(
-		() => ({
-			onSort: handleSort,
-			currentSort: sort,
-			currentOrder: order,
-			betStatuses,
-			showBetStatusIndicator,
-		}),
-		[handleSort, sort, order, betStatuses, showBetStatusIndicator],
-	)
-
-	// Columns — stable across sort changes since sort state is in meta
+	// Columns — feed the Display panel's column picker (the List view itself
+	// renders a fixed compact anatomy, not these column definitions).
 	const columns = useMemo(
 		() => [
 			...getStaticColumns({
@@ -524,8 +560,8 @@ function ObjectsPage() {
 		return base
 	}, [columns, typeFilter])
 
-	// Grouping state
-	const groupingState: GroupingState = groupBy ? [groupBy] : []
+	// Grouping state derives from the shared model.
+	const groupingState: GroupingState = filterModel.groupBy ? [filterModel.groupBy] : []
 
 	// Hide dynamic columns by default when in "All" tab
 	const effectiveVisibility = useMemo(() => {
@@ -546,6 +582,26 @@ function ObjectsPage() {
 		setColumnVisibility((prev) => ({ ...prev, [columnId]: visible }))
 	}, [])
 
+	// "Reset to default" from the Display menu — restores every display axis on
+	// the shared model: order back to created-desc, no grouping, all filters
+	// (status/driver/metadata) cleared, archived hidden, columns back to the
+	// default set. `view` and `q` are deliberately untouched (separate surfaces).
+	const handleResetToDefault = useCallback(() => {
+		const cleared: Record<string, string | undefined> = {
+			sort: 'createdAt',
+			order: 'desc',
+			groupBy: undefined,
+			status: undefined,
+			driver: undefined,
+			includeArchived: undefined,
+		}
+		for (const key of Object.keys(searchParams)) {
+			if (key.startsWith('metadata.')) cleared[key] = undefined
+		}
+		updateSearch(cleared)
+		setColumnVisibility({ createdBy: false })
+	}, [updateSearch, searchParams])
+
 	// Per-actor display settings (persistence layer from Task 5).
 	// Hydration policy: when the user lands on a tab with persisted settings
 	// and the URL is in its default shape, apply the saved view. Once any
@@ -563,7 +619,7 @@ function ObjectsPage() {
 	// through — T2's DoD asks for scroll-anchor changes to persist through
 	// the same rail as columnVisibility.
 	const handleCaptureViewState = useCallback(() => {
-		const firstVisibleRowId = dataTableRef.current?.getFirstVisibleRowId() ?? null
+		const firstVisibleRowId = listViewRef.current?.getFirstVisibleRowId() ?? null
 		patchViewState(workspaceId, displaySettingsKey, { firstVisibleRowId })
 		setCapturedAnchor(firstVisibleRowId)
 	}, [workspaceId, displaySettingsKey])
@@ -581,7 +637,7 @@ function ObjectsPage() {
 		if (allObjects.length === 0) return
 		const { firstVisibleRowId } = getViewState(workspaceId, displaySettingsKey)
 		if (firstVisibleRowId) {
-			dataTableRef.current?.scrollToRowId(firstVisibleRowId)
+			listViewRef.current?.scrollToRowId(firstVisibleRowId)
 		}
 		shouldRestoreScrollRef.current = false
 	}, [infiniteQuery.isLoading, allObjects.length])
@@ -704,35 +760,32 @@ function ObjectsPage() {
 		})
 	}, [displaySettingsKey, displaySettingsQuery.isSuccess, workspaceId, typeFilter])
 
-	// Group-expansion writes flow through here — the DataTable is fully
+	// Group-expansion writes flow through here — the ListView is fully
 	// controlled. On every user toggle: apply the update, patch the resulting
 	// map into the session store for the current key, and fire the group-
 	// toggle analytics with source: 'user'. The silent restore above bypasses
 	// this handler (it calls `setExpanded` directly), so every fire here is
 	// user-initiated by construction. `expanded` on the analytics payload is
-	// the net direction of the update — true when a row's expansion count
-	// grew (user opened a group), false when it shrank (user closed one).
-	const handleExpandedChange: OnChangeFn<ExpandedState> = useCallback(
-		(updater) => {
-			setExpanded((prev) => {
-				const next = typeof updater === 'function' ? updater(prev) : updater
-				const prevMap = prev === true ? {} : (prev ?? {})
-				const nextMap: Record<string, boolean> = {}
-				if (next !== true && next && typeof next === 'object') {
-					for (const [id, on] of Object.entries(next)) if (on) nextMap[id] = true
-				}
-				const prevOpen = Object.values(prevMap).filter(Boolean).length
-				const nextOpen = Object.values(nextMap).filter(Boolean).length
-				patchViewState(workspaceId, displaySettingsKey, { expandedGroupIds: nextMap })
-				trackObjectsListGroupToggled({
-					source: 'user',
-					expanded: nextOpen > prevOpen,
-					objectType: typeFilter ?? null,
-				})
-				return next
+	// the net direction of the update — true when a group's open count grew
+	// (user opened a group), false when it shrank (user closed one).
+	const handleExpandedChange = useCallback(
+		(next: Record<string, boolean>) => {
+			// Strip falsy entries — ListView only ever writes `true` values, and
+			// closing a group is modeled by the key's absence (DataTable-era
+			// blobs round-trip cleanly through this same contract).
+			const nextMap: Record<string, boolean> = {}
+			for (const [id, on] of Object.entries(next)) if (on) nextMap[id] = true
+			const prevOpen = Object.values(expanded).filter(Boolean).length
+			const nextOpen = Object.values(nextMap).filter(Boolean).length
+			setExpanded(nextMap)
+			patchViewState(workspaceId, displaySettingsKey, { expandedGroupIds: nextMap })
+			trackObjectsListGroupToggled({
+				source: 'user',
+				expanded: nextOpen > prevOpen,
+				objectType: typeFilter ?? null,
 			})
 		},
-		[workspaceId, displaySettingsKey, typeFilter],
+		[workspaceId, displaySettingsKey, typeFilter, expanded],
 	)
 
 	// Write-through. Only fires after this key has been hydrated so the
@@ -744,21 +797,10 @@ function ObjectsPage() {
 	useEffect(() => {
 		if (!hydratedTypesRef.current.has(displaySettingsKey)) return
 		const settings: DisplaySettingsBody = {
+			...toDisplaySettingsBody(filterModel),
 			view,
-			sort,
-			order,
-			groupBy: groupBy ?? null,
-			columnVisibility,
 		}
-		const filters: { status?: string; driver?: string; metadata?: Record<string, string> } = {}
-		if (statusFilter) filters.status = statusFilter
-		if (driverFilter) filters.driver = driverFilter
-		if (Object.keys(metadataFilters).length > 0) filters.metadata = metadataFilters
-		if (filters.status || filters.driver || filters.metadata) settings.filters = filters
-		// TanStack's ExpandedState can be `true` (all-expanded); that state is
-		// unreachable through the DataTable UI here but we skip persisting it
-		// since it can't round-trip through the schema's Record<string, boolean>.
-		if (expanded !== true && Object.keys(expanded).length > 0) {
+		if (Object.keys(expanded).length > 0) {
 			settings.groupExpanded = expanded
 		}
 		// Persist both string (anchor) and null (deliberate top). Skip
@@ -772,19 +814,7 @@ function ObjectsPage() {
 			updateMutateRef.current({ objectType: displaySettingsKey, settings })
 		}, 500)
 		return () => clearTimeout(handle)
-	}, [
-		displaySettingsKey,
-		view,
-		sort,
-		order,
-		groupBy,
-		statusFilter,
-		driverFilter,
-		metadataFilters,
-		columnVisibility,
-		expanded,
-		capturedAnchor,
-	])
+	}, [displaySettingsKey, view, filterModel, expanded, capturedAnchor])
 
 	const idsCount = idsFilter ? idsFilter.split(',').length : 0
 
@@ -870,6 +900,24 @@ function ObjectsPage() {
 		},
 		[selectedIds, bulkUpdate, reportBulkResult, retainOnlyFailed],
 	)
+
+	// Archive is a dedicated bulk action because 'archived' is never among the
+	// active status options the picker offers (archived rows are hidden by
+	// default) — mirror the per-row archive semantic on object-document.
+	const handleBulkArchive = useCallback(() => {
+		if (selectedIds.length === 0) return
+		const ids = [...selectedIds]
+		bulkUpdate.mutate(
+			{ ids, patch: { status: 'archived' } },
+			{
+				onSuccess: (data) => {
+					retainOnlyFailed(data)
+					reportBulkResult(data, ids.length, 'updated')
+				},
+				onError: () => toast.error('Failed to archive objects'),
+			},
+		)
+	}, [selectedIds, bulkUpdate, reportBulkResult, retainOnlyFailed])
 
 	// Build the path the app uses for object detail pages — kept relative so we can
 	// resolve to an absolute URL for clipboard payloads but pass the path directly
@@ -1134,6 +1182,7 @@ function ObjectsPage() {
 				}}
 				boardSupported={boardSupported}
 				onImportClick={() => setImportOpen(true)}
+				onResetToDefault={handleResetToDefault}
 			/>
 
 			{hasChipFilters && (
@@ -1207,18 +1256,18 @@ function ObjectsPage() {
 					/>
 				</div>
 			) : (
-				<DataTable
-					ref={dataTableRef}
+				<ListView
+					ref={listViewRef}
 					data={allObjects}
-					columns={columns}
 					workspaceId={workspaceId}
 					actors={actors}
 					rowSelection={rowSelection}
 					onRowSelectionChange={setRowSelection}
 					columnVisibility={effectiveVisibility}
-					onColumnVisibilityChange={setColumnVisibility}
 					grouping={groupingState}
-					meta={tableMeta}
+					betStatuses={betStatuses}
+					showBetStatusIndicator={showBetStatusIndicator}
+					asksByObjectId={pendingAsksByObjectId}
 					hasNextPage={infiniteQuery.hasNextPage}
 					isFetchingNextPage={infiniteQuery.isFetchingNextPage}
 					isError={infiniteQuery.isError}
@@ -1239,8 +1288,24 @@ function ObjectsPage() {
 				onCopyTitle={handleCopyTitles}
 				onCopyTitleAsLink={handleCopyTitlesAsLinks}
 				onOpenLinks={handleOpenLinks}
+				onAnswerAsks={() => setAsksOpen(true)}
+				askCount={askCount}
+				onArchive={handleBulkArchive}
 				onDelete={handleBulkDelete}
 				onClear={clearSelection}
+			/>
+			<AskPanel
+				open={asksOpen}
+				onOpenChange={setAsksOpen}
+				title="Asks"
+				subtitle={
+					askCount > 0
+						? `${askCount} agent${askCount === 1 ? '' : 's'} waiting on a decision`
+						: undefined
+				}
+				asks={selectedAsks}
+				actorsById={actorsById}
+				onRespond={handleRespond}
 			/>
 		</div>
 	)

@@ -133,6 +133,11 @@ describe('buildWebAppPath', () => {
 		)
 	})
 
+	it('builds loop list and detail paths', () => {
+		expect(buildWebAppPath(ws, { kind: 'loop' })).toBe('/ws-123/loops')
+		expect(buildWebAppPath(ws, { kind: 'loop', id: 'loop-1' })).toBe('/ws-123/loops/loop-1')
+	})
+
 	it('builds settings index and section paths', () => {
 		expect(buildWebAppPath(ws, { kind: 'settings' })).toBe('/ws-123/settings')
 		const sections = ['integrations', 'keys', 'mcp', 'members', 'skills', 'objects'] as const
@@ -155,6 +160,7 @@ describe('buildWebAppPath', () => {
 			{ kind: 'relationship', sourceId: 'x' },
 			{ kind: 'file', id: 'x' },
 			{ kind: 'skill', name: 'x' },
+			{ kind: 'loop', id: 'x' },
 			{ kind: 'settings' },
 		]
 		for (const t of targets) {
