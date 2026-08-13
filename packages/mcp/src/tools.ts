@@ -1643,6 +1643,36 @@ export const tools = {
 		}),
 	},
 
+	maskin_create_agent: {
+		description:
+			'Create a named, opinionated subject-matter-expert AI agent from a single one-line prompt. Runs a server-side pipeline that (1) parses the request into structured intent (domain, job-to-be-done, deliverables, constraints), and (2) synthesises a persona with a specific name, role, stance-bearing backstory, scope boundaries, delegation description, and inferred tool set. If the prompt is too vague to identify the domain or the job-to-be-done, the tool returns { status: "underspecified", gap_question } — a short question to ask the human — rather than hallucinating fills. Call this when a user asks you to "make me an agent for X", "create an SME for Y", or otherwise wants a dedicated domain expert. Required: prompt (the one-liner). Optional: workspace_id, examples (concrete tasks the agent should handle), references (docs or URLs), constraints (budget/scope/tool limits). Response shape: { status: "ok", intent, persona } on success, { status: "underspecified", gap_question, intent } when the prompt needs clarification.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			prompt: z
+				.string()
+				.min(1)
+				.max(4000)
+				.describe(
+					'One-line description of the agent you want. Example: "SEO auditor for early-stage SaaS landing pages, budget-conscious, prefers on-page fixes over paid".',
+				),
+			examples: z
+				.array(z.string().min(1).max(500))
+				.max(20)
+				.optional()
+				.describe('Concrete tasks or scenarios the agent should be able to handle.'),
+			references: z
+				.array(z.string().min(1).max(500))
+				.max(20)
+				.optional()
+				.describe('Docs, URLs, or written material the agent should be grounded in.'),
+			constraints: z
+				.array(z.string().min(1).max(500))
+				.max(20)
+				.optional()
+				.describe('Explicit limits — budget, scope, tools, timeline.'),
+		}),
+	},
+
 	record_widget_event: {
 		description:
 			'INTERNAL — called by rendered MCP widgets (Hero Card) to report click-through, render success, and render failure events. Powers the bet success metric (click-through rate on Open in Maskin) and the 48h rolling render-error kill criterion. Do not call from an agent directly.',

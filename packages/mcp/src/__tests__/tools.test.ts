@@ -99,6 +99,7 @@ const ALL_TOOL_NAMES = [
 	'delete_extension',
 	'record_widget_event',
 	'get_bet_widget_metrics',
+	'maskin_create_agent',
 ]
 
 describe('tool definitions', () => {

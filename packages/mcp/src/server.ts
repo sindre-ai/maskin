@@ -5875,6 +5875,32 @@ export function createMcpServer(config: McpConfig) {
 		},
 	)
 
+	// ─── Agent builder (maskin_create_agent) ─────────────────
+	// Thin delegator to POST /api/agent-builder/create. The backend runs the
+	// six-stage pipeline; stages 1 and 2 are implemented today (parse intent
+	// → synthesise persona). Underspecified prompts return a gap_question the
+	// caller should surface to the human before retrying — no persona is
+	// created in that branch.
+	registerAppTool(
+		server,
+		'maskin_create_agent',
+		{
+			description: tools.maskin_create_agent.description,
+			inputSchema: tools.maskin_create_agent.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { workspace_id, ...body } = args
+			const result = await apiCall(config, 'POST', '/api/agent-builder/create', body, {
+				workspaceId: workspace_id,
+			})
+			return {
+				_meta: meta('maskin_create_agent', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
 	// ─── Widget telemetry ────────────────────────────────────
 	// Called by rendered MCP widgets to report click-through and render
 	// outcomes. Powers the bet's success metric (CTR on `Open in Maskin`) and
