@@ -54,6 +54,15 @@ const addMemberBodySchema = z.object({
 	role: z.string().optional(),
 })
 
+const updateMemberBodySchema = z.object({
+	role: z.enum(['owner', 'admin', 'member']),
+})
+
+const memberParamSchema = z.object({
+	id: z.string().uuid(),
+	actorId: z.string().uuid(),
+})
+
 const workspaceWithRoleSchema = workspaceResponseSchema.extend({
 	role: z.string(),
 })
@@ -505,5 +514,233 @@ app.openapi(listMembersRoute, async (c) => {
 
 	return c.json(serializeArray(members) as z.infer<typeof memberResponseSchema>[])
 })
+
+// PATCH /api/workspaces/:id/members/:actorId — change a member's role
+const updateMemberRoute = createRoute({
+	method: 'patch',
+	path: '/{id}/members/{actorId}',
+	tags: ['workspaces'],
+	summary: "Change a workspace member's role",
+	request: {
+		params: memberParamSchema,
+		body: {
+			content: {
+				'application/json': {
+					schema: updateMemberBodySchema,
+				},
+			},
+		},
+	},
+	responses: {
+		200: {
+			description: 'Member role updated',
+			content: { 'application/json': { schema: memberResponseSchema } },
+		},
+		400: {
+			description: 'Would leave the workspace without an owner',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		403: {
+			description: 'Caller is not a workspace member',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Member not found in this workspace',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(updateMemberRoute, (async (c) => {
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { id: workspaceId, actorId } = c.req.valid('param')
+	const { role } = c.req.valid('json')
+
+	if (!(await isWorkspaceMember(db, callerId, workspaceId))) {
+		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
+	}
+
+	if (callerId === actorId) {
+		return c.json(
+			createApiError('BAD_REQUEST', 'Use account settings to manage your own membership'),
+			400,
+		)
+	}
+
+	const [existing] = await db
+		.select({ role: workspaceMembers.role })
+		.from(workspaceMembers)
+		.where(
+			and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.actorId, actorId)),
+		)
+		.limit(1)
+	if (!existing) {
+		return c.json(createApiError('NOT_FOUND', 'Member not found in this workspace'), 404)
+	}
+
+	const result = await db.transaction(async (tx) => {
+		// Guardrail inside the transaction: re-check the owner count under the transaction lock
+		// so two concurrent demotions cannot both pass the guard before either write commits.
+		if (existing.role === 'owner' && role !== 'owner') {
+			const owners = await tx
+				.select({ actorId: workspaceMembers.actorId })
+				.from(workspaceMembers)
+				.where(
+					and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.role, 'owner')),
+				)
+			if (owners.length <= 1) {
+				return { kind: 'last_owner_error' } as const
+			}
+		}
+
+		const [u] = await tx
+			.update(workspaceMembers)
+			.set({ role })
+			.where(
+				and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.actorId, actorId)),
+			)
+			.returning({
+				actorId: workspaceMembers.actorId,
+				role: workspaceMembers.role,
+				joinedAt: workspaceMembers.joinedAt,
+			})
+
+		if (!u) return { kind: 'not_found' } as const
+
+		const [a] = await tx
+			.select({ name: actors.name, type: actors.type })
+			.from(actors)
+			.where(eq(actors.id, actorId))
+			.limit(1)
+
+		await tx.insert(events).values({
+			workspaceId,
+			actorId: callerId,
+			action: 'updated',
+			entityType: 'workspace_member',
+			entityId: actorId,
+			data: { role: { from: existing.role, to: role } },
+		})
+
+		return { kind: 'success', updated: u, actor: a } as const
+	})
+
+	if (result.kind === 'last_owner_error') {
+		return c.json(createApiError('BAD_REQUEST', 'Cannot demote the last owner of a workspace'), 400)
+	}
+	if (result.kind === 'not_found') {
+		return c.json(createApiError('NOT_FOUND', 'Member not found in this workspace'), 404)
+	}
+
+	return c.json(
+		serialize({
+			actorId: result.updated.actorId,
+			role: result.updated.role,
+			joinedAt: result.updated.joinedAt,
+			name: result.actor?.name ?? '',
+			type: result.actor?.type ?? '',
+		}) as z.infer<typeof memberResponseSchema>,
+	)
+}) as RouteHandler<typeof updateMemberRoute, Env>)
+
+// DELETE /api/workspaces/:id/members/:actorId — remove a member
+const removeMemberRoute = createRoute({
+	method: 'delete',
+	path: '/{id}/members/{actorId}',
+	tags: ['workspaces'],
+	summary: 'Remove a member from a workspace',
+	request: {
+		params: memberParamSchema,
+	},
+	responses: {
+		200: {
+			description: 'Member removed',
+			content: { 'application/json': { schema: z.object({ removed: z.boolean() }) } },
+		},
+		400: {
+			description: 'Would leave the workspace without an owner',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		403: {
+			description: 'Caller is not a workspace member',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Member not found in this workspace',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(removeMemberRoute, (async (c) => {
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { id: workspaceId, actorId } = c.req.valid('param')
+
+	if (!(await isWorkspaceMember(db, callerId, workspaceId))) {
+		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
+	}
+
+	if (callerId === actorId) {
+		return c.json(createApiError('BAD_REQUEST', 'Use account settings to leave a workspace'), 400)
+	}
+
+	const [existing] = await db
+		.select({ role: workspaceMembers.role })
+		.from(workspaceMembers)
+		.where(
+			and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.actorId, actorId)),
+		)
+		.limit(1)
+	if (!existing) {
+		return c.json(createApiError('NOT_FOUND', 'Member not found in this workspace'), 404)
+	}
+
+	const deleteResult = await db.transaction(async (tx) => {
+		// Guardrail inside the transaction: re-check the owner count under the transaction lock
+		// so two concurrent removes cannot both pass the guard before either write commits.
+		if (existing.role === 'owner') {
+			const owners = await tx
+				.select({ actorId: workspaceMembers.actorId })
+				.from(workspaceMembers)
+				.where(
+					and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.role, 'owner')),
+				)
+			if (owners.length <= 1) {
+				return { kind: 'last_owner_error' } as const
+			}
+		}
+
+		const rows = await tx
+			.delete(workspaceMembers)
+			.where(
+				and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.actorId, actorId)),
+			)
+			.returning({ actorId: workspaceMembers.actorId })
+
+		if (rows.length > 0) {
+			await tx.insert(events).values({
+				workspaceId,
+				actorId: callerId,
+				action: 'deleted',
+				entityType: 'workspace_member',
+				entityId: actorId,
+				data: { role: existing.role },
+			})
+		}
+
+		return { kind: 'deleted', rows } as const
+	})
+
+	if (deleteResult.kind === 'last_owner_error') {
+		return c.json(createApiError('BAD_REQUEST', 'Cannot remove the last owner of a workspace'), 400)
+	}
+	if (deleteResult.rows.length === 0) {
+		return c.json(createApiError('NOT_FOUND', 'Member not found in this workspace'), 404)
+	}
+
+	return c.json({ removed: true })
+}) as RouteHandler<typeof removeMemberRoute, Env>)
 
 export default app

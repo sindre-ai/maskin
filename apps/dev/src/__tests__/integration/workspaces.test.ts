@@ -221,6 +221,99 @@ describe('Workspaces Integration', () => {
 				'owner',
 			])
 		})
+
+		it("changes a member's role and the change survives a reload", async () => {
+			const app = createApp()
+
+			const ws = await (
+				await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Role Change' }))
+			).json()
+
+			const target = await insertActor(db, {
+				name: 'Role Target',
+				email: 'role-target@test.com',
+			})
+			await app.request(
+				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, {
+					actor_id: target.id,
+					role: 'member',
+				}),
+			)
+
+			const patchRes = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}/members/${target.id}`, { role: 'admin' }),
+			)
+			expect(patchRes.status).toBe(200)
+
+			// Re-fetch (simulates reload) — the new role must persist.
+			const listRes = await app.request(jsonGet(`/api/workspaces/${ws.id}/members`))
+			const members = (await listRes.json()) as { actorId: string; role: string }[]
+			expect(members.find((m) => m.actorId === target.id)?.role).toBe('admin')
+		})
+
+		it('removes a member and the removal survives a reload', async () => {
+			const app = createApp()
+
+			const ws = await (
+				await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Remove Member' }))
+			).json()
+
+			const target = await insertActor(db, {
+				name: 'Remove Target',
+				email: 'remove-target@test.com',
+			})
+			await app.request(
+				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, {
+					actor_id: target.id,
+					role: 'member',
+				}),
+			)
+
+			const before = (await (
+				await app.request(jsonGet(`/api/workspaces/${ws.id}/members`))
+			).json()) as { actorId: string }[]
+			expect(before.some((m) => m.actorId === target.id)).toBe(true)
+
+			const deleteRes = await app.request(
+				new Request(`http://localhost/api/workspaces/${ws.id}/members/${target.id}`, {
+					method: 'DELETE',
+				}),
+			)
+			expect(deleteRes.status).toBe(200)
+
+			const after = (await (
+				await app.request(jsonGet(`/api/workspaces/${ws.id}/members`))
+			).json()) as { actorId: string }[]
+			expect(after.some((m) => m.actorId === target.id)).toBe(false)
+		})
+
+		it('refuses to demote or remove the last owner', async () => {
+			const app = createApp()
+			const ws = await (
+				await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Last Owner Guard' }))
+			).json()
+
+			// The workspace creator is the only owner — try to demote them.
+			const demoteRes = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}/members/${getTestActorId()}`, {
+					role: 'admin',
+				}),
+			)
+			expect(demoteRes.status).toBe(400)
+
+			const removeRes = await app.request(
+				new Request(`http://localhost/api/workspaces/${ws.id}/members/${getTestActorId()}`, {
+					method: 'DELETE',
+				}),
+			)
+			expect(removeRes.status).toBe(400)
+
+			// The owner is still there and still an owner.
+			const members = (await (
+				await app.request(jsonGet(`/api/workspaces/${ws.id}/members`))
+			).json()) as { actorId: string; role: string }[]
+			expect(members.find((m) => m.actorId === getTestActorId())?.role).toBe('owner')
+		})
 	})
 
 	describe('default agent seeding', () => {

@@ -136,7 +136,6 @@ describe('MCP telemetry wrapper', () => {
 		// explicitly opted out below.
 		const { MUTATION_TOOL_KINDS } = await import('../telemetry')
 		const NON_CRUD_WRITE_TOOLS = new Set([
-			'add_workspace_member',
 			'regenerate_api_key',
 			'connect_integration',
 			'disconnect_integration',
