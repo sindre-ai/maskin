@@ -98,7 +98,7 @@ function LoopBuilderPage() {
 		<div>
 			<PageHeader title="Start a loop" />
 
-			<div className="grid gap-6 lg:grid-cols-2 items-start">
+			<div className="grid gap-6 md:grid-cols-2 items-start">
 				{/* Left — conversation pane */}
 				<section
 					aria-label="Describe your loop"
