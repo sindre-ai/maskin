@@ -7,7 +7,8 @@ import { useWorkspace } from '@/lib/workspace-context'
 import { Plus } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { AddLinkForm } from './linked-objects'
-import { RelatedObjectsTable, type ResolvedRelationship } from './related-objects-table'
+import { RelatedObjectsTable } from './related-objects-table'
+import { resolveRelatedRows } from './related-tab-utils'
 
 const DEFAULT_RELATIONSHIP_TYPES = ['informs', 'breaks_into', 'blocks', 'relates_to', 'duplicates']
 
@@ -29,26 +30,13 @@ export function RelatedTab({ object }: { object: ObjectResponse }) {
 	const relationshipTypes =
 		(settings?.relationship_types as string[] | undefined) ?? DEFAULT_RELATIONSHIP_TYPES
 
-	// Resolve every unique edge on this object against the objects the graph
-	// returns; fall back to the workspace listing for endpoints the graph
-	// call didn't hydrate (mirrors the LinkedObjects pattern).
-	const { resolved, existingRelationships } = useMemo(() => {
-		const rels: RelationshipResponse[] = graph?.relationships ?? []
-		const objMap = new Map<string, ObjectResponse>()
-		for (const o of graph?.connected_objects ?? []) objMap.set(o.id, o)
-		if (allObjects) for (const o of allObjects) objMap.set(o.id, o)
-
-		const seen = new Set<string>()
-		const out: ResolvedRelationship[] = []
-		for (const rel of rels) {
-			if (seen.has(rel.id)) continue
-			seen.add(rel.id)
-			const otherId = rel.sourceId === object.id ? rel.targetId : rel.sourceId
-			const obj = objMap.get(otherId)
-			if (obj) out.push({ rel, object: obj })
-		}
-		return { resolved: out, existingRelationships: rels }
-	}, [graph, allObjects, object.id])
+	// Same resolver the tab-trigger count uses, so the header count in this
+	// tab and the "(N)" in the assembled tab strip stay in lockstep.
+	const resolved = useMemo(
+		() => resolveRelatedRows(graph, allObjects, object.id),
+		[graph, allObjects, object.id],
+	)
+	const existingRelationships: RelationshipResponse[] = graph?.relationships ?? []
 
 	const count = resolved.length
 

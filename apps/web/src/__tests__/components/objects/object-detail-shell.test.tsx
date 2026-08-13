@@ -35,10 +35,17 @@ vi.mock('@/hooks/use-objects', () => ({
 	useUpdateObject: () => ({ mutate: vi.fn() }),
 	useDeleteObject: () => ({ mutate: vi.fn(), isPending: false }),
 	useObject: () => ({ data: undefined, isLoading: false }),
+	useObjectGraph: () => ({ data: { events: [], relationships: [], connected_objects: [] } }),
+	useObjects: () => ({ data: [] }),
 }))
 
 vi.mock('@/hooks/use-workspaces', () => ({
 	useWorkspaceMembers: () => ({ data: [] }),
+}))
+
+vi.mock('@/hooks/use-relationships', () => ({
+	useCreateRelationship: () => ({ mutate: vi.fn() }),
+	useDeleteRelationship: () => ({ mutate: vi.fn() }),
 }))
 
 vi.mock('@/components/shared/markdown-content', () => ({
@@ -95,5 +102,16 @@ describe('ObjectDetailShell', () => {
 			wrapper: createWorkspaceWrapper(workspace),
 		})
 		expect(screen.getByPlaceholderText(/write a comment/i)).toBeInTheDocument()
+	})
+
+	it('mounts an Activity / Timeline / Related tab strip below the body', () => {
+		const object = buildObjectResponse({ type: 'bet' })
+		render(<ObjectDetailShell object={object} />, {
+			wrapper: createWorkspaceWrapper(workspace),
+		})
+		expect(screen.getByRole('tab', { name: /^Activity$/ })).toBeInTheDocument()
+		expect(screen.getByRole('tab', { name: /^Timeline$/ })).toBeInTheDocument()
+		// Related trigger carries the live count (0 with no seeded relationships).
+		expect(screen.getByRole('tab', { name: /^Related \(0\)$/ })).toBeInTheDocument()
 	})
 })
