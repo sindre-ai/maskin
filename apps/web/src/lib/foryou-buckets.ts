@@ -42,14 +42,14 @@ interface ClassifyOptions {
 	now?: number
 }
 
-// Classify a notification into one of the four buckets. Ordering of the
-// checks matters: `resolved` items either land in Waiting (dispatch still
-// pending) or Handled (dispatch already done or resolvedAt beyond the
-// handled-today window).
+// Classify a notification into one of the four buckets, or return null to
+// exclude it from the feed entirely. Ordering of the checks matters:
+// `resolved` items land in Waiting (dispatch still pending), Handled (resolved
+// within the 24h window), or null (resolved but too old to surface).
 export function classifyNotification(
 	notification: NotificationResponse,
 	options: ClassifyOptions = {},
-): ForYouBucket {
+): ForYouBucket | null {
 	const now = options.now ?? Date.now()
 
 	if (notification.status === 'resolved') {
@@ -62,7 +62,9 @@ export function classifyNotification(
 		) {
 			return 'handled'
 		}
-		return 'handled'
+		// Outside the 24h window (or resolvedAt missing) — drop from the feed so
+		// "Handled today" doesn't accumulate stale items across days.
+		return null
 	}
 
 	// Anything still pending/seen with structured options or an explicit
@@ -106,6 +108,7 @@ export function groupNotifications(
 
 	for (const notification of sorted) {
 		const bucket = classifyNotification(notification, { now })
+		if (bucket === null) continue
 		if (notification.objectId) {
 			const bucketMap = buckets[bucket]
 			const existing = bucketMap.get(notification.objectId)

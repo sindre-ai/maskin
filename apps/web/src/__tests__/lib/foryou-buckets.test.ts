@@ -63,6 +63,25 @@ describe('classifyNotification', () => {
 		expect(classifyNotification(notification, { now: NOW })).toBe('handled')
 	})
 
+	it('returns null for resolved notifications outside the 24h handled-today window', () => {
+		const notification = buildNotification({
+			status: 'resolved',
+			// 25 hours before NOW — outside the 24h window
+			resolvedAt: new Date(NOW - 25 * 60 * 60 * 1000).toISOString(),
+			wakeDispatched: true,
+		})
+		expect(classifyNotification(notification, { now: NOW })).toBeNull()
+	})
+
+	it('returns null for resolved notifications with no resolvedAt timestamp', () => {
+		const notification = buildNotification({
+			status: 'resolved',
+			resolvedAt: null,
+			wakeDispatched: true,
+		})
+		expect(classifyNotification(notification, { now: NOW })).toBeNull()
+	})
+
 	it('routes good_news and alerts to FYI', () => {
 		expect(classifyNotification(buildNotification({ type: 'good_news' }), { now: NOW })).toBe('fyi')
 		expect(classifyNotification(buildNotification({ type: 'alert' }), { now: NOW })).toBe('fyi')
@@ -121,6 +140,23 @@ describe('groupNotifications', () => {
 
 		expect(grouped.decision.map((g) => g.primary.id)).toEqual(['p'])
 		expect(grouped.handled.map((g) => g.primary.id)).toEqual(['r'])
+	})
+
+	it('excludes resolved notifications outside the 24h window from all buckets', () => {
+		const stale = buildNotification({
+			id: 'stale',
+			objectId: 'obj-stale',
+			status: 'resolved',
+			resolvedAt: new Date(NOW - 25 * 60 * 60 * 1000).toISOString(),
+			wakeDispatched: true,
+		})
+		const fresh = buildNotification({ id: 'fresh', type: 'needs_input' })
+
+		const grouped = groupNotifications([stale, fresh], { now: NOW })
+
+		expect(grouped.handled).toHaveLength(0)
+		expect(grouped.decision).toHaveLength(1)
+		expect(grouped.decision[0].primary.id).toBe('fresh')
 	})
 })
 
