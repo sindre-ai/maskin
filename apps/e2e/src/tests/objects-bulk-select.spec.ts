@@ -1,14 +1,18 @@
 import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS, VIEWPORTS } from '../helpers/viewports'
 
-// Ship-gate coverage for the iOS bulk-select ergonomics bet (T1, T3, T6), which
-// previously shipped with zero Playwright coverage — jsdom/Vitest component
-// tests can't exercise real pointer capture, elementFromPoint hit-testing, or
-// RAF-driven autoscroll timing.
+// Bulk-select coverage for the Objects list (bet T2), which replaced the
+// DataTable as the default 'list' view. The list surface has no page-level
+// "Select all" header checkbox, no tri-state group checkbox, and touch
+// drag-select is explicitly out of scope — rows are leaf checkboxes
+// (aria-label "Select row") under tappable collapsing groups, and the range
+// mechanism is shift-click. These specs reflect that surface; jsdom/Vitest
+// component tests can't exercise real pointer capture, hit-testing, or
+// modifier-key clicks, so the runtime assertions live here.
 
 test.describe('Bulk-select — checkbox tap zones (ship gate)', () => {
-	// T1: the 44×44 hit zone must keep the row checkbox reachable at every
-	// ship-gate viewport, not just the visual 16×16 target.
+	// The 44×44 hit zone must keep the row checkbox reachable at every
+	// ship-gate viewport, not just the visual target.
 	for (const viewport of SHIP_GATE_VIEWPORTS) {
 		test(`row checkbox is visible and selectable @ ${viewport.label}`, async ({
 			page,
@@ -33,12 +37,12 @@ test.describe('Bulk-select — checkbox tap zones (ship gate)', () => {
 	}
 })
 
-test.describe('Bulk-select — grouped selection', () => {
-	// Desktop table layout (>=768px) renders the page-level "Select all" header
-	// checkbox and the group-header rows — assert at both desktop-mode
-	// ship-gate widths (768 portrait, 1024 landscape).
+test.describe('Bulk-select — grouped list selection', () => {
+	// Desktop-mode ship-gate widths (768 portrait, 1024 landscape): grouped by
+	// status, groups render collapsed with their row counts, and leaf checkboxes
+	// under an expanded group drive the bulk bar.
 	for (const viewport of [VIEWPORTS.tabletPortrait, VIEWPORTS.tabletLandscape]) {
-		test(`select-all excludes group rows, group checkbox is tri-state @ ${viewport.label}`, async ({
+		test(`leaf selection under a status group drives the bulk bar @ ${viewport.label}`, async ({
 			page,
 			account,
 		}) => {
@@ -60,76 +64,96 @@ test.describe('Bulk-select — grouped selection', () => {
 			})
 
 			await page.goto(`/${account.workspaceId}/objects?groupBy=status`)
-			// Groups start collapsed, so the leaf titles aren't rendered yet — wait
-			// for the group-header labels instead.
+			// Groups start collapsed, so leaf titles aren't rendered yet — wait
+			// for the group-header label with its row count instead.
 			await expect(page.getByText('qualified', { exact: true })).toBeVisible({ timeout: 10000 })
+			await expect(page.getByText('Group Qualified Bet A')).not.toBeVisible()
 
-			// Plain attribute locator, not getByRole: once the bar goes `inert` (0
-			// selected) it drops out of the accessibility tree, so a role-based
-			// locator would stop matching it entirely.
-			const bulkBar = page.locator('[aria-label="Bulk actions"]')
-			const selectAll = page.getByRole('checkbox', { name: 'Select all', exact: true })
+			// Expand the qualified group; its two leaves appear under it.
+			await page.getByRole('button', { name: /^qualified/ }).click()
+			await expect(page.getByText('Group Qualified Bet A')).toBeVisible()
 
-			// Regression coverage: the page-level "select all" must select exactly
-			// the 3 real objects, not the 2 synthetic group rows ("status:signal",
-			// "status:qualified") alongside them.
-			await selectAll.click()
-			await expect(bulkBar).toHaveAttribute('aria-hidden', 'false')
-			await expect(page.getByLabel('3 selected')).toBeVisible()
-
-			await selectAll.click()
-			await expect(bulkBar).toHaveAttribute('aria-hidden', 'true')
-			await expect(page.getByRole('checkbox', { checked: true })).toHaveCount(0)
-
-			// Expand the "qualified" group and toggle its two leaves individually to
-			// exercise the group-header checkbox's tri-state (indeterminate -> checked).
-			await page.getByRole('button', { name: /qualified/i }).click()
-			const qualifiedGroupCheckbox = page.getByRole('checkbox', {
-				name: 'Select all in qualified',
-			})
+			// Selecting leaves one at a time grows the bulk bar count.
 			const leafCheckboxes = page.getByRole('checkbox', { name: 'Select row' })
-
 			await leafCheckboxes.first().click()
 			await expect(page.getByLabel('1 selected')).toBeVisible()
-			await expect(qualifiedGroupCheckbox).toHaveAttribute('data-state', 'indeterminate')
 
 			await leafCheckboxes.nth(1).click()
 			await expect(page.getByLabel('2 selected')).toBeVisible()
-			await expect(qualifiedGroupCheckbox).toHaveAttribute('data-state', 'checked')
+
+			// Selection is keyed by object id and survives collapsing the group.
+			await page.getByRole('button', { name: /^qualified/ }).click()
+			await expect(page.getByText('Group Qualified Bet A')).not.toBeVisible()
+			await expect(page.getByLabel('2 selected')).toBeVisible()
 		})
 	}
 })
 
-test.describe('Bulk-select — touch drag-select', () => {
-	// T6: long-press-arm then drag across rows should select the swept range.
-	test('long-press then drag selects the swept range', async ({ page, account }) => {
-		await page.setViewportSize({ width: VIEWPORTS.mobile.width, height: VIEWPORTS.mobile.height })
-		for (let i = 1; i <= 4; i++) {
+test.describe('Bulk-select — archive action', () => {
+	// Running a bulk action (T6) through the real list surface: select two rows,
+	// hit Archive, and confirm the action applies to all selected and the bar
+	// clears. Archived rows are hidden from the default list, so the titles
+	// should drop out after the mutation lands.
+	for (const viewport of [VIEWPORTS.tabletPortrait, VIEWPORTS.tabletLandscape]) {
+		test(`archive applies to all selected rows @ ${viewport.label}`, async ({ page, account }) => {
+			await page.setViewportSize({ width: viewport.width, height: viewport.height })
 			await account.api.createObject(account.workspaceId, {
 				type: 'bet',
-				title: `Drag Select Bet ${i}`,
+				title: 'Archive Bet A',
+				status: 'signal',
+			})
+			await account.api.createObject(account.workspaceId, {
+				type: 'bet',
+				title: 'Archive Bet B',
+				status: 'signal',
+			})
+
+			await page.goto(`/${account.workspaceId}/objects`)
+			await expect(page.getByText('Archive Bet A')).toBeVisible({ timeout: 10000 })
+			await expect(page.getByText('Archive Bet B')).toBeVisible()
+
+			await page.getByRole('checkbox', { name: 'Select row' }).first().click()
+			await page.getByRole('checkbox', { name: 'Select row' }).nth(1).click()
+			await expect(page.getByLabel('2 selected')).toBeVisible()
+
+			await page.getByRole('button', { name: 'Archive selected' }).click()
+
+			// Full success clears the selection and the default list hides archived rows.
+			await expect(page.getByLabel('2 selected')).not.toBeVisible()
+			await expect(page.getByText('Archive Bet A')).not.toBeVisible()
+			await expect(page.getByText('Archive Bet B')).not.toBeVisible()
+		})
+	}
+})
+
+test.describe('Bulk-select — shift-click range selection', () => {
+	// The list's range mechanism is shift-click (the DataTable era used touch
+	// drag-select, out of scope for the T2 list). A plain click anchors the
+	// group's range; a subsequent shift-click extends to the swept range.
+	test('plain click then shift-click selects the range', async ({ page, account }) => {
+		await page.setViewportSize({ width: VIEWPORTS.desktop.width, height: VIEWPORTS.desktop.height })
+		for (let i = 1; i <= 3; i++) {
+			await account.api.createObject(account.workspaceId, {
+				type: 'bet',
+				title: `Shift Select Bet ${i}`,
 				status: 'signal',
 			})
 		}
 
 		await page.goto(`/${account.workspaceId}/objects`)
-		await expect(page.getByText('Drag Select Bet 1')).toBeVisible({ timeout: 10000 })
+		await expect(page.getByText('Shift Select Bet')).toBeVisible({ timeout: 10000 })
 
-		const checkboxes = page.getByRole('checkbox', { name: 'Select row' })
-		const first = await checkboxes.nth(0).boundingBox()
-		const third = await checkboxes.nth(2).boundingBox()
-		if (!first || !third) throw new Error('checkbox bounding boxes not found')
+		// Ordinary click anchors the range on the first row.
+		await page.getByRole('checkbox', { name: 'Select row' }).first().click()
+		await expect(page.getByLabel('1 selected')).toBeVisible()
 
-		const start = { x: first.x + first.width / 2, y: first.y + first.height / 2 }
-		const end = { x: third.x + third.width / 2, y: third.y + third.height / 2 }
-
-		await page.mouse.move(start.x, start.y)
-		await page.mouse.down()
-		// Long-press arm window is 500ms — hold still past the threshold before dragging.
-		await page.waitForTimeout(650)
-		await page.mouse.move(end.x, end.y, { steps: 5 })
-		await page.mouse.up()
-
-		await expect(page.getByLabel('3 selected')).toBeVisible({ timeout: 5000 })
+		// Shift-click the third row's background. The checkbox and the title
+		// Link both stop propagation, so the shift-click must land on the row's
+		// own surface (what a real user clicks in the gap between cells).
+		await page
+			.locator('[data-obj-id]')
+			.nth(2)
+			.click({ modifiers: ['Shift'] })
+		await expect(page.getByLabel('3 selected')).toBeVisible()
 	})
 })

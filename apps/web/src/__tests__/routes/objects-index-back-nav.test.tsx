@@ -150,12 +150,12 @@ vi.mock('@/lib/query-keys', () => ({
 	},
 }))
 
-// DataTable stub — reflects the current rowSelection prop into the DOM so
-// tests can observe it, exposes a button to drive onRowSelectionChange, calls
+// ListView stub — reflects the current rowSelection prop into the DOM so tests
+// can observe it, exposes a button to drive onRowSelectionChange, calls
 // onCaptureViewState on row click, and provides an imperative handle whose
 // getFirstVisibleRowId is fixed to the first seed row (mirrors what the real
-// virtualizer would return with all rows on-screen).
-vi.mock('@/components/objects/data-table/data-table', async () => {
+// list's first-visible-row probe would return with all rows on-screen).
+vi.mock('@/components/objects/list/list-view', async () => {
 	const { forwardRef, useImperativeHandle } = await import('react')
 	type Props = {
 		data: Array<{ id: string }>
@@ -165,10 +165,10 @@ vi.mock('@/components/objects/data-table/data-table', async () => {
 		) => void
 		onCaptureViewState?: () => void
 	}
-	const DataTable = forwardRef<
+	const ListView = forwardRef<
 		{ getFirstVisibleRowId: () => string | null; scrollToRowId: (id: string) => void },
 		Props
-	>(function DataTableStub({ data, rowSelection, onRowSelectionChange, onCaptureViewState }, ref) {
+	>(function ListViewStub({ data, rowSelection, onRowSelectionChange, onCaptureViewState }, ref) {
 		useImperativeHandle(
 			ref,
 			() => ({
@@ -193,7 +193,7 @@ vi.mock('@/components/objects/data-table/data-table', async () => {
 			</div>
 		)
 	})
-	return { DataTable }
+	return { ListView }
 })
 
 import { Route } from '@/routes/_authed/$workspaceId/objects/index'
@@ -275,7 +275,7 @@ describe('ObjectsPage — row selection is NOT restored across back-nav (bet AC 
 		// Sanity: fresh mount has no selection.
 		expect(screen.getByTestId('selected-ids').textContent).toBe('')
 
-		// Select the first row — the mocked DataTable drives
+		// Select the first row — the mocked ListView drives
 		// onRowSelectionChange the same way the real checkbox would.
 		await act(async () => {
 			await user.click(screen.getByRole('button', { name: /select row 0/i }))

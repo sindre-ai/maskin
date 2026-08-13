@@ -1,6 +1,7 @@
 import {
 	COMMENT_MAX_ATTACHMENTS,
 	COMMENT_MAX_LENGTH,
+	LOOP_STATUSES,
 	createCommentSchema,
 	notificationActionSchema,
 	notificationOptionSchema,
@@ -51,6 +52,100 @@ const optionalWorkspaceId = z
 		'Workspace ID to operate in. If omitted, uses the default workspace (DEFAULT_WORKSPACE_ID). Call list_workspaces to discover available workspaces.',
 	)
 
+// Single agent-facing param covering everything needed to run an agent on a
+// specific LLM. The actor record still stores provider and config as two
+// separate columns server-side — the MCP layer splits `provider` back out
+// before calling the API, and merges the two columns back into this same
+// shape on the way out, so create_actor/update_actor responses mirror what
+// you send in.
+const actorLlmConfigSchema = z
+	.object({
+		provider: z
+			.string()
+			.optional()
+			.describe('LLM provider to run this agent on, e.g. "anthropic", "openai".'),
+		api_key: z.string().optional().describe('API key for the given provider.'),
+		model: z.string().optional().describe('Model identifier to use, e.g. "claude-opus-4-6".'),
+	})
+	.passthrough()
+	.optional()
+	.describe(
+		'Agents only — not used for humans. Configures which LLM this agent runs on: provider, api_key, and model. Extra provider-specific keys are passed through as-is.',
+	)
+
+/**
+ * Inline loop-step definition accepted by create_loop / update_loop. Each step
+ * becomes an ordinary trigger (POST /api/triggers) targeting an agent actor,
+ * and its id is appended to the loop's `metadata.trigger_ids`. The `when`
+ * union mirrors the two trigger types: `{ cron }` → a cron trigger,
+ * `{ object_type, action, filter? }` → an event trigger that fires as objects
+ * of that type change state. Both branches are `.strict()` so a step can't
+ * mix cron and event fields — the backend's `entity_type` is required on
+ * event triggers, so `object_type` is required here too rather than silently
+ * accepting a shape the backend would reject.
+ */
+const loopStepSchema = z.object({
+	name: z.string().min(1).describe('Step name, e.g. "Qualify new lead" or "Capture learnings".'),
+	agent_id: z
+		.string()
+		.uuid()
+		.describe(
+			"Agent actor that performs this step (create one with create_actor or find one with list_actors). Must be an agent, not a human — a human is put on the loop by having a step's agent notify/@mention them.",
+		),
+	prompt: z
+		.string()
+		.min(1)
+		.describe(
+			'Instruction the agent receives when the step fires. The triggering event (including the changed object) is appended automatically.',
+		),
+	when: z
+		.union([
+			z
+				.object({
+					cron: z
+						.string()
+						.min(1)
+						.describe('Cron expression, e.g. "*/30 * * * *" — the step runs on this schedule.'),
+				})
+				.strict(),
+			z
+				.object({
+					object_type: z
+						.string()
+						.min(1)
+						.describe(
+							'Object type whose events fire this step — any type defined in the workspace, including custom ones (call get_workspace_schema to see them).',
+						),
+					action: z
+						.enum(['created', 'updated', 'status_changed', 'deleted'])
+						.describe('Which mutation fires the step. `status_changed` drives most loop steps.'),
+					filter: z
+						.record(z.unknown())
+						.optional()
+						.describe(
+							'Equality filter evaluated against the current object row, e.g. { "status": "qualified" } or { "metadata.segment": "enterprise" }. Dot paths reach into metadata.',
+						),
+				})
+				.strict(),
+		])
+		.describe(
+			'When the step fires — exactly one of: { "cron": "<expression>" } for a schedule, or { "object_type", "action", "filter"? } to react to objects changing state. Do not mix fields from both forms; extra/mismatched keys are rejected.',
+		),
+})
+
+/**
+ * Per-loop map of which statuses mean "done" for objects flowing through the
+ * loop, e.g. { "lead": ["won", "lost"] }. This is what makes loop stats work
+ * for workspace-defined (custom) object types — without it only built-in types
+ * have known terminal statuses.
+ */
+const closedStatusesSchema = z
+	.record(z.array(z.string().min(1)))
+	.optional()
+	.describe(
+		'Map of object type → statuses that count as "done"/closed for THIS loop, e.g. {"lead": ["won", "lost"]}. Required for correct closed counts when custom object types flow through the loop; built-in types (bet/task/insight) have sensible defaults. Types and statuses are validated against the workspace schema.',
+	)
+
 /**
  * Equality filter on custom metadata fields — object types define their own
  * fields at runtime (see `create_workspace_field`), so this is a generic
@@ -96,14 +191,18 @@ export const tools = {
 	// ─── Objects ─────────────────────────────────────────────
 	create_objects: {
 		description:
-			'Create one or more objects (insights, bets, tasks) with optional relationships in a single atomic operation. For a single object, provide one node with no edges. For multiple related objects, use $id references in edges to link them. Edges can also reference existing object UUIDs to connect new objects to existing ones. Call get_workspace_schema first to discover valid statuses, metadata fields, and relationship types. Status defaults — insight: new|processing|clustered|scored|parked|discarded, bet: signal|qualified|define|active|live|succeeded|failed|paused, task: todo|in_progress|in_review|validated|done|discarded. To attach files to a created object, upload them first with create_file (or pick existing ones with list_files) and pass the returned ids in `file_ids` on the node. Attached files appear under the object in the UI and are returned alongside the object in get_objects. When referring to created or connected objects in human-facing output (comments, summaries, notifications, descriptions), use the object\'s title — not its UUID. Returned nodes include the title; edges include sourceTitle and targetTitle for the same reason. UUIDs should only appear in human-facing text when two objects share a near-identical title and disambiguation is needed — in that case append a short id suffix (e.g. "Bets and Threads v4 (ca957490)"). Use UUIDs freely inside tool arguments.',
+			'Create one or more objects — of any type this workspace defines (built-ins like insight/bet/task, or a custom type) — with optional relationships in a single atomic operation. To create a Loop — a persistent closed-loop agent process — use the dedicated create_loop tool instead, which wires the trigger and membership metadata correctly. For a single object, provide one node with no edges. For multiple related objects, use $id references in edges to link them. Edges can also reference existing object UUIDs to connect new objects to existing ones. ALWAYS call get_workspace_schema first — it returns the authoritative, live list of valid statuses per object type, metadata fields, and relationship types for this workspace (these are workspace-configurable, so they vary between workspaces and cannot be assumed). To attach files to a created object, upload them first with create_file (or pick existing ones with list_files) and pass the returned ids in `file_ids` on the node. Attached files appear under the object in the UI and are returned alongside the object in get_objects. When referring to created or connected objects in human-facing output (comments, summaries, notifications, descriptions), use the object\'s title — not its UUID. Returned nodes include the title; edges include sourceTitle and targetTitle for the same reason. UUIDs should only appear in human-facing text when two objects share a near-identical title and disambiguation is needed — in that case append a short id suffix (e.g. "Bets and Threads v4 (ca957490)"). Use UUIDs freely inside tool arguments.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			nodes: z
 				.array(
 					z.object({
 						$id: z.string().describe('Client-side temporary ID for cross-referencing in edges'),
-						type: z.string().describe('Object type (e.g. insight, bet, task, meeting)'),
+						type: z
+							.string()
+							.describe(
+								"Object type — any type this workspace defines (built-ins like insight/bet/task, or a custom type). Call get_workspace_schema first for this workspace's actual configured types; do not assume a fixed set.",
+							),
 						title: z.string().optional(),
 						content: z.string().optional(),
 						status: z.string(),
@@ -140,7 +239,9 @@ export const tools = {
 							.describe('A $id from a node in this request, or a UUID of an existing object'),
 						type: z
 							.string()
-							.describe('Relationship type: informs, breaks_into, blocks, relates_to, duplicates'),
+							.describe(
+								"Relationship type. Call get_workspace_schema to see this workspace's configured relationship types — built-ins like informs/breaks_into/blocks/relates_to/duplicates are common defaults, but workspaces can add their own.",
+							),
 					}),
 				)
 				.default([])
@@ -205,7 +306,9 @@ export const tools = {
 						target_id: z.string().uuid().describe('Target object UUID'),
 						type: z
 							.string()
-							.describe('Relationship type: informs, breaks_into, blocks, relates_to, duplicates'),
+							.describe(
+								"Relationship type. Call get_workspace_schema to see this workspace's configured relationship types — built-ins like informs/breaks_into/blocks/relates_to/duplicates are common defaults, but workspaces can add their own.",
+							),
 					}),
 				)
 				.default([])
@@ -224,7 +327,12 @@ export const tools = {
 			'List insights, bets, and/or tasks in the workspace. Filter by type, status, driver, last-updated window, or custom metadata fields. Returns paginated results ordered by creation date unless `sort` is set. Rows with `status = "archived"` are hidden by default — pass `include_archived: true` to see them. When response scoping is enabled the server pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page. `offset` still works for backward compatibility.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			type: z.string().describe('Object type (e.g. insight, bet, task, meeting)').optional(),
+			type: z
+				.string()
+				.describe(
+					'Object type — any type this workspace defines (built-ins like insight/bet/task, or a custom type). Call get_workspace_schema to see the live list.',
+				)
+				.optional(),
 			status: z.string().optional(),
 			driver: z
 				.string()
@@ -277,7 +385,12 @@ export const tools = {
 				.string()
 				.min(1)
 				.describe('Search query — matches against title and content (case-insensitive)'),
-			type: z.string().describe('Object type (e.g. insight, bet, task, meeting)').optional(),
+			type: z
+				.string()
+				.describe(
+					'Object type — any type this workspace defines (built-ins like insight/bet/task, or a custom type). Call get_workspace_schema to see the live list.',
+				)
+				.optional(),
 			status: z.string().optional(),
 			driver_id: z
 				.string()
@@ -396,22 +509,27 @@ export const tools = {
 	},
 	create_actor: {
 		description:
-			'Create a new actor (human or agent) and optionally add them to a workspace. Returns the actor details and API key (only shown once). If workspace_id is provided, the actor is added as a member with the given role. If auto_create_workspace is true (default for humans), a new, empty workspace is created instead. For agents, set tools.mcpServers and/or attach_skill_ids so the agent has its MCP servers and skills from the start. attach_skill_ids requires workspace_id — with auto_create_workspace the new workspace has no existing skills, so any attach_skill_ids passed alongside it are ignored.',
+			'Create a new actor (human or agent) and optionally add them to a workspace. Returns the actor details and API key (only shown once). If workspace_id is provided, the actor is added as a member with the given role — this is how to add a brand-new actor to a workspace as part of creating them. To add an already-existing actor to a workspace, use update_actor with workspace_id/role instead. If auto_create_workspace is true (default for humans), a new, empty workspace is created instead. For agents, set tools.mcpServers and/or attach_skill_ids so the agent has its MCP servers and skills from the start. attach_skill_ids requires workspace_id — with auto_create_workspace the new workspace has no existing skills, so any attach_skill_ids passed alongside it are ignored.',
 		inputSchema: z.object({
 			type: z.enum(['human', 'agent']),
-			name: z.string().min(1),
-			email: z.string().email().optional(),
-			auto_create_workspace: z.boolean().optional(),
+			name: z.string().min(1).describe('Name of actor'),
+			email: z.string().email().optional().describe('Required for humans'),
+			auto_create_workspace: z
+				.boolean()
+				.optional()
+				.describe(
+					'When true (the default for humans), a brand-new empty workspace is created and the actor is automatically added to it as owner — no separate add-to-workspace call needed. When false or omitted for agents, no workspace is created; pass workspace_id instead to add the actor to an existing one.',
+				),
 			workspace_id: z
 				.string()
 				.uuid()
 				.optional()
 				.describe('Add the new actor to this existing workspace'),
 			role: z
-				.enum(['owner', 'member', 'viewer'])
+				.enum(['owner', 'admin', 'member'])
 				.default('member')
 				.describe(
-					'Role when adding to a workspace: owner (full control), member (read/write), viewer (read-only)',
+					'Role when adding to a workspace via workspace_id: owner (full control), admin (manage members), member (read/write).',
 				),
 			description: z
 				.string()
@@ -420,46 +538,81 @@ export const tools = {
 				.describe(
 					'Short one-liner (max 80 chars) summarizing the actor. For agents this is shown on the Agents page list and sub-page so teammates can tell agents apart at a glance.',
 				),
-			system_prompt: z.string().optional(),
+			system_prompt: z
+				.string()
+				.optional()
+				.describe(
+					"Instructions defining the agent's behavior. Only meaningful for agents — not used for humans. If omitted for an agent, sessions fall back to a generic default prompt.",
+				),
 			tools: z
 				.record(z.unknown())
 				.optional()
 				.describe(
 					'MCP server config for agents: { mcpServers: { <name>: { command, args, env } } }.',
 				),
-			llm_provider: z.string().optional(),
-			llm_config: z.record(z.unknown()).optional(),
+			llm_config: actorLlmConfigSchema,
 			attach_skill_ids: z
 				.array(z.string().uuid())
 				.optional()
-				.describe('Workspace skill IDs to attach to this actor on creation.'),
+				.describe(
+					'Workspace skill IDs to attach to this actor on creation. Agents only — skills configure agent behavior and are not used for humans.',
+				),
 		}),
 	},
 	update_actor: {
 		description:
-			'Update an actor by ID. Can change name, email, description (short one-liner, max 80 chars), system_prompt / instructions (for agents and humans), tools configuration, memory (persistent key-value store), LLM provider, LLM config, and workspace skill attachments (attach_skill_ids / detach_skill_ids).',
+			'Update an actor by ID. Can change name, email, description (short one-liner, max 80 chars), system_prompt / instructions (agents only), tools configuration, llm_config (agents only), workspace skill attachments (attach_skill_ids / detach_skill_ids), and optionally add the actor to a workspace (workspace_id + role) in the same call. This is how to add an already-existing actor to a workspace — for adding a brand-new actor to a workspace as part of creating them, use create_actor instead.',
 		inputSchema: z.object({
 			id: z.string().uuid(),
-			name: z.string().min(1).optional(),
-			email: z.string().email().optional(),
+			name: z.string().min(1).optional().describe('New name for the actor.'),
+			email: z
+				.string()
+				.email()
+				.optional()
+				.describe('New email address for the actor. Only meaningful for humans.'),
 			description: z
 				.string()
 				.max(80)
 				.optional()
 				.describe('Short one-liner (max 80 chars) summarizing the actor.'),
-			system_prompt: z.string().optional(),
-			tools: z.record(z.unknown()).optional(),
-			memory: z.record(z.unknown()).optional(),
-			llm_provider: z.string().optional(),
-			llm_config: z.record(z.unknown()).optional(),
+			system_prompt: z
+				.string()
+				.optional()
+				.describe(
+					"Instructions defining the agent's behavior. Only meaningful for agents — not used for humans.",
+				),
+			tools: z
+				.record(z.unknown())
+				.optional()
+				.describe(
+					'MCP server config for agents: { mcpServers: { <name>: { command, args, env } } }.',
+				),
+			llm_config: actorLlmConfigSchema,
 			attach_skill_ids: z
 				.array(z.string().uuid())
 				.optional()
-				.describe('Workspace skill IDs to attach to this actor.'),
+				.describe(
+					'Workspace skill IDs to attach to this actor. Agents only — skills configure agent behavior and are not used for humans.',
+				),
 			detach_skill_ids: z
 				.array(z.string().uuid())
 				.optional()
-				.describe('Workspace skill IDs to detach from this actor.'),
+				.describe(
+					'Workspace skill IDs to detach from this actor. Agents only — skills configure agent behavior and are not used for humans.',
+				),
+			workspace_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'Add this actor to the given workspace as part of the update. This is the tool for adding an existing actor to a workspace. Omit to leave workspace membership unchanged.',
+				),
+			role: z
+				.enum(['owner', 'admin', 'member'])
+				.default('member')
+				.describe(
+					'Role to assign when adding to a workspace via workspace_id: owner (full control), admin (manage members), member (read/write). Only applied when workspace_id is set.',
+				),
 		}),
 	},
 	regenerate_api_key: {
@@ -531,20 +684,8 @@ export const tools = {
 				.string()
 				.optional()
 				.describe(
-					'Filter schema to a specific object type (e.g. insight, bet, task, meeting). If omitted, returns schema for all types.',
+					'Filter schema to a specific object type — any type this workspace defines (built-ins like insight/bet/task, or a custom type). If omitted, returns schema for all types.',
 				),
-		}),
-	},
-	add_workspace_member: {
-		description:
-			'Add an existing actor to a workspace. Use this to grant an agent or human access to a workspace. Requires the actor ID and workspace ID.',
-		inputSchema: z.object({
-			workspace_id: z.string().uuid().describe('The workspace to add the member to'),
-			actor_id: z.string().uuid().describe('The actor to add as a member'),
-			role: z
-				.enum(['owner', 'admin', 'member'])
-				.default('member')
-				.describe('Role: owner (full control), admin (manage members), member (read/write)'),
 		}),
 	},
 	// ─── Workspace Schema Editing (W1) ──────────────────────
@@ -555,7 +696,7 @@ export const tools = {
 	// endpoint shallow-merges `settings`.
 	create_workspace_field: {
 		description:
-			'Add a new metadata field to a workspace object type (e.g. insight, bet, task). Mirrors the web schema editor — once added, the field is available via get_workspace_schema and accepted by create_objects / update_objects metadata. Field names must be unique within a type.',
+			'Add a new metadata field to a workspace object type — any type this workspace defines (built-ins like insight/bet/task, or a custom type). Mirrors the web schema editor — once added, the field is available via get_workspace_schema and accepted by create_objects / update_objects metadata. Field names must be unique within a type.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			type: z
@@ -580,7 +721,7 @@ export const tools = {
 	},
 	update_workspace_field: {
 		description:
-			'Update an existing metadata field on a workspace object type. Use this to rename, change the field type, toggle required, or replace the full enum value list. Pass only the fields you want to change.',
+			"Update an existing metadata field on a workspace object type. Use this to rename, change the field type, toggle required, or edit an enum field's allowed values. Pass only the fields you want to change. For enum values, prefer add_values/remove_values to add or remove individual values without disturbing the rest (idempotent — adding an existing value or removing a missing one is a no-op); use values only when replacing the full list wholesale. Existing objects keep any value they previously stored even after it is removed from the allowed list — only new writes are constrained.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			type: z.string().min(1).describe('Object type the field belongs to.'),
@@ -599,7 +740,19 @@ export const tools = {
 				.array(z.string().min(1))
 				.optional()
 				.describe(
-					'Optional full replacement list of enum values. Pass an empty array to clear. Use add/remove_workspace_enum_value to mutate one value without losing others.',
+					'Optional full replacement list of enum values, applied before add_values/remove_values. Pass an empty array to clear (only valid if add_values then supplies at least one value, since enum fields require at least one). Omit to leave the current values as the starting point for add_values/remove_values.',
+				),
+			add_values: z
+				.array(z.string().min(1))
+				.optional()
+				.describe(
+					'Enum values to add, keeping all existing values. Only valid when the field is (or is being changed to, via field_type) an enum.',
+				),
+			remove_values: z
+				.array(z.string().min(1))
+				.optional()
+				.describe(
+					'Enum values to remove, keeping the rest. Only valid when the field is (or is being changed to, via field_type) an enum. Applied after add_values.',
 				),
 		}),
 	},
@@ -610,26 +763,6 @@ export const tools = {
 			workspace_id: optionalWorkspaceId,
 			type: z.string().min(1).describe('Object type the field belongs to.'),
 			name: z.string().min(1).describe('Field name to delete.'),
-		}),
-	},
-	add_workspace_enum_value: {
-		description:
-			'Append an allowed value to an enum field on a workspace object type. Fails if the field is not of type "enum". Idempotent — adding an existing value is a no-op.',
-		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
-			type: z.string().min(1).describe('Object type the field belongs to.'),
-			name: z.string().min(1).describe('Enum field name.'),
-			value: z.string().min(1).describe('Value to add.'),
-		}),
-	},
-	remove_workspace_enum_value: {
-		description:
-			'Remove an allowed value from an enum field on a workspace object type. Fails if the field is not of type "enum". Idempotent — removing a missing value is a no-op. Existing objects that previously stored this value keep their stored value; only new writes are constrained.',
-		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
-			type: z.string().min(1).describe('Object type the field belongs to.'),
-			name: z.string().min(1).describe('Enum field name.'),
-			value: z.string().min(1).describe('Value to remove.'),
 		}),
 	},
 	// ─── Workspace Skills ─────────────────────────────────────
@@ -867,6 +1000,168 @@ export const tools = {
 				),
 		}),
 	},
+	// ─── Loops ───────────────────────────────────────────────
+	// A Loop is a persistent multi-agent process: a goal wrapped around
+	// triggers + agents + objects changing state. Stored as an `objects` row
+	// with `type = 'loop'`; its steps are ordinary triggers referenced via
+	// `metadata.trigger_ids`, and the objects flowing through it are linked
+	// with `in_loop` relationship edges (source = loop, target = member
+	// object). "Open vs closed" is structural — a loop is closed when one of
+	// its steps is a feedback step that fires on end states. These tools are
+	// the supported way to author loops from MCP — they wire that metadata and
+	// those edges correctly, which raw create_objects calls historically got
+	// wrong.
+	create_loop: {
+		description:
+			'Create a Loop — a persistent process where agents (and humans) work toward a goal, with steps that fire as objects change state. A loop wraps: (a) STEPS — triggers that fire an agent, either on a schedule (cron) or when an object of any workspace-defined type changes state (event); (b) AGENTS — each step targets an agent actor that does the work; (c) MEMBER OBJECTS — the objects currently flowing through the loop (any type the workspace defines — call get_workspace_schema to discover types and statuses), linked via `in_loop` relationships. Pass `steps` to define and create the triggers inline in this one call, and/or `trigger_ids` to attach existing triggers. A loop is OPEN when it has no feedback mechanism, CLOSED when one of its steps is a feedback step — an event trigger on the close condition (e.g. when an object reaches a done status) whose agent captures learnings (create an insight/knowledge object linked with `informs`), improves the loop, and/or seeds the next object into it. Prefer closing every loop. To put a human ON the loop, add a step whose agent notifies/@mentions that human at decision points (via create_comment mentions or create_notification) — human participation is a step like any other, and another agent can be on the loop the same way. If custom object types flow through the loop, pass `closed_statuses` so the loop knows which statuses mean done. All ids, types, and statuses are validated against the workspace — unknown ones fail with a clear error instead of silently creating a loop with no working steps. The loop object and its `in_loop` membership edges are created atomically; attach more steps or objects later with update_loop; read loops back (with live stats) via list_loops. NOTE: this creates a custom loop from scratch — to install a pre-packaged marketplace loop template, use get_started instead.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			name: z.string().min(1).describe('Loop name, e.g. "Inbound lead qualification".'),
+			guarantee: z
+				.string()
+				.optional()
+				.describe(
+					'What the loop promises / a full description of the process. Stored as the loop object\'s content and shown as the "guarantee" on the loops page.',
+				),
+			status: z
+				.enum(LOOP_STATUSES)
+				.default('running')
+				.describe(
+					'Lifecycle status. `running` (default) means the loop is live; `waiting` flags it as needing human attention; `paused` and `archived` stop it.',
+				),
+			entry_condition: z
+				.string()
+				.optional()
+				.describe(
+					'Plain-language condition for when an object enters the loop, e.g. "A new insight is created with source=intercom".',
+				),
+			close_condition: z
+				.string()
+				.optional()
+				.describe(
+					'Plain-language condition for when an object is done and leaves the loop, e.g. "The task reaches status done or discarded".',
+				),
+			human_decision_points: z
+				.number()
+				.int()
+				.min(0)
+				.optional()
+				.describe('Number of points in the loop where a human must decide before it continues.'),
+			steps: z
+				.array(loopStepSchema)
+				.max(20)
+				.default([])
+				.describe(
+					'Inline step definitions — each becomes a trigger created in this same call and attached to the loop. Include a feedback step (event `when` on the close condition) to make the loop CLOSED.',
+				),
+			trigger_ids: z
+				.array(z.string().uuid())
+				.max(50)
+				.default([])
+				.describe(
+					"Pre-existing triggers to attach as loop steps (create them with create_trigger, or find them with list_triggers). Combined with any inline `steps` and stored on the loop as metadata.trigger_ids; the agents those triggers target become the loop's agents.",
+				),
+			object_ids: z
+				.array(z.string().uuid())
+				.max(50)
+				.default([])
+				.describe(
+					'Existing objects — of any workspace-defined type — to start running through the loop. Each becomes an `in_loop` relationship (source = loop, target = object). Objects can also be added later with update_loop.',
+				),
+			closed_statuses: closedStatusesSchema,
+		}),
+	},
+	update_loop: {
+		description:
+			"Update a Loop: rename it, change its status or entry/close conditions, add inline steps, attach/detach triggers (the loop's steps), add/remove the objects flowing through it, and set closed_statuses for custom object types. Use add_steps with an event `when` on the close condition to CLOSE an open loop — i.e. add the feedback step that captures learnings and seeds the next object when a member object reaches its end state. Trigger membership is stored on the loop row as metadata.trigger_ids — add_steps/add_trigger_ids/remove_trigger_ids do a safe read-modify-write of that list (added ids are validated against the workspace's triggers). Object membership is an `in_loop` relationship edge — add_object_ids creates edges (idempotent; already-member objects are fine), remove_object_ids deletes them. Find loop ids with list_loops. Fails with a clear error if the target object is not a loop — use update_objects for regular objects.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			id: z.string().uuid().describe('Loop object id (from list_loops or create_loop).'),
+			name: z.string().min(1).optional().describe('New loop name.'),
+			guarantee: z
+				.string()
+				.optional()
+				.describe('New loop guarantee / description (replaces the current content).'),
+			status: z
+				.enum(LOOP_STATUSES)
+				.optional()
+				.describe('New lifecycle status: running | waiting | paused | archived.'),
+			entry_condition: z
+				.string()
+				.optional()
+				.describe('New plain-language entry condition. Pass an empty string to clear.'),
+			close_condition: z
+				.string()
+				.optional()
+				.describe('New plain-language close condition. Pass an empty string to clear.'),
+			human_decision_points: z
+				.number()
+				.int()
+				.min(0)
+				.optional()
+				.describe('New count of human decision points in the loop.'),
+			closed_statuses: closedStatusesSchema,
+			add_steps: z
+				.array(loopStepSchema)
+				.max(20)
+				.optional()
+				.describe(
+					'Inline step definitions to add — each becomes a trigger created in this call and attached to the loop. Add a feedback step (event `when` on the close condition) to close an open loop.',
+				),
+			add_trigger_ids: z
+				.array(z.string().uuid())
+				.max(50)
+				.optional()
+				.describe(
+					'Trigger ids to attach as loop steps. Validated against the workspace — unknown ids fail the call. Already-attached ids are a no-op.',
+				),
+			remove_trigger_ids: z
+				.array(z.string().uuid())
+				.max(50)
+				.optional()
+				.describe(
+					'Trigger ids to detach from the loop. The triggers themselves are NOT deleted (use delete_trigger for that) — they just stop being steps of this loop.',
+				),
+			add_object_ids: z
+				.array(z.string().uuid())
+				.max(50)
+				.optional()
+				.describe(
+					'Object ids to start running through the loop (creates `in_loop` edges). Idempotent for objects already in the loop.',
+				),
+			remove_object_ids: z
+				.array(z.string().uuid())
+				.max(50)
+				.optional()
+				.describe(
+					'Object ids to take out of the loop (deletes their `in_loop` edges). The objects themselves are untouched.',
+				),
+		}),
+	},
+	list_loops: {
+		description:
+			'List every Loop in the workspace with live derived stats: composite status pill (running / waiting_on_you / paused / archived), entry/close conditions, in-progress and closed member-object counts, median time-to-close, the trigger ids that make up the loop\'s steps, and the distinct agent actor ids those triggers fire. Use this to see the workspace\'s loops and to find loop ids for update_loop. A loop with no feedback step is OPEN — consider closing it via update_loop add_steps. To list the objects currently inside a loop, call list_relationships with source_id=<loop id> and type="in_loop"; to inspect a step, pass its trigger id to list_triggers output or update_trigger.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+		}),
+	},
+	get_loop: {
+		description:
+			'Get a single Loop by id, with the same live derived stats list_loops returns: composite status pill, entry/close conditions, in-progress and closed member-object counts, median time-to-close, step trigger ids, and the distinct agent actor ids those triggers fire. Use list_loops to discover loop ids first. Fails with a clear error if the id is not a loop in this workspace.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			id: z.string().uuid().describe('Loop object id (from list_loops or create_loop).'),
+		}),
+	},
+	delete_loop: {
+		description:
+			"Delete a Loop: removes the loop object itself and its `in_loop` membership edges. Member objects (bets/tasks/insights/custom types that were flowing through the loop) and the loop's step triggers are NOT deleted — they're just no longer associated with this loop (triggers can be removed separately with delete_trigger if they're not reused elsewhere). Fails with a clear error if the id is not a loop in this workspace. This cannot be undone.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			id: z.string().uuid().describe('Loop object id (from list_loops or create_loop).'),
+		}),
+	},
+
 	// ─── Sessions ────────────────────────────────────────────
 	create_session: {
 		description:
