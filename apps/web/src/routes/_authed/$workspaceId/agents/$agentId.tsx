@@ -1,5 +1,5 @@
 import { AgentCreateForm } from '@/components/agents/agent-create-form'
-import { AgentDocument } from '@/components/agents/agent-document'
+import { AgentDetailView } from '@/components/agents/agent-detail-view'
 import { PageHeader } from '@/components/layout/page-header'
 import { Skeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
@@ -102,5 +102,5 @@ function AgentDetailLoaded({ agentId }: { agentId: string }) {
 		)
 	}
 
-	return <AgentDocument agent={agent} />
+	return <AgentDetailView agent={agent} />
 }
