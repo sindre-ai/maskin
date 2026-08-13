@@ -31,6 +31,20 @@ test.describe('Loop builder — language-only create flow', () => {
 			// AC-2 / empty state: nothing is drafted until a description is given.
 			await expect(page.getByText('No loop drafted yet')).toBeVisible({ timeout: 10000 })
 
+			// Layout gate: single-column stacked below md, two-pane side-by-side at md+.
+			// The design spec puts the split at md: (≥768px) — regressing to lg: would
+			// leave iPad portrait users stacked, which is what this assertion catches.
+			const describeBox = await page
+				.getByRole('region', { name: /describe your loop/i })
+				.boundingBox()
+			const proposedBox = await page.getByRole('region', { name: /proposed loop/i }).boundingBox()
+			if (!describeBox || !proposedBox) throw new Error('layout regions missing bounding boxes')
+			if (viewport.width >= 768) {
+				expect(proposedBox.x).toBeGreaterThan(describeBox.x + describeBox.width / 2)
+			} else {
+				expect(proposedBox.y).toBeGreaterThanOrEqual(describeBox.y + describeBox.height - 1)
+			}
+
 			// Tap an example chip → the proposed loop card appears, not yet created.
 			await page.getByRole('button', { name: EXAMPLE_CHIP }).click()
 			const planCard = page.getByText('PROPOSED LOOP')
