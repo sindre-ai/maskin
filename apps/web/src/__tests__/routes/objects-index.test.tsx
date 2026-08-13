@@ -144,37 +144,40 @@ vi.mock('@/lib/api', () => ({
 	api: { objects: { list: vi.fn(), search: vi.fn() }, notifications: { list: vi.fn() } },
 }))
 
-vi.mock('@/lib/query-keys', () => ({
-	queryKeys: {
-		objects: {
-			list: (workspaceId: string, filters?: unknown) => ['objects', workspaceId, 'list', filters],
-			listInfinite: () => ['objects'],
-			board: () => ['objects', 'board'],
+vi.mock('@/lib/query-keys', () => {
+	console.log('[DEBUG] query-keys mock factory invoked')
+	return {
+		queryKeys: {
+			objects: {
+				list: (workspaceId: string, filters?: unknown) => ['objects', workspaceId, 'list', filters],
+				listInfinite: () => ['objects'],
+				board: () => ['objects', 'board'],
+			},
+			relationships: {
+				all: (workspaceId: string) => ['relationships', workspaceId],
+			},
+			imports: { detail: (id: string) => ['imports', 'detail', id] },
+			notifications: {
+				all: (workspaceId: string) => ['notifications', workspaceId],
+				list: (workspaceId: string, filters?: Record<string, unknown>) => [
+					'notifications',
+					workspaceId,
+					'list',
+					filters,
+				],
+				detail: (id: string) => ['notifications', 'detail', id],
+			},
+			userDisplaySettings: {
+				detail: (workspaceId: string, objectType: string) => [
+					'user-display-settings',
+					workspaceId,
+					objectType,
+				],
+				list: (workspaceId: string) => ['user-display-settings', workspaceId],
+			},
 		},
-		relationships: {
-			all: (workspaceId: string) => ['relationships', workspaceId],
-		},
-		imports: { detail: (id: string) => ['imports', 'detail', id] },
-		notifications: {
-			all: (workspaceId: string) => ['notifications', workspaceId],
-			list: (workspaceId: string, filters?: Record<string, unknown>) => [
-				'notifications',
-				workspaceId,
-				'list',
-				filters,
-			],
-			detail: (id: string) => ['notifications', 'detail', id],
-		},
-		userDisplaySettings: {
-			detail: (workspaceId: string, objectType: string) => [
-				'user-display-settings',
-				workspaceId,
-				objectType,
-			],
-			list: (workspaceId: string) => ['user-display-settings', workspaceId],
-		},
-	},
-}))
+	}
+})
 
 import { Route } from '@/routes/_authed/$workspaceId/objects/index'
 

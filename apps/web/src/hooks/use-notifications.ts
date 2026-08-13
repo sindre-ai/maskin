@@ -3,6 +3,14 @@ import { queryKeys } from '@/lib/query-keys'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 export function useNotifications(workspaceId: string, filters?: Record<string, string>) {
+	if (!queryKeys.notifications) {
+		console.error(
+			'[DEBUG] queryKeys.notifications missing. queryKeys keys:',
+			JSON.stringify(Object.keys(queryKeys ?? {})),
+			'queryKeys itself:',
+			JSON.stringify(queryKeys),
+		)
+	}
 	return useQuery({
 		queryKey: queryKeys.notifications.list(workspaceId, filters),
 		queryFn: () => api.notifications.list(workspaceId, filters),
