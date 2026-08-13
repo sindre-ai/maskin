@@ -188,15 +188,23 @@ describe('getStaticColumns', () => {
 		expect(onSort).toHaveBeenCalledWith('title')
 	})
 
-	it('row and header select checkboxes render as touch-size (data-size="touch")', () => {
+	it('row and header select checkboxes expose a 44×44 tap surface via ::before while keeping the 16px visible glyph', () => {
 		const columns = getStaticColumns({ workspaceId: 'ws-1' })
 		const data = [buildObjectResponse()]
 		render(<TestTable data={data} columns={columns} />)
 
 		const selectRow = screen.getByRole('checkbox', { name: 'Select row' })
 		const selectAll = screen.getByRole('checkbox', { name: 'Select all' })
-		expect(selectRow).toHaveAttribute('data-size', 'touch')
-		expect(selectAll).toHaveAttribute('data-size', 'touch')
+		for (const cb of [selectRow, selectAll]) {
+			// Visible glyph stays at the default sm size, not the retired size="touch".
+			expect(cb).not.toHaveAttribute('data-size', 'touch')
+			const className = cb.getAttribute('class') ?? ''
+			expect(className).toContain('relative')
+			expect(className).toContain("before:content-['']")
+			expect(className).toContain('before:absolute')
+			expect(className).toContain('before:h-11')
+			expect(className).toContain('before:w-11')
+		}
 	})
 
 	it('clicking the row select checkbox toggles selection (AC-U1 — tap inside the 44pt region)', async () => {

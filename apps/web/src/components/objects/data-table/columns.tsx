@@ -96,24 +96,23 @@ export function getStaticColumns(options: ColumnOptions): ColumnDef<ObjectRespon
 			id: 'select',
 			header: ({ table }) => (
 				<Checkbox
-					size="touch"
 					checked={
 						table.getIsAllPageRowsSelected() ||
 						(table.getIsSomePageRowsSelected() && 'indeterminate')
 					}
 					onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
 					aria-label="Select all"
+					className="relative before:absolute before:left-1/2 before:top-1/2 before:h-11 before:w-11 before:-translate-x-1/2 before:-translate-y-1/2 before:content-['']"
 				/>
 			),
 			cell: ({ row }) => (
 				<Checkbox
-					size="touch"
 					data-drag-checkbox=""
 					checked={row.getIsSelected()}
 					onCheckedChange={(value) => row.toggleSelected(!!value)}
 					aria-label="Select row"
 					onClick={(e) => e.stopPropagation()}
-					className="touch-none select-none"
+					className="relative touch-none select-none before:absolute before:left-1/2 before:top-1/2 before:h-11 before:w-11 before:-translate-x-1/2 before:-translate-y-1/2 before:content-['']"
 				/>
 			),
 			enableSorting: false,

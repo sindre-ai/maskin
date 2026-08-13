@@ -51,13 +51,12 @@ export function ObjectCard({
 			)}
 		>
 			<Checkbox
-				size="touch"
 				data-drag-checkbox=""
 				checked={isSelected}
 				onCheckedChange={(value) => onSelect(!!value)}
 				onClick={(e) => e.stopPropagation()}
 				aria-label="Select row"
-				className="shrink-0 touch-none select-none"
+				className="relative mt-0.5 shrink-0 touch-none select-none before:absolute before:left-1/2 before:top-1/2 before:h-11 before:w-11 before:-translate-x-1/2 before:-translate-y-1/2 before:content-['']"
 			/>
 			<div className="flex min-w-0 flex-1 flex-col gap-1.5">
 				<div className="flex min-w-0 items-start justify-between gap-2">
