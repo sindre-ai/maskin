@@ -258,7 +258,10 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 		const dragTransform = `translateX(${dragOffset}px) rotate(${dragOffset / 24}deg)`
 
 		return (
-			<div ref={threadRef} className="relative mx-auto h-full w-full max-w-[760px]">
+			<div
+				ref={threadRef}
+				className="relative mx-auto h-full w-full max-w-[760px] md:max-w-[900px] lg:max-w-[1040px]"
+			>
 				<div
 					aria-hidden
 					data-testid="mark-read-reveal"

@@ -255,6 +255,18 @@ test.describe('For You prototype redesign — layout at 1024', () => {
 		await expect(page.getByRole('button', { name: 'Mark as read' })).toBeVisible()
 		await expect(page.getByText('3 items left')).toBeVisible()
 
+		// T3 iPad DoD: the card widens past phone-column width at 1024, not
+		// letterboxed to `max-w-[760px]`. `lg:max-w-[1040px]` on the thread
+		// container should hand the card the extra canvas.
+		const cardBox = await card.boundingBox()
+		expect(cardBox, '1024: card has no layout box').not.toBeNull()
+		if (cardBox) {
+			expect(
+				cardBox.width,
+				`1024: card is ${cardBox.width}px — still letterboxed to phone-column width`,
+			).toBeGreaterThan(800)
+		}
+
 		await assertNoHorizontalOverflow(page, '1024')
 	})
 })
@@ -278,6 +290,21 @@ test.describe('For You prototype redesign — layout at 768', () => {
 		await assertDecisionButtonsSideBySide(page, true, '768')
 
 		await expect(page.getByText('3 items left')).toBeVisible()
+
+		// T3 iPad DoD: at 768 the card should already break past the phone
+		// column via `md:max-w-[900px]`. At this viewport width the card is
+		// constrained by the viewport itself (768px), so the threshold just
+		// needs to exceed the old 760px cap — 761px proves the new breakpoint
+		// class is active and the letterbox is gone.
+		const cardBox = await card.boundingBox()
+		expect(cardBox, '768: card has no layout box').not.toBeNull()
+		if (cardBox) {
+			expect(
+				cardBox.width,
+				`768: card is ${cardBox.width}px — still letterboxed to phone-column width`,
+			).toBeGreaterThan(760)
+		}
+
 		await assertNoHorizontalOverflow(page, '768')
 	})
 })
