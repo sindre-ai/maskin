@@ -236,6 +236,11 @@ export class NotificationsLifecycle {
 						isNotNull(notifications.expiresAt),
 						inArray(notifications.status, ['pending', 'seen']),
 						lt(notifications.expiresAt, new Date()),
+						// T1's `default_action` column comment: NULL means "no safe
+						// default, keep waiting past the deadline". Filter these out
+						// so a pending decision with no fallback keeps requesting the
+						// human's attention rather than getting silently expired.
+						isNotNull(notifications.defaultAction),
 					),
 				)
 				.orderBy(asc(notifications.expiresAt))
@@ -280,9 +285,8 @@ export class NotificationsLifecycle {
 
 		if (!row.objectId) return
 
-		const commentBody = defaultAction
-			? `Notification "${row.title}" expired at ${new Date().toISOString()} — auto-applied default action "${optionLabel ?? defaultAction}".`
-			: `Notification "${row.title}" expired at ${new Date().toISOString()} — no default action was configured.`
+		// `default_action` is guaranteed non-null by claimExpiryCandidates' filter.
+		const commentBody = `Notification "${row.title}" expired at ${new Date().toISOString()} — auto-applied default action "${optionLabel ?? defaultAction}".`
 
 		await this.db.insert(events).values({
 			workspaceId: row.workspaceId,

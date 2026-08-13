@@ -165,6 +165,7 @@ logger.info('Session dispatch queue started')
 const shutdown = (signal: string) => {
 	logger.info(`Received ${signal}, shutting down`)
 	sessionDispatchQueue.stop()
+	notificationsLifecycle.stop()
 	notifyBridge.stop?.()
 	process.exit(0)
 }

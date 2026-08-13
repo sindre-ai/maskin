@@ -214,6 +214,26 @@ describe('NotificationsLifecycle (integration)', () => {
 			expect(expiredEvents).toHaveLength(1)
 		})
 
+		it('leaves rows with default_action=NULL alone — they keep waiting past the deadline', async () => {
+			// T1 schema comment: `default_action = NULL` means the notification
+			// should keep waiting instead of being auto-resolved. Regression
+			// guard so a future refactor doesn't quietly expire these.
+			const sm = mockSessionManager()
+			const service = new NotificationsLifecycle(db, sm)
+			const past = new Date(Date.now() - 1000)
+			const n = await insertNotification(db, workspaceId, agentActorId, {
+				status: 'pending',
+				expiresAt: past,
+				defaultAction: null,
+			})
+
+			const expired = await service.runExpirySweep()
+
+			expect(expired).toBe(0)
+			const [row] = await db.select().from(notifications).where(eq(notifications.id, n.id)).limit(1)
+			expect(row.status).toBe('pending')
+		})
+
 		it('is idempotent: a second pass over the same rows expires nothing', async () => {
 			const sm = mockSessionManager()
 			const service = new NotificationsLifecycle(db, sm)
