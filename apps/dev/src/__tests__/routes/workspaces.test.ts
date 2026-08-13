@@ -412,7 +412,7 @@ describe('Workspaces Routes', () => {
 
 		it('returns 400 when caller targets their own actorId', async () => {
 			const wsId = randomUUID()
-			const selfId = 'test-actor-id'
+			const selfId = randomUUID()
 			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces', selfId)
 			mockResults.select = [{ actorId: selfId }] // isWorkspaceMember passes
 
@@ -426,7 +426,7 @@ describe('Workspaces Routes', () => {
 			expect(calls.updates).toHaveLength(0)
 		})
 
-		it('returns 422 when role is not a valid enum value', async () => {
+		it('returns 400 when role is not a valid enum value', async () => {
 			const wsId = randomUUID()
 			const actorId = randomUUID()
 			const { app } = createTestApp(workspacesRoutes, '/api/workspaces')
@@ -435,7 +435,7 @@ describe('Workspaces Routes', () => {
 				jsonRequest('PATCH', `/api/workspaces/${wsId}/members/${actorId}`, { role: 'superuser' }),
 			)
 
-			expect(res.status).toBe(422)
+			expect(res.status).toBe(400)
 		})
 	})
 
@@ -479,7 +479,7 @@ describe('Workspaces Routes', () => {
 
 		it('returns 400 when caller targets their own actorId', async () => {
 			const wsId = randomUUID()
-			const selfId = 'test-actor-id'
+			const selfId = randomUUID()
 			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces', selfId)
 			mockResults.select = [{ actorId: selfId }] // isWorkspaceMember passes
 

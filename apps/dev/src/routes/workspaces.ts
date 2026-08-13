@@ -562,7 +562,10 @@ app.openapi(updateMemberRoute, (async (c) => {
 	}
 
 	if (callerId === actorId) {
-		return c.json(createApiError('BAD_REQUEST', 'Use account settings to manage your own membership'), 400)
+		return c.json(
+			createApiError('BAD_REQUEST', 'Use account settings to manage your own membership'),
+			400,
+		)
 	}
 
 	const [existing] = await db
@@ -576,22 +579,21 @@ app.openapi(updateMemberRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Member not found in this workspace'), 404)
 	}
 
-	// Guardrail: demoting the sole owner would lock the workspace out of
-	// owner-only operations (see PATCH /api/workspaces/admin/:id). Refuse.
-	if (existing.role === 'owner' && role !== 'owner') {
-		const owners = await db
-			.select({ actorId: workspaceMembers.actorId })
-			.from(workspaceMembers)
-			.where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.role, 'owner')))
-		if (owners.length <= 1) {
-			return c.json(
-				createApiError('BAD_REQUEST', 'Cannot demote the last owner of a workspace'),
-				400,
-			)
+	const result = await db.transaction(async (tx) => {
+		// Guardrail inside the transaction: re-check the owner count under the transaction lock
+		// so two concurrent demotions cannot both pass the guard before either write commits.
+		if (existing.role === 'owner' && role !== 'owner') {
+			const owners = await tx
+				.select({ actorId: workspaceMembers.actorId })
+				.from(workspaceMembers)
+				.where(
+					and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.role, 'owner')),
+				)
+			if (owners.length <= 1) {
+				return { kind: 'last_owner_error' } as const
+			}
 		}
-	}
 
-	const [updated, actor] = await db.transaction(async (tx) => {
 		const [u] = await tx
 			.update(workspaceMembers)
 			.set({ role })
@@ -604,7 +606,7 @@ app.openapi(updateMemberRoute, (async (c) => {
 				joinedAt: workspaceMembers.joinedAt,
 			})
 
-		if (!u) return [undefined, undefined] as const
+		if (!u) return { kind: 'not_found' } as const
 
 		const [a] = await tx
 			.select({ name: actors.name, type: actors.type })
@@ -621,20 +623,23 @@ app.openapi(updateMemberRoute, (async (c) => {
 			data: { role: { from: existing.role, to: role } },
 		})
 
-		return [u, a] as const
+		return { kind: 'success', updated: u, actor: a } as const
 	})
 
-	if (!updated) {
+	if (result.kind === 'last_owner_error') {
+		return c.json(createApiError('BAD_REQUEST', 'Cannot demote the last owner of a workspace'), 400)
+	}
+	if (result.kind === 'not_found') {
 		return c.json(createApiError('NOT_FOUND', 'Member not found in this workspace'), 404)
 	}
 
 	return c.json(
 		serialize({
-			actorId: updated.actorId,
-			role: updated.role,
-			joinedAt: updated.joinedAt,
-			name: actor?.name ?? '',
-			type: actor?.type ?? '',
+			actorId: result.updated.actorId,
+			role: result.updated.role,
+			joinedAt: result.updated.joinedAt,
+			name: result.actor?.name ?? '',
+			type: result.actor?.type ?? '',
 		}) as z.infer<typeof memberResponseSchema>,
 	)
 }) as RouteHandler<typeof updateMemberRoute, Env>)
@@ -692,20 +697,21 @@ app.openapi(removeMemberRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Member not found in this workspace'), 404)
 	}
 
-	if (existing.role === 'owner') {
-		const owners = await db
-			.select({ actorId: workspaceMembers.actorId })
-			.from(workspaceMembers)
-			.where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.role, 'owner')))
-		if (owners.length <= 1) {
-			return c.json(
-				createApiError('BAD_REQUEST', 'Cannot remove the last owner of a workspace'),
-				400,
-			)
+	const deleteResult = await db.transaction(async (tx) => {
+		// Guardrail inside the transaction: re-check the owner count under the transaction lock
+		// so two concurrent removes cannot both pass the guard before either write commits.
+		if (existing.role === 'owner') {
+			const owners = await tx
+				.select({ actorId: workspaceMembers.actorId })
+				.from(workspaceMembers)
+				.where(
+					and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.role, 'owner')),
+				)
+			if (owners.length <= 1) {
+				return { kind: 'last_owner_error' } as const
+			}
 		}
-	}
 
-	const deleted = await db.transaction(async (tx) => {
 		const rows = await tx
 			.delete(workspaceMembers)
 			.where(
@@ -724,10 +730,13 @@ app.openapi(removeMemberRoute, (async (c) => {
 			})
 		}
 
-		return rows
+		return { kind: 'deleted', rows } as const
 	})
 
-	if (deleted.length === 0) {
+	if (deleteResult.kind === 'last_owner_error') {
+		return c.json(createApiError('BAD_REQUEST', 'Cannot remove the last owner of a workspace'), 400)
+	}
+	if (deleteResult.rows.length === 0) {
 		return c.json(createApiError('NOT_FOUND', 'Member not found in this workspace'), 404)
 	}
 
