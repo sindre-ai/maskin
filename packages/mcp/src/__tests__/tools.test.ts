@@ -33,6 +33,8 @@ const ALL_TOOL_NAMES = [
 	'traverse_graph',
 	'delete_relationship',
 	'maskin_create_agent',
+	'maskin_rate_reviewer_verdict',
+	'maskin_reviewer_precision_summary',
 	'create_actor',
 	'update_actor',
 	'regenerate_api_key',
