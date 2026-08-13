@@ -16,9 +16,16 @@
 		"test": "vitest"
 	},
 	"dependencies": {
+		"@react-email/components": "^1.0.12",
+		"@react-email/render": "^2.1.0",
+		"react": "^19.2.5",
+		"react-dom": "^19.2.5",
 		"resend": "^4.0.0"
 	},
 	"devDependencies": {
+		"@types/react": "^19.0.0",
+		"@types/react-dom": "^19.0.0",
+		"react-email": "^6.9.2",
 		"typescript": "^5.7.0",
 		"vitest": "^3.0.0"
 	}
