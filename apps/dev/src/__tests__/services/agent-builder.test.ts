@@ -3,6 +3,8 @@ import {
 	AgentBuilderError,
 	assembleSkillMd,
 	assembleSystemPrompt,
+	composeDefinitionSummary,
+	formatGapReportMarkdown,
 	personaSkillName,
 	runAgentBuilder,
 } from '../../services/agent-builder'
@@ -88,6 +90,33 @@ function buildStage3Well() {
 	})
 }
 
+function buildStage6Well() {
+	return JSON.stringify({
+		gap_items: [
+			{
+				topic: 'target table row count',
+				detail:
+					'Provide the row count and average row size of the table being migrated so the agent can pick between shadow-write and dual-write patterns.',
+				why_it_matters:
+					'The decision framework branches on table size — chunked backfill vs. logical replication depends on it.',
+			},
+			{
+				topic: 'existing autovacuum tuning',
+				detail:
+					'Say whether the caller has custom autovacuum settings on the target table and, if so, what the thresholds are.',
+				why_it_matters:
+					'Named blind spot: this agent under-adjusts autovacuum during large backfills; the caller-provided settings anchor it.',
+			},
+			{
+				topic: 'reader migration scope',
+				detail: 'List which services or repos read this table today.',
+				why_it_matters:
+					'The system prompt requires a dual-write plan to migrate every reader — without the list, the agent will guess a scope.',
+			},
+		],
+	})
+}
+
 function buildStage4Well() {
 	return JSON.stringify({
 		opinionation_clause:
@@ -126,14 +155,21 @@ describe('runAgentBuilder — full pipeline', () => {
 		vi.restoreAllMocks()
 	})
 
-	it('runs stages 1-4 in order and registers actor + skill on a well-specified one-liner', async () => {
-		queueLlmResponses(buildStage1Well(), buildStage2Well(), buildStage3Well(), buildStage4Well())
+	it('runs stages 1-4 + 6 in order and registers actor + skill + posts gap report on a well-specified one-liner', async () => {
+		queueLlmResponses(
+			buildStage1Well(),
+			buildStage2Well(),
+			buildStage3Well(),
+			buildStage4Well(),
+			buildStage6Well(),
+		)
 
 		const agentStorage = createMockAgentStorage()
 		const ctxCtx = createTestContext()
 		// Each db.insert() call shifts one entry from the queue. Order:
 		//   1) actor  2) workspace_members  3) workspace_skill  4) agent_skills
 		//   5) audit event (actor)  6) audit event (workspace_skill)
+		//   7) gap-report comment event on the actor (from stage 6)
 		ctxCtx.mockResults.insertQueue = [
 			[
 				{
@@ -157,6 +193,8 @@ describe('runAgentBuilder — full pipeline', () => {
 			// audit event inserts
 			[],
 			[],
+			// stage 6 gap-report comment insert
+			[],
 		]
 
 		const result = await runAgentBuilder(
@@ -174,7 +212,7 @@ describe('runAgentBuilder — full pipeline', () => {
 
 		expect(result.kind).toBe('created')
 		if (result.kind !== 'created') throw new Error('narrowing')
-		expect(callLlm).toHaveBeenCalledTimes(4)
+		expect(callLlm).toHaveBeenCalledTimes(5)
 		expect(result.actor.id).toBe(CREATED_ACTOR_ID)
 		expect(result.actor.name).toBe('Sable Ostrik')
 		expect(result.skill.id).toBe(CREATED_SKILL_ID)
@@ -203,6 +241,15 @@ describe('runAgentBuilder — full pipeline', () => {
 			CREATED_SKILL_ID,
 			result.skillMd,
 		)
+
+		// Stage 6 produced a gap report with concrete items and posted it.
+		expect(result.gapReport.gap_items.length).toBeGreaterThanOrEqual(3)
+		expect(result.gapReportMarkdown).toContain('target table row count')
+		expect(result.gapReportMarkdown).toContain('## Gap report for Sable Ostrik')
+		expect(result.gapReportCommentPosted).toBe(true)
+		// Definition summary composes the persona for the caller.
+		expect(result.definitionSummary).toContain('Sable Ostrik')
+		expect(result.definitionSummary).toContain('Senior zero-downtime migration architect')
 	})
 
 	it('runs stages 3 and 4 in parallel (single Promise.all await)', async () => {
@@ -217,6 +264,7 @@ describe('runAgentBuilder — full pipeline', () => {
 			[{ id: CREATED_ACTOR_ID, name: 'Sable Ostrik', description: 'x' }],
 			[],
 			[{ id: CREATED_SKILL_ID, name: 'sable-ostrik-abc12345' }],
+			[],
 			[],
 			[],
 			[],
@@ -237,6 +285,7 @@ describe('runAgentBuilder — full pipeline', () => {
 			stage4Dispatched = true
 			return { ok: true, content: buildStage4Well() }
 		})
+		callLlm.mockImplementationOnce(async () => ({ ok: true, content: buildStage6Well() }))
 
 		await runAgentBuilder(
 			{ prompt: 'plan a zero-downtime add-column migration on a hot Postgres table' },
@@ -471,5 +520,225 @@ describe('assembleSkillMd — progressive disclosure', () => {
 		expect(md).toMatch(/Load this section only when/)
 		expect(md).toContain('## t1')
 		expect(md).toContain('## t2')
+	})
+})
+
+describe('composeDefinitionSummary', () => {
+	it('renders name — role. delegation_description on one line', () => {
+		const summary = composeDefinitionSummary({
+			name: 'Sable Ostrik',
+			role: 'Senior migration architect',
+			backstory: '',
+			scope_boundaries: [],
+			delegation_description: 'Use when planning a zero-downtime schema change.',
+			tool_set: [],
+		})
+		expect(summary).toBe(
+			'Sable Ostrik — Senior migration architect. Use when planning a zero-downtime schema change.',
+		)
+	})
+})
+
+describe('formatGapReportMarkdown', () => {
+	const persona = {
+		name: 'Sable Ostrik',
+		role: 'Senior migration architect',
+		backstory: '',
+		scope_boundaries: [],
+		delegation_description: 'Use when planning a zero-downtime schema change.',
+		tool_set: [],
+	}
+	const report = {
+		gap_items: [
+			{
+				topic: 'target table row count',
+				detail: 'Provide the row count.',
+				why_it_matters: 'Framework branches on it.',
+			},
+			{
+				topic: 'existing autovacuum tuning',
+				detail: 'Say whether autovacuum is tuned.',
+				why_it_matters: 'Neutralises the named blind spot.',
+			},
+		],
+	}
+
+	it('renders a persona-headed report with topic headings and reasons', () => {
+		const md = formatGapReportMarkdown(persona, report)
+		expect(md).toContain('## Gap report for Sable Ostrik')
+		expect(md).toContain('### target table row count')
+		expect(md).toContain('### existing autovacuum tuning')
+		expect(md).toContain('Provide the row count.')
+		expect(md).toContain('_Why it matters:_ Neutralises the named blind spot.')
+	})
+})
+
+describe('runAgentBuilder — stage 6 gap report', () => {
+	beforeEach(() => {
+		vi.spyOn(console, 'log').mockImplementation(() => undefined)
+		vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+		vi.spyOn(console, 'error').mockImplementation(() => undefined)
+	})
+
+	afterEach(() => {
+		vi.restoreAllMocks()
+	})
+
+	function buildRunContext() {
+		const agentStorage = createMockAgentStorage()
+		const ctxCtx = createTestContext()
+		ctxCtx.mockResults.insertQueue = [
+			[{ id: CREATED_ACTOR_ID, name: 'Sable Ostrik', description: 'x' }],
+			[],
+			[{ id: CREATED_SKILL_ID, name: 'sable-ostrik-abc12345' }],
+			[],
+			[],
+			[],
+			[],
+		]
+		return { agentStorage, ctxCtx }
+	}
+
+	it('posts the gap report as a commented event with entityType=actor on the new actor', async () => {
+		queueLlmResponses(
+			buildStage1Well(),
+			buildStage2Well(),
+			buildStage3Well(),
+			buildStage4Well(),
+			buildStage6Well(),
+		)
+		const { agentStorage, ctxCtx } = buildRunContext()
+
+		const result = await runAgentBuilder(
+			{ prompt: 'plan a zero-downtime add-column migration' },
+			{
+				db: ctxCtx.db,
+				agentStorage,
+				workspaceId: WORKSPACE_ID,
+				actorId: CALLER_ACTOR_ID,
+			},
+		)
+
+		expect(result.kind).toBe('created')
+		if (result.kind !== 'created') throw new Error('narrowing')
+		expect(result.gapReportCommentPosted).toBe(true)
+
+		// The comment insert has to carry action='commented' with entityType='actor'
+		// pointing at the newly created actor id, and its `content` must be the
+		// rendered gap-report markdown — otherwise the caller sees no gap report.
+		const commentInsert = ctxCtx.calls.inserts.find(
+			(row) => (row as { action?: string }).action === 'commented',
+		) as
+			| {
+					action: string
+					entityType: string
+					entityId: string
+					data: { content: string; source?: string }
+					workspaceId: string
+					actorId: string
+			  }
+			| undefined
+		expect(commentInsert).toBeDefined()
+		if (!commentInsert) throw new Error('narrowing')
+		expect(commentInsert.action).toBe('commented')
+		expect(commentInsert.entityType).toBe('actor')
+		expect(commentInsert.entityId).toBe(CREATED_ACTOR_ID)
+		expect(commentInsert.workspaceId).toBe(WORKSPACE_ID)
+		expect(commentInsert.actorId).toBe(CALLER_ACTOR_ID)
+		expect(commentInsert.data.source).toBe('agent_builder_gap_report')
+		expect(commentInsert.data.content).toContain('## Gap report for Sable Ostrik')
+		expect(commentInsert.data.content).toContain('target table row count')
+	})
+
+	it('degrades gracefully when the comment insert fails: report still returned, commentPosted=false', async () => {
+		queueLlmResponses(
+			buildStage1Well(),
+			buildStage2Well(),
+			buildStage3Well(),
+			buildStage4Well(),
+			buildStage6Well(),
+		)
+		const { agentStorage, ctxCtx } = buildRunContext()
+		// The 7th insert (gap-report comment) rejects; the 6 prior inserts
+		// (actor + skill + audits) succeed via the queue.
+		ctxCtx.mockResults.insertErrorQueue = [
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			new Error('boom'),
+		]
+
+		const result = await runAgentBuilder(
+			{ prompt: 'plan a zero-downtime add-column migration' },
+			{
+				db: ctxCtx.db,
+				agentStorage,
+				workspaceId: WORKSPACE_ID,
+				actorId: CALLER_ACTOR_ID,
+			},
+		)
+
+		expect(result.kind).toBe('created')
+		if (result.kind !== 'created') throw new Error('narrowing')
+		expect(result.gapReportCommentPosted).toBe(false)
+		expect(result.gapReportMarkdown).toContain('## Gap report for Sable Ostrik')
+	})
+
+	it('throws AgentBuilderError with reason stage6_parse_error on malformed gap-report JSON', async () => {
+		queueLlmResponses(
+			buildStage1Well(),
+			buildStage2Well(),
+			buildStage3Well(),
+			buildStage4Well(),
+			JSON.stringify({ gap_items: [] }), // fails min(1)
+		)
+		const { agentStorage, ctxCtx } = buildRunContext()
+
+		await expect(
+			runAgentBuilder(
+				{ prompt: 'plan a zero-downtime add-column migration' },
+				{
+					db: ctxCtx.db,
+					agentStorage,
+					workspaceId: WORKSPACE_ID,
+					actorId: CALLER_ACTOR_ID,
+				},
+			),
+		).rejects.toMatchObject({ name: 'AgentBuilderError', reason: 'stage6_parse_error' })
+	})
+
+	it('never invokes stage 6 or posts a comment on the underspec short-circuit', async () => {
+		queueLlmResponses(
+			JSON.stringify({
+				domain: '',
+				job_to_be_done: '',
+				deliverables: [],
+				constraints: [],
+				is_underspecified: true,
+				missing: ['domain', 'job_to_be_done'],
+				gap_question: 'What field and what outcome?',
+			}),
+		)
+		const agentStorage = createMockAgentStorage()
+		const ctxCtx = createTestContext()
+
+		const result = await runAgentBuilder(
+			{ prompt: 'help me' },
+			{
+				db: ctxCtx.db,
+				agentStorage,
+				workspaceId: WORKSPACE_ID,
+				actorId: CALLER_ACTOR_ID,
+			},
+		)
+
+		expect(result.kind).toBe('gap_question')
+		expect(callLlm).toHaveBeenCalledTimes(1)
+		// No inserts of any kind — no actor, no comment.
+		expect(ctxCtx.calls.inserts).toHaveLength(0)
+		expect(agentStorage.putWorkspaceSkill).not.toHaveBeenCalled()
 	})
 })

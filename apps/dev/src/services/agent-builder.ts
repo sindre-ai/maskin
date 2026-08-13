@@ -39,6 +39,7 @@ const STAGE_1_TEMPERATURE = 0.2
 const STAGE_2_TEMPERATURE = 0.3
 const STAGE_3_TEMPERATURE = 0.3
 const STAGE_4_TEMPERATURE = 0.2
+const STAGE_6_TEMPERATURE = 0.3
 const STAGE_TIMEOUT_MS = 15_000
 
 export const STAGE_1_PROMPT = `You extract structured intent from a one-line request for a new subject-matter-expert (SME) agent. Return STRICT JSON matching this shape (no prose, no code fences):
@@ -92,6 +93,26 @@ Rules:
 - Fill EVERY field. Empty strings or empty arrays for any of background/instructions/decision_framework/tool_guidance/output_format/bias_statement are a failure of this stage.
 - "worked_examples" must contain at least 2 and at most 5 items; each response must itself end with a clear recommendation and named assumptions — this is the pattern the agent will imitate.
 - Ground every section in the persona's specific expertise and biases. Generic advice is a failure.
+- Do not include markdown, backticks, or commentary — JSON only.`
+
+export const STAGE_6_PROMPT = `You are a domain-critical reviewer. A single-prompt agent builder just produced an SME agent from a one-liner. Read the persona and the sectioned system prompt, then produce a concrete GAP REPORT — the specific missing context items a caller would need to hand the agent so it stops guessing.
+
+Return STRICT JSON matching this shape (no prose, no code fences):
+
+{
+  "gap_items": [
+    {
+      "topic": string,          // 2-5 word label naming the missing input (e.g. "target database size", "SOC 2 constraints", "team size and seniority")
+      "detail": string,          // 1-2 sentences describing exactly what the caller should provide, in the caller's language
+      "why_it_matters": string   // 1 sentence tying it to a specific decision the agent has to make — reference the persona's decision framework or a section of the system prompt
+    }
+  ]
+}
+
+Rules:
+- Return between 3 and 6 gap_items. Every item MUST be specific to THIS agent's domain, persona, and stated decision framework. Generic advice like "add more examples" or "describe your use case better" is a failure of this stage.
+- Ground every item in something concrete from the persona backstory, the system prompt's decision framework, or the intent's stated constraints. If the persona names a bias (e.g. "under-values logical replication"), a gap item may target the context that would neutralise that bias.
+- Do NOT re-ask for the domain or job-to-be-done — those are already established. Focus on the next layer of context (data shape, constraints, environment, stakeholders, precedent decisions, tooling in place).
 - Do not include markdown, backticks, or commentary — JSON only.`
 
 export const STAGE_4_PROMPT = `You produce the anti-hedging opinionation layer that will be spliced into an SME agent's system prompt. This is scaffolding that forces the agent to end every in-domain response with a clear recommendation and stated assumptions — never hedging. Return STRICT JSON matching this shape (no prose, no code fences):
@@ -149,11 +170,23 @@ const stage4Schema = z.object({
 	assumption_openings: z.array(z.string().min(1)).min(1),
 })
 
+const gapItemSchema = z.object({
+	topic: z.string().min(1),
+	detail: z.string().min(1),
+	why_it_matters: z.string().min(1),
+})
+
+const stage6Schema = z.object({
+	gap_items: z.array(gapItemSchema).min(1).max(8),
+})
+
 export type Stage1Output = z.infer<typeof stage1Schema>
 export type PersonaSpec = z.infer<typeof stage2Schema>
 export type SystemPromptSpec = z.infer<typeof stage3Schema>
 export type OpinionationSpec = z.infer<typeof stage4Schema>
 export type WorkedExample = z.infer<typeof workedExampleSchema>
+export type GapItem = z.infer<typeof gapItemSchema>
+export type GapReportSpec = z.infer<typeof stage6Schema>
 
 export interface RunAgentBuilderInput {
 	prompt: string
@@ -188,6 +221,10 @@ export type RunAgentBuilderResult =
 			skillName: string
 			actor: { id: string; name: string; description: string }
 			skill: { id: string; name: string }
+			gapReport: GapReportSpec
+			gapReportMarkdown: string
+			definitionSummary: string
+			gapReportCommentPosted: boolean
 	  }
 
 export class AgentBuilderError extends Error {
@@ -200,6 +237,7 @@ export class AgentBuilderError extends Error {
 			| 'stage2_parse_error'
 			| 'stage3_parse_error'
 			| 'stage4_parse_error'
+			| 'stage6_parse_error'
 			| 'actor_registration_failed'
 			| 'skill_registration_failed'
 			| 'context_required',
@@ -227,6 +265,36 @@ function buildStage2UserMessage(intent: Stage1Output): string {
 	]
 		.filter(Boolean)
 		.join('\n\n')
+}
+
+function buildStage6UserMessage(
+	intent: Stage1Output,
+	persona: PersonaSpec,
+	sections: SystemPromptSpec,
+	assembledSystemPrompt: string,
+): string {
+	return [
+		`DOMAIN: ${intent.domain}`,
+		`JOB TO BE DONE: ${intent.job_to_be_done}`,
+		intent.deliverables.length ? `DELIVERABLES:\n- ${intent.deliverables.join('\n- ')}` : '',
+		intent.constraints.length ? `CONSTRAINTS:\n- ${intent.constraints.join('\n- ')}` : '',
+		'',
+		`PERSONA NAME: ${persona.name}`,
+		`PERSONA ROLE: ${persona.role}`,
+		`PERSONA BACKSTORY: ${persona.backstory}`,
+		persona.scope_boundaries.length
+			? `PERSONA SCOPE:\n- ${persona.scope_boundaries.join('\n- ')}`
+			: '',
+		`PERSONA DELEGATION: ${persona.delegation_description}`,
+		'',
+		`SYSTEM PROMPT DECISION FRAMEWORK: ${sections.decision_framework}`,
+		`SYSTEM PROMPT BIAS STATEMENT: ${sections.bias_statement}`,
+		'',
+		'ASSEMBLED SYSTEM PROMPT (for reference — do NOT summarise it, look for missing input surfaces the agent depends on):',
+		assembledSystemPrompt,
+	]
+		.filter(Boolean)
+		.join('\n')
 }
 
 function buildPersonaContextMessage(intent: Stage1Output, persona: PersonaSpec): string {
@@ -259,7 +327,7 @@ function safeParseJson(raw: string): unknown {
 }
 
 async function runStage(
-	stage: 'stage1' | 'stage2' | 'stage3' | 'stage4',
+	stage: 'stage1' | 'stage2' | 'stage3' | 'stage4' | 'stage6',
 	params: LlmCallInput,
 ): Promise<string> {
 	const result = await callLlm(params)
@@ -664,6 +732,37 @@ export async function runAgentBuilder(
 		skillMd,
 	})
 
+	// ── Stage 6: gap report ────────────────────────────────────────────────
+	// One LLM call surveys the assembled persona and system prompt, then names
+	// the concrete missing context items a caller would need to give the agent
+	// so it stops guessing. Posted as a comment on the newly created actor.
+	// Comment-write failures degrade gracefully — the report still ships back
+	// in the tool response so the caller can act on it.
+	const stage6Raw = await runStage('stage6', {
+		system: STAGE_6_PROMPT,
+		user: buildStage6UserMessage(intent, persona, sections, assembledSystemPrompt),
+		temperature: STAGE_6_TEMPERATURE,
+		maxTokens: 900,
+		timeoutMs: STAGE_TIMEOUT_MS,
+		jsonMode: true,
+	})
+
+	const stage6Parsed = stage6Schema.safeParse(safeParseJson(stage6Raw))
+	if (!stage6Parsed.success) {
+		logger.error('agent-builder: stage6 parse failed', {
+			issues: stage6Parsed.error.issues,
+			rawPreview: stage6Raw.slice(0, 200),
+		})
+		throw new AgentBuilderError(
+			'stage6_parse_error',
+			'stage6: LLM returned invalid gap-report shape',
+		)
+	}
+	const gapReport = stage6Parsed.data
+	const gapReportMarkdown = formatGapReportMarkdown(persona, gapReport)
+	const definitionSummary = composeDefinitionSummary(persona)
+	const gapReportCommentPosted = await postGapReportComment(ctx, actor.id, gapReportMarkdown)
+
 	return {
 		kind: 'created',
 		intent,
@@ -675,5 +774,76 @@ export async function runAgentBuilder(
 		skillName,
 		actor,
 		skill,
+		gapReport,
+		gapReportMarkdown,
+		definitionSummary,
+		gapReportCommentPosted,
+	}
+}
+
+/**
+ * Compose the caller-facing summary of what was created. Deterministic —
+ * doesn't cost an extra LLM call. One paragraph: name + role + delegation.
+ */
+export function composeDefinitionSummary(persona: PersonaSpec): string {
+	return `${persona.name} — ${persona.role}. ${persona.delegation_description}`
+}
+
+/**
+ * Render the gap report as a markdown comment body. The structure mirrors
+ * the JSON shape stage 6 returns so a caller can pattern-match, but it's
+ * comment-friendly (headings, bullets) rather than raw JSON.
+ */
+export function formatGapReportMarkdown(persona: PersonaSpec, report: GapReportSpec): string {
+	const lines: string[] = [
+		`## Gap report for ${persona.name}`,
+		'',
+		"Context this agent doesn't yet have. Provide any of these to a session and its answers get sharper — leave them missing and it will hedge or guess.",
+		'',
+	]
+	for (const item of report.gap_items) {
+		lines.push(
+			`### ${item.topic}`,
+			'',
+			item.detail,
+			'',
+			`_Why it matters:_ ${item.why_it_matters}`,
+			'',
+		)
+	}
+	return lines.join('\n').trimEnd()
+}
+
+/**
+ * Insert a `commented` event on the newly created actor carrying the gap
+ * report body. Any DB failure is logged and swallowed — the tool response
+ * still carries the report so the caller can act on it. Returns whether the
+ * comment was successfully persisted.
+ */
+async function postGapReportComment(
+	ctx: AgentBuilderContext,
+	actorEntityId: string,
+	body: string,
+): Promise<boolean> {
+	try {
+		await ctx.db.insert(events).values({
+			workspaceId: ctx.workspaceId,
+			actorId: ctx.actorId,
+			action: 'commented',
+			entityType: 'actor',
+			entityId: actorEntityId,
+			data: {
+				content: body,
+				source: 'agent_builder_gap_report',
+			},
+		})
+		return true
+	} catch (err) {
+		logger.error('agent-builder: gap-report comment insert failed', {
+			workspaceId: ctx.workspaceId,
+			actorEntityId,
+			error: String(err),
+		})
+		return false
 	}
 }

@@ -51,7 +51,7 @@ describe('POST /api/agent-builder/create', () => {
 		runAgentBuilder.mockReset()
 	})
 
-	it('returns 200 with actor + skill IDs on happy path (workspace_id via body)', async () => {
+	it('returns 200 with actor + skill IDs + gap report on happy path (workspace_id via body)', async () => {
 		runAgentBuilder.mockResolvedValue({
 			kind: 'created',
 			intent: {
@@ -78,6 +78,28 @@ describe('POST /api/agent-builder/create', () => {
 			skillName: 'test-abc',
 			actor: { id: 'actor-1', name: 'Test', description: 'use when' },
 			skill: { id: 'skill-1', name: 'test-abc' },
+			gapReport: {
+				gap_items: [
+					{
+						topic: 'target segment',
+						detail: 'name the segment',
+						why_it_matters: 'drives channel choice',
+					},
+					{
+						topic: 'budget',
+						detail: 'name the budget',
+						why_it_matters: 'bounds the plan',
+					},
+					{
+						topic: 'timeline',
+						detail: 'name the timeline',
+						why_it_matters: 'orders the plan',
+					},
+				],
+			},
+			gapReportMarkdown: '## Gap report for Test\n\n### target segment\n\nname the segment',
+			definitionSummary: 'Test — Growth PM. use when',
+			gapReportCommentPosted: true,
 		})
 
 		const { app } = createAgentBuilderTestApp()
@@ -94,6 +116,10 @@ describe('POST /api/agent-builder/create', () => {
 		expect(body.skill_id).toBe('skill-1')
 		expect(body.persona.name).toBe('Test')
 		expect(body.system_prompt).toMatch(/## Background/)
+		expect(body.definition_summary).toBe('Test — Growth PM. use when')
+		expect(body.gap_report).toContain('## Gap report for Test')
+		expect(body.gap_report_items).toHaveLength(3)
+		expect(body.gap_report_comment_posted).toBe(true)
 	})
 
 	it('accepts workspace_id via X-Workspace-Id header', async () => {
@@ -108,6 +134,10 @@ describe('POST /api/agent-builder/create', () => {
 			skillName: 'test',
 			actor: { id: 'a', name: 'A', description: '' },
 			skill: { id: 's', name: 'test' },
+			gapReport: { gap_items: [] },
+			gapReportMarkdown: '',
+			definitionSummary: '',
+			gapReportCommentPosted: false,
 		})
 
 		const { app } = createAgentBuilderTestApp()
