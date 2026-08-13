@@ -17,6 +17,7 @@
 #
 # Safe to re-run: every step is skipped if its output already exists.
 set -e
+set -o pipefail
 
 MASKIN_PG_VERSION="${MASKIN_PG_VERSION:-16.14.0}"
 MASKIN_WEED_VERSION="${MASKIN_WEED_VERSION:-4.41}"
@@ -69,8 +70,12 @@ mkdir -p "$MASKIN_DEVSTACK_DIR" "$LOG_DIR"
 if [ ! -x "$PG_HOME/bin/postgres" ]; then
 	echo "bootstrap-local-devstack: fetching portable Postgres $MASKIN_PG_VERSION ($PG_TARGET)..."
 	tmp_tar="$(mktemp)"
-	curl -sL -o "$tmp_tar" \
-		"https://github.com/theseus-rs/postgresql-binaries/releases/download/${MASKIN_PG_VERSION}/postgresql-${MASKIN_PG_VERSION}-${PG_TARGET}.tar.gz"
+	if ! curl -fsSL -o "$tmp_tar" \
+		"https://github.com/theseus-rs/postgresql-binaries/releases/download/${MASKIN_PG_VERSION}/postgresql-${MASKIN_PG_VERSION}-${PG_TARGET}.tar.gz"; then
+		echo "bootstrap-local-devstack: failed to download Postgres $MASKIN_PG_VERSION ($PG_TARGET) — check MASKIN_PG_VERSION and network access" >&2
+		rm -f "$tmp_tar"
+		exit 1
+	fi
 	mkdir -p "$PG_HOME"
 	tar xzf "$tmp_tar" -C "$PG_HOME" --strip-components=1
 	rm -f "$tmp_tar"
@@ -80,13 +85,26 @@ if [ ! -f "$PG_VENDOR_LIB/libicudata.so.72" ]; then
 	echo "bootstrap-local-devstack: vendoring libxml2 + ICU shared libs (no apt-get, no root)..."
 	mkdir -p "$PG_VENDOR_LIB"
 	tmp_dir="$(mktemp -d)"
-	curl -sL -o "$tmp_dir/libxml2.deb" "https://snapshot.debian.org/file/${LIBXML2_HASH}"
-	curl -sL -o "$tmp_dir/libicu72.deb" "https://snapshot.debian.org/file/${LIBICU72_HASH}"
+	if ! curl -fsSL -o "$tmp_dir/libxml2.deb" "https://snapshot.debian.org/file/${LIBXML2_HASH}"; then
+		echo "bootstrap-local-devstack: failed to download libxml2 .deb from snapshot.debian.org (hash ${LIBXML2_HASH} may have expired)" >&2
+		rm -rf "$tmp_dir"
+		exit 1
+	fi
+	if ! curl -fsSL -o "$tmp_dir/libicu72.deb" "https://snapshot.debian.org/file/${LIBICU72_HASH}"; then
+		echo "bootstrap-local-devstack: failed to download libicu72 .deb from snapshot.debian.org (hash ${LIBICU72_HASH} may have expired)" >&2
+		rm -rf "$tmp_dir"
+		exit 1
+	fi
 	dpkg-deb -x "$tmp_dir/libxml2.deb" "$tmp_dir/x1"
 	dpkg-deb -x "$tmp_dir/libicu72.deb" "$tmp_dir/x2"
 	libxml2_so="$(find "$tmp_dir/x1" -name 'libxml2.so.*.*' | head -1)"
 	libicuuc_so="$(find "$tmp_dir/x2" -name 'libicuuc.so.*.*' | head -1)"
 	libicudata_so="$(find "$tmp_dir/x2" -name 'libicudata.so.*.*' | head -1)"
+	if [ -z "$libxml2_so" ] || [ -z "$libicuuc_so" ] || [ -z "$libicudata_so" ]; then
+		echo "bootstrap-local-devstack: expected .so files not found in extracted .deb packages — package layout may have changed" >&2
+		rm -rf "$tmp_dir"
+		exit 1
+	fi
 	cp "$libxml2_so" "$libicuuc_so" "$libicudata_so" "$PG_VENDOR_LIB/"
 	ln -sf "$(basename "$libxml2_so")" "$PG_VENDOR_LIB/libxml2.so.2"
 	ln -sf "$(basename "$libicuuc_so")" "$PG_VENDOR_LIB/libicuuc.so.72"
@@ -115,7 +133,12 @@ if ! pg_ctl -D "$PG_DATA" status >/dev/null 2>&1; then
 	fi
 fi
 
-createdb -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" "$PG_DB" 2>/dev/null || true
+createdb_err="$(createdb -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" "$PG_DB" 2>&1)" || {
+	if ! grep -q "already exists" <<<"$createdb_err"; then
+		echo "bootstrap-local-devstack: createdb failed: $createdb_err" >&2
+		exit 1
+	fi
+}
 
 # ---------------------------------------------------------------------------
 # SeaweedFS
@@ -124,8 +147,12 @@ createdb -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" "$PG_DB" 2>/dev/null || true
 if [ ! -x "$WEED_DIR/weed" ]; then
 	echo "bootstrap-local-devstack: fetching SeaweedFS $MASKIN_WEED_VERSION ($WEED_ARCH)..."
 	tmp_tar="$(mktemp)"
-	curl -sL -o "$tmp_tar" \
-		"https://github.com/seaweedfs/seaweedfs/releases/download/${MASKIN_WEED_VERSION}/linux_${WEED_ARCH}.tar.gz"
+	if ! curl -fsSL -o "$tmp_tar" \
+		"https://github.com/seaweedfs/seaweedfs/releases/download/${MASKIN_WEED_VERSION}/linux_${WEED_ARCH}.tar.gz"; then
+		echo "bootstrap-local-devstack: failed to download SeaweedFS $MASKIN_WEED_VERSION ($WEED_ARCH) — check MASKIN_WEED_VERSION and network access" >&2
+		rm -f "$tmp_tar"
+		exit 1
+	fi
 	mkdir -p "$WEED_DIR"
 	tar xzf "$tmp_tar" -C "$WEED_DIR"
 	rm -f "$tmp_tar"
@@ -155,6 +182,7 @@ if [ "$(s3_http_code)" = "000" ]; then
 		-filer.port="$S3_FILER_PORT" \
 		-ip=127.0.0.1 \
 		>"$LOG_DIR/seaweedfs.log" 2>&1 &
+	echo $! >"$MASKIN_DEVSTACK_DIR/weed.pid"
 	disown
 	for _ in $(seq 1 30); do
 		[ "$(s3_http_code)" != "000" ] && break
