@@ -9,7 +9,7 @@ import {
 	reverseNotificationSchema,
 	updateNotificationSchema,
 } from '@maskin/shared'
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, eq, inArray, sql } from 'drizzle-orm'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { logger } from '../lib/logger'
 import {
@@ -153,7 +153,7 @@ const listNotificationsRoute = createRoute({
 app.openapi(listNotificationsRoute, (async (c) => {
 	const db = c.get('db')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
-	const { status, type, object_id, limit, offset } = c.req.valid('query')
+	const { status, type, object_id, attention_needed, limit, offset } = c.req.valid('query')
 
 	const conditions = [eq(notifications.workspaceId, workspaceId)]
 	if (status) {
@@ -165,6 +165,16 @@ app.openapi(listNotificationsRoute, (async (c) => {
 	}
 	if (type) conditions.push(eq(notifications.type, type))
 	if (object_id) conditions.push(eq(notifications.objectId, object_id))
+	if (attention_needed !== undefined) {
+		// metadata is JSONB; the schema wall (T2) puts `attention_needed` at the
+		// top of that object. Match on the JSONB text extract so partial-index
+		// pushdown stays available if we add one later.
+		conditions.push(
+			attention_needed
+				? sql`${notifications.metadata}->>'attention_needed' = 'true'`
+				: sql`(${notifications.metadata}->>'attention_needed' IS DISTINCT FROM 'true')`,
+		)
+	}
 
 	const results = await db
 		.select()

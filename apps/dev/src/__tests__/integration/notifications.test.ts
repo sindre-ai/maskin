@@ -296,4 +296,36 @@ describe('Notifications Integration', () => {
 			expect(reverseRes.status).toBe(400)
 		})
 	})
+
+	describe('attention_needed filter (For You feed)', () => {
+		it('returns only notifications whose metadata.attention_needed is true when the query flag is set', async () => {
+			const app = createApp()
+			const headers = { 'x-workspace-id': workspaceId }
+
+			const attention = await insertNotification(db, workspaceId, getTestActorId(), {
+				title: 'Wants attention',
+				metadata: { attention_needed: true, asked: 'Ship it?' },
+			})
+			await insertNotification(db, workspaceId, getTestActorId(), {
+				title: 'Silent recommendation',
+				metadata: { attention_needed: false, recommendation: 'ignore' },
+			})
+			await insertNotification(db, workspaceId, getTestActorId(), {
+				title: 'No attention key at all',
+				metadata: { asked: 'anyone home?' },
+			})
+
+			const filteredRes = await app.request(
+				jsonGet('/api/notifications?attention_needed=true', headers),
+			)
+			expect(filteredRes.status).toBe(200)
+			const filtered = await filteredRes.json()
+			expect(filtered.map((n: { id: string }) => n.id)).toEqual([attention.id])
+
+			// Sanity: without the flag, the caller still sees all three
+			const allRes = await app.request(jsonGet('/api/notifications', headers))
+			const all = await allRes.json()
+			expect(all.length).toBe(3)
+		})
+	})
 })

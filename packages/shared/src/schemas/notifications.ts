@@ -152,10 +152,19 @@ const commaSeparatedStatuses = z
 	)
 	.pipe(z.array(notificationStatusSchema).min(1))
 
+// Accepts 'true'/'false'/'1'/'0' and coerces to a boolean. Notifications set
+// `metadata.attention_needed` per the schema wall — the For You feed uses
+// this filter to surface only the attention-required subset.
+const booleanQueryParam = z.union([z.boolean(), z.string()]).transform((value) => {
+	if (typeof value === 'boolean') return value
+	return value === 'true' || value === '1'
+})
+
 export const notificationQuerySchema = z.object({
 	status: commaSeparatedStatuses.optional(),
 	type: z.string().optional(),
 	object_id: z.string().uuid().optional(),
+	attention_needed: booleanQueryParam.optional(),
 	limit: z.coerce.number().int().min(1).max(100).default(50),
 	offset: z.coerce.number().int().min(0).default(0),
 })

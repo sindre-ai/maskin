@@ -162,6 +162,21 @@ describe('notificationQuerySchema', () => {
 		expect(result.limit).toBe(10)
 		expect(result.offset).toBe(5)
 	})
+
+	it('parses attention_needed=true from a query string', () => {
+		const result = notificationQuerySchema.parse({ attention_needed: 'true' })
+		expect(result.attention_needed).toBe(true)
+	})
+
+	it('parses attention_needed=false from a query string', () => {
+		const result = notificationQuerySchema.parse({ attention_needed: 'false' })
+		expect(result.attention_needed).toBe(false)
+	})
+
+	it('accepts a native boolean for attention_needed and leaves it unset when omitted', () => {
+		expect(notificationQuerySchema.parse({ attention_needed: true }).attention_needed).toBe(true)
+		expect(notificationQuerySchema.parse({}).attention_needed).toBeUndefined()
+	})
 })
 
 describe('notificationMetadataSchema', () => {

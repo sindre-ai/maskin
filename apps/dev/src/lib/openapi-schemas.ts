@@ -260,6 +260,14 @@ export const notificationResponseSchema = z.object({
 	sessionId: z.string().uuid().nullable(),
 	status: z.string(),
 	resolvedAt: z.string().nullable(),
+	// Decision-lifecycle columns landed with T1's migration. Exposed here so the
+	// For You feed can classify notifications into buckets (Waiting on agents
+	// = resolved + dispatchAt still set) and Handled-today ordering can key
+	// off resolvedAt without a separate fetch.
+	expiresAt: z.string().nullable(),
+	defaultAction: z.string().nullable(),
+	dispatchAt: z.string().nullable(),
+	wakeDispatched: z.boolean(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
 })

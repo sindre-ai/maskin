@@ -402,6 +402,12 @@ export const api = {
 				body: { response },
 				workspaceId,
 			}),
+		bulkRespond: (ids: string[], response: unknown, workspaceId: string) =>
+			request<NotificationResponse[]>('/notifications/bulk-respond', {
+				method: 'POST',
+				body: { ids, response },
+				workspaceId,
+			}),
 		delete: (id: string) =>
 			request<{ deleted: boolean }>(`/notifications/${id}`, { method: 'DELETE' }),
 	},
@@ -1087,13 +1093,20 @@ export interface NotificationResponse {
 	type: string
 	title: string
 	content: string | null
-	metadata: SafeMetadata | null
+	// Notification metadata is richer than the generic `SafeMetadata` allows
+	// (it carries nested `options[]` and `artifacts[]` structures) — see
+	// `notificationMetadataSchema` in `@maskin/shared` for the typed shape.
+	metadata: Record<string, unknown> | null
 	sourceActorId: string
 	targetActorId: string | null
 	objectId: string | null
 	sessionId: string | null
 	status: string
 	resolvedAt: string | null
+	expiresAt: string | null
+	defaultAction: string | null
+	dispatchAt: string | null
+	wakeDispatched: boolean
 	createdAt: string | null
 	updatedAt: string | null
 }
