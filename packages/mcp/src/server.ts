@@ -2677,6 +2677,38 @@ export function createMcpServer(config: McpConfig) {
 	// ─── Actors ───────────────────────────────────────────────
 	registerAppTool(
 		server,
+		'maskin_create_agent',
+		{
+			description: tools.maskin_create_agent.description,
+			inputSchema: tools.maskin_create_agent.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const result = await apiCall(
+				config,
+				'POST',
+				'/api/agent-builder/create',
+				{
+					prompt: args.prompt,
+					examples: args.examples,
+					references: args.references,
+					constraints: args.constraints,
+				},
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: meta(
+					'maskin_create_agent',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'create_actor',
 		{
 			description: tools.create_actor.description,
