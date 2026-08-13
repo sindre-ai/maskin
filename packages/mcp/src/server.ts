@@ -1833,14 +1833,36 @@ export function createMcpServer(config: McpConfig) {
 			const { workspace_id, nodes, edges } = args
 			const wsOpts = { workspaceId: workspace_id }
 
+			// Lowest-status-by-default: statuses are earned, not drafted. When a
+			// node omits `status`, fill in the first (lowest) status configured for
+			// its type in the workspace settings before hitting /api/graph, which
+			// requires a status on every node. Only fetch settings when needed.
+			let statusesByType: Record<string, string[]> = {}
+			if (nodes.some((node) => !node.status)) {
+				const workspaces = (await apiCall(config, 'GET', '/api/workspaces', undefined, {
+					skipWorkspace: true,
+				})) as Array<{ id: string; settings?: { statuses?: Record<string, string[]> } }>
+				const effectiveWsId = workspace_id ?? config.defaultWorkspaceId
+				const workspace =
+					(effectiveWsId ? workspaces.find((w) => w.id === effectiveWsId) : workspaces[0]) ??
+					workspaces[0]
+				statusesByType = workspace?.settings?.statuses ?? {}
+			}
+
 			// /api/graph doesn't understand file_ids — strip them from the body
 			// and replay each node's file_ids as `attached` relationships after
 			// the graph is created. Keeps the backend schema unchanged.
 			const fileIdsByDollarId = new Map<string, string[]>()
 			const nodesForApi = nodes.map((node) => {
-				const { file_ids, ...rest } = node
+				const { file_ids, status, ...rest } = node
 				if (file_ids?.length) fileIdsByDollarId.set(node.$id, file_ids)
-				return rest
+				const resolvedStatus = status ?? statusesByType[node.type]?.[0]
+				if (!resolvedStatus) {
+					throw new Error(
+						`Node '${node.$id}' has no status and type '${node.type}' has no configured statuses in this workspace — pass an explicit status (call get_workspace_schema to see valid statuses per type).`,
+					)
+				}
+				return { ...rest, status: resolvedStatus }
 			})
 
 			const graphResult = (await apiCall(

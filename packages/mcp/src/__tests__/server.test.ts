@@ -278,6 +278,82 @@ describe('tool handlers', () => {
 			const parsed = JSON.parse(result.content[0].text)
 			expect(parsed.file_attachments).toBeUndefined()
 		})
+
+		it('fills in the lowest configured status when a node omits status', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.endsWith('/api/workspaces')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve([
+								{
+									id: 'ws-default-123',
+									settings: {
+										statuses: {
+											bet: ['signal', 'qualified', 'define', 'active'],
+											insight: ['new', 'clustered'],
+										},
+									},
+								},
+							]),
+					} as Response
+				}
+				return {
+					ok: true,
+					json: () =>
+						Promise.resolve({ nodes: [{ $id: 'bet-1', id: 'b1', type: 'bet' }], edges: [] }),
+				} as Response
+			})
+
+			const handler = getHandler('create_objects')
+			await handler({
+				nodes: [
+					{ $id: 'bet-1', type: 'bet' },
+					{ $id: 'insight-1', type: 'insight' },
+				],
+				edges: [],
+			})
+
+			const graphCall = vi
+				.mocked(fetch)
+				.mock.calls.find((c) => (c[0] as string).endsWith('/api/graph'))
+			expect(graphCall).toBeDefined()
+			const graphBody = JSON.parse((graphCall?.[1] as RequestInit).body as string)
+			expect(graphBody.nodes[0].status).toBe('signal')
+			expect(graphBody.nodes[1].status).toBe('new')
+		})
+
+		it('does not fetch workspace settings when every node has an explicit status', async () => {
+			mockFetchSuccess({ nodes: [{ $id: 'x', id: 'real-x', type: 'task' }], edges: [] })
+
+			const handler = getHandler('create_objects')
+			await handler({
+				nodes: [{ $id: 'x', type: 'task', status: 'todo' }],
+				edges: [],
+			})
+
+			const wsCalls = vi
+				.mocked(fetch)
+				.mock.calls.filter((c) => (c[0] as string).endsWith('/api/workspaces'))
+			expect(wsCalls).toHaveLength(0)
+		})
+
+		it('throws a clear error when status is omitted and the type has no configured statuses', async () => {
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				json: () =>
+					Promise.resolve([{ id: 'ws-default-123', settings: { statuses: { bet: ['signal'] } } }]),
+			} as Response)
+
+			const handler = getHandler('create_objects')
+			await expect(
+				handler({
+					nodes: [{ $id: 'x', type: 'custom_thing' }],
+					edges: [],
+				}),
+			).rejects.toThrow(/get_workspace_schema/)
+		})
 	})
 
 	describe('get_objects handler', () => {

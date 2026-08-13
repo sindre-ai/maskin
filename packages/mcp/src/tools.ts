@@ -191,7 +191,7 @@ export const tools = {
 	// ─── Objects ─────────────────────────────────────────────
 	create_objects: {
 		description:
-			'Create one or more objects — of any type this workspace defines (built-ins like insight/bet/task, or a custom type) — with optional relationships in a single atomic operation. To create a Loop — a persistent closed-loop agent process — use the dedicated create_loop tool instead, which wires the trigger and membership metadata correctly. For a single object, provide one node with no edges. For multiple related objects, use $id references in edges to link them. Edges can also reference existing object UUIDs to connect new objects to existing ones. ALWAYS call get_workspace_schema first — it returns the authoritative, live list of valid statuses per object type, metadata fields, and relationship types for this workspace (these are workspace-configurable, so they vary between workspaces and cannot be assumed). To attach files to a created object, upload them first with create_file (or pick existing ones with list_files) and pass the returned ids in `file_ids` on the node. Attached files appear under the object in the UI and are returned alongside the object in get_objects. When referring to created or connected objects in human-facing output (comments, summaries, notifications, descriptions), use the object\'s title — not its UUID. Returned nodes include the title; edges include sourceTitle and targetTitle for the same reason. UUIDs should only appear in human-facing text when two objects share a near-identical title and disambiguation is needed — in that case append a short id suffix (e.g. "Bets and Threads v4 (ca957490)"). Use UUIDs freely inside tool arguments.',
+			'Create one or more objects — of any type this workspace defines (built-ins like insight/bet/task, or a custom type) — with optional relationships in a single atomic operation. To create a Loop — a persistent closed-loop agent process — use the dedicated create_loop tool instead, which wires the trigger and membership metadata correctly. For a single object, provide one node with no edges. For multiple related objects, use $id references in edges to link them. Edges can also reference existing object UUIDs to connect new objects to existing ones. ALWAYS call get_workspace_schema first — it returns the authoritative, live list of valid statuses per object type, metadata fields, and relationship types for this workspace (these are workspace-configurable, so they vary between workspaces and cannot be assumed). To attach files to a created object, upload them first with create_file (or pick existing ones with list_files) and pass the returned ids in `file_ids` on the node. Attached files appear under the object in the UI and are returned alongside the object in get_objects. When referring to created or connected objects in human-facing output (comments, summaries, notifications, descriptions), use the object\'s title — not its UUID. Returned nodes include the title; edges include sourceTitle and targetTitle for the same reason. UUIDs should only appear in human-facing text when two objects share a near-identical title and disambiguation is needed — in that case append a short id suffix (e.g. "Bets and Threads v4 (ca957490)"). Use UUIDs freely inside tool arguments. Omit `status` unless the user explicitly asked for a specific one — a new object starts at the lowest (first) status configured for its type in this workspace (e.g. bet → signal, insight → new); statuses are earned through the workspace\'s promotion flow, not drafted at creation.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			nodes: z
@@ -205,7 +205,12 @@ export const tools = {
 							),
 						title: z.string().optional(),
 						content: z.string().optional(),
-						status: z.string(),
+						status: z
+							.string()
+							.optional()
+							.describe(
+								"Status for the new object. Omit unless the user explicitly asked for a specific status — when omitted, the object is created at the lowest (first) status configured for its type in this workspace (e.g. bet → signal, insight → new). Statuses are earned through the workspace's promotion flow, not drafted at creation.",
+							),
 						metadata: z
 							.record(z.unknown())
 							.optional()
