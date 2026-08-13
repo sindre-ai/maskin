@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
+	bulkRespondNotificationSchema,
 	createNotificationSchema,
 	notificationMetadataSchema,
+	notificationOptionSchema,
 	notificationQuerySchema,
 	notificationStatusSchema,
 	notificationTypeSchema,
 	respondNotificationSchema,
+	reverseNotificationSchema,
 	updateNotificationSchema,
 } from '../schemas/notifications'
 
@@ -30,6 +33,10 @@ describe('notificationStatusSchema', () => {
 		expect(notificationStatusSchema.parse('seen')).toBe('seen')
 		expect(notificationStatusSchema.parse('resolved')).toBe('resolved')
 		expect(notificationStatusSchema.parse('dismissed')).toBe('dismissed')
+	})
+
+	it('accepts expired for auto-resolved notifications', () => {
+		expect(notificationStatusSchema.parse('expired')).toBe('expired')
 	})
 
 	it('rejects unknown status', () => {
@@ -232,5 +239,121 @@ describe('notificationMetadataSchema', () => {
 		})
 		expect(result.urgency_label).toBe('Blocking next task')
 		expect((result as Record<string, unknown>).blocked_by_pr).toBe('https://github.com/x/y/pull/1')
+	})
+
+	it('accepts decision-support fields within their length caps', () => {
+		const result = notificationMetadataSchema.parse({
+			asked: 'a'.repeat(120),
+			found: 'b'.repeat(280),
+			recommendation: 'c'.repeat(160),
+			attention_needed: true,
+			reversibility: 'reversible',
+			blast_radius: 'workspace',
+			group_key: 'object-42',
+		})
+		expect(result.asked).toHaveLength(120)
+		expect(result.found).toHaveLength(280)
+		expect(result.recommendation).toHaveLength(160)
+		expect(result.attention_needed).toBe(true)
+		expect(result.reversibility).toBe('reversible')
+		expect(result.blast_radius).toBe('workspace')
+		expect(result.group_key).toBe('object-42')
+	})
+
+	it('rejects asked longer than 120 chars', () => {
+		expect(() => notificationMetadataSchema.parse({ asked: 'a'.repeat(121) })).toThrow()
+	})
+
+	it('rejects found longer than 280 chars', () => {
+		expect(() => notificationMetadataSchema.parse({ found: 'b'.repeat(281) })).toThrow()
+	})
+
+	it('rejects recommendation longer than 160 chars', () => {
+		expect(() => notificationMetadataSchema.parse({ recommendation: 'c'.repeat(161) })).toThrow()
+	})
+
+	it('rejects unknown reversibility values', () => {
+		expect(() => notificationMetadataSchema.parse({ reversibility: 'maybe' })).toThrow()
+	})
+
+	it('rejects unknown blast_radius values', () => {
+		expect(() => notificationMetadataSchema.parse({ blast_radius: 'galactic' })).toThrow()
+	})
+
+	it('accepts a native artifacts array', () => {
+		const result = notificationMetadataSchema.parse({
+			artifacts: [{ kind: 'diff', fileId: uuid, title: 'PR #123 diff' }],
+		})
+		expect(result.artifacts).toHaveLength(1)
+		expect(result.artifacts?.[0]?.fileId).toBe(uuid)
+	})
+
+	it('coerces a JSON-stringified artifacts array', () => {
+		const result = notificationMetadataSchema.parse({
+			artifacts: JSON.stringify([{ kind: 'metric', fileId: uuid, title: 'CTR' }]),
+		})
+		expect(result.artifacts).toHaveLength(1)
+		expect(result.artifacts?.[0]?.kind).toBe('metric')
+	})
+
+	it('rejects an artifact with a non-UUID fileId', () => {
+		expect(() =>
+			notificationMetadataSchema.parse({
+				artifacts: [{ kind: 'diff', fileId: 'not-a-uuid', title: 'x' }],
+			}),
+		).toThrow()
+	})
+})
+
+describe('notificationOptionSchema', () => {
+	it('accepts an option without the default marker', () => {
+		const result = notificationOptionSchema.parse({ label: 'Yes', value: 'yes' })
+		expect(result.default).toBeUndefined()
+	})
+
+	it('accepts an option marked as the expiry default', () => {
+		const result = notificationOptionSchema.parse({
+			label: 'Skip',
+			value: 'skip',
+			default: true,
+		})
+		expect(result.default).toBe(true)
+	})
+
+	it('rejects a non-boolean default marker', () => {
+		expect(() =>
+			notificationOptionSchema.parse({ label: 'Yes', value: 'yes', default: 'yes' }),
+		).toThrow()
+	})
+})
+
+describe('bulkRespondNotificationSchema', () => {
+	it('accepts a non-empty id list with a response', () => {
+		const result = bulkRespondNotificationSchema.parse({
+			ids: [uuid],
+			response: 'approved',
+		})
+		expect(result.ids).toEqual([uuid])
+		expect(result.response).toBe('approved')
+	})
+
+	it('rejects an empty id list', () => {
+		expect(() => bulkRespondNotificationSchema.parse({ ids: [], response: 'x' })).toThrow()
+	})
+
+	it('rejects a non-UUID id', () => {
+		expect(() =>
+			bulkRespondNotificationSchema.parse({ ids: ['not-a-uuid'], response: 'x' }),
+		).toThrow()
+	})
+
+	it('rejects a missing response', () => {
+		expect(() => bulkRespondNotificationSchema.parse({ ids: [uuid] })).toThrow()
+	})
+})
+
+describe('reverseNotificationSchema', () => {
+	it('accepts an empty body (server enforces the 6s window)', () => {
+		expect(reverseNotificationSchema.parse({})).toEqual({})
 	})
 })
