@@ -45,6 +45,7 @@ const HIDDEN_TOOL_NAMES = new Set([
 	'list_notifications',
 	'get_notification',
 	'update_notification',
+	'respond_notification',
 	'delete_notification',
 ])
 

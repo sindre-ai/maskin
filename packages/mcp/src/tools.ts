@@ -1387,6 +1387,19 @@ export const tools = {
 				),
 		}),
 	},
+	respond_notification: {
+		description:
+			'Respond to a notification on behalf of the current actor and resume the source agent immediately. Use only when an agent needs to post a decision programmatically — humans respond through the UI, which intentionally uses the deferred-wake path to preserve the 6s reverse window. Sets status=resolved, records the response in metadata, and wakes the source agent synchronously via the `dispatch=immediate` escape hatch on POST /api/notifications/:id/respond.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			id: z.string().uuid(),
+			response: z
+				.unknown()
+				.describe(
+					'The response value routed back to the source agent. Shape depends on how the notification was defined — a string for free-text asks, one of the action.response values for button asks, or one of the option.value strings for structured pickers.',
+				),
+		}),
+	},
 	delete_notification: {
 		description: 'Delete a notification by ID',
 		inputSchema: z.object({
