@@ -1,7 +1,15 @@
 import { randomUUID } from 'node:crypto'
+import { describe, expect, it, vi } from 'vitest'
 import { buildActor, buildCreateWorkspaceBody, buildWorkspace } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
+
+const { sendTeamInviteEmailMock } = vi.hoisted(() => ({
+	sendTeamInviteEmailMock: vi.fn().mockResolvedValue(undefined),
+}))
+vi.mock('../../lib/email-triggers', () => ({
+	sendTeamInviteEmail: sendTeamInviteEmailMock,
+}))
 
 const { default: workspacesRoutes } = await import('../../routes/workspaces')
 
@@ -294,7 +302,33 @@ describe('Workspaces Routes', () => {
 			expect(body.added).toBe(true)
 		})
 
-		it('returns 403 when caller is not a member of the workspace', async () => {
+		it('fires the team-invite email after a successful add', async () => {
+			sendTeamInviteEmailMock.mockClear()
+			const wsId = randomUUID()
+			const actorId = randomUUID()
+			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [[{ actorId: 'test-actor-id' }]]
+			mockResults.insert = [{}]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/workspaces/${wsId}/members`, {
+					actor_id: actorId,
+					role: 'member',
+				}),
+			)
+
+			expect(res.status).toBe(201)
+			expect(sendTeamInviteEmailMock).toHaveBeenCalledTimes(1)
+			const call = sendTeamInviteEmailMock.mock.calls[0][0]
+			expect(call.workspaceId).toBe(wsId)
+			expect(call.inviteeActorId).toBe(actorId)
+			expect(call.inviterActorId).toBe('test-actor-id')
+			expect(typeof call.inviteUrl).toBe('string')
+			expect(call.inviteUrl).toContain(wsId)
+		})
+
+		it('skips the invite email when the caller is not a workspace member', async () => {
+			sendTeamInviteEmailMock.mockClear()
 			const wsId = randomUUID()
 			const actorId = randomUUID()
 			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
@@ -311,6 +345,7 @@ describe('Workspaces Routes', () => {
 			expect(res.status).toBe(403)
 			const body = await res.json()
 			expect(body.error.code).toBe('FORBIDDEN')
+			expect(sendTeamInviteEmailMock).not.toHaveBeenCalled()
 		})
 	})
 
