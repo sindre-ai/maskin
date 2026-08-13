@@ -46,14 +46,17 @@ test.describe('Ask panel — bulk-bar round-trip (ship gate)', () => {
 			await expect(answerBtn).toBeVisible()
 			await answerBtn.click()
 
-			await expect(page.getByText('Asking Agent')).toBeVisible()
-			await expect(page.getByText('Can you approve releasing this to users?')).toBeVisible()
+			// Scoped to the panel: the row behind it also renders an "<Agent> asks
+			// · <text>" line, which would otherwise ambiguously match these texts.
+			const panel = page.getByRole('dialog')
+			await expect(panel.getByText('Asking Agent', { exact: true })).toBeVisible()
+			await expect(panel.getByText('Can you approve releasing this to users?')).toBeVisible()
 
 			// Approve round-trips: the row flips to a done label and the footer
 			// reports nothing left waiting.
-			await page.getByRole('button', { name: 'Approve' }).click()
-			await expect(page.getByText('Approved')).toBeVisible()
-			await expect(page.getByText('Nothing left waiting here')).toBeVisible()
+			await panel.getByRole('button', { name: 'Approve' }).click()
+			await expect(panel.getByText('Approved')).toBeVisible()
+			await expect(panel.getByText('Nothing left waiting here')).toBeVisible()
 		})
 	}
 })
@@ -75,9 +78,11 @@ test.describe('Ask panel — light and dark mode', () => {
 			await page.getByRole('button', { name: 'Answer 1 ask' }).click()
 
 			// The primary Approve button and the shared avatar must be visible in
-			// both modes (they use theme tokens, not hardcoded hex).
-			await expect(page.getByRole('button', { name: 'Approve' })).toBeVisible()
-			await expect(page.getByText('Asking Agent')).toBeVisible()
+			// both modes (they use theme tokens, not hardcoded hex). Scoped to the
+			// panel — the row behind it also renders an "<Agent> asks · <text>" line.
+			const panel = page.getByRole('dialog')
+			await expect(panel.getByRole('button', { name: 'Approve' })).toBeVisible()
+			await expect(panel.getByText('Asking Agent', { exact: true })).toBeVisible()
 		})
 	}
 })
