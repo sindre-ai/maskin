@@ -57,6 +57,7 @@ app.post('/', async (c) => {
 		workspaceId,
 		actorId,
 		agentLabel,
+		db,
 	})
 
 	// Stateless transport, same pattern as the Slack MCP route: each POST

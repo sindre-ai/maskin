@@ -1,4 +1,8 @@
+import type { Database } from '@maskin/db'
+import { actors, workspaceMembers } from '@maskin/db/schema'
+import { EmailSendError, readResendEnv, sendEmail, stripExternalImages } from '@maskin/email'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { and, eq, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { logger } from '../../../logger'
 
@@ -12,6 +16,8 @@ export interface EmailToolContext {
 	actorId: string
 	/** Human-readable "agent · in workspace" subscript for logs. */
 	agentLabel: string
+	/** DB handle bound to the request. Used for the workspace-member allowlist. */
+	db: Database
 }
 
 const RECIPIENT_MAX = 254 // RFC 5321
@@ -51,7 +57,7 @@ const sendEmailInput = {
  *
  * Error codes:
  * - `recipient_not_in_workspace` — `to` is not a member of the workspace.
- *   Enforced server-side by the T6 allowlist, not by prompt.
+ *   Enforced server-side by the allowlist join in this handler, not by prompt.
  * - `rate_limited` — per-agent 10-per-hour ceiling tripped (T7).
  * - `email_not_configured` — RESEND_API_KEY / EMAIL_FROM missing on the
  *   host. The MCP entry is auto-injected only when both env vars are set,
@@ -59,17 +65,23 @@ const sendEmailInput = {
  *   fails loudly instead of silently.
  * - `send_failed` — Resend/transport error. The provider's message is
  *   forwarded so an operator can grep it out of the logs.
- * - `not_available_yet` — the send path (T6 workspace allowlist + Resend
- *   dispatch) has not landed in this build. The tool is discoverable and
- *   its schema is stable so agent-side code can be written against it;
- *   real sends unlock when T6 replaces this stub handler.
  */
 export type SendEmailErrorCode =
 	| 'recipient_not_in_workspace'
 	| 'rate_limited'
 	| 'email_not_configured'
 	| 'send_failed'
-	| 'not_available_yet'
+
+interface SuccessPayload {
+	ok: true
+	messageId: string
+}
+
+interface ErrorPayload {
+	ok: false
+	error: SendEmailErrorCode
+	message: string
+}
 
 const TOOL_DESCRIPTION = [
 	'Send a transactional email from Maskin to a workspace member.',
@@ -80,16 +92,56 @@ const TOOL_DESCRIPTION = [
 	'',
 	'Every response is a JSON envelope on the `content` channel:',
 	'- Success: `{ "ok": true, "messageId": "<resend-id>" }`',
-	'- Error: `{ "ok": false, "error": "<code>", "message": "<human-readable>" }` where `<code>` is one of `recipient_not_in_workspace`, `rate_limited`, `email_not_configured`, `send_failed`, or (until T6 lands) `not_available_yet`.',
+	'- Error: `{ "ok": false, "error": "<code>", "message": "<human-readable>" }` where `<code>` is one of `recipient_not_in_workspace`, `rate_limited`, `email_not_configured`, or `send_failed`.',
 ].join('\n')
+
+function toTextEnvelope(payload: SuccessPayload | ErrorPayload) {
+	return { content: [{ type: 'text' as const, text: JSON.stringify(payload) }] }
+}
+
+function escapeHtml(input: string): string {
+	return input
+		.replace(/&/g, '&amp;')
+		.replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;')
+		.replace(/"/g, '&quot;')
+		.replace(/'/g, '&#39;')
+}
+
+// Minimal HTML derivation when the agent supplies only bodyText. Preserves
+// whitespace so line breaks in the plain-text body survive rendering, without
+// pulling a full React Email template into a free-form agent surface.
+function deriveHtmlFromText(text: string): string {
+	return `<pre style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; white-space: pre-wrap; margin: 0;">${escapeHtml(
+		text,
+	)}</pre>`
+}
+
+async function isWorkspaceRecipient(
+	db: Database,
+	workspaceId: string,
+	recipientEmail: string,
+): Promise<boolean> {
+	const [row] = await db
+		.select({ actorId: workspaceMembers.actorId })
+		.from(workspaceMembers)
+		.innerJoin(actors, eq(actors.id, workspaceMembers.actorId))
+		.where(
+			and(
+				eq(workspaceMembers.workspaceId, workspaceId),
+				sql`lower(${actors.email}) = lower(${recipientEmail})`,
+			),
+		)
+		.limit(1)
+	return !!row
+}
 
 /**
  * Build a fresh MCP server per request. Exposes one tool — `send_email` —
- * whose schema, description, and error contract are stable now so agent
- * authors can write code against them; the send path itself is filled in
- * by T6 (workspace allowlist + Resend dispatch) and T7 (rate limiter). This
- * server intentionally does NOT reach for RESEND_API_KEY or hit the Resend
- * SDK — those concerns land with T6.
+ * that enforces the workspace-member allowlist server-side before any Resend
+ * call, strips external image references from the body (T8), and dispatches
+ * through the shared @maskin/email `sendEmail` helper so the ship metric
+ * (`email_sent` PostHog event) fires uniformly with Layer 1 sends.
  */
 export function createEmailMcpServer(ctx: EmailToolContext): McpServer {
 	const server = new McpServer({ name: 'maskin-email', version: '0.1.0' })
@@ -101,7 +153,7 @@ export function createEmailMcpServer(ctx: EmailToolContext): McpServer {
 			inputSchema: sendEmailInput,
 		},
 		async (args) => {
-			logger.info('send_email tool invoked', {
+			const logContext = {
 				workspaceId: ctx.workspaceId,
 				actorId: ctx.actorId,
 				agentLabel: ctx.agentLabel,
@@ -109,21 +161,72 @@ export function createEmailMcpServer(ctx: EmailToolContext): McpServer {
 				subjectLength: args.subject.length,
 				bodyTextLength: args.bodyText.length,
 				hasBodyHtml: typeof args.bodyHtml === 'string',
-			})
+			}
+			logger.info('send_email tool invoked', logContext)
 
-			const payload: {
-				ok: false
-				error: SendEmailErrorCode
-				message: string
-			} = {
-				ok: false,
-				error: 'not_available_yet',
-				message:
-					'send_email is registered but the workspace allowlist and Resend dispatch handler have not landed yet. The tool schema and error contract are stable — safe to build against.',
+			const allowed = await isWorkspaceRecipient(ctx.db, ctx.workspaceId, args.to)
+			if (!allowed) {
+				logger.warn('send_email rejected: recipient not in workspace', logContext)
+				return toTextEnvelope({
+					ok: false,
+					error: 'recipient_not_in_workspace',
+					message:
+						'Recipient is not a member of the calling workspace. send_email only delivers to workspace members.',
+				})
 			}
 
-			return {
-				content: [{ type: 'text' as const, text: JSON.stringify(payload) }],
+			try {
+				readResendEnv()
+			} catch (err) {
+				logger.error('send_email rejected: email provider not configured', {
+					...logContext,
+					message: err instanceof Error ? err.message : String(err),
+				})
+				return toTextEnvelope({
+					ok: false,
+					error: 'email_not_configured',
+					message:
+						'Email provider is not configured on this host. Set RESEND_API_KEY and EMAIL_FROM.',
+				})
+			}
+
+			const strippedText = stripExternalImages(args.bodyText)
+			const strippedHtml =
+				typeof args.bodyHtml === 'string'
+					? stripExternalImages(args.bodyHtml)
+					: { bodyText: deriveHtmlFromText(strippedText.bodyText), removed: 0 }
+
+			try {
+				const { id } = await sendEmail({
+					to: args.to,
+					subject: args.subject,
+					text: strippedText.bodyText,
+					html: strippedHtml.bodyText,
+					analytics: {
+						workspaceId: ctx.workspaceId,
+						emailType: 'agent',
+						agentId: ctx.actorId,
+					},
+				})
+				logger.info('send_email delivered', {
+					...logContext,
+					messageId: id,
+					externalImagesRemoved: strippedText.removed + strippedHtml.removed,
+				})
+				return toTextEnvelope({ ok: true, messageId: id })
+			} catch (err) {
+				const providerCode = err instanceof EmailSendError ? err.providerCode : 'unexpected_error'
+				const message = err instanceof Error ? err.message : String(err)
+				logger.error('send_email dispatch failed', {
+					...logContext,
+					providerCode,
+					message,
+				})
+				return toTextEnvelope({
+					ok: false,
+					error: 'send_failed',
+					message: `${providerCode}: ${message}`,
+				})
 			}
 		},
 	)

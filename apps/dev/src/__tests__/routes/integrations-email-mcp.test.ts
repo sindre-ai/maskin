@@ -146,6 +146,7 @@ describe('POST /api/integrations/email/mcp', () => {
 			workspaceId: workspace.id,
 			actorId,
 			agentLabel: 'Synthesizer · in mesh-firm',
+			db: expect.anything(),
 		})
 		expect(mockConnect).toHaveBeenCalledTimes(1)
 		expect(mockHandleRequest).toHaveBeenCalledOnce()
