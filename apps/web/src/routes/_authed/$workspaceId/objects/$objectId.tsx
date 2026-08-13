@@ -1,6 +1,6 @@
 import { PageHeader } from '@/components/layout/page-header'
 import { ObjectCreateForm } from '@/components/objects/object-create-form'
-import { ObjectDetailShell } from '@/components/objects/object-detail-shell'
+import { ObjectDocument } from '@/components/objects/object-document'
 import { Skeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
 import { useCreateObject, useObject, useUpdateObject } from '@/hooks/use-objects'
@@ -72,9 +72,9 @@ function ObjectDetailPage() {
 		)
 	}
 
-	// Once fully loaded with object data, render the static detail shell
+	// Once fully loaded with object data, render the full document editor
 	if (isCreated && object) {
-		return <ObjectDetailShell object={object} />
+		return <ObjectDocument object={object} />
 	}
 
 	// Create mode — show form with document-like sections

@@ -1,47 +1,172 @@
+import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
-import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
+import { VIEWPORTS } from '../helpers/viewports'
 
-// Regression contract for the bet/object-detail rebuild: the legacy
-// ObjectDocumentView properties right sidebar (Metadata / Files / Subscribe /
-// timestamps) and its edit-in-place title textarea are not part of the
-// reconstructed surface per the bet's page enumeration — T1's static shell
-// owns header, ask banner, and body, and nothing else on the route may mount
-// the old chrome.
+// Exercises the four Playwright-verifiable acceptance criteria for the
+// object-detail right sidebar: click-toggle survives reload at 1024,
+// breakpoint defaults on a fresh browser context, `⌘/Ctrl+I` keyboard toggle
+// (while `⌘/Ctrl+B` remains bound to the left nav), and sidebar contents
+// render Subscribe + creator + timestamps + Metadata + Files.
 //
-// What this file used to exercise — the ⌘/Ctrl+I toggle, `__chrome__`
-// user-display-settings persistence, and breakpoint defaults (Sheet at 375 /
-// 44 px rail at 768 / 288 px inline at 1024) — is gone with the surface.
-// Status + Driver remain reachable: hoisted into the hero identity row, and
-// graduated into the shipped ⋯ menu's Properties group at narrow viewports
-// (covered by aux-menu-properties.spec.ts).
-test.describe('Object detail — no legacy properties sidebar', () => {
-	for (const vp of SHIP_GATE_VIEWPORTS) {
-		test(`shell renders with no properties-sidebar chrome @ ${vp.label}`, async ({
-			page,
-			account,
-		}) => {
+// Each test uses a fresh actor via `auth.fixture`, which means no persisted
+// `user_display_settings` row exists for `__chrome__` — the sidebar must
+// resolve to its breakpoint default rather than a carried-over value.
+
+async function waitForObjectDetail(page: Page, title: string) {
+	// Title field is a textarea placeholder="Untitled" that binds to the
+	// loaded object. Waiting on the exact value keeps the assertions below
+	// from racing against useUserDisplaySettings' first reconciliation.
+	await expect(page.getByPlaceholder('Untitled')).toHaveValue(title, { timeout: 10_000 })
+}
+
+test.describe('Object detail — right sidebar', () => {
+	test('at 1024px, closing the sidebar persists across hard reload', async ({ page, account }) => {
+		await page.setViewportSize({
+			width: VIEWPORTS.tabletLandscape.width,
+			height: VIEWPORTS.tabletLandscape.height,
+		})
+		const bet = await account.api.createObject(account.workspaceId, {
+			type: 'bet',
+			title: 'Sidebar persistence probe',
+			status: 'active',
+		})
+
+		await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
+		await waitForObjectDetail(page, 'Sidebar persistence probe')
+
+		// Default at 1024 = 288 px inline expanded. Toggle button reports its
+		// state via aria-expanded; the Files section is rendered inside the
+		// sidebar and is a reliable content-visibility indicator.
+		// The sidebar's own collapse toggle also has an accessible name
+		// containing "Properties" ("Expand/Collapse properties"), so this must
+		// be an exact match to avoid a strict-mode violation.
+		const toggle = page.getByRole('button', { name: 'Properties', exact: true })
+		await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+		await expect(page.getByRole('heading', { name: /^Files \(/ })).toBeVisible()
+
+		// Register the write-through listener BEFORE the click so waitForResponse
+		// blocks deterministically instead of racing on a debounce timer — mirrors
+		// the pattern already used in objects-display-persistence.spec.ts.
+		const chromeSaved = page.waitForResponse(
+			(r) =>
+				r.url().includes('/user-display-settings/__chrome__') && r.request().method() === 'PUT',
+		)
+		await toggle.click()
+		await chromeSaved
+
+		await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+
+		await page.reload()
+		await waitForObjectDetail(page, 'Sidebar persistence probe')
+
+		// Persisted state (objectDetailSidebarCollapsed: true) rides through the
+		// reload — sidebar must NOT snap back to the breakpoint default.
+		await expect(page.getByRole('button', { name: 'Properties', exact: true })).toHaveAttribute(
+			'aria-expanded',
+			'false',
+		)
+	})
+
+	// Breakpoint defaults on a fresh browser context. Each row seeds a new actor
+	// via the fixture, so no `__chrome__` row exists to override the breakpoint
+	// default (`objectDetailSidebarCollapsed` unset → collapsed = false-if-large,
+	// true-if-small per the architecture-decision reconciliation rules).
+	for (const { vp, expanded, note } of [
+		{ vp: VIEWPORTS.mobile, expanded: false, note: 'Sheet closed' },
+		{ vp: VIEWPORTS.tabletPortrait, expanded: false, note: '44 px rail collapsed' },
+		{ vp: VIEWPORTS.tabletLandscape, expanded: true, note: '288 px inline expanded' },
+	]) {
+		test(`breakpoint default on first load @ ${vp.label} → ${note}`, async ({ page, account }) => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
 			const bet = await account.api.createObject(account.workspaceId, {
 				type: 'bet',
-				title: 'Sidebar absence probe',
+				title: 'Breakpoint default probe',
 				status: 'active',
 			})
 
 			await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
-			// The shell exposes the title as a static h1 — proves the route loaded
-			// before the absence assertions run. The old textarea is never present.
-			await expect(
-				page.getByRole('heading', { level: 1, name: 'Sidebar absence probe' }),
-			).toBeVisible({ timeout: 10_000 })
-			await expect(page.getByPlaceholder('Untitled')).toHaveCount(0)
+			await waitForObjectDetail(page, 'Breakpoint default probe')
 
-			// No Properties collapse toggle (the sidebar's exact-match-header
-			// button). The ⋯ menu's "Properties" label is a DropdownMenuLabel,
-			// not a button, so this can't collide with it.
-			await expect(page.getByRole('button', { name: 'Properties', exact: true })).toHaveCount(0)
-			// No Files section, no Metadata "+ Add property" trigger.
-			await expect(page.getByRole('heading', { name: /^Files \(/ })).toHaveCount(0)
-			await expect(page.getByRole('button', { name: /add property/i })).toHaveCount(0)
+			await expect(page.getByRole('button', { name: 'Properties', exact: true })).toHaveAttribute(
+				'aria-expanded',
+				expanded ? 'true' : 'false',
+			)
 		})
 	}
+
+	test('⌘/Ctrl+I toggles the right sidebar at 1024; ⌘/Ctrl+B does not', async ({
+		page,
+		account,
+	}) => {
+		await page.setViewportSize({
+			width: VIEWPORTS.tabletLandscape.width,
+			height: VIEWPORTS.tabletLandscape.height,
+		})
+		const bet = await account.api.createObject(account.workspaceId, {
+			type: 'bet',
+			title: 'Sidebar shortcut probe',
+			status: 'active',
+		})
+
+		await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
+		await waitForObjectDetail(page, 'Sidebar shortcut probe')
+
+		const toggle = page.getByRole('button', { name: 'Properties', exact: true })
+		await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+
+		// CI runs Chromium on Linux — Control+I is the effective binding. The
+		// handler in T2 listens for `metaKey || ctrlKey`, so this matches the
+		// documented `⌘/Ctrl+I` shortcut.
+		await page.keyboard.press('Control+i')
+		await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+
+		await page.keyboard.press('Control+i')
+		await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+
+		// ⌘/Ctrl+B is bound to the left nav and must NOT flip the right sidebar.
+		await page.keyboard.press('Control+b')
+		await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+	})
+
+	test('open sidebar renders Subscribe, creator, timestamps, Metadata, Files', async ({
+		page,
+		account,
+	}) => {
+		await page.setViewportSize({
+			width: VIEWPORTS.tabletLandscape.width,
+			height: VIEWPORTS.tabletLandscape.height,
+		})
+		const bet = await account.api.createObject(account.workspaceId, {
+			type: 'bet',
+			title: 'Sidebar contents probe',
+			status: 'active',
+		})
+
+		await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
+		await waitForObjectDetail(page, 'Sidebar contents probe')
+
+		await expect(page.getByRole('button', { name: 'Properties', exact: true })).toHaveAttribute(
+			'aria-expanded',
+			'true',
+		)
+
+		// Subscribe / Unsubscribe toggle — aria-label swaps depending on whether
+		// the creator auto-subscribes on object create.
+		await expect(
+			page.getByRole('button', { name: /(subscribe to|unsubscribe from) this object/i }).first(),
+		).toBeVisible()
+
+		// created_at + updated_at — RelativeTime (relative-time.tsx) renders "now"
+		// for anything under 10s, else "Ns ago", for a freshly created object.
+		await expect(page.getByText(/^(now|\d+s ago)$/i).first()).toBeVisible()
+
+		// MetadataProperties on an object with no metadata + no field defs
+		// renders a "+ Add property" trigger; that's the observable presence
+		// signal for the section.
+		await expect(page.getByRole('button', { name: /add property/i })).toBeVisible()
+
+		// ObjectFiles renders a "Files (0)" heading when there are no
+		// attachments — proves the section mounted inside the sidebar.
+		await expect(page.getByRole('heading', { name: /^Files \(/ })).toBeVisible()
+	})
 })
