@@ -278,11 +278,26 @@ describe('MarketplaceLoopDetail', () => {
 			{ wrapper: TestWrapper },
 		)
 		expect(screen.queryByRole('button', { name: /install loop/i })).not.toBeInTheDocument()
+		// Baseline: no dialog on the page before the flow starts. Any
+		// role="dialog" or role="alertdialog" that appears between the Remove
+		// click and the mutation would be the regression this test exists to
+		// catch (the catalog card's Remove goes through UninstallDialog by
+		// design, so it's easy to wire the same path up here by mistake).
+		expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+		expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+
 		const user = userEvent.setup()
 		await user.click(screen.getByRole('button', { name: 'Loop actions' }))
 		const remove = await screen.findByText('Remove from workspace')
 		expect(remove).toBeInTheDocument()
 		await user.click(remove)
 		expect(api.installedLoops.uninstall).toHaveBeenCalledWith('ws-1', 'inst-1', false)
+
+		// Assert the invariant synchronously right after the click — a
+		// confirmation modal would render before the mutation could resolve, so
+		// checking now (not after a wait) is what distinguishes "no dialog"
+		// from "dialog opened and quickly closed."
+		expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+		expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
 	})
 })
