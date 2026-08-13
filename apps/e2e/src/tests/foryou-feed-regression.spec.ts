@@ -8,7 +8,7 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 // mark-as-read, queue advance + item pinning, empty state) still behave
 // against a real-shaped feed with zero console errors.
 //
-// The REC badge and reason rows are decision-block surfaces owned by T2
+// The decision-block option rows and reason rows are surfaces owned by T2
 // (foryou-queue-card.tsx / lib/foryou-card-kind.ts) — not asserted here.
 //
 // Unread + thread APIs are mocked (repo convention, same as

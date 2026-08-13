@@ -407,9 +407,6 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 								className="mb-3 rounded-md bg-status-in_review-bg p-2.5"
 							>
 								<div className="flex items-center gap-2 px-1 pb-2">
-									<span className="rounded-full bg-foreground px-1.5 py-0.5 font-mono text-[9.5px] font-bold uppercase tracking-wider text-background">
-										REC
-									</span>
 									<span className="text-[12px] font-semibold text-status-in_review-text">
 										Decision needed
 									</span>

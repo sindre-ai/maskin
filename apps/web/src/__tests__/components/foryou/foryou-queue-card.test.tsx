@@ -270,10 +270,9 @@ describe('ForYouQueueCard', () => {
 			expect(onProcessed).toHaveBeenCalledWith(itemQueueKey(item))
 		})
 
-		it('renders the idle block as an in-stream AskCard: REC pill, "Decision needed" header, and 48px option rows with a one-line rationale plus a trailing kbd affordance on the primary', () => {
+		it('renders the idle block as an in-stream AskCard: "Decision needed" header, and 48px option rows with a one-line rationale plus a trailing kbd affordance on the primary', () => {
 			renderDecisionCard()
 			const block = screen.getByTestId('decision-block')
-			expect(block).toHaveTextContent('REC')
 			expect(block).toHaveTextContent('Decision needed')
 
 			const approve = screen.getByRole('button', { name: /Approve/i })
