@@ -141,7 +141,9 @@ test.describe('Bulk-select — shift-click range selection', () => {
 		}
 
 		await page.goto(`/${account.workspaceId}/objects`)
-		await expect(page.getByText('Shift Select Bet')).toBeVisible({ timeout: 10000 })
+		// .first() — three rows share the "Shift Select Bet" prefix (Bet 1/2/3),
+		// which otherwise makes this locator ambiguous.
+		await expect(page.getByText('Shift Select Bet').first()).toBeVisible({ timeout: 10000 })
 
 		// Ordinary click anchors the range on the first row.
 		await page.getByRole('checkbox', { name: 'Select row' }).first().click()

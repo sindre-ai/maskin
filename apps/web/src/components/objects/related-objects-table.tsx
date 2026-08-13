@@ -1,5 +1,4 @@
 import { AgentWorkingBadge } from '@/components/shared/agent-working-badge'
-import { RelativeTime } from '@/components/shared/relative-time'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { Badge } from '@/components/ui/badge'
@@ -39,10 +38,6 @@ interface RelatedObjectsTableProps {
 	workspaceId: string
 	onDeleteRelationship: (relationshipId: string) => void
 	onNavigate?: (workspaceId: string, objectId: string) => void
-	/** Show a "when" column with the linked object's updatedAt (falls back to
-	 *  createdAt). Off by default so existing callers stay unchanged; the
-	 *  Related tab (T4) opts in to satisfy the type/name/status/when contract. */
-	showWhen?: boolean
 }
 
 function ColumnSortHeader({
@@ -69,14 +64,13 @@ export function RelatedObjectsTable({
 	workspaceId,
 	onDeleteRelationship,
 	onNavigate,
-	showWhen = false,
 }: RelatedObjectsTableProps) {
 	const navigate = useNavigate()
 	const isMobile = useIsMobile()
 	const [sorting, setSorting] = useState<SortingState>([])
 
-	const columns = useMemo<ColumnDef<ResolvedRelationship>[]>(() => {
-		const cols: ColumnDef<ResolvedRelationship>[] = [
+	const columns = useMemo<ColumnDef<ResolvedRelationship>[]>(
+		() => [
 			{
 				id: 'title',
 				accessorFn: (row) => row.object.title ?? '',
@@ -122,46 +116,31 @@ export function RelatedObjectsTable({
 				header: ({ column }) => <ColumnSortHeader label="Type" column={column} />,
 				cell: ({ row }) => <TypeBadge type={row.original.object.type} />,
 			},
-		]
-		if (showWhen) {
-			cols.push({
-				id: 'when',
-				accessorFn: (row) => row.object.updatedAt ?? row.object.createdAt ?? '',
-				header: ({ column }) => <ColumnSortHeader label="When" column={column} />,
-				cell: ({ row }) => {
-					const when = row.original.object.updatedAt ?? row.original.object.createdAt ?? null
-					return (
-						<span className="text-xs text-muted-foreground tabular-nums">
-							<RelativeTime date={when} />
-						</span>
-					)
-				},
-			})
-		}
-		cols.push({
-			id: 'actions',
-			header: '',
-			cell: ({ row }) => (
-				<Button
-					variant="ghost"
-					size="icon"
-					/* Always visible on touch; fades behind row hover on sm+. */
-					className="h-7 w-7 text-muted-foreground hover:text-error opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity"
-					onClick={(e) => {
-						e.stopPropagation()
-						onDeleteRelationship(row.original.rel.id)
-					}}
-					title="Remove link"
-					aria-label="Remove link"
-				>
-					<X className="h-3 w-3" />
-				</Button>
-			),
-			enableSorting: false,
-			size: 40,
-		})
-		return cols
-	}, [workspaceId, onDeleteRelationship, showWhen])
+			{
+				id: 'actions',
+				header: '',
+				cell: ({ row }) => (
+					<Button
+						variant="ghost"
+						size="icon"
+						/* Always visible on touch; fades behind row hover on sm+. */
+						className="h-7 w-7 text-muted-foreground hover:text-error opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity"
+						onClick={(e) => {
+							e.stopPropagation()
+							onDeleteRelationship(row.original.rel.id)
+						}}
+						title="Remove link"
+						aria-label="Remove link"
+					>
+						<X className="h-3 w-3" />
+					</Button>
+				),
+				enableSorting: false,
+				size: 40,
+			},
+		],
+		[workspaceId, onDeleteRelationship],
+	)
 
 	const table = useReactTable({
 		data: rows,

@@ -67,13 +67,12 @@ test.describe('Visual — Objects list', () => {
 	})
 })
 
-// Baselines for the rebuilt object-detail static shell (bet/object-detail:
-// header identity row, h1 title, body) across the ship-gate viewports in both
-// themes — 6 shots covering the three breakpoint modes with a seeded bet on
-// the page so the shell has real content to render. The legacy properties
-// sidebar it replaces for this surface (Sheet at 375, off-canvas at 768, 288
-// px inline at 1024) was removed in this bet per the page enumeration.
-test.describe('Visual — Object detail (static shell)', () => {
+// Baselines for the object-detail right sidebar across the ship-gate
+// viewports in both themes — 6 shots covering the three breakpoint modes
+// (Sheet closed at 375, off-canvas collapsed at 768, 288 px inline expanded
+// at 1024) with a seeded bet on the page so the sidebar has real content to
+// render where it's open by default.
+test.describe('Visual — Object detail (right sidebar)', () => {
 	const viewports = [
 		{ width: 375, height: 812, label: 'mobile-375' },
 		{ width: 768, height: 1024, label: 'tablet-768' },
@@ -87,19 +86,22 @@ test.describe('Visual — Object detail (static shell)', () => {
 				await page.setViewportSize({ width: vp.width, height: vp.height })
 				const bet = await account.api.createObject(account.workspaceId, {
 					type: 'bet',
-					title: 'Object detail shell visual',
+					title: 'Object detail sidebar visual',
 					status: 'active',
 					content: 'Hypothesis line so the body carries real content.',
 				})
 				await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
 				await waitForApp(page)
-				// Wait for the static title heading to hydrate before snapshotting
-				// so the hero row isn't captured mid-render.
-				await page.getByRole('heading', { level: 1, name: 'Object detail shell visual' }).waitFor({
-					state: 'visible',
-					timeout: 10_000,
+				// Wait for the title textarea to hydrate before snapshotting so
+				// the hero row isn't captured mid-render.
+				await page.getByPlaceholder('Untitled').waitFor({ state: 'visible', timeout: 10_000 })
+				// Mask per-run dynamic content: relative time labels (<time>) and
+				// activity items whose actor-name contains a run-specific timestamp
+				// (seeded by the E2E auth fixture). Neither is a regression signal
+				// for the sidebar layout this snapshot tests.
+				await argosScreenshot(page, `object-detail-sidebar-${vp.label}-${mode}`, {
+					mask: [page.locator('time'), page.locator('.animate-slide-in')],
 				})
-				await argosScreenshot(page, `object-detail-shell-${vp.label}-${mode}`)
 			})
 		}
 	}
