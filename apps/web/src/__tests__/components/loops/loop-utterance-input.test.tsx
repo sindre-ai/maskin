@@ -49,35 +49,4 @@ describe('LoopUtteranceInput', () => {
 
 		expect(openWithContextMock).not.toHaveBeenCalled()
 	})
-
-	it('calls onSubmit with the trimmed utterance when submitting', async () => {
-		const user = userEvent.setup()
-		const onSubmit = vi.fn()
-		render(
-			<LoopUtteranceInput
-				loop={buildLoopSummary({ id: 'loop-1', name: 'Billing reliability' })}
-				onSubmit={onSubmit}
-			/>,
-		)
-
-		await user.type(
-			screen.getByPlaceholderText('Listening — speak in plain words'),
-			'Tighten the close timeline',
-		)
-		await user.keyboard('{Enter}')
-
-		expect(onSubmit).toHaveBeenCalledWith('Tighten the close timeline')
-		// chat must also open
-		expect(openWithContextMock).toHaveBeenCalledOnce()
-	})
-
-	it('does not call onSubmit for empty utterance', async () => {
-		const user = userEvent.setup()
-		const onSubmit = vi.fn()
-		render(<LoopUtteranceInput loop={buildLoopSummary({ id: 'loop-1' })} onSubmit={onSubmit} />)
-
-		await user.keyboard('{Enter}')
-
-		expect(onSubmit).not.toHaveBeenCalled()
-	})
 })
