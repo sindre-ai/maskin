@@ -1406,6 +1406,24 @@ export class SessionManager extends EventEmitter {
 				env: { GITHUB_PERSONAL_ACCESS_TOKEN: token },
 			}
 		}
+
+		// Email is a platform-hosted tool, not an OAuth-connected integration:
+		// Maskin sends through a single Resend account on mail.maskin.ai. Inject
+		// the send_email MCP entry into every session as long as the host has
+		// RESEND_API_KEY + EMAIL_FROM configured — no per-workspace integration
+		// row required. Auth to the MCP endpoint still rides the standard
+		// MASKIN_API_KEY / X-Workspace-Id headers so the tool is workspace-scoped
+		// at call time.
+		if (process.env.RESEND_API_KEY && process.env.EMAIL_FROM) {
+			autoInjectedMcpServers['integration-email'] = {
+				type: 'http',
+				url: '${MASKIN_API_URL}/api/integrations/email/mcp',
+				headers: {
+					Authorization: 'Bearer ${MASKIN_API_KEY}',
+					'X-Workspace-Id': '${MASKIN_WORKSPACE_ID}',
+				},
+			}
+		}
 		// Register the session's github installs with the log classifier so
 		// tool_result envelopes coming back from the container carry a cause_tag
 		// alongside the failure — the parent bet's AC-6 grep-verifier reads

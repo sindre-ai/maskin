@@ -12,6 +12,7 @@ COPY packages/mcp/package.json packages/mcp/package.json
 COPY packages/module-sdk/package.json packages/module-sdk/package.json
 COPY packages/risk-classifier/package.json packages/risk-classifier/package.json
 COPY packages/markdown/package.json packages/markdown/package.json
+COPY packages/email/package.json packages/email/package.json
 COPY extensions/crm/package.json extensions/crm/package.json
 COPY extensions/knowledge/package.json extensions/knowledge/package.json
 COPY extensions/notetaker/package.json extensions/notetaker/package.json
