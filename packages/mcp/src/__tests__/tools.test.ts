@@ -32,6 +32,7 @@ const ALL_TOOL_NAMES = [
 	'list_relationships',
 	'traverse_graph',
 	'delete_relationship',
+	'maskin_create_agent',
 	'create_actor',
 	'update_actor',
 	'regenerate_api_key',

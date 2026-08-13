@@ -507,6 +507,33 @@ export const tools = {
 				),
 		}),
 	},
+	maskin_create_agent: {
+		description:
+			'Generate an opinionated subject-matter-expert (SME) agent spec from a single-line prompt. Runs a deterministic server-side pipeline that (1) parses the prompt into structured intent — domain, job-to-be-done, deliverables, constraints — and (2) synthesizes a stance-bearing persona (name, role, backstory with decision framework + named biases, scope boundaries, delegation description, inferred tool set). If mandatory intent fields are missing, returns { gap_question, missing } instead of a persona — no hallucinated fills. Actor registration and SKILL.md assembly are separate stages and not returned by this call. Sync response, typical p95 ≤15s. Optional examples/references/constraints refine stage 1 parsing.',
+		inputSchema: z.object({
+			prompt: z
+				.string()
+				.min(1)
+				.max(4000)
+				.describe('One-line description of the SME agent you want (required).'),
+			workspace_id: optionalWorkspaceId,
+			examples: z
+				.array(z.string().min(1).max(2000))
+				.max(10)
+				.optional()
+				.describe('Concrete examples the agent should be able to handle. Optional.'),
+			references: z
+				.array(z.string().min(1).max(2000))
+				.max(10)
+				.optional()
+				.describe('URLs, docs, or prior artifacts to ground the persona. Optional.'),
+			constraints: z
+				.array(z.string().min(1).max(2000))
+				.max(10)
+				.optional()
+				.describe('Hard constraints the agent must respect. Optional.'),
+		}),
+	},
 	create_actor: {
 		description:
 			'Create a new actor (human or agent) and optionally add them to a workspace. Returns the actor details and API key (only shown once). If workspace_id is provided, the actor is added as a member with the given role — this is how to add a brand-new actor to a workspace as part of creating them. To add an already-existing actor to a workspace, use update_actor with workspace_id/role instead. If auto_create_workspace is true (default for humans), a new, empty workspace is created instead. For agents, set tools.mcpServers and/or attach_skill_ids so the agent has its MCP servers and skills from the start. attach_skill_ids requires workspace_id — with auto_create_workspace the new workspace has no existing skills, so any attach_skill_ids passed alongside it are ignored.',

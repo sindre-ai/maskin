@@ -12,6 +12,7 @@ import {
 } from '../lib/landing-guests'
 import { logger } from '../lib/logger'
 import { extractClientIp } from '../lib/trusted-proxy'
+import { callLlm } from '../services/llm-call'
 
 // Public, no-auth endpoint for the landing-page Bet Strategist prompt bar (T3).
 // Accepts a guest's raw problem statement, calls the LLM, stores the result as a
@@ -135,7 +136,7 @@ export function _resetClaimIpDailyBuckets(): void {
 }
 
 // ---------------------------------------------------------------------------
-// LLM call — uses MASKIN_FALLBACK_OPENROUTER_KEY / MASKIN_FALLBACK_BASE_URL
+// LLM call — delegates to the shared callLlm() helper in services/llm-call.
 // ---------------------------------------------------------------------------
 
 const BET_STRATEGIST_SYSTEM_PROMPT = `You are a Bet Strategist for early-stage product teams. Given a user's problem statement, write a concise bet draft: a clear framing of the opportunity, who has the problem, and what a first experiment could look like. Keep it to 3–5 paragraphs, plain prose, no headers. Be direct and specific — if the idea is unclear, surface that honestly rather than padding the response.`
@@ -146,56 +147,20 @@ interface DraftResult {
 }
 
 async function generateDraft(prompt: string): Promise<DraftResult> {
-	const apiKey = process.env.MASKIN_FALLBACK_OPENROUTER_KEY?.trim()
-	if (!apiKey) {
-		logger.warn(
-			'public-bet-strategist: MASKIN_FALLBACK_OPENROUTER_KEY not set, returning error draft',
-		)
+	const result = await callLlm({
+		system: BET_STRATEGIST_SYSTEM_PROMPT,
+		user: prompt,
+		temperature: 0.7,
+		maxTokens: 800,
+		timeoutMs: 30_000,
+	})
+
+	if (!result.ok) {
 		return { content: '', isMalformed: true }
 	}
 
-	const baseUrl = process.env.MASKIN_FALLBACK_BASE_URL?.trim() ?? 'https://openrouter.ai/api'
-	const model =
-		process.env.MASKIN_FALLBACK_SMALL_MODEL?.trim() ??
-		process.env.MASKIN_FALLBACK_MODEL?.trim() ??
-		'deepseek/deepseek-v4-flash'
-
-	try {
-		const response = await fetch(`${baseUrl}/v1/chat/completions`, {
-			method: 'POST',
-			headers: {
-				'Content-Type': 'application/json',
-				Authorization: `Bearer ${apiKey}`,
-			},
-			body: JSON.stringify({
-				model,
-				messages: [
-					{ role: 'system', content: BET_STRATEGIST_SYSTEM_PROMPT },
-					{ role: 'user', content: prompt },
-				],
-				max_tokens: 800,
-				temperature: 0.7,
-			}),
-			signal: AbortSignal.timeout(30_000),
-		})
-
-		if (!response.ok) {
-			logger.warn('public-bet-strategist: LLM API error', { status: response.status })
-			return { content: '', isMalformed: true }
-		}
-
-		const data = (await response.json()) as {
-			choices?: Array<{ message?: { content?: string } }>
-		}
-		const content = data.choices?.[0]?.message?.content?.trim() ?? ''
-		const isMalformed = content.length < 50
-		return { content, isMalformed }
-	} catch (err) {
-		logger.error('public-bet-strategist: LLM call failed', {
-			err: err instanceof Error ? err.message : String(err),
-		})
-		return { content: '', isMalformed: true }
-	}
+	const isMalformed = result.content.length < 50
+	return { content: result.content, isMalformed }
 }
 
 // ---------------------------------------------------------------------------
