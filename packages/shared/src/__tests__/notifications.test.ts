@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest'
 import {
 	bulkRespondNotificationSchema,
 	createNotificationSchema,
+	isValidRequestDecisionMetadata,
 	notificationMetadataSchema,
 	notificationOptionSchema,
 	notificationQuerySchema,
 	notificationStatusSchema,
 	notificationTypeSchema,
+	requestDecisionMetadataSchema,
 	respondNotificationSchema,
 	reverseNotificationSchema,
 	updateNotificationSchema,
@@ -370,5 +372,76 @@ describe('bulkRespondNotificationSchema', () => {
 describe('reverseNotificationSchema', () => {
 	it('accepts an empty body (server enforces the 6s window)', () => {
 		expect(reverseNotificationSchema.parse({})).toEqual({})
+	})
+})
+
+describe('requestDecisionMetadataSchema / isValidRequestDecisionMetadata', () => {
+	const valid = {
+		asked: 'Ship checkout v2?',
+		found: 'Green across staging; zero open bugs; feature flag rollout ready.',
+		recommendation: 'Ship — reversible in 24h via the kill switch.',
+		options: [
+			{ label: 'Ship', value: 'ship', default: true },
+			{ label: 'Hold', value: 'hold' },
+		],
+	}
+
+	it('accepts a complete request_decision payload', () => {
+		expect(() => requestDecisionMetadataSchema.parse(valid)).not.toThrow()
+		expect(isValidRequestDecisionMetadata(valid)).toBe(true)
+	})
+
+	it('passes through unrelated metadata keys', () => {
+		expect(
+			isValidRequestDecisionMetadata({
+				...valid,
+				attention_needed: true,
+				group_key: 'onboarding',
+				tags: ['ship-review'],
+			}),
+		).toBe(true)
+	})
+
+	it('rejects when a decision-support field is missing', () => {
+		const { asked, ...missingAsked } = valid
+		void asked
+		expect(isValidRequestDecisionMetadata(missingAsked)).toBe(false)
+
+		const { found, ...missingFound } = valid
+		void found
+		expect(isValidRequestDecisionMetadata(missingFound)).toBe(false)
+
+		const { recommendation, ...missingRec } = valid
+		void recommendation
+		expect(isValidRequestDecisionMetadata(missingRec)).toBe(false)
+
+		const { options, ...missingOptions } = valid
+		void options
+		expect(isValidRequestDecisionMetadata(missingOptions)).toBe(false)
+	})
+
+	it('rejects an empty options[] (there must be at least one option to pick)', () => {
+		expect(isValidRequestDecisionMetadata({ ...valid, options: [] })).toBe(false)
+	})
+
+	it('rejects when a decision-support field violates its length cap', () => {
+		expect(isValidRequestDecisionMetadata({ ...valid, asked: 'a'.repeat(121) })).toBe(false)
+		expect(isValidRequestDecisionMetadata({ ...valid, found: 'b'.repeat(281) })).toBe(false)
+		expect(isValidRequestDecisionMetadata({ ...valid, recommendation: 'c'.repeat(161) })).toBe(
+			false,
+		)
+	})
+
+	it('rejects empty-string values (agents must actually fill each field)', () => {
+		expect(isValidRequestDecisionMetadata({ ...valid, asked: '' })).toBe(false)
+		expect(isValidRequestDecisionMetadata({ ...valid, found: '' })).toBe(false)
+		expect(isValidRequestDecisionMetadata({ ...valid, recommendation: '' })).toBe(false)
+	})
+
+	it('returns false for null, undefined, or a non-object payload — the pre-Stage-1 baseline', () => {
+		expect(isValidRequestDecisionMetadata(null)).toBe(false)
+		expect(isValidRequestDecisionMetadata(undefined)).toBe(false)
+		expect(isValidRequestDecisionMetadata('request_decision')).toBe(false)
+		expect(isValidRequestDecisionMetadata(42)).toBe(false)
 	})
 })

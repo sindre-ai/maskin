@@ -142,6 +142,33 @@ export const bulkRespondNotificationSchema = z.object({
 // (server clock), so this schema carries no client-supplied timestamp.
 export const reverseNotificationSchema = z.object({})
 
+// The minimum shape a notification's metadata must satisfy to count as a
+// `request_decision` payload — i.e. an agent-authored decision ask that the
+// For You feed can render as a schema-compliant card. Powers the
+// `schema_valid` property on `foryou_card_shown` / `foryou_card_action`
+// (schema compliance rate, per the parent bet's `metadata.posthog_query`).
+// `.passthrough()` because `notificationMetadataSchema` is `.catchall`; the
+// helper only asserts the four decision-support fields are present and
+// individually valid — extra keys are fine.
+export const requestDecisionMetadataSchema = z
+	.object({
+		asked: z.string().min(1).max(120),
+		found: z.string().min(1).max(280),
+		recommendation: z.string().min(1).max(160),
+		options: z.array(notificationOptionSchema).min(1),
+	})
+	.passthrough()
+
+// Boolean predicate wrapping `requestDecisionMetadataSchema.safeParse` so
+// call-sites can derive the `schema_valid` telemetry property from any
+// unknown metadata blob (or `undefined`) without try/catch. Kept in shared
+// so the frontend, MCP tools, and any backend guard read from a single
+// source of truth for what a schema-compliant decision ask looks like.
+export function isValidRequestDecisionMetadata(metadata: unknown): boolean {
+	if (metadata === null || metadata === undefined) return false
+	return requestDecisionMetadataSchema.safeParse(metadata).success
+}
+
 const commaSeparatedStatuses = z
 	.string()
 	.transform((s) =>
