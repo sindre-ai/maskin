@@ -477,6 +477,22 @@ export function trackObjectUnstarred(
 	trackEvent('object_unstarred', { ...fillBase(p), object_subtype: p.object_subtype })
 }
 
+// Success-metric event for the object favourites bet. The bet's `posthog_query`
+// counts distinct actors who fired `starred_filter_opened` on ≥3 of 7
+// consecutive days within 14 days of ship — so only the event name is
+// load-bearing for the metric; `distinct_id` rides via posthog-js's identify
+// call (see `identifyForWorkspace`). `source` distinguishes the Starred entry
+// on the objects-page filter panel from any future entry points (keyboard
+// shortcut, sidebar shortcut) so the count can be sliced without back-filling.
+// Emit once per activation — the filter toggling from off → on. Do not emit
+// when a page loads with the filter already active from URL state, or the day
+// counts get inflated by refreshes and back-navigations.
+export type StarredFilterOpenedSource = 'objects-filter-panel'
+
+export function trackStarredFilterOpened(p: { source: StarredFilterOpenedSource }): void {
+	trackEvent('starred_filter_opened', { source: p.source })
+}
+
 // For You redesign (Direction A) surface-adoption events. The success metric —
 // in-card action rate — pairs `foryou_card_action` (numerator) with
 // `foryou_card_shown` (denominator) on `card_id`, so both events MUST carry the
