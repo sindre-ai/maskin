@@ -142,6 +142,7 @@ describe('MCP telemetry wrapper', () => {
 			'set_llm_api_key',
 			'import_claude_subscription',
 			'disconnect_claude_subscription',
+			'rename_claude_subscription',
 			'stop_session',
 			'pause_session',
 			'resume_session',
