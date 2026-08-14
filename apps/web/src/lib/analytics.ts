@@ -478,3 +478,21 @@ export function trackForyouCardAction(p: {
 		action_id: p.action_id,
 	})
 }
+
+// Skills UX bet measures workspace_skill_attached events. `target_actor_id`
+// (not `actor_id`) carries the agent the skill was attached to — the
+// super-property `actor_id` already means the *acting* user across the whole
+// taxonomy, so we use a distinct name to keep both readings queryable.
+export function trackWorkspaceSkillAttached(p: {
+	workspace_id: string
+	target_actor_id: string
+	skill_id: string
+	skill_visible: boolean
+}): void {
+	trackEvent('workspace_skill_attached', {
+		workspace_id: p.workspace_id,
+		target_actor_id: p.target_actor_id,
+		skill_id: p.skill_id,
+		skill_visible: p.skill_visible,
+	})
+}

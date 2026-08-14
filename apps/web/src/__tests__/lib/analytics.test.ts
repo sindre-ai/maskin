@@ -31,6 +31,7 @@ import {
 	trackSpecialistSummonedManually,
 	trackTriggerCreated,
 	trackTriggerFired,
+	trackWorkspaceSkillAttached,
 } from '@/lib/analytics'
 import { setStoredActor } from '@/lib/auth'
 import { __setInitializedForTesting } from '@/lib/posthog'
@@ -368,6 +369,24 @@ describe('v1 taxonomy helpers', () => {
 				parent_entity_type: 'bet',
 			}),
 		)
+	})
+
+	it('workspace_skill_attached carries workspace, target actor, skill id, and visibility', () => {
+		const capture = captureSpy()
+
+		trackWorkspaceSkillAttached({
+			workspace_id: 'ws-1',
+			target_actor_id: 'agent-7',
+			skill_id: 'skill-9',
+			skill_visible: true,
+		})
+
+		expect(capture).toHaveBeenCalledWith('workspace_skill_attached', {
+			workspace_id: 'ws-1',
+			target_actor_id: 'agent-7',
+			skill_id: 'skill-9',
+			skill_visible: true,
+		})
 	})
 
 	it('mini_app_file_viewed carries the fixed property contract for a file open', () => {

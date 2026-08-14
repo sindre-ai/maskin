@@ -11,6 +11,11 @@ vi.mock('@/lib/api', () => ({
 	},
 }))
 
+const trackWorkspaceSkillAttachedMock = vi.fn()
+vi.mock('@/lib/analytics', () => ({
+	trackWorkspaceSkillAttached: (...args: unknown[]) => trackWorkspaceSkillAttachedMock(...args),
+}))
+
 import {
 	useAgentSkillAttachments,
 	useAttachSkill,
@@ -69,23 +74,74 @@ describe('use-agent-skill-attachments', () => {
 				wrapper: TestWrapper,
 			})
 
-			result.current.mutate(attached.id)
+			result.current.mutate({
+				id: attached.id,
+				workspaceId: attached.workspaceId,
+				isValid: attached.isValid,
+			})
 
 			await waitFor(() => expect(result.current.isSuccess).toBe(true))
 			expect(api.workspaceSkills.attach).toHaveBeenCalledWith('actor-1', attached.id)
 		})
 
-		it('surfaces errors', async () => {
+		it('emits workspace_skill_attached on success with workspace, target actor, skill, and visibility', async () => {
+			vi.mocked(api.workspaceSkills.attach).mockResolvedValue(attached)
+
+			const { result } = renderHook(() => useAttachSkill('actor-1'), {
+				wrapper: TestWrapper,
+			})
+
+			result.current.mutate({
+				id: attached.id,
+				workspaceId: attached.workspaceId,
+				isValid: attached.isValid,
+			})
+
+			await waitFor(() => expect(result.current.isSuccess).toBe(true))
+			expect(trackWorkspaceSkillAttachedMock).toHaveBeenCalledTimes(1)
+			expect(trackWorkspaceSkillAttachedMock).toHaveBeenCalledWith({
+				workspace_id: attached.workspaceId,
+				target_actor_id: 'actor-1',
+				skill_id: attached.id,
+				skill_visible: true,
+			})
+		})
+
+		it('passes skill_visible=false when the workspace skill is invalid', async () => {
+			vi.mocked(api.workspaceSkills.attach).mockResolvedValue({ ...attached, isValid: false })
+
+			const { result } = renderHook(() => useAttachSkill('actor-1'), {
+				wrapper: TestWrapper,
+			})
+
+			result.current.mutate({
+				id: attached.id,
+				workspaceId: attached.workspaceId,
+				isValid: false,
+			})
+
+			await waitFor(() => expect(result.current.isSuccess).toBe(true))
+			expect(trackWorkspaceSkillAttachedMock).toHaveBeenCalledWith(
+				expect.objectContaining({ skill_visible: false }),
+			)
+		})
+
+		it('does not emit the event when attach fails', async () => {
 			vi.mocked(api.workspaceSkills.attach).mockRejectedValue(new Error('forbidden'))
 
 			const { result } = renderHook(() => useAttachSkill('actor-1'), {
 				wrapper: TestWrapper,
 			})
 
-			result.current.mutate(attached.id)
+			result.current.mutate({
+				id: attached.id,
+				workspaceId: attached.workspaceId,
+				isValid: attached.isValid,
+			})
 
 			await waitFor(() => expect(result.current.isError).toBe(true))
 			expect(result.current.error?.message).toBe('forbidden')
+			expect(trackWorkspaceSkillAttachedMock).not.toHaveBeenCalled()
 		})
 	})
 
