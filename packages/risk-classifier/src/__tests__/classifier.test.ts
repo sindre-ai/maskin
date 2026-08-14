@@ -197,4 +197,53 @@ describe('classify', () => {
 		const b = collectSignals(input())
 		expect(a).toEqual(b)
 	})
+
+	it('architectural_invariant_violation adds 40 and lifts a small diff to at least AGENT RECOMMENDS HUMAN', () => {
+		const v = classify(input({ architectural_invariant_violation: true }))
+		const hit = v.signals.find((s) => s.kind === 'architectural_invariant_violation')
+		expect(hit?.weight).toBe(40)
+		expect(v.score).toBeGreaterThanOrEqual(60)
+		expect(v.band).not.toBe('auto')
+	})
+
+	it('architectural_invariant_violation floor is max(sum, 60), not a cap', () => {
+		const v = classify(
+			input({
+				architectural_invariant_violation: true,
+				files: [
+					file({ path: 'packages/auth/src/session.ts' }),
+					file({
+						path: 'apps/dev/migrations/0999_x.sql',
+						patch: '+ALTER TABLE x ADD COLUMN y int;',
+					}),
+					file({ path: '.github/workflows/ci.yml' }),
+				],
+				new_deps_with_cve: ['left-pad@1.0.0'],
+			}),
+		)
+		// arch(40) + auth(15) + ddl(15) + gha(20) + cve(25) = 115 → capped 100, floor stays under
+		expect(v.score).toBe(100)
+	})
+
+	it('protected-path floor (100) still wins over architectural_invariant_violation (60)', () => {
+		const v = classify(
+			input({
+				architectural_invariant_violation: true,
+				files: [file({ path: 'packages/auth/src/index.ts' })],
+				protected_paths: ['packages/auth/**'],
+			}),
+		)
+		expect(v.score).toBe(100)
+		expect(v.floors_applied.some((f) => f.kind === 'protected_path')).toBe(true)
+	})
+
+	it('architectural_invariant_violation absent → v0.2.0-shaped behaviour unchanged', () => {
+		const withoutFlag = classify(input())
+		const withFalseFlag = classify(input({ architectural_invariant_violation: false }))
+		expect(withoutFlag.score).toBe(withFalseFlag.score)
+		expect(withoutFlag.band).toBe(withFalseFlag.band)
+		expect(withoutFlag.signals.some((s) => s.kind === 'architectural_invariant_violation')).toBe(
+			false,
+		)
+	})
 })

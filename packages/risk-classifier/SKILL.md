@@ -1,7 +1,7 @@
 ---
 name: risk-classifier
-version: 0.1.0
-description: Use to score a PR diff on the 0–100 risk band that gates the auto-merge pipeline. Triggers on every `pull_request` opened/synchronize/reopened/ready_for_review event against `main`, and on demand from the `orchestrate-pr-review` skill. The skill produces a deterministic score from a fixed signal table (path sensitivity, DDL detection, secrets-like patterns, SAST alerts, incident density, and friends), applies the floors declared in `.maskin/protected-paths.yml` and `.maskin/risk-floors.yml`, and emits a `## Risk Score` block plus a `maskin/risk-score` check run. Do NOT use to *decide* whether to merge — that's `orchestrate-pr-review`'s job. Do NOT use to author code or critique style — score, output, stop.
+version: 0.3.0
+description: Use to score a PR diff on the 0–100 risk band that gates the auto-merge pipeline. Triggers on every `pull_request` opened/synchronize/reopened/ready_for_review event against `main`, and on demand from the `orchestrate-pr-review` skill. The skill produces a deterministic score from a fixed signal table (path sensitivity, DDL detection, secrets-like patterns, SAST alerts, incident density, architectural invariants read from the `maskin/fitness` check-run, and friends), applies the floors declared in `.maskin/protected-paths.yml` and `.maskin/risk-floors.yml` plus the arch-invariant floor, and emits a `## Risk Score` block plus a `maskin/risk-score` check run. Do NOT use to *decide* whether to merge — that's `orchestrate-pr-review`'s job. Do NOT use to author code or critique style — score, output, stop.
 ---
 
 # Risk Classifier
@@ -39,8 +39,9 @@ Run the adapter binary at `packages/risk-classifier/bin/risk-classifier.mjs`. Pa
 - `--ai-generated` if the PR body or commit trailers carry an AI-authoring marker
 - `--public-api-delta <n>` for the count of public symbols added/removed
 - `--incident-density <file.json>` if Sentry/PagerDuty data is available
+- `--fitness-check <owner/repo>` to read the `maskin/fitness` check-run conclusion on the head SHA (requires `GITHUB_TOKEN` in the environment; workflow-scoped read is included with `checks: write`)
 
-The adapter reads `.maskin/protected-paths.yml`, `.maskin/risk-floors.yml`, and `.maskin/hot-tables.yml` from the repo, runs `git diff` between the two SHAs, runs `squawk` on `.sql` files, and runs Semgrep diff-scan. It returns a `ClassifierVerdict` JSON object.
+The adapter reads `.maskin/protected-paths.yml`, `.maskin/risk-floors.yml`, and `.maskin/hot-tables.yml` from the repo, runs `git diff` between the two SHAs, runs `squawk` on `.sql` files, and runs Semgrep diff-scan. When `--fitness-check` is set, it also fetches `GET /repos/:owner/:repo/commits/:sha/check-runs?check_name=maskin/fitness&filter=latest`, polling every 10s up to 120s if the run has not yet completed, then failing closed (signal set) if the poll times out. It returns a `ClassifierVerdict` JSON object.
 
 ### 2. Apply the signal table
 
@@ -66,12 +67,14 @@ Sum the weights of every triggered signal. Cap the sum at 100.
 | `ai_generated_marker` | +5 |
 | `codeql_or_semgrep_alert` | severity-weighted: 30 / 20 / 8 / 2 (CRITICAL / ERROR / WARNING / INFO) |
 | `squawk_blocking_lock` | +15 |
+| `architectural_invariant_violation` | +40 (also applies floor: `max(sum, 60)`) |
 
 ### 3. Apply the floors
 
 Floors override the additive sum. Apply in this order:
 
 - **Protected path** — any file matches a glob in `.maskin/protected-paths.yml` → score = 100, regardless of additive sum.
+- **Architectural invariant violation** — the `maskin/fitness` check-run reports `conclusion == "failure"` (or the poll times out) → score = max(additive_sum, 60). Guarantees the PR lands at least AGENT RECOMMENDS HUMAN.
 - **Regex floor** — any line matches a pattern in `.maskin/risk-floors.yml` → score = max(additive_sum, 60).
 - **Squawk hot-table hit** — squawk flags a blocking lock against a table in `.maskin/hot-tables.yml` → score = max(additive_sum, 60).
 
@@ -93,7 +96,7 @@ Write the verdict on the **task** linked from the PR's `github_link`, under a `#
 ## Risk Score
 
 **Score:** <0-100>/100 — <BAND LABEL>
-**Skill version:** 0.1.0
+**Skill version:** 0.3.0
 **Commit:** <head-sha>
 **Deterministic seed:** <16-hex>
 
@@ -115,7 +118,11 @@ The check-run summary includes the score and band; the full block goes on the ta
 
 ## Attestation
 
-Record the skill version (`0.1.0`) and the deterministic seed in the in-toto attestation built by `orchestrate-pr-review`. The orchestrator binds the version to the verdict; bumping `version:` in this skill's frontmatter must accompany any change to the signal table, weights, floors, or output format.
+Record the skill version (`0.3.0`) and the deterministic seed in the in-toto attestation built by `orchestrate-pr-review`. The orchestrator binds the version to the verdict; bumping `version:` in this skill's frontmatter must accompany any change to the signal table, weights, floors, or output format.
+
+Version log:
+- **0.1.0** — initial signal table, protected-path floor (100), regex floor (60), squawk hot-table floor (60).
+- **0.3.0** — adds `architectural_invariant_violation` (+40) sourced from the `maskin/fitness` check-run conclusion, with a hard floor of `max(sum, 60)` when set. Reserved: 0.2.0 was never released (development snapshot).
 
 ## What NOT to do
 

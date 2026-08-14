@@ -171,6 +171,14 @@ export function collectSignals(input: ClassifierInput): CollectedSignals {
 		})
 	}
 
+	if (input.architectural_invariant_violation) {
+		signals.push({
+			kind: 'architectural_invariant_violation',
+			weight: SIGNAL_WEIGHTS.architectural_invariant_violation,
+			evidence: 'maskin/fitness check-run reported failure on PR head SHA',
+		})
+	}
+
 	if (input.semgrep_alerts && input.semgrep_alerts.length > 0) {
 		const totalSemgrepWeight = input.semgrep_alerts.reduce(
 			(acc, a) => acc + semgrepSeverityWeight(a.severity),

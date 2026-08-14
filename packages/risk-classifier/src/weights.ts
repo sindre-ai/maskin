@@ -2,6 +2,7 @@ import type { SignalKind } from './types.js'
 
 export const PATH_FLOOR_SCORE = 100
 export const REGEX_FLOOR_SCORE = 60
+export const ARCH_INVARIANT_FLOOR_SCORE = 60
 
 export const SIGNAL_WEIGHTS: Record<
 	Exclude<SignalKind, 'protected_path' | 'regex_floor_hit' | 'codeql_or_semgrep_alert'>,
@@ -24,6 +25,7 @@ export const SIGNAL_WEIGHTS: Record<
 	file_unchanged_365d: 5,
 	ai_generated_marker: 5,
 	squawk_blocking_lock: 15,
+	architectural_invariant_violation: 40,
 }
 
 export function diffLocBucketWeight(loc: number): number {

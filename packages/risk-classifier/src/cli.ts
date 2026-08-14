@@ -2,6 +2,7 @@ import path from 'node:path'
 import { parseArgs } from 'node:util'
 import { classify } from './classifier.js'
 import { loadMaskinConfig } from './lib/config.js'
+import { fetchFitnessSignal } from './lib/fitness.js'
 import { readDiffFromGit, resolveCommitSha } from './lib/git.js'
 import { loadIncidentDensityFromFile } from './lib/incidents.js'
 import { runSemgrepDiff } from './lib/semgrep.js'
@@ -19,6 +20,7 @@ interface CliOptions {
 	aiGenerated: boolean
 	publicApiDelta: number
 	output: 'markdown' | 'json' | 'check-run'
+	fitnessCheck?: { owner: string; repo: string }
 }
 
 export function parseCliArgs(argv: string[]): CliOptions {
@@ -34,6 +36,7 @@ export function parseCliArgs(argv: string[]): CliOptions {
 			'ai-generated': { type: 'boolean', default: false },
 			'public-api-delta': { type: 'string', default: '0' },
 			output: { type: 'string', default: 'markdown' },
+			'fitness-check': { type: 'string' },
 		},
 		strict: true,
 	})
@@ -57,7 +60,15 @@ export function parseCliArgs(argv: string[]): CliOptions {
 		aiGenerated: Boolean(values['ai-generated']),
 		publicApiDelta,
 		output,
+		fitnessCheck: parseFitnessCheck(values['fitness-check']),
 	}
+}
+
+function parseFitnessCheck(v: unknown): CliOptions['fitnessCheck'] {
+	if (typeof v !== 'string' || v.length === 0) return undefined
+	const [owner, repo] = v.split('/')
+	if (!owner || !repo) throw new Error(`--fitness-check expects owner/repo, got: ${v}`)
+	return { owner, repo }
 }
 
 function required(v: string | undefined, name: string): string {
@@ -70,7 +81,7 @@ function parseOutput(v: unknown): CliOptions['output'] {
 	return 'markdown'
 }
 
-export function runCli(argv: string[]): { exitCode: number; stdout: string } {
+export async function runCli(argv: string[]): Promise<{ exitCode: number; stdout: string }> {
 	const opts = parseCliArgs(argv)
 	const config = loadMaskinConfig(opts.repo)
 	const files = readDiffFromGit(opts.base, opts.head, opts.repo)
@@ -79,6 +90,14 @@ export function runCli(argv: string[]): { exitCode: number; stdout: string } {
 	const semgrepAlerts = runSemgrepDiff(opts.base, opts.head, opts.repo)
 	const incidentDensity = opts.incidentDensityFile
 		? loadIncidentDensityFromFile(opts.incidentDensityFile)
+		: undefined
+	const architecturalInvariantViolation = opts.fitnessCheck
+		? await fetchFitnessSignal({
+				owner: opts.fitnessCheck.owner,
+				repo: opts.fitnessCheck.repo,
+				sha: commitSha,
+				token: requireEnv('GITHUB_TOKEN', '--fitness-check'),
+			})
 		: undefined
 
 	const input: ClassifierInput = {
@@ -94,6 +113,7 @@ export function runCli(argv: string[]): { exitCode: number; stdout: string } {
 		ai_generated_marker: opts.aiGenerated,
 		missing_tests_for_logic: opts.missingTests,
 		public_api_surface_delta: opts.publicApiDelta,
+		architectural_invariant_violation: architecturalInvariantViolation,
 	}
 
 	const verdict = classify(input)
@@ -106,4 +126,10 @@ export function runCli(argv: string[]): { exitCode: number; stdout: string } {
 
 	const exitCode = verdict.band === 'auto' ? 0 : verdict.band === 'agent_recommends_human' ? 1 : 2
 	return { exitCode, stdout }
+}
+
+function requireEnv(name: string, contextFlag: string): string {
+	const v = process.env[name]
+	if (!v) throw new Error(`${contextFlag} requires ${name} to be set in the environment`)
+	return v
 }

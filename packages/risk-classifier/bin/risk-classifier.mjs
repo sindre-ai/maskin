@@ -2,7 +2,7 @@
 import { runCli } from '../dist/cli.js'
 
 try {
-	const { exitCode, stdout } = runCli(process.argv.slice(2))
+	const { exitCode, stdout } = await runCli(process.argv.slice(2))
 	process.stdout.write(`${stdout}\n`)
 	process.exit(exitCode)
 } catch (err) {
