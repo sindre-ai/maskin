@@ -9,6 +9,7 @@ import {
 	CCD_PACKAGE_SLUG,
 	CCD_PACKAGE_USE_CASE,
 	CCD_PACKAGE_VERSION,
+	DAILY_HUMAN_ACTIONS_DIGEST_ACTION_PROMPT,
 	DEV_ACTOR_ACCEPTANCE_VALIDATOR,
 	DEV_ACTOR_ARCHITECT,
 	DEV_ACTOR_AUTO_MERGE_BOT,
@@ -4183,55 +4184,10 @@ Triggering event: {triggering_event}`,
 			itemSnapshot: {
 				name: 'Daily human-actions digest → @Sebk',
 				description:
-					'Daily 5:30 AM digest of all human actions in the workspace from the previous day.',
+					'Daily 5:30 AM digest of all human actions in the workspace from the previous day, plus batched signup-driven bet promotions (always-notify-Sebastian lane).',
 				type: 'cron',
 				config: { expression: '30 5 * * *' },
-				actionPrompt: `Load the maskin-voice skill before writing anything. Every morning at 7:30am Copenhagen time, produce the daily human-actions digest and send it as a Slack message to Sebastian.
-
-**SWEEP — last 24 hours of human-authored events:**
-
-1. **Status changes by humans** — list every bet or task status change where the actor is a human (not an agent). Format: "[object title]: [old status] → [new status]"
-
-2. **Comments by humans** — list every comment authored by a human. Format: "[human name] on [object title]: [first 80 chars of comment]"
-
-3. **@mentions of founders** — find every comment that @mentions workspace owners (find via workspace members list). Note which agent sent the mention and what for.
-
-4. **New objects created by humans** — bets, insights, tasks created directly by a human (not spawned by an agent). List titles.
-
-5. **Approvals and overrides** — any comment containing "approved", "override", "force-done", "revert", "manual-merge". These are high-signal human decisions.
-
-6. **Open threads needing human response** — tasks in \`in_review\` with \`decision_type: ux\` or \`decision_type: architecture\` where no human has commented since the agent's proposal was posted. List them as "⏳ Waiting for your input: [task title]".
-
-**OUTPUT:**
-Send a Slack message to the workspace owner's DM (find the workspace owner's Slack user ID via slack_search_users — look up owner actor via workspace members, then find their email). Message format:
-
-\`\`\`
-Good morning, @Sebk 👋 Here's what happened yesterday:
-
-**Decisions made**
-[approvals and overrides from sweep #5]
-
-**Waiting for you**
-[open threads from sweep #6]
-
-**Status changes**
-[from sweep #1]
-
-**Comments**
-[from sweep #2, capped at 5 most recent]
-
-**New items**
-[from sweep #4]
-
-**@Mentions of you/Magnus**
-[from sweep #3]
-\`\`\`
-
-Keep it scannable — one line per item. Omit empty sections. If truly nothing happened in the last 24h, send: "Good morning, @Sebk 👋 Quiet day yesterday — no human actions recorded."
-
-Do NOT create an insight for this digest. The digest lives only in Slack.
-
-Triggering event: {triggering_event}`,
+				actionPrompt: DAILY_HUMAN_ACTIONS_DIGEST_ACTION_PROMPT,
 				targetActorId: DEV_ACTOR_WORKSPACE_COACH,
 				enabled: true,
 			},
