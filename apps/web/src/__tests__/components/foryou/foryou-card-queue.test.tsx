@@ -92,12 +92,14 @@ describe('ForYouCardQueue', () => {
 			objectId: 'obj-fyi',
 			metadata: { attention_needed: true },
 		})
+		// Relative timestamp so the fixture stays inside the 24h "handled today"
+		// window on every run — hardcoded absolute dates aged out overnight.
 		const handled = buildNotification({
 			id: 'n-handled',
 			status: 'resolved',
 			title: 'Approved the send',
 			objectId: 'obj-handled',
-			resolvedAt: '2026-08-13T05:00:00Z',
+			resolvedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
 			wakeDispatched: true,
 		})
 

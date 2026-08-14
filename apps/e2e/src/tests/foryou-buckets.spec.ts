@@ -186,9 +186,10 @@ for (const viewport of SHIP_GATE_VIEWPORTS) {
 			await expect(page.getByRole('heading', { name: 'Handled today' })).toBeVisible()
 
 			// The two same-object drafts collapse into one grouped card with a bulk action.
-			const groupedCard = page
-				.getByTestId('foryou-group-card')
-				.filter({ has: page.locator(`[data-object-id="${OBJ_SHARED}"]`) })
+			// Both attributes live on the same node; filter({ has }) is descendant-only.
+			const groupedCard = page.locator(
+				`[data-testid="foryou-group-card"][data-object-id="${OBJ_SHARED}"]`,
+			)
 			await expect(groupedCard).toHaveCount(1)
 			await expect(groupedCard).toHaveAttribute('data-group-size', '2')
 			await expect(groupedCard.getByTestId('foryou-bulk-approve')).toHaveText(/approve all 2/i)
@@ -201,9 +202,10 @@ for (const viewport of SHIP_GATE_VIEWPORTS) {
 			const { bulkCalls } = await mockNotifications(page, account.workspaceId)
 			await page.goto(`/${account.workspaceId}`)
 
-			const groupedCard = page
-				.getByTestId('foryou-group-card')
-				.filter({ has: page.locator(`[data-object-id="${OBJ_SHARED}"]`) })
+			// Both attributes live on the same node; filter({ has }) is descendant-only.
+			const groupedCard = page.locator(
+				`[data-testid="foryou-group-card"][data-object-id="${OBJ_SHARED}"]`,
+			)
 			await groupedCard.getByTestId('foryou-bulk-approve').click()
 
 			await expect.poll(() => bulkCalls.length).toBe(1)
