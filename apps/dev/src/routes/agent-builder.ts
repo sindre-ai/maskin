@@ -100,6 +100,10 @@ app.post('/create', async (c) => {
 				intent: result.intent,
 				persona: result.persona,
 				system_prompt: result.assembledSystemPrompt,
+				definition_summary: result.definitionSummary,
+				gap_report: result.gapReportMarkdown,
+				gap_report_items: result.gapReport.gap_items,
+				gap_report_comment_posted: result.gapReportCommentPosted,
 			},
 			200,
 		)
