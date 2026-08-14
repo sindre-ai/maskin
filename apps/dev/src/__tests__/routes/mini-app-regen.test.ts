@@ -4,6 +4,7 @@ import {
 	MASKIN_APP_DATA_WINDOW_KEY,
 	MASKIN_STATE_SLOT_ID,
 	buildDailyRegenActionPrompt,
+	buildMaskinStateSlot,
 	dailyRegenTriggerName,
 } from '../../services/mini-app-regen'
 import { buildFile, buildTrigger, buildWorkspaceMember } from '../factories'
@@ -161,6 +162,152 @@ describe('Mini-app regen route', () => {
 		)
 
 		expect(res.status).toBe(400)
+	})
+
+	it('DoD — smoke-test route reads the file, runs the harness, returns the report', async () => {
+		const { app, mockResults, storageProvider } = createImportTestApp(
+			miniAppRegenRoutes,
+			'/api/mini-apps',
+		)
+		const member = buildWorkspaceMember({ workspaceId, actorId })
+		const htmlFile = buildFile({
+			workspaceId,
+			id: fileId,
+			name: 'curriculum.html',
+			mimeType: 'text/html',
+			sizeBytes: 500,
+		})
+		mockResults.selectQueue = [[member], [htmlFile]]
+
+		const objects = [{ id: '11111111-1111-1111-1111-111111111111', type: 'insight' }]
+		const html = [
+			'<!DOCTYPE html>',
+			'<html><body><div id="root"></div>',
+			buildMaskinStateSlot(objects),
+			`<script>window.${MASKIN_APP_DATA_WINDOW_KEY} = JSON.parse(document.getElementById('${MASKIN_STATE_SLOT_ID}').textContent); document.getElementById('root').textContent = 'ok'</script>`,
+			'</body></html>',
+		].join('\n')
+		;(
+			storageProvider.get as unknown as { mockResolvedValue: (v: Buffer) => void }
+		).mockResolvedValue(Buffer.from(html, 'utf8'))
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/mini-apps/smoke-test',
+				{
+					file_id: fileId,
+					expected_object_ids: ['11111111-1111-1111-1111-111111111111'],
+				},
+				headers(),
+			),
+		)
+
+		expect(res.status).toBe(200)
+		const json = await res.json()
+		expect(json.ok).toBe(true)
+		expect(json.file.id).toBe(fileId)
+		expect(Array.isArray(json.checks)).toBe(true)
+		const idsCheck = json.checks.find(
+			(c: { name: string; ok: boolean }) => c.name === 'expected_ids_present',
+		)
+		expect(idsCheck?.ok).toBe(true)
+		expect(storageProvider.get).toHaveBeenCalledWith(htmlFile.storageKey)
+	})
+
+	it('DoD — smoke-test reports ok=false when the freshly-written slot is stale', async () => {
+		const { app, mockResults, storageProvider } = createImportTestApp(
+			miniAppRegenRoutes,
+			'/api/mini-apps',
+		)
+		const member = buildWorkspaceMember({ workspaceId, actorId })
+		const htmlFile = buildFile({
+			workspaceId,
+			id: fileId,
+			name: 'curriculum.html',
+			mimeType: 'text/html',
+			sizeBytes: 500,
+		})
+		mockResults.selectQueue = [[member], [htmlFile]]
+
+		// The bytes on disk carry only one of the two ids the agent claims it baked in.
+		const objects = [{ id: '11111111-1111-1111-1111-111111111111', type: 'insight' }]
+		const html = [
+			'<!DOCTYPE html>',
+			'<html><body><div id="root">x</div>',
+			buildMaskinStateSlot(objects),
+			`<script>window.${MASKIN_APP_DATA_WINDOW_KEY} = JSON.parse(document.getElementById('${MASKIN_STATE_SLOT_ID}').textContent);</script>`,
+			'</body></html>',
+		].join('\n')
+		;(
+			storageProvider.get as unknown as { mockResolvedValue: (v: Buffer) => void }
+		).mockResolvedValue(Buffer.from(html, 'utf8'))
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/mini-apps/smoke-test',
+				{
+					file_id: fileId,
+					expected_object_ids: [
+						'11111111-1111-1111-1111-111111111111',
+						'99999999-9999-9999-9999-999999999999',
+					],
+				},
+				headers(),
+			),
+		)
+
+		// Response is still 200 — the report itself carries pass/fail so the
+		// agent can act on it rather than a bare HTTP error.
+		expect(res.status).toBe(200)
+		const json = await res.json()
+		expect(json.ok).toBe(false)
+		const idsCheck = json.checks.find(
+			(c: { name: string; ok: boolean; detail?: string }) => c.name === 'expected_ids_present',
+		)
+		expect(idsCheck?.ok).toBe(false)
+	})
+
+	it('smoke-test rejects non-html files', async () => {
+		const { app, mockResults } = createImportTestApp(miniAppRegenRoutes, '/api/mini-apps')
+		const member = buildWorkspaceMember({ workspaceId, actorId })
+		const mdFile = buildFile({
+			workspaceId,
+			id: fileId,
+			name: 'notes.md',
+			mimeType: 'text/markdown',
+		})
+		mockResults.selectQueue = [[member], [mdFile]]
+
+		const res = await app.request(
+			jsonRequest('POST', '/api/mini-apps/smoke-test', { file_id: fileId }, headers()),
+		)
+
+		expect(res.status).toBe(400)
+	})
+
+	it('smoke-test rejects non-members', async () => {
+		const { app, mockResults } = createImportTestApp(miniAppRegenRoutes, '/api/mini-apps')
+		mockResults.selectQueue = [[]]
+
+		const res = await app.request(
+			jsonRequest('POST', '/api/mini-apps/smoke-test', { file_id: fileId }, headers()),
+		)
+
+		expect(res.status).toBe(403)
+	})
+
+	it('smoke-test 404s when the file is not in the workspace', async () => {
+		const { app, mockResults } = createImportTestApp(miniAppRegenRoutes, '/api/mini-apps')
+		const member = buildWorkspaceMember({ workspaceId, actorId })
+		mockResults.selectQueue = [[member], []]
+
+		const res = await app.request(
+			jsonRequest('POST', '/api/mini-apps/smoke-test', { file_id: fileId }, headers()),
+		)
+
+		expect(res.status).toBe(404)
 	})
 
 	it('does not take over a same-named trigger that regens a DIFFERENT file', async () => {

@@ -1,8 +1,10 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import { events, files, triggers } from '@maskin/db/schema'
+import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import { logger } from '../lib/logger'
 import { errorSchema, triggerResponseSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
 import { isWorkspaceMember } from '../lib/workspace-auth'
@@ -12,12 +14,14 @@ import {
 	buildDailyRegenTrigger,
 } from '../services/mini-app-regen'
 import type { MiniAppFileRef } from '../services/mini-app-regen'
+import { smokeTestMiniApp } from '../services/mini-app-smoke-test'
 
 type Env = {
 	Variables: {
 		db: Database
 		actorId: string
 		actorType: string
+		storageProvider: StorageProvider
 	}
 }
 
@@ -184,5 +188,125 @@ app.openapi(regenRoute, (async (c) => {
 		200,
 	)
 }) as RouteHandler<typeof regenRoute, Env>)
+
+// POST /smoke-test — post-regen render check, run before the agent considers a
+// regenerated file published. Fetches the stored bytes, invokes the pure
+// smoke-test kernel, returns a structured report the caller can act on.
+const smokeTestBodySchema = z.object({
+	file_id: z.string().uuid(),
+	// Ids the agent just baked into the slot. If any is missing from the parsed
+	// slot payload, the write produced a stale file — the agent must not treat
+	// it as published.
+	expected_object_ids: z.array(z.string().uuid()).max(500).optional(),
+})
+
+const smokeCheckSchema = z.object({
+	name: z.enum([
+		'slot_present',
+		'slot_is_json',
+		'renders_without_error',
+		'body_not_empty',
+		'exposes_window_key',
+		'expected_ids_present',
+	]),
+	ok: z.boolean(),
+	detail: z.string().optional(),
+})
+
+const smokeReportSchema = z.object({
+	ok: z.boolean(),
+	checks: z.array(smokeCheckSchema),
+	file: z.object({
+		id: z.string().uuid(),
+		name: z.string(),
+		mime_type: z.string(),
+		size_bytes: z.number().int().nonnegative(),
+	}),
+})
+
+const smokeTestRoute = createRoute({
+	method: 'post',
+	path: '/smoke-test',
+	tags: ['Mini-apps'],
+	summary: 'Render-check a regenerated mini-app before it counts as published',
+	request: {
+		headers: workspaceIdHeader,
+		body: { content: { 'application/json': { schema: smokeTestBodySchema } } },
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: smokeReportSchema } },
+			description: 'Report — 200 whether the file passes or fails; caller reads `ok`',
+		},
+		400: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Invalid request',
+		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Not a member',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'File not found',
+		},
+		500: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Failed to read file bytes',
+		},
+	},
+})
+
+app.openapi(smokeTestRoute, (async (c) => {
+	const db = c.get('db')
+	const storage = c.get('storageProvider')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const body = c.req.valid('json')
+
+	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
+		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
+	}
+
+	const [file] = await db.select().from(files).where(eq(files.id, body.file_id)).limit(1)
+	if (!file || file.workspaceId !== workspaceId) {
+		return c.json(createApiError('NOT_FOUND', 'File not found in this workspace'), 404)
+	}
+	if (!isHtmlMime(file.mimeType)) {
+		return c.json(
+			createApiError('VALIDATION_ERROR', 'Smoke-test only applies to hosted html apps'),
+			400,
+		)
+	}
+
+	let html: string
+	try {
+		const bytes = await storage.get(file.storageKey)
+		html = bytes.toString('utf8')
+	} catch (err) {
+		logger.error('Smoke-test failed to read file bytes', {
+			fileId: file.id,
+			storageKey: file.storageKey,
+			error: String(err),
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to read file bytes'), 500)
+	}
+
+	const report = smokeTestMiniApp(html, { expectedObjectIds: body.expected_object_ids })
+
+	return c.json(
+		{
+			ok: report.ok,
+			checks: report.checks,
+			file: {
+				id: file.id,
+				name: file.name,
+				mime_type: file.mimeType,
+				size_bytes: file.sizeBytes,
+			},
+		} satisfies z.infer<typeof smokeReportSchema>,
+		200,
+	)
+}) as RouteHandler<typeof smokeTestRoute, Env>)
 
 export default app
