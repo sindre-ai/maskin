@@ -1,3 +1,4 @@
+import { FormError } from '@/components/shared/form-error'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -210,6 +211,7 @@ function SlotCard({
 	const renameMutation = useMutation({
 		mutationFn: (nickname: string) => api.claudeOauth.rename(workspaceId, slot, nickname),
 		onSuccess,
+		onError: () => setNicknameDraft(info?.nickname ?? ''),
 	})
 
 	const [nicknameDraft, setNicknameDraft] = useState(info?.nickname ?? '')
@@ -279,31 +281,39 @@ function SlotCard({
 					</span>
 				)}
 			</div>
-			<div className="flex items-center gap-1 w-fit max-w-full">
-				<input
-					ref={nicknameInputRef}
-					type="text"
-					value={nicknameDraft}
-					onChange={(e) => setNicknameDraft(e.target.value)}
-					onBlur={handleNicknameBlur}
-					onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
-					placeholder={NICKNAME_PLACEHOLDER}
-					maxLength={60}
-					size={Math.max(nicknameDraft.length, NICKNAME_PLACEHOLDER.length)}
-					disabled={renameMutation.isPending}
-					aria-label={`Nickname for ${label} slot`}
-					data-testid={`slot-${slot}-nickname`}
-					className="min-w-0 max-w-full bg-transparent border-none outline-none text-sm font-medium text-foreground placeholder:text-muted-foreground/70 focus:outline-none px-0 py-0 disabled:opacity-60"
-				/>
-				<button
-					type="button"
-					onClick={() => nicknameInputRef.current?.focus()}
-					className="shrink-0 text-muted-foreground/60 hover:text-foreground transition-colors"
-					aria-label={`Edit nickname for ${label} slot`}
-					tabIndex={-1}
-				>
-					<Pencil size={12} />
-				</button>
+			<div>
+				<div className="flex items-center gap-1 w-fit max-w-full">
+					<input
+						ref={nicknameInputRef}
+						type="text"
+						value={nicknameDraft}
+						onChange={(e) => {
+							setNicknameDraft(e.target.value)
+							if (renameMutation.isError) renameMutation.reset()
+						}}
+						onBlur={handleNicknameBlur}
+						onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+						placeholder={NICKNAME_PLACEHOLDER}
+						maxLength={60}
+						size={Math.max(nicknameDraft.length, NICKNAME_PLACEHOLDER.length)}
+						disabled={renameMutation.isPending}
+						aria-label={`Nickname for ${label} slot`}
+						data-testid={`slot-${slot}-nickname`}
+						className="min-w-0 max-w-full bg-transparent border-none outline-none text-sm font-medium text-foreground placeholder:text-muted-foreground/70 focus:outline-none px-0 py-0 disabled:opacity-60"
+					/>
+					<button
+						type="button"
+						onClick={() => nicknameInputRef.current?.focus()}
+						className="shrink-0 text-muted-foreground/60 hover:text-foreground transition-colors"
+						aria-label={`Edit nickname for ${label} slot`}
+						tabIndex={-1}
+					>
+						<Pencil size={12} />
+					</button>
+				</div>
+				{renameMutation.isError && (
+					<FormError error={renameMutation.error?.message || 'Could not save nickname'} />
+				)}
 			</div>
 			<div className="flex items-center gap-2 flex-wrap">
 				<div
