@@ -15,6 +15,10 @@ export function initSentry(): void {
 		Sentry.init({
 			dsn,
 			environment: import.meta.env.MODE,
+			// VITE_SENTRY_RELEASE is passed as a Docker build ARG (baked into the SPA
+			// bundle at build time) — see apps/dev/Dockerfile. Undefined here is fine;
+			// Sentry treats the release tab as unset rather than throwing.
+			release: import.meta.env.VITE_SENTRY_RELEASE,
 			sendDefaultPii: false,
 		})
 		initialized = true

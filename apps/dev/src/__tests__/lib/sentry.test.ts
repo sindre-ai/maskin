@@ -9,7 +9,7 @@ vi.mock('@sentry/node', () => ({
 	setTag: vi.fn(),
 }))
 
-const ENV_KEYS = ['SENTRY_DSN_DEV', 'NODE_ENV', 'SENTRY_FORCE_ENABLE'] as const
+const ENV_KEYS = ['SENTRY_DSN_DEV', 'NODE_ENV', 'SENTRY_FORCE_ENABLE', 'SENTRY_RELEASE'] as const
 
 describe('lib/sentry (apps/dev) init gating', () => {
 	const original: Record<string, string | undefined> = {}
@@ -69,5 +69,29 @@ describe('lib/sentry (apps/dev) init gating', () => {
 		process.env.SENTRY_FORCE_ENABLE = 'true'
 		const { Sentry } = await loadSentryModule()
 		expect(Sentry.init).toHaveBeenCalledOnce()
+	})
+
+	it('propagates SENTRY_RELEASE onto Sentry.init when it is set', async () => {
+		process.env.SENTRY_DSN_DEV = 'https://example.invalid/1'
+		process.env.NODE_ENV = 'production'
+		// biome-ignore lint/performance/noDelete: assigning undefined coerces to the string "undefined" in Node.js
+		delete process.env.SENTRY_FORCE_ENABLE
+		process.env.SENTRY_RELEASE = 'deadbeefcafef00d'
+		const { Sentry } = await loadSentryModule()
+		expect(Sentry.init).toHaveBeenCalledWith(
+			expect.objectContaining({ release: 'deadbeefcafef00d' }),
+		)
+	})
+
+	it('passes release=undefined when SENTRY_RELEASE is not set so init still succeeds', async () => {
+		process.env.SENTRY_DSN_DEV = 'https://example.invalid/1'
+		process.env.NODE_ENV = 'production'
+		// biome-ignore lint/performance/noDelete: assigning undefined coerces to the string "undefined" in Node.js
+		delete process.env.SENTRY_FORCE_ENABLE
+		// biome-ignore lint/performance/noDelete: assigning undefined coerces to the string "undefined" in Node.js
+		delete process.env.SENTRY_RELEASE
+		const { Sentry } = await loadSentryModule()
+		expect(Sentry.init).toHaveBeenCalledOnce()
+		expect(Sentry.init).toHaveBeenCalledWith(expect.objectContaining({ release: undefined }))
 	})
 })

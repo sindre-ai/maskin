@@ -51,6 +51,29 @@ describe('initSentry gating', () => {
 		)
 	})
 
+	it('propagates VITE_SENTRY_RELEASE onto Sentry.init when it is set', () => {
+		vi.stubEnv('VITE_SENTRY_DSN', 'https://example.invalid/1')
+		vi.stubEnv('VITE_SENTRY_FORCE_ENABLE', 'true')
+		vi.stubEnv('VITE_SENTRY_RELEASE', 'deadbeefcafef00d')
+
+		initSentry()
+
+		expect(Sentry.init).toHaveBeenCalledWith(
+			expect.objectContaining({ release: 'deadbeefcafef00d' }),
+		)
+	})
+
+	it('passes release=undefined when VITE_SENTRY_RELEASE is not set so init still succeeds', () => {
+		vi.stubEnv('VITE_SENTRY_DSN', 'https://example.invalid/1')
+		vi.stubEnv('VITE_SENTRY_FORCE_ENABLE', 'true')
+		vi.stubEnv('VITE_SENTRY_RELEASE', '')
+
+		initSentry()
+
+		expect(Sentry.init).toHaveBeenCalledOnce()
+		expect(Sentry.init).toHaveBeenCalledWith(expect.objectContaining({ release: '' }))
+	})
+
 	it('is idempotent — a second call does not re-init', () => {
 		vi.stubEnv('VITE_SENTRY_DSN', 'https://example.invalid/1')
 		vi.stubEnv('VITE_SENTRY_FORCE_ENABLE', 'true')

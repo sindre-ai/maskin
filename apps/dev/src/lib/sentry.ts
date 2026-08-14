@@ -19,6 +19,12 @@ if (dsn && enabled) {
 		Sentry.init({
 			dsn,
 			environment: process.env.NODE_ENV ?? 'development',
+			// SENTRY_RELEASE is set to the deploy's git SHA by the Dockerfile / systemd
+			// EnvironmentFile. Undefined here is fine — Sentry treats the field as unset
+			// and the release tab in the UI just doesn't populate — so a missed injection
+			// degrades the T5 watcher's correlation to file-path+recency rather than
+			// crashing boot.
+			release: process.env.SENTRY_RELEASE,
 			tracesSampleRate: 0.1,
 			sendDefaultPii: false,
 		})

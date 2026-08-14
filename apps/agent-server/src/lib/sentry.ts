@@ -18,6 +18,11 @@ if (dsn && enabled) {
 		Sentry.init({
 			dsn,
 			environment: process.env.NODE_ENV ?? 'development',
+			// SENTRY_RELEASE is written to /opt/maskin/apps/agent-server/.env by
+			// agent-server-deploy.yml on every deploy, then picked up by systemd's
+			// EnvironmentFile on restart. Undefined here is fine — see the identical
+			// comment in apps/dev/src/lib/sentry.ts.
+			release: process.env.SENTRY_RELEASE,
 			tracesSampleRate: 0.1,
 			sendDefaultPii: false,
 		})

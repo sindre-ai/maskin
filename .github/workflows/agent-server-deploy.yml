@@ -18,10 +18,13 @@ jobs:
     steps:
       - name: git pull, build, restart on agent-server host
         uses: appleboy/ssh-action@v1
+        env:
+          RELEASE_SHA: ${{ github.sha }}
         with:
           host: ${{ secrets.AGENT_SERVER_HOST }}
           username: ${{ secrets.AGENT_SERVER_USER }}
           key: ${{ secrets.AGENT_SERVER_SSH_KEY }}
+          envs: RELEASE_SHA
           command_timeout: 15m
           script: |
             set -euo pipefail
@@ -32,6 +35,20 @@ jobs:
 
             pnpm install --frozen-lockfile
             pnpm turbo run build --filter=@maskin/agent-server...
+
+            # Systemd reads /opt/maskin/apps/agent-server/.env (EnvironmentFile)
+            # on start. Rewrite the SENTRY_RELEASE line so this deploy's SHA is
+            # what the restarted process sees — Sentry then tags every captured
+            # event with release.commit_id = this SHA, which is what the T5
+            # watcher uses to correlate an error back to the merging PR.
+            ENV_FILE=/opt/maskin/apps/agent-server/.env
+            touch "$ENV_FILE"
+            # Strip any prior SENTRY_RELEASE line, then append the fresh one.
+            # `set -e` above turns a grep no-match into a fatal exit — bypass
+            # with `|| true` so a first-ever deploy (no prior line) works.
+            (grep -v '^SENTRY_RELEASE=' "$ENV_FILE" || true) > "$ENV_FILE.tmp"
+            echo "SENTRY_RELEASE=$RELEASE_SHA" >> "$ENV_FILE.tmp"
+            mv "$ENV_FILE.tmp" "$ENV_FILE"
 
             # KillMode=process on this unit means a restart only replaces the
             # dispatcher — live microVM sessions are left running untouched.
