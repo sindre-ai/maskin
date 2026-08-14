@@ -243,6 +243,39 @@ describe('Workspaces Routes', () => {
 			expect(body.onboardingEnabled).toBe(true)
 		})
 
+		it('seeds prompt rows in the fixed dependency order (vision → hypothesis → ICP → NSM → evidence)', async () => {
+			const ws = buildWorkspace()
+			const updated = { ...ws, onboardingEnabled: true }
+			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.selectQueue = [
+				[ws], // workspace exists check
+				[{ actorId: 'test-actor-id' }], // isWorkspaceOwner → owner row found
+			]
+			mockResults.update = [updated]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, { onboarding_enabled: true }),
+			)
+
+			expect(res.status).toBe(200)
+			// The route inserts workspaces.update first, then workspaceOnboardingPrompts
+			// with the ordered prompt-type array. Locate the prompt-seed insert by shape.
+			const promptSeed = calls.inserts.find(
+				(v): v is Array<{ workspaceId: string; promptType: string }> =>
+					Array.isArray(v) && v.every((r) => r && typeof r === 'object' && 'promptType' in r),
+			)
+			expect(promptSeed).toBeDefined()
+			expect(promptSeed?.map((r) => r.promptType)).toEqual([
+				'product_vision',
+				'first_bet_hypothesis',
+				'icp',
+				'north_star_metric',
+				'customer_evidence',
+			])
+			// All seeded rows point at this workspace
+			expect(promptSeed?.every((r) => r.workspaceId === ws.id)).toBe(true)
+		})
+
 		it('returns 403 when caller is not the workspace owner', async () => {
 			const ws = buildWorkspace()
 			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')

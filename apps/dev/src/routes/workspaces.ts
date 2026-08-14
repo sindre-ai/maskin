@@ -346,10 +346,14 @@ const updateWorkspaceOnboardingRoute = createRoute({
 	},
 })
 
+// Fixed dependency order enforced by the workspace-observer-onboarding skill:
+// each prompt personalises its ask from answers upstream, so the sequence is
+// vision → hypothesis → ICP → North Star → evidence. This array both seeds the
+// tracking rows and pins the order the Coach follows when it reads them back.
 const ONBOARDING_PROMPT_TYPES = [
 	'product_vision',
-	'icp',
 	'first_bet_hypothesis',
+	'icp',
 	'north_star_metric',
 	'customer_evidence',
 ] as const
@@ -397,7 +401,7 @@ app.openapi(updateWorkspaceOnboardingRoute, (async (c) => {
 				.createSession(id, {
 					actorId: coach.id,
 					actionPrompt:
-						'A workspace has been enabled for onboarding (onboarding_enabled flipped to true). Run the workspace-observer-onboarding skill.\n\nBefore starting: check whether this workspace already has an onboarding_session object. If one exists, exit silently.\n\nIf none exists, follow the workspace-observer-onboarding skill to:\n1. Create the onboarding_session object.\n2. Subscribe the workspace owner.\n3. Post the five context prompts in sequence, waiting for each reply before the next.\n4. Capture each reply as a knowledge object.\n5. Close the session when all prompts are answered (or after 24h).',
+						"A workspace has been enabled for onboarding (onboarding_enabled flipped to true). Run the workspace-observer-onboarding skill.\n\nBefore starting: check whether this workspace already has an onboarding_session object. If one exists, exit silently.\n\nIf none exists, follow the workspace-observer-onboarding skill to:\n1. Create the onboarding_session object.\n2. Subscribe the workspace owner.\n3. Post the five context prompts strictly in the fixed dependency order — product_vision → first_bet_hypothesis → icp → north_star_metric → customer_evidence — waiting for each reply before the next. Before posting each prompt, run the skill's skip-logic (step 3a): if prior research already captured that layer at high confidence, convert the prompt to a confirmation card instead of asking cold.\n4. Capture each reply as a knowledge object with metadata.topic, metadata.provenance, and metadata.confidence set per the skill.\n5. Close the session when all prompts are answered or confirmed via skip-logic (or after 24h).",
 					createdBy: actorId,
 				})
 				.catch((err) =>
