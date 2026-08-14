@@ -1519,6 +1519,11 @@ export const tools = {
 			expires_at: z.number().describe('Unix ms timestamp when the access token expires.'),
 			subscription_type: z.string().optional().describe('e.g. "pro", "max", "teams".'),
 			scopes: z.array(z.string()).optional(),
+			nickname: z
+				.string()
+				.max(60)
+				.optional()
+				.describe('Optional label so this credential is distinguishable from others in the UI.'),
 		}),
 	},
 	get_claude_subscription_status: {
@@ -1532,6 +1537,15 @@ export const tools = {
 		description: 'Disconnect the Claude subscription for the workspace (removes stored tokens).',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
+		}),
+	},
+	rename_claude_subscription: {
+		description:
+			"Set or clear the nickname on a Claude subscription credential slot (primary or backup) so it's distinguishable from other credentials in the UI instead of showing only an opaque fingerprint. Pass an empty string to clear the nickname. Does not touch the stored tokens.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			slot: z.enum(['primary', 'backup']).default('primary'),
+			nickname: z.string().max(60),
 		}),
 	},
 	// ─── Extensions ──────────────────────────────────────────

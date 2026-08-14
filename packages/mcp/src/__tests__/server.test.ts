@@ -2435,6 +2435,22 @@ describe('tool handlers', () => {
 				scopes: ['read'],
 			})
 		})
+
+		it('passes through an optional nickname', async () => {
+			mockFetchSuccess({ success: true, expires_at: 1 })
+
+			const handler = getHandler('import_claude_subscription')
+			await handler({
+				access_token: 'at',
+				refresh_token: 'rt',
+				expires_at: 1,
+				nickname: 'Work account',
+			})
+
+			const fetchCall = vi.mocked(fetch).mock.calls[0]
+			const body = JSON.parse(fetchCall[1]?.body as string)
+			expect(body.nickname).toBe('Work account')
+		})
 	})
 
 	describe('get_claude_subscription_status handler', () => {
@@ -2469,6 +2485,29 @@ describe('tool handlers', () => {
 				'http://localhost:3000/api/claude-oauth',
 				expect.objectContaining({ method: 'DELETE' }),
 			)
+		})
+	})
+
+	describe('rename_claude_subscription handler', () => {
+		it('PATCHes /api/claude-oauth/nickname with the slot and nickname', async () => {
+			mockFetchSuccess({ success: true })
+
+			const handler = getHandler('rename_claude_subscription')
+			await handler({ slot: 'backup', nickname: 'Overflow account' })
+
+			expect(fetch).toHaveBeenCalledWith(
+				'http://localhost:3000/api/claude-oauth/nickname',
+				expect.objectContaining({
+					method: 'PATCH',
+					headers: expect.objectContaining({
+						Authorization: 'Bearer ank_testkey123',
+						'X-Workspace-Id': 'ws-default-123',
+					}),
+				}),
+			)
+			const fetchCall = vi.mocked(fetch).mock.calls[0]
+			const body = JSON.parse(fetchCall[1]?.body as string)
+			expect(body).toEqual({ slot: 'backup', nickname: 'Overflow account' })
 		})
 	})
 

@@ -527,6 +527,12 @@ export const api = {
 			}),
 		swap: (workspaceId: string) =>
 			request<{ success: boolean }>('/claude-oauth/swap', { method: 'POST', workspaceId }),
+		rename: (workspaceId: string, slot: ClaudeOAuthSlot, nickname: string) =>
+			request<{ success: boolean }>('/claude-oauth/nickname', {
+				method: 'PATCH',
+				body: { slot, nickname },
+				workspaceId,
+			}),
 	},
 
 	marketplaceLoops: {
@@ -775,6 +781,7 @@ export interface ClaudeOAuthSlotInfo {
 	subscription_type?: string
 	expires_at: number
 	fingerprint?: string
+	nickname?: string
 }
 
 export interface ClaudeOAuthExchangeResponse {
@@ -782,6 +789,7 @@ export interface ClaudeOAuthExchangeResponse {
 	slot?: ClaudeOAuthSlot
 	subscription_type?: string
 	expires_at: number
+	nickname?: string
 }
 
 export interface ClaudeOAuthStatusResponse {
@@ -807,6 +815,7 @@ export interface ClaudeOAuthImportInput {
 	subscriptionType?: string
 	scopes?: string[]
 	slot?: ClaudeOAuthSlot
+	nickname?: string
 }
 
 // Types derived from backend response schemas
