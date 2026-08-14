@@ -1,11 +1,28 @@
 import { randomUUID } from 'node:crypto'
 import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
-import { events, actors, agentSkills, workspaceMembers, workspaceSkills } from '@maskin/db/schema'
+import {
+	events,
+	actors,
+	agentSkills,
+	objects,
+	sessions,
+	workspaceMembers,
+	workspaceSkills,
+} from '@maskin/db/schema'
 import { PLATFORM_MCP_PRESET, serializeSkillMd, skillNameSchema } from '@maskin/shared'
+import { and, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { trackAgentCreated } from '../lib/analytics/agent-builder-events'
 import { logger } from '../lib/logger'
+import {
+	type ReviewerVerdict,
+	failingCriteriaNames,
+	getOrBootstrapCanonicalRubric,
+	resolveRubricById,
+	runAgentReviewer,
+	trackReviewerVerdictSubmitted,
+} from './agent-reviewer'
 import type { AgentStorageManager } from './agent-storage'
 import { type LlmCallInput, callLlm } from './llm-call'
 
@@ -209,6 +226,14 @@ export interface AgentBuilderContext {
 	actorId: string
 }
 
+export interface ReviewerAttemptRecord {
+	cycleNumber: number
+	overall: 'pass' | 'fail'
+	failingCriteria: string[]
+	reviewerSessionId: string
+	rubricId: string
+}
+
 export type RunAgentBuilderResult =
 	| { kind: 'gap_question'; gap_question: string; missing: string[] }
 	| {
@@ -226,6 +251,8 @@ export type RunAgentBuilderResult =
 			gapReportMarkdown: string
 			definitionSummary: string
 			gapReportCommentPosted: boolean
+			reviewerAttempts: ReviewerAttemptRecord[]
+			reviewerFinalOverall: 'pass' | 'fail'
 	  }
 
 export class AgentBuilderError extends Error {
@@ -298,7 +325,15 @@ function buildStage6UserMessage(
 		.join('\n')
 }
 
-function buildPersonaContextMessage(intent: Stage1Output, persona: PersonaSpec): string {
+function buildPersonaContextMessage(
+	intent: Stage1Output,
+	persona: PersonaSpec,
+	revisionNotes?: string[],
+): string {
+	const revisionBlock =
+		revisionNotes && revisionNotes.length > 0
+			? `REVISION FEEDBACK (address every item — a prior reviewer pass flagged these):\n- ${revisionNotes.join('\n- ')}`
+			: ''
 	return [
 		`DOMAIN: ${intent.domain}`,
 		`JOB TO BE DONE: ${intent.job_to_be_done}`,
@@ -308,6 +343,7 @@ function buildPersonaContextMessage(intent: Stage1Output, persona: PersonaSpec):
 		persona.scope_boundaries.length ? `SCOPE:\n- ${persona.scope_boundaries.join('\n- ')}` : '',
 		`DELEGATION DESCRIPTION: ${persona.delegation_description}`,
 		persona.tool_set.length ? `TOOL SET:\n- ${persona.tool_set.join('\n- ')}` : '',
+		revisionBlock,
 	]
 		.filter(Boolean)
 		.join('\n\n')
@@ -608,6 +644,68 @@ async function registerActorAndSkill(inputs: RegistrationInputs): Promise<{
 	return created
 }
 
+/**
+ * Run stages 3 (system prompt author) + 4 (opinionation layer) as one
+ * parallel dispatch. Extracted so the reviewer revision loop can re-run this
+ * pair (and only this pair — per DoD 4) with reviewer fix notes appended.
+ */
+async function runStages3And4(
+	intent: Stage1Output,
+	persona: PersonaSpec,
+	revisionNotes?: string[],
+): Promise<{ sections: SystemPromptSpec; opinionation: OpinionationSpec }> {
+	const personaContext = buildPersonaContextMessage(intent, persona, revisionNotes)
+	const [stage3Raw, stage4Raw] = await Promise.all([
+		runStage('stage3', {
+			system: STAGE_3_PROMPT,
+			user: personaContext,
+			temperature: STAGE_3_TEMPERATURE,
+			maxTokens: 1800,
+			timeoutMs: STAGE_TIMEOUT_MS,
+			jsonMode: true,
+		}),
+		runStage('stage4', {
+			system: STAGE_4_PROMPT,
+			user: personaContext,
+			temperature: STAGE_4_TEMPERATURE,
+			maxTokens: 700,
+			timeoutMs: STAGE_TIMEOUT_MS,
+			jsonMode: true,
+		}),
+	])
+
+	const stage3Parsed = stage3Schema.safeParse(safeParseJson(stage3Raw))
+	if (!stage3Parsed.success) {
+		logger.error('agent-builder: stage3 parse failed', {
+			issues: stage3Parsed.error.issues,
+			rawPreview: stage3Raw.slice(0, 200),
+		})
+		throw new AgentBuilderError(
+			'stage3_parse_error',
+			'stage3: LLM returned invalid system-prompt shape (missing required sections or too few worked examples)',
+		)
+	}
+
+	const stage4Parsed = stage4Schema.safeParse(safeParseJson(stage4Raw))
+	if (!stage4Parsed.success) {
+		logger.error('agent-builder: stage4 parse failed', {
+			issues: stage4Parsed.error.issues,
+			rawPreview: stage4Raw.slice(0, 200),
+		})
+		throw new AgentBuilderError(
+			'stage4_parse_error',
+			'stage4: LLM returned invalid opinionation shape',
+		)
+	}
+
+	return { sections: stage3Parsed.data, opinionation: stage4Parsed.data }
+}
+
+// Reviewer revision cap: 2 revision cycles means up to 3 attempts total.
+// Per DoD 4: on a 3rd failing attempt, log and proceed with best-effort
+// output rather than blocking the whole builder call.
+const MAX_REVIEWER_REVISION_CYCLES = 2
+
 export async function runAgentBuilder(
 	input: RunAgentBuilderInput,
 	ctx: AgentBuilderContext,
@@ -676,56 +774,89 @@ export async function runAgentBuilder(
 	}
 	const persona = stage2Parsed.data
 
-	// ── Stages 3 & 4: system prompt authoring + opinionation layer ─────────
-	// Both take {intent, persona} and produce independent artefacts, so they
-	// run in parallel to protect the p95 <30s budget.
-	const personaContext = buildPersonaContextMessage(intent, persona)
-	const [stage3Raw, stage4Raw] = await Promise.all([
-		runStage('stage3', {
-			system: STAGE_3_PROMPT,
-			user: personaContext,
-			temperature: STAGE_3_TEMPERATURE,
-			maxTokens: 1800,
-			timeoutMs: STAGE_TIMEOUT_MS,
-			jsonMode: true,
-		}),
-		runStage('stage4', {
-			system: STAGE_4_PROMPT,
-			user: personaContext,
-			temperature: STAGE_4_TEMPERATURE,
-			maxTokens: 700,
-			timeoutMs: STAGE_TIMEOUT_MS,
-			jsonMode: true,
-		}),
-	])
+	// ── Stages 3 & 4 + fresh-context reviewer loop ─────────────────────────
+	// Stages 3 and 4 dispatch in parallel (independent artefacts, single
+	// Promise.all). After they land, the reviewer scores the assembled system
+	// prompt against the workspace's rubric. A failing verdict re-runs THIS
+	// pair (and only this pair, per DoD 4) with the reviewer's fix notes
+	// appended as revision feedback. Hard cap 2 revisions (3 attempts total);
+	// beyond that we log and proceed with the last-produced definition so a
+	// broken reviewer never blocks the whole builder.
+	const rubric = await getOrBootstrapCanonicalRubric(ctx.db, ctx.workspaceId, ctx.actorId)
 
-	const stage3Parsed = stage3Schema.safeParse(safeParseJson(stage3Raw))
-	if (!stage3Parsed.success) {
-		logger.error('agent-builder: stage3 parse failed', {
-			issues: stage3Parsed.error.issues,
-			rawPreview: stage3Raw.slice(0, 200),
+	const reviewerAttempts: ReviewerAttemptRecord[] = []
+	let sections: SystemPromptSpec | null = null
+	let opinionation: OpinionationSpec | null = null
+	let assembledSystemPrompt = ''
+	let revisionNotes: string[] | undefined
+	let reviewerFinalOverall: 'pass' | 'fail' = 'fail'
+
+	for (let attempt = 0; attempt <= MAX_REVIEWER_REVISION_CYCLES; attempt++) {
+		const staged = await runStages3And4(intent, persona, revisionNotes)
+		sections = staged.sections
+		opinionation = staged.opinionation
+		assembledSystemPrompt = assembleSystemPrompt(persona, sections, opinionation)
+
+		let verdict: ReviewerVerdict
+		let reviewerSessionId: string
+		try {
+			const reviewed = await runAgentReviewer({
+				definitionText: assembledSystemPrompt,
+				rubricBody: rubric.content,
+			})
+			verdict = reviewed.verdict
+			reviewerSessionId = reviewed.reviewerSessionId
+		} catch (err) {
+			// Reviewer failure: log, proceed with the current attempt. Don't
+			// abort the builder — a broken reviewer must not sink the whole call.
+			logger.warn('agent-builder: reviewer errored, proceeding without verdict', {
+				attempt: attempt + 1,
+				error: String(err),
+			})
+			reviewerFinalOverall = 'fail'
+			break
+		}
+
+		const failing = failingCriteriaNames(verdict)
+		const cycleNumber = attempt + 1
+		reviewerAttempts.push({
+			cycleNumber,
+			overall: verdict.overall,
+			failingCriteria: failing,
+			reviewerSessionId,
+			rubricId: rubric.id,
 		})
-		throw new AgentBuilderError(
-			'stage3_parse_error',
-			'stage3: LLM returned invalid system-prompt shape (missing required sections or too few worked examples)',
-		)
+
+		reviewerFinalOverall = verdict.overall
+
+		if (verdict.overall === 'pass') break
+
+		if (attempt >= MAX_REVIEWER_REVISION_CYCLES) {
+			// Third failing attempt: log and ship the current definition anyway.
+			// This is the escape hatch called out in DoD 4 so a stubborn reviewer
+			// can never wedge the builder call indefinitely.
+			logger.warn('agent-builder: reviewer failed after 2 revision cycles, shipping anyway', {
+				failingCriteria: failing,
+				actorPersonaName: persona.name,
+			})
+			break
+		}
+
+		// Feed the failing criteria fixes back as revision notes for the next
+		// attempt's stage 3 + 4 dispatch.
+		revisionNotes = verdict.criteria
+			.filter((c) => !c.pass && c.fix.trim())
+			.map((c) => `[${c.name}] ${c.fix.trim()}`)
 	}
 
-	const stage4Parsed = stage4Schema.safeParse(safeParseJson(stage4Raw))
-	if (!stage4Parsed.success) {
-		logger.error('agent-builder: stage4 parse failed', {
-			issues: stage4Parsed.error.issues,
-			rawPreview: stage4Raw.slice(0, 200),
-		})
-		throw new AgentBuilderError(
-			'stage4_parse_error',
-			'stage4: LLM returned invalid opinionation shape',
-		)
+	if (!sections || !opinionation) {
+		// Unreachable: the loop body always assigns both before break, and the
+		// only path that skips assignment (`throw new AgentBuilderError(...)`)
+		// exits the function first. Kept as a defensive throw so drift on the
+		// loop can't silently ship a half-assembled definition.
+		throw new AgentBuilderError('stage3_parse_error', 'agent-builder: no definition produced')
 	}
 
-	const sections = stage3Parsed.data
-	const opinionation = stage4Parsed.data
-	const assembledSystemPrompt = assembleSystemPrompt(persona, sections, opinionation)
 	const skillName = personaSkillName(persona.name)
 	const skillMd = assembleSkillMd(skillName, persona, sections, opinionation)
 
@@ -778,6 +909,21 @@ export async function runAgentBuilder(
 		generationTimeMs: Date.now() - pipelineStartMs,
 	})
 
+	// Emit reviewer_verdict_submitted for every attempt now that the actor id
+	// is known — the target_actor_id property lets the SSE feed and PostHog
+	// dashboards join verdicts to the actor they scored.
+	for (const attempt of reviewerAttempts) {
+		await trackReviewerVerdictSubmitted(ctx.db, {
+			workspaceId: ctx.workspaceId,
+			actorId: ctx.actorId,
+			targetActorId: actor.id,
+			rubricId: attempt.rubricId,
+			overall: attempt.overall,
+			cycleNumber: attempt.cycleNumber,
+			reviewerSessionId: attempt.reviewerSessionId,
+			failingCriteria: attempt.failingCriteria,
+		})
+	}
 
 	return {
 		kind: 'created',
@@ -794,6 +940,8 @@ export async function runAgentBuilder(
 		gapReportMarkdown,
 		definitionSummary,
 		gapReportCommentPosted,
+		reviewerAttempts,
+		reviewerFinalOverall,
 	}
 }
 
@@ -862,4 +1010,358 @@ async function postGapReportComment(
 		})
 		return false
 	}
+}
+
+// ── Standalone reviewer path (maskin_review_work) ────────────────────────────
+
+export class AgentReviewTargetError extends Error {
+	constructor(
+		readonly reason:
+			| 'target_not_found'
+			| 'target_wrong_workspace'
+			| 'object_no_content'
+			| 'session_not_terminal'
+			| 'session_no_result'
+			| 'rubric_not_found',
+		message: string,
+	) {
+		super(message)
+		this.name = 'AgentReviewTargetError'
+	}
+}
+
+const TERMINAL_SESSION_STATUSES = new Set(['completed', 'failed', 'timeout'])
+
+/**
+ * Resolve the review target's definition text from either an object or a
+ * session id. Object path reads `objects.content`; session path reads
+ * `sessions.result` (requires a terminal status — a still-running session
+ * has nothing final to score).
+ */
+export async function loadReviewTarget(
+	db: Database,
+	workspaceId: string,
+	target: { objectId?: string; sessionId?: string },
+): Promise<{ definitionText: string; targetActorId: string | null }> {
+	if (target.objectId) {
+		const rows = await db
+			.select({
+				content: objects.content,
+				workspaceId: objects.workspaceId,
+			})
+			.from(objects)
+			.where(eq(objects.id, target.objectId))
+			.limit(1)
+		const row = rows[0]
+		if (!row) {
+			throw new AgentReviewTargetError('target_not_found', `Object ${target.objectId} not found`)
+		}
+		if (row.workspaceId !== workspaceId) {
+			throw new AgentReviewTargetError(
+				'target_wrong_workspace',
+				`Object ${target.objectId} does not belong to workspace ${workspaceId}`,
+			)
+		}
+		const definitionText = (row.content ?? '').trim()
+		if (!definitionText) {
+			throw new AgentReviewTargetError(
+				'object_no_content',
+				`Object ${target.objectId} has no content to review`,
+			)
+		}
+		return { definitionText, targetActorId: null }
+	}
+
+	if (target.sessionId) {
+		const rows = await db
+			.select({
+				status: sessions.status,
+				result: sessions.result,
+				workspaceId: sessions.workspaceId,
+				actorId: sessions.actorId,
+			})
+			.from(sessions)
+			.where(eq(sessions.id, target.sessionId))
+			.limit(1)
+		const row = rows[0]
+		if (!row) {
+			throw new AgentReviewTargetError('target_not_found', `Session ${target.sessionId} not found`)
+		}
+		if (row.workspaceId !== workspaceId) {
+			throw new AgentReviewTargetError(
+				'target_wrong_workspace',
+				`Session ${target.sessionId} does not belong to workspace ${workspaceId}`,
+			)
+		}
+		if (!TERMINAL_SESSION_STATUSES.has(row.status)) {
+			throw new AgentReviewTargetError(
+				'session_not_terminal',
+				`Session ${target.sessionId} status is "${row.status}" — must be completed/failed/timeout to review`,
+			)
+		}
+		const serialised = row.result ? JSON.stringify(row.result) : ''
+		if (!serialised.trim()) {
+			throw new AgentReviewTargetError(
+				'session_no_result',
+				`Session ${target.sessionId} has no result payload to review`,
+			)
+		}
+		return { definitionText: serialised, targetActorId: row.actorId }
+	}
+
+	throw new AgentReviewTargetError(
+		'target_not_found',
+		'Provide exactly one of object_id or session_id',
+	)
+}
+
+export async function reviewWork(
+	db: Database,
+	p: {
+		workspaceId: string
+		actorId: string
+		objectId?: string
+		sessionId?: string
+		rubricId?: string
+	},
+): Promise<{
+	verdict: ReviewerVerdict
+	reviewerSessionId: string
+	rubricId: string
+	targetActorId: string | null
+}> {
+	const { definitionText, targetActorId } = await loadReviewTarget(db, p.workspaceId, {
+		objectId: p.objectId,
+		sessionId: p.sessionId,
+	})
+
+	const rubric = p.rubricId
+		? await resolveRubricById(db, p.workspaceId, p.rubricId)
+		: await getOrBootstrapCanonicalRubric(db, p.workspaceId, p.actorId)
+	if (!rubric) {
+		throw new AgentReviewTargetError(
+			'rubric_not_found',
+			`Rubric ${p.rubricId} not found in workspace ${p.workspaceId}`,
+		)
+	}
+
+	const { verdict, reviewerSessionId } = await runAgentReviewer({
+		definitionText,
+		rubricBody: rubric.content,
+	})
+
+	await trackReviewerVerdictSubmitted(db, {
+		workspaceId: p.workspaceId,
+		actorId: p.actorId,
+		targetActorId,
+		rubricId: rubric.id,
+		overall: verdict.overall,
+		cycleNumber: 1,
+		reviewerSessionId,
+		failingCriteria: failingCriteriaNames(verdict),
+	})
+
+	return { verdict, reviewerSessionId, rubricId: rubric.id, targetActorId }
+}
+
+// ── Standalone refine path (maskin_refine_agent) ─────────────────────────────
+
+export class AgentRefineError extends Error {
+	constructor(
+		readonly reason:
+			| 'actor_wrong_workspace'
+			| 'skill_not_found'
+			| 'refine_context_empty',
+		message: string,
+	) {
+		super(message)
+		this.name = 'AgentRefineError'
+	}
+}
+
+/**
+ * Refine an existing agent-builder actor in place. Loads the current system
+ * prompt + persona summary from the actor, re-runs stages 3 and 4 with the
+ * caller's refinement `context` appended as revision feedback, then writes
+ * the assembled prompt back to the actor + republishes the SKILL.md.
+ *
+ * The intent + persona are inferred from the current actor row (we don't
+ * store the raw stage-1/2 outputs, so we synthesize a minimal intent from
+ * the actor's description and rely on the refinement context to steer the
+ * changes). This keeps refinement scoped to prompt authoring — we never
+ * rename the actor or change its scope boundaries silently.
+ */
+export async function refineAgent(
+	ctx: AgentBuilderContext,
+	p: { actorId: string; context: string },
+): Promise<{
+	updatedActorId: string
+	diff: string
+	newSystemPrompt: string
+	previousSystemPrompt: string
+}> {
+	const trimmedContext = p.context.trim()
+	if (!trimmedContext) {
+		throw new AgentRefineError('refine_context_empty', 'Refinement context is empty')
+	}
+
+	const actorRows = await ctx.db
+		.select({
+			id: actors.id,
+			name: actors.name,
+			description: actors.description,
+			systemPrompt: actors.systemPrompt,
+		})
+		.from(actors)
+		.innerJoin(workspaceMembers, eq(workspaceMembers.actorId, actors.id))
+		.where(and(eq(actors.id, p.actorId), eq(workspaceMembers.workspaceId, ctx.workspaceId)))
+		.limit(1)
+	const actor = actorRows[0]
+	if (!actor) {
+		throw new AgentRefineError(
+			'actor_wrong_workspace',
+			`Actor ${p.actorId} not found in workspace ${ctx.workspaceId}`,
+		)
+	}
+
+	// Look up the workspace_skill attached to this actor via agent_skills. We
+	// republish this row's content — refining the actor with no attached skill
+	// is out of scope (would need to synthesize a name + slug + description).
+	const skillRows = await ctx.db
+		.select({
+			id: workspaceSkills.id,
+			name: workspaceSkills.name,
+			description: workspaceSkills.description,
+		})
+		.from(workspaceSkills)
+		.innerJoin(agentSkills, eq(agentSkills.workspaceSkillId, workspaceSkills.id))
+		.where(and(eq(agentSkills.actorId, actor.id), eq(workspaceSkills.workspaceId, ctx.workspaceId)))
+		.limit(1)
+	const skillRow = skillRows[0]
+	if (!skillRow) {
+		throw new AgentRefineError(
+			'skill_not_found',
+			`Actor ${p.actorId} has no attached SKILL.md — cannot refine`,
+		)
+	}
+
+	// Synthesize minimal intent + persona from the actor row. The persona
+	// carries enough to feed stages 3 + 4 (name, role headline, delegation
+	// description). The refinement context lands as revision feedback.
+	const persona: PersonaSpec = {
+		name: actor.name,
+		role: actor.description?.trim() || `SME agent — ${actor.name}`,
+		backstory:
+			"Existing agent — refine the sectioned system prompt to reflect the caller's revision feedback while preserving persona identity and scope.",
+		scope_boundaries: [],
+		delegation_description:
+			skillRow.description?.trim() || `Use ${actor.name} when working in its domain.`,
+		tool_set: [],
+	}
+	const intent: Stage1Output = {
+		domain: skillRow.description?.trim() || `${actor.name}'s domain`,
+		job_to_be_done: `Update ${actor.name}'s definition to reflect the refinement context.`,
+		deliverables: [],
+		constraints: [],
+		is_underspecified: false,
+		missing: [],
+		gap_question: '',
+	}
+
+	const revisionNotes = [`[refinement] ${trimmedContext}`]
+	const { sections, opinionation } = await runStages3And4(intent, persona, revisionNotes)
+	const newSystemPrompt = assembleSystemPrompt(persona, sections, opinionation)
+	const newSkillMd = assembleSkillMd(skillRow.name, persona, sections, opinionation)
+	const sizeBytes = Buffer.byteLength(newSkillMd, 'utf-8')
+	const previousSystemPrompt = actor.systemPrompt ?? ''
+
+	// Update in a single transaction so a mid-flight failure leaves the actor
+	// and skill on their previous versions. S3 put happens inside so a
+	// rejected object rolls back everything (mirrors registerActorAndSkill).
+	let s3PutSucceeded = false
+	try {
+		await ctx.db.transaction(async (tx) => {
+			await tx.update(actors).set({ systemPrompt: newSystemPrompt }).where(eq(actors.id, actor.id))
+			await tx
+				.update(workspaceSkills)
+				.set({ content: newSkillMd, sizeBytes })
+				.where(eq(workspaceSkills.id, skillRow.id))
+			await ctx.agentStorage.putWorkspaceSkill(ctx.workspaceId, skillRow.id, newSkillMd)
+			s3PutSucceeded = true
+		})
+	} catch (err) {
+		if (s3PutSucceeded) {
+			logger.error('agent-builder: refine tx-commit failure after S3 put — orphan write', {
+				workspaceId: ctx.workspaceId,
+				skillId: skillRow.id,
+				error: String(err),
+			})
+		}
+		throw new AgentBuilderError(
+			'actor_registration_failed',
+			err instanceof Error ? err.message : 'DB write failed during agent refine',
+		)
+	}
+
+	// Audit — fire-and-forget, must not turn a successful commit into a 500.
+	try {
+		await ctx.db.insert(events).values({
+			workspaceId: ctx.workspaceId,
+			actorId: ctx.actorId,
+			action: 'updated',
+			entityType: 'actor',
+			entityId: actor.id,
+			data: { source: 'agent_builder_refine', refinement_context: trimmedContext.slice(0, 500) },
+		})
+	} catch (err) {
+		logger.warn('agent-builder: refine audit event failed', {
+			actorId: actor.id,
+			error: String(err),
+		})
+	}
+
+	return {
+		updatedActorId: actor.id,
+		diff: summariseRefineDiff(previousSystemPrompt, newSystemPrompt),
+		newSystemPrompt,
+		previousSystemPrompt,
+	}
+}
+
+/**
+ * Produce a short human-readable summary of what changed between two system
+ * prompts. Deliberately simple — the caller (usually the Developer or Code
+ * Reviewer) wants a quick "these sections grew / shrank / were added" view,
+ * not a full unified diff. If they need the exact diff they can pull both
+ * prompts from the actor row + git history.
+ */
+export function summariseRefineDiff(previous: string, next: string): string {
+	if (!previous.trim()) return 'Refine wrote a new system prompt (no previous version to diff).'
+
+	const sectionRe = /^## (.+)$/gm
+	const previousSections = new Set(
+		Array.from(previous.matchAll(sectionRe))
+			.map((m) => (m[1] ?? '').trim())
+			.filter(Boolean),
+	)
+	const nextSections = new Set(
+		Array.from(next.matchAll(sectionRe))
+			.map((m) => (m[1] ?? '').trim())
+			.filter(Boolean),
+	)
+	const added = [...nextSections].filter((s) => !previousSections.has(s))
+	const removed = [...previousSections].filter((s) => !nextSections.has(s))
+
+	const previousLength = previous.length
+	const nextLength = next.length
+	const pctDelta =
+		previousLength > 0 ? Math.round(((nextLength - previousLength) / previousLength) * 100) : 0
+
+	const bits: string[] = []
+	if (added.length) bits.push(`added sections: ${added.join(', ')}`)
+	if (removed.length) bits.push(`removed sections: ${removed.join(', ')}`)
+	bits.push(
+		`length changed by ${pctDelta >= 0 ? '+' : ''}${pctDelta}% (${previousLength} → ${nextLength} chars)`,
+	)
+	return bits.join('; ')
 }

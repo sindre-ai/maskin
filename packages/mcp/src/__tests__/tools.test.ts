@@ -35,6 +35,8 @@ const ALL_TOOL_NAMES = [
 	'maskin_create_agent',
 	'maskin_rate_reviewer_verdict',
 	'maskin_reviewer_precision_summary',
+	'maskin_review_work',
+	'maskin_refine_agent',
 	'create_actor',
 	'update_actor',
 	'regenerate_api_key',

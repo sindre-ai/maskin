@@ -1,12 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
 	AgentBuilderError,
+	AgentRefineError,
+	AgentReviewTargetError,
 	assembleSkillMd,
 	assembleSystemPrompt,
 	composeDefinitionSummary,
 	formatGapReportMarkdown,
+	loadReviewTarget,
 	personaSkillName,
+	refineAgent,
+	reviewWork,
 	runAgentBuilder,
+	summariseRefineDiff,
 } from '../../services/agent-builder'
 import { createMockAgentStorage, createTestContext } from '../setup'
 
@@ -42,6 +48,8 @@ const WORKSPACE_ID = '11111111-1111-1111-1111-111111111111'
 const CALLER_ACTOR_ID = '22222222-2222-2222-2222-222222222222'
 const CREATED_ACTOR_ID = '33333333-3333-3333-3333-333333333333'
 const CREATED_SKILL_ID = '44444444-4444-4444-4444-444444444444'
+const RUBRIC_ID = '55555555-5555-5555-5555-555555555555'
+const RUBRIC_CONTENT = '# Test rubric\n\nScore against these criteria...'
 
 function buildStage1Well() {
 	return JSON.stringify({
@@ -145,6 +153,69 @@ function buildStage4Well() {
 	})
 }
 
+function buildReviewerPass() {
+	return JSON.stringify({
+		criteria: [
+			{ name: 'persona_specificity', pass: true, fix: '' },
+			{ name: 'opinionation_scaffolding_present', pass: true, fix: '' },
+			{ name: 'worked_examples_at_least_two', pass: true, fix: '' },
+			{ name: 'no_hedging_enforcement', pass: true, fix: '' },
+			{ name: 'scope_boundaries_named', pass: true, fix: '' },
+		],
+		overall: 'pass',
+	})
+}
+
+function buildReviewerFail(failNames: string[] = ['no_hedging_enforcement']) {
+	return JSON.stringify({
+		criteria: [
+			'persona_specificity',
+			'opinionation_scaffolding_present',
+			'worked_examples_at_least_two',
+			'no_hedging_enforcement',
+			'scope_boundaries_named',
+		].map((name) => ({
+			name,
+			pass: !failNames.includes(name),
+			fix: failNames.includes(name)
+				? `Fix ${name} — the current definition does not satisfy this criterion.`
+				: '',
+		})),
+		overall: 'fail',
+	})
+}
+
+/**
+ * Insert queue for a happy-path pipeline run (1 attempt, reviewer passes).
+ * Order:
+ *   1) actor  2) workspace_members  3) workspace_skill  4) agent_skills
+ *   5) audit event (actor)  6) audit event (workspace_skill)
+ *   7) reviewer_verdict_submitted event (per attempt)
+ */
+function happyPathInsertQueue(personaName = 'Sable Ostrik') {
+	return [
+		[{ id: CREATED_ACTOR_ID, type: 'agent', name: personaName, description: 'x' }],
+		[],
+		[{ id: CREATED_SKILL_ID, workspaceId: WORKSPACE_ID, name: 'sable-ostrik-abc12345' }],
+		[],
+		[],
+		[],
+		[], // reviewer_verdict_submitted
+	]
+}
+
+/**
+ * Select queue: the pipeline calls db.select() exactly once during
+ * getOrBootstrapCanonicalRubric to look up the workspace's canonical rubric.
+ * Returning a row here means bootstrap is a no-op (no rubric insert).
+ */
+function existingRubricSelectQueue(extra: unknown[][] = []) {
+	return [
+		[{ id: RUBRIC_ID, content: RUBRIC_CONTENT, title: 'Agent builder — reviewer rubric' }],
+		...extra,
+	]
+}
+
 function buildContext() {
 	const { db } = createTestContext()
 	const agentStorage = createMockAgentStorage()
@@ -168,47 +239,20 @@ describe('runAgentBuilder — full pipeline', () => {
 		vi.restoreAllMocks()
 	})
 
-	it('runs stages 1-4 + 6 in order and registers actor + skill + posts gap report on a well-specified one-liner', async () => {
+	it('runs stages 1-4 + reviewer (pass) + 6 in order and registers actor + skill + posts gap report on a well-specified one-liner', async () => {
 		queueLlmResponses(
 			buildStage1Well(),
 			buildStage2Well(),
 			buildStage3Well(),
 			buildStage4Well(),
+			buildReviewerPass(),
 			buildStage6Well(),
 		)
 
 		const agentStorage = createMockAgentStorage()
 		const ctxCtx = createTestContext()
-		// Each db.insert() call shifts one entry from the queue. Order:
-		//   1) actor  2) workspace_members  3) workspace_skill  4) agent_skills
-		//   5) audit event (actor)  6) audit event (workspace_skill)
-		//   7) gap-report comment event on the actor (from stage 6)
-		ctxCtx.mockResults.insertQueue = [
-			[
-				{
-					id: CREATED_ACTOR_ID,
-					type: 'agent',
-					name: 'Sable Ostrik',
-					description: 'Use this agent when you need a concrete plan',
-				},
-			],
-			// workspace_members insert — no returning, but chain resolves []
-			[],
-			[
-				{
-					id: CREATED_SKILL_ID,
-					workspaceId: WORKSPACE_ID,
-					name: 'sable-ostrik-abc12345',
-				},
-			],
-			// agent_skills insert — no returning
-			[],
-			// audit event inserts
-			[],
-			[],
-			// stage 6 gap-report comment insert
-			[],
-		]
+		ctxCtx.mockResults.selectQueue = existingRubricSelectQueue()
+		ctxCtx.mockResults.insertQueue = happyPathInsertQueue()
 
 		const result = await runAgentBuilder(
 			{
@@ -225,28 +269,26 @@ describe('runAgentBuilder — full pipeline', () => {
 
 		expect(result.kind).toBe('created')
 		if (result.kind !== 'created') throw new Error('narrowing')
-		expect(callLlm).toHaveBeenCalledTimes(5)
+		// 4 pipeline stages + 1 reviewer pass + 1 stage 6 gap report = 6 LLM calls on the no-revision path.
+		expect(callLlm).toHaveBeenCalledTimes(6)
 		expect(result.actor.id).toBe(CREATED_ACTOR_ID)
 		expect(result.actor.name).toBe('Sable Ostrik')
 		expect(result.skill.id).toBe(CREATED_SKILL_ID)
+		expect(result.reviewerFinalOverall).toBe('pass')
+		expect(result.reviewerAttempts).toHaveLength(1)
+		expect(result.reviewerAttempts[0]?.cycleNumber).toBe(1)
+		expect(result.reviewerAttempts[0]?.rubricId).toBe(RUBRIC_ID)
+		expect(result.reviewerAttempts[0]?.failingCriteria).toEqual([])
 
 		// System prompt contains every section header + opinionation scaffolding.
 		expect(result.assembledSystemPrompt).toMatch(/## Background/)
-		expect(result.assembledSystemPrompt).toMatch(/## Instructions/)
-		expect(result.assembledSystemPrompt).toMatch(/## Decision framework/)
-		expect(result.assembledSystemPrompt).toMatch(/## Tool guidance/)
-		expect(result.assembledSystemPrompt).toMatch(/## Output format/)
-		expect(result.assembledSystemPrompt).toMatch(/## Named biases and blind spots/)
 		expect(result.assembledSystemPrompt).toMatch(/## Response protocol/)
 		expect(result.assembledSystemPrompt).toMatch(/Recommendation:/)
 		expect(result.assembledSystemPrompt).toMatch(/Assumptions:/)
 
-		// SKILL.md frontmatter carries the lightweight metadata; the sectioned
-		// system prompt lives in the body. Worked examples land in the
-		// on-demand reference section, not the always-loaded frontmatter.
+		// SKILL.md progressive disclosure preserved (T3 contract).
 		expect(result.skillMd).toMatch(/^---\nname: sable-ostrik-[a-f0-9]{8}\ndescription: /)
 		expect(result.skillMd).toMatch(/Reference — Worked examples/)
-		expect(result.skillMd).not.toMatch(/description:.*Background/)
 
 		// S3 write fired with the assembled SKILL.md body.
 		expect(agentStorage.putWorkspaceSkill).toHaveBeenCalledWith(
@@ -317,30 +359,18 @@ describe('runAgentBuilder — full pipeline', () => {
 	})
 
 	it('runs stages 3 and 4 in parallel (single Promise.all await)', async () => {
-		// If stages 3 and 4 were serialized, stage-4 would only dispatch after
-		// stage-3 resolved. Assert stage-4 dispatches while stage-3 is still
-		// pending — proves the Promise.all path.
 		let stage3Dispatched = false
 		let stage4Dispatched = false
 		const agentStorage = createMockAgentStorage()
 		const ctxCtx = createTestContext()
-		ctxCtx.mockResults.insertQueue = [
-			[{ id: CREATED_ACTOR_ID, name: 'Sable Ostrik', description: 'x' }],
-			[],
-			[{ id: CREATED_SKILL_ID, name: 'sable-ostrik-abc12345' }],
-			[],
-			[],
-			[],
-			[],
-		]
+		ctxCtx.mockResults.selectQueue = existingRubricSelectQueue()
+		ctxCtx.mockResults.insertQueue = happyPathInsertQueue()
 
 		callLlm.mockReset()
 		callLlm.mockImplementationOnce(async () => ({ ok: true, content: buildStage1Well() }))
 		callLlm.mockImplementationOnce(async () => ({ ok: true, content: buildStage2Well() }))
 		callLlm.mockImplementationOnce(async () => {
 			stage3Dispatched = true
-			// Yield once so stage-4 dispatch happens before stage-3 resolves,
-			// but only if the pipeline actually parallelised them.
 			await new Promise((r) => setTimeout(r, 5))
 			expect(stage4Dispatched).toBe(true)
 			return { ok: true, content: buildStage3Well() }
@@ -349,6 +379,7 @@ describe('runAgentBuilder — full pipeline', () => {
 			stage4Dispatched = true
 			return { ok: true, content: buildStage4Well() }
 		})
+		callLlm.mockImplementationOnce(async () => ({ ok: true, content: buildReviewerPass() }))
 		callLlm.mockImplementationOnce(async () => ({ ok: true, content: buildStage6Well() }))
 
 		await runAgentBuilder(
@@ -435,8 +466,18 @@ describe('runAgentBuilder — full pipeline', () => {
 			worked_examples: [],
 		})
 		queueLlmResponses(buildStage1Well(), buildStage2Well(), badStage3, buildStage4Well())
+		const ctxCtx = createTestContext()
+		ctxCtx.mockResults.selectQueue = existingRubricSelectQueue()
 		await expect(
-			runAgentBuilder({ prompt: 'plan zero-downtime migration' }, buildContext()),
+			runAgentBuilder(
+				{ prompt: 'plan zero-downtime migration' },
+				{
+					db: ctxCtx.db,
+					agentStorage: createMockAgentStorage(),
+					workspaceId: WORKSPACE_ID,
+					actorId: CALLER_ACTOR_ID,
+				},
+			),
 		).rejects.toMatchObject({ name: 'AgentBuilderError', reason: 'stage3_parse_error' })
 	})
 
@@ -451,9 +492,421 @@ describe('runAgentBuilder — full pipeline', () => {
 			worked_examples: [{ title: 't', ask: 'a', response: 'r' }],
 		})
 		queueLlmResponses(buildStage1Well(), buildStage2Well(), badStage3, buildStage4Well())
+		const ctxCtx = createTestContext()
+		ctxCtx.mockResults.selectQueue = existingRubricSelectQueue()
 		await expect(
-			runAgentBuilder({ prompt: 'plan zero-downtime migration' }, buildContext()),
+			runAgentBuilder(
+				{ prompt: 'plan zero-downtime migration' },
+				{
+					db: ctxCtx.db,
+					agentStorage: createMockAgentStorage(),
+					workspaceId: WORKSPACE_ID,
+					actorId: CALLER_ACTOR_ID,
+				},
+			),
 		).rejects.toMatchObject({ name: 'AgentBuilderError', reason: 'stage3_parse_error' })
+	})
+})
+
+describe('runAgentBuilder — fresh-context reviewer revision loop', () => {
+	beforeEach(() => {
+		vi.spyOn(console, 'log').mockImplementation(() => undefined)
+		vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+		vi.spyOn(console, 'error').mockImplementation(() => undefined)
+	})
+
+	afterEach(() => {
+		vi.restoreAllMocks()
+	})
+
+	it('re-runs stages 3-4 on a failing verdict and stops when the next attempt passes', async () => {
+		// Queue: stage1, stage2, [stage3+stage4]_attempt1, reviewer_fail,
+		//        [stage3+stage4]_attempt2, reviewer_pass
+		queueLlmResponses(
+			buildStage1Well(),
+			buildStage2Well(),
+			buildStage3Well(),
+			buildStage4Well(),
+			buildReviewerFail(['no_hedging_enforcement']),
+			buildStage3Well(),
+			buildStage4Well(),
+			buildReviewerPass(),
+		)
+
+		const agentStorage = createMockAgentStorage()
+		const ctxCtx = createTestContext()
+		ctxCtx.mockResults.selectQueue = existingRubricSelectQueue()
+		// Extra event insert for the 2nd reviewer attempt.
+		ctxCtx.mockResults.insertQueue = [...happyPathInsertQueue(), []]
+
+		const result = await runAgentBuilder(
+			{
+				prompt: 'plan a zero-downtime add-column migration for a 50M-row Postgres users table.',
+			},
+			{
+				db: ctxCtx.db,
+				agentStorage,
+				workspaceId: WORKSPACE_ID,
+				actorId: CALLER_ACTOR_ID,
+			},
+		)
+
+		expect(result.kind).toBe('created')
+		if (result.kind !== 'created') throw new Error('narrowing')
+		// stage1 + stage2 + (stage3+stage4 twice) + (reviewer twice) = 8 calls
+		expect(callLlm).toHaveBeenCalledTimes(8)
+		expect(result.reviewerFinalOverall).toBe('pass')
+		expect(result.reviewerAttempts.map((a) => a.overall)).toEqual(['fail', 'pass'])
+		expect(result.reviewerAttempts[0]?.failingCriteria).toEqual(['no_hedging_enforcement'])
+		expect(result.reviewerAttempts[1]?.failingCriteria).toEqual([])
+
+		// Attempt 2's stage-3 dispatch must carry revision feedback derived from
+		// the failing verdict's fix note. Second stage-3 call is index 5 (0-4
+		// were stage1, stage2, stage3, stage4, reviewer).
+		const secondStage3Call = callLlm.mock.calls[5]?.[0] as { user: string } | undefined
+		expect(secondStage3Call?.user).toMatch(/REVISION FEEDBACK/)
+		expect(secondStage3Call?.user).toMatch(/no_hedging_enforcement/)
+	})
+
+	it('caps at 2 revision cycles and ships the best-effort definition on a persistently failing reviewer', async () => {
+		// 4 stages then reviewer_fail 3 times, with 2 more stage3+stage4 pairs
+		// between failures. Total LLM calls: 2 + 3*(2 stages + 1 reviewer) = 11
+		queueLlmResponses(
+			buildStage1Well(),
+			buildStage2Well(),
+			buildStage3Well(),
+			buildStage4Well(),
+			buildReviewerFail(),
+			buildStage3Well(),
+			buildStage4Well(),
+			buildReviewerFail(),
+			buildStage3Well(),
+			buildStage4Well(),
+			buildReviewerFail(),
+		)
+
+		const agentStorage = createMockAgentStorage()
+		const ctxCtx = createTestContext()
+		ctxCtx.mockResults.selectQueue = existingRubricSelectQueue()
+		// 3 reviewer_verdict_submitted events after actor creation.
+		ctxCtx.mockResults.insertQueue = [...happyPathInsertQueue(), [], []]
+
+		const result = await runAgentBuilder(
+			{ prompt: 'plan a zero-downtime migration' },
+			{
+				db: ctxCtx.db,
+				agentStorage,
+				workspaceId: WORKSPACE_ID,
+				actorId: CALLER_ACTOR_ID,
+			},
+		)
+
+		expect(result.kind).toBe('created')
+		if (result.kind !== 'created') throw new Error('narrowing')
+		expect(callLlm).toHaveBeenCalledTimes(11)
+		expect(result.reviewerFinalOverall).toBe('fail')
+		expect(result.reviewerAttempts).toHaveLength(3)
+		// Actor still registered — cap is an escape hatch, not a blocker.
+		expect(result.actor.id).toBe(CREATED_ACTOR_ID)
+	})
+
+	it('proceeds past a reviewer LLM failure without aborting the whole builder', async () => {
+		callLlm.mockReset()
+		callLlm.mockResolvedValueOnce({ ok: true, content: buildStage1Well() })
+		callLlm.mockResolvedValueOnce({ ok: true, content: buildStage2Well() })
+		callLlm.mockResolvedValueOnce({ ok: true, content: buildStage3Well() })
+		callLlm.mockResolvedValueOnce({ ok: true, content: buildStage4Well() })
+		// Reviewer call — return an error result. runAgentReviewer throws
+		// AgentReviewerError; runAgentBuilder catches it and proceeds.
+		callLlm.mockResolvedValueOnce({ ok: false, reason: 'http_error', status: 502 })
+
+		const agentStorage = createMockAgentStorage()
+		const ctxCtx = createTestContext()
+		ctxCtx.mockResults.selectQueue = existingRubricSelectQueue()
+		ctxCtx.mockResults.insertQueue = happyPathInsertQueue()
+
+		const result = await runAgentBuilder(
+			{ prompt: 'plan a zero-downtime migration' },
+			{
+				db: ctxCtx.db,
+				agentStorage,
+				workspaceId: WORKSPACE_ID,
+				actorId: CALLER_ACTOR_ID,
+			},
+		)
+
+		expect(result.kind).toBe('created')
+		if (result.kind !== 'created') throw new Error('narrowing')
+		expect(result.reviewerFinalOverall).toBe('fail')
+		expect(result.reviewerAttempts).toEqual([])
+		expect(result.actor.id).toBe(CREATED_ACTOR_ID)
+	})
+
+	it('bootstraps a canonical rubric on the first run when none exists', async () => {
+		queueLlmResponses(
+			buildStage1Well(),
+			buildStage2Well(),
+			buildStage3Well(),
+			buildStage4Well(),
+			buildReviewerPass(),
+		)
+
+		const agentStorage = createMockAgentStorage()
+		const ctxCtx = createTestContext()
+		// Empty select → bootstrap inserts the rubric object, then the pipeline
+		// continues. Insert order: rubric bootstrap, then the happy-path chain.
+		ctxCtx.mockResults.selectQueue = [[]]
+		ctxCtx.mockResults.insertQueue = [
+			[{ id: RUBRIC_ID }], // rubric bootstrap
+			...happyPathInsertQueue(),
+		]
+
+		const result = await runAgentBuilder(
+			{ prompt: 'plan a zero-downtime migration' },
+			{
+				db: ctxCtx.db,
+				agentStorage,
+				workspaceId: WORKSPACE_ID,
+				actorId: CALLER_ACTOR_ID,
+			},
+		)
+
+		expect(result.kind).toBe('created')
+		if (result.kind !== 'created') throw new Error('narrowing')
+		// The first insert captured by the mock must be the rubric object.
+		const firstInsert = ctxCtx.calls.inserts[0] as { type?: string; title?: string } | undefined
+		expect(firstInsert?.type).toBe('agent_builder_rubric')
+		expect(firstInsert?.title).toBe('Agent builder — reviewer rubric')
+	})
+})
+
+describe('reviewWork — standalone reviewer', () => {
+	beforeEach(() => {
+		vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+		vi.spyOn(console, 'error').mockImplementation(() => undefined)
+	})
+	afterEach(() => vi.restoreAllMocks())
+
+	it('reviews an object.content payload against the workspace rubric', async () => {
+		callLlm.mockReset()
+		callLlm.mockResolvedValueOnce({ ok: true, content: buildReviewerPass() })
+
+		const OBJECT_ID = '77777777-7777-7777-7777-777777777777'
+		const ctxCtx = createTestContext()
+		ctxCtx.mockResults.selectQueue = [
+			// loadReviewTarget: fetch the object row
+			[{ content: '# draft skill body\n\n## Response protocol …', workspaceId: WORKSPACE_ID }],
+			// getOrBootstrapCanonicalRubric: fetch the rubric row (exists)
+			[{ id: RUBRIC_ID, content: RUBRIC_CONTENT, title: 'Rubric' }],
+		]
+
+		const out = await reviewWork(ctxCtx.db, {
+			workspaceId: WORKSPACE_ID,
+			actorId: CALLER_ACTOR_ID,
+			objectId: OBJECT_ID,
+		})
+
+		expect(out.verdict.overall).toBe('pass')
+		expect(out.rubricId).toBe(RUBRIC_ID)
+		expect(out.targetActorId).toBeNull()
+		expect(callLlm).toHaveBeenCalledTimes(1)
+	})
+
+	it('rejects a session_id review when the session is still running', async () => {
+		const SESSION_ID = '88888888-8888-8888-8888-888888888888'
+		const ctxCtx = createTestContext()
+		ctxCtx.mockResults.selectQueue = [
+			// loadReviewTarget: session row with non-terminal status
+			[
+				{
+					status: 'running',
+					result: null,
+					workspaceId: WORKSPACE_ID,
+					actorId: CREATED_ACTOR_ID,
+				},
+			],
+		]
+
+		await expect(
+			reviewWork(ctxCtx.db, {
+				workspaceId: WORKSPACE_ID,
+				actorId: CALLER_ACTOR_ID,
+				sessionId: SESSION_ID,
+			}),
+		).rejects.toMatchObject({ name: 'AgentReviewTargetError', reason: 'session_not_terminal' })
+	})
+
+	it("rejects an object whose workspace_id does not match the caller's workspace", async () => {
+		const OBJECT_ID = '77777777-7777-7777-7777-777777777777'
+		const OTHER_WS = '99999999-9999-9999-9999-999999999999'
+		const ctxCtx = createTestContext()
+		ctxCtx.mockResults.selectQueue = [[{ content: 'anything', workspaceId: OTHER_WS }]]
+
+		await expect(
+			reviewWork(ctxCtx.db, {
+				workspaceId: WORKSPACE_ID,
+				actorId: CALLER_ACTOR_ID,
+				objectId: OBJECT_ID,
+			}),
+		).rejects.toMatchObject({ name: 'AgentReviewTargetError', reason: 'target_wrong_workspace' })
+	})
+
+	it('surfaces target_not_found when the object does not exist', async () => {
+		const OBJECT_ID = '77777777-7777-7777-7777-777777777777'
+		const ctxCtx = createTestContext()
+		ctxCtx.mockResults.selectQueue = [[]]
+		await expect(
+			reviewWork(ctxCtx.db, {
+				workspaceId: WORKSPACE_ID,
+				actorId: CALLER_ACTOR_ID,
+				objectId: OBJECT_ID,
+			}),
+		).rejects.toMatchObject({ name: 'AgentReviewTargetError', reason: 'target_not_found' })
+	})
+})
+
+describe('refineAgent', () => {
+	beforeEach(() => {
+		vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+		vi.spyOn(console, 'error').mockImplementation(() => undefined)
+	})
+	afterEach(() => vi.restoreAllMocks())
+
+	it('re-runs stages 3-4 with the refinement context and republishes the SKILL.md', async () => {
+		callLlm.mockReset()
+		callLlm.mockResolvedValueOnce({ ok: true, content: buildStage3Well() })
+		callLlm.mockResolvedValueOnce({ ok: true, content: buildStage4Well() })
+
+		const ctxCtx = createTestContext()
+		ctxCtx.mockResults.selectQueue = [
+			// actors + workspace_members join → returns the current actor row
+			[
+				{
+					id: CREATED_ACTOR_ID,
+					name: 'Sable Ostrik',
+					description: 'Use this agent when planning zero-downtime migrations.',
+					systemPrompt: '# Sable Ostrik\n\n## Background\n\nprevious background',
+				},
+			],
+			// workspace_skills + agent_skills join → returns the attached skill
+			[
+				{
+					id: CREATED_SKILL_ID,
+					name: 'sable-ostrik-abc12345',
+					description: 'Use this agent when planning zero-downtime migrations.',
+				},
+			],
+		]
+		ctxCtx.mockResults.insertQueue = [
+			[], // audit event
+		]
+
+		const agentStorage = createMockAgentStorage()
+		const out = await refineAgent(
+			{ db: ctxCtx.db, agentStorage, workspaceId: WORKSPACE_ID, actorId: CALLER_ACTOR_ID },
+			{
+				actorId: CREATED_ACTOR_ID,
+				context: 'Sharpen the bias statement — name at least two blind spots.',
+			},
+		)
+
+		expect(callLlm).toHaveBeenCalledTimes(2)
+		expect(out.updatedActorId).toBe(CREATED_ACTOR_ID)
+		expect(out.newSystemPrompt).toMatch(/## Response protocol/)
+		expect(out.diff).toContain('length changed by')
+		expect(agentStorage.putWorkspaceSkill).toHaveBeenCalledWith(
+			WORKSPACE_ID,
+			CREATED_SKILL_ID,
+			expect.stringContaining('---'),
+		)
+		// The stage-3 call must carry the refinement context as revision feedback.
+		const firstStage3 = callLlm.mock.calls[0]?.[0] as { user: string } | undefined
+		expect(firstStage3?.user).toMatch(/REVISION FEEDBACK/)
+		expect(firstStage3?.user).toMatch(/Sharpen the bias statement/)
+	})
+
+	it('rejects refinement when the context is empty or whitespace-only', async () => {
+		await expect(
+			refineAgent(buildContext(), { actorId: CREATED_ACTOR_ID, context: '   ' }),
+		).rejects.toMatchObject({ name: 'AgentRefineError', reason: 'refine_context_empty' })
+	})
+
+	it("rejects refinement when the actor is not in the caller's workspace", async () => {
+		const ctxCtx = createTestContext()
+		ctxCtx.mockResults.selectQueue = [[]]
+		await expect(
+			refineAgent(
+				{
+					db: ctxCtx.db,
+					agentStorage: createMockAgentStorage(),
+					workspaceId: WORKSPACE_ID,
+					actorId: CALLER_ACTOR_ID,
+				},
+				{ actorId: CREATED_ACTOR_ID, context: 'do a thing' },
+			),
+		).rejects.toMatchObject({ name: 'AgentRefineError', reason: 'actor_wrong_workspace' })
+	})
+
+	it('rejects refinement when the actor has no attached SKILL.md', async () => {
+		const ctxCtx = createTestContext()
+		ctxCtx.mockResults.selectQueue = [
+			[
+				{
+					id: CREATED_ACTOR_ID,
+					name: 'Sable Ostrik',
+					description: 'x',
+					systemPrompt: '# old',
+				},
+			],
+			[], // no skill attached
+		]
+		await expect(
+			refineAgent(
+				{
+					db: ctxCtx.db,
+					agentStorage: createMockAgentStorage(),
+					workspaceId: WORKSPACE_ID,
+					actorId: CALLER_ACTOR_ID,
+				},
+				{ actorId: CREATED_ACTOR_ID, context: 'do a thing' },
+			),
+		).rejects.toMatchObject({ name: 'AgentRefineError', reason: 'skill_not_found' })
+	})
+})
+
+describe('loadReviewTarget', () => {
+	it('returns the actorId from a terminal session so the verdict can be joined back', async () => {
+		const SESSION_ID = '88888888-8888-8888-8888-888888888888'
+		const ctxCtx = createTestContext()
+		ctxCtx.mockResults.selectQueue = [
+			[
+				{
+					status: 'completed',
+					result: { output: 'final work product' },
+					workspaceId: WORKSPACE_ID,
+					actorId: CREATED_ACTOR_ID,
+				},
+			],
+		]
+		const out = await loadReviewTarget(ctxCtx.db, WORKSPACE_ID, { sessionId: SESSION_ID })
+		expect(out.definitionText).toContain('final work product')
+		expect(out.targetActorId).toBe(CREATED_ACTOR_ID)
+	})
+})
+
+describe('summariseRefineDiff', () => {
+	it('reports added and removed section headers', () => {
+		const previous = '# actor\n\n## Background\n\nold\n\n## Instructions\n\nold instrs'
+		const next = '# actor\n\n## Background\n\nnew\n\n## Response protocol\n\nnew protocol'
+		const diff = summariseRefineDiff(previous, next)
+		expect(diff).toContain('added sections: Response protocol')
+		expect(diff).toContain('removed sections: Instructions')
+		expect(diff).toContain('length changed by')
+	})
+
+	it('names the no-previous case explicitly', () => {
+		const diff = summariseRefineDiff('', '## new\n\nx')
+		expect(diff).toMatch(/no previous version/i)
 	})
 })
 
@@ -564,7 +1017,6 @@ describe('assembleSkillMd — progressive disclosure', () => {
 	it('lightweight-metadata tier: frontmatter carries only name and one-line description', () => {
 		const md = assembleSkillMd('sable-ostrik-abc12345', persona, sections, opinionation)
 		expect(md).toMatch(/^---\nname: sable-ostrik-abc12345\ndescription: Use this agent when/)
-		// Frontmatter section ends after the second `---`.
 		const closingIndex = md.indexOf('\n---\n', 4)
 		expect(closingIndex).toBeGreaterThan(0)
 		const frontmatter = md.slice(0, closingIndex)

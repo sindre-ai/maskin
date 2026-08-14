@@ -2762,6 +2762,63 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
+		'maskin_review_work',
+		{
+			description: tools.maskin_review_work.description,
+			inputSchema: tools.maskin_review_work.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const result = await apiCall(
+				config,
+				'POST',
+				'/api/agent-builder/review',
+				{
+					object_id: args.object_id,
+					session_id: args.session_id,
+					rubric_id: args.rubric_id,
+				},
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: meta('maskin_review_work', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'maskin_refine_agent',
+		{
+			description: tools.maskin_refine_agent.description,
+			inputSchema: tools.maskin_refine_agent.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const result = await apiCall(
+				config,
+				'POST',
+				'/api/agent-builder/refine',
+				{
+					actor_id: args.actor_id,
+					context: args.context,
+				},
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: meta(
+					'maskin_refine_agent',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'create_actor',
 		{
 			description: tools.create_actor.description,
