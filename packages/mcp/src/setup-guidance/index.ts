@@ -19,12 +19,17 @@ export { sortByPriority, toNextSteps } from './priority'
 export { toProseBlock } from './prose'
 export { findMentionedProviders, KNOWN_PROVIDERS } from './providers'
 export {
+	type ApiCaller,
+	type SetupBlock,
+	buildActorSetupBlockFromApi,
 	buildBetSetupBlock,
+	buildBetSetupBlockFromApi,
 	buildLoopSetupBlock,
+	buildLoopSetupBlockFromApi,
 	composeLoopSteps,
+	mergeBetSetupBlocks,
 	readConnectedProviders,
 	readStatusOrder,
 	readWorkspaceLlmReadiness,
 	safeBuildSetupBlock,
-	type SetupBlock,
 } from './wiring'
