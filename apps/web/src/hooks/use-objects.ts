@@ -4,7 +4,13 @@ import type { RowSelectionState } from '@tanstack/react-table'
 import { type Dispatch, type SetStateAction, useCallback } from 'react'
 import { toast } from 'sonner'
 import type { z } from 'zod'
-import { trackBetArchived, trackBetCreated, trackBetStatusChanged } from '../lib/analytics'
+import {
+	trackBetArchived,
+	trackBetCreated,
+	trackBetStatusChanged,
+	trackObjectStarred,
+	trackObjectUnstarred,
+} from '../lib/analytics'
 import type {
 	BoardObjectResponse,
 	BulkUpdateObjectsInput,
@@ -447,9 +453,29 @@ function rollbackStar(
 
 export function useToggleStar(workspaceId: string) {
 	const queryClient = useQueryClient()
-	return useMutation<{ starred: boolean }, Error, { id: string; starred: boolean }, StarSnapshots>({
+	return useMutation<
+		{ starred: boolean },
+		Error,
+		// `type` is the object's `type` column (bet/insight/task/…) — carried on
+		// the mutation variables so the analytics helpers can populate
+		// `object_subtype` without a second cache read at emit time.
+		{ id: string; starred: boolean; type: string },
+		StarSnapshots
+	>({
 		mutationFn: ({ id, starred }) => (starred ? api.objects.star(id) : api.objects.unstar(id)),
 		onMutate: ({ id, starred }) => applyOptimisticStar(queryClient, workspaceId, id, starred),
+		// Emit analytics only after the server confirms the transition — never
+		// from `onMutate` (optimistic, may roll back) or `onError` (mutation
+		// failed, no persisted state to celebrate). One helper per transition,
+		// so paired ship-metric queries (star ↔ same-session-reversal) can join
+		// on entity_id without dedup.
+		onSuccess: (_data, { id, starred, type }) => {
+			if (starred) {
+				trackObjectStarred({ entity_id: id, entity_type: 'object', object_subtype: type })
+			} else {
+				trackObjectUnstarred({ entity_id: id, entity_type: 'object', object_subtype: type })
+			}
+		},
 		onError: (_err, { id }, ctx) => {
 			if (ctx) rollbackStar(queryClient, id, ctx)
 			toast.error('Could not update star')
