@@ -173,7 +173,7 @@ jobs:
           node-version: 20
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter ${{ matrix.leg.package }} build
+      - run: pnpm --filter ${{ matrix.leg.package }}... build
       - name: Unit tests (${{ matrix.leg.name }} leg)
         run: pnpm --filter ${{ matrix.leg.package }} test -- --run
       - name: Integration tests (${{ matrix.leg.name }} leg)
