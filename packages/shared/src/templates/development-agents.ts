@@ -2128,4 +2128,29 @@ Do the work in this order:
 
 Do not touch UI wiring, do not emit \`qualified_bet_visible\` (T3 owns that event — it fires when the card renders, not when the bet is created), and do not wait on the bi-weekly council cron. This trigger is deliberately async from signup; do not block the signup webhook. Signup uptime is not coupled to council uptime.`,
 	},
+	{
+		name: 'Signup-driven promotions — daily digest',
+		type: 'cron',
+		config: { expression: '15 0 * * *' },
+		targetActor$id: 'strategist',
+		enabled: true,
+		actionPrompt: `Batched daily digest of signup-driven bet promotions for the workspace owner. Runs once per UTC day at 00:15 UTC and covers the UTC day that just closed. Signup-driven promotions can be high-volume once new-workspace throughput scales, so they ride this batched lane instead of firing per-bet realtime notifications — the sibling council intake trigger deliberately does not @mention on fire so this cron is the sole notify path for \`${SIGNUP_FIRST_BET_DRAFT_SOURCE}\` bets.
+
+Do the work in this order:
+
+1. Compute the window. \`end\` = the most recent midnight UTC (i.e. today at 00:00Z); \`start\` = \`end\` minus 24 hours. The digest covers bets with \`created_at\` in \`[start, end)\`.
+2. Load the candidates. Call \`list_objects\` with \`type: 'bet'\` and \`status: 'qualified'\` for this workspace, then keep only rows where \`metadata.source === '${SIGNUP_FIRST_BET_DRAFT_SOURCE}'\` AND \`created_at\` falls inside the window. Do not include any other \`metadata.source\` values — other promotion sources retain their existing notify behavior and are out of scope for this digest.
+3. If the filtered list is empty: exit silently. Do not post a digest entry, do not create a notification, do not comment. A day with zero signup-driven promotions produces no output.
+4. If the filtered list is non-empty: create one notification with \`create_notification\`.
+   - \`type: 'good_news'\`
+   - \`title\`: \`Signup-driven bet promotions — <YYYY-MM-DD>\` where the date is the UTC calendar date of \`start\`.
+   - \`content\`: one line per promoted bet, in this exact shape (markdown, workspace-standard link format from the startup block — never guess the host or drop the workspace id):
+     \`- <workspace name> — <bet title>: [open bet](<bet url>) · [open workspace](<workspace url>)\`
+     Use \`get_objects\` to resolve the workspace name and the bet title; use \`buildWebAppHref\`-shaped links (the startup block prints the exact template with the correct host and workspace segment).
+   - \`source_actor_id\`: your own actor id.
+   - \`target_actor_id\`: the workspace owner. Look this up by walking to the workspace record (\`get_objects\` on the workspace id) and reading the owning human actor; do not @mention any other actor.
+5. Emit no per-bet realtime notification — batching is the whole point. If you notice the sibling council intake trigger has started @mentioning per fire, stop and file that as a bug on the sibling trigger; do not compensate by suppressing this digest.
+
+Never touch bets whose \`metadata.source\` is anything other than \`${SIGNUP_FIRST_BET_DRAFT_SOURCE}\`. Never widen the window past 24 hours. UTC boundaries always — do not use local time.`,
+	},
 ]
