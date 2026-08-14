@@ -123,6 +123,20 @@ describe('MetricRenderer', () => {
 		expect(screen.getByTestId('foryou-metric-trend')).toHaveClass('text-error')
 	})
 
+	it('maps flat trend to text-muted-foreground', () => {
+		renderMetricCard({
+			metric: {
+				type: 'metric',
+				status: 'active',
+				value: '98',
+				label: 'Uptime',
+				trend: 'flat',
+				delta: '±0%',
+			},
+		})
+		expect(screen.getByTestId('foryou-metric-trend')).toHaveClass('text-muted-foreground')
+	})
+
 	it('renders the decision block with amber in_review tokens and a Waiting on you indicator', () => {
 		renderMetricCard()
 
