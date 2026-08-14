@@ -196,6 +196,12 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_e2e
           INTEGRATION_ENCRYPTION_KEY: 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
           ARGOS_TOKEN: ${{ secrets.ARGOS_TOKEN }}
+          # Argos visual-regression upload is opt-in: the reporter is enabled
+          # in apps/e2e/playwright.config.ts only when ARGOS_UPLOAD=1. Off
+          # right now because the free plan is out of screenshot quota and its
+          # onEnd() upload was failing every shard. To re-enable (after a plan
+          # decision), add `ARGOS_UPLOAD: '1'` here — the reporter will pick
+          # up ARGOS_TOKEN above.
 
       - name: Upload Playwright report
         if: always()
