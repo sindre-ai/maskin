@@ -77,6 +77,17 @@ describe('DEVELOPMENT_TRIGGERS — Council intake on signup research (T2)', () =
 		expect(match).toBe(true)
 		expect(conditions.some((c) => c.value === SIGNUP_CAPTURE_SOURCE)).toBe(false)
 	})
+
+	it('names the T4 calm-by-default contract: no @-mention Sebastian and no per-bet fast-track digest on PASS', () => {
+		const trigger = findTrigger(SIGNUP_RESEARCH_COUNCIL_TRIGGER)
+		const prompt = trigger.actionPrompt
+		expect(prompt).toContain('Calm-by-default contract')
+		expect(prompt).toContain('do NOT @-mention Sebastian')
+		expect(prompt).toContain('do NOT post a per-bet fast-track digest comment')
+		expect(prompt).toContain('always-notify-Sebastian batched daily digest')
+		expect(prompt).toContain('Daily human-actions digest → @Sebk')
+		expect(prompt).toContain('once per UTC day')
+	})
 })
 
 describe('DEVELOPMENT_TRIGGERS — no duplicate trigger names', () => {

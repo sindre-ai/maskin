@@ -6,6 +6,8 @@
  * edited Workspace Coach back to its original configuration.
  */
 
+import { SIGNUP_FIRST_BET_DRAFT_SOURCE } from '../schemas/signup-capture'
+
 export const WORKSPACE_COACH_SYSTEM_PROMPT = `You are the Workspace Coach — a meta-agent that monitors workspace health and produces actionable insights about how the team (humans and agents) is performing.
 
 Your job is NOT to do product work, and it is NOT to keep the pipeline moving. Your job is to observe patterns *over time* and surface learnings that help the team improve. Live operational work — unsticking stalled objects, advancing tasks, and real-time infra/runtime alerts (auth failures, cron silence, session stampedes) — belongs to the Workspace Driver, not you. Your lens is longitudinal: what keeps happening, what's trending, and what structural gap explains it.
@@ -110,3 +112,69 @@ export const WORKSPACE_COACH_DEFAULT = {
 } as const
 
 export type WorkspaceCoachDefault = typeof WORKSPACE_COACH_DEFAULT
+
+/**
+ * Action prompt for the Workspace Coach's daily human-actions digest cron.
+ * Runs once per UTC day and reports the previous day's noteworthy activity to
+ * the workspace owner's Slack DM.
+ *
+ * The signup-driven promotions section is the always-notify-Sebastian batched
+ * lane: bets that the council promote-door creates from signup research
+ * (`metadata.source = ${SIGNUP_FIRST_BET_DRAFT_SOURCE}`) are listed here rather
+ * than firing an individual real-time digest comment per bet, so scaled
+ * new-workspace throughput cannot generate a notification storm. When a UTC day
+ * has no such promotions, the section is omitted entirely; behavior for every
+ * other bet-promotion source (cadence council, fast-track) is untouched and
+ * still posts its own per-bet digest comment as before.
+ */
+export const DAILY_HUMAN_ACTIONS_DIGEST_ACTION_PROMPT = `Load the maskin-voice skill before writing anything. Every morning at 7:30am Copenhagen time, produce the daily human-actions digest and send it as a Slack message to Sebastian.
+
+**SWEEP — last 24 hours of human-authored events:**
+
+1. **Status changes by humans** — list every bet or task status change where the actor is a human (not an agent). Format: "[object title]: [old status] → [new status]"
+
+2. **Comments by humans** — list every comment authored by a human. Format: "[human name] on [object title]: [first 80 chars of comment]"
+
+3. **@mentions of founders** — find every comment that @mentions workspace owners (find via workspace members list). Note which agent sent the mention and what for.
+
+4. **New objects created by humans** — bets, insights, tasks created directly by a human (not spawned by an agent). List titles.
+
+5. **Approvals and overrides** — any comment containing "approved", "override", "force-done", "revert", "manual-merge". These are high-signal human decisions.
+
+6. **Open threads needing human response** — tasks in \`in_review\` with \`decision_type: ux\` or \`decision_type: architecture\` where no human has commented since the agent's proposal was posted. List them as "⏳ Waiting for your input: [task title]".
+
+7. **Signup-driven bet promotions (batched — always-notify-Sebastian lane)** — bets with \`metadata.source = ${SIGNUP_FIRST_BET_DRAFT_SOURCE}\` created in the last 24 hours (UTC day boundary; the same window this sweep is over). These are council promote-door bets from the signup-research pipeline. They are deliberately routed through this batched daily digest instead of an individual real-time digest comment so scaled new-workspace throughput does not fire N notifications per day. For each: list the workspace name, the bet title, and a link to both — use markdown links against the object \`url\` field returned by \`get_objects\` (workspace-standard link format: \`[title](<url>)\`). If zero such promotions landed in the window, omit this section entirely — do not add a "None" placeholder, and do not touch the section for other promotion sources.
+
+**OUTPUT:**
+Send a Slack message to the workspace owner's DM (find the workspace owner's Slack user ID via slack_search_users — look up owner actor via workspace members, then find their email). Message format:
+
+\`\`\`
+Good morning, @Sebk 👋 Here's what happened yesterday:
+
+**Decisions made**
+[approvals and overrides from sweep #5]
+
+**Waiting for you**
+[open threads from sweep #6]
+
+**Status changes**
+[from sweep #1]
+
+**Comments**
+[from sweep #2, capped at 5 most recent]
+
+**New items**
+[from sweep #4]
+
+**@Mentions of you/Magnus**
+[from sweep #3]
+
+**New signup-driven bets (batched)**
+[from sweep #7 — omit this section if empty]
+\`\`\`
+
+Keep it scannable — one line per item. Omit empty sections. If truly nothing happened in the last 24h, send: "Good morning, @Sebk 👋 Quiet day yesterday — no human actions recorded."
+
+Do NOT create an insight for this digest. The digest lives only in Slack.
+
+Triggering event: {triggering_event}`

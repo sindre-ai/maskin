@@ -2126,6 +2126,8 @@ Do the work in this order:
    Then create \`informs\` relationships from every source-cluster knowledge id → the new bet id via \`create_relationships\`.
 5. On FAIL (any of the four autonomy conditions unmet, or Sub-A stays below 4 after primary-domain dedup): do NOT create a bet. T3's starter-card fallback covers the user. Post one short comment on the source \`signup_capture\` knowledge naming which conditions failed so the ship-metric review has a paper trail. Stop.
 
-Do not touch UI wiring, do not emit \`qualified_bet_visible\` (T3 owns that event — it fires when the card renders, not when the bet is created), and do not wait on the bi-weekly council cron. This trigger is deliberately async from signup; do not block the signup webhook. Signup uptime is not coupled to council uptime.`,
+Do not touch UI wiring, do not emit \`qualified_bet_visible\` (T3 owns that event — it fires when the card renders, not when the bet is created), and do not wait on the bi-weekly council cron. This trigger is deliberately async from signup; do not block the signup webhook. Signup uptime is not coupled to council uptime.
+
+Calm-by-default contract (T4, batched daily digest lane): do NOT @-mention Sebastian and do NOT post a per-bet fast-track digest comment for the PASS outcome. Signup-driven promotions ride the always-notify-Sebastian batched daily digest — the Workspace Coach's \`Daily human-actions digest → @Sebk\` cron sweeps for \`metadata.source = ${SIGNUP_FIRST_BET_DRAFT_SOURCE}\` bets once per UTC day and lists them together. One digest entry per day, no matter how many signup-driven promotions land in the window. Behavior for every other bet-promotion source (cadence council, fast-track) is untouched — those still emit their own per-bet digest comment.`,
 	},
 ]
