@@ -452,6 +452,31 @@ export function deriveSidebarViewport(width: number): SidebarViewport {
 	return 'desktop'
 }
 
+// Star-action events for the object favourites bet. The bet's success metric
+// is `starred_filter_opened` (owned by T7), but the qualifying-actor query
+// pairs it with `object_starred` to distinguish real usage from filter
+// tourism: an operator who never stars anything but flips the filter open
+// shouldn't count as adoption. `object_unstarred` closes the loop for the
+// same-session-reversal guardrail in the bet's exit criteria (≥30% of star
+// actions reversed within the same session → stop). Follows the v1 taxonomy:
+// `entity_id` is the object id, `entity_type` is fixed to 'object', and
+// `object_subtype` carries the object's `type` column (bet/insight/task/…)
+// so the metric can be sliced per subtype without a back-fill. Emit from
+// the star toggle handler after the API POST/DELETE resolves — if the
+// mutation rolls back optimistically (Task 4's rollback path), do not emit,
+// or the event stream diverges from persisted state.
+export function trackObjectStarred(
+	p: BaseProps & { entity_type: 'object'; object_subtype: string },
+): void {
+	trackEvent('object_starred', { ...fillBase(p), object_subtype: p.object_subtype })
+}
+
+export function trackObjectUnstarred(
+	p: BaseProps & { entity_type: 'object'; object_subtype: string },
+): void {
+	trackEvent('object_unstarred', { ...fillBase(p), object_subtype: p.object_subtype })
+}
+
 // For You redesign (Direction A) surface-adoption events. The success metric —
 // in-card action rate — pairs `foryou_card_action` (numerator) with
 // `foryou_card_shown` (denominator) on `card_id`, so both events MUST carry the

@@ -21,6 +21,8 @@ import {
 	trackNorthStarPromptResponse,
 	trackObjectAttachedFile,
 	trackObjectCreated,
+	trackObjectStarred,
+	trackObjectUnstarred,
 	trackObjectsListArrived,
 	trackObjectsListGroupToggled,
 	trackRelationshipCreated,
@@ -634,6 +636,60 @@ describe('v1 taxonomy helpers', () => {
 				entity_id: 'task-9',
 				mobile: true,
 				via: 'swipe',
+			})
+		})
+	})
+
+	describe('object_starred / object_unstarred (object favourites bet)', () => {
+		it('object_starred carries entity_id/entity_type/object_subtype plus the shared base contract', () => {
+			const capture = captureSpy()
+
+			trackObjectStarred({ entity_id: 'obj-42', entity_type: 'object', object_subtype: 'bet' })
+
+			expect(capture).toHaveBeenCalledWith('object_starred', {
+				entity_id: 'obj-42',
+				entity_type: 'object',
+				source: 'web',
+				flow_id: null,
+				object_subtype: 'bet',
+			})
+		})
+
+		it('object_starred forwards a caller-supplied flow_id without overwriting the base', () => {
+			const capture = captureSpy()
+
+			trackObjectStarred({
+				entity_id: 'obj-7',
+				entity_type: 'object',
+				object_subtype: 'task',
+				flow_id: 'card-open-99',
+			})
+
+			expect(capture).toHaveBeenCalledWith(
+				'object_starred',
+				expect.objectContaining({
+					entity_id: 'obj-7',
+					object_subtype: 'task',
+					flow_id: 'card-open-99',
+				}),
+			)
+		})
+
+		it('object_unstarred mirrors object_starred with the same property shape so the guardrail query pairs cleanly', () => {
+			const capture = captureSpy()
+
+			trackObjectUnstarred({
+				entity_id: 'obj-42',
+				entity_type: 'object',
+				object_subtype: 'bet',
+			})
+
+			expect(capture).toHaveBeenCalledWith('object_unstarred', {
+				entity_id: 'obj-42',
+				entity_type: 'object',
+				source: 'web',
+				flow_id: null,
+				object_subtype: 'bet',
 			})
 		})
 	})
