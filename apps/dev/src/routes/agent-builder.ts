@@ -279,11 +279,9 @@ app.post('/refine', async (c) => {
 	} catch (err) {
 		if (err instanceof AgentRefineError) {
 			const status =
-				err.reason === 'actor_not_found' || err.reason === 'skill_not_found'
+				err.reason === 'skill_not_found' || err.reason === 'actor_wrong_workspace'
 					? 404
-					: err.reason === 'actor_wrong_workspace'
-						? 404
-						: 400
+					: 400
 			return c.json(createApiError('VALIDATION_ERROR', err.message), status)
 		}
 		if (err instanceof AgentBuilderError) {
