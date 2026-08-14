@@ -192,6 +192,22 @@ const includeArchivedSchema = z
 		'When false (the default), rows with `status = "archived"` are excluded regardless of type. Set to `true` to include archived rows — used by surfaces that let a viewer opt in (e.g. the "Include archived" DisplayPanel toggle).',
 	)
 
+/** Same preprocess pattern as `includeArchivedSchema` — accepts native booleans
+ *  (MCP JSON body) and query-string tokens `"true"` / `"1"` (HTTP querystring);
+ *  anything else resolves to `false`. When true, the list endpoint restricts
+ *  results to objects the calling actor has starred (per-user, via
+ *  `user_starred_objects`). Absent / false → unaltered list. */
+const starredSchema = z
+	.preprocess((v) => {
+		if (typeof v === 'boolean') return v
+		if (typeof v === 'string') return v === 'true' || v === '1'
+		return false
+	}, z.boolean())
+	.default(false)
+	.describe(
+		'When true, restricts the list to objects the calling actor has starred. Absent / false returns the unfiltered list.',
+	)
+
 export const objectQuerySchema = z.object({
 	type: objectTypeSchema.optional(),
 	status: z.string().optional(),
@@ -209,6 +225,7 @@ export const objectQuerySchema = z.object({
 	cursor_created_at: cursorCreatedAtSchema,
 	cursor_id: cursorIdSchema,
 	include_archived: includeArchivedSchema,
+	starred: starredSchema,
 })
 
 export const boardObjectQuerySchema = objectQuerySchema.extend({

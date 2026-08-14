@@ -53,6 +53,10 @@ export const objectResponseSchema = z.object({
 	is_subscribed: z.boolean().optional(),
 	unread_count: z.number().optional(),
 	subscriber_count: z.number().optional(),
+	// Per-viewer star state, resolved against `user_starred_objects` for the
+	// calling actor. Every list/board/detail read populates it (present as
+	// `true`/`false`); absent only on responses that predate this field.
+	isStarred: z.boolean().optional(),
 })
 
 export const actorSkillSchema = z.object({
