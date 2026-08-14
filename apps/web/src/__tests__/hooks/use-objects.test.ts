@@ -11,6 +11,8 @@ vi.mock('@/lib/api', () => ({
 			update: vi.fn(),
 			delete: vi.fn(),
 			bulkUpdate: vi.fn(),
+			star: vi.fn(),
+			unstar: vi.fn(),
 		},
 	},
 }))
@@ -27,6 +29,7 @@ import {
 	useObject,
 	useObjectGraph,
 	useObjects,
+	useToggleStar,
 	useUpdateObject,
 } from '@/hooks/use-objects'
 import type { ObjectResponse } from '@/lib/api'
@@ -619,5 +622,85 @@ describe('useDeleteObject', () => {
 		result.current.mutate('obj-1')
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
 		expect(api.objects.delete).toHaveBeenCalledWith('obj-1')
+	})
+})
+
+describe('useToggleStar', () => {
+	function wrapperWithClient() {
+		const client = new QueryClient({
+			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+		})
+		const wrapper = ({ children }: { children: ReactNode }) =>
+			React.createElement(QueryClientProvider, { client }, children)
+		return { client, wrapper }
+	}
+
+	it('optimistically stamps isStarred=true across the flat list cache before the request resolves', async () => {
+		const { client, wrapper } = wrapperWithClient()
+		client.setQueryData<ObjectResponse[]>(queryKeys.objects.list(workspaceId, { type: 'bet' }), [
+			buildObject({ id: 'obj-1', isStarred: false }),
+		])
+		let resolveStar: (value: { starred: boolean }) => void = () => {}
+		vi.mocked(api.objects.star).mockReturnValue(
+			new Promise<{ starred: boolean }>((r) => {
+				resolveStar = r
+			}),
+		)
+
+		const { result } = renderHook(() => useToggleStar(workspaceId), { wrapper })
+		result.current.mutate({ id: 'obj-1', starred: true })
+
+		await waitFor(() => {
+			const list = client.getQueryData<ObjectResponse[]>(
+				queryKeys.objects.list(workspaceId, { type: 'bet' }),
+			)
+			expect(list?.[0].isStarred).toBe(true)
+		})
+
+		resolveStar({ starred: true })
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+	})
+
+	it('rolls the flat list cache back to isStarred=false when the request fails', async () => {
+		const { client, wrapper } = wrapperWithClient()
+		client.setQueryData<ObjectResponse[]>(queryKeys.objects.list(workspaceId, { type: 'bet' }), [
+			buildObject({ id: 'obj-1', isStarred: false }),
+		])
+		vi.mocked(api.objects.star).mockRejectedValue(new Error('boom'))
+
+		const { result } = renderHook(() => useToggleStar(workspaceId), { wrapper })
+		result.current.mutate({ id: 'obj-1', starred: true })
+
+		await waitFor(() => expect(result.current.isError).toBe(true))
+		const list = client.getQueryData<ObjectResponse[]>(
+			queryKeys.objects.list(workspaceId, { type: 'bet' }),
+		)
+		expect(list?.[0].isStarred).toBe(false)
+	})
+
+	it('calls api.objects.unstar when starred=false', async () => {
+		vi.mocked(api.objects.unstar).mockResolvedValue({ starred: false })
+		const { result } = renderHook(() => useToggleStar(workspaceId), { wrapper: TestWrapper })
+		result.current.mutate({ id: 'obj-1', starred: false })
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(api.objects.unstar).toHaveBeenCalledWith('obj-1')
+		expect(api.objects.star).not.toHaveBeenCalled()
+	})
+
+	it('updates the detail cache alongside the list cache', async () => {
+		const { client, wrapper } = wrapperWithClient()
+		client.setQueryData<ObjectResponse>(
+			queryKeys.objects.detail('obj-1'),
+			buildObject({ id: 'obj-1', isStarred: false }),
+		)
+		vi.mocked(api.objects.star).mockResolvedValue({ starred: true })
+
+		const { result } = renderHook(() => useToggleStar(workspaceId), { wrapper })
+		result.current.mutate({ id: 'obj-1', starred: true })
+
+		await waitFor(() => {
+			const detail = client.getQueryData<ObjectResponse>(queryKeys.objects.detail('obj-1'))
+			expect(detail?.isStarred).toBe(true)
+		})
 	})
 })

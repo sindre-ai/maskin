@@ -5,10 +5,12 @@ import { SourceBadge } from '@/components/shared/source-badge'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { Checkbox } from '@/components/ui/checkbox'
+import { useToggleStar } from '@/hooks/use-objects'
 import type { ActorListItem, ObjectResponse } from '@/lib/api'
 import type { BetStatusResult } from '@/lib/bet-status'
 import { cn } from '@/lib/cn'
 import { Link } from '@tanstack/react-router'
+import { Star } from 'lucide-react'
 
 interface ObjectCardProps {
 	object: ObjectResponse
@@ -31,6 +33,19 @@ export function ObjectCard({
 }: ObjectCardProps) {
 	const owner = object.driver ? actors?.find((a) => a.id === object.driver) : null
 	const isArchived = object.status === 'archived'
+	const toggleStar = useToggleStar(workspaceId)
+	// While the mutation is pending the cache has been optimistically patched,
+	// and after it succeeds the server has echoed the same state — keep the
+	// button in that state until the parent's next cache read confirms it, so
+	// the card stays visually stable across in-flight → settled. On error the
+	// hook rolls the cache back and status flips to 'error', at which point we
+	// fall through to `object.isStarred` (which is the rolled-back value).
+	const mutationOwnsView =
+		(toggleStar.status === 'pending' || toggleStar.status === 'success') &&
+		toggleStar.variables?.id === object.id
+	const isStarred = mutationOwnsView
+		? toggleStar.variables?.starred === true
+		: object.isStarred === true
 	// Prior status is populated by the archive handler (T6) into metadata.previous_status.
 	// We only render "was <status>" when it's set; falling back to `object.status` would
 	// print "was archived", which is useless.
@@ -75,7 +90,21 @@ export function ObjectCard({
 							<AgentWorkingBadge sessionId={object.activeSessionId} workspaceId={workspaceId} />
 						)}
 					</div>
-					<StatusBadge status={object.status} className="shrink-0" />
+					<div className="flex shrink-0 items-center gap-2">
+						<button
+							type="button"
+							aria-pressed={isStarred}
+							aria-label={isStarred ? 'Unstar' : 'Star'}
+							onClick={(e) => {
+								e.stopPropagation()
+								toggleStar.mutate({ id: object.id, starred: !isStarred })
+							}}
+							className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 aria-pressed:text-foreground"
+						>
+							<Star size={14} className={isStarred ? 'fill-current' : undefined} />
+						</button>
+						<StatusBadge status={object.status} />
+					</div>
 				</div>
 				<div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
 					<TypeBadge type={object.type} />
