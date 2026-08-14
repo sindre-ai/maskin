@@ -1,7 +1,8 @@
 import type { Database } from '@maskin/db'
 import { sessions } from '@maskin/db/schema'
 import { and, eq, gte, sql } from 'drizzle-orm'
-import { getValidOAuthToken } from './claude-oauth'
+import { type SubscriptionProbe, resolveClaudeCredentialsWithFailover } from './claude-failover'
+import type { OAuthSlotKind } from './claude-oauth-slots'
 import type { WorkspaceSettings } from './types'
 
 /**
@@ -25,6 +26,7 @@ export interface LlmRoutingResult {
 	route: LlmRoute
 	/** Env vars to merge into the container environment. */
 	envVars: Record<string, string>
+	oauthSlot?: OAuthSlotKind
 }
 
 export interface FallbackConfig {
@@ -38,6 +40,7 @@ export interface FallbackConfig {
 export interface AgentLlmConfig {
 	provider?: string | null
 	apiKey?: string | null
+	model?: string | null
 }
 
 /**
@@ -146,6 +149,11 @@ function buildCustomLlmEnv(custom: WorkspaceSettings['custom_llm']): Record<stri
  *
  * Returns null if the agent uses a non-anthropic provider (e.g. OpenAI native);
  * caller continues to handle OPENAI_API_KEY injection itself.
+ *
+ * `agent.model`, when set, is forwarded as ANTHROPIC_MODEL on routes #1, #3,
+ * and #4 (the routes that don't already carry an explicit model of their
+ * own). Routes #2 and #5 already source their model from workspace/operator
+ * config and are left as-is.
  */
 export async function resolveLlmRoute(params: {
 	db: Database
@@ -153,17 +161,26 @@ export async function resolveLlmRoute(params: {
 	actorId: string
 	wsSettings: WorkspaceSettings
 	agent: AgentLlmConfig
+	/**
+	 * Overrides the default `probeClaudeSubscription` probe used by the
+	 * failover path when `MASKIN_CLAUDE_FAILOVER_ENABLED=true`. Only tests
+	 * need to pass this — production callers can omit it and
+	 * `resolveClaudeCredentialsWithFailover` falls back to the real
+	 * Anthropic Messages API probe.
+	 */
+	claudeProbe?: SubscriptionProbe
 }): Promise<LlmRoutingResult | null> {
-	const { db, workspaceId, actorId, wsSettings, agent } = params
+	const { db, workspaceId, actorId, wsSettings, agent, claudeProbe } = params
 
 	// 1. Agent-level override — only handled here for anthropic; non-anthropic
 	//    providers fall through to caller (matches existing behavior).
 	if (agent.apiKey) {
 		if (agent.provider === 'anthropic') {
-			return {
-				route: LLM_ROUTE_AGENT,
-				envVars: { ANTHROPIC_API_KEY: agent.apiKey },
+			const envVars: Record<string, string> = { ANTHROPIC_API_KEY: agent.apiKey }
+			if (agent.model) {
+				envVars.ANTHROPIC_MODEL = agent.model
 			}
+			return { route: LLM_ROUTE_AGENT, envVars }
 		}
 		// caller (session-manager) handles OPENAI_API_KEY etc.
 		return null
@@ -175,9 +192,16 @@ export async function resolveLlmRoute(params: {
 		return { route: LLM_ROUTE_CUSTOM, envVars: customEnv }
 	}
 
-	// 3. Claude OAuth subscription
+	// 3. Claude OAuth subscription (with primary→backup failover when the
+	//    MASKIN_CLAUDE_FAILOVER_ENABLED flag is set; otherwise legacy
+	//    primary-only behaviour).
 	try {
-		const oauthResult = await getValidOAuthToken(db, workspaceId)
+		const oauthResult = await resolveClaudeCredentialsWithFailover({
+			db,
+			workspaceId,
+			actorId,
+			probe: claudeProbe,
+		})
 		if (oauthResult) {
 			const envVars: Record<string, string> = {
 				CLAUDE_OAUTH_ACCESS_TOKEN: oauthResult.tokens.accessToken,
@@ -190,7 +214,10 @@ export async function resolveLlmRoute(params: {
 			if (oauthResult.tokens.subscriptionType) {
 				envVars.CLAUDE_OAUTH_SUBSCRIPTION_TYPE = oauthResult.tokens.subscriptionType
 			}
-			return { route: LLM_ROUTE_OAUTH, envVars }
+			if (agent.model) {
+				envVars.ANTHROPIC_MODEL = agent.model
+			}
+			return { route: LLM_ROUTE_OAUTH, envVars, oauthSlot: oauthResult.slot }
 		}
 	} catch {
 		// Swallow OAuth errors and let the next route take over — the warning
@@ -200,10 +227,11 @@ export async function resolveLlmRoute(params: {
 	// 4. Workspace anthropic api key
 	const wsAnthropic = wsSettings.llm_keys?.anthropic
 	if (wsAnthropic) {
-		return {
-			route: LLM_ROUTE_API_KEY,
-			envVars: { ANTHROPIC_API_KEY: wsAnthropic },
+		const envVars: Record<string, string> = { ANTHROPIC_API_KEY: wsAnthropic }
+		if (agent.model) {
+			envVars.ANTHROPIC_MODEL = agent.model
 		}
+		return { route: LLM_ROUTE_API_KEY, envVars }
 	}
 
 	// 5. System fallback

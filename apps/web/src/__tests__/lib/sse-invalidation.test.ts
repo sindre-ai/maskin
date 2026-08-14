@@ -80,6 +80,27 @@ describe('invalidateFromSSE', () => {
 		})
 	})
 
+	it('invalidates objects for loop entity', () => {
+		const qc = createMockQueryClient()
+		invalidateFromSSE(qc as never, workspaceId, {
+			entity_type: 'loop',
+			entity_id: entityId,
+			action: 'status_changed',
+		} as never)
+		expect(qc.invalidateQueries).toHaveBeenCalledWith({
+			queryKey: queryKeys.objects.all(workspaceId),
+		})
+		expect(qc.invalidateQueries).toHaveBeenCalledWith({
+			queryKey: queryKeys.objects.detail(entityId),
+		})
+		expect(qc.invalidateQueries).toHaveBeenCalledWith({
+			queryKey: queryKeys.objects.graph(entityId),
+		})
+		expect(qc.invalidateQueries).not.toHaveBeenCalledWith({
+			queryKey: queryKeys.bets.all(workspaceId),
+		})
+	})
+
 	it('invalidates objects for knowledge entity', () => {
 		const qc = createMockQueryClient()
 		invalidateFromSSE(qc as never, workspaceId, {

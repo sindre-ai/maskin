@@ -3,12 +3,17 @@ import type { Database } from '@maskin/db'
 import { events, agentSkills, workspaceMembers, workspaceSkills } from '@maskin/db/schema'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import type { StorageProvider } from '@maskin/storage'
+import AdmZip from 'adm-zip'
 import { and, eq } from 'drizzle-orm'
 import { createApiError, formatZodError } from '../../lib/errors'
-import { AgentStorageManager, workspaceSkillKey } from '../../services/agent-storage'
+import {
+	AgentStorageManager,
+	workspaceSkillFileKey,
+	workspaceSkillKey,
+} from '../../services/agent-storage'
 import { insertActor, insertWorkspace } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
-import { db, getTestActorId } from './global-setup'
+import { db, getTestActorId, sql } from './global-setup'
 
 const { default: workspaceSkillsRoutes } = await import('../../routes/workspace-skills')
 const { default: agentSkillAttachmentsRoutes } = await import(
@@ -49,6 +54,11 @@ function createMemoryStorage(): StorageProvider & { _store: Map<string, Buffer> 
 		},
 		async list(prefix) {
 			return [...store.keys()].filter((k) => k.startsWith(prefix))
+		},
+		async listWithMetadata(prefix) {
+			return [...store.entries()]
+				.filter(([k]) => k.startsWith(prefix))
+				.map(([key, buf]) => ({ key, size: buf.length }))
 		},
 		async delete(key) {
 			store.delete(key)
@@ -309,6 +319,294 @@ describe('Workspace Skills Integration', () => {
 		})
 	})
 
+	describe('batch attach', () => {
+		it('attaches multiple skills to an agent in a single request', async () => {
+			const app = createSkillsApp(storage)
+			const agent = await insertActor(db, { type: 'agent', name: 'Ops Bot' })
+			await db.insert(workspaceMembers).values({
+				workspaceId,
+				actorId: agent.id,
+				role: 'member',
+			})
+
+			const skillA = await (
+				await app.request(
+					jsonRequest('POST', `/api/workspaces/${workspaceId}/skills`, {
+						name: 'deploy-prod',
+						content: SKILL_BODY,
+					}),
+				)
+			).json()
+			const skillB = await (
+				await app.request(
+					jsonRequest('POST', `/api/workspaces/${workspaceId}/skills`, {
+						name: 'rollback-prod',
+						content: SKILL_BODY,
+					}),
+				)
+			).json()
+
+			const batchRes = await app.request(
+				jsonRequest('POST', `/api/actors/${agent.id}/workspace-skills/batch`, {
+					workspaceSkillIds: [skillA.id, skillB.id],
+				}),
+			)
+			expect(batchRes.status).toBe(200)
+			const results = await batchRes.json()
+			expect(results).toHaveLength(2)
+			expect(results.every((r: { success: boolean }) => r.success)).toBe(true)
+
+			const listRes = await app.request(jsonGet(`/api/actors/${agent.id}/workspace-skills`))
+			const list = await listRes.json()
+			expect(list.map((s: { id: string }) => s.id).sort()).toEqual([skillA.id, skillB.id].sort())
+
+			// Exactly one `attached` event per skill, even though the batch runs as
+			// a single call server-side.
+			const attachEvents = await db
+				.select()
+				.from(events)
+				.where(
+					and(
+						eq(events.workspaceId, workspaceId),
+						eq(events.entityType, 'agent_skill'),
+						eq(events.action, 'attached'),
+					),
+				)
+			expect(attachEvents).toHaveLength(2)
+		})
+
+		it('is idempotent and reports partial failures without failing the whole batch', async () => {
+			const app = createSkillsApp(storage)
+			const agent = await insertActor(db, { type: 'agent', name: 'Ops Bot' })
+			await db.insert(workspaceMembers).values({
+				workspaceId,
+				actorId: agent.id,
+				role: 'member',
+			})
+
+			const skill = await (
+				await app.request(
+					jsonRequest('POST', `/api/workspaces/${workspaceId}/skills`, {
+						name: 'deploy-prod',
+						content: SKILL_BODY,
+					}),
+				)
+			).json()
+
+			// Attach once up front so the batch call re-attaches it (idempotent branch).
+			await app.request(
+				jsonRequest('POST', `/api/actors/${agent.id}/workspace-skills`, {
+					workspaceSkillId: skill.id,
+				}),
+			)
+
+			const missingSkillId = '00000000-0000-0000-0000-0000000000ff'
+			const batchRes = await app.request(
+				jsonRequest('POST', `/api/actors/${agent.id}/workspace-skills/batch`, {
+					workspaceSkillIds: [skill.id, missingSkillId],
+				}),
+			)
+
+			expect(batchRes.status).toBe(200)
+			const results = await batchRes.json()
+			expect(results).toHaveLength(2)
+			expect(results[0].success).toBe(true)
+			expect(results[0].skill.id).toBe(skill.id)
+			expect(results[1].success).toBe(false)
+			expect(results[1].workspaceSkillId).toBe(missingSkillId)
+			expect(results[1].error).toContain('not found')
+
+			// Still only one `attached` event — the pre-attach plus the idempotent
+			// batch re-attach didn't double up.
+			const attachEvents = await db
+				.select()
+				.from(events)
+				.where(
+					and(
+						eq(events.workspaceId, workspaceId),
+						eq(events.entityType, 'agent_skill'),
+						eq(events.action, 'attached'),
+					),
+				)
+			expect(attachEvents).toHaveLength(1)
+		})
+
+		it('returns a per-skill error when attaching across workspaces', async () => {
+			const app = createSkillsApp(storage)
+			const workspaceB = await insertWorkspace(db, getTestActorId())
+
+			const skill = await (
+				await app.request(
+					jsonRequest('POST', `/api/workspaces/${workspaceId}/skills`, {
+						name: 'deploy-prod',
+						content: SKILL_BODY,
+					}),
+				)
+			).json()
+
+			// Agent is only a member of workspace B, not the skill's workspace.
+			const agent = await insertActor(db, { type: 'agent', name: 'Outsider' })
+			await db.insert(workspaceMembers).values({
+				workspaceId: workspaceB.id,
+				actorId: agent.id,
+				role: 'member',
+			})
+
+			const batchRes = await app.request(
+				jsonRequest('POST', `/api/actors/${agent.id}/workspace-skills/batch`, {
+					workspaceSkillIds: [skill.id],
+				}),
+			)
+			expect(batchRes.status).toBe(200)
+			const results = await batchRes.json()
+			expect(results[0].success).toBe(false)
+			expect(results[0].error).toContain("outside the skill's workspace")
+		})
+
+		it('returns a per-skill error when the caller is not a member of the skill workspace, and inserts no attachment', async () => {
+			// The target actor IS a member of the skill's workspace — only the
+			// CALLER isn't. This is the only check standing between an arbitrary
+			// caller and attaching a skill from a workspace they can't see.
+			const outsiderCaller = await insertActor(db, { type: 'human', name: 'Outsider Caller' })
+			const app = createSkillsApp(storage, outsiderCaller.id)
+
+			const agent = await insertActor(db, { type: 'agent', name: 'Ops Bot' })
+			await db.insert(workspaceMembers).values({
+				workspaceId,
+				actorId: agent.id,
+				role: 'member',
+			})
+
+			// Skill is created by the workspace owner via a separate app instance so
+			// the outsider caller's app never touches an authorized endpoint.
+			const ownerApp = createSkillsApp(storage, getTestActorId())
+			const skill = await (
+				await ownerApp.request(
+					jsonRequest('POST', `/api/workspaces/${workspaceId}/skills`, {
+						name: 'deploy-prod',
+						content: SKILL_BODY,
+					}),
+				)
+			).json()
+
+			const batchRes = await app.request(
+				jsonRequest('POST', `/api/actors/${agent.id}/workspace-skills/batch`, {
+					workspaceSkillIds: [skill.id],
+				}),
+			)
+			expect(batchRes.status).toBe(200)
+			const results = await batchRes.json()
+			expect(results[0].success).toBe(false)
+			expect(results[0].error).toContain("Not a member of the skill's workspace")
+
+			const attachments = await db
+				.select()
+				.from(agentSkills)
+				.where(and(eq(agentSkills.actorId, agent.id), eq(agentSkills.workspaceSkillId, skill.id)))
+			expect(attachments).toHaveLength(0)
+		})
+
+		it('returns 400 when workspaceSkillIds contains a duplicate id', async () => {
+			const app = createSkillsApp(storage)
+			const agent = await insertActor(db, { type: 'agent', name: 'Ops Bot' })
+			await db.insert(workspaceMembers).values({
+				workspaceId,
+				actorId: agent.id,
+				role: 'member',
+			})
+
+			const skill = await (
+				await app.request(
+					jsonRequest('POST', `/api/workspaces/${workspaceId}/skills`, {
+						name: 'deploy-prod',
+						content: SKILL_BODY,
+					}),
+				)
+			).json()
+
+			const batchRes = await app.request(
+				jsonRequest('POST', `/api/actors/${agent.id}/workspace-skills/batch`, {
+					workspaceSkillIds: [skill.id, skill.id],
+				}),
+			)
+			expect(batchRes.status).toBe(400)
+
+			// No attachment or event was written for the rejected request.
+			const attachments = await db
+				.select()
+				.from(agentSkills)
+				.where(and(eq(agentSkills.actorId, agent.id), eq(agentSkills.workspaceSkillId, skill.id)))
+			expect(attachments).toHaveLength(0)
+		})
+
+		it('rolls back the agentSkills insert when the events insert fails inside the transaction', async () => {
+			// Regression for the transaction guarantee described in the route's own
+			// comment: insert + audit event + read-back run in one db.transaction, so
+			// a failed events write must roll back the agentSkills insert too, rather
+			// than leaving an attached skill with no audit trail. The mocked-DB test
+			// suite can't verify this (its db.transaction() just calls the callback
+			// against the same mock, with no real rollback), so this needs a genuine
+			// Postgres constraint violation inside a real transaction.
+			const app = createSkillsApp(storage)
+			const agent = await insertActor(db, { type: 'agent', name: 'Ops Bot' })
+			await db.insert(workspaceMembers).values({
+				workspaceId,
+				actorId: agent.id,
+				role: 'member',
+			})
+
+			const skill = await (
+				await app.request(
+					jsonRequest('POST', `/api/workspaces/${workspaceId}/skills`, {
+						name: 'deploy-prod',
+						content: SKILL_BODY,
+					}),
+				)
+			).json()
+
+			// NOT VALID skips checking pre-existing rows (earlier tests in this file
+			// already inserted entity_type='agent_skill' events) while still
+			// enforcing the constraint for new inserts made during this test.
+			await sql.unsafe(
+				`ALTER TABLE events ADD CONSTRAINT test_block_agent_skill_events CHECK (entity_type <> 'agent_skill') NOT VALID`,
+			)
+			try {
+				const batchRes = await app.request(
+					jsonRequest('POST', `/api/actors/${agent.id}/workspace-skills/batch`, {
+						workspaceSkillIds: [skill.id],
+					}),
+				)
+				expect(batchRes.status).toBe(500)
+
+				const attachments = await db
+					.select()
+					.from(agentSkills)
+					.where(and(eq(agentSkills.actorId, agent.id), eq(agentSkills.workspaceSkillId, skill.id)))
+				expect(
+					attachments,
+					'agentSkills insert must roll back when the events insert in the same transaction fails',
+				).toHaveLength(0)
+
+				const attachEvents = await db
+					.select()
+					.from(events)
+					.where(
+						and(
+							eq(events.workspaceId, workspaceId),
+							eq(events.entityType, 'agent_skill'),
+							eq(events.action, 'attached'),
+							eq(events.entityId, skill.id),
+						),
+					)
+				expect(attachEvents).toHaveLength(0)
+			} finally {
+				await sql.unsafe(
+					'ALTER TABLE events DROP CONSTRAINT IF EXISTS test_block_agent_skill_events',
+				)
+			}
+		})
+	})
+
 	describe('delete cascade', () => {
 		it('removes matching agent_skills rows when a workspace_skills row is deleted', async () => {
 			const app = createSkillsApp(storage)
@@ -362,6 +660,204 @@ describe('Workspace Skills Integration', () => {
 
 			// S3 object was deleted.
 			expect(storage._store.has(workspaceSkillKey(workspaceId, skill.id))).toBe(false)
+		})
+	})
+
+	describe('folder skill upload', () => {
+		const ANTHROPIC_SKILL_MD =
+			'---\nname: docx\ndescription: Generate Microsoft Word documents\n---\n\nDocx skill body.'
+
+		function uploadRequest(name: string, body: Buffer, query = '') {
+			const formData = new FormData()
+			formData.append('file', new File([body], name))
+			return new Request(`http://localhost/api/workspaces/${workspaceId}/skills/upload${query}`, {
+				method: 'POST',
+				body: formData,
+			})
+		}
+
+		it('uploads an Anthropic-shaped docx bundle end-to-end', async () => {
+			const app = createSkillsApp(storage)
+			const zip = new AdmZip()
+			zip.addFile('docx/SKILL.md', Buffer.from(ANTHROPIC_SKILL_MD, 'utf-8'))
+			zip.addFile('docx/reference/style.md', Buffer.from('Style guide', 'utf-8'))
+			zip.addFile('docx/scripts/run.py', Buffer.from('print("hi")', 'utf-8'))
+
+			const res = await app.request(uploadRequest('docx.zip', zip.toBuffer()))
+			expect(res.status).toBe(201)
+			const body = await res.json()
+			expect(body.name).toBe('docx')
+			expect(body.isFolder).toBe(true)
+			expect(body.fileCount).toBe(3)
+			expect(body.isValid).toBe(true)
+			expect(body.error).toBeNull()
+
+			// Row landed with the folder flag set.
+			const [row] = await db.select().from(workspaceSkills).where(eq(workspaceSkills.id, body.id))
+			expect(row?.isFolder).toBe(true)
+			expect(row?.fileCount).toBe(3)
+
+			// Every bundled file is visible under the skill prefix.
+			expect(storage._store.has(workspaceSkillKey(workspaceId, body.id))).toBe(true)
+			expect(
+				storage._store.has(workspaceSkillFileKey(workspaceId, body.id, 'reference/style.md')),
+			).toBe(true)
+			expect(
+				storage._store.has(workspaceSkillFileKey(workspaceId, body.id, 'scripts/run.py')),
+			).toBe(true)
+		})
+
+		it('uploads a single SKILL.md via the same endpoint and marks it non-folder', async () => {
+			const app = createSkillsApp(storage)
+			const res = await app.request(
+				uploadRequest('docx.md', Buffer.from(ANTHROPIC_SKILL_MD, 'utf-8')),
+			)
+			expect(res.status).toBe(201)
+			const body = await res.json()
+			expect(body.isFolder).toBe(false)
+			expect(body.fileCount).toBeNull()
+
+			const [row] = await db.select().from(workspaceSkills).where(eq(workspaceSkills.id, body.id))
+			expect(row?.isFolder).toBe(false)
+			expect(row?.fileCount).toBeNull()
+		})
+
+		it('replaces a folder skill in place and clears stale bundled files', async () => {
+			const app = createSkillsApp(storage)
+
+			const firstZip = new AdmZip()
+			firstZip.addFile('docx/SKILL.md', Buffer.from(ANTHROPIC_SKILL_MD, 'utf-8'))
+			firstZip.addFile('docx/reference/old.md', Buffer.from('old', 'utf-8'))
+			const firstRes = await app.request(uploadRequest('docx.zip', firstZip.toBuffer()))
+			const first = await firstRes.json()
+			expect(
+				storage._store.has(workspaceSkillFileKey(workspaceId, first.id, 'reference/old.md')),
+			).toBe(true)
+
+			// Re-upload with a different layout — `old.md` should be gone.
+			const secondZip = new AdmZip()
+			secondZip.addFile('docx/SKILL.md', Buffer.from(ANTHROPIC_SKILL_MD, 'utf-8'))
+			secondZip.addFile('docx/reference/new.md', Buffer.from('new', 'utf-8'))
+			const secondRes = await app.request(
+				uploadRequest('docx.zip', secondZip.toBuffer(), `?skillId=${first.id}`),
+			)
+			expect(secondRes.status).toBe(201)
+			expect(
+				storage._store.has(workspaceSkillFileKey(workspaceId, first.id, 'reference/old.md')),
+			).toBe(false)
+			expect(
+				storage._store.has(workspaceSkillFileKey(workspaceId, first.id, 'reference/new.md')),
+			).toBe(true)
+		})
+
+		it('rejects a malformed bundle on replace and leaves the existing bundle intact', async () => {
+			const app = createSkillsApp(storage)
+			const zip = new AdmZip()
+			zip.addFile('docx/SKILL.md', Buffer.from(ANTHROPIC_SKILL_MD, 'utf-8'))
+			zip.addFile('docx/reference/keep.md', Buffer.from('keep me', 'utf-8'))
+			const firstRes = await app.request(uploadRequest('docx.zip', zip.toBuffer()))
+			expect(firstRes.status).toBe(201)
+			const first = await firstRes.json()
+
+			// Replace with a zip that has no SKILL.md — must be rejected without
+			// touching the row or the stored bundle.
+			const badZip = new AdmZip()
+			badZip.addFile('README.md', Buffer.from('not a skill', 'utf-8'))
+			const res = await app.request(
+				uploadRequest('docx.zip', badZip.toBuffer(), `?skillId=${first.id}`),
+			)
+			expect(res.status).toBe(400)
+
+			expect(storage._store.has(workspaceSkillKey(workspaceId, first.id))).toBe(true)
+			expect(
+				storage._store.has(workspaceSkillFileKey(workspaceId, first.id, 'reference/keep.md')),
+			).toBe(true)
+			const [row] = await db.select().from(workspaceSkills).where(eq(workspaceSkills.id, first.id))
+			expect(row?.isValid).toBe(true)
+			expect(row?.fileCount).toBe(2)
+			expect(row?.content).toContain('Docx skill body.')
+		})
+	})
+
+	describe('folder skill download', () => {
+		const ANTHROPIC_SKILL_MD =
+			'---\nname: docx\ndescription: Generate Microsoft Word documents\n---\n\nDocx skill body.'
+
+		function uploadRequest(name: string, body: Buffer, query = '') {
+			const formData = new FormData()
+			formData.append('file', new File([body], name))
+			return new Request(`http://localhost/api/workspaces/${workspaceId}/skills/upload${query}`, {
+				method: 'POST',
+				body: formData,
+			})
+		}
+
+		function downloadRequest(skillId: string) {
+			return new Request(
+				`http://localhost/api/workspaces/${workspaceId}/skills/${skillId}/download`,
+			)
+		}
+
+		it('round-trips through T2 upload — download zip re-uploads cleanly with the same file count', async () => {
+			const app = createSkillsApp(storage)
+
+			// Upload an Anthropic-shaped bundle so the row + S3 prefix is realistic.
+			const zip = new AdmZip()
+			zip.addFile('docx/SKILL.md', Buffer.from(ANTHROPIC_SKILL_MD, 'utf-8'))
+			zip.addFile('docx/reference/style.md', Buffer.from('Style guide', 'utf-8'))
+			zip.addFile('docx/scripts/run.py', Buffer.from('print("hi")', 'utf-8'))
+			const uploadRes = await app.request(uploadRequest('docx.zip', zip.toBuffer()))
+			expect(uploadRes.status).toBe(201)
+			const uploaded = await uploadRes.json()
+			expect(uploaded.isFolder).toBe(true)
+			expect(uploaded.fileCount).toBe(3)
+
+			// Download the bundle back as a zip.
+			const downloadRes = await app.request(downloadRequest(uploaded.id))
+			expect(downloadRes.status).toBe(200)
+			expect(downloadRes.headers.get('Content-Type')).toBe('application/zip')
+			expect(downloadRes.headers.get('Content-Disposition')).toContain('filename="docx.zip"')
+			const zipBuffer = Buffer.from(await downloadRes.arrayBuffer())
+
+			// Sanity-check the response zip structure.
+			const downloaded = new AdmZip(zipBuffer)
+			const entryNames = downloaded.getEntries().map((e) => e.entryName)
+			expect(entryNames.sort()).toEqual(['SKILL.md', 'reference/style.md', 'scripts/run.py'].sort())
+
+			// Re-upload the downloaded zip as a Replace of the same skill — same
+			// `file_count`, still folder skill. A round-trip re-upload keeps the
+			// SKILL.md frontmatter `name: docx` unchanged, so uploading it as a
+			// brand-new skill (no `?skillId=`) would collide with the original on
+			// the workspace's unique name constraint. Replacing is also the real
+			// user flow this proves: Download .zip → edit → Replace.
+			// This is the DoD round-trip: the downloaded zip must re-upload cleanly.
+			const reuploadRes = await app.request(
+				uploadRequest('docx-roundtrip.zip', zipBuffer, `?skillId=${uploaded.id}`),
+			)
+			expect(reuploadRes.status).toBe(201)
+			const reuploaded = await reuploadRes.json()
+			expect(reuploaded.isFolder).toBe(true)
+			expect(reuploaded.fileCount).toBe(3)
+			expect(reuploaded.isValid).toBe(true)
+			expect(reuploaded.error).toBeNull()
+		})
+
+		it('returns 404 for single-file skills', async () => {
+			const app = createSkillsApp(storage)
+			const uploadRes = await app.request(
+				uploadRequest('docx.md', Buffer.from(ANTHROPIC_SKILL_MD, 'utf-8')),
+			)
+			const uploaded = await uploadRes.json()
+			expect(uploaded.isFolder).toBe(false)
+
+			const downloadRes = await app.request(downloadRequest(uploaded.id))
+			expect(downloadRes.status).toBe(404)
+		})
+
+		it('returns 404 when the skill does not exist', async () => {
+			const app = createSkillsApp(storage)
+			const downloadRes = await app.request(downloadRequest('00000000-0000-0000-0000-0000ddddffff'))
+			expect(downloadRes.status).toBe(404)
 		})
 	})
 })

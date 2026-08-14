@@ -19,6 +19,7 @@ export type ChatAttachment =
 	| { kind: 'object'; id: string; title?: string | null; type?: string }
 	| { kind: 'agent'; id: string; name?: string | null }
 	| { kind: 'notification'; id: string; title?: string | null }
+	| { kind: 'file'; fileId: string; name: string; sizeBytes: number; mimeType?: string }
 
 export interface ChatContextValue {
 	open: boolean

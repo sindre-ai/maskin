@@ -8,3 +8,6 @@ export function createDb(url: string) {
 }
 
 export type Database = ReturnType<typeof createDb>
+
+/** The `tx` parameter inside a `db.transaction(async (tx) => { ... })` callback. */
+export type Transaction = Parameters<Parameters<Database['transaction']>[0]>[0]

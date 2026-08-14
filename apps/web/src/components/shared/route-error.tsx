@@ -1,8 +1,14 @@
 import { Button } from '@/components/ui/button'
+import { captureException } from '@/lib/sentry'
 import { useRouter } from '@tanstack/react-router'
+import { useEffect } from 'react'
 
 export function RouteError({ error }: { error: Error }) {
 	const router = useRouter()
+
+	useEffect(() => {
+		captureException(error)
+	}, [error])
 
 	return (
 		<div className="flex min-h-[50vh] items-center justify-center">

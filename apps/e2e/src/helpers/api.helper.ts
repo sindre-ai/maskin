@@ -85,6 +85,20 @@ interface RelationshipResponse {
 	type: string
 }
 
+interface TriggerResponse {
+	id: string
+	workspaceId: string
+	name: string
+	type: string
+	config: Record<string, unknown> | null
+	actionPrompt: string
+	targetActorId: string
+	enabled: boolean
+	createdBy: string
+	createdAt: string | null
+	updatedAt: string | null
+}
+
 export class TestAPI {
 	constructor(
 		private apiKey: string,
@@ -110,7 +124,13 @@ export class TestAPI {
 
 	async createObject(
 		workspaceId: string,
-		data: { type: string; title: string; status?: string; content?: string },
+		data: {
+			type: string
+			title: string
+			status?: string
+			content?: string
+			metadata?: Record<string, unknown>
+		},
 	): Promise<ObjectResponse> {
 		const res = await fetch(`${this.baseURL}/api/objects`, {
 			method: 'POST',
@@ -129,6 +149,25 @@ export class TestAPI {
 		return res.json()
 	}
 
+	async updateObject(
+		id: string,
+		workspaceId: string,
+		patch: Partial<{
+			status: string
+			title: string
+			content: string
+			metadata: Record<string, unknown>
+		}>,
+	): Promise<ObjectResponse> {
+		const res = await fetch(`${this.baseURL}/api/objects/${id}`, {
+			method: 'PATCH',
+			headers: this.headers(workspaceId),
+			body: JSON.stringify(patch),
+		})
+		if (!res.ok) throw new Error(`updateObject failed: ${res.status}`)
+		return res.json()
+	}
+
 	async deleteObject(id: string, workspaceId: string): Promise<void> {
 		const res = await fetch(`${this.baseURL}/api/objects/${id}`, {
 			method: 'DELETE',
@@ -137,9 +176,35 @@ export class TestAPI {
 		if (!res.ok) throw new Error(`deleteObject failed: ${res.status}`)
 	}
 
+	async createNotification(
+		workspaceId: string,
+		data: {
+			type: string
+			title: string
+			content?: string
+			metadata?: Record<string, unknown>
+			source_actor_id: string
+			target_actor_id?: string
+			object_id?: string
+		},
+	): Promise<{ id: string; status: string }> {
+		const res = await fetch(`${this.baseURL}/api/notifications`, {
+			method: 'POST',
+			headers: this.headers(workspaceId),
+			body: JSON.stringify(data),
+		})
+		if (!res.ok) throw new Error(`createNotification failed: ${res.status}`)
+		return res.json()
+	}
+
 	async createComment(
 		workspaceId: string,
-		data: { entity_id: string; content: string; parent_event_id?: number },
+		data: {
+			entity_id: string
+			content: string
+			parent_event_id?: number
+			metadata?: Record<string, unknown>
+		},
 	): Promise<EventResponse> {
 		const res = await fetch(`${this.baseURL}/api/events`, {
 			method: 'POST',
@@ -157,6 +222,19 @@ export class TestAPI {
 			body: JSON.stringify({ name }),
 		})
 		if (!res.ok) throw new Error(`createWorkspace failed: ${res.status}`)
+		return res.json()
+	}
+
+	async updateWorkspace(
+		id: string,
+		data: { name?: string; settings?: Record<string, unknown> },
+	): Promise<WorkspaceResponse> {
+		const res = await fetch(`${this.baseURL}/api/workspaces/${id}`, {
+			method: 'PATCH',
+			headers: this.headers(),
+			body: JSON.stringify(data),
+		})
+		if (!res.ok) throw new Error(`updateWorkspace failed: ${res.status}`)
 		return res.json()
 	}
 
@@ -250,6 +328,50 @@ export class TestAPI {
 			body: JSON.stringify(data),
 		})
 		if (!res.ok) throw new Error(`createRelationship failed: ${res.status}`)
+		return res.json()
+	}
+
+	async createAgentActor(name: string): Promise<CreateActorResponse> {
+		const res = await fetch(`${this.baseURL}/api/actors`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ type: 'agent', name }),
+		})
+		if (!res.ok) throw new Error(`createAgentActor failed: ${res.status}`)
+		return res.json()
+	}
+
+	async addWorkspaceMember(
+		workspaceId: string,
+		actorId: string,
+		role = 'member',
+	): Promise<{ added: boolean }> {
+		const res = await fetch(`${this.baseURL}/api/workspaces/${workspaceId}/members`, {
+			method: 'POST',
+			headers: this.headers(workspaceId),
+			body: JSON.stringify({ actor_id: actorId, role }),
+		})
+		if (!res.ok) throw new Error(`addWorkspaceMember failed: ${res.status}`)
+		return res.json()
+	}
+
+	async createTrigger(
+		workspaceId: string,
+		data: {
+			name: string
+			type: 'cron' | 'event' | 'reminder'
+			action_prompt: string
+			target_actor_id: string
+			config: Record<string, unknown>
+			enabled?: boolean
+		},
+	): Promise<TriggerResponse> {
+		const res = await fetch(`${this.baseURL}/api/triggers`, {
+			method: 'POST',
+			headers: this.headers(workspaceId),
+			body: JSON.stringify(data),
+		})
+		if (!res.ok) throw new Error(`createTrigger failed: ${res.status}`)
 		return res.json()
 	}
 }

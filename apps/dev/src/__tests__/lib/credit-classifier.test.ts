@@ -24,6 +24,17 @@ describe('classifyCreditExhaustion', () => {
 			})
 		})
 
+		it('classifies generic limit banner from rate_limit_event exits', () => {
+			const result = classifyCreditExhaustion(
+				'{"type":"rate_limit_event","rate_limit_info":{"rateLimitType":"five_hour"}}\nYou\'ve hit your limit · resets 3:20pm (UTC)',
+			)
+			expect(result).toMatchObject({
+				provider: 'anthropic',
+				reason_code: 'session_limit',
+				verbatim_output: "You've hit your limit",
+			})
+		})
+
 		it('classifies Opus limit banner', () => {
 			const result = classifyCreditExhaustion("You've hit your Opus limit")
 			expect(result).toMatchObject({

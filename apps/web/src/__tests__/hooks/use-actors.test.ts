@@ -235,14 +235,14 @@ describe('useAgentPause', () => {
 		expect(api.actors.pause).toHaveBeenCalledWith('agent-1', workspaceId)
 	})
 
-	it('toasts error when pause fails', async () => {
+	it('exposes error state when pause fails', async () => {
 		vi.mocked(api.actors.pause).mockRejectedValue(new Error('Failed'))
 
 		const { result } = renderHook(() => useAgentPause(workspaceId), { wrapper: TestWrapper })
 
 		result.current.mutate('agent-1')
 		await waitFor(() => expect(result.current.isError).toBe(true))
-		expect(toast.error).toHaveBeenCalledWith('Failed to pause agent')
+		expect(toast.error).not.toHaveBeenCalled()
 	})
 })
 
@@ -269,13 +269,13 @@ describe('useAgentRun', () => {
 		expect(api.actors.run).toHaveBeenCalledWith('agent-1', workspaceId, undefined)
 	})
 
-	it('toasts error when run fails', async () => {
+	it('exposes error state when run fails', async () => {
 		vi.mocked(api.actors.run).mockRejectedValue(new Error('Boom'))
 
 		const { result } = renderHook(() => useAgentRun(workspaceId), { wrapper: TestWrapper })
 
 		result.current.mutate({ id: 'agent-1' })
 		await waitFor(() => expect(result.current.isError).toBe(true))
-		expect(toast.error).toHaveBeenCalledWith('Failed to run agent')
+		expect(toast.error).not.toHaveBeenCalled()
 	})
 })

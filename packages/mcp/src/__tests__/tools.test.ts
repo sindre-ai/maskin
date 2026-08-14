@@ -30,6 +30,7 @@ const ALL_TOOL_NAMES = [
 	'list_objects',
 	'search_objects',
 	'list_relationships',
+	'traverse_graph',
 	'delete_relationship',
 	'create_actor',
 	'update_actor',
@@ -40,12 +41,9 @@ const ALL_TOOL_NAMES = [
 	'update_workspace',
 	'list_workspaces',
 	'get_workspace_schema',
-	'add_workspace_member',
 	'create_workspace_field',
 	'update_workspace_field',
 	'delete_workspace_field',
-	'add_workspace_enum_value',
-	'remove_workspace_enum_value',
 	'list_workspace_skills',
 	'get_workspace_skill',
 	'create_workspace_skill',
@@ -63,6 +61,11 @@ const ALL_TOOL_NAMES = [
 	'update_trigger',
 	'delete_trigger',
 	'list_triggers',
+	'create_loop',
+	'update_loop',
+	'list_loops',
+	'get_loop',
+	'delete_loop',
 	'create_session',
 	'list_sessions',
 	'get_session',
@@ -90,6 +93,7 @@ const ALL_TOOL_NAMES = [
 	'import_claude_subscription',
 	'get_claude_subscription_status',
 	'disconnect_claude_subscription',
+	'rename_claude_subscription',
 	'list_extensions',
 	'create_extension',
 	'update_extension',
@@ -164,10 +168,18 @@ describe('create_objects schema', () => {
 describe('list_objects schema', () => {
 	const schema = tools.list_objects.inputSchema
 
-	it('defaults limit to 50 and offset to 0', () => {
+	// Limit + offset are optional at the tool-schema layer so the server can
+	// pick the scoped default (25) when the flag is on; the API applies its
+	// own fallback when neither the client nor the server sets one.
+	it('leaves limit and offset undefined when not passed', () => {
 		const result = schema.parse({})
-		expect(result.limit).toBe(50)
-		expect(result.offset).toBe(0)
+		expect(result.limit).toBeUndefined()
+		expect(result.offset).toBeUndefined()
+	})
+
+	it('accepts an optional cursor for snapshot-consistent pagination', () => {
+		const result = schema.parse({ cursor: 'anything' })
+		expect(result.cursor).toBe('anything')
 	})
 
 	it('accepts optional type filter', () => {
@@ -183,6 +195,62 @@ describe('list_objects schema', () => {
 	it('rejects limit above 100', () => {
 		expect(() => schema.parse({ limit: 101 })).toThrow()
 	})
+
+	it('accepts updated_before / updated_after as ISO-8601', () => {
+		const result = schema.parse({
+			updated_before: '2026-06-30T12:00:00.000Z',
+			updated_after: '2026-06-29T12:00:00+02:00',
+		})
+		expect(result.updated_before).toBe('2026-06-30T12:00:00.000Z')
+		expect(result.updated_after).toBe('2026-06-29T12:00:00+02:00')
+	})
+
+	// AC-T6: malformed value surfaces as a Zod schema error so the SDK can
+	// return 400 instead of letting the bad string reach the route as a 500.
+	it('rejects malformed updated_before with a Zod error (AC-T6)', () => {
+		const result = schema.safeParse({ updated_before: 'not-a-date' })
+		expect(result.success).toBe(false)
+		if (!result.success) {
+			expect(result.error.issues[0]?.path).toEqual(['updated_before'])
+		}
+	})
+
+	it('rejects malformed updated_after with a Zod error', () => {
+		const result = schema.safeParse({ updated_after: 'yesterday' })
+		expect(result.success).toBe(false)
+		if (!result.success) {
+			expect(result.error.issues[0]?.path).toEqual(['updated_after'])
+		}
+	})
+
+	it('accepts sort = updated_at_asc / updated_at_desc', () => {
+		expect(schema.parse({ sort: 'updated_at_asc' }).sort).toBe('updated_at_asc')
+		expect(schema.parse({ sort: 'updated_at_desc' }).sort).toBe('updated_at_desc')
+	})
+
+	it('rejects unknown sort values', () => {
+		expect(() => schema.parse({ sort: 'created_at_asc' })).toThrow()
+	})
+
+	it('accepts metadata_eq as a field->value record', () => {
+		const result = schema.parse({ metadata_eq: { segment: 'enterprise', confidence: 'high' } })
+		expect(result.metadata_eq).toEqual({ segment: 'enterprise', confidence: 'high' })
+	})
+
+	it('omits metadata_eq when not supplied', () => {
+		const result = schema.parse({})
+		expect(result.metadata_eq).toBeUndefined()
+	})
+
+	it('defaults include_archived to false so archived rows stay hidden unless the caller opts in', () => {
+		const result = schema.parse({})
+		expect(result.include_archived).toBe(false)
+	})
+
+	it('accepts include_archived = true when the caller wants archived rows', () => {
+		const result = schema.parse({ include_archived: true })
+		expect(result.include_archived).toBe(true)
+	})
 })
 
 describe('search_objects schema', () => {
@@ -191,7 +259,11 @@ describe('search_objects schema', () => {
 	it('requires q with min 1 char', () => {
 		const result = schema.parse({ q: 'test' })
 		expect(result.q).toBe('test')
-		expect(result.limit).toBe(20)
+	})
+
+	it('accepts an optional cursor for snapshot-consistent pagination', () => {
+		const result = schema.parse({ q: 'test', cursor: 'anything' })
+		expect(result.cursor).toBe('anything')
 	})
 
 	it('rejects empty q', () => {
@@ -200,6 +272,108 @@ describe('search_objects schema', () => {
 
 	it('rejects missing q', () => {
 		expect(() => schema.parse({})).toThrow()
+	})
+
+	it('accepts driver_id as a uuid', () => {
+		const result = schema.parse({ q: 'bet', driver_id: uuid })
+		expect(result.driver_id).toBe(uuid)
+	})
+
+	it('rejects non-uuid driver_id', () => {
+		const result = schema.safeParse({ q: 'bet', driver_id: 'not-uuid' })
+		expect(result.success).toBe(false)
+		if (!result.success) {
+			expect(result.error.issues[0]?.path).toEqual(['driver_id'])
+		}
+	})
+
+	it('accepts updated_after as ISO-8601 with offset', () => {
+		const result = schema.parse({
+			q: 'bet',
+			updated_after: '2026-06-29T12:00:00+02:00',
+		})
+		expect(result.updated_after).toBe('2026-06-29T12:00:00+02:00')
+	})
+
+	it('rejects malformed updated_after with a Zod error', () => {
+		const result = schema.safeParse({ q: 'bet', updated_after: 'yesterday' })
+		expect(result.success).toBe(false)
+		if (!result.success) {
+			expect(result.error.issues[0]?.path).toEqual(['updated_after'])
+		}
+	})
+
+	it('accepts driver_id and updated_after composed with type + q', () => {
+		const result = schema.parse({
+			q: 'bet',
+			type: 'bet',
+			driver_id: uuid,
+			updated_after: '2026-06-29T12:00:00.000Z',
+		})
+		expect(result.q).toBe('bet')
+		expect(result.type).toBe('bet')
+		expect(result.driver_id).toBe(uuid)
+		expect(result.updated_after).toBe('2026-06-29T12:00:00.000Z')
+	})
+
+	it('accepts metadata_eq as a field->value record', () => {
+		const result = schema.parse({ q: 'bet', metadata_eq: { promotion_mode: 'human_approved' } })
+		expect(result.metadata_eq).toEqual({ promotion_mode: 'human_approved' })
+	})
+
+	it('omits metadata_eq when not supplied', () => {
+		const result = schema.parse({ q: 'bet' })
+		expect(result.metadata_eq).toBeUndefined()
+	})
+
+	it('defaults include_archived to false so archived rows stay hidden unless the caller opts in', () => {
+		const result = schema.parse({ q: 'bet' })
+		expect(result.include_archived).toBe(false)
+	})
+
+	it('accepts include_archived = true when the caller wants archived rows', () => {
+		const result = schema.parse({ q: 'bet', include_archived: true })
+		expect(result.include_archived).toBe(true)
+	})
+})
+
+describe('traverse_graph schema', () => {
+	const schema = tools.traverse_graph.inputSchema
+
+	it('accepts minimal input and applies bound defaults', () => {
+		const result = schema.parse({ object_id: uuid })
+		expect(result.object_id).toBe(uuid)
+		expect(result.max_depth).toBe(3)
+		expect(result.max_nodes).toBe(200)
+		expect(result.direction).toBe('both')
+	})
+
+	it('requires object_id as uuid', () => {
+		expect(() => schema.parse({ object_id: 'not-uuid' })).toThrow()
+	})
+
+	it('accepts an edge_type_allow_list enum array', () => {
+		const result = schema.parse({
+			object_id: uuid,
+			edge_type_allow_list: ['supersedes', 'contradicts'],
+		})
+		expect(result.edge_type_allow_list).toEqual(['supersedes', 'contradicts'])
+	})
+
+	it('rejects an unknown edge type', () => {
+		expect(() => schema.parse({ object_id: uuid, edge_type_allow_list: ['not_a_type'] })).toThrow()
+	})
+
+	it('rejects direction outside the allow-list', () => {
+		expect(() => schema.parse({ object_id: uuid, direction: 'sideways' })).toThrow()
+	})
+
+	it('rejects max_depth above the tool-side ceiling', () => {
+		expect(() => schema.parse({ object_id: uuid, max_depth: 11 })).toThrow()
+	})
+
+	it('rejects max_nodes above the tool-side ceiling', () => {
+		expect(() => schema.parse({ object_id: uuid, max_nodes: 1001 })).toThrow()
 	})
 })
 
@@ -252,6 +426,30 @@ describe('create_actor schema', () => {
 		expect(result.workspace_id).toBe(uuid)
 		expect(result.role).toBe('owner')
 	})
+
+	it('accepts admin role, matching update_actor', () => {
+		const result = schema.parse({ type: 'agent', name: 'Bot', role: 'admin' })
+		expect(result.role).toBe('admin')
+	})
+
+	it('rejects viewer — not a real workspace role', () => {
+		expect(() => schema.parse({ type: 'agent', name: 'Bot', role: 'viewer' })).toThrow()
+	})
+
+	it('accepts optional tools and attach_skill_ids', () => {
+		const result = schema.parse({
+			type: 'agent',
+			name: 'Bot',
+			tools: { mcpServers: { github: { command: 'npx' } } },
+			attach_skill_ids: [uuid],
+		})
+		expect(result.tools).toEqual({ mcpServers: { github: { command: 'npx' } } })
+		expect(result.attach_skill_ids).toEqual([uuid])
+	})
+
+	it('rejects non-uuid attach_skill_ids', () => {
+		expect(() => schema.parse({ type: 'agent', name: 'Bot', attach_skill_ids: ['nope'] })).toThrow()
+	})
 })
 
 describe('update_actor schema', () => {
@@ -269,6 +467,11 @@ describe('update_actor schema', () => {
 			system_prompt: 'Be helpful',
 		})
 		expect(result.name).toBe('Updated')
+	})
+
+	it('strips memory — no longer a supported param', () => {
+		const result = schema.parse({ id: uuid, memory: { notes: 'stale' } })
+		expect((result as Record<string, unknown>).memory).toBeUndefined()
 	})
 
 	it('accepts attach_skill_ids as an array of UUIDs', () => {
@@ -293,6 +496,34 @@ describe('update_actor schema', () => {
 		const result = schema.parse({ id: uuid })
 		expect(result.attach_skill_ids).toBeUndefined()
 		expect(result.detach_skill_ids).toBeUndefined()
+	})
+
+	it('accepts an optional workspace_id as uuid', () => {
+		const result = schema.parse({ id: uuid, workspace_id: uuid2 })
+		expect(result.workspace_id).toBe(uuid2)
+	})
+
+	it('rejects a non-UUID workspace_id', () => {
+		expect(() => schema.parse({ id: uuid, workspace_id: 'not-a-uuid' })).toThrow()
+	})
+
+	it('defaults role to member', () => {
+		const result = schema.parse({ id: uuid, workspace_id: uuid2 })
+		expect(result.role).toBe('member')
+	})
+
+	it('accepts owner and admin roles', () => {
+		expect(schema.parse({ id: uuid, workspace_id: uuid2, role: 'owner' }).role).toBe('owner')
+		expect(schema.parse({ id: uuid, workspace_id: uuid2, role: 'admin' }).role).toBe('admin')
+	})
+
+	it('rejects an invalid role', () => {
+		expect(() => schema.parse({ id: uuid, workspace_id: uuid2, role: 'viewer' })).toThrow()
+	})
+
+	it('leaves workspace_id undefined when omitted', () => {
+		const result = schema.parse({ id: uuid })
+		expect(result.workspace_id).toBeUndefined()
 	})
 })
 
@@ -335,6 +566,25 @@ describe('create_session schema', () => {
 			}),
 		).toThrow()
 	})
+
+	it('accepts previewGuestPorts alongside browserRequired', () => {
+		const result = schema.parse({
+			actor_id: uuid,
+			action_prompt: 'Test',
+			config: { browserRequired: true, previewGuestPorts: [5173] },
+		})
+		expect(result.config?.previewGuestPorts).toEqual([5173])
+	})
+
+	it('rejects previewGuestPorts entries above 65535', () => {
+		expect(() =>
+			schema.parse({
+				actor_id: uuid,
+				action_prompt: 'Test',
+				config: { previewGuestPorts: [70000] },
+			}),
+		).toThrow()
+	})
 })
 
 describe('list_sessions schema', () => {
@@ -353,6 +603,25 @@ describe('list_sessions schema', () => {
 
 	it('rejects invalid status', () => {
 		expect(() => schema.parse({ status: 'cancelled' })).toThrow()
+	})
+
+	it('accepts updated_before / updated_after as ISO-8601', () => {
+		const result = schema.parse({
+			updated_before: '2026-06-30T12:00:00.000Z',
+			updated_after: '2026-06-29T00:00:00Z',
+		})
+		expect(result.updated_before).toBe('2026-06-30T12:00:00.000Z')
+		expect(result.updated_after).toBe('2026-06-29T00:00:00Z')
+	})
+
+	// AC-T6: malformed value surfaces as a Zod schema error so the SDK can
+	// return 400 instead of letting the bad string reach the route as a 500.
+	it('rejects malformed updated_before with a Zod error (AC-T6)', () => {
+		const result = schema.safeParse({ updated_before: 'not-a-date' })
+		expect(result.success).toBe(false)
+		if (!result.success) {
+			expect(result.error.issues[0]?.path).toEqual(['updated_before'])
+		}
 	})
 })
 
@@ -541,6 +810,113 @@ describe('create_trigger schema', () => {
 	})
 })
 
+describe('create_loop schema', () => {
+	const schema = tools.create_loop.inputSchema
+
+	it('applies defaults: running status, empty steps/trigger_ids/object_ids', () => {
+		const result = schema.parse({ name: 'Lead loop' })
+		expect(result.status).toBe('running')
+		expect(result.steps).toEqual([])
+		expect(result.trigger_ids).toEqual([])
+		expect(result.object_ids).toEqual([])
+	})
+
+	it('accepts an event step and a cron step', () => {
+		const result = schema.parse({
+			name: 'Lead loop',
+			steps: [
+				{
+					name: 'Qualify',
+					agent_id: uuid,
+					prompt: 'Qualify the lead',
+					when: { object_type: 'lead', action: 'status_changed', filter: { status: 'new' } },
+				},
+				{
+					name: 'Sweep',
+					agent_id: uuid2,
+					prompt: 'Sweep stale leads',
+					when: { cron: '0 9 * * 1' },
+				},
+			],
+			closed_statuses: { lead: ['won', 'lost'] },
+		})
+		expect(result.steps).toHaveLength(2)
+		expect(result.closed_statuses).toEqual({ lead: ['won', 'lost'] })
+	})
+
+	it('rejects a step with an invalid event action', () => {
+		expect(() =>
+			schema.parse({
+				name: 'X',
+				steps: [
+					{
+						name: 'Bad',
+						agent_id: uuid,
+						prompt: 'Y',
+						when: { action: 'exploded' },
+					},
+				],
+			}),
+		).toThrow()
+	})
+
+	it('rejects an unknown loop status', () => {
+		expect(() => schema.parse({ name: 'X', status: 'sideways' })).toThrow()
+	})
+})
+
+describe('update_loop schema', () => {
+	const schema = tools.update_loop.inputSchema
+
+	it('accepts a pure membership update', () => {
+		const result = schema.parse({
+			id: uuid,
+			add_object_ids: [uuid2],
+			remove_trigger_ids: [uuid2],
+		})
+		expect(result.add_object_ids).toEqual([uuid2])
+		expect(result.remove_trigger_ids).toEqual([uuid2])
+	})
+
+	it('requires a uuid loop id', () => {
+		expect(() => schema.parse({ id: 'not-a-uuid', name: 'X' })).toThrow()
+	})
+})
+
+describe('get_loop schema', () => {
+	const schema = tools.get_loop.inputSchema
+
+	it('accepts a uuid id', () => {
+		const result = schema.parse({ id: uuid })
+		expect(result.id).toBe(uuid)
+	})
+
+	it('requires id', () => {
+		expect(() => schema.parse({})).toThrow()
+	})
+
+	it('rejects a non-uuid id', () => {
+		expect(() => schema.parse({ id: 'not-a-uuid' })).toThrow()
+	})
+})
+
+describe('delete_loop schema', () => {
+	const schema = tools.delete_loop.inputSchema
+
+	it('accepts a uuid id', () => {
+		const result = schema.parse({ id: uuid })
+		expect(result.id).toBe(uuid)
+	})
+
+	it('requires id', () => {
+		expect(() => schema.parse({})).toThrow()
+	})
+
+	it('rejects a non-uuid id', () => {
+		expect(() => schema.parse({ id: 'not-a-uuid' })).toThrow()
+	})
+})
+
 describe('list_workspace_skills schema', () => {
 	const schema = tools.list_workspace_skills.inputSchema
 
@@ -671,23 +1047,36 @@ describe('delete_workspace_skill schema', () => {
 	})
 })
 
-describe('add_workspace_member schema', () => {
-	const schema = tools.add_workspace_member.inputSchema
+describe('update_workspace schema', () => {
+	const schema = tools.update_workspace.inputSchema
 
-	it('requires workspace_id and actor_id, defaults role to member', () => {
-		const result = schema.parse({ workspace_id: uuid, actor_id: uuid2 })
-		expect(result.workspace_id).toBe(uuid)
-		expect(result.actor_id).toBe(uuid2)
-		expect(result.role).toBe('member')
+	it('accepts id with optional name and settings', () => {
+		const result = schema.parse({ id: uuid })
+		expect(result.id).toBe(uuid)
 	})
 
-	it('accepts role override', () => {
-		const result = schema.parse({ workspace_id: uuid, actor_id: uuid2, role: 'owner' })
-		expect(result.role).toBe('owner')
+	it('accepts north_star_metric in settings', () => {
+		const result = schema.parse({
+			id: uuid,
+			settings: { north_star_metric: 'Weekly active users' },
+		})
+		expect(result.settings?.north_star_metric).toBe('Weekly active users')
 	})
 
-	it('rejects missing workspace_id', () => {
-		expect(() => schema.parse({ actor_id: uuid2 })).toThrow()
+	it('accepts additional workspace settings alongside north_star_metric', () => {
+		const result = schema.parse({
+			id: uuid,
+			settings: {
+				north_star_metric: 'DAU',
+				tags: ['onboarding'],
+				llm_keys: { provider: 'anthropic' },
+			},
+		})
+		expect(result.settings?.north_star_metric).toBe('DAU')
+	})
+
+	it('rejects missing id', () => {
+		expect(() => schema.parse({})).toThrow()
 	})
 })
 
@@ -926,6 +1315,55 @@ describe('import_claude_subscription schema', () => {
 		expect(result.subscription_type).toBe('max')
 		expect(result.scopes).toEqual(['read'])
 	})
+
+	it('accepts an optional nickname', () => {
+		const result = schema.parse({
+			access_token: 'a',
+			refresh_token: 'r',
+			expires_at: 1,
+			nickname: 'Work account',
+		})
+		expect(result.nickname).toBe('Work account')
+	})
+
+	it('rejects a nickname over 60 characters', () => {
+		expect(() =>
+			schema.parse({
+				access_token: 'a',
+				refresh_token: 'r',
+				expires_at: 1,
+				nickname: 'x'.repeat(61),
+			}),
+		).toThrow()
+	})
+})
+
+describe('rename_claude_subscription schema', () => {
+	const schema = tools.rename_claude_subscription.inputSchema
+
+	it('accepts a slot and nickname', () => {
+		const result = schema.parse({ slot: 'backup', nickname: 'Overflow account' })
+		expect(result.slot).toBe('backup')
+		expect(result.nickname).toBe('Overflow account')
+	})
+
+	it('defaults slot to primary', () => {
+		const result = schema.parse({ nickname: 'Main account' })
+		expect(result.slot).toBe('primary')
+	})
+
+	it('accepts an empty string to clear the nickname', () => {
+		const result = schema.parse({ nickname: '' })
+		expect(result.nickname).toBe('')
+	})
+
+	it('rejects a nickname over 60 characters', () => {
+		expect(() => schema.parse({ nickname: 'x'.repeat(61) })).toThrow()
+	})
+
+	it('rejects a missing nickname', () => {
+		expect(() => schema.parse({ slot: 'primary' })).toThrow()
+	})
 })
 
 describe('get_claude_subscription_status schema', () => {
@@ -971,6 +1409,7 @@ describe('workspace_id optional on most tools', () => {
 		'import_claude_subscription',
 		'get_claude_subscription_status',
 		'disconnect_claude_subscription',
+		'rename_claude_subscription',
 	]
 
 	for (const name of toolsWithOptionalWorkspace) {

@@ -13,6 +13,10 @@ const QUICK_START_CHIPS = [
 
 interface SparseComposerProps {
 	itemsCount: number
+	/** Notified when focus enters/leaves the composer — used on the For You
+	 *  page to yield vertical space back to the composer (e.g. hiding the
+	 *  North Star prompt) while the on-screen keyboard is up on mobile. */
+	onFocusChange?: (focused: boolean) => void
 }
 
 /**
@@ -23,7 +27,7 @@ interface SparseComposerProps {
  * Reuses `<Composer>` directly so behaviour (Enter-to-send, slash picker,
  * selection chips, error display) stays in one place.
  */
-export function SparseComposer({ itemsCount }: SparseComposerProps) {
+export function SparseComposer({ itemsCount, onFocusChange }: SparseComposerProps) {
 	const { openWithContext } = useChat()
 	const { workspaceId } = useWorkspace()
 	const [selection, dispatchSelection] = useReducer(chatSelectionReducer, EMPTY_CHAT_SELECTION)
@@ -32,9 +36,39 @@ export function SparseComposer({ itemsCount }: SparseComposerProps) {
 	const mountedItemsCount = useRef(itemsCount)
 	const [chipSending, setChipSending] = useState(false)
 	const [chipError, setChipError] = useState<string | null>(null)
+	const [focused, setFocused] = useState(false)
+	// Read inside the visualViewport listener instead of `focused` directly —
+	// the listener is attached once on mount (see below), so it must see focus
+	// changes synchronously rather than waiting for the subscribing effect to
+	// re-run after a render, which loses events that fire in that gap (e.g. a
+	// keyboard-open resize dispatched right after focus).
+	const focusedRef = useRef(false)
+	// iOS Safari shrinks `visualViewport` (not `window.innerHeight`) when the
+	// on-screen keyboard rises, so a normal-flow element can end up hidden
+	// behind it. While focused, track how far the visual viewport has been
+	// pushed up and shift the composer by that amount so it stays reachable.
+	const [keyboardInset, setKeyboardInset] = useState(0)
 
 	useEffect(() => {
 		trackForyouSparseComposerShown({ items_count: mountedItemsCount.current })
+	}, [])
+
+	useEffect(() => {
+		const vv = window.visualViewport
+		if (!vv) return
+		const updateInset = () => {
+			if (!focusedRef.current) {
+				setKeyboardInset(0)
+				return
+			}
+			setKeyboardInset(Math.max(0, window.innerHeight - vv.height - vv.offsetTop))
+		}
+		vv.addEventListener('resize', updateInset)
+		vv.addEventListener('scroll', updateInset)
+		return () => {
+			vv.removeEventListener('resize', updateInset)
+			vv.removeEventListener('scroll', updateInset)
+		}
 	}, [])
 
 	const onSend = useCallback(
@@ -50,6 +84,18 @@ export function SparseComposer({ itemsCount }: SparseComposerProps) {
 					id: obj.id,
 					title: obj.title,
 					type: obj.type ?? undefined,
+				})
+			}
+			for (const notif of selection.notifications) {
+				attachments.push({ kind: 'notification', id: notif.id, title: notif.title })
+			}
+			for (const file of selection.files) {
+				attachments.push({
+					kind: 'file',
+					fileId: file.fileId,
+					name: file.name,
+					sizeBytes: file.sizeBytes,
+					...(file.mimeType ? { mimeType: file.mimeType } : {}),
 				})
 			}
 			const itemsCountAtSubmit = itemsCount
@@ -78,7 +124,26 @@ export function SparseComposer({ itemsCount }: SparseComposerProps) {
 	const showChips = itemsCount === 0
 
 	return (
-		<div className="mx-auto space-y-2 md:max-w-2xl">
+		<div
+			className="mx-auto space-y-2 transition-transform duration-150 md:max-w-2xl"
+			style={keyboardInset > 0 ? { transform: `translateY(-${keyboardInset}px)` } : undefined}
+			onFocus={() => {
+				if (focused) return
+				focusedRef.current = true
+				setFocused(true)
+				onFocusChange?.(true)
+			}}
+			onBlur={(e) => {
+				// Ignore focus moving between the composer's own controls (textarea,
+				// slash-picker buttons, send button) — only report unfocused once
+				// focus actually leaves the whole composer.
+				if (e.currentTarget.contains(e.relatedTarget as Node | null)) return
+				focusedRef.current = false
+				setFocused(false)
+				setKeyboardInset(0)
+				onFocusChange?.(false)
+			}}
+		>
 			{showChips ? (
 				<div className="flex flex-wrap gap-2" data-testid="sparse-composer-chips">
 					{QUICK_START_CHIPS.map((text) => (
@@ -110,7 +175,7 @@ export function SparseComposer({ itemsCount }: SparseComposerProps) {
 					onRemoveAgent={() => dispatchSelection({ type: 'remove_agent' })}
 					onRemoveObject={(id) => dispatchSelection({ type: 'remove_object', id })}
 					onRemoveNotification={(id) => dispatchSelection({ type: 'remove_notification', id })}
-					onRemoveFile={(name) => dispatchSelection({ type: 'remove_file', name })}
+					onRemoveFile={(fileId) => dispatchSelection({ type: 'remove_file', fileId })}
 					externalError={chipError}
 					onDismissExternalError={() => setChipError(null)}
 				/>

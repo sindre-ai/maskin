@@ -35,6 +35,7 @@ export type StartSessionRequest = {
 	cpus?: number
 	browserRequired?: boolean
 	sourceSessionId?: string
+	previewGuestPorts?: number[]
 }
 
 export type StartSessionResponse = {
@@ -43,6 +44,8 @@ export type StartSessionResponse = {
 	connection: { host: string; port: number }
 	env_overflow_spilled?: number
 	env_sanitized?: number
+	preview_url?: string
+	preview_forwarding_failed?: boolean
 }
 
 export type AgentServerClientDeps = {
@@ -72,6 +75,10 @@ export class AgentServerClient {
 		await this.postJson<{ ok: boolean }>(`/sessions/${sessionId}/input`, {
 			content: payload.message.content,
 		})
+	}
+
+	async stopSession(sessionId: string): Promise<void> {
+		await this.postJson<{ ok: boolean }>(`/sessions/${sessionId}/stop`, {})
 	}
 
 	// Public to let lifecycle-route callers (T3 stop/snapshot/restore) reuse the

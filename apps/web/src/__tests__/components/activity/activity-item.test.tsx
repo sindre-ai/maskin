@@ -129,4 +129,19 @@ describe('ActivityItemView', () => {
 
 		expect(screen.getByText('My Bet')).toBeInTheDocument()
 	})
+
+	it('renders the timestamp in a fixed-width tabular-nums mono column (AC-U3)', () => {
+		const actor = buildActorResponse()
+		const event = buildEventResponse({ createdAt: new Date(Date.now() - 5 * 60_000).toISOString() })
+
+		render(<ActivityItemView event={event} actor={actor} />)
+
+		const timeEl = screen.getByText(/ago|now/) as HTMLElement
+		expect(timeEl.tagName).toBe('TIME')
+		expect(timeEl).toHaveClass('font-mono')
+		expect(timeEl).toHaveClass('tabular-nums')
+		expect(timeEl).toHaveClass('w-14')
+		expect(timeEl).toHaveClass('text-right')
+		expect(timeEl).toHaveClass('shrink-0')
+	})
 })

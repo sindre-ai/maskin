@@ -44,6 +44,42 @@ describe('LinkedObjectsView', () => {
 		expect(screen.getByText('My Insight')).toBeInTheDocument()
 	})
 
+	it('resolves linked objects regardless of canonical or legacy sourceType/targetType labels', () => {
+		// Two edges pointing at the same object endpoint: one written with
+		// canonical type labels ('object'), one with legacy specialized labels
+		// ('insight', 'bet'). Both should render the linked object identically.
+		const target = buildObjectResponse({ id: 'obj-2', title: 'Shared Target' })
+
+		const canonicalRel = buildRelationshipResponse({
+			id: 'rel-canonical',
+			sourceId: 'obj-1',
+			targetId: 'obj-2',
+			sourceType: 'object',
+			targetType: 'object',
+		})
+		const legacyRel = buildRelationshipResponse({
+			id: 'rel-legacy',
+			sourceId: 'obj-1',
+			targetId: 'obj-2',
+			sourceType: 'insight',
+			targetType: 'bet',
+		})
+
+		render(
+			<LinkedObjectsView
+				{...baseProps}
+				asSource={[canonicalRel, legacyRel]}
+				asTarget={[]}
+				allObjects={[target]}
+			/>,
+		)
+
+		// Both edges resolve to the same target object, producing two rows
+		// with the same title. Verify both rows are present.
+		expect(screen.getAllByText('Shared Target')).toHaveLength(2)
+		expect(screen.getByText('Related (2)')).toBeInTheDocument()
+	})
+
 	it('shows "Untitled" for objects without title', () => {
 		const target = buildObjectResponse({ id: 'obj-2', title: null })
 		const rel = buildRelationshipResponse({ sourceId: 'obj-1', targetId: 'obj-2' })

@@ -15,8 +15,13 @@ import {
 	SelectValue,
 } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import {
+	type BulkEditCommitAction,
+	type PlatformDevice,
+	trackBulkEditCommit,
+} from '@/lib/analytics'
 import { cn } from '@/lib/cn'
-import { Brackets, ExternalLink, Link, Trash2, Type, X } from 'lucide-react'
+import { Archive, Brackets, ExternalLink, Link, MessageSquare, Trash2, Type, X } from 'lucide-react'
 import * as React from 'react'
 
 export interface BulkActionBarOption {
@@ -39,8 +44,32 @@ export interface BulkActionBarProps {
 	onCopyTitle?: () => void
 	onCopyTitleAsLink?: () => void
 	onOpenLinks?: () => void
+	onAnswerAsks?: () => void
+	askCount?: number
+	onArchive?: () => void
 	onDelete?: () => void
 	onClear: () => void
+}
+
+// Resolve the device class powering `platform_device` on bulk_edit_commit.
+// Uses a coarse `navigator.userAgent` check for iPhone/classic-iPad UAs, plus
+// the standard iPadOS-13+ detection (UA reports as Mac, but exposes multi-touch —
+// real desktop Macs report `maxTouchPoints === 0`). Deliberately NOT gated on
+// viewport width: real iPads sit at 768px/1024px, the project's own ship-gate
+// widths, so gating on a mobile-viewport check would misclassify them as desktop.
+export function resolvePlatformDevice(): PlatformDevice {
+	if (typeof navigator === 'undefined') return 'desktop'
+	const ua = navigator.userAgent ?? ''
+	if (/iPad|iPhone|iPod/.test(ua)) return 'ios'
+	if (
+		navigator.platform === 'MacIntel' &&
+		typeof navigator.maxTouchPoints === 'number' &&
+		navigator.maxTouchPoints > 1
+	) {
+		return 'ios'
+	}
+	if (/Android/i.test(ua)) return 'android'
+	return 'desktop'
 }
 
 function usePrefersReducedMotion() {
@@ -66,6 +95,9 @@ export function BulkActionBar({
 	onCopyTitle,
 	onCopyTitleAsLink,
 	onOpenLinks,
+	onAnswerAsks,
+	askCount = 0,
+	onArchive,
 	onDelete,
 	onClear,
 }: BulkActionBarProps) {
@@ -77,6 +109,17 @@ export function BulkActionBar({
 	// new row selection wouldn't refire onValueChange.
 	const [statusKey, setStatusKey] = React.useState(0)
 	const [ownerKey, setOwnerKey] = React.useState(0)
+
+	const emitCommit = React.useCallback(
+		(action: BulkEditCommitAction) => {
+			trackBulkEditCommit({
+				selected_count: selectedCount,
+				action,
+				platform_device: resolvePlatformDevice(),
+			})
+		},
+		[selectedCount],
+	)
 
 	React.useEffect(() => {
 		if (!visible) return
@@ -109,7 +152,7 @@ export function BulkActionBar({
 				className={cn(
 					'fixed left-1/2 bottom-10 z-50 -translate-x-1/2',
 					'flex w-[calc(100%-2rem)] max-w-[44rem] items-center gap-2',
-					'overflow-x-auto rounded-md border border-border bg-white px-3 py-2 shadow-lg',
+					'overflow-x-auto rounded-md border border-border bg-popover px-3 py-2 shadow-lg',
 					transitionClass,
 					visible
 						? 'pointer-events-auto opacity-100 translate-y-0'
@@ -130,6 +173,7 @@ export function BulkActionBar({
 					<Select
 						key={`status-${statusKey}`}
 						onValueChange={(value) => {
+							emitCommit('status_change')
 							onStatusChange(value)
 							setStatusKey((k) => k + 1)
 						}}
@@ -153,7 +197,10 @@ export function BulkActionBar({
 				<Select
 					key={`owner-${ownerKey}`}
 					onValueChange={(value) => {
-						if (onOwnerChange) onOwnerChange(value)
+						if (onOwnerChange) {
+							emitCommit('owner_change')
+							onOwnerChange(value)
+						}
 						setOwnerKey((k) => k + 1)
 					}}
 					disabled={ownerOptions.length === 0 || !onOwnerChange}
@@ -174,6 +221,19 @@ export function BulkActionBar({
 				</Select>
 
 				<div className="ml-auto flex shrink-0 items-center gap-1">
+					{onAnswerAsks && askCount > 0 && (
+						<Button
+							type="button"
+							variant="outline"
+							size="sm"
+							className="shrink-0"
+							onClick={onAnswerAsks}
+							aria-label={`Answer ${askCount} asks`}
+						>
+							<MessageSquare className="size-4" />
+							Answer {askCount} {askCount === 1 ? 'ask' : 'asks'}
+						</Button>
+					)}
 					{onCopyLink && (
 						<Tooltip>
 							<TooltipTrigger asChild>
@@ -182,7 +242,10 @@ export function BulkActionBar({
 									variant="outline"
 									size="icon"
 									className="size-8"
-									onClick={onCopyLink}
+									onClick={() => {
+										emitCommit('copy')
+										onCopyLink()
+									}}
 									aria-label={copyLinkLabel}
 								>
 									<Link className="size-4" />
@@ -199,7 +262,10 @@ export function BulkActionBar({
 									variant="outline"
 									size="icon"
 									className="size-8"
-									onClick={onCopyTitle}
+									onClick={() => {
+										emitCommit('copy')
+										onCopyTitle()
+									}}
 									aria-label={copyTitleLabel}
 								>
 									<Type className="size-4" />
@@ -216,7 +282,10 @@ export function BulkActionBar({
 									variant="outline"
 									size="icon"
 									className="size-8"
-									onClick={onCopyTitleAsLink}
+									onClick={() => {
+										emitCommit('copy')
+										onCopyTitleAsLink()
+									}}
 									aria-label={copyTitleAsLinkLabel}
 								>
 									<Brackets className="size-4" />
@@ -233,7 +302,10 @@ export function BulkActionBar({
 									variant="outline"
 									size="icon"
 									className="size-8"
-									onClick={onOpenLinks}
+									onClick={() => {
+										emitCommit('copy')
+										onOpenLinks()
+									}}
 									aria-label={openLinksLabel}
 								>
 									<ExternalLink className="size-4" />
@@ -241,6 +313,22 @@ export function BulkActionBar({
 							</TooltipTrigger>
 							<TooltipContent>{openLinksLabel}</TooltipContent>
 						</Tooltip>
+					)}
+					{onArchive && (
+						<Button
+							type="button"
+							variant="outline"
+							size="sm"
+							className="shrink-0"
+							onClick={() => {
+								emitCommit('archive')
+								onArchive()
+							}}
+							aria-label="Archive selected"
+						>
+							<Archive className="size-4" />
+							Archive
+						</Button>
 					)}
 					{onDelete && (
 						<Button
@@ -285,7 +373,10 @@ export function BulkActionBar({
 							variant="destructive"
 							onClick={() => {
 								setConfirmOpen(false)
-								if (onDelete) onDelete()
+								if (onDelete) {
+									emitCommit('delete')
+									onDelete()
+								}
 							}}
 						>
 							Delete

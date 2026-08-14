@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { OpenAPIHono } from '@hono/zod-openapi'
 import { type Database, createDb } from '@maskin/db'
+import { splitStatements } from '@maskin/db/migrate-utils'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import postgres from 'postgres'
 import { createApiError, formatZodError } from '../../lib/errors'
@@ -82,6 +83,16 @@ beforeAll(async () => {
 	await sql`DROP SCHEMA public CASCADE`
 	await sql`CREATE SCHEMA public`
 
+	// Mirror packages/db/src/migrate.ts: the tracking table must exist so any
+	// migration or rollback file that touches it (e.g. reversibility tests)
+	// runs identically to production.
+	await sql`
+		CREATE TABLE IF NOT EXISTS "_migrations" (
+			"name" text PRIMARY KEY,
+			"applied_at" timestamp with time zone DEFAULT now()
+		)
+	`
+
 	// Run migrations
 	const __dirname = dirname(fileURLToPath(import.meta.url))
 	const migrationsDir = join(__dirname, '..', '..', '..', '..', '..', 'packages', 'db', 'drizzle')
@@ -91,7 +102,11 @@ beforeAll(async () => {
 
 	for (const file of files) {
 		const content = readFileSync(join(migrationsDir, file), 'utf-8')
-		await sql.unsafe(content)
+		// One statement per query message — see packages/db/src/migrate-utils.ts.
+		for (const statement of splitStatements(content)) {
+			await sql.unsafe(statement)
+		}
+		await sql`INSERT INTO "_migrations" ("name") VALUES (${file}) ON CONFLICT DO NOTHING`
 	}
 
 	// Create a test actor to use across all integration tests
