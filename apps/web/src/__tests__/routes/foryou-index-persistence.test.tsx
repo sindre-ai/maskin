@@ -15,7 +15,14 @@ vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
 	return {
 		...mockTanStackRouter(),
-		createFileRoute: () => (options: Record<string, unknown>) => options,
+		// createFileRoute returns options plus a stub `useSearch` so route
+		// components that read search params (e.g. `Route.useSearch()`) don't
+		// blow up in this route-extracted rendering harness. These persistence
+		// tests don't drive the search state; a fixed empty object is fine.
+		createFileRoute: () => (options: Record<string, unknown>) => ({
+			...options,
+			useSearch: () => ({}),
+		}),
 	}
 })
 
