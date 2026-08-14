@@ -14,6 +14,7 @@ import { Link } from '@tanstack/react-router'
 import { CheckIcon, ChevronDown } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
+import { ArtifactDecisionCard, readArtifactKind } from './artifact-decision-card'
 
 interface ForYouCardQueueProps {
 	workspaceId: string
@@ -117,6 +118,35 @@ function GroupCard({ workspaceId, group }: GroupCardProps) {
 	const asked = typeof metadata.asked === 'string' ? metadata.asked : null
 	const recommendation =
 		typeof metadata.recommendation === 'string' ? metadata.recommendation : null
+
+	// Single-item groups whose notification carries a known artifact kind get
+	// the matching dedicated renderer. Multi-item groups fall through so
+	// bulk-approve keeps working across the batch.
+	const artifactKind = isGrouped ? null : readArtifactKind(primary)
+	if (artifactKind) {
+		return (
+			<div
+				data-testid="foryou-group-card"
+				data-object-id={group.objectId ?? ''}
+				data-group-size="1"
+			>
+				<ArtifactDecisionCard
+					workspaceId={workspaceId}
+					kind={artifactKind}
+					notification={primary}
+					onRespond={(response) =>
+						singleRespond.mutate(
+							{ id: primary.id, response },
+							{
+								onSuccess: () => toast.success('Responded'),
+								onError: () => toast.error('Respond failed — try again.'),
+							},
+						)
+					}
+				/>
+			</div>
+		)
+	}
 
 	const handleBulkApprove = () => {
 		const payload = bulkResponseFor(group)

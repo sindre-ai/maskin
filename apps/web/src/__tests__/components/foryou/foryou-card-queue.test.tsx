@@ -16,6 +16,21 @@ vi.mock('@/hooks/use-notifications', () => ({
 	useRespondNotification: () => ({ mutate: singleRespondMutate, isPending: false }),
 }))
 
+vi.mock('@/hooks/use-events', () => ({
+	useCreateComment: () => ({ mutate: vi.fn(), isPending: false }),
+}))
+
+vi.mock('@/lib/auth', () => ({
+	getStoredActor: () => ({ id: 'viewer', name: 'Viewer', type: 'human', email: null }),
+}))
+
+vi.mock('@/hooks/use-actors', () => ({
+	useActor: () => ({ data: { id: 'other', name: 'Other', type: 'human' } }),
+	useActors: () => ({
+		data: [{ id: 'viewer', name: 'Viewer', type: 'human', isSystem: false }],
+	}),
+}))
+
 import { ForYouCardQueue } from '@/components/foryou/foryou-card-queue'
 
 function buildNotification(overrides: Partial<NotificationResponse> = {}): NotificationResponse {
@@ -198,6 +213,68 @@ describe('ForYouCardQueue', () => {
 		const bulk = screen.getByTestId('foryou-bulk-approve')
 		expect(bulk).toBeDisabled()
 		expect(bulk).toHaveTextContent(/no recommendation/i)
+	})
+
+	it('routes single-item groups with a known artifact kind to the matching renderer', () => {
+		const mail = buildNotification({
+			id: 'mail-1',
+			objectId: 'obj-mail',
+			title: 'Approve outbound reply',
+			metadata: {
+				artifacts: [
+					{ kind: 'mail', fileId: '11111111-1111-4111-8111-111111111111', title: 'reply.eml' },
+				],
+				options: [{ label: 'Send', value: 'send', default: true }],
+			},
+		})
+		render(<ForYouCardQueue workspaceId="ws-1" notifications={[mail]} />)
+		expect(screen.getByTestId('foryou-mail-renderer')).toBeInTheDocument()
+		expect(screen.queryByTestId('foryou-single-option')).not.toBeInTheDocument()
+	})
+
+	it('multi-item groups keep the generic bulk card even when a kind is present', () => {
+		const objectId = 'obj-batch-mail'
+		const first = buildNotification({
+			id: 'batch-1',
+			objectId,
+			title: 'Approve mail A',
+			metadata: {
+				artifacts: [{ kind: 'mail', fileId: '11111111-1111-4111-8111-111111111111', title: 'a' }],
+				options: [{ label: 'Send', value: 'send', default: true }],
+				recommendation: 'send',
+			},
+			updatedAt: '2026-08-13T10:05:00Z',
+		})
+		const second = buildNotification({
+			id: 'batch-2',
+			objectId,
+			title: 'Approve mail B',
+			metadata: {
+				artifacts: [{ kind: 'mail', fileId: '22222222-2222-4222-8222-222222222222', title: 'b' }],
+				options: [{ label: 'Send', value: 'send', default: true }],
+				recommendation: 'send',
+			},
+			updatedAt: '2026-08-13T10:04:00Z',
+		})
+
+		render(<ForYouCardQueue workspaceId="ws-1" notifications={[first, second]} />)
+		expect(screen.queryByTestId('foryou-mail-renderer')).not.toBeInTheDocument()
+		expect(screen.getByTestId('foryou-bulk-approve')).toBeInTheDocument()
+	})
+
+	it('falls back to the generic card when the artifact kind is unknown', () => {
+		const diff = buildNotification({
+			id: 'diff-1',
+			objectId: 'obj-diff',
+			title: 'Approve the diff',
+			metadata: {
+				artifacts: [{ kind: 'diff', fileId: '11111111-1111-4111-8111-111111111111', title: 'x' }],
+				options: [{ label: 'Merge', value: 'merge', default: true }],
+			},
+		})
+		render(<ForYouCardQueue workspaceId="ws-1" notifications={[diff]} />)
+		expect(screen.queryByTestId('foryou-post-renderer')).not.toBeInTheDocument()
+		expect(screen.getByTestId('foryou-single-option')).toBeInTheDocument()
 	})
 
 	it('single-item groups render per-option buttons that call respond', () => {
