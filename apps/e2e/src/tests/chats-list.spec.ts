@@ -331,6 +331,99 @@ test.describe('Chats list — populated', () => {
 	})
 })
 
+test.describe('Chats list — Chief of Staff', () => {
+	const cosActor: MockActor = buildActor({ id: 'cos-actor', name: 'Chief of Staff' })
+	const specialistActor: MockActor = buildActor({ id: 'analyst', name: 'Product Analyst' })
+
+	async function mockWithCosDefaultAgent(page: Page, params: { sessions: MockSession[] }) {
+		await mockChatsData(page, {
+			sessions: params.sessions,
+			actors: [cosActor, specialistActor],
+		})
+		// Point the workspace's default_agent_id at the CoS actor via a
+		// GET /api/workspaces intercept — the resolver only reads that setting.
+		await page.route('**/api/workspaces*', async (route) => {
+			if (route.request().method() !== 'GET') return route.fallback()
+			const now = new Date().toISOString()
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify([
+					{
+						id: 'ws',
+						name: 'Test Workspace',
+						settings: { default_agent_id: cosActor.id },
+						role: 'admin',
+						createdBy: 'human-1',
+						createdAt: now,
+						updatedAt: now,
+					},
+				]),
+			})
+		})
+	}
+
+	test('pins the default agent thread above the recency groups', async ({ page, account }) => {
+		await mockWithCosDefaultAgent(page, {
+			sessions: [
+				buildSession({
+					id: 'cos-thread',
+					actorId: cosActor.id,
+					actionPrompt: 'Chief of Staff',
+					currentActivity: 'Pulled in Product Analyst',
+				}),
+				buildSession({
+					id: 'specialist-thread',
+					actorId: specialistActor.id,
+					createdBy: cosActor.id,
+					actionPrompt: 'Q3 retention deep-dive',
+					currentActivity: 'Three cohorts staged',
+				}),
+			],
+		})
+		await page.goto(`/${account.workspaceId}/chats`)
+		const list = page.getByTestId('chats-list')
+		const pinnedRegion = list.getByRole('region', { name: /pinned · your default agent/i })
+		await expect(pinnedRegion).toBeVisible()
+		await expect(pinnedRegion.getByText('Chief of Staff')).toBeVisible()
+		// The specialist row lives outside the pinned region, in Today.
+		const todayRegion = list.getByRole('region', { name: 'Today' })
+		await expect(todayRegion.getByText('Q3 retention deep-dive')).toBeVisible()
+	})
+
+	test('shows the "handed off" hint on sibling threads routed by the default agent', async ({
+		page,
+		account,
+	}) => {
+		await mockWithCosDefaultAgent(page, {
+			sessions: [
+				buildSession({
+					id: 'specialist-thread',
+					actorId: specialistActor.id,
+					createdBy: cosActor.id,
+					actionPrompt: 'Q3 retention deep-dive',
+					currentActivity: 'Three cohorts staged',
+				}),
+			],
+		})
+		await page.goto(`/${account.workspaceId}/chats`)
+		await expect(page.getByTestId('chats-list').getByText('Chief of Staff handed off')).toBeVisible()
+	})
+
+	test('renders the CoS greeting empty state when there are no conversations yet', async ({
+		page,
+		account,
+	}) => {
+		await mockWithCosDefaultAgent(page, { sessions: [] })
+		await page.goto(`/${account.workspaceId}/chats`)
+		const empty = page.getByTestId('chats-list-cos-empty')
+		await expect(empty).toBeVisible()
+		await expect(empty.getByText(/I'm your Chief of Staff\./)).toBeVisible()
+		await expect(empty.getByRole('button', { name: /summarise this week/i })).toBeVisible()
+		await expect(page.getByText(/no conversations here/i)).toHaveCount(0)
+	})
+})
+
 test.describe('Chats list — viewports', () => {
 	const sessions: MockSession[] = [1, 2, 3, 4, 5].map((i) =>
 		buildSession({

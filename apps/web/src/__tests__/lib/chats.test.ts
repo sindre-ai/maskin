@@ -4,7 +4,10 @@ import {
 	getChatRowSnippet,
 	getRecencyBucket,
 	groupSessionsByRecency,
+	isDefaultAgentSession,
+	partitionChatsWithPinned,
 	sessionStateLabel,
+	wasHandedOffByDefaultAgent,
 } from '@/lib/chats'
 import { describe, expect, it } from 'vitest'
 
@@ -93,6 +96,76 @@ describe('getChatRowSnippet', () => {
 
 	it('returns empty string when there is no activity', () => {
 		expect(getChatRowSnippet({ currentActivity: null } as never)).toBe('')
+	})
+})
+
+describe('isDefaultAgentSession', () => {
+	it('is true when the session actor is the workspace default agent', () => {
+		const s = buildSessionResponse({ actorId: 'cos' })
+		expect(isDefaultAgentSession(s, 'cos')).toBe(true)
+	})
+
+	it('is false when there is no default agent or the actor differs', () => {
+		const s = buildSessionResponse({ actorId: 'specialist' })
+		expect(isDefaultAgentSession(s, null)).toBe(false)
+		expect(isDefaultAgentSession(s, 'cos')).toBe(false)
+	})
+})
+
+describe('wasHandedOffByDefaultAgent', () => {
+	it('is true when the session was created by the default agent but runs under a specialist', () => {
+		const s = buildSessionResponse({ actorId: 'specialist', createdBy: 'cos' })
+		expect(wasHandedOffByDefaultAgent(s, 'cos')).toBe(true)
+	})
+
+	it('is false when the session runs under the default agent itself', () => {
+		const s = buildSessionResponse({ actorId: 'cos', createdBy: 'cos' })
+		expect(wasHandedOffByDefaultAgent(s, 'cos')).toBe(false)
+	})
+
+	it('is false when the session was created by someone else', () => {
+		const s = buildSessionResponse({ actorId: 'specialist', createdBy: 'human-1' })
+		expect(wasHandedOffByDefaultAgent(s, 'cos')).toBe(false)
+	})
+
+	it('is false when there is no default agent', () => {
+		const s = buildSessionResponse({ actorId: 'specialist', createdBy: 'anyone' })
+		expect(wasHandedOffByDefaultAgent(s, null)).toBe(false)
+	})
+})
+
+describe('partitionChatsWithPinned', () => {
+	it('pins the default agent session and groups the rest by recency', () => {
+		const { pinned, groups } = partitionChatsWithPinned(
+			[
+				buildSessionResponse({ id: 's-cos', actorId: 'cos', createdAt: iso(0) }),
+				buildSessionResponse({ id: 's-old', actorId: 'other', createdAt: iso(20) }),
+				buildSessionResponse({ id: 's-today', actorId: 'other', createdAt: iso(0) }),
+			],
+			'cos',
+			NOW,
+		)
+		expect(pinned.map((s) => s.id)).toEqual(['s-cos'])
+		expect(groups.map((g) => g.bucket)).toEqual(['today', 'earlier'])
+	})
+
+	it('sorts multiple pinned rows newest first', () => {
+		const { pinned } = partitionChatsWithPinned(
+			[
+				buildSessionResponse({ id: 's-old-cos', actorId: 'cos', createdAt: iso(3) }),
+				buildSessionResponse({ id: 's-new-cos', actorId: 'cos', createdAt: iso(0) }),
+			],
+			'cos',
+			NOW,
+		)
+		expect(pinned.map((s) => s.id)).toEqual(['s-new-cos', 's-old-cos'])
+	})
+
+	it('returns an empty pinned array and full grouping when no default agent is set', () => {
+		const sessions = [buildSessionResponse({ id: 's', actorId: 'anyone', createdAt: iso(0) })]
+		const { pinned, groups } = partitionChatsWithPinned(sessions, null, NOW)
+		expect(pinned).toEqual([])
+		expect(groups.map((g) => g.items[0].id)).toEqual(['s'])
 	})
 })
 

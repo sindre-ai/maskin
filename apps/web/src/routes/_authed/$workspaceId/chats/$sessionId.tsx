@@ -1,4 +1,4 @@
-import { ChatList } from '@/components/chat/chat-list'
+import { ChatList, type ChatListDefaultAgent } from '@/components/chat/chat-list'
 import { ConversationView } from '@/components/chat/conversation-view'
 import { PageHeader } from '@/components/layout/page-header'
 import { EmptyState } from '@/components/shared/empty-state'
@@ -8,6 +8,8 @@ import { useActors } from '@/hooks/use-actors'
 import { useNotifications } from '@/hooks/use-notifications'
 import { useSession, useWorkspaceSessions } from '@/hooks/use-sessions'
 import type { SessionResponse } from '@/lib/api'
+import { resolveDefaultAgent } from '@/lib/chats'
+import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useMemo } from 'react'
 
@@ -20,10 +22,19 @@ export const Route = createFileRoute('/_authed/$workspaceId/chats/$sessionId')({
 
 function ConversationPage() {
 	const { workspaceId, sessionId } = Route.useParams()
+	const { workspace } = useWorkspace()
 	const navigate = useNavigate()
 	const { data: sessions, isLoading: sessionsLoading } = useWorkspaceSessions(workspaceId)
 	const { data: actors } = useActors(workspaceId)
 	const { data: notifications } = useNotifications(workspaceId, { type: 'needs_input' })
+
+	const defaultAgentActor = useMemo(
+		() => resolveDefaultAgent(actors, workspace?.settings),
+		[actors, workspace],
+	)
+	const defaultAgent: ChatListDefaultAgent | null = defaultAgentActor
+		? { id: defaultAgentActor.id, name: defaultAgentActor.name }
+		: null
 	// Fetch the specific session too so a deep-link lands even before the list
 	// hydrates from cache (and refreshes the row after mutations elsewhere).
 	const { data: fetchedSession, isLoading: sessionLoading } = useSession(sessionId, workspaceId)
@@ -63,6 +74,7 @@ function ConversationPage() {
 						sessions={sessions ?? []}
 						actors={actors}
 						unreadSessionIds={unreadSessionIds}
+						defaultAgent={defaultAgent}
 						onSelectSession={handleSelectSession}
 						onStartNew={handleStartNew}
 					/>

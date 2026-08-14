@@ -1,6 +1,6 @@
 import { buildActorListItem, buildSessionResponse } from '@/__tests__/factories'
 import { ChatList } from '@/components/chat/chat-list'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
 function renderList(overrides: Partial<React.ComponentProps<typeof ChatList>> = {}) {
@@ -83,5 +83,81 @@ describe('ChatList', () => {
 		})
 		fireEvent.click(screen.getByRole('button', { name: /do the thing/i }))
 		expect(onSelectSession).toHaveBeenCalledTimes(1)
+	})
+
+	it('pins the default agent session above the recency groups', () => {
+		renderList({
+			sessions: [
+				buildSessionResponse({
+					id: 'cos-thread',
+					actorId: 'cos',
+					actionPrompt: 'Chief of Staff',
+					createdAt: new Date().toISOString(),
+					updatedAt: new Date().toISOString(),
+				}),
+				buildSessionResponse({
+					id: 'other',
+					actorId: 'specialist',
+					actionPrompt: 'Q3 retention deep-dive',
+					createdAt: new Date().toISOString(),
+					updatedAt: new Date().toISOString(),
+				}),
+			],
+			defaultAgent: { id: 'cos', name: 'Chief of Staff' },
+		})
+		const pinned = screen.getByRole('region', { name: /pinned · your default agent/i })
+		expect(within(pinned).getByText('Chief of Staff')).toBeInTheDocument()
+		const today = screen.getByRole('region', { name: 'Today' })
+		expect(within(today).getByText('Q3 retention deep-dive')).toBeInTheDocument()
+		expect(within(today).queryByText('Chief of Staff')).not.toBeInTheDocument()
+	})
+
+	it('renders the "handed off" hint on sibling threads the default agent created', () => {
+		renderList({
+			sessions: [
+				buildSessionResponse({
+					id: 'routed',
+					actorId: 'specialist',
+					createdBy: 'cos',
+					actionPrompt: 'Q3 retention deep-dive',
+					currentActivity: 'Product Analyst has 3 cohorts staged',
+				}),
+			],
+			defaultAgent: { id: 'cos', name: 'Chief of Staff' },
+		})
+		expect(screen.getByText('Chief of Staff handed off')).toBeInTheDocument()
+	})
+
+	it('does not render the "handed off" hint when the row was not routed by the default agent', () => {
+		renderList({
+			sessions: [
+				buildSessionResponse({
+					id: 'self-start',
+					actorId: 'specialist',
+					createdBy: 'human-1',
+					actionPrompt: 'Direct ask',
+					currentActivity: 'Working',
+				}),
+			],
+			defaultAgent: { id: 'cos', name: 'Chief of Staff' },
+		})
+		expect(screen.queryByText(/handed off/i)).not.toBeInTheDocument()
+	})
+
+	it('renders the CoS greeting empty state when there are no sessions and one is set', () => {
+		const onExample = vi.fn()
+		renderList({
+			sessions: [],
+			emptyGreeting: {
+				greeting: "Hi Sebk — I'm your Chief of Staff.",
+				description: "Say what you want done. I'll ask the right specialist.",
+				examples: ['Summarise this week', 'Draft a reply'],
+				onExample,
+			},
+		})
+		expect(screen.getByText("Hi Sebk — I'm your Chief of Staff.")).toBeInTheDocument()
+		expect(screen.queryByText(/no conversations here/i)).not.toBeInTheDocument()
+		fireEvent.click(screen.getByRole('button', { name: /draft a reply/i }))
+		expect(onExample).toHaveBeenCalledWith('Draft a reply')
 	})
 })
