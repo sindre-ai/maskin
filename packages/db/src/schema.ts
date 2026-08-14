@@ -937,3 +937,47 @@ export const sessionDispatchAttempts = pgTable(
 
 export type SessionDispatchAttempt = typeof sessionDispatchAttempts.$inferSelect
 export type NewSessionDispatchAttempt = typeof sessionDispatchAttempts.$inferInsert
+
+// ── Agent Email Sends ───────────────────────────────────────────────────────
+//
+// Per-send audit row backing two hardening gates on the agent `send_email`
+// tool: idempotency (an optional client key that lets the same call replay
+// safely) and a per-agent rolling-hour rate limit (checked before the
+// workspace-member allowlist so probing can't burn the ceiling on invalid
+// recipients).
+//
+// A row is written only on a successful Resend dispatch. Every successful
+// send counts toward the rate limit — including those without an
+// idempotency key — so the sliding-window count is a straight
+// `count(*) WHERE actor_id = ? AND sent_at >= now() - '1 hour'`.
+//
+// The partial unique index on (workspace_id, actor_id, idempotency_key)
+// enforces "same key from the same agent in the same workspace deduplicates
+// to the original send." Keys are workspace-scoped so the same string in a
+// different workspace is a distinct send. Rows without a key are excluded
+// from the uniqueness constraint (nothing to dedupe against).
+
+export const agentEmailSends = pgTable(
+	'agent_email_sends',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		actorId: uuid('actor_id')
+			.notNull()
+			.references(() => actors.id, { onDelete: 'cascade' }),
+		idempotencyKey: text('idempotency_key'),
+		providerMessageId: text('provider_message_id').notNull(),
+		sentAt: timestamp('sent_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		uniqueIndex('agent_email_sends_workspace_actor_key_uniq')
+			.on(t.workspaceId, t.actorId, t.idempotencyKey)
+			.where(sql`${t.idempotencyKey} IS NOT NULL`),
+		index('agent_email_sends_actor_sent_at_idx').on(t.actorId, t.sentAt),
+	],
+)
+
+export type AgentEmailSend = typeof agentEmailSends.$inferSelect
+export type NewAgentEmailSend = typeof agentEmailSends.$inferInsert
