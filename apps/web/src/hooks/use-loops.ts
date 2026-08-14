@@ -17,3 +17,16 @@ export function useLoop(id: string, workspaceId: string) {
 		data: loops?.find((l) => l.id === id),
 	}
 }
+
+export function useLoopActivity(
+	loopId: string,
+	workspaceId: string,
+	{ enabled = true }: { enabled?: boolean } = {},
+) {
+	return useQuery({
+		queryKey: queryKeys.loops.activity(workspaceId, loopId),
+		queryFn: () => api.loops.activity(loopId, workspaceId),
+		enabled: enabled && !!loopId,
+		select: (data) => data.events,
+	})
+}
