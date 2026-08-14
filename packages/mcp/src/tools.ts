@@ -507,6 +507,45 @@ export const tools = {
 				),
 		}),
 	},
+	maskin_rate_reviewer_verdict: {
+		description:
+			"Human/agent rating of a reviewer verdict for AC 6 of the single-prompt agent builder bet (reviewer precision ≥70% before Stage 2 ships). Sets `human_agreed: true` when the caller agrees with the reviewer's overall pass/fail, or `human_agreed: false` when they disagree. Optional `criteria_disagreements` names the specific rubric criteria the caller thinks the reviewer got wrong — those names feed the failing-criteria comment when precision drops below 70%. The reviewer itself cannot rate its own verdicts (server rejects with 403). Idempotent-hostile: a verdict can be rated once; a second call returns 409 so a human's rating is never overwritten silently.",
+		inputSchema: z.object({
+			verdict_id: z
+				.string()
+				.uuid()
+				.describe('ID of the reviewer_verdict row returned by the reviewer.'),
+			human_agreed: z
+				.boolean()
+				.describe(
+					"true when the caller agrees with the reviewer's overall pass/fail; false when they disagree.",
+				),
+			criteria_disagreements: z
+				.array(z.string().min(1).max(200))
+				.max(20)
+				.optional()
+				.describe(
+					"Names of rubric criteria the caller disagrees with the reviewer on. Populate this when human_agreed=false so DoD 5's failing-criteria comment can name specific criteria.",
+				),
+			note: z
+				.string()
+				.max(2000)
+				.optional()
+				.describe('Optional free-text explanation of the disagreement.'),
+			workspace_id: optionalWorkspaceId,
+		}),
+	},
+	maskin_reviewer_precision_summary: {
+		description:
+			"Reviewer precision summary for a rubric object — total verdicts, rated count, agreed count, precision ratio, and per-criterion false-positive breakdown. This is the ≥70% Stage 2 ship gate for the single-prompt agent builder bet: call it after at least 10 verdicts have been rated, paste `summary_line` into a comment on the parent bet. When precision drops below the threshold, `failing_criteria` names the specific rubric criteria producing false positives — that's the signal the Architect needs to tighten the rubric.",
+		inputSchema: z.object({
+			rubric_id: z
+				.string()
+				.uuid()
+				.describe('ID of the rubric object (the workspace object holding reviewer criteria).'),
+			workspace_id: optionalWorkspaceId,
+		}),
+	},
 	maskin_create_agent: {
 		description:
 			'Generate an opinionated subject-matter-expert (SME) agent from a single-line prompt. Runs a deterministic server-side pipeline that (1) parses the prompt into structured intent — domain, job-to-be-done, deliverables, constraints, (2) synthesises a stance-bearing persona, (3) authors a sectioned system prompt, (4) injects an anti-hedging opinionation layer, (5) registers a named actor with an attached SKILL.md (progressive disclosure), and (6) posts a gap-report comment on the new actor naming the concrete missing context items that would sharpen its answers. If mandatory intent fields are missing, returns { gap_question, missing } instead — no actor is created, no comment posted. Successful response: { actor_id, actor_name, skill_id, skill_name, intent, persona, system_prompt, definition_summary, gap_report, gap_report_items, gap_report_comment_posted }. Sync response, typical p95 <30s. workspace_id is required — the persona is written into that workspace.',

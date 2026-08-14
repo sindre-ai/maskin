@@ -2674,6 +2674,59 @@ export function createMcpServer(config: McpConfig) {
 		},
 	)
 
+	registerAppTool(
+		server,
+		'maskin_rate_reviewer_verdict',
+		{
+			description: tools.maskin_rate_reviewer_verdict.description,
+			inputSchema: tools.maskin_rate_reviewer_verdict.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { verdict_id, workspace_id, ...body } = args as {
+				verdict_id: string
+				workspace_id?: string
+				human_agreed: boolean
+				criteria_disagreements?: string[]
+				note?: string
+			}
+			const result = await apiCall(config, 'PATCH', `/api/reviewer-verdicts/${verdict_id}`, body, {
+				workspaceId: workspace_id,
+			})
+			return {
+				_meta: meta('maskin_rate_reviewer_verdict', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'maskin_reviewer_precision_summary',
+		{
+			description: tools.maskin_reviewer_precision_summary.description,
+			inputSchema: tools.maskin_reviewer_precision_summary.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { rubric_id, workspace_id } = args as {
+				rubric_id: string
+				workspace_id?: string
+			}
+			const result = await apiCall(
+				config,
+				'GET',
+				`/api/reviewer-verdicts/summary?rubric_id=${encodeURIComponent(rubric_id)}`,
+				undefined,
+				{ workspaceId: workspace_id },
+			)
+			return {
+				_meta: meta('maskin_reviewer_precision_summary', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
 	// ─── Actors ───────────────────────────────────────────────
 	registerAppTool(
 		server,
