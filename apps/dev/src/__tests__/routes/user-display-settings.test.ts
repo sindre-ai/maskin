@@ -60,12 +60,18 @@ describe('User Display Settings Routes', () => {
 			})
 		})
 
-		it('returns 404 when no row exists for the object type', async () => {
+		it('returns 200 with an empty defaults body when no row exists for the object type', async () => {
 			const { app } = createTestApp(userDisplaySettingsRoutes, '/api/user-display-settings')
 
 			const res = await app.request(jsonGet('/api/user-display-settings/task', headers))
 
-			expect(res.status).toBe(404)
+			expect(res.status).toBe(200)
+			expect(await res.json()).toEqual({
+				object_type: 'task',
+				name: 'default',
+				settings: {},
+				updated_at: null,
+			})
 		})
 
 		it('returns 400 for an invalid object_type', async () => {
