@@ -86,10 +86,13 @@ describe('TriggerRunner', () => {
 	})
 
 	describe('handleEvent()', () => {
+		// entity_id must be a real UUID: the runner guards the objects-table
+		// hydration probe with a UUID check (objects.id is a uuid column, so a
+		// non-UUID probe would raise in Postgres instead of finding no row).
 		const baseEvent: PgEvent = {
 			workspace_id: 'ws-1',
 			entity_type: 'task',
-			entity_id: 'obj-1',
+			entity_id: 'a4f1c9d2-3b58-4e07-9c26-8f5d0a7b1e43',
 			action: 'created',
 			actor_id: 'actor-1',
 			event_id: 'evt-1',
@@ -370,6 +373,35 @@ describe('TriggerRunner', () => {
 			mockResults.insert = []
 
 			bridge.emit('event', { ...baseEvent, action: 'status_changed' })
+			await vi.advanceTimersByTimeAsync(0)
+
+			expect(sessionManager.createSession).toHaveBeenCalled()
+		})
+
+		it('fires status_changed trigger for a CUSTOM object type by hydrating from the objects table', async () => {
+			// Workspaces define their own object types (extensions) — loop steps
+			// filtering on a custom type's status must hydrate the current row the
+			// same way built-in types do. Regression guard for the removed
+			// ['bet','task','insight'] allow-list.
+			const trigger = buildTrigger({
+				workspaceId: 'ws-1',
+				type: 'event',
+				config: {
+					entity_type: 'lead',
+					action: 'status_changed',
+					filter: { status: 'qualified' },
+				},
+			})
+			mockResults.selectQueue = [
+				[trigger], // matching triggers
+				// fetchEventData → new {changes} shape, no previous/updated snapshot
+				[{ data: { changes: [{ field: 'status', old: 'new', new: 'qualified' }] } }],
+				// hydrated current row from `objects` — a custom-typed object
+				[{ type: 'lead', status: 'qualified', driver: null, metadata: null }],
+			]
+			mockResults.insert = []
+
+			bridge.emit('event', { ...baseEvent, entity_type: 'lead', action: 'status_changed' })
 			await vi.advanceTimersByTimeAsync(0)
 
 			expect(sessionManager.createSession).toHaveBeenCalled()

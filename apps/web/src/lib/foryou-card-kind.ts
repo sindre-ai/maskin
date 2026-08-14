@@ -42,14 +42,28 @@ export interface CardAction {
 	label: string
 	// Primary shows filled/dark; secondary shows outline/light.
 	tone: 'primary' | 'secondary'
+	// One-line rationale under the label on the in-stream AskCard's option rows.
+	// Only the decision actions carry one; sign_off / proposed_bet / quick-reply
+	// stay chip-shaped with no rationale.
+	rationale?: string
 }
 
 // Kind → ordered list of affordances. First is always the primary action.
 // Labels match the Designer's prototype (foryou-directions-A-B.html).
 export const CARD_ACTIONS: Record<Exclude<CardKind, 'thread'>, readonly CardAction[]> = {
 	decision: [
-		{ id: 'approve', label: 'Approve', tone: 'primary' },
-		{ id: 'send_back', label: 'Send back', tone: 'secondary' },
+		{
+			id: 'approve',
+			label: 'Approve',
+			tone: 'primary',
+			rationale: 'I agree with the direction — proceed',
+		},
+		{
+			id: 'send_back',
+			label: 'Send back',
+			tone: 'secondary',
+			rationale: 'Needs changes before I sign off',
+		},
 	],
 	sign_off: [
 		{ id: 'sign_off', label: 'Sign off', tone: 'primary' },
