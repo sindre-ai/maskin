@@ -32,14 +32,21 @@ COPY apps/web/ apps/web/
 # it's only substitutable via `$VAR`. Promote to ENV so pnpm --filter=@maskin/web
 # build actually bakes the values into the SPA bundle. Empty defaults keep local
 # `docker build` (without --build-arg) working.
+#
+# SENTRY_RELEASE (Node-side runtime) is grouped here — not after the COPY step —
+# so all SHA-varying ARGs live in one layer. Placing it later would invalidate
+# the cache of every downstream layer on every commit, forcing an unnecessary
+# rebuild of the last-mile ENV/EXPOSE steps.
 ARG VITE_POSTHOG_KEY=""
 ARG VITE_POSTHOG_HOST=""
 ARG VITE_SENTRY_DSN=""
 ARG VITE_SENTRY_RELEASE=""
+ARG SENTRY_RELEASE=""
 ENV VITE_POSTHOG_KEY=$VITE_POSTHOG_KEY
 ENV VITE_POSTHOG_HOST=$VITE_POSTHOG_HOST
 ENV VITE_SENTRY_DSN=$VITE_SENTRY_DSN
 ENV VITE_SENTRY_RELEASE=$VITE_SENTRY_RELEASE
+ENV SENTRY_RELEASE=$SENTRY_RELEASE
 
 # Build sequentially to stay within 8GB server memory
 RUN NODE_OPTIONS=--max-old-space-size=1536 pnpm --filter='./packages/*' build
@@ -47,13 +54,6 @@ RUN NODE_OPTIONS=--max-old-space-size=1536 pnpm --filter=@maskin/dev build
 RUN NODE_OPTIONS=--max-old-space-size=1536 pnpm --filter=@maskin/web build
 
 COPY docker/agent-base/ docker/agent-base/
-
-# Node-side runtime env — apps/dev reads process.env.SENTRY_RELEASE inside
-# Sentry.init. Also passed as ARG so Coolify's build-arg → runtime-env pipeline
-# populates it deterministically at build time; the Coolify service config can
-# additionally set it as a runtime env override without needing a rebuild.
-ARG SENTRY_RELEASE=""
-ENV SENTRY_RELEASE=$SENTRY_RELEASE
 
 ENV NODE_ENV=production
 ENV STATIC_DIR=/app/apps/web/dist

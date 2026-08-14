@@ -42,12 +42,13 @@ jobs:
           - maskin-web
     steps:
       - uses: actions/checkout@v4
-        # sentry-cli --auto derives the commit range from local git history,
-        # so the checkout needs to reach back far enough to include the
-        # previous release's SHA. 100 commits covers roughly a week of
-        # activity; older releases fall back to a single-commit changelog.
+        # sentry-cli --auto walks local git history to compute the commit range
+        # between the previous finalized release and this one. Full history
+        # (fetch-depth: 0) guarantees the previous release's SHA is reachable
+        # even when a burst of commits pushes it past the shallow default,
+        # which is worth the small extra clone cost for release cadence.
         with:
-          fetch-depth: 100
+          fetch-depth: 0
 
       - name: Skip when SENTRY_AUTH_TOKEN is unset
         id: gate
@@ -74,7 +75,9 @@ jobs:
           set -euo pipefail
           sentry-cli releases new "$SENTRY_RELEASE"
           # --auto walks the local git log to attach the commit range between
-          # the previous finalized release and this one. Falls back to a
-          # single-commit range if no previous release exists in the project.
-          sentry-cli releases set-commits "$SENTRY_RELEASE" --auto
+          # the previous finalized release and this one. --ignore-missing keeps
+          # this step green when one of the three projects hasn't seen a prior
+          # release yet (falls back to a single-commit range instead of
+          # exiting non-zero for that project).
+          sentry-cli releases set-commits "$SENTRY_RELEASE" --auto --ignore-missing
           sentry-cli releases finalize "$SENTRY_RELEASE"

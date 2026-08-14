@@ -63,15 +63,16 @@ describe('initSentry gating', () => {
 		)
 	})
 
-	it('passes release=undefined when VITE_SENTRY_RELEASE is not set so init still succeeds', () => {
+	it('coerces empty VITE_SENTRY_RELEASE to undefined so events are not tagged with an empty-string release', () => {
 		vi.stubEnv('VITE_SENTRY_DSN', 'https://example.invalid/1')
 		vi.stubEnv('VITE_SENTRY_FORCE_ENABLE', 'true')
+		// Vite bakes an unset ARG as literal "", so guard against it at the call site.
 		vi.stubEnv('VITE_SENTRY_RELEASE', '')
 
 		initSentry()
 
 		expect(Sentry.init).toHaveBeenCalledOnce()
-		expect(Sentry.init).toHaveBeenCalledWith(expect.objectContaining({ release: '' }))
+		expect(Sentry.init).toHaveBeenCalledWith(expect.objectContaining({ release: undefined }))
 	})
 
 	it('is idempotent — a second call does not re-init', () => {
