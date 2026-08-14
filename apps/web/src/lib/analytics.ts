@@ -296,6 +296,27 @@ export function trackNorthStarPromptResponse(p: { workspace_id: string }): void 
 	)
 }
 
+// Ship-metric event for the signup-driven first-bet promotion. Fires once when
+// the draft card first renders to the workspace owner. `entity_id` is the bet
+// id and `minutes_since_signup` is derived from the workspace's `createdAt`
+// (workspaces are created at signup) — the parent bet's success query joins
+// both, so the names are exact.
+export function trackQualifiedBetVisible(p: {
+	entity_id: string
+	entity_type: 'bet'
+	minutes_since_signup: number
+}): void {
+	trackEvent(
+		'qualified_bet_visible',
+		{
+			entity_id: p.entity_id,
+			entity_type: p.entity_type,
+			minutes_since_signup: p.minutes_since_signup,
+		},
+		{ send_instantly: true },
+	)
+}
+
 // Ship-metric event for the iOS bulk-select ergonomics bet. Fires once per
 // bulk action bar commit so we can read `avg(selected_count)` filtered by
 // `platform_device='ios'` in PostHog. Intentionally lighter than the v1
