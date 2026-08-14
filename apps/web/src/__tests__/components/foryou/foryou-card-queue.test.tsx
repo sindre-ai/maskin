@@ -262,17 +262,17 @@ describe('ForYouCardQueue', () => {
 		expect(screen.getByTestId('foryou-bulk-approve')).toBeInTheDocument()
 	})
 
-	it('falls back to the generic card when the artifact kind is unknown', () => {
-		const diff = buildNotification({
-			id: 'diff-1',
-			objectId: 'obj-diff',
-			title: 'Approve the diff',
+	it('falls back to the generic card when the artifact kind is not a renderer target', () => {
+		const audio = buildNotification({
+			id: 'audio-1',
+			objectId: 'obj-audio',
+			title: 'Approve the clip',
 			metadata: {
-				artifacts: [{ kind: 'diff', fileId: '11111111-1111-4111-8111-111111111111', title: 'x' }],
-				options: [{ label: 'Merge', value: 'merge', default: true }],
+				artifacts: [{ kind: 'audio', fileId: '11111111-1111-4111-8111-111111111111', title: 'x' }],
+				options: [{ label: 'Approve', value: 'approve', default: true }],
 			},
 		})
-		render(<ForYouCardQueue workspaceId="ws-1" notifications={[diff]} />)
+		render(<ForYouCardQueue workspaceId="ws-1" notifications={[audio]} />)
 		expect(screen.queryByTestId('foryou-post-renderer')).not.toBeInTheDocument()
 		expect(screen.getByTestId('foryou-single-option')).toBeInTheDocument()
 	})

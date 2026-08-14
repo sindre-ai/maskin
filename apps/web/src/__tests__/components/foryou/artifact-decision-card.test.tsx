@@ -39,11 +39,11 @@ describe('readArtifactKind', () => {
 		expect(readArtifactKind(buildNotificationResponse({ metadata: null }))).toBeNull()
 	})
 
-	it('returns null when the artifact kind is unknown (e.g. diff before T12 lands)', () => {
+	it('returns null when the artifact kind is not a renderer target', () => {
 		const notification = buildNotificationResponse({
 			metadata: {
 				artifacts: [
-					{ kind: 'diff', fileId: '11111111-1111-4111-8111-111111111111', title: 'PR diff' },
+					{ kind: 'audio', fileId: '11111111-1111-4111-8111-111111111111', title: 'clip.mp3' },
 				],
 			},
 		})
@@ -60,7 +60,7 @@ describe('ArtifactDecisionCard', () => {
 		vi.clearAllMocks()
 	})
 
-	function renderCard(kind: 'mail' | 'post' | 'visual' | 'metric') {
+	function renderCard(kind: 'mail' | 'post' | 'visual' | 'metric' | 'diff') {
 		const notification = buildNotificationResponse({
 			id: `notif-${kind}`,
 			title: `${kind} decision`,
@@ -104,5 +104,10 @@ describe('ArtifactDecisionCard', () => {
 	it('routes metric to the metric renderer', () => {
 		renderCard('metric')
 		expect(screen.getByTestId('foryou-metric-renderer')).toBeInTheDocument()
+	})
+
+	it('routes diff to the diff renderer', () => {
+		renderCard('diff')
+		expect(screen.getByTestId('foryou-diff-renderer')).toBeInTheDocument()
 	})
 })

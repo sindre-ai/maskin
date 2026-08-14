@@ -5,11 +5,8 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 // DoD 1–3 of `Wire artifact renderers — dispatch by option.kind in
 // foryou-card-queue`: single-item decision notifications carrying
 // `metadata.artifacts[0].kind` route to the matching dedicated renderer
-// (Mail / Post / Visual / Metric). Multi-item groups keep the generic
-// bulk-approve card. Diff isn't covered here — the DiffRenderer (T12,
-// PR #1262) is validated but hasn't merged into bet yet; its case will
-// land in a follow-up commit once the component is on the bet branch,
-// with browser QA under the existing T12 follow-up task.
+// (Mail / Post / Visual / Metric / Diff). Multi-item groups keep the
+// generic bulk-approve card.
 
 interface NotificationFixture {
 	id: string
@@ -39,11 +36,13 @@ const OBJ_MAIL = '22222222-2222-4222-8222-222222222201'
 const OBJ_POST = '22222222-2222-4222-8222-222222222202'
 const OBJ_VISUAL = '22222222-2222-4222-8222-222222222203'
 const OBJ_METRIC = '22222222-2222-4222-8222-222222222204'
+const OBJ_DIFF = '22222222-2222-4222-8222-222222222205'
 
 const ID_MAIL = '66666666-6666-4666-8666-666666660001'
 const ID_POST = '66666666-6666-4666-8666-666666660002'
 const ID_VISUAL = '66666666-6666-4666-8666-666666660003'
 const ID_METRIC = '66666666-6666-4666-8666-666666660004'
+const ID_DIFF = '66666666-6666-4666-8666-666666660005'
 
 function buildNotification(
 	workspaceId: string,
@@ -71,7 +70,7 @@ function buildNotification(
 	}
 }
 
-function decisionMetadata(kind: 'mail' | 'post' | 'visual' | 'metric') {
+function decisionMetadata(kind: 'mail' | 'post' | 'visual' | 'metric' | 'diff') {
 	return {
 		attention_needed: true,
 		artifacts: [{ kind, fileId: FILE_ID, title: `${kind} artifact` }],
@@ -111,6 +110,12 @@ async function mockNotifications(page: Page, workspaceId: string) {
 			title: 'Approve KPI push',
 			objectId: OBJ_METRIC,
 			metadata: decisionMetadata('metric'),
+		}),
+		buildNotification(workspaceId, {
+			id: ID_DIFF,
+			title: 'Approve pending diff',
+			objectId: OBJ_DIFF,
+			metadata: decisionMetadata('diff'),
 		}),
 	]
 
@@ -173,6 +178,7 @@ for (const viewport of SHIP_GATE_VIEWPORTS) {
 			await expect(page.getByTestId('foryou-post-renderer')).toBeVisible()
 			await expect(page.getByTestId('foryou-visual-renderer')).toBeVisible()
 			await expect(page.getByTestId('foryou-metric-renderer')).toBeVisible()
+			await expect(page.getByTestId('foryou-diff-renderer')).toBeVisible()
 		})
 
 		test('mail card shows the decision block, sender strip, and a working reverse window', async ({
