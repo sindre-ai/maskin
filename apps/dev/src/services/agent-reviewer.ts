@@ -132,11 +132,25 @@ function buildReviewerUserMessage(rubricBody: string, definitionText: string): s
 	)
 }
 
+function stripCodeFences(raw: string): string {
+	// LLMs frequently wrap JSON in ```json ... ``` fences despite instructions
+	// otherwise. Strip a leading fence (with any language tag) and a trailing
+	// fence — including the case where the trailing fence was truncated by a
+	// max_tokens ceiling and never emitted.
+	let trimmed = raw.trim()
+	const openFence = trimmed.match(/^```[a-zA-Z0-9_-]*\r?\n/)
+	if (openFence) trimmed = trimmed.slice(openFence[0].length)
+	const closeFence = trimmed.match(/\r?\n?```\s*$/)
+	if (closeFence) trimmed = trimmed.slice(0, trimmed.length - closeFence[0].length)
+	return trimmed.trim()
+}
+
 function safeParseJson(raw: string): unknown {
+	const cleaned = stripCodeFences(raw)
 	try {
-		return JSON.parse(raw)
+		return JSON.parse(cleaned)
 	} catch {
-		const match = raw.match(/\{[\s\S]*\}/)
+		const match = cleaned.match(/\{[\s\S]*\}/)
 		if (!match) return null
 		try {
 			return JSON.parse(match[0])

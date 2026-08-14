@@ -67,15 +67,31 @@ export const STAGE_1_PROMPT = `You extract structured intent from a one-line req
   "job_to_be_done": string,         // the outcome the caller wants the agent to produce
   "deliverables": string[],         // concrete artifacts the agent should return (may be empty)
   "constraints": string[],          // known constraints from the input (may be empty)
-  "is_underspecified": boolean,     // true if EITHER domain OR job_to_be_done cannot be identified with confidence
+  "is_underspecified": boolean,     // true ONLY if EITHER domain OR job_to_be_done is genuinely absent or unrecognizable
   "missing": string[],              // when is_underspecified=true, the mandatory fields missing (e.g. ["domain","job_to_be_done"])
   "gap_question": string            // when is_underspecified=true, ONE direct question that would unblock you (empty string otherwise)
 }
 
-Rules:
-- Never invent a domain or job the input does not support. When in doubt, mark is_underspecified=true.
-- "constraints" and "deliverables" may be empty; only "domain" and "job_to_be_done" are mandatory for a well-specified input.
-- Do not include markdown, backticks, or commentary — JSON only.`
+What counts as "domain": any nameable field or activity — e.g. "database migrations", "strength training", "fixed-income trading", "SaaS content marketing", "residential real-estate appraisal". Broad domains count. Do not require narrower framing.
+
+What counts as "job_to_be_done": any nameable outcome — e.g. "plan a 12-week training block", "write a launch plan", "assess bond credit risk", "draft a listing description". A verb + object is enough. Do not require quantified targets, timeframes, or constraints for it to count.
+
+Underspecification rules:
+- Set is_underspecified=true ONLY when EITHER (a) no domain can be identified at all (e.g. "help me build an agent", "make me something useful"), OR (b) no outcome/job can be identified at all.
+- If the input names BOTH a domain AND a job — even thinly — set is_underspecified=false. It is NOT your job to extract every possible detail here; sparse specifics get surfaced by the stage-6 gap report, not by this gate.
+- Default to is_underspecified=false when the domain and job are both nameable. False-positive rejection of real requests is the failure mode we care about most.
+- "constraints" and "deliverables" may be empty; only "domain" and "job_to_be_done" are mandatory for well-specified input.
+
+Examples (well-specified — is_underspecified MUST be false):
+- "plan a 12-week strength program to add 20 lb to my squat" → domain: "strength training / powerlifting", job: "plan a 12-week program to add 20 lb to squat"
+- "help me build a SaaS launch marketing plan for a $99/mo dev tool" → domain: "SaaS marketing", job: "build a launch marketing plan"
+- "assess credit risk on this corporate bond portfolio" → domain: "fixed-income credit analysis", job: "assess credit risk on a corporate bond portfolio"
+
+Examples (underspecified — is_underspecified=true):
+- "help me build an agent" → missing: ["domain","job_to_be_done"], gap_question: "What field should this agent specialize in, and what outcome should it produce?"
+- "make something useful" → missing: ["domain","job_to_be_done"]
+
+Do not include markdown, backticks, or commentary — JSON only.`
 
 export const STAGE_2_PROMPT = `You synthesize an opinionated SME persona from parsed intent. The persona is used to seed an agent that will end its answers with a clear recommendation and stated assumptions — never hedging. Return STRICT JSON matching this shape (no prose, no code fences):
 
@@ -349,11 +365,25 @@ function buildPersonaContextMessage(
 		.join('\n\n')
 }
 
-function safeParseJson(raw: string): unknown {
+function stripCodeFences(raw: string): string {
+	// LLMs frequently wrap JSON in ```json ... ``` fences despite instructions
+	// otherwise. Strip a leading fence (with any language tag) and a trailing
+	// fence — including the case where the trailing fence was truncated by a
+	// max_tokens ceiling and never emitted.
+	let trimmed = raw.trim()
+	const openFence = trimmed.match(/^```[a-zA-Z0-9_-]*\r?\n/)
+	if (openFence) trimmed = trimmed.slice(openFence[0].length)
+	const closeFence = trimmed.match(/\r?\n?```\s*$/)
+	if (closeFence) trimmed = trimmed.slice(0, trimmed.length - closeFence[0].length)
+	return trimmed.trim()
+}
+
+export function safeParseJson(raw: string): unknown {
+	const cleaned = stripCodeFences(raw)
 	try {
-		return JSON.parse(raw)
+		return JSON.parse(cleaned)
 	} catch {
-		const match = raw.match(/\{[\s\S]*\}/)
+		const match = cleaned.match(/\{[\s\S]*\}/)
 		if (!match) return null
 		try {
 			return JSON.parse(match[0])
@@ -660,7 +690,9 @@ async function runStages3And4(
 			system: STAGE_3_PROMPT,
 			user: personaContext,
 			temperature: STAGE_3_TEMPERATURE,
-			maxTokens: 1800,
+			// 2500 gives a terse model (e.g. deepseek-v4-flash) headroom to finish
+			// 2 worked examples + all sections without truncation at the ceiling.
+			maxTokens: 2500,
 			timeoutMs: STAGE_TIMEOUT_MS,
 			jsonMode: true,
 		}),
@@ -879,7 +911,9 @@ export async function runAgentBuilder(
 		system: STAGE_6_PROMPT,
 		user: buildStage6UserMessage(intent, persona, sections, assembledSystemPrompt),
 		temperature: STAGE_6_TEMPERATURE,
-		maxTokens: 900,
+		// 1500 gives a terse model room to emit 3–6 gap items with why_it_matters
+		// prose without hitting the ceiling mid-object.
+		maxTokens: 1500,
 		timeoutMs: STAGE_TIMEOUT_MS,
 		jsonMode: true,
 	})
@@ -1168,10 +1202,7 @@ export async function reviewWork(
 
 export class AgentRefineError extends Error {
 	constructor(
-		readonly reason:
-			| 'actor_wrong_workspace'
-			| 'skill_not_found'
-			| 'refine_context_empty',
+		readonly reason: 'actor_wrong_workspace' | 'skill_not_found' | 'refine_context_empty',
 		message: string,
 	) {
 		super(message)

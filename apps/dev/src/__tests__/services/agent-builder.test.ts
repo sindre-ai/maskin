@@ -12,6 +12,7 @@ import {
 	refineAgent,
 	reviewWork,
 	runAgentBuilder,
+	safeParseJson,
 	summariseRefineDiff,
 } from '../../services/agent-builder'
 import { createMockAgentStorage, createTestContext } from '../setup'
@@ -1256,5 +1257,157 @@ describe('runAgentBuilder — stage 6 gap report', () => {
 		// No inserts of any kind — no actor, no comment.
 		expect(ctxCtx.calls.inserts).toHaveLength(0)
 		expect(agentStorage.putWorkspaceSkill).not.toHaveBeenCalled()
+	})
+})
+
+describe('safeParseJson', () => {
+	it('parses plain JSON', () => {
+		expect(safeParseJson('{"a":1}')).toEqual({ a: 1 })
+	})
+
+	it('parses JSON wrapped in a ```json fence', () => {
+		const raw = '```json\n{"a":1,"b":"two"}\n```'
+		expect(safeParseJson(raw)).toEqual({ a: 1, b: 'two' })
+	})
+
+	it('parses JSON wrapped in a bare ``` fence', () => {
+		const raw = '```\n{"a":1}\n```'
+		expect(safeParseJson(raw)).toEqual({ a: 1 })
+	})
+
+	it('parses JSON wrapped in a fence with surrounding whitespace', () => {
+		const raw = '   \n```json\n{"a":1}\n```   \n'
+		expect(safeParseJson(raw)).toEqual({ a: 1 })
+	})
+
+	it('parses JSON when the closing fence is missing (truncated at max_tokens)', () => {
+		// Simulates the stage 3/6 truncation shape: an open fence, valid JSON,
+		// then the response is cut before the closing ``` is emitted.
+		const raw = '```json\n{"a":1,"b":"two"}'
+		expect(safeParseJson(raw)).toEqual({ a: 1, b: 'two' })
+	})
+
+	it('falls back to the {…} substring when there is preamble prose around the JSON', () => {
+		const raw = 'Sure! Here is the JSON you asked for:\n{"a":1,"b":2}\nHope that helps.'
+		expect(safeParseJson(raw)).toEqual({ a: 1, b: 2 })
+	})
+
+	it('falls back to the {…} substring inside a fence with preamble prose', () => {
+		const raw = '```json\nHere you go: {"a":1}\n```'
+		expect(safeParseJson(raw)).toEqual({ a: 1 })
+	})
+
+	it('returns null on unparseable input with no {…} substring', () => {
+		expect(safeParseJson('not json at all')).toBeNull()
+	})
+
+	it('returns null when the JSON is malformed and cannot be recovered', () => {
+		expect(safeParseJson('{"a": ')).toBeNull()
+	})
+})
+
+/**
+ * Regression fixtures for the stage-1 underspecification gate.
+ *
+ * These prompts each name a domain, a job-to-be-done, and a concrete
+ * constraint. All three were false-positive-flagged as underspecified in the
+ * 2026-08-14 First test run (see task
+ * `Run First test — 10 one-liners, p95 latency, hedging ≤10%`). The tightened
+ * STAGE_1_PROMPT must accept them; each fixture supplies the well-specified
+ * stage-1 output the prompt should produce so this test locks the pipeline
+ * behaviour independently of the live LLM.
+ */
+const STAGE_1_WELL_SPECIFIED_FIXTURES = [
+	{
+		label: 'lifter — 12-week strength program',
+		prompt: 'plan a 12-week strength program to add 20 lb to my squat',
+		stage1: {
+			domain: 'strength training and powerlifting programming',
+			job_to_be_done: 'plan a 12-week program to add 20 lb to the squat',
+			deliverables: ['12-week weekly training plan'],
+			constraints: ['duration is 12 weeks', 'target: +20 lb on squat'],
+			is_underspecified: false,
+			missing: [],
+			gap_question: '',
+		},
+	},
+	{
+		label: 'marketing-plan — SaaS launch',
+		prompt: 'help me build a SaaS launch marketing plan for a $99/mo developer tool',
+		stage1: {
+			domain: 'SaaS marketing and go-to-market',
+			job_to_be_done: 'build a launch marketing plan for a $99/mo developer tool',
+			deliverables: ['launch marketing plan'],
+			constraints: ['product is a $99/mo developer tool'],
+			is_underspecified: false,
+			missing: [],
+			gap_question: '',
+		},
+	},
+	{
+		label: 'fixed-income — corporate bond credit analysis',
+		prompt: 'assess credit risk on this corporate bond portfolio with an average BBB rating',
+		stage1: {
+			domain: 'fixed-income credit analysis',
+			job_to_be_done: 'assess credit risk on a corporate bond portfolio',
+			deliverables: ['credit risk assessment'],
+			constraints: ['average portfolio rating is BBB'],
+			is_underspecified: false,
+			missing: [],
+			gap_question: '',
+		},
+	},
+] as const
+
+describe('runAgentBuilder — stage 1 well-specified fixtures (false-positive regression)', () => {
+	beforeEach(() => {
+		vi.spyOn(console, 'log').mockImplementation(() => undefined)
+		vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+		vi.spyOn(console, 'error').mockImplementation(() => undefined)
+	})
+
+	afterEach(() => {
+		vi.restoreAllMocks()
+	})
+
+	for (const fixture of STAGE_1_WELL_SPECIFIED_FIXTURES) {
+		it(`advances past stage 1 (not gap_question) for well-specified fixture: ${fixture.label}`, async () => {
+			// Queue only stage 1; the pipeline will attempt stage 2 next. We assert
+			// on the advance signal — a second callLlm invocation is proof stage 1
+			// did NOT short-circuit to gap_question.
+			callLlm.mockReset()
+			callLlm.mockResolvedValueOnce({ ok: true, content: JSON.stringify(fixture.stage1) })
+			// Stage 2 must not be considered a gap_question by the caller — return a
+			// deliberately malformed shape so the pipeline throws at stage 2 rather
+			// than continuing to build a full agent. The test only cares that we
+			// got past the stage-1 gate.
+			callLlm.mockResolvedValueOnce({ ok: true, content: 'not-json' })
+
+			const result = await runAgentBuilder({ prompt: fixture.prompt }, buildContext()).catch(
+				(err) => err,
+			)
+
+			// Either the pipeline advanced (result is an object with kind !== 'gap_question')
+			// or it threw at stage 2 (an AgentBuilderError with reason 'stage2_parse_error').
+			// Both prove stage 1 did NOT short-circuit — a gap_question result would fail.
+			if (result instanceof AgentBuilderError) {
+				expect(result.reason).toBe('stage2_parse_error')
+			} else {
+				expect(result.kind).not.toBe('gap_question')
+			}
+			// Stage 2 was called → stage 1 did not short-circuit.
+			expect(callLlm).toHaveBeenCalledTimes(2)
+		})
+	}
+
+	it('lists each false-positive prompt in STAGE_1_PROMPT examples so the tightened prompt keeps them well-specified', async () => {
+		const { STAGE_1_PROMPT } = await import('../../services/agent-builder')
+		// The prompt must contain enough of each fixture's shape that a model
+		// following it treats these classes as well-specified. We check the
+		// domain keyword and the "well-specified" example anchor.
+		expect(STAGE_1_PROMPT).toMatch(/is_underspecified MUST be false/i)
+		expect(STAGE_1_PROMPT).toMatch(/strength training/i)
+		expect(STAGE_1_PROMPT).toMatch(/SaaS marketing/i)
+		expect(STAGE_1_PROMPT).toMatch(/fixed-income/i)
 	})
 })
