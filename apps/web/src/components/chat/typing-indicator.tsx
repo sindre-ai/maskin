@@ -31,7 +31,16 @@ export function TypingIndicator({ sessionId, workspaceId, className }: TypingInd
 	const preview = useMemo(() => getLatestActivityPreview(logs ?? []), [logs])
 
 	if (!session) return null
-	if (session.status !== 'running' && session.status !== 'pending') return null
+	// 'starting' is the transient state between session creation and the
+	// container becoming active; useSession has no polling interval so the
+	// cache can retain this status even after the underlying session reaches
+	// 'running'. Show the indicator for all non-terminal active states.
+	if (
+		session.status !== 'running' &&
+		session.status !== 'pending' &&
+		session.status !== 'starting'
+	)
+		return null
 	if (idle) return null
 
 	const agentName = actor?.name?.trim() || 'Agent'
