@@ -5238,6 +5238,7 @@ export function createMcpServer(config: McpConfig) {
 					expiresAt: args.expires_at,
 					subscriptionType: args.subscription_type,
 					scopes: args.scopes,
+					nickname: args.nickname,
 				},
 				{ workspaceId: args.workspace_id },
 			)
@@ -5290,6 +5291,33 @@ export function createMcpServer(config: McpConfig) {
 			return {
 				_meta: meta(
 					'disconnect_claude_subscription',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'rename_claude_subscription',
+		{
+			description: tools.rename_claude_subscription.description,
+			inputSchema: tools.rename_claude_subscription.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const result = await apiCall(
+				config,
+				'PATCH',
+				'/api/claude-oauth/nickname',
+				{ slot: args.slot, nickname: args.nickname },
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: meta(
+					'rename_claude_subscription',
 					config,
 					(args as { workspace_id?: string }).workspace_id,
 				),
