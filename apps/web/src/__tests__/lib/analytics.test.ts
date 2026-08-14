@@ -31,6 +31,7 @@ import {
 	trackSidebarToggle,
 	trackSidebarWorkspaceSwitcherOpened,
 	trackSpecialistSummonedManually,
+	trackStarredFilterOpened,
 	trackTriggerCreated,
 	trackTriggerFired,
 } from '@/lib/analytics'
@@ -690,6 +691,19 @@ describe('v1 taxonomy helpers', () => {
 				source: 'web',
 				flow_id: null,
 				object_subtype: 'bet',
+			})
+		})
+	})
+
+	describe('starred_filter_opened (object favourites bet success metric)', () => {
+		it('emits with source so future entry points can be sliced without back-filling', () => {
+			__setInitializedForTesting(true)
+			const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
+
+			trackStarredFilterOpened({ source: 'objects-filter-panel' })
+
+			expect(capture).toHaveBeenCalledWith('starred_filter_opened', {
+				source: 'objects-filter-panel',
 			})
 		})
 	})
