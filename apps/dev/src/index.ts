@@ -17,6 +17,7 @@ import { logger } from './lib/logger'
 import { AgentStorageManager } from './services/agent-storage'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { LoopVersionPusher } from './services/loop-version-pusher'
+import { NotificationsLifecycle } from './services/notifications-lifecycle'
 import { RuntimeTelemetry } from './services/runtime-telemetry'
 import { SessionDispatchQueue } from './services/session-dispatch-queue'
 import { SessionDispatcher } from './services/session-dispatcher'
@@ -107,6 +108,10 @@ triggerRunner.start().then(() => {
 	logger.info('Trigger runner started')
 })
 
+const notificationsLifecycle = new NotificationsLifecycle(db, sessionManager)
+notificationsLifecycle.start()
+logger.info('Notifications lifecycle started')
+
 const gmailWatchRenewer = new GmailWatchRenewer(db)
 gmailWatchRenewer.start()
 logger.info('Gmail watch renewer started')
@@ -160,6 +165,7 @@ logger.info('Session dispatch queue started')
 const shutdown = (signal: string) => {
 	logger.info(`Received ${signal}, shutting down`)
 	sessionDispatchQueue.stop()
+	notificationsLifecycle.stop()
 	notifyBridge.stop?.()
 	process.exit(0)
 }
