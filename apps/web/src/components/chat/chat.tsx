@@ -6,6 +6,7 @@ import {
 	SlashPicker,
 	type SlashPickerResult,
 } from '@/components/chat/slash-picker'
+import { StreamingSessionChip } from '@/components/chat/streaming-session-chip'
 import { coerceOptions } from '@/components/pulse/notification-input'
 import { UploadProgress } from '@/components/shared/upload-progress'
 import { Button } from '@/components/ui/button'
@@ -378,6 +379,42 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function Chat(
 		[onDispatchSelection],
 	)
 
+	// Sessions actively streaming into the transcript right now, in arrival
+	// order. Renders one row of streaming chips per session so the user can see
+	// which agents are speaking and stop any of them with a single tap.
+	// - persistent chat session: streaming while a turn is in flight
+	//   (`pendingTurn`) and the SSE stream is either warming up or open.
+	// - one-shot session: streaming from the moment the create call resolves
+	//   until the SSE `done` envelope flips it to `closed`.
+	const activeStreamingSessionIds = useMemo(() => {
+		const ids: string[] = []
+		if (
+			!selectedAgent &&
+			session.sessionId &&
+			pendingTurn &&
+			(session.status === 'connecting' ||
+				session.status === 'ready' ||
+				session.status === 'starting')
+		) {
+			ids.push(session.sessionId)
+		}
+		if (oneShot.sessionId && oneShot.status === 'streaming') {
+			ids.push(oneShot.sessionId)
+		}
+		return ids
+	}, [
+		selectedAgent,
+		session.sessionId,
+		session.status,
+		oneShot.sessionId,
+		oneShot.status,
+		pendingTurn,
+	])
+
+	const handleStreamStopped = useCallback(() => {
+		setPendingTurn(false)
+	}, [])
+
 	const placeholder = computePlaceholder(surface, selectedAgent?.name)
 
 	return (
@@ -399,6 +436,11 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function Chat(
 					className="min-h-0 flex-1"
 				/>
 			)}
+			<StreamingSessionRow
+				workspaceId={workspaceId}
+				sessionIds={activeStreamingSessionIds}
+				onStopped={handleStreamStopped}
+			/>
 			<Composer
 				workspaceId={workspaceId}
 				onSend={handleSend}
@@ -418,6 +460,36 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function Chat(
 		</div>
 	)
 })
+
+/**
+ * Renders one streaming chip per active session, stacked vertically so
+ * concurrent one-shot + persistent sessions each show their own controls. The
+ * row collapses to nothing while no session is streaming — the surface stays
+ * quiet outside of a live turn.
+ */
+function StreamingSessionRow({
+	workspaceId,
+	sessionIds,
+	onStopped,
+}: {
+	workspaceId: string
+	sessionIds: string[]
+	onStopped: () => void
+}) {
+	if (sessionIds.length === 0) return null
+	return (
+		<div className="flex flex-col gap-1">
+			{sessionIds.map((sessionId) => (
+				<StreamingSessionChip
+					key={sessionId}
+					sessionId={sessionId}
+					workspaceId={workspaceId}
+					onStopped={onStopped}
+				/>
+			))}
+		</div>
+	)
+}
 
 function isTurnProgressEvent(event: ChatEvent): boolean {
 	return (
