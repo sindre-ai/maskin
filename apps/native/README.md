@@ -101,9 +101,20 @@ The shell registers the official `tauri-plugin-notification` (permission handlin
 Two things still need to be hooked into the generated Xcode project on the Mac after `ios:init` — both because `src-tauri/gen/apple/` is git-ignored (same reason as the AppIcon workaround above):
 
 1. **`aps-environment` entitlement.** A template lives at `src-tauri/ios/maskin.entitlements` (`aps-environment = development`). Copy it into `src-tauri/gen/apple/` and reference it from the app target's `CODE_SIGN_ENTITLEMENTS` build setting (add `CODE_SIGN_ENTITLEMENTS: gen/apple/maskin.entitlements` to `targets.maskin-mobile_iOS.settings.base` in `project.yml`, then re-run `xcodegen generate`). Flip the string to `production` before an App Store build. A paid Apple Developer Program membership is required for real APNs — the personal/free team can request permission but the OS won't hand back a token.
-2. **AppDelegate token capture.** The APNs device token is delivered to `application(_:didRegisterForRemoteNotificationsWithDeviceToken:)` on the app delegate. Tauri's generated iOS `AppDelegate` (under `gen/apple/Sources/`) needs an extension that forwards the token to JS via Tauri's event system — e.g. `webview.eval("window.__APNS_TOKEN__ = '<hex>'")` or an emitted event on the main webview. Track that follow-up under task 5 (push → card deep link).
+2. **AppDelegate token capture.** The APNs device token is delivered to `application(_:didRegisterForRemoteNotificationsWithDeviceToken:)` on the app delegate. Tauri's generated iOS `AppDelegate` (under `gen/apple/Sources/`) needs an extension that forwards the token to JS via Tauri's event system — e.g. `webview.eval("window.__APNS_TOKEN__ = '<hex>'")` or an emitted event on the main webview. Follow-up task; the tap → card deep-link (below) does not depend on it.
 
 Without step 2 the DoD "device token is obtained from APNs without error" is not testable end-to-end — the OS call succeeds and the delegate fires, but nothing surfaces the token to the shell. That is a scaffold gap, not a WKWebView-inherent failure.
+
+### Tap → For You card deep-link
+
+Wiring a tap on a delivered notification through to the correct For You card spans four surfaces:
+
+1. **APNs payload contract.** The backend sender includes `entity_type` and `entity_id` as top-level keys in the JSON payload alongside `aps`. Both are required strings — the FFI drops any tap that's missing either side.
+2. **AppDelegate → Rust FFI.** A template lives at `src-tauri/ios/AppDelegate.swift.template` documenting the exact `didFinishLaunchingWithOptions` / `UNUserNotificationCenterDelegate` hooks. Paste it into `src-tauri/gen/apple/Sources/AppDelegate.swift` after `ios:init` (same git-ignored-generated-tree reason as the entitlement above). It calls the Rust extern `maskin_push_notification_tapped`, which stashes the payload in a mutex and — when the app is already up — emits a `push-notification-tapped` Tauri event.
+3. **Rust bridge.** `src-tauri/src/lib.rs` exposes `consume_pending_notification` (Tauri command, take-once read of the mutex) so the JS side can drain the cold-start payload after boot. The AppHandle is captured in `.setup()` so warm-state taps can emit the Tauri event alongside the stash.
+4. **JS routing.** `apps/web/src/lib/ios-push-deep-link.ts` reads the payload in three places: once at boot (cold-start), on every `visibilitychange` when the tab becomes visible (warm-state), and on the `push-notification-tapped` Tauri event (belt-and-braces for warm-state). It writes `?card=<entity_type>:<entity_id>` into the URL and the For You route (`_authed/$workspaceId/index.tsx`) reads it via `validateSearch` and hands it to `<ForYouCardQueue focusKey={...} />`, which pins that card as the current one instead of the top of the sort.
+
+The whole path is inert in a plain browser (guarded by `isTauri()`), so web deploys are unchanged.
 
 ## Magic-link deep link (login)
 

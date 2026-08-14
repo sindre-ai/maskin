@@ -16,11 +16,17 @@ interface ForYouCardQueueProps {
 	 *  2026-08-13). It reappears once the queue empties, where the compact
 	 *  EmptyState doesn't compete for fill-height the same way. */
 	sparseComposer?: ReactNode
+	// When set, pin this key (shape: `<entity_type>:<entity_id>`) as the
+	// current card as soon as it appears in the visible queue. Push-notification
+	// deep-links use this to route straight to the tapped card instead of the
+	// top of the queue. Null / undefined leaves the pin-on-first-show default
+	// in place.
+	focusKey?: string | null
 }
 
 function noop() {}
 
-export function ForYouCardQueue({ workspaceId, queue, sparseComposer }: ForYouCardQueueProps) {
+export function ForYouCardQueue({ workspaceId, queue, sparseComposer, focusKey }: ForYouCardQueueProps) {
 	const [currentKey, setCurrentKey] = useState<string | null>(null)
 	const [processedKeys, setProcessedKeys] = useState<Set<string>>(() => new Set())
 	// Items whose deferred mark-read/mark-unread mutation (use-swipe-to-mark-read's
@@ -48,6 +54,22 @@ export function ForYouCardQueue({ workspaceId, queue, sparseComposer }: ForYouCa
 		}
 		setCurrentKey(visibleQueue[0] ? itemQueueKey(visibleQueue[0]) : null)
 	}, [visibleQueue, currentKey])
+
+	// Refocus onto `focusKey` when it changes (e.g. the URL just picked up a
+	// `?card=...` param from a push-notification tap). The applied-for ref
+	// guards two cases: a repeated visibleQueue rerender while the user is
+	// mid-read of a *different* card must NOT jerk them back — the effect
+	// only re-pins when the focusKey value itself changes; and a request for
+	// a card that hasn't landed in the queue yet (SSE hydration lag) doesn't
+	// record as applied, so a later rerender that includes it still fires.
+	const focusAppliedForRef = useRef<string | null>(null)
+	useEffect(() => {
+		if (!focusKey) return
+		if (focusAppliedForRef.current === focusKey) return
+		if (!visibleQueue.some((item) => itemQueueKey(item) === focusKey)) return
+		focusAppliedForRef.current = focusKey
+		setCurrentKey(focusKey)
+	}, [focusKey, visibleQueue])
 
 	const currentItem =
 		visibleQueue.find((item) => itemQueueKey(item) === currentKey) ?? visibleQueue[0] ?? null

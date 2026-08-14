@@ -36,6 +36,14 @@ import { toast } from 'sonner'
 export const Route = createFileRoute('/_authed/$workspaceId/')({
 	component: ForYouRedesign,
 	errorComponent: ({ error }) => <RouteError error={error} />,
+	// `?card=<entity_type>:<entity_id>` — set by the iOS push-notification
+	// deep-link handler when the user taps a notification. Read by the card
+	// queue to pin the tapped card as the current one instead of the top of
+	// the sort. Kept as an opaque string here; parsing lives in
+	// `lib/foryou-focus.ts` so the encode/decode stays in one place.
+	validateSearch: (search: Record<string, unknown>): { card?: string } => ({
+		card: typeof search.card === 'string' && search.card.length > 0 ? search.card : undefined,
+	}),
 })
 
 const UNDO_WINDOW_MS = 15_000
@@ -61,6 +69,7 @@ export function feedModeToForyouViewMode(
 
 function ForYouRedesign() {
 	const { workspaceId } = useWorkspace()
+	const { card: focusKey } = Route.useSearch()
 	const { data, isLoading } = useUnread(workspaceId, undefined, true)
 	const { data: bets, isLoading: betsLoading } = useBets(workspaceId)
 	const items = data?.items ?? []
@@ -341,6 +350,7 @@ function ForYouRedesign() {
 							workspaceId={workspaceId}
 							queue={queue}
 							sparseComposer={sparseComposerNode}
+							focusKey={focusKey ?? null}
 						/>
 					)}
 					{mode === 'list' && typeFilter === 'mentions' && filteredRegular.length === 0 && (
