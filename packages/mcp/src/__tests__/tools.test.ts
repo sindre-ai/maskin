@@ -93,6 +93,7 @@ const ALL_TOOL_NAMES = [
 	'import_claude_subscription',
 	'get_claude_subscription_status',
 	'disconnect_claude_subscription',
+	'rename_claude_subscription',
 	'list_extensions',
 	'create_extension',
 	'update_extension',
@@ -1314,6 +1315,55 @@ describe('import_claude_subscription schema', () => {
 		expect(result.subscription_type).toBe('max')
 		expect(result.scopes).toEqual(['read'])
 	})
+
+	it('accepts an optional nickname', () => {
+		const result = schema.parse({
+			access_token: 'a',
+			refresh_token: 'r',
+			expires_at: 1,
+			nickname: 'Work account',
+		})
+		expect(result.nickname).toBe('Work account')
+	})
+
+	it('rejects a nickname over 60 characters', () => {
+		expect(() =>
+			schema.parse({
+				access_token: 'a',
+				refresh_token: 'r',
+				expires_at: 1,
+				nickname: 'x'.repeat(61),
+			}),
+		).toThrow()
+	})
+})
+
+describe('rename_claude_subscription schema', () => {
+	const schema = tools.rename_claude_subscription.inputSchema
+
+	it('accepts a slot and nickname', () => {
+		const result = schema.parse({ slot: 'backup', nickname: 'Overflow account' })
+		expect(result.slot).toBe('backup')
+		expect(result.nickname).toBe('Overflow account')
+	})
+
+	it('defaults slot to primary', () => {
+		const result = schema.parse({ nickname: 'Main account' })
+		expect(result.slot).toBe('primary')
+	})
+
+	it('accepts an empty string to clear the nickname', () => {
+		const result = schema.parse({ nickname: '' })
+		expect(result.nickname).toBe('')
+	})
+
+	it('rejects a nickname over 60 characters', () => {
+		expect(() => schema.parse({ nickname: 'x'.repeat(61) })).toThrow()
+	})
+
+	it('rejects a missing nickname', () => {
+		expect(() => schema.parse({ slot: 'primary' })).toThrow()
+	})
 })
 
 describe('get_claude_subscription_status schema', () => {
@@ -1359,6 +1409,7 @@ describe('workspace_id optional on most tools', () => {
 		'import_claude_subscription',
 		'get_claude_subscription_status',
 		'disconnect_claude_subscription',
+		'rename_claude_subscription',
 	]
 
 	for (const name of toolsWithOptionalWorkspace) {

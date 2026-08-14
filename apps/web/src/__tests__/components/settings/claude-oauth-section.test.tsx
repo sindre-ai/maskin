@@ -1,3 +1,4 @@
+import { ApiError } from '@/lib/api'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -7,6 +8,7 @@ const mockStatus = vi.fn()
 const mockImport = vi.fn()
 const mockDisconnect = vi.fn()
 const mockSwap = vi.fn()
+const mockRename = vi.fn()
 
 vi.mock('@/lib/api', async () => {
 	const actual = await vi.importActual<typeof import('@/lib/api')>('@/lib/api')
@@ -19,6 +21,7 @@ vi.mock('@/lib/api', async () => {
 				import: (...args: unknown[]) => mockImport(...args),
 				disconnect: (...args: unknown[]) => mockDisconnect(...args),
 				swap: (...args: unknown[]) => mockSwap(...args),
+				rename: (...args: unknown[]) => mockRename(...args),
 			},
 		},
 	}
@@ -224,5 +227,110 @@ describe('Settings > Keys > Claude Subscription', () => {
 
 		await user.click(await screen.findByRole('button', { name: 'Swap into primary' }))
 		await waitFor(() => expect(mockSwap).toHaveBeenCalledWith(mockWorkspaceWithRole.id))
+	})
+
+	it('saves a trimmed nickname on blur', async () => {
+		const user = userEvent.setup()
+		mockStatus.mockResolvedValue({
+			connected: true,
+			valid: true,
+			slots: {
+				primary: { subscription_type: 'max-5x', expires_at: Date.now() + 1000 },
+			},
+			active_slot: 'primary',
+		})
+		mockRename.mockResolvedValue({ success: true })
+
+		renderPage()
+
+		const input = await screen.findByTestId('slot-primary-nickname')
+		await user.type(input, '  Work account  ')
+		await user.tab()
+
+		await waitFor(() =>
+			expect(mockRename).toHaveBeenCalledWith(mockWorkspaceWithRole.id, 'primary', 'Work account'),
+		)
+	})
+
+	it('clears a nickname when blurred with an empty value', async () => {
+		const user = userEvent.setup()
+		mockStatus.mockResolvedValue({
+			connected: true,
+			valid: true,
+			slots: {
+				primary: {
+					subscription_type: 'max-5x',
+					expires_at: Date.now() + 1000,
+					nickname: 'Old name',
+				},
+			},
+			active_slot: 'primary',
+		})
+		mockRename.mockResolvedValue({ success: true })
+
+		renderPage()
+
+		const input = await screen.findByTestId('slot-primary-nickname')
+		expect(input).toHaveValue('Old name')
+		await user.clear(input)
+		await user.tab()
+
+		await waitFor(() =>
+			expect(mockRename).toHaveBeenCalledWith(mockWorkspaceWithRole.id, 'primary', ''),
+		)
+	})
+
+	it('does not call rename when blurred without changing the nickname', async () => {
+		const user = userEvent.setup()
+		mockStatus.mockResolvedValue({
+			connected: true,
+			valid: true,
+			slots: {
+				primary: {
+					subscription_type: 'max-5x',
+					expires_at: Date.now() + 1000,
+					nickname: 'Unchanged',
+				},
+			},
+			active_slot: 'primary',
+		})
+
+		renderPage()
+
+		const input = await screen.findByTestId('slot-primary-nickname')
+		await user.click(input)
+		await user.tab()
+
+		expect(mockRename).not.toHaveBeenCalled()
+	})
+
+	it('reverts the draft and shows an error when saving the nickname fails', async () => {
+		const user = userEvent.setup()
+		mockStatus.mockResolvedValue({
+			connected: true,
+			valid: true,
+			slots: {
+				primary: {
+					subscription_type: 'max-5x',
+					expires_at: Date.now() + 1000,
+					nickname: 'Old name',
+				},
+			},
+			active_slot: 'primary',
+		})
+		mockRename.mockRejectedValue(new ApiError(403, 'Not a member of this workspace'))
+
+		renderPage()
+
+		const input = await screen.findByTestId('slot-primary-nickname')
+		await user.clear(input)
+		await user.type(input, 'New name')
+		await user.tab()
+
+		await waitFor(() => expect(mockRename).toHaveBeenCalled())
+		await waitFor(() =>
+			expect(screen.getByText('Not a member of this workspace')).toBeInTheDocument(),
+		)
+		expect(input).toHaveValue('Old name')
 	})
 })
