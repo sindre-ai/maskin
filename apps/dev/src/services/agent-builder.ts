@@ -1019,6 +1019,7 @@ export class AgentReviewTargetError extends Error {
 		readonly reason:
 			| 'target_not_found'
 			| 'target_wrong_workspace'
+			| 'object_no_content'
 			| 'session_not_terminal'
 			| 'session_no_result'
 			| 'rubric_not_found',
@@ -1061,7 +1062,14 @@ export async function loadReviewTarget(
 				`Object ${target.objectId} does not belong to workspace ${workspaceId}`,
 			)
 		}
-		return { definitionText: (row.content ?? '').trim(), targetActorId: null }
+		const definitionText = (row.content ?? '').trim()
+		if (!definitionText) {
+			throw new AgentReviewTargetError(
+				'object_no_content',
+				`Object ${target.objectId} has no content to review`,
+			)
+		}
+		return { definitionText, targetActorId: null }
 	}
 
 	if (target.sessionId) {
@@ -1161,7 +1169,6 @@ export async function reviewWork(
 export class AgentRefineError extends Error {
 	constructor(
 		readonly reason:
-			| 'actor_not_found'
 			| 'actor_wrong_workspace'
 			| 'skill_not_found'
 			| 'refine_context_empty',
