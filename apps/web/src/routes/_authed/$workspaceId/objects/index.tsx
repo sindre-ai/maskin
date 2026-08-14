@@ -30,6 +30,7 @@ import {
 	trackObjectsBoardArrived,
 	trackObjectsListArrived,
 	trackObjectsListGroupToggled,
+	trackStarredFilterOpened,
 } from '@/lib/analytics'
 import { api } from '@/lib/api'
 import type { DisplaySettingsBody, NotificationResponse, ObjectResponse } from '@/lib/api'
@@ -91,6 +92,13 @@ export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
 			rawIncludeArchived === 1 ||
 			rawIncludeArchived === true ||
 			rawIncludeArchived === 'true'
+		// Starred is the object-favourites bet's Show toggle. Same URL-only
+		// contract: present as `true` when on, omitted otherwise. Every off→on
+		// transition emits `starred_filter_opened` (bet's success metric) — the
+		// route callback handles the transition detection so a hydrate from URL
+		// state doesn't inflate the day count on refresh.
+		const rawStarred = search.starred
+		const starred = rawStarred === 'true' || rawStarred === true
 		return {
 			type: typeof search.type === 'string' ? search.type : undefined,
 			status: typeof search.status === 'string' ? search.status : undefined,
@@ -104,6 +112,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
 			groupBy: typeof search.groupBy === 'string' ? search.groupBy : undefined,
 			ids: typeof search.ids === 'string' ? search.ids : undefined,
 			includeArchived: includeArchived ? (1 as const) : undefined,
+			starred: starred ? ('true' as const) : undefined,
 			...metadataFilters,
 		}
 	},
@@ -127,8 +136,10 @@ function ObjectsPage() {
 		groupBy,
 		ids: idsFilter,
 		includeArchived: includeArchivedParam,
+		starred: starredParam,
 	} = searchParams
 	const includeArchived = includeArchivedParam === 1
+	const starredFilter = starredParam === 'true'
 	// Per the task scope, the "Show" section (with the Include archived toggle)
 	// is bet-only for now — surfaced when the bet tab is active. Non-bet tabs
 	// keep the existing panel shape until archive lands for their type.
@@ -321,6 +332,7 @@ function ObjectsPage() {
 				groupBy,
 				ids: idsFilter,
 				includeArchived,
+				starred: starredFilter,
 				metadata: metadataFilters,
 				columnVisibility,
 			}),
@@ -334,6 +346,7 @@ function ObjectsPage() {
 			groupBy,
 			idsFilter,
 			includeArchived,
+			starredFilter,
 			metadataFilters,
 			columnVisibility,
 		],
@@ -594,6 +607,7 @@ function ObjectsPage() {
 			status: undefined,
 			driver: undefined,
 			includeArchived: undefined,
+			starred: undefined,
 		}
 		for (const key of Object.keys(searchParams)) {
 			if (key.startsWith('metadata.')) cleared[key] = undefined
@@ -661,6 +675,7 @@ function ObjectsPage() {
 			!searchParams.groupBy &&
 			!searchParams.status &&
 			!searchParams.driver &&
+			!searchParams.starred &&
 			Object.keys(metadataFilters).length === 0,
 		[
 			searchParams.sort,
@@ -668,6 +683,7 @@ function ObjectsPage() {
 			searchParams.groupBy,
 			searchParams.status,
 			searchParams.driver,
+			searchParams.starred,
 			metadataFilters,
 		],
 	)
@@ -847,7 +863,8 @@ function ObjectsPage() {
 	// the toggle in DisplayPanel; mirroring it here keeps the chip in lockstep
 	// so a leftover URL param on a non-bet tab doesn't render an orphan chip.
 	const archivedChipActive = supportsIncludeArchived && includeArchived
-	const hasChipFilters = activeStatuses.length > 0 || activeDrivers.length > 0 || archivedChipActive
+	const hasChipFilters =
+		activeStatuses.length > 0 || activeDrivers.length > 0 || archivedChipActive || starredFilter
 
 	const bulkOwnerOptions = useMemo(
 		() => (actors ?? []).map((a) => ({ id: a.id, name: a.name })),
@@ -1118,6 +1135,7 @@ function ObjectsPage() {
 							groupBy: undefined,
 							ids: undefined,
 							includeArchived: undefined,
+							starred: undefined,
 						},
 						replace: true,
 					})
@@ -1164,6 +1182,17 @@ function ObjectsPage() {
 							(next) => updateSearch({ includeArchived: next ? 1 : undefined })
 						: undefined
 				}
+				starredFilter={starredFilter}
+				onStarredFilterChange={(next) => {
+					// Emit `starred_filter_opened` on the off→on transition only —
+					// hydrating the URL with `starred=true` on refresh must not
+					// inflate the bet's day-count metric. Off→off and on→off are
+					// no-op emissions by construction (`next && !starredFilter`).
+					if (next && !starredFilter) {
+						trackStarredFilterOpened({ source: 'objects-filter-panel' })
+					}
+					updateSearch({ starred: next ? 'true' : undefined })
+				}}
 				view={effectiveView}
 				onViewChange={(next) => {
 					setView(next)
@@ -1208,6 +1237,13 @@ function ObjectsPage() {
 							onRemove={() => updateSearch({ includeArchived: undefined })}
 						/>
 					)}
+					{starredFilter && (
+						<FilterChip
+							label="Show"
+							value="starred"
+							onRemove={() => updateSearch({ starred: undefined })}
+						/>
+					)}
 					<Button
 						variant="ghost"
 						size="sm"
@@ -1217,6 +1253,7 @@ function ObjectsPage() {
 								status: undefined,
 								driver: undefined,
 								includeArchived: undefined,
+								starred: undefined,
 							})
 						}
 					>
@@ -1276,6 +1313,7 @@ function ObjectsPage() {
 					expanded={expanded}
 					onExpandedChange={handleExpandedChange}
 					onCaptureViewState={handleCaptureViewState}
+					starredFilter={starredFilter}
 				/>
 			)}
 			<BulkActionBar

@@ -58,6 +58,11 @@ interface ListViewProps {
 	onExpandedChange: (next: Record<string, boolean>) => void
 	// Fires synchronously right before a row-open navigate (see DataTable).
 	onCaptureViewState?: () => void
+	// Swaps the empty-state copy for the object-favourites Starred filter. When
+	// the filter is active and the data comes back empty, the user is looking at
+	// a graceful "you haven't starred anything yet" hint, not the generic
+	// "create your first object" prompt — those paths are functionally different.
+	starredFilter?: boolean
 }
 
 interface ListGroup {
@@ -86,6 +91,7 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 		expanded,
 		onExpandedChange,
 		onCaptureViewState,
+		starredFilter = false,
 	},
 	ref,
 ) {
@@ -304,6 +310,14 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 	}
 
 	if (data.length === 0) {
+		if (starredFilter) {
+			return (
+				<EmptyState
+					title="No starred objects yet"
+					description="Click the ★ on any object to save it here."
+				/>
+			)
+		}
 		return (
 			<EmptyState title="No objects found" description="Create your first object to get started" />
 		)
