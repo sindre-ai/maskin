@@ -1,4 +1,4 @@
-import { CommentVisual, isVisualLanguage } from '@/components/activity/comment-visual'
+import { isVisualLanguage } from '@/components/activity/comment-visual-language'
 import { Textarea } from '@/components/ui/textarea'
 import type { ActorListItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
@@ -7,7 +7,9 @@ import {
 	Children,
 	type ReactElement,
 	type ReactNode,
+	Suspense,
 	isValidElement,
+	lazy,
 	useCallback,
 	useLayoutEffect,
 	useMemo,
@@ -16,6 +18,22 @@ import {
 } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import { MentionedText } from './mentioned-text'
+
+// Recharts (~250KB min) only enters the bundle when a comment actually needs a
+// visual — most signed-in pages render only text comments, so we keep it out of
+// the shared chunk with React.lazy. The dispatcher itself has no other deps
+// that matter for perf; splitting it is enough to isolate recharts.
+const CommentVisual = lazy(() => import('@/components/activity/comment-visual'))
+
+function CommentVisualPlaceholder() {
+	// Matches the h-48 chart footprint in comment-chart.tsx so the layout
+	// doesn't jump when the chunk resolves and the real chart takes over.
+	return (
+		<figure aria-hidden className="my-2 w-full max-w-full overflow-hidden">
+			<div className="h-48 w-full animate-pulse rounded-md bg-muted" />
+		</figure>
+	)
+}
 
 function wrapWithMentions(
 	children: ReactNode,
@@ -152,7 +170,11 @@ export function MarkdownContent({
 					| undefined
 				const lang = readCodeLanguage(first)
 				if (lang && isVisualLanguage(lang)) {
-					return <CommentVisual language={lang} source={readCodeSource(first)} />
+					return (
+						<Suspense fallback={<CommentVisualPlaceholder />}>
+							<CommentVisual language={lang} source={readCodeSource(first)} />
+						</Suspense>
+					)
 				}
 			}
 			return <pre {...rest}>{children}</pre>

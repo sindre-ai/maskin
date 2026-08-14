@@ -77,7 +77,7 @@ describe('MarkdownContent', () => {
 		expect(screen.getByText('body')).toBeInTheDocument()
 	})
 
-	it('renders a chart fenced block as a visual only when renderVisuals is on', () => {
+	it('renders a chart fenced block as a visual only when renderVisuals is on', async () => {
 		const spec = JSON.stringify({
 			type: 'bar',
 			x: 'day',
@@ -94,14 +94,18 @@ describe('MarkdownContent', () => {
 		expect(screen.queryByText('visual-on')).toBeNull()
 
 		rerender(<MarkdownContent content={md} renderVisuals />)
-		expect(screen.getByText('visual-on')).toBeInTheDocument()
+		// CommentVisual is lazy-loaded to keep recharts out of the shared bundle;
+		// findByText awaits the dynamic import resolving.
+		expect(await screen.findByText('visual-on', undefined, { timeout: 5000 })).toBeInTheDocument()
 		expect(container.querySelector('pre')).toBeNull()
 	})
 
-	it('shows the inline fallback note when a chart spec is malformed', () => {
+	it('shows the inline fallback note when a chart spec is malformed', async () => {
 		const md = 'lead\n\n```chart\n{not valid json\n```\n\ntail'
 		render(<MarkdownContent content={md} renderVisuals />)
-		expect(screen.getByText(/Couldn’t render chart/)).toBeInTheDocument()
+		expect(
+			await screen.findByText(/Couldn’t render chart/, undefined, { timeout: 5000 }),
+		).toBeInTheDocument()
 		expect(screen.getByText('lead')).toBeInTheDocument()
 		expect(screen.getByText('tail')).toBeInTheDocument()
 	})

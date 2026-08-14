@@ -1,4 +1,5 @@
-import { CommentVisual, isVisualLanguage } from '@/components/activity/comment-visual'
+import { CommentVisual } from '@/components/activity/comment-visual'
+import { isVisualLanguage } from '@/components/activity/comment-visual-language'
 import { render } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 

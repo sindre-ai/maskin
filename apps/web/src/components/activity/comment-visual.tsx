@@ -14,9 +14,6 @@ export function CommentVisual({ language, source }: CommentVisualProps) {
 	return <CommentChartFallback reason={`unsupported visual "${language}"`} />
 }
 
-const VISUAL_LANGUAGES = new Set(['chart'])
+export { isVisualLanguage } from './comment-visual-language'
 
-export function isVisualLanguage(language: string | undefined): boolean {
-	if (!language) return false
-	return VISUAL_LANGUAGES.has(language)
-}
+export default CommentVisual
