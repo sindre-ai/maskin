@@ -61,6 +61,7 @@ export async function evaluateAndRespond(ctx: {
 			content: messages.content,
 			metadata: messages.metadata,
 			authorName: actors.name,
+			authorType: actors.type,
 		})
 		.from(messages)
 		.innerJoin(actors, eq(actors.id, messages.actorId))
@@ -179,6 +180,7 @@ export async function evaluateAndRespond(ctx: {
 							role: 'user',
 							content: buildConversationTurnPrompt({
 								authorName: message.authorName,
+								authorType: message.authorType,
 								newMessageContent: messageForPrompt.content,
 								isDirectConversation,
 								wasMentioned,
@@ -242,7 +244,7 @@ async function spawnOrJoinConversationSession(params: {
 	conversationId: string
 	messageId: number
 	agentId: string
-	message: { actorId: string; content: string; authorName: string }
+	message: { actorId: string; content: string; authorName: string; authorType: string }
 	conversationHistory: Array<{ actorName: string; content: string }>
 	isDirectConversation: boolean
 	wasMentioned: boolean
@@ -304,6 +306,7 @@ async function spawnOrJoinConversationSession(params: {
 				role: 'user',
 				content: buildConversationTurnPrompt({
 					authorName: message.authorName,
+					authorType: message.authorType,
 					newMessageContent: message.content,
 					isDirectConversation,
 					wasMentioned,
@@ -497,7 +500,7 @@ function buildConversationReplyPrompt(ctx: {
 	wasMentioned: boolean
 }): string {
 	return [
-		'A new message was posted in a conversation you are a participant in, and you decided a reply from you may add value. This session stays open for the rest of this conversation — later messages will arrive as further turns, not new prompts.',
+		'A new message was posted in a conversation you are a participant in. This session stays open for the rest of this conversation — later messages will arrive as further turns, not new prompts.',
 		'',
 		'Recent conversation history (oldest first):',
 		'"""',
@@ -534,7 +537,7 @@ function describeReplyExpectation(ctx: {
 	if (ctx.wasMentioned) {
 		return 'The user @mentioned you directly, which is an explicit, unambiguous request for your reply — silence here reads as being ignored. Reply unless you have a clear reason not to.'
 	}
-	return "You judged this message relevant enough to act on, so lean toward replying. Doing nothing is still valid if, on reflection, a response from you doesn't actually add anything — but don't default to silence just because it's an option."
+	return "This message wasn't addressed to you directly, but it touched on something within your area, so it was routed to you as plausibly worth a response — lean toward replying. Doing nothing is still valid if, on reflection, a response from you doesn't actually add anything — but don't default to silence just because it's an option."
 }
 
 /**
@@ -542,18 +545,26 @@ function describeReplyExpectation(ctx: {
  * Deliberately minimal — the live CLI process already has every prior turn
  * in its own context, this only needs to carry the new message and who sent
  * it (a multi-party room isn't guaranteed to have the same sender turn after
- * turn).
+ * turn). Tags fellow-agent authors explicitly: without it, a peer agent's
+ * reply reads as indistinguishable from the human's, and the model infers
+ * "someone already answered" from mere proximity in the transcript — even
+ * when that peer's message is itself a question waiting on the human.
  */
 function buildConversationTurnPrompt(ctx: {
 	authorName: string
+	authorType: string
 	newMessageContent: string
 	isDirectConversation: boolean
 	wasMentioned: boolean
 }): string {
+	const speaker =
+		ctx.authorType === 'agent'
+			? `${ctx.authorName} (fellow agent, not the user — their reply doesn't mean the user's message has been handled)`
+			: ctx.authorName
 	const reminder = ctx.isDirectConversation
 		? " (it's just the two of you here — they're expecting a reply)"
 		: ctx.wasMentioned
 			? ' (they @mentioned you directly — expecting a reply)'
 			: ''
-	return `${ctx.authorName}: ${ctx.newMessageContent}${reminder}`
+	return `${speaker}: ${ctx.newMessageContent}${reminder}`
 }
