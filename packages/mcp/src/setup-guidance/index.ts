@@ -18,3 +18,13 @@ export { checkActor } from './actor-checks'
 export { sortByPriority, toNextSteps } from './priority'
 export { toProseBlock } from './prose'
 export { findMentionedProviders, KNOWN_PROVIDERS } from './providers'
+export {
+	buildBetSetupBlock,
+	buildLoopSetupBlock,
+	composeLoopSteps,
+	readConnectedProviders,
+	readStatusOrder,
+	readWorkspaceLlmReadiness,
+	safeBuildSetupBlock,
+	type SetupBlock,
+} from './wiring'

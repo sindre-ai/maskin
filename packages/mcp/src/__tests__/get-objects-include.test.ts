@@ -100,6 +100,21 @@ describe('get_objects `include:` expansions', () => {
 			if (urlStr.includes('/api/objects/bet-9/graph')) {
 				return { ok: true, json: () => Promise.resolve(GRAPH_PAYLOAD) } as Response
 			}
+			if (urlStr.includes('/api/workspaces')) {
+				// Workspace with no LLM keys → the setup check should surface
+				// `agents_runnable: warn` on any object include:['setup'] call.
+				return {
+					ok: true,
+					json: () =>
+						Promise.resolve([
+							{
+								id: 'ws-default-123',
+								name: 'Test WS',
+								settings: { statuses: { bet: ['signal', 'active'] } },
+							},
+						]),
+				} as Response
+			}
 			return { ok: true, json: () => Promise.resolve([]) } as Response
 		})
 	})
@@ -241,9 +256,32 @@ describe('get_objects `include:` expansions', () => {
 		it('accepts every enum value listed in the ADR', () => {
 			const parsed = tools.get_objects.inputSchema.safeParse({
 				ids: ['00000000-0000-0000-0000-000000000001'],
-				include: ['content', 'relationships', 'connected_objects', 'events', 'files'],
+				include: ['content', 'relationships', 'connected_objects', 'events', 'files', 'setup'],
 			})
 			expect(parsed.success).toBe(true)
+		})
+	})
+
+	describe("`include: ['setup']` attaches a fresh setup block per object", () => {
+		it('adds the setup block only when include contains `setup`', async () => {
+			const without = await callGetObjects({ ids: ['bet-9'] })
+			expect(Object.keys(without.structuredContent.objects[0]).sort()).toEqual(['object'])
+
+			const withSetup = await callGetObjects({ ids: ['bet-9'], include: ['setup'] })
+			const entry = withSetup.structuredContent.objects[0] as Record<string, unknown>
+			expect(Object.keys(entry).sort()).toEqual(['object', 'setup'])
+
+			const setup = entry.setup as {
+				checks: Array<{ name: string; status: string }>
+				next_steps: unknown[]
+				prose: string
+			}
+			expect(setup).toBeDefined()
+			expect(Array.isArray(setup.checks)).toBe(true)
+			expect(Array.isArray(setup.next_steps)).toBe(true)
+			expect(typeof setup.prose).toBe('string')
+			// Workspace has no LLM keys in the mock → agents_runnable must surface.
+			expect(setup.checks.some((c) => c.name === 'agents_runnable')).toBe(true)
 		})
 	})
 })

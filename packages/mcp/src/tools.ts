@@ -255,17 +255,25 @@ export const tools = {
 	},
 	get_objects: {
 		description:
-			'Get one or more objects by ID. Default response per object: `{id, type, title, status, contextLine, url, workspaceId}` — no other fields. Opt into extra blocks with `include:` (each adds only its own block): `content` — the object\'s body/description; `metadata` — the object\'s custom field values; `relationships` — inbound and outbound edges, each with sourceTitle and targetTitle; `connected_objects` — the objects on the other end of those edges; `events` — recent lifecycle changes and comments; `files` — metadata for files attached to the object or its comments. In human-facing output, refer to objects by their `title`, not their UUID. Append a short id suffix (e.g. "Sales v4 (ca957490)") only when two titles collide.',
+			"Get one or more objects by ID. Default response per object: `{id, type, title, status, contextLine, url, workspaceId}` — no other fields. Opt into extra blocks with `include:` (each adds only its own block): `content` — the object's body/description; `metadata` — the object's custom field values; `relationships` — inbound and outbound edges, each with sourceTitle and targetTitle; `connected_objects` — the objects on the other end of those edges; `events` — recent lifecycle changes and comments; `files` — metadata for files attached to the object or its comments; `setup` — a fresh readiness check per object (`{checks, next_steps, prose}`) surfacing gaps to walk the user through, same shape create_objects/update_objects return. For a loop's deep setup check (steps, connectors, members), call get_loop with `include: ['setup']` — the check here is the lightweight per-object slice. In human-facing output, refer to objects by their `title`, not their UUID. Append a short id suffix (e.g. \"Sales v4 (ca957490)\") only when two titles collide.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			ids: z.array(z.string().uuid()).min(1).max(50).describe('Object IDs to fetch'),
 			include: z
 				.array(
-					z.enum(['content', 'metadata', 'relationships', 'connected_objects', 'events', 'files']),
+					z.enum([
+						'content',
+						'metadata',
+						'relationships',
+						'connected_objects',
+						'events',
+						'files',
+						'setup',
+					]),
 				)
 				.default([])
 				.describe(
-					'Opt-in blocks to add to each object response. Default `[]` returns only the core fields `{id, type, title, status, contextLine, url, workspaceId}` per object; each listed value adds one block back.',
+					'Opt-in blocks to add to each object response. Default `[]` returns only the core fields `{id, type, title, status, contextLine, url, workspaceId}` per object; each listed value adds one block back. `setup` computes a fresh readiness check per object and attaches it as `{checks, next_steps, prose}`.',
 				),
 		}),
 	},
@@ -1018,7 +1026,7 @@ export const tools = {
 	// wrong.
 	create_loop: {
 		description:
-			'Create a Loop — a persistent process where agents (and humans) work toward a goal, with steps that fire as objects change state. A loop wraps: (a) STEPS — triggers that fire an agent, either on a schedule (cron) or when an object of any workspace-defined type changes state (event); (b) AGENTS — each step targets an agent actor that does the work; (c) MEMBER OBJECTS — the objects currently flowing through the loop (any type the workspace defines — call get_workspace_schema to discover types and statuses), linked via `in_loop` relationships. Pass `steps` to define and create the triggers inline in this one call, and/or `trigger_ids` to attach existing triggers. A loop is OPEN when it has no feedback mechanism, CLOSED when one of its steps is a feedback step — an event trigger on the close condition (e.g. when an object reaches a done status) whose agent captures learnings (create an insight/knowledge object linked with `informs`), improves the loop, and/or seeds the next object into it. Prefer closing every loop. To put a human ON the loop, add a step whose agent notifies/@mentions that human at decision points (via create_comment mentions or create_notification) — human participation is a step like any other, and another agent can be on the loop the same way. If custom object types flow through the loop, pass `closed_statuses` so the loop knows which statuses mean done. All ids, types, and statuses are validated against the workspace — unknown ones fail with a clear error instead of silently creating a loop with no working steps. The loop object and its `in_loop` membership edges are created atomically; attach more steps or objects later with update_loop; read loops back (with live stats) via list_loops. NOTE: this creates a custom loop from scratch — to install a pre-packaged marketplace loop template, use get_started instead.',
+			'Create a Loop — a persistent process where agents (and humans) work toward a goal, with steps that fire as objects change state. A loop wraps: (a) STEPS — triggers that fire an agent, either on a schedule (cron) or when an object of any workspace-defined type changes state (event); (b) AGENTS — each step targets an agent actor that does the work; (c) MEMBER OBJECTS — the objects currently flowing through the loop (any type the workspace defines — call get_workspace_schema to discover types and statuses), linked via `in_loop` relationships. Pass `steps` to define and create the triggers inline in this one call, and/or `trigger_ids` to attach existing triggers. A loop is OPEN when it has no feedback mechanism, CLOSED when one of its steps is a feedback step — an event trigger on the close condition (e.g. when an object reaches a done status) whose agent captures learnings (create an insight/knowledge object linked with `informs`), improves the loop, and/or seeds the next object into it. Prefer closing every loop. To put a human ON the loop, add a step whose agent @mentions that human on the relevant object via create_comment — human participation is a step like any other, and another agent can be on the loop the same way. If custom object types flow through the loop, pass `closed_statuses` so the loop knows which statuses mean done. All ids, types, and statuses are validated against the workspace — unknown ones fail with a clear error instead of silently creating a loop with no working steps. The loop object and its `in_loop` membership edges are created atomically; attach more steps or objects later with update_loop; read loops back (with live stats) via list_loops. NOTE: this creates a custom loop from scratch — to install a pre-packaged marketplace loop template, use get_started instead.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			name: z.string().min(1).describe('Loop name, e.g. "Inbound lead qualification".'),
@@ -1152,10 +1160,16 @@ export const tools = {
 	},
 	get_loop: {
 		description:
-			'Get a single Loop by id, with the same live derived stats list_loops returns: composite status pill, entry/close conditions, in-progress and closed member-object counts, median time-to-close, step trigger ids, and the distinct agent actor ids those triggers fire. Use list_loops to discover loop ids first. Fails with a clear error if the id is not a loop in this workspace.',
+			"Get a single Loop by id, with the same live derived stats list_loops returns: composite status pill, entry/close conditions, in-progress and closed member-object counts, median time-to-close, step trigger ids, and the distinct agent actor ids those triggers fire. Pass `include: ['setup']` to also compute a fresh readiness check for the loop — `{checks, next_steps, prose}` matching what create_loop/update_loop return, so callers can walk the user through gaps at read time. Use list_loops to discover loop ids first. Fails with a clear error if the id is not a loop in this workspace.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid().describe('Loop object id (from list_loops or create_loop).'),
+			include: z
+				.array(z.enum(['setup']))
+				.default([])
+				.describe(
+					"Opt-in blocks to add to the response. Default `[]` returns just the loop. `['setup']` computes a fresh setup block (checks, next_steps, prose) for the loop — same shape create_loop and update_loop return.",
+				),
 		}),
 	},
 	delete_loop: {
@@ -1170,7 +1184,7 @@ export const tools = {
 	// ─── Sessions ────────────────────────────────────────────
 	create_session: {
 		description:
-			'Spawn a containerized agent execution session. Creates an ephemeral Docker container running the specified agent (Claude Code, Codex, or custom). The agent executes the action_prompt autonomously. Use get_session to check status, get_session_logs to read output. For a blocking alternative that waits for completion, use run_agent instead.',
+			'Spawn a containerized agent execution session. Creates an ephemeral Docker container running the specified agent (Claude Code, Codex, or custom). The agent executes the action_prompt autonomously. Use get_session to check status; pass `include_logs: true` on the same call to read the container output. For a blocking alternative that waits for completion, use run_agent instead.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			actor_id: z.string().uuid().describe('The actor that will run inside the session'),
@@ -1288,7 +1302,7 @@ export const tools = {
 	},
 	run_agent: {
 		description:
-			'High-level tool: create a container agent session, wait for completion, and return the result with logs. This is a blocking call that polls until the session reaches a terminal state (completed/failed/timeout). Use create_session + get_session + get_session_logs separately if you need non-blocking execution.',
+			'High-level tool: create a container agent session, wait for completion, and return the result with logs. This is a blocking call that polls until the session reaches a terminal state (completed/failed/timeout). Use create_session + get_session (with `include_logs: true` when you want the output) separately if you need non-blocking execution.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			actor_id: z.string().uuid().describe('The agent actor that will execute the task'),

@@ -27,6 +27,15 @@ import {
 	isResponseScopingEnabled,
 } from './response-scoping.js'
 import {
+	buildBetSetupBlock,
+	buildLoopSetupBlock,
+	composeLoopSteps,
+	readConnectedProviders,
+	readStatusOrder,
+	readWorkspaceLlmReadiness,
+	safeBuildSetupBlock,
+} from './setup-guidance/index.js'
+import {
 	MUTATION_TOOL_KINDS,
 	type TelemetrySink,
 	createDefaultSink,
@@ -2008,51 +2017,80 @@ export function createMcpServer(config: McpConfig) {
 							}
 
 			const wsId = workspace_id ?? config.defaultWorkspaceId
+			// Setup context is fetched once per get_objects call and shared across
+			// every object in the batch — one extra API call (the workspace row)
+			// regardless of how many ids were requested. `checkBet` handles
+			// arbitrary object types via `statusOrder`; for loops the deep
+			// check-set lives on `get_loop include:['setup']`.
+			let sharedWorkspaceSettings: Record<string, unknown> | null = null
+			if (includeSet.has('setup') && wsId) {
+				try {
+					const workspace = await getWorkspace(config, wsId)
+					sharedWorkspaceSettings = workspace.settings
+				} catch {
+					sharedWorkspaceSettings = null
+				}
+			}
+			const workspaceReadiness = readWorkspaceLlmReadiness(sharedWorkspaceSettings)
 			// Default projection: strip every graph field except the core seven
 			// (`id, type, title, status, contextLine, url, workspaceId`) so the LLM's
 			// context isn't paid to carry relationships/connected_objects/events/files/
 			// content/metadata the caller didn't ask for. `workspaceId` stays in the
 			// core set (unlike the other fields) because it's a small id, not bulky
 			// content, and callers/widgets need it to route follow-up requests.
-			// `include:` opt-in expansions are wired in T4.
-			const projectedResults = results.map((r) => {
-				if (!r.success) return r
-				const graph = r.result as Record<string, unknown> | null | undefined
-				const rawObj = graph?.object as Record<string, unknown> | undefined
-				if (!rawObj) return r
-				const withUrl = wsId
-					? addUrl(rawObj, config, wsId, { kind: 'object', id: rawObj.id as string })
-					: rawObj
-				const projectedObject: Record<string, unknown> = {
-					id: withUrl.id,
-					type: withUrl.type,
-					title: withUrl.title ?? null,
-					status: withUrl.status ?? null,
-					contextLine: contextLineById.get(withUrl.id as string) ?? '',
-					workspaceId: withUrl.workspaceId,
-				}
-				if (typeof withUrl.url === 'string') projectedObject.url = withUrl.url
-				if (includeSet.has('content') && 'content' in withUrl) {
-					projectedObject.content = withUrl.content
-				}
-				if (includeSet.has('metadata') && 'metadata' in withUrl) {
-					projectedObject.metadata = withUrl.metadata
-				}
-				const extras: Record<string, unknown> = {}
-				if (includeSet.has('relationships') && graph && 'relationships' in graph) {
-					extras.relationships = graph.relationships
-				}
-				if (includeSet.has('connected_objects') && graph && 'connected_objects' in graph) {
-					extras.connected_objects = graph.connected_objects
-				}
-				if (includeSet.has('events') && graph && 'events' in graph) {
-					extras.events = graph.events
-				}
-				if (includeSet.has('files') && graph && 'files' in graph) {
-					extras.files = graph.files
-				}
-				return { ...r, result: { object: projectedObject, ...extras } }
-			})
+			const projectedResults = await Promise.all(
+				results.map(async (r) => {
+					if (!r.success) return r
+					const graph = r.result as Record<string, unknown> | null | undefined
+					const rawObj = graph?.object as Record<string, unknown> | undefined
+					if (!rawObj) return r
+					const withUrl = wsId
+						? addUrl(rawObj, config, wsId, { kind: 'object', id: rawObj.id as string })
+						: rawObj
+					const projectedObject: Record<string, unknown> = {
+						id: withUrl.id,
+						type: withUrl.type,
+						title: withUrl.title ?? null,
+						status: withUrl.status ?? null,
+						contextLine: contextLineById.get(withUrl.id as string) ?? '',
+						workspaceId: withUrl.workspaceId,
+					}
+					if (typeof withUrl.url === 'string') projectedObject.url = withUrl.url
+					if (includeSet.has('content') && 'content' in withUrl) {
+						projectedObject.content = withUrl.content
+					}
+					if (includeSet.has('metadata') && 'metadata' in withUrl) {
+						projectedObject.metadata = withUrl.metadata
+					}
+					const extras: Record<string, unknown> = {}
+					if (includeSet.has('relationships') && graph && 'relationships' in graph) {
+						extras.relationships = graph.relationships
+					}
+					if (includeSet.has('connected_objects') && graph && 'connected_objects' in graph) {
+						extras.connected_objects = graph.connected_objects
+					}
+					if (includeSet.has('events') && graph && 'events' in graph) {
+						extras.events = graph.events
+					}
+					if (includeSet.has('files') && graph && 'files' in graph) {
+						extras.files = graph.files
+					}
+					if (includeSet.has('setup')) {
+						extras.setup = await safeBuildSetupBlock('object_setup', async () =>
+							buildBetSetupBlock(
+								{
+									id: withUrl.id as string,
+									type: withUrl.type as string,
+									status: (withUrl.status as string | undefined) ?? null,
+								},
+								workspaceReadiness,
+								readStatusOrder(sharedWorkspaceSettings, withUrl.type as string),
+							),
+						)
+					}
+					return { ...r, result: { object: projectedObject, ...extras } }
+				}),
+			)
 
 			// Object body lives at `structuredContent.objects[]` only (ADR-0001).
 			// `results[]` is a per-id success/error envelope so the same body isn't
@@ -4459,7 +4497,7 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
-			const { workspace_id, id } = args
+			const { workspace_id, id, include } = args
 			const data = (await apiCall(
 				config,
 				'GET',
@@ -4476,9 +4514,70 @@ export function createMcpServer(config: McpConfig) {
 			const wsId =
 				(loop.workspaceId as string | undefined) ?? workspace_id ?? config.defaultWorkspaceId
 			const loopWithUrl = wsId ? addUrl(loop, config, wsId, { kind: 'loop', id }) : loop
+
+			const responseBody: Record<string, unknown> = { loop: loopWithUrl }
+			if (Array.isArray(include) && include.includes('setup')) {
+				responseBody.setup = await safeBuildSetupBlock('loop_setup', async () => {
+					const triggerIds = Array.isArray(loop.triggerIds)
+						? (loop.triggerIds as string[]).filter((t): t is string => typeof t === 'string')
+						: []
+					const inProgress = typeof loop.inProgressCount === 'number' ? loop.inProgressCount : 0
+					const closed = typeof loop.closedCount === 'number' ? loop.closedCount : 0
+					const [workspace, integrations, triggerRows] = await Promise.all([
+						getWorkspace(config, wsId as string),
+						apiCall(config, 'GET', '/api/integrations', undefined, {
+							workspaceId: workspace_id,
+						}),
+						triggerIds.length > 0
+							? apiCall(config, 'GET', '/api/triggers', undefined, {
+									workspaceId: workspace_id,
+								})
+							: Promise.resolve([]),
+					])
+					const workspaceReadiness = readWorkspaceLlmReadiness(workspace.settings)
+					const connectedProviders = readConnectedProviders(integrations)
+					const triggerIdSet = new Set(triggerIds)
+					const scopedTriggers = Array.isArray(triggerRows)
+						? triggerRows.filter((t) => triggerIdSet.has((t as { id?: string }).id as string))
+						: []
+					const agentIds = Array.from(
+						new Set(
+							scopedTriggers
+								.map((t) => (t as { targetActorId?: string }).targetActorId)
+								.filter((a): a is string => typeof a === 'string' && a.length > 0),
+						),
+					)
+					const actorRows =
+						agentIds.length > 0
+							? await apiCall(
+									config,
+									'GET',
+									`/api/actors?ids=${agentIds.map(encodeURIComponent).join(',')}`,
+									undefined,
+									{ workspaceId: workspace_id },
+								)
+							: []
+					const steps = composeLoopSteps(triggerIds, scopedTriggers, actorRows)
+					return buildLoopSetupBlock(
+						{
+							id: id as string,
+							name: (loop.name as string | undefined) ?? null,
+							entryCondition: (loop.entryCondition as string | undefined) ?? null,
+							closeCondition: (loop.closeCondition as string | undefined) ?? null,
+						},
+						{
+							workspace: workspaceReadiness,
+							connectedProviders,
+							steps,
+							memberCount: inProgress + closed,
+						},
+					)
+				})
+			}
+
 			return {
 				_meta: meta('get_loop', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify({ loop: loopWithUrl }, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(responseBody, null, 2) }],
 			}
 		},
 	)

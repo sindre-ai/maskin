@@ -11,8 +11,8 @@ If the user asks how to start this repo, start it, set it up, or similar — fol
 3. **Extract the ready-made MCP command from the banner.** The banner prints a copy-pasteable `Codex mcp add maskin -e API_BASE_URL=... -e API_KEY=ank_... -e WORKSPACE_ID=... -- pnpm --filter @maskin/mcp start` line with real credentials (the dev bootstrap auto-provisions a `dev@local` actor + `My Workspace` on a fresh DB, or looks up an existing actor if the DB already has one). Parse that exact line from the log output — do NOT reconstruct it by hand.
 4. **Run that exact `Codex mcp add` command** for the user so the MCP server gets wired into Codex.
 5. **Reload plugins to pick up the new MCP server in this session** by running `/reload-plugins`. This is critical — it makes the Maskin MCP tools (including `get_started`) available immediately without closing and reopening Codex.
-6. **Ask the user which template they want.** Do NOT wait for them to paste a starter prompt. Ask directly, e.g.: "Which template should I set up? Options: (1) development — for building and shipping a product, (2) growth — for running a launch/outreach pipeline, (3) custom — a few questions and I'll tailor it. Just say 1, 2, 3, or 'dev' / 'growth' / 'custom'." Once they pick, call the `get_started` MCP tool with the corresponding `template` arg. `get_started` drives the rest (tailoring questions, preview, apply, pipeline kickoff).
-7. **Relay the "Connect your Codex subscription" prompt.** When `get_started` applies a template, its response includes a block directing the user to `<frontendUrl>/<workspaceId>/settings/keys` to import their Codex Pro/Max credentials — agent sessions cannot run without them. Render that prompt as written and wait for the user to confirm before kicking off the pipeline.
+6. **Call `get_started` with no args to see the loop menu.** Do NOT wait for the user to paste a starter prompt. Call the `get_started` MCP tool with no arguments (or just `workspace_id`). It returns a numbered list of marketplace loops with ids and descriptions. Read that list back to the user and ask (a) which loop they want to install and (b) whether they want to rename the workspace. Then call `get_started` again with `{ loop_id: "<id from the list>", confirm: true, workspace_name: "<name if they want to rename, else omit>" }` to install.
+7. **Relay the "Connect your Claude subscription" prompt.** When `get_started` installs a loop, its response includes a block directing the user to `<frontendUrl>/<workspaceId>/settings/keys` to import their Claude Pro/Max credentials — agent sessions cannot run without them. Render that prompt as written and wait for the user to confirm before kicking off the pipeline.
 
 Don't skip steps 2 or 5. The API key and workspace id only exist after the dev server boots and the auto-bootstrap runs; and without `/reload-plugins` the MCP tools won't be callable in the current session.
 
@@ -41,7 +41,7 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - Agent execution: Docker-based container sessions in `apps/dev/src/services/session-manager.ts` — spins up ephemeral containers running Codex, Codex, or custom CLIs. Persistent agent files (skills, learnings, memory) stored in S3-compatible storage (SeaweedFS for dev). Sessions are trackable, streamable via SSE, pausable/resumable via snapshots.
 - Container management: `apps/dev/src/services/container-manager.ts` wraps dockerode
 - Agent file storage: `packages/storage` provides abstract `StorageProvider` interface with S3 implementation (`@aws-sdk/client-s3`). `apps/dev/src/services/agent-storage.ts` manages pull/push of agent files.
-- MCP server: `packages/mcp` wraps the API as 38 tools for external agents (stdio + HTTP transport)
+- MCP server: `packages/mcp` wraps the API as 73 tools for external agents (stdio + HTTP transport)
 - Workspace context passed via `X-Workspace-Id` header on all workspace-scoped routes
 
 ## Prerequisites
