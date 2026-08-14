@@ -5,12 +5,13 @@ vi.mock('@/lib/api', () => ({
 	api: {
 		loops: {
 			list: vi.fn(),
+			activity: vi.fn(),
 		},
 	},
 }))
 
-import { useLoop, useLoops } from '@/hooks/use-loops'
-import { type LoopSummary, api } from '@/lib/api'
+import { useLoop, useLoopActivity, useLoops } from '@/hooks/use-loops'
+import { type EventResponse, type LoopSummary, api } from '@/lib/api'
 import { TestWrapper } from '../setup'
 
 const workspaceId = 'ws-1'
@@ -91,5 +92,34 @@ describe('useLoop', () => {
 
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
 		expect(result.current.data).toBeUndefined()
+	})
+})
+
+describe('useLoopActivity', () => {
+	function buildEvent(overrides: Partial<EventResponse> = {}): EventResponse {
+		return {
+			id: 1,
+			workspaceId,
+			actorId: 'actor-1',
+			action: 'session_completed',
+			entityType: 'session',
+			entityId: 'session-1',
+			data: {},
+			createdAt: '2026-08-13T00:00:00.000Z',
+			...overrides,
+		}
+	}
+
+	it('unwraps events from the activity envelope', async () => {
+		const events = [buildEvent(), buildEvent({ id: 2, action: 'trigger_fired' })]
+		vi.mocked(api.loops.activity).mockResolvedValue({ events })
+
+		const { result } = renderHook(() => useLoopActivity('loop-1', workspaceId), {
+			wrapper: TestWrapper,
+		})
+
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(result.current.data).toEqual(events)
+		expect(api.loops.activity).toHaveBeenCalledWith('loop-1', workspaceId)
 	})
 })

@@ -254,7 +254,28 @@ app.openapi(logIngestRoute, async (c) => {
 		// routes into flushLogs()'s existing retry loop instead — some already-
 		// persisted lines from this batch may be re-inserted on retry, which is
 		// an acceptable duplication tradeoff against permanent, invisible loss.
-		logger.error('Failed to append remote session logs', { sessionId: id, error: String(err) })
+		//
+		// `err` here is typically a Drizzle `DrizzleQueryError`, whose own
+		// `.message` is just the raw SQL + params — for this route that means
+		// the full (possibly ~1MB, PII-bearing) session log content, with no
+		// indication of *why* the insert failed. The actual driver-level
+		// reason (Postgres SQLSTATE code, detail) lives on `.cause`, which
+		// `String(err)` never surfaces. Log the cause explicitly instead of
+		// leaving every occurrence of this error undiagnosable, and cap the
+		// query/params dump so one failure can't flood logs/Sentry with an
+		// entire tool_result.
+		const message = String(err)
+		const cause = err instanceof Error ? err.cause : undefined
+		logger.error('Failed to append remote session logs', {
+			sessionId: id,
+			error: message.length > 500 ? `${message.slice(0, 500)}...[truncated]` : message,
+			causeName: cause instanceof Error ? cause.constructor.name : undefined,
+			causeCode:
+				cause && typeof cause === 'object' && 'code' in cause
+					? (cause as { code?: unknown }).code
+					: undefined,
+			causeMessage: cause instanceof Error ? cause.message : undefined,
+		})
 		return c.json(createApiError(ApiErrorCode.INTERNAL_ERROR, 'Failed to persist log batch'), 500)
 	}
 

@@ -18,7 +18,12 @@ vi.mock('@tanstack/react-router', async () => {
 import { LoopFlow } from '@/components/loops/loop-flow'
 import type { RelationshipResponse } from '@/lib/api'
 import { api } from '@/lib/api'
-import { buildActorListItem, buildObjectResponse, buildTriggerResponse } from '../../factories'
+import {
+	buildActorListItem,
+	buildLoopSummary,
+	buildObjectResponse,
+	buildTriggerResponse,
+} from '../../factories'
 import { createWorkspaceWrapper } from '../../setup'
 
 const relay = buildActorListItem({ id: 'relay', name: 'Relay', type: 'agent' })
@@ -105,7 +110,7 @@ describe('LoopFlow', () => {
 			{ wrapper: wrapper() },
 		)
 
-		expect(await screen.findByText('2 triggers · 2 agents')).toBeInTheDocument()
+		expect(await screen.findByText(/2 triggers · 2 agents · 5 objects/)).toBeInTheDocument()
 	})
 
 	it('groups an event trigger with no from_status under "Comes in"', async () => {
@@ -282,5 +287,60 @@ describe('LoopFlow', () => {
 		const container = description.closest('.min-w-0')
 		expect(container?.classList.contains('min-w-0')).toBe(true)
 		expect(container?.classList.contains('break-words')).toBe(true)
+	})
+
+	it('includes the object count in the section header', async () => {
+		render(<LoopFlow workspaceId="ws-1" triggers={[]} actors={[]} childObjects={childObjects} />, {
+			wrapper: wrapper(),
+		})
+
+		expect(await screen.findByText(/5 objects/)).toBeInTheDocument()
+	})
+
+	it('renders a cycles note from the loop summary', async () => {
+		const loop = buildLoopSummary({
+			inProgressCount: 2,
+			closedCount: 4,
+			medianTimeToCloseMs: 2 * 24 * 60 * 60 * 1000,
+		})
+		render(
+			<LoopFlow
+				workspaceId="ws-1"
+				triggers={[]}
+				actors={[]}
+				childObjects={childObjects}
+				loop={loop}
+			/>,
+			{ wrapper: wrapper() },
+		)
+
+		expect(await screen.findByText(/2 cycles are running/)).toBeInTheDocument()
+		expect(screen.getByText(/4 cycles have closed/)).toBeInTheDocument()
+		expect(screen.getByText(/median close 2d/)).toBeInTheDocument()
+	})
+
+	it('flags steps with "asks you" when the loop is waiting on the viewer', async () => {
+		const triggers = [
+			buildTriggerResponse({
+				id: 't1',
+				targetActorId: 'relay',
+				type: 'event',
+				actionPrompt: 'A step asking for input',
+				config: {},
+			}),
+		]
+		const loop = buildLoopSummary({ pill: 'waiting_on_you' })
+		render(
+			<LoopFlow
+				workspaceId="ws-1"
+				triggers={triggers}
+				actors={[relay]}
+				childObjects={childObjects}
+				loop={loop}
+			/>,
+			{ wrapper: wrapper() },
+		)
+
+		expect(await screen.findByText('asks you')).toBeInTheDocument()
 	})
 })
