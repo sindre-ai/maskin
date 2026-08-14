@@ -283,5 +283,39 @@ describe('get_objects `include:` expansions', () => {
 			// Workspace has no LLM keys in the mock → agents_runnable must surface.
 			expect(setup.checks.some((c) => c.name === 'agents_runnable')).toBe(true)
 		})
+
+		it('degrades every object setup block to a single unknown check when the workspace fetch fails', async () => {
+			// Override the base mock: workspace fetch now 500s. The graph fetch
+			// still succeeds so the primary get_objects response comes back —
+			// only the setup block should collapse to unknown per object.
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/objects/bet-9/graph')) {
+					return { ok: true, json: () => Promise.resolve(GRAPH_PAYLOAD) } as Response
+				}
+				if (urlStr.includes('/api/workspaces')) {
+					return {
+						ok: false,
+						status: 500,
+						text: () => Promise.resolve('boom'),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+
+			const result = await callGetObjects({ ids: ['bet-9'], include: ['setup'] })
+			const entry = result.structuredContent.objects[0] as Record<string, unknown>
+			expect(entry.object).toBeDefined()
+
+			const setup = entry.setup as {
+				checks: Array<{ name: string; status: string }>
+				next_steps: unknown[]
+				prose: string
+			}
+			expect(setup.checks).toHaveLength(1)
+			expect(setup.checks[0].status).toBe('unknown')
+			expect(setup.next_steps).toEqual([])
+			expect(setup.prose).toBe('')
+		})
 	})
 })

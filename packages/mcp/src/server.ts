@@ -2022,16 +2022,21 @@ export function createMcpServer(config: McpConfig) {
 			// regardless of how many ids were requested. `checkBet` handles
 			// arbitrary object types via `statusOrder`; for loops the deep
 			// check-set lives on `get_loop include:['setup']`.
+			//
+			// When the shared fetch throws we capture the error and let
+			// `safeBuildSetupBlock` rethrow it per-object so each block collapses
+			// to a single `unknown` check — surfacing "no LLM keys" as certain
+			// when we actually couldn't check would be a false negative.
 			let sharedWorkspaceSettings: Record<string, unknown> | null = null
+			let sharedWorkspaceError: unknown = null
 			if (includeSet.has('setup') && wsId) {
 				try {
 					const workspace = await getWorkspace(config, wsId)
 					sharedWorkspaceSettings = workspace.settings
-				} catch {
-					sharedWorkspaceSettings = null
+				} catch (err) {
+					sharedWorkspaceError = err
 				}
 			}
-			const workspaceReadiness = readWorkspaceLlmReadiness(sharedWorkspaceSettings)
 			// Default projection: strip every graph field except the core seven
 			// (`id, type, title, status, contextLine, url, workspaceId`) so the LLM's
 			// context isn't paid to carry relationships/connected_objects/events/files/
@@ -2076,17 +2081,18 @@ export function createMcpServer(config: McpConfig) {
 						extras.files = graph.files
 					}
 					if (includeSet.has('setup')) {
-						extras.setup = await safeBuildSetupBlock('object_setup', async () =>
-							buildBetSetupBlock(
+						extras.setup = await safeBuildSetupBlock('object_setup', async () => {
+							if (sharedWorkspaceError) throw sharedWorkspaceError
+							return buildBetSetupBlock(
 								{
 									id: withUrl.id as string,
 									type: withUrl.type as string,
 									status: (withUrl.status as string | undefined) ?? null,
 								},
-								workspaceReadiness,
+								readWorkspaceLlmReadiness(sharedWorkspaceSettings),
 								readStatusOrder(sharedWorkspaceSettings, withUrl.type as string),
-							),
-						)
+							)
+						})
 					}
 					return { ...r, result: { object: projectedObject, ...extras } }
 				}),
