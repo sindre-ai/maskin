@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  App Store distribution export options for Maskin iOS.
+
+  Used by:
+    xcodebuild -exportArchive -archivePath <path>.xcarchive \
+               -exportOptionsPlist apps/native/ios-testflight/ExportOptions.plist \
+               -exportPath <out>
+
+  The CI workflow does not read this file directly — `tauri ios build
+  --export-method app-store-connect` generates its own on the fly. This copy
+  exists for manual `xcodebuild -exportArchive` runs and for anyone who
+  wants a canonical, checked-in reference for what the App Store build
+  export config is expected to look like.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>method</key>
+	<string>app-store-connect</string>
+	<key>destination</key>
+	<string>export</string>
+	<key>signingStyle</key>
+	<string>automatic</string>
+	<key>stripSwiftSymbols</key>
+	<true/>
+	<key>uploadSymbols</key>
+	<true/>
+	<key>uploadBitcode</key>
+	<false/>
+	<key>compileBitcode</key>
+	<false/>
+	<key>manageAppVersionAndBuildNumber</key>
+	<false/>
+</dict>
+</plist>
