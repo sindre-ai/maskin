@@ -7,9 +7,8 @@ import { useActors } from '@/hooks/use-actors'
 import { useNotifications } from '@/hooks/use-notifications'
 import { useWorkspaceSessions } from '@/hooks/use-sessions'
 import type { SessionResponse } from '@/lib/api'
-import { useChat } from '@/lib/chat-context'
 import { useWorkspace } from '@/lib/workspace-context'
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useMemo, useState } from 'react'
 
 // A session qualifies as unread when it has an open ask awaiting a human
@@ -23,10 +22,10 @@ export const Route = createFileRoute('/_authed/$workspaceId/chats/')({
 
 function ChatsPage() {
 	const { workspaceId } = useWorkspace()
+	const navigate = useNavigate()
 	const { data: sessions, isLoading } = useWorkspaceSessions(workspaceId)
 	const { data: actors } = useActors(workspaceId)
 	const { data: notifications } = useNotifications(workspaceId, { type: 'needs_input' })
-	const { openWithContext } = useChat()
 	const [composerOpen, setComposerOpen] = useState(false)
 
 	const unreadSessionIds = useMemo(() => {
@@ -40,9 +39,10 @@ function ChatsPage() {
 	}, [notifications])
 
 	const handleSelectSession = (session: SessionResponse) => {
-		if (!session.actorId) return
-		const actor = actors?.find((a) => a.id === session.actorId)
-		openWithContext([{ kind: 'agent', id: session.actorId, name: actor?.name ?? null }])
+		navigate({
+			to: '/$workspaceId/chats/$sessionId',
+			params: { workspaceId, sessionId: session.id },
+		})
 	}
 
 	return (
