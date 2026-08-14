@@ -3,15 +3,12 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 // Covers the shared agent-reply renderer: inline chart + live task checklist.
 // Both surfaces (For You unread cards and bet detail) render through
-// ActivityComment. The rebuilt object-detail shell (bet/object-detail, T1)
-// does not render the activity timeline yet (T2 scope), so the rich-reply
-// surface is pinned absent on the detail page here; the renderer itself is
-// still covered component-level. When the activity tab lands, this spec
-// re-scopes to the chart-caption / checklist ACs on the real thread.
+// ActivityComment, so verifying once on bet detail proves the path for both —
+// per the bet's design decision.
 
-test.describe('Rich agent replies — T1 absence contract on the detail surface', () => {
+test.describe('Rich agent replies — chart + live task checklist', () => {
 	for (const viewport of SHIP_GATE_VIEWPORTS) {
-		test(`no chart or checklist surfaces on the T1 shell at ${viewport.label}`, async ({
+		test(`renders inline chart + task checklist at ${viewport.label}`, async ({
 			page,
 			account,
 		}) => {
@@ -41,8 +38,6 @@ test.describe('Rich agent replies — T1 absence contract on the detail surface'
 			})
 			const content = ['Progress', '', '```chart', chartSpec, '```', '', 'Status above.'].join('\n')
 
-			// The rich comment exists server-side, but the T1 shell has no
-			// timeline to render it in.
 			await account.api.createComment(account.workspaceId, {
 				entity_id: parentBet.id,
 				content,
@@ -50,14 +45,30 @@ test.describe('Rich agent replies — T1 absence contract on the detail surface'
 			})
 
 			await page.goto(`/${account.workspaceId}/objects/${parentBet.id}`)
-			await expect(
-				page.getByRole('heading', { level: 1, name: 'Bet for rich reply renderer' }),
-			).toBeVisible({ timeout: 10000 })
+			await expect(page.getByText('Bet for rich reply renderer')).toBeVisible({ timeout: 10000 })
 
-			// No chart caption, no task checklist link, no checklist checkbox.
-			await expect(page.getByText('week-1 retention 38% → 56%')).toHaveCount(0)
-			await expect(page.getByRole('link', { name: /Inline checklist task/ })).toHaveCount(0)
-			await expect(page.getByRole('checkbox', { name: /Inline checklist task/ })).toHaveCount(0)
+			// AC-U1: chart caption replaces the fenced code block.
+			const caption = page.getByText('week-1 retention 38% → 56%')
+			await expect(caption).toBeVisible({ timeout: 10000 })
+
+			// AC-U2: task checklist row links the task title.
+			const taskRow = page.getByRole('link', { name: /Inline checklist task/ })
+			await expect(taskRow).toBeVisible()
+
+			// AC-U9 / AC-T5: the chart container must not overflow the comment row
+			// horizontally at any ship-gate viewport.
+			const chartBox = caption.locator('..').first()
+			const bbox = await chartBox.boundingBox()
+			expect(bbox).not.toBeNull()
+			if (bbox) {
+				expect(bbox.width).toBeLessThanOrEqual(viewport.width)
+			}
+
+			// AC-U4: flipping the referenced task's status updates the checkbox
+			// over the existing SSE invalidation channel — no manual reload.
+			await account.api.updateObject(childTask.id, account.workspaceId, { status: 'done' })
+			const checkbox = page.getByRole('checkbox', { name: /Inline checklist task/ })
+			await expect(checkbox).toHaveAttribute('data-state', 'checked', { timeout: 10000 })
 		})
 	}
 })
