@@ -306,6 +306,7 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	// Claude subscription
 	import_claude_subscription: 'claude_subscription_import',
 	disconnect_claude_subscription: 'claude_subscription_disconnect',
+	rename_claude_subscription: 'claude_subscription_rename',
 	// Integrations
 	connect_integration: 'integration_connect',
 	disconnect_integration: 'integration_disconnect',
