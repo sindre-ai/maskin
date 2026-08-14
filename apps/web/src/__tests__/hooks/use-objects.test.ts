@@ -22,6 +22,17 @@ vi.mock('sonner', () => ({
 	toast: { success: vi.fn(), error: vi.fn() },
 }))
 
+// Mock analytics so useToggleStar's trackObjectStarred/trackObjectUnstarred
+// calls can be inspected without hitting PostHog. Mocked as an object of vi.fn
+// so per-test `mockClear()` isolates emission counts across cases.
+vi.mock('@/lib/analytics', () => ({
+	trackBetArchived: vi.fn(),
+	trackBetCreated: vi.fn(),
+	trackBetStatusChanged: vi.fn(),
+	trackObjectStarred: vi.fn(),
+	trackObjectUnstarred: vi.fn(),
+}))
+
 import {
 	useBulkUpdateObjects,
 	useCreateObject,
@@ -32,6 +43,7 @@ import {
 	useToggleStar,
 	useUpdateObject,
 } from '@/hooks/use-objects'
+import { trackObjectStarred, trackObjectUnstarred } from '@/lib/analytics'
 import type { ObjectResponse } from '@/lib/api'
 import { api } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
@@ -648,7 +660,7 @@ describe('useToggleStar', () => {
 		)
 
 		const { result } = renderHook(() => useToggleStar(workspaceId), { wrapper })
-		result.current.mutate({ id: 'obj-1', starred: true })
+		result.current.mutate({ id: 'obj-1', starred: true, type: 'bet' })
 
 		await waitFor(() => {
 			const list = client.getQueryData<ObjectResponse[]>(
@@ -669,7 +681,7 @@ describe('useToggleStar', () => {
 		vi.mocked(api.objects.star).mockRejectedValue(new Error('boom'))
 
 		const { result } = renderHook(() => useToggleStar(workspaceId), { wrapper })
-		result.current.mutate({ id: 'obj-1', starred: true })
+		result.current.mutate({ id: 'obj-1', starred: true, type: 'bet' })
 
 		await waitFor(() => expect(result.current.isError).toBe(true))
 		const list = client.getQueryData<ObjectResponse[]>(
@@ -681,10 +693,71 @@ describe('useToggleStar', () => {
 	it('calls api.objects.unstar when starred=false', async () => {
 		vi.mocked(api.objects.unstar).mockResolvedValue({ starred: false })
 		const { result } = renderHook(() => useToggleStar(workspaceId), { wrapper: TestWrapper })
-		result.current.mutate({ id: 'obj-1', starred: false })
+		result.current.mutate({ id: 'obj-1', starred: false, type: 'bet' })
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
 		expect(api.objects.unstar).toHaveBeenCalledWith('obj-1')
 		expect(api.objects.star).not.toHaveBeenCalled()
+	})
+
+	describe('analytics wiring (T11)', () => {
+		beforeEach(() => {
+			vi.mocked(trackObjectStarred).mockClear()
+			vi.mocked(trackObjectUnstarred).mockClear()
+		})
+
+		it('emits object_starred exactly once when the star mutation resolves successfully', async () => {
+			vi.mocked(api.objects.star).mockResolvedValue({ starred: true })
+			const { result } = renderHook(() => useToggleStar(workspaceId), { wrapper: TestWrapper })
+
+			result.current.mutate({ id: 'obj-1', starred: true, type: 'bet' })
+			await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+			expect(trackObjectStarred).toHaveBeenCalledTimes(1)
+			expect(trackObjectStarred).toHaveBeenCalledWith({
+				entity_id: 'obj-1',
+				entity_type: 'object',
+				object_subtype: 'bet',
+			})
+			expect(trackObjectUnstarred).not.toHaveBeenCalled()
+		})
+
+		it('emits object_unstarred exactly once when the unstar mutation resolves successfully', async () => {
+			vi.mocked(api.objects.unstar).mockResolvedValue({ starred: false })
+			const { result } = renderHook(() => useToggleStar(workspaceId), { wrapper: TestWrapper })
+
+			result.current.mutate({ id: 'obj-2', starred: false, type: 'insight' })
+			await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+			expect(trackObjectUnstarred).toHaveBeenCalledTimes(1)
+			expect(trackObjectUnstarred).toHaveBeenCalledWith({
+				entity_id: 'obj-2',
+				entity_type: 'object',
+				object_subtype: 'insight',
+			})
+			expect(trackObjectStarred).not.toHaveBeenCalled()
+		})
+
+		it('does not emit either helper when the star mutation fails and rolls back', async () => {
+			vi.mocked(api.objects.star).mockRejectedValue(new Error('boom'))
+			const { result } = renderHook(() => useToggleStar(workspaceId), { wrapper: TestWrapper })
+
+			result.current.mutate({ id: 'obj-3', starred: true, type: 'bet' })
+			await waitFor(() => expect(result.current.isError).toBe(true))
+
+			expect(trackObjectStarred).not.toHaveBeenCalled()
+			expect(trackObjectUnstarred).not.toHaveBeenCalled()
+		})
+
+		it('does not emit either helper when the unstar mutation fails and rolls back', async () => {
+			vi.mocked(api.objects.unstar).mockRejectedValue(new Error('boom'))
+			const { result } = renderHook(() => useToggleStar(workspaceId), { wrapper: TestWrapper })
+
+			result.current.mutate({ id: 'obj-4', starred: false, type: 'task' })
+			await waitFor(() => expect(result.current.isError).toBe(true))
+
+			expect(trackObjectStarred).not.toHaveBeenCalled()
+			expect(trackObjectUnstarred).not.toHaveBeenCalled()
+		})
 	})
 
 	it('updates the detail cache alongside the list cache', async () => {
@@ -696,7 +769,7 @@ describe('useToggleStar', () => {
 		vi.mocked(api.objects.star).mockResolvedValue({ starred: true })
 
 		const { result } = renderHook(() => useToggleStar(workspaceId), { wrapper })
-		result.current.mutate({ id: 'obj-1', starred: true })
+		result.current.mutate({ id: 'obj-1', starred: true, type: 'bet' })
 
 		await waitFor(() => {
 			const detail = client.getQueryData<ObjectResponse>(queryKeys.objects.detail('obj-1'))

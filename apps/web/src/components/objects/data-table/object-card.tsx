@@ -97,7 +97,7 @@ export function ObjectCard({
 							aria-label={isStarred ? 'Unstar' : 'Star'}
 							onClick={(e) => {
 								e.stopPropagation()
-								toggleStar.mutate({ id: object.id, starred: !isStarred })
+								toggleStar.mutate({ id: object.id, starred: !isStarred, type: object.type })
 							}}
 							className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 aria-pressed:text-foreground"
 						>
