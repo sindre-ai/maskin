@@ -1,13 +1,10 @@
 import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
-// Task 4: star toggle on object cards. The full round-trip persistence gate
-// (star survives reload) is Task 8's QA sweep — it depends on Task 2 (DB) and
-// Task 3 (API) landing so the /objects/:id/star endpoint responds. This spec
-// covers what Task 4 owns end-to-end: the button renders on every card at each
-// ship-gate viewport, and clicking it exercises the optimistic-then-rollback
-// path (backend returns 404 today, so the row snaps back — the DoD's "roll back
-// on failure" behaviour).
+// Star toggle on object cards — combined Task 4 (UI) + Task 3 (API) gate.
+// Task 4 established the button renders and the optimistic-update path works.
+// Task 3 landed the API endpoint, so clicking now persists the star rather than
+// rolling back. Task 8 extends this to assert persistence across a page reload.
 
 test.describe('Object card star toggle', () => {
 	for (const vp of SHIP_GATE_VIEWPORTS) {
@@ -28,29 +25,25 @@ test.describe('Object card star toggle', () => {
 		})
 	}
 
-	test('optimistically flips then rolls back when the star endpoint is unavailable', async ({
-		page,
-		account,
-	}) => {
+	test('clicking the star button persists the starred state', async ({ page, account }) => {
 		await account.api.createObject(account.workspaceId, {
 			type: 'bet',
-			title: 'Star rollback bet',
+			title: 'Star persist bet',
 			status: 'active',
 		})
 
 		await page.goto(`/${account.workspaceId}/objects?type=bet`)
-		await expect(page.getByText('Star rollback bet')).toBeVisible({ timeout: 10000 })
+		await expect(page.getByText('Star persist bet')).toBeVisible({ timeout: 10000 })
 
 		const starButton = page.getByRole('button', { name: 'Star' }).first()
 		await starButton.click()
 
-		// Backend endpoint is Task 3's — until it lands the POST returns an error,
-		// so the optimistic starred state rolls back and the button returns to
-		// aria-pressed=false. Once Task 3 ships, this spec becomes the round-trip
-		// gate (Task 8 upgrades it to assert persisted starred state on reload).
-		await expect(page.getByRole('button', { name: 'Star' }).first()).toHaveAttribute(
+		// Task 3's endpoint is live — POST /api/objects/:id/star returns 200 { starred: true }.
+		// The optimistic update flips to aria-pressed=true and the settled mutation
+		// confirms it. Task 8 adds the reload assertion (star survives a full page refresh).
+		await expect(page.getByRole('button', { name: 'Unstar' }).first()).toHaveAttribute(
 			'aria-pressed',
-			'false',
+			'true',
 			{ timeout: 5000 },
 		)
 	})

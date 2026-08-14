@@ -437,10 +437,15 @@ function toCount(value: unknown) {
 // the response field name after serialize/JSON so the projection is legible
 // in EXPLAIN output too.
 function starredByActorExpr(actorId: string) {
+	// Use literal table-qualified SQL for the outer-table column reference.
+	// Drizzle column objects inside a correlated sql`` template render without
+	// a table prefix — see .claude/rules/known-pitfalls.md — so objects.id
+	// must be a literal string here, not ${objects.id}, to prevent Postgres
+	// from binding it to the inner table when a name collision exists.
 	return sql<boolean>`EXISTS (
 		SELECT 1 FROM ${userStarredObjects}
 		WHERE ${userStarredObjects.userId} = ${actorId}
-		  AND ${userStarredObjects.objectId} = ${objects.id}
+		  AND ${userStarredObjects.objectId} = objects.id
 	)`.as('isStarred')
 }
 
@@ -451,7 +456,7 @@ function starredByActorExists(actorId: string) {
 	return sql`EXISTS (
 		SELECT 1 FROM ${userStarredObjects}
 		WHERE ${userStarredObjects.userId} = ${actorId}
-		  AND ${userStarredObjects.objectId} = ${objects.id}
+		  AND ${userStarredObjects.objectId} = objects.id
 	)`
 }
 
