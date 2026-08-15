@@ -48,20 +48,40 @@ import {
 	Trash2,
 	XCircle,
 } from 'lucide-react'
-import { useCallback, useMemo, useState } from 'react'
+import { Suspense, lazy, useCallback, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { ActivityItem } from '../activity/activity-item'
 import { PageHeader } from '../layout/page-header'
 import { ObjectReference } from '../shared/object-reference'
 import { RelativeTime } from '../shared/relative-time'
 import { TypeBadge } from '../shared/type-badge'
+import { Skeleton } from '../ui/skeleton'
 import { AgentAvatarUpload } from './agent-avatar-upload'
 import { AgentRunPauseButton } from './agent-run-pause-button'
-import { AgentUsageChart } from './agent-usage-chart'
 import { McpServers } from './mcp-servers'
 import { FailureCard, SessionDetailPanel, parseFailureReason } from './session-detail-panel'
 import { getLatestActivityPreview, isSessionIdleAwaitingInput } from './session-log-transcript'
 import { Skills } from './skills'
+
+const AgentUsageChart = lazy(() => import('./agent-usage-chart'))
+
+function AgentUsageChartPlaceholder() {
+	return (
+		<div className="mb-6" aria-hidden>
+			<div className="flex items-center justify-between mb-3">
+				<div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+					Usage
+				</div>
+			</div>
+			<div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+				<Skeleton className="h-[68px] w-full" />
+				<Skeleton className="h-[68px] w-full" />
+				<Skeleton className="h-[68px] w-full" />
+			</div>
+			<Skeleton className="h-56 w-full" />
+		</div>
+	)
+}
 
 interface AgentDocumentViewProps {
 	agent: ActorResponse
@@ -300,7 +320,9 @@ export function AgentDocumentView({
 			</div>
 
 			{/* Usage chart */}
-			<AgentUsageChart agent={agent} workspaceId={workspaceId} />
+			<Suspense fallback={<AgentUsageChartPlaceholder />}>
+				<AgentUsageChart agent={agent} workspaceId={workspaceId} />
+			</Suspense>
 
 			{/* Currently Working On */}
 			{activeSessions && activeSessions.length > 0 && (

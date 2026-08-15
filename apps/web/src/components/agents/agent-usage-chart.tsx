@@ -260,3 +260,5 @@ function Stat({ label, value, loading }: { label: string; value: string; loading
 		</div>
 	)
 }
+
+export default AgentUsageChart
