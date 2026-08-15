@@ -19,7 +19,13 @@ import {
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { Cron } from 'croner'
-import { type CursorState, decodeCursor, encodeCursor, toSnapshotAt } from './cursor.js'
+import {
+	type CursorState,
+	decodeCursor,
+	encodeCursor,
+	paginateClientSide,
+	toSnapshotAt,
+} from './cursor.js'
 import { READ_TOOL_NAMES, buildReadErrorBody, toolErrorResponse } from './read-error.js'
 import { applyResponseTokenCap } from './response-cap.js'
 import {
@@ -3118,13 +3124,28 @@ export function createMcpServer(config: McpConfig) {
 			inputSchema: tools.list_workspaces.inputSchema.shape,
 			_meta: { ui: { resourceUri: UI_RESOURCES.heroCard, csp: CSP } },
 		},
-		async () => {
+		async (args) => {
+			const pagination = resolveListPagination(
+				{ limit: (args as { limit?: number }).limit, cursor: (args as { cursor?: string }).cursor },
+				25,
+			)
 			const result = await apiCall(config, 'GET', '/api/workspaces', undefined, {
 				skipWorkspace: true,
 			})
 			const rows = Array.isArray(result) ? (result as RawWorkspace[]) : []
-			const heroObjects = rows.map(buildWorkspaceHeroCardObject)
-			const webContextWorkspaceId = config.defaultWorkspaceId ?? rows[0]?.id
+			const { page: pagedRows, nextCursor } = isResponseScopingEnabled()
+				? paginateClientSide<RawWorkspace>({
+						rows,
+						limit: pagination.limit,
+						snapshotAt: pagination.snapshotAt,
+						order: pagination.order,
+						cursor: pagination.cursor,
+						getSortValue: (row) => row.createdAt ?? null,
+						getId: (row) => row.id,
+					})
+				: { page: rows, nextCursor: null }
+			const heroObjects = pagedRows.map(buildWorkspaceHeroCardObject)
+			const webContextWorkspaceId = config.defaultWorkspaceId ?? pagedRows[0]?.id
 			const heroCard: HeroCardPayload =
 				heroObjects.length === 0
 					? { kind: 'empty', tool: 'list_workspaces' }
@@ -3153,7 +3174,11 @@ export function createMcpServer(config: McpConfig) {
 						text: buildListContentText(result, summaryRows, 'No workspaces.'),
 					},
 				],
-				structuredContent: { heroCard },
+				structuredContent: {
+					heroCard,
+					...(isResponseScopingEnabled() ? { workspaces: pagedRows } : {}),
+					...(nextCursor ? { next_cursor: nextCursor } : {}),
+				},
 			}
 		},
 	)
@@ -3850,6 +3875,11 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
 		},
 		async (args) => {
+			const scoped = isResponseScopingEnabled()
+			const pagination = resolveListPagination(
+				{ limit: args.limit, cursor: (args as { cursor?: string }).cursor },
+				args.limit ?? 50,
+			)
 			const params = new URLSearchParams()
 			if (args.id) params.set('id', String(args.id))
 			if (args.entity_type) params.set('entity_type', args.entity_type)
@@ -3858,9 +3888,31 @@ export function createMcpServer(config: McpConfig) {
 			const result = await apiCall(config, 'GET', `/api/events/history?${params}`, undefined, {
 				workspaceId: args.workspace_id,
 			})
+			const rows = Array.isArray(result)
+				? (result as Array<{ id: number | string; createdAt?: string | null }>)
+				: []
+			const { page: pagedRows, nextCursor } = scoped
+				? paginateClientSide({
+						rows,
+						limit: pagination.limit,
+						snapshotAt: pagination.snapshotAt,
+						order: pagination.order,
+						cursor: pagination.cursor,
+						getSortValue: (row) => row.createdAt ?? null,
+						getId: (row) => String(row.id).padStart(20, '0'),
+					})
+				: { page: rows, nextCursor: null }
 			return {
 				_meta: meta('get_events', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(scoped ? pagedRows : result) }],
+				...(scoped
+					? {
+							structuredContent: {
+								events: pagedRows,
+								...(nextCursor ? { next_cursor: nextCursor } : {}),
+							},
+						}
+					: {}),
 			}
 		},
 	)
@@ -4445,12 +4497,31 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
+			const scoped = isResponseScopingEnabled()
+			const pagination = resolveListPagination(
+				{
+					limit: (args as { limit?: number }).limit,
+					cursor: (args as { cursor?: string }).cursor,
+				},
+				25,
+			)
 			const data = (await apiCall(config, 'GET', '/api/loops', undefined, {
 				workspaceId: args.workspace_id,
 			})) as { loops: Array<Record<string, unknown>> }
 			const wsId = args.workspace_id ?? config.defaultWorkspaceId
 			const loops = Array.isArray(data?.loops) ? data.loops : []
-			const enriched = loops.map((loop) =>
+			const { page: pagedLoops, nextCursor } = scoped
+				? paginateClientSide({
+						rows: loops,
+						limit: pagination.limit,
+						snapshotAt: pagination.snapshotAt,
+						order: pagination.order,
+						cursor: pagination.cursor,
+						getSortValue: (row) => (row.createdAt as string | null | undefined) ?? null,
+						getId: (row) => row.id as string,
+					})
+				: { page: loops, nextCursor: null }
+			const enriched = pagedLoops.map((loop) =>
 				addUrl(loop, config, (loop.workspaceId as string | undefined) ?? wsId, {
 					kind: 'loop',
 					id: loop.id as string,
@@ -4476,7 +4547,10 @@ export function createMcpServer(config: McpConfig) {
 						text: buildListContentText({ loops: enriched }, summaryRows, 'No loops.'),
 					},
 				],
-				structuredContent: { loops: enriched },
+				structuredContent: {
+					loops: enriched,
+					...(nextCursor ? { next_cursor: nextCursor } : {}),
+				},
 			}
 		},
 	)
@@ -4749,6 +4823,14 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
+			const scoped = isResponseScopingEnabled()
+			const pagination = resolveListPagination(
+				{
+					limit: (args as { limit?: number }).limit,
+					cursor: (args as { cursor?: string }).cursor,
+				},
+				25,
+			)
 			const params = new URLSearchParams({
 				entity_type: args.entity_type,
 				entity_id: args.entity_id,
@@ -4759,18 +4841,34 @@ export function createMcpServer(config: McpConfig) {
 				`/api/subscriptions/subscribers?${params}`,
 				undefined,
 				{ workspaceId: args.workspace_id },
-			)) as Array<Record<string, unknown>>
-			const rows = Array.isArray(result) ? result : []
-			const summaryRows: SummaryRow[] = rows.map((row) => {
-				const name = typeof row.name === 'string' && row.name.length > 0 ? row.name : undefined
-				const actorId = typeof row.actorId === 'string' ? row.actorId : undefined
-				const email = typeof row.email === 'string' ? row.email : undefined
-				const kind = typeof row.type === 'string' ? row.type : undefined
-				return {
-					title: name ?? email ?? actorId ?? 'Subscriber',
-					meta: kind,
-				}
-			})
+			)) as {
+				actors?: Array<{
+					id: string
+					type?: string
+					name?: string
+					createdAt?: string | null
+				}>
+			}
+			const rows = Array.isArray(result?.actors) ? result.actors : []
+			// The subscribers endpoint doesn't return a createdAt per actor —
+			// fall back to id ordering so pagination is still stable.
+			const { page: pagedActors, nextCursor } = scoped
+				? paginateClientSide({
+						rows,
+						limit: pagination.limit,
+						snapshotAt: pagination.snapshotAt,
+						order: pagination.order,
+						cursor: pagination.cursor,
+						getSortValue: (row) => row.createdAt ?? row.id,
+						getId: (row) => row.id,
+						applySnapshotFilter: false,
+					})
+				: { page: rows, nextCursor: null }
+			const summaryRows: SummaryRow[] = pagedActors.map((row) => ({
+				title:
+					typeof row.name === 'string' && row.name.length > 0 ? row.name : (row.id ?? 'Subscriber'),
+				meta: typeof row.type === 'string' ? row.type : undefined,
+			}))
 			return {
 				_meta: meta('list_subscribers', config, (args as { workspace_id?: string }).workspace_id),
 				content: [
@@ -4779,7 +4877,10 @@ export function createMcpServer(config: McpConfig) {
 						text: buildListContentText(result, summaryRows, 'No subscribers.'),
 					},
 				],
-				structuredContent: { subscribers: rows },
+				structuredContent: {
+					actors: pagedActors,
+					...(nextCursor ? { next_cursor: nextCursor } : {}),
+				},
 			}
 		},
 	)
@@ -4813,23 +4914,50 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
+			const scoped = isResponseScopingEnabled()
+			const pagination = resolveListPagination(
+				{
+					limit: (args as { limit?: number }).limit,
+					cursor: (args as { cursor?: string }).cursor,
+				},
+				25,
+			)
 			const params = new URLSearchParams()
 			if (args.entity_type) params.set('entity_type', args.entity_type)
 			const qs = params.toString()
 			const path = qs ? `/api/subscriptions/unread?${qs}` : '/api/subscriptions/unread'
 			const result = (await apiCall(config, 'GET', path, undefined, {
 				workspaceId: args.workspace_id,
-			})) as Array<Record<string, unknown>>
-			const rows = Array.isArray(result) ? result : []
-			const summaryRows: SummaryRow[] = rows.map((row) => {
+			})) as {
+				items?: Array<{
+					entity_id: string
+					entity_type?: string
+					unread_count?: number
+					latest_activity_at?: string | null
+					latest_event_id?: number | null
+					object?: { title?: string } | null
+				}>
+			}
+			const items = Array.isArray(result?.items) ? result.items : []
+			const { page: pagedItems, nextCursor } = scoped
+				? paginateClientSide({
+						rows: items,
+						limit: pagination.limit,
+						snapshotAt: pagination.snapshotAt,
+						order: pagination.order,
+						cursor: pagination.cursor,
+						getSortValue: (row) => row.latest_activity_at ?? null,
+						getId: (row) => row.entity_id,
+					})
+				: { page: items, nextCursor: null }
+			const summaryRows: SummaryRow[] = pagedItems.map((row) => {
 				const title =
-					typeof row.entityTitle === 'string' && row.entityTitle.length > 0
-						? row.entityTitle
-						: typeof row.entityId === 'string'
-							? row.entityId
-							: 'Unread'
-				const kind = typeof row.entityType === 'string' ? row.entityType : undefined
-				const count = typeof row.unreadCount === 'number' ? `${row.unreadCount} unread` : undefined
+					typeof row.object?.title === 'string' && row.object.title.length > 0
+						? row.object.title
+						: row.entity_id
+				const kind = typeof row.entity_type === 'string' ? row.entity_type : undefined
+				const count =
+					typeof row.unread_count === 'number' ? `${row.unread_count} unread` : undefined
 				const metaParts = [kind, count].filter((v): v is string => Boolean(v))
 				return {
 					title,
@@ -4844,7 +4972,10 @@ export function createMcpServer(config: McpConfig) {
 						text: buildListContentText(result, summaryRows, 'No unread items.'),
 					},
 				],
-				structuredContent: { unread: rows },
+				structuredContent: {
+					items: pagedItems,
+					...(nextCursor ? { next_cursor: nextCursor } : {}),
+				},
 			}
 		},
 	)
@@ -5163,18 +5294,40 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
+			const scoped = isResponseScopingEnabled()
+			const pagination = resolveListPagination(
+				{
+					limit: (args as { limit?: number }).limit,
+					cursor: (args as { cursor?: string }).cursor,
+				},
+				25,
+			)
 			const result = (await apiCall(config, 'GET', '/api/integrations', undefined, {
 				workspaceId: args.workspace_id,
-			})) as Array<Record<string, unknown>>
-			const rows = Array.isArray(result) ? result : []
-			const summaryRows: SummaryRow[] = rows.map((row) => {
-				const provider = typeof row.provider === 'string' ? row.provider : 'integration'
-				const status = typeof row.status === 'string' ? row.status : undefined
-				return {
-					title: provider,
-					meta: status,
-				}
-			})
+			})) as unknown
+			const rows = Array.isArray(result)
+				? (result as Array<{
+						id: string
+						createdAt?: string | null
+						provider?: string
+						status?: string
+					}>)
+				: []
+			const { page: pagedRows, nextCursor } = scoped
+				? paginateClientSide({
+						rows,
+						limit: pagination.limit,
+						snapshotAt: pagination.snapshotAt,
+						order: pagination.order,
+						cursor: pagination.cursor,
+						getSortValue: (row) => row.createdAt ?? null,
+						getId: (row) => row.id,
+					})
+				: { page: rows, nextCursor: null }
+			const summaryRows: SummaryRow[] = pagedRows.map((row) => ({
+				title: typeof row.provider === 'string' ? row.provider : 'integration',
+				meta: typeof row.status === 'string' ? row.status : undefined,
+			}))
 			return {
 				_meta: meta('list_integrations', config, (args as { workspace_id?: string }).workspace_id),
 				content: [
@@ -5183,7 +5336,10 @@ export function createMcpServer(config: McpConfig) {
 						text: buildListContentText(result, summaryRows, 'No integrations.'),
 					},
 				],
-				structuredContent: { integrations: rows },
+				structuredContent: {
+					integrations: pagedRows,
+					...(nextCursor ? { next_cursor: nextCursor } : {}),
+				},
 			}
 		},
 	)
@@ -5570,7 +5726,30 @@ export function createMcpServer(config: McpConfig) {
 
 			const result = [...moduleExtensions, ...trackedCustomExtensions, ...untrackedExtensions]
 
-			const summaryRows: SummaryRow[] = result.map((ext) => {
+			const scoped = isResponseScopingEnabled()
+			const pagination = resolveListPagination(
+				{
+					limit: (args as { limit?: number }).limit,
+					cursor: (args as { cursor?: string }).cursor,
+				},
+				25,
+			)
+			// Extensions are derived from workspace settings + registered modules —
+			// there's no per-row insert timestamp, so cursor uses the id string and
+			// snapshot filtering is skipped. Sort order is stable-by-id.
+			const { page: pagedRows, nextCursor } = scoped
+				? paginateClientSide({
+						rows: result,
+						limit: pagination.limit,
+						snapshotAt: pagination.snapshotAt,
+						order: 'asc',
+						cursor: pagination.cursor,
+						getSortValue: (row) => row.id,
+						getId: (row) => row.id,
+						applySnapshotFilter: false,
+					})
+				: { page: result, nextCursor: null }
+			const summaryRows: SummaryRow[] = pagedRows.map((ext) => {
 				const typeCount = Array.isArray(ext.object_types) ? ext.object_types.length : 0
 				const enabledLabel = ext.enabled ? 'enabled' : 'disabled'
 				const metaParts = [enabledLabel]
@@ -5580,7 +5759,6 @@ export function createMcpServer(config: McpConfig) {
 					meta: metaParts.join(' · '),
 				}
 			})
-
 			return {
 				_meta: meta('list_extensions', config, (args as { workspace_id?: string }).workspace_id),
 				content: [
@@ -5589,7 +5767,10 @@ export function createMcpServer(config: McpConfig) {
 						text: buildListContentText(result, summaryRows, 'No extensions.'),
 					},
 				],
-				structuredContent: { extensions: result },
+				structuredContent: {
+					extensions: pagedRows,
+					...(nextCursor ? { next_cursor: nextCursor } : {}),
+				},
 			}
 		},
 	)
