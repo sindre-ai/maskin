@@ -185,7 +185,7 @@ function NotificationRow({
 				</div>
 			</div>
 			<div className="flex items-center gap-2 justify-end">
-				{objectHref && (
+				{notification.objectId && objectHref && (
 					<a
 						href={objectHref}
 						target="_blank"
@@ -294,10 +294,8 @@ function NotificationDetailView({ notification }: { notification: NotificationRe
 						</div>
 					</div>
 				</div>
-				{local.objectId ? (
+				{local.objectId && (
 					<WebAppLink target={{ kind: 'object', id: local.objectId }} label="Open object" />
-				) : (
-					<WebAppLink target={{ kind: 'pulse' }} label="Open Pulse" />
 				)}
 			</div>
 
