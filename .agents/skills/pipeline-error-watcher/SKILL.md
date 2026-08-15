@@ -27,7 +27,7 @@ A missed hour just widens the next window — dedup (Step 3) absorbs any issues 
 
 ## Step 1 — Query Sentry
 
-For each project in `["maskin-web", "maskin-api", "maskin-agent-runtime"]`:
+For each project in `["maskin-web", "maskin-dev", "maskin-agent-server"]`:
 
 ```
 GET https://sentry.io/api/0/projects/<org>/<project>/issues/?query=firstSeen:>{last_run_iso}
@@ -65,7 +65,7 @@ This mirrors the join the T1 backtest ran; keep it identical so both bets share 
 
 Before creating anything, call `search_objects` filtered by `metadata_eq: { sentry_issue_id: <issue.id> }`.
 
-- Any hit with a non-terminal status (anything other than `succeeded` / `failed` / `archived`): the issue is already tracked. Skip it silently. Do not comment, do not touch the existing bet.
+- Any hit with a non-terminal status (anything other than `done` / `discarded` / `failed`): the issue is already tracked. Skip it silently. Do not comment, do not touch the existing bet.
 - All hits terminal, or zero hits: fall through to Step 4.
 
 Dedup runs before the create call, not as a database constraint — `sentry_issue_id` is a metadata field and only serves as an identity key for this skill.
