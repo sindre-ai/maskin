@@ -57,6 +57,12 @@ type FailoverReasonCopy = {
 	recoverable?: 'reconnect'
 }
 
+// Generic body used when the classifier emits a reason not in the copy map
+// below. Keeps the "Running on backup" signal visible instead of silently
+// dropping the banner if T4 widens its reason set.
+const GENERIC_FAILOVER_BANNER_BODY =
+	'The primary subscription is unhealthy. Agents are running on the backup until it recovers.'
+
 const FAILOVER_REASON_COPY: Record<string, FailoverReasonCopy> = {
 	auth_failed: {
 		slotLine: 'Authentication failed. Reconnect to use this subscription again.',
@@ -150,9 +156,10 @@ function ClaudeOAuthSection({ workspaceId }: { workspaceId: string }) {
 				credentials expire.
 			</p>
 
-			{isFailedOver && reasonCopy && (
+			{isFailedOver && (
 				<FailoverBanner
-					reasonCopy={reasonCopy}
+					bannerBody={reasonCopy?.bannerBody ?? GENERIC_FAILOVER_BANNER_BODY}
+					recoverable={reasonCopy?.recoverable}
 					reasonCode={status?.last_classified_reason ?? ''}
 					onReconnectPrimary={handleReconnectPrimary}
 				/>
@@ -395,11 +402,13 @@ function SlotCard({
 }
 
 function FailoverBanner({
-	reasonCopy,
+	bannerBody,
+	recoverable,
 	reasonCode,
 	onReconnectPrimary,
 }: {
-	reasonCopy: FailoverReasonCopy
+	bannerBody: string
+	recoverable?: FailoverReasonCopy['recoverable']
 	reasonCode: string
 	onReconnectPrimary: () => void
 }) {
@@ -410,8 +419,8 @@ function FailoverBanner({
 			data-testid="failover-banner"
 		>
 			<p className="text-sm font-bold text-warning">Running on backup</p>
-			<p className="text-xs text-foreground/80">{reasonCopy.bannerBody}</p>
-			{reasonCopy.recoverable === 'reconnect' && (
+			<p className="text-xs text-foreground/80">{bannerBody}</p>
+			{recoverable === 'reconnect' && (
 				<button
 					type="button"
 					onClick={onReconnectPrimary}
