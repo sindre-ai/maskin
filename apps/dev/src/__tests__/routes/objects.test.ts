@@ -12,6 +12,17 @@ import {
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
 
+// Spy on the backend PostHog capture so the knowledge-instrumentation tests
+// can assert the ship-metric events fire without hitting the network. Hoisted
+// so the mock is in place before the dynamic route import below evaluates
+// `apps/dev/src/lib/analytics/knowledge-events.ts`.
+const { capturePosthogEventMock } = vi.hoisted(() => ({
+	capturePosthogEventMock: vi.fn().mockResolvedValue(undefined),
+}))
+vi.mock('../../lib/analytics/posthog', () => ({
+	capturePosthogEvent: capturePosthogEventMock,
+}))
+
 // Import the route module directly (not index.ts)
 const { default: objectsRoutes } = await import('../../routes/objects')
 
@@ -1486,6 +1497,151 @@ describe('Objects Routes', () => {
 			)
 
 			expect(res.status).toBe(404)
+		})
+	})
+
+	// Retro-instrumentation for the (closed) Knowledge Extension bet — the
+	// route is the single choke point for every knowledge write and read
+	// regardless of client (UI, MCP, agent CLI), so both events fire from
+	// here.
+	describe('knowledge object instrumentation', () => {
+		function buildKnowledgeWorkspace() {
+			return buildWorkspace({
+				id: wsId,
+				settings: {
+					enabled_modules: ['work'],
+					display_names: { insight: 'Insight', bet: 'Bet', task: 'Task', knowledge: 'Knowledge' },
+					// getAllValidTypes() merges Object.keys(settings.statuses) with module
+					// types, so seeding a `knowledge` status list is enough to make
+					// `type: 'knowledge'` a valid choice without registering the module.
+					statuses: {
+						insight: ['new', 'processing'],
+						bet: ['signal', 'active'],
+						task: ['todo', 'done'],
+						knowledge: ['active', 'archived'],
+					},
+					field_definitions: {},
+					relationship_types: ['informs'],
+				},
+			})
+		}
+
+		beforeEach(() => {
+			capturePosthogEventMock.mockClear()
+			capturePosthogEventMock.mockResolvedValue(undefined)
+		})
+
+		it('fires knowledge_object_created with created_via=mcp when the MCP header is set', async () => {
+			const ws = buildKnowledgeWorkspace()
+			const created = buildObject({ workspaceId: wsId, type: 'knowledge', status: 'active' })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			// Workspace lookup, then the dedup preflight SELECT over existing
+			// knowledge titles (empty — this is the happy path).
+			mockResults.selectQueue = [[ws], []]
+			mockResults.insert = [created]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/objects',
+					{ type: 'knowledge', title: 'Data model overview', status: 'active' },
+					{ 'x-workspace-id': wsId, 'x-client-source': 'mcp' },
+				),
+			)
+
+			expect(res.status).toBe(201)
+			expect(capturePosthogEventMock).toHaveBeenCalledWith('knowledge_object_created', wsId, {
+				workspace_id: wsId,
+				actor_id: 'test-actor-id',
+				object_id: created.id,
+				created_via: 'mcp',
+			})
+		})
+
+		it('fires knowledge_object_created with created_via=ui when no client header is set (human actor)', async () => {
+			const ws = buildKnowledgeWorkspace()
+			const created = buildObject({ workspaceId: wsId, type: 'knowledge', status: 'active' })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[ws], []]
+			mockResults.insert = [created]
+
+			await app.request(
+				jsonRequest(
+					'POST',
+					'/api/objects',
+					{ type: 'knowledge', title: 'Onboarding checklist', status: 'active' },
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(capturePosthogEventMock).toHaveBeenCalledWith(
+				'knowledge_object_created',
+				wsId,
+				expect.objectContaining({ created_via: 'ui' }),
+			)
+		})
+
+		it('does not fire knowledge_object_created for non-knowledge object types', async () => {
+			const ws = buildWorkspace({ id: wsId })
+			const created = buildObject({ workspaceId: wsId, type: 'task' })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.selectQueue = [[ws]]
+			mockResults.insert = [created]
+
+			await app.request(
+				jsonRequest('POST', '/api/objects', buildCreateObjectBody(), {
+					'x-workspace-id': wsId,
+					'x-client-source': 'ui',
+				}),
+			)
+
+			const knowledgeCalls = capturePosthogEventMock.mock.calls.filter(
+				(call) => call[0] === 'knowledge_object_created',
+			)
+			expect(knowledgeCalls).toHaveLength(0)
+		})
+
+		it('fires knowledge_object_read with accessed_via=ui on GET when object is a knowledge type', async () => {
+			const obj = buildObject({ workspaceId: wsId, type: 'knowledge', status: 'active' })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.select = [obj]
+
+			const res = await app.request(jsonGet(`/api/objects/${obj.id}`, { 'x-client-source': 'ui' }))
+
+			expect(res.status).toBe(200)
+			expect(capturePosthogEventMock).toHaveBeenCalledWith('knowledge_object_read', wsId, {
+				workspace_id: wsId,
+				actor_id: 'test-actor-id',
+				object_id: obj.id,
+				accessed_via: 'ui',
+			})
+		})
+
+		it('fires knowledge_object_read with accessed_via=mcp when the MCP header is set', async () => {
+			const obj = buildObject({ workspaceId: wsId, type: 'knowledge', status: 'active' })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.select = [obj]
+
+			await app.request(jsonGet(`/api/objects/${obj.id}`, { 'x-client-source': 'mcp' }))
+
+			expect(capturePosthogEventMock).toHaveBeenCalledWith(
+				'knowledge_object_read',
+				wsId,
+				expect.objectContaining({ accessed_via: 'mcp' }),
+			)
+		})
+
+		it('does not fire knowledge_object_read for non-knowledge GETs', async () => {
+			const obj = buildObject({ workspaceId: wsId, type: 'task' })
+			const { app, mockResults } = createTestApp(objectsRoutes, '/api/objects')
+			mockResults.select = [obj]
+
+			await app.request(jsonGet(`/api/objects/${obj.id}`, { 'x-client-source': 'ui' }))
+
+			const readCalls = capturePosthogEventMock.mock.calls.filter(
+				(call) => call[0] === 'knowledge_object_read',
+			)
+			expect(readCalls).toHaveLength(0)
 		})
 	})
 })
