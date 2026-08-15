@@ -131,6 +131,30 @@ export function trackChatSessionStarted(
 	})
 }
 
+// Sindre message telemetry. `sindre_message_sent` fires per user turn posted
+// to the interactive session; `sindre_message_received` fires per unique
+// assistant `message.id` observed on the SSE stream. Together they let PostHog
+// tally adoption (workspaces with a completed exchange) and detect the
+// "chat not working" failure mode (sent-without-received per session), which
+// was the parent bet's kill criterion. `workspace_id` + `actor_id` ride via
+// the PostHog super-properties registered on workspace mount; only the
+// per-event contract goes here.
+export function trackSindreMessageSent(p: { session_id: string }): void {
+	trackEvent('sindre_message_sent', { session_id: p.session_id })
+}
+
+export function trackSindreMessageReceived(p: {
+	session_id: string
+	model: string | null
+	tokens: number | null
+}): void {
+	trackEvent('sindre_message_received', {
+		session_id: p.session_id,
+		model: p.model,
+		tokens: p.tokens,
+	})
+}
+
 // Fires when the owner picks a non-default agent from the slash-picker instead
 // of letting the default (Chief of Staff, once T3 wires it) route the chat.
 // One of the three thinness events for the Chief of Staff stub bet — a hit
