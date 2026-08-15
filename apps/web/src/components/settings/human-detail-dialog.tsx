@@ -49,7 +49,8 @@ export function HumanDetailDialog({
 	useEffect(() => {
 		setDescriptionDraft(actor?.description ?? '')
 		setSystemPromptDraft(actor?.system_prompt ?? '')
-	}, [actor?.description, actor?.system_prompt])
+		setRoleError(null)
+	}, [actorId, actor?.description, actor?.system_prompt])
 
 	if (!actorId) return null
 
