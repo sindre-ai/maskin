@@ -14,8 +14,9 @@ import { Input } from '@/components/ui/input'
 import { useActors, useAgentPause, useAgentRun } from '@/hooks/use-actors'
 import { useWorkspaceSessions } from '@/hooks/use-sessions'
 import { deriveAgentStatus, getLatestSession, groupSessionsByAgent } from '@/lib/agent-status'
-import type { ActorResponse, SessionResponse } from '@/lib/api'
+import type { ActorListItem, ActorResponse, SessionResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
+import type { CapabilityLevel } from '@maskin/shared'
 import { createFileRoute } from '@tanstack/react-router'
 import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
@@ -152,6 +153,8 @@ function AgentsPage() {
 									agent={agent as ActorResponse}
 									status={portraitStatuses.get(agent.id) ?? 'idle'}
 									latestSession={getLatestSession(agent.id, sessionsByAgent)}
+									capabilityLevel={(agent as ActorListItem).capability?.level ?? null}
+									capabilityScore={(agent as ActorListItem).capability?.score}
 								/>
 							))}
 						</div>
@@ -172,11 +175,15 @@ function AgentPortraitCardItem({
 	agent,
 	status,
 	latestSession,
+	capabilityLevel,
+	capabilityScore,
 }: {
 	workspaceId: string
 	agent: ActorResponse
 	status: PortraitStatus
 	latestSession?: SessionResponse
+	capabilityLevel?: CapabilityLevel | null
+	capabilityScore?: number
 }) {
 	// One mutation instance per card — sharing a single instance across the grid
 	// meant clicking Run/Pause on one agent detached the previous card's mutation
@@ -190,6 +197,8 @@ function AgentPortraitCardItem({
 			agent={agent}
 			status={status}
 			latestSession={latestSession}
+			capabilityLevel={capabilityLevel}
+			capabilityScore={capabilityScore}
 			onRun={() =>
 				runMutation.mutate(
 					{ id: agent.id },

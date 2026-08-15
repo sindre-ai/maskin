@@ -118,6 +118,27 @@ describe('AgentPortraitCard', () => {
 		const button = screen.getByRole('button', { name: /Run/ })
 		expect(button.className).toContain('min-h-[44px]')
 	})
+
+	it('renders the capability level chip when a level is provided', () => {
+		const agent = buildActorResponse({ type: 'agent' })
+		render(
+			<AgentPortraitCard
+				agent={agent}
+				status="idle"
+				capabilityLevel="apprentice"
+				capabilityScore={28}
+				onRun={noop}
+				onPause={noop}
+			/>,
+		)
+		expect(screen.getByLabelText(/Capability: Apprentice, score 28/)).toBeInTheDocument()
+	})
+
+	it('omits the capability chip when no level is provided (humans / stale list rows)', () => {
+		const agent = buildActorResponse({ type: 'agent' })
+		render(<AgentPortraitCard agent={agent} status="idle" onRun={noop} onPause={noop} />)
+		expect(screen.queryByLabelText(/^Capability: /)).not.toBeInTheDocument()
+	})
 })
 
 describe('getPortraitStatus', () => {
