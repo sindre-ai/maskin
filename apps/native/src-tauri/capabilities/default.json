@@ -3,10 +3,5 @@
 	"identifier": "default",
 	"description": "Capabilities for the Maskin shell webview",
 	"windows": ["main"],
-	"permissions": [
-		"core:default",
-		"push-notifications:allow-register",
-		"push-notifications:allow-request-permission",
-		"push-notifications:allow-check-permissions"
-	]
+	"permissions": ["core:default", "notification:default"]
 }

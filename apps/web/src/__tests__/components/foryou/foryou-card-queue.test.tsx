@@ -289,6 +289,70 @@ describe('ForYouCardQueue', () => {
 		expect(screen.getByTestId('stub-card').parentElement).toHaveClass('flex-1', 'min-h-0')
 	})
 
+	it('pins focusKey as the current card when it appears in the visible queue (push-notification tap)', () => {
+		const queue = [buildItem('a'), buildItem('b'), buildItem('c')]
+		render(
+			<ForYouCardQueue
+				workspaceId="ws-1"
+				queue={queue}
+				focusKey={itemQueueKeyImpl(buildItem('c'))}
+			/>,
+		)
+
+		// The default pin-on-first-show would land on 'a'; focusKey overrides
+		// so a notification tap opens the tapped card, not the top of the sort.
+		expect(screen.getByTestId('stub-card')).toHaveTextContent('c')
+	})
+
+	it('reapplies the focus when a delayed SSE refetch finally includes the requested card', () => {
+		const queue = [buildItem('a'), buildItem('b')]
+		const { rerender } = render(
+			<ForYouCardQueue
+				workspaceId="ws-1"
+				queue={queue}
+				focusKey={itemQueueKeyImpl(buildItem('c'))}
+			/>,
+		)
+
+		// 'c' isn't in the queue yet — the default pin wins the first render.
+		expect(screen.getByTestId('stub-card')).toHaveTextContent('a')
+
+		// SSE hydration lands the tapped card. The effect should still fire
+		// because the focus was never marked as applied.
+		rerender(
+			<ForYouCardQueue
+				workspaceId="ws-1"
+				queue={[buildItem('a'), buildItem('b'), buildItem('c')]}
+				focusKey={itemQueueKeyImpl(buildItem('c'))}
+			/>,
+		)
+
+		expect(screen.getByTestId('stub-card')).toHaveTextContent('c')
+	})
+
+	it('does not jerk the user back to the focused card after they swipe past it', () => {
+		const focus = itemQueueKeyImpl(buildItem('a'))
+		const queue = [buildItem('a'), buildItem('b')]
+		render(<ForYouCardQueue workspaceId="ws-1" queue={queue} focusKey={focus} />)
+
+		expect(screen.getByTestId('stub-card')).toHaveTextContent('a')
+
+		act(() => {
+			fireProcessed(itemQueueKeyImpl(queue[0]))
+		})
+
+		// User has swiped past 'a' — the queue must advance to 'b' and NOT
+		// re-pin 'a' just because focusKey still equals its key.
+		expect(screen.getByTestId('stub-card')).toHaveTextContent('b')
+	})
+
+	it('leaves the pin-on-first-show default in place when focusKey is null', () => {
+		const queue = [buildItem('a'), buildItem('b')]
+		render(<ForYouCardQueue workspaceId="ws-1" queue={queue} focusKey={null} />)
+
+		expect(screen.getByTestId('stub-card')).toHaveTextContent('a')
+	})
+
 	it('falls back to the first visible item when the current key drops out of an updated queue', () => {
 		const queue = [buildItem('a'), buildItem('b')]
 		const { rerender } = render(<ForYouCardQueue workspaceId="ws-1" queue={queue} />)

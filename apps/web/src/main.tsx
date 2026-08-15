@@ -6,6 +6,8 @@ import { createRoot } from 'react-dom/client'
 import './app.css'
 import { restoreSession } from './lib/auth'
 import { initBackNavTracker } from './lib/back-nav-tracker'
+import { initIosPushNotifications } from './lib/ios-push'
+import { initIosPushDeepLink } from './lib/ios-push-deep-link'
 import { initIosDeepLink } from './lib/ios-shell'
 import { consumeMagicLink } from './lib/magic-link'
 import { initPosthog } from './lib/posthog'
@@ -20,6 +22,8 @@ consumeMagicLink()
 // In the Tauri iOS shell, also register the maskin:// deep link so a magic-link
 // fragment delivered by the OS completes login. No-op in a plain browser.
 initIosDeepLink()
+// APNs registration on the iOS shell — no-op in a plain browser.
+void initIosPushNotifications()
 initPosthog()
 // Attach the popstate listener at app boot, before any route module loads —
 // otherwise a deep-link start (e.g. `/objects/{id}` from a Slack link) followed
@@ -44,6 +48,10 @@ declare module '@tanstack/react-router' {
 // this is a fast no-op.
 async function boot() {
 	await restoreSession()
+	// Consume any push-notification tap the AppDelegate stashed before the
+	// router mounts — the cold-start path (app launched by the tap) needs
+	// `?card=...` in the URL before the route's first render. No-op on web.
+	await initIosPushDeepLink()
 	// biome-ignore lint/style/noNonNullAssertion: root element is guaranteed to exist in index.html
 	createRoot(document.getElementById('root')!).render(
 		<StrictMode>

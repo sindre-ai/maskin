@@ -1,0 +1,119 @@
+// AppDelegate template — reference for the git-ignored `gen/apple/Sources/AppDelegate.swift`
+// ============================================================================
+//
+// This file is NOT compiled directly by anything. It documents the exact Swift
+// hooks the T5 push-notification deep-link needs, so the fix can be reapplied
+// by hand after every `pnpm --filter @maskin/native ios:init` (which
+// regenerates `src-tauri/gen/apple/` from scratch — see the AppIcon workaround
+// in README.md for the same pattern).
+//
+// Steps
+// -----
+// 1. Open the generated `src-tauri/gen/apple/Sources/AppDelegate.swift`.
+// 2. Add / replace the three hooks below onto the existing `AppDelegate`
+//    class (keep any Tauri-injected code around them — the class inherits
+//    from `TauriAppDelegate`, do NOT swap the base class).
+// 3. Add the `UNUserNotificationCenterDelegate` conformance in the same file.
+// 4. Rebuild the app. On tap, the FFI symbol `maskin_push_notification_tapped`
+//    is exported by the Rust static library — Swift links to it directly.
+//
+// Payload contract
+// ----------------
+// The backend APNs sender must include `entity_type` and `entity_id` as
+// top-level keys inside the `aps` payload's custom-data section:
+//
+//     {
+//       "aps": { "alert": {...}, "sound": "default" },
+//       "entity_type": "bet",
+//       "entity_id": "abc-123"
+//     }
+//
+// Both are required strings; the FFI drops any payload missing either side.
+//
+// -----------------------------------------------------------------------------
+
+import UIKit
+import UserNotifications
+
+// External Rust FFI — declared in apps/native/src-tauri/src/lib.rs. Swift
+// links to it directly (no header file). Signature must match the Rust
+// `#[no_mangle] pub unsafe extern "C" fn maskin_push_notification_tapped(...)`.
+@_silgen_name("maskin_push_notification_tapped")
+func maskin_push_notification_tapped(
+	_ entityType: UnsafePointer<CChar>,
+	_ entityId: UnsafePointer<CChar>
+)
+
+// Extract the (entity_type, entity_id) pair from an APNs userInfo dictionary
+// and hand it to the Rust bridge. No-op when either side is missing so a
+// notification with no deep-link payload does nothing on tap.
+func forwardNotificationTapToRust(userInfo: [AnyHashable: Any]) {
+	guard
+		let entityType = userInfo["entity_type"] as? String,
+		let entityId = userInfo["entity_id"] as? String,
+		!entityType.isEmpty,
+		!entityId.isEmpty
+	else { return }
+	entityType.withCString { typePtr in
+		entityId.withCString { idPtr in
+			maskin_push_notification_tapped(typePtr, idPtr)
+		}
+	}
+}
+
+@main
+class AppDelegate: TauriAppDelegate, UNUserNotificationCenterDelegate {
+
+	// (1) Cold-start hook. When the app is launched *by* the user tapping a
+	//     notification, iOS hands us the payload in launchOptions before the
+	//     webview even exists. Stash it via the Rust bridge — the JS side
+	//     calls `consume_pending_notification` on boot and reads it out.
+	override func application(
+		_ application: UIApplication,
+		didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
+	) -> Bool {
+		UNUserNotificationCenter.current().delegate = self
+		if let remote = launchOptions?[.remoteNotification] as? [AnyHashable: Any] {
+			forwardNotificationTapToRust(userInfo: remote)
+		}
+		return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+	}
+
+	// (2) APNs device token. Kept as a follow-up in the README (task 6) —
+	//     this is where the token would be forwarded to JS so it can register
+	//     with the /api/push-tokens endpoint. Stubbed here for reference.
+	// override func application(
+	// 	_ application: UIApplication,
+	// 	didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
+	// ) {
+	// 	let hex = deviceToken.map { String(format: "%02x", $0) }.joined()
+	// 	// TODO(t6): forward to webview via evaluateJavaScript or Tauri event
+	// }
+
+	// (3) Warm-state tap hook. When the app is running (foreground or
+	//     background) and the user taps a notification, iOS routes the tap
+	//     through the UNUserNotificationCenter delegate. Forward the payload
+	//     via the same Rust bridge — the Rust side emits a Tauri event
+	//     (`push-notification-tapped`) that the JS listener picks up.
+	func userNotificationCenter(
+		_ center: UNUserNotificationCenter,
+		didReceive response: UNNotificationResponse,
+		withCompletionHandler completionHandler: @escaping () -> Void
+	) {
+		forwardNotificationTapToRust(userInfo: response.notification.request.content.userInfo)
+		completionHandler()
+	}
+
+	// (4) Foreground presentation. Without this, a notification that arrives
+	//     while the app is in foreground is silently dropped. Presenting
+	//     banner + sound gives the same OS UI the user gets when the app
+	//     is closed, so the deep-link tap path is exercised the same way
+	//     in all states.
+	func userNotificationCenter(
+		_ center: UNUserNotificationCenter,
+		willPresent notification: UNNotification,
+		withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+	) {
+		completionHandler([.banner, .sound])
+	}
+}
