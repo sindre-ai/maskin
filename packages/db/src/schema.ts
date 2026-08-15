@@ -981,6 +981,12 @@ export const loopOutputApprovals = pgTable(
 		),
 		index('loop_output_approvals_ws_loop_status_idx').on(t.workspaceId, t.loopId, t.status),
 		index('loop_output_approvals_ws_status_created_idx').on(t.workspaceId, t.status, t.createdAt),
+		// One approval row per (loop, session) — prevents duplicate enqueues from
+		// concurrent stop/completion signals. Partial: session_id IS NOT NULL so
+		// manually-created rows (no session) don't collide with each other.
+		uniqueIndex('loop_output_approvals_loop_session_uniq')
+			.on(t.loopId, t.sessionId)
+			.where(sql`${t.sessionId} IS NOT NULL`),
 	],
 )
 

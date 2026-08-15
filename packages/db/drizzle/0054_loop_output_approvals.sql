@@ -61,3 +61,11 @@ CREATE INDEX IF NOT EXISTS "loop_output_approvals_ws_loop_status_idx"
 
 CREATE INDEX IF NOT EXISTS "loop_output_approvals_ws_status_created_idx"
 	ON "loop_output_approvals" ("workspace_id", "status", "created_at" DESC);
+--> statement-breakpoint
+
+-- Idempotency guard: a session can produce at most one pending approval row
+-- per loop. The partial index (WHERE session_id IS NOT NULL) avoids false
+-- uniqueness collisions for manually-enqueued rows that carry no session.
+CREATE UNIQUE INDEX IF NOT EXISTS "loop_output_approvals_loop_session_uniq"
+	ON "loop_output_approvals" ("loop_id", "session_id")
+	WHERE "session_id" IS NOT NULL;

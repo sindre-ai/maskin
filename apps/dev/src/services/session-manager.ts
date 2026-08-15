@@ -385,9 +385,7 @@ export class SessionManager extends EventEmitter {
 		// TriggerRunner; this one guarantees the invariant regardless of caller.
 		const gate = await resolveLoopExecutionGate(this.db, workspaceId, params.triggerId)
 		if (gate.decision === 'block') {
-			if (gate.loopId) {
-				throw new LoopExecutionBlockedError(gate.loopId, gate.status ?? 'unknown')
-			}
+			throw new LoopExecutionBlockedError(gate.loopId ?? 'unknown', gate.status ?? 'unknown')
 		}
 
 		const [session] = await this.db
@@ -3543,23 +3541,6 @@ export class SessionManager extends EventEmitter {
 		const gate = await resolveLoopExecutionGate(this.db, session.workspaceId, session.triggerId)
 		if (gate.decision !== 'supervised' || !gate.loopId) return
 
-		// Skip re-enqueue when a row already exists for this (loop, session) —
-		// covers the double-report path (provisional stop then genuine
-		// completion). Cheap indexed lookup on
-		// (workspace_id, loop_id, status).
-		const [existing] = await this.db
-			.select({ id: loopOutputApprovals.id })
-			.from(loopOutputApprovals)
-			.where(
-				and(
-					eq(loopOutputApprovals.workspaceId, session.workspaceId),
-					eq(loopOutputApprovals.loopId, gate.loopId),
-					eq(loopOutputApprovals.sessionId, session.id),
-				),
-			)
-			.limit(1)
-		if (existing) return
-
 		// Payload mirrors T7's `safeMetadataSchema` envelope — the result blob
 		// verbatim plus a bounded excerpt of the action prompt so the queue UI
 		// has a legible summary line without the full container transcript.
@@ -3573,6 +3554,9 @@ export class SessionManager extends EventEmitter {
 			...(outcome.failureReason ? { failure_reason: outcome.failureReason } : {}),
 		}
 
+		// ON CONFLICT DO NOTHING against the (loop_id, session_id) partial unique
+		// index handles the double-report path (provisional stop then genuine
+		// completion) atomically — no SELECT-before-INSERT race.
 		const [row] = await this.db
 			.insert(loopOutputApprovals)
 			.values({
@@ -3582,6 +3566,7 @@ export class SessionManager extends EventEmitter {
 				driverActorId: session.actorId,
 				payload,
 			})
+			.onConflictDoNothing()
 			.returning({ id: loopOutputApprovals.id })
 
 		if (!row) return
