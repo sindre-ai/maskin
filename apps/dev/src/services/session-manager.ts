@@ -87,6 +87,8 @@ import {
 } from './agent-server-client'
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
 import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
+import { evaluateAfterRun } from './loop-lifecycle'
+import { findLoopForSessionTrigger, recomputeAndPersistScore } from './loop-scoring'
 import { type RuntimeEndReason, RuntimeTelemetry } from './runtime-telemetry'
 import type { SessionDispatchQueue } from './session-dispatch-queue'
 import { type SessionUsage, extractSessionUsage, parseUsageFromLogChunks } from './usage-parser'
@@ -2372,6 +2374,19 @@ export class SessionManager extends EventEmitter {
 			logger.warn('Failed loop_active_day emit', { sessionId, error: String(err) })
 		})
 
+		// Loop performance score recompute + promotion/demotion evaluation.
+		// Fires only when the completing session belongs to a loop trigger; a
+		// standalone or unrelated session is a silent no-op. Best-effort: a
+		// scoring or lifecycle failure must not block the SSE terminal log
+		// or the queue drain below (same guarantee as the analytics emit).
+		await this.maybeScoreAndEvaluateLoop(
+			session.workspaceId,
+			session.actorId,
+			session.triggerId,
+		).catch((err) => {
+			logger.warn('Failed loop score recompute', { sessionId, error: String(err) })
+		})
+
 		try {
 			await this.insertSystemLog(sessionId, `Session ${status} with exit code ${exitCode}`)
 		} catch (err) {
@@ -2485,6 +2500,27 @@ export class SessionManager extends EventEmitter {
 			workspaceId: claim.workspaceId,
 			utcDay,
 		})
+	}
+
+	/**
+	 * If the completing session was launched by a trigger that belongs to a
+	 * loop, recompute the loop's performance score in place and hand off to
+	 * the lifecycle evaluator so the run can promote/demote. Best-effort:
+	 * every error is swallowed by the caller so a scoring or lifecycle
+	 * failure never blocks the completion path (the SSE `done` event and the
+	 * queue drain must still run). Returns silently for standalone sessions
+	 * (no trigger) or sessions whose trigger no loop claims — those are
+	 * legitimate no-ops, not errors. T3 of bet/loop-lifecycle-status-ladder.
+	 */
+	private async maybeScoreAndEvaluateLoop(
+		workspaceId: string,
+		actorId: string,
+		triggerId: string | null,
+	): Promise<void> {
+		const loopId = await findLoopForSessionTrigger(this.db, workspaceId, triggerId)
+		if (!loopId) return
+		await recomputeAndPersistScore(this.db, loopId)
+		await evaluateAfterRun(this.db, loopId, actorId)
 	}
 
 	private async runWatchdog(): Promise<void> {
@@ -3484,6 +3520,14 @@ export class SessionManager extends EventEmitter {
 				sessionId,
 				error: String(err),
 			})
+		})
+
+		await this.maybeScoreAndEvaluateLoop(
+			updated.workspaceId,
+			updated.actorId,
+			updated.triggerId,
+		).catch((err) => {
+			logger.warn('Failed loop score recompute (remote)', { sessionId, error: String(err) })
 		})
 
 		// Terminal system log is required for SSE /logs/stream clients to close.

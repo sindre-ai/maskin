@@ -92,6 +92,17 @@ export const objects = pgTable(
 		metadata: jsonb('metadata'),
 		driver: uuid('driver').references(() => actors.id),
 		activeSessionId: uuid('active_session_id'),
+		// Loop-only lifecycle fields (T3 of bet/loop-lifecycle-status-ladder).
+		// Nullable everywhere: only loop-type rows populate them. Held as
+		// first-class columns rather than metadata so the promotion/demotion
+		// evaluator (`readLoopState` in `apps/dev/src/services/loop-lifecycle.ts`)
+		// and the score engine (`apps/dev/src/services/loop-scoring.ts`) both
+		// read a typed contract instead of a jsonb bag.
+		outcomeMetric: text('outcome_metric'),
+		outcomeTarget: numeric('outcome_target'),
+		killThreshold: numeric('kill_threshold'),
+		performanceScore: numeric('performance_score'),
+		promotionMode: text('promotion_mode'),
 		createdBy: uuid('created_by')
 			.references(() => actors.id)
 			.notNull(),
@@ -103,6 +114,10 @@ export const objects = pgTable(
 		// Range-scan path for list_objects(updated_before/updated_after) — the
 		// watchdog's stalled-work query. Built CONCURRENTLY in migration 0043.
 		index('objects_ws_updated_at_idx').on(t.workspaceId, t.updatedAt),
+		check(
+			'objects_promotion_mode_check',
+			sql`${t.promotionMode} IS NULL OR ${t.promotionMode} IN ('auto', 'human_approved')`,
+		),
 	],
 )
 

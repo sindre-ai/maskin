@@ -54,6 +54,11 @@ async function insertLoop(
 		status?: string
 		metadata?: Record<string, unknown>
 		title?: string
+		performance_score?: number
+		kill_threshold?: number
+		promotion_mode?: 'auto' | 'human_approved'
+		outcome_metric?: string
+		outcome_target?: number
 	} = {},
 ) {
 	return insertObject(db, workspaceId, actorId, {
@@ -61,6 +66,20 @@ async function insertLoop(
 		title: overrides.title ?? 'Test loop',
 		status: overrides.status ?? 'draft',
 		metadata: overrides.metadata ?? null,
+		// Loop first-class columns land here (T3) — the score engine and the
+		// promotion/demotion evaluator both read them from columns, not the
+		// jsonb bag.
+		...(overrides.performance_score !== undefined
+			? { performanceScore: String(overrides.performance_score) }
+			: {}),
+		...(overrides.kill_threshold !== undefined
+			? { killThreshold: String(overrides.kill_threshold) }
+			: {}),
+		...(overrides.promotion_mode !== undefined ? { promotionMode: overrides.promotion_mode } : {}),
+		...(overrides.outcome_metric !== undefined ? { outcomeMetric: overrides.outcome_metric } : {}),
+		...(overrides.outcome_target !== undefined
+			? { outcomeTarget: String(overrides.outcome_target) }
+			: {}),
 	})
 }
 
@@ -78,11 +97,9 @@ describe('Loop lifecycle promotion/demotion service', () => {
 		it('does nothing when the score is below the rung threshold', async () => {
 			const loop = await insertLoop(workspaceId, actorId, {
 				status: 'draft',
-				metadata: {
-					performance_score: 10,
-					kill_threshold: 5,
-					promotion_mode: 'human_approved',
-				},
+				performance_score: 10,
+				kill_threshold: 5,
+				promotion_mode: 'human_approved',
 			})
 			const result = await evaluateAfterRun(db, loop.id, actorId)
 			expect(result).toEqual({ kind: 'no_change' })
@@ -100,11 +117,9 @@ describe('Loop lifecycle promotion/demotion service', () => {
 		it('auto-promotes when score crosses threshold and mode is auto', async () => {
 			const loop = await insertLoop(workspaceId, actorId, {
 				status: 'draft',
-				metadata: {
-					performance_score: 25,
-					kill_threshold: 5,
-					promotion_mode: 'auto',
-				},
+				performance_score: 25,
+				kill_threshold: 5,
+				promotion_mode: 'auto',
 			})
 			const result = await evaluateAfterRun(db, loop.id, actorId)
 			expect(result.kind).toBe('promoted')
@@ -141,11 +156,9 @@ describe('Loop lifecycle promotion/demotion service', () => {
 		it('enqueues a pending proposal for human_approved mode; loop stays at current rung', async () => {
 			const loop = await insertLoop(workspaceId, actorId, {
 				status: 'pilot',
-				metadata: {
-					performance_score: 55,
-					kill_threshold: 10,
-					promotion_mode: 'human_approved',
-				},
+				performance_score: 55,
+				kill_threshold: 10,
+				promotion_mode: 'human_approved',
 			})
 			const result = await evaluateAfterRun(db, loop.id, actorId)
 			expect(result.kind).toBe('proposed')
@@ -171,11 +184,9 @@ describe('Loop lifecycle promotion/demotion service', () => {
 		it('is idempotent: a second evaluator call surfaces the existing pending proposal instead of a duplicate', async () => {
 			const loop = await insertLoop(workspaceId, actorId, {
 				status: 'pilot',
-				metadata: {
-					performance_score: 55,
-					kill_threshold: 10,
-					promotion_mode: 'human_approved',
-				},
+				performance_score: 55,
+				kill_threshold: 10,
+				promotion_mode: 'human_approved',
 			})
 			const first = await evaluateAfterRun(db, loop.id, actorId)
 			expect(first.kind).toBe('proposed')
@@ -193,11 +204,9 @@ describe('Loop lifecycle promotion/demotion service', () => {
 		it('is a no-op for paused loops even when score is high', async () => {
 			const loop = await insertLoop(workspaceId, actorId, {
 				status: 'paused',
-				metadata: {
-					performance_score: 95,
-					kill_threshold: 10,
-					promotion_mode: 'auto',
-				},
+				performance_score: 95,
+				kill_threshold: 10,
+				promotion_mode: 'auto',
 			})
 			const result = await evaluateAfterRun(db, loop.id, actorId)
 			expect(result).toEqual({ kind: 'no_change' })
@@ -209,11 +218,9 @@ describe('Loop lifecycle promotion/demotion service', () => {
 		it('is a no-op at the top of the ladder (live loops cannot promote further)', async () => {
 			const loop = await insertLoop(workspaceId, actorId, {
 				status: 'live',
-				metadata: {
-					performance_score: 100,
-					kill_threshold: 10,
-					promotion_mode: 'auto',
-				},
+				performance_score: 100,
+				kill_threshold: 10,
+				promotion_mode: 'auto',
 			})
 			const result = await evaluateAfterRun(db, loop.id, actorId)
 			expect(result).toEqual({ kind: 'no_change' })
@@ -227,11 +234,9 @@ describe('Loop lifecycle promotion/demotion service', () => {
 		it('demotes one rung when score falls below kill_threshold', async () => {
 			const loop = await insertLoop(workspaceId, actorId, {
 				status: 'supervised',
-				metadata: {
-					performance_score: 5,
-					kill_threshold: 20,
-					promotion_mode: 'auto',
-				},
+				performance_score: 5,
+				kill_threshold: 20,
+				promotion_mode: 'auto',
 			})
 			const result = await evaluateAfterRun(db, loop.id, actorId)
 			expect(result.kind).toBe('demoted')
@@ -267,11 +272,9 @@ describe('Loop lifecycle promotion/demotion service', () => {
 			// deterministic regardless.
 			const loop = await insertLoop(workspaceId, actorId, {
 				status: 'pilot',
-				metadata: {
-					performance_score: 60,
-					kill_threshold: 80,
-					promotion_mode: 'auto',
-				},
+				performance_score: 60,
+				kill_threshold: 80,
+				promotion_mode: 'auto',
 			})
 			const result = await evaluateAfterRun(db, loop.id, actorId)
 			expect(result.kind).toBe('demoted')
@@ -283,11 +286,9 @@ describe('Loop lifecycle promotion/demotion service', () => {
 		it('does not demote below draft', async () => {
 			const loop = await insertLoop(workspaceId, actorId, {
 				status: 'draft',
-				metadata: {
-					performance_score: 0,
-					kill_threshold: 50,
-					promotion_mode: 'auto',
-				},
+				performance_score: 0,
+				kill_threshold: 50,
+				promotion_mode: 'auto',
 			})
 			const result = await evaluateAfterRun(db, loop.id, actorId)
 			expect(result).toEqual({ kind: 'no_change' })
@@ -301,11 +302,9 @@ describe('Loop lifecycle promotion/demotion service', () => {
 		it('demotes one rung and emits both guardrail_breached and demoted events', async () => {
 			const loop = await insertLoop(workspaceId, actorId, {
 				status: 'live',
-				metadata: {
-					performance_score: 90,
-					kill_threshold: 20,
-					promotion_mode: 'auto',
-				},
+				performance_score: 90,
+				kill_threshold: 20,
+				promotion_mode: 'auto',
 			})
 			const result = await breachGuardrail(db, loop.id, actorId, 'unhandled_exception_in_delivery')
 			expect(result.kind).toBe('demoted')
@@ -376,11 +375,9 @@ describe('Loop lifecycle promotion/demotion service', () => {
 		it('fires independently of score — a live loop with a perfect score still demotes on breach', async () => {
 			const loop = await insertLoop(workspaceId, actorId, {
 				status: 'live',
-				metadata: {
-					performance_score: 100,
-					kill_threshold: 0,
-					promotion_mode: 'auto',
-				},
+				performance_score: 100,
+				kill_threshold: 0,
+				promotion_mode: 'auto',
 			})
 			const result = await breachGuardrail(db, loop.id, actorId, 'critical_downstream_failure')
 			expect(result.kind).toBe('demoted')
@@ -394,11 +391,9 @@ describe('Loop lifecycle promotion/demotion service', () => {
 		async function seedPendingProposal(status: 'draft' | 'pilot' | 'supervised' = 'pilot') {
 			const loop = await insertLoop(workspaceId, actorId, {
 				status,
-				metadata: {
-					performance_score: 90,
-					kill_threshold: 10,
-					promotion_mode: 'human_approved',
-				},
+				performance_score: 90,
+				kill_threshold: 10,
+				promotion_mode: 'human_approved',
 			})
 			const result = await evaluateAfterRun(db, loop.id, actorId)
 			if (result.kind !== 'proposed') throw new Error('expected proposed')
