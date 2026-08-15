@@ -9,9 +9,19 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { useActor, useUpdateActor } from '@/hooks/use-actors'
+import { useUpdateWorkspaceMemberRole, useWorkspaceMembers } from '@/hooks/use-workspaces'
 import { useEffect, useState } from 'react'
+
+const ROLE_OPTIONS = ['owner', 'admin', 'member'] as const
 
 interface HumanDetailDialogProps {
 	actorId: string | null
@@ -27,10 +37,14 @@ export function HumanDetailDialog({
 	onOpenChange,
 }: HumanDetailDialogProps) {
 	const { data: actor } = useActor(actorId ?? '')
+	const { data: members } = useWorkspaceMembers(workspaceId)
+	const member = members?.find((m) => m.actorId === actorId)
 	const updateActor = useUpdateActor(workspaceId)
+	const updateRole = useUpdateWorkspaceMemberRole(workspaceId)
 
 	const [descriptionDraft, setDescriptionDraft] = useState('')
 	const [systemPromptDraft, setSystemPromptDraft] = useState('')
+	const [roleError, setRoleError] = useState<string | null>(null)
 
 	useEffect(() => {
 		setDescriptionDraft(actor?.description ?? '')
@@ -38,6 +52,16 @@ export function HumanDetailDialog({
 	}, [actor?.description, actor?.system_prompt])
 
 	if (!actorId) return null
+
+	const handleRoleChange = async (nextRole: string) => {
+		if (!member || nextRole === member.role) return
+		setRoleError(null)
+		try {
+			await updateRole.mutateAsync({ actorId: member.actorId, role: nextRole })
+		} catch (err) {
+			setRoleError(err instanceof Error ? err.message : 'Failed to update role')
+		}
+	}
 
 	const handleSave = () => {
 		if (!actor) return
@@ -67,6 +91,36 @@ export function HumanDetailDialog({
 					</DialogDescription>
 				</DialogHeader>
 				<div className="space-y-4">
+					{member && (
+						<div>
+							<Label htmlFor="human-role">Role</Label>
+							<Select
+								value={member.role}
+								onValueChange={handleRoleChange}
+								disabled={updateRole.isPending}
+							>
+								<SelectTrigger
+									id="human-role"
+									aria-label={`Role for ${member.name}`}
+									className="w-full"
+								>
+									<SelectValue />
+								</SelectTrigger>
+								<SelectContent>
+									{ROLE_OPTIONS.map((role) => (
+										<SelectItem key={role} value={role}>
+											{role}
+										</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
+							{roleError && (
+								<p className="mt-1 text-sm text-error" role="alert">
+									{roleError}
+								</p>
+							)}
+						</div>
+					)}
 					<div>
 						<Label htmlFor="human-description">Description</Label>
 						<Input
