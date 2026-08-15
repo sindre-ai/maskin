@@ -648,6 +648,14 @@ export const api = {
 			),
 	},
 
+	// APNs device tokens — per-actor, not workspace-scoped. Called from the
+	// iOS Tauri shell on every launch to register (upsert) the token the OS
+	// hands back after `registerForRemoteNotifications`.
+	apnsTokens: {
+		register: (body: { token: string; environment: 'sandbox' | 'production' }) =>
+			request<ApnsTokenResponse>('/apns-tokens', { method: 'PATCH', body }),
+	},
+
 	workspaceSkills: {
 		list: (workspaceId: string) =>
 			request<WorkspaceSkillListItem[]>(`/workspaces/${workspaceId}/skills`, { workspaceId }),
@@ -873,6 +881,14 @@ export interface UserDisplaySettingsResponse {
 	object_type: string
 	name: string
 	settings: DisplaySettingsBody
+	updated_at: string
+}
+
+export interface ApnsTokenResponse {
+	id: string
+	token: string
+	environment: 'sandbox' | 'production'
+	created_at: string
 	updated_at: string
 }
 

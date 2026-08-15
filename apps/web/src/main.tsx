@@ -8,6 +8,7 @@ import { restoreSession } from './lib/auth'
 import { initBackNavTracker } from './lib/back-nav-tracker'
 import { initIosPushNotifications } from './lib/ios-push'
 import { initIosPushDeepLink } from './lib/ios-push-deep-link'
+import { initIosPushTokenRegistration } from './lib/ios-push-token'
 import { initIosDeepLink } from './lib/ios-shell'
 import { consumeMagicLink } from './lib/magic-link'
 import { initPosthog } from './lib/posthog'
@@ -22,7 +23,12 @@ consumeMagicLink()
 // In the Tauri iOS shell, also register the maskin:// deep link so a magic-link
 // fragment delivered by the OS completes login. No-op in a plain browser.
 initIosDeepLink()
-// APNs registration on the iOS shell — no-op in a plain browser.
+// Wire the APNs device-token listener BEFORE kicking OS registration so a
+// fast handshake can't emit the event before this listener is attached. The
+// registration itself is async — `initIosPushTokenRegistration` returns as
+// soon as the listener + cold-start read are wired, without waiting on a
+// network round-trip. Both no-op in a plain browser.
+void initIosPushTokenRegistration()
 void initIosPushNotifications()
 initPosthog()
 // Attach the popstate listener at app boot, before any route module loads —

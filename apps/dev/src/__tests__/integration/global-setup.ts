@@ -120,7 +120,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
 	// Clean all data except the test actor
-	await sql`TRUNCATE session_logs, sessions, events, notifications, triggers, integrations, relationships, read_state, subscriptions, objects, workspace_members, workspaces CASCADE`
+	await sql`TRUNCATE session_logs, sessions, events, notifications, triggers, integrations, relationships, read_state, subscriptions, objects, workspace_members, workspaces, apns_device_tokens CASCADE`
 })
 
 afterAll(async () => {

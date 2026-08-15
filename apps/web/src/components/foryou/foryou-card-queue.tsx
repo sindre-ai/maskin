@@ -26,7 +26,12 @@ interface ForYouCardQueueProps {
 
 function noop() {}
 
-export function ForYouCardQueue({ workspaceId, queue, sparseComposer, focusKey }: ForYouCardQueueProps) {
+export function ForYouCardQueue({
+	workspaceId,
+	queue,
+	sparseComposer,
+	focusKey,
+}: ForYouCardQueueProps) {
 	const [currentKey, setCurrentKey] = useState<string | null>(null)
 	const [processedKeys, setProcessedKeys] = useState<Set<string>>(() => new Set())
 	// Items whose deferred mark-read/mark-unread mutation (use-swipe-to-mark-read's

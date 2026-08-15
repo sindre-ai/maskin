@@ -210,6 +210,39 @@ export const slackUserLinks = pgTable(
 	(t) => [primaryKey({ columns: [t.slackTeamId, t.slackUserId] })],
 )
 
+// ── APNs Device Tokens ──────────────────────────────────────────────────────
+// Per-device APNs push tokens for the iOS Tauri shell. Written by
+// PATCH /api/apns-tokens on every launch of the shell (the client
+// re-registers unconditionally so a silently invalidated token heals on
+// the next foreground). Keyed by token — a device holds one at a time,
+// and the token uniquely identifies device + bundle + environment. See
+// drizzle/0054_apns_device_tokens.sql.
+
+export const apnsDeviceTokens = pgTable(
+	'apns_device_tokens',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		token: text('token').notNull(),
+		environment: text('environment').notNull().$type<'sandbox' | 'production'>(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		unique('apns_device_tokens_token_uniq').on(t.token),
+		index('apns_device_tokens_actor_id_idx').on(t.actorId),
+		check(
+			'apns_device_tokens_environment_check',
+			sql`${t.environment} IN ('sandbox', 'production')`,
+		),
+	],
+)
+
+export type ApnsDeviceToken = typeof apnsDeviceTokens.$inferSelect
+export type NewApnsDeviceToken = typeof apnsDeviceTokens.$inferInsert
+
 // ── Triggers ────────────────────────────────────────────────────────────────
 
 export const triggers = pgTable('triggers', {
