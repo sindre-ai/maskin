@@ -16,12 +16,17 @@
  * Environment:
  *   ANTHROPIC_ADMIN_API_KEY  (required)  Anthropic Admin API key
  *   OPENROUTER_API_KEY       (required)  OpenRouter API key
+ *   POSTHOG_API_KEY          (optional)  PostHog project key. When unset,
+ *                                        `quota_alert_fired` events are not
+ *                                        emitted (poll otherwise unchanged).
  *   ANTHROPIC_WEEKLY_CEILING (optional)  Weekly ceiling in USD  [default: 1000]
  *   ANTHROPIC_5H_CEILING     (optional)  5h rolling ceiling in USD  [default: 150]
  *   THRESHOLD_PCT            (optional)  Alert threshold %  [default: 80]
  */
 
 import { env } from 'node:process'
+
+import { captureQuotaAlerts, generatePollerRunId } from './posthog.ts'
 
 /* -------------------------------------------------------------------------- */
 /*  Logger                                                                    */
@@ -55,6 +60,13 @@ export interface QuotaEntry {
 	limit: number
 	headroom_pct: number
 	exceeded: boolean
+	/**
+	 * When the underlying provider window resets. Populated from Anthropic's
+	 * `period_end` per metric; `null` for OpenRouter (no equivalent API field).
+	 * Omitted entirely when `computeQuota` is called without a reset time
+	 * (preserves the pre-T3 shape for callers that don't care).
+	 */
+	reset_at?: string | null
 }
 
 export interface PollResult {
@@ -139,15 +151,19 @@ async function fetchAnthropicQuotas(
 	}
 
 	const usageMap = new Map<string, number>()
+	const resetMap = new Map<string, string | null>()
 	for (const entry of report.usage) {
 		usageMap.set(entry.metric, entry.value)
+		resetMap.set(entry.metric, entry.period_end ?? null)
 	}
 
 	const weeklyUsed = usageMap.get('total_usage_7d') ?? usageMap.get('total_usage') ?? 0
 	const fiveHourUsed = usageMap.get('total_usage_5h') ?? usageMap.get('usage_5h') ?? 0
+	const weeklyReset = resetMap.get('total_usage_7d') ?? resetMap.get('total_usage') ?? null
+	const fiveHourReset = resetMap.get('total_usage_5h') ?? resetMap.get('usage_5h') ?? null
 
-	const claude_weekly = computeQuota(weeklyUsed, weeklyCeiling)
-	const claude_5h_overage = computeQuota(fiveHourUsed, fiveHourCeiling)
+	const claude_weekly = computeQuota(weeklyUsed, weeklyCeiling, weeklyReset)
+	const claude_5h_overage = computeQuota(fiveHourUsed, fiveHourCeiling, fiveHourReset)
 
 	return { claude_weekly, claude_5h_overage }
 }
@@ -239,7 +255,9 @@ async function fetchOpenRouterQuota(
 
 	const used = data.credits_used
 	const limit = data.credits_limit
-	const openrouter_daily = computeQuota(used, limit)
+	// OpenRouter's credits endpoint doesn't expose a window-reset timestamp,
+	// so `reset_at` is null for this route (still included in the event shape).
+	const openrouter_daily = computeQuota(used, limit, null)
 
 	return { openrouter_daily }
 }
@@ -248,14 +266,18 @@ async function fetchOpenRouterQuota(
 /*  Quota helpers                                                             */
 /* -------------------------------------------------------------------------- */
 
-function computeQuota(used: number, limit: number): QuotaEntry {
+function computeQuota(used: number, limit: number, resetAt?: string | null): QuotaEntry {
 	const headroom_pct = limit > 0 ? roundTo1((used / limit) * 100) : 0
-	return {
+	const entry: QuotaEntry = {
 		used: roundTo2(used),
 		limit: roundTo2(limit),
 		headroom_pct,
 		exceeded: headroom_pct >= THRESHOLD_PCT,
 	}
+	if (resetAt !== undefined) {
+		entry.reset_at = resetAt
+	}
+	return entry
 }
 
 function roundTo1(n: number): number {
@@ -279,6 +301,7 @@ function readEnvFloat(key: string, fallback: number): number {
 
 const ANTHROPIC_ADMIN_API_KEY = env.ANTHROPIC_ADMIN_API_KEY
 const OPENROUTER_API_KEY = env.OPENROUTER_API_KEY
+const POSTHOG_API_KEY = env.POSTHOG_API_KEY
 const ANTHROPIC_WEEKLY_CEILING = readEnvFloat('ANTHROPIC_WEEKLY_CEILING', 1000)
 const ANTHROPIC_5H_CEILING = readEnvFloat('ANTHROPIC_5H_CEILING', 150)
 const THRESHOLD_PCT = readEnvFloat('THRESHOLD_PCT', 80)
@@ -356,6 +379,17 @@ async function main(): Promise<PollResult> {
 			threshold_pct: THRESHOLD_PCT,
 		})
 	}
+
+	// Fire `quota_alert_fired` per route with quota data (AC-U1). Fail-open —
+	// captureQuotaAlerts logs any HTTP/network error and swallows it, so a
+	// PostHog outage never fails a poll. No-op when POSTHOG_API_KEY is unset.
+	await captureQuotaAlerts({
+		quotas,
+		thresholdPct: THRESHOLD_PCT,
+		pollTimestamp: result.timestamp,
+		pollerRunId: generatePollerRunId(),
+		apiKey: POSTHOG_API_KEY,
+	})
 
 	logger.info('Poll complete', {
 		routes_checked: Object.keys(quotas).length,
