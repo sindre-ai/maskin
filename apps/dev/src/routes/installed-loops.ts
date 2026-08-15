@@ -508,7 +508,13 @@ app.openapi(installLoopRoute, async (c) => {
 					type: 'loop',
 					title: loop.name,
 					content: loop.description,
-					status: 'running',
+					// A marketplace install lands inert on the lifecycle ladder — same
+					// precedent as provisioned integrations forced to `inactive`. Task 2
+					// of bet/loop-lifecycle-status-ladder extends the loop status enum
+					// with `pilot`; until it lands, `GET /api/loops` coerces unknown
+					// statuses to `'running'` on read (see loops.ts) so this doesn't
+					// 500 the endpoint in the gap.
+					status: 'pilot',
 					createdBy: actorId,
 					metadata: {
 						installed_from_marketplace_loop_id: loopId,

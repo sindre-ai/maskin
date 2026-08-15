@@ -1,6 +1,11 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, objects, triggers as triggersTable } from '@maskin/db/schema'
+import {
+	events,
+	objects,
+	relationships as relationshipsTable,
+	triggers as triggersTable,
+} from '@maskin/db/schema'
 import { and, sql as drizzleSql, eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createApiError, formatZodError } from '../../lib/errors'
@@ -12,7 +17,7 @@ import {
 	insertTrigger,
 	insertWorkspace,
 } from '../factories'
-import { jsonGet } from '../helpers'
+import { jsonGet, jsonRequest } from '../helpers'
 import { db, getTestActorId, sql } from './global-setup'
 
 // Load the routes lazily so vitest doesn't pull them in at module resolution
@@ -717,6 +722,196 @@ describe('Loops read API integration', () => {
 		const row = body.loops.find((l) => l.id === loop.id)
 		expect(row?.waitingOnViewer).toBe(true)
 		expect(row?.pill).toBe('waiting_on_you')
+	})
+})
+
+describe('POST /api/loops/promote-from-bet integration', () => {
+	let workspaceId: string
+	let actorId: string
+	let driverId: string
+
+	beforeEach(async () => {
+		actorId = getTestActorId()
+		const ws = await insertWorkspace(db, actorId)
+		workspaceId = ws.id
+		const driver = await insertActor(db)
+		driverId = driver.id
+	})
+
+	async function seedSucceededBet(overrides?: Record<string, unknown>) {
+		return insertObject(db, workspaceId, actorId, {
+			type: 'bet',
+			status: 'succeeded',
+			title: 'Cold outbound',
+			content: '10 warm replies in 4 weeks',
+			driver: driverId,
+			...overrides,
+		})
+	}
+
+	it('creates a loop object at status=pilot carrying the bet driver and title/content', async () => {
+		const bet = await seedSucceededBet()
+		const app = makeApp(actorId)
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/loops/promote-from-bet',
+				{ betId: bet.id },
+				{ 'x-workspace-id': workspaceId },
+			),
+		)
+		expect(res.status).toBe(201)
+		const body = await res.json()
+
+		const [loopRow] = await db.select().from(objects).where(eq(objects.id, body.id))
+		if (!loopRow) throw new Error('loop row not created')
+		expect(loopRow.type).toBe('loop')
+		expect(loopRow.status).toBe('pilot')
+		expect(loopRow.driver).toBe(driverId)
+		expect(loopRow.title).toBe(bet.title)
+		expect(loopRow.content).toBe(bet.content)
+		const meta = loopRow.metadata as Record<string, unknown>
+		expect(meta.promoted_from_bet_id).toBe(bet.id)
+	})
+
+	it('writes a derived_from edge from loop → bet', async () => {
+		const bet = await seedSucceededBet()
+		const app = makeApp(actorId)
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/loops/promote-from-bet',
+				{ betId: bet.id },
+				{ 'x-workspace-id': workspaceId },
+			),
+		)
+		const body = await res.json()
+
+		const edges = await db
+			.select()
+			.from(relationshipsTable)
+			.where(
+				and(
+					eq(relationshipsTable.sourceId, body.id),
+					eq(relationshipsTable.targetId, bet.id),
+					eq(relationshipsTable.type, 'derived_from'),
+				),
+			)
+		expect(edges).toHaveLength(1)
+		expect(edges[0]?.sourceType).toBe('object')
+		expect(edges[0]?.targetType).toBe('object')
+	})
+
+	it('emits loop `created` and relationship `created` events on the audit log', async () => {
+		const bet = await seedSucceededBet()
+		const app = makeApp(actorId)
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/loops/promote-from-bet',
+				{ betId: bet.id },
+				{ 'x-workspace-id': workspaceId },
+			),
+		)
+		const body = await res.json()
+
+		const loopEvents = await db
+			.select()
+			.from(events)
+			.where(and(eq(events.entityType, 'loop'), eq(events.entityId, body.id)))
+		expect(loopEvents).toHaveLength(1)
+		expect(loopEvents[0]?.action).toBe('created')
+
+		const edgeEvents = await db.select().from(events).where(eq(events.entityType, 'relationship'))
+		expect(edgeEvents.length).toBeGreaterThanOrEqual(1)
+	})
+
+	it('overrides title/content and stores outcome fields on loop metadata when supplied', async () => {
+		const bet = await seedSucceededBet()
+		const app = makeApp(actorId)
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/loops/promote-from-bet',
+				{
+					betId: bet.id,
+					name: 'Outbound loop',
+					guarantee: 'Every prospect gets a follow-up within 24h',
+					outcomeMetric: 'replies_per_week',
+					outcomeTarget: '10',
+					killThreshold: 0.4,
+					entryCondition: 'A new prospect enters the queue',
+					closeCondition: 'A meeting is booked',
+					humanDecisionPoints: 1,
+				},
+				{ 'x-workspace-id': workspaceId },
+			),
+		)
+		const body = await res.json()
+
+		const [loopRow] = await db.select().from(objects).where(eq(objects.id, body.id))
+		if (!loopRow) throw new Error('loop row not created')
+		expect(loopRow.title).toBe('Outbound loop')
+		expect(loopRow.content).toBe('Every prospect gets a follow-up within 24h')
+		const meta = loopRow.metadata as Record<string, unknown>
+		expect(meta.outcome_metric).toBe('replies_per_week')
+		expect(meta.outcome_target).toBe('10')
+		expect(meta.kill_threshold).toBe(0.4)
+		expect(meta.entry_condition).toBe('A new prospect enters the queue')
+		expect(meta.close_condition).toBe('A meeting is booked')
+		expect(meta.human_decision_points).toBe(1)
+	})
+
+	it('409s when the bet is not in `succeeded` status — no loop row created', async () => {
+		const bet = await insertObject(db, workspaceId, actorId, {
+			type: 'bet',
+			status: 'active',
+			title: 'Not yet succeeded',
+			driver: driverId,
+		})
+		const app = makeApp(actorId)
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/loops/promote-from-bet',
+				{ betId: bet.id },
+				{ 'x-workspace-id': workspaceId },
+			),
+		)
+		expect(res.status).toBe(409)
+
+		const loops = await db
+			.select()
+			.from(objects)
+			.where(and(eq(objects.workspaceId, workspaceId), eq(objects.type, 'loop')))
+		expect(loops).toHaveLength(0)
+	})
+
+	it('404s when the bet id belongs to a different workspace — no cross-workspace leak', async () => {
+		const otherActor = await insertActor(db)
+		const otherWs = await insertWorkspace(db, otherActor.id)
+		const foreignBet = await insertObject(db, otherWs.id, otherActor.id, {
+			type: 'bet',
+			status: 'succeeded',
+			title: 'Foreign bet',
+			driver: otherActor.id,
+		})
+
+		const app = makeApp(actorId)
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/loops/promote-from-bet',
+				{ betId: foreignBet.id },
+				{ 'x-workspace-id': workspaceId },
+			),
+		)
+		expect(res.status).toBe(404)
 	})
 })
 
