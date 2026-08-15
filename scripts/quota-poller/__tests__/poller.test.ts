@@ -347,7 +347,7 @@ describe('quota poller — integration', () => {
 			expect(quota).toHaveProperty('limit')
 			expect(typeof quota.limit).toBe('number')
 			expect(quota).toHaveProperty('headroom_pct')
-			expect(typeof quota.headroom_pct).toBe('number')
+			expect(quota.headroom_pct === null || typeof quota.headroom_pct === 'number').toBe(true)
 			expect(quota).toHaveProperty('exceeded')
 			expect(typeof quota.exceeded).toBe('boolean')
 		}
@@ -399,7 +399,7 @@ describe('quota poller — integration', () => {
 	/*  Edge cases                                                         */
 	/* ------------------------------------------------------------------ */
 
-	it('edge: zero limit produces zero headroom_pct and does not crash', async () => {
+	it('edge: zero limit produces null headroom_pct and does not crash', async () => {
 		mockFetch(
 			{
 				data: anthropicResponse([{ metric: 'total_usage_7d', value: 100 }]),
@@ -409,9 +409,10 @@ describe('quota poller — integration', () => {
 
 		const result = await poller.main()
 
-		// OpenRouter with 0 limit — computeQuota uses limit > 0 ? roundTo1((used / limit) * 100) : 0
+		// OpenRouter with 0 limit — a route without a ceiling can't compute headroom, so
+		// headroom_pct is null and exceeded stays false (null routes don't taint any_exceeded).
 		expect(result.quotas.openrouter_daily).toBeDefined()
-		expect(result.quotas.openrouter_daily.headroom_pct).toBe(0)
+		expect(result.quotas.openrouter_daily.headroom_pct).toBeNull()
 		expect(result.quotas.openrouter_daily.exceeded).toBe(false)
 	})
 

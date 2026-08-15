@@ -60,7 +60,7 @@ const logger = {
 export interface QuotaEntry {
 	used: number
 	limit: number
-	headroom_pct: number
+	headroom_pct: number | null
 	exceeded: boolean
 }
 
@@ -256,12 +256,12 @@ async function fetchOpenRouterQuota(
 /* -------------------------------------------------------------------------- */
 
 function computeQuota(used: number, limit: number): QuotaEntry {
-	const headroom_pct = limit > 0 ? roundTo1((used / limit) * 100) : 0
+	const headroom_pct = limit > 0 ? roundTo1((used / limit) * 100) : null
 	return {
 		used: roundTo2(used),
 		limit: roundTo2(limit),
 		headroom_pct,
-		exceeded: headroom_pct >= THRESHOLD_PCT,
+		exceeded: headroom_pct !== null && headroom_pct >= THRESHOLD_PCT,
 	}
 }
 
