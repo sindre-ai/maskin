@@ -18,6 +18,8 @@ import {
 	QUICK_REPLY_CHIPS,
 	classifyCardKind,
 } from '@/lib/foryou-card-kind'
+import { DECISION_REVERSE_WINDOW_MS } from '@/lib/foryou-decision'
+import { isValidRequestDecisionMetadata } from '@maskin/shared'
 import { Link } from '@tanstack/react-router'
 import { CheckIcon, X } from 'lucide-react'
 import {
@@ -30,12 +32,6 @@ import {
 	useState,
 } from 'react'
 import { toast } from 'sonner'
-
-// Honest, short reversible window for a decision commit — long enough to read
-// the receipt and change your mind. Not the mockup's fabricated "Reversible
-// for 2h" — a real durable multi-hour window needs a backend pending-decision
-// table this canary doesn't have.
-const DECISION_REVERSE_WINDOW_MS = 6000
 
 export function itemQueueKey(item: UnreadItem): string {
 	return `${item.entity_type}:${item.entity_id}`
@@ -91,18 +87,31 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 
 		const cardKind: CardKind = classifyCardKind(item)
 
+		// Schema-compliance flag on both events. UnreadItem is the pre-Stage-1
+		// thread payload, which carries no notification metadata — so this
+		// resolves to `false` today (baseline per T7 DoD #5). Once T5/T6 pipe
+		// a notification's metadata onto the item, the same helper will flip
+		// schema-compliant asks to `true` without touching call sites here.
+		const notificationMetadata = (item as { notification_metadata?: unknown }).notification_metadata
+		const schemaValid = isValidRequestDecisionMetadata(notificationMetadata)
+
 		const impressionFiredRef = useRef(false)
 		useEffect(() => {
 			if (impressionFiredRef.current) return
 			impressionFiredRef.current = true
-			trackForyouCardShown({ card_kind: cardKind, card_id: objectId })
-		}, [cardKind, objectId])
+			trackForyouCardShown({ card_kind: cardKind, card_id: objectId, schema_valid: schemaValid })
+		}, [cardKind, objectId, schemaValid])
 
 		const emitAction = useCallback(
 			(actionId: string) => {
-				trackForyouCardAction({ card_kind: cardKind, card_id: objectId, action_id: actionId })
+				trackForyouCardAction({
+					card_kind: cardKind,
+					card_id: objectId,
+					action_id: actionId,
+					schema_valid: schemaValid,
+				})
 			},
-			[cardKind, objectId],
+			[cardKind, objectId, schemaValid],
 		)
 
 		const markRead = useMarkRead(workspaceId)

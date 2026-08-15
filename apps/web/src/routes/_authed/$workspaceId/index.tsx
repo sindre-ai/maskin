@@ -18,6 +18,7 @@ import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { useBets } from '@/hooks/use-bets'
+import { useForYouNotifications } from '@/hooks/use-notifications'
 import { useMarkRead, useUnread } from '@/hooks/use-subscriptions'
 import {
 	useUpdateUserDisplaySettings,
@@ -62,8 +63,11 @@ export function feedModeToForyouViewMode(
 function ForYouRedesign() {
 	const { workspaceId } = useWorkspace()
 	const { data, isLoading } = useUnread(workspaceId, undefined, true)
+	const { data: attentionNotifications, isLoading: attentionLoading } =
+		useForYouNotifications(workspaceId)
 	const { data: bets, isLoading: betsLoading } = useBets(workspaceId)
 	const items = data?.items ?? []
+	const notifications = attentionNotifications ?? []
 	const markRead = useMarkRead(workspaceId)
 	const { open: composerOpen, setOpen: setComposerOpen } = useNewConversationComposer()
 
@@ -261,7 +265,7 @@ function ForYouRedesign() {
 		/>
 	)
 
-	if (isLoading || betsLoading) {
+	if (isLoading || betsLoading || attentionLoading) {
 		return (
 			<div className="flex flex-1 min-w-0 flex-col space-y-4" data-testid="foryou-redesign-root">
 				<CardSkeleton />
@@ -281,12 +285,6 @@ function ForYouRedesign() {
 		) : null
 
 	const isSparse = filteredRegular.length + onboardingItems.length < 3
-	const sparseComposerNode = isSparse ? (
-		<SparseComposer
-			itemsCount={filteredRegular.length + onboardingItems.length}
-			onFocusChange={setComposerFocused}
-		/>
-	) : null
 
 	return (
 		<>
@@ -337,17 +335,18 @@ function ForYouRedesign() {
 							))}
 						</div>
 					) : (
-						<ForYouCardQueue
-							workspaceId={workspaceId}
-							queue={queue}
-							sparseComposer={sparseComposerNode}
-						/>
+						<ForYouCardQueue workspaceId={workspaceId} notifications={notifications} />
 					)}
 					{mode === 'list' && typeFilter === 'mentions' && filteredRegular.length === 0 && (
 						<p className="py-10 text-center text-sm text-muted-foreground">No unread mentions.</p>
 					)}
-					{mode === 'list' && sparseComposerNode ? (
-						<div className="mt-4">{sparseComposerNode}</div>
+					{isSparse ? (
+						<div className="mt-4">
+							<SparseComposer
+								itemsCount={filteredRegular.length + onboardingItems.length}
+								onFocusChange={setComposerFocused}
+							/>
+						</div>
 					) : null}
 				</div>
 			</div>

@@ -553,12 +553,39 @@ export const notifications = pgTable(
 		sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'set null' }),
 		status: text('status').notNull(),
 		resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+		// Wall-clock deadline after which the expiry sweep applies `defaultAction`
+		// and writes the outcome as a comment on the underlying object. NULL means
+		// the notification never expires (baseline behaviour before this column).
+		expiresAt: timestamp('expires_at', { withTimezone: true }),
+		// Fallback option key from metadata.options[].key that the sweep resolves to
+		// when `expires_at` elapses without a user decision. NULL when there is no
+		// safe default and the notification should keep waiting past its deadline.
+		defaultAction: text('default_action'),
+		// Wall-clock time at which the lifecycle reaper should wake the paused
+		// source session (deferred replacement for the previous inline wake).
+		// NULL for notifications that don't pause a session.
+		dispatchAt: timestamp('dispatch_at', { withTimezone: true }),
+		// Set to true once the reaper has claimed and dispatched the wake — keeps
+		// the partial index on `dispatch_at` small and prevents the same row from
+		// being dispatched twice under contention.
+		wakeDispatched: boolean('wake_dispatched').notNull().default(false),
 		createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
 	},
 	(t) => [
 		index('notifications_ws_status_idx').on(t.workspaceId, t.status),
 		index('notifications_target_actor_idx').on(t.targetActorId, t.status),
+		// Reaper scan path for the deferred-wake loop. Partial so the index only
+		// carries rows the reaper still has to act on. Built CONCURRENTLY in 0054.
+		index('notifications_dispatch_at_pending_idx')
+			.on(t.dispatchAt)
+			.where(sql`${t.dispatchAt} IS NOT NULL AND ${t.wakeDispatched} = false`),
+		// Expiry sweep scan path. Partial so only the still-open cards
+		// (`pending` or `seen`) with a deadline are in the index. Built
+		// CONCURRENTLY in 0055.
+		index('notifications_expires_at_idx')
+			.on(t.expiresAt)
+			.where(sql`${t.expiresAt} IS NOT NULL AND ${t.status} IN ('pending','seen')`),
 	],
 )
 

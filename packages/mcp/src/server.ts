@@ -4624,6 +4624,39 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
+		'respond_notification',
+		{
+			description: tools.respond_notification.description,
+			inputSchema: tools.respond_notification.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			// `?dispatch=immediate` is required for programmatic (agent) callers.
+			// Without it the API defers the source-agent wake by ~6s to preserve
+			// the UI's reverse window — but an agent responding via MCP has no
+			// reverse window and expects the source agent to run right away.
+			// The 6s delay would leave the MCP caller staring at a resolved
+			// notification while the actual continuation hasn't started.
+			const result = await apiCall(
+				config,
+				'POST',
+				`/api/notifications/${args.id}/respond?dispatch=immediate`,
+				{ response: args.response },
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: meta(
+					'respond_notification',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
 		'delete_notification',
 		{
 			description: tools.delete_notification.description,

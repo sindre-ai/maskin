@@ -77,6 +77,7 @@ const ALL_TOOL_NAMES = [
 	'list_notifications',
 	'get_notification',
 	'update_notification',
+	'respond_notification',
 	'delete_notification',
 	'subscribe',
 	'unsubscribe',

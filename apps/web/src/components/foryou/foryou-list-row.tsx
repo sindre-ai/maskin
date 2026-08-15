@@ -1,3 +1,4 @@
+import { RelativeTime } from '@/components/shared/relative-time'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
 import type { UnreadItem } from '@/lib/api'
@@ -45,6 +46,12 @@ export function ForYouListRow({ workspaceId, item }: ForYouListRowProps) {
 				{type ? <TypeBadge type={type} /> : null}
 				{item.object?.status ? <StatusBadge status={item.object.status} /> : null}
 			</span>
+			{item.latest_activity_at ? (
+				<RelativeTime
+					date={item.latest_activity_at}
+					className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground"
+				/>
+			) : null}
 		</Link>
 	)
 }
