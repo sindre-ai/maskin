@@ -17,6 +17,7 @@ import { logger } from './lib/logger'
 import { AgentStorageManager } from './services/agent-storage'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { LoopVersionPusher } from './services/loop-version-pusher'
+import { OrphanThreadDetector } from './services/orphan-thread-detector'
 import { RuntimeTelemetry } from './services/runtime-telemetry'
 import { SessionDispatchQueue } from './services/session-dispatch-queue'
 import { SessionDispatcher } from './services/session-dispatcher'
@@ -122,6 +123,10 @@ logger.info('Webhook deliveries reconciler started')
 const loopVersionPusher = new LoopVersionPusher(db, agentStorage)
 loopVersionPusher.start()
 logger.info('Loop version pusher started')
+
+const orphanThreadDetector = new OrphanThreadDetector(db)
+orphanThreadDetector.start()
+logger.info('Orphan thread detector started')
 
 // Session dispatch queue absorbs backpressure when no agent-server has
 // capacity and retries failed dispatches. In production the SessionDispatcher
