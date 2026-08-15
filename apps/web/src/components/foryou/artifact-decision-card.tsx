@@ -42,7 +42,17 @@ interface RendererOption {
 	tone: 'primary' | 'secondary'
 }
 
+// A notification is "unresolved" only when it's still awaiting the human — any
+// terminal status (resolved/dismissed/expired) means the decision has already
+// been recorded, so we suppress the amber decision block. Without this gate a
+// resolved card that stays in the Decision needed bucket would re-render its
+// pending controls on refetch and invite a duplicate response.
+function isNotificationUnresolved(notification: NotificationResponse): boolean {
+	return notification.status === 'pending' || notification.status === 'seen'
+}
+
 function readOptions(notification: NotificationResponse): RendererOption[] {
+	if (!isNotificationUnresolved(notification)) return []
 	const metadata = (notification.metadata ?? {}) as Record<string, unknown>
 	const raw = Array.isArray(metadata.options) ? (metadata.options as OptionSource[]) : []
 	const mapped: RendererOption[] = []
