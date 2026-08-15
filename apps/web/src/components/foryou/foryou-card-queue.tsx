@@ -1,6 +1,7 @@
 import { EmptyState } from '@/components/shared/empty-state'
 import { Button } from '@/components/ui/button'
 import { useBulkRespondNotifications, useRespondNotification } from '@/hooks/use-notifications'
+import { trackForyouCardShown } from '@/lib/analytics'
 import type { NotificationResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import {
@@ -10,9 +11,11 @@ import {
 	bulkResponseFor,
 	groupNotifications,
 } from '@/lib/foryou-buckets'
+import type { CardKind } from '@/lib/foryou-card-kind'
+import { isValidRequestDecisionMetadata } from '@maskin/shared'
 import { Link } from '@tanstack/react-router'
 import { CheckIcon, ChevronDown } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { ArtifactDecisionCard, readArtifactKind } from './artifact-decision-card'
 
@@ -114,6 +117,19 @@ function GroupCard({ workspaceId, group }: GroupCardProps) {
 
 	const isGrouped = group.items.length > 1
 	const primary = group.primary
+
+	// Decision-bucket items are what the bet ships against; everything else
+	// (Waiting / FYI / Handled) still surfaces in the feed and gets counted
+	// so the schema-compliance ratio stays honest across the whole queue.
+	const cardKind: CardKind = group.bucket === 'decision' ? 'decision' : 'thread'
+	const schemaValid = isValidRequestDecisionMetadata(primary.metadata)
+
+	const impressionFiredRef = useRef(false)
+	useEffect(() => {
+		if (impressionFiredRef.current) return
+		impressionFiredRef.current = true
+		trackForyouCardShown({ card_kind: cardKind, card_id: group.key, schema_valid: schemaValid })
+	}, [cardKind, group.key, schemaValid])
 	const metadata = (primary.metadata ?? {}) as Record<string, unknown>
 	const asked = typeof metadata.asked === 'string' ? metadata.asked : null
 	const recommendation =

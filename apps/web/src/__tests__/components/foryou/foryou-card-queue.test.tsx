@@ -10,11 +10,20 @@ vi.mock('@tanstack/react-router', async () => {
 
 const bulkRespondMutate = vi.fn()
 const singleRespondMutate = vi.fn()
+const trackForyouCardShownMock = vi.fn()
 
 vi.mock('@/hooks/use-notifications', () => ({
 	useBulkRespondNotifications: () => ({ mutate: bulkRespondMutate, isPending: false }),
 	useRespondNotification: () => ({ mutate: singleRespondMutate, isPending: false }),
 }))
+
+vi.mock('@/lib/analytics', async () => {
+	const actual = await vi.importActual<typeof import('@/lib/analytics')>('@/lib/analytics')
+	return {
+		...actual,
+		trackForyouCardShown: (...args: unknown[]) => trackForyouCardShownMock(...args),
+	}
+})
 
 vi.mock('@/hooks/use-events', () => ({
 	useCreateComment: () => ({ mutate: vi.fn(), isPending: false }),
@@ -302,5 +311,99 @@ describe('ForYouCardQueue', () => {
 			{ id: 'solo', response: 'approve' },
 			expect.any(Object),
 		)
+	})
+
+	describe('foryou_card_shown impression', () => {
+		it('fires once per rendered group with schema_valid=true when the ask carries a request_decision payload', () => {
+			const decision = buildNotification({
+				id: 'n-schema-ok',
+				objectId: 'obj-schema-ok',
+				title: 'Approve the send',
+				metadata: {
+					asked: 'Send the reply now?',
+					found: 'Draft is ready and matches the recipient tone.',
+					recommendation: 'Send it',
+					options: [
+						{ label: 'Send', value: 'send', default: true },
+						{ label: 'Hold', value: 'hold' },
+					],
+				},
+			})
+
+			render(<ForYouCardQueue workspaceId="ws-1" notifications={[decision]} />)
+
+			expect(trackForyouCardShownMock).toHaveBeenCalledTimes(1)
+			expect(trackForyouCardShownMock).toHaveBeenCalledWith({
+				card_kind: 'decision',
+				card_id: 'decision:obj-schema-ok',
+				schema_valid: true,
+			})
+		})
+
+		it('marks pre-request_decision asks as schema_valid=false while still counting the impression', () => {
+			const legacy = buildNotification({
+				id: 'n-legacy',
+				objectId: 'obj-legacy',
+				title: 'Legacy ask',
+				metadata: {
+					options: [{ label: 'Approve', value: 'approve', default: true }],
+				},
+			})
+
+			render(<ForYouCardQueue workspaceId="ws-1" notifications={[legacy]} />)
+
+			expect(trackForyouCardShownMock).toHaveBeenCalledTimes(1)
+			expect(trackForyouCardShownMock).toHaveBeenCalledWith({
+				card_kind: 'decision',
+				card_id: 'decision:obj-legacy',
+				schema_valid: false,
+			})
+		})
+
+		it('non-decision buckets emit the impression as thread', () => {
+			const now = Date.now()
+			const fyi = buildNotification({
+				id: 'n-fyi',
+				type: 'good_news',
+				objectId: 'obj-fyi',
+				metadata: { attention_needed: true },
+			})
+			const handled = buildNotification({
+				id: 'n-handled',
+				status: 'resolved',
+				objectId: 'obj-handled',
+				resolvedAt: new Date(now - 60_000).toISOString(),
+			})
+
+			render(<ForYouCardQueue workspaceId="ws-1" notifications={[fyi, handled]} />)
+
+			const kinds = trackForyouCardShownMock.mock.calls.map((c) => c[0].card_kind)
+			expect(kinds).toEqual(expect.arrayContaining(['thread']))
+			expect(kinds.every((k) => k === 'thread')).toBe(true)
+			expect(trackForyouCardShownMock).toHaveBeenCalledTimes(2)
+		})
+
+		it('collapsed same-object group fires one impression, not one per notification', () => {
+			const objectId = 'obj-batch'
+			const first = buildNotification({
+				id: 'batch-1',
+				objectId,
+				metadata: { options: [{ label: 'Send', value: 'send', default: true }] },
+				updatedAt: '2026-08-13T10:05:00Z',
+			})
+			const second = buildNotification({
+				id: 'batch-2',
+				objectId,
+				metadata: { options: [{ label: 'Send', value: 'send', default: true }] },
+				updatedAt: '2026-08-13T10:04:00Z',
+			})
+
+			render(<ForYouCardQueue workspaceId="ws-1" notifications={[first, second]} />)
+
+			expect(trackForyouCardShownMock).toHaveBeenCalledTimes(1)
+			expect(trackForyouCardShownMock).toHaveBeenCalledWith(
+				expect.objectContaining({ card_id: `decision:${objectId}`, card_kind: 'decision' }),
+			)
+		})
 	})
 })
