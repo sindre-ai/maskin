@@ -38,6 +38,7 @@ import objectsRoutes from './routes/objects'
 import publicBetStrategistRoutes from './routes/public-bet-strategist'
 import publicLandingEventsRoutes from './routes/public-landing-events'
 import relationshipsRoutes from './routes/relationships'
+import sentryTestRoutes from './routes/sentry-test'
 import sessionsRoutes from './routes/sessions'
 import subscriptionsRoutes from './routes/subscriptions'
 import telemetryRoutes from './routes/telemetry'
@@ -189,7 +190,11 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	//     (per-IP rate-limited inside the handler).
 	//   - /api/internal/agent-servers/*: authenticated via the shared bearer
 	//     secret enforced inside the handler, not our API key.
+	//   - /api/sentry-test: mounted only when SENTRY_TEST_ENABLED=true; kept
+	//     unauthenticated so a fresh Sentry integration can be verified with a
+	//     plain curl from any environment where the flag is set.
 	const auth = authMiddleware(db)
+	const sentryTestEnabled = process.env.SENTRY_TEST_ENABLED === 'true'
 	app.use('/api/*', async (c, next) => {
 		const path = c.req.path
 		const method = c.req.method
@@ -202,6 +207,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		if (path === '/api/public/bet-strategist/drafts' && method === 'POST') return next()
 		if (path === '/api/public/bet-strategist/claim' && method === 'POST') return next()
 		if (/^\/api\/integrations\/[^/]+\/callback$/.test(path)) return next()
+		if (sentryTestEnabled && path === '/api/sentry-test') return next()
 
 		return auth(c, next)
 	})
@@ -258,6 +264,9 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/claude-oauth', claudeOauthRoutes)
 	app.route('/api/telemetry', telemetryRoutes)
 	app.route('/api/user-display-settings', userDisplaySettingsRoutes)
+	if (sentryTestEnabled) {
+		app.route('/api/sentry-test', sentryTestRoutes)
+	}
 
 	if (options.includeExtensions !== false) {
 		const moduleEnv = { db, notifyBridge, sessionManager, agentStorage, storageProvider }
