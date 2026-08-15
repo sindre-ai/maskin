@@ -432,3 +432,140 @@ describe('quota poller — integration', () => {
 		expect(result.quotas.claude_weekly.exceeded).toBe(false)
 	})
 })
+
+/* ------------------------------------------------------------------------ */
+/*  Missing API keys — must produce structured errors for all 3 quotas     */
+/*  and cause the CLI entry to exit 1. Runs in a separate describe with    */
+/*  vi.resetModules() so the poller re-reads the (cleared) env at import.  */
+/* ------------------------------------------------------------------------ */
+
+describe('quota poller — missing API keys', () => {
+	const originalAnthropic = process.env.ANTHROPIC_ADMIN_API_KEY
+	const originalOpenRouter = process.env.OPENROUTER_API_KEY
+
+	beforeEach(() => {
+		vi.stubGlobal('console', {
+			log: vi.fn(),
+			error: vi.fn(),
+			warn: vi.fn(),
+		})
+	})
+
+	afterEach(() => {
+		vi.unstubAllGlobals()
+	})
+
+	afterAll(() => {
+		if (originalAnthropic === undefined) {
+			Reflect.deleteProperty(process.env, 'ANTHROPIC_ADMIN_API_KEY')
+		} else {
+			process.env.ANTHROPIC_ADMIN_API_KEY = originalAnthropic
+		}
+		if (originalOpenRouter === undefined) {
+			Reflect.deleteProperty(process.env, 'OPENROUTER_API_KEY')
+		} else {
+			process.env.OPENROUTER_API_KEY = originalOpenRouter
+		}
+	})
+
+	async function loadPollerWith(env: Record<string, string | undefined>) {
+		vi.resetModules()
+		for (const [k, v] of Object.entries(env)) {
+			if (v === undefined) Reflect.deleteProperty(process.env, k)
+			else process.env[k] = v
+		}
+		return (await import('../poller')) as typeof import('../poller')
+	}
+
+	it('both keys missing: errors for claude_weekly, claude_5h_overage, openrouter_daily; no fetch calls', async () => {
+		const fetchMock = vi.fn()
+		vi.stubGlobal('fetch', fetchMock)
+
+		const poller = await loadPollerWith({
+			ANTHROPIC_ADMIN_API_KEY: '',
+			OPENROUTER_API_KEY: '',
+		})
+		const result = await poller.main()
+
+		expect(fetchMock).not.toHaveBeenCalled()
+		expect(Object.keys(result.quotas)).toHaveLength(0)
+		expect(result.any_exceeded).toBe(false)
+
+		const routes = result.errors.map((e) => e.route).sort()
+		expect(routes).toEqual(['claude_5h_overage', 'claude_weekly', 'openrouter_daily'])
+		for (const e of result.errors) {
+			expect(e.code).toBe('MISSING_API_KEY')
+			expect(e.message).toMatch(/environment variable is not set/)
+		}
+	})
+
+	it('only Anthropic key missing: errors for both claude quotas; OpenRouter is fetched', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn((url: string) => {
+				if (url.includes('openrouter.ai')) {
+					return Promise.resolve(jsonResponse(openRouterSuccess(100, 1000)))
+				}
+				return Promise.resolve(jsonResponse({}, 404))
+			}),
+		)
+
+		const poller = await loadPollerWith({
+			ANTHROPIC_ADMIN_API_KEY: undefined,
+			OPENROUTER_API_KEY: 'sk-or-test',
+		})
+		const result = await poller.main()
+
+		const routes = result.errors.map((e) => e.route).sort()
+		expect(routes).toEqual(['claude_5h_overage', 'claude_weekly'])
+		expect(result.errors.every((e) => e.code === 'MISSING_API_KEY')).toBe(true)
+		expect(result.quotas.openrouter_daily).toBeDefined()
+	})
+
+	it('only OpenRouter key missing: error for openrouter_daily; Anthropic is fetched', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn((url: string) => {
+				if (url.includes('api.anthropic.com')) {
+					return Promise.resolve(
+						jsonResponse(
+							anthropicResponse([
+								{ metric: 'total_usage_7d', value: 100 },
+								{ metric: 'total_usage_5h', value: 10 },
+							]),
+						),
+					)
+				}
+				return Promise.resolve(jsonResponse({}, 404))
+			}),
+		)
+
+		const poller = await loadPollerWith({
+			ANTHROPIC_ADMIN_API_KEY: 'sk-ant-test',
+			OPENROUTER_API_KEY: undefined,
+		})
+		const result = await poller.main()
+
+		expect(result.errors).toHaveLength(1)
+		expect(result.errors[0].route).toBe('openrouter_daily')
+		expect(result.errors[0].code).toBe('MISSING_API_KEY')
+		expect(result.quotas.claude_weekly).toBeDefined()
+		expect(result.quotas.claude_5h_overage).toBeDefined()
+	})
+
+	it('whitespace-only key values are treated as missing', async () => {
+		vi.stubGlobal('fetch', vi.fn())
+
+		const poller = await loadPollerWith({
+			ANTHROPIC_ADMIN_API_KEY: '   ',
+			OPENROUTER_API_KEY: '\t',
+		})
+		const result = await poller.main()
+
+		expect(result.errors.map((e) => e.code)).toEqual([
+			'MISSING_API_KEY',
+			'MISSING_API_KEY',
+			'MISSING_API_KEY',
+		])
+	})
+})
