@@ -509,7 +509,7 @@ export const tools = {
 	},
 	create_actor: {
 		description:
-			'Create a new actor (human or agent) and optionally add them to a workspace. Returns the actor details and API key (only shown once). If workspace_id is provided, the actor is added as a member with the given role — this is how to add a brand-new actor to a workspace as part of creating them. To add an already-existing actor to a workspace, use update_actor with workspace_id/role instead. If auto_create_workspace is true (default for humans), a new, empty workspace is created instead. For agents, set tools.mcpServers and/or attach_skill_ids so the agent has its MCP servers and skills from the start. attach_skill_ids requires workspace_id — with auto_create_workspace the new workspace has no existing skills, so any attach_skill_ids passed alongside it are ignored.',
+			'Create a new actor (human or agent) and optionally add them to a workspace. Returns the actor details and API key (only shown once). If workspace_id is provided, the actor is added as a member with the given role — this is how to add a brand-new actor to a workspace as part of creating them. To add an already-existing actor to a workspace, use update_actor with workspace_id/role instead. If auto_create_workspace is true (default for humans), a new, empty workspace is created instead. For agents, set tools.mcpServers and/or attach_skill_ids so the agent has its MCP servers and skills from the start. attach_skill_ids requires workspace_id — with auto_create_workspace the new workspace has no existing skills, so any attach_skill_ids passed alongside it are ignored. For agent actors, the response also includes a capability card (level Novice → Master, 5-dimension bars, and a ranked list of gaps that name the MCP tool that would close each one) so a freshly created agent shows how strong it already is and what to strengthen next.',
 		inputSchema: z.object({
 			type: z.enum(['human', 'agent']),
 			name: z.string().min(1).describe('Name of actor'),
@@ -644,7 +644,7 @@ export const tools = {
 	},
 	get_actor: {
 		description:
-			'Get an actor by ID — returns the full record including `description` (short one-liner), `system_prompt` / instructions (longer context on who the actor is and how to work with them), and `skills` (id + name of workspace skills attached to the actor). When a human is @mentioned on a comment, call this to pick up their instructions and tailor your reply.',
+			'Get an actor by ID — returns the full record including `description` (short one-liner), `system_prompt` / instructions (longer context on who the actor is and how to work with them), and `skills` (id + name of workspace skills attached to the actor). When a human is @mentioned on a comment, call this to pick up their instructions and tailor your reply. For agent actors, the response also includes a `capability` rating card (level Novice → Master, 5-dimension bars for Expertise/Skills/Connectors/Context/Autonomy, and a ranked list of gaps that name the MCP tool that would fix each one) so callers can see how strong the agent is and what to strengthen next.',
 		inputSchema: z.object({
 			id: z.string().uuid(),
 		}),

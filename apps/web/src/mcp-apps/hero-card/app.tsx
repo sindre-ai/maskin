@@ -17,6 +17,31 @@ interface HeroCardActor {
 	type: string | null
 }
 
+type CapabilityLevel = 'novice' | 'apprentice' | 'practitioner' | 'expert' | 'master'
+
+interface CapabilityDimension {
+	key: string
+	label: string
+	score: number
+	weight: number
+	reasons: string[]
+}
+
+interface CapabilityGap {
+	action: string
+	detail: string
+	dimension: string
+	toolHint?: string
+}
+
+interface AgentCapability {
+	version: 1
+	overall: { score: number; level: CapabilityLevel }
+	dimensions: CapabilityDimension[]
+	unresolvedPlaceholders: string[]
+	topGaps: CapabilityGap[]
+}
+
 interface HeroCardObject {
 	id: string
 	type: string
@@ -25,6 +50,7 @@ interface HeroCardObject {
 	driver: HeroCardActor | null
 	contextLine: string
 	badges?: string[]
+	capability?: AgentCapability | null
 }
 
 type HeroCardKind = 'single' | 'list' | 'empty'
@@ -114,6 +140,99 @@ function useHeroObjectHref(object: HeroCardObject): string | null {
 	return objectHref
 }
 
+const CAPABILITY_LEVEL_LABELS: Record<CapabilityLevel, string> = {
+	novice: 'Novice',
+	apprentice: 'Apprentice',
+	practitioner: 'Practitioner',
+	expert: 'Expert',
+	master: 'Master',
+}
+
+function capabilityLevelPillClass(level: CapabilityLevel): string {
+	const base = 'text-[10.5px] px-1.5 py-0.5 rounded-full font-medium'
+	switch (level) {
+		case 'master':
+			return `${base} bg-indigo-100 text-indigo-800`
+		case 'expert':
+			return `${base} bg-emerald-100 text-emerald-800`
+		case 'practitioner':
+			return `${base} bg-sky-100 text-sky-800`
+		case 'apprentice':
+			return `${base} bg-amber-100 text-amber-800`
+		default:
+			return `${base} bg-slate-100 text-slate-700`
+	}
+}
+
+function CapabilityDots({ score }: { score: number }) {
+	const clamped = Math.max(0, Math.min(5, Math.round(score)))
+	return (
+		<span className="inline-flex items-center gap-0.5" aria-label={`${clamped} out of 5`}>
+			{[0, 1, 2, 3, 4].map((i) => (
+				<span
+					key={i}
+					className={
+						i < clamped
+							? 'inline-block size-1.5 rounded-full bg-primary'
+							: 'inline-block size-1.5 rounded-full bg-border'
+					}
+				/>
+			))}
+		</span>
+	)
+}
+
+function CapabilityBlock({ capability }: { capability: AgentCapability }) {
+	const { overall, dimensions, topGaps } = capability
+	const levelLabel = CAPABILITY_LEVEL_LABELS[overall.level]
+	return (
+		<section className="flex flex-col gap-2 pt-2 border-t border-border" aria-label="Capability">
+			<div className="flex items-center gap-2">
+				<span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+					Capability
+				</span>
+				<span className={capabilityLevelPillClass(overall.level)}>{levelLabel}</span>
+				<span className="ml-auto font-mono text-[11px] text-muted-foreground tabular-nums">
+					{overall.score}/100
+				</span>
+			</div>
+			<ul className="flex flex-col gap-1 m-0 p-0 list-none">
+				{dimensions.map((dim) => (
+					<li key={dim.key} className="flex items-center gap-2 min-w-0">
+						<span className="text-[11.5px] text-foreground w-[74px] shrink-0">{dim.label}</span>
+						<CapabilityDots score={dim.score} />
+						<span className="text-[11px] text-muted-foreground truncate min-w-0">
+							{dim.reasons[0] ?? ''}
+						</span>
+					</li>
+				))}
+			</ul>
+			{topGaps.length > 0 ? (
+				<div className="flex flex-col gap-1 mt-1">
+					<span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+						Level up
+					</span>
+					<ul className="flex flex-col gap-1 m-0 p-0 list-none">
+						{topGaps.slice(0, 3).map((gap, i) => (
+							<li key={`${gap.dimension}-${i}`} className="flex flex-col gap-0.5 min-w-0">
+								<span className="text-[12px] font-medium text-foreground min-w-0 truncate">
+									{gap.action}
+									{gap.toolHint ? (
+										<span className="ml-1.5 font-mono text-[10.5px] text-muted-foreground">
+											{gap.toolHint}
+										</span>
+									) : null}
+								</span>
+								<span className="text-[11px] text-muted-foreground line-clamp-2">{gap.detail}</span>
+							</li>
+						))}
+					</ul>
+				</div>
+			) : null}
+		</section>
+	)
+}
+
 function HeroCardSingle({ object, toolName }: { object: HeroCardObject; toolName: string }) {
 	const callTool = useCallTool()
 	const href = useHeroObjectHref(object)
@@ -149,6 +268,7 @@ function HeroCardSingle({ object, toolName }: { object: HeroCardObject; toolName
 			<p className="text-[13px] text-muted-foreground leading-relaxed m-0 line-clamp-1">
 				{object.contextLine}
 			</p>
+			{object.capability ? <CapabilityBlock capability={object.capability} /> : null}
 			<div className="flex items-center gap-2.5 pt-2 border-t border-border mt-0.5">
 				{object.driver?.name &&
 					(object.driver.type !== 'agent' ? (
