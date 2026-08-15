@@ -1,11 +1,16 @@
 import { z } from '@hono/zod-openapi'
-import { actorListItemSchema, agentStateSchema, triggerResponseSchema } from '@maskin/shared'
+import {
+	actorListItemSchema,
+	agentStateSchema,
+	capabilitySchema,
+	triggerResponseSchema,
+} from '@maskin/shared'
 import { apiErrorSchema } from './errors'
 
 // Re-exported so existing route handlers keep their `from '../lib/openapi-schemas'`
 // import path; the canonical definitions live in `@maskin/shared` so the MCP
 // server and web client consume the same fields without redeclaring them.
-export { actorListItemSchema, agentStateSchema, triggerResponseSchema }
+export { actorListItemSchema, agentStateSchema, capabilitySchema, triggerResponseSchema }
 
 /**
  * JSON-compatible schema for JSONB fields in OpenAPI response schemas.
@@ -78,6 +83,7 @@ export const actorResponseSchema = z.object({
 	updatedAt: z.string().nullable(),
 	installedLoopId: z.string().uuid().nullable().optional(),
 	skills: z.array(actorSkillSchema).optional(),
+	capability: capabilitySchema.nullable().optional(),
 })
 
 export const actorWithKeySchema = actorResponseSchema.extend({
