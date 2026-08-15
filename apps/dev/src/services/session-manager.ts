@@ -13,6 +13,7 @@ import {
 	actors,
 	agentServers,
 	integrations,
+	loopOutputApprovals,
 	objects,
 	relationships,
 	sessionLogs,
@@ -77,6 +78,7 @@ import {
 	resolveLlmRoute,
 } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
+import { LoopExecutionBlockedError, resolveLoopExecutionGate } from '../lib/loop-execution-gate'
 import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
 import {
 	AgentServerAuthError,
@@ -374,6 +376,19 @@ export class SessionManager extends EventEmitter {
 	): Promise<typeof sessions.$inferSelect> {
 		const config = params.config ?? {}
 		const interactive = config.interactive === true
+
+		// Defence-in-depth: every trigger-owned session goes through the loop
+		// execution gate before the row is even inserted, so a trigger tied to
+		// a draft/paused/archived loop can't produce a session no matter which
+		// call site (TriggerRunner, POST /api/sessions, Claude backup retry)
+		// reaches this method. T1 gates the same set of statuses up-stream in
+		// TriggerRunner; this one guarantees the invariant regardless of caller.
+		const gate = await resolveLoopExecutionGate(this.db, workspaceId, params.triggerId)
+		if (gate.decision === 'block') {
+			if (gate.loopId) {
+				throw new LoopExecutionBlockedError(gate.loopId, gate.status ?? 'unknown')
+			}
+		}
 
 		const [session] = await this.db
 			.insert(sessions)
@@ -2332,6 +2347,13 @@ export class SessionManager extends EventEmitter {
 			})
 		}
 
+		await this.maybeEnqueueSupervisedApproval(session, { exitCode, failureReason }).catch((err) => {
+			logger.warn('Failed to enqueue supervised loop approval', {
+				sessionId,
+				error: String(err),
+			})
+		})
+
 		if (status === 'failed') {
 			await this.maybeRetryClaudeOAuthOnBackup({ session, failureReason, stdoutTail }).catch(
 				(err) =>
@@ -3456,6 +3478,16 @@ export class SessionManager extends EventEmitter {
 			})
 		}
 
+		await this.maybeEnqueueSupervisedApproval(updated, {
+			exitCode,
+			stoppedByUser,
+		}).catch((err) => {
+			logger.warn('Failed to enqueue supervised loop approval', {
+				sessionId,
+				error: String(err),
+			})
+		})
+
 		// Terminal system log is required for SSE /logs/stream clients to close.
 		const terminalLogMessage = stoppedByUser
 			? `Session ${status} — explicitly stopped, exit code not yet known`
@@ -3482,6 +3514,91 @@ export class SessionManager extends EventEmitter {
 
 		logger.info(`Remote session ${status}: ${sessionId}`, { exitCode, stoppedByUser })
 		return true
+	}
+
+	/**
+	 * Supervised-output gate. When a session's trigger belongs to a loop in
+	 * `supervised` status, hold its terminal output in T7's `loop_output_approvals`
+	 * queue instead of letting it fan out immediately. Idempotent per-session:
+	 * a stopped session's provisional terminal write and the agent-server's
+	 * later genuine `/complete` report both land here, but the second call is
+	 * a no-op because the first row already exists for `(loop_id, session_id)`
+	 * with `status = 'pending'`.
+	 *
+	 * Direct DB insert into T7's table (not an HTTP round-trip through
+	 * `POST /api/loop-approvals`) — same process, same transaction budget as
+	 * the terminal event insert above. Enqueue failure logs but never strands
+	 * the session; the caller wraps in `.catch`.
+	 */
+	private async maybeEnqueueSupervisedApproval(
+		session: typeof sessions.$inferSelect,
+		outcome: {
+			exitCode: number | null
+			stoppedByUser?: boolean
+			failureReason?: unknown
+		},
+	): Promise<void> {
+		if (!session.triggerId) return
+
+		const gate = await resolveLoopExecutionGate(this.db, session.workspaceId, session.triggerId)
+		if (gate.decision !== 'supervised' || !gate.loopId) return
+
+		// Skip re-enqueue when a row already exists for this (loop, session) —
+		// covers the double-report path (provisional stop then genuine
+		// completion). Cheap indexed lookup on
+		// (workspace_id, loop_id, status).
+		const [existing] = await this.db
+			.select({ id: loopOutputApprovals.id })
+			.from(loopOutputApprovals)
+			.where(
+				and(
+					eq(loopOutputApprovals.workspaceId, session.workspaceId),
+					eq(loopOutputApprovals.loopId, gate.loopId),
+					eq(loopOutputApprovals.sessionId, session.id),
+				),
+			)
+			.limit(1)
+		if (existing) return
+
+		// Payload mirrors T7's `safeMetadataSchema` envelope — the result blob
+		// verbatim plus a bounded excerpt of the action prompt so the queue UI
+		// has a legible summary line without the full container transcript.
+		const actionPromptExcerpt = (session.actionPrompt ?? '').slice(0, 500)
+		const payload: Record<string, unknown> = {
+			session_id: session.id,
+			exit_code: outcome.exitCode,
+			result: (session.result as Record<string, unknown> | null) ?? null,
+			action_prompt_excerpt: actionPromptExcerpt,
+			...(outcome.stoppedByUser === true ? { stopped_by_user: true } : {}),
+			...(outcome.failureReason ? { failure_reason: outcome.failureReason } : {}),
+		}
+
+		const [row] = await this.db
+			.insert(loopOutputApprovals)
+			.values({
+				workspaceId: session.workspaceId,
+				loopId: gate.loopId,
+				sessionId: session.id,
+				driverActorId: session.actorId,
+				payload,
+			})
+			.returning({ id: loopOutputApprovals.id })
+
+		if (!row) return
+
+		await this.db.insert(events).values({
+			workspaceId: session.workspaceId,
+			actorId: session.actorId,
+			action: 'created',
+			entityType: 'loop_output_approval',
+			entityId: row.id,
+			data: {
+				loop_id: gate.loopId,
+				session_id: session.id,
+				driver_actor_id: session.actorId,
+				status: 'pending',
+			},
+		})
 	}
 
 	/** Clear activeSessionId on any object linked to this session. */

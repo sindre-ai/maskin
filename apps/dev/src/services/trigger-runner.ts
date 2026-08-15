@@ -5,7 +5,25 @@ import { SAFE_METADATA_FIELD_NAME_RE, readChanges, reversePatch } from '@maskin/
 import { Cron } from 'croner'
 import { type SQL, and, eq, sql } from 'drizzle-orm'
 import { logger } from '../lib/logger'
+import { LoopExecutionBlockedError } from '../lib/loop-execution-gate'
 import type { SessionManager } from './session-manager'
+
+/**
+ * Session-creation errors thrown by `SessionManager.createSession` include a
+ * typed `LoopExecutionBlockedError` for the "trigger fired against a
+ * draft/paused/archived loop" case (T4 defence-in-depth gate). That's
+ * expected behaviour, not a failure — log at info instead of error so
+ * pausing a loop doesn't spew Sentry noise on every fire.
+ */
+function handleTriggerSessionCreationError(triggerName: string, err: unknown) {
+	if (err instanceof LoopExecutionBlockedError) {
+		logger.info(
+			`Trigger '${triggerName}' skipped — loop ${err.loopId} in status '${err.loopStatus}'`,
+		)
+		return
+	}
+	logger.error('Container session creation failed', { error: String(err) })
+}
 
 /** Cap on scope-match rows appended to the action prompt so the payload stays bounded. */
 const SCOPE_MATCH_LIMIT = 100
@@ -425,7 +443,7 @@ export class TriggerRunner {
 							)
 					}
 				})
-				.catch((err) => logger.error('Container session creation failed', { error: String(err) }))
+				.catch((err) => handleTriggerSessionCreationError(trigger.name, err))
 		}
 	}
 
@@ -569,7 +587,7 @@ export class TriggerRunner {
 				triggerId: trigger.id,
 				createdBy: trigger.createdBy,
 			})
-			.catch((err) => logger.error('Container session creation failed', { error: String(err) }))
+			.catch((err) => handleTriggerSessionCreationError(trigger.name, err))
 	}
 
 	private async queryScopeMatches(
@@ -626,7 +644,7 @@ export class TriggerRunner {
 						triggerId: trigger.id,
 						createdBy: trigger.createdBy,
 					})
-					.catch((err) => logger.error('Container session creation failed', { error: String(err) }))
+					.catch((err) => handleTriggerSessionCreationError(trigger.name, err))
 			} finally {
 				await this.db
 					.update(triggers)
