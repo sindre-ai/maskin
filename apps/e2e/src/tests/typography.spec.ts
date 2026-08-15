@@ -85,6 +85,48 @@ async function mockUnreadFeed(page: Page, workspaceId: string, items: UnreadFixt
 	})
 }
 
+// The For You landing page runs in "cards" mode by default and gets its cards
+// from GET /api/notifications?attention_needed=true. The unread-subscription
+// mock above only surfaces content in list mode (via ForYouListRow), so the
+// notification feed also needs a fixture for cards-mode assertions.
+function buildAttentionNotification(workspaceId: string, id: string, title: string) {
+	const now = new Date().toISOString()
+	return {
+		id,
+		workspaceId,
+		type: 'needs_input',
+		title,
+		content: null,
+		metadata: { attention_needed: true },
+		sourceActorId: null,
+		targetActorId: null,
+		objectId: null,
+		sessionId: null,
+		status: 'pending',
+		resolvedAt: null,
+		expiresAt: null,
+		defaultAction: null,
+		dispatchAt: null,
+		wakeDispatched: false,
+		createdAt: now,
+		updatedAt: now,
+	}
+}
+
+async function mockAttentionNotifications(
+	page: Page,
+	workspaceId: string,
+	notifications: ReturnType<typeof buildAttentionNotification>[],
+) {
+	await page.route('**/api/notifications?*attention_needed=true*', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(notifications),
+		})
+	})
+}
+
 /* ───── 1. Font-load URL integrity (AC-T2) ───── */
 
 test.describe('Typography — font load', () => {
@@ -232,6 +274,9 @@ test.describe('Typography — notification feed', () => {
 		await mockUnreadFeed(page, account.workspaceId, [
 			buildUnreadItem(account.workspaceId, 'feed-test-bet', 'Feed Test Bet'),
 		])
+		await mockAttentionNotifications(page, account.workspaceId, [
+			buildAttentionNotification(account.workspaceId, 'feed-test-notification', 'Approve draft'),
+		])
 
 		await setTheme(page, 'light')
 		await page.goto(`/${account.workspaceId}`)
@@ -298,6 +343,13 @@ test.describe('Typography — tabular-nums', () => {
 	test('elements with font-mono class have tabular-nums applied', async ({ page, account }) => {
 		await mockUnreadFeed(page, account.workspaceId, [
 			buildUnreadItem(account.workspaceId, 'mono-class-test-bet', 'Mono Class Test Bet'),
+		])
+		await mockAttentionNotifications(page, account.workspaceId, [
+			buildAttentionNotification(
+				account.workspaceId,
+				'mono-class-test-notification',
+				'Approve the send list',
+			),
 		])
 
 		await setTheme(page, 'light')

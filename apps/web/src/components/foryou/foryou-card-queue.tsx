@@ -1,4 +1,5 @@
 import { EmptyState } from '@/components/shared/empty-state'
+import { RelativeTime } from '@/components/shared/relative-time'
 import { Button } from '@/components/ui/button'
 import { useBulkRespondNotifications, useRespondNotification } from '@/hooks/use-notifications'
 import type { NotificationResponse } from '@/lib/api'
@@ -204,16 +205,26 @@ function GroupCard({ workspaceId, group }: GroupCardProps) {
 							{primary.title}
 						</span>
 					)}
-					<p className="mt-1 text-xs text-muted-foreground">
-						{isGrouped ? (
+					<div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+						<span>
+							{isGrouped ? (
+								<>
+									{group.items.length} notifications on this object
+									{primary.type ? ` · ${primary.type}` : null}
+								</>
+							) : (
+								<>{primary.type}</>
+							)}
+						</span>
+						{primary.createdAt ? (
 							<>
-								{group.items.length} notifications on this object
-								{primary.type ? ` · ${primary.type}` : null}
+								<span aria-hidden className="opacity-50">
+									·
+								</span>
+								<RelativeTime date={primary.createdAt} className="font-mono tabular-nums" />
 							</>
-						) : (
-							<>{primary.type}</>
-						)}
-					</p>
+						) : null}
+					</div>
 				</div>
 				{group.objectId && (
 					<Button size="sm" variant="outline" className="h-8 shrink-0 text-xs" asChild>
