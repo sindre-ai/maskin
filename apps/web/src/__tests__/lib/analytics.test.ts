@@ -28,6 +28,8 @@ import {
 	trackSidebarAgentActivityExpanded,
 	trackSidebarToggle,
 	trackSidebarWorkspaceSwitcherOpened,
+	trackSindreMessageReceived,
+	trackSindreMessageSent,
 	trackSpecialistSummonedManually,
 	trackTriggerCreated,
 	trackTriggerFired,
@@ -229,6 +231,44 @@ describe('v1 taxonomy helpers', () => {
 			flow_id: null,
 			entry_point: 'sindre_session',
 			entry_agent_role: null,
+		})
+	})
+
+	it('sindre_message_sent carries the session id and nothing else', () => {
+		const capture = captureSpy()
+
+		trackSindreMessageSent({ session_id: 'sess-42' })
+
+		expect(capture).toHaveBeenCalledWith('sindre_message_sent', {
+			session_id: 'sess-42',
+		})
+	})
+
+	it('sindre_message_received carries session_id, model, and tokens', () => {
+		const capture = captureSpy()
+
+		trackSindreMessageReceived({
+			session_id: 'sess-42',
+			model: 'claude-opus-4-7',
+			tokens: 128,
+		})
+
+		expect(capture).toHaveBeenCalledWith('sindre_message_received', {
+			session_id: 'sess-42',
+			model: 'claude-opus-4-7',
+			tokens: 128,
+		})
+	})
+
+	it('sindre_message_received serialises missing model/tokens as null', () => {
+		const capture = captureSpy()
+
+		trackSindreMessageReceived({ session_id: 'sess-7', model: null, tokens: null })
+
+		expect(capture).toHaveBeenCalledWith('sindre_message_received', {
+			session_id: 'sess-7',
+			model: null,
+			tokens: null,
 		})
 	})
 
