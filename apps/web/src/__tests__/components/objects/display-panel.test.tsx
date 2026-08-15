@@ -449,6 +449,90 @@ describe('DisplayPanel', () => {
 		})
 	})
 
+	describe('Show — Starred', () => {
+		it('does not render the Starred switch when onStarredFilterChange is unset', async () => {
+			const user = userEvent.setup()
+			renderPanel()
+			await user.click(screen.getByRole('button', { name: /display/i }))
+			expect(screen.queryByRole('switch', { name: /show only starred/i })).toBeNull()
+		})
+
+		it('renders the Show section with a Starred switch when only onStarredFilterChange is wired', async () => {
+			// Show section must surface even when Include archived is not wired,
+			// so a per-user surface (starred) doesn't get lost when there is
+			// nothing else to Show.
+			const user = userEvent.setup()
+			renderPanel({ onStarredFilterChange: vi.fn() })
+			await user.click(screen.getByRole('button', { name: /display/i }))
+			expect(screen.getByText('Show')).toBeInTheDocument()
+			const toggle = screen.getByRole('switch', { name: /show only starred/i })
+			expect(toggle).toBeInTheDocument()
+			expect(toggle).toHaveAttribute('data-state', 'unchecked')
+		})
+
+		it('reflects the current starredFilter state on the switch', async () => {
+			const user = userEvent.setup()
+			renderPanel({ starredFilter: true, onStarredFilterChange: vi.fn() })
+			await user.click(screen.getByRole('button', { name: /display/i }))
+			expect(screen.getByRole('switch', { name: /show only starred/i })).toHaveAttribute(
+				'data-state',
+				'checked',
+			)
+		})
+
+		it('calls onStarredFilterChange(true) when toggled on from unchecked', async () => {
+			const user = userEvent.setup()
+			const onStarredFilterChange = vi.fn()
+			renderPanel({ starredFilter: false, onStarredFilterChange })
+			await user.click(screen.getByRole('button', { name: /display/i }))
+			await user.click(screen.getByRole('switch', { name: /show only starred/i }))
+			expect(onStarredFilterChange).toHaveBeenCalledWith(true)
+		})
+
+		it('counts the starred flag in the trigger badge', () => {
+			renderPanel({ starredFilter: true, onStarredFilterChange: vi.fn() })
+			expect(screen.getByText('1')).toBeInTheDocument()
+		})
+
+		it('adds +1 to the badge on top of an existing status filter', () => {
+			renderPanel({
+				starredFilter: true,
+				onStarredFilterChange: vi.fn(),
+				statusFilter: 'active',
+			})
+			expect(screen.getByText('2')).toBeInTheDocument()
+		})
+
+		it('renders "only starred" inline next to the Display trigger when on', () => {
+			renderPanel({ starredFilter: true, onStarredFilterChange: vi.fn() })
+			expect(screen.getByText('only starred')).toBeInTheDocument()
+		})
+
+		it('does not render the inline "only starred" reading when the flag is off', () => {
+			renderPanel({ starredFilter: false, onStarredFilterChange: vi.fn() })
+			expect(screen.queryByText('only starred')).toBeNull()
+		})
+
+		it('does not render the inline "only starred" reading on the iconOnly (mobile) trigger', () => {
+			renderPanel({ starredFilter: true, onStarredFilterChange: vi.fn(), iconOnly: true })
+			expect(screen.queryByText('only starred')).toBeNull()
+			expect(screen.getByText('1')).toBeInTheDocument()
+		})
+
+		it('renders both Starred and Include archived switches when both are wired', async () => {
+			const user = userEvent.setup()
+			renderPanel({
+				includeArchived: false,
+				onIncludeArchivedChange: vi.fn(),
+				starredFilter: false,
+				onStarredFilterChange: vi.fn(),
+			})
+			await user.click(screen.getByRole('button', { name: /display/i }))
+			expect(screen.getByRole('switch', { name: /show only starred/i })).toBeInTheDocument()
+			expect(screen.getByRole('switch', { name: /include archived/i })).toBeInTheDocument()
+		})
+	})
+
 	describe('Reset to default', () => {
 		it('does not render the footer row when onResetToDefault is unset', async () => {
 			const user = userEvent.setup()

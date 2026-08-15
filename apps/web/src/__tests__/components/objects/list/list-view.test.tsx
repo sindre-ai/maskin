@@ -308,6 +308,36 @@ describe('ListView', () => {
 		expect(screen.queryByText(/Alice asks/i)).toBeNull()
 	})
 
+	describe('empty state', () => {
+		it('renders the generic empty state when no filter is narrowing the list', () => {
+			renderListView({ data: [] })
+			expect(screen.getByText('No objects found')).toBeInTheDocument()
+			expect(screen.getByText(/Create your first object/i)).toBeInTheDocument()
+			// The starred-specific copy must NOT leak into the generic path.
+			expect(screen.queryByText(/No starred objects yet/i)).toBeNull()
+		})
+
+		it('renders the starred-specific empty state when the Starred filter is active and data is empty', () => {
+			renderListView({ data: [], starredFilter: true })
+			// Filter is on and the list came back empty → the user is looking at
+			// "you haven't starred anything yet", not "create your first object".
+			expect(screen.getByText('No starred objects yet')).toBeInTheDocument()
+			expect(screen.getByText(/Click the ★/i)).toBeInTheDocument()
+			expect(screen.queryByText('No objects found')).toBeNull()
+		})
+
+		it('does not render the starred empty state when data is present, even with starredFilter on', () => {
+			// Once results exist, the list renders rows normally — the empty
+			// state is exclusively an empty-data affordance.
+			const data = [
+				buildObjectResponse({ id: 'obj-1', title: 'Starred alpha', updatedAt: deployedAt }),
+			]
+			renderListView({ data, starredFilter: true })
+			expect(screen.queryByText(/No starred objects yet/i)).toBeNull()
+			expect(screen.getByText('Starred alpha')).toBeInTheDocument()
+		})
+	})
+
 	it('composes shared primitives — Checkbox, StatusBadge, RelativeTime — instead of bespoke markup', () => {
 		const data = [
 			buildObjectResponse({

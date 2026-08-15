@@ -13,13 +13,14 @@ const baseModel = (): ObjectsFilterModel => defaultObjectsFilterModel()
 
 describe('objects-filter-model', () => {
 	describe('defaultObjectsFilterModel', () => {
-		it('defaults to sort=createdAt, order=desc, empty metadata, archived off', () => {
+		it('defaults to sort=createdAt, order=desc, empty metadata, archived + starred off', () => {
 			const model = defaultObjectsFilterModel()
 			expect(model).toEqual({
 				sort: DEFAULT_SORT,
 				order: DEFAULT_ORDER,
 				metadata: {},
 				includeArchived: false,
+				starred: false,
 			})
 		})
 
@@ -38,6 +39,7 @@ describe('objects-filter-model', () => {
 			expect(model.sort).toBe(DEFAULT_SORT)
 			expect(model.order).toBe(DEFAULT_ORDER)
 			expect(model.includeArchived).toBe(false)
+			expect(model.starred).toBe(false)
 			expect(model.metadata).toEqual({})
 		})
 
@@ -116,6 +118,17 @@ describe('objects-filter-model', () => {
 				'include_archived',
 			)
 			expect(toListParams(baseModel())).not.toHaveProperty('include_archived')
+		})
+
+		it('emits starred=true only when the Starred filter is on', () => {
+			// Off (default): no starred key at all — omission preserves the
+			// backend's "any object" default without touching the endpoint.
+			expect(toListParams(baseModel())).not.toHaveProperty('starred')
+
+			// On: exact `starred=true` string, matching the endpoint's contract
+			// (T3). Any drift in the emitted value silently breaks the filter.
+			const on = fromUrlSearch({ starred: true })
+			expect(toListParams(on)).toHaveProperty('starred', 'true')
 		})
 	})
 

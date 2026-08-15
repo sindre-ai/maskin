@@ -218,6 +218,9 @@ export const api = {
 				body,
 				workspaceId,
 			}),
+		star: (id: string) => request<{ starred: boolean }>(`/objects/${id}/star`, { method: 'POST' }),
+		unstar: (id: string) =>
+			request<{ starred: boolean }>(`/objects/${id}/star`, { method: 'DELETE' }),
 	},
 
 	auth: {
@@ -830,6 +833,9 @@ export interface ObjectResponse {
 	is_subscribed?: boolean
 	unread_count?: number
 	subscriber_count?: number
+	// Per-user star state (T2 DB + T3 API). Absent = unstarred; the card renders
+	// the same outline state whether the field is missing or explicitly false.
+	isStarred?: boolean
 }
 
 export interface BoardObjectColumn {

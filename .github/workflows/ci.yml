@@ -2,7 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - 'bet/**'
   pull_request:
     branches: [main]
 
@@ -202,5 +204,82 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report-${{ matrix.shard }}
+          path: apps/e2e/playwright-report/
+          retention-days: 7
+
+  verify-e2e-favourites:
+    # Focused signal for the object-favourites bet: runs only the two star
+    # specs (object-card-star-toggle + objects-starred-filter). The umbrella
+    # PR needs a green run covering AC 1–5 before merging to main; a dedicated
+    # job produces that signal on every push to a bet/** branch, isolated
+    # from unrelated flakes in the full verify-e2e matrix. AC 6–8 (PostHog
+    # events) remain gated on Task 1 OAuth and are not asserted here.
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: maskin_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Cache turbo build outputs
+        uses: ./.github/actions/cache-turbo
+        with:
+          job-name: verify-e2e-favourites
+
+      - run: pnpm build
+
+      - name: Run database migrations
+        run: pnpm db:migrate
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_e2e
+
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+
+      - name: Install Playwright browsers
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: pnpm --filter @maskin/e2e exec playwright install --with-deps chromium
+
+      - name: Install Playwright OS dependencies
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: pnpm --filter @maskin/e2e exec playwright install-deps chromium
+
+      - name: Run star toggle + starred filter specs
+        run: pnpm --filter @maskin/e2e exec playwright test object-card-star-toggle.spec.ts objects-starred-filter.spec.ts
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_e2e
+          INTEGRATION_ENCRYPTION_KEY: 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-favourites
           path: apps/e2e/playwright-report/
           retention-days: 7

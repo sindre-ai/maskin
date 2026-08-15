@@ -9,6 +9,7 @@ import {
 	relationships,
 	sessions,
 	subscriptions,
+	userStarredObjects,
 	workspaces,
 } from '@maskin/db/schema'
 import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
@@ -43,6 +44,7 @@ import {
 	count,
 	desc,
 	eq,
+	getTableColumns,
 	gt,
 	ilike,
 	inArray,
@@ -427,6 +429,37 @@ function toCount(value: unknown) {
 	return 0
 }
 
+// Per-row `isStarred` expression: EXISTS against `user_starred_objects` for the
+// calling actor and each `objects.id`. The composite PK on
+// (user_id, object_id) means the planner satisfies each row from the index
+// alone — no join expansion, no need for GROUP BY. Absent starred rows return
+// false, so an unpopulated workspace stays cheap. Alias `is_starred` matches
+// the response field name after serialize/JSON so the projection is legible
+// in EXPLAIN output too.
+function starredByActorExpr(actorId: string) {
+	// Use literal table-qualified SQL for the outer-table column reference.
+	// Drizzle column objects inside a correlated sql`` template render without
+	// a table prefix — see .claude/rules/known-pitfalls.md — so objects.id
+	// must be a literal string here, not ${objects.id}, to prevent Postgres
+	// from binding it to the inner table when a name collision exists.
+	return sql<boolean>`EXISTS (
+		SELECT 1 FROM ${userStarredObjects}
+		WHERE ${userStarredObjects.userId} = ${actorId}
+		  AND ${userStarredObjects.objectId} = objects.id
+	)`.as('isStarred')
+}
+
+// Same shape as `starredByActorExpr` but as a WHERE-side predicate, so a
+// `?starred=true` list-endpoint hit gates on the same EXISTS the response
+// column reports — no chance of the filter and the field disagreeing.
+function starredByActorExists(actorId: string) {
+	return sql`EXISTS (
+		SELECT 1 FROM ${userStarredObjects}
+		WHERE ${userStarredObjects.userId} = ${actorId}
+		  AND ${userStarredObjects.objectId} = objects.id
+	)`
+}
+
 // POST / - Create object
 const createObjectRoute = createRoute({
 	method: 'post',
@@ -636,6 +669,7 @@ const listObjectsRoute = createRoute({
 
 app.openapi(listObjectsRoute, async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const query = c.req.valid('query')
 
@@ -661,6 +695,15 @@ app.openapi(listObjectsRoute, async (c) => {
 		...buildCursorConditions(query, useKeyset),
 	]
 
+	// `?starred=true` gates the list to rows the calling actor has starred,
+	// via EXISTS against `user_starred_objects` (composite PK on
+	// (user_id, object_id) → the planner hits the index, no join expansion).
+	// When absent / false, the extra predicate is skipped entirely so the
+	// unfiltered list keeps its existing plan.
+	if (query.starred) {
+		conditions.push(starredByActorExists(actorId))
+	}
+
 	// When `q` tokenized to a non-empty set, rank rows by count of token hits
 	// (DESC, title ASC tie-break) and let ranking override caller-supplied
 	// sort — this is how the offline eval harness scores the fixture.
@@ -669,8 +712,11 @@ app.openapi(listObjectsRoute, async (c) => {
 	// When the keyset seek is engaged, `offset` no longer makes sense — the
 	// predicate itself skips past the last-seen row. Ignoring it also keeps
 	// the walk snapshot-consistent when a caller accidentally forwards both.
+	// Flat projection (`...objects` columns + `isStarred`) keeps the row shape
+	// compatible with `serializeArray` and with the mock-DB unit tests, which
+	// don't materialise the isStarred column but should still get a 200.
 	const results = await db
-		.select()
+		.select({ ...getTableColumns(objects), isStarred: starredByActorExpr(actorId) })
 		.from(objects)
 		.where(and(...conditions))
 		.limit(query.limit)
@@ -708,6 +754,7 @@ const boardObjectsRoute = createRoute({
 
 app.openapi(boardObjectsRoute, async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const rawQuery = c.req.query()
 	const query = c.req.valid('query') ?? {
@@ -788,7 +835,7 @@ app.openapi(boardObjectsRoute, async (c) => {
 	for (const value of columnValues) {
 		const columnConditions = [...baseConditions, eq(groupExpr, value)]
 		const rows = await db
-			.select()
+			.select({ ...getTableColumns(objects), isStarred: starredByActorExpr(actorId) })
 			.from(objects)
 			.where(and(...columnConditions))
 			.limit(query.limit)
@@ -1365,7 +1412,7 @@ app.openapi(getObjectRoute, async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
 	}
 
-	const [subscribed, unreadCount, subscriberCount, activeSession] = await Promise.all([
+	const [subscribed, unreadCount, subscriberCount, activeSession, starred] = await Promise.all([
 		isSubscribed(db, { actorId, entityType: 'object', entityId: id }),
 		getUnreadCount(db, {
 			workspaceId: object.workspaceId,
@@ -1386,6 +1433,12 @@ app.openapi(getObjectRoute, async (c) => {
 					.limit(1)
 					.then((rows) => rows[0] ?? null)
 			: Promise.resolve(null),
+		db
+			.select({ objectId: userStarredObjects.objectId })
+			.from(userStarredObjects)
+			.where(and(eq(userStarredObjects.userId, actorId), eq(userStarredObjects.objectId, id)))
+			.limit(1)
+			.then((rows) => rows.length > 0),
 	])
 
 	return c.json(
@@ -1395,6 +1448,7 @@ app.openapi(getObjectRoute, async (c) => {
 			is_subscribed: subscribed,
 			unread_count: unreadCount,
 			subscriber_count: subscriberCount,
+			isStarred: starred,
 		} as z.infer<typeof objectResponseSchema>,
 		200,
 	)

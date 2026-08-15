@@ -61,11 +61,17 @@ export interface DisplayPanelProps {
 	// Grouping
 	groupBy?: string
 	onGroupByChange?: (value: string | undefined) => void
-	// Show — per-view visibility flags. Callers opt in by wiring
-	// `onIncludeArchivedChange`; when unset the whole section is hidden so
-	// non-bet surfaces keep their existing panel.
+	// Show — per-view visibility flags. Callers opt in by wiring any of the
+	// section's switches (`onIncludeArchivedChange`, `onStarredFilterChange`);
+	// when none are wired the whole section is hidden so surfaces that don't
+	// use it keep their existing panel shape.
 	includeArchived?: boolean
 	onIncludeArchivedChange?: (value: boolean) => void
+	// Starred — when on, the list narrows to objects starred by the current
+	// user. Sits in the Show section next to Include archived because both are
+	// per-view visibility toggles, not filter values.
+	starredFilter?: boolean
+	onStarredFilterChange?: (value: boolean) => void
 	// "Reset to default" — restores every display axis (filter/group/order/
 	// show-in-list/show-archived) to defaults. Only rendered when wired; hidden
 	// on consumers that don't opt in (same convention as the Show section).
@@ -174,6 +180,8 @@ export function DisplayPanel({
 	onGroupByChange,
 	includeArchived = false,
 	onIncludeArchivedChange,
+	starredFilter = false,
+	onStarredFilterChange,
 	onResetToDefault,
 	iconOnly = false,
 	showView = true,
@@ -203,9 +211,10 @@ export function DisplayPanel({
 		(activeStatuses.length > 0 ? 1 : 0) +
 		(activeDrivers.length > 0 ? 1 : 0) +
 		activeMetadataFilterCount +
-		(includeArchived ? 1 : 0)
+		(includeArchived ? 1 : 0) +
+		(starredFilter ? 1 : 0)
 	const hasActiveFilters = activeFilterCount > 0
-	const showShow = !!onIncludeArchivedChange
+	const showShow = !!onIncludeArchivedChange || !!onStarredFilterChange
 
 	const showMetadataFilters = !!onMetadataFilterChange && metadataFields.length > 0
 	const showOrdering = !!sort && !!order && !!onSortChange && !!onOrderChange && columns.length > 0
@@ -267,7 +276,8 @@ export function DisplayPanel({
 	// mobile (the iconOnly variant already carries the filter count pill).
 	const isNonDefaultSort = !!sort && (sort !== 'createdAt' || order !== 'desc')
 	const hasGrouping = !!groupBy
-	const showInlineReading = !iconOnly && (isNonDefaultSort || hasGrouping || includeArchived)
+	const showInlineReading =
+		!iconOnly && (isNonDefaultSort || hasGrouping || includeArchived || starredFilter)
 	const inlineSortLabel = sortLabel ?? sort
 	const inlineGroupLabel = groupLabel ?? groupBy
 
@@ -330,31 +340,50 @@ export function DisplayPanel({
 						</>
 					)}
 
-					{/* Show — per-view visibility flags (Include archived, ...). Only
-					 * renders when the caller wires `onIncludeArchivedChange`, so
-					 * non-bet surfaces keep their existing panel shape. */}
+					{/* Show — per-view visibility flags (Starred, Include archived, ...).
+					 * Renders when the caller wires any of the switches; surfaces
+					 * that don't opt in keep their existing panel shape. */}
 					{showShow && (
 						<>
 							<div className="p-3 space-y-2">
 								<SectionHeader>Show</SectionHeader>
-								<label
-									htmlFor="display-include-archived"
-									className={cn(
-										// `relative` anchors the invisible `::before` hit surface
-										// so the visible row stays compact while the tap target
-										// meets 44 px — iOS/mobile canon.
-										'relative flex items-center justify-between gap-2 text-xs cursor-pointer',
-										"before:absolute before:-inset-3 before:h-11 before:w-full before:content-[''] before:pointer-events-none",
-									)}
-								>
-									<span className="text-foreground">Include archived</span>
-									<Switch
-										id="display-include-archived"
-										checked={includeArchived}
-										onCheckedChange={(next) => onIncludeArchivedChange?.(next)}
-										aria-label="Include archived"
-									/>
-								</label>
+								{onStarredFilterChange && (
+									<label
+										htmlFor="display-starred"
+										className={cn(
+											'relative flex items-center justify-between gap-2 text-xs cursor-pointer',
+											"before:absolute before:-inset-3 before:h-11 before:w-full before:content-[''] before:pointer-events-none",
+										)}
+									>
+										<span className="text-foreground">Show only starred</span>
+										<Switch
+											id="display-starred"
+											checked={starredFilter}
+											onCheckedChange={(next) => onStarredFilterChange?.(next)}
+											aria-label="Show only starred"
+										/>
+									</label>
+								)}
+								{onIncludeArchivedChange && (
+									<label
+										htmlFor="display-include-archived"
+										className={cn(
+											// `relative` anchors the invisible `::before` hit surface
+											// so the visible row stays compact while the tap target
+											// meets 44 px — iOS/mobile canon.
+											'relative flex items-center justify-between gap-2 text-xs cursor-pointer',
+											"before:absolute before:-inset-3 before:h-11 before:w-full before:content-[''] before:pointer-events-none",
+										)}
+									>
+										<span className="text-foreground">Include archived</span>
+										<Switch
+											id="display-include-archived"
+											checked={includeArchived}
+											onCheckedChange={(next) => onIncludeArchivedChange?.(next)}
+											aria-label="Include archived"
+										/>
+									</label>
+								)}
 							</div>
 							<Separator />
 						</>
@@ -698,6 +727,10 @@ export function DisplayPanel({
 						<span className="text-muted-foreground">·</span>
 					)}
 					{includeArchived && <span className="text-foreground">+ archived</span>}
+					{(isNonDefaultSort || hasGrouping || includeArchived) && starredFilter && (
+						<span className="text-muted-foreground">·</span>
+					)}
+					{starredFilter && <span className="text-foreground">only starred</span>}
 				</span>
 			)}
 		</div>
