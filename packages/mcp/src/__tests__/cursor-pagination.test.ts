@@ -246,7 +246,7 @@ describe('cursor pagination — seven previously-unpaginated tools', () => {
 			buildRow: eventRow,
 			wrapApiResponse: (rows) => rows,
 			rowsField: 'events',
-			getId: (row) => String((row as { id: number }).id),
+			getId: (row) => String((row as { id: number }).id).padStart(20, '0'),
 		},
 	]
 

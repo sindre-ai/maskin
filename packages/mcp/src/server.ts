@@ -3899,7 +3899,7 @@ export function createMcpServer(config: McpConfig) {
 						order: pagination.order,
 						cursor: pagination.cursor,
 						getSortValue: (row) => row.createdAt ?? null,
-						getId: (row) => String(row.id),
+						getId: (row) => String(row.id).padStart(20, '0'),
 					})
 				: { page: rows, nextCursor: null }
 			return {
