@@ -31,6 +31,12 @@ class InMemoryStorage implements StorageProvider {
 		return Array.from(this.objects.keys()).filter((k) => k.startsWith(prefix))
 	}
 
+	async listWithMetadata(prefix: string): Promise<{ key: string; size: number }[]> {
+		return Array.from(this.objects.entries())
+			.filter(([k]) => k.startsWith(prefix))
+			.map(([key, value]) => ({ key, size: value.byteLength }))
+	}
+
 	async delete(key: string): Promise<void> {
 		this.objects.delete(key)
 	}

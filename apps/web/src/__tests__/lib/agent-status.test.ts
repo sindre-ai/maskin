@@ -1,4 +1,9 @@
-import { deriveAgentStatus, getLatestSession, groupSessionsByAgent } from '@/lib/agent-status'
+import {
+	deriveAgentStatus,
+	getActiveAgentSessions,
+	getLatestSession,
+	groupSessionsByAgent,
+} from '@/lib/agent-status'
 import { describe, expect, it } from 'vitest'
 
 interface TestSession {
@@ -84,6 +89,59 @@ describe('deriveAgentStatus', () => {
 	it('returns idle when latest session completed', () => {
 		const map = new Map([['a1', [session({ actorId: 'a1', status: 'completed' })]]])
 		expect(deriveAgentStatus('a1', map)).toBe('idle')
+	})
+})
+
+describe('getActiveAgentSessions', () => {
+	it('filters out non-active statuses', () => {
+		const sessions = [
+			session({ actorId: 'a1', status: 'running' }),
+			session({ actorId: 'a2', status: 'completed' }),
+			session({ actorId: 'a3', status: 'failed' }),
+			session({ actorId: 'a4', status: 'pending' }),
+		]
+		const active = getActiveAgentSessions(sessions)
+		expect(active.map((s) => s.actorId).sort()).toEqual(['a1', 'a4'])
+	})
+
+	it('deduplicates on actorId keeping the most recent', () => {
+		const older = session({
+			actorId: 'a1',
+			status: 'running',
+			createdAt: '2025-01-01T00:00:00Z',
+		})
+		const newer = session({
+			actorId: 'a1',
+			status: 'running',
+			createdAt: '2025-01-02T00:00:00Z',
+		})
+		const active = getActiveAgentSessions([older, newer])
+		expect(active).toHaveLength(1)
+		expect(active[0]).toBe(newer)
+	})
+
+	it('returns empty array when no sessions are active', () => {
+		const sessions = [
+			session({ actorId: 'a1', status: 'completed' }),
+			session({ actorId: 'a2', status: 'failed' }),
+		]
+		expect(getActiveAgentSessions(sessions)).toEqual([])
+	})
+
+	it('returns empty array for empty input', () => {
+		expect(getActiveAgentSessions([])).toEqual([])
+	})
+
+	it('treats null createdAt as epoch 0 when comparing', () => {
+		const withDate = session({
+			actorId: 'a1',
+			status: 'running',
+			createdAt: '2025-01-01T00:00:00Z',
+		})
+		const withoutDate = session({ actorId: 'a1', status: 'running', createdAt: null })
+		const active = getActiveAgentSessions([withoutDate, withDate])
+		expect(active).toHaveLength(1)
+		expect(active[0]).toBe(withDate)
 	})
 })
 

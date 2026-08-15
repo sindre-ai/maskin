@@ -95,6 +95,28 @@ describe('RelatedObjectsTable', () => {
 		expect(onNavigate).toHaveBeenCalledWith('ws-1', 'obj-target')
 	})
 
+	it('lets the Title column expand to fill remaining width', () => {
+		render(<RelatedObjectsTable {...baseProps} rows={[buildRow({ title: 'Long linked title' })]} />)
+
+		const titleHeader = screen.getByRole('columnheader', { name: /title/i })
+		expect(titleHeader.className).toMatch(/\bw-full\b/)
+
+		const titleCell = screen.getByText('Long linked title').closest('td')
+		expect(titleCell?.className).toMatch(/\bmax-w-0\b/)
+
+		const statusHeader = screen.getByRole('columnheader', { name: /status/i })
+		expect(statusHeader.className).not.toMatch(/\bw-full\b/)
+	})
+
+	it('does not cap the title Link with a max-width literal', () => {
+		render(<RelatedObjectsTable {...baseProps} rows={[buildRow({ title: 'Growable' })]} />)
+
+		const link = screen.getByText('Growable')
+		expect(link.className).not.toMatch(/max-w-\[/)
+		expect(link.className).toMatch(/\btruncate\b/)
+		expect(link.className).toMatch(/\bmin-w-0\b/)
+	})
+
 	it('sorts rows by title when the Title header is clicked', async () => {
 		const user = userEvent.setup()
 		const rows = [

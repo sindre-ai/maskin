@@ -14,6 +14,14 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 	queryClient.invalidateQueries({ queryKey: queryKeys.events.history(workspaceId) })
 	queryClient.invalidateQueries({ queryKey: queryKeys.events.byEntity(event.entity_id) })
 
+	// Live-refresh the knowledge doc-header reference-count chip. The DoD
+	// tolerates a 5-minute lag (matches the hook's staleTime), but when a
+	// fresh cite lands over SSE we already know a downstream agent read this
+	// object — invalidate the counter so the chip catches up in the same tick.
+	if (event.action === 'workspace_knowledge_referenced') {
+		queryClient.invalidateQueries({ queryKey: queryKeys.objects.references(event.entity_id) })
+	}
+
 	// New comments may change unread counts for any subscriber in this workspace
 	// and the subscriber list for the entity that was commented on (the latter
 	// because the commenter auto-subscribes server-side).
@@ -34,12 +42,16 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 		case 'insight':
 		case 'bet':
 		case 'task':
+		case 'loop':
 		case 'knowledge':
 			queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(event.entity_id) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.objects.graph(event.entity_id) })
 			if (event.entity_type === 'bet') {
 				queryClient.invalidateQueries({ queryKey: queryKeys.bets.all(workspaceId) })
+			}
+			if (event.entity_type === 'loop') {
+				queryClient.invalidateQueries({ queryKey: queryKeys.loops.all(workspaceId) })
 			}
 			break
 		case 'relationship':
@@ -49,6 +61,10 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 		case 'trigger':
 			queryClient.invalidateQueries({ queryKey: queryKeys.triggers.all(workspaceId) })
 			if (event.action === 'trigger_fired') {
+				// Loop-detail "Latest activity" is a join through metadata.trigger_ids
+				// keyed to the trigger — we don't know which loop from the payload,
+				// so invalidate every open loop-activity query in this workspace.
+				queryClient.invalidateQueries({ queryKey: ['loops', workspaceId, 'activity'] })
 				trackTriggerFired({
 					entity_id: event.entity_id,
 					entity_type: 'trigger',
@@ -59,6 +75,9 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 		case 'session': {
 			// Broad prefix invalidation covers all session queries including byActor
 			queryClient.invalidateQueries({ queryKey: ['sessions'] })
+			// Same reasoning as trigger_fired above — session lifecycle events feed
+			// into the loop activity view via the trigger id join.
+			queryClient.invalidateQueries({ queryKey: ['loops', workspaceId, 'activity'] })
 			const outcome = SESSION_COMPLETION_ACTIONS.get(event.action)
 			if (outcome) {
 				trackAgentSessionCompleted({

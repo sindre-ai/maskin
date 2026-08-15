@@ -7,7 +7,9 @@ import {
 	recordMcpTelemetrySchema,
 } from '@maskin/shared'
 import { and, eq, gte, sql } from 'drizzle-orm'
-import { createApiError } from '../lib/errors'
+import { recordMcpMisfire } from '../lib/analytics/mcp-misfire'
+import { capturePosthogEvent } from '../lib/analytics/posthog'
+import { createApiError, validationFailureHook } from '../lib/errors'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { isWorkspaceMember } from '../lib/workspace-auth'
 
@@ -39,7 +41,7 @@ const WIDGET_CTR_KILL_THRESHOLD_PCT = 30
 const WIDGET_RENDER_ERROR_KILL_THRESHOLD_PCT = 10
 const WIDGET_RENDER_ERROR_WINDOW_MS = 48 * 60 * 60 * 1000
 
-const app = new OpenAPIHono<Env>()
+const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 // POST /api/telemetry/mcp — record a single MCP telemetry event.
 const recordRoute = createRoute({
@@ -94,6 +96,34 @@ app.openapi(recordRoute, (async (c) => {
 			sessionId: body.session_id ?? null,
 			objectType: body.object_type ?? null,
 			mutationKind: body.mutation_kind,
+		})
+	} else if (body.event_type === 'error') {
+		// MCP misfire ingest for the agent-reach-signal bet. Persisted to
+		// `mcp_telemetry.data` (jsonb, no schema migration) and fanned out to
+		// PostHog inside `recordMcpMisfire`. Best-effort: a PostHog outage or
+		// DB hiccup here must not surface a 5xx to the sink.
+		void recordMcpMisfire(db, workspaceId, {
+			kind: body.kind,
+			toolName: body.tool_name,
+			requestedShape: body.requested_shape,
+			sessionId: body.session_id ?? null,
+			agentActorId: body.agent_actor_id ?? null,
+		})
+	} else if (body.event_type === 'tool_call_response_size') {
+		// PostHog-only fan-out for the MCP response-scoping bet's First test —
+		// 5-day instrumentation window doesn't earn a schema migration. The
+		// Product Analyst's baseline query reads `mcp_tool_call_response_size`
+		// rows directly from PostHog. Fire-and-forget; `capturePosthogEvent`
+		// never throws.
+		void capturePosthogEvent('mcp_tool_call_response_size', workspaceId, {
+			tool_name: body.tool_name,
+			session_id: body.session_id ?? null,
+			content_bytes: body.content_bytes,
+			content_tokens: body.content_tokens,
+			structured_content_bytes: body.structured_content_bytes,
+			structured_content_tokens: body.structured_content_tokens,
+			truncated: body.truncated,
+			workspace_id: workspaceId,
 		})
 	} else {
 		// widget_event — widget-only fields (event, widget_name, card_kind, object_id,

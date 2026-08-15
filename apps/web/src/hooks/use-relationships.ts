@@ -29,7 +29,11 @@ export function useCreateRelationship(workspaceId: string, objectId: string) {
 			// `attached` edges from any object → file are the file-attach v1 event.
 			// Trigger fires from the object-files panel and any future direct-attach
 			// flow; the comment-attachment path emits this from the queue directly.
-			if (created.type === 'attached' && created.targetType === 'file') {
+			// `type === 'attached'` is the semantic file-attach relationship type;
+			// we deliberately do NOT gate on `targetType === 'file'` because some
+			// legacy writers stamp the endpoint label inconsistently, and a label
+			// check would silently drop the analytics event.
+			if (created.type === 'attached') {
 				trackEvent('object_attached_file', {
 					entity_id: created.sourceId,
 					entity_type: created.sourceType,

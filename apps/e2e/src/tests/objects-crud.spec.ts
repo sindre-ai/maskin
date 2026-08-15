@@ -1,39 +1,21 @@
-import { randomUUID } from 'node:crypto'
 import { expect, test } from '../fixtures/auth.fixture'
 
 test.describe('Objects CRUD', () => {
-	test('can create a new bet', async ({ page, account }) => {
-		await page.goto(`/${account.workspaceId}/objects/${randomUUID()}`)
+	test('can create an object via the header New menu', async ({ page, account }) => {
+		await page.goto(`/${account.workspaceId}/objects`)
 
-		// The create form should be open with an empty title field
-		await expect(page.getByPlaceholder('Untitled')).toBeVisible()
+		// Header "New" menu → "New task" opens the CreatePicker dialog pre-seeded
+		// to the task subtype, so no type-selector step is shown.
+		// The objects list toolbar has its own "New" button too — scope to the
+		// global header so this exercises the header's New menu specifically.
+		await page.locator('header').getByRole('button', { name: /^new$/i }).click()
+		await page.getByRole('menuitem', { name: /new task/i }).click()
 
-		// Fill in the title then select the type — auto-create fires when both are set
-		await page.getByPlaceholder('Untitled').fill('E2E Test Bet')
-		await page.getByRole('button', { name: 'Bets' }).click()
+		await page.getByPlaceholder('What are you creating?').fill('E2E Test Object')
+		await page.getByRole('button', { name: 'Create' }).click()
 
 		// Should navigate to the object detail page
-		await expect(page.getByText('E2E Test Bet')).toBeVisible({ timeout: 10000 })
-	})
-
-	test('can create an insight', async ({ page, account }) => {
-		await page.goto(`/${account.workspaceId}/objects/${randomUUID()}`)
-
-		await expect(page.getByPlaceholder('Untitled')).toBeVisible()
-		await page.getByPlaceholder('Untitled').fill('E2E Test Insight')
-		await page.getByRole('button', { name: 'Insights' }).click()
-
-		await expect(page.getByText('E2E Test Insight')).toBeVisible({ timeout: 10000 })
-	})
-
-	test('can create a task', async ({ page, account }) => {
-		await page.goto(`/${account.workspaceId}/objects/${randomUUID()}`)
-
-		await expect(page.getByPlaceholder('Untitled')).toBeVisible()
-		await page.getByPlaceholder('Untitled').fill('E2E Test Task')
-		await page.getByRole('button', { name: 'Tasks' }).click()
-
-		await expect(page.getByText('E2E Test Task')).toBeVisible({ timeout: 10000 })
+		await expect(page.getByText('E2E Test Object')).toBeVisible({ timeout: 10000 })
 	})
 
 	test('can view an object created via API', async ({ page, account }) => {
@@ -87,13 +69,15 @@ test.describe('Objects CRUD', () => {
 		await expect(page).not.toHaveURL(/objects\//, { timeout: 10000 })
 	})
 
-	test('can open create form via header create button', async ({ page, account }) => {
+	test('can open create form via the header New menu', async ({ page, account }) => {
 		await page.goto(`/${account.workspaceId}/objects`)
 
-		// The header + button opens a dropdown; click Object to navigate to the create form
-		await page.getByRole('button', { name: 'Create new' }).click()
-		await page.getByRole('menuitem', { name: 'Object' }).click()
+		// The objects list toolbar has its own "New" button too — scope to the
+		// global header so this exercises the header's New menu specifically.
+		await page.locator('header').getByRole('button', { name: /^new$/i }).click()
+		await page.getByRole('menuitem', { name: /new insight/i }).click()
 
-		await expect(page.getByPlaceholder('Untitled')).toBeVisible()
+		// Seeded with a defaultType, so the picker skips straight to the title input.
+		await expect(page.getByPlaceholder('What are you creating?')).toBeVisible()
 	})
 })

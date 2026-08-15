@@ -3,7 +3,7 @@ import type { Database } from '@maskin/db'
 import { objects } from '@maskin/db/schema'
 import { and, eq, gte, sql } from 'drizzle-orm'
 import { z } from 'zod'
-import { createApiError } from '../lib/errors'
+import { createApiError, formatZodError } from '../lib/errors'
 import { LANDING_GUESTS_WORKSPACE_ID } from '../lib/landing-guests'
 import { logger } from '../lib/logger'
 
@@ -50,6 +50,11 @@ app.get('/', async (c) => {
 	const url = new URL(c.req.url)
 	const parsed = querySchema.safeParse(Object.fromEntries(url.searchParams))
 	if (!parsed.success) {
+		logger.warn('Request validation failed', {
+			path: c.req.path,
+			method: c.req.method,
+			details: formatZodError(parsed.error),
+		})
 		return c.json(
 			createApiError(
 				'VALIDATION_ERROR',

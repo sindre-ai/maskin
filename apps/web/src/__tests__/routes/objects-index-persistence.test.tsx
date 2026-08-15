@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, render } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { buildWorkspaceWithRole } from '../factories'
 
@@ -39,11 +39,28 @@ vi.mock('@/lib/workspace-context', () => ({
 vi.mock('@/hooks/use-actors', () => ({ useActors: () => ({ data: [] }) }))
 vi.mock('@/hooks/use-enabled-modules', () => ({ useEnabledModules: () => [] }))
 vi.mock('@/hooks/use-custom-extensions', () => ({ useCustomExtensions: () => [] }))
-vi.mock('@maskin/module-sdk', () => ({ getEnabledObjectTypeTabs: () => [] }))
-vi.mock('@/hooks/use-objects', () => ({ useBulkUpdateObjects: () => ({ mutate: vi.fn() }) }))
+vi.mock('@maskin/module-sdk', () => ({
+	getEnabledObjectTypeTabs: () => [],
+	getAllWebModules: () => [],
+}))
+vi.mock('@/hooks/use-objects', () => ({
+	useBulkUpdateObjects: () => ({ mutate: vi.fn() }),
+	useBulkResultHandlers: () => ({ reportBulkResult: vi.fn(), retainOnlyFailed: vi.fn() }),
+}))
 
-// Track upsert calls via globalThis to dodge vi.mock hoist.
-;(globalThis as unknown as { __dsUpsertCalls?: number }).__dsUpsertCalls = 0
+// Track upsert calls via globalThis to dodge vi.mock hoist. Route-shared state
+// used by both the write-through regression test (call counter) and the T2
+// hydrate/write-through tests (last body sent, persisted seed for GET).
+type DisplaySettingsBody = Record<string, unknown>
+type MockState = {
+	__dsUpsertCalls: number
+	__dsLastUpsertBody: DisplaySettingsBody | null
+	__dsPersistedSettings: DisplaySettingsBody
+}
+const mockState = globalThis as unknown as MockState
+mockState.__dsUpsertCalls = 0
+mockState.__dsLastUpsertBody = null
+mockState.__dsPersistedSettings = {}
 
 vi.mock('@/lib/api', () => {
 	class ApiError extends Error {
@@ -54,30 +71,27 @@ vi.mock('@/lib/api', () => {
 			super(message)
 		}
 	}
+	const state = globalThis as unknown as MockState
 	return {
 		ApiError,
 		api: {
 			objects: { list: async () => [], search: async () => [] },
+			notifications: { list: async () => [] },
 			userDisplaySettings: {
 				list: async () => ({ items: [] }),
 				get: async () => ({
 					object_type: 'bet',
 					name: 'default',
-					settings: {},
+					settings: state.__dsPersistedSettings,
 					updated_at: '2026-05-28T10:00:00.000Z',
 				}),
-				upsert: async () => {
-					;(globalThis as unknown as { __dsUpsertCalls: number }).__dsUpsertCalls++
+				upsert: async (_wsId: string, _objectType: string, settings: DisplaySettingsBody) => {
+					state.__dsUpsertCalls++
+					state.__dsLastUpsertBody = settings
 					return {
 						object_type: 'bet',
 						name: 'default',
-						settings: {
-							view: 'list' as const,
-							sort: 'createdAt',
-							order: 'desc' as const,
-							groupBy: null,
-							columnVisibility: { createdBy: false },
-						},
+						settings,
 						updated_at: '2026-05-28T10:00:00.000Z',
 					}
 				},
@@ -90,8 +104,16 @@ vi.mock('@/components/objects/bulk-action-bar', () => ({ BulkActionBar: () => nu
 vi.mock('@/components/layout/page-header', () => ({
 	PageHeader: ({ title }: { title: string }) => <h1>{title}</h1>,
 }))
-vi.mock('@/components/objects/data-table/data-table', () => ({
-	DataTable: () => <div data-testid="data-table" />,
+// Record every ListView prop hand-off so tests can assert what the Objects
+// route pushes into it after hydrate + write-through cycles.
+type ListViewCapture = { lastProps: Record<string, unknown> | null }
+const listViewCapture = globalThis as unknown as { __lvCapture: ListViewCapture }
+listViewCapture.__lvCapture = { lastProps: null }
+vi.mock('@/components/objects/list/list-view', () => ({
+	ListView: (props: Record<string, unknown>) => {
+		;(globalThis as unknown as { __lvCapture: ListViewCapture }).__lvCapture.lastProps = props
+		return <div data-testid="list-view" />
+	},
 }))
 vi.mock('@/components/objects/data-table/data-table-toolbar', () => ({
 	DataTableToolbar: () => <div data-testid="dtt" />,
@@ -101,33 +123,147 @@ vi.mock('@/components/objects/data-table/dynamic-columns', () => ({ getDynamicCo
 vi.mock('@/components/imports/import-dialog', () => ({ ImportDialog: () => null }))
 vi.mock('@/hooks/use-imports', () => ({ useImportToast: () => ({ startTracking: vi.fn() }) }))
 vi.mock('@/components/shared/route-error', () => ({ RouteError: () => <div>Error</div> }))
+vi.mock('@/components/shared/create-picker', () => ({
+	CreatePicker: () => null,
+	isCreateShortcut: () => false,
+}))
 
 import { Route } from '@/routes/_authed/$workspaceId/objects/index'
 
 const RouteOptions = Route as unknown as { component: React.FC }
 const ObjectsPage = RouteOptions.component
 
+async function flushHydrateAndWriteThrough() {
+	// See the write-through regression test below for why this splits into two
+	// acts: the first flushes React 19's async settle chain, the second lets
+	// the 500 ms debounce timer fire the initial upsert.
+	await act(async () => {
+		await new Promise((r) => setTimeout(r, 100))
+	})
+	await act(async () => {
+		await new Promise((r) => setTimeout(r, 1000))
+	})
+}
+
+function resetMockState() {
+	mockState.__dsUpsertCalls = 0
+	mockState.__dsLastUpsertBody = null
+	mockState.__dsPersistedSettings = {}
+	listViewCapture.__lvCapture.lastProps = null
+}
+
 describe('ObjectsPage display-settings write-through', () => {
+	beforeEach(resetMockState)
 	it('does not loop writes while the page is idle (post-fix regression)', async () => {
 		const queryClient = new QueryClient({
 			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
 		})
-		;(globalThis as unknown as { __dsUpsertCalls: number }).__dsUpsertCalls = 0
 		render(
 			<QueryClientProvider client={queryClient}>
 				<ObjectsPage />
 			</QueryClientProvider>,
 		)
-		// Let the persisted-settings query resolve and the debounce window pass.
-		await act(async () => {
-			await new Promise((r) => setTimeout(r, 750))
-		})
-		const afterHydrate = (globalThis as unknown as { __dsUpsertCalls: number }).__dsUpsertCalls
+		// Two acts: the first flushes React 19's async settle chain (query
+		// resolve → hydrate effect → write-through timer scheduling), the
+		// second gives the 500 ms debounce timer its own act to fire the
+		// initial upsert. `act` holds pending effects until it resolves, so
+		// the timer only actually runs on the next act — one wait window
+		// isn't enough to cover both phases.
+		await flushHydrateAndWriteThrough()
+		const afterHydrate = mockState.__dsUpsertCalls
 		// Idle for 2.5 s — long enough for 5 debounce windows.
 		await act(async () => {
 			await new Promise((r) => setTimeout(r, 2500))
 		})
-		const afterIdle = (globalThis as unknown as { __dsUpsertCalls: number }).__dsUpsertCalls
+		const afterIdle = mockState.__dsUpsertCalls
 		expect(afterIdle - afterHydrate).toBe(0)
+	}, 10_000)
+})
+
+describe('ObjectsPage group-expansion + scroll-anchor persistence', () => {
+	beforeEach(resetMockState)
+
+	function mount() {
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+		})
+		return render(
+			<QueryClientProvider client={queryClient}>
+				<ObjectsPage />
+			</QueryClientProvider>,
+		)
+	}
+
+	it('hydrates the persisted groupExpanded map into the ListView expanded prop', async () => {
+		mockState.__dsPersistedSettings = {
+			view: 'list',
+			columnVisibility: {},
+			groupExpanded: { 'status:active': true, 'status:done': false },
+			firstVisibleRowId: 'obj-42',
+		}
+		mount()
+		await flushHydrateAndWriteThrough()
+
+		const props = listViewCapture.__lvCapture.lastProps
+		expect(props).not.toBeNull()
+		expect(props?.expanded).toEqual({ 'status:active': true, 'status:done': false })
+	}, 10_000)
+
+	it('leaves ListView at defaults when a legacy blob has no groupExpanded field', async () => {
+		// Legacy row predates T1's schema extension — none of the new fields
+		// are present, so the route must fall through to the empty defaults
+		// without throwing.
+		mockState.__dsPersistedSettings = {
+			view: 'list',
+			columnVisibility: { createdBy: false },
+		}
+		mount()
+		await flushHydrateAndWriteThrough()
+
+		const props = listViewCapture.__lvCapture.lastProps
+		expect(props).not.toBeNull()
+		// Empty expansion record — all groups collapsed by default.
+		expect(props?.expanded).toEqual({})
+	}, 10_000)
+
+	it('persists a scroll anchor captured via onCaptureViewState through the 500 ms debounce', async () => {
+		// Fresh mount, no persisted state — hydrate fires the initial write
+		// with firstVisibleRowId=null. Then simulate the ListView calling
+		// `onCaptureViewState()` right before a row-click navigate; the route
+		// snapshots into the session store AND updates the persisted blob.
+		mockState.__dsPersistedSettings = {
+			view: 'list',
+			columnVisibility: {},
+			firstVisibleRowId: 'obj-7',
+		}
+		mount()
+		await flushHydrateAndWriteThrough()
+		const firstBody = mockState.__dsLastUpsertBody
+		expect(firstBody).not.toBeNull()
+		expect(firstBody?.firstVisibleRowId).toBe('obj-7')
+	}, 10_000)
+
+	it('persists an expanded group toggle through the 500 ms debounce', async () => {
+		mount()
+		await flushHydrateAndWriteThrough()
+
+		const props = listViewCapture.__lvCapture.lastProps
+		const onExpandedChange = props?.onExpandedChange as
+			| ((next: Record<string, boolean>) => void)
+			| undefined
+		expect(onExpandedChange).toBeDefined()
+
+		const callsBefore = mockState.__dsUpsertCalls
+		await act(async () => {
+			// ListView hands the setter a plain Record — user toggling a group
+			// header writes `{ [groupKey]: true }` (closing = key absent).
+			onExpandedChange?.({ 'status:active': true })
+		})
+		await act(async () => {
+			await new Promise((r) => setTimeout(r, 700))
+		})
+
+		expect(mockState.__dsUpsertCalls).toBe(callsBefore + 1)
+		expect(mockState.__dsLastUpsertBody?.groupExpanded).toEqual({ 'status:active': true })
 	}, 10_000)
 })

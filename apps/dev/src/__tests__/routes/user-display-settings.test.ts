@@ -128,6 +128,51 @@ describe('User Display Settings Routes', () => {
 			expect(res.status).toBe(400)
 		})
 
+		it('persists timelineView=table for a bet (AC-T7 round-trip)', async () => {
+			const row = buildUserDisplaySettings({
+				workspaceId: wsId,
+				actorId,
+				objectType: 'bet',
+				settings: { timelineView: 'table' },
+			})
+			const { app, mockResults } = createTestApp(
+				userDisplaySettingsRoutes,
+				'/api/user-display-settings',
+			)
+			mockResults.insert = [row]
+
+			const res = await app.request(
+				jsonRequest(
+					'PUT',
+					'/api/user-display-settings/bet',
+					{ settings: { timelineView: 'table' } },
+					headers,
+				),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).toMatchObject({
+				object_type: 'bet',
+				settings: { timelineView: 'table' },
+			})
+		})
+
+		it('rejects unknown timelineView values', async () => {
+			const { app } = createTestApp(userDisplaySettingsRoutes, '/api/user-display-settings')
+
+			const res = await app.request(
+				jsonRequest(
+					'PUT',
+					'/api/user-display-settings/bet',
+					{ settings: { timelineView: 'graph' } },
+					headers,
+				),
+			)
+
+			expect(res.status).toBe(400)
+		})
+
 		it('accepts the All-tab sentinel key for upsert and GET', async () => {
 			// The Objects page's All tab persists its column-visibility state
 			// under the `__all__` slot — there is no concrete object type to

@@ -25,6 +25,16 @@ function run(cmd) {
 	execSync(cmd, { stdio: 'inherit', env: process.env })
 }
 
+// TTV instrumentation: fire `install_started` and stamp the state file the
+// backend reads to compute `install_completed`/`workspace_first_ready`.
+// Silent + fire-and-forget; can never fail the install.
+try {
+	execSync('node scripts/lib/install-telemetry.mjs start docker', {
+		stdio: 'ignore',
+		env: process.env,
+	})
+} catch {}
+
 // Ensure integration encryption key exists in .env before servers start.
 run('node scripts/ensure-encryption-key.mjs')
 loadEnv()

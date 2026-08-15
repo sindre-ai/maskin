@@ -14,6 +14,12 @@ vi.mock('@tanstack/react-router', async () => {
 
 vi.mock('@/lib/analytics', () => ({
 	trackEvent: (...args: unknown[]) => trackEventMock(...args),
+	trackSidebarToggle: vi.fn(),
+	deriveSidebarViewport: (width: number) => {
+		if (width < 768) return 'mobile'
+		if (width < 1024) return 'tablet'
+		return 'desktop'
+	},
 }))
 
 vi.mock('@/lib/workspace-context', () => ({
@@ -35,6 +41,7 @@ vi.mock('@/hooks/use-workspaces', () => ({
 vi.mock('@/hooks/use-objects', () => ({
 	useObjectGraph: () => ({ data: undefined }),
 	useUpdateObject: () => ({ mutate: vi.fn() }),
+	useVerifyObject: () => ({ mutate: vi.fn() }),
 	useDeleteObject: () => ({ mutate: mutateMock, isPending: false }),
 }))
 

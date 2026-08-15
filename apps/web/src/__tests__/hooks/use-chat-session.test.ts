@@ -27,6 +27,8 @@ vi.mock('@/lib/api', () => ({
 			// Lazy bootstrap polls GET /sessions/:id until status === 'running';
 			// default the mock to "already running" so tests don't hang.
 			get: vi.fn(),
+			// Hydration from localStorage replays via /logs.
+			logs: vi.fn(),
 		},
 	},
 }))
@@ -35,7 +37,22 @@ vi.mock('@/lib/auth', () => ({
 	getApiKey: () => 'test-api-key',
 }))
 
+vi.mock('@/lib/analytics', async () => {
+	const actual = await vi.importActual<typeof import('@/lib/analytics')>('@/lib/analytics')
+	return {
+		...actual,
+		trackChatSessionStarted: vi.fn(),
+		trackSindreMessageSent: vi.fn(),
+		trackSindreMessageReceived: vi.fn(),
+	}
+})
+
 import { useChatSession } from '@/hooks/use-chat-session'
+import {
+	trackChatSessionStarted,
+	trackSindreMessageReceived,
+	trackSindreMessageSent,
+} from '@/lib/analytics'
 import type { SessionResponse } from '@/lib/api'
 import { api } from '@/lib/api'
 import { TestWrapper } from '../setup'
@@ -116,6 +133,144 @@ describe('useChatSession — bootstrap', () => {
 		})
 		await expect(result.current.send('hi')).rejects.toThrow(/not available/i)
 		expect(api.sessions.create).not.toHaveBeenCalled()
+	})
+
+	it('forwards entry_agent_role to the backend when the caller provides one', async () => {
+		vi.mocked(api.sessions.create).mockResolvedValue(buildSession('sess-cos'))
+		vi.mocked(api.sessions.input).mockResolvedValue({ ok: true as const })
+
+		const { result } = renderHook(
+			() => useChatSession({ workspaceId, agentActorId, entryAgentRole: 'chief-of-staff' }),
+			{ wrapper: TestWrapper },
+		)
+
+		await act(async () => {
+			await result.current.send('hi')
+		})
+
+		expect(api.sessions.create).toHaveBeenCalledWith(workspaceId, {
+			actor_id: agentActorId,
+			action_prompt: 'Workspace Coach interactive chat',
+			config: { interactive: true },
+			auto_start: true,
+			entry_agent_role: 'chief-of-staff',
+		})
+	})
+
+	it('omits entry_agent_role from the create body when the caller passes null', async () => {
+		vi.mocked(api.sessions.create).mockResolvedValue(buildSession('sess-plain'))
+		vi.mocked(api.sessions.input).mockResolvedValue({ ok: true as const })
+
+		const { result } = renderHook(
+			() => useChatSession({ workspaceId, agentActorId, entryAgentRole: null }),
+			{ wrapper: TestWrapper },
+		)
+
+		await act(async () => {
+			await result.current.send('hi')
+		})
+
+		const createArgs = vi.mocked(api.sessions.create).mock.calls[0]
+		expect(createArgs?.[1]).not.toHaveProperty('entry_agent_role')
+	})
+
+	it('emits chat_session_started once on the first fresh send, not on subsequent ones', async () => {
+		vi.mocked(api.sessions.create).mockResolvedValue(buildSession('sess-new'))
+		vi.mocked(api.sessions.input).mockResolvedValue({ ok: true as const })
+
+		const { result } = renderHook(() => useChatSession({ workspaceId, agentActorId }), {
+			wrapper: TestWrapper,
+		})
+
+		await act(async () => {
+			await result.current.send('hi')
+		})
+		await act(async () => {
+			await result.current.send('again')
+		})
+
+		expect(trackChatSessionStarted).toHaveBeenCalledTimes(1)
+		expect(trackChatSessionStarted).toHaveBeenCalledWith({
+			entity_id: 'sess-new',
+			entity_type: 'session',
+			entry_point: 'sindre_session',
+			entry_agent_role: null,
+		})
+	})
+
+	it('emits chat_session_started again after reset() — a new container is a new chat', async () => {
+		vi.mocked(api.sessions.create)
+			.mockResolvedValueOnce(buildSession('sess-1'))
+			.mockResolvedValueOnce(buildSession('sess-2'))
+		vi.mocked(api.sessions.input).mockResolvedValue({ ok: true as const })
+
+		const { result } = renderHook(() => useChatSession({ workspaceId, agentActorId }), {
+			wrapper: TestWrapper,
+		})
+
+		await act(async () => {
+			await result.current.send('first')
+		})
+		act(() => {
+			result.current.reset()
+		})
+		await act(async () => {
+			await result.current.send('second')
+		})
+
+		expect(trackChatSessionStarted).toHaveBeenCalledTimes(2)
+		expect(trackChatSessionStarted).toHaveBeenNthCalledWith(1, {
+			entity_id: 'sess-1',
+			entity_type: 'session',
+			entry_point: 'sindre_session',
+			entry_agent_role: null,
+		})
+		expect(trackChatSessionStarted).toHaveBeenNthCalledWith(2, {
+			entity_id: 'sess-2',
+			entity_type: 'session',
+			entry_point: 'sindre_session',
+			entry_agent_role: null,
+		})
+	})
+
+	it('forwards entryAgentRole onto chat_session_started for the CoS bet', async () => {
+		vi.mocked(api.sessions.create).mockResolvedValue(buildSession('sess-cos'))
+		vi.mocked(api.sessions.input).mockResolvedValue({ ok: true as const })
+
+		const { result } = renderHook(
+			() =>
+				useChatSession({
+					workspaceId,
+					agentActorId,
+					entryAgentRole: 'chief-of-staff',
+				}),
+			{ wrapper: TestWrapper },
+		)
+
+		await act(async () => {
+			await result.current.send('hi')
+		})
+
+		expect(trackChatSessionStarted).toHaveBeenCalledWith({
+			entity_id: 'sess-cos',
+			entity_type: 'session',
+			entry_point: 'sindre_session',
+			entry_agent_role: 'chief-of-staff',
+		})
+	})
+
+	it('does not emit chat_session_started when session creation fails', async () => {
+		vi.mocked(api.sessions.create).mockRejectedValue(new Error('boom'))
+
+		const { result } = renderHook(() => useChatSession({ workspaceId, agentActorId }), {
+			wrapper: TestWrapper,
+		})
+
+		await act(async () => {
+			await expect(result.current.send('hi')).rejects.toThrow('boom')
+		})
+
+		expect(trackChatSessionStarted).not.toHaveBeenCalled()
 	})
 
 	it('captures errors from session creation as the hook error', async () => {
@@ -265,6 +420,160 @@ describe('useChatSession — SSE log stream', () => {
 	})
 })
 
+describe('useChatSession — Sindre message telemetry', () => {
+	it('emits sindre_message_sent per send() with the current session id', async () => {
+		vi.mocked(api.sessions.create).mockResolvedValue(buildSession('sess-1'))
+		vi.mocked(api.sessions.input).mockResolvedValue({ ok: true as const })
+
+		const { result } = renderHook(() => useChatSession({ workspaceId, agentActorId }), {
+			wrapper: TestWrapper,
+		})
+		await act(async () => {
+			await result.current.send('first')
+		})
+		await act(async () => {
+			await result.current.send('second')
+		})
+
+		expect(trackSindreMessageSent).toHaveBeenCalledTimes(2)
+		expect(trackSindreMessageSent).toHaveBeenNthCalledWith(1, { session_id: 'sess-1' })
+		expect(trackSindreMessageSent).toHaveBeenNthCalledWith(2, { session_id: 'sess-1' })
+	})
+
+	it('emits sindre_message_received once per unique assistant message id, carrying model + tokens', async () => {
+		const { onmessage } = await bootstrapAndOpen()
+
+		const first = JSON.stringify({
+			type: 'assistant',
+			session_id: 'sess-1',
+			message: {
+				id: 'msg_a',
+				model: 'claude-opus-4-7',
+				usage: { output_tokens: 42 },
+				content: [{ type: 'text', text: 'first block' }],
+			},
+		})
+		act(() => onmessage({ event: 'stdout', data: first }))
+		// Second envelope for the same message id — a follow-up text block from
+		// the same turn. Must not double-count.
+		const firstAgain = JSON.stringify({
+			type: 'assistant',
+			session_id: 'sess-1',
+			message: { id: 'msg_a', content: [{ type: 'text', text: 'more of the same turn' }] },
+		})
+		act(() => onmessage({ event: 'stdout', data: firstAgain }))
+		// New message id — a new reply turn, must emit again.
+		const second = JSON.stringify({
+			type: 'assistant',
+			session_id: 'sess-1',
+			message: {
+				id: 'msg_b',
+				model: 'claude-opus-4-7',
+				usage: { output_tokens: 7 },
+				content: [{ type: 'text', text: 'second turn' }],
+			},
+		})
+		act(() => onmessage({ event: 'stdout', data: second }))
+
+		expect(trackSindreMessageReceived).toHaveBeenCalledTimes(2)
+		expect(trackSindreMessageReceived).toHaveBeenNthCalledWith(1, {
+			session_id: 'sess-1',
+			model: 'claude-opus-4-7',
+			tokens: 42,
+		})
+		expect(trackSindreMessageReceived).toHaveBeenNthCalledWith(2, {
+			session_id: 'sess-1',
+			model: 'claude-opus-4-7',
+			tokens: 7,
+		})
+	})
+
+	it('records model + tokens as null when the assistant envelope omits them', async () => {
+		const { onmessage } = await bootstrapAndOpen()
+
+		const line = JSON.stringify({
+			type: 'assistant',
+			session_id: 'sess-1',
+			message: { id: 'msg_bare', content: [{ type: 'text', text: 'no metadata' }] },
+		})
+		act(() => onmessage({ event: 'stdout', data: line }))
+
+		expect(trackSindreMessageReceived).toHaveBeenCalledTimes(1)
+		expect(trackSindreMessageReceived).toHaveBeenCalledWith({
+			session_id: 'sess-1',
+			model: null,
+			tokens: null,
+		})
+	})
+
+	it('does not emit sindre_message_received for non-assistant envelopes or garbage lines', async () => {
+		const { onmessage } = await bootstrapAndOpen()
+
+		const systemLine = JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sess-1' })
+		act(() => onmessage({ event: 'stdout', data: systemLine }))
+		const resultLine = JSON.stringify({
+			type: 'result',
+			subtype: 'success',
+			is_error: false,
+			session_id: 'sess-1',
+		})
+		act(() => onmessage({ event: 'stdout', data: resultLine }))
+		act(() => onmessage({ event: 'stdout', data: 'not json' }))
+		act(() => onmessage({ event: 'stdout', data: '' }))
+
+		expect(trackSindreMessageReceived).not.toHaveBeenCalled()
+	})
+
+	it('resets the received-message-id dedupe set on reset() so a new session can re-emit', async () => {
+		vi.mocked(api.sessions.create)
+			.mockResolvedValueOnce(buildSession('sess-1'))
+			.mockResolvedValueOnce(buildSession('sess-2'))
+		vi.mocked(api.sessions.input).mockResolvedValue({ ok: true as const })
+
+		const hook = renderHook(() => useChatSession({ workspaceId, agentActorId }), {
+			wrapper: TestWrapper,
+		})
+		await act(async () => {
+			await hook.result.current.send('hi')
+		})
+		await waitFor(() => expect(mockFetchEventSource).toHaveBeenCalledTimes(1))
+		await act(async () => {
+			await lastFesInit?.onopen()
+		})
+		const assistantLine = JSON.stringify({
+			type: 'assistant',
+			session_id: 'sess-1',
+			message: { id: 'msg_same', content: [{ type: 'text', text: 'hello' }] },
+		})
+		act(() => lastFesInit?.onmessage({ event: 'stdout', data: assistantLine }))
+		expect(trackSindreMessageReceived).toHaveBeenCalledTimes(1)
+
+		act(() => hook.result.current.reset())
+		await act(async () => {
+			await hook.result.current.send('again')
+		})
+		await waitFor(() => expect(mockFetchEventSource).toHaveBeenCalledTimes(2))
+		await act(async () => {
+			await lastFesInit?.onopen()
+		})
+		// Same message id, but a fresh session — dedupe set was cleared, must
+		// emit again.
+		act(() => lastFesInit?.onmessage({ event: 'stdout', data: assistantLine }))
+		expect(trackSindreMessageReceived).toHaveBeenCalledTimes(2)
+	})
+})
+
+async function bootstrapAndOpen(): Promise<{
+	onmessage: NonNullable<FesInit['onmessage']>
+}> {
+	await renderAndBootstrap()
+	await act(async () => {
+		await lastFesInit?.onopen()
+	})
+	if (!lastFesInit) throw new Error('fetchEventSource was not called')
+	return { onmessage: lastFesInit.onmessage }
+}
+
 describe('useChatSession — send', () => {
 	beforeEach(() => {
 		vi.mocked(api.sessions.create).mockResolvedValue(buildSession('sess-1'))
@@ -407,5 +716,130 @@ describe('useChatSession — reset & workspace switching', () => {
 		)
 		// Transcript carries across the re-bootstrap.
 		expect(result.current.events.map((e: { kind: string }) => e.kind)).toEqual(['user', 'user'])
+	})
+})
+
+describe('useChatSession — persistence and reload', () => {
+	// AC-T2 + AC-U4: a successful send writes the sessionId to localStorage
+	// keyed by (workspaceId, agentActorId) so the next mount can pick the
+	// same conversation back up.
+	it('persists the sessionId in localStorage after a successful send', async () => {
+		vi.mocked(api.sessions.create).mockResolvedValue(buildSession('sess-persisted'))
+		vi.mocked(api.sessions.input).mockResolvedValue({ ok: true as const })
+
+		const { result } = renderHook(() => useChatSession({ workspaceId, agentActorId }), {
+			wrapper: TestWrapper,
+		})
+		await act(async () => {
+			await result.current.send('hi')
+		})
+
+		expect(localStorage.getItem(`maskin.chat.sessionId:${workspaceId}:${agentActorId}`)).toBe(
+			'sess-persisted',
+		)
+	})
+
+	it('clears the persisted sessionId on reset()', async () => {
+		vi.mocked(api.sessions.create).mockResolvedValue(buildSession('sess-A'))
+		vi.mocked(api.sessions.input).mockResolvedValue({ ok: true as const })
+
+		const { result } = renderHook(() => useChatSession({ workspaceId, agentActorId }), {
+			wrapper: TestWrapper,
+		})
+		await act(async () => {
+			await result.current.send('hi')
+		})
+		act(() => {
+			result.current.reset()
+		})
+
+		expect(localStorage.getItem(`maskin.chat.sessionId:${workspaceId}:${agentActorId}`)).toBeNull()
+	})
+
+	// AC-U4: reload renders the prior conversation — including any image
+	// attachments — from /logs alone. No second POST to /files is required.
+	it('hydrates the transcript from /logs on mount when a sessionId is persisted', async () => {
+		localStorage.setItem(`maskin.chat.sessionId:${workspaceId}:${agentActorId}`, 'sess-prev')
+		const userLog = JSON.stringify({
+			type: 'user',
+			message: { role: 'user', content: 'look at this' },
+			maskin_attachments: [
+				{
+					kind: 'file',
+					id: 'file-99',
+					name: 'photo.png',
+					mime_type: 'image/png',
+					size_bytes: 1234,
+				},
+			],
+		})
+		const assistantLog = JSON.stringify({
+			type: 'assistant',
+			session_id: 'sess-prev',
+			message: { id: 'msg_1', content: [{ type: 'text', text: 'I see it' }] },
+		})
+		vi.mocked(api.sessions.logs).mockResolvedValue([
+			{
+				id: 11,
+				sessionId: 'sess-prev',
+				stream: 'stdout',
+				content: userLog,
+				createdAt: '2026-06-25T20:00:00Z',
+			},
+			{
+				id: 12,
+				sessionId: 'sess-prev',
+				stream: 'stdout',
+				content: assistantLog,
+				createdAt: '2026-06-25T20:00:01Z',
+			},
+		])
+
+		const { result } = renderHook(() => useChatSession({ workspaceId, agentActorId }), {
+			wrapper: TestWrapper,
+		})
+
+		await waitFor(() => expect(result.current.sessionId).toBe('sess-prev'))
+		await waitFor(() => expect(result.current.events.length).toBeGreaterThanOrEqual(2))
+
+		expect(api.sessions.logs).toHaveBeenCalledWith('sess-prev', workspaceId, { limit: '500' })
+		const [userEvent, assistantEvent] = result.current.events
+		expect(userEvent).toMatchObject({
+			kind: 'user',
+			text: 'look at this',
+			attachments: [
+				{
+					kind: 'file',
+					id: 'file-99',
+					name: 'photo.png',
+					mimeType: 'image/png',
+					sizeBytes: 1234,
+				},
+			],
+		})
+		expect(assistantEvent).toMatchObject({ kind: 'text', text: 'I see it' })
+
+		// The SSE connection that follows hydration must skip the rows we
+		// already drained — passes Last-Event-ID equal to the max log id
+		// returned from /logs so the server replays nothing.
+		await waitFor(() => expect(mockFetchEventSource).toHaveBeenCalled())
+		expect(lastFesInit?.headers['Last-Event-ID']).toBe('12')
+	})
+
+	it('drops a stale persisted sessionId when /logs rejects', async () => {
+		localStorage.setItem(`maskin.chat.sessionId:${workspaceId}:${agentActorId}`, 'sess-gone')
+		vi.mocked(api.sessions.logs).mockRejectedValue(new Error('not found'))
+
+		const { result } = renderHook(() => useChatSession({ workspaceId, agentActorId }), {
+			wrapper: TestWrapper,
+		})
+
+		await waitFor(() =>
+			expect(
+				localStorage.getItem(`maskin.chat.sessionId:${workspaceId}:${agentActorId}`),
+			).toBeNull(),
+		)
+		expect(result.current.sessionId).toBeNull()
+		expect(result.current.events).toEqual([])
 	})
 })

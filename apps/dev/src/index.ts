@@ -1,3 +1,4 @@
+import './lib/sentry'
 import './extensions'
 import path from 'node:path'
 import { serve } from '@hono/node-server'
@@ -7,12 +8,16 @@ import { PgNotifyBridge } from '@maskin/realtime'
 import { S3StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
 import { createApp } from './app-factory'
-import { type DevBootstrapResult, maybeBootstrapDev, seedCatalogIfEmpty } from './lib/dev-bootstrap'
+import { emitInstallCompleted } from './lib/analytics/install-telemetry'
+import {
+	type DevBootstrapResult,
+	maybeBootstrapDev,
+	seedMarketplaceIfEmpty,
+} from './lib/dev-bootstrap'
 import { logger } from './lib/logger'
 import { AgentStorageManager } from './services/agent-storage'
-import { ContainerManager } from './services/container-manager'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
-import { PackageVersionPusher } from './services/package-version-pusher'
+import { LoopVersionPusher } from './services/loop-version-pusher'
 import { RuntimeTelemetry } from './services/runtime-telemetry'
 import { SessionDispatchQueue } from './services/session-dispatch-queue'
 import { SessionDispatcher } from './services/session-dispatcher'
@@ -74,17 +79,6 @@ try {
 	)
 }
 
-const containers = new ContainerManager()
-try {
-	await containers.ensureImage(
-		'agent-base:latest',
-		path.resolve(import.meta.dirname ?? __dirname, '../../../docker/agent-base'),
-	)
-} catch (err) {
-	logger.error('Failed to build agent-base image — sessions will fail until image is available', {
-		error: err instanceof Error ? err.message : String(err),
-	})
-}
 const agentStorage = new AgentStorageManager(storageProvider, db)
 
 const runtimeTelemetry = new RuntimeTelemetry({
@@ -126,9 +120,9 @@ const webhookDeliveriesReconciler = new WebhookDeliveriesReconciler(db)
 webhookDeliveriesReconciler.start()
 logger.info('Webhook deliveries reconciler started')
 
-const packageVersionPusher = new PackageVersionPusher(db)
-packageVersionPusher.start()
-logger.info('Package version pusher started')
+const loopVersionPusher = new LoopVersionPusher(db, agentStorage)
+loopVersionPusher.start()
+logger.info('Loop version pusher started')
 
 // Session dispatch queue absorbs backpressure when no agent-server has
 // capacity and retries failed dispatches. In production the SessionDispatcher
@@ -152,6 +146,7 @@ if (process.env.NODE_ENV === 'production') {
 				memoryMib: spec.memoryMib,
 				cpus: spec.cpus,
 				...(spec.browserRequired && { browserRequired: true }),
+				...(spec.previewGuestPorts.length > 0 && { previewGuestPorts: spec.previewGuestPorts }),
 				sourceSessionId: session.sourceSessionId ?? undefined,
 			}
 		},
@@ -183,7 +178,7 @@ try {
 			workspaceName: bootstrap.workspaceName,
 		})
 	}
-	await seedCatalogIfEmpty(db)
+	await seedMarketplaceIfEmpty(db)
 } catch (err) {
 	logger.error('Dev bootstrap failed', { error: err instanceof Error ? err.message : String(err) })
 }
@@ -229,6 +224,15 @@ ${mcpSetup}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 `
 	process.stdout.write(banner)
+	// TTV instrumentation: server is reachable on localhost, so this is the
+	// canonical "install_completed" moment for the open-source launch bet.
+	// Fire-and-forget — never blocks or throws.
+	emitInstallCompleted().catch(() => {})
+	sessionManager.warmAgentBaseImage().catch((err) => {
+		logger.error('Failed to build agent-base image — sessions will fail until image is available', {
+			error: err instanceof Error ? err.message : String(err),
+		})
+	})
 	sessionManager.warmBrowserSidecarImage().catch((err) => {
 		logger.error('Failed to prepare browser-sidecar image; browser sessions will retry on demand', {
 			error: err instanceof Error ? err.message : String(err),

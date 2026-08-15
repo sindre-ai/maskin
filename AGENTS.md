@@ -29,6 +29,9 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - `.Codex/rules/known-pitfalls.md` — registry of recurring bugs to check against before submitting code
 - `packages/db/MIGRATIONS.md` — migration conventions for hot tables (CONCURRENTLY indexes, chunked backfills); read before editing a `.sql` file produced by `pnpm db:generate`
 
+## Reference
+- `docs/reference/README.md` — Canonical documentation for Maskin's primitives — read the matching page before trusting model memory.
+
 ## Architecture
 - Modular monorepo managed by Turborepo + pnpm workspaces: `apps/` (deployable services) + `packages/` (shared libs)
 - Backend (`apps/dev`): Hono.js + OpenAPIHono + Drizzle ORM + PostgreSQL, runs on port 3000

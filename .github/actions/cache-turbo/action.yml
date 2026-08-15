@@ -1,0 +1,18 @@
+name: Cache turbo build outputs
+description: Restore/save the Turborepo local cache, keyed per job so parallel jobs don't clobber each other's cache entries
+
+inputs:
+  job-name:
+    description: Distinguishes this job's cache entry from other jobs running in the same workflow
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/cache@v4
+      with:
+        path: .turbo
+        key: turbo-${{ inputs.job-name }}-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+        restore-keys: |
+          turbo-${{ inputs.job-name }}-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-
+          turbo-${{ inputs.job-name }}-${{ runner.os }}-

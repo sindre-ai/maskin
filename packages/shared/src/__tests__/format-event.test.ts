@@ -83,6 +83,21 @@ describe('formatEventDescription', () => {
 		expect(formatEventDescription(event)).toBe('fired trigger')
 	})
 
+	it('returns "verified {type}" for a verification stamp', () => {
+		const event = buildEvent({ action: 'verified', entityType: 'knowledge' })
+		expect(formatEventDescription(event)).toBe('verified knowledge')
+	})
+
+	it('returns "unverified {type}" for a verification reversal', () => {
+		const event = buildEvent({ action: 'unverified', entityType: 'knowledge' })
+		expect(formatEventDescription(event)).toBe('unverified knowledge')
+	})
+
+	it('returns "undid a Knowledge Author write" for a knowledge_write_undone event', () => {
+		const event = buildEvent({ action: 'knowledge_write_undone', entityType: 'knowledge' })
+		expect(formatEventDescription(event)).toBe('undid a Knowledge Author write')
+	})
+
 	it('falls back to "updated {type}" when status_changed has no data', () => {
 		const event = buildEvent({ action: 'status_changed', entityType: 'bet' })
 		expect(formatEventDescription(event)).toBe('updated bet')
@@ -236,6 +251,96 @@ describe('formatEventDescription', () => {
 					previous: { status: 'signal', title: 'same' },
 					updated: { status: 'signal', title: 'same' },
 				},
+			})
+
+			expect(formatEventDescription(event)).toBe('updated bet')
+		})
+	})
+
+	describe('object update diff — new {changes} shape', () => {
+		it('formats status change from a single-element changes array', () => {
+			const event = buildEvent({
+				action: 'status_changed',
+				entityType: 'bet',
+				data: {
+					changes: [{ field: 'status', old: 'signal', new: 'proposed' }],
+				},
+			})
+
+			expect(formatEventDescription(event)).toBe('changed status from Signal to Proposed')
+		})
+
+		it('formats title change from a changes array', () => {
+			const event = buildEvent({
+				action: 'updated',
+				entityType: 'bet',
+				data: {
+					changes: [{ field: 'title', old: 'Old Title', new: 'New Title' }],
+				},
+			})
+
+			expect(formatEventDescription(event)).toBe('changed title from "Old Title" to "New Title"')
+		})
+
+		it('formats owner change from a changes array with actor lookup', () => {
+			const alice = buildActor({ id: 'actor-alice', name: 'Alice' })
+			const bob = buildActor({ id: 'actor-bob', name: 'Bob' })
+			const event = buildEvent({
+				action: 'updated',
+				entityType: 'bet',
+				data: {
+					changes: [{ field: 'driver', old: 'actor-alice', new: 'actor-bob' }],
+				},
+			})
+
+			expect(formatEventDescription(event, { actorsById: actorsMap([alice, bob]) })).toBe(
+				'changed driver from Alice to Bob',
+			)
+		})
+
+		it('renders multiple changes in the canonical status/driver/title/content order', () => {
+			const alice = buildActor({ id: 'actor-alice', name: 'Alice' })
+			const bob = buildActor({ id: 'actor-bob', name: 'Bob' })
+			const event = buildEvent({
+				action: 'status_changed',
+				entityType: 'bet',
+				data: {
+					changes: [
+						{ field: 'content', old: 'old', new: 'new' },
+						{ field: 'status', old: 'signal', new: 'proposed' },
+						{ field: 'driver', old: 'actor-alice', new: 'actor-bob' },
+					],
+				},
+			})
+
+			expect(formatEventDescription(event, { actorsById: actorsMap([alice, bob]) })).toBe(
+				'changed status from Signal to Proposed, changed driver from Alice to Bob, and updated content',
+			)
+		})
+
+		it('emits one metadata clause per changed sub-key when metadata is in changes', () => {
+			const event = buildEvent({
+				action: 'updated',
+				entityType: 'bet',
+				data: {
+					changes: [
+						{
+							field: 'metadata',
+							old: { priority: 'low', estimate: 3 },
+							new: { priority: 'high', estimate: 3 },
+						},
+					],
+				},
+			})
+
+			expect(formatEventDescription(event)).toBe('updated custom field: priority')
+		})
+
+		it('falls back to "updated {type}" when the changes array is empty', () => {
+			const event = buildEvent({
+				action: 'updated',
+				entityType: 'bet',
+				data: { changes: [] },
 			})
 
 			expect(formatEventDescription(event)).toBe('updated bet')

@@ -1,6 +1,7 @@
 import {
 	actors,
 	agentFiles,
+	agentSkills,
 	files,
 	imports,
 	notifications,
@@ -23,7 +24,7 @@ import {
 	insertSession,
 	insertWorkspace,
 } from '../factories'
-import { jsonRequest } from '../helpers'
+import { jsonGet, jsonRequest } from '../helpers'
 import { createIntegrationApp, db, getTestActorId } from './global-setup'
 
 const { default: actorsRoutes } = await import('../../routes/actors')
@@ -31,6 +32,34 @@ const { default: actorsRoutes } = await import('../../routes/actors')
 function createApp() {
 	return createIntegrationApp({ path: '/api/actors', module: actorsRoutes })
 }
+
+describe('Actors Integration — GET /:id', () => {
+	it('includes id and name of attached workspace skills', async () => {
+		const app = createApp()
+		const ws = await insertWorkspace(db, getTestActorId())
+		const agent = await insertActor(db, { type: 'agent', name: 'Skilled Agent' })
+		const [skill] = await db
+			.insert(workspaceSkills)
+			.values(buildWorkspaceSkill({ workspaceId: ws.id, createdBy: getTestActorId() }))
+			.returning()
+		await db.insert(agentSkills).values({ actorId: agent.id, workspaceSkillId: skill.id })
+
+		const res = await app.request(jsonGet(`/api/actors/${agent.id}`))
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body.skills).toEqual([{ id: skill.id, name: skill.name }])
+	})
+
+	it('returns an empty skills array when no skills are attached', async () => {
+		const app = createApp()
+		const agent = await insertActor(db, { type: 'agent', name: 'Skill-less Agent' })
+
+		const res = await app.request(jsonGet(`/api/actors/${agent.id}`))
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body.skills).toEqual([])
+	})
+})
 
 describe('Actors Integration — DELETE', () => {
 	let workspaceId: string

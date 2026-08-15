@@ -1,10 +1,19 @@
 import { randomUUID } from 'node:crypto'
 import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
-import { actors, agentSkills, triggers, workspaceMembers, workspaceSkills } from '@maskin/db/schema'
 import {
+	actors,
+	agentSkills,
+	triggers,
+	workspaceMembers,
+	workspaceSkills,
+	workspaces,
+} from '@maskin/db/schema'
+import {
+	CHIEF_OF_STAFF_DEFAULT,
 	DEVELOPMENT_AGENTS,
 	DEVELOPMENT_TRIGGERS,
+	WORKSPACE_COACH_DEFAULT,
 	parseSkillMd,
 	skillNameSchema,
 } from '@maskin/shared'
@@ -12,9 +21,243 @@ import { and, eq } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import { type AgentStorageManager, workspaceSkillKey } from './agent-storage'
 
-const DEFAULT_AGENT_IDS = ['workspace_coach', 'workspace_driver', 'strategist']
+export const DEFAULT_AGENT_IDS = [
+	'workspace_coach',
+	'chief_of_staff',
+	'workspace_driver',
+	'strategist',
+	'insights_triage',
+	'research_agent',
+] as const
 
-const defaultAgents = DEVELOPMENT_AGENTS.filter((a) => DEFAULT_AGENT_IDS.includes(a.$id))
+type DefaultAgentId = (typeof DEFAULT_AGENT_IDS)[number]
+
+const defaultAgents = DEVELOPMENT_AGENTS.filter((a) =>
+	DEFAULT_AGENT_IDS.includes(a.$id as DefaultAgentId),
+)
+
+// A caller can pass either the top-level Database or a Drizzle tx handle —
+// both expose the query-builder surface this file uses.
+type Tx = Pick<Database, 'select' | 'insert' | 'update'>
+
+/**
+ * Thrown when a per-agent actor/member insert fails inside the workspace
+ * transaction. The route inspects `agentId` and the wrapped `cause` to shape a
+ * 5xx that names what actually broke, rather than a generic 500.
+ */
+export class SeedAgentError extends Error {
+	readonly agentId: string
+	readonly cause: unknown
+
+	constructor(agentId: string, cause: unknown) {
+		const causeMsg = cause instanceof Error ? cause.message : String(cause)
+		super(`Failed to seed default agent "${agentId}": ${causeMsg}`)
+		this.name = 'SeedAgentError'
+		this.agentId = agentId
+		this.cause = cause
+	}
+
+	get errorClass(): string {
+		if (this.cause instanceof Error) return this.cause.name
+		return typeof this.cause
+	}
+}
+
+type ActorSpec = {
+	type: string
+	name: string
+	isSystem: boolean
+	systemPrompt: string
+	llmProvider: string | null
+	llmConfig: Record<string, unknown> | null
+	tools: Record<string, unknown> | null
+}
+
+function resolveActorSpec(agentId: DefaultAgentId): ActorSpec {
+	if (agentId === 'workspace_coach') {
+		return {
+			type: WORKSPACE_COACH_DEFAULT.type,
+			name: WORKSPACE_COACH_DEFAULT.name,
+			isSystem: WORKSPACE_COACH_DEFAULT.isSystem,
+			systemPrompt: WORKSPACE_COACH_DEFAULT.systemPrompt,
+			llmProvider: WORKSPACE_COACH_DEFAULT.llmProvider,
+			llmConfig: WORKSPACE_COACH_DEFAULT.llmConfig as Record<string, unknown>,
+			tools: WORKSPACE_COACH_DEFAULT.tools as Record<string, unknown>,
+		}
+	}
+	if (agentId === 'chief_of_staff') {
+		return {
+			type: CHIEF_OF_STAFF_DEFAULT.type,
+			name: CHIEF_OF_STAFF_DEFAULT.name,
+			isSystem: CHIEF_OF_STAFF_DEFAULT.isSystem,
+			systemPrompt: CHIEF_OF_STAFF_DEFAULT.systemPrompt,
+			llmProvider: CHIEF_OF_STAFF_DEFAULT.llmProvider,
+			llmConfig: CHIEF_OF_STAFF_DEFAULT.llmConfig as Record<string, unknown>,
+			tools: CHIEF_OF_STAFF_DEFAULT.tools as Record<string, unknown>,
+		}
+	}
+	const agent = DEVELOPMENT_AGENTS.find((a) => a.$id === agentId)
+	if (!agent) throw new Error(`agent "${agentId}" missing from DEVELOPMENT_AGENTS`)
+	return {
+		type: 'agent',
+		name: agent.name,
+		isSystem: false,
+		systemPrompt: agent.systemPrompt,
+		llmProvider: null,
+		llmConfig: (agent.llmConfig ?? null) as Record<string, unknown> | null,
+		tools: (agent.tools ?? null) as Record<string, unknown> | null,
+	}
+}
+
+/**
+ * Seed the default agent actor rows + workspace_members inside the
+ * caller's transaction. Skills, workspace_skill files, and triggers are NOT
+ * seeded here — those hit S3 and must live post-commit (see
+ * bootstrapDefaultAgents).
+ *
+ * Idempotent per workspace: an agent whose `name` already has a
+ * workspace_members row is skipped. On any per-agent failure throws
+ * SeedAgentError so the caller's tx rolls back cleanly.
+ *
+ * Returns a map of agent id → actor id (whether newly created or
+ * pre-existing) so callers can pin one of them as the workspace's default
+ * chat agent without an extra lookup query.
+ */
+export async function seedDefaultAgentActors(
+	tx: Tx,
+	workspaceId: string,
+	createdBy: string,
+): Promise<Record<DefaultAgentId, string>> {
+	const actorIds = {} as Record<DefaultAgentId, string>
+
+	for (const agentId of DEFAULT_AGENT_IDS) {
+		try {
+			const spec = resolveActorSpec(agentId)
+
+			const [existing] = await tx
+				.select({ actorId: workspaceMembers.actorId })
+				.from(workspaceMembers)
+				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+				.where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(actors.name, spec.name)))
+				.limit(1)
+
+			if (existing) {
+				actorIds[agentId] = existing.actorId
+				continue
+			}
+
+			const [created] = await tx
+				.insert(actors)
+				.values({
+					type: spec.type,
+					name: spec.name,
+					isSystem: spec.isSystem,
+					systemPrompt: spec.systemPrompt.replaceAll('{{self_id}}', ''),
+					llmProvider: spec.llmProvider,
+					llmConfig: spec.llmConfig,
+					tools: spec.tools,
+					apiKey: generateApiKey().key,
+					createdBy,
+				})
+				.returning()
+
+			if (!created) throw new Error('insert into actors returned no row')
+
+			if (spec.systemPrompt.includes('{{self_id}}')) {
+				await tx
+					.update(actors)
+					.set({ systemPrompt: spec.systemPrompt.replaceAll('{{self_id}}', created.id) })
+					.where(eq(actors.id, created.id))
+			}
+
+			await tx.insert(workspaceMembers).values({
+				workspaceId,
+				actorId: created.id,
+				role: 'member',
+			})
+
+			actorIds[agentId] = created.id
+		} catch (err) {
+			if (err instanceof SeedAgentError) throw err
+			throw new SeedAgentError(agentId, err)
+		}
+	}
+
+	return actorIds
+}
+
+/**
+ * Idempotently ensures a Chief of Staff actor exists in the workspace,
+ * creating it if missing. Returns its actor id either way.
+ */
+export async function ensureChiefOfStaffActor(
+	db: Tx,
+	workspaceId: string,
+	createdBy: string,
+): Promise<string> {
+	const chiefSpec = resolveActorSpec('chief_of_staff')
+	const [existing] = await db
+		.select({ actorId: workspaceMembers.actorId })
+		.from(workspaceMembers)
+		.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+		.where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(actors.name, chiefSpec.name)))
+		.limit(1)
+
+	if (existing) return existing.actorId
+
+	const [created] = await db
+		.insert(actors)
+		.values({
+			type: chiefSpec.type,
+			name: chiefSpec.name,
+			isSystem: chiefSpec.isSystem,
+			systemPrompt: chiefSpec.systemPrompt.replaceAll('{{self_id}}', ''),
+			llmProvider: chiefSpec.llmProvider,
+			llmConfig: chiefSpec.llmConfig,
+			tools: chiefSpec.tools,
+			apiKey: generateApiKey().key,
+			createdBy,
+		})
+		.returning()
+
+	if (!created) throw new Error('Failed to create Chief of Staff actor')
+
+	await db.insert(workspaceMembers).values({
+		workspaceId,
+		actorId: created.id,
+		role: 'member',
+	})
+
+	return created.id
+}
+
+/**
+ * Pins `agentActorId` as the workspace's default chat agent, but only if
+ * `settings.default_agent_id` isn't already set — never clobbers an
+ * explicit choice (owner pick, or a prior run of this same function).
+ * Returns whether it made a change.
+ */
+export async function pinDefaultAgentIfUnset(
+	db: Tx,
+	workspaceId: string,
+	agentActorId: string,
+): Promise<boolean> {
+	const [ws] = await db
+		.select({ settings: workspaces.settings })
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId))
+		.limit(1)
+
+	const currentSettings = (ws?.settings ?? {}) as Record<string, unknown>
+	if (currentSettings.default_agent_id != null) return false
+
+	await db
+		.update(workspaces)
+		.set({ settings: { ...currentSettings, default_agent_id: agentActorId } })
+		.where(eq(workspaces.id, workspaceId))
+
+	return true
+}
 
 export async function bootstrapDefaultAgents(
 	db: Database,
@@ -24,6 +267,29 @@ export async function bootstrapDefaultAgents(
 ): Promise<void> {
 	// Map from $id → created actor UUID — used to wire triggers after all agents are seeded.
 	const actorIdMap: Record<string, string> = {}
+
+	// Seed system agents that live outside DEVELOPMENT_AGENTS (Chief of Staff).
+	// Workspace Coach is seeded synchronously by the workspace-create paths, so
+	// its name-check would only ever hit "existing" here — Chief of Staff is the
+	// one that actually needs post-commit seeding via this function. Idempotent
+	// per workspace via the actors.name check.
+	let chiefId: string | null = null
+	try {
+		chiefId = await ensureChiefOfStaffActor(db, workspaceId, createdBy)
+	} catch (err) {
+		logger.error('Failed to create Chief of Staff during workspace bootstrap', {
+			workspaceId,
+			err,
+		})
+	}
+
+	// Pin Chief of Staff as the workspace's default chat agent if nothing has
+	// claimed that slot yet. No-op for workspaces that already have a
+	// default_agent_id (e.g. dev-bootstrap already set it synchronously, or an
+	// owner picked a different default).
+	if (chiefId) {
+		await pinDefaultAgentIfUnset(db, workspaceId, chiefId)
+	}
 
 	for (const agent of defaultAgents) {
 		// Idempotent: check if an actor with this name already exists in the workspace.

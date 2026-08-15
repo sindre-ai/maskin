@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+	SAFE_METADATA_FIELD_NAME_RE,
+	TERMINAL_BET_STATUSES,
 	createObjectSchema,
 	objectParamsSchema,
 	objectQuerySchema,
@@ -133,6 +135,24 @@ describe('objectQuerySchema', () => {
 		const result = objectQuerySchema.parse({ driver: uuid })
 		expect(result.driver).toBe(uuid)
 	})
+
+	it('accepts ISO-8601 updated_before and updated_after', () => {
+		const result = objectQuerySchema.parse({
+			updated_before: '2026-06-30T00:00:00.000Z',
+			updated_after: '2026-06-01T00:00:00.000Z',
+		})
+		expect(result.updated_before).toBe('2026-06-30T00:00:00.000Z')
+		expect(result.updated_after).toBe('2026-06-01T00:00:00.000Z')
+	})
+
+	it('rejects malformed updated_before (AC-T6)', () => {
+		expect(() => objectQuerySchema.parse({ updated_before: 'not-a-date' })).toThrow()
+		expect(() => objectQuerySchema.parse({ updated_before: '2026-06-30' })).toThrow()
+	})
+
+	it('rejects malformed updated_after (AC-T6)', () => {
+		expect(() => objectQuerySchema.parse({ updated_after: 'yesterday' })).toThrow()
+	})
 })
 
 describe('searchObjectsSchema', () => {
@@ -172,5 +192,33 @@ describe('objectParamsSchema', () => {
 
 	it('rejects missing id', () => {
 		expect(() => objectParamsSchema.parse({})).toThrow()
+	})
+})
+
+describe('TERMINAL_BET_STATUSES', () => {
+	it('is exactly succeeded/failed/paused — archived is silent, must stay excluded', () => {
+		// Locks the invariant that drives the retro fan-out gate
+		// (apps/dev/src/routes/objects.ts) and the unread-feed join
+		// (apps/dev/src/routes/subscriptions.ts). If `archived` slips in here,
+		// archiving a bet fires a retro and posts an unread — which is the
+		// exact behaviour the archived-status bet exists to prevent.
+		expect([...TERMINAL_BET_STATUSES]).toEqual(['succeeded', 'failed', 'paused'])
+		expect((TERMINAL_BET_STATUSES as readonly string[]).includes('archived')).toBe(false)
+	})
+})
+
+describe('SAFE_METADATA_FIELD_NAME_RE', () => {
+	it('accepts letters, numbers, and underscores starting with a letter', () => {
+		expect(SAFE_METADATA_FIELD_NAME_RE.test('segment')).toBe(true)
+		expect(SAFE_METADATA_FIELD_NAME_RE.test('deal_size_2')).toBe(true)
+		expect(SAFE_METADATA_FIELD_NAME_RE.test('A1')).toBe(true)
+	})
+
+	it('rejects names with spaces, punctuation, or a leading digit', () => {
+		expect(SAFE_METADATA_FIELD_NAME_RE.test('deal size')).toBe(false)
+		expect(SAFE_METADATA_FIELD_NAME_RE.test('cost-per-lead')).toBe(false)
+		expect(SAFE_METADATA_FIELD_NAME_RE.test('2024_target')).toBe(false)
+		expect(SAFE_METADATA_FIELD_NAME_RE.test("bad'field")).toBe(false)
+		expect(SAFE_METADATA_FIELD_NAME_RE.test('')).toBe(false)
 	})
 })

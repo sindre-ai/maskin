@@ -17,6 +17,8 @@ import {
 } from './providers/linear/config'
 import { linearEventNormalizer } from './providers/linear/webhooks'
 import { config as posthogConfig } from './providers/posthog/config'
+import { config as skjaldConfig } from './providers/skjald/config'
+import { reapSlackUserLinks } from './providers/slack/account-link'
 import {
 	config as slackConfig,
 	slackExtractDeliveryId,
@@ -24,7 +26,12 @@ import {
 	resolveExternalId as slackResolveExternalId,
 	slackWebhookPreHandler,
 } from './providers/slack/config'
+import {
+	removeSlackDefaultTriggers,
+	seedSlackDefaultTriggers,
+} from './providers/slack/default-triggers'
 import { slackWebhookFanOut } from './providers/slack/fan-out'
+import { probeSlackTierOnInstall } from './providers/slack/tier-cache'
 import { slackEventNormalizer } from './providers/slack/webhooks'
 
 const providers = new Map<string, ResolvedProvider>()
@@ -51,6 +58,21 @@ providers.set('slack', {
 	webhookPreHandler: slackWebhookPreHandler,
 	extractDeliveryId: slackExtractDeliveryId,
 	webhookFanOut: slackWebhookFanOut,
+	// Seed the tier cache, then the default @mention / DM responder triggers —
+	// without them, mention events sit unconsumed and the bot never answers.
+	// Both are fail-soft internally.
+	postInstall: async (ctx) => {
+		await probeSlackTierOnInstall(ctx)
+		await seedSlackDefaultTriggers(ctx)
+	},
+	// On disconnect, reap slack_user_links rows for this team/workspace pair so
+	// the next mention re-prompts (AC-T5), and remove the seeded default
+	// triggers (kept if another Slack team is still connected). Best-effort —
+	// never blocks the disconnect even if the table read fails.
+	preDisconnect: async (ctx) => {
+		await reapSlackUserLinks(ctx)
+		await removeSlackDefaultTriggers(ctx)
+	},
 	// File downloads can blow past Slack's 3s ack budget; process them off the
 	// hot path. The delivery claim still happens sync so retries are deduped.
 	asyncProcessing: true,
@@ -74,6 +96,10 @@ providers.set('google-calendar', {
 
 providers.set('posthog', {
 	config: posthogConfig,
+})
+
+providers.set('skjald', {
+	config: skjaldConfig,
 })
 
 // ── Public API ─────────────────────────────────────────────────────────────

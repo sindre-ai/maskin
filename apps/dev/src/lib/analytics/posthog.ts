@@ -3,7 +3,10 @@ import { logger } from '../logger'
 const DEFAULT_POSTHOG_HOST = 'https://eu.i.posthog.com'
 const CAPTURE_TIMEOUT_MS = 2_000
 
-export type PosthogEventProps = Record<string, string | number | boolean | null | undefined>
+export type PosthogEventProps = Record<
+	string,
+	string | number | boolean | null | undefined | string[]
+>
 
 /**
  * Best-effort PostHog capture from the backend.

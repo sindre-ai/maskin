@@ -1,3 +1,8 @@
+import {
+	trackChatSessionStarted,
+	trackSindreMessageReceived,
+	trackSindreMessageSent,
+} from '@/lib/analytics'
 import { api } from '@/lib/api'
 import type { SessionInputAttachment } from '@/lib/api'
 import { getApiKey } from '@/lib/auth'
@@ -21,6 +26,41 @@ const RUNNING_POLL_INTERVAL_MS = 300
 const RUNNING_POLL_TIMEOUT_MS = 20_000
 const TERMINAL_SESSION_STATUSES = new Set(['failed', 'timeout', 'completed', 'paused'])
 
+const SESSION_ID_STORAGE_PREFIX = 'maskin.chat.sessionId'
+
+function sessionStorageKey(workspaceId: string, agentActorId: string | null): string | null {
+	if (!workspaceId || !agentActorId) return null
+	return `${SESSION_ID_STORAGE_PREFIX}:${workspaceId}:${agentActorId}`
+}
+
+function readPersistedSessionId(workspaceId: string, agentActorId: string | null): string | null {
+	const key = sessionStorageKey(workspaceId, agentActorId)
+	if (!key) return null
+	try {
+		return window.localStorage.getItem(key)
+	} catch {
+		return null
+	}
+}
+
+function writePersistedSessionId(
+	workspaceId: string,
+	agentActorId: string | null,
+	sessionId: string | null,
+): void {
+	const key = sessionStorageKey(workspaceId, agentActorId)
+	if (!key) return
+	try {
+		if (sessionId) {
+			window.localStorage.setItem(key, sessionId)
+		} else {
+			window.localStorage.removeItem(key)
+		}
+	} catch {
+		/* localStorage may be disabled (private mode, quota) — silently no-op */
+	}
+}
+
 /**
  * Poll `GET /api/sessions/:id` until the session's container transitions to
  * `running`. The create endpoint returns as soon as the DB row is written
@@ -41,11 +81,60 @@ async function waitForRunning(sessionId: string, workspaceId: string): Promise<v
 	throw new Error('Chat session did not start in time')
 }
 
+/**
+ * Peek at a raw stdout log line and emit `sindre_message_received` once per
+ * unique assistant `message.id`. A single Sindre turn streams multiple content
+ * blocks (text + tool_use + thinking) under one message id — deduping on the
+ * id gives one reply event per turn. `model` and `tokens` come from the
+ * envelope's `message.model` / `message.usage.output_tokens` when present.
+ * Silently ignores non-JSON lines and non-assistant envelopes so this is safe
+ * to call for every stdout line.
+ */
+function emitSindreReceivedIfAssistant(
+	rawLine: string,
+	sessionId: string,
+	seenIds: Set<string>,
+): void {
+	const trimmed = rawLine.trim()
+	if (trimmed.length === 0) return
+	let envelope: unknown
+	try {
+		envelope = JSON.parse(trimmed)
+	} catch {
+		return
+	}
+	if (typeof envelope !== 'object' || envelope === null) return
+	const rec = envelope as Record<string, unknown>
+	if (rec.type !== 'assistant') return
+	const message = rec.message
+	if (typeof message !== 'object' || message === null) return
+	const msgRec = message as Record<string, unknown>
+	const messageId = typeof msgRec.id === 'string' ? msgRec.id : null
+	if (!messageId || seenIds.has(messageId)) return
+	seenIds.add(messageId)
+	const model = typeof msgRec.model === 'string' ? msgRec.model : null
+	const usage =
+		typeof msgRec.usage === 'object' && msgRec.usage !== null
+			? (msgRec.usage as Record<string, unknown>)
+			: null
+	const outputTokens = usage && typeof usage.output_tokens === 'number' ? usage.output_tokens : null
+	trackSindreMessageReceived({ session_id: sessionId, model, tokens: outputTokens })
+}
+
 export type ChatSessionStatus = 'idle' | 'starting' | 'connecting' | 'ready' | 'closed' | 'error'
 
 export interface UseChatSessionOptions {
 	workspaceId: string
 	agentActorId: string | null
+	/**
+	 * Kebab-cased role of the agent that opened the chat. Rides on
+	 * `chat_session_started` as `entry_agent_role` — set to `'chief-of-staff'`
+	 * when the workspace default routed the chat, otherwise the picked actor's
+	 * role. Callers derive it from the actor's display name via
+	 * `deriveEntryAgentRole()` in `@/lib/analytics`. Optional so pre-CoS
+	 * callers keep compiling; passing `null` leaves the property unset.
+	 */
+	entryAgentRole?: string | null
 	enabled?: boolean
 }
 
@@ -74,6 +163,7 @@ export interface UseChatSessionResult {
 export function useChatSession({
 	workspaceId,
 	agentActorId,
+	entryAgentRole = null,
 	enabled = true,
 }: UseChatSessionOptions): UseChatSessionResult {
 	const [sessionId, setSessionId] = useState<string | null>(null)
@@ -82,6 +172,11 @@ export function useChatSession({
 	const [error, setError] = useState<Error | null>(null)
 	const startingRef = useRef(false)
 	const prevWorkspaceIdRef = useRef(workspaceId)
+	// Tracks the highest session_logs row id we've already drained into events
+	// (either via the initial /logs replay or via the SSE stream). Used as the
+	// `Last-Event-ID` when the SSE connection opens so we don't re-emit history
+	// that the /logs replay already covered.
+	const lastLogIdRef = useRef<number>(0)
 	// Always-current status for use inside the send callback (avoids adding
 	// status to the dependency array which would recreate send on every render).
 	const statusRef = useRef(status)
@@ -92,6 +187,11 @@ export function useChatSession({
 	// `api.sessions.create` resolving and `waitForRunning` finishing would
 	// re-mount an SSE stream on a session the user thought they discarded.
 	const generationRef = useRef(0)
+	// Assistant message ids that have already emitted `sindre_message_received`.
+	// A single assistant turn streams multiple content blocks under one
+	// `message.id`; we want one reply event per turn, not one per block.
+	// Cleared on reset/workspace switch below.
+	const receivedMessageIdsRef = useRef<Set<string>>(new Set())
 
 	// Reset transcript + reload persisted sessionId when the workspace switches
 	// (StrictMode-safe: only fires when workspaceId actually changes).
@@ -100,11 +200,56 @@ export function useChatSession({
 		prevWorkspaceIdRef.current = workspaceId
 		generationRef.current += 1
 		startingRef.current = false
+		lastLogIdRef.current = 0
+		receivedMessageIdsRef.current = new Set()
 		setSessionId(null)
 		setEvents([])
 		setError(null)
 		setStatus('idle')
 	}, [workspaceId])
+
+	// Hydrate from localStorage on mount (and whenever workspace/agent change).
+	// Replays the prior session's transcript via /logs so the user sees their
+	// previous turns — including any attached file cards — before SSE attaches.
+	// Skipped if there's no persisted id, no workspace, or no agent actor.
+	useEffect(() => {
+		if (!enabled) return
+		const persisted = readPersistedSessionId(workspaceId, agentActorId)
+		if (!persisted) return
+		const generation = generationRef.current
+		let cancelled = false
+		;(async () => {
+			try {
+				const logs = await api.sessions.logs(persisted, workspaceId, { limit: '500' })
+				if (cancelled || generationRef.current !== generation) return
+				const replayed: ChatEvent[] = []
+				let maxId = 0
+				for (const log of logs) {
+					if (log.id > maxId) maxId = log.id
+					if (log.stream === 'stdout') {
+						for (const ev of parseChatLine(log.content, { includeUser: true })) {
+							replayed.push(ev)
+						}
+					}
+				}
+				if (cancelled || generationRef.current !== generation) return
+				lastLogIdRef.current = maxId
+				setEvents(replayed)
+				setSessionId(persisted)
+			} catch (err) {
+				// A stale persisted id (session deleted on the server, workspace
+				// flipped) shouldn't pollute the surface — just drop it. Other
+				// failures (network, parse) leave the transcript empty so the
+				// next send creates a fresh session.
+				if (cancelled || generationRef.current !== generation) return
+				writePersistedSessionId(workspaceId, agentActorId, null)
+				console.warn('[chat-session] hydrate failed; dropping persisted id', err)
+			}
+		})()
+		return () => {
+			cancelled = true
+		}
+	}, [enabled, workspaceId, agentActorId])
 
 	// Subscribe to the session's live SSE log stream and pipe stdout through
 	// the chat-stream parser. stderr/system lines are surfaced as `debug`
@@ -119,6 +264,12 @@ export function useChatSession({
 		const apiKey = getApiKey()
 		const headers: Record<string, string> = { 'X-Workspace-Id': workspaceId }
 		if (apiKey) headers.Authorization = `Bearer ${apiKey}`
+		// When we've already drained logs up to `lastLogIdRef.current` via the
+		// hydration /logs replay, ask the SSE handler to skip those rows so we
+		// don't re-emit duplicates on first connect.
+		if (lastLogIdRef.current > 0) {
+			headers['Last-Event-ID'] = String(lastLogIdRef.current)
+		}
 
 		fetchEventSource(`${API_BASE}/sessions/${sessionId}/logs/stream`, {
 			signal: controller.signal,
@@ -147,11 +298,18 @@ export function useChatSession({
 						data: msg.data,
 					})
 				}
+				if (msg.id) {
+					const parsed = Number(msg.id)
+					if (Number.isFinite(parsed) && parsed > lastLogIdRef.current) {
+						lastLogIdRef.current = parsed
+					}
+				}
 				if (msg.event === 'done') {
 					setStatus('closed')
 					return
 				}
 				if (msg.event === 'stdout') {
+					emitSindreReceivedIfAssistant(msg.data, sessionId, receivedMessageIdsRef.current)
 					const parsed = parseChatLine(msg.data)
 					if (parsed.length === 0) return
 					if (IS_DEV) {
@@ -217,6 +375,7 @@ export function useChatSession({
 						action_prompt: BOOTSTRAP_ACTION_PROMPT,
 						config: { interactive: true },
 						auto_start: true,
+						...(entryAgentRole ? { entry_agent_role: entryAgentRole } : {}),
 					})
 					// If reset() fired between create() resolving and now, the
 					// user discarded this session — don't mount an SSE stream
@@ -226,6 +385,23 @@ export function useChatSession({
 					}
 					currentSessionId = session.id
 					setSessionId(session.id)
+					writePersistedSessionId(workspaceId, agentActorId, session.id)
+					// Founder-substitution measurement: fires once per fresh
+					// container. Guarded by entering this bootstrap branch,
+					// which happens both on the first send (`sessionId` is
+					// null) and after the previous container closes
+					// (`currentSessionId` above is forced to null when
+					// `statusRef.current === 'closed'`, even though `sessionId`
+					// still holds the old, closed session's id) — both are
+					// legitimate new chat-session starts. `reset()`
+					// additionally bumps `generationRef` and nulls `sessionId`
+					// directly.
+					trackChatSessionStarted({
+						entity_id: session.id,
+						entity_type: 'session',
+						entry_point: 'sindre_session',
+						entry_agent_role: entryAgentRole,
+					})
 					// Wait for the container to actually be running before we
 					// POST the user's turn — otherwise the input endpoint
 					// rejects with 409 "Session is not running".
@@ -262,19 +438,26 @@ export function useChatSession({
 				}),
 			)
 			const body = attachments && attachments.length > 0 ? { content, attachments } : { content }
+			// Fires before the network call so a failed POST still shows in the
+			// sent-vs-received per-session ratio the parent bet's kill-check query
+			// keys off.
+			trackSindreMessageSent({ session_id: currentSessionId })
 			await api.sessions.input(currentSessionId, body, workspaceId)
 		},
-		[sessionId, workspaceId, agentActorId],
+		[sessionId, workspaceId, agentActorId, entryAgentRole],
 	)
 
 	const reset = useCallback(() => {
 		generationRef.current += 1
 		startingRef.current = false
+		lastLogIdRef.current = 0
+		receivedMessageIdsRef.current = new Set()
+		writePersistedSessionId(workspaceId, agentActorId, null)
 		setSessionId(null)
 		setEvents([])
 		setError(null)
 		setStatus('idle')
-	}, [])
+	}, [workspaceId, agentActorId])
 
 	return useMemo(
 		() => ({ sessionId, status, events, error, send, reset }),

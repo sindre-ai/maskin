@@ -12,6 +12,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
+	useCompleteIntegration,
 	useConnectIntegration,
 	useDisconnectIntegration,
 	useIntegrations,
@@ -20,7 +21,7 @@ import {
 import type { IntegrationResponse, ProviderInfo } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
-import { Plus } from 'lucide-react'
+import { Check, Copy, Plus } from 'lucide-react'
 import { useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/settings/integrations')({
@@ -36,6 +37,11 @@ function IntegrationsPage() {
 	const isLoading = integrationsLoading || providersLoading
 	const [apiKeyProvider, setApiKeyProvider] = useState<ProviderInfo | null>(null)
 	const [apiKey, setApiKey] = useState('')
+	const [manualConnect, setManualConnect] = useState<{
+		provider: ProviderInfo
+		webhookUrl: string
+		integrationId: string
+	} | null>(null)
 
 	// Group active integrations by provider — GitHub can have multiple installations,
 	// other providers currently have one.
@@ -80,6 +86,9 @@ function IntegrationsPage() {
 									setApiKeyProvider(provider)
 									setApiKey('')
 								}}
+								onManualConnected={(webhookUrl, integrationId) =>
+									setManualConnect({ provider, webhookUrl, integrationId })
+								}
 							/>
 						)
 					})}
@@ -95,6 +104,11 @@ function IntegrationsPage() {
 					setApiKey('')
 				}}
 			/>
+			<SkjaldConnectDialog
+				workspaceId={workspaceId}
+				state={manualConnect}
+				onClose={() => setManualConnect(null)}
+			/>
 		</div>
 	)
 }
@@ -104,11 +118,13 @@ function ProviderRow({
 	integration,
 	workspaceId,
 	onRequestApiKey,
+	onManualConnected,
 }: {
 	provider: ProviderInfo
 	integration?: IntegrationResponse
 	workspaceId: string
 	onRequestApiKey: () => void
+	onManualConnected: (webhookUrl: string, integrationId: string) => void
 }) {
 	const connect = useConnectIntegration(workspaceId)
 	const disconnect = useDisconnectIntegration(workspaceId)
@@ -116,6 +132,19 @@ function ProviderRow({
 	const handleConnect = () => {
 		if (provider.authType === 'api_key') {
 			onRequestApiKey()
+			return
+		}
+		if (provider.authType === 'manual') {
+			connect.mutate(
+				{ provider: provider.name },
+				{
+					onSuccess: (data) => {
+						if (data.webhook_url && data.integration_id) {
+							onManualConnected(data.webhook_url, data.integration_id)
+						}
+					},
+				},
+			)
 			return
 		}
 		connect.mutate({ provider: provider.name })
@@ -270,6 +299,116 @@ function ApiKeyDialog({
 						Connect
 					</Button>
 				</div>
+			</DialogContent>
+		</Dialog>
+	)
+}
+
+const SKJALD_SETUP_STEPS = [
+	'In Skjald, go to Settings → Webhooks → Add Webhook and paste the URL below.',
+	'Subscribe to the transcription.completed event.',
+	'Set payload mode to "Full content" so the transcript is included.',
+	'Copy the secret Skjald generates and paste it below to finish connecting.',
+]
+
+function SkjaldConnectDialog({
+	workspaceId,
+	state,
+	onClose,
+}: {
+	workspaceId: string
+	state: { provider: ProviderInfo; webhookUrl: string; integrationId: string } | null
+	onClose: () => void
+}) {
+	const complete = useCompleteIntegration(workspaceId)
+	const [step, setStep] = useState<1 | 2>(1)
+	const [secret, setSecret] = useState('')
+	const [copied, setCopied] = useState(false)
+
+	const open = !!state
+
+	const handleClose = () => {
+		onClose()
+		setStep(1)
+		setSecret('')
+		setCopied(false)
+	}
+
+	const handleCopy = () => {
+		if (!state) return
+		navigator.clipboard.writeText(state.webhookUrl)
+		setCopied(true)
+		setTimeout(() => setCopied(false), 2000)
+	}
+
+	const handleComplete = () => {
+		if (!state) return
+		complete.mutate(
+			{ id: state.integrationId, secret },
+			{
+				onSuccess: handleClose,
+			},
+		)
+	}
+
+	return (
+		<Dialog open={open} onOpenChange={(next) => !next && handleClose()}>
+			<DialogContent>
+				<DialogHeader>
+					<DialogTitle>Connect {state?.provider.displayName}</DialogTitle>
+					<DialogDescription>
+						{step === 1
+							? 'Set up a webhook in Skjald pointing at this URL.'
+							: 'Paste the secret Skjald generated to finish connecting.'}
+					</DialogDescription>
+				</DialogHeader>
+				{step === 1 ? (
+					<div className="space-y-3">
+						<div className="space-y-2">
+							<Label>Webhook URL</Label>
+							<div className="flex gap-2">
+								<div className="flex-1 min-w-0 rounded-md border border-border bg-bg-surface px-3 py-2 font-mono text-xs break-all select-all">
+									{state?.webhookUrl}
+								</div>
+								<Button variant="secondary" size="sm" className="shrink-0" onClick={handleCopy}>
+									{copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+								</Button>
+							</div>
+						</div>
+						<ol className="list-decimal list-inside space-y-1.5 text-xs text-muted-foreground">
+							{SKJALD_SETUP_STEPS.map((instruction) => (
+								<li key={instruction}>{instruction}</li>
+							))}
+						</ol>
+						<div className="flex justify-end gap-2">
+							<Button variant="ghost" onClick={handleClose}>
+								Cancel
+							</Button>
+							<Button onClick={() => setStep(2)}>Next</Button>
+						</div>
+					</div>
+				) : (
+					<div className="space-y-3">
+						<div className="space-y-2">
+							<Label htmlFor="skjald-secret">Webhook secret</Label>
+							<Input
+								id="skjald-secret"
+								type="password"
+								value={secret}
+								onChange={(e) => setSecret(e.target.value)}
+								placeholder="Paste the secret from Skjald"
+							/>
+						</div>
+						<div className="flex justify-end gap-2">
+							<Button variant="ghost" onClick={() => setStep(1)}>
+								Back
+							</Button>
+							<Button onClick={handleComplete} disabled={!secret.trim() || complete.isPending}>
+								Connect
+							</Button>
+						</div>
+					</div>
+				)}
 			</DialogContent>
 		</Dialog>
 	)

@@ -17,32 +17,43 @@ import {
 	decryptOAuthData,
 	encryptOAuthTokens,
 	getValidOAuthToken,
+	persistRefreshedSlot,
 	refreshClaudeToken,
 	refreshClaudeTokenIfNeeded,
 } from '../../lib/claude-oauth'
 import { decrypt, encrypt } from '../../lib/crypto'
 
-/** Create a mock DB with chainable select/update methods */
+/**
+ * Mock DB whose select chain supports both the unlocked outer read
+ * (`select().from().where().limit()`) and the locked re-read inside the
+ * persist transaction (`select().from().where().for('update').limit()`).
+ * `transaction(fn)` invokes the callback with the same mock db so writes
+ * inside the tx call through the same captured spies.
+ */
 function createMockDb(workspace?: Record<string, unknown>) {
-	const mockWhere = vi.fn().mockReturnValue({
-		limit: vi.fn().mockResolvedValue(workspace ? [workspace] : []),
-	})
+	const limitResult = workspace ? [workspace] : []
+	const mockLimit = vi.fn().mockResolvedValue(limitResult)
+	const mockFor = vi.fn().mockReturnValue({ limit: mockLimit })
+	const mockWhere = vi.fn().mockReturnValue({ limit: mockLimit, for: mockFor })
 	const mockUpdateWhere = vi.fn().mockResolvedValue(undefined)
+	const mockTransaction = vi.fn()
+
+	const db = {
+		select: vi.fn().mockReturnValue({
+			from: vi.fn().mockReturnValue({ where: mockWhere }),
+		}),
+		update: vi.fn().mockReturnValue({
+			set: vi.fn().mockReturnValue({ where: mockUpdateWhere }),
+		}),
+		transaction: mockTransaction,
+	}
+	mockTransaction.mockImplementation(async (fn: (tx: typeof db) => Promise<unknown>) => fn(db))
 
 	return {
-		db: {
-			select: vi.fn().mockReturnValue({
-				from: vi.fn().mockReturnValue({
-					where: mockWhere,
-				}),
-			}),
-			update: vi.fn().mockReturnValue({
-				set: vi.fn().mockReturnValue({
-					where: mockUpdateWhere,
-				}),
-			}),
-		} as unknown as Parameters<typeof getValidOAuthToken>[0],
+		db: db as unknown as Parameters<typeof getValidOAuthToken>[0],
 		mockUpdateWhere,
+		mockTransaction,
+		mockFor,
 	}
 }
 
@@ -338,5 +349,109 @@ describe('getValidOAuthToken', () => {
 		expect(result).not.toBeNull()
 		expect(result?.accessToken).toBe('new-access')
 		expect(mockUpdateWhere).toHaveBeenCalled()
+	})
+
+	it('locks the workspace row in a transaction before writing the refreshed slot', async () => {
+		// AC-T4 guard: every refresh that persists must go through the row-lock
+		// transaction in persistRefreshedSlot, otherwise a parallel slot refresh
+		// could clobber it.
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue({
+				ok: true,
+				json: () => Promise.resolve({ access_token: 'new-access', expires_in: 3600 }),
+			}),
+		)
+		const oauthData: EncryptedOAuthData = {
+			encryptedAccessToken: 'enc-access',
+			encryptedRefreshToken: 'enc-refresh',
+			expiresAt: Date.now() - 1000,
+		}
+		const { db, mockTransaction, mockFor } = createMockDb({
+			id: 'ws-1',
+			settings: { claude_oauth: oauthData },
+		})
+
+		await getValidOAuthToken(db, 'ws-1')
+
+		expect(mockTransaction).toHaveBeenCalledTimes(1)
+		expect(mockFor).toHaveBeenCalledWith('update')
+	})
+})
+
+describe('persistRefreshedSlot', () => {
+	beforeEach(() => {
+		vi.restoreAllMocks()
+		vi.mocked(decrypt).mockImplementation((input: string) => input)
+		vi.mocked(encrypt).mockImplementation((input: string) => input)
+	})
+
+	const fresh: EncryptedOAuthData = {
+		encryptedAccessToken: 'fresh-enc',
+		encryptedRefreshToken: 'fresh-enc-rt',
+		expiresAt: 9_999_999_999_999,
+		subscriptionType: 'pro',
+	}
+
+	it('merges new-shape settings preserving the other slot and failover state', async () => {
+		const otherSlot: EncryptedOAuthData = {
+			encryptedAccessToken: 'backup-enc',
+			encryptedRefreshToken: 'backup-enc-rt',
+			expiresAt: 1_000,
+		}
+		const { db, mockUpdateWhere, mockTransaction, mockFor } = createMockDb({
+			id: 'ws-1',
+			settings: {
+				enabled_modules: ['work'],
+				claude_oauth: {
+					primary: {
+						encryptedAccessToken: 'p-old',
+						encryptedRefreshToken: 'p-old-rt',
+						expiresAt: 1,
+					},
+					backup: otherSlot,
+					failover: { active_slot: 'primary' },
+				},
+			},
+		})
+
+		await persistRefreshedSlot(db, 'ws-1', 'primary', fresh)
+
+		expect(mockTransaction).toHaveBeenCalledTimes(1)
+		expect(mockFor).toHaveBeenCalledWith('update')
+		expect(mockUpdateWhere).toHaveBeenCalledTimes(1)
+		// The set() captured object holds the merged settings — pull it back via
+		// the update().set chain.
+		const setCall = vi.mocked(db.update).mock.results[0]?.value.set.mock.calls[0]?.[0]
+		expect(setCall.settings.claude_oauth).toEqual({
+			primary: fresh,
+			backup: otherSlot,
+			failover: { active_slot: 'primary' },
+		})
+		// Outer settings keys are preserved too.
+		expect(setCall.settings.enabled_modules).toEqual(['work'])
+	})
+
+	it('upgrades a legacy single-slot row to the new shape under `primary`', async () => {
+		const legacy: EncryptedOAuthData = {
+			encryptedAccessToken: 'legacy-enc',
+			encryptedRefreshToken: 'legacy-enc-rt',
+			expiresAt: 12345,
+		}
+		const { db } = createMockDb({
+			id: 'ws-1',
+			settings: { enabled_modules: ['work'], claude_oauth: legacy },
+		})
+
+		await persistRefreshedSlot(db, 'ws-1', 'primary', fresh)
+
+		const setCall = vi.mocked(db.update).mock.results[0]?.value.set.mock.calls[0]?.[0]
+		expect(setCall.settings.claude_oauth).toEqual({ primary: fresh })
+	})
+
+	it('no-ops when the workspace row has disappeared between read and lock', async () => {
+		const { db, mockUpdateWhere } = createMockDb(undefined)
+		await persistRefreshedSlot(db, 'ws-gone', 'primary', fresh)
+		expect(mockUpdateWhere).not.toHaveBeenCalled()
 	})
 })

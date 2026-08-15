@@ -138,7 +138,7 @@ export function DataTableControls({
 												}}
 											/>
 											<span className="flex-1">{type}</span>
-											<span className="text-xs text-muted-foreground">{count}</span>
+											<span className="text-xs text-muted-foreground tabular-nums">{count}</span>
 										</div>
 									))}
 								</div>

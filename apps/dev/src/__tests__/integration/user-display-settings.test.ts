@@ -142,6 +142,80 @@ describe('User Display Settings Integration', () => {
 		})
 	})
 
+	it('round-trips groupExpanded and firstVisibleRowId end-to-end', async () => {
+		const app = appAs(actorId)
+		const headers = { 'x-workspace-id': workspaceId }
+
+		const settings = {
+			groupBy: 'status',
+			groupExpanded: {
+				'metadata.status:active': true,
+				'metadata.status:done': false,
+			},
+			firstVisibleRowId: 'row_42',
+		}
+		const put = await app.request(
+			jsonRequest('PUT', '/api/user-display-settings/task', { settings }, headers),
+		)
+		expect(put.status).toBe(200)
+
+		const get = await app.request(jsonGet('/api/user-display-settings/task', headers))
+		expect(get.status).toBe(200)
+		expect(await get.json()).toMatchObject({
+			object_type: 'task',
+			settings,
+		})
+	})
+
+	it('accepts firstVisibleRowId=null to persist a cleared scroll anchor', async () => {
+		const app = appAs(actorId)
+		const headers = { 'x-workspace-id': workspaceId }
+
+		const put = await app.request(
+			jsonRequest(
+				'PUT',
+				'/api/user-display-settings/task',
+				{ settings: { firstVisibleRowId: null } },
+				headers,
+			),
+		)
+		expect(put.status).toBe(200)
+
+		const get = await app.request(jsonGet('/api/user-display-settings/task', headers))
+		expect(get.status).toBe(200)
+		const body = (await get.json()) as { settings: { firstVisibleRowId: string | null } }
+		expect(body.settings.firstVisibleRowId).toBeNull()
+	})
+
+	it('loads a legacy row that predates the new fields without erroring', async () => {
+		const app = appAs(actorId)
+		const headers = { 'x-workspace-id': workspaceId }
+
+		// Simulate a row persisted before this task landed: settings blob has no
+		// groupExpanded / firstVisibleRowId. Inserting via Drizzle bypasses the
+		// upsert validator, matching what a legacy row would look like on disk.
+		await db.insert(userDisplaySettings).values({
+			workspaceId,
+			actorId,
+			objectType: 'task',
+			name: 'default',
+			settings: { view: 'list', sort: 'title', order: 'asc' },
+		})
+
+		const get = await app.request(jsonGet('/api/user-display-settings/task', headers))
+		expect(get.status).toBe(200)
+		const body = (await get.json()) as {
+			settings: {
+				view: string
+				groupExpanded?: unknown
+				firstVisibleRowId?: unknown
+			}
+		}
+		expect(body.settings.view).toBe('list')
+		expect(body.settings.groupExpanded).toBeUndefined()
+		expect(body.settings.firstVisibleRowId).toBeUndefined()
+	})
+
 	it('rejects an unknown sentinel key', async () => {
 		const app = appAs(actorId)
 		const headers = { 'x-workspace-id': workspaceId }

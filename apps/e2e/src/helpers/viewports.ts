@@ -9,6 +9,7 @@ export const VIEWPORTS = {
 	tabletPortrait: { width: 768, height: 1024, label: 'iPad portrait (768×1024)' },
 	tabletLandscape: { width: 1024, height: 768, label: 'iPad landscape (1024×768)' },
 	desktop: { width: 1440, height: 900, label: 'Desktop (1440×900)' },
+	desktopXl: { width: 1280, height: 900, label: 'Desktop 1280 (1280×900)' },
 } as const satisfies Record<string, NamedViewport>
 
 export const SHIP_GATE_VIEWPORTS: NamedViewport[] = [
@@ -16,3 +17,6 @@ export const SHIP_GATE_VIEWPORTS: NamedViewport[] = [
 	VIEWPORTS.tabletPortrait,
 	VIEWPORTS.tabletLandscape,
 ]
+
+/** Viewports that exercise the xl: breakpoint (≥1280px) for 75ch assertion. */
+export const XL_VIEWPORTS: NamedViewport[] = [VIEWPORTS.desktopXl, VIEWPORTS.desktop]

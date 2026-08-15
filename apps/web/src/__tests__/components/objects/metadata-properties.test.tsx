@@ -1,5 +1,5 @@
 import { MetadataPropertiesView } from '@/components/objects/metadata-properties'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { buildObjectResponse, buildWorkspaceWithRole } from '../../factories'
 
@@ -58,5 +58,75 @@ describe('MetadataPropertiesView', () => {
 		const object = buildObjectResponse({ metadata: { score: 42 } })
 		render(<MetadataPropertiesView {...baseProps} object={object} />)
 		expect(screen.getByText('42')).toBeInTheDocument()
+	})
+
+	it('renders branch value as a GitHub tree link when both branch and repo are set', () => {
+		const object = buildObjectResponse({
+			metadata: {
+				branch: 'bet/branch-one-click-link',
+				repo: 'https://github.com/sindre-ai/maskin',
+			},
+		})
+		render(<MetadataPropertiesView {...baseProps} object={object} />)
+		const link = screen.getByRole('link', { name: 'bet/branch-one-click-link' })
+		expect(link).toHaveAttribute(
+			'href',
+			'https://github.com/sindre-ai/maskin/tree/bet%2Fbranch-one-click-link',
+		)
+		expect(link).toHaveAttribute('target', '_blank')
+		expect(link).toHaveAttribute('rel', 'noopener noreferrer')
+	})
+
+	it('trims trailing slash on repo before building the branch link', () => {
+		const object = buildObjectResponse({
+			metadata: {
+				branch: 'main',
+				repo: 'https://github.com/sindre-ai/maskin/',
+			},
+		})
+		render(<MetadataPropertiesView {...baseProps} object={object} />)
+		expect(screen.getByRole('link', { name: 'main' })).toHaveAttribute(
+			'href',
+			'https://github.com/sindre-ai/maskin/tree/main',
+		)
+	})
+
+	it('renders branch as plain text when repo is missing', () => {
+		const object = buildObjectResponse({ metadata: { branch: 'feature/x' } })
+		render(<MetadataPropertiesView {...baseProps} object={object} />)
+		expect(screen.getByText('feature/x')).toBeInTheDocument()
+		expect(screen.queryByRole('link')).not.toBeInTheDocument()
+	})
+
+	it('does not link non-branch keys that happen to sit next to a repo', () => {
+		const object = buildObjectResponse({
+			metadata: { branch: 'main', repo: 'https://github.com/sindre-ai/maskin', priority: 'high' },
+		})
+		render(<MetadataPropertiesView {...baseProps} object={object} />)
+		expect(screen.getAllByRole('link')).toHaveLength(1)
+	})
+
+	it('renders branch as plain text when repo is not a github.com URL', () => {
+		const object = buildObjectResponse({
+			metadata: { branch: 'main', repo: 'javascript:alert(document.cookie)' },
+		})
+		render(<MetadataPropertiesView {...baseProps} object={object} />)
+		expect(screen.getByText('main')).toBeInTheDocument()
+		expect(screen.queryByRole('link')).not.toBeInTheDocument()
+	})
+
+	it('commits a text property edit on blur', async () => {
+		const user = userEvent.setup()
+		const onUpdateMetadata = vi.fn()
+		const object = buildObjectResponse({ id: 'obj-1', metadata: { team: 'alpha' } })
+		render(
+			<MetadataPropertiesView {...baseProps} object={object} onUpdateMetadata={onUpdateMetadata} />,
+		)
+		await user.click(screen.getByText('alpha'))
+		const input = screen.getByDisplayValue('alpha')
+		await user.clear(input)
+		await user.type(input, 'beta')
+		fireEvent.blur(input)
+		expect(onUpdateMetadata).toHaveBeenCalledWith('obj-1', { team: 'beta' })
 	})
 })

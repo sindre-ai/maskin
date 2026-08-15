@@ -3,20 +3,31 @@ import {
 	DropdownMenu,
 	DropdownMenuContent,
 	DropdownMenuItem,
+	DropdownMenuLabel,
 	DropdownMenuSeparator,
 	DropdownMenuShortcut,
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Separator } from '@/components/ui/separator'
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
-import { useIsMobile } from '@/hooks/use-mobile'
+import { useIsMobile, useIsTouchViewport } from '@/hooks/use-mobile'
 import { useSubscribe, useUnsubscribe } from '@/hooks/use-subscriptions'
 import { trackEvent } from '@/lib/analytics'
-import type { ObjectResponse } from '@/lib/api'
+import type { MemberResponse, ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { Bell, BellOff, Copy, ExternalLink, FileText, MoreHorizontal, Trash2 } from 'lucide-react'
+import {
+	Archive,
+	Bell,
+	BellOff,
+	Copy,
+	ExternalLink,
+	FileText,
+	MoreHorizontal,
+	Trash2,
+} from 'lucide-react'
 import { Fragment, useCallback, useEffect, useMemo } from 'react'
 import { toast } from 'sonner'
+import { OwnerSelect, StatusSelect } from './property-selects'
 
 type Visibility = 'hide' | 'disable'
 
@@ -35,21 +46,48 @@ interface MenuItemDef {
 export interface AuxiliaryActionMenuProps {
 	object: ObjectResponse
 	onDeleteRequest: () => void
+	onArchiveRequest?: () => void
 	workspaceId: string
 	open?: boolean
 	onOpenChange?: (open: boolean) => void
+	// Properties group inputs — when all present and the viewport is narrow
+	// (mobile Sheet or touch-viewport popover), the menu leads with a
+	// Status + Driver row pair that mounts the same selects used in the hero.
+	statuses?: string[]
+	members?: MemberResponse[]
+	currentDriverId?: string | null
+	onStatusChange?: (status: string) => void
+	onDriverChange?: (driver: string | null) => void
 }
 
 export function AuxiliaryActionMenu({
 	object,
 	onDeleteRequest,
+	onArchiveRequest,
 	workspaceId,
 	open,
 	onOpenChange,
+	statuses,
+	members,
+	currentDriverId,
+	onStatusChange,
+	onDriverChange,
 }: AuxiliaryActionMenuProps) {
 	const isMobile = useIsMobile()
+	// ≤1024 CSS px — the design brief targets ≤1080 for the narrow-desktop
+	// compaction, but useIsTouchViewport is the existing hook and the closest
+	// standard breakpoint. Wide desktop (>1024) leaves the Properties group off.
+	const isTouchViewport = useIsTouchViewport()
 	const subscribe = useSubscribe(workspaceId)
 	const unsubscribe = useUnsubscribe(workspaceId)
+
+	const showProperties =
+		!!statuses &&
+		statuses.length > 0 &&
+		!!members &&
+		!!onStatusChange &&
+		!!onDriverChange &&
+		(isMobile || isTouchViewport)
 
 	const handleClipboard = useCallback((text: string, label: string) => {
 		navigator.clipboard.writeText(text).then(
@@ -66,8 +104,10 @@ export function AuxiliaryActionMenu({
 		}
 	}, [object.is_subscribed, object.id, subscribe, unsubscribe])
 
-	const items = useMemo<MenuItemDef[]>(
-		() => [
+	const canArchive = object.type === 'bet' && !!onArchiveRequest && object.status !== 'archived'
+
+	const items = useMemo<MenuItemDef[]>(() => {
+		const base: MenuItemDef[] = [
 			{
 				id: 'copy-link',
 				label: 'Copy link',
@@ -96,18 +136,37 @@ export function AuxiliaryActionMenu({
 				shortcut: 'S',
 				onSelect: handleSubscribeToggle,
 			},
-			{
-				id: 'delete',
-				label: 'Delete',
-				icon: Trash2,
-				shortcut: '⌘⌫',
+		]
+		if (canArchive && onArchiveRequest) {
+			base.push({
+				id: 'archive',
+				label: 'Archive',
+				icon: Archive,
+				shortcut: 'A',
 				separatorBefore: true,
-				variant: 'destructive',
-				onSelect: onDeleteRequest,
-			},
-		],
-		[object, handleClipboard, handleSubscribeToggle, onDeleteRequest],
-	)
+				onSelect: onArchiveRequest,
+			})
+		}
+		base.push({
+			id: 'delete',
+			label: 'Delete',
+			icon: Trash2,
+			shortcut: '⌘⌫',
+			// Only draw a separator before Delete when Archive isn't sitting right
+			// above it — otherwise the destructive-actions group gets a double rule.
+			separatorBefore: !canArchive,
+			variant: 'destructive',
+			onSelect: onDeleteRequest,
+		})
+		return base
+	}, [
+		object,
+		handleClipboard,
+		handleSubscribeToggle,
+		onDeleteRequest,
+		onArchiveRequest,
+		canArchive,
+	])
 
 	const visibleItems = items.filter((item) => item.visibility !== 'hide')
 
@@ -122,6 +181,7 @@ export function AuxiliaryActionMenu({
 			else if (e.key === 'T' && e.shiftKey && !isMeta) itemId = 'copy-title'
 			else if (e.key === 'C' && e.shiftKey && !isMeta) itemId = 'copy-content'
 			else if (e.key === 's' && !e.shiftKey && !isMeta) itemId = 'subscribe'
+			else if (e.key === 'a' && !e.shiftKey && !isMeta) itemId = 'archive'
 			else if (e.key === 'Backspace' && isMeta) itemId = 'delete'
 
 			if (!itemId) return
@@ -155,6 +215,17 @@ export function AuxiliaryActionMenu({
 		</Button>
 	)
 
+	const propertiesGroup = showProperties ? (
+		<PropertiesGroup
+			currentStatus={object.status}
+			statuses={statuses ?? []}
+			members={members ?? []}
+			currentDriverId={currentDriverId ?? null}
+			onStatusChange={onStatusChange ?? (() => {})}
+			onDriverChange={onDriverChange ?? (() => {})}
+		/>
+	) : null
+
 	if (isMobile) {
 		return (
 			<Sheet open={open} onOpenChange={handleOpenChange}>
@@ -163,6 +234,12 @@ export function AuxiliaryActionMenu({
 					<SheetHeader className="px-4">
 						<SheetTitle>Actions</SheetTitle>
 					</SheetHeader>
+					{propertiesGroup && (
+						<>
+							<div className="mt-2 px-4">{propertiesGroup}</div>
+							<Separator className="my-2" />
+						</>
+					)}
 					<div className="mt-2 flex flex-col">
 						{visibleItems.map((item) => (
 							<Fragment key={item.id}>
@@ -177,9 +254,18 @@ export function AuxiliaryActionMenu({
 	}
 
 	return (
-		<DropdownMenu open={open} onOpenChange={handleOpenChange}>
+		<DropdownMenu open={open} onOpenChange={handleOpenChange} modal={false}>
 			<DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
 			<DropdownMenuContent align="end" className="min-w-[200px]">
+				{propertiesGroup && (
+					<>
+						<DropdownMenuLabel className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+							Properties
+						</DropdownMenuLabel>
+						<div className="px-2 pb-1.5 space-y-1.5">{propertiesGroup}</div>
+						<DropdownMenuSeparator />
+					</>
+				)}
 				{visibleItems.map((item) => (
 					<Fragment key={item.id}>
 						{item.separatorBefore && <DropdownMenuSeparator />}
@@ -188,6 +274,47 @@ export function AuxiliaryActionMenu({
 				))}
 			</DropdownMenuContent>
 		</DropdownMenu>
+	)
+}
+
+function PropertiesGroup({
+	currentStatus,
+	statuses,
+	members,
+	currentDriverId,
+	onStatusChange,
+	onDriverChange,
+}: {
+	currentStatus: string
+	statuses: string[]
+	members: MemberResponse[]
+	currentDriverId: string | null
+	onStatusChange: (status: string) => void
+	onDriverChange: (driver: string | null) => void
+}) {
+	return (
+		<div className="flex flex-col gap-1">
+			<div className="flex min-h-[44px] items-center gap-2">
+				<span className="w-14 shrink-0 text-[11px] uppercase tracking-wide text-muted-foreground">
+					Status
+				</span>
+				<div className="flex-1 min-w-0">
+					<StatusSelect current={currentStatus} options={statuses} onChange={onStatusChange} />
+				</div>
+			</div>
+			<div className="flex min-h-[44px] items-center gap-2">
+				<span className="w-14 shrink-0 text-[11px] uppercase tracking-wide text-muted-foreground">
+					Driver
+				</span>
+				<div className="flex-1 min-w-0">
+					<OwnerSelect
+						members={members}
+						currentOwnerId={currentDriverId}
+						onChange={onDriverChange}
+					/>
+				</div>
+			</div>
+		</div>
 	)
 }
 

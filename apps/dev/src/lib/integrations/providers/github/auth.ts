@@ -47,6 +47,28 @@ function mintAppJwt(): string {
 	return createJwt(appId, privateKey)
 }
 
+async function postInstallationAccessToken(
+	installationId: string,
+	jwt: string,
+): Promise<{ ok: boolean; status: number; token?: string; body?: string }> {
+	const response = await fetch(
+		`https://api.github.com/app/installations/${installationId}/access_tokens`,
+		{
+			method: 'POST',
+			headers: {
+				Authorization: `Bearer ${jwt}`,
+				Accept: 'application/vnd.github+json',
+				'X-GitHub-Api-Version': '2022-11-28',
+			},
+		},
+	)
+	if (!response.ok) {
+		return { ok: false, status: response.status, body: await response.text() }
+	}
+	const data = (await response.json()) as { token: string }
+	return { ok: true, status: response.status, token: data.token }
+}
+
 export const githubAuth: CustomAuthHandler = {
 	getInstallUrl(state: string): string {
 		return `https://github.com/apps/${process.env.GITHUB_APP_SLUG || 'sindre-maskin'}/installations/new?state=${encodeURIComponent(state)}`
@@ -61,28 +83,121 @@ export const githubAuth: CustomAuthHandler = {
 	},
 
 	async getAccessToken(credentials: StoredCredentials): Promise<string> {
-		const jwt = mintAppJwt()
-
-		const response = await fetch(
-			`https://api.github.com/app/installations/${credentials.installation_id}/access_tokens`,
-			{
-				method: 'POST',
-				headers: {
-					Authorization: `Bearer ${jwt}`,
-					Accept: 'application/vnd.github+json',
-					'X-GitHub-Api-Version': '2022-11-28',
-				},
-			},
-		)
-
-		if (!response.ok) {
-			const text = await response.text()
-			throw new Error(`Failed to get installation access token: ${response.status} ${text}`)
+		const installationId = credentials.installation_id as string | undefined
+		if (!installationId) throw new Error('Missing installation_id on stored credentials')
+		const result = await postInstallationAccessToken(installationId, mintAppJwt())
+		if (!result.ok || !result.token) {
+			throw new Error(
+				`Failed to get installation access token: ${result.status} ${result.body ?? ''}`,
+			)
 		}
-
-		const data = (await response.json()) as { token: string }
-		return data.token
+		return result.token
 	},
+}
+
+/** owner/name — the format GitHub uses in `/repos/:owner/:name` — strict enough
+ *  to block URL-path injection when we interpolate this into the installation
+ *  discovery request below. */
+const REPO_SLUG_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/
+
+/**
+ * Thrown when `GET /repos/:repo/installation` returns a non-2xx. Carries the
+ * HTTP status so callers can distinguish "App is not installed on this repo"
+ * (404 → the caller genuinely needs to reconnect) from transient GitHub
+ * failures (5xx / 429 → tell the caller to retry, don't nag them to reconnect).
+ * Consumers should key on `err.status`, not on the message text.
+ */
+export class DiscoveryError extends Error {
+	readonly status: number
+	readonly repo: string
+	readonly body: string
+	constructor(repo: string, status: number, body: string) {
+		super(`Failed to discover GitHub App installation for ${repo}: ${status} ${body}`)
+		this.name = 'DiscoveryError'
+		this.status = status
+		this.repo = repo
+		this.body = body
+	}
+}
+
+async function discoverInstallationForRepo(repo: string, jwt: string): Promise<string> {
+	if (!REPO_SLUG_RE.test(repo)) {
+		throw new Error(`Invalid repo slug for installation recovery: ${repo}`)
+	}
+	const response = await fetch(`https://api.github.com/repos/${repo}/installation`, {
+		headers: {
+			Authorization: `Bearer ${jwt}`,
+			Accept: 'application/vnd.github+json',
+			'X-GitHub-Api-Version': '2022-11-28',
+		},
+	})
+	if (!response.ok) {
+		const text = await response.text()
+		throw new DiscoveryError(repo, response.status, text)
+	}
+	const data = (await response.json()) as { id?: number }
+	if (typeof data.id !== 'number') {
+		throw new Error(`GitHub /repos/${repo}/installation response missing id`)
+	}
+	return String(data.id)
+}
+
+export interface MintTokenResult {
+	token: string
+	installationId: string
+	/** True when the initial mint 404'd on the cached id and discovery landed a fresh install. */
+	recovered: boolean
+}
+
+export interface MintTokenOptions {
+	/** owner/name hint used to re-discover the current install on a stale-cache 404.
+	 *  Without it, 404 propagates unchanged (recovery is opt-in). */
+	repo?: string
+}
+
+/**
+ * Mint an App installation access token, recovering from mid-session install
+ * churn. Tries the cached installation id first; when GitHub returns 404 on
+ * that mint (App reinstalled → cached id rotated out) AND the caller supplied
+ * a `repo` hint, re-discovers the current install for that repo via App JWT
+ * and mints against it. Any other error is re-thrown so the wrapping tagger
+ * can classify it (see error-tagger.ts). Callers that get `recovered: true`
+ * should persist the returned `installationId` so subsequent writes skip the
+ * recovery round-trip.
+ */
+export async function mintInstallationTokenWithRecovery(
+	credentials: StoredCredentials,
+	opts: MintTokenOptions = {},
+): Promise<MintTokenResult> {
+	const cachedId = credentials.installation_id as string | undefined
+	if (!cachedId) throw new Error('Missing installation_id on stored credentials')
+
+	// JWT is valid for 10 minutes (see createJwt above), so the same token
+	// safely covers the discovery call and the retry mint in the recovery branch.
+	const jwt = mintAppJwt()
+	const first = await postInstallationAccessToken(cachedId, jwt)
+	if (first.ok && first.token) {
+		return { token: first.token, installationId: cachedId, recovered: false }
+	}
+
+	if (first.status !== 404 || !opts.repo) {
+		throw new Error(`Failed to get installation access token: ${first.status} ${first.body ?? ''}`)
+	}
+
+	const recoveredId = await discoverInstallationForRepo(opts.repo, jwt)
+	if (recoveredId === cachedId) {
+		// Discovery returned the same id — 404 is not from install churn.
+		// Re-throw the original error so the tagger stays honest instead of
+		// looping mint→discover→mint on the same dead id.
+		throw new Error(`Failed to get installation access token: ${first.status} ${first.body ?? ''}`)
+	}
+	const second = await postInstallationAccessToken(recoveredId, jwt)
+	if (!second.ok || !second.token) {
+		throw new Error(
+			`Failed to mint after install-ID recovery: ${second.status} ${second.body ?? ''}`,
+		)
+	}
+	return { token: second.token, installationId: recoveredId, recovered: true }
 }
 
 /**

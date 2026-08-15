@@ -57,15 +57,19 @@ vi.mock('@/hooks/use-enabled-modules', () => ({ useEnabledModules: () => [] }))
 vi.mock('@/hooks/use-custom-extensions', () => ({ useCustomExtensions: () => [] }))
 vi.mock('@maskin/module-sdk', () => ({
 	getEnabledObjectTypeTabs: () => [{ label: 'Tasks', value: 'task' }],
+	getAllWebModules: () => [],
 }))
-vi.mock('@/hooks/use-objects', () => ({ useBulkUpdateObjects: () => ({ mutate: vi.fn() }) }))
+vi.mock('@/hooks/use-objects', () => ({
+	useBulkUpdateObjects: () => ({ mutate: vi.fn() }),
+	useBulkResultHandlers: () => ({ reportBulkResult: vi.fn(), retainOnlyFailed: vi.fn() }),
+}))
 
 vi.mock('@tanstack/react-query', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('@tanstack/react-query')>()
 	return {
 		...actual,
-		useQuery: () => ({
-			data: { columns: boardQueryState.columns },
+		useQuery: (options: { queryKey?: readonly unknown[] }) => ({
+			data: options?.queryKey?.[0] === 'notifications' ? [] : { columns: boardQueryState.columns },
 			isLoading: false,
 			isSuccess: true,
 			isError: false,
@@ -85,6 +89,7 @@ vi.mock('@tanstack/react-query', async (importOriginal) => {
 			removeQueries: vi.fn(),
 			cancelQueries: vi.fn(),
 		}),
+		useMutation: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
 	}
 })
 
@@ -111,8 +116,8 @@ vi.mock('@/components/objects/bulk-action-bar', () => ({ BulkActionBar: () => nu
 vi.mock('@/components/layout/page-header', () => ({
 	PageHeader: ({ title }: { title: string }) => <h1>{title}</h1>,
 }))
-vi.mock('@/components/objects/data-table/data-table', () => ({
-	DataTable: () => <div data-testid="data-table" />,
+vi.mock('@/components/objects/list/list-view', () => ({
+	ListView: () => <div data-testid="list-view" />,
 }))
 vi.mock('@/components/objects/board/board-view', () => ({
 	// Mimic the real board column "load more" behavior closely enough for the
@@ -155,19 +160,44 @@ vi.mock('@/components/objects/data-table/dynamic-columns', () => ({ getDynamicCo
 vi.mock('@/components/imports/import-dialog', () => ({ ImportDialog: () => null }))
 vi.mock('@/hooks/use-imports', () => ({ useImportToast: () => ({ startTracking: vi.fn() }) }))
 vi.mock('@/components/shared/route-error', () => ({ RouteError: () => <div>Error</div> }))
-vi.mock('@/lib/api', () => ({
-	api: { objects: { list: vi.fn(), search: vi.fn() } },
+vi.mock('@/components/shared/create-picker', () => ({
+	CreatePicker: () => null,
+	isCreateShortcut: () => false,
 }))
-vi.mock('@/lib/analytics', () => ({ trackEvent: vi.fn() }))
+vi.mock('@/lib/api', () => ({
+	api: { objects: { list: vi.fn(), search: vi.fn() }, notifications: { list: vi.fn() } },
+}))
+vi.mock('@/lib/analytics', () => ({
+	trackEvent: vi.fn(),
+	trackObjectsListArrived: vi.fn(),
+	trackObjectsListGroupToggled: vi.fn(),
+	trackObjectsBoardArrived: vi.fn(),
+}))
+vi.mock('@/lib/back-nav-tracker', () => ({
+	consumeArrivalNavType: vi.fn().mockReturnValue('direct'),
+	initBackNavTracker: vi.fn(),
+}))
 vi.mock('@/lib/query-keys', () => ({
 	queryKeys: {
 		objects: {
+			list: (workspaceId: string, filters?: unknown) => ['objects', workspaceId, 'list', filters],
 			listInfinite: () => ['objects'],
 			listInfinitePrefix: () => ['objects', 'infinite'],
 			listPrefix: () => ['objects', 'list'],
 			board: () => ['objects', 'board'],
 			detail: (id: string) => ['objects', 'detail', id],
 			all: () => ['objects'],
+		},
+		relationships: {
+			all: (workspaceId: string) => ['relationships', workspaceId],
+		},
+		notifications: {
+			list: (workspaceId: string, filters?: unknown) => [
+				'notifications',
+				workspaceId,
+				'list',
+				filters,
+			],
 		},
 		bets: { all: () => ['bets'] },
 		imports: { detail: (id: string) => ['imports', 'detail', id] },
@@ -226,12 +256,12 @@ describe('ObjectsPage view switcher', () => {
 		expect(typeof props.onViewChange).toBe('function')
 	})
 
-	it('swaps DataTable for BoardView when the toolbar reports a Board selection', async () => {
+	it('swaps ListView for BoardView when the toolbar reports a Board selection', async () => {
 		persisted.current = null
 		toolbarProps.current = null
 		renderRoute()
 		await waitFor(() => expect(toolbarProps.current).not.toBeNull())
-		expect(screen.getByTestId('data-table')).toBeInTheDocument()
+		expect(screen.getByTestId('list-view')).toBeInTheDocument()
 		expect(screen.queryByTestId('board-view')).toBeNull()
 
 		act(() => {
@@ -239,7 +269,7 @@ describe('ObjectsPage view switcher', () => {
 		})
 
 		await waitFor(() => expect(screen.getByTestId('board-view')).toBeInTheDocument())
-		expect(screen.queryByTestId('data-table')).toBeNull()
+		expect(screen.queryByTestId('list-view')).toBeNull()
 		expect(screen.getByTestId('board-view')).toHaveAttribute('data-object-type', 'task')
 	})
 
