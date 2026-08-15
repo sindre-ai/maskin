@@ -14,25 +14,33 @@
 //
 // Row-carrying tools registered here:
 //
-//   list_objects        → get_objects (batch, `ids`)
-//   search_objects      → get_objects (batch, `ids`)
-//   list_files          → get_file    (single, `id`)
-//   list_workspace_skills → get_workspace_skill (single, `name`)
-//   list_relationships  → no get-by-id counterpart — see below
+//   list_objects              → get_objects (batch, `ids`)
+//   search_objects            → get_objects (batch, `ids`)
+//   list_files                → get_file    (single, `id`)
+//   list_workspace_skills     → get_workspace_skill (single, `name`)
+//   list_relationships        → no get-by-id counterpart — see below
+//   list_loops                → get_loop    (single, `id`)
+//   list_sessions             → get_session (single, `id`)
+//   list_subscribers          → no get-by-id counterpart
+//   list_unread               → no get-by-id counterpart
+//   list_integrations         → no get-by-id counterpart
+//   list_integration_providers → no get-by-id counterpart
+//   list_extensions           → no get-by-id counterpart (get_started is a
+//                               different operation)
 //
-// `list_actors` / `list_triggers` are omitted deliberately: their
-// `structuredContent` only carries the 25-item heroCard slice — the rich
+// `list_actors` / `list_workspaces` / `list_triggers` are omitted deliberately:
+// their `structuredContent` only carries the 25-item heroCard slice — the rich
 // rows never reach the structured channel, so there is nothing for the cap
 // to trim.
 //
-// `list_relationships` IS registered despite having no `get_relationship`
-// tool: its rows carry unbounded `sourceTitle`/`targetTitle` strings (joined
-// from `objects.title`, which has no length cap), so overflow is a real
-// path. With no `fetchHandleTool`, trimmed rows have no one-hop recovery —
-// instead `rewriteNextCursor` below always redirects `next_cursor` to point
-// right after the last row still present in `structuredContent`, so a
-// follow-up call with that cursor returns exactly the trimmed tail next
-// (an extra round trip, but no permanently unrecoverable rows).
+// `list_relationships` — and the other tools without a `fetchHandleTool` —
+// carry rows whose enriched fields (titles, config blobs, extension type
+// definitions, etc.) can bust the cap on real workspaces. Trimmed rows without
+// a `fetchHandleTool` have no one-hop recovery — instead `rewriteNextCursor`
+// below redirects `next_cursor` to point right after the last row still
+// present in `structuredContent`, so a follow-up call with that cursor
+// returns exactly the trimmed tail next (an extra round trip, but no
+// permanently unrecoverable rows).
 
 import { decodeCursor, encodeCursor } from './cursor'
 import { estimateTokensFromBytes } from './telemetry'
@@ -86,6 +94,13 @@ export const TOKEN_CAP_TARGETS: Record<string, TokenCapDescriptor> = {
 		idField: 'name',
 	},
 	list_relationships: { rowsField: 'relationships' },
+	list_loops: { fetchHandleTool: 'get_loop', rowsField: 'loops' },
+	list_sessions: { fetchHandleTool: 'get_session', rowsField: 'sessions' },
+	list_subscribers: { rowsField: 'subscribers' },
+	list_unread: { rowsField: 'unread' },
+	list_integrations: { rowsField: 'integrations' },
+	list_integration_providers: { rowsField: 'providers' },
+	list_extensions: { rowsField: 'extensions' },
 }
 
 /**
