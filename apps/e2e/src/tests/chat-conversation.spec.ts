@@ -66,7 +66,9 @@ interface MockLoop {
 
 const NOW = () => new Date().toISOString()
 
-function buildSession(overrides: Partial<MockSession> & { id: string; actorId: string; actionPrompt: string }): MockSession {
+function buildSession(
+	overrides: Partial<MockSession> & { id: string; actorId: string; actionPrompt: string },
+): MockSession {
 	const t = NOW()
 	return {
 		workspaceId: 'ws',
@@ -110,6 +112,32 @@ async function mockChatsData(
 				status: 200,
 				contentType: 'application/json',
 				body: JSON.stringify(opts.sessions),
+			})
+			return
+		}
+		if (method === 'GET' && url.pathname.endsWith('/logs/stream')) {
+			// SSE endpoint — return an empty text/event-stream so the client's
+			// fetch-event-source polling doesn't fire real events into the test.
+			await route.fulfill({
+				status: 200,
+				contentType: 'text/event-stream',
+				body: '',
+			})
+			return
+		}
+		if (method === 'GET' && url.pathname.endsWith('/logs')) {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: '[]',
+			})
+			return
+		}
+		if (method === 'POST' && url.pathname.endsWith('/input')) {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: '{"ok":true}',
 			})
 			return
 		}
@@ -230,7 +258,10 @@ test.describe('Conversation view', () => {
 
 		await page.goto(`/${account.workspaceId}/chats/${session.id}`)
 
-		await page.getByRole('button', { name: /in this chat/i }).first().click()
+		await page
+			.getByRole('button', { name: /in this chat/i })
+			.first()
+			.click()
 
 		// Locked CoS row is not removable.
 		await expect(page.getByText(/routes your ask to the right specialist/i)).toBeVisible()
@@ -250,7 +281,10 @@ test.describe('Conversation view', () => {
 		// Copy link.
 		await page.getByRole('button', { name: /copy link/i }).click()
 		await expect
-			.poll(async () => await page.evaluate(() => (window as unknown as { __copied: string | null }).__copied))
+			.poll(
+				async () =>
+					await page.evaluate(() => (window as unknown as { __copied: string | null }).__copied),
+			)
 			.toContain(`/chats/${session.id}`)
 
 		// Invite renders a mailto: link that carries the chat URL.
@@ -260,7 +294,10 @@ test.describe('Conversation view', () => {
 		expect(href).toContain(encodeURIComponent(`/chats/${session.id}`))
 	})
 
-	test('loop context chip renders when the session carries a loop id', async ({ page, account }) => {
+	test('loop context chip renders when the session carries a loop id', async ({
+		page,
+		account,
+	}) => {
 		const loopId = '11111111-1111-1111-1111-111111111111'
 		const session = buildSession({
 			id: 'sess-3',
@@ -296,6 +333,76 @@ test.describe('Conversation view', () => {
 
 		await page.goto(`/${account.workspaceId}/chats/${session.id}`)
 		await expect(page.getByText('Launch loop')).toBeVisible()
+	})
+})
+
+test.describe('Conversation view — transcript + composer wiring (T7)', () => {
+	test('renders replayed transcript, activates the composer, and posts input', async ({
+		page,
+		account,
+	}) => {
+		const session = buildSession({
+			id: 'sess-wired',
+			actorId: 'agent-cos',
+			actionPrompt: 'Kick off the plan',
+			config: { entry_agent_role: 'chief-of-staff' },
+		})
+		await mockChatsData(page, {
+			sessions: [session],
+			actors: [buildActor({ id: 'agent-cos', name: 'Chief of Staff' })],
+		})
+		// Replay one assistant log line so the transcript shows something the
+		// user could see loaded from history, not just the empty state.
+		await page.route(`**/api/sessions/${session.id}/logs**`, async (route) => {
+			if (route.request().method() !== 'GET') return route.fallback()
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify([
+					{
+						id: 1,
+						sessionId: session.id,
+						stream: 'stdout',
+						content: JSON.stringify({
+							type: 'assistant',
+							session_id: session.id,
+							message: { id: 'msg-1', content: [{ type: 'text', text: 'Loaded history line' }] },
+						}),
+						createdAt: '2026-08-15T00:00:00Z',
+					},
+				]),
+			})
+		})
+
+		let inputBody: unknown = null
+		await page.route(`**/api/sessions/${session.id}/input`, async (route) => {
+			if (route.request().method() !== 'POST') return route.fallback()
+			inputBody = route.request().postDataJSON()
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: '{"ok":true}',
+			})
+		})
+
+		await page.goto(`/${account.workspaceId}/chats/${session.id}`)
+
+		// Replayed transcript is visible.
+		await expect(page.getByText('Loaded history line')).toBeVisible()
+
+		// Composer textarea and Send are enabled — no longer visually inert.
+		const textarea = page.getByLabel('New message')
+		await expect(textarea).toBeEnabled()
+		const send = page.getByLabel('Send message')
+		await expect(send).toBeDisabled()
+		await textarea.fill('Ship it')
+		await expect(send).toBeEnabled()
+		await send.click()
+
+		await expect.poll(() => (inputBody as { content?: string } | null)?.content).toBe('Ship it')
+
+		// Optimistic user bubble appears in the transcript.
+		await expect(page.getByText('Ship it')).toBeVisible()
 	})
 })
 

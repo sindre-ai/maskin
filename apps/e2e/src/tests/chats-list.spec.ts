@@ -407,7 +407,9 @@ test.describe('Chats list — Chief of Staff', () => {
 			],
 		})
 		await page.goto(`/${account.workspaceId}/chats`)
-		await expect(page.getByTestId('chats-list').getByText('Chief of Staff handed off')).toBeVisible()
+		await expect(
+			page.getByTestId('chats-list').getByText('Chief of Staff handed off'),
+		).toBeVisible()
 	})
 
 	test('renders the CoS greeting empty state when there are no conversations yet', async ({

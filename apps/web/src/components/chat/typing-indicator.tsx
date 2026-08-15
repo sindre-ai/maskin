@@ -35,11 +35,7 @@ export function TypingIndicator({ sessionId, workspaceId, className }: TypingInd
 	// container becoming active; useSession has no polling interval so the
 	// cache can retain this status even after the underlying session reaches
 	// 'running'. Show the indicator for all non-terminal active states.
-	if (
-		session.status !== 'running' &&
-		session.status !== 'pending' &&
-		session.status !== 'starting'
-	)
+	if (session.status !== 'running' && session.status !== 'pending' && session.status !== 'starting')
 		return null
 	if (idle) return null
 

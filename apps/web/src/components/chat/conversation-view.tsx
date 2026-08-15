@@ -1,16 +1,32 @@
+import type { Ask } from '@/components/chat/ask-block'
+import { ChatTranscript } from '@/components/chat/chat-transcript'
 import { ConversationHeader } from '@/components/chat/conversation-header'
 import type { Participant } from '@/components/chat/in-this-chat-panel'
 import { ResumeBand, type ResumeItem } from '@/components/chat/resume-band'
-import { EmptyState } from '@/components/shared/empty-state'
+import { StreamingSessionChip } from '@/components/chat/streaming-session-chip'
+import { coerceOptions } from '@/components/pulse/notification-input'
+import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { useActors } from '@/hooks/use-actors'
+import { useLiveSession } from '@/hooks/use-live-session'
 import { useLoop } from '@/hooks/use-loops'
+import { useNotifications } from '@/hooks/use-notifications'
 import { deriveEntryAgentRole } from '@/lib/analytics'
 import type { ActorListItem, SessionResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
+import type { ChatEvent } from '@/lib/chat-stream'
 import { cn } from '@/lib/cn'
 import { Send } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import {
+	type ChangeEvent,
+	type FormEvent,
+	type KeyboardEvent,
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from 'react'
 
 interface ConversationViewProps {
 	workspaceId: string
@@ -20,12 +36,13 @@ interface ConversationViewProps {
 	className?: string
 }
 
+const STREAM_ACTIVE_STATUSES = new Set(['running', 'starting', 'pending'])
+
 /**
- * T3 conversation-view shell. Owns the header (back / title / participant
- * stack / IN THIS CHAT panel / loop chip / Chief of Staff attribution row),
- * the PICKING UP WHERE YOU LEFT OFF resume band, and a visual composer with
- * the CoS routing prefix. Message-type rendering (T1) and streaming
- * (T4) stay separate — this view carries the shell around them.
+ * Chats conversation view. Composes the T3 shell (header / IN THIS CHAT /
+ * loop chip / resume band) with the live transcript (T7): replays the
+ * session's stdout logs, tails its SSE stream, surfaces the T4 streaming chip
+ * while a turn is in flight, and posts new turns via the composer.
  */
 export function ConversationView({
 	workspaceId,
@@ -41,25 +58,17 @@ export function ConversationView({
 	const sessionAgentRole =
 		sessionAgent?.type === 'agent' ? deriveEntryAgentRole(sessionAgent.name ?? null) : null
 
-	// The persistent chat agent (workspace default) travels on the session
-	// config as `entry_agent_role`. When that role is `chief-of-staff` we treat
-	// the session as CoS-routed even if the actor row isn't in this fetch.
 	const config = session.config as Record<string, unknown> | null
 	const configRole =
 		typeof config?.entry_agent_role === 'string' ? (config.entry_agent_role as string) : null
 	const isChiefOfStaff = configRole === 'chief-of-staff' || sessionAgentRole === 'chief-of-staff'
 
-	// Loop context — sessions can carry a `loop_id` on config when they were
-	// spun up as part of a loop's execution. Present it as a compact chip when
-	// the loop resolves in the workspace.
 	const loopId = typeof config?.loop_id === 'string' ? (config.loop_id as string) : null
 	const { data: loop } = useLoop(loopId ?? '', workspaceId)
 	const loopContext = loopId && loop ? { id: loopId, name: loop.name } : null
 
 	const chiefOfStaff = useMemo(() => {
 		if (!isChiefOfStaff) return null
-		// Prefer the session's own agent; fall back to any workspace actor named
-		// "Chief of Staff" — matches the resolver in $workspaceId.tsx.
 		const resolved =
 			sessionAgent ?? availableActors.find((a) => a.type === 'agent' && a.name === 'Chief of Staff')
 		return resolved
@@ -71,9 +80,6 @@ export function ConversationView({
 			: null
 	}, [availableActors, isChiefOfStaff, sessionAgent])
 
-	// Participants: local state so add/remove work without a server round-trip
-	// (there's no multi-participant table today — the DoD says the controls
-	// "work", not that the change persists).
 	const owner = getStoredActor()
 
 	const initialParticipants = useMemo<Participant[]>(() => {
@@ -109,7 +115,6 @@ export function ConversationView({
 
 	const [participants, setParticipants] = useState<Participant[]>(initialParticipants)
 
-	// Reset participants when navigating between sessions.
 	useEffect(() => {
 		setParticipants(initialParticipants)
 	}, [initialParticipants])
@@ -151,13 +156,68 @@ export function ConversationView({
 		return items
 	}, [session.actionPrompt, session.currentActivity, session.status, chiefOfStaff])
 
-	// The composer send is intentionally out of scope per the task brief
-	// (Composer/attach flow) — the prefix + textarea render for visual parity
-	// and the send button stays disabled. T4 wires streaming input; the
-	// existing <Chat> primitive is the right surface for a follow-up.
-	const composerPrefix = chiefOfStaff
-		? `Replying to ${chiefOfStaff.name} · she'll route it if a specialist is needed`
-		: 'Replying to this conversation'
+	const live = useLiveSession({ sessionId: session.id, workspaceId })
+
+	// needs_input notifications bound to this session render as tappable
+	// asks inline in the transcript, matching the chat panel behavior.
+	const { data: sessionNotifications } = useNotifications(workspaceId, { type: 'needs_input' })
+	const asks = useMemo<Ask[]>(() => {
+		if (!sessionNotifications) return []
+		return sessionNotifications
+			.filter((n) => n.sessionId === session.id)
+			.map((n) => ({
+				id: n.id,
+				title: n.title,
+				content: n.content,
+				question: typeof n.metadata?.question === 'string' ? n.metadata.question : null,
+				options: coerceOptions(n.metadata?.options) ?? [],
+				suggestion: typeof n.metadata?.suggestion === 'string' ? n.metadata.suggestion : null,
+				status: n.status,
+				response: n.metadata?.response,
+			}))
+	}, [session.id, sessionNotifications])
+
+	// A turn is "in flight" when we just posted an input OR the session is
+	// actively producing output. The chip renders in both cases so the user
+	// sees Stop even after send() resolves but before the first token lands.
+	const [pendingTurn, setPendingTurn] = useState(false)
+	const pendingBaselineRef = useRef(0)
+
+	useEffect(() => {
+		if (!pendingTurn) return
+		for (let i = pendingBaselineRef.current; i < live.events.length; i++) {
+			if (isTurnProgressEvent(live.events[i])) {
+				setPendingTurn(false)
+				return
+			}
+		}
+	}, [pendingTurn, live.events])
+
+	const isSessionActive = STREAM_ACTIVE_STATUSES.has(session.status)
+	const showStreamingChip = pendingTurn || isSessionActive
+
+	const handleStopped = useCallback(() => setPendingTurn(false), [])
+
+	const handleSend = useCallback(
+		async (content: string) => {
+			pendingBaselineRef.current = live.events.length
+			setPendingTurn(true)
+			try {
+				await live.send(content)
+			} catch (err) {
+				setPendingTurn(false)
+				throw err
+			}
+		},
+		[live],
+	)
+
+	// Composer stays enabled on terminal sessions so the resume-band's
+	// "reply to reopen" promise isn't a lie — a stopped/failed session that
+	// receives a POST will surface the backend's error inline (reopen wiring
+	// belongs to a follow-up bet).
+	const composerDisabled = live.status === 'loading'
+	const showEmpty = live.events.length === 0
 
 	return (
 		<div className={cn('flex min-h-0 flex-col bg-background', className)}>
@@ -173,17 +233,39 @@ export function ConversationView({
 				loop={loopContext}
 			/>
 			<div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 md:px-6">
-				<div className="mx-auto flex max-w-3xl flex-col gap-4">
+				<div className="mx-auto flex h-full max-w-3xl flex-col gap-4">
 					<ResumeBand items={resumeItems} lastActivityAt={lastActivityAt} />
-					<EmptyState
-						title="Message rendering ships next"
-						description="Streaming replies, references, attachments and inline blocks land in a follow-up. Reopen this chat from the Chats list to see updates."
-					/>
+					{showEmpty && live.status === 'loading' ? (
+						<output
+							className="flex items-center justify-center gap-2 py-8 text-text-muted text-sm"
+							aria-live="polite"
+						>
+							<Spinner />
+							<span>Loading conversation…</span>
+						</output>
+					) : (
+						<ChatTranscript
+							workspaceId={workspaceId}
+							events={live.events}
+							asks={asks}
+							starting={live.status === 'loading'}
+							error={live.error}
+							authorLabel={chiefOfStaff ? 'DEFAULT' : null}
+							className="min-h-0 flex-1"
+						/>
+					)}
 				</div>
 			</div>
 			<div className="border-t border-border bg-background px-4 py-3 md:px-6">
-				<div className="mx-auto max-w-3xl">
-					<p className="pb-1 text-[11px] text-muted-foreground">
+				<div className="mx-auto flex max-w-3xl flex-col gap-2">
+					{showStreamingChip ? (
+						<StreamingSessionChip
+							sessionId={session.id}
+							workspaceId={workspaceId}
+							onStopped={handleStopped}
+						/>
+					) : null}
+					<p className="text-[11px] text-muted-foreground">
 						{chiefOfStaff ? (
 							<>
 								Replying to{' '}
@@ -193,29 +275,110 @@ export function ConversationView({
 								· she&apos;ll route it if a specialist is needed
 							</>
 						) : (
-							composerPrefix
+							'Replying to this conversation'
 						)}
 					</p>
-					<div className="flex items-end gap-2 rounded-lg border border-border bg-bg-surface p-2">
-						<Textarea
-							rows={1}
-							disabled
-							placeholder="Say what you want to happen next…"
-							aria-label="New message"
-							className="min-h-[44px] flex-1 resize-none border-0 bg-transparent text-sm focus-visible:ring-0"
-						/>
-						<button
-							type="button"
-							disabled
-							aria-label="Send message"
-							className="inline-flex h-11 w-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-full bg-muted text-muted-foreground"
-						>
-							<Send size={16} aria-hidden />
-						</button>
-					</div>
+					<Composer
+						onSend={handleSend}
+						disabled={composerDisabled}
+						pending={pendingTurn || live.sending}
+					/>
 				</div>
 			</div>
 		</div>
+	)
+}
+
+interface ComposerProps {
+	onSend: (content: string) => Promise<void>
+	disabled: boolean
+	pending: boolean
+}
+
+function Composer({ onSend, disabled, pending }: ComposerProps) {
+	const [value, setValue] = useState('')
+	const [sendError, setSendError] = useState<string | null>(null)
+	const canSend = value.trim().length > 0 && !disabled && !pending
+
+	const handleSubmit = useCallback(
+		async (e?: FormEvent<HTMLFormElement>) => {
+			e?.preventDefault()
+			if (!canSend) return
+			const content = value.trim()
+			setSendError(null)
+			let sent = false
+			try {
+				await onSend(content)
+				sent = true
+			} catch (err) {
+				setSendError(err instanceof Error ? err.message : 'Failed to send')
+			}
+			if (sent) setValue('')
+		},
+		[canSend, onSend, value],
+	)
+
+	const handleKeyDown = useCallback(
+		(e: KeyboardEvent<HTMLTextAreaElement>) => {
+			if (e.key !== 'Enter') return
+			if (e.shiftKey) return
+			if (e.nativeEvent.isComposing) return
+			e.preventDefault()
+			void handleSubmit()
+		},
+		[handleSubmit],
+	)
+
+	const handleChange = useCallback((e: ChangeEvent<HTMLTextAreaElement>) => {
+		setValue(e.target.value)
+	}, [])
+
+	return (
+		<form
+			onSubmit={handleSubmit}
+			className="flex flex-col gap-1 rounded-lg border border-border bg-bg-surface p-2"
+		>
+			<div className="flex items-end gap-2">
+				<Textarea
+					rows={1}
+					autoResize
+					value={value}
+					onChange={handleChange}
+					onKeyDown={handleKeyDown}
+					disabled={disabled}
+					placeholder="Say what you want to happen next…"
+					aria-label="New message"
+					className="max-h-40 min-h-[44px] flex-1 resize-none overflow-y-auto border-0 bg-transparent text-sm focus-visible:ring-0 focus-visible:ring-offset-0"
+				/>
+				<button
+					type="submit"
+					disabled={!canSend}
+					aria-label="Send message"
+					className={cn(
+						'inline-flex h-11 w-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-full transition-colors',
+						canSend
+							? 'bg-accent text-accent-foreground hover:bg-accent/90'
+							: 'bg-muted text-muted-foreground',
+					)}
+				>
+					{pending ? <Spinner /> : <Send size={16} aria-hidden />}
+				</button>
+			</div>
+			{sendError ? (
+				<p role="alert" className="px-1 text-error text-xs" aria-live="polite">
+					{sendError} — your message is preserved; try again.
+				</p>
+			) : null}
+		</form>
+	)
+}
+
+function isTurnProgressEvent(event: ChatEvent): boolean {
+	return (
+		event.kind === 'text' ||
+		event.kind === 'tool_use' ||
+		event.kind === 'thinking' ||
+		event.kind === 'result'
 	)
 }
 
