@@ -158,4 +158,48 @@ describe('ArtifactDecisionCard', () => {
 		expect(screen.getByTestId('foryou-visual-placeholder')).toBeInTheDocument()
 		expect(screen.queryByTestId('foryou-visual-preview')).not.toBeInTheDocument()
 	})
+
+	function renderVisualWithStatus(status: string) {
+		const notification = buildNotificationResponse({
+			id: `notif-visual-${status}`,
+			title: 'visual decision',
+			objectId: 'obj-visual',
+			status,
+			metadata: {
+				artifacts: [
+					{ kind: 'visual', fileId: '11111111-1111-4111-8111-111111111111', title: 'shot.png' },
+				],
+				options: [
+					{ label: 'Approve', value: 'approve', default: true },
+					{ label: 'Reject', value: 'reject' },
+				],
+			},
+		})
+		render(
+			<ArtifactDecisionCard
+				workspaceId="ws-1"
+				kind="visual"
+				notification={notification}
+				onRespond={vi.fn()}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+	}
+
+	it('shows the decision block for a pending visual notification', () => {
+		renderVisualWithStatus('pending')
+		expect(screen.getByTestId('decision-block')).toBeInTheDocument()
+	})
+
+	it('hides the decision block once the visual notification is resolved', () => {
+		renderVisualWithStatus('resolved')
+		expect(screen.queryByTestId('decision-block')).not.toBeInTheDocument()
+	})
+
+	it('hides the decision block for dismissed and expired visual notifications', () => {
+		renderVisualWithStatus('dismissed')
+		expect(screen.queryByTestId('decision-block')).not.toBeInTheDocument()
+		renderVisualWithStatus('expired')
+		expect(screen.queryAllByTestId('decision-block')).toHaveLength(0)
+	})
 })
