@@ -9,6 +9,14 @@ vi.mock('@/lib/analytics', () => ({
 
 import { trackAgentSessionCompleted, trackTriggerFired } from '@/lib/analytics'
 
+// Broad regression net: no code path in this file should ever call
+// trackAgentSessionCompleted — it moved server-side in apps/dev/src/services/
+// runtime-telemetry.ts so route + error_code can travel with the event for
+// the quota-wall-alarm bet's AC-T3 cohort join.
+function expectNoFrontendSessionCompletionTrack() {
+	expect(trackAgentSessionCompleted).not.toHaveBeenCalled()
+}
+
 function createMockQueryClient() {
 	return {
 		invalidateQueries: vi.fn(),
@@ -237,39 +245,24 @@ describe('invalidateFromSSE', () => {
 		expect(trackTriggerFired).not.toHaveBeenCalled()
 	})
 
-	it('emits agent_session_completed on completed/failed/timeout actions with outcome', () => {
+	it('invalidates session and loop-activity queries on session lifecycle actions without emitting agent_session_completed from the frontend', () => {
+		// agent_session_completed is now emitted server-side by RuntimeTelemetry
+		// so the event can carry `route` + `error_code` for the quota-wall-alarm
+		// AC-T3 cohort join. Firing it from here too would double-count.
 		const qc = createMockQueryClient()
-		for (const [action, outcome] of [
-			['session_completed', 'completed'],
-			['session_failed', 'failed'],
-			['session_timeout', 'timeout'],
-		] as const) {
+		for (const action of ['session_completed', 'session_failed', 'session_timeout'] as const) {
 			invalidateFromSSE(qc as never, workspaceId, {
 				entity_type: 'session',
 				entity_id: 'sess-1',
 				action,
 				event_id: 'evt-2',
 			} as never)
+			expect(qc.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['sessions'] })
+			expect(qc.invalidateQueries).toHaveBeenCalledWith({
+				queryKey: ['loops', workspaceId, 'activity'],
+			})
 		}
-		expect(trackAgentSessionCompleted).toHaveBeenCalledTimes(3)
-		expect(trackAgentSessionCompleted).toHaveBeenNthCalledWith(1, {
-			entity_id: 'sess-1',
-			entity_type: 'session',
-			outcome: 'completed',
-			flow_id: 'evt-2',
-		})
-		expect(trackAgentSessionCompleted).toHaveBeenNthCalledWith(2, {
-			entity_id: 'sess-1',
-			entity_type: 'session',
-			outcome: 'failed',
-			flow_id: 'evt-2',
-		})
-		expect(trackAgentSessionCompleted).toHaveBeenNthCalledWith(3, {
-			entity_id: 'sess-1',
-			entity_type: 'session',
-			outcome: 'timeout',
-			flow_id: 'evt-2',
-		})
+		expectNoFrontendSessionCompletionTrack()
 	})
 
 	it('does not emit agent_session_completed for routine session updates', () => {
@@ -279,6 +272,6 @@ describe('invalidateFromSSE', () => {
 			entity_id: 'sess-1',
 			action: 'updated',
 		} as never)
-		expect(trackAgentSessionCompleted).not.toHaveBeenCalled()
+		expectNoFrontendSessionCompletionTrack()
 	})
 })

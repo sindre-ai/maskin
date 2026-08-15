@@ -1,5 +1,6 @@
 import { PostHog } from 'posthog-node'
 import { logger } from '../lib/logger'
+import type { QuotaErrorCode, QuotaRoute } from './session-quota-context'
 
 /**
  * Maps to the bet's ship-metric vocabulary on `runtime_session_ended`.
@@ -7,6 +8,13 @@ import { logger } from '../lib/logger'
  * trying to drive to zero — credit exhaustion and runtime timeouts.
  */
 export type RuntimeEndReason = 'completed' | 'failed' | 'irrecoverable' | 'user_stopped'
+
+/**
+ * Outcome bucket the `agent_session_completed` PostHog event has carried since
+ * its 2026-06-09 introduction (see the frontend's `trackAgentSessionCompleted`
+ * shape). Kept identical so downstream PostHog dashboards keep matching.
+ */
+export type AgentSessionOutcome = 'completed' | 'failed' | 'timeout'
 
 export interface RuntimeTelemetryConfig {
 	apiKey?: string
@@ -42,6 +50,25 @@ interface SessionEndedEvent {
 	endReason: RuntimeEndReason
 	durationMs: number
 	agentServerUrl?: string
+}
+
+interface AgentSessionCompletedEvent {
+	sessionId: string
+	workspaceId: string
+	outcome: AgentSessionOutcome
+	/**
+	 * Quota route inferred from the failure reason via `deriveQuotaContext()`.
+	 * Null for successful exits, timeouts without a classified LLM error, or
+	 * any lifecycle site that doesn't carry a failure reason (enqueue error,
+	 * remote-agent completion signal, reconciler cleanup) — those events still
+	 * fire but are naturally excluded from the AC-T3 cohort join.
+	 */
+	route: QuotaRoute | null
+	/**
+	 * HTTP-shaped error the AC-T3 PostHog query filters on
+	 * (`error_code IN ('HTTP_402','HTTP_429')`). Null for anything else.
+	 */
+	errorCode: QuotaErrorCode | null
 }
 
 interface CrossSessionCheckEvent {
@@ -118,6 +145,41 @@ export class RuntimeTelemetry {
 				end_reason: endReason,
 				duration_ms: durationMs,
 				...(agentServerUrl ? { agent_server_url: agentServerUrl } : {}),
+			},
+		})
+	}
+
+	/**
+	 * Emit `agent_session_completed` server-side with `route` + `error_code`
+	 * so the quota-wall-alarm bet's AC-T3 PostHog query can join it against
+	 * `quota_alert_fired` on `route` within the 4h pre-window.
+	 *
+	 * The event was previously fired from the frontend SSE bridge, which had
+	 * two gaps that mattered for this bet: (1) sessions that ended while no
+	 * browser was watching (triggers, MCP, background reapers) never emitted;
+	 * (2) the SSE payload strips `data` for the pg_notify 8KB cap so the
+	 * failure route/error_code weren't reachable client-side. Server-side
+	 * emission fixes both. The frontend call site is removed in the same
+	 * change to avoid double-counting.
+	 */
+	recordAgentSessionCompleted({
+		sessionId,
+		workspaceId,
+		outcome,
+		route,
+		errorCode,
+	}: AgentSessionCompletedEvent): void {
+		this.capture({
+			distinctId: sessionId,
+			event: 'agent_session_completed',
+			properties: {
+				entity_id: sessionId,
+				entity_type: 'session',
+				source: 'system',
+				outcome,
+				route,
+				error_code: errorCode,
+				workspace_id: workspaceId,
 			},
 		})
 	}

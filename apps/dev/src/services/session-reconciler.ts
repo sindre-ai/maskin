@@ -3,6 +3,8 @@ import { events, sessions } from '@maskin/db/schema'
 import type { SessionResultFailureReason } from '@maskin/shared'
 import { and, eq, inArray, isNotNull, sql } from 'drizzle-orm'
 import { logger } from '../lib/logger'
+import { RuntimeTelemetry } from './runtime-telemetry'
+import { deriveQuotaContext } from './session-quota-context'
 
 /**
  * Statuses where the session is supposed to be actively running on the
@@ -56,7 +58,10 @@ export interface ReconcileResult {
 }
 
 export class SessionReconciler {
-	constructor(private db: Database) {}
+	constructor(
+		private db: Database,
+		private telemetry: RuntimeTelemetry = new RuntimeTelemetry(),
+	) {}
 
 	async reconcile(input: ReconcileInput): Promise<ReconcileResult> {
 		const sandboxSet = new Set(input.sandboxes)
@@ -144,6 +149,19 @@ export class SessionReconciler {
 			entityType: 'session',
 			entityId: sessionId,
 			data: { exit_code: null, failure_reason: FAILURE_REASON },
+		})
+
+		// `agent_server_lost` is provider='agent-server' so `route` collapses to
+		// null (this isn't a Claude/OpenRouter quota event) — the AC-T3 cohort
+		// correctly excludes it. The event still fires so total failure counts
+		// stay consistent between the audit log and PostHog.
+		const { route, error_code } = deriveQuotaContext(FAILURE_REASON)
+		this.telemetry.recordAgentSessionCompleted({
+			sessionId,
+			workspaceId,
+			outcome: 'failed',
+			route,
+			errorCode: error_code,
 		})
 	}
 }

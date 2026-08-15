@@ -230,4 +230,71 @@ describe('RuntimeTelemetry', () => {
 			},
 		})
 	})
+
+	describe('recordAgentSessionCompleted (quota-wall-alarm AC-T3)', () => {
+		it('captures agent_session_completed with the frontend-compatible property shape plus route + error_code', () => {
+			const { client, capture } = makeFakeClient()
+			const telemetry = new RuntimeTelemetry({ apiKey: 'phc_x', client })
+
+			telemetry.recordAgentSessionCompleted({
+				sessionId: 'sess-openrouter',
+				workspaceId: 'ws-1',
+				outcome: 'failed',
+				route: 'openrouter',
+				errorCode: 'HTTP_402',
+			})
+
+			expect(capture).toHaveBeenCalledWith({
+				distinctId: 'sess-openrouter',
+				event: 'agent_session_completed',
+				properties: {
+					entity_id: 'sess-openrouter',
+					entity_type: 'session',
+					source: 'system',
+					outcome: 'failed',
+					route: 'openrouter',
+					error_code: 'HTTP_402',
+					workspace_id: 'ws-1',
+					$process_person_profile: false,
+				},
+			})
+		})
+
+		it('emits null route + error_code for a clean completion so the total-events denominator stays consistent', () => {
+			const { client, capture } = makeFakeClient()
+			const telemetry = new RuntimeTelemetry({ apiKey: 'phc_x', client })
+
+			telemetry.recordAgentSessionCompleted({
+				sessionId: 'sess-clean',
+				workspaceId: 'ws-1',
+				outcome: 'completed',
+				route: null,
+				errorCode: null,
+			})
+
+			expect(capture).toHaveBeenCalledWith(
+				expect.objectContaining({
+					event: 'agent_session_completed',
+					properties: expect.objectContaining({
+						outcome: 'completed',
+						route: null,
+						error_code: null,
+					}),
+				}),
+			)
+		})
+
+		it('is a no-op when telemetry is disabled', () => {
+			const telemetry = new RuntimeTelemetry()
+			expect(() =>
+				telemetry.recordAgentSessionCompleted({
+					sessionId: 'sess-x',
+					workspaceId: 'ws-1',
+					outcome: 'timeout',
+					route: null,
+					errorCode: null,
+				}),
+			).not.toThrow()
+		})
+	})
 })

@@ -2,6 +2,7 @@ import type { Database } from '@maskin/db'
 import { events, sessionDispatchAttempts, sessions } from '@maskin/db/schema'
 import { and, asc, eq, lte, sql } from 'drizzle-orm'
 import { logger } from '../lib/logger'
+import { RuntimeTelemetry } from './runtime-telemetry'
 
 /**
  * Postgres-backed dispatch queue for session-start calls from apps/dev to
@@ -84,6 +85,7 @@ export class SessionDispatchQueue {
 		private db: Database,
 		private dispatchFn: DispatchFn,
 		opts: SessionDispatchQueueOptions = {},
+		private telemetry: RuntimeTelemetry = new RuntimeTelemetry(),
 	) {
 		this.maxAttempts = opts.maxAttempts ?? DEFAULTS.maxAttempts
 		this.baseBackoffMs = opts.baseBackoffMs ?? DEFAULTS.baseBackoffMs
@@ -363,6 +365,17 @@ export class SessionDispatchQueue {
 					entityType: 'session',
 					entityId: updated.id,
 					data: { error: errorMessage, source: 'dispatch_queue' },
+				})
+
+				// No failure_reason available at the dispatch layer — the LLM route
+				// hasn't been touched yet — so route/error_code stay null. The
+				// event still fires so the audit log and PostHog stay 1:1.
+				this.telemetry.recordAgentSessionCompleted({
+					sessionId: updated.id,
+					workspaceId: updated.workspaceId,
+					outcome: 'failed',
+					route: null,
+					errorCode: null,
 				})
 			}
 		} catch (err) {
