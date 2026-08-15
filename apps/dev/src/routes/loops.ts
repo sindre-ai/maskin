@@ -9,7 +9,12 @@ import {
 	sessions,
 	triggers,
 } from '@maskin/db/schema'
-import { TERMINAL_BET_STATUSES, listLoopsResponseSchema } from '@maskin/shared'
+import {
+	LOOP_STATUSES,
+	type LoopStatus,
+	TERMINAL_BET_STATUSES,
+	listLoopsResponseSchema,
+} from '@maskin/shared'
 import { and, desc, eq, inArray, or, sql } from 'drizzle-orm'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { errorSchema, eventResponseSchema, workspaceIdHeader } from '../lib/openapi-schemas'
@@ -343,19 +348,11 @@ app.openapi(listLoopsRoute, (async (c) => {
 	const response = {
 		loops: loopRows.map((row) => {
 			const rawStatus = row.status
-			const status = ((): 'running' | 'waiting' | 'paused' | 'archived' => {
-				if (
-					rawStatus === 'running' ||
-					rawStatus === 'waiting' ||
-					rawStatus === 'paused' ||
-					rawStatus === 'archived'
-				) {
-					return rawStatus
-				}
-				// Unknown status (shouldn't happen with schema-validated statuses,
-				// but preserved so a manual UPDATE cannot 500 the endpoint).
-				return 'running'
-			})()
+			const status: LoopStatus = (LOOP_STATUSES as readonly string[]).includes(rawStatus)
+				? (rawStatus as LoopStatus)
+				: // Unknown status (shouldn't happen with schema-validated statuses,
+					// but preserved so a manual UPDATE cannot 500 the endpoint).
+					'draft'
 
 			const meta = (row.metadata as Record<string, unknown> | null) ?? {}
 			const entryCondition =
@@ -390,19 +387,23 @@ app.openapi(listLoopsRoute, (async (c) => {
 			)
 			const waitingOnViewer = waitingByLoop.get(row.id) === true
 
-			// Composite pill signal per T1(c). Lifecycle overrides everything:
-			// paused/archived stay grey regardless of read state; only `running`
-			// composes with waitingOnViewer. An explicit `waiting` status forces
-			// the amber "waiting" pill even if the viewer has no unread events —
-			// the workspace has already declared the loop needs attention.
+			// Composite pill signal per T1(c). Collapses the six-rung lifecycle
+			// into the four UI badges the loop card renders. Lifecycle overrides
+			// everything: `draft` shows as `paused` (authored but not firing);
+			// `paused`/`archived` stay grey regardless of read state. `pilot` and
+			// `supervised` are inherently attention-worthy (test mode, or output
+			// held for approval) so they force `waiting_on_you`. Only `live`
+			// composes with waitingOnViewer.
 			const pill: 'running' | 'waiting_on_you' | 'paused' | 'archived' =
-				status === 'paused' || status === 'archived'
-					? status
-					: status === 'waiting'
-						? 'waiting_on_you'
-						: waitingOnViewer
+				status === 'archived'
+					? 'archived'
+					: status === 'paused' || status === 'draft'
+						? 'paused'
+						: status === 'pilot' || status === 'supervised'
 							? 'waiting_on_you'
-							: 'running'
+							: waitingOnViewer
+								? 'waiting_on_you'
+								: 'running'
 
 			return {
 				id: row.id,

@@ -169,8 +169,8 @@ describe('Installed Loops → Loop object linking', () => {
 		const [loopObject] = await db.select().from(objects).where(eq(objects.id, installed.objectId))
 		if (!loopObject) throw new Error('linked loop object not found')
 		expect(loopObject.type).toBe('loop')
-		// Marketplace installs land at `pilot` (task 6 of bet/loop-lifecycle-status-ladder)
-		// — starts-inert precedent shared with provisioned integrations forced to `inactive`.
+		// Marketplace installs land at `pilot` — starts-inert precedent shared with
+		// provisioned integrations forced to `inactive`.
 		expect(loopObject.status).toBe('pilot')
 		expect(loopObject.title).toBe(loop.name)
 		expect(loopObject.workspaceId).toBe(workspaceId)
@@ -201,9 +201,7 @@ describe('Installed Loops → Loop object linking', () => {
 		const row = body.loops[0]
 		if (!row) throw new Error('loop row not found in GET /api/loops response')
 		expect(row.id).toBe(installed.objectId)
-		// Stored as `pilot`; `GET /api/loops` coerces unknown statuses back to `running`
-		// on read until task 2 extends the response enum. Verifies the coercion path.
-		expect(row.status).toBe('running')
+		expect(row.status).toBe('pilot')
 		expect(row.triggerIds).toHaveLength(1)
 		// Exactly one agent (the provisioned actor) reachable through the
 		// installed trigger's targetActorId.

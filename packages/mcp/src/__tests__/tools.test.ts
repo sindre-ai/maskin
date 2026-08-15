@@ -813,9 +813,9 @@ describe('create_trigger schema', () => {
 describe('create_loop schema', () => {
 	const schema = tools.create_loop.inputSchema
 
-	it('applies defaults: running status, empty steps/trigger_ids/object_ids', () => {
+	it('applies defaults: draft status, empty steps/trigger_ids/object_ids', () => {
 		const result = schema.parse({ name: 'Lead loop' })
-		expect(result.status).toBe('running')
+		expect(result.status).toBe('draft')
 		expect(result.steps).toEqual([])
 		expect(result.trigger_ids).toEqual([])
 		expect(result.object_ids).toEqual([])

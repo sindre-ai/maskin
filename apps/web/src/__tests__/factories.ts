@@ -217,7 +217,7 @@ export function buildLoopSummary(overrides: Partial<LoopSummary> = {}): LoopSumm
 		workspaceId: 'ws-1',
 		name: 'Test loop',
 		guarantee: 'A guarantee the loop makes',
-		status: 'running',
+		status: 'live',
 		pill: 'running',
 		entryCondition: null,
 		closeCondition: null,
