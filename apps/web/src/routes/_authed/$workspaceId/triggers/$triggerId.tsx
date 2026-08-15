@@ -75,6 +75,7 @@ function TriggerDetailPage() {
 			id: triggerId,
 			data: {
 				name: payload.name,
+				type: payload.type,
 				action_prompt: payload.action_prompt,
 				target_actor_id: payload.target_actor_id,
 				config: payload.config as never,

@@ -16,6 +16,10 @@
 		"./connection": {
 			"types": "./src/connection.ts",
 			"default": "./dist/connection.js"
+		},
+		"./migrate-utils": {
+			"types": "./src/migrate-utils.ts",
+			"default": "./dist/migrate-utils.js"
 		}
 	},
 	"scripts": {

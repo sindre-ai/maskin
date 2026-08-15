@@ -5,10 +5,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockNavigate = vi.fn()
 
-vi.mock('@/hooks/use-workspaces', () => ({
-	useWorkspaces: () => ({ data: [] }),
-}))
-
 vi.mock('@/lib/auth', () => ({
 	getStoredActor: vi.fn(() => ({
 		id: 'actor-1',

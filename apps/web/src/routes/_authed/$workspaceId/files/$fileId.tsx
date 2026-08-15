@@ -1,4 +1,5 @@
 import { FileBody } from '@/components/files/file-body'
+import { PinFileButton } from '@/components/files/pin-file-button'
 import { PageHeader } from '@/components/layout/page-header'
 import { EmptyState } from '@/components/shared/empty-state'
 import { Skeleton } from '@/components/shared/loading-skeleton'
@@ -7,14 +8,16 @@ import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useFile } from '@/hooks/use-files'
+import { useUpdateWorkspace } from '@/hooks/use-workspaces'
 import type { AnnotationJson } from '@/lib/annotations'
 import { buildRevisePrompt } from '@/lib/annotations'
 import { ApiError, type FileDetail, api } from '@/lib/api'
 import { base64ToBytes } from '@/lib/file-utils'
+import { isPinned, togglePinnedFile } from '@/lib/pinned-files'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
 import { Download } from 'lucide-react'
-import { useCallback, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 
 function downloadFile(file: FileDetail): void {
@@ -45,10 +48,19 @@ function formatSize(bytes: number): string {
 
 function FileViewerPage() {
 	const { fileId } = Route.useParams()
-	const { workspaceId } = useWorkspace()
+	const { workspace, workspaceId } = useWorkspace()
 	const { data: file, isLoading, error } = useFile(workspaceId, fileId)
 	const { data: actors } = useActors(workspaceId)
 	const [isRevising, setIsRevising] = useState(false)
+	const updateWorkspace = useUpdateWorkspace(workspaceId)
+	const pinned = useMemo(() => isPinned(workspace, fileId), [workspace, fileId])
+
+	const handleTogglePin = useCallback(
+		(id: string) => {
+			updateWorkspace.mutate({ settings: { pinned_files: togglePinnedFile(workspace, id) } })
+		},
+		[updateWorkspace, workspace],
+	)
 
 	const designAgent = actors?.find(
 		(a) => a.type === 'agent' && a.name.toLowerCase().includes('design'),
@@ -117,7 +129,8 @@ function FileViewerPage() {
 					</div>
 				</header>
 
-				<div className="flex justify-end">
+				<div className="flex items-center justify-end gap-2">
+					<PinFileButton file={file} isPinned={pinned} onToggle={handleTogglePin} />
 					<Button variant="outline" size="sm" onClick={() => downloadFile(file)}>
 						<Download size={14} />
 						Download

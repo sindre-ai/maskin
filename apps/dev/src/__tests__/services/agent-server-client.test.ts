@@ -161,6 +161,33 @@ describe('AgentServerClient.startSession', () => {
 	})
 })
 
+describe('AgentServerClient.stopSession', () => {
+	it('POSTs an empty body to /sessions/:id/stop with bearer auth', async () => {
+		const { fetchImpl, calls } = makeFetchSpy(
+			new Response(JSON.stringify({ ok: true }), {
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+			}),
+		)
+		const client = new AgentServerClient({ server: SERVER, fetchImpl })
+
+		await client.stopSession('s1')
+
+		expect(calls).toHaveLength(1)
+		expect(calls[0]?.url).toBe('https://agent-finland.maskin.test:3001/sessions/s1/stop')
+		expect(calls[0]?.init?.method).toBe('POST')
+		const headers = new Headers(calls[0]?.init?.headers)
+		expect(headers.get('authorization')).toBe(`Bearer ${SERVER.secret}`)
+	})
+
+	it('throws AgentServerHttpError on non-2xx', async () => {
+		const { fetchImpl } = makeFetchSpy(new Response('boom', { status: 500 }))
+		const client = new AgentServerClient({ server: SERVER, fetchImpl })
+
+		await expect(client.stopSession('s1')).rejects.toThrow(AgentServerHttpError)
+	})
+})
+
 describe('AgentServerClient.postJson', () => {
 	it('exposes the same bearer + JSON plumbing for arbitrary sub-paths', async () => {
 		const { fetchImpl, calls } = makeFetchSpy(

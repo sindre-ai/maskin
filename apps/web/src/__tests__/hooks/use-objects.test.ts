@@ -118,6 +118,15 @@ describe('useObject', () => {
 		await waitFor(() => expect(result.current.isError).toBe(true))
 		expect(result.current.error?.message).toBe('Not found')
 	})
+
+	it('does not fetch when enabled is false', () => {
+		const { result } = renderHook(() => useObject('obj-3', { enabled: false }), {
+			wrapper: TestWrapper,
+		})
+
+		expect(result.current.fetchStatus).toBe('idle')
+		expect(api.objects.get).not.toHaveBeenCalled()
+	})
 })
 
 describe('useObjectGraph', () => {
@@ -155,6 +164,14 @@ describe('useObjectGraph', () => {
 	it('is disabled when id is empty', () => {
 		const { result } = renderHook(() => useObjectGraph(workspaceId, ''), { wrapper: TestWrapper })
 		expect(result.current.isFetching).toBe(false)
+		expect(api.objects.graph).not.toHaveBeenCalled()
+	})
+
+	it('is disabled when enabled=false so callers can gate per-row on card kind', () => {
+		const { result } = renderHook(() => useObjectGraph(workspaceId, 'bet-1', { enabled: false }), {
+			wrapper: TestWrapper,
+		})
+		expect(result.current.fetchStatus).toBe('idle')
 		expect(api.objects.graph).not.toHaveBeenCalled()
 	})
 })
@@ -205,6 +222,121 @@ describe('useUpdateObject', () => {
 		result.current.mutate({ id: 'obj-1', data: { title: 'Updated' } })
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
 		expect(api.objects.update).toHaveBeenCalledWith('obj-1', { title: 'Updated' })
+	})
+
+	// Archive is the one status transition that must vanish from default
+	// reads. Optimistically removing the row from list + infinite caches keeps
+	// the UI in step with T3's server-side `include_archived=false` gate,
+	// instead of leaving the row visible until the refetch settles.
+	it('optimistically removes archived row from list and infinite caches', async () => {
+		const queryClient = new QueryClient({
+			defaultOptions: {
+				queries: { retry: false, gcTime: 1000 * 60 },
+				mutations: { retry: false },
+			},
+		})
+		const Wrapper = ({ children }: { children: ReactNode }) =>
+			React.createElement(QueryClientProvider, { client: queryClient }, children)
+
+		const flatKey = queryKeys.objects.list(workspaceId, { type: 'bet' })
+		queryClient.setQueryData(flatKey, [
+			buildObject({ id: 'bet-1', status: 'active', type: 'bet' }),
+			buildObject({ id: 'bet-2', status: 'active', type: 'bet' }),
+		])
+		const infiniteKey = queryKeys.objects.listInfinite(workspaceId, {})
+		queryClient.setQueryData(infiniteKey, {
+			pages: [
+				[
+					buildObject({ id: 'bet-1', status: 'active', type: 'bet' }),
+					buildObject({ id: 'bet-2', status: 'active', type: 'bet' }),
+				],
+			],
+			pageParams: [0],
+		})
+
+		let resolve!: (value: ObjectResponse) => void
+		vi.mocked(api.objects.update).mockReturnValue(
+			new Promise<ObjectResponse>((res) => {
+				resolve = res
+			}),
+		)
+
+		const { result } = renderHook(() => useUpdateObject(workspaceId), { wrapper: Wrapper })
+		result.current.mutate({ id: 'bet-1', data: { status: 'archived' } })
+
+		await waitFor(() => {
+			const flat = queryClient.getQueryData<ObjectResponse[]>(flatKey) ?? []
+			expect(flat.map((o) => o.id)).toEqual(['bet-2'])
+			const infinite = queryClient.getQueryData<{ pages: ObjectResponse[][] }>(infiniteKey)
+			expect(infinite?.pages[0].map((o) => o.id)).toEqual(['bet-2'])
+		})
+
+		resolve(buildObject({ id: 'bet-1', status: 'archived', type: 'bet' }))
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+	})
+
+	// Non-archive updates leave the list caches untouched — status changes
+	// like `active → paused` should stay in the row and let the visual
+	// treatment carry the change, not disappear.
+	it('does not remove row when status is not archived', async () => {
+		const queryClient = new QueryClient({
+			defaultOptions: {
+				queries: { retry: false, gcTime: 1000 * 60 },
+				mutations: { retry: false },
+			},
+		})
+		const Wrapper = ({ children }: { children: ReactNode }) =>
+			React.createElement(QueryClientProvider, { client: queryClient }, children)
+
+		const flatKey = queryKeys.objects.list(workspaceId, { type: 'bet' })
+		queryClient.setQueryData(flatKey, [buildObject({ id: 'bet-1', status: 'active', type: 'bet' })])
+
+		let resolve!: (value: ObjectResponse) => void
+		vi.mocked(api.objects.update).mockReturnValue(
+			new Promise<ObjectResponse>((res) => {
+				resolve = res
+			}),
+		)
+
+		const { result } = renderHook(() => useUpdateObject(workspaceId), { wrapper: Wrapper })
+		result.current.mutate({ id: 'bet-1', data: { status: 'paused' } })
+
+		// The row must still be present — only the archived path removes it.
+		const flat = queryClient.getQueryData<ObjectResponse[]>(flatKey) ?? []
+		expect(flat.map((o) => o.id)).toEqual(['bet-1'])
+
+		resolve(buildObject({ id: 'bet-1', status: 'paused', type: 'bet' }))
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+	})
+
+	// Rollback restores the archived row if the request rejects, so a
+	// backend/network failure doesn't leave the user staring at a row that
+	// silently vanished when the archive never actually happened.
+	it('restores archived row when the update rejects', async () => {
+		const queryClient = new QueryClient({
+			defaultOptions: {
+				queries: { retry: false, gcTime: 1000 * 60 },
+				mutations: { retry: false },
+			},
+		})
+		const Wrapper = ({ children }: { children: ReactNode }) =>
+			React.createElement(QueryClientProvider, { client: queryClient }, children)
+
+		const flatKey = queryKeys.objects.list(workspaceId, { type: 'bet' })
+		const seed = [
+			buildObject({ id: 'bet-1', status: 'active', type: 'bet' }),
+			buildObject({ id: 'bet-2', status: 'active', type: 'bet' }),
+		]
+		queryClient.setQueryData(flatKey, seed)
+
+		vi.mocked(api.objects.update).mockRejectedValue(new Error('Network'))
+
+		const { result } = renderHook(() => useUpdateObject(workspaceId), { wrapper: Wrapper })
+		result.current.mutate({ id: 'bet-1', data: { status: 'archived' } })
+
+		await waitFor(() => expect(result.current.isError).toBe(true))
+		const flat = queryClient.getQueryData<ObjectResponse[]>(flatKey) ?? []
+		expect(flat.map((o) => o.id)).toEqual(['bet-1', 'bet-2'])
 	})
 })
 
@@ -300,6 +432,171 @@ describe('useBulkUpdateObjects', () => {
 		const cache = queryClient.getQueryData<{ pages: ObjectResponse[][] }>(key)
 		const rows = cache?.pages[0] ?? []
 		expect(rows.every((r) => r.status === 'todo')).toBe(true)
+	})
+
+	// AC-T1: with 2 ≤ N ≤ 200 selected ids, exactly one POST /bulk-update fires
+	// carrying all ids + the patch — not N per-object PATCH calls. Verifies the
+	// wire shape at both ends of the range.
+	it('fires exactly one bulkUpdate call for N=2 and again for N=200', async () => {
+		const { Wrapper } = makeWrapper()
+		vi.mocked(api.objects.bulkUpdate).mockResolvedValue({ results: [] })
+		vi.mocked(api.objects.update).mockResolvedValue(buildObject({ id: 'unused' }))
+
+		for (const size of [2, 200]) {
+			vi.mocked(api.objects.bulkUpdate).mockClear()
+			vi.mocked(api.objects.update).mockClear()
+			const ids = Array.from({ length: size }, (_, i) => `obj-${i}`)
+			vi.mocked(api.objects.bulkUpdate).mockResolvedValue({
+				results: ids.map((id) => ({ id, ok: true })),
+			})
+			const { result } = renderHook(() => useBulkUpdateObjects(workspaceId), { wrapper: Wrapper })
+			result.current.mutate({ ids, patch: { status: 'done' } })
+
+			await waitFor(() => expect(result.current.isSuccess).toBe(true))
+			expect(api.objects.bulkUpdate).toHaveBeenCalledTimes(1)
+			expect(api.objects.bulkUpdate).toHaveBeenCalledWith(workspaceId, {
+				ids,
+				patch: { status: 'done' },
+			})
+			// The wire must not fall back to per-id PATCH calls.
+			expect(api.objects.update).not.toHaveBeenCalled()
+		}
+	})
+
+	// AC-T2: the optimistic patch must land on the flat list cache too, not just
+	// the infinite-query cache — the objects page uses infinite lists but other
+	// callers (board view, related-objects tables) read from the flat list slice.
+	it('optimistically patches the flat list cache slice', async () => {
+		const { queryClient, Wrapper } = makeWrapper()
+		const key = queryKeys.objects.list(workspaceId, { type: 'task' })
+		queryClient.setQueryData(key, [
+			buildObject({ id: 'obj-1', status: 'todo', type: 'task' }),
+			buildObject({ id: 'obj-2', status: 'todo', type: 'task' }),
+			buildObject({ id: 'obj-3', status: 'todo', type: 'task' }),
+		])
+
+		let resolve!: (value: { results: Array<{ id: string; ok: boolean }> }) => void
+		vi.mocked(api.objects.bulkUpdate).mockReturnValue(
+			new Promise((res) => {
+				resolve = res
+			}),
+		)
+
+		const { result } = renderHook(() => useBulkUpdateObjects(workspaceId), { wrapper: Wrapper })
+		result.current.mutate({ ids: ['obj-1', 'obj-2'], patch: { status: 'in_progress' } })
+
+		await waitFor(() => {
+			const rows = queryClient.getQueryData<ObjectResponse[]>(key) ?? []
+			expect(rows.find((r) => r.id === 'obj-1')?.status).toBe('in_progress')
+			expect(rows.find((r) => r.id === 'obj-2')?.status).toBe('in_progress')
+			expect(rows.find((r) => r.id === 'obj-3')?.status).toBe('todo')
+		})
+
+		resolve({
+			results: [
+				{ id: 'obj-1', ok: true },
+				{ id: 'obj-2', ok: true },
+			],
+		})
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+	})
+
+	// AC-T2: per-id detail caches (open detail pages) must reflect the patch
+	// immediately so a detail view sitting behind the objects list doesn't lag.
+	it('optimistically patches per-id detail caches for seeded ids only', async () => {
+		const { queryClient, Wrapper } = makeWrapper()
+		// obj-1 has an open detail cache; obj-2 does not. onMutate must patch
+		// only obj-1 and leave obj-2 alone — otherwise we'd fabricate a detail
+		// entry the user never opened.
+		queryClient.setQueryData(
+			queryKeys.objects.detail('obj-1'),
+			buildObject({ id: 'obj-1', status: 'todo', type: 'task' }),
+		)
+
+		vi.mocked(api.objects.bulkUpdate).mockResolvedValue({
+			results: [
+				{ id: 'obj-1', ok: true },
+				{ id: 'obj-2', ok: true },
+			],
+		})
+
+		const { result } = renderHook(() => useBulkUpdateObjects(workspaceId), { wrapper: Wrapper })
+		result.current.mutate({ ids: ['obj-1', 'obj-2'], patch: { status: 'done' } })
+
+		await waitFor(() => {
+			const seeded = queryClient.getQueryData<ObjectResponse>(queryKeys.objects.detail('obj-1'))
+			expect(seeded?.status).toBe('done')
+		})
+		// Unseeded detail cache stays undefined — no fabricated entry.
+		expect(queryClient.getQueryData(queryKeys.objects.detail('obj-2'))).toBeUndefined()
+	})
+
+	// AC-T3: rollback restores every snapshot on reject — including the
+	// per-id detail snapshot. A seeded detail cache must return to its pre-
+	// mutation status when the promise rejects.
+	it('rollback restores per-id detail cache on reject', async () => {
+		const { queryClient, Wrapper } = makeWrapper()
+		queryClient.setQueryData(
+			queryKeys.objects.detail('obj-1'),
+			buildObject({ id: 'obj-1', status: 'todo', type: 'task' }),
+		)
+		vi.mocked(api.objects.bulkUpdate).mockRejectedValue(new Error('Network'))
+
+		const { result } = renderHook(() => useBulkUpdateObjects(workspaceId), { wrapper: Wrapper })
+		result.current.mutate({ ids: ['obj-1'], patch: { status: 'done' } })
+
+		await waitFor(() => expect(result.current.isError).toBe(true))
+		const cached = queryClient.getQueryData<ObjectResponse>(queryKeys.objects.detail('obj-1'))
+		expect(cached?.status).toBe('todo')
+	})
+
+	// onSettled: after a partial-failure response, list caches are invalidated
+	// (so a refetch reconciles the failed rows) and per-id detail caches are
+	// invalidated only for ok ids — failed ids stay optimistically patched only
+	// long enough for the caller to trim selection and let the list refetch
+	// deliver the real state. This locks the wire contract behind AC-T4.
+	it('invalidates only ok-id detail caches on partial-failure response', async () => {
+		const { queryClient, Wrapper } = makeWrapper()
+		const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries')
+		vi.mocked(api.objects.bulkUpdate).mockResolvedValue({
+			results: [
+				{ id: 'obj-1', ok: true },
+				{ id: 'obj-2', ok: false, error: 'nope' },
+			],
+		})
+
+		const { result } = renderHook(() => useBulkUpdateObjects(workspaceId), { wrapper: Wrapper })
+		result.current.mutate({ ids: ['obj-1', 'obj-2'], patch: { status: 'done' } })
+
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		const detailInvalidations = invalidateSpy.mock.calls
+			.map(([opts]) => opts?.queryKey)
+			.filter(
+				(k): k is readonly unknown[] => Array.isArray(k) && k[0] === 'objects' && k[1] === 'detail',
+			)
+		expect(detailInvalidations.some((k) => k[2] === 'obj-1')).toBe(true)
+		expect(detailInvalidations.some((k) => k[2] === 'obj-2')).toBe(false)
+	})
+
+	// On a network failure (no data), onSettled falls back to invalidating every
+	// requested id's detail cache — since we don't know which rows actually
+	// changed server-side.
+	it('invalidates every requested detail cache on network failure', async () => {
+		const { queryClient, Wrapper } = makeWrapper()
+		const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries')
+		vi.mocked(api.objects.bulkUpdate).mockRejectedValue(new Error('Network'))
+
+		const { result } = renderHook(() => useBulkUpdateObjects(workspaceId), { wrapper: Wrapper })
+		result.current.mutate({ ids: ['obj-1', 'obj-2'], patch: { status: 'done' } })
+
+		await waitFor(() => expect(result.current.isError).toBe(true))
+		const detailInvalidations = invalidateSpy.mock.calls
+			.map(([opts]) => opts?.queryKey)
+			.filter(
+				(k): k is readonly unknown[] => Array.isArray(k) && k[0] === 'objects' && k[1] === 'detail',
+			)
+		expect(detailInvalidations.some((k) => k[2] === 'obj-1')).toBe(true)
+		expect(detailInvalidations.some((k) => k[2] === 'obj-2')).toBe(true)
 	})
 })
 

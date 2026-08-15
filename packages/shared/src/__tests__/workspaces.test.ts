@@ -11,26 +11,43 @@ const uuid = '550e8400-e29b-41d4-a716-446655440000'
 describe('workspaceSettingsSchema', () => {
 	it('provides all defaults when given empty object', () => {
 		const result = workspaceSettingsSchema.parse({})
-		expect(result.display_names).toEqual({ insight: 'Insight', bet: 'Bet', task: 'Task' })
-		expect(result.statuses.insight).toEqual(['new', 'processing', 'clustered', 'discarded'])
+		expect(result.display_names).toEqual({
+			insight: 'Insight',
+			bet: 'Bet',
+			task: 'Task',
+			loop: 'Loop',
+			commitment: 'Commitment',
+		})
+		expect(result.statuses.insight).toEqual([
+			'new',
+			'processing',
+			'clustered',
+			'scored',
+			'parked',
+			'discarded',
+		])
 		expect(result.statuses.bet).toEqual([
 			'signal',
-			'proposed',
+			'qualified',
+			'define',
 			'active',
-			'completed',
+			'live',
 			'succeeded',
 			'failed',
 			'paused',
+			'archived',
 		])
 		expect(result.statuses.task).toEqual([
 			'todo',
 			'in_progress',
 			'in_review',
-			'testing',
+			'validated',
 			'done',
-			'blocked',
+			'discarded',
 		])
-		expect(result.field_definitions).toEqual({})
+		expect(result.field_definitions).toEqual({
+			bet: [{ name: 'archive_reason', type: 'text', required: false }],
+		})
 		expect(result.relationship_types).toEqual([
 			'informs',
 			'breaks_into',
@@ -93,6 +110,44 @@ describe('workspaceSettingsSchema', () => {
 				claude_oauth: { encryptedAccessToken: 'token' },
 			}),
 		).toThrow()
+	})
+
+	it('accepts claude_oauth new slot shape with a primary slot', () => {
+		const result = workspaceSettingsSchema.parse({
+			claude_oauth: {
+				primary: {
+					encryptedAccessToken: 'encrypted-token',
+					encryptedRefreshToken: 'encrypted-refresh',
+					expiresAt: 1234567890,
+				},
+			},
+		})
+		expect(result.claude_oauth).toMatchObject({
+			primary: { encryptedAccessToken: 'encrypted-token' },
+		})
+	})
+
+	it('rejects an empty claude_oauth object', () => {
+		expect(() => workspaceSettingsSchema.parse({ claude_oauth: {} })).toThrow()
+	})
+
+	it('leaves default_agent_id undefined when not provided', () => {
+		const result = workspaceSettingsSchema.parse({})
+		expect(result.default_agent_id).toBeUndefined()
+	})
+
+	it('accepts default_agent_id set to a uuid', () => {
+		const result = workspaceSettingsSchema.parse({ default_agent_id: uuid })
+		expect(result.default_agent_id).toBe(uuid)
+	})
+
+	it('accepts default_agent_id explicitly cleared to null', () => {
+		const result = workspaceSettingsSchema.parse({ default_agent_id: null })
+		expect(result.default_agent_id).toBeNull()
+	})
+
+	it('rejects default_agent_id that is not a uuid', () => {
+		expect(() => workspaceSettingsSchema.parse({ default_agent_id: 'not-a-uuid' })).toThrow()
 	})
 
 	it('accepts field_definitions', () => {

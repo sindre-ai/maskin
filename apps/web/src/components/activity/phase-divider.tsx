@@ -1,12 +1,10 @@
 import { cn } from '@/lib/cn'
 import { getStatusColor } from '@/lib/constants'
-import { ChevronDown, ChevronRight } from 'lucide-react'
 
 interface PhaseDividerProps {
 	status: string
 	startedAt: string | null
 	isOpen: boolean
-	eventCount: number
 	onToggle: () => void
 }
 
@@ -23,43 +21,25 @@ function formatPhaseDate(value: string | null): string | null {
 	return dateFormatter.format(date)
 }
 
-export function PhaseDivider({
-	status,
-	startedAt,
-	isOpen,
-	eventCount,
-	onToggle,
-}: PhaseDividerProps) {
+export function PhaseDivider({ status, startedAt, isOpen, onToggle }: PhaseDividerProps) {
 	const colors = getStatusColor(status)
 	const formattedDate = formatPhaseDate(startedAt)
 	const label = status.replace(/_/g, ' ')
 
 	return (
-		<div className="flex items-center gap-3 py-4">
+		<button
+			type="button"
+			onClick={onToggle}
+			aria-expanded={isOpen}
+			className="flex w-full cursor-pointer items-center gap-3 py-4 transition-colors hover:bg-bg-hover/40"
+		>
 			<div className="flex-1 border-t border-border" />
-			<button
-				type="button"
-				onClick={onToggle}
-				aria-expanded={isOpen}
-				className="flex cursor-pointer items-center gap-2 rounded-full border border-border bg-bg-surface px-3 py-1 transition-colors hover:border-border-hover hover:bg-bg-hover"
-			>
-				<span className={cn('inline-block h-2 w-2 rounded-full', colors.bg)} aria-hidden="true" />
-				<span className={cn('text-xs font-medium uppercase tracking-wider', colors.text)}>
-					{label}
-				</span>
-				{formattedDate && <span className="text-xs text-muted-foreground">{formattedDate}</span>}
-				{!isOpen && eventCount > 0 && (
-					<span className="text-xs text-muted-foreground">
-						· {eventCount} {eventCount === 1 ? 'event' : 'events'}
-					</span>
-				)}
-				{isOpen ? (
-					<ChevronDown size={14} className="text-muted-foreground" aria-hidden="true" />
-				) : (
-					<ChevronRight size={14} className="text-muted-foreground" aria-hidden="true" />
-				)}
-			</button>
+			<span className={cn('inline-block h-2 w-2 rounded-full', colors.bg)} aria-hidden="true" />
+			<span className={cn('text-xs font-medium uppercase tracking-wider', colors.text)}>
+				{label}
+			</span>
+			{formattedDate && <span className="text-xs text-muted-foreground">{formattedDate}</span>}
 			<div className="flex-1 border-t border-border" />
-		</div>
+		</button>
 	)
 }

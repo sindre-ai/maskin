@@ -1,4 +1,5 @@
 import { AgentOutput } from '@/components/shared/agent-output'
+import { AttachedFileCard } from '@/components/shared/attached-file-card'
 import { Spinner } from '@/components/ui/spinner'
 import type { ChatEvent, UserAttachmentView } from '@/lib/chat-stream'
 import { cn } from '@/lib/cn'
@@ -6,6 +7,7 @@ import { Bell, Bot, Box, ChevronDown, ChevronRight, FileText, Wrench } from 'luc
 import { useEffect, useRef, useState } from 'react'
 
 interface ChatTranscriptProps {
+	workspaceId: string
 	events: ChatEvent[]
 	starting: boolean
 	error: Error | null
@@ -18,7 +20,13 @@ interface ChatTranscriptProps {
  * as a collapsed expander. Non-renderable envelopes (user echoes, success
  * results, system, debug) fall through to nothing so the surface stays quiet.
  */
-export function ChatTranscript({ events, starting, error, className }: ChatTranscriptProps) {
+export function ChatTranscript({
+	workspaceId,
+	events,
+	starting,
+	error,
+	className,
+}: ChatTranscriptProps) {
 	const scrollerRef = useRef<HTMLDivElement | null>(null)
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: pin scroll to bottom on every new event
@@ -37,7 +45,7 @@ export function ChatTranscript({ events, starting, error, className }: ChatTrans
 			) : (
 				<div className="flex flex-col gap-3">
 					{events.map((event, index) => (
-						<TranscriptRow key={`${event.kind}-${index}`} event={event} />
+						<TranscriptRow key={`${event.kind}-${index}`} event={event} workspaceId={workspaceId} />
 					))}
 					{error && <TranscriptError error={error} />}
 				</div>
@@ -70,10 +78,16 @@ function TranscriptError({ error }: { error: Error }) {
 	)
 }
 
-function TranscriptRow({ event }: { event: ChatEvent }) {
+function TranscriptRow({ event, workspaceId }: { event: ChatEvent; workspaceId: string }) {
 	switch (event.kind) {
 		case 'user':
-			return <UserMessageBlock text={event.text} attachments={event.attachments} />
+			return (
+				<UserMessageBlock
+					text={event.text}
+					attachments={event.attachments}
+					workspaceId={workspaceId}
+				/>
+			)
 		case 'text':
 			return <AssistantTextBlock text={event.text} />
 		case 'thinking':
@@ -98,16 +112,23 @@ function TranscriptRow({ event }: { event: ChatEvent }) {
 function UserMessageBlock({
 	text,
 	attachments,
+	workspaceId,
 }: {
 	text: string
 	attachments?: UserAttachmentView[]
+	workspaceId: string
 }) {
+	const fileAttachments = attachments?.filter(
+		(a): a is Extract<UserAttachmentView, { kind: 'file' }> => a.kind === 'file',
+	)
+	const contextAttachments = attachments?.filter((a) => a.kind !== 'file')
+
 	return (
 		<div className="flex justify-end">
 			<div className="flex max-w-[85%] flex-col gap-1 rounded-md bg-accent px-3 py-2 text-accent-foreground text-sm">
-				{attachments && attachments.length > 0 ? (
+				{contextAttachments && contextAttachments.length > 0 ? (
 					<ul className="flex flex-wrap gap-1" aria-label="Attached context">
-						{attachments.map((a) => (
+						{contextAttachments.map((a) => (
 							<li
 								key={attachmentKey(a)}
 								className="inline-flex max-w-full items-center gap-1 rounded-full bg-accent-foreground/15 px-2 py-0.5 text-[11px]"
@@ -118,14 +139,31 @@ function UserMessageBlock({
 						))}
 					</ul>
 				) : null}
-				<span className="whitespace-pre-wrap">{text}</span>
+				{fileAttachments && fileAttachments.length > 0 ? (
+					<ul className="flex flex-col gap-1" aria-label="Attached files">
+						{fileAttachments.map((f) => (
+							<li key={attachmentKey(f)}>
+								<AttachedFileCard
+									workspaceId={workspaceId}
+									file={{
+										id: f.id,
+										name: f.name,
+										sizeBytes: f.sizeBytes,
+										mimeType: f.mimeType,
+									}}
+								/>
+							</li>
+						))}
+					</ul>
+				) : null}
+				{text.length > 0 ? <span className="whitespace-pre-wrap">{text}</span> : null}
 			</div>
 		</div>
 	)
 }
 
 function attachmentKey(a: UserAttachmentView): string {
-	if (a.kind === 'file') return `file:${a.name}`
+	if (a.kind === 'file') return `file:${a.id ?? a.name}`
 	return `${a.kind}:${a.id}`
 }
 

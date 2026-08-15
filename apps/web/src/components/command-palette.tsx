@@ -1,12 +1,13 @@
 import { useObjects } from '@/hooks/use-objects'
 import { useChat } from '@/lib/chat-context'
+import { useCommandPalette } from '@/lib/command-palette-context'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
 import { Command } from 'cmdk'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect } from 'react'
 
 export function CommandPalette() {
-	const [open, setOpen] = useState(false)
+	const { open, setOpen } = useCommandPalette()
 	const { workspaceId } = useWorkspace()
 	const { data: objects } = useObjects(workspaceId)
 	const { setOpen: setChatOpen } = useChat()
@@ -17,13 +18,13 @@ export function CommandPalette() {
 			navigate({ to: path })
 			setOpen(false)
 		},
-		[navigate],
+		[navigate, setOpen],
 	)
 
 	const openChat = useCallback(() => {
 		setChatOpen(true)
 		setOpen(false)
-	}, [setChatOpen])
+	}, [setChatOpen, setOpen])
 
 	useEffect(() => {
 		const handler = (e: KeyboardEvent) => {
@@ -36,17 +37,13 @@ export function CommandPalette() {
 				setChatOpen(true)
 				setOpen(false)
 			}
-			if (e.key === 'n' && (e.metaKey || e.ctrlKey)) {
-				e.preventDefault()
-				navigateTo(`/${workspaceId}/objects/${crypto.randomUUID()}`)
-			}
 			if (e.key === 'Escape') {
 				setOpen(false)
 			}
 		}
 		document.addEventListener('keydown', handler)
 		return () => document.removeEventListener('keydown', handler)
-	}, [navigateTo, workspaceId, setChatOpen])
+	}, [setChatOpen, setOpen])
 
 	if (!open) return null
 
@@ -101,12 +98,6 @@ export function CommandPalette() {
 							</Command.Item>
 							<Command.Item
 								className="flex items-center gap-2 rounded px-2 py-1.5 text-sm text-muted-foreground cursor-pointer data-[selected]:bg-accent data-[selected]:text-accent-foreground"
-								onSelect={() => navigateTo(`/${workspaceId}/activity`)}
-							>
-								Activity Feed
-							</Command.Item>
-							<Command.Item
-								className="flex items-center gap-2 rounded px-2 py-1.5 text-sm text-muted-foreground cursor-pointer data-[selected]:bg-accent data-[selected]:text-accent-foreground"
 								onSelect={() => navigateTo(`/${workspaceId}/agents`)}
 							>
 								Agents
@@ -138,10 +129,6 @@ export function CommandPalette() {
 						</span>
 						<span>
 							<kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">⌘J</kbd> Chat
-						</span>
-						<span>
-							<kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">⌘N</kbd> New
-							object
 						</span>
 						<span>
 							<kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">Esc</kbd> Close

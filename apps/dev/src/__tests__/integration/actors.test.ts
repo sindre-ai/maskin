@@ -1,7 +1,10 @@
 import {
 	actors,
+	agentFiles,
+	agentSkills,
 	files,
 	imports,
+	notifications,
 	readState,
 	sessions,
 	subscriptions,
@@ -10,16 +13,18 @@ import {
 } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
 import {
+	buildAgentFile,
 	buildFile,
 	buildImport,
 	buildReadState,
 	buildSubscription,
 	buildWorkspaceSkill,
 	insertActor,
+	insertNotification,
 	insertSession,
 	insertWorkspace,
 } from '../factories'
-import { jsonRequest } from '../helpers'
+import { jsonGet, jsonRequest } from '../helpers'
 import { createIntegrationApp, db, getTestActorId } from './global-setup'
 
 const { default: actorsRoutes } = await import('../../routes/actors')
@@ -27,6 +32,34 @@ const { default: actorsRoutes } = await import('../../routes/actors')
 function createApp() {
 	return createIntegrationApp({ path: '/api/actors', module: actorsRoutes })
 }
+
+describe('Actors Integration — GET /:id', () => {
+	it('includes id and name of attached workspace skills', async () => {
+		const app = createApp()
+		const ws = await insertWorkspace(db, getTestActorId())
+		const agent = await insertActor(db, { type: 'agent', name: 'Skilled Agent' })
+		const [skill] = await db
+			.insert(workspaceSkills)
+			.values(buildWorkspaceSkill({ workspaceId: ws.id, createdBy: getTestActorId() }))
+			.returning()
+		await db.insert(agentSkills).values({ actorId: agent.id, workspaceSkillId: skill.id })
+
+		const res = await app.request(jsonGet(`/api/actors/${agent.id}`))
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body.skills).toEqual([{ id: skill.id, name: skill.name }])
+	})
+
+	it('returns an empty skills array when no skills are attached', async () => {
+		const app = createApp()
+		const agent = await insertActor(db, { type: 'agent', name: 'Skill-less Agent' })
+
+		const res = await app.request(jsonGet(`/api/actors/${agent.id}`))
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body.skills).toEqual([])
+	})
+})
 
 describe('Actors Integration — DELETE', () => {
 	let workspaceId: string
@@ -58,6 +91,30 @@ describe('Actors Integration — DELETE', () => {
 
 		// A session the agent ran itself — deleted along with the actor.
 		const ownSession = await insertSession(db, workspaceId, agentId, humanId)
+
+		// A notification sent to the human about the agent's own session. Its
+		// source/target actor is the human, not the agent, so the agent-scoped
+		// notification cleanup won't touch it — but it still references
+		// ownSession via session_id, which is about to be hard-deleted. Without
+		// ON DELETE SET NULL on notifications.session_id, this FK reference
+		// blocks the session delete with a 23503 violation.
+		const notification = await insertNotification(db, workspaceId, humanId, {
+			targetActorId: humanId,
+			sessionId: ownSession.id,
+		})
+
+		// A file the agent pushed back to storage while running its own session
+		// (e.g. an updated memory/learnings file) — this is how every completed
+		// session's agent_files row ends up referencing sessions.id. It's owned
+		// by the same agent that's about to be deleted, so it's cleaned up by
+		// the agent-scoped agent_files delete below — but only after the agent's
+		// own sessions are deleted first. Without ON DELETE SET NULL on
+		// agent_files.session_id, that ordering blocks the session delete with a
+		// 23503 violation.
+		const [agentFile] = await db
+			.insert(agentFiles)
+			.values(buildAgentFile({ workspaceId, actorId: agentId, sessionId: ownSession.id }))
+			.returning()
 
 		// Workspace artifacts authored by the agent.
 		const [wsSkill] = await db
@@ -97,6 +154,25 @@ describe('Actors Integration — DELETE', () => {
 		// The agent's own session is deleted.
 		const ownSessionAfter = await db.select().from(sessions).where(eq(sessions.id, ownSession.id))
 		expect(ownSessionAfter).toHaveLength(0)
+
+		// The human's notification about that session survives (it isn't owned
+		// by the deleted agent) but its session_id is nulled rather than
+		// blocking the session delete with a FK violation.
+		const [notificationAfter] = await db
+			.select()
+			.from(notifications)
+			.where(eq(notifications.id, notification.id))
+		expect(notificationAfter).toBeDefined()
+		expect(notificationAfter.sessionId).toBeNull()
+
+		// The agent's own file record is gone (agent-scoped agent_files cleanup),
+		// which only runs because the session delete above no longer blocks on
+		// this row's session_id FK.
+		const remainingAgentFiles = await db
+			.select()
+			.from(agentFiles)
+			.where(eq(agentFiles.id, agentFile.id))
+		expect(remainingAgentFiles).toHaveLength(0)
 
 		// The session the agent created for the human is reassigned, not deleted.
 		const [createdSessionAfter] = await db

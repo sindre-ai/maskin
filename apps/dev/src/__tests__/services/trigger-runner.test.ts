@@ -86,10 +86,13 @@ describe('TriggerRunner', () => {
 	})
 
 	describe('handleEvent()', () => {
+		// entity_id must be a real UUID: the runner guards the objects-table
+		// hydration probe with a UUID check (objects.id is a uuid column, so a
+		// non-UUID probe would raise in Postgres instead of finding no row).
 		const baseEvent: PgEvent = {
 			workspace_id: 'ws-1',
 			entity_type: 'task',
-			entity_id: 'obj-1',
+			entity_id: 'a4f1c9d2-3b58-4e07-9c26-8f5d0a7b1e43',
 			action: 'created',
 			actor_id: 'actor-1',
 			event_id: 'evt-1',
@@ -253,6 +256,210 @@ describe('TriggerRunner', () => {
 
 			expect(sessionManager.createSession).not.toHaveBeenCalled()
 		})
+
+		it('fires status_changed trigger when filter matches data.updated', async () => {
+			const trigger = buildTrigger({
+				workspaceId: 'ws-1',
+				type: 'event',
+				config: { entity_type: 'task', action: 'status_changed', filter: { driver: 'actor-abc' } },
+			})
+			mockResults.selectQueue = [
+				[trigger],
+				[
+					{
+						data: {
+							previous: { status: 'todo', driver: 'actor-abc' },
+							updated: { status: 'in_progress', driver: 'actor-abc' },
+						},
+					},
+				],
+			]
+			mockResults.insert = []
+
+			bridge.emit('event', { ...baseEvent, action: 'status_changed' })
+			await vi.advanceTimersByTimeAsync(0)
+
+			expect(sessionManager.createSession).toHaveBeenCalled()
+		})
+
+		it('does not fire status_changed trigger when filter does not match data.updated', async () => {
+			const trigger = buildTrigger({
+				workspaceId: 'ws-1',
+				type: 'event',
+				config: { entity_type: 'task', action: 'status_changed', filter: { driver: 'actor-abc' } },
+			})
+			mockResults.selectQueue = [
+				[trigger],
+				[
+					{
+						data: {
+							previous: { status: 'todo', driver: 'actor-xyz' },
+							updated: { status: 'in_progress', driver: 'actor-xyz' },
+						},
+					},
+				],
+			]
+
+			bridge.emit('event', { ...baseEvent, action: 'status_changed' })
+			await vi.advanceTimersByTimeAsync(0)
+
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+
+		it('does not fire or throw when filter uses dotted path and intermediate is null', async () => {
+			const trigger = buildTrigger({
+				workspaceId: 'ws-1',
+				type: 'event',
+				config: {
+					entity_type: 'task',
+					action: 'status_changed',
+					filter: { 'metadata.decision_type': 'ux' },
+				},
+			})
+			mockResults.selectQueue = [
+				[trigger],
+				[
+					{
+						data: {
+							previous: { status: 'todo', metadata: null },
+							updated: { status: 'in_progress', metadata: null },
+						},
+					},
+				],
+			]
+
+			bridge.emit('event', { ...baseEvent, action: 'status_changed' })
+			await vi.advanceTimersByTimeAsync(0)
+
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+
+		it('fires created trigger with filter — regression guard', async () => {
+			const trigger = buildTrigger({
+				workspaceId: 'ws-1',
+				type: 'event',
+				config: { entity_type: 'relationship', action: 'created', filter: { type: 'informs' } },
+			})
+			mockResults.selectQueue = [
+				[trigger],
+				[{ data: { id: 'rel-1', type: 'informs', sourceId: 'obj-1', targetId: 'obj-2' } }],
+			]
+			mockResults.insert = []
+
+			bridge.emit('event', { ...baseEvent, action: 'created', entity_type: 'relationship' })
+			await vi.advanceTimersByTimeAsync(0)
+
+			expect(sessionManager.createSession).toHaveBeenCalled()
+		})
+
+		it('fires status_changed trigger on a new {changes} shape event by hydrating current from the objects table', async () => {
+			const trigger = buildTrigger({
+				workspaceId: 'ws-1',
+				type: 'event',
+				config: {
+					entity_type: 'task',
+					action: 'status_changed',
+					from_status: 'todo',
+					to_status: 'in_progress',
+				},
+			})
+			mockResults.selectQueue = [
+				[trigger], // matching triggers
+				// fetchEventData → new {changes} shape, no previous/updated snapshot
+				[{ data: { changes: [{ field: 'status', old: 'todo', new: 'in_progress' }] } }],
+				// hydrated current row from `objects`
+				[{ status: 'in_progress', driver: null, metadata: null }],
+			]
+			mockResults.insert = []
+
+			bridge.emit('event', { ...baseEvent, action: 'status_changed' })
+			await vi.advanceTimersByTimeAsync(0)
+
+			expect(sessionManager.createSession).toHaveBeenCalled()
+		})
+
+		it('fires status_changed trigger for a CUSTOM object type by hydrating from the objects table', async () => {
+			// Workspaces define their own object types (extensions) — loop steps
+			// filtering on a custom type's status must hydrate the current row the
+			// same way built-in types do. Regression guard for the removed
+			// ['bet','task','insight'] allow-list.
+			const trigger = buildTrigger({
+				workspaceId: 'ws-1',
+				type: 'event',
+				config: {
+					entity_type: 'lead',
+					action: 'status_changed',
+					filter: { status: 'qualified' },
+				},
+			})
+			mockResults.selectQueue = [
+				[trigger], // matching triggers
+				// fetchEventData → new {changes} shape, no previous/updated snapshot
+				[{ data: { changes: [{ field: 'status', old: 'new', new: 'qualified' }] } }],
+				// hydrated current row from `objects` — a custom-typed object
+				[{ type: 'lead', status: 'qualified', driver: null, metadata: null }],
+			]
+			mockResults.insert = []
+
+			bridge.emit('event', { ...baseEvent, entity_type: 'lead', action: 'status_changed' })
+			await vi.advanceTimersByTimeAsync(0)
+
+			expect(sessionManager.createSession).toHaveBeenCalled()
+		})
+
+		it('does not fire on new {changes} event when the object row is missing', async () => {
+			const trigger = buildTrigger({
+				workspaceId: 'ws-1',
+				type: 'event',
+				config: {
+					entity_type: 'task',
+					action: 'status_changed',
+					from_status: 'todo',
+					to_status: 'in_progress',
+				},
+			})
+			mockResults.selectQueue = [
+				[trigger],
+				[{ data: { changes: [{ field: 'status', old: 'todo', new: 'in_progress' }] } }],
+				[], // objects table lookup — row not found
+			]
+
+			bridge.emit('event', { ...baseEvent, action: 'status_changed' })
+			await vi.advanceTimersByTimeAsync(0)
+
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+
+		it('fires status_changed trigger only when both to_status and filter match', async () => {
+			const trigger = buildTrigger({
+				workspaceId: 'ws-1',
+				type: 'event',
+				config: {
+					entity_type: 'task',
+					action: 'status_changed',
+					to_status: 'in_progress',
+					filter: { driver: 'actor-abc' },
+				},
+			})
+			// Both conditions match
+			mockResults.selectQueue = [
+				[trigger],
+				[
+					{
+						data: {
+							previous: { status: 'todo', driver: 'actor-abc' },
+							updated: { status: 'in_progress', driver: 'actor-abc' },
+						},
+					},
+				],
+			]
+			mockResults.insert = []
+
+			bridge.emit('event', { ...baseEvent, action: 'status_changed' })
+			await vi.advanceTimersByTimeAsync(0)
+
+			expect(sessionManager.createSession).toHaveBeenCalled()
+		})
 	})
 
 	describe('cron scheduling', () => {
@@ -320,6 +527,70 @@ describe('TriggerRunner', () => {
 			// Should not throw, should not create a session
 			await vi.advanceTimersByTimeAsync(60 * 60 * 1000)
 			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+
+		it('skips session creation on a zero-row scope pass', async () => {
+			vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+			const trigger = buildTrigger({
+				type: 'cron',
+				workspaceId: 'ws-1',
+				config: {
+					expression: '*/5 * * * *',
+					scope: {
+						entity_type: 'knowledge',
+						metadata_eq: { doc_type: 'profile' },
+						metadata_before_now: 'review_by',
+					},
+				},
+			})
+			mockResults.selectQueue = [
+				[trigger], // cron triggers on load
+				[], // reminder triggers on load
+				[], // scope query — 0 matches
+			]
+			const insertSpy = vi.fn().mockReturnValue({
+				values: vi.fn().mockResolvedValue(undefined),
+			})
+			mockResults.insert = insertSpy as unknown as unknown[]
+			await runner.start()
+
+			await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+
+		it('fires and appends scope matches to the action prompt when the scope is non-empty', async () => {
+			vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+			const trigger = buildTrigger({
+				type: 'cron',
+				workspaceId: 'ws-1',
+				actionPrompt: 'Sweep stale profiles',
+				config: {
+					expression: '*/5 * * * *',
+					scope: {
+						entity_type: 'knowledge',
+						metadata_eq: { doc_type: 'profile' },
+						metadata_before_now: 'review_by',
+					},
+				},
+			})
+			const match = { id: 'kn-1', title: 'About this company' }
+			mockResults.selectQueue = [
+				[trigger], // cron triggers on load
+				[], // reminder triggers on load
+				[match], // scope query — 1 match
+			]
+			mockResults.insert = []
+			await runner.start()
+
+			await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+
+			expect(sessionManager.createSession).toHaveBeenCalledOnce()
+			const [, opts] = (sessionManager.createSession as ReturnType<typeof vi.fn>).mock.calls[0]
+			expect(opts.actionPrompt).toContain('Sweep stale profiles')
+			expect(opts.actionPrompt).toContain('kn-1')
+			expect(opts.actionPrompt).toContain('About this company')
+			expect(opts.actionPrompt).toContain('Scope matches:')
 		})
 	})
 
@@ -634,6 +905,76 @@ describe('TriggerRunner backoff', () => {
 			action: 'created',
 			actor_id: 'actor-1',
 			event_id: 'evt-3',
+		} satisfies PgEvent)
+		await vi.advanceTimersByTimeAsync(0)
+
+		expect(sessionManager.createSession).toHaveBeenCalled()
+	})
+
+	it('counts a stop-then-genuine-report pair for the same session as one failure, not two', async () => {
+		// Regression coverage: SessionManager.stopSession() writes a
+		// provisional session_failed row, and the agent-server's own genuine
+		// completion report (the normal path, not a rare race) can overwrite
+		// it moments later — see markRemoteSessionComplete's stoppedByUser
+		// handling in session-manager.ts. Both writes insert their own
+		// session_failed event for the SAME session id. Without dedup by
+		// session id, this would double-count as 2 failures (backoff = 2^2 *
+		// 60s = 4 min) instead of 1 (backoff = 2^1 * 60s = 2 min).
+		mockResults.selectQueue = [[], []]
+		await runner.start()
+
+		mockResults.selectQueue = [
+			[], // eventHandler: no triggers match entity_type=session
+			[{ triggerId: 'trigger-1' }], // sessionEventHandler: session lookup
+		]
+		bridge.emit('event', {
+			workspace_id: 'ws-1',
+			actor_id: 'actor-1',
+			action: 'session_failed',
+			entity_type: 'session',
+			entity_id: 'session-1',
+			event_id: 'evt-stop-provisional',
+		} satisfies PgEvent)
+		await vi.advanceTimersByTimeAsync(0)
+
+		// Genuine report for the SAME session lands moments later. Only one
+		// select is queued here (eventHandler's "no triggers match
+		// entity_type=session" lookup) — sessionEventHandler's own session
+		// lookup must NOT fire for this second event; the dedup guard should
+		// short-circuit handleSessionOutcome before it reaches that select.
+		mockResults.selectQueue = [[]]
+		bridge.emit('event', {
+			workspace_id: 'ws-1',
+			actor_id: 'actor-1',
+			action: 'session_failed',
+			entity_type: 'session',
+			entity_id: 'session-1',
+			event_id: 'evt-genuine-report',
+		} satisfies PgEvent)
+		await vi.advanceTimersByTimeAsync(0)
+
+		const trigger = buildTrigger({
+			id: 'trigger-1',
+			workspaceId: 'ws-1',
+			type: 'event',
+			config: { entity_type: 'task', action: 'created' },
+		})
+
+		// A single failure's backoff (2 min) should have expired; if the
+		// second event were double-counted, backoff would be 4 min and this
+		// would still be blocked.
+		await vi.advanceTimersByTimeAsync(2 * 60_000 + 1000)
+
+		mockResults.select = [trigger]
+		mockResults.insert = []
+
+		bridge.emit('event', {
+			workspace_id: 'ws-1',
+			entity_type: 'task',
+			entity_id: 'obj-1',
+			action: 'created',
+			actor_id: 'actor-1',
+			event_id: 'evt-fire',
 		} satisfies PgEvent)
 		await vi.advanceTimersByTimeAsync(0)
 

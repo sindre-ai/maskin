@@ -164,6 +164,60 @@ describe('Events Integration — reply chain collapse', () => {
 		expect(reply.data.parentEventId ?? null).toBeNull()
 	})
 
+	it('round-trips metadata.tasks and a ```chart fenced block through the events row', async () => {
+		const app = createEventsApp()
+		const taskId = '11111111-1111-4111-8111-111111111111'
+		const chartFence = [
+			'```chart',
+			'{"type":"bar","x":"day","series":["v"],"data":[]}',
+			'```',
+		].join('\n')
+		const content = `Week-1 retention\n\n${chartFence}`
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/events',
+				{
+					entity_id: objectId,
+					content,
+					metadata: { tasks: [taskId] },
+				},
+				{ 'x-workspace-id': workspaceId },
+			),
+		)
+		expect(res.status).toBe(201)
+		const posted = (await res.json()) as { id: number }
+
+		const [stored] = await db.select().from(events).where(eq(events.id, posted.id)).limit(1)
+		const data = stored.data as {
+			content: string
+			metadata?: { tasks?: unknown }
+		}
+		expect(data.content).toContain('```chart')
+		expect(Array.isArray(data.metadata?.tasks)).toBe(true)
+		expect(data.metadata?.tasks).toEqual([taskId])
+	})
+
+	it('rejects metadata values whose shape escapes safeMetadataSchema', async () => {
+		const app = createEventsApp()
+		// safeMetadataSchema only allows arrays of primitives; nested objects are
+		// not part of the contract and must be refused at the boundary so the
+		// renderer can trust the shape it reads back.
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/events',
+				{
+					entity_id: objectId,
+					content: 'bad metadata',
+					metadata: { tasks: [{ id: 'not-a-uuid-just-an-object' }] },
+				},
+				{ 'x-workspace-id': workspaceId },
+			),
+		)
+		expect(res.status).toBe(400)
+	})
+
 	it('persists the rewritten parentEventId in the events row', async () => {
 		const app = createEventsApp()
 		const root = await postComment(app, workspaceId, {

@@ -12,6 +12,7 @@ import { AgentOutput } from '../shared/agent-output'
 import { AttachedFileCard } from '../shared/attached-file-card'
 import { RelativeTime } from '../shared/relative-time'
 import { CommentInput } from './comment-input'
+import { CommentTaskList, hasTaskList } from './comment-task-list'
 import { DecisionChips, hasDecisionChips } from './decision-chips'
 import { MentionSessionCard } from './mention-session-card'
 
@@ -131,14 +132,19 @@ function CommentRow({
 					)}
 				</div>
 				<div className="flex-1 min-w-0">
-					<div className="flex items-baseline gap-1.5 flex-wrap">
-						{nameEl}
-						<RelativeTime date={event.createdAt} className="text-muted-foreground text-xs" />
-						{isDecisionPoint && (
-							<span className="text-[10px] font-medium leading-none px-1.5 py-0.5 rounded-full bg-accent text-accent-foreground">
-								Needs you
-							</span>
-						)}
+					<div className="flex items-baseline gap-2">
+						<div className="flex-1 min-w-0 flex items-baseline gap-1.5 flex-wrap">
+							{nameEl}
+							{isDecisionPoint && (
+								<span className="text-[10px] font-medium leading-none px-1.5 py-0.5 rounded-full bg-accent text-accent-foreground">
+									Needs you
+								</span>
+							)}
+						</div>
+						<RelativeTime
+							date={event.createdAt}
+							className="text-muted-foreground text-xs font-mono tabular-nums w-14 shrink-0 text-right"
+						/>
 					</div>
 					<AgentOutput
 						content={content}
@@ -147,7 +153,9 @@ function CommentRow({
 						onMentionClick={handleMentionClick}
 						size="sm"
 						className="mt-1"
+						renderVisuals
 					/>
+					{hasTaskList(event) && <CommentTaskList event={event} workspaceId={workspaceId} />}
 					{attachmentFileIds.length > 0 && (
 						<ul className="mt-1.5 space-y-1">
 							{attachmentFileIds.map((fileId) => {

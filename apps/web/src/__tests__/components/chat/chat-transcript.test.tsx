@@ -8,7 +8,7 @@ describe('ChatTranscript', () => {
 		const events: ChatEvent[] = [
 			{ kind: 'text', text: '# Hello\n\nSome **bold** text and a [link](https://example.com).' },
 		]
-		render(<ChatTranscript events={events} starting={false} error={null} />)
+		render(<ChatTranscript workspaceId="ws-1" events={events} starting={false} error={null} />)
 
 		expect(screen.getByRole('heading', { name: 'Hello' })).toBeInTheDocument()
 		expect(screen.getByText('bold')).toBeInTheDocument()
@@ -27,7 +27,7 @@ describe('ChatTranscript', () => {
 				input: { type: 'bet', limit: 10 },
 			},
 		]
-		render(<ChatTranscript events={events} starting={false} error={null} />)
+		render(<ChatTranscript workspaceId="ws-1" events={events} starting={false} error={null} />)
 
 		const trigger = screen.getByRole('button', { name: /list_objects/i })
 		expect(trigger).toHaveAttribute('aria-expanded', 'false')
@@ -44,7 +44,7 @@ describe('ChatTranscript', () => {
 				input: { type: 'bet', limit: 10 },
 			},
 		]
-		render(<ChatTranscript events={events} starting={false} error={null} />)
+		render(<ChatTranscript workspaceId="ws-1" events={events} starting={false} error={null} />)
 
 		fireEvent.click(screen.getByRole('button', { name: /list_objects/i }))
 
@@ -60,7 +60,7 @@ describe('ChatTranscript', () => {
 		const events: ChatEvent[] = [
 			{ kind: 'thinking', text: 'Let me inspect the workspace members…' },
 		]
-		render(<ChatTranscript events={events} starting={false} error={null} />)
+		render(<ChatTranscript workspaceId="ws-1" events={events} starting={false} error={null} />)
 
 		const trigger = screen.getByRole('button', { name: /thinking/i })
 		expect(trigger).toHaveAttribute('aria-expanded', 'false')
@@ -73,12 +73,12 @@ describe('ChatTranscript', () => {
 	})
 
 	it('renders the empty state when there are no events', () => {
-		render(<ChatTranscript events={[]} starting={false} error={null} />)
+		render(<ChatTranscript workspaceId="ws-1" events={[]} starting={false} error={null} />)
 		expect(screen.getByText(/Ask the agents about your workspace/i)).toBeInTheDocument()
 	})
 
 	it('renders a connecting indicator while the session is starting', () => {
-		render(<ChatTranscript events={[]} starting={true} error={null} />)
+		render(<ChatTranscript workspaceId="ws-1" events={[]} starting={true} error={null} />)
 		expect(screen.getByText(/Connecting to agent/i)).toBeInTheDocument()
 	})
 
@@ -87,7 +87,7 @@ describe('ChatTranscript', () => {
 			{ kind: 'error', message: 'Socket closed', data: {} },
 			{ kind: 'result', subtype: 'error_max_turns', isError: true, text: 'Out of turns' },
 		]
-		render(<ChatTranscript events={events} starting={false} error={null} />)
+		render(<ChatTranscript workspaceId="ws-1" events={events} starting={false} error={null} />)
 
 		expect(screen.getByText('Socket closed')).toBeInTheDocument()
 		expect(screen.getByText('Out of turns')).toBeInTheDocument()
@@ -99,7 +99,9 @@ describe('ChatTranscript', () => {
 			{ kind: 'debug', raw: 'junk' },
 			{ kind: 'result', subtype: 'success', isError: false, text: 'done' },
 		]
-		const { container } = render(<ChatTranscript events={events} starting={false} error={null} />)
+		const { container } = render(
+			<ChatTranscript workspaceId="ws-1" events={events} starting={false} error={null} />,
+		)
 		// None of these should produce visible text.
 		expect(screen.queryByText('junk')).not.toBeInTheDocument()
 		expect(screen.queryByText('done')).not.toBeInTheDocument()

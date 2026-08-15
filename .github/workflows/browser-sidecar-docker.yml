@@ -1,0 +1,76 @@
+name: Build & Push browser-sidecar Docker image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docker/browser-sidecar/**'
+
+concurrency:
+  group: browser-sidecar-docker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ vars.BROWSER_SIDECAR_IMAGE }}
+          tags: |
+            type=raw,value=latest
+            type=sha,format=short
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: docker/browser-sidecar
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Prune old SHA tags (keep latest 10)
+        env:
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          IMAGE: ${{ vars.BROWSER_SIDECAR_IMAGE }}
+        run: |
+          TOKEN=$(curl -s -X POST "https://hub.docker.com/v2/users/login" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n --arg u "$DOCKERHUB_USERNAME" --arg p "$DOCKERHUB_TOKEN" '{username:$u,password:$p}')" \
+            | jq -r '.token')
+
+          # Fetch all SHA tags (sha-*), sort by last_updated ascending so oldest are first
+          TAGS=$(curl -s "https://hub.docker.com/v2/repositories/$IMAGE/tags?page_size=100" \
+            | jq -r '[.results[] | select(.name | startswith("sha-"))] | sort_by(.last_updated) | .[].name')
+
+          COUNT=$(echo "$TAGS" | grep -c .) || COUNT=0
+          KEEP=10
+          DELETE_COUNT=$((COUNT - KEEP))
+
+          if [ "$DELETE_COUNT" -gt 0 ]; then
+            echo "Deleting $DELETE_COUNT old SHA tag(s)..."
+            echo "$TAGS" | head -n "$DELETE_COUNT" | while read TAG; do
+              echo "  Deleting sha tag: $TAG"
+              curl -s -X DELETE "https://hub.docker.com/v2/repositories/$IMAGE/tags/$TAG/" \
+                -H "Authorization: Bearer $TOKEN"
+            done
+          else
+            echo "Only $COUNT SHA tag(s) exist — nothing to prune."
+          fi

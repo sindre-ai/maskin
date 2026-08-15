@@ -50,6 +50,18 @@ export function useUpdateActor(workspaceId?: string) {
 	})
 }
 
+export function useUploadActorAvatar(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: ({ id, file }: { id: string; file: File }) =>
+			api.actors.uploadAvatar(id, file, workspaceId),
+		onSuccess: (_result, { id }) => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.actors.detail(id) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.actors.all(workspaceId) })
+		},
+	})
+}
+
 export function useDeleteActor(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
@@ -88,7 +100,9 @@ function invalidateAgentControls(
 	queryClient.invalidateQueries({ queryKey: queryKeys.actors.all(workspaceId) })
 	queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all(workspaceId) })
 	queryClient.invalidateQueries({ queryKey: queryKeys.sessions.byActor(workspaceId, actorId) })
-	queryClient.invalidateQueries({ queryKey: queryKeys.sessions.byActorAll(workspaceId, actorId) })
+	queryClient.invalidateQueries({
+		queryKey: queryKeys.sessions.byActorAllInfinite(workspaceId, actorId),
+	})
 }
 
 export function useAgentPause(workspaceId: string) {
@@ -97,9 +111,6 @@ export function useAgentPause(workspaceId: string) {
 		mutationFn: (id: string) => api.actors.pause(id, workspaceId),
 		onSuccess: (_result, id) => {
 			invalidateAgentControls(queryClient, workspaceId, id)
-		},
-		onError: () => {
-			toast.error('Failed to pause agent')
 		},
 	})
 }
@@ -111,9 +122,6 @@ export function useAgentRun(workspaceId: string) {
 			api.actors.run(id, workspaceId, body),
 		onSuccess: (_result, { id }) => {
 			invalidateAgentControls(queryClient, workspaceId, id)
-		},
-		onError: () => {
-			toast.error('Failed to run agent')
 		},
 	})
 }

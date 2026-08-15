@@ -42,6 +42,11 @@ vi.mock('@/components/shared/route-error', () => ({
 	RouteError: () => <div>Error</div>,
 }))
 
+vi.mock('@/components/shared/create-picker', () => ({
+	CreatePicker: () => null,
+	isCreateShortcut: () => false,
+}))
+
 import { Route } from '@/routes/_authed/$workspaceId/triggers/index'
 
 const TriggersPage = (Route as unknown as { component: React.FC }).component
@@ -75,7 +80,7 @@ describe('TriggersPage', () => {
 		mockUseActors.mockReturnValue({ data: [agent] })
 		render(<TriggersPage />)
 		expect(screen.getByText('Daily Sync')).toBeInTheDocument()
-		expect(screen.getByText(/Runs on schedule/)).toBeInTheDocument()
+		expect(screen.getByText(/Runs every hour at minute 0/)).toBeInTheDocument()
 		expect(screen.getByText(/My Agent/)).toBeInTheDocument()
 	})
 

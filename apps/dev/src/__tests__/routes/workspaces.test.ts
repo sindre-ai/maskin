@@ -5,18 +5,35 @@ import { createTestApp } from '../setup'
 
 const { default: workspacesRoutes } = await import('../../routes/workspaces')
 
+// Ordered actor names for the six default agents. Seed inserts run in this order:
+// workspaces → owner member → for each agent [actor insert, member insert].
+const DEFAULT_AGENT_NAMES = [
+	'Workspace Coach',
+	'Chief of Staff',
+	'Workspace Driver',
+	'Strategist',
+	'Insights Triage Agent',
+	'Research Agent',
+] as const
+
+function buildDefaultAgentSeedQueue(ws: ReturnType<typeof buildWorkspace>) {
+	const queue: unknown[][] = [
+		[ws], // workspaces insert
+		[{}], // owner workspaceMembers insert
+	]
+	for (const name of DEFAULT_AGENT_NAMES) {
+		queue.push([buildActor({ type: 'agent', name })]) // actor insert
+		queue.push([{}]) // workspaceMembers insert
+	}
+	return queue
+}
+
 describe('Workspaces Routes', () => {
 	describe('POST /api/workspaces', () => {
-		it('creates a workspace and seeds Workspace Coach, returning 201', async () => {
+		it('creates a workspace and seeds all 6 default agents, returning 201', async () => {
 			const ws = buildWorkspace()
-			const coach = buildActor({ type: 'agent', name: 'Workspace Coach', isSystem: true })
 			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
-			mockResults.insertQueue = [
-				[ws], // workspaces insert
-				[{}], // owner workspaceMembers insert
-				[coach], // Workspace Coach actor insert
-				[{}], // Workspace Coach workspaceMembers insert
-			]
+			mockResults.insertQueue = buildDefaultAgentSeedQueue(ws)
 
 			const res = await app.request(
 				jsonRequest('POST', '/api/workspaces', buildCreateWorkspaceBody()),
@@ -28,22 +45,73 @@ describe('Workspaces Routes', () => {
 			expect(body.name).toBe(ws.name)
 		})
 
-		it('seeds Workspace Coach with a generated apiKey distinct from the creator', async () => {
+		it('seeds every default agent with a generated apiKey and role member', async () => {
 			const ws = buildWorkspace()
-			const coach = buildActor({ type: 'agent', name: 'Workspace Coach', isSystem: true })
 			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
-			mockResults.insertQueue = [[ws], [{}], [coach], [{}]]
+			mockResults.insertQueue = buildDefaultAgentSeedQueue(ws)
 
 			const res = await app.request(
 				jsonRequest('POST', '/api/workspaces', buildCreateWorkspaceBody()),
 			)
 
 			expect(res.status).toBe(201)
-			// inserts: [workspace, owner-member, coach-actor, coach-member]
-			const coachInsert = calls.inserts[2] as { apiKey?: string; type?: string }
-			expect(coachInsert.type).toBe('agent')
-			expect(coachInsert.apiKey).toBeDefined()
-			expect(coachInsert.apiKey).toMatch(/^ank_/)
+			// inserts: [workspace, owner-member, agent1-actor, agent1-member, agent2-actor, ...]
+			// The 6 actor inserts are at indices 2, 4, 6, 8, 10, 12.
+			const actorInserts = [2, 4, 6, 8, 10, 12].map(
+				(i) => calls.inserts[i] as { apiKey?: string; type?: string; name?: string },
+			)
+			expect(actorInserts.map((a) => a.name)).toEqual([...DEFAULT_AGENT_NAMES])
+			for (const insert of actorInserts) {
+				expect(insert.type).toBe('agent')
+				expect(insert.apiKey).toMatch(/^ank_/)
+			}
+			// Member roles for the 6 default agents (at 3, 5, 7, 9, 11, 13).
+			const memberInserts = [3, 5, 7, 9, 11, 13].map((i) => calls.inserts[i] as { role?: string })
+			for (const insert of memberInserts) {
+				expect(insert.role).toBe('member')
+			}
+		})
+
+		it('sets default_agent_id to Chief of Staff when the caller does not specify one', async () => {
+			const ws = buildWorkspace()
+			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			const agentRows = DEFAULT_AGENT_NAMES.map((name) => buildActor({ type: 'agent', name }))
+			const queue: unknown[][] = [[ws], [{}]]
+			for (const row of agentRows) {
+				queue.push([row])
+				queue.push([{}])
+			}
+			mockResults.insertQueue = queue
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/workspaces', buildCreateWorkspaceBody()),
+			)
+
+			expect(res.status).toBe(201)
+			const body = await res.json()
+			const chief = agentRows.find((a) => a.name === 'Chief of Staff')
+			expect(body.settings.default_agent_id).toBe(chief?.id)
+		})
+
+		it('respects an explicit default_agent_id and does not overwrite it', async () => {
+			const explicitAgentId = randomUUID()
+			// The mock insert returns this row verbatim (unlike real Postgres, it
+			// doesn't reflect what was actually passed to .values()), so build it
+			// with the settings the route would have written for this request.
+			const ws = buildWorkspace({ settings: { default_agent_id: explicitAgentId } })
+			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.insertQueue = buildDefaultAgentSeedQueue(ws)
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/workspaces', {
+					...buildCreateWorkspaceBody(),
+					settings: { default_agent_id: explicitAgentId },
+				}),
+			)
+
+			expect(res.status).toBe(201)
+			const body = await res.json()
+			expect(body.settings.default_agent_id).toBe(explicitAgentId)
 		})
 
 		it('returns 500 when workspace insert returns empty', async () => {
@@ -60,13 +128,13 @@ describe('Workspaces Routes', () => {
 			expect(body.error.message).toContain('Failed to create workspace')
 		})
 
-		it('rolls back and returns 500 when Workspace Coach actor insert returns empty', async () => {
+		it('rolls back and returns 500 naming the failing agent when a seed insert fails', async () => {
 			const ws = buildWorkspace()
 			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
 			mockResults.insertQueue = [
 				[ws], // workspaces insert succeeds
 				[{}], // owner workspaceMembers insert succeeds
-				[], // Workspace Coach actor insert fails — triggers rollback
+				[], // first default-agent actor insert returns empty — triggers rollback
 			]
 
 			const res = await app.request(
@@ -74,6 +142,17 @@ describe('Workspaces Routes', () => {
 			)
 
 			expect(res.status).toBe(500)
+			const body = await res.json()
+			expect(body.error.code).toBe('INTERNAL_ERROR')
+			// The response names the failing agent and the underlying error class,
+			// not a generic "failed to create workspace" message.
+			expect(body.error.message).toContain('workspace_coach')
+			expect(body.error.details).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({ field: 'agent_id', message: 'workspace_coach' }),
+					expect.objectContaining({ field: 'error_class' }),
+				]),
+			)
 		})
 	})
 
@@ -116,6 +195,31 @@ describe('Workspaces Routes', () => {
 			)
 
 			expect(res.status).toBe(404)
+		})
+
+		it('returns 400 and does not touch the DB when settings.claude_oauth is present', async () => {
+			const ws = buildWorkspace()
+			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.update = [{ ...ws, name: 'should not be used' }]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: {
+						claude_oauth: {
+							primary: {
+								encryptedAccessToken: 'token',
+								encryptedRefreshToken: 'refresh',
+								expiresAt: 1234567890,
+							},
+						},
+					},
+				}),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.code).toBe('BAD_REQUEST')
+			expect(calls.updates).toHaveLength(0)
 		})
 	})
 

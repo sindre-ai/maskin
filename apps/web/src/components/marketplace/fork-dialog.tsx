@@ -8,14 +8,14 @@ import {
 	DialogTitle,
 } from '@/components/ui/dialog'
 import { Spinner } from '@/components/ui/spinner'
-import { useForkInstalledPackage } from '@/hooks/use-installed-packages'
+import { useForkInstalledLoop } from '@/hooks/use-installed-loops'
 
 interface ForkDialogProps {
 	open: boolean
 	onOpenChange: (open: boolean) => void
 	workspaceId: string
-	installedPackageId: string
-	packageName: string
+	installedLoopId: string
+	loopName: string
 	installedVersion: string
 	pendingVersion?: string | null
 }
@@ -24,24 +24,24 @@ export function ForkDialog({
 	open,
 	onOpenChange,
 	workspaceId,
-	installedPackageId,
-	packageName,
+	installedLoopId,
+	loopName,
 	installedVersion,
 	pendingVersion,
 }: ForkDialogProps) {
-	const fork = useForkInstalledPackage(workspaceId)
+	const fork = useForkInstalledLoop(workspaceId)
 	const isForking = fork.isPending
 	const hasPending = Boolean(pendingVersion && pendingVersion !== installedVersion)
 
 	const body = hasPending
-		? `You'll get an independent copy of ${packageName} at v${installedVersion}. v${pendingVersion} is ready to install — fork now and you skip it. Future updates appear as a banner, but won't be pushed.`
-		: `You'll get an independent copy of ${packageName} at v${installedVersion}. Future updates from Maskin will appear as a banner, but won't be pushed to a fork.`
+		? `You'll get an independent copy of ${loopName} at v${installedVersion}. v${pendingVersion} is ready to install — fork now and you skip it. Future updates appear as a banner, but won't be pushed.`
+		: `You'll get an independent copy of ${loopName} at v${installedVersion}. Future updates from Maskin will appear as a banner, but won't be pushed to a fork.`
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent>
 				<DialogHeader>
-					<DialogTitle>Fork this package?</DialogTitle>
+					<DialogTitle>Fork this loop?</DialogTitle>
 					<DialogDescription>{body}</DialogDescription>
 				</DialogHeader>
 				<p className="text-sm text-muted-foreground">Forking can't be undone.</p>
@@ -51,7 +51,7 @@ export function ForkDialog({
 					</Button>
 					<Button
 						onClick={() =>
-							fork.mutate({ installedPackageId }, { onSuccess: () => onOpenChange(false) })
+							fork.mutate({ installedLoopId }, { onSuccess: () => onOpenChange(false) })
 						}
 						disabled={isForking}
 					>

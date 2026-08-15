@@ -63,9 +63,9 @@ describe('resolveNavigationPath', () => {
 		expect(result).toBe('/ws-1/objects')
 	})
 
-	it('returns activity path', () => {
+	it('returns agents list path for activity target', () => {
 		const result = resolveNavigationPath(workspaceId, { to: 'activity' }, buildNotification())
-		expect(result).toBe('/ws-1/activity')
+		expect(result).toBe('/ws-1/agents')
 	})
 
 	describe('agent navigation', () => {

@@ -46,8 +46,8 @@ describe('SubscribeToggle', () => {
 			{ wrapper: TestWrapper },
 		)
 
-		await waitFor(() => expect(screen.getByText('A')).toBeInTheDocument())
-		expect(screen.getByText('⚡')).toBeInTheDocument()
+		await waitFor(() => expect(screen.getByText('AL')).toBeInTheDocument())
+		expect(screen.getByText('BO')).toBeInTheDocument()
 	})
 
 	it('shows a +N chip when there are more subscribers than the cap', async () => {
@@ -111,7 +111,7 @@ describe('SubscribeToggle', () => {
 			{ wrapper: TestWrapper },
 		)
 
-		await waitFor(() => expect(screen.getByText('A')).toBeInTheDocument())
+		await waitFor(() => expect(screen.getByText('AL')).toBeInTheDocument())
 		expect(screen.queryByRole('button', { name: /^subscribe/i })).not.toBeInTheDocument()
 	})
 
@@ -186,7 +186,7 @@ describe('SubscribeToggle', () => {
 			{ wrapper: TestWrapper },
 		)
 
-		await waitFor(() => expect(screen.getByText('B')).toBeInTheDocument())
+		await waitFor(() => expect(screen.getByText('BO')).toBeInTheDocument())
 		expect(screen.queryByRole('button', { name: /unsubscribe/i })).not.toBeInTheDocument()
 	})
 

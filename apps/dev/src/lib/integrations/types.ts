@@ -31,6 +31,13 @@ export type AuthConfig =
 	| { type: 'oauth2'; config: OAuth2Config }
 	| { type: 'oauth2_custom' }
 	| { type: 'api_key'; config: ApiKeyConfig }
+	/**
+	 * No OAuth redirect and no outbound-callable API key — Maskin mints the
+	 * credential handshake itself (a routing token + a place to paste a
+	 * provider-generated secret) instead of consuming one from the provider.
+	 * See providers/skjald for the reference implementation.
+	 */
+	| { type: 'manual' }
 
 // ── Webhook config ─────────────────────────────────────────────────────────
 
@@ -136,6 +143,8 @@ export interface ProviderConfig {
 		mapping?: EventMapping
 	}
 	mcp?: McpConfig
+	/** How to display externalId in the integrations UI. 'email' → "Connected as <id>", 'installation' (default) → "Connected · Installation <id>" */
+	externalIdDisplay?: 'email' | 'installation'
 }
 
 // ── Custom handler interfaces ──────────────────────────────────────────────
@@ -249,4 +258,5 @@ export interface PreDisconnectContext {
 	db: unknown
 	integrationId: string
 	workspaceId: string
+	credentials: StoredCredentials
 }

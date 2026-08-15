@@ -1,0 +1,39 @@
+# Regex floors for the `risk-classifier` skill (packages/risk-classifier).
+#
+# Each pattern is matched (as a JS RegExp, `new RegExp(pattern, 'm')`) against
+# every line of the unified diff. Any match floors the score to
+# max(additive_sum, 60) — at least TWO-HUMAN REQUIRED-adjacent, regardless of
+# how small the diff is. See "Apply the floors" in the risk-classifier skill
+# and R1/R4 in the risk-gate skill.
+#
+# This file is itself a protected path (.maskin/protected-paths.yml) — edits
+# here are always two-human PRs.
+#
+# Patterns are single-quoted so backslashes are literal in YAML (no double
+# escaping) — write them exactly as the JS RegExp source. A literal single
+# quote inside a pattern must be doubled ('' ) per YAML single-quote rules.
+
+regex_floors:
+  - pattern: '-----BEGIN ((RSA|EC|OPENSSH|PGP|DSA) )?PRIVATE KEY-----'
+    description: Private key material committed in diff
+
+  - pattern: 'AKIA[0-9A-Z]{16}'
+    description: AWS access key ID
+
+  - pattern: '(gh[pousr]|github_pat)_[A-Za-z0-9_]{20,}'
+    description: GitHub personal access / app / OAuth token
+
+  - pattern: 'xox[baprs]-[A-Za-z0-9-]{10,}'
+    description: Slack bot/user/app token
+
+  - pattern: 'sk-[A-Za-z0-9]{32,}'
+    description: OpenAI/Anthropic-style secret API key
+
+  - pattern: '(secret|password|api[_-]?key|access[_-]?token|private[_-]?key)\s*[:=]\s*["''][^"''\n]{12,}["'']'
+    description: Generic hardcoded secret-like assignment
+
+  - pattern: '(rejectUnauthorized|verify)\s*:\s*false'
+    description: TLS certificate verification disabled
+
+  - pattern: 'NODE_TLS_REJECT_UNAUTHORIZED\s*=\s*[''"]?0'
+    description: Node TLS verification globally disabled

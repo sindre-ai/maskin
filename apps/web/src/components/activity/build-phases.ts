@@ -1,4 +1,5 @@
 import type { EventResponse, ObjectResponse } from '@/lib/api'
+import { OBJECT_DIFF_FIELDS, findChange, getChangesFromEventData } from '@maskin/shared'
 
 export interface TimelinePhase {
 	status: string
@@ -6,12 +7,11 @@ export interface TimelinePhase {
 	events: EventResponse[]
 }
 
-function getStatusFromSnapshot(snapshot: unknown, key: 'previous' | 'updated'): string | null {
-	if (typeof snapshot !== 'object' || snapshot === null) return null
-	const inner = (snapshot as Record<string, unknown>)[key]
-	if (typeof inner !== 'object' || inner === null) return null
-	const status = (inner as Record<string, unknown>).status
-	return typeof status === 'string' ? status : null
+function getStatusFromEvent(event: EventResponse, side: 'old' | 'new'): string | null {
+	const changes = getChangesFromEventData(event.data, OBJECT_DIFF_FIELDS)
+	const statusChange = findChange(changes, 'status')
+	const value = statusChange?.[side]
+	return typeof value === 'string' ? value : null
 }
 
 /**
@@ -25,7 +25,7 @@ export function buildPhases(
 ): TimelinePhase[] {
 	const firstChange = events.find((e) => e.action === 'status_changed')
 	const initialStatus = firstChange
-		? (getStatusFromSnapshot(firstChange.data, 'previous') ?? object.status)
+		? (getStatusFromEvent(firstChange, 'old') ?? object.status)
 		: object.status
 
 	const phases: TimelinePhase[] = [
@@ -34,7 +34,7 @@ export function buildPhases(
 
 	for (const event of events) {
 		if (event.action === 'status_changed') {
-			const newStatus = getStatusFromSnapshot(event.data, 'updated') ?? object.status
+			const newStatus = getStatusFromEvent(event, 'new') ?? object.status
 			phases.push({ status: newStatus, startedAt: event.createdAt, events: [event] })
 		} else {
 			phases[phases.length - 1].events.push(event)

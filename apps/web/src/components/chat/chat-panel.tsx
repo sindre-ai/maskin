@@ -19,6 +19,7 @@ import {
 } from '@/lib/chat-export'
 import {
 	type ChatSelectionAgent,
+	type ChatSelectionFile,
 	type ChatSelectionNotification,
 	type ChatSelectionObject,
 	EMPTY_CHAT_SELECTION,
@@ -34,6 +35,14 @@ const AGENT_NAME = 'Workspace Coach'
 interface ChatPanelProps {
 	workspaceId: string
 	agentActorId: string | null
+	/**
+	 * Kebab-cased role of the default chat agent (currently `'workspace-coach'`,
+	 * `'chief-of-staff'` after T3 flips the default). Forwarded to the persistent
+	 * session so `chat_session_started.entry_agent_role` reads the routing agent's
+	 * role — one of the three thinness events the Chief of Staff prototype bet
+	 * measures.
+	 */
+	entryAgentRole?: string | null
 }
 
 /**
@@ -44,7 +53,7 @@ interface ChatPanelProps {
  * matching right margin to the main content so the panel pushes content
  * aside like a traditional sidebar.
  */
-export function ChatPanel({ workspaceId, agentActorId }: ChatPanelProps) {
+export function ChatPanel({ workspaceId, agentActorId, entryAgentRole = null }: ChatPanelProps) {
 	const {
 		open,
 		setOpen,
@@ -213,6 +222,7 @@ export function ChatPanel({ workspaceId, agentActorId }: ChatPanelProps) {
 						ref={chatRef}
 						workspaceId={workspaceId}
 						agentActorId={agentActorId}
+						entryAgentRole={entryAgentRole}
 						surface="sheet"
 						selection={selection}
 						onDispatchSelection={dispatch}
@@ -333,6 +343,15 @@ function attachmentToAction(attachment: ChatAttachment) {
 			title: attachment.title ?? null,
 		}
 		return { type: 'add_notification' as const, notification }
+	}
+	if (attachment.kind === 'file') {
+		const file: ChatSelectionFile = {
+			fileId: attachment.fileId,
+			name: attachment.name,
+			sizeBytes: attachment.sizeBytes,
+			...(attachment.mimeType ? { mimeType: attachment.mimeType } : {}),
+		}
+		return { type: 'add_file' as const, file }
 	}
 	return null
 }

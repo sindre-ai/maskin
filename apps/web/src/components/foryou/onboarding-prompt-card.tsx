@@ -86,7 +86,7 @@ export function OnboardingPromptCard({ workspaceId, item }: OnboardingPromptCard
 
 			<div className="px-4 py-6 min-h-24">
 				{promptText ? (
-					<p className="text-lg font-medium leading-snug">{promptText}</p>
+					<p className="text-lg font-medium tracking-[-0.013em] leading-snug">{promptText}</p>
 				) : (
 					<p className="text-sm text-muted-foreground">Loading…</p>
 				)}

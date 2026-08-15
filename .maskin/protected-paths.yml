@@ -1,0 +1,53 @@
+# Protected paths for the `risk-classifier` skill (packages/risk-classifier).
+#
+# Any file in a PR diff matching one of these globs floors the score to 100
+# (TWO-HUMAN REQUIRED), overriding the additive signal sum — see "Apply the
+# floors" in the risk-classifier skill and R1 in the risk-gate skill.
+#
+# This file is itself a protected path (see the last entry below) — edits
+# here are always two-human PRs, per the classifier's own rule.
+#
+# Glob syntax: `**` matches any characters including `/`, `*` matches within
+# a path segment, `?` matches one character. Patterns are anchored at both
+# ends (see packages/risk-classifier/src/lib/match.ts).
+
+protected_paths:
+  # --- auth / session ---
+  - "packages/auth/**"
+  - "apps/dev/src/lib/workspace-auth.ts"
+  - "apps/dev/src/routes/actors.ts"
+
+  # --- payments / billing ---
+  # No payments/billing subsystem exists in this repo yet. These patterns are
+  # forward-looking so the floor binds automatically the moment one lands,
+  # instead of requiring a follow-up edit to this protected file.
+  - "**/billing/**"
+  - "**/payments/**"
+  - "**/*billing*"
+  - "**/*payment*"
+  - "**/*invoice*"
+  - "**/*stripe*"
+
+  # --- crypto / secrets / KMS ---
+  - "apps/dev/src/lib/crypto.ts"
+  - "apps/dev/src/lib/integrations/oauth/**"
+  - "apps/dev/src/lib/integrations/webhooks/**"
+  - "scripts/ensure-encryption-key.mjs"
+
+  # --- IAM / policy (workspace membership + role checks) ---
+  - "packages/auth/src/middleware.ts"
+  - "packages/db/src/schema.ts"
+
+  # --- DB migrations / DDL ---
+  - "packages/db/drizzle/**"
+
+  # --- infra-as-code ---
+  - "docker-compose*.yml"
+  - "docker/**"
+  - "apps/dev/Dockerfile"
+
+  # --- CI/CD workflows ---
+  - ".github/workflows/**"
+
+  # --- the risk-classifier's own floor configuration (self-protecting) ---
+  - ".maskin/**"

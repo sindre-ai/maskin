@@ -4,7 +4,7 @@ import type { Database } from '@maskin/db'
 import { actors } from '@maskin/db/schema'
 import { loginSchema } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
-import { createApiError } from '../lib/errors'
+import { createApiError, validationFailureHook } from '../lib/errors'
 import { actorWithKeySchema, errorSchema } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
 
@@ -16,7 +16,7 @@ type Env = {
 	}
 }
 
-const app = new OpenAPIHono<Env>()
+const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 // POST /login
 const loginRoute = createRoute({

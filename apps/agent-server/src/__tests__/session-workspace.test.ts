@@ -31,6 +31,12 @@ class InMemoryStorage implements StorageProvider {
 		return Array.from(this.objects.keys()).filter((k) => k.startsWith(prefix))
 	}
 
+	async listWithMetadata(prefix: string): Promise<{ key: string; size: number }[]> {
+		return Array.from(this.objects.entries())
+			.filter(([k]) => k.startsWith(prefix))
+			.map(([key, value]) => ({ key, size: value.byteLength }))
+	}
+
 	async delete(key: string): Promise<void> {
 		this.objects.delete(key)
 	}
@@ -240,5 +246,62 @@ describe('pushSessionWorkspace — error cases', () => {
 		await expect(pushSessionWorkspace(storage, '../escape', sessionDir)).rejects.toThrow(
 			/Invalid session id/,
 		)
+	})
+})
+
+describe('pushSessionWorkspace — transient storage failures', () => {
+	// Wraps InMemoryStorage but fails `put` the first N times with a
+	// SlowDown-shaped error, then succeeds — simulates an S3 throttle response.
+	class FlakyStorage extends InMemoryStorage {
+		private failuresLeft: number
+		attempts = 0
+
+		constructor(failuresLeft: number) {
+			super()
+			this.failuresLeft = failuresLeft
+		}
+
+		override async put(key: string, data: Buffer | Uint8Array): Promise<void> {
+			this.attempts++
+			if (this.failuresLeft > 0) {
+				this.failuresLeft--
+				throw new Error('SlowDown: UnknownError')
+			}
+			await super.put(key, data)
+		}
+	}
+
+	it('retries a throttled upload and succeeds once storage recovers', async () => {
+		const storage = new FlakyStorage(2)
+		const sessionDir = join(tmpRoot, 'flaky-recovers')
+		await mkdir(join(sessionDir, 'workspace'), { recursive: true })
+		await writeFile(join(sessionDir, 'workspace', 'file.txt'), 'hello')
+
+		const sleeps: number[] = []
+		const result = await pushSessionWorkspace(storage, 'flaky-session', sessionDir, {
+			sleep: async (ms) => {
+				sleeps.push(ms)
+			},
+		})
+
+		expect(result.archiveBytes).toBeGreaterThan(0)
+		expect(storage.attempts).toBe(3)
+		expect(sleeps).toHaveLength(2)
+		expect(storage.keys()).toContain('session-workspaces/flaky-session.tar.gz')
+	})
+
+	it('surfaces the error (and forces the caller to notice) once retries are exhausted', async () => {
+		const storage = new FlakyStorage(5)
+		const sessionDir = join(tmpRoot, 'flaky-exhausted')
+		await mkdir(join(sessionDir, 'workspace'), { recursive: true })
+		await writeFile(join(sessionDir, 'workspace', 'file.txt'), 'hello')
+
+		await expect(
+			pushSessionWorkspace(storage, 'flaky-session-2', sessionDir, {
+				retries: 3,
+				sleep: async () => {},
+			}),
+		).rejects.toThrow(/SlowDown/)
+		expect(storage.attempts).toBe(3)
 	})
 })

@@ -1,10 +1,27 @@
 import type { Database } from '@maskin/db'
 import { events, objects, sessions, triggers } from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
+import { SAFE_METADATA_FIELD_NAME_RE, readChanges, reversePatch } from '@maskin/shared'
 import { Cron } from 'croner'
-import { and, eq } from 'drizzle-orm'
+import { type SQL, and, eq, sql } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import type { SessionManager } from './session-manager'
+
+/** Cap on scope-match rows appended to the action prompt so the payload stays bounded. */
+const SCOPE_MATCH_LIMIT = 100
+
+/**
+ * Guards the objects-table hydration lookup: `objects.id` is a uuid column, so
+ * probing it with a non-UUID entity id (e.g. a slack channel key) would raise
+ * a Postgres "invalid input syntax for type uuid" error instead of just
+ * finding no row. Which entity types are objects is deliberately NOT
+ * hardcoded — workspaces define their own object types (extensions,
+ * create_extension), so we attempt hydration for any UUID entity id and let a
+ * missing row mean "not an object". A previous allow-list here
+ * (['bet','task','insight']) silently broke status filters for custom-typed
+ * objects flowing through loops.
+ */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 interface TriggerFailureState {
 	count: number
@@ -31,6 +48,19 @@ export class TriggerRunner {
 	private eventHandler: ((event: PgEvent) => void) | null = null
 	private sessionEventHandler: ((event: PgEvent) => void) | null = null
 	private triggerFailures: Map<string, TriggerFailureState> = new Map()
+	// A session's terminal outcome can be reported more than once: e.g.
+	// SessionManager.stopSession() writes a provisional session_failed row,
+	// and the agent-server's own genuine completion report — if it arrives,
+	// which is the normal case, not a rare race — overwrites it with the real
+	// exit code (see markRemoteSessionComplete's stoppedByUser handling in
+	// session-manager.ts). Both writes insert their own session_failed/
+	// session_completed events row for audit-trail visibility, but they
+	// represent ONE physical session outcome. This map ensures only the first
+	// terminal event for a given session counts toward its trigger's
+	// failure/backoff accounting — otherwise every explicit stop of a
+	// trigger-spawned session double-counts as two failures instead of one.
+	private processedSessionOutcomes: Map<string, NodeJS.Timeout> = new Map()
+	private static readonly SESSION_OUTCOME_DEDUPE_TTL_MS = 10 * 60_000
 
 	constructor(db: Database, bridge: PgNotifyBridge, sessionManager: SessionManager) {
 		this.db = db
@@ -88,6 +118,10 @@ export class TriggerRunner {
 			clearTimeout(timeout)
 		}
 		this.reminderTimeouts.clear()
+		for (const [_, timeout] of this.processedSessionOutcomes) {
+			clearTimeout(timeout)
+		}
+		this.processedSessionOutcomes.clear()
 	}
 
 	private recordTriggerFailure(triggerId: string): void {
@@ -114,6 +148,18 @@ export class TriggerRunner {
 
 	private async handleSessionOutcome(event: PgEvent): Promise<void> {
 		const sessionId = event.entity_id
+		// Dedupe before any `await` so two events for the same session arriving
+		// back-to-back can't both pass this check — see processedSessionOutcomes'
+		// field comment above. A stale entry expires after
+		// SESSION_OUTCOME_DEDUPE_TTL_MS, well past how long a genuine correction
+		// report can realistically lag the provisional stop write.
+		if (this.processedSessionOutcomes.has(sessionId)) return
+		const dedupeTimeout = setTimeout(() => {
+			this.processedSessionOutcomes.delete(sessionId)
+		}, TriggerRunner.SESSION_OUTCOME_DEDUPE_TTL_MS)
+		dedupeTimeout.unref?.()
+		this.processedSessionOutcomes.set(sessionId, dedupeTimeout)
+
 		// Look up the session to find which trigger spawned it
 		const [session] = await this.db
 			.select({ triggerId: sessions.triggerId })
@@ -167,6 +213,45 @@ export class TriggerRunner {
 			return eventData
 		}
 
+		// Lazily resolve {current, previous} for object entity events. New-shape events
+		// (`data.changes`) don't carry the full pre/post snapshots, so we hydrate `current`
+		// from the objects table and reconstruct `previous` by reversing the recorded diff.
+		let objectContext: { current?: ObjectData; previous?: ObjectData } | undefined
+		const resolveObjectContext = async (): Promise<{
+			current?: ObjectData
+			previous?: ObjectData
+		}> => {
+			const data = await getEventData()
+			if (!data) return {}
+			// Legacy `{previous, updated}` snapshot ships both sides intact.
+			if (data.previous && data.updated) {
+				return {
+					current: data.updated as ObjectData,
+					previous: data.previous as ObjectData,
+				}
+			}
+			// New `{changes}` shape ships only the diff — hydrate current from the objects
+			// table for object entities and reverse-patch to reconstruct previous.
+			const changes = readChanges(data)
+			if (!changes || !event.entity_id || !UUID_RE.test(event.entity_id)) return {}
+			const [row] = await this.db
+				.select()
+				.from(objects)
+				.where(eq(objects.id, event.entity_id))
+				.limit(1)
+			if (!row) return {}
+			const current = row as unknown as ObjectData
+			const previous = reversePatch(
+				current as unknown as Record<string, unknown>,
+				changes,
+			) as unknown as ObjectData
+			return { current, previous }
+		}
+		const getObjectContext = async () => {
+			if (objectContext === undefined) objectContext = await resolveObjectContext()
+			return objectContext
+		}
+
 		for (const trigger of matchingTriggers) {
 			const config = trigger.config as Record<string, unknown>
 
@@ -183,19 +268,29 @@ export class TriggerRunner {
 			}
 			if (config.action && config.action !== event.action) continue
 
-			// Check filter conditions
+			// Check filter conditions — for status_changed / updated events the entity lives
+			// on `data.updated` (legacy) or must be hydrated from the objects table (new
+			// {changes} shape). Use getObjectContext() + resolvePath() so dotted paths
+			// (e.g. "metadata.decision_type") also work correctly.
 			if (config.filter) {
 				const data = await getEventData()
 				if (!data) continue
+				// Object-ness is resolved dynamically: getObjectContext() hydrates
+				// from the objects table and returns {} for non-object entities, so
+				// custom workspace-defined object types match filters too.
+				const isObjectUpdate = event.action === 'updated' || event.action === 'status_changed'
+				const ctx = isObjectUpdate ? await getObjectContext() : {}
+				const filterRoot = (ctx.current ?? data) as Record<string, unknown>
 				const filter = config.filter as Record<string, unknown>
-				const matches = Object.entries(filter).every(([key, value]) => data[key] === value)
+				const matches = Object.entries(filter).every(
+					([key, value]) => resolvePath(filterRoot, key) === value,
+				)
 				if (!matches) continue
 			}
 
 			// Check status transition conditions
 			if (config.from_status || config.to_status) {
-				const data = await getEventData()
-				const { previous, current } = getObjectFromData(data)
+				const { previous, current } = await getObjectContext()
 				if (config.from_status && previous?.status !== config.from_status) continue
 				if (config.to_status && current?.status !== config.to_status) continue
 			}
@@ -206,8 +301,9 @@ export class TriggerRunner {
 			if (Array.isArray(config.conditions) && config.conditions.length > 0) {
 				const data = await getEventData()
 				if (!data) continue
-				const { current } = getObjectFromData(data)
-				const conditionRoot = (current ?? data) as Record<string, unknown>
+				const isObjectUpdate = event.action === 'updated' || event.action === 'status_changed'
+				const ctx = isObjectUpdate ? await getObjectContext() : {}
+				const conditionRoot = (ctx.current ?? data) as Record<string, unknown>
 				if (!evaluateConditions(config.conditions, conditionRoot)) continue
 			}
 
@@ -344,37 +440,7 @@ export class TriggerRunner {
 
 		try {
 			const job = new Cron(expression, { timezone: 'UTC' }, async () => {
-				const cronBackoff = this.triggerFailures.get(trigger.id)
-				if (cronBackoff && cronBackoff.backoffUntil > new Date()) {
-					logger.info(
-						`Cron trigger '${trigger.name}' in backoff until ${cronBackoff.backoffUntil.toISOString()}, skipping`,
-					)
-					return
-				}
-
-				logger.info(`Cron trigger '${trigger.name}' firing`)
-
-				await this.db.insert(events).values({
-					workspaceId: trigger.workspaceId,
-					actorId: trigger.targetActorId,
-					action: 'trigger_fired',
-					entityType: 'trigger',
-					entityId: trigger.id,
-					data: {
-						trigger_name: trigger.name,
-						prompt: trigger.actionPrompt,
-						target_actor_id: trigger.targetActorId,
-					},
-				})
-
-				this.sessionManager
-					.createSession(trigger.workspaceId, {
-						actorId: trigger.targetActorId,
-						actionPrompt: trigger.actionPrompt,
-						triggerId: trigger.id,
-						createdBy: trigger.createdBy,
-					})
-					.catch((err) => logger.error('Container session creation failed', { error: String(err) }))
+				await this.fireCronTrigger(trigger)
 			})
 
 			this.cronJobs.set(trigger.id, job)
@@ -384,6 +450,72 @@ export class TriggerRunner {
 				error: String(err),
 			})
 		}
+	}
+
+	private async fireCronTrigger(trigger: typeof triggers.$inferSelect): Promise<void> {
+		const cronBackoff = this.triggerFailures.get(trigger.id)
+		if (cronBackoff && cronBackoff.backoffUntil > new Date()) {
+			logger.info(
+				`Cron trigger '${trigger.name}' in backoff until ${cronBackoff.backoffUntil.toISOString()}, skipping`,
+			)
+			return
+		}
+
+		const config = (trigger.config as Record<string, unknown>) ?? {}
+		const scope = parseCronScope(config.scope)
+
+		// When a scope filter is present, the trigger only fires if the query
+		// matches at least one row. Zero rows → no session, no `trigger_fired`
+		// event. This satisfies the "does not spawn an empty session" contract
+		// at the runner level, not via a silent agent exit.
+		let scopeMatches: { id: string; title: string | null }[] | null = null
+		if (scope) {
+			scopeMatches = await this.queryScopeMatches(trigger.workspaceId, scope)
+			if (scopeMatches.length === 0) {
+				logger.info(
+					`Cron trigger '${trigger.name}' skipped — scope matched 0 rows in workspace ${trigger.workspaceId}`,
+				)
+				return
+			}
+		}
+
+		logger.info(`Cron trigger '${trigger.name}' firing`)
+
+		const eventData: Record<string, unknown> = {
+			trigger_name: trigger.name,
+			prompt: trigger.actionPrompt,
+			target_actor_id: trigger.targetActorId,
+		}
+		if (scopeMatches) eventData.scope_matches = scopeMatches
+
+		await this.db.insert(events).values({
+			workspaceId: trigger.workspaceId,
+			actorId: trigger.targetActorId,
+			action: 'trigger_fired',
+			entityType: 'trigger',
+			entityId: trigger.id,
+			data: eventData,
+		})
+
+		const actionPrompt = scopeMatches
+			? `${trigger.actionPrompt}\n\nScope matches: ${JSON.stringify(scopeMatches)}`
+			: trigger.actionPrompt
+
+		this.sessionManager
+			.createSession(trigger.workspaceId, {
+				actorId: trigger.targetActorId,
+				actionPrompt,
+				triggerId: trigger.id,
+				createdBy: trigger.createdBy,
+			})
+			.catch((err) => logger.error('Container session creation failed', { error: String(err) }))
+	}
+
+	private async queryScopeMatches(
+		workspaceId: string,
+		scope: CronScope,
+	): Promise<{ id: string; title: string | null }[]> {
+		return await queryCronScopeMatches(this.db, workspaceId, scope, SCOPE_MATCH_LIMIT)
 	}
 
 	private async loadReminders() {
@@ -439,6 +571,77 @@ export class TriggerRunner {
 
 		this.reminderTimeouts.set(trigger.id, timeout)
 	}
+}
+
+export interface CronScope {
+	entity_type: string
+	metadata_eq?: Record<string, string>
+	metadata_before_now?: string
+}
+
+/**
+ * Query `objects` for the rows matching a cron trigger scope filter, scoped
+ * to the trigger's workspace. Exported so integration tests can exercise the
+ * JSONB metadata predicates and `timestamptz` cast against real Postgres —
+ * mocked-DB unit tests can't catch a mis-cast or a JSONB coercion pitfall.
+ */
+export async function queryCronScopeMatches(
+	db: Database,
+	workspaceId: string,
+	scope: CronScope,
+	limit: number,
+): Promise<{ id: string; title: string | null }[]> {
+	const conditions: SQL[] = [
+		eq(objects.workspaceId, workspaceId),
+		eq(objects.type, scope.entity_type),
+	]
+	if (scope.metadata_eq) {
+		for (const [key, value] of Object.entries(scope.metadata_eq)) {
+			// Field name pre-validated by schema; guard against a hand-crafted
+			// DB row that bypassed validation before inlining via sql.raw.
+			if (!SAFE_METADATA_FIELD_NAME_RE.test(key)) continue
+			conditions.push(sql`${objects.metadata}->>${sql.raw(`'${key}'`)} = ${value}`)
+		}
+	}
+	if (scope.metadata_before_now) {
+		const field = scope.metadata_before_now
+		if (SAFE_METADATA_FIELD_NAME_RE.test(field)) {
+			conditions.push(sql`(${objects.metadata}->>${sql.raw(`'${field}'`)})::timestamptz < now()`)
+		}
+	}
+	return await db
+		.select({ id: objects.id, title: objects.title })
+		.from(objects)
+		.where(and(...conditions))
+		.limit(limit)
+}
+
+/**
+ * Parse the `scope` block off a cron trigger config. Rejects anything that
+ * isn't a plain object with an `entity_type` string plus optional
+ * `metadata_eq` / `metadata_before_now`. Field names are pinned to
+ * `SAFE_METADATA_FIELD_NAME_RE` so a hand-crafted DB row that skipped Zod
+ * validation can never leak into the `sql.raw` path.
+ */
+export function parseCronScope(raw: unknown): CronScope | null {
+	if (!raw || typeof raw !== 'object') return null
+	const s = raw as Record<string, unknown>
+	if (typeof s.entity_type !== 'string' || s.entity_type.length === 0) return null
+	const scope: CronScope = { entity_type: s.entity_type }
+	if (s.metadata_eq && typeof s.metadata_eq === 'object') {
+		const eq: Record<string, string> = {}
+		for (const [k, v] of Object.entries(s.metadata_eq as Record<string, unknown>)) {
+			if (SAFE_METADATA_FIELD_NAME_RE.test(k) && typeof v === 'string') eq[k] = v
+		}
+		if (Object.keys(eq).length > 0) scope.metadata_eq = eq
+	}
+	if (
+		typeof s.metadata_before_now === 'string' &&
+		SAFE_METADATA_FIELD_NAME_RE.test(s.metadata_before_now)
+	) {
+		scope.metadata_before_now = s.metadata_before_now
+	}
+	return scope
 }
 
 export interface ObjectData {
