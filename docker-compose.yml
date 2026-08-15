@@ -38,6 +38,7 @@ services:
       S3_BUCKET: agent-files
       S3_ACCESS_KEY: admin
       S3_SECRET_KEY: admin
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
     depends_on:
       postgres:
         condition: service_healthy
