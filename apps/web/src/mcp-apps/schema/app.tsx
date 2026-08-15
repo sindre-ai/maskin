@@ -64,8 +64,6 @@ function SchemaApp() {
 			)
 		case 'create_workspace_field':
 		case 'update_workspace_field':
-		case 'add_workspace_enum_value':
-		case 'remove_workspace_enum_value':
 			return <FieldChangedView toolName={toolResult.toolName} payload={data} />
 		case 'delete_workspace_field':
 			return <FieldDeletedView payload={data} />
@@ -288,10 +286,10 @@ function FieldRow({
 								type="button"
 								disabled={isBusy}
 								onClick={() =>
-									runTool(rowKey, 'remove_workspace_enum_value', {
+									runTool(rowKey, 'update_workspace_field', {
 										type: typeName,
 										name: field.name,
-										value,
+										remove_values: [value],
 									})
 								}
 								aria-label={`Remove ${value}`}
@@ -307,10 +305,10 @@ function FieldRow({
 							e.preventDefault()
 							const trimmed = newValue.trim()
 							if (!trimmed) return
-							await runTool(rowKey, 'add_workspace_enum_value', {
+							await runTool(rowKey, 'update_workspace_field', {
 								type: typeName,
 								name: field.name,
-								value: trimmed,
+								add_values: [trimmed],
 							})
 							setNewValue('')
 						}}

@@ -2,17 +2,25 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { Button } from '@/components/ui/button'
 import type { UnreadItem } from '@/lib/api'
 import { Link } from '@tanstack/react-router'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ForYouQueueCard, type ForYouQueueCardHandle, itemQueueKey } from './foryou-queue-card'
 
 interface ForYouCardQueueProps {
 	workspaceId: string
 	queue: UnreadItem[]
+	/** The sparse-feed composer nudge (T-something), rendered by the caller so
+	 *  it can be shared with the list-mode layout too. On mobile it's hidden
+	 *  while a card is actively shown — the fixed action bar sits at a
+	 *  viewport-anchored offset, so any sibling sharing this flex-1 column
+	 *  shrinks the card away from it (bet foryou-brief-feed CI investigation,
+	 *  2026-08-13). It reappears once the queue empties, where the compact
+	 *  EmptyState doesn't compete for fill-height the same way. */
+	sparseComposer?: ReactNode
 }
 
 function noop() {}
 
-export function ForYouCardQueue({ workspaceId, queue }: ForYouCardQueueProps) {
+export function ForYouCardQueue({ workspaceId, queue, sparseComposer }: ForYouCardQueueProps) {
 	const [currentKey, setCurrentKey] = useState<string | null>(null)
 	const [processedKeys, setProcessedKeys] = useState<Set<string>>(() => new Set())
 	// Items whose deferred mark-read/mark-unread mutation (use-swipe-to-mark-read's
@@ -132,7 +140,7 @@ export function ForYouCardQueue({ workspaceId, queue }: ForYouCardQueueProps) {
 			{cards}
 
 			{currentItem ? (
-				<div className="fixed inset-x-0 bottom-0 z-10 flex justify-center border-t border-border bg-background/95 px-4 py-3 backdrop-blur-sm md:sticky md:border-0 md:bg-transparent md:px-0 md:py-0">
+				<div className="fixed inset-x-0 bottom-0 z-10 flex justify-center px-4 py-3 md:sticky md:px-0 md:py-0">
 					<div className="flex w-full max-w-[760px] items-center justify-between gap-3 md:max-w-[900px] lg:max-w-[1040px]">
 						<Button
 							size="sm"
@@ -173,6 +181,10 @@ export function ForYouCardQueue({ workspaceId, queue }: ForYouCardQueueProps) {
 						</div>
 					}
 				/>
+			)}
+
+			{sparseComposer && (
+				<div className={currentItem ? 'hidden md:block' : undefined}>{sparseComposer}</div>
 			)}
 		</div>
 	)

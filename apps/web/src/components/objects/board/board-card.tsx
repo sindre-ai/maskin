@@ -1,4 +1,5 @@
 import type { DisplayPanelColumn } from '@/components/objects/data-table/display-panel'
+import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { AgentWorkingBadge } from '@/components/shared/agent-working-badge'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { StatusBadge } from '@/components/shared/status-badge'
@@ -71,7 +72,7 @@ export function BoardCard({
 							property={property}
 							object={object}
 							actors={actors}
-							ownerName={owner?.name}
+							owner={owner}
 						/>
 					))}
 				</div>
@@ -88,12 +89,12 @@ function PropertyValue({
 	property,
 	object,
 	actors,
-	ownerName,
+	owner,
 }: {
 	property: DisplayPanelColumn
 	object: ObjectResponse
 	actors?: ActorListItem[]
-	ownerName?: string
+	owner?: ActorListItem | null
 }) {
 	switch (property.id) {
 		case 'status':
@@ -101,7 +102,9 @@ function PropertyValue({
 		case 'type':
 			return <TypeBadge type={object.type} />
 		case 'owner':
-			return ownerName ? <span className="truncate">{ownerName}</span> : null
+			return owner ? (
+				<ActorAvatar id={owner.id} name={owner.name} type={owner.type} className="shrink-0" />
+			) : null
 		case 'createdBy': {
 			const actor = actors?.find((a) => a.id === object.createdBy)
 			return actor ? <span className="truncate">{actor.name}</span> : null
