@@ -246,11 +246,7 @@ export async function buildActorSetupBlockFromApi(
 	options: { workspaceId?: string; defaultWorkspaceId?: string },
 ): Promise<SetupBlock> {
 	return safeBuildSetupBlock('setup', async () => {
-		const workspace = await loadWorkspace(
-			apiCall,
-			options.workspaceId,
-			options.defaultWorkspaceId,
-		)
+		const workspace = await loadWorkspace(apiCall, options.workspaceId, options.defaultWorkspaceId)
 		const readiness = readWorkspaceLlmReadiness(workspace?.settings ?? undefined)
 		return buildBlock(checkActor(actor, { workspace: readiness }))
 	})
