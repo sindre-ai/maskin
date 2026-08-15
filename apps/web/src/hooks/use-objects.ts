@@ -29,6 +29,30 @@ export function useObjects(
 	})
 }
 
+// Shared search engine for the command palette's active-query results and the
+// /search view — one server-side ranking so both surfaces show the same order.
+// `enabled` is driven by the debounced query: never fire a search request for
+// an empty query (the server schema requires `q`).
+export function useSearchObjects(
+	workspaceId: string,
+	params: { q: string; type?: string; status?: string; limit?: number },
+	options?: { enabled?: boolean },
+) {
+	const q = params.q.trim()
+	const normalized = { q, type: params.type, status: params.status, limit: params.limit }
+	return useQuery({
+		queryKey: queryKeys.objects.search(workspaceId, normalized),
+		queryFn: () =>
+			api.objects.search(
+				workspaceId,
+				Object.fromEntries(
+					Object.entries(normalized).filter(([, v]) => v !== undefined && v !== ''),
+				) as Record<string, string>,
+			),
+		enabled: (options?.enabled ?? true) && q.length >= 1,
+	})
+}
+
 export function useObject(id: string, options?: { enabled?: boolean }) {
 	return useQuery({
 		queryKey: queryKeys.objects.detail(id),

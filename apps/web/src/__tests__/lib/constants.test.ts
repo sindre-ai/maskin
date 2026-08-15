@@ -7,7 +7,9 @@ import {
 	getStatusColor,
 	getTypeColor,
 	statusColors,
+	statusLabel,
 	typeColors,
+	typeLabel,
 } from '@/lib/constants'
 
 describe('getTypeColor', () => {
@@ -53,6 +55,34 @@ describe('getStatusColor', () => {
 			bg: 'bg-status-breached-bg',
 			text: 'text-status-breached-text',
 		})
+	})
+})
+
+describe('typeLabel', () => {
+	it('humanizes the core object types', () => {
+		expect(typeLabel('insight')).toBe('Insight')
+		expect(typeLabel('bet')).toBe('Bet')
+		expect(typeLabel('task')).toBe('Task')
+	})
+
+	it('falls back to the raw type for unknown types', () => {
+		expect(typeLabel('meeting')).toBe('meeting')
+	})
+})
+
+describe('statusLabel', () => {
+	it('maps the shipped workflow statuses to their labels', () => {
+		expect(statusLabel('active')).toBe('Active')
+		expect(statusLabel('in_progress')).toBe('In progress')
+		expect(statusLabel('todo')).toBe('To do')
+		expect(statusLabel('define')).toBe('Define')
+		expect(statusLabel('in_review')).toBe('In review')
+		expect(statusLabel('done')).toBe('Done')
+		expect(statusLabel('validated')).toBe('Validated')
+	})
+
+	it('humanizes custom statuses by replacing underscores', () => {
+		expect(statusLabel('waiting_for_input')).toBe('waiting for input')
 	})
 })
 
