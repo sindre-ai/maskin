@@ -94,6 +94,13 @@ vi.mock('../../lib/credit-classifier', () => ({
 	classifyCreditExhaustion: mockClassifyCreditExhaustion,
 }))
 
+const { mockTrackGithubInstallationValidated } = vi.hoisted(() => ({
+	mockTrackGithubInstallationValidated: vi.fn().mockResolvedValue(undefined),
+}))
+vi.mock('../../lib/analytics/github-install-events', () => ({
+	trackGithubInstallationValidated: mockTrackGithubInstallationValidated,
+}))
+
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import type { StorageProvider } from '@maskin/storage'
@@ -1006,6 +1013,29 @@ describe('SessionManager', () => {
 			expect(mcpKeys.filter((k) => k.startsWith('github-'))).toHaveLength(2)
 			expect(mcpKeys).toContain('github-sindre-ai')
 			expect(mcpKeys).toContain('github-vaerksted-ai')
+
+			// Ship-metric for the multi-github-install bet: one
+			// `github_installation_validated` emission per resolved install,
+			// carrying installation_count and the per-owner wiring flags.
+			expect(mockTrackGithubInstallationValidated).toHaveBeenCalledTimes(2)
+			const emitCalls = mockTrackGithubInstallationValidated.mock.calls.map(
+				(c) => c[0] as Record<string, unknown>,
+			)
+			const byOwner = new Map(emitCalls.map((c) => [c.ownerLogin, c]))
+			expect(byOwner.get('sindre-ai')).toMatchObject({
+				workspaceId: wsId,
+				installationCount: 2,
+				envVarPresent: true,
+				mcpEntryPresent: true,
+				pushSucceeded: true,
+			})
+			expect(byOwner.get('vaerksted-ai')).toMatchObject({
+				workspaceId: wsId,
+				installationCount: 2,
+				envVarPresent: true,
+				mcpEntryPresent: true,
+				pushSucceeded: true,
+			})
 		})
 
 		it('sets GITHUB_REPO alongside GITHUB_INTEGRATION_ID when a scoped bet carries metadata.repo', async () => {
@@ -1623,6 +1653,28 @@ describe('SessionManager', () => {
 			expect(slackBody.text).toContain(brokenIntegration.externalId)
 			expect(slackBody.text).not.toContain(healthyIntegration.externalId)
 			expect(slackBody.text).toContain('github-vaerksted-ai')
+
+			// Ship-metric emission carries the preflight verdict per owner: the
+			// healthy install reports push_succeeded=true; the broken install
+			// reports push_succeeded=false so the downstream HogQL can distinguish
+			// wiring failures from resolution failures.
+			expect(mockTrackGithubInstallationValidated).toHaveBeenCalledTimes(2)
+			const emitCalls = mockTrackGithubInstallationValidated.mock.calls.map(
+				(c) => c[0] as Record<string, unknown>,
+			)
+			const byOwner = new Map(emitCalls.map((c) => [c.ownerLogin, c]))
+			expect(byOwner.get('sindre-ai')).toMatchObject({
+				installationCount: 2,
+				envVarPresent: true,
+				mcpEntryPresent: true,
+				pushSucceeded: true,
+			})
+			expect(byOwner.get('vaerksted-ai')).toMatchObject({
+				installationCount: 2,
+				envVarPresent: true,
+				mcpEntryPresent: false,
+				pushSucceeded: false,
+			})
 		})
 	})
 
