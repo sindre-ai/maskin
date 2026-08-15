@@ -8,6 +8,7 @@ import { PgNotifyBridge } from '@maskin/realtime'
 import { S3StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
 import { createApp } from './app-factory'
+import { emitInstallCompleted } from './lib/analytics/install-telemetry'
 import {
 	type DevBootstrapResult,
 	maybeBootstrapDev,
@@ -223,6 +224,10 @@ ${mcpSetup}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 `
 	process.stdout.write(banner)
+	// TTV instrumentation: server is reachable on localhost, so this is the
+	// canonical "install_completed" moment for the open-source launch bet.
+	// Fire-and-forget — never blocks or throws.
+	emitInstallCompleted().catch(() => {})
 	sessionManager.warmAgentBaseImage().catch((err) => {
 		logger.error('Failed to build agent-base image — sessions will fail until image is available', {
 			error: err instanceof Error ? err.message : String(err),
