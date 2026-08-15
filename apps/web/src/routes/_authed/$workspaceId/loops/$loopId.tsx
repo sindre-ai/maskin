@@ -85,7 +85,7 @@ function LoopDetailPage() {
 					onTogglePause={() =>
 						updateObject.mutate({
 							id: loop.id,
-							data: { status: loop.status === 'paused' ? 'running' : 'paused' },
+							data: { status: loop.status === 'paused' ? 'live' : 'paused' },
 						})
 					}
 				/>

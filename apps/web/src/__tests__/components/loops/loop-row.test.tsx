@@ -35,7 +35,7 @@ function buildLoop(overrides: Partial<LoopSummary> = {}): LoopSummary {
 		workspaceId: 'ws-1',
 		name: 'Customer feedback',
 		guarantee: 'Every customer who gives feedback hears back within 30 days',
-		status: 'running',
+		status: 'live',
 		pill: 'running',
 		entryCondition: null,
 		closeCondition: null,

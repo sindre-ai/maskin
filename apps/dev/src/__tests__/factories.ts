@@ -62,7 +62,7 @@ export function buildWorkspace(overrides?: Record<string, unknown>) {
 				bet: ['signal', 'proposed', 'active', 'completed', 'succeeded', 'failed', 'paused'],
 				task: ['todo', 'in_progress', 'done', 'blocked'],
 				commitment: ['holding', 'at-risk', 'breached'],
-				loop: ['running', 'waiting', 'paused', 'archived'],
+				loop: ['draft', 'pilot', 'supervised', 'live', 'paused', 'archived'],
 			},
 			field_definitions: {},
 			relationship_types: ['informs', 'breaks_into', 'blocks', 'relates_to', 'duplicates'],

@@ -45,15 +45,31 @@ export const COMMITMENT_ATTENTION_STATUSES = ['at-risk', 'breached'] as const
 export type CommitmentAttentionStatus = (typeof COMMITMENT_ATTENTION_STATUSES)[number]
 
 /**
- * Loop statuses used by the new (post-T1-rename) pipeline concept: a
- * persistent multi-agent process wrapping triggers + agents + a pipeline of
- * object states. `archived` is silent (mirrors the bet convention), so it is
- * NOT part of the attention-worthy set surfaced to the For You feed. Kept
- * here alongside the extension registration so backend code paths that need
- * the enum (read API, migrations, guards) stay pinned to one source of truth.
+ * Loop statuses used by the pipeline concept: a persistent multi-agent process
+ * wrapping triggers + agents + a pipeline of object states. The ladder is a
+ * maturity gate — a loop earns rungs before it runs unsupervised:
+ * - `draft`: authored but not yet firing; TriggerRunner skips it.
+ * - `pilot`: firing in a limited, guided-setup test mode.
+ * - `supervised`: firing, but side effects are held for human approval.
+ * - `live`: firing unattended.
+ * - `paused`: temporarily halted; TriggerRunner skips it.
+ * - `archived`: retired; silent terminal, NOT part of the attention-worthy set
+ *   surfaced to the For You feed (mirrors the bet convention).
+ *
+ * Single source of truth for backend code paths that need the enum (read API,
+ * migrations, MCP tools). Migrated in `packages/db/drizzle/0054_loop_status_lifecycle_enum.sql`.
  */
-export const LOOP_STATUSES = ['running', 'waiting', 'paused', 'archived'] as const
+export const LOOP_STATUSES = ['draft', 'pilot', 'supervised', 'live', 'paused', 'archived'] as const
 export type LoopStatus = (typeof LOOP_STATUSES)[number]
+
+/**
+ * Statuses at which TriggerRunner must skip session creation for a loop's
+ * triggers — the maturity gate's suppression set. Read by T1's TriggerRunner
+ * patch and T4's permissions layer so both agree on which rungs mean "no
+ * side effects" without a second copy that could drift.
+ */
+export const LOOP_STATUSES_BLOCKING_SESSIONS = ['draft', 'paused', 'archived'] as const
+export type LoopStatusBlockingSessions = (typeof LOOP_STATUSES_BLOCKING_SESSIONS)[number]
 
 export const createObjectSchema = z.object({
 	id: z.string().uuid().optional(),

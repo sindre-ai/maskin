@@ -47,7 +47,14 @@ describe('work extension — loop registration (T2 of bet/loops-first-class, new
 		const loop = workExtension.objectTypes.find((t) => t.type === 'loop')
 		expect(loop).toBeDefined()
 		expect(loop?.label).toBe('Loop')
-		expect(loop?.defaultStatuses).toEqual(['running', 'waiting', 'paused', 'archived'])
+		expect(loop?.defaultStatuses).toEqual([
+			'draft',
+			'pilot',
+			'supervised',
+			'live',
+			'paused',
+			'archived',
+		])
 	})
 
 	it('lists loop metadata fields as optional', () => {
@@ -64,14 +71,16 @@ describe('work extension — loop registration (T2 of bet/loops-first-class, new
 		}
 	})
 
-	it('exposes loop in defaultSettings.statuses with running as the default', () => {
+	it('exposes loop in defaultSettings.statuses with draft as the default', () => {
 		expect(workExtension.defaultSettings?.statuses?.loop).toEqual([
-			'running',
-			'waiting',
+			'draft',
+			'pilot',
+			'supervised',
+			'live',
 			'paused',
 			'archived',
 		])
-		expect(workExtension.defaultSettings?.statuses?.loop?.[0]).toBe('running')
+		expect(workExtension.defaultSettings?.statuses?.loop?.[0]).toBe('draft')
 	})
 
 	it('exposes loop in defaultSettings.display_names', () => {

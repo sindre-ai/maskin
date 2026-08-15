@@ -97,7 +97,7 @@ export const workspaceSettingsSchema = z.object({
 		],
 		task: ['todo', 'in_progress', 'in_review', 'validated', 'done', 'discarded'],
 		commitment: ['holding', 'at-risk', 'breached'],
-		loop: ['running', 'waiting', 'paused', 'archived'],
+		loop: ['draft', 'pilot', 'supervised', 'live', 'paused', 'archived'],
 	}),
 	field_definitions: z.record(z.array(fieldDefinitionSchema)).default({
 		bet: [{ name: 'archive_reason', type: 'text', required: false }],

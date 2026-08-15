@@ -16,11 +16,15 @@ const COMMITMENT_FIELDS: FieldDefinition[] = [
 ]
 
 // The new `loop` type: a named, persistent multi-agent process wrapping
-// triggers + agents + a pipeline of object states. `archived` is a silent
-// terminal (mirrors the bet convention) and is kept out of the attention-worthy
-// set. Metadata fields are plain text per T1's decision — no DSL until an
-// orchestration runtime exists to consume it.
-const LOOP_STATUSES = ['running', 'waiting', 'paused', 'archived']
+// triggers + agents + a pipeline of object states. The status enum is the
+// maturity ladder introduced by bet/loop-lifecycle-status-ladder — new loops
+// earn rungs before running unsupervised. `archived` is a silent terminal
+// (mirrors the bet convention) and is kept out of the attention-worthy set.
+// Metadata fields are plain text per T1's decision — no DSL until an
+// orchestration runtime exists to consume it. Canonical enum lives at
+// `packages/shared/src/schemas/objects.ts::LOOP_STATUSES`; kept in a local
+// literal here because the module SDK is dependency-free of `@maskin/shared`.
+const LOOP_STATUSES = ['draft', 'pilot', 'supervised', 'live', 'paused', 'archived']
 const LOOP_FIELDS: FieldDefinition[] = [
 	{ name: 'entry_condition', type: 'text' },
 	{ name: 'close_condition', type: 'text' },
