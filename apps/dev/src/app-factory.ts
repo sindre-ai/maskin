@@ -18,6 +18,7 @@ import adminLandingFunnelRoutes from './routes/admin-landing-funnel'
 import agentServerReconcileRoutes from './routes/agent-server-reconcile'
 import agentSkillAttachmentsRoutes from './routes/agent-skill-attachments'
 import agentSkillsRoutes from './routes/agent-skills'
+import apnsTokensRoutes from './routes/apns-tokens'
 import authRoutes from './routes/auth'
 import briefingRoutes from './routes/briefing'
 import claudeOauthRoutes from './routes/claude-oauth'
@@ -258,6 +259,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/claude-oauth', claudeOauthRoutes)
 	app.route('/api/telemetry', telemetryRoutes)
 	app.route('/api/user-display-settings', userDisplaySettingsRoutes)
+	app.route('/api/apns-tokens', apnsTokensRoutes)
 
 	if (options.includeExtensions !== false) {
 		const moduleEnv = { db, notifyBridge, sessionManager, agentStorage, storageProvider }

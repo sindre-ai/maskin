@@ -7,6 +7,7 @@ const KEYCHAIN_SERVICE: &str = "io.maskin.mobile";
 const KEYCHAIN_ACCOUNT: &str = "api-key";
 
 const PUSH_NOTIFICATION_TAPPED_EVENT: &str = "push-notification-tapped";
+const APNS_DEVICE_TOKEN_EVENT: &str = "apns-device-token";
 
 /// Payload the AppDelegate hands us when the user taps a push notification.
 /// Both fields are required — the whole point of the deep link is to route to
@@ -18,11 +19,27 @@ pub struct PendingNotification {
 	pub entity_id: String,
 }
 
+/// APNs device-token payload the AppDelegate hands us when iOS finishes
+/// remote-notification registration. Environment is derived Swift-side from
+/// the `aps-environment` entitlement (debug/TestFlight → sandbox, App Store →
+/// production) so the backend knows which APNs server to hit when it sends.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ApnsDeviceToken {
+	pub token: String,
+	pub environment: String,
+}
+
 // Cross-platform storage for the last unconsumed tap payload. The cold-start
 // path (app launched *by* the notification) needs a slot that survives from
 // the AppDelegate hook — which fires before the webview is even attached —
 // through to the JS `consume_pending_notification` read after boot.
 static PENDING_NOTIFICATION: Mutex<Option<PendingNotification>> = Mutex::new(None);
+
+// Same shape for APNs registration: iOS can deliver the device token before
+// the JS listener is attached (particularly on a cold boot where the OS
+// callback races the webview). Stash it here so the boot-time consume call
+// catches it even if the emit event was fired too early.
+static PENDING_APNS_TOKEN: Mutex<Option<ApnsDeviceToken>> = Mutex::new(None);
 
 // AppHandle captured during setup so the FFI entry point can emit a Tauri
 // event when a warm-state tap arrives after the app is already up.
@@ -125,6 +142,67 @@ fn consume_pending_notification() -> Option<PendingNotification> {
 	PENDING_NOTIFICATION.lock().ok().and_then(|mut slot| slot.take())
 }
 
+/// C-ABI entry point the iOS AppDelegate calls when
+/// `didRegisterForRemoteNotificationsWithDeviceToken` fires. Stashes the
+/// hex-encoded token so the JS side can consume it on next boot, and — if
+/// the Tauri app is already up — emits `apns-device-token` so the JS
+/// listener PATCHes the server without waiting for the next launch.
+///
+/// # Safety
+/// `token` and `environment` must be non-null, valid, NUL-terminated UTF-8
+/// C strings owned by the caller for the duration of this call. The Swift
+/// bridge constructs them from Swift `String` via `.utf8CString`, which
+/// guarantees both.
+#[cfg(target_os = "ios")]
+#[no_mangle]
+pub unsafe extern "C" fn maskin_apns_device_token_received(
+	token: *const std::os::raw::c_char,
+	environment: *const std::os::raw::c_char,
+) {
+	use std::ffi::CStr;
+
+	if token.is_null() || environment.is_null() {
+		return;
+	}
+	let token = match CStr::from_ptr(token).to_str() {
+		Ok(s) => s.to_owned(),
+		Err(_) => return,
+	};
+	let environment = match CStr::from_ptr(environment).to_str() {
+		Ok(s) => s.to_owned(),
+		Err(_) => return,
+	};
+	if token.is_empty() || environment.is_empty() {
+		return;
+	}
+
+	store_pending_apns_token(ApnsDeviceToken { token, environment });
+}
+
+// Split out from the FFI entry so the same store-and-emit path is unit
+// testable on the host — the extern "C" function is iOS-only, but the state
+// machine it drives is not.
+fn store_pending_apns_token(payload: ApnsDeviceToken) {
+	if let Ok(mut slot) = PENDING_APNS_TOKEN.lock() {
+		*slot = Some(payload.clone());
+	}
+	if let Ok(handle) = APP_HANDLE.lock() {
+		if let Some(app) = handle.as_ref() {
+			let _ = app.emit(APNS_DEVICE_TOKEN_EVENT, payload);
+		}
+	}
+}
+
+/// Read (and clear) the pending APNs device-token payload stashed by the
+/// AppDelegate. The JS side calls this on boot to catch a token that
+/// landed before the `apns-device-token` event listener was attached
+/// (cold-start races the webview mount). Returns `None` when the OS
+/// hasn't handed anything back yet.
+#[tauri::command]
+fn consume_pending_apns_token() -> Option<ApnsDeviceToken> {
+	PENDING_APNS_TOKEN.lock().ok().and_then(|mut slot| slot.take())
+}
+
 /// Read the stored Maskin API key back from the iOS Keychain.
 /// Returns None when nothing is stored — a fresh install falls to the login
 /// screen with no phantom session.
@@ -171,6 +249,7 @@ pub fn run() {
 			delete_api_key,
 			register_for_remote_notifications,
 			consume_pending_notification,
+			consume_pending_apns_token,
 		])
 		.run(tauri::generate_context!())
 		.expect("error while running the Maskin Tauri shell")
@@ -182,6 +261,12 @@ mod tests {
 
 	fn reset_pending_slot() {
 		if let Ok(mut slot) = PENDING_NOTIFICATION.lock() {
+			*slot = None;
+		}
+	}
+
+	fn reset_pending_apns_slot() {
+		if let Ok(mut slot) = PENDING_APNS_TOKEN.lock() {
 			*slot = None;
 		}
 	}
@@ -215,5 +300,37 @@ mod tests {
 		});
 		let read = consume_pending_notification().expect("payload present");
 		assert_eq!(read.entity_id, "new");
+	}
+
+	#[test]
+	fn store_then_consume_apns_returns_the_stashed_token_once() {
+		reset_pending_apns_slot();
+		store_pending_apns_token(ApnsDeviceToken {
+			token: "abcdef01".into(),
+			environment: "sandbox".into(),
+		});
+		let first = consume_pending_apns_token();
+		let second = consume_pending_apns_token();
+		assert!(first.is_some(), "first consume should surface the stored token");
+		let first = first.unwrap();
+		assert_eq!(first.token, "abcdef01");
+		assert_eq!(first.environment, "sandbox");
+		assert!(second.is_none(), "second consume should be empty — take-once contract");
+	}
+
+	#[test]
+	fn store_overwrites_a_previous_unread_apns_token() {
+		reset_pending_apns_slot();
+		store_pending_apns_token(ApnsDeviceToken {
+			token: "aaaaaaaa".into(),
+			environment: "sandbox".into(),
+		});
+		store_pending_apns_token(ApnsDeviceToken {
+			token: "bbbbbbbb".into(),
+			environment: "production".into(),
+		});
+		let read = consume_pending_apns_token().expect("token present");
+		assert_eq!(read.token, "bbbbbbbb");
+		assert_eq!(read.environment, "production");
 	}
 }

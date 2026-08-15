@@ -44,6 +44,16 @@ func maskin_push_notification_tapped(
 	_ entityId: UnsafePointer<CChar>
 )
 
+// External Rust FFI — declared in apps/native/src-tauri/src/lib.rs. Called
+// once from `didRegisterForRemoteNotificationsWithDeviceToken` on every launch
+// (the JS shell kicks OS registration unconditionally at boot, so this path
+// runs every session — see initIosPushNotifications).
+@_silgen_name("maskin_apns_device_token_received")
+func maskin_apns_device_token_received(
+	_ token: UnsafePointer<CChar>,
+	_ environment: UnsafePointer<CChar>
+)
+
 // Extract the (entity_type, entity_id) pair from an APNs userInfo dictionary
 // and hand it to the Rust bridge. No-op when either side is missing so a
 // notification with no deep-link payload does nothing on tap.
@@ -57,6 +67,31 @@ func forwardNotificationTapToRust(userInfo: [AnyHashable: Any]) {
 	entityType.withCString { typePtr in
 		entityId.withCString { idPtr in
 			maskin_push_notification_tapped(typePtr, idPtr)
+		}
+	}
+}
+
+// Convert the raw APNs `Data` blob into a lower-case hex string (the shape
+// server-side APNs senders and Apple's docs both use) and hand it to the
+// Rust bridge alongside the current APNs environment.
+//
+// Environment split: debug and TestFlight/Ad-Hoc builds hit the APNs sandbox;
+// App Store builds hit production. The `aps-environment` entitlement encodes
+// this, but Swift can't read the entitlement plist at runtime without
+// bundle-parsing gymnastics — `#if DEBUG` is the pragmatic proxy: the
+// production build defines it away and falls through to "production". Flip
+// the entitlement template's value in the same PR when cutting an App Store
+// build (`development` → `production`, see apps/native/README.md).
+func forwardDeviceTokenToRust(deviceToken: Data) {
+	let hex = deviceToken.map { String(format: "%02x", $0) }.joined()
+	#if DEBUG
+	let environment = "sandbox"
+	#else
+	let environment = "production"
+	#endif
+	hex.withCString { tokenPtr in
+		environment.withCString { envPtr in
+			maskin_apns_device_token_received(tokenPtr, envPtr)
 		}
 	}
 }
@@ -79,16 +114,33 @@ class AppDelegate: TauriAppDelegate, UNUserNotificationCenterDelegate {
 		return super.application(application, didFinishLaunchingWithOptions: launchOptions)
 	}
 
-	// (2) APNs device token. Kept as a follow-up in the README (task 6) —
-	//     this is where the token would be forwarded to JS so it can register
-	//     with the /api/push-tokens endpoint. Stubbed here for reference.
-	// override func application(
-	// 	_ application: UIApplication,
-	// 	didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
-	// ) {
-	// 	let hex = deviceToken.map { String(format: "%02x", $0) }.joined()
-	// 	// TODO(t6): forward to webview via evaluateJavaScript or Tauri event
-	// }
+	// (2) APNs device token. Fires once per launch after
+	//     `UIApplication.registerForRemoteNotifications` (triggered from JS by
+	//     `initIosPushNotifications`) succeeds. Forwards the hex-encoded token
+	//     to the Rust bridge, which stashes it and emits `apns-device-token`
+	//     for the JS listener to PATCH the server (see
+	//     apps/web/src/lib/ios-push-token.ts). The stash is what makes the
+	//     cold-start race safe: iOS can hand back the token before the
+	//     webview's event listener is attached, and the JS boot path reads
+	//     the slot via `consume_pending_apns_token` right after.
+	override func application(
+		_ application: UIApplication,
+		didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
+	) {
+		forwardDeviceTokenToRust(deviceToken: deviceToken)
+	}
+
+	// APNs registration can fail (airplane mode, no APNs entitlement on the
+	// signing profile, Apple outage). Log it — the shell doesn't retry itself,
+	// but the next launch will re-trigger `registerForRemoteNotifications` via
+	// `initIosPushNotifications`, so a transient failure heals on the next
+	// foreground.
+	override func application(
+		_ application: UIApplication,
+		didFailToRegisterForRemoteNotificationsWithError error: Error
+	) {
+		NSLog("[apns] registration failed: %@", error.localizedDescription)
+	}
 
 	// (3) Warm-state tap hook. When the app is running (foreground or
 	//     background) and the user taps a notification, iOS routes the tap
