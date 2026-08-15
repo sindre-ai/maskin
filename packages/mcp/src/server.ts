@@ -20,6 +20,7 @@ import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mc
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { Cron } from 'croner'
 import { type CursorState, decodeCursor, encodeCursor, toSnapshotAt } from './cursor.js'
+import { READ_TOOL_NAMES, buildReadErrorBody, toolErrorResponse } from './read-error.js'
 import { applyResponseTokenCap } from './response-cap.js'
 import {
 	type SummaryRow,
@@ -1724,8 +1725,11 @@ export function createMcpServer(config: McpConfig) {
 	// Telemetry-instrumented tool registration. Wraps the upstream
 	// `registerAppTool` so every tool response emits a `tool_call` telemetry
 	// event (rich-render % numerator/denominator) and successful mutations
-	// emit an additional `mutation` event. Failures inside the original
-	// handler are re-thrown unchanged so MCP error semantics are preserved.
+	// emit an additional `mutation` event. Read-side handler failures are
+	// converted into a structured `{ error: { tool, reason, next } }` response
+	// (see `read-error.ts`) so the calling LLM sees a teachable next step
+	// instead of a bare transport error; mutation failures still re-throw so
+	// their existing error semantics are preserved.
 	//
 	// We deliberately type as `any` at the boundary because ext-apps' generic
 	// tool signature can't be re-introduced through a higher-order wrapper
@@ -1735,6 +1739,7 @@ export function createMcpServer(config: McpConfig) {
 	const registerAppTool = ((s: any, name: string, definition: any, handler: any) => {
 		const defHasRichRender = Boolean(definition?._meta?.ui)
 		const mutationKind = MUTATION_TOOL_KINDS[name]
+		const isReadTool = READ_TOOL_NAMES.has(name)
 
 		const wrappedHandler = async (args: unknown, extra: unknown) => {
 			const start = Date.now()
@@ -1748,6 +1753,22 @@ export function createMcpServer(config: McpConfig) {
 					duration_ms: Date.now() - start,
 					workspace_id: extractWorkspaceId(args),
 				})
+				if (isReadTool) {
+					// Read handlers return a structured error envelope instead of
+					// throwing so the caller sees the failing tool, a human-readable
+					// reason, and the next tool to try. Mutation tools intentionally
+					// keep their throwing behavior — the Guided setup workflow bet
+					// owns post-mutation guidance.
+					const errorResponse = toolErrorResponse(name, err)
+					recordToolCallResponseSize(telemetrySink, telemetryTarget, {
+						tool_name: name,
+						content: errorResponse.content,
+						structured_content: errorResponse.structuredContent,
+						truncated: false,
+						workspace_id: extractWorkspaceId(args),
+					})
+					return errorResponse
+				}
 				throw err
 			}
 
@@ -1945,9 +1966,14 @@ export function createMcpServer(config: McpConfig) {
 						const result = await apiCall(config, 'GET', `/api/objects/${id}/graph`, undefined, {
 							workspaceId: workspace_id,
 						})
-						return { id, success: true, result }
+						return { id, success: true as const, result }
 					} catch (error) {
-						return { id, success: false, error: String(error) }
+						// Per-id sub-error follows the same `{ error: { tool, reason, next } }`
+						// contract as top-level tool errors so callers pattern-match on one
+						// shape for both "one id failed in a batch" and "the whole tool
+						// failed." Top-level throws (e.g. from resolveActors) are caught by
+						// the READ_TOOL_NAMES branch in the registerAppTool wrapper below.
+						return { id, success: false as const, ...buildReadErrorBody('get_objects', error) }
 					}
 				}),
 			)
