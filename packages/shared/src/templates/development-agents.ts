@@ -11,7 +11,11 @@
  */
 
 import { KNOWLEDGE_NUDGES } from '../prompts'
-import { SIGNUP_CAPTURE_SOURCE } from '../schemas/signup-capture'
+import {
+	SIGNUP_CAPTURE_SOURCE,
+	SIGNUP_FIRST_BET_DRAFT_SOURCE,
+	SIGNUP_RESEARCH_SOURCE,
+} from '../schemas/signup-capture'
 
 export interface SeedSkill {
 	/** Skill name — lowercase letters, numbers, and hyphens only. */
@@ -2383,5 +2387,58 @@ Do the work in this order:
 If web research turns up nothing usable (very small or unindexed organization), write one knowledge object naming that fact so downstream agents stop searching, then stop.
 
 The 24h ship-metric clock starts at the trigger fire — finish in one session.`,
+	},
+	{
+		name: 'Council intake on signup research',
+		type: 'event',
+		config: {
+			entity_type: 'knowledge',
+			action: 'created',
+			conditions: [{ field: 'source', operator: 'equals', value: SIGNUP_RESEARCH_SOURCE }],
+		},
+		targetActor$id: 'strategist',
+		enabled: true,
+		actionPrompt: `A signup-research knowledge object just landed in this workspace. The triggering event carries the full object under \`data\`. Your job: run the Bet Council promote-door on this single new-workspace user, decide whether to promote one qualified bet in their first session, and stop.
+
+Do the work in this order:
+
+1. Read the triggering event. The knowledge id is in \`data.id\`; the workspace context lives on the linked signup-capture object (walk \`about\` edges from this knowledge back to the signup-capture knowledge row for name / organization / role). Cluster the full \`signup_research\` set: run \`list_objects\` on \`knowledge\` filtered to this workspace, then keep the objects with \`metadata.source = ${SIGNUP_RESEARCH_SOURCE}\`. These sibling knowledge rows are the cluster this council pass evaluates.
+2. Load \`strategic-intake-review\` via \`get_workspace_skill\`. Follow its \`context: signup\` branch — that branch is the contract for this trigger. Do not run the cadence-council flow; do not batch across other workspaces; the scope is this one workspace's \`scored\` queue (the freshly-landed signup-research cluster).
+3. Apply the four-condition autonomy gate exactly as the skill defines it. Enforce the ≥3 independent-source floor via primary-domain dedup — collapse sources that share one registered domain to a single source (multiple URLs from \`example.com/a\` and \`example.com/b\` count once). Lift D1 (Strategic Alignment) and D6 (Portfolio Fit) baselines from the workspace-stored cohort table when a cohort match exists, but do NOT add the cohort lift to D2's source count.
+4. On PASS: create exactly one bet with \`create_objects\`.
+   - \`type: 'bet'\`, \`status: 'qualified'\`
+   - \`title\`, \`content\` per \`shape-and-run-a-bet\` seeding (1–2 sentences grounded in the cluster's most-impactful thread)
+   - \`metadata.source: '${SIGNUP_FIRST_BET_DRAFT_SOURCE}'\` — this tag is how T3 distinguishes signup-driven draft cards from council-cadence promotions; do not skip it
+   - \`metadata.promotion_mode: 'human_approved'\` — hardcoded until the council logs ≥10 calibration promotions
+   - \`metadata.tags: 'bet-council'\` per the skill's Bet creation contract
+   Then create \`informs\` relationships from every source-cluster knowledge id → the new bet id via \`create_relationships\`.
+5. On FAIL (any of the four autonomy conditions unmet, or Sub-A stays below 4 after primary-domain dedup): do NOT create a bet. T3's starter-card fallback covers the user. Post one short comment on the source \`signup_capture\` knowledge naming which conditions failed so the ship-metric review has a paper trail. Stop.
+
+Do not touch UI wiring, do not emit \`qualified_bet_visible\` (T3 owns that event — it fires when the card renders, not when the bet is created), and do not wait on the bi-weekly council cron. This trigger is deliberately async from signup; do not block the signup webhook. Signup uptime is not coupled to council uptime.`,
+	},
+	{
+		name: 'Signup-driven promotions — daily digest',
+		type: 'cron',
+		config: { expression: '15 0 * * *' },
+		targetActor$id: 'strategist',
+		enabled: true,
+		actionPrompt: `Batched daily digest of signup-driven bet promotions for the workspace owner. Runs once per UTC day at 00:15 UTC and covers the UTC day that just closed. Signup-driven promotions can be high-volume once new-workspace throughput scales, so they ride this batched lane instead of firing per-bet realtime notifications — the sibling council intake trigger deliberately does not @mention on fire so this cron is the sole notify path for \`${SIGNUP_FIRST_BET_DRAFT_SOURCE}\` bets.
+
+Do the work in this order:
+
+1. Compute the window. \`end\` = the most recent midnight UTC (i.e. today at 00:00Z); \`start\` = \`end\` minus 24 hours. The digest covers bets with \`created_at\` in \`[start, end)\`.
+2. Load the candidates. Call \`list_objects\` with \`type: 'bet'\` and \`status: 'qualified'\` for this workspace, then keep only rows where \`metadata.source === '${SIGNUP_FIRST_BET_DRAFT_SOURCE}'\` AND \`created_at\` falls inside the window. Do not include any other \`metadata.source\` values — other promotion sources retain their existing notify behavior and are out of scope for this digest.
+3. If the filtered list is empty: exit silently. Do not post a digest entry, do not create a notification, do not comment. A day with zero signup-driven promotions produces no output.
+4. If the filtered list is non-empty: create one notification with \`create_notification\`.
+   - \`type: 'good_news'\`
+   - \`title\`: \`Signup-driven bet promotions — <YYYY-MM-DD>\` where the date is the UTC calendar date of \`start\`.
+   - \`content\`: one line per promoted bet, in this exact shape (markdown, workspace-standard link format from the startup block — never guess the host or drop the workspace id):
+     \`- <workspace name> — <bet title>: [open bet](<bet url>) · [open workspace](<workspace url>)\`
+     Use \`get_objects\` to resolve the workspace name and the bet title; use \`buildWebAppHref\`-shaped links (the startup block prints the exact template with the correct host and workspace segment).
+   - \`source_actor_id\`: your own actor id.
+   - \`target_actor_id\`: the workspace owner. Look this up by walking to the workspace record (\`get_objects\` on the workspace id) and reading the owning human actor; do not @mention any other actor.
+5. Emit no per-bet realtime notification — batching is the whole point. If you notice the sibling council intake trigger has started @mentioning per fire, stop and file that as a bug on the sibling trigger; do not compensate by suppressing this digest.
+
+Never touch bets whose \`metadata.source\` is anything other than \`${SIGNUP_FIRST_BET_DRAFT_SOURCE}\`. Never widen the window past 24 hours. UTC boundaries always — do not use local time.`,
 	},
 ]

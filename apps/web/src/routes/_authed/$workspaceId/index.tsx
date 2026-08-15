@@ -10,6 +10,8 @@ import { ForYouListRow } from '@/components/foryou/foryou-list-row'
 import { NewConversationComposer } from '@/components/foryou/new-conversation-composer'
 import { NorthStarPromptCard } from '@/components/foryou/north-star-prompt-card'
 import { OnboardingPromptCard } from '@/components/foryou/onboarding-prompt-card'
+import { SignupDraftCard } from '@/components/foryou/signup-draft-card'
+import { SignupStarterCard } from '@/components/foryou/signup-starter-card'
 import { SparseComposer } from '@/components/foryou/sparse-composer'
 import { PageHeader } from '@/components/layout/page-header'
 import { EmptyState } from '@/components/shared/empty-state'
@@ -18,6 +20,7 @@ import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { useBets } from '@/hooks/use-bets'
+import { useIsSignupWorkspace, useSignupDraftBet } from '@/hooks/use-signup-first-bet'
 import { useMarkRead, useUnread } from '@/hooks/use-subscriptions'
 import {
 	useUpdateUserDisplaySettings,
@@ -60,9 +63,11 @@ export function feedModeToForyouViewMode(
 }
 
 function ForYouRedesign() {
-	const { workspaceId } = useWorkspace()
+	const { workspace, workspaceId } = useWorkspace()
 	const { data, isLoading } = useUnread(workspaceId, undefined, true)
 	const { data: bets, isLoading: betsLoading } = useBets(workspaceId)
+	const { isSignup } = useIsSignupWorkspace(workspaceId)
+	const { bet: signupDraftBet } = useSignupDraftBet(workspaceId)
 	const items = data?.items ?? []
 	const markRead = useMarkRead(workspaceId)
 	const { open: composerOpen, setOpen: setComposerOpen } = useNewConversationComposer()
@@ -271,7 +276,29 @@ function ForYouRedesign() {
 		)
 	}
 
-	const showNorthStarPrompt = (bets?.length ?? 0) === 0 && !northStarDismissed
+	// Signup-driven workspaces surface either the council-promoted draft (when
+	// the T2 promote-door produced one) or a Strategist starter card (when it
+	// didn't). Both replace the empty-state UI — no NorthStar prompt, no sparse
+	// composer — but the regular unread queue still renders below.
+	const showSignupDraftCard = isSignup && signupDraftBet !== null
+	const showSignupStarterCard = isSignup && signupDraftBet === null
+	const suppressEmptyStates = showSignupDraftCard || showSignupStarterCard
+
+	const signupDraftCard =
+		showSignupDraftCard && signupDraftBet ? (
+			<SignupDraftCard
+				workspaceId={workspaceId}
+				bet={signupDraftBet}
+				workspaceCreatedAt={workspace.createdAt}
+			/>
+		) : null
+
+	const signupStarterCard = showSignupStarterCard ? (
+		<SignupStarterCard workspaceId={workspaceId} />
+	) : null
+
+	const showNorthStarPrompt =
+		!suppressEmptyStates && (bets?.length ?? 0) === 0 && !northStarDismissed
 	const northStarCard =
 		showNorthStarPrompt && !composerFocused ? (
 			<NorthStarPromptCard
@@ -281,12 +308,13 @@ function ForYouRedesign() {
 		) : null
 
 	const isSparse = filteredRegular.length + onboardingItems.length < 3
-	const sparseComposerNode = isSparse ? (
-		<SparseComposer
-			itemsCount={filteredRegular.length + onboardingItems.length}
-			onFocusChange={setComposerFocused}
-		/>
-	) : null
+	const sparseComposerNode =
+		isSparse && !suppressEmptyStates ? (
+			<SparseComposer
+				itemsCount={filteredRegular.length + onboardingItems.length}
+				onFocusChange={setComposerFocused}
+			/>
+		) : null
 
 	return (
 		<>
@@ -301,6 +329,8 @@ function ForYouRedesign() {
 						/>
 					}
 				/>
+				{signupDraftCard}
+				{signupStarterCard}
 				{northStarCard}
 				<ForYouHeader
 					unreadCount={unreadRegular.length}
