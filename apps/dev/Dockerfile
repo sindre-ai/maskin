@@ -38,7 +38,7 @@ ENV VITE_POSTHOG_KEY=$VITE_POSTHOG_KEY
 ENV VITE_POSTHOG_HOST=$VITE_POSTHOG_HOST
 
 # Build sequentially to stay within 8GB server memory
-RUN NODE_OPTIONS=--max-old-space-size=1536 pnpm --filter='./packages/*' build
+RUN NODE_OPTIONS=--max-old-space-size=1536 pnpm --workspace-concurrency=1 --filter='./packages/*' build
 RUN NODE_OPTIONS=--max-old-space-size=1536 pnpm --filter=@maskin/dev build
 RUN NODE_OPTIONS=--max-old-space-size=1536 pnpm --filter=@maskin/web build
 
