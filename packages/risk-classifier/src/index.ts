@@ -8,6 +8,8 @@ export { runSquawkOnSqlFiles } from './lib/squawk.js'
 export { runSemgrepDiff } from './lib/semgrep.js'
 export { loadIncidentDensityFromFile } from './lib/incidents.js'
 export { readDiffFromGit, resolveCommitSha } from './lib/git.js'
+export { fetchFitnessSignal } from './lib/fitness.js'
+export type { FetchFitnessSignalOptions } from './lib/fitness.js'
 export type {
 	ClassifierInput,
 	ClassifierVerdict,

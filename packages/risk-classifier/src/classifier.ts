@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { collectSignals } from './signals.js'
 import type { ClassifierInput, ClassifierVerdict, RiskBand, SignalHit } from './types.js'
 import { SKILL_VERSION } from './types.js'
-import { PATH_FLOOR_SCORE, REGEX_FLOOR_SCORE } from './weights.js'
+import { ARCH_INVARIANT_FLOOR_SCORE, PATH_FLOOR_SCORE, REGEX_FLOOR_SCORE } from './weights.js'
 
 export function classify(input: ClassifierInput): ClassifierVerdict {
 	const { signals, floors_applied } = collectSignals(input)
@@ -12,12 +12,16 @@ export function classify(input: ClassifierInput): ClassifierVerdict {
 
 	const hasProtectedPath = floors_applied.some((s) => s.kind === 'protected_path')
 	const hasRegexFloor = floors_applied.some((s) => s.kind === 'regex_floor_hit')
+	const hasArchInvariantViolation = signals.some(
+		(s) => s.kind === 'architectural_invariant_violation',
+	)
 
 	let score: number
 	if (hasProtectedPath) {
 		score = PATH_FLOOR_SCORE
-	} else if (hasRegexFloor) {
-		score = Math.max(cappedAdditive, REGEX_FLOOR_SCORE)
+	} else if (hasArchInvariantViolation || hasRegexFloor) {
+		const floor = hasArchInvariantViolation ? ARCH_INVARIANT_FLOOR_SCORE : REGEX_FLOOR_SCORE
+		score = Math.max(cappedAdditive, floor)
 	} else {
 		score = cappedAdditive
 	}

@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export const SKILL_VERSION = '0.1.0'
+export const SKILL_VERSION = '0.3.0'
 
 export type RiskBand = 'auto' | 'agent_recommends_human' | 'two_human_required'
 
@@ -25,6 +25,7 @@ export type SignalKind =
 	| 'protected_path'
 	| 'regex_floor_hit'
 	| 'squawk_blocking_lock'
+	| 'architectural_invariant_violation'
 
 export interface SignalHit {
 	kind: SignalKind
@@ -54,6 +55,7 @@ export interface ClassifierInput {
 	ai_generated_marker?: boolean
 	missing_tests_for_logic?: boolean
 	public_api_surface_delta?: number
+	architectural_invariant_violation?: boolean
 }
 
 export interface RegexFloor {

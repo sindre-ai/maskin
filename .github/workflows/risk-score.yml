@@ -54,6 +54,11 @@ jobs:
         run: node packages/risk-classifier/bin/assert-risk-config.mjs --repo .
 
       - name: Run risk-classifier
+        env:
+          # v0.3.0: consume the maskin/fitness check-run on the head SHA to set
+          # the architectural_invariant_violation signal (+40, floor 60).
+          # `checks: write` already includes read; no new secret needed.
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           # `risk-classifier.mjs` exits 1/2 for a non-auto band by design (see
           # cli.ts) — that must not abort this step under bash's default -e,
@@ -65,6 +70,7 @@ jobs:
             --base "${{ github.event.pull_request.base.sha }}" \
             --head "${{ github.event.pull_request.head.sha }}" \
             --repo . \
+            --fitness-check "${{ github.repository }}" \
             --output check-run > risk-score-check-run.json || true
           cat risk-score-check-run.json
 
