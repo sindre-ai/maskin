@@ -18,6 +18,7 @@ vi.mock('node:fs', () => ({
 
 import { registerAppResource, registerAppTool } from '@modelcontextprotocol/ext-apps/server'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { RESPONSE_SCOPING_ENV_VAR } from '../response-scoping'
 import {
 	HERO_CARD_TYPE_DEFAULTS,
 	type HeroCardTypeAnnotation,
@@ -128,6 +129,13 @@ describe('tool handlers', () => {
 		vi.clearAllMocks()
 		handlers = new Map()
 
+		// After T1 the response-scoping default flipped to ON. This suite pins
+		// the pre-scoping legacy URL/content contract for every registered tool;
+		// the scoped-path assertions live in response-scoping/response-cap/
+		// verification-harness suites. Explicitly opt out here so the legacy
+		// contract stays testable.
+		process.env[RESPONSE_SCOPING_ENV_VAR] = '0'
+
 		vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
 			handlers.set(name as string, handler as (args: Record<string, unknown>) => Promise<unknown>)
 		})
@@ -138,6 +146,7 @@ describe('tool handlers', () => {
 	afterEach(() => {
 		vi.useRealTimers()
 		vi.restoreAllMocks()
+		delete process.env[RESPONSE_SCOPING_ENV_VAR]
 	})
 
 	function getHandler(name: string) {
@@ -4242,6 +4251,9 @@ describe('url field injection', () => {
 	}
 
 	beforeEach(() => {
+		// url-injection suite pins the legacy content JSON dump — see the same
+		// note on the tool handlers suite above.
+		process.env[RESPONSE_SCOPING_ENV_VAR] = '0'
 		vi.mocked(McpServer).mockImplementation(() => ({ registerResource: vi.fn(), connect: vi.fn() }))
 		vi.mocked(registerAppTool).mockReset()
 		vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
@@ -4257,6 +4269,7 @@ describe('url field injection', () => {
 	afterEach(() => {
 		vi.useRealTimers()
 		vi.restoreAllMocks()
+		delete process.env[RESPONSE_SCOPING_ENV_VAR]
 	})
 
 	it('omits url when webAppBaseUrl is not configured', async () => {
