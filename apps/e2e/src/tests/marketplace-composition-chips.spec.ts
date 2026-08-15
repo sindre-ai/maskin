@@ -19,7 +19,15 @@ test.describe('Marketplace composition chip row', () => {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
 			await page.goto(`/${account.workspaceId}/marketplace`)
 
-			// Wait for the Loops section (bundle-card container) to render.
+			// Anchor first on the visible "Loops" heading — the region role
+			// derives from the same <section aria-label="Loops">, but the header
+			// text paints as soon as the section commits so it's the earliest
+			// signal that bundle rendering has started. At 375 the loops sit
+			// below the fold; use .scrollIntoViewIfNeeded so the a11y locator
+			// can resolve without racing hydration timing on the mobile shell.
+			const loopsHeading = page.getByRole('heading', { name: 'Loops' })
+			await expect(loopsHeading).toBeVisible({ timeout: 30000 })
+			await loopsHeading.scrollIntoViewIfNeeded()
 			const loopsSection = page.getByRole('region', { name: 'Loops' })
 			await expect(loopsSection).toBeVisible({ timeout: 20000 })
 
