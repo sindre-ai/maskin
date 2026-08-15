@@ -209,7 +209,7 @@ export const tools = {
 							.string()
 							.optional()
 							.describe(
-								"Status for the new object. Omit unless the user explicitly asked for a specific status — when omitted, the object is created at the lowest (first) status configured for its type in this workspace (e.g. bet → signal, insight → new). Statuses are earned through the workspace's promotion flow, not drafted at creation.",
+								"Object status. Bets are always created at `signal` — the founders' go/no-go gate — regardless of what is sent here; the server ignores this field for `bet` nodes and it can be omitted. Required for every other type.",
 							),
 						metadata: z
 							.record(z.unknown())
