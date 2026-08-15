@@ -68,13 +68,22 @@ const listLoopPromotionsRoute = createRoute({
 			description: 'Missing workspace ID',
 			content: { 'application/json': { schema: errorSchema } },
 		},
+		404: {
+			description: 'Workspace not found or actor is not a member',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 	},
 })
 
 app.openapi(listLoopPromotionsRoute, (async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const { loop_id, status, limit, offset } = c.req.valid('query')
+
+	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
 
 	const conditions = [eq(loopPromotionProposals.workspaceId, workspaceId)]
 	if (loop_id) conditions.push(eq(loopPromotionProposals.loopId, loop_id))
