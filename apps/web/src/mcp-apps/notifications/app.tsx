@@ -109,7 +109,7 @@ function NotificationListView({ notifications }: { notifications: NotificationRe
 	)
 }
 
-function NotificationRow({
+export function NotificationRow({
 	notification,
 	onUpdate,
 	onRemove,
@@ -245,7 +245,7 @@ function NotificationRow({
 	)
 }
 
-function NotificationDetailView({ notification }: { notification: NotificationResponse }) {
+export function NotificationDetailView({ notification }: { notification: NotificationResponse }) {
 	const callTool = useCallTool()
 	const [local, setLocal] = useState(notification)
 	const [busy, setBusy] = useState(false)
