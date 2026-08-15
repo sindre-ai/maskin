@@ -16,6 +16,11 @@ vi.mock('@/mcp-apps/shared/mcp-app-provider', () => ({
 	useWebAppContext: () => null,
 }))
 
+vi.mock('@/mcp-apps/shared/web-app-link', () => ({
+	WebAppLink: ({ label }: { label: string }) => <a href="#mock">{label}</a>,
+	useWebAppHref: () => 'https://mock-app/object',
+}))
+
 function buildNotification(overrides: Partial<NotificationResponse> = {}): NotificationResponse {
 	return {
 		id: 'n-1',
@@ -142,5 +147,29 @@ describe('NotificationDetailView — optimistic-update rollback', () => {
 			expect(screen.getByText('resolved')).toBeInTheDocument()
 		})
 		expect(screen.getByText(/Marked resolved/i)).toBeInTheDocument()
+	})
+})
+
+describe('NotificationRow — objectId-null link visibility', () => {
+	it('hides the Open link when objectId is null', () => {
+		render(<RowHarness initial={buildNotification({ objectId: null })} />)
+		expect(screen.queryByRole('link', { name: /^open$/i })).toBeNull()
+	})
+
+	it('shows the Open link when objectId is set', () => {
+		render(<RowHarness initial={buildNotification({ objectId: 'obj-1' })} />)
+		expect(screen.getByRole('link', { name: /^open$/i })).toBeInTheDocument()
+	})
+})
+
+describe('NotificationDetailView — objectId-null link visibility', () => {
+	it('hides the Open object link when objectId is null', () => {
+		render(<NotificationDetailView notification={buildNotification({ objectId: null })} />)
+		expect(screen.queryByRole('link', { name: /open object/i })).toBeNull()
+	})
+
+	it('shows the Open object link when objectId is set', () => {
+		render(<NotificationDetailView notification={buildNotification({ objectId: 'obj-1' })} />)
+		expect(screen.getByRole('link', { name: /open object/i })).toBeInTheDocument()
 	})
 })
