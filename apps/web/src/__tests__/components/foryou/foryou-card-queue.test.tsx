@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { NotificationResponse } from '@/lib/api'
@@ -10,6 +10,16 @@ vi.mock('@tanstack/react-router', async () => {
 
 const bulkRespondMutate = vi.fn()
 const singleRespondMutate = vi.fn()
+const trackForyouCardActionMock = vi.fn()
+
+vi.mock('@/lib/analytics', async () => {
+	const actual = await vi.importActual<typeof import('@/lib/analytics')>('@/lib/analytics')
+	return {
+		...actual,
+		trackForyouCardAction: (...args: Parameters<typeof actual.trackForyouCardAction>) =>
+			trackForyouCardActionMock(...args),
+	}
+})
 
 vi.mock('@/hooks/use-notifications', () => ({
 	useBulkRespondNotifications: () => ({ mutate: bulkRespondMutate, isPending: false }),
@@ -302,5 +312,114 @@ describe('ForYouCardQueue', () => {
 			{ id: 'solo', response: 'approve' },
 			expect.any(Object),
 		)
+	})
+
+	it('emits foryou_card_action on single Approve/Decline clicks with schema_valid derived from the payload', () => {
+		const notification = buildNotification({
+			id: 'solo-analytics',
+			objectId: 'obj-solo',
+			title: 'Ship the update?',
+			metadata: {
+				asked: 'Ship the update to production?',
+				found: 'One reviewer approved; CI is green; the change is scoped to the analytics helper.',
+				recommendation: 'Approve — the change is low-risk and unblocks the ship metric.',
+				options: [
+					{ label: 'Approve', value: 'approve', default: true },
+					{ label: 'Decline', value: 'decline' },
+				],
+			},
+		})
+
+		render(<ForYouCardQueue workspaceId="ws-1" notifications={[notification]} />)
+
+		const [approve, decline] = screen.getAllByTestId('foryou-single-option')
+		fireEvent.click(approve)
+		fireEvent.click(decline)
+
+		expect(trackForyouCardActionMock).toHaveBeenNthCalledWith(1, {
+			card_kind: 'decision',
+			card_id: 'solo-analytics',
+			action_id: 'approve',
+			schema_valid: true,
+		})
+		expect(trackForyouCardActionMock).toHaveBeenNthCalledWith(2, {
+			card_kind: 'decision',
+			card_id: 'solo-analytics',
+			action_id: 'decline',
+			schema_valid: true,
+		})
+	})
+
+	it('emits foryou_card_action=bulk_approve on the bulk-approve button, with schema_valid=false when the payload is bare', () => {
+		const objectId = 'obj-bulk-analytics'
+		const items = [
+			buildNotification({
+				id: 'batch-analytics-1',
+				objectId,
+				title: 'A',
+				metadata: {
+					options: [{ label: 'Send', value: 'send' }],
+					recommendation: 'send-it',
+				},
+			}),
+			buildNotification({
+				id: 'batch-analytics-2',
+				objectId,
+				title: 'B',
+				metadata: {
+					options: [{ label: 'Send', value: 'send' }],
+					recommendation: 'send-it',
+				},
+			}),
+		]
+
+		render(<ForYouCardQueue workspaceId="ws-1" notifications={items} />)
+		fireEvent.click(screen.getByTestId('foryou-bulk-approve'))
+
+		expect(trackForyouCardActionMock).toHaveBeenCalledTimes(1)
+		expect(trackForyouCardActionMock).toHaveBeenCalledWith({
+			card_kind: 'decision',
+			card_id: 'batch-analytics-1',
+			action_id: 'bulk_approve',
+			schema_valid: false,
+		})
+	})
+
+	it('emits foryou_card_action when an artifact renderer commits its primary option after the reverse window', () => {
+		vi.useFakeTimers()
+		try {
+			const mail = buildNotification({
+				id: 'mail-analytics',
+				objectId: 'obj-mail-analytics',
+				title: 'Approve outbound reply',
+				metadata: {
+					artifacts: [
+						{ kind: 'mail', fileId: '11111111-1111-4111-8111-111111111111', title: 'reply.eml' },
+					],
+					options: [{ label: 'Send', value: 'send', default: true }],
+				},
+			})
+
+			const { container } = render(<ForYouCardQueue workspaceId="ws-1" notifications={[mail]} />)
+
+			const send = container.querySelector('[data-action-id="send"]')
+			expect(send).not.toBeNull()
+			fireEvent.click(send as HTMLElement)
+
+			// Renderer holds the commit for the 6s reverse window before calling
+			// onRespond → analytics — advance past the window to trip the timer.
+			act(() => {
+				vi.advanceTimersByTime(6000)
+			})
+
+			expect(trackForyouCardActionMock).toHaveBeenCalledWith({
+				card_kind: 'decision',
+				card_id: 'mail-analytics',
+				action_id: 'send',
+				schema_valid: false,
+			})
+		} finally {
+			vi.useRealTimers()
+		}
 	})
 })

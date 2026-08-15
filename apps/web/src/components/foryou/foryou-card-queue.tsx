@@ -2,6 +2,7 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { Button } from '@/components/ui/button'
 import { useBulkRespondNotifications, useRespondNotification } from '@/hooks/use-notifications'
+import { trackForyouCardAction } from '@/lib/analytics'
 import type { NotificationResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import {
@@ -11,9 +12,10 @@ import {
 	bulkResponseFor,
 	groupNotifications,
 } from '@/lib/foryou-buckets'
+import { isValidRequestDecisionMetadata } from '@maskin/shared'
 import { Link } from '@tanstack/react-router'
 import { CheckIcon, ChevronDown } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { ArtifactDecisionCard, readArtifactKind } from './artifact-decision-card'
 
@@ -120,6 +122,37 @@ function GroupCard({ workspaceId, group }: GroupCardProps) {
 	const recommendation =
 		typeof metadata.recommendation === 'string' ? metadata.recommendation : null
 
+	// Ship metric denominator side (`foryou_card_shown`) lives on the impression
+	// task; this file owns the numerator (`foryou_card_action`). Both must carry
+	// the same `card_kind`, `card_id`, and `schema_valid` shape or the ratio the
+	// bet's `posthog_query` reads goes wrong.
+	const schemaValid = isValidRequestDecisionMetadata(primary.metadata)
+	const emitAction = useCallback(
+		(actionId: string) => {
+			trackForyouCardAction({
+				card_kind: 'decision',
+				card_id: primary.id,
+				action_id: actionId,
+				schema_valid: schemaValid,
+			})
+		},
+		[primary.id, schemaValid],
+	)
+
+	const handleSingleRespond = useCallback(
+		(response: unknown) => {
+			emitAction(typeof response === 'string' ? response : 'respond')
+			singleRespond.mutate(
+				{ id: primary.id, response },
+				{
+					onSuccess: () => toast.success('Responded'),
+					onError: () => toast.error('Respond failed — try again.'),
+				},
+			)
+		},
+		[emitAction, singleRespond, primary.id],
+	)
+
 	// Single-item groups whose notification carries a known artifact kind get
 	// the matching dedicated renderer. Multi-item groups fall through so
 	// bulk-approve keeps working across the batch.
@@ -135,15 +168,7 @@ function GroupCard({ workspaceId, group }: GroupCardProps) {
 					workspaceId={workspaceId}
 					kind={artifactKind}
 					notification={primary}
-					onRespond={(response) =>
-						singleRespond.mutate(
-							{ id: primary.id, response },
-							{
-								onSuccess: () => toast.success('Responded'),
-								onError: () => toast.error('Respond failed — try again.'),
-							},
-						)
-					}
+					onRespond={handleSingleRespond}
 				/>
 			</div>
 		)
@@ -155,6 +180,7 @@ function GroupCard({ workspaceId, group }: GroupCardProps) {
 			toast.error('This group has no recommended action to apply.')
 			return
 		}
+		emitAction('bulk_approve')
 		const ids = group.items.map((item) => item.id)
 		bulkRespond.mutate(
 			{ ids, response: payload.response },
@@ -162,16 +188,6 @@ function GroupCard({ workspaceId, group }: GroupCardProps) {
 				onSuccess: (updated) =>
 					toast.success(`Approved ${updated.length} ${updated.length === 1 ? 'item' : 'items'}`),
 				onError: () => toast.error('Bulk approve failed — try again.'),
-			},
-		)
-	}
-
-	const handleSingleRespond = (response: unknown) => {
-		singleRespond.mutate(
-			{ id: primary.id, response },
-			{
-				onSuccess: () => toast.success('Responded'),
-				onError: () => toast.error('Respond failed — try again.'),
 			},
 		)
 	}
