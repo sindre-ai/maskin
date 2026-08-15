@@ -6,6 +6,7 @@ import { createRoot } from 'react-dom/client'
 import './app.css'
 import { restoreSession } from './lib/auth'
 import { initBackNavTracker } from './lib/back-nav-tracker'
+import { initIosPushNotifications } from './lib/ios-push'
 import { initIosDeepLink } from './lib/ios-shell'
 import { consumeMagicLink } from './lib/magic-link'
 import { initPosthog } from './lib/posthog'
@@ -20,6 +21,8 @@ consumeMagicLink()
 // In the Tauri iOS shell, also register the maskin:// deep link so a magic-link
 // fragment delivered by the OS completes login. No-op in a plain browser.
 initIosDeepLink()
+// APNs registration on the iOS shell — no-op in a plain browser.
+void initIosPushNotifications()
 initPosthog()
 // Attach the popstate listener at app boot, before any route module loads —
 // otherwise a deep-link start (e.g. `/objects/{id}` from a Slack link) followed
