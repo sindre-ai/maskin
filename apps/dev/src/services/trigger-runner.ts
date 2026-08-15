@@ -11,6 +11,18 @@ import type { SessionManager } from './session-manager'
 const SCOPE_MATCH_LIMIT = 100
 
 /**
+ * Loop lifecycle statuses that suppress trigger firing. A trigger owned by a
+ * loop in any of these statuses produces no `trigger_fired` event and no
+ * session — the loop is either not yet approved to run (`draft`), explicitly
+ * paused, or archived. Triggers not owned by a loop are unaffected.
+ *
+ * `pilot` / `supervised` / `live` (the running rungs, per
+ * `packages/shared/src/schemas/loop-lifecycle.ts`) still fire; supervised
+ * loops gate their OUTPUT via the approval queue (T7), not their firing.
+ */
+const LOOP_STATUSES_BLOCKING_FIRE = new Set(['draft', 'paused', 'archived'])
+
+/**
  * Guards the objects-table hydration lookup: `objects.id` is a uuid column, so
  * probing it with a non-UUID entity id (e.g. a slack channel key) would raise
  * a Postgres "invalid input syntax for type uuid" error instead of just
@@ -177,6 +189,48 @@ export class TriggerRunner {
 		}
 	}
 
+	/**
+	 * Resolve the firing status of the loop that owns this trigger, if any.
+	 * A trigger's parent loop is the `type='loop'` object in the same workspace
+	 * whose `metadata.trigger_ids` array contains the trigger id — the same
+	 * source-of-truth membership used by `GET /api/loops`. Returns:
+	 *   - `null` when the trigger isn't owned by a loop (fire as normal).
+	 *   - the loop's status string otherwise, so the caller can gate on the
+	 *     `LOOP_STATUSES_BLOCKING_FIRE` set.
+	 * Restricted to the trigger's own workspace; a leaked id can't pull a loop
+	 * from another workspace.
+	 */
+	private async getParentLoopStatus(
+		workspaceId: string,
+		triggerId: string,
+	): Promise<string | null> {
+		const [row] = await this.db
+			.select({ status: objects.status })
+			.from(objects)
+			.where(
+				and(
+					eq(objects.workspaceId, workspaceId),
+					eq(objects.type, 'loop'),
+					sql`${objects.metadata}->'trigger_ids' @> ${JSON.stringify(triggerId)}::jsonb`,
+				),
+			)
+			.limit(1)
+		return row?.status ?? null
+	}
+
+	private async isLoopFireSuppressed(
+		workspaceId: string,
+		trigger: { id: string; name: string },
+	): Promise<boolean> {
+		const loopStatus = await this.getParentLoopStatus(workspaceId, trigger.id)
+		if (loopStatus === null) return false
+		if (!LOOP_STATUSES_BLOCKING_FIRE.has(loopStatus)) return false
+		logger.info(
+			`Trigger '${trigger.name}' suppressed — parent loop is '${loopStatus}' (workspace ${workspaceId})`,
+		)
+		return true
+	}
+
 	private async fetchEventData(eventId: string): Promise<Record<string, unknown> | null> {
 		const [row] = await this.db
 			.select({ data: events.data })
@@ -315,6 +369,11 @@ export class TriggerRunner {
 				)
 				continue
 			}
+
+			// Suppress firing when the parent loop is not in a running state.
+			// Mirrors the zero-scope-matches early-return in fireCronTrigger:
+			// no trigger_fired event, no session, no side effects.
+			if (await this.isLoopFireSuppressed(event.workspace_id, trigger)) continue
 
 			// Run the agent
 			logger.info(
@@ -461,6 +520,8 @@ export class TriggerRunner {
 			return
 		}
 
+		if (await this.isLoopFireSuppressed(trigger.workspaceId, trigger)) return
+
 		const config = (trigger.config as Record<string, unknown>) ?? {}
 		const scope = parseCronScope(config.scope)
 
@@ -535,38 +596,45 @@ export class TriggerRunner {
 		const delay = Math.max(0, scheduledAt.getTime() - Date.now())
 
 		const timeout = setTimeout(async () => {
-			logger.info(`Reminder trigger '${trigger.name}' firing`)
+			// Reminder triggers auto-disable after firing regardless of loop
+			// gate: the reminder has consumed its one scheduled slot either
+			// way — leaving `enabled=true` would keep it "queued" forever
+			// past its scheduled_at without ever firing.
+			try {
+				if (await this.isLoopFireSuppressed(trigger.workspaceId, trigger)) return
 
-			await this.db.insert(events).values({
-				workspaceId: trigger.workspaceId,
-				actorId: trigger.targetActorId,
-				action: 'trigger_fired',
-				entityType: 'trigger',
-				entityId: trigger.id,
-				data: {
-					trigger_name: trigger.name,
-					prompt: trigger.actionPrompt,
-					target_actor_id: trigger.targetActorId,
-					scheduled_at: config.scheduled_at,
-				},
-			})
+				logger.info(`Reminder trigger '${trigger.name}' firing`)
 
-			this.sessionManager
-				.createSession(trigger.workspaceId, {
+				await this.db.insert(events).values({
+					workspaceId: trigger.workspaceId,
 					actorId: trigger.targetActorId,
-					actionPrompt: trigger.actionPrompt,
-					triggerId: trigger.id,
-					createdBy: trigger.createdBy,
+					action: 'trigger_fired',
+					entityType: 'trigger',
+					entityId: trigger.id,
+					data: {
+						trigger_name: trigger.name,
+						prompt: trigger.actionPrompt,
+						target_actor_id: trigger.targetActorId,
+						scheduled_at: config.scheduled_at,
+					},
 				})
-				.catch((err) => logger.error('Container session creation failed', { error: String(err) }))
 
-			// Auto-disable after firing
-			await this.db
-				.update(triggers)
-				.set({ enabled: false, updatedAt: new Date() })
-				.where(eq(triggers.id, trigger.id))
+				this.sessionManager
+					.createSession(trigger.workspaceId, {
+						actorId: trigger.targetActorId,
+						actionPrompt: trigger.actionPrompt,
+						triggerId: trigger.id,
+						createdBy: trigger.createdBy,
+					})
+					.catch((err) => logger.error('Container session creation failed', { error: String(err) }))
+			} finally {
+				await this.db
+					.update(triggers)
+					.set({ enabled: false, updatedAt: new Date() })
+					.where(eq(triggers.id, trigger.id))
 
-			this.reminderTimeouts.delete(trigger.id)
+				this.reminderTimeouts.delete(trigger.id)
+			}
 		}, delay)
 
 		this.reminderTimeouts.set(trigger.id, timeout)

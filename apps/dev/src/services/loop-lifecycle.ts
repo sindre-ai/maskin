@@ -165,8 +165,7 @@ export async function evaluateAfterRun(
 		// violation) is on `.cause.code` for the outer DrizzleError and on
 		// `.code` when the driver throws directly. Check both.
 		const code =
-			(err as { code?: string }).code ??
-			((err as { cause?: { code?: string } }).cause?.code)
+			(err as { code?: string }).code ?? (err as { cause?: { code?: string } }).cause?.code
 		if (code === '23505') {
 			const [existing] = await db
 				.select({ id: loopPromotionProposals.id })
