@@ -23,7 +23,7 @@ export function ResumeBand({
 	return (
 		<section
 			aria-label="Picking up where you left off"
-			className="rounded-lg border border-primary/20 bg-primary/5 p-3"
+			className="rounded-lg border border-primary-tint-border bg-primary-tint-2 p-3"
 		>
 			<header className="flex items-center gap-2">
 				<span

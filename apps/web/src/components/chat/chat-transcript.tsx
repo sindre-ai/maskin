@@ -16,6 +16,10 @@ interface ChatTranscriptProps {
 	starting: boolean
 	error: Error | null
 	className?: string
+	/** Short badge to render above every assistant message body, e.g. "DEFAULT"
+	 * for the Chief-of-Staff conversation. Uses the cos palette; matches the
+	 * mockup's `.role-mini` pill. Leave null/undefined on non-CoS threads. */
+	authorLabel?: string | null
 }
 
 /**
@@ -34,6 +38,7 @@ export function ChatTranscript({
 	starting,
 	error,
 	className,
+	authorLabel,
 }: ChatTranscriptProps) {
 	const scrollerRef = useRef<HTMLDivElement | null>(null)
 
@@ -53,7 +58,12 @@ export function ChatTranscript({
 			) : (
 				<div className="flex flex-col gap-3">
 					{events.map((event, index) => (
-						<TranscriptRow key={`${event.kind}-${index}`} event={event} workspaceId={workspaceId} />
+						<TranscriptRow
+							key={`${event.kind}-${index}`}
+							event={event}
+							workspaceId={workspaceId}
+							authorLabel={authorLabel}
+						/>
 					))}
 					{asks && asks.length > 0
 						? asks.map((ask) => <AskBlock key={ask.id} workspaceId={workspaceId} ask={ask} />)
@@ -89,7 +99,15 @@ function TranscriptError({ error }: { error: Error }) {
 	)
 }
 
-function TranscriptRow({ event, workspaceId }: { event: ChatEvent; workspaceId: string }) {
+function TranscriptRow({
+	event,
+	workspaceId,
+	authorLabel,
+}: {
+	event: ChatEvent
+	workspaceId: string
+	authorLabel?: string | null
+}) {
 	switch (event.kind) {
 		case 'user':
 			return (
@@ -105,6 +123,7 @@ function TranscriptRow({ event, workspaceId }: { event: ChatEvent; workspaceId: 
 					text={event.text}
 					attachments={event.attachments}
 					workspaceId={workspaceId}
+					authorLabel={authorLabel}
 				/>
 			)
 		case 'thinking':
@@ -197,10 +216,12 @@ function AssistantTextBlock({
 	text,
 	attachments,
 	workspaceId,
+	authorLabel,
 }: {
 	text: string
 	attachments?: UserAttachmentView[]
 	workspaceId: string
+	authorLabel?: string | null
 }) {
 	const objectRefs = attachments?.filter(
 		(a): a is Extract<UserAttachmentView, { kind: 'object' }> => a.kind === 'object',
@@ -212,6 +233,11 @@ function AssistantTextBlock({
 
 	return (
 		<div className="flex max-w-[85%] flex-col items-start gap-1.5">
+			{authorLabel ? (
+				<span className="inline-flex items-center rounded border border-cos-tint-border bg-cos-tint px-1.5 py-px font-mono text-[9px] font-bold uppercase tracking-[0.09em] text-cos">
+					{authorLabel}
+				</span>
+			) : null}
 			{attachments && attachments.length > 0 ? <MicroLabel>Referenced</MicroLabel> : null}
 			{fileRefs && fileRefs.length > 0 ? (
 				<ul className="flex w-full flex-col gap-1" aria-label="Referenced files">

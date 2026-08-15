@@ -110,6 +110,7 @@ export function ConversationHeader({
 						type="agent"
 						id={chiefOfStaff.id}
 						size="md"
+						variant="cos"
 						className="flex-none"
 					/>
 					<div className="min-w-0 flex-1">
@@ -135,8 +136,15 @@ export function ConversationHeader({
 }
 
 function LoopChip({ name }: { name: string }) {
+	// Visible chip stays compact (22px, per the mockup); the ::after pseudo
+	// expands the touch region to 44×44 without changing the layout box.
 	return (
-		<span className="inline-flex min-h-[44px] items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] font-medium text-text-secondary">
+		<span
+			className={cn(
+				'relative inline-flex h-[22px] items-center gap-1 rounded-md border border-border px-2 text-[11px] font-medium text-text-secondary',
+				'after:absolute after:left-1/2 after:top-1/2 after:min-h-11 after:min-w-11 after:-translate-x-1/2 after:-translate-y-1/2 after:content-[""]',
+			)}
+		>
 			<Repeat size={11} aria-hidden className="text-success" />
 			{name}
 		</span>

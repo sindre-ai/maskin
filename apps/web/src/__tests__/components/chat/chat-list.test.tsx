@@ -85,6 +85,32 @@ describe('ChatList', () => {
 		expect(onSelectSession).toHaveBeenCalledTimes(1)
 	})
 
+	it('renders the DEFAULT · ALWAYS HERE badge on the pinned CoS row only', () => {
+		renderList({
+			sessions: [
+				buildSessionResponse({
+					id: 'cos-thread',
+					actorId: 'cos',
+					actionPrompt: 'Chief of Staff',
+					createdAt: new Date().toISOString(),
+					updatedAt: new Date().toISOString(),
+				}),
+				buildSessionResponse({
+					id: 'other',
+					actorId: 'specialist',
+					actionPrompt: 'Q3 retention',
+					createdAt: new Date().toISOString(),
+					updatedAt: new Date().toISOString(),
+				}),
+			],
+			defaultAgent: { id: 'cos', name: 'Chief of Staff' },
+		})
+		const pinned = screen.getByRole('region', { name: /pinned · your default agent/i })
+		expect(within(pinned).getByText(/default · always here/i)).toBeInTheDocument()
+		const today = screen.getByRole('region', { name: 'Today' })
+		expect(within(today).queryByText(/default · always here/i)).not.toBeInTheDocument()
+	})
+
 	it('pins the default agent session above the recency groups', () => {
 		renderList({
 			sessions: [

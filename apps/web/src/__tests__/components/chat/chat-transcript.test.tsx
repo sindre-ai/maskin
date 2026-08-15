@@ -196,6 +196,30 @@ describe('ChatTranscript', () => {
 		expect(screen.getByRole('link', { name: /Ship Chats/i })).toBeInTheDocument()
 	})
 
+	it('renders the DEFAULT role-mini pill above assistant text when authorLabel is set', () => {
+		const events: ChatEvent[] = [{ kind: 'text', text: 'On it — pulling in Product Analyst.' }]
+		render(
+			<ChatTranscript
+				workspaceId="ws-1"
+				events={events}
+				starting={false}
+				error={null}
+				authorLabel="DEFAULT"
+			/>,
+		)
+		const pill = screen.getByText('DEFAULT')
+		expect(pill).toBeInTheDocument()
+		// Uses the cos palette tokens from chats-cos-explicit.html
+		expect(pill.className).toContain('text-cos')
+		expect(pill.className).toContain('bg-cos-tint')
+	})
+
+	it('does not render the role-mini pill when authorLabel is null', () => {
+		const events: ChatEvent[] = [{ kind: 'text', text: 'Just a plain reply.' }]
+		render(<ChatTranscript workspaceId="ws-1" events={events} starting={false} error={null} />)
+		expect(screen.queryByText('DEFAULT')).not.toBeInTheDocument()
+	})
+
 	it('renders open asks as tappable option rows at the end of the transcript', () => {
 		const events: ChatEvent[] = [{ kind: 'text', text: 'Checking your options.' }]
 		render(

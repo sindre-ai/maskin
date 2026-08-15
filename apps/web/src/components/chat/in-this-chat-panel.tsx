@@ -189,7 +189,13 @@ function ParticipantRow({
 					'border border-[color:var(--color-cos-tint-border)] bg-[color:var(--color-cos-tint)]',
 			)}
 		>
-			<ActorAvatar name={participant.name} type={participant.type} id={participant.id} size="sm" />
+			<ActorAvatar
+				name={participant.name}
+				type={participant.type}
+				id={participant.id}
+				size="sm"
+				variant={participant.locked ? 'cos' : 'default'}
+			/>
 			<div className="min-w-0 flex-1">
 				<div className="flex items-center gap-1.5 text-sm font-medium text-foreground">
 					<span className="min-w-0 truncate">{participant.name}</span>

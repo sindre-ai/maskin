@@ -97,6 +97,7 @@ export function ChatList({
 								session={session}
 								actor={session.actorId ? actorById.get(session.actorId) : undefined}
 								unread={unreadSessionIds.has(session.id)}
+								pinnedDefault
 								onSelect={() => onSelectSession(session)}
 							/>
 						))}
@@ -140,6 +141,7 @@ export function ChatRow({
 	actor,
 	unread,
 	handedOffLabel,
+	pinnedDefault = false,
 	onSelect,
 }: {
 	session: SessionResponse
@@ -147,6 +149,9 @@ export function ChatRow({
 	unread: boolean
 	/** Purple lead-in on the snippet — set when the default agent routed this thread. */
 	handedOffLabel?: string | null
+	/** When true, the row renders the DEFAULT · ALWAYS HERE badge and the CoS
+	 * gradient avatar — the pinned pattern from chats-cos-explicit.html. */
+	pinnedDefault?: boolean
 	onSelect: () => void
 }) {
 	const snippet = getChatRowSnippet(session)
@@ -163,6 +168,7 @@ export function ChatRow({
 				id={actor?.id}
 				size="md"
 				className="mt-0.5 shrink-0"
+				variant={pinnedDefault ? 'cos' : 'default'}
 			/>
 			<div className="flex min-w-0 flex-1 flex-col gap-0.5">
 				<div className="flex min-w-0 items-center gap-1.5">
@@ -194,6 +200,12 @@ export function ChatRow({
 						)}
 						{snippet}
 					</p>
+				)}
+				{pinnedDefault && (
+					<span className="mt-1 inline-flex w-fit items-center gap-1 rounded border border-cos-tint-border bg-cos-tint px-1.5 py-px font-mono text-[9px] font-bold uppercase tracking-[0.09em] text-cos">
+						<span aria-hidden className="h-1 w-1 rounded-full bg-cos" />
+						Default · Always here
+					</span>
 				)}
 			</div>
 			<span className="mt-0.5 shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
