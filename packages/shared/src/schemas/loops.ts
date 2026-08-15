@@ -57,6 +57,12 @@ export const loopSummarySchema = z.object({
 	 * currently linked to this loop? Reused from the same expression the
 	 * unread-feed uses in `subscriptions.ts`. */
 	waitingOnViewer: z.boolean(),
+	/** Count of `loop_output_approvals` rows in `status = 'pending'` for this
+	 * loop — the supervised-queue badge on the loop header (task 8). Always
+	 * present, `0` when no pending rows exist. Non-supervised loops never
+	 * enqueue via task 4's delivery gate so this stays 0 for them by
+	 * construction, without needing a status-dependent branch here. */
+	pendingApprovalCount: z.number().int().nonnegative(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
 })

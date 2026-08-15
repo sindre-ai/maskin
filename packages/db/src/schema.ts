@@ -937,3 +937,52 @@ export const sessionDispatchAttempts = pgTable(
 
 export type SessionDispatchAttempt = typeof sessionDispatchAttempts.$inferSelect
 export type NewSessionDispatchAttempt = typeof sessionDispatchAttempts.$inferInsert
+
+// ── Loop Output Approvals ─────────────────────────────────────────────────
+//
+// Supervised-loop output queue (T7 of bet/loop-lifecycle-status-ladder). At
+// `objects.status = 'supervised'` the loop's delivery path enqueues one row
+// per output for human sign-off before delivery. `payload` is the blob the
+// caller wanted to hand off; `edited_payload` is populated when the human
+// edits before approving (a labelled correction routed back to
+// `driver_actor_id` as a training-signal event).
+//
+// The "when to enqueue" gate off `objects.status = 'supervised'` lives in
+// T4's delivery-path wiring, not here — the queue accepts any loop id and
+// trusts the caller to hold that invariant. See `apps/dev/src/routes/loop-approvals.ts`
+// and `apps/dev/src/routes/loops.ts` (pending-count aggregation on the
+// list-loops render shape) for the read/write surfaces built on this table.
+
+export const loopOutputApprovals = pgTable(
+	'loop_output_approvals',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		loopId: uuid('loop_id')
+			.notNull()
+			.references(() => objects.id, { onDelete: 'cascade' }),
+		sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'set null' }),
+		driverActorId: uuid('driver_actor_id').references(() => actors.id, { onDelete: 'set null' }),
+		status: text('status').notNull().default('pending'),
+		payload: jsonb('payload').notNull(),
+		editedPayload: jsonb('edited_payload'),
+		correctionNote: text('correction_note'),
+		decidedBy: uuid('decided_by').references(() => actors.id, { onDelete: 'set null' }),
+		decidedAt: timestamp('decided_at', { withTimezone: true }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		check(
+			'loop_output_approvals_status_check',
+			sql`${t.status} IN ('pending', 'approved', 'rejected')`,
+		),
+		index('loop_output_approvals_ws_loop_status_idx').on(t.workspaceId, t.loopId, t.status),
+		index('loop_output_approvals_ws_status_created_idx').on(t.workspaceId, t.status, t.createdAt),
+	],
+)
+
+export type LoopOutputApproval = typeof loopOutputApprovals.$inferSelect
+export type NewLoopOutputApproval = typeof loopOutputApprovals.$inferInsert

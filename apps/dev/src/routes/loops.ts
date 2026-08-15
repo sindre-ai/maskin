@@ -1,6 +1,14 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, objects, readState, relationships, sessions, triggers } from '@maskin/db/schema'
+import {
+	events,
+	loopOutputApprovals,
+	objects,
+	readState,
+	relationships,
+	sessions,
+	triggers,
+} from '@maskin/db/schema'
 import { TERMINAL_BET_STATUSES, listLoopsResponseSchema } from '@maskin/shared'
 import { and, desc, eq, inArray, or, sql } from 'drizzle-orm'
 import { validationFailureHook } from '../lib/errors'
@@ -307,6 +315,30 @@ app.openapi(listLoopsRoute, (async (c) => {
 		waitingByLoop.set(row.loop_id, waitingByLoop.get(row.loop_id) === true || row.waiting === true)
 	}
 
+	// Per-loop pending-approval count for the supervised queue badge (T7 of
+	// bet/loop-lifecycle-status-ladder). One indexed aggregate scan; loops
+	// with zero pending rows are omitted from the map and default to 0
+	// below. Filtered to workspaceId so a leaked loop id in metadata cannot
+	// pull counts from another workspace.
+	const pendingApprovalRows = await db
+		.select({
+			loopId: loopOutputApprovals.loopId,
+			count: sql<number>`COUNT(*)::int`,
+		})
+		.from(loopOutputApprovals)
+		.where(
+			and(
+				eq(loopOutputApprovals.workspaceId, workspaceId),
+				inArray(loopOutputApprovals.loopId, loopIds),
+				eq(loopOutputApprovals.status, 'pending'),
+			),
+		)
+		.groupBy(loopOutputApprovals.loopId)
+	const pendingApprovalByLoop = new Map<string, number>()
+	for (const row of pendingApprovalRows) {
+		pendingApprovalByLoop.set(row.loopId, Number(row.count) || 0)
+	}
+
 	const response = {
 		loops: loopRows.map((row) => {
 			const rawStatus = row.status
@@ -387,6 +419,7 @@ app.openapi(listLoopsRoute, (async (c) => {
 				agentIds,
 				triggerIds,
 				waitingOnViewer,
+				pendingApprovalCount: pendingApprovalByLoop.get(row.id) ?? 0,
 				createdAt: row.createdAt ? row.createdAt.toISOString() : null,
 				updatedAt: row.updatedAt ? row.updatedAt.toISOString() : null,
 			}

@@ -33,6 +33,7 @@ function buildLoop(overrides: Partial<LoopSummary> = {}): LoopSummary {
 		agentIds: [],
 		triggerIds: [],
 		waitingOnViewer: false,
+		pendingApprovalCount: 0,
 		createdAt: '2026-08-01T00:00:00.000Z',
 		updatedAt: '2026-08-04T00:00:00.000Z',
 		...overrides,
