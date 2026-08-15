@@ -25,10 +25,12 @@ import { and, eq } from 'drizzle-orm'
  *   - `breachGuardrail` — called from the run-error path on a single hard
  *     failure. Independent of score; always attempts to drop one rung.
  *
- * Both entry points read the loop's status + tuning knobs off `objects` and
- * `objects.metadata` (T2 and T3 will lift these to top-level columns, at
- * which point the two `readLoopState` reads switch fields without any
- * caller-visible change).
+ * Both entry points read the loop's status + tuning knobs from the first-
+ * class columns on `objects` (`performance_score`, `kill_threshold`,
+ * `promotion_mode`) that T3 promoted out of `objects.metadata`. The score
+ * itself is written by `apps/dev/src/services/loop-scoring.ts` on every
+ * run-completion callsite, so by the time this service reads it the number
+ * already reflects the just-finished run.
  *
  * Approve / reject / defer of the proposals this service emits is owned by
  * `apps/dev/src/routes/loop-promotions.ts` — this file writes them.
@@ -51,25 +53,34 @@ async function readLoopState(db: Database, loopId: string): Promise<LoopState | 
 			id: objects.id,
 			workspaceId: objects.workspaceId,
 			status: objects.status,
-			metadata: objects.metadata,
+			performanceScore: objects.performanceScore,
+			killThreshold: objects.killThreshold,
+			promotionMode: objects.promotionMode,
 			type: objects.type,
 		})
 		.from(objects)
 		.where(eq(objects.id, loopId))
 		.limit(1)
 	if (!row || row.type !== LOOP_TYPE) return null
-	const metadata = (row.metadata ?? {}) as Record<string, unknown>
-	const rawScore = metadata.performance_score
-	const rawKill = metadata.kill_threshold
-	const rawMode = metadata.promotion_mode
+	// numeric columns come back as strings from postgres-js — parse once here
+	// so downstream evaluate helpers can compare number-to-number.
+	const score = parseNumeric(row.performanceScore)
+	const killThreshold = parseNumeric(row.killThreshold)
 	return {
 		id: row.id,
 		workspaceId: row.workspaceId,
 		status: row.status as LoopLifecycleStatus,
-		score: typeof rawScore === 'number' ? rawScore : null,
-		killThreshold: typeof rawKill === 'number' ? rawKill : null,
-		promotionMode: rawMode === 'auto' ? 'auto' : 'human_approved',
+		score,
+		killThreshold,
+		promotionMode: row.promotionMode === 'auto' ? 'auto' : 'human_approved',
 	}
+}
+
+function parseNumeric(value: string | number | null): number | null {
+	if (value === null || value === undefined) return null
+	if (typeof value === 'number') return Number.isFinite(value) ? value : null
+	const n = Number(value)
+	return Number.isFinite(n) ? n : null
 }
 
 export type EvaluateAfterRunResult =
