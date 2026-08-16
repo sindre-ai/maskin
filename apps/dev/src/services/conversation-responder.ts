@@ -174,19 +174,24 @@ export async function evaluateAndRespond(ctx: {
 			const existing = await sessionManager.findActiveConversationSession(conversationId, agent.id)
 			if (existing) {
 				try {
-					await sessionManager.writeInput(existing.id, {
-						type: 'user',
-						message: {
-							role: 'user',
-							content: buildConversationTurnPrompt({
-								authorName: message.authorName,
-								authorType: message.authorType,
-								newMessageContent: messageForPrompt.content,
-								isDirectConversation,
-								wasMentioned,
-							}),
+					await sessionManager.writeInput(
+						existing.id,
+						{
+							type: 'user',
+							message: {
+								role: 'user',
+								content: buildConversationTurnPrompt({
+									authorName: message.authorName,
+									authorType: message.authorType,
+									newMessageContent: messageForPrompt.content,
+									isDirectConversation,
+									wasMentioned,
+								}),
+							},
 						},
-					})
+						undefined,
+						messageId,
+					)
 					return
 				} catch (err) {
 					logger.warn(
@@ -300,19 +305,24 @@ async function spawnOrJoinConversationSession(params: {
 		return
 	}
 	await sessionManager
-		.writeInput(winner.id, {
-			type: 'user',
-			message: {
-				role: 'user',
-				content: buildConversationTurnPrompt({
-					authorName: message.authorName,
-					authorType: message.authorType,
-					newMessageContent: message.content,
-					isDirectConversation,
-					wasMentioned,
-				}),
+		.writeInput(
+			winner.id,
+			{
+				type: 'user',
+				message: {
+					role: 'user',
+					content: buildConversationTurnPrompt({
+						authorName: message.authorName,
+						authorType: message.authorType,
+						newMessageContent: message.content,
+						isDirectConversation,
+						wasMentioned,
+					}),
+				},
 			},
-		})
+			undefined,
+			messageId,
+		)
 		.catch(async (err: unknown) => {
 			logger.warn('Failed to join winning conversation session after race', {
 				agentId,

@@ -741,6 +741,9 @@ describe('Conversations Integration', () => {
 			expect(sessionManager.writeInput).toHaveBeenCalledTimes(1)
 			expect(sessionManager.writeInput.mock.calls[0]?.[0]).toBe('existing-session-id')
 			expect(sessionManager.createSession).not.toHaveBeenCalled()
+			// The triggering message id is tagged onto the turn (4th arg) so the
+			// chat UI can anchor this turn's activity dropdown to this message.
+			expect(sessionManager.writeInput.mock.calls[0]?.[3]).toBe(triggering.id)
 		})
 
 		it('spawns a fresh interactive session with inlined history when none is running', async () => {
@@ -908,7 +911,12 @@ describe('Conversations Integration', () => {
 				messageId: triggering.id,
 			})
 
-			expect(sessionManager.writeInput).toHaveBeenCalledWith('winner-session-id', expect.anything())
+			expect(sessionManager.writeInput).toHaveBeenCalledWith(
+				'winner-session-id',
+				expect.anything(),
+				undefined,
+				triggering.id,
+			)
 			expect(sessionManager.markSessionFailedAfterContainerLoss).toHaveBeenCalledWith(
 				'winner-session-id',
 				workspaceId,

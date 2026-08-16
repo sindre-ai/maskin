@@ -2,11 +2,12 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { flattenMessagesOldestFirst, useConversationMessages } from '@/hooks/use-conversation'
+import { useConversationActivity } from '@/hooks/use-conversation-activity'
 import { cn } from '@/lib/cn'
 import { useEffect, useRef, useState } from 'react'
+import { MessageActivity } from './message-activity'
 import { MessageBubble } from './message-bubble'
 import { MessageDivider, isNewDay } from './message-divider'
-import { TypingIndicator } from './typing-indicator'
 
 interface ThreadMessagesProps {
 	workspaceId: string
@@ -18,6 +19,7 @@ export function ThreadMessages({ workspaceId, conversationId, className }: Threa
 	const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
 		useConversationMessages(conversationId, workspaceId)
 	const messages = flattenMessagesOldestFirst(data)
+	const { byMessageId, fallback } = useConversationActivity(workspaceId, conversationId)
 
 	const scrollerRef = useRef<HTMLDivElement | null>(null)
 	const bottomAnchorRef = useRef<HTMLDivElement | null>(null)
@@ -87,18 +89,21 @@ export function ThreadMessages({ workspaceId, conversationId, className }: Threa
 			<div className="flex flex-col gap-3">
 				{messages.map((message, index) => {
 					const prev = messages[index - 1]
+					const isLast = index === messages.length - 1
+					const turns = byMessageId.get(message.id) ?? []
+					const turnsHere = isLast ? [...turns, ...fallback] : turns
 					return (
-						<div key={message.id}>
+						<div key={message.id} className="flex flex-col gap-1">
 							{isNewDay(message.createdAt, prev?.createdAt ?? null) ? (
 								<MessageDivider date={message.createdAt} />
 							) : null}
 							<MessageBubble workspaceId={workspaceId} message={message} />
+							{turnsHere.map((turn) => (
+								<MessageActivity key={turn.sessionId} turn={turn} />
+							))}
 						</div>
 					)
 				})}
-			</div>
-			<div className="pt-2">
-				<TypingIndicator workspaceId={workspaceId} conversationId={conversationId} />
 			</div>
 			<div ref={bottomAnchorRef} />
 		</div>

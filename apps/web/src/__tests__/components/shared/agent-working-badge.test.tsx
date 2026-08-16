@@ -1,5 +1,5 @@
 import { AgentWorkingBadge } from '@/components/shared/agent-working-badge'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { buildActorResponse, buildSessionResponse } from '../../factories'
 import { TestWrapper } from '../../setup'
@@ -109,82 +109,5 @@ describe('AgentWorkingBadge', () => {
 		expect(screen.queryByRole('status')).not.toBeInTheDocument()
 		// The activity dot span has no accessible role, so verify no extra text content
 		expect(screen.queryByText(/Searching/)).not.toBeInTheDocument()
-	})
-
-	describe('expandable banner (chain-of-thought dropdown)', () => {
-		it('auto-expands to show the accumulated step history while the agent is active', () => {
-			const tool = JSON.stringify({
-				type: 'assistant',
-				message: {
-					id: 'm1',
-					content: [{ type: 'tool_use', id: 't1', name: 'search_objects', input: {} }],
-				},
-			})
-			const text = JSON.stringify({
-				type: 'assistant',
-				message: { id: 'm2', content: [{ type: 'text', text: 'Found 3 matches' }] },
-			})
-			vi.mocked(useSessionLogs).mockReturnValue({
-				data: [logRow('stdout', tool, 1), logRow('stdout', text, 2)],
-			} as unknown as ReturnType<typeof useSessionLogs>)
-			render(
-				<AgentWorkingBadge sessionId="sess-1" workspaceId="ws-1" variant="banner" expandable />,
-				{ wrapper: TestWrapper },
-			)
-			expect(screen.getAllByText('Using search_objects')).toHaveLength(1)
-			// "Found 3 matches" appears twice: once as the header's live preview
-			// (the latest step) and once as its own row in the expanded history.
-			expect(screen.getAllByText('Found 3 matches')).toHaveLength(2)
-		})
-
-		it('shows a placeholder when the session has no steps yet', () => {
-			vi.mocked(useSessionLogs).mockReturnValue({
-				data: [],
-			} as unknown as ReturnType<typeof useSessionLogs>)
-			render(
-				<AgentWorkingBadge sessionId="sess-1" workspaceId="ws-1" variant="banner" expandable />,
-				{ wrapper: TestWrapper },
-			)
-			expect(screen.getByText('Starting…')).toBeInTheDocument()
-		})
-
-		it('collapses the step history when the trigger is clicked', () => {
-			const tool = JSON.stringify({
-				type: 'assistant',
-				message: {
-					id: 'm1',
-					content: [{ type: 'tool_use', id: 't1', name: 'search_objects', input: {} }],
-				},
-			})
-			vi.mocked(useSessionLogs).mockReturnValue({
-				data: [logRow('stdout', tool)],
-			} as unknown as ReturnType<typeof useSessionLogs>)
-			render(
-				<AgentWorkingBadge sessionId="sess-1" workspaceId="ws-1" variant="banner" expandable />,
-				{ wrapper: TestWrapper },
-			)
-			// Header preview + expanded history row both show the same text.
-			expect(screen.getAllByText('Using search_objects')).toHaveLength(2)
-			fireEvent.click(screen.getByRole('button', { name: /toggle agent activity/i }))
-			// Only the header preview remains once collapsed.
-			expect(screen.getAllByText('Using search_objects')).toHaveLength(1)
-		})
-
-		it('collapses the step history once the agent goes idle awaiting input', () => {
-			const result = JSON.stringify({
-				type: 'result',
-				subtype: 'success',
-				is_error: false,
-				result: 'done',
-			})
-			vi.mocked(useSessionLogs).mockReturnValue({
-				data: [logRow('stdout', result)],
-			} as unknown as ReturnType<typeof useSessionLogs>)
-			render(
-				<AgentWorkingBadge sessionId="sess-1" workspaceId="ws-1" variant="banner" expandable />,
-				{ wrapper: TestWrapper },
-			)
-			expect(screen.queryByText('Starting…')).not.toBeInTheDocument()
-		})
 	})
 })

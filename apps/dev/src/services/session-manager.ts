@@ -612,6 +612,20 @@ export class SessionManager extends EventEmitter {
 				})
 				.where(eq(sessions.id, sessionId))
 
+			// Notify the frontend the session is actually running now — without
+			// this, useActiveSessionsForConversation (and other "agent is
+			// working" surfaces) never refetch past their last 'pending'-status
+			// snapshot from session_created, so the chat typing indicator never
+			// appears even though the agent is live.
+			await this.db.insert(events).values({
+				workspaceId: session.workspaceId,
+				actorId: session.actorId,
+				action: 'session_started',
+				entityType: 'session',
+				entityId: sessionId,
+				data: {},
+			})
+
 			logger.info(`Session started: ${sessionId}`, { containerId })
 
 			const sessionStartLatencyMs = session.createdAt
@@ -684,11 +698,19 @@ export class SessionManager extends EventEmitter {
 	 * unknown fields), but IS tacked onto the JSON envelope persisted in
 	 * `session_logs` so reload-from-history can render attached file cards on
 	 * the user turn without a second POST to `/files`.
+	 *
+	 * `conversationMessageId`, if provided, is the same kind of Maskin-only
+	 * side-channel tag (never sent to the CLI) — the `messages.id` of the chat
+	 * message that triggered this turn. It lets the frontend segment a single
+	 * long-running interactive session's accumulated logs back into per-message
+	 * chunks, so the chat UI can show a separate activity dropdown under each
+	 * message instead of one dropdown that mixes every turn of the conversation.
 	 */
 	async writeInput(
 		sessionId: string,
 		payload: StreamJsonUserMessage,
 		maskinAttachments?: unknown[],
+		conversationMessageId?: number,
 	): Promise<void> {
 		const [session] = await this.db
 			.select()
@@ -716,10 +738,13 @@ export class SessionManager extends EventEmitter {
 		// stdin as a stdout-stream log row so historical transcripts and the
 		// live SSE feed can render the user's turn alongside the agent's
 		// reply.
-		const persistedEnvelope =
-			maskinAttachments && maskinAttachments.length > 0
-				? { ...payload, maskin_attachments: maskinAttachments }
-				: payload
+		const persistedEnvelope = {
+			...payload,
+			...(maskinAttachments && maskinAttachments.length > 0
+				? { maskin_attachments: maskinAttachments }
+				: {}),
+			...(conversationMessageId !== undefined ? { maskin_message_id: conversationMessageId } : {}),
+		}
 		const [log] = await this.db
 			.insert(sessionLogs)
 			.values({
@@ -1046,6 +1071,17 @@ export class SessionManager extends EventEmitter {
 					updatedAt: new Date(),
 				})
 				.where(eq(sessions.id, sessionId))
+
+			// Same rationale as the fresh-start path above — without this the
+			// frontend never learns the resumed session is running again.
+			await this.db.insert(events).values({
+				workspaceId: session.workspaceId,
+				actorId: session.actorId,
+				action: 'session_resumed',
+				entityType: 'session',
+				entityId: sessionId,
+				data: {},
+			})
 
 			await this.insertSystemLog(sessionId, 'Session resumed from snapshot')
 
@@ -1829,10 +1865,18 @@ export class SessionManager extends EventEmitter {
 				// way — the conversation-responder uses it to inject full
 				// conversation history, since interactive sessions get no
 				// ACTION_PROMPT env var at all.
-				await this.writeInput(session.id, {
-					type: 'user',
-					message: { role: 'user', content: session.actionPrompt },
-				}).catch((err) => {
+				const seedTurnMessageId = (
+					session.config as { conversation?: { message_id?: number } } | null
+				)?.conversation?.message_id
+				await this.writeInput(
+					session.id,
+					{
+						type: 'user',
+						message: { role: 'user', content: session.actionPrompt },
+					},
+					undefined,
+					seedTurnMessageId,
+				).catch((err) => {
 					// Don't fail session startup over the seed turn — the session is
 					// still usable via a later /input call, just without its opening
 					// context. Surface loudly since a silently context-less chat
