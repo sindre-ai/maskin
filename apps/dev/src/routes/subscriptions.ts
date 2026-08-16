@@ -91,6 +91,12 @@ const unreadItemSchema = z.object({
 	// coach reply can be unread (non-zero unread_count) without mentioning the
 	// actor (mentioning_unread_count stays 0).
 	mentioning_unread_count: z.number(),
+	// Highest attention score (1-5) among this entity's unread comments — same
+	// join scope as unread_count (so an onboarding coach reply's score counts
+	// even without a mention). null when none of the unread comments carry an
+	// attention score — the Priority sort on For You treats that as the lowest
+	// tier, below any scored comment.
+	max_unread_attention: z.number().nullable(),
 	latest_event_id: z.number().nullable(),
 	latest_activity_at: z.string().nullable(),
 	object: objectResponseSchema.optional(),
@@ -368,12 +374,24 @@ app.openapi(listUnreadRoute, (async (c) => {
 	// True unread count regardless of whether recently-read events are joined.
 	const unreadCountExpr = sql<number>`coalesce(count(${events.id}) filter (where ${events.id} > ${lastReadExpr}), 0)::int`
 
+	// Highest attention score among this entity's *joined* unread comments, for
+	// the Priority sort on For You — same join scope as unread_count (mentioning
+	// comments, plus any onboarding_session coach reply regardless of mention;
+	// see the join predicate below), not the narrower mentioning_unread_count
+	// scope. Comments without an attention score don't contribute a value —
+	// max() over an all-null filtered set returns null, which the frontend
+	// sorts below any scored comment.
+	const maxUnreadAttentionExpr = sql<
+		number | null
+	>`max((${events.data}->>'attention')::int) filter (where ${events.id} > ${lastReadExpr})`
+
 	const rows = await db
 		.select({
 			entityType: subscriptions.entityType,
 			entityId: subscriptions.entityId,
 			unreadCount: unreadCountExpr,
 			mentioningUnreadCount: mentioningUnreadCountExpr,
+			maxUnreadAttention: maxUnreadAttentionExpr,
 			latestEventId: max(events.id),
 			latestActivityAt: max(events.createdAt),
 		})
@@ -443,6 +461,7 @@ app.openapi(listUnreadRoute, (async (c) => {
 			entity_id: r.entityId,
 			unread_count: Number(r.unreadCount),
 			mentioning_unread_count: Number(r.mentioningUnreadCount),
+			max_unread_attention: r.maxUnreadAttention == null ? null : Number(r.maxUnreadAttention),
 			latest_event_id: r.latestEventId,
 			latest_activity_at:
 				r.latestActivityAt instanceof Date ? r.latestActivityAt.toISOString() : r.latestActivityAt,
