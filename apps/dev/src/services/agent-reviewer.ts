@@ -92,10 +92,14 @@ const criterionSchema = z.object({
 	fix: z.string().default(''),
 })
 
-const verdictSchema = z.object({
-	criteria: z.array(criterionSchema).min(1),
-	overall: z.enum(['pass', 'fail']),
-})
+const verdictSchema = z
+	.object({
+		criteria: z.array(criterionSchema).min(1),
+		overall: z.enum(['pass', 'fail']),
+	})
+	.refine((v) => (v.overall === 'pass') === v.criteria.every((c) => c.pass), {
+		message: 'overall must be "pass" iff every criterion passes',
+	})
 
 export type ReviewerVerdict = z.infer<typeof verdictSchema>
 export type ReviewerCriterion = z.infer<typeof criterionSchema>

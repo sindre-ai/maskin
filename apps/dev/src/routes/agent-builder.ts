@@ -3,6 +3,7 @@ import type { Database } from '@maskin/db'
 import { z } from 'zod'
 import { createApiError, formatZodError } from '../lib/errors'
 import { logger } from '../lib/logger'
+import { isWorkspaceMember } from '../lib/workspace-auth'
 import {
 	AgentBuilderError,
 	AgentRefineError,
@@ -111,6 +112,10 @@ app.post('/create', async (c) => {
 	const actorId = c.get('actorId')
 	const agentStorage = c.get('agentStorage')
 
+	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
+
 	try {
 		const result = await runAgentBuilder(
 			{
@@ -141,6 +146,11 @@ app.post('/create', async (c) => {
 				gap_report_comment_posted: result.gapReportCommentPosted,
 				reviewer: {
 					final_overall: result.reviewerFinalOverall,
+					// True when the reviewer itself errored (LLM failure or unparseable
+					// verdict) rather than genuinely scoring the definition as failing —
+					// callers must not treat final_overall:'fail' + errored:true as a
+					// real review outcome; attempts will be empty in that case.
+					errored: result.reviewerErrored,
 					attempts: result.reviewerAttempts.map((a) => ({
 						cycle_number: a.cycleNumber,
 						overall: a.overall,
@@ -196,6 +206,10 @@ app.post('/review', async (c) => {
 
 	const db = c.get('db')
 	const actorId = c.get('actorId')
+
+	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
 
 	try {
 		const { verdict, reviewerSessionId, rubricId, targetActorId } = await reviewWork(db, {
@@ -263,6 +277,10 @@ app.post('/refine', async (c) => {
 	const actorId = c.get('actorId')
 	const agentStorage = c.get('agentStorage')
 
+	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
+
 	try {
 		const result = await refineAgent(
 			{ db, agentStorage, workspaceId, actorId },
@@ -279,9 +297,7 @@ app.post('/refine', async (c) => {
 	} catch (err) {
 		if (err instanceof AgentRefineError) {
 			const status =
-				err.reason === 'skill_not_found' || err.reason === 'actor_wrong_workspace'
-					? 404
-					: 400
+				err.reason === 'skill_not_found' || err.reason === 'actor_wrong_workspace' ? 404 : 400
 			return c.json(createApiError('VALIDATION_ERROR', err.message), status)
 		}
 		if (err instanceof AgentBuilderError) {

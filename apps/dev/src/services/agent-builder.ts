@@ -16,6 +16,7 @@ import { z } from 'zod'
 import { trackAgentCreated } from '../lib/analytics/agent-builder-events'
 import { logger } from '../lib/logger'
 import {
+	AgentReviewerError,
 	type ReviewerVerdict,
 	failingCriteriaNames,
 	getOrBootstrapCanonicalRubric,
@@ -281,6 +282,11 @@ export type RunAgentBuilderResult =
 			gapReportCommentPosted: boolean
 			reviewerAttempts: ReviewerAttemptRecord[]
 			reviewerFinalOverall: 'pass' | 'fail'
+			// True when the reviewer itself could not run (LLM error or unparseable
+			// verdict) rather than genuinely scoring the definition as failing —
+			// callers must not read reviewerFinalOverall:'fail' + reviewerErrored:true
+			// as "the persona failed review."
+			reviewerErrored: boolean
 	  }
 
 export class AgentBuilderError extends Error {
@@ -878,6 +884,7 @@ export async function runAgentBuilder(
 	let assembledSystemPrompt = ''
 	let revisionNotes: string[] | undefined
 	let reviewerFinalOverall: 'pass' | 'fail' = 'fail'
+	let reviewerErrored = false
 
 	for (let attempt = 0; attempt <= MAX_REVIEWER_REVISION_CYCLES; attempt++) {
 		const staged = await runStages3And4(intent, persona, revisionNotes)
@@ -895,13 +902,27 @@ export async function runAgentBuilder(
 			verdict = reviewed.verdict
 			reviewerSessionId = reviewed.reviewerSessionId
 		} catch (err) {
-			// Reviewer failure: log, proceed with the current attempt. Don't
-			// abort the builder — a broken reviewer must not sink the whole call.
-			logger.warn('agent-builder: reviewer errored, proceeding without verdict', {
+			// A missing reviewer API key is a configuration problem, not a
+			// transient one — more attempts or shipping unreviewed can't fix it,
+			// so abort loudly instead of silently producing an "unreviewed" agent.
+			if (err instanceof AgentReviewerError && err.reason === 'llm_no_api_key') {
+				throw new AgentBuilderError(
+					'llm_no_api_key',
+					'agent-builder: reviewer LLM key not configured',
+				)
+			}
+			// Transient reviewer failure (LLM HTTP error/exception, or an
+			// unparseable/self-inconsistent verdict): log at error level so it
+			// pages, don't fabricate a verdict or push a reviewerAttempts entry
+			// (nothing was actually scored), and surface reviewerErrored to the
+			// caller so a broken reviewer isn't misread as a failing review.
+			logger.error('agent-builder: reviewer errored, proceeding without a verdict', {
 				attempt: attempt + 1,
+				reason: err instanceof AgentReviewerError ? err.reason : 'unknown',
 				error: String(err),
 			})
 			reviewerFinalOverall = 'fail'
+			reviewerErrored = true
 			break
 		}
 
@@ -1033,6 +1054,7 @@ export async function runAgentBuilder(
 		gapReportCommentPosted,
 		reviewerAttempts,
 		reviewerFinalOverall,
+		reviewerErrored,
 	}
 }
 

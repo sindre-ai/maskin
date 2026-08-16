@@ -31,6 +31,11 @@ const RUBRIC_ID = '55555555-5555-5555-5555-555555555555'
 function createAgentBuilderTestApp() {
 	const app = new CreateOpenAPIHono()
 	const { db, mockResults } = createTestContext()
+	// Routes now check isWorkspaceMember(db, actorId, workspaceId) before
+	// dispatching (see the body-workspace_id auth-bypass fix) — the service
+	// functions below are mocked out entirely, so this membership row is the
+	// only thing the mock db.select() needs to serve for the happy paths.
+	mockResults.select = [{ actorId: 'caller-actor-id' }]
 	const agentStorage = createMockAgentStorage()
 	app.use('*', async (c, next) => {
 		c.set('db', db)
@@ -241,6 +246,25 @@ describe('POST /api/agent-builder/create', () => {
 		)
 		expect(res.status).toBe(500)
 	})
+
+	it('returns 404 and never dispatches the pipeline when the caller is not a member of the body-supplied workspace_id', async () => {
+		stubCreatedResult()
+		const { app, mockResults } = createAgentBuilderTestApp()
+		// No membership row for this actor/workspace pair — simulates a caller
+		// with a valid API key for a different workspace supplying an arbitrary
+		// workspace_id in the body instead of the (membership-checked) header.
+		mockResults.select = []
+
+		const res = await app.request(
+			jsonRequest('POST', `${BASE}/create`, {
+				prompt: 'help plan a B2B launch',
+				workspace_id: WORKSPACE_ID,
+			}),
+		)
+
+		expect(res.status).toBe(404)
+		expect(runAgentBuilder).not.toHaveBeenCalled()
+	})
 })
 
 describe('POST /api/agent-builder/review', () => {
@@ -350,6 +374,21 @@ describe('POST /api/agent-builder/review', () => {
 		)
 		expect(res.status).toBe(404)
 	})
+
+	it('returns 404 and never dispatches when the caller is not a member of the body-supplied workspace_id', async () => {
+		const { app, mockResults } = createAgentBuilderTestApp()
+		mockResults.select = []
+
+		const res = await app.request(
+			jsonRequest('POST', `${BASE}/review`, {
+				object_id: OBJECT_ID,
+				workspace_id: WORKSPACE_ID,
+			}),
+		)
+
+		expect(res.status).toBe(404)
+		expect(reviewWork).not.toHaveBeenCalled()
+	})
 })
 
 describe('POST /api/agent-builder/refine', () => {
@@ -423,5 +462,21 @@ describe('POST /api/agent-builder/refine', () => {
 			}),
 		)
 		expect(res.status).toBe(400)
+	})
+
+	it('returns 404 and never dispatches when the caller is not a member of the body-supplied workspace_id', async () => {
+		const { app, mockResults } = createAgentBuilderTestApp()
+		mockResults.select = []
+
+		const res = await app.request(
+			jsonRequest('POST', `${BASE}/refine`, {
+				actor_id: ACTOR_ID,
+				context: 'sharpen the bias statement',
+				workspace_id: WORKSPACE_ID,
+			}),
+		)
+
+		expect(res.status).toBe(404)
+		expect(refineAgent).not.toHaveBeenCalled()
 	})
 })

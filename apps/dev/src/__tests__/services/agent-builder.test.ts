@@ -683,7 +683,37 @@ describe('runAgentBuilder — fresh-context reviewer revision loop', () => {
 		if (result.kind !== 'created') throw new Error('narrowing')
 		expect(result.reviewerFinalOverall).toBe('fail')
 		expect(result.reviewerAttempts).toEqual([])
+		expect(result.reviewerErrored).toBe(true)
 		expect(result.actor.id).toBe(CREATED_ACTOR_ID)
+	})
+
+	it('aborts the whole builder when the reviewer LLM key is not configured', async () => {
+		callLlm.mockReset()
+		callLlm.mockResolvedValueOnce({ ok: true, content: buildStage1Well() })
+		callLlm.mockResolvedValueOnce({ ok: true, content: buildStage2Well() })
+		callLlm.mockResolvedValueOnce({ ok: true, content: buildStage3Well() })
+		callLlm.mockResolvedValueOnce({ ok: true, content: buildStage4Well() })
+		// Reviewer call — missing API key is a config problem, not a transient
+		// one. runAgentReviewer throws AgentReviewerError('llm_no_api_key', ...);
+		// runAgentBuilder must rethrow rather than silently shipping an
+		// unreviewed agent.
+		callLlm.mockResolvedValueOnce({ ok: false, reason: 'no_api_key' })
+
+		const agentStorage = createMockAgentStorage()
+		const ctxCtx = createTestContext()
+		ctxCtx.mockResults.selectQueue = existingRubricSelectQueue()
+
+		await expect(
+			runAgentBuilder(
+				{ prompt: 'plan a zero-downtime migration' },
+				{
+					db: ctxCtx.db,
+					agentStorage,
+					workspaceId: WORKSPACE_ID,
+					actorId: CALLER_ACTOR_ID,
+				},
+			),
+		).rejects.toMatchObject({ name: 'AgentBuilderError', reason: 'llm_no_api_key' })
 	})
 
 	it('bootstraps a canonical rubric on the first run when none exists', async () => {
