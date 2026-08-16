@@ -149,7 +149,7 @@ export function AgentSessionsSection({ agent }: { agent: ActorResponse }) {
 	return (
 		<section
 			aria-labelledby="agent-sessions-heading"
-			className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4"
+			className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4"
 		>
 			<div className="flex items-center gap-2">
 				<h2
@@ -225,7 +225,7 @@ function SessionCard({
 	return (
 		<div
 			className={cn(
-				'rounded-lg border bg-card transition-colors',
+				'rounded-xl border bg-card transition-colors',
 				active ? 'border-border' : 'border-border/70',
 			)}
 		>
@@ -284,9 +284,7 @@ function SessionCard({
 					<ol className="flex flex-col gap-2">
 						{phases.map((phase, idx) => (
 							<li key={`${session.id}-${phase.label}-${idx}`} className="flex items-start gap-2.5">
-								<span className="w-12 shrink-0 pt-[3px] font-mono text-[9.5px] font-semibold uppercase tracking-wider text-muted-foreground">
-									{phase.label}
-								</span>
+								<span className="eyebrow w-12 shrink-0 pt-[3px]">{phase.label}</span>
 								<span
 									aria-hidden
 									className={cn('mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full', phase.dot)}

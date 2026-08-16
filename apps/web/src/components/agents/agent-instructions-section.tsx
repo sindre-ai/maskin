@@ -28,7 +28,7 @@ export function AgentInstructionsSection({ agent }: { agent: ActorResponse }) {
 	return (
 		<section
 			aria-labelledby="agent-instructions-heading"
-			className="flex flex-col gap-2 rounded-lg border border-border bg-card p-4"
+			className="flex flex-col gap-2 rounded-xl border border-border bg-card p-4"
 		>
 			<div className="flex items-center gap-2">
 				<h2
@@ -37,9 +37,7 @@ export function AgentInstructionsSection({ agent }: { agent: ActorResponse }) {
 				>
 					Instructions
 				</h2>
-				<span className="text-[11px] uppercase tracking-wide text-muted-foreground">
-					system prompt
-				</span>
+				<span className="eyebrow">system prompt</span>
 				<div className="mx-2 h-px flex-1 bg-border" aria-hidden />
 				<Button
 					variant="ghost"
@@ -95,7 +93,7 @@ export function AgentInstructionsEditModal({ agent, open, onOpenChange }: EditMo
 
 	return (
 		<ResponsiveDialog open={open} onOpenChange={onOpenChange}>
-			<ResponsiveDialogContent className="flex max-h-[85dvh] flex-col gap-0 p-0 sm:max-w-2xl">
+			<ResponsiveDialogContent className="flex max-h-[85dvh] flex-col gap-0 p-0 shadow-xl sm:max-w-2xl sm:rounded-2xl">
 				<ResponsiveDialogHeader className="flex flex-row items-center gap-3 border-b border-border px-6 py-4 text-left">
 					<ActorAvatar
 						name={agent.name}

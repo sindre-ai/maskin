@@ -36,17 +36,17 @@ export function AgentPortraitCard({
 	return (
 		<div
 			className={cn(
-				'group relative flex flex-col items-center gap-3 rounded-lg border bg-card p-5 text-center shadow-md transition-colors',
-				isRunning && 'border-accent/60',
+				'group relative flex flex-col items-center gap-3 rounded-xl border bg-card p-5 text-center shadow-md transition-colors',
+				isRunning && 'border-brand/60',
 				status === 'failed' && 'border-error',
 				status === 'paused' && 'border-border',
-				status === 'idle' && 'border-border hover:border-border-hover',
+				status === 'idle' && 'border-border hover:border-border-strong',
 			)}
 		>
 			<Link
 				to="/$workspaceId/agents/$agentId"
 				params={{ workspaceId, agentId: agent.id }}
-				className="absolute inset-0 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+				className="absolute inset-0 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
 				aria-label={`Open ${agent.name}`}
 			/>
 
@@ -129,7 +129,7 @@ function AvatarPortrait({
 		status === 'failed'
 			? 'stroke-error'
 			: status === 'running'
-				? 'stroke-accent'
+				? 'stroke-brand'
 				: status === 'paused'
 					? 'stroke-muted-foreground/60'
 					: 'stroke-border'

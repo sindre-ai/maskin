@@ -26,14 +26,9 @@ export function AgentToolsSection({ agent }: { agent: ActorResponse }) {
 	)
 
 	return (
-		<section
-			aria-label="Tools"
-			className="overflow-hidden rounded-lg border border-border bg-bg-surface"
-		>
+		<section aria-label="Tools" className="overflow-hidden rounded-xl border border-border bg-card">
 			<div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2.5">
-				<span className="font-mono text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
-					Tools
-				</span>
+				<span className="eyebrow">Tools</span>
 				<span
 					className="text-[11px] tabular-nums text-muted-foreground"
 					aria-label={`${total} tool${total === 1 ? '' : 's'} attached`}

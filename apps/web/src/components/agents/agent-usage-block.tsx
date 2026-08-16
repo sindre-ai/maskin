@@ -132,14 +132,9 @@ export function AgentUsageBlock({
 	const isLoading = currentQuery.isLoading
 
 	return (
-		<section
-			aria-label="Usage"
-			className="overflow-hidden rounded-lg border border-border bg-bg-surface"
-		>
+		<section aria-label="Usage" className="overflow-hidden rounded-xl border border-border bg-card">
 			<div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2.5">
-				<span className="font-mono text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
-					Usage
-				</span>
+				<span className="eyebrow">Usage</span>
 				<div className="ml-auto inline-flex items-center gap-1 rounded-md bg-muted p-0.5">
 					{PRESETS.map((p) => (
 						<Button
@@ -228,9 +223,7 @@ function UsageColumn({
 			</div>
 
 			<div>
-				<div className="mb-1.5 font-mono text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">
-					{chartLabel}
-				</div>
+				<div className="eyebrow mb-1.5">{chartLabel}</div>
 				{isLoading ? (
 					<Skeleton className="h-12 w-full" />
 				) : bars.length === 0 ? (

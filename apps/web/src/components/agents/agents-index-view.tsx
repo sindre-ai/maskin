@@ -309,7 +309,7 @@ function AgentGroupSection({
 }) {
 	if (group.label === undefined) {
 		return (
-			<ul className="overflow-hidden rounded-lg border border-border bg-bg-surface">
+			<ul className="overflow-hidden rounded-xl border border-border bg-card">
 				{group.rows.map((row) => (
 					<AgentRowItem
 						key={row.agent.id}
@@ -327,10 +327,8 @@ function AgentGroupSection({
 
 	return (
 		<section aria-label={group.label}>
-			<div className="flex items-baseline gap-2 px-1 pb-1.5">
-				<h3 className="shrink-0 text-xs font-semibold uppercase tracking-wide text-foreground">
-					{group.label}
-				</h3>
+			<div className="flex items-baseline gap-2 px-1 pb-2">
+				<h3 className="eyebrow shrink-0 text-foreground">{group.label}</h3>
 				<span className="shrink-0 text-xs tabular-nums text-muted-foreground">
 					{group.rows.length}
 				</span>
@@ -341,7 +339,7 @@ function AgentGroupSection({
 				)}
 			</div>
 			{group.rows.length > 0 ? (
-				<ul className="overflow-hidden rounded-lg border border-border bg-bg-surface">
+				<ul className="overflow-hidden rounded-xl border border-border bg-card">
 					{group.rows.map((row) => (
 						<AgentRowItem
 							key={row.agent.id}
