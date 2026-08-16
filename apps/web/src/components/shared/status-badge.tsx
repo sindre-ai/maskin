@@ -15,7 +15,7 @@ export function StatusBadge({
 	className?: string
 	variant?: StatusBadgeVariant
 }) {
-	const colors = statusColors[status] ?? { bg: 'bg-zinc-700', text: 'text-zinc-300' }
+	const colors = statusColors[status] ?? { bg: 'bg-muted', text: 'text-muted-foreground' }
 	const label = status.replace(/_/g, ' ')
 
 	if (variant === 'dot-word') {

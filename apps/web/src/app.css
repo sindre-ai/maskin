@@ -134,6 +134,13 @@
 	--radius-md: calc(var(--radius) - 2px);
 	--radius-lg: var(--radius);
 	--radius-xl: calc(var(--radius) + 4px);
+
+	/* v2 mockup uses a small set of literal radii outside the sm–xl scale.
+	   Named per the maskin-design skill so components don't fall back to
+	   arbitrary `rounded-[Npx]` values. */
+	--radius-tag: 2px; /* mono id tag, tiny status dot square */
+	--radius-square: 3px; /* object-type swatch, dense chip */
+	--radius-hero: 18px; /* For You queue card + hero surfaces */
 }
 
 :root {

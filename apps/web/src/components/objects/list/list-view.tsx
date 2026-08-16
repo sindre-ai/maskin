@@ -351,7 +351,7 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 												<span
 													aria-hidden="true"
 													className={cn(
-														'h-1.5 w-1.5 shrink-0 rounded-[2px] bg-current',
+														'h-1.5 w-1.5 shrink-0 rounded-tag bg-current',
 														statusDot.text,
 													)}
 												/>

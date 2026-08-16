@@ -161,7 +161,7 @@ function ProviderRow({
 	return (
 		<div className="flex items-center gap-3 rounded-lg border border-border bg-card p-4">
 			<div
-				className={`h-3 w-3 shrink-0 rounded-full ${isConnected ? 'bg-success' : 'bg-zinc-600'}`}
+				className={`h-3 w-3 shrink-0 rounded-full ${isConnected ? 'bg-success' : 'bg-muted-foreground'}`}
 			/>
 			<div className="flex-1 min-w-0">
 				<p className="text-sm font-medium text-foreground truncate">{provider.displayName}</p>

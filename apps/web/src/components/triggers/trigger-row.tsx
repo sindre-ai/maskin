@@ -55,7 +55,7 @@ export function TriggerRow({
 		>
 			<div className="flex flex-col items-center gap-1">
 				<span
-					className={`h-3 w-3 rounded-full shrink-0 ${trigger.enabled ? 'bg-success' : 'bg-zinc-600'}`}
+					className={`h-3 w-3 rounded-full shrink-0 ${trigger.enabled ? 'bg-success' : 'bg-muted-foreground'}`}
 				/>
 			</div>
 			<Icon size={15} className="shrink-0 text-muted-foreground" />

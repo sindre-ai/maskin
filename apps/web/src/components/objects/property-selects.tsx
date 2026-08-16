@@ -68,7 +68,7 @@ export function OwnerSelect({
 					{current ? (
 						<span className="inline-flex items-center gap-1.5">
 							{!compact && current.type !== 'agent' && (
-								<User className="size-3 text-amber-600 shrink-0" />
+								<User className="size-3 text-warning shrink-0" />
 							)}
 							{!compact && <span className="text-muted-foreground text-[11px]">Driver:</span>}
 							<ActorAvatar name={current.name} type={current.type} size="sm" />
