@@ -35,11 +35,11 @@ export function MarketplaceLoopCard({
 	const isBundle = loop.item_types.length >= 2
 
 	return (
-		<article className="relative flex flex-col gap-3 rounded-lg border border-border bg-background p-4 shadow-sm transition-colors hover:bg-muted/40">
+		<article className="relative flex flex-col gap-3 rounded-xl border border-border bg-card p-4 shadow-sm transition-colors hover:border-border-strong hover:shadow-md">
 			<Link
 				to="/$workspaceId/marketplace/$loopId"
 				params={{ workspaceId, loopId: loop.id }}
-				className="absolute inset-0 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+				className="absolute inset-0 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
 				aria-label={`Open ${loop.name}`}
 			/>
 
@@ -76,10 +76,7 @@ export function MarketplaceLoopCard({
 			) : (
 				<div className="flex flex-wrap gap-1">
 					{loop.item_types.map((type) => (
-						<span
-							key={type}
-							className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
-						>
+						<span key={type} className="eyebrow rounded-full bg-muted px-2 py-0.5">
 							{type}
 						</span>
 					))}
@@ -191,7 +188,7 @@ function CompositionChipRow({ items }: { items: MarketplaceLoopItem[] }) {
 								<button
 									type="button"
 									aria-label={tip}
-									className="relative inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-muted/40 py-0.5 pr-2 pl-0.5 text-[11px] font-medium text-muted-foreground cursor-help hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+									className="relative inline-flex max-w-full cursor-help items-center gap-1 rounded-full border border-border bg-muted py-0.5 pr-2 pl-0.5 text-[11px] font-medium text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 								>
 									<CompositionGlyph chip={chip} />
 									<span className="truncate">{label}</span>

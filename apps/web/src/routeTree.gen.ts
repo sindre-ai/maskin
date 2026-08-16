@@ -13,6 +13,7 @@ import { Route as SignupRouteImport } from './routes/signup'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AuthedRouteImport } from './routes/_authed'
 import { Route as AuthedIndexRouteImport } from './routes/_authed/index'
+import { Route as PrototypesGalleryRouteImport } from './routes/prototypes/gallery'
 import { Route as PrototypesAboveTitleHeaderRouteImport } from './routes/prototypes/above-title-header'
 import { Route as AuthedWorkspacesRouteImport } from './routes/_authed/workspaces'
 import { Route as AuthedWorkspaceIdRouteImport } from './routes/_authed/$workspaceId'
@@ -60,6 +61,11 @@ const AuthedIndexRoute = AuthedIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => AuthedRoute,
+} as any)
+const PrototypesGalleryRoute = PrototypesGalleryRouteImport.update({
+  id: '/prototypes/gallery',
+  path: '/prototypes/gallery',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const PrototypesAboveTitleHeaderRoute =
   PrototypesAboveTitleHeaderRouteImport.update({
@@ -234,6 +240,7 @@ export interface FileRoutesByFullPath {
   '/$workspaceId': typeof AuthedWorkspaceIdRouteWithChildren
   '/workspaces': typeof AuthedWorkspacesRoute
   '/prototypes/above-title-header': typeof PrototypesAboveTitleHeaderRoute
+  '/prototypes/gallery': typeof PrototypesGalleryRoute
   '/$workspaceId/briefing': typeof AuthedWorkspaceIdBriefingRoute
   '/$workspaceId/settings': typeof AuthedWorkspaceIdSettingsRouteWithChildren
   '/$workspaceId/': typeof AuthedWorkspaceIdIndexRoute
@@ -265,6 +272,7 @@ export interface FileRoutesByTo {
   '/signup': typeof SignupRoute
   '/workspaces': typeof AuthedWorkspacesRoute
   '/prototypes/above-title-header': typeof PrototypesAboveTitleHeaderRoute
+  '/prototypes/gallery': typeof PrototypesGalleryRoute
   '/': typeof AuthedIndexRoute
   '/$workspaceId/briefing': typeof AuthedWorkspaceIdBriefingRoute
   '/$workspaceId': typeof AuthedWorkspaceIdIndexRoute
@@ -299,6 +307,7 @@ export interface FileRoutesById {
   '/_authed/$workspaceId': typeof AuthedWorkspaceIdRouteWithChildren
   '/_authed/workspaces': typeof AuthedWorkspacesRoute
   '/prototypes/above-title-header': typeof PrototypesAboveTitleHeaderRoute
+  '/prototypes/gallery': typeof PrototypesGalleryRoute
   '/_authed/': typeof AuthedIndexRoute
   '/_authed/$workspaceId/briefing': typeof AuthedWorkspaceIdBriefingRoute
   '/_authed/$workspaceId/settings': typeof AuthedWorkspaceIdSettingsRouteWithChildren
@@ -335,6 +344,7 @@ export interface FileRouteTypes {
     | '/$workspaceId'
     | '/workspaces'
     | '/prototypes/above-title-header'
+    | '/prototypes/gallery'
     | '/$workspaceId/briefing'
     | '/$workspaceId/settings'
     | '/$workspaceId/'
@@ -366,6 +376,7 @@ export interface FileRouteTypes {
     | '/signup'
     | '/workspaces'
     | '/prototypes/above-title-header'
+    | '/prototypes/gallery'
     | '/'
     | '/$workspaceId/briefing'
     | '/$workspaceId'
@@ -399,6 +410,7 @@ export interface FileRouteTypes {
     | '/_authed/$workspaceId'
     | '/_authed/workspaces'
     | '/prototypes/above-title-header'
+    | '/prototypes/gallery'
     | '/_authed/'
     | '/_authed/$workspaceId/briefing'
     | '/_authed/$workspaceId/settings'
@@ -432,6 +444,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   SignupRoute: typeof SignupRoute
   PrototypesAboveTitleHeaderRoute: typeof PrototypesAboveTitleHeaderRoute
+  PrototypesGalleryRoute: typeof PrototypesGalleryRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -463,6 +476,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/'
       preLoaderRoute: typeof AuthedIndexRouteImport
       parentRoute: typeof AuthedRoute
+    }
+    '/prototypes/gallery': {
+      id: '/prototypes/gallery'
+      path: '/prototypes/gallery'
+      fullPath: '/prototypes/gallery'
+      preLoaderRoute: typeof PrototypesGalleryRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/prototypes/above-title-header': {
       id: '/prototypes/above-title-header'
@@ -764,6 +784,7 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   SignupRoute: SignupRoute,
   PrototypesAboveTitleHeaderRoute: PrototypesAboveTitleHeaderRoute,
+  PrototypesGalleryRoute: PrototypesGalleryRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

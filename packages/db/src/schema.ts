@@ -999,3 +999,99 @@ export type Billing = typeof billing.$inferSelect
 export type NewBilling = typeof billing.$inferInsert
 export type Invoice = typeof invoices.$inferSelect
 export type NewInvoice = typeof invoices.$inferInsert
+
+// ── Reviewer Verdicts ───────────────────────────────────────────────────────
+//
+// One row per `reviewer_verdict_submitted` event from Stage 2 of the
+// single-prompt agent builder. The reviewer (T6) writes the verdict; a human
+// or non-reviewer agent later sets `human_agreed` so precision (agreed / rated)
+// can be computed per rubric. The check constraint keeps a reviewer from
+// self-rating: `human_rated_by` must be non-null when `human_agreed` is set,
+// and the route layer additionally rejects a rating whose caller equals
+// `reviewer_actor_id` (route-side, not enforced in SQL because the reviewer
+// runs from a fresh session whose actor is only knowable at write time).
+
+export const reviewerVerdicts = pgTable(
+	'reviewer_verdicts',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id)
+			.notNull(),
+		rubricId: uuid('rubric_id')
+			.references(() => objects.id)
+			.notNull(),
+		targetActorId: uuid('target_actor_id')
+			.references(() => actors.id)
+			.notNull(),
+		reviewerActorId: uuid('reviewer_actor_id')
+			.references(() => actors.id)
+			.notNull(),
+		reviewerSessionId: uuid('reviewer_session_id'),
+		cycleNumber: integer('cycle_number').notNull().default(0),
+		verdict: text('verdict').notNull(),
+		criteriaVerdicts: jsonb('criteria_verdicts').notNull(),
+		humanAgreed: boolean('human_agreed'),
+		humanCriteriaDisagreements: jsonb('human_criteria_disagreements'),
+		humanRatedBy: uuid('human_rated_by').references(() => actors.id),
+		humanRatedAt: timestamp('human_rated_at', { withTimezone: true }),
+		humanNote: text('human_note'),
+		createdBy: uuid('created_by')
+			.references(() => actors.id)
+			.notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+	},
+	(t) => [
+		index('reviewer_verdicts_ws_rubric_idx').on(t.workspaceId, t.rubricId),
+		index('reviewer_verdicts_ws_created_idx').on(t.workspaceId, t.createdAt),
+		check('reviewer_verdicts_verdict_check', sql`${t.verdict} IN ('pass', 'fail')`),
+		check(
+			'reviewer_verdicts_rating_pair_check',
+			sql`(${t.humanAgreed} IS NULL AND ${t.humanRatedBy} IS NULL AND ${t.humanRatedAt} IS NULL)
+				OR (${t.humanAgreed} IS NOT NULL AND ${t.humanRatedBy} IS NOT NULL AND ${t.humanRatedAt} IS NOT NULL)`,
+		),
+	],
+)
+
+export type ReviewerVerdict = typeof reviewerVerdicts.$inferSelect
+export type NewReviewerVerdict = typeof reviewerVerdicts.$inferInsert
+
+// ── Orphan Thread Detections ────────────────────────────────────────────────
+//
+// Idempotency ledger for the `orphan_thread_detected` analytics signal. One
+// row per root comment (`root_comment_event_id` is the UNIQUE key) so the
+// detector can run on an interval without double-firing the PostHog event
+// when a slow tick overlaps a faster one. The ledger row is written in the
+// same transaction as the capture attempt — if PostHog is down the row is
+// still written (the signal is best-effort by design; see the service's
+// docstring) so we never re-scan an already-decided thread.
+
+export const orphanThreadDetections = pgTable(
+	'orphan_thread_detections',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id)
+			.notNull(),
+		objectId: uuid('object_id').notNull(),
+		rootCommentEventId: bigint('root_comment_event_id', { mode: 'number' }).notNull(),
+		expectedReplyActorId: uuid('expected_reply_actor_id')
+			.references(() => actors.id)
+			.notNull(),
+		hoursWithoutReply: numeric('hours_without_reply', { precision: 10, scale: 2 }).notNull(),
+		threadKind: text('thread_kind').notNull(),
+		detectedAt: timestamp('detected_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		unique('orphan_thread_detections_root_comment_event_id_uniq').on(t.rootCommentEventId),
+		check(
+			'orphan_thread_detections_thread_kind_check',
+			sql`${t.threadKind} IN ('decision_required','question','flag')`,
+		),
+		index('orphan_thread_detections_detected_at_idx').on(t.detectedAt),
+	],
+)
+
+export type OrphanThreadDetection = typeof orphanThreadDetections.$inferSelect
+export type NewOrphanThreadDetection = typeof orphanThreadDetections.$inferInsert

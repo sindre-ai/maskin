@@ -154,7 +154,7 @@ function TriggerFlowRow({
 	const when = type ? describeTrigger({ type, config }) : ''
 
 	return (
-		<div className="flex items-start gap-3 rounded-lg border border-border bg-background p-3">
+		<div className="flex items-start gap-3 rounded-xl border border-border bg-card p-3 shadow-sm transition-colors hover:border-border-strong">
 			<ActorAvatar
 				id={targetActorId || agentName}
 				name={agentName}
@@ -192,9 +192,9 @@ function LoopBringsRow({
 		<Link
 			to="/$workspaceId/marketplace/$loopId/$itemId"
 			params={{ workspaceId, loopId, itemId: item.id }}
-			className="flex items-center gap-3 rounded-lg border border-border bg-background px-4 py-3 hover:bg-muted/40"
+			className="flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 shadow-sm transition-colors hover:border-border-strong hover:shadow-md"
 		>
-			<span className="shrink-0 rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+			<span className="eyebrow shrink-0 rounded-full bg-muted px-2 py-0.5">
 				{ITEM_TYPE_LABEL[item.item_type]}
 			</span>
 			<span className="min-w-0 flex-1">

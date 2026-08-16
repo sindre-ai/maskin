@@ -507,6 +507,129 @@ export const tools = {
 				),
 		}),
 	},
+	maskin_rate_reviewer_verdict: {
+		description:
+			"Human/agent rating of a reviewer verdict for AC 6 of the single-prompt agent builder bet (reviewer precision ≥70% before Stage 2 ships). Sets `human_agreed: true` when the caller agrees with the reviewer's overall pass/fail, or `human_agreed: false` when they disagree. Optional `criteria_disagreements` names the specific rubric criteria the caller thinks the reviewer got wrong — those names feed the failing-criteria comment when precision drops below 70%. The reviewer itself cannot rate its own verdicts (server rejects with 403). Idempotent-hostile: a verdict can be rated once; a second call returns 409 so a human's rating is never overwritten silently.",
+		inputSchema: z.object({
+			verdict_id: z
+				.string()
+				.uuid()
+				.describe('ID of the reviewer_verdict row returned by the reviewer.'),
+			human_agreed: z
+				.boolean()
+				.describe(
+					"true when the caller agrees with the reviewer's overall pass/fail; false when they disagree.",
+				),
+			criteria_disagreements: z
+				.array(z.string().min(1).max(200))
+				.max(20)
+				.optional()
+				.describe(
+					"Names of rubric criteria the caller disagrees with the reviewer on. Populate this when human_agreed=false so DoD 5's failing-criteria comment can name specific criteria.",
+				),
+			note: z
+				.string()
+				.max(2000)
+				.optional()
+				.describe('Optional free-text explanation of the disagreement.'),
+			workspace_id: optionalWorkspaceId,
+		}),
+	},
+	maskin_reviewer_precision_summary: {
+		description:
+			"Reviewer precision summary for a rubric object — total verdicts, rated count, agreed count, precision ratio, and per-criterion false-positive breakdown. This is the ≥70% Stage 2 ship gate for the single-prompt agent builder bet: call it after at least 10 verdicts have been rated, paste `summary_line` into a comment on the parent bet. When precision drops below the threshold, `failing_criteria` names the specific rubric criteria producing false positives — that's the signal the Architect needs to tighten the rubric.",
+		inputSchema: z.object({
+			rubric_id: z
+				.string()
+				.uuid()
+				.describe('ID of the rubric object (the workspace object holding reviewer criteria).'),
+			workspace_id: optionalWorkspaceId,
+		}),
+	},
+	maskin_create_agent: {
+		description:
+			"Generate an opinionated subject-matter-expert (SME) agent from a single-line prompt. ASYNC — kicks off one container agent session that does the whole job itself (intent extraction, persona synthesis, system-prompt authoring, anti-hedging opinionation, mandatory self-critique against a quality rubric, actor + SKILL.md registration, and a gap-report comment naming missing context) and returns { session_id, status } immediately, typically in well under a second. Does NOT return the created agent's details synchronously. Poll get_session(session_id) (optionally include_logs) until status is completed/failed/timeout, or use run_agent-style waiting. On success, session.result.final_message contains a fenced ```json maskin_agent_builder_result ... ``` block: { kind: 'created', actor_id, actor_name, skill_id, skill_name, definition_summary, self_critique, gap_report_items, gap_report_comment_posted }. If the prompt was too underspecified to build from, the same fenced block instead contains { kind: 'gap_question', gap_question, missing } — no actor is created, no comment posted. workspace_id is required — the persona is written into that workspace.",
+		inputSchema: z.object({
+			prompt: z
+				.string()
+				.min(1)
+				.max(4000)
+				.describe('One-line description of the SME agent you want (required).'),
+			workspace_id: z
+				.string()
+				.uuid()
+				.describe('Workspace the new actor + SKILL.md are written into (required, UUID).'),
+			examples: z
+				.array(z.string().min(1).max(2000))
+				.max(10)
+				.optional()
+				.describe('Concrete examples the agent should be able to handle. Optional.'),
+			references: z
+				.array(z.string().min(1).max(2000))
+				.max(10)
+				.optional()
+				.describe('URLs, docs, or prior artifacts to ground the persona. Optional.'),
+			constraints: z
+				.array(z.string().min(1).max(2000))
+				.max(10)
+				.optional()
+				.describe('Hard constraints the agent must respect. Optional.'),
+		}),
+	},
+	maskin_review_work: {
+		description:
+			'Score an agent definition against a rubric using a fresh-context reviewer — no shared conversation with the producer. Pass EXACTLY ONE of object_id (reads the object\'s content as the draft definition — used for reviewing a stored SKILL body or agent spec) OR session_id (reads sessions.result from a terminal container session — used for reviewing an agent-builder run that completed asynchronously). Passing both, or neither, returns a 400 from the route. rubric_id is optional; when omitted, resolves to the workspace\'s canonical agent-builder rubric (bootstrapped on first use, editable via update_objects without a deploy). Returns { criteria: [{ name, pass, fix? }], overall: "pass" | "fail" }. This is the same reviewer the agent builder runs internally; call it manually to re-score a definition after edits or to score with a custom rubric.',
+		// Kept as a plain z.object (no .refine) so `inputSchema instanceof
+		// ZodObject` — the invariant the tools test enforces — holds. Cross-
+		// field validation (exactly one of object_id/session_id) happens at the
+		// route boundary where the response can be a clean 400.
+		inputSchema: z.object({
+			object_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'Workspace object whose `content` is the draft definition to review (e.g. a stored SKILL body). Provide exactly one of object_id or session_id.',
+				),
+			session_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'Terminal container session whose `result` payload is the draft definition to review. Provide exactly one of object_id or session_id.',
+				),
+			rubric_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					"Rubric object to score against. Omit to use the workspace's canonical agent-builder rubric.",
+				),
+			workspace_id: z
+				.string()
+				.uuid()
+				.describe('Workspace to look up the rubric + target object/session in (required).'),
+		}),
+	},
+	maskin_refine_agent: {
+		description:
+			'Refine an existing agent generated by maskin_create_agent. Loads the actor\'s current system prompt + SKILL.md, re-runs the pipeline\'s prompt-authoring and opinionation stages with the free-text `context` treated as a refinement instruction (e.g. "add a section on cost estimation", "the persona is too diplomatic — sharpen the biases"), then writes the updated system prompt back to the actor and republishes the SKILL.md. Returns { updated_actor_id, diff } where diff is a short human-readable summary of the sections that changed. Does not create a new actor — refines in place. Underspecified refinement context (empty or vague) returns { gap_question } instead, same shape as maskin_create_agent.',
+		inputSchema: z.object({
+			actor_id: z
+				.string()
+				.uuid()
+				.describe('Actor to refine — must be an agent previously created via maskin_create_agent.'),
+			context: z
+				.string()
+				.min(1)
+				.max(4000)
+				.describe('The refinement instruction — what to change and (ideally) why.'),
+			workspace_id: z
+				.string()
+				.uuid()
+				.describe('Workspace the actor belongs to (required for the SKILL.md attachment).'),
+		}),
+	},
 	create_actor: {
 		description:
 			'Create a new actor (human or agent) and optionally add them to a workspace. Returns the actor details and API key (only shown once). If workspace_id is provided, the actor is added as a member with the given role — this is how to add a brand-new actor to a workspace as part of creating them. To add an already-existing actor to a workspace, use update_actor with workspace_id/role instead. If auto_create_workspace is true (default for humans), a new, empty workspace is created instead. For agents, set tools.mcpServers and/or attach_skill_ids so the agent has its MCP servers and skills from the start. attach_skill_ids requires workspace_id — with auto_create_workspace the new workspace has no existing skills, so any attach_skill_ids passed alongside it are ignored.',
@@ -1506,6 +1629,11 @@ export const tools = {
 			expires_at: z.number().describe('Unix ms timestamp when the access token expires.'),
 			subscription_type: z.string().optional().describe('e.g. "pro", "max", "teams".'),
 			scopes: z.array(z.string()).optional(),
+			nickname: z
+				.string()
+				.max(60)
+				.optional()
+				.describe('Optional label so this credential is distinguishable from others in the UI.'),
 		}),
 	},
 	get_claude_subscription_status: {
@@ -1519,6 +1647,15 @@ export const tools = {
 		description: 'Disconnect the Claude subscription for the workspace (removes stored tokens).',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
+		}),
+	},
+	rename_claude_subscription: {
+		description:
+			"Set or clear the nickname on a Claude subscription credential slot (primary or backup) so it's distinguishable from other credentials in the UI instead of showing only an opaque fingerprint. Pass an empty string to clear the nickname. Does not touch the stored tokens.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			slot: z.enum(['primary', 'backup']).default('primary'),
+			nickname: z.string().max(60),
 		}),
 	},
 	// ─── Extensions ──────────────────────────────────────────

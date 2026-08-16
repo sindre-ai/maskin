@@ -199,7 +199,7 @@ export function ForYouHeader({
 							<Separator />
 
 							<div>
-								<p className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+								<p className="eyebrow mb-2 flex items-center gap-1.5">
 									<ArrowUpDown size={12} aria-hidden />
 									Sort by
 								</p>

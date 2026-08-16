@@ -312,6 +312,10 @@ async function apiFetch(
 	const url = `${config.apiBaseUrl}${path}`
 	const headers: Record<string, string> = {
 		'Content-Type': 'application/json',
+		// Tells the backend this call arrived through the MCP transport so
+		// route-level analytics (knowledge_object_created / _read) can
+		// attribute `created_via` / `accessed_via` without guessing.
+		'X-Client-Source': 'mcp',
 	}
 	if (config.apiKey) {
 		headers.Authorization = `Bearer ${config.apiKey}`
@@ -2674,7 +2678,149 @@ export function createMcpServer(config: McpConfig) {
 		},
 	)
 
+	registerAppTool(
+		server,
+		'maskin_rate_reviewer_verdict',
+		{
+			description: tools.maskin_rate_reviewer_verdict.description,
+			inputSchema: tools.maskin_rate_reviewer_verdict.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { verdict_id, workspace_id, ...body } = args as {
+				verdict_id: string
+				workspace_id?: string
+				human_agreed: boolean
+				criteria_disagreements?: string[]
+				note?: string
+			}
+			const result = await apiCall(config, 'PATCH', `/api/reviewer-verdicts/${verdict_id}`, body, {
+				workspaceId: workspace_id,
+			})
+			return {
+				_meta: meta('maskin_rate_reviewer_verdict', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'maskin_reviewer_precision_summary',
+		{
+			description: tools.maskin_reviewer_precision_summary.description,
+			inputSchema: tools.maskin_reviewer_precision_summary.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { rubric_id, workspace_id } = args as {
+				rubric_id: string
+				workspace_id?: string
+			}
+			const result = await apiCall(
+				config,
+				'GET',
+				`/api/reviewer-verdicts/summary?rubric_id=${encodeURIComponent(rubric_id)}`,
+				undefined,
+				{ workspaceId: workspace_id },
+			)
+			return {
+				_meta: meta('maskin_reviewer_precision_summary', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
 	// ─── Actors ───────────────────────────────────────────────
+	registerAppTool(
+		server,
+		'maskin_create_agent',
+		{
+			description: tools.maskin_create_agent.description,
+			inputSchema: tools.maskin_create_agent.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const result = await apiCall(
+				config,
+				'POST',
+				'/api/agent-builder/create',
+				{
+					prompt: args.prompt,
+					examples: args.examples,
+					references: args.references,
+					constraints: args.constraints,
+				},
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: meta(
+					'maskin_create_agent',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'maskin_review_work',
+		{
+			description: tools.maskin_review_work.description,
+			inputSchema: tools.maskin_review_work.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const result = await apiCall(
+				config,
+				'POST',
+				'/api/agent-builder/review',
+				{
+					object_id: args.object_id,
+					session_id: args.session_id,
+					rubric_id: args.rubric_id,
+				},
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: meta('maskin_review_work', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'maskin_refine_agent',
+		{
+			description: tools.maskin_refine_agent.description,
+			inputSchema: tools.maskin_refine_agent.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const result = await apiCall(
+				config,
+				'POST',
+				'/api/agent-builder/refine',
+				{
+					actor_id: args.actor_id,
+					context: args.context,
+				},
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: meta(
+					'maskin_refine_agent',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
 	registerAppTool(
 		server,
 		'create_actor',
@@ -5238,6 +5384,7 @@ export function createMcpServer(config: McpConfig) {
 					expiresAt: args.expires_at,
 					subscriptionType: args.subscription_type,
 					scopes: args.scopes,
+					nickname: args.nickname,
 				},
 				{ workspaceId: args.workspace_id },
 			)
@@ -5290,6 +5437,33 @@ export function createMcpServer(config: McpConfig) {
 			return {
 				_meta: meta(
 					'disconnect_claude_subscription',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'rename_claude_subscription',
+		{
+			description: tools.rename_claude_subscription.description,
+			inputSchema: tools.rename_claude_subscription.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const result = await apiCall(
+				config,
+				'PATCH',
+				'/api/claude-oauth/nickname',
+				{ slot: args.slot, nickname: args.nickname },
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: meta(
+					'rename_claude_subscription',
 					config,
 					(args as { workspace_id?: string }).workspace_id,
 				),

@@ -88,6 +88,25 @@ describe('request', () => {
 		)
 	})
 
+	// Backend routes attribute knowledge_object_created/_read `created_via` /
+	// `accessed_via` from this header — the web client must self-declare
+	// alongside MCP callers so the fallback (actorType inference) never has
+	// to decide between two human-actor paths.
+	it('sends X-Client-Source: ui on every request', async () => {
+		fetchSpy.mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }))
+
+		await api.objects.list('ws-1')
+
+		expect(fetchSpy).toHaveBeenCalledWith(
+			'/api/objects',
+			expect.objectContaining({
+				headers: expect.objectContaining({
+					'X-Client-Source': 'ui',
+				}),
+			}),
+		)
+	})
+
 	it('sends Content-Type and body for POST requests', async () => {
 		vi.mocked(getApiKey).mockReturnValue('ank_key')
 		fetchSpy.mockResolvedValue(new Response(JSON.stringify({ id: '1' }), { status: 200 }))

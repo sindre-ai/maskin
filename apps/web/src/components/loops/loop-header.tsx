@@ -7,9 +7,8 @@ import {
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import type { LoopSummary } from '@/lib/api'
-import { useChat } from '@/lib/chat-context'
 import { cn } from '@/lib/cn'
-import { MessageCircle, MoreHorizontal, Pause, Play } from 'lucide-react'
+import { MoreHorizontal, Pause, Play } from 'lucide-react'
 import { LOOP_PILL_STYLES } from './loop-pill'
 
 export function LoopHeader({
@@ -21,14 +20,13 @@ export function LoopHeader({
 	onTogglePause: () => void
 	isTogglingPause: boolean
 }) {
-	const { openWithContext } = useChat()
 	const pill = LOOP_PILL_STYLES[loop.pill]
 	const isPaused = loop.status === 'paused'
 
 	return (
 		<div>
 			<div className="flex items-start justify-between gap-3">
-				<h1 className="text-2xl font-semibold tracking-tight text-foreground">
+				<h1 className="text-2xl font-semibold tracking-[-0.022em] text-foreground">
 					{loop.name ?? 'Untitled loop'}
 				</h1>
 				<div className="flex items-center gap-2 shrink-0">
@@ -72,20 +70,6 @@ export function LoopHeader({
 					<MarkdownContent content={loop.guarantee} className="text-sm text-muted-foreground" />
 				</div>
 			)}
-
-			<div className="mt-3">
-				<Button
-					variant="outline"
-					size="sm"
-					className="gap-1.5"
-					onClick={() =>
-						openWithContext([{ kind: 'object', id: loop.id, title: loop.name, type: 'loop' }])
-					}
-				>
-					<MessageCircle size={13} />
-					Edit this loop
-				</Button>
-			</div>
 		</div>
 	)
 }

@@ -1,6 +1,6 @@
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { TypeBadge } from '@/components/shared/type-badge'
-import type { ActorListItem, ObjectResponse, TriggerResponse } from '@/lib/api'
+import type { ActorListItem, LoopSummary, ObjectResponse, TriggerResponse } from '@/lib/api'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { getStatusColor } from '@/lib/constants'
@@ -80,19 +80,29 @@ function triggerFromStatus(trigger: TriggerResponse): string | null {
 	return typeof fromStatus === 'string' && fromStatus.length > 0 ? fromStatus : null
 }
 
+function formatDuration(ms: number | null | undefined): string | null {
+	if (!ms || ms <= 0 || !Number.isFinite(ms)) return null
+	const days = Math.round(ms / (24 * 60 * 60 * 1000))
+	if (days >= 1) return `${days}d`
+	const hours = Math.round(ms / (60 * 60 * 1000))
+	if (hours >= 1) return `${hours}h`
+	return `${Math.round(ms / (60 * 1000))}m`
+}
+
 function pillClasses(active: boolean) {
 	return cn(
-		'inline-flex items-center gap-1.5 h-[26px] px-2.5 rounded-full text-[11.5px] font-medium border transition-colors',
+		'inline-flex items-center gap-1.5 h-7 px-3 rounded-full text-[11.5px] font-semibold border transition-colors',
 		active
-			? 'bg-foreground text-background border-foreground'
-			: 'bg-transparent text-muted-foreground border-border hover:border-foreground/40',
+			? 'bg-secondary text-foreground border-border-strong'
+			: 'bg-background text-muted-foreground border-border hover:border-border-strong hover:text-foreground',
 	)
 }
 
 function StepRow({
 	trigger,
 	agent,
-}: { trigger: TriggerResponse; agent: ActorListItem | undefined }) {
+	asksYou,
+}: { trigger: TriggerResponse; agent: ActorListItem | undefined; asksYou?: boolean }) {
 	return (
 		<div className="flex items-start gap-2.5">
 			<ActorAvatar
@@ -105,6 +115,11 @@ function StepRow({
 				<span className="font-semibold text-foreground">{agent?.name ?? 'Unknown agent'}</span>{' '}
 				<span className="text-muted-foreground">{trigger.actionPrompt}</span>
 			</div>
+			{asksYou && (
+				<span className="shrink-0 inline-flex items-center rounded-full bg-accent px-2 py-0.5 text-[10.5px] font-semibold text-accent-foreground mt-0.5">
+					asks you
+				</span>
+			)}
 			{!trigger.enabled && (
 				<span className="text-[10.5px] font-medium text-muted-foreground shrink-0 mt-0.5">off</span>
 			)}
@@ -154,11 +169,13 @@ export function LoopFlow({
 	triggers,
 	actors,
 	childObjects,
+	loop,
 }: {
 	workspaceId: string
 	triggers: TriggerResponse[]
 	actors: ActorListItem[] | undefined
 	childObjects: ObjectResponse[]
+	loop?: LoopSummary
 }) {
 	const [agentFilter, setAgentFilter] = useState<string | null>(null)
 	const { workspace } = useWorkspace()
@@ -222,15 +239,35 @@ export function LoopFlow({
 	const hasStages = columns.some((c) => c.total > 0)
 	if (!hasTriggers && !hasStages) return null
 
+	const asksYou = loop?.pill === 'waiting_on_you'
+
 	return (
 		<div>
 			<div className="flex items-center gap-2.5 mb-2.5">
 				<h2 className="text-sm font-semibold text-foreground">The loop, right now</h2>
-				<span className="text-xs text-muted-foreground">
+				<span className="eyebrow">
 					{triggers.length} {triggers.length === 1 ? 'trigger' : 'triggers'} ·{' '}
 					{distinctAgentIds.length} {distinctAgentIds.length === 1 ? 'agent' : 'agents'}
+					{childObjects.length > 0 &&
+						` · ${childObjects.length} ${childObjects.length === 1 ? 'object' : 'objects'}`}
 				</span>
 			</div>
+
+			{(loop?.inProgressCount ?? 0) + (loop?.closedCount ?? 0) > 0 &&
+				(() => {
+					const inProgress = loop?.inProgressCount ?? 0
+					const closed = loop?.closedCount ?? 0
+					const median = formatDuration(loop?.medianTimeToCloseMs)
+					return (
+						<p className="mb-3 text-xs text-muted-foreground">
+							{inProgress > 0 &&
+								`${inProgress} ${inProgress === 1 ? 'cycle is' : 'cycles are'} running`}
+							{inProgress > 0 && closed > 0 && ' · '}
+							{closed > 0 && `${closed} ${closed === 1 ? 'cycle has' : 'cycles have'} closed`}
+							{median && ` · median close ${median}`}
+						</p>
+					)
+				})()}
 
 			{distinctAgentIds.length > 1 && (
 				<div className="flex flex-wrap items-center gap-1.5 mb-3">
@@ -240,7 +277,7 @@ export function LoopFlow({
 						className={pillClasses(agentFilter === null)}
 					>
 						All steps
-						<span className="text-[10.5px] opacity-60">{triggers.length}</span>
+						<span className="text-[10.5px] text-border-strong">{triggers.length}</span>
 					</button>
 					{distinctAgentIds.map((agentId) => {
 						const agent = actorsById.get(agentId)
@@ -253,27 +290,30 @@ export function LoopFlow({
 								className={pillClasses(agentFilter === agentId)}
 							>
 								{agent?.name ?? 'Unknown agent'}
-								<span className="text-[10.5px] opacity-60">{count}</span>
+								<span className="text-[10.5px] text-border-strong">{count}</span>
 							</button>
 						)
 					})}
 				</div>
 			)}
 
-			<div className="border border-border rounded-xl bg-card p-3 flex flex-col gap-4">
+			<div className="border border-border rounded-xl bg-card p-3 flex flex-col gap-4 shadow-sm">
 				{shownComesIn.length > 0 && (
 					<div>
 						<div className="flex items-baseline gap-2 mb-2">
-							<span className="text-[9px] font-bold tracking-wider text-muted-foreground uppercase">
-								Comes in
-							</span>
+							<span className="eyebrow">Comes in</span>
 							<span className="text-[10.5px] text-muted-foreground/70">
 								how work reaches the loop
 							</span>
 						</div>
 						<div className="flex flex-col gap-2.5">
 							{shownComesIn.map((t) => (
-								<StepRow key={t.id} trigger={t} agent={actorsById.get(t.targetActorId)} />
+								<StepRow
+									key={t.id}
+									trigger={t}
+									agent={actorsById.get(t.targetActorId)}
+									asksYou={asksYou}
+								/>
 							))}
 						</div>
 					</div>
@@ -289,9 +329,7 @@ export function LoopFlow({
 								<span
 									className={cn('h-2 w-2 rounded-full', column.total > 0 ? colors.bg : 'bg-muted')}
 								/>
-								<span className="text-[10px] font-bold tracking-wider text-muted-foreground uppercase">
-									{column.label.replace(/_/g, ' ')}
-								</span>
+								<span className="eyebrow">{column.label.replace(/_/g, ' ')}</span>
 								<span
 									className={cn(
 										'inline-flex items-center rounded-full px-1.5 text-[10.5px] font-semibold',
@@ -317,7 +355,12 @@ export function LoopFlow({
 							{gapTriggers.length > 0 && (
 								<div className="flex flex-col gap-2.5 mt-2 ml-4">
 									{gapTriggers.map((t) => (
-										<StepRow key={t.id} trigger={t} agent={actorsById.get(t.targetActorId)} />
+										<StepRow
+											key={t.id}
+											trigger={t}
+											agent={actorsById.get(t.targetActorId)}
+											asksYou={asksYou}
+										/>
 									))}
 								</div>
 							)}
@@ -328,16 +371,19 @@ export function LoopFlow({
 				{shownAlongside.length > 0 && (
 					<div>
 						<div className="flex items-baseline gap-2 mb-2">
-							<span className="text-[9px] font-bold tracking-wider text-muted-foreground uppercase">
-								Runs alongside
-							</span>
+							<span className="eyebrow">Runs alongside</span>
 							<span className="text-[10.5px] text-muted-foreground/70">
 								schedules and safety nets
 							</span>
 						</div>
 						<div className="flex flex-col gap-2.5">
 							{shownAlongside.map((t) => (
-								<StepRow key={t.id} trigger={t} agent={actorsById.get(t.targetActorId)} />
+								<StepRow
+									key={t.id}
+									trigger={t}
+									agent={actorsById.get(t.targetActorId)}
+									asksYou={asksYou}
+								/>
 							))}
 						</div>
 					</div>

@@ -281,6 +281,12 @@ function ForYouRedesign() {
 		) : null
 
 	const isSparse = filteredRegular.length + onboardingItems.length < 3
+	const sparseComposerNode = isSparse ? (
+		<SparseComposer
+			itemsCount={filteredRegular.length + onboardingItems.length}
+			onFocusChange={setComposerFocused}
+		/>
+	) : null
 
 	return (
 		<>
@@ -331,18 +337,17 @@ function ForYouRedesign() {
 							))}
 						</div>
 					) : (
-						<ForYouCardQueue workspaceId={workspaceId} queue={queue} />
+						<ForYouCardQueue
+							workspaceId={workspaceId}
+							queue={queue}
+							sparseComposer={sparseComposerNode}
+						/>
 					)}
 					{mode === 'list' && typeFilter === 'mentions' && filteredRegular.length === 0 && (
 						<p className="py-10 text-center text-sm text-muted-foreground">No unread mentions.</p>
 					)}
-					{isSparse ? (
-						<div className="mt-4">
-							<SparseComposer
-								itemsCount={filteredRegular.length + onboardingItems.length}
-								onFocusChange={setComposerFocused}
-							/>
-						</div>
+					{mode === 'list' && sparseComposerNode ? (
+						<div className="mt-4">{sparseComposerNode}</div>
 					) : null}
 				</div>
 			</div>

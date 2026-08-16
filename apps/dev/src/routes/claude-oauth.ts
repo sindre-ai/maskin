@@ -35,7 +35,12 @@ const slotStatusSchema = z.object({
 	subscription_type: z.string().optional(),
 	expires_at: z.number(),
 	fingerprint: z.string(),
+	nickname: z.string().optional(),
 })
+
+// Free-text label users attach to a slot so multiple credentials are
+// distinguishable in the UI instead of only showing an opaque fingerprint.
+const nicknameSchema = z.string().trim().max(60)
 
 const statusResponseSchema = z.object({
 	// Back-compat: kept so existing callers (status route consumers, MCP
@@ -228,14 +233,25 @@ app.openapi(statusRoute, (async (c) => {
 	const failover = readFailoverState(settings.claude_oauth)
 
 	const slotResponse: {
-		primary?: { subscription_type?: string; expires_at: number; fingerprint: string }
-		backup?: { subscription_type?: string; expires_at: number; fingerprint: string }
+		primary?: {
+			subscription_type?: string
+			expires_at: number
+			fingerprint: string
+			nickname?: string
+		}
+		backup?: {
+			subscription_type?: string
+			expires_at: number
+			fingerprint: string
+			nickname?: string
+		}
 	} = {}
 	if (slots.primary) {
 		slotResponse.primary = {
 			subscription_type: slots.primary.subscriptionType,
 			expires_at: slots.primary.expiresAt,
 			fingerprint: slotFingerprint(slots.primary),
+			nickname: slots.primary.nickname,
 		}
 	}
 	if (slots.backup) {
@@ -243,6 +259,7 @@ app.openapi(statusRoute, (async (c) => {
 			subscription_type: slots.backup.subscriptionType,
 			expires_at: slots.backup.expiresAt,
 			fingerprint: slotFingerprint(slots.backup),
+			nickname: slots.backup.nickname,
 		}
 	}
 
@@ -306,6 +323,7 @@ const importRoute = createRoute({
 						subscriptionType: z.string().optional(),
 						scopes: z.array(z.string()).optional(),
 						slot: slotKindSchema.optional(),
+						nickname: nicknameSchema.optional(),
 					}),
 				},
 			},
@@ -321,6 +339,7 @@ const importRoute = createRoute({
 						slot: slotKindSchema,
 						subscription_type: z.string().optional(),
 						expires_at: z.number(),
+						nickname: z.string().optional(),
 					}),
 				},
 			},
@@ -405,8 +424,94 @@ app.openapi(importRoute, (async (c) => {
 		slot,
 		subscription_type: tokens.subscriptionType,
 		expires_at: tokens.expiresAt,
+		nickname: tokens.nickname,
 	})
 }) as RouteHandler<typeof importRoute, Env>)
+
+// ── PATCH /api/claude-oauth/nickname ────────────────────────────────────────
+// Rename (or clear, via an empty string) a slot's nickname without touching
+// its tokens — a lightweight sibling to /import for the common "just relabel
+// it" case so callers don't need to re-paste credentials to rename a slot.
+
+const renameRoute = createRoute({
+	method: 'patch',
+	path: '/nickname',
+	tags: ['claude-oauth'],
+	summary: "Set or clear a slot's nickname",
+	request: {
+		headers: workspaceIdHeader,
+		body: {
+			content: {
+				'application/json': {
+					schema: z.object({
+						slot: slotKindSchema,
+						nickname: nicknameSchema,
+					}),
+				},
+			},
+		},
+	},
+	responses: {
+		200: {
+			description: 'Nickname updated',
+			content: { 'application/json': { schema: z.object({ success: z.boolean() }) } },
+		},
+		403: {
+			description: 'Not a workspace member',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Workspace not found or slot not connected',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(renameRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { slot, nickname } = c.req.valid('json')
+
+	const member = await requireWorkspaceMember(db, workspaceId, actorId)
+	if (!member) {
+		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
+	}
+
+	// Locked read-modify-write — see the disconnect route above for why.
+	const result = await db.transaction(async (tx) => {
+		const [ws] = await tx
+			.select()
+			.from(workspaces)
+			.where(eq(workspaces.id, workspaceId))
+			.for('update')
+			.limit(1)
+		if (!ws) return 'not_found' as const
+
+		const settings = (ws.settings as WorkspaceSettings) ?? {}
+		const existing = readSlots(settings.claude_oauth)[slot]
+		if (!existing) return 'slot_empty' as const
+
+		const nextData = { ...existing, nickname: nickname || undefined }
+		const nextOAuth = writeSlot(settings.claude_oauth, slot, nextData)
+
+		await tx
+			.update(workspaces)
+			.set({ settings: { ...settings, claude_oauth: nextOAuth }, updatedAt: new Date() })
+			.where(eq(workspaces.id, workspaceId))
+		return 'ok' as const
+	})
+
+	if (result === 'not_found') {
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
+	if (result === 'slot_empty') {
+		return c.json(createApiError('NOT_FOUND', 'Slot not connected'), 404)
+	}
+
+	logger.info('Claude OAuth slot nickname updated', { workspaceId, slot })
+	return c.json({ success: true })
+}) as RouteHandler<typeof renameRoute, Env>)
 
 // ── POST /api/claude-oauth/swap ─────────────────────────────────────────────
 // Swap the data in the primary and backup slots. The on-disk keys
