@@ -58,7 +58,7 @@ function lowerFirst(s: string): string {
 export function LoopSummary({ loop }: { loop: LoopSummaryType }) {
 	const sentences = buildLoopSummarySentences(loop)
 	return (
-		<section className="rounded-xl border border-border bg-card p-4">
+		<section className="rounded-xl border border-border bg-card p-4 shadow-sm">
 			<div className="space-y-1.5" data-testid="loop-summary">
 				{sentences.map((sentence) => (
 					<p key={sentence} className="text-sm leading-relaxed text-foreground">
