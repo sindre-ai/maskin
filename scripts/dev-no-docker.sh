@@ -7,6 +7,11 @@ set -e
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# TTV instrumentation: fire `install_started` and stamp the state file the
+# backend reads to compute `install_completed`/`workspace_first_ready`.
+# Silent + fire-and-forget; can never fail the install.
+node "$REPO_ROOT/scripts/lib/install-telemetry.mjs" start no-docker >/dev/null 2>&1 || true
+
 echo "Bootstrapping local Postgres + SeaweedFS (no Docker)..."
 source "$REPO_ROOT/scripts/bootstrap-local-devstack.sh"
 
