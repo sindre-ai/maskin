@@ -8,6 +8,7 @@ import { PgNotifyBridge } from '@maskin/realtime'
 import { S3StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
 import { createApp } from './app-factory'
+import { emitInstallCompleted } from './lib/analytics/install-telemetry'
 import {
 	type DevBootstrapResult,
 	maybeBootstrapDev,
@@ -17,6 +18,7 @@ import { logger } from './lib/logger'
 import { AgentStorageManager } from './services/agent-storage'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { LoopVersionPusher } from './services/loop-version-pusher'
+import { OrphanThreadDetector } from './services/orphan-thread-detector'
 import { RuntimeTelemetry } from './services/runtime-telemetry'
 import { SessionDispatchQueue } from './services/session-dispatch-queue'
 import { SessionDispatcher } from './services/session-dispatcher'
@@ -123,6 +125,10 @@ const loopVersionPusher = new LoopVersionPusher(db, agentStorage)
 loopVersionPusher.start()
 logger.info('Loop version pusher started')
 
+const orphanThreadDetector = new OrphanThreadDetector(db)
+orphanThreadDetector.start()
+logger.info('Orphan thread detector started')
+
 // Session dispatch queue absorbs backpressure when no agent-server has
 // capacity and retries failed dispatches. In production the SessionDispatcher
 // is wired as the queue's DispatchFn and SessionManager routes session-start
@@ -223,6 +229,10 @@ ${mcpSetup}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 `
 	process.stdout.write(banner)
+	// TTV instrumentation: server is reachable on localhost, so this is the
+	// canonical "install_completed" moment for the open-source launch bet.
+	// Fire-and-forget — never blocks or throws.
+	emitInstallCompleted().catch(() => {})
 	sessionManager.warmAgentBaseImage().catch((err) => {
 		logger.error('Failed to build agent-base image — sessions will fail until image is available', {
 			error: err instanceof Error ? err.message : String(err),

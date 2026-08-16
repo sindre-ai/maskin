@@ -95,7 +95,13 @@ test.describe('Visual — Object detail (right sidebar)', () => {
 				// Wait for the title textarea to hydrate before snapshotting so
 				// the hero row isn't captured mid-render.
 				await page.getByPlaceholder('Untitled').waitFor({ state: 'visible', timeout: 10_000 })
-				await argosScreenshot(page, `object-detail-sidebar-${vp.label}-${mode}`)
+				// Mask per-run dynamic content: relative time labels (<time>) and
+				// activity items whose actor-name contains a run-specific timestamp
+				// (seeded by the E2E auth fixture). Neither is a regression signal
+				// for the sidebar layout this snapshot tests.
+				await argosScreenshot(page, `object-detail-sidebar-${vp.label}-${mode}`, {
+					mask: [page.locator('time'), page.locator('.animate-slide-in')],
+				})
 			})
 		}
 	}

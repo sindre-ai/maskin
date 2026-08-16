@@ -41,12 +41,9 @@ const ALL_TOOL_NAMES = [
 	'update_workspace',
 	'list_workspaces',
 	'get_workspace_schema',
-	'add_workspace_member',
 	'create_workspace_field',
 	'update_workspace_field',
 	'delete_workspace_field',
-	'add_workspace_enum_value',
-	'remove_workspace_enum_value',
 	'list_workspace_skills',
 	'get_workspace_skill',
 	'create_workspace_skill',
@@ -64,6 +61,11 @@ const ALL_TOOL_NAMES = [
 	'update_trigger',
 	'delete_trigger',
 	'list_triggers',
+	'create_loop',
+	'update_loop',
+	'list_loops',
+	'get_loop',
+	'delete_loop',
 	'create_session',
 	'list_sessions',
 	'get_session',
@@ -91,6 +93,7 @@ const ALL_TOOL_NAMES = [
 	'import_claude_subscription',
 	'get_claude_subscription_status',
 	'disconnect_claude_subscription',
+	'rename_claude_subscription',
 	'list_extensions',
 	'create_extension',
 	'update_extension',
@@ -424,6 +427,15 @@ describe('create_actor schema', () => {
 		expect(result.role).toBe('owner')
 	})
 
+	it('accepts admin role, matching update_actor', () => {
+		const result = schema.parse({ type: 'agent', name: 'Bot', role: 'admin' })
+		expect(result.role).toBe('admin')
+	})
+
+	it('rejects viewer — not a real workspace role', () => {
+		expect(() => schema.parse({ type: 'agent', name: 'Bot', role: 'viewer' })).toThrow()
+	})
+
 	it('accepts optional tools and attach_skill_ids', () => {
 		const result = schema.parse({
 			type: 'agent',
@@ -457,6 +469,11 @@ describe('update_actor schema', () => {
 		expect(result.name).toBe('Updated')
 	})
 
+	it('strips memory — no longer a supported param', () => {
+		const result = schema.parse({ id: uuid, memory: { notes: 'stale' } })
+		expect((result as Record<string, unknown>).memory).toBeUndefined()
+	})
+
 	it('accepts attach_skill_ids as an array of UUIDs', () => {
 		const result = schema.parse({ id: uuid, attach_skill_ids: [uuid2] })
 		expect(result.attach_skill_ids).toEqual([uuid2])
@@ -479,6 +496,34 @@ describe('update_actor schema', () => {
 		const result = schema.parse({ id: uuid })
 		expect(result.attach_skill_ids).toBeUndefined()
 		expect(result.detach_skill_ids).toBeUndefined()
+	})
+
+	it('accepts an optional workspace_id as uuid', () => {
+		const result = schema.parse({ id: uuid, workspace_id: uuid2 })
+		expect(result.workspace_id).toBe(uuid2)
+	})
+
+	it('rejects a non-UUID workspace_id', () => {
+		expect(() => schema.parse({ id: uuid, workspace_id: 'not-a-uuid' })).toThrow()
+	})
+
+	it('defaults role to member', () => {
+		const result = schema.parse({ id: uuid, workspace_id: uuid2 })
+		expect(result.role).toBe('member')
+	})
+
+	it('accepts owner and admin roles', () => {
+		expect(schema.parse({ id: uuid, workspace_id: uuid2, role: 'owner' }).role).toBe('owner')
+		expect(schema.parse({ id: uuid, workspace_id: uuid2, role: 'admin' }).role).toBe('admin')
+	})
+
+	it('rejects an invalid role', () => {
+		expect(() => schema.parse({ id: uuid, workspace_id: uuid2, role: 'viewer' })).toThrow()
+	})
+
+	it('leaves workspace_id undefined when omitted', () => {
+		const result = schema.parse({ id: uuid })
+		expect(result.workspace_id).toBeUndefined()
 	})
 })
 
@@ -765,6 +810,113 @@ describe('create_trigger schema', () => {
 	})
 })
 
+describe('create_loop schema', () => {
+	const schema = tools.create_loop.inputSchema
+
+	it('applies defaults: running status, empty steps/trigger_ids/object_ids', () => {
+		const result = schema.parse({ name: 'Lead loop' })
+		expect(result.status).toBe('running')
+		expect(result.steps).toEqual([])
+		expect(result.trigger_ids).toEqual([])
+		expect(result.object_ids).toEqual([])
+	})
+
+	it('accepts an event step and a cron step', () => {
+		const result = schema.parse({
+			name: 'Lead loop',
+			steps: [
+				{
+					name: 'Qualify',
+					agent_id: uuid,
+					prompt: 'Qualify the lead',
+					when: { object_type: 'lead', action: 'status_changed', filter: { status: 'new' } },
+				},
+				{
+					name: 'Sweep',
+					agent_id: uuid2,
+					prompt: 'Sweep stale leads',
+					when: { cron: '0 9 * * 1' },
+				},
+			],
+			closed_statuses: { lead: ['won', 'lost'] },
+		})
+		expect(result.steps).toHaveLength(2)
+		expect(result.closed_statuses).toEqual({ lead: ['won', 'lost'] })
+	})
+
+	it('rejects a step with an invalid event action', () => {
+		expect(() =>
+			schema.parse({
+				name: 'X',
+				steps: [
+					{
+						name: 'Bad',
+						agent_id: uuid,
+						prompt: 'Y',
+						when: { action: 'exploded' },
+					},
+				],
+			}),
+		).toThrow()
+	})
+
+	it('rejects an unknown loop status', () => {
+		expect(() => schema.parse({ name: 'X', status: 'sideways' })).toThrow()
+	})
+})
+
+describe('update_loop schema', () => {
+	const schema = tools.update_loop.inputSchema
+
+	it('accepts a pure membership update', () => {
+		const result = schema.parse({
+			id: uuid,
+			add_object_ids: [uuid2],
+			remove_trigger_ids: [uuid2],
+		})
+		expect(result.add_object_ids).toEqual([uuid2])
+		expect(result.remove_trigger_ids).toEqual([uuid2])
+	})
+
+	it('requires a uuid loop id', () => {
+		expect(() => schema.parse({ id: 'not-a-uuid', name: 'X' })).toThrow()
+	})
+})
+
+describe('get_loop schema', () => {
+	const schema = tools.get_loop.inputSchema
+
+	it('accepts a uuid id', () => {
+		const result = schema.parse({ id: uuid })
+		expect(result.id).toBe(uuid)
+	})
+
+	it('requires id', () => {
+		expect(() => schema.parse({})).toThrow()
+	})
+
+	it('rejects a non-uuid id', () => {
+		expect(() => schema.parse({ id: 'not-a-uuid' })).toThrow()
+	})
+})
+
+describe('delete_loop schema', () => {
+	const schema = tools.delete_loop.inputSchema
+
+	it('accepts a uuid id', () => {
+		const result = schema.parse({ id: uuid })
+		expect(result.id).toBe(uuid)
+	})
+
+	it('requires id', () => {
+		expect(() => schema.parse({})).toThrow()
+	})
+
+	it('rejects a non-uuid id', () => {
+		expect(() => schema.parse({ id: 'not-a-uuid' })).toThrow()
+	})
+})
+
 describe('list_workspace_skills schema', () => {
 	const schema = tools.list_workspace_skills.inputSchema
 
@@ -925,26 +1077,6 @@ describe('update_workspace schema', () => {
 
 	it('rejects missing id', () => {
 		expect(() => schema.parse({})).toThrow()
-	})
-})
-
-describe('add_workspace_member schema', () => {
-	const schema = tools.add_workspace_member.inputSchema
-
-	it('requires workspace_id and actor_id, defaults role to member', () => {
-		const result = schema.parse({ workspace_id: uuid, actor_id: uuid2 })
-		expect(result.workspace_id).toBe(uuid)
-		expect(result.actor_id).toBe(uuid2)
-		expect(result.role).toBe('member')
-	})
-
-	it('accepts role override', () => {
-		const result = schema.parse({ workspace_id: uuid, actor_id: uuid2, role: 'owner' })
-		expect(result.role).toBe('owner')
-	})
-
-	it('rejects missing workspace_id', () => {
-		expect(() => schema.parse({ actor_id: uuid2 })).toThrow()
 	})
 })
 
@@ -1183,6 +1315,55 @@ describe('import_claude_subscription schema', () => {
 		expect(result.subscription_type).toBe('max')
 		expect(result.scopes).toEqual(['read'])
 	})
+
+	it('accepts an optional nickname', () => {
+		const result = schema.parse({
+			access_token: 'a',
+			refresh_token: 'r',
+			expires_at: 1,
+			nickname: 'Work account',
+		})
+		expect(result.nickname).toBe('Work account')
+	})
+
+	it('rejects a nickname over 60 characters', () => {
+		expect(() =>
+			schema.parse({
+				access_token: 'a',
+				refresh_token: 'r',
+				expires_at: 1,
+				nickname: 'x'.repeat(61),
+			}),
+		).toThrow()
+	})
+})
+
+describe('rename_claude_subscription schema', () => {
+	const schema = tools.rename_claude_subscription.inputSchema
+
+	it('accepts a slot and nickname', () => {
+		const result = schema.parse({ slot: 'backup', nickname: 'Overflow account' })
+		expect(result.slot).toBe('backup')
+		expect(result.nickname).toBe('Overflow account')
+	})
+
+	it('defaults slot to primary', () => {
+		const result = schema.parse({ nickname: 'Main account' })
+		expect(result.slot).toBe('primary')
+	})
+
+	it('accepts an empty string to clear the nickname', () => {
+		const result = schema.parse({ nickname: '' })
+		expect(result.nickname).toBe('')
+	})
+
+	it('rejects a nickname over 60 characters', () => {
+		expect(() => schema.parse({ nickname: 'x'.repeat(61) })).toThrow()
+	})
+
+	it('rejects a missing nickname', () => {
+		expect(() => schema.parse({ slot: 'primary' })).toThrow()
+	})
 })
 
 describe('get_claude_subscription_status schema', () => {
@@ -1228,6 +1409,7 @@ describe('workspace_id optional on most tools', () => {
 		'import_claude_subscription',
 		'get_claude_subscription_status',
 		'disconnect_claude_subscription',
+		'rename_claude_subscription',
 	]
 
 	for (const name of toolsWithOptionalWorkspace) {

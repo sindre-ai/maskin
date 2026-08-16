@@ -493,6 +493,7 @@ export class SessionManager extends EventEmitter {
 				session.actorId,
 				session.workspaceId,
 				tempDir,
+				{ sessionId },
 			)
 			await this.reportSkillPullFailures(sessionId, pullResult)
 			await this.writeWorkspaceBriefing(session.workspaceId, tempDir, sessionId)
@@ -997,7 +998,7 @@ export class SessionManager extends EventEmitter {
 				session.actorId,
 				session.workspaceId,
 				tempDir,
-				{ overwrite: true },
+				{ overwrite: true, sessionId },
 			)
 			await this.reportSkillPullFailures(sessionId, pullResult)
 			await this.writeWorkspaceBriefing(session.workspaceId, tempDir, sessionId)

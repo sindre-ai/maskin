@@ -12,6 +12,7 @@ export interface ClaudeOAuthTokens {
 	expiresAt: number
 	subscriptionType?: string
 	scopes?: string[]
+	nickname?: string
 }
 
 interface TokenResponse {
@@ -77,6 +78,7 @@ export interface EncryptedOAuthData {
 	expiresAt: number
 	subscriptionType?: string
 	scopes?: string[]
+	nickname?: string
 }
 
 /**
@@ -89,6 +91,7 @@ export function decryptOAuthData(data: EncryptedOAuthData): ClaudeOAuthTokens {
 		expiresAt: data.expiresAt,
 		subscriptionType: data.subscriptionType,
 		scopes: data.scopes,
+		nickname: data.nickname,
 	}
 }
 
@@ -102,6 +105,7 @@ export function encryptOAuthTokens(tokens: ClaudeOAuthTokens): EncryptedOAuthDat
 		expiresAt: tokens.expiresAt,
 		subscriptionType: tokens.subscriptionType,
 		scopes: tokens.scopes,
+		nickname: tokens.nickname,
 	}
 }
 

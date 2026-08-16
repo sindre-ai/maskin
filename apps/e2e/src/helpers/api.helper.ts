@@ -176,6 +176,27 @@ export class TestAPI {
 		if (!res.ok) throw new Error(`deleteObject failed: ${res.status}`)
 	}
 
+	async createNotification(
+		workspaceId: string,
+		data: {
+			type: string
+			title: string
+			content?: string
+			metadata?: Record<string, unknown>
+			source_actor_id: string
+			target_actor_id?: string
+			object_id?: string
+		},
+	): Promise<{ id: string; status: string }> {
+		const res = await fetch(`${this.baseURL}/api/notifications`, {
+			method: 'POST',
+			headers: this.headers(workspaceId),
+			body: JSON.stringify(data),
+		})
+		if (!res.ok) throw new Error(`createNotification failed: ${res.status}`)
+		return res.json()
+	}
+
 	async createComment(
 		workspaceId: string,
 		data: {

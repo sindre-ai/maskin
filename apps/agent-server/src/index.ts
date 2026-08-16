@@ -710,8 +710,6 @@ export function buildApp(deps: AppDeps): Hono {
 			}
 			browserSidecar = await provisionBrowserSidecar(body.sessionId.slice(0, 16), deps.msb, {
 				image: deps.env.BROWSER_SIDECAR_IMAGE,
-				sshKeyPath: deps.env.AGENT_SERVER_SSH_KEY_PATH,
-				agentServerInternalHost,
 				...(previewPortMappings.length > 0 && {
 					extraAllowedHostPorts: previewPortMappings.map((m) => m.relayPort),
 				}),
@@ -760,12 +758,12 @@ export function buildApp(deps: AppDeps): Hono {
 								maxDuration: deps.env.SESSION_MAX_DURATION,
 							}),
 						// Only opened when a sidecar was provisioned — keeps the default
-						// session firewall posture tight for the common path. Grants
-						// reachability into exactly the sidecar's CDP SSH-relay port,
-						// not the old allow@private blanket RFC1918 range.
-						...(browserSidecar?.cdpRelay !== undefined && {
-							extraAllowedHostPorts: [browserSidecar.cdpRelay.relayPort],
-						}),
+						// session firewall posture tight for the common path. allow@private
+						// grants reachability to the whole msb bridge, not just the
+						// sidecar's CDP port — see PRIVATE_NET_RULE in microsandbox.ts for
+						// why this is temporarily broader than the narrow allow@host:tcp
+						// grant it replaces.
+						...(browserSidecar !== null && { allowPrivateNet: true }),
 					},
 					deps.msb,
 				)
