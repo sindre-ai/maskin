@@ -1,5 +1,4 @@
 import { AgentsIndexView } from '@/components/agents/agents-index-view'
-import { PageHeader } from '@/components/layout/page-header'
 import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picker'
 import { EmptyState } from '@/components/shared/empty-state'
 import { CardSkeleton } from '@/components/shared/loading-skeleton'
@@ -36,7 +35,6 @@ function AgentsPage() {
 	if (isLoading) {
 		return (
 			<div>
-				<PageHeader title="Agents" />
 				<div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
 					<CardSkeleton />
 					<CardSkeleton />
@@ -53,8 +51,6 @@ function AgentsPage() {
 
 	return (
 		<div>
-			<PageHeader title="Agents" />
-
 			{agents.length === 0 ? (
 				<EmptyState
 					title="No agents in this workspace"

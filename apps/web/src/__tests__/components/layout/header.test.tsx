@@ -163,6 +163,7 @@ describe('Header', () => {
 			setActions: vi.fn(),
 			setStickyIdentity: vi.fn(),
 			setContentPush: vi.fn(),
+			setScrollLocked: vi.fn(),
 		})
 
 		render(<Header />)
@@ -176,6 +177,7 @@ describe('Header', () => {
 			setActions: vi.fn(),
 			setStickyIdentity: vi.fn(),
 			setContentPush: vi.fn(),
+			setScrollLocked: vi.fn(),
 		})
 
 		render(<Header />)
@@ -189,6 +191,7 @@ describe('Header', () => {
 			setActions: vi.fn(),
 			setStickyIdentity: vi.fn(),
 			setContentPush: vi.fn(),
+			setScrollLocked: vi.fn(),
 		})
 		render(<Header />)
 		const trigger = screen.getByRole('button', { name: /toggle sidebar/i })
@@ -214,6 +217,7 @@ describe('Header', () => {
 			setActions: vi.fn(),
 			setStickyIdentity: vi.fn(),
 			setContentPush: vi.fn(),
+			setScrollLocked: vi.fn(),
 		})
 
 		const user = userEvent.setup()
@@ -241,6 +245,7 @@ describe('Header', () => {
 			setActions: vi.fn(),
 			setStickyIdentity: vi.fn(),
 			setContentPush: vi.fn(),
+			setScrollLocked: vi.fn(),
 		})
 
 		const user = userEvent.setup()
@@ -270,6 +275,7 @@ describe('Header', () => {
 			setActions: vi.fn(),
 			setStickyIdentity: vi.fn(),
 			setContentPush: vi.fn(),
+			setScrollLocked: vi.fn(),
 		})
 
 		render(<Header />)
