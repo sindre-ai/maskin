@@ -2,8 +2,6 @@ import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openap
 import type { Database } from '@maskin/db'
 import { events, objects, subscriptions } from '@maskin/db/schema'
 import {
-	COMMITMENT_ATTENTION_STATUSES,
-	TERMINAL_BET_STATUSES,
 	markReadBodySchema,
 	markUnreadBodySchema,
 	subscribeBodySchema,
@@ -82,15 +80,16 @@ const subscribersResponseSchema = z.object({
 const unreadItemSchema = z.object({
 	entity_type: z.string(),
 	entity_id: z.string().uuid(),
-	// Total unread activity count. Includes both comments (action='commented') and
-	// terminal bet status transitions (action='status_changed', status in
-	// succeeded/failed). A bet with only a terminal transition and no comments will
-	// have unread_count=1 and mentioning_unread_count=0.
+	// Total unread activity count. For You only surfaces comments that actually
+	// @-mention the current actor (action='commented', data.mentions contains
+	// their actor id) — see the query below. The one exception is an
+	// onboarding_session object, whose coach replies all count as unread
+	// regardless of mention, since the coach doesn't @-mention on every turn.
 	unread_count: z.number(),
-	// Count of unread events that actually @-mention the current actor. Per-event
-	// grain — not a bool_or rollup — so a single buried mention among nine
-	// agent→agent comments yields 1. The For You card surfaces the "Mentioned"
-	// pill when > 0.
+	// Count of unread events that actually @-mention the current actor. Equal to
+	// unread_count for every entity except onboarding_session objects, where a
+	// coach reply can be unread (non-zero unread_count) without mentioning the
+	// actor (mentioning_unread_count stays 0).
 	mentioning_unread_count: z.number(),
 	latest_event_id: z.number().nullable(),
 	latest_activity_at: z.string().nullable(),
@@ -369,22 +368,6 @@ app.openapi(listUnreadRoute, (async (c) => {
 	// True unread count regardless of whether recently-read events are joined.
 	const unreadCountExpr = sql<number>`coalesce(count(${events.id}) filter (where ${events.id} > ${lastReadExpr}), 0)::int`
 
-	// `status_changed` events carry the new-shape `data.changes` diff array
-	// (see bet/mcp-response-shape) going forward, but historical rows before
-	// that migration still carry the legacy `{previous, updated}` snapshot —
-	// read whichever is present so old terminal transitions don't drop out of
-	// the unread feed. The third fallback (`data->>'status'`) reads the
-	// initial status on a `created` event, whose `data` payload is the full
-	// object row — used by the Loop `created` arm below so a Loop born at
-	// `at-risk`/`breached` surfaces without waiting for a subsequent
-	// transition. `commented` and `status_changed` payloads never carry a
-	// top-level `status` field, so this fallback is safe for them.
-	const statusExpr = sql<string>`coalesce(
-		${events.data}->'updated'->>'status',
-		jsonb_path_query_first(${events.data}, '$.changes[*] ? (@.field == "status")')->>'new',
-		${events.data}->>'status'
-	)`
-
 	const rows = await db
 		.select({
 			entityType: subscriptions.entityType,
@@ -406,60 +389,30 @@ app.openapi(listUnreadRoute, (async (c) => {
 				eq(events.entityId, subscriptions.entityId),
 				ne(events.actorId, actorId),
 				readOrRecentPredicate,
-				// Three surfaces land in the unread feed:
-				// (1) comments on the subscribed entity (events.entity_type matches the
-				//     subscription's polymorphic type, e.g. 'object'), and
-				// (2) the bet's own terminal-status transition (events.entity_type is
-				//     the object's concrete type, e.g. 'bet', while the subscription's
-				//     entityType is 'object'). The entityType guard on this arm is
-				//     explicit to prevent other subscribable entity types from
-				//     accidentally matching bet terminal events via entityId alone.
-				// TERMINAL_BET_STATUSES (succeeded/failed/paused) is the single
-				// source of truth shared with the notification fan-out gate in
-				// objects.ts — without (2) a watcher misses the terminal signal, see
-				// T2 on bet/notif-cascade-fix.
-				// (3) a Commitment transitioning into an attention-worthy status
-				//     (at-risk / breached) — mirrors (2) for the Commitment
-				//     primitive. Uses `type='commitment'` in the polymorphic
-				//     filter path (renamed from `loop` in T1 of
-				//     bet/loops-first-class); a transition back to `holding` is
-				//     quiet news and does not land in the feed.
-				//     COMMITMENT_ATTENTION_STATUSES is the single source of truth
-				//     shared with the briefing composer's health-priority sort.
-				// (4) a Commitment born already at an attention-worthy status —
-				//     QA on the original loops-primitive bet found seeded
-				//     `at-risk`/`breached` rows silent in the feed because their
-				//     `created` event emits an initial-status payload, not a
-				//     transition. Mirrors (3) via the `data->>'status'` fallback
-				//     in `statusExpr` above; a row born at `holding` stays quiet.
-				// Unlike TERMINAL_BET_STATUSES, a commitment's status is never
-				// permanent — it can flip back to `holding` after arm (3) or (4)
-				// already matched an older unread event. Both commitment arms
-				// additionally require the object's CURRENT status (via the
-				// `objects` join above) to still be attention-worthy, so a
-				// recovered commitment stops surfacing once it's read back to
-				// `holding` even if the triggering event is still unread.
+				// Two surfaces land in the unread feed, both scoped to comments only
+				// (status-change/terminal-bet/commitment-attention signals were
+				// dropped from For You — mentions are the only trigger now):
+				// (1) a comment that actually @-mentions this actor specifically —
+				//     `data.mentions` is the per-comment array of actor ids passed on
+				//     POST /api/events, checked with `@>` containment against this
+				//     actor's own id so a comment that mentions a different actor in
+				//     the same workspace never counts.
+				// (2) the onboarding coach conversation — any comment on an
+				//     onboarding_session object the actor owns counts as unread
+				//     regardless of mention, since the coach doesn't @-mention the
+				//     human on every turn. Carve-out for a pre-existing, unrelated
+				//     feature; everything else in the feed is mentions-only.
 				or(
-					and(eq(events.entityType, subscriptions.entityType), eq(events.action, 'commented')),
 					and(
-						eq(subscriptions.entityType, 'object'),
-						eq(events.entityType, 'bet'),
-						eq(events.action, 'status_changed'),
-						inArray(statusExpr, [...TERMINAL_BET_STATUSES]),
+						eq(events.entityType, subscriptions.entityType),
+						eq(events.action, 'commented'),
+						sql`${events.data}->'mentions' @> jsonb_build_array(${actorId}::text)`,
 					),
 					and(
 						eq(subscriptions.entityType, 'object'),
-						eq(events.entityType, 'commitment'),
-						eq(events.action, 'status_changed'),
-						inArray(statusExpr, [...COMMITMENT_ATTENTION_STATUSES]),
-						inArray(objects.status, [...COMMITMENT_ATTENTION_STATUSES]),
-					),
-					and(
-						eq(subscriptions.entityType, 'object'),
-						eq(events.entityType, 'commitment'),
-						eq(events.action, 'created'),
-						inArray(statusExpr, [...COMMITMENT_ATTENTION_STATUSES]),
-						inArray(objects.status, [...COMMITMENT_ATTENTION_STATUSES]),
+						eq(events.entityType, 'object'),
+						eq(events.action, 'commented'),
+						eq(objects.type, 'onboarding_session'),
 					),
 				),
 			),
