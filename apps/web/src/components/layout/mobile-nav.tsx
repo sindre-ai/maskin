@@ -50,7 +50,7 @@ export function MobileNav() {
 	return (
 		<nav
 			aria-label="Primary"
-			className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/95 backdrop-blur md:hidden pb-[env(safe-area-inset-bottom)]"
+			className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background pb-[env(safe-area-inset-bottom)] md:hidden"
 		>
 			<div className="flex items-stretch justify-around">
 				{items.map((item) => {

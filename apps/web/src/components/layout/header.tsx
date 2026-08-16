@@ -219,10 +219,10 @@ export function Header() {
 						type="button"
 						onClick={() => setPaletteOpen(true)}
 						aria-label="Search and run commands (⌘K)"
-						className="hidden sm:flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-input bg-transparent px-2 text-muted-foreground transition-colors duration-150 hover:text-foreground"
+						className="hidden sm:flex h-[30px] shrink-0 items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 text-[11.5px] font-semibold text-muted-foreground transition-colors duration-150 hover:border-border-strong hover:text-foreground"
 					>
-						<Search size={13} />
-						<kbd className="font-mono text-[10px] leading-none text-muted-foreground/70">⌘K</kbd>
+						<Search aria-hidden="true" className="size-[13px]" />
+						<kbd className="font-mono text-[10px] leading-none text-border-strong">⌘K</kbd>
 					</button>
 					{actions}
 					{!isForYouPage && (

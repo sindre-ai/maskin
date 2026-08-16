@@ -74,7 +74,7 @@ export function WorkspaceSwitcher() {
 							aria-label={`Switch workspace, currently ${displayName}`}
 							className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
 						>
-							<div className="flex aspect-square size-5 items-center justify-center rounded bg-primary text-[10px] font-semibold text-primary-foreground">
+							<div className="flex aspect-square size-5 items-center justify-center rounded-md bg-primary text-[10px] font-semibold text-primary-foreground">
 								{initial}
 							</div>
 							<span className="truncate font-medium group-data-[collapsible=icon]:hidden">
@@ -93,7 +93,7 @@ export function WorkspaceSwitcher() {
 						</SidebarMenuButton>
 					</DropdownMenuTrigger>
 					<DropdownMenuContent
-						className="w-[--radix-dropdown-menu-trigger-width] min-w-56 rounded-lg"
+						className="w-[--radix-dropdown-menu-trigger-width] min-w-56"
 						side={isMobile ? 'bottom' : 'right'}
 						align="start"
 						sideOffset={4}
