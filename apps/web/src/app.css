@@ -134,6 +134,19 @@
 	--radius-md: calc(var(--radius) - 2px);
 	--radius-lg: var(--radius);
 	--radius-xl: calc(var(--radius) + 4px);
+
+	/* Motion — mirrors .claude/skills/maskin-design/tokens/motion.css.
+	   Tailwind v4 auto-generates `ease-*` utilities from --ease-* tokens, so
+	   `ease-standard` / `ease-emphasized` are authored classes. Duration uses
+	   the built-in numeric utilities (`duration-{150,200,300}`) plus the named
+	   `duration-slide` utility below for the semantic drawer-slide case. */
+	--duration-slide: 300ms;
+	--ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+	--ease-emphasized: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@utility duration-slide {
+	transition-duration: var(--duration-slide);
 }
 
 :root {
@@ -369,6 +382,21 @@
 	}
 	*::-webkit-scrollbar-thumb:hover {
 		background-color: var(--border-hover, var(--border));
+	}
+
+	/* Reduced motion — kill animations and transitions, don't just slow them.
+	   Mirrors .claude/skills/maskin-design/tokens/motion.css so every animated
+	   surface (Tailwind utilities, Radix data-state animations, custom keyframes)
+	   inherits the preference without per-component wiring. */
+	@media (prefers-reduced-motion: reduce) {
+		*,
+		*::before,
+		*::after {
+			animation-duration: 0.001ms !important;
+			animation-iteration-count: 1 !important;
+			transition-duration: 0.001ms !important;
+			scroll-behavior: auto !important;
+		}
 	}
 }
 

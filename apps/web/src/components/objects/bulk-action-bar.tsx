@@ -72,19 +72,6 @@ export function resolvePlatformDevice(): PlatformDevice {
 	return 'desktop'
 }
 
-function usePrefersReducedMotion() {
-	const [reduced, setReduced] = React.useState(false)
-	React.useEffect(() => {
-		if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return
-		const mql = window.matchMedia('(prefers-reduced-motion: reduce)')
-		const onChange = () => setReduced(mql.matches)
-		onChange()
-		mql.addEventListener('change', onChange)
-		return () => mql.removeEventListener('change', onChange)
-	}, [])
-	return reduced
-}
-
 export function BulkActionBar({
 	selectedCount,
 	statusOptions = [],
@@ -102,7 +89,6 @@ export function BulkActionBar({
 	onClear,
 }: BulkActionBarProps) {
 	const visible = selectedCount > 0
-	const reducedMotion = usePrefersReducedMotion()
 	const [confirmOpen, setConfirmOpen] = React.useState(false)
 	// Bump these keys after each pick so the Selects remount and don't latch onto
 	// the last-chosen value — otherwise re-selecting the same status/owner on a
@@ -135,8 +121,6 @@ export function BulkActionBar({
 		if (!visible && confirmOpen) setConfirmOpen(false)
 	}, [visible, confirmOpen])
 
-	const transitionClass = reducedMotion ? '' : 'transition-all duration-200 ease-out'
-
 	const plural = selectedCount === 1 ? '' : 's'
 	const copyLinkLabel = `Copy link${plural}`
 	const copyTitleLabel = `Copy title${plural}`
@@ -153,7 +137,7 @@ export function BulkActionBar({
 					'fixed left-1/2 bottom-10 z-50 -translate-x-1/2',
 					'flex w-[calc(100%-2rem)] max-w-[44rem] items-center gap-2',
 					'overflow-x-auto rounded-md border border-border bg-popover px-3 py-2 shadow-lg',
-					transitionClass,
+					'transition-all duration-200 ease-out',
 					visible
 						? 'pointer-events-auto opacity-100 translate-y-0'
 						: 'pointer-events-none opacity-0 translate-y-4',

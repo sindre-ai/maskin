@@ -195,11 +195,15 @@ describe('BulkActionBar', () => {
 		expect(props.onClear).not.toHaveBeenCalled()
 	})
 
-	it('disables the transition classes when prefers-reduced-motion is set', () => {
+	// Reduced-motion is now enforced by a global @media (prefers-reduced-motion:
+	// reduce) rule in app.css that zeroes transition-duration on every element,
+	// so the component keeps its transition class in both preference states.
+	// Coverage of the CSS guard itself lives in the motion-tokens.test.ts suite.
+	it('keeps its transition class regardless of prefers-reduced-motion', () => {
 		setMatchMedia(true)
 		renderBar()
 		const bar = screen.getByRole('region', { name: 'Bulk actions' })
-		expect(bar.className).not.toMatch(/transition-all/)
+		expect(bar.className).toMatch(/transition-all/)
 	})
 
 	it('does not render a delete button when onDelete is not provided', () => {
