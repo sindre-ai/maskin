@@ -80,7 +80,12 @@ export function ConversationView({
 			: null
 	}, [availableActors, isChiefOfStaff, sessionAgent])
 
-	const owner = getStoredActor()
+	// getStoredActor() parses localStorage on every call, so it returns a fresh
+	// object each render. Reading it once keeps `initialParticipants` stable —
+	// otherwise the `setParticipants` effect below sees a new array on every
+	// render and thrashes into a Maximum-update-depth crash the moment anything
+	// else in the tree re-renders.
+	const owner = useMemo(() => getStoredActor(), [])
 
 	const initialParticipants = useMemo<Participant[]>(() => {
 		const rows: Participant[] = []

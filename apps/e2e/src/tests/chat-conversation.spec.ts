@@ -406,6 +406,51 @@ test.describe('Conversation view — transcript + composer wiring (T7)', () => {
 	})
 })
 
+test.describe('Conversation view — IN THIS CHAT panel opens cleanly on mobile', () => {
+	// Regression for React error #185 ("Maximum update depth exceeded") when
+	// tapping "In this chat" on the mobile viewport — the panel's Sheet mount
+	// re-rendered the parent and unstable owner-from-localStorage kicked the
+	// participants sync effect into an infinite loop.
+	test('opens without triggering a React error at 375px', async ({ page, account }) => {
+		await page.setViewportSize({ width: 375, height: 812 })
+		const session = buildSession({
+			id: 'sess-panel-mobile',
+			actorId: 'agent-cos',
+			actionPrompt: 'Mobile panel smoke',
+			config: { entry_agent_role: 'chief-of-staff' },
+		})
+		await mockChatsData(page, {
+			sessions: [session],
+			actors: [
+				buildActor({ id: 'agent-cos', name: 'Chief of Staff' }),
+				buildActor({ id: 'agent-marketer', name: 'Marketer' }),
+			],
+		})
+
+		const consoleErrors: string[] = []
+		page.on('pageerror', (err) => {
+			consoleErrors.push(err.message)
+		})
+		page.on('console', (msg) => {
+			if (msg.type() === 'error') consoleErrors.push(msg.text())
+		})
+
+		await page.goto(`/${account.workspaceId}/chats/${session.id}`)
+		await page
+			.getByRole('button', { name: /in this chat/i })
+			.first()
+			.click()
+		// The panel's search input renders once the sheet is mounted and the
+		// tree is stable — if the render loop crashed, this never appears.
+		await expect(page.getByLabel('Search people and agents')).toBeVisible()
+
+		const relevant = consoleErrors.filter(
+			(m) => /minified react error #185/i.test(m) || /maximum update depth/i.test(m),
+		)
+		expect(relevant, `Unexpected React errors: ${relevant.join('\n')}`).toEqual([])
+	})
+})
+
 test.describe('Conversation view — viewports', () => {
 	for (const viewport of SHIP_GATE_VIEWPORTS) {
 		test(`shell is reachable and does not overflow horizontally at ${viewport.label}`, async ({
