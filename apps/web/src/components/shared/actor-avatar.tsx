@@ -52,6 +52,7 @@ export function ActorAvatar({
 	onClick,
 	id,
 	imageUrl,
+	variant = 'default',
 }: {
 	name: string
 	type: string
@@ -60,6 +61,10 @@ export function ActorAvatar({
 	onClick?: () => void
 	id?: string
 	imageUrl?: string
+	/** `cos` renders the Chief-of-Staff purple gradient + live-status dot from
+	 * chats-cos-explicit.html (::after pseudo-element). Everywhere else stays
+	 * on the hashed palette so unrelated agents don't drift into the CoS look. */
+	variant?: 'default' | 'cos'
 }) {
 	// Track the specific url that failed so a caller swapping imageUrl resets the fallback
 	// automatically — without a useEffect that biome flags for missing dep semantics.
@@ -68,7 +73,10 @@ export function ActorAvatar({
 
 	const sizeClasses = size === 'sm' ? 'h-5 w-5 text-[10px]' : 'h-7 w-7 text-xs'
 	const initials = getActorInitials(name)
-	const paletteClass = getActorAvatarPaletteClass(id ?? name)
+	const isCos = variant === 'cos'
+	const paletteClass = isCos
+		? 'text-white [background-image:linear-gradient(135deg,#7c3aed_0%,#4338ca_100%)]'
+		: getActorAvatarPaletteClass(id ?? name)
 	const showImage = Boolean(imageUrl) && !imageFailed
 
 	const baseClasses = cn(
@@ -77,6 +85,21 @@ export function ActorAvatar({
 		sizeClasses,
 		className,
 	)
+
+	// Live-status dot on the Chief-of-Staff avatar (chats-cos-explicit.html
+	// `.chat-av.cos::after`). Rendered as a positioned span rather than an
+	// ::after pseudo — the button branch below already uses ::after for its
+	// tap-target expansion, and CSS allows only one ::after per element.
+	const cosDot = isCos ? (
+		<span
+			aria-hidden
+			className={cn(
+				'absolute -right-0.5 -bottom-0.5 rounded-full bg-success ring-2 ring-background',
+				size === 'sm' ? 'h-1.5 w-1.5' : 'h-2 w-2',
+			)}
+			data-testid="cos-status-dot"
+		/>
+	) : null
 
 	const content = (
 		<>
@@ -92,6 +115,7 @@ export function ActorAvatar({
 					draggable={false}
 				/>
 			) : null}
+			{cosDot}
 		</>
 	)
 

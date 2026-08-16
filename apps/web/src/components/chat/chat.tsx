@@ -1,3 +1,4 @@
+import type { Ask } from '@/components/chat/ask-block'
 import { ChatTranscript } from '@/components/chat/chat-transcript'
 import { SelectionChips } from '@/components/chat/selection-chips'
 import {
@@ -5,6 +6,8 @@ import {
 	SlashPicker,
 	type SlashPickerResult,
 } from '@/components/chat/slash-picker'
+import { StreamingSessionChip } from '@/components/chat/streaming-session-chip'
+import { coerceOptions } from '@/components/pulse/notification-input'
 import { UploadProgress } from '@/components/shared/upload-progress'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -12,6 +15,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { useChatOneShot } from '@/hooks/use-chat-one-shot'
 import { useChatSession } from '@/hooks/use-chat-session'
 import { useUploadFile } from '@/hooks/use-files'
+import { useNotifications } from '@/hooks/use-notifications'
 import {
 	deriveEntryAgentRole,
 	trackChatImageUpload,
@@ -38,6 +42,7 @@ import {
 	useCallback,
 	useEffect,
 	useImperativeHandle,
+	useMemo,
 	useRef,
 	useState,
 } from 'react'
@@ -166,6 +171,26 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function Chat(
 	useEffect(() => {
 		onEventsChange?.(events)
 	}, [events, onEventsChange])
+
+	// Bridge `needs_input` notifications that are bound to this persistent chat
+	// session into the transcript as tappable ask blocks. Only notifications the
+	// session itself created (via `session_id`) belong to this conversation.
+	const { data: sessionNotifications } = useNotifications(workspaceId, { type: 'needs_input' })
+	const asks = useMemo<Ask[]>(() => {
+		if (!session.sessionId || !sessionNotifications) return []
+		return sessionNotifications
+			.filter((n) => n.sessionId === session.sessionId)
+			.map((n) => ({
+				id: n.id,
+				title: n.title,
+				content: n.content,
+				question: typeof n.metadata?.question === 'string' ? n.metadata.question : null,
+				options: coerceOptions(n.metadata?.options) ?? [],
+				suggestion: typeof n.metadata?.suggestion === 'string' ? n.metadata.suggestion : null,
+				status: n.status,
+				response: n.metadata?.response,
+			}))
+	}, [session.sessionId, sessionNotifications])
 
 	useImperativeHandle(
 		ref,
@@ -354,6 +379,42 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function Chat(
 		[onDispatchSelection],
 	)
 
+	// Sessions actively streaming into the transcript right now, in arrival
+	// order. Renders one row of streaming chips per session so the user can see
+	// which agents are speaking and stop any of them with a single tap.
+	// - persistent chat session: streaming while a turn is in flight
+	//   (`pendingTurn`) and the SSE stream is either warming up or open.
+	// - one-shot session: streaming from the moment the create call resolves
+	//   until the SSE `done` envelope flips it to `closed`.
+	const activeStreamingSessionIds = useMemo(() => {
+		const ids: string[] = []
+		if (
+			!selectedAgent &&
+			session.sessionId &&
+			pendingTurn &&
+			(session.status === 'connecting' ||
+				session.status === 'ready' ||
+				session.status === 'starting')
+		) {
+			ids.push(session.sessionId)
+		}
+		if (oneShot.sessionId && oneShot.status === 'streaming') {
+			ids.push(oneShot.sessionId)
+		}
+		return ids
+	}, [
+		selectedAgent,
+		session.sessionId,
+		session.status,
+		oneShot.sessionId,
+		oneShot.status,
+		pendingTurn,
+	])
+
+	const handleStreamStopped = useCallback(() => {
+		setPendingTurn(false)
+	}, [])
+
 	const placeholder = computePlaceholder(surface, selectedAgent?.name)
 
 	return (
@@ -369,11 +430,17 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function Chat(
 				<ChatTranscript
 					workspaceId={workspaceId}
 					events={events}
+					asks={asks}
 					starting={starting}
 					error={error}
 					className="min-h-0 flex-1"
 				/>
 			)}
+			<StreamingSessionRow
+				workspaceId={workspaceId}
+				sessionIds={activeStreamingSessionIds}
+				onStopped={handleStreamStopped}
+			/>
 			<Composer
 				workspaceId={workspaceId}
 				onSend={handleSend}
@@ -393,6 +460,36 @@ export const Chat = forwardRef<ChatHandle, ChatProps>(function Chat(
 		</div>
 	)
 })
+
+/**
+ * Renders one streaming chip per active session, stacked vertically so
+ * concurrent one-shot + persistent sessions each show their own controls. The
+ * row collapses to nothing while no session is streaming — the surface stays
+ * quiet outside of a live turn.
+ */
+function StreamingSessionRow({
+	workspaceId,
+	sessionIds,
+	onStopped,
+}: {
+	workspaceId: string
+	sessionIds: string[]
+	onStopped: () => void
+}) {
+	if (sessionIds.length === 0) return null
+	return (
+		<div className="flex flex-col gap-1">
+			{sessionIds.map((sessionId) => (
+				<StreamingSessionChip
+					key={sessionId}
+					sessionId={sessionId}
+					workspaceId={workspaceId}
+					onStopped={onStopped}
+				/>
+			))}
+		</div>
+	)
+}
 
 function isTurnProgressEvent(event: ChatEvent): boolean {
 	return (

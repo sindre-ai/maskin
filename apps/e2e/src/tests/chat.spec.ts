@@ -35,6 +35,7 @@ test.describe('Chat surfaces', () => {
 			workspaceId: account.workspaceId,
 			humanActorId: account.actorId,
 			humanActorName: 'E2E Test User',
+			objects: [{ id: 'obj-e2e-1', title: 'Ship Chats', type: 'bet', status: 'active' }],
 			streamEvents: [
 				{
 					type: 'assistant',
@@ -42,6 +43,11 @@ test.describe('Chat surfaces', () => {
 						id: 'msg-e2e-1',
 						content: [{ type: 'text', text: 'Hi from Workspace Coach E2E' }],
 					},
+					// Agent-referenced item — the transcript renders it as a
+					// REFERENCED card that fetches the object for its status.
+					maskin_attachments: [
+						{ kind: 'object', id: 'obj-e2e-1', title: 'Ship Chats', type: 'bet' },
+					],
 				},
 			],
 		})
@@ -73,6 +79,77 @@ test.describe('Chat surfaces', () => {
 		await expect(page.getByText('Hi from Workspace Coach E2E')).toBeVisible({
 			timeout: 10_000,
 		})
+
+		// The reply's agent-referenced object renders as a REFERENCED card with
+		// the object's live status (fetched from GET /api/objects/:id).
+		const sheet = page.locator('[data-surface="sheet"]')
+		await expect(sheet.getByText('Referenced')).toBeVisible({ timeout: 10_000 })
+		await expect(sheet.getByRole('link', { name: /Ship Chats/ })).toBeVisible()
+		await expect(sheet.getByText('active')).toBeVisible()
+	})
+
+	test('an open ask renders tap-to-choose options and posts the picked option back', async ({
+		page,
+		account,
+	}) => {
+		const ask = buildNotificationFixture({
+			id: 'e2e-ask-1',
+			workspaceId: account.workspaceId,
+			sourceActorId: account.actorId,
+			title: 'Direction call',
+			type: 'needs_input',
+			// Bound to the chat session the helper mocks so the transcript
+			// bridges it into an ask block.
+			sessionId: 'e2e-chat-session',
+			metadata: {
+				question: 'Ship the chats E2E now?',
+				options: [
+					{ label: 'Ship it', value: 'ship' },
+					{ label: 'Hold', value: 'hold', description: 'Pause until reviewed' },
+				],
+				suggestion: 'ship',
+			},
+		})
+
+		const mocks = await installChatMocks(page, {
+			workspaceId: account.workspaceId,
+			humanActorId: account.actorId,
+			humanActorName: 'E2E Test User',
+			notifications: [ask],
+		})
+
+		// The header's "Open chat" button is hidden on the For You page (its own
+		// header surfaces equivalent actions) — use the Objects list instead.
+		await page.goto(`/${account.workspaceId}/objects`)
+		await openSheetFromSidebar(page)
+
+		// Ask blocks only bridge once a session bound to this conversation
+		// exists — send a message so the session bootstraps first.
+		const input = page.getByPlaceholder('Message agents')
+		await expect(input).toBeEnabled({ timeout: 10_000 })
+		await input.fill('Decision time')
+		await input.press('Enter')
+
+		const sheet = page.locator('[data-surface="sheet"]')
+		await expect(sheet.getByText('Ask')).toBeVisible({ timeout: 10_000 })
+		await expect(sheet.getByText('Ship the chats E2E now?')).toBeVisible()
+		await expect(sheet.getByRole('button', { name: /Ship it/ })).toBeVisible()
+		await expect(sheet.getByRole('button', { name: /Hold/ })).toBeVisible()
+
+		// The producer's recommendation is surfaced as a REC chip.
+		await expect(sheet.getByText('REC').first()).toBeVisible()
+
+		// Tapping an option posts the choice back immediately.
+		await sheet.getByRole('button', { name: /Ship it/ }).click()
+
+		await expect
+			.poll(() => mocks.respondCalls, { timeout: 10_000 })
+			.toContainEqual({ id: 'e2e-ask-1', response: 'ship' })
+
+		// The block locks on the picked option once resolved.
+		const picked = sheet.getByRole('button', { name: /Ship it/ })
+		await expect(picked).toBeDisabled()
+		await expect(picked).toHaveAttribute('aria-pressed', 'true')
 	})
 
 	test('slash picker: two objects multi-select, agent is single-select and re-picks replace', async ({

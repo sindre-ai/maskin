@@ -138,4 +138,24 @@ describe('ActorAvatar', () => {
 		render(<ActorAvatar name="Alice" type="human" imageUrl="https://example.com/a.png" />)
 		expect(screen.getByText('AL')).toBeInTheDocument()
 	})
+
+	it('applies the Chief-of-Staff purple gradient when variant="cos"', () => {
+		render(<ActorAvatar name="Chief of Staff" type="agent" variant="cos" />)
+		const el = screen.getByTitle('Chief of Staff')
+		// Gradient token from chats-cos-explicit.html
+		expect(el.className).toContain('linear-gradient(135deg,#7c3aed_0%,#4338ca_100%)')
+		expect(el.className).toContain('text-white')
+	})
+
+	it('renders a live-status dot on the CoS variant (visible on both sizes)', () => {
+		const { rerender } = render(<ActorAvatar name="Chief of Staff" type="agent" variant="cos" />)
+		expect(screen.getByTestId('cos-status-dot')).toBeInTheDocument()
+		rerender(<ActorAvatar name="Chief of Staff" type="agent" variant="cos" size="md" />)
+		expect(screen.getByTestId('cos-status-dot')).toBeInTheDocument()
+	})
+
+	it('does not render the status dot outside the CoS variant', () => {
+		render(<ActorAvatar name="Product Analyst" type="agent" />)
+		expect(screen.queryByTestId('cos-status-dot')).not.toBeInTheDocument()
+	})
 })

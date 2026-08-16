@@ -48,6 +48,13 @@ vi.mock('@/hooks/use-files', () => ({
 	useUploadFile: () => mockUploadFile,
 }))
 
+// The session-id filter + needs_input bridge is covered where QueryClient is
+// provided (chat-panel Harness); here `Chat` renders without a provider in
+// most tests, so stub the hook to keep the transcript path simple.
+vi.mock('@/hooks/use-notifications', () => ({
+	useNotifications: () => ({ data: [] }),
+}))
+
 vi.mock('@/lib/api', () => ({
 	api: {
 		actors: { list: vi.fn() },

@@ -24,6 +24,7 @@ import { Route as AuthedWorkspaceIdSettingsIndexRouteImport } from './routes/_au
 import { Route as AuthedWorkspaceIdObjectsIndexRouteImport } from './routes/_authed/$workspaceId/objects/index'
 import { Route as AuthedWorkspaceIdMarketplaceIndexRouteImport } from './routes/_authed/$workspaceId/marketplace/index'
 import { Route as AuthedWorkspaceIdLoopsIndexRouteImport } from './routes/_authed/$workspaceId/loops/index'
+import { Route as AuthedWorkspaceIdChatsIndexRouteImport } from './routes/_authed/$workspaceId/chats/index'
 import { Route as AuthedWorkspaceIdAgentsIndexRouteImport } from './routes/_authed/$workspaceId/agents/index'
 import { Route as AuthedWorkspaceIdTriggersTriggerIdRouteImport } from './routes/_authed/$workspaceId/triggers/$triggerId'
 import { Route as AuthedWorkspaceIdSettingsSkillsRouteImport } from './routes/_authed/$workspaceId/settings/skills'
@@ -34,6 +35,7 @@ import { Route as AuthedWorkspaceIdSettingsIntegrationsRouteImport } from './rou
 import { Route as AuthedWorkspaceIdObjectsObjectIdRouteImport } from './routes/_authed/$workspaceId/objects/$objectId'
 import { Route as AuthedWorkspaceIdLoopsLoopIdRouteImport } from './routes/_authed/$workspaceId/loops/$loopId'
 import { Route as AuthedWorkspaceIdFilesFileIdRouteImport } from './routes/_authed/$workspaceId/files/$fileId'
+import { Route as AuthedWorkspaceIdChatsSessionIdRouteImport } from './routes/_authed/$workspaceId/chats/$sessionId'
 import { Route as AuthedWorkspaceIdAgentsAgentIdRouteImport } from './routes/_authed/$workspaceId/agents/$agentId'
 import { Route as AuthedWorkspaceIdSettingsObjectsIndexRouteImport } from './routes/_authed/$workspaceId/settings/objects/index'
 import { Route as AuthedWorkspaceIdMarketplaceLoopIdIndexRouteImport } from './routes/_authed/$workspaceId/marketplace/$loopId/index'
@@ -122,6 +124,12 @@ const AuthedWorkspaceIdLoopsIndexRoute =
     path: '/loops/',
     getParentRoute: () => AuthedWorkspaceIdRoute,
   } as any)
+const AuthedWorkspaceIdChatsIndexRoute =
+  AuthedWorkspaceIdChatsIndexRouteImport.update({
+    id: '/chats/',
+    path: '/chats/',
+    getParentRoute: () => AuthedWorkspaceIdRoute,
+  } as any)
 const AuthedWorkspaceIdAgentsIndexRoute =
   AuthedWorkspaceIdAgentsIndexRouteImport.update({
     id: '/agents/',
@@ -182,6 +190,12 @@ const AuthedWorkspaceIdFilesFileIdRoute =
     path: '/files/$fileId',
     getParentRoute: () => AuthedWorkspaceIdRoute,
   } as any)
+const AuthedWorkspaceIdChatsSessionIdRoute =
+  AuthedWorkspaceIdChatsSessionIdRouteImport.update({
+    id: '/chats/$sessionId',
+    path: '/chats/$sessionId',
+    getParentRoute: () => AuthedWorkspaceIdRoute,
+  } as any)
 const AuthedWorkspaceIdAgentsAgentIdRoute =
   AuthedWorkspaceIdAgentsAgentIdRouteImport.update({
     id: '/agents/$agentId',
@@ -224,6 +238,7 @@ export interface FileRoutesByFullPath {
   '/$workspaceId/settings': typeof AuthedWorkspaceIdSettingsRouteWithChildren
   '/$workspaceId/': typeof AuthedWorkspaceIdIndexRoute
   '/$workspaceId/agents/$agentId': typeof AuthedWorkspaceIdAgentsAgentIdRoute
+  '/$workspaceId/chats/$sessionId': typeof AuthedWorkspaceIdChatsSessionIdRoute
   '/$workspaceId/files/$fileId': typeof AuthedWorkspaceIdFilesFileIdRoute
   '/$workspaceId/loops/$loopId': typeof AuthedWorkspaceIdLoopsLoopIdRoute
   '/$workspaceId/objects/$objectId': typeof AuthedWorkspaceIdObjectsObjectIdRoute
@@ -234,6 +249,7 @@ export interface FileRoutesByFullPath {
   '/$workspaceId/settings/skills': typeof AuthedWorkspaceIdSettingsSkillsRoute
   '/$workspaceId/triggers/$triggerId': typeof AuthedWorkspaceIdTriggersTriggerIdRoute
   '/$workspaceId/agents/': typeof AuthedWorkspaceIdAgentsIndexRoute
+  '/$workspaceId/chats/': typeof AuthedWorkspaceIdChatsIndexRoute
   '/$workspaceId/loops/': typeof AuthedWorkspaceIdLoopsIndexRoute
   '/$workspaceId/marketplace/': typeof AuthedWorkspaceIdMarketplaceIndexRoute
   '/$workspaceId/objects/': typeof AuthedWorkspaceIdObjectsIndexRoute
@@ -253,6 +269,7 @@ export interface FileRoutesByTo {
   '/$workspaceId/briefing': typeof AuthedWorkspaceIdBriefingRoute
   '/$workspaceId': typeof AuthedWorkspaceIdIndexRoute
   '/$workspaceId/agents/$agentId': typeof AuthedWorkspaceIdAgentsAgentIdRoute
+  '/$workspaceId/chats/$sessionId': typeof AuthedWorkspaceIdChatsSessionIdRoute
   '/$workspaceId/files/$fileId': typeof AuthedWorkspaceIdFilesFileIdRoute
   '/$workspaceId/loops/$loopId': typeof AuthedWorkspaceIdLoopsLoopIdRoute
   '/$workspaceId/objects/$objectId': typeof AuthedWorkspaceIdObjectsObjectIdRoute
@@ -263,6 +280,7 @@ export interface FileRoutesByTo {
   '/$workspaceId/settings/skills': typeof AuthedWorkspaceIdSettingsSkillsRoute
   '/$workspaceId/triggers/$triggerId': typeof AuthedWorkspaceIdTriggersTriggerIdRoute
   '/$workspaceId/agents': typeof AuthedWorkspaceIdAgentsIndexRoute
+  '/$workspaceId/chats': typeof AuthedWorkspaceIdChatsIndexRoute
   '/$workspaceId/loops': typeof AuthedWorkspaceIdLoopsIndexRoute
   '/$workspaceId/marketplace': typeof AuthedWorkspaceIdMarketplaceIndexRoute
   '/$workspaceId/objects': typeof AuthedWorkspaceIdObjectsIndexRoute
@@ -286,6 +304,7 @@ export interface FileRoutesById {
   '/_authed/$workspaceId/settings': typeof AuthedWorkspaceIdSettingsRouteWithChildren
   '/_authed/$workspaceId/': typeof AuthedWorkspaceIdIndexRoute
   '/_authed/$workspaceId/agents/$agentId': typeof AuthedWorkspaceIdAgentsAgentIdRoute
+  '/_authed/$workspaceId/chats/$sessionId': typeof AuthedWorkspaceIdChatsSessionIdRoute
   '/_authed/$workspaceId/files/$fileId': typeof AuthedWorkspaceIdFilesFileIdRoute
   '/_authed/$workspaceId/loops/$loopId': typeof AuthedWorkspaceIdLoopsLoopIdRoute
   '/_authed/$workspaceId/objects/$objectId': typeof AuthedWorkspaceIdObjectsObjectIdRoute
@@ -296,6 +315,7 @@ export interface FileRoutesById {
   '/_authed/$workspaceId/settings/skills': typeof AuthedWorkspaceIdSettingsSkillsRoute
   '/_authed/$workspaceId/triggers/$triggerId': typeof AuthedWorkspaceIdTriggersTriggerIdRoute
   '/_authed/$workspaceId/agents/': typeof AuthedWorkspaceIdAgentsIndexRoute
+  '/_authed/$workspaceId/chats/': typeof AuthedWorkspaceIdChatsIndexRoute
   '/_authed/$workspaceId/loops/': typeof AuthedWorkspaceIdLoopsIndexRoute
   '/_authed/$workspaceId/marketplace/': typeof AuthedWorkspaceIdMarketplaceIndexRoute
   '/_authed/$workspaceId/objects/': typeof AuthedWorkspaceIdObjectsIndexRoute
@@ -319,6 +339,7 @@ export interface FileRouteTypes {
     | '/$workspaceId/settings'
     | '/$workspaceId/'
     | '/$workspaceId/agents/$agentId'
+    | '/$workspaceId/chats/$sessionId'
     | '/$workspaceId/files/$fileId'
     | '/$workspaceId/loops/$loopId'
     | '/$workspaceId/objects/$objectId'
@@ -329,6 +350,7 @@ export interface FileRouteTypes {
     | '/$workspaceId/settings/skills'
     | '/$workspaceId/triggers/$triggerId'
     | '/$workspaceId/agents/'
+    | '/$workspaceId/chats/'
     | '/$workspaceId/loops/'
     | '/$workspaceId/marketplace/'
     | '/$workspaceId/objects/'
@@ -348,6 +370,7 @@ export interface FileRouteTypes {
     | '/$workspaceId/briefing'
     | '/$workspaceId'
     | '/$workspaceId/agents/$agentId'
+    | '/$workspaceId/chats/$sessionId'
     | '/$workspaceId/files/$fileId'
     | '/$workspaceId/loops/$loopId'
     | '/$workspaceId/objects/$objectId'
@@ -358,6 +381,7 @@ export interface FileRouteTypes {
     | '/$workspaceId/settings/skills'
     | '/$workspaceId/triggers/$triggerId'
     | '/$workspaceId/agents'
+    | '/$workspaceId/chats'
     | '/$workspaceId/loops'
     | '/$workspaceId/marketplace'
     | '/$workspaceId/objects'
@@ -380,6 +404,7 @@ export interface FileRouteTypes {
     | '/_authed/$workspaceId/settings'
     | '/_authed/$workspaceId/'
     | '/_authed/$workspaceId/agents/$agentId'
+    | '/_authed/$workspaceId/chats/$sessionId'
     | '/_authed/$workspaceId/files/$fileId'
     | '/_authed/$workspaceId/loops/$loopId'
     | '/_authed/$workspaceId/objects/$objectId'
@@ -390,6 +415,7 @@ export interface FileRouteTypes {
     | '/_authed/$workspaceId/settings/skills'
     | '/_authed/$workspaceId/triggers/$triggerId'
     | '/_authed/$workspaceId/agents/'
+    | '/_authed/$workspaceId/chats/'
     | '/_authed/$workspaceId/loops/'
     | '/_authed/$workspaceId/marketplace/'
     | '/_authed/$workspaceId/objects/'
@@ -515,6 +541,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedWorkspaceIdLoopsIndexRouteImport
       parentRoute: typeof AuthedWorkspaceIdRoute
     }
+    '/_authed/$workspaceId/chats/': {
+      id: '/_authed/$workspaceId/chats/'
+      path: '/chats'
+      fullPath: '/$workspaceId/chats/'
+      preLoaderRoute: typeof AuthedWorkspaceIdChatsIndexRouteImport
+      parentRoute: typeof AuthedWorkspaceIdRoute
+    }
     '/_authed/$workspaceId/agents/': {
       id: '/_authed/$workspaceId/agents/'
       path: '/agents'
@@ -583,6 +616,13 @@ declare module '@tanstack/react-router' {
       path: '/files/$fileId'
       fullPath: '/$workspaceId/files/$fileId'
       preLoaderRoute: typeof AuthedWorkspaceIdFilesFileIdRouteImport
+      parentRoute: typeof AuthedWorkspaceIdRoute
+    }
+    '/_authed/$workspaceId/chats/$sessionId': {
+      id: '/_authed/$workspaceId/chats/$sessionId'
+      path: '/chats/$sessionId'
+      fullPath: '/$workspaceId/chats/$sessionId'
+      preLoaderRoute: typeof AuthedWorkspaceIdChatsSessionIdRouteImport
       parentRoute: typeof AuthedWorkspaceIdRoute
     }
     '/_authed/$workspaceId/agents/$agentId': {
@@ -660,11 +700,13 @@ interface AuthedWorkspaceIdRouteChildren {
   AuthedWorkspaceIdSettingsRoute: typeof AuthedWorkspaceIdSettingsRouteWithChildren
   AuthedWorkspaceIdIndexRoute: typeof AuthedWorkspaceIdIndexRoute
   AuthedWorkspaceIdAgentsAgentIdRoute: typeof AuthedWorkspaceIdAgentsAgentIdRoute
+  AuthedWorkspaceIdChatsSessionIdRoute: typeof AuthedWorkspaceIdChatsSessionIdRoute
   AuthedWorkspaceIdFilesFileIdRoute: typeof AuthedWorkspaceIdFilesFileIdRoute
   AuthedWorkspaceIdLoopsLoopIdRoute: typeof AuthedWorkspaceIdLoopsLoopIdRoute
   AuthedWorkspaceIdObjectsObjectIdRoute: typeof AuthedWorkspaceIdObjectsObjectIdRoute
   AuthedWorkspaceIdTriggersTriggerIdRoute: typeof AuthedWorkspaceIdTriggersTriggerIdRoute
   AuthedWorkspaceIdAgentsIndexRoute: typeof AuthedWorkspaceIdAgentsIndexRoute
+  AuthedWorkspaceIdChatsIndexRoute: typeof AuthedWorkspaceIdChatsIndexRoute
   AuthedWorkspaceIdLoopsIndexRoute: typeof AuthedWorkspaceIdLoopsIndexRoute
   AuthedWorkspaceIdMarketplaceIndexRoute: typeof AuthedWorkspaceIdMarketplaceIndexRoute
   AuthedWorkspaceIdObjectsIndexRoute: typeof AuthedWorkspaceIdObjectsIndexRoute
@@ -678,12 +720,14 @@ const AuthedWorkspaceIdRouteChildren: AuthedWorkspaceIdRouteChildren = {
   AuthedWorkspaceIdSettingsRoute: AuthedWorkspaceIdSettingsRouteWithChildren,
   AuthedWorkspaceIdIndexRoute: AuthedWorkspaceIdIndexRoute,
   AuthedWorkspaceIdAgentsAgentIdRoute: AuthedWorkspaceIdAgentsAgentIdRoute,
+  AuthedWorkspaceIdChatsSessionIdRoute: AuthedWorkspaceIdChatsSessionIdRoute,
   AuthedWorkspaceIdFilesFileIdRoute: AuthedWorkspaceIdFilesFileIdRoute,
   AuthedWorkspaceIdLoopsLoopIdRoute: AuthedWorkspaceIdLoopsLoopIdRoute,
   AuthedWorkspaceIdObjectsObjectIdRoute: AuthedWorkspaceIdObjectsObjectIdRoute,
   AuthedWorkspaceIdTriggersTriggerIdRoute:
     AuthedWorkspaceIdTriggersTriggerIdRoute,
   AuthedWorkspaceIdAgentsIndexRoute: AuthedWorkspaceIdAgentsIndexRoute,
+  AuthedWorkspaceIdChatsIndexRoute: AuthedWorkspaceIdChatsIndexRoute,
   AuthedWorkspaceIdLoopsIndexRoute: AuthedWorkspaceIdLoopsIndexRoute,
   AuthedWorkspaceIdMarketplaceIndexRoute:
     AuthedWorkspaceIdMarketplaceIndexRoute,

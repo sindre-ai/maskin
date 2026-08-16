@@ -78,6 +78,60 @@ describe('parseChatLine', () => {
 		expect(toolUse.input).toEqual({ query: 'workspace' })
 	})
 
+	it('attaches maskin_attachments to the assistant text event so agent-referenced items render', () => {
+		const line = JSON.stringify({
+			type: 'assistant',
+			message: {
+				role: 'assistant',
+				id: 'msg_01REF',
+				content: [{ type: 'text', text: 'See the bet below.' }],
+			},
+			maskin_attachments: [
+				{ kind: 'object', id: 'obj-1', title: 'Bet Alpha', type: 'bet' },
+				{ kind: 'file', id: 'file-uuid-1', name: 'report.pdf', size_bytes: 2048 },
+			],
+		})
+		expect(parseChatLine(line)).toEqual([
+			{
+				kind: 'text',
+				text: 'See the bet below.',
+				messageId: 'msg_01REF',
+				attachments: [
+					{ kind: 'object', id: 'obj-1', title: 'Bet Alpha', type: 'bet' },
+					{ kind: 'file', id: 'file-uuid-1', name: 'report.pdf', sizeBytes: 2048 },
+				],
+			},
+		])
+	})
+
+	it('does not emit attachments when an assistant message has no text block', () => {
+		const line = JSON.stringify({
+			type: 'assistant',
+			message: {
+				role: 'assistant',
+				id: 'msg_01TOOL',
+				content: [
+					{
+						type: 'tool_use',
+						id: 'toolu_01xyz',
+						name: 'list_objects',
+						input: { type: 'bet', limit: 5 },
+					},
+				],
+			},
+			maskin_attachments: [{ kind: 'object', id: 'obj-1', title: 'Bet Alpha', type: 'bet' }],
+		})
+		expect(parseChatLine(line)).toEqual([
+			{
+				kind: 'tool_use',
+				id: 'toolu_01xyz',
+				name: 'list_objects',
+				input: { type: 'bet', limit: 5 },
+				messageId: 'msg_01TOOL',
+			},
+		])
+	})
+
 	it('emits no events for user echoes so tool results are not duplicated', () => {
 		const events = parseChatLine(loadFixtureAsLine('user-tool-result'))
 		expect(events).toEqual([])

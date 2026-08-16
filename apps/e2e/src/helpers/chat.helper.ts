@@ -6,6 +6,8 @@ export interface ChatMockState {
 	agents: Array<{ id: string; name: string }>
 	objects: Array<{ id: string; title: string; type: string }>
 	inputCalls: Array<{ content: string; attachments?: Array<{ kind: string; id: string }> }>
+	/** Responses posted back via `POST /api/notifications/:id/respond`. */
+	respondCalls: Array<{ id: string; response: unknown }>
 	sessionsCreated: number
 	streamSubscriptions: number
 }
@@ -16,8 +18,12 @@ export interface InstallChatOpts {
 	humanActorName: string
 	/** Agents to expose in the actors list alongside the human and the agent. */
 	extraAgents?: Array<{ id: string; name: string }>
-	/** Objects to expose for the `/` object picker. */
-	objects?: Array<{ id: string; title: string; type: string }>
+	/**
+	 * Objects to expose for the `/` object picker and, when id-matching, for
+	 * `GET /api/objects/:id` (REFERENCED cards fetch the object to render its
+	 * status).
+	 */
+	objects?: Array<{ id: string; title: string; type: string; status?: string }>
 	/** Notifications to expose at `/api/notifications`. */
 	notifications?: Array<Record<string, unknown>>
 	sessionId?: string
@@ -60,6 +66,7 @@ export async function installChatMocks(page: Page, opts: InstallChatOpts): Promi
 		agents,
 		objects,
 		inputCalls: [],
+		respondCalls: [],
 		sessionsCreated: 0,
 		streamSubscriptions: 0,
 	}
@@ -170,7 +177,8 @@ export async function installChatMocks(page: Page, opts: InstallChatOpts): Promi
 		})
 	})
 
-	// GET /api/objects (empty-query picker fetch) and /api/objects/search.
+	// GET /api/objects (empty-query picker fetch), /api/objects/search, and
+	// /api/objects/:id (REFERENCED cards fetch the object to render its status).
 	await page.route('**/api/objects**', async (route: Route) => {
 		const req = route.request()
 		if (req.method() !== 'GET') return route.fallback()
@@ -186,7 +194,7 @@ export async function installChatMocks(page: Page, opts: InstallChatOpts): Promi
 						type: o.type,
 						title: o.title,
 						content: null,
-						status: 'active',
+						status: o.status ?? 'active',
 						metadata: null,
 						owner: null,
 						activeSessionId: null,
@@ -199,14 +207,57 @@ export async function installChatMocks(page: Page, opts: InstallChatOpts): Promi
 			})
 			return
 		}
+		const byId = pathname.match(/\/api\/objects\/([^/]+)$/)
+		if (byId) {
+			const obj = objects.find((o) => o.id === byId[1])
+			if (obj) {
+				await route.fulfill({
+					status: 200,
+					contentType: 'application/json',
+					body: JSON.stringify({
+						id: obj.id,
+						type: obj.type,
+						title: obj.title,
+						content: null,
+						status: obj.status ?? 'active',
+						metadata: null,
+						owner: null,
+						activeSessionId: null,
+						createdBy: opts.humanActorId,
+						createdAt: new Date().toISOString(),
+						updatedAt: new Date().toISOString(),
+						workspaceId: opts.workspaceId,
+					}),
+				})
+				return
+			}
+		}
 		await route.fallback()
 	})
 
-	// GET /api/notifications — pre-seeded for the "Chat with agents" flow.
+	// GET /api/notifications — pre-seeded for the "Chat with agents" flow, and
+	// POST /api/notifications/:id/respond so ask-block taps resolve cleanly
+	// (the seeded notification doesn't exist in the backend DB).
 	await page.route('**/api/notifications**', async (route: Route) => {
 		const req = route.request()
-		if (req.method() !== 'GET') return route.fallback()
 		const url = new URL(req.url())
+		const respondMatch = url.pathname.match(/\/api\/notifications\/([^/]+)\/respond$/)
+		if (respondMatch && req.method() === 'POST') {
+			let response: unknown = null
+			try {
+				response = req.postDataJSON()?.response
+			} catch {
+				// non-JSON body — leave response null
+			}
+			state.respondCalls.push({ id: respondMatch[1], response })
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({ id: respondMatch[1], status: 'resolved' }),
+			})
+			return
+		}
+		if (req.method() !== 'GET') return route.fallback()
 		if (!url.pathname.endsWith('/api/notifications')) return route.fallback()
 		await route.fulfill({
 			status: 200,
@@ -245,6 +296,13 @@ export function buildNotificationFixture(params: {
 	title: string
 	content?: string
 	type?: 'needs_input' | 'recommendation' | 'good_news' | 'alert'
+	/**
+	 * Session the notification belongs to. Ask blocks only bridge into the
+	 * conversation when this matches the chat session id.
+	 */
+	sessionId?: string | null
+	/** Free-form producer payload; ask blocks read `question`/`options`/`suggestion`. */
+	metadata?: Record<string, unknown> | null
 }): Record<string, unknown> {
 	const now = new Date().toISOString()
 	return {
@@ -253,11 +311,11 @@ export function buildNotificationFixture(params: {
 		type: params.type ?? 'recommendation',
 		title: params.title,
 		content: params.content ?? null,
-		metadata: null,
+		metadata: params.metadata ?? null,
 		sourceActorId: params.sourceActorId,
 		targetActorId: null,
 		objectId: null,
-		sessionId: null,
+		sessionId: params.sessionId ?? null,
 		status: 'pending',
 		createdAt: now,
 		updatedAt: now,
