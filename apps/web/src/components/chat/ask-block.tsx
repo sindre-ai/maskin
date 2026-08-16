@@ -37,15 +37,15 @@ export function AskBlock({ workspaceId, ask }: AskBlockProps) {
 	const respondingId = respond.isPending ? respond.variables?.id : undefined
 
 	return (
-		<div className="w-full max-w-sm rounded-md border border-border bg-bg p-3">
+		<div className="w-full max-w-sm rounded-lg border border-border bg-bg p-3">
 			<div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-text-muted">
 				<CornerDownLeft size={10} aria-hidden className="shrink-0" />
 				<span>Ask</span>
 			</div>
-			{ask.question ? <p className="text-sm font-medium text-text">{ask.question}</p> : null}
+			{ask.question ? <p className="text-sm font-semibold text-text">{ask.question}</p> : null}
 			{ask.content ? <p className="mt-1 text-xs text-text-secondary">{ask.content}</p> : null}
 			{ask.title && !ask.question && !ask.content ? (
-				<p className="text-sm font-medium text-text">{ask.title}</p>
+				<p className="text-sm font-semibold text-text">{ask.title}</p>
 			) : null}
 			<ul className="mt-2 flex flex-col gap-1">
 				{ask.options.map((opt) => {
