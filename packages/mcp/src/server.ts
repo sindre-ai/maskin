@@ -2912,6 +2912,12 @@ export function createMcpServer(config: McpConfig) {
 						})
 					: result
 
+			// auto_create_workspace mints a brand-new workspace whose id only exists
+			// on the API response (`result.workspace_id`), not on the request — the
+			// setup block must be scoped to THAT workspace, not to `workspace_id`
+			// (usually undefined here) or it falls back to an arbitrary workspace
+			// via loadWorkspace()'s workspaces[0] default and reports the wrong
+			// workspace's LLM readiness.
 			const setup = await buildActorSetupBlockFromApi(
 				{
 					id: (result.id as string | undefined) ?? '',
@@ -2919,7 +2925,10 @@ export function createMcpServer(config: McpConfig) {
 					type: (result.type as string | undefined) ?? createBody.type,
 				},
 				setupApiCaller(config),
-				{ workspaceId: workspace_id, defaultWorkspaceId: config.defaultWorkspaceId },
+				{
+					workspaceId: (result.workspace_id as string | undefined) ?? workspace_id,
+					defaultWorkspaceId: config.defaultWorkspaceId,
+				},
 			)
 			const responseBody = { ...(withUrl as Record<string, unknown>), setup }
 			return {

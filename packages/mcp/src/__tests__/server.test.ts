@@ -4575,6 +4575,72 @@ describe('tool handlers', () => {
 			expect(parsed.setup).toBeDefined()
 			expect(parsed.setup.checks.some((c: { status: string }) => c.status === 'unknown')).toBe(true)
 		})
+
+		it('create_actor — scopes the setup block to the auto-created workspace, not the caller default', async () => {
+			// auto_create_workspace: true mints a brand-new workspace server-side;
+			// /api/actors returns its id on the response body (workspace_id) and,
+			// since auto_create_workspace is set, the MCP handler skips its own
+			// add-to-targetWorkspace call — result.workspace_id must reach the setup
+			// block unmodified. config.defaultWorkspaceId ('ws-default-123') is
+			// deliberately given no LLM credentials here, so a wrong-workspace
+			// fallback would show a spurious `agents_runnable` warn instead of
+			// correctly reading the auto-created workspace's credentials.
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const u = String(url)
+				if (u.endsWith('/api/actors')) {
+					return setupOkJson({
+						id: 'actor-2',
+						type: 'human',
+						name: 'Person',
+						workspace_id: 'ws-auto-created-999',
+					})
+				}
+				if (u.endsWith('/api/workspaces')) {
+					return setupOkJson([
+						{ id: 'ws-default-123', settings: {} },
+						{ id: 'ws-auto-created-999', settings: { llm_keys: { anthropic: 'sk-ant-test' } } },
+					])
+				}
+				return setupOkJson({})
+			})
+			const handler = getHandler('create_actor')
+			const result = (await handler({
+				type: 'human',
+				name: 'Person',
+				auto_create_workspace: true,
+			})) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.setup).toBeDefined()
+			expect(parsed.setup.checks.some((c: { name: string }) => c.name === 'agents_runnable')).toBe(
+				false,
+			)
+		})
+
+		it('create_actor — degrades to unknown when an explicit workspace_id matches no workspace', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const u = String(url)
+				if (u.endsWith('/api/actors')) {
+					return setupOkJson({ id: 'actor-3', type: 'agent', name: 'Bot' })
+				}
+				if (u.endsWith('/api/workspaces')) {
+					return setupOkJson([{ id: 'ws-default-123', settings: {} }])
+				}
+				return setupOkJson({})
+			})
+			const handler = getHandler('create_actor')
+			const result = (await handler({
+				type: 'agent',
+				name: 'Bot',
+				workspace_id: 'ws-does-not-exist',
+			})) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			// Primary response still succeeds.
+			expect(parsed.id).toBe('actor-3')
+			// Setup block degrades to a single unknown check instead of silently
+			// reporting a different workspace's readiness.
+			expect(parsed.setup.checks).toHaveLength(1)
+			expect(parsed.setup.checks[0].status).toBe('unknown')
+		})
 	})
 })
 
