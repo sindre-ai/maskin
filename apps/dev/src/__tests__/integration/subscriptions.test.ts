@@ -926,6 +926,108 @@ describe('Subscriptions Integration', () => {
 		expect(itemA.max_unread_attention).toBeNull()
 	})
 
+	it("max_unread_attention ignores a non-mentioning comment's score, even when it's the highest", async () => {
+		// max_unread_attention must inherit the same mentions-only scoping as
+		// mentioning_unread_count: it's computed over the already mention-filtered
+		// join, not over every unread comment on the entity. A high-attention
+		// comment that never @-mentions A must not leak into A's max, even though
+		// a lower-attention mentioning comment is also unread.
+		const appA = appAs(aId)
+		const appB = appAs(bId)
+		const headersA = { 'x-workspace-id': workspaceId }
+		const headersB = { 'x-workspace-id': workspaceId }
+
+		const createRes = await appA.request(
+			jsonRequest('POST', '/api/objects', buildCreateObjectBody(), headersA),
+		)
+		const obj = await createRes.json()
+
+		// High attention, but no mention of A — must be invisible to A's feed.
+		const nonMentioningRes = await appB.request(
+			jsonRequest(
+				'POST',
+				'/api/events',
+				{ entity_id: obj.id, content: 'urgent but not for A', attention: 5 },
+				headersB,
+			),
+		)
+		expect(nonMentioningRes.status).toBe(201)
+
+		// Low attention, but does mention A.
+		const mentioningRes = await appB.request(
+			jsonRequest(
+				'POST',
+				'/api/events',
+				{ entity_id: obj.id, content: 'fyi', mentions: [aId], attention: 2 },
+				headersB,
+			),
+		)
+		expect(mentioningRes.status).toBe(201)
+
+		const unreadA = await appA
+			.request(jsonGet('/api/subscriptions/unread', headersA))
+			.then((r) => r.json())
+		const itemA = unreadA.items.find((i: { entity_id: string }) => i.entity_id === obj.id)
+		expect(itemA).toBeDefined()
+		expect(itemA.max_unread_attention).toBe(2)
+	})
+
+	it("include_recently_read excludes a recently-read comment's attention score from max_unread_attention", async () => {
+		// maxUnreadAttentionExpr filters on `events.id > lastReadExpr` only,
+		// deliberately narrower than the recently-read join predicate — a scored
+		// comment A has already read must not surface in max_unread_attention
+		// just because the mixed feed still joins it for unread_count = 0 display.
+		const appA = appAs(aId)
+		const appB = appAs(bId)
+		const headersA = { 'x-workspace-id': workspaceId }
+		const headersB = { 'x-workspace-id': workspaceId }
+
+		const createRes = await appA.request(
+			jsonRequest('POST', '/api/objects', buildCreateObjectBody(), headersA),
+		)
+		const obj = await createRes.json()
+
+		// A high-attention comment that A reads immediately.
+		const readRes = await appB.request(
+			jsonRequest(
+				'POST',
+				'/api/events',
+				{ entity_id: obj.id, content: 'urgent', mentions: [aId], attention: 5 },
+				headersB,
+			),
+		)
+		const readComment = await readRes.json()
+		await appA.request(
+			jsonRequest(
+				'POST',
+				'/api/subscriptions/read',
+				{ entity_type: 'object', entity_id: obj.id, last_event_id: readComment.id },
+				headersA,
+			),
+		)
+
+		// A second, unscored comment that stays unread.
+		const unreadRes = await appB.request(
+			jsonRequest(
+				'POST',
+				'/api/events',
+				{ entity_id: obj.id, content: 'another update', mentions: [aId] },
+				headersB,
+			),
+		)
+		expect(unreadRes.status).toBe(201)
+
+		const mixedFeed = await appA
+			.request(jsonGet('/api/subscriptions/unread?include_recently_read=true', headersA))
+			.then((r) => r.json())
+		const item = mixedFeed.items.find((i: { entity_id: string }) => i.entity_id === obj.id)
+		expect(item).toBeDefined()
+		expect(item.unread_count).toBe(1)
+		// The read comment's attention=5 must not leak in — only the unread,
+		// unscored comment counts, so the max is null rather than 5.
+		expect(item.max_unread_attention).toBeNull()
+	})
+
 	it("agent-to-agent mentions on a shared object never surface in a human watcher's For You", async () => {
 		// The bet's commitment: agent→agent mentions route to the target agent via
 		// the per-event notification path and never surface to a human's For You.
