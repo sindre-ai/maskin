@@ -119,16 +119,36 @@ test.describe('Object title — long titles fill available row width', () => {
 
 		await page.goto(`/${account.workspaceId}/objects/${parent.id}`)
 
-		const titleLink = page.getByRole('link', { name: LONG_TITLE })
-		await expect(titleLink).toBeVisible({ timeout: 10000 })
+		// The related task's title also appears inline in the Activity timeline
+		// (relationship-creation events project as a "related to <title>" row) —
+		// scope to the Related Objects DataTable so that inline mention doesn't
+		// make this locator ambiguous.
+		const relatedTable = page.getByRole('table')
+		const titleHead = relatedTable.getByRole('columnheader', { name: /^title/i }).first()
+		await expect(titleHead).toBeVisible({ timeout: 10000 })
 
 		// The Related Objects table is still a DataTable: its Title <th> carries
-		// w-full so auto-layout gives it all the leftover width.
-		const titleHead = page.getByRole('columnheader', { name: /^title/i }).first()
-		await expect(titleHead).toBeVisible()
+		// w-full so auto-layout gives it all the leftover width. The table now
+		// lives inside the document's max-w-3xl column (AC-U1) rather than a
+		// full-bleed tab, so the historical ">300px" absolute cap no longer
+		// applies at every viewport — assert the width-independent property the
+		// comment actually describes instead: the title column absorbs more
+		// leftover space than any of the fixed-content columns next to it.
+		const titleLink = relatedTable.getByRole('link', { name: LONG_TITLE })
+		await expect(titleLink).toBeVisible()
 
 		const linkBox = await titleLink.boundingBox()
 		if (!linkBox) throw new Error('related title link has no layout box')
-		expect(linkBox.width).toBeGreaterThan(300)
+		const relationshipBox = await relatedTable
+			.getByRole('columnheader', { name: /^relationship/i })
+			.boundingBox()
+		const statusBox = await relatedTable
+			.getByRole('columnheader', { name: /^status/i })
+			.boundingBox()
+		const typeBox = await relatedTable.getByRole('columnheader', { name: /^type/i }).boundingBox()
+		for (const box of [relationshipBox, statusBox, typeBox]) {
+			if (!box) throw new Error('expected sibling column header to have a layout box')
+			expect(linkBox.width).toBeGreaterThan(box.width)
+		}
 	})
 })
