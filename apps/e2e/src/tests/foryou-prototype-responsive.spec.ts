@@ -209,7 +209,7 @@ async function assertDecisionButtonsSideBySide(page: Page, expected: boolean, la
 test.describe('For You prototype redesign — layout at 1024', () => {
 	test.use({ viewport: VIEWPORTS.tabletLandscape })
 
-	test('header controls, Display popover, and decision buttons render side-by-side', async ({
+	test('header controls, Display popover, and decision buttons render as stacked full-width rows', async ({
 		page,
 		account,
 	}) => {
@@ -249,7 +249,9 @@ test.describe('For You prototype redesign — layout at 1024', () => {
 		await expect(card).toHaveCount(1)
 		await expect(card).toHaveAttribute('data-card-kind', 'decision')
 		await expect(page.getByRole('button', { name: 'Approve' })).toBeVisible()
-		await assertDecisionButtonsSideBySide(page, true, '1024')
+		// T2's AskCard render is stacked full-width option rows at every
+		// viewport (flex flex-col, w-full) — not a side-by-side pair.
+		await assertDecisionButtonsSideBySide(page, false, '1024')
 
 		await expect(page.getByRole('button', { name: 'Keep unread' })).toBeVisible()
 		await expect(page.getByRole('button', { name: 'Mark as read' })).toBeVisible()
@@ -262,7 +264,7 @@ test.describe('For You prototype redesign — layout at 1024', () => {
 test.describe('For You prototype redesign — layout at 768', () => {
 	test.use({ viewport: VIEWPORTS.tabletPortrait })
 
-	test('header controls stay reachable and decision buttons stay side-by-side', async ({
+	test('header controls stay reachable and decision buttons stack as full-width rows', async ({
 		page,
 		account,
 	}) => {
@@ -275,7 +277,8 @@ test.describe('For You prototype redesign — layout at 768', () => {
 
 		const card = page.getByTestId('foryou-queue-card')
 		await expect(card).toHaveAttribute('data-card-kind', 'decision')
-		await assertDecisionButtonsSideBySide(page, true, '768')
+		// Stacked full-width option rows at every viewport (T2 AskCard design).
+		await assertDecisionButtonsSideBySide(page, false, '768')
 
 		await expect(page.getByText('3 items left')).toBeVisible()
 		await assertNoHorizontalOverflow(page, '768')

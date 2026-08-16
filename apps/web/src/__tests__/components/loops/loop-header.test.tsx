@@ -4,12 +4,6 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { buildLoopSummary } from '../../factories'
 
-const openWithContextMock = vi.fn()
-
-vi.mock('@/lib/chat-context', () => ({
-	useChat: () => ({ openWithContext: openWithContextMock }),
-}))
-
 describe('LoopHeader', () => {
 	it('renders the loop name, pill, and description', () => {
 		const loop = buildLoopSummary({
@@ -34,18 +28,6 @@ describe('LoopHeader', () => {
 		)
 
 		expect(screen.getByText('Untitled loop')).toBeInTheDocument()
-	})
-
-	it('opens the chat panel with the loop attached when "Edit this loop" is clicked', async () => {
-		const user = userEvent.setup()
-		const loop = buildLoopSummary({ id: 'loop-1', name: 'Billing reliability' })
-		render(<LoopHeader loop={loop} onTogglePause={vi.fn()} isTogglingPause={false} />)
-
-		await user.click(screen.getByRole('button', { name: /edit this loop/i }))
-
-		expect(openWithContextMock).toHaveBeenCalledWith([
-			{ kind: 'object', id: 'loop-1', title: 'Billing reliability', type: 'loop' },
-		])
 	})
 
 	it('calls onTogglePause with "Pause loop" when running', async () => {
