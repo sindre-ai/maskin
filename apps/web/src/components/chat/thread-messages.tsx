@@ -19,7 +19,11 @@ export function ThreadMessages({ workspaceId, conversationId, className }: Threa
 	const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
 		useConversationMessages(conversationId, workspaceId)
 	const messages = flattenMessagesOldestFirst(data)
-	const { byMessageId, fallback } = useConversationActivity(workspaceId, conversationId)
+	const { byReplyMessageId, byTriggerMessageId, fallback } = useConversationActivity(
+		workspaceId,
+		conversationId,
+		messages,
+	)
 
 	const scrollerRef = useRef<HTMLDivElement | null>(null)
 	const bottomAnchorRef = useRef<HTMLDivElement | null>(null)
@@ -90,15 +94,23 @@ export function ThreadMessages({ workspaceId, conversationId, className }: Threa
 				{messages.map((message, index) => {
 					const prev = messages[index - 1]
 					const isLast = index === messages.length - 1
-					const turns = byMessageId.get(message.id) ?? []
-					const turnsHere = isLast ? [...turns, ...fallback] : turns
+					// Turns this message's own reply resulted from render above
+					// it; turns this message triggered (still in progress, no
+					// reply yet) render below it, in the gap before that reply
+					// lands — see useConversationActivity's doc comment.
+					const turnsAbove = byReplyMessageId.get(message.id) ?? []
+					const turnsBelow = byTriggerMessageId.get(message.id) ?? []
+					const turnsBelowHere = isLast ? [...turnsBelow, ...fallback] : turnsBelow
 					return (
 						<div key={message.id} className="flex flex-col gap-1">
 							{isNewDay(message.createdAt, prev?.createdAt ?? null) ? (
 								<MessageDivider date={message.createdAt} />
 							) : null}
+							{turnsAbove.map((turn) => (
+								<MessageActivity key={turn.sessionId} turn={turn} />
+							))}
 							<MessageBubble workspaceId={workspaceId} message={message} />
-							{turnsHere.map((turn) => (
+							{turnsBelowHere.map((turn) => (
 								<MessageActivity key={turn.sessionId} turn={turn} />
 							))}
 						</div>

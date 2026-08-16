@@ -352,10 +352,12 @@ describe('segmentActivityByMessage', () => {
 		expect(segments).toEqual([
 			{
 				conversationMessageId: 10,
+				containsReply: false,
 				steps: [{ id: '2-0', kind: 'tool_use', text: 'Using search_objects' }],
 			},
 			{
 				conversationMessageId: 20,
+				containsReply: false,
 				steps: [{ id: '4-0', kind: 'tool_use', text: 'Using list_objects' }],
 			},
 		])
@@ -374,10 +376,10 @@ describe('segmentActivityByMessage', () => {
 			log(2, 'stdout', taggedUserTurn(10, 'hi')),
 		])
 		expect(unassigned).toEqual([{ id: '1-0', kind: 'tool_use', text: 'Using search_objects' }])
-		expect(segments).toEqual([{ conversationMessageId: 10, steps: [] }])
+		expect(segments).toEqual([{ conversationMessageId: 10, containsReply: false, steps: [] }])
 	})
 
-	it('renames a post_conversation_message tool call to a friendly reply label', () => {
+	it('renames a post_conversation_message tool call to a friendly reply label and marks the segment containsReply', () => {
 		const tool = JSON.stringify({
 			type: 'assistant',
 			message: {
@@ -392,6 +394,7 @@ describe('segmentActivityByMessage', () => {
 		expect(segments).toEqual([
 			{
 				conversationMessageId: 10,
+				containsReply: true,
 				steps: [{ id: '2-0', kind: 'tool_use', text: 'Replied to the conversation.' }],
 			},
 		])
@@ -427,6 +430,7 @@ describe('segmentActivityByMessage', () => {
 		expect(segments).toEqual([
 			{
 				conversationMessageId: 10,
+				containsReply: true,
 				steps: [
 					{ id: '2-0', kind: 'thinking', text: 'Thinking…' },
 					{ id: '3-0', kind: 'tool_use', text: 'Replied to the conversation.' },
@@ -455,11 +459,44 @@ describe('segmentActivityByMessage', () => {
 		expect(segments).toEqual([
 			{
 				conversationMessageId: 10,
+				containsReply: false,
 				steps: [
 					{ id: '2-0', kind: 'tool_use', text: 'Using search_objects' },
 					{ id: '3-0', kind: 'text', text: 'Found 3 matches' },
 				],
 			},
+		])
+	})
+
+	it('sets containsReply only on the segment that actually replied, even when a later segment does not', () => {
+		const replyTool = JSON.stringify({
+			type: 'assistant',
+			message: {
+				id: 'm1',
+				content: [{ id: 't1', type: 'tool_use', name: 'post_conversation_message', input: {} }],
+			},
+		})
+		const searchTool = JSON.stringify({
+			type: 'assistant',
+			message: {
+				id: 'm2',
+				content: [{ id: 't2', type: 'tool_use', name: 'search_objects', input: {} }],
+			},
+		})
+		const { segments } = segmentActivityByMessage([
+			log(1, 'stdout', taggedUserTurn(10, 'hi')),
+			log(2, 'stdout', replyTool),
+			log(3, 'stdout', taggedUserTurn(20, 'thanks')),
+			log(4, 'stdout', searchTool),
+		])
+		expect(
+			segments.map((s) => ({
+				conversationMessageId: s.conversationMessageId,
+				containsReply: s.containsReply,
+			})),
+		).toEqual([
+			{ conversationMessageId: 10, containsReply: true },
+			{ conversationMessageId: 20, containsReply: false },
 		])
 	})
 })

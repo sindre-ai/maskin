@@ -104,6 +104,14 @@ export interface ActivityStep {
 export interface MessageActivitySegment {
 	conversationMessageId: number
 	steps: ActivityStep[]
+	/**
+	 * True once this turn called the conversation-reply tool. Lets the chat UI
+	 * re-anchor a finished turn's dropdown to the reply message it actually
+	 * produced instead of the message that triggered it — see
+	 * `useConversationActivity`, which pairs `containsReply` segments with the
+	 * same agent's own posted messages in order.
+	 */
+	containsReply: boolean
 }
 
 /**
@@ -141,7 +149,11 @@ export function segmentActivityByMessage(logs: SessionLogResponse[]): {
 			// isn't rendered as a step since the triggering message is already
 			// shown as the actual chat bubble right above the dropdown.
 			if (event.kind === 'user' && event.conversationMessageId !== undefined) {
-				cursor.current = { conversationMessageId: event.conversationMessageId, steps: [] }
+				cursor.current = {
+					conversationMessageId: event.conversationMessageId,
+					steps: [],
+					containsReply: false,
+				}
 				segments.push(cursor.current)
 				return
 			}
@@ -156,6 +168,9 @@ export function segmentActivityByMessage(logs: SessionLogResponse[]): {
 			}
 			const summary = describeEvent(event)
 			if (summary === null) return
+			if (event.kind === 'tool_use' && summary === CONVERSATION_REPLY_LABEL && cursor.current) {
+				cursor.current.containsReply = true
+			}
 			bucket.push({ id: `${log.id}-${index}`, kind: event.kind, text: summary })
 		})
 	}
