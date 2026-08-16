@@ -1,4 +1,8 @@
-import { trackChatSessionStarted } from '@/lib/analytics'
+import {
+	trackChatSessionStarted,
+	trackSindreMessageReceived,
+	trackSindreMessageSent,
+} from '@/lib/analytics'
 import { api } from '@/lib/api'
 import type { SessionInputAttachment } from '@/lib/api'
 import { getApiKey } from '@/lib/auth'
@@ -77,6 +81,46 @@ async function waitForRunning(sessionId: string, workspaceId: string): Promise<v
 	throw new Error('Chat session did not start in time')
 }
 
+/**
+ * Peek at a raw stdout log line and emit `sindre_message_received` once per
+ * unique assistant `message.id`. A single Sindre turn streams multiple content
+ * blocks (text + tool_use + thinking) under one message id — deduping on the
+ * id gives one reply event per turn. `model` and `tokens` come from the
+ * envelope's `message.model` / `message.usage.output_tokens` when present.
+ * Silently ignores non-JSON lines and non-assistant envelopes so this is safe
+ * to call for every stdout line.
+ */
+function emitSindreReceivedIfAssistant(
+	rawLine: string,
+	sessionId: string,
+	seenIds: Set<string>,
+): void {
+	const trimmed = rawLine.trim()
+	if (trimmed.length === 0) return
+	let envelope: unknown
+	try {
+		envelope = JSON.parse(trimmed)
+	} catch {
+		return
+	}
+	if (typeof envelope !== 'object' || envelope === null) return
+	const rec = envelope as Record<string, unknown>
+	if (rec.type !== 'assistant') return
+	const message = rec.message
+	if (typeof message !== 'object' || message === null) return
+	const msgRec = message as Record<string, unknown>
+	const messageId = typeof msgRec.id === 'string' ? msgRec.id : null
+	if (!messageId || seenIds.has(messageId)) return
+	seenIds.add(messageId)
+	const model = typeof msgRec.model === 'string' ? msgRec.model : null
+	const usage =
+		typeof msgRec.usage === 'object' && msgRec.usage !== null
+			? (msgRec.usage as Record<string, unknown>)
+			: null
+	const outputTokens = usage && typeof usage.output_tokens === 'number' ? usage.output_tokens : null
+	trackSindreMessageReceived({ session_id: sessionId, model, tokens: outputTokens })
+}
+
 export type ChatSessionStatus = 'idle' | 'starting' | 'connecting' | 'ready' | 'closed' | 'error'
 
 export interface UseChatSessionOptions {
@@ -143,6 +187,11 @@ export function useChatSession({
 	// `api.sessions.create` resolving and `waitForRunning` finishing would
 	// re-mount an SSE stream on a session the user thought they discarded.
 	const generationRef = useRef(0)
+	// Assistant message ids that have already emitted `sindre_message_received`.
+	// A single assistant turn streams multiple content blocks under one
+	// `message.id`; we want one reply event per turn, not one per block.
+	// Cleared on reset/workspace switch below.
+	const receivedMessageIdsRef = useRef<Set<string>>(new Set())
 
 	// Reset transcript + reload persisted sessionId when the workspace switches
 	// (StrictMode-safe: only fires when workspaceId actually changes).
@@ -152,6 +201,7 @@ export function useChatSession({
 		generationRef.current += 1
 		startingRef.current = false
 		lastLogIdRef.current = 0
+		receivedMessageIdsRef.current = new Set()
 		setSessionId(null)
 		setEvents([])
 		setError(null)
@@ -259,6 +309,7 @@ export function useChatSession({
 					return
 				}
 				if (msg.event === 'stdout') {
+					emitSindreReceivedIfAssistant(msg.data, sessionId, receivedMessageIdsRef.current)
 					const parsed = parseChatLine(msg.data)
 					if (parsed.length === 0) return
 					if (IS_DEV) {
@@ -387,6 +438,10 @@ export function useChatSession({
 				}),
 			)
 			const body = attachments && attachments.length > 0 ? { content, attachments } : { content }
+			// Fires before the network call so a failed POST still shows in the
+			// sent-vs-received per-session ratio the parent bet's kill-check query
+			// keys off.
+			trackSindreMessageSent({ session_id: currentSessionId })
 			await api.sessions.input(currentSessionId, body, workspaceId)
 		},
 		[sessionId, workspaceId, agentActorId, entryAgentRole],
@@ -396,6 +451,7 @@ export function useChatSession({
 		generationRef.current += 1
 		startingRef.current = false
 		lastLogIdRef.current = 0
+		receivedMessageIdsRef.current = new Set()
 		writePersistedSessionId(workspaceId, agentActorId, null)
 		setSessionId(null)
 		setEvents([])

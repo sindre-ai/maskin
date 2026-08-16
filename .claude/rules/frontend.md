@@ -75,7 +75,7 @@ All visual values must come from the design system:
 - **Colors**: semantic tokens only (`text-text-secondary`, `bg-bg-surface`, `border-border`, `text-accent`, etc.) — never raw hex/rgb/oklch
 - **Spacing**: Tailwind scale (`p-4`, `gap-2`, `mt-3`) — never arbitrary values like `p-[13px]`
 - **Border radius**: theme tokens (`rounded-md`, `rounded-lg`) — never arbitrary
-- **Fonts**: theme fonts (Inter for sans-serif, JetBrains Mono for monospace) — never custom font stacks
+- **Fonts**: theme fonts (Schibsted Grotesk for sans-serif, JetBrains Mono for monospace) — never custom font stacks
 - **Shadows**: theme shadows (`shadow-sm`, `shadow-md`) — never custom box-shadow values
 
 ## Standard UI Patterns

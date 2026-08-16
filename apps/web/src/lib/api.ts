@@ -51,6 +51,12 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 	const apiKey = getApiKey()
 
 	const reqHeaders: Record<string, string> = {
+		// Marks this call as originating from the web UI so route-level
+		// analytics (e.g. knowledge_object_created / _read) can attribute
+		// `created_via` / `accessed_via` without inferring from actorType.
+		// Overridable via `headers` for the (currently zero) callers that
+		// need to spoof a different source.
+		'X-Client-Source': 'ui',
 		...headers,
 	}
 
