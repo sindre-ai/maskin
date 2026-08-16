@@ -118,7 +118,7 @@ function HeroCardSingle({ object }: { object: HeroCardObject }) {
 	const typeLabel = schema?.types?.[object.type]?.display_name ?? object.type
 
 	const content = (
-		<article className="flex flex-col gap-2.5 px-4 py-3.5 bg-card border border-border rounded-[10px] max-w-[540px] transition-colors hover:border-border-hover">
+		<article className="flex flex-col gap-2.5 px-4 py-3.5 bg-card border border-border rounded-lg max-w-[540px] transition-colors hover:border-border-hover">
 			<div className="flex items-center gap-2">
 				<div className="flex items-center justify-center w-3.5 h-3.5 rounded-sm bg-primary text-primary-foreground text-[9px] leading-none font-bold shrink-0">
 					M
@@ -246,7 +246,7 @@ function HeroCardList({
 
 	return (
 		<div className="p-3">
-			<div className="flex flex-col bg-card border border-border rounded-[10px] max-w-[540px] overflow-hidden">
+			<div className="flex flex-col bg-card border border-border rounded-lg max-w-[540px] overflow-hidden">
 				<header className="flex items-center gap-2 px-4 py-3 border-b border-border">
 					<div className="flex items-center justify-center w-3.5 h-3.5 rounded-sm bg-primary text-primary-foreground text-[9px] leading-none font-bold shrink-0">
 						M
