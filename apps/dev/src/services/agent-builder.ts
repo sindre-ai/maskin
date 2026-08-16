@@ -70,7 +70,8 @@ Rules:
 - Fill EVERY field. Empty strings or empty arrays for any of background/instructions/decision_framework/tool_guidance/output_format/bias_statement are a failure of this stage.
 - "worked_examples" must contain at least 2 and at most 5 items; each response must itself end with a clear recommendation and named assumptions — this is the pattern the agent will imitate.
 - Ground every section in the persona's specific expertise and biases. Generic advice is a failure.
-- Do not include markdown, backticks, or commentary — JSON only.`
+- Do not include markdown, backticks, or commentary — JSON only.
+- If the user message includes a CURRENT SYSTEM PROMPT block, this is a REVISION, not a fresh authoring: for every field, reproduce the current wording as closely as possible and change ONLY what the REVISION FEEDBACK requires. A field the feedback doesn't mention must come back unchanged in meaning and wording. Rewriting, reorganizing, or "improving" a section the feedback never named is a failure of this stage.`
 
 export const STAGE_4_PROMPT = `You produce the anti-hedging opinionation layer that will be spliced into an SME agent's system prompt. This is scaffolding that forces the agent to end every in-domain response with a clear recommendation and stated assumptions — never hedging. Return STRICT JSON matching this shape (no prose, no code fences):
 
@@ -84,7 +85,8 @@ Rules:
 - opinionation_clause MUST literally contain the words "Recommendation:" and "Assumptions:" so the agent can grep-match its own output shape.
 - opinionation_clause MUST forbid hedging in the closing block.
 - Openings should be domain-specific — generic openings ("Consider …", "It depends …") are a failure.
-- Do not include markdown, backticks, or commentary — JSON only.`
+- Do not include markdown, backticks, or commentary — JSON only.
+- If the user message includes a CURRENT SYSTEM PROMPT block, this is a REVISION, not a fresh authoring: reproduce the current opinionation_clause / recommendation_openings / assumption_openings as closely as possible and change ONLY what the REVISION FEEDBACK requires. Do not rewrite fields the feedback never named.`
 
 // Plain type aliases (not zod-derived) — the LLM calls that used to produce
 // these shapes (stage 1 intent extraction, stage 2 persona synthesis) no
@@ -168,11 +170,19 @@ function buildPersonaContextMessage(
 	intent: Stage1Output,
 	persona: PersonaSpec,
 	revisionNotes?: string[],
+	currentSystemPrompt?: string,
 ): string {
 	const revisionBlock =
 		revisionNotes && revisionNotes.length > 0
 			? `REVISION FEEDBACK (address every item — a prior reviewer pass flagged these):\n- ${revisionNotes.join('\n- ')}`
 			: ''
+	// Anchors the model on the actual current wording so it can carry sections
+	// forward verbatim instead of re-deriving the whole prompt from the thin
+	// synthesized persona below — without this, unrelated sections drift on
+	// every refine call. See refineAgent()'s doc comment.
+	const currentPromptBlock = currentSystemPrompt
+		? `CURRENT SYSTEM PROMPT (verbatim — this is what the agent runs on today):\n${currentSystemPrompt}\n\nThis is a REVISION. Carry every field's current wording forward unchanged unless the REVISION FEEDBACK above specifically requires a change to it.`
+		: ''
 	return [
 		`DOMAIN: ${intent.domain}`,
 		`JOB TO BE DONE: ${intent.job_to_be_done}`,
@@ -183,6 +193,7 @@ function buildPersonaContextMessage(
 		`DELEGATION DESCRIPTION: ${persona.delegation_description}`,
 		persona.tool_set.length ? `TOOL SET:\n- ${persona.tool_set.join('\n- ')}` : '',
 		revisionBlock,
+		currentPromptBlock,
 	]
 		.filter(Boolean)
 		.join('\n\n')
@@ -341,8 +352,14 @@ async function runStages3And4(
 	intent: Stage1Output,
 	persona: PersonaSpec,
 	revisionNotes?: string[],
+	currentSystemPrompt?: string,
 ): Promise<{ sections: SystemPromptSpec; opinionation: OpinionationSpec }> {
-	const personaContext = buildPersonaContextMessage(intent, persona, revisionNotes)
+	const personaContext = buildPersonaContextMessage(
+		intent,
+		persona,
+		revisionNotes,
+		currentSystemPrompt,
+	)
 	const stage3Params: LlmCallInput = {
 		system: STAGE_3_PROMPT,
 		user: personaContext,
@@ -603,6 +620,13 @@ export class AgentRefineError extends Error {
  * the actor's description and rely on the refinement context to steer the
  * changes). This keeps refinement scoped to prompt authoring — we never
  * rename the actor or change its scope boundaries silently.
+ *
+ * The actor's current systemPrompt is also passed into stages 3-4 verbatim
+ * (see buildPersonaContextMessage's CURRENT SYSTEM PROMPT block) so the model
+ * has the actual prior wording to preserve, not just the thin synthesized
+ * persona — this is what keeps a narrow refinement request from rewriting
+ * unrelated sections. It's a prompt-level constraint, not a structural diff:
+ * the model can still stray, but it now has the anchor to hold still against.
  */
 export async function refineAgent(
 	ctx: AgentBuilderContext,
@@ -681,12 +705,17 @@ export async function refineAgent(
 		gap_question: '',
 	}
 
+	const previousSystemPrompt = actor.systemPrompt ?? ''
 	const revisionNotes = [`[refinement] ${trimmedContext}`]
-	const { sections, opinionation } = await runStages3And4(intent, persona, revisionNotes)
+	const { sections, opinionation } = await runStages3And4(
+		intent,
+		persona,
+		revisionNotes,
+		previousSystemPrompt || undefined,
+	)
 	const newSystemPrompt = assembleSystemPrompt(persona, sections, opinionation)
 	const newSkillMd = assembleSkillMd(skillRow.name, persona, sections, opinionation)
 	const sizeBytes = Buffer.byteLength(newSkillMd, 'utf-8')
-	const previousSystemPrompt = actor.systemPrompt ?? ''
 
 	// Update in a single transaction so a mid-flight failure leaves the actor
 	// and skill on their previous versions. S3 put happens inside so a
