@@ -504,6 +504,125 @@ describe('Conversations Integration', () => {
 			const detailBody = (await detail.json()) as { pinned: boolean }
 			expect(detailBody.pinned).toBe(true)
 		})
+
+		it('rejects a non-creator participant trying to remove another participant', async () => {
+			// Regression: any active participant used to be able to evict any
+			// other participant (including the creator) — only self-removal or
+			// removal by the creator should be permitted.
+			const other = await insertActor(db, { type: 'human' })
+			const bystander = await insertActor(db, { type: 'human' })
+			await addMember(workspaceId, other.id)
+			await addMember(workspaceId, bystander.id)
+			const { app: ownerApp } = createConversationsApp(ownerId)
+			const created = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Guarded', participant_actor_ids: [other.id, bystander.id] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+
+			const { app: bystanderApp } = createConversationsApp(bystander.id)
+			const res = await bystanderApp.request(
+				jsonDelete(`/api/conversations/${conversation.id}/participants/${other.id}`, {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			expect(res.status).toBe(403)
+
+			const detail = await ownerApp.request(
+				jsonGet(`/api/conversations/${conversation.id}`, { 'x-workspace-id': workspaceId }),
+			)
+			const detailBody = (await detail.json()) as { participants: Array<{ actorId: string }> }
+			expect(detailBody.participants.map((p) => p.actorId).sort()).toEqual(
+				[ownerId, other.id, bystander.id].sort(),
+			)
+		})
+
+		it('allows a participant to remove themself (leave)', async () => {
+			const other = await insertActor(db, { type: 'human' })
+			await addMember(workspaceId, other.id)
+			const { app: ownerApp } = createConversationsApp(ownerId)
+			const created = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Leaving', participant_actor_ids: [other.id] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+
+			const { app: otherApp } = createConversationsApp(other.id)
+			const res = await otherApp.request(
+				jsonDelete(`/api/conversations/${conversation.id}/participants/${other.id}`, {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			expect(res.status).toBe(204)
+
+			const detail = await otherApp.request(
+				jsonGet(`/api/conversations/${conversation.id}`, { 'x-workspace-id': workspaceId }),
+			)
+			expect(detail.status).toBe(404)
+		})
+
+		it('does not write an audit event when removing an already-left participant', async () => {
+			// Regression: the removal handler used to insert a
+			// conversation_participant_removed event unconditionally, even when
+			// the UPDATE affected zero rows (actor already removed / never a
+			// participant), so the audit log recorded removals that never happened.
+			const other = await insertActor(db, { type: 'human' })
+			await addMember(workspaceId, other.id)
+			const { app: ownerApp } = createConversationsApp(ownerId)
+			const created = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Double removal', participant_actor_ids: [other.id] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+
+			const first = await ownerApp.request(
+				jsonDelete(`/api/conversations/${conversation.id}/participants/${other.id}`, {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			expect(first.status).toBe(204)
+
+			const countAfterFirst = await db
+				.select()
+				.from(events)
+				.where(
+					and(
+						eq(events.entityId, conversation.id),
+						eq(events.action, 'conversation_participant_removed'),
+					),
+				)
+			expect(countAfterFirst.length).toBe(1)
+
+			const second = await ownerApp.request(
+				jsonDelete(`/api/conversations/${conversation.id}/participants/${other.id}`, {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			expect(second.status).toBe(204)
+
+			const countAfterSecond = await db
+				.select()
+				.from(events)
+				.where(
+					and(
+						eq(events.entityId, conversation.id),
+						eq(events.action, 'conversation_participant_removed'),
+					),
+				)
+			expect(countAfterSecond.length).toBe(1)
+		})
 	})
 
 	describe('messages.session_id', () => {

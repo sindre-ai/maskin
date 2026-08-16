@@ -21,6 +21,7 @@ interface ParticipantsPopoverProps {
 	workspaceId: string
 	conversationId: string
 	participants: ConversationParticipantResponse[]
+	createdBy: string
 	children: ReactNode
 }
 
@@ -28,6 +29,7 @@ export function ParticipantsPopover({
 	workspaceId,
 	conversationId,
 	participants,
+	createdBy,
 	children,
 }: ParticipantsPopoverProps) {
 	const [open, setOpen] = useState(false)
@@ -84,20 +86,27 @@ export function ParticipantsPopover({
 						In this chat
 					</div>
 					<ul className="flex flex-col gap-0.5 px-1 pb-2">
-						{participants.map((p) => (
-							<li key={p.actorId} className="flex items-center gap-2 rounded px-2 py-1.5 text-sm">
-								<ActorAvatar id={p.actorId} name={p.actorName} type={p.actorType} size="sm" />
-								<span className="min-w-0 flex-1 truncate">{p.actorName}</span>
-								<button
-									type="button"
-									onClick={() => handleRemove(p.actorId)}
-									aria-label={`Remove ${p.actorName}`}
-									className="inline-flex h-6 w-6 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-								>
-									<UserMinus size={13} aria-hidden />
-								</button>
-							</li>
-						))}
+						{participants.map((p) => {
+							// Mirrors the backend rule: a participant may leave themself,
+							// and the conversation creator may remove anyone else.
+							const canRemove = p.actorId === currentActor?.id || createdBy === currentActor?.id
+							return (
+								<li key={p.actorId} className="flex items-center gap-2 rounded px-2 py-1.5 text-sm">
+									<ActorAvatar id={p.actorId} name={p.actorName} type={p.actorType} size="sm" />
+									<span className="min-w-0 flex-1 truncate">{p.actorName}</span>
+									{canRemove ? (
+										<button
+											type="button"
+											onClick={() => handleRemove(p.actorId)}
+											aria-label={`Remove ${p.actorName}`}
+											className="inline-flex h-6 w-6 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+										>
+											<UserMinus size={13} aria-hidden />
+										</button>
+									) : null}
+								</li>
+							)
+						})}
 					</ul>
 					<div className="border-t border-border px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
 						Add someone — person or agent

@@ -116,6 +116,7 @@ export function ThreadHeader({ workspaceId, conversationId }: ThreadHeaderProps)
 				workspaceId={workspaceId}
 				conversationId={conversationId}
 				participants={participants}
+				createdBy={conversation.createdBy}
 			>
 				<button
 					type="button"

@@ -613,6 +613,10 @@ const removeParticipantRoute = createRoute({
 	},
 	responses: {
 		204: { description: 'Removed' },
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Not permitted to remove this participant',
+		},
 		404: { content: { 'application/json': { schema: errorSchema } }, description: 'Not found' },
 	},
 })
@@ -628,24 +632,37 @@ app.openapi(removeParticipantRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
 	}
 
-	await db
+	// Only self-removal (leaving) or the conversation creator removing someone
+	// else is allowed — a regular participant may not evict another.
+	if (callerId !== actorId && row.conversation.createdBy !== callerId) {
+		return c.json(
+			createApiError('FORBIDDEN', 'Only the conversation creator can remove other participants'),
+			403,
+		)
+	}
+
+	const removed = await db
 		.update(conversationParticipants)
 		.set({ leftAt: new Date(), updatedAt: new Date() })
 		.where(
 			and(
 				eq(conversationParticipants.conversationId, id),
 				eq(conversationParticipants.actorId, actorId),
+				isNull(conversationParticipants.leftAt),
 			),
 		)
+		.returning({ actorId: conversationParticipants.actorId })
 
-	await db.insert(events).values({
-		workspaceId,
-		actorId: callerId,
-		action: 'conversation_participant_removed',
-		entityType: 'conversation',
-		entityId: id,
-		data: { removed_actor_id: actorId },
-	})
+	if (removed.length > 0) {
+		await db.insert(events).values({
+			workspaceId,
+			actorId: callerId,
+			action: 'conversation_participant_removed',
+			entityType: 'conversation',
+			entityId: id,
+			data: { removed_actor_id: actorId },
+		})
+	}
 
 	return c.body(null, 204)
 }) as RouteHandler<typeof removeParticipantRoute, Env>)
