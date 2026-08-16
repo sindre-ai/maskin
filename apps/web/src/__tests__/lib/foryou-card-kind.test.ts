@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { UnreadItem } from '@/lib/api'
-import { CARD_ACTIONS, classifyCardKind } from '@/lib/foryou-card-kind'
+import { CARD_ACTIONS, QUICK_REPLY_CHIPS, classifyCardKind } from '@/lib/foryou-card-kind'
 import { buildObjectResponse } from '../factories'
 
 function buildItem(overrides: Partial<UnreadItem> = {}): UnreadItem {
@@ -96,5 +96,18 @@ describe('CARD_ACTIONS', () => {
 	it('defines the sign_off and proposed_bet action sets required by the design directions', () => {
 		expect(CARD_ACTIONS.sign_off.map((a) => a.id)).toEqual(['sign_off', 'send_back', 'snooze_24h'])
 		expect(CARD_ACTIONS.proposed_bet.map((a) => a.id)).toEqual(['open_bet', 'refine', 'dismiss'])
+	})
+
+	it('carries a one-line rationale on the decision option rows only, not on chips', () => {
+		for (const action of CARD_ACTIONS.decision) {
+			expect(action.rationale).toBeTruthy()
+		}
+		for (const action of [
+			...CARD_ACTIONS.sign_off,
+			...CARD_ACTIONS.proposed_bet,
+			...QUICK_REPLY_CHIPS,
+		]) {
+			expect(action.rationale).toBeUndefined()
+		}
 	})
 })
