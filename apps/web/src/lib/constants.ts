@@ -54,6 +54,33 @@ export function getTypeColor(type: string) {
 	return typeColors[type] ?? defaultTypeColor
 }
 
+export const TYPE_LABELS: Record<string, string> = {
+	insight: 'Insight',
+	bet: 'Bet',
+	task: 'Task',
+}
+
+export function typeLabel(type: string): string {
+	return TYPE_LABELS[type] ?? type
+}
+
+// Human-readable labels for the workflow statuses the /search view ships with.
+// Custom statuses configured in workspace settings render via `statusLabel`'s
+// humanize fallback (underscores → spaces).
+export const STATUS_LABELS: Record<string, string> = {
+	active: 'Active',
+	in_progress: 'In progress',
+	todo: 'To do',
+	define: 'Define',
+	in_review: 'In review',
+	done: 'Done',
+	validated: 'Validated',
+}
+
+export function statusLabel(status: string): string {
+	return STATUS_LABELS[status] ?? status.replace(/_/g, ' ')
+}
+
 export function getStatusColor(status: string) {
 	return statusColors[status] ?? defaultStatusColor
 }

@@ -19,6 +19,7 @@ import { Route as AuthedWorkspacesRouteImport } from './routes/_authed/workspace
 import { Route as AuthedWorkspaceIdRouteImport } from './routes/_authed/$workspaceId'
 import { Route as AuthedWorkspaceIdIndexRouteImport } from './routes/_authed/$workspaceId/index'
 import { Route as AuthedWorkspaceIdSettingsRouteImport } from './routes/_authed/$workspaceId/settings'
+import { Route as AuthedWorkspaceIdSearchRouteImport } from './routes/_authed/$workspaceId/search'
 import { Route as AuthedWorkspaceIdBriefingRouteImport } from './routes/_authed/$workspaceId/briefing'
 import { Route as AuthedWorkspaceIdTriggersIndexRouteImport } from './routes/_authed/$workspaceId/triggers/index'
 import { Route as AuthedWorkspaceIdSettingsIndexRouteImport } from './routes/_authed/$workspaceId/settings/index'
@@ -92,6 +93,11 @@ const AuthedWorkspaceIdSettingsRoute =
     path: '/settings',
     getParentRoute: () => AuthedWorkspaceIdRoute,
   } as any)
+const AuthedWorkspaceIdSearchRoute = AuthedWorkspaceIdSearchRouteImport.update({
+  id: '/search',
+  path: '/search',
+  getParentRoute: () => AuthedWorkspaceIdRoute,
+} as any)
 const AuthedWorkspaceIdBriefingRoute =
   AuthedWorkspaceIdBriefingRouteImport.update({
     id: '/briefing',
@@ -228,6 +234,7 @@ export interface FileRoutesByFullPath {
   '/prototypes/above-title-header': typeof PrototypesAboveTitleHeaderRoute
   '/prototypes/gallery': typeof PrototypesGalleryRoute
   '/$workspaceId/briefing': typeof AuthedWorkspaceIdBriefingRoute
+  '/$workspaceId/search': typeof AuthedWorkspaceIdSearchRoute
   '/$workspaceId/settings': typeof AuthedWorkspaceIdSettingsRouteWithChildren
   '/$workspaceId/': typeof AuthedWorkspaceIdIndexRoute
   '/$workspaceId/agents/$agentId': typeof AuthedWorkspaceIdAgentsAgentIdRoute
@@ -259,6 +266,7 @@ export interface FileRoutesByTo {
   '/prototypes/gallery': typeof PrototypesGalleryRoute
   '/': typeof AuthedIndexRoute
   '/$workspaceId/briefing': typeof AuthedWorkspaceIdBriefingRoute
+  '/$workspaceId/search': typeof AuthedWorkspaceIdSearchRoute
   '/$workspaceId': typeof AuthedWorkspaceIdIndexRoute
   '/$workspaceId/agents/$agentId': typeof AuthedWorkspaceIdAgentsAgentIdRoute
   '/$workspaceId/files/$fileId': typeof AuthedWorkspaceIdFilesFileIdRoute
@@ -292,6 +300,7 @@ export interface FileRoutesById {
   '/prototypes/gallery': typeof PrototypesGalleryRoute
   '/_authed/': typeof AuthedIndexRoute
   '/_authed/$workspaceId/briefing': typeof AuthedWorkspaceIdBriefingRoute
+  '/_authed/$workspaceId/search': typeof AuthedWorkspaceIdSearchRoute
   '/_authed/$workspaceId/settings': typeof AuthedWorkspaceIdSettingsRouteWithChildren
   '/_authed/$workspaceId/': typeof AuthedWorkspaceIdIndexRoute
   '/_authed/$workspaceId/agents/$agentId': typeof AuthedWorkspaceIdAgentsAgentIdRoute
@@ -326,6 +335,7 @@ export interface FileRouteTypes {
     | '/prototypes/above-title-header'
     | '/prototypes/gallery'
     | '/$workspaceId/briefing'
+    | '/$workspaceId/search'
     | '/$workspaceId/settings'
     | '/$workspaceId/'
     | '/$workspaceId/agents/$agentId'
@@ -357,6 +367,7 @@ export interface FileRouteTypes {
     | '/prototypes/gallery'
     | '/'
     | '/$workspaceId/briefing'
+    | '/$workspaceId/search'
     | '/$workspaceId'
     | '/$workspaceId/agents/$agentId'
     | '/$workspaceId/files/$fileId'
@@ -389,6 +400,7 @@ export interface FileRouteTypes {
     | '/prototypes/gallery'
     | '/_authed/'
     | '/_authed/$workspaceId/briefing'
+    | '/_authed/$workspaceId/search'
     | '/_authed/$workspaceId/settings'
     | '/_authed/$workspaceId/'
     | '/_authed/$workspaceId/agents/$agentId'
@@ -491,6 +503,13 @@ declare module '@tanstack/react-router' {
       path: '/settings'
       fullPath: '/$workspaceId/settings'
       preLoaderRoute: typeof AuthedWorkspaceIdSettingsRouteImport
+      parentRoute: typeof AuthedWorkspaceIdRoute
+    }
+    '/_authed/$workspaceId/search': {
+      id: '/_authed/$workspaceId/search'
+      path: '/search'
+      fullPath: '/$workspaceId/search'
+      preLoaderRoute: typeof AuthedWorkspaceIdSearchRouteImport
       parentRoute: typeof AuthedWorkspaceIdRoute
     }
     '/_authed/$workspaceId/briefing': {
@@ -677,6 +696,7 @@ const AuthedWorkspaceIdSettingsRouteWithChildren =
 
 interface AuthedWorkspaceIdRouteChildren {
   AuthedWorkspaceIdBriefingRoute: typeof AuthedWorkspaceIdBriefingRoute
+  AuthedWorkspaceIdSearchRoute: typeof AuthedWorkspaceIdSearchRoute
   AuthedWorkspaceIdSettingsRoute: typeof AuthedWorkspaceIdSettingsRouteWithChildren
   AuthedWorkspaceIdIndexRoute: typeof AuthedWorkspaceIdIndexRoute
   AuthedWorkspaceIdAgentsAgentIdRoute: typeof AuthedWorkspaceIdAgentsAgentIdRoute
@@ -695,6 +715,7 @@ interface AuthedWorkspaceIdRouteChildren {
 
 const AuthedWorkspaceIdRouteChildren: AuthedWorkspaceIdRouteChildren = {
   AuthedWorkspaceIdBriefingRoute: AuthedWorkspaceIdBriefingRoute,
+  AuthedWorkspaceIdSearchRoute: AuthedWorkspaceIdSearchRoute,
   AuthedWorkspaceIdSettingsRoute: AuthedWorkspaceIdSettingsRouteWithChildren,
   AuthedWorkspaceIdIndexRoute: AuthedWorkspaceIdIndexRoute,
   AuthedWorkspaceIdAgentsAgentIdRoute: AuthedWorkspaceIdAgentsAgentIdRoute,

@@ -7,6 +7,8 @@ export const queryKeys = {
 		listInfinite: (workspaceId: string, filters?: Record<string, unknown>) =>
 			['objects', workspaceId, 'listInfinite', filters] as const,
 		listInfinitePrefix: (workspaceId: string) => ['objects', workspaceId, 'listInfinite'] as const,
+		search: (workspaceId: string, params?: Record<string, unknown>) =>
+			['objects', workspaceId, 'search', params] as const,
 		board: (workspaceId: string, filters?: Record<string, unknown>) =>
 			['objects', workspaceId, 'board', filters] as const,
 		boardPrefix: (workspaceId: string) => ['objects', workspaceId, 'board'] as const,
