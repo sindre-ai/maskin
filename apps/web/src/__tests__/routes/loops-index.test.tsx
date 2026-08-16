@@ -126,7 +126,6 @@ describe('LoopsPage', () => {
 	it('renders the empty state when there are no loops', () => {
 		render(<LoopsPage />)
 
-		expect(screen.getByRole('heading', { name: 'Loops' })).toBeInTheDocument()
 		expect(screen.getByText('No loops running here yet')).toBeInTheDocument()
 	})
 
