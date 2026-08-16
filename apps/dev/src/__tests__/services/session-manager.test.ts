@@ -2418,7 +2418,12 @@ describe('SessionManager', () => {
 			await manager.startSession(session.id)
 
 			expect(pullAgentFilesSpy).toHaveBeenCalledWith('actor-1', 'ws-1', expect.any(String))
-			expect(pullWorkspaceSkillsSpy).toHaveBeenCalledWith('actor-1', 'ws-1', expect.any(String))
+			expect(pullWorkspaceSkillsSpy).toHaveBeenCalledWith(
+				'actor-1',
+				'ws-1',
+				expect.any(String),
+				expect.objectContaining({ sessionId: expect.any(String) }),
+			)
 
 			const agentFilesOrder = pullAgentFilesSpy.mock.invocationCallOrder[0] ?? 0
 			const workspaceSkillsOrder = pullWorkspaceSkillsSpy.mock.invocationCallOrder[0] ?? 0
@@ -2457,7 +2462,12 @@ describe('SessionManager', () => {
 			await manager.startSession(session.id)
 
 			expect(pullWorkspaceSkillsSpy).toHaveBeenCalledTimes(1)
-			expect(pullWorkspaceSkillsSpy).toHaveBeenCalledWith('actor-2', 'ws-2', expect.any(String))
+			expect(pullWorkspaceSkillsSpy).toHaveBeenCalledWith(
+				'actor-2',
+				'ws-2',
+				expect.any(String),
+				expect.objectContaining({ sessionId: expect.any(String) }),
+			)
 		})
 	})
 

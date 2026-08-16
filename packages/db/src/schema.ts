@@ -937,3 +937,42 @@ export const sessionDispatchAttempts = pgTable(
 
 export type SessionDispatchAttempt = typeof sessionDispatchAttempts.$inferSelect
 export type NewSessionDispatchAttempt = typeof sessionDispatchAttempts.$inferInsert
+
+// ── Orphan Thread Detections ────────────────────────────────────────────────
+//
+// Idempotency ledger for the `orphan_thread_detected` analytics signal. One
+// row per root comment (`root_comment_event_id` is the UNIQUE key) so the
+// detector can run on an interval without double-firing the PostHog event
+// when a slow tick overlaps a faster one. The ledger row is written in the
+// same transaction as the capture attempt — if PostHog is down the row is
+// still written (the signal is best-effort by design; see the service's
+// docstring) so we never re-scan an already-decided thread.
+
+export const orphanThreadDetections = pgTable(
+	'orphan_thread_detections',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id)
+			.notNull(),
+		objectId: uuid('object_id').notNull(),
+		rootCommentEventId: bigint('root_comment_event_id', { mode: 'number' }).notNull(),
+		expectedReplyActorId: uuid('expected_reply_actor_id')
+			.references(() => actors.id)
+			.notNull(),
+		hoursWithoutReply: numeric('hours_without_reply', { precision: 10, scale: 2 }).notNull(),
+		threadKind: text('thread_kind').notNull(),
+		detectedAt: timestamp('detected_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		unique('orphan_thread_detections_root_comment_event_id_uniq').on(t.rootCommentEventId),
+		check(
+			'orphan_thread_detections_thread_kind_check',
+			sql`${t.threadKind} IN ('decision_required','question','flag')`,
+		),
+		index('orphan_thread_detections_detected_at_idx').on(t.detectedAt),
+	],
+)
+
+export type OrphanThreadDetection = typeof orphanThreadDetections.$inferSelect
+export type NewOrphanThreadDetection = typeof orphanThreadDetections.$inferInsert
