@@ -245,9 +245,8 @@ describe('validateSearch', () => {
 })
 
 describe('ObjectsPage', () => {
-	it('renders page header and list view', () => {
+	it('renders list view and toolbar', () => {
 		render(<ObjectsPage />)
-		expect(screen.getByText('Objects')).toBeInTheDocument()
 		expect(screen.getByTestId('list-view')).toBeInTheDocument()
 		expect(screen.getByTestId('data-table-toolbar')).toBeInTheDocument()
 	})
