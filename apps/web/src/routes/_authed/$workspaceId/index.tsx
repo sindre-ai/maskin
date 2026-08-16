@@ -291,7 +291,10 @@ function ForYouRedesign() {
 
 	return (
 		<>
-			<div className="flex min-w-0 flex-1 flex-col gap-3" data-testid="foryou-redesign-root">
+			<div
+				className="flex min-h-0 min-w-0 flex-1 flex-col gap-3"
+				data-testid="foryou-redesign-root"
+			>
 				<PageHeader
 					stickyIdentity={<ForYouHeaderIdentity unreadCount={unreadRegular.length} />}
 					actions={
@@ -301,6 +304,7 @@ function ForYouRedesign() {
 							markAllReadDisabled={unreadRegular.length === 0}
 						/>
 					}
+					scrollLocked={mode === 'cards'}
 				/>
 				{northStarCard}
 				<ForYouHeader
