@@ -49,14 +49,11 @@ export function CommandPalette() {
 
 	return (
 		<div className="fixed inset-0 z-50 flex items-start justify-center pt-[20vh]">
+			{/* biome-ignore lint/a11y/useKeyWithClickEvents: aria-hidden scrim — keyboard users dismiss via the global Escape handler above, not by tabbing to the backdrop */}
 			<div
 				className="fixed inset-0 bg-black/50"
 				onClick={() => setOpen(false)}
-				onKeyDown={(e) => {
-					if (e.key === 'Escape') setOpen(false)
-				}}
-				role="button"
-				tabIndex={0}
+				aria-hidden="true"
 			/>
 			<div className="relative w-[calc(100%-2rem)] max-w-lg mx-auto bg-popover rounded-xl shadow-2xl">
 				<Command className="w-full">
