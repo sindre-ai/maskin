@@ -195,10 +195,11 @@ describe('BulkActionBar', () => {
 		expect(props.onClear).not.toHaveBeenCalled()
 	})
 
-	it('disables the transition classes when prefers-reduced-motion is set', () => {
-		setMatchMedia(true)
+	it('applies scoped transition classes (transform + opacity only) so motion inherits the global reduced-motion guard', () => {
 		renderBar()
 		const bar = screen.getByRole('region', { name: 'Bulk actions' })
+		expect(bar.className).toMatch(/transition-\[transform,opacity\]/)
+		expect(bar.className).toMatch(/duration-200/)
 		expect(bar.className).not.toMatch(/transition-all/)
 	})
 

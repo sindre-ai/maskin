@@ -134,6 +134,22 @@
 	--radius-md: calc(var(--radius) - 2px);
 	--radius-lg: var(--radius);
 	--radius-xl: calc(var(--radius) + 4px);
+
+	/* Motion scale — v2 design system (see .claude/skills/maskin-design/tokens/motion.css).
+	   Named durations so surfaces don't hardcode raw ms values. Tailwind v4
+	   auto-generates duration-<name> / ease-<name> utilities from these.
+	   Guidance: --duration-150 on colour/border, --duration-200 on shadow +
+	   transform, --duration-250 on nav/panel state, --duration-slide on
+	   drawer/sheet slide-in. */
+	--duration-150: 150ms;
+	--duration-180: 180ms;
+	--duration-200: 200ms;
+	--duration-250: 250ms;
+	--duration-slide: 300ms;
+
+	--ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+	--ease-emphasized: cubic-bezier(0.16, 1, 0.3, 1);
+	--ease-out: ease-out;
 }
 
 :root {
@@ -369,6 +385,21 @@
 	}
 	*::-webkit-scrollbar-thumb:hover {
 		background-color: var(--border-hover, var(--border));
+	}
+
+	/* Reduced motion — motion is disabled, not slowed. Applies to every
+	   transition and animation on every route so component code doesn't
+	   need per-surface guards. Kept in @layer base so utility classes
+	   inherit the collapse. */
+	@media (prefers-reduced-motion: reduce) {
+		*,
+		*::before,
+		*::after {
+			animation-duration: 0.01ms !important;
+			animation-iteration-count: 1 !important;
+			transition-duration: 0.01ms !important;
+			scroll-behavior: auto !important;
+		}
 	}
 }
 
