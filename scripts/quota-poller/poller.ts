@@ -84,6 +84,8 @@ export interface PollResult {
 	errors: Array<{ route: string; message: string; code: string }>
 }
 
+const FETCH_TIMEOUT_MS = 30_000
+
 /* -------------------------------------------------------------------------- */
 /*  Anthropic Admin API client                                                */
 /* -------------------------------------------------------------------------- */
@@ -123,6 +125,7 @@ async function fetchAnthropicQuotas(
 				'anthropic-version': '2023-06-01',
 				'content-type': 'application/json',
 			},
+			signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
 		})
 	} catch (err) {
 		logger.error('Anthropic API request failed', {
@@ -207,6 +210,7 @@ async function fetchOpenRouterQuota(
 			headers: {
 				authorization: `Bearer ${apiKey}`,
 			},
+			signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
 		})
 	} catch (err) {
 		logger.error('OpenRouter API request failed', {
