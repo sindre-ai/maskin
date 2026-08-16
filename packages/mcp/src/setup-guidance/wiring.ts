@@ -72,6 +72,7 @@ export async function safeBuildSetupBlock(
 		return await build()
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err)
+		console.error(`[setup-guidance] '${name}' setup block failed, degrading to unknown:`, err)
 		const checks: SetupCheck[] = [
 			{
 				name,
@@ -228,11 +229,14 @@ async function loadWorkspace(
 	})) as WorkspaceRow[] | null
 	if (!Array.isArray(workspaces) || workspaces.length === 0) return null
 	const effective = workspaceId ?? defaultWorkspaceId
-	if (effective) {
-		const match = workspaces.find((w) => w.id === effective)
-		if (match) return match
-	}
-	return workspaces[0] ?? null
+	if (!effective) return workspaces[0] ?? null
+	const match = workspaces.find((w) => w.id === effective)
+	// An explicitly-requested workspace id that matches no row must not fall
+	// back to a different workspace's data — that would silently report (or
+	// act on) the wrong workspace's settings. Throwing here lets the caller's
+	// `safeBuildSetupBlock` collapse to a single `unknown` check instead.
+	if (!match) throw new Error(`Workspace '${effective}' not found`)
+	return match
 }
 
 /**
@@ -294,15 +298,16 @@ export async function buildLoopSetupBlockFromApi(
 	},
 ): Promise<SetupBlock> {
 	return safeBuildSetupBlock('setup', async () => {
+		// No per-source `.catch()` here: a partial fetch failure (e.g.
+		// /api/integrations errors but /api/workspaces succeeds) must not be
+		// silently treated as "found nothing" — that would produce a confident
+		// but wrong `connectors_connected` warning instead of degrading the
+		// whole block to `unknown` via the outer `safeBuildSetupBlock`.
 		const [workspace, integrationsRows, triggerRows] = await Promise.all([
-			loadWorkspace(apiCall, options.workspaceId, options.defaultWorkspaceId).catch(() => null),
-			apiCall('GET', '/api/integrations', undefined, { workspaceId: options.workspaceId }).catch(
-				() => [] as unknown,
-			),
+			loadWorkspace(apiCall, options.workspaceId, options.defaultWorkspaceId),
+			apiCall('GET', '/api/integrations', undefined, { workspaceId: options.workspaceId }),
 			options.triggerIds.length > 0
-				? apiCall('GET', '/api/triggers', undefined, { workspaceId: options.workspaceId }).catch(
-						() => [] as unknown,
-					)
+				? apiCall('GET', '/api/triggers', undefined, { workspaceId: options.workspaceId })
 				: Promise.resolve([] as unknown),
 		])
 		const matchedTriggers = Array.isArray(triggerRows)
@@ -324,7 +329,7 @@ export async function buildLoopSetupBlockFromApi(
 						`/api/actors?ids=${agentIds.map(encodeURIComponent).join(',')}`,
 						undefined,
 						{ workspaceId: options.workspaceId },
-					).catch(() => [] as unknown)
+					)
 				: []
 		const steps = composeLoopSteps(options.triggerIds, matchedTriggers, actorRows)
 		return buildLoopSetupBlock(loop, {

@@ -1876,21 +1876,31 @@ export function createMcpServer(config: McpConfig) {
 				} | null
 			}
 			let cachedWorkspace: SetupWorkspaceRow | null = null
+			let workspaceLoadError: unknown = null
 			const needsStatusInference = nodes.some((node) => !node.status)
 			try {
 				const workspaces = (await apiCall(config, 'GET', '/api/workspaces', undefined, {
 					skipWorkspace: true,
 				})) as SetupWorkspaceRow[]
 				const effectiveWsId = workspace_id ?? config.defaultWorkspaceId
-				cachedWorkspace =
-					(effectiveWsId ? workspaces.find((w) => w.id === effectiveWsId) : workspaces[0]) ??
-					workspaces[0] ??
-					null
+				if (effectiveWsId) {
+					const match = workspaces.find((w) => w.id === effectiveWsId)
+					// An explicit workspace_id that matches no row must not silently
+					// fall back to a different workspace — that workspace's statuses
+					// and LLM readiness would otherwise be attributed to this request,
+					// which can write the wrong inferred status onto a new object.
+					if (!match) throw new Error(`Workspace '${effectiveWsId}' not found`)
+					cachedWorkspace = match
+				} else {
+					cachedWorkspace = workspaces[0] ?? null
+				}
 			} catch (err) {
 				// Only re-throw when the workspace row is required for status
 				// inference (the pre-setup behaviour). If every node already carries
-				// a status, a workspace-load failure just degrades the setup block
-				// to unknown below — the primary response still succeeds.
+				// a status, a workspace-load failure (including a workspace_id that
+				// doesn't match any row) just degrades the setup block to unknown
+				// below — the primary response still succeeds.
+				workspaceLoadError = err
 				if (needsStatusInference) throw err
 			}
 			const statusesByType: Record<string, string[]> = cachedWorkspace?.settings?.statuses ?? {}
@@ -2005,11 +2015,15 @@ export function createMcpServer(config: McpConfig) {
 			})
 			const perNodeBlocks = await Promise.all(
 				createdNodesForSetup.map((bet) =>
-					buildBetSetupBlockFromApi(bet, setupApiCaller(config), {
-						workspaceId: workspace_id,
-						defaultWorkspaceId: config.defaultWorkspaceId,
-						workspace: cachedWorkspace,
-					}),
+					workspaceLoadError
+						? safeBuildSetupBlock('setup', async () => {
+								throw workspaceLoadError
+							})
+						: buildBetSetupBlockFromApi(bet, setupApiCaller(config), {
+								workspaceId: workspace_id,
+								defaultWorkspaceId: config.defaultWorkspaceId,
+								workspace: cachedWorkspace,
+							}),
 				),
 			)
 			const setup = mergeBetSetupBlocks(perNodeBlocks)

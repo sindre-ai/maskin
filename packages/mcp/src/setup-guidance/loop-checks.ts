@@ -10,6 +10,7 @@ function safeCheck(name: string, run: () => SetupCheck | null): SetupCheck | nul
 	try {
 		return run()
 	} catch (err) {
+		console.error(`[setup-guidance] loop check '${name}' threw, degrading to unknown:`, err)
 		return {
 			name,
 			status: 'unknown',
