@@ -9,7 +9,7 @@ This is a **steering interface for humans overseeing autonomous agents**, not a 
 3. **Instant feedback** — Every action is optimistic. SSE drives real-time updates. No loading spinners for mutations.
 4. **Linear/Apple aesthetic** — Clean, minimal, monospace accents, tight spacing, keyboard-driven.
 5. **Light/dark mode** — Defaults to light. User can choose system/light/dark in settings. Both modes are first-class.
-6. **Glassmorphism** — Overlays and command palette use glass/blur effects (frosted-glass-on-white in light, dark translucent in dark). Sidebar is solid.
+6. **Solid, warm neutrals (v2)** — the product's visual language matches the maskin.io landing page: a warm neutral gray with an indigo brand accent, no glass/blur. Source of truth: `Maskin App v2 Standalone.html`. Never re-introduce frosted or translucent surfaces — overlays are solid with a shadow.
 7. **Document-first detail** — Each object opens as a Notion-like document: title, dynamic metadata badges, markdown content, linked objects.
 8. **Composable-ready** — Architecture the component system so blocks/views can be added incrementally.
 
@@ -78,25 +78,25 @@ This is a **steering interface for humans overseeing autonomous agents**, not a 
 - **FOUC prevention**: inline script in `index.html` applies `.dark` class before first paint
 
 ### Color Tokens (defined in `src/app.css`)
-- Backgrounds: `bg`, `bg-surface`, `bg-hover`, `bg-glass`, `bg-glass-heavy`
-- Borders: `border`, `border-hover`, `border-focus`
-- Text: `text` (primary), `text-secondary`, `text-muted`
-- Accent: `accent` (indigo), `accent-hover`
+- Surface + text: `background`, `foreground`, `card`, `card-foreground`, `popover`, `popover-foreground`, `primary`, `primary-foreground`, `secondary`, `secondary-foreground`, `muted`, `muted-foreground`, `accent`, `accent-foreground`
+- Borders: `border` (default), `border-strong` (hover / dividers in dense UI), `input`, `ring`
+- Brand: `brand`, `brand-foreground`, `brand-hover` — indigo, used for links and primary actions
 - Status: `success`, `warning`, `error`
 - Status badges: `status-{name}-bg` / `status-{name}-text` for each workflow status
 - Type badges: `type-{insight|bet|task}-bg` / `type-{insight|bet|task}-text`
-- Shadows: `shadow-sm`, `shadow-md`, `shadow-lg` — adapt per mode (more visible in light, subtle in dark)
-- **Color token pairing rule**: `bg-X` must pair with `text-X-foreground` — e.g. `bg-accent` + `text-accent-foreground`, `bg-primary` + `text-primary-foreground`. Mismatching (e.g. `bg-accent` + `text-primary-foreground`) causes contrast issues.
+- Shadows: `shadow-xs`, `shadow-sm`, `shadow-md`, `shadow-lg` (dropdown), `shadow-xl` (modal)
+- **Colour token pairing rule**: `bg-X` must pair with `text-X-foreground` — e.g. `bg-accent` + `text-accent-foreground`, `bg-primary` + `text-primary-foreground`. Mismatching causes contrast issues; see `.claude/rules/known-pitfalls.md` for the invisible-`text-accent` history.
 
-### Visual Style
-- Light/dark mode with full token parity — both are first-class citizens
-- Light mode: clean white (Linear-inspired), pastel status badges, visible shadows
-- Dark mode: zinc/neutral base, indigo accent, deep status badge colors, subtle shadows
-- Glassmorphism: `glass` and `glass-heavy` utility classes (frosted-white in light, dark translucent in dark)
-- Minimal, Linear-inspired aesthetic — clean lines, subtle borders, generous spacing
-- Fonts: Schibsted Grotesk (sans), JetBrains Mono (mono) — see `src/styles/typography.md` for the full spec
-- Border radius: 6px (Linear-style) — `--radius: 0.375rem`
-- Subtle transitions: `transition-colors duration-150` on all elements (base layer)
+### Visual Style — v2
+- Light + dark with full token parity — both are first-class.
+- Light mode: warm neutral gray on `#ffffff`, indigo brand for links and primary actions, pastel status badges.
+- Dark mode: warm neutral inverted (zinc-950 field, zinc-800 borders), indigo brand shifted one stop lighter for legibility.
+- Overlays are **solid**, elevated by shadow only — no glass, no blur.
+- Fonts: Schibsted Grotesk (sans, variable 400–900) + JetBrains Mono (mono) — self-hosted from `/public/fonts/`, see `src/styles/typography.md`.
+- Base border radius: 10px (`--radius: 0.625rem`) — the `sm`/`md`/`lg`/`xl`/`2xl` scale steps 6/8/10/14/16px, matched to the v2 mockup's chip / menu-item / control / card / modal usage.
+- Micro eyebrow labels (the mockup's "VIEW / SHOW / SORT" markers) ship as the `.eyebrow` utility — 8px mono, 700, 0.11em tracking, uppercase, muted-foreground.
+- Subtle transitions: `transition-colors duration-150` at the base layer.
+- Gallery specimen: `/prototypes/gallery` — every page must render from these primitives.
 
 ### Component Conventions
 - **Full rules**: see `.claude/rules/frontend.md` — component reuse hierarchy, DRY, and consistency rules

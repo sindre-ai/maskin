@@ -1,0 +1,331 @@
+import { RelativeTime } from '@/components/shared/relative-time'
+import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
+import { useWorkspaceSessions } from '@/hooks/use-sessions'
+import type { ActorResponse, SessionResponse } from '@/lib/api'
+import { useChat } from '@/lib/chat-context'
+import { cn } from '@/lib/cn'
+import { formatDurationBetween } from '@/lib/format-duration'
+import { useWorkspace } from '@/lib/workspace-context'
+import { AlertCircle, CheckCircle2, ChevronDown, ChevronUp, Clock, PauseCircle } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { SessionDetailPanel } from './session-detail-panel'
+
+type SessionState = 'running' | 'waiting' | 'paused' | 'completed' | 'failed'
+
+type IconComponent = React.ComponentType<{ className?: string }>
+
+interface StateMeta {
+	label: string
+	Icon: IconComponent
+	iconBg: string
+	iconFg: string
+	dot: string
+}
+
+const STATE_META: Record<SessionState, StateMeta> = {
+	running: {
+		label: 'Running',
+		Icon: Spinner,
+		iconBg: 'bg-status-in_progress-bg',
+		iconFg: 'text-status-in_progress-text',
+		dot: 'bg-status-in_progress-text',
+	},
+	waiting: {
+		label: 'Waiting',
+		Icon: Clock,
+		iconBg: 'bg-muted',
+		iconFg: 'text-muted-foreground',
+		dot: 'bg-muted-foreground',
+	},
+	paused: {
+		label: 'Paused',
+		Icon: PauseCircle,
+		iconBg: 'bg-status-paused-bg',
+		iconFg: 'text-status-paused-text',
+		dot: 'bg-status-paused-text',
+	},
+	completed: {
+		label: 'Completed',
+		Icon: CheckCircle2,
+		iconBg: 'bg-status-completed-bg',
+		iconFg: 'text-status-completed-text',
+		dot: 'bg-status-completed-text',
+	},
+	failed: {
+		label: 'Failed',
+		Icon: AlertCircle,
+		iconBg: 'bg-status-failed-bg',
+		iconFg: 'text-status-failed-text',
+		dot: 'bg-status-failed-text',
+	},
+}
+
+const RUNNING_STATUSES = new Set(['running', 'starting', 'pending', 'queued', 'snapshotting'])
+const WAITING_STATUSES = new Set(['waiting_for_input'])
+const PAUSED_STATUSES = new Set(['paused'])
+const FAILED_STATUSES = new Set(['failed', 'timeout'])
+const COMPLETED_STATUSES = new Set(['completed'])
+
+function deriveState(status: string): SessionState {
+	if (RUNNING_STATUSES.has(status)) return 'running'
+	if (WAITING_STATUSES.has(status)) return 'waiting'
+	if (PAUSED_STATUSES.has(status)) return 'paused'
+	if (FAILED_STATUSES.has(status)) return 'failed'
+	if (COMPLETED_STATUSES.has(status)) return 'completed'
+	return 'waiting'
+}
+
+function isActive(state: SessionState): boolean {
+	return state === 'running' || state === 'waiting'
+}
+
+interface Phase {
+	label: string
+	text: string
+	dot: string
+}
+
+function derivePhases(session: SessionResponse, state: SessionState): Phase[] {
+	const phases: Phase[] = []
+	const meta = STATE_META[state]
+
+	if (session.startedAt) {
+		phases.push({
+			label: 'START',
+			text: session.actionPrompt || 'Session started',
+			dot: 'bg-muted-foreground',
+		})
+	} else if (session.createdAt) {
+		phases.push({
+			label: 'QUEUED',
+			text: session.actionPrompt || 'Waiting to start',
+			dot: 'bg-muted-foreground',
+		})
+	}
+
+	if (isActive(state)) {
+		const now = session.currentActivity?.trim() || meta.label
+		phases.push({ label: 'NOW', text: now, dot: meta.dot.replace('bg-', 'bg-') })
+	}
+
+	if (state === 'completed' || state === 'failed' || state === 'paused') {
+		const end =
+			state === 'failed'
+				? 'Ended with an error'
+				: state === 'paused'
+					? 'Paused — will resume on the next tick'
+					: 'Finished'
+		phases.push({ label: 'END', text: end, dot: meta.dot })
+	}
+
+	return phases
+}
+
+function sortSessions(a: SessionResponse, b: SessionResponse): number {
+	const aActive = isActive(deriveState(a.status))
+	const bActive = isActive(deriveState(b.status))
+	if (aActive !== bActive) return aActive ? -1 : 1
+	const aTime = new Date(a.createdAt ?? 0).getTime()
+	const bTime = new Date(b.createdAt ?? 0).getTime()
+	return bTime - aTime
+}
+
+export function AgentSessionsSection({ agent }: { agent: ActorResponse }) {
+	const { workspaceId } = useWorkspace()
+	const { data: sessions, isLoading } = useWorkspaceSessions(workspaceId, { paged: false })
+	const [detailSession, setDetailSession] = useState<SessionResponse | null>(null)
+
+	const agentSessions = useMemo(() => {
+		const list = (sessions ?? []).filter((s) => s.actorId === agent.id)
+		return list.sort(sortSessions)
+	}, [sessions, agent.id])
+
+	const runningCount = useMemo(
+		() => agentSessions.filter((s) => isActive(deriveState(s.status))).length,
+		[agentSessions],
+	)
+
+	return (
+		<section
+			aria-labelledby="agent-sessions-heading"
+			className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4"
+		>
+			<div className="flex items-center gap-2">
+				<h2
+					id="agent-sessions-heading"
+					className="text-sm font-semibold tracking-tight text-foreground"
+				>
+					Sessions
+				</h2>
+				<span className="text-[11px] text-muted-foreground">
+					{runningCount > 0
+						? `${runningCount} running`
+						: agentSessions.length > 0
+							? `${agentSessions.length} total`
+							: 'none yet'}
+				</span>
+				<div className="mx-2 h-px flex-1 bg-border" aria-hidden />
+			</div>
+
+			{isLoading ? (
+				<div className="flex items-center justify-center py-6">
+					<Spinner />
+				</div>
+			) : agentSessions.length === 0 ? (
+				<p className="py-4 text-center text-sm text-muted-foreground">
+					No sessions yet. Runs will show up here.
+				</p>
+			) : (
+				<ul className="flex flex-col gap-1.5">
+					{agentSessions.map((session) => (
+						<li key={session.id}>
+							<SessionCard
+								session={session}
+								agent={agent}
+								onOpenLog={() => setDetailSession(session)}
+							/>
+						</li>
+					))}
+				</ul>
+			)}
+
+			<SessionDetailPanel
+				session={detailSession}
+				workspaceId={workspaceId}
+				open={detailSession !== null}
+				onOpenChange={(open) => {
+					if (!open) setDetailSession(null)
+				}}
+			/>
+		</section>
+	)
+}
+
+function SessionCard({
+	session,
+	agent,
+	onOpenLog,
+}: {
+	session: SessionResponse
+	agent: ActorResponse
+	onOpenLog: () => void
+}) {
+	const [open, setOpen] = useState(false)
+	const state = deriveState(session.status)
+	const meta = STATE_META[state]
+	const active = isActive(state)
+	const { openWithContext } = useChat()
+
+	const name = session.actionPrompt?.trim() || 'Untitled session'
+	const duration = formatDurationBetween(session.startedAt, session.completedAt)
+	const phases = useMemo(() => derivePhases(session, state), [session, state])
+	const StateIcon = meta.Icon
+
+	return (
+		<div
+			className={cn(
+				'rounded-xl border bg-card transition-colors',
+				active ? 'border-border' : 'border-border/70',
+			)}
+		>
+			<div className="flex items-center gap-2.5 px-3 py-2">
+				<span
+					aria-hidden
+					className={cn(
+						'grid h-6 w-6 shrink-0 place-items-center rounded-md',
+						meta.iconBg,
+						meta.iconFg,
+					)}
+				>
+					<StateIcon className="size-3.5" />
+				</span>
+				<div className="flex min-w-0 flex-1 items-baseline gap-2 overflow-hidden">
+					<span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+						{name}
+					</span>
+					<span className="shrink-0 text-[11px] text-muted-foreground">
+						<RelativeTime date={session.startedAt ?? session.createdAt} />
+					</span>
+				</div>
+				<span
+					className={cn(
+						'shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide',
+						meta.iconBg,
+						meta.iconFg,
+					)}
+				>
+					{meta.label}
+				</span>
+				<button
+					type="button"
+					onClick={() => setOpen((v) => !v)}
+					className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+					aria-expanded={open}
+					aria-controls={`session-details-${session.id}`}
+					aria-label={open ? `Hide details for ${name}` : `View details for ${name}`}
+				>
+					{open ? 'Hide' : 'View'}
+					{open ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
+				</button>
+			</div>
+			{open && (
+				<div
+					id={`session-details-${session.id}`}
+					className="flex flex-col gap-3 border-t border-border bg-muted/30 px-3 py-3"
+				>
+					<div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+						<span className={cn('font-semibold', meta.iconFg)}>{meta.label}</span>
+						<span aria-hidden>·</span>
+						<span className="min-w-0 truncate">
+							{duration ? `${duration} elapsed` : 'not started yet'}
+						</span>
+					</div>
+					<ol className="flex flex-col gap-2">
+						{phases.map((phase, idx) => (
+							<li key={`${session.id}-${phase.label}-${idx}`} className="flex items-start gap-2.5">
+								<span className="eyebrow w-12 shrink-0 pt-[3px]">{phase.label}</span>
+								<span
+									aria-hidden
+									className={cn('mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full', phase.dot)}
+								/>
+								<span className="min-w-0 flex-1 text-xs leading-relaxed text-foreground">
+									{phase.text}
+								</span>
+							</li>
+						))}
+					</ol>
+					<div className="flex flex-wrap items-center gap-2">
+						<Button
+							size="sm"
+							className="h-7 rounded-md px-3 text-xs"
+							onClick={() =>
+								openWithContext(
+									[{ kind: 'agent', id: agent.id, name: agent.name }],
+									session.actionPrompt || undefined,
+								)
+							}
+						>
+							Continue in chat
+						</Button>
+						<Button
+							size="sm"
+							variant="outline"
+							className="h-7 rounded-md px-3 text-xs"
+							onClick={onOpenLog}
+						>
+							Full log
+						</Button>
+					</div>
+				</div>
+			)}
+		</div>
+	)
+}
+
+export const __test = {
+	deriveState,
+	derivePhases,
+	sortSessions,
+	isActive,
+}

@@ -328,7 +328,7 @@ function AttachedSkillRow({
 	const isFolder = skill.isFolder === true
 	const fileCount = skill.fileCount ?? 0
 	return (
-		<div className="flex items-center gap-3 overflow-hidden rounded-md border border-border bg-bg-surface px-3 py-2">
+		<div className="flex items-center gap-3 overflow-hidden rounded-md border border-border bg-card px-3 py-2">
 			<Library className="h-4 w-4 text-muted-foreground shrink-0" />
 			<div className="flex-1 min-w-0">
 				<div className="flex items-center gap-1.5">
@@ -357,7 +357,7 @@ function AttachedSkillRow({
 function FolderBadge({ fileCount }: { fileCount: number }) {
 	return (
 		<span
-			className="inline-flex items-center gap-1 rounded border border-border bg-bg px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground shrink-0"
+			className="inline-flex items-center gap-1 rounded border border-border bg-background px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground shrink-0"
 			aria-label={`Folder skill with ${fileCount} file${fileCount === 1 ? '' : 's'}`}
 		>
 			<span aria-hidden="true">📁</span>
@@ -382,7 +382,7 @@ function SkillCard({
 	const [confirmDelete, setConfirmDelete] = useState(false)
 
 	return (
-		<div className="flex items-center gap-3 overflow-hidden rounded-md border border-border bg-bg-surface px-3 py-2">
+		<div className="flex items-center gap-3 overflow-hidden rounded-md border border-border bg-card px-3 py-2">
 			<BookOpen className="h-4 w-4 text-muted-foreground shrink-0" />
 			<div className="flex-1 min-w-0">
 				<p className="text-sm font-medium text-foreground truncate">{skill.name}</p>
@@ -494,7 +494,7 @@ function SkillForm({
 	}
 
 	return (
-		<div className="rounded-md border border-border bg-bg-surface p-3 space-y-2">
+		<div className="rounded-md border border-border bg-card p-3 space-y-2">
 			<div className="flex gap-2">
 				<div className="flex-1">
 					<Label>Name</Label>
