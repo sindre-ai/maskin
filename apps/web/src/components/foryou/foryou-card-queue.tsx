@@ -172,7 +172,7 @@ export function ForYouCardQueue({
 						<Button
 							size="sm"
 							variant="outline"
-							className="flex-1 md:flex-none"
+							className="min-h-11 flex-1 touch-manipulation md:min-h-9 md:flex-none"
 							onClick={() => cardRef.current?.skip()}
 						>
 							Keep unread
@@ -182,7 +182,7 @@ export function ForYouCardQueue({
 						</span>
 						<Button
 							size="sm"
-							className="flex-1 md:flex-none"
+							className="min-h-11 flex-1 touch-manipulation md:min-h-9 md:flex-none"
 							onClick={() => cardRef.current?.commit()}
 						>
 							Mark as read

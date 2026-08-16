@@ -503,7 +503,7 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 										type="button"
 										data-action-id={action.id}
 										className={cn(
-											'shrink-0 whitespace-nowrap rounded-full border px-3 py-1 text-xs font-medium transition-colors disabled:opacity-50',
+											'inline-flex min-h-11 shrink-0 touch-manipulation items-center whitespace-nowrap rounded-full border px-3.5 py-2 text-[13px] font-medium transition-colors disabled:opacity-50 md:min-h-8 md:px-3 md:py-1 md:text-xs',
 											action.tone === 'primary'
 												? 'border-foreground bg-foreground text-background hover:bg-foreground/90'
 												: 'border-border bg-background text-muted-foreground hover:border-foreground hover:bg-secondary hover:text-foreground',
