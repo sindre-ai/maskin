@@ -57,7 +57,7 @@ export function LoopRow({
 		<Link
 			to="/$workspaceId/loops/$loopId"
 			params={{ workspaceId: loop.workspaceId, loopId: loop.id }}
-			className="flex items-center gap-3 rounded-lg border border-border bg-card p-4 hover:bg-accent/50 transition-colors"
+			className="group flex items-center gap-3 rounded-xl border border-border bg-card p-4 shadow-sm transition-[box-shadow,border-color] hover:border-border-strong hover:shadow-md"
 		>
 			<div className="flex flex-col items-center gap-1">
 				<span className={cn('h-3 w-3 rounded-full shrink-0', pill.dot)} />

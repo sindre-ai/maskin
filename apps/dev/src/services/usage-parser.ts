@@ -80,3 +80,53 @@ export async function extractSessionUsage(
 	const chunks = rows.map((r) => r.content).reverse()
 	return parseUsageFromLogChunks(chunks)
 }
+
+/**
+ * Pure parser: scans log chunks (in arrival order) for the final
+ * stream-json `result` event and extracts the agent's final answer text.
+ * Sibling of parseUsageFromLogChunks — same event, different field, kept
+ * separate so SessionUsage stays scoped to the typed billing columns it's
+ * written into. Returns null if nothing found or the `result` field isn't
+ * a string.
+ */
+export function parseFinalMessageFromLogChunks(chunks: string[]): string | null {
+	if (chunks.length === 0) return null
+	const lines = chunks.join('').split('\n')
+	const start = Math.max(0, lines.length - MAX_LINES_SCANNED)
+	for (let i = lines.length - 1; i >= start; i--) {
+		const line = lines[i]?.trim()
+		if (!line || line[0] !== '{') continue
+		let parsed: unknown
+		try {
+			parsed = JSON.parse(line)
+		} catch {
+			continue
+		}
+		if (!parsed || typeof parsed !== 'object') continue
+		const obj = parsed as Record<string, unknown>
+		if (obj.type !== 'result') continue
+		return typeof obj.result === 'string' ? obj.result : null
+	}
+	return null
+}
+
+/**
+ * DB-fallback counterpart to extractSessionUsage, for the agent's final
+ * answer text. Used when no in-memory stdout tail is available (e.g. the
+ * remote/dispatched-session completion path).
+ */
+export async function extractSessionFinalMessage(
+	db: Database,
+	sessionId: string,
+): Promise<string | null> {
+	const rows = await db
+		.select({ content: sessionLogs.content })
+		.from(sessionLogs)
+		.where(and(eq(sessionLogs.sessionId, sessionId), eq(sessionLogs.stream, 'stdout')))
+		.orderBy(desc(sessionLogs.id))
+		.limit(MAX_LOG_ROWS_FETCHED)
+
+	if (rows.length === 0) return null
+	const chunks = rows.map((r) => r.content).reverse()
+	return parseFinalMessageFromLogChunks(chunks)
+}

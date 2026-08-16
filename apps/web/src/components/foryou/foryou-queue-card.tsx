@@ -266,7 +266,7 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 				<div
 					aria-hidden
 					data-testid="mark-read-reveal"
-					className="pointer-events-none absolute inset-0 flex items-center justify-end gap-2 rounded-[18px] bg-status-active-bg px-5 text-xs font-medium text-status-active-text"
+					className="pointer-events-none absolute inset-0 flex items-center justify-end gap-2 rounded-2xl bg-status-active-bg px-5 text-xs font-medium text-status-active-text"
 					style={{ opacity: isDragging && dragOffset > 0 ? swipeBgOpacity : 0 }}
 				>
 					<CheckIcon size={14} />
@@ -276,7 +276,7 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 				<div
 					aria-hidden
 					data-testid="keep-unread-reveal"
-					className="pointer-events-none absolute inset-0 flex items-center justify-start gap-2 rounded-[18px] bg-muted px-5 text-xs font-medium text-muted-foreground"
+					className="pointer-events-none absolute inset-0 flex items-center justify-start gap-2 rounded-2xl bg-muted px-5 text-xs font-medium text-muted-foreground"
 					style={{ opacity: isDragging && dragOffset < 0 ? swipeBgOpacity : 0 }}
 				>
 					<X size={14} />
@@ -287,7 +287,7 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 					data-testid="foryou-queue-card"
 					data-card-kind={cardKind}
 					className={cn(
-						'relative flex h-full flex-col overflow-hidden rounded-[18px] border border-border bg-background shadow-md cursor-grab touch-pan-y',
+						'relative flex h-full flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-lg cursor-grab touch-pan-y',
 						exitDir
 							? 'transition-[transform,opacity] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]'
 							: isDragging
@@ -344,9 +344,7 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 					{insightPreview && (
 						<div className="border-b border-border bg-secondary/25 px-4 py-2.5">
 							<div className="flex items-center justify-between gap-2">
-								<p className="text-[9.5px] font-bold uppercase tracking-wider text-muted-foreground">
-									✦ Summary
-								</p>
+								<p className="eyebrow">✦ Summary</p>
 								<button
 									type="button"
 									onClick={() => setSummaryExpanded((v) => !v)}
@@ -404,7 +402,7 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 						{decisionActions && decisionPhase.status === 'idle' && (
 							<div
 								data-testid="decision-block"
-								className="mb-3 rounded-md bg-status-in_review-bg p-2.5"
+								className="mb-3 rounded-xl bg-status-in_review-bg p-2.5"
 							>
 								<div className="flex items-center gap-2 px-1 pb-2">
 									<span className="text-[12px] font-semibold text-status-in_review-text">
@@ -420,7 +418,7 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 											className={cn(
 												'flex min-h-12 w-full touch-manipulation items-center justify-between gap-3 rounded-md px-3 py-2 text-left text-[13.5px] font-medium transition-colors',
 												action.tone === 'primary'
-													? 'bg-foreground text-background hover:bg-foreground/90'
+													? 'bg-brand text-brand-foreground hover:bg-brand-hover'
 													: 'border border-border bg-background text-foreground hover:bg-secondary',
 											)}
 											onClick={() => chooseDecision(action)}
@@ -432,7 +430,7 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 														className={cn(
 															'truncate text-[11px] font-normal',
 															action.tone === 'primary'
-																? 'text-background/70'
+																? 'text-brand-foreground/80'
 																: 'text-muted-foreground',
 														)}
 													>
@@ -454,7 +452,7 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 						{(decisionPhase.status === 'receipt' || decisionPhase.status === 'committed') && (
 							<div
 								data-testid="decision-receipt"
-								className="mb-3 rounded-md border border-border bg-status-active-bg p-3"
+								className="mb-3 rounded-xl border border-border bg-status-active-bg p-3"
 							>
 								<div className="flex items-center gap-2 text-sm font-medium text-status-active-text">
 									<CheckIcon size={14} />
@@ -502,7 +500,7 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 										className={cn(
 											'shrink-0 whitespace-nowrap rounded-full border px-3 py-1 text-xs font-medium transition-colors disabled:opacity-50',
 											action.tone === 'primary'
-												? 'border-foreground bg-foreground text-background hover:bg-foreground/90'
+												? 'border-brand bg-brand text-brand-foreground hover:bg-brand-hover'
 												: 'border-border bg-background text-muted-foreground hover:border-foreground hover:bg-secondary hover:text-foreground',
 										)}
 										onClick={() => runQuickReply(action)}
