@@ -301,7 +301,7 @@ function ResultBlock({ event }: { event: Extract<ChatEvent, { kind: 'result' }> 
 	const durationLabel = event.durationMs != null ? `${(event.durationMs / 1000).toFixed(1)}s` : null
 	const pct = event.durationMs != null ? Math.max(0, Math.min(1, event.durationMs / 60_000)) : 0
 	return (
-		<div className="w-full max-w-sm rounded-md border border-border bg-bg p-3">
+		<div className="w-full max-w-sm rounded-lg border border-border bg-bg p-3">
 			<div className="flex items-baseline justify-between gap-2">
 				<MicroLabel>Run</MicroLabel>
 				<span className="font-mono text-[10px] uppercase text-text-muted">{event.subtype}</span>
@@ -367,7 +367,7 @@ function ToolUseBlock({ name, input }: { name: string; input: unknown }) {
 	const [open, setOpen] = useState(false)
 	const preview = describeToolInput(input)
 	return (
-		<div className="rounded-md border border-border bg-bg text-xs">
+		<div className="rounded-lg border border-border bg-bg text-xs">
 			<button
 				type="button"
 				onClick={() => setOpen((v) => !v)}
@@ -399,7 +399,7 @@ function ThinkingBlock({ text, redacted }: { text: string; redacted?: boolean })
 		? 'Anthropic withheld the internal reasoning for this turn. The agent still thought about the problem — the content just isn’t available here.'
 		: text
 	return (
-		<div className="rounded-md border border-border bg-bg text-xs">
+		<div className="rounded-lg border border-border bg-bg text-xs">
 			<button
 				type="button"
 				onClick={() => setOpen((v) => !v)}

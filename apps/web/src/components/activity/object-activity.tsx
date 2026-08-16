@@ -297,7 +297,7 @@ export function ObjectActivity({
 	const tableViewRelationships = relationships ?? []
 
 	return (
-		<div className="border-t border-border pt-6">
+		<div className="border-t border-border pt-6" data-testid="object-activity">
 			<div className="flex items-center justify-between mb-3 gap-2">
 				<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
 					Activity
