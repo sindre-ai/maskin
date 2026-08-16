@@ -312,7 +312,7 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 	return (
 		<div
 			ref={scrollRef}
-			className={cn('flex-1 min-h-0 overflow-auto rounded-md border', 'touch-pan-y')}
+			className={cn('flex-1 min-h-0 overflow-auto rounded-lg border', 'touch-pan-y')}
 		>
 			<ul className="m-0 list-none p-0" aria-label="Objects">
 				{groups === null

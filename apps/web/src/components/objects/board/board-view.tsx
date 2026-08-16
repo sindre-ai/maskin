@@ -1043,7 +1043,7 @@ function CardSkeleton() {
 	return (
 		<div
 			data-testid="board-card-skeleton"
-			className="h-16 animate-pulse rounded-md border border-border bg-card"
+			className="h-16 animate-pulse rounded-lg border border-border bg-card"
 		/>
 	)
 }
