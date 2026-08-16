@@ -933,12 +933,12 @@ export const tools = {
 	},
 	get_comments: {
 		description:
-			'Get comments posted on a specific object, newest first. Comments are events with action="commented" on entity_type="object". Threading is expressed via data.parentEventId on each row — replies reference the event id of the comment they reply to.',
+			'Get comments posted on a specific object, newest first. Threading is expressed via data.parentEventId on each row — replies reference the event id of the comment they reply to.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			entity_id: z.string().uuid().describe('Object ID to fetch comments for.'),
-			limit: z.number().int().min(1).max(100).default(50),
-			offset: z.number().int().min(0).default(0),
+			limit: z.number().int().min(1).max(100).default(50).describe('Defaults to 50.'),
+			offset: z.number().int().min(0).default(0).describe('Defaults to 0.'),
 		}),
 	},
 	create_comment: {
