@@ -128,24 +128,27 @@ function ForYouRedesign() {
 		[items],
 	)
 
-	// `priority` (default) puts mentions above FYI, stable within tiers.
-	// `latest` is a straight latest_activity_at desc — the alternative surfaced
-	// by the sort control per the design directions task.
+	// `priority` (default) sorts by the sender's attention score (1-5) on each
+	// card's highest-scored unread comment, highest first; unscored comments
+	// sort below any scored one. Ties (including all-unscored) fall back to
+	// latest_activity_at desc. `latest` is a straight latest_activity_at desc —
+	// the alternative surfaced by the sort control per the design directions
+	// task.
 	const sortedRegular = useMemo(() => {
 		const base = items.filter((item) => item.object?.type !== 'onboarding_session')
+		const byLatestDesc = (a: UnreadItem, b: UnreadItem) => {
+			const at = a.latest_activity_at ? new Date(a.latest_activity_at).getTime() : 0
+			const bt = b.latest_activity_at ? new Date(b.latest_activity_at).getTime() : 0
+			return bt - at
+		}
 		if (sort === 'latest') {
-			return base.slice().sort((a, b) => {
-				const at = a.latest_activity_at ? new Date(a.latest_activity_at).getTime() : 0
-				const bt = b.latest_activity_at ? new Date(b.latest_activity_at).getTime() : 0
-				return bt - at
-			})
+			return base.slice().sort(byLatestDesc)
 		}
 		return base.slice().sort((a, b) => {
-			const aMentions = a.mentioning_unread_count > 0
-			const bMentions = b.mentioning_unread_count > 0
-			if (aMentions && !bMentions) return -1
-			if (!aMentions && bMentions) return 1
-			return 0
+			const aAttention = a.max_unread_attention ?? -1
+			const bAttention = b.max_unread_attention ?? -1
+			if (aAttention !== bAttention) return bAttention - aAttention
+			return byLatestDesc(a, b)
 		})
 	}, [items, sort])
 

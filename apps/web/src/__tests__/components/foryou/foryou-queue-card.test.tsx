@@ -77,6 +77,7 @@ function buildItem(overrides: Partial<UnreadItem> = {}): UnreadItem {
 		entity_id: 'obj-1',
 		unread_count: 1,
 		mentioning_unread_count: 0,
+		max_unread_attention: null,
 		latest_event_id: 20,
 		latest_activity_at: '2026-01-01T00:00:00Z',
 		object: buildObjectResponse({
