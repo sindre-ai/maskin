@@ -87,6 +87,7 @@ import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-sto
 import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
 import { type RuntimeEndReason, RuntimeTelemetry } from './runtime-telemetry'
 import type { SessionDispatchQueue } from './session-dispatch-queue'
+import { deriveQuotaContext } from './session-quota-context'
 import { type SessionUsage, extractSessionUsage, parseUsageFromLogChunks } from './usage-parser'
 import { buildWorkspaceStartupBlock, renderWorkspaceBriefing } from './workspace-briefing'
 
@@ -473,6 +474,13 @@ export class SessionManager extends EventEmitter {
 					entityId: sessionId,
 					data: { error: `Enqueue failed: ${message}` },
 				})
+				this.telemetry.recordAgentSessionCompleted({
+					sessionId,
+					workspaceId: session.workspaceId,
+					outcome: 'failed',
+					route: null,
+					errorCode: null,
+				})
 				throw err
 			}
 			return
@@ -621,6 +629,14 @@ export class SessionManager extends EventEmitter {
 				endReason: 'failed',
 				durationMs: elapsedMs(null, session.createdAt),
 				agentServerUrl: LOCAL_RUNTIME_BUCKET,
+			})
+
+			this.telemetry.recordAgentSessionCompleted({
+				sessionId,
+				workspaceId: session.workspaceId,
+				outcome: 'failed',
+				route: null,
+				errorCode: null,
 			})
 
 			this.containers.detachStdin(sessionId)
@@ -1053,6 +1069,14 @@ export class SessionManager extends EventEmitter {
 				endReason: 'failed',
 				durationMs: elapsedMs(session.startedAt, session.createdAt),
 				agentServerUrl: LOCAL_RUNTIME_BUCKET,
+			})
+
+			this.telemetry.recordAgentSessionCompleted({
+				sessionId,
+				workspaceId: session.workspaceId,
+				outcome: 'failed',
+				route: null,
+				errorCode: null,
 			})
 
 			this.containers.detachStdin(sessionId)
@@ -2387,6 +2411,15 @@ export class SessionManager extends EventEmitter {
 			agentServerUrl: LOCAL_RUNTIME_BUCKET,
 		})
 
+		const quotaContext = deriveQuotaContext(failureReason)
+		this.telemetry.recordAgentSessionCompleted({
+			sessionId,
+			workspaceId: session.workspaceId,
+			outcome: status === 'completed' ? 'completed' : 'failed',
+			route: quotaContext.route,
+			errorCode: quotaContext.error_code,
+		})
+
 		// Clear active session link on object
 		await this.clearActiveSession(sessionId)
 
@@ -2553,6 +2586,14 @@ export class SessionManager extends EventEmitter {
 				endReason: 'irrecoverable',
 				durationMs: elapsedMs(session.startedAt, session.createdAt),
 				agentServerUrl: LOCAL_RUNTIME_BUCKET,
+			})
+
+			this.telemetry.recordAgentSessionCompleted({
+				sessionId: session.id,
+				workspaceId: session.workspaceId,
+				outcome: 'timeout',
+				route: null,
+				errorCode: null,
 			})
 
 			await this.insertSystemLog(session.id, 'Session timed out').catch((err) =>
@@ -2787,6 +2828,14 @@ export class SessionManager extends EventEmitter {
 				endReason: 'failed',
 				durationMs: elapsedMs(session.startedAt, session.createdAt),
 				agentServerUrl: LOCAL_RUNTIME_BUCKET,
+			})
+
+			this.telemetry.recordAgentSessionCompleted({
+				sessionId: session.id,
+				workspaceId: session.workspaceId,
+				outcome: 'failed',
+				route: null,
+				errorCode: null,
 			})
 
 			await this.cleanupBrowserSidecar(session.id).catch(() => {})
@@ -3456,6 +3505,23 @@ export class SessionManager extends EventEmitter {
 				error: String(err),
 			})
 		}
+
+		// Reuse the failure_reason the agent-server (or this method's own write
+		// above) persisted onto `sessions.result` so a quota-driven remote
+		// failure gets `route` + `error_code` on `agent_session_completed`
+		// exactly like the local `handleCompletion` path does. If the field
+		// isn't a well-shaped SessionResult, fall back to nulls — the event
+		// still fires for AC-T3's denominator.
+		const remoteFailureReason =
+			(updated.result as SessionResult | null | undefined)?.failure_reason ?? null
+		const remoteQuota = deriveQuotaContext(remoteFailureReason)
+		this.telemetry.recordAgentSessionCompleted({
+			sessionId,
+			workspaceId: updated.workspaceId,
+			outcome: status === 'completed' ? 'completed' : 'failed',
+			route: remoteQuota.route,
+			errorCode: remoteQuota.error_code,
+		})
 
 		// Terminal system log is required for SSE /logs/stream clients to close.
 		const terminalLogMessage = stoppedByUser

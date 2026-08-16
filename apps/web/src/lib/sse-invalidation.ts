@@ -1,13 +1,7 @@
 import type { QueryClient } from '@tanstack/react-query'
-import { trackAgentSessionCompleted, trackTriggerFired } from './analytics'
+import { trackTriggerFired } from './analytics'
 import { queryKeys } from './query-keys'
 import type { SSEEvent } from './sse'
-
-const SESSION_COMPLETION_ACTIONS = new Map<string, 'completed' | 'failed' | 'timeout'>([
-	['session_completed', 'completed'],
-	['session_failed', 'failed'],
-	['session_timeout', 'timeout'],
-])
 
 export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string, event: SSEEvent) {
 	// Always invalidate events history
@@ -78,15 +72,10 @@ export function invalidateFromSSE(queryClient: QueryClient, workspaceId: string,
 			// Same reasoning as trigger_fired above — session lifecycle events feed
 			// into the loop activity view via the trigger id join.
 			queryClient.invalidateQueries({ queryKey: ['loops', workspaceId, 'activity'] })
-			const outcome = SESSION_COMPLETION_ACTIONS.get(event.action)
-			if (outcome) {
-				trackAgentSessionCompleted({
-					entity_id: event.entity_id,
-					entity_type: 'session',
-					outcome,
-					flow_id: event.event_id ?? null,
-				})
-			}
+			// `agent_session_completed` is emitted server-side now (see
+			// `RuntimeTelemetry.recordAgentSessionCompleted` in apps/dev) so
+			// route + error_code can travel with it for the quota-wall-alarm
+			// bet's AC-T3 cohort join. Emitting from here too would double-count.
 			break
 		}
 		case 'notification':
