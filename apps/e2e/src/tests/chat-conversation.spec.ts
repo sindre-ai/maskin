@@ -436,3 +436,52 @@ test.describe('Conversation view — viewports', () => {
 		})
 	}
 })
+
+test.describe('Conversation view — IN THIS CHAT panel opens cleanly', () => {
+	// Regression guard for the mobile-panel crash (React #185, "Maximum
+	// update depth exceeded"). Reproduced when a logged-in user tapped the
+	// IN THIS CHAT trigger — the derived-participants effect looped because
+	// getStoredActor() churned a new ref every render. Covered here at all
+	// three ship-gate viewports so a similar regression can't sneak past.
+	for (const viewport of SHIP_GATE_VIEWPORTS) {
+		test(`opens without a React error at ${viewport.label}`, async ({ page, account }) => {
+			await page.setViewportSize({ width: viewport.width, height: viewport.height })
+			const errors: string[] = []
+			page.on('pageerror', (err) => errors.push(err.message))
+			page.on('console', (msg) => {
+				if (msg.type() === 'error') errors.push(msg.text())
+			})
+
+			const session = buildSession({
+				id: 'sess-panel-open',
+				actorId: 'agent-cos',
+				actionPrompt: 'Panel-open smoke',
+				config: { entry_agent_role: 'chief-of-staff' },
+			})
+			await mockChatsData(page, {
+				sessions: [session],
+				actors: [
+					buildActor({ id: 'agent-cos', name: 'Chief of Staff' }),
+					buildActor({ id: 'agent-analyst', name: 'Product Analyst' }),
+				],
+			})
+
+			await page.goto(`/${account.workspaceId}/chats/${session.id}`)
+			await expect(page.getByRole('heading', { level: 1, name: /panel-open smoke/i })).toBeVisible()
+
+			await page
+				.getByRole('button', { name: /in this chat/i })
+				.first()
+				.click()
+
+			// Panel content is reachable — copy of the CoS explainer is the
+			// most stable anchor across the two open-modes (popover / sheet).
+			await expect(page.getByText(/routes your ask to the right specialist/i)).toBeVisible()
+
+			const reactCrash = errors.filter(
+				(e) => /Minified React error #185/.test(e) || /Maximum update depth exceeded/.test(e),
+			)
+			expect(reactCrash, `React crash observed: ${reactCrash.join(' | ')}`).toHaveLength(0)
+		})
+	}
+})

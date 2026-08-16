@@ -80,7 +80,13 @@ export function ConversationView({
 			: null
 	}, [availableActors, isChiefOfStaff, sessionAgent])
 
-	const owner = getStoredActor()
+	// getStoredActor() JSON.parses localStorage on each call, returning a fresh
+	// object reference every render. Left inline, the reference churn cascades
+	// through initialParticipants → the setParticipants effect → re-render, and
+	// React eventually throws #185 ("Maximum update depth exceeded"). The lazy
+	// useState initializer pins the ref for the session — owner doesn't change
+	// mid-conversation, so this is safe.
+	const [owner] = useState(() => getStoredActor())
 
 	const initialParticipants = useMemo<Participant[]>(() => {
 		const rows: Participant[] = []

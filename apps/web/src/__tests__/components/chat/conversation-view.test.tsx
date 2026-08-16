@@ -63,9 +63,9 @@ vi.mock('@/components/pulse/notification-input', () => ({
 }))
 
 // The T3 shell hits several data hooks that are peripheral to this test.
-// Stable references are critical — a fresh `data` array each render triggers
-// ConversationView's `useEffect(setParticipants, [initialParticipants])`
-// infinite loop.
+// Stable references matter here because ConversationView derives
+// `initialParticipants` from these and mirrors it into state via
+// `setParticipants` — a churning ref cascades into React #185.
 const MOCK_ACTORS = [{ id: 'agent-cos', name: 'Chief of Staff', type: 'agent' }]
 const MOCK_ACTORS_RESULT = { data: MOCK_ACTORS }
 const MOCK_ACTOR_RESULT = { data: MOCK_ACTORS[0] }
@@ -100,6 +100,20 @@ vi.mock('@/lib/api', () => ({
 	api: {
 		actors: { list: vi.fn().mockResolvedValue([]) },
 	},
+}))
+
+// getStoredActor JSON.parses localStorage each call, so real usage in a
+// logged-in session hands ConversationView a new object reference every
+// render. The panel-crash regression (React #185) reproduces only when the
+// mock mirrors that — jsdom's empty localStorage returns null, which is
+// accidentally stable.
+vi.mock('@/lib/auth', () => ({
+	getStoredActor: vi.fn(() => ({
+		id: 'user-1',
+		name: 'Owner',
+		type: 'human',
+		email: null,
+	})),
 }))
 
 // Analytics pulls in posthog + the whole card-kind universe; the T7 wiring
@@ -257,5 +271,33 @@ describe('ConversationView — composer', () => {
 		await screen.findByRole('alert')
 		expect(screen.getByRole('alert')).toHaveTextContent(/offline/i)
 		expect(textarea.value).toBe('draft me')
+	})
+})
+
+describe('ConversationView — participants ref stability', () => {
+	// Regression guard for the IN THIS CHAT panel crash (React #185).
+	// Any parent re-render is enough to trigger the loop when `owner` isn't
+	// pinned: getStoredActor() returns a fresh object → initialParticipants
+	// changes ref → the setParticipants effect fires → schedules another
+	// render → past 25 renders React throws #185.
+	it('does not loop when the parent re-renders', () => {
+		const client = createTestQueryClient()
+		const tree = (
+			<QueryClientProvider client={client}>
+				<ConversationView workspaceId="ws-1" session={buildSession()} actors={[]} />
+			</QueryClientProvider>
+		)
+		const { rerender } = render(tree)
+		rerender(
+			<QueryClientProvider client={client}>
+				<ConversationView workspaceId="ws-1" session={buildSession()} actors={[]} />
+			</QueryClientProvider>,
+		)
+		rerender(
+			<QueryClientProvider client={client}>
+				<ConversationView workspaceId="ws-1" session={buildSession()} actors={[]} />
+			</QueryClientProvider>,
+		)
+		expect(screen.getByTestId('chat-transcript')).toBeInTheDocument()
 	})
 })
