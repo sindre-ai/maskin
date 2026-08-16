@@ -95,6 +95,38 @@ export function getLatestActivityPreview(logs: SessionLogResponse[]): string | n
 	return null
 }
 
+export interface ActivityStep {
+	id: string
+	kind: 'text' | 'tool_use' | 'thinking' | 'user' | 'error'
+	text: string
+}
+
+/**
+ * Full one-line-per-event activity history for a session, in chronological
+ * order — the accumulated version of `getLatestActivityPreview`, which only
+ * ever returns the single most recent line. Powers the chain-of-thought-style
+ * dropdown that lists every step (tool calls, thinking, text) the agent has
+ * taken so far during the current turn, not just where it is right now.
+ */
+export function getActivityLog(logs: SessionLogResponse[]): ActivityStep[] {
+	const steps: ActivityStep[] = []
+	for (const log of logs) {
+		if (log.stream === 'stderr') {
+			steps.push({ id: `${log.id}-stderr`, kind: 'error', text: truncate(log.content, 100) })
+			continue
+		}
+		if (log.stream !== 'stdout') continue
+		const events = parseChatLine(log.content, { includeUser: true })
+		events.forEach((event, index) => {
+			if (event.kind === 'result' || event.kind === 'system' || event.kind === 'debug') return
+			const summary = describeEvent(event)
+			if (summary === null) return
+			steps.push({ id: `${log.id}-${index}`, kind: event.kind, text: summary })
+		})
+	}
+	return steps
+}
+
 function describeEvent(event: ChatEvent): string | null {
 	switch (event.kind) {
 		case 'text':

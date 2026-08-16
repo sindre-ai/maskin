@@ -1,5 +1,6 @@
 import {
 	buildSessionTranscript,
+	getActivityLog,
 	getLatestActivityPreview,
 	getSessionResultDisplay,
 	isSessionIdleAwaitingInput,
@@ -244,5 +245,51 @@ describe('getLatestActivityPreview', () => {
 
 	it('returns null when there is nothing renderable yet', () => {
 		expect(getLatestActivityPreview([])).toBeNull()
+	})
+})
+
+describe('getActivityLog', () => {
+	it('returns one step per meaningful event, in chronological order', () => {
+		const first = JSON.stringify({
+			type: 'assistant',
+			message: {
+				id: 'm1',
+				content: [{ type: 'tool_use', id: 't1', name: 'search_objects', input: {} }],
+			},
+		})
+		const second = JSON.stringify({
+			type: 'assistant',
+			message: { id: 'm2', content: [{ type: 'text', text: 'Found 3 matches' }] },
+		})
+		const steps = getActivityLog([log(1, 'stdout', first), log(2, 'stdout', second)])
+		expect(steps).toEqual([
+			{ id: '1-0', kind: 'tool_use', text: 'Using search_objects' },
+			{ id: '2-0', kind: 'text', text: 'Found 3 matches' },
+		])
+	})
+
+	it('omits result, system, and debug envelopes from the history', () => {
+		const result = JSON.stringify({
+			type: 'result',
+			subtype: 'success',
+			is_error: false,
+			result: 'done',
+		})
+		const systemInit = JSON.stringify({ type: 'system', subtype: 'init' })
+		const steps = getActivityLog([
+			log(1, 'stdout', systemInit),
+			log(2, 'stdout', result),
+			log(3, 'stdout', 'not json'),
+		])
+		expect(steps).toEqual([])
+	})
+
+	it('surfaces stderr lines as error steps', () => {
+		const steps = getActivityLog([log(1, 'stderr', 'connection refused')])
+		expect(steps).toEqual([{ id: '1-stderr', kind: 'error', text: 'connection refused' }])
+	})
+
+	it('returns an empty array for no logs', () => {
+		expect(getActivityLog([])).toEqual([])
 	})
 })
