@@ -132,6 +132,10 @@ describe('reviewWork — standalone reviewer', () => {
 		expect(out.rubricId).toBe(RUBRIC_ID)
 		expect(out.targetActorId).toBeNull()
 		expect(callLlm).toHaveBeenCalledTimes(1)
+		// object_id reviews with no target_actor_id have nothing to persist
+		// against — the verdict is computed but stays unpersisted/unratable.
+		expect(out.persisted).toBe(false)
+		expect(out.verdictId).toBeNull()
 	})
 
 	it('rejects a session_id review when the session is still running', async () => {

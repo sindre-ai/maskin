@@ -505,45 +505,6 @@ export const tools = {
 				),
 		}),
 	},
-	maskin_rate_reviewer_verdict: {
-		description:
-			"Human/agent rating of a reviewer verdict for AC 6 of the single-prompt agent builder bet (reviewer precision ≥70% before Stage 2 ships). Sets `human_agreed: true` when the caller agrees with the reviewer's overall pass/fail, or `human_agreed: false` when they disagree. Optional `criteria_disagreements` names the specific rubric criteria the caller thinks the reviewer got wrong — those names feed the failing-criteria comment when precision drops below 70%. The reviewer itself cannot rate its own verdicts (server rejects with 403). Idempotent-hostile: a verdict can be rated once; a second call returns 409 so a human's rating is never overwritten silently.",
-		inputSchema: z.object({
-			verdict_id: z
-				.string()
-				.uuid()
-				.describe('ID of the reviewer_verdict row returned by the reviewer.'),
-			human_agreed: z
-				.boolean()
-				.describe(
-					"true when the caller agrees with the reviewer's overall pass/fail; false when they disagree.",
-				),
-			criteria_disagreements: z
-				.array(z.string().min(1).max(200))
-				.max(20)
-				.optional()
-				.describe(
-					"Names of rubric criteria the caller disagrees with the reviewer on. Populate this when human_agreed=false so DoD 5's failing-criteria comment can name specific criteria.",
-				),
-			note: z
-				.string()
-				.max(2000)
-				.optional()
-				.describe('Optional free-text explanation of the disagreement.'),
-			workspace_id: optionalWorkspaceId,
-		}),
-	},
-	maskin_reviewer_precision_summary: {
-		description:
-			"Reviewer precision summary for a rubric object — total verdicts, rated count, agreed count, precision ratio, and per-criterion false-positive breakdown. This is the ≥70% Stage 2 ship gate for the single-prompt agent builder bet: call it after at least 10 verdicts have been rated, paste `summary_line` into a comment on the parent bet. When precision drops below the threshold, `failing_criteria` names the specific rubric criteria producing false positives — that's the signal the Architect needs to tighten the rubric.",
-		inputSchema: z.object({
-			rubric_id: z
-				.string()
-				.uuid()
-				.describe('ID of the rubric object (the workspace object holding reviewer criteria).'),
-			workspace_id: optionalWorkspaceId,
-		}),
-	},
 	maskin_create_agent: {
 		description:
 			"Generate an opinionated subject-matter-expert (SME) agent from a single-line prompt. ASYNC — kicks off one container agent session that does the whole job itself (intent extraction, persona synthesis, system-prompt authoring, anti-hedging opinionation, mandatory self-critique against a quality rubric, actor + SKILL.md registration, and a gap-report comment naming missing context) and returns { session_id, status } immediately, typically in well under a second. Does NOT return the created agent's details synchronously. Poll get_session(session_id) (optionally include_logs) until status is completed/failed/timeout, or use run_agent-style waiting. On success, session.result.final_message contains a fenced ```json maskin_agent_builder_result ... ``` block: { kind: 'created', actor_id, actor_name, skill_id, skill_name, definition_summary, self_critique, gap_report_items, gap_report_comment_posted }. If the prompt was too underspecified to build from, the same fenced block instead contains { kind: 'gap_question', gap_question, missing } — no actor is created, no comment posted. workspace_id is required — the persona is written into that workspace.",
@@ -574,39 +535,76 @@ export const tools = {
 				.describe('Hard constraints the agent must respect. Optional.'),
 		}),
 	},
-	maskin_review_work: {
+	maskin_reviewer_verdict: {
 		description:
-			'Score an agent definition against a rubric using a fresh-context reviewer — no shared conversation with the producer. Pass EXACTLY ONE of object_id (reads the object\'s content as the draft definition — used for reviewing a stored SKILL body or agent spec) OR session_id (reads sessions.result from a terminal container session — used for reviewing an agent-builder run that completed asynchronously). Passing both, or neither, returns a 400 from the route. rubric_id is optional; when omitted, resolves to the workspace\'s canonical agent-builder rubric (bootstrapped on first use, editable via update_objects without a deploy). Returns { criteria: [{ name, pass, fix? }], overall: "pass" | "fail" }. This is the same reviewer the agent builder runs internally; call it manually to re-score a definition after edits or to score with a custom rubric.',
+			"One tool covering the full reviewer-verdict lifecycle for the single-prompt agent builder: review a definition, rate a verdict, and read the rubric's precision summary — whichever the call has fields for, all run together, no action/mode switch needed. " +
+			"REVIEW runs when object_id or session_id is set: scores an agent definition against a rubric using a fresh-context reviewer (no shared conversation with the producer). object_id reads the object's content as the draft (a stored SKILL body or agent spec); session_id reads sessions.result from a terminal container session (an agent-builder run that completed asynchronously). Provide at most one. rubric_id is optional and resolves to the workspace's canonical agent-builder rubric when omitted. object_id reviews have no inherent actor association — pass target_actor_id if you want that verdict persisted and later ratable; without it the verdict is still returned but noted as not persisted. session_id reviews always resolve their own target actor automatically. " +
+			'RATE runs when human_agreed is set: records agreement/disagreement with a verdict. Rates verdict_id if given, otherwise the verdict this same call just reviewed — but note the reviewer cannot rate its own verdict (403 self_rating_forbidden) whenever the reviewing and rating identity are the same caller, which is the common case for a same-call review+rate. To actually record a rating, pass verdict_id for a verdict a *different* prior caller produced. A verdict can only be rated once — a second rate attempt on the same verdict_id returns 409. Optional criteria_disagreements names the specific rubric criteria the caller thinks the reviewer got wrong, for AC 6 of the bet (reviewer precision ≥70% before Stage 2 ships) — populate it when human_agreed=false. ' +
+			'PRECISION SUMMARY is attached automatically whenever a rubric is resolvable (from the review just run, from the verdict just rated, or from an explicit rubric_id) — total verdicts, rated count, agreed count, precision ratio, and per-criterion false-positive breakdown, with a ready-to-paste summary_line and (when precision is below threshold) failing_criteria naming what to tighten in the rubric. ' +
+			'Returns { verdict: {...} | null, rating: {...} | null, precision_summary: {...} | null } — each null when the call had nothing to trigger it.',
 		// Kept as a plain z.object (no .refine) so `inputSchema instanceof
 		// ZodObject` — the invariant the tools test enforces — holds. Cross-
-		// field validation (exactly one of object_id/session_id) happens at the
-		// route boundary where the response can be a clean 400.
+		// field validation (at most one of object_id/session_id; at least one
+		// of object_id/session_id/verdict_id/rubric_id) happens at the route
+		// boundary where the response can be a clean 400.
 		inputSchema: z.object({
 			object_id: z
 				.string()
 				.uuid()
 				.optional()
 				.describe(
-					'Workspace object whose `content` is the draft definition to review (e.g. a stored SKILL body). Provide exactly one of object_id or session_id.',
+					'Review target: workspace object whose `content` is the draft definition. Provide at most one of object_id or session_id — set neither to skip reviewing (rate-only or summary-only call).',
 				),
 			session_id: z
 				.string()
 				.uuid()
 				.optional()
 				.describe(
-					'Terminal container session whose `result` payload is the draft definition to review. Provide exactly one of object_id or session_id.',
+					'Review target: terminal container session whose `result` payload is the draft definition. Provide at most one of object_id or session_id.',
+				),
+			target_actor_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'The actor being reviewed, for the object_id path only (session_id resolves its own target actor from the session row). Required to make an object_id-based verdict persisted and ratable.',
 				),
 			rubric_id: z
 				.string()
 				.uuid()
 				.optional()
 				.describe(
-					"Rubric object to score against. Omit to use the workspace's canonical agent-builder rubric.",
+					"Rubric to score against when reviewing, or to read the precision summary for when not reviewing. Omit while reviewing to use the workspace's canonical agent-builder rubric.",
 				),
+			verdict_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'ID of an existing reviewer_verdict row to rate, from a prior review by a different caller. Omit to rate the verdict this same call just reviewed (only works when the reviewing and rating identity differ).',
+				),
+			human_agreed: z
+				.boolean()
+				.optional()
+				.describe(
+					"Set to rate a verdict: true when the caller agrees with the reviewer's overall pass/fail, false when they disagree. Omit to skip rating.",
+				),
+			criteria_disagreements: z
+				.array(z.string().min(1).max(200))
+				.max(20)
+				.optional()
+				.describe(
+					'Names of rubric criteria the caller disagrees with the reviewer on. Only used when human_agreed is set — populate when human_agreed=false.',
+				),
+			note: z
+				.string()
+				.max(2000)
+				.optional()
+				.describe('Optional free-text explanation of the disagreement. Only used when rating.'),
 			workspace_id: z
 				.string()
 				.uuid()
-				.describe('Workspace to look up the rubric + target object/session in (required).'),
+				.describe('Workspace to look up the rubric + target object/session/verdict in (required).'),
 		}),
 	},
 	maskin_refine_agent: {

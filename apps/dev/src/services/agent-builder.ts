@@ -22,11 +22,18 @@ import {
 } from './agent-reviewer'
 import type { AgentStorageManager } from './agent-storage'
 import { type LlmCallInput, callLlm } from './llm-call'
+import {
+	type PrecisionSummary,
+	computeReviewerPrecision,
+	rateReviewerVerdict,
+	recordReviewerVerdict,
+} from './reviewer-verdicts'
 
 // Shared system-prompt authoring (stages 3-4) plus the two standalone tools
-// that reuse it: maskin_review_work (fresh-context rubric scoring against an
-// arbitrary object/session) and maskin_refine_agent (re-author an existing
-// actor's system prompt from a free-text instruction).
+// that reuse it: maskin_reviewer_verdict (fresh-context rubric scoring
+// against an arbitrary object/session, plus rating + precision summary) and
+// maskin_refine_agent (re-author an existing actor's system prompt from a
+// free-text instruction).
 //
 // The maskin_create_agent CREATE path no longer lives here — it moved to a
 // single async container agent session (see agent-builder-bootstrap.ts for
@@ -445,7 +452,7 @@ async function runStages3And4(
 	return { sections: stage3Parsed.data, opinionation: stage4Parsed.data }
 }
 
-// ── Standalone reviewer path (maskin_review_work) ────────────────────────────
+// ── Standalone reviewer path (maskin_reviewer_verdict) ───────────────────────
 
 export class AgentReviewTargetError extends Error {
 	constructor(
@@ -455,7 +462,9 @@ export class AgentReviewTargetError extends Error {
 			| 'object_no_content'
 			| 'session_not_terminal'
 			| 'session_no_result'
-			| 'rubric_not_found',
+			| 'rubric_not_found'
+			| 'no_target_specified'
+			| 'no_verdict_to_rate',
 		message: string,
 	) {
 		super(message)
@@ -556,17 +565,28 @@ export async function reviewWork(
 		objectId?: string
 		sessionId?: string
 		rubricId?: string
+		// Only consulted on the object_id path — the session_id path always
+		// derives its own target actor from the session row. Reviewing a
+		// generic object has no inherent actor association, so the verdict
+		// can't be persisted (reviewer_verdicts.target_actor_id is NOT NULL)
+		// unless the caller names one explicitly.
+		targetActorId?: string
 	},
 ): Promise<{
 	verdict: ReviewerVerdict
 	reviewerSessionId: string
 	rubricId: string
 	targetActorId: string | null
+	verdictId: string | null
+	persisted: boolean
+	persistenceNote?: string
 }> {
-	const { definitionText, targetActorId } = await loadReviewTarget(db, p.workspaceId, {
-		objectId: p.objectId,
-		sessionId: p.sessionId,
-	})
+	const { definitionText, targetActorId: sessionTargetActorId } = await loadReviewTarget(
+		db,
+		p.workspaceId,
+		{ objectId: p.objectId, sessionId: p.sessionId },
+	)
+	const targetActorId = sessionTargetActorId ?? p.targetActorId ?? null
 
 	const rubric = p.rubricId
 		? await resolveRubricById(db, p.workspaceId, p.rubricId)
@@ -594,7 +614,154 @@ export async function reviewWork(
 		failingCriteria: failingCriteriaNames(verdict),
 	})
 
-	return { verdict, reviewerSessionId, rubricId: rubric.id, targetActorId }
+	// Persist so the verdict becomes ratable — rating and the precision
+	// summary (both folded into maskin_reviewer_verdict alongside review)
+	// read from reviewer_verdicts, not from this call's return value.
+	// Best-effort: a persistence failure must not turn
+	// an already-computed verdict into a 500 for the caller.
+	let verdictId: string | null = null
+	let persisted = false
+	let persistenceNote: string | undefined
+	if (targetActorId) {
+		try {
+			const recorded = await recordReviewerVerdict({
+				db,
+				workspaceId: p.workspaceId,
+				rubricId: rubric.id,
+				targetActorId,
+				reviewerActorId: p.actorId,
+				reviewerSessionId,
+				cycleNumber: 1,
+				verdict: verdict.overall,
+				criteriaVerdicts: verdict.criteria,
+				createdBy: p.actorId,
+			})
+			verdictId = recorded.id
+			persisted = true
+		} catch (err) {
+			logger.warn('agent-builder: failed to persist reviewer verdict', {
+				workspaceId: p.workspaceId,
+				targetActorId,
+				error: String(err),
+			})
+			persistenceNote = `verdict computed but not persisted: ${err instanceof Error ? err.message : String(err)}`
+		}
+	} else {
+		persistenceNote =
+			'verdict computed but not persisted — object_id reviews have no associated actor; pass target_actor_id to make this verdict ratable'
+	}
+
+	return {
+		verdict,
+		reviewerSessionId,
+		rubricId: rubric.id,
+		targetActorId,
+		verdictId,
+		persisted,
+		persistenceNote,
+	}
+}
+
+/**
+ * Composes review + rate + precision-summary behind the single
+ * maskin_reviewer_verdict MCP tool. Each piece runs whenever the caller
+ * supplied enough to do it — there's no action/mode switch:
+ *  - object_id or session_id present → review runs (and persists via
+ *    reviewWork, so its verdict_id becomes ratable).
+ *  - human_agreed present → rate runs, against verdict_id if given,
+ *    otherwise against the verdict this same call just reviewed.
+ *  - a rubric resolves (from the review, the rating, or an explicit
+ *    rubric_id) → the precision summary is always attached.
+ *
+ * One constraint callers hit often enough to call out: rating the verdict
+ * this same call just reviewed will throw self_rating_forbidden whenever the
+ * reviewing and rating identity are the same actor (the common case, since
+ * both default to the caller) — that guard is deliberate (see
+ * rateReviewerVerdict's doc comment) and this function does not route around
+ * it. Pass verdict_id for a verdict produced by a *different* prior caller
+ * to actually record a rating.
+ */
+export async function reviewerVerdictWorkflow(
+	db: Database,
+	p: {
+		workspaceId: string
+		actorId: string
+		objectId?: string
+		sessionId?: string
+		targetActorId?: string
+		rubricId?: string
+		verdictId?: string
+		humanAgreed?: boolean
+		criteriaDisagreements?: string[]
+		note?: string
+	},
+): Promise<{
+	review: Awaited<ReturnType<typeof reviewWork>> | null
+	rating: {
+		verdictId: string
+		humanAgreed: boolean
+		humanCriteriaDisagreements: string[] | null
+	} | null
+	precisionSummary: PrecisionSummary | null
+}> {
+	if (!p.objectId && !p.sessionId && !p.verdictId && !p.rubricId) {
+		throw new AgentReviewTargetError(
+			'no_target_specified',
+			'Provide at least one of object_id, session_id, verdict_id, or rubric_id.',
+		)
+	}
+
+	const review =
+		p.objectId || p.sessionId
+			? await reviewWork(db, {
+					workspaceId: p.workspaceId,
+					actorId: p.actorId,
+					objectId: p.objectId,
+					sessionId: p.sessionId,
+					rubricId: p.rubricId,
+					targetActorId: p.targetActorId,
+				})
+			: null
+
+	let rating: {
+		verdictId: string
+		humanAgreed: boolean
+		humanCriteriaDisagreements: string[] | null
+	} | null = null
+	let ratedRubricId: string | null = null
+	if (p.humanAgreed !== undefined) {
+		const verdictIdForRating = p.verdictId ?? review?.verdictId ?? null
+		if (!verdictIdForRating) {
+			throw new AgentReviewTargetError(
+				'no_verdict_to_rate',
+				'human_agreed was provided but no ratable verdict is available — pass verdict_id ' +
+					'(from a prior, differently-attributed review), or review via session_id / ' +
+					'object_id+target_actor_id so a verdict is persisted first.',
+			)
+		}
+		const rated = await rateReviewerVerdict({
+			db,
+			workspaceId: p.workspaceId,
+			verdictId: verdictIdForRating,
+			ratedByActorId: p.actorId,
+			humanAgreed: p.humanAgreed,
+			criteriaDisagreements: p.criteriaDisagreements,
+			note: p.note,
+		})
+		rating = {
+			verdictId: rated.id,
+			humanAgreed: rated.humanAgreed,
+			humanCriteriaDisagreements: rated.humanCriteriaDisagreements,
+		}
+		ratedRubricId = rated.rubricId
+	}
+
+	const resolvedRubricId = review?.rubricId ?? ratedRubricId ?? p.rubricId ?? null
+	const precisionSummary = resolvedRubricId
+		? await computeReviewerPrecision({ db, workspaceId: p.workspaceId, rubricId: resolvedRubricId })
+		: null
+
+	return { review, rating, precisionSummary }
 }
 
 // ── Standalone refine path (maskin_refine_agent) ─────────────────────────────
