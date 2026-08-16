@@ -6,6 +6,7 @@ import {
 	conversationParticipants,
 	conversations,
 	messages,
+	sessions,
 	workspaceMembers,
 } from '@maskin/db/schema'
 import {
@@ -350,6 +351,20 @@ app.openapi(listConversationsRoute, (async (c) => {
 		eq(conversationParticipants.archived, query.archived),
 	]
 	if (query.pinned !== undefined) conditions.push(eq(conversationParticipants.pinned, query.pinned))
+	if (query.unread_only) {
+		// Table names (not Drizzle column refs) inside the correlated subquery —
+		// interpolating column objects here renders unqualified and silently
+		// binds to the inner `messages` alias for names both tables share (see
+		// known-pitfalls.md's correlated-subquery entry).
+		conditions.push(
+			sql`EXISTS (
+				SELECT 1 FROM messages m
+				WHERE m.conversation_id = conversations.id
+					AND m.actor_id != ${callerId}
+					AND m.id > COALESCE(conversation_participants.last_read_message_id, 0)
+			)`,
+		)
+	}
 
 	const rows = await db
 		.select({ conversation: conversations, participant: conversationParticipants })
@@ -742,16 +757,19 @@ app.openapi(postMessageRoute, (async (c) => {
 	// stale client, not a hostile one.
 	let sessionId: string | null = null
 	if (body.session_id && callerType === 'agent') {
-		const isOwnSession = await db.execute(
-			sql`SELECT 1 FROM sessions WHERE id = ${body.session_id} AND actor_id = ${callerId}
-				AND workspace_id = ${workspaceId}
-				AND config->'conversation'->>'conversation_id' = ${id} LIMIT 1`,
-		)
-		if (
-			Array.isArray(isOwnSession)
-				? isOwnSession.length > 0
-				: (isOwnSession as { rows?: unknown[] }).rows?.length
-		) {
+		const [ownSession] = await db
+			.select({ id: sessions.id })
+			.from(sessions)
+			.where(
+				and(
+					eq(sessions.id, body.session_id),
+					eq(sessions.actorId, callerId),
+					eq(sessions.workspaceId, workspaceId),
+					eq(sessions.conversationId, id),
+				),
+			)
+			.limit(1)
+		if (ownSession) {
 			sessionId = body.session_id
 		}
 	}
@@ -892,6 +910,19 @@ app.openapi(updateMeRoute, (async (c) => {
 		)
 		.returning()
 	if (!updated) return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
+
+	await db.insert(events).values({
+		workspaceId,
+		actorId: callerId,
+		action: 'conversation_participant_state_updated',
+		entityType: 'conversation',
+		entityId: id,
+		data: {
+			pinned: body.pinned,
+			archived: body.archived,
+			last_read_message_id: body.last_read_message_id,
+		},
+	})
 
 	return c.json({
 		pinned: updated.pinned,

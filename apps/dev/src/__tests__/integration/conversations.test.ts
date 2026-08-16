@@ -1,7 +1,7 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { conversations, messages, sessions, workspaceMembers } from '@maskin/db/schema'
-import { eq } from 'drizzle-orm'
+import { events, conversations, messages, sessions, workspaceMembers } from '@maskin/db/schema'
+import { and, eq } from 'drizzle-orm'
 import { vi } from 'vitest'
 import { createApiError, formatZodError } from '../../lib/errors'
 import { evaluateAndRespond } from '../../services/conversation-responder'
@@ -274,6 +274,107 @@ describe('Conversations Integration', () => {
 			const detailBody2 = (await detail2.json()) as { last_read_message_id: number }
 			expect(detailBody2.last_read_message_id).toBe(msg2.id)
 		})
+
+		it('unread_only=true excludes conversations the caller has fully read', async () => {
+			const other = await insertActor(db, { type: 'human' })
+			await addMember(workspaceId, other.id)
+			const { app: ownerApp } = createConversationsApp(ownerId)
+
+			const readThread = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Read thread', participant_actor_ids: [other.id] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const readConversation = (await readThread.json()) as { id: string }
+			const unreadThread = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Unread thread', participant_actor_ids: [other.id] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const unreadConversation = (await unreadThread.json()) as { id: string }
+
+			const { app: otherApp } = createConversationsApp(other.id)
+			for (const conversationId of [readConversation.id, unreadConversation.id]) {
+				await ownerApp.request(
+					jsonRequest(
+						'POST',
+						`/api/conversations/${conversationId}/messages`,
+						{ content: 'ping' },
+						{ 'x-workspace-id': workspaceId },
+					),
+				)
+			}
+			const readMessages = await otherApp.request(
+				jsonGet(`/api/conversations/${readConversation.id}/messages`, {
+					'x-workspace-id': workspaceId,
+				}),
+			)
+			const { messages: readMsgs } = (await readMessages.json()) as {
+				messages: Array<{ id: number }>
+			}
+			await otherApp.request(
+				jsonRequest(
+					'PATCH',
+					`/api/conversations/${readConversation.id}/me`,
+					{ last_read_message_id: readMsgs[0]?.id },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+
+			const filtered = await otherApp.request(
+				jsonGet('/api/conversations?unread_only=true', { 'x-workspace-id': workspaceId }),
+			)
+			expect(filtered.status).toBe(200)
+			const filteredBody = (await filtered.json()) as { conversations: Array<{ id: string }> }
+			expect(filteredBody.conversations.map((c) => c.id)).toEqual([unreadConversation.id])
+
+			const unfiltered = await otherApp.request(
+				jsonGet('/api/conversations', { 'x-workspace-id': workspaceId }),
+			)
+			const unfilteredBody = (await unfiltered.json()) as { conversations: Array<{ id: string }> }
+			expect(unfilteredBody.conversations).toHaveLength(2)
+		})
+
+		it('logs an events row when updating pin/archive/read state via PATCH /:id/me', async () => {
+			const { app: ownerApp } = createConversationsApp(ownerId)
+			const created = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Audited', participant_actor_ids: [] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+
+			const res = await ownerApp.request(
+				jsonRequest(
+					'PATCH',
+					`/api/conversations/${conversation.id}/me`,
+					{ pinned: true },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(200)
+
+			const rows = await db
+				.select()
+				.from(events)
+				.where(
+					and(
+						eq(events.entityId, conversation.id),
+						eq(events.action, 'conversation_participant_state_updated'),
+					),
+				)
+			expect(rows).toHaveLength(1)
+			expect(rows[0]?.actorId).toBe(ownerId)
+		})
 	})
 
 	describe('participants', () => {
@@ -422,11 +523,14 @@ describe('Conversations Integration', () => {
 			)
 			const conversation = (await created.json()) as { id: string }
 
-			// Stamp session.config.conversation so the ownership check in the route passes.
+			// Stamp both the indexed sessions.conversationId column (what the route's
+			// ownership check now queries) and config.conversation (what launched
+			// sessions carry) so the ownership check in the route passes.
 			await db
 				.update(sessions)
 				.set({
 					config: { conversation: { conversation_id: conversation.id, message_id: 1 } },
+					conversationId: conversation.id,
 				})
 				.where(eq(sessions.id, session.id))
 
@@ -456,6 +560,51 @@ describe('Conversations Integration', () => {
 				})
 				.returning()
 			expect(second?.sessionId).toBe(session.id)
+		})
+
+		it('drops session_id when the indexed conversationId column does not match, even if config.conversation still claims this conversation', async () => {
+			// Regression: the ownership check used to scan config->'conversation'
+			// ->>'conversation_id' (unindexed JSONB) instead of the indexed
+			// conversationId column those two are supposed to stay in sync — this
+			// proves the indexed column is now the actual source of truth.
+			const agent = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, agent.id)
+			const session = await insertSession(db, workspaceId, agent.id, ownerId, { interactive: true })
+
+			const { app: ownerApp } = createConversationsApp(ownerId)
+			const created = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'With agent', participant_actor_ids: [agent.id] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+
+			// config.conversation claims this conversation, but conversationId is
+			// deliberately left pointing elsewhere (simulates drift between the two
+			// representations).
+			await db
+				.update(sessions)
+				.set({
+					config: { conversation: { conversation_id: conversation.id, message_id: 1 } },
+					conversationId: null,
+				})
+				.where(eq(sessions.id, session.id))
+
+			const { app: agentApp } = createConversationsApp(agent.id, 'agent')
+			const res = await agentApp.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${conversation.id}/messages`,
+					{ content: 'agent reply', session_id: session.id },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(201)
+			const body = (await res.json()) as { sessionId: string | null }
+			expect(body.sessionId).toBeNull()
 		})
 	})
 

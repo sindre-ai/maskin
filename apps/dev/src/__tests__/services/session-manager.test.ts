@@ -477,7 +477,9 @@ describe('SessionManager', () => {
 
 			await manager.startSession(session.id)
 
-			const inserted = calls.inserts.find((v) => typeof (v as { content?: unknown }).content === 'string') as {
+			const inserted = calls.inserts.find(
+				(v) => typeof (v as { content?: unknown }).content === 'string',
+			) as {
 				content: string
 			}
 			expect(inserted).toBeDefined()
@@ -2731,7 +2733,7 @@ describe('SessionManager', () => {
 	})
 
 	describe('startSession() — chat sessions bypass workspace capacity', () => {
-		it('launches a chat session without querying hasCapacity, even when the workspace is at its cap', async () => {
+		it('launches a chat session without querying the regular hasCapacity budget, only its own chat-session budget, even when the regular workspace budget is at cap', async () => {
 			const session = buildSession({
 				status: 'pending',
 				interactive: true,
@@ -2756,11 +2758,13 @@ describe('SessionManager', () => {
 				failures: [],
 			})
 
-			// No hasCapacity queries (workspace lookup + count) are queued here — if
-			// startSession() called hasCapacity() for a chat session, it would consume
-			// the launchContainer agent lookup as a bogus "workspace" row and fail.
+			// hasChatCapacity() (its own, separate budget) is queried — workspace
+			// lookup + count, both well under the default cap — but never the
+			// regular hasCapacity() used for non-chat sessions.
 			mockResults.selectQueue = [
 				[session], // startSession: load session
+				[{ settings: {} }], // hasChatCapacity: workspace lookup
+				[{ count: 0 }], // hasChatCapacity: no chat sessions active yet
 				[agent], // launchContainer: agent lookup
 				[workspace], // launchContainer: workspace lookup (llm keys)
 				[], // launchContainer: integrations lookup
@@ -2769,6 +2773,26 @@ describe('SessionManager', () => {
 			await manager.startSession(session.id)
 
 			expect(mockContainerManager.create).toHaveBeenCalledTimes(1)
+		})
+
+		it('queues (does not launch) a chat session when its own chat-session budget is at cap', async () => {
+			const session = buildSession({
+				status: 'pending',
+				interactive: true,
+				conversationId: 'conv-1',
+				actionPrompt: '',
+				containerId: null,
+			})
+
+			mockResults.selectQueue = [
+				[session], // startSession: load session
+				[{ settings: { max_concurrent_chat_sessions: 2 } }], // hasChatCapacity: workspace lookup
+				[{ count: 2 }], // hasChatCapacity: at cap
+			]
+
+			await manager.startSession(session.id)
+
+			expect(mockContainerManager.create).not.toHaveBeenCalled()
 		})
 	})
 

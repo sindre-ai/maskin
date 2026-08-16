@@ -22,6 +22,7 @@ import {
 import { type SessionResult, githubOwnerLoginToEnvKey } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import {
+	type SQL,
 	and,
 	asc,
 	count as countFn,
@@ -474,10 +475,14 @@ export class SessionManager extends EventEmitter {
 		// limit — a live human is waiting on the other end, which is more urgent than
 		// queuing behind background/trigger sessions. They also don't count against
 		// other sessions' capacity — see the isNull(conversationId) filter in hasCapacity().
+		// They still have their own, separate aggregate cap (hasChatCapacity) so a
+		// workspace with many conversations can't spawn unbounded containers.
 		const isChatSession = Boolean(session.conversationId)
 
-		// Check workspace concurrency limit — queue instead of rejecting
-		const hasCapacity = isChatSession || (await this.hasCapacity(session.workspaceId))
+		// Check the applicable concurrency limit — queue instead of rejecting
+		const hasCapacity = isChatSession
+			? await this.hasChatCapacity(session.workspaceId)
+			: await this.hasCapacity(session.workspaceId)
 		if (!hasCapacity) {
 			await this.db
 				.update(sessions)
@@ -1185,9 +1190,42 @@ export class SessionManager extends EventEmitter {
 	}
 
 	/**
+	 * Separate aggregate cap for chat sessions (see the isChatSession bypass in
+	 * startSession()) — they don't compete with max_concurrent_sessions, but
+	 * still need a ceiling so a workspace with many active conversations can't
+	 * spawn unbounded concurrent containers.
+	 */
+	private async hasChatCapacity(workspaceId: string): Promise<boolean> {
+		const [workspace] = await this.db
+			.select()
+			.from(workspaces)
+			.where(eq(workspaces.id, workspaceId))
+			.limit(1)
+
+		const settings = (workspace?.settings as WorkspaceSettings) ?? {}
+		const maxConcurrentChat = settings.max_concurrent_chat_sessions ?? 20
+
+		const [result] = await this.db
+			.select({ count: countFn() })
+			.from(sessions)
+			.where(
+				and(
+					eq(sessions.workspaceId, workspaceId),
+					inArray(sessions.status, ['starting', 'running']),
+					isNotNull(sessions.conversationId),
+				),
+			)
+
+		return !result || result.count < maxConcurrentChat
+	}
+
+	/**
 	 * Drain the queue: start queued sessions for a workspace until capacity is full or queue is empty.
 	 * Called after a session completes, fails, or times out, and from the watchdog as a safety net.
-	 * Uses a per-workspace lock to prevent concurrent drain calls from racing.
+	 * Uses a per-workspace lock to prevent concurrent drain calls from racing. Chat and non-chat
+	 * sessions are drained as two independent scopes, each gated by its own capacity check — a
+	 * combined loop would let an over-budget chat queue block behind a full non-chat budget (or
+	 * vice versa) since "oldest queued" wouldn't necessarily match whichever budget just freed up.
 	 */
 	private async drainQueue(workspaceId: string): Promise<void> {
 		// Prevent concurrent drains for the same workspace
@@ -1195,37 +1233,56 @@ export class SessionManager extends EventEmitter {
 		this.drainingWorkspaces.add(workspaceId)
 
 		try {
-			while (await this.hasCapacity(workspaceId)) {
-				// Atomically claim the oldest queued session by transitioning its status.
-				// If two callers race, only one gets a non-empty result from the UPDATE.
-				const [nextQueued] = await this.db
-					.select()
-					.from(sessions)
-					.where(and(eq(sessions.workspaceId, workspaceId), eq(sessions.status, 'queued')))
-					.orderBy(sessions.createdAt)
-					.limit(1)
-
-				if (!nextQueued) break
-
-				const [claimed] = await this.db
-					.update(sessions)
-					.set({ status: 'pending', updatedAt: new Date() })
-					.where(and(eq(sessions.id, nextQueued.id), eq(sessions.status, 'queued')))
-					.returning()
-
-				if (!claimed) break
-
-				logger.info(`Draining queue: starting session ${claimed.id}`, { workspaceId })
-				// Await start so capacity check on next iteration reflects the new running session
-				await this.startSession(claimed.id).catch((err) =>
-					logger.error('Failed to start queued session', {
-						sessionId: claimed.id,
-						error: String(err),
-					}),
-				)
-			}
+			await this.drainQueueScoped(
+				workspaceId,
+				() => this.hasCapacity(workspaceId),
+				isNull(sessions.conversationId),
+			)
+			await this.drainQueueScoped(
+				workspaceId,
+				() => this.hasChatCapacity(workspaceId),
+				isNotNull(sessions.conversationId),
+			)
 		} finally {
 			this.drainingWorkspaces.delete(workspaceId)
+		}
+	}
+
+	private async drainQueueScoped(
+		workspaceId: string,
+		hasCapacity: () => Promise<boolean>,
+		scopeFilter: SQL,
+	): Promise<void> {
+		while (await hasCapacity()) {
+			// Atomically claim the oldest queued session in this scope by transitioning
+			// its status. If two callers race, only one gets a non-empty UPDATE result.
+			const [nextQueued] = await this.db
+				.select()
+				.from(sessions)
+				.where(
+					and(eq(sessions.workspaceId, workspaceId), eq(sessions.status, 'queued'), scopeFilter),
+				)
+				.orderBy(sessions.createdAt)
+				.limit(1)
+
+			if (!nextQueued) break
+
+			const [claimed] = await this.db
+				.update(sessions)
+				.set({ status: 'pending', updatedAt: new Date() })
+				.where(and(eq(sessions.id, nextQueued.id), eq(sessions.status, 'queued')))
+				.returning()
+
+			if (!claimed) break
+
+			logger.info(`Draining queue: starting session ${claimed.id}`, { workspaceId })
+			// Await start so capacity check on next iteration reflects the new running session
+			await this.startSession(claimed.id).catch((err) =>
+				logger.error('Failed to start queued session', {
+					sessionId: claimed.id,
+					error: String(err),
+				}),
+			)
 		}
 	}
 

@@ -442,11 +442,21 @@ async function checkRelevance(params: {
 		const call = response.tool_calls.find((tc) => tc.name === 'decide_response')
 		return call?.arguments.should_respond === true
 	} catch (err) {
-		logger.warn('Conversation relevance check failed — staying silent', {
-			agentId: agent.id,
-			error: String(err),
-		})
-		return false
+		// Every throw in the block above is a call/infra failure (network error,
+		// non-2xx HTTP, malformed response) — the model's actual "no, don't
+		// reply" decision is returned via tool_calls above, not an exception.
+		// So this catch never represents a legitimate decline; failing closed
+		// here would indistinguishably conflate "the model declined" with "a
+		// credential expired" or "the provider is down" — exactly the silent,
+		// permanent-silence bug this heuristic exists to avoid. Fail OPEN, same
+		// as the no-credentials branch above, and use logger.error (not warn)
+		// so a systemic outage actually creates a Sentry issue instead of a
+		// breadcrumb nobody sees.
+		logger.error(
+			'Conversation relevance check call failed — defaulting to respond and letting session launch decide',
+			{ agentId: agent.id, error: String(err) },
+		)
+		return true
 	}
 }
 
