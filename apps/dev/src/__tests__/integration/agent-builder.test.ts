@@ -36,6 +36,11 @@ vi.mock('../../lib/analytics/posthog', () => ({
 const { callLlm: mockedCallLlm } = await import('../../services/llm-call')
 const callLlm = mockedCallLlm as unknown as ReturnType<typeof vi.fn>
 
+const { capturePosthogEvent: mockedCapturePosthogEvent } = await import(
+	'../../lib/analytics/posthog'
+)
+const capturePosthogEvent = mockedCapturePosthogEvent as unknown as ReturnType<typeof vi.fn>
+
 const {
 	AgentReviewTargetError,
 	loadReviewTarget,
@@ -142,6 +147,7 @@ function createMemoryStorage(): StorageProvider & { _store: Map<string, Buffer> 
 describe('agent-builder service integration', () => {
 	beforeEach(() => {
 		callLlm.mockReset()
+		capturePosthogEvent.mockClear()
 	})
 
 	describe('reviewWork', () => {
@@ -283,6 +289,16 @@ describe('agent-builder service integration', () => {
 				.where(eq(reviewerVerdicts.id, out.verdictId as string))
 			expect(verdictRow.targetActorId).toBe(targetAgent.id)
 			expect(verdictRow.reviewerSessionId).toBeTruthy()
+
+			// Regression guard: reviewWork() fires both trackReviewerVerdictSubmitted
+			// (always) and recordReviewerVerdict (when persisted) for the same
+			// review — only recordReviewerVerdict may emit the PostHog
+			// reviewer_verdict_submitted capture, or the ship-metric dashboard
+			// double-counts every persisted verdict.
+			const submittedCalls = capturePosthogEvent.mock.calls.filter(
+				([event]) => event === 'reviewer_verdict_submitted',
+			)
+			expect(submittedCalls).toHaveLength(1)
 		})
 	})
 

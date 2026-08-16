@@ -764,10 +764,31 @@ export async function reviewerVerdictWorkflow(
 		ratedRubricId = rated.rubricId
 	}
 
+	// Best-effort, same reasoning as reviewWork's own persistence step: by
+	// this point `review` and/or `rating` may already be durably committed
+	// (reviewWork persists inline; rateReviewerVerdict already returned above).
+	// The precision summary is a derived read — letting it throw here would
+	// turn an already-successful review/rate into a request-level failure the
+	// caller can't distinguish from "nothing happened," and a retry would then
+	// hit already_rated/self_rating_forbidden for a rating that, from the
+	// caller's perspective, never succeeded.
 	const resolvedRubricId = review?.rubricId ?? ratedRubricId ?? p.rubricId ?? null
-	const precisionSummary = resolvedRubricId
-		? await computeReviewerPrecision({ db, workspaceId: p.workspaceId, rubricId: resolvedRubricId })
-		: null
+	let precisionSummary: PrecisionSummary | null = null
+	if (resolvedRubricId) {
+		try {
+			precisionSummary = await computeReviewerPrecision({
+				db,
+				workspaceId: p.workspaceId,
+				rubricId: resolvedRubricId,
+			})
+		} catch (err) {
+			logger.error('agent-builder: failed to compute reviewer precision summary', {
+				workspaceId: p.workspaceId,
+				rubricId: resolvedRubricId,
+				error: String(err),
+			})
+		}
+	}
 
 	return { review, rating, precisionSummary }
 }

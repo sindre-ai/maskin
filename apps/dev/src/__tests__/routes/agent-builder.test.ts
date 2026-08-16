@@ -393,7 +393,7 @@ describe('POST /api/agent-builder/reviewer-verdict', () => {
 		expect(res.status).toBe(404)
 	})
 
-	it('returns 400 when target_actor_id does not resolve to a real actor', async () => {
+	it('returns 404 when target_actor_id does not resolve to a real actor', async () => {
 		const { ReviewerVerdictError } = await import('../../services/reviewer-verdicts')
 		reviewerVerdictWorkflow.mockRejectedValue(
 			new ReviewerVerdictError('target_actor_not_found', 'Target actor not found'),
@@ -406,7 +406,9 @@ describe('POST /api/agent-builder/reviewer-verdict', () => {
 				workspace_id: WORKSPACE_ID,
 			}),
 		)
-		expect(res.status).toBe(400)
+		// Mirrors routes/reviewer-verdicts.ts's mapErrorCode for the same
+		// ReviewerVerdictError code — see apps/dev/src/routes/agent-builder.ts.
+		expect(res.status).toBe(404)
 	})
 
 	it('returns 409 when rating an already-rated verdict', async () => {

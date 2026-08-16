@@ -7,6 +7,7 @@ import {
 	loadReviewTarget,
 	refineAgent,
 	reviewWork,
+	reviewerVerdictWorkflow,
 	safeParseJson,
 	summariseRefineDiff,
 } from '../../services/agent-builder'
@@ -18,8 +19,26 @@ vi.mock('../../services/llm-call', () => ({
 	callLlm: vi.fn(),
 }))
 
+// Real implementation by default; individual tests override
+// computeReviewerPrecision to exercise reviewerVerdictWorkflow's isolation of
+// precision-summary failures from an already-committed review/rating.
+vi.mock('../../services/reviewer-verdicts', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../services/reviewer-verdicts')>()
+	return {
+		...actual,
+		computeReviewerPrecision: vi.fn(actual.computeReviewerPrecision),
+	}
+})
+
 const { callLlm: mockedCallLlm } = await import('../../services/llm-call')
 const callLlm = mockedCallLlm as unknown as ReturnType<typeof vi.fn>
+
+const { computeReviewerPrecision: mockedComputeReviewerPrecision } = await import(
+	'../../services/reviewer-verdicts'
+)
+const computeReviewerPrecision = mockedComputeReviewerPrecision as unknown as ReturnType<
+	typeof vi.fn
+>
 
 const WORKSPACE_ID = '11111111-1111-1111-1111-111111111111'
 const CALLER_ACTOR_ID = '22222222-2222-2222-2222-222222222222'
@@ -188,6 +207,33 @@ describe('reviewWork — standalone reviewer', () => {
 				objectId: OBJECT_ID,
 			}),
 		).rejects.toMatchObject({ name: 'AgentReviewTargetError', reason: 'target_not_found' })
+	})
+})
+
+describe('reviewerVerdictWorkflow — precision summary isolation', () => {
+	beforeEach(() => {
+		vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+		vi.spyOn(console, 'error').mockImplementation(() => undefined)
+	})
+	afterEach(() => vi.restoreAllMocks())
+
+	it('degrades to precisionSummary: null instead of throwing when computeReviewerPrecision fails', async () => {
+		computeReviewerPrecision.mockRejectedValueOnce(new Error('connection reset'))
+		const ctxCtx = createTestContext()
+
+		const out = await reviewerVerdictWorkflow(ctxCtx.db, {
+			workspaceId: WORKSPACE_ID,
+			actorId: CALLER_ACTOR_ID,
+			rubricId: RUBRIC_ID,
+		})
+
+		// A rubric_id-only call has nothing to review or rate — the point of
+		// this test is only that the precision-summary failure doesn't
+		// propagate and take down the whole call.
+		expect(out.review).toBeNull()
+		expect(out.rating).toBeNull()
+		expect(out.precisionSummary).toBeNull()
+		expect(computeReviewerPrecision).toHaveBeenCalledTimes(1)
 	})
 })
 

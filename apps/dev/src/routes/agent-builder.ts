@@ -250,7 +250,14 @@ app.post('/reviewer-verdict', async (c) => {
 			return c.json(createApiError('VALIDATION_ERROR', err.message), status)
 		}
 		if (err instanceof ReviewerVerdictError) {
-			if (err.code === 'verdict_not_found') {
+			// Mirrors routes/reviewer-verdicts.ts's mapErrorCode — same
+			// ReviewerVerdictError codes must map to the same HTTP status
+			// regardless of which route surfaces them.
+			if (
+				err.code === 'verdict_not_found' ||
+				err.code === 'target_actor_not_found' ||
+				err.code === 'rubric_not_found'
+			) {
 				return c.json(createApiError('NOT_FOUND', err.message), 404)
 			}
 			if (err.code === 'already_rated') {
