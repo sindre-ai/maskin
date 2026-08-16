@@ -447,12 +447,16 @@ test.describe('For You prototype redesign — swipe & button commit regression',
 	})
 })
 
-// Regression coverage for five card/composer fixes: summary hide/show toggle,
-// removal of the redundant plain-text object type under the title, the card
-// stretching to fill its container instead of leaving empty space below it,
-// the shortened single-line composer placeholder on mobile, and the
-// composer textarea being focusable with a single tap (the fix excludes
-// form controls from the swipe-to-mark-read pointer-capture handler).
+// Regression coverage for four card/composer fixes: removal of the redundant
+// plain-text object type under the title, the card stretching to fill its
+// container instead of leaving empty space below it, the shortened
+// single-line composer placeholder on mobile, and the composer textarea
+// being focusable with a single tap (the fix excludes form controls from the
+// swipe-to-mark-read pointer-capture handler).
+//
+// The card's former Summary strip (and its Show full/Hide toggle) was
+// removed; the "Read more" collapsed-earlier-conversation surface that
+// replaced it is covered in foryou-feed-regression.spec.ts.
 async function assertCardFillsAvailableHeight(page: Page, label: string) {
 	const cardBox = await page.getByTestId('foryou-queue-card').boundingBox()
 	if (!cardBox) throw new Error(`${label}: card has no layout box`)
@@ -493,35 +497,6 @@ test.describe('For You prototype redesign — card fills container height', () =
 			await assertCardFillsAvailableHeight(page, label)
 		})
 	}
-})
-
-test.describe('For You prototype redesign — summary toggle', () => {
-	test.use({ viewport: VIEWPORTS.tabletLandscape })
-
-	test('the summary strip truncates by default and expands/collapses via the toggle', async ({
-		page,
-		account,
-	}) => {
-		await mockFeed(page, [
-			buildItem(account.workspaceId, {
-				id: 'thread-1',
-				title: 'Renewal terms need a read',
-				type: 'insight',
-			}),
-		])
-		await gotoForyou(page, account.workspaceId)
-
-		const summary = page.locator('p', {
-			hasText: 'Preview line leads the card body before the action UI.',
-		})
-		await expect(summary).toHaveClass(/line-clamp-3/)
-
-		await page.getByRole('button', { name: 'Show full' }).click()
-		await expect(summary).not.toHaveClass(/line-clamp-3/)
-
-		await page.getByRole('button', { name: 'Hide' }).click()
-		await expect(summary).toHaveClass(/line-clamp-3/)
-	})
 })
 
 test.describe('For You prototype redesign — metadata row', () => {
