@@ -30,6 +30,12 @@ import {
 	workspaceSettingsSchema,
 } from '@maskin/shared'
 import { and, asc, count, countDistinct, desc, eq, inArray, or, sql } from 'drizzle-orm'
+import {
+	dimensionsRaised,
+	isLevelAdvancement,
+	trackAgentCapabilityLevelAdvanced,
+} from '../lib/analytics/capability-events'
+import { buildActorCapabilitiesForList, buildActorCapability } from '../lib/capability-snapshot'
 import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { logger } from '../lib/logger'
@@ -41,7 +47,7 @@ import {
 	idParamSchema,
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
-import { serialize, serializeArray } from '../lib/serialize'
+import { serialize } from '../lib/serialize'
 import { isWorkspaceMember } from '../lib/workspace-auth'
 import type { AgentStorageManager } from '../services/agent-storage'
 import type { SessionManager } from '../services/session-manager'
@@ -407,7 +413,16 @@ app.openapi(listActorsRoute, (async (c) => {
 				.where(wsWhere)
 
 			c.header('X-Total-Count', String(members.length))
-			return c.json(serializeArray(members) as z.infer<typeof actorListItemSchema>[])
+			const capabilities = await buildActorCapabilitiesForList(db, members, {
+				workspaceScope: 'workspace',
+				workspaceId,
+			})
+			return c.json(
+				members.map((m) => ({
+					...serialize(m),
+					capability: capabilities.get(m.id) ?? null,
+				})) as z.infer<typeof actorListItemSchema>[],
+			)
 		}
 
 		// Under the cursor path the sort switches to (createdAt, id) so the
@@ -464,7 +479,16 @@ app.openapi(listActorsRoute, (async (c) => {
 		])
 
 		c.header('X-Total-Count', String(totalRow[0]?.value ?? 0))
-		return c.json(serializeArray(members) as z.infer<typeof actorListItemSchema>[])
+		const capabilities = await buildActorCapabilitiesForList(db, members, {
+			workspaceScope: 'workspace',
+			workspaceId,
+		})
+		return c.json(
+			members.map((m) => ({
+				...serialize(m),
+				capability: capabilities.get(m.id) ?? null,
+			})) as z.infer<typeof actorListItemSchema>[],
+		)
 	}
 
 	// List actors across all workspaces the authenticated actor belongs to
@@ -510,7 +534,13 @@ app.openapi(listActorsRoute, (async (c) => {
 			.orderBy(asc(actors.name), asc(actors.id), asc(workspaces.name), asc(workspaces.id))
 		const grouped = groupActorMemberships(rows)
 		c.header('X-Total-Count', String(grouped.length))
-		return c.json(serializeArray(grouped) as z.infer<typeof actorListItemSchema>[])
+		const capabilities = await buildActorCapabilitiesForList(db, grouped)
+		return c.json(
+			grouped.map((g) => ({
+				...serialize(g),
+				capability: capabilities.get(g.id) ?? null,
+			})) as z.infer<typeof actorListItemSchema>[],
+		)
 	}
 
 	// Two phases: (1) count + pick paginated set of distinct actor IDs ordered
@@ -546,8 +576,13 @@ app.openapi(listActorsRoute, (async (c) => {
 		.orderBy(asc(actors.name), asc(actors.id), asc(workspaces.name), asc(workspaces.id))
 
 	c.header('X-Total-Count', String(totalRow[0]?.value ?? 0))
+	const grouped = groupActorMemberships(rows)
+	const capabilities = await buildActorCapabilitiesForList(db, grouped)
 	return c.json(
-		serializeArray(groupActorMemberships(rows)) as z.infer<typeof actorListItemSchema>[],
+		grouped.map((g) => ({
+			...serialize(g),
+			capability: capabilities.get(g.id) ?? null,
+		})) as z.infer<typeof actorListItemSchema>[],
 	)
 }) as RouteHandler<typeof listActorsRoute, Env>)
 
@@ -655,6 +690,7 @@ app.openapi(getActorRoute, (async (c) => {
 				agentStateUpdatedAt: actors.agentStateUpdatedAt,
 				createdAt: actors.createdAt,
 				updatedAt: actors.updatedAt,
+				metadata: actors.metadata,
 				installedLoopId: sql<string | null>`${actors.metadata}->>'installed_loop_id'`,
 			})
 			.from(actors)
@@ -671,7 +707,23 @@ app.openapi(getActorRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
-	return c.json(serialize({ ...actor, skills }) as z.infer<typeof actorResponseSchema>)
+	const capability = await buildActorCapability(db, {
+		id: actor.id,
+		type: actor.type,
+		systemPrompt: actor.system_prompt,
+		description: actor.description,
+		tools: actor.tools,
+		memory: actor.memory,
+		llmProvider: actor.llm_provider,
+		llmConfig: actor.llm_config,
+		metadata: actor.metadata,
+	})
+
+	// Drop `metadata` from the response — it isn't part of actorResponseSchema
+	// (only its derived `installedLoopId` is surfaced). Everything else on the
+	// row maps 1:1 to the schema.
+	const { metadata: _metadata, ...rest } = actor
+	return c.json(serialize({ ...rest, skills, capability }) as z.infer<typeof actorResponseSchema>)
 }) as RouteHandler<typeof getActorRoute, Env>)
 
 // PATCH /:id - Update actor
@@ -712,8 +764,21 @@ app.openapi(updateActorRoute, (async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const body = c.req.valid('json')
 
+	// Widen the pre-update read to every column the capability scorer needs so
+	// we can compute the "before" snapshot without a second round-trip. Humans
+	// short-circuit — capability is null for them and there's nothing to emit.
 	const [existing] = await db
-		.select({ type: actors.type })
+		.select({
+			id: actors.id,
+			type: actors.type,
+			systemPrompt: actors.systemPrompt,
+			description: actors.description,
+			tools: actors.tools,
+			memory: actors.memory,
+			llmProvider: actors.llmProvider,
+			llmConfig: actors.llmConfig,
+			metadata: actors.metadata,
+		})
 		.from(actors)
 		.where(eq(actors.id, id))
 		.limit(1)
@@ -744,6 +809,11 @@ app.openapi(updateActorRoute, (async (c) => {
 		}
 	}
 
+	// Score before mutating so we can compare against the after-snapshot. Only
+	// agents carry a capability card; humans skip both scores and emission.
+	const capabilityBefore =
+		existing.type === 'agent' ? await buildActorCapability(db, existing) : null
+
 	const [updated] = await db
 		.update(actors)
 		.set({
@@ -773,13 +843,43 @@ app.openapi(updateActorRoute, (async (c) => {
 			agentState: actors.agentState,
 			agentStateUpdatedAt: actors.agentStateUpdatedAt,
 			updatedAt: actors.updatedAt,
+			metadata: actors.metadata,
 		})
 
 	if (!updated) {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
-	return c.json(serialize(updated) as z.infer<typeof actorResponseSchema>)
+	if (capabilityBefore && updated.type === 'agent') {
+		const capabilityAfter = await buildActorCapability(db, {
+			id: updated.id,
+			type: updated.type,
+			systemPrompt: updated.system_prompt,
+			description: updated.description,
+			tools: updated.tools,
+			memory: updated.memory,
+			llmProvider: updated.llm_provider,
+			llmConfig: updated.llm_config,
+			metadata: updated.metadata,
+		})
+		if (
+			capabilityAfter &&
+			isLevelAdvancement(capabilityBefore.overall.level, capabilityAfter.overall.level)
+		) {
+			await trackAgentCapabilityLevelAdvanced({
+				actorId: updated.id,
+				workspaceId: workspaceId ?? null,
+				fromLevel: capabilityBefore.overall.level,
+				toLevel: capabilityAfter.overall.level,
+				dimensionsChanged: dimensionsRaised(capabilityBefore, capabilityAfter),
+			})
+		}
+	}
+
+	// `metadata` was included in the returning clause so we could re-score the
+	// row, but it isn't part of the response schema — drop it before returning.
+	const { metadata: _metadata, ...responseFields } = updated
+	return c.json(serialize(responseFields) as z.infer<typeof actorResponseSchema>)
 }) as RouteHandler<typeof updateActorRoute, Env>)
 
 // POST /:id/api-keys - Regenerate API key

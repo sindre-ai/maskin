@@ -58,6 +58,7 @@ import { TypeBadge } from '../shared/type-badge'
 import { AgentAvatarUpload } from './agent-avatar-upload'
 import { AgentRunPauseButton } from './agent-run-pause-button'
 import { AgentUsageChart } from './agent-usage-chart'
+import { CapabilityCard, CapabilityLevelPill } from './capability-card'
 import { McpServers } from './mcp-servers'
 import { FailureCard, SessionDetailPanel, parseFailureReason } from './session-detail-panel'
 import { getLatestActivityPreview, isSessionIdleAwaitingInput } from './session-log-transcript'
@@ -266,6 +267,12 @@ export function AgentDocumentView({
 					/>
 					<span className="text-muted-foreground">{isActive ? 'active' : 'idle'}</span>
 				</span>
+				{agent.capability && (
+					<CapabilityLevelPill
+						level={agent.capability.overall.level}
+						score={agent.capability.overall.score}
+					/>
+				)}
 				{agent.llm_provider && (
 					<span className="text-[11px] text-muted-foreground">{agent.llm_provider}</span>
 				)}
@@ -356,6 +363,9 @@ export function AgentDocumentView({
 					if (!open) setSelectedSession(null)
 				}}
 			/>
+
+			{/* Capability — full dimension breakdown + level-up checklist */}
+			{agent.capability && <CapabilityCard capability={agent.capability} />}
 
 			{/* Configuration (collapsible) */}
 			<Collapsible open={configExpanded} onOpenChange={setConfigExpanded}>

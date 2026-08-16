@@ -2,11 +2,13 @@ import { useDuration } from '@/hooks/use-duration'
 import type { ActorResponse, AgentState, SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
+import type { CapabilityLevel } from '@maskin/shared'
 import { Link } from '@tanstack/react-router'
 import { AlertTriangle, Pause, Play } from 'lucide-react'
 import { ActorAvatar } from '../shared/actor-avatar'
 import { Spinner } from '../ui/spinner'
 import { AgentRunPauseButton } from './agent-run-pause-button'
+import { CapabilityLevelPill } from './capability-card'
 
 export type PortraitStatus = 'running' | 'paused' | 'idle' | 'failed'
 
@@ -14,6 +16,8 @@ export function AgentPortraitCard({
 	agent,
 	status,
 	latestSession,
+	capabilityLevel,
+	capabilityScore,
 	onRun,
 	onPause,
 	isRunPending = false,
@@ -22,6 +26,9 @@ export function AgentPortraitCard({
 	agent: ActorResponse
 	status: PortraitStatus
 	latestSession?: SessionResponse
+	/** Capability level for the grid pill; resolves the surface-probe `levelChip` MISS. */
+	capabilityLevel?: CapabilityLevel | null
+	capabilityScore?: number
 	onRun: () => void
 	onPause: () => void
 	isRunPending?: boolean
@@ -64,7 +71,7 @@ export function AgentPortraitCard({
 
 			<FocusLine status={status} text={focus} session={latestSession} />
 
-			<div className="relative inline-flex items-center gap-1.5 text-[11px] text-muted-foreground pointer-events-none">
+			<div className="relative inline-flex flex-wrap items-center justify-center gap-1.5 text-[11px] text-muted-foreground pointer-events-none">
 				<span
 					className={cn(
 						'inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-medium',
@@ -79,6 +86,7 @@ export function AgentPortraitCard({
 					)}
 					{meta.label}
 				</span>
+				{capabilityLevel && <CapabilityLevelPill level={capabilityLevel} score={capabilityScore} />}
 			</div>
 
 			<div className="relative mt-auto flex w-full items-center justify-center gap-2 pt-1">

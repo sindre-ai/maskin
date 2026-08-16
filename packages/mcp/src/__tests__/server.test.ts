@@ -3448,8 +3448,18 @@ describe('tool handlers', () => {
 					heroCard: {
 						kind: string
 						tool: string
-						object?: { type: string; title: string | null; status: string | null }
+						object?: {
+							type: string
+							title: string | null
+							status: string | null
+							capability?: { overall: { level: string } } | null
+						}
 					}
+					capability?: {
+						overall: { level: string; score: number }
+						dimensions: Array<{ key: string; score: number }>
+						topGaps: Array<{ action: string; toolHint?: string }>
+					} | null
 				}
 			}
 			expect(result._meta.ui?.resourceUri).toBe('ui://maskin/hero-card')
@@ -3460,6 +3470,113 @@ describe('tool handlers', () => {
 				title: 'Designer',
 				status: 'running',
 			})
+			// Agent actors carry a capability card — mirrored on the heroCard object
+			// (widget consumption) and at top level (structuredContent consumers).
+			const cap = result.structuredContent.capability
+			expect(cap).not.toBeNull()
+			expect(cap?.overall.level).toBe('novice')
+			expect(cap?.dimensions.length).toBe(5)
+			expect(cap?.topGaps.length).toBeGreaterThan(0)
+			expect(result.structuredContent.heroCard.object?.capability?.overall.level).toBe('novice')
+		})
+
+		it('returns capability=null for human actors on get_actor', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/actors/h-1')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve({
+								id: 'h-1',
+								type: 'human',
+								name: 'Alex',
+								email: 'alex@example.com',
+								role: 'admin',
+							}),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+			const handler = getHandler('get_actor')
+			const result = (await handler({ id: 'h-1', workspace_id: 'ws-1' })) as {
+				structuredContent: {
+					heroCard: { object?: { capability?: unknown } }
+					capability?: unknown
+				}
+				content: Array<{ text: string }>
+			}
+			expect(result.structuredContent.capability).toBeNull()
+			expect(result.structuredContent.heroCard.object?.capability).toBeNull()
+			// No capability card block appended when there's no capability.
+			expect(result.content.length).toBe(1)
+		})
+
+		it('renders the capability card as a second text block on get_actor for agents', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/actors/a-2')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve({
+								id: 'a-2',
+								type: 'agent',
+								name: 'Coach',
+								email: null,
+								system_prompt: 'You are a bot.',
+							}),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+			const handler = getHandler('get_actor')
+			const result = (await handler({ id: 'a-2', workspace_id: 'ws-1' })) as {
+				content: Array<{ text: string }>
+			}
+			expect(result.content.length).toBe(2)
+			// content[0] stays the JSON body (existing callers rely on that ordering).
+			expect(() => JSON.parse(result.content[0].text)).not.toThrow()
+			const card = result.content[1].text
+			expect(card).toContain('Capability:')
+			expect(card).toContain('Novice')
+			// The dimension bars use the filled/unfilled glyphs the DoD calls for.
+			expect(card).toContain('▰')
+			expect(card).toContain('▱')
+			expect(card).toContain('To level up:')
+		})
+
+		it('emits a single heroCard + capability for create_actor on agents', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+				const urlStr = url as string
+				const method = (init?.method ?? 'GET') as string
+				if (urlStr === 'http://localhost:3000/api/actors' && method === 'POST') {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () =>
+							Promise.resolve({
+								id: 'a-3',
+								type: 'agent',
+								name: 'Builder',
+							}),
+					} as Response
+				}
+				return { ok: true, headers: new Headers(), json: () => Promise.resolve({}) } as Response
+			})
+			const handler = getHandler('create_actor')
+			const result = (await handler({ type: 'agent', name: 'Builder' })) as {
+				_meta: { ui?: { resourceUri?: string } }
+				structuredContent: {
+					heroCard: { kind: string; tool: string; object?: { type: string } }
+					capability?: { overall: { level: string } } | null
+				}
+			}
+			expect(result._meta.ui?.resourceUri).toBe('ui://maskin/hero-card')
+			expect(result.structuredContent.heroCard.kind).toBe('single')
+			expect(result.structuredContent.heroCard.tool).toBe('create_actor')
+			expect(result.structuredContent.heroCard.object?.type).toBe('actor')
+			expect(result.structuredContent.capability?.overall.level).toBe('novice')
 		})
 
 		it('emits a list heroCard for list_workspaces with type=workspace rows', async () => {

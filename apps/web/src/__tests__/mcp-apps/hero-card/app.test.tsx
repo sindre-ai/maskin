@@ -169,6 +169,123 @@ describe('HeroCardApp — bet single render', () => {
 		await waitFor(() => expect(screen.getByText(/no results/)).toBeInTheDocument())
 	})
 
+	it('renders the capability block when the single-object payload carries capability', async () => {
+		useToolResultMock.mockReturnValue({
+			toolName: 'get_actor',
+			workspaceId: 'ws-1',
+			webAppBaseUrl: 'https://maskin.test',
+			input: null,
+			result: {
+				content: [{ type: 'text', text: '[]' }],
+				structuredContent: {
+					heroCard: {
+						kind: 'single',
+						tool: 'get_actor',
+						object: {
+							id: 'actor-1',
+							type: 'actor',
+							title: 'Designer',
+							status: 'running',
+							driver: null,
+							contextLine: 'agent',
+							capability: {
+								version: 1,
+								overall: { score: 18, level: 'novice' },
+								dimensions: [
+									{
+										key: 'expertise',
+										label: 'Expertise',
+										score: 1,
+										weight: 35,
+										reasons: ['Prompt is 42 characters.'],
+									},
+									{ key: 'skills', label: 'Skills', score: 0, weight: 20, reasons: ['No skills.'] },
+									{
+										key: 'connectors',
+										label: 'Connectors',
+										score: 0,
+										weight: 20,
+										reasons: ['No connectors.'],
+									},
+									{
+										key: 'context',
+										label: 'Context',
+										score: 0,
+										weight: 10,
+										reasons: ['No memory keys recorded.'],
+									},
+									{
+										key: 'autonomy',
+										label: 'Autonomy',
+										score: 0,
+										weight: 15,
+										reasons: ['No triggers fire this agent.'],
+									},
+								],
+								unresolvedPlaceholders: [],
+								topGaps: [
+									{
+										action: 'Write a system prompt',
+										detail: 'Write at least a short role statement.',
+										dimension: 'expertise',
+										toolHint: 'update_actor',
+									},
+									{
+										action: 'Attach a skill',
+										detail: 'Skills give the agent step-by-step methods.',
+										dimension: 'skills',
+										toolHint: 'create_workspace_skill',
+									},
+								],
+							},
+						},
+					},
+				},
+			},
+		})
+		render(<HeroCardApp />)
+		await waitFor(() => expect(screen.getByText('Novice')).toBeInTheDocument())
+		expect(screen.getByText('18/100')).toBeInTheDocument()
+		expect(screen.getByText('Expertise')).toBeInTheDocument()
+		expect(screen.getByText('Skills')).toBeInTheDocument()
+		expect(screen.getByText('Connectors')).toBeInTheDocument()
+		expect(screen.getByText('Context')).toBeInTheDocument()
+		expect(screen.getByText('Autonomy')).toBeInTheDocument()
+		expect(screen.getByText('Level up')).toBeInTheDocument()
+		expect(screen.getByText('Write a system prompt')).toBeInTheDocument()
+		expect(screen.getByText('update_actor')).toBeInTheDocument()
+		expect(screen.getByText('Attach a skill')).toBeInTheDocument()
+	})
+
+	it('skips the capability block when the object has no capability field', async () => {
+		useToolResultMock.mockReturnValue({
+			toolName: 'get_actor',
+			workspaceId: 'ws-1',
+			webAppBaseUrl: 'https://maskin.test',
+			input: null,
+			result: {
+				content: [{ type: 'text', text: '[]' }],
+				structuredContent: {
+					heroCard: {
+						kind: 'single',
+						tool: 'get_actor',
+						object: {
+							id: 'actor-1',
+							type: 'actor',
+							title: 'Designer',
+							status: 'running',
+							driver: null,
+							contextLine: 'agent',
+						},
+					},
+				},
+			},
+		})
+		render(<HeroCardApp />)
+		await screen.findByText('Designer')
+		expect(screen.queryByText('Level up')).not.toBeInTheDocument()
+	})
+
 	it('falls back to raw text when structuredContent is missing', () => {
 		useToolResultMock.mockReturnValue({
 			toolName: 'get_objects',

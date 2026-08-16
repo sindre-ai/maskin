@@ -5,10 +5,13 @@ import { fileURLToPath } from 'node:url'
 import './extensions.js'
 import { getAllModules, getModuleDefaultSettings } from '@maskin/module-sdk'
 import {
+	type AgentCapability,
+	type AgentCapabilitySnapshot,
 	type CustomExtensionEntry,
 	type WebAppTarget,
 	buildWebAppHref,
 	resolveWebAppBaseUrl,
+	scoreAgentCapability,
 	stripTrailingSlash,
 } from '@maskin/shared'
 import {
@@ -1163,6 +1166,9 @@ export interface HeroCardObject {
 	llmProvider?: string | null
 	llmConfig?: Record<string, unknown> | null
 	skills?: Array<{ id: string; name: string }> | null
+	// Capability rating card — populated for agent actors on get_actor / create_actor.
+	// null for humans and system actors; absent on list rows.
+	capability?: AgentCapability | null
 	// Full detail fields — populated by list_triggers
 	actionPrompt?: string | null
 	config?: Record<string, unknown> | null
@@ -1514,8 +1520,72 @@ function buildActorHeroCardObject(actor: RawActor, includeDetails = false): Hero
 		obj.llmProvider = actor.llm_provider ?? null
 		obj.llmConfig = actor.llm_config ?? null
 		obj.skills = actor.skills ?? null
+		obj.capability = buildActorCapability(actor)
 	}
 	return obj
+}
+
+// Build a capability snapshot from the actor fields the MCP server already
+// receives (system_prompt, description, tools.mcpServers, skills, llm_config).
+// Trigger count, memory keys and integration-derived env keys aren't on the
+// core actor payload — they land through T2's actors-API extension, and the
+// scoring module treats them as `0` / `[]` / `undefined` here.
+function buildActorCapability(actor: RawActor): AgentCapability | null {
+	if (actor.type !== 'agent') return null
+	const mcpServersRaw = (actor.tools?.mcpServers ?? null) as
+		| Record<string, unknown>
+		| null
+		| undefined
+	const mcpServers =
+		mcpServersRaw && typeof mcpServersRaw === 'object'
+			? (mcpServersRaw as AgentCapabilitySnapshot['mcpServers'])
+			: null
+	const llmModel =
+		typeof actor.llm_config?.model === 'string' ? (actor.llm_config.model as string) : null
+	const snapshot: AgentCapabilitySnapshot = {
+		systemPrompt: actor.system_prompt ?? null,
+		description: actor.description ?? null,
+		mcpServers,
+		skillCount: Array.isArray(actor.skills) ? actor.skills.length : 0,
+		invalidSkillCount: 0,
+		triggerCount: 0,
+		inLoop: false,
+		model: llmModel,
+		llmProvider: actor.llm_provider ?? null,
+		memoryKeys: [],
+		activeIntegrationProviders: [],
+		availableEnvKeys: undefined,
+	}
+	return scoreAgentCapability(snapshot)
+}
+
+/**
+ * Render the capability rating as a plain-text card for MCP clients that
+ * only read the `content[]` text (before the widget renders). Level label +
+ * `▰▰▰▱▱` dimension bars for all 5 dimensions + "To level up:" gap list
+ * that names the fixing MCP tool per gap.
+ */
+function formatCapabilityCard(capability: AgentCapability): string {
+	const lines: string[] = []
+	const level = capability.overall.level
+	const levelLabel = level.charAt(0).toUpperCase() + level.slice(1)
+	lines.push(`Capability: ${levelLabel} (${capability.overall.score}/100)`)
+	for (const dim of capability.dimensions) {
+		const filled = '▰'.repeat(dim.score)
+		const empty = '▱'.repeat(Math.max(0, 5 - dim.score))
+		lines.push(`  ${dim.label.padEnd(11)} ${filled}${empty} ${dim.score}/5`)
+	}
+	if (capability.topGaps.length > 0) {
+		lines.push('To level up:')
+		for (const gap of capability.topGaps) {
+			const hint = gap.toolHint ? ` (tool: ${gap.toolHint})` : ''
+			lines.push(`  • ${gap.action}${hint} — ${gap.detail}`)
+		}
+	}
+	if (capability.unresolvedPlaceholders.length > 0) {
+		lines.push(`Unresolved placeholders: ${capability.unresolvedPlaceholders.join(', ')}`)
+	}
+	return lines.join('\n')
 }
 
 function buildWorkspaceContextLine(workspace: RawWorkspace): string {
@@ -2827,7 +2897,7 @@ export function createMcpServer(config: McpConfig) {
 		{
 			description: tools.create_actor.description,
 			inputSchema: tools.create_actor.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.actors, csp: CSP } },
+			_meta: { ui: { resourceUri: UI_RESOURCES.heroCard, csp: CSP } },
 		},
 		async (args) => {
 			const { workspace_id, role, attach_skill_ids, llm_config, ...createBody } = args
@@ -2886,9 +2956,33 @@ export function createMcpServer(config: McpConfig) {
 							id: result.id,
 						})
 					: result
+			// Rebuild the RawActor shape from `result` so the capability + heroCard
+			// use the same view of the created actor the caller sees. Type is taken
+			// from the input args since not every /api/actors response echoes it back.
+			const createdActor: RawActor = {
+				...(result as unknown as RawActor),
+				type: (result.type as string | undefined) ?? (createBody as { type?: string }).type ?? null,
+			}
+			const heroObject = buildActorHeroCardObject(createdActor, true)
+			const capability = heroObject.capability ?? null
+			const heroCard: HeroCardPayload = {
+				kind: 'single',
+				tool: 'create_actor',
+				object: heroObject,
+			}
+			const contentBlocks: Array<{ type: 'text'; text: string }> = [
+				{ type: 'text', text: JSON.stringify(withUrl, null, 2) },
+			]
+			if (capability) contentBlocks.push({ type: 'text', text: formatCapabilityCard(capability) })
 			return {
-				_meta: meta('create_actor', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(withUrl, null, 2) }],
+				_meta: uiMeta(
+					'create_actor',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+					UI_RESOURCES.heroCard,
+				),
+				content: contentBlocks,
+				structuredContent: { heroCard, capability },
 			}
 		},
 	)
@@ -3030,10 +3124,12 @@ export function createMcpServer(config: McpConfig) {
 			const result = (await apiCall(config, 'GET', `/api/actors/${args.id}`, undefined, {
 				skipWorkspace: true,
 			})) as RawActor
+			const heroObject = buildActorHeroCardObject(result, true)
+			const capability = heroObject.capability ?? null
 			const heroCard: HeroCardPayload = {
 				kind: 'single',
 				tool: 'get_actor',
-				object: buildActorHeroCardObject(result, true),
+				object: heroObject,
 			}
 			const workspaceId = (args as { workspace_id?: string }).workspace_id
 			const wsId = workspaceId ?? config.defaultWorkspaceId
@@ -3043,10 +3139,14 @@ export function createMcpServer(config: McpConfig) {
 						id: result.id,
 					})
 				: result
+			const contentBlocks: Array<{ type: 'text'; text: string }> = [
+				{ type: 'text', text: JSON.stringify(withUrl, null, 2) },
+			]
+			if (capability) contentBlocks.push({ type: 'text', text: formatCapabilityCard(capability) })
 			return {
 				_meta: uiMeta('get_actor', config, workspaceId, UI_RESOURCES.heroCard),
-				content: [{ type: 'text' as const, text: JSON.stringify(withUrl, null, 2) }],
-				structuredContent: { heroCard },
+				content: contentBlocks,
+				structuredContent: { heroCard, capability },
 			}
 		},
 	)
