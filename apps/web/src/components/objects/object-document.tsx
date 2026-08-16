@@ -101,8 +101,10 @@ function ViewportChecklist({ taskId, betId }: { taskId: string; betId: string | 
 				<label
 					key={key}
 					className="flex items-center gap-2 text-sm cursor-pointer select-none"
+					htmlFor={`viewport-${key}`}
 				>
 					<Checkbox
+						id={`viewport-${key}`}
 						checked={checked[key]}
 						onCheckedChange={() => setChecked((prev) => ({ ...prev, [key]: !prev[key] }))}
 					/>
