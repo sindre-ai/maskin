@@ -273,7 +273,6 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	// Actors
 	create_actor: 'actor_create',
 	update_actor: 'actor_update',
-	regenerate_api_key: 'actor_api_key_rotate',
 	// Triggers
 	create_trigger: 'trigger_create',
 	update_trigger: 'trigger_update',
@@ -300,13 +299,6 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	create_extension: 'extension_create',
 	update_extension: 'extension_update',
 	delete_extension: 'extension_delete',
-	// LLM API keys
-	set_llm_api_key: 'llm_key_set',
-	delete_llm_api_key: 'llm_key_delete',
-	// Claude subscription
-	import_claude_subscription: 'claude_subscription_import',
-	disconnect_claude_subscription: 'claude_subscription_disconnect',
-	rename_claude_subscription: 'claude_subscription_rename',
 	// Integrations
 	connect_integration: 'integration_connect',
 	disconnect_integration: 'integration_disconnect',

@@ -613,12 +613,6 @@ export const tools = {
 				),
 		}),
 	},
-	regenerate_api_key: {
-		description: 'Regenerate the API key for an actor. Returns the new key (only shown once).',
-		inputSchema: z.object({
-			id: z.string().uuid(),
-		}),
-	},
 	list_actors: {
 		description:
 			"List actors (humans and agents). If workspace_id is provided, returns members of that workspace with their role. If omitted, returns actors across all workspaces the caller belongs to, each annotated with their workspace memberships. Each row includes the actor's short `description` (one-liner) — call `get_actor` for the full `system_prompt` (instructions), which is how to pick up context on a human teammate @mentioned in a comment. When response scoping is enabled the workspace-scoped path pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.",
@@ -1467,71 +1461,6 @@ export const tools = {
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid(),
-		}),
-	},
-	// ─── LLM API Keys ─────────────────────────────────────────
-	set_llm_api_key: {
-		description:
-			"Save (or replace) a workspace LLM API key. Stored in workspace settings alongside any other providers. Returns { success, provider, last4 } — the full key is never echoed back. The key is stored as-is with no server-side validation against the provider; use the UI at /settings/keys if you need a live validation check. Mirrors the 'LLM API Keys' inputs in Settings → Keys.",
-		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
-			provider: z.enum(['anthropic', 'openai']),
-			api_key: z.string().min(1).describe('The API key (e.g. "sk-ant-..." or "sk-...").'),
-		}),
-	},
-	get_llm_api_keys: {
-		description:
-			"Report which LLM API keys are configured for the workspace. Returns { anthropic: { set, last4? }, openai: { set, last4? } } — never the full key. Mirrors the 'LLM API Keys' status in Settings → Keys.",
-		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
-		}),
-	},
-	delete_llm_api_key: {
-		description:
-			'Remove a workspace LLM API key for a single provider. Other providers are left untouched.',
-		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
-			provider: z.enum(['anthropic', 'openai']),
-		}),
-	},
-	// ─── Claude Subscription ──────────────────────────────────
-	import_claude_subscription: {
-		description:
-			"Import Claude Pro/Max/Teams subscription tokens for the workspace (from ~/.claude/.credentials.json). Stored encrypted; used as the preferred auth for sandboxed Claude Code runs. Mirrors the 'Claude Subscription → Import credentials' action in Settings → Keys.",
-		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
-			access_token: z.string().min(1),
-			refresh_token: z.string().min(1),
-			expires_at: z.number().describe('Unix ms timestamp when the access token expires.'),
-			subscription_type: z.string().optional().describe('e.g. "pro", "max", "teams".'),
-			scopes: z.array(z.string()).optional(),
-			nickname: z
-				.string()
-				.max(60)
-				.optional()
-				.describe('Optional label so this credential is distinguishable from others in the UI.'),
-		}),
-	},
-	get_claude_subscription_status: {
-		description:
-			'Check Claude subscription connection status for the workspace. Returns { connected, valid, subscription_type?, expires_at? } — never the tokens themselves.',
-		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
-		}),
-	},
-	disconnect_claude_subscription: {
-		description: 'Disconnect the Claude subscription for the workspace (removes stored tokens).',
-		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
-		}),
-	},
-	rename_claude_subscription: {
-		description:
-			"Set or clear the nickname on a Claude subscription credential slot (primary or backup) so it's distinguishable from other credentials in the UI instead of showing only an opaque fingerprint. Pass an empty string to clear the nickname. Does not touch the stored tokens.",
-		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
-			slot: z.enum(['primary', 'backup']).default('primary'),
-			nickname: z.string().max(60),
 		}),
 	},
 	// ─── Extensions ──────────────────────────────────────────
