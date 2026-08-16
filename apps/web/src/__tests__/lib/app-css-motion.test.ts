@@ -12,8 +12,12 @@ describe('app.css — motion tokens & reduced-motion guard', () => {
 	})
 
 	it('wires the semantic duration tokens up as authored utility classes', () => {
-		expect(appCss).toMatch(/@utility duration-180[\s\S]*?transition-duration:\s*var\(--duration-180\)/)
-		expect(appCss).toMatch(/@utility duration-250[\s\S]*?transition-duration:\s*var\(--duration-250\)/)
+		expect(appCss).toMatch(
+			/@utility duration-180[\s\S]*?transition-duration:\s*var\(--duration-180\)/,
+		)
+		expect(appCss).toMatch(
+			/@utility duration-250[\s\S]*?transition-duration:\s*var\(--duration-250\)/,
+		)
 		expect(appCss).toMatch(
 			/@utility duration-slide[\s\S]*?transition-duration:\s*var\(--duration-slide\)/,
 		)
