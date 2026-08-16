@@ -2,6 +2,7 @@ import { ChatPanel } from '@/components/chat/chat-panel'
 import { CommandPalette } from '@/components/command-palette'
 import { Header } from '@/components/layout/header'
 import { AppSidebar } from '@/components/layout/sidebar'
+import { Skeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
 import { useActors } from '@/hooks/use-actors'
@@ -121,8 +122,12 @@ function WorkspaceLayout() {
 
 	if (!workspace) {
 		return (
-			<div className="flex min-h-screen items-center justify-center">
-				<p className="text-sm text-muted-foreground">Loading workspace...</p>
+			<div className="flex min-h-screen flex-col p-4 md:p-8">
+				<div className="mx-auto w-full max-w-3xl space-y-4">
+					<Skeleton className="h-8 w-64" />
+					<Skeleton className="h-4 w-full max-w-96" />
+					<Skeleton className="h-32 w-full" />
+				</div>
 			</div>
 		)
 	}

@@ -18,6 +18,7 @@ const mockCaptureException = vi.mocked(sentryLib.captureException)
 
 afterEach(() => {
 	mockCaptureException.mockClear()
+	mockInvalidate.mockClear()
 })
 
 describe('RouteError', () => {
@@ -44,5 +45,25 @@ describe('RouteError', () => {
 		render(<RouteError error={error} />)
 		expect(mockCaptureException).toHaveBeenCalledOnce()
 		expect(mockCaptureException).toHaveBeenCalledWith(error)
+	})
+
+	it('calls onRetry when provided instead of router.invalidate', async () => {
+		const user = userEvent.setup()
+		const onRetry = vi.fn()
+		render(<RouteError error={new Error('x')} onRetry={onRetry} />)
+		await user.click(screen.getByRole('button', { name: /try again/i }))
+		expect(onRetry).toHaveBeenCalledOnce()
+		expect(mockInvalidate).not.toHaveBeenCalled()
+	})
+
+	it('renders custom title in the default variant', () => {
+		render(<RouteError error={new Error('x')} title="Custom title" />)
+		expect(screen.getByText('Custom title')).toBeInTheDocument()
+	})
+
+	it('renders the compact variant without the min-h-[50vh] wrapper', () => {
+		const { container } = render(<RouteError error={new Error('x')} compact title="Inline" />)
+		expect(screen.getByText('Inline')).toBeInTheDocument()
+		expect(container.querySelector('.min-h-\\[50vh\\]')).toBeNull()
 	})
 })

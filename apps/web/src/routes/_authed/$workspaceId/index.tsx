@@ -15,6 +15,7 @@ import { PageHeader } from '@/components/layout/page-header'
 import { EmptyState } from '@/components/shared/empty-state'
 import { FilterTabs } from '@/components/shared/filter-tabs'
 import { CardSkeleton } from '@/components/shared/loading-skeleton'
+import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { useBets } from '@/hooks/use-bets'
@@ -61,8 +62,14 @@ export function feedModeToForyouViewMode(
 
 function ForYouRedesign() {
 	const { workspaceId } = useWorkspace()
-	const { data, isLoading } = useUnread(workspaceId, undefined, true)
-	const { data: bets, isLoading: betsLoading } = useBets(workspaceId)
+	const {
+		data,
+		isLoading,
+		isError: isUnreadError,
+		error: unreadError,
+		refetch: refetchUnread,
+	} = useUnread(workspaceId, undefined, true)
+	const { data: bets, isLoading: betsLoading, isError: isBetsError } = useBets(workspaceId)
 	const items = data?.items ?? []
 	const markRead = useMarkRead(workspaceId)
 	const { open: composerOpen, setOpen: setComposerOpen } = useNewConversationComposer()
@@ -267,6 +274,18 @@ function ForYouRedesign() {
 				<CardSkeleton />
 				<CardSkeleton />
 				<CardSkeleton />
+			</div>
+		)
+	}
+
+	if ((isUnreadError && !data) || (isBetsError && !bets)) {
+		return (
+			<div className="flex flex-1 min-w-0 flex-col" data-testid="foryou-redesign-root">
+				<QueryStateError
+					title="Couldn't load your feed"
+					error={unreadError ?? new Error('Try again in a moment.')}
+					onRetry={() => refetchUnread()}
+				/>
 			</div>
 		)
 	}

@@ -2,6 +2,8 @@ import { PageHeader } from '@/components/layout/page-header'
 import { LoopGrid } from '@/components/marketplace/loop-grid'
 import { MarketplaceHeaderIdentity } from '@/components/marketplace/marketplace-header'
 import { EmptyState } from '@/components/shared/empty-state'
+import { CardSkeleton } from '@/components/shared/loading-skeleton'
+import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
 import { Input } from '@/components/ui/input'
 import { useInstalledLoops } from '@/hooks/use-installed-loops'
@@ -58,7 +60,7 @@ function MarketplacePage() {
 	const [query, setQuery] = useState('')
 	const trimmedQuery = query.trim()
 
-	const { data, isLoading, isError } = useMarketplaceLoops()
+	const { data, isLoading, isError, error, refetch } = useMarketplaceLoops()
 	const counts = data?.counts
 	const loops = data?.loops ?? []
 	const useCaseItems = useMemo(() => buildUseCaseItems(counts), [counts])
@@ -191,15 +193,25 @@ function MarketplacePage() {
 
 			<div className="flex-1 min-w-0">
 				{isError ? (
-					<p className="text-sm text-muted-foreground">
-						Couldn't load the marketplace right now. Try refreshing.
-					</p>
+					<QueryStateError
+						title="Couldn't load the marketplace"
+						error={error ?? new Error('Try refreshing.')}
+						onRetry={refetch ? () => refetch() : undefined}
+					/>
 				) : isLoading ? (
-					<p className="text-sm text-muted-foreground">Loading marketplace…</p>
+					<div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
+						<CardSkeleton />
+						<CardSkeleton />
+						<CardSkeleton />
+						<CardSkeleton />
+						<CardSkeleton />
+						<CardSkeleton />
+					</div>
 				) : isMarketplaceEmpty ? (
-					<p className="text-sm text-muted-foreground">
-						No loops yet — check back once Maskin publishes the first one.
-					</p>
+					<EmptyState
+						title="No loops yet"
+						description="Check back once Maskin publishes the first one."
+					/>
 				) : isFilterEmpty ? (
 					<EmptyState
 						title="No matches"

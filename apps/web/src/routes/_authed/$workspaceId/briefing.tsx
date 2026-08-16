@@ -1,7 +1,7 @@
 import { PageHeader } from '@/components/layout/page-header'
-import { EmptyState } from '@/components/shared/empty-state'
 import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { MarkdownContent } from '@/components/shared/markdown-content'
+import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
 import { useBriefing } from '@/hooks/use-briefing'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -14,7 +14,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/briefing')({
 
 function BriefingPage() {
 	const { workspaceId } = useWorkspace()
-	const { data, isLoading, isError, error } = useBriefing(workspaceId)
+	const { data, isLoading, isError, error, refetch } = useBriefing(workspaceId)
 
 	return (
 		<div className="flex flex-col gap-4">
@@ -33,9 +33,10 @@ function BriefingPage() {
 					<CardSkeleton />
 				</div>
 			) : isError ? (
-				<EmptyState
+				<QueryStateError
 					title="Couldn't load briefing"
-					description={error instanceof Error ? error.message : 'Unknown error'}
+					error={error instanceof Error ? error : new Error('Unknown error')}
+					onRetry={() => refetch()}
 				/>
 			) : (
 				<article className="rounded-md border border-border bg-bg-surface p-4 md:p-6">

@@ -1,5 +1,6 @@
 import { EmptyState } from '@/components/shared/empty-state'
-import { Spinner } from '@/components/ui/spinner'
+import { ListSkeleton } from '@/components/shared/loading-skeleton'
+import { QueryStateError } from '@/components/shared/query-state'
 import type { ActorListItem, NotificationResponse, ObjectResponse } from '@/lib/api'
 import type { BetStatusResult } from '@/lib/bet-status'
 import { cn } from '@/lib/cn'
@@ -296,10 +297,15 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 		))
 
 	if (isLoading) {
+		return <ListSkeleton />
+	}
+
+	if (isError && data.length === 0) {
 		return (
-			<div className="flex items-center justify-center py-12">
-				<Spinner />
-			</div>
+			<QueryStateError
+				title="Couldn't load objects"
+				error={new Error('Something went wrong loading this list.')}
+			/>
 		)
 	}
 
@@ -379,8 +385,8 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 			</ul>
 			<div ref={sentinelRef} className="h-1" />
 			{isFetchingNextPage && (
-				<div className="flex items-center justify-center py-4">
-					<Spinner />
+				<div className="py-2">
+					<ListSkeleton rows={2} />
 				</div>
 			)}
 		</div>
