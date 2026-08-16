@@ -6,7 +6,7 @@ import { TypeBadge } from '@/components/shared/type-badge'
 import { Button } from '@/components/ui/button'
 import { useEntityThread } from '@/hooks/use-entity-thread'
 import { useCreateComment } from '@/hooks/use-events'
-import { useMarkRead } from '@/hooks/use-subscriptions'
+import { useMarkRead, useMarkUnread } from '@/hooks/use-subscriptions'
 import { useSwipeToMarkRead } from '@/hooks/use-swipe-to-mark-read'
 import { trackForyouCardAction, trackForyouCardShown } from '@/lib/analytics'
 import type { UnreadItem } from '@/lib/api'
@@ -112,6 +112,14 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 			markRead.mutate({ entityType: item.entity_type, entityId: objectId, lastEventId: target })
 		}, [markRead, item.entity_type, objectId, item.latest_event_id, latestEventId])
 
+		// Not used as a swipe gesture here (queue cards are always unread) —
+		// wired into the hook purely so Undo has a real reverse mutation to
+		// call after a mark-read commit has already landed.
+		const markUnread = useMarkUnread(workspaceId)
+		const handleMarkUnread = useCallback(() => {
+			markUnread.mutate({ entityType: item.entity_type, entityId: objectId })
+		}, [markUnread, item.entity_type, objectId])
+
 		const replyTarget = firstUnreadRootId ?? latestRootId ?? undefined
 		const quickReply = useCreateComment(workspaceId, objectId)
 
@@ -149,6 +157,7 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 			commit,
 		} = useSwipeToMarkRead({
 			onMarkRead: handleMarkRead,
+			onMarkUnread: handleMarkUnread,
 			analytics: { entity_type: item.entity_type, entity_id: objectId },
 			onCommitScheduled: () => {
 				beginExit('right')

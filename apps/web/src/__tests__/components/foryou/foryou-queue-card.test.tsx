@@ -32,6 +32,8 @@ vi.mock('@/lib/analytics', async () => {
 const mockUseEntityEvents = vi.fn()
 const mockMarkReadMutate = vi.fn()
 const mockUseMarkRead = vi.fn(() => ({ mutate: mockMarkReadMutate, isPending: false }))
+const mockMarkUnreadMutate = vi.fn()
+const mockUseMarkUnread = vi.fn(() => ({ mutate: mockMarkUnreadMutate, isPending: false }))
 const mockCreateCommentMutate = vi.fn()
 
 vi.mock('@tanstack/react-router', async () => {
@@ -46,6 +48,7 @@ vi.mock('@/hooks/use-events', () => ({
 
 vi.mock('@/hooks/use-subscriptions', () => ({
 	useMarkRead: () => mockUseMarkRead(),
+	useMarkUnread: () => mockUseMarkUnread(),
 }))
 
 vi.mock('@/lib/auth', () => ({
@@ -521,7 +524,7 @@ describe('ForYouQueueCard', () => {
 			expect(onProcessed).toHaveBeenCalledWith(itemQueueKey(item))
 		})
 
-		it('commit() drives the real swipe-to-mark-read commit path: exits immediately, marks read after the deferred window, advances only after the exit transition ends', () => {
+		it('commit() drives the real swipe-to-mark-read commit path: exits and marks read immediately, advances only after the exit transition ends', () => {
 			vi.useFakeTimers()
 			const onProcessed = vi.fn()
 			const item = buildItem()
@@ -545,11 +548,8 @@ describe('ForYouQueueCard', () => {
 
 			const card = screen.getByTestId('foryou-queue-card')
 			expect(card.style.transform).toBe('translateX(140%) rotate(8deg)')
-			expect(mockMarkReadMutate).not.toHaveBeenCalled()
-
-			act(() => {
-				vi.advanceTimersByTime(4500)
-			})
+			// The mutation fires immediately so it survives a refresh during the
+			// Undo window — it no longer waits for the deferred timer.
 			expect(mockMarkReadMutate).toHaveBeenCalledWith({
 				entityType: 'object',
 				entityId: 'obj-1',
