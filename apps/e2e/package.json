@@ -5,7 +5,8 @@
 	"license": "Apache-2.0",
 	"scripts": {
 		"test:e2e": "playwright test",
-		"test:e2e:ui": "playwright test --ui"
+		"test:e2e:ui": "playwright test --ui",
+		"exercise:capability": "tsx src/scripts/exercise-capability.ts"
 	},
 	"devDependencies": {
 		"@argos-ci/playwright": "^3.0.0",
