@@ -1,0 +1,12 @@
+/* v2 loads three families from Google Fonts. Weights/styles match what the
+   mockup actually uses; do not add more without a matching mockup reference. */
+
+/* Schibsted Grotesk — the UI font. Every screen and every component. */
+@import url('https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:ital,wght@0,400..900;1,400..900&display=swap');
+
+/* Newsreader italic — reserved for a single pull-quote or a display accent. */
+@import url('https://fonts.googleapis.com/css2?family=Newsreader:ital,wght@1,400..600&display=swap');
+
+/* JetBrains Mono — machine-shaped text: uppercase micro-labels, ids, counts,
+   codes, monospaced meta. Weights 400, 500, 600. */
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap');
