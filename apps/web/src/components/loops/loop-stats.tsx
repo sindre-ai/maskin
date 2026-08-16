@@ -19,7 +19,7 @@ export function LoopStats({ loop }: { loop: LoopSummary }) {
 
 	return (
 		<div
-			className="flex flex-wrap rounded-xl border border-border bg-card overflow-hidden"
+			className="flex flex-wrap rounded-xl border border-border bg-card overflow-hidden shadow-sm"
 			data-testid="loop-stats"
 		>
 			{stats.map((stat) => (

@@ -50,11 +50,11 @@ export function LoopActivity({
 	const shown = expanded ? rows : rows.slice(0, DEFAULT_LIMIT)
 
 	return (
-		<section className="rounded-xl border border-border bg-card">
+		<section className="rounded-xl border border-border bg-card shadow-sm">
 			<div className="flex items-center gap-2 border-b border-border px-4 py-3">
 				<Activity size={14} className="text-muted-foreground" aria-hidden="true" />
 				<h2 className="text-sm font-semibold text-foreground">Latest activity</h2>
-				<span className="text-xs text-muted-foreground">what the agents did last</span>
+				<span className="eyebrow">what the agents did last</span>
 			</div>
 
 			{shown.length === 0 ? (
