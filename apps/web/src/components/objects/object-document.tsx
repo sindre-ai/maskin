@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
 	Dialog,
 	DialogContent,
@@ -23,7 +24,12 @@ import {
 	useUserDisplaySettings,
 } from '@/hooks/use-user-display-settings'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
-import { deriveSidebarViewport, trackEvent, trackSidebarToggle } from '@/lib/analytics'
+import {
+	deriveSidebarViewport,
+	trackEvent,
+	trackMobileViewportCheckRecorded,
+	trackSidebarToggle,
+} from '@/lib/analytics'
 import type {
 	DisplaySettingsBody,
 	EventResponse,
@@ -31,6 +37,7 @@ import type {
 	ObjectResponse,
 	RelationshipResponse,
 } from '@/lib/api'
+import { getStoredActor } from '@/lib/auth'
 import { classifyBetStatus } from '@/lib/bet-status'
 import { useWorkspace } from '@/lib/workspace-context'
 import { CHROME_KEY } from '@maskin/shared'
@@ -52,6 +59,59 @@ import { ObjectPropertiesSidebar } from './object-properties-sidebar'
 import { PropertiesSidebarProvider, SIDEBAR_WIDTH } from './properties-sidebar-provider'
 import { OwnerSelect, StatusSelect } from './property-selects'
 import { VerifiedChip, isKnowledgeAuthorWrite } from './verified-chip'
+
+const VIEWPORT_BREAKPOINTS = [
+	{ key: 'desktop', label: 'Desktop ≥1024px' },
+	{ key: 'tablet', label: 'Tablet 768–1024px' },
+	{ key: 'mobile', label: 'Mobile <768px' },
+] as const
+
+type ViewportKey = (typeof VIEWPORT_BREAKPOINTS)[number]['key']
+
+function ViewportChecklist({ taskId, betId }: { taskId: string; betId: string | null }) {
+	const [checked, setChecked] = useState<Record<ViewportKey, boolean>>({
+		desktop: false,
+		tablet: false,
+		mobile: false,
+	})
+	const firedRef = useRef(false)
+
+	useEffect(() => {
+		const allChecked = VIEWPORT_BREAKPOINTS.every(({ key }) => checked[key])
+		if (!allChecked) {
+			firedRef.current = false
+			return
+		}
+		if (firedRef.current) return
+		firedRef.current = true
+		const actor = getStoredActor()
+		trackMobileViewportCheckRecorded({
+			task_id: taskId,
+			bet_id: betId,
+			viewport_pass: true,
+			breakpoints_checked: VIEWPORT_BREAKPOINTS.map(({ key }) => key),
+			reviewer_actor_id: actor?.id ?? '',
+		})
+	}, [checked, taskId, betId])
+
+	return (
+		<div className="rounded-md border p-3 mb-4 space-y-2">
+			<p className="text-xs font-medium text-muted-foreground">Viewport checklist</p>
+			{VIEWPORT_BREAKPOINTS.map(({ key, label }) => (
+				<label
+					key={key}
+					className="flex items-center gap-2 text-sm cursor-pointer select-none"
+				>
+					<Checkbox
+						checked={checked[key]}
+						onCheckedChange={() => setChecked((prev) => ({ ...prev, [key]: !prev[key] }))}
+					/>
+					{label}
+				</label>
+			))}
+		</div>
+	)
+}
 
 interface ObjectDocumentViewProps {
 	object: ObjectResponse
@@ -265,6 +325,12 @@ export function ObjectDocumentView({
 
 			{/* Content — long-form prose caps at 75ch on viewports ≥1280px (AC-U1). */}
 			<div className="mb-8 xl:max-w-[75ch]">
+				{object.type === 'task' && object.status === 'in_review' && (
+					<ViewportChecklist
+						taskId={object.id}
+						betId={connectedObjects?.find((o) => o.type === 'bet')?.id ?? null}
+					/>
+				)}
 				{contentLoaded ? (
 					<MarkdownContent content={object.content ?? ''} onChange={handleContentChange} editable />
 				) : (
