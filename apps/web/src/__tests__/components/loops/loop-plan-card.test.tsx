@@ -97,7 +97,8 @@ describe('LoopPlanCard', () => {
 		expect(screen.getByText('triage')).toBeInTheDocument()
 		expect(screen.getByText('JUST ADDED')).toBeInTheDocument()
 		expect(screen.getByText('when a new feedback is added')).toBeInTheDocument()
-		expect(screen.getByText('Feedback agent')).toBeInTheDocument()
+		// v2 renders the agent name on both the trigger row and the AGENTS section.
+		expect(screen.getAllByText('Feedback agent').length).toBeGreaterThan(0)
 		expect(screen.getByText('before it proceeds')).toBeInTheDocument()
 	})
 

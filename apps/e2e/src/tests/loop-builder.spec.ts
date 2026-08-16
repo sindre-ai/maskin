@@ -29,7 +29,8 @@ test.describe('Loop builder — language-only create flow', () => {
 			await page.goto(`/${account.workspaceId}/loops/new`)
 
 			// AC-2 / empty state: nothing is drafted until a description is given.
-			await expect(page.getByText('No loop drafted yet')).toBeVisible({ timeout: 10000 })
+			// v2 empty state carries copy that begins "The loop appears here…".
+			await expect(page.getByText(/The loop appears here/i)).toBeVisible({ timeout: 10000 })
 
 			// Layout gate: single-column stacked below md, two-pane side-by-side at md+.
 			// The design spec puts the split at md: (≥768px) — regressing to lg: would
@@ -81,7 +82,7 @@ test.describe('Loop builder — language-only create flow', () => {
 
 			// Done clears back to a fresh draft.
 			await page.getByRole('button', { name: /^done$/i }).click()
-			await expect(page.getByText('No loop drafted yet')).toBeVisible()
+			await expect(page.getByText(/The loop appears here/i)).toBeVisible()
 		})
 	}
 })
