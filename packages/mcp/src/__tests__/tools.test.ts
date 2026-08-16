@@ -32,21 +32,22 @@ const ALL_TOOL_NAMES = [
 	'list_relationships',
 	'traverse_graph',
 	'delete_relationship',
+	'maskin_create_agent',
+	'maskin_rate_reviewer_verdict',
+	'maskin_reviewer_precision_summary',
+	'maskin_review_work',
+	'maskin_refine_agent',
 	'create_actor',
 	'update_actor',
-	'regenerate_api_key',
 	'list_actors',
 	'get_actor',
 	'create_workspace',
 	'update_workspace',
 	'list_workspaces',
 	'get_workspace_schema',
-	'add_workspace_member',
 	'create_workspace_field',
 	'update_workspace_field',
 	'delete_workspace_field',
-	'add_workspace_enum_value',
-	'remove_workspace_enum_value',
 	'list_workspace_skills',
 	'get_workspace_skill',
 	'create_workspace_skill',
@@ -64,6 +65,11 @@ const ALL_TOOL_NAMES = [
 	'update_trigger',
 	'delete_trigger',
 	'list_triggers',
+	'create_loop',
+	'update_loop',
+	'list_loops',
+	'get_loop',
+	'delete_loop',
 	'create_session',
 	'list_sessions',
 	'get_session',
@@ -76,27 +82,16 @@ const ALL_TOOL_NAMES = [
 	'get_notification',
 	'update_notification',
 	'delete_notification',
-	'subscribe',
-	'unsubscribe',
-	'list_subscribers',
 	'mark_read',
 	'list_unread',
 	'list_integrations',
 	'list_integration_providers',
 	'connect_integration',
 	'disconnect_integration',
-	'set_llm_api_key',
-	'get_llm_api_keys',
-	'delete_llm_api_key',
-	'import_claude_subscription',
-	'get_claude_subscription_status',
-	'disconnect_claude_subscription',
 	'list_extensions',
 	'create_extension',
 	'update_extension',
 	'delete_extension',
-	'record_widget_event',
-	'get_bet_widget_metrics',
 ]
 
 describe('tool definitions', () => {
@@ -424,6 +419,15 @@ describe('create_actor schema', () => {
 		expect(result.role).toBe('owner')
 	})
 
+	it('accepts admin role, matching update_actor', () => {
+		const result = schema.parse({ type: 'agent', name: 'Bot', role: 'admin' })
+		expect(result.role).toBe('admin')
+	})
+
+	it('rejects viewer — not a real workspace role', () => {
+		expect(() => schema.parse({ type: 'agent', name: 'Bot', role: 'viewer' })).toThrow()
+	})
+
 	it('accepts optional tools and attach_skill_ids', () => {
 		const result = schema.parse({
 			type: 'agent',
@@ -457,6 +461,11 @@ describe('update_actor schema', () => {
 		expect(result.name).toBe('Updated')
 	})
 
+	it('strips memory — no longer a supported param', () => {
+		const result = schema.parse({ id: uuid, memory: { notes: 'stale' } })
+		expect((result as Record<string, unknown>).memory).toBeUndefined()
+	})
+
 	it('accepts attach_skill_ids as an array of UUIDs', () => {
 		const result = schema.parse({ id: uuid, attach_skill_ids: [uuid2] })
 		expect(result.attach_skill_ids).toEqual([uuid2])
@@ -479,6 +488,34 @@ describe('update_actor schema', () => {
 		const result = schema.parse({ id: uuid })
 		expect(result.attach_skill_ids).toBeUndefined()
 		expect(result.detach_skill_ids).toBeUndefined()
+	})
+
+	it('accepts an optional workspace_id as uuid', () => {
+		const result = schema.parse({ id: uuid, workspace_id: uuid2 })
+		expect(result.workspace_id).toBe(uuid2)
+	})
+
+	it('rejects a non-UUID workspace_id', () => {
+		expect(() => schema.parse({ id: uuid, workspace_id: 'not-a-uuid' })).toThrow()
+	})
+
+	it('defaults role to member', () => {
+		const result = schema.parse({ id: uuid, workspace_id: uuid2 })
+		expect(result.role).toBe('member')
+	})
+
+	it('accepts owner and admin roles', () => {
+		expect(schema.parse({ id: uuid, workspace_id: uuid2, role: 'owner' }).role).toBe('owner')
+		expect(schema.parse({ id: uuid, workspace_id: uuid2, role: 'admin' }).role).toBe('admin')
+	})
+
+	it('rejects an invalid role', () => {
+		expect(() => schema.parse({ id: uuid, workspace_id: uuid2, role: 'viewer' })).toThrow()
+	})
+
+	it('leaves workspace_id undefined when omitted', () => {
+		const result = schema.parse({ id: uuid })
+		expect(result.workspace_id).toBeUndefined()
 	})
 })
 
@@ -725,6 +762,27 @@ describe('create_comment schema', () => {
 	it('rejects non-positive parent_event_id', () => {
 		expect(() => schema.parse({ entity_id: uuid, content: 'hi', parent_event_id: 0 })).toThrow()
 	})
+
+	it('accepts attention scores from 1 to 5', () => {
+		for (let attention = 1; attention <= 5; attention++) {
+			const result = schema.parse({ entity_id: uuid, content: 'hi', attention })
+			expect(result.attention).toBe(attention)
+		}
+	})
+
+	it('leaves attention undefined when omitted', () => {
+		const result = schema.parse({ entity_id: uuid, content: 'hi' })
+		expect(result.attention).toBeUndefined()
+	})
+
+	it('rejects attention scores outside 1-5', () => {
+		expect(() => schema.parse({ entity_id: uuid, content: 'hi', attention: 0 })).toThrow()
+		expect(() => schema.parse({ entity_id: uuid, content: 'hi', attention: 6 })).toThrow()
+	})
+
+	it('rejects non-integer attention scores', () => {
+		expect(() => schema.parse({ entity_id: uuid, content: 'hi', attention: 3.5 })).toThrow()
+	})
 })
 
 describe('create_trigger schema', () => {
@@ -762,6 +820,113 @@ describe('create_trigger schema', () => {
 				target_actor_id: uuid,
 			}),
 		).toThrow()
+	})
+})
+
+describe('create_loop schema', () => {
+	const schema = tools.create_loop.inputSchema
+
+	it('applies defaults: running status, empty steps/trigger_ids/object_ids', () => {
+		const result = schema.parse({ name: 'Lead loop' })
+		expect(result.status).toBe('running')
+		expect(result.steps).toEqual([])
+		expect(result.trigger_ids).toEqual([])
+		expect(result.object_ids).toEqual([])
+	})
+
+	it('accepts an event step and a cron step', () => {
+		const result = schema.parse({
+			name: 'Lead loop',
+			steps: [
+				{
+					name: 'Qualify',
+					agent_id: uuid,
+					prompt: 'Qualify the lead',
+					when: { object_type: 'lead', action: 'status_changed', filter: { status: 'new' } },
+				},
+				{
+					name: 'Sweep',
+					agent_id: uuid2,
+					prompt: 'Sweep stale leads',
+					when: { cron: '0 9 * * 1' },
+				},
+			],
+			closed_statuses: { lead: ['won', 'lost'] },
+		})
+		expect(result.steps).toHaveLength(2)
+		expect(result.closed_statuses).toEqual({ lead: ['won', 'lost'] })
+	})
+
+	it('rejects a step with an invalid event action', () => {
+		expect(() =>
+			schema.parse({
+				name: 'X',
+				steps: [
+					{
+						name: 'Bad',
+						agent_id: uuid,
+						prompt: 'Y',
+						when: { action: 'exploded' },
+					},
+				],
+			}),
+		).toThrow()
+	})
+
+	it('rejects an unknown loop status', () => {
+		expect(() => schema.parse({ name: 'X', status: 'sideways' })).toThrow()
+	})
+})
+
+describe('update_loop schema', () => {
+	const schema = tools.update_loop.inputSchema
+
+	it('accepts a pure membership update', () => {
+		const result = schema.parse({
+			id: uuid,
+			add_object_ids: [uuid2],
+			remove_trigger_ids: [uuid2],
+		})
+		expect(result.add_object_ids).toEqual([uuid2])
+		expect(result.remove_trigger_ids).toEqual([uuid2])
+	})
+
+	it('requires a uuid loop id', () => {
+		expect(() => schema.parse({ id: 'not-a-uuid', name: 'X' })).toThrow()
+	})
+})
+
+describe('get_loop schema', () => {
+	const schema = tools.get_loop.inputSchema
+
+	it('accepts a uuid id', () => {
+		const result = schema.parse({ id: uuid })
+		expect(result.id).toBe(uuid)
+	})
+
+	it('requires id', () => {
+		expect(() => schema.parse({})).toThrow()
+	})
+
+	it('rejects a non-uuid id', () => {
+		expect(() => schema.parse({ id: 'not-a-uuid' })).toThrow()
+	})
+})
+
+describe('delete_loop schema', () => {
+	const schema = tools.delete_loop.inputSchema
+
+	it('accepts a uuid id', () => {
+		const result = schema.parse({ id: uuid })
+		expect(result.id).toBe(uuid)
+	})
+
+	it('requires id', () => {
+		expect(() => schema.parse({})).toThrow()
+	})
+
+	it('rejects a non-uuid id', () => {
+		expect(() => schema.parse({ id: 'not-a-uuid' })).toThrow()
 	})
 })
 
@@ -928,26 +1093,6 @@ describe('update_workspace schema', () => {
 	})
 })
 
-describe('add_workspace_member schema', () => {
-	const schema = tools.add_workspace_member.inputSchema
-
-	it('requires workspace_id and actor_id, defaults role to member', () => {
-		const result = schema.parse({ workspace_id: uuid, actor_id: uuid2 })
-		expect(result.workspace_id).toBe(uuid)
-		expect(result.actor_id).toBe(uuid2)
-		expect(result.role).toBe('member')
-	})
-
-	it('accepts role override', () => {
-		const result = schema.parse({ workspace_id: uuid, actor_id: uuid2, role: 'owner' })
-		expect(result.role).toBe('owner')
-	})
-
-	it('rejects missing workspace_id', () => {
-		expect(() => schema.parse({ actor_id: uuid2 })).toThrow()
-	})
-})
-
 describe('create_extension schema', () => {
 	const schema = tools.create_extension.inputSchema
 
@@ -1107,100 +1252,6 @@ describe('empty input schema tools', () => {
 	})
 })
 
-describe('set_llm_api_key schema', () => {
-	const schema = tools.set_llm_api_key.inputSchema
-
-	it('accepts anthropic + non-empty api_key', () => {
-		const result = schema.parse({ provider: 'anthropic', api_key: 'sk-ant-abc' })
-		expect(result.provider).toBe('anthropic')
-		expect(result.api_key).toBe('sk-ant-abc')
-	})
-
-	it('accepts openai', () => {
-		const result = schema.parse({ provider: 'openai', api_key: 'sk-abc' })
-		expect(result.provider).toBe('openai')
-	})
-
-	it('rejects unknown provider', () => {
-		expect(() => schema.parse({ provider: 'google', api_key: 'x' })).toThrow()
-	})
-
-	it('rejects an empty api_key', () => {
-		expect(() => schema.parse({ provider: 'anthropic', api_key: '' })).toThrow()
-	})
-
-	it('rejects a missing api_key', () => {
-		expect(() => schema.parse({ provider: 'anthropic' })).toThrow()
-	})
-})
-
-describe('delete_llm_api_key schema', () => {
-	const schema = tools.delete_llm_api_key.inputSchema
-
-	it('accepts provider', () => {
-		expect(schema.parse({ provider: 'anthropic' }).provider).toBe('anthropic')
-	})
-
-	it('rejects unknown provider', () => {
-		expect(() => schema.parse({ provider: 'google' })).toThrow()
-	})
-})
-
-describe('get_llm_api_keys schema', () => {
-	const schema = tools.get_llm_api_keys.inputSchema
-
-	it('accepts empty object', () => {
-		expect(schema.parse({})).toEqual({})
-	})
-})
-
-describe('import_claude_subscription schema', () => {
-	const schema = tools.import_claude_subscription.inputSchema
-
-	it('accepts required token fields', () => {
-		const result = schema.parse({
-			access_token: 'a',
-			refresh_token: 'r',
-			expires_at: 123,
-		})
-		expect(result.access_token).toBe('a')
-		expect(result.refresh_token).toBe('r')
-		expect(result.expires_at).toBe(123)
-	})
-
-	it('rejects missing access_token', () => {
-		expect(() => schema.parse({ refresh_token: 'r', expires_at: 1 })).toThrow()
-	})
-
-	it('accepts optional subscription_type and scopes', () => {
-		const result = schema.parse({
-			access_token: 'a',
-			refresh_token: 'r',
-			expires_at: 1,
-			subscription_type: 'max',
-			scopes: ['read'],
-		})
-		expect(result.subscription_type).toBe('max')
-		expect(result.scopes).toEqual(['read'])
-	})
-})
-
-describe('get_claude_subscription_status schema', () => {
-	const schema = tools.get_claude_subscription_status.inputSchema
-
-	it('accepts empty object', () => {
-		expect(schema.parse({})).toEqual({})
-	})
-})
-
-describe('disconnect_claude_subscription schema', () => {
-	const schema = tools.disconnect_claude_subscription.inputSchema
-
-	it('accepts empty object', () => {
-		expect(schema.parse({})).toEqual({})
-	})
-})
-
 describe('workspace_id optional on most tools', () => {
 	const toolsWithOptionalWorkspace = [
 		'create_objects',
@@ -1222,12 +1273,6 @@ describe('workspace_id optional on most tools', () => {
 		'list_integrations',
 		'connect_integration',
 		'disconnect_integration',
-		'set_llm_api_key',
-		'get_llm_api_keys',
-		'delete_llm_api_key',
-		'import_claude_subscription',
-		'get_claude_subscription_status',
-		'disconnect_claude_subscription',
 	]
 
 	for (const name of toolsWithOptionalWorkspace) {

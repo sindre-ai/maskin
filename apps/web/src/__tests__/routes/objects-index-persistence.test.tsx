@@ -76,6 +76,7 @@ vi.mock('@/lib/api', () => {
 		ApiError,
 		api: {
 			objects: { list: async () => [], search: async () => [] },
+			notifications: { list: async () => [] },
 			userDisplaySettings: {
 				list: async () => ({ items: [] }),
 				get: async () => ({

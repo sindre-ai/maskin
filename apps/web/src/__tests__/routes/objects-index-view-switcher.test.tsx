@@ -68,8 +68,8 @@ vi.mock('@tanstack/react-query', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('@tanstack/react-query')>()
 	return {
 		...actual,
-		useQuery: () => ({
-			data: { columns: boardQueryState.columns },
+		useQuery: (options: { queryKey?: readonly unknown[] }) => ({
+			data: options?.queryKey?.[0] === 'notifications' ? [] : { columns: boardQueryState.columns },
 			isLoading: false,
 			isSuccess: true,
 			isError: false,
@@ -89,6 +89,7 @@ vi.mock('@tanstack/react-query', async (importOriginal) => {
 			removeQueries: vi.fn(),
 			cancelQueries: vi.fn(),
 		}),
+		useMutation: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
 	}
 })
 
@@ -164,12 +165,13 @@ vi.mock('@/components/shared/create-picker', () => ({
 	isCreateShortcut: () => false,
 }))
 vi.mock('@/lib/api', () => ({
-	api: { objects: { list: vi.fn(), search: vi.fn() } },
+	api: { objects: { list: vi.fn(), search: vi.fn() }, notifications: { list: vi.fn() } },
 }))
 vi.mock('@/lib/analytics', () => ({
 	trackEvent: vi.fn(),
 	trackObjectsListArrived: vi.fn(),
 	trackObjectsListGroupToggled: vi.fn(),
+	trackObjectsBoardArrived: vi.fn(),
 }))
 vi.mock('@/lib/back-nav-tracker', () => ({
 	consumeArrivalNavType: vi.fn().mockReturnValue('direct'),
@@ -188,6 +190,14 @@ vi.mock('@/lib/query-keys', () => ({
 		},
 		relationships: {
 			all: (workspaceId: string) => ['relationships', workspaceId],
+		},
+		notifications: {
+			list: (workspaceId: string, filters?: unknown) => [
+				'notifications',
+				workspaceId,
+				'list',
+				filters,
+			],
 		},
 		bets: { all: () => ['bets'] },
 		imports: { detail: (id: string) => ['imports', 'detail', id] },

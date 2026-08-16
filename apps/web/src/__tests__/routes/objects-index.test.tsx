@@ -64,8 +64,8 @@ vi.mock('@tanstack/react-query', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('@tanstack/react-query')>()
 	return {
 		...actual,
-		useQuery: () => ({
-			data: { columns: [] },
+		useQuery: (options: { queryKey?: readonly unknown[] }) => ({
+			data: options?.queryKey?.[0] === 'notifications' ? [] : { columns: [] },
 			isLoading: false,
 			isSuccess: true,
 			isError: false,
@@ -85,6 +85,7 @@ vi.mock('@tanstack/react-query', async (importOriginal) => {
 			removeQueries: vi.fn(),
 			cancelQueries: vi.fn(),
 		}),
+		useMutation: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
 	}
 })
 
@@ -140,7 +141,7 @@ vi.mock('@/components/shared/create-picker', () => ({
 }))
 
 vi.mock('@/lib/api', () => ({
-	api: { objects: { list: vi.fn(), search: vi.fn() } },
+	api: { objects: { list: vi.fn(), search: vi.fn() }, notifications: { list: vi.fn() } },
 }))
 
 vi.mock('@/lib/query-keys', () => ({
@@ -152,6 +153,14 @@ vi.mock('@/lib/query-keys', () => ({
 		},
 		relationships: {
 			all: (workspaceId: string) => ['relationships', workspaceId],
+		},
+		notifications: {
+			list: (workspaceId: string, filters?: unknown) => [
+				'notifications',
+				workspaceId,
+				'list',
+				filters,
+			],
 		},
 		imports: { detail: (id: string) => ['imports', 'detail', id] },
 		userDisplaySettings: {
@@ -236,9 +245,8 @@ describe('validateSearch', () => {
 })
 
 describe('ObjectsPage', () => {
-	it('renders page header and list view', () => {
+	it('renders list view and toolbar', () => {
 		render(<ObjectsPage />)
-		expect(screen.getByText('Objects')).toBeInTheDocument()
 		expect(screen.getByTestId('list-view')).toBeInTheDocument()
 		expect(screen.getByTestId('data-table-toolbar')).toBeInTheDocument()
 	})

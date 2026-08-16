@@ -36,6 +36,7 @@ interface UnreadFixture {
 	entity_id: string
 	unread_count: number
 	mentioning_unread_count: number
+	max_unread_attention: number | null
 	latest_event_id: number
 	latest_activity_at: string
 	object: {
@@ -65,6 +66,7 @@ function buildItem(
 		entity_id: id,
 		unread_count: 1,
 		mentioning_unread_count: 0,
+		max_unread_attention: null,
 		latest_event_id: 42,
 		latest_activity_at: new Date().toISOString(),
 		object: {
@@ -83,8 +85,8 @@ function buildItem(
 	}
 }
 
-// One card per kind — decision sorts first (it's the only one mentioning
-// the viewer, and default sort is "priority").
+// One card per kind — decision sorts first (it has the highest attention
+// score, and default sort is "priority").
 //   - task + status=in_review + metadata.decision_type set → decision
 //   - task + status=in_review + no decision_type          → sign_off
 //   - bet + status=signal                                  → proposed_bet
@@ -97,6 +99,7 @@ function threeKindFeed(workspaceId: string): UnreadFixture[] {
 			status: 'in_review',
 			metadata: { decision_type: 'architecture' },
 			mentioning_unread_count: 1,
+			max_unread_attention: 5,
 		}),
 		buildItem(workspaceId, {
 			id: 'sign-off-1',
@@ -209,7 +212,7 @@ async function assertDecisionButtonsSideBySide(page: Page, expected: boolean, la
 test.describe('For You prototype redesign — layout at 1024', () => {
 	test.use({ viewport: VIEWPORTS.tabletLandscape })
 
-	test('header controls, Display popover, and decision buttons render side-by-side', async ({
+	test('header controls, Display popover, and decision buttons render as stacked full-width rows', async ({
 		page,
 		account,
 	}) => {
@@ -243,13 +246,15 @@ test.describe('For You prototype redesign — layout at 1024', () => {
 		await expect(page.getByRole('radio', { name: /latest activity/i })).toBeVisible()
 		await page.keyboard.press('Escape')
 
-		// One card visible at a time — priority sort puts the mentioned
+		// One card visible at a time — priority sort puts the highest-attention
 		// decision card first.
 		const card = page.getByTestId('foryou-queue-card')
 		await expect(card).toHaveCount(1)
 		await expect(card).toHaveAttribute('data-card-kind', 'decision')
 		await expect(page.getByRole('button', { name: 'Approve' })).toBeVisible()
-		await assertDecisionButtonsSideBySide(page, true, '1024')
+		// T2's AskCard render is stacked full-width option rows at every
+		// viewport (flex flex-col, w-full) — not a side-by-side pair.
+		await assertDecisionButtonsSideBySide(page, false, '1024')
 
 		await expect(page.getByRole('button', { name: 'Keep unread' })).toBeVisible()
 		await expect(page.getByRole('button', { name: 'Mark as read' })).toBeVisible()
@@ -262,7 +267,7 @@ test.describe('For You prototype redesign — layout at 1024', () => {
 test.describe('For You prototype redesign — layout at 768', () => {
 	test.use({ viewport: VIEWPORTS.tabletPortrait })
 
-	test('header controls stay reachable and decision buttons stay side-by-side', async ({
+	test('header controls stay reachable and decision buttons stack as full-width rows', async ({
 		page,
 		account,
 	}) => {
@@ -275,7 +280,8 @@ test.describe('For You prototype redesign — layout at 768', () => {
 
 		const card = page.getByTestId('foryou-queue-card')
 		await expect(card).toHaveAttribute('data-card-kind', 'decision')
-		await assertDecisionButtonsSideBySide(page, true, '768')
+		// Stacked full-width option rows at every viewport (T2 AskCard design).
+		await assertDecisionButtonsSideBySide(page, false, '768')
 
 		await expect(page.getByText('3 items left')).toBeVisible()
 		await assertNoHorizontalOverflow(page, '768')
@@ -378,7 +384,7 @@ test.describe('For You prototype redesign — swipe & button commit regression',
 		return { calls }
 	}
 
-	test('right-swipe reveals mark-read and advances the queue, committing after the undo window', async ({
+	test('right-swipe fires mark-read immediately (durable across a refresh) and advances the queue', async ({
 		page,
 		account,
 	}) => {
@@ -394,16 +400,21 @@ test.describe('For You prototype redesign — swipe & button commit regression',
 		await expect(page.getByTestId('mark-read-reveal').first()).toBeVisible()
 
 		// The queue advances optimistically as soon as the exit transition
-		// ends — well before the 4.5s undo window elapses. The just-committed
-		// card stays mounted (hidden) until its deferred mutation lands, so
-		// the locator must be scoped to the currently-visible card only.
+		// ends. The just-committed card stays mounted (hidden) until its
+		// mutation settles, so the locator must be scoped to the
+		// currently-visible card only.
 		await expect(page.locator('[data-testid="foryou-queue-card"]:visible')).toContainText(
 			'Follow-up from customer call',
 		)
-		expect(readCalls).toHaveLength(0)
 
+		// The mutation fires immediately on commit — durable across a refresh
+		// — not deferred behind the 4.5s Undo window, which only gates the
+		// Undo affordance and analytics.
+		await expect.poll(() => readCalls.length).toBe(1)
+
+		// The undo window elapsing doesn't fire a second, duplicate mutation.
 		await page.waitForTimeout(4800)
-		expect(readCalls.length).toBeGreaterThanOrEqual(1)
+		expect(readCalls).toHaveLength(1)
 	})
 
 	test('"Keep unread" skips without any mutation and advances the queue', async ({
@@ -444,12 +455,16 @@ test.describe('For You prototype redesign — swipe & button commit regression',
 	})
 })
 
-// Regression coverage for five card/composer fixes: summary hide/show toggle,
-// removal of the redundant plain-text object type under the title, the card
-// stretching to fill its container instead of leaving empty space below it,
-// the shortened single-line composer placeholder on mobile, and the
-// composer textarea being focusable with a single tap (the fix excludes
-// form controls from the swipe-to-mark-read pointer-capture handler).
+// Regression coverage for four card/composer fixes: removal of the redundant
+// plain-text object type under the title, the card stretching to fill its
+// container instead of leaving empty space below it, the shortened
+// single-line composer placeholder on mobile, and the composer textarea
+// being focusable with a single tap (the fix excludes form controls from the
+// swipe-to-mark-read pointer-capture handler).
+//
+// The card's former Summary strip (and its Show full/Hide toggle) was
+// removed; the "Read more" collapsed-earlier-conversation surface that
+// replaced it is covered in foryou-feed-regression.spec.ts.
 async function assertCardFillsAvailableHeight(page: Page, label: string) {
 	const cardBox = await page.getByTestId('foryou-queue-card').boundingBox()
 	if (!cardBox) throw new Error(`${label}: card has no layout box`)
@@ -490,35 +505,6 @@ test.describe('For You prototype redesign — card fills container height', () =
 			await assertCardFillsAvailableHeight(page, label)
 		})
 	}
-})
-
-test.describe('For You prototype redesign — summary toggle', () => {
-	test.use({ viewport: VIEWPORTS.tabletLandscape })
-
-	test('the summary strip truncates by default and expands/collapses via the toggle', async ({
-		page,
-		account,
-	}) => {
-		await mockFeed(page, [
-			buildItem(account.workspaceId, {
-				id: 'thread-1',
-				title: 'Renewal terms need a read',
-				type: 'insight',
-			}),
-		])
-		await gotoForyou(page, account.workspaceId)
-
-		const summary = page.locator('p', {
-			hasText: 'Preview line leads the card body before the action UI.',
-		})
-		await expect(summary).toHaveClass(/line-clamp-3/)
-
-		await page.getByRole('button', { name: 'Show full' }).click()
-		await expect(summary).not.toHaveClass(/line-clamp-3/)
-
-		await page.getByRole('button', { name: 'Hide' }).click()
-		await expect(summary).toHaveClass(/line-clamp-3/)
-	})
 })
 
 test.describe('For You prototype redesign — metadata row', () => {

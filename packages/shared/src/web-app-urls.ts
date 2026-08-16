@@ -131,6 +131,11 @@ export type WebAppTarget =
 	 * pattern. `name` is the skill's stable identifier and is recorded here
 	 * for forward-compat even though the current URL builder ignores it. */
 	| { kind: 'skill'; name: string }
+	/** Loop list or detail — the loops-first-class pipeline surface. A loop is
+	 * an `objects` row with `type = 'loop'`, but it has a dedicated detail page
+	 * (`/{ws}/loops/{id}`) distinct from the generic object detail view, so it
+	 * gets its own target kind rather than reusing `object`. */
+	| { kind: 'loop'; id?: string }
 	/** Workspace settings (root or a specific section). */
 	| { kind: 'settings'; section?: WebAppSettingsSection }
 
@@ -206,6 +211,8 @@ export function buildWebAppPath(workspaceId: string, target: WebAppTarget): stri
 			return `${root}/files/${target.id}`
 		case 'skill':
 			return `${root}/settings/skills`
+		case 'loop':
+			return target.id ? `${root}/loops/${target.id}` : `${root}/loops`
 		case 'settings':
 			return target.section ? `${root}/settings/${target.section}` : `${root}/settings`
 		default: {
