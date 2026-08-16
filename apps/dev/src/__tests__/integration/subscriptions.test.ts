@@ -927,11 +927,15 @@ describe('Subscriptions Integration', () => {
 	})
 
 	it("max_unread_attention ignores a non-mentioning comment's score, even when it's the highest", async () => {
-		// max_unread_attention must inherit the same mentions-only scoping as
-		// mentioning_unread_count: it's computed over the already mention-filtered
-		// join, not over every unread comment on the entity. A high-attention
-		// comment that never @-mentions A must not leak into A's max, even though
-		// a lower-attention mentioning comment is also unread.
+		// For a regular object, max_unread_attention is scoped by the same join
+		// predicate as mentioning_unread_count: only mentioning comments are
+		// joined in the first place, so a high-attention comment that never
+		// @-mentions A never reaches the aggregate. (The onboarding_session
+		// carve-out below is the one exception — see the next test — where any
+		// coach reply is joined regardless of mention, so its attention score
+		// *does* count.) A high-attention comment that never @-mentions A must
+		// not leak into A's max, even though a lower-attention mentioning
+		// comment is also unread.
 		const appA = appAs(aId)
 		const appB = appAs(bId)
 		const headersA = { 'x-workspace-id': workspaceId }
@@ -1128,6 +1132,50 @@ describe('Subscriptions Integration', () => {
 		expect(
 			unreadA2.items.find((i: { entity_id: string }) => i.entity_id === obj.id),
 		).toBeUndefined()
+	})
+
+	it("a scored onboarding coach reply's attention counts toward max_unread_attention despite not @-mentioning the human", async () => {
+		// max_unread_attention shares unread_count's join scope, not
+		// mentioning_unread_count's narrower one (see the onboarding carve-out
+		// test above): any coach reply on an onboarding_session is joined
+		// regardless of mention, so a scored one contributes its score here too.
+		// This is the one case where max_unread_attention is NOT mentions-only.
+		const appA = appAs(aId)
+		const appB = appAs(bId)
+		const headersA = { 'x-workspace-id': workspaceId }
+		const headersB = { 'x-workspace-id': workspaceId }
+
+		const session = await insertObject(db, workspaceId, aId, {
+			type: 'onboarding_session',
+			title: 'Getting started',
+			status: 'active',
+		})
+		await appA.request(
+			jsonRequest(
+				'POST',
+				'/api/subscriptions',
+				{ entity_type: 'object', entity_id: session.id },
+				headersA,
+			),
+		)
+
+		const coachReply = await appB.request(
+			jsonRequest(
+				'POST',
+				'/api/events',
+				{ entity_id: session.id, content: 'You should decide on a name soon', attention: 4 },
+				headersB,
+			),
+		)
+		expect(coachReply.status).toBe(201)
+
+		const unreadA = await appA
+			.request(jsonGet('/api/subscriptions/unread', headersA))
+			.then((r) => r.json())
+		const item = unreadA.items.find((i: { entity_id: string }) => i.entity_id === session.id)
+		expect(item).toBeDefined()
+		expect(item.mentioning_unread_count).toBe(0)
+		expect(item.max_unread_attention).toBe(4)
 	})
 
 	it('commitment/Loop status changes — at-risk, breached, or born signalling — never surface in the mentions-only unread feed', async () => {
