@@ -381,7 +381,7 @@ test.describe('For You prototype redesign — swipe & button commit regression',
 		return { calls }
 	}
 
-	test('right-swipe reveals mark-read and advances the queue, committing after the undo window', async ({
+	test('right-swipe fires mark-read immediately (durable across a refresh) and advances the queue', async ({
 		page,
 		account,
 	}) => {
@@ -397,16 +397,21 @@ test.describe('For You prototype redesign — swipe & button commit regression',
 		await expect(page.getByTestId('mark-read-reveal').first()).toBeVisible()
 
 		// The queue advances optimistically as soon as the exit transition
-		// ends — well before the 4.5s undo window elapses. The just-committed
-		// card stays mounted (hidden) until its deferred mutation lands, so
-		// the locator must be scoped to the currently-visible card only.
+		// ends. The just-committed card stays mounted (hidden) until its
+		// mutation settles, so the locator must be scoped to the
+		// currently-visible card only.
 		await expect(page.locator('[data-testid="foryou-queue-card"]:visible')).toContainText(
 			'Follow-up from customer call',
 		)
-		expect(readCalls).toHaveLength(0)
 
+		// The mutation fires immediately on commit — durable across a refresh
+		// — not deferred behind the 4.5s Undo window, which only gates the
+		// Undo affordance and analytics.
+		await expect.poll(() => readCalls.length).toBe(1)
+
+		// The undo window elapsing doesn't fire a second, duplicate mutation.
 		await page.waitForTimeout(4800)
-		expect(readCalls.length).toBeGreaterThanOrEqual(1)
+		expect(readCalls).toHaveLength(1)
 	})
 
 	test('"Keep unread" skips without any mutation and advances the queue', async ({
