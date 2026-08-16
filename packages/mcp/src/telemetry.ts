@@ -40,18 +40,6 @@ export interface MutationEvent {
 	mutation_kind: string
 }
 
-export interface WidgetEvent {
-	event_type: 'widget_event'
-	widget_name: string
-	event: 'click_through' | 'render_success' | 'render_error'
-	tool_name: string
-	object_type?: string
-	object_id?: string
-	card_kind: 'single' | 'list' | 'empty'
-	session_id: string
-	ts: number
-}
-
 export interface ToolCallResponseSizeEvent {
 	event_type: 'tool_call_response_size'
 	tool_name: string
@@ -78,12 +66,7 @@ export interface ErrorEvent {
 	requested_shape: Record<string, string>
 }
 
-export type TelemetryEvent =
-	| ToolCallEvent
-	| MutationEvent
-	| WidgetEvent
-	| ToolCallResponseSizeEvent
-	| ErrorEvent
+export type TelemetryEvent = ToolCallEvent | MutationEvent | ToolCallResponseSizeEvent | ErrorEvent
 
 /** A telemetry sink ingests events. Production default POSTs to the API; tests
  *  inject capturing sinks; deployments without telemetry endpoints can pass a
@@ -140,36 +123,6 @@ export function recordToolCall(
 			session_id: SESSION_ID,
 			has_rich_render: event.has_rich_render,
 			duration_ms: Math.max(0, Math.round(event.duration_ms)),
-		},
-		cfg,
-	)
-}
-
-export function recordWidgetEvent(
-	sink: TelemetrySink,
-	target: TelemetryConfig,
-	event: {
-		widget_name: string
-		event: 'click_through' | 'render_success' | 'render_error'
-		tool_name: string
-		card_kind: 'single' | 'list' | 'empty'
-		object_type?: string
-		object_id?: string
-		workspace_id?: string
-	},
-): void {
-	const cfg = event.workspace_id ? { ...target, workspaceId: event.workspace_id } : target
-	sink(
-		{
-			event_type: 'widget_event',
-			widget_name: event.widget_name,
-			event: event.event,
-			tool_name: event.tool_name,
-			object_type: event.object_type,
-			object_id: event.object_id,
-			card_kind: event.card_kind,
-			session_id: SESSION_ID,
-			ts: Date.now(),
 		},
 		cfg,
 	)
@@ -266,21 +219,21 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	// Workspaces + members
 	create_workspace: 'workspace_create',
 	update_workspace: 'workspace_update',
-	add_workspace_member: 'workspace_member_add',
 	// Workspace schema (fields + enums)
 	create_workspace_field: 'workspace_field_create',
 	update_workspace_field: 'workspace_field_update',
 	delete_workspace_field: 'workspace_field_delete',
-	add_workspace_enum_value: 'workspace_enum_add',
-	remove_workspace_enum_value: 'workspace_enum_remove',
 	// Actors
 	create_actor: 'actor_create',
 	update_actor: 'actor_update',
-	regenerate_api_key: 'actor_api_key_rotate',
 	// Triggers
 	create_trigger: 'trigger_create',
 	update_trigger: 'trigger_update',
 	delete_trigger: 'trigger_delete',
+	// Loops
+	create_loop: 'loop_create',
+	update_loop: 'loop_update',
+	delete_loop: 'loop_delete',
 	// Notifications
 	create_notification: 'notification_create',
 	update_notification: 'notification_update',
@@ -299,12 +252,6 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	create_extension: 'extension_create',
 	update_extension: 'extension_update',
 	delete_extension: 'extension_delete',
-	// LLM API keys
-	set_llm_api_key: 'llm_key_set',
-	delete_llm_api_key: 'llm_key_delete',
-	// Claude subscription
-	import_claude_subscription: 'claude_subscription_import',
-	disconnect_claude_subscription: 'claude_subscription_disconnect',
 	// Integrations
 	connect_integration: 'integration_connect',
 	disconnect_integration: 'integration_disconnect',

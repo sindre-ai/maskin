@@ -8,9 +8,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import type { LoopSummary } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { useWorkspace } from '@/lib/workspace-context'
-import { useNavigate } from '@tanstack/react-router'
-import { MessageCircle, MoreHorizontal, Pause, Play } from 'lucide-react'
+import { MoreHorizontal, Pause, Play } from 'lucide-react'
 import { LOOP_PILL_STYLES } from './loop-pill'
 
 export function LoopHeader({
@@ -22,8 +20,6 @@ export function LoopHeader({
 	onTogglePause: () => void
 	isTogglingPause: boolean
 }) {
-	const { workspaceId } = useWorkspace()
-	const navigate = useNavigate()
 	const pill = LOOP_PILL_STYLES[loop.pill]
 	const isPaused = loop.status === 'paused'
 
@@ -74,28 +70,6 @@ export function LoopHeader({
 					<MarkdownContent content={loop.guarantee} className="text-sm text-muted-foreground" />
 				</div>
 			)}
-
-			<div className="mt-3">
-				<Button
-					variant="outline"
-					size="sm"
-					className="gap-1.5"
-					onClick={() =>
-						navigate({
-							to: '/$workspaceId/chats/new',
-							params: { workspaceId },
-							search: {
-								objectId: loop.id,
-								objectTitle: loop.name ?? undefined,
-								objectType: 'loop',
-							},
-						})
-					}
-				>
-					<MessageCircle size={13} />
-					Edit this loop
-				</Button>
-			</div>
 		</div>
 	)
 }

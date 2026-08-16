@@ -4,16 +4,6 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { buildLoopSummary } from '../../factories'
 
-const navigateMock = vi.fn()
-
-vi.mock('@tanstack/react-router', () => ({
-	useNavigate: () => navigateMock,
-}))
-
-vi.mock('@/lib/workspace-context', () => ({
-	useWorkspace: () => ({ workspaceId: 'ws-1' }),
-}))
-
 describe('LoopHeader', () => {
 	it('renders the loop name, pill, and description', () => {
 		const loop = buildLoopSummary({
@@ -38,20 +28,6 @@ describe('LoopHeader', () => {
 		)
 
 		expect(screen.getByText('Untitled loop')).toBeInTheDocument()
-	})
-
-	it('navigates to a new chat with the loop attached when "Edit this loop" is clicked', async () => {
-		const user = userEvent.setup()
-		const loop = buildLoopSummary({ id: 'loop-1', name: 'Billing reliability' })
-		render(<LoopHeader loop={loop} onTogglePause={vi.fn()} isTogglingPause={false} />)
-
-		await user.click(screen.getByRole('button', { name: /edit this loop/i }))
-
-		expect(navigateMock).toHaveBeenCalledWith({
-			to: '/$workspaceId/chats/new',
-			params: { workspaceId: 'ws-1' },
-			search: { objectId: 'loop-1', objectTitle: 'Billing reliability', objectType: 'loop' },
-		})
 	})
 
 	it('calls onTogglePause with "Pause loop" when running', async () => {

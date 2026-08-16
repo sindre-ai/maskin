@@ -12,7 +12,7 @@ import {
 import type { StorageProvider } from '@maskin/storage'
 import { and, asc, desc, eq, ilike, inArray } from 'drizzle-orm'
 import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
-import { createApiError } from '../lib/errors'
+import { createApiError, validationFailureHook } from '../lib/errors'
 import { fileStorageKey, fileViewerUrl, frontendBaseUrl } from '../lib/file-urls'
 import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, workspaceIdHeader } from '../lib/openapi-schemas'
@@ -27,7 +27,7 @@ type Env = {
 	}
 }
 
-const app = new OpenAPIHono<Env>()
+const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 function buildResponse(row: typeof files.$inferSelect, bytes: Buffer, frontendUrl: string) {
 	const encoding = isTextMimeType(row.mimeType) ? 'utf8' : 'base64'

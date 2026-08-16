@@ -75,7 +75,7 @@ export const actorResponseSchema = z.object({
 	agentStateUpdatedAt: z.string().nullable().default(null),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
-	installedPackageId: z.string().uuid().nullable().optional(),
+	installedLoopId: z.string().uuid().nullable().optional(),
 })
 
 export type ActorResponse = z.infer<typeof actorResponseSchema>

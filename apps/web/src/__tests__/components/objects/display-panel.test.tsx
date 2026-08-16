@@ -448,4 +448,22 @@ describe('DisplayPanel', () => {
 			)
 		})
 	})
+
+	describe('Reset to default', () => {
+		it('does not render the footer row when onResetToDefault is unset', async () => {
+			const user = userEvent.setup()
+			renderPanel()
+			await user.click(screen.getByRole('button', { name: /display/i }))
+			expect(screen.queryByRole('button', { name: /reset to default/i })).toBeNull()
+		})
+
+		it('renders and calls onResetToDefault when clicked', async () => {
+			const user = userEvent.setup()
+			const onResetToDefault = vi.fn()
+			renderPanel({ onResetToDefault })
+			await user.click(screen.getByRole('button', { name: /display/i }))
+			await user.click(screen.getByRole('button', { name: /reset to default/i }))
+			expect(onResetToDefault).toHaveBeenCalledTimes(1)
+		})
+	})
 })

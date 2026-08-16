@@ -1,11 +1,23 @@
 import { randomUUID } from 'node:crypto'
+import { vi } from 'vitest'
 import { buildActor, buildWorkspaceMember, buildWorkspaceSkill } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
 
+const { trackWorkspaceSkillAttachedMock } = vi.hoisted(() => ({
+	trackWorkspaceSkillAttachedMock: vi.fn().mockResolvedValue(undefined),
+}))
+vi.mock('../../lib/analytics/workspace-skill-events', () => ({
+	trackWorkspaceSkillAttached: trackWorkspaceSkillAttachedMock,
+}))
+
 const { default: agentSkillAttachmentsRoutes } = await import(
 	'../../routes/agent-skill-attachments'
 )
+
+beforeEach(() => {
+	trackWorkspaceSkillAttachedMock.mockClear()
+})
 
 const callerActorId = 'test-actor-id'
 const workspaceId = '00000000-0000-0000-0000-000000000010'
@@ -228,6 +240,249 @@ describe('Agent Skill Attachments Routes', () => {
 			)
 
 			expect(res.status).toBe(400)
+		})
+
+		it('emits workspace_skill_attached on first attach, defaulting via=ui', async () => {
+			const { app, mockResults } = createTestApp(agentSkillAttachmentsRoutes, '/api/actors')
+			const skill = buildWorkspaceSkill({ id: workspaceSkillId, workspaceId })
+
+			mockResults.selectQueue = [
+				[buildActor({ id: actorId })],
+				[skill],
+				[buildWorkspaceMember({ workspaceId, actorId: callerActorId })],
+				[buildWorkspaceMember({ workspaceId, actorId })],
+			]
+			mockResults.insert = [{ actorId, workspaceSkillId, createdAt: new Date() }]
+
+			await app.request(
+				jsonRequest('POST', `/api/actors/${actorId}/workspace-skills`, { workspaceSkillId }),
+			)
+
+			expect(trackWorkspaceSkillAttachedMock).toHaveBeenCalledOnce()
+			expect(trackWorkspaceSkillAttachedMock).toHaveBeenCalledWith({
+				workspaceId,
+				actorId: callerActorId,
+				agentActorId: actorId,
+				skillName: skill.name,
+				via: 'ui',
+			})
+		})
+
+		it('emits via=mcp when the X-Client-Source header is mcp', async () => {
+			const { app, mockResults } = createTestApp(agentSkillAttachmentsRoutes, '/api/actors')
+			const skill = buildWorkspaceSkill({ id: workspaceSkillId, workspaceId })
+
+			mockResults.selectQueue = [
+				[buildActor({ id: actorId })],
+				[skill],
+				[buildWorkspaceMember({ workspaceId, actorId: callerActorId })],
+				[buildWorkspaceMember({ workspaceId, actorId })],
+			]
+			mockResults.insert = [{ actorId, workspaceSkillId, createdAt: new Date() }]
+
+			const req = jsonRequest('POST', `/api/actors/${actorId}/workspace-skills`, {
+				workspaceSkillId,
+			})
+			req.headers.set('X-Client-Source', 'mcp')
+			await app.request(req)
+
+			expect(trackWorkspaceSkillAttachedMock).toHaveBeenCalledWith(
+				expect.objectContaining({ via: 'mcp' }),
+			)
+		})
+
+		it('does not emit workspace_skill_attached on an idempotent re-attach', async () => {
+			const { app, mockResults } = createTestApp(agentSkillAttachmentsRoutes, '/api/actors')
+			const skill = buildWorkspaceSkill({ id: workspaceSkillId, workspaceId })
+
+			mockResults.selectQueue = [
+				[buildActor({ id: actorId })],
+				[skill],
+				[buildWorkspaceMember({ workspaceId, actorId: callerActorId })],
+				[buildWorkspaceMember({ workspaceId, actorId })],
+				[{ createdAt: new Date() }],
+			]
+			mockResults.insert = []
+
+			await app.request(
+				jsonRequest('POST', `/api/actors/${actorId}/workspace-skills`, { workspaceSkillId }),
+			)
+
+			expect(trackWorkspaceSkillAttachedMock).not.toHaveBeenCalled()
+		})
+	})
+
+	describe('POST /:actorId/workspace-skills/batch', () => {
+		const workspaceSkillId2 = '00000000-0000-0000-0000-000000000031'
+
+		it('returns 404 when the actor does not exist', async () => {
+			const { app, mockResults } = createTestApp(agentSkillAttachmentsRoutes, '/api/actors')
+			mockResults.selectQueue = [[]]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${actorId}/workspace-skills/batch`, {
+					workspaceSkillIds: [workspaceSkillId],
+				}),
+			)
+
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 400 for an empty workspaceSkillIds array', async () => {
+			const { app } = createTestApp(agentSkillAttachmentsRoutes, '/api/actors')
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${actorId}/workspace-skills/batch`, {
+					workspaceSkillIds: [],
+				}),
+			)
+
+			expect(res.status).toBe(400)
+		})
+
+		it('attaches all skills in one call and writes one event per newly attached skill', async () => {
+			const { app, mockResults } = createTestApp(agentSkillAttachmentsRoutes, '/api/actors')
+			const skill1 = buildWorkspaceSkill({ id: workspaceSkillId, workspaceId })
+			const skill2 = buildWorkspaceSkill({ id: workspaceSkillId2, workspaceId })
+
+			// Queue order:
+			//  1. actor lookup
+			//  2. bulk skill lookup
+			//  3. caller membership (bulk)
+			//  4. actor membership (bulk)
+			//  5. bulk insert (agentSkills) — via mockResults.insertQueue
+			//  6. bulk select attachedAt
+			mockResults.selectQueue = [
+				[buildActor({ id: actorId })],
+				[skill1, skill2],
+				[{ workspaceId }],
+				[{ workspaceId }],
+				[
+					{ workspaceSkillId, createdAt: new Date() },
+					{ workspaceSkillId: workspaceSkillId2, createdAt: new Date() },
+				],
+			]
+			mockResults.insertQueue = [
+				[
+					{ actorId, workspaceSkillId, createdAt: new Date() },
+					{ actorId, workspaceSkillId: workspaceSkillId2, createdAt: new Date() },
+				],
+				[],
+			]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${actorId}/workspace-skills/batch`, {
+					workspaceSkillIds: [workspaceSkillId, workspaceSkillId2],
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).toHaveLength(2)
+			expect(body.every((r: { success: boolean }) => r.success)).toBe(true)
+			expect(body[0].skill.id).toBe(workspaceSkillId)
+			expect(body[1].skill.id).toBe(workspaceSkillId2)
+		})
+
+		it('reports a per-skill error without failing the whole batch', async () => {
+			const { app, mockResults } = createTestApp(agentSkillAttachmentsRoutes, '/api/actors')
+			const skill1 = buildWorkspaceSkill({ id: workspaceSkillId, workspaceId })
+			// workspaceSkillId2 is intentionally NOT returned by the bulk skill lookup,
+			// simulating a nonexistent skill ID mixed into the batch.
+
+			mockResults.selectQueue = [
+				[buildActor({ id: actorId })],
+				[skill1],
+				[{ workspaceId }],
+				[{ workspaceId }],
+				[{ workspaceSkillId, createdAt: new Date() }],
+			]
+			mockResults.insertQueue = [[{ actorId, workspaceSkillId, createdAt: new Date() }], []]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${actorId}/workspace-skills/batch`, {
+					workspaceSkillIds: [workspaceSkillId, workspaceSkillId2],
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body[0].success).toBe(true)
+			expect(body[1].success).toBe(false)
+			expect(body[1].workspaceSkillId).toBe(workspaceSkillId2)
+			expect(body[1].error).toContain('not found')
+		})
+
+		it('reports a per-skill error when the caller is not a member of the skill workspace', async () => {
+			const { app, mockResults, calls } = createTestApp(agentSkillAttachmentsRoutes, '/api/actors')
+			const skill = buildWorkspaceSkill({ id: workspaceSkillId, workspaceId })
+
+			// Queue order:
+			//  1. actor lookup
+			//  2. bulk skill lookup
+			//  3. caller membership (bulk) — caller is NOT a member of `workspaceId`
+			//  4. actor membership (bulk) — target actor IS a member
+			mockResults.selectQueue = [[buildActor({ id: actorId })], [skill], [], [{ workspaceId }]]
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${actorId}/workspace-skills/batch`, {
+					workspaceSkillIds: [workspaceSkillId],
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).toHaveLength(1)
+			expect(body[0].success).toBe(false)
+			expect(body[0].error).toContain("Not a member of the skill's workspace")
+			// Caller-authorization failure must not insert an attachment row.
+			expect(calls.inserts).toHaveLength(0)
+		})
+
+		it('returns 400 when workspaceSkillIds contains a duplicate id', async () => {
+			const { app } = createTestApp(agentSkillAttachmentsRoutes, '/api/actors')
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${actorId}/workspace-skills/batch`, {
+					workspaceSkillIds: [workspaceSkillId, workspaceSkillId],
+				}),
+			)
+
+			expect(res.status).toBe(400)
+		})
+
+		it('emits workspace_skill_attached once per newly attached skill in a batch', async () => {
+			const { app, mockResults } = createTestApp(agentSkillAttachmentsRoutes, '/api/actors')
+			const skill1 = buildWorkspaceSkill({ id: workspaceSkillId, workspaceId })
+			const skill2 = buildWorkspaceSkill({ id: workspaceSkillId2, workspaceId })
+
+			mockResults.selectQueue = [
+				[buildActor({ id: actorId })],
+				[skill1, skill2],
+				[{ workspaceId }],
+				[{ workspaceId }],
+				[
+					{ workspaceSkillId, createdAt: new Date() },
+					{ workspaceSkillId: workspaceSkillId2, createdAt: new Date() },
+				],
+			]
+			// Only skill1 is newly inserted — skill2 was already attached.
+			mockResults.insertQueue = [[{ actorId, workspaceSkillId, createdAt: new Date() }], []]
+
+			const req = jsonRequest('POST', `/api/actors/${actorId}/workspace-skills/batch`, {
+				workspaceSkillIds: [workspaceSkillId, workspaceSkillId2],
+			})
+			req.headers.set('X-Client-Source', 'mcp')
+			await app.request(req)
+
+			expect(trackWorkspaceSkillAttachedMock).toHaveBeenCalledTimes(1)
+			expect(trackWorkspaceSkillAttachedMock).toHaveBeenCalledWith({
+				workspaceId,
+				actorId: callerActorId,
+				agentActorId: actorId,
+				skillName: skill1.name,
+				via: 'mcp',
+			})
 		})
 	})
 

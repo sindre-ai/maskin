@@ -199,7 +199,7 @@ export function buildTriggerResponse(overrides: Partial<TriggerResponse> = {}): 
 		workspaceId: 'ws-1',
 		name: 'Test Trigger',
 		type: 'cron',
-		config: { schedule: '0 * * * *' },
+		config: { expression: '0 * * * *' },
 		actionPrompt: 'Run something',
 		targetActorId: 'actor-1',
 		enabled: true,

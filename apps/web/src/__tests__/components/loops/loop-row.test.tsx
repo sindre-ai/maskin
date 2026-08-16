@@ -82,7 +82,49 @@ describe('LoopRow', () => {
 	it('renders "Waiting on you" pill when the loop is waiting', () => {
 		render(<LoopRow loop={buildLoop({ pill: 'waiting_on_you' })} actors={[]} />)
 
-		expect(screen.getByText('Waiting on you')).toBeInTheDocument()
+		expect(screen.getByTestId('loop-pill')).toHaveTextContent('Waiting on you')
+	})
+
+	it('renders "X items in progress" as the last-activity line while work is active', () => {
+		render(<LoopRow loop={buildLoop({ inProgressCount: 6, closedCount: 128 })} actors={[]} />)
+
+		expect(screen.getByText('6 items in progress')).toBeInTheDocument()
+	})
+
+	it('renders "X items completed" as last activity when nothing is in progress', () => {
+		render(<LoopRow loop={buildLoop({ inProgressCount: 0, closedCount: 5 })} actors={[]} />)
+
+		expect(screen.getByText('5 items completed')).toBeInTheDocument()
+	})
+
+	it('renders "Paused — not running" as last activity when paused', () => {
+		render(<LoopRow loop={buildLoop({ pill: 'paused' })} actors={[]} />)
+
+		expect(screen.getByText('Paused — not running')).toBeInTheDocument()
+	})
+
+	it('renders the decision-point count in last activity when waiting on the viewer', () => {
+		render(
+			<LoopRow
+				loop={buildLoop({ pill: 'waiting_on_you', humanDecisionPoints: 3, inProgressCount: 0 })}
+				actors={[]}
+			/>,
+		)
+
+		expect(screen.getByText('Waiting on you — 3 decision points open')).toBeInTheDocument()
+	})
+
+	it("renders the first agent's avatar next to the last-activity line", () => {
+		const actors = [
+			buildActor({ id: 'a1', name: 'Compass' }),
+			buildActor({ id: 'a2', name: 'Sentinel' }),
+		]
+		render(
+			<LoopRow loop={buildLoop({ agentIds: ['a1', 'a2'], inProgressCount: 2 })} actors={actors} />,
+		)
+
+		expect(screen.getByText('2 items in progress')).toBeInTheDocument()
+		expect(screen.getAllByTitle('Compass').length).toBeGreaterThan(0)
 	})
 
 	it("renders agent avatars for the loop's agents (up to 5)", () => {
@@ -93,8 +135,8 @@ describe('LoopRow', () => {
 		const loop = buildLoop({ agentIds: ['a1', 'a2'] })
 		render(<LoopRow loop={loop} actors={actors} />)
 
-		expect(screen.getByTitle('Compass')).toBeInTheDocument()
-		expect(screen.getByTitle('Sentinel')).toBeInTheDocument()
+		expect(screen.getAllByTitle('Compass').length).toBeGreaterThan(0)
+		expect(screen.getAllByTitle('Sentinel').length).toBeGreaterThan(0)
 	})
 
 	it('collapses agents past 5 into an overflow chip', () => {

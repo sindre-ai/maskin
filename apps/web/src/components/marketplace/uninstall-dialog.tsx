@@ -10,18 +10,18 @@ import {
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Spinner } from '@/components/ui/spinner'
-import { useUninstallPackage } from '@/hooks/use-installed-packages'
+import { useUninstallLoop } from '@/hooks/use-installed-loops'
 import { useState } from 'react'
 
 interface UninstallDialogProps {
 	open: boolean
 	onOpenChange: (open: boolean) => void
 	workspaceId: string
-	// Required for package uninstall; omit when providing onConfirm.
-	installedPackageId?: string
-	packageName: string
+	// Required for loop uninstall; omit when providing onConfirm.
+	installedLoopId?: string
+	loopName: string
 	isLocked: boolean
-	// Override the internal package-uninstall mutation (e.g. for individual items).
+	// Override the internal loop-uninstall mutation (e.g. for individual items).
 	onConfirm?: (keepItems: boolean) => void
 	confirmPending?: boolean
 }
@@ -30,13 +30,13 @@ export function UninstallDialog({
 	open,
 	onOpenChange,
 	workspaceId,
-	installedPackageId,
-	packageName,
+	installedLoopId,
+	loopName,
 	isLocked,
 	onConfirm,
 	confirmPending,
 }: UninstallDialogProps) {
-	const uninstall = useUninstallPackage(workspaceId)
+	const uninstall = useUninstallLoop(workspaceId)
 	const [keepItems, setKeepItems] = useState(false)
 
 	const isPending = onConfirm ? (confirmPending ?? false) : uninstall.isPending
@@ -46,9 +46,9 @@ export function UninstallDialog({
 			onConfirm(keepItems)
 			return
 		}
-		if (!installedPackageId) return
+		if (!installedLoopId) return
 		uninstall.mutate(
-			{ installedPackageId, keepProvisionedItems: keepItems },
+			{ installedLoopId, keepProvisionedItems: keepItems },
 			{ onSuccess: () => onOpenChange(false) },
 		)
 	}
@@ -57,11 +57,11 @@ export function UninstallDialog({
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent>
 				<DialogHeader>
-					<DialogTitle>Remove {packageName}?</DialogTitle>
+					<DialogTitle>Remove {loopName}?</DialogTitle>
 					<DialogDescription>
 						{isLocked
-							? 'This package has provisioned agents, triggers, and skills in your workspace.'
-							: 'This package has agents, triggers, and skills in your workspace.'}
+							? 'This loop has provisioned agents, triggers, and skills in your workspace.'
+							: 'This loop has agents, triggers, and skills in your workspace.'}
 					</DialogDescription>
 				</DialogHeader>
 
@@ -76,7 +76,7 @@ export function UninstallDialog({
 							<span className="font-medium">Remove everything</span>
 							<br />
 							<span className="text-xs text-muted-foreground">
-								Deletes all agents, triggers, and skills from this package.
+								Deletes all agents, triggers, and skills from this loop.
 							</span>
 						</Label>
 					</div>

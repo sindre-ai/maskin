@@ -1,19 +1,22 @@
-import { ObjectActivity } from '@/components/activity/object-activity'
 import { PageHeader } from '@/components/layout/page-header'
+import { LoopActivity } from '@/components/loops/loop-activity'
+import { LoopChanges } from '@/components/loops/loop-changes'
 import { LoopFlow } from '@/components/loops/loop-flow'
 import { LoopHeader } from '@/components/loops/loop-header'
 import { LoopStats } from '@/components/loops/loop-stats'
+import { LoopSummary } from '@/components/loops/loop-summary'
+import { LoopUtteranceInput } from '@/components/loops/loop-utterance-input'
 import { EmptyState } from '@/components/shared/empty-state'
 import { Skeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
 import { useActors } from '@/hooks/use-actors'
 import { useEntityEvents } from '@/hooks/use-events'
-import { useLoop } from '@/hooks/use-loops'
+import { useLoop, useLoopActivity } from '@/hooks/use-loops'
 import { useObject, useObjects, useUpdateObject } from '@/hooks/use-objects'
 import { useRelationships } from '@/hooks/use-relationships'
 import { useTriggers } from '@/hooks/use-triggers'
 import { useWorkspace } from '@/lib/workspace-context'
-import { createFileRoute } from '@tanstack/react-router'
+import { Link, createFileRoute } from '@tanstack/react-router'
 
 /** Relationship type marking loop membership — mirrors
  * `LOOP_MEMBERSHIP_RELATIONSHIP_TYPE` in `apps/dev/src/routes/loops.ts`.
@@ -43,6 +46,7 @@ function LoopDetailPage() {
 		{ enabled: childIds.length > 0 },
 	)
 	const { data: events } = useEntityEvents(workspaceId, loopId)
+	const { data: activityEvents } = useLoopActivity(loopId, workspaceId)
 	const updateObject = useUpdateObject(workspaceId)
 
 	if (loopLoading && !loop) {
@@ -68,6 +72,8 @@ function LoopDetailPage() {
 	}
 
 	const loopTriggers = (triggers ?? []).filter((t) => loop.triggerIds.includes(t.id))
+	const installedFromMarketplaceLoopId = object?.metadata?.installed_from_marketplace_loop_id
+	const isInstalledFromMarketplace = typeof installedFromMarketplaceLoopId === 'string'
 
 	return (
 		<>
@@ -84,6 +90,20 @@ function LoopDetailPage() {
 					}
 				/>
 
+				{isInstalledFromMarketplace && (
+					<Link
+						to="/$workspaceId/marketplace"
+						params={{ workspaceId }}
+						className="text-[11px] text-muted-foreground hover:text-foreground hover:underline"
+					>
+						Installed from marketplace
+					</Link>
+				)}
+
+				<LoopUtteranceInput loop={loop} />
+
+				<LoopSummary loop={loop} />
+
 				<LoopStats loop={loop} />
 
 				<LoopFlow
@@ -91,13 +111,12 @@ function LoopDetailPage() {
 					triggers={loopTriggers}
 					actors={actors}
 					childObjects={children ?? []}
+					loop={loop}
 				/>
 
-				{object && (
-					<div>
-						<ObjectActivity workspaceId={workspaceId} object={object} events={events} />
-					</div>
-				)}
+				<LoopActivity workspaceId={workspaceId} events={activityEvents} />
+
+				<LoopChanges workspaceId={workspaceId} loopId={loop.id} events={events} />
 			</div>
 		</>
 	)

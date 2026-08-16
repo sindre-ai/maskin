@@ -1,36 +1,44 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { CCD_ACTOR_IDS, CCD_PACKAGE, CCD_TRIGGER_IDS } from '../../lib/catalog-packages/ccd-package'
-import { DEV_PIPELINE_PACKAGE } from '../../lib/catalog-packages/dev-pipeline-package'
-import { GROWTH_BET_PACKAGE } from '../../lib/catalog-packages/growth-bet-package'
-import { GROWTH_BRAND_DEMAND_PACKAGE } from '../../lib/catalog-packages/growth-brand-demand-package'
-import { GROWTH_CONTENT_INSIGHT_PACKAGE } from '../../lib/catalog-packages/growth-content-insight-package'
-import { GROWTH_DEAL_RELATIONSHIP_PACKAGE } from '../../lib/catalog-packages/growth-deal-relationship-package'
-import { GROWTH_LEAD_GEN_PACKAGE } from '../../lib/catalog-packages/growth-lead-gen-package'
-import { GROWTH_MEETING_PACKAGE } from '../../lib/catalog-packages/growth-meeting-package'
-import { GROWTH_OPS_KNOWLEDGE_PACKAGE } from '../../lib/catalog-packages/growth-ops-knowledge-package'
-import { GROWTH_SDR_OUTREACH_PACKAGE } from '../../lib/catalog-packages/growth-sdr-outreach-package'
-import { STRATEGY_GROWTH_PACKAGE } from '../../lib/catalog-packages/strategy-growth-package'
-import { TEAM_OPS_PACKAGE } from '../../lib/catalog-packages/team-ops-package'
-import { maybeBootstrapDev, seedCatalogIfEmpty, seedCatalogPackages } from '../../lib/dev-bootstrap'
+import {
+	maybeBootstrapDev,
+	seedMarketplaceIfEmpty,
+	seedMarketplaceLoops,
+} from '../../lib/dev-bootstrap'
+import { CCD_ACTOR_IDS, CCD_LOOP, CCD_TRIGGER_IDS } from '../../lib/marketplace-loops/ccd-loop'
+import { DEV_PIPELINE_LOOP } from '../../lib/marketplace-loops/dev-pipeline-loop'
+import { GROWTH_BET_LOOP } from '../../lib/marketplace-loops/growth-bet-loop'
+import { GROWTH_BRAND_DEMAND_LOOP } from '../../lib/marketplace-loops/growth-brand-demand-loop'
+import { GROWTH_CONTENT_INSIGHT_LOOP } from '../../lib/marketplace-loops/growth-content-insight-loop'
+import { GROWTH_DEAL_RELATIONSHIP_LOOP } from '../../lib/marketplace-loops/growth-deal-relationship-loop'
+import { GROWTH_LEAD_GEN_LOOP } from '../../lib/marketplace-loops/growth-lead-gen-loop'
+import { GROWTH_MEETING_LOOP } from '../../lib/marketplace-loops/growth-meeting-loop'
+import { GROWTH_OPS_KNOWLEDGE_LOOP } from '../../lib/marketplace-loops/growth-ops-knowledge-loop'
+import { GROWTH_SDR_OUTREACH_LOOP } from '../../lib/marketplace-loops/growth-sdr-outreach-loop'
+import { STRATEGY_GROWTH_LOOP } from '../../lib/marketplace-loops/strategy-growth-loop'
+import { TEAM_OPS_LOOP } from '../../lib/marketplace-loops/team-ops-loop'
 import { createTestContext } from '../setup'
 
 const ALL_PACKAGES = [
-	CCD_PACKAGE,
-	DEV_PIPELINE_PACKAGE,
-	STRATEGY_GROWTH_PACKAGE,
-	TEAM_OPS_PACKAGE,
-	GROWTH_LEAD_GEN_PACKAGE,
-	GROWTH_SDR_OUTREACH_PACKAGE,
-	GROWTH_DEAL_RELATIONSHIP_PACKAGE,
-	GROWTH_CONTENT_INSIGHT_PACKAGE,
-	GROWTH_BRAND_DEMAND_PACKAGE,
-	GROWTH_BET_PACKAGE,
-	GROWTH_OPS_KNOWLEDGE_PACKAGE,
-	GROWTH_MEETING_PACKAGE,
+	CCD_LOOP,
+	DEV_PIPELINE_LOOP,
+	STRATEGY_GROWTH_LOOP,
+	TEAM_OPS_LOOP,
+	GROWTH_LEAD_GEN_LOOP,
+	GROWTH_SDR_OUTREACH_LOOP,
+	GROWTH_DEAL_RELATIONSHIP_LOOP,
+	GROWTH_CONTENT_INSIGHT_LOOP,
+	GROWTH_BRAND_DEMAND_LOOP,
+	GROWTH_BET_LOOP,
+	GROWTH_OPS_KNOWLEDGE_LOOP,
+	GROWTH_MEETING_LOOP,
 ]
 
-function matchingCatalogRows() {
-	return ALL_PACKAGES.map((pkg, i) => ({ id: `pkg-${i}`, slug: pkg.slug, version: pkg.version }))
+function matchingMarketplaceRows() {
+	return ALL_PACKAGES.map((loop, i) => ({
+		id: `loop-${i}`,
+		slug: loop.slug,
+		version: loop.version,
+	}))
 }
 
 describe('maybeBootstrapDev', () => {
@@ -148,7 +156,7 @@ describe('maybeBootstrapDev', () => {
 	})
 })
 
-describe('seedCatalogIfEmpty', () => {
+describe('seedMarketplaceIfEmpty', () => {
 	const originalEnv = { ...process.env }
 
 	afterEach(() => {
@@ -156,12 +164,12 @@ describe('seedCatalogIfEmpty', () => {
 		vi.restoreAllMocks()
 	})
 
-	it('does nothing in production, even on an empty catalog', async () => {
+	it('does nothing in production, even on an empty marketplace', async () => {
 		process.env.NODE_ENV = 'production'
 		const { db, mockResults, calls } = createTestContext()
 		mockResults.select = []
 
-		await seedCatalogIfEmpty(db)
+		await seedMarketplaceIfEmpty(db)
 
 		expect(calls.inserts).toEqual([])
 	})
@@ -172,34 +180,34 @@ describe('seedCatalogIfEmpty', () => {
 		const { db, mockResults, calls } = createTestContext()
 		mockResults.select = []
 
-		await seedCatalogIfEmpty(db)
+		await seedMarketplaceIfEmpty(db)
 
 		expect(calls.inserts).toEqual([])
 	})
 
-	it("no-ops when every package's version already matches the catalog", async () => {
+	it("no-ops when every loop's version already matches the marketplace", async () => {
 		process.env.NODE_ENV = 'development'
 		process.env.MASKIN_AUTO_BOOTSTRAP = 'true'
 		const { db, mockResults, calls } = createTestContext()
-		mockResults.select = matchingCatalogRows()
+		mockResults.select = matchingMarketplaceRows()
 
-		await seedCatalogIfEmpty(db)
+		await seedMarketplaceIfEmpty(db)
 
 		expect(calls.inserts).toEqual([])
 		expect(calls.updates).toEqual([])
 	})
 
-	it('inserts all 12 Loop packages when the catalog is empty', async () => {
+	it('inserts all 12 loops when the marketplace is empty', async () => {
 		process.env.NODE_ENV = 'development'
 		process.env.MASKIN_AUTO_BOOTSTRAP = 'true'
 		const { db, mockResults, calls } = createTestContext()
 		mockResults.select = []
-		mockResults.insert = [{ id: 'pkg-1' }]
+		mockResults.insert = [{ id: 'loop-1' }]
 
-		await seedCatalogIfEmpty(db)
+		await seedMarketplaceIfEmpty(db)
 
-		// Every package does one catalog_packages insert (values() called with a
-		// single object carrying `slug`) and one catalog_package_items insert
+		// Every loop does one marketplace_loops insert (values() called with a
+		// single object carrying `slug`) and one marketplace_loop_items insert
 		// (values() called with an array), in that order.
 		const packageInserts = calls.inserts.filter(
 			(v): v is { slug: string } =>
@@ -221,7 +229,7 @@ describe('seedCatalogIfEmpty', () => {
 	})
 })
 
-describe('seedCatalogPackages', () => {
+describe('seedMarketplaceLoops', () => {
 	const originalEnv = { ...process.env }
 
 	afterEach(() => {
@@ -229,13 +237,13 @@ describe('seedCatalogPackages', () => {
 		vi.restoreAllMocks()
 	})
 
-	it('inserts every package even when NODE_ENV is production — scripts/seed-catalog.ts (the deploy-time entrypoint) calls this directly, unguarded', async () => {
+	it('inserts every loop even when NODE_ENV is production — scripts/seed-marketplace.ts (the deploy-time entrypoint) calls this directly, unguarded', async () => {
 		process.env.NODE_ENV = 'production'
 		const { db, mockResults, calls } = createTestContext()
 		mockResults.select = []
-		mockResults.insert = [{ id: 'pkg-1' }]
+		mockResults.insert = [{ id: 'loop-1' }]
 
-		const result = await seedCatalogPackages(db)
+		const result = await seedMarketplaceLoops(db)
 
 		expect(result.inserted.length).toBe(12)
 		expect(result.updated).toEqual([])
@@ -243,12 +251,12 @@ describe('seedCatalogPackages', () => {
 		expect(calls.inserts.length).toBeGreaterThan(0)
 	})
 
-	it("no-ops when every package's version already matches, regardless of NODE_ENV", async () => {
+	it("no-ops when every loop's version already matches, regardless of NODE_ENV", async () => {
 		process.env.NODE_ENV = 'production'
 		const { db, mockResults, calls } = createTestContext()
-		mockResults.select = matchingCatalogRows()
+		mockResults.select = matchingMarketplaceRows()
 
-		const result = await seedCatalogPackages(db)
+		const result = await seedMarketplaceLoops(db)
 
 		expect(result.inserted).toEqual([])
 		expect(result.updated).toEqual([])
@@ -256,17 +264,17 @@ describe('seedCatalogPackages', () => {
 		expect(calls.inserts).toEqual([])
 	})
 
-	it('updates a package and replaces its items when its version has changed', async () => {
+	it('updates a loop and replaces its items when its version has changed', async () => {
 		process.env.NODE_ENV = 'production'
 		const { db, mockResults, calls } = createTestContext()
-		mockResults.select = matchingCatalogRows().map((row) =>
-			row.slug === CCD_PACKAGE.slug ? { ...row, version: 'stale-version' } : row,
+		mockResults.select = matchingMarketplaceRows().map((row) =>
+			row.slug === CCD_LOOP.slug ? { ...row, version: 'stale-version' } : row,
 		)
-		mockResults.insert = [{ id: 'pkg-1' }]
+		mockResults.insert = [{ id: 'loop-1' }]
 
-		const result = await seedCatalogPackages(db)
+		const result = await seedMarketplaceLoops(db)
 
-		expect(result.updated).toEqual([CCD_PACKAGE.slug])
+		expect(result.updated).toEqual([CCD_LOOP.slug])
 		expect(result.inserted).toEqual([])
 		expect(result.unchanged.length).toBe(11)
 		expect(calls.updates.length).toBe(1)

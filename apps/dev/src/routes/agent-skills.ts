@@ -9,7 +9,7 @@ import {
 	skillNameSchema,
 } from '@maskin/shared'
 import { and, eq } from 'drizzle-orm'
-import { createApiError } from '../lib/errors'
+import { createApiError, validationFailureHook } from '../lib/errors'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import type { AgentStorageManager } from '../services/agent-storage'
 
@@ -21,7 +21,7 @@ type Env = {
 	}
 }
 
-const app = new OpenAPIHono<Env>()
+const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 // Verify caller is a member of the workspace
 async function requireWorkspaceMember(db: Database, workspaceId: string, actorId: string) {

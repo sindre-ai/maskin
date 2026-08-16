@@ -8,7 +8,7 @@ import {
 	updateNotificationSchema,
 } from '@maskin/shared'
 import { and, eq, inArray } from 'drizzle-orm'
-import { createApiError } from '../lib/errors'
+import { createApiError, validationFailureHook } from '../lib/errors'
 import { logger } from '../lib/logger'
 import {
 	errorSchema,
@@ -29,7 +29,7 @@ type Env = {
 	}
 }
 
-const app = new OpenAPIHono<Env>()
+const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 // POST /api/notifications
 const createNotificationRoute = createRoute({

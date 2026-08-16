@@ -46,8 +46,8 @@ export function WorkspaceSwitcher() {
 		queryClient.removeQueries({ queryKey: queryKeys.files.all(id) })
 		queryClient.removeQueries({ queryKey: queryKeys.subscriptions.unread(id) })
 		queryClient.removeQueries({ queryKey: queryKeys.userDisplaySettings.list(id) })
-		queryClient.removeQueries({ queryKey: queryKeys.installedPackages.all(id) })
-		queryClient.removeQueries({ queryKey: queryKeys.catalogItems.installed(id) })
+		queryClient.removeQueries({ queryKey: queryKeys.installedLoops.all(id) })
+		queryClient.removeQueries({ queryKey: queryKeys.marketplaceItems.installed(id) })
 		queryClient.removeQueries({ queryKey: queryKeys.claudeOauth.status(id) })
 		queryClient.removeQueries({ queryKey: queryKeys.events.history(id) })
 	}

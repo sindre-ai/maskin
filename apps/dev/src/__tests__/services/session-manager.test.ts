@@ -98,6 +98,7 @@ import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import type { StorageProvider } from '@maskin/storage'
 import { getProvider } from '../../lib/integrations/registry'
+import { logger } from '../../lib/logger'
 import { AgentStorageManager } from '../../services/agent-storage'
 import { SessionManager, mergeLaunchRouteConfig } from '../../services/session-manager'
 import { buildIntegration, buildSession } from '../factories'
@@ -2018,6 +2019,35 @@ describe('SessionManager', () => {
 			expect(calls.inserts.length).toBe(initialInsertCount)
 		})
 
+		// Regression coverage for docs/runbooks/agent-session-failures-2026-08-11.md,
+		// Issue 3's suggested fix: the CAS-miss no-op used to be completely
+		// silent (no log at any level), which is exactly why the null-vs-1 exit
+		// code mismatch for session 4d1f3c8b required host log spelunking to
+		// diagnose instead of being visible from app logs alone.
+		it('logs a warning with the dropped exit code and current session state when the CAS update matches no row', async () => {
+			const session = buildSession({ status: 'completed', result: { exit_code: 0 } })
+			mockResults.update = [] // .returning() → no row: UPDATE matched nothing (already terminal)
+			// 1st select: markRemoteSessionComplete's own usage extraction (reads
+			// session_logs) — empty means "no usage found". 2nd select: final-
+			// message extraction, same fallback shape. 3rd select: the best-effort
+			// lookup used only to enrich the dropped-signal log line.
+			mockResults.selectQueue = [[], [], [session]]
+			const warnSpy = vi.spyOn(logger, 'warn')
+
+			await manager.markRemoteSessionComplete(session.id, 1)
+
+			expect(warnSpy).toHaveBeenCalledWith(
+				'Completion signal dropped — session already terminal or not found',
+				expect.objectContaining({
+					sessionId: session.id,
+					droppedExitCode: 1,
+					droppedStoppedByUser: false,
+					currentStatus: 'completed',
+					currentResult: { exit_code: 0 },
+				}),
+			)
+		})
+
 		it('inserts exactly one session_failed event when the CAS update matches a row (nonzero exit code)', async () => {
 			const session = buildSession({ status: 'running' })
 			mockResults.updateQueue = [[session], []]
@@ -2062,11 +2092,38 @@ describe('SessionManager', () => {
 			]
 			// The fallback lookup after CAS retries are exhausted finds nothing
 			// (unconfigured select defaults to []) — nothing left to clean up.
+			// This is a legitimate terminal outcome (not a DB failure a caller
+			// could usefully retry), so it still resolves `true`.
 			const initialInsertCount = calls.inserts.length
 
-			await expect(
-				manager.markRemoteSessionComplete('some-session-id', 137),
-			).resolves.toBeUndefined()
+			await expect(manager.markRemoteSessionComplete('some-session-id', 137)).resolves.toBe(true)
+
+			expect(calls.inserts.length).toBe(initialInsertCount)
+		})
+
+		// Regression coverage: the route handler for POST
+		// /sessions/:id/complete (apps/dev/src/routes/agent-server-reconcile.ts)
+		// used to report `{ ok: true }` unconditionally, even when this method
+		// gave up without ever confirming the row's state — silently defeating
+		// the agent-server's own retry-on-failure logic. `false` is reserved
+		// for exactly this "we have no idea what happened" case, distinct from
+		// every other early-return above (already terminal / not found /
+		// resolved by a concurrent call), which are legitimate no-ops and
+		// still resolve `true`.
+		it('gives up and returns false when the fallback lookup after CAS retries also throws', async () => {
+			mockResults.updateErrorQueue = [
+				new Error('connection reset'),
+				new Error('connection reset'),
+				new Error('connection reset'),
+			]
+			// 1st select: usage extraction (empty = no-op). 2nd select: final-
+			// message extraction (empty = no-op). 3rd select: the fallback lookup
+			// itself throws — the DB is still unreachable.
+			mockResults.selectQueue = [[], []]
+			mockResults.selectErrorQueue = [undefined, undefined, new Error('connection reset')]
+			const initialInsertCount = calls.inserts.length
+
+			await expect(manager.markRemoteSessionComplete('some-session-id', 137)).resolves.toBe(false)
 
 			expect(calls.inserts.length).toBe(initialInsertCount)
 		})
@@ -2576,7 +2633,12 @@ describe('SessionManager', () => {
 			await manager.startSession(session.id)
 
 			expect(pullAgentFilesSpy).toHaveBeenCalledWith('actor-1', 'ws-1', expect.any(String))
-			expect(pullWorkspaceSkillsSpy).toHaveBeenCalledWith('actor-1', 'ws-1', expect.any(String))
+			expect(pullWorkspaceSkillsSpy).toHaveBeenCalledWith(
+				'actor-1',
+				'ws-1',
+				expect.any(String),
+				expect.objectContaining({ sessionId: expect.any(String) }),
+			)
 
 			const agentFilesOrder = pullAgentFilesSpy.mock.invocationCallOrder[0] ?? 0
 			const workspaceSkillsOrder = pullWorkspaceSkillsSpy.mock.invocationCallOrder[0] ?? 0
@@ -2615,7 +2677,12 @@ describe('SessionManager', () => {
 			await manager.startSession(session.id)
 
 			expect(pullWorkspaceSkillsSpy).toHaveBeenCalledTimes(1)
-			expect(pullWorkspaceSkillsSpy).toHaveBeenCalledWith('actor-2', 'ws-2', expect.any(String))
+			expect(pullWorkspaceSkillsSpy).toHaveBeenCalledWith(
+				'actor-2',
+				'ws-2',
+				expect.any(String),
+				expect.objectContaining({ sessionId: expect.any(String) }),
+			)
 		})
 	})
 
@@ -3287,6 +3354,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // extractSessionFinalMessage fallback
 				[otherSession], // hasOtherActiveSessions: agent still has live work
 			]
 
@@ -3301,6 +3369,80 @@ describe('SessionManager', () => {
 					typeof u === 'object' && u !== null && 'agentState' in (u as Record<string, unknown>),
 			)
 			expect(actorUpdate).toBeUndefined()
+		})
+	})
+
+	describe('handleCompletion() — final_message capture', () => {
+		beforeEach(() => {
+			vi.spyOn(AgentStorageManager.prototype, 'pushAgentFiles').mockResolvedValue(undefined)
+			mockClassifyCreditExhaustion.mockReturnValue(null)
+		})
+
+		it("captures the agent's final answer into session.result.final_message from the in-memory stdout tail", async () => {
+			const session = buildSession({ status: 'running' })
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, {
+				tempDir: '/tmp/test',
+				stdoutTail: JSON.stringify({
+					type: 'result',
+					subtype: 'success',
+					result: '```json maskin_agent_builder_result\n{"kind":"created"}\n```',
+				}),
+			})
+
+			mockResults.selectQueue = [
+				[session], // handleCompletion: load session
+			]
+
+			await (
+				manager as unknown as {
+					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', 0)
+
+			const sessionUpdate = calls.updates.find(
+				(u): u is { result: { exit_code: number; final_message?: string } } =>
+					typeof u === 'object' &&
+					u !== null &&
+					'result' in (u as Record<string, unknown>) &&
+					typeof (u as Record<string, unknown>).result === 'object',
+			)
+			expect(sessionUpdate?.result?.final_message).toBe(
+				'```json maskin_agent_builder_result\n{"kind":"created"}\n```',
+			)
+		})
+
+		it('omits final_message from session.result when no stream-json result event is found anywhere', async () => {
+			const session = buildSession({ status: 'running' })
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
+
+			mockResults.selectQueue = [
+				[session], // handleCompletion: load session
+				[], // extractSessionUsage fallback
+				[], // extractSessionFinalMessage fallback
+			]
+
+			await (
+				manager as unknown as {
+					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', 0)
+
+			const sessionUpdate = calls.updates.find(
+				(u): u is { result: { exit_code: number; final_message?: string } } =>
+					typeof u === 'object' &&
+					u !== null &&
+					'result' in (u as Record<string, unknown>) &&
+					typeof (u as Record<string, unknown>).result === 'object',
+			)
+			expect(sessionUpdate?.result?.final_message).toBeUndefined()
 		})
 	})
 
@@ -3512,6 +3654,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // extractSessionFinalMessage fallback
 				[], // hasOtherActiveSessions
 				[], // existing runtime failover retry lookup
 				[
@@ -3605,6 +3748,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
+				[], // extractSessionFinalMessage fallback
 				[], // hasOtherActiveSessions
 				[
 					{

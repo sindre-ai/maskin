@@ -27,7 +27,7 @@ const routeConfig: Record<string, RouteConfig> = {
 		label: 'Object Details',
 		parent: '/_authed/$workspaceId/objects/',
 	},
-	'/_authed/$workspaceId/agents': { label: 'Agents' },
+	'/_authed/$workspaceId/agents/': { label: 'Agents' },
 	'/_authed/$workspaceId/settings/': { label: 'Settings' },
 	'/_authed/$workspaceId/settings/keys': {
 		label: 'LLM',
@@ -66,6 +66,17 @@ const routeConfig: Record<string, RouteConfig> = {
 	'/_authed/$workspaceId/loops/$loopId': {
 		label: 'Loop Details',
 		parent: '/_authed/$workspaceId/loops/',
+	},
+	'/_authed/$workspaceId/marketplace/': {
+		label: 'Marketplace',
+	},
+	'/_authed/$workspaceId/marketplace/$loopId/': {
+		label: 'Marketplace Item',
+		parent: '/_authed/$workspaceId/marketplace/',
+	},
+	'/_authed/$workspaceId/marketplace/$loopId/$itemId': {
+		label: 'Marketplace Item',
+		parent: '/_authed/$workspaceId/marketplace/$loopId/',
 	},
 }
 

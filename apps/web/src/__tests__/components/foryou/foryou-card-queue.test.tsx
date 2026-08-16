@@ -240,6 +240,22 @@ describe('ForYouCardQueue', () => {
 		expect(skipMock).not.toHaveBeenCalled()
 	})
 
+	// Regression guard: the founder-QA punch list requires the bottom action bar
+	// to sit flat on the card with no border and no background fill. The card
+	// itself is `overflow-hidden` and the queue container reserves 96px (`pb-24`)
+	// below it, so buttons live in that reserved strip — no scroll-behind risk
+	// even without a frosted surface. Re-introducing the frost is a regression.
+	it('renders the fixed action bar with no border or background fill', () => {
+		render(<ForYouCardQueue workspaceId="ws-1" queue={[buildItem('a')]} />)
+
+		const markRead = screen.getByRole('button', { name: 'Mark as read' })
+		const bar = markRead.closest('div.fixed')
+		expect(bar).not.toBeNull()
+		expect(bar?.className).not.toContain('bg-background/95')
+		expect(bar?.className).not.toContain('border-t')
+		expect(bar?.className).not.toContain('backdrop-blur-sm')
+	})
+
 	it('keeps the current card pinned when a background refetch re-sorts the queue ahead of it', () => {
 		const queue = [buildItem('a'), buildItem('b')]
 		const { rerender } = render(<ForYouCardQueue workspaceId="ws-1" queue={queue} />)

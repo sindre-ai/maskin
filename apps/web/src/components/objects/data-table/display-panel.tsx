@@ -21,6 +21,7 @@ import { cn } from '@/lib/cn'
 import { SAFE_METADATA_FIELD_NAME_RE } from '@maskin/shared'
 import type { VisibilityState } from '@tanstack/react-table'
 import { ArrowDown, ArrowUp, Check, ChevronDown, SlidersHorizontal } from 'lucide-react'
+import { useState } from 'react'
 
 export interface DisplayPanelColumn {
 	id: string
@@ -66,6 +67,10 @@ export interface DisplayPanelProps {
 	// non-bet surfaces keep their existing panel.
 	includeArchived?: boolean
 	onIncludeArchivedChange?: (value: boolean) => void
+	// "Reset to default" — restores every display axis (filter/group/order/
+	// show-in-list/show-archived) to defaults. Only rendered when wired; hidden
+	// on consumers that don't opt in (same convention as the Show section).
+	onResetToDefault?: () => void
 	// Trigger appearance
 	iconOnly?: boolean
 	// Sections — surfaces that don't have a board view can opt out of the View pills.
@@ -170,9 +175,21 @@ export function DisplayPanel({
 	onGroupByChange,
 	includeArchived = false,
 	onIncludeArchivedChange,
+	onResetToDefault,
 	iconOnly = false,
 	showView = true,
 }: DisplayPanelProps) {
+	// Switching View closes the panel — on mobile it renders as a full-width
+	// bottom Sheet that would otherwise sit on top of the just-switched-to
+	// surface (e.g. Board), swallowing pointer events meant for it. The other
+	// sections (Show/Filters/Sort) stay open on selection since users commonly
+	// tweak several of those in one pass.
+	const [open, setOpen] = useState(false)
+	const handleViewChange = (next: DisplayPanelView) => {
+		onViewChange?.(next)
+		setOpen(false)
+	}
+
 	const activeStatuses = statusFilter ? statusFilter.split(',').filter(Boolean) : []
 	const activeDrivers = driverFilter ? driverFilter.split(',').filter(Boolean) : []
 	const metadataFields = fieldDefinitions ?? []
@@ -267,7 +284,7 @@ export function DisplayPanel({
 	const inlineGroupLabel = groupLabel ?? groupBy
 
 	const trigger = (
-		<ResponsivePopover>
+		<ResponsivePopover open={open} onOpenChange={setOpen}>
 			<ResponsivePopoverTrigger asChild>
 				{iconOnly ? (
 					<Button
@@ -304,13 +321,13 @@ export function DisplayPanel({
 							<div className="p-3 space-y-2">
 								<SectionHeader>View</SectionHeader>
 								<div className="flex items-center gap-1.5">
-									<PillButton active={view === 'list'} onClick={() => onViewChange?.('list')}>
+									<PillButton active={view === 'list'} onClick={() => handleViewChange('list')}>
 										List
 									</PillButton>
 									<PillButton
 										active={view === 'board'}
 										disabled={!boardSupported}
-										onClick={boardSupported ? () => onViewChange?.('board') : undefined}
+										onClick={boardSupported ? () => handleViewChange('board') : undefined}
 										title={
 											boardSupported
 												? undefined
@@ -635,6 +652,23 @@ export function DisplayPanel({
 								})}
 							</div>
 						</div>
+					)}
+
+					{/* Reset to default — restores every display axis. Always the
+						final row, matching the mockup's footer action. */}
+					{onResetToDefault && (
+						<>
+							<Separator />
+							<div className="p-1">
+								<button
+									type="button"
+									onClick={onResetToDefault}
+									className="w-full rounded-lg px-2.5 py-2 text-left text-xs text-text-secondary transition-colors hover:bg-bg-hover hover:text-foreground"
+								>
+									Reset to default
+								</button>
+							</div>
+						</>
 					)}
 				</div>
 			</ResponsivePopoverContent>

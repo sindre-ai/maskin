@@ -16,6 +16,9 @@ export interface SidebarNavItemDef {
 interface SidebarNavItemProps {
 	item: SidebarNavItemDef
 	source: NavItemSource
+	// Route params beyond the workspace id (e.g. a dynamic `fileId` for the
+	// files viewer route). Merged over the workspace id on both match and link.
+	params?: Record<string, string>
 	children?: ReactNode
 }
 
@@ -23,15 +26,16 @@ interface SidebarNavItemProps {
 // carries `to: string` so a single component can render every nav entry regardless of
 // route, so the router options are cast at the call site. TanStack Router validates the
 // path at runtime — passing an unknown route still fails loudly, just not at compile time.
-export function SidebarNavItem({ item, source, children }: SidebarNavItemProps) {
+export function SidebarNavItem({ item, source, params = {}, children }: SidebarNavItemProps) {
 	const { workspaceId } = useWorkspace()
 	const matchRoute = useMatchRoute()
 	const { setOpenMobile } = useSidebar()
 	const Icon = item.icon
+	const routeParams = { workspaceId, ...params }
 
 	const isActive = !!matchRoute({
 		to: item.to,
-		params: { workspaceId },
+		params: routeParams,
 		fuzzy: !item.exact,
 	} as never)
 
@@ -40,7 +44,7 @@ export function SidebarNavItem({ item, source, children }: SidebarNavItemProps) 
 			<SidebarMenuButton asChild isActive={isActive} tooltip={item.label}>
 				<Link
 					to={item.to as never}
-					params={{ workspaceId } as never}
+					params={routeParams as never}
 					search={{} as never}
 					onClick={() => {
 						trackNavItemClicked({ item_key: item.key, source })

@@ -10,6 +10,12 @@ vi.mock('@/hooks/use-subscriptions', () => ({
 	useUnread: vi.fn(() => ({ data: { items: [] } })),
 }))
 
+// SidebarFavorites resolves pinned ids through useFiles; with nothing pinned the
+// group renders nothing, and the hook must not hit the real API in this suite.
+vi.mock('@/hooks/use-files', () => ({
+	useFiles: vi.fn(() => ({ data: undefined })),
+}))
+
 vi.mock('@maskin/module-sdk', () => ({
 	getEnabledObjectTypeTabs: vi.fn((ids: string[]) =>
 		ids.includes('work') ? [{ label: 'Bets', value: 'bet' }] : [],

@@ -9,6 +9,7 @@ import {
 	reconcileOnBoot,
 } from '../index'
 import type { AgentServerEnv } from '../lib/env'
+import { logger } from '../lib/logger'
 import { ImageWarmer } from '../services/image-warmer'
 
 function makeEnv(overrides: Partial<AgentServerEnv> = {}): AgentServerEnv {
@@ -456,7 +457,7 @@ describe('POST /sessions browserRequired wiring', () => {
 		return values
 	}
 
-	it('provisions a sidecar, injects BROWSER_CDP_URL, and grants the session a narrow allow@host:tcp:<relayPort> rule when browserRequired=true', async () => {
+	it('provisions a sidecar, injects BROWSER_CDP_URL, and grants the session allow@private when browserRequired=true', async () => {
 		const { run, cdpPollReady, tcpPollReady, calls } = makeSidecarAwareRunner()
 		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
 		const app = buildApp({
@@ -493,20 +494,24 @@ describe('POST /sessions browserRequired wiring', () => {
 		const sessionCreate = creates.find((c) => c.args.includes('sess-betqa1'))
 		expect(sidecarCreate).toBeDefined()
 		expect(sessionCreate).toBeDefined()
-		// findPort call order: sidecar's self-allocated CDP relay reserves
-		// relayPort (39222) before sshPort (39223) — see startSshRelay.
-		const cdpRelayPort = 39222
-		// Session VM must carry a narrow --net-rule reaching only the CDP relay
-		// port on host loopback — never a blanket allow@private RFC1918 grant.
-		expect(netRuleValues(sessionCreate?.args)).toContain(`allow@host:tcp:${cdpRelayPort}`)
-		expect(sessionCreate?.args).not.toContain('allow@private')
-		// Session VM env must include BROWSER_CDP_URL pointing at the SSH-relay port.
+		// findPort call order: the sidecar's own bridge-published CDP port
+		// reserves the first available port — see provisionBrowserSidecar.
+		const sidecarHostPort = 39222
+		// Sidecar publishes its CDP port on the msb bridge.
+		expect(sidecarCreate?.args).toContain('-p')
+		expect(sidecarCreate?.args).toContain(`10.0.1.1:${sidecarHostPort}:9222`)
+		// Session VM must carry allow@private to reach the sidecar on the bridge —
+		// see PRIVATE_NET_RULE in microsandbox.ts for why this is temporarily
+		// broader than a narrow allow@host:tcp grant.
+		expect(sessionCreate?.args).toContain('allow@private')
+		expect(netRuleValues(sessionCreate?.args)).not.toContain(`allow@host:tcp:${sidecarHostPort}`)
+		// Session VM env must include BROWSER_CDP_URL pointing at the bridge.
 		const envFlags =
 			sessionCreate?.args.filter((_a, i) => sessionCreate?.args[i - 1] === '-e') ?? []
-		expect(envFlags).toContain(`BROWSER_CDP_URL=http://host.microsandbox.internal:${cdpRelayPort}`)
+		expect(envFlags).toContain(`BROWSER_CDP_URL=http://10.0.1.1:${sidecarHostPort}`)
 	})
 
-	it('opens a preview SSH relay, grants the sidecar allow@host:tcp:<relayPort>, and returns preview_url', async () => {
+	it('opens a preview SSH relay, grants the sidecar allow@host:tcp:<relayPort>, publishes CDP on the bridge, and returns preview_url', async () => {
 		const { run, cdpPollReady, tcpPollReady, calls } = makeSidecarAwareRunner()
 		const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
 		const app = buildApp({
@@ -551,13 +556,16 @@ describe('POST /sessions browserRequired wiring', () => {
 		expect(sessionCreate).toBeDefined()
 
 		// Sidecar needs a route to reach the preview relay's host-loopback port
-		// (Playwright inside the sidecar talks to PREVIEW_URL).
+		// (Playwright inside the sidecar talks to PREVIEW_URL) — unrelated to its
+		// own CDP bridge-publish below, still uses the SSH-relay mechanism.
 		expect(netRuleValues(sidecarCreate?.args)).toContain(`allow@host:tcp:${previewRelayPort}`)
 		expect(sidecarCreate?.args).not.toContain('allow@private')
 
-		// No bridge-publish flags exist in the SSH-relay model.
+		// Sidecar publishes its own CDP port on the bridge; the session reaches
+		// it via allow@private, not a bridge-publish flag of its own.
+		expect(sidecarCreate?.args).toContain('-p')
 		expect(sessionCreate?.args).not.toContain('-p')
-		expect(sidecarCreate?.args).not.toContain('-p')
+		expect(sessionCreate?.args).toContain('allow@private')
 	})
 
 	it('adds no extra allow@host:tcp:<port> rule to the sidecar when no previewGuestPorts are given', async () => {
@@ -804,10 +812,9 @@ describe('POST /sessions browserRequired wiring', () => {
 			.filter((c) => c.args[0] === 'create')
 			.find((c) => c.args.includes('sess-previewfail'))
 		expect(sessionCreate).toBeDefined()
-		// Sidecar still provisions successfully (CDP relay unaffected by the
-		// preview-port failure) — session gets exactly the CDP relay's grant.
-		const cdpRelayPort = 39222
-		expect(netRuleValues(sessionCreate?.args)).toContain(`allow@host:tcp:${cdpRelayPort}`)
+		// Sidecar still provisions successfully (its own bridge-publish is
+		// unaffected by the preview-port failure) — session still gets allow@private.
+		expect(sessionCreate?.args).toContain('allow@private')
 	})
 })
 
@@ -1592,6 +1599,61 @@ describe('monitorSession — flushLogs retry and drop marker', () => {
 			logs: Array<{ stream: string; content: string }>
 		}
 		expect(body.logs).toEqual([{ stream: 'stdout', content: 'hello world' }])
+	})
+
+	it('warns when the server reports fewer accepted lines than were sent, without retrying', async () => {
+		// Regression coverage: a 200 response can still mean a partial batch —
+		// the server rejects any oversized/invalid line rather than failing the
+		// whole batch — but flushLogs() used to return on any `res.ok` without
+		// ever reading the response body, so a partial accept was silently
+		// indistinguishable from full success. That's the same kind of invisible
+		// log loss this whole batching/truncation mechanism exists to fix.
+		const sessionId = 'sess-flush-partial-accept'
+		const run = makeAlwaysRunningRunner(sessionId)
+		const env = makeEnv({
+			AGENT_SESSION_ROOT: sessionRoot,
+			MASKIN_BASE_URL: 'http://maskin.test',
+			AGENT_SERVER_ID: '123e4567-e89b-12d3-a456-426614174000',
+		})
+		const reconcileFetch = vi.fn(async () => ({
+			ok: true,
+			json: async () => ({ marked_failed: [], orphan_sandboxes: [] }),
+		}))
+		const sessionLogRouters = new Map<string, (line: string) => void>()
+
+		const logsFetch = vi
+			.fn()
+			.mockResolvedValueOnce({ ok: true, json: async () => ({ accepted: 1 }) })
+		vi.stubGlobal('fetch', logsFetch)
+		const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+		vi.useFakeTimers()
+		try {
+			await reconcileOnBoot({
+				env,
+				storage: null,
+				msb: { msbBin: '/usr/local/bin/msb', run },
+				sessionLogRouters,
+				sessionExitCodes: new Map(),
+				fetchImpl: reconcileFetch as unknown as typeof fetch,
+			})
+
+			const push = sessionLogRouters.get(sessionId)
+			expect(push).toBeDefined()
+			push?.('line one')
+			push?.('line two')
+
+			await vi.advanceTimersByTimeAsync(2_000)
+		} finally {
+			vi.useRealTimers()
+		}
+
+		// Accepted (200) on the first attempt — no retry for a partial accept.
+		expect(logsFetch).toHaveBeenCalledTimes(1)
+		expect(warnSpy).toHaveBeenCalledWith(
+			'Maskin log ingest accepted fewer lines than sent',
+			expect.objectContaining({ sessionId, sent: 2, accepted: 1 }),
+		)
 	})
 
 	it('drops a batch after exhausting retries and queues a marker for the next flush', async () => {

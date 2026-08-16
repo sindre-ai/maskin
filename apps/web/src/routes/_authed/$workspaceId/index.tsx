@@ -18,11 +18,16 @@ import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { useBets } from '@/hooks/use-bets'
-import { useMarkRead, useUnread } from '@/hooks/use-subscriptions'
-import type { UnreadItem } from '@/lib/api'
+import { useMarkRead, useMarkUnread, useUnread } from '@/hooks/use-subscriptions'
+import {
+	useUpdateUserDisplaySettings,
+	useUserDisplaySettings,
+} from '@/hooks/use-user-display-settings'
+import type { DisplaySettingsBody, UnreadItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useNewConversationComposer } from '@/lib/new-conversation-context'
 import { useWorkspace } from '@/lib/workspace-context'
+import { CHROME_KEY } from '@maskin/shared'
 import { createFileRoute } from '@tanstack/react-router'
 import { Plus } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -39,20 +44,77 @@ function itemKey(item: UnreadItem): string {
 	return `${item.entity_type}:${item.entity_id}`
 }
 
+// The persisted display-setting field spells the card mode as `'card'`, while
+// the feed's internal FeedMode spells it `'cards'`. These two mappings keep the
+// rename in one place so the route and its tests can't drift.
+export function foryouViewModeToFeedMode(
+	persisted: DisplaySettingsBody['foryouViewMode'],
+): FeedMode {
+	return persisted === 'list' ? 'list' : 'cards'
+}
+
+export function feedModeToForyouViewMode(
+	mode: FeedMode,
+): NonNullable<DisplaySettingsBody['foryouViewMode']> {
+	return mode === 'cards' ? 'card' : 'list'
+}
+
 function ForYouRedesign() {
 	const { workspaceId } = useWorkspace()
 	const { data, isLoading } = useUnread(workspaceId, undefined, true)
 	const { data: bets, isLoading: betsLoading } = useBets(workspaceId)
 	const items = data?.items ?? []
 	const markRead = useMarkRead(workspaceId)
+	const markUnread = useMarkUnread(workspaceId)
 	const { open: composerOpen, setOpen: setComposerOpen } = useNewConversationComposer()
 
 	const [typeFilter, setTypeFilter] = useState<string | undefined>(undefined)
-	const [mode, setMode] = useState<FeedMode>('cards')
 	const [sort, setSort] = useState<FeedSort>('priority')
 
+	// Feed mode (cards/list) is persisted per actor under the `__chrome__`
+	// sentinel display-settings row — the same store the object-detail sidebar
+	// collapse bit uses. First paint defaults to cards, then reconciles to the
+	// persisted `foryouViewMode` once the settings query has fetched.
+	const settingsQuery = useUserDisplaySettings(workspaceId, CHROME_KEY)
+	const upsertSettings = useUpdateUserDisplaySettings(workspaceId)
+	const persistedSettings = settingsQuery.data?.settings
+	const mode: FeedMode = settingsQuery.isFetched
+		? foryouViewModeToFeedMode(persistedSettings?.foryouViewMode)
+		: 'cards'
+
+	// Radix Tabs can fire onValueChange twice for one click on an inactive tab
+	// (mousedown activation plus focus activation before the controlled value
+	// flushes) and fires even when the clicked tab is already active — both
+	// cases would re-upsert the same setting. Dedupe on the last mode written,
+	// and skip outright when the requested mode already matches what's shown.
+	const lastWrittenModeRef = useRef<FeedMode | null>(null)
+	const handleModeChange = useCallback(
+		(next: FeedMode) => {
+			if (lastWrittenModeRef.current === next) return
+			const current: FeedMode = settingsQuery.isFetched
+				? foryouViewModeToFeedMode(persistedSettings?.foryouViewMode)
+				: 'cards'
+			if (current === next) return
+			lastWrittenModeRef.current = next
+			const nextSettings: DisplaySettingsBody = {
+				...(persistedSettings ?? {}),
+				foryouViewMode: feedModeToForyouViewMode(next),
+			}
+			upsertSettings.mutate(
+				{ objectType: CHROME_KEY, settings: nextSettings },
+				// On failure the optimistic write rolls back, so clear the
+				// dedupe ref and let the user retry the same mode.
+				{
+					onError: () => {
+						lastWrittenModeRef.current = null
+					},
+				},
+			)
+		},
+		[settingsQuery.isFetched, persistedSettings, upsertSettings],
+	)
+
 	const [pendingKeys, setPendingKeys] = useState<Set<string>>(() => new Set())
-	const settledRef = useRef(false)
 
 	const [northStarDismissed, setNorthStarDismissed] = useState(() =>
 		Boolean(localStorage.getItem(`north_star_answered_${workspaceId}`)),
@@ -143,26 +205,29 @@ function ForYouRedesign() {
 		[markRead],
 	)
 
+	const markItemUnread = useCallback(
+		(item: UnreadItem) => {
+			markUnread.mutate({ entityType: item.entity_type, entityId: item.entity_id })
+		},
+		[markUnread],
+	)
+
+	// Fires the real mark-read mutation for every item immediately — it used
+	// to wait for the Undo toast to auto-close (or be dismissed) before
+	// mutating at all, so navigating away or refreshing during that window
+	// silently dropped the mark-read and the items reappeared unread on
+	// reload. Undo now reverses the already-landed mutation with a real
+	// mark-unread call instead of just restoring the optimistic hide.
 	const handleMarkAllRead = useCallback(() => {
 		if (visibleRegular.length === 0) return
 		const snapshot = visibleRegular
 		const snapshotKeys = new Set(snapshot.map(itemKey))
-		settledRef.current = false
 		setPendingKeys((prev) => new Set([...prev, ...snapshotKeys]))
 
-		const commit = () => {
-			if (settledRef.current) return
-			settledRef.current = true
-			for (const item of snapshot) markItemRead(item)
-			setPendingKeys((prev) => {
-				const next = new Set(prev)
-				for (const key of snapshotKeys) next.delete(key)
-				return next
-			})
-		}
+		for (const item of snapshot) markItemRead(item)
+
 		const restore = () => {
-			if (settledRef.current) return
-			settledRef.current = true
+			for (const item of snapshot) markItemUnread(item)
 			setPendingKeys((prev) => {
 				const next = new Set(prev)
 				for (const key of snapshotKeys) next.delete(key)
@@ -174,10 +239,8 @@ function ForYouRedesign() {
 		toast(`Marked ${count} thread${count === 1 ? '' : 's'} as read`, {
 			duration: UNDO_WINDOW_MS,
 			action: { label: 'Undo', onClick: restore },
-			onAutoClose: commit,
-			onDismiss: commit,
 		})
-	}, [markItemRead, visibleRegular])
+	}, [markItemRead, markItemUnread, visibleRegular])
 
 	// Alt+U shortcut mirrors the visible "Mark all read" button in
 	// ForYouHeaderActions — power-user keyboard access alongside the click target.
@@ -219,10 +282,19 @@ function ForYouRedesign() {
 		) : null
 
 	const isSparse = filteredRegular.length + onboardingItems.length < 3
+	const sparseComposerNode = isSparse ? (
+		<SparseComposer
+			itemsCount={filteredRegular.length + onboardingItems.length}
+			onFocusChange={setComposerFocused}
+		/>
+	) : null
 
 	return (
 		<>
-			<div className="flex min-w-0 flex-1 flex-col gap-3" data-testid="foryou-redesign-root">
+			<div
+				className="flex min-h-0 min-w-0 flex-1 flex-col gap-3"
+				data-testid="foryou-redesign-root"
+			>
 				<PageHeader
 					stickyIdentity={<ForYouHeaderIdentity unreadCount={unreadRegular.length} />}
 					actions={
@@ -232,6 +304,7 @@ function ForYouRedesign() {
 							markAllReadDisabled={unreadRegular.length === 0}
 						/>
 					}
+					scrollLocked={mode === 'cards'}
 				/>
 				{northStarCard}
 				<ForYouHeader
@@ -241,7 +314,7 @@ function ForYouRedesign() {
 					typeCounts={typeCounts}
 					mentionCount={mentionCount}
 					mode={mode}
-					onModeChange={setMode}
+					onModeChange={handleModeChange}
 					sort={sort}
 					onSortChange={setSort}
 				/>
@@ -269,18 +342,17 @@ function ForYouRedesign() {
 							))}
 						</div>
 					) : (
-						<ForYouCardQueue workspaceId={workspaceId} queue={queue} />
+						<ForYouCardQueue
+							workspaceId={workspaceId}
+							queue={queue}
+							sparseComposer={sparseComposerNode}
+						/>
 					)}
 					{mode === 'list' && typeFilter === 'mentions' && filteredRegular.length === 0 && (
 						<p className="py-10 text-center text-sm text-muted-foreground">No unread mentions.</p>
 					)}
-					{isSparse ? (
-						<div className="mt-4">
-							<SparseComposer
-								itemsCount={filteredRegular.length + onboardingItems.length}
-								onFocusChange={setComposerFocused}
-							/>
-						</div>
+					{mode === 'list' && sparseComposerNode ? (
+						<div className="mt-4">{sparseComposerNode}</div>
 					) : null}
 				</div>
 			</div>

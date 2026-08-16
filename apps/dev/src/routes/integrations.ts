@@ -13,10 +13,10 @@ import type { PgNotifyBridge } from '@maskin/realtime'
 import { skjaldTranscriptionCompletedPayloadSchema } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
-import { trackSlackMentionReceived } from '../lib/analytics/catalog-events'
+import { trackSlackMentionReceived } from '../lib/analytics/loop-events'
 import { markSlackMention } from '../lib/analytics/slack-attribution'
 import { decrypt, encrypt } from '../lib/crypto'
-import { createApiError } from '../lib/errors'
+import { createApiError, validationFailureHook } from '../lib/errors'
 import { isAuthRevokedError } from '../lib/integrations/errors'
 import { normalizeEvent } from '../lib/integrations/events/normalizer'
 import { OAuth2Handler } from '../lib/integrations/oauth/handler'
@@ -83,7 +83,7 @@ type Env = {
 	}
 }
 
-const app = new OpenAPIHono<Env>()
+const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 // ── GET /api/integrations ──────────────────────────────────────────────────
 
