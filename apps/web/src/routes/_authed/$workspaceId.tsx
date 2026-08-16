@@ -14,6 +14,7 @@ import { deriveEntryAgentRole } from '@/lib/analytics'
 import { api } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { ChatProvider, useChat } from '@/lib/chat-context'
+import { cn } from '@/lib/cn'
 import { CommandPaletteProvider } from '@/lib/command-palette-context'
 import { isHiddenRouteId, migrateLegacySidebarState, viewKeyFromRouteId } from '@/lib/nav-view-keys'
 import { NewConversationProvider } from '@/lib/new-conversation-context'
@@ -124,12 +125,9 @@ function WorkspaceLayout() {
 										<AppSidebar />
 										<SidebarInset className="min-w-0">
 											<Header />
-											<div
-												className="flex flex-col flex-1 min-w-0 overflow-auto px-4 pb-20 pt-4 scroll-pb-20 md:p-8 md:scroll-pb-0"
-												data-scroll-root
-											>
+											<MainScrollArea>
 												<Outlet />
-											</div>
+											</MainScrollArea>
 										</SidebarInset>
 										<MobileNav />
 									</SidebarProvider>
@@ -237,6 +235,32 @@ function ChatPinShell({ children }: { children: ReactNode }) {
 	}
 	return (
 		<div className="transition-[margin] duration-200 ease-linear" style={{ marginRight }}>
+			{children}
+		</div>
+	)
+}
+
+/**
+ * The shared page scroll container. Scrolls by default (`overflow-auto`) so
+ * ordinary routes get normal page scrolling. A route can opt out via
+ * `<PageHeader scrollLocked />` (e.g. the For You card queue, which owns its
+ * own internal scroll region on the active card's thread) — the container
+ * then clips instead of scrolling, so only that inner region scrolls.
+ *
+ * Mobile leaves `pb-20`/`scroll-pb-20` of space so the fixed `MobileNav`
+ * bottom bar never covers the last row of content or a scroll-into-view
+ * target; desktop resets both back to zero via `md:p-8`/`md:scroll-pb-0`.
+ */
+function MainScrollArea({ children }: { children: ReactNode }) {
+	const { scrollLocked } = usePageHeader()
+	return (
+		<div
+			className={cn(
+				'flex flex-col flex-1 min-w-0 px-4 pb-20 pt-4 scroll-pb-20 md:p-8 md:scroll-pb-0',
+				scrollLocked ? 'overflow-hidden' : 'overflow-auto',
+			)}
+			data-scroll-root
+		>
 			{children}
 		</div>
 	)

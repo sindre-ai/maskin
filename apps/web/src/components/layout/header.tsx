@@ -28,7 +28,7 @@ const routeConfig: Record<string, RouteConfig> = {
 		label: 'Object Details',
 		parent: '/_authed/$workspaceId/objects/',
 	},
-	'/_authed/$workspaceId/agents': { label: 'Agents' },
+	'/_authed/$workspaceId/agents/': { label: 'Agents' },
 	'/_authed/$workspaceId/settings/': { label: 'Settings' },
 	'/_authed/$workspaceId/settings/keys': {
 		label: 'LLM',
