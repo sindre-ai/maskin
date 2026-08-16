@@ -466,7 +466,10 @@ describe('runAgentBuilder — full pipeline', () => {
 			bias_statement: '',
 			worked_examples: [],
 		})
-		queueLlmResponses(buildStage1Well(), buildStage2Well(), badStage3, buildStage4Well())
+		// Stage 3 gets one retry on a parse failure (see agent-builder.ts) —
+		// queue the bad response twice so the retry also fails and the
+		// pipeline throws.
+		queueLlmResponses(buildStage1Well(), buildStage2Well(), badStage3, buildStage4Well(), badStage3)
 		const ctxCtx = createTestContext()
 		ctxCtx.mockResults.selectQueue = existingRubricSelectQueue()
 		await expect(
@@ -492,7 +495,10 @@ describe('runAgentBuilder — full pipeline', () => {
 			bias_statement: 'x',
 			worked_examples: [{ title: 't', ask: 'a', response: 'r' }],
 		})
-		queueLlmResponses(buildStage1Well(), buildStage2Well(), badStage3, buildStage4Well())
+		// Stage 3 gets one retry on a parse failure (see agent-builder.ts) —
+		// queue the bad response twice so the retry also fails and the
+		// pipeline throws.
+		queueLlmResponses(buildStage1Well(), buildStage2Well(), badStage3, buildStage4Well(), badStage3)
 		const ctxCtx = createTestContext()
 		ctxCtx.mockResults.selectQueue = existingRubricSelectQueue()
 		await expect(
@@ -506,6 +512,43 @@ describe('runAgentBuilder — full pipeline', () => {
 				},
 			),
 		).rejects.toMatchObject({ name: 'AgentBuilderError', reason: 'stage3_parse_error' })
+	})
+
+	it('recovers when stage 3 fails once and succeeds on its single retry', async () => {
+		const badStage3 = JSON.stringify({
+			background: 'x',
+			instructions: ['x'],
+			decision_framework: 'x',
+			tool_guidance: 'x',
+			output_format: 'x',
+			bias_statement: 'x',
+			worked_examples: [{ title: 't', ask: 'a', response: 'r' }],
+		})
+		const agentStorage = createMockAgentStorage()
+		const ctxCtx = createTestContext()
+		ctxCtx.mockResults.selectQueue = existingRubricSelectQueue()
+		ctxCtx.mockResults.insertQueue = happyPathInsertQueue()
+
+		callLlm.mockReset()
+		callLlm.mockResolvedValueOnce({ ok: true, content: buildStage1Well() })
+		callLlm.mockResolvedValueOnce({ ok: true, content: buildStage2Well() })
+		callLlm.mockResolvedValueOnce({ ok: true, content: badStage3 })
+		callLlm.mockResolvedValueOnce({ ok: true, content: buildStage4Well() })
+		callLlm.mockResolvedValueOnce({ ok: true, content: buildStage3Well() })
+		callLlm.mockResolvedValueOnce({ ok: true, content: buildReviewerPass() })
+		callLlm.mockResolvedValueOnce({ ok: true, content: buildStage6Well() })
+
+		const result = await runAgentBuilder(
+			{ prompt: 'plan a zero-downtime add-column migration on a hot Postgres table' },
+			{
+				db: ctxCtx.db,
+				agentStorage,
+				workspaceId: WORKSPACE_ID,
+				actorId: CALLER_ACTOR_ID,
+			},
+		)
+
+		expect(result.kind).toBe('created')
 	})
 })
 

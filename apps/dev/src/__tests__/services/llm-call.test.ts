@@ -68,4 +68,76 @@ describe('callLlm', () => {
 		const result = await callLlm({ system: 's', user: 'u' })
 		expect(result).toEqual({ ok: false, reason: 'exception' })
 	})
+
+	it('retries once on a transient exception (e.g. timeout) and returns the retry result', async () => {
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'test-key'
+		const fetchMock = vi
+			.fn()
+			.mockRejectedValueOnce(new Error('The operation was aborted due to timeout'))
+			.mockResolvedValueOnce({
+				ok: true,
+				status: 200,
+				json: async () => ({ choices: [{ message: { content: 'recovered' } }] }),
+			})
+		vi.stubGlobal('fetch', fetchMock)
+
+		const result = await callLlm({ system: 's', user: 'u' })
+		expect(result).toEqual({ ok: true, content: 'recovered' })
+		expect(fetchMock).toHaveBeenCalledTimes(2)
+	})
+
+	it('retries once on a 5xx response before giving up', async () => {
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'test-key'
+		const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 503, json: async () => ({}) })
+		vi.stubGlobal('fetch', fetchMock)
+
+		const result = await callLlm({ system: 's', user: 'u' })
+		expect(result).toEqual({ ok: false, reason: 'http_error', status: 503 })
+		expect(fetchMock).toHaveBeenCalledTimes(2)
+	})
+
+	it('does not retry a 4xx client error', async () => {
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'test-key'
+		const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 400, json: async () => ({}) })
+		vi.stubGlobal('fetch', fetchMock)
+
+		const result = await callLlm({ system: 's', user: 'u' })
+		expect(result).toEqual({ ok: false, reason: 'http_error', status: 400 })
+		expect(fetchMock).toHaveBeenCalledTimes(1)
+	})
+
+	it('retries once on an empty completion (e.g. reasoning consumed the whole token budget)', async () => {
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'test-key'
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce({
+				ok: true,
+				status: 200,
+				json: async () => ({ choices: [{ message: { content: '   ' } }] }),
+			})
+			.mockResolvedValueOnce({
+				ok: true,
+				status: 200,
+				json: async () => ({ choices: [{ message: { content: '{}' } }] }),
+			})
+		vi.stubGlobal('fetch', fetchMock)
+
+		const result = await callLlm({ system: 's', user: 'u' })
+		expect(result).toEqual({ ok: true, content: '{}' })
+		expect(fetchMock).toHaveBeenCalledTimes(2)
+	})
+
+	it('returns empty content if every attempt comes back empty', async () => {
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'test-key'
+		const fetchMock = vi.fn().mockResolvedValue({
+			ok: true,
+			status: 200,
+			json: async () => ({ choices: [{ message: { content: '' } }] }),
+		})
+		vi.stubGlobal('fetch', fetchMock)
+
+		const result = await callLlm({ system: 's', user: 'u' })
+		expect(result).toEqual({ ok: true, content: '' })
+		expect(fetchMock).toHaveBeenCalledTimes(2)
+	})
 })

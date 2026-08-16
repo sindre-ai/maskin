@@ -36,6 +36,21 @@ export class LlmCallError extends Error {
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000
+// One retry for transient failures (request timeout, connection reset, 5xx).
+// Non-retryable failures (missing key, 4xx) return immediately — a retry
+// can't fix a bad request. Kept to a single retry so a stage's worst-case
+// latency stays bounded (timeoutMs * 2 + RETRY_DELAY_MS) rather than
+// compounding indefinitely.
+const MAX_ATTEMPTS = 2
+const RETRY_DELAY_MS = 400
+
+function sleep(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function isRetryable(reason: 'http_error' | 'exception', status?: number): boolean {
+	return reason === 'exception' || (status !== undefined && status >= 500)
+}
 
 export async function callLlm(input: LlmCallInput): Promise<LlmCallResult> {
 	const fallback = readFallbackConfig()
@@ -59,31 +74,56 @@ export async function callLlm(input: LlmCallInput): Promise<LlmCallResult> {
 	}
 	if (input.jsonMode) body.response_format = { type: 'json_object' }
 
-	try {
-		const response = await fetch(`${baseUrl}/v1/chat/completions`, {
-			method: 'POST',
-			headers: {
-				'Content-Type': 'application/json',
-				Authorization: `Bearer ${fallback.apiKey}`,
-			},
-			body: JSON.stringify(body),
-			signal: AbortSignal.timeout(timeoutMs),
-		})
+	for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+		try {
+			const response = await fetch(`${baseUrl}/v1/chat/completions`, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					Authorization: `Bearer ${fallback.apiKey}`,
+				},
+				body: JSON.stringify(body),
+				signal: AbortSignal.timeout(timeoutMs),
+			})
 
-		if (!response.ok) {
-			logger.warn('llm-call: LLM API error', { status: response.status })
-			return { ok: false, reason: 'http_error', status: response.status }
-		}
+			if (!response.ok) {
+				logger.warn('llm-call: LLM API error', { status: response.status, attempt })
+				if (attempt < MAX_ATTEMPTS && isRetryable('http_error', response.status)) {
+					await sleep(RETRY_DELAY_MS)
+					continue
+				}
+				return { ok: false, reason: 'http_error', status: response.status }
+			}
 
-		const data = (await response.json()) as {
-			choices?: Array<{ message?: { content?: string } }>
+			const data = (await response.json()) as {
+				choices?: Array<{ message?: { content?: string } }>
+			}
+			const content = data.choices?.[0]?.message?.content?.trim() ?? ''
+			// An empty completion is never a useful answer to any caller. Some
+			// models emit visible chain-of-thought reasoning that shares the
+			// same completion-token budget as the answer — how much they
+			// "think" before answering varies per call, and can occasionally
+			// consume the whole budget before any content is written. Retry
+			// once rather than handing the caller a guaranteed-unparseable
+			// empty string.
+			if (!content && attempt < MAX_ATTEMPTS) {
+				logger.warn('llm-call: empty completion content, retrying', { attempt })
+				await sleep(RETRY_DELAY_MS)
+				continue
+			}
+			return { ok: true, content }
+		} catch (err) {
+			logger.error('llm-call: request failed', {
+				err: err instanceof Error ? err.message : String(err),
+				attempt,
+			})
+			if (attempt < MAX_ATTEMPTS && isRetryable('exception')) {
+				await sleep(RETRY_DELAY_MS)
+				continue
+			}
+			return { ok: false, reason: 'exception' }
 		}
-		const content = data.choices?.[0]?.message?.content?.trim() ?? ''
-		return { ok: true, content }
-	} catch (err) {
-		logger.error('llm-call: request failed', {
-			err: err instanceof Error ? err.message : String(err),
-		})
-		return { ok: false, reason: 'exception' }
 	}
+	// Unreachable — the loop always returns on its final attempt.
+	return { ok: false, reason: 'exception' }
 }

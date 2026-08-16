@@ -58,7 +58,19 @@ const STAGE_2_TEMPERATURE = 0.3
 const STAGE_3_TEMPERATURE = 0.3
 const STAGE_4_TEMPERATURE = 0.2
 const STAGE_6_TEMPERATURE = 0.3
-const STAGE_TIMEOUT_MS = 15_000
+// 15s was measured to be too tight for the configured MASKIN_FALLBACK model
+// (deepseek/deepseek-v4-flash via OpenRouter): a direct timed call with a
+// stage-2-sized prompt (~900 max_tokens, json_mode) took 27.4s end to end.
+// That's provider/model latency, not a function of any one stage's token
+// budget, so every stage needs headroom — not just the largest one.
+const STAGE_TIMEOUT_MS = 60_000
+// Stage 3 authors the full system prompt (background, instructions, up to 5
+// worked examples) at maxTokens: 4500. Measured directly against the fallback
+// model: a 3-worked-example response used 1877 completion tokens at ~31
+// tok/s; a full 5-example response can run close to the cap, which at this
+// throughput needs ~130s+. Generous on purpose — better a slow success than
+// a truncated-JSON failure.
+const STAGE_3_TIMEOUT_MS = 150_000
 
 export const STAGE_1_PROMPT = `You extract structured intent from a one-line request for a new subject-matter-expert (SME) agent. Return STRICT JSON matching this shape (no prose, no code fences):
 
@@ -685,49 +697,86 @@ async function runStages3And4(
 	revisionNotes?: string[],
 ): Promise<{ sections: SystemPromptSpec; opinionation: OpinionationSpec }> {
 	const personaContext = buildPersonaContextMessage(intent, persona, revisionNotes)
+	const stage3Params: LlmCallInput = {
+		system: STAGE_3_PROMPT,
+		user: personaContext,
+		temperature: STAGE_3_TEMPERATURE,
+		// 1800, then 3000, both measured too low: with up to 5 worked
+		// examples the model can need close to 3000 tokens just for
+		// examples, on top of the other 6 sections. 4500 gives real
+		// headroom against a truncated, unparseable JSON tail.
+		maxTokens: 4500,
+		timeoutMs: STAGE_3_TIMEOUT_MS,
+		jsonMode: true,
+	}
+	const stage4Params: LlmCallInput = {
+		system: STAGE_4_PROMPT,
+		user: personaContext,
+		temperature: STAGE_4_TEMPERATURE,
+		// 700 measured too low: this model does visible chain-of-thought
+		// reasoning that shares the same completion-token budget as the
+		// JSON answer, and how much it "thinks" before answering varies
+		// per call — one run consumed the entire 700-token cap on
+		// reasoning and returned empty content. 1500 gives headroom (a
+		// content-only reproduction of this exact prompt used 291 tokens).
+		maxTokens: 1500,
+		timeoutMs: STAGE_TIMEOUT_MS,
+		jsonMode: true,
+	}
 	const [stage3Raw, stage4Raw] = await Promise.all([
-		runStage('stage3', {
-			system: STAGE_3_PROMPT,
-			user: personaContext,
-			temperature: STAGE_3_TEMPERATURE,
-			// 2500 gives a terse model (e.g. deepseek-v4-flash) headroom to finish
-			// 2 worked examples + all sections without truncation at the ceiling.
-			maxTokens: 2500,
-			timeoutMs: STAGE_TIMEOUT_MS,
-			jsonMode: true,
-		}),
-		runStage('stage4', {
-			system: STAGE_4_PROMPT,
-			user: personaContext,
-			temperature: STAGE_4_TEMPERATURE,
-			maxTokens: 700,
-			timeoutMs: STAGE_TIMEOUT_MS,
-			jsonMode: true,
-		}),
+		runStage('stage3', stage3Params),
+		runStage('stage4', stage4Params),
 	])
 
-	const stage3Parsed = stage3Schema.safeParse(safeParseJson(stage3Raw))
+	let stage3Parsed = stage3Schema.safeParse(safeParseJson(stage3Raw))
+	// Measured directly against the fallback model: stage 3 can return
+	// complete, valid JSON that simply undershoots the "2-5 worked examples"
+	// instruction (e.g. 1 example). That's not truncation or a network
+	// failure a bigger token budget or callLlm's own retry can catch — it's a
+	// content-quality miss that needs a fresh generation. One retry,
+	// stage 3 only (stage 4 already succeeded above and doesn't need
+	// re-running).
 	if (!stage3Parsed.success) {
-		logger.error('agent-builder: stage3 parse failed', {
+		logger.warn('agent-builder: stage3 parse failed, retrying once', {
 			issues: stage3Parsed.error.issues,
 			rawPreview: stage3Raw.slice(0, 200),
 		})
-		throw new AgentBuilderError(
-			'stage3_parse_error',
-			'stage3: LLM returned invalid system-prompt shape (missing required sections or too few worked examples)',
-		)
+		const stage3RetryRaw = await runStage('stage3', stage3Params)
+		stage3Parsed = stage3Schema.safeParse(safeParseJson(stage3RetryRaw))
+		if (!stage3Parsed.success) {
+			logger.error('agent-builder: stage3 parse failed after retry', {
+				issues: stage3Parsed.error.issues,
+				rawPreview: stage3RetryRaw.slice(0, 200),
+			})
+			throw new AgentBuilderError(
+				'stage3_parse_error',
+				'stage3: LLM returned invalid system-prompt shape (missing required sections or too few worked examples)',
+			)
+		}
 	}
 
-	const stage4Parsed = stage4Schema.safeParse(safeParseJson(stage4Raw))
+	let stage4Parsed = stage4Schema.safeParse(safeParseJson(stage4Raw))
+	// Same rationale as stage 3's retry above: this model's variable
+	// chain-of-thought reasoning can eat into the answer budget mid-response,
+	// leaving a truncated, unparseable JSON tail even at a generous token cap.
+	// One retry, stage 4 only (stage 3 already succeeded above).
 	if (!stage4Parsed.success) {
-		logger.error('agent-builder: stage4 parse failed', {
+		logger.warn('agent-builder: stage4 parse failed, retrying once', {
 			issues: stage4Parsed.error.issues,
 			rawPreview: stage4Raw.slice(0, 200),
 		})
-		throw new AgentBuilderError(
-			'stage4_parse_error',
-			'stage4: LLM returned invalid opinionation shape',
-		)
+		const stage4RetryRaw = await runStage('stage4', stage4Params)
+		stage4Parsed = stage4Schema.safeParse(safeParseJson(stage4RetryRaw))
+		if (!stage4Parsed.success) {
+			logger.error('agent-builder: stage4 parse failed after retry', {
+				issues: stage4Parsed.error.issues,
+				rawPreview: stage4RetryRaw.slice(0, 200),
+			})
+			throw new AgentBuilderError(
+				'stage4_parse_error',
+				'stage4: LLM returned invalid opinionation shape',
+			)
+		}
 	}
 
 	return { sections: stage3Parsed.data, opinionation: stage4Parsed.data }
@@ -754,7 +803,10 @@ export async function runAgentBuilder(
 		system: STAGE_1_PROMPT,
 		user: buildStage1UserMessage(input),
 		temperature: STAGE_1_TEMPERATURE,
-		maxTokens: 600,
+		// 600 was too tight once examples/references/constraints are supplied —
+		// the model's JSON response got truncated mid-string and failed to
+		// parse. 900 matches the other structured-output stages' headroom.
+		maxTokens: 900,
 		timeoutMs: STAGE_TIMEOUT_MS,
 		jsonMode: true,
 	})
@@ -791,7 +843,11 @@ export async function runAgentBuilder(
 		system: STAGE_2_PROMPT,
 		user: buildStage2UserMessage(intent),
 		temperature: STAGE_2_TEMPERATURE,
-		maxTokens: 900,
+		// Bumped alongside stage 4's identical fix: this model's chain-of-
+		// thought reasoning shares the completion-token budget with the JSON
+		// answer and its length is unpredictable per call, so any small cap
+		// risks reasoning alone exhausting it before content starts.
+		maxTokens: 1500,
 		timeoutMs: STAGE_TIMEOUT_MS,
 		jsonMode: true,
 	})
@@ -911,8 +967,9 @@ export async function runAgentBuilder(
 		system: STAGE_6_PROMPT,
 		user: buildStage6UserMessage(intent, persona, sections, assembledSystemPrompt),
 		temperature: STAGE_6_TEMPERATURE,
-		// 1500 gives a terse model room to emit 3–6 gap items with why_it_matters
-		// prose without hitting the ceiling mid-object.
+		// 1500 gives a terse model room to emit 3-6 gap items with why_it_matters
+		// prose without hitting the ceiling mid-object — bumped alongside stage
+		// 2/4's identical fix, see stage 2's comment.
 		maxTokens: 1500,
 		timeoutMs: STAGE_TIMEOUT_MS,
 		jsonMode: true,
