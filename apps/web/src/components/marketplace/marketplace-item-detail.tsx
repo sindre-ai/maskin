@@ -89,7 +89,7 @@ function ItemSnapshotDetails({ item }: { item: MarketplaceLoopItem }) {
 	return (
 		<div>
 			<h2 className="mb-3 text-sm font-semibold text-foreground">Details</h2>
-			<div className="flex flex-col gap-2 rounded-lg border border-border bg-background p-4">
+			<div className="flex flex-col gap-2 rounded-xl border border-border bg-card p-4 shadow-sm">
 				{rows.map(([label, value]) => (
 					<div key={label} className="flex flex-col gap-0.5 sm:flex-row sm:gap-3">
 						<span className="w-32 shrink-0 text-xs font-medium text-muted-foreground">{label}</span>
