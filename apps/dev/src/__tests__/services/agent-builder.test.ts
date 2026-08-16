@@ -249,6 +249,11 @@ describe('refineAgent', () => {
 		const firstStage3 = callLlm.mock.calls[0]?.[0] as { user: string } | undefined
 		expect(firstStage3?.user).toMatch(/REVISION FEEDBACK/)
 		expect(firstStage3?.user).toMatch(/Sharpen the bias statement/)
+		// It must also anchor on the actor's actual current system prompt
+		// (verbatim) so unrelated sections carry forward instead of drifting —
+		// this is the whole point of refineAgent's revision-anchoring fix.
+		expect(firstStage3?.user).toMatch(/CURRENT SYSTEM PROMPT/)
+		expect(firstStage3?.user).toContain('previous background')
 	})
 
 	it('rejects refinement when the context is empty or whitespace-only', async () => {

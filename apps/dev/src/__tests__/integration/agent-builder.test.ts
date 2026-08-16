@@ -235,6 +235,25 @@ describe('agent-builder service integration', () => {
 			expect(verdictRow.humanAgreed).toBeNull()
 		})
 
+		it('propagates target_actor_not_found instead of silently reporting persisted: false', async () => {
+			callLlm.mockResolvedValueOnce({ ok: true, content: REVIEWER_PASS_VERDICT })
+
+			const ws = await insertWorkspace(db, getTestActorId())
+			const draft = await insertObject(db, ws.id, getTestActorId(), {
+				content:
+					'# Draft SME agent\n\n## Response protocol\n\nEnd with Recommendation: and Assumptions:.',
+			})
+
+			await expect(
+				reviewWork(db, {
+					workspaceId: ws.id,
+					actorId: getTestActorId(),
+					objectId: draft.id,
+					targetActorId: randomUUID(),
+				}),
+			).rejects.toMatchObject({ name: 'ReviewerVerdictError', code: 'target_actor_not_found' })
+		})
+
 		it('persists a ratable verdict automatically for a session_id review (target actor resolved from the session)', async () => {
 			callLlm.mockResolvedValueOnce({ ok: true, content: REVIEWER_PASS_VERDICT })
 

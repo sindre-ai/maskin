@@ -393,6 +393,22 @@ describe('POST /api/agent-builder/reviewer-verdict', () => {
 		expect(res.status).toBe(404)
 	})
 
+	it('returns 400 when target_actor_id does not resolve to a real actor', async () => {
+		const { ReviewerVerdictError } = await import('../../services/reviewer-verdicts')
+		reviewerVerdictWorkflow.mockRejectedValue(
+			new ReviewerVerdictError('target_actor_not_found', 'Target actor not found'),
+		)
+		const { app } = createAgentBuilderTestApp()
+		const res = await app.request(
+			jsonRequest('POST', `${BASE}/reviewer-verdict`, {
+				object_id: OBJECT_ID,
+				target_actor_id: ACTOR_ID,
+				workspace_id: WORKSPACE_ID,
+			}),
+		)
+		expect(res.status).toBe(400)
+	})
+
 	it('returns 409 when rating an already-rated verdict', async () => {
 		const { ReviewerVerdictError } = await import('../../services/reviewer-verdicts')
 		reviewerVerdictWorkflow.mockRejectedValue(

@@ -24,6 +24,7 @@ import type { AgentStorageManager } from './agent-storage'
 import { type LlmCallInput, callLlm } from './llm-call'
 import {
 	type PrecisionSummary,
+	ReviewerVerdictError,
 	computeReviewerPrecision,
 	rateReviewerVerdict,
 	recordReviewerVerdict,
@@ -639,7 +640,14 @@ export async function reviewWork(
 			verdictId = recorded.id
 			persisted = true
 		} catch (err) {
-			logger.warn('agent-builder: failed to persist reviewer verdict', {
+			// Caller-input errors (e.g. a target_actor_id that doesn't exist) must
+			// surface to the route's error mapping, not be swallowed as a
+			// best-effort persistence failure — only genuine write/connectivity
+			// failures belong in persistence_note.
+			if (err instanceof ReviewerVerdictError) {
+				throw err
+			}
+			logger.error('agent-builder: failed to persist reviewer verdict', {
 				workspaceId: p.workspaceId,
 				targetActorId,
 				error: String(err),
