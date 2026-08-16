@@ -468,8 +468,14 @@ export class SessionManager extends EventEmitter {
 			throw new Error(`Session ${sessionId} not found or not in pending/queued state`)
 		}
 
+		// Chat sessions (conversationId set) are exempt from the workspace concurrency
+		// limit — a live human is waiting on the other end, which is more urgent than
+		// queuing behind background/trigger sessions. They also don't count against
+		// other sessions' capacity — see the isNull(conversationId) filter in hasCapacity().
+		const isChatSession = Boolean(session.conversationId)
+
 		// Check workspace concurrency limit — queue instead of rejecting
-		const hasCapacity = await this.hasCapacity(session.workspaceId)
+		const hasCapacity = isChatSession || (await this.hasCapacity(session.workspaceId))
 		if (!hasCapacity) {
 			await this.db
 				.update(sessions)
@@ -1142,6 +1148,9 @@ export class SessionManager extends EventEmitter {
 				and(
 					eq(sessions.workspaceId, workspaceId),
 					inArray(sessions.status, ['starting', 'running']),
+					// Chat sessions don't count against the workspace's session budget —
+					// see the isChatSession bypass in startSession().
+					isNull(sessions.conversationId),
 				),
 			)
 

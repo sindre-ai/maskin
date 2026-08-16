@@ -2663,6 +2663,48 @@ describe('SessionManager', () => {
 		})
 	})
 
+	describe('startSession() — chat sessions bypass workspace capacity', () => {
+		it('launches a chat session without querying hasCapacity, even when the workspace is at its cap', async () => {
+			const session = buildSession({
+				status: 'pending',
+				interactive: true,
+				conversationId: 'conv-1',
+				actionPrompt: '',
+				containerId: null,
+			})
+			const agent = {
+				id: session.actorId,
+				type: 'agent',
+				systemPrompt: 'You are Workspace Coach.',
+				llmProvider: null,
+				llmConfig: null,
+				apiKey: 'ank_test_agent_key',
+				tools: null,
+			}
+			const workspace = { id: session.workspaceId, settings: {} }
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+
+			// No hasCapacity queries (workspace lookup + count) are queued here — if
+			// startSession() called hasCapacity() for a chat session, it would consume
+			// the launchContainer agent lookup as a bogus "workspace" row and fail.
+			mockResults.selectQueue = [
+				[session], // startSession: load session
+				[agent], // launchContainer: agent lookup
+				[workspace], // launchContainer: workspace lookup (llm keys)
+				[], // launchContainer: integrations lookup
+			]
+
+			await manager.startSession(session.id)
+
+			expect(mockContainerManager.create).toHaveBeenCalledTimes(1)
+		})
+	})
+
 	describe('start() and stop()', () => {
 		it('starts and stops watchdog without error', async () => {
 			await manager.start()
