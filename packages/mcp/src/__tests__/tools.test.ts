@@ -90,8 +90,6 @@ const ALL_TOOL_NAMES = [
 	'create_extension',
 	'update_extension',
 	'delete_extension',
-	'record_widget_event',
-	'get_bet_widget_metrics',
 ]
 
 describe('tool definitions', () => {

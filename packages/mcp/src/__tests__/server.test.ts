@@ -3581,44 +3581,6 @@ describe('tool handlers', () => {
 		})
 	})
 
-	describe('record_widget_event handler', () => {
-		it('forwards click_through events to the telemetry sink', async () => {
-			const events: unknown[] = []
-			const localConfig = {
-				...config,
-				telemetrySink: (event: unknown) => events.push(event),
-			}
-			const localHandlers = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>()
-			vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
-				localHandlers.set(
-					name as string,
-					handler as (args: Record<string, unknown>) => Promise<unknown>,
-				)
-			})
-			createMcpServer(localConfig)
-			const handler = localHandlers.get('record_widget_event')
-			if (!handler) throw new Error('record_widget_event not registered')
-			await handler({
-				widget_name: 'hero-card',
-				event: 'click_through',
-				tool_name: 'get_objects',
-				card_kind: 'single',
-				object_type: 'bet',
-				object_id: 'bet-9',
-			})
-			const widgetEvents = events.filter(
-				(e): e is { event_type: string; event: string } =>
-					(e as { event_type?: unknown })?.event_type === 'widget_event',
-			)
-			expect(widgetEvents).toHaveLength(1)
-			expect(widgetEvents[0]).toMatchObject({
-				event_type: 'widget_event',
-				event: 'click_through',
-				widget_name: 'hero-card',
-			})
-		})
-	})
-
 	describe('update_actor handler', () => {
 		const actorId = '550e8400-e29b-41d4-a716-446655440000'
 		const skillId1 = '660e8400-e29b-41d4-a716-446655440001'
