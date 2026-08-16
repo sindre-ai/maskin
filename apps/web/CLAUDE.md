@@ -9,7 +9,7 @@ This is a **steering interface for humans overseeing autonomous agents**, not a 
 3. **Instant feedback** — Every action is optimistic. SSE drives real-time updates. No loading spinners for mutations.
 4. **Linear/Apple aesthetic** — Clean, minimal, monospace accents, tight spacing, keyboard-driven.
 5. **Light/dark mode** — Defaults to light. User can choose system/light/dark in settings. Both modes are first-class.
-6. **Solid, warm neutrals (v2)** — the product's visual language matches the maskin.io landing page: a warm neutral gray with an indigo brand accent, no glass/blur. Source of truth: `Maskin App v2 Standalone.html`. Never re-introduce frosted or translucent surfaces — overlays are solid with a shadow.
+6. **Solid zinc + indigo (v2)** — the product's visual language matches the maskin.io landing page: the Tailwind zinc neutral ramp with an indigo brand accent and amber for warning/at-risk states, no glass/blur. Source of truth: `Maskin App v2 Standalone.html`. Never re-introduce frosted or translucent surfaces — overlays are solid with a shadow.
 7. **Document-first detail** — Each object opens as a Notion-like document: title, dynamic metadata badges, markdown content, linked objects.
 8. **Composable-ready** — Architecture the component system so blocks/views can be added incrementally.
 
@@ -89,8 +89,8 @@ This is a **steering interface for humans overseeing autonomous agents**, not a 
 
 ### Visual Style — v2
 - Light + dark with full token parity — both are first-class.
-- Light mode: warm neutral gray on `#ffffff`, indigo brand for links and primary actions, pastel status badges.
-- Dark mode: warm neutral inverted (zinc-950 field, zinc-800 borders), indigo brand shifted one stop lighter for legibility.
+- Light mode: zinc neutrals on `#ffffff`, indigo brand for links and primary actions, amber for warning/at-risk, pastel status badges.
+- Dark mode: zinc ramp inverted (zinc-950 field, zinc-800 borders), indigo brand lifted two stops for legibility (`#4f46e5` → `#818cf8`).
 - Overlays are **solid**, elevated by shadow only — no glass, no blur.
 - Fonts: Schibsted Grotesk (sans, variable 400–900) + JetBrains Mono (mono) — self-hosted from `/public/fonts/`, see `src/styles/typography.md`.
 - Base border radius: 10px (`--radius: 0.625rem`) — the `sm`/`md`/`lg`/`xl`/`2xl` scale steps 6/8/10/14/16px, matched to the v2 mockup's chip / menu-item / control / card / modal usage.

@@ -218,8 +218,7 @@ function GalleryPage() {
 						{RADII.map((r) => (
 							<div
 								key={r.token}
-								className="flex items-center gap-4 border border-border bg-card p-3"
-								style={{ borderRadius: 10 }}
+								className="flex items-center gap-4 rounded-lg border border-border bg-card p-3"
 							>
 								<div className={`h-12 w-12 bg-primary ${r.className}`} />
 								<div>
