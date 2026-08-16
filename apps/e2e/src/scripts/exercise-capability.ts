@@ -138,7 +138,7 @@ const scenarios: Scenario[] = [
 		},
 	},
 	{
-		name: 'PATCH preserves capability shape and returns updated snapshot',
+		name: 'PATCH response body carries updated capability snapshot',
 		async run() {
 			const steps: string[] = []
 			steps.push('POST /api/actors (agent)')
@@ -150,31 +150,52 @@ const scenarios: Scenario[] = [
 				'You are the workspace coach. Teach humans how to shape bets, decide edges, ' +
 				'and coordinate agents. Explain the object model, the reasoning loop, and the ' +
 				'tradeoffs between speed and quality.'
-			await patchActor(a.id, { system_prompt: prompt })
-			steps.push(`GET /api/actors/${a.id} (re-fetch to read updated capability)`)
-			const patched = await getActor(a.id)
-			const cap = patched.capability as {
+			const patchResponse = await patchActor(a.id, { system_prompt: prompt })
+			// PATCH is claimed to return the updated snapshot directly — assert that
+			// contract before falling back to a GET, so a regression that drops
+			// capability from the PATCH response body actually fails this scenario.
+			if (!patchResponse.capability)
+				throw new Error(
+					`PATCH response missing capability: ${JSON.stringify(patchResponse.capability)}`,
+				)
+			const patchCap = patchResponse.capability as {
 				overall: { level: string; score: number }
 				dimensions: Array<{ key: string; score: number; reasons: string[] }>
 			}
-			const dimKeys = cap.dimensions.map((d) => d.key).sort()
+			if (typeof patchCap.overall?.score !== 'number')
+				throw new Error(`PATCH capability.overall.score not a number: ${patchCap.overall?.score}`)
+			const patchDimKeys = patchCap.dimensions.map((d) => d.key).sort()
 			const expected = [...DIMS].sort()
-			if (JSON.stringify(dimKeys) !== JSON.stringify(expected))
-				throw new Error(`dims after PATCH: ${dimKeys.join(',')}`)
-			if (typeof cap.overall.score !== 'number')
-				throw new Error(`score after PATCH: ${cap.overall.score}`)
-			const expertise = cap.dimensions.find((d) => d.key === 'expertise')
-			if (!expertise || expertise.score <= 0)
-				throw new Error(`expertise dim not scored: ${JSON.stringify(expertise)}`)
+			if (JSON.stringify(patchDimKeys) !== JSON.stringify(expected))
+				throw new Error(`PATCH dims: ${patchDimKeys.join(',')}`)
+			const patchExpertise = patchCap.dimensions.find((d) => d.key === 'expertise')
+			if (!patchExpertise || patchExpertise.score <= 0)
+				throw new Error(`PATCH expertise dim not scored: ${JSON.stringify(patchExpertise)}`)
+			steps.push(`GET /api/actors/${a.id} (parity check: GET matches PATCH snapshot)`)
+			const patched = await getActor(a.id)
+			const getCap = patched.capability as {
+				overall: { level: string; score: number }
+				dimensions: Array<{ key: string; score: number; reasons: string[] }>
+			}
+			if (getCap.overall.score !== patchCap.overall.score)
+				throw new Error(
+					`GET score ${getCap.overall.score} != PATCH score ${patchCap.overall.score}`,
+				)
+			if (getCap.overall.level !== patchCap.overall.level)
+				throw new Error(
+					`GET level ${getCap.overall.level} != PATCH level ${patchCap.overall.level}`,
+				)
 			return {
 				steps,
 				evidence: {
 					actorId: a.id,
-					level: cap.overall.level,
-					score: cap.overall.score,
-					expertiseScore: expertise.score,
-					expertiseReasons: expertise.reasons,
-					dimensions: dimKeys,
+					patchLevel: patchCap.overall.level,
+					patchScore: patchCap.overall.score,
+					patchExpertiseScore: patchExpertise.score,
+					patchExpertiseReasons: patchExpertise.reasons,
+					patchDimensions: patchDimKeys,
+					getLevel: getCap.overall.level,
+					getScore: getCap.overall.score,
 				},
 			}
 		},
