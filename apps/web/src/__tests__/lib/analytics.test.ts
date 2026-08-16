@@ -21,6 +21,7 @@ import {
 	trackNorthStarPromptResponse,
 	trackObjectAttachedFile,
 	trackObjectCreated,
+	trackObjectUpdated,
 	trackObjectsListArrived,
 	trackObjectsListGroupToggled,
 	trackRelationshipCreated,
@@ -28,10 +29,11 @@ import {
 	trackSidebarAgentActivityExpanded,
 	trackSidebarToggle,
 	trackSidebarWorkspaceSwitcherOpened,
+	trackSindreMessageReceived,
+	trackSindreMessageSent,
 	trackSpecialistSummonedManually,
 	trackTriggerCreated,
 	trackTriggerFired,
-	trackWorkspaceSkillAttached,
 } from '@/lib/analytics'
 import { setStoredActor } from '@/lib/auth'
 import { __setInitializedForTesting } from '@/lib/posthog'
@@ -233,6 +235,44 @@ describe('v1 taxonomy helpers', () => {
 		})
 	})
 
+	it('sindre_message_sent carries the session id and nothing else', () => {
+		const capture = captureSpy()
+
+		trackSindreMessageSent({ session_id: 'sess-42' })
+
+		expect(capture).toHaveBeenCalledWith('sindre_message_sent', {
+			session_id: 'sess-42',
+		})
+	})
+
+	it('sindre_message_received carries session_id, model, and tokens', () => {
+		const capture = captureSpy()
+
+		trackSindreMessageReceived({
+			session_id: 'sess-42',
+			model: 'claude-opus-4-7',
+			tokens: 128,
+		})
+
+		expect(capture).toHaveBeenCalledWith('sindre_message_received', {
+			session_id: 'sess-42',
+			model: 'claude-opus-4-7',
+			tokens: 128,
+		})
+	})
+
+	it('sindre_message_received serialises missing model/tokens as null', () => {
+		const capture = captureSpy()
+
+		trackSindreMessageReceived({ session_id: 'sess-7', model: null, tokens: null })
+
+		expect(capture).toHaveBeenCalledWith('sindre_message_received', {
+			session_id: 'sess-7',
+			model: null,
+			tokens: null,
+		})
+	})
+
 	it('specialist_summoned_manually names the picked agent and its kebab role', () => {
 		const capture = captureSpy()
 
@@ -313,6 +353,60 @@ describe('v1 taxonomy helpers', () => {
 		)
 	})
 
+	describe('object_updated (Bulk-select ship-metric event)', () => {
+		it('carries object_id + the four bespoke props for a single status change', () => {
+			const capture = captureSpy()
+
+			trackObjectUpdated({
+				object_id: 'obj-1',
+				mutation_type: 'status',
+				via: 'single',
+				bulk_batch_size: 1,
+			})
+
+			expect(capture).toHaveBeenCalledWith('object_updated', {
+				object_id: 'obj-1',
+				mutation_type: 'status',
+				via: 'single',
+				bulk_batch_size: 1,
+			})
+		})
+
+		it('records via=bulk with the selected count for a bulk mutation', () => {
+			const capture = captureSpy()
+
+			trackObjectUpdated({
+				object_id: 'obj-9',
+				mutation_type: 'field',
+				via: 'bulk',
+				bulk_batch_size: 12,
+			})
+
+			expect(capture).toHaveBeenCalledWith('object_updated', {
+				object_id: 'obj-9',
+				mutation_type: 'field',
+				via: 'bulk',
+				bulk_batch_size: 12,
+			})
+		})
+
+		it('accepts mutation_type=delete for a single-object delete', () => {
+			const capture = captureSpy()
+
+			trackObjectUpdated({
+				object_id: 'obj-3',
+				mutation_type: 'delete',
+				via: 'single',
+				bulk_batch_size: 1,
+			})
+
+			expect(capture).toHaveBeenCalledWith(
+				'object_updated',
+				expect.objectContaining({ mutation_type: 'delete', via: 'single' }),
+			)
+		})
+	})
+
 	it('object_created carries object_subtype and the shared base contract', () => {
 		const capture = captureSpy()
 
@@ -369,24 +463,6 @@ describe('v1 taxonomy helpers', () => {
 				parent_entity_type: 'bet',
 			}),
 		)
-	})
-
-	it('workspace_skill_attached carries workspace, target actor, skill id, and visibility', () => {
-		const capture = captureSpy()
-
-		trackWorkspaceSkillAttached({
-			workspace_id: 'ws-1',
-			target_actor_id: 'agent-7',
-			skill_id: 'skill-9',
-			skill_visible: true,
-		})
-
-		expect(capture).toHaveBeenCalledWith('workspace_skill_attached', {
-			workspace_id: 'ws-1',
-			target_actor_id: 'agent-7',
-			skill_id: 'skill-9',
-			skill_visible: true,
-		})
 	})
 
 	it('mini_app_file_viewed carries the fixed property contract for a file open', () => {

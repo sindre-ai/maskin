@@ -240,11 +240,7 @@ function WorkspaceSkillsSection({
 												if (isAttached) {
 													detachSkill.mutate(skill.id)
 												} else {
-													attachSkill.mutate({
-														id: skill.id,
-														workspaceId: skill.workspaceId,
-														isValid: skill.isValid,
-													})
+													attachSkill.mutate(skill.id)
 												}
 												setOpen(false)
 											}}

@@ -1,4 +1,3 @@
-import { PageHeader } from '@/components/layout/page-header'
 import { LoopRow } from '@/components/loops/loop-row'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picker'
@@ -93,8 +92,6 @@ function LoopsPage() {
 
 	return (
 		<div>
-			<PageHeader title="Loops" />
-
 			{loopsLoading ? (
 				<ListSkeleton />
 			) : !hasLoops ? (

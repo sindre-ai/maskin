@@ -3,10 +3,20 @@ import type { Database } from '@maskin/db'
 import { events, actors, agentSkills, workspaceMembers, workspaceSkills } from '@maskin/db/schema'
 import { attachSkillSchema, attachSkillsBatchSchema } from '@maskin/shared'
 import { and, eq, inArray } from 'drizzle-orm'
+import {
+	type SkillAttachSource,
+	trackWorkspaceSkillAttached,
+} from '../lib/analytics/workspace-skill-events'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { errorSchema } from '../lib/openapi-schemas'
 import { serializeArray } from '../lib/serialize'
+
+// UI is the default caller — the frontend does not set X-Client-Source. The
+// MCP client explicitly sends 'mcp' (see packages/mcp/src/server.ts:apiFetch).
+function resolveAttachSource(header: string | undefined): SkillAttachSource {
+	return header === 'mcp' ? 'mcp' : 'ui'
+}
 
 type Env = {
 	Variables: {
@@ -261,6 +271,14 @@ app.openapi(attachSkillRoute, (async (c) => {
 				error: String(err),
 			})
 		}
+		void trackWorkspaceSkillAttached({
+			workspaceId: skill.workspaceId,
+			actorId: callerActorId,
+			agentActorId: actorId,
+			skillName: skill.name,
+			via: resolveAttachSource(c.req.header('x-client-source')),
+			skillVisible: skill.isValid,
+		})
 	}
 
 	const response = {
@@ -391,8 +409,9 @@ app.openapi(attachSkillsBatchRoute, (async (c) => {
 	// swallowing that failure here would silently break the SSE feed for rows
 	// that the response reports as successfully attached.
 	let attachedAtById = new Map<string, Date | string>()
+	let newlyAttachedForEmit: (typeof skills)[number][] = []
 	if (toAttach.length > 0) {
-		const { attachRows } = await db.transaction(async (tx) => {
+		const { attachRows, newlyAttached } = await db.transaction(async (tx) => {
 			const inserted = await tx
 				.insert(agentSkills)
 				.values(toAttach.map((skill) => ({ actorId, workspaceSkillId: skill.id })))
@@ -429,9 +448,26 @@ app.openapi(attachSkillsBatchRoute, (async (c) => {
 						),
 					),
 				)
-			return { attachRows }
+			return { attachRows, newlyAttached }
 		})
 		attachedAtById = new Map(attachRows.map((row) => [row.workspaceSkillId, row.createdAt]))
+		newlyAttachedForEmit = newlyAttached
+	}
+
+	// Fire PostHog outside the transaction — same "only newly-attached" rule as
+	// the audit events, matching the single-attach path's idempotency contract.
+	if (newlyAttachedForEmit.length > 0) {
+		const via = resolveAttachSource(c.req.header('x-client-source'))
+		for (const skill of newlyAttachedForEmit) {
+			void trackWorkspaceSkillAttached({
+				workspaceId: skill.workspaceId,
+				actorId: callerActorId,
+				agentActorId: actorId,
+				skillName: skill.name,
+				via,
+				skillVisible: skill.isValid,
+			})
+		}
 	}
 
 	const results = workspaceSkillIds.map((workspaceSkillId) => {

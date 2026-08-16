@@ -27,11 +27,6 @@ describe('SettingsLayout', () => {
 		mockMatchRoute.mockReturnValue(false)
 	})
 
-	it('renders Settings heading', () => {
-		render(<SettingsLayout />)
-		expect(screen.getByRole('heading', { name: 'Settings' })).toBeInTheDocument()
-	})
-
 	it('renders all navigation links', () => {
 		render(<SettingsLayout />)
 		expect(screen.getByText('General')).toBeInTheDocument()

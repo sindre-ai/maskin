@@ -39,11 +39,20 @@ vi.mock('@/lib/auth', () => ({
 
 vi.mock('@/lib/analytics', async () => {
 	const actual = await vi.importActual<typeof import('@/lib/analytics')>('@/lib/analytics')
-	return { ...actual, trackChatSessionStarted: vi.fn() }
+	return {
+		...actual,
+		trackChatSessionStarted: vi.fn(),
+		trackSindreMessageSent: vi.fn(),
+		trackSindreMessageReceived: vi.fn(),
+	}
 })
 
 import { useChatSession } from '@/hooks/use-chat-session'
-import { trackChatSessionStarted } from '@/lib/analytics'
+import {
+	trackChatSessionStarted,
+	trackSindreMessageReceived,
+	trackSindreMessageSent,
+} from '@/lib/analytics'
 import type { SessionResponse } from '@/lib/api'
 import { api } from '@/lib/api'
 import { TestWrapper } from '../setup'
@@ -410,6 +419,160 @@ describe('useChatSession — SSE log stream', () => {
 		expect(result.current.error?.message).toMatch(/HTTP 404/)
 	})
 })
+
+describe('useChatSession — Sindre message telemetry', () => {
+	it('emits sindre_message_sent per send() with the current session id', async () => {
+		vi.mocked(api.sessions.create).mockResolvedValue(buildSession('sess-1'))
+		vi.mocked(api.sessions.input).mockResolvedValue({ ok: true as const })
+
+		const { result } = renderHook(() => useChatSession({ workspaceId, agentActorId }), {
+			wrapper: TestWrapper,
+		})
+		await act(async () => {
+			await result.current.send('first')
+		})
+		await act(async () => {
+			await result.current.send('second')
+		})
+
+		expect(trackSindreMessageSent).toHaveBeenCalledTimes(2)
+		expect(trackSindreMessageSent).toHaveBeenNthCalledWith(1, { session_id: 'sess-1' })
+		expect(trackSindreMessageSent).toHaveBeenNthCalledWith(2, { session_id: 'sess-1' })
+	})
+
+	it('emits sindre_message_received once per unique assistant message id, carrying model + tokens', async () => {
+		const { onmessage } = await bootstrapAndOpen()
+
+		const first = JSON.stringify({
+			type: 'assistant',
+			session_id: 'sess-1',
+			message: {
+				id: 'msg_a',
+				model: 'claude-opus-4-7',
+				usage: { output_tokens: 42 },
+				content: [{ type: 'text', text: 'first block' }],
+			},
+		})
+		act(() => onmessage({ event: 'stdout', data: first }))
+		// Second envelope for the same message id — a follow-up text block from
+		// the same turn. Must not double-count.
+		const firstAgain = JSON.stringify({
+			type: 'assistant',
+			session_id: 'sess-1',
+			message: { id: 'msg_a', content: [{ type: 'text', text: 'more of the same turn' }] },
+		})
+		act(() => onmessage({ event: 'stdout', data: firstAgain }))
+		// New message id — a new reply turn, must emit again.
+		const second = JSON.stringify({
+			type: 'assistant',
+			session_id: 'sess-1',
+			message: {
+				id: 'msg_b',
+				model: 'claude-opus-4-7',
+				usage: { output_tokens: 7 },
+				content: [{ type: 'text', text: 'second turn' }],
+			},
+		})
+		act(() => onmessage({ event: 'stdout', data: second }))
+
+		expect(trackSindreMessageReceived).toHaveBeenCalledTimes(2)
+		expect(trackSindreMessageReceived).toHaveBeenNthCalledWith(1, {
+			session_id: 'sess-1',
+			model: 'claude-opus-4-7',
+			tokens: 42,
+		})
+		expect(trackSindreMessageReceived).toHaveBeenNthCalledWith(2, {
+			session_id: 'sess-1',
+			model: 'claude-opus-4-7',
+			tokens: 7,
+		})
+	})
+
+	it('records model + tokens as null when the assistant envelope omits them', async () => {
+		const { onmessage } = await bootstrapAndOpen()
+
+		const line = JSON.stringify({
+			type: 'assistant',
+			session_id: 'sess-1',
+			message: { id: 'msg_bare', content: [{ type: 'text', text: 'no metadata' }] },
+		})
+		act(() => onmessage({ event: 'stdout', data: line }))
+
+		expect(trackSindreMessageReceived).toHaveBeenCalledTimes(1)
+		expect(trackSindreMessageReceived).toHaveBeenCalledWith({
+			session_id: 'sess-1',
+			model: null,
+			tokens: null,
+		})
+	})
+
+	it('does not emit sindre_message_received for non-assistant envelopes or garbage lines', async () => {
+		const { onmessage } = await bootstrapAndOpen()
+
+		const systemLine = JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sess-1' })
+		act(() => onmessage({ event: 'stdout', data: systemLine }))
+		const resultLine = JSON.stringify({
+			type: 'result',
+			subtype: 'success',
+			is_error: false,
+			session_id: 'sess-1',
+		})
+		act(() => onmessage({ event: 'stdout', data: resultLine }))
+		act(() => onmessage({ event: 'stdout', data: 'not json' }))
+		act(() => onmessage({ event: 'stdout', data: '' }))
+
+		expect(trackSindreMessageReceived).not.toHaveBeenCalled()
+	})
+
+	it('resets the received-message-id dedupe set on reset() so a new session can re-emit', async () => {
+		vi.mocked(api.sessions.create)
+			.mockResolvedValueOnce(buildSession('sess-1'))
+			.mockResolvedValueOnce(buildSession('sess-2'))
+		vi.mocked(api.sessions.input).mockResolvedValue({ ok: true as const })
+
+		const hook = renderHook(() => useChatSession({ workspaceId, agentActorId }), {
+			wrapper: TestWrapper,
+		})
+		await act(async () => {
+			await hook.result.current.send('hi')
+		})
+		await waitFor(() => expect(mockFetchEventSource).toHaveBeenCalledTimes(1))
+		await act(async () => {
+			await lastFesInit?.onopen()
+		})
+		const assistantLine = JSON.stringify({
+			type: 'assistant',
+			session_id: 'sess-1',
+			message: { id: 'msg_same', content: [{ type: 'text', text: 'hello' }] },
+		})
+		act(() => lastFesInit?.onmessage({ event: 'stdout', data: assistantLine }))
+		expect(trackSindreMessageReceived).toHaveBeenCalledTimes(1)
+
+		act(() => hook.result.current.reset())
+		await act(async () => {
+			await hook.result.current.send('again')
+		})
+		await waitFor(() => expect(mockFetchEventSource).toHaveBeenCalledTimes(2))
+		await act(async () => {
+			await lastFesInit?.onopen()
+		})
+		// Same message id, but a fresh session — dedupe set was cleared, must
+		// emit again.
+		act(() => lastFesInit?.onmessage({ event: 'stdout', data: assistantLine }))
+		expect(trackSindreMessageReceived).toHaveBeenCalledTimes(2)
+	})
+})
+
+async function bootstrapAndOpen(): Promise<{
+	onmessage: NonNullable<FesInit['onmessage']>
+}> {
+	await renderAndBootstrap()
+	await act(async () => {
+		await lastFesInit?.onopen()
+	})
+	if (!lastFesInit) throw new Error('fetchEventSource was not called')
+	return { onmessage: lastFesInit.onmessage }
+}
 
 describe('useChatSession — send', () => {
 	beforeEach(() => {

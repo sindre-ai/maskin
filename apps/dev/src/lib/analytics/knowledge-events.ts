@@ -17,6 +17,92 @@ type DbHandle = Database | Transaction
 // chip, and the PostHog ship-metric query) can't drift out of sync.
 export const WORKSPACE_KNOWLEDGE_REFERENCED = 'workspace_knowledge_referenced'
 
+// Canonical event names for the Knowledge Extension retro-instrumentation: one
+// PostHog event when a knowledge object is created (any surface) and one when
+// an actor opens one. Together they let the intended HogQL run — see the
+// closed bet's Retro block ("What we'd cut next time") and the T-instrument
+// task body for the query shape.
+export const KNOWLEDGE_OBJECT_CREATED = 'knowledge_object_created'
+export const KNOWLEDGE_OBJECT_READ = 'knowledge_object_read'
+
+// Header the MCP server + web UI set on outbound API calls so the create/read
+// routes can attribute events without guessing. Absent header falls back to
+// actorType-based inference (see resolveCreatedVia / resolveAccessedVia).
+export const CLIENT_SOURCE_HEADER = 'x-client-source'
+
+export type KnowledgeCreatedVia = 'ui' | 'agent' | 'mcp'
+export type KnowledgeAccessedVia = 'extension' | 'ui' | 'mcp'
+
+// Maps the optional X-Client-Source header + actor type onto the ship-metric
+// enum. MCP callers self-identify; agent CLIs that hit the API without going
+// through MCP resolve to `agent`; anything else is `ui`.
+export function resolveCreatedVia(
+	clientSource: string | undefined,
+	actorType: string | undefined,
+): KnowledgeCreatedVia {
+	if (clientSource === 'mcp') return 'mcp'
+	if (clientSource === 'agent') return 'agent'
+	if (clientSource === 'ui') return 'ui'
+	if (actorType === 'agent') return 'agent'
+	return 'ui'
+}
+
+// Read-side enum has no `agent` slot per the task spec — an agent that reads
+// without going through MCP is unusual today, but map it to `mcp` because
+// that's the intended agent read path (get_objects → MCP → API). `extension`
+// is only honoured when the caller explicitly declares it.
+export function resolveAccessedVia(
+	clientSource: string | undefined,
+	actorType: string | undefined,
+): KnowledgeAccessedVia {
+	if (clientSource === 'extension') return 'extension'
+	if (clientSource === 'mcp') return 'mcp'
+	if (clientSource === 'ui') return 'ui'
+	if (actorType === 'agent') return 'mcp'
+	return 'ui'
+}
+
+// Fires `knowledge_object_created` end-to-end for the Knowledge Extension
+// retro-instrumentation. Fire-and-forget: a broken PostHog capture must never
+// surface to the caller — analytics can't block object writes. The audit row
+// for the create itself is already inserted by the route handler as
+// `action='created'`, so this helper only emits the PostHog capture.
+interface KnowledgeObjectCreatedProps {
+	workspaceId: string
+	actorId: string
+	objectId: string
+	createdVia: KnowledgeCreatedVia
+}
+
+export async function trackKnowledgeObjectCreated(p: KnowledgeObjectCreatedProps): Promise<void> {
+	await capturePosthogEvent(KNOWLEDGE_OBJECT_CREATED, p.workspaceId, {
+		workspace_id: p.workspaceId,
+		actor_id: p.actorId,
+		object_id: p.objectId,
+		created_via: p.createdVia,
+	})
+}
+
+// Fires `knowledge_object_read` for the retro-instrumentation. Reads are not
+// mutations, so no `events` audit row is inserted — that would flood both the
+// events table and the PG NOTIFY → SSE bridge on every TanStack Query
+// refetch or MCP get_objects call. PostHog capture only.
+interface KnowledgeObjectReadProps {
+	workspaceId: string
+	actorId: string
+	objectId: string
+	accessedVia: KnowledgeAccessedVia
+}
+
+export async function trackKnowledgeObjectRead(p: KnowledgeObjectReadProps): Promise<void> {
+	await capturePosthogEvent(KNOWLEDGE_OBJECT_READ, p.workspaceId, {
+		workspace_id: p.workspaceId,
+		actor_id: p.actorId,
+		object_id: p.objectId,
+		accessed_via: p.accessedVia,
+	})
+}
+
 interface WorkspaceKnowledgeReferencedProps {
 	workspaceId: string
 	// Caller reading the knowledge object.

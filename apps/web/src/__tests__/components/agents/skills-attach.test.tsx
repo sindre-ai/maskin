@@ -231,7 +231,7 @@ describe('Skills — Workspace Skills section', () => {
 		expect(labels).toEqual(['Alpha', 'mango', 'zeta'])
 	})
 
-	it('calls attach mutation with the skill id, workspace, and validity when an unattached skill is selected', async () => {
+	it('calls attach mutation with workspaceSkillId when an unattached skill is selected', async () => {
 		const user = userEvent.setup()
 		mockUseWorkspaceSkills.mockReturnValue({
 			data: [buildWorkspaceSkill({ id: 'skill-abc', name: 'deploy' })],
@@ -247,11 +247,7 @@ describe('Skills — Workspace Skills section', () => {
 		await user.click(screen.getByRole('button', { name: 'Attach workspace skill' }))
 		await user.click(screen.getByText('deploy'))
 
-		expect(mockAttach).toHaveBeenCalledWith({
-			id: 'skill-abc',
-			workspaceId: 'ws-1',
-			isValid: true,
-		})
+		expect(mockAttach).toHaveBeenCalledWith('skill-abc')
 		expect(mockDetach).not.toHaveBeenCalled()
 	})
 
