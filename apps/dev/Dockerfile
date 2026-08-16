@@ -48,3 +48,4 @@ ENV NODE_ENV=production
 ENV STATIC_DIR=/app/apps/web/dist
 EXPOSE 3000
 CMD ["sh", "-c", "node packages/db/dist/migrate.js && pnpm --filter @maskin/dev exec tsx scripts/seed-marketplace.ts && node apps/dev/dist/index.js"]
+
