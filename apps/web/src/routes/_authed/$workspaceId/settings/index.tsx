@@ -102,7 +102,7 @@ function PrivacySection() {
 				workspace is actually used and feed that back into active bets.
 			</p>
 			<div className="space-y-3">
-				<div className="flex items-start justify-between gap-4 rounded-lg border border-border p-3">
+				<div className="flex items-start justify-between gap-4 rounded-xl border border-border bg-card p-3 shadow-sm transition-colors hover:border-border-strong">
 					<div className="min-w-0">
 						<span className="text-sm font-medium block">Share product usage with Maskin</span>
 						<span className="text-sm text-muted-foreground">
@@ -116,7 +116,7 @@ function PrivacySection() {
 						aria-label="Share product usage with Maskin"
 					/>
 				</div>
-				<div className="flex items-start justify-between gap-4 rounded-lg border border-border p-3">
+				<div className="flex items-start justify-between gap-4 rounded-xl border border-border bg-card p-3 shadow-sm transition-colors hover:border-border-strong">
 					<div className="min-w-0">
 						<span className="text-sm font-medium block">Anonymize this workspace</span>
 						<span className="text-sm text-muted-foreground">
@@ -147,7 +147,7 @@ function ThemePicker() {
 	return (
 		<div>
 			<Label className="mb-2 text-muted-foreground">Appearance</Label>
-			<div className="flex gap-1 rounded-lg border border-border bg-background p-1">
+			<div className="flex gap-1 rounded-xl border border-border bg-card p-1 shadow-sm">
 				{themeOptions.map((option) => {
 					const Icon = option.icon
 					const isActive = theme === option.value
@@ -157,10 +157,10 @@ function ThemePicker() {
 							type="button"
 							onClick={() => setTheme(option.value)}
 							className={cn(
-								'flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-sm transition-colors',
+								'flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-sm transition-colors',
 								isActive
-									? 'bg-muted text-foreground font-medium shadow-sm'
-									: 'text-muted-foreground hover:text-muted-foreground',
+									? 'bg-secondary text-foreground font-medium shadow-xs'
+									: 'text-muted-foreground hover:text-foreground',
 							)}
 						>
 							<Icon size={14} />

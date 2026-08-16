@@ -120,7 +120,7 @@ function PlanCard({
 					<div className="flex items-center gap-2">
 						<StatusBadge status={plan.status} />
 						{testMode && (
-							<span className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
+							<span className="inline-flex h-6 items-center rounded-full border border-border-strong bg-secondary px-2.5 text-xs text-foreground">
 								Test mode
 							</span>
 						)}
@@ -160,7 +160,7 @@ function PlanCard({
 				{!configured && (
 					<p
 						aria-live="polite"
-						className="mt-4 rounded-md border bg-muted/40 px-3 py-2 text-sm text-muted-foreground"
+						className="mt-4 rounded-lg border border-border bg-muted px-3 py-2 text-sm text-muted-foreground"
 					>
 						Stripe is not configured for this instance. Billing is disabled until the server is set
 						up with Stripe keys.

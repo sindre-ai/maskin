@@ -149,7 +149,7 @@ export function ExtensionsManager() {
 					return (
 						<div
 							key={mod.id}
-							className="flex items-center justify-between rounded-lg border border-border p-3"
+							className="flex items-center justify-between rounded-xl border border-border bg-card p-3 shadow-sm transition-colors hover:border-border-strong"
 						>
 							<div>
 								<span className="text-sm font-medium">{mod.name}</span>
@@ -169,7 +169,7 @@ export function ExtensionsManager() {
 				{customExtensions.map((ext) => (
 					<div
 						key={ext.id}
-						className="flex items-center justify-between rounded-lg border border-border p-3"
+						className="flex items-center justify-between rounded-xl border border-border bg-card p-3 shadow-sm transition-colors hover:border-border-strong"
 					>
 						<div>
 							<span className="text-sm font-medium">{ext.name}</span>

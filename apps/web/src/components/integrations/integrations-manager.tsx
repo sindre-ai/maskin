@@ -163,9 +163,9 @@ function ProviderRow({
 			: 'Available to connect'
 
 	return (
-		<div className="flex items-center gap-3 rounded-lg border border-border bg-card p-4">
+		<div className="flex items-center gap-3 rounded-xl border border-border bg-card p-4 shadow-sm transition-colors hover:border-border-strong">
 			<div
-				className={`h-3 w-3 shrink-0 rounded-full ${isConnected ? 'bg-success' : 'bg-zinc-600'}`}
+				className={`h-3 w-3 shrink-0 rounded-full ${isConnected ? 'bg-success' : 'bg-muted-foreground/40'}`}
 			/>
 			<div className="flex-1 min-w-0">
 				<p className="text-sm font-medium text-foreground truncate">{provider.displayName}</p>
@@ -205,12 +205,12 @@ function GroupedProviderRow({
 	const count = installations.length
 
 	return (
-		<div className="overflow-hidden rounded-lg border border-border bg-card">
+		<div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm transition-colors hover:border-border-strong">
 			<button
 				type="button"
 				onClick={() => setExpanded((v) => !v)}
 				aria-expanded={expanded}
-				className="flex w-full items-center gap-3 p-4 text-left transition-colors hover:bg-bg-hover"
+				className="flex w-full items-center gap-3 p-4 text-left transition-colors hover:bg-secondary"
 			>
 				<div className="h-3 w-3 shrink-0 rounded-full bg-success" />
 				<div className="flex-1 min-w-0">
@@ -371,7 +371,7 @@ function SkjaldConnectDialog({
 						<div className="space-y-2">
 							<Label>Webhook URL</Label>
 							<div className="flex gap-2">
-								<div className="flex-1 min-w-0 rounded-md border border-border bg-bg-surface px-3 py-2 font-mono text-xs break-all select-all">
+								<div className="flex-1 min-w-0 rounded-md border border-border bg-muted px-3 py-2 font-mono text-xs break-all select-all">
 									{state?.webhookUrl}
 								</div>
 								<Button variant="secondary" size="sm" className="shrink-0" onClick={handleCopy}>
@@ -434,7 +434,7 @@ function NestedInstallationRow({
 		(integration.externalId ? `Installation ${integration.externalId}` : 'Installation')
 
 	return (
-		<div className="flex items-center gap-3 rounded-md border border-border bg-bg-surface p-3">
+		<div className="flex items-center gap-3 rounded-lg border border-border bg-muted p-3">
 			<div className="h-3 w-3 shrink-0 rounded-full bg-success" />
 			<div className="flex-1 min-w-0">
 				<p className="text-sm font-medium text-foreground truncate">{label}</p>
