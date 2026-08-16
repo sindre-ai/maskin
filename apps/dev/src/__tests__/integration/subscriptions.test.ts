@@ -855,6 +855,77 @@ describe('Subscriptions Integration', () => {
 		expect('mentions_you' in itemA).toBe(false)
 	})
 
+	it('max_unread_attention reflects the highest attention score among unread mentioning comments', async () => {
+		const appA = appAs(aId)
+		const appB = appAs(bId)
+		const headersA = { 'x-workspace-id': workspaceId }
+		const headersB = { 'x-workspace-id': workspaceId }
+
+		const createRes = await appA.request(
+			jsonRequest('POST', '/api/objects', buildCreateObjectBody(), headersA),
+		)
+		const obj = await createRes.json()
+
+		// A low-attention mention, then a higher-attention mention. The item's
+		// max_unread_attention should surface the higher of the two, not the
+		// latest or the first.
+		const lowRes = await appB.request(
+			jsonRequest(
+				'POST',
+				'/api/events',
+				{ entity_id: obj.id, content: 'fyi', mentions: [aId], attention: 2 },
+				headersB,
+			),
+		)
+		expect(lowRes.status).toBe(201)
+
+		const highRes = await appB.request(
+			jsonRequest(
+				'POST',
+				'/api/events',
+				{ entity_id: obj.id, content: 'urgent', mentions: [aId], attention: 5 },
+				headersB,
+			),
+		)
+		expect(highRes.status).toBe(201)
+
+		const unreadA = await appA
+			.request(jsonGet('/api/subscriptions/unread', headersA))
+			.then((r) => r.json())
+		const itemA = unreadA.items.find((i: { entity_id: string }) => i.entity_id === obj.id)
+		expect(itemA).toBeDefined()
+		expect(itemA.max_unread_attention).toBe(5)
+	})
+
+	it('max_unread_attention is null when no unread mentioning comment carries a score', async () => {
+		const appA = appAs(aId)
+		const appB = appAs(bId)
+		const headersA = { 'x-workspace-id': workspaceId }
+		const headersB = { 'x-workspace-id': workspaceId }
+
+		const createRes = await appA.request(
+			jsonRequest('POST', '/api/objects', buildCreateObjectBody(), headersA),
+		)
+		const obj = await createRes.json()
+
+		const commentRes = await appB.request(
+			jsonRequest(
+				'POST',
+				'/api/events',
+				{ entity_id: obj.id, content: 'hey there', mentions: [aId] },
+				headersB,
+			),
+		)
+		expect(commentRes.status).toBe(201)
+
+		const unreadA = await appA
+			.request(jsonGet('/api/subscriptions/unread', headersA))
+			.then((r) => r.json())
+		const itemA = unreadA.items.find((i: { entity_id: string }) => i.entity_id === obj.id)
+		expect(itemA).toBeDefined()
+		expect(itemA.max_unread_attention).toBeNull()
+	})
+
 	it("agent-to-agent mentions on a shared object never surface in a human watcher's For You", async () => {
 		// The bet's commitment: agent→agent mentions route to the target agent via
 		// the per-event notification path and never surface to a human's For You.

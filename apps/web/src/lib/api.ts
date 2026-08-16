@@ -861,6 +861,10 @@ export interface UnreadItem {
 	// Count of unread events on the entity that actually @-mention the viewer.
 	// Drives the "Mentioned" pill on the For You card when > 0.
 	mentioning_unread_count: number
+	// Highest attention score (1-5) among the entity's unread comments. null
+	// when no unread comment carries a score — sorts below scored comments in
+	// the Priority sort.
+	max_unread_attention: number | null
 	latest_event_id: number | null
 	latest_activity_at: string | null
 	object?: ObjectResponse

@@ -36,6 +36,7 @@ interface UnreadFixture {
 	entity_id: string
 	unread_count: number
 	mentioning_unread_count: number
+	max_unread_attention: number | null
 	latest_event_id: number
 	latest_activity_at: string
 	object: {
@@ -65,6 +66,7 @@ function buildItem(
 		entity_id: id,
 		unread_count: 1,
 		mentioning_unread_count: 0,
+		max_unread_attention: null,
 		latest_event_id: 42,
 		latest_activity_at: new Date().toISOString(),
 		object: {
@@ -83,8 +85,8 @@ function buildItem(
 	}
 }
 
-// One card per kind — decision sorts first (it's the only one mentioning
-// the viewer, and default sort is "priority").
+// One card per kind — decision sorts first (it has the highest attention
+// score, and default sort is "priority").
 //   - task + status=in_review + metadata.decision_type set → decision
 //   - task + status=in_review + no decision_type          → sign_off
 //   - bet + status=signal                                  → proposed_bet
@@ -97,6 +99,7 @@ function threeKindFeed(workspaceId: string): UnreadFixture[] {
 			status: 'in_review',
 			metadata: { decision_type: 'architecture' },
 			mentioning_unread_count: 1,
+			max_unread_attention: 5,
 		}),
 		buildItem(workspaceId, {
 			id: 'sign-off-1',
@@ -243,7 +246,7 @@ test.describe('For You prototype redesign — layout at 1024', () => {
 		await expect(page.getByRole('radio', { name: /latest activity/i })).toBeVisible()
 		await page.keyboard.press('Escape')
 
-		// One card visible at a time — priority sort puts the mentioned
+		// One card visible at a time — priority sort puts the highest-attention
 		// decision card first.
 		const card = page.getByTestId('foryou-queue-card')
 		await expect(card).toHaveCount(1)
