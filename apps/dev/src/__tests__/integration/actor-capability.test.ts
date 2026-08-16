@@ -1,4 +1,5 @@
 import { agentSkills, integrations, workspaceMembers, workspaceSkills } from '@maskin/db/schema'
+import { beforeEach, vi } from 'vitest'
 import {
 	buildIntegration,
 	buildWorkspaceSkill,
@@ -9,7 +10,18 @@ import {
 import { jsonGet } from '../helpers'
 import { createIntegrationApp, db, getTestActorId } from './global-setup'
 
+const { capturePosthogEventMock } = vi.hoisted(() => ({
+	capturePosthogEventMock: vi.fn().mockResolvedValue(undefined),
+}))
+vi.mock('../../lib/analytics/posthog', () => ({
+	capturePosthogEvent: capturePosthogEventMock,
+}))
+
 const { default: actorsRoutes } = await import('../../routes/actors')
+
+beforeEach(() => {
+	capturePosthogEventMock.mockClear()
+})
 
 function createApp() {
 	return createIntegrationApp({ path: '/api/actors', module: actorsRoutes })
@@ -257,5 +269,116 @@ describe('Actors Integration — PATCH /:id capability is read-only', () => {
 		const body = await res.json()
 		expect(body.description).toBe('renamed')
 		expect(body.capability.overall.level).toBe('novice')
+	})
+})
+
+describe('Actors Integration — PATCH /:id capability level advancement', () => {
+	const BEEFY_PROMPT = [
+		'# Role',
+		'You are a workspace copilot that keeps ongoing initiatives moving.',
+		'',
+		'# Scope',
+		'You handle recurring status updates, draft summaries of recent activity, and answer questions about workspace state. You do not run destructive operations.',
+		'',
+		'# Decision framework',
+		'When asked to act, prefer additive updates over destructive ones. When information is missing, ask the human before guessing. Cite the source object for every claim.',
+		'',
+		'# Output format',
+		'Return short paragraphs with markdown links to any referenced objects.',
+	].join('\n')
+
+	it('emits agent_capability_level_advanced when a PATCH lifts the computed level', async () => {
+		const app = createApp()
+		const ws = await insertWorkspace(db, getTestActorId())
+		const agent = await insertActor(db, {
+			type: 'agent',
+			name: 'Advancing Agent',
+			systemPrompt: 'You are a bot.',
+		})
+		await db.insert(workspaceMembers).values({
+			workspaceId: ws.id,
+			actorId: agent.id,
+			role: 'member',
+		})
+
+		const patch = await app.request(`/api/actors/${agent.id}`, {
+			method: 'PATCH',
+			headers: {
+				'Content-Type': 'application/json',
+				'X-Workspace-Id': ws.id,
+			},
+			body: JSON.stringify({
+				description: 'Ongoing initiatives copilot',
+				system_prompt: BEEFY_PROMPT,
+			}),
+		})
+		expect(patch.status).toBe(200)
+
+		expect(capturePosthogEventMock).toHaveBeenCalledOnce()
+		const [event, distinctId, props] = capturePosthogEventMock.mock.calls[0]
+		expect(event).toBe('agent_capability_level_advanced')
+		expect(distinctId).toBe(agent.id)
+		expect(props).toMatchObject({
+			actor_id: agent.id,
+			workspace_id: ws.id,
+			from_level: 'novice',
+		})
+		expect(['apprentice', 'practitioner', 'expert', 'master']).toContain(props.to_level)
+		expect(Array.isArray(props.dimensions_changed)).toBe(true)
+		expect(props.dimensions_changed).toContain('expertise')
+	})
+
+	it('does not emit when the PATCH keeps the actor at the same level', async () => {
+		const app = createApp()
+		const agent = await insertActor(db, {
+			type: 'agent',
+			name: 'Steady Agent',
+			systemPrompt: 'You are a bot.',
+		})
+
+		const patch = await app.request(`/api/actors/${agent.id}`, {
+			method: 'PATCH',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name: 'Renamed Steady Agent' }),
+		})
+		expect(patch.status).toBe(200)
+		expect(capturePosthogEventMock).not.toHaveBeenCalled()
+	})
+
+	it('does not emit when the PATCH regresses the level', async () => {
+		const app = createApp()
+		const agent = await insertActor(db, {
+			type: 'agent',
+			name: 'Regressing Agent',
+			description: 'Ongoing initiatives copilot',
+			systemPrompt: BEEFY_PROMPT,
+		})
+
+		const patch = await app.request(`/api/actors/${agent.id}`, {
+			method: 'PATCH',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				system_prompt: '',
+				description: null,
+			}),
+		})
+		expect(patch.status).toBe(200)
+		expect(capturePosthogEventMock).not.toHaveBeenCalled()
+	})
+
+	it('does not emit when the target is a human — humans carry no capability', async () => {
+		const app = createApp()
+		// Patch the test actor itself (which is human) so the cross-user human
+		// PATCH auth guard doesn't 403 us first.
+		const patch = await app.request(`/api/actors/${getTestActorId()}`, {
+			method: 'PATCH',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				system_prompt: BEEFY_PROMPT,
+				description: 'Ongoing initiatives copilot',
+			}),
+		})
+		expect(patch.status).toBe(200)
+		expect(capturePosthogEventMock).not.toHaveBeenCalled()
 	})
 })
