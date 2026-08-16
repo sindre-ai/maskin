@@ -95,11 +95,12 @@ test.describe('Loop detail page', () => {
 		await input.fill('Tighten the close timeline')
 		await input.press('Enter')
 
-		// The utterance is forwarded to the chat-driven edit path: the chat
-		// panel opens with the message staged and sent.
-		await expect(page.getByRole('heading', { name: 'Chat' })).toBeVisible({
+		// The utterance is forwarded to the chat-driven edit path: navigates to
+		// a new chat with the loop attached via the `objectId` search param.
+		await expect(page).toHaveURL(new RegExp(`chats/new\\?.*objectId=${loop.id}`), {
 			timeout: 10000,
 		})
+		await expect(page.getByRole('heading', { name: 'New chat', exact: true })).toBeVisible()
 		await expect(input).toHaveValue('')
 	})
 
