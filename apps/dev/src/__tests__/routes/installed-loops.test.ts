@@ -11,11 +11,15 @@ const { trackLoopInstalledMock, trackLoopForkedMock, trackLoopUninstalledMock } 
 		trackLoopUninstalledMock: vi.fn().mockResolvedValue(undefined),
 	}),
 )
-vi.mock('../../lib/analytics/loop-events', () => ({
-	trackLoopInstalled: trackLoopInstalledMock,
-	trackLoopForked: trackLoopForkedMock,
-	trackLoopUninstalled: trackLoopUninstalledMock,
-}))
+vi.mock('../../lib/analytics/loop-events', async (importOriginal) => {
+	const actual = (await importOriginal()) as Record<string, unknown>
+	return {
+		...actual,
+		trackLoopInstalled: trackLoopInstalledMock,
+		trackLoopForked: trackLoopForkedMock,
+		trackLoopUninstalled: trackLoopUninstalledMock,
+	}
+})
 
 const { default: installedLoopsRoutes } = await import('../../routes/installed-loops')
 
@@ -85,6 +89,8 @@ describe('POST /api/installed-loops', () => {
 			[],
 			// existing installed_loops check — none
 			[],
+			// workspaces.createdAt lookup for first_session derivation
+			[{ createdAt: new Date() }],
 		]
 		// installed_loops, loop object, loop event, installed_loop event, auto-subscribe.
 		mockResults.insertQueue = [[install], [loopObject], [], [], []]
@@ -161,6 +167,8 @@ describe('POST /api/installed-loops', () => {
 			[loop({ id: loopId })],
 			items,
 			[],
+			// workspaces.createdAt lookup for first_session derivation
+			[{ createdAt: new Date() }],
 		]
 		// Inserts fire in this order: installed_loops, actor, workspace_members
 		// (binds the provisioned agent to the workspace), trigger, loop object,
@@ -252,6 +260,8 @@ describe('POST /api/installed-loops', () => {
 			[loop({ id: loopId })],
 			items,
 			[],
+			// workspaces.createdAt lookup for first_session derivation
+			[{ createdAt: new Date() }],
 			// Dedup lookup: the workspace already holds an actor provisioned from
 			// this exact source item (another loop, or a kept prior install).
 			[{ id: existingActorId }],
@@ -346,12 +356,15 @@ describe('POST /api/installed-loops', () => {
 		const workspaceId = randomUUID()
 		const loopId = randomUUID()
 		const install = installRow({ workspaceId, sourceLoopId: loopId })
+		// Workspace created 5 minutes ago → firstSession true.
+		const wsCreatedAt = new Date(Date.now() - 5 * 60 * 1000)
 
 		mockResults.selectQueue = [
 			[buildWorkspaceMember({ workspaceId, actorId: ACTOR_ID })],
 			[loop({ id: loopId, slug: 'customer-continuous-discovery', version: '1.4.2' })],
 			[],
 			[],
+			[{ createdAt: wsCreatedAt }],
 		]
 		mockResults.insertQueue = [[install], [loopObjectRow()], [], [], []]
 
@@ -370,10 +383,39 @@ describe('POST /api/installed-loops', () => {
 			workspaceId,
 			actorId: ACTOR_ID,
 			provisioned: { actors: 0, triggers: 0, skills: 0, integrations: 0 },
+			componentIds: [],
+			firstSession: true,
 		})
 	})
 
-	it('passes the provisioned counter through to the emit so the bundle-card discriminator can be derived', async () => {
+	it('emits first_session=false when the workspace is older than the activation window', async () => {
+		const { app, mockResults } = setup()
+		const workspaceId = randomUUID()
+		const loopId = randomUUID()
+		const install = installRow({ workspaceId, sourceLoopId: loopId })
+		// Workspace created 2 hours ago → firstSession false.
+		const wsCreatedAt = new Date(Date.now() - 2 * 60 * 60 * 1000)
+
+		mockResults.selectQueue = [
+			[buildWorkspaceMember({ workspaceId, actorId: ACTOR_ID })],
+			[loop({ id: loopId })],
+			[],
+			[],
+			[{ createdAt: wsCreatedAt }],
+		]
+		mockResults.insertQueue = [[install], [loopObjectRow()], [], [], []]
+
+		const res = await app.request(
+			jsonRequest('POST', '/api/installed-loops', { loopId, workspaceId }),
+		)
+
+		expect(res.status).toBe(201)
+		await Promise.resolve()
+		const call = trackLoopInstalledMock.mock.calls[0]?.[0] as { firstSession: boolean }
+		expect(call.firstSession).toBe(false)
+	})
+
+	it('passes the provisioned counter and per-item component_ids through to the emit', async () => {
 		const { app, mockResults } = setup()
 		const workspaceId = randomUUID()
 		const loopId = randomUUID()
@@ -412,6 +454,7 @@ describe('POST /api/installed-loops', () => {
 			[loop({ id: loopId })],
 			items,
 			[],
+			[{ createdAt: new Date() }],
 		]
 		mockResults.insertQueue = [
 			[install],
@@ -431,8 +474,15 @@ describe('POST /api/installed-loops', () => {
 		expect(res.status).toBe(201)
 		await Promise.resolve()
 		expect(trackLoopInstalledMock).toHaveBeenCalledOnce()
-		const call = trackLoopInstalledMock.mock.calls[0]?.[0] as { provisioned: unknown }
+		const call = trackLoopInstalledMock.mock.calls[0]?.[0] as {
+			provisioned: unknown
+			componentIds: string[]
+		}
 		expect(call.provisioned).toEqual({ actors: 1, triggers: 1, skills: 0, integrations: 0 })
+		// component_ids captures every freshly-provisioned local id — the two the
+		// install just created — so the ship-metric query can count items per
+		// workspace with `length(component_ids)`.
+		expect(call.componentIds).toEqual([newActorId, newTriggerId])
 	})
 
 	it('does not emit loop_installed when the install fails', async () => {

@@ -26,6 +26,19 @@ interface LoopInstalledProps {
 		skills: number
 		integrations: number
 	}
+	// Local ids of every element (actor/trigger/skill/integration) freshly
+	// provisioned by this install — reused/deduped ids are deliberately not
+	// included, so `length(component_ids)` matches the sum of `provisioned.*`
+	// counters. Emitted as `component_ids` so the curated-catalog ship metric
+	// ("≥3 catalog items added in first session") can count per-item without
+	// needing a separate per-item emitter.
+	componentIds: string[]
+	// True when the install lands inside the workspace's first-session window
+	// (workspace age at install time < FIRST_SESSION_WINDOW_MS). Emitted as
+	// `first_session` so the ship-metric query filters cheaply on a property
+	// instead of joining PostHog distinct_id → workspaces.created_at at
+	// query time.
+	firstSession: boolean
 }
 
 // Ordering here is the wire ordering downstream queries will see in
@@ -39,6 +52,16 @@ const PROVISIONED_TO_COMPONENT_TYPE: ReadonlyArray<
 	['integrations', 'integration'],
 ]
 
+// Activation-window proxy for "the workspace's first user session." 30 min
+// matches the industry-standard session-inactivity cutoff PostHog itself
+// uses and keeps the emit-side check zero-cost — no session table lookup,
+// just a subtraction against workspaces.created_at at install time.
+export const FIRST_SESSION_WINDOW_MS = 30 * 60 * 1000
+
+export function isFirstSession(workspaceCreatedAt: Date, now: Date = new Date()): boolean {
+	return now.getTime() - workspaceCreatedAt.getTime() < FIRST_SESSION_WINDOW_MS
+}
+
 export async function trackLoopInstalled(p: LoopInstalledProps): Promise<void> {
 	const componentTypes = PROVISIONED_TO_COMPONENT_TYPE.filter(
 		([key]) => p.provisioned[key] > 0,
@@ -51,6 +74,8 @@ export async function trackLoopInstalled(p: LoopInstalledProps): Promise<void> {
 		actor_id: p.actorId,
 		component_type_count: componentTypes.length,
 		component_types: componentTypes,
+		component_ids: p.componentIds,
+		first_session: p.firstSession,
 	})
 }
 

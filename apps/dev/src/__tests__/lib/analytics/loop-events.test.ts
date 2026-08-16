@@ -8,7 +8,9 @@ vi.mock('../../../lib/analytics/posthog', () => ({
 }))
 
 import {
+	FIRST_SESSION_WINDOW_MS,
 	claimLoopActiveDay,
+	isFirstSession,
 	trackLoopActiveDay,
 	trackLoopForked,
 	trackLoopInstalled,
@@ -47,6 +49,8 @@ describe('trackLoopInstalled', () => {
 			workspaceId: 'ws-1',
 			actorId: 'actor-1',
 			provisioned: { actors: 2, triggers: 1, skills: 0, integrations: 1 },
+			componentIds: ['a1', 'a2', 't1', 'i1'],
+			firstSession: true,
 		})
 
 		expect(capturePosthogEventMock).toHaveBeenCalledOnce()
@@ -58,6 +62,8 @@ describe('trackLoopInstalled', () => {
 			actor_id: 'actor-1',
 			component_type_count: 3,
 			component_types: ['actor', 'trigger', 'integration'],
+			component_ids: ['a1', 'a2', 't1', 'i1'],
+			first_session: true,
 		})
 	})
 
@@ -69,11 +75,15 @@ describe('trackLoopInstalled', () => {
 			workspaceId: 'ws-1',
 			actorId: 'actor-1',
 			provisioned: { actors: 0, triggers: 0, skills: 0, integrations: 0 },
+			componentIds: [],
+			firstSession: false,
 		})
 
 		const props = capturePosthogEventMock.mock.calls[0]?.[2] as Record<string, unknown>
 		expect(props.component_type_count).toBe(0)
 		expect(props.component_types).toEqual([])
+		expect(props.component_ids).toEqual([])
+		expect(props.first_session).toBe(false)
 	})
 
 	it('counts distinct types, not element counts (single-item card stays at count 1)', async () => {
@@ -84,11 +94,32 @@ describe('trackLoopInstalled', () => {
 			workspaceId: 'ws-1',
 			actorId: 'actor-1',
 			provisioned: { actors: 3, triggers: 0, skills: 0, integrations: 0 },
+			componentIds: ['a1', 'a2', 'a3'],
+			firstSession: false,
 		})
 
 		const props = capturePosthogEventMock.mock.calls[0]?.[2] as Record<string, unknown>
 		expect(props.component_type_count).toBe(1)
 		expect(props.component_types).toEqual(['actor'])
+		// component_ids stays at the element granularity even when the type count is 1 —
+		// the ship metric ("≥3 items") reads length(component_ids), not the type count.
+		expect(props.component_ids).toEqual(['a1', 'a2', 'a3'])
+	})
+})
+
+describe('isFirstSession', () => {
+	it('is true inside the activation window', () => {
+		const now = new Date('2026-08-16T12:00:00Z')
+		const wsCreated = new Date(now.getTime() - (FIRST_SESSION_WINDOW_MS - 1))
+		expect(isFirstSession(wsCreated, now)).toBe(true)
+	})
+
+	it('is false at or past the activation window boundary', () => {
+		const now = new Date('2026-08-16T12:00:00Z')
+		expect(isFirstSession(new Date(now.getTime() - FIRST_SESSION_WINDOW_MS), now)).toBe(false)
+		expect(isFirstSession(new Date(now.getTime() - FIRST_SESSION_WINDOW_MS - 1000), now)).toBe(
+			false,
+		)
 	})
 })
 
