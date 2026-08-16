@@ -195,7 +195,14 @@ describe('BulkActionBar', () => {
 		expect(props.onClear).not.toHaveBeenCalled()
 	})
 
-	it('applies scoped transition classes (transform + opacity only) so motion inherits the global reduced-motion guard', () => {
+	// Reduced-motion is now enforced by a global @media (prefers-reduced-motion:
+	// reduce) rule in app.css that zeroes transition-duration on every element,
+	// so the component keeps its transition class in both preference states.
+	// Coverage of the CSS guard itself lives in app-css-motion.test.ts. The
+	// bar's transition is narrowed to transform + opacity per the v2 spec's
+	// "shadow + transform" tier at --duration-200.
+	it('keeps its transform+opacity transition class regardless of prefers-reduced-motion', () => {
+		setMatchMedia(true)
 		renderBar()
 		const bar = screen.getByRole('region', { name: 'Bulk actions' })
 		expect(bar.className).toMatch(/transition-\[transform,opacity\]/)
