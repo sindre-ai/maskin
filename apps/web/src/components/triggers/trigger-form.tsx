@@ -590,7 +590,7 @@ export function TriggerForm({
 							// biome-ignore lint/a11y/noAutofocus: focus title on create
 							autoFocus={!initialValues}
 							rows={1}
-							className="w-full text-2xl font-bold tracking-tight bg-transparent border-none outline-none text-foreground resize-none overflow-hidden p-0 focus:outline-none"
+							className="w-full text-2xl font-semibold tracking-[-0.022em] bg-transparent border-none outline-none text-foreground resize-none overflow-hidden p-0 focus:outline-none"
 							ref={(el) => {
 								if (el) {
 									el.style.height = 'auto'
@@ -607,7 +607,7 @@ export function TriggerForm({
 								}`}
 							>
 								<span
-									className={`h-1.5 w-1.5 rounded-full ${enabled ? 'bg-success' : 'bg-zinc-600'}`}
+									className={`h-1.5 w-1.5 rounded-full ${enabled ? 'bg-success' : 'bg-muted-foreground'}`}
 								/>
 								{enabled ? 'Enabled' : 'Disabled'}
 							</span>
@@ -629,13 +629,11 @@ export function TriggerForm({
 				{/* Pinned plain-language summary — re-renders live on every value change */}
 				<section
 					aria-live="polite"
-					className="mb-5 flex items-start gap-2.5 rounded-lg border border-border bg-muted px-3.5 py-3"
+					className="mb-5 flex items-start gap-2.5 rounded-xl border border-border bg-muted px-3.5 py-3 shadow-sm"
 				>
 					<Zap size={15} className="mt-0.5 shrink-0 text-muted-foreground" />
 					<div>
-						<p className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
-							What happens
-						</p>
+						<p className="eyebrow mb-1">What happens</p>
 						<p className="text-sm text-foreground">
 							{buildTriggerSummary({
 								type,
@@ -658,9 +656,9 @@ export function TriggerForm({
 				</section>
 
 				{/* When it fires */}
-				<Card className="rounded-lg">
+				<Card className="rounded-xl shadow-sm">
 					<div className="space-y-3 p-4 sm:p-5">
-						<h2 className="flex items-center gap-2 text-[13px] font-bold text-foreground">
+						<h2 className="flex items-center gap-2 text-[15px] font-semibold tracking-[-0.010em] text-foreground">
 							<Zap size={15} className="text-muted-foreground" />
 							When it fires
 						</h2>
@@ -681,17 +679,24 @@ export function TriggerForm({
 										key={t}
 										htmlFor={id}
 										className={cn(
-											'flex min-h-11 cursor-pointer flex-col gap-1.5 rounded-md border p-2.5 text-left transition-colors sm:min-h-0 sm:p-3',
+											'flex min-h-11 cursor-pointer flex-col gap-1.5 rounded-lg border p-2.5 text-left transition-colors sm:min-h-0 sm:p-3',
 											selected
-												? 'border-primary/50 bg-primary/5 ring-1 ring-primary/40'
-												: 'border-border bg-card hover:border-foreground/30',
+												? 'border-brand bg-brand/5 ring-1 ring-brand/30'
+												: 'border-border bg-card hover:border-border-strong',
 										)}
 									>
 										<RadioGroupItem id={id} value={t} className="sr-only" />
-										<span className="grid h-8 w-8 place-items-center rounded-md bg-secondary text-secondary-foreground">
+										<span
+											className={cn(
+												'grid h-8 w-8 place-items-center rounded-md transition-colors',
+												selected
+													? 'bg-brand/10 text-brand'
+													: 'bg-secondary text-secondary-foreground',
+											)}
+										>
 											<Icon size={15} />
 										</span>
-										<span className="text-sm font-bold text-foreground">{info.label}</span>
+										<span className="text-sm font-semibold text-foreground">{info.label}</span>
 										<span className="text-xs leading-snug text-muted-foreground">
 											{info.tagline}
 										</span>
@@ -860,9 +865,11 @@ export function TriggerForm({
 
 				{/* Where it listens */}
 				{type === 'event' && isSlack && (
-					<Card className="rounded-lg">
+					<Card className="rounded-xl shadow-sm">
 						<div className="space-y-3 p-4 sm:p-5">
-							<h2 className="text-[13px] font-bold text-foreground">Where it listens</h2>
+							<h2 className="text-[15px] font-semibold tracking-[-0.010em] text-foreground">
+								Where it listens
+							</h2>
 							<p className="text-xs text-muted-foreground">
 								Only matching Slack events are forwarded to the agent.
 							</p>
@@ -878,9 +885,11 @@ export function TriggerForm({
 				)}
 
 				{/* Do this */}
-				<Card className="rounded-lg">
+				<Card className="rounded-xl shadow-sm">
 					<div className="space-y-4 p-4 sm:p-5">
-						<h2 className="text-[13px] font-bold text-foreground">Do this</h2>
+						<h2 className="text-[15px] font-semibold tracking-[-0.010em] text-foreground">
+							Do this
+						</h2>
 						<div className="space-y-1.5">
 							<p className="text-[13px] font-semibold">Prompt — how the agent acts</p>
 							<Textarea
@@ -921,7 +930,7 @@ export function TriggerForm({
 			</div>
 
 			{/* Sticky bottom save bar */}
-			<div className="sticky bottom-0 z-10 border-t border-border bg-background/90 backdrop-blur">
+			<div className="sticky bottom-0 z-10 border-t border-border bg-background">
 				<div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-3 px-4 pb-[max(0.625rem,env(safe-area-inset-bottom))] pt-2.5 sm:px-6">
 					<span className="text-xs text-muted-foreground">{saveMeta}</span>
 					<span
