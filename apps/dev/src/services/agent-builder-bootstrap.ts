@@ -4,6 +4,7 @@ import type { Database } from '@maskin/db'
 import { actors, agentSkills, workspaceMembers, workspaceSkills } from '@maskin/db/schema'
 import { PLATFORM_MCP_PRESET, serializeSkillMd } from '@maskin/shared'
 import { and, eq } from 'drizzle-orm'
+import { z } from 'zod'
 import { logger } from '../lib/logger'
 import { RUBRIC_CRITERIA } from './agent-reviewer'
 import type { AgentStorageManager } from './agent-storage'
@@ -22,6 +23,72 @@ export const SELF_CRITIQUE_SKILL_NAME = 'self-critique-agent-definition'
 // agent's own prose mentions other JSON along the way (e.g. while narrating
 // a tool call).
 export const AGENT_BUILDER_RESULT_MARKER = 'maskin_agent_builder_result'
+
+// Shared, validated shape for the two possible terminal results a builder
+// session's final_message can contain — mirrors BUILDER_SYSTEM_PROMPT's
+// OUTPUT CONTRACTS below. Every caller (MCP tool, a future route, a UI)
+// should parse `session.result.final_message` through
+// `parseAgentBuilderResult()` instead of hand-rolling fence/JSON extraction.
+const gapQuestionResultSchema = z.object({
+	kind: z.literal('gap_question'),
+	gap_question: z.string().min(1),
+	missing: z.array(z.string()),
+})
+
+const createdResultSchema = z.object({
+	kind: z.literal('created'),
+	actor_id: z.string().uuid(),
+	actor_name: z.string().min(1),
+	skill_id: z.string().uuid(),
+	skill_name: z.string().min(1),
+	definition_summary: z.string().min(1),
+	self_critique: z.object({
+		revised: z.boolean(),
+		rounds: z.number().int().min(0),
+	}),
+	gap_report_items: z.array(
+		z.object({
+			topic: z.string(),
+			detail: z.string(),
+			why_it_matters: z.string(),
+		}),
+	),
+	gap_report_comment_posted: z.boolean(),
+})
+
+export const agentBuilderResultSchema = z.discriminatedUnion('kind', [
+	gapQuestionResultSchema,
+	createdResultSchema,
+])
+
+export type AgentBuilderResult = z.infer<typeof agentBuilderResultSchema>
+
+const RESULT_FENCE_RE = new RegExp(
+	`\`\`\`json\\s+${AGENT_BUILDER_RESULT_MARKER}\\r?\\n([\\s\\S]*?)\\r?\\n?\`\`\``,
+)
+
+/**
+ * Extracts and validates the builder session's authoritative JSON result
+ * from a session's `final_message` text. Returns `null` when the marker
+ * fence is absent (e.g. the session errored before emitting one) or its
+ * contents don't match either output-contract shape — callers should treat
+ * `null` as "no structured result available," not throw.
+ */
+export function parseAgentBuilderResult(finalMessage: string): AgentBuilderResult | null {
+	const match = finalMessage.match(RESULT_FENCE_RE)
+	const jsonText = match?.[1]
+	if (!jsonText) return null
+
+	let raw: unknown
+	try {
+		raw = JSON.parse(jsonText)
+	} catch {
+		return null
+	}
+
+	const parsed = agentBuilderResultSchema.safeParse(raw)
+	return parsed.success ? parsed.data : null
+}
 
 export function selfCritiqueSkillContent(): string {
 	const criteriaList = RUBRIC_CRITERIA.map(

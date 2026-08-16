@@ -37,10 +37,10 @@ export const CANONICAL_RUBRIC_TITLE = 'Agent builder — reviewer rubric'
 // `metadata.posthog_query` dashboard and any SSE consumers can't drift.
 export const REVIEWER_VERDICT_SUBMITTED = 'reviewer_verdict_submitted'
 
-// Named rubric criteria the builder's revision loop pattern-matches on.
-// Order is not load-bearing; the reviewer LLM is free to add extras (extra
-// criteria are surfaced in the verdict but never gate a revision beyond
-// their own pass/fail).
+// Named rubric criteria the reviewer scores against. Order is not
+// load-bearing; the reviewer LLM is free to add extras (extra criteria are
+// surfaced in the verdict but never gate anything beyond their own
+// pass/fail).
 export const RUBRIC_CRITERIA_NAMES = [
 	'persona_specificity',
 	'opinionation_scaffolding_present',
@@ -90,7 +90,7 @@ export const RUBRIC_CRITERIA: { name: RubricCriterionName; description: string }
 // this by updating the workspace object's content.
 export const DEFAULT_RUBRIC_BODY = `# Agent builder reviewer rubric
 
-Score each criterion below as pass or fail. A single failing criterion means overall = "fail" and the builder will re-run stages 3-4 with your \`fix\` notes appended to the persona context. Be concrete in fix notes — name the specific section, the specific sentence, or the specific missing element.
+Score each criterion below as pass or fail. A single failing criterion means overall = "fail". Your verdict (including every \`fix\` note) is returned as-is to whoever called you — there is no automatic revision on your output, so be concrete in fix notes — name the specific section, the specific sentence, or the specific missing element.
 
 ## Criteria
 

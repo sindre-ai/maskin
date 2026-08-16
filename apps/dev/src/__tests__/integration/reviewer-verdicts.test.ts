@@ -170,6 +170,71 @@ describe('Reviewer Verdicts Integration — persist / rate / precision', () => {
 		expect(second.status).toBe(409)
 	})
 
+	it('PATCH under concurrent race: exactly one of two simultaneous ratings wins, the other gets already_rated', async () => {
+		// Regression test for a check-then-act race in rateReviewerVerdict: two
+		// concurrent PATCH calls could both read human_agreed as null before
+		// either UPDATE landed, so the second would silently clobber the first
+		// rater's judgment. The service now re-checks human_agreed IS NULL inside
+		// the UPDATE's WHERE, so exactly one of the two concurrent calls below
+		// must win and the other must be rejected as already_rated — never both
+		// succeeding and never a lost update.
+		const reviewerApp = createApp(reviewerActorId)
+		const created = await reviewerApp.request(
+			jsonRequest(
+				'POST',
+				'/api/reviewer-verdicts',
+				{
+					rubric_id: rubricId,
+					actor_id: targetActorId,
+					reviewer_actor_id: reviewerActorId,
+					verdict: 'pass',
+					criteria_verdicts: [{ name: 'no_hedging', pass: true }],
+				},
+				{ 'X-Workspace-Id': workspaceId },
+			),
+		)
+		const { id: verdictId } = await created.json()
+
+		const raterA = await insertActor(db, { type: 'human', name: 'Rater A' })
+		const raterB = await insertActor(db, { type: 'human', name: 'Rater B' })
+		const appA = createApp(raterA.id)
+		const appB = createApp(raterB.id)
+
+		const [resA, resB] = await Promise.all([
+			appA.request(
+				jsonRequest(
+					'PATCH',
+					`/api/reviewer-verdicts/${verdictId}`,
+					{ human_agreed: true },
+					{
+						'X-Workspace-Id': workspaceId,
+					},
+				),
+			),
+			appB.request(
+				jsonRequest(
+					'PATCH',
+					`/api/reviewer-verdicts/${verdictId}`,
+					{ human_agreed: false },
+					{
+						'X-Workspace-Id': workspaceId,
+					},
+				),
+			),
+		])
+
+		const statuses = [resA.status, resB.status].sort()
+		expect(statuses).toEqual([200, 409])
+
+		const winnerRaterId = resA.status === 200 ? raterA.id : raterB.id
+		const [row] = await db
+			.select()
+			.from(reviewerVerdicts)
+			.where(eq(reviewerVerdicts.id, verdictId))
+			.limit(1)
+		expect(row.humanRatedBy).toBe(winnerRaterId)
+	})
+
 	it('PATCH forbids the reviewer from rating its own verdict (403)', async () => {
 		const reviewerApp = createApp(reviewerActorId)
 		const created = await reviewerApp.request(

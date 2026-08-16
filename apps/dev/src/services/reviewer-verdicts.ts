@@ -1,6 +1,6 @@
 import type { Database } from '@maskin/db'
 import { events, actors, objects, reviewerVerdicts } from '@maskin/db/schema'
-import { and, desc, eq, isNotNull, sql } from 'drizzle-orm'
+import { and, desc, eq, isNotNull, isNull, sql } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { logger } from '../lib/logger'
 
@@ -206,6 +206,11 @@ export async function rateReviewerVerdict(input: RateVerdictInput): Promise<{
 	}
 
 	const now = new Date()
+	// Re-check humanAgreed IS NULL in the UPDATE's WHERE itself — the SELECT
+	// above only rejects an *already*-raced request; without this guard, two
+	// concurrent PATCH calls that both pass the SELECT check would both reach
+	// this UPDATE and the second would silently clobber the first human's
+	// rating. A zero-row result here means another call won the race.
 	const updatedRows = await db
 		.update(reviewerVerdicts)
 		.set({
@@ -216,13 +221,13 @@ export async function rateReviewerVerdict(input: RateVerdictInput): Promise<{
 			humanNote: note ?? null,
 			updatedAt: now,
 		})
-		.where(eq(reviewerVerdicts.id, verdictId))
+		.where(and(eq(reviewerVerdicts.id, verdictId), isNull(reviewerVerdicts.humanAgreed)))
 		.returning()
 	const updated = updatedRows[0]
 	if (!updated) {
 		throw new ReviewerVerdictError(
-			'verdict_not_found',
-			`Reviewer verdict ${verdictId} disappeared before update completed`,
+			'already_rated',
+			`Reviewer verdict ${verdictId} already rated — refusing to overwrite`,
 		)
 	}
 
