@@ -8,8 +8,12 @@ import {
 	workspaceSkills,
 } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
-import { and, eq } from 'drizzle-orm'
+import { and, count, eq } from 'drizzle-orm'
 import { vi } from 'vitest'
+import {
+	AGENT_BUILDER_ACTOR_NAME,
+	getOrBootstrapAgentBuilderActor,
+} from '../../services/agent-builder-bootstrap'
 import { AgentStorageManager, workspaceSkillKey } from '../../services/agent-storage'
 import { insertActor, insertObject, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
@@ -302,6 +306,59 @@ describe('agent-builder service integration', () => {
 			await expect(loadReviewTarget(db, ws.id, { objectId: emptyObject.id })).rejects.toMatchObject(
 				{ reason: 'object_no_content' },
 			)
+		})
+	})
+
+	describe('getOrBootstrapAgentBuilderActor', () => {
+		it('creates the actor + membership + self-critique skill on first call, and reuses it on the second', async () => {
+			const ws = await insertWorkspace(db, getTestActorId())
+			const storage = createMemoryStorage()
+			const agentStorage = new AgentStorageManager(storage, db)
+
+			const first = await getOrBootstrapAgentBuilderActor(db, agentStorage, ws.id, getTestActorId())
+			expect(first.bootstrapped).toBe(true)
+
+			const [actorRow] = await db.select().from(actors).where(eq(actors.id, first.actorId)).limit(1)
+			expect(actorRow).toBeDefined()
+			expect(actorRow.name).toBe(AGENT_BUILDER_ACTOR_NAME)
+			expect(actorRow.systemPrompt).toBeTruthy()
+
+			const [memberRow] = await db
+				.select()
+				.from(workspaceMembers)
+				.where(
+					and(eq(workspaceMembers.workspaceId, ws.id), eq(workspaceMembers.actorId, first.actorId)),
+				)
+				.limit(1)
+			expect(memberRow).toBeDefined()
+
+			const skillRows = await db
+				.select({ id: workspaceSkills.id, content: workspaceSkills.content })
+				.from(workspaceSkills)
+				.innerJoin(agentSkills, eq(agentSkills.workspaceSkillId, workspaceSkills.id))
+				.where(and(eq(workspaceSkills.workspaceId, ws.id), eq(agentSkills.actorId, first.actorId)))
+			expect(skillRows).toHaveLength(1)
+			// S3 write executed for real (memory-backed StorageProvider), not just
+			// a DB row — putWorkspaceSkill's storageKey must resolve to content.
+			const storageKey = workspaceSkillKey(ws.id, skillRows[0].id)
+			expect(storage._store.get(storageKey)?.toString('utf-8')).toBe(skillRows[0].content)
+
+			// Second call in the same workspace must be a pure read — no second
+			// actor, no duplicate membership/skill rows.
+			const second = await getOrBootstrapAgentBuilderActor(
+				db,
+				agentStorage,
+				ws.id,
+				getTestActorId(),
+			)
+			expect(second.bootstrapped).toBe(false)
+			expect(second.actorId).toBe(first.actorId)
+
+			const [{ value: actorCount }] = await db
+				.select({ value: count() })
+				.from(actors)
+				.where(eq(actors.name, AGENT_BUILDER_ACTOR_NAME))
+			expect(actorCount).toBe(1)
 		})
 	})
 })

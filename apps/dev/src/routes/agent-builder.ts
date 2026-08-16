@@ -10,25 +10,32 @@ import {
 	AgentReviewTargetError,
 	refineAgent,
 	reviewWork,
-	runAgentBuilder,
 } from '../services/agent-builder'
+import {
+	buildAgentBuilderActionPrompt,
+	getOrBootstrapAgentBuilderActor,
+} from '../services/agent-builder-bootstrap'
 import { AgentReviewerError } from '../services/agent-reviewer'
 import type { AgentStorageManager } from '../services/agent-storage'
+import type { SessionManager } from '../services/session-manager'
 
-// POST /api/agent-builder/create — full pipeline (stages 1-4 + reviewer +
-// actor + SKILL.md registration).
+// POST /api/agent-builder/create — bootstraps (or reuses) the per-workspace
+// "Agent Builder" actor and kicks off one async container session that does
+// intent extraction, persona synthesis, system-prompt authoring, self-
+// critique, and actor/skill registration itself. Returns { session_id,
+// status } immediately — the caller polls get_session for the eventual
+// result (JSON in session.result.final_message).
 // POST /api/agent-builder/review — standalone reviewer against a workspace
 // object or a terminal session's result.
 // POST /api/agent-builder/refine — re-run stages 3-4 for an existing actor
 // with a free-text refinement instruction and republish the SKILL.md.
-// Underspecified prompts short-circuit at stage 1 with a gap question and
-// never touch the workspace.
 
 type Env = {
 	Variables: {
 		db: Database
 		actorId: string
 		agentStorage: AgentStorageManager
+		sessionManager: SessionManager
 	}
 }
 
@@ -111,66 +118,42 @@ app.post('/create', async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const agentStorage = c.get('agentStorage')
+	const sessionManager = c.get('sessionManager')
 
 	if (!(await isWorkspaceMember(db, actorId, workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 	}
 
 	try {
-		const result = await runAgentBuilder(
-			{
-				prompt: body.prompt,
-				examples: body.examples,
-				references: body.references,
-				constraints: body.constraints,
-			},
-			{ db, agentStorage, workspaceId, actorId },
+		const { actorId: builderActorId } = await getOrBootstrapAgentBuilderActor(
+			db,
+			agentStorage,
+			workspaceId,
+			actorId,
 		)
 
-		if (result.kind === 'gap_question') {
-			return c.json({ gap_question: result.gap_question, missing: result.missing }, 200)
-		}
+		const actionPrompt = buildAgentBuilderActionPrompt({
+			prompt: body.prompt,
+			workspaceId,
+			examples: body.examples,
+			references: body.references,
+			constraints: body.constraints,
+		})
 
-		return c.json(
-			{
-				actor_id: result.actor.id,
-				actor_name: result.actor.name,
-				skill_id: result.skill.id,
-				skill_name: result.skill.name,
-				intent: result.intent,
-				persona: result.persona,
-				system_prompt: result.assembledSystemPrompt,
-				definition_summary: result.definitionSummary,
-				gap_report: result.gapReportMarkdown,
-				gap_report_items: result.gapReport.gap_items,
-				gap_report_comment_posted: result.gapReportCommentPosted,
-				reviewer: {
-					final_overall: result.reviewerFinalOverall,
-					// True when the reviewer itself errored (LLM failure or unparseable
-					// verdict) rather than genuinely scoring the definition as failing —
-					// callers must not treat final_overall:'fail' + errored:true as a
-					// real review outcome; attempts will be empty in that case.
-					errored: result.reviewerErrored,
-					attempts: result.reviewerAttempts.map((a) => ({
-						cycle_number: a.cycleNumber,
-						overall: a.overall,
-						failing_criteria: a.failingCriteria,
-						reviewer_session_id: a.reviewerSessionId,
-						rubric_id: a.rubricId,
-					})),
-				},
-			},
-			200,
-		)
+		const session = await sessionManager.createSession(workspaceId, {
+			actorId: builderActorId,
+			actionPrompt,
+			createdBy: actorId,
+			autoStart: true,
+		})
+
+		return c.json({ session_id: session.id, status: session.status }, 202)
 	} catch (err) {
-		if (err instanceof AgentBuilderError) {
-			logger.warn('agent-builder: pipeline error', {
-				reason: err.reason,
-				message: err.message,
-			})
-			return c.json(createApiError('INTERNAL_ERROR', err.message), 500)
-		}
-		throw err
+		logger.error('agent-builder: failed to start create session', {
+			workspaceId,
+			error: String(err),
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to start agent-builder session'), 500)
 	}
 })
 

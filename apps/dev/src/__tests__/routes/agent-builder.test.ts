@@ -4,22 +4,32 @@ import type { PgNotifyBridge } from '@maskin/realtime'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import agentBuilderRoutes from '../../routes/agent-builder'
 import { jsonRequest } from '../helpers'
-import { createMockAgentStorage, createTestContext } from '../setup'
+import { createMockAgentStorage, createMockSessionManager, createTestContext } from '../setup'
 
 vi.mock('../../services/agent-builder', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('../../services/agent-builder')>()
 	return {
 		...actual,
-		runAgentBuilder: vi.fn(),
 		reviewWork: vi.fn(),
 		refineAgent: vi.fn(),
 	}
 })
 
+vi.mock('../../services/agent-builder-bootstrap', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../services/agent-builder-bootstrap')>()
+	return {
+		...actual,
+		getOrBootstrapAgentBuilderActor: vi.fn(),
+	}
+})
+
 const service = await import('../../services/agent-builder')
-const runAgentBuilder = service.runAgentBuilder as unknown as ReturnType<typeof vi.fn>
 const reviewWork = service.reviewWork as unknown as ReturnType<typeof vi.fn>
 const refineAgent = service.refineAgent as unknown as ReturnType<typeof vi.fn>
+
+const bootstrapService = await import('../../services/agent-builder-bootstrap')
+const getOrBootstrapAgentBuilderActor =
+	bootstrapService.getOrBootstrapAgentBuilderActor as unknown as ReturnType<typeof vi.fn>
 
 const BASE = '/api/agent-builder'
 const WORKSPACE_ID = '11111111-1111-1111-1111-111111111111'
@@ -27,6 +37,7 @@ const OBJECT_ID = '77777777-7777-7777-7777-777777777777'
 const SESSION_ID = '88888888-8888-8888-8888-888888888888'
 const ACTOR_ID = '33333333-3333-3333-3333-333333333333'
 const RUBRIC_ID = '55555555-5555-5555-5555-555555555555'
+const BUILDER_ACTOR_ID = '66666666-6666-6666-6666-666666666666'
 
 function createAgentBuilderTestApp() {
 	const app = new CreateOpenAPIHono()
@@ -37,16 +48,18 @@ function createAgentBuilderTestApp() {
 	// only thing the mock db.select() needs to serve for the happy paths.
 	mockResults.select = [{ actorId: 'caller-actor-id' }]
 	const agentStorage = createMockAgentStorage()
+	const sessionManager = createMockSessionManager()
 	app.use('*', async (c, next) => {
 		c.set('db', db)
 		c.set('actorId', 'caller-actor-id')
 		c.set('actorType', 'human')
 		c.set('notifyBridge', {} as PgNotifyBridge)
 		c.set('agentStorage', agentStorage)
+		c.set('sessionManager', sessionManager)
 		await next()
 	})
 	app.route(BASE, agentBuilderRoutes as unknown as OpenAPIHono)
-	return { app, db, mockResults, agentStorage }
+	return { app, db, mockResults, agentStorage, sessionManager }
 }
 
 describe('POST /api/agent-builder/create', () => {
@@ -54,80 +67,24 @@ describe('POST /api/agent-builder/create', () => {
 		vi.spyOn(console, 'log').mockImplementation(() => undefined)
 		vi.spyOn(console, 'warn').mockImplementation(() => undefined)
 		vi.spyOn(console, 'error').mockImplementation(() => undefined)
+		getOrBootstrapAgentBuilderActor.mockResolvedValue({
+			actorId: BUILDER_ACTOR_ID,
+			bootstrapped: false,
+		})
 	})
 
 	afterEach(() => {
 		vi.restoreAllMocks()
-		runAgentBuilder.mockReset()
+		getOrBootstrapAgentBuilderActor.mockReset()
 	})
 
-	function stubCreatedResult(overrides: Record<string, unknown> = {}) {
-		runAgentBuilder.mockResolvedValue({
-			kind: 'created',
-			intent: {
-				domain: 'growth',
-				job_to_be_done: 'plan a launch',
-				deliverables: [],
-				constraints: [],
-				is_underspecified: false,
-				missing: [],
-				gap_question: '',
-			},
-			persona: {
-				name: 'Test',
-				role: 'Growth PM',
-				backstory: 'story',
-				scope_boundaries: [],
-				delegation_description: 'use when',
-				tool_set: [],
-			},
-			systemPrompt: {} as never,
-			opinionation: {} as never,
-			assembledSystemPrompt: '# Test\n\n## Background\n...',
-			skillMd: '---\nname: test-abc\n---\n',
-			skillName: 'test-abc',
-			actor: { id: 'actor-1', name: 'Test', description: 'use when' },
-			skill: { id: 'skill-1', name: 'test-abc' },
-			gapReport: {
-				gap_items: [
-					{
-						topic: 'target segment',
-						detail: 'name the segment',
-						why_it_matters: 'drives channel choice',
-					},
-					{
-						topic: 'budget',
-						detail: 'name the budget',
-						why_it_matters: 'bounds the plan',
-					},
-					{
-						topic: 'timeline',
-						detail: 'name the timeline',
-						why_it_matters: 'orders the plan',
-					},
-				],
-			},
-			gapReportMarkdown: '## Gap report for Test\n\n### target segment\n\nname the segment',
-			definitionSummary: 'Test — Growth PM. use when',
-			gapReportCommentPosted: true,
-			reviewerAttempts: [
-				{
-					cycleNumber: 1,
-					overall: 'pass' as const,
-					failingCriteria: [],
-					reviewerSessionId: 'rev-session-uuid',
-					rubricId: RUBRIC_ID,
-				},
-			],
-			reviewerFinalOverall: 'pass' as const,
-			...overrides,
+	it('returns 202 with session_id + status immediately, without waiting for the pipeline', async () => {
+		const { app, sessionManager } = createAgentBuilderTestApp()
+		;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+			id: 'session-1',
+			status: 'pending',
 		})
-	}
 
-	it('returns 200 with actor + skill IDs + reviewer verdict on happy path (workspace_id via body)', async () => {
-		stubCreatedResult()
-
-		const { app } = createAgentBuilderTestApp()
 		const res = await app.request(
 			jsonRequest('POST', `${BASE}/create`, {
 				prompt: 'help plan a B2B launch',
@@ -135,32 +92,28 @@ describe('POST /api/agent-builder/create', () => {
 			}),
 		)
 
-		expect(res.status).toBe(200)
+		expect(res.status).toBe(202)
 		const body = await res.json()
-		expect(body.actor_id).toBe('actor-1')
-		expect(body.skill_id).toBe('skill-1')
-		expect(body.persona.name).toBe('Test')
-		expect(body.system_prompt).toMatch(/## Background/)
-		expect(body.definition_summary).toBe('Test — Growth PM. use when')
-		expect(body.gap_report).toContain('## Gap report for Test')
-		expect(body.gap_report_items).toHaveLength(3)
-		expect(body.gap_report_comment_posted).toBe(true)
-		expect(body.reviewer.final_overall).toBe('pass')
-		expect(body.reviewer.attempts).toHaveLength(1)
-		expect(body.reviewer.attempts[0].reviewer_session_id).toBe('rev-session-uuid')
+		expect(body.session_id).toBe('session-1')
+		expect(body.status).toBe('pending')
+		expect(sessionManager.createSession).toHaveBeenCalledWith(
+			WORKSPACE_ID,
+			expect.objectContaining({
+				actorId: BUILDER_ACTOR_ID,
+				createdBy: 'caller-actor-id',
+				autoStart: true,
+				actionPrompt: expect.stringContaining('help plan a B2B launch'),
+			}),
+		)
 	})
 
 	it('accepts workspace_id via X-Workspace-Id header', async () => {
-		stubCreatedResult({
-			actor: { id: 'a', name: 'A', description: '' },
-			skill: { id: 's', name: 'test' },
-			gapReport: { gap_items: [] },
-			gapReportMarkdown: '',
-			definitionSummary: '',
-			gapReportCommentPosted: false,
+		const { app, sessionManager } = createAgentBuilderTestApp()
+		;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+			id: 'session-2',
+			status: 'pending',
 		})
 
-		const { app } = createAgentBuilderTestApp()
 		const req = new Request(`http://localhost${BASE}/create`, {
 			method: 'POST',
 			headers: {
@@ -170,28 +123,7 @@ describe('POST /api/agent-builder/create', () => {
 			body: JSON.stringify({ prompt: 'plan a launch' }),
 		})
 		const res = await app.request(req)
-		expect(res.status).toBe(200)
-	})
-
-	it('returns 200 with gap_question when the pipeline short-circuits', async () => {
-		runAgentBuilder.mockResolvedValue({
-			kind: 'gap_question',
-			gap_question: 'What field and what outcome?',
-			missing: ['domain', 'job_to_be_done'],
-		})
-
-		const { app } = createAgentBuilderTestApp()
-		const res = await app.request(
-			jsonRequest('POST', `${BASE}/create`, {
-				prompt: 'help me',
-				workspace_id: WORKSPACE_ID,
-			}),
-		)
-
-		expect(res.status).toBe(200)
-		const body = await res.json()
-		expect(body.gap_question).toMatch(/field and what outcome/)
-		expect(body.missing).toEqual(['domain', 'job_to_be_done'])
+		expect(res.status).toBe(202)
 	})
 
 	it('returns 400 when body is missing prompt', async () => {
@@ -234,10 +166,9 @@ describe('POST /api/agent-builder/create', () => {
 		expect(res.status).toBe(400)
 	})
 
-	it('returns 500 when the pipeline throws AgentBuilderError', async () => {
-		const { AgentBuilderError } = await import('../../services/agent-builder')
-		runAgentBuilder.mockRejectedValue(new AgentBuilderError('llm_http_error', 'boom'))
-		const { app } = createAgentBuilderTestApp()
+	it('returns 500 when starting the session fails', async () => {
+		const { app, sessionManager } = createAgentBuilderTestApp()
+		;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('boom'))
 		const res = await app.request(
 			jsonRequest('POST', `${BASE}/create`, {
 				prompt: 'anything',
@@ -247,8 +178,7 @@ describe('POST /api/agent-builder/create', () => {
 		expect(res.status).toBe(500)
 	})
 
-	it('returns 404 and never dispatches the pipeline when the caller is not a member of the body-supplied workspace_id', async () => {
-		stubCreatedResult()
+	it('returns 404 and never bootstraps or dispatches when the caller is not a member of the body-supplied workspace_id', async () => {
 		const { app, mockResults } = createAgentBuilderTestApp()
 		// No membership row for this actor/workspace pair — simulates a caller
 		// with a valid API key for a different workspace supplying an arbitrary
@@ -263,7 +193,7 @@ describe('POST /api/agent-builder/create', () => {
 		)
 
 		expect(res.status).toBe(404)
-		expect(runAgentBuilder).not.toHaveBeenCalled()
+		expect(getOrBootstrapAgentBuilderActor).not.toHaveBeenCalled()
 	})
 })
 

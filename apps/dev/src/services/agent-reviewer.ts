@@ -51,6 +51,39 @@ export const RUBRIC_CRITERIA_NAMES = [
 
 export type RubricCriterionName = (typeof RUBRIC_CRITERIA_NAMES)[number]
 
+// Single source of truth for what each criterion checks. DEFAULT_RUBRIC_BODY
+// (below, third-person scoring language for the isolated reviewer) and the
+// agent-builder's self-critique skill (first-person, "does your draft have…"
+// language for the same producer that drafted it) both render from this —
+// the voice differs by consumer, the substance can't drift between them.
+export const RUBRIC_CRITERIA: { name: RubricCriterionName; description: string }[] = [
+	{
+		name: 'persona_specificity',
+		description:
+			'The persona has a named role, a stated backstory that encodes at least one named framework the agent uses to decide, and at least one named blind spot / bias. A generic "expert in X" backstory FAILS. A one-line role with no framework FAILS.',
+	},
+	{
+		name: 'opinionation_scaffolding_present',
+		description:
+			'The system prompt contains a `## Response protocol` section (or equivalent) that literally requires "Recommendation:" and "Assumptions:" lines in every in-domain response. The absence of that scaffolding — or scaffolding that is optional, hedged, or aspirational — FAILS.',
+	},
+	{
+		name: 'worked_examples_at_least_two',
+		description:
+			'The definition includes at least two worked examples (ask + response pairs) that follow the Recommendation / Assumptions shape themselves. Fewer than two FAILS. Examples that hedge in their own response FAILS.',
+	},
+	{
+		name: 'no_hedging_enforcement',
+		description:
+			'The system prompt explicitly forbids hedging language ("might", "could", "it depends") in the closing recommendation block. If forbidding language is absent, or is present as a suggestion rather than a directive, FAILS.',
+	},
+	{
+		name: 'scope_boundaries_named',
+		description:
+			'Scope boundaries are stated as concrete things the agent will and will NOT engage with (topics, adjacent domains, out-of-scope asks). "General expert" or "any question in X" FAILS.',
+	},
+]
+
 // Default rubric body written into the workspace on first reviewer run. The
 // language is intentionally concrete about what makes a criterion pass so a
 // low-temperature reviewer can score it deterministically. Humans can edit
@@ -61,11 +94,7 @@ Score each criterion below as pass or fail. A single failing criterion means ove
 
 ## Criteria
 
-- **persona_specificity** — The persona has a named role, a stated backstory that encodes at least one named framework the agent uses to decide, and at least one named blind spot / bias. A generic "expert in X" backstory FAILS. A one-line role with no framework FAILS.
-- **opinionation_scaffolding_present** — The system prompt contains a \`## Response protocol\` section (or equivalent) that literally requires "Recommendation:" and "Assumptions:" lines in every in-domain response. The absence of that scaffolding — or scaffolding that is optional, hedged, or aspirational — FAILS.
-- **worked_examples_at_least_two** — The definition includes at least two worked examples (ask + response pairs) that follow the Recommendation / Assumptions shape themselves. Fewer than two FAILS. Examples that hedge in their own response FAILS.
-- **no_hedging_enforcement** — The system prompt explicitly forbids hedging language ("might", "could", "it depends") in the closing recommendation block. If forbidding language is absent, or is present as a suggestion rather than a directive, FAILS.
-- **scope_boundaries_named** — Scope boundaries are stated as concrete things the agent will and will NOT engage with (topics, adjacent domains, out-of-scope asks). "General expert" or "any question in X" FAILS.
+${RUBRIC_CRITERIA.map((c) => `- **${c.name}** — ${c.description}`).join('\n')}
 
 ## Output contract
 
