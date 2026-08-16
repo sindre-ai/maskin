@@ -28,14 +28,23 @@ export const test = base.extend<AuthFixtures>({
 			throw new Error('No workspace found after actor creation')
 		}
 
-		// Inject auth into localStorage before any page navigation
+		// Inject auth into localStorage before any page navigation. Also mark the
+		// per-workspace North Star prompt as answered — the For You landing route
+		// renders `NorthStarPromptCard` above the queue whenever the workspace has
+		// no bets and this key is unset, and every e2e workspace is freshly
+		// created with no bets. Left showing, the extra card destabilises specs
+		// that drive the queue (see `apps/web/src/routes/_authed/$workspaceId/index.tsx`
+		// `showNorthStarPrompt`). Specs that specifically want to exercise the
+		// prompt can clear the key in their own `addInitScript`.
 		await page.addInitScript(
 			(data: {
 				apiKey: string
 				actor: { id: string; name: string; type: string; email: string | null }
+				workspaceId: string
 			}) => {
 				localStorage.setItem('maskin-api-key', data.apiKey)
 				localStorage.setItem('maskin-actor', JSON.stringify(data.actor))
+				localStorage.setItem(`north_star_answered_${data.workspaceId}`, '1')
 			},
 			{
 				apiKey: actor.api_key,
@@ -45,6 +54,7 @@ export const test = base.extend<AuthFixtures>({
 					type: actor.type,
 					email: actor.email,
 				},
+				workspaceId: workspace.id,
 			},
 		)
 

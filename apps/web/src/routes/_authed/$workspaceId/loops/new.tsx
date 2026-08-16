@@ -1,17 +1,14 @@
 import { Composer } from '@/components/chat/chat'
-import { PageHeader } from '@/components/layout/page-header'
 import { LoopPlanCard, draftFromPlan, mergeDraftOntoPlan } from '@/components/loops/loop-plan-card'
-import { EmptyState } from '@/components/shared/empty-state'
 import { RouteError } from '@/components/shared/route-error'
-import { Card, CardContent } from '@/components/ui/card'
 import { useCreateObject } from '@/hooks/use-objects'
 import { trackLoopCreatedViaLanguage } from '@/lib/analytics'
 import { EMPTY_CHAT_SELECTION } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
 import { type LoopPlan, parseLoopDescription } from '@/lib/loop-plan'
 import { useWorkspace } from '@/lib/workspace-context'
-import { createFileRoute } from '@tanstack/react-router'
-import { CornerDownLeft, Sparkles } from 'lucide-react'
+import { Link, createFileRoute } from '@tanstack/react-router'
+import { Sparkles } from 'lucide-react'
 import { useCallback, useState } from 'react'
 import { toast } from 'sonner'
 
@@ -20,6 +17,21 @@ const EXAMPLE_SENTENCES = [
 	'Have a triage agent review every new feedback item when it comes in.',
 	'Track bets and tell me before anything goes at risk or needs a rescue.',
 ]
+
+const PRIMER = [
+	{
+		label: 'OBJECT TYPE',
+		body: 'the thing that moves, and the states it moves through',
+	},
+	{
+		label: 'TRIGGER',
+		body: 'watches one state, or one source, and hands the work on',
+	},
+	{
+		label: 'AGENT',
+		body: 'does the actual work when a trigger fires',
+	},
+] as const
 
 export const Route = createFileRoute('/_authed/$workspaceId/loops/new')({
 	component: LoopBuilderPage,
@@ -95,73 +107,138 @@ function LoopBuilderPage() {
 	}, [plan, draft, creating, createObject, workspaceId])
 
 	return (
-		<div>
-			<PageHeader title="Start a loop" />
+		<div className="flex min-h-0 flex-1 flex-col">
+			<div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3 md:px-6 lg:px-9">
+				<Link
+					to="/$workspaceId/loops"
+					params={{ workspaceId }}
+					className="text-xs text-muted-foreground hover:text-foreground"
+				>
+					Loops
+				</Link>
+				<span aria-hidden className="text-xs text-muted-foreground">
+					›
+				</span>
+				<span className="text-xs font-semibold text-foreground">New loop</span>
+				<span className="ml-auto whitespace-nowrap text-[11px] text-muted-foreground">
+					no builder, no canvas — you describe it
+				</span>
+			</div>
 
-			<div className="grid gap-6 md:grid-cols-2 items-start">
-				{/* Left — conversation pane */}
+			<div className="mx-auto flex w-full max-w-[1300px] flex-col gap-6 px-4 py-6 md:flex-row md:items-start md:gap-8 md:px-6 md:py-8 lg:px-9 xl:gap-11">
+				{/* Left — conversation */}
 				<section
 					aria-label="Describe your loop"
-					className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4"
+					className="flex min-w-0 flex-1 flex-col md:basis-[340px]"
 				>
-					<div className="flex items-center gap-2">
-						<Sparkles size={16} className="text-accent-foreground" aria-hidden />
-						<p className="text-sm text-foreground">
-							Describe the loop you want to run in plain language.
-						</p>
-					</div>
+					{plan === null ? (
+						<>
+							<h1 className="text-2xl font-bold tracking-tight text-foreground md:text-[1.6875rem]">
+								What should the loop do?
+							</h1>
+							<p className="mt-3 max-w-prose text-sm leading-relaxed text-muted-foreground">
+								Say it the way you'd say it to a colleague. Maskin picks the object types, writes
+								the triggers on their states, and assigns agents from your crew. You read it back
+								before anything exists.
+							</p>
 
-					<div className="flex flex-wrap gap-2" aria-label="Example prompts">
-						{EXAMPLE_SENTENCES.map((sentence) => (
-							<button
-								key={sentence}
-								type="button"
-								onClick={() => void handleSend(sentence)}
-								className="inline-flex min-h-11 items-center gap-1.5 rounded-md border border-border bg-background px-3 py-2 text-left text-xs text-muted-foreground transition-colors hover:text-foreground hover:border-border-hover"
-							>
-								<CornerDownLeft size={13} className="shrink-0" aria-hidden />
-								<span className="line-clamp-2">{sentence}</span>
-							</button>
-						))}
-					</div>
+							<div className="mt-5 flex flex-col overflow-hidden rounded-xl border border-border">
+								{PRIMER.map((row) => (
+									<div
+										key={row.label}
+										className="flex items-baseline gap-2.5 border-b border-border bg-muted px-3.5 py-3 last:border-b-0"
+									>
+										<span className="eyebrow w-[86px] shrink-0">{row.label}</span>
+										<span className="text-xs leading-relaxed text-muted-foreground">
+											{row.body}
+										</span>
+									</div>
+								))}
+							</div>
+
+							<div className="eyebrow mt-6">OR START FROM ONE OF THESE</div>
+							<div className="mt-2.5 flex flex-col gap-2" aria-label="Example prompts">
+								{EXAMPLE_SENTENCES.map((sentence) => (
+									<button
+										key={sentence}
+										type="button"
+										onClick={() => void handleSend(sentence)}
+										className="rounded-xl border border-border bg-card px-3.5 py-3 text-left text-sm leading-relaxed text-foreground transition-colors hover:border-border-strong hover:bg-muted"
+									>
+										{sentence}
+									</button>
+								))}
+							</div>
+						</>
+					) : (
+						<div className="flex items-center gap-2 text-xs text-muted-foreground">
+							<Sparkles size={14} aria-hidden className="text-brand" />
+							<span>Describing your loop — refine below.</span>
+						</div>
+					)}
 
 					{thread.length > 0 && (
-						<div className="flex flex-col gap-2 my-1">
+						<div className="mt-5 flex flex-col gap-3">
 							{thread.map((item, i) => (
 								<div
 									// biome-ignore lint/suspicious/noArrayIndexKey: append-only transcript, order is stable
 									key={i}
 									className={cn(
-										'rounded-md px-3 py-2 text-sm',
-										item.role === 'user'
-											? 'self-end bg-accent text-accent-foreground max-w-[85%]'
-											: 'self-start bg-muted text-muted-foreground max-w-[85%]',
+										'flex flex-col gap-1',
+										item.role === 'user' ? 'items-end' : 'items-start',
 									)}
 								>
-									{item.content}
+									{item.role === 'user' ? (
+										<>
+											<div className="max-w-[90%] rounded-2xl rounded-br-sm bg-primary px-3.5 py-2.5 text-sm leading-relaxed text-primary-foreground">
+												{item.content}
+											</div>
+											<span className="text-[10px] text-muted-foreground">you</span>
+										</>
+									) : (
+										<div className="flex gap-2.5">
+											<span
+												aria-hidden
+												className="grid h-6 w-6 shrink-0 place-items-center rounded-md bg-primary text-[11px] text-primary-foreground"
+											>
+												✦
+											</span>
+											<p className="min-w-0 flex-1 text-sm leading-relaxed text-foreground">
+												{item.content}
+											</p>
+										</div>
+									)}
 								</div>
 							))}
 						</div>
 					)}
 
-					<Composer
-						workspaceId={workspaceId}
-						onSend={handleSend}
-						disabled={!!createdId}
-						pending={false}
-						surface="pulse-bar"
-						placeholder="e.g. Notify me weekly with a summary of customer feedback…"
-						selection={EMPTY_CHAT_SELECTION}
-						onRemoveAgent={() => {}}
-						onRemoveObject={() => {}}
-						onRemoveNotification={() => {}}
-						onRemoveFile={() => {}}
-						textareaLabel="Describe your loop"
-					/>
+					<div className="mt-5">
+						<Composer
+							workspaceId={workspaceId}
+							onSend={handleSend}
+							disabled={!!createdId}
+							pending={false}
+							surface="pulse-bar"
+							placeholder="e.g. Notify me weekly with a summary of customer feedback…"
+							selection={EMPTY_CHAT_SELECTION}
+							onRemoveAgent={() => {}}
+							onRemoveObject={() => {}}
+							onRemoveNotification={() => {}}
+							onRemoveFile={() => {}}
+							textareaLabel="Describe your loop"
+						/>
+						<p className="mt-2 text-[11px] text-muted-foreground">
+							Maskin only builds from language.
+						</p>
+					</div>
 				</section>
 
-				{/* Right — proposed loop / created */}
-				<section aria-label="Proposed loop" className="min-w-0">
+				{/* Right — proposed loop / empty state */}
+				<section
+					aria-label="Proposed loop"
+					className="flex min-w-0 flex-1 flex-col md:basis-[430px] md:grow-[1.1]"
+				>
 					{plan && draft ? (
 						<LoopPlanCard
 							plan={plan}
@@ -178,14 +255,21 @@ function LoopBuilderPage() {
 							createdId={createdId}
 						/>
 					) : (
-						<Card>
-							<CardContent className="py-12">
-								<EmptyState
-									title="No loop drafted yet"
-									description="Tap an example above, or type your own description. The proposed loop will appear here before anything is created."
-								/>
-							</CardContent>
-						</Card>
+						<div
+							aria-label="No loop drafted yet"
+							className="flex flex-col gap-3.5 rounded-2xl border border-dashed border-border bg-muted p-6"
+						>
+							<p className="max-w-prose text-xs leading-relaxed text-muted-foreground">
+								The loop appears here as Maskin reads your sentence — object types first, then the
+								triggers, then who answers them. Nothing is created until you say so.
+							</p>
+							<div className="flex flex-col gap-2" aria-hidden>
+								<div className="h-12 rounded-lg bg-background" />
+								<div className="h-16 rounded-lg bg-background" />
+								<div className="h-16 rounded-lg bg-background/70" />
+								<div className="h-12 rounded-lg border border-border bg-background" />
+							</div>
+						</div>
 					)}
 				</section>
 			</div>

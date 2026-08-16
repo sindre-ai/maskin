@@ -1,13 +1,11 @@
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { StatusBadge } from '@/components/shared/status-badge'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/cn'
 import type { LoopPlan } from '@/lib/loop-plan'
 import { Link } from '@tanstack/react-router'
-import { Check, Lock, Pencil, Plus } from 'lucide-react'
+import { Check, Plus } from 'lucide-react'
 
 export interface PlanEditDraft {
 	name: string
@@ -55,12 +53,8 @@ export function mergeDraftOntoPlan(plan: LoopPlan, draft: PlanEditDraft): LoopPl
 	}
 }
 
-function SectionLabel({ children }: { children: string }) {
-	return (
-		<h3 className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground mb-1.5">
-			{children}
-		</h3>
-	)
+function SectionLabel({ children, className }: { children: string; className?: string }) {
+	return <div className={cn('eyebrow', className)}>{children}</div>
 }
 
 export interface LoopPlanCardProps {
@@ -103,122 +97,152 @@ export function LoopPlanCard({
 				.filter(Boolean),
 		})
 
+	const title = created ? 'Loop created' : draft.name.trim() || defaultLoopName(plan)
+
 	return (
-		<Card className="max-h-[50vh] lg:max-h-[65vh] flex flex-col">
-			<CardHeader className="pb-3">
-				<div className="flex items-center justify-between gap-3">
-					<div className="flex items-center gap-2">
-						{created ? (
-							<Check size={18} className="text-success shrink-0" aria-hidden />
-						) : (
-							<Lock size={15} className="text-muted-foreground shrink-0" aria-hidden />
-						)}
-						<CardTitle className="text-base">
-							{created ? 'Loop created' : 'PROPOSED LOOP'}
-						</CardTitle>
-					</div>
-					<span
-						className={cn(
-							'text-[11px] font-medium rounded px-1.5 py-0.5',
-							created
-								? 'bg-status-live-bg text-status-live-text'
-								: 'bg-muted text-muted-foreground',
-						)}
-					>
+		<div className="flex flex-col overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+			<div className="flex flex-col gap-2 border-b border-border px-5 py-4">
+				<div className="flex items-center gap-2">
+					{created ? <Check size={14} className="shrink-0 text-success" aria-hidden /> : null}
+					<SectionLabel>{created ? 'LOOP CREATED' : 'PROPOSED LOOP'}</SectionLabel>
+					<span className="ml-auto text-[11px] text-muted-foreground">
 						{created ? 'created' : 'not created yet'}
 					</span>
 				</div>
-			</CardHeader>
+				<h2 className="text-base font-semibold tracking-tight text-foreground">{title}</h2>
+				<p className="text-xs leading-relaxed text-muted-foreground">
+					{created
+						? 'Your loop is running. Open it to watch it move.'
+						: 'Read this back before it becomes real. Nothing exists in your workspace yet.'}
+				</p>
+			</div>
 
-			<CardContent className="flex-1 overflow-y-auto space-y-4">
+			<div className="flex max-h-[50vh] flex-col gap-5 overflow-y-auto px-5 py-4 lg:max-h-[60vh]">
 				<section>
-					<SectionLabel>Object types & state chain</SectionLabel>
-					{plan.objectTypes.length === 0 ? (
-						<p className="text-sm text-muted-foreground">
-							No objects detected yet. Describe what should be tracked.
-						</p>
-					) : (
-						plan.objectTypes.map((t, i) => (
-							<div key={`${t.type}-${i}`} className="rounded-md border border-border p-3 space-y-2">
-								<div className="flex items-center justify-between gap-2">
+					<SectionLabel>OBJECT TYPES</SectionLabel>
+					<div className="mt-2.5 flex flex-col gap-2">
+						{plan.objectTypes.length === 0 ? (
+							<p className="text-sm text-muted-foreground">
+								No objects detected yet. Describe what should be tracked.
+							</p>
+						) : (
+							plan.objectTypes.map((t, i) => (
+								<div key={`${t.type}-${i}`} className="rounded-lg border border-border bg-card p-3">
+									<div className="flex flex-wrap items-center gap-2">
+										{editing && i === 0 ? (
+											<Input
+												value={draft.objectTypeName}
+												onChange={(e) =>
+													onDraftChange({ ...draft, objectTypeName: e.target.value })
+												}
+												className="h-8 w-44 text-sm"
+												aria-label="Object type name"
+											/>
+										) : (
+											<span className="inline-flex items-center rounded-md bg-muted px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-wider text-foreground">
+												{t.name}
+											</span>
+										)}
+										<span className="text-xs text-muted-foreground">{t.role}</span>
+										{t.live && (
+											<span className="ml-auto text-[11px] text-muted-foreground">
+												tracked live
+											</span>
+										)}
+									</div>
 									{editing && i === 0 ? (
 										<Input
-											value={draft.objectTypeName}
-											onChange={(e) => onDraftChange({ ...draft, objectTypeName: e.target.value })}
-											className="h-8 w-44 text-sm"
-											aria-label="Object type name"
+											value={draft.stateChain.join(', ')}
+											onChange={(e) => setStateChain(e.target.value)}
+											className="mt-2.5 h-8 text-sm"
+											placeholder="todo, in_progress, done"
+											aria-label="State chain"
 										/>
 									) : (
-										<div className="flex items-center gap-2 min-w-0">
-											<Badge variant="outline" className="font-medium shrink-0">
-												{t.name}
-											</Badge>
-											<span className="text-sm text-muted-foreground truncate">{t.role}</span>
-										</div>
+										t.stateChain.length > 0 && (
+											<div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+												{t.stateChain.map((state, si) => (
+													<span key={state} className="inline-flex items-center gap-1.5">
+														<StatusBadge status={state} />
+														{si < t.stateChain.length - 1 && (
+															<span aria-hidden className="text-xs text-muted-foreground">
+																→
+															</span>
+														)}
+													</span>
+												))}
+											</div>
+										)
 									)}
-									{t.live && <Badge variant="outline">tracked live</Badge>}
 								</div>
-								{editing && i === 0 ? (
-									<Input
-										value={draft.stateChain.join(', ')}
-										onChange={(e) => setStateChain(e.target.value)}
-										className="h-8 text-sm"
-										placeholder="todo, in_progress, done"
-										aria-label="State chain"
-									/>
-								) : (
-									<div className="flex flex-wrap gap-1.5">
-										{t.stateChain.map((state) => (
-											<StatusBadge key={state} status={state} />
-										))}
-									</div>
-								)}
-							</div>
-						))
-					)}
+							))
+						)}
+					</div>
 				</section>
 
 				<section>
-					<SectionLabel>Triggers</SectionLabel>
-					{plan.triggers.length === 0 ? (
-						<p className="text-sm text-muted-foreground">Nothing triggers the loop yet.</p>
-					) : (
-						<div className="space-y-2">
-							{plan.triggers.map((t, i) => (
+					<SectionLabel>TRIGGERS</SectionLabel>
+					<div className="mt-2.5 flex flex-col gap-2">
+						{plan.triggers.length === 0 ? (
+							<p className="text-sm text-muted-foreground">Nothing triggers the loop yet.</p>
+						) : (
+							plan.triggers.map((t, i) => (
 								<div
 									// biome-ignore lint/suspicious/noArrayIndexKey: plan-derived triggers have no stable id and order is deterministic
 									key={i}
-									className="rounded-md border border-border p-3 text-sm"
+									className="rounded-lg border border-border bg-card p-3"
 								>
-									<div className="flex items-center gap-2 mb-1">
-										<Badge className="font-medium">{t.kindLabel}</Badge>
-										<span className="text-muted-foreground">{t.whenClause}</span>
+									<div className="flex flex-wrap items-center gap-2">
+										<span className="inline-flex h-5 w-5 items-center justify-center rounded-md bg-muted font-mono text-[10px] font-bold text-muted-foreground">
+											{i + 1}
+										</span>
+										<span className="inline-flex items-center rounded-md bg-muted px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-wider text-foreground">
+											{t.kindLabel}
+										</span>
 									</div>
-									<p className="text-xs text-muted-foreground">
-										{t.targetAgent}{' '}
-										{t.thenWrites.map((w) => `${w.act} ${w.type ?? ''}`.trim()).join(' · ')}
-										{t.asks ? ` · asks ${t.asks}` : ''}
+									<p className="mt-2.5 text-xs leading-relaxed text-foreground">
+										<span className="eyebrow mr-1.5 inline">WHEN</span>
+										{t.whenClause}
 									</p>
+									<div className="mt-2 flex items-center gap-2">
+										<ActorAvatar name={t.targetAgent} type="agent" />
+										<span className="text-xs font-semibold text-foreground">{t.targetAgent}</span>
+									</div>
+									<div className="mt-2 flex flex-wrap items-center gap-2">
+										<span className="eyebrow">THEN</span>
+										<span className="text-xs text-muted-foreground">
+											{t.thenWrites.map((w) => `${w.act} ${w.type ?? ''}`.trim()).join(' · ')}
+										</span>
+									</div>
+									{t.asks && (
+										<div className="mt-2.5 flex flex-wrap items-baseline gap-2 border-t border-border pt-2.5">
+											<span className="eyebrow text-warning">ASKS</span>
+											<span className="text-xs text-foreground">{t.asks}</span>
+										</div>
+									)}
 								</div>
-							))}
-						</div>
-					)}
+							))
+						)}
+					</div>
 				</section>
 
 				<section>
-					<SectionLabel>Agents</SectionLabel>
-					{plan.agents.length === 0 ? (
-						<p className="text-sm text-muted-foreground">No agents assigned yet.</p>
-					) : (
-						<div className="space-y-2">
-							{plan.agents.map((a, i) => (
+					<SectionLabel>AGENTS</SectionLabel>
+					<div className="mt-2.5 overflow-hidden rounded-lg border border-border">
+						{plan.agents.length === 0 ? (
+							<p className="p-3 text-sm text-muted-foreground">No agents assigned yet.</p>
+						) : (
+							plan.agents.map((a, i) => (
 								<div
 									// biome-ignore lint/suspicious/noArrayIndexKey: plan-derived agents have no stable id and order is deterministic
 									key={i}
-									className="flex items-center gap-3 rounded-md border border-border p-3"
+									className={cn(
+										'flex items-center gap-2.5 bg-card p-3',
+										i < plan.agents.length - 1 && 'border-b border-border',
+									)}
 								>
 									<ActorAvatar name={a.name} type="agent" />
-									<div className="flex-1 min-w-0">
+									<div className="min-w-0 flex-1">
 										{editing && i === 0 ? (
 											<Input
 												value={draft.agentName}
@@ -227,37 +251,41 @@ export function LoopPlanCard({
 												aria-label="Agent name"
 											/>
 										) : (
-											<p className="text-sm font-medium text-foreground truncate">
+											<p className="truncate text-sm font-semibold text-foreground">
 												{a.name}
 												{a.count > 1 ? ` ×${a.count}` : ''}
 											</p>
 										)}
-										<p className="text-xs text-muted-foreground truncate">{a.role}</p>
+										<p className="truncate text-xs text-muted-foreground">{a.role}</p>
 									</div>
 								</div>
-							))}
-						</div>
-					)}
+							))
+						)}
+					</div>
 				</section>
 
 				{plan.stopForOperator && (
 					<section>
-						<SectionLabel>Stops for you</SectionLabel>
-						{editing ? (
-							<Input
-								value={draft.stopForOperator}
-								onChange={(e) => onDraftChange({ ...draft, stopForOperator: e.target.value })}
-								className="h-8 text-sm"
-								aria-label="Stop for operator"
-							/>
-						) : (
-							<p className="text-sm text-foreground">{plan.stopForOperator}</p>
-						)}
+						<SectionLabel>WHERE IT WILL STOP FOR YOU</SectionLabel>
+						<div className="mt-2.5 rounded-lg border border-status-processing-text/40 bg-status-processing-bg px-3 py-2.5">
+							{editing ? (
+								<Input
+									value={draft.stopForOperator}
+									onChange={(e) => onDraftChange({ ...draft, stopForOperator: e.target.value })}
+									className="h-8 text-sm"
+									aria-label="Stop for operator"
+								/>
+							) : (
+								<p className="text-xs leading-relaxed text-status-processing-text">
+									{plan.stopForOperator}
+								</p>
+							)}
+						</div>
 					</section>
 				)}
-			</CardContent>
+			</div>
 
-			<CardFooter className="flex items-center gap-2 flex-wrap pt-3">
+			<div className="flex flex-wrap items-center gap-2 border-t border-border bg-muted px-5 py-3">
 				{created ? (
 					<>
 						<Button size="sm" asChild>
@@ -274,7 +302,7 @@ export function LoopPlanCard({
 					</>
 				) : editing ? (
 					<>
-						<Button size="sm" onClick={onSave} variant="default">
+						<Button size="sm" onClick={onSave}>
 							Save
 						</Button>
 						<Button size="sm" variant="ghost" onClick={onDone} disabled={creating}>
@@ -283,8 +311,10 @@ export function LoopPlanCard({
 					</>
 				) : (
 					<>
-						<Button size="sm" variant="outline" onClick={onAdjust}>
-							<Pencil size={14} className="mr-1" aria-hidden />
+						<span className="mr-auto text-[11px] text-muted-foreground">
+							Nothing is created until you press Create loop.
+						</span>
+						<Button size="sm" variant="ghost" onClick={onAdjust}>
 							Adjust
 						</Button>
 						<Button size="sm" onClick={onCreate} disabled={creating}>
@@ -302,7 +332,7 @@ export function LoopPlanCard({
 						</Button>
 					</>
 				)}
-			</CardFooter>
-		</Card>
+			</div>
+		</div>
 	)
 }

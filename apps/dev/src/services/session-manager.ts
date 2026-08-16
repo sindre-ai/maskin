@@ -87,7 +87,13 @@ import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-sto
 import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
 import { type RuntimeEndReason, RuntimeTelemetry } from './runtime-telemetry'
 import type { SessionDispatchQueue } from './session-dispatch-queue'
-import { type SessionUsage, extractSessionUsage, parseUsageFromLogChunks } from './usage-parser'
+import {
+	type SessionUsage,
+	extractSessionFinalMessage,
+	extractSessionUsage,
+	parseFinalMessageFromLogChunks,
+	parseUsageFromLogChunks,
+} from './usage-parser'
 import { buildWorkspaceStartupBlock, renderWorkspaceBriefing } from './workspace-briefing'
 
 /**
@@ -493,6 +499,7 @@ export class SessionManager extends EventEmitter {
 				session.actorId,
 				session.workspaceId,
 				tempDir,
+				{ sessionId },
 			)
 			await this.reportSkillPullFailures(sessionId, pullResult)
 			await this.writeWorkspaceBriefing(session.workspaceId, tempDir, sessionId)
@@ -997,7 +1004,7 @@ export class SessionManager extends EventEmitter {
 				session.actorId,
 				session.workspaceId,
 				tempDir,
-				{ overwrite: true },
+				{ overwrite: true, sessionId },
 			)
 			await this.reportSkillPullFailures(sessionId, pullResult)
 			await this.writeWorkspaceBriefing(session.workspaceId, tempDir, sessionId)
@@ -2241,6 +2248,26 @@ export class SessionManager extends EventEmitter {
 			})
 		}
 
+		// Same stdout tail, same event, different field — the agent's final
+		// answer text rather than billing usage. Never blocks the status
+		// update below; falls through to null (final_message simply omitted)
+		// on any parse failure or absent final event.
+		let finalMessage: string | null = null
+		try {
+			const tail = this.activeSessions.get(sessionId)?.stdoutTail
+			if (tail) {
+				finalMessage = parseFinalMessageFromLogChunks([tail])
+			}
+			if (finalMessage === null) {
+				finalMessage = await extractSessionFinalMessage(this.db, sessionId)
+			}
+		} catch (err) {
+			logger.warn('Failed to parse final message from session logs', {
+				sessionId,
+				error: String(err),
+			})
+		}
+
 		const stdoutTail = this.activeSessions.get(sessionId)?.stdoutTail ?? ''
 		const failureReason =
 			exitCode !== null
@@ -2269,6 +2296,7 @@ export class SessionManager extends EventEmitter {
 					result: {
 						exit_code: exitCode,
 						...(failureReason ? { failure_reason: failureReason } : {}),
+						...(finalMessage !== null ? { final_message: finalMessage } : {}),
 					},
 					completedAt: new Date(),
 					updatedAt: new Date(),
@@ -3218,9 +3246,6 @@ export class SessionManager extends EventEmitter {
 	): Promise<boolean> {
 		const stoppedByUser = opts.stoppedByUser ?? false
 		const status = exitCode === 0 ? 'completed' : 'failed'
-		const result: SessionResult = stoppedByUser
-			? { exit_code: exitCode, stopped_by_user: true }
-			: { exit_code: exitCode }
 
 		// Extract token / cost usage from the remote session's stdout tail.
 		// Unlike the local Docker path, there is no in-memory tail buffer for a
@@ -3238,6 +3263,26 @@ export class SessionManager extends EventEmitter {
 				sessionId,
 				error: String(err),
 			})
+		}
+
+		// Same DB-backed tail read, the agent's final answer text rather than
+		// billing usage. Resolved before `result` below so both CAS write
+		// attempts pick it up from the single `result` object.
+		let finalMessage: string | null = null
+		try {
+			finalMessage = await extractSessionFinalMessage(this.db, sessionId)
+		} catch (err) {
+			logger.warn('Failed to parse final message from remote session logs', {
+				sessionId,
+				error: String(err),
+			})
+		}
+
+		const result: SessionResult = stoppedByUser
+			? { exit_code: exitCode, stopped_by_user: true }
+			: { exit_code: exitCode }
+		if (finalMessage !== null) {
+			result.final_message = finalMessage
 		}
 
 		// A thrown DB error here (distinct from a clean 0-row CAS miss) must not

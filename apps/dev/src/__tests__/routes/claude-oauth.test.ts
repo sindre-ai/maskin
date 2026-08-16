@@ -2,12 +2,13 @@ import { createHash } from 'node:crypto'
 import { vi } from 'vitest'
 
 vi.mock('../../lib/claude-oauth', () => ({
-	encryptOAuthTokens: vi.fn().mockReturnValue({
+	encryptOAuthTokens: vi.fn().mockImplementation((tokens: { nickname?: string }) => ({
 		encryptedAccessToken: 'enc-access',
 		encryptedRefreshToken: 'enc-refresh',
 		expiresAt: 1_800_000_000_000,
 		subscriptionType: 'pro',
-	}),
+		nickname: tokens.nickname,
+	})),
 	getValidOAuthToken: vi.fn(),
 }))
 
@@ -288,6 +289,27 @@ describe('Claude OAuth Routes', () => {
 			const res = await app.request(jsonGet('/api/claude-oauth/status', headers))
 			expect(res.status).toBe(403)
 		})
+
+		it('surfaces a nickname when the slot has one', async () => {
+			const workspace = buildWorkspace({
+				id: wsId,
+				settings: {
+					claude_oauth: newShapeOAuth({
+						primary: { ...newShapeOAuth().primary, nickname: 'Work account' },
+					}),
+				},
+			})
+			const { app, mockResults } = createTestApp(claudeOauthRoutes, '/api/claude-oauth')
+			mockResults.selectQueue = [[buildWorkspaceMember()], [workspace]]
+			mockGetValid.mockResolvedValue({
+				tokens: { subscriptionType: 'max-5x', expiresAt: 1_800_000_000_000 },
+			})
+
+			const res = await app.request(jsonGet('/api/claude-oauth/status', headers))
+			const body = await res.json()
+			expect(body.slots.primary.nickname).toBe('Work account')
+			expect(body.slots.backup.nickname).toBeUndefined()
+		})
 	})
 
 	// ── IMPORT ──────────────────────────────────────────────────────────────
@@ -397,6 +419,45 @@ describe('Claude OAuth Routes', () => {
 			)
 			expect(res.status).toBe(403)
 		})
+
+		it('stores an optional nickname alongside the tokens', async () => {
+			const workspace = buildWorkspace({ id: wsId })
+			const { app, mockResults, calls } = createTestApp(claudeOauthRoutes, '/api/claude-oauth')
+			mockResults.selectQueue = [[buildWorkspaceMember()], [workspace]]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/claude-oauth/import',
+					{ ...baseImport, nickname: 'Work account' },
+					headers,
+				),
+			)
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.nickname).toBe('Work account')
+			const update = calls.updates[0] as {
+				settings: { claude_oauth: { primary: { nickname?: string } } }
+			}
+			expect(update.settings.claude_oauth.primary.nickname).toBe('Work account')
+		})
+
+		it('rejects a nickname over 60 characters', async () => {
+			const workspace = buildWorkspace({ id: wsId })
+			const { app, mockResults } = createTestApp(claudeOauthRoutes, '/api/claude-oauth')
+			mockResults.selectQueue = [[buildWorkspaceMember()], [workspace]]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/claude-oauth/import',
+					{ ...baseImport, nickname: 'x'.repeat(61) },
+					headers,
+				),
+			)
+			expect(res.status).toBe(400)
+		})
 	})
 
 	// ── SWAP ────────────────────────────────────────────────────────────────
@@ -445,6 +506,127 @@ describe('Claude OAuth Routes', () => {
 			const { app } = createTestApp(claudeOauthRoutes, '/api/claude-oauth')
 			const res = await app.request(
 				jsonRequest('POST', '/api/claude-oauth/swap', undefined, headers),
+			)
+			expect(res.status).toBe(403)
+		})
+	})
+
+	// ── NICKNAME ────────────────────────────────────────────────────────────
+
+	describe('PATCH /api/claude-oauth/nickname', () => {
+		it('sets a nickname on the named slot without touching its tokens', async () => {
+			const workspace = buildWorkspace({ id: wsId, settings: { claude_oauth: newShapeOAuth() } })
+			const { app, mockResults, calls } = createTestApp(claudeOauthRoutes, '/api/claude-oauth')
+			mockResults.selectQueue = [[buildWorkspaceMember()], [workspace]]
+
+			const res = await app.request(
+				jsonRequest(
+					'PATCH',
+					'/api/claude-oauth/nickname',
+					{ slot: 'primary', nickname: 'Work account' },
+					headers,
+				),
+			)
+
+			expect(res.status).toBe(200)
+			const update = calls.updates[0] as {
+				settings: { claude_oauth: { primary: { encryptedAccessToken: string; nickname?: string } } }
+			}
+			expect(update.settings.claude_oauth.primary.nickname).toBe('Work account')
+			expect(update.settings.claude_oauth.primary.encryptedAccessToken).toBe('primary-access')
+		})
+
+		it('trims whitespace before saving', async () => {
+			const workspace = buildWorkspace({ id: wsId, settings: { claude_oauth: newShapeOAuth() } })
+			const { app, mockResults, calls } = createTestApp(claudeOauthRoutes, '/api/claude-oauth')
+			mockResults.selectQueue = [[buildWorkspaceMember()], [workspace]]
+
+			await app.request(
+				jsonRequest(
+					'PATCH',
+					'/api/claude-oauth/nickname',
+					{ slot: 'primary', nickname: '  Work account  ' },
+					headers,
+				),
+			)
+
+			const update = calls.updates[0] as {
+				settings: { claude_oauth: { primary: { nickname?: string } } }
+			}
+			expect(update.settings.claude_oauth.primary.nickname).toBe('Work account')
+		})
+
+		it('clears the nickname when given an empty string', async () => {
+			const workspace = buildWorkspace({
+				id: wsId,
+				settings: {
+					claude_oauth: newShapeOAuth({
+						primary: { ...newShapeOAuth().primary, nickname: 'Old name' },
+					}),
+				},
+			})
+			const { app, mockResults, calls } = createTestApp(claudeOauthRoutes, '/api/claude-oauth')
+			mockResults.selectQueue = [[buildWorkspaceMember()], [workspace]]
+
+			await app.request(
+				jsonRequest(
+					'PATCH',
+					'/api/claude-oauth/nickname',
+					{ slot: 'primary', nickname: '' },
+					headers,
+				),
+			)
+
+			const update = calls.updates[0] as {
+				settings: { claude_oauth: { primary: { nickname?: string } } }
+			}
+			expect(update.settings.claude_oauth.primary.nickname).toBeUndefined()
+		})
+
+		it('rejects a nickname over 60 characters', async () => {
+			const workspace = buildWorkspace({ id: wsId, settings: { claude_oauth: newShapeOAuth() } })
+			const { app, mockResults } = createTestApp(claudeOauthRoutes, '/api/claude-oauth')
+			mockResults.selectQueue = [[buildWorkspaceMember()], [workspace]]
+
+			const res = await app.request(
+				jsonRequest(
+					'PATCH',
+					'/api/claude-oauth/nickname',
+					{ slot: 'primary', nickname: 'x'.repeat(61) },
+					headers,
+				),
+			)
+			expect(res.status).toBe(400)
+		})
+
+		it('returns 404 when the target slot has no credentials', async () => {
+			const workspace = buildWorkspace({
+				id: wsId,
+				settings: { claude_oauth: { primary: newShapeOAuth().primary } },
+			})
+			const { app, mockResults } = createTestApp(claudeOauthRoutes, '/api/claude-oauth')
+			mockResults.selectQueue = [[buildWorkspaceMember()], [workspace]]
+
+			const res = await app.request(
+				jsonRequest(
+					'PATCH',
+					'/api/claude-oauth/nickname',
+					{ slot: 'backup', nickname: 'Backup account' },
+					headers,
+				),
+			)
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 403 when not a workspace member', async () => {
+			const { app } = createTestApp(claudeOauthRoutes, '/api/claude-oauth')
+			const res = await app.request(
+				jsonRequest(
+					'PATCH',
+					'/api/claude-oauth/nickname',
+					{ slot: 'primary', nickname: 'Work account' },
+					headers,
+				),
 			)
 			expect(res.status).toBe(403)
 		})
