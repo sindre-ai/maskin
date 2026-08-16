@@ -169,30 +169,40 @@ export function useSwipeToMarkRead(
 	}, [isRead])
 
 	const triggerWithUndo = useCallback((variant: SwipeRevealVariant) => {
-		callbacksRef.current.onCommitScheduled?.(variant)
+		const c = callbacksRef.current
+		c.onCommitScheduled?.(variant)
 		setSwipePending(true)
+
+		// Fire the real mutation immediately — it used to run inside the 4.5s
+		// timer below, so leaving the page (or the card unmounting) during the
+		// Undo window silently dropped the mark-read/unread and the server
+		// state never actually changed, even though the card had already
+		// disappeared from the queue. The timer now only gates the "completed"
+		// signal (analytics + onCommitSettled), so Undo still suppresses
+		// double-counting a reversed swipe — but Undo itself must now perform a
+		// genuine reverse mutation instead of just cancelling a pending one.
+		if (variant === 'mark-read') {
+			c.onMarkRead()
+		} else {
+			c.onMarkUnread?.()
+		}
+
 		pendingTimer.current = setTimeout(() => {
-			const c = callbacksRef.current
-			if (variant === 'mark-read') {
-				c.onMarkRead()
-				if (c.analytics) {
-					trackForyouCardMarkedRead({
-						entity_type: c.analytics.entity_type,
-						entity_id: c.analytics.entity_id,
-					})
-				}
-			} else {
-				c.onMarkUnread?.()
-				if (c.analytics) {
-					trackForyouCardMarkedUnread({
-						entity_type: c.analytics.entity_type,
-						entity_id: c.analytics.entity_id,
-					})
-				}
+			const cc = callbacksRef.current
+			if (variant === 'mark-read' && cc.analytics) {
+				trackForyouCardMarkedRead({
+					entity_type: cc.analytics.entity_type,
+					entity_id: cc.analytics.entity_id,
+				})
+			} else if (variant === 'mark-unread' && cc.analytics) {
+				trackForyouCardMarkedUnread({
+					entity_type: cc.analytics.entity_type,
+					entity_id: cc.analytics.entity_id,
+				})
 			}
 			setSwipePending(false)
 			pendingTimer.current = null
-			c.onCommitSettled?.(variant)
+			cc.onCommitSettled?.(variant)
 		}, 4500)
 		toast(variant === 'mark-read' ? 'Marked as read' : 'Marked as unread', {
 			duration: 4500,
@@ -204,7 +214,16 @@ export function useSwipeToMarkRead(
 						pendingTimer.current = null
 					}
 					setSwipePending(false)
-					callbacksRef.current.onUndo?.(variant)
+					// Reverse the mutation that already landed — since the forward
+					// action fired immediately above, Undo can no longer just cancel
+					// a timer, it has to undo what actually happened server-side.
+					const cc = callbacksRef.current
+					if (variant === 'mark-read') {
+						cc.onMarkUnread?.()
+					} else {
+						cc.onMarkRead()
+					}
+					cc.onUndo?.(variant)
 				},
 			},
 		})

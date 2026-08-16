@@ -18,7 +18,7 @@ import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { useBets } from '@/hooks/use-bets'
-import { useMarkRead, useUnread } from '@/hooks/use-subscriptions'
+import { useMarkRead, useMarkUnread, useUnread } from '@/hooks/use-subscriptions'
 import {
 	useUpdateUserDisplaySettings,
 	useUserDisplaySettings,
@@ -65,6 +65,7 @@ function ForYouRedesign() {
 	const { data: bets, isLoading: betsLoading } = useBets(workspaceId)
 	const items = data?.items ?? []
 	const markRead = useMarkRead(workspaceId)
+	const markUnread = useMarkUnread(workspaceId)
 	const { open: composerOpen, setOpen: setComposerOpen } = useNewConversationComposer()
 
 	const [typeFilter, setTypeFilter] = useState<string | undefined>(undefined)
@@ -114,7 +115,6 @@ function ForYouRedesign() {
 	)
 
 	const [pendingKeys, setPendingKeys] = useState<Set<string>>(() => new Set())
-	const settledRef = useRef(false)
 
 	const [northStarDismissed, setNorthStarDismissed] = useState(() =>
 		Boolean(localStorage.getItem(`north_star_answered_${workspaceId}`)),
@@ -205,26 +205,29 @@ function ForYouRedesign() {
 		[markRead],
 	)
 
+	const markItemUnread = useCallback(
+		(item: UnreadItem) => {
+			markUnread.mutate({ entityType: item.entity_type, entityId: item.entity_id })
+		},
+		[markUnread],
+	)
+
+	// Fires the real mark-read mutation for every item immediately — it used
+	// to wait for the Undo toast to auto-close (or be dismissed) before
+	// mutating at all, so navigating away or refreshing during that window
+	// silently dropped the mark-read and the items reappeared unread on
+	// reload. Undo now reverses the already-landed mutation with a real
+	// mark-unread call instead of just restoring the optimistic hide.
 	const handleMarkAllRead = useCallback(() => {
 		if (visibleRegular.length === 0) return
 		const snapshot = visibleRegular
 		const snapshotKeys = new Set(snapshot.map(itemKey))
-		settledRef.current = false
 		setPendingKeys((prev) => new Set([...prev, ...snapshotKeys]))
 
-		const commit = () => {
-			if (settledRef.current) return
-			settledRef.current = true
-			for (const item of snapshot) markItemRead(item)
-			setPendingKeys((prev) => {
-				const next = new Set(prev)
-				for (const key of snapshotKeys) next.delete(key)
-				return next
-			})
-		}
+		for (const item of snapshot) markItemRead(item)
+
 		const restore = () => {
-			if (settledRef.current) return
-			settledRef.current = true
+			for (const item of snapshot) markItemUnread(item)
 			setPendingKeys((prev) => {
 				const next = new Set(prev)
 				for (const key of snapshotKeys) next.delete(key)
@@ -236,10 +239,8 @@ function ForYouRedesign() {
 		toast(`Marked ${count} thread${count === 1 ? '' : 's'} as read`, {
 			duration: UNDO_WINDOW_MS,
 			action: { label: 'Undo', onClick: restore },
-			onAutoClose: commit,
-			onDismiss: commit,
 		})
-	}, [markItemRead, visibleRegular])
+	}, [markItemRead, markItemUnread, visibleRegular])
 
 	// Alt+U shortcut mirrors the visible "Mark all read" button in
 	// ForYouHeaderActions — power-user keyboard access alongside the click target.
@@ -290,7 +291,10 @@ function ForYouRedesign() {
 
 	return (
 		<>
-			<div className="flex min-w-0 flex-1 flex-col gap-3" data-testid="foryou-redesign-root">
+			<div
+				className="flex min-h-0 min-w-0 flex-1 flex-col gap-3"
+				data-testid="foryou-redesign-root"
+			>
 				<PageHeader
 					stickyIdentity={<ForYouHeaderIdentity unreadCount={unreadRegular.length} />}
 					actions={
@@ -300,6 +304,7 @@ function ForYouRedesign() {
 							markAllReadDisabled={unreadRegular.length === 0}
 						/>
 					}
+					scrollLocked={mode === 'cards'}
 				/>
 				{northStarCard}
 				<ForYouHeader

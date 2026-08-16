@@ -37,6 +37,7 @@ vi.mock('@/hooks/use-subscriptions', () => ({
 		isLoading: false,
 	}),
 	useMarkRead: () => ({ mutate: vi.fn() }),
+	useMarkUnread: () => ({ mutate: vi.fn() }),
 }))
 
 vi.mock('@/hooks/use-bets', () => ({
