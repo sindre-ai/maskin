@@ -312,6 +312,10 @@ async function apiFetch(
 	const url = `${config.apiBaseUrl}${path}`
 	const headers: Record<string, string> = {
 		'Content-Type': 'application/json',
+		// Tells the backend this call arrived through the MCP transport so
+		// route-level analytics (knowledge_object_created / _read) can
+		// attribute `created_via` / `accessed_via` without guessing.
+		'X-Client-Source': 'mcp',
 	}
 	if (config.apiKey) {
 		headers.Authorization = `Bearer ${config.apiKey}`

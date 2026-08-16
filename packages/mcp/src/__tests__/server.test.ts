@@ -180,6 +180,11 @@ describe('tool handlers', () => {
 					headers: expect.objectContaining({
 						Authorization: 'Bearer ank_testkey123',
 						'X-Workspace-Id': 'ws-default-123',
+						// Backend attributes analytics like knowledge_object_created's
+						// `created_via` field off this header — every outbound MCP call
+						// must self-declare so the create/read routes don't have to
+						// guess from actorType alone.
+						'X-Client-Source': 'mcp',
 					}),
 				}),
 			)
