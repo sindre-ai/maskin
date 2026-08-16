@@ -22,6 +22,13 @@
  *   ANTHROPIC_WEEKLY_CEILING (optional)  Weekly ceiling in USD  [default: 1000]
  *   ANTHROPIC_5H_CEILING     (optional)  5h rolling ceiling in USD  [default: 150]
  *   THRESHOLD_PCT            (optional)  Alert threshold %  [default: 80]
+ *
+ * Exit codes:
+ *   0  poll completed (any per-route fetch failures are reported via errors[])
+ *   1  either required API key was missing — errors[] carries one entry per
+ *      quota that could not be polled (claude_weekly, claude_5h_overage,
+ *      openrouter_daily). The full PollResult is still written to stdout so
+ *      callers can inspect what failed.
  */
 
 import { env } from 'node:process'
@@ -58,7 +65,7 @@ const logger = {
 export interface QuotaEntry {
 	used: number
 	limit: number
-	headroom_pct: number
+	headroom_pct: number | null
 	exceeded: boolean
 	/**
 	 * When the underlying provider window resets. Populated from Anthropic's
@@ -267,12 +274,12 @@ async function fetchOpenRouterQuota(
 /* -------------------------------------------------------------------------- */
 
 function computeQuota(used: number, limit: number, resetAt?: string | null): QuotaEntry {
-	const headroom_pct = limit > 0 ? roundTo1((used / limit) * 100) : 0
+	const headroom_pct = limit > 0 ? roundTo1((used / limit) * 100) : null
 	const entry: QuotaEntry = {
 		used: roundTo2(used),
 		limit: roundTo2(limit),
 		headroom_pct,
-		exceeded: headroom_pct >= THRESHOLD_PCT,
+		exceeded: headroom_pct !== null && headroom_pct >= THRESHOLD_PCT,
 	}
 	if (resetAt !== undefined) {
 		entry.reset_at = resetAt
@@ -299,8 +306,16 @@ function readEnvFloat(key: string, fallback: number): number {
 	return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback
 }
 
-const ANTHROPIC_ADMIN_API_KEY = env.ANTHROPIC_ADMIN_API_KEY
-const OPENROUTER_API_KEY = env.OPENROUTER_API_KEY
+// An empty or whitespace-only env value is treated as missing so the
+// verification recipe `KEY='' KEY='' npx tsx ...` triggers the exit-1 path.
+function readEnvKey(key: string): string | undefined {
+	const raw = env[key]
+	if (raw === undefined || raw.trim() === '') return undefined
+	return raw
+}
+
+const ANTHROPIC_ADMIN_API_KEY = readEnvKey('ANTHROPIC_ADMIN_API_KEY')
+const OPENROUTER_API_KEY = readEnvKey('OPENROUTER_API_KEY')
 const POSTHOG_API_KEY = env.POSTHOG_API_KEY
 const ANTHROPIC_WEEKLY_CEILING = readEnvFloat('ANTHROPIC_WEEKLY_CEILING', 1000)
 const ANTHROPIC_5H_CEILING = readEnvFloat('ANTHROPIC_5H_CEILING', 150)
@@ -310,17 +325,28 @@ const THRESHOLD_PCT = readEnvFloat('THRESHOLD_PCT', 80)
 /*  Main                                                                      */
 /* -------------------------------------------------------------------------- */
 
-async function main(): Promise<PollResult> {
+const ANTHROPIC_QUOTAS = ['claude_weekly', 'claude_5h_overage'] as const
+const OPENROUTER_QUOTAS = ['openrouter_daily'] as const
+
+function missingKeyError(quota: string, envVar: string) {
+	return {
+		route: quota,
+		message: `${envVar} environment variable is not set`,
+		code: 'MISSING_API_KEY',
+	}
+}
+
+export async function main(): Promise<PollResult> {
 	const errors: PollResult['errors'] = []
 	const quotas: PollResult['quotas'] = {}
 
 	if (!ANTHROPIC_ADMIN_API_KEY) {
-		logger.error("ANTHROPIC_ADMIN_API_KEY not set — cannot poll Claude quotas")
-		errors.push({
-			route: "claude",
-			message: "ANTHROPIC_ADMIN_API_KEY environment variable is not set",
-			code: "MISSING_API_KEY",
+		logger.error('ANTHROPIC_ADMIN_API_KEY not set — cannot poll Claude quotas', {
+			affected_quotas: ANTHROPIC_QUOTAS,
 		})
+		for (const quota of ANTHROPIC_QUOTAS) {
+			errors.push(missingKeyError(quota, 'ANTHROPIC_ADMIN_API_KEY'))
+		}
 	} else {
 		const result = await fetchAnthropicQuotas(
 			ANTHROPIC_ADMIN_API_KEY,
@@ -340,12 +366,12 @@ async function main(): Promise<PollResult> {
 	}
 
 	if (!OPENROUTER_API_KEY) {
-		logger.error("OPENROUTER_API_KEY not set — cannot poll OpenRouter quotas")
-		errors.push({
-			route: "openrouter",
-			message: "OPENROUTER_API_KEY environment variable is not set",
-			code: "MISSING_API_KEY",
+		logger.error('OPENROUTER_API_KEY not set — cannot poll OpenRouter quotas', {
+			affected_quotas: OPENROUTER_QUOTAS,
 		})
+		for (const quota of OPENROUTER_QUOTAS) {
+			errors.push(missingKeyError(quota, 'OPENROUTER_API_KEY'))
+		}
 	} else {
 		const result = await fetchOpenRouterQuota(OPENROUTER_API_KEY)
 		if (result) {
@@ -415,11 +441,11 @@ const isMain =
 if (isMain) {
 	main()
 		.then((result) => {
-		const hasMissingKey = result.errors.some((e) => e.code === "MISSING_API_KEY")
-		if (hasMissingKey) {
-			process.exit(1)
-		}
-		process.stdout.write(JSON.stringify(result) + "\n")
+			process.stdout.write(`${JSON.stringify(result)}\n`)
+			const hasMissingKey = result.errors.some((e) => e.code === 'MISSING_API_KEY')
+			if (hasMissingKey) {
+				process.exit(1)
+			}
 		})
 		.catch((err) => {
 			logger.error('Unhandled poller error', { error: String(err) })

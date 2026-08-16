@@ -41,7 +41,7 @@ const CAPTURE_TIMEOUT_MS = 10_000
  * circular import back into `poller.ts`.
  */
 interface QuotaLike {
-	headroom_pct: number
+	headroom_pct: number | null
 	reset_at?: string | null
 }
 
@@ -105,7 +105,7 @@ export async function captureQuotaAlerts(input: CaptureQuotaAlertsInput): Promis
 interface CaptureQuotaAlertInput {
 	apiKey: string
 	route: string
-	headroomPct: number
+	headroomPct: number | null
 	thresholdPct: number
 	resetAt: string | null
 	pollTimestamp: string
