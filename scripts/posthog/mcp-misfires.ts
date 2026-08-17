@@ -40,7 +40,7 @@ function getApiKey(): string {
 
 async function main(): Promise<void> {
 	const apiKey = getApiKey()
-	const projectId = (process.env.POSTHOG_PROJECT_ID?.trim() || DEFAULT_PROJECT_ID)
+	const projectId = process.env.POSTHOG_PROJECT_ID?.trim() || DEFAULT_PROJECT_ID
 	const host = (process.env.POSTHOG_HOST?.trim() || DEFAULT_HOST).replace(/\/$/, '')
 
 	const query = `
