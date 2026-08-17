@@ -516,7 +516,7 @@ function SkillRow({
 	}
 
 	return (
-		<div className="rounded-lg border border-border bg-card transition-colors hover:border-border-hover">
+		<div className="rounded-lg border border-border bg-card transition-colors hover:border-border-strong">
 			{/* biome-ignore lint/a11y/useKeyWithClickEvents: row click supplements the inner kebab button, which keyboard users tab to and activate to reach Edit/Delete */}
 			<div
 				onClick={handleRowClick}

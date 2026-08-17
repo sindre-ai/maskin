@@ -326,7 +326,7 @@ export function ObjectFiles({
 					onClick={() => inputRef.current?.click()}
 					disabled={isUploading}
 					className={cn(
-						'w-full flex items-center justify-center gap-2 rounded-md border border-dashed border-border bg-card px-3 py-2 text-xs text-muted-foreground hover:border-border-hover hover:text-foreground transition-colors',
+						'w-full flex items-center justify-center gap-2 rounded-md border border-dashed border-border bg-card px-3 py-2 text-xs text-muted-foreground hover:border-border-strong hover:text-foreground transition-colors',
 						isDragging && 'border-accent text-accent',
 						isUploading && 'pointer-events-none opacity-60',
 					)}

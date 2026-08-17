@@ -41,7 +41,7 @@ export function AgentPortraitCard({
 				isRunning && 'border-accent/60',
 				status === 'failed' && 'border-error',
 				status === 'paused' && 'border-border',
-				status === 'idle' && 'border-border hover:border-border-hover',
+				status === 'idle' && 'border-border hover:border-border-strong',
 			)}
 		>
 			<Link
