@@ -1,5 +1,6 @@
 import type { Locator, Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
+import { TestAPI } from '../helpers/api.helper'
 import { VIEWPORTS } from '../helpers/viewports'
 
 // AC-T6 / AC-U1: at viewports ≤1024 CSS px, the rendered row-select checkbox
@@ -8,10 +9,7 @@ import { VIEWPORTS } from '../helpers/viewports'
 
 const TOUCH_VIEWPORTS = [VIEWPORTS.mobile, VIEWPORTS.tabletPortrait, VIEWPORTS.tabletLandscape]
 
-async function seedTwoObjects(account: {
-	api: { createObject: (wsId: string, body: Record<string, unknown>) => Promise<{ id: string }> }
-	workspaceId: string
-}) {
+async function seedTwoObjects(account: { api: TestAPI; workspaceId: string }) {
 	await account.api.createObject(account.workspaceId, {
 		type: 'bet',
 		title: 'Bulk Select Bet A',
