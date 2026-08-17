@@ -691,10 +691,14 @@ export function buildApp(deps: AppDeps): Hono {
 		// on every code path.
 		let releasePreviewPorts: () => void = () => {}
 		if (body.browserRequired === true) {
-			// Resolve preview port relay ports before provisioning the sidecar so
-			// we know which allow@host:tcp:<port> rules the sidecar needs baked in
-			// at create time — the relay itself can only start once the session VM
-			// is Running, further down.
+			// Resolve preview relay ports up front, purely so PREVIEW_URL can be
+			// baked into the session's boot-time env below — the relay itself can
+			// only start once the session VM is Running, further down. The
+			// sidecar no longer needs these exact port numbers pre-baked into its
+			// own rules: it carries a standing allow@host:tcp:<DEV_SERVER_HOST_PORT_RANGE>
+			// grant that already covers wherever resolvePreviewPortMappings lands
+			// (see microsandbox.ts), so this step no longer has to happen before
+			// provisionBrowserSidecar.
 			if (body.previewGuestPorts && body.previewGuestPorts.length > 0) {
 				try {
 					const resolved = await resolvePreviewPortMappings(body.previewGuestPorts, deps.msb)
@@ -705,14 +709,12 @@ export function buildApp(deps: AppDeps): Hono {
 					logger.warn('preview port resolution failed — continuing without preview forwarding', {
 						sessionId: body.sessionId,
 						error: String(err),
+						cause: err instanceof Error && err.cause !== undefined ? String(err.cause) : undefined,
 					})
 				}
 			}
 			browserSidecar = await provisionBrowserSidecar(body.sessionId.slice(0, 16), deps.msb, {
 				image: deps.env.BROWSER_SIDECAR_IMAGE,
-				...(previewPortMappings.length > 0 && {
-					extraAllowedHostPorts: previewPortMappings.map((m) => m.relayPort),
-				}),
 			})
 			if (browserSidecar) {
 				sessionEnv.BROWSER_CDP_URL = browserSidecar.cdpUrl
@@ -783,8 +785,9 @@ export function buildApp(deps: AppDeps): Hono {
 			})
 
 			// Session VM is now Running — actually open the SSH-relay tunnel(s) into
-			// its preview port(s), targeting the same relayPort numbers already
-			// baked into the sidecar's allow@host:tcp:<port> net-rules above. Must
+			// its preview port(s); the sidecar's standing
+			// allow@host:tcp:<DEV_SERVER_HOST_PORT_RANGE> grant already covers these
+			// relayPort numbers, so nothing needs to be pre-baked into its rules. Must
 			// happen after spawnSession (the relay target must be a live VM); the
 			// pre-reserved port numbers are only released once this has run,
 			// whatever the outcome — see resolvePreviewPortMappings.
