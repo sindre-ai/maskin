@@ -196,7 +196,7 @@ describe('trackReviewerVerdictSubmitted — on-the-wire event', () => {
 	})
 	afterEach(() => vi.restoreAllMocks())
 
-	it('writes an events row and captures a PostHog event with the required properties', async () => {
+	it('writes an events row but does not capture a PostHog event (recordReviewerVerdict owns that)', async () => {
 		const ctxCtx = createTestContext()
 		await trackReviewerVerdictSubmitted(ctxCtx.db, {
 			workspaceId: WORKSPACE_ID,
@@ -227,18 +227,11 @@ describe('trackReviewerVerdictSubmitted — on-the-wire event', () => {
 		expect(insert.data?.rubric_id).toBe(RUBRIC_ID)
 		expect(insert.data?.failing_criteria).toEqual(['no_hedging_enforcement'])
 
-		expect(capturePosthogEvent).toHaveBeenCalledTimes(1)
-		const [event, distinctId, props] = capturePosthogEvent.mock.calls[0] ?? []
-		expect(event).toBe(REVIEWER_VERDICT_SUBMITTED)
-		expect(distinctId).toBe(WORKSPACE_ID)
-		expect(props).toMatchObject({
-			workspace_id: WORKSPACE_ID,
-			actor_id: TARGET_ACTOR_ID,
-			overall: 'fail',
-			cycle_number: 2,
-			reviewer_session_id: 'reviewer-session-uuid',
-			rubric_id: RUBRIC_ID,
-		})
+		// recordReviewerVerdict (reviewer-verdicts.ts) is the sole PostHog
+		// emitter for reviewer_verdict_submitted once a verdict is persisted —
+		// see this function's doc comment for why firing it here too would
+		// double the ship-metric count.
+		expect(capturePosthogEvent).not.toHaveBeenCalled()
 	})
 
 	it('anchors the events row to the rubric object when no target actor exists yet', async () => {

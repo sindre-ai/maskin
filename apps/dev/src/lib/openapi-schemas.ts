@@ -213,6 +213,57 @@ export const sessionResponseSchema = z.object({
 	updatedAt: z.string().nullable(),
 })
 
+export const conversationParticipantResponseSchema = z.object({
+	actorId: z.string().uuid(),
+	actorName: z.string(),
+	actorType: z.string(),
+	joinedAt: z.string().nullable(),
+	addedBy: z.string().uuid().nullable(),
+})
+
+export const conversationListItemResponseSchema = z.object({
+	id: z.string().uuid(),
+	workspaceId: z.string().uuid(),
+	title: z.string(),
+	createdBy: z.string().uuid(),
+	lastMessageAt: z.string().nullable(),
+	createdAt: z.string().nullable(),
+	updatedAt: z.string().nullable(),
+	// Per-viewer participant state — resolved from the caller's own
+	// conversation_participants row, same "computed, snake_case" convention
+	// as objectResponseSchema's is_subscribed/unread_count/subscriber_count.
+	pinned: z.boolean(),
+	archived: z.boolean(),
+	unread_count: z.number(),
+	snippet: z.string().nullable(),
+	participants: z.array(conversationParticipantResponseSchema),
+})
+
+export const conversationDetailResponseSchema = conversationListItemResponseSchema
+	.omit({ snippet: true })
+	.extend({
+		last_read_message_id: z.number().nullable(),
+	})
+
+export const conversationParticipantStateResponseSchema = z.object({
+	pinned: z.boolean(),
+	archived: z.boolean(),
+	last_read_message_id: z.number().nullable(),
+})
+
+export const messageResponseSchema = z.object({
+	id: z.number(),
+	conversationId: z.string().uuid(),
+	actorId: z.string().uuid(),
+	actorName: z.string(),
+	actorType: z.string(),
+	kind: z.string(),
+	content: z.string(),
+	metadata: jsonbField,
+	sessionId: z.string().uuid().nullable(),
+	createdAt: z.string().nullable(),
+})
+
 export const sessionLogResponseSchema = z.object({
 	id: z.number(),
 	sessionId: z.string().uuid(),

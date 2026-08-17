@@ -1,5 +1,4 @@
 import { useObjects } from '@/hooks/use-objects'
-import { useChat } from '@/lib/chat-context'
 import { useCommandPalette } from '@/lib/command-palette-context'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
@@ -10,7 +9,6 @@ export function CommandPalette() {
 	const { open, setOpen } = useCommandPalette()
 	const { workspaceId } = useWorkspace()
 	const { data: objects } = useObjects(workspaceId)
-	const { setOpen: setChatOpen } = useChat()
 	const navigate = useNavigate()
 
 	const navigateTo = useCallback(
@@ -22,9 +20,8 @@ export function CommandPalette() {
 	)
 
 	const openChat = useCallback(() => {
-		setChatOpen(true)
-		setOpen(false)
-	}, [setChatOpen, setOpen])
+		navigateTo(`/${workspaceId}/chats/new`)
+	}, [navigateTo, workspaceId])
 
 	useEffect(() => {
 		const handler = (e: KeyboardEvent) => {
@@ -34,8 +31,7 @@ export function CommandPalette() {
 			}
 			if (e.key === 'j' && (e.metaKey || e.ctrlKey)) {
 				e.preventDefault()
-				setChatOpen(true)
-				setOpen(false)
+				openChat()
 			}
 			if (e.key === 'Escape') {
 				setOpen(false)
@@ -43,7 +39,7 @@ export function CommandPalette() {
 		}
 		document.addEventListener('keydown', handler)
 		return () => document.removeEventListener('keydown', handler)
-	}, [setChatOpen, setOpen])
+	}, [openChat, setOpen])
 
 	if (!open) return null
 
