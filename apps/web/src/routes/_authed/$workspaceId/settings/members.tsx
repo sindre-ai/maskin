@@ -132,7 +132,7 @@ function MembersPage() {
 						<button
 							type="button"
 							key={member.actorId}
-							className="flex w-full items-center gap-3 rounded px-3 py-2 text-left transition-colors hover:bg-bg-hover cursor-pointer"
+							className="flex w-full items-center gap-3 rounded px-3 py-2 text-left transition-colors hover:bg-accent cursor-pointer"
 							onClick={() => {
 								if (member.type === 'agent') {
 									navigate({

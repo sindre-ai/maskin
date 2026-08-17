@@ -70,7 +70,7 @@ export function SearchableMultiSelect({
 								<span>{item?.label ?? id}</span>
 								<button
 									type="button"
-									className="rounded-sm hover:bg-bg-hover"
+									className="rounded-sm hover:bg-accent"
 									onClick={() => remove(id)}
 									aria-label={`Remove ${item?.label ?? id}`}
 								>
@@ -118,8 +118,8 @@ export function SearchableMultiSelect({
 										type="button"
 										onClick={() => toggle(item.id)}
 										className={cn(
-											'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-bg-hover',
-											selected && 'bg-bg-hover',
+											'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent',
+											selected && 'bg-muted-hover',
 										)}
 									>
 										<div className="flex h-4 w-4 shrink-0 items-center justify-center">

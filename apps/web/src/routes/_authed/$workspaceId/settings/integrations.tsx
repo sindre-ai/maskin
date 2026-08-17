@@ -206,7 +206,7 @@ function GroupedProviderRow({
 				type="button"
 				onClick={() => setExpanded((v) => !v)}
 				aria-expanded={expanded}
-				className="flex w-full items-center gap-3 p-4 text-left transition-colors hover:bg-bg-hover"
+				className="flex w-full items-center gap-3 p-4 text-left transition-colors hover:bg-accent"
 			>
 				<div className="h-3 w-3 shrink-0 rounded-full bg-success" />
 				<div className="flex-1 min-w-0">
@@ -367,7 +367,7 @@ function SkjaldConnectDialog({
 						<div className="space-y-2">
 							<Label>Webhook URL</Label>
 							<div className="flex gap-2">
-								<div className="flex-1 min-w-0 rounded-md border border-border bg-bg-surface px-3 py-2 font-mono text-xs break-all select-all">
+								<div className="flex-1 min-w-0 rounded-md border border-border bg-card px-3 py-2 font-mono text-xs break-all select-all">
 									{state?.webhookUrl}
 								</div>
 								<Button variant="secondary" size="sm" className="shrink-0" onClick={handleCopy}>
@@ -430,7 +430,7 @@ function NestedInstallationRow({
 		(integration.externalId ? `Installation ${integration.externalId}` : 'Installation')
 
 	return (
-		<div className="flex items-center gap-3 rounded-md border border-border bg-bg-surface p-3">
+		<div className="flex items-center gap-3 rounded-md border border-border bg-card p-3">
 			<div className="h-3 w-3 shrink-0 rounded-full bg-success" />
 			<div className="flex-1 min-w-0">
 				<p className="text-sm font-medium text-foreground truncate">{label}</p>

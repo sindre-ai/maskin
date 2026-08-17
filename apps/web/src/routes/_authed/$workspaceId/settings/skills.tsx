@@ -520,7 +520,7 @@ function SkillRow({
 			{/* biome-ignore lint/a11y/useKeyWithClickEvents: row click supplements the inner kebab button, which keyboard users tab to and activate to reach Edit/Delete */}
 			<div
 				onClick={handleRowClick}
-				className="flex items-center gap-3 p-4 cursor-pointer hover:bg-bg-hover rounded-lg"
+				className="flex items-center gap-3 p-4 cursor-pointer hover:bg-accent rounded-lg"
 			>
 				{skill.isFolder && (
 					<ChevronRight
@@ -546,7 +546,7 @@ function SkillRow({
 						<p className="text-sm font-medium text-foreground truncate">{skill.name}</p>
 						{skill.isFolder && (
 							<span
-								className="shrink-0 inline-flex items-center gap-1 rounded-md bg-bg-surface px-1.5 py-0.5 text-xs text-muted-foreground"
+								className="shrink-0 inline-flex items-center gap-1 rounded-md bg-card px-1.5 py-0.5 text-xs text-muted-foreground"
 								title={`${skill.fileCount ?? 0} files in bundle`}
 							>
 								<Folder size={12} aria-hidden="true" />
@@ -794,7 +794,7 @@ function SkillDialog({
 							disabled={loadingExisting}
 						/>
 						{isEdit && (
-							<p className="mt-1 text-xs text-text-secondary">
+							<p className="mt-1 text-xs text-muted-foreground">
 								Only recognised frontmatter keys (name, description, and SKILL.md options) are
 								preserved on save — custom keys are dropped.
 							</p>

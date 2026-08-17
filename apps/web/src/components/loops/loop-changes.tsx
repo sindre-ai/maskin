@@ -128,7 +128,7 @@ export function LoopChanges({
 										type="button"
 										onClick={() => handleUndo(event)}
 										disabled={updateObject.isPending}
-										className="shrink-0 inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-bg-hover disabled:opacity-50"
+										className="shrink-0 inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-accent disabled:opacity-50"
 									>
 										<Undo2 size={13} aria-hidden="true" />
 										Undo

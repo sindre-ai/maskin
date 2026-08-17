@@ -434,7 +434,7 @@ function FileRow({ workspaceId, file, visible, uploaderName }: FileRowProps) {
 				params={{ workspaceId, fileId: file.id }}
 				target="_blank"
 				rel="noopener noreferrer"
-				className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-border bg-card px-3 py-2 text-sm transition-colors hover:bg-bg-hover"
+				className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-border bg-card px-3 py-2 text-sm transition-colors hover:bg-accent"
 			>
 				<FileIcon size={14} className="text-muted-foreground shrink-0" />
 				<span className="flex-1 min-w-0 truncate">{file.name}</span>
