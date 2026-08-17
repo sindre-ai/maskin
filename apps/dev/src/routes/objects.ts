@@ -52,6 +52,13 @@ import {
 	or,
 	sql,
 } from 'drizzle-orm'
+import {
+	CLIENT_SOURCE_HEADER,
+	resolveAccessedVia,
+	resolveCreatedVia,
+	trackKnowledgeObjectCreated,
+	trackKnowledgeObjectRead,
+} from '../lib/analytics/knowledge-events'
 import { createApiError, createInvalidTypeError, validationFailureHook } from '../lib/errors'
 import { fileViewerUrl, frontendBaseUrl } from '../lib/file-urls'
 import { findKnowledgeDuplicate, isKnowledgeTitleUniqueViolation } from '../lib/knowledge-dedup'
@@ -470,6 +477,7 @@ const createObjectRoute = createRoute({
 app.openapi(createObjectRoute, async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
+	const actorType = c.get('actorType')
 	const body = c.req.valid('json')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
@@ -608,6 +616,15 @@ app.openapi(createObjectRoute, async (c) => {
 		entityId: created.id,
 		source: 'author',
 	})
+
+	if (created.type === 'knowledge') {
+		void trackKnowledgeObjectCreated({
+			workspaceId,
+			actorId,
+			objectId: created.id,
+			createdVia: resolveCreatedVia(c.req.header(CLIENT_SOURCE_HEADER), actorType),
+		})
+	}
 
 	return c.json(serialize(created) as z.infer<typeof objectResponseSchema>, 201)
 })
@@ -1357,12 +1374,22 @@ const getObjectRoute = createRoute({
 app.openapi(getObjectRoute, async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
+	const actorType = c.get('actorType')
 	const { id } = c.req.valid('param')
 
 	const [object] = await db.select().from(objects).where(eq(objects.id, id)).limit(1)
 
 	if (!object || !(await isWorkspaceMember(db, actorId, object.workspaceId))) {
 		return c.json(createApiError('NOT_FOUND', 'Object not found'), 404)
+	}
+
+	if (object.type === 'knowledge') {
+		void trackKnowledgeObjectRead({
+			workspaceId: object.workspaceId,
+			actorId,
+			objectId: object.id,
+			accessedVia: resolveAccessedVia(c.req.header(CLIENT_SOURCE_HEADER), actorType),
+		})
 	}
 
 	const [subscribed, unreadCount, subscriberCount, activeSession] = await Promise.all([

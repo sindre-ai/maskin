@@ -4,12 +4,14 @@ import { render } from '@testing-library/react'
 const mockSetActions = vi.fn()
 const mockSetStickyIdentity = vi.fn()
 const mockSetContentPush = vi.fn()
+const mockSetScrollLocked = vi.fn()
 
 vi.mock('@/lib/page-header-context', () => ({
 	usePageHeader: () => ({
 		setActions: mockSetActions,
 		setStickyIdentity: mockSetStickyIdentity,
 		setContentPush: mockSetContentPush,
+		setScrollLocked: mockSetScrollLocked,
 	}),
 }))
 
@@ -18,6 +20,7 @@ describe('PageHeader', () => {
 		mockSetActions.mockClear()
 		mockSetStickyIdentity.mockClear()
 		mockSetContentPush.mockClear()
+		mockSetScrollLocked.mockClear()
 	})
 
 	it('calls setActions on mount with provided actions', () => {
@@ -76,5 +79,22 @@ describe('PageHeader', () => {
 		mockSetContentPush.mockClear()
 		unmount()
 		expect(mockSetContentPush).toHaveBeenCalledWith(undefined)
+	})
+
+	it('calls setScrollLocked on mount with the provided value', () => {
+		render(<PageHeader scrollLocked />)
+		expect(mockSetScrollLocked).toHaveBeenCalledWith(true)
+	})
+
+	it('calls setScrollLocked with false when unset', () => {
+		render(<PageHeader />)
+		expect(mockSetScrollLocked).toHaveBeenCalledWith(false)
+	})
+
+	it('calls setScrollLocked(false) on unmount', () => {
+		const { unmount } = render(<PageHeader scrollLocked />)
+		mockSetScrollLocked.mockClear()
+		unmount()
+		expect(mockSetScrollLocked).toHaveBeenCalledWith(false)
 	})
 })

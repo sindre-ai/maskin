@@ -4,7 +4,7 @@ import { createRef } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { UnreadItem } from '@/lib/api'
-import { buildObjectResponse } from '../../factories'
+import { buildEventResponse, buildObjectResponse } from '../../factories'
 import { TestWrapper } from '../../setup'
 
 // jsdom has no TransitionEvent constructor, so @testing-library/dom's
@@ -32,6 +32,8 @@ vi.mock('@/lib/analytics', async () => {
 const mockUseEntityEvents = vi.fn()
 const mockMarkReadMutate = vi.fn()
 const mockUseMarkRead = vi.fn(() => ({ mutate: mockMarkReadMutate, isPending: false }))
+const mockMarkUnreadMutate = vi.fn()
+const mockUseMarkUnread = vi.fn(() => ({ mutate: mockMarkUnreadMutate, isPending: false }))
 const mockCreateCommentMutate = vi.fn()
 
 vi.mock('@tanstack/react-router', async () => {
@@ -46,6 +48,7 @@ vi.mock('@/hooks/use-events', () => ({
 
 vi.mock('@/hooks/use-subscriptions', () => ({
 	useMarkRead: () => mockUseMarkRead(),
+	useMarkUnread: () => mockUseMarkUnread(),
 }))
 
 vi.mock('@/lib/auth', () => ({
@@ -74,6 +77,7 @@ function buildItem(overrides: Partial<UnreadItem> = {}): UnreadItem {
 		entity_id: 'obj-1',
 		unread_count: 1,
 		mentioning_unread_count: 0,
+		max_unread_attention: null,
 		latest_event_id: 20,
 		latest_activity_at: '2026-01-01T00:00:00Z',
 		object: buildObjectResponse({
@@ -380,64 +384,6 @@ describe('ForYouQueueCard', () => {
 		})
 	})
 
-	describe('summary strip', () => {
-		it('truncates the summary by default and expands/collapses it via the toggle', () => {
-			const longSummary = 'This is a long insight summary. '.repeat(10)
-			render(
-				<ForYouQueueCard
-					workspaceId="ws-1"
-					item={buildItem({
-						object: buildObjectResponse({
-							id: 'obj-1',
-							title: 'Thread item',
-							type: 'insight',
-							status: 'active',
-							content: longSummary,
-						}),
-					})}
-					onProcessed={vi.fn()}
-					onRestored={vi.fn()}
-					onCommitScheduled={vi.fn()}
-					onCommitSettled={vi.fn()}
-				/>,
-				{ wrapper: TestWrapper },
-			)
-
-			const summaryText = screen.getByText(longSummary.trim())
-			expect(summaryText).toHaveClass('line-clamp-3')
-
-			fireEvent.click(screen.getByRole('button', { name: 'Show full' }))
-			expect(summaryText).not.toHaveClass('line-clamp-3')
-
-			fireEvent.click(screen.getByRole('button', { name: 'Hide' }))
-			expect(summaryText).toHaveClass('line-clamp-3')
-		})
-
-		it('renders no summary strip or toggle when the object has no content', () => {
-			render(
-				<ForYouQueueCard
-					workspaceId="ws-1"
-					item={buildItem({
-						object: buildObjectResponse({
-							id: 'obj-1',
-							title: 'Thread item',
-							type: 'insight',
-							status: 'active',
-							content: null,
-						}),
-					})}
-					onProcessed={vi.fn()}
-					onRestored={vi.fn()}
-					onCommitScheduled={vi.fn()}
-					onCommitSettled={vi.fn()}
-				/>,
-				{ wrapper: TestWrapper },
-			)
-
-			expect(screen.queryByRole('button', { name: 'Show full' })).not.toBeInTheDocument()
-		})
-	})
-
 	describe('header metadata', () => {
 		it('does not render a redundant plain-text object type next to the title', () => {
 			render(
@@ -462,6 +408,79 @@ describe('ForYouQueueCard', () => {
 			// TypeBadge still renders the type; the plain-text duplicate below the
 			// title must be gone.
 			expect(screen.queryByText('bet', { selector: 'span.capitalize' })).not.toBeInTheDocument()
+		})
+	})
+
+	describe('collapsed earlier conversation', () => {
+		it('hides comments before the unread boundary behind a Read more toggle, then reveals them on click', () => {
+			const root1 = buildEventResponse({
+				id: 1,
+				action: 'commented',
+				actorId: 'other',
+				data: { content: 'Old message one' },
+			})
+			const root2 = buildEventResponse({
+				id: 2,
+				action: 'commented',
+				actorId: 'other',
+				data: { content: 'Old message two' },
+			})
+			const root3 = buildEventResponse({
+				id: 3,
+				action: 'commented',
+				actorId: 'other',
+				data: { content: 'New message' },
+			})
+			// The API returns events newest-first.
+			mockUseEntityEvents.mockReturnValue({ data: [root3, root2, root1] })
+
+			render(
+				<ForYouQueueCard
+					workspaceId="ws-1"
+					item={buildItem({ unread_count: 1 })}
+					onProcessed={vi.fn()}
+					onRestored={vi.fn()}
+					onCommitScheduled={vi.fn()}
+					onCommitSettled={vi.fn()}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+
+			expect(screen.queryByText('Old message one')).not.toBeInTheDocument()
+			expect(screen.queryByText('Old message two')).not.toBeInTheDocument()
+			expect(screen.getByText('New message')).toBeInTheDocument()
+
+			fireEvent.click(screen.getByRole('button', { name: 'Read more (2 earlier)' }))
+
+			expect(screen.getByText('Old message one')).toBeInTheDocument()
+			expect(screen.getByText('Old message two')).toBeInTheDocument()
+			expect(screen.getByText('New message')).toBeInTheDocument()
+			expect(screen.queryByRole('button', { name: /Read more/ })).not.toBeInTheDocument()
+		})
+
+		it('renders no Read more toggle when there is nothing before the unread boundary', () => {
+			const root1 = buildEventResponse({
+				id: 1,
+				action: 'commented',
+				actorId: 'other',
+				data: { content: 'Only message' },
+			})
+			mockUseEntityEvents.mockReturnValue({ data: [root1] })
+
+			render(
+				<ForYouQueueCard
+					workspaceId="ws-1"
+					item={buildItem({ unread_count: 1 })}
+					onProcessed={vi.fn()}
+					onRestored={vi.fn()}
+					onCommitScheduled={vi.fn()}
+					onCommitSettled={vi.fn()}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+
+			expect(screen.getByText('Only message')).toBeInTheDocument()
+			expect(screen.queryByRole('button', { name: /Read more/ })).not.toBeInTheDocument()
 		})
 	})
 
@@ -521,7 +540,7 @@ describe('ForYouQueueCard', () => {
 			expect(onProcessed).toHaveBeenCalledWith(itemQueueKey(item))
 		})
 
-		it('commit() drives the real swipe-to-mark-read commit path: exits immediately, marks read after the deferred window, advances only after the exit transition ends', () => {
+		it('commit() drives the real swipe-to-mark-read commit path: exits and marks read immediately, advances only after the exit transition ends', () => {
 			vi.useFakeTimers()
 			const onProcessed = vi.fn()
 			const item = buildItem()
@@ -545,11 +564,8 @@ describe('ForYouQueueCard', () => {
 
 			const card = screen.getByTestId('foryou-queue-card')
 			expect(card.style.transform).toBe('translateX(140%) rotate(8deg)')
-			expect(mockMarkReadMutate).not.toHaveBeenCalled()
-
-			act(() => {
-				vi.advanceTimersByTime(4500)
-			})
+			// The mutation fires immediately so it survives a refresh during the
+			// Undo window — it no longer waits for the deferred timer.
 			expect(mockMarkReadMutate).toHaveBeenCalledWith({
 				entityType: 'object',
 				entityId: 'obj-1',

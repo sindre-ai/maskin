@@ -9,11 +9,17 @@ vi.mock('node:fs/promises', () => ({
 	stat: vi.fn().mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' })),
 }))
 
-const { capturePosthogEventMock } = vi.hoisted(() => ({
+const { capturePosthogEventMock, trackWorkspaceSkillLoadedMock } = vi.hoisted(() => ({
 	capturePosthogEventMock: vi.fn().mockResolvedValue(undefined),
+	trackWorkspaceSkillLoadedMock: vi.fn().mockResolvedValue(undefined),
 }))
 vi.mock('../../lib/analytics/posthog', () => ({
 	capturePosthogEvent: capturePosthogEventMock,
+}))
+// Mocked separately from capturePosthogEvent so per-file-read count assertions
+// in this file don't have to also account for the per-skill loaded emit.
+vi.mock('../../lib/analytics/workspace-skill-events', () => ({
+	trackWorkspaceSkillLoaded: trackWorkspaceSkillLoadedMock,
 }))
 
 import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
@@ -646,6 +652,125 @@ describe('AgentStorageManager', () => {
 					expect(storage.get).not.toHaveBeenCalled()
 					expect(writeFile).not.toHaveBeenCalled()
 					expect(capturePosthogEventMock).not.toHaveBeenCalled()
+				})
+			})
+
+			describe('workspace_skill_loaded emission', () => {
+				it('fires once per successfully-pulled skill with the sessionId option', async () => {
+					mockResults.select = [
+						{
+							id: deployCheckId,
+							name: 'deploy-check',
+							storageKey: workspaceSkillKey(workspaceId, deployCheckId),
+							isFolder: false,
+						},
+						{
+							id: prReviewId,
+							name: 'pr-review',
+							storageKey: workspaceSkillKey(workspaceId, prReviewId),
+							isFolder: false,
+						},
+					]
+					storage.get.mockResolvedValue(Buffer.from('body', 'utf-8'))
+
+					await manager.pullWorkspaceSkillsForAgent(actorId, workspaceId, '/tmp/agent', {
+						sessionId: 'sess-42',
+					})
+
+					expect(trackWorkspaceSkillLoadedMock).toHaveBeenCalledTimes(2)
+					expect(trackWorkspaceSkillLoadedMock).toHaveBeenCalledWith({
+						workspaceId,
+						agentActorId: actorId,
+						skillName: 'deploy-check',
+						sessionId: 'sess-42',
+					})
+					expect(trackWorkspaceSkillLoadedMock).toHaveBeenCalledWith({
+						workspaceId,
+						agentActorId: actorId,
+						skillName: 'pr-review',
+						sessionId: 'sess-42',
+					})
+				})
+
+				it('passes sessionId=null when the option is omitted', async () => {
+					mockResults.select = [
+						{
+							id: deployCheckId,
+							name: 'deploy-check',
+							storageKey: workspaceSkillKey(workspaceId, deployCheckId),
+							isFolder: false,
+						},
+					]
+					storage.get.mockResolvedValue(Buffer.from('body', 'utf-8'))
+
+					await manager.pullWorkspaceSkillsForAgent(actorId, workspaceId, '/tmp/agent')
+
+					expect(trackWorkspaceSkillLoadedMock).toHaveBeenCalledWith(
+						expect.objectContaining({ sessionId: null }),
+					)
+				})
+
+				it('does not fire for skipped skills (agent-local wins) or failed pulls', async () => {
+					const existingFolder = join('/tmp/agent/skills/deploy-check')
+					;(stat as ReturnType<typeof vi.fn>).mockImplementation(async (path: string) => {
+						if (path === existingFolder) {
+							return { isDirectory: () => true } as { isDirectory: () => boolean }
+						}
+						throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+					})
+					mockResults.select = [
+						{
+							id: deployCheckId,
+							name: 'deploy-check',
+							storageKey: workspaceSkillKey(workspaceId, deployCheckId),
+							isFolder: false,
+						},
+						{
+							id: prReviewId,
+							name: 'pr-review',
+							storageKey: workspaceSkillKey(workspaceId, prReviewId),
+							isFolder: false,
+						},
+					]
+					storage.get.mockRejectedValue(new Error('NoSuchKey'))
+
+					await manager.pullWorkspaceSkillsForAgent(actorId, workspaceId, '/tmp/agent', {
+						sessionId: 'sess-42',
+					})
+
+					// deploy-check skipped (agent-local wins), pr-review failed —
+					// neither should emit workspace_skill_loaded.
+					expect(trackWorkspaceSkillLoadedMock).not.toHaveBeenCalled()
+				})
+
+				it('fires exactly once per folder skill (not per bundled file)', async () => {
+					mockResults.select = [
+						{
+							id: docxId,
+							name: 'docx',
+							storageKey: workspaceSkillKey(workspaceId, docxId),
+							isFolder: true,
+						},
+					]
+					const prefix = workspaceSkillPrefix(workspaceId, docxId)
+					storage.list.mockResolvedValueOnce([
+						`${prefix}SKILL.md`,
+						`${prefix}reference/style.md`,
+						`${prefix}scripts/build.sh`,
+					])
+					storage.get.mockResolvedValue(Buffer.from('body', 'utf-8'))
+
+					await manager.pullWorkspaceSkillsForAgent(actorId, workspaceId, '/tmp/agent', {
+						sessionId: 'sess-42',
+					})
+
+					expect(trackWorkspaceSkillLoadedMock).toHaveBeenCalledTimes(1)
+					expect(trackWorkspaceSkillLoadedMock).toHaveBeenCalledWith({
+						workspaceId,
+						agentActorId: actorId,
+						skillName: 'docx',
+						sessionId: 'sess-42',
+					})
 				})
 			})
 		})

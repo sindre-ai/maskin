@@ -10,6 +10,7 @@ function buildItem(overrides: Partial<UnreadItem> = {}): UnreadItem {
 		entity_id: 'obj-1',
 		unread_count: 0,
 		mentioning_unread_count: 0,
+		max_unread_attention: null,
 		latest_event_id: null,
 		latest_activity_at: null,
 		object: buildObjectResponse({ id: 'obj-1', type: 'bet', status: 'active' }),
