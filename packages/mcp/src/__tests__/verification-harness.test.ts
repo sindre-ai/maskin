@@ -256,7 +256,9 @@ describe('AC-U3 verification harness — contract replay of typical Claude Code 
 
 	for (const { trace, tool, args, fixture } of traces) {
 		it(`${trace}: flag OFF preserves the pre-scoping JSON-dump contract`, async () => {
-			delete process.env[RESPONSE_SCOPING_ENV_VAR]
+			// After T1 the default is ON — the legacy shape now requires an
+			// explicit opt-out via the env var, not a delete.
+			process.env[RESPONSE_SCOPING_ENV_VAR] = '0'
 			stubFetch(fixture)
 			const handler = handlers.get(tool)
 			if (!handler) throw new Error(`handler ${tool} not registered`)
@@ -352,7 +354,7 @@ describe('AC-T4 verification harness — ON → OFF → ON toggle parity across 
 			}
 			expect(/^(- |No |… )/.test(on1.content[0].text)).toBe(true)
 
-			delete process.env[RESPONSE_SCOPING_ENV_VAR]
+			process.env[RESPONSE_SCOPING_ENV_VAR] = '0'
 			const off = (await handler(args ?? {})) as {
 				content: Array<{ text: string }>
 				_meta?: Record<string, unknown>
@@ -400,7 +402,7 @@ describe('AC-T4 verification harness — ON → OFF → ON toggle parity across 
 		expect(on1._meta.fetch_handle?.tool).toBe('get_objects')
 		expect(typeof on1.structuredContent.next_cursor).toBe('string')
 
-		delete process.env[RESPONSE_SCOPING_ENV_VAR]
+		process.env[RESPONSE_SCOPING_ENV_VAR] = '0'
 		const off = (await handler({})) as {
 			_meta?: { truncated?: boolean; fetch_handle?: unknown }
 			structuredContent?: { next_cursor?: string }
@@ -516,5 +518,55 @@ describe('AC-T7 verification harness — seeded p95 fixture never busts the 15K 
 		if (!handler) throw new Error('list_objects handler not registered')
 		const result = await handler({})
 		expect(estimateResponseTokens(result)).toBeLessThanOrEqual(5000)
+	})
+})
+
+// ─────────────────────────────────────────────────────────────────
+// T1 DoD #7 — before/after size assertion for the lean default
+// ─────────────────────────────────────────────────────────────────
+//
+// Anchors the DoD claim that flipping `MCP_RESPONSE_SCOPING` on materially
+// shrinks a list tool's default-page response. `list_objects` with a
+// realistic 5-row fixture is the smallest case that still carries object
+// content bodies + metadata (the fat that dominates the pre-scoping shape),
+// so a ≥60% cut here is a fair proxy for the bet's headline metric.
+// If this assertion ever slips below the threshold, the lean default has
+// drifted and the token savings the bet promises no longer hold.
+
+describe('T1 DoD #7 — lean default is materially smaller than the pre-scoping full-content default', () => {
+	let handlers: Map<string, Handler>
+
+	beforeEach(() => {
+		vi.clearAllMocks()
+		handlers = setupServer()
+	})
+
+	afterEach(() => {
+		vi.restoreAllMocks()
+		delete process.env[RESPONSE_SCOPING_ENV_VAR]
+	})
+
+	it('list_objects: scoped default is ≥60% smaller than the pre-scoping content-channel dump', async () => {
+		const fixture = Array.from({ length: 5 }, (_, i) => objectRow(i))
+		const handler = handlers.get('list_objects')
+		if (!handler) throw new Error('list_objects handler not registered')
+
+		process.env[RESPONSE_SCOPING_ENV_VAR] = '0'
+		stubFetch(fixture)
+		const off = (await handler({})) as { content: Array<{ text: string }> }
+		const legacyContentBytes = Buffer.byteLength(off.content[0].text, 'utf8')
+
+		vi.restoreAllMocks()
+		process.env[RESPONSE_SCOPING_ENV_VAR] = '1'
+		stubFetch(fixture)
+		const on = (await handler({})) as { content: Array<{ text: string }> }
+		const scopedContentBytes = Buffer.byteLength(on.content[0].text, 'utf8')
+
+		// Sanity: both channels carry SOMETHING for the same fixture.
+		expect(legacyContentBytes).toBeGreaterThan(0)
+		expect(scopedContentBytes).toBeGreaterThan(0)
+		// The lean summary is at most 40% of the pre-scoping content dump —
+		// i.e. ≥60% reduction, matching the bet's headline ship metric.
+		expect(scopedContentBytes).toBeLessThan(legacyContentBytes * 0.4)
 	})
 })

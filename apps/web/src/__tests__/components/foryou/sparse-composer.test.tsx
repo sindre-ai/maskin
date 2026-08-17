@@ -5,16 +5,25 @@ import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const openWithContextMock = vi.fn()
+const createConversationMock = vi.fn()
+const navigateMock = vi.fn()
 const trackShownMock = vi.fn()
 const trackSubmitMock = vi.fn()
 
-vi.mock('@/lib/chat-context', () => ({
-	useChat: () => ({ openWithContext: openWithContextMock }),
+vi.mock('@/hooks/use-conversations', () => ({
+	useCreateConversation: () => ({ mutateAsync: createConversationMock }),
+}))
+
+vi.mock('@/hooks/use-actors', () => ({
+	useDefaultChatAgent: () => ({ id: 'agent-coach', name: 'Workspace Coach' }),
+}))
+
+vi.mock('@tanstack/react-router', () => ({
+	useNavigate: () => navigateMock,
 }))
 
 vi.mock('@/lib/workspace-context', () => ({
-	useWorkspace: () => ({ workspaceId: 'ws-test' }),
+	useWorkspace: () => ({ workspaceId: 'ws-test', workspace: { id: 'ws-test', settings: {} } }),
 }))
 
 vi.mock('@/lib/analytics', () => ({
@@ -24,7 +33,7 @@ vi.mock('@/lib/analytics', () => ({
 
 // Minimal stub — Composer's own tests cover its internals (Enter, error display, etc.).
 // Exposes a hidden "Seed file attachment" button so tests can dispatch add_file into
-// SparseComposer's reducer and assert the forwarding path through openWithContext.
+// SparseComposer's reducer and assert the forwarding path through the composer's onSend.
 vi.mock('@/components/chat/chat', () => ({
 	Composer: ({
 		onSend,
@@ -81,8 +90,9 @@ function getTextarea() {
 
 describe('SparseComposer', () => {
 	beforeEach(() => {
-		openWithContextMock.mockReset()
-		openWithContextMock.mockImplementation(() => undefined)
+		createConversationMock.mockReset()
+		createConversationMock.mockResolvedValue({ id: 'conv-1' })
+		navigateMock.mockReset()
 		trackShownMock.mockReset()
 		trackSubmitMock.mockReset()
 	})
@@ -100,23 +110,35 @@ describe('SparseComposer', () => {
 		expect(screen.queryByTestId('sparse-composer-chips')).not.toBeInTheDocument()
 	})
 
-	it('submits via openWithContext with empty attachments and clears the input', async () => {
+	it('creates a conversation with the default agent, navigates to it, and clears the input', async () => {
 		const user = userEvent.setup()
 		render(<SparseComposer itemsCount={0} />)
 		await user.type(getTextarea(), 'help me plan a launch')
 		await user.click(screen.getByRole('button', { name: 'Send message' }))
 		await waitFor(() => {
-			expect(openWithContextMock).toHaveBeenCalledWith([], 'help me plan a launch')
+			expect(createConversationMock).toHaveBeenCalledWith({
+				title: 'Workspace Coach',
+				participant_actor_ids: ['agent-coach'],
+				initial_message: 'help me plan a launch',
+			})
 		})
+		await waitFor(() =>
+			expect(navigateMock).toHaveBeenCalledWith({
+				to: '/$workspaceId/chats/$conversationId',
+				params: { workspaceId: 'ws-test', conversationId: 'conv-1' },
+			}),
+		)
 		await waitFor(() => expect(getTextarea().value).toBe(''))
 	})
 
-	it('clicking a quick-start chip submits its text via openWithContext', async () => {
+	it('clicking a quick-start chip submits its text via createConversation', async () => {
 		const user = userEvent.setup()
 		render(<SparseComposer itemsCount={0} />)
 		await user.click(screen.getByRole('button', { name: 'Help me plan a new bet' }))
 		await waitFor(() => {
-			expect(openWithContextMock).toHaveBeenCalledWith([], 'Help me plan a new bet')
+			expect(createConversationMock).toHaveBeenCalledWith(
+				expect.objectContaining({ initial_message: 'Help me plan a new bet' }),
+			)
 		})
 	})
 
@@ -128,7 +150,7 @@ describe('SparseComposer', () => {
 		expect(trackShownMock).toHaveBeenCalledTimes(1)
 	})
 
-	it('emits foryou_sparse_composer_submit after openWithContext resolves with items_count snapshotted at submit', async () => {
+	it('emits foryou_sparse_composer_submit after createConversation resolves with items_count snapshotted at submit', async () => {
 		const user = userEvent.setup()
 		render(<SparseComposer itemsCount={2} />)
 		await user.type(getTextarea(), 'go')
@@ -144,24 +166,24 @@ describe('SparseComposer', () => {
 		render(<SparseComposer itemsCount={0} />)
 		await user.type(getTextarea(), '   ')
 		await user.click(screen.getByRole('button', { name: 'Send message' }))
-		expect(openWithContextMock).not.toHaveBeenCalled()
+		expect(createConversationMock).not.toHaveBeenCalled()
 	})
 
-	it('does not emit _submit and preserves draft when openWithContext rejects via Composer submit (AC-T2/T3)', async () => {
-		openWithContextMock.mockRejectedValue(new Error('network error'))
+	it('does not emit _submit and preserves draft when createConversation rejects via Composer submit (AC-T2/T3)', async () => {
+		createConversationMock.mockRejectedValue(new Error('network error'))
 		const user = userEvent.setup()
 		render(<SparseComposer itemsCount={2} />)
 		await user.type(getTextarea(), 'test message')
 		await user.click(screen.getByRole('button', { name: 'Send message' }))
-		await waitFor(() => expect(openWithContextMock).toHaveBeenCalled())
+		await waitFor(() => expect(createConversationMock).toHaveBeenCalled())
 		expect(trackSubmitMock).not.toHaveBeenCalled()
 		expect(getTextarea().value).toBe('test message')
 	})
 
 	it('chip double-tap is idempotent — second click ignored while first is in-flight (AC-T1)', async () => {
-		let resolve!: () => void
-		openWithContextMock.mockReturnValue(
-			new Promise<void>((r) => {
+		let resolve!: (value: { id: string }) => void
+		createConversationMock.mockReturnValue(
+			new Promise<{ id: string }>((r) => {
 				resolve = r
 			}),
 		)
@@ -170,39 +192,32 @@ describe('SparseComposer', () => {
 		const chip = screen.getByRole('button', { name: 'Help me plan a new bet' })
 		await user.click(chip)
 		await user.click(chip)
-		resolve()
-		await waitFor(() => expect(openWithContextMock).toHaveBeenCalledTimes(1))
+		resolve({ id: 'conv-1' })
+		await waitFor(() => expect(createConversationMock).toHaveBeenCalledTimes(1))
 	})
 
-	it('does not emit _submit and re-enables chip when openWithContext rejects via chip click (AC-T2/T3)', async () => {
-		openWithContextMock.mockRejectedValue(new Error('sidebar error'))
+	it('does not emit _submit and re-enables chip when createConversation rejects via chip click (AC-T2/T3)', async () => {
+		createConversationMock.mockRejectedValue(new Error('sidebar error'))
 		const user = userEvent.setup()
 		render(<SparseComposer itemsCount={0} />)
 		const chip = screen.getByRole('button', { name: 'Help me plan a new bet' })
 		await user.click(chip)
-		await waitFor(() => expect(openWithContextMock).toHaveBeenCalled())
+		await waitFor(() => expect(createConversationMock).toHaveBeenCalled())
 		expect(trackSubmitMock).not.toHaveBeenCalled()
 		await waitFor(() => expect(chip).not.toBeDisabled())
 	})
 
-	it('forwards a picked file attachment to the sheet so Chat.handleSend sees it on the auto-send turn', async () => {
+	it('forwards a picked file attachment into the initial message so the thread sees it', async () => {
 		const user = userEvent.setup()
 		render(<SparseComposer itemsCount={0} />)
 		await user.click(screen.getByRole('button', { name: 'Seed file attachment' }))
 		await user.type(getTextarea(), 'look at this')
 		await user.click(screen.getByRole('button', { name: 'Send message' }))
 		await waitFor(() => {
-			expect(openWithContextMock).toHaveBeenCalledWith(
-				[
-					{
-						kind: 'file',
-						fileId: 'file-seeded',
-						name: 'photo.jpg',
-						sizeBytes: 2048,
-						mimeType: 'image/jpeg',
-					},
-				],
-				'look at this',
+			expect(createConversationMock).toHaveBeenCalledWith(
+				expect.objectContaining({
+					initial_message: expect.stringContaining('photo.jpg'),
+				}),
 			)
 		})
 	})
@@ -275,8 +290,8 @@ describe('SparseComposer', () => {
 	})
 
 	it('clears chipError on successful text-input submit after a prior chip failure', async () => {
-		openWithContextMock.mockRejectedValueOnce(new Error('sidebar error'))
-		openWithContextMock.mockResolvedValue(undefined)
+		createConversationMock.mockRejectedValueOnce(new Error('sidebar error'))
+		createConversationMock.mockResolvedValue({ id: 'conv-1' })
 		const user = userEvent.setup()
 		render(<SparseComposer itemsCount={0} />)
 		// Trigger a chip error.
@@ -285,7 +300,7 @@ describe('SparseComposer', () => {
 		// Successful text-input submit should clear the error.
 		await user.type(getTextarea(), 'hello')
 		await user.click(screen.getByRole('button', { name: 'Send message' }))
-		await waitFor(() => expect(openWithContextMock).toHaveBeenCalledTimes(2))
+		await waitFor(() => expect(createConversationMock).toHaveBeenCalledTimes(2))
 		expect(screen.queryByRole('alert')).not.toBeInTheDocument()
 	})
 })

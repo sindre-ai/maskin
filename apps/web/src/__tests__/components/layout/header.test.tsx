@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
+const navigateMock = vi.fn()
 vi.mock('@tanstack/react-router', () => ({
 	useMatches: vi.fn(() => [
 		{
@@ -11,7 +12,7 @@ vi.mock('@tanstack/react-router', () => ({
 			params: { workspaceId: 'ws-1' },
 		},
 	]),
-	useNavigate: () => vi.fn(),
+	useNavigate: () => navigateMock,
 	useRouter: () => ({ history: { back: vi.fn() } }),
 }))
 
@@ -21,11 +22,6 @@ vi.mock('@/lib/page-header-context', () => ({
 
 vi.mock('@/lib/workspace-context', () => ({
 	useWorkspace: () => ({ workspaceId: 'ws-1' }),
-}))
-
-const setChatOpen = vi.fn()
-vi.mock('@/lib/chat-context', () => ({
-	useChat: () => ({ setOpen: setChatOpen }),
 }))
 
 const setPaletteOpen = vi.fn()
@@ -99,15 +95,18 @@ describe('Header', () => {
 		expect(screen.getByText('Members')).toBeInTheDocument()
 	})
 
-	it('opens the chat panel from the New menu without navigating', async () => {
-		setChatOpen.mockClear()
+	it('navigates to a new chat from the New menu', async () => {
+		navigateMock.mockClear()
 		const user = userEvent.setup()
 		render(<Header />)
 
 		await user.click(screen.getByRole('button', { name: /^new$/i }))
 		await user.click(screen.getByRole('menuitem', { name: /new chat/i }))
 
-		expect(setChatOpen).toHaveBeenCalledWith(true)
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: '/$workspaceId/chats/new',
+			params: { workspaceId: 'ws-1' },
+		})
 	})
 
 	it('opens CreatePicker seeded to the right object subtype', async () => {

@@ -88,3 +88,118 @@ export function toSnapshotAt(input: Date | string): string {
 	if (typeof input === 'string') return input
 	return input.toISOString()
 }
+
+export interface ClientPaginationInput<T> {
+	/** Full result set from the underlying API. Not mutated. */
+	rows: readonly T[]
+	/** Row cap for the returned page. */
+	limit: number
+	/** Snapshot upper bound for the walk (locked at first call, threaded
+	 *  through every subsequent cursor hop). */
+	snapshotAt: string
+	/** Sort direction the walk was opened in. Locked for the whole cursor
+	 *  chain so the keyset predicate stays consistent. */
+	order: CursorSortOrder
+	/** Decoded cursor when the caller resumed a walk; `null` on the first hop. */
+	cursor: CursorState | null
+	/** Extract the primary sort value from a row — usually an ISO timestamp
+	 *  string like `createdAt`. Return `null`/`undefined` for rows with no
+	 *  natural sort value (they will still be included, sorted below all
+	 *  timed rows). */
+	getSortValue: (row: T) => string | null | undefined
+	/** Extract the row's tiebreaker id — used both as keyset tiebreaker and
+	 *  as the `next_cursor.k.id`. */
+	getId: (row: T) => string
+	/**
+	 * Enforce the snapshot upper bound (`sortValue <= snapshotAt`). Defaults
+	 * to true. Set to `false` for row types whose sort values aren't
+	 * timestamps and thus can't be compared against `snapshotAt` — e.g.
+	 * `list_extensions`, whose rows are derived from workspace settings and
+	 * carry no per-row insert time.
+	 */
+	applySnapshotFilter?: boolean
+}
+
+export interface ClientPaginationResult<T> {
+	page: T[]
+	nextCursor: string | null
+}
+
+/**
+ * Client-side keyset pagination for MCP list tools whose backing API endpoint
+ * has no server-side cursor support. The caller fetches the full result set
+ * from the API, hands it here with a resolved cursor state, and gets back a
+ * bounded page plus a `next_cursor` when more rows remain.
+ *
+ * Snapshot consistency: with `applySnapshotFilter` on (default) rows whose
+ * sort value is strictly greater than `snapshotAt` — i.e. rows inserted after
+ * the walk began — are excluded from every hop of the same walk, so inserts
+ * mid-walk cannot leak in as duplicates or skips against the first-call
+ * freeze. The cursor envelope shape and the encode/decode round-trip are
+ * identical to the server-side keyset in `list_objects` etc., so the on-wire
+ * contract stays the same across every list/search tool.
+ */
+export function paginateClientSide<T>(input: ClientPaginationInput<T>): ClientPaginationResult<T> {
+	const { rows, limit, snapshotAt, order, cursor, getSortValue, getId } = input
+	const applySnapshotFilter = input.applySnapshotFilter ?? true
+	// Rows with no sort value are placed at the end of the ordering — they
+	// can never be the keyset boundary and don't participate in snapshot
+	// filtering (nothing to compare).
+	const sortValueOf = (row: T): string | null => {
+		const v = getSortValue(row)
+		return typeof v === 'string' && v.length > 0 ? v : null
+	}
+	const cmp = (a: T, b: T): number => {
+		const av = sortValueOf(a)
+		const bv = sortValueOf(b)
+		if (av == null && bv == null) {
+			const aid = getId(a)
+			const bid = getId(b)
+			if (aid === bid) return 0
+			return order === 'desc' ? (aid < bid ? 1 : -1) : aid < bid ? -1 : 1
+		}
+		if (av == null) return 1
+		if (bv == null) return -1
+		if (av !== bv) return order === 'desc' ? (av < bv ? 1 : -1) : av < bv ? -1 : 1
+		const aid = getId(a)
+		const bid = getId(b)
+		if (aid === bid) return 0
+		return order === 'desc' ? (aid < bid ? 1 : -1) : aid < bid ? -1 : 1
+	}
+	const sorted = [...rows].sort(cmp)
+	const afterSnapshot = applySnapshotFilter
+		? sorted.filter((row) => {
+				const v = sortValueOf(row)
+				if (v == null) return true
+				return v <= snapshotAt
+			})
+		: sorted
+	const afterCursor = cursor
+		? afterSnapshot.filter((row) => {
+				const v = sortValueOf(row) ?? ''
+				const id = getId(row)
+				const cv = cursor.k.sortValue
+				const cid = cursor.k.id
+				if (order === 'desc') {
+					if (v < cv) return true
+					if (v === cv && id < cid) return true
+					return false
+				}
+				if (v > cv) return true
+				if (v === cv && id > cid) return true
+				return false
+			})
+		: afterSnapshot
+	const page = afterCursor.slice(0, limit)
+	if (afterCursor.length <= limit) return { page, nextCursor: null }
+	const boundary = page[page.length - 1]
+	if (!boundary) return { page, nextCursor: null }
+	const sortValue = sortValueOf(boundary)
+	if (sortValue == null) return { page, nextCursor: null }
+	const nextCursor = encodeCursor({
+		s: snapshotAt,
+		o: order,
+		k: { sortValue, id: getId(boundary) },
+	})
+	return { page, nextCursor }
+}

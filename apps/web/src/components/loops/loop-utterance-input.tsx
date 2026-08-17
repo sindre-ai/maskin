@@ -1,25 +1,30 @@
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type { LoopSummary } from '@/lib/api'
-import { useChat } from '@/lib/chat-context'
+import { useWorkspace } from '@/lib/workspace-context'
+import { useNavigate } from '@tanstack/react-router'
 import { Send } from 'lucide-react'
 import { useState } from 'react'
 
 /**
  * "Change by talking" utterance bar on loop detail. Submitting a plain-language
- * utterance opens the chat panel with this loop attached and forwards the text
- * as the first message, so the operator edits the loop by describing what
- * should change rather than filling in a builder.
+ * utterance opens a new chat with this loop attached, so the operator edits
+ * the loop by describing what should change rather than filling in a builder.
  */
 export function LoopUtteranceInput({ loop }: { loop: LoopSummary }) {
-	const { openWithContext } = useChat()
+	const { workspaceId } = useWorkspace()
+	const navigate = useNavigate()
 	const [value, setValue] = useState('')
 
 	const submit = () => {
 		const utterance = value.trim()
 		if (!utterance) return
-		openWithContext([{ kind: 'object', id: loop.id, title: loop.name, type: 'loop' }], utterance)
 		setValue('')
+		navigate({
+			to: '/$workspaceId/chats/new',
+			params: { workspaceId },
+			search: { objectId: loop.id, objectTitle: loop.name ?? undefined, objectType: 'loop' },
+		})
 	}
 
 	return (

@@ -150,4 +150,23 @@ describe('CommentTaskList', () => {
 		)
 		expect(screen.getByTitle('Driver: Developer')).toBeInTheDocument()
 	})
+
+	it('renders a single row when the same taskId appears twice in metadata.tasks', () => {
+		mockUseObject.mockReturnValue({
+			data: buildObjectResponse({
+				id: TASK_A,
+				type: 'task',
+				status: 'in_progress',
+				title: 'Ship renderer',
+			}),
+			isLoading: false,
+		})
+		render(
+			<TestWrapper>
+				<CommentTaskList event={eventWithTasks([TASK_A, TASK_A])} workspaceId="ws-1" />
+			</TestWrapper>,
+		)
+		expect(screen.getAllByRole('listitem')).toHaveLength(1)
+		expect(screen.getAllByText('Ship renderer')).toHaveLength(1)
+	})
 })

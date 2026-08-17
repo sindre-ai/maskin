@@ -41,35 +41,36 @@ describe('isResponseScopingEnabled', () => {
 		delete process.env[RESPONSE_SCOPING_ENV_VAR]
 	})
 
-	it('is off when the env var is unset', () => {
-		expect(isResponseScopingEnabled({})).toBe(false)
+	it('is on when the env var is unset (default flipped in T1)', () => {
+		expect(isResponseScopingEnabled({})).toBe(true)
 	})
 
-	it('is off when the env var is empty or whitespace', () => {
-		expect(isResponseScopingEnabled({ [RESPONSE_SCOPING_ENV_VAR]: '' })).toBe(false)
-		expect(isResponseScopingEnabled({ [RESPONSE_SCOPING_ENV_VAR]: '   ' })).toBe(false)
+	it('is on when the env var is empty or whitespace', () => {
+		expect(isResponseScopingEnabled({ [RESPONSE_SCOPING_ENV_VAR]: '' })).toBe(true)
+		expect(isResponseScopingEnabled({ [RESPONSE_SCOPING_ENV_VAR]: '   ' })).toBe(true)
 	})
 
-	it.each(['1', 'true', 'on', 'yes', 'TRUE', 'Yes', ' on '])(
-		'is on for truthy value %p',
+	it.each(['1', 'true', 'on', 'yes', 'TRUE', 'Yes', ' on ', 'nope', 'anything'])(
+		'is on for value %p (default + explicit truthy + unrecognised all opt in)',
 		(value) => {
 			expect(isResponseScopingEnabled({ [RESPONSE_SCOPING_ENV_VAR]: value })).toBe(true)
 		},
 	)
 
-	it.each(['0', 'false', 'off', 'no', 'nope', 'FALSE '])(
-		'is off for non-truthy value %p',
+	it.each(['0', 'false', 'off', 'no', 'FALSE ', ' OFF'])(
+		'is off for explicit off value %p',
 		(value) => {
 			expect(isResponseScopingEnabled({ [RESPONSE_SCOPING_ENV_VAR]: value })).toBe(false)
 		},
 	)
 
 	it('reads process.env by default and sees changes without restart (AC-T4)', () => {
-		expect(isResponseScopingEnabled()).toBe(false)
-		process.env[RESPONSE_SCOPING_ENV_VAR] = '1'
+		delete process.env[RESPONSE_SCOPING_ENV_VAR]
 		expect(isResponseScopingEnabled()).toBe(true)
 		process.env[RESPONSE_SCOPING_ENV_VAR] = '0'
 		expect(isResponseScopingEnabled()).toBe(false)
+		process.env[RESPONSE_SCOPING_ENV_VAR] = '1'
+		expect(isResponseScopingEnabled()).toBe(true)
 	})
 })
 
@@ -283,7 +284,9 @@ describe('MCP list/search channel split (AC-T2 / AC-T4 / AC-U2)', () => {
 
 	for (const { tool, fixture, args } of parityCases) {
 		it(`${tool}: flag OFF returns content byte-identical to the pre-scoping JSON dump`, async () => {
-			delete process.env[RESPONSE_SCOPING_ENV_VAR]
+			// After T1 the default is ON — an explicit opt-out is required to
+			// exercise the pre-scoping shape.
+			process.env[RESPONSE_SCOPING_ENV_VAR] = '0'
 			fetchStubFor(fixture)
 			const handler = getHandler(tool)
 			const result = (await handler(args ?? {})) as {
@@ -437,7 +440,8 @@ describe('MCP list/search channel split (AC-T2 / AC-T4 / AC-U2)', () => {
 		fetchStubFor(fixture)
 		const handler = getHandler('list_objects')
 
-		delete process.env[RESPONSE_SCOPING_ENV_VAR]
+		// After T1 the default is ON — the legacy shape is now opt-in via `= '0'`.
+		process.env[RESPONSE_SCOPING_ENV_VAR] = '0'
 		const off1 = (await handler({})) as { content: Array<{ text: string }> }
 		expect(off1.content[0].text.startsWith('[')).toBe(true)
 
