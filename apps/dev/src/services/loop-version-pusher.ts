@@ -15,6 +15,7 @@ import {
 	messages,
 	notifications,
 	objects,
+	orphanThreadDetections,
 	readState,
 	relationships,
 	sessionLogs,
@@ -598,6 +599,9 @@ export class LoopVersionPusher {
 				await tx
 					.delete(conversationParticipants)
 					.where(inArray(conversationParticipants.actorId, removedActorIds))
+				await tx
+					.delete(orphanThreadDetections)
+					.where(inArray(orphanThreadDetections.expectedReplyActorId, removedActorIds))
 				await tx
 					.update(objects)
 					.set({ driver: null })

@@ -13,6 +13,7 @@ import {
 	messages,
 	notifications,
 	objects,
+	orphanThreadDetections,
 	readState,
 	relationships,
 	sessionLogs,
@@ -1010,6 +1011,11 @@ app.openapi(deleteActorRoute, (async (c) => {
 		// Delete per-actor feed bookkeeping
 		await tx.delete(subscriptions).where(eq(subscriptions.actorId, id))
 		await tx.delete(readState).where(eq(readState.actorId, id))
+
+		// Delete orphan-thread-detection ledger rows expecting a reply from this actor
+		await tx
+			.delete(orphanThreadDetections)
+			.where(eq(orphanThreadDetections.expectedReplyActorId, id))
 
 		// conversation_participants.actor_id/added_by are RESTRICT FKs to
 		// actors.id with no cascade — null out added_by on surviving rows,

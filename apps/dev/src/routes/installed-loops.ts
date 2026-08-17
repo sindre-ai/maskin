@@ -16,6 +16,7 @@ import {
 	messages,
 	notifications,
 	objects,
+	orphanThreadDetections,
 	readState,
 	relationships,
 	sessionLogs,
@@ -1071,6 +1072,9 @@ app.openapi(uninstallLoopRoute, async (c) => {
 				await tx.delete(relationships).where(inArray(relationships.createdBy, actorIds))
 				await tx.delete(subscriptions).where(inArray(subscriptions.actorId, actorIds))
 				await tx.delete(readState).where(inArray(readState.actorId, actorIds))
+				await tx
+					.delete(orphanThreadDetections)
+					.where(inArray(orphanThreadDetections.expectedReplyActorId, actorIds))
 
 				// conversation_participants.actor_id/added_by are RESTRICT FKs to
 				// actors.id with no cascade — null out added_by on surviving rows,

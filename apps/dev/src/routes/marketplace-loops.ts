@@ -16,6 +16,7 @@ import {
 	messages,
 	notifications,
 	objects,
+	orphanThreadDetections,
 	readState,
 	relationships,
 	sessionLogs,
@@ -684,6 +685,9 @@ app.openapi(uninstallItemRoute, (async (c) => {
 					await tx.delete(relationships).where(eq(relationships.createdBy, entityId))
 					await tx.delete(subscriptions).where(eq(subscriptions.actorId, entityId))
 					await tx.delete(readState).where(eq(readState.actorId, entityId))
+					await tx
+						.delete(orphanThreadDetections)
+						.where(eq(orphanThreadDetections.expectedReplyActorId, entityId))
 					// conversation_participants.actor_id/added_by are RESTRICT FKs to
 					// actors.id with no cascade — null out added_by on surviving rows,
 					// then drop this actor's own participant rows.
