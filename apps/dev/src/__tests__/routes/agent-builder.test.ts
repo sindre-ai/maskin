@@ -40,6 +40,7 @@ const SESSION_ID = '88888888-8888-8888-8888-888888888888'
 const ACTOR_ID = '33333333-3333-3333-3333-333333333333'
 const RUBRIC_ID = '55555555-5555-5555-5555-555555555555'
 const BUILDER_ACTOR_ID = '66666666-6666-6666-6666-666666666666'
+const VERDICT_ID = '99999999-9999-9999-9999-999999999999'
 
 function createAgentBuilderTestApp() {
 	const app = new CreateOpenAPIHono()
@@ -260,7 +261,7 @@ describe('POST /api/agent-builder/reviewer-verdict', () => {
 				reviewerSessionId: 'rev-session-uuid',
 				rubricId: RUBRIC_ID,
 				targetActorId: ACTOR_ID,
-				verdictId: 'verdict-uuid',
+				verdictId: VERDICT_ID,
 				persisted: true,
 			},
 			rating: null,
@@ -289,7 +290,7 @@ describe('POST /api/agent-builder/reviewer-verdict', () => {
 		expect(body.verdict.overall).toBe('fail')
 		expect(body.verdict.target_actor_id).toBe(ACTOR_ID)
 		expect(body.verdict.persisted).toBe(true)
-		expect(body.verdict.verdict_id).toBe('verdict-uuid')
+		expect(body.verdict.verdict_id).toBe(VERDICT_ID)
 		expect(body.verdict.criteria[1].pass).toBe(false)
 		expect(body.precision_summary.total_verdicts).toBe(1)
 	})
@@ -297,7 +298,7 @@ describe('POST /api/agent-builder/reviewer-verdict', () => {
 	it('returns 200 with rating + precision_summary for a rate-only call (no review)', async () => {
 		reviewerVerdictWorkflow.mockResolvedValue({
 			review: null,
-			rating: { verdictId: 'verdict-uuid', humanAgreed: true, humanCriteriaDisagreements: null },
+			rating: { verdictId: VERDICT_ID, humanAgreed: true, humanCriteriaDisagreements: null },
 			precisionSummary: {
 				rubric_id: RUBRIC_ID,
 				precision_threshold: 0.7,
@@ -314,7 +315,7 @@ describe('POST /api/agent-builder/reviewer-verdict', () => {
 		const { app } = createAgentBuilderTestApp()
 		const res = await app.request(
 			jsonRequest('POST', `${BASE}/reviewer-verdict`, {
-				verdict_id: 'verdict-uuid',
+				verdict_id: VERDICT_ID,
 				human_agreed: true,
 				workspace_id: WORKSPACE_ID,
 			}),
@@ -322,7 +323,7 @@ describe('POST /api/agent-builder/reviewer-verdict', () => {
 		expect(res.status).toBe(200)
 		const body = await res.json()
 		expect(body.verdict).toBeNull()
-		expect(body.rating.verdict_id).toBe('verdict-uuid')
+		expect(body.rating.verdict_id).toBe(VERDICT_ID)
 		expect(body.rating.human_agreed).toBe(true)
 		expect(body.precision_summary.meets_threshold).toBe(true)
 	})
@@ -419,7 +420,7 @@ describe('POST /api/agent-builder/reviewer-verdict', () => {
 		const { app } = createAgentBuilderTestApp()
 		const res = await app.request(
 			jsonRequest('POST', `${BASE}/reviewer-verdict`, {
-				verdict_id: 'verdict-uuid',
+				verdict_id: VERDICT_ID,
 				human_agreed: true,
 				workspace_id: WORKSPACE_ID,
 			}),
