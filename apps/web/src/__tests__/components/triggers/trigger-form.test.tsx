@@ -1,11 +1,16 @@
 import { TriggerForm } from '@/components/triggers/trigger-form'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { buildTriggerResponse, buildWorkspaceWithRole } from '../../factories'
 import { TestWrapper } from '../../setup'
 
+const { useAutoSave } = vi.hoisted(() => {
+	const useAutoSave = vi.fn()
+	return { useAutoSave }
+})
+
 vi.mock('@/hooks/use-auto-save', () => ({
-	useAutoSave: () => ({ showSaved: false }),
+	useAutoSave: (args: unknown) => useAutoSave(args),
 }))
 
 vi.mock('@/hooks/use-enabled-modules', () => ({
@@ -48,6 +53,7 @@ describe('TriggerForm', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks()
+		useAutoSave.mockReturnValue({ showSaved: false })
 	})
 
 	it('renders trigger name input with placeholder', () => {
@@ -55,11 +61,104 @@ describe('TriggerForm', () => {
 		expect(screen.getByPlaceholderText('Trigger name')).toBeInTheDocument()
 	})
 
-	it('renders type buttons (event, cron, reminder)', () => {
+	it('renders type cards (event, cron, reminder) as focusable radios', () => {
 		render(<TriggerForm {...defaultProps} />, { wrapper: TestWrapper })
-		expect(screen.getByRole('button', { name: /Event/i })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /Schedule/i })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /Reminder/i })).toBeInTheDocument()
+		expect(screen.getByRole('radio', { name: /Event/i })).toBeInTheDocument()
+		expect(screen.getByRole('radio', { name: /Schedule/i })).toBeInTheDocument()
+		expect(screen.getByRole('radio', { name: /Reminder/i })).toBeInTheDocument()
+	})
+
+	it('shows every trigger section: When it fires and Do this', () => {
+		render(<TriggerForm {...defaultProps} />, { wrapper: TestWrapper })
+		expect(screen.getByRole('heading', { name: 'When it fires' })).toBeInTheDocument()
+		expect(screen.getByRole('heading', { name: 'Do this' })).toBeInTheDocument()
+	})
+
+	it('pins a plain-language summary that re-renders live on config edits', async () => {
+		const user = userEvent.setup()
+		render(<TriggerForm {...defaultProps} />, { wrapper: TestWrapper })
+
+		const summary = screen.getByText('What happens').closest('section')
+		expect(summary).not.toBeNull()
+
+		await user.click(screen.getByRole('radio', { name: /Reminder/i }))
+		const dateInput = document.querySelector('input[type="date"]')
+		expect(dateInput).not.toBeNull()
+		fireEvent.change(dateInput as HTMLInputElement, { target: { value: '2026-09-01' } })
+
+		await waitFor(() => {
+			expect(summary?.textContent).toContain('2026-09-01')
+		})
+	})
+
+	it('updates the section description text in place when the type changes', async () => {
+		const user = userEvent.setup()
+		render(<TriggerForm {...defaultProps} />, { wrapper: TestWrapper })
+
+		expect(screen.getByText(/Fires when something happens/i)).toBeInTheDocument()
+
+		await user.click(screen.getByRole('radio', { name: /Schedule/i }))
+
+		expect(screen.getByText(/Fires on a recurring schedule/i)).toBeInTheDocument()
+		expect(screen.queryByText(/Fires when something happens/i)).not.toBeInTheDocument()
+	})
+
+	it('shows the Saved indicator only when autosave reports a completed save', () => {
+		render(<TriggerForm {...defaultProps} isCreated />, { wrapper: TestWrapper })
+		const savedDefault = screen.getByText('Saved')
+		expect(savedDefault.className).toMatch(/opacity-0/)
+	})
+
+	it('shows the Saved indicator when autosave reports a completed save', () => {
+		useAutoSave.mockReturnValue({ showSaved: true })
+		render(<TriggerForm {...defaultProps} isCreated />, { wrapper: TestWrapper })
+		const saved = screen.getByText('Saved')
+		expect(saved.className).toMatch(/opacity-100/)
+	})
+
+	it('keeps a sticky bottom save bar with "editing" meta for created triggers', () => {
+		render(<TriggerForm {...defaultProps} isCreated />, { wrapper: TestWrapper })
+		const bar = screen.getByText('Editing — every change saves automatically').parentElement
+			?.parentElement
+		expect(bar?.className).toMatch(/sticky bottom-0/)
+		expect(screen.getByText('Saved')).toBeInTheDocument()
+	})
+
+	it('gives radios a 44px touch target on mobile and collapses to one column', async () => {
+		const user = userEvent.setup()
+		render(<TriggerForm {...defaultProps} />, { wrapper: TestWrapper })
+
+		const eventRadio = screen.getByRole('radio', { name: /Event/i })
+		expect(eventRadio.closest('label')?.className).toMatch(/min-h-11/)
+
+		await user.click(screen.getByRole('radio', { name: /Reminder/i }))
+		const controls = document.querySelectorAll('input[type="date"], input[type="time"]')
+		for (const control of controls) {
+			expect((control as HTMLInputElement).className).toMatch(/min-h-11/)
+		}
+
+		const container = document.querySelector('input[type="date"]')?.parentElement
+		expect(container?.className).toMatch(/flex-col/)
+		expect(container?.className).toMatch(/sm:flex-row/)
+	})
+
+	it('type cards are keyboard-reachable and operable with Space', async () => {
+		const user = userEvent.setup()
+		render(<TriggerForm {...defaultProps} />, { wrapper: TestWrapper })
+
+		const scheduleRadio = screen.getByRole('radio', { name: /Schedule/i })
+		scheduleRadio.focus()
+		expect(document.activeElement).toBe(scheduleRadio)
+
+		await user.keyboard(' ')
+
+		expect(screen.getByText(/Fires on a recurring schedule/i)).toBeInTheDocument()
+	})
+
+	it('announces the summary region to assistive tech via aria-live', () => {
+		render(<TriggerForm {...defaultProps} />, { wrapper: TestWrapper })
+		const summary = screen.getByText('What happens').closest('section')
+		expect(summary?.getAttribute('aria-live')).toBe('polite')
 	})
 
 	it('shows warning when agents array is empty', () => {
@@ -85,7 +184,7 @@ describe('TriggerForm', () => {
 		const user = userEvent.setup()
 		render(<TriggerForm {...defaultProps} />, { wrapper: TestWrapper })
 
-		await user.click(screen.getByRole('button', { name: /Schedule/i }))
+		await user.click(screen.getByRole('radio', { name: /Schedule/i }))
 
 		expect(screen.getByRole('button', { name: 'Hourly' })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Daily' })).toBeInTheDocument()
@@ -97,7 +196,7 @@ describe('TriggerForm', () => {
 		const user = userEvent.setup()
 		render(<TriggerForm {...defaultProps} />, { wrapper: TestWrapper })
 
-		await user.click(screen.getByRole('button', { name: /Reminder/i }))
+		await user.click(screen.getByRole('radio', { name: /Reminder/i }))
 
 		const dateInput = document.querySelector('input[type="date"]')
 		const timeInput = document.querySelector('input[type="time"]')
@@ -112,10 +211,19 @@ describe('TriggerForm', () => {
 		).toBeInTheDocument()
 	})
 
-	it('shows enabled/disabled toggle', () => {
-		render(<TriggerForm {...defaultProps} />, { wrapper: TestWrapper })
+	it('shows enabled/disabled toggle for created triggers and flips on click', async () => {
+		const user = userEvent.setup()
+		const onToggleEnabled = vi.fn()
+		render(<TriggerForm {...defaultProps} isCreated onToggleEnabled={onToggleEnabled} />, {
+			wrapper: TestWrapper,
+		})
+
 		expect(screen.getByText('Enabled')).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: 'Disable' })).toBeInTheDocument()
+		await user.click(screen.getByRole('button', { name: 'Disable' }))
+
+		expect(onToggleEnabled).toHaveBeenCalledTimes(1)
+		expect(screen.getByText('Disabled')).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Enable' })).toBeInTheDocument()
 	})
 
 	it('pre-fills form when initialValues provided', () => {
@@ -128,7 +236,7 @@ describe('TriggerForm', () => {
 			enabled: false,
 		})
 
-		render(<TriggerForm {...defaultProps} initialValues={trigger} />, {
+		render(<TriggerForm {...defaultProps} initialValues={trigger} isCreated />, {
 			wrapper: TestWrapper,
 		})
 

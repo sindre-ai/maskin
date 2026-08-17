@@ -11,6 +11,7 @@ import {
 	useTrigger,
 	useUpdateTrigger,
 } from '@/hooks/use-triggers'
+import { trackTriggerUpdated } from '@/lib/analytics'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { Trash2 } from 'lucide-react'
@@ -71,16 +72,21 @@ function TriggerDetailPage() {
 	}
 
 	const handleSave = (payload: TriggerFormPayload) => {
-		updateTrigger.mutate({
-			id: triggerId,
-			data: {
-				name: payload.name,
-				type: payload.type,
-				action_prompt: payload.action_prompt,
-				target_actor_id: payload.target_actor_id,
-				config: payload.config as never,
+		updateTrigger.mutate(
+			{
+				id: triggerId,
+				data: {
+					name: payload.name,
+					type: payload.type,
+					action_prompt: payload.action_prompt,
+					target_actor_id: payload.target_actor_id,
+					config: payload.config as never,
+				},
 			},
-		})
+			{
+				onSuccess: () => trackTriggerUpdated({ entity_id: triggerId, entity_type: 'trigger' }),
+			},
+		)
 	}
 
 	const handleDelete = () => {
@@ -96,7 +102,12 @@ function TriggerDetailPage() {
 
 	const handleToggleEnabled = () => {
 		if (!trigger) return
-		updateTrigger.mutate({ id: triggerId, data: { enabled: !trigger.enabled } })
+		updateTrigger.mutate(
+			{ id: triggerId, data: { enabled: !trigger.enabled } },
+			{
+				onSuccess: () => trackTriggerUpdated({ entity_id: triggerId, entity_type: 'trigger' }),
+			},
+		)
 	}
 
 	return (
@@ -115,20 +126,18 @@ function TriggerDetailPage() {
 					) : undefined
 				}
 			/>
-			<div className="max-w-3xl mx-auto">
-				<TriggerForm
-					workspaceId={workspaceId}
-					workspace={workspace}
-					agents={agents}
-					initialValues={trigger}
-					onAutoCreate={!isCreated ? handleAutoCreate : undefined}
-					onSave={isCreated ? handleSave : undefined}
-					onToggleEnabled={isCreated ? handleToggleEnabled : undefined}
-					isPending={createTrigger.isPending || updateTrigger.isPending}
-					error={createTrigger.error || updateTrigger.error}
-					isCreated={isCreated}
-				/>
-			</div>
+			<TriggerForm
+				workspaceId={workspaceId}
+				workspace={workspace}
+				agents={agents}
+				initialValues={trigger}
+				onAutoCreate={!isCreated ? handleAutoCreate : undefined}
+				onSave={isCreated ? handleSave : undefined}
+				onToggleEnabled={isCreated ? handleToggleEnabled : undefined}
+				isPending={createTrigger.isPending || updateTrigger.isPending}
+				error={createTrigger.error || updateTrigger.error}
+				isCreated={isCreated}
+			/>
 		</>
 	)
 }
