@@ -4,7 +4,7 @@ import {
 	segmentActivityByMessage,
 } from '@/components/agents/session-log-transcript'
 import { api } from '@/lib/api'
-import type { MessageResponse } from '@/lib/api'
+import type { MessageResponse, SessionResponse } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
 import { useQueries } from '@tanstack/react-query'
 import { useActiveSessionsForConversation } from './use-sessions'
@@ -15,6 +15,8 @@ export interface MessageTurnActivity {
 	steps: ActivityStep[]
 	/** True for the single most recent turn of a session that hasn't reached a `result` envelope yet. */
 	inProgress: boolean
+	/** True when the session that would have produced this turn failed before (or shortly after) starting. */
+	failed?: boolean
 }
 
 export interface ConversationActivity {
@@ -29,16 +31,20 @@ export interface ConversationActivity {
 	 */
 	byReplyMessageId: Map<number, MessageTurnActivity[]>
 	/**
-	 * A still-in-progress turn's live dropdown, keyed by the message that
-	 * triggered it — there's no reply yet to anchor it to. Once the turn
-	 * posts a reply it moves to `byReplyMessageId` on the next render; if it
-	 * resolves without posting one ("no action needed"), it just disappears.
+	 * A still-in-progress turn's live dropdown, or a failed session's error
+	 * notice, keyed by the message that triggered it — there's no reply yet
+	 * (and never will be, if failed) to anchor it to instead. A live turn
+	 * moves to `byReplyMessageId` once it posts a reply; if it resolves
+	 * without posting one ("no action needed"), it just disappears. A failed
+	 * turn stays put until the actor's next session for this conversation
+	 * supersedes it (see the "latest session per actor" filtering above).
 	 */
 	byTriggerMessageId: Map<number, MessageTurnActivity[]>
 	/**
 	 * A still-in-progress turn whose `maskin_message_id` tag hasn't been
-	 * logged yet (the brief window right after a turn starts) or an older
-	 * session whose turns predate message-id tagging. The caller should
+	 * logged yet (the brief window right after a turn starts), an older
+	 * session whose turns predate message-id tagging, or a failed session
+	 * whose `config.conversation.message_id` wasn't set. The caller should
 	 * attach these to the newest message in the thread so something still
 	 * shows immediately, matching the old "typing indicator" behavior for
 	 * this edge case.
@@ -47,13 +53,17 @@ export interface ConversationActivity {
 }
 
 /**
- * Segments every active (status=running) session tied to a conversation into
- * per-message activity turns, then re-anchors each finished turn to the
- * reply message it produced (see `byReplyMessageId`'s doc comment for why).
- * Pairing a session's reply-producing segments with that same agent's own
- * posted messages, in chronological order, is reliable even though not
- * every turn results in a reply — turns that go silent are simply excluded
- * from both lists, so the pairing stays 1:1.
+ * Segments the conversation's most recent session per agent into per-message
+ * activity turns: a running session's turns are split from its logs and
+ * re-anchored to the reply message they produced (see `byReplyMessageId`'s
+ * doc comment for why); a failed session (one that never reached `running`,
+ * or died before its first turn) instead surfaces a single error notice
+ * anchored to the message that triggered it — otherwise a session that fails
+ * to start is invisible to the chat UI. Pairing a running session's
+ * reply-producing segments with that same agent's own posted messages, in
+ * chronological order, is reliable even though not every turn results in a
+ * reply — turns that go silent are simply excluded from both lists, so the
+ * pairing stays 1:1.
  *
  * Pairing is scoped by `actorId` + "posted at/after this session started",
  * NOT `messages.sessionId` — that column only gets populated when an agent's
@@ -74,7 +84,19 @@ export function useConversationActivity(
 	messages: MessageResponse[],
 ): ConversationActivity {
 	const { data: sessions } = useActiveSessionsForConversation(workspaceId, conversationId)
-	const activeSessions = sessions ?? []
+
+	// Sessions come back newest-first (see the route's `orderBy(desc(sessions.createdAt))`)
+	// — keep only the latest session per agent, since that's the one whose
+	// status actually reflects "what's happening now" for that agent. An
+	// older failed attempt for an actor who has since retried (or replied
+	// successfully) shouldn't keep showing a stale failure notice.
+	const latestByActor = new Map<string, SessionResponse>()
+	for (const session of sessions ?? []) {
+		if (!latestByActor.has(session.actorId)) latestByActor.set(session.actorId, session)
+	}
+	const latestSessions = [...latestByActor.values()]
+	const activeSessions = latestSessions.filter((s) => s.status === 'running')
+	const failedSessions = latestSessions.filter((s) => s.status === 'failed')
 
 	const logsQueries = useQueries({
 		queries: activeSessions.map((session) => ({
@@ -87,6 +109,26 @@ export function useConversationActivity(
 	const byReplyMessageId = new Map<number, MessageTurnActivity[]>()
 	const byTriggerMessageId = new Map<number, MessageTurnActivity[]>()
 	const fallback: MessageTurnActivity[] = []
+
+	for (const session of failedSessions) {
+		const config = session.config as { conversation?: { message_id?: number } } | null
+		const messageId = config?.conversation?.message_id
+		const errorText = typeof session.result?.error === 'string' ? session.result.error : undefined
+		const turn: MessageTurnActivity = {
+			sessionId: session.id,
+			actorId: session.actorId,
+			steps: errorText ? [{ id: `${session.id}-error`, kind: 'error', text: errorText }] : [],
+			inProgress: false,
+			failed: true,
+		}
+		if (typeof messageId === 'number') {
+			const list = byTriggerMessageId.get(messageId) ?? []
+			list.push(turn)
+			byTriggerMessageId.set(messageId, list)
+		} else {
+			fallback.push(turn)
+		}
+	}
 
 	activeSessions.forEach((session, sessionIndex) => {
 		const logs = logsQueries[sessionIndex]?.data ?? []

@@ -257,6 +257,73 @@ describe('useConversationActivity', () => {
 		expect(result.current.byTriggerMessageId.get(10)).toMatchObject([{ sessionId: 'sess-2' }])
 	})
 
+	it('surfaces a failed session as an error turn anchored to its trigger message', async () => {
+		vi.mocked(api.sessions.list).mockResolvedValue([
+			buildSession({
+				id: 'sess-1',
+				status: 'failed',
+				config: { conversation: { conversation_id: conversationId, message_id: 10 } },
+				result: { error: 'No available LLM credentials' },
+			}),
+		])
+		vi.mocked(api.sessions.logs).mockResolvedValue([])
+		const messages = [buildMessage({ id: 10, actorId: 'human-1', content: 'hi' })]
+
+		const { result } = renderHook(
+			() => useConversationActivity(workspaceId, conversationId, messages),
+			{ wrapper: TestWrapper },
+		)
+		await waitFor(() => expect(result.current.byTriggerMessageId.get(10)).toBeDefined())
+
+		expect(result.current.byTriggerMessageId.get(10)).toMatchObject([
+			{ sessionId: 'sess-1', actorId: 'agent-1', inProgress: false, failed: true },
+		])
+		// Logs are never fetched for a session that never ran.
+		expect(api.sessions.logs).not.toHaveBeenCalled()
+	})
+
+	it('routes a failed session with no tagged trigger message to fallback', async () => {
+		vi.mocked(api.sessions.list).mockResolvedValue([
+			buildSession({ id: 'sess-1', status: 'failed', config: null }),
+		])
+
+		const { result } = renderHook(() => useConversationActivity(workspaceId, conversationId, []), {
+			wrapper: TestWrapper,
+		})
+		await waitFor(() => expect(result.current.fallback).toHaveLength(1))
+
+		expect(result.current.fallback[0]).toMatchObject({
+			sessionId: 'sess-1',
+			actorId: 'agent-1',
+			failed: true,
+		})
+	})
+
+	it('only surfaces the latest session per actor, so a retried session supersedes an earlier failure', async () => {
+		vi.mocked(api.sessions.list).mockResolvedValue([
+			// Newest first, matching the backend's orderBy(desc(createdAt)).
+			buildSession({ id: 'sess-2', actorId: 'agent-1', status: 'running' }),
+			buildSession({
+				id: 'sess-1',
+				actorId: 'agent-1',
+				status: 'failed',
+				config: { conversation: { conversation_id: conversationId, message_id: 10 } },
+			}),
+		])
+		vi.mocked(api.sessions.logs).mockResolvedValue([])
+
+		const { result } = renderHook(() => useConversationActivity(workspaceId, conversationId, []), {
+			wrapper: TestWrapper,
+		})
+		await waitFor(() =>
+			expect(api.sessions.logs).toHaveBeenCalledWith('sess-2', workspaceId, {
+				limit: '500',
+			}),
+		)
+
+		expect(result.current.byTriggerMessageId.get(10)).toBeUndefined()
+	})
+
 	it('a turn that resolves without posting a reply disappears once idle, instead of leaving an orphaned dropdown', async () => {
 		vi.mocked(api.sessions.list).mockResolvedValue([buildSession({ id: 'sess-1' })])
 		vi.mocked(api.sessions.logs).mockResolvedValue([
