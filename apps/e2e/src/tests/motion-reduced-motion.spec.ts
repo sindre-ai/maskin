@@ -32,10 +32,11 @@ const ROUTES: RouteSpec[] = [
 	{ label: 'settings skills', path: (ctx) => `/${ctx.workspaceId}/settings/skills` },
 ]
 
-async function probeReducedMotion(page: import('@playwright/test').Page) {
-	// Inject a fresh element with a long transition + animation duration and
-	// read what the browser actually resolves after applying every rule that
-	// matches. Under the reduced-motion guard both should collapse to 0.01ms.
+/** Returns computed transition/animation durations as numbers in milliseconds.
+ *  Chromium normalises short time values to seconds in getComputedStyle (e.g.
+ *  0.001ms → '0.000001s'), so comparing raw strings is fragile. Parse here
+ *  and let callers use numeric comparisons instead. */
+async function probeReducedMotionMs(page: import('@playwright/test').Page) {
 	return page.evaluate(() => {
 		const el = document.createElement('div')
 		el.className = 'transition-all duration-1000 animate-spin'
@@ -43,9 +44,15 @@ async function probeReducedMotion(page: import('@playwright/test').Page) {
 		el.style.transitionDuration = '5s'
 		document.body.appendChild(el)
 		const cs = getComputedStyle(el)
+		const parseMs = (v: string): number => {
+			if (!v || v === '0s' || v === '0ms') return 0
+			if (v.endsWith('ms')) return parseFloat(v)
+			if (v.endsWith('s')) return parseFloat(v) * 1000
+			return 0
+		}
 		const result = {
-			transition: cs.transitionDuration,
-			animation: cs.animationDuration,
+			transitionMs: parseMs(cs.transitionDuration),
+			animationMs: parseMs(cs.animationDuration),
 		}
 		el.remove()
 		return result
@@ -63,25 +70,25 @@ test.describe('motion — prefers-reduced-motion guard', () => {
 
 			const path = route.path({ workspaceId: account.workspaceId })
 
-			// Baseline: no-preference — the injected transition should run at its
-			// declared duration, not the collapsed value. Confirms the probe
-			// itself is meaningful (not always-zero).
+			// Baseline: no-preference — the injected inline style (5s) should win
+			// over the Tailwind class (1s), confirming the probe is meaningful and
+			// not always-zero.
 			await page.emulateMedia({ reducedMotion: 'no-preference' })
 			await page.goto(path)
 			await page.waitForLoadState('networkidle')
 			await expect(page.locator('body')).toBeVisible()
 
-			const baseline = await probeReducedMotion(page)
-			expect(baseline.transition).toBe('5s')
-			expect(baseline.animation).toBe('5s')
+			const baseline = await probeReducedMotionMs(page)
+			expect(baseline.transitionMs).toBeGreaterThan(4000) // inline 5s wins
+			expect(baseline.animationMs).toBeGreaterThan(4000)
 
-			// Then flip the media query and reprobe. The base-layer @media rule
-			// in app.css must clamp both durations to 0.01ms (disabled, not
-			// slowed) via !important, which wins over the inline styles above.
+			// Flip the media query and reprobe. The @layer base @media rule sets
+			// both durations to 0.001ms via !important, which wins over inline
+			// styles. 0.001ms is < 1ms, so motion is effectively disabled.
 			await page.emulateMedia({ reducedMotion: 'reduce' })
-			const reduced = await probeReducedMotion(page)
-			expect(reduced.transition).toBe('0.01ms')
-			expect(reduced.animation).toBe('0.01ms')
+			const reduced = await probeReducedMotionMs(page)
+			expect(reduced.transitionMs).toBeLessThan(1) // 0.001ms << 1ms
+			expect(reduced.animationMs).toBeLessThan(1)
 		})
 	}
 })
