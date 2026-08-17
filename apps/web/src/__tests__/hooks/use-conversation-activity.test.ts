@@ -288,6 +288,37 @@ describe('useConversationActivity', () => {
 		expect(api.sessions.logs).not.toHaveBeenCalled()
 	})
 
+	it('surfaces a timed-out session as an error turn, same as a failed one', async () => {
+		vi.mocked(api.sessions.list).mockResolvedValue([
+			buildSession({
+				id: 'sess-1',
+				status: 'timeout',
+				config: { conversation: { conversation_id: conversationId, message_id: 10 } },
+				result: { error: 'Session timed out' },
+			}),
+		])
+		vi.mocked(api.sessions.logs).mockResolvedValue([])
+		const messages = [buildMessage({ id: 10, actorId: 'human-1', content: 'hi' })]
+
+		const { result } = renderHook(
+			() => useConversationActivity(workspaceId, conversationId, messages),
+			{ wrapper: TestWrapper },
+		)
+		await waitFor(() => expect(result.current.byTriggerMessageId.get(10)).toBeDefined())
+
+		expect(result.current.byTriggerMessageId.get(10)).toMatchObject([
+			{
+				sessionId: 'sess-1',
+				actorId: 'agent-1',
+				inProgress: false,
+				failed: true,
+				steps: [{ kind: 'error', text: 'Session timed out' }],
+			},
+		])
+		// Logs are never fetched for a timed-out session either.
+		expect(api.sessions.logs).not.toHaveBeenCalled()
+	})
+
 	it('prefers the classified failure_reason.human_message over a generic result.error for a session that failed mid-run', async () => {
 		vi.mocked(api.sessions.list).mockResolvedValue([
 			buildSession({

@@ -98,7 +98,13 @@ export function useConversationActivity(
 	}
 	const latestSessions = [...latestByActor.values()]
 	const activeSessions = latestSessions.filter((s) => s.status === 'running')
-	const failedSessions = latestSessions.filter((s) => s.status === 'failed')
+	// 'timeout' is a distinct terminal status from 'failed' (session-manager.ts's
+	// reaper sets it after the 2-hour backstop, with the same `result: { error }`
+	// shape as a failure) — treated the same as 'failed' here so a timed-out
+	// session doesn't fall through both buckets and go invisible again.
+	const failedSessions = latestSessions.filter(
+		(s) => s.status === 'failed' || s.status === 'timeout',
+	)
 
 	const logsQueries = useQueries({
 		queries: activeSessions.map((session) => ({
