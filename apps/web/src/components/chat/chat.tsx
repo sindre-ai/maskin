@@ -797,7 +797,7 @@ export function Composer({
 	return (
 		<div
 			className={cn(
-				'relative flex flex-col gap-1 rounded-md border border-border bg-bg-surface p-2 shadow-sm',
+				'relative flex flex-col gap-1 rounded-md border border-border bg-card p-2 shadow-sm',
 			)}
 		>
 			<SlashPicker
@@ -828,7 +828,7 @@ export function Composer({
 							key={p.tempId}
 							data-upload-status={p.status}
 							className={cn(
-								'inline-flex max-w-full items-center gap-1 rounded-full border bg-bg-surface px-2 py-0.5 text-xs text-foreground',
+								'inline-flex max-w-full items-center gap-1 rounded-full border bg-card px-2 py-0.5 text-xs text-foreground',
 								p.status === 'failed' ? 'border-error' : 'border-border',
 							)}
 						>
@@ -887,7 +887,7 @@ export function Composer({
 						type="button"
 						size="sm"
 						variant="ghost"
-						className="h-7 gap-1 px-2 text-xs text-text-secondary"
+						className="h-7 gap-1 px-2 text-xs text-muted-foreground"
 						onClick={() => openPickerForKind('agent')}
 						disabled={disabled}
 						aria-label="Pick an agent"
@@ -899,7 +899,7 @@ export function Composer({
 						type="button"
 						size="sm"
 						variant="ghost"
-						className="h-7 gap-1 px-2 text-xs text-text-secondary"
+						className="h-7 gap-1 px-2 text-xs text-muted-foreground"
 						onClick={() => openPickerForKind('item')}
 						disabled={disabled}
 						aria-label="Attach items"
@@ -911,7 +911,7 @@ export function Composer({
 						type="button"
 						size="sm"
 						variant="ghost"
-						className="relative h-7 gap-1 px-2 text-xs text-text-secondary before:absolute before:-inset-3 before:h-11 before:w-11 before:content-['']"
+						className="relative h-7 gap-1 px-2 text-xs text-muted-foreground before:absolute before:-inset-3 before:h-11 before:w-11 before:content-['']"
 						onClick={() => fileInputRef.current?.click()}
 						disabled={disabled}
 						aria-label="Attach image"

@@ -79,7 +79,7 @@ export interface DisplayPanelProps {
 
 function SectionHeader({ children }: { children: React.ReactNode }) {
 	return (
-		<p className="text-[11px] font-medium uppercase tracking-wide text-text-secondary">
+		<p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
 			{children}
 		</p>
 	)
@@ -113,8 +113,8 @@ function PillButton({
 				'inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs transition-colors',
 				active
 					? 'border-accent bg-accent text-accent-foreground'
-					: 'border-border bg-bg-surface text-text-secondary hover:text-foreground hover:border-border-hover',
-				disabled && 'cursor-not-allowed opacity-50 hover:text-text-secondary hover:border-border',
+					: 'border-border bg-card text-muted-foreground hover:text-foreground hover:border-border-hover',
+				disabled && 'cursor-not-allowed opacity-50 hover:text-muted-foreground hover:border-border',
 			)}
 		>
 			{children}
@@ -137,7 +137,7 @@ function PickerRow({
 }) {
 	return (
 		<div className="flex items-center gap-2">
-			<span className="w-16 shrink-0 text-xs text-text-secondary">{label}</span>
+			<span className="w-16 shrink-0 text-xs text-muted-foreground">{label}</span>
 			<div className="flex flex-1 items-center gap-1.5">
 				{children}
 				{trailing}
@@ -408,7 +408,7 @@ export function DisplayPanel({
 											aria-label={order === 'asc' ? 'Ascending' : 'Descending'}
 											title={order === 'asc' ? 'Ascending' : 'Descending'}
 											onClick={() => onOrderChange?.(order === 'asc' ? 'desc' : 'asc')}
-											className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border text-text-secondary hover:text-foreground hover:border-border-hover transition-colors"
+											className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:text-foreground hover:border-border-hover transition-colors"
 										>
 											{order === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />}
 										</button>
@@ -468,7 +468,7 @@ export function DisplayPanel({
 									{hasActiveFilters && (
 										<button
 											type="button"
-											className="text-[11px] text-text-secondary hover:text-foreground transition-colors"
+											className="text-[11px] text-muted-foreground hover:text-foreground transition-colors"
 											onClick={() => {
 												if (onResetFilters) {
 													onResetFilters()
@@ -489,7 +489,7 @@ export function DisplayPanel({
 								{/* Status — grouped by type with separators, multi-select */}
 								{onStatusFilterChange && (
 									<div className="flex items-center gap-2">
-										<span className="w-16 shrink-0 text-xs text-text-secondary">Status</span>
+										<span className="w-16 shrink-0 text-xs text-muted-foreground">Status</span>
 										<DropdownMenu>
 											<DropdownMenuTrigger asChild disabled={!hasStatuses}>
 												<Button
@@ -498,7 +498,7 @@ export function DisplayPanel({
 													className={cn(
 														'h-7 gap-1.5 px-2 text-xs',
 														activeStatuses.length === 0 &&
-															'text-text-secondary hover:text-foreground',
+															'text-muted-foreground hover:text-foreground',
 													)}
 												>
 													<span className="truncate capitalize">{statusTriggerLabel}</span>
@@ -509,7 +509,7 @@ export function DisplayPanel({
 												{typeEntries.map(([type, statuses], i) => (
 													<div key={type}>
 														{i > 0 && <DropdownMenuSeparator />}
-														<DropdownMenuLabel className="capitalize text-xs font-medium text-text-secondary py-1">
+														<DropdownMenuLabel className="capitalize text-xs font-medium text-muted-foreground py-1">
 															{type}
 														</DropdownMenuLabel>
 														{statuses.map((status) => (
@@ -532,7 +532,7 @@ export function DisplayPanel({
 												aria-label="Clear Status filter"
 												title="Clear Status filter"
 												onClick={() => onStatusFilterChange?.(undefined)}
-												className="text-[11px] text-text-secondary hover:text-foreground transition-colors"
+												className="text-[11px] text-muted-foreground hover:text-foreground transition-colors"
 											>
 												Clear
 											</button>
@@ -543,7 +543,7 @@ export function DisplayPanel({
 								{/* Filter by Driver */}
 								{onDriverFilterChange && (
 									<div className="flex items-center gap-2">
-										<span className="w-16 shrink-0 text-xs text-text-secondary">Driver</span>
+										<span className="w-16 shrink-0 text-xs text-muted-foreground">Driver</span>
 										<DropdownMenu>
 											<DropdownMenuTrigger asChild disabled={!hasOwners}>
 												<Button
@@ -552,7 +552,7 @@ export function DisplayPanel({
 													className={cn(
 														'h-7 gap-1.5 px-2 text-xs',
 														activeDrivers.length === 0 &&
-															'text-text-secondary hover:text-foreground',
+															'text-muted-foreground hover:text-foreground',
 													)}
 												>
 													<span className="truncate">{driverTriggerLabel}</span>
@@ -577,7 +577,7 @@ export function DisplayPanel({
 												aria-label="Clear Driver filter"
 												title="Clear Driver filter"
 												onClick={() => onDriverFilterChange?.(undefined)}
-												className="text-[11px] text-text-secondary hover:text-foreground transition-colors"
+												className="text-[11px] text-muted-foreground hover:text-foreground transition-colors"
 											>
 												Clear
 											</button>
@@ -592,7 +592,7 @@ export function DisplayPanel({
 										return (
 											<div key={field.name} className="flex items-center gap-2">
 												<span
-													className="w-16 shrink-0 truncate text-xs capitalize text-text-secondary"
+													className="w-16 shrink-0 truncate text-xs capitalize text-muted-foreground"
 													title={field.name}
 												>
 													{field.name.replace(/_/g, ' ')}
@@ -613,7 +613,7 @@ export function DisplayPanel({
 														aria-label={`Clear ${field.name} filter`}
 														title={`Clear ${field.name} filter`}
 														onClick={() => onMetadataFilterChange?.(field.name, undefined)}
-														className="text-[11px] text-text-secondary hover:text-foreground transition-colors"
+														className="text-[11px] text-muted-foreground hover:text-foreground transition-colors"
 													>
 														Clear
 													</button>
@@ -622,7 +622,7 @@ export function DisplayPanel({
 										)
 									})}
 								{unfilterableFieldCount > 0 && (
-									<p className="text-[11px] text-text-secondary">
+									<p className="text-[11px] text-muted-foreground">
 										{unfilterableFieldCount} field{unfilterableFieldCount === 1 ? '' : 's'} can't be
 										filtered — field names must start with a letter and contain only letters,
 										numbers, and underscores.
@@ -663,7 +663,7 @@ export function DisplayPanel({
 								<button
 									type="button"
 									onClick={onResetToDefault}
-									className="w-full rounded-lg px-2.5 py-2 text-left text-xs text-text-secondary transition-colors hover:bg-bg-hover hover:text-foreground"
+									className="w-full rounded-lg px-2.5 py-2 text-left text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
 								>
 									Reset to default
 								</button>

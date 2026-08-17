@@ -104,7 +104,7 @@ This is a **steering interface for humans overseeing autonomous agents**, not a 
 - **shadcn/ui built on Radix UI** — all UI primitives use Radix UI under the hood. Use them plain with default variants and sizes. Never use raw HTML form elements (`<select>`, `<dialog>`, `<input type="checkbox">`), always use the Radix-based equivalent from `src/components/ui/`.
 - **UI primitives** in `src/components/ui/` — shadcn/ui components (light/dark theme via CSS variables)
   - Add new components via `npx shadcn@latest add <component>` — do NOT hand-write UI primitives
-  - Customized with the project's color tokens (bg, bg-surface, border, text, accent, etc.)
+  - Customized with the project's color tokens (bg-card, bg-muted, border, text-foreground, accent, etc.)
   - Keep primitives simple — no business logic, just styling + HTML attributes
   - Don't wrap these in custom abstractions — use `<Button>`, `<Card>`, `<Dialog>` directly
 - **Shared components** in `src/components/shared/` — list the directory to see what's available
@@ -115,7 +115,7 @@ This is a **steering interface for humans overseeing autonomous agents**, not a 
 - **No custom size overrides on SelectTrigger** — use the default h-8 bordered trigger everywhere. Layout classes like `flex-1` or `w-fit` are fine, but don't override height/border/text-size.
 
 ### Layout
-- Fixed sidebar (w-56) with solid background (`bg-bg-surface`) and right border, left side
+- Fixed sidebar (w-56) with solid background (`bg-sidebar`) and right border, left side
 - Sidebar is collapsible — shows icons only when collapsed (TODO: implement collapse toggle)
 - Content area scrolls independently
 - Page headers via `src/components/layout/page-header.tsx`
@@ -213,7 +213,7 @@ src/
 - Always use the `api` object from `src/lib/api.ts` for API calls — never raw fetch
 - Always use `queryKeys` from `src/lib/query-keys.ts` — never inline cache keys
 - Always use `cn()` for combining Tailwind classes — no custom CSS files, no inline `style={}`
-- Always use semantic color tokens (e.g., `text-text-secondary`, `bg-bg-surface`) — never hardcode hex values
+- Always use semantic color tokens (e.g., `text-muted-foreground`, `bg-card`) — never hardcode hex values
 - Always use `useWorkspace()` to get workspace context — never parse URL params directly
 - Same component for the same purpose everywhere — no one-off alternatives
 - New hooks go in `src/hooks/`, new UI primitives in `src/components/ui/`, new shared components in `src/components/shared/`

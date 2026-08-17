@@ -90,7 +90,7 @@ function EmojiList({ value, onChange, placeholder }: EmojiListProps) {
 							<span>:{name}:</span>
 							<button
 								type="button"
-								className="rounded-sm hover:bg-bg-hover"
+								className="rounded-sm hover:bg-accent"
 								onClick={() => remove(name)}
 								aria-label={`Remove ${name}`}
 							>

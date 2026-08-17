@@ -174,7 +174,7 @@ function EventBlock({ event }: { event: ChatEvent }) {
 
 function SystemLine({ text }: { text: string }) {
 	return (
-		<div className="text-[11px] font-mono text-text-muted italic whitespace-pre-wrap break-words">
+		<div className="text-[11px] font-mono text-muted-foreground italic whitespace-pre-wrap break-words">
 			{text}
 		</div>
 	)
@@ -182,7 +182,7 @@ function SystemLine({ text }: { text: string }) {
 
 function PlainStdoutLine({ text }: { text: string }) {
 	return (
-		<div className="text-[11px] font-mono text-text-muted whitespace-pre-wrap break-words">
+		<div className="text-[11px] font-mono text-muted-foreground whitespace-pre-wrap break-words">
 			{text}
 		</div>
 	)
@@ -194,7 +194,7 @@ function StderrLine({ text }: { text: string }) {
 
 function SystemEventLine({ subtype }: { subtype: string }) {
 	return (
-		<div className="flex items-center gap-1.5 text-[11px] text-text-muted">
+		<div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
 			<Settings size={12} />
 			<span>
 				system <span className="font-mono">{subtype}</span>
@@ -222,26 +222,26 @@ function ToolUseBlock({ name, input }: { name: string; input: unknown }) {
 	const [open, setOpen] = useState(false)
 	const preview = describeToolInput(input)
 	return (
-		<div className="rounded-md border border-border bg-bg text-xs">
+		<div className="rounded-md border border-border bg-muted text-xs">
 			<button
 				type="button"
 				onClick={() => setOpen((v) => !v)}
-				className="flex w-full items-center gap-1.5 px-2 py-1.5 min-w-0 text-left text-text-secondary hover:bg-bg-hover cursor-pointer"
+				className="flex w-full items-center gap-1.5 px-2 py-1.5 min-w-0 text-left text-muted-foreground hover:bg-accent cursor-pointer"
 				aria-expanded={open}
 			>
 				{open ? (
-					<ChevronDown size={14} className="shrink-0 text-text-muted" />
+					<ChevronDown size={14} className="shrink-0 text-muted-foreground" />
 				) : (
-					<ChevronRight size={14} className="shrink-0 text-text-muted" />
+					<ChevronRight size={14} className="shrink-0 text-muted-foreground" />
 				)}
-				<Wrench size={12} className="shrink-0 text-text-muted" />
-				<span className="font-mono text-text shrink-0">{name}</span>
+				<Wrench size={12} className="shrink-0 text-muted-foreground" />
+				<span className="font-mono text-foreground shrink-0">{name}</span>
 				{preview && !open && (
-					<span className="truncate font-mono text-text-muted min-w-0 flex-1">{preview}</span>
+					<span className="truncate font-mono text-muted-foreground min-w-0 flex-1">{preview}</span>
 				)}
 			</button>
 			{open && (
-				<pre className="overflow-x-auto border-t border-border px-3 py-2 font-mono text-text-secondary text-xs whitespace-pre-wrap break-words">
+				<pre className="overflow-x-auto border-t border-border px-3 py-2 font-mono text-muted-foreground text-xs whitespace-pre-wrap break-words">
 					{formatToolInput(input)}
 				</pre>
 			)}
@@ -256,22 +256,22 @@ function ThinkingBlock({ text, redacted }: { text: string; redacted?: boolean })
 		? 'Anthropic withheld the internal reasoning for this turn. The agent still thought about the problem — the content just isn’t available here.'
 		: text
 	return (
-		<div className="rounded-md border border-border bg-bg text-xs">
+		<div className="rounded-md border border-border bg-muted text-xs">
 			<button
 				type="button"
 				onClick={() => setOpen((v) => !v)}
-				className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-text-secondary italic hover:bg-bg-hover cursor-pointer"
+				className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-muted-foreground italic hover:bg-accent cursor-pointer"
 				aria-expanded={open}
 			>
 				{open ? (
-					<ChevronDown size={14} className="shrink-0 not-italic text-text-muted" />
+					<ChevronDown size={14} className="shrink-0 not-italic text-muted-foreground" />
 				) : (
-					<ChevronRight size={14} className="shrink-0 not-italic text-text-muted" />
+					<ChevronRight size={14} className="shrink-0 not-italic text-muted-foreground" />
 				)}
-				<span className="text-text-muted">{label}</span>
+				<span className="text-muted-foreground">{label}</span>
 			</button>
 			{open && (
-				<div className="whitespace-pre-wrap border-t border-border px-3 py-2 text-text-muted italic">
+				<div className="whitespace-pre-wrap border-t border-border px-3 py-2 text-muted-foreground italic">
 					{body}
 				</div>
 			)}
