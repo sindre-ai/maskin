@@ -22,11 +22,19 @@ import {
 } from './agent-reviewer'
 import type { AgentStorageManager } from './agent-storage'
 import { type LlmCallInput, callLlm } from './llm-call'
+import {
+	type PrecisionSummary,
+	ReviewerVerdictError,
+	computeReviewerPrecision,
+	rateReviewerVerdict,
+	recordReviewerVerdict,
+} from './reviewer-verdicts'
 
 // Shared system-prompt authoring (stages 3-4) plus the two standalone tools
-// that reuse it: maskin_review_work (fresh-context rubric scoring against an
-// arbitrary object/session) and maskin_refine_agent (re-author an existing
-// actor's system prompt from a free-text instruction).
+// that reuse it: maskin_reviewer_verdict (fresh-context rubric scoring
+// against an arbitrary object/session, plus rating + precision summary) and
+// maskin_refine_agent (re-author an existing actor's system prompt from a
+// free-text instruction).
 //
 // The maskin_create_agent CREATE path no longer lives here — it moved to a
 // single async container agent session (see agent-builder-bootstrap.ts for
@@ -70,7 +78,8 @@ Rules:
 - Fill EVERY field. Empty strings or empty arrays for any of background/instructions/decision_framework/tool_guidance/output_format/bias_statement are a failure of this stage.
 - "worked_examples" must contain at least 2 and at most 5 items; each response must itself end with a clear recommendation and named assumptions — this is the pattern the agent will imitate.
 - Ground every section in the persona's specific expertise and biases. Generic advice is a failure.
-- Do not include markdown, backticks, or commentary — JSON only.`
+- Do not include markdown, backticks, or commentary — JSON only.
+- If the user message includes a CURRENT SYSTEM PROMPT block, this is a REVISION, not a fresh authoring: for every field, reproduce the current wording as closely as possible and change ONLY what the REVISION FEEDBACK requires. A field the feedback doesn't mention must come back unchanged in meaning and wording. Rewriting, reorganizing, or "improving" a section the feedback never named is a failure of this stage.`
 
 export const STAGE_4_PROMPT = `You produce the anti-hedging opinionation layer that will be spliced into an SME agent's system prompt. This is scaffolding that forces the agent to end every in-domain response with a clear recommendation and stated assumptions — never hedging. Return STRICT JSON matching this shape (no prose, no code fences):
 
@@ -84,7 +93,8 @@ Rules:
 - opinionation_clause MUST literally contain the words "Recommendation:" and "Assumptions:" so the agent can grep-match its own output shape.
 - opinionation_clause MUST forbid hedging in the closing block.
 - Openings should be domain-specific — generic openings ("Consider …", "It depends …") are a failure.
-- Do not include markdown, backticks, or commentary — JSON only.`
+- Do not include markdown, backticks, or commentary — JSON only.
+- If the user message includes a CURRENT SYSTEM PROMPT block, this is a REVISION, not a fresh authoring: reproduce the current opinionation_clause / recommendation_openings / assumption_openings as closely as possible and change ONLY what the REVISION FEEDBACK requires. Do not rewrite fields the feedback never named.`
 
 // Plain type aliases (not zod-derived) — the LLM calls that used to produce
 // these shapes (stage 1 intent extraction, stage 2 persona synthesis) no
@@ -168,11 +178,19 @@ function buildPersonaContextMessage(
 	intent: Stage1Output,
 	persona: PersonaSpec,
 	revisionNotes?: string[],
+	currentSystemPrompt?: string,
 ): string {
 	const revisionBlock =
 		revisionNotes && revisionNotes.length > 0
 			? `REVISION FEEDBACK (address every item — a prior reviewer pass flagged these):\n- ${revisionNotes.join('\n- ')}`
 			: ''
+	// Anchors the model on the actual current wording so it can carry sections
+	// forward verbatim instead of re-deriving the whole prompt from the thin
+	// synthesized persona below — without this, unrelated sections drift on
+	// every refine call. See refineAgent()'s doc comment.
+	const currentPromptBlock = currentSystemPrompt
+		? `CURRENT SYSTEM PROMPT (verbatim — this is what the agent runs on today):\n${currentSystemPrompt}\n\nThis is a REVISION. Carry every field's current wording forward unchanged unless the REVISION FEEDBACK above specifically requires a change to it.`
+		: ''
 	return [
 		`DOMAIN: ${intent.domain}`,
 		`JOB TO BE DONE: ${intent.job_to_be_done}`,
@@ -183,6 +201,7 @@ function buildPersonaContextMessage(
 		`DELEGATION DESCRIPTION: ${persona.delegation_description}`,
 		persona.tool_set.length ? `TOOL SET:\n- ${persona.tool_set.join('\n- ')}` : '',
 		revisionBlock,
+		currentPromptBlock,
 	]
 		.filter(Boolean)
 		.join('\n\n')
@@ -341,8 +360,14 @@ async function runStages3And4(
 	intent: Stage1Output,
 	persona: PersonaSpec,
 	revisionNotes?: string[],
+	currentSystemPrompt?: string,
 ): Promise<{ sections: SystemPromptSpec; opinionation: OpinionationSpec }> {
-	const personaContext = buildPersonaContextMessage(intent, persona, revisionNotes)
+	const personaContext = buildPersonaContextMessage(
+		intent,
+		persona,
+		revisionNotes,
+		currentSystemPrompt,
+	)
 	const stage3Params: LlmCallInput = {
 		system: STAGE_3_PROMPT,
 		user: personaContext,
@@ -428,7 +453,7 @@ async function runStages3And4(
 	return { sections: stage3Parsed.data, opinionation: stage4Parsed.data }
 }
 
-// ── Standalone reviewer path (maskin_review_work) ────────────────────────────
+// ── Standalone reviewer path (maskin_reviewer_verdict) ───────────────────────
 
 export class AgentReviewTargetError extends Error {
 	constructor(
@@ -438,7 +463,9 @@ export class AgentReviewTargetError extends Error {
 			| 'object_no_content'
 			| 'session_not_terminal'
 			| 'session_no_result'
-			| 'rubric_not_found',
+			| 'rubric_not_found'
+			| 'no_target_specified'
+			| 'no_verdict_to_rate',
 		message: string,
 	) {
 		super(message)
@@ -539,17 +566,28 @@ export async function reviewWork(
 		objectId?: string
 		sessionId?: string
 		rubricId?: string
+		// Only consulted on the object_id path — the session_id path always
+		// derives its own target actor from the session row. Reviewing a
+		// generic object has no inherent actor association, so the verdict
+		// can't be persisted (reviewer_verdicts.target_actor_id is NOT NULL)
+		// unless the caller names one explicitly.
+		targetActorId?: string
 	},
 ): Promise<{
 	verdict: ReviewerVerdict
 	reviewerSessionId: string
 	rubricId: string
 	targetActorId: string | null
+	verdictId: string | null
+	persisted: boolean
+	persistenceNote?: string
 }> {
-	const { definitionText, targetActorId } = await loadReviewTarget(db, p.workspaceId, {
-		objectId: p.objectId,
-		sessionId: p.sessionId,
-	})
+	const { definitionText, targetActorId: sessionTargetActorId } = await loadReviewTarget(
+		db,
+		p.workspaceId,
+		{ objectId: p.objectId, sessionId: p.sessionId },
+	)
+	const targetActorId = sessionTargetActorId ?? p.targetActorId ?? null
 
 	const rubric = p.rubricId
 		? await resolveRubricById(db, p.workspaceId, p.rubricId)
@@ -577,7 +615,182 @@ export async function reviewWork(
 		failingCriteria: failingCriteriaNames(verdict),
 	})
 
-	return { verdict, reviewerSessionId, rubricId: rubric.id, targetActorId }
+	// Persist so the verdict becomes ratable — rating and the precision
+	// summary (both folded into maskin_reviewer_verdict alongside review)
+	// read from reviewer_verdicts, not from this call's return value.
+	// Best-effort: a persistence failure must not turn
+	// an already-computed verdict into a 500 for the caller.
+	let verdictId: string | null = null
+	let persisted = false
+	let persistenceNote: string | undefined
+	if (targetActorId) {
+		try {
+			const recorded = await recordReviewerVerdict({
+				db,
+				workspaceId: p.workspaceId,
+				rubricId: rubric.id,
+				targetActorId,
+				reviewerActorId: p.actorId,
+				reviewerSessionId,
+				cycleNumber: 1,
+				verdict: verdict.overall,
+				criteriaVerdicts: verdict.criteria,
+				createdBy: p.actorId,
+			})
+			verdictId = recorded.id
+			persisted = true
+		} catch (err) {
+			// Caller-input errors (e.g. a target_actor_id that doesn't exist) must
+			// surface to the route's error mapping, not be swallowed as a
+			// best-effort persistence failure — only genuine write/connectivity
+			// failures belong in persistence_note.
+			if (err instanceof ReviewerVerdictError) {
+				throw err
+			}
+			logger.error('agent-builder: failed to persist reviewer verdict', {
+				workspaceId: p.workspaceId,
+				targetActorId,
+				error: String(err),
+			})
+			persistenceNote = `verdict computed but not persisted: ${err instanceof Error ? err.message : String(err)}`
+		}
+	} else {
+		persistenceNote =
+			'verdict computed but not persisted — object_id reviews have no associated actor; pass target_actor_id to make this verdict ratable'
+	}
+
+	return {
+		verdict,
+		reviewerSessionId,
+		rubricId: rubric.id,
+		targetActorId,
+		verdictId,
+		persisted,
+		persistenceNote,
+	}
+}
+
+/**
+ * Composes review + rate + precision-summary behind the single
+ * maskin_reviewer_verdict MCP tool. Each piece runs whenever the caller
+ * supplied enough to do it — there's no action/mode switch:
+ *  - object_id or session_id present → review runs (and persists via
+ *    reviewWork, so its verdict_id becomes ratable).
+ *  - human_agreed present → rate runs, against verdict_id if given,
+ *    otherwise against the verdict this same call just reviewed.
+ *  - a rubric resolves (from the review, the rating, or an explicit
+ *    rubric_id) → the precision summary is always attached.
+ *
+ * One constraint callers hit often enough to call out: rating the verdict
+ * this same call just reviewed will throw self_rating_forbidden whenever the
+ * reviewing and rating identity are the same actor (the common case, since
+ * both default to the caller) — that guard is deliberate (see
+ * rateReviewerVerdict's doc comment) and this function does not route around
+ * it. Pass verdict_id for a verdict produced by a *different* prior caller
+ * to actually record a rating.
+ */
+export async function reviewerVerdictWorkflow(
+	db: Database,
+	p: {
+		workspaceId: string
+		actorId: string
+		objectId?: string
+		sessionId?: string
+		targetActorId?: string
+		rubricId?: string
+		verdictId?: string
+		humanAgreed?: boolean
+		criteriaDisagreements?: string[]
+		note?: string
+	},
+): Promise<{
+	review: Awaited<ReturnType<typeof reviewWork>> | null
+	rating: {
+		verdictId: string
+		humanAgreed: boolean
+		humanCriteriaDisagreements: string[] | null
+	} | null
+	precisionSummary: PrecisionSummary | null
+}> {
+	if (!p.objectId && !p.sessionId && !p.verdictId && !p.rubricId) {
+		throw new AgentReviewTargetError(
+			'no_target_specified',
+			'Provide at least one of object_id, session_id, verdict_id, or rubric_id.',
+		)
+	}
+
+	const review =
+		p.objectId || p.sessionId
+			? await reviewWork(db, {
+					workspaceId: p.workspaceId,
+					actorId: p.actorId,
+					objectId: p.objectId,
+					sessionId: p.sessionId,
+					rubricId: p.rubricId,
+					targetActorId: p.targetActorId,
+				})
+			: null
+
+	let rating: {
+		verdictId: string
+		humanAgreed: boolean
+		humanCriteriaDisagreements: string[] | null
+	} | null = null
+	let ratedRubricId: string | null = null
+	if (p.humanAgreed !== undefined) {
+		const verdictIdForRating = p.verdictId ?? review?.verdictId ?? null
+		if (!verdictIdForRating) {
+			throw new AgentReviewTargetError(
+				'no_verdict_to_rate',
+				'human_agreed was provided but no ratable verdict is available — pass verdict_id ' +
+					'(from a prior, differently-attributed review), or review via session_id / ' +
+					'object_id+target_actor_id so a verdict is persisted first.',
+			)
+		}
+		const rated = await rateReviewerVerdict({
+			db,
+			workspaceId: p.workspaceId,
+			verdictId: verdictIdForRating,
+			ratedByActorId: p.actorId,
+			humanAgreed: p.humanAgreed,
+			criteriaDisagreements: p.criteriaDisagreements,
+			note: p.note,
+		})
+		rating = {
+			verdictId: rated.id,
+			humanAgreed: rated.humanAgreed,
+			humanCriteriaDisagreements: rated.humanCriteriaDisagreements,
+		}
+		ratedRubricId = rated.rubricId
+	}
+
+	// Best-effort, same reasoning as reviewWork's own persistence step: by
+	// this point `review` and/or `rating` may already be durably committed
+	// (reviewWork persists inline; rateReviewerVerdict already returned above).
+	// The precision summary is a derived read — letting it throw here would
+	// turn an already-successful review/rate into a request-level failure the
+	// caller can't distinguish from "nothing happened," and a retry would then
+	// hit already_rated/self_rating_forbidden for a rating that, from the
+	// caller's perspective, never succeeded.
+	const resolvedRubricId = review?.rubricId ?? ratedRubricId ?? p.rubricId ?? null
+	let precisionSummary: PrecisionSummary | null = null
+	if (resolvedRubricId) {
+		try {
+			precisionSummary = await computeReviewerPrecision({
+				db,
+				workspaceId: p.workspaceId,
+				rubricId: resolvedRubricId,
+			})
+		} catch (err) {
+			logger.error('agent-builder: failed to compute reviewer precision summary', {
+				workspaceId: p.workspaceId,
+				rubricId: resolvedRubricId,
+				error: String(err),
+			})
+		}
+	}
+
+	return { review, rating, precisionSummary }
 }
 
 // ── Standalone refine path (maskin_refine_agent) ─────────────────────────────
@@ -603,6 +816,13 @@ export class AgentRefineError extends Error {
  * the actor's description and rely on the refinement context to steer the
  * changes). This keeps refinement scoped to prompt authoring — we never
  * rename the actor or change its scope boundaries silently.
+ *
+ * The actor's current systemPrompt is also passed into stages 3-4 verbatim
+ * (see buildPersonaContextMessage's CURRENT SYSTEM PROMPT block) so the model
+ * has the actual prior wording to preserve, not just the thin synthesized
+ * persona — this is what keeps a narrow refinement request from rewriting
+ * unrelated sections. It's a prompt-level constraint, not a structural diff:
+ * the model can still stray, but it now has the anchor to hold still against.
  */
 export async function refineAgent(
 	ctx: AgentBuilderContext,
@@ -681,12 +901,17 @@ export async function refineAgent(
 		gap_question: '',
 	}
 
+	const previousSystemPrompt = actor.systemPrompt ?? ''
 	const revisionNotes = [`[refinement] ${trimmedContext}`]
-	const { sections, opinionation } = await runStages3And4(intent, persona, revisionNotes)
+	const { sections, opinionation } = await runStages3And4(
+		intent,
+		persona,
+		revisionNotes,
+		previousSystemPrompt || undefined,
+	)
 	const newSystemPrompt = assembleSystemPrompt(persona, sections, opinionation)
 	const newSkillMd = assembleSkillMd(skillRow.name, persona, sections, opinionation)
 	const sizeBytes = Buffer.byteLength(newSkillMd, 'utf-8')
-	const previousSystemPrompt = actor.systemPrompt ?? ''
 
 	// Update in a single transaction so a mid-flight failure leaves the actor
 	// and skill on their previous versions. S3 put happens inside so a

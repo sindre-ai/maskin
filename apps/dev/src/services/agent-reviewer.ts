@@ -3,7 +3,6 @@ import type { Database, Transaction } from '@maskin/db'
 import { events, objects } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { z } from 'zod'
-import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { logger } from '../lib/logger'
 import { type LlmCallInput, callLlm } from './llm-call'
 
@@ -311,13 +310,22 @@ export async function resolveRubricById(
 }
 
 /**
- * Emit the `reviewer_verdict_submitted` event. Two paths:
- *  - `events` table row (audit + PG NOTIFY → SSE feed, same pattern as
- *    workspace_knowledge_referenced),
- *  - PostHog capture (feeds the bet's `metadata.posthog_query` dashboard).
+ * Emit the `reviewer_verdict_submitted` `events` table row (audit + PG
+ * NOTIFY → SSE feed, same pattern as workspace_knowledge_referenced) —
+ * anchors the workspace activity feed to the reviewed actor (or the rubric
+ * object when no target actor exists yet) regardless of whether the verdict
+ * ends up persisted to `reviewer_verdicts`.
  *
- * Both are best-effort. A failed audit or PostHog call must never surface
- * to the caller — the reviewer verdict is already computed.
+ * Deliberately does NOT also fire the `reviewer_verdict_submitted` PostHog
+ * capture — `recordReviewerVerdict` (reviewer-verdicts.ts) owns that, and
+ * only fires it when a `reviewer_verdicts` row is actually persisted, so the
+ * bet's ship-metric dashboard sees exactly one PostHog event per row. Firing
+ * it here too would double-count every review that also gets persisted
+ * (reviewWork() calls both this and recordReviewerVerdict for the same
+ * review).
+ *
+ * Best-effort: a failed audit insert must never surface to the caller — the
+ * reviewer verdict is already computed.
  */
 export async function trackReviewerVerdictSubmitted(
 	db: DbHandle,
@@ -358,21 +366,6 @@ export async function trackReviewerVerdictSubmitted(
 			error: String(err),
 		})
 	}
-
-	// PostHog properties are scalar-only per PosthogEventProps — the failing
-	// criteria list ships as a comma-joined string plus a count so the
-	// dashboard can group without exploding the property cardinality.
-	await capturePosthogEvent(REVIEWER_VERDICT_SUBMITTED, p.workspaceId, {
-		workspace_id: p.workspaceId,
-		actor_id: p.targetActorId,
-		caller_actor_id: p.actorId,
-		overall: p.overall,
-		cycle_number: p.cycleNumber,
-		reviewer_session_id: p.reviewerSessionId,
-		rubric_id: p.rubricId,
-		failing_criteria: p.failingCriteria.join(','),
-		failing_criteria_count: p.failingCriteria.length,
-	})
 }
 
 export function failingCriteriaNames(verdict: ReviewerVerdict): string[] {

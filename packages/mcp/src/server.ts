@@ -2847,59 +2847,6 @@ export function createMcpServer(config: McpConfig) {
 		},
 	)
 
-	registerAppTool(
-		server,
-		'maskin_rate_reviewer_verdict',
-		{
-			description: tools.maskin_rate_reviewer_verdict.description,
-			inputSchema: tools.maskin_rate_reviewer_verdict.inputSchema.shape,
-			_meta: {},
-		},
-		async (args) => {
-			const { verdict_id, workspace_id, ...body } = args as {
-				verdict_id: string
-				workspace_id?: string
-				human_agreed: boolean
-				criteria_disagreements?: string[]
-				note?: string
-			}
-			const result = await apiCall(config, 'PATCH', `/api/reviewer-verdicts/${verdict_id}`, body, {
-				workspaceId: workspace_id,
-			})
-			return {
-				_meta: meta('maskin_rate_reviewer_verdict', config, workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-			}
-		},
-	)
-
-	registerAppTool(
-		server,
-		'maskin_reviewer_precision_summary',
-		{
-			description: tools.maskin_reviewer_precision_summary.description,
-			inputSchema: tools.maskin_reviewer_precision_summary.inputSchema.shape,
-			_meta: {},
-		},
-		async (args) => {
-			const { rubric_id, workspace_id } = args as {
-				rubric_id: string
-				workspace_id?: string
-			}
-			const result = await apiCall(
-				config,
-				'GET',
-				`/api/reviewer-verdicts/summary?rubric_id=${encodeURIComponent(rubric_id)}`,
-				undefined,
-				{ workspaceId: workspace_id },
-			)
-			return {
-				_meta: meta('maskin_reviewer_precision_summary', config, workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-			}
-		},
-	)
-
 	// ─── Actors ───────────────────────────────────────────────
 	registerAppTool(
 		server,
@@ -2935,26 +2882,35 @@ export function createMcpServer(config: McpConfig) {
 
 	registerAppTool(
 		server,
-		'maskin_review_work',
+		'maskin_reviewer_verdict',
 		{
-			description: tools.maskin_review_work.description,
-			inputSchema: tools.maskin_review_work.inputSchema.shape,
+			description: tools.maskin_reviewer_verdict.description,
+			inputSchema: tools.maskin_reviewer_verdict.inputSchema.shape,
 			_meta: {},
 		},
 		async (args) => {
 			const result = await apiCall(
 				config,
 				'POST',
-				'/api/agent-builder/review',
+				'/api/agent-builder/reviewer-verdict',
 				{
 					object_id: args.object_id,
 					session_id: args.session_id,
+					target_actor_id: args.target_actor_id,
 					rubric_id: args.rubric_id,
+					verdict_id: args.verdict_id,
+					human_agreed: args.human_agreed,
+					criteria_disagreements: args.criteria_disagreements,
+					note: args.note,
 				},
 				{ workspaceId: args.workspace_id },
 			)
 			return {
-				_meta: meta('maskin_review_work', config, (args as { workspace_id?: string }).workspace_id),
+				_meta: meta(
+					'maskin_reviewer_verdict',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
