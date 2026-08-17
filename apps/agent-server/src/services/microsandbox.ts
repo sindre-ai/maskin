@@ -681,18 +681,21 @@ function findFreeHostPortInRange(
 ): Promise<number> {
 	const rangeSize = rangeEnd - rangeStart + 1
 	return new Promise((resolve, reject) => {
+		let lastErr: unknown
 		const tryNext = (attemptsLeft: number): void => {
 			if (attemptsLeft <= 0) {
 				reject(
 					new Error(
 						`no free port found in ${rangeStart}-${rangeEnd} after ${RANGE_PORT_ALLOCATION_ATTEMPTS} attempts`,
+						{ cause: lastErr },
 					),
 				)
 				return
 			}
 			const candidate = rangeStart + Math.floor(Math.random() * rangeSize)
 			const srv = createServer()
-			srv.once('error', () => {
+			srv.once('error', (err) => {
+				lastErr = err
 				srv.close(() => tryNext(attemptsLeft - 1))
 			})
 			srv.listen(candidate, host, () => {

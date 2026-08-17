@@ -709,6 +709,7 @@ export function buildApp(deps: AppDeps): Hono {
 					logger.warn('preview port resolution failed — continuing without preview forwarding', {
 						sessionId: body.sessionId,
 						error: String(err),
+						cause: err instanceof Error && err.cause !== undefined ? String(err.cause) : undefined,
 					})
 				}
 			}
@@ -784,8 +785,9 @@ export function buildApp(deps: AppDeps): Hono {
 			})
 
 			// Session VM is now Running — actually open the SSH-relay tunnel(s) into
-			// its preview port(s), targeting the same relayPort numbers already
-			// baked into the sidecar's allow@host:tcp:<port> net-rules above. Must
+			// its preview port(s); the sidecar's standing
+			// allow@host:tcp:<DEV_SERVER_HOST_PORT_RANGE> grant already covers these
+			// relayPort numbers, so nothing needs to be pre-baked into its rules. Must
 			// happen after spawnSession (the relay target must be a live VM); the
 			// pre-reserved port numbers are only released once this has run,
 			// whatever the outcome — see resolvePreviewPortMappings.
