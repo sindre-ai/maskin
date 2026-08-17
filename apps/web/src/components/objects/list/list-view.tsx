@@ -50,6 +50,7 @@ interface ListViewProps {
 	hasNextPage?: boolean
 	isFetchingNextPage?: boolean
 	isError?: boolean
+	error?: Error | null
 	fetchNextPage?: () => void
 	isLoading?: boolean
 	// Controlled group-expansion state (the same contract DataTable exposed).
@@ -82,6 +83,7 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 		hasNextPage,
 		isFetchingNextPage,
 		isError,
+		error,
 		fetchNextPage,
 		isLoading,
 		expanded,
@@ -304,7 +306,7 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 		return (
 			<QueryStateError
 				title="Couldn't load objects"
-				error={new Error('Something went wrong loading this list.')}
+				error={error instanceof Error ? error : new Error('Unknown error')}
 			/>
 		)
 	}
