@@ -936,7 +936,9 @@ describe('tool handlers', () => {
 			mockFetchSuccess({ id: 'actor-new', name: 'Bot', type: 'agent' })
 
 			const handler = getHandler('create_actor')
-			await handler({ type: 'agent', name: 'Bot' })
+			// skip_interview: a bare agent without it now returns interview guidance
+			// instead of creating (covered in create-actor-interview.test.ts).
+			await handler({ type: 'agent', name: 'Bot', skip_interview: true })
 
 			expect(fetch).toHaveBeenCalledWith(
 				'http://localhost:3000/api/actors',
@@ -954,16 +956,23 @@ describe('tool handlers', () => {
 					ok: true,
 					json: () => Promise.resolve({}),
 				} as Response)
+				// Trailing GET /api/integrations for the capability read.
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve([]),
+				} as Response)
 
 			const handler = getHandler('create_actor')
 			const result = (await handler({
 				type: 'agent',
 				name: 'Bot',
 				workspace_id: 'ws-123',
+				skip_interview: true,
 			})) as { content: Array<{ text: string }> }
 
-			expect(fetch).toHaveBeenCalledTimes(2)
-			expect(fetch).toHaveBeenLastCalledWith(
+			expect(fetch).toHaveBeenCalledTimes(3)
+			expect(fetch).toHaveBeenCalledWith(
 				'http://localhost:3000/api/workspaces/ws-123/members',
 				expect.objectContaining({ method: 'POST' }),
 			)
@@ -999,6 +1008,7 @@ describe('tool handlers', () => {
 				type: 'agent',
 				name: 'Bot',
 				llm_config: { provider: 'anthropic', model: 'claude-opus-4-6' },
+				skip_interview: true,
 			})) as { content: Array<{ text: string }> }
 
 			expect(actorsPostBody).toMatchObject({
@@ -1035,6 +1045,12 @@ describe('tool handlers', () => {
 							{ workspaceSkillId: skillId2, success: false, error: 'Workspace skill not found' },
 						]),
 				} as Response)
+				// Trailing GET /api/integrations for the capability read.
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve([]),
+				} as Response)
 
 			const handler = getHandler('create_actor')
 			const result = (await handler({
@@ -1042,10 +1058,11 @@ describe('tool handlers', () => {
 				name: 'Bot',
 				workspace_id: 'ws-123',
 				attach_skill_ids: [skillId1, skillId2],
+				skip_interview: true,
 			})) as { content: Array<{ text: string }> }
 
-			expect(fetch).toHaveBeenCalledTimes(3)
-			expect(fetch).toHaveBeenLastCalledWith(
+			expect(fetch).toHaveBeenCalledTimes(4)
+			expect(fetch).toHaveBeenCalledWith(
 				'http://localhost:3000/api/actors/actor-new/workspace-skills/batch',
 				expect.objectContaining({ method: 'POST' }),
 			)
@@ -1075,6 +1092,12 @@ describe('tool handlers', () => {
 					status: 500,
 					text: () => Promise.resolve('Internal error'),
 				} as Response)
+				// Trailing GET /api/integrations for the capability read.
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve([]),
+				} as Response)
 
 			const handler = getHandler('create_actor')
 			const result = (await handler({
@@ -1082,6 +1105,7 @@ describe('tool handlers', () => {
 				name: 'Bot',
 				workspace_id: 'ws-123',
 				attach_skill_ids: [skillId1],
+				skip_interview: true,
 			})) as { content: Array<{ text: string }> }
 
 			const parsed = JSON.parse(result.content[0].text)
@@ -1125,6 +1149,12 @@ describe('tool handlers', () => {
 							chunk2.map((id) => ({ workspaceSkillId: id, success: true, skill: { id } })),
 						),
 				} as Response)
+				// Trailing GET /api/integrations for the capability read.
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve([]),
+				} as Response)
 
 			const handler = getHandler('create_actor')
 			const result = (await handler({
@@ -1132,12 +1162,14 @@ describe('tool handlers', () => {
 				name: 'Bot',
 				workspace_id: 'ws-123',
 				attach_skill_ids: skillIds,
+				skip_interview: true,
 			})) as { content: Array<{ text: string }> }
 
-			// create actor + add member + one batch call per 50-id chunk (51 ids -> 2 chunks).
-			expect(fetch).toHaveBeenCalledTimes(4)
+			// create actor + add member + one batch call per 50-id chunk (51 ids -> 2 chunks)
+			// + trailing integrations GET for the capability read.
+			expect(fetch).toHaveBeenCalledTimes(5)
 
-			const batchCalls = vi.mocked(fetch).mock.calls.slice(2)
+			const batchCalls = vi.mocked(fetch).mock.calls.slice(2, 4)
 			expect(batchCalls).toHaveLength(2)
 			const sentChunks = batchCalls.map(
 				(call) =>
@@ -1183,6 +1215,12 @@ describe('tool handlers', () => {
 					status: 500,
 					text: () => Promise.resolve('Internal error'),
 				} as Response)
+				// Trailing GET /api/integrations for the capability read.
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () => Promise.resolve([]),
+				} as Response)
 
 			const handler = getHandler('create_actor')
 			const result = (await handler({
@@ -1190,6 +1228,7 @@ describe('tool handlers', () => {
 				name: 'Bot',
 				workspace_id: 'ws-123',
 				attach_skill_ids: skillIds,
+				skip_interview: true,
 			})) as { content: Array<{ text: string }> }
 
 			const parsed = JSON.parse(result.content[0].text)
@@ -4304,7 +4343,7 @@ describe('url field injection', () => {
 			} as Response)
 
 			const handler = getUrlHandler('create_actor')
-			const result = (await handler({ type: 'agent', name: 'Bot' })) as {
+			const result = (await handler({ type: 'agent', name: 'Bot', skip_interview: true })) as {
 				content: Array<{ text: string }>
 			}
 

@@ -5,10 +5,15 @@ import { fileURLToPath } from 'node:url'
 import './extensions.js'
 import { getAllModules, getModuleDefaultSettings } from '@maskin/module-sdk'
 import {
+	type AgentCapability,
+	type AgentCapabilitySnapshot,
 	type CustomExtensionEntry,
+	PROMPT_MIN_LENGTH,
 	type WebAppTarget,
 	buildWebAppHref,
+	findUnresolvedPlaceholders,
 	resolveWebAppBaseUrl,
+	scoreAgentCapability,
 	stripTrailingSlash,
 } from '@maskin/shared'
 import {
@@ -2675,6 +2680,216 @@ export function createMcpServer(config: McpConfig) {
 	)
 
 	// ─── Actors ───────────────────────────────────────────────
+
+	// Interview gate: `create_actor` for an agent with a missing/thin system prompt
+	// returns interview guidance instead of silently creating a generic agent.
+	// A prompt is "thin" when absent, under PROMPT_MIN_LENGTH, or without a single
+	// heading/numbered section — deliberately looser than the full critique rubric
+	// so strong-but-unconventional prompts are never blocked.
+	const EMPTY_SNAPSHOT: AgentCapabilitySnapshot = {
+		systemPrompt: null,
+		description: null,
+		mcpServers: {},
+		skillCount: 0,
+		invalidSkillCount: 0,
+		triggerCount: 0,
+		inLoop: false,
+		model: null,
+		llmProvider: null,
+		memoryKeys: 0,
+		activeIntegrationProviders: [],
+		availableEnvKeys: [],
+	}
+
+	const SECTION_RE = /^(#{1,6}\s|\s*\d+\.\s)/m
+	const isThinAgentPrompt = (prompt: string | undefined): boolean => {
+		if (!prompt) return true
+		if (prompt.length < PROMPT_MIN_LENGTH) return true
+		return !SECTION_RE.test(prompt)
+	}
+
+	// Env keys the session runtime injects at container launch. The per-provider
+	// map mirrors each provider config's `mcp.envKey` (the registry lives in
+	// apps/dev and isn't importable here). Used to warn about `${TOKEN}`
+	// placeholders that won't resolve — a failure that otherwise only surfaces
+	// when a session boots.
+	const ALWAYS_AVAILABLE_ENV_KEYS = [
+		'MASKIN_API_URL',
+		'MASKIN_API_KEY',
+		'MASKIN_WORKSPACE_ID',
+		'SESSION_ID',
+		'BROWSER_CDP_URL',
+	]
+	const PROVIDER_ENV_KEYS: Record<string, string[]> = {
+		slack: ['SLACK_BOT_TOKEN', 'SLACK_TOKEN'],
+		github: ['GITHUB_TOKEN', 'GITHUB_PERSONAL_ACCESS_TOKEN', 'GITHUB_INTEGRATION_ID'],
+		posthog: ['POSTHOG_TOKEN'],
+		linear: ['LINEAR_TOKEN'],
+		gmail: ['GMAIL_TOKEN'],
+		'google-calendar': ['GOOGLE_CALENDAR_TOKEN'],
+	}
+	const envKeysForProviders = (providers: string[]): string[] => {
+		const keys = new Set(ALWAYS_AVAILABLE_ENV_KEYS)
+		for (const provider of providers) {
+			keys.add(`${provider.toUpperCase().replace(/-/g, '_')}_TOKEN`)
+			for (const key of PROVIDER_ENV_KEYS[provider] ?? []) keys.add(key)
+		}
+		return [...keys]
+	}
+
+	// GitHub injects one token per installation as GITHUB_TOKEN_<OWNER>, so any
+	// such placeholder counts as resolvable while the github integration is active.
+	const expandGithubOwnerKeys = (
+		envKeys: string[],
+		activeProviders: string[],
+		mcpServers: Record<string, unknown>,
+	): string[] => {
+		if (!activeProviders.includes('github')) return envKeys
+		const ownerKeys = findUnresolvedPlaceholders({
+			...EMPTY_SNAPSHOT,
+			mcpServers,
+			availableEnvKeys: envKeys,
+		})
+			.map((entry) => entry.envKey)
+			.filter((key) => key.startsWith('GITHUB_TOKEN_'))
+		return [...envKeys, ...ownerKeys]
+	}
+
+	interface WorkspaceEquipment {
+		skills: Array<{ id: string; name: string; description?: string | null }>
+		activeProviders: string[]
+		connectableProviders: string[]
+		fetched: boolean
+	}
+
+	const fetchWorkspaceEquipment = async (wsId: string | undefined): Promise<WorkspaceEquipment> => {
+		const equipment: WorkspaceEquipment = {
+			skills: [],
+			activeProviders: [],
+			connectableProviders: [],
+			fetched: false,
+		}
+		if (!wsId) return equipment
+		const [skillsRes, integrationsRes, providersRes] = await Promise.allSettled([
+			apiCall(config, 'GET', `/api/workspaces/${wsId}/skills`, undefined, { workspaceId: wsId }),
+			apiCall(config, 'GET', '/api/integrations', undefined, { workspaceId: wsId }),
+			apiCall(config, 'GET', '/api/integrations/providers', undefined, { skipWorkspace: true }),
+		])
+		if (skillsRes.status === 'fulfilled' && Array.isArray(skillsRes.value)) {
+			equipment.skills = (
+				skillsRes.value as Array<{
+					id: string
+					name: string
+					description?: string | null
+					isValid?: boolean
+				}>
+			).filter((skill) => skill.isValid !== false)
+		}
+		if (integrationsRes.status === 'fulfilled' && Array.isArray(integrationsRes.value)) {
+			equipment.activeProviders = (
+				integrationsRes.value as Array<{ provider: string; status?: string }>
+			)
+				.filter((row) => row.status === 'active')
+				.map((row) => row.provider)
+			equipment.fetched = true
+		}
+		if (providersRes.status === 'fulfilled' && Array.isArray(providersRes.value)) {
+			equipment.connectableProviders = (
+				providersRes.value as Array<{ name?: string; provider?: string }>
+			)
+				.map((row) => row.name ?? row.provider ?? '')
+				.filter((name) => name && !equipment.activeProviders.includes(name))
+		}
+		return equipment
+	}
+
+	const buildAgentInterviewText = (name: string, equipment: WorkspaceEquipment): string => {
+		const skillLines =
+			equipment.skills.length > 0
+				? equipment.skills
+						.map((skill) => {
+							const description = skill.description?.split(/\r?\n/)[0]?.trim()
+							return `  • ${skill.name}${description ? ` — ${description}` : ''} (id: ${skill.id})`
+						})
+						.join('\n')
+				: '  (no workspace skills yet)'
+		const toolLines = [
+			equipment.activeProviders.length > 0
+				? `  Connected and ready: ${equipment.activeProviders.join(', ')}`
+				: '  No integrations connected yet.',
+			equipment.connectableProviders.length > 0
+				? `  Available to connect: ${equipment.connectableProviders.join(', ')} — have the user run connect_integration first so \${TOKEN} placeholders resolve at session launch.`
+				: '',
+		]
+			.filter(Boolean)
+			.join('\n')
+
+		return `🧑‍🎨 Not created yet — let's build "${name}" properly. A one-line prompt produces a generic AI-slop agent; two minutes of questions produce a colleague.
+
+Ask the user (do not answer these yourself):
+  1. Mission — what outcome is this agent responsible for, and what does success look like?
+  2. Scope — what is in, what is explicitly out, and what may it decide alone vs escalate?
+  3. Stance — what tone should it take, and what strong opinion should it hold about how this work is done well?
+  4. Example — one real worked example: a typical input and the exact output they'd want back.
+
+📚 Workspace skills — pick matches YOURSELF from the user's answers (the user doesn't have this overview; don't ask them to choose from a list). Attach via attach_skill_ids and tell the user what you picked and why:
+${skillLines}
+  If a procedure this agent needs isn't covered, draft a SKILL.md with the user and create it via create_workspace_skill, then attach it.
+
+🔌 Tools — pick the right MCP servers YOURSELF based on the mission (tools.mcpServers) and tell the user what you picked:
+${toolLines}
+
+📝 System prompt template — draft it YOURSELF from the user's answers, at this altitude, specific and opinionated, no generic filler:
+  # Role — You are ${name}, <specific expertise and who you work for>
+  ## Scope — what you own; what you never touch; when to escalate
+  ## How you decide — when X, do Y; priorities; always/never rules
+  ## Stance — give a clear recommendation and state your assumptions; do not hedge or enumerate options neutrally. Hold strong opinions; change them when shown better evidence — and say so.
+  ## Example — <input> → <expected output>
+  ## Output — what you produce and its format
+
+Then call create_actor again with the same args plus the full system_prompt (and attach_skill_ids / tools you agreed on).
+To create anyway without the interview, pass skip_interview: true.`
+	}
+
+	const capitalize = (word: string) => word.charAt(0).toUpperCase() + word.slice(1)
+
+	// Single lightweight lookup for the create path — which providers have an
+	// active integration (drives the unresolved-`${TOKEN}` warning). `fetched`
+	// false means we couldn't verify and must not emit false warnings.
+	const fetchActiveProviders = async (
+		wsId: string | undefined,
+	): Promise<{ providers: string[]; fetched: boolean }> => {
+		if (!wsId) return { providers: [], fetched: false }
+		try {
+			const rows = await apiCall(config, 'GET', '/api/integrations', undefined, {
+				workspaceId: wsId,
+			})
+			if (!Array.isArray(rows)) return { providers: [], fetched: false }
+			return {
+				providers: (rows as Array<{ provider: string; status?: string }>)
+					.filter((row) => row.status === 'active')
+					.map((row) => row.provider),
+				fetched: true,
+			}
+		} catch {
+			return { providers: [], fetched: false }
+		}
+	}
+
+	// Serialized onto the create_actor JSON response for agents — the honest
+	// "this agent is not great yet" read the client relays to the user.
+	const buildAgentCapabilityField = (capability: AgentCapability) => ({
+		score: capability.overall.score,
+		level: capability.overall.level,
+		summary: `${capitalize(capability.overall.level)} (${capability.overall.score}/100) — new agents start weak and level up as you equip them.`,
+		to_make_it_better: capability.topGaps.map(
+			(gap) => `${gap.detail}${gap.toolHint ? ` → ${gap.toolHint}` : ''}`,
+		),
+		unresolved_placeholders: capability.unresolvedPlaceholders,
+		next_step:
+			'Offer the user a dry run: call run_agent with a small representative task (e.g. the example from the interview). The Workspace Coach reviews sessions and files insights, so the dry run gets an independent quality check.',
+	})
+
 	registerAppTool(
 		server,
 		'create_actor',
@@ -2684,7 +2899,32 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.actors, csp: CSP } },
 		},
 		async (args) => {
-			const { workspace_id, role, attach_skill_ids, llm_config, ...createBody } = args
+			const { workspace_id, role, attach_skill_ids, llm_config, skip_interview, ...createBody } =
+				args
+
+			// Interview gate — agents with thin instructions get guidance, not a
+			// silent generic agent. Humans and the auto_create_workspace bootstrap
+			// path (first-run onboarding, no workspace to list equipment from) are
+			// never gated.
+			const interviewWorkspace = workspace_id ?? config.defaultWorkspaceId
+			if (
+				createBody.type === 'agent' &&
+				!skip_interview &&
+				!createBody.auto_create_workspace &&
+				isThinAgentPrompt(createBody.system_prompt as string | undefined)
+			) {
+				const equipment = await fetchWorkspaceEquipment(interviewWorkspace)
+				return {
+					_meta: meta('create_actor', config, (args as { workspace_id?: string }).workspace_id),
+					content: [
+						{
+							type: 'text' as const,
+							text: buildAgentInterviewText(createBody.name as string, equipment),
+						},
+					],
+				}
+			}
+
 			const rawResult = (await apiCall(
 				config,
 				'POST',
@@ -2740,6 +2980,48 @@ export function createMcpServer(config: McpConfig) {
 							id: result.id,
 						})
 					: result
+
+			// For agents, embed an honest capability read on the JSON response: one
+			// summary line plus the highest-impact gaps, so the client can tell the
+			// user what would make the new agent genuinely useful. Additive JSON
+			// field — the response stays parseable for existing automations.
+			if (createBody.type === 'agent') {
+				const mcpServers =
+					((createBody.tools as { mcpServers?: Record<string, unknown> } | undefined)
+						?.mcpServers as Record<string, unknown>) ?? {}
+				const lookup = createBody.auto_create_workspace
+					? { providers: [], fetched: false }
+					: await fetchActiveProviders(wsId)
+				const attachedCount = Array.isArray(result.attached_skills)
+					? (result.attached_skills as Array<{ error?: string }>).filter((entry) => !entry?.error)
+							.length
+					: 0
+				// If the integrations lookup failed we cannot tell which tokens
+				// resolve — treat every placeholder as available rather than emit
+				// false warnings.
+				const baseEnvKeys = lookup.fetched
+					? envKeysForProviders(lookup.providers)
+					: findUnresolvedPlaceholders({ ...EMPTY_SNAPSHOT, mcpServers }).map(
+							(entry) => entry.envKey,
+						)
+				const llm = (llm_config ?? {}) as { provider?: string; model?: string }
+				const capability = scoreAgentCapability({
+					systemPrompt: (createBody.system_prompt as string | undefined) ?? null,
+					description: (createBody.description as string | undefined) ?? null,
+					mcpServers,
+					skillCount: attachedCount,
+					invalidSkillCount: 0,
+					triggerCount: 0,
+					inLoop: false,
+					model: llm.model ?? null,
+					llmProvider: llm.provider ?? null,
+					memoryKeys: 0,
+					activeIntegrationProviders: lookup.providers,
+					availableEnvKeys: expandGithubOwnerKeys(baseEnvKeys, lookup.providers, mcpServers),
+				})
+				;(withUrl as Record<string, unknown>).capability = buildAgentCapabilityField(capability)
+			}
+
 			return {
 				_meta: meta('create_actor', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(withUrl, null, 2) }],
