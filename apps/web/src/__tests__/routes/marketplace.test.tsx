@@ -123,6 +123,30 @@ describe('MarketplacePage', () => {
 		expect(screen.getByText(/Couldn't load the marketplace/i)).toBeInTheDocument()
 	})
 
+	it('renders skeleton blocks (not a spinner) while loading', () => {
+		mockUseMarketplaceLoops.mockReturnValue({
+			data: undefined,
+			isLoading: true,
+			isError: false,
+		})
+		const { container } = render(<MarketplacePage />)
+		// CardSkeleton renders animate-pulse elements — the shared vocabulary signal.
+		expect(container.querySelectorAll('.animate-pulse').length).toBeGreaterThan(0)
+	})
+
+	it('renders the empty state through EmptyState when there are no loops', () => {
+		mockUseMarketplaceLoops.mockReturnValue({
+			data: { loops: [], counts: { total: 0, by_type: {}, by_use_case: {} } },
+			isLoading: false,
+			isError: false,
+		})
+		render(<MarketplacePage />)
+		expect(screen.getByText(/No loops yet/i)).toBeInTheDocument()
+		expect(
+			screen.getByText(/Check back once Maskin publishes the first one\./i),
+		).toBeInTheDocument()
+	})
+
 	it('places a multi-type loop in the Loops section, not in Agents or Triggers', () => {
 		mockUseMarketplaceLoops.mockReturnValue({
 			data: {

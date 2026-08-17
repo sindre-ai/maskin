@@ -11,7 +11,7 @@ exports[`HeroCardApp — schema-driven render per type > renders the insight var
     target="_blank"
   >
     <article
-      class="flex flex-col gap-2.5 px-4 py-3.5 bg-card border border-border rounded-[10px] max-w-[540px] transition-colors hover:border-border-hover"
+      class="flex flex-col gap-2.5 px-4 py-3.5 bg-card border border-border rounded-lg max-w-[540px] transition-colors hover:border-border-hover"
     >
       <div
         class="flex items-center gap-2"
@@ -92,7 +92,7 @@ exports[`HeroCardApp — schema-driven render per type > renders the task varian
     target="_blank"
   >
     <article
-      class="flex flex-col gap-2.5 px-4 py-3.5 bg-card border border-border rounded-[10px] max-w-[540px] transition-colors hover:border-border-hover"
+      class="flex flex-col gap-2.5 px-4 py-3.5 bg-card border border-border rounded-lg max-w-[540px] transition-colors hover:border-border-hover"
     >
       <div
         class="flex items-center gap-2"
@@ -200,7 +200,7 @@ exports[`HeroCardApp — schema-driven render per type > renders the trigger var
     target="_blank"
   >
     <article
-      class="flex flex-col gap-2.5 px-4 py-3.5 bg-card border border-border rounded-[10px] max-w-[540px] transition-colors hover:border-border-hover"
+      class="flex flex-col gap-2.5 px-4 py-3.5 bg-card border border-border rounded-lg max-w-[540px] transition-colors hover:border-border-hover"
     >
       <div
         class="flex items-center gap-2"

@@ -8,6 +8,7 @@ import { LoopSummary } from '@/components/loops/loop-summary'
 import { LoopUtteranceInput } from '@/components/loops/loop-utterance-input'
 import { EmptyState } from '@/components/shared/empty-state'
 import { Skeleton } from '@/components/shared/loading-skeleton'
+import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
 import { useActors } from '@/hooks/use-actors'
 import { useEntityEvents } from '@/hooks/use-events'
@@ -31,7 +32,13 @@ export const Route = createFileRoute('/_authed/$workspaceId/loops/$loopId')({
 function LoopDetailPage() {
 	const { loopId } = Route.useParams()
 	const { workspaceId } = useWorkspace()
-	const { data: loop, isLoading: loopLoading } = useLoop(loopId, workspaceId)
+	const {
+		data: loop,
+		isLoading: loopLoading,
+		isError: isLoopError,
+		error: loopError,
+		refetch: refetchLoop,
+	} = useLoop(loopId, workspaceId)
 	const { data: object } = useObject(loopId)
 	const { data: triggers } = useTriggers(workspaceId)
 	const { data: actors } = useActors(workspaceId)
@@ -56,6 +63,18 @@ function LoopDetailPage() {
 				<Skeleton className="h-4 w-full max-w-96" />
 				<Skeleton className="h-20 w-full" />
 				<Skeleton className="h-32 w-full" />
+			</div>
+		)
+	}
+
+	if (isLoopError && !loop) {
+		return (
+			<div className="max-w-3xl mx-auto">
+				<QueryStateError
+					title="Couldn't load loop"
+					error={loopError ?? new Error('Something went wrong.')}
+					onRetry={() => refetchLoop()}
+				/>
 			</div>
 		)
 	}

@@ -1268,6 +1268,7 @@ function ObjectsPage() {
 					hasNextPage={infiniteQuery.hasNextPage}
 					isFetchingNextPage={infiniteQuery.isFetchingNextPage}
 					isError={infiniteQuery.isError}
+					error={infiniteQuery.error}
 					fetchNextPage={infiniteQuery.fetchNextPage}
 					isLoading={infiniteQuery.isLoading}
 					expanded={expanded}

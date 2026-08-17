@@ -2,6 +2,7 @@ import { HumanDetailDialog } from '@/components/settings/human-detail-dialog'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
+import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import {
@@ -38,7 +39,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/settings/members')({
 
 function MembersPage() {
 	const { workspaceId } = useWorkspace()
-	const { data: members, isLoading } = useWorkspaceMembers(workspaceId)
+	const { data: members, isLoading, isError, error, refetch } = useWorkspaceMembers(workspaceId)
 	const addMember = useAddWorkspaceMember(workspaceId)
 	const navigate = useNavigate()
 	const [showAddDialog, setShowAddDialog] = useState(false)
@@ -124,6 +125,12 @@ function MembersPage() {
 
 			{isLoading ? (
 				<ListSkeleton />
+			) : isError && !members ? (
+				<QueryStateError
+					title="Couldn't load members"
+					error={error ?? new Error('Try again in a moment.')}
+					onRetry={() => refetch()}
+				/>
 			) : !members?.length ? (
 				<EmptyState title="No members" />
 			) : (

@@ -1,5 +1,6 @@
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
+import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import {
@@ -32,7 +33,13 @@ export const Route = createFileRoute('/_authed/$workspaceId/settings/integration
 function IntegrationsPage() {
 	const { workspaceId } = useWorkspace()
 	const { data: integrations, isLoading: integrationsLoading } = useIntegrations(workspaceId)
-	const { data: providers, isLoading: providersLoading } = useProviders()
+	const {
+		data: providers,
+		isLoading: providersLoading,
+		isError: providersError,
+		error: providersErrorObj,
+		refetch: refetchProviders,
+	} = useProviders()
 
 	const isLoading = integrationsLoading || providersLoading
 	const [apiKeyProvider, setApiKeyProvider] = useState<ProviderInfo | null>(null)
@@ -57,6 +64,12 @@ function IntegrationsPage() {
 		<div>
 			{isLoading ? (
 				<ListSkeleton />
+			) : providersError ? (
+				<QueryStateError
+					title="Couldn't load integrations"
+					error={providersErrorObj ?? new Error('Something went wrong.')}
+					onRetry={() => refetchProviders()}
+				/>
 			) : !providers?.length ? (
 				<EmptyState
 					title="No providers available"

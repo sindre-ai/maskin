@@ -1,5 +1,6 @@
 import { PageHeader } from '@/components/layout/page-header'
 import { Skeleton } from '@/components/shared/loading-skeleton'
+import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
 import { TriggerForm } from '@/components/triggers/trigger-form'
 import type { TriggerFormPayload } from '@/components/triggers/trigger-form'
@@ -25,7 +26,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/triggers/$triggerId'
 function TriggerDetailPage() {
 	const { triggerId } = Route.useParams()
 	const { workspaceId, workspace } = useWorkspace()
-	const { data: trigger, isLoading } = useTrigger(triggerId, workspaceId)
+	const { data: trigger, isLoading, isError, error, refetch } = useTrigger(triggerId, workspaceId)
 	const { data: actors } = useActors(workspaceId)
 	const createTrigger = useCreateTrigger(workspaceId)
 	const updateTrigger = useUpdateTrigger(workspaceId)
@@ -47,6 +48,20 @@ function TriggerDetailPage() {
 				<Skeleton className="h-8 w-64" />
 				<Skeleton className="h-4 w-full max-w-96" />
 				<Skeleton className="h-32 w-full" />
+			</div>
+		)
+	}
+
+	// The triggers list fetch failing shouldn't silently drop the user into
+	// create mode — that's a real load failure and needs a retry surface.
+	if (isError && !isCreated) {
+		return (
+			<div className="max-w-3xl mx-auto">
+				<QueryStateError
+					title="Couldn't load this trigger"
+					error={error ?? new Error('Something went wrong.')}
+					onRetry={() => refetch()}
+				/>
 			</div>
 		)
 	}

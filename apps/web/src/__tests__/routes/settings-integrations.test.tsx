@@ -41,6 +41,10 @@ vi.mock('@/components/shared/route-error', () => ({
 	RouteError: () => <div>Error</div>,
 }))
 
+vi.mock('@/components/shared/query-state', () => ({
+	QueryStateError: ({ title }: { title: string }) => <div>{title}</div>,
+}))
+
 import { Route } from '@/routes/_authed/$workspaceId/settings/integrations'
 
 const IntegrationsPage = (Route as unknown as { component: React.FC }).component
@@ -55,6 +59,19 @@ describe('IntegrationsPage', () => {
 		mockUseProviders.mockReturnValue({ data: undefined, isLoading: true })
 		render(<IntegrationsPage />)
 		expect(screen.getByTestId('list-skeleton')).toBeInTheDocument()
+	})
+
+	it('shows inline error when providers fetch fails', () => {
+		mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
+		mockUseProviders.mockReturnValue({
+			data: undefined,
+			isLoading: false,
+			isError: true,
+			error: new Error('Network error'),
+			refetch: vi.fn(),
+		})
+		render(<IntegrationsPage />)
+		expect(screen.getByText("Couldn't load integrations")).toBeInTheDocument()
 	})
 
 	it('shows empty state when no providers available', () => {

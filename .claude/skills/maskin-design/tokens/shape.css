@@ -1,0 +1,37 @@
+/* v2 radii — every step the mockup uses. Assign by intent, not by px. */
+
+:root {
+  /* --- radii by intent --- */
+  --r-tag: 2px;         /* mono id tag, thin bar */
+  --r-tag-2: 3px;       /* object-type dot square (Forge avatar) */
+  --r-input-sm: 5px;    /* palette result key-hint, dense chip */
+  --r-input: 6px;       /* small button, object chip */
+  --r-key: 7px;         /* new-picker glyph tile */
+  --r-btn: 8px;         /* button, nav item, icon tile */
+  --r-btn-lg: 9px;      /* command palette glyph tile */
+  --r-panel: 10px;      /* mobile drawer nav item */
+  --r-input-lg: 11px;
+  --r-card: 12px;       /* card, inline panel */
+  --r-card-lg: 13px;
+  --r-card-xl: 14px;    /* brief card, video frame */
+  --r-panel-lg: 15px;
+  --r-panel-xl: 16px;
+  --r-hero: 18px;
+  --r-pill: 99px;       /* full pill — toast, unread-badge pill */
+  --r-round: 999px;     /* fully round — dots, prompt chips */
+  --r-avatar: 50%;      /* round avatar (default) */
+
+  /* --- border widths --- */
+  --border-hair: 1px;         /* card, input, list rule */
+  --border-emphasis: 1.5px;   /* focus, active card top-rule */
+  --border-strong: 2px;       /* button icon stroke-width, focus ring */
+
+  /* --- elevation --- */
+  --elev-flat: none;
+  --elev-hover: 0 4px 16px rgba(0, 0, 0, .07);        /* card hover lift */
+  --elev-card: 0 1px 4px rgba(0, 0, 0, .12);          /* subtle card lift */
+  --elev-modal: 0 8px 24px rgba(0, 0, 0, .25);        /* modal, drawer */
+
+  /* --- borders on interactive elements ---
+     `1.5px` is the signature emphasis. `1px` is the default hairline. */
+}

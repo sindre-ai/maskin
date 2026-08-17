@@ -1,5 +1,6 @@
 import { EmptyState } from '@/components/shared/empty-state'
-import { Spinner } from '@/components/ui/spinner'
+import { ListSkeleton } from '@/components/shared/loading-skeleton'
+import { QueryStateError } from '@/components/shared/query-state'
 import type { ActorListItem, NotificationResponse, ObjectResponse } from '@/lib/api'
 import type { BetStatusResult } from '@/lib/bet-status'
 import { cn } from '@/lib/cn'
@@ -49,6 +50,7 @@ interface ListViewProps {
 	hasNextPage?: boolean
 	isFetchingNextPage?: boolean
 	isError?: boolean
+	error?: Error | null
 	fetchNextPage?: () => void
 	isLoading?: boolean
 	// Controlled group-expansion state (the same contract DataTable exposed).
@@ -81,6 +83,7 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 		hasNextPage,
 		isFetchingNextPage,
 		isError,
+		error,
 		fetchNextPage,
 		isLoading,
 		expanded,
@@ -296,10 +299,15 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 		))
 
 	if (isLoading) {
+		return <ListSkeleton />
+	}
+
+	if (isError && data.length === 0) {
 		return (
-			<div className="flex items-center justify-center py-12">
-				<Spinner />
-			</div>
+			<QueryStateError
+				title="Couldn't load objects"
+				error={error instanceof Error ? error : new Error('Unknown error')}
+			/>
 		)
 	}
 
@@ -345,7 +353,7 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 												<span
 													aria-hidden="true"
 													className={cn(
-														'h-1.5 w-1.5 shrink-0 rounded-[2px] bg-current',
+														'h-1.5 w-1.5 shrink-0 rounded-sm bg-current',
 														statusDot.text,
 													)}
 												/>
@@ -379,8 +387,8 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 			</ul>
 			<div ref={sentinelRef} className="h-1" />
 			{isFetchingNextPage && (
-				<div className="flex items-center justify-center py-4">
-					<Spinner />
+				<div className="py-2">
+					<ListSkeleton rows={2} />
 				</div>
 			)}
 		</div>
