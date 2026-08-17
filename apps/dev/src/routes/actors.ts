@@ -6,9 +6,11 @@ import {
 	actors,
 	agentFiles,
 	agentSkills,
+	conversationParticipants,
 	files,
 	imports,
 	integrations,
+	messages,
 	notifications,
 	objects,
 	orphanThreadDetections,
@@ -1015,6 +1017,15 @@ app.openapi(deleteActorRoute, (async (c) => {
 			.delete(orphanThreadDetections)
 			.where(eq(orphanThreadDetections.expectedReplyActorId, id))
 
+		// conversation_participants.actor_id/added_by are RESTRICT FKs to
+		// actors.id with no cascade — null out added_by on surviving rows,
+		// then drop this actor's own participant rows.
+		await tx
+			.update(conversationParticipants)
+			.set({ addedBy: null })
+			.where(eq(conversationParticipants.addedBy, id))
+		await tx.delete(conversationParticipants).where(eq(conversationParticipants.actorId, id))
+
 		// Reassign objects
 		await tx.update(objects).set({ driver: null }).where(eq(objects.driver, id))
 		await tx.update(objects).set({ createdBy: actorId }).where(eq(objects.createdBy, id))
@@ -1022,6 +1033,9 @@ app.openapi(deleteActorRoute, (async (c) => {
 		// Reassign workspace artifacts authored by this agent
 		await tx.update(files).set({ createdBy: actorId }).where(eq(files.createdBy, id))
 		await tx.update(imports).set({ createdBy: actorId }).where(eq(imports.createdBy, id))
+		// messages.actor_id is NOT NULL with no cascade — reassign authorship
+		// to the deleting actor rather than deleting message history.
+		await tx.update(messages).set({ actorId }).where(eq(messages.actorId, id))
 		await tx
 			.update(workspaceSkills)
 			.set({ createdBy: null })
