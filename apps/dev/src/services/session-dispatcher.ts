@@ -1,5 +1,5 @@
 import type { Database } from '@maskin/db'
-import { agentServers, sessions } from '@maskin/db/schema'
+import { events, agentServers, sessions } from '@maskin/db/schema'
 import { and, eq, inArray, sql } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import {
@@ -235,14 +235,18 @@ export class SessionDispatcher {
 		sandboxName: string,
 	): Promise<void> {
 		const [session] = await this.db
-			.select({ config: sessions.config })
+			.select({
+				config: sessions.config,
+				workspaceId: sessions.workspaceId,
+				actorId: sessions.actorId,
+			})
 			.from(sessions)
 			.where(eq(sessions.id, sessionId))
 			.limit(1)
 		const config = (session?.config ?? {}) as Record<string, unknown>
 		const timeoutSeconds = (config.timeout_seconds as number) ?? 7200
 		const now = new Date()
-		await this.db
+		const [updated] = await this.db
 			.update(sessions)
 			.set({
 				status: 'running',
@@ -255,5 +259,21 @@ export class SessionDispatcher {
 			.where(
 				and(eq(sessions.id, sessionId), sql`${sessions.status} NOT IN ('completed', 'failed')`),
 			)
+			.returning({ id: sessions.id })
+
+		// Same rationale as the local-container path in session-manager.ts —
+		// without this, the frontend never learns the session left 'pending'
+		// and live-activity surfaces (e.g. the chat typing indicator) never
+		// refetch to pick it up.
+		if (updated && session) {
+			await this.db.insert(events).values({
+				workspaceId: session.workspaceId,
+				actorId: session.actorId,
+				action: 'session_started',
+				entityType: 'session',
+				entityId: sessionId,
+				data: {},
+			})
+		}
 	}
 }

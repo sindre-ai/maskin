@@ -28,9 +28,17 @@ import { jsonGet, jsonRequest } from '../helpers'
 import { createIntegrationApp, db, getTestActorId } from './global-setup'
 
 const { default: actorsRoutes } = await import('../../routes/actors')
+const { default: workspacesRoutes } = await import('../../routes/workspaces')
 
 function createApp() {
 	return createIntegrationApp({ path: '/api/actors', module: actorsRoutes })
+}
+
+function createMcpFlowApp() {
+	return createIntegrationApp(
+		{ path: '/api/actors', module: actorsRoutes },
+		{ path: '/api/workspaces', module: workspacesRoutes },
+	)
 }
 
 describe('Actors Integration — GET /:id', () => {
@@ -194,5 +202,71 @@ describe('Actors Integration — DELETE', () => {
 		expect(fileAfter.createdBy).toBe(humanId)
 		const [importAfter] = await db.select().from(imports).where(eq(imports.id, importRow.id))
 		expect(importAfter.createdBy).toBe(humanId)
+	})
+})
+
+// Regression coverage for the MCP `create_actor` workspace-attach path.
+// The MCP handler in packages/mcp/src/server.ts (~L2708) calls two HTTP
+// endpoints in sequence — POST /api/actors (skipAuth) then POST
+// /api/workspaces/:id/members (caller-auth) — and the reported bug
+// (insight 4beeafd5) was that the second call silently failed on some
+// deployments, leaving new agents un-attached to the workspace they were
+// created in. This test replays that exact HTTP sequence against real
+// Postgres and asserts the new agent is queryable via the same list
+// endpoint list_actors reads (`GET /api/actors?workspace_id=...`) with
+// role = 'member'. A regression that breaks the members insert or the
+// workspace-scoped list query will fail this test.
+describe('Actors Integration — MCP create_actor + attach flow', () => {
+	it('creates an agent and attaches it to the workspace so list_actors returns it as a member', async () => {
+		const app = createMcpFlowApp()
+		const ws = await insertWorkspace(db, getTestActorId())
+
+		const createRes = await app.request(
+			jsonRequest('POST', '/api/actors', { type: 'agent', name: 'MCP-created agent' }),
+		)
+		expect(createRes.status).toBe(201)
+		const created = await createRes.json()
+		expect(created.id).toBeDefined()
+		expect(created.type).toBe('agent')
+		// Agents don't get an auto-created workspace, so the create response
+		// has no workspace_id — the MCP handler adds the attach in a second call.
+		expect(created.workspace_id).toBeUndefined()
+
+		const attachRes = await app.request(
+			jsonRequest(
+				'POST',
+				`/api/workspaces/${ws.id}/members`,
+				{ actor_id: created.id, role: 'member' },
+				{ 'x-workspace-id': ws.id },
+			),
+		)
+		expect(attachRes.status).toBe(201)
+		expect(await attachRes.json()).toEqual({ added: true })
+
+		// list_actors: same query as `GET /api/actors?workspace_id=<id>` via
+		// the workspace-scoped branch. The new agent must appear with the
+		// role recorded on the workspaceMembers join.
+		const listRes = await app.request(jsonGet('/api/actors', { 'x-workspace-id': ws.id }))
+		expect(listRes.status).toBe(200)
+		const members = (await listRes.json()) as Array<{
+			id: string
+			name: string
+			type: string
+			role: string
+		}>
+		const newAgent = members.find((m) => m.id === created.id)
+		expect(newAgent).toBeDefined()
+		expect(newAgent?.role).toBe('member')
+		expect(newAgent?.type).toBe('agent')
+
+		// Belt-and-braces DB check: exactly one workspaceMembers row for the
+		// new agent in this workspace.
+		const rows = await db
+			.select()
+			.from(workspaceMembers)
+			.where(eq(workspaceMembers.actorId, created.id))
+		expect(rows).toHaveLength(1)
+		expect(rows[0].workspaceId).toBe(ws.id)
+		expect(rows[0].role).toBe('member')
 	})
 })

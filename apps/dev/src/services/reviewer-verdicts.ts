@@ -71,9 +71,10 @@ export interface PrecisionSummary {
 }
 
 /**
- * Persist one reviewer verdict. Called by T6's reviewer path (or by tests /
- * the MCP tool) right after `maskin_review_work` produces a verdict. Also
- * fires the `reviewer_verdict_submitted` PostHog event so the ship-metric
+ * Persist one reviewer verdict. Called from agent-builder.ts's reviewWork()
+ * right after the reviewer produces a verdict — reachable via the merged
+ * maskin_reviewer_verdict MCP tool. Also fires the
+ * `reviewer_verdict_submitted` PostHog event so the ship-metric
  * pipeline (`posthog_query` on the bet: `reviewer_verdict_submitted`) sees
  * the same row that lands in `reviewer_verdicts`.
  */
@@ -177,6 +178,7 @@ export async function rateReviewerVerdict(input: RateVerdictInput): Promise<{
 	id: string
 	humanAgreed: boolean
 	humanCriteriaDisagreements: string[] | null
+	rubricId: string
 }> {
 	const { db, workspaceId, verdictId, ratedByActorId, humanAgreed, criteriaDisagreements, note } =
 		input
@@ -256,6 +258,7 @@ export async function rateReviewerVerdict(input: RateVerdictInput): Promise<{
 		id: updated.id,
 		humanAgreed: updated.humanAgreed as boolean,
 		humanCriteriaDisagreements: (updated.humanCriteriaDisagreements as string[] | null) ?? null,
+		rubricId: existing.rubricId,
 	}
 }
 

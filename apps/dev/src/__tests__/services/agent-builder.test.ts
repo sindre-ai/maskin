@@ -7,6 +7,7 @@ import {
 	loadReviewTarget,
 	refineAgent,
 	reviewWork,
+	reviewerVerdictWorkflow,
 	safeParseJson,
 	summariseRefineDiff,
 } from '../../services/agent-builder'
@@ -18,8 +19,26 @@ vi.mock('../../services/llm-call', () => ({
 	callLlm: vi.fn(),
 }))
 
+// Real implementation by default; individual tests override
+// computeReviewerPrecision to exercise reviewerVerdictWorkflow's isolation of
+// precision-summary failures from an already-committed review/rating.
+vi.mock('../../services/reviewer-verdicts', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../services/reviewer-verdicts')>()
+	return {
+		...actual,
+		computeReviewerPrecision: vi.fn(actual.computeReviewerPrecision),
+	}
+})
+
 const { callLlm: mockedCallLlm } = await import('../../services/llm-call')
 const callLlm = mockedCallLlm as unknown as ReturnType<typeof vi.fn>
+
+const { computeReviewerPrecision: mockedComputeReviewerPrecision } = await import(
+	'../../services/reviewer-verdicts'
+)
+const computeReviewerPrecision = mockedComputeReviewerPrecision as unknown as ReturnType<
+	typeof vi.fn
+>
 
 const WORKSPACE_ID = '11111111-1111-1111-1111-111111111111'
 const CALLER_ACTOR_ID = '22222222-2222-2222-2222-222222222222'
@@ -132,6 +151,10 @@ describe('reviewWork — standalone reviewer', () => {
 		expect(out.rubricId).toBe(RUBRIC_ID)
 		expect(out.targetActorId).toBeNull()
 		expect(callLlm).toHaveBeenCalledTimes(1)
+		// object_id reviews with no target_actor_id have nothing to persist
+		// against — the verdict is computed but stays unpersisted/unratable.
+		expect(out.persisted).toBe(false)
+		expect(out.verdictId).toBeNull()
 	})
 
 	it('rejects a session_id review when the session is still running', async () => {
@@ -184,6 +207,33 @@ describe('reviewWork — standalone reviewer', () => {
 				objectId: OBJECT_ID,
 			}),
 		).rejects.toMatchObject({ name: 'AgentReviewTargetError', reason: 'target_not_found' })
+	})
+})
+
+describe('reviewerVerdictWorkflow — precision summary isolation', () => {
+	beforeEach(() => {
+		vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+		vi.spyOn(console, 'error').mockImplementation(() => undefined)
+	})
+	afterEach(() => vi.restoreAllMocks())
+
+	it('degrades to precisionSummary: null instead of throwing when computeReviewerPrecision fails', async () => {
+		computeReviewerPrecision.mockRejectedValueOnce(new Error('connection reset'))
+		const ctxCtx = createTestContext()
+
+		const out = await reviewerVerdictWorkflow(ctxCtx.db, {
+			workspaceId: WORKSPACE_ID,
+			actorId: CALLER_ACTOR_ID,
+			rubricId: RUBRIC_ID,
+		})
+
+		// A rubric_id-only call has nothing to review or rate — the point of
+		// this test is only that the precision-summary failure doesn't
+		// propagate and take down the whole call.
+		expect(out.review).toBeNull()
+		expect(out.rating).toBeNull()
+		expect(out.precisionSummary).toBeNull()
+		expect(computeReviewerPrecision).toHaveBeenCalledTimes(1)
 	})
 })
 
@@ -245,6 +295,11 @@ describe('refineAgent', () => {
 		const firstStage3 = callLlm.mock.calls[0]?.[0] as { user: string } | undefined
 		expect(firstStage3?.user).toMatch(/REVISION FEEDBACK/)
 		expect(firstStage3?.user).toMatch(/Sharpen the bias statement/)
+		// It must also anchor on the actor's actual current system prompt
+		// (verbatim) so unrelated sections carry forward instead of drifting —
+		// this is the whole point of refineAgent's revision-anchoring fix.
+		expect(firstStage3?.user).toMatch(/CURRENT SYSTEM PROMPT/)
+		expect(firstStage3?.user).toContain('previous background')
 	})
 
 	it('rejects refinement when the context is empty or whitespace-only', async () => {

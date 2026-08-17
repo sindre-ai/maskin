@@ -6,7 +6,7 @@ import { TypeBadge } from '@/components/shared/type-badge'
 import { Button } from '@/components/ui/button'
 import { useEntityThread } from '@/hooks/use-entity-thread'
 import { useCreateComment } from '@/hooks/use-events'
-import { useMarkRead } from '@/hooks/use-subscriptions'
+import { useMarkRead, useMarkUnread } from '@/hooks/use-subscriptions'
 import { useSwipeToMarkRead } from '@/hooks/use-swipe-to-mark-read'
 import { trackForyouCardAction, trackForyouCardShown } from '@/lib/analytics'
 import type { UnreadItem } from '@/lib/api'
@@ -112,6 +112,14 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 			markRead.mutate({ entityType: item.entity_type, entityId: objectId, lastEventId: target })
 		}, [markRead, item.entity_type, objectId, item.latest_event_id, latestEventId])
 
+		// Not used as a swipe gesture here (queue cards are always unread) —
+		// wired into the hook purely so Undo has a real reverse mutation to
+		// call after a mark-read commit has already landed.
+		const markUnread = useMarkUnread(workspaceId)
+		const handleMarkUnread = useCallback(() => {
+			markUnread.mutate({ entityType: item.entity_type, entityId: objectId })
+		}, [markUnread, item.entity_type, objectId])
+
 		const replyTarget = firstUnreadRootId ?? latestRootId ?? undefined
 		const quickReply = useCreateComment(workspaceId, objectId)
 
@@ -149,6 +157,7 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 			commit,
 		} = useSwipeToMarkRead({
 			onMarkRead: handleMarkRead,
+			onMarkUnread: handleMarkUnread,
 			analytics: { entity_type: item.entity_type, entity_id: objectId },
 			onCommitScheduled: () => {
 				beginExit('right')
@@ -161,8 +170,6 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 			onCommitSettled: () => onCommitSettled(itemKey),
 			onSwipeLeft: handleSkip,
 		})
-
-		const [summaryExpanded, setSummaryExpanded] = useState(false)
 
 		// Decision → decided-receipt is fully independent of the swipe hook: its
 		// own phase state, own timer, own "Reverse this" undo. Defer-then-commit
@@ -242,10 +249,22 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 			handleSkip,
 		])
 
+		// Everything older than the unread boundary starts collapsed — the card's
+		// job is triaging what's new, not re-reading history. "Read more" reveals
+		// it on demand; there's no re-collapse since the reveal is one-directional.
+		const [earlierExpanded, setEarlierExpanded] = useState(false)
+		const boundaryIndex =
+			firstUnreadRootId !== null
+				? nodes.findIndex((node) => node.root.id === firstUnreadRootId)
+				: -1
+		const earlierNodes = boundaryIndex > 0 ? nodes.slice(0, boundaryIndex) : []
+		const visibleNodes =
+			earlierExpanded || earlierNodes.length === 0 ? nodes : nodes.slice(boundaryIndex)
+		const earlierCount = earlierNodes.reduce((sum, node) => sum + 1 + node.replies.length, 0)
+
 		const title = item.object?.title ?? 'Untitled'
 		const objectType = item.object?.type
 		const objectStatus = item.object?.status
-		const insightPreview = (item.object?.content ?? '').trim()
 		const chipActions: readonly CardAction[] =
 			cardKind === 'sign_off' || cardKind === 'proposed_bet'
 				? CARD_ACTIONS[cardKind]
@@ -305,33 +324,28 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 					onTransitionEnd={handleExitTransitionEnd}
 				>
 					{/* Header */}
-					<div className="flex items-start gap-3 border-b border-border px-4 py-3">
-						{objectType && <TypeBadge type={objectType} />}
-						<div className="min-w-0 flex-1">
-							<Link
-								to="/$workspaceId/objects/$objectId"
-								params={{ workspaceId, objectId }}
-								className="block truncate text-[15px] font-semibold leading-snug text-foreground hover:underline"
-								title={title}
-							>
-								{title}
-							</Link>
-							<div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-								{objectStatus && <StatusBadge status={objectStatus} variant="dot-word" />}
-								{item.latest_activity_at && (
-									<>
-										{objectStatus && (
-											<span aria-hidden className="opacity-50">
-												·
-											</span>
-										)}
-										<RelativeTime
-											date={item.latest_activity_at}
-											className="font-mono tabular-nums"
-										/>
-									</>
-								)}
-							</div>
+					<div className="flex items-center gap-2 border-b border-border px-4 py-3">
+						{objectType && <TypeBadge type={objectType} variant="mono" className="shrink-0" />}
+						<Link
+							to="/$workspaceId/objects/$objectId"
+							params={{ workspaceId, objectId }}
+							className="min-w-0 flex-1 truncate text-[15px] font-semibold leading-snug text-foreground hover:underline"
+							title={title}
+						>
+							{title}
+						</Link>
+						<div className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+							{objectStatus && <StatusBadge status={objectStatus} variant="dot-word" />}
+							{item.latest_activity_at && (
+								<>
+									{objectStatus && (
+										<span aria-hidden className="opacity-50">
+											·
+										</span>
+									)}
+									<RelativeTime date={item.latest_activity_at} className="font-mono tabular-nums" />
+								</>
+							)}
 						</div>
 						<Button size="sm" variant="outline" className="h-8 shrink-0 text-xs" asChild>
 							<Link to="/$workspaceId/objects/$objectId" params={{ workspaceId, objectId }}>
@@ -370,7 +384,16 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 							<p className="py-4 text-center text-sm text-muted-foreground">Loading…</p>
 						) : (
 							<div className="space-y-1.5">
-								{nodes.map((node) => {
+								{earlierNodes.length > 0 && !earlierExpanded && (
+									<button
+										type="button"
+										onClick={() => setEarlierExpanded(true)}
+										className="mb-1.5 w-full rounded-md border border-border bg-secondary/40 py-1.5 text-center text-xs font-medium text-muted-foreground hover:bg-secondary hover:text-foreground"
+									>
+										Read more ({earlierCount} earlier)
+									</button>
+								)}
+								{visibleNodes.map((node) => {
 									const dividerOnRoot =
 										firstUnreadEventId !== null && firstUnreadEventId === node.root.id
 									const dividerInsideThread =

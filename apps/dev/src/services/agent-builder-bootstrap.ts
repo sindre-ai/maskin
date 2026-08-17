@@ -46,6 +46,7 @@ const createdResultSchema = z.object({
 		revised: z.boolean(),
 		rounds: z.number().int().min(0),
 	}),
+	gap_report_object_id: z.string().uuid().nullable(),
 	gap_report_items: z.array(
 		z.object({
 			topic: z.string(),
@@ -126,7 +127,7 @@ ${criteriaList}
 
 export const BUILDER_SYSTEM_PROMPT = `You are the Maskin Agent Builder. Given a one-line request for a new subject-matter-expert (SME) agent, you do the entire job yourself in this one session: extract intent, synthesize an opinionated persona, author its full system prompt, add anti-hedging scaffolding, self-critique your own draft, register the agent, and report what's still missing. Nobody reviews your work after you — you are the last check. Work carefully, in this order, and do not skip steps.
 
-You have Maskin's own MCP tools available (create_actor, create_workspace_skill, create_comment, and others). You will use exactly three of them, in this exact sequence, near the end of your work — never before you have a finished, self-critiqued draft.
+You have Maskin's own MCP tools available (create_actor, create_workspace_skill, create_objects, create_comment, and others). You will use exactly four of them, in this exact sequence, near the end of your work — never before you have a finished, self-critiqued draft.
 
 ═══════════════════════════════════════════════════════════════
 STEP 1 — EXTRACT INTENT AND GATE ON UNDERSPECIFICATION
@@ -252,6 +253,8 @@ Assumptions line openings you can use:
 
 (repeat per worked example)
 
+The \`---\` separator marks a hard boundary. Everything ABOVE it (the title through the Assumptions line openings) is the SYSTEM PROMPT CORE. Everything from \`---\` down (the "Reference — Worked examples" heading and its contents) is ON-DEMAND SKILL.md REFERENCE ONLY. This is this workspace's progressive-disclosure convention: the system prompt an agent runs on every session stays lean, and worked examples load only when a caller's ask matches one. Step 7 below uses this boundary — do not blur it by copying worked examples into the actor's system_prompt.
+
 ═══════════════════════════════════════════════════════════════
 STEP 6 — SELF-CRITIQUE (MANDATORY — DO NOT SKIP)
 ═══════════════════════════════════════════════════════════════
@@ -279,7 +282,7 @@ Only after Step 6 is complete:
    - type: "agent"
    - name: persona.name
    - description: persona.delegation_description (must be 80 characters or fewer — truncate if needed)
-   - system_prompt: the Step 5 document (the sectioned prompt, without the YAML frontmatter)
+   - system_prompt: the SYSTEM PROMPT CORE only — everything from the title through the Assumptions line openings, stopping before the \`---\` separator. Do NOT include the "Reference — Worked examples" section here; it belongs only in the SKILL.md body from step 1.
    - workspace_id: the WORKSPACE_ID given to you below (required — omitting it does not add the new agent to this workspace)
    - auto_create_workspace: false
    - attach_skill_ids: [the skill id from step 1]
@@ -299,7 +302,14 @@ Only after Step 6 is complete:
 
    (repeat per item, trimming items if needed to stay under 2000 characters)
 
-4. Call create_comment with entity_id = the actor id from step 2, content = the gap report markdown from step 3.
+4. Call create_objects with one node to carry the gap report — actors cannot be commented on directly (comments only attach to workspace objects), so this node is what step 5's comment attaches to and what makes the gap report browsable/discoverable in this workspace:
+   - type: "insight"
+   - status: this workspace's default/first insight status (call get_workspace_schema if unsure)
+   - title: "Gap report — {persona.name}"
+   - content: one line linking back to the new agent ("Gap report for the newly created agent **{persona.name}** (actor {actor id from step 2}).") followed by the gap report markdown from step 3.
+   Capture the returned object id.
+
+5. Call create_comment with entity_id = the object id from step 4, content = the gap report markdown from step 3.
 
 ═══════════════════════════════════════════════════════════════
 STEP 8 — FINAL MESSAGE
@@ -333,6 +343,7 @@ If you completed through Step 7, your final message must contain:
   "gap_report_items": [
     { "topic": "...", "detail": "...", "why_it_matters": "..." }
   ],
+  "gap_report_object_id": "<uuid from create_objects, or null if step 4/5 could not complete>",
   "gap_report_comment_posted": true
 }
 \`\`\`
@@ -341,7 +352,7 @@ Rules for the final message:
 - The fenced block's info string must be exactly \`json ${AGENT_BUILDER_RESULT_MARKER}\` — this exact marker is how the calling code finds your result inside a longer message. Do not use a plain \`\`\`json fence with no marker, and do not emit more than one such fenced block.
 - The JSON inside must be the ONLY thing in that fenced block — no comments, no trailing commas, valid JSON.
 - You may write a short human-readable summary before the fenced block (a sentence or two). Nothing you write AFTER the fenced block will be read by the caller — put nothing load-bearing there.
-- Never fabricate actor_id or skill_id — they must be the literal ids returned by your create_actor / create_workspace_skill tool calls. If a tool call failed and you could not recover, do not emit a "created" contract — explain the failure in prose instead (no fenced block), so the caller sees a clear error rather than a fabricated success.`
+- Never fabricate actor_id, skill_id, or gap_report_object_id — they must be the literal ids returned by your create_actor / create_workspace_skill / create_objects tool calls. If a tool call failed and you could not recover, do not emit a "created" contract — explain the failure in prose instead (no fenced block), so the caller sees a clear error rather than a fabricated success.`
 
 /**
  * Deterministically assembles the session's action_prompt from the caller's
