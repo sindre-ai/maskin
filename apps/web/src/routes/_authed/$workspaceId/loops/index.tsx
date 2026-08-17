@@ -107,12 +107,15 @@ function LoopsPage() {
 					}
 				/>
 			) : (
-				<div className="space-y-8">
+				<div className="space-y-10">
 					{hasLoops && (
-						<section className="space-y-2">
-							<p className="text-xs text-muted-foreground">
-								Persistent multi-agent pipelines running in this workspace.
-							</p>
+						<section className="space-y-3">
+							<header className="space-y-1">
+								<div className="eyebrow">Loops</div>
+								<p className="text-xs text-muted-foreground">
+									Persistent multi-agent pipelines running in this workspace.
+								</p>
+							</header>
 							<div className="space-y-2">
 								{loops?.map((loop) => (
 									<LoopRow key={loop.id} loop={loop} actors={actors} />
@@ -121,13 +124,13 @@ function LoopsPage() {
 						</section>
 					)}
 					{hasStandalone && (
-						<section className="space-y-2">
-							<div>
-								<h2 className="text-sm font-medium text-foreground">Not tied to a loop</h2>
+						<section className="space-y-3">
+							<header className="space-y-1">
+								<div className="eyebrow">Not tied to a loop</div>
 								<p className="text-xs text-muted-foreground">
 									Workspace-wide automations that run on their own.
 								</p>
-							</div>
+							</header>
 							<div className="space-y-2">
 								{standaloneTriggers.map((trigger) => {
 									const agent = actors?.find((a) => a.id === trigger.targetActorId)
@@ -144,20 +147,20 @@ function LoopsPage() {
 						</section>
 					)}
 					{hasAssignedInChat && (
-						<section className="space-y-2">
-							<div>
-								<h2 className="text-sm font-medium text-foreground">Assigned in chat</h2>
+						<section className="space-y-3">
+							<header className="space-y-1">
+								<div className="eyebrow">Assigned in chat</div>
 								<p className="text-xs text-muted-foreground">
 									Work you handed an agent yourself, outside any cycle.
 								</p>
-							</div>
+							</header>
 							<div className="space-y-2">
 								{assignedInChat.map((session) => {
 									const agent = actors?.find((a) => a.id === session.actorId)
 									return (
 										<div
 											key={session.id}
-											className="flex items-center gap-3 rounded-lg border border-border bg-card p-4"
+											className="flex items-center gap-3 rounded-xl border border-border bg-card p-4 shadow-sm"
 										>
 											{agent && <ActorAvatar id={agent.id} name={agent.name} type={agent.type} />}
 											<div className="flex-1 min-w-0">
@@ -165,7 +168,7 @@ function LoopsPage() {
 													<p className="text-sm font-medium text-foreground truncate">
 														{agent?.name ?? 'Agent'}
 													</p>
-													<span className="text-[10px] font-medium text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+													<span className="text-[10px] font-medium text-muted-foreground bg-muted px-1.5 py-0.5 rounded-md">
 														{sessionStateLabel(session.status)}
 													</span>
 												</div>

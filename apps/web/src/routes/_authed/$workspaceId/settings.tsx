@@ -11,9 +11,8 @@ const settingsNav = [
 	{ label: 'Objects', to: '/$workspaceId/settings/objects' as const },
 	{ label: 'Members', to: '/$workspaceId/settings/members' as const },
 	{ label: 'Integrations', to: '/$workspaceId/settings/integrations' as const },
-	{ label: 'Skills', to: '/$workspaceId/settings/skills' as const },
-	{ label: 'LLM', to: '/$workspaceId/settings/keys' as const },
-	{ label: 'MCP', to: '/$workspaceId/settings/mcp' as const },
+	{ label: 'Extensions', to: '/$workspaceId/settings/extensions' as const },
+	{ label: 'Billing', to: '/$workspaceId/settings/billing' as const },
 ]
 
 function SettingsLayout() {
@@ -35,10 +34,10 @@ function SettingsLayout() {
 										to={item.to}
 										params={{ workspaceId }}
 										className={cn(
-											'block whitespace-nowrap rounded-md px-3 py-1.5 text-sm transition-colors',
+											'block whitespace-nowrap rounded-lg px-3 py-1.5 text-sm transition-colors',
 											isActive
-												? 'bg-muted font-medium text-foreground'
-												: 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
+												? 'bg-secondary font-medium text-foreground'
+												: 'text-muted-foreground hover:text-foreground hover:bg-secondary/60',
 										)}
 									>
 										{item.label}

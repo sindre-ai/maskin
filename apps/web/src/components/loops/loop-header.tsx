@@ -26,7 +26,7 @@ export function LoopHeader({
 	return (
 		<div>
 			<div className="flex items-start justify-between gap-3">
-				<h1 className="text-2xl font-semibold tracking-tight text-foreground">
+				<h1 className="text-2xl font-semibold tracking-[-0.022em] text-foreground">
 					{loop.name ?? 'Untitled loop'}
 				</h1>
 				<div className="flex items-center gap-2 shrink-0">

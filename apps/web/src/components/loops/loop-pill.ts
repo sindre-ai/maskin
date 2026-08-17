@@ -6,6 +6,6 @@ export const LOOP_PILL_STYLES: Record<
 > = {
 	running: { label: 'Running', dot: 'bg-success', text: 'text-success' },
 	waiting_on_you: { label: 'Waiting on you', dot: 'bg-warning', text: 'text-warning' },
-	paused: { label: 'Paused', dot: 'bg-zinc-500', text: 'text-muted-foreground' },
-	archived: { label: 'Archived', dot: 'bg-zinc-600', text: 'text-muted-foreground' },
+	paused: { label: 'Paused', dot: 'bg-muted-foreground', text: 'text-muted-foreground' },
+	archived: { label: 'Archived', dot: 'bg-muted-foreground', text: 'text-muted-foreground' },
 }

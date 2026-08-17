@@ -243,21 +243,24 @@ function ChipStrip({
 						key={item.value}
 						type="button"
 						onClick={() => onSelect(item.value)}
+						aria-pressed={isActive}
 						className={cn(
-							'shrink-0 rounded-full border px-3 py-1 text-xs font-medium whitespace-nowrap transition-colors',
+							'inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border bg-background px-3 text-[11.5px] font-semibold transition-colors hover:border-border-strong',
 							isActive
-								? 'border-foreground bg-foreground text-background'
-								: 'border-border bg-background text-muted-foreground hover:text-foreground',
+								? 'border-border-strong bg-secondary text-foreground'
+								: 'border-border text-muted-foreground hover:text-foreground',
 						)}
 					>
-						{item.label}
+						<span>{item.label}</span>
 						{typeof count === 'number' ? (
-							<>
-								{' '}
-								<span className={cn('ml-1.5 tabular-nums', isActive ? 'opacity-80' : 'opacity-60')}>
-									{count}
-								</span>
-							</>
+							<span
+								className={cn(
+									'text-[10.5px] font-semibold tabular-nums',
+									isActive ? 'text-muted-foreground' : 'text-border-strong',
+								)}
+							>
+								{count}
+							</span>
 						) : null}
 					</button>
 				)

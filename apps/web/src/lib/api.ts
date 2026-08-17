@@ -315,6 +315,15 @@ export const api = {
 					method: 'POST',
 					body: data,
 				}),
+			updateRole: (workspaceId: string, actorId: string, role: string) =>
+				request<MemberResponse>(`/workspaces/${workspaceId}/members/${actorId}`, {
+					method: 'PATCH',
+					body: { role },
+				}),
+			remove: (workspaceId: string, actorId: string) =>
+				request<{ removed: boolean }>(`/workspaces/${workspaceId}/members/${actorId}`, {
+					method: 'DELETE',
+				}),
 		},
 	},
 
@@ -533,6 +542,24 @@ export const api = {
 				body: { slot, nickname },
 				workspaceId,
 			}),
+	},
+
+	billing: {
+		summary: (workspaceId: string) => request<BillingSummaryResponse>('/billing', { workspaceId }),
+		startCheckout: (workspaceId: string, invoiceEmail?: string) =>
+			request<BillingCheckoutResponse>('/billing/checkout', {
+				method: 'POST',
+				body: invoiceEmail ? { invoiceEmail } : {},
+				workspaceId,
+			}),
+		complete: (workspaceId: string, paymentIntentId: string, invoiceEmail?: string) =>
+			request<BillingSummaryResponse>('/billing/complete', {
+				method: 'POST',
+				body: invoiceEmail ? { paymentIntentId, invoiceEmail } : { paymentIntentId },
+				workspaceId,
+			}),
+		portal: (workspaceId: string) =>
+			request<{ url: string }>('/billing/portal', { method: 'POST', workspaceId }),
 	},
 
 	marketplaceLoops: {
@@ -1664,4 +1691,37 @@ interface InstalledLoopForkResponse {
 	installedAt: string | null
 	updatedAt: string | null
 	detached: { actors: number; triggers: number; skills: number; integrations: number }
+}
+
+export interface BillingPlanResponse {
+	planId: string
+	planLabel: string | null
+	status: string
+	priceCents: number | null
+	currency: string
+	nextChargeAt: string | null
+}
+
+export interface BillingInvoiceResponse {
+	id: string
+	description: string
+	amountCents: number
+	currency: string
+	status: string
+	billedAt: string
+}
+
+export interface BillingSummaryResponse {
+	configured: boolean
+	testMode: boolean
+	publishableKey: string | null
+	plan: BillingPlanResponse
+	invoiceEmail: string | null
+	invoices: BillingInvoiceResponse[]
+}
+
+export interface BillingCheckoutResponse {
+	clientSecret: string
+	testMode: boolean
+	plan: BillingPlanResponse
 }

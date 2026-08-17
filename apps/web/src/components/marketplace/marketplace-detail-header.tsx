@@ -31,9 +31,7 @@ export function MarketplaceDetailHeader({
 					{getActorInitials(name)}
 				</span>
 				<div className="min-w-[200px] flex-1">
-					<div className="font-mono text-[10px] font-bold tracking-widest text-muted-foreground uppercase">
-						{kindLabel}
-					</div>
+					<div className="eyebrow">{kindLabel}</div>
 					<h1 className="mt-0.5 text-xl font-semibold tracking-tight text-foreground">{name}</h1>
 				</div>
 				{badge}

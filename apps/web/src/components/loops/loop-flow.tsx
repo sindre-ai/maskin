@@ -91,10 +91,10 @@ function formatDuration(ms: number | null | undefined): string | null {
 
 function pillClasses(active: boolean) {
 	return cn(
-		'inline-flex items-center gap-1.5 h-[26px] px-2.5 rounded-full text-[11.5px] font-medium border transition-colors',
+		'inline-flex items-center gap-1.5 h-7 px-3 rounded-full text-[11.5px] font-semibold border transition-colors',
 		active
-			? 'bg-foreground text-background border-foreground'
-			: 'bg-transparent text-muted-foreground border-border hover:border-foreground/40',
+			? 'bg-secondary text-foreground border-border-strong'
+			: 'bg-background text-muted-foreground border-border hover:border-border-strong hover:text-foreground',
 	)
 }
 
@@ -245,7 +245,7 @@ export function LoopFlow({
 		<div>
 			<div className="flex items-center gap-2.5 mb-2.5">
 				<h2 className="text-sm font-semibold text-foreground">The loop, right now</h2>
-				<span className="text-xs text-muted-foreground">
+				<span className="eyebrow">
 					{triggers.length} {triggers.length === 1 ? 'trigger' : 'triggers'} ·{' '}
 					{distinctAgentIds.length} {distinctAgentIds.length === 1 ? 'agent' : 'agents'}
 					{childObjects.length > 0 &&
@@ -277,7 +277,7 @@ export function LoopFlow({
 						className={pillClasses(agentFilter === null)}
 					>
 						All steps
-						<span className="text-[10.5px] opacity-60">{triggers.length}</span>
+						<span className="text-[10.5px] text-border-strong">{triggers.length}</span>
 					</button>
 					{distinctAgentIds.map((agentId) => {
 						const agent = actorsById.get(agentId)
@@ -290,20 +290,18 @@ export function LoopFlow({
 								className={pillClasses(agentFilter === agentId)}
 							>
 								{agent?.name ?? 'Unknown agent'}
-								<span className="text-[10.5px] opacity-60">{count}</span>
+								<span className="text-[10.5px] text-border-strong">{count}</span>
 							</button>
 						)
 					})}
 				</div>
 			)}
 
-			<div className="border border-border rounded-xl bg-card p-3 flex flex-col gap-4">
+			<div className="border border-border rounded-xl bg-card p-3 flex flex-col gap-4 shadow-sm">
 				{shownComesIn.length > 0 && (
 					<div>
 						<div className="flex items-baseline gap-2 mb-2">
-							<span className="text-[9px] font-bold tracking-wider text-muted-foreground uppercase">
-								Comes in
-							</span>
+							<span className="eyebrow">Comes in</span>
 							<span className="text-[10.5px] text-muted-foreground/70">
 								how work reaches the loop
 							</span>
@@ -331,9 +329,7 @@ export function LoopFlow({
 								<span
 									className={cn('h-2 w-2 rounded-full', column.total > 0 ? colors.bg : 'bg-muted')}
 								/>
-								<span className="text-[10px] font-bold tracking-wider text-muted-foreground uppercase">
-									{column.label.replace(/_/g, ' ')}
-								</span>
+								<span className="eyebrow">{column.label.replace(/_/g, ' ')}</span>
 								<span
 									className={cn(
 										'inline-flex items-center rounded-full px-1.5 text-[10.5px] font-semibold',
@@ -375,9 +371,7 @@ export function LoopFlow({
 				{shownAlongside.length > 0 && (
 					<div>
 						<div className="flex items-baseline gap-2 mb-2">
-							<span className="text-[9px] font-bold tracking-wider text-muted-foreground uppercase">
-								Runs alongside
-							</span>
+							<span className="eyebrow">Runs alongside</span>
 							<span className="text-[10.5px] text-muted-foreground/70">
 								schedules and safety nets
 							</span>

@@ -24,11 +24,11 @@ export function ItemCard({ workspaceId, item, install, installedEntity }: ItemCa
 	const locked = install?.isLocked ?? false
 
 	return (
-		<article className="relative flex flex-col gap-3 rounded-lg border border-border bg-background p-4 shadow-sm transition-colors hover:bg-muted/40">
+		<article className="relative flex flex-col gap-3 rounded-xl border border-border bg-card p-4 shadow-sm transition-colors hover:border-border-strong hover:shadow-md">
 			<Link
 				to="/$workspaceId/marketplace/$loopId/$itemId"
 				params={{ workspaceId, loopId: item.loop_id, itemId: item.id }}
-				className="absolute inset-0 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+				className="absolute inset-0 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
 				aria-label={`Open ${name}`}
 			/>
 
@@ -59,7 +59,7 @@ export function ItemCard({ workspaceId, item, install, installedEntity }: ItemCa
 			</div>
 
 			<div className="flex flex-wrap gap-1">
-				<span className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+				<span className="eyebrow rounded-full bg-muted px-2 py-0.5">
 					{ITEM_TYPE_LABEL[item.item_type]}
 				</span>
 			</div>

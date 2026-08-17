@@ -89,11 +89,11 @@ export function LoopChanges({
 	}
 
 	return (
-		<section className="rounded-xl border border-border bg-card">
+		<section className="rounded-xl border border-border bg-card shadow-sm">
 			<div className="flex items-center gap-2 border-b border-border px-4 py-3">
 				<History size={14} className="text-muted-foreground" aria-hidden="true" />
 				<h2 className="text-sm font-semibold text-foreground">Changes</h2>
-				<span className="text-xs text-muted-foreground">recent changes to this loop</span>
+				<span className="eyebrow">recent changes to this loop</span>
 			</div>
 
 			{rows.length === 0 ? (

@@ -41,6 +41,14 @@ const routeConfig: Record<string, RouteConfig> = {
 		label: 'Integrations',
 		parent: '/_authed/$workspaceId/settings/',
 	},
+	'/_authed/$workspaceId/settings/extensions': {
+		label: 'Extensions',
+		parent: '/_authed/$workspaceId/settings/',
+	},
+	'/_authed/$workspaceId/settings/billing': {
+		label: 'Billing',
+		parent: '/_authed/$workspaceId/settings/',
+	},
 	'/_authed/$workspaceId/settings/mcp': {
 		label: 'MCP',
 		parent: '/_authed/$workspaceId/settings/',
