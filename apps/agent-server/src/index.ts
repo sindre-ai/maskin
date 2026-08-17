@@ -691,10 +691,14 @@ export function buildApp(deps: AppDeps): Hono {
 		// on every code path.
 		let releasePreviewPorts: () => void = () => {}
 		if (body.browserRequired === true) {
-			// Resolve preview port relay ports before provisioning the sidecar so
-			// we know which allow@host:tcp:<port> rules the sidecar needs baked in
-			// at create time — the relay itself can only start once the session VM
-			// is Running, further down.
+			// Resolve preview relay ports up front, purely so PREVIEW_URL can be
+			// baked into the session's boot-time env below — the relay itself can
+			// only start once the session VM is Running, further down. The
+			// sidecar no longer needs these exact port numbers pre-baked into its
+			// own rules: it carries a standing allow@host:tcp:<DEV_SERVER_HOST_PORT_RANGE>
+			// grant that already covers wherever resolvePreviewPortMappings lands
+			// (see microsandbox.ts), so this step no longer has to happen before
+			// provisionBrowserSidecar.
 			if (body.previewGuestPorts && body.previewGuestPorts.length > 0) {
 				try {
 					const resolved = await resolvePreviewPortMappings(body.previewGuestPorts, deps.msb)
@@ -710,9 +714,6 @@ export function buildApp(deps: AppDeps): Hono {
 			}
 			browserSidecar = await provisionBrowserSidecar(body.sessionId.slice(0, 16), deps.msb, {
 				image: deps.env.BROWSER_SIDECAR_IMAGE,
-				...(previewPortMappings.length > 0 && {
-					extraAllowedHostPorts: previewPortMappings.map((m) => m.relayPort),
-				}),
 			})
 			if (browserSidecar) {
 				sessionEnv.BROWSER_CDP_URL = browserSidecar.cdpUrl

@@ -267,11 +267,33 @@ describe('buildMsbCreateArgs', () => {
 			if (args[i] === '--net-rule') netRules.push(args[i + 1] as string)
 		}
 		expect(netRules).toEqual([
+			'deny@[fd42:6d73:62::/48]',
 			'allow@host:tcp:3001',
 			'allow@public',
 			'allow@any:udp:53',
 			'allow@any:tcp:53',
 		])
+	})
+
+	it('lists the IPv6 host-alias deny rule before allow@host:tcp:<port> (first-match-wins)', () => {
+		const args = buildMsbCreateArgs({
+			sessionId: 's',
+			image: 'i',
+			memoryMib: 512,
+			cpus: 1,
+			hostPort: 3001,
+			env: {},
+			sessionDir: '/d',
+			extraAllowedHostPorts: [39500],
+		})
+		const netRules: string[] = []
+		for (let i = 0; i < args.length - 1; i++) {
+			if (args[i] === '--net-rule') netRules.push(args[i + 1] as string)
+		}
+		const denyIdx = netRules.indexOf('deny@[fd42:6d73:62::/48]')
+		expect(denyIdx).toBe(0)
+		expect(denyIdx).toBeLessThan(netRules.indexOf('allow@host:tcp:3001'))
+		expect(denyIdx).toBeLessThan(netRules.indexOf('allow@host:tcp:39500'))
 	})
 
 	it('adds one allow@host:tcp:<port> net-rule per extraAllowedHostPorts entry (narrow SSH-relay grant)', () => {
@@ -331,25 +353,39 @@ describe('buildMsbCreateArgs', () => {
 
 describe('resolvePreviewPortMappings', () => {
 	it('resolves one free host-loopback relay port per guest port', async () => {
-		let next = 39500
-		const findPort = async () => next++
+		let next = 3500
+		const findPortInRange = async () => next++
 		const result = await resolvePreviewPortMappings([5173, 3000], {
 			msbBin: '/usr/local/bin/msb',
 			run: async () => ({ stdout: '', stderr: '' }),
-			findPort,
+			findPortInRange,
 		})
 		expect(result.mappings).toEqual([
-			{ guestPort: 5173, relayPort: 39500 },
-			{ guestPort: 3000, relayPort: 39501 },
+			{ guestPort: 5173, relayPort: 3500 },
+			{ guestPort: 3000, relayPort: 3501 },
 		])
 		expect(() => result.release()).not.toThrow()
+	})
+
+	it('allocates within DEV_SERVER_HOST_PORT_RANGE so the sidecar’s standing grant covers it', async () => {
+		const seenRanges: Array<[number, number]> = []
+		const findPortInRange = async (_host: string, rangeStart: number, rangeEnd: number) => {
+			seenRanges.push([rangeStart, rangeEnd])
+			return rangeStart
+		}
+		await resolvePreviewPortMappings([5173], {
+			msbBin: '/usr/local/bin/msb',
+			run: async () => ({ stdout: '', stderr: '' }),
+			findPortInRange,
+		})
+		expect(seenRanges).toEqual([[3000, 12000]])
 	})
 
 	it('returns an empty array for an empty guestPorts list', async () => {
 		const result = await resolvePreviewPortMappings([], {
 			msbBin: '/usr/local/bin/msb',
 			run: async () => ({ stdout: '', stderr: '' }),
-			findPort: async () => 39500,
+			findPortInRange: async () => 3500,
 		})
 		expect(result.mappings).toEqual([])
 		expect(() => result.release()).not.toThrow()
@@ -357,16 +393,16 @@ describe('resolvePreviewPortMappings', () => {
 
 	it('releases already-resolved reservations when a later guest port fails to resolve', async () => {
 		let calls = 0
-		const findPort = async () => {
+		const findPortInRange = async () => {
 			calls++
 			if (calls === 2) throw new Error('no free ports')
-			return 39500 + calls
+			return 3500 + calls
 		}
 		await expect(
 			resolvePreviewPortMappings([5173, 3000], {
 				msbBin: '/usr/local/bin/msb',
 				run: async () => ({ stdout: '', stderr: '' }),
-				findPort,
+				findPortInRange,
 			}),
 		).rejects.toThrow('no free ports')
 	})
@@ -1162,7 +1198,7 @@ describe('provisionBrowserSidecar', () => {
 		expect(calls).toEqual([])
 	})
 
-	it('adds no extra allow@host:tcp:<port> rules when extraAllowedHostPorts is omitted', async () => {
+	it('always carries the deny-IPv6 rule and the static dev-server port range, even with no extraAllowedHostPorts', async () => {
 		const calls: Array<readonly string[]> = []
 		const run = async (
 			_bin: string,
@@ -1186,7 +1222,12 @@ describe('provisionBrowserSidecar', () => {
 			cdpPollReady: async () => {},
 		})
 		const createCall = calls.find((c) => c[0] === 'create')
-		expect(createCall?.some((a) => a.startsWith('allow@host:tcp:'))).toBe(false)
+		expect(createCall).toContain('deny@[fd42:6d73:62::/48]')
+		expect(createCall).toContain('allow@host:tcp:3000-12000')
+		// No extra per-port grants beyond the standing range.
+		expect(createCall?.filter((a) => a.startsWith('allow@host:tcp:'))).toEqual([
+			'allow@host:tcp:3000-12000',
+		])
 	})
 
 	it('adds one allow@host:tcp:<port> net-rule per extraAllowedHostPorts entry (reach a session preview relay)', async () => {
