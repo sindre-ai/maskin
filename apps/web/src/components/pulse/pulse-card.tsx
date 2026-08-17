@@ -6,7 +6,6 @@ import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/componen
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
 import type { ActorListItem, NotificationResponse } from '@/lib/api'
-import { useChat } from '@/lib/chat-context'
 import { resolveNavigationTarget } from '@/lib/navigation'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link, useNavigate } from '@tanstack/react-router'
@@ -133,7 +132,6 @@ interface PulseCardProps {
 export function PulseCard({ notification, actorsById, onAction, onDismiss }: PulseCardProps) {
 	const { workspaceId } = useWorkspace()
 	const navigate = useNavigate()
-	const { openWithContext } = useChat()
 	const metadata = notification.metadata ?? {}
 	const metaText = metadata.meta_text as string | undefined
 	const rawTags = metadata.tags
@@ -176,7 +174,14 @@ export function PulseCard({ notification, actorsById, onAction, onDismiss }: Pul
 	}
 
 	const handleChatWithAgents = () => {
-		openWithContext([{ kind: 'notification', id: notification.id, title: notification.title }])
+		navigate({
+			to: '/$workspaceId/chats/new',
+			params: { workspaceId },
+			search: {
+				notificationId: notification.id,
+				notificationTitle: notification.title ?? undefined,
+			},
+		})
 	}
 
 	return (

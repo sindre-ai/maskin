@@ -175,6 +175,28 @@ describe('parseChatLine', () => {
 		])
 	})
 
+	// A single interactive session accumulates logs for a whole chat
+	// conversation, so the chat UI segments turns by this tag to show a
+	// separate activity dropdown per message instead of one giant dropdown.
+	it('reads maskin_message_id off a user envelope and emits it as conversationMessageId', () => {
+		const line = JSON.stringify({
+			type: 'user',
+			message: { role: 'user', content: 'follow-up turn' },
+			maskin_message_id: 4321,
+		})
+		expect(parseChatLine(line, { includeUser: true })).toEqual([
+			{ kind: 'user', text: 'follow-up turn', conversationMessageId: 4321 },
+		])
+	})
+
+	it('omits conversationMessageId when maskin_message_id is absent', () => {
+		const line = JSON.stringify({
+			type: 'user',
+			message: { role: 'user', content: 'no tag' },
+		})
+		expect(parseChatLine(line, { includeUser: true })).toEqual([{ kind: 'user', text: 'no tag' }])
+	})
+
 	it('parses a successful result envelope into a result event', () => {
 		const events = parseChatLine(loadFixtureAsLine('result-success'))
 		expect(events).toEqual([

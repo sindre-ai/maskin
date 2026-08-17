@@ -32,9 +32,13 @@ const ALL_TOOL_NAMES = [
 	'list_relationships',
 	'traverse_graph',
 	'delete_relationship',
+	'maskin_create_agent',
+	'maskin_rate_reviewer_verdict',
+	'maskin_reviewer_precision_summary',
+	'maskin_review_work',
+	'maskin_refine_agent',
 	'create_actor',
 	'update_actor',
-	'regenerate_api_key',
 	'list_actors',
 	'get_actor',
 	'create_workspace',
@@ -57,6 +61,9 @@ const ALL_TOOL_NAMES = [
 	'get_events',
 	'get_comments',
 	'create_comment',
+	'get_conversation',
+	'list_conversation_messages',
+	'post_conversation_message',
 	'create_trigger',
 	'update_trigger',
 	'delete_trigger',
@@ -78,28 +85,16 @@ const ALL_TOOL_NAMES = [
 	'get_notification',
 	'update_notification',
 	'delete_notification',
-	'subscribe',
-	'unsubscribe',
-	'list_subscribers',
 	'mark_read',
 	'list_unread',
 	'list_integrations',
 	'list_integration_providers',
 	'connect_integration',
 	'disconnect_integration',
-	'set_llm_api_key',
-	'get_llm_api_keys',
-	'delete_llm_api_key',
-	'import_claude_subscription',
-	'get_claude_subscription_status',
-	'disconnect_claude_subscription',
-	'rename_claude_subscription',
 	'list_extensions',
 	'create_extension',
 	'update_extension',
 	'delete_extension',
-	'record_widget_event',
-	'get_bet_widget_metrics',
 ]
 
 describe('tool definitions', () => {
@@ -770,6 +765,27 @@ describe('create_comment schema', () => {
 	it('rejects non-positive parent_event_id', () => {
 		expect(() => schema.parse({ entity_id: uuid, content: 'hi', parent_event_id: 0 })).toThrow()
 	})
+
+	it('accepts attention scores from 1 to 5', () => {
+		for (let attention = 1; attention <= 5; attention++) {
+			const result = schema.parse({ entity_id: uuid, content: 'hi', attention })
+			expect(result.attention).toBe(attention)
+		}
+	})
+
+	it('leaves attention undefined when omitted', () => {
+		const result = schema.parse({ entity_id: uuid, content: 'hi' })
+		expect(result.attention).toBeUndefined()
+	})
+
+	it('rejects attention scores outside 1-5', () => {
+		expect(() => schema.parse({ entity_id: uuid, content: 'hi', attention: 0 })).toThrow()
+		expect(() => schema.parse({ entity_id: uuid, content: 'hi', attention: 6 })).toThrow()
+	})
+
+	it('rejects non-integer attention scores', () => {
+		expect(() => schema.parse({ entity_id: uuid, content: 'hi', attention: 3.5 })).toThrow()
+	})
 })
 
 describe('create_trigger schema', () => {
@@ -1239,149 +1255,6 @@ describe('empty input schema tools', () => {
 	})
 })
 
-describe('set_llm_api_key schema', () => {
-	const schema = tools.set_llm_api_key.inputSchema
-
-	it('accepts anthropic + non-empty api_key', () => {
-		const result = schema.parse({ provider: 'anthropic', api_key: 'sk-ant-abc' })
-		expect(result.provider).toBe('anthropic')
-		expect(result.api_key).toBe('sk-ant-abc')
-	})
-
-	it('accepts openai', () => {
-		const result = schema.parse({ provider: 'openai', api_key: 'sk-abc' })
-		expect(result.provider).toBe('openai')
-	})
-
-	it('rejects unknown provider', () => {
-		expect(() => schema.parse({ provider: 'google', api_key: 'x' })).toThrow()
-	})
-
-	it('rejects an empty api_key', () => {
-		expect(() => schema.parse({ provider: 'anthropic', api_key: '' })).toThrow()
-	})
-
-	it('rejects a missing api_key', () => {
-		expect(() => schema.parse({ provider: 'anthropic' })).toThrow()
-	})
-})
-
-describe('delete_llm_api_key schema', () => {
-	const schema = tools.delete_llm_api_key.inputSchema
-
-	it('accepts provider', () => {
-		expect(schema.parse({ provider: 'anthropic' }).provider).toBe('anthropic')
-	})
-
-	it('rejects unknown provider', () => {
-		expect(() => schema.parse({ provider: 'google' })).toThrow()
-	})
-})
-
-describe('get_llm_api_keys schema', () => {
-	const schema = tools.get_llm_api_keys.inputSchema
-
-	it('accepts empty object', () => {
-		expect(schema.parse({})).toEqual({})
-	})
-})
-
-describe('import_claude_subscription schema', () => {
-	const schema = tools.import_claude_subscription.inputSchema
-
-	it('accepts required token fields', () => {
-		const result = schema.parse({
-			access_token: 'a',
-			refresh_token: 'r',
-			expires_at: 123,
-		})
-		expect(result.access_token).toBe('a')
-		expect(result.refresh_token).toBe('r')
-		expect(result.expires_at).toBe(123)
-	})
-
-	it('rejects missing access_token', () => {
-		expect(() => schema.parse({ refresh_token: 'r', expires_at: 1 })).toThrow()
-	})
-
-	it('accepts optional subscription_type and scopes', () => {
-		const result = schema.parse({
-			access_token: 'a',
-			refresh_token: 'r',
-			expires_at: 1,
-			subscription_type: 'max',
-			scopes: ['read'],
-		})
-		expect(result.subscription_type).toBe('max')
-		expect(result.scopes).toEqual(['read'])
-	})
-
-	it('accepts an optional nickname', () => {
-		const result = schema.parse({
-			access_token: 'a',
-			refresh_token: 'r',
-			expires_at: 1,
-			nickname: 'Work account',
-		})
-		expect(result.nickname).toBe('Work account')
-	})
-
-	it('rejects a nickname over 60 characters', () => {
-		expect(() =>
-			schema.parse({
-				access_token: 'a',
-				refresh_token: 'r',
-				expires_at: 1,
-				nickname: 'x'.repeat(61),
-			}),
-		).toThrow()
-	})
-})
-
-describe('rename_claude_subscription schema', () => {
-	const schema = tools.rename_claude_subscription.inputSchema
-
-	it('accepts a slot and nickname', () => {
-		const result = schema.parse({ slot: 'backup', nickname: 'Overflow account' })
-		expect(result.slot).toBe('backup')
-		expect(result.nickname).toBe('Overflow account')
-	})
-
-	it('defaults slot to primary', () => {
-		const result = schema.parse({ nickname: 'Main account' })
-		expect(result.slot).toBe('primary')
-	})
-
-	it('accepts an empty string to clear the nickname', () => {
-		const result = schema.parse({ nickname: '' })
-		expect(result.nickname).toBe('')
-	})
-
-	it('rejects a nickname over 60 characters', () => {
-		expect(() => schema.parse({ nickname: 'x'.repeat(61) })).toThrow()
-	})
-
-	it('rejects a missing nickname', () => {
-		expect(() => schema.parse({ slot: 'primary' })).toThrow()
-	})
-})
-
-describe('get_claude_subscription_status schema', () => {
-	const schema = tools.get_claude_subscription_status.inputSchema
-
-	it('accepts empty object', () => {
-		expect(schema.parse({})).toEqual({})
-	})
-})
-
-describe('disconnect_claude_subscription schema', () => {
-	const schema = tools.disconnect_claude_subscription.inputSchema
-
-	it('accepts empty object', () => {
-		expect(schema.parse({})).toEqual({})
-	})
-})
-
 describe('workspace_id optional on most tools', () => {
 	const toolsWithOptionalWorkspace = [
 		'create_objects',
@@ -1403,13 +1276,6 @@ describe('workspace_id optional on most tools', () => {
 		'list_integrations',
 		'connect_integration',
 		'disconnect_integration',
-		'set_llm_api_key',
-		'get_llm_api_keys',
-		'delete_llm_api_key',
-		'import_claude_subscription',
-		'get_claude_subscription_status',
-		'disconnect_claude_subscription',
-		'rename_claude_subscription',
 	]
 
 	for (const name of toolsWithOptionalWorkspace) {

@@ -67,10 +67,16 @@ async function slackPostMessage(
 	const body: Record<string, unknown> = {
 		channel: args.channel,
 		text: args.text,
-		username: ctx.agentLabel,
+		username: 'Machine',
 	}
 	if (ctx.machineIconUrl) body.icon_url = ctx.machineIconUrl
 	if (args.thread_ts) body.thread_ts = args.thread_ts
+	if (ctx.agentLabel?.trim()) {
+		body.blocks = [
+			{ type: 'section', text: { type: 'mrkdwn', text: args.text } },
+			{ type: 'context', elements: [{ type: 'mrkdwn', text: ctx.agentLabel }] },
+		]
+	}
 
 	let res: Response
 	try {

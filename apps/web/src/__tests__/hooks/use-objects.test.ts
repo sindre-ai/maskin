@@ -20,6 +20,17 @@ vi.mock('sonner', () => ({
 	toast: { success: vi.fn(), error: vi.fn() },
 }))
 
+vi.mock('@/lib/analytics', async () => {
+	const actual = await vi.importActual<typeof import('@/lib/analytics')>('@/lib/analytics')
+	return {
+		...actual,
+		trackObjectUpdated: vi.fn(),
+		trackBetStatusChanged: vi.fn(),
+		trackBetCreated: vi.fn(),
+		trackBetArchived: vi.fn(),
+	}
+})
+
 import {
 	useBulkUpdateObjects,
 	useCreateObject,
@@ -29,6 +40,7 @@ import {
 	useObjects,
 	useUpdateObject,
 } from '@/hooks/use-objects'
+import { trackObjectUpdated } from '@/lib/analytics'
 import type { ObjectResponse } from '@/lib/api'
 import { api } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
@@ -222,6 +234,38 @@ describe('useUpdateObject', () => {
 		result.current.mutate({ id: 'obj-1', data: { title: 'Updated' } })
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
 		expect(api.objects.update).toHaveBeenCalledWith('obj-1', { title: 'Updated' })
+	})
+
+	it('emits object_updated with via=single and mutation_type=field for a title edit', async () => {
+		vi.mocked(api.objects.update).mockResolvedValue(buildObject({ id: 'obj-1', title: 'Updated' }))
+
+		const { result } = renderHook(() => useUpdateObject(workspaceId), { wrapper: TestWrapper })
+		result.current.mutate({ id: 'obj-1', data: { title: 'Updated' } })
+
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(trackObjectUpdated).toHaveBeenCalledWith({
+			object_id: 'obj-1',
+			mutation_type: 'field',
+			via: 'single',
+			bulk_batch_size: 1,
+		})
+	})
+
+	it('emits object_updated with mutation_type=status when the patch carries a status', async () => {
+		vi.mocked(api.objects.update).mockResolvedValue(
+			buildObject({ id: 'obj-2', status: 'in_progress' }),
+		)
+
+		const { result } = renderHook(() => useUpdateObject(workspaceId), { wrapper: TestWrapper })
+		result.current.mutate({ id: 'obj-2', data: { status: 'in_progress' } })
+
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(trackObjectUpdated).toHaveBeenCalledWith({
+			object_id: 'obj-2',
+			mutation_type: 'status',
+			via: 'single',
+			bulk_batch_size: 1,
+		})
 	})
 
 	// Archive is the one status transition that must vanish from default
@@ -578,6 +622,54 @@ describe('useBulkUpdateObjects', () => {
 		expect(detailInvalidations.some((k) => k[2] === 'obj-2')).toBe(false)
 	})
 
+	it('emits one object_updated event per ok result with via=bulk and bulk_batch_size=N', async () => {
+		const { Wrapper } = makeWrapper()
+		vi.mocked(api.objects.bulkUpdate).mockResolvedValue({
+			results: [
+				{ id: 'obj-1', ok: true },
+				{ id: 'obj-2', ok: true },
+				{ id: 'obj-3', ok: false, error: 'nope' },
+			],
+		})
+
+		const { result } = renderHook(() => useBulkUpdateObjects(workspaceId), { wrapper: Wrapper })
+		result.current.mutate({
+			ids: ['obj-1', 'obj-2', 'obj-3'],
+			patch: { status: 'done' },
+		})
+
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(trackObjectUpdated).toHaveBeenCalledTimes(2)
+		expect(trackObjectUpdated).toHaveBeenCalledWith({
+			object_id: 'obj-1',
+			mutation_type: 'status',
+			via: 'bulk',
+			bulk_batch_size: 3,
+		})
+		expect(trackObjectUpdated).toHaveBeenCalledWith({
+			object_id: 'obj-2',
+			mutation_type: 'status',
+			via: 'bulk',
+			bulk_batch_size: 3,
+		})
+		// Failed rows must not emit — the bet's HogQL counts successful mutations
+		// only, so counting a failed row would inflate the ship metric.
+		expect(trackObjectUpdated).not.toHaveBeenCalledWith(
+			expect.objectContaining({ object_id: 'obj-3' }),
+		)
+	})
+
+	it('does not emit object_updated on a network failure (no results to key off)', async () => {
+		const { Wrapper } = makeWrapper()
+		vi.mocked(api.objects.bulkUpdate).mockRejectedValue(new Error('Network'))
+
+		const { result } = renderHook(() => useBulkUpdateObjects(workspaceId), { wrapper: Wrapper })
+		result.current.mutate({ ids: ['obj-1', 'obj-2'], patch: { status: 'done' } })
+
+		await waitFor(() => expect(result.current.isError).toBe(true))
+		expect(trackObjectUpdated).not.toHaveBeenCalled()
+	})
+
 	// On a network failure (no data), onSettled falls back to invalidating every
 	// requested id's detail cache — since we don't know which rows actually
 	// changed server-side.
@@ -619,5 +711,20 @@ describe('useDeleteObject', () => {
 		result.current.mutate('obj-1')
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
 		expect(api.objects.delete).toHaveBeenCalledWith('obj-1')
+	})
+
+	it('emits object_updated with mutation_type=delete for a single-object delete', async () => {
+		vi.mocked(api.objects.delete).mockResolvedValue({ deleted: true })
+
+		const { result } = renderHook(() => useDeleteObject(workspaceId), { wrapper: TestWrapper })
+		result.current.mutate('obj-1')
+
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(trackObjectUpdated).toHaveBeenCalledWith({
+			object_id: 'obj-1',
+			mutation_type: 'delete',
+			via: 'single',
+			bulk_batch_size: 1,
+		})
 	})
 })

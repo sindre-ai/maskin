@@ -70,6 +70,24 @@ describe('POST /api/integrations/slack/mcp', () => {
 		expect(json.error.code).toBe('BAD_REQUEST')
 	})
 
+	it('returns 404 when the calling actor is not found', async () => {
+		const { app, mockResults } = await createApp()
+
+		// actor row → not found
+		mockResults.selectQueue = [[]]
+
+		const { env } = createEnv()
+		const res = await app.request(
+			postRequest(JSONRPC_BODY, { 'X-Workspace-Id': 'ws-any' }),
+			undefined,
+			env,
+		)
+		expect(res.status).toBe(404)
+		const json = await res.json()
+		expect(json.error.code).toBe('NOT_FOUND')
+		expect(mockCreateSlackMcpServer).not.toHaveBeenCalled()
+	})
+
 	it('returns 403 when the calling actor is not a member of the workspace', async () => {
 		const actorId = 'actor-not-member'
 		const { app, mockResults } = await createApp(actorId)
@@ -177,6 +195,30 @@ describe('POST /api/integrations/slack/mcp', () => {
 		expect(mockConnect).toHaveBeenCalledTimes(1)
 		expect(mockHandleRequest).toHaveBeenCalledOnce()
 		expect(res.headers.get('x-hono-already-sent')).toBe('1')
+	})
+
+	it('passes empty agentLabel when actor.name is blank so the server omits the context block', async () => {
+		const actorId = 'actor-no-name'
+		const { app, mockResults } = await createApp(actorId)
+
+		const actor = buildActor({ id: actorId, name: '' })
+		const workspace = buildWorkspace({ name: 'mesh-firm' })
+		const member = buildWorkspaceMember({ actorId, workspaceId: workspace.id })
+		const integration = buildIntegration({
+			provider: 'slack',
+			status: 'active',
+			workspaceId: workspace.id,
+		})
+
+		mockDecrypt.mockReturnValue(JSON.stringify({ accessToken: 'xoxb-real-bot-token' }))
+		mockResults.selectQueue = [[actor], [workspace], [member], [integration]]
+
+		const { env } = createEnv()
+		await app.request(postRequest(JSONRPC_BODY, { 'X-Workspace-Id': workspace.id }), undefined, env)
+
+		expect(mockCreateSlackMcpServer).toHaveBeenCalledWith(
+			expect.objectContaining({ agentLabel: '' }),
+		)
 	})
 
 	it('returns 400 for invalid JSON body', async () => {

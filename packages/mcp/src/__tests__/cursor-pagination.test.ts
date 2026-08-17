@@ -88,13 +88,6 @@ function integrationRow(idx: number) {
 		updatedAt: ts(idx),
 	}
 }
-function subscriberRow(idx: number) {
-	return {
-		id: uuid('44444444', idx),
-		type: 'human',
-		name: `Subscriber ${idx}`,
-	}
-}
 function unreadRow(idx: number) {
 	return {
 		entity_type: 'object',
@@ -224,14 +217,6 @@ describe('cursor pagination — seven previously-unpaginated tools', () => {
 			buildRow: integrationRow,
 			wrapApiResponse: (rows) => rows,
 			rowsField: 'integrations',
-			getId: (row) => (row as { id: string }).id,
-		},
-		{
-			tool: 'list_subscribers',
-			args: { entity_type: 'object', entity_id: uuid('66666666', 0) },
-			buildRow: subscriberRow,
-			wrapApiResponse: (rows) => ({ actors: rows }),
-			rowsField: 'actors',
 			getId: (row) => (row as { id: string }).id,
 		},
 		{

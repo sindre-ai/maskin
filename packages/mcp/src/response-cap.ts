@@ -21,7 +21,6 @@
 //   list_relationships        → no get-by-id counterpart — see below
 //   list_loops                → get_loop    (single, `id`)
 //   list_sessions             → get_session (single, `id`)
-//   list_subscribers          → no get-by-id counterpart
 //   list_unread               → no get-by-id counterpart
 //   list_integrations         → no get-by-id counterpart
 //   list_integration_providers → no get-by-id counterpart
@@ -96,7 +95,6 @@ export const TOKEN_CAP_TARGETS: Record<string, TokenCapDescriptor> = {
 	list_relationships: { rowsField: 'relationships' },
 	list_loops: { fetchHandleTool: 'get_loop', rowsField: 'loops' },
 	list_sessions: { fetchHandleTool: 'get_session', rowsField: 'sessions' },
-	list_subscribers: { rowsField: 'subscribers' },
 	list_unread: { rowsField: 'unread' },
 	list_integrations: { rowsField: 'integrations' },
 	list_integration_providers: { rowsField: 'providers' },

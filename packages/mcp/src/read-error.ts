@@ -131,16 +131,12 @@ export const READ_TOOL_NAMES = new Set<string>([
 	'list_triggers',
 	'list_loops',
 	'get_loop',
-	'list_subscribers',
 	'list_unread',
 	'list_sessions',
 	'get_session',
 	'list_integrations',
 	'list_integration_providers',
-	'get_llm_api_keys',
-	'get_claude_subscription_status',
 	'list_extensions',
-	'get_bet_widget_metrics',
 	'get_started',
 ])
 
@@ -319,16 +315,6 @@ const GUIDANCE: Record<string, ToolGuidance> = {
 			hint: 'get_loop({ id: "<uuid>" }) — id must be a UUID.',
 		},
 	},
-	list_subscribers: {
-		notFound: {
-			tool: 'search_objects',
-			hint: 'search_objects to confirm the entity exists, then list_subscribers({ entity_type, entity_id }).',
-		},
-		invalidParam: {
-			tool: 'list_subscribers',
-			hint: 'list_subscribers({ entity_type: "object", entity_id: "<uuid>" }) — both fields required.',
-		},
-	},
 	list_unread: {
 		notFound: {
 			tool: 'list_workspaces',
@@ -379,26 +365,6 @@ const GUIDANCE: Record<string, ToolGuidance> = {
 			hint: 'list_integration_providers() takes no arguments — call it with an empty input.',
 		},
 	},
-	get_llm_api_keys: {
-		notFound: {
-			tool: 'list_workspaces',
-			hint: 'list_workspaces() to confirm workspace access, then get_llm_api_keys({ workspace_id: "<uuid>" }).',
-		},
-		invalidParam: {
-			tool: 'get_llm_api_keys',
-			hint: 'get_llm_api_keys({ workspace_id: "<uuid>" }) — workspace_id defaults to the configured workspace when omitted.',
-		},
-	},
-	get_claude_subscription_status: {
-		notFound: {
-			tool: 'list_workspaces',
-			hint: 'list_workspaces() to confirm workspace access, then get_claude_subscription_status({ workspace_id: "<uuid>" }).',
-		},
-		invalidParam: {
-			tool: 'get_claude_subscription_status',
-			hint: 'get_claude_subscription_status({ workspace_id: "<uuid>" }) — workspace_id defaults to the configured workspace when omitted.',
-		},
-	},
 	list_extensions: {
 		notFound: {
 			tool: 'list_workspaces',
@@ -407,16 +373,6 @@ const GUIDANCE: Record<string, ToolGuidance> = {
 		invalidParam: {
 			tool: 'list_extensions',
 			hint: 'list_extensions({ workspace_id: "<uuid>" }) — workspace_id defaults to the configured workspace when omitted.',
-		},
-	},
-	get_bet_widget_metrics: {
-		notFound: {
-			tool: 'list_workspaces',
-			hint: 'list_workspaces() to confirm workspace access, then get_bet_widget_metrics({ workspace_id: "<uuid>" }).',
-		},
-		invalidParam: {
-			tool: 'get_bet_widget_metrics',
-			hint: 'get_bet_widget_metrics({ workspace_id: "<uuid>" }) — workspace_id defaults to the configured workspace when omitted.',
 		},
 	},
 	get_started: {
