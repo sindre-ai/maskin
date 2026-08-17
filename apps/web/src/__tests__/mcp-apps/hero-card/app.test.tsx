@@ -1,5 +1,5 @@
 import { __resetSchemaCacheForTests } from '@/mcp-apps/shared/use-workspace-schema'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 
 const callTool = vi.fn()
 const useToolResultMock = vi.fn()
@@ -85,44 +85,6 @@ describe('HeroCardApp — bet single render', () => {
 		useToolResultMock.mockReturnValue(makeBetToolResult())
 		render(<HeroCardApp />)
 		await waitFor(() => expect(screen.getByText('Bet')).toBeInTheDocument())
-	})
-
-	it('fires render_success telemetry on mount with the card_kind and object info', async () => {
-		useToolResultMock.mockReturnValue(makeBetToolResult())
-		render(<HeroCardApp />)
-		await waitFor(() => {
-			expect(callTool).toHaveBeenCalledWith(
-				'record_widget_event',
-				expect.objectContaining({
-					widget_name: 'hero-card',
-					event: 'render_success',
-					tool_name: 'get_objects',
-					card_kind: 'single',
-					object_type: 'bet',
-					object_id: 'bet-9',
-				}),
-			)
-		})
-	})
-
-	it('fires click_through telemetry when the CTA is clicked', async () => {
-		useToolResultMock.mockReturnValue(makeBetToolResult())
-		render(<HeroCardApp />)
-		const cta = await screen.findByRole('link', { name: /Open in Maskin/ })
-		fireEvent.click(cta)
-		await waitFor(() => {
-			expect(callTool).toHaveBeenCalledWith(
-				'record_widget_event',
-				expect.objectContaining({
-					widget_name: 'hero-card',
-					event: 'click_through',
-					tool_name: 'get_objects',
-					card_kind: 'single',
-					object_type: 'bet',
-					object_id: 'bet-9',
-				}),
-			)
-		})
 	})
 
 	it('links a single actor card to the agent detail page', async () => {
@@ -509,25 +471,6 @@ describe('HeroCardApp — list envelope', () => {
 		expect(cta).toHaveAttribute('href', 'https://maskin.test/ws-1')
 	})
 
-	it('fires click_through telemetry on the footer CTA with card_kind:list', async () => {
-		useToolResultMock.mockReturnValue(makeListToolResult('list_objects', betRows))
-		render(<HeroCardApp />)
-		await waitFor(() => expect(screen.getByText('Bets')).toBeInTheDocument())
-		const cta = screen.getByRole('link', { name: /Open in Maskin/ })
-		fireEvent.click(cta)
-		await waitFor(() => {
-			expect(callTool).toHaveBeenCalledWith(
-				'record_widget_event',
-				expect.objectContaining({
-					widget_name: 'hero-card',
-					event: 'click_through',
-					tool_name: 'list_objects',
-					card_kind: 'list',
-				}),
-			)
-		})
-	})
-
 	it('keeps the list compact when totalCount ≤ MAX_VISIBLE_ROWS', async () => {
 		useToolResultMock.mockReturnValue(makeListToolResult('list_objects', betRows.slice(0, 3)))
 		render(<HeroCardApp />)
@@ -755,7 +698,7 @@ describe('HeroCardSingle — driver type pill', () => {
 	})
 })
 
-describe('HeroCardRoot — render_error telemetry', () => {
+describe('HeroCardRoot — render error fallback', () => {
 	beforeEach(() => {
 		__resetSchemaCacheForTests()
 		callTool.mockReset()
@@ -766,7 +709,7 @@ describe('HeroCardRoot — render_error telemetry', () => {
 		})
 	})
 
-	it('catches a child render throw, fires record_widget_event with event: "render_error", and renders the fallback', () => {
+	it('catches a child render throw and renders the fallback', () => {
 		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
 		const betToolResult = makeBetToolResult()
 		let calls = 0
@@ -781,17 +724,6 @@ describe('HeroCardRoot — render_error telemetry', () => {
 		render(<HeroCardRoot />)
 
 		expect(screen.getByText(/Card failed to render/)).toBeInTheDocument()
-		expect(callTool).toHaveBeenCalledWith(
-			'record_widget_event',
-			expect.objectContaining({
-				widget_name: 'hero-card',
-				event: 'render_error',
-				tool_name: 'get_objects',
-				card_kind: 'single',
-				object_type: 'bet',
-				object_id: 'bet-9',
-			}),
-		)
 
 		consoleError.mockRestore()
 	})

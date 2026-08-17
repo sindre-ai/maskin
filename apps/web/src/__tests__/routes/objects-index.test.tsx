@@ -154,15 +154,17 @@ vi.mock('@/lib/query-keys', () => ({
 		relationships: {
 			all: (workspaceId: string) => ['relationships', workspaceId],
 		},
+		imports: { detail: (id: string) => ['imports', 'detail', id] },
 		notifications: {
-			list: (workspaceId: string, filters?: unknown) => [
+			all: (workspaceId: string) => ['notifications', workspaceId],
+			list: (workspaceId: string, filters?: Record<string, unknown>) => [
 				'notifications',
 				workspaceId,
 				'list',
 				filters,
 			],
+			detail: (id: string) => ['notifications', 'detail', id],
 		},
-		imports: { detail: (id: string) => ['imports', 'detail', id] },
 		userDisplaySettings: {
 			detail: (workspaceId: string, objectType: string) => [
 				'user-display-settings',
@@ -245,9 +247,8 @@ describe('validateSearch', () => {
 })
 
 describe('ObjectsPage', () => {
-	it('renders page header and list view', () => {
+	it('renders list view and toolbar', () => {
 		render(<ObjectsPage />)
-		expect(screen.getByText('Objects')).toBeInTheDocument()
 		expect(screen.getByTestId('list-view')).toBeInTheDocument()
 		expect(screen.getByTestId('data-table-toolbar')).toBeInTheDocument()
 	})

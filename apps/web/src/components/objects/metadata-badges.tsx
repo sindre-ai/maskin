@@ -58,7 +58,7 @@ export function MetadataBadges({
 	return <MetadataBadgesView object={object} onRemove={handleRemove} />
 }
 
-function formatValue(value: unknown): string {
+export function formatValue(value: unknown): string {
 	if (value === null || value === undefined) return ''
 	if (typeof value === 'boolean') return value ? 'Yes' : 'No'
 	if (value instanceof Date || (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(value))) {

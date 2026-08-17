@@ -171,14 +171,13 @@ test.describe('Typography — object detail', () => {
 		await page.goto(`/${account.workspaceId}/objects/${obj.id}`)
 		await waitForApp(page)
 
-		// The content wrapper (xl:max-w-[75ch]) is the first `.mb-8` block in the
-		// document view — it precedes the linked-objects/files sections, which
-		// also carry `mb-8`. Chromium resolves `ch` units to a pixel value in
+		// The rebuilt shell's markdown body carries `max-w-[75ch]` on the
+		// MarkdownContent root. Chromium resolves `ch` units to a pixel value in
 		// getComputedStyle rather than echoing the literal string, so assert the
 		// cap is present (not 'none') and narrower than the outer document
 		// wrapper's max-w-3xl (768px), rather than a brittle exact-string match.
 		const maxWidthPx = await page.evaluate(() => {
-			const contentDiv = document.querySelector('div.mb-8')
+			const contentDiv = document.querySelector('div[class*="max-w-[75ch]"]')
 			if (!contentDiv) return null
 			const value = getComputedStyle(contentDiv).getPropertyValue('max-width')
 			return value === 'none' ? null : Number.parseFloat(value)
@@ -189,7 +188,7 @@ test.describe('Typography — object detail', () => {
 		expect(maxWidthPx as number).toBeLessThan(768)
 	})
 
-	test('title input uses font-semibold with tracking-tight', async ({ page, account }) => {
+	test('title heading uses font-semibold', async ({ page, account }) => {
 		const obj = await createObjectWithContent(account.api, account.workspaceId)
 
 		await setTheme(page, 'light')
@@ -197,11 +196,9 @@ test.describe('Typography — object detail', () => {
 		await waitForApp(page)
 
 		const fontWeight = await page.evaluate(() => {
-			const titleInput = document.querySelector<HTMLTextAreaElement>(
-				'textarea[placeholder="Untitled"]',
-			)
-			if (!titleInput) return null
-			return getComputedStyle(titleInput).getPropertyValue('font-weight')
+			const titleEl = document.querySelector<HTMLElement>('h1')
+			if (!titleEl) return null
+			return getComputedStyle(titleEl).getPropertyValue('font-weight')
 		})
 
 		// font-semibold = 600

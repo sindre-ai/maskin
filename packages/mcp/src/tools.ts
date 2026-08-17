@@ -1,6 +1,4 @@
 import {
-	COMMENT_MAX_ATTACHMENTS,
-	COMMENT_MAX_LENGTH,
 	LOOP_STATUSES,
 	createCommentSchema,
 	notificationActionSchema,
@@ -738,12 +736,6 @@ export const tools = {
 				),
 		}),
 	},
-	regenerate_api_key: {
-		description: 'Regenerate the API key for an actor. Returns the new key (only shown once).',
-		inputSchema: z.object({
-			id: z.string().uuid(),
-		}),
-	},
 	list_actors: {
 		description:
 			"List actors (humans and agents). If workspace_id is provided, returns members of that workspace with their role. If omitted, returns actors across all workspaces the caller belongs to, each annotated with their workspace memberships. Each row includes the actor's short `description` (one-liner) — call `get_actor` for the full `system_prompt` (instructions), which is how to pick up context on a human teammate @mentioned in a comment. When response scoping is enabled the workspace-scoped path pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.",
@@ -1056,16 +1048,17 @@ export const tools = {
 	},
 	get_comments: {
 		description:
-			'Get comments posted on a specific object, newest first. Comments are events with action="commented" on entity_type="object". Threading is expressed via data.parentEventId on each row — replies reference the event id of the comment they reply to.',
+			'Get comments posted on a specific object, newest first. Threading is expressed via data.parentEventId on each row — replies reference the event id of the comment they reply to.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			entity_id: z.string().uuid().describe('Object ID to fetch comments for.'),
-			limit: z.number().int().min(1).max(100).default(50),
-			offset: z.number().int().min(0).default(0),
+			limit: z.number().int().min(1).max(100).default(50).describe('Defaults to 50.'),
+			offset: z.number().int().min(0).default(0).describe('Defaults to 0.'),
 		}),
 	},
 	create_comment: {
-		description: `Primary channel for agent-to-human communication. Post comments here for status updates, questions, findings, decisions, blockers, and anything else a human needs to see. Do NOT bury that dialogue in \`bet.content\`, \`task.content\`, or object titles — those fields are the durable spec, not the conversation, and humans don't scan them for new information. If you're tempted to edit a description to "let someone know" something, that belongs in a comment.\n\nWrite it like a Slack message, not a report: one thought per comment, plain conversational language, direct. No headers, no bold labels, no bulleted sections, no walls of text. If a thought is long, split it into multiple short comments or use parent_event_id to thread a reply. When referencing another object in human-facing text, use a markdown link \`[title](link)\` — never paste partial UUIDs.\n\nHard limit: ${COMMENT_MAX_LENGTH} characters — the API rejects anything over the limit with a validation error. Set parent_event_id to thread a reply under an existing comment (use the id returned by get_comments). Include mentions as an array of actor UUIDs — for each @mentioned agent actor, the server creates a needs_input notification AND spawns a session that lets the agent read the comment and reply on the same object. @mention human actors whenever you need their input, decision, or attention: they get a notification about the comment, so this is the right way to pull a human into the loop. Don't mention humans gratuitously, but don't hesitate to mention them when their input would actually unblock you. To attach files, first upload them with create_file (or pick existing ones with list_files) and pass the returned file ids in attachment_file_ids (max ${COMMENT_MAX_ATTACHMENTS}). Attached files appear as clickable cards under the posted comment. To prompt the human for a structured decision, pass metadata: { chips: ["Option A", "Option B", "Skip"] } — up to 5 string options, each up to 20 characters. The UI renders them as quick-reply buttons the human can tap, with a free-text fallback. Their reply is threaded under this comment.\n\nRich replies (short + visual): you can embed an inline chart by writing a fenced \`\`\`chart block whose body is a JSON spec — \`{ "type": "bar" | "line" | "area", "x": "<x-field>", "series": ["<series1>", ...], "data": [{ "<x-field>": ..., "<series1>": <number>, ... }], "caption": "optional short label" }\`. The UI renders it as a bounded-height recharts visual; malformed specs degrade to a small "couldn't render chart" note without breaking the comment. You can also surface a live task checklist by passing \`metadata: { tasks: ["<task-uuid>", ...] }\` — each row renders as a checkbox (checked iff the task's status is done/completed/succeeded), a link to the task, and its driver avatar, and updates automatically when the referenced task changes. Use both to keep replies short: one paragraph + a chart of the data you pulled via MCP + the checklist of work this comment represents.`,
+		description:
+			'Primary channel for agent-to-human communication. Post comments here for status updates, questions, findings, decisions, blockers, and anything else a human needs to see. Do NOT bury that dialogue in `bet.content`, `task.content`, or object titles — those fields are the durable spec, not the conversation, and humans don\'t scan them for new information. If you\'re tempted to edit a description to "let someone know" something, that belongs in a comment.\n\nUse both a chart and a task checklist (see the `content` and `metadata` param docs) to keep replies short: one paragraph + a chart of the data you pulled via MCP + the checklist of work this comment represents.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			...createCommentSchema.shape,
@@ -1518,33 +1511,6 @@ export const tools = {
 		}),
 	},
 	// ─── Subscriptions ────────────────────────────────────────
-	subscribe: {
-		description:
-			'Subscribe the current actor to an entity (e.g. an object) so they receive unread counts when others comment. Use entity_type="object" and entity_id=<object_id>. Subscription is idempotent — a no-op if the actor is already subscribed.',
-		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
-			entity_type: z.enum(['object']),
-			entity_id: z.string().uuid(),
-		}),
-	},
-	unsubscribe: {
-		description:
-			"Unsubscribe the current actor from an entity. Idempotent — a no-op if the actor wasn't subscribed.",
-		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
-			entity_type: z.enum(['object']),
-			entity_id: z.string().uuid(),
-		}),
-	},
-	list_subscribers: {
-		description:
-			'List the actors subscribed to an entity (object). Useful for showing watchers on an object.',
-		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
-			entity_type: z.enum(['object']),
-			entity_id: z.string().uuid(),
-		}),
-	},
 	mark_read: {
 		description:
 			'Mark an entity as read up to a given event id. last_event_id should be the highest event id the actor has seen for this entity — the server will never move the high-water-mark backward.',
@@ -1591,71 +1557,6 @@ export const tools = {
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid(),
-		}),
-	},
-	// ─── LLM API Keys ─────────────────────────────────────────
-	set_llm_api_key: {
-		description:
-			"Save (or replace) a workspace LLM API key. Stored in workspace settings alongside any other providers. Returns { success, provider, last4 } — the full key is never echoed back. The key is stored as-is with no server-side validation against the provider; use the UI at /settings/keys if you need a live validation check. Mirrors the 'LLM API Keys' inputs in Settings → Keys.",
-		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
-			provider: z.enum(['anthropic', 'openai']),
-			api_key: z.string().min(1).describe('The API key (e.g. "sk-ant-..." or "sk-...").'),
-		}),
-	},
-	get_llm_api_keys: {
-		description:
-			"Report which LLM API keys are configured for the workspace. Returns { anthropic: { set, last4? }, openai: { set, last4? } } — never the full key. Mirrors the 'LLM API Keys' status in Settings → Keys.",
-		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
-		}),
-	},
-	delete_llm_api_key: {
-		description:
-			'Remove a workspace LLM API key for a single provider. Other providers are left untouched.',
-		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
-			provider: z.enum(['anthropic', 'openai']),
-		}),
-	},
-	// ─── Claude Subscription ──────────────────────────────────
-	import_claude_subscription: {
-		description:
-			"Import Claude Pro/Max/Teams subscription tokens for the workspace (from ~/.claude/.credentials.json). Stored encrypted; used as the preferred auth for sandboxed Claude Code runs. Mirrors the 'Claude Subscription → Import credentials' action in Settings → Keys.",
-		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
-			access_token: z.string().min(1),
-			refresh_token: z.string().min(1),
-			expires_at: z.number().describe('Unix ms timestamp when the access token expires.'),
-			subscription_type: z.string().optional().describe('e.g. "pro", "max", "teams".'),
-			scopes: z.array(z.string()).optional(),
-			nickname: z
-				.string()
-				.max(60)
-				.optional()
-				.describe('Optional label so this credential is distinguishable from others in the UI.'),
-		}),
-	},
-	get_claude_subscription_status: {
-		description:
-			'Check Claude subscription connection status for the workspace. Returns { connected, valid, subscription_type?, expires_at? } — never the tokens themselves.',
-		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
-		}),
-	},
-	disconnect_claude_subscription: {
-		description: 'Disconnect the Claude subscription for the workspace (removes stored tokens).',
-		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
-		}),
-	},
-	rename_claude_subscription: {
-		description:
-			"Set or clear the nickname on a Claude subscription credential slot (primary or backup) so it's distinguishable from other credentials in the UI instead of showing only an opaque fingerprint. Pass an empty string to clear the nickname. Does not touch the stored tokens.",
-		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
-			slot: z.enum(['primary', 'backup']).default('primary'),
-			nickname: z.string().max(60),
 		}),
 	},
 	// ─── Extensions ──────────────────────────────────────────
@@ -1769,32 +1670,6 @@ export const tools = {
 			id: z
 				.string()
 				.describe('Extension ID to remove. Pass the extension ID, not individual type names.'),
-		}),
-	},
-
-	get_bet_widget_metrics: {
-		description:
-			"Pull the MCP widget UX bet's live success and kill metrics for the workspace: rolling click-through rate over the first 200 bet renders, the first-50 kill window, and the 48h rolling render-error rate. Renders sent by agents are excluded so this number matches the success/kill criteria on the bet. Read-only; does not produce any telemetry rows. Use this when you need evidence on whether the widget UX bet is meeting its CTR target or has tripped a kill criterion, without writing a bespoke SQL query.",
-		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
-		}),
-	},
-
-	record_widget_event: {
-		description:
-			'INTERNAL — called by rendered MCP widgets (Hero Card) to report click-through, render success, and render failure events. Powers the bet success metric (click-through rate on Open in Maskin) and the 48h rolling render-error kill criterion. Do not call from an agent directly.',
-		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
-			widget_name: z.string().describe('Widget bundle name, e.g. "hero-card".'),
-			event: z
-				.enum(['click_through', 'render_success', 'render_error'])
-				.describe('What happened on the widget.'),
-			tool_name: z.string().describe('The MCP tool whose response produced this widget render.'),
-			card_kind: z
-				.enum(['single', 'list', 'empty'])
-				.describe('Result shape — single object, multi-row list, or empty state.'),
-			object_type: z.string().optional().describe('Object type when card_kind=single.'),
-			object_id: z.string().optional().describe('Object id when card_kind=single.'),
 		}),
 	},
 } as const
