@@ -406,6 +406,64 @@ describe('SessionDispatcher.dispatch', () => {
 		expect(sess.agentServerId).toBeNull()
 	})
 
+	it('seeds the initial interactive turn after a successful dispatch', async () => {
+		const sess: SessionStub = {
+			id: 's-1',
+			status: 'starting',
+			agentServerId: null,
+			containerId: null,
+			startedAt: null,
+		}
+		const startSession = vi.fn(async (_req: StartSessionRequest) => startResponse('s-1'))
+		const db = fakeDb([SERVER], [sess])
+		const client = makeClient({ startSession })
+		const seedInteractiveTurn = vi.fn(async () => {})
+		const dispatcher = new SessionDispatcher({
+			// biome-ignore lint/suspicious/noExplicitAny: fake DB
+			db: db as any,
+			buildStartRequest: async (sessionId) => defaultStartReq(sessionId),
+			clientFactory: () => client,
+			seedInteractiveTurn,
+		})
+
+		const result = await dispatcher.dispatch('s-1', 'dispatch:s-1')
+
+		expect(result).toEqual({ kind: 'dispatched' })
+		expect(seedInteractiveTurn).toHaveBeenCalledTimes(1)
+		expect(seedInteractiveTurn).toHaveBeenCalledWith('s-1')
+	})
+
+	it('still reports dispatched when seedInteractiveTurn throws', async () => {
+		const sess: SessionStub = {
+			id: 's-1',
+			status: 'starting',
+			agentServerId: null,
+			containerId: null,
+			startedAt: null,
+		}
+		const startSession = vi.fn(async (_req: StartSessionRequest) => startResponse('s-1'))
+		const db = fakeDb([SERVER], [sess])
+		const client = makeClient({ startSession })
+		const seedInteractiveTurn = vi.fn(async () => {
+			throw new Error('agent-server unreachable')
+		})
+		const dispatcher = new SessionDispatcher({
+			// biome-ignore lint/suspicious/noExplicitAny: fake DB
+			db: db as any,
+			buildStartRequest: async (sessionId) => defaultStartReq(sessionId),
+			clientFactory: () => client,
+			seedInteractiveTurn,
+		})
+
+		const result = await dispatcher.dispatch('s-1', 'dispatch:s-1')
+
+		// Sandbox is already up — a seed failure must not undo the dispatch or
+		// release the slot back to the pool.
+		expect(result).toEqual({ kind: 'dispatched' })
+		expect(sess.status).toBe('running')
+		expect(sess.agentServerId).toBe(SERVER.id)
+	})
+
 	it('returns transient_failure when buildStartRequest throws', async () => {
 		const sess: SessionStub = {
 			id: 's-1',
