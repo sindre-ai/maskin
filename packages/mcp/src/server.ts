@@ -19,7 +19,14 @@ import {
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { Cron } from 'croner'
-import { type CursorState, decodeCursor, encodeCursor, toSnapshotAt } from './cursor.js'
+import {
+	type CursorState,
+	decodeCursor,
+	encodeCursor,
+	paginateClientSide,
+	toSnapshotAt,
+} from './cursor.js'
+import { READ_TOOL_NAMES, buildReadErrorBody, toolErrorResponse } from './read-error.js'
 import { applyResponseTokenCap } from './response-cap.js'
 import {
 	type SummaryRow,
@@ -122,12 +129,12 @@ function addUrl(
 
 /**
  * Build the `content` text for a list/search tool response. When response
- * scoping is on, returns a lean markdown summary bounded by the summary
- * byte budget (AC-T2); when off, returns `JSON.stringify(fullPayload, null, 2)`
- * so the flag-off response is byte-identical to the pre-scoping shape
- * (AC-T4 partial). `structuredContent` (built by the caller) is never touched
- * either way — the full enriched payload always survives on the structured
- * channel.
+ * scoping is on (the default after T1), returns a lean markdown summary
+ * bounded by the summary byte budget (AC-T2); when off, returns a compact
+ * `JSON.stringify(fullPayload)` — the pre-scoping dump minus the pretty-print
+ * whitespace (T1 dropped `null, 2` across every handler). `structuredContent`
+ * (built by the caller) is never touched either way — the full enriched
+ * payload always survives on the structured channel.
  */
 function buildListContentText(
 	fullPayload: unknown,
@@ -137,7 +144,7 @@ function buildListContentText(
 	if (isResponseScopingEnabled()) {
 		return buildContentSummary(rows, { emptyLabel })
 	}
-	return JSON.stringify(fullPayload, null, 2)
+	return JSON.stringify(fullPayload)
 }
 
 /** Default page size when response scoping is on and the caller did not
@@ -958,7 +965,7 @@ function registerObjectResources(server: McpServer, config: McpConfig) {
 					{
 						uri: uri.toString(),
 						mimeType: 'application/json',
-						text: JSON.stringify(payload, null, 2),
+						text: JSON.stringify(payload),
 					},
 				],
 			}
@@ -1021,7 +1028,7 @@ function registerObjectResources(server: McpServer, config: McpConfig) {
 					{
 						uri: uri.toString(),
 						mimeType: 'application/json',
-						text: JSON.stringify(payload, null, 2),
+						text: JSON.stringify(payload),
 					},
 				],
 			}
@@ -1081,7 +1088,7 @@ function registerObjectResources(server: McpServer, config: McpConfig) {
 					{
 						uri: uri.toString(),
 						mimeType: 'application/json',
-						text: JSON.stringify(payload, null, 2),
+						text: JSON.stringify(payload),
 					},
 				],
 			}
@@ -1755,8 +1762,11 @@ export function createMcpServer(config: McpConfig) {
 	// Telemetry-instrumented tool registration. Wraps the upstream
 	// `registerAppTool` so every tool response emits a `tool_call` telemetry
 	// event (rich-render % numerator/denominator) and successful mutations
-	// emit an additional `mutation` event. Failures inside the original
-	// handler are re-thrown unchanged so MCP error semantics are preserved.
+	// emit an additional `mutation` event. Read-side handler failures are
+	// converted into a structured `{ error: { tool, reason, next } }` response
+	// (see `read-error.ts`) so the calling LLM sees a teachable next step
+	// instead of a bare transport error; mutation failures still re-throw so
+	// their existing error semantics are preserved.
 	//
 	// We deliberately type as `any` at the boundary because ext-apps' generic
 	// tool signature can't be re-introduced through a higher-order wrapper
@@ -1766,6 +1776,7 @@ export function createMcpServer(config: McpConfig) {
 	const registerAppTool = ((s: any, name: string, definition: any, handler: any) => {
 		const defHasRichRender = Boolean(definition?._meta?.ui)
 		const mutationKind = MUTATION_TOOL_KINDS[name]
+		const isReadTool = READ_TOOL_NAMES.has(name)
 
 		const wrappedHandler = async (args: unknown, extra: unknown) => {
 			const start = Date.now()
@@ -1779,6 +1790,27 @@ export function createMcpServer(config: McpConfig) {
 					duration_ms: Date.now() - start,
 					workspace_id: extractWorkspaceId(args),
 				})
+				if (isReadTool) {
+					// Read handlers return a structured error envelope instead of
+					// throwing so the caller sees the failing tool, a human-readable
+					// reason, and the next tool to try. Mutation tools intentionally
+					// keep their throwing behavior — the Guided setup workflow bet
+					// owns post-mutation guidance.
+					//
+					// The envelope sent to the caller is deliberately sanitized, so
+					// log the raw error here — this is the only place the original
+					// stack trace is still available.
+					console.error(`[MCP] Read tool "${name}" failed:`, err)
+					const errorResponse = toolErrorResponse(name, err)
+					recordToolCallResponseSize(telemetrySink, telemetryTarget, {
+						tool_name: name,
+						content: errorResponse.content,
+						structured_content: errorResponse.structuredContent,
+						truncated: false,
+						workspace_id: extractWorkspaceId(args),
+					})
+					return errorResponse
+				}
 				throw err
 			}
 
@@ -2033,7 +2065,7 @@ export function createMcpServer(config: McpConfig) {
 
 			return {
 				_meta: meta('create_objects', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(responseBody, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(responseBody) }],
 			}
 		},
 	)
@@ -2055,9 +2087,14 @@ export function createMcpServer(config: McpConfig) {
 						const result = await apiCall(config, 'GET', `/api/objects/${id}/graph`, undefined, {
 							workspaceId: workspace_id,
 						})
-						return { id, success: true, result }
+						return { id, success: true as const, result }
 					} catch (error) {
-						return { id, success: false, error: String(error) }
+						// Per-id sub-error follows the same `{ error: { tool, reason, next } }`
+						// contract as top-level tool errors so callers pattern-match on one
+						// shape for both "one id failed in a batch" and "the whole tool
+						// failed." Top-level throws (e.g. from resolveActors) are caught by
+						// the READ_TOOL_NAMES branch in the registerAppTool wrapper below.
+						return { id, success: false as const, ...buildReadErrorBody('get_objects', error) }
 					}
 				}),
 			)
@@ -2194,7 +2231,7 @@ export function createMcpServer(config: McpConfig) {
 
 			return {
 				_meta: uiMeta('get_objects', config, workspace_id, pickResourceUri(heroCard)),
-				content: [{ type: 'text' as const, text: JSON.stringify(projectedResults, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(projectedResults) }],
 				structuredContent: {
 					heroCard,
 					results: slimResults,
@@ -2480,7 +2517,7 @@ export function createMcpServer(config: McpConfig) {
 
 			return {
 				_meta: meta('update_objects', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(responseBody, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(responseBody) }],
 			}
 		},
 	)
@@ -2499,7 +2536,7 @@ export function createMcpServer(config: McpConfig) {
 			})
 			return {
 				_meta: meta('delete_object', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 			}
 		},
 	)
@@ -2816,7 +2853,7 @@ export function createMcpServer(config: McpConfig) {
 				content: [
 					{
 						type: 'text' as const,
-						text: `${summaryLines.join('\n')}\n\n${JSON.stringify(result, null, 2)}`,
+						text: `${summaryLines.join('\n')}\n\n${JSON.stringify(result)}`,
 					},
 				],
 				structuredContent: result,
@@ -2842,7 +2879,7 @@ export function createMcpServer(config: McpConfig) {
 					config,
 					(args as { workspace_id?: string }).workspace_id,
 				),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 			}
 		},
 	)
@@ -3033,7 +3070,7 @@ export function createMcpServer(config: McpConfig) {
 			const responseBody = { ...(withUrl as Record<string, unknown>), setup }
 			return {
 				_meta: meta('create_actor', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(responseBody, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(responseBody) }],
 			}
 		},
 	)
@@ -3190,7 +3227,7 @@ export function createMcpServer(config: McpConfig) {
 				: result
 			return {
 				_meta: uiMeta('get_actor', config, workspaceId, UI_RESOURCES.heroCard),
-				content: [{ type: 'text' as const, text: JSON.stringify(withUrl, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(withUrl) }],
 				structuredContent: { heroCard },
 			}
 		},
@@ -3268,7 +3305,7 @@ export function createMcpServer(config: McpConfig) {
 				const responseBody = { ...(withUrl as Record<string, unknown>), setup }
 				return {
 					_meta: meta('update_actor', config, workspace_id),
-					content: [{ type: 'text' as const, text: JSON.stringify(responseBody, null, 2) }],
+					content: [{ type: 'text' as const, text: JSON.stringify(responseBody) }],
 				}
 			}
 
@@ -3331,7 +3368,7 @@ export function createMcpServer(config: McpConfig) {
 
 			return {
 				_meta: meta('update_actor', config, workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(output, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(output) }],
 			}
 		},
 	)
@@ -3351,7 +3388,7 @@ export function createMcpServer(config: McpConfig) {
 			})
 			return {
 				_meta: meta('create_workspace', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 			}
 		},
 	)
@@ -3371,7 +3408,7 @@ export function createMcpServer(config: McpConfig) {
 			})
 			return {
 				_meta: meta('update_workspace', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 			}
 		},
 	)
@@ -3384,13 +3421,28 @@ export function createMcpServer(config: McpConfig) {
 			inputSchema: tools.list_workspaces.inputSchema.shape,
 			_meta: { ui: { resourceUri: UI_RESOURCES.heroCard, csp: CSP } },
 		},
-		async () => {
+		async (args) => {
+			const pagination = resolveListPagination(
+				{ limit: (args as { limit?: number }).limit, cursor: (args as { cursor?: string }).cursor },
+				25,
+			)
 			const result = await apiCall(config, 'GET', '/api/workspaces', undefined, {
 				skipWorkspace: true,
 			})
 			const rows = Array.isArray(result) ? (result as RawWorkspace[]) : []
-			const heroObjects = rows.map(buildWorkspaceHeroCardObject)
-			const webContextWorkspaceId = config.defaultWorkspaceId ?? rows[0]?.id
+			const { page: pagedRows, nextCursor } = isResponseScopingEnabled()
+				? paginateClientSide<RawWorkspace>({
+						rows,
+						limit: pagination.limit,
+						snapshotAt: pagination.snapshotAt,
+						order: pagination.order,
+						cursor: pagination.cursor,
+						getSortValue: (row) => row.createdAt ?? null,
+						getId: (row) => row.id,
+					})
+				: { page: rows, nextCursor: null }
+			const heroObjects = pagedRows.map(buildWorkspaceHeroCardObject)
+			const webContextWorkspaceId = config.defaultWorkspaceId ?? pagedRows[0]?.id
 			const heroCard: HeroCardPayload =
 				heroObjects.length === 0
 					? { kind: 'empty', tool: 'list_workspaces' }
@@ -3407,10 +3459,23 @@ export function createMcpServer(config: McpConfig) {
 									hasMore: heroObjects.length > HERO_CARD_UI_PAGE_SIZE,
 								},
 							}
+			const summaryRows: SummaryRow[] = pagedRows.map((w) => ({
+				title: w.name ?? `Workspace ${w.id.slice(0, 8)}`,
+				meta: typeof w.role === 'string' ? w.role : undefined,
+			}))
 			return {
 				_meta: uiMeta('list_workspaces', config, webContextWorkspaceId, UI_RESOURCES.heroCard),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-				structuredContent: { heroCard },
+				content: [
+					{
+						type: 'text' as const,
+						text: buildListContentText(result, summaryRows, 'No workspaces.'),
+					},
+				],
+				structuredContent: {
+					heroCard,
+					...(isResponseScopingEnabled() ? { workspaces: pagedRows } : {}),
+					...(nextCursor ? { next_cursor: nextCursor } : {}),
+				},
 			}
 		},
 	)
@@ -3486,7 +3551,7 @@ export function createMcpServer(config: McpConfig) {
 					config,
 					(args as { workspace_id?: string }).workspace_id,
 				),
-				content: [{ type: 'text' as const, text: JSON.stringify(schema, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(schema) }],
 			}
 		},
 	)
@@ -3618,7 +3683,7 @@ export function createMcpServer(config: McpConfig) {
 				content: [
 					{
 						type: 'text' as const,
-						text: JSON.stringify({ workspace_id: wsId, type: args.type, field: created }, null, 2),
+						text: JSON.stringify({ workspace_id: wsId, type: args.type, field: created }),
 					},
 				],
 			}
@@ -3689,7 +3754,7 @@ export function createMcpServer(config: McpConfig) {
 				content: [
 					{
 						type: 'text' as const,
-						text: JSON.stringify({ workspace_id: wsId, type: args.type, field: updated }, null, 2),
+						text: JSON.stringify({ workspace_id: wsId, type: args.type, field: updated }),
 					},
 				],
 			}
@@ -3839,7 +3904,7 @@ export function createMcpServer(config: McpConfig) {
 					config,
 					(args as { workspace_id?: string }).workspace_id,
 				),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 			}
 		},
 	)
@@ -3867,7 +3932,7 @@ export function createMcpServer(config: McpConfig) {
 					config,
 					(args as { workspace_id?: string }).workspace_id,
 				),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 			}
 		},
 	)
@@ -3895,7 +3960,7 @@ export function createMcpServer(config: McpConfig) {
 					config,
 					(args as { workspace_id?: string }).workspace_id,
 				),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 			}
 		},
 	)
@@ -3923,7 +3988,7 @@ export function createMcpServer(config: McpConfig) {
 					config,
 					(args as { workspace_id?: string }).workspace_id,
 				),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 			}
 		},
 	)
@@ -3954,7 +4019,7 @@ export function createMcpServer(config: McpConfig) {
 			)
 			return {
 				_meta: meta('create_file', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 			}
 		},
 	)
@@ -4046,7 +4111,7 @@ export function createMcpServer(config: McpConfig) {
 			})
 			return {
 				_meta: meta('get_file', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 			}
 		},
 	)
@@ -4072,7 +4137,7 @@ export function createMcpServer(config: McpConfig) {
 			})
 			return {
 				_meta: meta('update_file', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 			}
 		},
 	)
@@ -4092,7 +4157,7 @@ export function createMcpServer(config: McpConfig) {
 			})
 			return {
 				_meta: meta('delete_file', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 			}
 		},
 	)
@@ -4107,6 +4172,11 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
 		},
 		async (args) => {
+			const scoped = isResponseScopingEnabled()
+			const pagination = resolveListPagination(
+				{ limit: args.limit, cursor: (args as { cursor?: string }).cursor },
+				args.limit ?? 50,
+			)
 			const params = new URLSearchParams()
 			if (args.id) params.set('id', String(args.id))
 			if (args.entity_type) params.set('entity_type', args.entity_type)
@@ -4115,9 +4185,31 @@ export function createMcpServer(config: McpConfig) {
 			const result = await apiCall(config, 'GET', `/api/events/history?${params}`, undefined, {
 				workspaceId: args.workspace_id,
 			})
+			const rows = Array.isArray(result)
+				? (result as Array<{ id: number | string; createdAt?: string | null }>)
+				: []
+			const { page: pagedRows, nextCursor } = scoped
+				? paginateClientSide({
+						rows,
+						limit: pagination.limit,
+						snapshotAt: pagination.snapshotAt,
+						order: pagination.order,
+						cursor: pagination.cursor,
+						getSortValue: (row) => row.createdAt ?? null,
+						getId: (row) => String(row.id).padStart(20, '0'),
+					})
+				: { page: rows, nextCursor: null }
 			return {
 				_meta: meta('get_events', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(scoped ? pagedRows : result) }],
+				...(scoped
+					? {
+							structuredContent: {
+								events: pagedRows,
+								...(nextCursor ? { next_cursor: nextCursor } : {}),
+							},
+						}
+					: {}),
 			}
 		},
 	)
@@ -4143,7 +4235,7 @@ export function createMcpServer(config: McpConfig) {
 			})
 			return {
 				_meta: meta('get_comments', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 			}
 		},
 	)
@@ -4163,7 +4255,7 @@ export function createMcpServer(config: McpConfig) {
 			})
 			return {
 				_meta: meta('create_comment', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 			}
 		},
 	)
@@ -4285,7 +4377,7 @@ export function createMcpServer(config: McpConfig) {
 					: result
 			return {
 				_meta: meta('create_trigger', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(withUrl, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(withUrl) }],
 			}
 		},
 	)
@@ -4427,7 +4519,7 @@ export function createMcpServer(config: McpConfig) {
 				: result
 			return {
 				_meta: meta('update_trigger', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(withUrl, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(withUrl) }],
 			}
 		},
 	)
@@ -4446,7 +4538,7 @@ export function createMcpServer(config: McpConfig) {
 			})
 			return {
 				_meta: meta('delete_trigger', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 			}
 		},
 	)
@@ -4597,7 +4689,7 @@ export function createMcpServer(config: McpConfig) {
 
 			return {
 				_meta: meta('create_loop', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(responseBody, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(responseBody) }],
 			}
 		},
 	)
@@ -4825,7 +4917,7 @@ export function createMcpServer(config: McpConfig) {
 				)
 				return {
 					_meta: meta('update_loop', config, (args as { workspace_id?: string }).workspace_id),
-					content: [{ type: 'text' as const, text: JSON.stringify(responseBody, null, 2) }],
+					content: [{ type: 'text' as const, text: JSON.stringify(responseBody) }],
 				}
 			})
 		},
@@ -4840,20 +4932,60 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
+			const scoped = isResponseScopingEnabled()
+			const pagination = resolveListPagination(
+				{
+					limit: (args as { limit?: number }).limit,
+					cursor: (args as { cursor?: string }).cursor,
+				},
+				25,
+			)
 			const data = (await apiCall(config, 'GET', '/api/loops', undefined, {
 				workspaceId: args.workspace_id,
 			})) as { loops: Array<Record<string, unknown>> }
 			const wsId = args.workspace_id ?? config.defaultWorkspaceId
 			const loops = Array.isArray(data?.loops) ? data.loops : []
-			const enriched = loops.map((loop) =>
+			const { page: pagedLoops, nextCursor } = scoped
+				? paginateClientSide({
+						rows: loops,
+						limit: pagination.limit,
+						snapshotAt: pagination.snapshotAt,
+						order: pagination.order,
+						cursor: pagination.cursor,
+						getSortValue: (row) => (row.createdAt as string | null | undefined) ?? null,
+						getId: (row) => row.id as string,
+					})
+				: { page: loops, nextCursor: null }
+			const enriched = pagedLoops.map((loop) =>
 				addUrl(loop, config, (loop.workspaceId as string | undefined) ?? wsId, {
 					kind: 'loop',
 					id: loop.id as string,
 				}),
 			)
+			const summaryRows: SummaryRow[] = enriched.map((loop) => {
+				const status = typeof loop.status === 'string' ? loop.status : undefined
+				const openness =
+					loop.closed === false ? 'open' : loop.closed === true ? 'closed' : undefined
+				const metaParts = [status, openness].filter((v): v is string => Boolean(v))
+				return {
+					title:
+						typeof loop.title === 'string' && loop.title.length > 0 ? loop.title : 'Untitled loop',
+					url: pickUrl(loop),
+					meta: metaParts.length > 0 ? metaParts.join(' · ') : undefined,
+				}
+			})
 			return {
 				_meta: meta('list_loops', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify({ loops: enriched }, null, 2) }],
+				content: [
+					{
+						type: 'text' as const,
+						text: buildListContentText({ loops: enriched }, summaryRows, 'No loops.'),
+					},
+				],
+				structuredContent: {
+					loops: enriched,
+					...(nextCursor ? { next_cursor: nextCursor } : {}),
+				},
 			}
 		},
 	)
@@ -4947,7 +5079,7 @@ export function createMcpServer(config: McpConfig) {
 
 			return {
 				_meta: meta('get_loop', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(responseBody, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(responseBody) }],
 			}
 		},
 	)
@@ -5041,7 +5173,7 @@ export function createMcpServer(config: McpConfig) {
 					config,
 					(args as { workspace_id?: string }).workspace_id,
 				),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 			}
 		},
 	)
@@ -5065,7 +5197,7 @@ export function createMcpServer(config: McpConfig) {
 			})
 			return {
 				_meta: meta('list_notifications', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 			}
 		},
 	)
@@ -5084,7 +5216,7 @@ export function createMcpServer(config: McpConfig) {
 			})
 			return {
 				_meta: meta('get_notification', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 			}
 		},
 	)
@@ -5108,7 +5240,7 @@ export function createMcpServer(config: McpConfig) {
 					config,
 					(args as { workspace_id?: string }).workspace_id,
 				),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 			}
 		},
 	)
@@ -5131,7 +5263,7 @@ export function createMcpServer(config: McpConfig) {
 					config,
 					(args as { workspace_id?: string }).workspace_id,
 				),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 			}
 		},
 	)
@@ -5153,7 +5285,7 @@ export function createMcpServer(config: McpConfig) {
 			})
 			return {
 				_meta: meta('mark_read', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 			}
 		},
 	)
@@ -5167,16 +5299,68 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
+			const scoped = isResponseScopingEnabled()
+			const pagination = resolveListPagination(
+				{
+					limit: (args as { limit?: number }).limit,
+					cursor: (args as { cursor?: string }).cursor,
+				},
+				25,
+			)
 			const params = new URLSearchParams()
 			if (args.entity_type) params.set('entity_type', args.entity_type)
 			const qs = params.toString()
 			const path = qs ? `/api/subscriptions/unread?${qs}` : '/api/subscriptions/unread'
-			const result = await apiCall(config, 'GET', path, undefined, {
+			const result = (await apiCall(config, 'GET', path, undefined, {
 				workspaceId: args.workspace_id,
+			})) as {
+				items?: Array<{
+					entity_id: string
+					entity_type?: string
+					unread_count?: number
+					latest_activity_at?: string | null
+					latest_event_id?: number | null
+					object?: { title?: string } | null
+				}>
+			}
+			const items = Array.isArray(result?.items) ? result.items : []
+			const { page: pagedItems, nextCursor } = scoped
+				? paginateClientSide({
+						rows: items,
+						limit: pagination.limit,
+						snapshotAt: pagination.snapshotAt,
+						order: pagination.order,
+						cursor: pagination.cursor,
+						getSortValue: (row) => row.latest_activity_at ?? null,
+						getId: (row) => row.entity_id,
+					})
+				: { page: items, nextCursor: null }
+			const summaryRows: SummaryRow[] = pagedItems.map((row) => {
+				const title =
+					typeof row.object?.title === 'string' && row.object.title.length > 0
+						? row.object.title
+						: row.entity_id
+				const kind = typeof row.entity_type === 'string' ? row.entity_type : undefined
+				const count =
+					typeof row.unread_count === 'number' ? `${row.unread_count} unread` : undefined
+				const metaParts = [kind, count].filter((v): v is string => Boolean(v))
+				return {
+					title,
+					meta: metaParts.length > 0 ? metaParts.join(' · ') : undefined,
+				}
 			})
 			return {
 				_meta: meta('list_unread', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [
+					{
+						type: 'text' as const,
+						text: buildListContentText(result, summaryRows, 'No unread items.'),
+					},
+				],
+				structuredContent: {
+					items: pagedItems,
+					...(nextCursor ? { next_cursor: nextCursor } : {}),
+				},
 			}
 		},
 	)
@@ -5206,7 +5390,7 @@ export function createMcpServer(config: McpConfig) {
 				: enriched
 			return {
 				_meta: meta('create_session', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(withUrl, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(withUrl) }],
 			}
 		},
 	)
@@ -5244,9 +5428,28 @@ export function createMcpServer(config: McpConfig) {
 						}),
 					)
 				: enriched
+			const summaryRows: SummaryRow[] = withUrls.map((session) => {
+				const s = session as Record<string, unknown>
+				const status = typeof s.status === 'string' ? s.status : undefined
+				const actorName = typeof s.actorName === 'string' ? s.actorName : undefined
+				const sessionId = typeof s.id === 'string' ? s.id : ''
+				const shortId = sessionId ? sessionId.slice(0, 8) : ''
+				const metaParts = [status, actorName].filter((v): v is string => Boolean(v))
+				return {
+					title: `Session ${shortId}`,
+					url: pickUrl(s),
+					meta: metaParts.length > 0 ? metaParts.join(' · ') : undefined,
+				}
+			})
 			return {
 				_meta: meta('list_sessions', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(withUrls, null, 2) }],
+				content: [
+					{
+						type: 'text' as const,
+						text: buildListContentText(withUrls, summaryRows, 'No sessions.'),
+					},
+				],
+				structuredContent: { sessions: withUrls },
 			}
 		},
 	)
@@ -5293,7 +5496,7 @@ export function createMcpServer(config: McpConfig) {
 					content: [
 						{
 							type: 'text' as const,
-							text: JSON.stringify({ session: sessionWithUrl, logs }, null, 2),
+							text: JSON.stringify({ session: sessionWithUrl, logs }),
 						},
 					],
 				}
@@ -5301,7 +5504,7 @@ export function createMcpServer(config: McpConfig) {
 
 			return {
 				_meta: meta('get_session', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(sessionWithUrl, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(sessionWithUrl) }],
 			}
 		},
 	)
@@ -5329,7 +5532,7 @@ export function createMcpServer(config: McpConfig) {
 				: enriched
 			return {
 				_meta: meta('stop_session', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(withUrl, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(withUrl) }],
 			}
 		},
 	)
@@ -5357,7 +5560,7 @@ export function createMcpServer(config: McpConfig) {
 				: enriched
 			return {
 				_meta: meta('pause_session', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(withUrl, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(withUrl) }],
 			}
 		},
 	)
@@ -5385,7 +5588,7 @@ export function createMcpServer(config: McpConfig) {
 				: enriched
 			return {
 				_meta: meta('resume_session', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(withUrl, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(withUrl) }],
 			}
 		},
 	)
@@ -5459,7 +5662,7 @@ export function createMcpServer(config: McpConfig) {
 				content: [
 					{
 						type: 'text' as const,
-						text: JSON.stringify({ session: currentWithUrl, logs }, null, 2),
+						text: JSON.stringify({ session: currentWithUrl, logs }),
 					},
 				],
 			}
@@ -5476,12 +5679,52 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
-			const result = await apiCall(config, 'GET', '/api/integrations', undefined, {
+			const scoped = isResponseScopingEnabled()
+			const pagination = resolveListPagination(
+				{
+					limit: (args as { limit?: number }).limit,
+					cursor: (args as { cursor?: string }).cursor,
+				},
+				25,
+			)
+			const result = (await apiCall(config, 'GET', '/api/integrations', undefined, {
 				workspaceId: args.workspace_id,
-			})
+			})) as unknown
+			const rows = Array.isArray(result)
+				? (result as Array<{
+						id: string
+						createdAt?: string | null
+						provider?: string
+						status?: string
+					}>)
+				: []
+			const { page: pagedRows, nextCursor } = scoped
+				? paginateClientSide({
+						rows,
+						limit: pagination.limit,
+						snapshotAt: pagination.snapshotAt,
+						order: pagination.order,
+						cursor: pagination.cursor,
+						getSortValue: (row) => row.createdAt ?? null,
+						getId: (row) => row.id,
+					})
+				: { page: rows, nextCursor: null }
+			const summaryRows: SummaryRow[] = pagedRows.map((row) => ({
+				title: typeof row.provider === 'string' ? row.provider : 'integration',
+				meta: typeof row.status === 'string' ? row.status : undefined,
+			}))
 			return {
 				_meta: meta('list_integrations', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [
+					{
+						type: 'text' as const,
+						text: buildListContentText(result, summaryRows, 'No integrations.'),
+					},
+				],
+				structuredContent: {
+					integrations: pagedRows,
+					...(nextCursor ? { next_cursor: nextCursor } : {}),
+				},
 			}
 		},
 	)
@@ -5495,12 +5738,30 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async () => {
-			const result = await apiCall(config, 'GET', '/api/integrations/providers', undefined, {
+			const result = (await apiCall(config, 'GET', '/api/integrations/providers', undefined, {
 				skipWorkspace: true,
+			})) as Array<Record<string, unknown>>
+			const rows = Array.isArray(result) ? result : []
+			const summaryRows: SummaryRow[] = rows.map((row) => {
+				const name = typeof row.name === 'string' ? row.name : 'provider'
+				const displayName =
+					typeof row.displayName === 'string' && row.displayName !== name
+						? row.displayName
+						: undefined
+				return {
+					title: displayName ?? name,
+					meta: displayName ? name : undefined,
+				}
 			})
 			return {
 				_meta: meta('list_integration_providers', config),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [
+					{
+						type: 'text' as const,
+						text: buildListContentText(result, summaryRows, 'No integration providers.'),
+					},
+				],
+				structuredContent: { providers: rows },
 			}
 		},
 	)
@@ -5532,7 +5793,7 @@ export function createMcpServer(config: McpConfig) {
 				content: [
 					{
 						type: 'text' as const,
-						text: `Open this URL in your browser to complete the installation:\n\n${result.install_url}\n\n${JSON.stringify(result, null, 2)}`,
+						text: `Open this URL in your browser to complete the installation:\n\n${result.install_url}\n\n${JSON.stringify(result)}`,
 					},
 				],
 			}
@@ -5557,7 +5818,7 @@ export function createMcpServer(config: McpConfig) {
 					config,
 					(args as { workspace_id?: string }).workspace_id,
 				),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 			}
 		},
 	)
@@ -5662,9 +5923,51 @@ export function createMcpServer(config: McpConfig) {
 
 			const result = [...moduleExtensions, ...trackedCustomExtensions, ...untrackedExtensions]
 
+			const scoped = isResponseScopingEnabled()
+			const pagination = resolveListPagination(
+				{
+					limit: (args as { limit?: number }).limit,
+					cursor: (args as { cursor?: string }).cursor,
+				},
+				25,
+			)
+			// Extensions are derived from workspace settings + registered modules —
+			// there's no per-row insert timestamp, so cursor uses the id string and
+			// snapshot filtering is skipped. Sort order is stable-by-id.
+			const { page: pagedRows, nextCursor } = scoped
+				? paginateClientSide({
+						rows: result,
+						limit: pagination.limit,
+						snapshotAt: pagination.snapshotAt,
+						order: 'asc',
+						cursor: pagination.cursor,
+						getSortValue: (row) => row.id,
+						getId: (row) => row.id,
+						applySnapshotFilter: false,
+					})
+				: { page: result, nextCursor: null }
+			const summaryRows: SummaryRow[] = pagedRows.map((ext) => {
+				const typeCount = Array.isArray(ext.object_types) ? ext.object_types.length : 0
+				const enabledLabel = ext.enabled ? 'enabled' : 'disabled'
+				const metaParts = [enabledLabel]
+				if (typeCount > 0) metaParts.push(`${typeCount} type${typeCount === 1 ? '' : 's'}`)
+				return {
+					title: ext.name || ext.id,
+					meta: metaParts.join(' · '),
+				}
+			})
 			return {
 				_meta: meta('list_extensions', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [
+					{
+						type: 'text' as const,
+						text: buildListContentText(result, summaryRows, 'No extensions.'),
+					},
+				],
+				structuredContent: {
+					extensions: pagedRows,
+					...(nextCursor ? { next_cursor: nextCursor } : {}),
+				},
 			}
 		},
 	)
@@ -5724,7 +6027,7 @@ export function createMcpServer(config: McpConfig) {
 
 				return {
 					_meta: meta('create_extension', config, (args as { workspace_id?: string }).workspace_id),
-					content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+					content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 				}
 			}
 
@@ -5793,7 +6096,7 @@ export function createMcpServer(config: McpConfig) {
 
 			return {
 				_meta: meta('create_extension', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 			}
 		},
 	)
@@ -5843,7 +6146,7 @@ export function createMcpServer(config: McpConfig) {
 							config,
 							(args as { workspace_id?: string }).workspace_id,
 						),
-						content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+						content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 					}
 				}
 
@@ -5887,7 +6190,7 @@ export function createMcpServer(config: McpConfig) {
 							content: [
 								{
 									type: 'text' as const,
-									text: JSON.stringify(result, null, 2),
+									text: JSON.stringify(result),
 								},
 							],
 						}
@@ -5929,7 +6232,7 @@ export function createMcpServer(config: McpConfig) {
 
 				return {
 					_meta: meta('update_extension', config, (args as { workspace_id?: string }).workspace_id),
-					content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+					content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 				}
 			}
 
@@ -6005,7 +6308,7 @@ export function createMcpServer(config: McpConfig) {
 
 				return {
 					_meta: meta('update_extension', config, (args as { workspace_id?: string }).workspace_id),
-					content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+					content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 				}
 			}
 
@@ -6078,7 +6381,7 @@ export function createMcpServer(config: McpConfig) {
 					content: [
 						{
 							type: 'text' as const,
-							text: JSON.stringify({ removed, workspace: result }, null, 2),
+							text: JSON.stringify({ removed, workspace: result }),
 						},
 					],
 				}
@@ -6129,7 +6432,7 @@ export function createMcpServer(config: McpConfig) {
 
 				return {
 					_meta: meta('delete_extension', config, (args as { workspace_id?: string }).workspace_id),
-					content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+					content: [{ type: 'text' as const, text: JSON.stringify(result) }],
 				}
 			}
 

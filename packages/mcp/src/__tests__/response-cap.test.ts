@@ -494,8 +494,9 @@ describe('token-cap wired into createMcpServer (AC-T5 / AC-T6 end-to-end)', () =
 
 	it('flag OFF: token-cap wrapper is a no-op even on an oversized payload (AC-T4)', async () => {
 		// The flag off means the pre-scoping shape ships verbatim — even if the
-		// response would be enormous, the wrapper must not touch it.
-		delete process.env[RESPONSE_SCOPING_ENV_VAR]
+		// response would be enormous, the wrapper must not touch it. After T1
+		// the default is ON, so the legacy path requires an explicit opt-out.
+		process.env[RESPONSE_SCOPING_ENV_VAR] = '0'
 		process.env[RESPONSE_TOKEN_CAP_ENV_VAR] = '2000'
 
 		const fixture = Array.from({ length: 25 }, (_, i) => bigObjectRow(i))

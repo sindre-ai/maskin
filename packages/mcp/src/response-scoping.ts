@@ -26,18 +26,26 @@ export const CONTENT_SUMMARY_BUDGET_BYTES = 2048
  * required — the deployment can flip the env var and the very next tool call
  * sees the new value.
  *
- * Truthy values (case-insensitive): `1`, `true`, `on`, `yes`. Anything else
- * (including unset, empty, and any other string) is treated as off. Keeping
- * the accepted set small avoids ambiguity: the flag is a hard on/off toggle,
- * not a level.
+ * Scoping is ON by default — unset, empty, or any unrecognised value is
+ * treated as on. Only the explicit off values (`0`, `false`, `off`, `no`,
+ * case-insensitive) disable it. The default flipped in T1 of the "Lean MCP
+ * responses" bet once the parity harness proved the scoped path is a
+ * behavior-preserving superset of the legacy path; a deployment that wants
+ * the pre-scoping shape back can still opt out by exporting `0`.
  */
 export function isResponseScopingEnabled(
 	env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,
 ): boolean {
 	const raw = env[RESPONSE_SCOPING_ENV_VAR]
-	if (typeof raw !== 'string') return false
+	if (typeof raw !== 'string') return true
 	const normalized = raw.trim().toLowerCase()
-	return normalized === '1' || normalized === 'true' || normalized === 'on' || normalized === 'yes'
+	if (normalized === '') return true
+	return !(
+		normalized === '0' ||
+		normalized === 'false' ||
+		normalized === 'off' ||
+		normalized === 'no'
+	)
 }
 
 /** One row in a summary. Title is the human-readable label; url is the

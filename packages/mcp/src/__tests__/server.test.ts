@@ -18,6 +18,7 @@ vi.mock('node:fs', () => ({
 
 import { registerAppResource, registerAppTool } from '@modelcontextprotocol/ext-apps/server'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { RESPONSE_SCOPING_ENV_VAR } from '../response-scoping'
 import {
 	HERO_CARD_TYPE_DEFAULTS,
 	type HeroCardTypeAnnotation,
@@ -128,6 +129,13 @@ describe('tool handlers', () => {
 		vi.clearAllMocks()
 		handlers = new Map()
 
+		// After T1 the response-scoping default flipped to ON. This suite pins
+		// the pre-scoping legacy URL/content contract for every registered tool;
+		// the scoped-path assertions live in response-scoping/response-cap/
+		// verification-harness suites. Explicitly opt out here so the legacy
+		// contract stays testable.
+		process.env[RESPONSE_SCOPING_ENV_VAR] = '0'
+
 		vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
 			handlers.set(name as string, handler as (args: Record<string, unknown>) => Promise<unknown>)
 		})
@@ -138,6 +146,7 @@ describe('tool handlers', () => {
 	afterEach(() => {
 		vi.useRealTimers()
 		vi.restoreAllMocks()
+		delete process.env[RESPONSE_SCOPING_ENV_VAR]
 	})
 
 	function getHandler(name: string) {
@@ -1419,7 +1428,7 @@ describe('tool handlers', () => {
 	})
 
 	describe('get_objects handler (partial failure)', () => {
-		it('returns success false for failed IDs without rejecting', async () => {
+		it('returns a structured error for failed IDs without rejecting', async () => {
 			vi.spyOn(globalThis, 'fetch')
 				.mockResolvedValueOnce({
 					ok: true,
@@ -1441,7 +1450,14 @@ describe('tool handlers', () => {
 			expect(parsed[0].success).toBe(true)
 			expect(parsed[0].result).toEqual({ id: 'id-1', title: 'OK' })
 			expect(parsed[1].success).toBe(false)
-			expect(parsed[1].error).toContain('API error 404')
+			// Per-id sub-error follows the same `{ tool, reason, next }` shape as
+			// top-level tool errors (T2).
+			expect(parsed[1].error).toMatchObject({
+				tool: 'get_objects',
+				reason: expect.stringMatching(/not found/i),
+				next: { tool: 'search_objects', hint: expect.any(String) },
+			})
+			expect(parsed[1].error.next.hint).toContain('search_objects')
 		})
 	})
 
@@ -1787,11 +1803,22 @@ describe('tool handlers', () => {
 				expect(parsed.loop.id).toBe('loop-1')
 			})
 
-			it('throws a not-found error when the loops array is empty', async () => {
+			it('returns a structured not-found error when the loops array is empty', async () => {
 				mockFetchSuccess({ loops: [] })
 
 				const handler = getHandler('get_loop')
-				await expect(handler({ id: 'missing-loop' })).rejects.toThrow(/not found/)
+				const result = (await handler({ id: 'missing-loop' })) as {
+					isError?: boolean
+					structuredContent?: {
+						error?: { tool: string; reason: string; next: { tool: string; hint: string } }
+					}
+				}
+				expect(result.isError).toBe(true)
+				expect(result.structuredContent?.error).toMatchObject({
+					tool: 'get_loop',
+					reason: expect.stringMatching(/not found/i),
+					next: { tool: 'list_loops', hint: expect.stringContaining('list_loops') },
+				})
 			})
 		})
 
@@ -2131,8 +2158,12 @@ describe('tool handlers', () => {
 		})
 	})
 
-	describe('error handling', () => {
-		it('throws with API error message', async () => {
+	describe('error handling (read-side structured errors, T2)', () => {
+		// Read-side handlers convert thrown API errors into a structured
+		// `{ error: { tool, reason, next: { tool, hint } } }` response so the
+		// caller sees the failing tool, why it failed, and which tool to try
+		// next — instead of a bare transport-level throw.
+		it('returns invalid_param error and echoes the API detail in reason', async () => {
 			mockFetchError(
 				400,
 				JSON.stringify({
@@ -2144,10 +2175,23 @@ describe('tool handlers', () => {
 			)
 
 			const handler = getHandler('list_objects')
-			await expect(handler({})).rejects.toThrow('API error 400')
+			const result = (await handler({})) as {
+				isError?: boolean
+				structuredContent?: {
+					error?: { tool: string; reason: string; next: { tool: string; hint: string } }
+				}
+			}
+			expect(result.isError).toBe(true)
+			const err = result.structuredContent?.error
+			expect(err?.tool).toBe('list_objects')
+			expect(err?.reason).toMatch(/invalid argument/i)
+			expect(err?.reason).toContain('Validation failed')
+			// Invalid-param → same tool with a corrective example.
+			expect(err?.next.tool).toBe('list_objects')
+			expect(err?.next.hint).toContain('list_objects')
 		})
 
-		it('throws with suggestion when available', async () => {
+		it('returns permission error with the API suggestion preserved in reason', async () => {
 			mockFetchError(
 				401,
 				JSON.stringify({
@@ -2156,19 +2200,36 @@ describe('tool handlers', () => {
 			)
 
 			const handler = getHandler('list_objects')
-			await expect(handler({})).rejects.toThrow('Hint: Check your API key')
+			const result = (await handler({})) as {
+				structuredContent?: {
+					error?: { tool: string; reason: string; next: { tool: string; hint: string } }
+				}
+			}
+			const err = result.structuredContent?.error
+			expect(err?.tool).toBe('list_objects')
+			expect(err?.reason).toMatch(/permission denied/i)
+			expect(err?.reason).toContain('Hint: Check your API key')
+			// Auth failure → point at list_workspaces so the caller can confirm access.
+			expect(err?.next.tool).toBe('list_workspaces')
 		})
 
-		it('throws with raw text for non-JSON error', async () => {
+		it('returns server error for 5xx and echoes the raw response body', async () => {
 			mockFetchError(500, 'Internal Server Error')
 
 			const handler = getHandler('list_objects')
-			await expect(handler({})).rejects.toThrow('Internal Server Error')
+			const result = (await handler({})) as {
+				structuredContent?: {
+					error?: { tool: string; reason: string; next: { tool: string; hint: string } }
+				}
+			}
+			const err = result.structuredContent?.error
+			expect(err?.reason).toContain('Internal Server Error')
+			expect(err?.next.tool).toBe('list_objects')
 		})
 	})
 
 	describe('auth validation', () => {
-		it('throws when no API key configured', async () => {
+		it('returns a structured permission error when no API key configured', async () => {
 			const noKeyHandlers = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>()
 			vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
 				noKeyHandlers.set(
@@ -2180,7 +2241,17 @@ describe('tool handlers', () => {
 
 			const handler = noKeyHandlers.get('list_objects')
 			if (!handler) throw new Error('Handler list_objects not registered')
-			await expect(handler({})).rejects.toThrow('Not authenticated')
+			const result = (await handler({})) as {
+				isError?: boolean
+				structuredContent?: {
+					error?: { tool: string; reason: string; next: { tool: string; hint: string } }
+				}
+			}
+			expect(result.isError).toBe(true)
+			const err = result.structuredContent?.error
+			expect(err?.tool).toBe('list_objects')
+			expect(err?.reason).toContain('Not authenticated')
+			expect(err?.next.tool).toBe('list_workspaces')
 		})
 
 		it('hosted-MCP setup hint mentions the Authorization header, not env vars', async () => {
@@ -2195,7 +2266,10 @@ describe('tool handlers', () => {
 
 			const handler = httpHandlers.get('list_objects')
 			if (!handler) throw new Error('Handler list_objects not registered')
-			await expect(handler({})).rejects.toThrow(/Authorization: Bearer/)
+			const result = (await handler({})) as {
+				structuredContent?: { error?: { reason: string } }
+			}
+			expect(result.structuredContent?.error?.reason).toMatch(/Authorization: Bearer/)
 		})
 
 		it('hosted-MCP missing-workspace hint mentions the X-Workspace-Id header', async () => {
@@ -2210,7 +2284,10 @@ describe('tool handlers', () => {
 
 			const handler = httpHandlers.get('list_objects')
 			if (!handler) throw new Error('Handler list_objects not registered')
-			await expect(handler({})).rejects.toThrow(/X-Workspace-Id/)
+			const result = (await handler({})) as {
+				structuredContent?: { error?: { reason: string } }
+			}
+			expect(result.structuredContent?.error?.reason).toMatch(/X-Workspace-Id/)
 		})
 	})
 
@@ -2438,7 +2515,7 @@ describe('tool handlers', () => {
 			})
 		})
 
-		it('throws when no workspace is configured and none provided', async () => {
+		it('returns structured invalid_param error when no workspace is configured and none provided', async () => {
 			vi.clearAllMocks()
 			const handlersNoWs = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>()
 			vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
@@ -2451,7 +2528,11 @@ describe('tool handlers', () => {
 
 			const handler = handlersNoWs.get('list_workspace_skills')
 			if (!handler) throw new Error('handler missing')
-			await expect(handler({})).rejects.toThrow(/No workspace specified/)
+			const result = (await handler({})) as {
+				structuredContent?: { error?: { reason: string; next: { tool: string } } }
+			}
+			expect(result.structuredContent?.error?.reason).toMatch(/No workspace specified/)
+			expect(result.structuredContent?.error?.next.tool).toBe('list_workspace_skills')
 		})
 	})
 
@@ -4383,6 +4464,9 @@ describe('url field injection', () => {
 	}
 
 	beforeEach(() => {
+		// url-injection suite pins the legacy content JSON dump — see the same
+		// note on the tool handlers suite above.
+		process.env[RESPONSE_SCOPING_ENV_VAR] = '0'
 		vi.mocked(McpServer).mockImplementation(() => ({ registerResource: vi.fn(), connect: vi.fn() }))
 		vi.mocked(registerAppTool).mockReset()
 		vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
@@ -4398,6 +4482,7 @@ describe('url field injection', () => {
 	afterEach(() => {
 		vi.useRealTimers()
 		vi.restoreAllMocks()
+		delete process.env[RESPONSE_SCOPING_ENV_VAR]
 	})
 
 	it('omits url when webAppBaseUrl is not configured', async () => {
