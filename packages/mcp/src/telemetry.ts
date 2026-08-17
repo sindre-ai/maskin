@@ -214,7 +214,6 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	create_objects: 'create',
 	update_objects: 'update',
 	delete_object: 'delete',
-	create_relationship: 'relationship_create',
 	delete_relationship: 'relationship_delete',
 	// Workspaces + members
 	create_workspace: 'workspace_create',
@@ -234,10 +233,6 @@ export const MUTATION_TOOL_KINDS: Record<string, string> = {
 	create_loop: 'loop_create',
 	update_loop: 'loop_update',
 	delete_loop: 'loop_delete',
-	// Notifications
-	create_notification: 'notification_create',
-	update_notification: 'notification_update',
-	delete_notification: 'notification_delete',
 	// Comments
 	create_comment: 'comment_create',
 	// Workspace skills

@@ -307,7 +307,7 @@ function ForYouRedesign() {
 							markAllReadDisabled={unreadRegular.length === 0}
 						/>
 					}
-					scrollLocked={mode === 'cards'}
+					scrollLocked={mode === 'cards' && queue.length > 0}
 				/>
 				{northStarCard}
 				<ForYouHeader

@@ -4,6 +4,7 @@ import {
 	actors,
 	agentSkills,
 	objects,
+	reviewerVerdicts,
 	workspaceMembers,
 	workspaceSkills,
 } from '@maskin/db/schema'
@@ -15,7 +16,7 @@ import {
 	getOrBootstrapAgentBuilderActor,
 } from '../../services/agent-builder-bootstrap'
 import { AgentStorageManager, workspaceSkillKey } from '../../services/agent-storage'
-import { insertActor, insertObject, insertWorkspace } from '../factories'
+import { insertActor, insertObject, insertSession, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
 
 // The reviewer and refine paths make one or more LLM calls before writing to
@@ -35,9 +36,18 @@ vi.mock('../../lib/analytics/posthog', () => ({
 const { callLlm: mockedCallLlm } = await import('../../services/llm-call')
 const callLlm = mockedCallLlm as unknown as ReturnType<typeof vi.fn>
 
-const { AgentReviewTargetError, loadReviewTarget, refineAgent, reviewWork } = await import(
-	'../../services/agent-builder'
+const { capturePosthogEvent: mockedCapturePosthogEvent } = await import(
+	'../../lib/analytics/posthog'
 )
+const capturePosthogEvent = mockedCapturePosthogEvent as unknown as ReturnType<typeof vi.fn>
+
+const {
+	AgentReviewTargetError,
+	loadReviewTarget,
+	refineAgent,
+	reviewWork,
+	reviewerVerdictWorkflow,
+} = await import('../../services/agent-builder')
 
 const REVIEWER_PASS_VERDICT = JSON.stringify({
 	criteria: [
@@ -137,6 +147,7 @@ function createMemoryStorage(): StorageProvider & { _store: Map<string, Buffer> 
 describe('agent-builder service integration', () => {
 	beforeEach(() => {
 		callLlm.mockReset()
+		capturePosthogEvent.mockClear()
 	})
 
 	describe('reviewWork', () => {
@@ -190,6 +201,205 @@ describe('agent-builder service integration', () => {
 			expect(data.cycle_number).toBe(1)
 			expect(data.rubric_id).toBe(out.rubricId)
 			expect(data.failing_criteria).toEqual([])
+
+			// Unpersisted on purpose: object_id reviews have no inherent actor
+			// association unless the caller names one via target_actor_id.
+			expect(out.persisted).toBe(false)
+			expect(out.verdictId).toBeNull()
+		})
+
+		it('persists a ratable verdict when target_actor_id is supplied for an object_id review', async () => {
+			callLlm.mockResolvedValueOnce({ ok: true, content: REVIEWER_PASS_VERDICT })
+
+			const ws = await insertWorkspace(db, getTestActorId())
+			const targetAgent = await insertActor(db, { type: 'agent', name: 'Target Agent' })
+			await db
+				.insert(workspaceMembers)
+				.values({ workspaceId: ws.id, actorId: targetAgent.id, role: 'member' })
+			const draft = await insertObject(db, ws.id, getTestActorId(), {
+				content:
+					'# Draft SME agent\n\n## Response protocol\n\nEnd with Recommendation: and Assumptions:.',
+			})
+
+			const out = await reviewWork(db, {
+				workspaceId: ws.id,
+				actorId: getTestActorId(),
+				objectId: draft.id,
+				targetActorId: targetAgent.id,
+			})
+
+			expect(out.persisted).toBe(true)
+			expect(out.verdictId).toBeTruthy()
+
+			const [verdictRow] = await db
+				.select()
+				.from(reviewerVerdicts)
+				.where(eq(reviewerVerdicts.id, out.verdictId as string))
+			expect(verdictRow).toBeDefined()
+			expect(verdictRow.targetActorId).toBe(targetAgent.id)
+			expect(verdictRow.verdict).toBe('pass')
+			expect(verdictRow.humanAgreed).toBeNull()
+		})
+
+		it('propagates target_actor_not_found instead of silently reporting persisted: false', async () => {
+			callLlm.mockResolvedValueOnce({ ok: true, content: REVIEWER_PASS_VERDICT })
+
+			const ws = await insertWorkspace(db, getTestActorId())
+			const draft = await insertObject(db, ws.id, getTestActorId(), {
+				content:
+					'# Draft SME agent\n\n## Response protocol\n\nEnd with Recommendation: and Assumptions:.',
+			})
+
+			await expect(
+				reviewWork(db, {
+					workspaceId: ws.id,
+					actorId: getTestActorId(),
+					objectId: draft.id,
+					targetActorId: randomUUID(),
+				}),
+			).rejects.toMatchObject({ name: 'ReviewerVerdictError', code: 'target_actor_not_found' })
+		})
+
+		it('persists a ratable verdict automatically for a session_id review (target actor resolved from the session)', async () => {
+			callLlm.mockResolvedValueOnce({ ok: true, content: REVIEWER_PASS_VERDICT })
+
+			const ws = await insertWorkspace(db, getTestActorId())
+			const targetAgent = await insertActor(db, { type: 'agent', name: 'Session Target Agent' })
+			await db
+				.insert(workspaceMembers)
+				.values({ workspaceId: ws.id, actorId: targetAgent.id, role: 'member' })
+			const session = await insertSession(db, ws.id, targetAgent.id, getTestActorId(), {
+				status: 'completed',
+				result: { final_message: 'done' },
+			})
+
+			const out = await reviewWork(db, {
+				workspaceId: ws.id,
+				actorId: getTestActorId(),
+				sessionId: session.id,
+			})
+
+			expect(out.targetActorId).toBe(targetAgent.id)
+			expect(out.persisted).toBe(true)
+			expect(out.verdictId).toBeTruthy()
+
+			const [verdictRow] = await db
+				.select()
+				.from(reviewerVerdicts)
+				.where(eq(reviewerVerdicts.id, out.verdictId as string))
+			expect(verdictRow.targetActorId).toBe(targetAgent.id)
+			expect(verdictRow.reviewerSessionId).toBeTruthy()
+
+			// Regression guard: reviewWork() fires both trackReviewerVerdictSubmitted
+			// (always) and recordReviewerVerdict (when persisted) for the same
+			// review — only recordReviewerVerdict may emit the PostHog
+			// reviewer_verdict_submitted capture, or the ship-metric dashboard
+			// double-counts every persisted verdict.
+			const submittedCalls = capturePosthogEvent.mock.calls.filter(
+				([event]) => event === 'reviewer_verdict_submitted',
+			)
+			expect(submittedCalls).toHaveLength(1)
+		})
+	})
+
+	describe('reviewerVerdictWorkflow', () => {
+		it('reviews via session_id, persists, and attaches a precision summary with zero rated verdicts', async () => {
+			callLlm.mockResolvedValueOnce({ ok: true, content: REVIEWER_PASS_VERDICT })
+
+			const ws = await insertWorkspace(db, getTestActorId())
+			const targetAgent = await insertActor(db, { type: 'agent', name: 'Workflow Target Agent' })
+			await db
+				.insert(workspaceMembers)
+				.values({ workspaceId: ws.id, actorId: targetAgent.id, role: 'member' })
+			const session = await insertSession(db, ws.id, targetAgent.id, getTestActorId(), {
+				status: 'completed',
+				result: { final_message: 'done' },
+			})
+
+			const { review, rating, precisionSummary } = await reviewerVerdictWorkflow(db, {
+				workspaceId: ws.id,
+				actorId: getTestActorId(),
+				sessionId: session.id,
+			})
+
+			expect(review?.persisted).toBe(true)
+			expect(rating).toBeNull()
+			expect(precisionSummary?.total_verdicts).toBe(1)
+			expect(precisionSummary?.rated_verdicts).toBe(0)
+			expect(precisionSummary?.precision).toBeNull()
+		})
+
+		it('rates a verdict produced by a different caller and folds the updated precision into the response', async () => {
+			callLlm.mockResolvedValueOnce({ ok: true, content: REVIEWER_PASS_VERDICT })
+
+			const ws = await insertWorkspace(db, getTestActorId())
+			const targetAgent = await insertActor(db, { type: 'agent', name: 'Rate Target Agent' })
+			await db
+				.insert(workspaceMembers)
+				.values({ workspaceId: ws.id, actorId: targetAgent.id, role: 'member' })
+			const rater = await insertActor(db, { type: 'human', name: 'Human Rater' })
+			await db
+				.insert(workspaceMembers)
+				.values({ workspaceId: ws.id, actorId: rater.id, role: 'member' })
+			const session = await insertSession(db, ws.id, targetAgent.id, getTestActorId(), {
+				status: 'completed',
+				result: { final_message: 'done' },
+			})
+
+			const { review } = await reviewerVerdictWorkflow(db, {
+				workspaceId: ws.id,
+				actorId: getTestActorId(),
+				sessionId: session.id,
+			})
+			expect(review?.verdictId).toBeTruthy()
+
+			const {
+				review: secondReview,
+				rating,
+				precisionSummary,
+			} = await reviewerVerdictWorkflow(db, {
+				workspaceId: ws.id,
+				actorId: rater.id,
+				verdictId: review?.verdictId as string,
+				humanAgreed: true,
+			})
+
+			expect(secondReview).toBeNull()
+			expect(rating?.humanAgreed).toBe(true)
+			expect(precisionSummary?.rated_verdicts).toBe(1)
+			expect(precisionSummary?.agreed_verdicts).toBe(1)
+			expect(precisionSummary?.precision).toBe(1)
+			expect(precisionSummary?.meets_threshold).toBe(true)
+		})
+
+		it('throws self_rating_forbidden when the reviewing and rating identity are the same caller', async () => {
+			callLlm.mockResolvedValueOnce({ ok: true, content: REVIEWER_PASS_VERDICT })
+
+			const ws = await insertWorkspace(db, getTestActorId())
+			const targetAgent = await insertActor(db, { type: 'agent', name: 'Self Rate Target Agent' })
+			await db
+				.insert(workspaceMembers)
+				.values({ workspaceId: ws.id, actorId: targetAgent.id, role: 'member' })
+			const session = await insertSession(db, ws.id, targetAgent.id, getTestActorId(), {
+				status: 'completed',
+				result: { final_message: 'done' },
+			})
+
+			await expect(
+				reviewerVerdictWorkflow(db, {
+					workspaceId: ws.id,
+					actorId: getTestActorId(),
+					sessionId: session.id,
+					humanAgreed: true,
+				}),
+			).rejects.toMatchObject({ code: 'self_rating_forbidden' })
+		})
+
+		it('throws no_target_specified when nothing to review, rate, or summarize is given', async () => {
+			const ws = await insertWorkspace(db, getTestActorId())
+			await expect(
+				reviewerVerdictWorkflow(db, { workspaceId: ws.id, actorId: getTestActorId() }),
+			).rejects.toMatchObject({ reason: 'no_target_specified' })
 		})
 	})
 

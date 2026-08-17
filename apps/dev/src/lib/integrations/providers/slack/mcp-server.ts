@@ -18,8 +18,8 @@ export interface SlackPostContext {
 	 * with the workspace name, e.g. `Synthesizer · in mesh-firm`.
 	 */
 	agentLabel: string
-	/** PNG URL for the shared Machine avatar; omitted when unset. */
-	machineIconUrl?: string
+	/** PNG URL for the shared Maskin avatar; omitted when unset. */
+	iconUrl?: string
 	/** For logs only — tells us which workspace the post came from. */
 	workspaceId: string
 	/** For logs only — tells us which actor in that workspace sent it. */
@@ -67,9 +67,9 @@ async function slackPostMessage(
 	const body: Record<string, unknown> = {
 		channel: args.channel,
 		text: args.text,
-		username: 'Machine',
+		username: 'Maskin',
 	}
-	if (ctx.machineIconUrl) body.icon_url = ctx.machineIconUrl
+	if (ctx.iconUrl) body.icon_url = ctx.iconUrl
 	if (args.thread_ts) body.thread_ts = args.thread_ts
 	if (ctx.agentLabel?.trim()) {
 		body.blocks = [
@@ -137,8 +137,8 @@ const sendMessageInput = {
 
 /**
  * Build a fresh MCP server per request. The server exposes one tool —
- * `slack_send_message` — that posts to Slack as Machine with the calling
- * agent's subscript. Identity (`agentLabel`, `machineIconUrl`) is bound at
+ * `slack_send_message` — that posts to Slack as Maskin with the calling
+ * agent's subscript. Identity (`agentLabel`, `iconUrl`) is bound at
  * server-construction time so a single connection can't be reused across
  * workspaces by mistake.
  */
@@ -149,7 +149,7 @@ export function createSlackMcpServer(ctx: SlackPostContext): McpServer {
 		'slack_send_message',
 		{
 			description:
-				'Post a message to Slack as Machine. The calling agent\'s name and the workspace name are appended automatically as the `username` subscript (e.g. "Synthesizer · in mesh-firm") — do not prefix the message text with your own identity.',
+				'Post a message to Slack as Maskin. The calling agent\'s name and the workspace name are appended automatically as the `username` subscript (e.g. "Synthesizer · in mesh-firm") — do not prefix the message text with your own identity.',
 			inputSchema: sendMessageInput,
 		},
 		async (args) => {

@@ -1,14 +1,14 @@
-# Slack app — Machine
+# Slack app — Maskin
 
 This directory holds the source of truth for the Slack app behind Maskin's
-Machine identity:
+bot identity:
 
 - `manifest.yml` — the Slack [app manifest](https://api.slack.com/reference/manifests) that defines display info, the bot user, OAuth scopes, and event subscriptions.
 - `icon-placeholder.svg` — temporary brand mark for the app icon. Replace with the 512×512 PNG produced by the branded-profile spec (T2 on `bet/slack-trust-surface`) before the next operator-facing install.
 
 ## Upload steps
 
-1. Open the [Slack app dashboard](https://api.slack.com/apps) and pick the Maskin/Machine app (one per environment — dev / prod).
+1. Open the [Slack app dashboard](https://api.slack.com/apps) and pick the Maskin app (one per environment — dev / prod).
 2. Go to **Features → App Manifest** (left sidebar).
 3. Switch the editor to **YAML**, paste the contents of `manifest.yml`, and **Save changes**.
 4. Before saving, replace **both** occurrences of `REPLACE_WITH_ENV_URL` — in `settings.event_subscriptions.request_url` and in `oauth_config.redirect_urls` — with the public hostname of the target environment. Production is `maskin.io` (request URL → `/api/webhooks/slack`, redirect → `/api/integrations/slack/callback`).

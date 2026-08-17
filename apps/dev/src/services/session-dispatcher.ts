@@ -1,5 +1,5 @@
 import type { Database } from '@maskin/db'
-import { agentServers, sessions } from '@maskin/db/schema'
+import { events, agentServers, sessions } from '@maskin/db/schema'
 import { and, eq, inArray, sql } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import {
@@ -29,6 +29,17 @@ export type StartSessionRequestBuilder = (sessionId: string) => Promise<StartSes
 
 export type AgentServerClientFactory = (server: AgentServerRow) => AgentServerClient
 
+/**
+ * Delivers a session's opening turn once it's dispatched. Mirrors the
+ * local-Docker `launchContainer()` path in session-manager.ts, which calls
+ * `writeInput()` right after `attachStdin()` — interactive sessions have no
+ * `ACTION_PROMPT` env var (see buildLaunchSpec), so `agent-run.sh`'s
+ * interactive branch blocks forever reading `claude`'s stdin from
+ * `/sessions/:id/input/stream` until something POSTs `/sessions/:id/input`.
+ * No-ops for non-interactive sessions (their prompt already went in via env).
+ */
+export type SeedInteractiveTurnFn = (sessionId: string) => Promise<void>
+
 export interface SessionDispatcherDeps {
 	db: Database
 	/**
@@ -40,6 +51,8 @@ export interface SessionDispatcherDeps {
 	buildStartRequest: StartSessionRequestBuilder
 	/** Constructs an `AgentServerClient` for a chosen server row. */
 	clientFactory?: AgentServerClientFactory
+	/** See `SeedInteractiveTurnFn`. Optional so tests that don't exercise interactive dispatch can omit it. */
+	seedInteractiveTurn?: SeedInteractiveTurnFn
 }
 
 export interface PickedServer {
@@ -52,11 +65,13 @@ export class SessionDispatcher {
 	private readonly db: Database
 	private readonly buildStartRequest: StartSessionRequestBuilder
 	private readonly clientFactory: AgentServerClientFactory
+	private readonly seedInteractiveTurn?: SeedInteractiveTurnFn
 
 	constructor(deps: SessionDispatcherDeps) {
 		this.db = deps.db
 		this.buildStartRequest = deps.buildStartRequest
 		this.clientFactory = deps.clientFactory ?? ((server) => new AgentServerClient({ server }))
+		this.seedInteractiveTurn = deps.seedInteractiveTurn
 	}
 
 	/**
@@ -114,6 +129,20 @@ export class SessionDispatcher {
 		try {
 			const response = await client.startSession(request)
 			await this.markDispatched(sessionId, picked.server.id, response.sandboxName)
+			if (this.seedInteractiveTurn) {
+				try {
+					await this.seedInteractiveTurn(sessionId)
+				} catch (err) {
+					// Don't fail the dispatch over this — the sandbox is already up and
+					// the session is still usable via a later /input call, just without
+					// its opening turn. Same rationale as launchContainer's local path.
+					logger.error('Failed to seed initial interactive turn after remote dispatch', {
+						sessionId,
+						agentServerId: picked.server.id,
+						error: err instanceof Error ? err.message : String(err),
+					})
+				}
+			}
 			logger.info('Session dispatched to agent-server', {
 				sessionId,
 				idempotencyKey,
@@ -235,14 +264,18 @@ export class SessionDispatcher {
 		sandboxName: string,
 	): Promise<void> {
 		const [session] = await this.db
-			.select({ config: sessions.config })
+			.select({
+				config: sessions.config,
+				workspaceId: sessions.workspaceId,
+				actorId: sessions.actorId,
+			})
 			.from(sessions)
 			.where(eq(sessions.id, sessionId))
 			.limit(1)
 		const config = (session?.config ?? {}) as Record<string, unknown>
 		const timeoutSeconds = (config.timeout_seconds as number) ?? 7200
 		const now = new Date()
-		await this.db
+		const [updated] = await this.db
 			.update(sessions)
 			.set({
 				status: 'running',
@@ -255,5 +288,21 @@ export class SessionDispatcher {
 			.where(
 				and(eq(sessions.id, sessionId), sql`${sessions.status} NOT IN ('completed', 'failed')`),
 			)
+			.returning({ id: sessions.id })
+
+		// Same rationale as the local-container path in session-manager.ts —
+		// without this, the frontend never learns the session left 'pending'
+		// and live-activity surfaces (e.g. the chat typing indicator) never
+		// refetch to pick it up.
+		if (updated && session) {
+			await this.db.insert(events).values({
+				workspaceId: session.workspaceId,
+				actorId: session.actorId,
+				action: 'session_started',
+				entityType: 'session',
+				entityId: sessionId,
+				data: {},
+			})
+		}
 	}
 }
