@@ -50,7 +50,7 @@ export function AgentWorkingBadge({
 						</>
 					)}
 					{duration && (
-						<span className="ml-auto text-xs text-muted-foreground shrink-0">{duration}</span>
+						<span className="text-xs text-muted-foreground shrink-0 ml-auto">{duration}</span>
 					)}
 				</div>
 				{session?.currentActivity && (

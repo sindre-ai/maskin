@@ -50,7 +50,7 @@ All agent execution runs via Docker container sessions (`session-manager.ts`). S
 
 ## MCP Server
 
-The `packages/mcp` package wraps the API as 14 MCP tools with stdio transport. Any MCP-compatible agent (Claude Code, etc.) can connect and operate the workspace natively — create objects, query relationships, fire triggers, read events.
+The `packages/mcp` package wraps the API as 73 MCP tools with stdio + HTTP transport. Any MCP-compatible agent (Claude Code, etc.) can connect and operate the workspace natively — create objects, query relationships, fire triggers, read events.
 
 ## API Design
 

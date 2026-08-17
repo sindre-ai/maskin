@@ -37,6 +37,7 @@ vi.mock('@/hooks/use-subscriptions', () => ({
 		isLoading: false,
 	}),
 	useMarkRead: () => ({ mutate: vi.fn() }),
+	useMarkUnread: () => ({ mutate: vi.fn() }),
 }))
 
 vi.mock('@/hooks/use-bets', () => ({
@@ -141,6 +142,7 @@ function buildItem(id: string, title: string, type: string): UnreadItem {
 		entity_id: id,
 		unread_count: 1,
 		mentioning_unread_count: 0,
+		max_unread_attention: null,
 		latest_event_id: 42,
 		latest_activity_at: '2026-08-11T10:00:00.000Z',
 		object: {
@@ -284,5 +286,46 @@ describe('ForYou view-mode persistence via __chrome__ display settings', () => {
 
 		expect(settingsState.__dsLastUpsertBody).toMatchObject({ foryouViewMode: 'card' })
 		expect(screen.getByTestId('foryou-card-queue')).toBeInTheDocument()
+	})
+})
+
+describe('ForYou Priority sort — ordered by attention score', () => {
+	beforeEach(() => {
+		settingsState.__dsPersisted = { foryouViewMode: 'list' }
+		settingsState.__dsUpsertCalls = 0
+		settingsState.__dsLastUpsertBody = null
+	})
+
+	it('orders cards by max_unread_attention desc, unscored last, default sort is priority', async () => {
+		feedState.__foryouItems = [
+			{
+				...buildItem('low', 'Low attention item', 'insight'),
+				max_unread_attention: 2,
+				latest_activity_at: '2026-08-10T00:00:00.000Z',
+			},
+			{
+				...buildItem('unscored', 'Unscored item', 'insight'),
+				max_unread_attention: null,
+				latest_activity_at: '2026-08-15T00:00:00.000Z',
+			},
+			{
+				...buildItem('critical', 'Critical attention item', 'insight'),
+				max_unread_attention: 5,
+				latest_activity_at: '2026-08-01T00:00:00.000Z',
+			},
+		]
+
+		mount()
+		await flush()
+
+		const links = screen
+			.getAllByRole('link')
+			.filter((el) => /attention item|Unscored item/.test(el.textContent ?? ''))
+		const names = links.map((el) => el.textContent)
+		expect(names).toEqual([
+			expect.stringContaining('Critical attention item'),
+			expect.stringContaining('Low attention item'),
+			expect.stringContaining('Unscored item'),
+		])
 	})
 })

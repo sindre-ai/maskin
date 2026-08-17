@@ -1,6 +1,6 @@
 ---
 name: workspace-observer-onboarding
-description: Guides the Workspace Coach to run onboarding for a new workspace — detecting an empty workspace, creating an onboarding session, subscribing the owner, and posting context prompts in sequence to get the workspace to its first bet.
+description: Guides the Workspace Coach to run onboarding for a new workspace — detecting an empty workspace, creating an onboarding session, identifying the owner, and posting context prompts in sequence to get the workspace to its first bet.
 ---
 
 # Workspace Coach Onboarding
@@ -26,11 +26,9 @@ Call `create_objects` to create a single object:
 
 Save the returned object ID — all prompts in the next step are comments posted on this object.
 
-### 2. Subscribe the workspace owner
+### 2. Identify the workspace owner
 
-Call `subscribe` with the onboarding session object ID and the workspace owner's actor ID. This ensures the owner receives the prompts via their For You feed.
-
-To find the workspace owner: list workspace members and identify the human actor (type != "agent") who created the workspace or is listed as owner. Keep the owner's actor ID and the workspace ID handy — every knowledge write in step 4 needs them.
+List workspace members and identify the human actor (type != "agent") who created the workspace or is listed as owner. Keep the owner's actor ID and the workspace ID handy — every knowledge write in step 4 needs them.
 
 ### 3. Post prompts in sequence
 

@@ -99,7 +99,16 @@ test.describe('Objects board drag-persist', () => {
 			const endX = doneBox.x + doneBox.width / 2
 			const endY = doneBox.y + doneBox.height / 2
 			await stepTo(endX, endY)
+
+			// The board applies the status change optimistically and fires the
+			// bulk-update PATCH in the background (see BoardView.handleDragEnd) —
+			// the UI settles before the write actually lands. Wait for the
+			// response here so the reload below can't race ahead of persistence.
+			const bulkUpdateResponse = page.waitForResponse(
+				(resp) => resp.url().includes('/objects/bulk-update') && resp.request().method() === 'POST',
+			)
 			await page.mouse.up()
+			await bulkUpdateResponse
 
 			// The status change lands optimistically and the card re-renders under
 			// "done" while disappearing from "todo".

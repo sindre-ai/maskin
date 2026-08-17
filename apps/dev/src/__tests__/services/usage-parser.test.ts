@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { parseUsageFromLogChunks } from '../../services/usage-parser'
+import {
+	parseFinalMessageFromLogChunks,
+	parseUsageFromLogChunks,
+} from '../../services/usage-parser'
 
 const RESULT_SUCCESS = JSON.stringify({
 	type: 'result',
@@ -94,5 +97,52 @@ describe('parseUsageFromLogChunks', () => {
 			cacheReadInputTokens: null,
 			durationMs: null,
 		})
+	})
+})
+
+describe('parseFinalMessageFromLogChunks', () => {
+	it('extracts the final assistant text from a clean stream-json result line', () => {
+		const raw = JSON.stringify({
+			type: 'result',
+			subtype: 'success',
+			is_error: false,
+			result: '```json maskin_agent_builder_result\n{"kind":"created"}\n```',
+		})
+		expect(parseFinalMessageFromLogChunks([`${raw}\n`])).toBe(
+			'```json maskin_agent_builder_result\n{"kind":"created"}\n```',
+		)
+	})
+
+	it('reassembles a result line split across multiple chunks (multiplex)', () => {
+		const raw = JSON.stringify({ type: 'result', result: 'the final answer' })
+		const half = Math.floor(raw.length / 2)
+		const a = raw.slice(0, half)
+		const b = `${raw.slice(half)}\n`
+		expect(parseFinalMessageFromLogChunks([a, b])).toBe('the final answer')
+	})
+
+	it('returns null when no result event is present', () => {
+		const noise = '{"type":"assistant","message":"hi"}\n[INFO] starting...\n'
+		expect(parseFinalMessageFromLogChunks([noise])).toBeNull()
+	})
+
+	it('returns null on plain-text codex / custom output (no stream-json at all)', () => {
+		const codex = 'Running task...\nTask completed in 1.4s\n'
+		expect(parseFinalMessageFromLogChunks([codex])).toBeNull()
+	})
+
+	it('returns null when the result event has no string result field', () => {
+		const raw = JSON.stringify({ type: 'result', subtype: 'success' })
+		expect(parseFinalMessageFromLogChunks([`${raw}\n`])).toBeNull()
+	})
+
+	it('returns null when the result field is present but not a string', () => {
+		const raw = JSON.stringify({ type: 'result', result: { nested: true } })
+		expect(parseFinalMessageFromLogChunks([`${raw}\n`])).toBeNull()
+	})
+
+	it('returns null for empty input', () => {
+		expect(parseFinalMessageFromLogChunks([])).toBeNull()
+		expect(parseFinalMessageFromLogChunks([''])).toBeNull()
 	})
 })
