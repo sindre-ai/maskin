@@ -27,6 +27,20 @@ import {
 	isResponseScopingEnabled,
 } from './response-scoping.js'
 import {
+	type ApiCaller as SetupApiCaller,
+	buildActorSetupBlockFromApi,
+	buildBetSetupBlock,
+	buildBetSetupBlockFromApi,
+	buildLoopSetupBlock,
+	buildLoopSetupBlockFromApi,
+	composeLoopSteps,
+	mergeBetSetupBlocks,
+	readConnectedProviders,
+	readStatusOrder,
+	readWorkspaceLlmReadiness,
+	safeBuildSetupBlock,
+} from './setup-guidance/index.js'
+import {
 	MUTATION_TOOL_KINDS,
 	type TelemetrySink,
 	createDefaultSink,
@@ -390,6 +404,14 @@ async function apiCallWithResponse(
 ): Promise<{ data: unknown; response: Response }> {
 	const response = await apiFetch(config, method, path, body, options)
 	return { data: await response.json(), response }
+}
+
+/**
+ * Adapts `apiCall` to the arity the setup-guidance wiring expects, closing over
+ * `config` so callers pass method/path/body/options only.
+ */
+function setupApiCaller(config: McpConfig): SetupApiCaller {
+	return (method, path, body, options) => apiCall(config, method, path, body, options)
 }
 
 /** Parse an `X-Total-Count`-style header, falling back to a default. */
@@ -1098,18 +1120,24 @@ function isSuccessfulMutationResponse(response: unknown): boolean {
 	} catch {
 		return false
 	}
-	if (Array.isArray(parsed)) {
-		// Per-target aggregation (update_objects-style). The call counts when
-		// at least one entry explicitly reports success === true.
-		return parsed.some((entry) => {
+	const isSuccessArray = (arr: unknown[]): boolean =>
+		arr.some((entry) => {
 			if (!entry || typeof entry !== 'object') return false
 			return (entry as { success?: unknown }).success === true
 		})
+
+	if (Array.isArray(parsed)) {
+		// Per-target aggregation (update_objects-style). The call counts when
+		// at least one entry explicitly reports success === true.
+		return isSuccessArray(parsed)
 	}
 	if (parsed && typeof parsed === 'object') {
-		const obj = parsed as { success?: unknown; error?: unknown; id?: unknown }
+		const obj = parsed as { success?: unknown; error?: unknown; id?: unknown; results?: unknown }
 		if (obj.success === true) return true
 		if (obj.success === false) return false
+		// update_objects now wraps its per-target array as `{ results, setup }`
+		// so the setup block can ride alongside — apply the same aggregation.
+		if (Array.isArray(obj.results)) return isSuccessArray(obj.results)
 		// No explicit success flag — accept as confirmed only if the payload has
 		// no `error` field and looks like a record (has an `id`). Anything else
 		// stays uncounted.
@@ -1836,14 +1864,63 @@ export function createMcpServer(config: McpConfig) {
 			const { workspace_id, nodes, edges } = args
 			const wsOpts = { workspaceId: workspace_id }
 
+			// Lowest-status-by-default: statuses are earned, not drafted. When a
+			// node omits `status`, fill in the first (lowest) status configured for
+			// its type in the workspace settings before hitting /api/graph, which
+			// requires a status on every node. Always fetch workspace settings —
+			// the setup block computed below reads the same row for LLM readiness
+			// and per-type status order.
+			type SetupWorkspaceRow = {
+				id: string
+				settings?: {
+					statuses?: Record<string, string[]>
+					llm_keys?: Record<string, string | null | undefined>
+					claude_oauth?: unknown
+				} | null
+			}
+			let cachedWorkspace: SetupWorkspaceRow | null = null
+			let workspaceLoadError: unknown = null
+			const needsStatusInference = nodes.some((node) => !node.status)
+			try {
+				const workspaces = (await apiCall(config, 'GET', '/api/workspaces', undefined, {
+					skipWorkspace: true,
+				})) as SetupWorkspaceRow[]
+				const effectiveWsId = workspace_id ?? config.defaultWorkspaceId
+				// No explicit or default workspace id to scope against — picking an
+				// arbitrary workspace (e.g. workspaces[0]) would silently attribute a
+				// different workspace's statuses and LLM readiness to this request,
+				// which can write the wrong inferred status onto a new object.
+				if (!effectiveWsId) throw new Error('No workspace id available to scope this request')
+				const match = workspaces.find((w) => w.id === effectiveWsId)
+				// An explicit workspace_id that matches no row must not silently
+				// fall back to a different workspace — same reasoning as above.
+				if (!match) throw new Error(`Workspace '${effectiveWsId}' not found`)
+				cachedWorkspace = match
+			} catch (err) {
+				// Only re-throw when the workspace row is required for status
+				// inference (the pre-setup behaviour). If every node already carries
+				// a status, a workspace-load failure (including a workspace_id that
+				// doesn't match any row) just degrades the setup block to unknown
+				// below — the primary response still succeeds.
+				workspaceLoadError = err
+				if (needsStatusInference) throw err
+			}
+			const statusesByType: Record<string, string[]> = cachedWorkspace?.settings?.statuses ?? {}
+
 			// /api/graph doesn't understand file_ids — strip them from the body
 			// and replay each node's file_ids as `attached` relationships after
 			// the graph is created. Keeps the backend schema unchanged.
 			const fileIdsByDollarId = new Map<string, string[]>()
 			const nodesForApi = nodes.map((node) => {
-				const { file_ids, ...rest } = node
+				const { file_ids, status, ...rest } = node
 				if (file_ids?.length) fileIdsByDollarId.set(node.$id, file_ids)
-				return rest
+				const resolvedStatus = status ?? statusesByType[node.type]?.[0]
+				if (!resolvedStatus) {
+					throw new Error(
+						`Node '${node.$id}' has no status and type '${node.type}' has no configured statuses in this workspace — pass an explicit status (call get_workspace_schema to see valid statuses per type).`,
+					)
+				}
+				return { ...rest, status: resolvedStatus }
 			})
 
 			const graphResult = (await apiCall(
@@ -1920,9 +1997,39 @@ export function createMcpServer(config: McpConfig) {
 						)
 					: graphResult.nodes
 			const enrichedResult = { ...graphResult, nodes: enrichedNodes }
-			const responseBody = fileAttachments.length
+			const baseBody = fileAttachments.length
 				? { ...enrichedResult, file_attachments: fileAttachments }
 				: enrichedResult
+
+			// Compute one setup block covering every created node. Runs the bet
+			// check-set per node (workspace-level warns like `agents_runnable`
+			// dedupe by name+message; `elevated_status` was intentionally taken off
+			// the wire path by the lowest-status default, so it only fires when the
+			// caller explicitly passes an above-lowest status).
+			const createdNodesRaw = Array.isArray(graphResult.nodes) ? graphResult.nodes : []
+			const createdNodesForSetup = createdNodesRaw.map((n) => {
+				const original = nodes.find((node) => node.$id === n.$id)
+				return {
+					id: n.id,
+					type: (n as { type?: string }).type ?? original?.type ?? '',
+					status: original?.status ?? statusesByType[original?.type ?? '']?.[0] ?? null,
+				}
+			})
+			const perNodeBlocks = await Promise.all(
+				createdNodesForSetup.map((bet) =>
+					workspaceLoadError
+						? safeBuildSetupBlock('setup', async () => {
+								throw workspaceLoadError
+							})
+						: buildBetSetupBlockFromApi(bet, setupApiCaller(config), {
+								workspaceId: workspace_id,
+								defaultWorkspaceId: config.defaultWorkspaceId,
+								workspace: cachedWorkspace,
+							}),
+				),
+			)
+			const setup = mergeBetSetupBlocks(perNodeBlocks)
+			const responseBody = { ...baseBody, setup }
 
 			return {
 				_meta: meta('create_objects', config, (args as { workspace_id?: string }).workspace_id),
@@ -1989,51 +2096,86 @@ export function createMcpServer(config: McpConfig) {
 							}
 
 			const wsId = workspace_id ?? config.defaultWorkspaceId
+			// Setup context is fetched once per get_objects call and shared across
+			// every object in the batch — one extra API call (the workspace row)
+			// regardless of how many ids were requested. `checkBet` handles
+			// arbitrary object types via `statusOrder`; for loops the deep
+			// check-set lives on `get_loop include:['setup']`.
+			//
+			// When the shared fetch throws we capture the error and let
+			// `safeBuildSetupBlock` rethrow it per-object so each block collapses
+			// to a single `unknown` check — surfacing "no LLM keys" as certain
+			// when we actually couldn't check would be a false negative.
+			let sharedWorkspaceSettings: Record<string, unknown> | null = null
+			let sharedWorkspaceError: unknown = null
+			if (includeSet.has('setup') && wsId) {
+				try {
+					const workspace = await getWorkspace(config, wsId)
+					sharedWorkspaceSettings = workspace.settings
+				} catch (err) {
+					sharedWorkspaceError = err
+				}
+			}
 			// Default projection: strip every graph field except the core seven
 			// (`id, type, title, status, contextLine, url, workspaceId`) so the LLM's
 			// context isn't paid to carry relationships/connected_objects/events/files/
 			// content/metadata the caller didn't ask for. `workspaceId` stays in the
 			// core set (unlike the other fields) because it's a small id, not bulky
 			// content, and callers/widgets need it to route follow-up requests.
-			// `include:` opt-in expansions are wired in T4.
-			const projectedResults = results.map((r) => {
-				if (!r.success) return r
-				const graph = r.result as Record<string, unknown> | null | undefined
-				const rawObj = graph?.object as Record<string, unknown> | undefined
-				if (!rawObj) return r
-				const withUrl = wsId
-					? addUrl(rawObj, config, wsId, { kind: 'object', id: rawObj.id as string })
-					: rawObj
-				const projectedObject: Record<string, unknown> = {
-					id: withUrl.id,
-					type: withUrl.type,
-					title: withUrl.title ?? null,
-					status: withUrl.status ?? null,
-					contextLine: contextLineById.get(withUrl.id as string) ?? '',
-					workspaceId: withUrl.workspaceId,
-				}
-				if (typeof withUrl.url === 'string') projectedObject.url = withUrl.url
-				if (includeSet.has('content') && 'content' in withUrl) {
-					projectedObject.content = withUrl.content
-				}
-				if (includeSet.has('metadata') && 'metadata' in withUrl) {
-					projectedObject.metadata = withUrl.metadata
-				}
-				const extras: Record<string, unknown> = {}
-				if (includeSet.has('relationships') && graph && 'relationships' in graph) {
-					extras.relationships = graph.relationships
-				}
-				if (includeSet.has('connected_objects') && graph && 'connected_objects' in graph) {
-					extras.connected_objects = graph.connected_objects
-				}
-				if (includeSet.has('events') && graph && 'events' in graph) {
-					extras.events = graph.events
-				}
-				if (includeSet.has('files') && graph && 'files' in graph) {
-					extras.files = graph.files
-				}
-				return { ...r, result: { object: projectedObject, ...extras } }
-			})
+			const projectedResults = await Promise.all(
+				results.map(async (r) => {
+					if (!r.success) return r
+					const graph = r.result as Record<string, unknown> | null | undefined
+					const rawObj = graph?.object as Record<string, unknown> | undefined
+					if (!rawObj) return r
+					const withUrl = wsId
+						? addUrl(rawObj, config, wsId, { kind: 'object', id: rawObj.id as string })
+						: rawObj
+					const projectedObject: Record<string, unknown> = {
+						id: withUrl.id,
+						type: withUrl.type,
+						title: withUrl.title ?? null,
+						status: withUrl.status ?? null,
+						contextLine: contextLineById.get(withUrl.id as string) ?? '',
+						workspaceId: withUrl.workspaceId,
+					}
+					if (typeof withUrl.url === 'string') projectedObject.url = withUrl.url
+					if (includeSet.has('content') && 'content' in withUrl) {
+						projectedObject.content = withUrl.content
+					}
+					if (includeSet.has('metadata') && 'metadata' in withUrl) {
+						projectedObject.metadata = withUrl.metadata
+					}
+					const extras: Record<string, unknown> = {}
+					if (includeSet.has('relationships') && graph && 'relationships' in graph) {
+						extras.relationships = graph.relationships
+					}
+					if (includeSet.has('connected_objects') && graph && 'connected_objects' in graph) {
+						extras.connected_objects = graph.connected_objects
+					}
+					if (includeSet.has('events') && graph && 'events' in graph) {
+						extras.events = graph.events
+					}
+					if (includeSet.has('files') && graph && 'files' in graph) {
+						extras.files = graph.files
+					}
+					if (includeSet.has('setup')) {
+						extras.setup = await safeBuildSetupBlock('object_setup', async () => {
+							if (sharedWorkspaceError) throw sharedWorkspaceError
+							return buildBetSetupBlock(
+								{
+									id: withUrl.id as string,
+									type: withUrl.type as string,
+									status: (withUrl.status as string | undefined) ?? null,
+								},
+								readWorkspaceLlmReadiness(sharedWorkspaceSettings),
+								readStatusOrder(sharedWorkspaceSettings, withUrl.type as string),
+							)
+						})
+					}
+					return { ...r, result: { object: projectedObject, ...extras } }
+				}),
+			)
 
 			// Object body lives at `structuredContent.objects[]` only (ADR-0001).
 			// `results[]` is a per-id success/error envelope so the same body isn't
@@ -2308,9 +2450,37 @@ export function createMcpServer(config: McpConfig) {
 				results.push(...edgeResults)
 			}
 
+			// Setup block computed from the updated object rows. Every successful
+			// object update contributes; edges + file ops don't (they alter
+			// relationships, not the object's own state). Workspace-level warns
+			// dedupe across updates via mergeBetSetupBlocks.
+			const successfulObjectResults = results.filter(
+				(r): r is { type: string; id: string; success: true; result: unknown } =>
+					r.type === 'object' && r.success === true && r.result != null,
+			)
+			const perObjectSetup = await Promise.all(
+				successfulObjectResults.map((r) => {
+					const obj = r.result as { id?: string; type?: string; status?: string | null }
+					return buildBetSetupBlockFromApi(
+						{
+							id: obj.id ?? r.id,
+							type: obj.type ?? '',
+							status: obj.status ?? null,
+						},
+						setupApiCaller(config),
+						{
+							workspaceId: workspace_id,
+							defaultWorkspaceId: config.defaultWorkspaceId,
+						},
+					)
+				}),
+			)
+			const setup = mergeBetSetupBlocks(perObjectSetup)
+			const responseBody = { results, setup }
+
 			return {
 				_meta: meta('update_objects', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(results, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(responseBody, null, 2) }],
 			}
 		},
 	)
@@ -2841,9 +3011,29 @@ export function createMcpServer(config: McpConfig) {
 							id: result.id,
 						})
 					: result
+
+			// auto_create_workspace mints a brand-new workspace whose id only exists
+			// on the API response (`result.workspace_id`), not on the request — the
+			// setup block must be scoped to THAT workspace, not to `workspace_id`
+			// (usually undefined here) or it falls back to an arbitrary workspace
+			// via loadWorkspace()'s workspaces[0] default and reports the wrong
+			// workspace's LLM readiness.
+			const setup = await buildActorSetupBlockFromApi(
+				{
+					id: (result.id as string | undefined) ?? '',
+					name: (result.name as string | undefined) ?? createBody.name,
+					type: (result.type as string | undefined) ?? createBody.type,
+				},
+				setupApiCaller(config),
+				{
+					workspaceId: (result.workspace_id as string | undefined) ?? workspace_id,
+					defaultWorkspaceId: config.defaultWorkspaceId,
+				},
+			)
+			const responseBody = { ...(withUrl as Record<string, unknown>), setup }
 			return {
 				_meta: meta('create_actor', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(withUrl, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(responseBody, null, 2) }],
 			}
 		},
 	)
@@ -3066,9 +3256,19 @@ export function createMcpServer(config: McpConfig) {
 					wsId && actorId
 						? addUrl(actor as Record<string, unknown>, config, wsId, { kind: 'actor', id: actorId })
 						: actor
+				const setup = await buildActorSetupBlockFromApi(
+					{
+						id: actorId ?? id,
+						name: (actor as { name?: string | null }).name ?? null,
+						type: (actor as { type?: string | null }).type ?? null,
+					},
+					setupApiCaller(config),
+					{ workspaceId: workspace_id, defaultWorkspaceId: config.defaultWorkspaceId },
+				)
+				const responseBody = { ...(withUrl as Record<string, unknown>), setup }
 				return {
 					_meta: meta('update_actor', config, workspace_id),
-					content: [{ type: 'text' as const, text: JSON.stringify(withUrl, null, 2) }],
+					content: [{ type: 'text' as const, text: JSON.stringify(responseBody, null, 2) }],
 				}
 			}
 
@@ -3118,6 +3318,16 @@ export function createMcpServer(config: McpConfig) {
 			) {
 				output.partial_failure = true
 			}
+
+			output.setup = await buildActorSetupBlockFromApi(
+				{
+					id: actorId ?? id,
+					name: (actor as { name?: string | null }).name ?? null,
+					type: (actor as { type?: string | null }).type ?? null,
+				},
+				setupApiCaller(config),
+				{ workspaceId: workspace_id, defaultWorkspaceId: config.defaultWorkspaceId },
+			)
 
 			return {
 				_meta: meta('update_actor', config, workspace_id),
@@ -4361,12 +4571,29 @@ export function createMcpServer(config: McpConfig) {
 				created && wsId
 					? addUrl(created, config, wsId, { kind: 'loop', id: created.id })
 					: (created ?? null)
+			const allTriggerIds = [...new Set([...existingTriggerIds, ...stepTriggerIds])]
 			const responseBody: Record<string, unknown> = {
 				loop: loopWithUrl,
-				trigger_ids: [...new Set([...existingTriggerIds, ...stepTriggerIds])],
+				trigger_ids: allTriggerIds,
 				member_edges: graphResult.edges,
 			}
 			if (stepTriggerIds.length > 0) responseBody.created_step_trigger_ids = stepTriggerIds
+
+			responseBody.setup = await buildLoopSetupBlockFromApi(
+				{
+					id: (created?.id as string | undefined) ?? '',
+					name: name ?? null,
+					entryCondition: entry_condition ?? null,
+					closeCondition: close_condition ?? null,
+				},
+				setupApiCaller(config),
+				{
+					workspaceId: workspace_id,
+					defaultWorkspaceId: config.defaultWorkspaceId,
+					triggerIds: allTriggerIds,
+					memberCount: memberObjectIds.length,
+				},
+			)
 
 			return {
 				_meta: meta('create_loop', config, (args as { workspace_id?: string }).workspace_id),
@@ -4564,6 +4791,38 @@ export function createMcpServer(config: McpConfig) {
 				if (removedObjectIds.length > 0) responseBody.removed_object_ids = removedObjectIds
 				if (notMembers.length > 0) responseBody.not_members_skipped = notMembers
 
+				// Member count is intentionally best-effort: re-listing every in_loop
+				// edge just for the setup block would blow the ≤4-extra-call budget.
+				// `addedObjectIds.length` is the floor for calls that add members;
+				// otherwise we skip the has_members check by passing `1` (T4's
+				// get_loop path computes the real number when it matters).
+				const loopMeta = (loopRow.metadata as Record<string, unknown> | null) ?? {}
+				const effectiveTriggerIds =
+					mergedTriggerIds.length > 0
+						? mergedTriggerIds
+						: Array.isArray(loopMeta.trigger_ids)
+							? (loopMeta.trigger_ids as unknown[]).filter(
+									(v): v is string => typeof v === 'string',
+								)
+							: []
+				const memberCount = addedObjectIds.length > 0 ? addedObjectIds.length : 1
+				responseBody.setup = await buildLoopSetupBlockFromApi(
+					{
+						id,
+						name: (loopRow.title as string | null | undefined) ?? name ?? null,
+						entryCondition:
+							(loopMeta.entry_condition as string | null | undefined) ?? entry_condition ?? null,
+						closeCondition:
+							(loopMeta.close_condition as string | null | undefined) ?? close_condition ?? null,
+					},
+					setupApiCaller(config),
+					{
+						workspaceId: workspace_id,
+						defaultWorkspaceId: config.defaultWorkspaceId,
+						triggerIds: effectiveTriggerIds,
+						memberCount,
+					},
+				)
 				return {
 					_meta: meta('update_loop', config, (args as { workspace_id?: string }).workspace_id),
 					content: [{ type: 'text' as const, text: JSON.stringify(responseBody, null, 2) }],
@@ -4608,7 +4867,7 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
-			const { workspace_id, id } = args
+			const { workspace_id, id, include } = args
 			const data = (await apiCall(
 				config,
 				'GET',
@@ -4625,9 +4884,70 @@ export function createMcpServer(config: McpConfig) {
 			const wsId =
 				(loop.workspaceId as string | undefined) ?? workspace_id ?? config.defaultWorkspaceId
 			const loopWithUrl = wsId ? addUrl(loop, config, wsId, { kind: 'loop', id }) : loop
+
+			const responseBody: Record<string, unknown> = { loop: loopWithUrl }
+			if (Array.isArray(include) && include.includes('setup')) {
+				responseBody.setup = await safeBuildSetupBlock('loop_setup', async () => {
+					const triggerIds = Array.isArray(loop.triggerIds)
+						? (loop.triggerIds as string[]).filter((t): t is string => typeof t === 'string')
+						: []
+					const inProgress = typeof loop.inProgressCount === 'number' ? loop.inProgressCount : 0
+					const closed = typeof loop.closedCount === 'number' ? loop.closedCount : 0
+					const [workspace, integrations, triggerRows] = await Promise.all([
+						getWorkspace(config, wsId as string),
+						apiCall(config, 'GET', '/api/integrations', undefined, {
+							workspaceId: workspace_id,
+						}),
+						triggerIds.length > 0
+							? apiCall(config, 'GET', '/api/triggers', undefined, {
+									workspaceId: workspace_id,
+								})
+							: Promise.resolve([]),
+					])
+					const workspaceReadiness = readWorkspaceLlmReadiness(workspace.settings)
+					const connectedProviders = readConnectedProviders(integrations)
+					const triggerIdSet = new Set(triggerIds)
+					const scopedTriggers = Array.isArray(triggerRows)
+						? triggerRows.filter((t) => triggerIdSet.has((t as { id?: string }).id as string))
+						: []
+					const agentIds = Array.from(
+						new Set(
+							scopedTriggers
+								.map((t) => (t as { targetActorId?: string }).targetActorId)
+								.filter((a): a is string => typeof a === 'string' && a.length > 0),
+						),
+					)
+					const actorRows =
+						agentIds.length > 0
+							? await apiCall(
+									config,
+									'GET',
+									`/api/actors?ids=${agentIds.map(encodeURIComponent).join(',')}`,
+									undefined,
+									{ workspaceId: workspace_id },
+								)
+							: []
+					const steps = composeLoopSteps(triggerIds, scopedTriggers, actorRows)
+					return buildLoopSetupBlock(
+						{
+							id: id as string,
+							name: (loop.name as string | undefined) ?? null,
+							entryCondition: (loop.entryCondition as string | undefined) ?? null,
+							closeCondition: (loop.closeCondition as string | undefined) ?? null,
+						},
+						{
+							workspace: workspaceReadiness,
+							connectedProviders,
+							steps,
+							memberCount: inProgress + closed,
+						},
+					)
+				})
+			}
+
 			return {
 				_meta: meta('get_loop', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify({ loop: loopWithUrl }, null, 2) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(responseBody, null, 2) }],
 			}
 		},
 	)
