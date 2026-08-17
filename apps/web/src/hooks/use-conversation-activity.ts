@@ -1,3 +1,4 @@
+import { parseFailureReason } from '@/components/agents/session-detail-panel'
 import type { ActivityStep } from '@/components/agents/session-log-transcript'
 import {
 	isSessionIdleAwaitingInput,
@@ -56,10 +57,11 @@ export interface ConversationActivity {
  * Segments the conversation's most recent session per agent into per-message
  * activity turns: a running session's turns are split from its logs and
  * re-anchored to the reply message they produced (see `byReplyMessageId`'s
- * doc comment for why); a failed session (one that never reached `running`,
- * or died before its first turn) instead surfaces a single error notice
- * anchored to the message that triggered it — otherwise a session that fails
- * to start is invisible to the chat UI. Pairing a running session's
+ * doc comment for why); a failed session — whether it died before ever
+ * reaching `running` (dispatch/enqueue failure) or ran for a while and then
+ * failed (e.g. classified credit/rate-limit exhaustion) — instead surfaces a
+ * single error notice anchored to the message that triggered it, otherwise a
+ * failed session is invisible to the chat UI. Pairing a running session's
  * reply-producing segments with that same agent's own posted messages, in
  * chronological order, is reliable even though not every turn results in a
  * reply — turns that go silent are simply excluded from both lists, so the
@@ -113,7 +115,14 @@ export function useConversationActivity(
 	for (const session of failedSessions) {
 		const config = session.config as { conversation?: { message_id?: number } } | null
 		const messageId = config?.conversation?.message_id
-		const errorText = typeof session.result?.error === 'string' ? session.result.error : undefined
+		// A session that reached `running` and later died from classified credit/rate-limit
+		// exhaustion carries its message in `result.failure_reason.human_message`, not
+		// `result.error` (see classifyCreditExhaustion() in session-manager.ts) — prefer
+		// that curated message when present, since it's specific (e.g. "credit balance
+		// exhausted") rather than the generic "could not be started" fallback copy.
+		const errorText =
+			parseFailureReason(session.result)?.human_message ||
+			(typeof session.result?.error === 'string' ? session.result.error : undefined)
 		const turn: MessageTurnActivity = {
 			sessionId: session.id,
 			actorId: session.actorId,

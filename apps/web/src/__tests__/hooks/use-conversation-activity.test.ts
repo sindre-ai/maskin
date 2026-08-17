@@ -276,10 +276,54 @@ describe('useConversationActivity', () => {
 		await waitFor(() => expect(result.current.byTriggerMessageId.get(10)).toBeDefined())
 
 		expect(result.current.byTriggerMessageId.get(10)).toMatchObject([
-			{ sessionId: 'sess-1', actorId: 'agent-1', inProgress: false, failed: true },
+			{
+				sessionId: 'sess-1',
+				actorId: 'agent-1',
+				inProgress: false,
+				failed: true,
+				steps: [{ kind: 'error', text: 'No available LLM credentials' }],
+			},
 		])
 		// Logs are never fetched for a session that never ran.
 		expect(api.sessions.logs).not.toHaveBeenCalled()
+	})
+
+	it('prefers the classified failure_reason.human_message over a generic result.error for a session that failed mid-run', async () => {
+		vi.mocked(api.sessions.list).mockResolvedValue([
+			buildSession({
+				id: 'sess-1',
+				status: 'failed',
+				config: { conversation: { conversation_id: conversationId, message_id: 10 } },
+				result: {
+					exit_code: 1,
+					failure_reason: {
+						provider: 'anthropic',
+						reason_code: 'insufficient_credits',
+						human_message: 'Anthropic billing error — credit balance may be exhausted',
+						http_status: null,
+						reset_at: null,
+						verbatim_output: null,
+					},
+				},
+			}),
+		])
+		const messages = [buildMessage({ id: 10, actorId: 'human-1', content: 'hi' })]
+
+		const { result } = renderHook(
+			() => useConversationActivity(workspaceId, conversationId, messages),
+			{ wrapper: TestWrapper },
+		)
+		await waitFor(() => expect(result.current.byTriggerMessageId.get(10)).toBeDefined())
+
+		expect(result.current.byTriggerMessageId.get(10)).toMatchObject([
+			{
+				sessionId: 'sess-1',
+				failed: true,
+				steps: [
+					{ kind: 'error', text: 'Anthropic billing error — credit balance may be exhausted' },
+				],
+			},
+		])
 	})
 
 	it('routes a failed session with no tagged trigger message to fallback', async () => {
