@@ -89,8 +89,8 @@ describe('MarketplacePage', () => {
 		const user = userEvent.setup()
 		const btn = screen.getByRole('button', { name: /^Agents\s5/ })
 		await user.click(btn)
-		expect(btn.className).toMatch(/border-foreground/)
-		expect(btn.className).toMatch(/bg-foreground/)
+		expect(btn.className).toMatch(/(?:^|\s)border-border-strong/)
+		expect(btn.className).toMatch(/(?:^|\s)bg-secondary/)
 	})
 
 	it('only one chip can be active at a time, across type and use-case chips', async () => {
@@ -99,17 +99,17 @@ describe('MarketplacePage', () => {
 
 		const agentsBtn = screen.getByRole('button', { name: /^Agents\s5/ })
 		await user.click(agentsBtn)
-		expect(agentsBtn.className).toMatch(/border-foreground/)
+		expect(agentsBtn.className).toMatch(/(?:^|\s)border-border-strong/)
 
 		const discoveryBtn = screen.getByRole('button', { name: /^Discovery\s1/ })
 		await user.click(discoveryBtn)
-		expect(discoveryBtn.className).toMatch(/border-foreground/)
-		expect(agentsBtn.className).not.toMatch(/border-foreground/)
+		expect(discoveryBtn.className).toMatch(/(?:^|\s)border-border-strong/)
+		expect(agentsBtn.className).not.toMatch(/(?:^|\s)border-border-strong/)
 
 		const allBtn = screen.getByRole('button', { name: /^All\s/ })
 		await user.click(allBtn)
-		expect(allBtn.className).toMatch(/border-foreground/)
-		expect(discoveryBtn.className).not.toMatch(/border-foreground/)
+		expect(allBtn.className).toMatch(/(?:^|\s)border-border-strong/)
+		expect(discoveryBtn.className).not.toMatch(/(?:^|\s)border-border-strong/)
 	})
 
 	it('renders chips without counts when the API request errors', () => {
