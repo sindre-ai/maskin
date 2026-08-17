@@ -548,6 +548,12 @@ export class LoopVersionPusher {
 			removes -= removedActorRows.length - removedActorIds.length
 
 			if (removedActorIds.length > 0) {
+				if (!createdBy) {
+					throw new Error(
+						`cannot remove actors for install ${install.id}: no workspace actor to reassign their content to`,
+					)
+				}
+
 				// Delete triggers targeting or created by removed actors. This covers both
 				// marketplace-managed triggers that reference a removed actor AND any
 				// user-created triggers pointing at the same agent.
@@ -570,12 +576,10 @@ export class LoopVersionPusher {
 					await tx.delete(sessionLogs).where(inArray(sessionLogs.sessionId, sessionIds))
 				}
 				await tx.delete(sessions).where(inArray(sessions.actorId, removedActorIds))
-				if (createdBy) {
-					await tx
-						.update(sessions)
-						.set({ createdBy })
-						.where(inArray(sessions.createdBy, removedActorIds))
-				}
+				await tx
+					.update(sessions)
+					.set({ createdBy })
+					.where(inArray(sessions.createdBy, removedActorIds))
 				await tx.delete(agentFiles).where(inArray(agentFiles.actorId, removedActorIds))
 				await tx
 					.delete(notifications)
@@ -606,27 +610,25 @@ export class LoopVersionPusher {
 					.update(objects)
 					.set({ driver: null })
 					.where(inArray(objects.driver, removedActorIds))
-				if (createdBy) {
-					await tx
-						.update(objects)
-						.set({ createdBy })
-						.where(inArray(objects.createdBy, removedActorIds))
-					await tx.update(files).set({ createdBy }).where(inArray(files.createdBy, removedActorIds))
-					await tx
-						.update(imports)
-						.set({ createdBy })
-						.where(inArray(imports.createdBy, removedActorIds))
-					await tx
-						.update(integrations)
-						.set({ createdBy })
-						.where(inArray(integrations.createdBy, removedActorIds))
-					// messages.actor_id is NOT NULL with no cascade — reassign authorship
-					// rather than deleting message history.
-					await tx
-						.update(messages)
-						.set({ actorId: createdBy })
-						.where(inArray(messages.actorId, removedActorIds))
-				}
+				await tx
+					.update(objects)
+					.set({ createdBy })
+					.where(inArray(objects.createdBy, removedActorIds))
+				await tx.update(files).set({ createdBy }).where(inArray(files.createdBy, removedActorIds))
+				await tx
+					.update(imports)
+					.set({ createdBy })
+					.where(inArray(imports.createdBy, removedActorIds))
+				await tx
+					.update(integrations)
+					.set({ createdBy })
+					.where(inArray(integrations.createdBy, removedActorIds))
+				// messages.actor_id is NOT NULL with no cascade — reassign authorship
+				// rather than deleting message history.
+				await tx
+					.update(messages)
+					.set({ actorId: createdBy })
+					.where(inArray(messages.actorId, removedActorIds))
 				await tx
 					.update(workspaceSkills)
 					.set({ createdBy: null })
