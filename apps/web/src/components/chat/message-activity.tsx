@@ -21,11 +21,11 @@ interface MessageActivityProps {
 export function MessageActivity({ turn }: MessageActivityProps) {
 	const { data: actor } = useActor(turn.actorId)
 	const [manuallyToggled, setManuallyToggled] = useState(false)
-	const [open, setOpen] = useState(turn.inProgress)
+	const [open, setOpen] = useState(turn.inProgress || turn.failed === true)
 	useEffect(() => {
 		if (manuallyToggled) return
-		setOpen(turn.inProgress)
-	}, [turn.inProgress, manuallyToggled])
+		setOpen(turn.inProgress || turn.failed === true)
+	}, [turn.inProgress, turn.failed, manuallyToggled])
 
 	const stepsRef = useRef<HTMLDivElement | null>(null)
 	// biome-ignore lint/correctness/useExhaustiveDependencies: pin scroll to bottom whenever a new step arrives while open
@@ -36,7 +36,7 @@ export function MessageActivity({ turn }: MessageActivityProps) {
 		el.scrollTop = el.scrollHeight
 	}, [turn.steps.length, open])
 
-	if (!turn.inProgress && turn.steps.length === 0) return null
+	if (!turn.inProgress && !turn.failed && turn.steps.length === 0) return null
 
 	const name = actor?.name ?? 'Agent'
 
@@ -50,11 +50,17 @@ export function MessageActivity({ turn }: MessageActivityProps) {
 			className="min-w-0 pl-8"
 		>
 			<CollapsibleTrigger
-				className="flex w-fit cursor-pointer items-center gap-1.5 text-xs text-muted-foreground"
+				className={cn(
+					'flex w-fit cursor-pointer items-center gap-1.5 text-xs',
+					turn.failed ? 'text-error' : 'text-muted-foreground',
+				)}
 				aria-label={`Toggle ${name} activity`}
 			>
 				{turn.inProgress && <Spinner />}
-				<span>{turn.inProgress ? `${name} is working…` : name}</span>
+				{turn.failed && <AlertTriangle size={12} className="shrink-0" />}
+				<span role={turn.failed ? 'alert' : undefined}>
+					{turn.failed ? `${name} failed to start` : turn.inProgress ? `${name} is working…` : name}
+				</span>
 				<ChevronDown
 					size={12}
 					className={cn('shrink-0 transition-transform', open && 'rotate-180')}
@@ -63,10 +69,13 @@ export function MessageActivity({ turn }: MessageActivityProps) {
 			<CollapsibleContent>
 				<div
 					ref={stepsRef}
-					className="mt-1 flex max-h-40 flex-col gap-1 overflow-y-auto text-xs text-muted-foreground"
+					className={cn(
+						'mt-1 flex max-h-40 flex-col gap-1 overflow-y-auto text-xs',
+						turn.failed ? 'text-error' : 'text-muted-foreground',
+					)}
 				>
 					{turn.steps.length === 0 ? (
-						<span>Starting…</span>
+						<span>{turn.failed ? 'The session could not be started.' : 'Starting…'}</span>
 					) : (
 						turn.steps.map((step) => (
 							<div key={step.id} className="flex items-start gap-1.5">

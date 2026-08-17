@@ -200,7 +200,6 @@ describe('tool handlers', () => {
 
 			const parsed = JSON.parse(result.content[0].text)
 			expect(parsed).toMatchObject(mockResult)
-			expect(parsed.setup).toBeDefined()
 		})
 
 		it('uses workspace_id from args over default', async () => {
@@ -4156,7 +4155,7 @@ describe('tool handlers', () => {
 		const setupOkJson = (data: unknown) =>
 			({ ok: true, headers: new Headers(), json: () => Promise.resolve(data) }) as Response
 
-		it('create_objects — response includes a well-shaped setup block for minimal input', async () => {
+		it('create_objects — response is bare, without a setup block', async () => {
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
 				const u = String(url)
 				if (u.endsWith('/api/workspaces')) {
@@ -4181,39 +4180,7 @@ describe('tool handlers', () => {
 				edges: [],
 			})) as { content: Array<{ text: string }> }
 			const parsed = JSON.parse(result.content[0].text)
-			expect(parsed.setup).toBeDefined()
-			expect(Array.isArray(parsed.setup.checks)).toBe(true)
-			expect(Array.isArray(parsed.setup.next_steps)).toBe(true)
-			expect(typeof parsed.setup.prose).toBe('string')
-		})
-
-		it('create_objects — elevated status on a bet node fires the elevated_status warn', async () => {
-			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
-				const u = String(url)
-				if (u.endsWith('/api/workspaces')) {
-					return setupOkJson([
-						{
-							id: 'ws-default-123',
-							settings: {
-								statuses: { bet: ['signal', 'qualified', 'active'] },
-								llm_keys: { anthropic: 'sk-ant-test' },
-							},
-						},
-					])
-				}
-				if (u.endsWith('/api/graph')) {
-					return setupOkJson({ nodes: [{ $id: 'b1', id: 'bet-1', type: 'bet' }], edges: [] })
-				}
-				return setupOkJson({})
-			})
-			const handler = getHandler('create_objects')
-			const result = (await handler({
-				nodes: [{ $id: 'b1', type: 'bet', status: 'active' }],
-				edges: [],
-			})) as { content: Array<{ text: string }> }
-			const parsed = JSON.parse(result.content[0].text)
-			const names = parsed.setup.checks.map((c: { name: string }) => c.name)
-			expect(names).toContain('elevated_status')
+			expect(parsed.setup).toBeUndefined()
 		})
 
 		it('update_objects — response includes a well-shaped setup block wrapping results', async () => {
@@ -4240,7 +4207,7 @@ describe('tool handlers', () => {
 			expect(Array.isArray(parsed.setup.next_steps)).toBe(true)
 		})
 
-		it('create_actor — response includes a setup block', async () => {
+		it('create_actor — response is bare, without a setup block', async () => {
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
 				const u = String(url)
 				if (u.endsWith('/api/actors')) {
@@ -4256,8 +4223,7 @@ describe('tool handlers', () => {
 				content: Array<{ text: string }>
 			}
 			const parsed = JSON.parse(result.content[0].text)
-			expect(parsed.setup).toBeDefined()
-			expect(Array.isArray(parsed.setup.checks)).toBe(true)
+			expect(parsed.setup).toBeUndefined()
 		})
 
 		it('update_actor — response includes a setup block', async () => {
@@ -4281,7 +4247,7 @@ describe('tool handlers', () => {
 			expect(Array.isArray(parsed.setup.checks)).toBe(true)
 		})
 
-		it('create_loop — response includes a setup block that flags no LLM credentials', async () => {
+		it('create_loop — response is bare, without a setup block', async () => {
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
 				const u = String(url)
 				const method = (init as RequestInit | undefined)?.method
@@ -4308,9 +4274,7 @@ describe('tool handlers', () => {
 				object_ids: [],
 			})) as { content: Array<{ text: string }> }
 			const parsed = JSON.parse(result.content[0].text)
-			expect(parsed.setup).toBeDefined()
-			const names = parsed.setup.checks.map((c: { name: string }) => c.name)
-			expect(names).toContain('agents_runnable')
+			expect(parsed.setup).toBeUndefined()
 		})
 
 		it('update_loop — response includes a setup block', async () => {
@@ -4351,7 +4315,7 @@ describe('tool handlers', () => {
 			expect(Array.isArray(parsed.setup.checks)).toBe(true)
 		})
 
-		it('degrades to an unknown check when the setup fetch fails, without failing the primary response', async () => {
+		it('create_actor — stays bare even when the workspace fetch fails', async () => {
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
 				const u = String(url)
 				if (u.endsWith('/api/actors')) {
@@ -4374,75 +4338,7 @@ describe('tool handlers', () => {
 			const parsed = JSON.parse(result.content[0].text)
 			// Primary response still contains the created actor.
 			expect(parsed.id).toBe('actor-1')
-			// Setup block is present with an unknown-status check.
-			expect(parsed.setup).toBeDefined()
-			expect(parsed.setup.checks.some((c: { status: string }) => c.status === 'unknown')).toBe(true)
-		})
-
-		it('create_actor — scopes the setup block to the auto-created workspace, not the caller default', async () => {
-			// auto_create_workspace: true mints a brand-new workspace server-side;
-			// /api/actors returns its id on the response body (workspace_id) and,
-			// since auto_create_workspace is set, the MCP handler skips its own
-			// add-to-targetWorkspace call — result.workspace_id must reach the setup
-			// block unmodified. config.defaultWorkspaceId ('ws-default-123') is
-			// deliberately given no LLM credentials here, so a wrong-workspace
-			// fallback would show a spurious `agents_runnable` warn instead of
-			// correctly reading the auto-created workspace's credentials.
-			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
-				const u = String(url)
-				if (u.endsWith('/api/actors')) {
-					return setupOkJson({
-						id: 'actor-2',
-						type: 'human',
-						name: 'Person',
-						workspace_id: 'ws-auto-created-999',
-					})
-				}
-				if (u.endsWith('/api/workspaces')) {
-					return setupOkJson([
-						{ id: 'ws-default-123', settings: {} },
-						{ id: 'ws-auto-created-999', settings: { llm_keys: { anthropic: 'sk-ant-test' } } },
-					])
-				}
-				return setupOkJson({})
-			})
-			const handler = getHandler('create_actor')
-			const result = (await handler({
-				type: 'human',
-				name: 'Person',
-				auto_create_workspace: true,
-			})) as { content: Array<{ text: string }> }
-			const parsed = JSON.parse(result.content[0].text)
-			expect(parsed.setup).toBeDefined()
-			expect(parsed.setup.checks.some((c: { name: string }) => c.name === 'agents_runnable')).toBe(
-				false,
-			)
-		})
-
-		it('create_actor — degrades to unknown when an explicit workspace_id matches no workspace', async () => {
-			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
-				const u = String(url)
-				if (u.endsWith('/api/actors')) {
-					return setupOkJson({ id: 'actor-3', type: 'agent', name: 'Bot' })
-				}
-				if (u.endsWith('/api/workspaces')) {
-					return setupOkJson([{ id: 'ws-default-123', settings: {} }])
-				}
-				return setupOkJson({})
-			})
-			const handler = getHandler('create_actor')
-			const result = (await handler({
-				type: 'agent',
-				name: 'Bot',
-				workspace_id: 'ws-does-not-exist',
-			})) as { content: Array<{ text: string }> }
-			const parsed = JSON.parse(result.content[0].text)
-			// Primary response still succeeds.
-			expect(parsed.id).toBe('actor-3')
-			// Setup block degrades to a single unknown check instead of silently
-			// reporting a different workspace's readiness.
-			expect(parsed.setup.checks).toHaveLength(1)
-			expect(parsed.setup.checks[0].status).toBe('unknown')
+			expect(parsed.setup).toBeUndefined()
 		})
 	})
 })
