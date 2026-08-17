@@ -46,8 +46,8 @@ async function probeReducedMotionMs(page: import('@playwright/test').Page) {
 		const cs = getComputedStyle(el)
 		const parseMs = (v: string): number => {
 			if (!v || v === '0s' || v === '0ms') return 0
-			if (v.endsWith('ms')) return parseFloat(v)
-			if (v.endsWith('s')) return parseFloat(v) * 1000
+			if (v.endsWith('ms')) return Number.parseFloat(v)
+			if (v.endsWith('s')) return Number.parseFloat(v) * 1000
 			return 0
 		}
 		const result = {
