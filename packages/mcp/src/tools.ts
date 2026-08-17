@@ -1,6 +1,4 @@
 import {
-	COMMENT_MAX_ATTACHMENTS,
-	COMMENT_MAX_LENGTH,
 	LOOP_STATUSES,
 	createCommentSchema,
 	notificationActionSchema,
@@ -50,6 +48,27 @@ const optionalWorkspaceId = z
 	.optional()
 	.describe(
 		'Workspace ID to operate in. If omitted, uses the default workspace (DEFAULT_WORKSPACE_ID). Call list_workspaces to discover available workspaces.',
+	)
+
+// Single agent-facing param covering everything needed to run an agent on a
+// specific LLM. The actor record still stores provider and config as two
+// separate columns server-side — the MCP layer splits `provider` back out
+// before calling the API, and merges the two columns back into this same
+// shape on the way out, so create_actor/update_actor responses mirror what
+// you send in.
+const actorLlmConfigSchema = z
+	.object({
+		provider: z
+			.string()
+			.optional()
+			.describe('LLM provider to run this agent on, e.g. "anthropic", "openai".'),
+		api_key: z.string().optional().describe('API key for the given provider.'),
+		model: z.string().optional().describe('Model identifier to use, e.g. "claude-opus-4-6".'),
+	})
+	.passthrough()
+	.optional()
+	.describe(
+		'Agents only — not used for humans. Configures which LLM this agent runs on: provider, api_key, and model. Extra provider-specific keys are passed through as-is.',
 	)
 
 /**
@@ -486,24 +505,152 @@ export const tools = {
 				),
 		}),
 	},
+	maskin_rate_reviewer_verdict: {
+		description:
+			"Human/agent rating of a reviewer verdict for AC 6 of the single-prompt agent builder bet (reviewer precision ≥70% before Stage 2 ships). Sets `human_agreed: true` when the caller agrees with the reviewer's overall pass/fail, or `human_agreed: false` when they disagree. Optional `criteria_disagreements` names the specific rubric criteria the caller thinks the reviewer got wrong — those names feed the failing-criteria comment when precision drops below 70%. The reviewer itself cannot rate its own verdicts (server rejects with 403). Idempotent-hostile: a verdict can be rated once; a second call returns 409 so a human's rating is never overwritten silently.",
+		inputSchema: z.object({
+			verdict_id: z
+				.string()
+				.uuid()
+				.describe('ID of the reviewer_verdict row returned by the reviewer.'),
+			human_agreed: z
+				.boolean()
+				.describe(
+					"true when the caller agrees with the reviewer's overall pass/fail; false when they disagree.",
+				),
+			criteria_disagreements: z
+				.array(z.string().min(1).max(200))
+				.max(20)
+				.optional()
+				.describe(
+					"Names of rubric criteria the caller disagrees with the reviewer on. Populate this when human_agreed=false so DoD 5's failing-criteria comment can name specific criteria.",
+				),
+			note: z
+				.string()
+				.max(2000)
+				.optional()
+				.describe('Optional free-text explanation of the disagreement.'),
+			workspace_id: optionalWorkspaceId,
+		}),
+	},
+	maskin_reviewer_precision_summary: {
+		description:
+			"Reviewer precision summary for a rubric object — total verdicts, rated count, agreed count, precision ratio, and per-criterion false-positive breakdown. This is the ≥70% Stage 2 ship gate for the single-prompt agent builder bet: call it after at least 10 verdicts have been rated, paste `summary_line` into a comment on the parent bet. When precision drops below the threshold, `failing_criteria` names the specific rubric criteria producing false positives — that's the signal the Architect needs to tighten the rubric.",
+		inputSchema: z.object({
+			rubric_id: z
+				.string()
+				.uuid()
+				.describe('ID of the rubric object (the workspace object holding reviewer criteria).'),
+			workspace_id: optionalWorkspaceId,
+		}),
+	},
+	maskin_create_agent: {
+		description:
+			"Generate an opinionated subject-matter-expert (SME) agent from a single-line prompt. ASYNC — kicks off one container agent session that does the whole job itself (intent extraction, persona synthesis, system-prompt authoring, anti-hedging opinionation, mandatory self-critique against a quality rubric, actor + SKILL.md registration, and a gap-report comment naming missing context) and returns { session_id, status } immediately, typically in well under a second. Does NOT return the created agent's details synchronously. Poll get_session(session_id) (optionally include_logs) until status is completed/failed/timeout, or use run_agent-style waiting. On success, session.result.final_message contains a fenced ```json maskin_agent_builder_result ... ``` block: { kind: 'created', actor_id, actor_name, skill_id, skill_name, definition_summary, self_critique, gap_report_items, gap_report_comment_posted }. If the prompt was too underspecified to build from, the same fenced block instead contains { kind: 'gap_question', gap_question, missing } — no actor is created, no comment posted. workspace_id is required — the persona is written into that workspace.",
+		inputSchema: z.object({
+			prompt: z
+				.string()
+				.min(1)
+				.max(4000)
+				.describe('One-line description of the SME agent you want (required).'),
+			workspace_id: z
+				.string()
+				.uuid()
+				.describe('Workspace the new actor + SKILL.md are written into (required, UUID).'),
+			examples: z
+				.array(z.string().min(1).max(2000))
+				.max(10)
+				.optional()
+				.describe('Concrete examples the agent should be able to handle. Optional.'),
+			references: z
+				.array(z.string().min(1).max(2000))
+				.max(10)
+				.optional()
+				.describe('URLs, docs, or prior artifacts to ground the persona. Optional.'),
+			constraints: z
+				.array(z.string().min(1).max(2000))
+				.max(10)
+				.optional()
+				.describe('Hard constraints the agent must respect. Optional.'),
+		}),
+	},
+	maskin_review_work: {
+		description:
+			'Score an agent definition against a rubric using a fresh-context reviewer — no shared conversation with the producer. Pass EXACTLY ONE of object_id (reads the object\'s content as the draft definition — used for reviewing a stored SKILL body or agent spec) OR session_id (reads sessions.result from a terminal container session — used for reviewing an agent-builder run that completed asynchronously). Passing both, or neither, returns a 400 from the route. rubric_id is optional; when omitted, resolves to the workspace\'s canonical agent-builder rubric (bootstrapped on first use, editable via update_objects without a deploy). Returns { criteria: [{ name, pass, fix? }], overall: "pass" | "fail" }. This is the same reviewer the agent builder runs internally; call it manually to re-score a definition after edits or to score with a custom rubric.',
+		// Kept as a plain z.object (no .refine) so `inputSchema instanceof
+		// ZodObject` — the invariant the tools test enforces — holds. Cross-
+		// field validation (exactly one of object_id/session_id) happens at the
+		// route boundary where the response can be a clean 400.
+		inputSchema: z.object({
+			object_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'Workspace object whose `content` is the draft definition to review (e.g. a stored SKILL body). Provide exactly one of object_id or session_id.',
+				),
+			session_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'Terminal container session whose `result` payload is the draft definition to review. Provide exactly one of object_id or session_id.',
+				),
+			rubric_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					"Rubric object to score against. Omit to use the workspace's canonical agent-builder rubric.",
+				),
+			workspace_id: z
+				.string()
+				.uuid()
+				.describe('Workspace to look up the rubric + target object/session in (required).'),
+		}),
+	},
+	maskin_refine_agent: {
+		description:
+			'Refine an existing agent generated by maskin_create_agent. Loads the actor\'s current system prompt + SKILL.md, re-runs the pipeline\'s prompt-authoring and opinionation stages with the free-text `context` treated as a refinement instruction (e.g. "add a section on cost estimation", "the persona is too diplomatic — sharpen the biases"), then writes the updated system prompt back to the actor and republishes the SKILL.md. Returns { updated_actor_id, diff } where diff is a short human-readable summary of the sections that changed. Does not create a new actor — refines in place. Underspecified refinement context (empty or vague) returns { gap_question } instead, same shape as maskin_create_agent.',
+		inputSchema: z.object({
+			actor_id: z
+				.string()
+				.uuid()
+				.describe('Actor to refine — must be an agent previously created via maskin_create_agent.'),
+			context: z
+				.string()
+				.min(1)
+				.max(4000)
+				.describe('The refinement instruction — what to change and (ideally) why.'),
+			workspace_id: z
+				.string()
+				.uuid()
+				.describe('Workspace the actor belongs to (required for the SKILL.md attachment).'),
+		}),
+	},
 	create_actor: {
 		description:
-			'Create a new actor (human or agent) and optionally add them to a workspace. Returns the actor details and API key (only shown once). If workspace_id is provided, the actor is added as a member with the given role. If auto_create_workspace is true (default for humans), a new, empty workspace is created instead. For agents, set tools.mcpServers and/or attach_skill_ids so the agent has its MCP servers and skills from the start. attach_skill_ids requires workspace_id — with auto_create_workspace the new workspace has no existing skills, so any attach_skill_ids passed alongside it are ignored.',
+			'Create a new actor (human or agent) and optionally add them to a workspace. Returns the actor details and API key (only shown once). If workspace_id is provided, the actor is added as a member with the given role — this is how to add a brand-new actor to a workspace as part of creating them. To add an already-existing actor to a workspace, use update_actor with workspace_id/role instead. If auto_create_workspace is true (default for humans), a new, empty workspace is created instead. For agents, set tools.mcpServers and/or attach_skill_ids so the agent has its MCP servers and skills from the start. attach_skill_ids requires workspace_id — with auto_create_workspace the new workspace has no existing skills, so any attach_skill_ids passed alongside it are ignored.',
 		inputSchema: z.object({
 			type: z.enum(['human', 'agent']),
-			name: z.string().min(1),
-			email: z.string().email().optional(),
-			auto_create_workspace: z.boolean().optional(),
+			name: z.string().min(1).describe('Name of actor'),
+			email: z.string().email().optional().describe('Required for humans'),
+			auto_create_workspace: z
+				.boolean()
+				.optional()
+				.describe(
+					'When true (the default for humans), a brand-new empty workspace is created and the actor is automatically added to it as owner — no separate add-to-workspace call needed. When false or omitted for agents, no workspace is created; pass workspace_id instead to add the actor to an existing one.',
+				),
 			workspace_id: z
 				.string()
 				.uuid()
 				.optional()
 				.describe('Add the new actor to this existing workspace'),
 			role: z
-				.enum(['owner', 'member', 'viewer'])
+				.enum(['owner', 'admin', 'member'])
 				.default('member')
 				.describe(
-					'Role when adding to a workspace: owner (full control), member (read/write), viewer (read-only)',
+					'Role when adding to a workspace via workspace_id: owner (full control), admin (manage members), member (read/write).',
 				),
 			description: z
 				.string()
@@ -512,52 +659,81 @@ export const tools = {
 				.describe(
 					'Short one-liner (max 80 chars) summarizing the actor. For agents this is shown on the Agents page list and sub-page so teammates can tell agents apart at a glance.',
 				),
-			system_prompt: z.string().optional(),
+			system_prompt: z
+				.string()
+				.optional()
+				.describe(
+					"Instructions defining the agent's behavior. Only meaningful for agents — not used for humans. If omitted for an agent, sessions fall back to a generic default prompt.",
+				),
 			tools: z
 				.record(z.unknown())
 				.optional()
 				.describe(
 					'MCP server config for agents: { mcpServers: { <name>: { command, args, env } } }.',
 				),
-			llm_provider: z.string().optional(),
-			llm_config: z.record(z.unknown()).optional(),
+			llm_config: actorLlmConfigSchema,
 			attach_skill_ids: z
 				.array(z.string().uuid())
 				.optional()
-				.describe('Workspace skill IDs to attach to this actor on creation.'),
+				.describe(
+					'Workspace skill IDs to attach to this actor on creation. Agents only — skills configure agent behavior and are not used for humans.',
+				),
 		}),
 	},
 	update_actor: {
 		description:
-			'Update an actor by ID. Can change name, email, description (short one-liner, max 80 chars), system_prompt / instructions (for agents and humans), tools configuration, memory (persistent key-value store), LLM provider, LLM config, and workspace skill attachments (attach_skill_ids / detach_skill_ids).',
+			'Update an actor by ID. Can change name, email, description (short one-liner, max 80 chars), system_prompt / instructions (agents only), tools configuration, llm_config (agents only), workspace skill attachments (attach_skill_ids / detach_skill_ids), and optionally add the actor to a workspace (workspace_id + role) in the same call. This is how to add an already-existing actor to a workspace — for adding a brand-new actor to a workspace as part of creating them, use create_actor instead.',
 		inputSchema: z.object({
 			id: z.string().uuid(),
-			name: z.string().min(1).optional(),
-			email: z.string().email().optional(),
+			name: z.string().min(1).optional().describe('New name for the actor.'),
+			email: z
+				.string()
+				.email()
+				.optional()
+				.describe('New email address for the actor. Only meaningful for humans.'),
 			description: z
 				.string()
 				.max(80)
 				.optional()
 				.describe('Short one-liner (max 80 chars) summarizing the actor.'),
-			system_prompt: z.string().optional(),
-			tools: z.record(z.unknown()).optional(),
-			memory: z.record(z.unknown()).optional(),
-			llm_provider: z.string().optional(),
-			llm_config: z.record(z.unknown()).optional(),
+			system_prompt: z
+				.string()
+				.optional()
+				.describe(
+					"Instructions defining the agent's behavior. Only meaningful for agents — not used for humans.",
+				),
+			tools: z
+				.record(z.unknown())
+				.optional()
+				.describe(
+					'MCP server config for agents: { mcpServers: { <name>: { command, args, env } } }.',
+				),
+			llm_config: actorLlmConfigSchema,
 			attach_skill_ids: z
 				.array(z.string().uuid())
 				.optional()
-				.describe('Workspace skill IDs to attach to this actor.'),
+				.describe(
+					'Workspace skill IDs to attach to this actor. Agents only — skills configure agent behavior and are not used for humans.',
+				),
 			detach_skill_ids: z
 				.array(z.string().uuid())
 				.optional()
-				.describe('Workspace skill IDs to detach from this actor.'),
-		}),
-	},
-	regenerate_api_key: {
-		description: 'Regenerate the API key for an actor. Returns the new key (only shown once).',
-		inputSchema: z.object({
-			id: z.string().uuid(),
+				.describe(
+					'Workspace skill IDs to detach from this actor. Agents only — skills configure agent behavior and are not used for humans.',
+				),
+			workspace_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'Add this actor to the given workspace as part of the update. This is the tool for adding an existing actor to a workspace. Omit to leave workspace membership unchanged.',
+				),
+			role: z
+				.enum(['owner', 'admin', 'member'])
+				.default('member')
+				.describe(
+					'Role to assign when adding to a workspace via workspace_id: owner (full control), admin (manage members), member (read/write). Only applied when workspace_id is set.',
+				),
 		}),
 	},
 	list_actors: {
@@ -627,18 +803,6 @@ export const tools = {
 				),
 		}),
 	},
-	add_workspace_member: {
-		description:
-			'Add an existing actor to a workspace. Use this to grant an agent or human access to a workspace. Requires the actor ID and workspace ID.',
-		inputSchema: z.object({
-			workspace_id: z.string().uuid().describe('The workspace to add the member to'),
-			actor_id: z.string().uuid().describe('The actor to add as a member'),
-			role: z
-				.enum(['owner', 'admin', 'member'])
-				.default('member')
-				.describe('Role: owner (full control), admin (manage members), member (read/write)'),
-		}),
-	},
 	// ─── Workspace Schema Editing (W1) ──────────────────────
 	// Mutate `settings.field_definitions[type]` so agents can author/extend
 	// the workspace schema from chat. Mirrors the web schema editor at
@@ -672,7 +836,7 @@ export const tools = {
 	},
 	update_workspace_field: {
 		description:
-			'Update an existing metadata field on a workspace object type. Use this to rename, change the field type, toggle required, or replace the full enum value list. Pass only the fields you want to change.',
+			"Update an existing metadata field on a workspace object type. Use this to rename, change the field type, toggle required, or edit an enum field's allowed values. Pass only the fields you want to change. For enum values, prefer add_values/remove_values to add or remove individual values without disturbing the rest (idempotent — adding an existing value or removing a missing one is a no-op); use values only when replacing the full list wholesale. Existing objects keep any value they previously stored even after it is removed from the allowed list — only new writes are constrained.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			type: z.string().min(1).describe('Object type the field belongs to.'),
@@ -691,7 +855,19 @@ export const tools = {
 				.array(z.string().min(1))
 				.optional()
 				.describe(
-					'Optional full replacement list of enum values. Pass an empty array to clear. Use add/remove_workspace_enum_value to mutate one value without losing others.',
+					'Optional full replacement list of enum values, applied before add_values/remove_values. Pass an empty array to clear (only valid if add_values then supplies at least one value, since enum fields require at least one). Omit to leave the current values as the starting point for add_values/remove_values.',
+				),
+			add_values: z
+				.array(z.string().min(1))
+				.optional()
+				.describe(
+					'Enum values to add, keeping all existing values. Only valid when the field is (or is being changed to, via field_type) an enum.',
+				),
+			remove_values: z
+				.array(z.string().min(1))
+				.optional()
+				.describe(
+					'Enum values to remove, keeping the rest. Only valid when the field is (or is being changed to, via field_type) an enum. Applied after add_values.',
 				),
 		}),
 	},
@@ -702,26 +878,6 @@ export const tools = {
 			workspace_id: optionalWorkspaceId,
 			type: z.string().min(1).describe('Object type the field belongs to.'),
 			name: z.string().min(1).describe('Field name to delete.'),
-		}),
-	},
-	add_workspace_enum_value: {
-		description:
-			'Append an allowed value to an enum field on a workspace object type. Fails if the field is not of type "enum". Idempotent — adding an existing value is a no-op.',
-		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
-			type: z.string().min(1).describe('Object type the field belongs to.'),
-			name: z.string().min(1).describe('Enum field name.'),
-			value: z.string().min(1).describe('Value to add.'),
-		}),
-	},
-	remove_workspace_enum_value: {
-		description:
-			'Remove an allowed value from an enum field on a workspace object type. Fails if the field is not of type "enum". Idempotent — removing a missing value is a no-op. Existing objects that previously stored this value keep their stored value; only new writes are constrained.',
-		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
-			type: z.string().min(1).describe('Object type the field belongs to.'),
-			name: z.string().min(1).describe('Enum field name.'),
-			value: z.string().min(1).describe('Value to remove.'),
 		}),
 	},
 	// ─── Workspace Skills ─────────────────────────────────────
@@ -892,16 +1048,17 @@ export const tools = {
 	},
 	get_comments: {
 		description:
-			'Get comments posted on a specific object, newest first. Comments are events with action="commented" on entity_type="object". Threading is expressed via data.parentEventId on each row — replies reference the event id of the comment they reply to.',
+			'Get comments posted on a specific object, newest first. Threading is expressed via data.parentEventId on each row — replies reference the event id of the comment they reply to.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			entity_id: z.string().uuid().describe('Object ID to fetch comments for.'),
-			limit: z.number().int().min(1).max(100).default(50),
-			offset: z.number().int().min(0).default(0),
+			limit: z.number().int().min(1).max(100).default(50).describe('Defaults to 50.'),
+			offset: z.number().int().min(0).default(0).describe('Defaults to 0.'),
 		}),
 	},
 	create_comment: {
-		description: `Primary channel for agent-to-human communication. Post comments here for status updates, questions, findings, decisions, blockers, and anything else a human needs to see. Do NOT bury that dialogue in \`bet.content\`, \`task.content\`, or object titles — those fields are the durable spec, not the conversation, and humans don't scan them for new information. If you're tempted to edit a description to "let someone know" something, that belongs in a comment.\n\nWrite it like a Slack message, not a report: one thought per comment, plain conversational language, direct. No headers, no bold labels, no bulleted sections, no walls of text. If a thought is long, split it into multiple short comments or use parent_event_id to thread a reply. When referencing another object in human-facing text, use a markdown link \`[title](link)\` — never paste partial UUIDs.\n\nHard limit: ${COMMENT_MAX_LENGTH} characters — the API rejects anything over the limit with a validation error. Set parent_event_id to thread a reply under an existing comment (use the id returned by get_comments). Include mentions as an array of actor UUIDs — for each @mentioned agent actor, the server creates a needs_input notification AND spawns a session that lets the agent read the comment and reply on the same object. @mention human actors whenever you need their input, decision, or attention: they get a notification about the comment, so this is the right way to pull a human into the loop. Don't mention humans gratuitously, but don't hesitate to mention them when their input would actually unblock you. To attach files, first upload them with create_file (or pick existing ones with list_files) and pass the returned file ids in attachment_file_ids (max ${COMMENT_MAX_ATTACHMENTS}). Attached files appear as clickable cards under the posted comment. To prompt the human for a structured decision, pass metadata: { chips: ["Option A", "Option B", "Skip"] } — up to 5 string options, each up to 20 characters. The UI renders them as quick-reply buttons the human can tap, with a free-text fallback. Their reply is threaded under this comment.\n\nRich replies (short + visual): you can embed an inline chart by writing a fenced \`\`\`chart block whose body is a JSON spec — \`{ "type": "bar" | "line" | "area", "x": "<x-field>", "series": ["<series1>", ...], "data": [{ "<x-field>": ..., "<series1>": <number>, ... }], "caption": "optional short label" }\`. The UI renders it as a bounded-height recharts visual; malformed specs degrade to a small "couldn't render chart" note without breaking the comment. You can also surface a live task checklist by passing \`metadata: { tasks: ["<task-uuid>", ...] }\` — each row renders as a checkbox (checked iff the task's status is done/completed/succeeded), a link to the task, and its driver avatar, and updates automatically when the referenced task changes. Use both to keep replies short: one paragraph + a chart of the data you pulled via MCP + the checklist of work this comment represents.`,
+		description:
+			'Primary channel for agent-to-human communication. Post comments here for status updates, questions, findings, decisions, blockers, and anything else a human needs to see. Do NOT bury that dialogue in `bet.content`, `task.content`, or object titles — those fields are the durable spec, not the conversation, and humans don\'t scan them for new information. If you\'re tempted to edit a description to "let someone know" something, that belongs in a comment.\n\nUse both a chart and a task checklist (see the `content` and `metadata` param docs) to keep replies short: one paragraph + a chart of the data you pulled via MCP + the checklist of work this comment represents.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			...createCommentSchema.shape,
@@ -1354,33 +1511,6 @@ export const tools = {
 		}),
 	},
 	// ─── Subscriptions ────────────────────────────────────────
-	subscribe: {
-		description:
-			'Subscribe the current actor to an entity (e.g. an object) so they receive unread counts when others comment. Use entity_type="object" and entity_id=<object_id>. Subscription is idempotent — a no-op if the actor is already subscribed.',
-		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
-			entity_type: z.enum(['object']),
-			entity_id: z.string().uuid(),
-		}),
-	},
-	unsubscribe: {
-		description:
-			"Unsubscribe the current actor from an entity. Idempotent — a no-op if the actor wasn't subscribed.",
-		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
-			entity_type: z.enum(['object']),
-			entity_id: z.string().uuid(),
-		}),
-	},
-	list_subscribers: {
-		description:
-			'List the actors subscribed to an entity (object). Useful for showing watchers on an object.',
-		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
-			entity_type: z.enum(['object']),
-			entity_id: z.string().uuid(),
-		}),
-	},
 	mark_read: {
 		description:
 			'Mark an entity as read up to a given event id. last_event_id should be the highest event id the actor has seen for this entity — the server will never move the high-water-mark backward.',
@@ -1427,57 +1557,6 @@ export const tools = {
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid(),
-		}),
-	},
-	// ─── LLM API Keys ─────────────────────────────────────────
-	set_llm_api_key: {
-		description:
-			"Save (or replace) a workspace LLM API key. Stored in workspace settings alongside any other providers. Returns { success, provider, last4 } — the full key is never echoed back. The key is stored as-is with no server-side validation against the provider; use the UI at /settings/keys if you need a live validation check. Mirrors the 'LLM API Keys' inputs in Settings → Keys.",
-		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
-			provider: z.enum(['anthropic', 'openai']),
-			api_key: z.string().min(1).describe('The API key (e.g. "sk-ant-..." or "sk-...").'),
-		}),
-	},
-	get_llm_api_keys: {
-		description:
-			"Report which LLM API keys are configured for the workspace. Returns { anthropic: { set, last4? }, openai: { set, last4? } } — never the full key. Mirrors the 'LLM API Keys' status in Settings → Keys.",
-		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
-		}),
-	},
-	delete_llm_api_key: {
-		description:
-			'Remove a workspace LLM API key for a single provider. Other providers are left untouched.',
-		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
-			provider: z.enum(['anthropic', 'openai']),
-		}),
-	},
-	// ─── Claude Subscription ──────────────────────────────────
-	import_claude_subscription: {
-		description:
-			"Import Claude Pro/Max/Teams subscription tokens for the workspace (from ~/.claude/.credentials.json). Stored encrypted; used as the preferred auth for sandboxed Claude Code runs. Mirrors the 'Claude Subscription → Import credentials' action in Settings → Keys.",
-		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
-			access_token: z.string().min(1),
-			refresh_token: z.string().min(1),
-			expires_at: z.number().describe('Unix ms timestamp when the access token expires.'),
-			subscription_type: z.string().optional().describe('e.g. "pro", "max", "teams".'),
-			scopes: z.array(z.string()).optional(),
-		}),
-	},
-	get_claude_subscription_status: {
-		description:
-			'Check Claude subscription connection status for the workspace. Returns { connected, valid, subscription_type?, expires_at? } — never the tokens themselves.',
-		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
-		}),
-	},
-	disconnect_claude_subscription: {
-		description: 'Disconnect the Claude subscription for the workspace (removes stored tokens).',
-		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
 		}),
 	},
 	// ─── Extensions ──────────────────────────────────────────
@@ -1591,32 +1670,6 @@ export const tools = {
 			id: z
 				.string()
 				.describe('Extension ID to remove. Pass the extension ID, not individual type names.'),
-		}),
-	},
-
-	get_bet_widget_metrics: {
-		description:
-			"Pull the MCP widget UX bet's live success and kill metrics for the workspace: rolling click-through rate over the first 200 bet renders, the first-50 kill window, and the 48h rolling render-error rate. Renders sent by agents are excluded so this number matches the success/kill criteria on the bet. Read-only; does not produce any telemetry rows. Use this when you need evidence on whether the widget UX bet is meeting its CTR target or has tripped a kill criterion, without writing a bespoke SQL query.",
-		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
-		}),
-	},
-
-	record_widget_event: {
-		description:
-			'INTERNAL — called by rendered MCP widgets (Hero Card) to report click-through, render success, and render failure events. Powers the bet success metric (click-through rate on Open in Maskin) and the 48h rolling render-error kill criterion. Do not call from an agent directly.',
-		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
-			widget_name: z.string().describe('Widget bundle name, e.g. "hero-card".'),
-			event: z
-				.enum(['click_through', 'render_success', 'render_error'])
-				.describe('What happened on the widget.'),
-			tool_name: z.string().describe('The MCP tool whose response produced this widget render.'),
-			card_kind: z
-				.enum(['single', 'list', 'empty'])
-				.describe('Result shape — single object, multi-row list, or empty state.'),
-			object_type: z.string().optional().describe('Object type when card_kind=single.'),
-			object_id: z.string().optional().describe('Object id when card_kind=single.'),
 		}),
 	},
 } as const

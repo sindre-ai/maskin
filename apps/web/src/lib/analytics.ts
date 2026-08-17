@@ -137,6 +137,30 @@ export function trackChatSessionStarted(
 	})
 }
 
+// Sindre message telemetry. `sindre_message_sent` fires per user turn posted
+// to the interactive session; `sindre_message_received` fires per unique
+// assistant `message.id` observed on the SSE stream. Together they let PostHog
+// tally adoption (workspaces with a completed exchange) and detect the
+// "chat not working" failure mode (sent-without-received per session), which
+// was the parent bet's kill criterion. `workspace_id` + `actor_id` ride via
+// the PostHog super-properties registered on workspace mount; only the
+// per-event contract goes here.
+export function trackSindreMessageSent(p: { session_id: string }): void {
+	trackEvent('sindre_message_sent', { session_id: p.session_id })
+}
+
+export function trackSindreMessageReceived(p: {
+	session_id: string
+	model: string | null
+	tokens: number | null
+}): void {
+	trackEvent('sindre_message_received', {
+		session_id: p.session_id,
+		model: p.model,
+		tokens: p.tokens,
+	})
+}
+
 // Fires when the owner picks a non-default agent from the slash-picker instead
 // of letting the default (Chief of Staff, once T3 wires it) route the chat.
 // One of the three thinness events for the Chief of Staff stub bet — a hit
@@ -307,7 +331,7 @@ export function trackNorthStarPromptResponse(p: { workspace_id: string }): void 
 // `platform_device='ios'` in PostHog. Intentionally lighter than the v1
 // taxonomy helpers above — there's no `entity_id` because the commit spans
 // many objects; `selected_count` carries the n instead.
-export type BulkEditCommitAction = 'status_change' | 'owner_change' | 'copy' | 'delete'
+export type BulkEditCommitAction = 'status_change' | 'owner_change' | 'copy' | 'archive' | 'delete'
 export type PlatformDevice = 'ios' | 'android' | 'desktop'
 
 export function trackBulkEditCommit(p: {
@@ -354,6 +378,14 @@ export function trackObjectsListGroupToggled(p: {
 		expanded: p.expanded,
 		objectType: p.objectType,
 	})
+}
+
+// Board-view arrival, mirroring the List's on-mount event so both surfaces
+// carry the same sliceable telemetry. Diagnostic only — the Objects list-and-
+// board bet treats drag-persist-on-reload (not a behavioral metric) as its
+// observable success, so this fires per board mount just for observability.
+export function trackObjectsBoardArrived(p: { objectType: string | null }): void {
+	trackEvent('objects_board_arrived', { objectType: p.objectType })
 }
 
 // Ship-metric event for the sticky-nav-hero bet. Fires once per completed
@@ -474,5 +506,32 @@ export function trackForyouCardAction(p: {
 		card_kind: p.card_kind,
 		card_id: p.card_id,
 		action_id: p.action_id,
+	})
+}
+
+// Per-mutation event for the Bulk select bet's ship metric (avg ≥5 objects
+// changed per cleanup session, baseline 1). Fires once per successful object
+// mutation from the three object hooks — single update, single delete, and one
+// per ok result in a bulk update. `workspace_id`, `actor_id` ride via the
+// PostHog super-properties registered on workspace mount, and `$session_id` is
+// stamped natively by posthog-js — so the caller only supplies the four
+// bespoke props. `mutation_type` is 'status' when the patch carries a status
+// field, 'delete' for a delete, and 'field' for any other write (title,
+// content, metadata, driver). `bulk_batch_size` is 1 for single ops and the
+// selected count for a bulk op, matching the HogQL query's expected shape.
+export type ObjectMutationType = 'status' | 'field' | 'delete'
+export type ObjectMutationVia = 'single' | 'bulk'
+
+export function trackObjectUpdated(p: {
+	object_id: string
+	mutation_type: ObjectMutationType
+	via: ObjectMutationVia
+	bulk_batch_size: number
+}): void {
+	trackEvent('object_updated', {
+		object_id: p.object_id,
+		mutation_type: p.mutation_type,
+		via: p.via,
+		bulk_batch_size: p.bulk_batch_size,
 	})
 }

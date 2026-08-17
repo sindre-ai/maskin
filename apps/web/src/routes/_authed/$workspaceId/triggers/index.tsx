@@ -1,4 +1,3 @@
-import { PageHeader } from '@/components/layout/page-header'
 import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picker'
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
@@ -46,8 +45,6 @@ function TriggersPage() {
 
 	return (
 		<div>
-			<PageHeader title="Triggers" />
-
 			{isLoading ? (
 				<ListSkeleton />
 			) : !triggers?.length ? (
@@ -57,7 +54,7 @@ function TriggersPage() {
 				/>
 			) : (
 				<div className="space-y-1">
-					<p className="text-xs text-muted-foreground mb-3">
+					<p className="text-[13px] leading-[1.55] text-muted-foreground mb-3">
 						Triggers automatically run agents when events happen, on a schedule, or at a specific
 						time.
 					</p>

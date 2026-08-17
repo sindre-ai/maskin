@@ -16,7 +16,15 @@ function extractTasks(event: EventResponse): string[] {
 	const metadata = event.data?.metadata as Record<string, unknown> | undefined
 	const raw = metadata?.tasks
 	if (!Array.isArray(raw)) return []
-	return raw.filter((id): id is string => typeof id === 'string' && UUID_RE.test(id)).slice(0, 25)
+	const seen = new Set<string>()
+	const unique: string[] = []
+	for (const id of raw) {
+		if (typeof id !== 'string' || !UUID_RE.test(id) || seen.has(id)) continue
+		seen.add(id)
+		unique.push(id)
+		if (unique.length === 25) break
+	}
+	return unique
 }
 
 export function hasTaskList(event: EventResponse): boolean {

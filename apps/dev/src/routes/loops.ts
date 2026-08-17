@@ -1,10 +1,11 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, objects, readState, relationships, triggers } from '@maskin/db/schema'
+import { events, objects, readState, relationships, sessions, triggers } from '@maskin/db/schema'
 import { TERMINAL_BET_STATUSES, listLoopsResponseSchema } from '@maskin/shared'
-import { and, eq, inArray, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, or, sql } from 'drizzle-orm'
 import { validationFailureHook } from '../lib/errors'
-import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
+import { errorSchema, eventResponseSchema, workspaceIdHeader } from '../lib/openapi-schemas'
+import { serializeArray } from '../lib/serialize'
 
 /** Loose UUID match — used to filter free-form `metadata.trigger_ids` entries
  * before they reach a query. Guards two things at once: an attacker-controlled
@@ -394,5 +395,120 @@ app.openapi(listLoopsRoute, (async (c) => {
 
 	return c.json(response)
 }) as RouteHandler<typeof listLoopsRoute, Env>)
+
+/**
+ * `GET /api/loops/:id/activity` — the "Latest activity" feed on the loop detail
+ * screen. Distinct from `/api/events/history?entity_id=<loopId>` (which is
+ * scoped to the loop row itself and drives the Changes log): session and
+ * trigger events carry `entityId = session.id` / `trigger.id`, so filtering by
+ * loop id alone cannot reach them. This endpoint reaches them by joining
+ * through the loop's `metadata.trigger_ids`:
+ *   - `trigger_fired` events for those trigger ids
+ *   - `session_*` lifecycle events for sessions whose `triggerId` is in that
+ *     list (session-manager writes these under `entityType = 'session'`).
+ * Result: the feed shows what the agents actually did on the loop, without any
+ * overlap with the loop-row events the Changes log renders.
+ */
+const loopActivityRoute = createRoute({
+	method: 'get',
+	path: '/{id}/activity',
+	tags: ['loops'],
+	summary: "Agent-work events (session + trigger) scoped to a loop's triggers",
+	description:
+		"Returns the loop's agent-work event feed: `trigger_fired` events for the trigger ids listed in the loop's `metadata.trigger_ids`, plus `session_*` lifecycle events for sessions launched from those triggers. Newest first. Returns `{ events: [] }` — not an error — for a loop with no triggers, no fired triggers, or an unknown id (a foreign loop returns empty without leaking existence).",
+	request: {
+		headers: workspaceIdHeader,
+		params: z.object({ id: z.string().uuid() }),
+	},
+	responses: {
+		200: {
+			description: 'Agent-work events for this loop, newest first',
+			content: {
+				'application/json': { schema: z.object({ events: z.array(eventResponseSchema) }) },
+			},
+		},
+		400: {
+			description: 'Missing workspace ID or malformed loop id',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(loopActivityRoute, (async (c) => {
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id: loopId } = c.req.valid('param')
+
+	const [loop] = await db
+		.select({ metadata: objects.metadata })
+		.from(objects)
+		.where(
+			and(eq(objects.id, loopId), eq(objects.workspaceId, workspaceId), eq(objects.type, 'loop')),
+		)
+		.limit(1)
+
+	if (!loop) {
+		return c.json({ events: [] })
+	}
+
+	const meta = (loop.metadata as Record<string, unknown> | null) ?? {}
+	const raw = meta.trigger_ids
+	const triggerIds = Array.isArray(raw)
+		? raw.filter((v): v is string => typeof v === 'string' && UUID_RE.test(v))
+		: []
+
+	if (triggerIds.length === 0) {
+		return c.json({ events: [] })
+	}
+
+	// Sessions launched from any of the loop's triggers. `triggerId` is
+	// nullable and set to NULL on trigger delete, so a stale metadata.trigger_ids
+	// entry naturally drops out here — no join to the triggers table needed.
+	const loopSessions = await db
+		.select({ id: sessions.id })
+		.from(sessions)
+		.where(and(eq(sessions.workspaceId, workspaceId), inArray(sessions.triggerId, triggerIds)))
+	const sessionIds = loopSessions.map((s) => s.id)
+
+	// `trigger_fired` events are keyed to the trigger; `session_*` events are
+	// keyed to the session. Both are filtered to this workspace so a leaked
+	// id in metadata cannot pull events from another workspace.
+	const sessionActions = [
+		'session_created',
+		'session_running',
+		'session_completed',
+		'session_failed',
+		'session_timeout',
+		'session_paused',
+	]
+
+	const conditions = [
+		and(
+			eq(events.action, 'trigger_fired'),
+			eq(events.entityType, 'trigger'),
+			inArray(events.entityId, triggerIds),
+		),
+	]
+	if (sessionIds.length > 0) {
+		conditions.push(
+			and(
+				inArray(events.action, sessionActions),
+				eq(events.entityType, 'session'),
+				inArray(events.entityId, sessionIds),
+			),
+		)
+	}
+
+	const rows = await db
+		.select()
+		.from(events)
+		.where(and(eq(events.workspaceId, workspaceId), or(...conditions)))
+		.orderBy(desc(events.createdAt))
+		.limit(50)
+
+	return c.json({
+		events: serializeArray(rows) as z.infer<typeof eventResponseSchema>[],
+	})
+}) as RouteHandler<typeof loopActivityRoute, Env>)
 
 export default app
