@@ -60,7 +60,7 @@ export function UploadProgress({ progress, status, error, className }: UploadPro
 	return (
 		<span
 			aria-label={`Uploading: ${Math.round(pct)}%`}
-			className={cn('block h-1 w-16 overflow-hidden rounded-full bg-muted-hover', className)}
+			className={cn('block h-1 w-16 overflow-hidden rounded-full bg-muted', className)}
 		>
 			<span
 				className="block h-full bg-accent transition-[width] duration-200"
