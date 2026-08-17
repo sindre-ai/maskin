@@ -3461,7 +3461,9 @@ export function createMcpServer(config: McpConfig) {
 							}
 			const summaryRows: SummaryRow[] = pagedRows.map((w) => ({
 				title: w.name ?? `Workspace ${w.id.slice(0, 8)}`,
-				meta: typeof w.role === 'string' ? w.role : undefined,
+				meta: [typeof w.role === 'string' ? w.role : undefined, `id: ${w.id}`]
+					.filter(Boolean)
+					.join(' · '),
 			}))
 			return {
 				_meta: uiMeta('list_workspaces', config, webContextWorkspaceId, UI_RESOURCES.heroCard),
