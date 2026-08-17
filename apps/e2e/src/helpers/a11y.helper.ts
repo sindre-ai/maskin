@@ -1,10 +1,7 @@
-import { readFileSync } from 'node:fs'
-import { createRequire } from 'node:module'
 import { type Page, expect } from '@playwright/test'
-import type { AxeResults, Result, RunOptions } from 'axe-core'
+import axe, { type AxeResults, type Result, type RunOptions } from 'axe-core'
 
-const require = createRequire(import.meta.url)
-const AXE_SOURCE = readFileSync(require.resolve('axe-core/axe.min.js'), 'utf8')
+const AXE_SOURCE = axe.source
 
 declare global {
 	interface Window {
