@@ -33,9 +33,7 @@ const ALL_TOOL_NAMES = [
 	'traverse_graph',
 	'delete_relationship',
 	'maskin_create_agent',
-	'maskin_rate_reviewer_verdict',
-	'maskin_reviewer_precision_summary',
-	'maskin_review_work',
+	'maskin_reviewer_verdict',
 	'maskin_refine_agent',
 	'create_actor',
 	'update_actor',
@@ -61,6 +59,9 @@ const ALL_TOOL_NAMES = [
 	'get_events',
 	'get_comments',
 	'create_comment',
+	'get_conversation',
+	'list_conversation_messages',
+	'post_conversation_message',
 	'create_trigger',
 	'update_trigger',
 	'delete_trigger',
@@ -761,6 +762,27 @@ describe('create_comment schema', () => {
 
 	it('rejects non-positive parent_event_id', () => {
 		expect(() => schema.parse({ entity_id: uuid, content: 'hi', parent_event_id: 0 })).toThrow()
+	})
+
+	it('accepts attention scores from 1 to 5', () => {
+		for (let attention = 1; attention <= 5; attention++) {
+			const result = schema.parse({ entity_id: uuid, content: 'hi', attention })
+			expect(result.attention).toBe(attention)
+		}
+	})
+
+	it('leaves attention undefined when omitted', () => {
+		const result = schema.parse({ entity_id: uuid, content: 'hi' })
+		expect(result.attention).toBeUndefined()
+	})
+
+	it('rejects attention scores outside 1-5', () => {
+		expect(() => schema.parse({ entity_id: uuid, content: 'hi', attention: 0 })).toThrow()
+		expect(() => schema.parse({ entity_id: uuid, content: 'hi', attention: 6 })).toThrow()
+	})
+
+	it('rejects non-integer attention scores', () => {
+		expect(() => schema.parse({ entity_id: uuid, content: 'hi', attention: 3.5 })).toThrow()
 	})
 })
 

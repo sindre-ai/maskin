@@ -124,9 +124,16 @@ beforeEach(async () => {
 })
 
 afterAll(async () => {
-	// Clean up the test actor and close connection
+	// Clean up the test actor and close connections. `createDb()` opens its own
+	// independent postgres.js client (separate pool from `sql`) — leaving it
+	// open here leaks a connection pool per test *file* (setupFiles' beforeAll/
+	// afterAll run fresh per file), which exhausts Postgres's max_connections
+	// once enough integration test files exist. See known-pitfalls.md.
 	if (sql) {
 		await sql`TRUNCATE actors CASCADE`
 		await sql.end()
+	}
+	if (db) {
+		await db.$client.end()
 	}
 })

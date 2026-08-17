@@ -21,8 +21,8 @@ import { useActor } from '@/hooks/use-actors'
 import { useDuration } from '@/hooks/use-duration'
 import { useSession, useSessionLogs } from '@/hooks/use-sessions'
 
-function logRow(stream: 'stdout' | 'stderr' | 'system', content: string) {
-	return { id: 1, sessionId: 's', stream, content, createdAt: null }
+function logRow(stream: 'stdout' | 'stderr' | 'system', content: string, id = 1) {
+	return { id, sessionId: 's', stream, content, createdAt: null }
 }
 
 describe('AgentWorkingBadge', () => {
