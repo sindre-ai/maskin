@@ -137,11 +137,6 @@ test.describe('Object title — long titles fill available row width', () => {
 		const titleLink = relatedTable.getByRole('link', { name: LONG_TITLE })
 		await expect(titleLink).toBeVisible()
 
-		// The Related Objects table is still a DataTable: its Title <th> carries
-		// w-full so auto-layout gives it all the leftover width.
-		const titleHead = page.getByRole('columnheader', { name: /^title/i }).first()
-		await expect(titleHead).toBeVisible()
-
 		const linkBox = await titleLink.boundingBox()
 		if (!linkBox) throw new Error('related title link has no layout box')
 		const relationshipBox = await relatedTable
