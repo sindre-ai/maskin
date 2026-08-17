@@ -262,11 +262,5 @@ export const sessionResultSchema = z.object({
 	// to overwrite a record still carrying this marker with the real exit code;
 	// it is never set on a genuine report itself.
 	stopped_by_user: z.boolean().optional(),
-	// The agent's final assistant message, extracted from the terminal
-	// stream-json `result` event — see parseFinalMessageFromLogChunks() in
-	// apps/dev/src/services/usage-parser.ts. Absent (not null) when no
-	// parseable final event was found (non-stream-json runtimes, parse
-	// failure, or no logs).
-	final_message: z.string().nullable().optional(),
 })
 export type SessionResult = z.infer<typeof sessionResultSchema>
