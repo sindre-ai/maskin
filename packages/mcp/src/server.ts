@@ -2852,104 +2852,6 @@ export function createMcpServer(config: McpConfig) {
 	// ─── Actors ───────────────────────────────────────────────
 	registerAppTool(
 		server,
-		'maskin_create_agent',
-		{
-			description: tools.maskin_create_agent.description,
-			inputSchema: tools.maskin_create_agent.inputSchema.shape,
-			_meta: {},
-		},
-		async (args) => {
-			const result = await apiCall(
-				config,
-				'POST',
-				'/api/agent-builder/create',
-				{
-					prompt: args.prompt,
-					examples: args.examples,
-					references: args.references,
-					constraints: args.constraints,
-				},
-				{ workspaceId: args.workspace_id },
-			)
-			return {
-				_meta: meta(
-					'maskin_create_agent',
-					config,
-					(args as { workspace_id?: string }).workspace_id,
-				),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-			}
-		},
-	)
-
-	registerAppTool(
-		server,
-		'maskin_reviewer_verdict',
-		{
-			description: tools.maskin_reviewer_verdict.description,
-			inputSchema: tools.maskin_reviewer_verdict.inputSchema.shape,
-			_meta: {},
-		},
-		async (args) => {
-			const result = await apiCall(
-				config,
-				'POST',
-				'/api/agent-builder/reviewer-verdict',
-				{
-					object_id: args.object_id,
-					session_id: args.session_id,
-					target_actor_id: args.target_actor_id,
-					rubric_id: args.rubric_id,
-					verdict_id: args.verdict_id,
-					human_agreed: args.human_agreed,
-					criteria_disagreements: args.criteria_disagreements,
-					note: args.note,
-				},
-				{ workspaceId: args.workspace_id },
-			)
-			return {
-				_meta: meta(
-					'maskin_reviewer_verdict',
-					config,
-					(args as { workspace_id?: string }).workspace_id,
-				),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-			}
-		},
-	)
-
-	registerAppTool(
-		server,
-		'maskin_refine_agent',
-		{
-			description: tools.maskin_refine_agent.description,
-			inputSchema: tools.maskin_refine_agent.inputSchema.shape,
-			_meta: {},
-		},
-		async (args) => {
-			const result = await apiCall(
-				config,
-				'POST',
-				'/api/agent-builder/refine',
-				{
-					actor_id: args.actor_id,
-					context: args.context,
-				},
-				{ workspaceId: args.workspace_id },
-			)
-			return {
-				_meta: meta(
-					'maskin_refine_agent',
-					config,
-					(args as { workspace_id?: string }).workspace_id,
-				),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-			}
-		},
-	)
-
-	registerAppTool(
-		server,
 		'create_actor',
 		{
 			description: tools.create_actor.description,
@@ -3407,7 +3309,9 @@ export function createMcpServer(config: McpConfig) {
 							}
 			const summaryRows: SummaryRow[] = pagedRows.map((w) => ({
 				title: w.name ?? `Workspace ${w.id.slice(0, 8)}`,
-				meta: typeof w.role === 'string' ? w.role : undefined,
+				meta: [typeof w.role === 'string' ? w.role : undefined, `id: ${w.id}`]
+					.filter(Boolean)
+					.join(' · '),
 			}))
 			return {
 				_meta: uiMeta('list_workspaces', config, webContextWorkspaceId, UI_RESOURCES.heroCard),
