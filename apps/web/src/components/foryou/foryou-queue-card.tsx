@@ -266,7 +266,7 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 				<div
 					aria-hidden
 					data-testid="mark-read-reveal"
-					className="pointer-events-none absolute inset-0 flex items-center justify-end gap-2 rounded-[18px] bg-status-active-bg px-5 text-xs font-medium text-status-active-text"
+					className="pointer-events-none absolute inset-0 flex items-center justify-end gap-2 rounded-2xl bg-status-active-bg px-5 text-xs font-medium text-status-active-text"
 					style={{ opacity: isDragging && dragOffset > 0 ? swipeBgOpacity : 0 }}
 				>
 					<CheckIcon size={14} />
@@ -276,7 +276,7 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 				<div
 					aria-hidden
 					data-testid="keep-unread-reveal"
-					className="pointer-events-none absolute inset-0 flex items-center justify-start gap-2 rounded-[18px] bg-muted px-5 text-xs font-medium text-muted-foreground"
+					className="pointer-events-none absolute inset-0 flex items-center justify-start gap-2 rounded-2xl bg-muted px-5 text-xs font-medium text-muted-foreground"
 					style={{ opacity: isDragging && dragOffset < 0 ? swipeBgOpacity : 0 }}
 				>
 					<X size={14} />
@@ -287,7 +287,7 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 					data-testid="foryou-queue-card"
 					data-card-kind={cardKind}
 					className={cn(
-						'relative flex h-full flex-col overflow-hidden rounded-[18px] border border-border bg-background shadow-md cursor-grab touch-pan-y',
+						'relative flex h-full flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-md cursor-grab touch-pan-y',
 						exitDir
 							? 'transition-[transform,opacity] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]'
 							: isDragging
