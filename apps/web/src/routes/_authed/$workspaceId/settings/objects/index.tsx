@@ -91,7 +91,7 @@ function ObjectsPage() {
 								className={cn(
 									'whitespace-nowrap px-3 py-1.5 text-sm capitalize transition-colors first:rounded-l-lg last:rounded-r-lg',
 									activeType === type
-										? 'bg-primary text-primary-foreground'
+										? 'bg-foreground text-background'
 										: 'bg-background text-muted-foreground hover:bg-secondary hover:text-foreground',
 								)}
 								onClick={() => setActiveType(type)}

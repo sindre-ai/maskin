@@ -264,7 +264,7 @@ function SlotCard({
 
 	return (
 		<div
-			className="rounded-lg border border-border bg-bg-surface p-3 space-y-2"
+			className="rounded-lg border border-border bg-muted p-3 space-y-2"
 			data-slot={slot}
 			data-testid={`slot-${slot}`}
 		>
@@ -274,7 +274,7 @@ function SlotCard({
 				</span>
 				{isActive && (
 					<span
-						className="inline-flex items-center rounded-full bg-success/15 text-success px-2 py-0.5 text-[11px] font-medium"
+						className="inline-flex items-center rounded-full bg-success/15 text-success px-2 py-0.5 text-[13px] font-medium"
 						aria-label="Currently serving sessions"
 					>
 						In use
