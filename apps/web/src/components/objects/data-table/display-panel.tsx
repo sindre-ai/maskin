@@ -113,7 +113,7 @@ function PillButton({
 				'inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs transition-colors',
 				active
 					? 'border-accent bg-accent text-accent-foreground'
-					: 'border-border bg-card text-muted-foreground hover:text-foreground hover:border-border-hover',
+					: 'border-border bg-card text-muted-foreground hover:text-foreground hover:border-border-strong',
 				disabled && 'cursor-not-allowed opacity-50 hover:text-muted-foreground hover:border-border',
 			)}
 		>
@@ -408,7 +408,7 @@ export function DisplayPanel({
 											aria-label={order === 'asc' ? 'Ascending' : 'Descending'}
 											title={order === 'asc' ? 'Ascending' : 'Descending'}
 											onClick={() => onOrderChange?.(order === 'asc' ? 'desc' : 'asc')}
-											className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:text-foreground hover:border-border-hover transition-colors"
+											className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:text-foreground hover:border-border-strong transition-colors"
 										>
 											{order === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />}
 										</button>
