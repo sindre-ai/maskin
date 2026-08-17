@@ -1,6 +1,6 @@
 import type { Locator, Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
-import { TestAPI } from '../helpers/api.helper'
+import type { TestAPI } from '../helpers/api.helper'
 import { VIEWPORTS } from '../helpers/viewports'
 
 // AC-T6 / AC-U1: at viewports ≤1024 CSS px, the rendered row-select checkbox
