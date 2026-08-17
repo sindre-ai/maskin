@@ -36,7 +36,7 @@ export function trackEvent(
 // the per-event contract: entity_id, entity_type, source, flow_id, plus any
 // event-specific fields.
 
-type TaxonomyEntityType =
+export type TaxonomyEntityType =
 	| 'object'
 	| 'agent'
 	| 'bet'
@@ -534,4 +534,23 @@ export function trackObjectUpdated(p: {
 		via: p.via,
 		bulk_batch_size: p.bulk_batch_size,
 	})
+}
+
+// Ship-metric events for the Search view + command palette bet. The success
+// metric funnels `command_palette_opened` (denominator — a session that opened
+// the palette or the /search view) into `search_result_opened` (numerator —
+// it opened a result from either surface). The event names are the
+// measurement contract: `command_palette_opened` exactly,
+// `search_result_opened` shared by both surfaces. `surface` distinguishes the
+// entry point so the ratio can be sliced without joining super properties.
+export type SearchSurface = 'command_palette' | 'search_view'
+
+export function trackCommandPaletteOpened(p: { surface: SearchSurface }): void {
+	trackEvent('command_palette_opened', { surface: p.surface, source: 'web' })
+}
+
+export function trackSearchResultOpened(
+	p: BaseProps & { entity_type: TaxonomyEntityType; surface: SearchSurface },
+): void {
+	trackEvent('search_result_opened', { ...fillBase(p), surface: p.surface })
 }

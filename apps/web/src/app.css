@@ -477,6 +477,24 @@
 	}
 }
 
+@layer base {
+	/* Search highlight (<mark>) — tuned to the v2 warm palette so the
+	   command palette and /search view highlights read cleanly in both
+	   themes. Light: soft amber wash + indigo text; dark: indigo tint with
+	   a lighter indigo text stop. Rounded so the highlight sits inside the
+	   cell without touching the row edges. */
+	mark {
+		background-color: color-mix(in oklab, var(--brand) 12%, transparent);
+		color: var(--brand-hover);
+		border-radius: var(--radius-sm);
+		padding: 0 2px;
+	}
+	.dark mark {
+		background-color: color-mix(in oklab, var(--brand) 20%, transparent);
+		color: var(--brand);
+	}
+}
+
 @layer utilities {
 	/* Micro eyebrow — the mockup's uppercase JetBrains Mono section labels
 	   ("VIEW", "SHOW", "SORT"). Locked to muted-foreground so it never
