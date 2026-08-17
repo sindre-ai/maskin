@@ -80,6 +80,7 @@ describe('parseAgentBuilderResult', () => {
 		skill_name: 'migration-architect',
 		definition_summary: 'Migration Architect — plans schema migrations.',
 		self_critique: { revised: true, rounds: 1 },
+		gap_report_object_id: '33333333-3333-3333-3333-333333333333',
 		gap_report_items: [
 			{
 				topic: 'scale',
@@ -132,5 +133,10 @@ describe('parseAgentBuilderResult', () => {
 	it('ignores prose before and after the fenced block', () => {
 		const withTrailingProse = `${fenced(CREATED_JSON)}\nThanks for using the agent builder!`
 		expect(parseAgentBuilderResult(withTrailingProse)).toEqual(CREATED_JSON)
+	})
+
+	it('accepts gap_report_object_id: null when the gap-report object could not be created', () => {
+		const withoutGapReportObject = { ...CREATED_JSON, gap_report_object_id: null }
+		expect(parseAgentBuilderResult(fenced(withoutGapReportObject))).toEqual(withoutGapReportObject)
 	})
 })
