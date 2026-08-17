@@ -1883,17 +1883,16 @@ export function createMcpServer(config: McpConfig) {
 					skipWorkspace: true,
 				})) as SetupWorkspaceRow[]
 				const effectiveWsId = workspace_id ?? config.defaultWorkspaceId
-				if (effectiveWsId) {
-					const match = workspaces.find((w) => w.id === effectiveWsId)
-					// An explicit workspace_id that matches no row must not silently
-					// fall back to a different workspace — that workspace's statuses
-					// and LLM readiness would otherwise be attributed to this request,
-					// which can write the wrong inferred status onto a new object.
-					if (!match) throw new Error(`Workspace '${effectiveWsId}' not found`)
-					cachedWorkspace = match
-				} else {
-					cachedWorkspace = workspaces[0] ?? null
-				}
+				// No explicit or default workspace id to scope against — picking an
+				// arbitrary workspace (e.g. workspaces[0]) would silently attribute a
+				// different workspace's statuses and LLM readiness to this request,
+				// which can write the wrong inferred status onto a new object.
+				if (!effectiveWsId) throw new Error('No workspace id available to scope this request')
+				const match = workspaces.find((w) => w.id === effectiveWsId)
+				// An explicit workspace_id that matches no row must not silently
+				// fall back to a different workspace — same reasoning as above.
+				if (!match) throw new Error(`Workspace '${effectiveWsId}' not found`)
+				cachedWorkspace = match
 			} catch (err) {
 				// Only re-throw when the workspace row is required for status
 				// inference (the pre-setup behaviour). If every node already carries

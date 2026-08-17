@@ -229,7 +229,11 @@ async function loadWorkspace(
 	})) as WorkspaceRow[] | null
 	if (!Array.isArray(workspaces) || workspaces.length === 0) return null
 	const effective = workspaceId ?? defaultWorkspaceId
-	if (!effective) return workspaces[0] ?? null
+	// No explicit or default workspace id to scope against — picking an
+	// arbitrary workspace (e.g. workspaces[0]) would silently report a
+	// different workspace's settings. Throw so the caller's
+	// `safeBuildSetupBlock` collapses this to a single `unknown` check.
+	if (!effective) throw new Error('No workspace id available to scope setup checks')
 	const match = workspaces.find((w) => w.id === effective)
 	// An explicitly-requested workspace id that matches no row must not fall
 	// back to a different workspace's data — that would silently report (or
