@@ -207,9 +207,11 @@
 /* v2 tokens                                                                 */
 /*                                                                           */
 /* Palette source: `Maskin App v2 Standalone.html` (attached to the parent   */
-/* bet, 2026-08-14) — a warm neutral gray with an indigo brand accent that   */
-/* matches the maskin.io landing page. v2 supersedes the 2026-08-11          */
-/* cool-zinc palette in full: nothing under the old palette survives.        */
+/* bet, 2026-08-14) — zinc neutrals (Tailwind zinc ramp) + indigo brand      */
+/* accent + amber warning, matching the maskin.io landing page. v2           */
+/* supersedes the 2026-08-11 cool-zinc palette in full — the neutral family  */
+/* is still zinc, but the exact hexes, the `--brand` / `--brand-subtle`      */
+/* tokens, and the type/status badge remaps are all v2.                      */
 /* Raw hex values in this block are intentional — this is the sole place a  */
 /* colour literal is allowed; every consumer downstream must go through a   */
 /* semantic token (bg-background, text-foreground, border-border, etc.).    */
@@ -229,7 +231,9 @@
 	--primary: #18181b;
 	--primary-foreground: #ffffff;
 
-	/* Secondary + muted surfaces (v2 uses a warmer, lighter neutral than cool-zinc) */
+	/* Secondary + muted surfaces (v2 uses `#f6f6f7` for the tab-selected /
+	   hover surface — the mockup's near-white zinc step between `--background`
+	   and `--muted`, kept distinct from `--muted`'s `#f4f4f5`) */
 	--secondary: #f6f6f7;
 	--secondary-foreground: #18181b;
 	--muted: #f4f4f5;
@@ -280,7 +284,10 @@
 	--st-succeeded-text: #15803d;
 	--st-blocked-bg: #ffe4e6;
 	--st-blocked-text: #be123c;
-	--st-failed-bg: #ffe4e6;
+	/* Failed + breached read as danger (red family), separate from blocked's
+	   rose "waiting on someone" tone. Kept aligned across both badges so
+	   the two failure-mode states read as the same visual family. */
+	--st-failed-bg: #fee2e2;
 	--st-failed-text: #b91c1c;
 	--st-paused-bg: #f4f4f5;
 	--st-paused-text: #71717a;
@@ -306,7 +313,7 @@
 	--st-holding-text: #52525b;
 	--st-at_risk-bg: #fef3c7;
 	--st-at_risk-text: #b45309;
-	--st-breached-bg: #ffe4e6;
+	--st-breached-bg: #fee2e2;
 	--st-breached-text: #b91c1c;
 
 	/* Type badges */
@@ -331,9 +338,10 @@
 .dark {
 	/* v2 dark theme.
 	   The mockup only ships the light palette; dark values are derived by
-	   inverting the neutral ramp (zinc-950/900/800/400/200/50), keeping the
-	   same indigo brand, and lightening the destructive/status tones so they
-	   read on a #0a0a0b field. Same warm-neutral character, just inverted. */
+	   inverting the zinc neutral ramp (zinc-950/900/800/400/200/50) and
+	   lifting the indigo brand two stops (light `#4f46e5` → dark `#818cf8`)
+	   so it reads on a `#09090b` field. Same zinc + indigo family — the
+	   ramp is inverted, the character is not. */
 	--background: #09090b;
 	--foreground: #fafafa;
 	--card: #18181b;
@@ -418,8 +426,8 @@
 	--st-holding-text: #a1a1aa;
 	--st-at_risk-bg: #422006;
 	--st-at_risk-text: #fbbf24;
-	--st-breached-bg: #4c0519;
-	--st-breached-text: #fda4af;
+	--st-breached-bg: #450a0a;
+	--st-breached-text: #fca5a5;
 
 	--tp-insight-bg: #422006;
 	--tp-insight-text: #fbbf24;
