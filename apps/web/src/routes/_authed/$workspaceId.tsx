@@ -13,6 +13,7 @@ import { deriveEntryAgentRole } from '@/lib/analytics'
 import { api } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { ChatProvider, useChat } from '@/lib/chat-context'
+import { cn } from '@/lib/cn'
 import { CommandPaletteProvider } from '@/lib/command-palette-context'
 import { NewConversationProvider } from '@/lib/new-conversation-context'
 import { PageHeaderProvider, usePageHeader } from '@/lib/page-header-context'
@@ -146,12 +147,9 @@ function WorkspaceLayout() {
 										<AppSidebar />
 										<SidebarInset className="min-w-0">
 											<Header />
-											<div
-												className="flex flex-col flex-1 min-w-0 overflow-auto p-4 md:p-8"
-												data-scroll-root
-											>
+											<MainScrollArea>
 												<Outlet />
-											</div>
+											</MainScrollArea>
 										</SidebarInset>
 									</SidebarProvider>
 								</ChatPinShell>
@@ -258,6 +256,28 @@ function ChatPinShell({ children }: { children: ReactNode }) {
 	}
 	return (
 		<div className="transition-[margin] duration-200 ease-linear" style={{ marginRight }}>
+			{children}
+		</div>
+	)
+}
+
+/**
+ * The shared page scroll container. Scrolls by default (`overflow-auto`) so
+ * ordinary routes get normal page scrolling. A route can opt out via
+ * `<PageHeader scrollLocked />` (e.g. the For You card queue, which owns its
+ * own internal scroll region on the active card's thread) — the container
+ * then clips instead of scrolling, so only that inner region scrolls.
+ */
+function MainScrollArea({ children }: { children: ReactNode }) {
+	const { scrollLocked } = usePageHeader()
+	return (
+		<div
+			className={cn(
+				'flex flex-col flex-1 min-w-0 p-4 md:p-8',
+				scrollLocked ? 'overflow-hidden' : 'overflow-auto',
+			)}
+			data-scroll-root
+		>
 			{children}
 		</div>
 	)

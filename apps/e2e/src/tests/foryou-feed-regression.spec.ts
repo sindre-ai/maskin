@@ -4,18 +4,15 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 // T3 of bet foryou-brief-feed: prove the For You feed renders real
 // notifications/asks from live workspace data and that the no-regression
-// surfaces (SUMMARY from real object content, filter chips, keep-unread /
-// mark-as-read, queue advance + item pinning, empty state) still behave
-// against a real-shaped feed with zero console errors.
+// surfaces (filter chips, keep-unread / mark-as-read, queue advance + item
+// pinning, empty state) still behave against a real-shaped feed with zero
+// console errors.
 //
 // The decision-block option rows and reason rows are surfaces owned by T2
 // (foryou-queue-card.tsx / lib/foryou-card-kind.ts) — not asserted here.
 //
 // Unread + thread APIs are mocked (repo convention, same as
-// foryou-prototype-responsive.spec.ts) with fully live-shaped items. Each
-// item carries a unique `object.content` so SUMMARY rendering "from real
-// object data, no hard-coded strings" is provable: the card must show that
-// exact content, not a fixed placeholder.
+// foryou-prototype-responsive.spec.ts) with fully live-shaped items.
 
 interface UnreadFixture {
 	entity_type: 'object'
@@ -110,14 +107,11 @@ async function gotoForyou(page: Page, workspaceId: string) {
 
 test.describe('For You feed — renders real data from the live feed (ship-gate viewports)', () => {
 	for (const vp of SHIP_GATE_VIEWPORTS) {
-		test(`${vp.label}: card renders real title, status, SUMMARY, zero console errors`, async ({
+		test(`${vp.label}: card renders real title, status, zero console errors`, async ({
 			page,
 			account,
 		}) => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
-
-			const uniqueSummary =
-				'This is a real object summary pulled from live workspace data. Sentence two stays unique per card so a hard-coded placeholder cannot fake it.'
 
 			const { errors } = trackErrors(page)
 			await mockFeed(page, [
@@ -126,7 +120,6 @@ test.describe('For You feed — renders real data from the live feed (ship-gate 
 					title: 'Renewal terms need a read',
 					type: 'insight',
 					status: 'active',
-					content: uniqueSummary,
 				}),
 			])
 			await gotoForyou(page, account.workspaceId)
@@ -136,9 +129,6 @@ test.describe('For You feed — renders real data from the live feed (ship-gate 
 			await expect(card).toContainText('Renewal terms need a read')
 			// Status comes from the item's real `object.status`.
 			await expect(card.getByText('active', { exact: true })).toBeVisible()
-			// SUMMARY block is labelled and renders the real object content verbatim.
-			await expect(card.getByText(/✦ summary/i)).toBeVisible()
-			await expect(card).toContainText(uniqueSummary)
 
 			expect(errors).toEqual([])
 		})
@@ -183,25 +173,80 @@ test.describe('For You feed — no-regression surfaces against a real feed', () 
 		expect(errors).toEqual([])
 	})
 
-	test('SUMMARY collapses and expands against real content', async ({ page, account }) => {
+	test('conversation history before the unread boundary collapses behind Read more, against real thread data', async ({
+		page,
+		account,
+	}) => {
 		const { errors } = trackErrors(page)
-		const longSummary = 'A genuinely long real object summary. '.repeat(12)
+		const entityId = 'long-thread'
+
+		// The card's thread fetch (`GET /events/history`) hits the real backend
+		// for every other route in this file — this test alone needs real-shaped
+		// comment events, so it stubs that one endpoint directly rather than
+		// seeding real rows.
+		await page.route('**/api/events/history*', async (route) => {
+			if (route.request().method() !== 'GET') return route.fallback()
+			const url = new URL(route.request().url())
+			if (url.searchParams.get('entity_id') !== entityId) return route.fallback()
+			// The API returns events newest-first.
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify([
+					{
+						id: 3,
+						workspaceId: account.workspaceId,
+						actorId: 'other-actor',
+						action: 'commented',
+						entityType: 'object',
+						entityId,
+						data: { content: 'Newest unread reply.' },
+						createdAt: new Date().toISOString(),
+					},
+					{
+						id: 2,
+						workspaceId: account.workspaceId,
+						actorId: 'other-actor',
+						action: 'commented',
+						entityType: 'object',
+						entityId,
+						data: { content: 'Second earlier comment, already read.' },
+						createdAt: new Date().toISOString(),
+					},
+					{
+						id: 1,
+						workspaceId: account.workspaceId,
+						actorId: 'other-actor',
+						action: 'commented',
+						entityType: 'object',
+						entityId,
+						data: { content: 'First earlier comment, already read.' },
+						createdAt: new Date().toISOString(),
+					},
+				]),
+			})
+		})
+
 		await mockFeed(page, [
 			buildItem(account.workspaceId, {
-				id: 'long-thread',
+				id: entityId,
 				title: 'Long-form writeup',
 				type: 'insight',
-				content: longSummary.trim(),
+				unread_count: 1,
 			}),
 		])
 		await gotoForyou(page, account.workspaceId)
 
-		const summary = page.getByText(longSummary.trim())
-		await expect(summary).toBeVisible()
+		const card = page.getByTestId('foryou-queue-card')
+		await expect(card.getByText('Newest unread reply.')).toBeVisible()
+		await expect(card.getByText('Second earlier comment, already read.')).not.toBeVisible()
+		await expect(card.getByText('First earlier comment, already read.')).not.toBeVisible()
 
-		await page.getByRole('button', { name: 'Show full' }).click()
-		await page.getByRole('button', { name: 'Hide' }).click()
-		await expect(page.getByRole('button', { name: 'Show full' })).toBeVisible()
+		await card.getByRole('button', { name: 'Read more (2 earlier)' }).click()
+
+		await expect(card.getByText('Second earlier comment, already read.')).toBeVisible()
+		await expect(card.getByText('First earlier comment, already read.')).toBeVisible()
+		await expect(card.getByRole('button', { name: /Read more/ })).not.toBeVisible()
 
 		expect(errors).toEqual([])
 	})
