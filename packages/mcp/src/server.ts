@@ -1899,9 +1899,7 @@ export function createMcpServer(config: McpConfig) {
 			// Lowest-status-by-default: statuses are earned, not drafted. When a
 			// node omits `status`, fill in the first (lowest) status configured for
 			// its type in the workspace settings before hitting /api/graph, which
-			// requires a status on every node. Always fetch workspace settings —
-			// the setup block computed below reads the same row for LLM readiness
-			// and per-type status order.
+			// requires a status on every node.
 			type SetupWorkspaceRow = {
 				id: string
 				settings?: {
@@ -1911,7 +1909,6 @@ export function createMcpServer(config: McpConfig) {
 				} | null
 			}
 			let cachedWorkspace: SetupWorkspaceRow | null = null
-			let workspaceLoadError: unknown = null
 			const needsStatusInference = nodes.some((node) => !node.status)
 			try {
 				const workspaces = (await apiCall(config, 'GET', '/api/workspaces', undefined, {
@@ -1920,8 +1917,8 @@ export function createMcpServer(config: McpConfig) {
 				const effectiveWsId = workspace_id ?? config.defaultWorkspaceId
 				// No explicit or default workspace id to scope against — picking an
 				// arbitrary workspace (e.g. workspaces[0]) would silently attribute a
-				// different workspace's statuses and LLM readiness to this request,
-				// which can write the wrong inferred status onto a new object.
+				// different workspace's statuses to this request, which can write the
+				// wrong inferred status onto a new object.
 				if (!effectiveWsId) throw new Error('No workspace id available to scope this request')
 				const match = workspaces.find((w) => w.id === effectiveWsId)
 				// An explicit workspace_id that matches no row must not silently
@@ -1930,11 +1927,9 @@ export function createMcpServer(config: McpConfig) {
 				cachedWorkspace = match
 			} catch (err) {
 				// Only re-throw when the workspace row is required for status
-				// inference (the pre-setup behaviour). If every node already carries
-				// a status, a workspace-load failure (including a workspace_id that
-				// doesn't match any row) just degrades the setup block to unknown
-				// below — the primary response still succeeds.
-				workspaceLoadError = err
+				// inference. If every node already carries a status, a
+				// workspace-load failure (including a workspace_id that doesn't
+				// match any row) is harmless — the primary response still succeeds.
 				if (needsStatusInference) throw err
 			}
 			const statusesByType: Record<string, string[]> = cachedWorkspace?.settings?.statuses ?? {}
@@ -2033,39 +2028,9 @@ export function createMcpServer(config: McpConfig) {
 				? { ...enrichedResult, file_attachments: fileAttachments }
 				: enrichedResult
 
-			// Compute one setup block covering every created node. Runs the bet
-			// check-set per node (workspace-level warns like `agents_runnable`
-			// dedupe by name+message; `elevated_status` was intentionally taken off
-			// the wire path by the lowest-status default, so it only fires when the
-			// caller explicitly passes an above-lowest status).
-			const createdNodesRaw = Array.isArray(graphResult.nodes) ? graphResult.nodes : []
-			const createdNodesForSetup = createdNodesRaw.map((n) => {
-				const original = nodes.find((node) => node.$id === n.$id)
-				return {
-					id: n.id,
-					type: (n as { type?: string }).type ?? original?.type ?? '',
-					status: original?.status ?? statusesByType[original?.type ?? '']?.[0] ?? null,
-				}
-			})
-			const perNodeBlocks = await Promise.all(
-				createdNodesForSetup.map((bet) =>
-					workspaceLoadError
-						? safeBuildSetupBlock('setup', async () => {
-								throw workspaceLoadError
-							})
-						: buildBetSetupBlockFromApi(bet, setupApiCaller(config), {
-								workspaceId: workspace_id,
-								defaultWorkspaceId: config.defaultWorkspaceId,
-								workspace: cachedWorkspace,
-							}),
-				),
-			)
-			const setup = mergeBetSetupBlocks(perNodeBlocks)
-			const responseBody = { ...baseBody, setup }
-
 			return {
 				_meta: meta('create_objects', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(responseBody) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(baseBody) }],
 			}
 		},
 	)
@@ -2887,104 +2852,6 @@ export function createMcpServer(config: McpConfig) {
 	// ─── Actors ───────────────────────────────────────────────
 	registerAppTool(
 		server,
-		'maskin_create_agent',
-		{
-			description: tools.maskin_create_agent.description,
-			inputSchema: tools.maskin_create_agent.inputSchema.shape,
-			_meta: {},
-		},
-		async (args) => {
-			const result = await apiCall(
-				config,
-				'POST',
-				'/api/agent-builder/create',
-				{
-					prompt: args.prompt,
-					examples: args.examples,
-					references: args.references,
-					constraints: args.constraints,
-				},
-				{ workspaceId: args.workspace_id },
-			)
-			return {
-				_meta: meta(
-					'maskin_create_agent',
-					config,
-					(args as { workspace_id?: string }).workspace_id,
-				),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-			}
-		},
-	)
-
-	registerAppTool(
-		server,
-		'maskin_reviewer_verdict',
-		{
-			description: tools.maskin_reviewer_verdict.description,
-			inputSchema: tools.maskin_reviewer_verdict.inputSchema.shape,
-			_meta: {},
-		},
-		async (args) => {
-			const result = await apiCall(
-				config,
-				'POST',
-				'/api/agent-builder/reviewer-verdict',
-				{
-					object_id: args.object_id,
-					session_id: args.session_id,
-					target_actor_id: args.target_actor_id,
-					rubric_id: args.rubric_id,
-					verdict_id: args.verdict_id,
-					human_agreed: args.human_agreed,
-					criteria_disagreements: args.criteria_disagreements,
-					note: args.note,
-				},
-				{ workspaceId: args.workspace_id },
-			)
-			return {
-				_meta: meta(
-					'maskin_reviewer_verdict',
-					config,
-					(args as { workspace_id?: string }).workspace_id,
-				),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-			}
-		},
-	)
-
-	registerAppTool(
-		server,
-		'maskin_refine_agent',
-		{
-			description: tools.maskin_refine_agent.description,
-			inputSchema: tools.maskin_refine_agent.inputSchema.shape,
-			_meta: {},
-		},
-		async (args) => {
-			const result = await apiCall(
-				config,
-				'POST',
-				'/api/agent-builder/refine',
-				{
-					actor_id: args.actor_id,
-					context: args.context,
-				},
-				{ workspaceId: args.workspace_id },
-			)
-			return {
-				_meta: meta(
-					'maskin_refine_agent',
-					config,
-					(args as { workspace_id?: string }).workspace_id,
-				),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-			}
-		},
-	)
-
-	registerAppTool(
-		server,
 		'create_actor',
 		{
 			description: tools.create_actor.description,
@@ -3049,28 +2916,9 @@ export function createMcpServer(config: McpConfig) {
 						})
 					: result
 
-			// auto_create_workspace mints a brand-new workspace whose id only exists
-			// on the API response (`result.workspace_id`), not on the request — the
-			// setup block must be scoped to THAT workspace, not to `workspace_id`
-			// (usually undefined here) or it falls back to an arbitrary workspace
-			// via loadWorkspace()'s workspaces[0] default and reports the wrong
-			// workspace's LLM readiness.
-			const setup = await buildActorSetupBlockFromApi(
-				{
-					id: (result.id as string | undefined) ?? '',
-					name: (result.name as string | undefined) ?? createBody.name,
-					type: (result.type as string | undefined) ?? createBody.type,
-				},
-				setupApiCaller(config),
-				{
-					workspaceId: (result.workspace_id as string | undefined) ?? workspace_id,
-					defaultWorkspaceId: config.defaultWorkspaceId,
-				},
-			)
-			const responseBody = { ...(withUrl as Record<string, unknown>), setup }
 			return {
 				_meta: meta('create_actor', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(responseBody) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(withUrl) }],
 			}
 		},
 	)
@@ -4672,22 +4520,6 @@ export function createMcpServer(config: McpConfig) {
 				member_edges: graphResult.edges,
 			}
 			if (stepTriggerIds.length > 0) responseBody.created_step_trigger_ids = stepTriggerIds
-
-			responseBody.setup = await buildLoopSetupBlockFromApi(
-				{
-					id: (created?.id as string | undefined) ?? '',
-					name: name ?? null,
-					entryCondition: entry_condition ?? null,
-					closeCondition: close_condition ?? null,
-				},
-				setupApiCaller(config),
-				{
-					workspaceId: workspace_id,
-					defaultWorkspaceId: config.defaultWorkspaceId,
-					triggerIds: allTriggerIds,
-					memberCount: memberObjectIds.length,
-				},
-			)
 
 			return {
 				_meta: meta('create_loop', config, (args as { workspace_id?: string }).workspace_id),
