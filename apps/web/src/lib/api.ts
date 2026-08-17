@@ -51,6 +51,12 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 	const apiKey = getApiKey()
 
 	const reqHeaders: Record<string, string> = {
+		// Marks this call as originating from the web UI so route-level
+		// analytics (e.g. knowledge_object_created / _read) can attribute
+		// `created_via` / `accessed_via` without inferring from actorType.
+		// Overridable via `headers` for the (currently zero) callers that
+		// need to spoof a different source.
+		'X-Client-Source': 'ui',
 		...headers,
 	}
 
@@ -332,6 +338,8 @@ export const api = {
 
 	loops: {
 		list: (workspaceId: string) => request<ListLoopsResponse>('/loops', { workspaceId }),
+		activity: (id: string, workspaceId: string) =>
+			request<{ events: EventResponse[] }>(`/loops/${id}/activity`, { workspaceId }),
 	},
 
 	triggers: {
@@ -519,6 +527,12 @@ export const api = {
 			}),
 		swap: (workspaceId: string) =>
 			request<{ success: boolean }>('/claude-oauth/swap', { method: 'POST', workspaceId }),
+		rename: (workspaceId: string, slot: ClaudeOAuthSlot, nickname: string) =>
+			request<{ success: boolean }>('/claude-oauth/nickname', {
+				method: 'PATCH',
+				body: { slot, nickname },
+				workspaceId,
+			}),
 	},
 
 	marketplaceLoops: {
@@ -767,6 +781,7 @@ export interface ClaudeOAuthSlotInfo {
 	subscription_type?: string
 	expires_at: number
 	fingerprint?: string
+	nickname?: string
 }
 
 export interface ClaudeOAuthExchangeResponse {
@@ -774,6 +789,7 @@ export interface ClaudeOAuthExchangeResponse {
 	slot?: ClaudeOAuthSlot
 	subscription_type?: string
 	expires_at: number
+	nickname?: string
 }
 
 export interface ClaudeOAuthStatusResponse {
@@ -799,6 +815,7 @@ export interface ClaudeOAuthImportInput {
 	subscriptionType?: string
 	scopes?: string[]
 	slot?: ClaudeOAuthSlot
+	nickname?: string
 }
 
 // Types derived from backend response schemas
@@ -844,6 +861,10 @@ export interface UnreadItem {
 	// Count of unread events on the entity that actually @-mention the viewer.
 	// Drives the "Mentioned" pill on the For You card when > 0.
 	mentioning_unread_count: number
+	// Highest attention score (1-5) among the entity's unread comments. null
+	// when no unread comment carries a score — sorts below scored comments in
+	// the Priority sort.
+	max_unread_attention: number | null
 	latest_event_id: number | null
 	latest_activity_at: string | null
 	object?: ObjectResponse

@@ -18,7 +18,7 @@ import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { useBets } from '@/hooks/use-bets'
-import { useMarkRead, useUnread } from '@/hooks/use-subscriptions'
+import { useMarkRead, useMarkUnread, useUnread } from '@/hooks/use-subscriptions'
 import {
 	useUpdateUserDisplaySettings,
 	useUserDisplaySettings,
@@ -65,6 +65,7 @@ function ForYouRedesign() {
 	const { data: bets, isLoading: betsLoading } = useBets(workspaceId)
 	const items = data?.items ?? []
 	const markRead = useMarkRead(workspaceId)
+	const markUnread = useMarkUnread(workspaceId)
 	const { open: composerOpen, setOpen: setComposerOpen } = useNewConversationComposer()
 
 	const [typeFilter, setTypeFilter] = useState<string | undefined>(undefined)
@@ -114,7 +115,6 @@ function ForYouRedesign() {
 	)
 
 	const [pendingKeys, setPendingKeys] = useState<Set<string>>(() => new Set())
-	const settledRef = useRef(false)
 
 	const [northStarDismissed, setNorthStarDismissed] = useState(() =>
 		Boolean(localStorage.getItem(`north_star_answered_${workspaceId}`)),
@@ -128,24 +128,27 @@ function ForYouRedesign() {
 		[items],
 	)
 
-	// `priority` (default) puts mentions above FYI, stable within tiers.
-	// `latest` is a straight latest_activity_at desc — the alternative surfaced
-	// by the sort control per the design directions task.
+	// `priority` (default) sorts by the sender's attention score (1-5) on each
+	// card's highest-scored unread comment, highest first; unscored comments
+	// sort below any scored one. Ties (including all-unscored) fall back to
+	// latest_activity_at desc. `latest` is a straight latest_activity_at desc —
+	// the alternative surfaced by the sort control per the design directions
+	// task.
 	const sortedRegular = useMemo(() => {
 		const base = items.filter((item) => item.object?.type !== 'onboarding_session')
+		const byLatestDesc = (a: UnreadItem, b: UnreadItem) => {
+			const at = a.latest_activity_at ? new Date(a.latest_activity_at).getTime() : 0
+			const bt = b.latest_activity_at ? new Date(b.latest_activity_at).getTime() : 0
+			return bt - at
+		}
 		if (sort === 'latest') {
-			return base.slice().sort((a, b) => {
-				const at = a.latest_activity_at ? new Date(a.latest_activity_at).getTime() : 0
-				const bt = b.latest_activity_at ? new Date(b.latest_activity_at).getTime() : 0
-				return bt - at
-			})
+			return base.slice().sort(byLatestDesc)
 		}
 		return base.slice().sort((a, b) => {
-			const aMentions = a.mentioning_unread_count > 0
-			const bMentions = b.mentioning_unread_count > 0
-			if (aMentions && !bMentions) return -1
-			if (!aMentions && bMentions) return 1
-			return 0
+			const aAttention = a.max_unread_attention ?? -1
+			const bAttention = b.max_unread_attention ?? -1
+			if (aAttention !== bAttention) return bAttention - aAttention
+			return byLatestDesc(a, b)
 		})
 	}, [items, sort])
 
@@ -205,26 +208,29 @@ function ForYouRedesign() {
 		[markRead],
 	)
 
+	const markItemUnread = useCallback(
+		(item: UnreadItem) => {
+			markUnread.mutate({ entityType: item.entity_type, entityId: item.entity_id })
+		},
+		[markUnread],
+	)
+
+	// Fires the real mark-read mutation for every item immediately — it used
+	// to wait for the Undo toast to auto-close (or be dismissed) before
+	// mutating at all, so navigating away or refreshing during that window
+	// silently dropped the mark-read and the items reappeared unread on
+	// reload. Undo now reverses the already-landed mutation with a real
+	// mark-unread call instead of just restoring the optimistic hide.
 	const handleMarkAllRead = useCallback(() => {
 		if (visibleRegular.length === 0) return
 		const snapshot = visibleRegular
 		const snapshotKeys = new Set(snapshot.map(itemKey))
-		settledRef.current = false
 		setPendingKeys((prev) => new Set([...prev, ...snapshotKeys]))
 
-		const commit = () => {
-			if (settledRef.current) return
-			settledRef.current = true
-			for (const item of snapshot) markItemRead(item)
-			setPendingKeys((prev) => {
-				const next = new Set(prev)
-				for (const key of snapshotKeys) next.delete(key)
-				return next
-			})
-		}
+		for (const item of snapshot) markItemRead(item)
+
 		const restore = () => {
-			if (settledRef.current) return
-			settledRef.current = true
+			for (const item of snapshot) markItemUnread(item)
 			setPendingKeys((prev) => {
 				const next = new Set(prev)
 				for (const key of snapshotKeys) next.delete(key)
@@ -236,10 +242,8 @@ function ForYouRedesign() {
 		toast(`Marked ${count} thread${count === 1 ? '' : 's'} as read`, {
 			duration: UNDO_WINDOW_MS,
 			action: { label: 'Undo', onClick: restore },
-			onAutoClose: commit,
-			onDismiss: commit,
 		})
-	}, [markItemRead, visibleRegular])
+	}, [markItemRead, markItemUnread, visibleRegular])
 
 	// Alt+U shortcut mirrors the visible "Mark all read" button in
 	// ForYouHeaderActions — power-user keyboard access alongside the click target.
@@ -281,10 +285,19 @@ function ForYouRedesign() {
 		) : null
 
 	const isSparse = filteredRegular.length + onboardingItems.length < 3
+	const sparseComposerNode = isSparse ? (
+		<SparseComposer
+			itemsCount={filteredRegular.length + onboardingItems.length}
+			onFocusChange={setComposerFocused}
+		/>
+	) : null
 
 	return (
 		<>
-			<div className="flex min-w-0 flex-1 flex-col gap-3" data-testid="foryou-redesign-root">
+			<div
+				className="flex min-h-0 min-w-0 flex-1 flex-col gap-3"
+				data-testid="foryou-redesign-root"
+			>
 				<PageHeader
 					stickyIdentity={<ForYouHeaderIdentity unreadCount={unreadRegular.length} />}
 					actions={
@@ -294,6 +307,7 @@ function ForYouRedesign() {
 							markAllReadDisabled={unreadRegular.length === 0}
 						/>
 					}
+					scrollLocked={mode === 'cards'}
 				/>
 				{northStarCard}
 				<ForYouHeader
@@ -331,18 +345,17 @@ function ForYouRedesign() {
 							))}
 						</div>
 					) : (
-						<ForYouCardQueue workspaceId={workspaceId} queue={queue} />
+						<ForYouCardQueue
+							workspaceId={workspaceId}
+							queue={queue}
+							sparseComposer={sparseComposerNode}
+						/>
 					)}
 					{mode === 'list' && typeFilter === 'mentions' && filteredRegular.length === 0 && (
 						<p className="py-10 text-center text-sm text-muted-foreground">No unread mentions.</p>
 					)}
-					{isSparse ? (
-						<div className="mt-4">
-							<SparseComposer
-								itemsCount={filteredRegular.length + onboardingItems.length}
-								onFocusChange={setComposerFocused}
-							/>
-						</div>
+					{mode === 'list' && sparseComposerNode ? (
+						<div className="mt-4">{sparseComposerNode}</div>
 					) : null}
 				</div>
 			</div>

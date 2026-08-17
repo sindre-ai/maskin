@@ -11,6 +11,7 @@ import { CHIEF_OF_STAFF_DEFAULT, WORKSPACE_COACH_DEFAULT } from '@maskin/shared'
 import { and, eq, isNotNull } from 'drizzle-orm'
 import type { AgentStorageManager } from '../services/agent-storage'
 import { bootstrapDefaultAgents } from '../services/workspace-bootstrap'
+import { emitWorkspaceFirstReady } from './analytics/install-telemetry'
 import { logger } from './logger'
 import {
 	CCD_ACTOR_IDS,
@@ -436,6 +437,12 @@ export async function maybeBootstrapDev(
 			}),
 		)
 	}
+
+	// TTV instrumentation: this is the first (and per findExistingCredentials
+	// only) workspace the auto-bootstrap creates for a fresh install; agents
+	// have just been seeded as workspace members and can run against it.
+	// Fire-and-forget — never blocks or throws.
+	emitWorkspaceFirstReady({ workspaceId: workspace.id, actorId: actor.id }).catch(() => {})
 
 	return {
 		apiKey: key,

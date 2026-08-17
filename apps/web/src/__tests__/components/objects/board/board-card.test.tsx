@@ -66,7 +66,8 @@ describe('BoardCard', () => {
 		expect(screen.getByText('Wire up board')).toBeInTheDocument()
 		expect(screen.getByText('in progress')).toBeInTheDocument()
 		expect(screen.getByText('task')).toBeInTheDocument()
-		expect(screen.getByText('Magnus')).toBeInTheDocument()
+		// The driver renders as an avatar whose accessible name is the driver's name.
+		expect(screen.getByTitle('Magnus')).toBeInTheDocument()
 		// Relative time renders as a <time> element.
 		expect(screen.getByRole('time')).toBeInTheDocument()
 	})

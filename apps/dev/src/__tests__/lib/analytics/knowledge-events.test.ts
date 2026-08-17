@@ -8,8 +8,14 @@ vi.mock('../../../lib/analytics/posthog', () => ({
 }))
 
 import {
+	KNOWLEDGE_OBJECT_CREATED,
+	KNOWLEDGE_OBJECT_READ,
 	WORKSPACE_KNOWLEDGE_REFERENCED,
 	maybeEmitKnowledgeReferenceFromEdge,
+	resolveAccessedVia,
+	resolveCreatedVia,
+	trackKnowledgeObjectCreated,
+	trackKnowledgeObjectRead,
 	trackWorkspaceKnowledgeReferenced,
 } from '../../../lib/analytics/knowledge-events'
 
@@ -305,5 +311,107 @@ describe('maybeEmitKnowledgeReferenceFromEdge', () => {
 				source_topics: [],
 			},
 		})
+	})
+})
+
+describe('resolveCreatedVia', () => {
+	it('honours an explicit mcp header', () => {
+		expect(resolveCreatedVia('mcp', 'human')).toBe('mcp')
+		expect(resolveCreatedVia('mcp', 'agent')).toBe('mcp')
+	})
+
+	it('honours an explicit agent header', () => {
+		expect(resolveCreatedVia('agent', 'human')).toBe('agent')
+	})
+
+	it('honours an explicit ui header even for an agent actor', () => {
+		expect(resolveCreatedVia('ui', 'agent')).toBe('ui')
+	})
+
+	it('falls back to `agent` when actorType=agent and no header is set', () => {
+		expect(resolveCreatedVia(undefined, 'agent')).toBe('agent')
+	})
+
+	it('falls back to `ui` for a human actor with no header', () => {
+		expect(resolveCreatedVia(undefined, 'human')).toBe('ui')
+	})
+
+	it('falls back to `ui` when both header and actorType are missing', () => {
+		expect(resolveCreatedVia(undefined, undefined)).toBe('ui')
+	})
+
+	it('ignores an unrecognised header value', () => {
+		expect(resolveCreatedVia('lol', 'human')).toBe('ui')
+	})
+})
+
+describe('resolveAccessedVia', () => {
+	it('honours the extension header (only path with an explicit slot)', () => {
+		expect(resolveAccessedVia('extension', 'human')).toBe('extension')
+	})
+
+	it('honours an explicit mcp header', () => {
+		expect(resolveAccessedVia('mcp', 'human')).toBe('mcp')
+	})
+
+	it('honours an explicit ui header', () => {
+		expect(resolveAccessedVia('ui', 'agent')).toBe('ui')
+	})
+
+	// The read-side enum has no `agent` value per the task spec; agents that
+	// read without MCP fall through to `mcp` because that is the intended
+	// agent read path.
+	it('maps a headerless agent actor to `mcp`', () => {
+		expect(resolveAccessedVia(undefined, 'agent')).toBe('mcp')
+	})
+
+	it('falls back to `ui` for a headerless human actor', () => {
+		expect(resolveAccessedVia(undefined, 'human')).toBe('ui')
+	})
+})
+
+describe('trackKnowledgeObjectCreated', () => {
+	it('captures the ship-metric event with the flattened prop shape', async () => {
+		await trackKnowledgeObjectCreated({
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
+			objectId: 'knowledge-1',
+			createdVia: 'mcp',
+		})
+
+		expect(capturePosthogEventMock).toHaveBeenCalledOnce()
+		expect(capturePosthogEventMock).toHaveBeenCalledWith(KNOWLEDGE_OBJECT_CREATED, 'ws-1', {
+			workspace_id: 'ws-1',
+			actor_id: 'actor-1',
+			object_id: 'knowledge-1',
+			created_via: 'mcp',
+		})
+	})
+
+	it('exports the canonical event-name constant', () => {
+		expect(KNOWLEDGE_OBJECT_CREATED).toBe('knowledge_object_created')
+	})
+})
+
+describe('trackKnowledgeObjectRead', () => {
+	it('captures the ship-metric event with the flattened prop shape', async () => {
+		await trackKnowledgeObjectRead({
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
+			objectId: 'knowledge-1',
+			accessedVia: 'ui',
+		})
+
+		expect(capturePosthogEventMock).toHaveBeenCalledOnce()
+		expect(capturePosthogEventMock).toHaveBeenCalledWith(KNOWLEDGE_OBJECT_READ, 'ws-1', {
+			workspace_id: 'ws-1',
+			actor_id: 'actor-1',
+			object_id: 'knowledge-1',
+			accessed_via: 'ui',
+		})
+	})
+
+	it('exports the canonical event-name constant', () => {
+		expect(KNOWLEDGE_OBJECT_READ).toBe('knowledge_object_read')
 	})
 })
