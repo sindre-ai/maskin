@@ -21,7 +21,7 @@ function BriefingPage() {
 			<PageHeader />
 			<header>
 				<h1 className="text-2xl font-semibold leading-tight tracking-tight">Briefing</h1>
-				<p className="mt-0.5 text-sm text-muted-foreground">
+				<p className="mt-0.5 text-[13px] leading-[1.55] text-muted-foreground">
 					The workspace snapshot that opens every agent session — active bets, loops, open insights,
 					and recent learnings.
 				</p>
@@ -38,7 +38,7 @@ function BriefingPage() {
 					description={error instanceof Error ? error.message : 'Unknown error'}
 				/>
 			) : (
-				<article className="rounded-md border border-border bg-bg-surface p-4 md:p-6">
+				<article className="rounded-md border border-border bg-card p-4 md:p-6">
 					<MarkdownContent content={data?.markdown ?? ''} />
 				</article>
 			)}
