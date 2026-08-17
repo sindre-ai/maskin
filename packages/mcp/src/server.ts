@@ -1899,9 +1899,7 @@ export function createMcpServer(config: McpConfig) {
 			// Lowest-status-by-default: statuses are earned, not drafted. When a
 			// node omits `status`, fill in the first (lowest) status configured for
 			// its type in the workspace settings before hitting /api/graph, which
-			// requires a status on every node. Always fetch workspace settings —
-			// the setup block computed below reads the same row for LLM readiness
-			// and per-type status order.
+			// requires a status on every node.
 			type SetupWorkspaceRow = {
 				id: string
 				settings?: {
@@ -1911,7 +1909,6 @@ export function createMcpServer(config: McpConfig) {
 				} | null
 			}
 			let cachedWorkspace: SetupWorkspaceRow | null = null
-			let workspaceLoadError: unknown = null
 			const needsStatusInference = nodes.some((node) => !node.status)
 			try {
 				const workspaces = (await apiCall(config, 'GET', '/api/workspaces', undefined, {
@@ -1920,8 +1917,8 @@ export function createMcpServer(config: McpConfig) {
 				const effectiveWsId = workspace_id ?? config.defaultWorkspaceId
 				// No explicit or default workspace id to scope against — picking an
 				// arbitrary workspace (e.g. workspaces[0]) would silently attribute a
-				// different workspace's statuses and LLM readiness to this request,
-				// which can write the wrong inferred status onto a new object.
+				// different workspace's statuses to this request, which can write the
+				// wrong inferred status onto a new object.
 				if (!effectiveWsId) throw new Error('No workspace id available to scope this request')
 				const match = workspaces.find((w) => w.id === effectiveWsId)
 				// An explicit workspace_id that matches no row must not silently
@@ -1930,11 +1927,9 @@ export function createMcpServer(config: McpConfig) {
 				cachedWorkspace = match
 			} catch (err) {
 				// Only re-throw when the workspace row is required for status
-				// inference (the pre-setup behaviour). If every node already carries
-				// a status, a workspace-load failure (including a workspace_id that
-				// doesn't match any row) just degrades the setup block to unknown
-				// below — the primary response still succeeds.
-				workspaceLoadError = err
+				// inference. If every node already carries a status, a
+				// workspace-load failure (including a workspace_id that doesn't
+				// match any row) is harmless — the primary response still succeeds.
 				if (needsStatusInference) throw err
 			}
 			const statusesByType: Record<string, string[]> = cachedWorkspace?.settings?.statuses ?? {}
