@@ -10,7 +10,7 @@ vi.mock('../../services/agent-builder', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('../../services/agent-builder')>()
 	return {
 		...actual,
-		reviewWork: vi.fn(),
+		reviewerVerdictWorkflow: vi.fn(),
 		refineAgent: vi.fn(),
 	}
 })
@@ -24,7 +24,9 @@ vi.mock('../../services/agent-builder-bootstrap', async (importOriginal) => {
 })
 
 const service = await import('../../services/agent-builder')
-const reviewWork = service.reviewWork as unknown as ReturnType<typeof vi.fn>
+const reviewerVerdictWorkflow = service.reviewerVerdictWorkflow as unknown as ReturnType<
+	typeof vi.fn
+>
 const refineAgent = service.refineAgent as unknown as ReturnType<typeof vi.fn>
 
 const bootstrapService = await import('../../services/agent-builder-bootstrap')
@@ -38,6 +40,7 @@ const SESSION_ID = '88888888-8888-8888-8888-888888888888'
 const ACTOR_ID = '33333333-3333-3333-3333-333333333333'
 const RUBRIC_ID = '55555555-5555-5555-5555-555555555555'
 const BUILDER_ACTOR_ID = '66666666-6666-6666-6666-666666666666'
+const VERDICT_ID = '99999999-9999-9999-9999-999999999999'
 
 function createAgentBuilderTestApp() {
 	const app = new CreateOpenAPIHono()
@@ -197,7 +200,7 @@ describe('POST /api/agent-builder/create', () => {
 	})
 })
 
-describe('POST /api/agent-builder/review', () => {
+describe('POST /api/agent-builder/reviewer-verdict', () => {
 	beforeEach(() => {
 		vi.spyOn(console, 'log').mockImplementation(() => undefined)
 		vi.spyOn(console, 'warn').mockImplementation(() => undefined)
@@ -205,71 +208,130 @@ describe('POST /api/agent-builder/review', () => {
 	})
 	afterEach(() => {
 		vi.restoreAllMocks()
-		reviewWork.mockReset()
+		reviewerVerdictWorkflow.mockReset()
 	})
 
-	it('returns 200 with the structured verdict for an object_id review', async () => {
-		reviewWork.mockResolvedValue({
-			verdict: {
-				overall: 'pass',
-				criteria: [{ name: 'persona_specificity', pass: true, fix: '' }],
+	it('returns 200 with the structured verdict for an object_id review (unpersisted — no target actor)', async () => {
+		reviewerVerdictWorkflow.mockResolvedValue({
+			review: {
+				verdict: {
+					overall: 'pass',
+					criteria: [{ name: 'persona_specificity', pass: true, fix: '' }],
+				},
+				reviewerSessionId: 'rev-session-uuid',
+				rubricId: RUBRIC_ID,
+				targetActorId: null,
+				verdictId: null,
+				persisted: false,
+				persistenceNote: 'verdict computed but not persisted — no target actor',
 			},
-			reviewerSessionId: 'rev-session-uuid',
-			rubricId: RUBRIC_ID,
-			targetActorId: null,
+			rating: null,
+			precisionSummary: null,
 		})
 
 		const { app } = createAgentBuilderTestApp()
 		const res = await app.request(
-			jsonRequest('POST', `${BASE}/review`, {
+			jsonRequest('POST', `${BASE}/reviewer-verdict`, {
 				object_id: OBJECT_ID,
 				workspace_id: WORKSPACE_ID,
 			}),
 		)
 		expect(res.status).toBe(200)
 		const body = await res.json()
-		expect(body.overall).toBe('pass')
-		expect(body.rubric_id).toBe(RUBRIC_ID)
-		expect(body.reviewer_session_id).toBe('rev-session-uuid')
-		expect(body.criteria[0].name).toBe('persona_specificity')
+		expect(body.verdict.overall).toBe('pass')
+		expect(body.verdict.rubric_id).toBe(RUBRIC_ID)
+		expect(body.verdict.reviewer_session_id).toBe('rev-session-uuid')
+		expect(body.verdict.criteria[0].name).toBe('persona_specificity')
+		expect(body.verdict.persisted).toBe(false)
+		expect(body.verdict.verdict_id).toBeNull()
+		expect(body.rating).toBeNull()
+		expect(body.precision_summary).toBeNull()
 	})
 
-	it('returns 200 with the structured verdict for a session_id review', async () => {
-		reviewWork.mockResolvedValue({
-			verdict: {
-				overall: 'fail',
-				criteria: [
-					{ name: 'persona_specificity', pass: true, fix: '' },
-					{
-						name: 'no_hedging_enforcement',
-						pass: false,
-						fix: 'Add anti-hedging directive.',
-					},
-				],
+	it('returns 200 with a persisted, ratable verdict for a session_id review', async () => {
+		reviewerVerdictWorkflow.mockResolvedValue({
+			review: {
+				verdict: {
+					overall: 'fail',
+					criteria: [
+						{ name: 'persona_specificity', pass: true, fix: '' },
+						{ name: 'no_hedging_enforcement', pass: false, fix: 'Add anti-hedging directive.' },
+					],
+				},
+				reviewerSessionId: 'rev-session-uuid',
+				rubricId: RUBRIC_ID,
+				targetActorId: ACTOR_ID,
+				verdictId: VERDICT_ID,
+				persisted: true,
 			},
-			reviewerSessionId: 'rev-session-uuid',
-			rubricId: RUBRIC_ID,
-			targetActorId: ACTOR_ID,
+			rating: null,
+			precisionSummary: {
+				rubric_id: RUBRIC_ID,
+				precision_threshold: 0.7,
+				total_verdicts: 1,
+				rated_verdicts: 0,
+				agreed_verdicts: 0,
+				precision: null,
+				meets_threshold: false,
+				failing_criteria: [],
+				summary_line: `Reviewer precision: no rated verdicts yet for rubric ${RUBRIC_ID} (1 total unrated).`,
+			},
 		})
 
 		const { app } = createAgentBuilderTestApp()
 		const res = await app.request(
-			jsonRequest('POST', `${BASE}/review`, {
+			jsonRequest('POST', `${BASE}/reviewer-verdict`, {
 				session_id: SESSION_ID,
 				workspace_id: WORKSPACE_ID,
 			}),
 		)
 		expect(res.status).toBe(200)
 		const body = await res.json()
-		expect(body.overall).toBe('fail')
-		expect(body.target_actor_id).toBe(ACTOR_ID)
-		expect(body.criteria[1].pass).toBe(false)
+		expect(body.verdict.overall).toBe('fail')
+		expect(body.verdict.target_actor_id).toBe(ACTOR_ID)
+		expect(body.verdict.persisted).toBe(true)
+		expect(body.verdict.verdict_id).toBe(VERDICT_ID)
+		expect(body.verdict.criteria[1].pass).toBe(false)
+		expect(body.precision_summary.total_verdicts).toBe(1)
+	})
+
+	it('returns 200 with rating + precision_summary for a rate-only call (no review)', async () => {
+		reviewerVerdictWorkflow.mockResolvedValue({
+			review: null,
+			rating: { verdictId: VERDICT_ID, humanAgreed: true, humanCriteriaDisagreements: null },
+			precisionSummary: {
+				rubric_id: RUBRIC_ID,
+				precision_threshold: 0.7,
+				total_verdicts: 3,
+				rated_verdicts: 1,
+				agreed_verdicts: 1,
+				precision: 1,
+				meets_threshold: true,
+				failing_criteria: [],
+				summary_line: 'Reviewer precision 100.0% (1/1) — meets ≥70% gate.',
+			},
+		})
+
+		const { app } = createAgentBuilderTestApp()
+		const res = await app.request(
+			jsonRequest('POST', `${BASE}/reviewer-verdict`, {
+				verdict_id: VERDICT_ID,
+				human_agreed: true,
+				workspace_id: WORKSPACE_ID,
+			}),
+		)
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body.verdict).toBeNull()
+		expect(body.rating.verdict_id).toBe(VERDICT_ID)
+		expect(body.rating.human_agreed).toBe(true)
+		expect(body.precision_summary.meets_threshold).toBe(true)
 	})
 
 	it('returns 400 when both object_id and session_id are provided', async () => {
 		const { app } = createAgentBuilderTestApp()
 		const res = await app.request(
-			jsonRequest('POST', `${BASE}/review`, {
+			jsonRequest('POST', `${BASE}/reviewer-verdict`, {
 				object_id: OBJECT_ID,
 				session_id: SESSION_ID,
 				workspace_id: WORKSPACE_ID,
@@ -278,31 +340,109 @@ describe('POST /api/agent-builder/review', () => {
 		expect(res.status).toBe(400)
 	})
 
-	it('returns 400 when neither object_id nor session_id is provided', async () => {
+	it('returns 400 when the service rejects because no target was specified', async () => {
+		const { AgentReviewTargetError } = await import('../../services/agent-builder')
+		reviewerVerdictWorkflow.mockRejectedValue(
+			new AgentReviewTargetError(
+				'no_target_specified',
+				'Provide at least one of object_id, session_id, verdict_id, or rubric_id.',
+			),
+		)
 		const { app } = createAgentBuilderTestApp()
 		const res = await app.request(
-			jsonRequest('POST', `${BASE}/review`, { workspace_id: WORKSPACE_ID }),
+			jsonRequest('POST', `${BASE}/reviewer-verdict`, { workspace_id: WORKSPACE_ID }),
+		)
+		expect(res.status).toBe(400)
+	})
+
+	it('returns 400 when human_agreed is provided with no ratable verdict available', async () => {
+		const { AgentReviewTargetError } = await import('../../services/agent-builder')
+		reviewerVerdictWorkflow.mockRejectedValue(
+			new AgentReviewTargetError('no_verdict_to_rate', 'human_agreed was provided but no verdict'),
+		)
+		const { app } = createAgentBuilderTestApp()
+		const res = await app.request(
+			jsonRequest('POST', `${BASE}/reviewer-verdict`, {
+				rubric_id: RUBRIC_ID,
+				human_agreed: true,
+				workspace_id: WORKSPACE_ID,
+			}),
 		)
 		expect(res.status).toBe(400)
 	})
 
 	it('returns 400 when workspace_id is missing', async () => {
 		const { app } = createAgentBuilderTestApp()
-		const res = await app.request(jsonRequest('POST', `${BASE}/review`, { object_id: OBJECT_ID }))
+		const res = await app.request(
+			jsonRequest('POST', `${BASE}/reviewer-verdict`, { object_id: OBJECT_ID }),
+		)
 		expect(res.status).toBe(400)
 	})
 
 	it('returns 404 when the reviewer target is not found', async () => {
 		const { AgentReviewTargetError } = await import('../../services/agent-builder')
-		reviewWork.mockRejectedValue(new AgentReviewTargetError('target_not_found', 'Object not found'))
+		reviewerVerdictWorkflow.mockRejectedValue(
+			new AgentReviewTargetError('target_not_found', 'Object not found'),
+		)
 		const { app } = createAgentBuilderTestApp()
 		const res = await app.request(
-			jsonRequest('POST', `${BASE}/review`, {
+			jsonRequest('POST', `${BASE}/reviewer-verdict`, {
 				object_id: OBJECT_ID,
 				workspace_id: WORKSPACE_ID,
 			}),
 		)
 		expect(res.status).toBe(404)
+	})
+
+	it('returns 404 when target_actor_id does not resolve to a real actor', async () => {
+		const { ReviewerVerdictError } = await import('../../services/reviewer-verdicts')
+		reviewerVerdictWorkflow.mockRejectedValue(
+			new ReviewerVerdictError('target_actor_not_found', 'Target actor not found'),
+		)
+		const { app } = createAgentBuilderTestApp()
+		const res = await app.request(
+			jsonRequest('POST', `${BASE}/reviewer-verdict`, {
+				object_id: OBJECT_ID,
+				target_actor_id: ACTOR_ID,
+				workspace_id: WORKSPACE_ID,
+			}),
+		)
+		// Mirrors routes/reviewer-verdicts.ts's mapErrorCode for the same
+		// ReviewerVerdictError code — see apps/dev/src/routes/agent-builder.ts.
+		expect(res.status).toBe(404)
+	})
+
+	it('returns 409 when rating an already-rated verdict', async () => {
+		const { ReviewerVerdictError } = await import('../../services/reviewer-verdicts')
+		reviewerVerdictWorkflow.mockRejectedValue(
+			new ReviewerVerdictError('already_rated', 'Reviewer verdict already rated'),
+		)
+		const { app } = createAgentBuilderTestApp()
+		const res = await app.request(
+			jsonRequest('POST', `${BASE}/reviewer-verdict`, {
+				verdict_id: VERDICT_ID,
+				human_agreed: true,
+				workspace_id: WORKSPACE_ID,
+			}),
+		)
+		expect(res.status).toBe(409)
+	})
+
+	it('returns 403 when the reviewer tries to rate its own verdict', async () => {
+		const { ReviewerVerdictError } = await import('../../services/reviewer-verdicts')
+		reviewerVerdictWorkflow.mockRejectedValue(
+			new ReviewerVerdictError('self_rating_forbidden', 'Reviewer cannot rate its own verdict'),
+		)
+		const { app } = createAgentBuilderTestApp()
+		const res = await app.request(
+			jsonRequest('POST', `${BASE}/reviewer-verdict`, {
+				object_id: OBJECT_ID,
+				target_actor_id: ACTOR_ID,
+				human_agreed: true,
+				workspace_id: WORKSPACE_ID,
+			}),
+		)
+		expect(res.status).toBe(403)
 	})
 
 	it('returns 404 and never dispatches when the caller is not a member of the body-supplied workspace_id', async () => {
@@ -310,14 +450,14 @@ describe('POST /api/agent-builder/review', () => {
 		mockResults.select = []
 
 		const res = await app.request(
-			jsonRequest('POST', `${BASE}/review`, {
+			jsonRequest('POST', `${BASE}/reviewer-verdict`, {
 				object_id: OBJECT_ID,
 				workspace_id: WORKSPACE_ID,
 			}),
 		)
 
 		expect(res.status).toBe(404)
-		expect(reviewWork).not.toHaveBeenCalled()
+		expect(reviewerVerdictWorkflow).not.toHaveBeenCalled()
 	})
 })
 

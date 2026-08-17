@@ -199,7 +199,8 @@ describe('tool handlers', () => {
 			)
 
 			const parsed = JSON.parse(result.content[0].text)
-			expect(parsed).toEqual(mockResult)
+			expect(parsed).toMatchObject(mockResult)
+			expect(parsed.setup).toBeDefined()
 		})
 
 		it('uses workspace_id from args over default', async () => {
@@ -223,21 +224,35 @@ describe('tool handlers', () => {
 		})
 
 		it('attaches file_ids on a node by replaying each as an `attached` relationship', async () => {
-			// First fetch: POST /api/graph returns the created node with its real
-			// UUID + type. Subsequent fetches are the per-file relationship POSTs.
-			vi.spyOn(globalThis, 'fetch')
-				.mockResolvedValueOnce({
+			// The handler now always fetches /api/workspaces up-front (for the
+			// setup block); route the mocks by URL so per-call order is stable
+			// regardless of setup-block plumbing.
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const u = String(url)
+				if (u.endsWith('/api/workspaces')) {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () => Promise.resolve([{ id: 'ws-default-123', settings: {} }]),
+					} as Response
+				}
+				if (u.endsWith('/api/graph')) {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () =>
+							Promise.resolve({
+								nodes: [{ $id: 'bet-1', id: 'real-bet-id', type: 'bet' }],
+								edges: [],
+							}),
+					} as Response
+				}
+				return {
 					ok: true,
-					json: () =>
-						Promise.resolve({
-							nodes: [{ $id: 'bet-1', id: 'real-bet-id', type: 'bet' }],
-							edges: [],
-						}),
-				} as Response)
-				.mockResolvedValue({
-					ok: true,
+					headers: new Headers(),
 					json: () => Promise.resolve({ id: 'rel-1' }),
-				} as Response)
+				} as Response
+			})
 
 			const handler = getHandler('create_objects')
 			const result = (await handler({
@@ -291,6 +306,86 @@ describe('tool handlers', () => {
 
 			const parsed = JSON.parse(result.content[0].text)
 			expect(parsed.file_attachments).toBeUndefined()
+		})
+
+		it('fills in the lowest configured status when a node omits status', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.endsWith('/api/workspaces')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve([
+								{
+									id: 'ws-default-123',
+									settings: {
+										statuses: {
+											bet: ['signal', 'qualified', 'define', 'active'],
+											insight: ['new', 'clustered'],
+										},
+									},
+								},
+							]),
+					} as Response
+				}
+				return {
+					ok: true,
+					json: () =>
+						Promise.resolve({ nodes: [{ $id: 'bet-1', id: 'b1', type: 'bet' }], edges: [] }),
+				} as Response
+			})
+
+			const handler = getHandler('create_objects')
+			await handler({
+				nodes: [
+					{ $id: 'bet-1', type: 'bet' },
+					{ $id: 'insight-1', type: 'insight' },
+				],
+				edges: [],
+			})
+
+			const graphCall = vi
+				.mocked(fetch)
+				.mock.calls.find((c) => (c[0] as string).endsWith('/api/graph'))
+			expect(graphCall).toBeDefined()
+			const graphBody = JSON.parse((graphCall?.[1] as RequestInit).body as string)
+			expect(graphBody.nodes[0].status).toBe('signal')
+			expect(graphBody.nodes[1].status).toBe('new')
+		})
+
+		it('fetches workspace settings exactly once even when every node has an explicit status', async () => {
+			// The setup-block wiring reuses the same workspace fetch that powers
+			// lowest-status inference — even when inference isn't needed we still
+			// need `settings.llm_keys`/`claude_oauth` for `agents_runnable`, so
+			// the fetch happens unconditionally (but only once per call).
+			mockFetchSuccess({ nodes: [{ $id: 'x', id: 'real-x', type: 'task' }], edges: [] })
+
+			const handler = getHandler('create_objects')
+			await handler({
+				nodes: [{ $id: 'x', type: 'task', status: 'todo' }],
+				edges: [],
+			})
+
+			const wsCalls = vi
+				.mocked(fetch)
+				.mock.calls.filter((c) => (c[0] as string).endsWith('/api/workspaces'))
+			expect(wsCalls).toHaveLength(1)
+		})
+
+		it('throws a clear error when status is omitted and the type has no configured statuses', async () => {
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				json: () =>
+					Promise.resolve([{ id: 'ws-default-123', settings: { statuses: { bet: ['signal'] } } }]),
+			} as Response)
+
+			const handler = getHandler('create_objects')
+			await expect(
+				handler({
+					nodes: [{ $id: 'x', type: 'custom_thing' }],
+					edges: [],
+				}),
+			).rejects.toThrow(/get_workspace_schema/)
 		})
 	})
 
@@ -779,7 +874,9 @@ describe('tool handlers', () => {
 			}
 
 			const parsed = JSON.parse(result.content[0].text)
-			const attachments = parsed.filter((e: { type: string }) => e.type === 'file_attachment')
+			const attachments = parsed.results.filter(
+				(e: { type: string }) => e.type === 'file_attachment',
+			)
 			expect(attachments).toHaveLength(2)
 			expect(attachments.every((a: { success: boolean }) => a.success)).toBe(true)
 			expect(attachments.every((a: { skipped?: boolean }) => !a.skipped)).toBe(true)
@@ -823,7 +920,9 @@ describe('tool handlers', () => {
 			expect(relPosts).toHaveLength(0)
 
 			const parsed = JSON.parse(result.content[0].text)
-			const attachments = parsed.filter((e: { type: string }) => e.type === 'file_attachment')
+			const attachments = parsed.results.filter(
+				(e: { type: string }) => e.type === 'file_attachment',
+			)
 			expect(attachments).toHaveLength(1)
 			expect(attachments[0].success).toBe(true)
 			expect(attachments[0].skipped).toBe(true)
@@ -903,7 +1002,9 @@ describe('tool handlers', () => {
 			expect((calls[1][1] as RequestInit).method).toBe('DELETE')
 
 			const parsed = JSON.parse(result.content[0].text)
-			const detachments = parsed.filter((e: { type: string }) => e.type === 'file_detachment')
+			const detachments = parsed.results.filter(
+				(e: { type: string }) => e.type === 'file_detachment',
+			)
 			expect(detachments).toHaveLength(1)
 			expect(detachments[0].success).toBe(true)
 		})
@@ -925,9 +1026,9 @@ describe('tool handlers', () => {
 			})) as { content: Array<{ text: string }> }
 
 			const parsed = JSON.parse(result.content[0].text)
-			expect(parsed[0].type).toBe('file_detachment')
-			expect(parsed[0].success).toBe(false)
-			expect(parsed[0].error).toMatch(/no attached relationship/i)
+			expect(parsed.results[0].type).toBe('file_detachment')
+			expect(parsed.results[0].success).toBe(false)
+			expect(parsed.results[0].error).toMatch(/no attached relationship/i)
 		})
 	})
 
@@ -959,15 +1060,31 @@ describe('tool handlers', () => {
 		})
 
 		it('adds to workspace when workspace_id provided', async () => {
-			vi.spyOn(globalThis, 'fetch')
-				.mockResolvedValueOnce({
-					ok: true,
-					json: () => Promise.resolve({ id: 'actor-new' }),
-				} as Response)
-				.mockResolvedValueOnce({
-					ok: true,
-					json: () => Promise.resolve({}),
-				} as Response)
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const u = String(url)
+				if (u.endsWith('/api/actors')) {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () => Promise.resolve({ id: 'actor-new' }),
+					} as Response
+				}
+				if (u.endsWith('/api/workspaces/ws-123/members')) {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () => Promise.resolve({}),
+					} as Response
+				}
+				if (u.endsWith('/api/workspaces')) {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () => Promise.resolve([{ id: 'ws-123', settings: {} }]),
+					} as Response
+				}
+				return { ok: true, headers: new Headers(), json: () => Promise.resolve({}) } as Response
+			})
 
 			const handler = getHandler('create_actor')
 			const result = (await handler({
@@ -976,8 +1093,7 @@ describe('tool handlers', () => {
 				workspace_id: 'ws-123',
 			})) as { content: Array<{ text: string }> }
 
-			expect(fetch).toHaveBeenCalledTimes(2)
-			expect(fetch).toHaveBeenLastCalledWith(
+			expect(fetch).toHaveBeenCalledWith(
 				'http://localhost:3000/api/workspaces/ws-123/members',
 				expect.objectContaining({ method: 'POST' }),
 			)
@@ -1029,26 +1145,47 @@ describe('tool handlers', () => {
 			const skillId1 = '660e8400-e29b-41d4-a716-446655440001'
 			const skillId2 = '660e8400-e29b-41d4-a716-446655440002'
 			const mockSkill1 = { id: skillId1, name: 'My Skill' }
-			vi.spyOn(globalThis, 'fetch')
-				.mockResolvedValueOnce({
-					ok: true,
-					headers: new Headers(),
-					json: () => Promise.resolve({ id: 'actor-new' }),
-				} as Response)
-				.mockResolvedValueOnce({
-					ok: true,
-					headers: new Headers(),
-					json: () => Promise.resolve({}),
-				} as Response)
-				.mockResolvedValueOnce({
-					ok: true,
-					headers: new Headers(),
-					json: () =>
-						Promise.resolve([
-							{ workspaceSkillId: skillId1, success: true, skill: mockSkill1 },
-							{ workspaceSkillId: skillId2, success: false, error: 'Workspace skill not found' },
-						]),
-				} as Response)
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+				const u = String(url)
+				const method = (init as RequestInit | undefined)?.method
+				if (u.endsWith('/api/actors') && method === 'POST') {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () => Promise.resolve({ id: 'actor-new' }),
+					} as Response
+				}
+				if (u.endsWith('/api/workspaces/ws-123/members')) {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () => Promise.resolve({}),
+					} as Response
+				}
+				if (u.endsWith('/workspace-skills/batch')) {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () =>
+							Promise.resolve([
+								{ workspaceSkillId: skillId1, success: true, skill: mockSkill1 },
+								{
+									workspaceSkillId: skillId2,
+									success: false,
+									error: 'Workspace skill not found',
+								},
+							]),
+					} as Response
+				}
+				if (u.endsWith('/api/workspaces')) {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () => Promise.resolve([{ id: 'ws-123', settings: {} }]),
+					} as Response
+				}
+				return { ok: true, headers: new Headers(), json: () => Promise.resolve({}) } as Response
+			})
 
 			const handler = getHandler('create_actor')
 			const result = (await handler({
@@ -1058,8 +1195,7 @@ describe('tool handlers', () => {
 				attach_skill_ids: [skillId1, skillId2],
 			})) as { content: Array<{ text: string }> }
 
-			expect(fetch).toHaveBeenCalledTimes(3)
-			expect(fetch).toHaveBeenLastCalledWith(
+			expect(fetch).toHaveBeenCalledWith(
 				'http://localhost:3000/api/actors/actor-new/workspace-skills/batch',
 				expect.objectContaining({ method: 'POST' }),
 			)
@@ -1073,22 +1209,32 @@ describe('tool handlers', () => {
 
 		it('marks all requested skills failed when the batch call itself throws', async () => {
 			const skillId1 = '660e8400-e29b-41d4-a716-446655440001'
-			vi.spyOn(globalThis, 'fetch')
-				.mockResolvedValueOnce({
-					ok: true,
-					headers: new Headers(),
-					json: () => Promise.resolve({ id: 'actor-new' }),
-				} as Response)
-				.mockResolvedValueOnce({
-					ok: true,
-					headers: new Headers(),
-					json: () => Promise.resolve({}),
-				} as Response)
-				.mockResolvedValueOnce({
-					ok: false,
-					status: 500,
-					text: () => Promise.resolve('Internal error'),
-				} as Response)
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const u = String(url)
+				if (u.endsWith('/api/actors')) {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () => Promise.resolve({ id: 'actor-new' }),
+					} as Response
+				}
+				if (u.endsWith('/api/workspaces/ws-123/members')) {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () => Promise.resolve({}),
+					} as Response
+				}
+				if (u.endsWith('/workspace-skills/batch')) {
+					return {
+						ok: false,
+						status: 500,
+						headers: new Headers(),
+						text: () => Promise.resolve('Internal error'),
+					} as Response
+				}
+				return { ok: true, headers: new Headers(), json: () => Promise.resolve([]) } as Response
+			})
 
 			const handler = getHandler('create_actor')
 			const result = (await handler({
@@ -1111,34 +1257,46 @@ describe('tool handlers', () => {
 			)
 			const chunk1 = skillIds.slice(0, 50)
 			const chunk2 = skillIds.slice(50)
+			let batchCall = 0
 
-			vi.spyOn(globalThis, 'fetch')
-				.mockResolvedValueOnce({
-					ok: true,
-					headers: new Headers(),
-					json: () => Promise.resolve({ id: 'actor-new' }),
-				} as Response)
-				.mockResolvedValueOnce({
-					ok: true,
-					headers: new Headers(),
-					json: () => Promise.resolve({}),
-				} as Response)
-				.mockResolvedValueOnce({
-					ok: true,
-					headers: new Headers(),
-					json: () =>
-						Promise.resolve(
-							chunk1.map((id) => ({ workspaceSkillId: id, success: true, skill: { id } })),
-						),
-				} as Response)
-				.mockResolvedValueOnce({
-					ok: true,
-					headers: new Headers(),
-					json: () =>
-						Promise.resolve(
-							chunk2.map((id) => ({ workspaceSkillId: id, success: true, skill: { id } })),
-						),
-				} as Response)
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+				const u = String(url)
+				const method = (init as RequestInit | undefined)?.method
+				if (u.endsWith('/api/actors') && method === 'POST') {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () => Promise.resolve({ id: 'actor-new' }),
+					} as Response
+				}
+				if (u.endsWith('/api/workspaces/ws-123/members')) {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () => Promise.resolve({}),
+					} as Response
+				}
+				if (u.endsWith('/workspace-skills/batch')) {
+					batchCall += 1
+					const chunk = batchCall === 1 ? chunk1 : chunk2
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () =>
+							Promise.resolve(
+								chunk.map((id) => ({ workspaceSkillId: id, success: true, skill: { id } })),
+							),
+					} as Response
+				}
+				if (u.endsWith('/api/workspaces')) {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () => Promise.resolve([{ id: 'ws-123', settings: {} }]),
+					} as Response
+				}
+				return { ok: true, headers: new Headers(), json: () => Promise.resolve({}) } as Response
+			})
 
 			const handler = getHandler('create_actor')
 			const result = (await handler({
@@ -1148,10 +1306,9 @@ describe('tool handlers', () => {
 				attach_skill_ids: skillIds,
 			})) as { content: Array<{ text: string }> }
 
-			// create actor + add member + one batch call per 50-id chunk (51 ids -> 2 chunks).
-			expect(fetch).toHaveBeenCalledTimes(4)
-
-			const batchCalls = vi.mocked(fetch).mock.calls.slice(2)
+			const batchCalls = vi
+				.mocked(fetch)
+				.mock.calls.filter((c) => (c[0] as string).endsWith('/workspace-skills/batch'))
 			expect(batchCalls).toHaveLength(2)
 			const sentChunks = batchCalls.map(
 				(call) =>
@@ -1172,31 +1329,45 @@ describe('tool handlers', () => {
 			)
 			const chunk1 = skillIds.slice(0, 50)
 			const chunk2 = skillIds.slice(50)
+			let batchCall = 0
 
-			vi.spyOn(globalThis, 'fetch')
-				.mockResolvedValueOnce({
-					ok: true,
-					headers: new Headers(),
-					json: () => Promise.resolve({ id: 'actor-new' }),
-				} as Response)
-				.mockResolvedValueOnce({
-					ok: true,
-					headers: new Headers(),
-					json: () => Promise.resolve({}),
-				} as Response)
-				.mockResolvedValueOnce({
-					ok: true,
-					headers: new Headers(),
-					json: () =>
-						Promise.resolve(
-							chunk1.map((id) => ({ workspaceSkillId: id, success: true, skill: { id } })),
-						),
-				} as Response)
-				.mockResolvedValueOnce({
-					ok: false,
-					status: 500,
-					text: () => Promise.resolve('Internal error'),
-				} as Response)
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const u = String(url)
+				if (u.endsWith('/api/actors')) {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () => Promise.resolve({ id: 'actor-new' }),
+					} as Response
+				}
+				if (u.endsWith('/api/workspaces/ws-123/members')) {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () => Promise.resolve({}),
+					} as Response
+				}
+				if (u.endsWith('/workspace-skills/batch')) {
+					batchCall += 1
+					if (batchCall === 1) {
+						return {
+							ok: true,
+							headers: new Headers(),
+							json: () =>
+								Promise.resolve(
+									chunk1.map((id) => ({ workspaceSkillId: id, success: true, skill: { id } })),
+								),
+						} as Response
+					}
+					return {
+						ok: false,
+						status: 500,
+						headers: new Headers(),
+						text: () => Promise.resolve('Internal error'),
+					} as Response
+				}
+				return { ok: true, headers: new Headers(), json: () => Promise.resolve([]) } as Response
+			})
 
 			const handler = getHandler('create_actor')
 			const result = (await handler({
@@ -1215,11 +1386,19 @@ describe('tool handlers', () => {
 
 		it('skips skill attachment and explains why when auto_create_workspace is combined with attach_skill_ids', async () => {
 			const skillId1 = '660e8400-e29b-41d4-a716-446655440001'
-			vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
-				ok: true,
-				headers: new Headers(),
-				json: () => Promise.resolve({ id: 'actor-new', workspace_id: 'ws-auto' }),
-			} as Response)
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const u = String(url)
+				if (u.endsWith('/api/actors')) {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () => Promise.resolve({ id: 'actor-new', workspace_id: 'ws-auto' }),
+					} as Response
+				}
+				// setup-block fetches (workspaces) return an empty list so no
+				// membership/batch calls follow from the setup path either.
+				return { ok: true, headers: new Headers(), json: () => Promise.resolve([]) } as Response
+			})
 
 			const handler = getHandler('create_actor')
 			const result = (await handler({
@@ -1229,11 +1408,17 @@ describe('tool handlers', () => {
 				attach_skill_ids: [skillId1],
 			})) as { content: Array<{ text: string }> }
 
-			// Only the create-actor call fires — no membership call (the backend
-			// already added the actor to its auto-created workspace) and no batch
-			// attach call (the requested skills can't live in a workspace that was
-			// just created empty).
-			expect(fetch).toHaveBeenCalledTimes(1)
+			// No membership call (the backend already added the actor to its
+			// auto-created workspace) and no batch attach call (the requested
+			// skills can't live in a workspace that was just created empty).
+			const memberCalls = vi
+				.mocked(fetch)
+				.mock.calls.filter((c) => (c[0] as string).includes('/members'))
+			expect(memberCalls).toHaveLength(0)
+			const batchCalls = vi
+				.mocked(fetch)
+				.mock.calls.filter((c) => (c[0] as string).endsWith('/workspace-skills/batch'))
+			expect(batchCalls).toHaveLength(0)
 
 			const parsed = JSON.parse(result.content[0].text)
 			expect(parsed.attached_skills).toBeUndefined()
@@ -3677,9 +3862,9 @@ describe('tool handlers', () => {
 				content: Array<{ text: string }>
 			}
 
-			expect(fetch).toHaveBeenCalledTimes(1)
 			const parsed = JSON.parse(result.content[0].text)
-			expect(parsed).toEqual(mockActor)
+			expect(parsed).toMatchObject(mockActor)
+			expect(parsed.setup).toBeDefined()
 		})
 
 		it('splits the merged llm_config into llm_provider + llm_config on the PATCH body', async () => {
@@ -3718,17 +3903,24 @@ describe('tool handlers', () => {
 			// attach workspace_id/role, and mockActor is shared across this describe
 			// block, so reusing it here would leak state into later tests.
 			const freshActor = { id: actorId, name: 'Test Actor' }
-			vi.spyOn(globalThis, 'fetch')
-				.mockResolvedValueOnce({
-					ok: true,
-					headers: new Headers(),
-					json: () => Promise.resolve(freshActor),
-				} as Response)
-				.mockResolvedValueOnce({
-					ok: true,
-					headers: new Headers(),
-					json: () => Promise.resolve({ actorId, workspaceId, role: 'owner' }),
-				} as Response)
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const u = String(url)
+				if (u.endsWith(`/api/actors/${actorId}`)) {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () => Promise.resolve(freshActor),
+					} as Response
+				}
+				if (u.endsWith(`/api/workspaces/${workspaceId}/members`)) {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () => Promise.resolve({ actorId, workspaceId, role: 'owner' }),
+					} as Response
+				}
+				return { ok: true, headers: new Headers(), json: () => Promise.resolve([]) } as Response
+			})
 
 			const handler = getHandler('update_actor')
 			// getHandler bypasses the MCP SDK's zod parsing layer, so the schema's
@@ -3740,8 +3932,7 @@ describe('tool handlers', () => {
 				role: 'owner',
 			})) as { content: Array<{ text: string }> }
 
-			expect(fetch).toHaveBeenCalledTimes(2)
-			expect(fetch).toHaveBeenLastCalledWith(
+			expect(fetch).toHaveBeenCalledWith(
 				`http://localhost:3000/api/workspaces/${workspaceId}/members`,
 				expect.objectContaining({ method: 'POST' }),
 			)
@@ -3806,18 +3997,25 @@ describe('tool handlers', () => {
 		})
 
 		it('attaches skills via one batched call and wraps response under actor key', async () => {
-			vi.spyOn(globalThis, 'fetch')
-				.mockResolvedValueOnce({
-					ok: true,
-					headers: new Headers(),
-					json: () => Promise.resolve(mockActor),
-				} as Response)
-				.mockResolvedValueOnce({
-					ok: true,
-					headers: new Headers(),
-					json: () =>
-						Promise.resolve([{ workspaceSkillId: skillId1, success: true, skill: mockSkill }]),
-				} as Response)
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const u = String(url)
+				if (u.endsWith(`/api/actors/${actorId}`)) {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () => Promise.resolve(mockActor),
+					} as Response
+				}
+				if (u.endsWith('/workspace-skills/batch')) {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () =>
+							Promise.resolve([{ workspaceSkillId: skillId1, success: true, skill: mockSkill }]),
+					} as Response
+				}
+				return { ok: true, headers: new Headers(), json: () => Promise.resolve([]) } as Response
+			})
 
 			const handler = getHandler('update_actor')
 			const result = (await handler({
@@ -3825,8 +4023,7 @@ describe('tool handlers', () => {
 				attach_skill_ids: [skillId1],
 			})) as { content: Array<{ text: string }> }
 
-			expect(fetch).toHaveBeenCalledTimes(2)
-			expect(fetch).toHaveBeenLastCalledWith(
+			expect(fetch).toHaveBeenCalledWith(
 				`http://localhost:3000/api/actors/${actorId}/workspace-skills/batch`,
 				expect.objectContaining({ method: 'POST' }),
 			)
@@ -3952,6 +4149,300 @@ describe('tool handlers', () => {
 			await expect(
 				handler({ id: actorId, attach_skill_ids: [skillId1], detach_skill_ids: [skillId1] }),
 			).rejects.toThrow(/attach_skill_ids and detach_skill_ids/)
+		})
+	})
+
+	describe('setup block on create/update responses', () => {
+		const setupOkJson = (data: unknown) =>
+			({ ok: true, headers: new Headers(), json: () => Promise.resolve(data) }) as Response
+
+		it('create_objects — response includes a well-shaped setup block for minimal input', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const u = String(url)
+				if (u.endsWith('/api/workspaces')) {
+					return setupOkJson([
+						{
+							id: 'ws-default-123',
+							settings: {
+								statuses: { bet: ['signal', 'qualified'] },
+								llm_keys: { anthropic: 'sk-ant-test' },
+							},
+						},
+					])
+				}
+				if (u.endsWith('/api/graph')) {
+					return setupOkJson({ nodes: [{ $id: 'b1', id: 'bet-1', type: 'bet' }], edges: [] })
+				}
+				return setupOkJson({})
+			})
+			const handler = getHandler('create_objects')
+			const result = (await handler({
+				nodes: [{ $id: 'b1', type: 'bet' }],
+				edges: [],
+			})) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.setup).toBeDefined()
+			expect(Array.isArray(parsed.setup.checks)).toBe(true)
+			expect(Array.isArray(parsed.setup.next_steps)).toBe(true)
+			expect(typeof parsed.setup.prose).toBe('string')
+		})
+
+		it('create_objects — elevated status on a bet node fires the elevated_status warn', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const u = String(url)
+				if (u.endsWith('/api/workspaces')) {
+					return setupOkJson([
+						{
+							id: 'ws-default-123',
+							settings: {
+								statuses: { bet: ['signal', 'qualified', 'active'] },
+								llm_keys: { anthropic: 'sk-ant-test' },
+							},
+						},
+					])
+				}
+				if (u.endsWith('/api/graph')) {
+					return setupOkJson({ nodes: [{ $id: 'b1', id: 'bet-1', type: 'bet' }], edges: [] })
+				}
+				return setupOkJson({})
+			})
+			const handler = getHandler('create_objects')
+			const result = (await handler({
+				nodes: [{ $id: 'b1', type: 'bet', status: 'active' }],
+				edges: [],
+			})) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			const names = parsed.setup.checks.map((c: { name: string }) => c.name)
+			expect(names).toContain('elevated_status')
+		})
+
+		it('update_objects — response includes a well-shaped setup block wrapping results', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+				const u = String(url)
+				const method = (init as RequestInit | undefined)?.method
+				if (u.includes('/api/objects/') && method === 'PATCH') {
+					return setupOkJson({ id: 'obj-1', type: 'bet', title: 'Updated' })
+				}
+				if (u.endsWith('/api/workspaces')) {
+					return setupOkJson([
+						{ id: 'ws-default-123', settings: { llm_keys: { anthropic: 'sk-ant-test' } } },
+					])
+				}
+				return setupOkJson([])
+			})
+			const handler = getHandler('update_objects')
+			const result = (await handler({
+				updates: [{ id: '11111111-1111-1111-1111-111111111111', title: 'Updated' }],
+			})) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(Array.isArray(parsed.results)).toBe(true)
+			expect(parsed.setup).toBeDefined()
+			expect(Array.isArray(parsed.setup.next_steps)).toBe(true)
+		})
+
+		it('create_actor — response includes a setup block', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const u = String(url)
+				if (u.endsWith('/api/actors')) {
+					return setupOkJson({ id: 'actor-1', type: 'agent', name: 'Bot' })
+				}
+				if (u.endsWith('/api/workspaces')) {
+					return setupOkJson([{ id: 'ws-default-123', settings: {} }])
+				}
+				return setupOkJson({})
+			})
+			const handler = getHandler('create_actor')
+			const result = (await handler({ type: 'agent', name: 'Bot' })) as {
+				content: Array<{ text: string }>
+			}
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.setup).toBeDefined()
+			expect(Array.isArray(parsed.setup.checks)).toBe(true)
+		})
+
+		it('update_actor — response includes a setup block', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const u = String(url)
+				if (u.includes('/api/actors/')) {
+					return setupOkJson({ id: 'actor-1', type: 'agent', name: 'Renamed' })
+				}
+				if (u.endsWith('/api/workspaces')) {
+					return setupOkJson([{ id: 'ws-default-123', settings: {} }])
+				}
+				return setupOkJson([])
+			})
+			const handler = getHandler('update_actor')
+			const result = (await handler({
+				id: '550e8400-e29b-41d4-a716-446655440000',
+				name: 'Renamed',
+			})) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.setup).toBeDefined()
+			expect(Array.isArray(parsed.setup.checks)).toBe(true)
+		})
+
+		it('create_loop — response includes a setup block that flags no LLM credentials', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+				const u = String(url)
+				const method = (init as RequestInit | undefined)?.method
+				if (u.endsWith('/api/graph')) {
+					return setupOkJson({
+						nodes: [{ $id: 'loop', id: 'loop-1', workspaceId: 'ws-default-123', type: 'loop' }],
+						edges: [],
+					})
+				}
+				if (u.endsWith('/api/workspaces')) {
+					return setupOkJson([{ id: 'ws-default-123', settings: {} }])
+				}
+				if (u.endsWith('/api/integrations')) return setupOkJson([])
+				if (u.endsWith('/api/triggers') && (method === 'GET' || method === undefined)) {
+					return setupOkJson([])
+				}
+				return setupOkJson({})
+			})
+			const handler = getHandler('create_loop')
+			const result = (await handler({
+				name: 'Test loop',
+				steps: [],
+				trigger_ids: [],
+				object_ids: [],
+			})) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.setup).toBeDefined()
+			const names = parsed.setup.checks.map((c: { name: string }) => c.name)
+			expect(names).toContain('agents_runnable')
+		})
+
+		it('update_loop — response includes a setup block', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+				const u = String(url)
+				const method = (init as RequestInit | undefined)?.method
+				if (u.endsWith('/api/objects/loop-1') && method === 'GET') {
+					return setupOkJson({
+						id: 'loop-1',
+						type: 'loop',
+						workspaceId: 'ws-default-123',
+						metadata: { trigger_ids: [] },
+					})
+				}
+				if (u.endsWith('/api/objects/loop-1') && method === 'PATCH') {
+					return setupOkJson({
+						id: 'loop-1',
+						type: 'loop',
+						workspaceId: 'ws-default-123',
+						title: 'Renamed',
+					})
+				}
+				if (u.endsWith('/api/workspaces')) {
+					return setupOkJson([{ id: 'ws-default-123', settings: {} }])
+				}
+				if (u.endsWith('/api/integrations')) return setupOkJson([])
+				if (u.endsWith('/api/triggers') && (method === 'GET' || method === undefined)) {
+					return setupOkJson([])
+				}
+				return setupOkJson({})
+			})
+			const handler = getHandler('update_loop')
+			const result = (await handler({ id: 'loop-1', name: 'Renamed' })) as {
+				content: Array<{ text: string }>
+			}
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.setup).toBeDefined()
+			expect(Array.isArray(parsed.setup.checks)).toBe(true)
+		})
+
+		it('degrades to an unknown check when the setup fetch fails, without failing the primary response', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const u = String(url)
+				if (u.endsWith('/api/actors')) {
+					return setupOkJson({ id: 'actor-1', type: 'agent', name: 'Bot' })
+				}
+				if (u.endsWith('/api/workspaces')) {
+					return {
+						ok: false,
+						status: 500,
+						headers: new Headers(),
+						text: () => Promise.resolve('boom'),
+					} as Response
+				}
+				return setupOkJson({})
+			})
+			const handler = getHandler('create_actor')
+			const result = (await handler({ type: 'agent', name: 'Bot' })) as {
+				content: Array<{ text: string }>
+			}
+			const parsed = JSON.parse(result.content[0].text)
+			// Primary response still contains the created actor.
+			expect(parsed.id).toBe('actor-1')
+			// Setup block is present with an unknown-status check.
+			expect(parsed.setup).toBeDefined()
+			expect(parsed.setup.checks.some((c: { status: string }) => c.status === 'unknown')).toBe(true)
+		})
+
+		it('create_actor — scopes the setup block to the auto-created workspace, not the caller default', async () => {
+			// auto_create_workspace: true mints a brand-new workspace server-side;
+			// /api/actors returns its id on the response body (workspace_id) and,
+			// since auto_create_workspace is set, the MCP handler skips its own
+			// add-to-targetWorkspace call — result.workspace_id must reach the setup
+			// block unmodified. config.defaultWorkspaceId ('ws-default-123') is
+			// deliberately given no LLM credentials here, so a wrong-workspace
+			// fallback would show a spurious `agents_runnable` warn instead of
+			// correctly reading the auto-created workspace's credentials.
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const u = String(url)
+				if (u.endsWith('/api/actors')) {
+					return setupOkJson({
+						id: 'actor-2',
+						type: 'human',
+						name: 'Person',
+						workspace_id: 'ws-auto-created-999',
+					})
+				}
+				if (u.endsWith('/api/workspaces')) {
+					return setupOkJson([
+						{ id: 'ws-default-123', settings: {} },
+						{ id: 'ws-auto-created-999', settings: { llm_keys: { anthropic: 'sk-ant-test' } } },
+					])
+				}
+				return setupOkJson({})
+			})
+			const handler = getHandler('create_actor')
+			const result = (await handler({
+				type: 'human',
+				name: 'Person',
+				auto_create_workspace: true,
+			})) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.setup).toBeDefined()
+			expect(parsed.setup.checks.some((c: { name: string }) => c.name === 'agents_runnable')).toBe(
+				false,
+			)
+		})
+
+		it('create_actor — degrades to unknown when an explicit workspace_id matches no workspace', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const u = String(url)
+				if (u.endsWith('/api/actors')) {
+					return setupOkJson({ id: 'actor-3', type: 'agent', name: 'Bot' })
+				}
+				if (u.endsWith('/api/workspaces')) {
+					return setupOkJson([{ id: 'ws-default-123', settings: {} }])
+				}
+				return setupOkJson({})
+			})
+			const handler = getHandler('create_actor')
+			const result = (await handler({
+				type: 'agent',
+				name: 'Bot',
+				workspace_id: 'ws-does-not-exist',
+			})) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			// Primary response still succeeds.
+			expect(parsed.id).toBe('actor-3')
+			// Setup block degrades to a single unknown check instead of silently
+			// reporting a different workspace's readiness.
+			expect(parsed.setup.checks).toHaveLength(1)
+			expect(parsed.setup.checks[0].status).toBe('unknown')
 		})
 	})
 })
@@ -4129,12 +4620,10 @@ describe('url field injection', () => {
 				updates: [{ id: objectId, title: 'Updated' }],
 			})) as { content: Array<{ text: string }> }
 
-			const parsed = JSON.parse(result.content[0].text) as Array<{
-				type: string
-				success: boolean
-				result: { url: string }
-			}>
-			const objectEntry = parsed.find((e) => e.type === 'object' && e.success)
+			const parsed = JSON.parse(result.content[0].text) as {
+				results: Array<{ type: string; success: boolean; result: { url: string } }>
+			}
+			const objectEntry = parsed.results.find((e) => e.type === 'object' && e.success)
 			expect(objectEntry?.result.url).toBe(
 				`https://maskin.example.com/ws-default-123/objects/${objectId}`,
 			)

@@ -191,7 +191,7 @@ export const tools = {
 	// ─── Objects ─────────────────────────────────────────────
 	create_objects: {
 		description:
-			'Create one or more objects — of any type this workspace defines (built-ins like insight/bet/task, or a custom type) — with optional relationships in a single atomic operation. To create a Loop — a persistent closed-loop agent process — use the dedicated create_loop tool instead, which wires the trigger and membership metadata correctly. For a single object, provide one node with no edges. For multiple related objects, use $id references in edges to link them. Edges can also reference existing object UUIDs to connect new objects to existing ones. ALWAYS call get_workspace_schema first — it returns the authoritative, live list of valid statuses per object type, metadata fields, and relationship types for this workspace (these are workspace-configurable, so they vary between workspaces and cannot be assumed). To attach files to a created object, upload them first with create_file (or pick existing ones with list_files) and pass the returned ids in `file_ids` on the node. Attached files appear under the object in the UI and are returned alongside the object in get_objects. When referring to created or connected objects in human-facing output (comments, summaries, notifications, descriptions), use the object\'s title — not its UUID. Returned nodes include the title; edges include sourceTitle and targetTitle for the same reason. UUIDs should only appear in human-facing text when two objects share a near-identical title and disambiguation is needed — in that case append a short id suffix (e.g. "Bets and Threads v4 (ca957490)"). Use UUIDs freely inside tool arguments.',
+			'Create one or more objects — of any type this workspace defines (built-ins like insight/bet/task, or a custom type) — with optional relationships in a single atomic operation. To create a Loop — a persistent closed-loop agent process — use the dedicated create_loop tool instead, which wires the trigger and membership metadata correctly. For a single object, provide one node with no edges. For multiple related objects, use $id references in edges to link them. Edges can also reference existing object UUIDs to connect new objects to existing ones. ALWAYS call get_workspace_schema first — it returns the authoritative, live list of valid statuses per object type, metadata fields, and relationship types for this workspace (these are workspace-configurable, so they vary between workspaces and cannot be assumed). To attach files to a created object, upload them first with create_file (or pick existing ones with list_files) and pass the returned ids in `file_ids` on the node. Attached files appear under the object in the UI and are returned alongside the object in get_objects. When referring to created or connected objects in human-facing output (comments, summaries, notifications, descriptions), use the object\'s title — not its UUID. Returned nodes include the title; edges include sourceTitle and targetTitle for the same reason. UUIDs should only appear in human-facing text when two objects share a near-identical title and disambiguation is needed — in that case append a short id suffix (e.g. "Bets and Threads v4 (ca957490)"). Use UUIDs freely inside tool arguments. Omit `status` unless the user explicitly asked for a specific one — a new object starts at the lowest (first) status configured for its type in this workspace (e.g. bet → signal, insight → new); statuses are earned through the workspace\'s promotion flow, not drafted at creation.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			nodes: z
@@ -205,7 +205,12 @@ export const tools = {
 							),
 						title: z.string().optional(),
 						content: z.string().optional(),
-						status: z.string(),
+						status: z
+							.string()
+							.optional()
+							.describe(
+								"Status for the new object. Omit unless the user explicitly asked for a specific status — when omitted, the object is created at the lowest (first) status configured for its type in this workspace (e.g. bet → signal, insight → new). Statuses are earned through the workspace's promotion flow, not drafted at creation.",
+							),
 						metadata: z
 							.record(z.unknown())
 							.optional()
@@ -250,17 +255,25 @@ export const tools = {
 	},
 	get_objects: {
 		description:
-			'Get one or more objects by ID. Default response per object: `{id, type, title, status, contextLine, url, workspaceId}` — no other fields. Opt into extra blocks with `include:` (each adds only its own block): `content` — the object\'s body/description; `metadata` — the object\'s custom field values; `relationships` — inbound and outbound edges, each with sourceTitle and targetTitle; `connected_objects` — the objects on the other end of those edges; `events` — recent lifecycle changes and comments; `files` — metadata for files attached to the object or its comments. In human-facing output, refer to objects by their `title`, not their UUID. Append a short id suffix (e.g. "Sales v4 (ca957490)") only when two titles collide.',
+			"Get one or more objects by ID. Default response per object: `{id, type, title, status, contextLine, url, workspaceId}` — no other fields. Opt into extra blocks with `include:` (each adds only its own block): `content` — the object's body/description; `metadata` — the object's custom field values; `relationships` — inbound and outbound edges, each with sourceTitle and targetTitle; `connected_objects` — the objects on the other end of those edges; `events` — recent lifecycle changes and comments; `files` — metadata for files attached to the object or its comments; `setup` — a fresh readiness check per object (`{checks, next_steps, prose}`) surfacing gaps to walk the user through, same shape create_objects/update_objects return. For a loop's deep setup check (steps, connectors, members), call get_loop with `include: ['setup']` — the check here is the lightweight per-object slice. In human-facing output, refer to objects by their `title`, not their UUID. Append a short id suffix (e.g. \"Sales v4 (ca957490)\") only when two titles collide.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			ids: z.array(z.string().uuid()).min(1).max(50).describe('Object IDs to fetch'),
 			include: z
 				.array(
-					z.enum(['content', 'metadata', 'relationships', 'connected_objects', 'events', 'files']),
+					z.enum([
+						'content',
+						'metadata',
+						'relationships',
+						'connected_objects',
+						'events',
+						'files',
+						'setup',
+					]),
 				)
 				.default([])
 				.describe(
-					'Opt-in blocks to add to each object response. Default `[]` returns only the core fields `{id, type, title, status, contextLine, url, workspaceId}` per object; each listed value adds one block back.',
+					'Opt-in blocks to add to each object response. Default `[]` returns only the core fields `{id, type, title, status, contextLine, url, workspaceId}` per object; each listed value adds one block back. `setup` computes a fresh readiness check per object and attaches it as `{checks, next_steps, prose}`.',
 				),
 		}),
 	},
@@ -507,45 +520,6 @@ export const tools = {
 				),
 		}),
 	},
-	maskin_rate_reviewer_verdict: {
-		description:
-			"Human/agent rating of a reviewer verdict for AC 6 of the single-prompt agent builder bet (reviewer precision ≥70% before Stage 2 ships). Sets `human_agreed: true` when the caller agrees with the reviewer's overall pass/fail, or `human_agreed: false` when they disagree. Optional `criteria_disagreements` names the specific rubric criteria the caller thinks the reviewer got wrong — those names feed the failing-criteria comment when precision drops below 70%. The reviewer itself cannot rate its own verdicts (server rejects with 403). Idempotent-hostile: a verdict can be rated once; a second call returns 409 so a human's rating is never overwritten silently.",
-		inputSchema: z.object({
-			verdict_id: z
-				.string()
-				.uuid()
-				.describe('ID of the reviewer_verdict row returned by the reviewer.'),
-			human_agreed: z
-				.boolean()
-				.describe(
-					"true when the caller agrees with the reviewer's overall pass/fail; false when they disagree.",
-				),
-			criteria_disagreements: z
-				.array(z.string().min(1).max(200))
-				.max(20)
-				.optional()
-				.describe(
-					"Names of rubric criteria the caller disagrees with the reviewer on. Populate this when human_agreed=false so DoD 5's failing-criteria comment can name specific criteria.",
-				),
-			note: z
-				.string()
-				.max(2000)
-				.optional()
-				.describe('Optional free-text explanation of the disagreement.'),
-			workspace_id: optionalWorkspaceId,
-		}),
-	},
-	maskin_reviewer_precision_summary: {
-		description:
-			"Reviewer precision summary for a rubric object — total verdicts, rated count, agreed count, precision ratio, and per-criterion false-positive breakdown. This is the ≥70% Stage 2 ship gate for the single-prompt agent builder bet: call it after at least 10 verdicts have been rated, paste `summary_line` into a comment on the parent bet. When precision drops below the threshold, `failing_criteria` names the specific rubric criteria producing false positives — that's the signal the Architect needs to tighten the rubric.",
-		inputSchema: z.object({
-			rubric_id: z
-				.string()
-				.uuid()
-				.describe('ID of the rubric object (the workspace object holding reviewer criteria).'),
-			workspace_id: optionalWorkspaceId,
-		}),
-	},
 	maskin_create_agent: {
 		description:
 			"Generate an opinionated subject-matter-expert (SME) agent from a single-line prompt. ASYNC — kicks off one container agent session that does the whole job itself (intent extraction, persona synthesis, system-prompt authoring, anti-hedging opinionation, mandatory self-critique against a quality rubric, actor + SKILL.md registration, and a gap-report comment naming missing context) and returns { session_id, status } immediately, typically in well under a second. Does NOT return the created agent's details synchronously. Poll get_session(session_id) (optionally include_logs) until status is completed/failed/timeout, or use run_agent-style waiting. On success, session.result.final_message contains a fenced ```json maskin_agent_builder_result ... ``` block: { kind: 'created', actor_id, actor_name, skill_id, skill_name, definition_summary, self_critique, gap_report_items, gap_report_comment_posted }. If the prompt was too underspecified to build from, the same fenced block instead contains { kind: 'gap_question', gap_question, missing } — no actor is created, no comment posted. workspace_id is required — the persona is written into that workspace.",
@@ -576,39 +550,76 @@ export const tools = {
 				.describe('Hard constraints the agent must respect. Optional.'),
 		}),
 	},
-	maskin_review_work: {
+	maskin_reviewer_verdict: {
 		description:
-			'Score an agent definition against a rubric using a fresh-context reviewer — no shared conversation with the producer. Pass EXACTLY ONE of object_id (reads the object\'s content as the draft definition — used for reviewing a stored SKILL body or agent spec) OR session_id (reads sessions.result from a terminal container session — used for reviewing an agent-builder run that completed asynchronously). Passing both, or neither, returns a 400 from the route. rubric_id is optional; when omitted, resolves to the workspace\'s canonical agent-builder rubric (bootstrapped on first use, editable via update_objects without a deploy). Returns { criteria: [{ name, pass, fix? }], overall: "pass" | "fail" }. This is the same reviewer the agent builder runs internally; call it manually to re-score a definition after edits or to score with a custom rubric.',
+			"One tool covering the full reviewer-verdict lifecycle for the single-prompt agent builder: review a definition, rate a verdict, and read the rubric's precision summary — whichever the call has fields for, all run together, no action/mode switch needed. " +
+			"REVIEW runs when object_id or session_id is set: scores an agent definition against a rubric using a fresh-context reviewer (no shared conversation with the producer). object_id reads the object's content as the draft (a stored SKILL body or agent spec); session_id reads sessions.result from a terminal container session (an agent-builder run that completed asynchronously). Provide at most one. rubric_id is optional and resolves to the workspace's canonical agent-builder rubric when omitted. object_id reviews have no inherent actor association — pass target_actor_id if you want that verdict persisted and later ratable; without it the verdict is still returned but noted as not persisted. session_id reviews always resolve their own target actor automatically. " +
+			'RATE runs when human_agreed is set: records agreement/disagreement with a verdict. Rates verdict_id if given, otherwise the verdict this same call just reviewed — but note the reviewer cannot rate its own verdict (403 self_rating_forbidden) whenever the reviewing and rating identity are the same caller, which is the common case for a same-call review+rate. To actually record a rating, pass verdict_id for a verdict a *different* prior caller produced. A verdict can only be rated once — a second rate attempt on the same verdict_id returns 409. Optional criteria_disagreements names the specific rubric criteria the caller thinks the reviewer got wrong, for AC 6 of the bet (reviewer precision ≥70% before Stage 2 ships) — populate it when human_agreed=false. ' +
+			'PRECISION SUMMARY is attached automatically whenever a rubric is resolvable (from the review just run, from the verdict just rated, or from an explicit rubric_id) — total verdicts, rated count, agreed count, precision ratio, and per-criterion false-positive breakdown, with a ready-to-paste summary_line and (when precision is below threshold) failing_criteria naming what to tighten in the rubric. ' +
+			'Returns { verdict: {...} | null, rating: {...} | null, precision_summary: {...} | null } — each null when the call had nothing to trigger it.',
 		// Kept as a plain z.object (no .refine) so `inputSchema instanceof
 		// ZodObject` — the invariant the tools test enforces — holds. Cross-
-		// field validation (exactly one of object_id/session_id) happens at the
-		// route boundary where the response can be a clean 400.
+		// field validation (at most one of object_id/session_id; at least one
+		// of object_id/session_id/verdict_id/rubric_id) happens at the route
+		// boundary where the response can be a clean 400.
 		inputSchema: z.object({
 			object_id: z
 				.string()
 				.uuid()
 				.optional()
 				.describe(
-					'Workspace object whose `content` is the draft definition to review (e.g. a stored SKILL body). Provide exactly one of object_id or session_id.',
+					'Review target: workspace object whose `content` is the draft definition. Provide at most one of object_id or session_id — set neither to skip reviewing (rate-only or summary-only call).',
 				),
 			session_id: z
 				.string()
 				.uuid()
 				.optional()
 				.describe(
-					'Terminal container session whose `result` payload is the draft definition to review. Provide exactly one of object_id or session_id.',
+					'Review target: terminal container session whose `result` payload is the draft definition. Provide at most one of object_id or session_id.',
+				),
+			target_actor_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'The actor being reviewed, for the object_id path only (session_id resolves its own target actor from the session row). Required to make an object_id-based verdict persisted and ratable.',
 				),
 			rubric_id: z
 				.string()
 				.uuid()
 				.optional()
 				.describe(
-					"Rubric object to score against. Omit to use the workspace's canonical agent-builder rubric.",
+					"Rubric to score against when reviewing, or to read the precision summary for when not reviewing. Omit while reviewing to use the workspace's canonical agent-builder rubric.",
 				),
+			verdict_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'ID of an existing reviewer_verdict row to rate, from a prior review by a different caller. Omit to rate the verdict this same call just reviewed (only works when the reviewing and rating identity differ).',
+				),
+			human_agreed: z
+				.boolean()
+				.optional()
+				.describe(
+					"Set to rate a verdict: true when the caller agrees with the reviewer's overall pass/fail, false when they disagree. Omit to skip rating.",
+				),
+			criteria_disagreements: z
+				.array(z.string().min(1).max(200))
+				.max(20)
+				.optional()
+				.describe(
+					'Names of rubric criteria the caller disagrees with the reviewer on. Only used when human_agreed is set — populate when human_agreed=false.',
+				),
+			note: z
+				.string()
+				.max(2000)
+				.optional()
+				.describe('Optional free-text explanation of the disagreement. Only used when rating.'),
 			workspace_id: z
 				.string()
 				.uuid()
-				.describe('Workspace to look up the rubric + target object/session in (required).'),
+				.describe('Workspace to look up the rubric + target object/session/verdict in (required).'),
 		}),
 	},
 	maskin_refine_agent: {
@@ -1176,7 +1187,7 @@ export const tools = {
 	// wrong.
 	create_loop: {
 		description:
-			'Create a Loop — a persistent process where agents (and humans) work toward a goal, with steps that fire as objects change state. A loop wraps: (a) STEPS — triggers that fire an agent, either on a schedule (cron) or when an object of any workspace-defined type changes state (event); (b) AGENTS — each step targets an agent actor that does the work; (c) MEMBER OBJECTS — the objects currently flowing through the loop (any type the workspace defines — call get_workspace_schema to discover types and statuses), linked via `in_loop` relationships. Pass `steps` to define and create the triggers inline in this one call, and/or `trigger_ids` to attach existing triggers. A loop is OPEN when it has no feedback mechanism, CLOSED when one of its steps is a feedback step — an event trigger on the close condition (e.g. when an object reaches a done status) whose agent captures learnings (create an insight/knowledge object linked with `informs`), improves the loop, and/or seeds the next object into it. Prefer closing every loop. To put a human ON the loop, add a step whose agent @mentions that human at decision points (via create_comment mentions) — human participation is a step like any other, and another agent can be on the loop the same way. If custom object types flow through the loop, pass `closed_statuses` so the loop knows which statuses mean done. All ids, types, and statuses are validated against the workspace — unknown ones fail with a clear error instead of silently creating a loop with no working steps. The loop object and its `in_loop` membership edges are created atomically; attach more steps or objects later with update_loop; read loops back (with live stats) via list_loops. NOTE: this creates a custom loop from scratch — to install a pre-packaged marketplace loop template, use get_started instead.',
+			'Create a Loop — a persistent process where agents (and humans) work toward a goal, with steps that fire as objects change state. A loop wraps: (a) STEPS — triggers that fire an agent, either on a schedule (cron) or when an object of any workspace-defined type changes state (event); (b) AGENTS — each step targets an agent actor that does the work; (c) MEMBER OBJECTS — the objects currently flowing through the loop (any type the workspace defines — call get_workspace_schema to discover types and statuses), linked via `in_loop` relationships. Pass `steps` to define and create the triggers inline in this one call, and/or `trigger_ids` to attach existing triggers. A loop is OPEN when it has no feedback mechanism, CLOSED when one of its steps is a feedback step — an event trigger on the close condition (e.g. when an object reaches a done status) whose agent captures learnings (create an insight/knowledge object linked with `informs`), improves the loop, and/or seeds the next object into it. Prefer closing every loop. To put a human ON the loop, add a step whose agent @mentions that human on the relevant object via create_comment — human participation is a step like any other, and another agent can be on the loop the same way. If custom object types flow through the loop, pass `closed_statuses` so the loop knows which statuses mean done. All ids, types, and statuses are validated against the workspace — unknown ones fail with a clear error instead of silently creating a loop with no working steps. The loop object and its `in_loop` membership edges are created atomically; attach more steps or objects later with update_loop; read loops back (with live stats) via list_loops. NOTE: this creates a custom loop from scratch — to install a pre-packaged marketplace loop template, use get_started instead.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			name: z.string().min(1).describe('Loop name, e.g. "Inbound lead qualification".'),
@@ -1317,10 +1328,16 @@ export const tools = {
 	},
 	get_loop: {
 		description:
-			'Get a single Loop by id, with the same live derived stats list_loops returns: composite status pill, entry/close conditions, in-progress and closed member-object counts, median time-to-close, step trigger ids, and the distinct agent actor ids those triggers fire. Use list_loops to discover loop ids first. Fails with a clear error if the id is not a loop in this workspace.',
+			"Get a single Loop by id, with the same live derived stats list_loops returns: composite status pill, entry/close conditions, in-progress and closed member-object counts, median time-to-close, step trigger ids, and the distinct agent actor ids those triggers fire. Pass `include: ['setup']` to also compute a fresh readiness check for the loop — `{checks, next_steps, prose}` matching what create_loop/update_loop return, so callers can walk the user through gaps at read time. Use list_loops to discover loop ids first. Fails with a clear error if the id is not a loop in this workspace.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid().describe('Loop object id (from list_loops or create_loop).'),
+			include: z
+				.array(z.enum(['setup']))
+				.default([])
+				.describe(
+					"Opt-in blocks to add to the response. Default `[]` returns just the loop. `['setup']` computes a fresh setup block (checks, next_steps, prose) for the loop — same shape create_loop and update_loop return.",
+				),
 		}),
 	},
 	delete_loop: {
@@ -1335,7 +1352,7 @@ export const tools = {
 	// ─── Sessions ────────────────────────────────────────────
 	create_session: {
 		description:
-			'Spawn a containerized agent execution session. Creates an ephemeral Docker container running the specified agent (Claude Code, Codex, or custom). The agent executes the action_prompt autonomously. Use get_session to check status, or get_session with include_logs: true to read output. For a blocking alternative that waits for completion, use run_agent instead.',
+			'Spawn a containerized agent execution session. Creates an ephemeral Docker container running the specified agent (Claude Code, Codex, or custom). The agent executes the action_prompt autonomously. Use get_session to check status; pass `include_logs: true` on the same call to read the container output. For a blocking alternative that waits for completion, use run_agent instead.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			actor_id: z.string().uuid().describe('The actor that will run inside the session'),
@@ -1453,7 +1470,7 @@ export const tools = {
 	},
 	run_agent: {
 		description:
-			'High-level tool: create a container agent session, wait for completion, and return the result with logs. This is a blocking call that polls until the session reaches a terminal state (completed/failed/timeout). Use create_session + get_session (with include_logs: true) separately if you need non-blocking execution.',
+			'High-level tool: create a container agent session, wait for completion, and return the result with logs. This is a blocking call that polls until the session reaches a terminal state (completed/failed/timeout). Use create_session + get_session (with `include_logs: true` when you want the output) separately if you need non-blocking execution.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			actor_id: z.string().uuid().describe('The agent actor that will execute the task'),
