@@ -249,6 +249,62 @@ describe('SessionManager', () => {
 
 			expect(result.interactive).toBe(false)
 		})
+
+		it('persists conversationId from config.conversation.conversation_id', async () => {
+			const session = buildSession({
+				status: 'pending',
+				interactive: true,
+				conversationId: 'conv-1',
+			})
+			mockResults.insertQueue = [[session], []]
+
+			const result = await manager.createSession('ws-1', {
+				actorId: 'actor-1',
+				actionPrompt: '',
+				config: { interactive: true, conversation: { conversation_id: 'conv-1' } },
+				createdBy: 'creator-1',
+				autoStart: false,
+			})
+
+			expect(result.conversationId).toBe('conv-1')
+		})
+
+		it('leaves conversationId null when config.conversation is absent', async () => {
+			const session = buildSession({ status: 'pending', conversationId: null })
+			mockResults.insertQueue = [[session], []]
+
+			const result = await manager.createSession('ws-1', {
+				actorId: 'actor-1',
+				actionPrompt: 'Do the thing',
+				createdBy: 'creator-1',
+				autoStart: false,
+			})
+
+			expect(result.conversationId).toBeNull()
+		})
+	})
+
+	describe('findActiveConversationSession()', () => {
+		it('queries for a running interactive session matching (conversationId, actorId)', async () => {
+			const session = buildSession({
+				interactive: true,
+				status: 'running',
+				conversationId: 'conv-1',
+			})
+			mockResults.select = [session]
+
+			const result = await manager.findActiveConversationSession('conv-1', session.actorId)
+
+			expect(result?.id).toBe(session.id)
+		})
+
+		it('returns null when no matching session is found', async () => {
+			mockResults.select = []
+
+			const result = await manager.findActiveConversationSession('conv-1', 'actor-1')
+
+			expect(result).toBeNull()
+		})
 	})
 
 	describe('startSession() — interactive launch flow', () => {
@@ -297,6 +353,144 @@ describe('SessionManager', () => {
 			expect(createArgs.env.ACTION_PROMPT).toBeUndefined()
 			expect(createArgs.interactive).toBe(true)
 			expect(mockContainerManager.attachStdin).toHaveBeenCalledWith(session.id, 'container-id-123')
+			// actionPrompt is '' here — no seed turn should be sent once attached.
+			expect(mockContainerManager.write).not.toHaveBeenCalled()
+		})
+
+		it('inserts a session_started event once the session reaches running — without this, live-activity surfaces like the chat typing indicator never learn the session left pending', async () => {
+			const session = buildSession({
+				status: 'pending',
+				interactive: true,
+				actionPrompt: '',
+				containerId: null,
+			})
+			const agent = {
+				id: session.actorId,
+				type: 'agent',
+				systemPrompt: 'You are Workspace Coach.',
+				llmProvider: null,
+				llmConfig: null,
+				apiKey: 'ank_test_agent_key',
+				tools: null,
+			}
+			const workspace = { id: session.workspaceId, settings: {} }
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+
+			mockResults.selectQueue = [
+				[session], // startSession: load session
+				[workspace], // hasCapacity: workspace lookup
+				[{ count: 0 }], // hasCapacity: running count
+				[agent], // launchContainer: agent lookup
+				[workspace], // launchContainer: workspace lookup (llm keys)
+				[], // launchContainer: integrations lookup
+			]
+
+			await manager.startSession(session.id)
+
+			const startedEvent = calls.inserts.find(
+				(v) => (v as { action?: string }).action === 'session_started',
+			) as
+				| { workspaceId: string; actorId: string; entityType: string; entityId: string }
+				| undefined
+			expect(startedEvent).toBeDefined()
+			expect(startedEvent?.entityType).toBe('session')
+			expect(startedEvent?.entityId).toBe(session.id)
+			expect(startedEvent?.workspaceId).toBe(session.workspaceId)
+			expect(startedEvent?.actorId).toBe(session.actorId)
+		})
+
+		it('sends session.actionPrompt as the first stdin turn once interactive stdin is attached', async () => {
+			const session = buildSession({
+				status: 'pending',
+				interactive: true,
+				actionPrompt: 'Full conversation history goes here.',
+				containerId: null,
+			})
+			const agent = {
+				id: session.actorId,
+				type: 'agent',
+				systemPrompt: 'You are Workspace Coach.',
+				llmProvider: null,
+				llmConfig: null,
+				apiKey: 'ank_test_agent_key',
+				tools: null,
+			}
+			const workspace = { id: session.workspaceId, settings: {} }
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+
+			mockResults.selectQueue = [
+				[session], // startSession: load session
+				[workspace], // hasCapacity: workspace lookup
+				[{ count: 0 }], // hasCapacity: running count
+				[agent], // launchContainer: agent lookup
+				[workspace], // launchContainer: workspace lookup (llm keys)
+				[], // launchContainer: integrations lookup
+				[session], // writeInput (seed turn): session lookup
+			]
+
+			await manager.startSession(session.id)
+
+			expect(mockContainerManager.attachStdin).toHaveBeenCalledWith(session.id, 'container-id-123')
+			expect(mockContainerManager.write).toHaveBeenCalledWith(session.id, {
+				type: 'user',
+				message: { role: 'user', content: 'Full conversation history goes here.' },
+			})
+		})
+
+		it('tags the seed turn with config.conversation.message_id so the chat UI can anchor the first activity dropdown to the triggering message', async () => {
+			const session = buildSession({
+				status: 'pending',
+				interactive: true,
+				actionPrompt: 'Full conversation history goes here.',
+				containerId: null,
+				config: { interactive: true, conversation: { conversation_id: 'conv-1', message_id: 555 } },
+			})
+			const agent = {
+				id: session.actorId,
+				type: 'agent',
+				systemPrompt: 'You are Workspace Coach.',
+				llmProvider: null,
+				llmConfig: null,
+				apiKey: 'ank_test_agent_key',
+				tools: null,
+			}
+			const workspace = { id: session.workspaceId, settings: {} }
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+
+			mockResults.selectQueue = [
+				[session], // startSession: load session
+				[workspace], // hasCapacity: workspace lookup
+				[{ count: 0 }], // hasCapacity: running count
+				[agent], // launchContainer: agent lookup
+				[workspace], // launchContainer: workspace lookup (llm keys)
+				[], // launchContainer: integrations lookup
+				[session], // writeInput (seed turn): session lookup
+			]
+
+			await manager.startSession(session.id)
+
+			const inserted = calls.inserts.find(
+				(v) => typeof (v as { content?: unknown }).content === 'string',
+			) as {
+				content: string
+			}
+			expect(inserted).toBeDefined()
+			expect(JSON.parse(inserted.content)).toMatchObject({ maskin_message_id: 555 })
 		})
 
 		it('sets ACTION_PROMPT and omits INTERACTIVE for non-interactive sessions', async () => {
@@ -2253,6 +2447,36 @@ describe('SessionManager', () => {
 			})
 		})
 
+		// The chat UI segments one long-running interactive session's
+		// accumulated logs back into per-message activity dropdowns using this
+		// tag — without it, every turn of a conversation gets mixed into a
+		// single dropdown with no way to tell which steps belong to which reply.
+		it('persists conversationMessageId as maskin_message_id in the log envelope but keeps stdin clean', async () => {
+			const session = buildSession({ interactive: true, status: 'running' })
+			mockResults.insert = [{ id: 100, ...session, stream: 'stdout', content: '' }]
+
+			await manager.writeInput(
+				session.id,
+				{ type: 'user', message: { role: 'user', content: 'hi again' } },
+				undefined,
+				1234,
+			)
+
+			expect(mockContainerManager.write).toHaveBeenCalledWith(session.id, {
+				type: 'user',
+				message: { role: 'user', content: 'hi again' },
+			})
+			const wirePayload = (mockContainerManager.write.mock.calls[0] as unknown[])[1]
+			expect(wirePayload).not.toHaveProperty('maskin_message_id')
+
+			const inserted = calls.inserts.at(-1) as { content: string; stream: string }
+			expect(JSON.parse(inserted.content)).toEqual({
+				type: 'user',
+				message: { role: 'user', content: 'hi again' },
+				maskin_message_id: 1234,
+			})
+		})
+
 		it('does not record a log row when the stdin write fails', async () => {
 			const session = buildSession({ interactive: true, status: 'running' })
 			mockContainerManager.write.mockRejectedValueOnce(new Error('stream closed'))
@@ -2327,6 +2551,49 @@ describe('SessionManager', () => {
 			await manager.resumeSession(session.id)
 
 			expect(mockContainerManager.attachStdin).toHaveBeenCalledWith(session.id, 'container-id-123')
+		})
+
+		it('inserts a session_resumed event once the resumed session reaches running', async () => {
+			const session = buildSession({
+				status: 'paused',
+				interactive: true,
+				snapshotPath: 'snapshots/abc.tar.gz',
+				containerId: null,
+			})
+			const agent = {
+				id: session.actorId,
+				type: 'agent',
+				systemPrompt: 'You are Workspace Coach.',
+				llmProvider: null,
+				llmConfig: null,
+				apiKey: 'ank_test_agent_key',
+				tools: null,
+			}
+			const workspace = { id: session.workspaceId, settings: {} }
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+
+			mockResults.selectQueue = [
+				[session], // resumeSession: load session
+				[agent], // launchContainer: agent lookup
+				[workspace], // launchContainer: workspace lookup (llm keys)
+				[], // launchContainer: integrations lookup
+			]
+
+			await manager.resumeSession(session.id)
+
+			const resumedEvent = calls.inserts.find(
+				(v) => (v as { action?: string }).action === 'session_resumed',
+			) as
+				| { workspaceId: string; actorId: string; entityType: string; entityId: string }
+				| undefined
+			expect(resumedEvent).toBeDefined()
+			expect(resumedEvent?.entityType).toBe('session')
+			expect(resumedEvent?.entityId).toBe(session.id)
 		})
 
 		it('extracts the snapshot with `tar -xf --strip-components=1` (not `-xzf`)', async () => {
@@ -2514,6 +2781,70 @@ describe('SessionManager', () => {
 			).hasCapacity('ws-1')
 
 			expect(result).toBe(false)
+		})
+	})
+
+	describe('startSession() — chat sessions bypass workspace capacity', () => {
+		it('launches a chat session without querying the regular hasCapacity budget, only its own chat-session budget, even when the regular workspace budget is at cap', async () => {
+			const session = buildSession({
+				status: 'pending',
+				interactive: true,
+				conversationId: 'conv-1',
+				actionPrompt: '',
+				containerId: null,
+			})
+			const agent = {
+				id: session.actorId,
+				type: 'agent',
+				systemPrompt: 'You are Workspace Coach.',
+				llmProvider: null,
+				llmConfig: null,
+				apiKey: 'ank_test_agent_key',
+				tools: null,
+			}
+			const workspace = { id: session.workspaceId, settings: {} }
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+
+			// hasChatCapacity() (its own, separate budget) is queried — workspace
+			// lookup + count, both well under the default cap — but never the
+			// regular hasCapacity() used for non-chat sessions.
+			mockResults.selectQueue = [
+				[session], // startSession: load session
+				[{ settings: {} }], // hasChatCapacity: workspace lookup
+				[{ count: 0 }], // hasChatCapacity: no chat sessions active yet
+				[agent], // launchContainer: agent lookup
+				[workspace], // launchContainer: workspace lookup (llm keys)
+				[], // launchContainer: integrations lookup
+			]
+
+			await manager.startSession(session.id)
+
+			expect(mockContainerManager.create).toHaveBeenCalledTimes(1)
+		})
+
+		it('queues (does not launch) a chat session when its own chat-session budget is at cap', async () => {
+			const session = buildSession({
+				status: 'pending',
+				interactive: true,
+				conversationId: 'conv-1',
+				actionPrompt: '',
+				containerId: null,
+			})
+
+			mockResults.selectQueue = [
+				[session], // startSession: load session
+				[{ settings: { max_concurrent_chat_sessions: 2 } }], // hasChatCapacity: workspace lookup
+				[{ count: 2 }], // hasChatCapacity: at cap
+			]
+
+			await manager.startSession(session.id)
+
+			expect(mockContainerManager.create).not.toHaveBeenCalled()
 		})
 	})
 

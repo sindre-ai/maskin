@@ -95,16 +95,104 @@ export function getLatestActivityPreview(logs: SessionLogResponse[]): string | n
 	return null
 }
 
+export interface ActivityStep {
+	id: string
+	kind: 'text' | 'tool_use' | 'thinking' | 'user' | 'error'
+	text: string
+}
+
+export interface MessageActivitySegment {
+	conversationMessageId: number
+	steps: ActivityStep[]
+	/**
+	 * True once this turn called the conversation-reply tool. Lets the chat UI
+	 * re-anchor a finished turn's dropdown to the reply message it actually
+	 * produced instead of the message that triggered it — see
+	 * `useConversationActivity`, which pairs `containsReply` segments with the
+	 * same agent's own posted messages in order.
+	 */
+	containsReply: boolean
+}
+
+/**
+ * Splits a session's full activity log into per-message chunks, keyed by the
+ * `maskin_message_id` tag `SessionManager.writeInput()` writes onto each
+ * turn's stdin envelope (see `conversationMessageId` on the `user` ChatEvent
+ * variant). A single interactive session stays open and accumulates logs for
+ * the whole lifetime of a chat conversation, so without this the UI would
+ * have to show one giant dropdown mixing every reply's thinking and tool
+ * calls together — this lets the chat thread show a separate dropdown under
+ * each message instead. Steps that arrive before the first tagged turn
+ * boundary (an older session whose earlier turns predate this tagging) are
+ * returned separately as `unassigned` rather than silently dropped.
+ */
+export function segmentActivityByMessage(logs: SessionLogResponse[]): {
+	segments: MessageActivitySegment[]
+	unassigned: ActivityStep[]
+} {
+	const segments: MessageActivitySegment[] = []
+	const unassigned: ActivityStep[] = []
+	// A plain mutable ref (rather than a `let`) sidesteps TS control-flow
+	// narrowing not tracking reassignment inside the forEach callback below.
+	const cursor: { current: MessageActivitySegment | null } = { current: null }
+
+	for (const log of logs) {
+		if (log.stream === 'stderr') {
+			const bucket = cursor.current?.steps ?? unassigned
+			bucket.push({ id: `${log.id}-stderr`, kind: 'error', text: truncate(log.content, 100) })
+			continue
+		}
+		if (log.stream !== 'stdout') continue
+		const events = parseChatLine(log.content, { includeUser: true })
+		events.forEach((event, index) => {
+			// A tagged user turn starts a new segment — the boundary itself
+			// isn't rendered as a step since the triggering message is already
+			// shown as the actual chat bubble right above the dropdown.
+			if (event.kind === 'user' && event.conversationMessageId !== undefined) {
+				cursor.current = {
+					conversationMessageId: event.conversationMessageId,
+					steps: [],
+					containsReply: false,
+				}
+				segments.push(cursor.current)
+				return
+			}
+			if (event.kind === 'result' || event.kind === 'system' || event.kind === 'debug') return
+			const bucket = cursor.current?.steps ?? unassigned
+			// The agent's own wrap-up text right after replying just restates
+			// the "Replied to the conversation." step above it — drop it so
+			// Thinking sits directly above a single, clean reply line.
+			if (event.kind === 'text') {
+				const prev = bucket[bucket.length - 1]
+				if (prev?.kind === 'tool_use' && prev.text === CONVERSATION_REPLY_LABEL) return
+			}
+			const summary = describeEvent(event)
+			if (summary === null) return
+			if (event.kind === 'tool_use' && summary === CONVERSATION_REPLY_LABEL && cursor.current) {
+				cursor.current.containsReply = true
+			}
+			bucket.push({ id: `${log.id}-${index}`, kind: event.kind, text: summary })
+		})
+	}
+	return { segments, unassigned }
+}
+
+const CONVERSATION_REPLY_LABEL = 'Replied to the conversation.'
+
+function isConversationReplyTool(name: string): boolean {
+	return name === 'post_conversation_message' || name.endsWith('__post_conversation_message')
+}
+
 function describeEvent(event: ChatEvent): string | null {
 	switch (event.kind) {
 		case 'text':
 			return truncate(event.text.replace(/\s+/g, ' ').trim(), 80) || null
 		case 'tool_use':
-			return `Using ${event.name}`
+			return isConversationReplyTool(event.name) ? CONVERSATION_REPLY_LABEL : `Using ${event.name}`
 		case 'thinking':
 			return event.redacted ? 'Thinking (redacted)…' : 'Thinking…'
 		case 'user':
-			return `You: ${truncate(event.text, 60)}`
+			return 'The user sent a message'
 		case 'result':
 			return event.isError ? 'Errored — awaiting input' : 'Awaiting input'
 		case 'error':
