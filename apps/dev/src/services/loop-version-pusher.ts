@@ -5,12 +5,14 @@ import {
 	actors,
 	agentFiles,
 	agentSkills,
+	conversationParticipants,
 	files,
 	imports,
 	installedLoops,
 	integrations,
 	marketplaceLoopItems,
 	marketplaceLoops,
+	messages,
 	notifications,
 	objects,
 	readState,
@@ -586,6 +588,16 @@ export class LoopVersionPusher {
 				await tx.delete(relationships).where(inArray(relationships.createdBy, removedActorIds))
 				await tx.delete(subscriptions).where(inArray(subscriptions.actorId, removedActorIds))
 				await tx.delete(readState).where(inArray(readState.actorId, removedActorIds))
+				// conversation_participants.actor_id/added_by are RESTRICT FKs to
+				// actors.id with no cascade — null out added_by on surviving rows,
+				// then drop the removed actors' own participant rows.
+				await tx
+					.update(conversationParticipants)
+					.set({ addedBy: null })
+					.where(inArray(conversationParticipants.addedBy, removedActorIds))
+				await tx
+					.delete(conversationParticipants)
+					.where(inArray(conversationParticipants.actorId, removedActorIds))
 				await tx
 					.update(objects)
 					.set({ driver: null })
@@ -604,6 +616,12 @@ export class LoopVersionPusher {
 						.update(integrations)
 						.set({ createdBy })
 						.where(inArray(integrations.createdBy, removedActorIds))
+					// messages.actor_id is NOT NULL with no cascade — reassign authorship
+					// rather than deleting message history.
+					await tx
+						.update(messages)
+						.set({ actorId: createdBy })
+						.where(inArray(messages.actorId, removedActorIds))
 				}
 				await tx
 					.update(workspaceSkills)

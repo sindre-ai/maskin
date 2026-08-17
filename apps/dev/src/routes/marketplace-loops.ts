@@ -7,11 +7,13 @@ import {
 	type MarketplaceLoopItem,
 	actors,
 	agentFiles,
+	conversationParticipants,
 	files,
 	imports,
 	integrations,
 	marketplaceLoopItems,
 	marketplaceLoops,
+	messages,
 	notifications,
 	objects,
 	readState,
@@ -682,6 +684,16 @@ app.openapi(uninstallItemRoute, (async (c) => {
 					await tx.delete(relationships).where(eq(relationships.createdBy, entityId))
 					await tx.delete(subscriptions).where(eq(subscriptions.actorId, entityId))
 					await tx.delete(readState).where(eq(readState.actorId, entityId))
+					// conversation_participants.actor_id/added_by are RESTRICT FKs to
+					// actors.id with no cascade — null out added_by on surviving rows,
+					// then drop this actor's own participant rows.
+					await tx
+						.update(conversationParticipants)
+						.set({ addedBy: null })
+						.where(eq(conversationParticipants.addedBy, entityId))
+					await tx
+						.delete(conversationParticipants)
+						.where(eq(conversationParticipants.actorId, entityId))
 					await tx.update(objects).set({ driver: null }).where(eq(objects.driver, entityId))
 					await tx
 						.update(objects)
@@ -692,6 +704,9 @@ app.openapi(uninstallItemRoute, (async (c) => {
 						.update(imports)
 						.set({ createdBy: actorId })
 						.where(eq(imports.createdBy, entityId))
+					// messages.actor_id is NOT NULL with no cascade — reassign authorship
+					// to the uninstaller rather than deleting message history.
+					await tx.update(messages).set({ actorId }).where(eq(messages.actorId, entityId))
 					await tx
 						.update(workspaceSkills)
 						.set({ createdBy: null })

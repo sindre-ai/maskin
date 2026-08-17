@@ -1,9 +1,17 @@
 import { randomUUID } from 'node:crypto'
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { marketplaceLoopItems, marketplaceLoops, objects } from '@maskin/db/schema'
+import {
+	actors,
+	conversationParticipants,
+	conversations,
+	marketplaceLoopItems,
+	marketplaceLoops,
+	messages,
+	objects,
+} from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createApiError, formatZodError } from '../../lib/errors'
 import { AgentStorageManager } from '../../services/agent-storage'
@@ -225,6 +233,102 @@ describe('Installed Loops → Loop object linking', () => {
 
 		const remaining = await db.select().from(objects).where(eq(objects.id, installed.objectId))
 		expect(remaining).toHaveLength(0)
+	})
+
+	// Regression: uninstall failed with a 23503 FK violation —
+	// `conversation_participants.actor_id` (RESTRICT, no cascade) still
+	// referenced a provisioned actor that the delete-actors cascade in
+	// installed-loops.ts didn't clean up before deleting the actor row.
+	it('uninstall with keepProvisionedItems=false succeeds when the provisioned actor is a conversation participant', async () => {
+		const { loop, sourceActorId } = await seedMarketplaceLoop()
+		const app = makeApp(actorId)
+
+		const installRes = await install(app, loop.id, workspaceId)
+		const installed = await installRes.json()
+		expect(installed.objectId).toBeTruthy()
+
+		const [provisionedActor] = await db
+			.select({ id: actors.id })
+			.from(actors)
+			.where(sql`${actors.metadata}->>'source_item_id' = ${sourceActorId}`)
+		if (!provisionedActor) throw new Error('provisioned actor not found')
+
+		const [conversation] = await db
+			.insert(conversations)
+			.values({ workspaceId, title: 'Outreach thread', createdBy: actorId })
+			.returning()
+		if (!conversation) throw new Error('conversation insert returned no row')
+
+		await db.insert(conversationParticipants).values({
+			conversationId: conversation.id,
+			actorId: provisionedActor.id,
+			addedBy: provisionedActor.id,
+		})
+
+		const res = await app.request(
+			jsonRequest('DELETE', `/api/installed-loops/${installed.id}`, {
+				keepProvisionedItems: false,
+			}),
+		)
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body.removedElements.actors).toBe(1)
+
+		const remainingActor = await db.select().from(actors).where(eq(actors.id, provisionedActor.id))
+		expect(remainingActor).toHaveLength(0)
+		const remainingParticipant = await db
+			.select()
+			.from(conversationParticipants)
+			.where(eq(conversationParticipants.actorId, provisionedActor.id))
+		expect(remainingParticipant).toHaveLength(0)
+	})
+
+	// Regression: messages.actor_id is NOT NULL with no cascade — deleting a
+	// provisioned actor that authored a message must reassign authorship to
+	// the uninstaller rather than 500ing or destroying the message.
+	it('uninstall with keepProvisionedItems=false reassigns messages authored by the provisioned actor instead of deleting them', async () => {
+		const { loop, sourceActorId } = await seedMarketplaceLoop()
+		const app = makeApp(actorId)
+
+		const installRes = await install(app, loop.id, workspaceId)
+		const installed = await installRes.json()
+		expect(installed.objectId).toBeTruthy()
+
+		const [provisionedActor] = await db
+			.select({ id: actors.id })
+			.from(actors)
+			.where(sql`${actors.metadata}->>'source_item_id' = ${sourceActorId}`)
+		if (!provisionedActor) throw new Error('provisioned actor not found')
+
+		const [conversation] = await db
+			.insert(conversations)
+			.values({ workspaceId, title: 'Outreach thread', createdBy: actorId })
+			.returning()
+		if (!conversation) throw new Error('conversation insert returned no row')
+
+		const [message] = await db
+			.insert(messages)
+			.values({
+				conversationId: conversation.id,
+				actorId: provisionedActor.id,
+				content: 'Following up on yesterday’s outreach.',
+			})
+			.returning()
+		if (!message) throw new Error('message insert returned no row')
+
+		const res = await app.request(
+			jsonRequest('DELETE', `/api/installed-loops/${installed.id}`, {
+				keepProvisionedItems: false,
+			}),
+		)
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body.removedElements.actors).toBe(1)
+
+		const [reassignedMessage] = await db.select().from(messages).where(eq(messages.id, message.id))
+		if (!reassignedMessage) throw new Error('message should survive actor deletion, reassigned')
+		expect(reassignedMessage.actorId).toBe(actorId)
+		expect(reassignedMessage.content).toBe(message.content)
 	})
 
 	it('uninstall with keepProvisionedItems=true keeps the linked loop object untouched', async () => {
