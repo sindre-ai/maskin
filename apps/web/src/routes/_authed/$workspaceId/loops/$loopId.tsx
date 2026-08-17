@@ -94,7 +94,7 @@ function LoopDetailPage() {
 					<Link
 						to="/$workspaceId/marketplace"
 						params={{ workspaceId }}
-						className="text-[11px] text-muted-foreground hover:text-foreground hover:underline"
+						className="text-[13px] leading-[1.55] text-muted-foreground hover:text-foreground hover:underline"
 					>
 						Installed from marketplace
 					</Link>
