@@ -95,12 +95,15 @@ test.describe('Loop detail page', () => {
 		await input.fill('Tighten the close timeline')
 		await input.press('Enter')
 
-		// The utterance is forwarded to the chat-driven edit path: the chat
-		// panel opens with the message staged and sent.
-		await expect(page.getByRole('heading', { name: 'Chat' })).toBeVisible({
+		// The utterance is forwarded to the chat-driven edit path: navigates to
+		// a new chat with the loop attached via the `objectId` search param. The
+		// local input unmounts as part of that navigation (timing between the
+		// synchronous clear and the route swap isn't reliably observable), so
+		// the destination is the only thing worth asserting here.
+		await expect(page).toHaveURL(new RegExp(`chats/new\\?.*objectId=${loop.id}`), {
 			timeout: 10000,
 		})
-		await expect(input).toHaveValue('')
+		await expect(page.getByRole('heading', { name: 'New chat', exact: true })).toBeVisible()
 	})
 
 	test('Pause/Resume toggles the loop pill', async ({ page, account }) => {

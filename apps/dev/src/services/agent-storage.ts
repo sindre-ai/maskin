@@ -5,6 +5,7 @@ import { agentFiles, agentSkills, workspaceSkills } from '@maskin/db/schema'
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
+import { trackWorkspaceSkillLoaded } from '../lib/analytics/workspace-skill-events'
 import { logger } from '../lib/logger'
 import { appendToLedger } from './workspace-briefing'
 
@@ -444,7 +445,7 @@ export class AgentStorageManager {
 		actorId: string,
 		workspaceId: string,
 		localDir: string,
-		options: { overwrite?: boolean } = {},
+		options: { overwrite?: boolean; sessionId?: string } = {},
 	): Promise<PullWorkspaceSkillsResult> {
 		const rows = await this.db
 			.select({
@@ -525,6 +526,15 @@ export class AgentStorageManager {
 						file_path: relativePath,
 					})
 				}
+				// Workspace Skills bet ship metric — one event per skill hydrated
+				// into the container's /agent/skills/ directory, independent of
+				// per-file `agent_skill_file_read` granularity.
+				void trackWorkspaceSkillLoaded({
+					workspaceId,
+					agentActorId: actorId,
+					skillName: name,
+					sessionId: options.sessionId ?? null,
+				})
 				if (isFolder) {
 					logger.info('Hydrated folder skill onto agent disk', {
 						actorId,

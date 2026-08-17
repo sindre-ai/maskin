@@ -26,7 +26,20 @@ export type UserAttachmentView =
 	| { kind: 'file'; id?: string; name: string; sizeBytes: number; mimeType?: string }
 
 export type ChatEvent =
-	| { kind: 'user'; text: string; attachments?: UserAttachmentView[] }
+	| {
+			kind: 'user'
+			text: string
+			attachments?: UserAttachmentView[]
+			/**
+			 * The Maskin `messages.id` (conversation chat message) that triggered
+			 * this turn — NOT the same thing as the LLM's own per-turn `message.id`
+			 * carried by the other event kinds below (that one's a string from the
+			 * Claude API; this one's our DB's numeric messages.id). Only set for
+			 * conversation-triggered turns — read from the `maskin_message_id`
+			 * side-channel field in `parseUserMessage`.
+			 */
+			conversationMessageId?: number
+	  }
 	| { kind: 'text'; text: string; sessionId?: string; messageId?: string }
 	| {
 			kind: 'tool_use'
@@ -157,11 +170,13 @@ function parseUserMessage(envelope: Record<string, unknown>): ChatEvent[] {
 	if (!isRecord(message)) return []
 	const content = message.content
 	const attachments = parseMaskinAttachments(envelope.maskin_attachments)
+	const conversationMessageId = asNumber(envelope.maskin_message_id)
 
 	const withAttachments = (text: string): ChatEvent => ({
 		kind: 'user',
 		text,
 		...(attachments.length > 0 ? { attachments } : {}),
+		...(conversationMessageId !== undefined ? { conversationMessageId } : {}),
 	})
 
 	if (typeof content === 'string') {

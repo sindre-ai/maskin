@@ -47,7 +47,6 @@ import {
 	recordMutation,
 	recordToolCall,
 	recordToolCallResponseSize,
-	recordWidgetEvent,
 } from './telemetry.js'
 import { tools } from './tools.js'
 
@@ -326,6 +325,10 @@ async function apiFetch(
 	const url = `${config.apiBaseUrl}${path}`
 	const headers: Record<string, string> = {
 		'Content-Type': 'application/json',
+		// Tells the backend this call arrived through the MCP transport so
+		// route-level analytics (knowledge_object_created / _read) can
+		// attribute `created_via` / `accessed_via` without guessing.
+		'X-Client-Source': 'mcp',
 	}
 	if (config.apiKey) {
 		headers.Authorization = `Bearer ${config.apiKey}`
@@ -2844,7 +2847,149 @@ export function createMcpServer(config: McpConfig) {
 		},
 	)
 
+	registerAppTool(
+		server,
+		'maskin_rate_reviewer_verdict',
+		{
+			description: tools.maskin_rate_reviewer_verdict.description,
+			inputSchema: tools.maskin_rate_reviewer_verdict.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { verdict_id, workspace_id, ...body } = args as {
+				verdict_id: string
+				workspace_id?: string
+				human_agreed: boolean
+				criteria_disagreements?: string[]
+				note?: string
+			}
+			const result = await apiCall(config, 'PATCH', `/api/reviewer-verdicts/${verdict_id}`, body, {
+				workspaceId: workspace_id,
+			})
+			return {
+				_meta: meta('maskin_rate_reviewer_verdict', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'maskin_reviewer_precision_summary',
+		{
+			description: tools.maskin_reviewer_precision_summary.description,
+			inputSchema: tools.maskin_reviewer_precision_summary.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const { rubric_id, workspace_id } = args as {
+				rubric_id: string
+				workspace_id?: string
+			}
+			const result = await apiCall(
+				config,
+				'GET',
+				`/api/reviewer-verdicts/summary?rubric_id=${encodeURIComponent(rubric_id)}`,
+				undefined,
+				{ workspaceId: workspace_id },
+			)
+			return {
+				_meta: meta('maskin_reviewer_precision_summary', config, workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
 	// ─── Actors ───────────────────────────────────────────────
+	registerAppTool(
+		server,
+		'maskin_create_agent',
+		{
+			description: tools.maskin_create_agent.description,
+			inputSchema: tools.maskin_create_agent.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const result = await apiCall(
+				config,
+				'POST',
+				'/api/agent-builder/create',
+				{
+					prompt: args.prompt,
+					examples: args.examples,
+					references: args.references,
+					constraints: args.constraints,
+				},
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: meta(
+					'maskin_create_agent',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'maskin_review_work',
+		{
+			description: tools.maskin_review_work.description,
+			inputSchema: tools.maskin_review_work.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const result = await apiCall(
+				config,
+				'POST',
+				'/api/agent-builder/review',
+				{
+					object_id: args.object_id,
+					session_id: args.session_id,
+					rubric_id: args.rubric_id,
+				},
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: meta('maskin_review_work', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'maskin_refine_agent',
+		{
+			description: tools.maskin_refine_agent.description,
+			inputSchema: tools.maskin_refine_agent.inputSchema.shape,
+			_meta: {},
+		},
+		async (args) => {
+			const result = await apiCall(
+				config,
+				'POST',
+				'/api/agent-builder/refine',
+				{
+					actor_id: args.actor_id,
+					context: args.context,
+				},
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: meta(
+					'maskin_refine_agent',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
 	registerAppTool(
 		server,
 		'create_actor',
@@ -3231,25 +3376,6 @@ export function createMcpServer(config: McpConfig) {
 			return {
 				_meta: meta('update_actor', config, workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(output, null, 2) }],
-			}
-		},
-	)
-
-	registerAppTool(
-		server,
-		'regenerate_api_key',
-		{
-			description: tools.regenerate_api_key.description,
-			inputSchema: tools.regenerate_api_key.inputSchema.shape,
-			_meta: { ui: { resourceUri: UI_RESOURCES.actors, csp: CSP } },
-		},
-		async (args) => {
-			const result = await apiCall(config, 'POST', `/api/actors/${args.id}/api-keys`, undefined, {
-				skipWorkspace: true,
-			})
-			return {
-				_meta: meta('regenerate_api_key', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
 	)
@@ -4081,6 +4207,95 @@ export function createMcpServer(config: McpConfig) {
 			})
 			return {
 				_meta: meta('create_comment', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	// ─── Conversations ────────────────────────────────────────
+	registerAppTool(
+		server,
+		'get_conversation',
+		{
+			description: tools.get_conversation.description,
+			inputSchema: tools.get_conversation.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
+		},
+		async (args) => {
+			const result = await apiCall(
+				config,
+				'GET',
+				`/api/conversations/${args.conversation_id}`,
+				undefined,
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: meta('get_conversation', config, (args as { workspace_id?: string }).workspace_id),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'list_conversation_messages',
+		{
+			description: tools.list_conversation_messages.description,
+			inputSchema: tools.list_conversation_messages.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
+		},
+		async (args) => {
+			const params = new URLSearchParams()
+			if (args.before_id) params.set('before_id', String(args.before_id))
+			if (args.after_id) params.set('after_id', String(args.after_id))
+			params.set('limit', String(args.limit))
+			const result = await apiCall(
+				config,
+				'GET',
+				`/api/conversations/${args.conversation_id}/messages?${params}`,
+				undefined,
+				{ workspaceId: args.workspace_id },
+			)
+			return {
+				_meta: meta(
+					'list_conversation_messages',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
+				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+			}
+		},
+	)
+
+	registerAppTool(
+		server,
+		'post_conversation_message',
+		{
+			description: tools.post_conversation_message.description,
+			inputSchema: tools.post_conversation_message.inputSchema.shape,
+			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
+		},
+		async (args) => {
+			const { workspace_id, conversation_id, ...body } = args
+			// SESSION_ID is injected by session-manager into every agent
+			// container's env — stamping it here lets the conversations route
+			// attribute this message back to the session that produced it
+			// (messages.session_id), for cost/token drill-down. Undefined
+			// outside an agent session (e.g. a human testing the MCP server
+			// locally), in which case the field is simply omitted.
+			const result = await apiCall(
+				config,
+				'POST',
+				`/api/conversations/${conversation_id}/messages`,
+				{ ...body, session_id: process.env.SESSION_ID },
+				{ workspaceId: workspace_id },
+			)
+			return {
+				_meta: meta(
+					'post_conversation_message',
+					config,
+					(args as { workspace_id?: string }).workspace_id,
+				),
 				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
 			}
 		},
@@ -4969,73 +5184,6 @@ export function createMcpServer(config: McpConfig) {
 	// ─── Subscriptions ────────────────────────────────────────
 	registerAppTool(
 		server,
-		'subscribe',
-		{
-			description: tools.subscribe.description,
-			inputSchema: tools.subscribe.inputSchema.shape,
-			_meta: {},
-		},
-		async (args) => {
-			const { workspace_id, ...body } = args
-			const result = await apiCall(config, 'POST', '/api/subscriptions', body, {
-				workspaceId: workspace_id,
-			})
-			return {
-				_meta: meta('subscribe', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-			}
-		},
-	)
-
-	registerAppTool(
-		server,
-		'unsubscribe',
-		{
-			description: tools.unsubscribe.description,
-			inputSchema: tools.unsubscribe.inputSchema.shape,
-			_meta: {},
-		},
-		async (args) => {
-			const { workspace_id, ...body } = args
-			const result = await apiCall(config, 'DELETE', '/api/subscriptions', body, {
-				workspaceId: workspace_id,
-			})
-			return {
-				_meta: meta('unsubscribe', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-			}
-		},
-	)
-
-	registerAppTool(
-		server,
-		'list_subscribers',
-		{
-			description: tools.list_subscribers.description,
-			inputSchema: tools.list_subscribers.inputSchema.shape,
-			_meta: {},
-		},
-		async (args) => {
-			const params = new URLSearchParams({
-				entity_type: args.entity_type,
-				entity_id: args.entity_id,
-			})
-			const result = await apiCall(
-				config,
-				'GET',
-				`/api/subscriptions/subscribers?${params}`,
-				undefined,
-				{ workspaceId: args.workspace_id },
-			)
-			return {
-				_meta: meta('list_subscribers', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-			}
-		},
-	)
-
-	registerAppTool(
-		server,
 		'mark_read',
 		{
 			description: tools.mark_read.description,
@@ -5450,194 +5598,6 @@ export function createMcpServer(config: McpConfig) {
 			return {
 				_meta: meta(
 					'disconnect_integration',
-					config,
-					(args as { workspace_id?: string }).workspace_id,
-				),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-			}
-		},
-	)
-
-	// ─── LLM API Keys ─────────────────────────────────────────
-	// Wraps PATCH /api/workspaces/:id with settings.llm_keys. The server deep-
-	// merges `llm_keys`, so a single-provider update preserves the others and
-	// `null` signals deletion — no read-modify-write dance needed here.
-	const last4 = (s: string) => (s.length <= 4 ? s : s.slice(-4))
-
-	registerAppTool(
-		server,
-		'set_llm_api_key',
-		{
-			description: tools.set_llm_api_key.description,
-			inputSchema: tools.set_llm_api_key.inputSchema.shape,
-			_meta: {},
-		},
-		async (args) => {
-			await apiCall(
-				config,
-				'PATCH',
-				`/api/workspaces/${args.workspace_id ?? config.defaultWorkspaceId}`,
-				{ settings: { llm_keys: { [args.provider]: args.api_key } } },
-				{ workspaceId: args.workspace_id },
-			)
-			const result = { success: true, provider: args.provider, last4: last4(args.api_key) }
-			return {
-				_meta: meta('set_llm_api_key', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-			}
-		},
-	)
-
-	registerAppTool(
-		server,
-		'get_llm_api_keys',
-		{
-			description: tools.get_llm_api_keys.description,
-			inputSchema: tools.get_llm_api_keys.inputSchema.shape,
-			_meta: {},
-		},
-		async (args) => {
-			const wsId = args.workspace_id ?? config.defaultWorkspaceId
-			if (!wsId) throw new Error(`No workspace specified. ${workspaceSetupHint(config)}`)
-			const ws = await getWorkspace(config, wsId)
-			const llmKeys = (ws.settings.llm_keys ?? {}) as Record<string, string>
-			const providerStatus = (key?: string) =>
-				key ? { set: true, last4: last4(key) } : { set: false }
-			const result = {
-				anthropic: providerStatus(llmKeys.anthropic),
-				openai: providerStatus(llmKeys.openai),
-			}
-			return {
-				_meta: meta('get_llm_api_keys', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-			}
-		},
-	)
-
-	registerAppTool(
-		server,
-		'delete_llm_api_key',
-		{
-			description: tools.delete_llm_api_key.description,
-			inputSchema: tools.delete_llm_api_key.inputSchema.shape,
-			_meta: {},
-		},
-		async (args) => {
-			await apiCall(
-				config,
-				'PATCH',
-				`/api/workspaces/${args.workspace_id ?? config.defaultWorkspaceId}`,
-				{ settings: { llm_keys: { [args.provider]: null } } },
-				{ workspaceId: args.workspace_id },
-			)
-			const result = { success: true, provider: args.provider }
-			return {
-				_meta: meta('delete_llm_api_key', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-			}
-		},
-	)
-
-	// ─── Claude Subscription ──────────────────────────────────
-	registerAppTool(
-		server,
-		'import_claude_subscription',
-		{
-			description: tools.import_claude_subscription.description,
-			inputSchema: tools.import_claude_subscription.inputSchema.shape,
-			_meta: {},
-		},
-		async (args) => {
-			const result = await apiCall(
-				config,
-				'POST',
-				'/api/claude-oauth/import',
-				{
-					accessToken: args.access_token,
-					refreshToken: args.refresh_token,
-					expiresAt: args.expires_at,
-					subscriptionType: args.subscription_type,
-					scopes: args.scopes,
-					nickname: args.nickname,
-				},
-				{ workspaceId: args.workspace_id },
-			)
-			return {
-				_meta: meta(
-					'import_claude_subscription',
-					config,
-					(args as { workspace_id?: string }).workspace_id,
-				),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-			}
-		},
-	)
-
-	registerAppTool(
-		server,
-		'get_claude_subscription_status',
-		{
-			description: tools.get_claude_subscription_status.description,
-			inputSchema: tools.get_claude_subscription_status.inputSchema.shape,
-			_meta: {},
-		},
-		async (args) => {
-			const result = await apiCall(config, 'GET', '/api/claude-oauth/status', undefined, {
-				workspaceId: args.workspace_id,
-			})
-			return {
-				_meta: meta(
-					'get_claude_subscription_status',
-					config,
-					(args as { workspace_id?: string }).workspace_id,
-				),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-			}
-		},
-	)
-
-	registerAppTool(
-		server,
-		'disconnect_claude_subscription',
-		{
-			description: tools.disconnect_claude_subscription.description,
-			inputSchema: tools.disconnect_claude_subscription.inputSchema.shape,
-			_meta: {},
-		},
-		async (args) => {
-			const result = await apiCall(config, 'DELETE', '/api/claude-oauth', undefined, {
-				workspaceId: args.workspace_id,
-			})
-			return {
-				_meta: meta(
-					'disconnect_claude_subscription',
-					config,
-					(args as { workspace_id?: string }).workspace_id,
-				),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-			}
-		},
-	)
-
-	registerAppTool(
-		server,
-		'rename_claude_subscription',
-		{
-			description: tools.rename_claude_subscription.description,
-			inputSchema: tools.rename_claude_subscription.inputSchema.shape,
-			_meta: {},
-		},
-		async (args) => {
-			const result = await apiCall(
-				config,
-				'PATCH',
-				'/api/claude-oauth/nickname',
-				{ slot: args.slot, nickname: args.nickname },
-				{ workspaceId: args.workspace_id },
-			)
-			return {
-				_meta: meta(
-					'rename_claude_subscription',
 					config,
 					(args as { workspace_id?: string }).workspace_id,
 				),
@@ -6223,76 +6183,6 @@ export function createMcpServer(config: McpConfig) {
 		},
 	)
 
-	// ─── Widget telemetry ────────────────────────────────────
-	// Called by rendered MCP widgets to report click-through and render
-	// outcomes. Powers the bet's success metric (CTR on `Open in Maskin`) and
-	// the 48h rolling render-error kill criterion. Intentionally NOT in
-	// MUTATION_TOOL_KINDS — it's an instrumentation channel, not a write.
-	registerAppTool(
-		server,
-		'record_widget_event',
-		{
-			description: tools.record_widget_event.description,
-			inputSchema: tools.record_widget_event.inputSchema.shape,
-			_meta: {},
-		},
-		async (args) => {
-			recordWidgetEvent(telemetrySink, telemetryTarget, {
-				widget_name: args.widget_name,
-				event: args.event,
-				tool_name: args.tool_name,
-				card_kind: args.card_kind,
-				object_type: args.object_type,
-				object_id: args.object_id,
-				workspace_id: args.workspace_id,
-			})
-			return {
-				_meta: meta('record_widget_event', config, args.workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify({ recorded: true }) }],
-			}
-		},
-	)
-
-	// ─── Bet success metrics (read-only) ─────────────────────
-	// Agent-callable surface for the MCP widget UX bet's success/kill metrics.
-	// Wraps GET /api/telemetry/mcp/summary and returns only the bet-first widget
-	// window — kept narrow so agents pull evidence without reading unrelated
-	// rich-render / mutation aggregates they have no context for.
-	registerAppTool(
-		server,
-		'get_bet_widget_metrics',
-		{
-			description: tools.get_bet_widget_metrics.description,
-			inputSchema: tools.get_bet_widget_metrics.inputSchema.shape,
-			_meta: {},
-		},
-		async (args) => {
-			const workspaceId = args.workspace_id ?? config.defaultWorkspaceId
-			const summary = (await apiCall(config, 'GET', '/api/telemetry/mcp/summary', undefined, {
-				workspaceId,
-			})) as {
-				workspace_id: string
-				window_start: string
-				window_end: string
-				widget_bet_first_window: unknown
-			}
-			const result = {
-				workspace_id: summary.workspace_id,
-				window_start: summary.window_start,
-				window_end: summary.window_end,
-				widget_bet_first_window: summary.widget_bet_first_window,
-			}
-			return {
-				_meta: meta('get_bet_widget_metrics', config, workspaceId),
-				content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-			}
-		},
-	)
-
-	// ─── Widget telemetry ────────────────────────────────────
-	// Called by rendered MCP widgets to report click-through and render
-	// outcomes. Powers the bet's success metric (CTR on `Open in Maskin`) and
-	// the 48h rolling render-error kill criterion. Intentionally NOT in
 	// ─── Get Started (Onboarding) ────────────────────────────
 	registerAppTool(
 		server,

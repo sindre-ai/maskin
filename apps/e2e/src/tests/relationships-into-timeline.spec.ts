@@ -36,8 +36,14 @@ test.describe('Relationships into the timeline (AC-U11/U12)', () => {
 			await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
 			await expect(page.getByText('Relationships timeline bet')).toBeVisible({ timeout: 10000 })
 
+			// The linked insight also appears in the dedicated Related objects
+			// section (added back alongside Activity) — scope every assertion
+			// below to the Activity surface so that section's own copy of the
+			// same link/badge text doesn't make these locators ambiguous.
+			const activity = page.getByTestId('object-activity')
+
 			// AC-U11: the linked insight appears as a timeline row.
-			const insightLink = page.getByRole('link', { name: /Inform-relationship insight/ })
+			const insightLink = activity.getByRole('link', { name: /Inform-relationship insight/ })
 			await expect(insightLink).toBeVisible({ timeout: 10000 })
 
 			// AC-U12 + AC-T7: toggle to Table — choice persists across reload.
@@ -46,15 +52,15 @@ test.describe('Relationships into the timeline (AC-U11/U12)', () => {
 			// re-renders. `check()` asserts the state once, synchronously after
 			// the click, and races that re-render — so click the wrapping
 			// <label> and let the retrying `toBeChecked()` absorb the update.
-			const viewToggle = page.getByRole('group', { name: 'Relationship view' })
+			const viewToggle = activity.getByRole('group', { name: 'Relationship view' })
 			await viewToggle.getByText('table', { exact: true }).click()
 			await expect(viewToggle.getByRole('radio', { name: /table/i })).toBeChecked()
 
 			await page.reload()
 			await expect(page.getByText('Relationships timeline bet')).toBeVisible({ timeout: 10000 })
-			await expect(page.getByRole('radio', { name: /table/i })).toBeChecked()
+			await expect(activity.getByRole('radio', { name: /table/i })).toBeChecked()
 			// Edge-type heading is what makes Table view visually distinct.
-			await expect(page.getByText(/informs/i).first()).toBeVisible()
+			await expect(activity.getByText(/informs/i).first()).toBeVisible()
 
 			// Toggle back to Timeline so the SSE assertion below targets the
 			// inline projection, not the table.
@@ -76,7 +82,7 @@ test.describe('Relationships into the timeline (AC-U11/U12)', () => {
 				type: 'breaks_into',
 			})
 
-			await expect(page.getByRole('link', { name: /Late-linked task/ })).toBeVisible({
+			await expect(activity.getByRole('link', { name: /Late-linked task/ })).toBeVisible({
 				timeout: 10000,
 			})
 		})

@@ -344,6 +344,7 @@ describe('Subscriptions Routes', () => {
 						entityId: obj.id,
 						unreadCount: 10,
 						mentioningUnreadCount: 1,
+						maxUnreadAttention: 4,
 						latestEventId: 200,
 						latestActivityAt: new Date('2026-01-02T00:00:00Z'),
 					},
@@ -359,7 +360,33 @@ describe('Subscriptions Routes', () => {
 			// per-event count, not as a "the whole object is mentioned" boolean.
 			expect(body.items[0].mentioning_unread_count).toBe(1)
 			expect(body.items[0].unread_count).toBe(10)
+			expect(body.items[0].max_unread_attention).toBe(4)
 			expect(body.items[0]).not.toHaveProperty('mentions_you')
+		})
+
+		it('returns null max_unread_attention when no unread comment carries a score', async () => {
+			const obj = buildObject({ workspaceId: wsId })
+			const { app, mockResults } = createTestApp(subscriptionsRoutes, '/api/subscriptions')
+			mockResults.selectQueue = [
+				[
+					{
+						entityType: 'object',
+						entityId: obj.id,
+						unreadCount: 1,
+						mentioningUnreadCount: 1,
+						maxUnreadAttention: null,
+						latestEventId: 100,
+						latestActivityAt: new Date('2026-01-01T00:00:00Z'),
+					},
+				],
+				[obj],
+			]
+
+			const res = await app.request(jsonGet('/api/subscriptions/unread', headers))
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.items[0].max_unread_attention).toBeNull()
 		})
 
 		it('rejects unknown entity_type filter with 400', async () => {

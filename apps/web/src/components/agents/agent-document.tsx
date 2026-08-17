@@ -31,7 +31,6 @@ import {
 	useSessionLogs,
 } from '@/hooks/use-sessions'
 import type { ActorListItem, ActorResponse, EventResponse, SessionResponse } from '@/lib/api'
-import { useChat } from '@/lib/chat-context'
 import { cn } from '@/lib/cn'
 import { formatDurationBetween } from '@/lib/format-duration'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -704,7 +703,6 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 	const resetActor = useResetActor(workspaceId)
 	const run = useAgentRun(workspaceId)
 	const pause = useAgentPause(workspaceId)
-	const { openWithContext } = useChat()
 	const navigate = useNavigate()
 	const { data: allEvents } = useEvents(workspaceId, { limit: '50' })
 	const { data: activeSessions } = useActiveSessionsForActor(agent.id, workspaceId)
@@ -879,7 +877,11 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 					)
 				}
 				onNewConversation={() =>
-					openWithContext([{ kind: 'agent', id: agent.id, name: agent.name }])
+					navigate({
+						to: '/$workspaceId/chats/new',
+						params: { workspaceId },
+						search: { agentId: agent.id, agentName: agent.name },
+					})
 				}
 				onPause={() =>
 					pause.mutate(agent.id, {
