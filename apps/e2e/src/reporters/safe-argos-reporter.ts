@@ -18,9 +18,11 @@ import type {
 // this narrowly swallows only Argos-originated rejections (identified by
 // their stack referencing the @argos-ci packages) and preserves normal
 // crash-on-unhandled-rejection behavior for anything else.
+const isArgosError = (reason: unknown): boolean =>
+	reason instanceof Error && (reason.stack?.includes('@argos-ci') ?? false)
+
 process.on('unhandledRejection', (reason) => {
-	const stack = reason instanceof Error ? reason.stack : undefined
-	if (stack?.includes('@argos-ci')) {
+	if (isArgosError(reason)) {
 		console.error(
 			'[argos] unhandled rejection from Argos upload, continuing without upload:',
 			reason,
@@ -29,6 +31,15 @@ process.on('unhandledRejection', (reason) => {
 	}
 	console.error('Unhandled promise rejection:', reason)
 	process.exitCode = 1
+})
+
+process.on('uncaughtException', (error) => {
+	if (isArgosError(error)) {
+		console.error('[argos] uncaught exception from Argos upload, continuing without upload:', error)
+		return
+	}
+	console.error('Uncaught exception:', error)
+	process.exit(1)
 })
 
 /**
