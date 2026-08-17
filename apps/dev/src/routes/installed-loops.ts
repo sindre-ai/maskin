@@ -80,6 +80,11 @@ class SkillNameConflictError extends Error {
 const installLoopBodySchema = z.object({
 	loopId: z.string().uuid(),
 	workspaceId: z.string().uuid(),
+	// Which marketplace surface started the install. Only the detail view sends
+	// `'detail'` — the catalog surface omits it, keeping the two populations
+	// distinguishable on `loop_installed`. Never derived server-side from any
+	// layout/URL heuristic; it is set exclusively at the detail call site.
+	source: z.enum(['detail']).optional(),
 })
 
 const listInstalledLoopsQuerySchema = z.object({
@@ -251,7 +256,7 @@ app.openapi(installLoopRoute, async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const agentStorage = c.get('agentStorage')
-	const { loopId, workspaceId } = c.req.valid('json')
+	const { loopId, workspaceId, source } = c.req.valid('json')
 
 	// 1. Caller must belong to the target workspace. We check resource-scoped
 	//    membership here rather than via the workspace-id header because the
@@ -593,6 +598,7 @@ app.openapi(installLoopRoute, async (c) => {
 		workspaceId,
 		actorId,
 		provisioned,
+		source,
 	})
 
 	return c.json(

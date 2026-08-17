@@ -10,7 +10,9 @@ interface MarketplaceDetailHeaderProps {
 }
 
 /** Read-only header shared by the marketplace loop and item detail pages —
- * icon, kind label, name, description, install-state badge and actions. */
+ * icon, kind label, name, description, install-state badge and actions.
+ * Actions sit in the top row (beside the badge) so Install + the overflow menu
+ * are reachable without scrolling, per the Direction A mock. */
 export function MarketplaceDetailHeader({
 	kindLabel,
 	name,
@@ -37,9 +39,9 @@ export function MarketplaceDetailHeader({
 					<h1 className="mt-0.5 text-xl font-semibold tracking-tight text-foreground">{name}</h1>
 				</div>
 				{badge}
+				{actions}
 			</div>
 			<p className="text-sm leading-relaxed text-muted-foreground">{description}</p>
-			{actions}
 		</div>
 	)
 }

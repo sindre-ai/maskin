@@ -3,6 +3,7 @@ import { LoopGrid } from '@/components/marketplace/loop-grid'
 import { MarketplaceHeaderIdentity } from '@/components/marketplace/marketplace-header'
 import { EmptyState } from '@/components/shared/empty-state'
 import { RouteError } from '@/components/shared/route-error'
+import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useInstalledLoops } from '@/hooks/use-installed-loops'
 import { useInstalledMarketplaceItems, useMarketplaceLoops } from '@/hooks/use-marketplace-loops'
@@ -204,6 +205,19 @@ function MarketplacePage() {
 					<EmptyState
 						title="No matches"
 						description="Try a different search term or clear the filters."
+						action={
+							<Button
+								type="button"
+								variant="outline"
+								size="sm"
+								onClick={() => {
+									setQuery('')
+									setActiveFilter('all')
+								}}
+							>
+								Clear filters
+							</Button>
+						}
 					/>
 				) : (
 					<LoopGrid
@@ -244,7 +258,7 @@ function ChipStrip({
 						type="button"
 						onClick={() => onSelect(item.value)}
 						className={cn(
-							'shrink-0 rounded-full border px-3 py-1 text-xs font-medium whitespace-nowrap transition-colors',
+							'inline-flex h-7 shrink-0 items-center rounded-full border px-3 text-[13px] font-medium whitespace-nowrap transition-colors',
 							isActive
 								? 'border-foreground bg-foreground text-background'
 								: 'border-border bg-background text-muted-foreground hover:text-foreground',
