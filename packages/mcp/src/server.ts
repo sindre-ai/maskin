@@ -2033,39 +2033,9 @@ export function createMcpServer(config: McpConfig) {
 				? { ...enrichedResult, file_attachments: fileAttachments }
 				: enrichedResult
 
-			// Compute one setup block covering every created node. Runs the bet
-			// check-set per node (workspace-level warns like `agents_runnable`
-			// dedupe by name+message; `elevated_status` was intentionally taken off
-			// the wire path by the lowest-status default, so it only fires when the
-			// caller explicitly passes an above-lowest status).
-			const createdNodesRaw = Array.isArray(graphResult.nodes) ? graphResult.nodes : []
-			const createdNodesForSetup = createdNodesRaw.map((n) => {
-				const original = nodes.find((node) => node.$id === n.$id)
-				return {
-					id: n.id,
-					type: (n as { type?: string }).type ?? original?.type ?? '',
-					status: original?.status ?? statusesByType[original?.type ?? '']?.[0] ?? null,
-				}
-			})
-			const perNodeBlocks = await Promise.all(
-				createdNodesForSetup.map((bet) =>
-					workspaceLoadError
-						? safeBuildSetupBlock('setup', async () => {
-								throw workspaceLoadError
-							})
-						: buildBetSetupBlockFromApi(bet, setupApiCaller(config), {
-								workspaceId: workspace_id,
-								defaultWorkspaceId: config.defaultWorkspaceId,
-								workspace: cachedWorkspace,
-							}),
-				),
-			)
-			const setup = mergeBetSetupBlocks(perNodeBlocks)
-			const responseBody = { ...baseBody, setup }
-
 			return {
 				_meta: meta('create_objects', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(responseBody) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(baseBody) }],
 			}
 		},
 	)
@@ -3049,28 +3019,9 @@ export function createMcpServer(config: McpConfig) {
 						})
 					: result
 
-			// auto_create_workspace mints a brand-new workspace whose id only exists
-			// on the API response (`result.workspace_id`), not on the request — the
-			// setup block must be scoped to THAT workspace, not to `workspace_id`
-			// (usually undefined here) or it falls back to an arbitrary workspace
-			// via loadWorkspace()'s workspaces[0] default and reports the wrong
-			// workspace's LLM readiness.
-			const setup = await buildActorSetupBlockFromApi(
-				{
-					id: (result.id as string | undefined) ?? '',
-					name: (result.name as string | undefined) ?? createBody.name,
-					type: (result.type as string | undefined) ?? createBody.type,
-				},
-				setupApiCaller(config),
-				{
-					workspaceId: (result.workspace_id as string | undefined) ?? workspace_id,
-					defaultWorkspaceId: config.defaultWorkspaceId,
-				},
-			)
-			const responseBody = { ...(withUrl as Record<string, unknown>), setup }
 			return {
 				_meta: meta('create_actor', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(responseBody) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(withUrl) }],
 			}
 		},
 	)
@@ -4670,22 +4621,6 @@ export function createMcpServer(config: McpConfig) {
 				member_edges: graphResult.edges,
 			}
 			if (stepTriggerIds.length > 0) responseBody.created_step_trigger_ids = stepTriggerIds
-
-			responseBody.setup = await buildLoopSetupBlockFromApi(
-				{
-					id: (created?.id as string | undefined) ?? '',
-					name: name ?? null,
-					entryCondition: entry_condition ?? null,
-					closeCondition: close_condition ?? null,
-				},
-				setupApiCaller(config),
-				{
-					workspaceId: workspace_id,
-					defaultWorkspaceId: config.defaultWorkspaceId,
-					triggerIds: allTriggerIds,
-					memberCount: memberObjectIds.length,
-				},
-			)
 
 			return {
 				_meta: meta('create_loop', config, (args as { workspace_id?: string }).workspace_id),
