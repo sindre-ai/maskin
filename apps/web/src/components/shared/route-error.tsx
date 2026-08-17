@@ -2,7 +2,11 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/cn'
 import { captureException } from '@/lib/sentry'
 import { useRouter } from '@tanstack/react-router'
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
+
+// Compact variant is used inline in retry flows (see `QueryStateError`) — an
+// error that a refetch resolves inside this window never reaches Sentry.
+const COMPACT_CAPTURE_DELAY_MS = 3000
 
 export function RouteError({
 	error,
@@ -20,10 +24,22 @@ export function RouteError({
 	className?: string
 }) {
 	const router = useRouter()
+	const capturedRef = useRef<Error | null>(null)
 
 	useEffect(() => {
+		if (capturedRef.current === error) return
+
+		if (compact) {
+			const timer = window.setTimeout(() => {
+				captureException(error)
+				capturedRef.current = error
+			}, COMPACT_CAPTURE_DELAY_MS)
+			return () => window.clearTimeout(timer)
+		}
+
 		captureException(error)
-	}, [error])
+		capturedRef.current = error
+	}, [error, compact])
 
 	const handleRetry = () => {
 		if (onRetry) onRetry()
