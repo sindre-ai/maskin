@@ -8,6 +8,29 @@ import type {
 	TestResult,
 } from '@playwright/test/reporter'
 
+// Argos's upload pipeline (@argos-ci/core's `upload()`) can reject via a
+// promise that isn't part of the chain awaited by ArgosReporter.onEnd() —
+// observed in CI as an uncaught `APIError: You have reached the maximum
+// screenshot capacity included in your Free Plan` that bypasses this file's
+// own try/catch entirely (its log line below never appears) and crashes the
+// whole process, since Node terminates on any unhandled rejection by
+// default. Registering a listener disables that default-crash behavior, so
+// this narrowly swallows only Argos-originated rejections (identified by
+// their stack referencing the @argos-ci packages) and preserves normal
+// crash-on-unhandled-rejection behavior for anything else.
+process.on('unhandledRejection', (reason) => {
+	const stack = reason instanceof Error ? reason.stack : undefined
+	if (stack?.includes('@argos-ci')) {
+		console.error(
+			'[argos] unhandled rejection from Argos upload, continuing without upload:',
+			reason,
+		)
+		return
+	}
+	console.error('Unhandled promise rejection:', reason)
+	process.exitCode = 1
+})
+
 /**
  * Wraps the Argos reporter so an upload failure (free-plan screenshot quota,
  * outage, auth) can't fail the whole Playwright run. Argos's own onEnd()

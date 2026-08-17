@@ -95,11 +95,21 @@
 	--color-destructive-foreground: var(--destructive-foreground);
 	--color-border: var(--border);
 	--color-border-strong: var(--border-strong);
+	--color-border-hover: var(--border-hover);
 	--color-input: var(--input);
 	--color-ring: var(--ring);
 	--color-brand: var(--brand);
 	--color-brand-foreground: var(--brand-foreground);
 	--color-brand-hover: var(--brand-hover);
+
+	/* v2 brand — indigo accent for small surfaces (chip, focus ring, left rule).
+	   Not the app-wide solid button; that stays on --primary per v2. */
+	--color-brand: var(--brand);
+	--color-brand-foreground: var(--brand-foreground);
+	--color-brand-subtle: var(--brand-subtle);
+	--color-brand-subtle-foreground: var(--brand-subtle-foreground);
+	--color-ask-surface: var(--ask-surface);
+	--color-ask-border: var(--ask-border);
 
 	/* Semantic */
 	--color-success: var(--success);
@@ -231,9 +241,7 @@
 	--primary: #18181b;
 	--primary-foreground: #ffffff;
 
-	/* Secondary + muted surfaces (v2 uses `#f6f6f7` for the tab-selected /
-	   hover surface — the mockup's near-white zinc step between `--background`
-	   and `--muted`, kept distinct from `--muted`'s `#f4f4f5`) */
+	/* Secondary + muted surfaces */
 	--secondary: #f6f6f7;
 	--secondary-foreground: #18181b;
 	--muted: #f4f4f5;
@@ -246,6 +254,7 @@
 
 	--border: #e4e4e7;
 	--border-strong: #c4c4cc;
+	--border-hover: #c4c4cc;
 	--input: #e4e4e7;
 	--ring: #a1a1aa;
 
@@ -253,6 +262,16 @@
 	--brand: #4f46e5;
 	--brand-foreground: #ffffff;
 	--brand-hover: #4338ca;
+
+	/* v2 brand accent (indigo-600 / indigo-50 chip). */
+	--brand: #4f46e5;
+	--brand-foreground: #ffffff;
+	--brand-subtle: #eef2ff;
+	--brand-subtle-foreground: #4338ca;
+
+	/* v2 ask banner — warm parchment surface, semantically distinct from brand-subtle. */
+	--ask-surface: #fffdf7;
+	--ask-border: #f0e6d2;
 
 	/* Semantic */
 	--success: #16a34a;
@@ -364,6 +383,7 @@
 
 	--border: #27272a;
 	--border-strong: #3f3f46;
+	--border-hover: #3f3f46;
 	--input: #27272a;
 	--ring: #52525b;
 
@@ -371,6 +391,12 @@
 	--brand: #818cf8;
 	--brand-foreground: #18181b;
 	--brand-hover: #a5b4fc;
+	--brand-subtle: #1e1b4b;
+	--brand-subtle-foreground: #a5b4fc;
+
+	/* v2 ask banner — warm parchment surface, dark derived by cooling the warm ramp one stop. */
+	--ask-surface: #1c1a14;
+	--ask-border: #3a2d1e;
 
 	--success: #4ade80;
 	--warning: #fbbf24;

@@ -1,6 +1,5 @@
 import { AskPanel } from '@/components/asks/ask-panel'
 import { ImportDialog } from '@/components/imports/import-dialog'
-import { PageHeader } from '@/components/layout/page-header'
 import { BoardView } from '@/components/objects/board/board-view'
 import { BulkActionBar } from '@/components/objects/bulk-action-bar'
 import { getStaticColumns } from '@/components/objects/data-table/columns'
@@ -1062,8 +1061,6 @@ function ObjectsPage() {
 
 	return (
 		<div className="flex flex-col flex-1 min-h-0">
-			<PageHeader title="Objects" />
-
 			{idsFilter && (
 				<div className="flex items-center gap-2 mx-6 mb-3 px-3 py-2 rounded-md bg-muted/50 border text-sm">
 					<Filter className="h-4 w-4 text-muted-foreground shrink-0" />
