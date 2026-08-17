@@ -19,6 +19,7 @@ const mockNavigate = vi.fn()
 
 vi.mock('@tanstack/react-router', () => ({
 	useNavigate: () => mockNavigate,
+	useRouter: () => ({ invalidate: vi.fn() }),
 	Link: ({ children, ...props }: { children: ReactNode } & Record<string, unknown>) => {
 		const { to, params, onClick, ...rest } = props
 		return (
@@ -306,6 +307,24 @@ describe('ListView', () => {
 
 		expect(screen.queryByText('Waiting on you')).toBeNull()
 		expect(screen.queryByText(/Alice asks/i)).toBeNull()
+	})
+
+	it('passes the real query error through to the inline error card', () => {
+		renderListView({
+			data: [],
+			isError: true,
+			error: new Error('Network request failed: 500'),
+		})
+
+		expect(screen.getByText("Couldn't load objects")).toBeInTheDocument()
+		expect(screen.getByText('Network request failed: 500')).toBeInTheDocument()
+	})
+
+	it('falls back to a generic error when isError fires without a concrete error', () => {
+		renderListView({ data: [], isError: true })
+
+		expect(screen.getByText("Couldn't load objects")).toBeInTheDocument()
+		expect(screen.getByText('Unknown error')).toBeInTheDocument()
 	})
 
 	it('composes shared primitives — Checkbox, StatusBadge, RelativeTime — instead of bespoke markup', () => {
