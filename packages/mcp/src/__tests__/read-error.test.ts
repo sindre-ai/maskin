@@ -60,8 +60,10 @@ describe('reasonFromError', () => {
 		expect(reasonFromError(err, 'invalid_param')).toBe('Invalid argument: No workspace specified')
 	})
 
-	it('returns unknown kinds verbatim', () => {
-		expect(reasonFromError(new Error('mystery'), 'unknown')).toBe('mystery')
+	it('labels unknown kinds instead of returning them verbatim', () => {
+		// Prefixing distinguishes a genuinely unclassified failure from a plain
+		// not-found message when a human or agent later reads the reason string.
+		expect(reasonFromError(new Error('mystery'), 'unknown')).toBe('Unexpected error: mystery')
 	})
 })
 
@@ -97,6 +99,18 @@ describe('pickNext', () => {
 		const next = pickNext('some_new_tool', 'not_found')
 		expect(next.tool).toBe('list_workspaces')
 		expect(next.hint).toBeTruthy()
+	})
+
+	it('does not reuse not_found guidance for unknown-kind errors', () => {
+		// unknown is as likely to be a real bug as a missing resource — routing
+		// it into the same "search again" guidance as not_found would mask the
+		// failure instead of surfacing it (see server.ts's console.error for the
+		// other half of this fix: unknown errors are also now logged).
+		const notFound = pickNext('get_objects', 'not_found')
+		const unknown = pickNext('get_objects', 'unknown')
+		expect(unknown).not.toEqual(notFound)
+		expect(unknown.tool).toBe('get_objects')
+		expect(unknown.hint.toLowerCase()).toMatch(/unexpected|bug|report/)
 	})
 })
 

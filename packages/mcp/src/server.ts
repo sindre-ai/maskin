@@ -1765,6 +1765,11 @@ export function createMcpServer(config: McpConfig) {
 					// reason, and the next tool to try. Mutation tools intentionally
 					// keep their throwing behavior — the Guided setup workflow bet
 					// owns post-mutation guidance.
+					//
+					// The envelope sent to the caller is deliberately sanitized, so
+					// log the raw error here — this is the only place the original
+					// stack trace is still available.
+					console.error(`[MCP] Read tool "${name}" failed:`, err)
 					const errorResponse = toolErrorResponse(name, err)
 					recordToolCallResponseSize(telemetrySink, telemetryTarget, {
 						tool_name: name,
@@ -3162,7 +3167,7 @@ export function createMcpServer(config: McpConfig) {
 									hasMore: heroObjects.length > HERO_CARD_UI_PAGE_SIZE,
 								},
 							}
-			const summaryRows: SummaryRow[] = rows.map((w) => ({
+			const summaryRows: SummaryRow[] = pagedRows.map((w) => ({
 				title: w.name ?? `Workspace ${w.id.slice(0, 8)}`,
 				meta: typeof w.role === 'string' ? w.role : undefined,
 			}))

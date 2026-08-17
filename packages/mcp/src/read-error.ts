@@ -69,7 +69,7 @@ export function reasonFromError(err: unknown, kind: ReadErrorKind): string {
 		case 'server':
 			return `Upstream error: ${detail}`
 		default:
-			return detail
+			return `Unexpected error: ${detail}`
 	}
 }
 
@@ -467,7 +467,14 @@ export function pickNext(toolName: string, kind: ReadErrorKind): ReadErrorNext {
 				hint: 'Retry the same call after a short delay — the upstream API returned a transient server error.',
 			}
 		default:
-			return guidance.notFound
+			// Unrecognized error shape — do NOT reuse `notFound` guidance here.
+			// An unclassified error is as likely to be a bug as a missing
+			// resource; steering the caller straight into a "search again"
+			// loop would mask the failure instead of surfacing it.
+			return {
+				tool: toolName,
+				hint: 'This may be an unexpected server-side error rather than a missing resource. Retry once; if it persists, report the tool name and reason verbatim instead of retrying further.',
+			}
 	}
 }
 
