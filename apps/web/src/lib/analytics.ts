@@ -502,3 +502,30 @@ export function trackForyouCardAction(p: {
 		action_id: p.action_id,
 	})
 }
+
+// Per-mutation event for the Bulk select bet's ship metric (avg ≥5 objects
+// changed per cleanup session, baseline 1). Fires once per successful object
+// mutation from the three object hooks — single update, single delete, and one
+// per ok result in a bulk update. `workspace_id`, `actor_id` ride via the
+// PostHog super-properties registered on workspace mount, and `$session_id` is
+// stamped natively by posthog-js — so the caller only supplies the four
+// bespoke props. `mutation_type` is 'status' when the patch carries a status
+// field, 'delete' for a delete, and 'field' for any other write (title,
+// content, metadata, driver). `bulk_batch_size` is 1 for single ops and the
+// selected count for a bulk op, matching the HogQL query's expected shape.
+export type ObjectMutationType = 'status' | 'field' | 'delete'
+export type ObjectMutationVia = 'single' | 'bulk'
+
+export function trackObjectUpdated(p: {
+	object_id: string
+	mutation_type: ObjectMutationType
+	via: ObjectMutationVia
+	bulk_batch_size: number
+}): void {
+	trackEvent('object_updated', {
+		object_id: p.object_id,
+		mutation_type: p.mutation_type,
+		via: p.via,
+		bulk_batch_size: p.bulk_batch_size,
+	})
+}

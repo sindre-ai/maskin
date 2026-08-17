@@ -21,6 +21,7 @@ import { cn } from '@/lib/cn'
 import { SAFE_METADATA_FIELD_NAME_RE } from '@maskin/shared'
 import type { VisibilityState } from '@tanstack/react-table'
 import { ArrowDown, ArrowUp, Check, ChevronDown, SlidersHorizontal } from 'lucide-react'
+import { useState } from 'react'
 
 export interface DisplayPanelColumn {
 	id: string
@@ -178,6 +179,17 @@ export function DisplayPanel({
 	iconOnly = false,
 	showView = true,
 }: DisplayPanelProps) {
+	// Switching View closes the panel — on mobile it renders as a full-width
+	// bottom Sheet that would otherwise sit on top of the just-switched-to
+	// surface (e.g. Board), swallowing pointer events meant for it. The other
+	// sections (Show/Filters/Sort) stay open on selection since users commonly
+	// tweak several of those in one pass.
+	const [open, setOpen] = useState(false)
+	const handleViewChange = (next: DisplayPanelView) => {
+		onViewChange?.(next)
+		setOpen(false)
+	}
+
 	const activeStatuses = statusFilter ? statusFilter.split(',').filter(Boolean) : []
 	const activeDrivers = driverFilter ? driverFilter.split(',').filter(Boolean) : []
 	const metadataFields = fieldDefinitions ?? []
@@ -272,7 +284,7 @@ export function DisplayPanel({
 	const inlineGroupLabel = groupLabel ?? groupBy
 
 	const trigger = (
-		<ResponsivePopover>
+		<ResponsivePopover open={open} onOpenChange={setOpen}>
 			<ResponsivePopoverTrigger asChild>
 				{iconOnly ? (
 					<Button
@@ -309,13 +321,13 @@ export function DisplayPanel({
 							<div className="p-3 space-y-2">
 								<SectionHeader>View</SectionHeader>
 								<div className="flex items-center gap-1.5">
-									<PillButton active={view === 'list'} onClick={() => onViewChange?.('list')}>
+									<PillButton active={view === 'list'} onClick={() => handleViewChange('list')}>
 										List
 									</PillButton>
 									<PillButton
 										active={view === 'board'}
 										disabled={!boardSupported}
-										onClick={boardSupported ? () => onViewChange?.('board') : undefined}
+										onClick={boardSupported ? () => handleViewChange('board') : undefined}
 										title={
 											boardSupported
 												? undefined

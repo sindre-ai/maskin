@@ -21,6 +21,7 @@ type SessionStub = {
 
 function fakeDb(servers: ServerStub[], sessionsRows: SessionStub[]) {
 	const sessionsById = new Map(sessionsRows.map((s) => [s.id, s]))
+	const insertedEvents: Array<Record<string, unknown>> = []
 
 	// pickLeastLoadedServer issues .select({...}).from(agentServers).where(...).
 	// We satisfy that one shape and compute `active` from sessionsRows directly.
@@ -105,10 +106,23 @@ function fakeDb(servers: ServerStub[], sessionsRows: SessionStub[]) {
 		}),
 	})
 
+	// markDispatched inserts an `events` row (entityType 'session') once a
+	// session reaches 'running' — the frontend's live-activity surfaces (e.g.
+	// the chat typing indicator) rely on this to refetch past a stale
+	// 'pending' snapshot. No-op the write but record it for assertions.
+	const insert = (_table: unknown) => ({
+		values: (row: Record<string, unknown>) => {
+			insertedEvents.push(row)
+			return Promise.resolve()
+		},
+	})
+
 	return {
 		select,
 		update,
+		insert,
 		_sessions: sessionsById,
+		_insertedEvents: insertedEvents,
 	}
 }
 
@@ -305,7 +319,7 @@ describe('SessionDispatcher.dispatch', () => {
 			startedAt: null,
 		}
 		const startSession = vi.fn(async (_req: StartSessionRequest) => startResponse('s-1'))
-		const { dispatcher, client } = setup([sess], { startSession })
+		const { dispatcher, client, db } = setup([sess], { startSession })
 
 		const result = await dispatcher.dispatch('s-1', 'dispatch:s-1')
 
@@ -315,6 +329,15 @@ describe('SessionDispatcher.dispatch', () => {
 		expect(sess.agentServerId).toBe(SERVER.id)
 		expect(sess.status).toBe('running')
 		expect(sess.containerId).toBe('sb-s-1')
+		// Regression guard: without this event, live-activity surfaces (e.g.
+		// the chat typing indicator) never learn the session left 'pending'.
+		expect(db._insertedEvents).toContainEqual(
+			expect.objectContaining({
+				action: 'session_started',
+				entityType: 'session',
+				entityId: 's-1',
+			}),
+		)
 	})
 
 	it('maps 401 to permanent_failure and releases the slot', async () => {

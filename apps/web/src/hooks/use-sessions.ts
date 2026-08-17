@@ -67,6 +67,26 @@ export function useActiveSessionsForActor(actorId: string, workspaceId: string) 
 	})
 }
 
+// Powers the conversation thread's typing indicator — any in-flight agent
+// turn for the conversation is a normal `sessions` row with
+// `config.conversation.conversation_id` set. SSE invalidation of the broad
+// `['sessions']` prefix on any session event (see sse-invalidation.ts) keeps
+// this fresh without a poll interval.
+export function useActiveSessionsForConversation(
+	workspaceId: string,
+	conversationId: string | null,
+) {
+	return useQuery({
+		queryKey: queryKeys.sessions.byConversation(workspaceId, conversationId ?? ''),
+		queryFn: () =>
+			api.sessions.list(workspaceId, {
+				conversation_id: conversationId as string,
+				status: 'running',
+			}),
+		enabled: !!workspaceId && !!conversationId,
+	})
+}
+
 export function useSessionErrorLog(
 	sessionId: string | null,
 	workspaceId: string,

@@ -11,12 +11,6 @@ import { createWorkspaceWrapper } from '../../setup'
 const deleteMutate = vi.fn()
 const resetMutate = vi.fn()
 const navigateMock = vi.fn()
-const openWithContextMock = vi.fn()
-
-vi.mock('@/lib/chat-context', () => ({
-	useChat: () => ({ openWithContext: openWithContextMock }),
-	ChatProvider: ({ children }: { children: React.ReactNode }) => children,
-}))
 
 vi.mock('@/hooks/use-actors', () => ({
 	useActors: () => ({ data: [] }),
@@ -365,16 +359,18 @@ describe('AgentDocument — New Conversation', () => {
 		localStorage.clear()
 	})
 
-	it('opens the chat panel with this agent selected instead of starting a session', async () => {
+	it('navigates to a new chat seeded with this agent instead of starting a session', async () => {
 		const user = userEvent.setup()
 		const agent = buildActorResponse({ id: 'actor-scout', name: 'Scout', type: 'agent' })
-		render(<AgentDocument agent={agent} />, { wrapper: createWorkspaceWrapper() })
+		render(<AgentDocument agent={agent} />, { wrapper: createWorkspaceWrapper({ id: 'ws-test' }) })
 
 		await user.click(screen.getByText('New Conversation'))
 
-		expect(openWithContextMock).toHaveBeenCalledWith([
-			{ kind: 'agent', id: 'actor-scout', name: 'Scout' },
-		])
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: '/$workspaceId/chats/new',
+			params: { workspaceId: 'ws-test' },
+			search: { agentId: 'actor-scout', agentName: 'Scout' },
+		})
 	})
 })
 

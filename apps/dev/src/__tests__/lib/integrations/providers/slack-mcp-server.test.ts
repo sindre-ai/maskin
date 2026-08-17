@@ -33,7 +33,7 @@ describe('createSlackMcpServer — slack_send_message', () => {
 	const ctx = {
 		botToken: 'xoxb-test-token',
 		agentLabel: 'Synthesizer · in mesh-firm',
-		machineIconUrl: 'https://maskin.example.com/machine.png',
+		iconUrl: 'https://maskin.example.com/maskin.png',
 		workspaceId: 'ws-1',
 		actorId: 'actor-1',
 		slackTeamId: 'T123ABC',
@@ -69,7 +69,7 @@ describe('createSlackMcpServer — slack_send_message', () => {
 		return tool.handler(args, {})
 	}
 
-	it('posts to chat.postMessage with the bot token and the per-agent username override', async () => {
+	it('posts to chat.postMessage as Maskin with the agent label in a Block Kit context block', async () => {
 		await callSendMessage({ channel: 'C123', text: 'hello' })
 
 		expect(fetchMock).toHaveBeenCalledOnce()
@@ -78,12 +78,14 @@ describe('createSlackMcpServer — slack_send_message', () => {
 		expect((init.headers as Record<string, string>).Authorization).toBe('Bearer xoxb-test-token')
 
 		const body = JSON.parse(init.body as string)
-		expect(body).toEqual({
-			channel: 'C123',
-			text: 'hello',
-			username: 'Synthesizer · in mesh-firm',
-			icon_url: 'https://maskin.example.com/machine.png',
-		})
+		expect(body.channel).toBe('C123')
+		expect(body.text).toBe('hello')
+		expect(body.username).toBe('Maskin')
+		expect(body.icon_url).toBe('https://maskin.example.com/maskin.png')
+		expect(body.blocks).toEqual([
+			{ type: 'section', text: { type: 'mrkdwn', text: 'hello' } },
+			{ type: 'context', elements: [{ type: 'mrkdwn', text: 'Synthesizer · in mesh-firm' }] },
+		])
 	})
 
 	it('forwards thread_ts when provided', async () => {
@@ -93,8 +95,8 @@ describe('createSlackMcpServer — slack_send_message', () => {
 		expect(body.thread_ts).toBe('1717000000.000050')
 	})
 
-	it('omits icon_url when no machineIconUrl is configured', async () => {
-		const server = createSlackMcpServer({ ...ctx, machineIconUrl: undefined })
+	it('omits icon_url when no iconUrl is configured', async () => {
+		const server = createSlackMcpServer({ ...ctx, iconUrl: undefined })
 		const tool = (
 			server as unknown as {
 				_registeredTools: Record<
@@ -106,7 +108,38 @@ describe('createSlackMcpServer — slack_send_message', () => {
 		await tool.handler({ channel: 'C123', text: 'hi' }, {})
 		const body = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string)
 		expect('icon_url' in body).toBe(false)
-		expect(body.username).toBe('Synthesizer · in mesh-firm')
+		expect(body.username).toBe('Maskin')
+	})
+
+	it('omits the context block when agentLabel is empty — no placeholder text', async () => {
+		const server = createSlackMcpServer({ ...ctx, agentLabel: '' })
+		const tool = (
+			server as unknown as {
+				_registeredTools: Record<
+					string,
+					{ handler: (args: unknown, extra: unknown) => Promise<unknown> }
+				>
+			}
+		)._registeredTools.slack_send_message
+		await tool.handler({ channel: 'C123', text: 'hi' }, {})
+		const body = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string)
+		expect(body.username).toBe('Maskin')
+		expect('blocks' in body).toBe(false)
+	})
+
+	it('omits the context block when agentLabel is whitespace-only', async () => {
+		const server = createSlackMcpServer({ ...ctx, agentLabel: '   ' })
+		const tool = (
+			server as unknown as {
+				_registeredTools: Record<
+					string,
+					{ handler: (args: unknown, extra: unknown) => Promise<unknown> }
+				>
+			}
+		)._registeredTools.slack_send_message
+		await tool.handler({ channel: 'C123', text: 'hi' }, {})
+		const body = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string)
+		expect('blocks' in body).toBe(false)
 	})
 
 	it('refuses to post when the context token is not a bot token — defense in depth', async () => {

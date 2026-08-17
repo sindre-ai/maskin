@@ -109,6 +109,12 @@ export const workspaceSettingsSchema = z.object({
 	custom_extensions: z.record(customExtensionEntrySchema).default({}),
 	enabled_modules: z.array(z.string()).default(['work']),
 	max_concurrent_sessions: z.coerce.number().int().min(1).max(50).default(3),
+	// Chat sessions bypass max_concurrent_sessions entirely (a live human is
+	// waiting), but still need *some* aggregate ceiling so a workspace with
+	// many conversations can't spawn unbounded concurrent containers. Default
+	// is generous relative to max_concurrent_sessions since chat is meant to
+	// stay responsive even when the background/trigger budget is saturated.
+	max_concurrent_chat_sessions: z.coerce.number().int().min(1).max(200).default(20),
 	llm_keys: z
 		.object({
 			// `null` on PATCH signals deletion of that provider; see the deep-merge
