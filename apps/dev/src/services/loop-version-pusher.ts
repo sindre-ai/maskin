@@ -13,6 +13,7 @@ import {
 	marketplaceLoops,
 	notifications,
 	objects,
+	orphanThreadDetections,
 	readState,
 	relationships,
 	sessionLogs,
@@ -586,6 +587,9 @@ export class LoopVersionPusher {
 				await tx.delete(relationships).where(inArray(relationships.createdBy, removedActorIds))
 				await tx.delete(subscriptions).where(inArray(subscriptions.actorId, removedActorIds))
 				await tx.delete(readState).where(inArray(readState.actorId, removedActorIds))
+				await tx
+					.delete(orphanThreadDetections)
+					.where(inArray(orphanThreadDetections.expectedReplyActorId, removedActorIds))
 				await tx
 					.update(objects)
 					.set({ driver: null })

@@ -14,6 +14,7 @@ import {
 	marketplaceLoops,
 	notifications,
 	objects,
+	orphanThreadDetections,
 	readState,
 	relationships,
 	sessionLogs,
@@ -682,6 +683,9 @@ app.openapi(uninstallItemRoute, (async (c) => {
 					await tx.delete(relationships).where(eq(relationships.createdBy, entityId))
 					await tx.delete(subscriptions).where(eq(subscriptions.actorId, entityId))
 					await tx.delete(readState).where(eq(readState.actorId, entityId))
+					await tx
+						.delete(orphanThreadDetections)
+						.where(eq(orphanThreadDetections.expectedReplyActorId, entityId))
 					await tx.update(objects).set({ driver: null }).where(eq(objects.driver, entityId))
 					await tx
 						.update(objects)
