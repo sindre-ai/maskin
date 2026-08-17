@@ -4628,7 +4628,7 @@ export function createMcpServer(config: McpConfig) {
 					$id: 'loop',
 					type: 'loop',
 					title: name,
-					status: status ?? 'running',
+					status: status ?? 'draft',
 					metadata,
 				}
 				if (guarantee !== undefined) node.content = guarantee

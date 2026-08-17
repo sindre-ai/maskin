@@ -1,6 +1,11 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, objects, triggers as triggersTable } from '@maskin/db/schema'
+import {
+	events,
+	objects,
+	relationships as relationshipsTable,
+	triggers as triggersTable,
+} from '@maskin/db/schema'
 import { and, sql as drizzleSql, eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createApiError, formatZodError } from '../../lib/errors'
@@ -12,7 +17,7 @@ import {
 	insertTrigger,
 	insertWorkspace,
 } from '../factories'
-import { jsonGet } from '../helpers'
+import { jsonGet, jsonRequest } from '../helpers'
 import { db, getTestActorId, sql } from './global-setup'
 
 // Load the routes lazily so vitest doesn't pull them in at module resolution
@@ -79,13 +84,13 @@ describe('Loops read API integration', () => {
 		const otherWs = await insertWorkspace(db, otherActor.id)
 		await insertObject(db, otherWs.id, otherActor.id, {
 			type: 'loop',
-			status: 'running',
+			status: 'live',
 			title: 'Foreign loop',
 		})
 
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'running',
+			status: 'live',
 			title: 'Customer feedback',
 			content: 'Every customer who gives feedback hears back within 30 days',
 			metadata: {
@@ -120,7 +125,7 @@ describe('Loops read API integration', () => {
 		expect(row.id).toBe(loop.id)
 		expect(row.name).toBe('Customer feedback')
 		expect(row.guarantee).toBe('Every customer who gives feedback hears back within 30 days')
-		expect(row.status).toBe('running')
+		expect(row.status).toBe('live')
 		expect(row.pill).toBe('running')
 		expect(row.entryCondition).toBe('A new customer feedback item lands in the inbox')
 		expect(row.closeCondition).toBe('A personalised reply is sent within 30 days')
@@ -135,12 +140,12 @@ describe('Loops read API integration', () => {
 	it('scopes to a single loop when `id` is passed (used by get_loop)', async () => {
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'running',
+			status: 'live',
 			title: 'Wanted loop',
 		})
 		await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'running',
+			status: 'live',
 			title: 'Other loop in the same workspace',
 		})
 
@@ -160,7 +165,7 @@ describe('Loops read API integration', () => {
 		const otherWs = await insertWorkspace(db, otherActor.id)
 		const foreignLoop = await insertObject(db, otherWs.id, otherActor.id, {
 			type: 'loop',
-			status: 'running',
+			status: 'live',
 			title: 'Foreign loop',
 		})
 
@@ -176,12 +181,12 @@ describe('Loops read API integration', () => {
 	it('derives in-progress and closed counts from child objects linked via an in_loop relationship', async () => {
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'running',
+			status: 'live',
 			title: 'Bug intake',
 		})
 		const otherLoop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'running',
+			status: 'live',
 			title: 'Unrelated loop',
 		})
 
@@ -246,13 +251,13 @@ describe('Loops read API integration', () => {
 		// override, every lead would count as in-progress forever.
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'running',
+			status: 'live',
 			title: 'Lead qualification',
 			metadata: { closed_statuses: { lead: ['won', 'lost'] } },
 		})
 		const openLoop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'running',
+			status: 'live',
 			title: 'No override loop',
 		})
 
@@ -317,7 +322,7 @@ describe('Loops read API integration', () => {
 		// while the fallback table would have counted it closed.
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'running',
+			status: 'live',
 			title: 'Strict validation loop',
 			metadata: { closed_statuses: { task: ['validated'] } },
 		})
@@ -354,12 +359,12 @@ describe('Loops read API integration', () => {
 	it('computes medianTimeToCloseMs from closed children (updated_at − created_at), null when none are closed', async () => {
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'running',
+			status: 'live',
 			title: 'Median timing',
 		})
 		const openLoop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'running',
+			status: 'live',
 			title: 'No closed children yet',
 		})
 
@@ -415,7 +420,7 @@ describe('Loops read API integration', () => {
 	it('ignores relationships of a different type when computing loop membership', async () => {
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'running',
+			status: 'live',
 			title: 'Narrow membership',
 		})
 		const relatedButNotMember = await insertObject(db, workspaceId, actorId, {
@@ -474,7 +479,7 @@ describe('Loops read API integration', () => {
 
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'running',
+			status: 'live',
 			title: 'Pipeline',
 			metadata: { trigger_ids: [trigA.id, trigB.id] },
 		})
@@ -490,29 +495,49 @@ describe('Loops read API integration', () => {
 	})
 
 	it('composes the `pill` field from lifecycle status + waiting_on_viewer', async () => {
-		const running = await insertObject(db, workspaceId, actorId, {
+		// One loop per lifecycle rung; pill collapses the six-rung ladder into
+		// the four UI states (running | waiting_on_you | paused | archived).
+		const draft = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'running',
-			title: 'Running loop',
+			status: 'draft',
+			title: 'Draft loop',
 		})
-		const waiting = await insertObject(db, workspaceId, actorId, {
+		const pilot = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'waiting',
-			title: 'Waiting loop',
+			status: 'pilot',
+			title: 'Pilot loop',
+		})
+		const supervised = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'supervised',
+			title: 'Supervised loop',
+		})
+		const live = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'live',
+			title: 'Live loop',
 		})
 		const paused = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
 			status: 'paused',
 			title: 'Paused loop',
 		})
+		const archived = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'archived',
+			title: 'Archived loop',
+		})
 
 		const app = makeApp(actorId)
 		const res = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
 		const body = (await res.json()) as { loops: Array<{ id: string; pill: string }> }
 		const byId = new Map(body.loops.map((r) => [r.id, r]))
-		expect(byId.get(running.id)?.pill).toBe('running')
-		expect(byId.get(waiting.id)?.pill).toBe('waiting_on_you')
+		expect(byId.get(draft.id)?.pill).toBe('paused')
+		expect(byId.get(pilot.id)?.pill).toBe('waiting_on_you')
+		expect(byId.get(supervised.id)?.pill).toBe('waiting_on_you')
+		expect(byId.get(live.id)?.pill).toBe('running')
 		expect(byId.get(paused.id)?.pill).toBe('paused')
+		expect(byId.get(archived.id)?.pill).toBe('archived')
 	})
 
 	describe("GET /api/loops/:id/activity — the agents' own event feed", () => {
@@ -527,7 +552,7 @@ describe('Loops read API integration', () => {
 
 			const loop = await insertObject(db, workspaceId, actorId, {
 				type: 'loop',
-				status: 'running',
+				status: 'live',
 				title: 'Loop with activity',
 				metadata: { trigger_ids: [trigger.id] },
 			})
@@ -629,7 +654,7 @@ describe('Loops read API integration', () => {
 		it('returns { events: [] } — not an error — for a loop with no triggers', async () => {
 			const loop = await insertObject(db, workspaceId, actorId, {
 				type: 'loop',
-				status: 'running',
+				status: 'live',
 				title: 'Empty loop',
 			})
 
@@ -651,7 +676,7 @@ describe('Loops read API integration', () => {
 			})
 			const foreignLoop = await insertObject(db, otherWs.id, otherActor.id, {
 				type: 'loop',
-				status: 'running',
+				status: 'live',
 				title: 'Foreign loop',
 				metadata: { trigger_ids: [otherTrigger.id] },
 			})
@@ -681,7 +706,7 @@ describe('Loops read API integration', () => {
 
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'running',
+			status: 'live',
 			title: 'Needs attention',
 		})
 		const childTask = await insertObject(db, workspaceId, actorId, {
@@ -717,6 +742,196 @@ describe('Loops read API integration', () => {
 		const row = body.loops.find((l) => l.id === loop.id)
 		expect(row?.waitingOnViewer).toBe(true)
 		expect(row?.pill).toBe('waiting_on_you')
+	})
+})
+
+describe('POST /api/loops/promote-from-bet integration', () => {
+	let workspaceId: string
+	let actorId: string
+	let driverId: string
+
+	beforeEach(async () => {
+		actorId = getTestActorId()
+		const ws = await insertWorkspace(db, actorId)
+		workspaceId = ws.id
+		const driver = await insertActor(db)
+		driverId = driver.id
+	})
+
+	async function seedSucceededBet(overrides?: Record<string, unknown>) {
+		return insertObject(db, workspaceId, actorId, {
+			type: 'bet',
+			status: 'succeeded',
+			title: 'Cold outbound',
+			content: '10 warm replies in 4 weeks',
+			driver: driverId,
+			...overrides,
+		})
+	}
+
+	it('creates a loop object at status=pilot carrying the bet driver and title/content', async () => {
+		const bet = await seedSucceededBet()
+		const app = makeApp(actorId)
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/loops/promote-from-bet',
+				{ betId: bet.id },
+				{ 'x-workspace-id': workspaceId },
+			),
+		)
+		expect(res.status).toBe(201)
+		const body = await res.json()
+
+		const [loopRow] = await db.select().from(objects).where(eq(objects.id, body.id))
+		if (!loopRow) throw new Error('loop row not created')
+		expect(loopRow.type).toBe('loop')
+		expect(loopRow.status).toBe('pilot')
+		expect(loopRow.driver).toBe(driverId)
+		expect(loopRow.title).toBe(bet.title)
+		expect(loopRow.content).toBe(bet.content)
+		const meta = loopRow.metadata as Record<string, unknown>
+		expect(meta.promoted_from_bet_id).toBe(bet.id)
+	})
+
+	it('writes a derived_from edge from loop → bet', async () => {
+		const bet = await seedSucceededBet()
+		const app = makeApp(actorId)
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/loops/promote-from-bet',
+				{ betId: bet.id },
+				{ 'x-workspace-id': workspaceId },
+			),
+		)
+		const body = await res.json()
+
+		const edges = await db
+			.select()
+			.from(relationshipsTable)
+			.where(
+				and(
+					eq(relationshipsTable.sourceId, body.id),
+					eq(relationshipsTable.targetId, bet.id),
+					eq(relationshipsTable.type, 'derived_from'),
+				),
+			)
+		expect(edges).toHaveLength(1)
+		expect(edges[0]?.sourceType).toBe('object')
+		expect(edges[0]?.targetType).toBe('object')
+	})
+
+	it('emits loop `created` and relationship `created` events on the audit log', async () => {
+		const bet = await seedSucceededBet()
+		const app = makeApp(actorId)
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/loops/promote-from-bet',
+				{ betId: bet.id },
+				{ 'x-workspace-id': workspaceId },
+			),
+		)
+		const body = await res.json()
+
+		const loopEvents = await db
+			.select()
+			.from(events)
+			.where(and(eq(events.entityType, 'loop'), eq(events.entityId, body.id)))
+		expect(loopEvents).toHaveLength(1)
+		expect(loopEvents[0]?.action).toBe('created')
+
+		const edgeEvents = await db.select().from(events).where(eq(events.entityType, 'relationship'))
+		expect(edgeEvents.length).toBeGreaterThanOrEqual(1)
+	})
+
+	it('overrides title/content and stores outcome fields on loop metadata when supplied', async () => {
+		const bet = await seedSucceededBet()
+		const app = makeApp(actorId)
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/loops/promote-from-bet',
+				{
+					betId: bet.id,
+					name: 'Outbound loop',
+					guarantee: 'Every prospect gets a follow-up within 24h',
+					outcomeMetric: 'replies_per_week',
+					outcomeTarget: '10',
+					killThreshold: 0.4,
+					entryCondition: 'A new prospect enters the queue',
+					closeCondition: 'A meeting is booked',
+					humanDecisionPoints: 1,
+				},
+				{ 'x-workspace-id': workspaceId },
+			),
+		)
+		const body = await res.json()
+
+		const [loopRow] = await db.select().from(objects).where(eq(objects.id, body.id))
+		if (!loopRow) throw new Error('loop row not created')
+		expect(loopRow.title).toBe('Outbound loop')
+		expect(loopRow.content).toBe('Every prospect gets a follow-up within 24h')
+		const meta = loopRow.metadata as Record<string, unknown>
+		expect(meta.outcome_metric).toBe('replies_per_week')
+		expect(meta.outcome_target).toBe('10')
+		expect(meta.kill_threshold).toBe(0.4)
+		expect(meta.entry_condition).toBe('A new prospect enters the queue')
+		expect(meta.close_condition).toBe('A meeting is booked')
+		expect(meta.human_decision_points).toBe(1)
+	})
+
+	it('409s when the bet is not in `succeeded` status — no loop row created', async () => {
+		const bet = await insertObject(db, workspaceId, actorId, {
+			type: 'bet',
+			status: 'active',
+			title: 'Not yet succeeded',
+			driver: driverId,
+		})
+		const app = makeApp(actorId)
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/loops/promote-from-bet',
+				{ betId: bet.id },
+				{ 'x-workspace-id': workspaceId },
+			),
+		)
+		expect(res.status).toBe(409)
+
+		const loops = await db
+			.select()
+			.from(objects)
+			.where(and(eq(objects.workspaceId, workspaceId), eq(objects.type, 'loop')))
+		expect(loops).toHaveLength(0)
+	})
+
+	it('404s when the bet id belongs to a different workspace — no cross-workspace leak', async () => {
+		const otherActor = await insertActor(db)
+		const otherWs = await insertWorkspace(db, otherActor.id)
+		const foreignBet = await insertObject(db, otherWs.id, otherActor.id, {
+			type: 'bet',
+			status: 'succeeded',
+			title: 'Foreign bet',
+			driver: otherActor.id,
+		})
+
+		const app = makeApp(actorId)
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/loops/promote-from-bet',
+				{ betId: foreignBet.id },
+				{ 'x-workspace-id': workspaceId },
+			),
+		)
+		expect(res.status).toBe(404)
 	})
 })
 

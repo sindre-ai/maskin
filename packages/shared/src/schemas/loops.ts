@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { LOOP_STATUSES } from './objects'
 
 /**
  * Response schema for `GET /api/loops` — the list-view read shape T3 renders
@@ -9,8 +10,11 @@ import { z } from 'zod'
  * `pill` composes the object's stored lifecycle status with a per-viewer
  * `waiting_on_viewer` flag so the frontend can render "Running" vs
  * "Waiting on you" from a single field without re-implementing the composite
- * signal client-side. Fields intentionally match the design spec attached to
- * the parent bet — status pill, per-loop stats, agent-avatar chips.
+ * signal client-side. The pill collapses the six-rung lifecycle
+ * (`draft|pilot|supervised|live|paused|archived`) into the four UI states the
+ * loop card renders: `running` (live), `waiting_on_you` (pilot/supervised, or
+ * live with unread viewer activity), `paused` (draft/paused), and `archived`.
+ * Fields intentionally match the design spec attached to the parent bet.
  */
 export const loopPillSchema = z.enum(['running', 'waiting_on_you', 'paused', 'archived'])
 
@@ -23,7 +27,7 @@ export const loopSummarySchema = z.object({
 	/** Full loop guarantee / description — mirrors `objects.content`. */
 	guarantee: z.string().nullable(),
 	/** Raw lifecycle status enum stored on `objects.status`. */
-	status: z.enum(['running', 'waiting', 'paused', 'archived']),
+	status: z.enum(LOOP_STATUSES),
 	/** Composite badge signal: `status` combined with `waiting_on_viewer` so
 	 * the frontend renders one badge without branching on both fields. */
 	pill: loopPillSchema,
@@ -57,6 +61,12 @@ export const loopSummarySchema = z.object({
 	 * currently linked to this loop? Reused from the same expression the
 	 * unread-feed uses in `subscriptions.ts`. */
 	waitingOnViewer: z.boolean(),
+	/** Count of `loop_output_approvals` rows in `status = 'pending'` for this
+	 * loop — the supervised-queue badge on the loop header (task 8). Always
+	 * present, `0` when no pending rows exist. Non-supervised loops never
+	 * enqueue via task 4's delivery gate so this stays 0 for them by
+	 * construction, without needing a status-dependent branch here. */
+	pendingApprovalCount: z.number().int().nonnegative(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
 })

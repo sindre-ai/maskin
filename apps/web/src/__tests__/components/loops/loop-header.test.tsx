@@ -35,7 +35,7 @@ describe('LoopHeader', () => {
 		const onTogglePause = vi.fn()
 		render(
 			<LoopHeader
-				loop={buildLoopSummary({ status: 'running' })}
+				loop={buildLoopSummary({ status: 'live' })}
 				onTogglePause={onTogglePause}
 				isTogglingPause={false}
 			/>,

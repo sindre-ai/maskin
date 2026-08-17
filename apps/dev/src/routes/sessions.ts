@@ -14,6 +14,7 @@ import { and, asc, desc, eq, gt, lt, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { logger } from '../lib/logger'
+import { LoopExecutionBlockedError } from '../lib/loop-execution-gate'
 import {
 	errorSchema,
 	sessionLogResponseSchema,
@@ -65,6 +66,10 @@ const createSessionRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Invalid request',
 		},
+		409: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Blocked by parent loop status (draft, paused, or archived)',
+		},
 	},
 })
 
@@ -82,17 +87,34 @@ app.openapi(createSessionRoute, (async (c) => {
 		? { ...body.config, entry_agent_role: body.entry_agent_role }
 		: body.config
 
-	const session = await sessionManager.createSession(workspaceId, {
-		actorId: body.actor_id,
-		actionPrompt: body.action_prompt,
-		config,
-		triggerId: body.trigger_id,
-		createdBy: actorId,
-		autoStart: body.auto_start,
-		sourceSessionId: body.source_session_id,
-	})
+	try {
+		const session = await sessionManager.createSession(workspaceId, {
+			actorId: body.actor_id,
+			actionPrompt: body.action_prompt,
+			config,
+			triggerId: body.trigger_id,
+			createdBy: actorId,
+			autoStart: body.auto_start,
+			sourceSessionId: body.source_session_id,
+		})
 
-	return c.json(serialize(session) as z.infer<typeof sessionResponseSchema>, 201)
+		return c.json(serialize(session) as z.infer<typeof sessionResponseSchema>, 201)
+	} catch (err) {
+		if (err instanceof LoopExecutionBlockedError) {
+			return c.json(
+				createApiError(
+					'CONFLICT',
+					`Loop ${err.loopId} is in status '${err.loopStatus}' — session creation blocked`,
+					[
+						{ field: 'loop_id', message: err.loopId },
+						{ field: 'loop_status', message: err.loopStatus },
+					],
+				),
+				409,
+			)
+		}
+		throw err
+	}
 }) as RouteHandler<typeof createSessionRoute, Env>)
 
 // GET / - List sessions

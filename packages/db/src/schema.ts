@@ -92,6 +92,17 @@ export const objects = pgTable(
 		metadata: jsonb('metadata'),
 		driver: uuid('driver').references(() => actors.id),
 		activeSessionId: uuid('active_session_id'),
+		// Loop-only lifecycle fields (T3 of bet/loop-lifecycle-status-ladder).
+		// Nullable everywhere: only loop-type rows populate them. Held as
+		// first-class columns rather than metadata so the promotion/demotion
+		// evaluator (`readLoopState` in `apps/dev/src/services/loop-lifecycle.ts`)
+		// and the score engine (`apps/dev/src/services/loop-scoring.ts`) both
+		// read a typed contract instead of a jsonb bag.
+		outcomeMetric: text('outcome_metric'),
+		outcomeTarget: numeric('outcome_target'),
+		killThreshold: numeric('kill_threshold'),
+		performanceScore: numeric('performance_score'),
+		promotionMode: text('promotion_mode'),
 		createdBy: uuid('created_by')
 			.references(() => actors.id)
 			.notNull(),
@@ -103,6 +114,10 @@ export const objects = pgTable(
 		// Range-scan path for list_objects(updated_before/updated_after) — the
 		// watchdog's stalled-work query. Built CONCURRENTLY in migration 0043.
 		index('objects_ws_updated_at_idx').on(t.workspaceId, t.updatedAt),
+		check(
+			'objects_promotion_mode_check',
+			sql`${t.promotionMode} IS NULL OR ${t.promotionMode} IN ('auto', 'human_approved')`,
+		),
 	],
 )
 
@@ -1061,6 +1076,118 @@ export const sessionDispatchAttempts = pgTable(
 
 export type SessionDispatchAttempt = typeof sessionDispatchAttempts.$inferSelect
 export type NewSessionDispatchAttempt = typeof sessionDispatchAttempts.$inferInsert
+
+// ── Loop Output Approvals ─────────────────────────────────────────────────
+//
+// Supervised-loop output queue (T7 of bet/loop-lifecycle-status-ladder). At
+// `objects.status = 'supervised'` the loop's delivery path enqueues one row
+// per output for human sign-off before delivery. `payload` is the blob the
+// caller wanted to hand off; `edited_payload` is populated when the human
+// edits before approving (a labelled correction routed back to
+// `driver_actor_id` as a training-signal event).
+//
+// The "when to enqueue" gate off `objects.status = 'supervised'` lives in
+// T4's delivery-path wiring, not here — the queue accepts any loop id and
+// trusts the caller to hold that invariant. See `apps/dev/src/routes/loop-approvals.ts`
+// and `apps/dev/src/routes/loops.ts` (pending-count aggregation on the
+// list-loops render shape) for the read/write surfaces built on this table.
+
+export const loopOutputApprovals = pgTable(
+	'loop_output_approvals',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		loopId: uuid('loop_id')
+			.notNull()
+			.references(() => objects.id, { onDelete: 'cascade' }),
+		sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'set null' }),
+		driverActorId: uuid('driver_actor_id').references(() => actors.id, { onDelete: 'set null' }),
+		status: text('status').notNull().default('pending'),
+		payload: jsonb('payload').notNull(),
+		editedPayload: jsonb('edited_payload'),
+		correctionNote: text('correction_note'),
+		decidedBy: uuid('decided_by').references(() => actors.id, { onDelete: 'set null' }),
+		decidedAt: timestamp('decided_at', { withTimezone: true }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		check(
+			'loop_output_approvals_status_check',
+			sql`${t.status} IN ('pending', 'approved', 'rejected')`,
+		),
+		index('loop_output_approvals_ws_loop_status_idx').on(t.workspaceId, t.loopId, t.status),
+		index('loop_output_approvals_ws_status_created_idx').on(t.workspaceId, t.status, t.createdAt),
+		// One approval row per (loop, session) — prevents duplicate enqueues from
+		// concurrent stop/completion signals. Partial: session_id IS NOT NULL so
+		// manually-created rows (no session) don't collide with each other.
+		uniqueIndex('loop_output_approvals_loop_session_uniq')
+			.on(t.loopId, t.sessionId)
+			.where(sql`${t.sessionId} IS NOT NULL`),
+	],
+)
+
+export type LoopOutputApproval = typeof loopOutputApprovals.$inferSelect
+export type NewLoopOutputApproval = typeof loopOutputApprovals.$inferInsert
+
+// ── Loop Promotion Proposals ──────────────────────────────────────────────
+//
+// Rung-graduation queue for the loop lifecycle ladder (T5 of
+// bet/loop-lifecycle-status-ladder). One row per proposal to advance a loop
+// from its current rung to the next. `human_approved` proposals stay pending
+// until a human resolves them; `auto` proposals are still recorded here as
+// approved-in-the-same-transaction so the audit trail treats every rung
+// change identically. Demotion is not queued here — it's automatic and
+// lands directly on `objects.status`.
+//
+// `payload` holds the {score, threshold, mode} snapshot the driver used to
+// justify the proposal, kept as-of proposal time so a later approve reads
+// the original decision context even if the live score has drifted. The
+// partial UNIQUE on (loop_id) WHERE status = 'pending' is what keeps two
+// racing evaluators from stacking duplicate open proposals on the same loop.
+
+export const loopPromotionProposals = pgTable(
+	'loop_promotion_proposals',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		loopId: uuid('loop_id')
+			.notNull()
+			.references(() => objects.id, { onDelete: 'cascade' }),
+		fromStatus: text('from_status').notNull(),
+		toStatus: text('to_status').notNull(),
+		status: text('status').notNull().default('pending'),
+		payload: jsonb('payload').notNull(),
+		reason: text('reason'),
+		proposedBy: uuid('proposed_by').references(() => actors.id, { onDelete: 'set null' }),
+		decidedBy: uuid('decided_by').references(() => actors.id, { onDelete: 'set null' }),
+		decidedAt: timestamp('decided_at', { withTimezone: true }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		check(
+			'loop_promotion_proposals_status_check',
+			sql`${t.status} IN ('pending', 'approved', 'rejected', 'deferred')`,
+		),
+		index('loop_promotion_proposals_ws_loop_status_idx').on(t.workspaceId, t.loopId, t.status),
+		index('loop_promotion_proposals_ws_status_created_idx').on(
+			t.workspaceId,
+			t.status,
+			t.createdAt,
+		),
+		uniqueIndex('loop_promotion_proposals_loop_pending_uniq')
+			.on(t.loopId)
+			.where(sql`${t.status} = 'pending'`),
+	],
+)
+
+export type LoopPromotionProposal = typeof loopPromotionProposals.$inferSelect
+export type NewLoopPromotionProposal = typeof loopPromotionProposals.$inferInsert
 
 // ── Reviewer Verdicts ───────────────────────────────────────────────────────
 //

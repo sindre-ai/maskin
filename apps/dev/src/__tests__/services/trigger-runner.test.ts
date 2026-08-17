@@ -131,6 +131,7 @@ describe('TriggerRunner', () => {
 			const eventData = { threadId: '19e410381018bd93', messageId: 'msg-abc' }
 			mockResults.selectQueue = [
 				[trigger], // matching triggers
+				[], // parent-loop status lookup — trigger not owned by a loop
 				[{ data: eventData }], // fetchEventData
 			]
 			mockResults.insert = []
@@ -578,6 +579,7 @@ describe('TriggerRunner', () => {
 			mockResults.selectQueue = [
 				[trigger], // cron triggers on load
 				[], // reminder triggers on load
+				[], // parent-loop status lookup — trigger not owned by a loop
 				[match], // scope query — 1 match
 			]
 			mockResults.insert = []

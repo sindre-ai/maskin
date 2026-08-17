@@ -1,11 +1,25 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, objects, readState, relationships, sessions, triggers } from '@maskin/db/schema'
-import { TERMINAL_BET_STATUSES, listLoopsResponseSchema } from '@maskin/shared'
+import {
+	events,
+	loopOutputApprovals,
+	objects,
+	readState,
+	relationships,
+	sessions,
+	triggers,
+} from '@maskin/db/schema'
+import {
+	LOOP_STATUSES,
+	type LoopStatus,
+	TERMINAL_BET_STATUSES,
+	listLoopsResponseSchema,
+} from '@maskin/shared'
 import { and, desc, eq, inArray, or, sql } from 'drizzle-orm'
-import { validationFailureHook } from '../lib/errors'
+import { createApiError, validationFailureHook } from '../lib/errors'
 import { errorSchema, eventResponseSchema, workspaceIdHeader } from '../lib/openapi-schemas'
-import { serializeArray } from '../lib/serialize'
+import { serialize, serializeArray } from '../lib/serialize'
+import { autoSubscribe } from '../services/subscriptions'
 
 /** Loose UUID match — used to filter free-form `metadata.trigger_ids` entries
  * before they reach a query. Guards two things at once: an attacker-controlled
@@ -307,22 +321,38 @@ app.openapi(listLoopsRoute, (async (c) => {
 		waitingByLoop.set(row.loop_id, waitingByLoop.get(row.loop_id) === true || row.waiting === true)
 	}
 
+	// Per-loop pending-approval count for the supervised queue badge (T7 of
+	// bet/loop-lifecycle-status-ladder). One indexed aggregate scan; loops
+	// with zero pending rows are omitted from the map and default to 0
+	// below. Filtered to workspaceId so a leaked loop id in metadata cannot
+	// pull counts from another workspace.
+	const pendingApprovalRows = await db
+		.select({
+			loopId: loopOutputApprovals.loopId,
+			count: sql<number>`COUNT(*)::int`,
+		})
+		.from(loopOutputApprovals)
+		.where(
+			and(
+				eq(loopOutputApprovals.workspaceId, workspaceId),
+				inArray(loopOutputApprovals.loopId, loopIds),
+				eq(loopOutputApprovals.status, 'pending'),
+			),
+		)
+		.groupBy(loopOutputApprovals.loopId)
+	const pendingApprovalByLoop = new Map<string, number>()
+	for (const row of pendingApprovalRows) {
+		pendingApprovalByLoop.set(row.loopId, Number(row.count) || 0)
+	}
+
 	const response = {
 		loops: loopRows.map((row) => {
 			const rawStatus = row.status
-			const status = ((): 'running' | 'waiting' | 'paused' | 'archived' => {
-				if (
-					rawStatus === 'running' ||
-					rawStatus === 'waiting' ||
-					rawStatus === 'paused' ||
-					rawStatus === 'archived'
-				) {
-					return rawStatus
-				}
-				// Unknown status (shouldn't happen with schema-validated statuses,
-				// but preserved so a manual UPDATE cannot 500 the endpoint).
-				return 'running'
-			})()
+			const status: LoopStatus = (LOOP_STATUSES as readonly string[]).includes(rawStatus)
+				? (rawStatus as LoopStatus)
+				: // Unknown status (shouldn't happen with schema-validated statuses,
+					// but preserved so a manual UPDATE cannot 500 the endpoint).
+					'draft'
 
 			const meta = (row.metadata as Record<string, unknown> | null) ?? {}
 			const entryCondition =
@@ -357,19 +387,23 @@ app.openapi(listLoopsRoute, (async (c) => {
 			)
 			const waitingOnViewer = waitingByLoop.get(row.id) === true
 
-			// Composite pill signal per T1(c). Lifecycle overrides everything:
-			// paused/archived stay grey regardless of read state; only `running`
-			// composes with waitingOnViewer. An explicit `waiting` status forces
-			// the amber "waiting" pill even if the viewer has no unread events —
-			// the workspace has already declared the loop needs attention.
+			// Composite pill signal per T1(c). Collapses the six-rung lifecycle
+			// into the four UI badges the loop card renders. Lifecycle overrides
+			// everything: `draft` shows as `paused` (authored but not firing);
+			// `paused`/`archived` stay grey regardless of read state. `pilot` and
+			// `supervised` are inherently attention-worthy (test mode, or output
+			// held for approval) so they force `waiting_on_you`. Only `live`
+			// composes with waitingOnViewer.
 			const pill: 'running' | 'waiting_on_you' | 'paused' | 'archived' =
-				status === 'paused' || status === 'archived'
-					? status
-					: status === 'waiting'
-						? 'waiting_on_you'
-						: waitingOnViewer
+				status === 'archived'
+					? 'archived'
+					: status === 'paused' || status === 'draft'
+						? 'paused'
+						: status === 'pilot' || status === 'supervised'
 							? 'waiting_on_you'
-							: 'running'
+							: waitingOnViewer
+								? 'waiting_on_you'
+								: 'running'
 
 			return {
 				id: row.id,
@@ -387,6 +421,7 @@ app.openapi(listLoopsRoute, (async (c) => {
 				agentIds,
 				triggerIds,
 				waitingOnViewer,
+				pendingApprovalCount: pendingApprovalByLoop.get(row.id) ?? 0,
 				createdAt: row.createdAt ? row.createdAt.toISOString() : null,
 				updatedAt: row.updatedAt ? row.updatedAt.toISOString() : null,
 			}
@@ -510,5 +545,213 @@ app.openapi(loopActivityRoute, (async (c) => {
 		events: serializeArray(rows) as z.infer<typeof eventResponseSchema>[],
 	})
 }) as RouteHandler<typeof loopActivityRoute, Env>)
+
+/**
+ * `POST /api/loops/promote-from-bet` — graduate a succeeded bet into a
+ * running Loop. The bet already proved the process works, so the promoted
+ * loop starts at `pilot` rather than `draft`; task 2 of
+ * bet/loop-lifecycle-status-ladder extends the loop status enum with `pilot`,
+ * and `GET /api/loops` above coerces unknown statuses back to `running` on
+ * read until then.
+ *
+ * The loop carries the bet's driver agent and (by default) its title/content
+ * forward, plus a `derived_from` edge back to the source bet so lineage is
+ * queryable. `outcome_metric`/`outcome_target`/`kill_threshold` are NOT
+ * inherited — the acceptance criteria on the parent bet says those live on
+ * the loop itself and the operator sets them per-loop.
+ *
+ * Only bets in `succeeded` status can be promoted (parent-bet acceptance
+ * criteria). Statuses outside that return 409 with the current status —
+ * the intent is a graduation, not a resurrection of failed/paused work.
+ */
+
+const promoteFromBetBodySchema = z.object({
+	betId: z.string().uuid(),
+	name: z.string().min(1).optional(),
+	guarantee: z.string().optional(),
+	outcomeMetric: z.string().min(1).optional(),
+	outcomeTarget: z.string().min(1).optional(),
+	killThreshold: z.number().finite().optional(),
+	entryCondition: z.string().min(1).optional(),
+	closeCondition: z.string().min(1).optional(),
+	humanDecisionPoints: z.number().int().nonnegative().optional(),
+})
+
+const promoteFromBetResponseSchema = z.object({
+	id: z.string().uuid(),
+	workspaceId: z.string().uuid(),
+	type: z.string(),
+	title: z.string().nullable(),
+	content: z.string().nullable(),
+	status: z.string(),
+	metadata: z.record(z.unknown()).nullable(),
+	driver: z.string().uuid().nullable(),
+	createdAt: z.string().nullable(),
+	updatedAt: z.string().nullable(),
+	derivedFromBetId: z.string().uuid(),
+})
+
+const promoteFromBetRoute = createRoute({
+	method: 'post',
+	path: '/promote-from-bet',
+	tags: ['loops'],
+	summary: 'Promote a succeeded bet into a pilot-status Loop',
+	description:
+		"Creates a Loop object (`objects.type = 'loop'`, `status = 'pilot'`) from a bet in `succeeded` status. The loop carries the bet's driver forward, defaults its title/content to the bet's, and links back with a `derived_from` edge (loop → bet). The loop's own outcome_metric/outcome_target/kill_threshold are set from the request body — they are not inherited from the bet.",
+	request: {
+		headers: workspaceIdHeader,
+		body: {
+			content: { 'application/json': { schema: promoteFromBetBodySchema } },
+		},
+	},
+	responses: {
+		201: {
+			description: 'Loop created',
+			content: { 'application/json': { schema: promoteFromBetResponseSchema } },
+		},
+		400: {
+			description: 'Validation error',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Bet not found in this workspace',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		409: {
+			description: 'Bet is not in `succeeded` status',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(promoteFromBetRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const body = c.req.valid('json')
+
+	// Workspace membership is already enforced by authMiddleware on header-scoped
+	// routes (see CLAUDE.md: "authMiddleware ... also enforces workspace
+	// membership when X-Workspace-Id is present"). The bet lookup below is
+	// still workspace-scoped so a caller with membership in one workspace
+	// can't reach a bet id from another.
+	const [bet] = await db
+		.select()
+		.from(objects)
+		.where(
+			and(
+				eq(objects.id, body.betId),
+				eq(objects.workspaceId, workspaceId),
+				eq(objects.type, 'bet'),
+			),
+		)
+		.limit(1)
+
+	if (!bet) {
+		return c.json(createApiError('NOT_FOUND', 'Bet not found in this workspace'), 404)
+	}
+
+	if (bet.status !== 'succeeded') {
+		return c.json(
+			createApiError(
+				'CONFLICT',
+				`Only bets in \`succeeded\` status can be promoted (current status: \`${bet.status}\`)`,
+				[
+					{
+						field: 'betId',
+						message: 'Bet status must be `succeeded`',
+						expected: '`succeeded`',
+						received: `\`${bet.status}\``,
+					},
+				],
+			),
+			409,
+		)
+	}
+
+	const metadata: Record<string, unknown> = {
+		promoted_from_bet_id: bet.id,
+	}
+	if (body.outcomeMetric) metadata.outcome_metric = body.outcomeMetric
+	if (body.outcomeTarget) metadata.outcome_target = body.outcomeTarget
+	if (body.killThreshold !== undefined) metadata.kill_threshold = body.killThreshold
+	if (body.entryCondition) metadata.entry_condition = body.entryCondition
+	if (body.closeCondition) metadata.close_condition = body.closeCondition
+	if (body.humanDecisionPoints !== undefined)
+		metadata.human_decision_points = body.humanDecisionPoints
+
+	const loop = await db.transaction(async (tx) => {
+		const [loopRow] = await tx
+			.insert(objects)
+			.values({
+				workspaceId,
+				type: 'loop',
+				title: body.name ?? bet.title,
+				content: body.guarantee ?? bet.content,
+				status: 'pilot',
+				driver: bet.driver,
+				createdBy: actorId,
+				metadata,
+			})
+			.returning()
+		if (!loopRow) throw new Error('Failed to insert loop object for bet promotion')
+
+		const [edge] = await tx
+			.insert(relationships)
+			.values({
+				sourceType: 'object',
+				sourceId: loopRow.id,
+				targetType: 'object',
+				targetId: bet.id,
+				type: 'derived_from',
+				createdBy: actorId,
+			})
+			.onConflictDoNothing({
+				target: [relationships.sourceId, relationships.targetId, relationships.type],
+			})
+			.returning()
+
+		await tx.insert(events).values({
+			workspaceId,
+			actorId,
+			action: 'created',
+			entityType: 'loop',
+			entityId: loopRow.id,
+			data: loopRow,
+		})
+
+		if (edge) {
+			await tx.insert(events).values({
+				workspaceId,
+				actorId,
+				action: 'created',
+				entityType: 'relationship',
+				entityId: edge.id,
+				data: edge,
+			})
+		}
+
+		return loopRow
+	})
+
+	// Auto-subscribe the promoter to the new Loop object — mirrors POST /api/graph
+	// and POST /api/installed-loops. Outside the transaction: a failed subscribe
+	// must not roll back the promotion.
+	await autoSubscribe(db, {
+		workspaceId,
+		actorId,
+		entityType: 'object',
+		entityId: loop.id,
+		source: 'author',
+	})
+
+	return c.json(
+		{
+			...serialize(loop),
+			derivedFromBetId: bet.id,
+		},
+		201,
+	)
+}) as RouteHandler<typeof promoteFromBetRoute, Env>)
 
 export default app

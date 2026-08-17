@@ -1,3 +1,4 @@
+import { LoopExecutionBlockedError } from '../../lib/loop-execution-gate'
 import { buildCreateSessionBody, buildSession, buildSessionLog } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
 import { createSessionTestApp } from '../setup'
@@ -67,6 +68,33 @@ describe('Sessions Routes', () => {
 
 			const createArgs = (sessionManager.createSession as ReturnType<typeof vi.fn>).mock.calls[0]
 			expect(createArgs?.[1]?.config).not.toHaveProperty('entry_agent_role')
+		})
+
+		it('returns 409 with loop id and status when parent loop is in a blocking status', async () => {
+			const loopId = '00000000-0000-0000-0000-0000000000aa'
+			const { app, sessionManager } = createSessionTestApp(sessionsRoutes, '/api/sessions')
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockRejectedValue(
+				new LoopExecutionBlockedError(loopId, 'paused'),
+			)
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/sessions', buildCreateSessionBody(), {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(409)
+			const body = (await res.json()) as {
+				error?: {
+					code: string
+					message: string
+					details?: Array<{ field: string; message: string }>
+				}
+			}
+			expect(body.error?.code).toBe('CONFLICT')
+			const detailByField = new Map((body.error?.details ?? []).map((d) => [d.field, d.message]))
+			expect(detailByField.get('loop_id')).toBe(loopId)
+			expect(detailByField.get('loop_status')).toBe('paused')
 		})
 	})
 

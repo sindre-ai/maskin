@@ -500,7 +500,9 @@ app.openapi(installLoopRoute, async (c) => {
 			}
 
 			// Create the Loop object this install represents (see route comment) and
-			// link it back on the install row.
+			// link it back on the install row. Marketplace installs land at `pilot`
+			// on the maturity ladder — provisioned but not autonomous — same
+			// precedent as provisioned integrations forced to `inactive`.
 			const [loopObject] = await tx
 				.insert(objects)
 				.values({
@@ -508,7 +510,7 @@ app.openapi(installLoopRoute, async (c) => {
 					type: 'loop',
 					title: loop.name,
 					content: loop.description,
-					status: 'running',
+					status: 'pilot',
 					createdBy: actorId,
 					metadata: {
 						installed_from_marketplace_loop_id: loopId,

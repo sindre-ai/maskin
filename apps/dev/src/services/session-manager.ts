@@ -13,6 +13,7 @@ import {
 	actors,
 	agentServers,
 	integrations,
+	loopOutputApprovals,
 	objects,
 	relationships,
 	sessionLogs,
@@ -78,6 +79,7 @@ import {
 	resolveLlmRoute,
 } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
+import { LoopExecutionBlockedError, resolveLoopExecutionGate } from '../lib/loop-execution-gate'
 import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
 import {
 	AgentServerAuthError,
@@ -86,6 +88,8 @@ import {
 } from './agent-server-client'
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
 import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
+import { evaluateAfterRun } from './loop-lifecycle'
+import { findLoopForSessionTrigger, recomputeAndPersistScore } from './loop-scoring'
 import { type RuntimeEndReason, RuntimeTelemetry } from './runtime-telemetry'
 import type { SessionDispatchQueue } from './session-dispatch-queue'
 import {
@@ -390,6 +394,17 @@ export class SessionManager extends EventEmitter {
 		const interactive = config.interactive === true
 		const conversationId =
 			(config.conversation as { conversation_id?: string } | undefined)?.conversation_id ?? null
+
+		// Defence-in-depth: every trigger-owned session goes through the loop
+		// execution gate before the row is even inserted, so a trigger tied to
+		// a draft/paused/archived loop can't produce a session no matter which
+		// call site (TriggerRunner, POST /api/sessions, Claude backup retry)
+		// reaches this method. T1 gates the same set of statuses up-stream in
+		// TriggerRunner; this one guarantees the invariant regardless of caller.
+		const gate = await resolveLoopExecutionGate(this.db, workspaceId, params.triggerId)
+		if (gate.decision === 'block') {
+			throw new LoopExecutionBlockedError(gate.loopId ?? 'unknown', gate.status ?? 'unknown')
+		}
 
 		const [session] = await this.db
 			.insert(sessions)
@@ -2552,6 +2567,13 @@ export class SessionManager extends EventEmitter {
 			})
 		}
 
+		await this.maybeEnqueueSupervisedApproval(session, { exitCode, failureReason }).catch((err) => {
+			logger.warn('Failed to enqueue supervised loop approval', {
+				sessionId,
+				error: String(err),
+			})
+		})
+
 		if (status === 'failed') {
 			await this.maybeRetryClaudeOAuthOnBackup({ session, failureReason, stdoutTail }).catch(
 				(err) =>
@@ -2570,6 +2592,19 @@ export class SessionManager extends EventEmitter {
 		// path that downstream watchdogs and SSE clients depend on.
 		await this.maybeEmitLoopActiveDay(session.actorId, session.workspaceId).catch((err) => {
 			logger.warn('Failed loop_active_day emit', { sessionId, error: String(err) })
+		})
+
+		// Loop performance score recompute + promotion/demotion evaluation.
+		// Fires only when the completing session belongs to a loop trigger; a
+		// standalone or unrelated session is a silent no-op. Best-effort: a
+		// scoring or lifecycle failure must not block the SSE terminal log
+		// or the queue drain below (same guarantee as the analytics emit).
+		await this.maybeScoreAndEvaluateLoop(
+			session.workspaceId,
+			session.actorId,
+			session.triggerId,
+		).catch((err) => {
+			logger.warn('Failed loop score recompute', { sessionId, error: String(err) })
 		})
 
 		try {
@@ -2685,6 +2720,27 @@ export class SessionManager extends EventEmitter {
 			workspaceId: claim.workspaceId,
 			utcDay,
 		})
+	}
+
+	/**
+	 * If the completing session was launched by a trigger that belongs to a
+	 * loop, recompute the loop's performance score in place and hand off to
+	 * the lifecycle evaluator so the run can promote/demote. Best-effort:
+	 * every error is swallowed by the caller so a scoring or lifecycle
+	 * failure never blocks the completion path (the SSE `done` event and the
+	 * queue drain must still run). Returns silently for standalone sessions
+	 * (no trigger) or sessions whose trigger no loop claims — those are
+	 * legitimate no-ops, not errors. T3 of bet/loop-lifecycle-status-ladder.
+	 */
+	private async maybeScoreAndEvaluateLoop(
+		workspaceId: string,
+		actorId: string,
+		triggerId: string | null,
+	): Promise<void> {
+		const loopId = await findLoopForSessionTrigger(this.db, workspaceId, triggerId)
+		if (!loopId) return
+		await recomputeAndPersistScore(this.db, loopId)
+		await evaluateAfterRun(this.db, loopId, actorId)
 	}
 
 	private async runWatchdog(): Promise<void> {
@@ -3693,6 +3749,24 @@ export class SessionManager extends EventEmitter {
 			})
 		}
 
+		await this.maybeEnqueueSupervisedApproval(updated, {
+			exitCode,
+			stoppedByUser,
+		}).catch((err) => {
+			logger.warn('Failed to enqueue supervised loop approval', {
+				sessionId,
+				error: String(err),
+			})
+		})
+
+		await this.maybeScoreAndEvaluateLoop(
+			updated.workspaceId,
+			updated.actorId,
+			updated.triggerId,
+		).catch((err) => {
+			logger.warn('Failed loop score recompute (remote)', { sessionId, error: String(err) })
+		})
+
 		// Terminal system log is required for SSE /logs/stream clients to close.
 		const terminalLogMessage = stoppedByUser
 			? `Session ${status} — explicitly stopped, exit code not yet known`
@@ -3719,6 +3793,78 @@ export class SessionManager extends EventEmitter {
 
 		logger.info(`Remote session ${status}: ${sessionId}`, { exitCode, stoppedByUser })
 		return true
+	}
+
+	/**
+	 * Supervised-output gate. When a session's trigger belongs to a loop in
+	 * `supervised` status, hold its terminal output in T7's `loop_output_approvals`
+	 * queue instead of letting it fan out immediately. Idempotent per-session:
+	 * a stopped session's provisional terminal write and the agent-server's
+	 * later genuine `/complete` report both land here, but the second call is
+	 * a no-op because the first row already exists for `(loop_id, session_id)`
+	 * with `status = 'pending'`.
+	 *
+	 * Direct DB insert into T7's table (not an HTTP round-trip through
+	 * `POST /api/loop-approvals`) — same process, same transaction budget as
+	 * the terminal event insert above. Enqueue failure logs but never strands
+	 * the session; the caller wraps in `.catch`.
+	 */
+	private async maybeEnqueueSupervisedApproval(
+		session: typeof sessions.$inferSelect,
+		outcome: {
+			exitCode: number | null
+			stoppedByUser?: boolean
+			failureReason?: unknown
+		},
+	): Promise<void> {
+		if (!session.triggerId) return
+
+		const gate = await resolveLoopExecutionGate(this.db, session.workspaceId, session.triggerId)
+		if (gate.decision !== 'supervised' || !gate.loopId) return
+
+		// Payload mirrors T7's `safeMetadataSchema` envelope — the result blob
+		// verbatim plus a bounded excerpt of the action prompt so the queue UI
+		// has a legible summary line without the full container transcript.
+		const actionPromptExcerpt = (session.actionPrompt ?? '').slice(0, 500)
+		const payload: Record<string, unknown> = {
+			session_id: session.id,
+			exit_code: outcome.exitCode,
+			result: (session.result as Record<string, unknown> | null) ?? null,
+			action_prompt_excerpt: actionPromptExcerpt,
+			...(outcome.stoppedByUser === true ? { stopped_by_user: true } : {}),
+			...(outcome.failureReason ? { failure_reason: outcome.failureReason } : {}),
+		}
+
+		// ON CONFLICT DO NOTHING against the (loop_id, session_id) partial unique
+		// index handles the double-report path (provisional stop then genuine
+		// completion) atomically — no SELECT-before-INSERT race.
+		const [row] = await this.db
+			.insert(loopOutputApprovals)
+			.values({
+				workspaceId: session.workspaceId,
+				loopId: gate.loopId,
+				sessionId: session.id,
+				driverActorId: session.actorId,
+				payload,
+			})
+			.onConflictDoNothing()
+			.returning({ id: loopOutputApprovals.id })
+
+		if (!row) return
+
+		await this.db.insert(events).values({
+			workspaceId: session.workspaceId,
+			actorId: session.actorId,
+			action: 'created',
+			entityType: 'loop_output_approval',
+			entityId: row.id,
+			data: {
+				loop_id: gate.loopId,
+				session_id: session.id,
+				driver_actor_id: session.actorId,
+				status: 'pending',
+			},
+		})
 	}
 
 	/** Clear activeSessionId on any object linked to this session. */

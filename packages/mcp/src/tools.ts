@@ -1199,9 +1199,9 @@ export const tools = {
 				),
 			status: z
 				.enum(LOOP_STATUSES)
-				.default('running')
+				.default('draft')
 				.describe(
-					'Lifecycle status. `running` (default) means the loop is live; `waiting` flags it as needing human attention; `paused` and `archived` stop it.',
+					'Lifecycle status. New loops default to `draft` — authored but not firing yet. Rungs: `draft` → `pilot` (guided test) → `supervised` (side effects held for approval) → `live` (unattended). `paused` and `archived` stop the loop.',
 				),
 			entry_condition: z
 				.string()
@@ -1259,7 +1259,7 @@ export const tools = {
 			status: z
 				.enum(LOOP_STATUSES)
 				.optional()
-				.describe('New lifecycle status: running | waiting | paused | archived.'),
+				.describe('New lifecycle status: draft | pilot | supervised | live | paused | archived.'),
 			entry_condition: z
 				.string()
 				.optional()

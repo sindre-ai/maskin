@@ -1472,7 +1472,7 @@ describe('tool handlers', () => {
 				statuses: {
 					task: ['todo', 'done'],
 					lead: ['new', 'qualified', 'won', 'lost'],
-					loop: ['running', 'waiting', 'paused', 'archived'],
+					loop: ['draft', 'pilot', 'supervised', 'live', 'paused', 'archived'],
 				},
 			},
 		}
@@ -1533,7 +1533,7 @@ describe('tool handlers', () => {
 				const result = (await handler({
 					name: 'Lead qualification',
 					guarantee: 'Every lead gets an answer',
-					status: 'running',
+					status: 'live',
 					entry_condition: 'A lead is created',
 					close_condition: 'The lead is won or lost',
 					closed_statuses: { lead: ['won', 'lost'] },
@@ -1600,7 +1600,7 @@ describe('tool handlers', () => {
 					type: 'loop',
 					title: 'Lead qualification',
 					content: 'Every lead gets an answer',
-					status: 'running',
+					status: 'live',
 				})
 				expect(graphBody.nodes[0].metadata.trigger_ids).toEqual(['trig-1', 'trig-2'])
 				expect(graphBody.nodes[0].metadata.entry_condition).toBe('A lead is created')
