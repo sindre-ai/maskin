@@ -2008,58 +2008,14 @@ export function createMcpServer(config: McpConfig) {
 			const { workspace_id, nodes, edges } = args
 			const wsOpts = { workspaceId: workspace_id }
 
-			// Lowest-status-by-default: statuses are earned, not drafted. When a
-			// node omits `status`, fill in the first (lowest) status configured for
-			// its type in the workspace settings before hitting /api/graph, which
-			// requires a status on every node.
-			type SetupWorkspaceRow = {
-				id: string
-				settings?: {
-					statuses?: Record<string, string[]>
-					llm_keys?: Record<string, string | null | undefined>
-					claude_oauth?: unknown
-				} | null
-			}
-			let cachedWorkspace: SetupWorkspaceRow | null = null
-			const needsStatusInference = nodes.some((node) => !node.status)
-			try {
-				const workspaces = (await apiCall(config, 'GET', '/api/workspaces', undefined, {
-					skipWorkspace: true,
-				})) as SetupWorkspaceRow[]
-				const effectiveWsId = workspace_id ?? config.defaultWorkspaceId
-				// No explicit or default workspace id to scope against — picking an
-				// arbitrary workspace (e.g. workspaces[0]) would silently attribute a
-				// different workspace's statuses to this request, which can write the
-				// wrong inferred status onto a new object.
-				if (!effectiveWsId) throw new Error('No workspace id available to scope this request')
-				const match = workspaces.find((w) => w.id === effectiveWsId)
-				// An explicit workspace_id that matches no row must not silently
-				// fall back to a different workspace — same reasoning as above.
-				if (!match) throw new Error(`Workspace '${effectiveWsId}' not found`)
-				cachedWorkspace = match
-			} catch (err) {
-				// Only re-throw when the workspace row is required for status
-				// inference. If every node already carries a status, a
-				// workspace-load failure (including a workspace_id that doesn't
-				// match any row) is harmless — the primary response still succeeds.
-				if (needsStatusInference) throw err
-			}
-			const statusesByType: Record<string, string[]> = cachedWorkspace?.settings?.statuses ?? {}
-
 			// /api/graph doesn't understand file_ids — strip them from the body
 			// and replay each node's file_ids as `attached` relationships after
 			// the graph is created. Keeps the backend schema unchanged.
 			const fileIdsByDollarId = new Map<string, string[]>()
 			const nodesForApi = nodes.map((node) => {
-				const { file_ids, status, ...rest } = node
+				const { file_ids, ...rest } = node
 				if (file_ids?.length) fileIdsByDollarId.set(node.$id, file_ids)
-				const resolvedStatus = status ?? statusesByType[node.type]?.[0]
-				if (!resolvedStatus) {
-					throw new Error(
-						`Node '${node.$id}' has no status and type '${node.type}' has no configured statuses in this workspace — pass an explicit status (call get_workspace_schema to see valid statuses per type).`,
-					)
-				}
-				return { ...rest, status: resolvedStatus }
+				return rest
 			})
 
 			const graphResult = (await apiCall(
@@ -2125,23 +2081,29 @@ export function createMcpServer(config: McpConfig) {
 				await Promise.all(tasks)
 			}
 
-			const wsId = workspace_id ?? config.defaultWorkspaceId
-			const enrichedNodes =
-				wsId && Array.isArray(graphResult.nodes)
-					? graphResult.nodes.map((node) =>
-							addUrl(node as Record<string, unknown>, config, wsId, {
-								kind: 'object',
-								id: node.id,
-							}),
-						)
-					: graphResult.nodes
+			// activeSessionId/activeSessionCurrentActivity/unread_count/subscriber_count
+			// are per-viewer/session bookkeeping fields the API returns on every
+			// object row; a just-created object never has them populated
+			// meaningfully, so create_objects strips them from the response.
+			const enrichedNodes = Array.isArray(graphResult.nodes)
+				? graphResult.nodes.map((node) => {
+						const {
+							activeSessionId,
+							activeSessionCurrentActivity,
+							unread_count,
+							subscriber_count,
+							...rest
+						} = node as Record<string, unknown>
+						return addUrl(rest, config, workspace_id, { kind: 'object', id: node.id })
+					})
+				: graphResult.nodes
 			const enrichedResult = { ...graphResult, nodes: enrichedNodes }
 			const baseBody = fileAttachments.length
 				? { ...enrichedResult, file_attachments: fileAttachments }
 				: enrichedResult
 
 			return {
-				_meta: meta('create_objects', config, (args as { workspace_id?: string }).workspace_id),
+				_meta: meta('create_objects', config, workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(baseBody) }],
 			}
 		},

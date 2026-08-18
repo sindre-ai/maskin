@@ -113,22 +113,25 @@ describe('create_objects schema', () => {
 
 	it('accepts valid input with nodes', () => {
 		const result = schema.parse({
+			workspace_id: uuid,
 			nodes: [{ $id: 'bet-1', type: 'bet', status: 'active' }],
 		})
 		expect(result.nodes).toHaveLength(1)
 		expect(result.edges).toEqual([])
 	})
 
-	it('accepts optional workspace_id', () => {
-		const result = schema.parse({
-			workspace_id: uuid,
+	it('requires workspace_id', () => {
+		const result = schema.safeParse({
 			nodes: [{ $id: 'task-1', type: 'task', status: 'todo' }],
 		})
-		expect(result.workspace_id).toBe(uuid)
+		expect(result.success).toBe(false)
+		if (!result.success) {
+			expect(result.error.issues[0]?.path).toEqual(['workspace_id'])
+		}
 	})
 
 	it('rejects empty nodes array', () => {
-		expect(() => schema.parse({ nodes: [] })).toThrow()
+		expect(() => schema.parse({ workspace_id: uuid, nodes: [] })).toThrow()
 	})
 
 	it('rejects more than 50 nodes', () => {
@@ -137,18 +140,31 @@ describe('create_objects schema', () => {
 			type: 'task' as const,
 			status: 'todo',
 		}))
-		expect(() => schema.parse({ nodes })).toThrow()
+		expect(() => schema.parse({ workspace_id: uuid, nodes })).toThrow()
 	})
 
 	it('accepts any string as object type', () => {
 		const result = schema.parse({
+			workspace_id: uuid,
 			nodes: [{ $id: 'x', type: 'story', status: 'new' }],
 		})
 		expect(result.nodes[0].type).toBe('story')
 	})
 
+	it('requires status on every node', () => {
+		const result = schema.safeParse({
+			workspace_id: uuid,
+			nodes: [{ $id: 'x', type: 'insight' }],
+		})
+		expect(result.success).toBe(false)
+		if (!result.success) {
+			expect(result.error.issues[0]?.path).toEqual(['nodes', 0, 'status'])
+		}
+	})
+
 	it('defaults edges to empty array', () => {
 		const result = schema.parse({
+			workspace_id: uuid,
 			nodes: [{ $id: 'x', type: 'insight', status: 'new' }],
 		})
 		expect(result.edges).toEqual([])
@@ -1288,9 +1304,15 @@ describe('empty input schema tools', () => {
 	})
 })
 
+describe('workspace_id required on create_objects', () => {
+	it('create_objects requires workspace_id', () => {
+		const shape = tools.create_objects.inputSchema.shape
+		expect(shape.workspace_id.isOptional()).toBe(false)
+	})
+})
+
 describe('workspace_id optional on most tools', () => {
 	const toolsWithOptionalWorkspace = [
-		'create_objects',
 		'get_objects',
 		'update_objects',
 		'delete_object',

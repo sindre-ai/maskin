@@ -52,6 +52,11 @@ const optionalWorkspaceId = z
 		'Workspace ID to operate in. If omitted, uses the default workspace (DEFAULT_WORKSPACE_ID). Call list_workspaces to discover available workspaces.',
 	)
 
+const requiredWorkspaceId = z
+	.string()
+	.uuid()
+	.describe('Workspace ID to operate in. Call list_workspaces to discover available workspaces.')
+
 // Single agent-facing param covering everything needed to run an agent on a
 // specific LLM. The actor record still stores provider and config as two
 // separate columns server-side — the MCP layer splits `provider` back out
@@ -190,9 +195,9 @@ export const tools = {
 	// ─── Objects ─────────────────────────────────────────────
 	create_objects: {
 		description:
-			'Create one or more objects — of any type this workspace defines (built-ins like insight/bet/task, or a custom type) — with optional relationships in a single atomic operation. To create a Loop — a persistent closed-loop agent process — use the dedicated create_loop tool instead, which wires the trigger and membership metadata correctly. For a single object, provide one node with no edges. For multiple related objects, use $id references in edges to link them. Edges can also reference existing object UUIDs to connect new objects to existing ones. ALWAYS call get_workspace_schema first — it returns the authoritative, live list of valid statuses per object type, metadata fields, and relationship types for this workspace (these are workspace-configurable, so they vary between workspaces and cannot be assumed). To attach files to a created object, upload them first with create_file (or pick existing ones with list_files) and pass the returned ids in `file_ids` on the node. Attached files appear under the object in the UI and are returned alongside the object in get_objects. When referring to created or connected objects in human-facing output (comments, summaries, notifications, descriptions), use the object\'s title — not its UUID. Returned nodes include the title; edges include sourceTitle and targetTitle for the same reason. UUIDs should only appear in human-facing text when two objects share a near-identical title and disambiguation is needed — in that case append a short id suffix (e.g. "Bets and Threads v4 (ca957490)"). Use UUIDs freely inside tool arguments. Omit `status` unless the user explicitly asked for a specific one — a new object starts at the lowest (first) status configured for its type in this workspace (e.g. bet → signal, insight → new); statuses are earned through the workspace\'s promotion flow, not drafted at creation.',
+			'Create one or more objects with optional relationships in a single atomic operation. Use get_workspace_schema to see more details on objects and relationships. To create a Loop — a persistent closed-loop agent process — use the dedicated create_loop tool instead, which wires the trigger and membership metadata correctly. For a single object, provide one node with no edges. For multiple related objects, use $id references in edges to link them. Edges can also reference existing object UUIDs to connect new objects to existing ones. ALWAYS call get_workspace_schema first — it returns the authoritative, live list of valid statuses per object type, metadata fields, and relationship types for this workspace (these are workspace-configurable, so they vary between workspaces and cannot be assumed). To attach files to a created object, upload them first with create_file (or pick existing ones with list_files) and pass the returned ids in `file_ids` on the node. Attached files appear under the object in the UI and are returned alongside the object in get_objects. When referring to created or connected objects in human-facing output (comments, summaries, notifications, descriptions), use the object\'s title — not its UUID. Returned nodes include the title; edges include sourceTitle and targetTitle for the same reason. UUIDs should only appear in human-facing text when two objects share a near-identical title and disambiguation is needed — in that case append a short id suffix (e.g. "Bets and Threads v4 (ca957490)"). Use UUIDs freely inside tool arguments.',
 		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
+			workspace_id: requiredWorkspaceId,
 			nodes: z
 				.array(
 					z.object({
@@ -200,15 +205,19 @@ export const tools = {
 						type: z
 							.string()
 							.describe(
-								"Object type — any type this workspace defines (built-ins like insight/bet/task, or a custom type). Call get_workspace_schema first for this workspace's actual configured types; do not assume a fixed set.",
+								"Object type. Call get_workspace_schema first for this workspace's actual configured types; do not assume a fixed set.",
 							),
-						title: z.string().optional(),
-						content: z.string().optional(),
-						status: z
+						title: z.string().optional().describe('Short, human-readable title for the object.'),
+						content: z
 							.string()
 							.optional()
 							.describe(
-								"Object status. Bets are always created at `signal` — the founders' go/no-go gate — regardless of what is sent here; the server ignores this field for `bet` nodes and it can be omitted. Required for every other type.",
+								"The object's body — this is the meat of it. Keep it sharp: lead with the point, cut filler.",
+							),
+						status: z
+							.string()
+							.describe(
+								"Object status. Choose the first status by default. Only choose a different status when it's relevant.",
 							),
 						metadata: z
 							.record(z.unknown())

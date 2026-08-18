@@ -202,6 +202,37 @@ describe('tool handlers', () => {
 			expect(parsed).toMatchObject(mockResult)
 		})
 
+		it('strips per-viewer/session bookkeeping fields from each returned node', async () => {
+			mockFetchSuccess({
+				nodes: [
+					{
+						id: 'obj-1',
+						type: 'bet',
+						$id: 'bet-1',
+						activeSessionId: 'session-1',
+						activeSessionCurrentActivity: 'thinking',
+						unread_count: 3,
+						subscriber_count: 2,
+					},
+				],
+				edges: [],
+			})
+
+			const handler = getHandler('create_objects')
+			const result = (await handler({
+				workspace_id: 'ws-default-123',
+				nodes: [{ $id: 'bet-1', type: 'bet', status: 'active' }],
+				edges: [],
+			})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.nodes[0]).not.toHaveProperty('activeSessionId')
+			expect(parsed.nodes[0]).not.toHaveProperty('activeSessionCurrentActivity')
+			expect(parsed.nodes[0]).not.toHaveProperty('unread_count')
+			expect(parsed.nodes[0]).not.toHaveProperty('subscriber_count')
+			expect(parsed.nodes[0].id).toBe('obj-1')
+		})
+
 		it('uses workspace_id from args over default', async () => {
 			mockFetchSuccess({})
 
@@ -223,18 +254,10 @@ describe('tool handlers', () => {
 		})
 
 		it('attaches file_ids on a node by replaying each as an `attached` relationship', async () => {
-			// The handler now always fetches /api/workspaces up-front (for the
-			// setup block); route the mocks by URL so per-call order is stable
-			// regardless of setup-block plumbing.
+			// Route the mocks by URL so the /api/graph vs /api/relationships calls
+			// are distinguishable regardless of call order.
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
 				const u = String(url)
-				if (u.endsWith('/api/workspaces')) {
-					return {
-						ok: true,
-						headers: new Headers(),
-						json: () => Promise.resolve([{ id: 'ws-default-123', settings: {} }]),
-					} as Response
-				}
 				if (u.endsWith('/api/graph')) {
 					return {
 						ok: true,
@@ -307,60 +330,12 @@ describe('tool handlers', () => {
 			expect(parsed.file_attachments).toBeUndefined()
 		})
 
-		it('fills in the lowest configured status when a node omits status', async () => {
-			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
-				const urlStr = url as string
-				if (urlStr.endsWith('/api/workspaces')) {
-					return {
-						ok: true,
-						json: () =>
-							Promise.resolve([
-								{
-									id: 'ws-default-123',
-									settings: {
-										statuses: {
-											bet: ['signal', 'qualified', 'define', 'active'],
-											insight: ['new', 'clustered'],
-										},
-									},
-								},
-							]),
-					} as Response
-				}
-				return {
-					ok: true,
-					json: () =>
-						Promise.resolve({ nodes: [{ $id: 'bet-1', id: 'b1', type: 'bet' }], edges: [] }),
-				} as Response
-			})
-
-			const handler = getHandler('create_objects')
-			await handler({
-				nodes: [
-					{ $id: 'bet-1', type: 'bet' },
-					{ $id: 'insight-1', type: 'insight' },
-				],
-				edges: [],
-			})
-
-			const graphCall = vi
-				.mocked(fetch)
-				.mock.calls.find((c) => (c[0] as string).endsWith('/api/graph'))
-			expect(graphCall).toBeDefined()
-			const graphBody = JSON.parse((graphCall?.[1] as RequestInit).body as string)
-			expect(graphBody.nodes[0].status).toBe('signal')
-			expect(graphBody.nodes[1].status).toBe('new')
-		})
-
-		it('fetches workspace settings exactly once even when every node has an explicit status', async () => {
-			// The setup-block wiring reuses the same workspace fetch that powers
-			// lowest-status inference — even when inference isn't needed we still
-			// need `settings.llm_keys`/`claude_oauth` for `agents_runnable`, so
-			// the fetch happens unconditionally (but only once per call).
+		it('does not fetch /api/workspaces — status and workspace_id are required on input', async () => {
 			mockFetchSuccess({ nodes: [{ $id: 'x', id: 'real-x', type: 'task' }], edges: [] })
 
 			const handler = getHandler('create_objects')
 			await handler({
+				workspace_id: 'ws-default-123',
 				nodes: [{ $id: 'x', type: 'task', status: 'todo' }],
 				edges: [],
 			})
@@ -368,23 +343,7 @@ describe('tool handlers', () => {
 			const wsCalls = vi
 				.mocked(fetch)
 				.mock.calls.filter((c) => (c[0] as string).endsWith('/api/workspaces'))
-			expect(wsCalls).toHaveLength(1)
-		})
-
-		it('throws a clear error when status is omitted and the type has no configured statuses', async () => {
-			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-				ok: true,
-				json: () =>
-					Promise.resolve([{ id: 'ws-default-123', settings: { statuses: { bet: ['signal'] } } }]),
-			} as Response)
-
-			const handler = getHandler('create_objects')
-			await expect(
-				handler({
-					nodes: [{ $id: 'x', type: 'custom_thing' }],
-					edges: [],
-				}),
-			).rejects.toThrow(/get_workspace_schema/)
+			expect(wsCalls).toHaveLength(0)
 		})
 	})
 
@@ -4444,27 +4403,11 @@ describe('tool handlers', () => {
 			({ ok: true, headers: new Headers(), json: () => Promise.resolve(data) }) as Response
 
 		it('create_objects — response is bare, without a setup block', async () => {
-			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
-				const u = String(url)
-				if (u.endsWith('/api/workspaces')) {
-					return setupOkJson([
-						{
-							id: 'ws-default-123',
-							settings: {
-								statuses: { bet: ['signal', 'qualified'] },
-								llm_keys: { anthropic: 'sk-ant-test' },
-							},
-						},
-					])
-				}
-				if (u.endsWith('/api/graph')) {
-					return setupOkJson({ nodes: [{ $id: 'b1', id: 'bet-1', type: 'bet' }], edges: [] })
-				}
-				return setupOkJson({})
-			})
+			mockFetchSuccess({ nodes: [{ $id: 'b1', id: 'bet-1', type: 'bet' }], edges: [] })
 			const handler = getHandler('create_objects')
 			const result = (await handler({
-				nodes: [{ $id: 'b1', type: 'bet' }],
+				workspace_id: 'ws-default-123',
+				nodes: [{ $id: 'b1', type: 'bet', status: 'signal' }],
 				edges: [],
 			})) as { content: Array<{ text: string }> }
 			const parsed = JSON.parse(result.content[0].text)
@@ -4781,6 +4724,7 @@ describe('url field injection', () => {
 
 			const handler = getUrlHandler('create_objects')
 			const result = (await handler({
+				workspace_id: 'ws-default-123',
 				nodes: [{ $id: 'bet-1', type: 'bet', status: 'active' }],
 				edges: [],
 			})) as { content: Array<{ text: string }> }

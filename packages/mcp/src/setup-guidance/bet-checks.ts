@@ -41,7 +41,7 @@ function elevatedStatus(bet: BetInput, ctx: BetCheckContext): SetupCheck | null 
 		message: `Status "${bet.status}" is above the entry status "${lowest}" for ${bet.type}s in this workspace — usually earned, not set at creation.`,
 		fix: {
 			tool: 'update_objects',
-			args_hint: `set status: "${lowest}" (or leave off — create_objects defaults to the lowest configured status)`,
+			args_hint: `set status: "${lowest}"`,
 			why: 'Elevated statuses skip the earlier stages of review, discovery, or qualification.',
 		},
 	}
