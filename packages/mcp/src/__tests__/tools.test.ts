@@ -277,9 +277,9 @@ describe('search_objects schema', () => {
 		expect(result.q).toBe('test')
 	})
 
-	it('accepts an optional cursor for snapshot-consistent pagination', () => {
+	it('does not accept a cursor param — ranked search cannot use the keyset', () => {
 		const result = schema.parse({ q: 'test', cursor: 'anything' })
-		expect(result.cursor).toBe('anything')
+		expect((result as Record<string, unknown>).cursor).toBeUndefined()
 	})
 
 	it('rejects empty q', () => {

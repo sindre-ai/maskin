@@ -30,7 +30,6 @@ import {
 	estimateResponseTokens,
 	getMaxResponseTokens,
 } from '../response-cap'
-import { RESPONSE_SCOPING_ENV_VAR } from '../response-scoping'
 
 const wsId = '00000000-0000-0000-0000-0000000000aa'
 
@@ -504,7 +503,6 @@ describe('token-cap wired into createMcpServer (AC-T5 / AC-T6 end-to-end)', () =
 
 	afterEach(() => {
 		vi.restoreAllMocks()
-		delete process.env[RESPONSE_SCOPING_ENV_VAR]
 		delete process.env[RESPONSE_TOKEN_CAP_ENV_VAR]
 	})
 
@@ -523,7 +521,6 @@ describe('token-cap wired into createMcpServer (AC-T5 / AC-T6 end-to-end)', () =
 	}
 
 	it('list_objects: oversized payload gets trimmed, telemetry sees truncated=true (AC-T5)', async () => {
-		process.env[RESPONSE_SCOPING_ENV_VAR] = '1'
 		// Drop the cap way below the default so a modest fixture triggers trim
 		// without needing to seed a MB of data.
 		process.env[RESPONSE_TOKEN_CAP_ENV_VAR] = '2000'
@@ -562,30 +559,7 @@ describe('token-cap wired into createMcpServer (AC-T5 / AC-T6 end-to-end)', () =
 		expect(evt.truncated).toBe(true)
 	})
 
-	it('flag OFF: token-cap wrapper is a no-op even on an oversized payload (AC-T4)', async () => {
-		// The flag off means the pre-scoping shape ships verbatim — even if the
-		// response would be enormous, the wrapper must not touch it. After T1
-		// the default is ON, so the legacy path requires an explicit opt-out.
-		process.env[RESPONSE_SCOPING_ENV_VAR] = '0'
-		process.env[RESPONSE_TOKEN_CAP_ENV_VAR] = '2000'
-
-		const fixture = Array.from({ length: 25 }, (_, i) => bigObjectRow(i))
-		stubApi(fixture)
-
-		const handler = handlers.get('list_objects')
-		if (!handler) throw new Error('list_objects handler not registered')
-		const result = (await handler({})) as { _meta?: { truncated?: boolean } }
-
-		// Truncated flag is absent (flag-off keeps the original _meta unchanged).
-		expect(result._meta?.truncated).toBeUndefined()
-
-		const sizeEvents = recorded.filter((r) => r.event_type === 'tool_call_response_size')
-		if (sizeEvents[0]?.event_type !== 'tool_call_response_size') throw new Error('narrowing')
-		expect(sizeEvents[0].truncated).toBe(false)
-	})
-
 	it('AC-T6: calling fetch_handle.tool with fetch_handle.ids returns the omitted rows without re-truncation', async () => {
-		process.env[RESPONSE_SCOPING_ENV_VAR] = '1'
 		process.env[RESPONSE_TOKEN_CAP_ENV_VAR] = '2000'
 
 		const fixture = Array.from({ length: 25 }, (_, i) => bigObjectRow(i))

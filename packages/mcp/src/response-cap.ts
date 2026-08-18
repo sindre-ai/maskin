@@ -5,8 +5,7 @@
 // rows from the tail of `structuredContent`, populates
 // `_meta.truncated = true` and `_meta.fetch_handle = { tool, ids }`, and
 // leaves it to the caller to re-fetch the omitted rows via the get-by-id
-// counterpart. Fires only under `MCP_RESPONSE_SCOPING`; flag-off is byte-
-// identical to the pre-scoping response.
+// counterpart. Applied unconditionally on every response.
 //
 // Reuses T1's `bytes/4` token estimator so the cap check and the response-
 // size telemetry event count tokens the same way — otherwise the wrapper

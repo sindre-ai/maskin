@@ -18,7 +18,6 @@ vi.mock('node:fs', () => ({
 
 import { registerAppResource, registerAppTool } from '@modelcontextprotocol/ext-apps/server'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import { RESPONSE_SCOPING_ENV_VAR } from '../response-scoping'
 import {
 	HERO_CARD_TYPE_DEFAULTS,
 	type HeroCardTypeAnnotation,
@@ -129,13 +128,6 @@ describe('tool handlers', () => {
 		vi.clearAllMocks()
 		handlers = new Map()
 
-		// After T1 the response-scoping default flipped to ON. This suite pins
-		// the pre-scoping legacy URL/content contract for every registered tool;
-		// the scoped-path assertions live in response-scoping/response-cap/
-		// verification-harness suites. Explicitly opt out here so the legacy
-		// contract stays testable.
-		process.env[RESPONSE_SCOPING_ENV_VAR] = '0'
-
 		vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
 			handlers.set(name as string, handler as (args: Record<string, unknown>) => Promise<unknown>)
 		})
@@ -146,7 +138,6 @@ describe('tool handlers', () => {
 	afterEach(() => {
 		vi.useRealTimers()
 		vi.restoreAllMocks()
-		delete process.env[RESPONSE_SCOPING_ENV_VAR]
 	})
 
 	function getHandler(name: string) {
@@ -557,7 +548,9 @@ describe('tool handlers', () => {
 			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
 			expect(calledUrl).toContain('/api/objects?')
 			expect(calledUrl).toContain('type=task')
-			expect(calledUrl).toContain('limit=10')
+			// The cursor walk always fetches one extra row (the "has more"
+			// sentinel), so the requested limit of 10 becomes 11 on the wire.
+			expect(calledUrl).toContain('limit=11')
 			expect(calledUrl).toContain('offset=5')
 		})
 
@@ -614,15 +607,16 @@ describe('tool handlers', () => {
 			expect(calledUrl).toContain('order=desc')
 		})
 
-		it('omits sort + order when no sort is passed (additive only)', async () => {
+		it('sorts by createdAt (the cursor walk order), not updatedAt, when no sort is passed', async () => {
 			mockFetchSuccess([])
 
 			const handler = getHandler('list_objects')
 			await handler({ type: 'task' })
 
 			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
-			expect(calledUrl).not.toContain('sort=')
-			expect(calledUrl).not.toContain('order=')
+			expect(calledUrl).toContain('sort=createdAt')
+			expect(calledUrl).toContain('order=desc')
+			expect(calledUrl).not.toContain('sort=updatedAt')
 		})
 
 		it('forwards each metadata_eq entry as metadata.<field>=<value>', async () => {
@@ -2350,8 +2344,11 @@ describe('tool handlers', () => {
 				const handler = getHandler('list_workspace_skills')
 				const result = (await handler({})) as { content: Array<{ text: string }> }
 
-				expect(fetch).toHaveBeenCalledWith(
-					'http://localhost:3000/api/workspaces/ws-default-123/skills',
+				const call = vi.mocked(fetch).mock.calls[0]
+				const calledUrl = call[0] as string
+				expect(calledUrl).toContain('http://localhost:3000/api/workspaces/ws-default-123/skills?')
+				expect(calledUrl).toContain('snapshot_at=')
+				expect(call[1]).toEqual(
 					expect.objectContaining({
 						method: 'GET',
 						headers: expect.objectContaining({
@@ -2371,8 +2368,10 @@ describe('tool handlers', () => {
 				const handler = getHandler('list_workspace_skills')
 				await handler({ workspace_id: 'ws-custom' })
 
-				expect(fetch).toHaveBeenCalledWith(
-					'http://localhost:3000/api/workspaces/ws-custom/skills',
+				const call = vi.mocked(fetch).mock.calls[0]
+				const calledUrl = call[0] as string
+				expect(calledUrl).toContain('http://localhost:3000/api/workspaces/ws-custom/skills?')
+				expect(call[1]).toEqual(
 					expect.objectContaining({
 						headers: expect.objectContaining({ 'X-Workspace-Id': 'ws-custom' }),
 					}),
@@ -3358,12 +3357,16 @@ describe('tool handlers', () => {
 			}
 
 			expect(result.structuredContent.heroCard.objects).toHaveLength(25)
-			expect(result.structuredContent.heroCard.totalCount).toBe(100)
+			// The cursor walk fetches `limit + 1` as a "has more" sentinel and the
+			// requested limit is capped at LIST_ENDPOINT_MAX_LIMIT - 1 (99) so the
+			// sentinel stays within the API's hard cap of 100 — so a 100-row
+			// fixture yields 99 kept rows, not 100.
+			expect(result.structuredContent.heroCard.totalCount).toBe(99)
 			expect(result.structuredContent.heroCard.page).toMatchObject({
 				limit: 25,
 				hasMore: true,
 			})
-			expect(result.structuredContent.objects).toHaveLength(100)
+			expect(result.structuredContent.objects).toHaveLength(99)
 		})
 
 		it('emits a list heroCard for list_actors with type=actor rows', async () => {
@@ -3712,8 +3715,18 @@ describe('tool handlers', () => {
 						ok: true,
 						json: () =>
 							Promise.resolve([
-								{ id: 'ws-1', name: 'Maskin', role: 'owner' },
-								{ id: 'ws-2', name: 'Reflect Studio', role: 'member' },
+								{
+									id: 'ws-1',
+									name: 'Maskin',
+									role: 'owner',
+									createdAt: '2026-02-01T00:00:00.000Z',
+								},
+								{
+									id: 'ws-2',
+									name: 'Reflect Studio',
+									role: 'member',
+									createdAt: '2026-01-01T00:00:00.000Z',
+								},
 							]),
 					} as Response
 				}
@@ -3763,7 +3776,9 @@ describe('tool handlers', () => {
 					heroCard: { kind: string; totalCount?: number }
 				}
 			}
-			expect(calls.some((u) => u.includes('limit=1') && u.includes('offset=0'))).toBe(true)
+			// The cursor walk fetches one extra row (the "has more" sentinel), so
+			// the requested limit of 1 becomes 2 on the wire.
+			expect(calls.some((u) => u.includes('limit=2') && u.includes('offset=0'))).toBe(true)
 			expect(result.structuredContent.heroCard.kind).toBe('list')
 			expect(result.structuredContent.heroCard.totalCount).toBe(1234)
 		})
@@ -3872,7 +3887,9 @@ describe('tool handlers', () => {
 				structuredContent: { heroCard: { kind: string; totalCount?: number } }
 			}
 			const triggersCalls = calls.filter((u) => u.includes('/api/triggers'))
-			expect(triggersCalls.some((u) => u.includes('limit=1') && u.includes('offset=0'))).toBe(true)
+			// The cursor walk fetches one extra row (the "has more" sentinel), so
+			// the requested limit of 1 becomes 2 on the wire.
+			expect(triggersCalls.some((u) => u.includes('limit=2') && u.includes('offset=0'))).toBe(true)
 			expect(result.structuredContent.heroCard.kind).toBe('list')
 			expect(result.structuredContent.heroCard.totalCount).toBe(987)
 		})
@@ -4591,9 +4608,6 @@ describe('url field injection', () => {
 	}
 
 	beforeEach(() => {
-		// url-injection suite pins the legacy content JSON dump — see the same
-		// note on the tool handlers suite above.
-		process.env[RESPONSE_SCOPING_ENV_VAR] = '0'
 		vi.mocked(McpServer).mockImplementation(() => ({ registerResource: vi.fn(), connect: vi.fn() }))
 		vi.mocked(registerAppTool).mockReset()
 		vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
@@ -4609,7 +4623,6 @@ describe('url field injection', () => {
 	afterEach(() => {
 		vi.useRealTimers()
 		vi.restoreAllMocks()
-		delete process.env[RESPONSE_SCOPING_ENV_VAR]
 	})
 
 	it('omits url when webAppBaseUrl is not configured', async () => {
