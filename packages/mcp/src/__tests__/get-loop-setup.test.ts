@@ -132,11 +132,8 @@ describe("get_loop `include: ['setup']`", () => {
 		expect(bad.success).toBe(false)
 	})
 
-	it('omits the setup block when include is empty (existing response shape)', async () => {
-		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
-			ok: true,
-			json: () => Promise.resolve({ loops: [LOOP_ROW] }),
-		} as Response)
+	it('omits the setup block when include is empty, but still nests steps (existing response shape)', async () => {
+		stubHappyPath()
 
 		const handler = getHandler('get_loop')
 		const result = (await handler({ id: 'loop-1' })) as { content: Array<{ text: string }> }
@@ -144,6 +141,18 @@ describe("get_loop `include: ['setup']`", () => {
 
 		expect(parsed.loop.id).toBe('loop-1')
 		expect(parsed.setup).toBeUndefined()
+
+		// `steps` mirrors what create_loop/update_loop return by default: each
+		// trigger nested with its resolved agent, in trigger_ids order.
+		const steps = parsed.steps as Array<{
+			triggerId: string
+			agent: { id: string; name: string } | null
+		}>
+		expect(steps).toHaveLength(2)
+		expect(steps[0].triggerId).toBe('trig-a')
+		expect(steps[0].agent?.id).toBe('agent-a')
+		expect(steps[1].triggerId).toBe('trig-b')
+		expect(steps[1].agent).toBeNull()
 	})
 
 	it('attaches a fresh setup block when include contains `setup`', async () => {

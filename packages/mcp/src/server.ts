@@ -5156,49 +5156,29 @@ export function createMcpServer(config: McpConfig) {
 				(loop.workspaceId as string | undefined) ?? workspace_id ?? config.defaultWorkspaceId
 			const loopWithUrl = wsId ? addUrl(loop, config, wsId, { kind: 'loop', id }) : loop
 
-			const responseBody: Record<string, unknown> = { loop: loopWithUrl }
+			// Same nested trigger+agent view create_loop/update_loop return by
+			// default (fetchLoopStepsView) — get_loop previously only exposed
+			// flat `loop.triggerIds`/`loop.agentIds`, forcing a caller to
+			// separately fetch list_triggers + list_actors and correlate them by
+			// hand to see which agent runs which step.
+			const triggerIds = Array.isArray(loop.triggerIds)
+				? (loop.triggerIds as string[]).filter((t): t is string => typeof t === 'string')
+				: []
+			const steps = await fetchLoopStepsView(config, workspace_id, triggerIds)
+
+			const responseBody: Record<string, unknown> = { loop: loopWithUrl, steps }
 			if (Array.isArray(include) && include.includes('setup')) {
 				responseBody.setup = await safeBuildSetupBlock('loop_setup', async () => {
-					const triggerIds = Array.isArray(loop.triggerIds)
-						? (loop.triggerIds as string[]).filter((t): t is string => typeof t === 'string')
-						: []
 					const inProgress = typeof loop.inProgressCount === 'number' ? loop.inProgressCount : 0
 					const closed = typeof loop.closedCount === 'number' ? loop.closedCount : 0
-					const [workspace, integrations, triggerRows] = await Promise.all([
+					const [workspace, integrations] = await Promise.all([
 						getWorkspace(config, wsId as string),
 						apiCall(config, 'GET', '/api/integrations', undefined, {
 							workspaceId: workspace_id,
 						}),
-						triggerIds.length > 0
-							? apiCall(config, 'GET', '/api/triggers', undefined, {
-									workspaceId: workspace_id,
-								})
-							: Promise.resolve([]),
 					])
 					const workspaceReadiness = readWorkspaceLlmReadiness(workspace.settings)
 					const connectedProviders = readConnectedProviders(integrations)
-					const triggerIdSet = new Set(triggerIds)
-					const scopedTriggers = Array.isArray(triggerRows)
-						? triggerRows.filter((t) => triggerIdSet.has((t as { id?: string }).id as string))
-						: []
-					const agentIds = Array.from(
-						new Set(
-							scopedTriggers
-								.map((t) => (t as { targetActorId?: string }).targetActorId)
-								.filter((a): a is string => typeof a === 'string' && a.length > 0),
-						),
-					)
-					const actorRows =
-						agentIds.length > 0
-							? await apiCall(
-									config,
-									'GET',
-									`/api/actors?ids=${agentIds.map(encodeURIComponent).join(',')}`,
-									undefined,
-									{ workspaceId: workspace_id },
-								)
-							: []
-					const steps = composeLoopSteps(triggerIds, scopedTriggers, actorRows)
 					return buildLoopSetupBlock(
 						{
 							id: id as string,
