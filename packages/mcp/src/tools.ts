@@ -657,7 +657,7 @@ export const tools = {
 	},
 	get_actor: {
 		description:
-			'Get an actor by ID — returns the full record including `description` (short one-liner), `system_prompt` / instructions (longer context on who the actor is and how to work with them), `skills` (id + name of workspace skills attached to the actor), and `connectedTriggers`/`connectedLoops` (the triggers/loops wired to this actor, same as `list_actors`). When a human is @mentioned on a comment, call this to pick up their instructions and tailor your reply.',
+			"Get an actor by ID — returns the full record including `description` (short one-liner), `system_prompt` / instructions (longer context on who the actor is and how to work with them), `skills` (id + name of workspace skills attached to the actor), and `connectedTriggers`/`connectedLoops` (the triggers/loops wired to this actor, same as `list_actors`). When `workspace_id` is given, `status` reflects the actor's membership role in that workspace (owner/admin/member), matching `list_actors`' workspace-scoped `status`. When a human is @mentioned on a comment, call this to pick up their instructions and tailor your reply.",
 		inputSchema: z.object({
 			id: z.string().uuid(),
 			workspace_id: z
@@ -665,7 +665,7 @@ export const tools = {
 				.uuid()
 				.optional()
 				.describe(
-					'Workspace to resolve links against: the returned `url` and the `connected_triggers`/`connected_loops` lists are scoped to a single workspace. Defaults to the connection default workspace if omitted.',
+					'Workspace to resolve against: the returned `url`, `status` (membership role in this workspace), and `connectedTriggers`/`connectedLoops` are all scoped to this workspace. Defaults to the connection default workspace if omitted.',
 				),
 		}),
 	},

@@ -406,6 +406,44 @@ describe('Actors Routes', () => {
 			const body = await res.json()
 			expect(body.skills).toEqual([])
 		})
+
+		it('omits role when no X-Workspace-Id header is provided', async () => {
+			const actor = buildActor()
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [[actor], []]
+
+			const res = await app.request(jsonGet(`/api/actors/${actor.id}`))
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.role).toBeUndefined()
+		})
+
+		it("returns the actor's membership role when X-Workspace-Id is provided", async () => {
+			const wsId = randomUUID()
+			const actor = buildActor()
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [[actor], [], [{ role: 'admin' }]]
+
+			const res = await app.request(jsonGet(`/api/actors/${actor.id}`, { 'x-workspace-id': wsId }))
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.role).toBe('admin')
+		})
+
+		it('returns role: null when the actor is not a member of the given workspace', async () => {
+			const wsId = randomUUID()
+			const actor = buildActor()
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [[actor], [], []]
+
+			const res = await app.request(jsonGet(`/api/actors/${actor.id}`, { 'x-workspace-id': wsId }))
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.role).toBeNull()
+		})
 	})
 
 	describe('PATCH /api/actors/:id', () => {

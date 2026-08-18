@@ -3222,9 +3222,17 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.heroCard, csp: CSP } },
 		},
 		async (args) => {
-			const result = (await apiCall(config, 'GET', `/api/actors/${args.id}`, undefined, {
-				skipWorkspace: true,
-			})) as RawActor
+			// Forwarding workspace_id as X-Workspace-Id lets the backend join
+			// workspace_members and return the actor's role in that workspace
+			// (mirrors list_actors' workspace-scoped `role` field, folded into
+			// buildActorHeroCardObject's `status`).
+			const result = (await apiCall(
+				config,
+				'GET',
+				`/api/actors/${args.id}`,
+				undefined,
+				args.workspace_id ? { workspaceId: args.workspace_id } : { skipWorkspace: true },
+			)) as RawActor
 			const workspaceId = args.workspace_id
 			const wsId = workspaceId ?? config.defaultWorkspaceId
 			// Connected triggers/loops only resolve for a single, known workspace —
