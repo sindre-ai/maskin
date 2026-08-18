@@ -58,16 +58,14 @@ function MarketplaceItemDetailPage() {
 
 	return (
 		<>
-			<PageHeader />
-			<div className="max-w-3xl mx-auto">
-				<MarketplaceItemDetail
-					workspaceId={workspaceId}
-					item={item}
-					parentLoop={data.loop}
-					install={install}
-					installedEntity={installedEntity}
-				/>
-			</div>
+			<PageHeader scrollLocked />
+			<MarketplaceItemDetail
+				workspaceId={workspaceId}
+				item={item}
+				parentLoop={data.loop}
+				install={install}
+				installedEntity={installedEntity}
+			/>
 		</>
 	)
 }

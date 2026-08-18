@@ -7,6 +7,7 @@ import { SHIP_GATE_VIEWPORTS, VIEWPORTS } from '../helpers/viewports'
 // marketplace loads a real set of loops on every run.
 
 const FILTER_LABEL = 'Filter marketplace'
+const EMPTY_COPY = 'Nothing in the catalog matches those filters.'
 
 async function noHorizontalOverflow(page: import('@playwright/test').Page) {
 	const overflow = await page.evaluate(() => {
@@ -131,12 +132,44 @@ test.describe('Marketplace loop filter', () => {
 		const filter = page.getByRole('searchbox', { name: FILTER_LABEL }).and(page.locator(':visible'))
 		await filter.fill('zzzznomatchxyz')
 
-		await expect(page.getByText('No matches')).toBeVisible()
+		await expect(page.getByText(EMPTY_COPY)).toBeVisible()
 		await expect(page.getByRole('region', { name: 'Loops' })).toHaveCount(0)
 		await expect(page.getByRole('region', { name: 'Agents' })).toHaveCount(0)
 		// No stale count line — the old marketplace empty-state copy must not leak.
 		await expect(page.getByText(/No loops yet/i)).toHaveCount(0)
 		await expect(page.getByText(/Showing all/i)).toHaveCount(0)
+	})
+
+	test('Clear filters from the empty state resets the query and the active chip', async ({
+		page,
+		account,
+	}) => {
+		await page.setViewportSize({
+			width: VIEWPORTS.desktopXl.width,
+			height: VIEWPORTS.desktopXl.height,
+		})
+		await page.goto(`/${account.workspaceId}/marketplace`)
+
+		await expect(page.getByRole('region', { name: 'Loops' })).toBeVisible({ timeout: 20000 })
+
+		// Select the Triggers chip (a section with real seeded items), then drive
+		// the query to "No matches" so the clearable empty state is what shows.
+		const chips = page.getByTestId('marketplace-filter-chips')
+		await chips.getByRole('button', { name: /^Triggers\s/ }).click()
+		await expect(page.getByRole('region', { name: 'Triggers' })).toBeVisible()
+
+		const filter = page.getByRole('searchbox', { name: FILTER_LABEL }).and(page.locator(':visible'))
+		await filter.fill('zzzznomatchxyz')
+		await expect(page.getByText(EMPTY_COPY)).toBeVisible()
+
+		// "Clear filters" resets the search box and returns the catalog to "All".
+		// exact:true disambiguates from the sidebar workspace-switcher buttons,
+		// whose accessible name embeds the session workspace name ("E2E Clear
+		// filters from the empty state ...'s Workspace").
+		await page.getByRole('button', { name: 'Clear filters', exact: true }).click()
+		await expect(filter).toHaveValue('')
+		await expect(page.getByRole('region', { name: 'Loops' })).toBeVisible()
+		await expect(page.getByRole('region', { name: 'Triggers' })).toBeVisible()
 	})
 
 	test('layout holds at 375px across default, typing, and empty states', async ({
@@ -160,7 +193,7 @@ test.describe('Marketplace loop filter', () => {
 		await noHorizontalOverflow(page)
 
 		await filter.fill('zzzznomatchxyz')
-		await expect(page.getByText('No matches')).toBeVisible()
+		await expect(page.getByText(EMPTY_COPY)).toBeVisible()
 		await noHorizontalOverflow(page)
 	})
 })

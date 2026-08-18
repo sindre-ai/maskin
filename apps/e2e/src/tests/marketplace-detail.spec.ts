@@ -37,7 +37,17 @@ test.describe('Marketplace detail pages', () => {
 			await expect(page.getByRole('heading', { name: loopName ?? '', level: 1 })).toBeVisible({
 				timeout: 20000,
 			})
-			await expect(page.getByText('What it brings')).toBeVisible()
+			// Disclosure sections derived from the loop's real item snapshots. The
+			// bundle loops' seeded agents may or may not hand control back to the
+			// operator, so only the sections that always render from real data are
+			// asserted here — the "asks you" classifier is covered by unit tests.
+			const detail = page.getByRole('main')
+			await expect(detail.getByText('The loop, once installed')).toBeVisible()
+			await expect(detail.getByText('What it brings')).toBeVisible()
+			await expect(detail.getByText('How it runs')).toBeVisible()
+			await expect(detail.getByText('Version')).toBeVisible()
+			await expect(detail.getByText('Permissions')).toBeVisible()
+			await expect(detail.getByText('This workspace only')).toBeVisible()
 
 			// Layout gate — the detail page must not overflow the viewport.
 			const overflow = await page.evaluate(() => ({
@@ -51,6 +61,22 @@ test.describe('Marketplace detail pages', () => {
 			await expect(loopsSection).toBeVisible()
 		})
 	}
+
+	test('detail surface renders in dark mode with colour tokens', async ({ page, account }) => {
+		await page.setViewportSize({ width: 768, height: 1024 })
+		await page.emulateMedia({ colorScheme: 'dark' })
+		await page.goto(`/${account.workspaceId}/marketplace`)
+
+		const loopsSection = page.getByRole('region', { name: 'Loops' })
+		await expect(loopsSection).toBeVisible({ timeout: 20000 })
+		const firstCard = loopsSection.locator('article').first()
+		await firstCard.getByRole('link').click({ position: { x: 10, y: 10 } })
+
+		const detail = page.getByRole('main')
+		await expect(detail.getByText('The loop, once installed')).toBeVisible({ timeout: 20000 })
+		await expect(detail.getByText('How it runs')).toBeVisible()
+		await expect(detail.getByText('Permissions')).toBeVisible()
+	})
 
 	test('opens an item detail page from the Agents section and links back to its loop', async ({
 		page,
@@ -113,7 +139,11 @@ test.describe('Marketplace detail pages', () => {
 		// locator.click() — never auto-scrolls, so the first "not yet installed"
 		// card must be scrolled into view first: with enough marketplace items
 		// already installed in this workspace, it can sit below the fold.
-		const chip = card.getByText(/^(Agent|Trigger|Skill|Integration)$/)
+		// `.first()` is the card's kind eyebrow: a single-type loop card now also
+		// carries a kind chip below the description with the same label, so an
+		// unqualified match is ambiguous. Either element proves the point — both
+		// are inert text under the card's full-bleed overlay link.
+		const chip = card.getByText(/^(Agent|Trigger|Skill|Integration)$/).first()
 		await chip.scrollIntoViewIfNeeded()
 		const chipBox = await chip.boundingBox()
 		if (!chipBox) throw new Error('missing chip bounding box')
@@ -141,5 +171,82 @@ test.describe('Marketplace detail pages', () => {
 		await stableCard.getByRole('button', { name: /^install$/i }).click()
 		await expect(stableCard.getByText('Installed')).toBeVisible()
 		await expect(page).toHaveURL(new RegExp(`/${account.workspaceId}/marketplace$`))
+	})
+
+	// Removing a loop discards every agent, trigger and skill it provisioned
+	// and there is no undo, so the detail page's overflow Remove must open the
+	// same UninstallDialog the catalog card uses — never mutate on select. This
+	// spec previously asserted the opposite (immediate uninstall); that was a
+	// safety defect, not a ratified direction. Behavioural invariant only — one
+	// viewport is enough. Mirrored at the unit level in
+	// apps/web/src/__tests__/components/marketplace/marketplace-loop-detail.test.tsx;
+	// this E2E gate is the real-stack backstop that catches API-level breakage
+	// (e.g. the bundle-install 500 root-caused 2026-08-13) which a component
+	// test with mocked mutations can't see.
+	test('overflow "Remove from workspace" confirms before uninstalling', async ({
+		page,
+		account,
+	}) => {
+		await page.setViewportSize({ width: 1024, height: 768 })
+		await page.goto(`/${account.workspaceId}/marketplace`)
+
+		const loopsSection = page.getByRole('region', { name: 'Loops' })
+		await expect(loopsSection).toBeVisible({ timeout: 20000 })
+
+		const firstCard = loopsSection.locator('article').first()
+		const loopName = (await firstCard.locator('h3').first().textContent())?.trim()
+		expect(loopName).toBeTruthy()
+
+		await firstCard.getByRole('link').click({ position: { x: 10, y: 10 } })
+
+		const detailUrl = /\/marketplace\/[^/]+\/?$/
+		await expect(page).toHaveURL(detailUrl)
+		await expect(page.getByRole('heading', { name: loopName ?? '', level: 1 })).toBeVisible({
+			timeout: 20000,
+		})
+
+		// Fresh workspace → loop is not installed yet, so the header shows the
+		// Install button. Installing from the detail surface is the exact flow
+		// that unlocks the overflow menu whose Remove item this test guards.
+		const detail = page.getByRole('main')
+		await detail.getByRole('button', { name: /^install$/i }).click()
+
+		const overflowButton = detail.getByRole('button', { name: 'Loop actions' })
+		await expect(overflowButton).toBeVisible({ timeout: 20000 })
+
+		expect(await page.getByRole('dialog').count()).toBe(0)
+		const urlBefore = page.url()
+
+		await overflowButton.click()
+		const removeItem = page.getByRole('menuitem', { name: 'Remove from workspace' })
+		await expect(removeItem).toBeVisible()
+		await removeItem.click()
+
+		// The confirmation stands between the click and the mutation, and it
+		// carries the keep-or-discard choice for the provisioned items.
+		const dialog = page.getByRole('dialog')
+		await expect(dialog).toBeVisible()
+		await expect(dialog.getByText(`Remove ${loopName}?`)).toBeVisible()
+		await expect(dialog.getByText('Remove everything')).toBeVisible()
+		await expect(dialog.getByText('Keep agents, triggers, and skills')).toBeVisible()
+
+		// Cancelling leaves the install untouched — the loop is still installed
+		// and the page has not navigated.
+		await dialog.getByRole('button', { name: 'Cancel' }).click()
+		await expect(dialog).toHaveCount(0)
+		await expect(overflowButton).toBeVisible()
+		await expect(detail.getByRole('button', { name: /^install$/i })).toHaveCount(0)
+		expect(page.url()).toBe(urlBefore)
+
+		// Confirming is what actually removes it.
+		await overflowButton.click()
+		await page.getByRole('menuitem', { name: 'Remove from workspace' }).click()
+		await page.getByRole('dialog').getByRole('button', { name: 'Remove' }).click()
+
+		await expect(detail.getByRole('button', { name: /^install$/i })).toBeVisible({
+			timeout: 20000,
+		})
+		await expect(overflowButton).toHaveCount(0)
+		expect(page.url()).toBe(urlBefore)
 	})
 })
