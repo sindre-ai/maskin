@@ -1,3 +1,5 @@
+import { Lightbulb, type LucideIcon, SquareCheck, Target } from 'lucide-react'
+
 export const statusColors: Record<string, { bg: string; text: string }> = {
 	new: { bg: 'bg-status-new-bg', text: 'text-status-new-text' },
 	todo: { bg: 'bg-status-todo-bg', text: 'text-status-todo-text' },
@@ -32,12 +34,27 @@ export const statusColors: Record<string, { bg: string; text: string }> = {
 	snapshotting: { bg: 'bg-status-processing-bg', text: 'text-status-processing-text' },
 	waiting_for_input: { bg: 'bg-status-blocked-bg', text: 'text-status-blocked-text' },
 	timeout: { bg: 'bg-status-failed-bg', text: 'text-status-failed-text' },
+	// Billing lifecycle. Without these, StatusBadge falls through to its
+	// hardcoded zinc-700/zinc-300 default, which is a dark pill with low-contrast
+	// text on a white invoice row. `past_due` and `canceled` are included because
+	// apps/dev/src/routes/billing.ts can write them.
+	paid: { bg: 'bg-status-succeeded-bg', text: 'text-status-succeeded-text' },
+	inactive: { bg: 'bg-status-parked-bg', text: 'text-status-parked-text' },
+	past_due: { bg: 'bg-status-at_risk-bg', text: 'text-status-at_risk-text' },
+	// billing.ts:381 writes 'declined' when a payment fails. Without an entry it
+	// falls through to StatusBadge's zinc-700 default — a dark pill with
+	// low-contrast text, on the one card a user needs to be able to read.
+	declined: { bg: 'bg-status-failed-bg', text: 'text-status-failed-text' },
+	canceled: { bg: 'bg-status-discarded-bg', text: 'text-status-discarded-text' },
 }
 
-export const typeIcons: Record<string, string> = {
-	insight: '💡',
-	bet: '🎯',
-	task: '☐',
+// Lucide glyphs per object type, for the TypeBadge tile. These replaced an
+// emoji map (💡 🎯 ☐) that nothing rendered — the design system forbids emoji
+// outright, so it could only ever have been a latent violation.
+export const typeIcons: Record<string, LucideIcon> = {
+	insight: Lightbulb,
+	bet: Target,
+	task: SquareCheck,
 }
 
 export const typeColors: Record<string, { bg: string; text: string }> = {
@@ -54,8 +71,44 @@ export function getTypeColor(type: string) {
 	return typeColors[type] ?? defaultTypeColor
 }
 
+export const TYPE_LABELS: Record<string, string> = {
+	insight: 'Insight',
+	bet: 'Bet',
+	task: 'Task',
+}
+
+export function typeLabel(type: string): string {
+	return TYPE_LABELS[type] ?? type
+}
+
+// Human-readable labels for the workflow statuses the /search view ships with.
+// Custom statuses configured in workspace settings render via `statusLabel`'s
+// humanize fallback (underscores → spaces).
+export const STATUS_LABELS: Record<string, string> = {
+	active: 'Active',
+	in_progress: 'In progress',
+	todo: 'To do',
+	define: 'Define',
+	in_review: 'In review',
+	done: 'Done',
+	validated: 'Validated',
+}
+
+export function statusLabel(status: string): string {
+	return STATUS_LABELS[status] ?? status.replace(/_/g, ' ')
+}
+
 export function getStatusColor(status: string) {
 	return statusColors[status] ?? defaultStatusColor
 }
 
 export const API_BASE = '/api'
+
+// One-line copy for the built-in object types (mockup NEWKINDS, lines 254-262).
+// Module and custom types deliberately have no entry — we describe a type only
+// when the product actually defines it, and fall back to the bare label.
+export const objectTypeDescriptions: Record<string, string> = {
+	insight: 'A structured finding, linked to its evidence',
+	bet: 'A hypothesis to run across cycles',
+	task: 'A piece of work to track through to done',
+}

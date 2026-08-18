@@ -1,0 +1,119 @@
+/* v2 type scale — every rem value the mockup uses, plus the two families. */
+
+:root {
+  /* --- families --- */
+  --font-sans: 'Schibsted Grotesk', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* --- weights --- */
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+
+  /* --- UI size scale ---
+     The v2 mockup uses a dense set of px sizes. Ordered small→large.
+     Half-step sizes are intentional — the mockup uses them, do not round. */
+  --text-7-5: 7.5px;   /* micro tally */
+  --text-8: 8px;       /* dense group-header tag */
+  --text-8-5: 8.5px;   /* uppercase micro-label at max compression ("VIEW", "MENTIONED") */
+  --text-9: 9px;
+  --text-9-5: 9.5px;   /* uppercase micro-label default */
+  --text-10: 10px;
+  --text-10-5: 10.5px; /* meta row under waveform, group open count */
+  --text-11: 11px;
+  --text-11-5: 11.5px; /* nav-item, dense meta, filter chip label */
+  --text-12: 12px;     /* menu popover row, toast, small chip label */
+  --text-12-5: 12.5px; /* palette result, tab label, group title */
+  --text-13: 13px;     /* row body, list item, body copy */
+  --text-13-5: 13.5px; /* feed card headline */
+  --text-14: 14px;     /* section prose (mobile) */
+  --text-15: 15px;
+  --text-16: 16px;     /* brief headline, section-heading */
+  --text-17: 17px;
+  --text-19: 19px;     /* screen heading */
+  --text-22: 22px;     /* page headline */
+
+  /* --- line heights --- */
+  --lh-tight: 1;
+  --lh-snug: 1.2;
+  --lh-normal: 1.35;   /* headings */
+  --lh-body: 1.55;
+  --lh-prose: 1.7;     /* brief paragraphs */
+
+  /* --- tracking --- */
+  --tracking-tight: -.02em;    /* page headline */
+  --tracking-tighter: -.015em; /* section heading */
+  --tracking-snug: -.008em;    /* feed card headline */
+  --tracking-normal: 0;
+  --tracking-wide: .03em;      /* small caps tag */
+  --tracking-wider: .06em;     /* meta dots */
+  --tracking-widest: .11em;    /* JetBrains Mono micro-label ("VIEW", "MENTIONED") */
+}
+
+/* --- Recipes ---
+   Every recipe below is used in the v2 mockup. If a new pattern appears,
+   extend this file rather than hardcoding sizes at the callsite. */
+
+/* Uppercase micro-label — the JetBrains Mono "VIEW" / "MENTIONED" style. */
+.type-micro-label {
+  font: var(--fw-bold) var(--text-8-5) / 1 var(--font-mono);
+  letter-spacing: var(--tracking-widest);
+  color: var(--ink-placeholder);
+  text-transform: uppercase;
+}
+
+/* Dense uppercase label ("BET", "TASK", "INSIGHT" tags on group headers). */
+.type-dense-label {
+  font: var(--fw-bold) var(--text-8) / 1 var(--font-mono);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+/* Body row text — feed card meta, comments, chat lines. */
+.type-body {
+  font: var(--fw-regular) var(--text-13) / var(--lh-body) var(--font-sans);
+  color: var(--ink-3);
+}
+
+/* Emphasised list-item title — feed card tldr. */
+.type-title {
+  font: var(--fw-semibold) var(--text-13-5) / var(--lh-normal) var(--font-sans);
+  letter-spacing: var(--tracking-snug);
+  color: var(--ink);
+}
+
+/* Group title on grouped-card cluster. */
+.type-group-title {
+  font: var(--fw-bold) var(--text-12-5) / var(--lh-normal) var(--font-sans);
+  letter-spacing: -.01em;
+  color: var(--ink);
+}
+
+/* Section heading (For You brief, panel titles). */
+.type-heading {
+  font: var(--fw-bold) var(--text-16) / var(--lh-normal) var(--font-sans);
+  letter-spacing: var(--tracking-tighter);
+  color: var(--ink);
+  text-wrap: pretty;
+}
+
+/* Page-level headline (Marketplace detail, Object detail). */
+.type-display {
+  font: var(--fw-bold) var(--text-22) / var(--lh-normal) var(--font-sans);
+  letter-spacing: var(--tracking-tight);
+  color: var(--ink);
+}
+
+/* Prose paragraph inside a brief or modal body. */
+.type-prose {
+  font: var(--fw-regular) var(--text-13) / var(--lh-prose) var(--font-sans);
+  color: var(--ink-2);
+  text-wrap: pretty;
+}
+
+/* Mono meta (ids, cron, counts). */
+.type-mono {
+  font: var(--fw-medium) var(--text-11) / var(--lh-tight) var(--font-mono);
+  color: var(--ink-4);
+}

@@ -2,19 +2,20 @@ import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 // T2 (retain view state across in-app navigation) — silent restore of group
-// expansion + first-visible-row scroll on the Objects list. Both fields are
+// collapse + first-visible-row scroll on the Objects list. Both fields are
 // persisted through the existing per-actor display-settings row (extended in
 // T1) and hydrated on the next mount.
 test.describe('Objects list retains view state across back-nav', () => {
 	for (const vp of SHIP_GATE_VIEWPORTS) {
-		test(`group expansion is restored after clicking into an object and back @ ${vp.label}`, async ({
+		test(`a collapsed group stays collapsed after clicking into an object and back @ ${vp.label}`, async ({
 			page,
 			account,
 		}) => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
 
 			// Seed two bets in two different statuses so grouping by status
-			// produces multiple collapsed groups.
+			// produces more than one group — collapsing one must not touch the
+			// other.
 			await account.api.createObject(account.workspaceId, {
 				type: 'bet',
 				title: 'Bet Alpha (active)',
@@ -28,16 +29,16 @@ test.describe('Objects list retains view state across back-nav', () => {
 
 			await page.goto(`/${account.workspaceId}/objects?type=bet&groupBy=status`)
 
-			// Groups render collapsed by default — the group header shows the
-			// status label + count, and sub-rows are hidden until expanded.
-			// Wait for the "active" group toggle as the ready signal.
+			// Groups rest OPEN — the header shows the status label + count and its
+			// rows are reachable without a click.
 			const activeGroupToggle = page.getByRole('button', {
 				name: /active/i,
-				expanded: false,
+				expanded: true,
 			})
 			await expect(activeGroupToggle).toBeVisible({ timeout: 10_000 })
+			await expect(page.getByText('Bet Alpha (active)')).toBeVisible()
 
-			// Expand the active group. Fire the click and wait for the
+			// Collapse the active group. Fire the click and wait for the
 			// debounced PUT concurrently so the response isn't missed if the
 			// toggle-driven write-through fires before we start listening.
 			const [putResponse] = await Promise.all([
@@ -49,23 +50,33 @@ test.describe('Objects list retains view state across back-nav', () => {
 			])
 			expect(putResponse.ok()).toBe(true)
 
-			await expect(page.getByRole('button', { name: /active/i, expanded: true })).toBeVisible()
-			await expect(page.getByText('Bet Alpha (active)')).toBeVisible()
+			await expect(page.getByRole('button', { name: /active/i, expanded: false })).toBeVisible()
+			await expect(page.getByText('Bet Alpha (active)')).toBeHidden()
+			// Only its own group went down.
+			await expect(page.getByText('Bet Beta (signal)')).toBeVisible()
 
-			// Click into the object, then browser-back to the list.
-			await page.getByText('Bet Alpha (active)').click()
+			// Click into an object from the still-open group, then browser-back.
+			await page.getByText('Bet Beta (signal)').click()
 			await expect(page).toHaveURL(/\/objects\//, { timeout: 10_000 })
 			await page.goBack()
 
-			// After silent restore, the "active" group is expanded again and
-			// the row is visible.
-			await expect(page.getByRole('button', { name: /active/i, expanded: true })).toBeVisible({
+			// After silent restore, the "active" group is still collapsed and its
+			// row is still hidden.
+			await expect(page.getByRole('button', { name: /active/i, expanded: false })).toBeVisible({
 				timeout: 10_000,
 			})
-			await expect(page.getByText('Bet Alpha (active)')).toBeVisible()
+			await expect(page.getByText('Bet Alpha (active)')).toBeHidden()
 
 			// Restore is silent: no toast, no banner, no "resume" affordance.
 			await expect(page.locator('[role="status"]')).toHaveCount(0)
+
+			// The collapse also survives a hard reload — the session view-state
+			// store is wiped, so this leg exercises the persisted blob.
+			await page.reload()
+			await expect(page.getByRole('button', { name: /active/i, expanded: false })).toBeVisible({
+				timeout: 10_000,
+			})
+			await expect(page.getByText('Bet Alpha (active)')).toBeHidden()
 		})
 
 		test(`scroll anchor is restored to the previously-first-visible row after back-nav @ ${vp.label}`, async ({

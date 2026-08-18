@@ -19,6 +19,7 @@ import agentServerReconcileRoutes from './routes/agent-server-reconcile'
 import agentSkillAttachmentsRoutes from './routes/agent-skill-attachments'
 import agentSkillsRoutes from './routes/agent-skills'
 import authRoutes from './routes/auth'
+import billingRoutes from './routes/billing'
 import briefingRoutes from './routes/briefing'
 import claudeOauthRoutes from './routes/claude-oauth'
 import conversationsRoutes from './routes/conversations'
@@ -127,13 +128,21 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 					column_name?: string
 			  }
 			| undefined
+		// Non-Postgres errors (S3 ECONNREFUSED, fetch failures, AggregateError,
+		// etc.) don't populate the pg* fields on `cause`, so a raw `Unhandled
+		// error` line with only pgCode=undefined tells the on-call nothing. Pull
+		// the error's own name + optional `code` off the top-level err so
+		// e.g. an S3 ECONNREFUSED shows up as `errName: AggregateError,
+		// errCode: ECONNREFUSED` in the webServer stdout Playwright captures.
+		const errName = (err as { name?: string }).name
+		const errCode = (err as { code?: string }).code
 		// Guarded — this is the last line of defense before a response goes out.
 		// A throwing Sentry call must never suppress the actual error response
 		// or the diagnostic log line below.
 		try {
 			Sentry.captureException(err, {
 				tags: { path: c.req.path, method: c.req.method },
-				extra: { pgCode: cause?.code, pgTable: cause?.table_name },
+				extra: { pgCode: cause?.code, pgTable: cause?.table_name, errCode, errName },
 			})
 		} catch (sentryErr) {
 			console.error('[sentry] captureException failed', sentryErr)
@@ -142,6 +151,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 			'Unhandled error',
 			{
 				error: String(err),
+				errName,
+				errCode,
 				cause: cause?.message ?? (cause ? String(cause) : undefined),
 				pgCode: cause?.code,
 				pgDetail: cause?.detail,
@@ -230,6 +241,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 
 	app.route('/api/objects', objectsRoutes)
 	app.route('/api/briefing', briefingRoutes)
+	app.route('/api/billing', billingRoutes)
 	app.route('/api/public/landing-events', publicLandingEventsRoutes)
 	app.route('/api/public/bet-strategist', publicBetStrategistRoutes)
 	app.route('/api/admin/landing-funnel', adminLandingFunnelRoutes)

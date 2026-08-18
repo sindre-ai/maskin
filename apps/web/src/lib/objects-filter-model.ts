@@ -51,8 +51,11 @@ export interface ObjectsFilterModelInput {
 	columnVisibility?: VisibilityState
 }
 
-export const DEFAULT_SORT = 'createdAt'
-export const DEFAULT_ORDER = 'desc'
+// The Objects list's resting order, single-sourced. The route's `validateSearch`
+// seeds the URL from these and the Display panel reads them to decide whether
+// the current order is an override worth surfacing — so the two cannot drift.
+export const DEFAULT_SORT = 'updatedAt'
+export const DEFAULT_ORDER: 'asc' | 'desc' = 'desc'
 
 export function defaultObjectsFilterModel(): ObjectsFilterModel {
 	return { sort: DEFAULT_SORT, order: DEFAULT_ORDER, metadata: {}, includeArchived: false }
@@ -139,7 +142,10 @@ export function toDisplaySettingsBody(
 	> = {
 		sort: model.sort,
 		order: model.order,
-		groupBy: model.groupBy ?? null,
+		// GROUP BY rests on State, so an absent group is the operator's explicit
+		// "None" — persist it as the `none` sentinel the URL uses. `null` would
+		// be indistinguishable from "never chose", which now means State.
+		groupBy: model.groupBy ?? 'none',
 		columnVisibility: model.columnVisibility,
 	}
 	const filters: { status?: string; driver?: string; metadata?: Record<string, string> } = {}

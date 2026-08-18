@@ -173,7 +173,7 @@ test.describe('For You feed — no-regression surfaces against a real feed', () 
 		expect(errors).toEqual([])
 	})
 
-	test('conversation history before the unread boundary collapses behind Read more, against real thread data', async ({
+	test('conversation history before the unread boundary collapses behind the scroll-up hint, against real thread data', async ({
 		page,
 		account,
 	}) => {
@@ -242,11 +242,11 @@ test.describe('For You feed — no-regression surfaces against a real feed', () 
 		await expect(card.getByText('Second earlier comment, already read.')).not.toBeVisible()
 		await expect(card.getByText('First earlier comment, already read.')).not.toBeVisible()
 
-		await card.getByRole('button', { name: 'Read more (2 earlier)' }).click()
+		await card.getByRole('button', { name: 'Scroll up to load 2 earlier messages' }).click()
 
 		await expect(card.getByText('Second earlier comment, already read.')).toBeVisible()
 		await expect(card.getByText('First earlier comment, already read.')).toBeVisible()
-		await expect(card.getByRole('button', { name: /Read more/ })).not.toBeVisible()
+		await expect(card.getByRole('button', { name: /Scroll up to load/ })).not.toBeVisible()
 
 		expect(errors).toEqual([])
 	})

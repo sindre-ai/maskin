@@ -95,7 +95,7 @@ export function SubscribeToggle({
 					disabled={pending}
 					aria-label={`Subscribe to this ${entityType}`}
 					title="Subscribe — see unread badges for new comments"
-					className="h-5 w-5 rounded-full border-dashed bg-transparent p-0 text-text-secondary hover:bg-bg-hover hover:text-text [&_svg]:size-3"
+					className="h-5 w-5 rounded-full border-dashed bg-transparent p-0 text-muted-foreground hover:bg-accent hover:text-foreground [&_svg]:size-3"
 				>
 					<Plus />
 				</Button>
@@ -108,7 +108,7 @@ export function SubscribeToggle({
 					disabled={pending}
 					aria-label={`Unsubscribe from this ${entityType}`}
 					title="Unsubscribe — stop getting unread badges"
-					className="h-5 w-5 rounded-full p-0 text-text-secondary hover:bg-bg-hover hover:text-text [&_svg]:size-3"
+					className="h-5 w-5 rounded-full p-0 text-muted-foreground hover:bg-accent hover:text-foreground [&_svg]:size-3"
 				>
 					<BellOff />
 				</Button>

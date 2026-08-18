@@ -270,14 +270,16 @@ describe('ObjectFiles', () => {
 		expect(within(getFileRow('spec.md')).getByText('2.0 KB')).toBeInTheDocument()
 	})
 
-	it('shows the empty-state uploader when no files are attached', () => {
+	it('reads "Nothing attached." when no files are attached, with the attach control still present', () => {
 		useFilesMock.mockReturnValue({ data: [] })
 
 		render(<ObjectFiles {...baseProps} relationships={{ asSource: [], asTarget: [] }} />, {
 			wrapper: TestWrapper,
 		})
 
-		expect(screen.getByText('Drop a file here or click to upload')).toBeInTheDocument()
+		expect(screen.getByText('Nothing attached.')).toBeInTheDocument()
+		expect(screen.queryByText('Drop a file here or click to upload')).not.toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /attach file/i })).toBeInTheDocument()
 	})
 
 	it('rehydrates Created/Modified visibility from persisted settings under object_type "files"', async () => {

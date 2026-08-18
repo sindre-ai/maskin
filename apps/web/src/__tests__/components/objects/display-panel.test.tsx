@@ -57,16 +57,17 @@ describe('DisplayPanel', () => {
 		expect(screen.getByText('2')).toBeInTheDocument()
 	})
 
-	it('opens panel and renders the five section headers', async () => {
+	// The View control is a segmented List | Board rail with no label of its own
+	// (mockup 694–697); Properties is a row of toggle pills (mockup 709–712).
+	it('opens panel and renders the section headers', async () => {
 		const user = userEvent.setup()
 		renderPanel({
 			actors: [{ id: 'a1', name: 'Alice', type: 'human', createdAt: '', updatedAt: '' } as never],
 		})
 		await user.click(screen.getByRole('button', { name: /display/i }))
-		expect(screen.getByText('View')).toBeInTheDocument()
-		expect(screen.getByText('Ordering')).toBeInTheDocument()
-		expect(screen.getByText('Grouping')).toBeInTheDocument()
 		expect(screen.getByText('Filters')).toBeInTheDocument()
+		expect(screen.getByText('Grouping')).toBeInTheDocument()
+		expect(screen.getByText('Ordering')).toBeInTheDocument()
 		expect(screen.getByText('Properties')).toBeInTheDocument()
 	})
 
@@ -152,24 +153,25 @@ describe('DisplayPanel', () => {
 		expect(props.onDriverFilterChange).toHaveBeenCalledWith(undefined)
 	})
 
-	it('renders one pill per hideable column in Properties', async () => {
+	it('renders one Properties pill per hideable column, pressed when shown', async () => {
 		const user = userEvent.setup()
 		renderPanel({ columnVisibility: { status: true, owner: false, createdAt: true } })
 		await user.click(screen.getByRole('button', { name: /display/i }))
-		const propertiesSection = screen.getByText('Properties').closest('div') as HTMLElement
-		expect(within(propertiesSection).getByRole('button', { name: 'Status' })).toBeInTheDocument()
-		expect(within(propertiesSection).getByRole('button', { name: 'Owner' })).toBeInTheDocument()
-		expect(within(propertiesSection).getByRole('button', { name: 'Created' })).toBeInTheDocument()
+		// Scoped to the pill row — "Created" is also an option in the Sort by menu.
+		const pills = within(screen.getByTestId('display-properties'))
+		expect(pills.getByRole('button', { name: 'Status' })).toHaveAttribute('aria-pressed', 'true')
+		expect(pills.getByRole('button', { name: 'Owner' })).toHaveAttribute('aria-pressed', 'false')
+		expect(pills.getByRole('button', { name: 'Created' })).toHaveAttribute('aria-pressed', 'true')
 		// Non-hideable column does not get a pill
-		expect(within(propertiesSection).queryByRole('button', { name: 'Title' })).toBeNull()
+		expect(pills.queryByRole('button', { name: 'Title' })).toBeNull()
 	})
 
-	it('toggles a column when its property pill is clicked', async () => {
+	it('toggles a column when its Properties pill is clicked', async () => {
 		const user = userEvent.setup()
 		const { props } = renderPanel({ columnVisibility: { status: true } })
 		await user.click(screen.getByRole('button', { name: /display/i }))
-		const propertiesSection = screen.getByText('Properties').closest('div') as HTMLElement
-		await user.click(within(propertiesSection).getByRole('button', { name: 'Status' }))
+		const pills = within(screen.getByTestId('display-properties'))
+		await user.click(pills.getByRole('button', { name: 'Status' }))
 		expect(props.onColumnVisibilityChange).toHaveBeenCalledWith('status', false)
 	})
 
@@ -177,7 +179,6 @@ describe('DisplayPanel', () => {
 		const user = userEvent.setup()
 		renderPanel({ showView: false })
 		await user.click(screen.getByRole('button', { name: /display/i }))
-		expect(screen.queryByText('View')).toBeNull()
 		expect(screen.queryByRole('button', { name: 'List' })).toBeNull()
 		expect(screen.queryByRole('button', { name: 'Board' })).toBeNull()
 		// Other sections still render.
@@ -333,20 +334,20 @@ describe('DisplayPanel', () => {
 	})
 
 	describe('Show — Include archived', () => {
-		it('does not render the Show section when onIncludeArchivedChange is unset', async () => {
+		it('does not render the Show archived row when onIncludeArchivedChange is unset', async () => {
 			const user = userEvent.setup()
 			renderPanel()
 			await user.click(screen.getByRole('button', { name: /display/i }))
-			expect(screen.queryByText('Show')).toBeNull()
-			expect(screen.queryByRole('switch', { name: /include archived/i })).toBeNull()
+			expect(screen.queryByText('Show archived')).toBeNull()
+			expect(screen.queryByRole('switch', { name: /show archived/i })).toBeNull()
 		})
 
-		it('renders the Show section and reflects the current includeArchived state', async () => {
+		it('renders the Show archived row and reflects the current includeArchived state', async () => {
 			const user = userEvent.setup()
 			renderPanel({ includeArchived: true, onIncludeArchivedChange: vi.fn() })
 			await user.click(screen.getByRole('button', { name: /display/i }))
-			expect(screen.getByText('Show')).toBeInTheDocument()
-			const toggle = screen.getByRole('switch', { name: /include archived/i })
+			expect(screen.getByText('Show archived')).toBeInTheDocument()
+			const toggle = screen.getByRole('switch', { name: /show archived/i })
 			expect(toggle).toBeInTheDocument()
 			expect(toggle).toHaveAttribute('data-state', 'checked')
 		})
@@ -356,8 +357,16 @@ describe('DisplayPanel', () => {
 			const onIncludeArchivedChange = vi.fn()
 			renderPanel({ includeArchived: false, onIncludeArchivedChange })
 			await user.click(screen.getByRole('button', { name: /display/i }))
-			await user.click(screen.getByRole('switch', { name: /include archived/i }))
+			await user.click(screen.getByRole('switch', { name: /show archived/i }))
 			expect(onIncludeArchivedChange).toHaveBeenCalledWith(true)
+		})
+
+		it('renders the archived count beside the label when supplied', async () => {
+			const user = userEvent.setup()
+			renderPanel({ includeArchived: true, onIncludeArchivedChange: vi.fn(), archivedCount: 4 })
+			await user.click(screen.getByRole('button', { name: /display/i }))
+			const row = screen.getByText('Show archived').parentElement as HTMLElement
+			expect(row.textContent).toContain('4')
 		})
 
 		it('counts the includeArchived flag in the trigger badge', () => {
@@ -392,21 +401,42 @@ describe('DisplayPanel', () => {
 			expect(screen.getByText('1')).toBeInTheDocument()
 		})
 
-		it('renders section headers in the order View → Show → Ordering → Grouping → Filters', async () => {
-			// The approved UX direction pins Show between View and Ordering.
-			// Guard the DOM order so a future refactor can't silently slide
-			// Show back past Grouping.
+		it('renders sections in the mockup order (694–716)', async () => {
+			// Mockup 926–966 pins FILTER BY → GROUP BY → ORDER BY → SHOW IN LIST →
+			// Show archived → Reset all. Guard the DOM order so a future refactor
+			// can't silently slide a section past its neighbour. (The value pickers
+			// — "Filters" — ride directly under the axis they configure.)
 			const user = userEvent.setup()
 			renderPanel({
 				includeArchived: false,
 				onIncludeArchivedChange: vi.fn(),
+				onFilterByChange: vi.fn(),
+				filterBy: 'status' as const,
+				onResetToDefault: vi.fn(),
 				actors: [{ id: 'a1', name: 'Alice', type: 'human', createdAt: '', updatedAt: '' } as never],
 			})
 			await user.click(screen.getByRole('button', { name: /display/i }))
 			const headers = screen
-				.getAllByText(/^(View|Show|Ordering|Grouping|Filters|Properties)$/)
+				.getAllByText(/^(Filter by|Filters|Grouping|Ordering|Properties|Show archived|Reset all)$/)
 				.map((el) => el.textContent)
-			expect(headers).toEqual(['View', 'Show', 'Ordering', 'Grouping', 'Filters', 'Properties'])
+			expect(headers).toEqual([
+				'Filter by',
+				'Filters',
+				'Grouping',
+				'Ordering',
+				'Properties',
+				'Show archived',
+				'Reset all',
+			])
+		})
+
+		it('calls onFilterByChange when a FILTER BY axis is picked', async () => {
+			const user = userEvent.setup()
+			const onFilterByChange = vi.fn()
+			renderPanel({ filterBy: 'status' as const, onFilterByChange })
+			await user.click(screen.getByRole('button', { name: /display/i }))
+			await user.click(screen.getByRole('button', { name: 'Attention' }))
+			expect(onFilterByChange).toHaveBeenCalledWith('attention')
 		})
 
 		it('keeps the popover open when includeArchived toggles false→true (e.g. via URL commit)', async () => {
@@ -437,24 +467,24 @@ describe('DisplayPanel', () => {
 			}
 			const { rerender } = render(<DisplayPanel {...props} />)
 			await user.click(screen.getByRole('button', { name: /display/i }))
-			expect(screen.getByText('Show')).toBeInTheDocument()
+			expect(screen.getByText('Show archived')).toBeInTheDocument()
 			// Simulate the URL commit round-trip: parent re-renders with the
 			// new includeArchived value while the popover is open.
 			rerender(<DisplayPanel {...props} includeArchived={true} />)
-			expect(screen.getByText('Show')).toBeInTheDocument()
-			expect(screen.getByRole('switch', { name: /include archived/i })).toHaveAttribute(
+			expect(screen.getByText('Show archived')).toBeInTheDocument()
+			expect(screen.getByRole('switch', { name: /show archived/i })).toHaveAttribute(
 				'data-state',
 				'checked',
 			)
 		})
 	})
 
-	describe('Reset to default', () => {
+	describe('Reset all', () => {
 		it('does not render the footer row when onResetToDefault is unset', async () => {
 			const user = userEvent.setup()
 			renderPanel()
 			await user.click(screen.getByRole('button', { name: /display/i }))
-			expect(screen.queryByRole('button', { name: /reset to default/i })).toBeNull()
+			expect(screen.queryByRole('button', { name: /reset all/i })).toBeNull()
 		})
 
 		it('renders and calls onResetToDefault when clicked', async () => {
@@ -462,7 +492,7 @@ describe('DisplayPanel', () => {
 			const onResetToDefault = vi.fn()
 			renderPanel({ onResetToDefault })
 			await user.click(screen.getByRole('button', { name: /display/i }))
-			await user.click(screen.getByRole('button', { name: /reset to default/i }))
+			await user.click(screen.getByRole('button', { name: /reset all/i }))
 			expect(onResetToDefault).toHaveBeenCalledTimes(1)
 		})
 	})

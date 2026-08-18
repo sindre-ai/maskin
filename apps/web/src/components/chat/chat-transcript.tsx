@@ -57,14 +57,14 @@ export function ChatTranscript({
 function EmptyTranscript({ starting }: { starting: boolean }) {
 	if (starting) {
 		return (
-			<div className="flex h-full items-center justify-center gap-2 text-text-muted">
+			<div className="flex h-full items-center justify-center gap-2 text-muted-foreground">
 				<Spinner />
 				<span>Connecting to agent…</span>
 			</div>
 		)
 	}
 	return (
-		<div className="flex h-full items-center justify-center text-center text-text-muted">
+		<div className="flex h-full items-center justify-center text-center text-muted-foreground">
 			Ask the agents about your workspace — notifications, objects, bets, or how to get started.
 		</div>
 	)
@@ -189,24 +189,26 @@ function ToolUseBlock({ name, input }: { name: string; input: unknown }) {
 	const [open, setOpen] = useState(false)
 	const preview = describeToolInput(input)
 	return (
-		<div className="rounded-md border border-border bg-bg text-xs">
+		<div className="rounded-md border border-border bg-muted text-xs">
 			<button
 				type="button"
 				onClick={() => setOpen((v) => !v)}
-				className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-text-secondary hover:bg-bg-hover"
+				className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-muted-foreground hover:bg-accent"
 				aria-expanded={open}
 			>
 				{open ? (
-					<ChevronDown size={14} className="shrink-0 text-text-muted" />
+					<ChevronDown size={14} className="shrink-0 text-muted-foreground" />
 				) : (
-					<ChevronRight size={14} className="shrink-0 text-text-muted" />
+					<ChevronRight size={14} className="shrink-0 text-muted-foreground" />
 				)}
-				<Wrench size={12} className="shrink-0 text-text-muted" />
-				<span className="font-mono text-text">{name}</span>
-				{preview && !open && <span className="truncate font-mono text-text-muted">{preview}</span>}
+				<Wrench size={12} className="shrink-0 text-muted-foreground" />
+				<span className="font-mono text-foreground">{name}</span>
+				{preview && !open && (
+					<span className="truncate font-mono text-muted-foreground">{preview}</span>
+				)}
 			</button>
 			{open && (
-				<pre className="overflow-x-auto border-t border-border px-3 py-2 font-mono text-text-secondary text-xs">
+				<pre className="overflow-x-auto border-t border-border px-3 py-2 font-mono text-muted-foreground text-xs">
 					{formatToolInput(input)}
 				</pre>
 			)}
@@ -221,22 +223,22 @@ function ThinkingBlock({ text, redacted }: { text: string; redacted?: boolean })
 		? 'Anthropic withheld the internal reasoning for this turn. The agent still thought about the problem — the content just isn’t available here.'
 		: text
 	return (
-		<div className="rounded-md border border-border bg-bg text-xs">
+		<div className="rounded-md border border-border bg-muted text-xs">
 			<button
 				type="button"
 				onClick={() => setOpen((v) => !v)}
-				className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-text-secondary italic hover:bg-bg-hover"
+				className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-muted-foreground italic hover:bg-accent"
 				aria-expanded={open}
 			>
 				{open ? (
-					<ChevronDown size={14} className="shrink-0 not-italic text-text-muted" />
+					<ChevronDown size={14} className="shrink-0 not-italic text-muted-foreground" />
 				) : (
-					<ChevronRight size={14} className="shrink-0 not-italic text-text-muted" />
+					<ChevronRight size={14} className="shrink-0 not-italic text-muted-foreground" />
 				)}
-				<span className="text-text-muted">{label}</span>
+				<span className="text-muted-foreground">{label}</span>
 			</button>
 			{open && (
-				<div className="whitespace-pre-wrap border-t border-border px-3 py-2 text-text-muted italic">
+				<div className="whitespace-pre-wrap border-t border-border px-3 py-2 text-muted-foreground italic">
 					{body}
 				</div>
 			)}

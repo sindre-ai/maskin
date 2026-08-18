@@ -1,7 +1,7 @@
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { RelativeTime } from '@/components/shared/relative-time'
-import { UnreadBadge } from '@/components/shared/unread-badge'
 import type { ConversationListItemResponse } from '@/lib/api'
+import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { Link } from '@tanstack/react-router'
 import { Pin } from 'lucide-react'
@@ -12,51 +12,56 @@ interface ConversationListRowProps {
 }
 
 export function ConversationListRow({ workspaceId, conversation }: ConversationListRowProps) {
-	const visibleParticipants = conversation.participants.slice(0, 3)
+	// One lead avatar (mockup 527): the first participant who isn't the viewer,
+	// falling back to the first participant in a solo thread.
+	const self = getStoredActor()
+	const lead =
+		conversation.participants.find((p) => p.actorId !== self?.id) ?? conversation.participants[0]
+	const isUnread = conversation.unread_count > 0
 
 	return (
 		<Link
 			to="/$workspaceId/chats/$conversationId"
 			params={{ workspaceId, conversationId: conversation.id }}
-			activeProps={{ className: 'bg-bg-hover' }}
-			className="flex items-start gap-2.5 rounded-md px-2.5 py-2 text-left hover:bg-bg-hover"
+			activeProps={{ className: 'bg-accent' }}
+			className="flex items-start gap-2.5 rounded-[10px] px-2.5 py-2 text-left hover:bg-accent"
 		>
-			<div className="mt-0.5 flex shrink-0 items-center -space-x-1.5">
-				{visibleParticipants.map((p) => (
-					<ActorAvatar
-						key={p.actorId}
-						id={p.actorId}
-						name={p.actorName}
-						type={p.actorType}
-						size="sm"
-						className="ring-2 ring-background"
-					/>
-				))}
-			</div>
+			{lead ? (
+				<ActorAvatar
+					id={lead.actorId}
+					name={lead.actorName}
+					type={lead.actorType}
+					size="md"
+					className="mt-px shrink-0 rounded-lg"
+				/>
+			) : null}
 			<div className="min-w-0 flex-1">
 				<div className="flex items-center gap-1.5">
+					{isUnread ? (
+						<span
+							aria-label={`${conversation.unread_count} unread`}
+							className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary"
+						/>
+					) : null}
 					<span
 						className={cn(
-							'min-w-0 flex-1 truncate text-sm',
-							conversation.unread_count > 0 ? 'font-semibold text-foreground' : 'text-foreground',
+							'min-w-0 flex-1 truncate text-[12.5px] tracking-[-0.01em] text-foreground',
+							isUnread ? 'font-bold' : 'font-medium',
 						)}
 					>
 						{conversation.title}
 					</span>
 					{conversation.pinned ? (
-						<Pin size={11} className="shrink-0 text-muted-foreground" aria-label="Pinned" />
+						<Pin size={10} className="shrink-0 text-muted-foreground" aria-label="Pinned" />
 					) : null}
 					<RelativeTime
 						date={conversation.lastMessageAt ?? conversation.createdAt}
-						className="shrink-0 text-[11px] text-muted-foreground"
+						className="shrink-0 text-[10px] text-muted-foreground"
 					/>
 				</div>
-				<div className="mt-0.5 flex items-center gap-1.5">
-					<span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-						{conversation.snippet ?? 'No messages yet'}
-					</span>
-					<UnreadBadge count={conversation.unread_count} className="shrink-0" />
-				</div>
+				<span className="mt-0.5 line-clamp-2 text-[11.5px] leading-[1.4] text-muted-foreground">
+					{conversation.snippet ?? 'No messages yet'}
+				</span>
 			</div>
 		</Link>
 	)

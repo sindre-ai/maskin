@@ -4,16 +4,27 @@ import {
 	SlashPicker,
 	type SlashPickerResult,
 } from '@/components/chat/slash-picker'
+import { CreatePicker } from '@/components/shared/create-picker'
+import { TypeBadge } from '@/components/shared/type-badge'
 import { UploadProgress } from '@/components/shared/upload-progress'
 import { Button } from '@/components/ui/button'
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
+import { useAvailableObjectTypes } from '@/hooks/use-available-object-types'
+import { useDictation } from '@/hooks/use-dictation'
 import { useUploadFile } from '@/hooks/use-files'
 import { deriveEntryAgentRole, trackSpecialistSummonedManually } from '@/lib/analytics'
 import type { ChatSelection, ChatSelectionAction } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
 import { readFileAsBase64 } from '@/lib/file-utils'
-import { Bot, Box, Paperclip, Send, X } from 'lucide-react'
+import { AtSign, Box, Mic, Paperclip, Plus, Send, Sparkles, X } from 'lucide-react'
 import {
 	type ChangeEvent,
 	type FormEvent,
@@ -59,6 +70,11 @@ export interface ComposerProps {
 	onDismissExternalError?: () => void
 	/** Forwarded as `aria-label` on the textarea. Defaults to the surface placeholder. */
 	textareaLabel?: string
+	/** Optional controlled draft. Supply both to let a caller prefill the
+	 *  composer (the chats zero-state suggestion rows); omit both to keep the
+	 *  composer's own internal state. */
+	value?: string
+	onValueChange?: (value: string) => void
 }
 
 /**
@@ -93,8 +109,24 @@ export function Composer({
 	externalError,
 	onDismissExternalError,
 	textareaLabel,
+	value: controlledValue,
+	onValueChange,
 }: ComposerProps) {
-	const [value, setValue] = useState('')
+	const [internalValue, setInternalValue] = useState('')
+	const value = controlledValue ?? internalValue
+	// Mirrors `value` for the functional-update path — a controlled caller has
+	// no state for us to read back synchronously.
+	const valueRef = useRef(value)
+	valueRef.current = value
+	const setValue = useCallback(
+		(updater: string | ((prev: string) => string)) => {
+			const next = typeof updater === 'function' ? updater(valueRef.current) : updater
+			valueRef.current = next
+			if (controlledValue === undefined) setInternalValue(next)
+			onValueChange?.(next)
+		},
+		[controlledValue, onValueChange],
+	)
 	const [sending, setSending] = useState(false)
 	const [sendError, setSendError] = useState<string | null>(null)
 	const [pickerOpen, setPickerOpen] = useState(false)
@@ -106,8 +138,26 @@ export function Composer({
 	const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([])
 	const slashPosRef = useRef<number | null>(null)
 	const fileInputRef = useRef<HTMLInputElement | null>(null)
+	const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+	// `/` opens the create list (mockup 761–771). The chosen type seeds the
+	// shipped create surface; the mockup's FROM-THIS-CHAT panel additionally
+	// pre-fills the name/fields from the conversation, which needs a `seed`
+	// prop on <CreatePicker> that doesn't exist yet — see the composer note
+	// where it is rendered.
+	const [createOpen, setCreateOpen] = useState(false)
+	const [createSubtype, setCreateSubtype] = useState<string | undefined>(undefined)
+	const [turnIntoOpen, setTurnIntoOpen] = useState(false)
+	const objectTypes = useAvailableObjectTypes()
 	const abortControllersRef = useRef<Map<string, AbortController>>(new Map())
 	const uploadFile = useUploadFile(workspaceId)
+	const dictation = useDictation(
+		useCallback(
+			(text: string) => {
+				setValue((prev) => (prev.length === 0 ? text : `${prev.trimEnd()} ${text}`))
+			},
+			[setValue],
+		),
+	)
 
 	// Abort every in-flight upload when the composer unmounts so a closed
 	// chat surface doesn't leave XHRs hanging (and doesn't race-dispatch
@@ -148,7 +198,7 @@ export function Composer({
 			// without losing a carefully crafted prompt.
 			if (sent) setValue('')
 		},
-		[canSend, onDismissExternalError, onSend, value],
+		[canSend, onDismissExternalError, onSend, setValue, value],
 	)
 
 	const handleKeyDown = useCallback(
@@ -162,22 +212,24 @@ export function Composer({
 		[handleSubmit],
 	)
 
-	const handleChange = useCallback((e: ChangeEvent<HTMLTextAreaElement>) => {
-		const next = e.target.value
-		setValue(next)
-		// Open the picker when the user just typed a `/` at a qualifying
-		// position: either at the very start of the input or immediately
-		// after whitespace. Anything else (middle of a URL, inside a word,
-		// etc.) is left alone so `/` remains a regular character.
-		const pos = e.target.selectionStart
-		if (typeof pos !== 'number' || pos <= 0) return
-		if (next[pos - 1] !== '/') return
-		const prev = pos >= 2 ? next[pos - 2] : ''
-		if (prev !== '' && !/\s/.test(prev)) return
-		slashPosRef.current = pos - 1
-		setPickerKind(null)
-		setPickerOpen(true)
-	}, [])
+	const handleChange = useCallback(
+		(e: ChangeEvent<HTMLTextAreaElement>) => {
+			const next = e.target.value
+			setValue(next)
+			// Open the picker when the user just typed a `/` at a qualifying
+			// position: either at the very start of the input or immediately
+			// after whitespace. Anything else (middle of a URL, inside a word,
+			// etc.) is left alone so `/` remains a regular character.
+			const pos = e.target.selectionStart
+			if (typeof pos !== 'number' || pos <= 0) return
+			if (next[pos - 1] !== '/') return
+			const prev = pos >= 2 ? next[pos - 2] : ''
+			if (prev !== '' && !/\s/.test(prev)) return
+			slashPosRef.current = pos - 1
+			setTurnIntoOpen(true)
+		},
+		[setValue],
+	)
 
 	const openPickerForKind = useCallback((kind: SlashKindId) => {
 		slashPosRef.current = null
@@ -193,7 +245,17 @@ export function Composer({
 			if (prev[pos] !== '/') return prev
 			return prev.slice(0, pos) + prev.slice(pos + 1)
 		})
-	}, [])
+	}, [setValue])
+
+	const openCreateFor = useCallback(
+		(subtype: string | undefined) => {
+			setCreateSubtype(subtype)
+			setTurnIntoOpen(false)
+			consumeSlashTrigger()
+			setCreateOpen(true)
+		},
+		[consumeSlashTrigger],
+	)
 
 	const handlePickerSelect = useCallback(
 		(result: SlashPickerResult) => {
@@ -325,7 +387,7 @@ export function Composer({
 	return (
 		<div
 			className={cn(
-				'relative flex flex-col gap-1 rounded-md border border-border bg-bg-surface p-2 shadow-sm',
+				'relative mx-auto flex w-full max-w-[860px] flex-col gap-1 rounded-2xl border border-input bg-card px-3 py-2.5 shadow-sm',
 			)}
 		>
 			<SlashPicker
@@ -339,6 +401,43 @@ export function Composer({
 					<span aria-hidden className="pointer-events-none absolute left-2 bottom-2 h-0 w-0" />
 				}
 			/>
+			<Popover
+				open={turnIntoOpen}
+				onOpenChange={(next) => {
+					setTurnIntoOpen(next)
+					if (!next) slashPosRef.current = null
+				}}
+			>
+				<PopoverAnchor asChild>
+					<span aria-hidden className="pointer-events-none absolute bottom-2 left-2 h-0 w-0" />
+				</PopoverAnchor>
+				<PopoverContent
+					align="start"
+					side="top"
+					sideOffset={8}
+					className="w-[320px] p-1.5"
+					onOpenAutoFocus={(e) => e.preventDefault()}
+					aria-label="Turn this into an object"
+				>
+					<p className="eyebrow px-2 pb-1 pt-1.5">Turn this into an object</p>
+					<ul className="flex list-none flex-col p-0">
+						{objectTypes.map((type) => (
+							<li key={type.value}>
+								<button
+									type="button"
+									onClick={() => openCreateFor(type.value)}
+									className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left hover:bg-accent hover:text-accent-foreground"
+								>
+									<TypeBadge type={type.value} variant="tile" />
+									<span className="min-w-0 flex-1 truncate text-[12.5px] font-semibold">
+										{type.label}
+									</span>
+								</button>
+							</li>
+						))}
+					</ul>
+				</PopoverContent>
+			</Popover>
 			<SelectionChips
 				selection={selection}
 				onRemoveAgent={onRemoveAgent}
@@ -356,7 +455,7 @@ export function Composer({
 							key={p.tempId}
 							data-upload-status={p.status}
 							className={cn(
-								'inline-flex max-w-full items-center gap-1 rounded-full border bg-bg-surface px-2 py-0.5 text-xs text-foreground',
+								'inline-flex max-w-full items-center gap-1 rounded-full border bg-card px-2 py-0.5 text-xs text-foreground',
 								p.status === 'failed' ? 'border-error' : 'border-border',
 							)}
 						>
@@ -396,6 +495,7 @@ export function Composer({
 			<form onSubmit={handleSubmit}>
 				<Textarea
 					autoResize
+					ref={textareaRef}
 					value={value}
 					onChange={handleChange}
 					onKeyDown={handleKeyDown}
@@ -410,56 +510,98 @@ export function Composer({
 						{sendError ?? externalError} — your message is preserved; try again.
 					</p>
 				) : null}
-				<div className="flex items-center gap-1">
+				<div className="flex items-center gap-2">
+					<DropdownMenu>
+						<DropdownMenuTrigger asChild>
+							{/* No 44 px `::before` here: Attach next to it already carries one,
+							    and two overlapping invisible hit surfaces 8 px apart steal
+							    taps from each other. The v2 control row is 28 px by design. */}
+							<Button
+								type="button"
+								size="icon"
+								variant="outline"
+								className="h-7 w-7 shrink-0 rounded-full text-muted-foreground"
+								disabled={disabled}
+								aria-label="Add an object, file, or mention"
+							>
+								<Plus size={15} aria-hidden />
+							</Button>
+						</DropdownMenuTrigger>
+						<DropdownMenuContent align="start" className="w-[252px]">
+							<DropdownMenuItem onSelect={() => openPickerForKind('item')}>
+								<Box size={15} aria-hidden />
+								Reference an object
+							</DropdownMenuItem>
+							<DropdownMenuItem onSelect={() => openPickerForKind('agent')}>
+								<AtSign size={15} aria-hidden />
+								Mention an agent
+							</DropdownMenuItem>
+							<DropdownMenuItem onSelect={() => openCreateFor(undefined)}>
+								<Sparkles size={15} aria-hidden />
+								Create an object
+							</DropdownMenuItem>
+						</DropdownMenuContent>
+					</DropdownMenu>
+					{/* Attach stays a visible sibling rather than a menu row: it is the
+					    one composer affordance with a pinned 44 px touch target
+					    (`ios-chat-attach-tap-area.spec.ts`), which a closed menu can't
+					    satisfy. */}
 					<Button
 						type="button"
-						size="sm"
+						size="icon"
 						variant="ghost"
-						className="h-7 gap-1 px-2 text-xs text-text-secondary"
-						onClick={() => openPickerForKind('agent')}
-						disabled={disabled}
-						aria-label="Pick an agent"
-					>
-						<Bot size={14} aria-hidden />
-						Agent
-					</Button>
-					<Button
-						type="button"
-						size="sm"
-						variant="ghost"
-						className="h-7 gap-1 px-2 text-xs text-text-secondary"
-						onClick={() => openPickerForKind('item')}
-						disabled={disabled}
-						aria-label="Attach items"
-					>
-						<Box size={14} aria-hidden />
-						Items
-					</Button>
-					<Button
-						type="button"
-						size="sm"
-						variant="ghost"
-						className="relative h-7 gap-1 px-2 text-xs text-text-secondary before:absolute before:-inset-3 before:h-11 before:w-11 before:content-['']"
+						className="relative h-7 w-7 shrink-0 rounded-full text-muted-foreground before:absolute before:-inset-2 before:h-11 before:w-11 before:content-['']"
 						onClick={() => fileInputRef.current?.click()}
 						disabled={disabled}
 						aria-label="Attach image"
 					>
 						<Paperclip size={14} aria-hidden />
-						Attach
 					</Button>
-					<div className="ml-auto">
+					{dictation.supported ? (
 						<Button
-							type="submit"
+							type="button"
 							size="icon"
-							variant="ghost"
-							disabled={!canSend}
-							aria-label="Send message"
+							variant={dictation.recording ? 'destructive' : 'outline'}
+							className={cn(
+								'ml-auto h-7 w-7 shrink-0 rounded-full',
+								dictation.recording ? 'animate-pulse' : 'text-muted-foreground',
+							)}
+							onClick={dictation.toggle}
+							disabled={disabled}
+							aria-pressed={dictation.recording}
+							aria-label={dictation.recording ? 'Stop dictating' : 'Dictate a message'}
 						>
-							{showSpinner ? <Spinner /> : <Send size={16} />}
+							<Mic size={14} aria-hidden />
 						</Button>
-					</div>
+					) : null}
+					<Button
+						type="submit"
+						size="icon"
+						className={cn(
+							'h-7 w-7 shrink-0 rounded-full',
+							dictation.supported ? '' : 'ml-auto',
+							canSend
+								? 'bg-primary text-primary-foreground'
+								: 'bg-muted text-muted-foreground hover:bg-muted',
+						)}
+						disabled={!canSend}
+						aria-label="Send message"
+					>
+						{showSpinner ? <Spinner /> : <Send size={14} />}
+					</Button>
 				</div>
 			</form>
+			{/* "Turn this into an object" — reuses the shipped creation flow rather
+			    than the mockup's bespoke FROM-THIS-CHAT modal (800–848). The picked
+			    type is seeded; the conversation itself is not, because pre-filling
+			    the name / field table / "CONTEXT IT INHERITS" block needs a `seed`
+			    prop on CreatePicker, which is owned elsewhere. */}
+			<CreatePicker
+				open={createOpen}
+				onOpenChange={setCreateOpen}
+				defaultType="object"
+				defaultObjectSubtype={createSubtype}
+			/>
 		</div>
 	)
 }

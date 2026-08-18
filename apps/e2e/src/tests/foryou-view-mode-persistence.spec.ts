@@ -90,8 +90,7 @@ test.describe('For You view-mode persistence via __chrome__ display settings', (
 
 			// A user who never switched stays on the card queue. The queue card
 			// only exists in cards mode, so its presence is what proves we are
-			// not in list mode — card titles render as links too, so link-role
-			// counting cannot distinguish the two modes here.
+			// not in list mode.
 			const queueCard = page.getByTestId('foryou-queue-card')
 			await expect(queueCard).toHaveCount(1, { timeout: 10_000 })
 			await expect(queueCard).toContainText('Renewal terms need a read')
@@ -119,17 +118,18 @@ test.describe('For You view-mode persistence via __chrome__ display settings', (
 			// aria-hidden while a modal Dialog is open.
 			await page.keyboard.press('Escape')
 
-			// List rows replace the card queue.
-			await expect(page.getByRole('link', { name: 'Renewal terms need a read' })).toBeVisible()
-			await expect(page.getByRole('link', { name: 'Follow-up from customer call' })).toBeVisible()
+			// List rows replace the card queue. Rows are buttons, not links —
+			// selecting one returns to Cards pinned on that item.
+			await expect(page.getByRole('button', { name: 'Renewal terms need a read' })).toBeVisible()
+			await expect(page.getByRole('button', { name: 'Follow-up from customer call' })).toBeVisible()
 			await expect(queueCard).toHaveCount(0)
 
 			// Reload restores the persisted list — hydration, not first-paint default.
 			await page.reload()
-			await expect(page.getByRole('link', { name: 'Renewal terms need a read' })).toBeVisible({
+			await expect(page.getByRole('button', { name: 'Renewal terms need a read' })).toBeVisible({
 				timeout: 10_000,
 			})
-			await expect(page.getByRole('link', { name: 'Follow-up from customer call' })).toBeVisible()
+			await expect(page.getByRole('button', { name: 'Follow-up from customer call' })).toBeVisible()
 			await expect(queueCard).toHaveCount(0)
 		})
 	}

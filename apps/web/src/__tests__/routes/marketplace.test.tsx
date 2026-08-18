@@ -61,14 +61,14 @@ describe('MarketplacePage', () => {
 		render(<MarketplacePage />)
 
 		// Only one "All" chip — type and use-case filters share a single list.
-		expect(screen.getAllByRole('button', { name: /^All\s/ })).toHaveLength(1)
+		expect(screen.getAllByRole('button', { name: /^All \(/ })).toHaveLength(1)
 		// Type counts fall back to by_type when no items are loaded.
-		expect(screen.getByRole('button', { name: /^Agents\s5/ })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /^Triggers\s2/ })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /^Skills\s6/ })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /^Integrations\s3/ })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /^Discovery\s1/ })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /^Sales\s2/ })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /^Agents \(5\)$/ })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /^Triggers \(2\)$/ })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /^Skills \(6\)$/ })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /^Integrations \(3\)$/ })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /^Discovery \(1\)$/ })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /^Sales \(2\)$/ })).toBeInTheDocument()
 	})
 
 	it('hides chips with a zero count', () => {
@@ -80,36 +80,36 @@ describe('MarketplacePage', () => {
 	it('shows the total catalog size on "All", not the loop count', () => {
 		render(<MarketplacePage />)
 		// Sum of by_type counts (5 + 2 + 6 + 3 = 16), not COUNTS.total (4 loops).
-		expect(screen.getByRole('button', { name: /^All\s16/ })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /^Loops\s4/ })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /^All \(16\)$/ })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /^Loops \(4\)$/ })).toBeInTheDocument()
 	})
 
 	it('clicking a chip marks it active', async () => {
 		render(<MarketplacePage />)
 		const user = userEvent.setup()
-		const btn = screen.getByRole('button', { name: /^Agents\s5/ })
+		const btn = screen.getByRole('button', { name: /^Agents \(5\)$/ })
 		await user.click(btn)
-		expect(btn.className).toMatch(/border-foreground/)
-		expect(btn.className).toMatch(/bg-foreground/)
+		expect(btn.className).toMatch(/(?:^|\s)border-primary(?:\s|$)/)
+		expect(btn.className).toMatch(/(?:^|\s)bg-primary(?:\s|$)/)
 	})
 
 	it('only one chip can be active at a time, across type and use-case chips', async () => {
 		render(<MarketplacePage />)
 		const user = userEvent.setup()
 
-		const agentsBtn = screen.getByRole('button', { name: /^Agents\s5/ })
+		const agentsBtn = screen.getByRole('button', { name: /^Agents \(5\)$/ })
 		await user.click(agentsBtn)
-		expect(agentsBtn.className).toMatch(/border-foreground/)
+		expect(agentsBtn.className).toMatch(/(?:^|\s)border-primary(?:\s|$)/)
 
-		const discoveryBtn = screen.getByRole('button', { name: /^Discovery\s1/ })
+		const discoveryBtn = screen.getByRole('button', { name: /^Discovery \(1\)$/ })
 		await user.click(discoveryBtn)
-		expect(discoveryBtn.className).toMatch(/border-foreground/)
-		expect(agentsBtn.className).not.toMatch(/border-foreground/)
+		expect(discoveryBtn.className).toMatch(/(?:^|\s)border-primary(?:\s|$)/)
+		expect(agentsBtn.className).not.toMatch(/(?:^|\s)border-primary(?:\s|$)/)
 
-		const allBtn = screen.getByRole('button', { name: /^All\s/ })
+		const allBtn = screen.getByRole('button', { name: /^All \(/ })
 		await user.click(allBtn)
-		expect(allBtn.className).toMatch(/border-foreground/)
-		expect(discoveryBtn.className).not.toMatch(/border-foreground/)
+		expect(allBtn.className).toMatch(/(?:^|\s)border-primary(?:\s|$)/)
+		expect(discoveryBtn.className).not.toMatch(/(?:^|\s)border-primary(?:\s|$)/)
 	})
 
 	it('renders chips without counts when the API request errors', () => {
@@ -121,6 +121,30 @@ describe('MarketplacePage', () => {
 		render(<MarketplacePage />)
 		expect(screen.getByRole('button', { name: /^Agents$/ })).toBeInTheDocument()
 		expect(screen.getByText(/Couldn't load the marketplace/i)).toBeInTheDocument()
+	})
+
+	it('renders skeleton blocks (not a spinner) while loading', () => {
+		mockUseMarketplaceLoops.mockReturnValue({
+			data: undefined,
+			isLoading: true,
+			isError: false,
+		})
+		const { container } = render(<MarketplacePage />)
+		// CardSkeleton renders animate-pulse elements — the shared vocabulary signal.
+		expect(container.querySelectorAll('.animate-pulse').length).toBeGreaterThan(0)
+	})
+
+	it('renders the empty state through EmptyState when there are no loops', () => {
+		mockUseMarketplaceLoops.mockReturnValue({
+			data: { loops: [], counts: { total: 0, by_type: {}, by_use_case: {} } },
+			isLoading: false,
+			isError: false,
+		})
+		render(<MarketplacePage />)
+		expect(screen.getByText(/No loops yet/i)).toBeInTheDocument()
+		expect(
+			screen.getByText(/Check back once Maskin publishes the first one\./i),
+		).toBeInTheDocument()
 	})
 
 	it('places a multi-type loop in the Loops section, not in Agents or Triggers', () => {
@@ -307,9 +331,48 @@ describe('MarketplacePage', () => {
 		const user = userEvent.setup()
 		const input = screen.getByRole('searchbox', { name: 'Filter marketplace' })
 		await user.type(input, 'zzzznomatchxyz')
-		expect(screen.getByText('No matches')).toBeInTheDocument()
+		expect(screen.getByText('Nothing in the catalog matches those filters.')).toBeInTheDocument()
 		expect(screen.queryByRole('region', { name: 'Loops' })).not.toBeInTheDocument()
 		expect(screen.queryByText(/Showing all/i)).not.toBeInTheDocument()
 		expect(screen.queryByText(/No loops yet/i)).not.toBeInTheDocument()
+	})
+
+	it('clears the search query and chip filter from the empty state', async () => {
+		mockUseMarketplaceLoops.mockReturnValue({
+			data: {
+				loops: [
+					{
+						id: 'p1',
+						name: 'Alpha',
+						slug: 'alpha',
+						description: '',
+						version: '1',
+						use_case: null,
+						item_types: ['actor'],
+						created_at: null,
+						updated_at: null,
+					},
+				],
+				counts: COUNTS,
+			},
+			isLoading: false,
+			isError: false,
+		})
+		render(<MarketplacePage />)
+		const user = userEvent.setup()
+
+		// Filter to a chip with matches, then type a query that matches nothing.
+		const agentsBtn = screen.getByRole('button', { name: /^Agents \(5\)$/ })
+		await user.click(agentsBtn)
+		const input = screen.getByRole('searchbox', { name: 'Filter marketplace' })
+		await user.type(input, 'zzzznomatchxyz')
+		expect(screen.getByText('Nothing in the catalog matches those filters.')).toBeInTheDocument()
+
+		// "Clear filters" resets both the search box and the active chip.
+		await user.click(screen.getByRole('button', { name: 'Clear filters' }))
+		expect(input).toHaveValue('')
+		expect(screen.getByRole('button', { name: /^All \(/ }).className).toMatch(
+			/(?:^|\s)border-primary(?:\s|$)/,
+		)
 	})
 })

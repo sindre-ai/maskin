@@ -78,7 +78,7 @@ export function AttachedFileCard({ workspaceId, file, className }: AttachedFileC
 				params={{ workspaceId, fileId: file.id }}
 				target="_blank"
 				rel="noopener noreferrer"
-				className={cn(baseClass, 'hover:bg-bg-hover')}
+				className={cn(baseClass, 'hover:bg-accent')}
 			>
 				{inner}
 			</Link>

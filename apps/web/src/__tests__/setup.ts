@@ -20,6 +20,39 @@ if (typeof Element !== 'undefined') {
 	}
 }
 
+// Node 22 ships its own `localStorage` getter on the global object. In vitest's
+// jsdom environment the global *is* the jsdom window, and Node's getter wins over
+// jsdom's own storage property — so both `localStorage` and `window.localStorage`
+// read back `undefined`, and any module touching storage at import time throws.
+// Install a spec-shaped in-memory Storage instead. setup.ts runs per test file,
+// so each file gets a clean store and `localStorage.clear()` behaves.
+if (typeof globalThis.localStorage === 'undefined') {
+	const makeStorage = (): Storage => {
+		const store = new Map<string, string>()
+		return {
+			get length() {
+				return store.size
+			},
+			key: (i: number) => [...store.keys()][i] ?? null,
+			getItem: (k: string) => store.get(String(k)) ?? null,
+			setItem: (k: string, v: string) => {
+				store.set(String(k), String(v))
+			},
+			removeItem: (k: string) => {
+				store.delete(String(k))
+			},
+			clear: () => store.clear(),
+		} as Storage
+	}
+	for (const name of ['localStorage', 'sessionStorage'] as const) {
+		Object.defineProperty(globalThis, name, {
+			value: makeStorage(),
+			configurable: true,
+			writable: true,
+		})
+	}
+}
+
 // Radix's `react-use-size` (used by Switch + others) reads ResizeObserver.
 if (typeof globalThis.ResizeObserver === 'undefined') {
 	class ResizeObserverStub {

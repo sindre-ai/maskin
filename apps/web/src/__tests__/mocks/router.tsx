@@ -11,5 +11,6 @@ export function mockTanStackRouter() {
 			</a>
 		),
 		useNavigate: () => vi.fn(),
+		useRouter: () => ({ invalidate: vi.fn() }),
 	}
 }

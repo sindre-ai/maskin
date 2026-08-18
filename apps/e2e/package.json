@@ -9,6 +9,7 @@
 	},
 	"devDependencies": {
 		"@argos-ci/playwright": "^3.0.0",
-		"@playwright/test": "1.59.1"
+		"@playwright/test": "1.59.1",
+		"axe-core": "4.10.2"
 	}
 }

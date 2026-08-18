@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { act } from 'react'
 import { createRef } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -177,6 +177,48 @@ describe('ForYouQueueCard', () => {
 		})
 	})
 
+	describe('reply target', () => {
+		it('aims the card composer at a picked message and cancels back to the thread', () => {
+			mockUseEntityEvents.mockReturnValue({
+				data: [
+					buildEventResponse({
+						id: 5,
+						action: 'commented',
+						actorId: 'other',
+						data: { content: 'Which copy should we ship?' },
+					}),
+				],
+			})
+			render(
+				<ForYouQueueCard
+					workspaceId="ws-1"
+					item={buildItem({
+						object: buildObjectResponse({
+							id: 'obj-1',
+							title: 'Bet',
+							type: 'insight',
+							status: 'active',
+						}),
+					})}
+					onProcessed={vi.fn()}
+					onRestored={vi.fn()}
+					onCommitScheduled={vi.fn()}
+					onCommitSettled={vi.fn()}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+
+			expect(screen.queryByTestId('reply-banner')).not.toBeInTheDocument()
+			fireEvent.click(screen.getByRole('button', { name: 'Reply' }))
+
+			const banner = screen.getByTestId('reply-banner')
+			expect(banner).toHaveTextContent('Replying to Other')
+
+			fireEvent.click(within(banner).getByRole('button', { name: 'Cancel reply' }))
+			expect(screen.queryByTestId('reply-banner')).not.toBeInTheDocument()
+		})
+	})
+
 	describe('decision → decided-receipt', () => {
 		function renderDecisionCard(onProcessed = vi.fn(), onRestored = vi.fn()) {
 			const item = buildItem({
@@ -223,6 +265,15 @@ describe('ForYouQueueCard', () => {
 				vi.advanceTimersByTime(3000)
 			})
 			expect(screen.getByTestId('decision-receipt')).toHaveTextContent('Reversible for 3s')
+		})
+
+		it('marks the recommended option with a REC chip', () => {
+			renderDecisionCard()
+			const approve = screen.getByRole('button', { name: /Approve/i })
+			expect(within(approve).getByTestId('decision-rec')).toHaveTextContent('Rec')
+			// Only the recommended option carries it.
+			const sendBack = screen.getByRole('button', { name: /Send back/i })
+			expect(within(sendBack).queryByTestId('decision-rec')).not.toBeInTheDocument()
 		})
 
 		it('"Reverse this" returns to the decision block and the comment is never posted', () => {
@@ -274,10 +325,23 @@ describe('ForYouQueueCard', () => {
 			expect(onProcessed).toHaveBeenCalledWith(itemQueueKey(item))
 		})
 
-		it('renders the idle block as an in-stream AskCard: "Decision needed" header, and 48px option rows with a one-line rationale plus a trailing kbd affordance on the primary', () => {
+		it('renders the idle block as an in-stream AskCard: an "{author} asks ·" header, and 48px option rows with a one-line rationale plus a trailing kbd affordance on the primary', () => {
+			mockUseEntityEvents.mockReturnValue({
+				data: [
+					buildEventResponse({
+						id: 5,
+						action: 'commented',
+						actorId: 'other',
+						data: { content: 'Ship the new onboarding copy?' },
+					}),
+				],
+			})
 			renderDecisionCard()
 			const block = screen.getByTestId('decision-block')
-			expect(block).toHaveTextContent('Decision needed')
+			// The header names whoever actually asked and quotes what they said,
+			// instead of a canned "Decision needed" string.
+			expect(block).toHaveTextContent('Other asks')
+			expect(block).toHaveTextContent('Ship the new onboarding copy?')
 
 			const approve = screen.getByRole('button', { name: /Approve/i })
 			expect(approve).toHaveTextContent('I agree with the direction — proceed')
@@ -289,18 +353,20 @@ describe('ForYouQueueCard', () => {
 			expect(sendBack).toHaveTextContent('Needs changes before I sign off')
 		})
 
-		it('renders the reason rows in the receipt only once the choice commits — reply posted, card marked read and advanced', () => {
+		it('renders the receipt lines during the reverse window as well as after the commit', () => {
 			vi.useFakeTimers()
 			mockCreateCommentMutate.mockImplementation((_vars, opts) => opts?.onSuccess?.())
 			renderDecisionCard()
 
 			fireEvent.click(screen.getByRole('button', { name: /Approve/ }))
 
-			// Reversible window still open — no reason rows yet, only the countdown.
-			expect(screen.getByTestId('decision-receipt')).toHaveTextContent('Reversible for')
-			expect(screen.getByTestId('decision-receipt')).not.toHaveTextContent(
-				'Your choice was posted to the thread',
-			)
+			// The lines describe what the choice does, so they read the same on
+			// both sides of the window (mockup 428–445) — only the reverse control
+			// and countdown are window-only.
+			const pending = screen.getByTestId('decision-receipt')
+			expect(pending).toHaveTextContent('Reversible for')
+			expect(pending).toHaveTextContent('Your choice was posted to the thread')
+			expect(pending).toHaveTextContent('just now')
 
 			act(() => {
 				vi.advanceTimersByTime(6000)
@@ -308,8 +374,25 @@ describe('ForYouQueueCard', () => {
 
 			const receipt = screen.getByTestId('decision-receipt')
 			expect(receipt).toHaveTextContent('You chose Approve')
-			expect(receipt).toHaveTextContent('Your choice was posted to the thread')
 			expect(receipt).toHaveTextContent('Card marked read and advanced')
+			expect(receipt).not.toHaveTextContent('Reversible for')
+			expect(screen.queryByRole('button', { name: 'Reverse this' })).not.toBeInTheDocument()
+		})
+
+		it('brings quick-reply chips back after the decision, minus any that echo an option', () => {
+			vi.useFakeTimers()
+			renderDecisionCard()
+
+			// No chips while the decision is still open (mockup 449–453).
+			expect(screen.queryByTestId('chip-row')).not.toBeInTheDocument()
+
+			fireEvent.click(screen.getByRole('button', { name: /Approve/ }))
+
+			const chips = screen.getByTestId('chip-row')
+			expect(chips).toBeInTheDocument()
+			// "Approved" overlaps the Approve option and is dropped.
+			expect(screen.queryByRole('button', { name: 'Approved' })).not.toBeInTheDocument()
+			expect(screen.getByRole('button', { name: 'On it' })).toBeInTheDocument()
 		})
 	})
 
@@ -450,12 +533,12 @@ describe('ForYouQueueCard', () => {
 			expect(screen.queryByText('Old message two')).not.toBeInTheDocument()
 			expect(screen.getByText('New message')).toBeInTheDocument()
 
-			fireEvent.click(screen.getByRole('button', { name: 'Read more (2 earlier)' }))
+			fireEvent.click(screen.getByRole('button', { name: 'Scroll up to load 2 earlier messages' }))
 
 			expect(screen.getByText('Old message one')).toBeInTheDocument()
 			expect(screen.getByText('Old message two')).toBeInTheDocument()
 			expect(screen.getByText('New message')).toBeInTheDocument()
-			expect(screen.queryByRole('button', { name: /Read more/ })).not.toBeInTheDocument()
+			expect(screen.queryByRole('button', { name: /Scroll up to load/ })).not.toBeInTheDocument()
 		})
 
 		it('renders no Read more toggle when there is nothing before the unread boundary', () => {
@@ -480,7 +563,97 @@ describe('ForYouQueueCard', () => {
 			)
 
 			expect(screen.getByText('Only message')).toBeInTheDocument()
-			expect(screen.queryByRole('button', { name: /Read more/ })).not.toBeInTheDocument()
+			expect(screen.queryByRole('button', { name: /Scroll up to load/ })).not.toBeInTheDocument()
+		})
+	})
+
+	describe('summary band', () => {
+		it("renders the object's own content under the header, clamped", () => {
+			render(
+				<ForYouQueueCard
+					workspaceId="ws-1"
+					item={buildItem({
+						object: buildObjectResponse({
+							id: 'obj-1',
+							title: 'Onboarding A/B',
+							type: 'bet',
+							status: 'active',
+							content: 'Signup drop-off concentrates on step two of the onboarding flow.',
+						}),
+					})}
+					onProcessed={vi.fn()}
+					onRestored={vi.fn()}
+					onCommitScheduled={vi.fn()}
+					onCommitSettled={vi.fn()}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+
+			const band = screen.getByTestId('card-summary')
+			// `.eyebrow` uppercases in CSS; the DOM text stays sentence case.
+			expect(band).toHaveTextContent('Summary')
+			expect(band.querySelector('.eyebrow')).not.toBeNull()
+			expect(band).toHaveTextContent(
+				'Signup drop-off concentrates on step two of the onboarding flow.',
+			)
+			expect(band.querySelector('.line-clamp-3')).not.toBeNull()
+		})
+
+		it('is absent when the object has no content', () => {
+			render(
+				<ForYouQueueCard
+					workspaceId="ws-1"
+					item={buildItem()}
+					onProcessed={vi.fn()}
+					onRestored={vi.fn()}
+					onCommitScheduled={vi.fn()}
+					onCommitSettled={vi.fn()}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+			expect(screen.queryByTestId('card-summary')).not.toBeInTheDocument()
+		})
+	})
+
+	describe('new-message divider', () => {
+		it('labels the divider with the unread count and commits from its Mark read action', () => {
+			mockUseEntityEvents.mockReturnValue({
+				data: [
+					buildEventResponse({
+						id: 2,
+						action: 'commented',
+						actorId: 'other',
+						data: { content: 'Second unread' },
+					}),
+					buildEventResponse({
+						id: 1,
+						action: 'commented',
+						actorId: 'other',
+						data: { content: 'First unread' },
+					}),
+				],
+			})
+			render(
+				<ForYouQueueCard
+					workspaceId="ws-1"
+					item={buildItem({ unread_count: 2 })}
+					onProcessed={vi.fn()}
+					onRestored={vi.fn()}
+					onCommitScheduled={vi.fn()}
+					onCommitSettled={vi.fn()}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+
+			const divider = screen.getByLabelText('Unread divider')
+			expect(divider).toHaveTextContent('2 new messages')
+
+			fireEvent.click(within(divider).getByRole('button', { name: 'Mark read' }))
+			expect(mockMarkReadMutate).toHaveBeenCalledWith({
+				entityType: 'object',
+				entityId: 'obj-1',
+				lastEventId: 20,
+			})
 		})
 	})
 

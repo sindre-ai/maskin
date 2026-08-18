@@ -264,7 +264,7 @@ function SlotCard({
 
 	return (
 		<div
-			className="rounded-lg border border-border bg-bg-surface p-3 space-y-2"
+			className="rounded-lg border border-border bg-card p-3 space-y-2"
 			data-slot={slot}
 			data-testid={`slot-${slot}`}
 		>

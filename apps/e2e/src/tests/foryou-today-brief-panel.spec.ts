@@ -1,14 +1,16 @@
 import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
-// T2 of bet foryou-prototype-redesign — the side rail + Sheet "Today's brief"
-// panel was deleted from the single-card queue redesign. The button now
-// navigates straight to the real /briefing route instead of toggling a
-// placeholder panel.
+// The nav's Brief action opens a right-side drawer over the current screen
+// (mockup 3414–3463) instead of navigating away. `/$workspaceId/briefing`
+// stays as the deep-linkable full page for palette links and bookmarks.
 
-test.describe("For You — Today's brief button", () => {
+test.describe('For You — Brief drawer', () => {
 	for (const viewport of SHIP_GATE_VIEWPORTS) {
-		test(`navigates to the briefing route at ${viewport.label}`, async ({ page, account }) => {
+		test(`opens the brief as a drawer, not a navigation, at ${viewport.label}`, async ({
+			page,
+			account,
+		}) => {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
 			await page.goto(`/${account.workspaceId}`)
 
@@ -16,13 +18,24 @@ test.describe("For You — Today's brief button", () => {
 			await expect(trigger).toBeVisible({ timeout: 10000 })
 			await trigger.click()
 
-			await page.waitForURL(`**/${account.workspaceId}/briefing`)
-			// exact: true — the briefing markdown body renders its own H1
-			// ("{workspace name} — workspace briefing"), which substring-matches
-			// the default (non-exact) name filter on "Briefing".
-			await expect(
-				page.getByRole('heading', { name: 'Briefing', exact: true, level: 1 }),
-			).toBeVisible()
+			const drawer = page.getByTestId('brief-drawer')
+			await expect(drawer).toBeVisible()
+			await expect(drawer).toContainText('Your brief')
+			// The briefing markdown really rendered — the backend composes a
+			// "{workspace name} — workspace briefing" heading.
+			await expect(drawer.getByRole('heading', { name: /workspace briefing/i })).toBeVisible()
+			// Still on For You — the drawer is an overlay, not a route change.
+			expect(new URL(page.url()).pathname).toBe(`/${account.workspaceId}`)
+
+			// No horizontal page scrollbar while the drawer is open.
+			const { scrollWidth, innerWidth } = await page.evaluate(() => ({
+				scrollWidth: document.documentElement.scrollWidth,
+				innerWidth: window.innerWidth,
+			}))
+			expect(scrollWidth).toBeLessThanOrEqual(innerWidth + 1)
+
+			await page.keyboard.press('Escape')
+			await expect(drawer).toHaveCount(0)
 		})
 	}
 })

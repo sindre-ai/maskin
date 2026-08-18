@@ -110,7 +110,7 @@ test.describe('Sidebar Activity group', () => {
 		)
 		await page.goto(`/${account.workspaceId}`)
 		const group = page.getByTestId('sidebar-activity')
-		await expect(group.getByText('Activity')).toBeVisible()
+		await expect(group.getByText('Live agents')).toBeVisible()
 		await expect(group.getByText('Planner')).toBeVisible()
 		await expect(group.getByText('Reading files')).toBeVisible()
 		await expect(group.getByText('Reviewer')).toBeVisible()

@@ -573,4 +573,30 @@ describe('Skills — Workspace Skills section', () => {
 		expect(screen.queryByText(/No workspace skills in this workspace yet/)).not.toBeInTheDocument()
 		expect(screen.queryByRole('button', { name: 'Attach workspace skill' })).not.toBeInTheDocument()
 	})
+
+	// Mockup 2482 — agent detail renders this block read-only, where the "create
+	// one in Settings" copy is unreachable advice and used to be the only text.
+	it('states that nothing is attached when read-only and empty', () => {
+		render(
+			<TestWrapper>
+				<Skills actorId="agent-1" readOnly />
+			</TestWrapper>,
+		)
+
+		expect(screen.getByText('No workspace skills attached.')).toBeInTheDocument()
+		expect(screen.getByText('No personal skills yet.')).toBeInTheDocument()
+		expect(screen.queryByText(/No workspace skills in this workspace yet/)).not.toBeInTheDocument()
+	})
+
+	it('still says nothing is attached when the workspace has skills but none are on the agent', () => {
+		mockUseWorkspaceSkills.mockReturnValue({ data: [buildWorkspaceSkill()], isLoading: false })
+
+		render(
+			<TestWrapper>
+				<Skills actorId="agent-1" readOnly />
+			</TestWrapper>,
+		)
+
+		expect(screen.getByText('No workspace skills attached.')).toBeInTheDocument()
+	})
 })

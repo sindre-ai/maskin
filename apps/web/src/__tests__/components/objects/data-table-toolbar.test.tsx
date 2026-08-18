@@ -17,13 +17,15 @@ function renderToolbar(overrides: Partial<React.ComponentProps<typeof DataTableT
 		columns: [],
 		columnVisibility: {},
 		onColumnVisibilityChange: vi.fn(),
-		tabs: [
+		axisChips: [
 			{ label: 'All', value: undefined },
-			{ label: 'Bets', value: 'bet' },
-			{ label: 'Tasks', value: 'task' },
+			{ label: 'Active', value: 'active', count: 2 },
+			{ label: 'Done', value: 'done', count: 1 },
 		],
-		typeFilter: undefined,
-		onTypeFilterChange: vi.fn(),
+		axisValue: undefined,
+		onAxisValueChange: vi.fn(),
+		filterPills: [],
+		onClearAllFilters: vi.fn(),
 		search: '',
 		onSearchChange: vi.fn(),
 		statusFilter: undefined,
@@ -45,27 +47,59 @@ function renderToolbar(overrides: Partial<React.ComponentProps<typeof DataTableT
 }
 
 describe('DataTableToolbar', () => {
-	it('renders type tab buttons', () => {
+	// The type-tab strip moved to the shared nav row (mockup 165–170); the
+	// toolbar's own chip row now carries the active FILTER BY axis's values.
+	it('renders a value chip per axis option, counts spoken but drawn bare', () => {
 		renderToolbar()
 		expect(screen.getByRole('button', { name: 'All' })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: 'Bets' })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: 'Tasks' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Active (2)' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Done (1)' })).toBeInTheDocument()
 	})
 
-	it('calls onTypeFilterChange when a tab is clicked', async () => {
+	it('calls onAxisValueChange when a value chip is clicked', async () => {
 		const user = userEvent.setup()
 		const { props } = renderToolbar()
 
-		await user.click(screen.getByRole('button', { name: 'Bets' }))
-		expect(props.onTypeFilterChange).toHaveBeenCalledWith('bet')
+		await user.click(screen.getByRole('button', { name: 'Active (2)' }))
+		expect(props.onAxisValueChange).toHaveBeenCalledWith('active')
 	})
 
-	it('calls onTypeFilterChange with undefined for All tab', async () => {
+	it('calls onAxisValueChange with undefined for the All chip', async () => {
 		const user = userEvent.setup()
-		const { props } = renderToolbar({ typeFilter: 'bet' })
+		const { props } = renderToolbar({ axisValue: 'active' })
 
 		await user.click(screen.getByRole('button', { name: 'All' }))
-		expect(props.onTypeFilterChange).toHaveBeenCalledWith(undefined)
+		expect(props.onAxisValueChange).toHaveBeenCalledWith(undefined)
+	})
+
+	it('renders a removable pill per active filter and clears it', async () => {
+		const user = userEvent.setup()
+		const onRemove = vi.fn()
+		renderToolbar({
+			filterPills: [{ id: 'status', label: 'Status', value: 'active', onRemove }],
+		})
+		expect(screen.getByText('Status:')).toBeInTheDocument()
+		await user.click(screen.getByRole('button', { name: 'Remove Status filter' }))
+		expect(onRemove).toHaveBeenCalledOnce()
+	})
+
+	// Mockup 920 (`objPillsMany`): a single pill's own × already clears it.
+	it('shows Clear all only once more than one pill is active', async () => {
+		const user = userEvent.setup()
+		const { unmount } = renderToolbar({
+			filterPills: [{ id: 'status', label: 'Status', value: 'active', onRemove: vi.fn() }],
+		})
+		expect(screen.queryByRole('button', { name: 'Clear all' })).toBeNull()
+		unmount()
+
+		const { props } = renderToolbar({
+			filterPills: [
+				{ id: 'status', label: 'Status', value: 'active', onRemove: vi.fn() },
+				{ id: 'driver', label: 'Driver', value: 'Ada', onRemove: vi.fn() },
+			],
+		})
+		await user.click(screen.getByRole('button', { name: 'Clear all' }))
+		expect(props.onClearAllFilters).toHaveBeenCalledOnce()
 	})
 
 	it('renders search input with placeholder', () => {
@@ -78,16 +112,16 @@ describe('DataTableToolbar', () => {
 		expect(screen.getByRole('button', { name: /import/i })).toBeInTheDocument()
 	})
 
-	it('keeps the action cluster on its own row below the xl breakpoint', () => {
-		// Actions cluster must sit on `basis-full` (own row) up to <1280px so
-		// iPad landscape (1024px) wraps predictably, and `xl:basis-auto`
-		// restores the inline single-row layout on wider viewports.
+	it('keeps the action cluster on its own row on small viewports', () => {
+		// Search + Display + Import sit on `basis-full` (own row) below `sm:` so
+		// narrow viewports wrap predictably; `sm:basis-auto` restores the single
+		// right-aligned row the mockup shows at 921.
 		renderToolbar()
 		const importBtn = screen.getByRole('button', { name: /import/i })
 		const cluster = importBtn.parentElement
 		expect(cluster).not.toBeNull()
 		expect(cluster?.className).toContain('basis-full')
-		expect(cluster?.className).toContain('xl:basis-auto')
+		expect(cluster?.className).toContain('sm:basis-auto')
 		expect(cluster?.className).toContain('justify-end')
 	})
 

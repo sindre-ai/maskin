@@ -1062,6 +1062,125 @@ export const sessionDispatchAttempts = pgTable(
 export type SessionDispatchAttempt = typeof sessionDispatchAttempts.$inferSelect
 export type NewSessionDispatchAttempt = typeof sessionDispatchAttempts.$inferInsert
 
+// ── Billing ────────────────────────────────────────────────────────────────
+//
+// One row per workspace. `status` mirrors the lifecycle of the Stripe
+// PaymentIntent that activated the plan: 'inactive' (never subscribed),
+// 'pending' (checkout started, not yet confirmed), 'active' (payment
+// succeeded, set by POST /api/billing/complete which verifies intent status
+// server-side), 'declined' (the last checkout failed). `priceCents` and the
+// display fields are snapshots resolved from the Stripe Price at checkout
+// time — the Stripe Price object is the source of truth for amount, never a
+// hardcoded number. Card data never persists here (or anywhere Maskin-owned).
+
+export const billing = pgTable(
+	'billing',
+	{
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.primaryKey(),
+		planId: text('plan_id').notNull().default('free'),
+		planLabel: text('plan_label'),
+		status: text('status').notNull().default('inactive'),
+		priceCents: integer('price_cents'),
+		currency: text('currency').notNull().default('usd'),
+		invoiceEmail: text('invoice_email'),
+		stripeCustomerId: text('stripe_customer_id'),
+		stripePriceId: text('stripe_price_id'),
+		nextChargeAt: timestamp('next_charge_at', { withTimezone: true }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		check('billing_status_check', sql`${t.status} IN ('inactive','pending','active','declined')`),
+	],
+)
+
+export const invoices = pgTable(
+	'invoices',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		description: text('description').notNull(),
+		amountCents: integer('amount_cents').notNull(),
+		currency: text('currency').notNull().default('usd'),
+		stripePaymentIntentId: text('stripe_payment_intent_id'),
+		status: text('status').notNull().default('paid'),
+		billedAt: timestamp('billed_at', { withTimezone: true }).notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index('invoices_ws_billed_at_idx').on(t.workspaceId, t.billedAt),
+		uniqueIndex('invoices_stripe_payment_intent_id_key')
+			.on(t.stripePaymentIntentId)
+			.where(sql`${t.stripePaymentIntentId} IS NOT NULL`),
+	],
+)
+
+export type Billing = typeof billing.$inferSelect
+export type NewBilling = typeof billing.$inferInsert
+export type Invoice = typeof invoices.$inferSelect
+export type NewInvoice = typeof invoices.$inferInsert
+
+// ── Reviewer Verdicts ───────────────────────────────────────────────────────
+//
+// One row per `reviewer_verdict_submitted` event from Stage 2 of the
+// single-prompt agent builder. The reviewer (T6) writes the verdict; a human
+// or non-reviewer agent later sets `human_agreed` so precision (agreed / rated)
+// can be computed per rubric. The check constraint keeps a reviewer from
+// self-rating: `human_rated_by` must be non-null when `human_agreed` is set,
+// and the route layer additionally rejects a rating whose caller equals
+// `reviewer_actor_id` (route-side, not enforced in SQL because the reviewer
+// runs from a fresh session whose actor is only knowable at write time).
+
+export const reviewerVerdicts = pgTable(
+	'reviewer_verdicts',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id)
+			.notNull(),
+		rubricId: uuid('rubric_id')
+			.references(() => objects.id)
+			.notNull(),
+		targetActorId: uuid('target_actor_id')
+			.references(() => actors.id)
+			.notNull(),
+		reviewerActorId: uuid('reviewer_actor_id')
+			.references(() => actors.id)
+			.notNull(),
+		reviewerSessionId: uuid('reviewer_session_id'),
+		cycleNumber: integer('cycle_number').notNull().default(0),
+		verdict: text('verdict').notNull(),
+		criteriaVerdicts: jsonb('criteria_verdicts').notNull(),
+		humanAgreed: boolean('human_agreed'),
+		humanCriteriaDisagreements: jsonb('human_criteria_disagreements'),
+		humanRatedBy: uuid('human_rated_by').references(() => actors.id),
+		humanRatedAt: timestamp('human_rated_at', { withTimezone: true }),
+		humanNote: text('human_note'),
+		createdBy: uuid('created_by')
+			.references(() => actors.id)
+			.notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+	},
+	(t) => [
+		index('reviewer_verdicts_ws_rubric_idx').on(t.workspaceId, t.rubricId),
+		index('reviewer_verdicts_ws_created_idx').on(t.workspaceId, t.createdAt),
+		check('reviewer_verdicts_verdict_check', sql`${t.verdict} IN ('pass', 'fail')`),
+		check(
+			'reviewer_verdicts_rating_pair_check',
+			sql`(${t.humanAgreed} IS NULL AND ${t.humanRatedBy} IS NULL AND ${t.humanRatedAt} IS NULL)
+				OR (${t.humanAgreed} IS NOT NULL AND ${t.humanRatedBy} IS NOT NULL AND ${t.humanRatedAt} IS NOT NULL)`,
+		),
+	],
+)
+
+export type ReviewerVerdict = typeof reviewerVerdicts.$inferSelect
+export type NewReviewerVerdict = typeof reviewerVerdicts.$inferInsert
+
 // ── Orphan Thread Detections ────────────────────────────────────────────────
 //
 // Idempotency ledger for the `orphan_thread_detected` analytics signal. One
