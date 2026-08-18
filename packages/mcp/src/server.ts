@@ -172,6 +172,12 @@ interface ResolvedPagination {
 function resolveListPagination(args: {
 	limit?: number
 	cursor?: string
+	/** Sort direction to open a fresh walk in when no cursor is present yet.
+	 *  Ignored once a cursor exists — the walk stays locked to whatever
+	 *  direction the first call opened it in. Defaults to `desc`; only
+	 *  tools that expose their own sort-direction param (e.g. `list_objects`'
+	 *  `sort=updated_at_asc`) need to pass this. */
+	order?: 'asc' | 'desc'
 }): ResolvedPagination {
 	const cursor = decodeCursor(args.cursor)
 	const requested =
@@ -183,7 +189,7 @@ function resolveListPagination(args: {
 	// at `MAX - 1` to keep the sentinel within bounds.
 	const limit = Math.min(requested, LIST_ENDPOINT_MAX_LIMIT - 1)
 	const snapshotAt = cursor?.s ?? toSnapshotAt(new Date())
-	const order = cursor?.o ?? 'desc'
+	const order = cursor?.o ?? args.order ?? 'desc'
 	return { limit, cursor, snapshotAt, order }
 }
 
@@ -193,21 +199,26 @@ function resolveListPagination(args: {
  * means the API had nothing more to hand back.
  *
  * Reuses `snapshotAt` and `order` from `pagination`, so every hop of the
- * same walk agrees on the freeze even if the underlying `objects` table
- * accepts inserts between calls.
+ * same walk agrees on the freeze even if the underlying table accepts
+ * inserts between calls. `getSortValue` picks the field the walk is keyed
+ * on — defaults to `createdAt`; `list_objects` passes `updatedAt` when its
+ * `sort` param is set, since the API seeks on whichever column the walk is
+ * actually ordered by.
  */
-function encodeNextCursor(
+function encodeNextCursor<T extends { id: string; createdAt?: string | null }>(
 	pagination: ResolvedPagination,
-	rows: Array<{ id: string; createdAt?: string | null }>,
-): { nextCursor: string | null; trimmed: Array<{ id: string; createdAt?: string | null }> } {
+	rows: T[],
+	getSortValue: (row: T) => string | null | undefined = (row) => row.createdAt,
+): { nextCursor: string | null; trimmed: T[] } {
 	if (rows.length <= pagination.limit) return { nextCursor: null, trimmed: rows }
 	const trimmed = rows.slice(0, pagination.limit)
 	const last = trimmed[trimmed.length - 1]
-	if (!last || !last.createdAt) return { nextCursor: null, trimmed }
+	const sortValue = last ? getSortValue(last) : null
+	if (!last || !sortValue) return { nextCursor: null, trimmed }
 	const nextCursor = encodeCursor({
 		s: pagination.snapshotAt,
 		o: pagination.order,
-		k: { sortValue: last.createdAt, id: last.id },
+		k: { sortValue, id: last.id },
 	})
 	return { nextCursor, trimmed }
 }
@@ -2567,61 +2578,43 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.objects, csp: CSP } },
 		},
 		async (args) => {
-			// The snapshot-consistent cursor walk is only valid when the API
-			// orders by `createdAt` — the column the keyset seek in
-			// `buildCursorConditions` is always expressed in. A `sort` override
-			// asks for `updatedAt` ordering instead, so pairing it with a cursor
-			// would seek on a column unrelated to the ORDER BY and silently skip
-			// or duplicate rows. Fall back to plain offset pagination for that
-			// combination — the same behavior this tool had before cursors
-			// existed — rather than accept a cursor or hand back a `next_cursor`
-			// that can't be honoured consistently.
-			const sortedByCreatedAt = !args.sort
-			const pagination = resolveListPagination({
-				limit: args.limit,
-				cursor: sortedByCreatedAt ? args.cursor : undefined,
-			})
+			// The API's cursor keyset can seek on either `createdAt` (default) or
+			// `updatedAt` (when `sort` is set) — both are real timestamp columns
+			// with a supporting index, so the cursor walk works uniformly either
+			// way. `order` must be pinned from the first call so an `asc` request
+			// isn't silently dropped to the pagination default of `desc`.
+			const order = args.sort === 'updated_at_asc' ? 'asc' : 'desc'
+			const pagination = resolveListPagination({ limit: args.limit, cursor: args.cursor, order })
 			const params = new URLSearchParams()
 			if (args.type) params.set('type', args.type)
 			if (args.status) params.set('status', args.status)
 			if (args.driver) params.set('driver', args.driver)
 			if (args.updated_before) params.set('updated_before', args.updated_before)
 			if (args.updated_after) params.set('updated_after', args.updated_after)
-			if (args.sort) {
-				params.set('sort', 'updatedAt')
-				params.set('order', args.sort === 'updated_at_asc' ? 'asc' : 'desc')
+			params.set('sort', args.sort ? 'updatedAt' : 'createdAt')
+			params.set('order', pagination.order)
+			params.set('limit', String(pagination.limit + 1))
+			params.set('snapshot_at', pagination.snapshotAt)
+			if (pagination.cursor) {
+				params.set('cursor_created_at', pagination.cursor.k.sortValue)
+				params.set('cursor_id', pagination.cursor.k.id)
 			}
-			const fetchCap = sortedByCreatedAt ? pagination.limit + 1 : pagination.limit
-			params.set('limit', String(fetchCap))
-			if (args.offset) params.set('offset', String(args.offset))
 			for (const [field, value] of Object.entries(args.metadata_eq ?? {})) {
 				if (typeof value === 'string' && value.length > 0) params.set(`metadata.${field}`, value)
 			}
 			if (args.include_archived) params.set('include_archived', 'true')
-			if (sortedByCreatedAt) {
-				params.set('snapshot_at', pagination.snapshotAt)
-				params.set('order', pagination.order)
-				params.set('sort', 'createdAt')
-				if (pagination.cursor) {
-					params.set('cursor_created_at', pagination.cursor.k.sortValue)
-					params.set('cursor_id', pagination.cursor.k.id)
-				}
-			}
 			const raw = (await apiCall(config, 'GET', `/api/objects?${params}`, undefined, {
 				workspaceId: args.workspace_id,
 			})) as RawObject[]
-			const { nextCursor, trimmed } = sortedByCreatedAt
-				? encodeNextCursor(pagination, raw)
-				: { nextCursor: null, trimmed: raw }
+			const { nextCursor, trimmed } = encodeNextCursor(pagination, raw, (row) =>
+				args.sort ? row.updatedAt : row.createdAt,
+			)
 			const result = trimmed as RawObject[]
-			const offset = typeof args.offset === 'number' ? args.offset : 0
 			const heroCard = await buildCollectionHeroCard(
 				config,
 				'list_objects',
 				result,
 				args.workspace_id,
-				result.length,
-				offset,
 			)
 			const wsId = args.workspace_id ?? config.defaultWorkspaceId
 			const enriched = wsId
@@ -2650,7 +2643,6 @@ export function createMcpServer(config: McpConfig) {
 					objects: enriched,
 					page: {
 						limit: result.length,
-						offset,
 						returned: result.length,
 						...(nextCursor ? { next_cursor: nextCursor } : {}),
 					},
@@ -4102,18 +4094,37 @@ export function createMcpServer(config: McpConfig) {
 			_meta: { ui: { resourceUri: UI_RESOURCES.events, csp: CSP } },
 		},
 		async (args) => {
+			const pagination = resolveListPagination({
+				limit: args.limit,
+				cursor: (args as { cursor?: string }).cursor,
+			})
 			const params = new URLSearchParams()
 			params.set('entity_type', 'object')
 			params.set('entity_id', args.entity_id)
 			params.set('action', 'commented')
 			params.set('limit', String(args.limit))
-			params.set('offset', String(args.offset))
 			const result = await apiCall(config, 'GET', `/api/events/history?${params}`, undefined, {
 				workspaceId: args.workspace_id,
 			})
+			const rows = Array.isArray(result)
+				? (result as Array<{ id: number | string; createdAt?: string | null }>)
+				: []
+			const { page: pagedRows, nextCursor } = paginateClientSide({
+				rows,
+				limit: pagination.limit,
+				snapshotAt: pagination.snapshotAt,
+				order: pagination.order,
+				cursor: pagination.cursor,
+				getSortValue: (row) => row.createdAt ?? null,
+				getId: (row) => String(row.id).padStart(20, '0'),
+			})
 			return {
 				_meta: meta('get_comments', config, (args as { workspace_id?: string }).workspace_id),
-				content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+				content: [{ type: 'text' as const, text: JSON.stringify(pagedRows) }],
+				structuredContent: {
+					comments: pagedRows,
+					...(nextCursor ? { next_cursor: nextCursor } : {}),
+				},
 			}
 		},
 	)

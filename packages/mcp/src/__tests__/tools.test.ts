@@ -178,13 +178,16 @@ describe('list_objects schema', () => {
 		expect(() => schema.parse({})).toThrow()
 	})
 
-	// Limit + offset are optional at the tool-schema layer so the server can
-	// pick the scoped default (25) when the flag is on; the API applies its
-	// own fallback when neither the client nor the server sets one.
-	it('leaves limit and offset undefined when not passed', () => {
+	// Limit is optional at the tool-schema layer so the server can pick the
+	// default page size (25) when the caller sets neither.
+	it('leaves limit undefined when not passed', () => {
 		const result = schema.parse({ workspace_id: uuid })
 		expect(result.limit).toBeUndefined()
-		expect(result.offset).toBeUndefined()
+	})
+
+	it('does not accept an offset param — cursor covers pagination for both sort orders', () => {
+		const result = schema.parse({ workspace_id: uuid, offset: 5 })
+		expect((result as Record<string, unknown>).offset).toBeUndefined()
 	})
 
 	it('accepts an optional cursor for snapshot-consistent pagination', () => {
@@ -735,7 +738,6 @@ describe('get_comments schema', () => {
 		const result = schema.parse({ entity_id: uuid })
 		expect(result.entity_id).toBe(uuid)
 		expect(result.limit).toBe(50)
-		expect(result.offset).toBe(0)
 	})
 
 	it('rejects missing entity_id', () => {
@@ -750,8 +752,14 @@ describe('get_comments schema', () => {
 		expect(() => schema.parse({ entity_id: uuid, limit: 200 })).toThrow()
 	})
 
-	it('rejects negative offset', () => {
-		expect(() => schema.parse({ entity_id: uuid, offset: -1 })).toThrow()
+	it('accepts an optional cursor for snapshot-consistent pagination', () => {
+		const result = schema.parse({ entity_id: uuid, cursor: 'anything' })
+		expect(result.cursor).toBe('anything')
+	})
+
+	it('does not accept an offset param — cursor covers pagination', () => {
+		const result = schema.parse({ entity_id: uuid, offset: 5 })
+		expect((result as Record<string, unknown>).offset).toBeUndefined()
 	})
 })
 

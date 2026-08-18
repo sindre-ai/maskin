@@ -543,7 +543,7 @@ describe('tool handlers', () => {
 			mockFetchSuccess([])
 
 			const handler = getHandler('list_objects')
-			await handler({ type: 'task', limit: 10, offset: 5 })
+			await handler({ type: 'task', limit: 10 })
 
 			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
 			expect(calledUrl).toContain('/api/objects?')
@@ -551,7 +551,7 @@ describe('tool handlers', () => {
 			// The cursor walk always fetches one extra row (the "has more"
 			// sentinel), so the requested limit of 10 becomes 11 on the wire.
 			expect(calledUrl).toContain('limit=11')
-			expect(calledUrl).toContain('offset=5')
+			expect(calledUrl).toContain('snapshot_at=')
 		})
 
 		it('forwards updated_before and updated_after to the route', async () => {
@@ -2500,7 +2500,7 @@ describe('tool handlers', () => {
 			mockFetchSuccess([])
 
 			const handler = getHandler('get_comments')
-			await handler({ entity_id: objectId, limit: 25, offset: 5 })
+			await handler({ entity_id: objectId, limit: 25 })
 
 			const call = vi.mocked(fetch).mock.calls[0]
 			const url = call[0] as string
@@ -2509,7 +2509,6 @@ describe('tool handlers', () => {
 			expect(url).toContain(`entity_id=${objectId}`)
 			expect(url).toContain('action=commented')
 			expect(url).toContain('limit=25')
-			expect(url).toContain('offset=5')
 			expect((call[1] as RequestInit).method).toBe('GET')
 		})
 
@@ -2517,7 +2516,7 @@ describe('tool handlers', () => {
 			mockFetchSuccess([])
 
 			const handler = getHandler('get_comments')
-			await handler({ entity_id: objectId, workspace_id: 'ws-custom', limit: 50, offset: 0 })
+			await handler({ entity_id: objectId, workspace_id: 'ws-custom', limit: 50 })
 
 			expect(fetch).toHaveBeenCalledWith(
 				expect.any(String),

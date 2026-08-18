@@ -166,14 +166,29 @@ function invalidMetadataFieldError(fieldName: string) {
 }
 
 /**
+ * Timestamp columns a keyset seek can safely be expressed against — both are
+ * real `timestamp` columns with a supporting index
+ * (`objects_ws_created_at_idx`, `objects_ws_updated_at_idx`), so a `(column,
+ * id)` tuple comparison is a valid seek predicate for either. Any other
+ * resolved sort column (title, status, a metadata field, ...) has no such
+ * guarantee — those stay offset-only.
+ */
+function resolveCursorSeekColumn(sort?: string): Column | null {
+	const resolved = resolveSortColumn(sort ?? 'createdAt') ?? objects.createdAt
+	if (resolved === objects.createdAt) return objects.createdAt
+	if (resolved === objects.updatedAt) return objects.updatedAt
+	return null
+}
+
+/**
  * True when a caller-supplied keyset pair will actually be applied as a seek
- * predicate. The seek is always expressed in `createdAt` order, so it only
- * produces a result set consistent with `resolveOrderBy`'s ORDER BY when the
- * walk is actually sorted by `createdAt` (the default) — pairing the seek
- * with `sort=updatedAt` (or any other column) would filter on a column
- * unrelated to the ORDER BY, silently skipping or duplicating rows across
- * pages. A lone `cursor_id` is also ignored so a malformed cursor cannot
- * silently degrade to an unbounded seek.
+ * predicate. The seek is expressed in whatever column `resolveCursorSeekColumn`
+ * resolves to, so it only produces a result set consistent with
+ * `resolveOrderBy`'s ORDER BY when the walk is sorted by `createdAt` or
+ * `updatedAt` — pairing the seek with any other sort column would filter on
+ * a column unrelated to the ORDER BY, silently skipping or duplicating rows
+ * across pages. A lone `cursor_id` is also ignored so a malformed cursor
+ * cannot silently degrade to an unbounded seek.
  */
 function isCursorSeekActive(query: {
 	sort?: string
@@ -181,24 +196,30 @@ function isCursorSeekActive(query: {
 	cursor_id?: string
 }): boolean {
 	if (!query.cursor_created_at || !query.cursor_id) return false
-	return (resolveSortColumn(query.sort ?? 'createdAt') ?? objects.createdAt) === objects.createdAt
+	return resolveCursorSeekColumn(query.sort) !== null
 }
 
 /**
  * Snapshot-consistent cursor predicates for `objects` list/search endpoints.
  *
- * `snapshot_at` (upper bound on `created_at`) is the "freeze" — every hop
- * of the same walk carries the same value so an insert on `objects` after
- * the walk began cannot leak into the paginated stream.
+ * `snapshot_at` (upper bound on the active seek column) is the "freeze" —
+ * every hop of the same walk carries the same value so a row whose seek
+ * column moves past the snapshot after the walk began (a fresh insert under
+ * `createdAt` order, or an update that bumps `updatedAt` under `updatedAt`
+ * order) cannot leak into the paginated stream.
  *
  * `cursor_created_at` + `cursor_id` is the keyset seek — the next page
- * starts strictly past this `(created_at, id)` tuple in `createdAt` order.
- * Callers must always pair the two; a lone `cursor_id` is ignored so a
- * malformed cursor cannot silently degrade to unbounded seek.
+ * starts strictly past this `(<seek column>, id)` tuple in the active seek
+ * column's order. The field is still named `cursor_created_at` even when the
+ * active seek column is `updatedAt`, since every MCP-facing caller already
+ * passes this parameter name for the createdAt-seek case — reusing it avoids
+ * a schema/param rename across every list_objects-adjacent caller. Callers
+ * must always pair the two; a lone `cursor_id` is ignored so a malformed
+ * cursor cannot silently degrade to unbounded seek.
  *
- * The keyset predicate matches the sort order the list handlers use
- * (`createdAt` desc/asc, `id` asc tiebreaker — see `resolveOrderBy`), so it
- * only fires when the walk is actually sorted by `createdAt` — see
+ * The keyset predicate matches the sort order the list handlers use (seek
+ * column desc/asc, `id` asc tiebreaker — see `resolveOrderBy`), so it only
+ * fires when the walk is actually sorted by `createdAt` or `updatedAt` — see
  * `isCursorSeekActive`. Callers pass `includeKeyset=false` to force the
  * predicate off when the ORDER BY is overridden downstream (e.g. by
  * `searchRankExpr`) so the seek and the walk order can't drift out of sync.
@@ -214,23 +235,18 @@ function buildCursorConditions(
 	includeKeyset = true,
 ): SQL[] {
 	const conditions: SQL[] = []
+	const seekColumn = resolveCursorSeekColumn(query.sort) ?? objects.createdAt
 	if (query.snapshot_at) {
-		conditions.push(lte(objects.createdAt, new Date(query.snapshot_at)))
+		conditions.push(lte(seekColumn, new Date(query.snapshot_at)))
 	}
 	if (includeKeyset && isCursorSeekActive(query)) {
 		const lastCa = new Date(query.cursor_created_at as string)
 		const lastId = query.cursor_id as string
 		if (query.order === 'asc') {
-			const seek = or(
-				gt(objects.createdAt, lastCa),
-				and(eq(objects.createdAt, lastCa), gt(objects.id, lastId)),
-			)
+			const seek = or(gt(seekColumn, lastCa), and(eq(seekColumn, lastCa), gt(objects.id, lastId)))
 			if (seek) conditions.push(seek)
 		} else {
-			const seek = or(
-				lt(objects.createdAt, lastCa),
-				and(eq(objects.createdAt, lastCa), gt(objects.id, lastId)),
-			)
+			const seek = or(lt(seekColumn, lastCa), and(eq(seekColumn, lastCa), gt(objects.id, lastId)))
 			if (seek) conditions.push(seek)
 		}
 	}

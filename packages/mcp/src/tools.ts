@@ -345,7 +345,7 @@ export const tools = {
 	},
 	list_objects: {
 		description:
-			'List objects in the workspace. Filter by type, status, driver, last-updated window, or custom metadata fields. Returns paginated results ordered by creation date, newest first, unless `sort` is set. Rows with `status = "archived"` are hidden by default — pass `include_archived: true` to see them. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page. `offset` only applies when `sort` is set, since sorting by `updated_at` is incompatible with the cursor keyset.',
+			'List objects in the workspace. Filter by type, status, driver, last-updated window, or custom metadata fields. Returns paginated results ordered by creation date, newest first, unless `sort` is set. Rows with `status = "archived"` are hidden by default — pass `include_archived: true` to see them. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page. This applies uniformly to the default creation-date order and to `sort`-overridden updated-at order.',
 		inputSchema: z.object({
 			workspace_id: requiredWorkspaceId,
 			type: z
@@ -385,19 +385,11 @@ export const tools = {
 				.max(100)
 				.optional()
 				.describe('Max rows to return. Defaults to 25.'),
-			offset: z
-				.number()
-				.int()
-				.min(0)
-				.optional()
-				.describe(
-					'Rows to skip before the page starts. Only used when `sort` is set — the default order pages via `cursor` instead. Defaults to 0.',
-				),
 			cursor: z
 				.string()
 				.optional()
 				.describe(
-					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call — rows inserted after that first call cannot leak into the stream. Not usable together with `sort`.',
+					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call — rows inserted (or, under `sort`-overridden order, updated) after that first call cannot leak into the stream.',
 				),
 			metadata_eq: metadataEqSchema,
 			include_archived: z
@@ -1018,12 +1010,17 @@ export const tools = {
 	},
 	get_comments: {
 		description:
-			'Get comments posted on a specific object, newest first. Threading is expressed via data.parentEventId on each row — replies reference the event id of the comment they reply to.',
+			'Get comments posted on a specific object, newest first. Threading is expressed via data.parentEventId on each row — replies reference the event id of the comment they reply to. Paginated via a snapshot-consistent cursor — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			entity_id: z.string().uuid().describe('Object ID to fetch comments for.'),
 			limit: z.number().int().min(1).max(100).default(50).describe('Defaults to 50.'),
-			offset: z.number().int().min(0).default(0).describe('Defaults to 0.'),
+			cursor: z
+				.string()
+				.optional()
+				.describe(
+					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call.',
+				),
 		}),
 	},
 	create_comment: {
