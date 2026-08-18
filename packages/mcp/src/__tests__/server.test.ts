@@ -3443,6 +3443,114 @@ describe('tool handlers', () => {
 			expect(result.structuredContent.heroCard.objects?.[0]?.title).toBe('Sebastian')
 		})
 
+		it('list_actors includes the short one-liner description and omits driver', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/actors')) {
+					return {
+						ok: true,
+						headers: new Headers({ 'X-Total-Count': '1' }),
+						json: () =>
+							Promise.resolve([
+								{
+									id: 'a-1',
+									type: 'agent',
+									name: 'Architect',
+									description:
+										'Owns technical architecture; route architecture decision tasks here.',
+								},
+							]),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+			const handler = getHandler('list_actors')
+			const result = (await handler({ workspace_id: 'ws-1' })) as {
+				structuredContent: {
+					heroCard: { kind: string; object?: { description?: string; driver?: unknown } }
+				}
+			}
+			// totalCount is 2 from the X-Total-Count header check above; here it's 1
+			// so a single actor + totalCount 1 collapses to the 'single' shape.
+			const obj = result.structuredContent.heroCard.object
+			expect(obj?.description).toBe(
+				'Owns technical architecture; route architecture decision tasks here.',
+			)
+			expect(obj && 'driver' in obj).toBe(false)
+		})
+
+		it('list_actors resolves connectedTriggers/connectedLoops when workspace_id is set (no url — webAppBaseUrl unset in this suite)', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/actors')) {
+					return {
+						ok: true,
+						headers: new Headers({ 'X-Total-Count': '1' }),
+						json: () => Promise.resolve([{ id: 'a-1', type: 'agent', name: 'Architect' }]),
+					} as Response
+				}
+				if (urlStr.includes('/api/triggers')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve([
+								{ id: 't-1', name: 'On new bet', targetActorId: 'a-1' },
+								{ id: 't-2', name: 'Unrelated', targetActorId: 'a-2' },
+							]),
+					} as Response
+				}
+				if (urlStr.includes('/api/loops')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve({
+								loops: [{ id: 'l-1', name: 'Architecture review', agentIds: ['a-1', 'a-2'] }],
+							}),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+			const handler = getHandler('list_actors')
+			const result = (await handler({ workspace_id: 'ws-1' })) as {
+				structuredContent: {
+					heroCard: {
+						object?: {
+							connectedTriggers?: Array<{ name: string; url?: string }>
+							connectedLoops?: Array<{ name: string; url?: string }>
+						}
+					}
+				}
+			}
+			const obj = result.structuredContent.heroCard.object
+			expect(obj?.connectedTriggers).toEqual([{ name: 'On new bet' }])
+			expect(obj?.connectedLoops).toEqual([{ name: 'Architecture review' }])
+		})
+
+		it('list_actors omits connectedTriggers/connectedLoops for the cross-workspace listing', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/actors')) {
+					return {
+						ok: true,
+						headers: new Headers({ 'X-Total-Count': '1' }),
+						json: () => Promise.resolve([{ id: 'a-1', type: 'agent', name: 'Architect' }]),
+					} as Response
+				}
+				// If list_actors called /api/triggers or /api/loops here, that would be
+				// a bug — there's no single workspace to scope them to.
+				throw new Error(`unexpected fetch: ${urlStr}`)
+			})
+			const handler = getHandler('list_actors')
+			const result = (await handler({})) as {
+				structuredContent: {
+					heroCard: { object?: { connectedTriggers?: unknown; connectedLoops?: unknown } }
+				}
+			}
+			const obj = result.structuredContent.heroCard.object
+			expect(obj && 'connectedTriggers' in obj).toBe(false)
+			expect(obj && 'connectedLoops' in obj).toBe(false)
+		})
+
 		it('emits a single heroCard for get_actor', async () => {
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
 				const urlStr = url as string
@@ -4559,7 +4667,7 @@ describe('url field injection', () => {
 			expect(parsed.url).toBe(`https://maskin.example.com/ws-default-123/agents/${testUuid}`)
 		})
 
-		it('list_actors — url added to each actor in content', async () => {
+		it('list_actors — url added to each actor in structuredContent', async () => {
 			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
 				ok: true,
 				headers: new Headers(),
@@ -4567,10 +4675,62 @@ describe('url field injection', () => {
 			} as Response)
 
 			const handler = getUrlHandler('list_actors')
-			const result = (await handler({})) as { content: Array<{ text: string }> }
+			const result = (await handler({})) as {
+				structuredContent: { heroCard: { kind: string; object?: { url?: string } } }
+			}
 
-			const parsed = JSON.parse(result.content[0].text) as Array<{ id: string; url: string }>
-			expect(parsed[0].url).toBe('https://maskin.example.com/ws-default-123/agents/actor-2')
+			expect(result.structuredContent.heroCard.object?.url).toBe(
+				'https://maskin.example.com/ws-default-123/agents/actor-2',
+			)
+		})
+
+		it('list_actors — connectedTriggers/connectedLoops carry deep links when webAppBaseUrl is configured', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/actors')) {
+					return {
+						ok: true,
+						headers: new Headers({ 'X-Total-Count': '1' }),
+						json: () => Promise.resolve([{ id: 'actor-2', type: 'agent', name: 'Worker' }]),
+					} as Response
+				}
+				if (urlStr.includes('/api/triggers')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve([{ id: 'trig-1', name: 'On new bet', targetActorId: 'actor-2' }]),
+					} as Response
+				}
+				if (urlStr.includes('/api/loops')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve({
+								loops: [{ id: 'loop-1', name: 'Architecture review', agentIds: ['actor-2'] }],
+							}),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+
+			const handler = getUrlHandler('list_actors')
+			const result = (await handler({ workspace_id: 'ws-1' })) as {
+				structuredContent: {
+					heroCard: {
+						object?: {
+							connectedTriggers?: Array<{ name: string; url?: string }>
+							connectedLoops?: Array<{ name: string; url?: string }>
+						}
+					}
+				}
+			}
+
+			expect(result.structuredContent.heroCard.object?.connectedTriggers).toEqual([
+				{ name: 'On new bet', url: 'https://maskin.example.com/ws-1/triggers/trig-1' },
+			])
+			expect(result.structuredContent.heroCard.object?.connectedLoops).toEqual([
+				{ name: 'Architecture review', url: 'https://maskin.example.com/ws-1/loops/loop-1' },
+			])
 		})
 	})
 

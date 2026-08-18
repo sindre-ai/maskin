@@ -266,7 +266,13 @@ describe('MCP list/search channel split (AC-T2 / AC-T4 / AC-U2)', () => {
 	}
 
 	// AC-T4 partial: flag off => `content[0].text === JSON.stringify(fullPayload, null, 2)`
-	// for each of the seven tools. This locks the pre-scoping shape byte-for-byte.
+	// for each of these tools. This locks the pre-scoping shape byte-for-byte.
+	//
+	// `list_actors` is deliberately excluded: it no longer emits a `content`
+	// channel at all (in either flag state) — `structuredContent.heroCard`
+	// (now carrying `url` per row) is the sole response channel. See the
+	// dedicated `list_actors` coverage below and the matching carve-out
+	// comment in `response-cap.ts`.
 	const parityCases: Array<{
 		tool: string
 		fixture: unknown[]
@@ -275,7 +281,6 @@ describe('MCP list/search channel split (AC-T2 / AC-T4 / AC-U2)', () => {
 	}> = [
 		{ tool: 'list_objects', fixture: [objectRow(1), objectRow(2)] },
 		{ tool: 'search_objects', fixture: [objectRow(1)], args: { q: 'anything' } },
-		{ tool: 'list_actors', fixture: [actorRow(1), actorRow(2)] },
 		{ tool: 'list_relationships', fixture: [relationshipRow(1), relationshipRow(2)] },
 		{ tool: 'list_triggers', fixture: [triggerRow(1), triggerRow(2)] },
 		{ tool: 'list_files', fixture: [fileRow(1), fileRow(2)] },
@@ -294,7 +299,7 @@ describe('MCP list/search channel split (AC-T2 / AC-T4 / AC-U2)', () => {
 				structuredContent?: unknown
 			}
 			// The pre-scoping shape stringifies either `enriched` (list_objects,
-			// search_objects, list_actors, list_triggers) or `result` (list_relationships,
+			// search_objects, list_triggers) or `result` (list_relationships,
 			// list_files, list_workspace_skills — no enrichment layer). We assert that
 			// the flag-off text is a valid non-empty JSON dump — the specific dump the
 			// snapshot pins is what the tool already returned before this change.
@@ -306,12 +311,15 @@ describe('MCP list/search channel split (AC-T2 / AC-T4 / AC-U2)', () => {
 	}
 
 	// AC-T2: flag on => `content[0].text` ≤ 2KB for the default-page response.
-	// Fixture size matches the p95 default page: 50 rows for list_actors /
+	// Fixture size matches the p95 default page: 50 rows for
 	// list_triggers / list_files (their args.limit ?? 50 default), 50 rows for
 	// list_objects (API default), 20 rows for search_objects (API default), 50
 	// rows for list_relationships / list_workspace_skills (best available upper
 	// bound). Using 50 rows uniformly overshoots the tight cases and stresses the
 	// budget guard rather than the fixture.
+	//
+	// `list_actors` is excluded — see the parityCases comment above; it has no
+	// `content` channel to budget-check in either flag state.
 	const scopingCases: Array<{
 		tool: string
 		fixture: unknown[]
@@ -325,10 +333,6 @@ describe('MCP list/search channel split (AC-T2 / AC-T4 / AC-U2)', () => {
 			tool: 'search_objects',
 			fixture: Array.from({ length: 50 }, (_, i) => objectRow(i)),
 			args: { q: 'anything' },
-		},
-		{
-			tool: 'list_actors',
-			fixture: Array.from({ length: 50 }, (_, i) => actorRow(i)),
 		},
 		{
 			tool: 'list_relationships',
@@ -378,6 +382,26 @@ describe('MCP list/search channel split (AC-T2 / AC-T4 / AC-U2)', () => {
 			// once per row. Empty fixtures skip this — but the scoping cases seed
 			// 50 rows, so the summary always has at least one linked row.
 			expect(result.content[0].text).toContain('](https://maskin.io/')
+		})
+	}
+
+	// `list_actors` has no `content` channel in either flag state —
+	// `structuredContent.heroCard` (with `url` folded into each object) is
+	// the sole response channel. See the parityCases/scopingCases carve-out
+	// comments above and the matching one in `response-cap.ts`.
+	for (const flag of ['0', '1'] as const) {
+		it(`list_actors: flag ${flag === '0' ? 'OFF' : 'ON'} never emits a content channel`, async () => {
+			process.env[RESPONSE_SCOPING_ENV_VAR] = flag
+			const fixture = Array.from({ length: 3 }, (_, i) => actorRow(i))
+			fetchStubFor(fixture)
+			const handler = getHandler('list_actors')
+			const result = (await handler({})) as {
+				content?: Array<{ text: string }>
+				structuredContent: { heroCard: { kind: string; objects?: Array<{ url?: string }> } }
+			}
+			expect(result.content).toBeUndefined()
+			expect(result.structuredContent.heroCard.kind).toBe('list')
+			expect(result.structuredContent.heroCard.objects?.[0]?.url).toContain('https://maskin.io')
 		})
 	}
 

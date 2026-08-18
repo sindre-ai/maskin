@@ -198,6 +198,10 @@ describe('AC-U3 verification harness — contract replay of typical Claude Code 
 	// fixture the API would have returned. Chosen to cover the shapes the two
 	// callers actually use in production: Claude Code sessions and background
 	// workspace agents that page through workspace state.
+	//
+	// `list_actors` is intentionally absent — it has no `content` channel in
+	// either flag state (structuredContent-only), so it can't participate in
+	// a content-channel parity loop. See the dedicated trace test below.
 	const traces: Array<{
 		trace: string
 		tool: string
@@ -215,12 +219,6 @@ describe('AC-U3 verification harness — contract replay of typical Claude Code 
 			tool: 'search_objects',
 			args: { q: 'response scoping' },
 			fixture: [objectRow(10)],
-		},
-		{
-			trace: 'claude-code: list_actors (default)',
-			tool: 'list_actors',
-			args: {},
-			fixture: [actorRow(1), actorRow(2)],
 		},
 		{
 			trace: 'workspace-agent: list_objects (filter by type=bet)',
@@ -294,6 +292,23 @@ describe('AC-U3 verification harness — contract replay of typical Claude Code 
 			}
 		})
 	}
+
+	it('claude-code: list_actors (default): responds via structuredContent only, in both flag states', async () => {
+		const fixture = [actorRow(1), actorRow(2)]
+		for (const flag of ['0', '1'] as const) {
+			process.env[RESPONSE_SCOPING_ENV_VAR] = flag
+			stubFetch(fixture)
+			const handler = handlers.get('list_actors')
+			if (!handler) throw new Error('handler list_actors not registered')
+			const result = (await handler({})) as {
+				content?: Array<{ text: string }>
+				structuredContent: { heroCard: { kind: string; objects?: unknown[] } }
+			}
+			expect(result.content).toBeUndefined()
+			expect(result.structuredContent.heroCard.kind).toBe('list')
+			expect(result.structuredContent.heroCard.objects).toHaveLength(fixture.length)
+		}
+	})
 })
 
 // ─────────────────────────────────────────────────────────────────
@@ -301,13 +316,16 @@ describe('AC-U3 verification harness — contract replay of typical Claude Code 
 // ─────────────────────────────────────────────────────────────────
 //
 // Existing response-scoping tests cover OFF → ON → OFF on a single tool.
-// This suite generalises the toggle: for each of the seven scoped tools,
-// flip ON → OFF → ON on one handler instance and assert that (a) the OFF
-// pass returns the pre-scoping JSON dump byte-for-byte, and (b) the second
-// ON pass is byte-identical to the first ON pass. That second half is what
-// proves flag-off leaves no cached / process-level state behind.
+// This suite generalises the toggle: for each of six content-channel-scoped
+// tools, flip ON → OFF → ON on one handler instance and assert that (a) the
+// OFF pass returns the pre-scoping JSON dump byte-for-byte, and (b) the
+// second ON pass is byte-identical to the first ON pass. That second half is
+// what proves flag-off leaves no cached / process-level state behind.
+//
+// `list_actors` is excluded — it has no `content` channel to toggle; its own
+// structuredContent-stability check lives in the dedicated test below.
 
-describe('AC-T4 verification harness — ON → OFF → ON toggle parity across all seven scoped tools', () => {
+describe('AC-T4 verification harness — ON → OFF → ON toggle parity across six scoped tools', () => {
 	let handlers: Map<string, Handler>
 
 	beforeEach(() => {
@@ -328,7 +346,6 @@ describe('AC-T4 verification harness — ON → OFF → ON toggle parity across 
 	}> = [
 		{ tool: 'list_objects', fixture: [objectRow(1), objectRow(2)] },
 		{ tool: 'search_objects', args: { q: 'anything' }, fixture: [objectRow(3), objectRow(4)] },
-		{ tool: 'list_actors', fixture: [actorRow(1), actorRow(2)] },
 		{
 			tool: 'list_relationships',
 			fixture: [relationshipRow(1), relationshipRow(2)],
@@ -381,6 +398,28 @@ describe('AC-T4 verification harness — ON → OFF → ON toggle parity across 
 			expect(Boolean(on2.structuredContent)).toBe(Boolean(on1.structuredContent))
 		})
 	}
+
+	it('list_actors: ON → OFF → ON restores structuredContent-only shape byte-for-byte', async () => {
+		const fixture = [actorRow(1), actorRow(2)]
+		stubFetch(fixture)
+		const handler = handlers.get('list_actors')
+		if (!handler) throw new Error('handler list_actors not registered')
+
+		process.env[RESPONSE_SCOPING_ENV_VAR] = '1'
+		const on1 = (await handler({})) as { content?: unknown; structuredContent: unknown }
+		expect(on1.content).toBeUndefined()
+
+		process.env[RESPONSE_SCOPING_ENV_VAR] = '0'
+		const off = (await handler({})) as { content?: unknown; structuredContent: unknown }
+		expect(off.content).toBeUndefined()
+
+		process.env[RESPONSE_SCOPING_ENV_VAR] = '1'
+		const on2 = (await handler({})) as { content?: unknown; structuredContent: unknown }
+		expect(on2.content).toBeUndefined()
+		// list_actors never threads a cursor for a 2-row fixture, so
+		// structuredContent is deterministic across the toggle.
+		expect(on2.structuredContent).toEqual(on1.structuredContent)
+	})
 
 	it('list_objects: token-cap truncation markers reappear on the second ON pass (no state leak)', async () => {
 		// Bigger fixture (26 == default scoped page + 1 sentinel row, so the
