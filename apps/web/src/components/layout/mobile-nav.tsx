@@ -4,7 +4,7 @@ import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { getEnabledObjectTypeTabs } from '@maskin/module-sdk'
 import { Link, useMatchRoute } from '@tanstack/react-router'
-import { Bot, Layers, RefreshCw, Zap } from 'lucide-react'
+import { Layers, MessageSquare, RefreshCw, Zap } from 'lucide-react'
 import { useMemo } from 'react'
 
 // On mobile (≤767px) the sidebar becomes an off-canvas sheet, so the fixed bottom
@@ -22,9 +22,12 @@ interface MobileNavItem {
 	exact?: boolean
 }
 
+// Mirrors the v2 sidebar inventory (mockup navDefs). Agents is deliberately not
+// here — it is reached through the working-agents card and agent-name links, and
+// a bottom bar promoting it would reinstate exactly the entry the sidebar drops.
 const baseItems: MobileNavItem[] = [
-	{ key: 'for-you', label: 'For You', to: FOR_YOU_ROUTE, exact: true, icon: Zap },
-	{ key: 'agents', label: 'Agents', to: '/$workspaceId/agents', icon: Bot },
+	{ key: 'for-you', label: 'For you', to: FOR_YOU_ROUTE, exact: true, icon: Zap },
+	{ key: 'chats', label: 'Chats', to: '/$workspaceId/chats', icon: MessageSquare },
 	{ key: 'loops', label: 'Loops', to: '/$workspaceId/loops', icon: RefreshCw },
 ]
 

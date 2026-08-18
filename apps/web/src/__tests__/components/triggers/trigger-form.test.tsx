@@ -301,6 +301,47 @@ describe('TriggerForm', () => {
 		expect(screen.getByText('Disabled')).toBeInTheDocument()
 	})
 
+	it('reconciles the title to a rename that landed while the field was dirty', async () => {
+		const user = userEvent.setup()
+		const trigger = buildTriggerResponse({ name: 'Original name' })
+		const { rerender } = render(
+			<TriggerForm {...defaultProps} initialValues={trigger} isCreated />,
+			{ wrapper: TestWrapper },
+		)
+
+		// Both rename paths stay live by decision, so the field must never write
+		// a stale local name back over a rename the language bar already landed.
+		const title = screen.getByPlaceholderText('Trigger name')
+		await user.click(title)
+		await user.type(title, ' edited locally')
+		expect(screen.getByDisplayValue('Original name edited locally')).toBeInTheDocument()
+
+		rerender(
+			<TriggerForm
+				{...defaultProps}
+				initialValues={buildTriggerResponse({ name: 'Renamed by an agent' })}
+				isCreated
+			/>,
+		)
+
+		expect(screen.getByDisplayValue('Renamed by an agent')).toBeInTheDocument()
+	})
+
+	it('leaves the title alone while the saved name is unchanged', async () => {
+		const user = userEvent.setup()
+		const trigger = buildTriggerResponse({ name: 'Original name' })
+		const { rerender } = render(
+			<TriggerForm {...defaultProps} initialValues={trigger} isCreated />,
+			{ wrapper: TestWrapper },
+		)
+
+		await user.type(screen.getByPlaceholderText('Trigger name'), ' edited locally')
+		// An unrelated re-render (any other field autosaving) must not reset it.
+		rerender(<TriggerForm {...defaultProps} initialValues={trigger} isCreated />)
+
+		expect(screen.getByDisplayValue('Original name edited locally')).toBeInTheDocument()
+	})
+
 	it('shows error message when error prop set', () => {
 		render(<TriggerForm {...defaultProps} error={new Error('Something broke')} />, {
 			wrapper: TestWrapper,

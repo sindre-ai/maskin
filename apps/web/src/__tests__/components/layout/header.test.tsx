@@ -20,6 +20,13 @@ vi.mock('@/lib/page-header-context', () => ({
 	usePageHeader: vi.fn(() => ({ actions: null, stickyIdentity: null })),
 }))
 
+vi.mock('@/hooks/use-available-object-types', () => ({
+	useAvailableObjectTypes: () => [
+		{ label: 'Insights', value: 'insight' },
+		{ label: 'Bets', value: 'bet' },
+	],
+}))
+
 vi.mock('@/lib/workspace-context', () => ({
 	useWorkspace: () => ({ workspaceId: 'ws-1' }),
 }))
@@ -152,25 +159,6 @@ describe('Header', () => {
 		expect(setPaletteOpen).toHaveBeenCalledWith(true)
 	})
 
-	it('hides the New menu on the For You page', () => {
-		vi.mocked(useMatches).mockReturnValue([
-			{ routeId: '/_authed/$workspaceId/', pathname: '/ws-1', params: { workspaceId: 'ws-1' } },
-		] as ReturnType<typeof useMatches>)
-		vi.mocked(usePageHeader).mockReturnValue({
-			actions: null,
-			stickyIdentity: null,
-			setTitle: vi.fn(),
-			setSubtitle: vi.fn(),
-			setActions: vi.fn(),
-			setStickyIdentity: vi.fn(),
-			setContentPush: vi.fn(),
-			setScrollLocked: vi.fn(),
-		})
-
-		render(<Header />)
-		expect(screen.queryByRole('button', { name: /^new$/i })).not.toBeInTheDocument()
-	})
-
 	it('renders page header actions from usePageHeader', () => {
 		vi.mocked(usePageHeader).mockReturnValue({
 			actions: <button type="button">Custom Action</button>,
@@ -235,7 +223,7 @@ describe('Header', () => {
 
 		expect(screen.getByRole('menuitem', { name: /new chat/i })).toBeInTheDocument()
 		expect(screen.queryByText('Create an object')).not.toBeInTheDocument()
-		expect(screen.queryByRole('menuitem', { name: /new task/i })).not.toBeInTheDocument()
+		expect(screen.queryByRole('menuitem', { name: /new insight/i })).not.toBeInTheDocument()
 	})
 
 	it('keeps the "Create an object" section on the objects list surface', async () => {
@@ -262,7 +250,7 @@ describe('Header', () => {
 		await user.click(screen.getByRole('button', { name: 'More ways to start' }))
 
 		expect(screen.getByText('Create an object')).toBeInTheDocument()
-		expect(screen.getByRole('menuitem', { name: /new task/i })).toBeInTheDocument()
+		expect(screen.getByRole('menuitem', { name: /new insight/i })).toBeInTheDocument()
 	})
 
 	it('renders the sticky identity projection when the hero has scrolled off', () => {

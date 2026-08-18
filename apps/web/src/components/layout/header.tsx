@@ -198,7 +198,7 @@ export function Header() {
 						{headingText}
 					</h1>
 					{subtitle && (
-						<span className="hidden whitespace-nowrap text-[11.5px] text-muted-foreground sm:inline">
+						<span className="whitespace-nowrap text-[11.5px] text-muted-foreground">
 							{subtitle}
 						</span>
 					)}

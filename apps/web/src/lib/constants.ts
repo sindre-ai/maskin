@@ -99,3 +99,12 @@ export function getStatusColor(status: string) {
 }
 
 export const API_BASE = '/api'
+
+// One-line copy for the built-in object types (mockup NEWKINDS, lines 254-262).
+// Module and custom types deliberately have no entry — we describe a type only
+// when the product actually defines it, and fall back to the bare label.
+export const objectTypeDescriptions: Record<string, string> = {
+	insight: 'A structured finding, linked to its evidence',
+	bet: 'A hypothesis to run across cycles',
+	task: 'A piece of work to track through to done',
+}

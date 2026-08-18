@@ -85,6 +85,9 @@ export function LoopRow({
 				)}
 			</div>
 			<div className="shrink-0 text-right leading-[1.35]">
+				{/* Stage stands in for the mockup's per-loop stage label (1535).
+				    `LoopSummary` carries no stage field, so this reads the pill —
+				    a real stage needs a `stage` column on `loopSummarySchema`. */}
 				<p data-testid="loop-pill" className={cn('text-xs font-semibold', pill.text)}>
 					{pill.label}
 				</p>

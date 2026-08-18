@@ -100,15 +100,12 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 									</>
 								)}
 								{item.to === CHATS_ROUTE && (
-									<>
-										<UnreadBadge
-											count={chatUnread.count}
-											overflow={chatUnread.hasMore}
-											variant="plain"
-											className="ml-auto group-data-[collapsible=icon]:hidden"
-										/>
-										<CollapsedUnreadDot count={chatUnread.count} />
-									</>
+									<UnreadBadge
+										count={chatUnread.count}
+										overflow={chatUnread.hasMore}
+										variant="plain"
+										className="ml-auto group-data-[collapsible=icon]:hidden"
+									/>
 								)}
 							</SidebarNavItem>
 						))}
@@ -129,8 +126,10 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 }
 
 // The icon rail has no room for a numeral, so unread collapses to a 6px brand
-// dot on the tile (mockup line 124's `i.dot`). Hidden whenever the sidebar is
-// expanded, where the numeral carries the same signal with more precision.
+// dot on the tile (mockup line 125's `i.dot`). Scoped to For you: the mockup
+// gives the rail exactly one attention signal, and putting it on Chats too
+// makes neither mean anything. Hidden when the sidebar is expanded, where the
+// numeral carries the same signal with more precision.
 function CollapsedUnreadDot({ count }: { count: number }) {
 	if (count <= 0) return null
 	return (

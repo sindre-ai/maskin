@@ -569,6 +569,21 @@ export function TriggerForm({
 		if (initialEnabled !== undefined) setEnabled(initialEnabled)
 	}, [initialEnabled])
 
+	// Two rename paths coexist by decision: this field's debounced autosave, and
+	// the language bar below (which hands the utterance to an agent that may
+	// rename the trigger server-side). If a rename lands while this field is
+	// focused or dirty, the saved value wins — otherwise the next autosave would
+	// write the stale local name straight back over the rename that just landed.
+	// Keyed off the last value we adopted, not off the current field, so the
+	// field's own saves round-trip without re-triggering a reset.
+	const savedName = initialValues?.name
+	const adoptedNameRef = useRef(savedName)
+	useEffect(() => {
+		if (savedName === undefined || savedName === adoptedNameRef.current) return
+		adoptedNameRef.current = savedName
+		setName(savedName)
+	}, [savedName])
+
 	const handleEntityTypeChange = (val: string) => {
 		setEntityType(val)
 		const def = allEvents.find((e) => e.entityType === val)

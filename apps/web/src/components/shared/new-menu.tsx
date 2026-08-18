@@ -8,7 +8,10 @@ import {
 	DropdownMenuShortcut,
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { useAvailableObjectTypes } from '@/hooks/use-available-object-types'
+import { cn } from '@/lib/cn'
 import { useCommandPalette } from '@/lib/command-palette-context'
+import { defaultTypeColor, objectTypeDescriptions, typeColors } from '@/lib/constants'
 import { Bot, ChevronDown, MessageSquare, Plus, RefreshCw, Search } from 'lucide-react'
 import { useState } from 'react'
 
@@ -16,12 +19,6 @@ interface CreateConfig {
 	type: CreatableType
 	subtype?: string
 }
-
-const OBJECT_TYPE_ITEMS: { subtype: string; label: string; swatchClassName: string }[] = [
-	{ subtype: 'task', label: 'Task', swatchClassName: 'bg-type-task-bg' },
-	{ subtype: 'insight', label: 'Insight', swatchClassName: 'bg-type-insight-bg' },
-	{ subtype: 'bet', label: 'Bet', swatchClassName: 'bg-type-bet-bg' },
-]
 
 interface NewMenuProps {
 	// Only step that varies by page — the global header opens the docked chat
@@ -55,6 +52,10 @@ const PRIMARY_TITLE: Record<PrimaryKind, string> = {
 export function NewMenu({ onNewChat, hideObjectSection, primaryKind }: NewMenuProps) {
 	const [createConfig, setCreateConfig] = useState<CreateConfig | null>(null)
 	const { setOpen: setPaletteOpen } = useCommandPalette()
+	// The menu lists the types this workspace actually defines — modules and
+	// custom extensions included. Hardcoding the three built-ins hid every
+	// workspace-defined type behind the create picker.
+	const objectTypes = useAvailableObjectTypes()
 
 	// Object-detail hides the object section, so its primary must not be the
 	// object picker either — fall back to chat rather than opening a surface the
@@ -117,15 +118,31 @@ export function NewMenu({ onNewChat, hideObjectSection, primaryKind }: NewMenuPr
 							<>
 								<DropdownMenuSeparator />
 								<div className="eyebrow px-2 py-1">Create an object</div>
-								{OBJECT_TYPE_ITEMS.map((item) => (
-									<DropdownMenuItem
-										key={item.subtype}
-										onSelect={() => setCreateConfig({ type: 'object', subtype: item.subtype })}
-									>
-										<span className={`h-2.5 w-2.5 shrink-0 rounded-sm ${item.swatchClassName}`} />
-										New {item.label.toLowerCase()}
-									</DropdownMenuItem>
-								))}
+								{objectTypes.map((item) => {
+									const description = objectTypeDescriptions[item.value]
+									return (
+										<DropdownMenuItem
+											key={item.value}
+											onSelect={() => setCreateConfig({ type: 'object', subtype: item.value })}
+											className="items-start gap-2.5"
+										>
+											<span
+												className={cn(
+													'mt-1 h-2.5 w-2.5 shrink-0 rounded-sm',
+													typeColors[item.value]?.bg ?? defaultTypeColor.bg,
+												)}
+											/>
+											<span className="min-w-0 flex-1">
+												<span className="block text-sm">New {item.label.toLowerCase()}</span>
+												{description && (
+													<span className="block truncate text-xs text-muted-foreground">
+														{description}
+													</span>
+												)}
+											</span>
+										</DropdownMenuItem>
+									)
+								})}
 							</>
 						)}
 						<DropdownMenuSeparator />

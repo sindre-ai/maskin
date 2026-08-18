@@ -15,10 +15,10 @@ import {
 import { clearAuth, getStoredActor } from '@/lib/auth'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
-import { ChevronsUpDown, LogOut, Settings, UserCircle } from 'lucide-react'
+import { ChevronDown, LogOut, Settings } from 'lucide-react'
 
 export function NavUser() {
-	const { workspaceId } = useWorkspace()
+	const { workspace, workspaceId } = useWorkspace()
 	const navigate = useNavigate()
 	const { isMobile, setOpenMobile } = useSidebar()
 	const actor = getStoredActor()
@@ -34,11 +34,22 @@ export function NavUser() {
 					<DropdownMenuTrigger asChild>
 						<SidebarMenuButton
 							tooltip={displayName}
-							className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+							className="h-auto data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
 						>
-							<UserCircle />
-							<span className="truncate">{displayName}</span>
-							<ChevronsUpDown className="ml-auto size-4 shrink-0" />
+							<span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-brand-subtle text-[10px] font-bold text-brand-subtle-foreground">
+								{initial}
+							</span>
+							{/* The row identifies the person and the workspace they are in —
+							    the mockup pairs them because one account spans several. */}
+							<span className="grid min-w-0 flex-1 text-left leading-tight group-data-[collapsible=icon]:hidden">
+								<span className="truncate text-xs font-semibold">{displayName}</span>
+								{workspace?.name && (
+									<span className="truncate text-[10.5px] text-muted-foreground">
+										{workspace.name}
+									</span>
+								)}
+							</span>
+							<ChevronDown className="ml-auto size-3 shrink-0 text-muted-foreground group-data-[collapsible=icon]:hidden" />
 						</SidebarMenuButton>
 					</DropdownMenuTrigger>
 					<DropdownMenuContent

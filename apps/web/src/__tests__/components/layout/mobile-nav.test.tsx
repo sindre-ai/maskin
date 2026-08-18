@@ -65,7 +65,7 @@ describe('MobileNav', () => {
 		mockMatch.mockReturnValue(false)
 		render(<MobileNav />)
 		expect(screen.getByRole('link', { name: /for you/i })).toBeInTheDocument()
-		expect(screen.getByRole('link', { name: /agents/i })).toBeInTheDocument()
+		expect(screen.getByRole('link', { name: /chats/i })).toBeInTheDocument()
 		expect(screen.getByRole('link', { name: /loops/i })).toBeInTheDocument()
 		expect(screen.queryByRole('link', { name: /objects/i })).not.toBeInTheDocument()
 	})
@@ -85,19 +85,19 @@ describe('MobileNav', () => {
 		const links = screen.getAllByRole('link')
 		const labels = links.map((l) => l.getAttribute('aria-label'))
 		expect(labels).toEqual([
-			'For You, navigate to',
+			'For you, navigate to',
 			'Objects, navigate to',
-			'Agents, navigate to',
+			'Chats, navigate to',
 			'Loops, navigate to',
 		])
 	})
 
 	it('marks the current page link and keeps others as navigate-to', () => {
 		mockUseEnabledModules.mockReturnValue([])
-		mockMatch.mockImplementation(({ to }) => to === '/$workspaceId/agents')
+		mockMatch.mockImplementation(({ to }) => to === '/$workspaceId/chats')
 		render(<MobileNav />)
-		expect(screen.getByRole('link', { name: 'Agents, current page' })).toBeInTheDocument()
-		expect(screen.getByRole('link', { name: 'For You, navigate to' })).toBeInTheDocument()
+		expect(screen.getByRole('link', { name: 'Chats, current page' })).toBeInTheDocument()
+		expect(screen.getByRole('link', { name: 'For you, navigate to' })).toBeInTheDocument()
 		expect(screen.getByRole('link', { name: 'Loops, navigate to' })).toBeInTheDocument()
 	})
 
@@ -116,7 +116,7 @@ describe('MobileNav', () => {
 		expect(linkCalls).toHaveLength(4)
 		const hrefs = linkCalls.map((c) => c.to)
 		expect(hrefs).toContain('/$workspaceId/objects')
-		expect(hrefs).toContain('/$workspaceId/agents')
+		expect(hrefs).toContain('/$workspaceId/chats')
 		expect(hrefs).toContain('/$workspaceId/loops')
 		for (const call of linkCalls) {
 			expect(call.params).toEqual({ workspaceId: 'ws-1' })
