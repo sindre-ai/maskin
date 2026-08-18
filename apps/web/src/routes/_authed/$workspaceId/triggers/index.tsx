@@ -1,4 +1,3 @@
-import { PageHeader } from '@/components/layout/page-header'
 import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picker'
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
@@ -46,8 +45,6 @@ function TriggersPage() {
 
 	return (
 		<div>
-			<PageHeader title="Triggers" />
-
 			{isLoading ? (
 				<ListSkeleton />
 			) : !triggers?.length ? (

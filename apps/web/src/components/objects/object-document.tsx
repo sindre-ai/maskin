@@ -48,6 +48,7 @@ import { StatusBadge } from '../shared/status-badge'
 import { TypeBadge } from '../shared/type-badge'
 import { AuxiliaryActionMenu } from './auxiliary-action-menu'
 import { CommitmentCard } from './commitment-card'
+import { LinkedObjects } from './linked-objects'
 import { ObjectPropertiesSidebar } from './object-properties-sidebar'
 import { PropertiesSidebarProvider, SIDEBAR_WIDTH } from './properties-sidebar-provider'
 import { OwnerSelect, StatusSelect } from './property-selects'
@@ -59,6 +60,7 @@ interface ObjectDocumentViewProps {
 	statuses: string[]
 	members?: MemberResponse[]
 	allRelationships?: RelationshipResponse[]
+	relationships?: { asSource: RelationshipResponse[]; asTarget: RelationshipResponse[] }
 	connectedObjects?: ObjectResponse[]
 	events?: EventResponse[]
 	onUpdateTitle: (title: string) => void
@@ -119,6 +121,7 @@ export function ObjectDocumentView({
 	statuses,
 	members,
 	allRelationships,
+	relationships,
 	connectedObjects,
 	events,
 	onUpdateTitle,
@@ -273,6 +276,20 @@ export function ObjectDocumentView({
 					</p>
 				)}
 			</div>
+
+			{/* Related objects — dedicated add/remove/filter surface, separate from
+			 * the Activity timeline's relationship-creation events below. */}
+			{relationships && (
+				<div className="mb-8">
+					<LinkedObjects
+						objectId={object.id}
+						objectType={object.type}
+						asSource={relationships.asSource}
+						asTarget={relationships.asTarget}
+						connectedObjects={connectedObjects}
+					/>
+				</div>
+			)}
 
 			{/* Activity — relationships are projected inline (AC-U11) or rendered
 				as a grouped-by-edge-type table (AC-U12) depending on the persisted
@@ -688,6 +705,7 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 					statuses={statuses}
 					members={members}
 					allRelationships={allRelationships}
+					relationships={relationships}
 					connectedObjects={graph?.connected_objects}
 					events={events}
 					onUpdateTitle={handleUpdateTitle}

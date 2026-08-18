@@ -256,6 +256,14 @@ export const sessions = pgTable(
 		actionPrompt: text('action_prompt').notNull(),
 		config: jsonb('config').notNull().default({}),
 		interactive: boolean('interactive').notNull().default(false),
+		// Denormalized from config.conversation.conversation_id — same treatment
+		// `interactive` already got — so the conversation-responder's "does a
+		// running interactive session already exist for this (conversation,
+		// agent)?" lookup can use an indexed column instead of an unindexed
+		// JSONB path scan.
+		conversationId: uuid('conversation_id').references((): AnyPgColumn => conversations.id, {
+			onDelete: 'set null',
+		}),
 		result: jsonb('result').$type<SessionResult>(),
 		snapshotPath: text('snapshot_path'),
 		sourceSessionId: uuid('source_session_id'),
@@ -289,6 +297,19 @@ export const sessions = pgTable(
 		index('sessions_agent_server_active_idx')
 			.on(t.agentServerId, t.status)
 			.where(sql`${t.agentServerId} IS NOT NULL`),
+		// Backs the conversation-responder's "is there already a running
+		// interactive session for this (conversation, agent)?" lookup.
+		index('sessions_conversation_actor_idx')
+			.on(t.conversationId, t.actorId)
+			.where(sql`${t.conversationId} IS NOT NULL`),
+		// Authoritative concurrency guard, not just an optimization: at most one
+		// interactive session may be actively spawning/running for a given
+		// (conversation, agent) pair. Enforced at the DB layer because the
+		// application-level lookup-then-insert in evaluateAndRespond has a race
+		// window between two near-simultaneous replies from the same agent.
+		uniqueIndex('sessions_conversation_actor_active_uniq')
+			.on(t.conversationId, t.actorId)
+			.where(sql`${t.interactive} = true AND ${t.status} IN ('pending','starting','running')`),
 	],
 )
 
@@ -307,6 +328,109 @@ export const sessionLogs = pgTable(
 	},
 	(t) => [index('session_logs_session_idx').on(t.sessionId, t.createdAt)],
 )
+
+// ── Conversations ────────────────────────────────────────────────────────
+
+export const conversations = pgTable(
+	'conversations',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id)
+			.notNull(),
+		title: text('title').notNull(),
+		createdBy: uuid('created_by')
+			.references(() => actors.id)
+			.notNull(),
+		// Denormalized so "my conversations ordered by last activity" is a plain
+		// index scan instead of a MAX(messages.id) aggregate per row. Bumped in
+		// the same transaction as every message insert.
+		lastMessageAt: timestamp('last_message_at', { withTimezone: true }).notNull().defaultNow(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [index('conversations_ws_last_message_at_idx').on(t.workspaceId, t.lastMessageAt)],
+)
+
+export type Conversation = typeof conversations.$inferSelect
+export type NewConversation = typeof conversations.$inferInsert
+
+// ── Conversation Participants ──────────────────────────────────────────────
+//
+// Per-user pin/archive/read state lives here rather than on `conversations` —
+// two humans in the same conversation can have independently pinned/archived/
+// read state. `leftAt` is a soft-remove (not a DELETE) so a re-added
+// participant keeps their prior pin/archive/read history and a removed
+// participant keeps a stable author FK on their historical messages.
+
+export const conversationParticipants = pgTable(
+	'conversation_participants',
+	{
+		conversationId: uuid('conversation_id')
+			.references(() => conversations.id, { onDelete: 'cascade' })
+			.notNull(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id)
+			.notNull(),
+		addedBy: uuid('added_by').references(() => actors.id),
+		joinedAt: timestamp('joined_at', { withTimezone: true }).notNull().defaultNow(),
+		leftAt: timestamp('left_at', { withTimezone: true }),
+		pinned: boolean('pinned').notNull().default(false),
+		archived: boolean('archived').notNull().default(false),
+		// High-water mark into messages.id (bigserial, monotonic).
+		lastReadMessageId: bigint('last_read_message_id', { mode: 'number' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		primaryKey({ columns: [t.conversationId, t.actorId] }),
+		// Leading column actorId (reverse of the PK's leading column) — required
+		// for "list my active conversations" to be an index scan.
+		index('conversation_participants_actor_active_idx')
+			.on(t.actorId, t.conversationId)
+			.where(sql`${t.leftAt} IS NULL`),
+	],
+)
+
+export type ConversationParticipant = typeof conversationParticipants.$inferSelect
+export type NewConversationParticipant = typeof conversationParticipants.$inferInsert
+
+// ── Messages ────────────────────────────────────────────────────────────────
+//
+// One row per chat turn in a conversation, human- or agent-authored.
+// `sessionId` links an agent-authored message back to the session that
+// produced it (NULL for human messages) — cost/token drill-down is a join at
+// read time, same nullable-FK shape as notifications.sessionId and
+// agentFiles.sessionId. sessionId is intentionally NOT unique: an
+// interactive session is long-lived and reused across many replies in the
+// same conversation (see conversation-responder.ts), so many messages
+// legitimately share one session_id over that session's lifetime.
+
+export const messages = pgTable(
+	'messages',
+	{
+		id: bigserial('id', { mode: 'number' }).primaryKey(),
+		conversationId: uuid('conversation_id')
+			.references(() => conversations.id, { onDelete: 'cascade' })
+			.notNull(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id)
+			.notNull(),
+		kind: text('kind').notNull().default('message'),
+		content: text('content').notNull(),
+		metadata: jsonb('metadata'),
+		sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'set null' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index('messages_conversation_id_idx').on(t.conversationId, t.id),
+		index('messages_session_id_idx').on(t.sessionId),
+		check('messages_kind_check', sql`${t.kind} IN ('message', 'system')`),
+	],
+)
+
+export type Message = typeof messages.$inferSelect
+export type NewMessage = typeof messages.$inferInsert
 
 // ── Agent Files ────────────────────────────────────────────────────────────
 
@@ -937,3 +1061,42 @@ export const sessionDispatchAttempts = pgTable(
 
 export type SessionDispatchAttempt = typeof sessionDispatchAttempts.$inferSelect
 export type NewSessionDispatchAttempt = typeof sessionDispatchAttempts.$inferInsert
+
+// ── Orphan Thread Detections ────────────────────────────────────────────────
+//
+// Idempotency ledger for the `orphan_thread_detected` analytics signal. One
+// row per root comment (`root_comment_event_id` is the UNIQUE key) so the
+// detector can run on an interval without double-firing the PostHog event
+// when a slow tick overlaps a faster one. The ledger row is written in the
+// same transaction as the capture attempt — if PostHog is down the row is
+// still written (the signal is best-effort by design; see the service's
+// docstring) so we never re-scan an already-decided thread.
+
+export const orphanThreadDetections = pgTable(
+	'orphan_thread_detections',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id)
+			.notNull(),
+		objectId: uuid('object_id').notNull(),
+		rootCommentEventId: bigint('root_comment_event_id', { mode: 'number' }).notNull(),
+		expectedReplyActorId: uuid('expected_reply_actor_id')
+			.references(() => actors.id)
+			.notNull(),
+		hoursWithoutReply: numeric('hours_without_reply', { precision: 10, scale: 2 }).notNull(),
+		threadKind: text('thread_kind').notNull(),
+		detectedAt: timestamp('detected_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		unique('orphan_thread_detections_root_comment_event_id_uniq').on(t.rootCommentEventId),
+		check(
+			'orphan_thread_detections_thread_kind_check',
+			sql`${t.threadKind} IN ('decision_required','question','flag')`,
+		),
+		index('orphan_thread_detections_detected_at_idx').on(t.detectedAt),
+	],
+)
+
+export type OrphanThreadDetection = typeof orphanThreadDetections.$inferSelect
+export type NewOrphanThreadDetection = typeof orphanThreadDetections.$inferInsert

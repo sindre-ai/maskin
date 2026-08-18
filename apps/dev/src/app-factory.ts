@@ -21,6 +21,7 @@ import agentSkillsRoutes from './routes/agent-skills'
 import authRoutes from './routes/auth'
 import briefingRoutes from './routes/briefing'
 import claudeOauthRoutes from './routes/claude-oauth'
+import conversationsRoutes from './routes/conversations'
 import eventsRoutes from './routes/events'
 import filesRoutes from './routes/files'
 import graphRoutes from './routes/graph'
@@ -248,6 +249,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/webhooks', webhookApp)
 	app.route('/api/internal/agent-servers', agentServerReconcileRoutes)
 	app.route('/api/events', eventsRoutes)
+	app.route('/api/conversations', conversationsRoutes)
 	app.route('/api/sessions', sessionsRoutes)
 	app.route('/api/notifications', notificationsRoutes)
 	app.route('/api/subscriptions', subscriptionsRoutes)

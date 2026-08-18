@@ -11,8 +11,7 @@ test.describe('Loops list page', () => {
 
 			await page.goto(`/${account.workspaceId}/loops`)
 
-			await expect(page.getByRole('heading', { name: 'Loops' })).toBeVisible({ timeout: 10000 })
-			await expect(page.getByText('No loops running here yet')).toBeVisible()
+			await expect(page.getByText('No loops running here yet')).toBeVisible({ timeout: 10000 })
 		})
 
 		test(`renders a loop row with derived stats at ${viewport.label}`, async ({
@@ -43,7 +42,9 @@ test.describe('Loops list page', () => {
 		await page.getByRole('link', { name: 'Loops' }).click()
 
 		await expect(page).toHaveURL(new RegExp(`${account.workspaceId}/loops`), { timeout: 10000 })
-		await expect(page.getByRole('heading', { name: 'Loops' })).toBeVisible()
+		await expect(
+			page.getByRole('navigation', { name: 'breadcrumb' }).getByText('Loops', { exact: true }),
+		).toBeVisible()
 	})
 
 	test('triggers page continues to render for workspaces with only triggers', async ({
@@ -54,7 +55,9 @@ test.describe('Loops list page', () => {
 
 		await page.goto(`/${account.workspaceId}/triggers`)
 
-		await expect(page.getByRole('heading', { name: 'Triggers' })).toBeVisible({ timeout: 10000 })
+		await expect(
+			page.getByRole('navigation', { name: 'breadcrumb' }).getByText('Triggers', { exact: true }),
+		).toBeVisible({ timeout: 10000 })
 		// Every workspace is seeded with default triggers from the development
 		// template — a genuinely trigger-free workspace doesn't occur by
 		// default, so this asserts the list itself renders, verifying the
