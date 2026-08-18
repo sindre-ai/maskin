@@ -26,7 +26,6 @@ const baseItems: MobileNavItem[] = [
 	{ key: 'for-you', label: 'For You', to: FOR_YOU_ROUTE, exact: true, icon: Zap },
 	{ key: 'agents', label: 'Agents', to: '/$workspaceId/agents', icon: Bot },
 	{ key: 'loops', label: 'Loops', to: '/$workspaceId/loops', icon: RefreshCw },
-	{ key: 'triggers', label: 'Triggers', to: '/$workspaceId/triggers', icon: Zap },
 ]
 
 export function MobileNav() {

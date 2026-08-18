@@ -1,4 +1,4 @@
-import { parseLoopDescription } from '@/lib/loop-plan'
+import { describeLoopPlan, parseLoopDescription, summariseLoopPlan } from '@/lib/loop-plan'
 import { describe, expect, it } from 'vitest'
 
 const AC_EXAMPLE =
@@ -14,6 +14,7 @@ describe('parseLoopDescription — acceptance example', () => {
 				role: 'Submissions from customers',
 				live: false,
 				stateChain: ['new', 'triage', 'approved', 'published'],
+				isNew: false,
 			},
 		])
 	})
@@ -22,10 +23,12 @@ describe('parseLoopDescription — acceptance example', () => {
 		const plan = parseLoopDescription(AC_EXAMPLE)
 		expect(plan.triggers).toEqual([
 			{
-				kindLabel: 'JUST ADDED',
+				kindLabel: 'EVENT',
 				whenClause: 'when a customer submits feedback',
 				targetAgent: 'Feedback agent',
 				thenWrites: [{ act: 'state_change', type: 'feedback', state: 'triage' }],
+				isNew: true,
+				whenChip: { type: 'feedback', state: 'triage' },
 				asks: 'you before publishing',
 			},
 		])
@@ -60,6 +63,8 @@ describe('parseLoopDescription — cue words', () => {
 			whenClause: 'when the weekly summary is due',
 			targetAgent: 'Feedback agent',
 			thenWrites: [{ act: 'create', type: 'feedback' }, { act: 'notify' }],
+			isNew: true,
+			whenChip: { type: 'feedback' },
 		})
 		expect(plan.agents[0].role).toBe('triages feedback · writes the weekly summary')
 	})
@@ -82,6 +87,7 @@ describe('parseLoopDescription — cue words', () => {
 			role: 'Captured notes',
 			live: false,
 			stateChain: ['new', 'done'],
+			isNew: false,
 		})
 		expect(plan.triggers[0].thenWrites).toContainEqual({ act: 'create', type: 'note' })
 	})
@@ -106,7 +112,7 @@ describe('parseLoopDescription — second example sentence', () => {
 			stateChain: ['signal', 'active', 'at_risk', 'rescue'],
 		})
 		expect(plan.triggers[0]).toMatchObject({
-			kindLabel: 'JUST ADDED',
+			kindLabel: 'EVENT',
 			whenClause: 'when a bet hits at-risk',
 			targetAgent: 'Strategist agent',
 			thenWrites: [
@@ -161,5 +167,61 @@ describe('parseLoopDescription — determinism and no side effects', () => {
 		const plan = parseLoopDescription('have the Feedback agent triage feedback weekly')
 		expect(plan.objectTypes[0].type).toBe('feedback')
 		expect(plan.triggers.length).toBeGreaterThan(0)
+	})
+})
+
+describe('parseLoopDescription — kindLabel vs isNew', () => {
+	it('reports the trigger kind in kindLabel, never the "just added" badge', () => {
+		const plan = parseLoopDescription(AC_EXAMPLE)
+		expect(plan.triggers[0].kindLabel).toBe('EVENT')
+		expect(plan.triggers[0].isNew).toBe(true)
+	})
+
+	it('marks an object type NEW only when the workspace vocabulary lacks it', () => {
+		const known = parseLoopDescription(AC_EXAMPLE, { statusChains: { feedback: ['new', 'done'] } })
+		expect(known.objectTypes[0].isNew).toBe(false)
+
+		const unknown = parseLoopDescription(AC_EXAMPLE, { statusChains: { bet: ['signal'] } })
+		expect(unknown.objectTypes[0].isNew).toBe(true)
+	})
+
+	it('claims nothing is new when no workspace vocabulary is supplied', () => {
+		expect(parseLoopDescription(AC_EXAMPLE).objectTypes[0].isNew).toBe(false)
+	})
+})
+
+describe('parseLoopDescription — clarify signal', () => {
+	it('produces no triggers and no stop point for an under-specified sentence', () => {
+		const plan = parseLoopDescription('track customer feedback')
+		expect(plan.triggers).toHaveLength(0)
+		expect(plan.stopForOperator).toBeNull()
+	})
+
+	it('drafts a trigger once a when-clause is appended', () => {
+		const plan = parseLoopDescription('track customer feedback when it comes in.')
+		expect(plan.triggers.length).toBeGreaterThan(0)
+	})
+})
+
+describe('describeLoopPlan / summariseLoopPlan', () => {
+	it('describes the drafted loop rather than fixed copy', () => {
+		const plan = parseLoopDescription(AC_EXAMPLE)
+		const description = describeLoopPlan(plan)
+		expect(description).toContain('Moves feedback from new to published.')
+		expect(description).toContain('Feedback agent')
+		expect(description).toContain('It stops for you before publishing.')
+	})
+
+	it('counts what would be created and says nothing exists yet', () => {
+		const plan = parseLoopDescription(AC_EXAMPLE)
+		expect(summariseLoopPlan(plan)).toBe(
+			'1 object type · 1 trigger · 1 agent — nothing exists in your workspace yet.',
+		)
+	})
+
+	it('says nothing is drafted for an empty plan', () => {
+		expect(describeLoopPlan(parseLoopDescription(''))).toBe(
+			'Nothing is drafted yet — say what should happen.',
+		)
 	})
 })

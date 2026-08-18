@@ -24,6 +24,10 @@ export interface PlanObjectType {
 	role: string
 	live: boolean
 	stateChain: string[]
+	/** True when the workspace has no vocabulary for this type yet — rendered as
+	 *  the `NEW TYPE` badge (mockup 2168). Derived from `ParseOptions.statusChains`,
+	 *  which is the workspace's own per-type status vocabulary. */
+	isNew: boolean
 }
 
 export interface PlanThenWrite {
@@ -32,12 +36,24 @@ export interface PlanThenWrite {
 	state?: string
 }
 
+/** The right-aligned TYPE+state chip on a trigger header (mockup 2199–2204). */
+export interface PlanWhenChip {
+	type: string
+	state?: string
+}
+
 export interface PlanTrigger {
+	/** The trigger's *kind* — EVENT / RECURRING / NOTIFY. Never a badge string:
+	 *  "just added" is `isNew`, which is a separate concept (mockup 2197–2198). */
 	kindLabel: string
 	whenClause: string
 	targetAgent: string
 	thenWrites: PlanThenWrite[]
 	asks?: string
+	/** Drafted by this sentence rather than already living in the workspace —
+	 *  rendered as the `JUST ADDED` badge beside `kindLabel`. */
+	isNew: boolean
+	whenChip?: PlanWhenChip
 }
 
 export interface PlanAgent {
@@ -123,6 +139,11 @@ export function parseLoopDescription(description: string, options: ParseOptions 
 	const planNoun = matchPlanNoun(lower)
 	const asks = detectAsks(lower)
 
+	const knownTypes = options.statusChains ? new Set(Object.keys(options.statusChains)) : null
+	// With no workspace vocabulary supplied we can't tell new from existing, so
+	// nothing is claimed to be new — the badge only ever appears on real signal.
+	const isNewType = (type: string) => (knownTypes ? !knownTypes.has(type) : false)
+
 	const objectTypes: PlanObjectType[] = [
 		{
 			type: detected.type,
@@ -130,6 +151,7 @@ export function parseLoopDescription(description: string, options: ParseOptions 
 			role: objectTypeRole(detected.spec, cue.summaryInterval),
 			live: false,
 			stateChain,
+			isNew: isNewType(detected.type),
 		},
 	]
 	if (cue.note) {
@@ -139,6 +161,7 @@ export function parseLoopDescription(description: string, options: ParseOptions 
 			role: 'Captured notes',
 			live: false,
 			stateChain: ['new', 'done'],
+			isNew: isNewType('note'),
 		})
 	}
 
@@ -151,6 +174,8 @@ export function parseLoopDescription(description: string, options: ParseOptions 
 			whenClause: `when the ${cue.summaryInterval} summary is due`,
 			targetAgent: agentName,
 			thenWrites: [{ act: 'create', type: detected.type }, { act: 'notify' }],
+			isNew: true,
+			whenChip: { type: detected.type },
 		})
 	}
 	if (cue.notify && !coreTrigger) {
@@ -159,6 +184,8 @@ export function parseLoopDescription(description: string, options: ParseOptions 
 			whenClause: 'when there is something to report',
 			targetAgent: agentName,
 			thenWrites: [{ act: 'notify' }],
+			isNew: true,
+			whenChip: { type: detected.type },
 		})
 	}
 
@@ -296,11 +323,15 @@ function buildCoreTrigger(
 		writes.push({ act: 'create', type: 'note' })
 	}
 
+	const chipState = writes.find((w) => w.act === 'state_change' && w.state)?.state
+
 	return {
-		kindLabel: 'JUST ADDED',
+		kindLabel: 'EVENT',
 		whenClause: `when ${clause}`,
 		targetAgent: agentName,
 		thenWrites: writes,
+		isNew: true,
+		whenChip: { type, ...(chipState ? { state: chipState } : {}) },
 		...(asks ? { asks } : {}),
 	}
 }
@@ -349,4 +380,56 @@ function stripTrailingPunctuation(value: string): string {
 
 function hasWord(text: string, word: string): boolean {
 	return new RegExp(`(^|[^a-z])${word}([^a-z]|$)`, 'i').test(text)
+}
+
+/** One-line read-back of the drafted loop, shown under the card title
+ *  (mockup 2157–2158 `lbDesc`). Describes *this* plan, never fixed copy. */
+export function describeLoopPlan(plan: LoopPlan): string {
+	if (plan.objectTypes.length === 0 && plan.triggers.length === 0) {
+		return 'Nothing is drafted yet — say what should happen.'
+	}
+	const sentences: string[] = []
+	const primary = plan.objectTypes[0]
+	if (primary) {
+		const noun = primary.name.toLowerCase()
+		const chain = primary.stateChain
+		sentences.push(
+			chain.length > 1
+				? `Moves ${noun} from ${chain[0]} to ${chain[chain.length - 1]}.`
+				: `Tracks ${noun}.`,
+		)
+	}
+	if (plan.triggers.length > 0) {
+		const n = plan.triggers.length
+		const agents = Array.from(new Set(plan.triggers.map((t) => t.targetAgent)))
+		sentences.push(
+			`${n} trigger${n === 1 ? '' : 's'} hand${n === 1 ? 's' : ''} the work to ${joinNames(agents)}.`,
+		)
+	}
+	sentences.push(
+		plan.stopForOperator
+			? `It stops for you ${plan.stopForOperator}.`
+			: 'It never stops for you — it runs on its own.',
+	)
+	return sentences.join(' ')
+}
+
+/** Footer reading of what would be created (mockup 2272 `lbSummary`). */
+export function summariseLoopPlan(plan: LoopPlan): string {
+	const counts = [
+		countLabel(plan.objectTypes.length, 'object type'),
+		countLabel(plan.triggers.length, 'trigger'),
+		countLabel(plan.agents.length, 'agent'),
+	]
+	return `${counts.join(' · ')} — nothing exists in your workspace yet.`
+}
+
+function countLabel(n: number, noun: string): string {
+	return `${n} ${noun}${n === 1 ? '' : 's'}`
+}
+
+function joinNames(names: string[]): string {
+	if (names.length === 0) return 'an agent'
+	if (names.length === 1) return names[0]
+	return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
 }

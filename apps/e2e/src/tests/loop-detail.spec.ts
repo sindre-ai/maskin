@@ -73,6 +73,55 @@ test.describe('Loop detail page', () => {
 			await expect(page.getByRole('heading', { name: 'Latest activity' })).toBeVisible()
 			await expect(page.getByRole('heading', { name: 'Changes' })).toBeVisible()
 			await expect(page.getByRole('button', { name: /undo/i }).first()).toBeVisible()
+
+			// The composer is the last thing in the reader column and sticks to
+			// the bottom — it sits below the Changes section, not above the story.
+			const composer = page.getByPlaceholder('Listening — speak in plain words')
+			const changesBox = await page.getByRole('heading', { name: 'Changes' }).boundingBox()
+			const composerBox = await composer.boundingBox()
+			if (!changesBox || !composerBox) throw new Error('missing bounding boxes')
+			expect(composerBox.y).toBeGreaterThan(changesBox.y)
+
+			// A step row is the only route into a loop-owned trigger now that
+			// /triggers redirects.
+			await page.getByText('Normalises the Slack event into the shared source').click()
+			await expect(page).toHaveURL(new RegExp(`${account.workspaceId}/triggers/${trigger.id}`), {
+				timeout: 10000,
+			})
+		})
+
+		test(`pre-first-run banner reads in light and dark at ${viewport.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: viewport.width, height: viewport.height })
+
+			const agent = await account.api.createAgentActor('Relay')
+			await account.api.addWorkspaceMember(account.workspaceId, agent.id)
+			const loop = await account.api.createObject(account.workspaceId, {
+				type: 'loop',
+				title: 'Brand new loop',
+				status: 'running',
+			})
+			const trigger = await account.api.createTrigger(account.workspaceId, {
+				name: 'Nightly sweep',
+				type: 'cron',
+				action_prompt: 'Sweep the backlog',
+				target_actor_id: agent.id,
+				config: { expression: '0 3 * * *' },
+			})
+			await account.api.updateObject(loop.id, account.workspaceId, {
+				metadata: { trigger_ids: [trigger.id] },
+			})
+
+			await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
+
+			const banner = page.getByText(/Built from what you said — nothing has fired yet/)
+			await page.emulateMedia({ colorScheme: 'light' })
+			await expect(banner).toBeVisible({ timeout: 10000 })
+			await page.emulateMedia({ colorScheme: 'dark' })
+			await expect(banner).toBeVisible()
+			await expect(page.getByText(/The first cycle opens/)).toBeVisible()
 		})
 	}
 

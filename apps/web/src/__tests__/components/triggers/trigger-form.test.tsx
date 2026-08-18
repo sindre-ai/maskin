@@ -26,6 +26,29 @@ vi.mock('@/hooks/use-custom-extensions', () => ({
 	useCustomExtensions: () => [],
 }))
 
+vi.mock('@/hooks/use-sessions', () => ({
+	useWorkspaceSessions: () => ({ data: [] }),
+}))
+
+vi.mock('@tanstack/react-router', () => ({
+	useNavigate: () => vi.fn(),
+	Link: ({ children }: { children: React.ReactNode }) => <span>{children}</span>,
+}))
+
+// RECENT RUNS / CHANGES read the workspace event + session feeds; they have
+// their own coverage and would otherwise drag the whole query stack in here.
+vi.mock('@/components/triggers/trigger-history', () => ({
+	TriggerHistory: () => null,
+}))
+
+// The real Composer reaches for uploads and the slash picker; this form only
+// needs the language bar to exist and forward what was said.
+vi.mock('@/components/chat/chat', () => ({
+	Composer: ({ placeholder, textareaLabel }: { placeholder: string; textareaLabel?: string }) => (
+		<textarea aria-label={textareaLabel} placeholder={placeholder} />
+	),
+}))
+
 vi.mock('@maskin/module-sdk', () => ({
 	getAllWebModules: () => [
 		{
@@ -56,7 +79,7 @@ describe('TriggerForm', () => {
 		useAutoSave.mockReturnValue({ showSaved: false })
 	})
 
-	it('renders trigger name input with placeholder', () => {
+	it('renders the trigger name as an in-place editable heading', () => {
 		render(<TriggerForm {...defaultProps} />, { wrapper: TestWrapper })
 		expect(screen.getByPlaceholderText('Trigger name')).toBeInTheDocument()
 	})
@@ -68,10 +91,48 @@ describe('TriggerForm', () => {
 		expect(screen.getByRole('radio', { name: /Reminder/i })).toBeInTheDocument()
 	})
 
-	it('shows every trigger section: When it fires and Do this', () => {
+	it('shows every trigger section as a v2 eyebrow label', () => {
 		render(<TriggerForm {...defaultProps} />, { wrapper: TestWrapper })
-		expect(screen.getByRole('heading', { name: 'When it fires' })).toBeInTheDocument()
-		expect(screen.getByRole('heading', { name: 'Do this' })).toBeInTheDocument()
+		expect(screen.getByRole('heading', { name: 'TRIGGER TYPE' })).toBeInTheDocument()
+		expect(screen.getByRole('heading', { name: 'WHEN THIS HAPPENS' })).toBeInTheDocument()
+		expect(screen.getByRole('heading', { name: 'DO THIS' })).toBeInTheDocument()
+		expect(screen.getByRole('heading', { name: 'USING THIS AGENT' })).toBeInTheDocument()
+	})
+
+	it('renders the meta row with the type chip and the agent', () => {
+		render(<TriggerForm {...defaultProps} isCreated />, { wrapper: TestWrapper })
+		// The type chip and the selected radio chip both read "Event".
+		expect(screen.getAllByText('Event').length).toBeGreaterThan(1)
+		expect(screen.getAllByText('Scout').length).toBeGreaterThan(0)
+		expect(screen.getByText(/not tied to a loop/)).toBeInTheDocument()
+	})
+
+	it('renders the config-driven sections only when their fields are present', () => {
+		const { rerender } = render(<TriggerForm {...defaultProps} isCreated />, {
+			wrapper: TestWrapper,
+		})
+		expect(screen.queryByRole('heading', { name: 'WHAT IT WRITES' })).not.toBeInTheDocument()
+		expect(screen.queryByRole('heading', { name: 'IT STOPS FOR YOU WHEN' })).not.toBeInTheDocument()
+
+		rerender(
+			<TriggerForm
+				{...defaultProps}
+				isCreated
+				initialValues={buildTriggerResponse({
+					type: 'event',
+					config: {
+						entity_type: 'insight',
+						action: 'created',
+						skill: 'triage',
+						writes: [{ act: 'creates', type: 'insight', state: 'new' }],
+						stops_for_you: 'before anything is published',
+					},
+				})}
+			/>,
+		)
+		expect(screen.getByText('skill · triage')).toBeInTheDocument()
+		expect(screen.getByRole('heading', { name: 'WHAT IT WRITES' })).toBeInTheDocument()
+		expect(screen.getByText('before anything is published')).toBeInTheDocument()
 	})
 
 	it('pins a plain-language summary that re-renders live on config edits', async () => {
@@ -103,25 +164,20 @@ describe('TriggerForm', () => {
 		expect(screen.queryByText(/Fires when something happens/i)).not.toBeInTheDocument()
 	})
 
-	it('shows the Saved indicator only when autosave reports a completed save', () => {
-		render(<TriggerForm {...defaultProps} isCreated />, { wrapper: TestWrapper })
-		const savedDefault = screen.getByText('Saved')
-		expect(savedDefault.className).toMatch(/opacity-0/)
-	})
-
-	it('shows the Saved indicator when autosave reports a completed save', () => {
+	it('publishes autosave state upward so the header can render the Saved marker', () => {
+		const onSavedChange = vi.fn()
 		useAutoSave.mockReturnValue({ showSaved: true })
-		render(<TriggerForm {...defaultProps} isCreated />, { wrapper: TestWrapper })
-		const saved = screen.getByText('Saved')
-		expect(saved.className).toMatch(/opacity-100/)
+		render(<TriggerForm {...defaultProps} isCreated onSavedChange={onSavedChange} />, {
+			wrapper: TestWrapper,
+		})
+		expect(onSavedChange).toHaveBeenCalledWith(true)
 	})
 
-	it('keeps a sticky bottom save bar with "editing" meta for created triggers', () => {
+	it('replaces the bottom save bar with the sticky language edit bar', () => {
 		render(<TriggerForm {...defaultProps} isCreated />, { wrapper: TestWrapper })
-		const bar = screen.getByText('Editing — every change saves automatically').parentElement
-			?.parentElement
-		expect(bar?.className).toMatch(/sticky bottom-0/)
-		expect(screen.getByText('Saved')).toBeInTheDocument()
+		expect(screen.queryByText('Editing — every change saves automatically')).not.toBeInTheDocument()
+		const caption = screen.getByText('Say what should change — it edits the trigger above')
+		expect(caption.parentElement?.parentElement?.className).toMatch(/sticky bottom-0/)
 	})
 
 	it('gives radios a 44px touch target on mobile and collapses to one column', async () => {
@@ -170,7 +226,7 @@ describe('TriggerForm', () => {
 
 	it('shows agent selector when agents provided', () => {
 		render(<TriggerForm {...defaultProps} />, { wrapper: TestWrapper })
-		expect(screen.getByText('Scout')).toBeInTheDocument()
+		expect(screen.getByRole('combobox', { name: 'Agent' })).toHaveTextContent('Scout')
 	})
 
 	it('event type shows entity type and action selects', () => {
@@ -268,8 +324,9 @@ describe('TriggerForm', () => {
 		await user.click(comboboxes[1])
 		await user.click(screen.getByRole('option', { name: 'status_changed' }))
 
-		const transitionLabel = screen.getByText('Status transition')
-		const transitionRow = transitionLabel.parentElement?.querySelector('div')
+		const transitionRow = screen
+			.getByRole('heading', { name: 'STATUS TRANSITION' })
+			.parentElement?.querySelector('div')
 		expect(transitionRow?.className).toMatch(/flex-col/)
 		expect(transitionRow?.className).toMatch(/sm:flex-row/)
 	})

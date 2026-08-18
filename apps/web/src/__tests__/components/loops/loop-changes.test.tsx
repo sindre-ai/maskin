@@ -97,11 +97,34 @@ describe('LoopChanges', () => {
 		expect(screen.queryByRole('button', { name: /undo/i })).not.toBeInTheDocument()
 	})
 
-	it('shows an empty state when there are no change events', async () => {
-		render(<LoopChanges workspaceId="ws-1" loopId={loopId} events={[]} />, {
+	it('renders nothing at all when there are no change events', () => {
+		// v2 puts Changes inside the reader column above a sticky composer — an
+		// empty section would push the composer down for no information.
+		const { container } = render(<LoopChanges workspaceId="ws-1" loopId={loopId} events={[]} />, {
 			wrapper: createWorkspaceWrapper(),
 		})
 
-		expect(await screen.findByText('No changes yet.')).toBeInTheDocument()
+		expect(container).toBeEmptyDOMElement()
+	})
+
+	it('renders each change as a chat bubble', async () => {
+		const events = [
+			buildEventResponse({
+				id: 1,
+				entityId: loopId,
+				actorId: 'actor-1',
+				action: 'updated',
+				entityType: 'bet',
+				data: { changes: [{ field: 'status', old: 'draft', new: 'active' }] },
+			}),
+		]
+		render(<LoopChanges workspaceId="ws-1" loopId={loopId} events={events} />, {
+			wrapper: createWorkspaceWrapper(),
+		})
+
+		expect(await screen.findByText('Changes')).toBeInTheDocument()
+		// Agent-authored changes read as the left-hand bubble carrying the actor.
+		const bubble = (await screen.findByText(/Relay/)).closest('p')
+		expect(bubble?.className).toMatch(/rounded-2xl/)
 	})
 })

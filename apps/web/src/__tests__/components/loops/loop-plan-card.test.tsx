@@ -17,14 +17,17 @@ const plan: LoopPlan = {
 			role: 'Submissions from customers',
 			live: false,
 			stateChain: ['new', 'triage', 'approved', 'published'],
+			isNew: true,
 		},
 	],
 	triggers: [
 		{
-			kindLabel: 'JUST ADDED',
+			kindLabel: 'EVENT',
 			whenClause: 'when a new feedback is added',
 			targetAgent: 'Feedback agent',
 			thenWrites: [{ act: 'state_change', type: 'feedback', state: 'triage' }, { act: 'notify' }],
+			isNew: true,
+			whenChip: { type: 'feedback', state: 'triage' },
 		},
 	],
 	agents: [{ avatar: 'FB', name: 'Feedback agent', role: 'triages feedback', count: 1 }],
@@ -40,7 +43,7 @@ function baseProps(overrides: Partial<Parameters<typeof LoopPlanCard>[0]> = {}) 
 		onAdjust: vi.fn(),
 		onSave: vi.fn(),
 		onCreate: vi.fn(),
-		onDone: vi.fn(),
+		onStartOver: vi.fn(),
 		workspaceId: 'ws-1',
 		...overrides,
 	}
@@ -94,8 +97,11 @@ describe('LoopPlanCard', () => {
 		expect(screen.getByText('not created yet')).toBeInTheDocument()
 		expect(screen.getByText('Feedback')).toBeInTheDocument()
 		expect(screen.getByText('new')).toBeInTheDocument()
-		expect(screen.getByText('triage')).toBeInTheDocument()
+		expect(screen.getAllByText('triage').length).toBeGreaterThan(0)
+		// `kindLabel` is the trigger's kind; "just added" is a separate badge.
+		expect(screen.getByText('EVENT')).toBeInTheDocument()
 		expect(screen.getByText('JUST ADDED')).toBeInTheDocument()
+		expect(screen.getByText('NEW TYPE')).toBeInTheDocument()
 		expect(screen.getByText('when a new feedback is added')).toBeInTheDocument()
 		// v2 renders the agent name on both the trigger row and the AGENTS section.
 		expect(screen.getAllByText('Feedback agent').length).toBeGreaterThan(0)
@@ -135,12 +141,26 @@ describe('LoopPlanCard', () => {
 		expect(onCreate).toHaveBeenCalled()
 	})
 
-	it('calls onDone to clear to a fresh draft', async () => {
+	it('calls onStartOver to clear to a fresh draft', async () => {
 		const user = userEvent.setup()
-		const onDone = vi.fn()
-		render(<LoopPlanCard {...baseProps({ onDone })} />)
+		const onStartOver = vi.fn()
+		render(<LoopPlanCard {...baseProps({ onStartOver })} />)
 
-		await user.click(screen.getByRole('button', { name: /^done$/i }))
-		expect(onDone).toHaveBeenCalled()
+		await user.click(screen.getByRole('button', { name: /^start over$/i }))
+		expect(onStartOver).toHaveBeenCalled()
+	})
+
+	it('reads the footer summary off the plan rather than fixed copy', () => {
+		render(<LoopPlanCard {...baseProps()} />)
+		expect(
+			screen.getByText(
+				'1 object type · 1 trigger · 1 agent — nothing exists in your workspace yet.',
+			),
+		).toBeInTheDocument()
+	})
+
+	it('labels the agents section with the "from your crew" promise', () => {
+		render(<LoopPlanCard {...baseProps()} />)
+		expect(screen.getByText('AGENTS · from your crew, nobody new to hire')).toBeInTheDocument()
 	})
 })

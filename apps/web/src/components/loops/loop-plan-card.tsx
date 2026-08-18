@@ -1,9 +1,10 @@
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { StatusBadge } from '@/components/shared/status-badge'
+import { TypeBadge } from '@/components/shared/type-badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/cn'
-import type { LoopPlan } from '@/lib/loop-plan'
+import { type LoopPlan, describeLoopPlan, summariseLoopPlan } from '@/lib/loop-plan'
 import { Link } from '@tanstack/react-router'
 import { Check, Plus } from 'lucide-react'
 
@@ -57,6 +58,16 @@ function SectionLabel({ children, className }: { children: string; className?: s
 	return <div className={cn('eyebrow', className)}>{children}</div>
 }
 
+/** `NEW TYPE` / `JUST ADDED` — the brand-tinted "this doesn't exist yet" marker
+ *  (mockup 2168, 2197–2198). Distinct from a trigger's `kindLabel`. */
+function NewBadge({ children }: { children: string }) {
+	return (
+		<span className="shrink-0 rounded-md bg-brand-subtle px-1.5 py-1 font-mono text-[8.5px] font-bold tracking-wider text-brand-subtle-foreground">
+			{children}
+		</span>
+	)
+}
+
 export interface LoopPlanCardProps {
 	plan: LoopPlan
 	draft: PlanEditDraft
@@ -65,7 +76,7 @@ export interface LoopPlanCardProps {
 	onAdjust: () => void
 	onSave: () => void
 	onCreate: () => void
-	onDone: () => void
+	onStartOver: () => void
 	creating?: boolean
 	created?: boolean
 	createdId?: string | null
@@ -80,7 +91,7 @@ export function LoopPlanCard({
 	onAdjust,
 	onSave,
 	onCreate,
-	onDone,
+	onStartOver,
 	creating,
 	created,
 	createdId,
@@ -100,7 +111,7 @@ export function LoopPlanCard({
 	const title = created ? 'Loop created' : draft.name.trim() || defaultLoopName(plan)
 
 	return (
-		<div className="flex flex-col overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+		<div className="flex flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
 			<div className="flex flex-col gap-2 border-b border-border px-5 py-4">
 				<div className="flex items-center gap-2">
 					{created ? <Check size={14} className="shrink-0 text-success" aria-hidden /> : null}
@@ -111,9 +122,7 @@ export function LoopPlanCard({
 				</div>
 				<h2 className="text-base font-semibold tracking-tight text-foreground">{title}</h2>
 				<p className="text-xs leading-relaxed text-muted-foreground">
-					{created
-						? 'Your loop is running. Open it to watch it move.'
-						: 'Read this back before it becomes real. Nothing exists in your workspace yet.'}
+					{created ? 'Your loop is running. Open it to watch it move.' : describeLoopPlan(plan)}
 				</p>
 			</div>
 
@@ -127,7 +136,7 @@ export function LoopPlanCard({
 							</p>
 						) : (
 							plan.objectTypes.map((t, i) => (
-								<div key={`${t.type}-${i}`} className="rounded-lg border border-border bg-card p-3">
+								<div key={`${t.type}-${i}`} className="rounded-xl border border-border bg-card p-3">
 									<div className="flex flex-wrap items-center gap-2">
 										{editing && i === 0 ? (
 											<Input
@@ -143,6 +152,7 @@ export function LoopPlanCard({
 												{t.name}
 											</span>
 										)}
+										{t.isNew && <NewBadge>NEW TYPE</NewBadge>}
 										<span className="text-xs text-muted-foreground">{t.role}</span>
 										{t.live && (
 											<span className="ml-auto text-[11px] text-muted-foreground">
@@ -190,7 +200,7 @@ export function LoopPlanCard({
 								<div
 									// biome-ignore lint/suspicious/noArrayIndexKey: plan-derived triggers have no stable id and order is deterministic
 									key={i}
-									className="rounded-lg border border-border bg-card p-3"
+									className="rounded-xl border border-border bg-card p-3"
 								>
 									<div className="flex flex-wrap items-center gap-2">
 										<span className="inline-flex h-5 w-5 items-center justify-center rounded-md bg-muted font-mono text-[10px] font-bold text-muted-foreground">
@@ -199,6 +209,13 @@ export function LoopPlanCard({
 										<span className="inline-flex items-center rounded-md bg-muted px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-wider text-foreground">
 											{t.kindLabel}
 										</span>
+										{t.isNew && <NewBadge>JUST ADDED</NewBadge>}
+										{t.whenChip && (
+											<span className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border px-1.5 py-1">
+												<TypeBadge type={t.whenChip.type} />
+												{t.whenChip.state && <StatusBadge status={t.whenChip.state} />}
+											</span>
+										)}
 									</div>
 									<p className="mt-2.5 text-xs leading-relaxed text-foreground">
 										<span className="eyebrow mr-1.5 inline">WHEN</span>
@@ -227,8 +244,8 @@ export function LoopPlanCard({
 				</section>
 
 				<section>
-					<SectionLabel>AGENTS</SectionLabel>
-					<div className="mt-2.5 overflow-hidden rounded-lg border border-border">
+					<SectionLabel>AGENTS · from your crew, nobody new to hire</SectionLabel>
+					<div className="mt-2.5 overflow-hidden rounded-xl border border-border">
 						{plan.agents.length === 0 ? (
 							<p className="p-3 text-sm text-muted-foreground">No agents assigned yet.</p>
 						) : (
@@ -251,13 +268,13 @@ export function LoopPlanCard({
 												aria-label="Agent name"
 											/>
 										) : (
-											<p className="truncate text-sm font-semibold text-foreground">
-												{a.name}
-												{a.count > 1 ? ` ×${a.count}` : ''}
-											</p>
+											<p className="truncate text-sm font-semibold text-foreground">{a.name}</p>
 										)}
 										<p className="truncate text-xs text-muted-foreground">{a.role}</p>
 									</div>
+									<span className="shrink-0 whitespace-nowrap font-mono text-[9.5px] font-semibold text-muted-foreground">
+										{a.count} {a.count === 1 ? 'step' : 'steps'}
+									</span>
 								</div>
 							))
 						)}
@@ -267,7 +284,7 @@ export function LoopPlanCard({
 				{plan.stopForOperator && (
 					<section>
 						<SectionLabel>WHERE IT WILL STOP FOR YOU</SectionLabel>
-						<div className="mt-2.5 rounded-lg border border-status-processing-text/40 bg-status-processing-bg px-3 py-2.5">
+						<div className="mt-2.5 rounded-xl border border-ask-border bg-ask-surface px-3 py-2.5">
 							{editing ? (
 								<Input
 									value={draft.stopForOperator}
@@ -276,16 +293,14 @@ export function LoopPlanCard({
 									aria-label="Stop for operator"
 								/>
 							) : (
-								<p className="text-xs leading-relaxed text-status-processing-text">
-									{plan.stopForOperator}
-								</p>
+								<p className="text-xs leading-relaxed text-foreground">{plan.stopForOperator}</p>
 							)}
 						</div>
 					</section>
 				)}
 			</div>
 
-			<div className="flex flex-wrap items-center gap-2 border-t border-border bg-muted px-5 py-3">
+			<div className="flex flex-wrap items-center gap-2 border-t border-border bg-muted px-5 py-3.5">
 				{created ? (
 					<>
 						<Button size="sm" asChild>
@@ -296,8 +311,8 @@ export function LoopPlanCard({
 								Open loop
 							</Link>
 						</Button>
-						<Button size="sm" variant="ghost" onClick={onDone}>
-							Done
+						<Button size="sm" variant="ghost" onClick={onStartOver}>
+							Start over
 						</Button>
 					</>
 				) : editing ? (
@@ -305,16 +320,19 @@ export function LoopPlanCard({
 						<Button size="sm" onClick={onSave}>
 							Save
 						</Button>
-						<Button size="sm" variant="ghost" onClick={onDone} disabled={creating}>
-							Done
+						<Button size="sm" variant="ghost" onClick={onStartOver} disabled={creating}>
+							Start over
 						</Button>
 					</>
 				) : (
 					<>
-						<span className="mr-auto text-[11px] text-muted-foreground">
-							Nothing is created until you press Create loop.
+						<span className="mr-auto min-w-[180px] flex-1 text-[11px] leading-relaxed text-muted-foreground">
+							{summariseLoopPlan(plan)}
 						</span>
-						<Button size="sm" variant="ghost" onClick={onAdjust}>
+						<Button size="sm" variant="ghost" onClick={onStartOver} disabled={creating}>
+							Start over
+						</Button>
+						<Button size="sm" variant="ghost" onClick={onAdjust} disabled={creating}>
 							Adjust
 						</Button>
 						<Button size="sm" onClick={onCreate} disabled={creating}>
@@ -326,9 +344,6 @@ export function LoopPlanCard({
 									Create loop
 								</>
 							)}
-						</Button>
-						<Button size="sm" variant="ghost" onClick={onDone} disabled={creating}>
-							Done
 						</Button>
 					</>
 				)}

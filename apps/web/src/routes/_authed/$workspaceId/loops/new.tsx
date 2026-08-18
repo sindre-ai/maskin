@@ -1,21 +1,40 @@
 import { Composer } from '@/components/chat/chat'
+import { PageHeader } from '@/components/layout/page-header'
 import { LoopPlanCard, draftFromPlan, mergeDraftOntoPlan } from '@/components/loops/loop-plan-card'
 import { RouteError } from '@/components/shared/route-error'
+import { Button } from '@/components/ui/button'
 import { useCreateObject } from '@/hooks/use-objects'
 import { trackLoopCreatedViaLanguage } from '@/lib/analytics'
 import { EMPTY_CHAT_SELECTION } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
 import { type LoopPlan, parseLoopDescription } from '@/lib/loop-plan'
 import { useWorkspace } from '@/lib/workspace-context'
-import { Link, createFileRoute } from '@tanstack/react-router'
+import { createFileRoute } from '@tanstack/react-router'
 import { Sparkles } from 'lucide-react'
-import { useCallback, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 
 const EXAMPLE_SENTENCES = [
 	'Notify me weekly with a summary of new customer feedback, and triage anything at risk.',
 	'Have a triage agent review every new feedback item when it comes in.',
 	'Track bets and tell me before anything goes at risk or needs a rescue.',
+]
+
+// Clarify state (mockup 2094–2106). A sentence with no `when` clause and no
+// stop point can't be drawn as a loop — these chips name the two things that
+// are missing and append the clause so the parser can re-read the sentence.
+const FILL_IN_CHIPS = [
+	{ label: '…when it comes in', clause: 'when it comes in' },
+	{ label: '…when it changes status', clause: 'when it changes status' },
+	{ label: '…and ask me before it goes out', clause: 'and ask me before it goes out' },
+]
+
+// Refine chips (mockup 2119–2125) — offered once a plan exists, so the next
+// utterance is still language rather than a form.
+const REFINE_CHIPS = [
+	{ label: 'Add a weekly summary', clause: 'and send me a weekly summary' },
+	{ label: 'Ask me before it publishes', clause: 'and ask me before it publishes' },
+	{ label: 'Notify me when it closes', clause: 'and notify me when it closes' },
 ]
 
 const PRIMER = [
@@ -44,24 +63,36 @@ interface ThreadItem {
 }
 
 function LoopBuilderPage() {
-	const { workspaceId } = useWorkspace()
+	const { workspaceId, workspace } = useWorkspace()
 	const createObject = useCreateObject(workspaceId)
 
+	// The workspace's own per-type status vocabulary — both the state chain the
+	// plan proposes and the `NEW TYPE` signal are derived from it.
+	const statusChains = useMemo(
+		() => (workspace.settings as { statuses?: Record<string, string[]> } | undefined)?.statuses,
+		[workspace.settings],
+	)
+
 	const [thread, setThread] = useState<ThreadItem[]>([])
+	const [utterance, setUtterance] = useState('')
 	const [plan, setPlan] = useState<LoopPlan | null>(null)
 	const [draft, setDraft] = useState(plan ? draftFromPlan(plan) : null)
 	const [mode, setMode] = useState<'proposed' | 'editing'>('proposed')
 	const [createdId, setCreatedId] = useState<string | null>(null)
 	const [creating, setCreating] = useState(false)
 
-	const applyDescription = useCallback((description: string) => {
-		const parsed = parseLoopDescription(description)
-		setPlan(parsed)
-		setDraft(draftFromPlan(parsed))
-		setMode('proposed')
-		setCreatedId(null)
-		setThread((prev) => [...prev, { role: 'user', content: description }])
-	}, [])
+	const applyDescription = useCallback(
+		(description: string) => {
+			const parsed = parseLoopDescription(description, { statusChains })
+			setUtterance(description)
+			setPlan(parsed)
+			setDraft(draftFromPlan(parsed))
+			setMode('proposed')
+			setCreatedId(null)
+			setThread((prev) => [...prev, { role: 'user', content: description }])
+		},
+		[statusChains],
+	)
 
 	const handleSend = useCallback(
 		async (content: string) => {
@@ -71,9 +102,20 @@ function LoopBuilderPage() {
 		[applyDescription],
 	)
 
+	// Chips extend the sentence the operator already said rather than replacing
+	// it — the loop is still built from one continuous piece of language.
+	const extendUtterance = useCallback(
+		(clause: string) => {
+			const base = utterance.trim().replace(/[.!?]+$/, '')
+			void handleSend(base ? `${base} ${clause}.` : `${clause}.`)
+		},
+		[utterance, handleSend],
+	)
+
 	const resetAll = useCallback(() => {
 		setPlan(null)
 		setDraft(null)
+		setUtterance('')
 		setMode('proposed')
 		setCreatedId(null)
 		setThread([])
@@ -106,32 +148,49 @@ function LoopBuilderPage() {
 		}
 	}, [plan, draft, creating, createObject, workspaceId])
 
-	return (
-		<div className="flex min-h-0 flex-1 flex-col">
-			<div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3 md:px-6 lg:px-9">
-				<Link
-					to="/$workspaceId/loops"
-					params={{ workspaceId }}
-					className="text-xs text-muted-foreground hover:text-foreground"
-				>
-					Loops
-				</Link>
-				<span aria-hidden className="text-xs text-muted-foreground">
-					›
-				</span>
-				<span className="text-xs font-semibold text-foreground">New loop</span>
-				<span className="ml-auto whitespace-nowrap text-[11px] text-muted-foreground">
-					no builder, no canvas — you describe it
-				</span>
-			</div>
+	// A sentence Maskin can't draw: it named no source it listens to and no end
+	// it reports to, so there is nothing to wire between (mockup 2094–2106).
+	const needsClarifying = plan !== null && plan.triggers.length === 0 && !plan.stopForOperator
+	const showBlueprint = plan !== null && draft !== null && !needsClarifying
+	const asking = plan === null
 
-			<div className="mx-auto flex w-full max-w-[1300px] flex-col gap-6 px-4 py-6 md:flex-row md:items-start md:gap-8 md:px-6 md:py-8 lg:px-9 xl:gap-11">
+	// What Maskin actually did with the sentence (mockup 2108–2117). Derived
+	// from the plan, so it never claims a step the parser didn't take.
+	const steps = useMemo(() => {
+		if (!plan) return []
+		const done: string[] = ['Read your sentence']
+		if (plan.objectTypes.length > 0) {
+			done.push(`Picked ${plan.objectTypes.map((t) => t.name).join(' and ')}`)
+		}
+		if (plan.triggers.length > 0) {
+			done.push(`Wrote ${plan.triggers.length} trigger${plan.triggers.length === 1 ? '' : 's'}`)
+		}
+		if (plan.agents.length > 0) {
+			done.push(`Assigned ${plan.agents.map((a) => a.name).join(' and ')}`)
+		}
+		if (plan.stopForOperator) done.push('Marked where it stops for you')
+		return done
+	}, [plan])
+
+	return (
+		<>
+			{/* The breadcrumb (Loops › New loop) comes from the shared nav's routeConfig;
+			    the mockup's right-aligned caption rides in the same row via `actions`. */}
+			<PageHeader
+				title="New loop"
+				actions={
+					<span className="hidden whitespace-nowrap text-[11px] text-muted-foreground lg:inline">
+						no builder, no canvas — you describe it
+					</span>
+				}
+			/>
+			<div className="mx-auto flex w-full max-w-[1300px] flex-col gap-6 md:flex-row md:items-start md:gap-8 xl:gap-11">
 				{/* Left — conversation */}
 				<section
 					aria-label="Describe your loop"
-					className="flex min-w-0 flex-1 flex-col md:basis-[340px]"
+					className="flex min-w-0 flex-1 flex-col md:sticky md:top-0 md:basis-[340px] md:self-start"
 				>
-					{plan === null ? (
+					{asking ? (
 						<>
 							<h1 className="text-2xl font-bold tracking-tight text-foreground md:text-[1.6875rem]">
 								What should the loop do?
@@ -213,6 +272,69 @@ function LoopBuilderPage() {
 						</div>
 					)}
 
+					{needsClarifying && (
+						<>
+							<div className="mt-4 flex flex-wrap gap-2" aria-label="Fill in what is missing">
+								{FILL_IN_CHIPS.map((chip) => (
+									<Button
+										key={chip.clause}
+										size="sm"
+										variant="outline"
+										className="rounded-full border-foreground"
+										onClick={() => extendUtterance(chip.clause)}
+									>
+										{chip.label}
+									</Button>
+								))}
+							</div>
+							<div className="eyebrow mt-5">OR START FROM ONE OF THESE</div>
+							<div className="mt-2.5 flex flex-col gap-2" aria-label="Example prompts">
+								{EXAMPLE_SENTENCES.map((sentence) => (
+									<button
+										key={sentence}
+										type="button"
+										onClick={() => void handleSend(sentence)}
+										className="rounded-xl border border-border bg-card px-3.5 py-3 text-left text-[12.5px] leading-relaxed text-foreground transition-colors hover:border-border-strong hover:bg-muted"
+									>
+										{sentence}
+									</button>
+								))}
+							</div>
+						</>
+					)}
+
+					{steps.length > 0 && !needsClarifying && (
+						<ul className="mt-4 flex flex-col gap-2 border-l-2 border-border pl-3.5">
+							{steps.map((step) => (
+								<li
+									key={step}
+									className="flex items-baseline gap-2.5 text-[12.5px] leading-snug text-muted-foreground"
+								>
+									<span aria-hidden className="shrink-0 text-[11px] text-success">
+										✓
+									</span>
+									{step}
+								</li>
+							))}
+						</ul>
+					)}
+
+					{showBlueprint && !createdId && (
+						<div className="mt-4 flex flex-wrap gap-2" aria-label="Refine this loop">
+							{REFINE_CHIPS.map((chip) => (
+								<Button
+									key={chip.clause}
+									size="sm"
+									variant="outline"
+									className="rounded-full"
+									onClick={() => extendUtterance(chip.clause)}
+								>
+									{chip.label}
+								</Button>
+							))}
+						</div>
+					)}
+
 					<div className="mt-5">
 						<Composer
 							workspaceId={workspaceId}
@@ -239,7 +361,7 @@ function LoopBuilderPage() {
 					aria-label="Proposed loop"
 					className="flex min-w-0 flex-1 flex-col md:basis-[430px] md:grow-[1.1]"
 				>
-					{plan && draft ? (
+					{showBlueprint && draft ? (
 						<LoopPlanCard
 							plan={plan}
 							draft={draft}
@@ -249,11 +371,19 @@ function LoopBuilderPage() {
 							onAdjust={() => setMode('editing')}
 							onSave={() => setMode('proposed')}
 							onCreate={() => void handleCreate()}
-							onDone={resetAll}
+							onStartOver={resetAll}
 							creating={creating}
 							created={!!createdId}
 							createdId={createdId}
 						/>
+					) : needsClarifying ? (
+						<div
+							aria-label="Nothing to draw yet"
+							className="max-w-[46ch] rounded-2xl border border-dashed border-border bg-muted px-5 py-6 text-xs leading-relaxed text-muted-foreground"
+						>
+							Nothing to draw yet. A loop needs a source it listens to and an end it reports to —
+							name both and the blueprint fills in.
+						</div>
 					) : (
 						<div
 							aria-label="No loop drafted yet"
@@ -273,6 +403,6 @@ function LoopBuilderPage() {
 					)}
 				</section>
 			</div>
-		</div>
+		</>
 	)
 }

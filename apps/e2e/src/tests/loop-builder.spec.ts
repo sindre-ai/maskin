@@ -1,5 +1,4 @@
 import { expect, test } from '../fixtures/auth.fixture'
-import { installChatMocks } from '../helpers/chat.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 // The first example sentence on the "Start a loop" page. It drafts a feedback
@@ -13,15 +12,9 @@ test.describe('Loop builder — language-only create flow', () => {
 			account,
 		}) => {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
-			// Mock the chat API slice so the mounted Composer does not reach the
-			// session backend or create any session — the create-flow must never
-			// write anything until "Create loop" is pressed.
-			const chat = await installChatMocks(page, {
-				workspaceId: account.workspaceId,
-				humanActorId: account.actorId,
-				humanActorName: account.actorId,
-			})
-
+			// The mounted Composer never reaches the backend on this surface — its
+			// `onSend` only re-parses the sentence locally. The create-flow must
+			// write nothing at all until "Create loop" is pressed.
 			const loopsBefore = (await account.api.listObjects(account.workspaceId)).filter(
 				(o) => o.type === 'loop',
 			)
@@ -62,7 +55,6 @@ test.describe('Loop builder — language-only create flow', () => {
 			await expect(page.getByText('PROPOSED LOOP')).toBeVisible()
 
 			// No loop object exists before Create.
-			expect(chat.sessionsCreated).toBe(0)
 			const loopsDuring = (await account.api.listObjects(account.workspaceId)).filter(
 				(o) => o.type === 'loop',
 			)
@@ -80,9 +72,34 @@ test.describe('Loop builder — language-only create flow', () => {
 			expect(loopsAfter.length).toBe(loopsBefore.length + 1)
 			expect(loopsAfter[loopsAfter.length - 1].title).toMatch(/ loop$/)
 
-			// Done clears back to a fresh draft.
-			await page.getByRole('button', { name: /^done$/i }).click()
+			// Start over clears back to a fresh draft.
+			await page.getByRole('button', { name: /^start over$/i }).click()
 			await expect(page.getByText(/The loop appears here/i)).toBeVisible()
+		})
+
+		test(`an under-specified sentence asks for the missing half at ${viewport.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: viewport.width, height: viewport.height })
+
+			await page.goto(`/${account.workspaceId}/loops/new`)
+			await expect(page.getByText(/The loop appears here/i)).toBeVisible({ timeout: 10000 })
+
+			const composer = page.getByRole('textbox', { name: /describe your loop/i })
+			await composer.fill('track customer feedback')
+			await composer.press('Enter')
+
+			// No source it listens to and no end it reports to — nothing to draw.
+			await expect(
+				page.getByText(/Nothing to draw yet\. A loop needs a source it listens to/),
+			).toBeVisible({ timeout: 10000 })
+			await expect(page.getByText('PROPOSED LOOP')).toBeHidden()
+
+			// Tapping a fill-in chip extends the sentence and drafts the plan.
+			await page.getByRole('button', { name: '…when it comes in' }).click()
+			await expect(page.getByText('PROPOSED LOOP')).toBeVisible({ timeout: 10000 })
+			await expect(page.getByText('not created yet')).toBeVisible()
 		})
 	}
 })

@@ -60,15 +60,22 @@ afterEach(() => {
 })
 
 describe('MobileNav', () => {
-	it('renders the four base items when no object-type module is enabled', () => {
+	it('renders the three base items when no object-type module is enabled', () => {
 		mockUseEnabledModules.mockReturnValue([])
 		mockMatch.mockReturnValue(false)
 		render(<MobileNav />)
 		expect(screen.getByRole('link', { name: /for you/i })).toBeInTheDocument()
 		expect(screen.getByRole('link', { name: /agents/i })).toBeInTheDocument()
 		expect(screen.getByRole('link', { name: /loops/i })).toBeInTheDocument()
-		expect(screen.getByRole('link', { name: /triggers/i })).toBeInTheDocument()
 		expect(screen.queryByRole('link', { name: /objects/i })).not.toBeInTheDocument()
+	})
+
+	it('has no Triggers tab — v2 routes triggers through Loops', () => {
+		mockUseEnabledModules.mockReturnValue(['work'])
+		mockMatch.mockReturnValue(false)
+		render(<MobileNav />)
+		expect(screen.queryByRole('link', { name: /triggers/i })).not.toBeInTheDocument()
+		expect(linkCalls.map((c) => c.to)).not.toContain('/$workspaceId/triggers')
 	})
 
 	it('injects the Objects item after For You when object types are enabled', () => {
@@ -82,7 +89,6 @@ describe('MobileNav', () => {
 			'Objects, navigate to',
 			'Agents, navigate to',
 			'Loops, navigate to',
-			'Triggers, navigate to',
 		])
 	})
 
@@ -107,11 +113,11 @@ describe('MobileNav', () => {
 		mockUseEnabledModules.mockReturnValue(['work'])
 		mockMatch.mockReturnValue(false)
 		render(<MobileNav />)
-		expect(linkCalls).toHaveLength(5)
+		expect(linkCalls).toHaveLength(4)
 		const hrefs = linkCalls.map((c) => c.to)
 		expect(hrefs).toContain('/$workspaceId/objects')
 		expect(hrefs).toContain('/$workspaceId/agents')
-		expect(hrefs).toContain('/$workspaceId/triggers')
+		expect(hrefs).toContain('/$workspaceId/loops')
 		for (const call of linkCalls) {
 			expect(call.params).toEqual({ workspaceId: 'ws-1' })
 		}

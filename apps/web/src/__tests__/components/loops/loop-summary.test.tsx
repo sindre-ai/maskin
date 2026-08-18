@@ -1,7 +1,16 @@
-import { LoopSummary, buildLoopSummarySentences } from '@/components/loops/loop-summary'
+import {
+	LoopSummary,
+	buildLoopSummarySentences,
+	loopSummarySentenceText,
+} from '@/components/loops/loop-summary'
 import { render, screen } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import userEvent from '@testing-library/user-event'
+import { describe, expect, it, vi } from 'vitest'
 import { buildLoopSummary } from '../../factories'
+
+function texts(loop: Parameters<typeof buildLoopSummarySentences>[0]): string[] {
+	return buildLoopSummarySentences(loop).map(loopSummarySentenceText)
+}
 
 describe('buildLoopSummarySentences', () => {
 	it('builds four sentences from real loop data', () => {
@@ -14,7 +23,7 @@ describe('buildLoopSummarySentences', () => {
 			inProgressCount: 3,
 		})
 
-		const sentences = buildLoopSummarySentences(loop)
+		const sentences = texts(loop)
 
 		expect(sentences).toHaveLength(4)
 		expect(sentences[0]).toBe('Every customer hears back within 30 days')
@@ -25,24 +34,39 @@ describe('buildLoopSummarySentences', () => {
 		expect(sentences[3]).toBe('Right now 3 items are in progress.')
 	})
 
+	it('segments the key noun so it renders at full ink against the muted body', () => {
+		const loop = buildLoopSummary({
+			guarantee: null,
+			name: 'Billing reliability',
+			entryCondition: 'a payment fails',
+			pill: 'paused',
+		})
+		const sentences = buildLoopSummarySentences(loop)
+
+		expect(sentences[1]).toEqual([
+			{ text: 'New work enters when ' },
+			{ text: 'a payment fails', emphasis: true },
+			{ text: '.' },
+		])
+		expect(sentences[3]).toEqual([
+			{ text: 'Right now it is ' },
+			{ text: 'paused', emphasis: true },
+			{ text: '.' },
+		])
+	})
+
 	it('falls back to a name-based guarantee when none is set', () => {
 		const loop = buildLoopSummary({ name: 'Billing reliability', guarantee: null })
-		const sentences = buildLoopSummarySentences(loop)
-		expect(sentences[0]).toBe('Billing reliability keeps the workspace moving on its own.')
+		expect(texts(loop)[0]).toBe('Billing reliability keeps the workspace moving on its own.')
 	})
 
 	it('says it is waiting on you with decision points when the pill is waiting_on_you', () => {
-		const loop = buildLoopSummary({
-			pill: 'waiting_on_you',
-			humanDecisionPoints: 2,
-		})
-		const sentences = buildLoopSummarySentences(loop)
-		expect(sentences[3]).toBe('Right now it is waiting on you, with 2 decision points open.')
+		const loop = buildLoopSummary({ pill: 'waiting_on_you', humanDecisionPoints: 2 })
+		expect(texts(loop)[3]).toBe('Right now it is waiting on you, with 2 decision points open.')
 	})
 
 	it('says it is paused when the pill is paused', () => {
-		const sentences = buildLoopSummarySentences(buildLoopSummary({ pill: 'paused' }))
-		expect(sentences[3]).toBe('Right now it is paused.')
+		expect(texts(buildLoopSummary({ pill: 'paused' }))[3]).toBe('Right now it is paused.')
 	})
 })
 
@@ -50,5 +74,20 @@ describe('LoopSummary', () => {
 	it('renders each sentence as a paragraph', () => {
 		render(<LoopSummary loop={buildLoopSummary({ guarantee: 'The loop guarantee' })} />)
 		expect(screen.getByText('The loop guarantee')).toBeInTheDocument()
+	})
+
+	it('offers "Edit this loop" with the no-builder hint and calls back', async () => {
+		const user = userEvent.setup()
+		const onEdit = vi.fn()
+		render(<LoopSummary loop={buildLoopSummary()} onEdit={onEdit} />)
+
+		expect(screen.getByText('say what should change — no builder')).toBeInTheDocument()
+		await user.click(screen.getByRole('button', { name: /edit this loop/i }))
+		expect(onEdit).toHaveBeenCalled()
+	})
+
+	it('omits the edit affordance when there is nowhere to send the utterance', () => {
+		render(<LoopSummary loop={buildLoopSummary()} />)
+		expect(screen.queryByRole('button', { name: /edit this loop/i })).not.toBeInTheDocument()
 	})
 })

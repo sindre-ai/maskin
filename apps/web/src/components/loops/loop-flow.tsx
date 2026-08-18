@@ -99,12 +99,25 @@ function pillClasses(active: boolean) {
 }
 
 function StepRow({
+	workspaceId,
 	trigger,
 	agent,
 	asksYou,
-}: { trigger: TriggerResponse; agent: ActorListItem | undefined; asksYou?: boolean }) {
+}: {
+	workspaceId: string
+	trigger: TriggerResponse
+	agent: ActorListItem | undefined
+	asksYou?: boolean
+}) {
 	return (
-		<div className="flex items-start gap-2.5">
+		// With `/triggers` folded into Loops, this row is the only route into a
+		// loop-owned trigger's detail page — the second half of the reachability
+		// contract the fold-in depends on.
+		<Link
+			to="/$workspaceId/triggers/$triggerId"
+			params={{ workspaceId, triggerId: trigger.id }}
+			className="flex items-start gap-2.5 rounded-lg px-1 py-0.5 -mx-1 transition-colors duration-150 hover:bg-muted"
+		>
 			<ActorAvatar
 				id={trigger.targetActorId}
 				name={agent?.name ?? 'Unknown agent'}
@@ -123,7 +136,7 @@ function StepRow({
 			{!trigger.enabled && (
 				<span className="text-[10.5px] font-medium text-muted-foreground shrink-0 mt-0.5">off</span>
 			)}
-		</div>
+		</Link>
 	)
 }
 
@@ -239,6 +252,19 @@ export function LoopFlow({
 	const hasStages = columns.some((c) => c.total > 0)
 	if (!hasTriggers && !hasStages) return null
 
+	// A pill filter that matches nothing renders the mockup's own line rather
+	// than an empty card (mockup 1943–1945).
+	const shownGapTriggerCount = columns.reduce(
+		(sum, column) =>
+			sum + (gapTriggersByStatus.get(column.value) ?? []).filter(matchesFilter).length,
+		0,
+	)
+	const flowEmpty =
+		agentFilter !== null &&
+		shownComesIn.length === 0 &&
+		shownAlongside.length === 0 &&
+		shownGapTriggerCount === 0
+
 	const asksYou = loop?.pill === 'waiting_on_you'
 
 	return (
@@ -310,6 +336,7 @@ export function LoopFlow({
 							{shownComesIn.map((t) => (
 								<StepRow
 									key={t.id}
+									workspaceId={workspaceId}
 									trigger={t}
 									agent={actorsById.get(t.targetActorId)}
 									asksYou={asksYou}
@@ -357,6 +384,7 @@ export function LoopFlow({
 									{gapTriggers.map((t) => (
 										<StepRow
 											key={t.id}
+											workspaceId={workspaceId}
 											trigger={t}
 											agent={actorsById.get(t.targetActorId)}
 											asksYou={asksYou}
@@ -367,6 +395,12 @@ export function LoopFlow({
 						</div>
 					)
 				})}
+
+				{flowEmpty && (
+					<p className="py-2 text-[12.5px] leading-relaxed text-muted-foreground">
+						No step matches that filter.
+					</p>
+				)}
 
 				{shownAlongside.length > 0 && (
 					<div>
@@ -380,6 +414,7 @@ export function LoopFlow({
 							{shownAlongside.map((t) => (
 								<StepRow
 									key={t.id}
+									workspaceId={workspaceId}
 									trigger={t}
 									agent={actorsById.get(t.targetActorId)}
 									asksYou={asksYou}
