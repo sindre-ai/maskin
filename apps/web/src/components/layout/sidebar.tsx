@@ -77,19 +77,25 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 						{navItems.map((item) => (
 							<SidebarNavItem key={item.to} item={item} source="top-nav">
 								{item.to === FOR_YOU_ROUTE && (
-									<UnreadBadge
-										count={unreadCount}
-										variant="plain"
-										className="ml-auto group-data-[collapsible=icon]:hidden"
-									/>
+									<>
+										<UnreadBadge
+											count={unreadCount}
+											variant="plain"
+											className="ml-auto group-data-[collapsible=icon]:hidden"
+										/>
+										<CollapsedUnreadDot count={unreadCount} />
+									</>
 								)}
 								{item.to === CHATS_ROUTE && (
-									<UnreadBadge
-										count={chatUnread.count}
-										overflow={chatUnread.hasMore}
-										variant="plain"
-										className="ml-auto group-data-[collapsible=icon]:hidden"
-									/>
+									<>
+										<UnreadBadge
+											count={chatUnread.count}
+											overflow={chatUnread.hasMore}
+											variant="plain"
+											className="ml-auto group-data-[collapsible=icon]:hidden"
+										/>
+										<CollapsedUnreadDot count={chatUnread.count} />
+									</>
 								)}
 							</SidebarNavItem>
 						))}
@@ -106,5 +112,18 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 			</SidebarFooter>
 			<SidebarRail />
 		</Sidebar>
+	)
+}
+
+// The icon rail has no room for a numeral, so unread collapses to a 6px brand
+// dot on the tile (mockup line 124's `i.dot`). Hidden whenever the sidebar is
+// expanded, where the numeral carries the same signal with more precision.
+function CollapsedUnreadDot({ count }: { count: number }) {
+	if (count <= 0) return null
+	return (
+		<span
+			aria-hidden="true"
+			className="absolute right-1 top-1 hidden size-1.5 rounded-full bg-brand group-data-[collapsible=icon]:block"
+		/>
 	)
 }

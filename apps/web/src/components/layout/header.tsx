@@ -1,4 +1,5 @@
-import { NewMenu } from '@/components/shared/new-menu'
+import { NavSearch } from '@/components/layout/nav-search'
+import { NewMenu, type PrimaryKind } from '@/components/shared/new-menu'
 import {
 	Breadcrumb,
 	BreadcrumbItem,
@@ -9,26 +10,30 @@ import {
 } from '@/components/ui/breadcrumb'
 import { Button } from '@/components/ui/button'
 import { SidebarTrigger } from '@/components/ui/sidebar'
-import { useCommandPalette } from '@/lib/command-palette-context'
 import { usePageHeader } from '@/lib/page-header-context'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useMatches, useNavigate, useRouter } from '@tanstack/react-router'
-import { ArrowLeft, Search } from 'lucide-react'
+import { ArrowLeft } from 'lucide-react'
 import { Fragment } from 'react'
 
 interface RouteConfig {
 	label: string
 	parent?: string
+	// Which create action the split New button's label half runs on this screen
+	// (mockup `newPrimary`). Screens that create nothing in particular fall
+	// through to a new chat.
+	primary?: PrimaryKind
 }
 
 const routeConfig: Record<string, RouteConfig> = {
-	'/_authed/$workspaceId/': { label: 'For You' },
-	'/_authed/$workspaceId/objects/': { label: 'Objects' },
+	'/_authed/$workspaceId/': { label: 'For you' },
+	'/_authed/$workspaceId/objects/': { label: 'Objects', primary: 'object' },
 	'/_authed/$workspaceId/objects/$objectId': {
 		label: 'Object Details',
 		parent: '/_authed/$workspaceId/objects/',
+		primary: 'object',
 	},
-	'/_authed/$workspaceId/agents/': { label: 'Agents' },
+	'/_authed/$workspaceId/agents/': { label: 'Agents', primary: 'agent' },
 	'/_authed/$workspaceId/settings/': { label: 'Settings' },
 	'/_authed/$workspaceId/settings/keys': {
 		label: 'LLM',
@@ -62,23 +67,19 @@ const routeConfig: Record<string, RouteConfig> = {
 		label: 'Property Details',
 		parent: '/_authed/$workspaceId/settings/objects/',
 	},
-	'/_authed/$workspaceId/triggers/': {
-		label: 'Triggers',
-	},
+	'/_authed/$workspaceId/triggers/': { label: 'Triggers', primary: 'loop' },
 	'/_authed/$workspaceId/triggers/$triggerId': {
 		label: 'Trigger Details',
 		parent: '/_authed/$workspaceId/triggers/',
+		primary: 'loop',
 	},
-	'/_authed/$workspaceId/loops/': {
-		label: 'Loops',
-	},
+	'/_authed/$workspaceId/loops/': { label: 'Loops', primary: 'loop' },
 	'/_authed/$workspaceId/loops/$loopId': {
 		label: 'Loop Details',
 		parent: '/_authed/$workspaceId/loops/',
+		primary: 'loop',
 	},
-	'/_authed/$workspaceId/marketplace/': {
-		label: 'Marketplace',
-	},
+	'/_authed/$workspaceId/marketplace/': { label: 'Marketplace' },
 	'/_authed/$workspaceId/marketplace/$loopId/': {
 		label: 'Marketplace Item',
 		parent: '/_authed/$workspaceId/marketplace/',
@@ -94,10 +95,22 @@ const hiddenRoutes = new Set(['__root__', '/_authed', '/_authed/', '/_authed/$wo
 const OBJECT_DETAIL_ROUTE_ID = '/_authed/$workspaceId/objects/$objectId'
 const FOR_YOU_ROUTE_ID = '/_authed/$workspaceId/'
 
+/**
+ * The shared top nav — mockup lines 155–279.
+ *
+ * One 44px row per screen: the screen's <h1> and muted count on the left, then
+ * the workspace search, the screen's own actions, a hairline divider, and the
+ * split New button. It wraps rather than scrolls, so a narrow viewport drops the
+ * right-hand cluster to a second line instead of hiding controls.
+ *
+ * The title resolves in three steps: a `stickyIdentity` the page supplied wins
+ * (it is a richer identity element than a string), then the page's `title`, then
+ * the route's own label. Detail routes keep a breadcrumb chain until their
+ * screen lands and moves it into the page body, which is where v2 puts it.
+ */
 export function Header() {
 	const matches = useMatches()
-	const { actions, stickyIdentity } = usePageHeader()
-	const { setOpen: setPaletteOpen } = useCommandPalette()
+	const { title, subtitle, actions, stickyIdentity } = usePageHeader()
 	const { workspaceId } = useWorkspace()
 	const navigate = useNavigate()
 	const router = useRouter()
@@ -130,118 +143,80 @@ export function Header() {
 	// menu — landing users on the generic object picker is disorienting when
 	// they're mid-edit on a specific object. New chat/loop/agent/search stay.
 	const isObjectDetail = leafMatch?.routeId === OBJECT_DETAIL_ROUTE_ID
-	// The For You page's own header already surfaces equivalent actions
-	// (title, "Today's brief", "New") — the global Create/Chat icons here
-	// would just duplicate them.
+	// The For You page still renders its own create affordance. Until that
+	// screen lands and drops it, showing the nav's split New too would be a
+	// visible duplicate.
 	const isForYouPage = leafMatch?.routeId === FOR_YOU_ROUTE_ID
 
-	const parentCrumbs = crumbs.slice(0, -1)
-	const hasSticky = Boolean(stickyIdentity)
+	const isDetail = crumbs.length > 1
+	const headingText = title ?? leafConfig?.label
 
 	return (
-		<header className="relative flex h-11 shrink-0 items-center gap-2 after:pointer-events-none after:absolute after:top-full after:right-0 after:left-0 after:z-10 after:h-8 after:bg-gradient-to-b after:from-background after:to-transparent after:content-['']">
-			<div className="flex w-full min-w-0 items-center gap-1 px-3 lg:gap-2 lg:px-4">
-				<SidebarTrigger className="md:hidden -ml-1 h-7 w-7 shrink-0" />
-				{crumbs.length > 1 && (
-					<Button
-						variant="ghost"
-						size="icon"
-						className="md:hidden -ml-1 h-7 w-7 shrink-0"
-						onClick={() => router.history.back()}
-					>
-						<ArrowLeft />
-						<span className="sr-only">Go back</span>
-					</Button>
-				)}
-				<div className="hidden md:flex min-w-0 flex-1 items-center gap-1 text-muted-foreground hover:text-foreground transition-colors duration-150 lg:gap-2">
-					{crumbs.length > 1 && (
-						<Button
-							variant="ghost"
-							size="icon"
-							className="-ml-1 h-7 w-7"
-							onClick={() => router.history.back()}
-						>
-							<ArrowLeft />
-							<span className="sr-only">Go back</span>
-						</Button>
-					)}
-					{hasSticky ? (
-						<div className="flex min-w-0 flex-1 items-center gap-1 lg:gap-2">
-							{parentCrumbs.length > 0 && (
-								<div className="hidden xl:flex min-w-0 items-center">
-									<Breadcrumb>
-										<BreadcrumbList>
-											{parentCrumbs.map((crumb, index) => (
-												<Fragment key={crumb.path}>
-													{index > 0 && <BreadcrumbSeparator />}
-													<BreadcrumbItem>
-														<BreadcrumbLink asChild>
-															<a href={crumb.path}>{crumb.label}</a>
-														</BreadcrumbLink>
-													</BreadcrumbItem>
-												</Fragment>
-											))}
-											<BreadcrumbSeparator />
-										</BreadcrumbList>
-									</Breadcrumb>
-								</div>
-							)}
-							<div className="min-w-0 flex-1">{stickyIdentity}</div>
-						</div>
-					) : (
-						crumbs.length > 0 && (
-							<Breadcrumb>
-								<BreadcrumbList>
-									{crumbs.map((crumb, index) => {
-										const isLast = index === crumbs.length - 1
-										return (
-											<Fragment key={crumb.path}>
-												{index > 0 && <BreadcrumbSeparator />}
-												<BreadcrumbItem>
-													{isLast ? (
-														<BreadcrumbPage className="font-medium">{crumb.label}</BreadcrumbPage>
-													) : (
-														<BreadcrumbLink asChild>
-															<a href={crumb.path}>{crumb.label}</a>
-														</BreadcrumbLink>
-													)}
-												</BreadcrumbItem>
-											</Fragment>
-										)
-									})}
-								</BreadcrumbList>
-							</Breadcrumb>
-						)
+		<header className="flex min-h-11 flex-none flex-wrap items-center gap-2 gap-y-1.5 border-b border-border px-[clamp(16px,4vw,44px)] py-1.5">
+			<SidebarTrigger className="md:hidden -ml-1 h-[30px] w-[30px] shrink-0" />
+			{isDetail && (
+				<Button
+					variant="ghost"
+					size="icon"
+					className="-ml-1 h-[30px] w-[30px] shrink-0"
+					onClick={() => router.history.back()}
+				>
+					<ArrowLeft />
+					<span className="sr-only">Go back</span>
+				</Button>
+			)}
+
+			{stickyIdentity ? (
+				<div className="flex min-w-0 flex-1 items-center gap-1 lg:gap-2">{stickyIdentity}</div>
+			) : isDetail ? (
+				<div className="hidden min-w-0 items-center text-muted-foreground md:flex">
+					<Breadcrumb>
+						<BreadcrumbList>
+							{crumbs.map((crumb, index) => {
+								const isLast = index === crumbs.length - 1
+								return (
+									<Fragment key={crumb.path}>
+										{index > 0 && <BreadcrumbSeparator />}
+										<BreadcrumbItem>
+											{isLast ? (
+												<BreadcrumbPage className="font-medium">{crumb.label}</BreadcrumbPage>
+											) : (
+												<BreadcrumbLink asChild>
+													<a href={crumb.path}>{crumb.label}</a>
+												</BreadcrumbLink>
+											)}
+										</BreadcrumbItem>
+									</Fragment>
+								)
+							})}
+						</BreadcrumbList>
+					</Breadcrumb>
+				</div>
+			) : headingText ? (
+				<div className="flex min-w-0 items-baseline gap-2">
+					<h1 className="truncate text-[clamp(17px,2vw,20px)] font-bold tracking-[-0.02em] text-foreground">
+						{headingText}
+					</h1>
+					{subtitle && (
+						<span className="hidden whitespace-nowrap text-[11.5px] text-muted-foreground sm:inline">
+							{subtitle}
+						</span>
 					)}
 				</div>
-				{hasSticky && (
-					<div className="md:hidden flex min-w-0 flex-1 items-center overflow-hidden">
-						{stickyIdentity}
-					</div>
-				)}
-				<div className="ml-auto flex shrink-0 items-center gap-2">
-					{/* ⌘K command-palette trigger — the palette's own global ⌘K
-						listener already opens it; this button is the always-visible
-						entry point per the shell spec. Hidden below sm so mobile
-						keeps the slim header. */}
-					<button
-						type="button"
-						onClick={() => setPaletteOpen(true)}
-						aria-label="Search and run commands (⌘K)"
-						className="hidden sm:flex h-[30px] shrink-0 items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 text-[11.5px] font-semibold text-muted-foreground transition-colors duration-150 hover:border-border-strong hover:text-foreground"
-					>
-						<Search aria-hidden="true" className="size-[13px]" />
-						<kbd className="font-mono text-[10px] leading-none text-border-strong">⌘K</kbd>
-					</button>
-					{actions}
-					{!isForYouPage && (
-						<NewMenu
-							onNewChat={() => navigate({ to: '/$workspaceId/chats/new', params: { workspaceId } })}
-							hideObjectSection={isObjectDetail}
-						/>
-					)}
-				</div>
-			</div>
+			) : null}
+
+			<span className="ml-auto" />
+
+			<NavSearch />
+			{actions}
+			<span aria-hidden="true" className="mx-0.5 h-5 w-px shrink-0 bg-border" />
+			{!isForYouPage && (
+				<NewMenu
+					onNewChat={() => navigate({ to: '/$workspaceId/chats/new', params: { workspaceId } })}
+					hideObjectSection={isObjectDetail}
+					primaryKind={leafConfig?.primary ?? 'chat'}
+				/>
+			)}
 		</header>
 	)
 }
