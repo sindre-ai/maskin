@@ -1,5 +1,6 @@
 import { SlashPicker, type SlashPickerResult } from '@/components/chat/slash-picker'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -16,7 +17,7 @@ import { cn } from '@/lib/cn'
 import { formatSize } from '@/lib/file-utils'
 import { useDraft } from '@/lib/pending-comments-context'
 import { COMMENT_MAX_ATTACHMENTS, COMMENT_MAX_LENGTH } from '@maskin/shared'
-import { ArrowUp, AtSign, Box, Mic, Paperclip, Plus, X } from 'lucide-react'
+import { ArrowUp, AtSign, Box, ListChecks, Mic, Paperclip, Plus, X } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ActorAvatar } from '../shared/actor-avatar'
 import { MentionedText } from '../shared/mentioned-text'
@@ -50,6 +51,12 @@ const MAX_INPUT_HEIGHT_PX = 130
 // limit. Keeps the UI quiet for the common short-comment case.
 const COUNTER_VISIBILITY_THRESHOLD = 0.9
 
+// Decision options ride `metadata.chips` on the created event — the same field
+// agents write and `DecisionChips` renders. `createCommentSchema`'s own
+// description is the contract: up to 5 options, 20 characters each.
+const MAX_DECISION_CHIPS = 5
+const MAX_DECISION_CHIP_LENGTH = 20
+
 export function CommentInput({
 	workspaceId,
 	objectId,
@@ -73,6 +80,11 @@ export function CommentInput({
 	// second search UI; the pick is inserted as the canonical markdown object
 	// link the comment API documents (`[title](/<ws>/objects/<id>)`).
 	const [objectPickerOpen, setObjectPickerOpen] = useState(false)
+	// "Attach a decision" — the options the reader will be offered as
+	// quick-reply chips under the posted comment.
+	const [decisionChips, setDecisionChips] = useState<string[]>([])
+	const [chipDraft, setChipDraft] = useState('')
+	const [decisionOpen, setDecisionOpen] = useState(false)
 
 	const inputRef = useRef<HTMLTextAreaElement>(null)
 	const overlayRef = useRef<HTMLDivElement>(null)
@@ -232,12 +244,28 @@ export function CommentInput({
 		setSelectedIndex(0)
 	}, [insertAtCursor])
 
+	const addDecisionChip = useCallback(() => {
+		const next = chipDraft.trim().slice(0, MAX_DECISION_CHIP_LENGTH)
+		if (!next) return
+		setDecisionChips((prev) =>
+			prev.length >= MAX_DECISION_CHIPS || prev.includes(next) ? prev : [...prev, next],
+		)
+		setChipDraft('')
+	}, [chipDraft])
+
+	const removeDecisionChip = useCallback((chip: string) => {
+		setDecisionChips((prev) => prev.filter((c) => c !== chip))
+	}, [])
+
 	const overLimit = content.length > COMMENT_MAX_LENGTH
 	const showCounter = content.length >= COMMENT_MAX_LENGTH * COUNTER_VISIBILITY_THRESHOLD
 
 	const resetComposer = useCallback(() => {
 		setContent('')
 		setMentions([])
+		setDecisionChips([])
+		setChipDraft('')
+		setDecisionOpen(false)
 		draftIdRef.current = randomDraftId()
 	}, [])
 
@@ -268,6 +296,7 @@ export function CommentInput({
 				content: trimmed,
 				mentions: activeMentions.length > 0 ? activeMentions : undefined,
 				parent_event_id: parentEventId,
+				...(decisionChips.length > 0 ? { metadata: { chips: decisionChips } } : {}),
 			},
 			{
 				onSuccess: () => {
@@ -286,6 +315,7 @@ export function CommentInput({
 		onSubmitted,
 		hasAttachments,
 		draft,
+		decisionChips,
 		resetComposer,
 	])
 
@@ -454,6 +484,64 @@ export function CommentInput({
 								style={{ minHeight: '28px', maxHeight: `${MAX_INPUT_HEIGHT_PX}px` }}
 							/>
 						</div>
+						{(decisionOpen || decisionChips.length > 0) && (
+							<div
+								data-testid="decision-attachment"
+								className="flex flex-col gap-1.5 border-t border-border px-1.5 py-1.5"
+							>
+								<p className="eyebrow">Decision options</p>
+								{decisionChips.length > 0 && (
+									<ul className="flex flex-wrap gap-1.5">
+										{decisionChips.map((chip) => (
+											<li
+												key={chip}
+												className="inline-flex items-center gap-1 rounded-full border border-border px-2.5 py-0.5 text-xs text-foreground"
+											>
+												{chip}
+												<button
+													type="button"
+													onClick={() => removeDecisionChip(chip)}
+													aria-label={`Remove option ${chip}`}
+													className="text-muted-foreground hover:text-foreground"
+												>
+													<X size={11} aria-hidden />
+												</button>
+											</li>
+										))}
+									</ul>
+								)}
+								{decisionChips.length < MAX_DECISION_CHIPS && (
+									<div className="flex items-center gap-1.5">
+										<Input
+											value={chipDraft}
+											onChange={(e) => setChipDraft(e.target.value)}
+											onKeyDown={(e) => {
+												if (e.key !== 'Enter') return
+												e.preventDefault()
+												addDecisionChip()
+											}}
+											maxLength={MAX_DECISION_CHIP_LENGTH}
+											placeholder="Add an option…"
+											aria-label="Decision option"
+											className="h-7 flex-1 text-xs"
+										/>
+										<Button
+											type="button"
+											size="sm"
+											variant="outline"
+											className="h-7 text-xs"
+											disabled={chipDraft.trim().length === 0}
+											onClick={addDecisionChip}
+										>
+											Add
+										</Button>
+									</div>
+								)}
+								<p className="text-[11px] text-muted-foreground">
+									They reply by tapping one — or type instead.
+								</p>
+							</div>
+						)}
 						{/* Control row — `+` menu, hint, mic, send (mockup 457–472). */}
 						<div className="flex items-center gap-2 px-1.5 pb-1.5">
 							<SlashPicker
@@ -484,7 +572,11 @@ export function CommentInput({
 								</DropdownMenuTrigger>
 								<DropdownMenuContent align="start" className="w-[250px]">
 									<DropdownMenuItem
-										disabled={attachmentLimitReached}
+										// A decision rides `metadata` on the direct POST; the
+										// attachment queue (pending-comments-context) carries no
+										// metadata yet, so the two can't be combined without
+										// silently dropping the options.
+										disabled={attachmentLimitReached || decisionChips.length > 0}
 										onSelect={() => fileInputRef.current?.click()}
 									>
 										<Paperclip size={15} aria-hidden />
@@ -497,6 +589,13 @@ export function CommentInput({
 									<DropdownMenuItem onSelect={startMention}>
 										<AtSign size={15} aria-hidden />
 										Mention an agent
+									</DropdownMenuItem>
+									<DropdownMenuItem
+										disabled={hasAttachments}
+										onSelect={() => setDecisionOpen(true)}
+									>
+										<ListChecks size={15} aria-hidden />
+										Attach a decision
 									</DropdownMenuItem>
 								</DropdownMenuContent>
 							</DropdownMenu>

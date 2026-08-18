@@ -7,6 +7,7 @@ import { TypeBadge } from '@/components/shared/type-badge'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import { useDefaultChatAgent } from '@/hooks/use-actors'
+import { type BriefPlayback, formatClock, useBriefPlayback } from '@/hooks/use-brief-playback'
 import { useBriefing } from '@/hooks/use-briefing'
 import { useCreateConversation } from '@/hooks/use-conversations'
 import { useObjects } from '@/hooks/use-objects'
@@ -19,7 +20,6 @@ import { cn } from '@/lib/cn'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { Pause, Play } from 'lucide-react'
 import { useCallback, useMemo, useReducer, useState } from 'react'
-import { type BriefPlayback, formatClock, useBriefPlayback } from './brief-playback'
 
 interface BriefDrawerProps {
 	workspaceId: string

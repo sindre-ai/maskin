@@ -1529,6 +1529,11 @@ export interface CreateCommentInput {
 	mentions?: string[]
 	parent_event_id?: number
 	attachment_file_ids?: string[]
+	/** Structured extras the backend already accepts on `POST /events`
+	 *  (`createCommentSchema.metadata`, a `safeMetadataSchema` record). Today the
+	 *  UI writes `{ chips: string[] }` from the composer's "Attach a decision"
+	 *  affordance; `DecisionChips` renders them under the posted comment. */
+	metadata?: Record<string, unknown>
 }
 
 // Imports

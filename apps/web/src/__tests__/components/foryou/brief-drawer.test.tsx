@@ -50,7 +50,7 @@ import {
 	briefSpokenText,
 	splitBriefHeadline,
 } from '@/components/foryou/brief-drawer'
-import { estimateDurationMs, formatClock } from '@/components/foryou/brief-playback'
+import { estimateDurationMs, formatClock } from '@/hooks/use-brief-playback'
 import { TestWrapper } from '../../setup'
 
 const OBJECT_ID = '11111111-2222-4333-8444-555555555555'
