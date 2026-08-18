@@ -101,8 +101,9 @@ describe('get_objects `include:` expansions', () => {
 				return { ok: true, json: () => Promise.resolve(GRAPH_PAYLOAD) } as Response
 			}
 			if (urlStr.includes('/api/workspaces')) {
-				// Workspace with no LLM keys → the setup check should surface
-				// `agents_runnable: warn` on any object include:['setup'] call.
+				// bet-9 is status 'active', above the lowest configured status
+				// ('signal') → the setup check should surface `elevated_status: warn`
+				// on any object include:['setup'] call.
 				return {
 					ok: true,
 					json: () =>
@@ -280,8 +281,8 @@ describe('get_objects `include:` expansions', () => {
 			expect(Array.isArray(setup.checks)).toBe(true)
 			expect(Array.isArray(setup.next_steps)).toBe(true)
 			expect(typeof setup.prose).toBe('string')
-			// Workspace has no LLM keys in the mock → agents_runnable must surface.
-			expect(setup.checks.some((c) => c.name === 'agents_runnable')).toBe(true)
+			// bet-9's status ('active') is above the lowest configured status → elevated_status must surface.
+			expect(setup.checks.some((c) => c.name === 'elevated_status')).toBe(true)
 		})
 
 		it('degrades every object setup block to a single unknown check when the workspace fetch fails', async () => {

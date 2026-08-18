@@ -194,9 +194,9 @@ export function buildBetSetupBlock(
 
 /**
  * Merge multiple bet setup blocks (from a batched create/update) into one.
- * De-duplicates by (name + message) so a single workspace-level warn like
- * `agents_runnable` only appears once even across many nodes, while per-node
- * warns (`elevated_status` with different messages) all survive.
+ * De-duplicates by (name + message) so a shared warn only appears once even
+ * across many nodes, while per-node warns (`elevated_status` with different
+ * messages) all survive.
  */
 export function mergeBetSetupBlocks(blocks: SetupBlock[]): SetupBlock {
 	const seen = new Set<string>()

@@ -91,17 +91,6 @@ describe('checkLoop — individual checks', () => {
 		expect(checks.find((c) => c.name === 'steps_have_agents')).toBeUndefined()
 	})
 
-	it('agents_runnable warns when workspace has no LLM key and no Claude OAuth', () => {
-		const checks = checkLoop(loop(), ctx({ workspace: emptyWorkspace }))
-		const c = checks.find((c) => c.name === 'agents_runnable')
-		expect(c?.status).toBe('warn')
-	})
-
-	it('agents_runnable passes when Claude OAuth is present even without llm_keys', () => {
-		const checks = checkLoop(loop(), ctx({ workspace: { hasLlmKey: false, hasClaudeOAuth: true } }))
-		expect(checks.find((c) => c.name === 'agents_runnable')).toBeUndefined()
-	})
-
 	it('connectors_connected scans the trigger action_prompt independently of the agent prompt', () => {
 		const checks = checkLoop(
 			loop(),
@@ -192,7 +181,6 @@ describe('priority ordering', () => {
 		expect(checks.map((c) => c.name)).toEqual([
 			'steps_have_agents', // fail
 			'conditions_set', // warn — intent
-			'agents_runnable', // warn — agents
 			'connectors_connected', // warn — connectors
 			'has_members', // warn — rest
 		])
@@ -215,14 +203,6 @@ describe('priority ordering', () => {
 })
 
 describe('checkBet', () => {
-	it('warns when workspace has no LLM credentials', () => {
-		const checks = checkBet(
-			{ id: 'b1', type: 'bet' },
-			{ workspace: emptyWorkspace, statusOrder: ['signal', 'qualified', 'active'] },
-		)
-		expect(checks.find((c) => c.name === 'agents_runnable')?.status).toBe('warn')
-	})
-
 	it('warns when the bet is created above the lowest configured status', () => {
 		const checks = checkBet(
 			{ id: 'b1', type: 'bet', status: 'active' },
@@ -243,15 +223,9 @@ describe('checkBet', () => {
 })
 
 describe('checkActor', () => {
-	it('warns when workspace has no LLM credentials', () => {
-		const checks = checkActor({ id: 'a1', name: 'Assistant' }, { workspace: emptyWorkspace })
-		expect(checks[0].name).toBe('agents_runnable')
-		expect(checks[0].status).toBe('warn')
-	})
-
-	it('produces no checks when workspace is ready', () => {
-		const checks = checkActor({ id: 'a1', name: 'Assistant' }, { workspace: readyWorkspace })
-		expect(checks).toEqual([])
+	it('produces no checks regardless of workspace readiness', () => {
+		expect(checkActor({ id: 'a1', name: 'Assistant' }, { workspace: emptyWorkspace })).toEqual([])
+		expect(checkActor({ id: 'a1', name: 'Assistant' }, { workspace: readyWorkspace })).toEqual([])
 	})
 })
 
@@ -320,7 +294,7 @@ describe('toProseBlock', () => {
 
 	it('skips unknown-status checks so a broken check does not surface to the user', () => {
 		const prose = toProseBlock([
-			{ name: 'agents_runnable', status: 'unknown', message: 'Could not fetch settings' },
+			{ name: 'has_members', status: 'unknown', message: 'Could not fetch settings' },
 		])
 		expect(prose).toBe('')
 	})

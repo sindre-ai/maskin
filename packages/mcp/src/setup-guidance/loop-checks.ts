@@ -46,21 +46,6 @@ function stepsHaveAgents(ctx: LoopCheckContext): SetupCheck | null {
 	}
 }
 
-function agentsRunnable(ctx: LoopCheckContext): SetupCheck | null {
-	if (ctx.workspace.hasLlmKey || ctx.workspace.hasClaudeOAuth) return null
-	return {
-		name: 'agents_runnable',
-		status: 'warn',
-		message:
-			'No LLM credentials on this workspace — agents can be assigned but their sessions will fail to start.',
-		fix: {
-			tool: 'set_llm_api_key',
-			args_hint: 'anthropic or openai key, or import a Claude Pro/Max subscription',
-			why: 'Sessions read workspace-level llm_keys or claude_oauth to authenticate the model call.',
-		},
-	}
-}
-
 function connectorsConnected(ctx: LoopCheckContext): SetupCheck | null {
 	const connected = new Set(ctx.connectedProviders.map((p) => p.toLowerCase()))
 	const missing = new Set<string>()
@@ -132,7 +117,6 @@ function conditionsSet(loop: LoopInput): SetupCheck | null {
 export function checkLoop(loop: LoopInput, ctx: LoopCheckContext): SetupCheck[] {
 	const results: (SetupCheck | null)[] = [
 		safeCheck('steps_have_agents', () => stepsHaveAgents(ctx)),
-		safeCheck('agents_runnable', () => agentsRunnable(ctx)),
 		safeCheck('connectors_connected', () => connectorsConnected(ctx)),
 		safeCheck('has_members', () => hasMembers(ctx)),
 		safeCheck('conditions_set', () => conditionsSet(loop)),

@@ -355,7 +355,7 @@ describe('tool handlers', () => {
 		it('fetches workspace settings exactly once even when every node has an explicit status', async () => {
 			// The setup-block wiring reuses the same workspace fetch that powers
 			// lowest-status inference — even when inference isn't needed we still
-			// need `settings.llm_keys`/`claude_oauth` for `agents_runnable`, so
+			// need `settings.statuses` for `elevated_status`, so
 			// the fetch happens unconditionally (but only once per call).
 			mockFetchSuccess({ nodes: [{ $id: 'x', id: 'real-x', type: 'task' }], edges: [] })
 

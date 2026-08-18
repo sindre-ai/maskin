@@ -16,9 +16,8 @@ const STATUS_WEIGHT: Record<SetupCheckStatus, number> = {
 const CHECK_ORDER: Record<string, number> = {
 	// intent — what is this loop / object for
 	conditions_set: 10,
-	// agents — is the loop/bet/actor staffed and can that staff run
+	// agents — is the loop staffed
 	steps_have_agents: 20,
-	agents_runnable: 21,
 	// connectors — providers the prompts reference
 	connectors_connected: 40,
 	// rest
