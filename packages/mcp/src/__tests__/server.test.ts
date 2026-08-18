@@ -4526,7 +4526,7 @@ describe('tool handlers', () => {
 		})
 	})
 
-	describe('setup block on create/update responses', () => {
+	describe('setup block on create/update/get responses', () => {
 		const setupOkJson = (data: unknown) =>
 			({ ok: true, headers: new Headers(), json: () => Promise.resolve(data) }) as Response
 
@@ -4714,6 +4714,79 @@ describe('tool handlers', () => {
 			// Primary response still contains the created actor.
 			expect(parsed.id).toBe('actor-1')
 			expect(parsed.setup).toBeUndefined()
+		})
+
+		it('get_actor — response includes a setup block for agents', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const u = String(url)
+				if (u.includes('/api/actors/agent-1')) {
+					return setupOkJson({
+						id: 'agent-1',
+						type: 'agent',
+						name: 'Bot',
+						system_prompt: 'short',
+						tools: { mcpServers: { maskin: {} } },
+						skills: [],
+					})
+				}
+				return setupOkJson([])
+			})
+			const handler = getHandler('get_actor')
+			const result = (await handler({ id: 'agent-1' })) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.setup).toBeDefined()
+			expect(Array.isArray(parsed.setup.checks)).toBe(true)
+			expect(
+				parsed.setup.checks.some((c: { name: string }) => c.name === 'system_prompt_quality'),
+			).toBe(true)
+			expect(parsed.setup.checks.some((c: { name: string }) => c.name === 'mcp_configured')).toBe(
+				true,
+			)
+		})
+
+		it('get_actor — stays bare for human actors', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const u = String(url)
+				if (u.includes('/api/actors/human-1')) {
+					return setupOkJson({ id: 'human-1', type: 'human', name: 'Alice' })
+				}
+				return setupOkJson([])
+			})
+			const handler = getHandler('get_actor')
+			const result = (await handler({ id: 'human-1' })) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.setup).toBeUndefined()
+		})
+
+		it('get_loop — response includes a setup block', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const u = String(url)
+				if (u.includes('/api/loops?id=loop-1')) {
+					return setupOkJson({
+						loops: [
+							{
+								id: 'loop-1',
+								workspaceId: 'ws-default-123',
+								name: 'Test loop',
+								entryCondition: null,
+								closeCondition: null,
+								triggerIds: [],
+								inProgressCount: 0,
+								closedCount: 0,
+							},
+						],
+					})
+				}
+				return setupOkJson([])
+			})
+			const handler = getHandler('get_loop')
+			const result = (await handler({ id: 'loop-1' })) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.setup).toBeDefined()
+			expect(Array.isArray(parsed.setup.checks)).toBe(true)
+			expect(parsed.setup.checks.some((c: { name: string }) => c.name === 'conditions_set')).toBe(
+				true,
+			)
 		})
 	})
 })

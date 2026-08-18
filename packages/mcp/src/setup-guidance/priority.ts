@@ -14,15 +14,22 @@ const STATUS_WEIGHT: Record<SetupCheckStatus, number> = {
  * agents, triggers, connectors, everything else. Lower = earlier.
  */
 const CHECK_ORDER: Record<string, number> = {
-	// intent — what is this loop / object for
+	// intent — what is this loop / object / agent for
 	conditions_set: 10,
-	// agents — is the loop staffed
+	system_prompt_quality: 11,
+	// agents — is the loop/actor staffed
 	steps_have_agents: 20,
+	skills_attached: 21,
+	mcp_configured: 22,
 	// connectors — providers the prompts reference
 	connectors_connected: 40,
+	// content & ownership — objects
+	content_quality: 45,
+	driver_set: 46,
+	status_progression: 47,
 	// rest
 	has_members: 50,
-	elevated_status: 51,
+	dry_run_suggested: 90,
 }
 
 const CHECK_ORDER_DEFAULT = 999

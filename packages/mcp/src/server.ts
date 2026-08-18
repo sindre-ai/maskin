@@ -414,6 +414,14 @@ function setupApiCaller(config: McpConfig): SetupApiCaller {
 	return (method, path, body, options) => apiCall(config, method, path, body, options)
 }
 
+/** Count configured MCP servers on an actor's `tools`, excluding the built-in `maskin` entry. */
+function countNonMaskinMcpServers(tools: unknown): number {
+	const mcpServers = (tools as { mcpServers?: Record<string, unknown> } | null | undefined)
+		?.mcpServers
+	if (!mcpServers || typeof mcpServers !== 'object') return 0
+	return Object.keys(mcpServers).filter((name) => name !== 'maskin').length
+}
+
 /** Parse an `X-Total-Count`-style header, falling back to a default. */
 function parseTotalCountHeader(response: Response, fallback: number): number {
 	const raw = response.headers.get('x-total-count')
@@ -2220,6 +2228,8 @@ export function createMcpServer(config: McpConfig) {
 				? { ...enrichedResult, file_attachments: fileAttachments }
 				: enrichedResult
 
+			// No setup block on create — matches create_actor/create_loop: creates
+			// stay bare, setup guidance surfaces on update_* and get_* include:['setup'].
 			return {
 				_meta: meta('create_objects', config, (args as { workspace_id?: string }).workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(baseBody) }],
@@ -2361,6 +2371,8 @@ export function createMcpServer(config: McpConfig) {
 									id: withUrl.id as string,
 									type: withUrl.type as string,
 									status: (withUrl.status as string | undefined) ?? null,
+									content: (withUrl.content as string | undefined) ?? null,
+									driver: (withUrl.driver as string | undefined) ?? null,
 								},
 								readWorkspaceLlmReadiness(sharedWorkspaceSettings),
 								readStatusOrder(sharedWorkspaceSettings, withUrl.type as string),
@@ -2654,12 +2666,20 @@ export function createMcpServer(config: McpConfig) {
 			)
 			const perObjectSetup = await Promise.all(
 				successfulObjectResults.map((r) => {
-					const obj = r.result as { id?: string; type?: string; status?: string | null }
+					const obj = r.result as {
+						id?: string
+						type?: string
+						status?: string | null
+						content?: string | null
+						driver?: string | null
+					}
 					return buildBetSetupBlockFromApi(
 						{
 							id: obj.id ?? r.id,
 							type: obj.type ?? '',
 							status: obj.status ?? null,
+							content: obj.content ?? null,
+							driver: obj.driver ?? null,
 						},
 						setupApiCaller(config),
 						{
@@ -3115,6 +3135,9 @@ export function createMcpServer(config: McpConfig) {
 			// skills from day one and should be wired into a trigger/loop, but not
 			// always (e.g. a manually-invoked, prompt-only agent), so surface the
 			// gap and let the caller confirm with the user rather than assuming.
+			// No setup block on create — matches create_objects/create_loop: creates
+			// stay bare, checkActor's fuller checks (system prompt, skills, MCP,
+			// dry-run) surface on update_actor via the `setup` block instead.
 			if (createBody.type === 'agent') {
 				const callerMcpServers = (
 					createBody.tools as { mcpServers?: Record<string, unknown> } | undefined
@@ -3327,6 +3350,25 @@ export function createMcpServer(config: McpConfig) {
 			if (connectedTriggers?.length) withUrl = { ...withUrl, connectedTriggers }
 			if (connectedLoops?.length) withUrl = { ...withUrl, connectedLoops }
 			if (wsId) heroObject = { ...heroObject, url: pickUrl(withUrl) }
+
+			// Agents only — checkActor returns [] for humans, and get_actor stays
+			// bare for them rather than attaching an empty setup block. skillCount
+			// comes straight off this GET's `skills` field (no extra API call).
+			if (result.type === 'agent') {
+				const setup = await buildActorSetupBlockFromApi(
+					{
+						id: result.id,
+						name: result.name ?? null,
+						type: result.type ?? null,
+						systemPrompt: result.system_prompt ?? null,
+						skillCount: result.skills?.length ?? 0,
+						nonMaskinMcpServerCount: countNonMaskinMcpServers(result.tools),
+					},
+					setupApiCaller(config),
+				)
+				withUrl = { ...withUrl, setup }
+			}
+
 			const heroCard: HeroCardPayload = {
 				kind: 'single',
 				tool: 'get_actor',
@@ -3400,11 +3442,16 @@ export function createMcpServer(config: McpConfig) {
 					wsId && actorId
 						? addUrl(actor as Record<string, unknown>, config, wsId, { kind: 'actor', id: actorId })
 						: actor
-				const setup = await buildActorSetupBlockFromApi({
-					id: actorId ?? id,
-					name: (actor as { name?: string | null }).name ?? null,
-					type: (actor as { type?: string | null }).type ?? null,
-				})
+				const setup = await buildActorSetupBlockFromApi(
+					{
+						id: actorId ?? id,
+						name: (actor as { name?: string | null }).name ?? null,
+						type: (actor as { type?: string | null }).type ?? null,
+						systemPrompt: (actor as { system_prompt?: string | null }).system_prompt ?? null,
+						nonMaskinMcpServerCount: countNonMaskinMcpServers((actor as { tools?: unknown }).tools),
+					},
+					setupApiCaller(config),
+				)
 				const responseBody = { ...(withUrl as Record<string, unknown>), setup }
 				return {
 					_meta: meta('update_actor', config, workspace_id),
@@ -3459,11 +3506,16 @@ export function createMcpServer(config: McpConfig) {
 				output.partial_failure = true
 			}
 
-			output.setup = await buildActorSetupBlockFromApi({
-				id: actorId ?? id,
-				name: (actor as { name?: string | null }).name ?? null,
-				type: (actor as { type?: string | null }).type ?? null,
-			})
+			output.setup = await buildActorSetupBlockFromApi(
+				{
+					id: actorId ?? id,
+					name: (actor as { name?: string | null }).name ?? null,
+					type: (actor as { type?: string | null }).type ?? null,
+					systemPrompt: (actor as { system_prompt?: string | null }).system_prompt ?? null,
+					nonMaskinMcpServerCount: countNonMaskinMcpServers((actor as { tools?: unknown }).tools),
+				},
+				setupApiCaller(config),
+			)
 
 			return {
 				_meta: meta('update_actor', config, workspace_id),
@@ -5157,6 +5209,27 @@ export function createMcpServer(config: McpConfig) {
 			const steps = await fetchLoopStepsView(config, workspace_id, triggerIds)
 
 			const responseBody: Record<string, unknown> = { loop: loopWithUrl, steps }
+
+			// get_loop already has the loop's own inProgressCount/closedCount from
+			// /api/loops, so — unlike update_loop's best-effort member count — this
+			// is the real number, not a floor.
+			const memberCount =
+				(typeof loop.inProgressCount === 'number' ? loop.inProgressCount : 0) +
+				(typeof loop.closedCount === 'number' ? loop.closedCount : 0)
+			responseBody.setup = await buildLoopSetupBlockFromApi(
+				{
+					id,
+					name: (loop.name as string | null | undefined) ?? null,
+					entryCondition: (loop.entryCondition as string | null | undefined) ?? null,
+					closeCondition: (loop.closeCondition as string | null | undefined) ?? null,
+				},
+				setupApiCaller(config),
+				{
+					workspaceId: workspace_id,
+					triggerIds,
+					memberCount,
+				},
+			)
 
 			return {
 				_meta: meta('get_loop', config, (args as { workspace_id?: string }).workspace_id),

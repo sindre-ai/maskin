@@ -9,17 +9,19 @@
  *   - **Async fetch-and-compose helpers** (`buildActorSetupBlockFromApi`,
  *     `buildBetSetupBlockFromApi`, `buildLoopSetupBlockFromApi`) do any
  *     necessary fetching themselves and are used by mutation handlers where
- *     data isn't already in hand. `buildActorSetupBlockFromApi` fetches
- *     nothing today — kept async/named consistently with the other two in
- *     case actor checks grow a workspace-dependent check later.
+ *     data isn't already in hand. `buildActorSetupBlockFromApi` fetches the
+ *     actor's attached-skill count (one call, skipped for non-agent actors) —
+ *     system prompt and MCP server count are read directly off the actor row
+ *     the caller already has.
  *
  * `safeBuildSetupBlock` wraps any compute in a single `unknown` check on
  * failure so the primary tool response always ships.
  *
- * Extra API-call budget per mutation tool call:
- *   - actor (create/update):    0 (checkActor has no checks that depend on workspace state)
+ * Extra API-call budget per mutation/read tool call:
+ *   - actor (update/get):       ≤1 (workspace-skills count — skipped for `type !== 'agent'`
+ *                                and skipped when the caller already passes `skillCount`)
  *   - bet   (create/update):    1 (workspace — reused for status order)
- *   - loop  (create/update):    ≤3 (integrations, triggers, actors)
+ *   - loop  (create/update/get): ≤3 (integrations, triggers, actors)
  */
 
 import { checkActor, checkBet, checkLoop } from './index'
@@ -246,11 +248,28 @@ async function loadWorkspace(
 }
 
 /**
- * Async convenience: build the actor setup block. `checkActor` currently has
- * no checks that read workspace state, so this makes no API calls.
+ * Async convenience: build the actor setup block. Fetches the actor's total
+ * attached-skill count via `GET /api/actors/:id/workspace-skills` — the only
+ * piece of `checkActor`'s input the caller doesn't already have on hand.
+ * Skipped for non-agent actors (since `checkActor` returns `[]` for them) and
+ * skipped whenever `actor.skillCount` is already set — callers that already
+ * have the count on hand (e.g. `get_actor`, whose `GET /api/actors/:id`
+ * response embeds `skills` inline) should pass it directly.
  */
-export async function buildActorSetupBlockFromApi(actor: ActorInput): Promise<SetupBlock> {
-	return buildBlock(checkActor(actor))
+export async function buildActorSetupBlockFromApi(
+	actor: ActorInput,
+	apiCall: ApiCaller,
+): Promise<SetupBlock> {
+	return safeBuildSetupBlock('setup', async () => {
+		if (actor.type !== 'agent' || actor.skillCount !== undefined) {
+			return buildBlock(checkActor(actor))
+		}
+		const skills = await apiCall('GET', `/api/actors/${actor.id}/workspace-skills`, undefined, {
+			skipWorkspace: true,
+		})
+		const skillCount = Array.isArray(skills) ? skills.length : 0
+		return buildBlock(checkActor({ ...actor, skillCount }))
+	})
 }
 
 /**

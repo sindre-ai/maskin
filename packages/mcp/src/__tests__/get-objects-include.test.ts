@@ -101,9 +101,9 @@ describe('get_objects `include:` expansions', () => {
 				return { ok: true, json: () => Promise.resolve(GRAPH_PAYLOAD) } as Response
 			}
 			if (urlStr.includes('/api/workspaces')) {
-				// bet-9 is status 'active', above the lowest configured status
-				// ('signal') → the setup check should surface `elevated_status: warn`
-				// on any object include:['setup'] call.
+				// bet-9 has short content and no driver → the setup check should
+				// surface `content_quality: warn` and `driver_set: warn` on any
+				// object include:['setup'] call.
 				return {
 					ok: true,
 					json: () =>
@@ -281,8 +281,9 @@ describe('get_objects `include:` expansions', () => {
 			expect(Array.isArray(setup.checks)).toBe(true)
 			expect(Array.isArray(setup.next_steps)).toBe(true)
 			expect(typeof setup.prose).toBe('string')
-			// bet-9's status ('active') is above the lowest configured status → elevated_status must surface.
-			expect(setup.checks.some((c) => c.name === 'elevated_status')).toBe(true)
+			// bet-9's content is short and it has no driver → both must surface.
+			expect(setup.checks.some((c) => c.name === 'content_quality')).toBe(true)
+			expect(setup.checks.some((c) => c.name === 'driver_set')).toBe(true)
 		})
 
 		it('degrades every object setup block to a single unknown check when the workspace fetch fails', async () => {

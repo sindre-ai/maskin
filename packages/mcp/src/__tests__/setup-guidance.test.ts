@@ -196,28 +196,171 @@ describe('priority ordering', () => {
 })
 
 describe('checkBet', () => {
-	it('warns when the bet is created above the lowest configured status', () => {
+	const fullContent = 'x'.repeat(200)
+
+	it('applies to any object type, not just bets', () => {
 		const checks = checkBet(
-			{ id: 'b1', type: 'bet', status: 'active' },
-			{ workspace: readyWorkspace, statusOrder: ['signal', 'qualified', 'define', 'active'] },
+			{ id: 't1', type: 'task', status: 'todo', content: fullContent, driver: 'actor-1' },
+			{ workspace: readyWorkspace, statusOrder: ['todo', 'done'] },
 		)
-		const c = checks.find((c) => c.name === 'elevated_status')
-		expect(c?.status).toBe('warn')
-		expect(c?.message).toContain('signal')
+		expect(checks.find((c) => c.name === 'driver_set')).toBeDefined()
 	})
 
-	it('does not warn when the bet is at the lowest status', () => {
-		const checks = checkBet(
-			{ id: 'b1', type: 'bet', status: 'signal' },
-			{ workspace: readyWorkspace, statusOrder: ['signal', 'qualified'] },
-		)
-		expect(checks.find((c) => c.name === 'elevated_status')).toBeUndefined()
+	describe('content_quality', () => {
+		it('warns when content is missing', () => {
+			const checks = checkBet(
+				{ id: 'b1', type: 'bet', driver: 'actor-1' },
+				{ workspace: readyWorkspace, statusOrder: [] },
+			)
+			const c = checks.find((c) => c.name === 'content_quality')
+			expect(c?.status).toBe('warn')
+			expect(c?.message).toMatch(/no content/)
+		})
+
+		it('warns when content is under 200 characters', () => {
+			const checks = checkBet(
+				{ id: 'b1', type: 'bet', content: 'short', driver: 'actor-1' },
+				{ workspace: readyWorkspace, statusOrder: [] },
+			)
+			const c = checks.find((c) => c.name === 'content_quality')
+			expect(c?.status).toBe('warn')
+			expect(c?.message).toContain('5 characters')
+		})
+
+		it('does not warn when content is 200+ characters', () => {
+			const checks = checkBet(
+				{ id: 'b1', type: 'bet', content: fullContent, driver: 'actor-1' },
+				{ workspace: readyWorkspace, statusOrder: [] },
+			)
+			expect(checks.find((c) => c.name === 'content_quality')).toBeUndefined()
+		})
+	})
+
+	describe('driver_set', () => {
+		it('warns to add a driver when none is set', () => {
+			const checks = checkBet(
+				{ id: 'b1', type: 'bet', content: fullContent },
+				{ workspace: readyWorkspace, statusOrder: [] },
+			)
+			const c = checks.find((c) => c.name === 'driver_set')
+			expect(c?.status).toBe('warn')
+			expect(c?.message).toMatch(/no driver/)
+		})
+
+		it('warns to confirm the driver when one is set', () => {
+			const checks = checkBet(
+				{ id: 'b1', type: 'bet', content: fullContent, driver: 'actor-1' },
+				{ workspace: readyWorkspace, statusOrder: [] },
+			)
+			const c = checks.find((c) => c.name === 'driver_set')
+			expect(c?.status).toBe('warn')
+			expect(c?.message).toContain('actor-1')
+			expect(c?.message).toMatch(/confirm/)
+		})
+	})
+
+	describe('status_progression', () => {
+		it('asks whether to progress when status is the entry status', () => {
+			const checks = checkBet(
+				{ id: 'b1', type: 'bet', status: 'signal', content: fullContent, driver: 'actor-1' },
+				{ workspace: readyWorkspace, statusOrder: ['signal', 'qualified', 'active'] },
+			)
+			const c = checks.find((c) => c.name === 'status_progression')
+			expect(c?.status).toBe('warn')
+			expect(c?.message).toContain('signal')
+			expect(c?.message).toContain('qualified')
+		})
+
+		it('does not fire once the object is past the entry status', () => {
+			const checks = checkBet(
+				{ id: 'b1', type: 'bet', status: 'active', content: fullContent, driver: 'actor-1' },
+				{ workspace: readyWorkspace, statusOrder: ['signal', 'qualified', 'active'] },
+			)
+			expect(checks.find((c) => c.name === 'status_progression')).toBeUndefined()
+		})
+
+		it('does not fire when there is no status order to progress along', () => {
+			const checks = checkBet(
+				{ id: 'b1', type: 'bet', status: 'signal', content: fullContent, driver: 'actor-1' },
+				{ workspace: readyWorkspace, statusOrder: [] },
+			)
+			expect(checks.find((c) => c.name === 'status_progression')).toBeUndefined()
+		})
 	})
 })
 
 describe('checkActor', () => {
-	it('produces no checks', () => {
-		expect(checkActor({ id: 'a1', name: 'Assistant' })).toEqual([])
+	it('produces no checks for non-agent actors', () => {
+		expect(checkActor({ id: 'a1', name: 'A Human', type: 'human' })).toEqual([])
+		expect(checkActor({ id: 'a1', name: 'A Human' })).toEqual([])
+	})
+
+	const fullPrompt = 'x'.repeat(200)
+
+	it('warns on a missing or short system prompt', () => {
+		const missing = checkActor({ id: 'a1', type: 'agent' })
+		expect(missing.find((c) => c.name === 'system_prompt_quality')?.status).toBe('warn')
+
+		const short = checkActor({ id: 'a1', type: 'agent', systemPrompt: 'short' })
+		expect(short.find((c) => c.name === 'system_prompt_quality')?.status).toBe('warn')
+
+		const full = checkActor({ id: 'a1', type: 'agent', systemPrompt: fullPrompt })
+		expect(full.find((c) => c.name === 'system_prompt_quality')).toBeUndefined()
+	})
+
+	it('warns when no skills or only one skill are attached', () => {
+		const none = checkActor({ id: 'a1', type: 'agent', systemPrompt: fullPrompt, skillCount: 0 })
+		expect(none.find((c) => c.name === 'skills_attached')?.message).toMatch(/no skills/)
+
+		const one = checkActor({ id: 'a1', type: 'agent', systemPrompt: fullPrompt, skillCount: 1 })
+		expect(one.find((c) => c.name === 'skills_attached')?.message).toMatch(/only one skill/)
+
+		const two = checkActor({ id: 'a1', type: 'agent', systemPrompt: fullPrompt, skillCount: 2 })
+		expect(two.find((c) => c.name === 'skills_attached')).toBeUndefined()
+	})
+
+	it('warns when no MCP tools or only one are configured (excluding maskin)', () => {
+		const none = checkActor({
+			id: 'a1',
+			type: 'agent',
+			systemPrompt: fullPrompt,
+			nonMaskinMcpServerCount: 0,
+		})
+		expect(none.find((c) => c.name === 'mcp_configured')?.message).toMatch(/no MCP tools/)
+
+		const one = checkActor({
+			id: 'a1',
+			type: 'agent',
+			systemPrompt: fullPrompt,
+			nonMaskinMcpServerCount: 1,
+		})
+		expect(one.find((c) => c.name === 'mcp_configured')?.message).toMatch(/one MCP tool/)
+
+		const two = checkActor({
+			id: 'a1',
+			type: 'agent',
+			systemPrompt: fullPrompt,
+			nonMaskinMcpServerCount: 2,
+		})
+		expect(two.find((c) => c.name === 'mcp_configured')).toBeUndefined()
+	})
+
+	it('always asks about a dry run for agents', () => {
+		const checks = checkActor({
+			id: 'a1',
+			type: 'agent',
+			systemPrompt: fullPrompt,
+			skillCount: 2,
+			nonMaskinMcpServerCount: 2,
+		})
+		expect(checks).toEqual([
+			{
+				name: 'dry_run_suggested',
+				status: 'warn',
+				message: expect.stringContaining('dry-run'),
+				fix: expect.objectContaining({ tool: 'run_agent' }),
+			},
+		])
 	})
 })
 
