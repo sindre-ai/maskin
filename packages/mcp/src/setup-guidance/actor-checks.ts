@@ -1,5 +1,5 @@
-import type { ActorCheckContext, ActorInput, SetupCheck } from './types'
+import type { ActorInput, SetupCheck } from './types'
 
-export function checkActor(_actor: ActorInput, _ctx: ActorCheckContext): SetupCheck[] {
+export function checkActor(_actor: ActorInput): SetupCheck[] {
 	return []
 }

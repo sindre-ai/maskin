@@ -3400,15 +3400,11 @@ export function createMcpServer(config: McpConfig) {
 					wsId && actorId
 						? addUrl(actor as Record<string, unknown>, config, wsId, { kind: 'actor', id: actorId })
 						: actor
-				const setup = await buildActorSetupBlockFromApi(
-					{
-						id: actorId ?? id,
-						name: (actor as { name?: string | null }).name ?? null,
-						type: (actor as { type?: string | null }).type ?? null,
-					},
-					setupApiCaller(config),
-					{ workspaceId: workspace_id, defaultWorkspaceId: config.defaultWorkspaceId },
-				)
+				const setup = await buildActorSetupBlockFromApi({
+					id: actorId ?? id,
+					name: (actor as { name?: string | null }).name ?? null,
+					type: (actor as { type?: string | null }).type ?? null,
+				})
 				const responseBody = { ...(withUrl as Record<string, unknown>), setup }
 				return {
 					_meta: meta('update_actor', config, workspace_id),
@@ -3463,15 +3459,11 @@ export function createMcpServer(config: McpConfig) {
 				output.partial_failure = true
 			}
 
-			output.setup = await buildActorSetupBlockFromApi(
-				{
-					id: actorId ?? id,
-					name: (actor as { name?: string | null }).name ?? null,
-					type: (actor as { type?: string | null }).type ?? null,
-				},
-				setupApiCaller(config),
-				{ workspaceId: workspace_id, defaultWorkspaceId: config.defaultWorkspaceId },
-			)
+			output.setup = await buildActorSetupBlockFromApi({
+				id: actorId ?? id,
+				name: (actor as { name?: string | null }).name ?? null,
+				type: (actor as { type?: string | null }).type ?? null,
+			})
 
 			return {
 				_meta: meta('update_actor', config, workspace_id),
@@ -5047,7 +5039,6 @@ export function createMcpServer(config: McpConfig) {
 					setupApiCaller(config),
 					{
 						workspaceId: workspace_id,
-						defaultWorkspaceId: config.defaultWorkspaceId,
 						triggerIds: effectiveTriggerIds,
 						memberCount,
 					},

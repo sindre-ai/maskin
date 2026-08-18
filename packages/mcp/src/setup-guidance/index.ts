@@ -1,5 +1,4 @@
 export type {
-	ActorCheckContext,
 	ActorInput,
 	BetCheckContext,
 	BetInput,

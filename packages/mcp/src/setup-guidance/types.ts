@@ -48,7 +48,6 @@ export type LoopStep = {
 }
 
 export type LoopCheckContext = {
-	workspace: WorkspaceLlmReadiness
 	/** Provider names currently connected in this workspace (e.g. `['github', 'slack']`). */
 	connectedProviders: string[]
 	steps: LoopStep[]
@@ -74,10 +73,6 @@ export type BetInput = {
 	id: string
 	type: string
 	status?: string | null
-}
-
-export type ActorCheckContext = {
-	workspace: WorkspaceLlmReadiness
 }
 
 export type ActorInput = {

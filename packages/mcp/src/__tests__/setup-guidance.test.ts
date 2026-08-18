@@ -13,7 +13,6 @@ import {
 } from '../setup-guidance'
 
 const readyWorkspace = { hasLlmKey: true, hasClaudeOAuth: false }
-const emptyWorkspace = { hasLlmKey: false, hasClaudeOAuth: false }
 
 function loop(fields: Partial<LoopInput> = {}): LoopInput {
 	return {
@@ -39,7 +38,6 @@ function step(fields: Partial<LoopStep> = {}): LoopStep {
 
 function ctx(fields: Partial<LoopCheckContext> = {}): LoopCheckContext {
 	return {
-		workspace: readyWorkspace,
 		connectedProviders: [],
 		steps: [step()],
 		memberCount: 3,
@@ -60,10 +58,7 @@ describe('checkLoop — first-test fixture (bet DoD #8)', () => {
 				},
 			}),
 		]
-		const checks = checkLoop(
-			loop(),
-			ctx({ steps, connectedProviders: [], memberCount: 5, workspace: readyWorkspace }),
-		)
+		const checks = checkLoop(loop(), ctx({ steps, connectedProviders: [], memberCount: 5 }))
 
 		expect(checks[0].name).toBe('steps_have_agents')
 		expect(checks[0].status).toBe('fail')
@@ -166,7 +161,6 @@ describe('priority ordering', () => {
 		const checks = checkLoop(
 			loop({ entryCondition: null, closeCondition: null }),
 			ctx({
-				workspace: emptyWorkspace,
 				steps: [
 					step({ triggerId: 'a', agent: null }),
 					step({
@@ -190,7 +184,6 @@ describe('priority ordering', () => {
 		const checks = checkLoop(
 			loop({ entryCondition: null, closeCondition: null }),
 			ctx({
-				workspace: emptyWorkspace,
 				steps: [step({ agent: null })],
 				connectedProviders: [],
 				memberCount: 0,
@@ -223,9 +216,8 @@ describe('checkBet', () => {
 })
 
 describe('checkActor', () => {
-	it('produces no checks regardless of workspace readiness', () => {
-		expect(checkActor({ id: 'a1', name: 'Assistant' }, { workspace: emptyWorkspace })).toEqual([])
-		expect(checkActor({ id: 'a1', name: 'Assistant' }, { workspace: readyWorkspace })).toEqual([])
+	it('produces no checks', () => {
+		expect(checkActor({ id: 'a1', name: 'Assistant' })).toEqual([])
 	})
 })
 
@@ -276,7 +268,6 @@ describe('toProseBlock', () => {
 		const checks = checkLoop(
 			loop({ entryCondition: null, closeCondition: null }),
 			ctx({
-				workspace: emptyWorkspace,
 				steps: [step({ agent: null })],
 				connectedProviders: [],
 				memberCount: 0,
