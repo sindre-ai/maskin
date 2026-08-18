@@ -1,9 +1,11 @@
 import { PageHeader } from '@/components/layout/page-header'
 import { ObjectCreateForm } from '@/components/objects/object-create-form'
-import { ObjectDocument } from '@/components/objects/object-document'
+import { ObjectDetailShell } from '@/components/objects/object-detail-shell'
 import { Skeleton } from '@/components/shared/loading-skeleton'
+import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
 import { useCreateObject, useObject, useUpdateObject } from '@/hooks/use-objects'
+import { ApiError } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { getDefaultStatusForType } from '@maskin/module-sdk'
 import { createFileRoute } from '@tanstack/react-router'
@@ -24,7 +26,7 @@ function ObjectDetailPage() {
 	const statusMap = (settings?.statuses ?? {}) as Record<string, string[]>
 	const getDefaultStatus = (type: string) =>
 		statusMap[type]?.[0] ?? getDefaultStatusForType(type) ?? 'new'
-	const { data: object, isLoading } = useObject(objectId)
+	const { data: object, isLoading, error, refetch } = useObject(objectId)
 	const createObject = useCreateObject(workspaceId)
 	const updateObject = useUpdateObject(workspaceId)
 	const isCreatedRef = useRef(false)
@@ -72,9 +74,26 @@ function ObjectDetailPage() {
 		)
 	}
 
+	// Distinguish "id doesn't exist yet → create mode" from "fetch failed on
+	// an existing id". A 404 legitimately means the create form (typing a new
+	// object into a fresh URL) — any other error is a real load failure.
+	const nonNotFoundError =
+		error && !(error instanceof ApiError && error.status === 404) ? error : null
+	if (nonNotFoundError && !isCreated) {
+		return (
+			<div className="max-w-3xl mx-auto">
+				<QueryStateError
+					title="Couldn't load this object"
+					error={nonNotFoundError}
+					onRetry={() => refetch()}
+				/>
+			</div>
+		)
+	}
+
 	// Once fully loaded with object data, render the full document editor
 	if (isCreated && object) {
-		return <ObjectDocument object={object} />
+		return <ObjectDetailShell object={object} />
 	}
 
 	// Create mode — show form with document-like sections

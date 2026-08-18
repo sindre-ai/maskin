@@ -1,12 +1,13 @@
 import type { DisplayPanelColumn } from '@/components/objects/data-table/display-panel'
 import { EmptyState } from '@/components/shared/empty-state'
-import { StatusBadge } from '@/components/shared/status-badge'
+import { QueryStateError } from '@/components/shared/query-state'
 import { useBulkUpdateObjects } from '@/hooks/use-objects'
 import { api } from '@/lib/api'
 import type {
 	ActorListItem,
 	BoardObjectColumn,
 	BulkUpdateObjectsInput,
+	NotificationResponse,
 	ObjectResponse,
 } from '@/lib/api'
 import { cn } from '@/lib/cn'
@@ -51,6 +52,8 @@ interface BoardViewProps {
 	workspaceId: string
 	actors?: ActorListItem[]
 	isLoading?: boolean
+	isError?: boolean
+	error?: Error | null
 	selectedIds?: string[]
 	onObjectSelectionChange?: (id: string, selected: boolean) => void
 	onObjectRangeSelectionChange?: (ids: string[]) => void
@@ -60,6 +63,11 @@ interface BoardViewProps {
 	displayColumns?: DisplayPanelColumn[]
 	columnVisibility?: VisibilityState
 	onManualOrderChange?: () => void
+	/** Pending asks keyed by the object they target — drives the column's
+	 *  "N NEED YOU" chip and each card's "Waiting on you" pill (mockup 977, 984). */
+	asksByObjectId?: Map<string, NotificationResponse>
+	/** Move a single object to the next column via the card's `→` (mockup 983). */
+	onAdvance?: (objectId: string, status: string) => void
 }
 
 const BOARD_MANUAL_SORT = 'boardOrder'
@@ -240,6 +248,8 @@ export function BoardView({
 	workspaceId,
 	actors,
 	isLoading,
+	isError,
+	error,
 	selectedIds = [],
 	onObjectSelectionChange,
 	onObjectRangeSelectionChange,
@@ -249,6 +259,8 @@ export function BoardView({
 	displayColumns,
 	columnVisibility,
 	onManualOrderChange,
+	asksByObjectId,
+	onAdvance,
 }: BoardViewProps) {
 	const bulkUpdate = useBulkUpdateObjects(workspaceId)
 	const scrollContainerRef = useRef<HTMLDivElement | null>(null)
@@ -432,7 +444,15 @@ export function BoardView({
 		})
 	}, [displayObjects])
 
+	// Loading → error → empty. "No statuses configured" is a workspace
+	// mis-configuration claim, so it may only be made once the query has
+	// actually resolved with nothing — a first paint or a failed fetch also has
+	// zero columns and must not read as one.
 	if (columns.length === 0) {
+		if (isLoading) return <BoardSkeleton />
+		if (isError) {
+			return <QueryStateError title="Couldn't load the board" error={error} />
+		}
 		return (
 			<EmptyState
 				title="No statuses configured"
@@ -620,13 +640,17 @@ export function BoardView({
 				data-testid="board-view"
 				className={cn('flex gap-3 overflow-x-auto pb-2', activeObject && 'cursor-grabbing')}
 			>
-				{columns.map((column) => (
+				{columns.map((column, columnIndex) => (
 					<BoardColumn
 						key={column.id}
 						status={column.value}
 						label={column.label}
 						objects={column.objects}
 						total={column.total}
+						asksByObjectId={asksByObjectId}
+						onAdvance={onAdvance}
+						nextStatus={columns[columnIndex + 1]?.value}
+						nextLabel={columns[columnIndex + 1]?.label}
 						workspaceId={workspaceId}
 						actors={actors}
 						isLoading={isLoading}
@@ -698,6 +722,10 @@ interface BoardColumnProps {
 	displayColumns?: DisplayPanelColumn[]
 	columnVisibility?: VisibilityState
 	loadMore?: ReactNode
+	asksByObjectId?: Map<string, NotificationResponse>
+	onAdvance?: (objectId: string, status: string) => void
+	nextStatus?: string
+	nextLabel?: string
 }
 
 function BoardColumn({
@@ -719,6 +747,10 @@ function BoardColumn({
 	displayColumns,
 	columnVisibility,
 	loadMore,
+	asksByObjectId,
+	onAdvance,
+	nextStatus,
+	nextLabel,
 }: BoardColumnProps) {
 	const { setNodeRef, isOver, active } = useDroppable({
 		id: `col:${status}`,
@@ -730,6 +762,9 @@ function BoardColumn({
 		(isOverTarget ?? isOver) && activeObject && activeObject.status !== status,
 	)
 	const orderedObjects = getOrderedObjects(objects, sort, order)
+	const needsYouCount = asksByObjectId
+		? objects.filter((object) => asksByObjectId.get(object.id)?.status === 'pending').length
+		: 0
 	const orderedIds = useMemo(() => orderedObjects.map((object) => object.id), [orderedObjects])
 	const previewCard = previewObject ? (
 		<DropPreview
@@ -745,18 +780,35 @@ function BoardColumn({
 		<div
 			ref={setNodeRef}
 			data-testid={`board-column-${status}`}
+			data-over={isValidTarget ? '' : undefined}
 			className={cn(
-				'relative flex min-h-[28rem] shrink-0 flex-col gap-2 rounded-md transition-colors',
+				'relative flex min-h-[28rem] shrink-0 flex-col gap-2 rounded-xl border border-dashed border-transparent p-1 transition-colors',
 				'w-full sm:w-72 md:w-72 lg:w-80',
-				isValidTarget && 'bg-accent/5',
+				isValidTarget && 'border-brand bg-brand/5',
 			)}
 		>
-			<div className="flex items-center justify-between px-1">
-				<StatusBadge status={label} />
-				<span className="text-xs text-muted-foreground tabular-nums">
-					{objects.length}
-					{total > objects.length ? `/${total}` : ''}
+			<div className="flex items-baseline gap-2 px-1.5 pt-1 min-w-0">
+				<span className="shrink-0 text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
+					{humanizeStatus(label)}
 				</span>
+				{/* Plain count (mockup 976) — the loaded-of-total reading moved to the
+				    column note slot on the right (mockup 978). */}
+				<span className="shrink-0 text-[11px] font-semibold tabular-nums text-muted-foreground/60">
+					{total}
+				</span>
+				{needsYouCount > 0 && (
+					<span
+						title="Waiting on you"
+						className="shrink-0 truncate rounded-[5px] bg-ask-surface px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-[0.06em] text-warning"
+					>
+						{needsYouCount} need you
+					</span>
+				)}
+				{total > objects.length && (
+					<span className="ml-auto min-w-0 truncate text-[10px] text-muted-foreground/60">
+						{objects.length} of {total} loaded
+					</span>
+				)}
 			</div>
 
 			<div
@@ -784,7 +836,7 @@ function BoardColumn({
 							Drop here to move to {humanizeStatus(status)}.
 						</div>
 					) : (
-						<ColumnEmpty status={status} />
+						<ColumnEmpty />
 					)
 				) : (
 					<SortableContext
@@ -806,6 +858,10 @@ function BoardColumn({
 										onRangeSelectionChange={onObjectRangeSelectionChange}
 										displayColumns={displayColumns}
 										columnVisibility={columnVisibility}
+										ask={asksByObjectId?.get(obj.id)}
+										onAdvance={nextStatus && onAdvance ? onAdvance : undefined}
+										nextStatus={nextStatus}
+										nextLabel={nextLabel}
 									/>
 								</div>
 							))}
@@ -922,6 +978,10 @@ interface DraggableBoardCardProps {
 	onRangeSelectionChange?: (status: string, orderedIds: string[], id: string) => void
 	displayColumns?: DisplayPanelColumn[]
 	columnVisibility?: VisibilityState
+	ask?: NotificationResponse
+	onAdvance?: (objectId: string, status: string) => void
+	nextStatus?: string
+	nextLabel?: string
 }
 
 function DraggableBoardCard({
@@ -935,6 +995,10 @@ function DraggableBoardCard({
 	onRangeSelectionChange,
 	displayColumns,
 	columnVisibility,
+	ask,
+	onAdvance,
+	nextStatus,
+	nextLabel,
 }: DraggableBoardCardProps) {
 	const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
 		id: object.id,
@@ -1034,7 +1098,33 @@ function DraggableBoardCard({
 				isSelected={isSelected}
 				columns={displayColumns}
 				columnVisibility={columnVisibility}
+				ask={ask}
+				onAdvance={onAdvance && nextStatus ? () => onAdvance(object.id, nextStatus) : undefined}
+				advanceLabel={nextLabel ? `Move to ${humanizeStatus(nextLabel)}` : undefined}
 			/>
+		</div>
+	)
+}
+
+// First-paint placeholder for the whole board — the column shells the real
+// board renders, before any column data exists to render them from.
+function BoardSkeleton() {
+	return (
+		<div className="flex gap-3 overflow-x-auto pb-2">
+			{Array.from({ length: 3 }).map((_, columnIndex) => (
+				<div
+					// biome-ignore lint/suspicious/noArrayIndexKey: static skeleton columns never reorder
+					key={`board-skeleton-${columnIndex}`}
+					className="flex w-[280px] shrink-0 flex-col gap-2"
+				>
+					{Array.from({ length: SKELETON_CARDS_PER_COLUMN }).map((_, cardIndex) => (
+						<CardSkeleton
+							// biome-ignore lint/suspicious/noArrayIndexKey: static skeleton rows never reorder
+							key={`board-skeleton-${columnIndex}-${cardIndex}`}
+						/>
+					))}
+				</div>
+			))}
 		</div>
 	)
 }
@@ -1048,11 +1138,11 @@ function CardSkeleton() {
 	)
 }
 
-function ColumnEmpty({ status }: { status: string }) {
+// Mockup 988: an empty column is just the drop target, nothing more.
+function ColumnEmpty() {
 	return (
-		<div className="rounded-md border border-dashed border-border/70 bg-muted/20 px-3 py-4 text-xs text-muted-foreground">
-			<p>Nothing here yet.</p>
-			<p className="mt-1">Drag a card to {humanizeStatus(status)}.</p>
+		<div className="rounded-xl border border-dashed border-border px-3 py-4 text-center text-[10.5px] text-muted-foreground">
+			Drop here
 		</div>
 	)
 }
