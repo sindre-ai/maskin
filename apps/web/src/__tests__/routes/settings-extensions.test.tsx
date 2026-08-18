@@ -22,14 +22,16 @@ import { Route } from '@/routes/_authed/$workspaceId/settings/extensions'
 const ExtensionsPage = (Route as unknown as { component: React.FC }).component
 
 describe('ExtensionsPage', () => {
-	it('renders the Extensions card with the shared extension list', () => {
+	// The screen's title belongs to the shared top nav, so the page body opens
+	// with the lead paragraph (mockup 2779), not a duplicate heading.
+	it('renders no heading of its own, only the lead paragraph and the shared list', () => {
 		render(<ExtensionsPage />)
-		expect(screen.getByText('Extensions')).toBeInTheDocument()
+		expect(screen.queryByRole('heading')).not.toBeInTheDocument()
 		expect(screen.getByText('ExtensionsManager')).toBeInTheDocument()
 	})
 
-	it('explains that enabled extensions add object types and navigation', () => {
+	it('promises that turning an extension off hides its objects without deleting them', () => {
 		render(<ExtensionsPage />)
-		expect(screen.getByText(/Enable or disable extensions for this workspace/)).toBeInTheDocument()
+		expect(screen.getByText(/it never deletes them/)).toBeInTheDocument()
 	})
 })

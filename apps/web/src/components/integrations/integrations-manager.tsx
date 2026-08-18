@@ -23,6 +23,15 @@ import { Check, Copy, Plus } from 'lucide-react'
 import { useState } from 'react'
 
 /**
+ * Brand tile initials (mockup 2770). The mockup tints each tile per brand from
+ * a fixture palette with no semantic token behind it, so the tile ships neutral
+ * — `bg-muted` — rather than introducing raw hex per provider.
+ */
+function providerInitials(displayName: string): string {
+	return (displayName.match(/[a-z0-9]/gi) ?? []).slice(0, 2).join('').toUpperCase()
+}
+
+/**
  * Lists every registered integration provider with its connection state and a
  * per-provider connect/disconnect action. Shared between the General settings
  * page and the dedicated Integrations section so the provider list, the
@@ -163,17 +172,23 @@ function ProviderRow({
 			: 'Available to connect'
 
 	return (
-		<div className="flex items-center gap-3 rounded-xl border border-border bg-card p-4 shadow-sm transition-colors hover:border-border-strong">
+		<div className="flex items-center gap-3 rounded-xl border border-border bg-card p-3">
 			<div
-				className={`h-3 w-3 shrink-0 rounded-full ${isConnected ? 'bg-success' : 'bg-muted-foreground/40'}`}
+				className={`h-2 w-2 shrink-0 rounded-full ${isConnected ? 'bg-success' : 'bg-muted-foreground/40'}`}
 			/>
+			<span
+				aria-hidden="true"
+				className="grid size-[30px] shrink-0 place-items-center rounded-md bg-muted text-[10px] font-bold text-muted-foreground"
+			>
+				{providerInitials(provider.displayName)}
+			</span>
 			<div className="flex-1 min-w-0">
 				<p className="text-sm font-medium text-foreground truncate">{provider.displayName}</p>
 				<p className="text-xs text-muted-foreground truncate">{connectedLabel}</p>
 			</div>
 			{isConnected ? (
 				<Button
-					variant="ghost"
+					variant="outline"
 					size="sm"
 					className="shrink-0 text-muted-foreground hover:text-error"
 					onClick={() => disconnect.mutate(integration.id)}
@@ -205,14 +220,14 @@ function GroupedProviderRow({
 	const count = installations.length
 
 	return (
-		<div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm transition-colors hover:border-border-strong">
+		<div className="overflow-hidden rounded-xl border border-border bg-card">
 			<button
 				type="button"
 				onClick={() => setExpanded((v) => !v)}
 				aria-expanded={expanded}
-				className="flex w-full items-center gap-3 p-4 text-left transition-colors hover:bg-secondary"
+				className="flex w-full items-center gap-3 p-3 text-left transition-colors hover:bg-secondary"
 			>
-				<div className="h-3 w-3 shrink-0 rounded-full bg-success" />
+				<div className="h-2 w-2 shrink-0 rounded-full bg-success" />
 				<div className="flex-1 min-w-0">
 					<p className="text-sm font-medium text-foreground truncate">
 						{provider.displayName} · {count}
@@ -435,7 +450,7 @@ function NestedInstallationRow({
 
 	return (
 		<div className="flex items-center gap-3 rounded-lg border border-border bg-muted p-3">
-			<div className="h-3 w-3 shrink-0 rounded-full bg-success" />
+			<div className="h-2 w-2 shrink-0 rounded-full bg-success" />
 			<div className="flex-1 min-w-0">
 				<p className="text-sm font-medium text-foreground truncate">{label}</p>
 				{integration.externalId && (
@@ -445,7 +460,7 @@ function NestedInstallationRow({
 				)}
 			</div>
 			<Button
-				variant="ghost"
+				variant="outline"
 				size="sm"
 				className="shrink-0 text-muted-foreground hover:text-error"
 				onClick={onDisconnect}

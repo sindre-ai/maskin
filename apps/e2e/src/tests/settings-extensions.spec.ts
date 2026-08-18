@@ -24,11 +24,9 @@ async function openExtensionsPage(page: Page, workspaceId: string) {
 	await page.waitForTimeout(300)
 }
 
-/** The module row (the padded flex card containing the module's name + toggle). */
-function moduleRow(page: Page, name: string) {
-	return page
-		.locator('div.flex.items-center.justify-between.rounded-lg')
-		.filter({ has: page.getByText(name, { exact: true }) })
+/** A module's toggle, located by its accessible name rather than row classes. */
+function moduleSwitch(page: Page, name: string) {
+	return page.getByRole('switch', { name, exact: true })
 }
 
 test.describe('Settings — Extensions page', () => {
@@ -48,7 +46,7 @@ test.describe('Settings — Extensions page', () => {
 
 			// The section and its helper text render.
 			await expect(
-				page.getByText('Enable or disable extensions for this workspace').first(),
+				page.getByText('Extensions add object types and tabs for this workspace').first(),
 			).toBeVisible()
 
 			// The registered modules are listed with their names.
@@ -57,9 +55,9 @@ test.describe('Settings — Extensions page', () => {
 			await expect(page.getByText('Knowledge', { exact: true }).first()).toBeVisible()
 
 			// Default state: Work enabled, CRM and Knowledge disabled.
-			await expect(moduleRow(page, 'Work').getByRole('switch')).toBeChecked()
-			await expect(moduleRow(page, 'CRM').getByRole('switch')).not.toBeChecked()
-			await expect(moduleRow(page, 'Knowledge').getByRole('switch')).not.toBeChecked()
+			await expect(moduleSwitch(page, 'Work')).toBeChecked()
+			await expect(moduleSwitch(page, 'CRM')).not.toBeChecked()
+			await expect(moduleSwitch(page, 'Knowledge')).not.toBeChecked()
 		})
 	}
 
@@ -72,7 +70,7 @@ test.describe('Settings — Extensions page', () => {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
 			await openExtensionsPage(page, account.workspaceId)
 
-			const crmSwitch = moduleRow(page, 'CRM').getByRole('switch')
+			const crmSwitch = moduleSwitch(page, 'CRM')
 			await expect(crmSwitch).not.toBeChecked({ timeout: 10000 })
 			await crmSwitch.click()
 
@@ -81,9 +79,9 @@ test.describe('Settings — Extensions page', () => {
 			// …and survives a full page reload.
 			await page.reload()
 			await expect(
-				page.getByText('Enable or disable extensions for this workspace').first(),
+				page.getByText('Extensions add object types and tabs for this workspace').first(),
 			).toBeVisible({ timeout: 10000 })
-			await expect(moduleRow(page, 'CRM').getByRole('switch')).toBeChecked()
+			await expect(moduleSwitch(page, 'CRM')).toBeChecked()
 		})
 	}
 
@@ -103,10 +101,10 @@ test.describe('Settings — Extensions page', () => {
 			}
 
 			await expect(
-				page.getByText('Enable or disable extensions for this workspace').first(),
+				page.getByText('Extensions add object types and tabs for this workspace').first(),
 			).toBeVisible()
-			await expect(moduleRow(page, 'Work').getByRole('switch')).toBeChecked()
-			await expect(moduleRow(page, 'CRM').getByRole('switch')).toBeVisible()
+			await expect(moduleSwitch(page, 'Work')).toBeChecked()
+			await expect(moduleSwitch(page, 'CRM')).toBeVisible()
 		}
 	})
 })

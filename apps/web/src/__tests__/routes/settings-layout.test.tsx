@@ -14,7 +14,7 @@ vi.mock('@tanstack/react-router', async () => {
 })
 
 vi.mock('@/lib/workspace-context', () => ({
-	useWorkspace: () => ({ workspaceId: 'ws-1' }),
+	useWorkspace: () => ({ workspaceId: 'ws-1', workspace: { id: 'ws-1', name: 'My Workspace' } }),
 }))
 
 import { Route } from '@/routes/_authed/$workspaceId/settings'
@@ -33,6 +33,16 @@ describe('SettingsLayout', () => {
 	it('renders no heading of its own', () => {
 		render(<SettingsLayout />)
 		expect(screen.queryByRole('heading')).not.toBeInTheDocument()
+	})
+
+	it('marks the active section with the bg-muted / font-bold rail state', () => {
+		mockMatchRoute.mockImplementation(
+			({ to }: { to: string }) => to === '/$workspaceId/settings/billing',
+		)
+		render(<SettingsLayout />)
+		const billing = screen.getByRole('link', { name: 'Billing' })
+		expect(billing.className).toContain('bg-muted')
+		expect(billing.className).toContain('font-bold')
 	})
 
 	it('renders the six settings sections in mockup order', () => {

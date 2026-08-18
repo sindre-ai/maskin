@@ -1,8 +1,7 @@
-import { ExtensionsManager } from '@/components/extensions/extensions-manager'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
+import { Separator } from '@/components/ui/separator'
 import { Switch } from '@/components/ui/switch'
 import { useUpdateWorkspace } from '@/hooks/use-workspaces'
 import { cn } from '@/lib/cn'
@@ -25,45 +24,40 @@ function GeneralPage() {
 
 	const handleSave = () => {
 		if (name !== workspace.name) {
-			updateWorkspace.mutate({ name })
+			updateWorkspace.mutate(
+				{ name },
+				{
+					onSuccess: () => toast.success('Workspace name saved'),
+					onError: () => toast.error('Failed to save the workspace name'),
+				},
+			)
 		}
 	}
 
 	return (
-		<div className="max-w-lg space-y-6">
-			<div>
-				<Label className="mb-1 text-muted-foreground">Workspace name</Label>
-				<div className="flex gap-2">
-					<Input
-						type="text"
-						value={name}
-						onChange={(e) => setName(e.target.value)}
-						className="flex-1"
-					/>
-					<Button
-						onClick={handleSave}
-						disabled={name === workspace.name || updateWorkspace.isPending}
-					>
-						Save
-					</Button>
-				</div>
+		<div className="max-w-[580px]">
+			<h2 className="eyebrow mb-2">WORKSPACE NAME</h2>
+			<div className="flex gap-2">
+				<Input
+					type="text"
+					value={name}
+					onChange={(e) => setName(e.target.value)}
+					aria-label="Workspace name"
+					className="flex-1"
+				/>
+				<Button
+					onClick={handleSave}
+					disabled={name === workspace.name || updateWorkspace.isPending}
+				>
+					Save
+				</Button>
 			</div>
 
-			<div className="border-t border-border pt-6">
-				<Label className="mb-1 text-muted-foreground">Extensions</Label>
-				<p className="text-sm text-muted-foreground mb-3">
-					Enable or disable extensions for this workspace.
-				</p>
-				<ExtensionsManager />
-			</div>
+			<Separator className="my-6" />
+			<ThemePicker />
 
-			<div className="border-t border-border pt-6">
-				<PrivacySection />
-			</div>
-
-			<div className="border-t border-border pt-6">
-				<ThemePicker />
-			</div>
+			<Separator className="my-6" />
+			<PrivacySection />
 		</div>
 	)
 }
@@ -96,18 +90,17 @@ function PrivacySection() {
 
 	return (
 		<div>
-			<Label className="mb-1 text-muted-foreground">Privacy & data</Label>
-			<p className="text-sm text-muted-foreground mb-3 max-w-prose">
-				Product usage events are sent to PostHog so the team and the Synthesizer can see how the
-				workspace is actually used and feed that back into active bets.
+			<h2 className="eyebrow mb-1.5">PRIVACY &amp; DATA</h2>
+			<p className="mb-3 max-w-prose text-xs leading-relaxed text-muted-foreground">
+				Usage events feed the Synthesizer so the team sees how the workspace is really used. No
+				object titles, no content, no PII.
 			</p>
-			<div className="space-y-3">
-				<div className="flex items-start justify-between gap-4 rounded-xl border border-border bg-card p-3 shadow-sm transition-colors hover:border-border-strong">
+			<div className="space-y-2.5">
+				<div className="flex items-start justify-between gap-4 rounded-xl border border-border bg-card p-3">
 					<div className="min-w-0">
-						<span className="text-sm font-medium block">Share product usage with Maskin</span>
-						<span className="text-sm text-muted-foreground">
-							Bet lifecycle, agent sessions, comments, trigger fires. No object titles, no content,
-							no PII.
+						<span className="block text-sm font-medium">Share product usage with Maskin</span>
+						<span className="text-xs text-muted-foreground">
+							Bet lifecycle, agent sessions, trigger fires. No content, no PII.
 						</span>
 					</div>
 					<Switch
@@ -116,12 +109,11 @@ function PrivacySection() {
 						aria-label="Share product usage with Maskin"
 					/>
 				</div>
-				<div className="flex items-start justify-between gap-4 rounded-xl border border-border bg-card p-3 shadow-sm transition-colors hover:border-border-strong">
+				<div className="flex items-start justify-between gap-4 rounded-xl border border-border bg-card p-3">
 					<div className="min-w-0">
-						<span className="text-sm font-medium block">Anonymize this workspace</span>
-						<span className="text-sm text-muted-foreground">
-							Replace workspace and actor IDs with rotating hashes before events leave the browser.
-							Recommended when working with sensitive customer data.
+						<span className="block text-sm font-medium">Anonymize this workspace</span>
+						<span className="text-xs text-muted-foreground">
+							Rotate workspace and actor IDs into hashes before events leave the browser.
 						</span>
 					</div>
 					<Switch
@@ -146,8 +138,8 @@ function ThemePicker() {
 
 	return (
 		<div>
-			<Label className="mb-2 text-muted-foreground">Appearance</Label>
-			<div className="flex gap-1 rounded-xl border border-border bg-card p-1 shadow-sm">
+			<h2 className="eyebrow mb-2">APPEARANCE</h2>
+			<div className="flex w-full gap-1 rounded-xl border border-border bg-card p-1 sm:inline-flex sm:w-auto">
 				{themeOptions.map((option) => {
 					const Icon = option.icon
 					const isActive = theme === option.value
@@ -157,9 +149,9 @@ function ThemePicker() {
 							type="button"
 							onClick={() => setTheme(option.value)}
 							className={cn(
-								'flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-sm transition-colors',
+								'flex flex-1 items-center justify-center gap-1.5 rounded-lg px-4 py-1.5 text-[12.5px] font-semibold transition-colors sm:flex-none',
 								isActive
-									? 'bg-secondary text-foreground font-medium shadow-xs'
+									? 'bg-secondary text-foreground'
 									: 'text-muted-foreground hover:text-foreground',
 							)}
 						>

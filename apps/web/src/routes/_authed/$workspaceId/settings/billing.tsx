@@ -3,8 +3,9 @@ import { Skeleton } from '@/components/shared/loading-skeleton'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { RouteError } from '@/components/shared/route-error'
 import { StatusBadge } from '@/components/shared/status-badge'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
@@ -55,6 +56,14 @@ function formatAmount(cents: number | null, currency: string): string {
 	}
 }
 
+// An invoice is a financial record — "2 weeks ago" is the wrong register for
+// one, so invoice rows carry an absolute date (mockup 2925).
+const INVOICE_DATE_FORMAT = new Intl.DateTimeFormat('en-GB', {
+	day: 'numeric',
+	month: 'short',
+	year: 'numeric',
+})
+
 function BillingPage() {
 	const { workspaceId } = useWorkspace()
 	const { data, isLoading } = useBillingSummary(workspaceId)
@@ -62,7 +71,7 @@ function BillingPage() {
 
 	if (isLoading || !data) {
 		return (
-			<div className="space-y-4">
+			<div className="max-w-[940px] space-y-4">
 				<Skeleton className="h-32 w-full" />
 				<Skeleton className="h-24 w-full" />
 				<Skeleton className="h-40 w-full" />
@@ -71,16 +80,21 @@ function BillingPage() {
 	}
 
 	return (
-		<div className="space-y-4">
-			<PlanCard
+		<div className="flex max-w-[940px] flex-col gap-6">
+			<PlanBanner
 				workspaceId={workspaceId}
 				plan={data.plan}
 				configured={data.configured}
 				testMode={data.testMode}
 				onChangePlan={() => setCheckoutOpen(true)}
 			/>
-			<InvoiceEmailCard email={data.invoiceEmail} />
-			<InvoicesCard invoices={data.invoices} />
+			<AccountDisclosure
+				workspaceId={workspaceId}
+				plan={data.plan}
+				configured={data.configured}
+				invoiceEmail={data.invoiceEmail}
+				invoices={data.invoices}
+			/>
 
 			{data.configured && data.publishableKey && (
 				<CheckoutDialog
@@ -88,7 +102,7 @@ function BillingPage() {
 					onOpenChange={setCheckoutOpen}
 					workspaceId={workspaceId}
 					publishableKey={data.publishableKey}
-					planLabel={data.plan.planLabel ?? data.plan.planId}
+					plan={data.plan}
 					currentEmail={data.invoiceEmail}
 					testMode={data.testMode}
 				/>
@@ -97,7 +111,7 @@ function BillingPage() {
 	)
 }
 
-function PlanCard({
+function PlanBanner({
 	workspaceId,
 	plan,
 	configured,
@@ -113,136 +127,205 @@ function PlanCard({
 	const portal = useOpenPortal(workspaceId)
 
 	return (
-		<Card>
-			<CardHeader>
-				<div className="flex items-center justify-between gap-2">
-					<CardTitle>Current plan</CardTitle>
-					<div className="flex items-center gap-2">
+		<div className="overflow-hidden rounded-xl border border-border bg-card">
+			<div className="flex flex-wrap items-center gap-4 border-b border-border bg-muted/40 px-4 py-4">
+				<div className="min-w-0 flex-1 sm:min-w-[210px]">
+					<div className="flex flex-wrap items-center gap-2">
+						<h2 className="text-[15px] font-bold tracking-tight text-foreground">
+							{plan.planLabel ?? plan.planId}
+						</h2>
 						<StatusBadge status={plan.status} />
-						{testMode && (
-							<span className="inline-flex h-6 items-center rounded-full border border-border-strong bg-secondary px-2.5 text-xs text-foreground">
-								Test mode
+						{testMode && <Badge variant="outline">Test mode</Badge>}
+					</div>
+					<p className="mt-1 text-xs text-muted-foreground">
+						{plan.priceCents !== null
+							? `${formatAmount(plan.priceCents, plan.currency)} / month`
+							: 'No active subscription'}
+						{plan.nextChargeAt ? (
+							<span>
+								{' '}
+								· next charge <RelativeTime date={plan.nextChargeAt} />
 							</span>
-						)}
-					</div>
+						) : null}
+					</p>
 				</div>
-			</CardHeader>
-			<CardContent>
-				<div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-					<div className="space-y-1">
-						<p className="text-lg font-semibold text-foreground">{plan.planLabel ?? plan.planId}</p>
-						<p className="text-sm text-muted-foreground">
-							{plan.priceCents !== null
-								? `${formatAmount(plan.priceCents, plan.currency)} / month`
-								: 'No active subscription'}
-							{plan.nextChargeAt ? (
-								<span className="text-muted-foreground">
-									{' '}
-									· next charge <RelativeTime date={plan.nextChargeAt} />
-								</span>
-							) : null}
-						</p>
-					</div>
-					<div className="flex shrink-0 gap-2">
-						<Button
-							variant="outline"
-							disabled={!configured || portal.isPending}
-							onClick={() => portal.mutate()}
-						>
-							{portal.isPending && <Spinner className="size-4" />}
-							Manage on Stripe
-						</Button>
-						<Button onClick={onChangePlan} disabled={!configured}>
-							Change plan
-						</Button>
-					</div>
+				<div className="flex shrink-0 gap-2">
+					<Button
+						variant="outline"
+						disabled={!configured || portal.isPending}
+						onClick={() => portal.mutate()}
+					>
+						{portal.isPending && <Spinner className="size-4" />}
+						Manage on Stripe
+					</Button>
+					<Button onClick={onChangePlan} disabled={!configured}>
+						Change plan
+					</Button>
 				</div>
+			</div>
+			<div className="px-4 py-4">
+				<p className="text-xs leading-relaxed text-muted-foreground">
+					Subscription and invoicing run on Stripe. Everything Stripe knows about this workspace —
+					card, address, tax ID, cancellation — is managed there.
+				</p>
 				{!configured && (
 					<p
 						aria-live="polite"
-						className="mt-4 rounded-lg border border-border bg-muted px-3 py-2 text-sm text-muted-foreground"
+						className="mt-3 rounded-lg border border-border bg-muted px-3 py-2 text-sm text-muted-foreground"
 					>
 						Stripe is not configured for this instance. Billing is disabled until the server is set
 						up with Stripe keys.
 					</p>
 				)}
-			</CardContent>
-		</Card>
+			</div>
+		</div>
 	)
 }
 
-function InvoiceEmailCard({ email }: { email: string | null }) {
-	return (
-		<Card>
-			<CardHeader>
-				<CardTitle>Invoice email</CardTitle>
-			</CardHeader>
-			<CardContent>
-				<p className="text-sm text-foreground">{email ?? 'Not set'}</p>
-				<p className="mt-1 text-sm text-muted-foreground">
-					Invoices are sent to this address. Card details are handled by Stripe inside its own
-					secured frames — Maskin never stores payment data.
-				</p>
-			</CardContent>
-		</Card>
-	)
-}
+function AccountDisclosure({
+	workspaceId,
+	plan,
+	configured,
+	invoiceEmail,
+	invoices,
+}: {
+	workspaceId: string
+	plan: BillingPlanResponse
+	configured: boolean
+	invoiceEmail: string | null
+	invoices: BillingInvoiceResponse[]
+}) {
+	const portal = useOpenPortal(workspaceId)
+	const [open, setOpen] = useState(invoices.length > 0)
 
-function InvoicesCard({ invoices }: { invoices: BillingInvoiceResponse[] }) {
-	if (invoices.length === 0) {
-		return (
-			<Card>
-				<CardHeader>
-					<CardTitle>Invoices</CardTitle>
-				</CardHeader>
-				<CardContent>
-					<EmptyState
-						title="No invoices yet"
-						description="Your invoices will appear here once your first payment is confirmed."
-					/>
-				</CardContent>
-			</Card>
-		)
-	}
+	const summary =
+		invoices.length === 0
+			? 'no invoices yet'
+			: `${invoices.length} invoice${invoices.length === 1 ? '' : 's'}`
 
 	return (
-		<Card>
-			<CardHeader>
-				<CardTitle>Invoices</CardTitle>
-			</CardHeader>
-			<CardContent>
-				<div className="overflow-x-auto">
-					<Table>
-						<TableHeader>
-							<TableRow>
-								<TableHead>Date</TableHead>
-								<TableHead>Description</TableHead>
-								<TableHead className="text-right">Amount</TableHead>
-								<TableHead>Status</TableHead>
-							</TableRow>
-						</TableHeader>
-						<TableBody>
-							{invoices.map((invoice) => (
-								<TableRow key={invoice.id}>
-									<TableCell className="whitespace-nowrap">
-										<RelativeTime date={invoice.billedAt} />
-									</TableCell>
-									<TableCell className="min-w-0 max-w-[160px] truncate sm:max-w-[300px]">
-										{invoice.description}
-									</TableCell>
-									<TableCell className="whitespace-nowrap text-right">
-										{formatAmount(invoice.amountCents, invoice.currency)}
-									</TableCell>
-									<TableCell>
-										<StatusBadge status={invoice.status} />
-									</TableCell>
-								</TableRow>
-							))}
-						</TableBody>
-					</Table>
+		<Collapsible open={open} onOpenChange={setOpen} className="border-t border-border pt-4">
+			<CollapsibleTrigger className="flex w-full items-center gap-3 text-left transition-opacity hover:opacity-70">
+				<span className="min-w-0 flex-1">
+					<span className="block text-[12.5px] font-semibold text-foreground">
+						Payment, details and invoices
+					</span>
+					<span className="block text-xs text-muted-foreground">{summary}</span>
+				</span>
+				<span className="shrink-0 text-xs font-semibold text-muted-foreground">
+					{open ? 'Hide' : 'Show'}
+				</span>
+			</CollapsibleTrigger>
+			<CollapsibleContent className="pt-4">
+				<div className="flex flex-col gap-6">
+					<div className="grid gap-6 md:grid-cols-2">
+						<div>
+							<h3 className="eyebrow mb-2">PAYMENT METHOD</h3>
+							{/* The summary endpoint carries no payment-method field, so the
+							    mockup's brand / •••• last4 / expiry state cannot be rendered
+							    honestly. The dashed panel states only what is always true and
+							    routes to the Stripe portal, which owns the card. */}
+							<div className="flex flex-wrap items-center gap-3 rounded-xl border border-dashed border-input bg-muted/30 p-4">
+								<p className="min-w-0 flex-1 text-xs leading-relaxed text-muted-foreground sm:min-w-[180px]">
+									Card details are held by Stripe — Maskin never stores your card number.
+								</p>
+								<Button
+									className="shrink-0"
+									disabled={!configured || portal.isPending}
+									onClick={() => portal.mutate()}
+								>
+									Manage card
+								</Button>
+							</div>
+						</div>
+
+						<div>
+							<h3 className="eyebrow mb-2">BILLING DETAILS</h3>
+							<div className="rounded-xl border border-border">
+								<div className="flex items-center gap-3 px-4 py-2">
+									<span className="w-[88px] shrink-0 text-xs text-muted-foreground">
+										Billing email
+									</span>
+									<span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">
+										{invoiceEmail ?? 'Not set'}
+									</span>
+									<Button
+										variant="ghost"
+										size="sm"
+										className="shrink-0 text-muted-foreground"
+										disabled={!configured || portal.isPending}
+										onClick={() => portal.mutate()}
+									>
+										Edit
+									</Button>
+								</div>
+							</div>
+						</div>
+					</div>
+
+					<div>
+						<h3 className="eyebrow mb-2">INVOICES</h3>
+						{invoices.length === 0 ? (
+							<div className="rounded-xl border border-border bg-muted/30">
+								<EmptyState
+									title="No invoices yet"
+									description="The first one arrives the day the subscription starts."
+									className="py-6"
+								/>
+							</div>
+						) : (
+							<div className="overflow-x-auto rounded-xl border border-border">
+								<Table>
+									<TableHeader>
+										<TableRow>
+											<TableHead>Date</TableHead>
+											<TableHead>Description</TableHead>
+											<TableHead className="text-right">Amount</TableHead>
+											<TableHead>Status</TableHead>
+										</TableRow>
+									</TableHeader>
+									<TableBody>
+										{invoices.map((invoice) => (
+											<TableRow key={invoice.id}>
+												<TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground">
+													{INVOICE_DATE_FORMAT.format(new Date(invoice.billedAt))}
+												</TableCell>
+												<TableCell className="min-w-0 max-w-[160px] truncate sm:max-w-[300px]">
+													{invoice.description}
+												</TableCell>
+												<TableCell className="whitespace-nowrap text-right">
+													{formatAmount(invoice.amountCents, invoice.currency)}
+												</TableCell>
+												<TableCell>
+													<StatusBadge status={invoice.status} />
+												</TableCell>
+											</TableRow>
+										))}
+									</TableBody>
+								</Table>
+							</div>
+						)}
+					</div>
+
+					<div className="flex flex-wrap items-center gap-4 pb-2">
+						<p className="min-w-0 flex-1 text-xs leading-relaxed text-muted-foreground sm:min-w-[240px]">
+							Payments and invoicing run on Stripe. Card details never touch Maskin's servers.
+						</p>
+						{plan.status === 'active' && (
+							<Button
+								variant="ghost"
+								size="sm"
+								className="shrink-0 text-error hover:text-error"
+								disabled={!configured || portal.isPending}
+								onClick={() => portal.mutate()}
+							>
+								Cancel subscription
+							</Button>
+						)}
+					</div>
 				</div>
-			</CardContent>
-		</Card>
+			</CollapsibleContent>
+		</Collapsible>
 	)
 }
 
@@ -251,7 +334,7 @@ function CheckoutDialog({
 	onOpenChange,
 	workspaceId,
 	publishableKey,
-	planLabel,
+	plan,
 	currentEmail,
 	testMode,
 }: {
@@ -259,13 +342,17 @@ function CheckoutDialog({
 	onOpenChange: (open: boolean) => void
 	workspaceId: string
 	publishableKey: string
-	planLabel: string
+	plan: BillingPlanResponse
 	currentEmail: string | null
 	testMode: boolean
 }) {
+	const { workspace } = useWorkspace()
 	const startCheckout = useStartCheckout(workspaceId)
 	const [email, setEmail] = useState(currentEmail ?? '')
 	const [serverError, setServerError] = useState<string | null>(null)
+
+	const planLabel = plan.planLabel ?? plan.planId
+	const price = formatAmount(plan.priceCents, plan.currency)
 
 	useEffect(() => {
 		if (open) {
@@ -295,15 +382,30 @@ function CheckoutDialog({
 		<ResponsiveDialog open={open} onOpenChange={onOpenChange}>
 			<ResponsiveDialogContent>
 				<ResponsiveDialogHeader>
-					<ResponsiveDialogTitle>Change plan</ResponsiveDialogTitle>
+					<ResponsiveDialogTitle>
+						{plan.status === 'active' ? `Switch to ${planLabel}` : `Subscribe to ${planLabel}`}
+					</ResponsiveDialogTitle>
 					<ResponsiveDialogDescription>
-						Upgrade to {planLabel}
-						{testMode ? ' — test mode: use the Stripe test card 4242 4242 4242 4242' : ''}. Your
-						plan is activated as soon as the payment is confirmed.
+						Billing for {workspace?.name ?? 'this workspace'}. Change or cancel any time.
+						{testMode ? ' Test mode: use the Stripe test card 4242 4242 4242 4242.' : ''}
 					</ResponsiveDialogDescription>
 				</ResponsiveDialogHeader>
 
 				<div className="space-y-4">
+					{/* Order summary (mockup 3018–3031), reduced to the lines the API
+					    actually returns — there is no included-usage or overage field. */}
+					<div className="space-y-2.5 rounded-xl border border-border bg-muted/30 p-3">
+						<div className="flex items-center gap-3 text-xs">
+							<span className="min-w-0 flex-1 text-muted-foreground">Subscription</span>
+							<span className="font-semibold text-foreground">{price} / month</span>
+						</div>
+						<div className="h-px bg-border" />
+						<div className="flex items-baseline gap-3">
+							<span className="flex-1 text-[12.5px] font-semibold text-foreground">Due today</span>
+							<span className="text-[17px] font-bold tracking-tight text-foreground">{price}</span>
+						</div>
+					</div>
+
 					<div className="space-y-2">
 						<Label htmlFor="billing-invoice-email">Invoice email</Label>
 						<Input
@@ -321,7 +423,7 @@ function CheckoutDialog({
 								clientSecret={clientSecret}
 								email={email}
 								workspaceId={workspaceId}
-								planLabel={planLabel}
+								price={price}
 								onCancel={() => onOpenChange(false)}
 								onPaid={() => onOpenChange(false)}
 							/>
@@ -333,9 +435,13 @@ function CheckoutDialog({
 						</output>
 					)}
 
-					<p aria-live="polite" className="text-xs text-muted-foreground">
-						{serverError} Payments are handled by Stripe inside its own secured frames — your card
-						details never touch Maskin's servers.
+					{/* The checkout failure and the Stripe reassurance are two different
+					    statements — sharing one <p> rendered them as a run-on sentence. */}
+					<p aria-live="polite" className="text-sm text-error empty:hidden">
+						{serverError}
+					</p>
+					<p className="text-center text-xs leading-relaxed text-muted-foreground">
+						Secured by Stripe. Maskin never sees or stores your card number.
 					</p>
 				</div>
 			</ResponsiveDialogContent>
@@ -347,14 +453,14 @@ function CheckoutForm({
 	clientSecret,
 	email,
 	workspaceId,
-	planLabel,
+	price,
 	onCancel,
 	onPaid,
 }: {
 	clientSecret: string
 	email: string
 	workspaceId: string
-	planLabel: string
+	price: string
 	onCancel: () => void
 	onPaid: () => void
 }) {
@@ -433,7 +539,7 @@ function CheckoutForm({
 				</Button>
 				<Button type="submit" disabled={!stripe || paying}>
 					{paying && <Spinner className="size-4" />}
-					{paying ? 'Processing…' : `Pay for ${planLabel}`}
+					{paying ? 'Processing…' : `Subscribe · ${price} / month`}
 				</Button>
 			</ResponsiveDialogFooter>
 		</form>

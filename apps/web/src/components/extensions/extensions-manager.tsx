@@ -1,4 +1,5 @@
 import { ExtensionRemovalDialog } from '@/components/extensions/extension-removal-dialog'
+import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { useCustomExtensions } from '@/hooks/use-custom-extensions'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
@@ -143,18 +144,18 @@ export function ExtensionsManager() {
 
 	return (
 		<>
-			<div className="space-y-3">
+			<div className="space-y-2">
 				{allModules.map((mod) => {
 					const isEnabled = enabledModules.includes(mod.id)
 					return (
 						<div
 							key={mod.id}
-							className="flex items-center justify-between rounded-xl border border-border bg-card p-3 shadow-sm transition-colors hover:border-border-strong"
+							className="flex items-center justify-between gap-4 rounded-xl border border-border bg-card p-3"
 						>
-							<div>
-								<span className="text-sm font-medium">{mod.name}</span>
+							<div className="min-w-0">
+								<span className="block truncate text-sm font-medium">{mod.name}</span>
 								{mod.objectTypeTabs.length > 0 && (
-									<span className="text-sm text-muted-foreground ml-2">
+									<span className="block truncate text-xs text-muted-foreground">
 										{mod.objectTypeTabs.map((t) => t.label).join(', ')}
 									</span>
 								)}
@@ -162,6 +163,7 @@ export function ExtensionsManager() {
 							<Switch
 								checked={isEnabled}
 								onCheckedChange={(checked) => handleToggle(mod.id, !!checked)}
+								aria-label={mod.name}
 							/>
 						</div>
 					)
@@ -169,28 +171,30 @@ export function ExtensionsManager() {
 				{customExtensions.map((ext) => (
 					<div
 						key={ext.id}
-						className="flex items-center justify-between rounded-xl border border-border bg-card p-3 shadow-sm transition-colors hover:border-border-strong"
+						className="flex items-center justify-between gap-4 rounded-xl border border-border bg-card p-3"
 					>
-						<div>
-							<span className="text-sm font-medium">{ext.name}</span>
+						<div className="min-w-0">
+							<span className="block truncate text-sm font-medium">{ext.name}</span>
 							{ext.tabs.length > 0 && (
-								<span className="text-sm text-muted-foreground ml-2">
+								<span className="block truncate text-xs text-muted-foreground">
 									{ext.tabs.map((t) => t.label).join(', ')}
 								</span>
 							)}
 						</div>
-						<div className="flex items-center gap-3">
-							<button
-								type="button"
+						<div className="flex shrink-0 items-center gap-2">
+							<Button
+								variant="ghost"
+								size="icon"
 								aria-label={`Delete ${ext.name}`}
 								onClick={() => handleDeleteCustomExtension(ext.id, ext.types)}
-								className="text-muted-foreground hover:text-destructive transition-colors"
+								className="text-muted-foreground hover:text-error"
 							>
 								<Trash2 size={15} />
-							</button>
+							</Button>
 							<Switch
 								checked={ext.enabled}
 								onCheckedChange={(checked) => handleToggleCustomExtension(ext.id, !!checked)}
+								aria-label={ext.name}
 							/>
 						</div>
 					</div>

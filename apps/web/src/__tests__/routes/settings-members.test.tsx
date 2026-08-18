@@ -6,11 +6,14 @@ const mockUpdateRoleMutateAsync = vi.fn().mockResolvedValue({})
 const mockRemoveMutateAsync = vi.fn().mockResolvedValue({ removed: true })
 const mockAddMutateAsync = vi.fn().mockResolvedValue({ added: true })
 
+const mockNavigate = vi.fn()
+
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../mocks/router')
 	return {
 		...mockTanStackRouter(),
 		createFileRoute: () => (options: Record<string, unknown>) => options,
+		useNavigate: () => mockNavigate,
 	}
 })
 
@@ -82,6 +85,34 @@ describe('MembersPage', () => {
 		expect(screen.getAllByText('Bot One').length).toBeGreaterThanOrEqual(1)
 		expect(screen.getByRole('combobox', { name: /Role for Alice/i })).toHaveTextContent('admin')
 		expect(screen.getByRole('combobox', { name: /Role for Bot One/i })).toHaveTextContent('member')
+	})
+
+	it('renders the member count line beside the inline Members header', () => {
+		mockUseWorkspaceMembers.mockReturnValue({
+			data: [
+				{ actorId: 'a1', name: 'Alice', type: 'human', role: 'admin', joinedAt: null },
+				{ actorId: 'a2', name: 'Bot One', type: 'agent', role: 'member', joinedAt: null },
+			],
+			isLoading: false,
+		})
+		render(<MembersPage />)
+		expect(screen.getByRole('heading', { name: 'Members' })).toBeInTheDocument()
+		expect(screen.getByText('2 people & agents')).toBeInTheDocument()
+	})
+
+	it('navigates to agent detail when an agent row is clicked', () => {
+		mockUseWorkspaceMembers.mockReturnValue({
+			data: [{ actorId: 'a2', name: 'Bot One', type: 'agent', role: 'member', joinedAt: null }],
+			isLoading: false,
+		})
+		render(<MembersPage />)
+
+		fireEvent.click(screen.getAllByText('Bot One')[1])
+
+		expect(mockNavigate).toHaveBeenCalledWith({
+			to: '/$workspaceId/agents/$agentId',
+			params: { workspaceId: 'ws-1', agentId: 'a2' },
+		})
 	})
 
 	it('renders an "Add member" trigger and a remove action per row', () => {

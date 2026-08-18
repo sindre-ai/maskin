@@ -8,8 +8,9 @@ import { SHIP_GATE_VIEWPORTS, VIEWPORTS } from '../helpers/viewports'
  * In the E2E environment STRIPE_SECRET_KEY is unset, so the backend reports
  * `configured: false` and the page renders the free-plan defaults with the
  * "Stripe is not configured" notice and a disabled Change plan button. These
- * specs assert that graceful unconfigured fallback (plus the empty-invoices
- * state) at every ship-gate viewport, and the light/dark theme surface.
+ * specs assert that graceful unconfigured fallback, the "Payment, details and
+ * invoices" disclosure (mockup 2883-2946) opening and closing, and the
+ * empty-invoices state at every ship-gate viewport, plus light/dark theme.
  */
 
 async function setTheme(page: Page, theme: 'light' | 'dark') {
@@ -39,20 +40,31 @@ test.describe('Settings — Billing page', () => {
 				timeout: 10000,
 			})
 
-			// The three cards render with their headings.
-			await expect(page.getByRole('heading', { name: 'Current plan' }).first()).toBeVisible()
-			await expect(page.getByRole('heading', { name: 'Invoice email' }).first()).toBeVisible()
-			await expect(page.getByRole('heading', { name: 'Invoices' }).first()).toBeVisible()
+			// The plan banner names the plan and its state.
+			await expect(page.getByRole('heading', { name: 'Free' }).first()).toBeVisible()
 
 			// Unconfigured instance: free plan, no subscription yet.
 			await expect(page.getByText('No active subscription').first()).toBeVisible()
-			await expect(page.getByText('Not set').first()).toBeVisible()
 
 			// Change plan is disabled until Stripe is configured.
 			await expect(page.getByRole('button', { name: 'Change plan' }).first()).toBeDisabled()
 
-			// Invoices card shows the empty state rather than a blank table.
+			// With zero invoices the payment disclosure starts collapsed — its
+			// contents must not be on the page until the trigger is used.
+			await expect(page.getByRole('heading', { name: 'PAYMENT METHOD' })).toHaveCount(0)
+			await expect(page.getByText('No invoices yet')).toHaveCount(0)
+
+			// Opening the disclosure reveals payment method, billing details and invoices.
+			await page.getByRole('button', { name: /Payment, details and invoices/ }).click()
+			await expect(page.getByRole('heading', { name: 'PAYMENT METHOD' })).toBeVisible()
+			await expect(page.getByRole('heading', { name: 'BILLING DETAILS' })).toBeVisible()
+			await expect(page.getByRole('heading', { name: 'INVOICES' })).toBeVisible()
+			await expect(page.getByText('Not set').first()).toBeVisible()
 			await expect(page.getByText('No invoices yet').first()).toBeVisible()
+
+			// …and closing it hides them again.
+			await page.getByRole('button', { name: /Payment, details and invoices/ }).click()
+			await expect(page.getByRole('heading', { name: 'PAYMENT METHOD' })).toHaveCount(0)
 		})
 
 		test(`shows the Stripe not-configured notice at ${viewport.label}`, async ({
@@ -86,7 +98,8 @@ test.describe('Settings — Billing page', () => {
 				expect(isDark).toBe(true)
 			}
 
-			await expect(page.getByRole('heading', { name: 'Current plan' }).first()).toBeVisible()
+			await expect(page.getByRole('heading', { name: 'Free' }).first()).toBeVisible()
+			await page.getByRole('button', { name: /Payment, details and invoices/ }).click()
 			await expect(page.getByText('No invoices yet').first()).toBeVisible()
 		}
 	})

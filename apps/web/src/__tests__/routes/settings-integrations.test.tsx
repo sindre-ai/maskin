@@ -9,6 +9,10 @@ vi.mock('@tanstack/react-router', async () => {
 	}
 })
 
+vi.mock('@/lib/workspace-context', () => ({
+	useWorkspace: () => ({ workspaceId: 'ws-1' }),
+}))
+
 vi.mock('@/components/shared/route-error', () => ({
 	RouteError: () => <div>Error</div>,
 }))
@@ -22,15 +26,24 @@ import { Route } from '@/routes/_authed/$workspaceId/settings/integrations'
 const IntegrationsPage = (Route as unknown as { component: React.FC }).component
 
 describe('IntegrationsPage', () => {
-	it('renders the Integrations card with the shared integrations list', () => {
+	// The screen's title belongs to the shared top nav, so the page body opens
+	// with the lead paragraph (mockup 2765), not a duplicate heading.
+	it('renders no heading of its own, only the lead paragraph and the shared list', () => {
 		render(<IntegrationsPage />)
-		expect(screen.getByText('Integrations')).toBeInTheDocument()
+		expect(screen.queryByRole('heading')).not.toBeInTheDocument()
+		expect(
+			screen.getByText(/Connect the tools your agents read from and write to/),
+		).toBeInTheDocument()
 		expect(screen.getByText('IntegrationsManager')).toBeInTheDocument()
 	})
 
-	it('explains that connection state persists across reload', () => {
+	it('offers entry points to the model-provider and MCP credential routes', () => {
 		render(<IntegrationsPage />)
-		expect(screen.getByText(/Connect this workspace to third-party services/)).toBeInTheDocument()
-		expect(screen.getByText(/persists across\s+reload/)).toBeInTheDocument()
+
+		const modelProviders = screen.getByRole('link', { name: /Model providers/ })
+		expect(modelProviders).toHaveAttribute('href', expect.stringContaining('/settings/keys'))
+
+		const mcp = screen.getByRole('link', { name: /Connect your coding agent/ })
+		expect(mcp).toHaveAttribute('href', expect.stringContaining('/settings/mcp'))
 	})
 })

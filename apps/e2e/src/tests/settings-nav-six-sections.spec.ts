@@ -63,10 +63,11 @@ test.describe('Settings — six-section left rail', () => {
 			const nav = page.getByRole('navigation').first()
 			const link = nav.getByRole('link', { name: label, exact: true })
 			await expect(link).toBeVisible({ timeout: 10000 })
-			// Active item styles carry `bg-muted` + `font-medium` — a proxy for the
-			// SettingsLayout's matchRoute-driven active state.
+			// Active item styles carry `bg-muted` + `font-bold` (mockup 2721 puts the
+			// active rail item at weight 700) — a proxy for the SettingsLayout's
+			// matchRoute-driven active state.
 			await expect(link).toHaveClass(/bg-muted/)
-			await expect(link).toHaveClass(/font-medium/)
+			await expect(link).toHaveClass(/font-bold/)
 		})
 	}
 })

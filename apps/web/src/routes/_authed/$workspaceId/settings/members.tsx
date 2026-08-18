@@ -2,10 +2,8 @@ import { HumanDetailDialog } from '@/components/settings/human-detail-dialog'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
-import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
 	Dialog,
 	DialogContent,
@@ -29,14 +27,6 @@ import {
 	SelectValue,
 } from '@/components/ui/select'
 import {
-	Table,
-	TableBody,
-	TableCell,
-	TableHead,
-	TableHeader,
-	TableRow,
-} from '@/components/ui/table'
-import {
 	useAddWorkspaceMember,
 	useRemoveWorkspaceMember,
 	useUpdateWorkspaceMemberRole,
@@ -57,7 +47,7 @@ const ROLE_OPTIONS = ['owner', 'admin', 'member'] as const
 
 function MembersPage() {
 	const { workspaceId } = useWorkspace()
-	const { data: members, isLoading, isError, error, refetch } = useWorkspaceMembers(workspaceId)
+	const { data: members, isLoading } = useWorkspaceMembers(workspaceId)
 	const addMember = useAddWorkspaceMember(workspaceId)
 	const updateRole = useUpdateWorkspaceMemberRole(workspaceId)
 	const removeMember = useRemoveWorkspaceMember(workspaceId)
@@ -113,13 +103,18 @@ function MembersPage() {
 		}
 	}
 
+	const count = members?.length ?? 0
+
 	return (
-		<Card>
-			<CardHeader className="flex flex-row items-center justify-between space-y-0">
-				<CardTitle>Members</CardTitle>
+		<div className="max-w-[580px]">
+			<div className="mb-3 flex items-center gap-2">
+				<h2 className="text-sm font-bold text-foreground">Members</h2>
+				<span className="text-xs text-muted-foreground">
+					{count} {count === 1 ? 'person or agent' : 'people & agents'}
+				</span>
 				<DropdownMenu>
 					<DropdownMenuTrigger asChild>
-						<Button variant="outline" size="sm">
+						<Button variant="outline" size="sm" className="ml-auto">
 							<Plus size={14} className="mr-1" />
 							Add member
 						</Button>
@@ -135,87 +130,82 @@ function MembersPage() {
 						</DropdownMenuItem>
 					</DropdownMenuContent>
 				</DropdownMenu>
-			</CardHeader>
-			<CardContent>
-				{roleError && (
-					<p className="mb-3 text-sm text-error" role="alert">
-						{roleError}
-					</p>
-				)}
-				{isLoading ? (
-					<ListSkeleton />
-				) : !members?.length ? (
-					<EmptyState title="No members" />
-				) : (
-					<Table>
-						<TableHeader>
-							<TableRow>
-								<TableHead>Member</TableHead>
-								<TableHead>Type</TableHead>
-								<TableHead className="w-40">Role</TableHead>
-								<TableHead className="w-16 text-right">Actions</TableHead>
-							</TableRow>
-						</TableHeader>
-						<TableBody>
-							{members.map((member) => (
-								<TableRow key={member.actorId}>
-									<TableCell>
-										<button
-											type="button"
-											className="flex items-center gap-3 text-left transition-colors hover:text-foreground"
-											onClick={() => {
-												if (member.type === 'agent') {
-													navigate({
-														to: '/$workspaceId/agents/$agentId',
-														params: { workspaceId, agentId: member.actorId },
-													})
-												} else {
-													setActiveHumanId(member.actorId)
-												}
-											}}
-										>
-											<ActorAvatar name={member.name} type={member.type} size="md" />
-											<span className="text-sm font-medium">{member.name}</span>
-										</button>
-									</TableCell>
-									<TableCell className="text-sm text-muted-foreground">{member.type}</TableCell>
-									<TableCell>
-										<Select
-											value={member.role}
-											onValueChange={(value) => handleRoleChange(member, value)}
-											disabled={updateRole.isPending}
-										>
-											<SelectTrigger aria-label={`Role for ${member.name}`}>
-												<SelectValue />
-											</SelectTrigger>
-											<SelectContent>
-												{ROLE_OPTIONS.map((role) => (
-													<SelectItem key={role} value={role}>
-														{role}
-													</SelectItem>
-												))}
-											</SelectContent>
-										</Select>
-									</TableCell>
-									<TableCell className="text-right">
-										<Button
-											variant="ghost"
-											size="icon"
-											aria-label={`Remove ${member.name}`}
-											onClick={() => {
-												setRemoveError(null)
-												setPendingRemoval(member)
-											}}
-										>
-											<Trash2 size={14} />
-										</Button>
-									</TableCell>
-								</TableRow>
-							))}
-						</TableBody>
-					</Table>
-				)}
-			</CardContent>
+			</div>
+
+			{roleError && (
+				<p className="mb-3 text-sm text-error" role="alert">
+					{roleError}
+				</p>
+			)}
+
+			{isLoading ? (
+				<ListSkeleton />
+			) : !members?.length ? (
+				<EmptyState
+					title="No members"
+					description="Invite a teammate or create an agent to get started."
+				/>
+			) : (
+				<div className="flex flex-col">
+					{members.map((member) => (
+						<div
+							key={member.actorId}
+							className="flex items-center gap-3 rounded-lg border-b border-border px-2 py-2.5 transition-colors hover:bg-muted"
+						>
+							<button
+								type="button"
+								className="flex min-w-0 flex-1 items-center gap-3 text-left"
+								onClick={() => {
+									if (member.type === 'agent') {
+										navigate({
+											to: '/$workspaceId/agents/$agentId',
+											params: { workspaceId, agentId: member.actorId },
+										})
+									} else {
+										setActiveHumanId(member.actorId)
+									}
+								}}
+							>
+								<ActorAvatar name={member.name} type={member.type} size="md" />
+								<span className="min-w-0 flex-1">
+									<span className="block truncate text-sm font-medium">{member.name}</span>
+									<span className="block truncate text-xs capitalize text-muted-foreground">
+										{member.type}
+									</span>
+								</span>
+							</button>
+							<Select
+								value={member.role}
+								onValueChange={(value) => handleRoleChange(member, value)}
+								disabled={updateRole.isPending}
+							>
+								<SelectTrigger className="w-28 shrink-0" aria-label={`Role for ${member.name}`}>
+									<SelectValue />
+								</SelectTrigger>
+								<SelectContent>
+									{ROLE_OPTIONS.map((role) => (
+										<SelectItem key={role} value={role}>
+											{role}
+										</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
+							<Button
+								variant="ghost"
+								size="icon"
+								className="shrink-0"
+								aria-label={`Remove ${member.name}`}
+								onClick={() => {
+									setRemoveError(null)
+									setPendingRemoval(member)
+								}}
+							>
+								<Trash2 size={14} />
+							</Button>
+						</div>
+					))}
+				</div>
+			)}
 
 			<Dialog
 				open={showAddDialog}
@@ -241,7 +231,7 @@ function MembersPage() {
 							autoFocus
 						/>
 						<Select value={newMemberRole} onValueChange={setNewMemberRole}>
-							<SelectTrigger>
+							<SelectTrigger aria-label="Role for the new member">
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent>
@@ -316,6 +306,6 @@ function MembersPage() {
 					}}
 				/>
 			)}
-		</Card>
+		</div>
 	)
 }
