@@ -103,6 +103,13 @@ export function CommandPalette() {
 		})
 	}, [navigate, setOpen, trimmedQuery, workspaceId])
 
+	// The global key handler is registered once; reading seeAll through a ref
+	// keeps it current without re-binding the listener on every keystroke.
+	const seeAllRef = useRef(seeAll)
+	useEffect(() => {
+		seeAllRef.current = seeAll
+	}, [seeAll])
+
 	useEffect(() => {
 		const handler = (e: KeyboardEvent) => {
 			if (e.key === 'k' && (e.metaKey || e.ctrlKey)) {
@@ -117,6 +124,15 @@ export function CommandPalette() {
 			if (e.key === 'j' && (e.metaKey || e.ctrlKey)) {
 				e.preventDefault()
 				openChat()
+			}
+			if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+				// ⌘↵ — "search everything": hand the typed query to /search
+				// instead of running the highlighted item. Advertised in the
+				// palette footer (mockup line 3255), so it has to exist.
+				if (queryRef.current.trim()) {
+					e.preventDefault()
+					seeAllRef.current()
+				}
 			}
 			if (e.key === 'Escape') {
 				// First Esc clears the query; a second Esc closes the panel.
@@ -156,7 +172,7 @@ export function CommandPalette() {
 						<Command.Input
 							value={query}
 							onValueChange={setQuery}
-							placeholder="Search objects, jump to a route…"
+							placeholder="Run a command or jump to…"
 							className="h-12 w-full bg-transparent text-[13.5px] text-foreground placeholder:text-muted-foreground outline-none"
 							autoFocus
 						/>
@@ -165,8 +181,8 @@ export function CommandPalette() {
 						</kbd>
 					</div>
 					<Command.List className="max-h-[360px] overflow-auto p-1.5 max-sm:max-h-none max-sm:min-h-0 max-sm:flex-1">
-						<Command.Empty className="px-3 py-8 text-center text-[13px] text-muted-foreground">
-							No results found.
+						<Command.Empty className="px-3 py-8 text-center text-[12.5px] text-muted-foreground">
+							{hasQuery ? `No command or shortcut matches “${query}”.` : 'No results found.'}
 						</Command.Empty>
 
 						{!doesNotMatch('chat with agents') && (
@@ -222,7 +238,7 @@ export function CommandPalette() {
 							</Command.Group>
 						)}
 					</Command.List>
-					{hasQuery && items.length > 0 ? (
+					{hasQuery && items.length > 0 && (
 						<button
 							type="button"
 							onClick={seeAll}
@@ -236,31 +252,15 @@ export function CommandPalette() {
 								className="size-3.5 text-brand transition-colors group-hover:text-brand-hover"
 							/>
 						</button>
-					) : (
-						<div className="flex shrink-0 items-center gap-3 border-t border-border bg-popover px-3.5 py-2 text-[11px] text-muted-foreground">
-							<KeyHint keys={['⌘', 'K']}>Toggle</KeyHint>
-							<KeyHint keys={['⌘', 'J']}>Chat</KeyHint>
-							<KeyHint keys={['Esc']}>Close</KeyHint>
-						</div>
 					)}
+					<div className="flex shrink-0 items-center gap-3.5 border-t border-border bg-secondary px-4 py-2 text-[10.5px] text-muted-foreground">
+						<span>↑↓ navigate</span>
+						<span>↵ run</span>
+						<span>⌘↵ search everything</span>
+						<span className="ml-auto">esc closes</span>
+					</div>
 				</Command>
 			</div>
 		</div>
-	)
-}
-
-function KeyHint({ keys, children }: { keys: string[]; children: React.ReactNode }) {
-	return (
-		<span className="inline-flex items-center gap-1">
-			{keys.map((k) => (
-				<kbd
-					key={k}
-					className="inline-flex h-4 min-w-4 items-center justify-center rounded-md border border-border bg-secondary px-1 font-mono text-[10px] text-muted-foreground"
-				>
-					{k}
-				</kbd>
-			))}
-			<span>{children}</span>
-		</span>
 	)
 }

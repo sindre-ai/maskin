@@ -68,9 +68,7 @@ describe('CommandPalette', () => {
 
 	it('is not visible initially', () => {
 		render(<CommandPalette />)
-		expect(
-			screen.queryByPlaceholderText('Search objects, jump to a route…'),
-		).not.toBeInTheDocument()
+		expect(screen.queryByPlaceholderText('Run a command or jump to…')).not.toBeInTheDocument()
 	})
 
 	it('opens on Ctrl+K keyboard event', async () => {
@@ -78,7 +76,7 @@ describe('CommandPalette', () => {
 		render(<CommandPalette />)
 
 		await user.keyboard('{Control>}k{/Control}')
-		expect(screen.getByPlaceholderText('Search objects, jump to a route…')).toBeInTheDocument()
+		expect(screen.getByPlaceholderText('Run a command or jump to…')).toBeInTheDocument()
 	})
 
 	it('opens on Meta+K keyboard event', async () => {
@@ -86,7 +84,7 @@ describe('CommandPalette', () => {
 		render(<CommandPalette />)
 
 		await user.keyboard('{Meta>}k{/Meta}')
-		expect(screen.getByPlaceholderText('Search objects, jump to a route…')).toBeInTheDocument()
+		expect(screen.getByPlaceholderText('Run a command or jump to…')).toBeInTheDocument()
 	})
 
 	it('closes on Escape', async () => {
@@ -94,12 +92,10 @@ describe('CommandPalette', () => {
 		render(<CommandPalette />)
 
 		await user.keyboard('{Control>}k{/Control}')
-		expect(screen.getByPlaceholderText('Search objects, jump to a route…')).toBeInTheDocument()
+		expect(screen.getByPlaceholderText('Run a command or jump to…')).toBeInTheDocument()
 
 		await user.keyboard('{Escape}')
-		expect(
-			screen.queryByPlaceholderText('Search objects, jump to a route…'),
-		).not.toBeInTheDocument()
+		expect(screen.queryByPlaceholderText('Run a command or jump to…')).not.toBeInTheDocument()
 	})
 
 	it('toggles on repeated Ctrl+K', async () => {
@@ -107,12 +103,10 @@ describe('CommandPalette', () => {
 		render(<CommandPalette />)
 
 		await user.keyboard('{Control>}k{/Control}')
-		expect(screen.getByPlaceholderText('Search objects, jump to a route…')).toBeInTheDocument()
+		expect(screen.getByPlaceholderText('Run a command or jump to…')).toBeInTheDocument()
 
 		await user.keyboard('{Control>}k{/Control}')
-		expect(
-			screen.queryByPlaceholderText('Search objects, jump to a route…'),
-		).not.toBeInTheDocument()
+		expect(screen.queryByPlaceholderText('Run a command or jump to…')).not.toBeInTheDocument()
 	})
 
 	it('fires command_palette_opened once per open with the command_palette surface', async () => {
@@ -121,7 +115,7 @@ describe('CommandPalette', () => {
 
 		// Open via ⌘K from the current route (the keydown listener is global).
 		await user.keyboard('{Control>}k{/Control}')
-		expect(screen.getByPlaceholderText('Search objects, jump to a route…')).toBeInTheDocument()
+		expect(screen.getByPlaceholderText('Run a command or jump to…')).toBeInTheDocument()
 		expect(trackCommandPaletteOpenedMock).toHaveBeenCalledTimes(1)
 		expect(trackCommandPaletteOpenedMock).toHaveBeenCalledWith({ surface: 'command_palette' })
 
@@ -182,9 +176,7 @@ describe('CommandPalette', () => {
 		await user.click(screen.getByText('Bets Dashboard'))
 
 		expect(mockNavigate).toHaveBeenCalledWith({ to: '/ws-1' })
-		expect(
-			screen.queryByPlaceholderText('Search objects, jump to a route…'),
-		).not.toBeInTheDocument()
+		expect(screen.queryByPlaceholderText('Run a command or jump to…')).not.toBeInTheDocument()
 	})
 
 	it('See all footer navigates to /search with the typed query and closes the palette', async () => {
@@ -195,7 +187,7 @@ describe('CommandPalette', () => {
 		render(<CommandPalette />)
 
 		await user.keyboard('{Control>}k{/Control}')
-		await user.type(screen.getByPlaceholderText('Search objects, jump to a route…'), 'alpha')
+		await user.type(screen.getByPlaceholderText('Run a command or jump to…'), 'alpha')
 
 		await user.click(await screen.findByRole('button', { name: /See all/ }))
 
@@ -204,9 +196,52 @@ describe('CommandPalette', () => {
 			params: { workspaceId: 'ws-1' },
 			search: { q: 'alpha' },
 		})
-		expect(
-			screen.queryByPlaceholderText('Search objects, jump to a route…'),
-		).not.toBeInTheDocument()
+		expect(screen.queryByPlaceholderText('Run a command or jump to…')).not.toBeInTheDocument()
+	})
+
+	it('Ctrl+Enter hands the typed query to /search — the footer advertises it', async () => {
+		const user = userEvent.setup()
+		vi.mocked(useSearchObjects).mockReturnValue({
+			data: [buildObjectResponse({ id: 'obj-1', title: 'Alpha Insight', type: 'insight' })],
+		} as unknown as ReturnType<typeof useSearchObjects>)
+		render(<CommandPalette />)
+
+		await user.keyboard('{Control>}k{/Control}')
+		await user.type(screen.getByPlaceholderText('Run a command or jump to…'), 'alpha')
+		await user.keyboard('{Control>}{Enter}{/Control}')
+
+		expect(mockNavigate).toHaveBeenCalledWith({
+			to: '/$workspaceId/search',
+			params: { workspaceId: 'ws-1' },
+			search: { q: 'alpha' },
+		})
+	})
+
+	// With nothing typed there is no query to search, so ⌘↵ falls through to
+	// cmdk's own Enter — it runs the highlighted item instead of navigating to
+	// an empty /search.
+	it('does not navigate to an empty search when Ctrl+Enter is pressed with no query', async () => {
+		const user = userEvent.setup()
+		render(<CommandPalette />)
+
+		await user.keyboard('{Control>}k{/Control}')
+		mockNavigate.mockClear()
+		await user.keyboard('{Control>}{Enter}{/Control}')
+
+		expect(mockNavigate).not.toHaveBeenCalledWith(
+			expect.objectContaining({ to: '/$workspaceId/search' }),
+		)
+	})
+
+	it('always shows the keyboard hint footer', async () => {
+		const user = userEvent.setup()
+		render(<CommandPalette />)
+
+		await user.keyboard('{Control>}k{/Control}')
+
+		expect(screen.getByText('↑↓ navigate')).toBeInTheDocument()
+		expect(screen.getByText('⌘↵ search everything')).toBeInTheDocument()
+		expect(screen.getByText('esc closes')).toBeInTheDocument()
 	})
 
 	it('does not bind Ctrl+N or Meta+N to anything (reserved by the browser for New Window)', async () => {
@@ -217,9 +252,7 @@ describe('CommandPalette', () => {
 		await user.keyboard('{Meta>}n{/Meta}')
 
 		expect(mockNavigate).not.toHaveBeenCalled()
-		expect(
-			screen.queryByPlaceholderText('Search objects, jump to a route…'),
-		).not.toBeInTheDocument()
+		expect(screen.queryByPlaceholderText('Run a command or jump to…')).not.toBeInTheDocument()
 	})
 
 	it('Ctrl+J navigates to a new chat without opening the palette', async () => {
@@ -229,9 +262,7 @@ describe('CommandPalette', () => {
 		await user.keyboard('{Control>}j{/Control}')
 
 		expect(mockNavigate).toHaveBeenCalledWith({ to: '/ws-1/chats/new' })
-		expect(
-			screen.queryByPlaceholderText('Search objects, jump to a route…'),
-		).not.toBeInTheDocument()
+		expect(screen.queryByPlaceholderText('Run a command or jump to…')).not.toBeInTheDocument()
 	})
 
 	it('Meta+J navigates to a new chat without opening the palette', async () => {
@@ -241,9 +272,7 @@ describe('CommandPalette', () => {
 		await user.keyboard('{Meta>}j{/Meta}')
 
 		expect(mockNavigate).toHaveBeenCalledWith({ to: '/ws-1/chats/new' })
-		expect(
-			screen.queryByPlaceholderText('Search objects, jump to a route…'),
-		).not.toBeInTheDocument()
+		expect(screen.queryByPlaceholderText('Run a command or jump to…')).not.toBeInTheDocument()
 	})
 
 	it('Ctrl+J closes the palette if it is already open', async () => {
@@ -251,14 +280,12 @@ describe('CommandPalette', () => {
 		render(<CommandPalette />)
 
 		await user.keyboard('{Control>}k{/Control}')
-		expect(screen.getByPlaceholderText('Search objects, jump to a route…')).toBeInTheDocument()
+		expect(screen.getByPlaceholderText('Run a command or jump to…')).toBeInTheDocument()
 
 		await user.keyboard('{Control>}j{/Control}')
 
 		expect(mockNavigate).toHaveBeenCalledWith({ to: '/ws-1/chats/new' })
-		expect(
-			screen.queryByPlaceholderText('Search objects, jump to a route…'),
-		).not.toBeInTheDocument()
+		expect(screen.queryByPlaceholderText('Run a command or jump to…')).not.toBeInTheDocument()
 	})
 
 	it('Chat with agents action navigates to a new chat and closes the palette', async () => {
@@ -269,8 +296,6 @@ describe('CommandPalette', () => {
 		await user.click(screen.getByText('Chat with agents…'))
 
 		expect(mockNavigate).toHaveBeenCalledWith({ to: '/ws-1/chats/new' })
-		expect(
-			screen.queryByPlaceholderText('Search objects, jump to a route…'),
-		).not.toBeInTheDocument()
+		expect(screen.queryByPlaceholderText('Run a command or jump to…')).not.toBeInTheDocument()
 	})
 })
