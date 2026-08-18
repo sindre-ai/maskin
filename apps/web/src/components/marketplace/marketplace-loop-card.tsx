@@ -9,6 +9,7 @@ import type {
 } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { Link } from '@tanstack/react-router'
+import { KIND_LABEL_BASE, KIND_LABEL_CLASS, kindLabel, loopKind } from './item-type-label'
 import { LoopInstallControls } from './loop-install-controls'
 import { UpdateAvailableBanner } from './update-available-banner'
 
@@ -33,6 +34,7 @@ export function MarketplaceLoopCard({
 	const locked = install?.isLocked ?? false
 	const showUpdateBanner = locked && install?.hasUpdate === true
 	const isBundle = loop.item_types.length >= 2
+	const kind = loopKind(loop.item_types)
 
 	return (
 		<article className="relative flex flex-col gap-3 rounded-xl border border-border bg-card p-4 shadow-sm transition-colors hover:border-border-strong hover:shadow-md">
@@ -43,10 +45,23 @@ export function MarketplaceLoopCard({
 				aria-label={`Open ${loop.name}`}
 			/>
 
-			<div className="flex items-start justify-between gap-3">
-				<div className="min-w-0">
-					<h3 className="text-sm font-semibold text-foreground">{loop.name}</h3>
-					<p className="mt-1 text-xs text-muted-foreground line-clamp-2">{loop.description}</p>
+			<div className="flex items-start gap-3">
+				{/* 38px identity tile (mockup 2588) — the same palette treatment the
+				    detail header uses, so a loop looks like itself in both places. */}
+				<span
+					aria-hidden="true"
+					className={cn(
+						'grid size-[38px] shrink-0 place-items-center rounded-xl text-sm font-bold',
+						getActorAvatarPaletteClass(loop.name),
+					)}
+				>
+					{getActorInitials(loop.name)}
+				</span>
+				<div className="min-w-0 flex-1">
+					<h3 className="truncate text-[13.5px] font-bold text-foreground">{loop.name}</h3>
+					<div className={cn(KIND_LABEL_BASE, 'mt-0.5', KIND_LABEL_CLASS[kind])}>
+						{kindLabel(kind)}
+					</div>
 				</div>
 				{install ? (
 					locked ? (
@@ -66,6 +81,10 @@ export function MarketplaceLoopCard({
 					)
 				) : null}
 			</div>
+
+			<p className="text-xs leading-relaxed text-muted-foreground line-clamp-3">
+				{loop.description}
+			</p>
 
 			{/* This row is never itself positioned, so it paints below the overlay
 			    link and any empty space still opens the card. Only the chip buttons

@@ -1,12 +1,14 @@
+import { getActorAvatarPaletteClass, getActorInitials } from '@/components/shared/actor-avatar'
 import { Badge } from '@/components/ui/badge'
 import type {
 	InstalledLoopRow,
 	MarketplaceItemInstalledEntry,
 	MarketplaceLoopItem,
 } from '@/lib/api'
+import { cn } from '@/lib/cn'
 import { Link } from '@tanstack/react-router'
 import { ItemInstallControls } from './item-install-controls'
-import { ITEM_TYPE_LABEL } from './item-type-label'
+import { ITEM_TYPE_LABEL, KIND_LABEL_BASE, KIND_LABEL_CLASS } from './item-type-label'
 
 interface ItemCardProps {
 	workspaceId: string
@@ -32,12 +34,26 @@ export function ItemCard({ workspaceId, item, install, installedEntity }: ItemCa
 				aria-label={`Open ${name}`}
 			/>
 
-			<div className="flex items-start justify-between gap-3">
-				<div className="min-w-0">
-					<h3 className="text-sm font-semibold text-foreground">{name}</h3>
-					{description && (
-						<p className="mt-1 text-xs text-muted-foreground line-clamp-2">{description}</p>
+			<div className="flex items-start gap-3">
+				{/* 38px identity tile (mockup 2588) — same treatment as the loop card
+				    and the detail header. */}
+				<span
+					aria-hidden="true"
+					className={cn(
+						'grid size-[38px] shrink-0 place-items-center rounded-xl text-sm font-bold',
+						getActorAvatarPaletteClass(name),
 					)}
+				>
+					{getActorInitials(name)}
+				</span>
+				<div className="min-w-0 flex-1">
+					<h3 className="truncate text-[13.5px] font-bold text-foreground">{name}</h3>
+					<div
+						className={cn(KIND_LABEL_BASE, 'mt-0.5', KIND_LABEL_CLASS[item.item_type])}
+						data-testid="item-card-kind"
+					>
+						{ITEM_TYPE_LABEL[item.item_type]}
+					</div>
 				</div>
 				{install ? (
 					locked ? (
@@ -58,11 +74,9 @@ export function ItemCard({ workspaceId, item, install, installedEntity }: ItemCa
 				) : null}
 			</div>
 
-			<div className="flex flex-wrap gap-1">
-				<span className="eyebrow rounded-full bg-muted px-2 py-0.5">
-					{ITEM_TYPE_LABEL[item.item_type]}
-				</span>
-			</div>
+			{description && (
+				<p className="text-xs leading-relaxed text-muted-foreground line-clamp-3">{description}</p>
+			)}
 
 			<div className="mt-auto">
 				<ItemInstallControls

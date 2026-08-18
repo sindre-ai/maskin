@@ -42,7 +42,7 @@ test.describe('Marketplace detail pages', () => {
 			// operator, so only the sections that always render from real data are
 			// asserted here — the "asks you" classifier is covered by unit tests.
 			const detail = page.getByRole('main')
-			await expect(detail.getByText('The flow')).toBeVisible()
+			await expect(detail.getByText('The loop, once installed')).toBeVisible()
 			await expect(detail.getByText('What it brings')).toBeVisible()
 			await expect(detail.getByText('How it runs')).toBeVisible()
 			await expect(detail.getByText('Version')).toBeVisible()
@@ -73,7 +73,7 @@ test.describe('Marketplace detail pages', () => {
 		await firstCard.getByRole('link').click({ position: { x: 10, y: 10 } })
 
 		const detail = page.getByRole('main')
-		await expect(detail.getByText('The flow')).toBeVisible({ timeout: 20000 })
+		await expect(detail.getByText('The loop, once installed')).toBeVisible({ timeout: 20000 })
 		await expect(detail.getByText('How it runs')).toBeVisible()
 		await expect(detail.getByText('Permissions')).toBeVisible()
 	})
@@ -206,7 +206,7 @@ test.describe('Marketplace detail pages', () => {
 		// Install button. Installing from the detail surface is the exact flow
 		// that unlocks the overflow menu whose Remove item this test guards.
 		const detail = page.getByRole('main')
-		await detail.getByRole('button', { name: /^install loop$/i }).click()
+		await detail.getByRole('button', { name: /^install$/i }).click()
 
 		const overflowButton = detail.getByRole('button', { name: 'Loop actions' })
 		await expect(overflowButton).toBeVisible({ timeout: 20000 })
@@ -236,7 +236,7 @@ test.describe('Marketplace detail pages', () => {
 		// the page stays on the detail URL throughout. Poll with `waitFor` for
 		// the state change but re-check the dialog invariant one more time on
 		// the way out.
-		await expect(detail.getByRole('button', { name: /^install loop$/i })).toBeVisible({
+		await expect(detail.getByRole('button', { name: /^install$/i })).toBeVisible({
 			timeout: 20000,
 		})
 		await expect(overflowButton).toHaveCount(0)

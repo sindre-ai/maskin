@@ -15,7 +15,7 @@ export function InstallButton({
 	workspaceId,
 	loopId,
 	disabled,
-	label = 'Install loop',
+	label = 'Install',
 	source,
 }: InstallButtonProps) {
 	const install = useInstallLoop(workspaceId)

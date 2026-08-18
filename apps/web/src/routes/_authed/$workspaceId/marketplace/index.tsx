@@ -2,6 +2,7 @@ import { PageHeader } from '@/components/layout/page-header'
 import { LoopGrid } from '@/components/marketplace/loop-grid'
 import { MarketplaceHeaderIdentity } from '@/components/marketplace/marketplace-header'
 import { EmptyState } from '@/components/shared/empty-state'
+import { FilterTabs } from '@/components/shared/filter-tabs'
 import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
@@ -18,7 +19,6 @@ import type {
 	MarketplaceLoopSummary,
 } from '@/lib/api'
 import { api } from '@/lib/api'
-import { cn } from '@/lib/cn'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useQueries } from '@tanstack/react-query'
@@ -186,7 +186,7 @@ function MarketplacePage() {
 					type="search"
 					value={query}
 					onChange={(e) => setQuery(e.target.value)}
-					placeholder="Search the marketplace…"
+					placeholder="Filter the catalog…"
 					aria-label="Filter marketplace"
 					className="w-full shrink-0 md:w-80"
 				/>
@@ -215,8 +215,7 @@ function MarketplacePage() {
 					/>
 				) : isFilterEmpty ? (
 					<EmptyState
-						title="No matches"
-						description="Try a different search term or clear the filters."
+						title="Nothing in the catalog matches those filters."
 						action={
 							<Button
 								type="button"
@@ -259,39 +258,20 @@ function ChipStrip({
 	counts: MarketplaceLoopCounts | undefined
 	itemCounts: Partial<Record<MarketplaceItemType, number>>
 }) {
+	const tabs = items.map((item) => ({
+		label: item.label,
+		value: item.value,
+		count: countForFilter(item.value, counts, itemCounts),
+	}))
 	return (
-		<div className="flex gap-1.5 overflow-x-auto px-1 pb-1">
-			{items.map((item) => {
-				const count = countForFilter(item.value, counts, itemCounts)
-				const isActive = active === item.value
-				return (
-					<button
-						key={item.value}
-						type="button"
-						onClick={() => onSelect(item.value)}
-						aria-pressed={isActive}
-						className={cn(
-							'inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border bg-background px-3 text-[13px] font-medium transition-colors hover:border-border-strong',
-							isActive
-								? 'border-border-strong bg-secondary text-foreground'
-								: 'border-border text-muted-foreground hover:text-foreground',
-						)}
-					>
-						<span>{item.label}</span>
-						{typeof count === 'number' ? (
-							<span
-								className={cn(
-									'text-[10.5px] font-semibold tabular-nums',
-									isActive ? 'text-muted-foreground' : 'text-border-strong',
-								)}
-							>
-								{count}
-							</span>
-						) : null}
-					</button>
-				)
-			})}
-		</div>
+		<FilterTabs
+			aria-label="Catalog filters"
+			variant="pill"
+			tabs={tabs}
+			value={active}
+			onChange={(value) => onSelect(value)}
+			className="px-1 pb-1 max-sm:[&>button]:min-h-11"
+		/>
 	)
 }
 

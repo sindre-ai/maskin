@@ -7,6 +7,7 @@ import { SHIP_GATE_VIEWPORTS, VIEWPORTS } from '../helpers/viewports'
 // marketplace loads a real set of loops on every run.
 
 const FILTER_LABEL = 'Filter marketplace'
+const EMPTY_COPY = 'Nothing in the catalog matches those filters.'
 
 async function noHorizontalOverflow(page: import('@playwright/test').Page) {
 	const overflow = await page.evaluate(() => {
@@ -131,7 +132,7 @@ test.describe('Marketplace loop filter', () => {
 		const filter = page.getByRole('searchbox', { name: FILTER_LABEL }).and(page.locator(':visible'))
 		await filter.fill('zzzznomatchxyz')
 
-		await expect(page.getByText('No matches')).toBeVisible()
+		await expect(page.getByText(EMPTY_COPY)).toBeVisible()
 		await expect(page.getByRole('region', { name: 'Loops' })).toHaveCount(0)
 		await expect(page.getByRole('region', { name: 'Agents' })).toHaveCount(0)
 		// No stale count line — the old marketplace empty-state copy must not leak.
@@ -159,7 +160,7 @@ test.describe('Marketplace loop filter', () => {
 
 		const filter = page.getByRole('searchbox', { name: FILTER_LABEL }).and(page.locator(':visible'))
 		await filter.fill('zzzznomatchxyz')
-		await expect(page.getByText('No matches')).toBeVisible()
+		await expect(page.getByText(EMPTY_COPY)).toBeVisible()
 
 		// "Clear filters" resets the search box and returns the catalog to "All".
 		// exact:true disambiguates from the sidebar workspace-switcher buttons,
@@ -192,7 +193,7 @@ test.describe('Marketplace loop filter', () => {
 		await noHorizontalOverflow(page)
 
 		await filter.fill('zzzznomatchxyz')
-		await expect(page.getByText('No matches')).toBeVisible()
+		await expect(page.getByText(EMPTY_COPY)).toBeVisible()
 		await noHorizontalOverflow(page)
 	})
 })

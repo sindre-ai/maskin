@@ -1,4 +1,5 @@
 import { MarketplaceBreadcrumb } from '@/components/marketplace/marketplace-breadcrumb'
+import { getActorAvatarPaletteClass, getActorInitials } from '@/components/shared/actor-avatar'
 import { describeTrigger } from '@/components/triggers/trigger-row'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -12,13 +13,14 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { useUninstallLoop } from '@/hooks/use-installed-loops'
 import type { InstalledLoopRow, MarketplaceLoopItem, MarketplaceLoopSummary } from '@/lib/api'
+import { cn } from '@/lib/cn'
 import { stepAsksYou } from '@/lib/marketplace-asks'
 import { Link } from '@tanstack/react-router'
-import { MoreHorizontal } from 'lucide-react'
+import { Check, ChevronRight, MoreHorizontal } from 'lucide-react'
 import { useState } from 'react'
 import { ForkDialog } from './fork-dialog'
 import { InstallButton } from './install-button'
-import { ITEM_TYPE_LABEL } from './item-type-label'
+import { ITEM_TYPE_LABEL, loopKind } from './item-type-label'
 import { MarketplaceDetailHeader } from './marketplace-detail-header'
 import { AsksSection, FlowSection, PermissionsSection, RunsSection } from './marketplace-disclosure'
 
@@ -36,43 +38,56 @@ export function MarketplaceLoopDetail({
 	install,
 }: MarketplaceLoopDetailProps) {
 	const locked = install?.isLocked ?? false
-	const kindLabel =
-		loop.item_types.length === 1 ? ITEM_TYPE_LABEL[loop.item_types[0]] : 'Loop bundle'
+	const kind = loopKind(loop.item_types)
 
 	return (
-		<div className="space-y-8">
-			<MarketplaceBreadcrumb
-				workspaceId={workspaceId}
-				items={[{ label: 'Loops' }, { label: loop.name }]}
-			/>
+		// The action bar sits outside the scroll region so the breadcrumb,
+		// Install/Manage and the ⋯ menu stay reachable without scrolling at 375px
+		// (mockup 2610–2628).
+		<div className="flex min-h-0 min-w-0 flex-1 flex-col">
+			<div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border pb-3">
+				<MarketplaceBreadcrumb workspaceId={workspaceId} items={[{ label: loop.name }]} />
+				<div className="ml-auto flex shrink-0 items-center gap-2">
+					<HeaderActions workspaceId={workspaceId} loop={loop} install={install} />
+				</div>
+			</div>
 
-			<MarketplaceDetailHeader
-				kindLabel={kindLabel}
-				name={loop.name}
-				description={loop.description}
-				badge={
-					install ? (
-						locked ? (
-							<Badge
-								variant="secondary"
-								className="shrink-0 whitespace-nowrap text-[11px] font-medium"
-							>
-								🔒 Managed · v{install.installedVersion}
-							</Badge>
-						) : (
-							<Badge
-								variant="outline"
-								className="shrink-0 whitespace-nowrap text-[11px] font-medium text-foreground"
-							>
-								⑂ Forked from v{install.installedVersion}
-							</Badge>
-						)
-					) : undefined
-				}
-				actions={<HeaderActions workspaceId={workspaceId} loop={loop} install={install} />}
-			/>
+			<div className="min-h-0 flex-1 overflow-y-auto">
+				<div className="mx-auto flex w-full max-w-3xl flex-col gap-7 py-6">
+					<MarketplaceDetailHeader
+						kind={kind}
+						name={loop.name}
+						description={loop.description}
+						badge={
+							install ? (
+								<div className="flex shrink-0 flex-wrap items-center gap-2">
+									<Badge className="gap-1.5 whitespace-nowrap border-transparent bg-status-active-bg text-[12px] font-semibold text-status-active-text">
+										<Check aria-hidden="true" className="size-3.5" />
+										Installed
+									</Badge>
+									{locked ? (
+										<Badge
+											variant="secondary"
+											className="whitespace-nowrap text-[11px] font-medium"
+										>
+											🔒 Managed · v{install.installedVersion}
+										</Badge>
+									) : (
+										<Badge
+											variant="outline"
+											className="whitespace-nowrap text-[11px] font-medium text-foreground"
+										>
+											⑂ Forked from v{install.installedVersion}
+										</Badge>
+									)}
+								</div>
+							) : undefined
+						}
+					/>
 
-			<LoopFlow workspaceId={workspaceId} loop={loop} items={items} />
+					<LoopFlow workspaceId={workspaceId} loop={loop} items={items} />
+				</div>
+			</div>
 		</div>
 	)
 }
@@ -97,6 +112,16 @@ function HeaderActions({
 
 	return (
 		<>
+			{/* Installed loops with a provisioned object get a Manage link to it
+			    (mockup 2613); older installs without one fall through to the ⋯ menu. */}
+			{install.objectId ? (
+				<Button asChild size="sm" variant="outline">
+					<Link to="/$workspaceId/loops/$loopId" params={{ workspaceId, loopId: install.objectId }}>
+						Manage
+					</Link>
+				</Button>
+			) : null}
+
 			<DropdownMenu>
 				<DropdownMenuTrigger asChild>
 					<Button variant="ghost" size="icon" className="h-7 w-7" aria-label="Loop actions">
@@ -166,6 +191,7 @@ function LoopFlow({
 	const actorsBySourceId = new Map(
 		items.filter((item) => item.item_type === 'actor').map((item) => [item.source_item_id, item]),
 	)
+	const isBundle = loop.item_types.length > 1
 
 	const steps = triggers.map((trigger, i) => {
 		const snapshot = trigger.item_snapshot as TriggerSnapshot
@@ -209,12 +235,23 @@ function LoopFlow({
 
 	return (
 		<>
-			<FlowSection steps={steps} />
+			<FlowSection
+				steps={steps}
+				title={isBundle ? 'The loop, once installed' : 'How it works'}
+				subtitle={
+					isBundle
+						? 'the steps that move work between states'
+						: 'when it acts, and where it stops for you'
+				}
+			/>
 			{items.length > 0 && (
 				<div>
-					<div className="mb-3 flex items-center gap-2">
-						<h2 className="text-sm font-semibold text-foreground">What it brings</h2>
-						<span className="text-xs text-muted-foreground">everything installed in one go</span>
+					<div className="mb-3 flex items-center gap-2.5">
+						<h2 className="shrink-0 text-sm font-bold text-foreground">What it brings</h2>
+						<span className="min-w-0 truncate text-xs text-muted-foreground">
+							everything installed in one go
+						</span>
+						<span aria-hidden="true" className="h-px flex-1 bg-border" />
 					</div>
 					<div className="flex flex-col gap-2">
 						{items.map((item) => (
@@ -223,9 +260,9 @@ function LoopFlow({
 					</div>
 				</div>
 			)}
-			<AsksSection rows={askRows} />
+			<AsksSection rows={askRows} note="Everything else runs without you." />
 			<RunsSection rows={runsRows(loop, items)} />
-			<PermissionsSection rows={permissionsRows(items)} />
+			<PermissionsSection pills={permissionPills(items)} />
 		</>
 	)
 }
@@ -259,10 +296,10 @@ function runsRows(
 	return rows
 }
 
-function permissionsRows(items: MarketplaceLoopItem[]): { label: string; value: string }[] {
-	const rows: { label: string; value: string }[] = [
-		{ label: 'Scope', value: 'This workspace only' },
-	]
+/** One pill per real permission (mockup 2708–2711): the product-level scope
+ * every install is bound to, then each MCP surface the loop's agents declare. */
+function permissionPills(items: MarketplaceLoopItem[]): string[] {
+	const pills = ['This workspace only']
 	const tools = new Set<string>()
 	for (const agent of items.filter((item) => item.item_type === 'actor')) {
 		const snapshot = agent.item_snapshot as Record<string, unknown>
@@ -274,8 +311,7 @@ function permissionsRows(items: MarketplaceLoopItem[]): { label: string; value: 
 			}
 		}
 	}
-	if (tools.size > 0) rows.push({ label: 'Integrations', value: [...tools].join(', ') })
-	return rows
+	return [...pills, ...tools]
 }
 
 function capitalize(value: string): string {
@@ -287,6 +323,8 @@ interface LoopItemSnapshot {
 	description?: unknown
 }
 
+/** "What it brings" row (mockup 2680–2684): 28px glyph tile, label over a
+ * kind-led sub-line, trailing caret. */
 function LoopBringsRow({
 	workspaceId,
 	loopId,
@@ -300,22 +338,32 @@ function LoopBringsRow({
 	const name =
 		typeof snapshot.name === 'string' && snapshot.name.trim() ? snapshot.name : 'Untitled'
 	const description = typeof snapshot.description === 'string' ? snapshot.description : null
+	const sub = description
+		? `${ITEM_TYPE_LABEL[item.item_type]} · ${description}`
+		: ITEM_TYPE_LABEL[item.item_type]
 
 	return (
 		<Link
 			to="/$workspaceId/marketplace/$loopId/$itemId"
 			params={{ workspaceId, loopId, itemId: item.id }}
-			className="flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 shadow-sm transition-colors hover:border-border-strong hover:shadow-md"
+			className="flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 transition-colors hover:border-border-strong hover:shadow-md"
 		>
-			<span className="eyebrow shrink-0 rounded-full bg-muted px-2 py-0.5">
-				{ITEM_TYPE_LABEL[item.item_type]}
-			</span>
-			<span className="min-w-0 flex-1">
-				<span className="block truncate text-sm font-medium text-foreground">{name}</span>
-				{description && (
-					<span className="mt-0.5 block truncate text-xs text-muted-foreground">{description}</span>
+			<span
+				aria-hidden="true"
+				className={cn(
+					'grid size-7 shrink-0 place-items-center rounded-lg text-[11px] font-bold',
+					item.item_type === 'actor'
+						? getActorAvatarPaletteClass(name)
+						: 'bg-muted text-muted-foreground',
 				)}
+			>
+				{getActorInitials(name)}
 			</span>
+			<span className="min-w-0 flex-1 leading-tight">
+				<span className="block truncate text-[12.5px] font-semibold text-foreground">{name}</span>
+				<span className="mt-0.5 block truncate text-[11.5px] text-muted-foreground">{sub}</span>
+			</span>
+			<ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
 		</Link>
 	)
 }

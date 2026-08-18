@@ -88,8 +88,8 @@ describe('MarketplaceLoopDetail', () => {
 		render(<MarketplaceLoopDetail workspaceId={workspaceId} loop={loop()} items={[]} />, {
 			wrapper: TestWrapper,
 		})
-		fireEvent.click(screen.getByRole('button', { name: /install loop/i }))
-		await screen.findByRole('button', { name: /install loop/i })
+		fireEvent.click(screen.getByRole('button', { name: /^install$/i }))
+		await screen.findByRole('button', { name: /^install$/i })
 		expect(api.installedLoops.install).toHaveBeenCalledWith('ws-1', 'loop-1', 'detail')
 	})
 
@@ -101,15 +101,16 @@ describe('MarketplaceLoopDetail', () => {
 			screen.getByRole('heading', { name: 'Customer Continuous Discovery' }),
 		).toBeInTheDocument()
 		expect(screen.getByText('Turns feedback into clustered insights.')).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /install loop/i })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /^install$/i })).toBeInTheDocument()
 	})
 
-	it('renders the breadcrumb back to the catalog', () => {
+	it('renders a two-crumb breadcrumb back to the catalog', () => {
 		render(<MarketplaceLoopDetail workspaceId={workspaceId} loop={loop()} items={[]} />, {
 			wrapper: TestWrapper,
 		})
 		expect(screen.getByRole('link', { name: 'Marketplace' })).toBeInTheDocument()
-		expect(screen.getByText('Loops')).toBeInTheDocument()
+		// The dead middle "Loops" crumb is gone (mockup 2611).
+		expect(screen.queryByText('Loops')).not.toBeInTheDocument()
 	})
 
 	it('lists each item under "What it brings", linking to its detail page', () => {
@@ -137,7 +138,7 @@ describe('MarketplaceLoopDetail', () => {
 		expect(screen.queryByText('What it brings')).not.toBeInTheDocument()
 	})
 
-	it('renders "The flow" from real trigger + actor snapshots', () => {
+	it('renders the flow from real trigger + actor snapshots', () => {
 		render(
 			<MarketplaceLoopDetail
 				workspaceId={workspaceId}
@@ -165,8 +166,8 @@ describe('MarketplaceLoopDetail', () => {
 			/>,
 			{ wrapper: TestWrapper },
 		)
-		expect(screen.getByText('The flow')).toBeInTheDocument()
-		// "Relay" appears once in "The flow" and once in "What it brings".
+		expect(screen.getByText('The loop, once installed')).toBeInTheDocument()
+		// "Relay" appears once in the flow and once in "What it brings".
 		expect(screen.getAllByText('Relay')).toHaveLength(2)
 		expect(screen.getByText('When signal is created')).toBeInTheDocument()
 		expect(screen.getByText('Acknowledge the customer in their own words.')).toBeInTheDocument()
@@ -245,7 +246,7 @@ describe('MarketplaceLoopDetail', () => {
 		expect(screen.getByText(/asks you to confirm before escalating/)).toBeInTheDocument()
 	})
 
-	it('does not render "The flow" when the loop has no triggers', () => {
+	it('does not render the flow when the loop has no triggers', () => {
 		render(
 			<MarketplaceLoopDetail
 				workspaceId={workspaceId}
@@ -254,7 +255,7 @@ describe('MarketplaceLoopDetail', () => {
 			/>,
 			{ wrapper: TestWrapper },
 		)
-		expect(screen.queryByText('The flow')).not.toBeInTheDocument()
+		expect(screen.queryByText('The loop, once installed')).not.toBeInTheDocument()
 	})
 
 	it('renders "How it runs" from the loop version', () => {
@@ -277,7 +278,7 @@ describe('MarketplaceLoopDetail', () => {
 			/>,
 			{ wrapper: TestWrapper },
 		)
-		expect(screen.queryByRole('button', { name: /install loop/i })).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /^install$/i })).not.toBeInTheDocument()
 		// Baseline: no dialog on the page before the flow starts. Any
 		// role="dialog" or role="alertdialog" that appears between the Remove
 		// click and the mutation would be the regression this test exists to

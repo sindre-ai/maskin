@@ -56,15 +56,15 @@ function MarketplaceLoopDetailPage() {
 
 	return (
 		<>
-			<PageHeader />
-			<div className="max-w-3xl mx-auto">
-				<MarketplaceLoopDetail
-					workspaceId={workspaceId}
-					loop={data.loop}
-					items={data.items}
-					install={install}
-				/>
-			</div>
+			{/* The detail page owns its own scroll region so the action bar stays
+			    pinned above it (mockup 2610–2628). */}
+			<PageHeader scrollLocked />
+			<MarketplaceLoopDetail
+				workspaceId={workspaceId}
+				loop={data.loop}
+				items={data.items}
+				install={install}
+			/>
 		</>
 	)
 }

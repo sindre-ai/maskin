@@ -1,5 +1,4 @@
 import { render, screen } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/api', () => ({
@@ -65,22 +64,44 @@ beforeEach(() => {
 })
 
 describe('MarketplaceLoopCard', () => {
-	it('shows Install loop CTA when not installed', () => {
+	it('shows the Install CTA and the kind label when not installed', () => {
 		render(<MarketplaceLoopCard workspaceId={workspaceId} loop={loop()} />, {
 			wrapper: TestWrapper,
 		})
-		expect(screen.getByRole('button', { name: /install loop/i })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /^install$/i })).toBeInTheDocument()
+		// Multi-type loops read as a bundle; the label is colour-coded per kind.
+		expect(screen.getByText('Loop')).toBeInTheDocument()
 		expect(screen.queryByText(/Managed/)).not.toBeInTheDocument()
 		expect(screen.queryByText(/Forked from/)).not.toBeInTheDocument()
+		expect(screen.queryByText('Installed')).not.toBeInTheDocument()
 	})
 
-	it('shows Managed badge and Fork button when locked', () => {
+	it('shows the Managed badge, an Installed marker and Manage when locked', () => {
 		render(<MarketplaceLoopCard workspaceId={workspaceId} loop={loop()} install={install()} />, {
 			wrapper: TestWrapper,
 		})
 		expect(screen.getByText(/Managed · v1.0.0/)).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /fork/i })).toBeInTheDocument()
-		expect(screen.queryByRole('button', { name: /install loop/i })).not.toBeInTheDocument()
+		expect(screen.getByText('Installed')).toBeInTheDocument()
+		expect(screen.getByRole('link', { name: 'Manage' })).toHaveAttribute(
+			'href',
+			'/$workspaceId/loops/$loopId',
+		)
+		// Fork and Remove live in the detail page's overflow menu, not on the card.
+		expect(screen.queryByRole('button', { name: /fork/i })).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /^install$/i })).not.toBeInTheDocument()
+	})
+
+	it('offers Remove instead of Manage when the install has no provisioned loop', () => {
+		render(
+			<MarketplaceLoopCard
+				workspaceId={workspaceId}
+				loop={loop()}
+				install={install({ objectId: null })}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		expect(screen.queryByRole('link', { name: 'Manage' })).not.toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /remove/i })).toBeInTheDocument()
 	})
 
 	it('renders the amber update banner when a locked install trails the marketplace version', () => {
@@ -106,28 +127,6 @@ describe('MarketplaceLoopCard', () => {
 		)
 		expect(screen.getByText(/Forked from v1\.0\.0/)).toBeInTheDocument()
 		expect(screen.queryByRole('button', { name: /fork/i })).not.toBeInTheDocument()
-	})
-
-	it('opens the fork confirmation dialog when Fork is clicked', async () => {
-		render(<MarketplaceLoopCard workspaceId={workspaceId} loop={loop()} install={install()} />, {
-			wrapper: TestWrapper,
-		})
-		await userEvent.click(screen.getByRole('button', { name: /fork/i }))
-		expect(screen.getByText(/Fork this loop\?/)).toBeInTheDocument()
-		expect(screen.getByText(/Forking can't be undone\./)).toBeInTheDocument()
-	})
-
-	it('names the pending update in the fork dialog when one is available', async () => {
-		render(
-			<MarketplaceLoopCard
-				workspaceId={workspaceId}
-				loop={loop({ version: '1.1.0' })}
-				install={install({ installedVersion: '1.0.0', availableVersion: '1.1.0', hasUpdate: true })}
-			/>,
-			{ wrapper: TestWrapper },
-		)
-		await userEvent.click(screen.getByRole('button', { name: /fork/i }))
-		expect(screen.getByText(/v1\.1\.0 is ready to install/)).toBeInTheDocument()
 	})
 
 	describe('composition chip row', () => {
