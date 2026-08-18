@@ -46,6 +46,12 @@ export interface CardAction {
 	// Only the decision actions carry one; sign_off / proposed_bet / quick-reply
 	// stay chip-shaped with no rationale.
 	rationale?: string
+	// Marks the option the card recommends — rendered as the mockup's `REC`
+	// chip (mockup 419–424). It is a property of the *action registry* below,
+	// the same static class of data as `label` and `rationale`; no per-item
+	// recommendation is computed from the object, and nothing in the API
+	// returns one, so exactly one option per kind carries it.
+	recommended?: boolean
 }
 
 // Kind → ordered list of affordances. First is always the primary action.
@@ -57,6 +63,7 @@ export const CARD_ACTIONS: Record<Exclude<CardKind, 'thread'>, readonly CardActi
 			label: 'Approve',
 			tone: 'primary',
 			rationale: 'I agree with the direction — proceed',
+			recommended: true,
 		},
 		{
 			id: 'send_back',
@@ -66,12 +73,12 @@ export const CARD_ACTIONS: Record<Exclude<CardKind, 'thread'>, readonly CardActi
 		},
 	],
 	sign_off: [
-		{ id: 'sign_off', label: 'Sign off', tone: 'primary' },
+		{ id: 'sign_off', label: 'Sign off', tone: 'primary', recommended: true },
 		{ id: 'send_back', label: 'Send back', tone: 'secondary' },
 		{ id: 'snooze_24h', label: 'Snooze 24h', tone: 'secondary' },
 	],
 	proposed_bet: [
-		{ id: 'open_bet', label: 'Open bet', tone: 'primary' },
+		{ id: 'open_bet', label: 'Open bet', tone: 'primary', recommended: true },
 		{ id: 'refine', label: 'Refine first', tone: 'secondary' },
 		{ id: 'dismiss', label: 'Dismiss', tone: 'secondary' },
 	],
@@ -86,3 +93,27 @@ export const QUICK_REPLY_CHIPS: readonly CardAction[] = [
 	{ id: 'looks_good', label: 'Looks good', tone: 'secondary' },
 	{ id: 'need_context', label: 'Need more context', tone: 'secondary' },
 ]
+
+// Chips offered *after* a decision has been committed on a decision card. The
+// mockup drops any quick reply that echoes an option the user just picked
+// (`cuAfterQuick`, mockup 5962) — "Approved" reads as noise right under a
+// receipt that already says "You chose Approve" — and falls back to a
+// forward-looking pair when the filter empties the row.
+export const AFTER_DECISION_FALLBACK_CHIPS: readonly CardAction[] = [
+	{ id: 'rollback_plan', label: 'Show me the rollback plan', tone: 'secondary' },
+	{ id: 'loop_me_in', label: 'Loop me on the results', tone: 'secondary' },
+]
+
+export function afterDecisionChips(
+	options: readonly CardAction[] = CARD_ACTIONS.decision,
+	chips: readonly CardAction[] = QUICK_REPLY_CHIPS,
+): readonly CardAction[] {
+	const heads = options
+		.map((option) => option.label.split(' ')[0]?.toLowerCase() ?? '')
+		.filter((head) => head.length > 0)
+	const kept = chips.filter((chip) => {
+		const label = chip.label.toLowerCase()
+		return !heads.some((head) => label.includes(head))
+	})
+	return kept.length > 0 ? kept : AFTER_DECISION_FALLBACK_CHIPS
+}
