@@ -4,8 +4,16 @@ import type { UnreadItem } from '@/lib/api'
 // - `decision`  → shaded footer with full-width primary/secondary buttons (heavier stakes)
 // - `sign_off`  → flat chip-row in the body (lighter — approve/send back)
 // - `proposed_bet` → flat chip-row in the body (lighter — open/refine/dismiss)
+// - `first_use` → the Research Agent's context card, same weight as `decision`
 // - `thread`    → fallback for anything that isn't decision-shaped (regular reply chips)
-export type CardKind = 'decision' | 'sign_off' | 'proposed_bet' | 'thread'
+export type CardKind = 'decision' | 'first_use' | 'sign_off' | 'proposed_bet' | 'thread'
+
+// The first-use conversation cards. `context` — the researched Knowledge the
+// Research Agent wants confirmed before every agent inherits it — is the only
+// one carrying a decision; the introduction and suggestions cards are threads
+// whose quick replies come from the comment's own `metadata.chips`.
+const FIRST_USE_SESSION_TYPE = 'onboarding_session'
+const FIRST_USE_DECISION_CARD = 'context'
 
 // Statuses that signal a bet is a proposed/early-stage bet (not yet shaped).
 // A bet in one of these needs a "yes / refine / dismiss" call, not an approval.
@@ -27,6 +35,11 @@ function hasDecisionType(item: UnreadItem): boolean {
 export function classifyCardKind(item: UnreadItem): CardKind {
 	const type = item.object?.type
 	const status = item.object?.status
+	if (type === FIRST_USE_SESSION_TYPE) {
+		return item.object?.metadata?.first_use_card === FIRST_USE_DECISION_CARD
+			? 'first_use'
+			: 'thread'
+	}
 	if (!type || !status) return 'thread'
 	if (type === 'task' && REVIEW_TASK_STATUSES.has(status)) {
 		return hasDecisionType(item) ? 'decision' : 'sign_off'
@@ -57,6 +70,30 @@ export interface CardAction {
 // Kind → ordered list of affordances. First is always the primary action.
 // Labels match the Designer's prototype (foryou-directions-A-B.html).
 export const CARD_ACTIONS: Record<Exclude<CardKind, 'thread'>, readonly CardAction[]> = {
+	// First use asks one question the agent genuinely cannot answer for itself:
+	// is the context it researched right? The three options are the three things
+	// that actually change what happens next — confirm it, send it back for a
+	// rewrite, or point it at more material.
+	first_use: [
+		{
+			id: 'context_confirmed',
+			label: 'Looks right',
+			tone: 'primary',
+			rationale: 'Every agent starts from it as written',
+		},
+		{
+			id: 'context_wrong',
+			label: 'Something is wrong',
+			tone: 'secondary',
+			rationale: 'The Research Agent rewrites it — the old version stays in history',
+		},
+		{
+			id: 'context_add_source',
+			label: 'Add a source',
+			tone: 'secondary',
+			rationale: 'Name what it should read and the same objects get updated',
+		},
+	],
 	decision: [
 		{
 			id: 'approve',

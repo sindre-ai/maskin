@@ -829,9 +829,15 @@ export type NewUserDisplaySettings = typeof userDisplaySettings.$inferInsert
 
 // ── Workspace Onboarding Prompts ──────────────────────────────────────────────
 //
-// One row per prompt type per workspace. Written when onboarding is enabled;
-// `answered_at` and `object_id` are filled in once the owner replies and the
-// knowledge object is created.
+// One row per prompt type per workspace. `answered_at` and `object_id` are
+// filled in once the owner replies and the knowledge object is created.
+//
+// RETAINED, NOT WRITTEN. The five-question onboarding interview this table
+// backed was replaced by first use (`apps/dev/src/services/first-use.ts`),
+// which asks nothing up front — the Research Agent researches the company and
+// the owner corrects it. Nothing inserts here any more; the table is kept only
+// so the rows written for workspaces that went through the old flow stay
+// readable. Drop it in its own migration once those are no longer of interest.
 
 export const workspaceOnboardingPrompts = pgTable(
 	'workspace_onboarding_prompts',

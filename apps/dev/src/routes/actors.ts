@@ -47,6 +47,7 @@ import {
 import { serialize, serializeArray } from '../lib/serialize'
 import { isWorkspaceMember } from '../lib/workspace-auth'
 import type { AgentStorageManager } from '../services/agent-storage'
+import { resolveFirstUseAgents, runFirstUse } from '../services/first-use'
 import type { SessionManager } from '../services/session-manager'
 import { bootstrapDefaultAgents } from '../services/workspace-bootstrap'
 
@@ -263,6 +264,21 @@ app.openapi(createActorRoute, async (c) => {
 				await bootstrapDefaultAgents(db, agentStorage, created.id, actor.id).catch((err) =>
 					logger.error('workspace bootstrap failed', { workspaceId: created.id, err }),
 				)
+			}
+
+			// First use runs after the bootstrap above, which is what seeds the
+			// Chief of Staff, Research Agent and Strategist this path needs —
+			// resolving them any earlier would find only the Workspace Coach.
+			const agents = await resolveFirstUseAgents(db, created.id)
+			if (agents) {
+				await runFirstUse(db, c.get('sessionManager') ?? null, {
+					workspaceId: created.id,
+					workspaceName: created.name,
+					ownerActorId: actor.id,
+					ownerName: actor.name,
+					agents,
+					agentsWorking: true,
+				})
 			}
 		}
 	}
