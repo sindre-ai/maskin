@@ -31,7 +31,7 @@ export function PhaseDivider({ status, startedAt, isOpen, onToggle }: PhaseDivid
 			type="button"
 			onClick={onToggle}
 			aria-expanded={isOpen}
-			className="flex w-full cursor-pointer items-center gap-3 py-4 transition-colors hover:bg-bg-hover/40"
+			className="flex w-full cursor-pointer items-center gap-3 py-4 transition-colors hover:bg-accent/40"
 		>
 			<div className="flex-1 border-t border-border" />
 			<span className={cn('inline-block h-2 w-2 rounded-full', colors.bg)} aria-hidden="true" />

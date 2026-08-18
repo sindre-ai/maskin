@@ -44,4 +44,22 @@ describe('RelativeTime', () => {
 		render(<RelativeTime date={date} />)
 		expect(screen.getByText('3h ago')).toBeInTheDocument()
 	})
+	// Compact is the list-row age column (mockup 764): a fixed-width, right-aligned
+	// cell, so the suffix is dropped and old dates collapse to a day/month token
+	// instead of a full locale date that would wrap onto a second line.
+	it('drops the "ago" suffix in compact mode', () => {
+		const date = '2024-01-15T12:00:00Z'
+		vi.spyOn(Date, 'now').mockReturnValue(new Date(date).getTime() + 3 * 60 * 60 * 1000)
+
+		render(<RelativeTime date={date} compact />)
+		expect(screen.getByText('3h')).toBeInTheDocument()
+	})
+
+	it('renders a short day/month token in compact mode past a month', () => {
+		const date = '2024-01-15T12:00:00Z'
+		vi.spyOn(Date, 'now').mockReturnValue(new Date(date).getTime() + 60 * 24 * 60 * 60 * 1000)
+
+		render(<RelativeTime date={date} compact />)
+		expect(screen.getByText(/^(\w{3} \d+|\d+ \w{3})$/)).toBeInTheDocument()
+	})
 })
