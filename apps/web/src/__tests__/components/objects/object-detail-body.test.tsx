@@ -55,7 +55,7 @@ describe('ObjectDetailBody', () => {
 		})
 		render(<ObjectDetailBody object={object} />)
 
-		expect(screen.getByText('A source quote')).toBeInTheDocument()
+		expect(screen.getByText(/A source quote/)).toBeInTheDocument()
 		expect(screen.getByText('Slack #general')).toBeInTheDocument()
 	})
 })

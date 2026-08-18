@@ -7,6 +7,7 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 // agent's open question, "Answer it ↓" moves focus to the answer control,
 // kv rows come from public metadata, the evidence block sits behind its own
 // fold, and the document fold expands to its markdown. No horizontal scroll.
+// The evidence row is inline (no "Evidence" fold) since the v2 port.
 
 const ASK = 'Should we ship this?'
 const FOLD_TITLE = 'Research notes'
@@ -63,10 +64,9 @@ test.describe('Object detail shell — document sections', () => {
 			await page.getByText(FOLD_TITLE).click()
 			await expect(page.getByText(FOLD_BODY)).toBeVisible()
 
-			// Evidence block behind its own fold.
-			await expect(page.getByText(EVIDENCE_QUOTE)).toHaveCount(0)
-			await page.getByText('Evidence').click()
-			await expect(page.getByText(EVIDENCE_QUOTE)).toBeVisible()
+			// Evidence: a row of pull-quote cards, rendered inline (mockup 1127–1136).
+			// The card wraps the quote in typographic quotes, so match on a substring.
+			await expect(page.getByText(new RegExp(EVIDENCE_QUOTE))).toBeVisible()
 			await expect(page.getByText(new RegExp(EVIDENCE_SOURCE))).toBeVisible()
 			await expect(page.getByText(new RegExp(EVIDENCE_DATE))).toBeVisible()
 

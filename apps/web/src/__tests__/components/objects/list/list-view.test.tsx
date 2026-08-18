@@ -347,4 +347,43 @@ describe('ListView', () => {
 		expect(screen.getAllByText('done').length).toBeGreaterThan(0)
 		expect(screen.getByText(/ago/i)).toBeInTheDocument()
 	})
+	// Mockup 1021–1022: the empty state names the filters that produced it and
+	// offers a single action that clears them.
+	it('renders the filter-derived empty state with a Clear all filters action', async () => {
+		const user = userEvent.setup()
+		const onClearFilters = vi.fn()
+		renderListView({
+			data: [],
+			emptyTitle: 'No bets waiting on you right now.',
+			hasActiveFilters: true,
+			onClearFilters,
+		})
+
+		expect(screen.getByText('No bets waiting on you right now.')).toBeInTheDocument()
+		const clear = screen.getByRole('button', { name: 'Clear all filters' })
+		expect(clear).toBeVisible()
+		await user.click(clear)
+		expect(onClearFilters).toHaveBeenCalledOnce()
+	})
+
+	it('falls back to the create-your-first copy when no filter is applied', () => {
+		renderListView({ data: [], hasActiveFilters: false })
+		expect(screen.getByText('No objects found')).toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Clear all filters' })).toBeNull()
+	})
+
+	// Mockup 995: the group a row belongs to stays readable while its rows scroll.
+	it('pins the group header to the top of the scroller', () => {
+		renderListView({
+			data: [
+				buildObjectResponse({ id: 'o1', status: 'active' }),
+				buildObjectResponse({ id: 'o2', status: 'done' }),
+			],
+			grouping: ['status'],
+		})
+		const header = indexAt(groupHeaders(), 0).parentElement
+		expect(header).not.toBeNull()
+		expect(header?.className).toContain('sticky')
+		expect(header?.className).toContain('top-0')
+	})
 })

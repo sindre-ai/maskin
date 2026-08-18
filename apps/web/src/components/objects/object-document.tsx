@@ -455,6 +455,8 @@ export function ObjectDocument({ object }: { object: ObjectResponse }) {
 						type: prev.type,
 						status: prev.status,
 						driver: prev.driver,
+						filterBy: prev.filterBy,
+						attention: prev.attention,
 						sort: prev.sort ?? 'createdAt',
 						order: prev.order ?? 'desc',
 						q: prev.q,

@@ -1,6 +1,7 @@
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
+import { Button } from '@/components/ui/button'
 import type { ActorListItem, NotificationResponse, ObjectResponse } from '@/lib/api'
 import type { BetStatusResult } from '@/lib/bet-status'
 import { cn } from '@/lib/cn'
@@ -60,6 +61,13 @@ interface ListViewProps {
 	onExpandedChange: (next: Record<string, boolean>) => void
 	// Fires synchronously right before a row-open navigate (see DataTable).
 	onCaptureViewState?: () => void
+	/** Filter-derived empty-state sentence, e.g. "No bets waiting on you in
+	 *  Define right now." Falls back to the unfiltered copy when absent. */
+	emptyTitle?: string
+	/** True while any filter pill is active — swaps the empty state's copy and
+	 *  surfaces the `Clear all filters` action (mockup 1021–1022). */
+	hasActiveFilters?: boolean
+	onClearFilters?: () => void
 }
 
 interface ListGroup {
@@ -89,6 +97,9 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 		expanded,
 		onExpandedChange,
 		onCaptureViewState,
+		emptyTitle,
+		hasActiveFilters,
+		onClearFilters,
 	},
 	ref,
 ) {
@@ -97,13 +108,28 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 	const sentinelRef = useRef<HTMLDivElement>(null)
 	const groupBy = grouping?.[0]
 
+	// Rows the user is blocking float to the top of the pool (mockup fixture
+	// 6655's `nyOf`). A stable partition, so within each half the API's own
+	// sort order is untouched — and there is no synthetic "Waiting on you"
+	// group, which the mockup doesn't have either.
+	const rows = useMemo(() => {
+		if (!asksByObjectId || asksByObjectId.size === 0) return data
+		const waiting: ObjectResponse[] = []
+		const rest: ObjectResponse[] = []
+		for (const object of data) {
+			if (asksByObjectId.get(object.id)?.status === 'pending') waiting.push(object)
+			else rest.push(object)
+		}
+		return waiting.length === 0 ? data : [...waiting, ...rest]
+	}, [data, asksByObjectId])
+
 	// Groups preserve first-occurrence order across the API-sorted data, so the
 	// visible order follows the sort/order the shared filter model emitted.
 	const groups = useMemo<ListGroup[] | null>(() => {
 		if (!groupBy) return null
 		const byValue = new Map<string, ListGroup>()
 		const order: ListGroup[] = []
-		for (const object of data) {
+		for (const object of rows) {
 			const value = getObjectGroupValue(object, groupBy)
 			const existing = byValue.get(value)
 			if (existing) existing.rows.push(object)
@@ -114,7 +140,7 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 			}
 		}
 		return order
-	}, [data, groupBy])
+	}, [rows, groupBy])
 
 	// Per-group "Show N more" reveals are view-local and intentionally not
 	// persisted — they are transient scrolling affordances, not view state.
@@ -158,8 +184,8 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 			const anchorKey = groupId ?? ''
 			const anchorId = selectionAnchorRef.current[anchorKey]
 			const orderedIds = groupBy
-				? data.filter((o) => getObjectGroupValue(o, groupBy) === groupId).map((o) => o.id)
-				: data.map((o) => o.id)
+				? rows.filter((o) => getObjectGroupValue(o, groupBy) === groupId).map((o) => o.id)
+				: rows.map((o) => o.id)
 			if (Object.keys(rowSelection).length === 0 || !anchorId || !selectedIdSet.has(anchorId)) {
 				setSelected(targetId, true)
 				selectionAnchorRef.current = { ...selectionAnchorRef.current, [anchorKey]: targetId }
@@ -181,7 +207,7 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 				return next
 			})
 		},
-		[groupBy, data, rowSelection, selectedIdSet, setSelected, onRowSelectionChange],
+		[groupBy, rows, rowSelection, selectedIdSet, setSelected, onRowSelectionChange],
 	)
 
 	const handleOpen = useCallback(
@@ -295,6 +321,7 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 				showBetStatusIndicator={showBetStatusIndicator}
 				ask={asksByObjectId?.get(object.id)}
 				columnVisibility={columnVisibility}
+				anySelected={selectedIdSet.size > 0}
 			/>
 		))
 
@@ -312,19 +339,30 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 	}
 
 	if (data.length === 0) {
-		return (
-			<EmptyState title="No objects found" description="Create your first object to get started" />
+		return hasActiveFilters ? (
+			<EmptyState
+				title={emptyTitle ?? 'No objects match these filters.'}
+				action={
+					onClearFilters ? (
+						<Button variant="outline" size="sm" onClick={onClearFilters}>
+							Clear all filters
+						</Button>
+					) : undefined
+				}
+			/>
+		) : (
+			<EmptyState
+				title={emptyTitle ?? 'No objects found'}
+				description="Create your first object to get started"
+			/>
 		)
 	}
 
 	return (
-		<div
-			ref={scrollRef}
-			className={cn('flex-1 min-h-0 overflow-auto rounded-xl border', 'touch-pan-y')}
-		>
+		<div ref={scrollRef} className={cn('min-h-0 flex-1 overflow-auto', 'touch-pan-y')}>
 			<ul className="m-0 list-none p-0" aria-label="Objects">
 				{groups === null
-					? renderRows(data)
+					? renderRows(rows)
 					: groups.map((group) => {
 							const open = expanded[group.key] === true
 							const capped = revealedGroups.has(group.key)
@@ -334,34 +372,36 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 							const statusDot = groupBy === 'status' ? getStatusColor(group.value) : null
 							return (
 								<li key={group.key}>
-									<div className="flex w-full items-center gap-2 border-b border-border bg-muted/30 px-4 py-2 hover:bg-muted/50">
+									{/* Sticky so the group a row belongs to stays readable while
+									    its rows scroll past (mockup 995). */}
+									<div className="sticky top-0 z-[2] flex w-full items-center gap-2 bg-background px-1 pt-4 pb-1.5">
 										<button
 											type="button"
 											onClick={() => toggleGroup(group)}
 											aria-expanded={open}
-											className="flex flex-1 items-center gap-2 text-left"
+											className="flex flex-1 items-center gap-2 text-left transition-opacity hover:opacity-75"
 										>
 											<ChevronRight
-												size={14}
+												size={12}
 												aria-hidden="true"
 												className={cn(
-													'shrink-0 text-muted-foreground transition-transform',
+													'shrink-0 text-muted-foreground/60 transition-transform',
 													open && 'rotate-90',
 												)}
 											/>
-											{statusDot && (
-												<span
-													aria-hidden="true"
-													className={cn(
-														'h-1.5 w-1.5 shrink-0 rounded-sm bg-current',
-														statusDot.text,
-													)}
-												/>
-											)}
-											<span className="text-sm font-medium">
+											<span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
+												{statusDot && (
+													<span
+														aria-hidden="true"
+														className={cn(
+															'h-[7px] w-[7px] shrink-0 rounded-[2px] bg-current',
+															statusDot.text,
+														)}
+													/>
+												)}
 												{getObjectGroupLabel(groupBy, group.value, actors)}
 											</span>
-											<span className="text-xs tabular-nums text-muted-foreground">
+											<span className="text-[11px] font-semibold tabular-nums text-muted-foreground/60">
 												{group.rows.length}
 											</span>
 										</button>
@@ -373,7 +413,7 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 												<button
 													type="button"
 													onClick={() => revealGroup(group.key)}
-													className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+													className="ml-[30px] flex w-fit items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
 												>
 													Show {hiddenCount} more
 													<ChevronRight size={12} aria-hidden="true" className="rotate-90" />

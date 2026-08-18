@@ -9,8 +9,9 @@ vi.mock('@tanstack/react-router', async () => {
 })
 
 vi.mock('@/hooks/use-subscriptions', () => ({
-	useSubscribe: () => ({ mutate: vi.fn() }),
-	useUnsubscribe: () => ({ mutate: vi.fn() }),
+	useSubscribe: () => ({ mutate: vi.fn(), isPending: false }),
+	useUnsubscribe: () => ({ mutate: vi.fn(), isPending: false }),
+	useSubscribers: () => ({ data: [] }),
 }))
 
 vi.mock('@/hooks/use-mobile', () => ({
@@ -31,6 +32,10 @@ vi.mock('@/hooks/use-actors', () => ({
 	useActors: () => ({ data: [] }),
 }))
 
+vi.mock('@/hooks/use-notifications', () => ({
+	useNotifications: () => ({ data: [] }),
+}))
+
 vi.mock('@/hooks/use-objects', () => ({
 	useUpdateObject: () => ({ mutate: vi.fn() }),
 	useDeleteObject: () => ({ mutate: vi.fn(), isPending: false }),
@@ -41,6 +46,8 @@ vi.mock('@/hooks/use-objects', () => ({
 
 vi.mock('@/hooks/use-workspaces', () => ({
 	useWorkspaceMembers: () => ({ data: [] }),
+	useUpdateWorkspace: () => ({ mutate: vi.fn(), isPending: false }),
+	useWorkspaces: () => ({ data: [] }),
 }))
 
 vi.mock('@/hooks/use-relationships', () => ({
@@ -104,14 +111,27 @@ describe('ObjectDetailShell', () => {
 		expect(screen.getByPlaceholderText(/write a comment/i)).toBeInTheDocument()
 	})
 
-	it('mounts an Activity / Timeline / Related tab strip below the body', () => {
+	// Mockup 1138–1143: one Activity heading + a 2-way Timeline | Related
+	// segmented control. The old third "Activity" tab folded into Timeline.
+	it('mounts a Timeline / Related segmented control below the body', () => {
 		const object = buildObjectResponse({ type: 'bet' })
 		render(<ObjectDetailShell object={object} />, {
 			wrapper: createWorkspaceWrapper(workspace),
 		})
-		expect(screen.getByRole('tab', { name: /^Activity$/ })).toBeInTheDocument()
+		expect(screen.queryByRole('tab', { name: /^Activity$/ })).toBeNull()
 		expect(screen.getByRole('tab', { name: /^Timeline$/ })).toBeInTheDocument()
 		// Related trigger carries the live count (0 with no seeded relationships).
-		expect(screen.getByRole('tab', { name: /^Related \(0\)$/ })).toBeInTheDocument()
+		expect(screen.getByRole('tab', { name: /^Related 0$/ })).toBeInTheDocument()
+	})
+
+	it('mounts the properties drawer behind the header toggle', () => {
+		const object = buildObjectResponse({ type: 'bet' })
+		render(<ObjectDetailShell object={object} />, {
+			wrapper: createWorkspaceWrapper(workspace),
+		})
+		const toggle = screen.getByRole('button', { name: 'Properties' })
+		expect(toggle).toHaveAttribute('aria-expanded', 'false')
+		fireEvent.click(toggle)
+		expect(toggle).toHaveAttribute('aria-expanded', 'true')
 	})
 })

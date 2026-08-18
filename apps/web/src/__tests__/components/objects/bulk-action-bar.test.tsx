@@ -132,7 +132,7 @@ describe('BulkActionBar', () => {
 	it('renders status and owner selects with provided options', () => {
 		renderBar()
 		expect(screen.getByRole('combobox', { name: 'Set status' })).not.toBeDisabled()
-		expect(screen.getByRole('combobox', { name: 'Set owner' })).not.toBeDisabled()
+		expect(screen.getByRole('combobox', { name: 'Set driver' })).not.toBeDisabled()
 	})
 
 	it('fires onStatusChange when a status option is picked', () => {
@@ -144,7 +144,7 @@ describe('BulkActionBar', () => {
 
 	it('fires onOwnerChange when an owner option is picked', () => {
 		const { props } = renderBar()
-		fireEvent.click(screen.getByRole('combobox', { name: 'Set owner' }))
+		fireEvent.click(screen.getByRole('combobox', { name: 'Set driver' }))
 		fireEvent.click(screen.getByRole('option', { name: 'Alice' }))
 		expect(props.onOwnerChange).toHaveBeenCalledWith('actor-1')
 	})
@@ -302,7 +302,7 @@ describe('BulkActionBar', () => {
 
 		it('emits once with action=owner_change on an owner pick', () => {
 			renderBar({ selectedCount: 2 })
-			fireEvent.click(screen.getByRole('combobox', { name: 'Set owner' }))
+			fireEvent.click(screen.getByRole('combobox', { name: 'Set driver' }))
 			fireEvent.click(screen.getByRole('option', { name: 'Bob' }))
 			expect(trackBulkEditCommit).toHaveBeenCalledTimes(1)
 			expect(trackBulkEditCommit).toHaveBeenCalledWith({

@@ -1,4 +1,4 @@
-import { ObjectDetailHeader } from '@/components/objects/object-detail-header'
+import { ObjectDetailHeader, ObjectDetailIdentity } from '@/components/objects/object-detail-header'
 import type { MemberResponse } from '@/lib/api'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
@@ -49,14 +49,46 @@ describe('ObjectDetailHeader', () => {
 		const object = buildObjectResponse({ title: 'My Bet' })
 		render(<ObjectDetailHeader {...baseProps} object={object} />, { wrapper: makeWrapper() })
 		expect(screen.getByRole('link', { name: 'Objects' })).toHaveAttribute('href')
-		// Title appears both in the breadcrumb page crumb and the page h1
-		expect(screen.getAllByText('My Bet').length).toBeGreaterThan(0)
-		expect(screen.getByRole('heading', { level: 1, name: 'My Bet' })).toBeInTheDocument()
+		expect(screen.getByText('My Bet')).toBeInTheDocument()
 	})
 
-	it('renders type badge, status trigger, and driver picker above the title', () => {
-		const object = buildObjectResponse({ type: 'bet', status: 'active' })
+	it('renders the properties toggle when the host wires it', async () => {
+		const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never })
+		const object = buildObjectResponse({ title: 'My Bet' })
+		const onTogglePropertiesRequest = vi.fn()
+		render(
+			<ObjectDetailHeader
+				{...baseProps}
+				object={object}
+				onTogglePropertiesRequest={onTogglePropertiesRequest}
+				propertiesOpen={false}
+			/>,
+			{ wrapper: makeWrapper() },
+		)
+		const toggle = screen.getByRole('button', { name: 'Properties' })
+		expect(toggle).toHaveAttribute('aria-expanded', 'false')
+		await user.click(toggle)
+		expect(onTogglePropertiesRequest).toHaveBeenCalledOnce()
+	})
+
+	it('omits the properties toggle when no handler is wired', () => {
+		const object = buildObjectResponse({ title: 'My Bet' })
 		render(<ObjectDetailHeader {...baseProps} object={object} />, { wrapper: makeWrapper() })
+		expect(screen.queryByRole('button', { name: 'Properties' })).toBeNull()
+	})
+})
+
+describe('ObjectDetailIdentity', () => {
+	const identityProps = {
+		statuses: baseProps.statuses,
+		members,
+		onStatusChange: vi.fn(),
+		onDriverChange: vi.fn(),
+	}
+
+	it('renders type badge, status chip, and driver chip above the title', () => {
+		const object = buildObjectResponse({ type: 'bet', status: 'active' })
+		render(<ObjectDetailIdentity {...identityProps} object={object} />, { wrapper: makeWrapper() })
 
 		expect(screen.getByText('bet')).toBeInTheDocument()
 		expect(screen.getByText('active')).toBeInTheDocument()
@@ -65,15 +97,15 @@ describe('ObjectDetailHeader', () => {
 
 	it('renders the h1 title as static text (not an editable textarea)', () => {
 		const object = buildObjectResponse({ title: 'Static Title' })
-		render(<ObjectDetailHeader {...baseProps} object={object} />, { wrapper: makeWrapper() })
-		expect(screen.getByRole('heading', { name: 'Static Title' })).toBeInTheDocument()
+		render(<ObjectDetailIdentity {...identityProps} object={object} />, { wrapper: makeWrapper() })
+		expect(screen.getByRole('heading', { level: 1, name: 'Static Title' })).toBeInTheDocument()
 		expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
 	})
 
 	it('status dropdown offers the workspace statuses as checked options', async () => {
 		const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never })
 		const object = buildObjectResponse({ status: 'active' })
-		render(<ObjectDetailHeader {...baseProps} object={object} />, { wrapper: makeWrapper() })
+		render(<ObjectDetailIdentity {...identityProps} object={object} />, { wrapper: makeWrapper() })
 
 		await user.click(screen.getByText('active'))
 		const items = await screen.findAllByRole('option')
@@ -83,7 +115,7 @@ describe('ObjectDetailHeader', () => {
 	it('driver picker lists workspace members plus unassigned', async () => {
 		const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never })
 		const object = buildObjectResponse({ type: 'bet' })
-		render(<ObjectDetailHeader {...baseProps} object={object} />, { wrapper: makeWrapper() })
+		render(<ObjectDetailIdentity {...identityProps} object={object} />, { wrapper: makeWrapper() })
 
 		await user.click(screen.getByText('Driver: Unassigned'))
 		const items = await screen.findAllByRole('option')
@@ -92,7 +124,9 @@ describe('ObjectDetailHeader', () => {
 		expect(labels.some((l) => l.includes('Alice'))).toBe(true)
 		expect(labels.some((l) => l.includes('Bob'))).toBe(true)
 	})
+})
 
+describe('ObjectDetailHeader overflow menu', () => {
 	it('overflow menu exposes archive and delete actions', async () => {
 		const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never })
 		const object = buildObjectResponse({ type: 'bet' })

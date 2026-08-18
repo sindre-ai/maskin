@@ -1,5 +1,6 @@
 import { type FieldDefinition, FieldValueInput } from '@/components/objects/field-value-input'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
 	DropdownMenu,
 	DropdownMenuCheckboxItem,
@@ -20,7 +21,15 @@ import type { ActorListItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { SAFE_METADATA_FIELD_NAME_RE } from '@maskin/shared'
 import type { VisibilityState } from '@tanstack/react-table'
-import { ArrowDown, ArrowUp, Check, ChevronDown, SlidersHorizontal } from 'lucide-react'
+import {
+	ArrowDown,
+	ArrowUp,
+	Check,
+	ChevronDown,
+	LayoutGrid,
+	List as ListIcon,
+	SlidersHorizontal,
+} from 'lucide-react'
 import { useState } from 'react'
 
 export interface DisplayPanelColumn {
@@ -31,12 +40,26 @@ export interface DisplayPanelColumn {
 
 export type DisplayPanelView = 'list' | 'board'
 
+/** Which single property the toolbar's value-chip row drives (mockup 932–937).
+ *  The mockup also offers `Loop`; `ObjectResponse` carries no loop association,
+ *  so that axis is omitted until the API grows one. */
+export type DisplayPanelFilterAxis = 'status' | 'driver' | 'attention'
+
+export const FILTER_BY_AXES: Array<{ id: DisplayPanelFilterAxis; label: string }> = [
+	{ id: 'status', label: 'Status' },
+	{ id: 'attention', label: 'Attention' },
+	{ id: 'driver', label: 'Driver' },
+]
+
 export interface DisplayPanelProps {
 	// View (List | Board)
 	view?: DisplayPanelView
 	onViewChange?: (view: DisplayPanelView) => void
 	// Whether the active type supports board view (false hides Board and forces List)
 	boardSupported?: boolean
+	// FILTER BY — which property the toolbar chip row shows values for.
+	filterBy?: DisplayPanelFilterAxis
+	onFilterByChange?: (value: DisplayPanelFilterAxis) => void
 	// Column visibility (Properties section)
 	columns?: DisplayPanelColumn[]
 	columnVisibility?: VisibilityState
@@ -71,6 +94,8 @@ export interface DisplayPanelProps {
 	// non-bet surfaces keep their existing panel.
 	includeArchived?: boolean
 	onIncludeArchivedChange?: (value: boolean) => void
+	// Muted count rendered beside the "Show archived" label (mockup 964).
+	archivedCount?: number
 	// "Reset to default" — restores every display axis (filter/group/order/
 	// show-in-list/show-archived) to defaults. Only rendered when wired; hidden
 	// on consumers that don't opt in (same convention as the Show section).
@@ -81,12 +106,10 @@ export interface DisplayPanelProps {
 	showView?: boolean
 }
 
+// The mockup's 9.5px mono section markers (931/940/948/956) — the `.eyebrow`
+// utility already encodes exactly that treatment.
 function SectionHeader({ children }: { children: React.ReactNode }) {
-	return (
-		<p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-			{children}
-		</p>
-	)
+	return <p className="eyebrow">{children}</p>
 }
 
 // Bordered picker toggle used inside this popover (View, Properties). The
@@ -158,6 +181,8 @@ export function DisplayPanel({
 	view = 'list',
 	onViewChange,
 	boardSupported = true,
+	filterBy,
+	onFilterByChange,
 	columns = [],
 	columnVisibility,
 	onColumnVisibilityChange,
@@ -181,6 +206,7 @@ export function DisplayPanel({
 	onGroupByChange,
 	includeArchived = false,
 	onIncludeArchivedChange,
+	archivedCount,
 	onResetToDefault,
 	iconOnly = false,
 	showView = true,
@@ -329,145 +355,78 @@ export function DisplayPanel({
 			</ResponsivePopoverTrigger>
 			<ResponsivePopoverContent align="end" accessibleTitle="Display" className="md:w-80 md:p-0">
 				<div className="min-h-0 overflow-y-auto md:max-h-[480px] text-left">
-					{/* View */}
+					{/* View — segmented List | Board rail (mockup 932–937). */}
 					{showView && (
 						<>
-							<div className="p-3 space-y-2">
-								<SectionHeader>View</SectionHeader>
-								<div className="flex items-center gap-1.5">
-									<PillButton active={view === 'list'} onClick={() => handleViewChange('list')}>
+							<div className="p-1.5">
+								<div className="flex gap-1 rounded-lg bg-muted p-1">
+									<button
+										type="button"
+										aria-pressed={view === 'list'}
+										onClick={() => handleViewChange('list')}
+										className={cn(
+											'inline-flex h-8 flex-1 items-center justify-center gap-1.5 rounded-md text-xs font-semibold transition-colors',
+											view === 'list'
+												? 'bg-background text-foreground shadow-xs'
+												: 'text-muted-foreground hover:text-foreground',
+										)}
+									>
+										<ListIcon size={15} aria-hidden="true" />
 										List
-									</PillButton>
-									<PillButton
-										active={view === 'board'}
+									</button>
+									<button
+										type="button"
+										aria-pressed={view === 'board'}
 										disabled={!boardSupported}
-										onClick={boardSupported ? () => handleViewChange('board') : undefined}
 										title={
 											boardSupported
 												? undefined
 												: 'Board view needs configured statuses for this type'
 										}
+										onClick={boardSupported ? () => handleViewChange('board') : undefined}
+										className={cn(
+											'inline-flex h-8 flex-1 items-center justify-center gap-1.5 rounded-md text-xs font-semibold transition-colors',
+											view === 'board'
+												? 'bg-background text-foreground shadow-xs'
+												: 'text-muted-foreground hover:text-foreground',
+											!boardSupported && 'cursor-not-allowed opacity-50',
+										)}
 									>
+										<LayoutGrid size={15} aria-hidden="true" />
 										Board
-									</PillButton>
+									</button>
 								</div>
 							</div>
 							<Separator />
 						</>
 					)}
 
-					{/* Show — per-view visibility flags (Include archived, ...). Only
-					 * renders when the caller wires `onIncludeArchivedChange`, so
-					 * non-bet surfaces keep their existing panel shape. */}
-					{showShow && (
+					{/* FILTER BY — which single property the toolbar chip row drives. */}
+					{onFilterByChange && (
 						<>
-							<div className="p-3 space-y-2">
-								<SectionHeader>Show</SectionHeader>
-								<label
-									htmlFor="display-include-archived"
-									className={cn(
-										// `relative` anchors the invisible `::before` hit surface
-										// so the visible row stays compact while the tap target
-										// meets 44 px — iOS/mobile canon.
-										'relative flex items-center justify-between gap-2 text-xs cursor-pointer',
-										"before:absolute before:-inset-3 before:h-11 before:w-full before:content-[''] before:pointer-events-none",
-									)}
-								>
-									<span className="text-foreground">Include archived</span>
-									<Switch
-										id="display-include-archived"
-										checked={includeArchived}
-										onCheckedChange={(next) => onIncludeArchivedChange?.(next)}
-										aria-label="Include archived"
-									/>
-								</label>
-							</div>
-							<Separator />
-						</>
-					)}
-
-					{/* Ordering */}
-					{showOrdering && (
-						<>
-							<div className="p-3 space-y-2">
-								<SectionHeader>Ordering</SectionHeader>
-								<PickerRow label="Sort by" value={sortLabel} placeholder="Sort">
-									<DropdownMenu>
-										<DropdownMenuTrigger asChild>
-											<Button
-												variant="outline"
-												size="sm"
-												className="h-7 flex-1 justify-between gap-1.5 px-2 text-xs"
-											>
-												<span className="truncate capitalize">{sortLabel ?? 'Created'}</span>
-												<ChevronDown size={12} className="shrink-0 opacity-60" />
-											</Button>
-										</DropdownMenuTrigger>
-										<DropdownMenuContent align="start" className={DROPDOWN_CLS}>
-											{orderingColumns.map((col) => (
-												<DropdownMenuItem
-													key={col.id}
-													onClick={() => onSortChange?.(col.id)}
-													className="capitalize"
-												>
-													<span className="flex-1">{col.label}</span>
-													{sort === col.id && <Check size={12} className="opacity-60" />}
-												</DropdownMenuItem>
-											))}
-										</DropdownMenuContent>
-									</DropdownMenu>
-									{sort !== BOARD_MANUAL_SORT && (
-										<button
-											type="button"
-											aria-label={order === 'asc' ? 'Ascending' : 'Descending'}
-											title={order === 'asc' ? 'Ascending' : 'Descending'}
-											onClick={() => onOrderChange?.(order === 'asc' ? 'desc' : 'asc')}
-											className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:text-foreground hover:border-border-strong transition-colors"
+							<div className="p-1.5">
+								<div className="px-2.5 pt-1 pb-1">
+									<SectionHeader>Filter by</SectionHeader>
+								</div>
+								{FILTER_BY_AXES.map((axis) => (
+									<button
+										key={axis.id}
+										type="button"
+										aria-pressed={filterBy === axis.id}
+										onClick={() => onFilterByChange(axis.id)}
+										className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs transition-colors hover:bg-accent"
+									>
+										<span
+											className={cn(
+												'min-w-0 flex-1 truncate',
+												filterBy === axis.id ? 'font-semibold text-foreground' : 'text-foreground',
+											)}
 										>
-											{order === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />}
-										</button>
-									)}
-								</PickerRow>
-							</div>
-							<Separator />
-						</>
-					)}
-
-					{/* Grouping */}
-					{showGrouping && (
-						<>
-							<div className="p-3 space-y-2">
-								<SectionHeader>Grouping</SectionHeader>
-								<PickerRow label="Group by" value={groupLabel ?? 'None'} placeholder="None">
-									<DropdownMenu>
-										<DropdownMenuTrigger asChild>
-											<Button
-												variant="outline"
-												size="sm"
-												className="h-7 flex-1 justify-between gap-1.5 px-2 text-xs"
-											>
-												<span className="truncate capitalize">{groupLabel ?? 'None'}</span>
-												<ChevronDown size={12} className="shrink-0 opacity-60" />
-											</Button>
-										</DropdownMenuTrigger>
-										<DropdownMenuContent align="start" className={DROPDOWN_CLS}>
-											<DropdownMenuItem onClick={() => onGroupByChange?.(undefined)}>
-												<span className="flex-1">None</span>
-												{!groupBy && <Check size={12} className="opacity-60" />}
-											</DropdownMenuItem>
-											{groupingColumns.map((col) => (
-												<DropdownMenuItem
-													key={col.id}
-													onClick={() => onGroupByChange?.(col.id)}
-													className="capitalize"
-												>
-													<span className="flex-1">{col.label}</span>
-													{groupBy === col.id && <Check size={12} className="opacity-60" />}
-												</DropdownMenuItem>
-											))}
-										</DropdownMenuContent>
-									</DropdownMenu>
-								</PickerRow>
+											{axis.label}
+										</span>
+										{filterBy === axis.id && <Check size={12} className="opacity-60" />}
+									</button>
+								))}
 							</div>
 							<Separator />
 						</>
@@ -647,24 +606,151 @@ export function DisplayPanel({
 						</>
 					)}
 
-					{/* Properties */}
+					{/* Grouping */}
+					{showGrouping && (
+						<>
+							<div className="p-3 space-y-2">
+								<SectionHeader>Grouping</SectionHeader>
+								<PickerRow label="Group by" value={groupLabel ?? 'None'} placeholder="None">
+									<DropdownMenu>
+										<DropdownMenuTrigger asChild>
+											<Button
+												variant="outline"
+												size="sm"
+												className="h-7 flex-1 justify-between gap-1.5 px-2 text-xs"
+											>
+												<span className="truncate capitalize">{groupLabel ?? 'None'}</span>
+												<ChevronDown size={12} className="shrink-0 opacity-60" />
+											</Button>
+										</DropdownMenuTrigger>
+										<DropdownMenuContent align="start" className={DROPDOWN_CLS}>
+											<DropdownMenuItem onClick={() => onGroupByChange?.(undefined)}>
+												<span className="flex-1">None</span>
+												{!groupBy && <Check size={12} className="opacity-60" />}
+											</DropdownMenuItem>
+											{groupingColumns.map((col) => (
+												<DropdownMenuItem
+													key={col.id}
+													onClick={() => onGroupByChange?.(col.id)}
+													className="capitalize"
+												>
+													<span className="flex-1">{col.label}</span>
+													{groupBy === col.id && <Check size={12} className="opacity-60" />}
+												</DropdownMenuItem>
+											))}
+										</DropdownMenuContent>
+									</DropdownMenu>
+								</PickerRow>
+							</div>
+							<Separator />
+						</>
+					)}
+
+					{/* Ordering */}
+					{showOrdering && (
+						<>
+							<div className="p-3 space-y-2">
+								<SectionHeader>Ordering</SectionHeader>
+								<PickerRow label="Sort by" value={sortLabel} placeholder="Sort">
+									<DropdownMenu>
+										<DropdownMenuTrigger asChild>
+											<Button
+												variant="outline"
+												size="sm"
+												className="h-7 flex-1 justify-between gap-1.5 px-2 text-xs"
+											>
+												<span className="truncate capitalize">{sortLabel ?? 'Created'}</span>
+												<ChevronDown size={12} className="shrink-0 opacity-60" />
+											</Button>
+										</DropdownMenuTrigger>
+										<DropdownMenuContent align="start" className={DROPDOWN_CLS}>
+											{orderingColumns.map((col) => (
+												<DropdownMenuItem
+													key={col.id}
+													onClick={() => onSortChange?.(col.id)}
+													className="capitalize"
+												>
+													<span className="flex-1">{col.label}</span>
+													{sort === col.id && <Check size={12} className="opacity-60" />}
+												</DropdownMenuItem>
+											))}
+										</DropdownMenuContent>
+									</DropdownMenu>
+									{sort !== BOARD_MANUAL_SORT && (
+										<button
+											type="button"
+											aria-label={order === 'asc' ? 'Ascending' : 'Descending'}
+											title={order === 'asc' ? 'Ascending' : 'Descending'}
+											onClick={() => onOrderChange?.(order === 'asc' ? 'desc' : 'asc')}
+											className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground hover:text-foreground hover:border-border-strong transition-colors"
+										>
+											{order === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />}
+										</button>
+									)}
+								</PickerRow>
+							</div>
+							<Separator />
+						</>
+					)}
+
+					{/* SHOW IN LIST — checkbox rows (mockup 956–962). */}
 					{showProperties && (
-						<div className="p-3 space-y-2">
-							<SectionHeader>Properties</SectionHeader>
-							<div className="flex flex-wrap gap-1.5">
+						<>
+							<div className="p-1.5">
+								<div className="px-2.5 pt-1 pb-1">
+									<SectionHeader>Show in list</SectionHeader>
+								</div>
 								{hideableColumns.map((col) => {
 									const isVisible = columnVisibility?.[col.id] !== false
 									return (
-										<PillButton
+										<label
 											key={col.id}
-											active={isVisible}
-											onClick={() => onColumnVisibilityChange?.(col.id, !isVisible)}
+											htmlFor={`display-col-${col.id}`}
+											className="flex cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-1.5 text-xs transition-colors hover:bg-accent"
 										>
-											<span className="capitalize">{col.label}</span>
-										</PillButton>
+											<Checkbox
+												id={`display-col-${col.id}`}
+												checked={isVisible}
+												onCheckedChange={() => onColumnVisibilityChange?.(col.id, !isVisible)}
+											/>
+											<span className="min-w-0 flex-1 truncate capitalize text-foreground">
+												{col.label}
+											</span>
+										</label>
 									)
 								})}
 							</div>
+							<Separator />
+						</>
+					)}
+
+					{/* Show archived — the archived count sits between the label and
+					 * the switch (mockup 964). Only renders when the caller wires
+					 * `onIncludeArchivedChange`, so non-bet surfaces keep their shape. */}
+					{showShow && (
+						<div className="p-1.5">
+							<label
+								htmlFor="display-include-archived"
+								className={cn(
+									// `relative` anchors the invisible `::before` hit surface so
+									// the visible row stays compact while the tap target meets
+									// 44 px — iOS/mobile canon.
+									'relative flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-1.5 text-xs transition-colors hover:bg-accent',
+									"before:absolute before:-inset-1 before:h-11 before:w-full before:content-[''] before:pointer-events-none",
+								)}
+							>
+								<span className="text-foreground">Show archived</span>
+								{archivedCount !== undefined && (
+									<span className="tabular-nums text-muted-foreground">{archivedCount}</span>
+								)}
+								<Switch
+									id="display-include-archived"
+									checked={includeArchived}
+									onCheckedChange={(next) => onIncludeArchivedChange?.(next)}
+									aria-label="Show archived"
+									className="ml-auto"
+								/>
+							</label>
 						</div>
 					)}
 

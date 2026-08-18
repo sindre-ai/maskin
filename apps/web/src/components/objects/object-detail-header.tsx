@@ -6,8 +6,10 @@ import {
 	BreadcrumbPage,
 	BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb'
+import { Button } from '@/components/ui/button'
 import type { MemberResponse, ObjectResponse } from '@/lib/api'
 import { Link } from '@tanstack/react-router'
+import { PanelRight } from 'lucide-react'
 import { useState } from 'react'
 import { TypeBadge } from '../shared/type-badge'
 import { AuxiliaryActionMenu } from './auxiliary-action-menu'
@@ -22,8 +24,17 @@ interface ObjectDetailHeaderProps {
 	onDriverChange: (driver: string | null) => void
 	onDeleteRequest: () => void
 	onArchiveRequest?: () => void
+	/** Opens/closes the properties drawer (mockup 1037). Rendered only when the
+	 *  host wires it — the MCP-app embed has no drawer. */
+	onTogglePropertiesRequest?: () => void
+	propertiesOpen?: boolean
 }
 
+/**
+ * The page-level bar above the document (mockup 1033–1039): breadcrumb on the
+ * left, properties toggle + overflow menu right-aligned, one hairline rule
+ * underneath. The document scrolls in its own region below it.
+ */
 export function ObjectDetailHeader({
 	object,
 	workspaceId,
@@ -33,75 +44,114 @@ export function ObjectDetailHeader({
 	onDriverChange,
 	onDeleteRequest,
 	onArchiveRequest,
+	onTogglePropertiesRequest,
+	propertiesOpen,
 }: ObjectDetailHeaderProps) {
 	const [menuOpen, setMenuOpen] = useState(false)
 
 	return (
-		<div className="mb-8">
-			<div className="mb-3 flex items-center justify-between gap-2">
-				<Breadcrumb className="min-w-0">
-					<BreadcrumbList className="flex-nowrap">
-						<BreadcrumbItem className="shrink-0">
-							<BreadcrumbLink asChild>
-								<Link
-									to="/$workspaceId/objects"
-									params={{ workspaceId }}
-									search={{
-										type: undefined,
-										status: undefined,
-										driver: undefined,
-										sort: 'createdAt',
-										order: 'desc',
-										q: undefined,
-										groupBy: undefined,
-										ids: undefined,
-										includeArchived: undefined,
-									}}
-								>
-									Objects
-								</Link>
-							</BreadcrumbLink>
-						</BreadcrumbItem>
-						<BreadcrumbSeparator />
-						<BreadcrumbItem className="min-w-0">
-							<BreadcrumbPage className="truncate">{object.title ?? 'Untitled'}</BreadcrumbPage>
-						</BreadcrumbItem>
-					</BreadcrumbList>
-				</Breadcrumb>
-				<AuxiliaryActionMenu
-					object={object}
-					onDeleteRequest={onDeleteRequest}
-					onArchiveRequest={onArchiveRequest}
-					workspaceId={workspaceId}
-					open={menuOpen}
-					onOpenChange={setMenuOpen}
-					statuses={statuses}
-					members={members}
-					currentDriverId={object.driver ?? null}
-					onStatusChange={onStatusChange}
-					onDriverChange={onDriverChange}
-				/>
-			</div>
+		<div className="flex flex-none flex-wrap items-center gap-2 border-b border-border pb-3">
+			<Breadcrumb className="min-w-0 flex-1">
+				<BreadcrumbList className="flex-nowrap">
+					<BreadcrumbItem className="shrink-0">
+						<BreadcrumbLink asChild>
+							<Link
+								to="/$workspaceId/objects"
+								params={{ workspaceId }}
+								search={{
+									type: undefined,
+									status: undefined,
+									driver: undefined,
+									filterBy: undefined,
+									attention: undefined,
+									sort: 'createdAt',
+									order: 'desc',
+									q: undefined,
+									groupBy: undefined,
+									ids: undefined,
+									includeArchived: undefined,
+								}}
+							>
+								Objects
+							</Link>
+						</BreadcrumbLink>
+					</BreadcrumbItem>
+					<BreadcrumbSeparator />
+					<BreadcrumbItem className="min-w-0">
+						<BreadcrumbPage className="truncate">{object.title ?? 'Untitled'}</BreadcrumbPage>
+					</BreadcrumbItem>
+				</BreadcrumbList>
+			</Breadcrumb>
+			{onTogglePropertiesRequest && (
+				<Button
+					variant="outline"
+					size="icon"
+					className="shrink-0"
+					onClick={onTogglePropertiesRequest}
+					aria-label="Properties"
+					aria-expanded={propertiesOpen}
+				>
+					<PanelRight size={15} />
+				</Button>
+			)}
+			<AuxiliaryActionMenu
+				object={object}
+				onDeleteRequest={onDeleteRequest}
+				onArchiveRequest={onArchiveRequest}
+				workspaceId={workspaceId}
+				open={menuOpen}
+				onOpenChange={setMenuOpen}
+				statuses={statuses}
+				members={members}
+				currentDriverId={object.driver ?? null}
+				onStatusChange={onStatusChange}
+				onDriverChange={onDriverChange}
+			/>
+		</div>
+	)
+}
 
-			{/* Identity row — type tag, status dropdown, driver picker hoisted above
-			    the title so type/state/owner are readable before the h1. Hosts
-			    [data-hero-status-trigger] for the sticky-nav sprout-back. */}
-			<div className="mb-3 flex flex-wrap items-center gap-2">
+/**
+ * Type tag, status chip and driver chip, then the title (mockup 1056–1096).
+ * Lives inside the reader column, not the bar — the mockup reads type/state/
+ * owner before the h1. Hosts [data-hero-status-trigger] for the sticky-nav
+ * sprout-back.
+ */
+export function ObjectDetailIdentity({
+	object,
+	statuses,
+	members,
+	onStatusChange,
+	onDriverChange,
+}: {
+	object: ObjectResponse
+	statuses: string[]
+	members: MemberResponse[]
+	onStatusChange: (status: string) => void
+	onDriverChange: (driver: string | null) => void
+}) {
+	return (
+		<div className="mb-3">
+			<div className="mb-2.5 flex flex-wrap items-center gap-2">
 				<TypeBadge type={object.type} />
-				<StatusSelect
-					current={object.status}
-					options={statuses}
-					onChange={onStatusChange}
-					heroAnchor
-				/>
+				{statuses.length > 0 && (
+					<StatusSelect
+						current={object.status}
+						options={statuses}
+						onChange={onStatusChange}
+						variant="chip"
+						heroAnchor
+					/>
+				)}
 				<OwnerSelect
 					members={members}
 					currentOwnerId={object.driver ?? null}
 					onChange={onDriverChange}
+					variant="chip"
 				/>
 			</div>
 
-			<h1 className="text-2xl font-semibold leading-tight tracking-tight text-foreground">
+			<h1 className="text-[clamp(20px,2.4vw,25px)] font-bold leading-tight tracking-[-0.02em] text-foreground">
 				{object.title ?? 'Untitled'}
 			</h1>
 		</div>

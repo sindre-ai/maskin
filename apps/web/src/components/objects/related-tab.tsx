@@ -40,12 +40,22 @@ export function RelatedTab({ object }: { object: ObjectResponse }) {
 
 	const count = resolved.length
 
+	// Grouped by relationship type (mockup 1156–1172) — one labelled bordered
+	// list per edge type, in first-occurrence order.
+	const groups = useMemo(() => {
+		const byType = new Map<string, typeof resolved>()
+		for (const row of resolved) {
+			const existing = byType.get(row.rel.type)
+			if (existing) existing.push(row)
+			else byType.set(row.rel.type, [row])
+		}
+		return [...byType.entries()].map(([type, rows]) => ({ type, rows }))
+	}, [resolved])
+
 	return (
 		<div className="w-full min-w-0">
 			<div className="mb-3 flex items-center justify-between gap-2">
-				<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-					Related ({count})
-				</h3>
+				<h3 className="eyebrow">Related ({count})</h3>
 				{count > 0 && (
 					<Button
 						variant="ghost"
@@ -84,12 +94,24 @@ export function RelatedTab({ object }: { object: ObjectResponse }) {
 					}
 				/>
 			) : (
-				<RelatedObjectsTable
-					rows={resolved}
-					workspaceId={workspaceId}
-					onDeleteRelationship={(id) => deleteRelationship.mutate(id)}
-					showWhen
-				/>
+				<div className="flex flex-col gap-4">
+					{groups.map((group) => (
+						<div key={group.type}>
+							<div className="mb-1.5 flex items-baseline gap-2">
+								<span className="eyebrow">{group.type.replace(/_/g, ' ')}</span>
+								<span className="text-[10.5px] font-semibold tabular-nums text-muted-foreground/60">
+									{group.rows.length}
+								</span>
+							</div>
+							<RelatedObjectsTable
+								rows={group.rows}
+								workspaceId={workspaceId}
+								onDeleteRelationship={(id) => deleteRelationship.mutate(id)}
+								showWhen
+							/>
+						</div>
+					))}
+				</div>
 			)}
 		</div>
 	)

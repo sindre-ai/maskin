@@ -1,6 +1,7 @@
 import { TimelineTab } from '@/components/objects/timeline-tab'
 import { useObjectGraph } from '@/hooks/use-objects'
 import { render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { buildEventResponse, buildObjectResponse, buildRelationshipResponse } from '../../factories'
 import { createWorkspaceWrapper } from '../../setup'
 
@@ -102,7 +103,9 @@ describe('TimelineTab', () => {
 		expect(within(third).getAllByRole('link', { name: /Timeline tab/i })).not.toHaveLength(0)
 	})
 
-	it('omits comment events (they live in the Activity tab)', () => {
+	// The Activity/Timeline split is gone: one stream carries comments and
+	// events together (mockup 1176–1355).
+	it('renders comment events inline in the same stream as events', () => {
 		const object = buildObjectResponse({ id: 'obj-1', type: 'bet' })
 		mockGraph(
 			[
@@ -131,9 +134,39 @@ describe('TimelineTab', () => {
 		render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
 
 		const items = screen.getAllByRole('listitem')
-		expect(items).toHaveLength(1)
-		expect(within(items[0]).getByText('Status')).toBeInTheDocument()
-		expect(screen.queryByText(/commented/i)).not.toBeInTheDocument()
+		expect(items).toHaveLength(2)
+		expect(within(items[1]).getByText('Status')).toBeInTheDocument()
+		// Filter chips carry per-kind counts (mockup 1145–1152).
+		expect(screen.getByRole('button', { name: 'Comments (1)' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Status (1)' })).toBeInTheDocument()
+	})
+
+	it('narrows the stream to one kind when a filter chip is picked, and resets', async () => {
+		const user = userEvent.setup()
+		const object = buildObjectResponse({ id: 'obj-1', type: 'bet' })
+		mockGraph(
+			[
+				buildEventResponse({
+					id: 4,
+					action: 'status_changed',
+					entityType: 'bet',
+					entityId: 'obj-1',
+					actorId: 'actor-1',
+					createdAt: '2026-01-04T00:00:00Z',
+					data: { changes: [{ field: 'status', old: 'define', new: 'active' }] },
+				}),
+			],
+			[],
+			[],
+			object,
+		)
+
+		render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
+
+		await user.click(screen.getByRole('button', { name: 'Comments (0)' }))
+		expect(screen.queryByRole('listitem')).toBeNull()
+		await user.click(screen.getByRole('button', { name: 'Show all activity' }))
+		expect(screen.getAllByRole('listitem')).toHaveLength(1)
 	})
 
 	it('sorts entries newest first regardless of arrival order', () => {
@@ -187,7 +220,7 @@ describe('TimelineTab', () => {
 		render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
 
 		expect(screen.queryByRole('listitem')).not.toBeInTheDocument()
-		expect(screen.getByText('No timeline entries yet')).toBeInTheDocument()
+		expect(screen.getByText('No activity yet.')).toBeInTheDocument()
 	})
 
 	it('falls back to a denormalized title when the linked object is not in the graph', () => {
@@ -215,5 +248,89 @@ describe('TimelineTab', () => {
 
 		expect(screen.getByText('relates to')).toBeInTheDocument()
 		expect(screen.getByText('Ghost task')).toBeInTheDocument()
+	})
+	// Migrated from the retired ActivityTab: the merged stream owns unread
+	// surfacing and comment threading now.
+	it('surfaces unread activity, jumps to the first unread comment, and can mark it read', async () => {
+		const user = userEvent.setup()
+		const scrollIntoView = vi.fn()
+		Element.prototype.scrollIntoView = scrollIntoView
+
+		const object = buildObjectResponse({ id: 'obj-1', type: 'bet', unread_count: 2 })
+		mockGraph(
+			[
+				buildEventResponse({
+					id: 30,
+					action: 'status_changed',
+					entityType: 'bet',
+					entityId: 'obj-1',
+					createdAt: '2026-01-03T00:00:00Z',
+					data: { changes: [{ field: 'status', old: 'define', new: 'active' }] },
+				}),
+				buildEventResponse({
+					id: 20,
+					action: 'commented',
+					entityType: 'bet',
+					entityId: 'obj-1',
+					createdAt: '2026-01-02T00:00:00Z',
+				}),
+				buildEventResponse({
+					id: 10,
+					action: 'commented',
+					entityType: 'bet',
+					entityId: 'obj-1',
+					createdAt: '2026-01-01T00:00:00Z',
+				}),
+			],
+			[],
+			[],
+			object,
+		)
+
+		render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
+
+		expect(screen.getAllByRole('listitem')).toHaveLength(3)
+		await user.click(screen.getByRole('button', { name: '2 new' }))
+		expect(scrollIntoView).toHaveBeenCalledTimes(1)
+
+		await user.click(screen.getByRole('button', { name: 'Mark read' }))
+		expect(screen.queryByRole('button', { name: 'Mark read' })).toBeNull()
+	})
+
+	it('threads replies under their parent comment instead of listing them', () => {
+		const object = buildObjectResponse({ id: 'obj-1', type: 'bet' })
+		mockGraph(
+			[
+				buildEventResponse({
+					id: 4,
+					action: 'commented',
+					entityType: 'bet',
+					entityId: 'obj-1',
+					createdAt: '2026-01-04T00:00:00Z',
+					data: { parentEventId: 3 },
+				}),
+				buildEventResponse({
+					id: 3,
+					action: 'commented',
+					entityType: 'bet',
+					entityId: 'obj-1',
+					createdAt: '2026-01-03T00:00:00Z',
+				}),
+				buildEventResponse({
+					id: 2,
+					action: 'created',
+					entityType: 'bet',
+					entityId: 'obj-1',
+					createdAt: '2026-01-02T00:00:00Z',
+				}),
+			],
+			[],
+			[],
+			object,
+		)
+
+		render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
+
+		expect(screen.getAllByRole('listitem')).toHaveLength(2)
 	})
 })

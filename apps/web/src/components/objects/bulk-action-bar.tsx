@@ -153,6 +153,19 @@ export function BulkActionBar({
 
 				<div className="mx-1 h-5 w-px shrink-0 bg-border" aria-hidden="true" />
 
+				{onAnswerAsks && askCount > 0 && (
+					<Button
+						type="button"
+						size="sm"
+						className="shrink-0"
+						onClick={onAnswerAsks}
+						aria-label={`Answer ${askCount} asks`}
+					>
+						<MessageSquare className="size-4" />
+						Answer {askCount} {askCount === 1 ? 'ask' : 'asks'}
+					</Button>
+				)}
+
 				{onStatusChange && statusOptions.length > 0 && (
 					<Select
 						key={`status-${statusKey}`}
@@ -190,10 +203,10 @@ export function BulkActionBar({
 					disabled={ownerOptions.length === 0 || !onOwnerChange}
 				>
 					<SelectTrigger
-						aria-label="Set owner"
+						aria-label="Set driver"
 						className="shrink-0 text-sm data-[placeholder]:text-muted-foreground"
 					>
-						<SelectValue placeholder="Owner" />
+						<SelectValue placeholder="Driver" />
 					</SelectTrigger>
 					<SelectContent>
 						{ownerOptions.map((opt) => (
@@ -205,19 +218,6 @@ export function BulkActionBar({
 				</Select>
 
 				<div className="ml-auto flex shrink-0 items-center gap-1">
-					{onAnswerAsks && askCount > 0 && (
-						<Button
-							type="button"
-							variant="outline"
-							size="sm"
-							className="shrink-0"
-							onClick={onAnswerAsks}
-							aria-label={`Answer ${askCount} asks`}
-						>
-							<MessageSquare className="size-4" />
-							Answer {askCount} {askCount === 1 ? 'ask' : 'asks'}
-						</Button>
-					)}
 					{onCopyLink && (
 						<Tooltip>
 							<TooltipTrigger asChild>
@@ -303,7 +303,7 @@ export function BulkActionBar({
 							type="button"
 							variant="outline"
 							size="sm"
-							className="shrink-0"
+							className="shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
 							onClick={() => {
 								emitCommit('archive')
 								onArchive()

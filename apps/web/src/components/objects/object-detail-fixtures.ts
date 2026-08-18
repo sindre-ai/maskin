@@ -20,15 +20,26 @@ export function getAsk(object: ObjectResponse): string | null {
 	return asString(object.metadata?._ask)
 }
 
-/** Evidence block (metadata._evidence_quote/_evidence_source/_evidence_date). */
-export function getEvidence(object: ObjectResponse): EvidenceFixture | null {
-	const quote = asString(object.metadata?._evidence_quote)
-	if (!quote) return null
-	return {
-		quote,
-		source: asString(object.metadata?._evidence_source) ?? undefined,
-		date: asString(object.metadata?._evidence_date) ?? undefined,
+/**
+ * Evidence quotes. Reads the single `_evidence_quote` shape and the indexed
+ * `_evidence_quote_2` / `_evidence_quote_3` … variants, so a document can carry
+ * a row of pull-quotes (mockup 1127–1136) without a schema change.
+ */
+export function getEvidence(object: ObjectResponse): EvidenceFixture[] {
+	const metadata = object.metadata
+	if (!metadata) return []
+	const out: EvidenceFixture[] = []
+	for (let index = 1; ; index++) {
+		const suffix = index === 1 ? '' : `_${index}`
+		const quote = asString(metadata[`_evidence_quote${suffix}`])
+		if (!quote) break
+		out.push({
+			quote,
+			source: asString(metadata[`_evidence_source${suffix}`]) ?? undefined,
+			date: asString(metadata[`_evidence_date${suffix}`]) ?? undefined,
+		})
 	}
+	return out
 }
 
 /** Collapsible document fold (metadata._fold_title/_fold_markdown). */

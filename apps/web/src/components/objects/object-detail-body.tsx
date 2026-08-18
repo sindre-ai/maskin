@@ -34,7 +34,7 @@ export function ObjectDetailBody({ object }: { object: ObjectResponse }) {
 
 			{fold && <DocumentFold fold={fold} />}
 
-			{evidence && <ObjectEvidenceBlock evidence={evidence} />}
+			{evidence.length > 0 && <ObjectEvidenceBlock evidence={evidence} />}
 		</div>
 	)
 }
@@ -43,10 +43,15 @@ function DocumentFold({ fold }: { fold: { title: string; markdown: string } }) {
 	const [open, setOpen] = useState(false)
 
 	return (
-		<Collapsible open={open} onOpenChange={setOpen} className="border-t border-border pt-4">
-			<CollapsibleTrigger className="flex items-center gap-1.5 text-sm font-medium text-foreground">
-				<ChevronRight size={14} className={cn('transition-transform', open && 'rotate-90')} />
+		<Collapsible open={open} onOpenChange={setOpen}>
+			{/* Rounded pill trigger, mockup 1124–1126. */}
+			<CollapsibleTrigger className="inline-flex h-7 items-center gap-1.5 rounded-full border border-border bg-background px-3 text-[11.5px] font-semibold text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground">
 				{fold.title}
+				<ChevronRight
+					size={12}
+					aria-hidden="true"
+					className={cn('transition-transform', open && 'rotate-90')}
+				/>
 			</CollapsibleTrigger>
 			<CollapsibleContent>
 				<div className="mt-3">

@@ -19,14 +19,14 @@ describe('getAsk', () => {
 })
 
 describe('getEvidence', () => {
-	it('returns null when quote is missing', () => {
-		expect(getEvidence(buildObjectResponse({ metadata: null }))).toBeNull()
-		expect(getEvidence(buildObjectResponse({ metadata: { _evidence_source: 'src' } }))).toBeNull()
+	it('returns an empty list when quote is missing', () => {
+		expect(getEvidence(buildObjectResponse({ metadata: null }))).toEqual([])
+		expect(getEvidence(buildObjectResponse({ metadata: { _evidence_source: 'src' } }))).toEqual([])
 	})
 
 	it('returns quote without optional fields', () => {
 		const object = buildObjectResponse({ metadata: { _evidence_quote: 'A quote' } })
-		expect(getEvidence(object)).toEqual({ quote: 'A quote' })
+		expect(getEvidence(object)).toEqual([{ quote: 'A quote', source: undefined, date: undefined }])
 	})
 
 	it('returns quote with source and date', () => {
@@ -37,11 +37,26 @@ describe('getEvidence', () => {
 				_evidence_date: '2026-08-01',
 			},
 		})
-		expect(getEvidence(object)).toEqual({
-			quote: 'A quote',
-			source: 'Slack #general',
-			date: '2026-08-01',
+		expect(getEvidence(object)).toEqual([
+			{
+				quote: 'A quote',
+				source: 'Slack #general',
+				date: '2026-08-01',
+			},
+		])
+	})
+
+	// Indexed variants let a document carry a row of pull-quotes (mockup 1127).
+	it('collects indexed evidence quotes in order and stops at the first gap', () => {
+		const object = buildObjectResponse({
+			metadata: {
+				_evidence_quote: 'First',
+				_evidence_quote_2: 'Second',
+				_evidence_source_2: 'Slack',
+				_evidence_quote_4: 'Never reached',
+			},
 		})
+		expect(getEvidence(object).map((e) => e.quote)).toEqual(['First', 'Second'])
 	})
 })
 

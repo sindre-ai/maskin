@@ -289,7 +289,8 @@ describe('BoardView', () => {
 		expect(screen.getAllByTestId('board-card-skeleton')).toHaveLength(4)
 	})
 
-	it('shows the per-column empty hint when a column has no objects and is not loading', () => {
+	// Mockup 988: an empty column reads as the drop target itself, nothing more.
+	it('shows the per-column drop target when a column has no objects and is not loading', () => {
 		render(
 			<BoardView
 				objectType="task"
@@ -298,11 +299,10 @@ describe('BoardView', () => {
 				objects={[]}
 			/>,
 		)
-		expect(screen.getByText('Nothing here yet.')).toBeInTheDocument()
-		expect(screen.getByText('Drag a card to todo.')).toBeInTheDocument()
+		expect(screen.getByText('Drop here')).toBeInTheDocument()
 	})
 
-	it('uses the active status name in the empty hint', () => {
+	it('names the column with its status label in the header', () => {
 		render(
 			<BoardView
 				objectType="insight"
@@ -311,7 +311,7 @@ describe('BoardView', () => {
 				objects={[]}
 			/>,
 		)
-		expect(screen.getByText('Drag a card to under review.')).toBeInTheDocument()
+		expect(screen.getByText('under review')).toBeInTheDocument()
 	})
 
 	it('renders the drop cue below existing cards when a column is a valid target', () => {

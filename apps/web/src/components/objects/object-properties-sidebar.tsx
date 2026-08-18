@@ -48,9 +48,7 @@ export function ObjectPropertiesSidebar({
 			className="pointer-events-auto"
 		>
 			<SidebarHeader className="flex-row items-center justify-between gap-2 border-b border-border px-3 py-2">
-				<span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-					Properties
-				</span>
+				<span className="eyebrow">Properties</span>
 				<CollapseToggle />
 			</SidebarHeader>
 			<SidebarContent className="min-h-0 flex-1 overflow-y-auto px-3 py-3.5">
@@ -122,18 +120,18 @@ export function ObjectPropertiesSidebar({
 	)
 }
 
+// The drawer's mono section markers (mockup 1437, 1479, 1490).
 function SectionLabel({ children }: { children: React.ReactNode }) {
-	return (
-		<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-			{children}
-		</h3>
-	)
+	return <h3 className="eyebrow">{children}</h3>
 }
 
+// 84px label column, mockup 1383.
 function CorePropertyRow({ label, children }: { label: string; children: React.ReactNode }) {
 	return (
-		<div className="flex items-center gap-2 py-1">
-			<span className="w-20 shrink-0 truncate text-xs text-muted-foreground sm:w-28">{label}</span>
+		<div className="flex items-center gap-2.5 py-1">
+			<span className="w-[84px] shrink-0 truncate text-[11.5px] text-muted-foreground">
+				{label}
+			</span>
 			<div className="min-w-0 flex-1">{children}</div>
 		</div>
 	)
