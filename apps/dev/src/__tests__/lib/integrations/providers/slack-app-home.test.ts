@@ -162,6 +162,8 @@ describe('publishAppHomeView', () => {
 		const { publishAppHomeView } = await import(
 			'../../../../lib/integrations/providers/slack/webhooks'
 		)
+		const { logger } = await import('../../../../lib/logger')
+		const infoSpy = vi.spyOn(logger, 'info').mockImplementation(() => {})
 		const inbox: InboxRow[] = [
 			{
 				id: 'n1',
@@ -211,6 +213,14 @@ describe('publishAppHomeView', () => {
 		const subscripts = contextBlocks.map((c) => c.elements[0]?.text)
 		expect(subscripts[0]).toBe('<#7C1F1A|↳ Workspace Coach (Acme)>')
 		expect(subscripts[1]).toBe('<#7C1F1A|↳ Architect (Acme)>')
+
+		// rowCount log field must reflect the inbox row count, not Block Kit
+		// block count — alerts tuned on rowCount would otherwise be misled.
+		expect(infoSpy).toHaveBeenCalledWith(
+			'Slack App Home: published For You view',
+			expect.objectContaining({ rowCount: 2 }),
+		)
+		infoSpy.mockRestore()
 	})
 
 	it('renders the agent-only subscript when the workspace row is missing', async () => {
@@ -371,6 +381,28 @@ describe('publishAppHomeView', () => {
 		expect(_internal.formatAgentSubscript('Pipe|Bot', 'Sharp<Acme>')).toBe(
 			'↳ Pipe&#124;Bot (Sharp&lt;Acme&gt;)',
 		)
+	})
+
+	it('evicts stale debounce entries older than DEBOUNCE_MS * 2 on each write', async () => {
+		const { publishAppHomeView, _appHomeDebounceSize } = await import(
+			'../../../../lib/integrations/providers/slack/webhooks'
+		)
+		const db = makeFakeDb({
+			link: { actorId: 'actor-1', defaultWorkspaceId: 'ws-1' },
+			inbox: [],
+		})
+
+		const t0 = 1_000_000
+		await publishAppHomeView({ db: db as never, teamId: 'T1', slackUserId: 'U1', now: t0 })
+		expect(_appHomeDebounceSize()).toBe(1)
+		// A publish for a different user > 2s later must evict U1's stale entry.
+		await publishAppHomeView({
+			db: db as never,
+			teamId: 'T1',
+			slackUserId: 'U2',
+			now: t0 + 3_000,
+		})
+		expect(_appHomeDebounceSize()).toBe(1)
 	})
 
 	it('app_home_opened normalizer round-trip emits slack.app_home_opened', async () => {

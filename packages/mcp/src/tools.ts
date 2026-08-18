@@ -64,13 +64,12 @@ const actorLlmConfigSchema = z
 			.string()
 			.optional()
 			.describe('LLM provider to run this agent on, e.g. "anthropic", "openai".'),
-		api_key: z.string().optional().describe('API key for the given provider.'),
 		model: z.string().optional().describe('Model identifier to use, e.g. "claude-opus-4-6".'),
 	})
 	.passthrough()
 	.optional()
 	.describe(
-		'Agents only — not used for humans. Configures which LLM this agent runs on: provider, api_key, and model. Extra provider-specific keys are passed through as-is.',
+		"Agents only — not used for humans. Configures which LLM this agent runs on: provider and model. Every agent runs on its workspace's connected LLM credentials (the Claude subscription or API key connected under Settings → Keys) — per-agent API key overrides are not supported here. Extra provider-specific keys are passed through as-is.",
 	)
 
 /**
@@ -209,7 +208,7 @@ export const tools = {
 							.string()
 							.optional()
 							.describe(
-								"Status for the new object. Omit unless the user explicitly asked for a specific status — when omitted, the object is created at the lowest (first) status configured for its type in this workspace (e.g. bet → signal, insight → new). Statuses are earned through the workspace's promotion flow, not drafted at creation.",
+								"Object status. Bets are always created at `signal` — the founders' go/no-go gate — regardless of what is sent here; the server ignores this field for `bet` nodes and it can be omitted. Required for every other type.",
 							),
 						metadata: z
 							.record(z.unknown())
@@ -522,7 +521,7 @@ export const tools = {
 	},
 	create_actor: {
 		description:
-			'Create a new actor (human or agent) and optionally add them to a workspace. Returns the actor details and API key (only shown once). If workspace_id is provided, the actor is added as a member with the given role — this is how to add a brand-new actor to a workspace as part of creating them. To add an already-existing actor to a workspace, use update_actor with workspace_id/role instead. If auto_create_workspace is true (default for humans), a new, empty workspace is created instead. For agents, set tools.mcpServers and/or attach_skill_ids so the agent has its MCP servers and skills from the start. attach_skill_ids requires workspace_id — with auto_create_workspace the new workspace has no existing skills, so any attach_skill_ids passed alongside it are ignored.',
+			'Create a new actor (human or agent). Returns the actor details and API key (only shown once). If workspace_id is provided, the actor is added as a member with the given role — this is how to add a brand-new actor to a workspace as part of creating them. To add an already-existing actor to a workspace, use update_actor with workspace_id/role instead. If auto_create_workspace is true (default for humans), a new, empty workspace is created instead. For agents, set tools.mcpServers and/or attach_skill_ids so the agent has its MCP servers and skills from the start. attach_skill_ids requires workspace_id — with auto_create_workspace the new workspace has no existing skills, so any attach_skill_ids passed alongside it are ignored.',
 		inputSchema: z.object({
 			type: z.enum(['human', 'agent']),
 			name: z.string().min(1).describe('Name of actor'),
@@ -547,7 +546,6 @@ export const tools = {
 			description: z
 				.string()
 				.max(80)
-				.optional()
 				.describe(
 					'Short one-liner (max 80 chars) summarizing the actor. For agents this is shown on the Agents page list and sub-page so teammates can tell agents apart at a glance.',
 				),
@@ -555,20 +553,20 @@ export const tools = {
 				.string()
 				.optional()
 				.describe(
-					"Instructions defining the agent's behavior. Only meaningful for agents — not used for humans. If omitted for an agent, sessions fall back to a generic default prompt.",
+					"Agents only — not used for humans. This is the single most important param for agent quality: it's what makes the agent an expert rather than a generic assistant, so invest real effort here. Write it as an opinionated subject-matter-expert persona, not a bland instruction list — give the agent a clear domain and job-to-be-done, a decision framework it applies (plus a couple of named biases it leans on), explicit scope boundaries, guidance on how/when to use its tools, the output format it should produce, and ideally a few worked examples that each end in a concrete recommendation plus its assumptions. Bias the agent against hedging — it should state a recommendation, not equivocate. If omitted for an agent, sessions fall back to a generic default prompt, which produces a generic, non-expert agent.",
 				),
 			tools: z
 				.record(z.unknown())
 				.optional()
 				.describe(
-					'MCP server config for agents: { mcpServers: { <name>: { command, args, env } } }.',
+					'MCP server config for agents: { mcpServers: { <name>: { command, args, env } } }. Critical for any agent whose job requires taking action outside Maskin itself — without the relevant MCP server connected here, the agent can have a perfect system_prompt and still be unable to actually do its job.',
 				),
 			llm_config: actorLlmConfigSchema,
 			attach_skill_ids: z
 				.array(z.string().uuid())
 				.optional()
 				.describe(
-					'Workspace skill IDs to attach to this actor on creation. Agents only — skills configure agent behavior and are not used for humans.',
+					'Workspace skill IDs to attach to this actor on creation — skills are what push an agent from "just a well-written prompt" to expert-level at its actual job, so treat this as seriously as system_prompt. Agents only — not used for humans. Before creating, check the workspace\'s existing skills (list_workspace_skills) for ones that genuinely match this agent\'s job and attach those. If none of the existing skills fit, do not attach unrelated ones just to fill this field — instead, after creation, flag to the user that no matching skill was found and ask whether one should be authored (create_workspace_skill).',
 				),
 		}),
 	},
@@ -630,7 +628,7 @@ export const tools = {
 	},
 	list_actors: {
 		description:
-			"List actors (humans and agents). If workspace_id is provided, returns members of that workspace with their role. If omitted, returns actors across all workspaces the caller belongs to, each annotated with their workspace memberships. Each row includes the actor's short `description` (one-liner) — call `get_actor` for the full `system_prompt` (instructions), which is how to pick up context on a human teammate @mentioned in a comment. When response scoping is enabled the workspace-scoped path pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.",
+			"List actors (humans and agents). If workspace_id is provided, returns members of that workspace with their role. If omitted, returns actors across all workspaces the caller belongs to, each annotated with their workspace memberships. Each row includes the actor's short `description` (one-liner) — call `get_actor` for the full `system_prompt` (instructions), which is how to pick up context on a human teammate @mentioned in a comment. When `workspace_id` is set, each row also includes `connectedTriggers`/`connectedLoops` — the triggers and loops wired to that actor, each as `{ name, url }` (omitted when there are none, and always omitted for the cross-workspace listing, since a trigger/loop belongs to exactly one workspace). When response scoping is enabled the workspace-scoped path pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.",
 		inputSchema: z.object({
 			workspace_id: z
 				.string()
@@ -639,8 +637,16 @@ export const tools = {
 				.describe(
 					'Optional workspace ID to scope the listing to. If omitted, returns actors across all workspaces the caller belongs to (each with their workspace memberships).',
 				),
-			limit: z.number().int().min(1).max(100).optional(),
-			offset: z.number().int().min(0).optional(),
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(100)
+				.optional()
+				.describe(
+					'Max rows to return (1-100). Defaults to 25 when response scoping is enabled, or 50 otherwise.',
+				),
+			offset: z.number().int().min(0).optional().describe('Number of rows to skip. Defaults to 0.'),
 			cursor: z
 				.string()
 				.optional()
@@ -651,9 +657,16 @@ export const tools = {
 	},
 	get_actor: {
 		description:
-			'Get an actor by ID — returns the full record including `description` (short one-liner), `system_prompt` / instructions (longer context on who the actor is and how to work with them), and `skills` (id + name of workspace skills attached to the actor). When a human is @mentioned on a comment, call this to pick up their instructions and tailor your reply.',
+			"Get an actor by ID — returns the full record including `description` (short one-liner), `system_prompt` / instructions (longer context on who the actor is and how to work with them), `skills` (id + name of workspace skills attached to the actor), and `connectedTriggers`/`connectedLoops` (the triggers/loops wired to this actor, same as `list_actors`). When `workspace_id` is given, `status` reflects the actor's membership role in that workspace (owner/admin/member), matching `list_actors`' workspace-scoped `status`. When a human is @mentioned on a comment, call this to pick up their instructions and tailor your reply.",
 		inputSchema: z.object({
 			id: z.string().uuid(),
+			workspace_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'Workspace to resolve against: the returned `url`, `status` (membership role in this workspace), and `connectedTriggers`/`connectedLoops` are all scoped to this workspace. Defaults to the connection default workspace if omitted.',
+				),
 		}),
 	},
 	create_workspace: {
