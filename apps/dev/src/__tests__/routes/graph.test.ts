@@ -199,5 +199,84 @@ describe('Graph Routes', () => {
 			const body = await res.json()
 			expect(body.error.message).toContain('Invalid status')
 		})
+
+		it('returns 400 when a non-bet node omits status', async () => {
+			const ws = buildWorkspace({ id: wsId })
+			const { app, mockResults } = createTestApp(graphRoutes, '/api/graph')
+			mockResults.selectQueue = [[ws]]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/graph',
+					{
+						nodes: [{ $id: 'task-1', type: 'task', title: 'A' }],
+						edges: [],
+					},
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.message).toContain("Missing status for type 'task'")
+		})
+
+		it("creates a bet at 'signal' when no status is supplied", async () => {
+			const ws = buildWorkspace({ id: wsId })
+			const created = buildObject({ workspaceId: wsId, type: 'bet', status: 'signal' })
+			const { app, mockResults, calls } = createTestApp(graphRoutes, '/api/graph')
+			mockResults.selectQueue = [[ws]]
+			// insert: node returning, node event, autoSubscribe
+			mockResults.insertQueue = [[created], [{}], []]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/graph',
+					{
+						nodes: [{ $id: 'bet-1', type: 'bet', title: 'A' }],
+						edges: [],
+					},
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(201)
+			const objectInserts = calls.inserts.filter(
+				(v): v is { type?: string; status?: string } =>
+					typeof v === 'object' && v !== null && 'type' in v && 'status' in v,
+			)
+			const betInsert = objectInserts.find((i) => i.type === 'bet')
+			expect(betInsert?.status).toBe('signal')
+		})
+
+		it("overrides any caller-supplied non-signal status to 'signal' on a bet", async () => {
+			const ws = buildWorkspace({ id: wsId })
+			const created = buildObject({ workspaceId: wsId, type: 'bet', status: 'signal' })
+			const { app, mockResults, calls } = createTestApp(graphRoutes, '/api/graph')
+			mockResults.selectQueue = [[ws]]
+			mockResults.insertQueue = [[created], [{}], []]
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/graph',
+					{
+						nodes: [{ $id: 'bet-1', type: 'bet', title: 'A', status: 'active' }],
+						edges: [],
+					},
+					{ 'x-workspace-id': wsId },
+				),
+			)
+
+			expect(res.status).toBe(201)
+			const objectInserts = calls.inserts.filter(
+				(v): v is { type?: string; status?: string } =>
+					typeof v === 'object' && v !== null && 'type' in v && 'status' in v,
+			)
+			const betInsert = objectInserts.find((i) => i.type === 'bet')
+			expect(betInsert?.status).toBe('signal')
+		})
 	})
 })
