@@ -125,12 +125,20 @@ describe('getPortraitStatus', () => {
 		expect(getPortraitStatus({ agentState: 'running' }, 'idle')).toBe('running')
 	})
 
-	it('prefers paused agentState', () => {
-		expect(getPortraitStatus({ agentState: 'paused' }, 'working')).toBe('paused')
+	it('prefers paused agentState when no session is active', () => {
+		expect(getPortraitStatus({ agentState: 'paused' }, 'idle')).toBe('paused')
 	})
 
-	it('prefers failed agentState', () => {
+	it('prefers failed agentState when no session is active', () => {
 		expect(getPortraitStatus({ agentState: 'failed' }, 'idle')).toBe('failed')
+	})
+
+	it('surfaces an active session as running even when agentState is paused', () => {
+		expect(getPortraitStatus({ agentState: 'paused' }, 'working')).toBe('running')
+	})
+
+	it('surfaces an active session as running even when agentState is failed', () => {
+		expect(getPortraitStatus({ agentState: 'failed' }, 'working')).toBe('running')
 	})
 
 	it('falls back to session-derived working when agentState is idle/missing', () => {

@@ -21,6 +21,7 @@ type SessionStub = {
 
 function fakeDb(servers: ServerStub[], sessionsRows: SessionStub[]) {
 	const sessionsById = new Map(sessionsRows.map((s) => [s.id, s]))
+	const insertedEvents: Array<Record<string, unknown>> = []
 
 	// pickLeastLoadedServer issues .select({...}).from(agentServers).where(...).
 	// We satisfy that one shape and compute `active` from sessionsRows directly.
@@ -105,10 +106,23 @@ function fakeDb(servers: ServerStub[], sessionsRows: SessionStub[]) {
 		}),
 	})
 
+	// markDispatched inserts an `events` row (entityType 'session') once a
+	// session reaches 'running' — the frontend's live-activity surfaces (e.g.
+	// the chat typing indicator) rely on this to refetch past a stale
+	// 'pending' snapshot. No-op the write but record it for assertions.
+	const insert = (_table: unknown) => ({
+		values: (row: Record<string, unknown>) => {
+			insertedEvents.push(row)
+			return Promise.resolve()
+		},
+	})
+
 	return {
 		select,
 		update,
+		insert,
 		_sessions: sessionsById,
+		_insertedEvents: insertedEvents,
 	}
 }
 
@@ -305,7 +319,7 @@ describe('SessionDispatcher.dispatch', () => {
 			startedAt: null,
 		}
 		const startSession = vi.fn(async (_req: StartSessionRequest) => startResponse('s-1'))
-		const { dispatcher, client } = setup([sess], { startSession })
+		const { dispatcher, client, db } = setup([sess], { startSession })
 
 		const result = await dispatcher.dispatch('s-1', 'dispatch:s-1')
 
@@ -315,6 +329,15 @@ describe('SessionDispatcher.dispatch', () => {
 		expect(sess.agentServerId).toBe(SERVER.id)
 		expect(sess.status).toBe('running')
 		expect(sess.containerId).toBe('sb-s-1')
+		// Regression guard: without this event, live-activity surfaces (e.g.
+		// the chat typing indicator) never learn the session left 'pending'.
+		expect(db._insertedEvents).toContainEqual(
+			expect.objectContaining({
+				action: 'session_started',
+				entityType: 'session',
+				entityId: 's-1',
+			}),
+		)
 	})
 
 	it('maps 401 to permanent_failure and releases the slot', async () => {
@@ -381,6 +404,64 @@ describe('SessionDispatcher.dispatch', () => {
 		expect(startSession).not.toHaveBeenCalled()
 		// slot released
 		expect(sess.agentServerId).toBeNull()
+	})
+
+	it('seeds the initial interactive turn after a successful dispatch', async () => {
+		const sess: SessionStub = {
+			id: 's-1',
+			status: 'starting',
+			agentServerId: null,
+			containerId: null,
+			startedAt: null,
+		}
+		const startSession = vi.fn(async (_req: StartSessionRequest) => startResponse('s-1'))
+		const db = fakeDb([SERVER], [sess])
+		const client = makeClient({ startSession })
+		const seedInteractiveTurn = vi.fn(async () => {})
+		const dispatcher = new SessionDispatcher({
+			// biome-ignore lint/suspicious/noExplicitAny: fake DB
+			db: db as any,
+			buildStartRequest: async (sessionId) => defaultStartReq(sessionId),
+			clientFactory: () => client,
+			seedInteractiveTurn,
+		})
+
+		const result = await dispatcher.dispatch('s-1', 'dispatch:s-1')
+
+		expect(result).toEqual({ kind: 'dispatched' })
+		expect(seedInteractiveTurn).toHaveBeenCalledTimes(1)
+		expect(seedInteractiveTurn).toHaveBeenCalledWith('s-1')
+	})
+
+	it('still reports dispatched when seedInteractiveTurn throws', async () => {
+		const sess: SessionStub = {
+			id: 's-1',
+			status: 'starting',
+			agentServerId: null,
+			containerId: null,
+			startedAt: null,
+		}
+		const startSession = vi.fn(async (_req: StartSessionRequest) => startResponse('s-1'))
+		const db = fakeDb([SERVER], [sess])
+		const client = makeClient({ startSession })
+		const seedInteractiveTurn = vi.fn(async () => {
+			throw new Error('agent-server unreachable')
+		})
+		const dispatcher = new SessionDispatcher({
+			// biome-ignore lint/suspicious/noExplicitAny: fake DB
+			db: db as any,
+			buildStartRequest: async (sessionId) => defaultStartReq(sessionId),
+			clientFactory: () => client,
+			seedInteractiveTurn,
+		})
+
+		const result = await dispatcher.dispatch('s-1', 'dispatch:s-1')
+
+		// Sandbox is already up — a seed failure must not undo the dispatch or
+		// release the slot back to the pool.
+		expect(result).toEqual({ kind: 'dispatched' })
+		expect(sess.status).toBe('running')
+		expect(sess.agentServerId).toBe(SERVER.id)
 	})
 
 	it('returns transient_failure when buildStartRequest throws', async () => {

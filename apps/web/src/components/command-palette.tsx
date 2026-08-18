@@ -5,7 +5,6 @@ import {
 	trackSearchResultOpened,
 } from '@/lib/analytics'
 import type { ObjectResponse } from '@/lib/api'
-import { useChat } from '@/lib/chat-context'
 import { useCommandPalette } from '@/lib/command-palette-context'
 import { typeLabel } from '@/lib/constants'
 import { highlightText } from '@/lib/search-highlight'
@@ -26,7 +25,6 @@ const SEARCH_DEBOUNCE_MS = 300
 export function CommandPalette() {
 	const { open, setOpen } = useCommandPalette()
 	const { workspaceId } = useWorkspace()
-	const { setOpen: setChatOpen } = useChat()
 	const navigate = useNavigate()
 
 	const [query, setQuery] = useState('')
@@ -52,9 +50,8 @@ export function CommandPalette() {
 	)
 
 	const openChat = useCallback(() => {
-		setChatOpen(true)
-		setOpen(false)
-	}, [setChatOpen, setOpen])
+		navigateTo(`/${workspaceId}/chats/new`)
+	}, [navigateTo, workspaceId])
 
 	// One `command_palette_opened` per open transition, fired on any route —
 	// the success-metric funnel denominator. The /search route fires the same
@@ -119,8 +116,7 @@ export function CommandPalette() {
 			}
 			if (e.key === 'j' && (e.metaKey || e.ctrlKey)) {
 				e.preventDefault()
-				setChatOpen(true)
-				setOpen(false)
+				openChat()
 			}
 			if (e.key === 'Escape') {
 				// First Esc clears the query; a second Esc closes the panel.
@@ -133,7 +129,7 @@ export function CommandPalette() {
 		}
 		document.addEventListener('keydown', handler)
 		return () => document.removeEventListener('keydown', handler)
-	}, [setChatOpen, setOpen])
+	}, [openChat, setOpen])
 
 	if (!open) return null
 

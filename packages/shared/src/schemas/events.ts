@@ -55,4 +55,19 @@ export const createCommentSchema = z.object({
 		.describe(
 			'To prompt the human for a structured decision, pass { chips: ["Option A", "Option B", "Skip"] } — up to 5 string options, each up to 20 characters. The UI renders them as quick-reply buttons the human can tap, with a free-text fallback. Their reply is threaded under this comment. To surface a live task checklist, pass { tasks: ["<task-uuid>", ...] } — each row renders as a checkbox (checked iff the task\'s status is done/completed/succeeded), a link to the task, and its driver avatar, and updates automatically when the referenced task changes.',
 		),
+	attention: z
+		.number()
+		.int()
+		.min(1)
+		.max(5)
+		.optional()
+		.describe(
+			"How important and urgent this comment is for the human reading it, on a 1-5 scale. Score it yourself, from the human's point of view — this drives the ordering of their For You feed, so score consistently rather than defaulting to the middle every time:\n" +
+				'5 = Critical — blocks progress right now or needs an urgent human decision (e.g. something is broken, a deadline/money is at risk, an approval is blocking work).\n' +
+				"4 = High — an important decision or blocker coming up that the human should look at today, but it isn't on fire.\n" +
+				'3 = Normal — a noteworthy update, finding, or question; worth a look when convenient, no rush.\n' +
+				'2 = Low — a minor note, context, or non-blocking observation.\n' +
+				'1 = FYI — nice to know, purely informational, no action expected.\n' +
+				"Leave unset if you genuinely can't judge urgency; an unset score sorts below any scored comment. Reserve 5 for things that are genuinely business-critical — inflating scores buries the comments that actually need it.",
+		),
 })

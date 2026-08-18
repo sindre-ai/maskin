@@ -2,7 +2,7 @@ import { readFallbackConfig } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 
 // Shared helper for one-shot LLM calls made from backend services (e.g. the
-// agent-builder pipeline and the public bet-strategist draft endpoint). Wraps
+// public bet-strategist draft endpoint). Wraps
 // the OpenAI-shape chat completions endpoint the workspace already uses via
 // MASKIN_FALLBACK_OPENROUTER_KEY / MASKIN_FALLBACK_BASE_URL / MASKIN_FALLBACK_SMALL_MODEL.
 // Keeping this in one place ensures both callers pick up the same env var
