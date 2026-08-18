@@ -29,6 +29,7 @@ export const queryKeys = {
 		messages: (id: string, filters?: Record<string, unknown>) =>
 			['conversations', 'detail', id, 'messages', filters] as const,
 		messagesPrefix: (id: string) => ['conversations', 'detail', id, 'messages'] as const,
+		unreadCount: (workspaceId: string) => ['conversations', workspaceId, 'unreadCount'] as const,
 	},
 	actors: {
 		all: (workspaceId?: string) => ['actors', workspaceId] as const,

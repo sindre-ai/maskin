@@ -8,30 +8,43 @@ import {
 	SidebarMenu,
 	SidebarRail,
 } from '@/components/ui/sidebar'
+import { useChatUnreadCount } from '@/hooks/use-chat-unread'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useUnread } from '@/hooks/use-subscriptions'
 import { useWorkspace } from '@/lib/workspace-context'
 import { getEnabledObjectTypeTabs } from '@maskin/module-sdk'
-import { Bot, Layers, MessageSquare, RefreshCw, Store, Zap } from 'lucide-react'
+import { Layers, MessageSquare, RefreshCw, Store, Zap } from 'lucide-react'
 import { useMemo } from 'react'
 import { NavUser } from './nav-user'
 import { SidebarActivity } from './sidebar-activity'
-import { SidebarFavorites } from './sidebar-favorites'
 import { SidebarNavItem, type SidebarNavItemDef } from './sidebar-nav-item'
+import { SidebarReleaseCard } from './sidebar-release-card'
 import { WorkspaceSwitcher } from './workspace-switcher'
 
 const FOR_YOU_ROUTE = '/$workspaceId' as const
+const CHATS_ROUTE = '/$workspaceId/chats' as const
 
+// v2 nav inventory — mockup `navDefs` (For you, Chats, Loops, Objects) and
+// `navSecondaryDefs` (Marketplace). Agents and Triggers are deliberately absent:
+// Agents is reached through the working-agents card in the footer, triggers
+// through the "Not tied to a loop" group on Loops. Both routes stay mounted, so
+// deep links and bookmarks keep resolving.
+//
 // `key` is the stable analytics identifier for `nav_item_clicked` — never rename
 // after ship without coordinating with the PostHog query in the parent bet
 // (`metadata.posthog_query`).
 const coreNavItems: SidebarNavItemDef[] = [
-	{ key: 'for-you', label: 'For You', to: FOR_YOU_ROUTE, exact: true, icon: Zap },
-	{ key: 'chats', label: 'Chats', to: '/$workspaceId/chats', icon: MessageSquare },
-	{ key: 'agents', label: 'Agents', to: '/$workspaceId/agents', icon: Bot },
+	{ key: 'for-you', label: 'For you', to: FOR_YOU_ROUTE, exact: true, icon: Zap },
+	{ key: 'chats', label: 'Chats', to: CHATS_ROUTE, icon: MessageSquare },
 	{ key: 'loops', label: 'Loops', to: '/$workspaceId/loops', icon: RefreshCw },
-	{ key: 'triggers', label: 'Triggers', to: '/$workspaceId/triggers', icon: Zap },
 ]
+
+const objectsNavItem: SidebarNavItemDef = {
+	key: 'objects',
+	label: 'Objects',
+	to: '/$workspaceId/objects',
+	icon: Layers,
+}
 
 const marketplaceItem: SidebarNavItemDef = {
 	key: 'marketplace',
@@ -45,14 +58,12 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 	const enabledModules = useEnabledModules()
 	const { data: unread } = useUnread(workspaceId)
 	const unreadCount = unread?.items.length ?? 0
+	const chatUnread = useChatUnreadCount(workspaceId)
 
 	const navItems = useMemo(() => {
+		// Objects only earns a nav slot once the workspace has object types to show.
 		const hasObjectTypes = getEnabledObjectTypeTabs(enabledModules).length > 0
-		const [pulse, ...rest] = coreNavItems
-		const objectsItem: SidebarNavItemDef[] = hasObjectTypes
-			? [{ key: 'objects', label: 'Objects', to: '/$workspaceId/objects', icon: Layers }]
-			: []
-		return [pulse, ...objectsItem, ...rest]
+		return hasObjectTypes ? [...coreNavItems, objectsNavItem] : coreNavItems
 	}, [enabledModules])
 
 	return (
@@ -68,6 +79,15 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 								{item.to === FOR_YOU_ROUTE && (
 									<UnreadBadge
 										count={unreadCount}
+										variant="plain"
+										className="ml-auto group-data-[collapsible=icon]:hidden"
+									/>
+								)}
+								{item.to === CHATS_ROUTE && (
+									<UnreadBadge
+										count={chatUnread.count}
+										overflow={chatUnread.hasMore}
+										variant="plain"
 										className="ml-auto group-data-[collapsible=icon]:hidden"
 									/>
 								)}
@@ -75,12 +95,12 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 						))}
 					</SidebarMenu>
 				</SidebarGroup>
-				<SidebarFavorites />
 			</SidebarContent>
 			<SidebarFooter>
 				<SidebarMenu>
 					<SidebarNavItem item={marketplaceItem} source="footer" />
 				</SidebarMenu>
+				<SidebarReleaseCard />
 				<SidebarActivity workspaceId={workspaceId} />
 				<NavUser />
 			</SidebarFooter>

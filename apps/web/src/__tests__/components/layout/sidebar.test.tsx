@@ -10,10 +10,8 @@ vi.mock('@/hooks/use-subscriptions', () => ({
 	useUnread: vi.fn(() => ({ data: { items: [] } })),
 }))
 
-// SidebarFavorites resolves pinned ids through useFiles; with nothing pinned the
-// group renders nothing, and the hook must not hit the real API in this suite.
-vi.mock('@/hooks/use-files', () => ({
-	useFiles: vi.fn(() => ({ data: undefined })),
+vi.mock('@/hooks/use-chat-unread', () => ({
+	useChatUnreadCount: vi.fn(() => ({ count: 0, hasMore: false })),
 }))
 
 vi.mock('@maskin/module-sdk', () => ({
@@ -61,6 +59,10 @@ vi.mock('@/components/ui/sidebar', () => ({
 	useSidebar: () => ({ setOpenMobile }),
 }))
 
+vi.mock('@/components/layout/sidebar-release-card', () => ({
+	SidebarReleaseCard: () => <div data-testid="sidebar-release-card">SidebarReleaseCard</div>,
+}))
+
 vi.mock('@/components/layout/sidebar-activity', () => ({
 	SidebarActivity: () => <div data-testid="sidebar-activity">SidebarActivity</div>,
 }))
@@ -73,20 +75,25 @@ vi.mock('@/components/layout/workspace-switcher', () => ({
 	WorkspaceSwitcher: () => <div data-testid="workspace-switcher">WorkspaceSwitcher</div>,
 }))
 
+import { useChatUnreadCount } from '@/hooks/use-chat-unread'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useUnread } from '@/hooks/use-subscriptions'
 
 describe('AppSidebar', () => {
-	it('renders core navigation items', () => {
+	it('renders the v2 core navigation items in mockup order', () => {
 		render(<AppSidebar />)
-		expect(screen.getByText('For You')).toBeInTheDocument()
+		expect(screen.getByText('For you')).toBeInTheDocument()
 		expect(screen.getByText('Chats')).toBeInTheDocument()
-		expect(screen.getByText('Agents')).toBeInTheDocument()
-		expect(screen.getByText('Triggers')).toBeInTheDocument()
+		expect(screen.getByText('Loops')).toBeInTheDocument()
+		expect(screen.getByText('Objects')).toBeInTheDocument()
 	})
 
-	it('does not render Activity or Briefing top-nav entries', () => {
+	// v2 reaches Agents through the working-agents card and triggers through the
+	// "Not tied to a loop" group on Loops — neither is a nav entry.
+	it('does not render Agents, Triggers, Activity or Briefing nav entries', () => {
 		render(<AppSidebar />)
+		expect(screen.queryByText('Agents')).not.toBeInTheDocument()
+		expect(screen.queryByText('Triggers')).not.toBeInTheDocument()
 		expect(screen.queryByText('Activity')).not.toBeInTheDocument()
 		expect(screen.queryByText('Briefing')).not.toBeInTheDocument()
 	})
@@ -112,9 +119,10 @@ describe('AppSidebar', () => {
 		expect(screen.queryByText('Objects')).not.toBeInTheDocument()
 	})
 
-	it('renders SidebarActivity and NavUser in footer', () => {
+	it('renders the release card, SidebarActivity and NavUser in footer', () => {
 		vi.mocked(useEnabledModules).mockReturnValue(['work'])
 		render(<AppSidebar />)
+		expect(screen.getByTestId('sidebar-release-card')).toBeInTheDocument()
 		expect(screen.getByText('SidebarActivity')).toBeInTheDocument()
 		expect(screen.getByText('NavUser')).toBeInTheDocument()
 	})
@@ -130,7 +138,15 @@ describe('AppSidebar', () => {
 		expect(screen.getByText('Chats')).toBeInTheDocument()
 	})
 
+	it('shows a chat unread count next to Chats, capped with a + when the page overflows', () => {
+		vi.mocked(useEnabledModules).mockReturnValue(['work'])
+		vi.mocked(useChatUnreadCount).mockReturnValue({ count: 50, hasMore: true })
+		render(<AppSidebar />)
+		expect(screen.getByLabelText('50+ unread')).toBeInTheDocument()
+	})
+
 	it('shows an unread count next to For You when there are unread threads', () => {
+		vi.mocked(useChatUnreadCount).mockReturnValue({ count: 0, hasMore: false })
 		vi.mocked(useUnread).mockReturnValue({
 			data: {
 				items: [

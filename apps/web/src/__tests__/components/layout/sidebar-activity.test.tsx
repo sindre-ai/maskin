@@ -9,27 +9,19 @@ vi.mock('@/hooks/use-active-agents', () => ({
 	useActiveAgents: (workspaceId: string) => mockUseActiveAgents(workspaceId),
 }))
 
-const trackExpanded = vi.fn()
+const trackNavItemClicked = vi.fn()
 vi.mock('@/lib/analytics', () => ({
-	trackSidebarAgentActivityExpanded: (p: { workspaceId: string }) => trackExpanded(p),
+	trackNavItemClicked: (p: { item_key: string; source: string }) => trackNavItemClicked(p),
 }))
 
-vi.mock('@/components/ui/sidebar', () => {
-	const passthrough = ({ children, ...rest }: React.ComponentProps<'div'>) => (
-		<div {...rest}>{children}</div>
-	)
-	return {
-		SidebarGroup: passthrough,
-		SidebarGroupContent: passthrough,
-		SidebarGroupLabel: passthrough,
-		SidebarMenu: passthrough,
-		SidebarMenuItem: passthrough,
-		SidebarMenuButton: ({ children, onClick, ...rest }: React.ComponentProps<'button'>) => (
-			<button type="button" onClick={onClick} {...rest}>
-				{children}
-			</button>
-		),
-	}
+const setOpenMobile = vi.fn()
+vi.mock('@/components/ui/sidebar', () => ({
+	useSidebar: () => ({ setOpenMobile }),
+}))
+
+vi.mock('@tanstack/react-router', async () => {
+	const { mockTanStackRouter } = await import('../../mocks/router')
+	return mockTanStackRouter()
 })
 
 function agent(overrides: Partial<ActiveAgent> = {}): ActiveAgent {
@@ -44,102 +36,99 @@ function agent(overrides: Partial<ActiveAgent> = {}): ActiveAgent {
 	}
 }
 
+function card() {
+	return screen.getByTestId('sidebar-activity')
+}
+
 describe('SidebarActivity', () => {
 	beforeEach(() => {
 		mockUseActiveAgents.mockReset()
-		trackExpanded.mockReset()
+		trackNavItemClicked.mockReset()
+		setOpenMobile.mockReset()
 	})
 
-	it('renders the "Live agents" group label', () => {
+	it('reads "idle" with nothing running when no agent holds a live session', () => {
 		mockUseActiveAgents.mockReturnValue({ agents: [], isLoading: false, isError: false })
 		render(<SidebarActivity workspaceId="ws-1" />)
-		expect(screen.getByText('Live agents')).toBeInTheDocument()
+		expect(card()).toHaveTextContent('idle')
+		expect(card()).toHaveTextContent('nothing running')
 	})
 
-	it('renders "No agents running" when list is empty (AC-U6)', () => {
-		mockUseActiveAgents.mockReturnValue({ agents: [], isLoading: false, isError: false })
-		render(<SidebarActivity workspaceId="ws-1" />)
-		expect(screen.getByText('No agents running')).toBeInTheDocument()
-	})
-
-	it('renders one row per active agent with the current activity (AC-U4)', () => {
+	it('reads "working" and counts sessions, not agents', () => {
+		// Two agents, three live sessions — `useActiveAgents` returns one row per
+		// session, so the card must de-duplicate for the avatar stack.
 		mockUseActiveAgents.mockReturnValue({
 			agents: [
-				agent({ actorId: 'a-1', name: 'Planner', currentActivity: 'Reading files' }),
-				agent({ actorId: 'a-2', name: 'Reviewer', currentActivity: 'Reviewing diff' }),
+				agent({ actorId: 'a-1', name: 'Quill', sessionId: 's-1' }),
+				agent({ actorId: 'a-1', name: 'Quill', sessionId: 's-2' }),
+				agent({ actorId: 'a-2', name: 'Analyst', sessionId: 's-3' }),
 			],
 			isLoading: false,
 			isError: false,
 		})
 		render(<SidebarActivity workspaceId="ws-1" />)
-		expect(screen.getByText('Planner')).toBeInTheDocument()
-		expect(screen.getByText('Reading files')).toBeInTheDocument()
-		expect(screen.getByText('Reviewer')).toBeInTheDocument()
-		expect(screen.getByText('Reviewing diff')).toBeInTheDocument()
+		expect(card()).toHaveTextContent('working')
+		expect(card()).toHaveTextContent('3 sessions running')
+		expect(screen.getAllByTitle('Quill')).toHaveLength(1)
+		expect(screen.getAllByTitle('Analyst')).toHaveLength(1)
 	})
 
-	it('collapses beyond 5 rows with a "+N more" toggle (AC-U5)', () => {
+	it('singularises a lone session', () => {
 		mockUseActiveAgents.mockReturnValue({
-			agents: Array.from({ length: 7 }, (_, i) => agent({ actorId: `a-${i}`, name: `Agent ${i}` })),
+			agents: [agent()],
 			isLoading: false,
 			isError: false,
 		})
 		render(<SidebarActivity workspaceId="ws-1" />)
-		expect(screen.getByText('Agent 0')).toBeInTheDocument()
-		expect(screen.getByText('Agent 4')).toBeInTheDocument()
-		expect(screen.queryByText('Agent 5')).not.toBeInTheDocument()
-		const more = screen.getByText('+2 more')
-		expect(more).toBeInTheDocument()
+		expect(card()).toHaveTextContent('1 session running')
 	})
 
-	it('expands inline when "+N more" is clicked and collapses again on second click (AC-U5)', () => {
+	it('collapses the avatar stack past four agents into a +N tile', () => {
 		mockUseActiveAgents.mockReturnValue({
-			agents: Array.from({ length: 7 }, (_, i) => agent({ actorId: `a-${i}`, name: `Agent ${i}` })),
+			agents: Array.from({ length: 6 }, (_, i) =>
+				agent({ actorId: `a-${i}`, name: `Agent ${i}`, sessionId: `s-${i}` }),
+			),
 			isLoading: false,
 			isError: false,
 		})
 		render(<SidebarActivity workspaceId="ws-1" />)
-		fireEvent.click(screen.getByText('+2 more'))
-		expect(screen.getByText('Agent 5')).toBeInTheDocument()
-		expect(screen.getByText('Agent 6')).toBeInTheDocument()
-		fireEvent.click(screen.getByText('Show fewer'))
-		expect(screen.queryByText('Agent 5')).not.toBeInTheDocument()
+		expect(screen.getByTitle('2 more')).toHaveTextContent('+2')
 	})
 
-	it('renders skeleton rows while loading (AC-T2)', () => {
+	it('links to Agents and emits the footer nav event on click', () => {
+		mockUseActiveAgents.mockReturnValue({
+			agents: [agent()],
+			isLoading: false,
+			isError: false,
+		})
+		render(<SidebarActivity workspaceId="ws-1" />)
+		fireEvent.click(card())
+		expect(trackNavItemClicked).toHaveBeenCalledWith({ item_key: 'agents', source: 'footer' })
+		expect(setOpenMobile).toHaveBeenCalledWith(false)
+	})
+
+	it('renders a skeleton card while loading', () => {
 		mockUseActiveAgents.mockReturnValue({ agents: [], isLoading: true, isError: false })
 		render(<SidebarActivity workspaceId="ws-1" />)
 		expect(screen.getByTestId('sidebar-activity-loading')).toBeInTheDocument()
 	})
 
-	it('renders nothing when the sessions query errors (AC-T2)', () => {
+	it('renders nothing when the sessions query errors', () => {
 		mockUseActiveAgents.mockReturnValue({ agents: [], isLoading: false, isError: true })
 		const { container } = render(<SidebarActivity workspaceId="ws-1" />)
 		expect(container).toBeEmptyDOMElement()
 	})
 
-	it('emits sidebar.agent_activity.expanded once on expand, not on collapse (T4)', () => {
+	it('hides the card and shows the bare dot in icon-collapsed mode', () => {
 		mockUseActiveAgents.mockReturnValue({
-			agents: Array.from({ length: 7 }, (_, i) => agent({ actorId: `a-${i}`, name: `Agent ${i}` })),
-			isLoading: false,
-			isError: false,
-		})
-		render(<SidebarActivity workspaceId="ws-42" />)
-		fireEvent.click(screen.getByText('+2 more'))
-		expect(trackExpanded).toHaveBeenCalledTimes(1)
-		expect(trackExpanded).toHaveBeenCalledWith({ workspaceId: 'ws-42' })
-		fireEvent.click(screen.getByText('Show fewer'))
-		expect(trackExpanded).toHaveBeenCalledTimes(1)
-	})
-
-	it('hides the Activity group in icon-collapsed mode via CSS class (AC-T3)', () => {
-		mockUseActiveAgents.mockReturnValue({
-			agents: [agent({ actorId: 'a-1', name: 'Planner', currentActivity: 'Reading files' })],
+			agents: [agent()],
 			isLoading: false,
 			isError: false,
 		})
 		render(<SidebarActivity workspaceId="ws-1" />)
-		const group = screen.getByTestId('sidebar-activity')
-		expect(group.className).toContain('group-data-[collapsible=icon]:hidden')
+		expect(card().className).toContain('group-data-[collapsible=icon]:hidden')
+		expect(screen.getByLabelText('Agents').className).toContain(
+			'group-data-[collapsible=icon]:grid',
+		)
 	})
 })
