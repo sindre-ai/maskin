@@ -9,6 +9,8 @@ vi.mock('@/lib/api', () => ({
 			members: {
 				list: vi.fn(),
 				add: vi.fn(),
+				updateRole: vi.fn(),
+				remove: vi.fn(),
 			},
 		},
 	},
@@ -16,7 +18,9 @@ vi.mock('@/lib/api', () => ({
 
 import {
 	useAddWorkspaceMember,
+	useRemoveWorkspaceMember,
 	useUpdateWorkspace,
+	useUpdateWorkspaceMemberRole,
 	useWorkspaceMembers,
 	useWorkspaces,
 } from '@/hooks/use-workspaces'
@@ -160,5 +164,35 @@ describe('useAddWorkspaceMember', () => {
 		result.current.mutate({ actor_id: 'a-2' })
 		await waitFor(() => expect(result.current.isSuccess).toBe(true))
 		expect(api.workspaces.members.add).toHaveBeenCalledWith(workspaceId, { actor_id: 'a-2' })
+	})
+})
+
+describe('useUpdateWorkspaceMemberRole', () => {
+	it('calls api.workspaces.members.updateRole', async () => {
+		vi.mocked(api.workspaces.members.updateRole).mockResolvedValue(
+			buildMember({ actorId: 'a-2', role: 'admin' }),
+		)
+
+		const { result } = renderHook(() => useUpdateWorkspaceMemberRole(workspaceId), {
+			wrapper: TestWrapper,
+		})
+
+		result.current.mutate({ actorId: 'a-2', role: 'admin' })
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(api.workspaces.members.updateRole).toHaveBeenCalledWith(workspaceId, 'a-2', 'admin')
+	})
+})
+
+describe('useRemoveWorkspaceMember', () => {
+	it('calls api.workspaces.members.remove', async () => {
+		vi.mocked(api.workspaces.members.remove).mockResolvedValue({ removed: true })
+
+		const { result } = renderHook(() => useRemoveWorkspaceMember(workspaceId), {
+			wrapper: TestWrapper,
+		})
+
+		result.current.mutate('a-2')
+		await waitFor(() => expect(result.current.isSuccess).toBe(true))
+		expect(api.workspaces.members.remove).toHaveBeenCalledWith(workspaceId, 'a-2')
 	})
 })
