@@ -1498,7 +1498,11 @@ function splitLlmConfig(llmConfig: Record<string, unknown> | undefined): {
 	llm_config?: Record<string, unknown>
 } {
 	if (!llmConfig) return {}
-	const { provider, ...rest } = llmConfig
+	// api_key is intentionally not part of actorLlmConfigSchema (per-agent API key
+	// overrides aren't a supported/tested path — only workspace-level credentials
+	// are), but the schema's .passthrough() would otherwise let a caller sneak one
+	// through anyway. Strip it here so the boundary actually holds.
+	const { provider, api_key: _apiKey, ...rest } = llmConfig
 	return {
 		...(typeof provider === 'string' ? { llm_provider: provider } : {}),
 		...(Object.keys(rest).length > 0 ? { llm_config: rest } : {}),
@@ -2984,6 +2988,16 @@ export function createMcpServer(config: McpConfig) {
 				{ skipAuth: true, skipWorkspace: true },
 			)) as { id: string; [key: string]: unknown }
 			const result = mergeLlmConfig(rawResult) as { id: string; [key: string]: unknown }
+			// These fields can't be meaningful on a just-created actor: installedLoopId
+			// only applies to actors provisioned via a marketplace loop install (a
+			// separate flow from create_actor), and agentState/agentStateUpdatedAt
+			// describe container session activity, which is always empty on a
+			// brand-new actor. Setting undefined (rather than `delete`) is enough —
+			// JSON.stringify omits undefined-valued keys, and avoids the delete
+			// operator's perf cost per Biome's noDelete rule.
+			result.installedLoopId = undefined
+			result.agentState = undefined
+			result.agentStateUpdatedAt = undefined
 
 			// If workspace_id provided, add the new actor as a member
 			const targetWorkspace = workspace_id ?? config.defaultWorkspaceId
@@ -3010,17 +3024,41 @@ export function createMcpServer(config: McpConfig) {
 					// the actor a member of THAT workspace, not of `targetWorkspace` — the
 					// requested skills live in some other, pre-existing workspace the actor
 					// was never added to, so every attach would fail with "outside the
-					// skill's workspace". Skip the call and say why once, instead of
-					// returning a wall of per-skill errors that all restate the same cause.
-					result.skills_not_attached_reason =
-						'attach_skill_ids was ignored: auto_create_workspace creates a brand-new workspace with no existing skills. Pass workspace_id (an existing workspace) instead of auto_create_workspace to attach skills.'
+					// skill's workspace". Skip the call rather than let every id fail —
+					// a new workspace never having existing skills is expected, not worth
+					// a dedicated explanation in the response.
 				} else {
 					const attached = await attachSkillsBatch(config, result.id, skillIds)
 					result.attached_skills = attached
 					if (attached.some((entry) => (entry as { error?: string })?.error)) {
 						result.partial_failure = true
+						result.partial_failure_reason =
+							'One or more attach_skill_ids failed to attach — see the `error` field on the corresponding entries in attached_skills. The actor itself, and any skills that did attach, are unaffected.'
 					}
 				}
+			}
+
+			// Reminders for agents only — tools/skills/automation are meaningless for
+			// humans. These are advisory, not blocking: most agents need tools and
+			// skills from day one and should be wired into a trigger/loop, but not
+			// always (e.g. a manually-invoked, prompt-only agent), so surface the
+			// gap and let the caller confirm with the user rather than assuming.
+			if (createBody.type === 'agent') {
+				const callerMcpServers = (
+					createBody.tools as { mcpServers?: Record<string, unknown> } | undefined
+				)?.mcpServers
+				if (!callerMcpServers || Object.keys(callerMcpServers).length === 0) {
+					result.tools_reminder =
+						'No MCP tools were configured beyond the built-in Maskin connection. Most agents need at least one external tool to actually take action on their job — confirm with the user whether this agent should have tools, and add them with update_actor if so.'
+				}
+
+				if (skillIds.length === 0) {
+					result.skills_reminder =
+						'No skills were attached to this agent. Skills are what make an agent expert-level rather than just a well-written prompt — confirm with the user whether an existing workspace skill (list_workspace_skills) should be attached, or a new one authored (create_workspace_skill).'
+				}
+
+				result.automation_reminder =
+					"This agent isn't wired into any trigger or loop yet, so nothing will make it run on its own. Confirm with the user whether it should be added to one (create_trigger / create_loop) — most agents should be, but not always (e.g. one meant to be run manually via run_agent)."
 			}
 
 			const wsId = targetWorkspace ?? config.defaultWorkspaceId

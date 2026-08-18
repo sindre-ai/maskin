@@ -384,32 +384,37 @@ describe('create_actor schema', () => {
 	const schema = tools.create_actor.inputSchema
 
 	it('accepts valid actor', () => {
-		const result = schema.parse({ type: 'agent', name: 'Bot' })
+		const result = schema.parse({ type: 'agent', name: 'Bot', description: 'Test agent' })
 		expect(result.type).toBe('agent')
 		expect(result.role).toBe('member')
 	})
 
 	it('defaults role to member', () => {
-		const result = schema.parse({ type: 'human', name: 'Alice' })
+		const result = schema.parse({ type: 'human', name: 'Alice', description: 'Test human' })
 		expect(result.role).toBe('member')
 	})
 
 	it('rejects missing name', () => {
-		expect(() => schema.parse({ type: 'human' })).toThrow()
+		expect(() => schema.parse({ type: 'human', description: 'Test human' })).toThrow()
 	})
 
 	it('rejects empty name', () => {
-		expect(() => schema.parse({ type: 'human', name: '' })).toThrow()
+		expect(() => schema.parse({ type: 'human', name: '', description: 'Test human' })).toThrow()
 	})
 
 	it('rejects invalid type', () => {
-		expect(() => schema.parse({ type: 'bot', name: 'X' })).toThrow()
+		expect(() => schema.parse({ type: 'bot', name: 'X', description: 'Test' })).toThrow()
+	})
+
+	it('rejects missing description', () => {
+		expect(() => schema.parse({ type: 'human', name: 'Alice' })).toThrow()
 	})
 
 	it('accepts optional workspace_id and role', () => {
 		const result = schema.parse({
 			type: 'agent',
 			name: 'Bot',
+			description: 'Test agent',
 			workspace_id: uuid,
 			role: 'owner',
 		})
@@ -418,18 +423,26 @@ describe('create_actor schema', () => {
 	})
 
 	it('accepts admin role, matching update_actor', () => {
-		const result = schema.parse({ type: 'agent', name: 'Bot', role: 'admin' })
+		const result = schema.parse({
+			type: 'agent',
+			name: 'Bot',
+			description: 'Test agent',
+			role: 'admin',
+		})
 		expect(result.role).toBe('admin')
 	})
 
 	it('rejects viewer — not a real workspace role', () => {
-		expect(() => schema.parse({ type: 'agent', name: 'Bot', role: 'viewer' })).toThrow()
+		expect(() =>
+			schema.parse({ type: 'agent', name: 'Bot', description: 'Test agent', role: 'viewer' }),
+		).toThrow()
 	})
 
 	it('accepts optional tools and attach_skill_ids', () => {
 		const result = schema.parse({
 			type: 'agent',
 			name: 'Bot',
+			description: 'Test agent',
 			tools: { mcpServers: { github: { command: 'npx' } } },
 			attach_skill_ids: [uuid],
 		})
@@ -438,7 +451,14 @@ describe('create_actor schema', () => {
 	})
 
 	it('rejects non-uuid attach_skill_ids', () => {
-		expect(() => schema.parse({ type: 'agent', name: 'Bot', attach_skill_ids: ['nope'] })).toThrow()
+		expect(() =>
+			schema.parse({
+				type: 'agent',
+				name: 'Bot',
+				description: 'Test agent',
+				attach_skill_ids: ['nope'],
+			}),
+		).toThrow()
 	})
 })
 
