@@ -43,10 +43,14 @@ export function NewMenu({ onNewChat, hideObjectSection }: NewMenuProps) {
 		<>
 			<DropdownMenu>
 				<DropdownMenuTrigger asChild>
-					<Button size="sm" aria-label="New" className="h-7 gap-1 px-2">
-						<Plus size={14} aria-hidden />
+					<Button
+						size="sm"
+						aria-label="New"
+						className="h-[30px] gap-1.5 rounded-lg px-3 text-[11.5px] font-semibold"
+					>
+						<Plus aria-hidden className="size-[13px]" />
 						<span className="hidden sm:inline">New</span>
-						<ChevronDown size={12} aria-hidden className="opacity-70" />
+						<ChevronDown aria-hidden className="size-3 opacity-70" />
 					</Button>
 				</DropdownMenuTrigger>
 				<DropdownMenuContent align="end" className="w-72">
@@ -64,9 +68,7 @@ export function NewMenu({ onNewChat, hideObjectSection }: NewMenuProps) {
 					{!hideObjectSection && (
 						<>
 							<DropdownMenuSeparator />
-							<div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-								Create an object
-							</div>
+							<div className="eyebrow px-2 py-1">Create an object</div>
 							{OBJECT_TYPE_ITEMS.map((item) => (
 								<DropdownMenuItem
 									key={item.subtype}

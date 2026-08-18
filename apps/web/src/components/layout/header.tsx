@@ -9,10 +9,11 @@ import {
 } from '@/components/ui/breadcrumb'
 import { Button } from '@/components/ui/button'
 import { SidebarTrigger } from '@/components/ui/sidebar'
+import { useCommandPalette } from '@/lib/command-palette-context'
 import { usePageHeader } from '@/lib/page-header-context'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useMatches, useNavigate, useRouter } from '@tanstack/react-router'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, Search } from 'lucide-react'
 import { Fragment } from 'react'
 
 interface RouteConfig {
@@ -88,6 +89,7 @@ const FOR_YOU_ROUTE_ID = '/_authed/$workspaceId/'
 export function Header() {
 	const matches = useMatches()
 	const { actions, stickyIdentity } = usePageHeader()
+	const { setOpen: setPaletteOpen } = useCommandPalette()
 	const { workspaceId } = useWorkspace()
 	const navigate = useNavigate()
 	const router = useRouter()
@@ -210,6 +212,19 @@ export function Header() {
 					</div>
 				)}
 				<div className="ml-auto flex shrink-0 items-center gap-2">
+					{/* ⌘K command-palette trigger — the palette's own global ⌘K
+						listener already opens it; this button is the always-visible
+						entry point per the shell spec. Hidden below sm so mobile
+						keeps the slim header. */}
+					<button
+						type="button"
+						onClick={() => setPaletteOpen(true)}
+						aria-label="Search and run commands (⌘K)"
+						className="hidden sm:flex h-[30px] shrink-0 items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 text-[11.5px] font-semibold text-muted-foreground transition-colors duration-150 hover:border-border-strong hover:text-foreground"
+					>
+						<Search aria-hidden="true" className="size-[13px]" />
+						<kbd className="font-mono text-[10px] leading-none text-border-strong">⌘K</kbd>
+					</button>
 					{actions}
 					{!isForYouPage && (
 						<NewMenu

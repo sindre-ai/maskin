@@ -3,6 +3,7 @@ import {
 	DropdownMenuContent,
 	DropdownMenuItem,
 	DropdownMenuLabel,
+	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import {
@@ -19,7 +20,7 @@ import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
-import { Check, ChevronsUpDown } from 'lucide-react'
+import { Check, ChevronsUpDown, Settings } from 'lucide-react'
 
 export function WorkspaceSwitcher() {
 	const { workspace, workspaceId } = useWorkspace()
@@ -73,7 +74,7 @@ export function WorkspaceSwitcher() {
 							aria-label={`Switch workspace, currently ${displayName}`}
 							className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
 						>
-							<div className="flex aspect-square size-5 items-center justify-center rounded bg-primary text-[10px] font-semibold text-primary-foreground">
+							<div className="flex aspect-square size-5 items-center justify-center rounded-md bg-primary text-[10px] font-semibold text-primary-foreground">
 								{initial}
 							</div>
 							<span className="truncate font-medium group-data-[collapsible=icon]:hidden">
@@ -92,7 +93,7 @@ export function WorkspaceSwitcher() {
 						</SidebarMenuButton>
 					</DropdownMenuTrigger>
 					<DropdownMenuContent
-						className="w-[--radix-dropdown-menu-trigger-width] min-w-56 rounded-lg"
+						className="w-[--radix-dropdown-menu-trigger-width] min-w-56"
 						side={isMobile ? 'bottom' : 'right'}
 						align="start"
 						sideOffset={4}
@@ -121,11 +122,24 @@ export function WorkspaceSwitcher() {
 										<span className="flex size-4 shrink-0 items-center justify-center">
 											{isCurrent && <Check className="size-4" />}
 										</span>
-										<span className="truncate">{ws.name}</span>
+										<span className="flex min-w-0 flex-col">
+											<span className="truncate text-sm font-medium text-foreground">
+												{ws.name}
+											</span>
+											<span className="truncate text-xs text-muted-foreground">{ws.role}</span>
+										</span>
 									</DropdownMenuItem>
 								)
 							})
 						)}
+						<DropdownMenuSeparator />
+						<DropdownMenuItem
+							onSelect={() => navigate({ to: '/$workspaceId/settings', params: { workspaceId } })}
+							className="gap-2 text-muted-foreground"
+						>
+							<Settings className="size-4" />
+							<span className="truncate">Workspace settings</span>
+						</DropdownMenuItem>
 					</DropdownMenuContent>
 				</DropdownMenu>
 			</SidebarMenuItem>
