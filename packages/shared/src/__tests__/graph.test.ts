@@ -36,8 +36,9 @@ describe('graphNodeSchema', () => {
 		expect(() => graphNodeSchema.parse({ $id: 'x', status: 'active' })).toThrow()
 	})
 
-	it('rejects missing status', () => {
-		expect(() => graphNodeSchema.parse({ $id: 'x', type: 'bet' })).toThrow()
+	it('accepts missing status (server enforces `signal` for bets and rejects non-bet types without a status)', () => {
+		const result = graphNodeSchema.parse({ $id: 'x', type: 'bet' })
+		expect(result.status).toBeUndefined()
 	})
 
 	it('accepts valid lowercase slug types', () => {

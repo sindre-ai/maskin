@@ -84,11 +84,11 @@ describe('Graph schema validation', () => {
 		expect(result.success).toBe(false)
 	})
 
-	it('rejects missing status on nodes', () => {
+	it('accepts missing status on nodes (server enforces `signal` for bets and rejects non-bet types without a status at the route)', () => {
 		const result = createGraphSchema.safeParse({
 			nodes: [{ $id: 'bet-1', type: 'bet' }],
 		})
-		expect(result.success).toBe(false)
+		expect(result.success).toBe(true)
 	})
 
 	it('rejects edges with missing type', () => {
