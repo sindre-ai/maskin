@@ -1221,16 +1221,10 @@ export const tools = {
 	},
 	get_loop: {
 		description:
-			"Get a single Loop by id, with the same live derived stats list_loops returns (composite status pill, entry/close conditions, in-progress and closed member-object counts, median time-to-close), plus `steps` — each step's trigger nested with its resolved agent (id/name/system_prompt), the same shape update_loop returns. Pass `include: ['setup']` to also compute a fresh readiness check for the loop — `{checks, next_steps, prose}` matching what update_loop returns (create_loop does not return a setup block) — so callers can walk the user through gaps at read time. Use list_loops to discover loop ids first. Fails with a clear error if the id is not a loop in this workspace.",
+			"Get a single Loop by id: composite status pill, entry/close conditions, in-progress and closed member-object counts, median time-to-close, plus `steps` — each step's trigger nested with its resolved agent (id/name/description). Use list_loops (a lean id/name index) to discover loop ids first. Fails with a clear error if the id is not a loop in this workspace.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid().describe('Loop object id (from list_loops or create_loop).'),
-			include: z
-				.array(z.enum(['setup']))
-				.default([])
-				.describe(
-					"Opt-in blocks to add to the response. Default `[]` returns the loop plus `steps`. `['setup']` additionally computes a fresh setup block (checks, next_steps, prose) for the loop — same shape update_loop returns.",
-				),
 		}),
 	},
 	delete_loop: {

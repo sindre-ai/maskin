@@ -34,11 +34,9 @@ import {
 	buildActorSetupBlockFromApi,
 	buildBetSetupBlock,
 	buildBetSetupBlockFromApi,
-	buildLoopSetupBlock,
 	buildLoopSetupBlockFromApi,
 	composeLoopSteps,
 	mergeBetSetupBlocks,
-	readConnectedProviders,
 	readStatusOrder,
 	readWorkspaceLlmReadiness,
 	safeBuildSetupBlock,
@@ -5139,7 +5137,7 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
-			const { workspace_id, id, include } = args
+			const { workspace_id, id } = args
 			const data = (await apiCall(
 				config,
 				'GET',
@@ -5168,34 +5166,6 @@ export function createMcpServer(config: McpConfig) {
 			const steps = await fetchLoopStepsView(config, workspace_id, triggerIds)
 
 			const responseBody: Record<string, unknown> = { loop: loopWithUrl, steps }
-			if (Array.isArray(include) && include.includes('setup')) {
-				responseBody.setup = await safeBuildSetupBlock('loop_setup', async () => {
-					const inProgress = typeof loop.inProgressCount === 'number' ? loop.inProgressCount : 0
-					const closed = typeof loop.closedCount === 'number' ? loop.closedCount : 0
-					const [workspace, integrations] = await Promise.all([
-						getWorkspace(config, wsId as string),
-						apiCall(config, 'GET', '/api/integrations', undefined, {
-							workspaceId: workspace_id,
-						}),
-					])
-					const workspaceReadiness = readWorkspaceLlmReadiness(workspace.settings)
-					const connectedProviders = readConnectedProviders(integrations)
-					return buildLoopSetupBlock(
-						{
-							id: id as string,
-							name: (loop.name as string | undefined) ?? null,
-							entryCondition: (loop.entryCondition as string | undefined) ?? null,
-							closeCondition: (loop.closeCondition as string | undefined) ?? null,
-						},
-						{
-							workspace: workspaceReadiness,
-							connectedProviders,
-							steps,
-							memberCount: inProgress + closed,
-						},
-					)
-				})
-			}
 
 			return {
 				_meta: meta('get_loop', config, (args as { workspace_id?: string }).workspace_id),

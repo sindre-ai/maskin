@@ -32,7 +32,7 @@ function step(fields: Partial<LoopStep> = {}): LoopStep {
 		triggerConfig: fields.triggerConfig ?? { expression: '0 * * * *' },
 		agent:
 			fields.agent === undefined
-				? { id: 'a1', name: 'Worker', systemPrompt: 'You are a worker.' }
+				? { id: 'a1', name: 'Worker', description: 'You are a worker.' }
 				: fields.agent,
 	}
 }
@@ -56,7 +56,7 @@ describe('checkLoop — first-test fixture (bet DoD #8)', () => {
 				agent: {
 					id: 'analyst',
 					name: 'Analyst',
-					systemPrompt: 'You are an analyst who queries PostHog for events.',
+					description: 'You are an analyst who queries PostHog for events.',
 				},
 			}),
 		]
@@ -108,7 +108,7 @@ describe('checkLoop — individual checks', () => {
 			ctx({
 				steps: [
 					step({
-						agent: { id: 'a1', name: 'a', systemPrompt: 'Plain agent.' },
+						agent: { id: 'a1', name: 'a', description: 'Plain agent.' },
 						triggerActionPrompt: 'Post an update to Slack when done.',
 					}),
 				],
@@ -126,7 +126,7 @@ describe('checkLoop — individual checks', () => {
 			ctx({
 				steps: [
 					step({
-						agent: { id: 'a1', name: 'a', systemPrompt: 'Plain agent.' },
+						agent: { id: 'a1', name: 'a', description: 'Plain agent.' },
 						triggerActionPrompt: 'Do a thing.',
 						triggerConfig: { entity_type: 'linear_issue' },
 					}),
@@ -145,7 +145,7 @@ describe('checkLoop — individual checks', () => {
 			ctx({
 				steps: [
 					step({
-						agent: { id: 'a1', name: 'a', systemPrompt: 'Query PostHog.' },
+						agent: { id: 'a1', name: 'a', description: 'Query PostHog.' },
 					}),
 				],
 				connectedProviders: ['posthog'],
@@ -182,7 +182,7 @@ describe('priority ordering', () => {
 					step({ triggerId: 'a', agent: null }),
 					step({
 						triggerId: 'b',
-						agent: { id: 'a1', name: 'a', systemPrompt: 'GitHub things.' },
+						agent: { id: 'a1', name: 'a', description: 'GitHub things.' },
 					}),
 				],
 				connectedProviders: [],

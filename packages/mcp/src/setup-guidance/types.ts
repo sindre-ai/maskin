@@ -43,7 +43,7 @@ export type LoopStep = {
 	agent: {
 		id: string
 		name?: string | null
-		systemPrompt?: string | null
+		description?: string | null
 	} | null
 }
 

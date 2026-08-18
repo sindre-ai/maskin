@@ -165,7 +165,7 @@ export function composeLoopSteps(
 			? {
 					id: actor.id as string,
 					name: (actor.name as string | undefined) ?? null,
-					systemPrompt: (actor.systemPrompt as string | undefined) ?? null,
+					description: (actor.description as string | undefined) ?? null,
 				}
 			: null
 		return {

@@ -66,7 +66,7 @@ function connectorsConnected(ctx: LoopCheckContext): SetupCheck | null {
 	const missing = new Set<string>()
 	for (const step of ctx.steps) {
 		const blobs: string[] = []
-		if (step.agent?.systemPrompt) blobs.push(step.agent.systemPrompt)
+		if (step.agent?.description) blobs.push(step.agent.description)
 		if (step.triggerActionPrompt) blobs.push(step.triggerActionPrompt)
 		if (step.triggerConfig !== undefined && step.triggerConfig !== null) {
 			try {

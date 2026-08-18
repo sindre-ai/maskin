@@ -1857,6 +1857,55 @@ describe('tool handlers', () => {
 					next: { tool: 'list_loops', hint: expect.stringContaining('list_loops') },
 				})
 			})
+
+			it('nests each trigger with its resolved agent (id/name/description) under `steps`', async () => {
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+					const u = String(url)
+					if (u.includes('/api/loops?id=loop-1')) {
+						return okJson({
+							loops: [
+								{
+									id: 'loop-1',
+									workspaceId: 'ws-default-123',
+									name: 'Lead loop',
+									triggerIds: ['trig-a', 'trig-b'],
+								},
+							],
+						})
+					}
+					if (u.includes('/api/triggers')) {
+						return okJson([
+							{ id: 'trig-a', name: 'Qualify', targetActorId: 'agent-a' },
+							{ id: 'trig-b', name: 'Capture', targetActorId: null },
+						])
+					}
+					if (u.includes('/api/actors')) {
+						return okJson([
+							{ id: 'agent-a', name: 'Qualifier', description: 'Qualifies inbound leads.' },
+						])
+					}
+					throw new Error(`Unexpected fetch: ${u}`)
+				})
+
+				const handler = getHandler('get_loop')
+				const result = (await handler({ id: 'loop-1' })) as { content: Array<{ text: string }> }
+				const parsed = JSON.parse(result.content[0].text)
+
+				expect(parsed.loop.id).toBe('loop-1')
+				const steps = parsed.steps as Array<{
+					triggerId: string
+					agent: { id: string; name: string; description: string } | null
+				}>
+				expect(steps).toHaveLength(2)
+				expect(steps[0].triggerId).toBe('trig-a')
+				expect(steps[0].agent).toEqual({
+					id: 'agent-a',
+					name: 'Qualifier',
+					description: 'Qualifies inbound leads.',
+				})
+				expect(steps[1].triggerId).toBe('trig-b')
+				expect(steps[1].agent).toBeNull()
+			})
 		})
 
 		describe('delete_loop', () => {
