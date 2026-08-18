@@ -460,6 +460,10 @@ export const api = {
 			}),
 		stop: (id: string, workspaceId: string) =>
 			request<SessionResponse>(`/sessions/${id}/stop`, { method: 'POST', workspaceId }),
+		pause: (id: string, workspaceId: string) =>
+			request<SessionResponse>(`/sessions/${id}/pause`, { method: 'POST', workspaceId }),
+		resume: (id: string, workspaceId: string) =>
+			request<SessionResponse>(`/sessions/${id}/resume`, { method: 'POST', workspaceId }),
 		usage: (
 			workspaceId: string,
 			params: { actor_id: string; from: string; to: string; bucket: 'hour' | 'day' | 'week' },

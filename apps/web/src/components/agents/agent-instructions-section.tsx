@@ -172,14 +172,21 @@ export function AgentInstructionsEditModal({ agent, open, onOpenChange }: EditMo
 						aria-label="System prompt"
 						value={draft}
 						onChange={(e) => setDraft(e.target.value)}
-						placeholder="Write the instructions this agent should follow…"
-						className="min-h-[240px] font-mono text-sm"
+						placeholder="Describe what this agent should always do — one idea per paragraph."
+						className="min-h-[240px] text-[12.5px] leading-[1.7]"
 					/>
 				</div>
 
-				<div className="flex items-start gap-2 border-t border-border bg-muted/30 px-6 py-3 text-xs text-muted-foreground">
-					<AlertTriangle size={14} className="mt-0.5 shrink-0 text-warning" aria-hidden />
-					<p>{RUNNING_SESSIONS_WARNING}</p>
+				<div className="flex flex-wrap items-start gap-x-3 gap-y-1.5 border-t border-border bg-muted/30 px-6 py-3 text-xs text-muted-foreground">
+					{/* Mockup 3089 — the shape of what you're about to save, beside the
+					    warning about when it takes effect. */}
+					<span className="shrink-0 font-mono text-[10px] font-semibold uppercase tracking-wider tabular-nums">
+						{describeDraft(draft)}
+					</span>
+					<span className="flex min-w-[140px] flex-1 items-start gap-2">
+						<AlertTriangle size={14} className="mt-0.5 shrink-0 text-warning" aria-hidden />
+						<span>{RUNNING_SESSIONS_WARNING}</span>
+					</span>
 				</div>
 
 				<ResponsiveDialogFooter className="flex-row items-center gap-2 border-t border-border px-6 py-3 sm:justify-between">

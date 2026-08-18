@@ -139,4 +139,22 @@ describe('AgentInstructionsSection', () => {
 		// Section still shows the untouched saved value.
 		expect(screen.getByText('Kept prompt.')).toBeInTheDocument()
 	})
+
+	// Mockup 3089 — the meta line beside the "running sessions" notice.
+	it('shows a paragraph/word count for the draft and keeps it live while typing', async () => {
+		const agent = buildActorResponse({
+			id: 'agent-meta',
+			type: 'agent',
+			system_prompt: 'One line.',
+		})
+		render(<AgentInstructionsSection agent={agent} />, { wrapper: createWorkspaceWrapper() })
+		await userEvent.click(screen.getByRole('button', { name: 'Edit' }))
+		const scope = within(await screen.findByRole('dialog'))
+
+		expect(scope.getByText('1 paragraph · 2 words')).toBeInTheDocument()
+
+		const textarea = scope.getByLabelText('System prompt') as HTMLTextAreaElement
+		await userEvent.type(textarea, ' Two.')
+		expect(scope.getByText('1 paragraph · 3 words')).toBeInTheDocument()
+	})
 })

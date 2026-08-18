@@ -2,7 +2,12 @@ import { AgentSectionHeading } from '@/components/agents/agent-section-heading'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
-import { useCreateSession, useWorkspaceSessions } from '@/hooks/use-sessions'
+import {
+	useCreateSession,
+	usePauseSession,
+	useResumeSession,
+	useWorkspaceSessions,
+} from '@/hooks/use-sessions'
 import type { ActorResponse, SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { formatDurationBetween } from '@/lib/format-duration'
@@ -14,7 +19,9 @@ import {
 	ChevronDown,
 	ChevronUp,
 	Clock,
+	Pause,
 	PauseCircle,
+	Play,
 	RotateCcw,
 } from 'lucide-react'
 import { useMemo, useState } from 'react'
@@ -22,6 +29,9 @@ import { toast } from 'sonner'
 import { SessionDetailPanel } from './session-detail-panel'
 
 type SessionState = 'running' | 'waiting' | 'paused' | 'completed' | 'failed'
+
+/** Sessions listed before the section collapses behind "Show all" (mockup 2427). */
+const COLLAPSED_SESSIONS = 5
 
 type IconComponent = React.ComponentType<{ className?: string }>
 
@@ -145,11 +155,18 @@ export function AgentSessionsSection({ agent }: { agent: ActorResponse }) {
 	const { workspaceId } = useWorkspace()
 	const { data: sessions, isLoading } = useWorkspaceSessions(workspaceId, { paged: false })
 	const [detailSession, setDetailSession] = useState<SessionResponse | null>(null)
+	const [showAll, setShowAll] = useState(false)
 
 	const agentSessions = useMemo(() => {
 		const list = (sessions ?? []).filter((s) => s.actorId === agent.id)
 		return list.sort(sortSessions)
 	}, [sessions, agent.id])
+
+	// A long-lived agent accumulates hundreds of runs; the newest few answer
+	// "what is it doing" without burying every section below them (mockup 2427).
+	const isTruncated = agentSessions.length > COLLAPSED_SESSIONS
+	const shownSessions =
+		showAll || !isTruncated ? agentSessions : agentSessions.slice(0, COLLAPSED_SESSIONS)
 
 	// Mockup 2427: the note tells you what you can do here, and turns amber to
 	// explain why nothing is moving while the agent itself is paused.
@@ -169,6 +186,19 @@ export function AgentSessionsSection({ agent }: { agent: ActorResponse }) {
 						? 'min-w-0 truncate text-[11px] text-warning'
 						: 'min-w-0 truncate text-[11px] text-muted-foreground'
 				}
+				action={
+					isTruncated ? (
+						<Button
+							variant="ghost"
+							size="sm"
+							className="h-7 shrink-0 px-2 text-xs font-medium"
+							aria-expanded={showAll}
+							onClick={() => setShowAll((v) => !v)}
+						>
+							{showAll ? 'Show fewer' : `Show all ${agentSessions.length}`}
+						</Button>
+					) : undefined
+				}
 			/>
 
 			{isLoading ? (
@@ -181,7 +211,7 @@ export function AgentSessionsSection({ agent }: { agent: ActorResponse }) {
 				</p>
 			) : (
 				<ul className="flex flex-col gap-1.5">
-					{agentSessions.map((session) => (
+					{shownSessions.map((session) => (
 						<li key={session.id}>
 							<SessionCard
 								session={session}
@@ -222,6 +252,8 @@ function SessionCard({
 	const { workspaceId } = useWorkspace()
 
 	const createSession = useCreateSession(workspaceId)
+	const pauseSession = usePauseSession(workspaceId)
+	const resumeSession = useResumeSession(workspaceId)
 
 	const name = session.actionPrompt?.trim() || 'Untitled session'
 	const duration = formatDurationBetween(session.startedAt, session.completedAt)
@@ -243,6 +275,41 @@ function SessionCard({
 				onError: () => toast.error(`Couldn't restart this session for ${agent.name}`),
 			},
 		)
+
+	// Mockup 2443's `s.b1`. The backend refuses anything but an exactly-running
+	// session for pause, and a paused session needs a snapshot to restore from —
+	// so the button only appears where the write path can actually succeed
+	// (apps/dev/src/services/session-manager.ts:896 / :1049).
+	const canPause = session.status === 'running'
+	const canResume = state === 'paused' && !!session.snapshotPath
+	const isPauseResumePending = pauseSession.isPending || resumeSession.isPending
+
+	const handlePauseResume = () => {
+		if (canPause) {
+			pauseSession.mutate(session.id, {
+				onSuccess: () => toast.success('Session paused'),
+				onError: () => toast.error("Couldn't pause this session"),
+			})
+			return
+		}
+		resumeSession.mutate(session.id, {
+			onSuccess: () => toast.success('Session resumed'),
+			onError: () => toast.error("Couldn't resume this session"),
+		})
+	}
+
+	const pauseResumeButton = (
+		<Button
+			size="sm"
+			variant="outline"
+			className="h-7 rounded-md px-2.5 text-xs"
+			onClick={handlePauseResume}
+			disabled={isPauseResumePending}
+		>
+			{canPause ? <Pause size={12} aria-hidden /> : <Play size={12} aria-hidden />}
+			{canPause ? 'Pause' : 'Resume'}
+		</Button>
+	)
 
 	const restartButton = (
 		<Button
@@ -292,6 +359,9 @@ function SessionCard({
 				>
 					{meta.label}
 				</span>
+				{(canPause || canResume) && (
+					<span className="hidden shrink-0 md:inline-flex">{pauseResumeButton}</span>
+				)}
 				{canRestart && <span className="hidden shrink-0 md:inline-flex">{restartButton}</span>}
 				<button
 					type="button"
@@ -353,6 +423,7 @@ function SessionCard({
 						>
 							Full log
 						</Button>
+						{(canPause || canResume) && <span className="md:hidden">{pauseResumeButton}</span>}
 						{canRestart && <span className="md:hidden">{restartButton}</span>}
 					</div>
 				</div>

@@ -76,6 +76,33 @@ export function useStopSession(workspaceId: string) {
 	})
 }
 
+/**
+ * Per-session Pause / Resume (mockup 2443). Backed by `POST /sessions/:id/pause`
+ * and `/resume`, which snapshot the container and restore it — distinct from the
+ * agent-level pause, which stops the actor from taking new work at all.
+ */
+export function usePauseSession(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (sessionId: string) => api.sessions.pause(sessionId, workspaceId),
+		onSuccess: (result) => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.sessions.detail(result.id) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all(workspaceId) })
+		},
+	})
+}
+
+export function useResumeSession(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (sessionId: string) => api.sessions.resume(sessionId, workspaceId),
+		onSuccess: (result) => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.sessions.detail(result.id) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all(workspaceId) })
+		},
+	})
+}
+
 export function useMentionSessionsForObject(workspaceId: string, objectId: string | null) {
 	return useQuery({
 		queryKey: queryKeys.sessions.byMentionObject(workspaceId, objectId ?? ''),

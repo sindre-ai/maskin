@@ -17,11 +17,15 @@ vi.mock('@tanstack/react-router', async () => {
 
 const sessionsData = vi.fn()
 const createSessionMutate = vi.fn()
+const pauseSessionMutate = vi.fn()
+const resumeSessionMutate = vi.fn()
 
 vi.mock('@/hooks/use-sessions', () => ({
 	useWorkspaceSessions: () => ({ data: sessionsData(), isLoading: false }),
 	useSessionLogs: () => ({ data: [], isLoading: false }),
 	useCreateSession: () => ({ mutate: createSessionMutate, isPending: false }),
+	usePauseSession: () => ({ mutate: pauseSessionMutate, isPending: false }),
+	useResumeSession: () => ({ mutate: resumeSessionMutate, isPending: false }),
 }))
 
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
@@ -35,6 +39,8 @@ describe('AgentSessionsSection', () => {
 		navigateMock.mockReset()
 		sessionsData.mockReset()
 		createSessionMutate.mockReset()
+		pauseSessionMutate.mockReset()
+		resumeSessionMutate.mockReset()
 	})
 
 	it('offers Restart on a running session and reruns the same prompt', async () => {
@@ -214,6 +220,90 @@ describe('AgentSessionsSection', () => {
 
 		const dialog = await screen.findByRole('dialog')
 		expect(within(dialog).getByText('Migrate the fixtures')).toBeInTheDocument()
+	})
+
+	// Mockup 2443 — the `s.b1` control beside Restart.
+	it('offers Pause on a running session and calls the pause mutation', async () => {
+		const agent = buildActorResponse({ id: 'agent-p', type: 'agent' })
+		sessionsData.mockReturnValue([
+			buildSessionResponse({
+				id: 's-live',
+				actorId: 'agent-p',
+				status: 'running',
+				actionPrompt: 'Hold the queue',
+			}),
+		])
+		render(<AgentSessionsSection agent={agent} />, { wrapper: createWorkspaceWrapper() })
+
+		await userEvent.click(screen.getAllByRole('button', { name: /^pause$/i })[0])
+		expect(pauseSessionMutate).toHaveBeenCalledWith('s-live', expect.anything())
+	})
+
+	it('offers Resume on a paused session that has a snapshot', async () => {
+		const agent = buildActorResponse({ id: 'agent-r', type: 'agent' })
+		sessionsData.mockReturnValue([
+			buildSessionResponse({
+				id: 's-paused',
+				actorId: 'agent-r',
+				status: 'paused',
+				snapshotPath: 'snapshots/s-paused.tar',
+				actionPrompt: 'Pick it back up',
+			}),
+		])
+		render(<AgentSessionsSection agent={agent} />, { wrapper: createWorkspaceWrapper() })
+
+		await userEvent.click(screen.getAllByRole('button', { name: /^resume$/i })[0])
+		expect(resumeSessionMutate).toHaveBeenCalledWith('s-paused', expect.anything())
+	})
+
+	it('hides Resume on a paused session with no snapshot to restore from', () => {
+		const agent = buildActorResponse({ id: 'agent-ns', type: 'agent' })
+		sessionsData.mockReturnValue([
+			buildSessionResponse({
+				id: 's-nosnap',
+				actorId: 'agent-ns',
+				status: 'paused',
+				snapshotPath: null,
+				actionPrompt: 'Nothing to restore',
+			}),
+		])
+		render(<AgentSessionsSection agent={agent} />, { wrapper: createWorkspaceWrapper() })
+		expect(screen.queryByRole('button', { name: /^resume$/i })).not.toBeInTheDocument()
+	})
+
+	it('offers neither Pause nor Resume on a completed session', () => {
+		const agent = buildActorResponse({ id: 'agent-c', type: 'agent' })
+		sessionsData.mockReturnValue([
+			buildSessionResponse({ id: 's-done', actorId: 'agent-c', status: 'completed' }),
+		])
+		render(<AgentSessionsSection agent={agent} />, { wrapper: createWorkspaceWrapper() })
+		expect(screen.queryByRole('button', { name: /^pause$/i })).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /^resume$/i })).not.toBeInTheDocument()
+	})
+
+	// Mockup 2427 — the note promises a bounded list, not every run ever.
+	it('caps the list at five sessions and reveals the rest behind Show all', async () => {
+		const agent = buildActorResponse({ id: 'agent-many', type: 'agent' })
+		sessionsData.mockReturnValue(
+			Array.from({ length: 7 }, (_, i) =>
+				buildSessionResponse({
+					id: `s-${i}`,
+					actorId: 'agent-many',
+					status: 'completed',
+					actionPrompt: `Run number ${i}`,
+					createdAt: `2026-01-0${i + 1}T00:00:00Z`,
+				}),
+			),
+		)
+		render(<AgentSessionsSection agent={agent} />, { wrapper: createWorkspaceWrapper() })
+
+		expect(screen.queryByText('Run number 0')).not.toBeInTheDocument()
+
+		await userEvent.click(screen.getByRole('button', { name: 'Show all 7' }))
+		expect(screen.getByText('Run number 0')).toBeInTheDocument()
+
+		await userEvent.click(screen.getByRole('button', { name: 'Show fewer' }))
+		expect(screen.queryByText('Run number 0')).not.toBeInTheDocument()
 	})
 })
 

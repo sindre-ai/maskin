@@ -358,9 +358,9 @@ function AgentGroupSection({
 					{group.rows.length}
 				</span>
 				{group.note && (
-					<span className="hidden min-w-0 truncate text-xs text-muted-foreground sm:inline">
-						{group.note}
-					</span>
+					// One truncated line beside the count at every width (mockup 2320) —
+					// hiding it below `sm` dropped the only explanation of the group.
+					<span className="min-w-0 truncate text-xs text-muted-foreground">{group.note}</span>
 				)}
 			</div>
 			<ul className="overflow-hidden rounded-xl border border-border bg-card">
@@ -442,7 +442,10 @@ function AgentRowItem({
 					</span>
 				</div>
 				{showActivity && (
-					<span className="hidden w-[200px] shrink-0 truncate text-[11.5px] text-muted-foreground lg:block">
+					// "What it's doing now" (mockup 2333) shares the sessions column's
+					// breakpoint — at 768px the row otherwise carried a name and a status
+					// and nothing about the work.
+					<span className="hidden w-[140px] shrink-0 truncate text-[11.5px] text-muted-foreground md:block lg:w-[200px]">
 						{describeFocus(portrait, latestSession)}
 					</span>
 				)}

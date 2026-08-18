@@ -115,5 +115,40 @@ test.describe('Agents index', () => {
 			await page.mouse.click(box.x + box.width - 30, box.y + box.height / 2)
 			await expect(page).toHaveURL(new RegExp(`/agents/${ada.id}$`))
 		})
+
+		// Mockup 2320 (group note) and 2333 ("what it's doing now").
+		test(`group note and activity column at their breakpoints @ ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+
+			const ada = await account.api.createAgentActor('Ada Atom')
+			await account.api.addWorkspaceMember(account.workspaceId, ada.id)
+
+			await page.goto(`/${account.workspaceId}/agents`)
+			await expect(page.getByRole('link', { name: /Ada Atom/ })).toBeVisible({ timeout: 10_000 })
+
+			// The note explaining the group rides beside the count at every width.
+			const note = page.getByText('Standing by for their next run')
+			for (const scheme of ['light', 'dark'] as const) {
+				await page.emulateMedia({ colorScheme: scheme })
+				await expect(note).toBeVisible()
+			}
+			await page.emulateMedia({ colorScheme: 'light' })
+
+			// The activity and session columns share one breakpoint — both appear
+			// from 768px up, and neither crowds the phone layout.
+			const row = page.getByRole('link', { name: /Ada Atom/ })
+			const activity = row.getByText('Standing by', { exact: true })
+			const sessions = row.getByText('0 sessions')
+			if (vp.width >= 768) {
+				await expect(activity).toBeVisible()
+				await expect(sessions).toBeVisible()
+			} else {
+				await expect(activity).toBeHidden()
+				await expect(sessions).toBeHidden()
+			}
+		})
 	}
 })

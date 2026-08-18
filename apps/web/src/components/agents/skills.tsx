@@ -105,7 +105,9 @@ export function Skills({ actorId, readOnly = false }: SkillsProps) {
 				</div>
 			) : (
 				<p className="text-xs text-muted-foreground mb-3">
-					No personal skills configured. Add skills to extend what this agent can do.
+					{readOnly
+						? 'No personal skills yet.'
+						: 'No personal skills configured. Add skills to extend what this agent can do.'}
 				</p>
 			)}
 
@@ -185,6 +187,12 @@ function WorkspaceSkillsSection({
 			/>
 
 			{isLoading && <p className="text-xs text-muted-foreground">Loading workspace skills...</p>}
+
+			{/* Read-only is how agent detail renders this block, so the section
+			    cannot just fall silent when there is nothing attached (mockup 2482). */}
+			{readOnly && !isLoading && attached.length === 0 && (
+				<p className="text-xs text-muted-foreground">No workspace skills attached.</p>
+			)}
 
 			{showEmptyState && !readOnly && (
 				<p className="text-xs text-muted-foreground">

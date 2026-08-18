@@ -159,6 +159,27 @@ describe('AgentsIndexView', () => {
 			expect(screen.getByText('No idle agents right now.')).toBeInTheDocument()
 			expect(screen.getByText('No failed agents right now.')).toBeInTheDocument()
 		})
+
+		// Mockup 2320 — the note is the only thing explaining a group; hiding it
+		// below `sm` left mobile with a bare label and a number.
+		it('keeps the group note on one truncated line at every width', () => {
+			mount([agentAda(), agentBrian(), agentCy()], [brianRunningSession()])
+			const note = screen.getByText('Agents with a session in progress')
+			expect(note.className).toContain('truncate')
+			expect(note.className).not.toContain('hidden')
+		})
+	})
+
+	// Mockup 2333 — "what it's doing now" is a desktop column, but it shared no
+	// breakpoint with the sessions count, so 768px showed a name and a status.
+	describe('row columns', () => {
+		it('reveals the activity and session columns at the same breakpoint', () => {
+			mount([agentBrian()], [brianRunningSession()])
+			const activity = screen.getByText('Crunching numbers')
+			const sessions = screen.getByText('1 session')
+			expect(activity.className).toContain('md:block')
+			expect(sessions.className).toContain('md:block')
+		})
 	})
 
 	describe('status chips', () => {
@@ -258,7 +279,7 @@ describe('AgentsIndexView', () => {
 			expect(screen.getByRole('link', { name: /Ada/ })).toBeInTheDocument()
 		})
 
-		it('Reset to default clears the status filter, sort, order and grouping together', async () => {
+		it('Reset all clears the status filter, sort, order and grouping together', async () => {
 			const user = userEvent.setup()
 			mount([agentAda(), agentBrian(), agentCy()], [brianRunningSession()])
 
@@ -270,7 +291,7 @@ describe('AgentsIndexView', () => {
 			await pickFromDisplayPanel(user, 'Group by', 'Kind')
 			expect(screen.getByRole('heading', { name: 'Architect' })).toBeInTheDocument()
 
-			await user.click(screen.getByRole('button', { name: 'Reset to default' }))
+			await user.click(screen.getByRole('button', { name: /Reset all/ }))
 
 			expect(screen.getByRole('link', { name: /Ada/ })).toBeInTheDocument()
 			expect(screen.getByRole('heading', { name: /working/i })).toBeInTheDocument()
