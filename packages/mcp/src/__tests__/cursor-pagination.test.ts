@@ -19,7 +19,6 @@ vi.mock('node:fs', () => ({
 import { registerAppTool } from '@modelcontextprotocol/ext-apps/server'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { decodeCursor } from '../cursor'
-import { RESPONSE_SCOPING_ENV_VAR } from '../response-scoping'
 import { createMcpServer } from '../server'
 
 const wsId = '00000000-0000-0000-0000-0000000000aa'
@@ -157,12 +156,10 @@ describe('cursor pagination — seven previously-unpaginated tools', () => {
 			handlers.set(name as string, handler as Handler)
 		})
 		createMcpServer(config)
-		process.env[RESPONSE_SCOPING_ENV_VAR] = '1'
 	})
 
 	afterEach(() => {
 		vi.restoreAllMocks()
-		delete process.env[RESPONSE_SCOPING_ENV_VAR]
 	})
 
 	function getHandler(name: string): Handler {

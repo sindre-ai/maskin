@@ -113,22 +113,25 @@ describe('create_objects schema', () => {
 
 	it('accepts valid input with nodes', () => {
 		const result = schema.parse({
+			workspace_id: uuid,
 			nodes: [{ $id: 'bet-1', type: 'bet', status: 'active' }],
 		})
 		expect(result.nodes).toHaveLength(1)
 		expect(result.edges).toEqual([])
 	})
 
-	it('accepts optional workspace_id', () => {
-		const result = schema.parse({
-			workspace_id: uuid,
+	it('requires workspace_id', () => {
+		const result = schema.safeParse({
 			nodes: [{ $id: 'task-1', type: 'task', status: 'todo' }],
 		})
-		expect(result.workspace_id).toBe(uuid)
+		expect(result.success).toBe(false)
+		if (!result.success) {
+			expect(result.error.issues[0]?.path).toEqual(['workspace_id'])
+		}
 	})
 
 	it('rejects empty nodes array', () => {
-		expect(() => schema.parse({ nodes: [] })).toThrow()
+		expect(() => schema.parse({ workspace_id: uuid, nodes: [] })).toThrow()
 	})
 
 	it('rejects more than 50 nodes', () => {
@@ -137,18 +140,31 @@ describe('create_objects schema', () => {
 			type: 'task' as const,
 			status: 'todo',
 		}))
-		expect(() => schema.parse({ nodes })).toThrow()
+		expect(() => schema.parse({ workspace_id: uuid, nodes })).toThrow()
 	})
 
 	it('accepts any string as object type', () => {
 		const result = schema.parse({
+			workspace_id: uuid,
 			nodes: [{ $id: 'x', type: 'story', status: 'new' }],
 		})
 		expect(result.nodes[0].type).toBe('story')
 	})
 
+	it('requires status on every node', () => {
+		const result = schema.safeParse({
+			workspace_id: uuid,
+			nodes: [{ $id: 'x', type: 'insight' }],
+		})
+		expect(result.success).toBe(false)
+		if (!result.success) {
+			expect(result.error.issues[0]?.path).toEqual(['nodes', 0, 'status'])
+		}
+	})
+
 	it('defaults edges to empty array', () => {
 		const result = schema.parse({
+			workspace_id: uuid,
 			nodes: [{ $id: 'x', type: 'insight', status: 'new' }],
 		})
 		expect(result.edges).toEqual([])
@@ -158,36 +174,44 @@ describe('create_objects schema', () => {
 describe('list_objects schema', () => {
 	const schema = tools.list_objects.inputSchema
 
-	// Limit + offset are optional at the tool-schema layer so the server can
-	// pick the scoped default (25) when the flag is on; the API applies its
-	// own fallback when neither the client nor the server sets one.
-	it('leaves limit and offset undefined when not passed', () => {
-		const result = schema.parse({})
+	it('requires workspace_id', () => {
+		expect(() => schema.parse({})).toThrow()
+	})
+
+	// Limit is optional at the tool-schema layer so the server can pick the
+	// default page size (25) when the caller sets neither.
+	it('leaves limit undefined when not passed', () => {
+		const result = schema.parse({ workspace_id: uuid })
 		expect(result.limit).toBeUndefined()
-		expect(result.offset).toBeUndefined()
+	})
+
+	it('does not accept an offset param — cursor covers pagination for both sort orders', () => {
+		const result = schema.parse({ workspace_id: uuid, offset: 5 })
+		expect((result as Record<string, unknown>).offset).toBeUndefined()
 	})
 
 	it('accepts an optional cursor for snapshot-consistent pagination', () => {
-		const result = schema.parse({ cursor: 'anything' })
+		const result = schema.parse({ workspace_id: uuid, cursor: 'anything' })
 		expect(result.cursor).toBe('anything')
 	})
 
 	it('accepts optional type filter', () => {
-		const result = schema.parse({ type: 'bet' })
+		const result = schema.parse({ workspace_id: uuid, type: 'bet' })
 		expect(result.type).toBe('bet')
 	})
 
 	it('accepts any string as type filter', () => {
-		const result = schema.parse({ type: 'story' })
+		const result = schema.parse({ workspace_id: uuid, type: 'story' })
 		expect(result.type).toBe('story')
 	})
 
 	it('rejects limit above 100', () => {
-		expect(() => schema.parse({ limit: 101 })).toThrow()
+		expect(() => schema.parse({ workspace_id: uuid, limit: 101 })).toThrow()
 	})
 
 	it('accepts updated_before / updated_after as ISO-8601', () => {
 		const result = schema.parse({
+			workspace_id: uuid,
 			updated_before: '2026-06-30T12:00:00.000Z',
 			updated_after: '2026-06-29T12:00:00+02:00',
 		})
@@ -198,7 +222,7 @@ describe('list_objects schema', () => {
 	// AC-T6: malformed value surfaces as a Zod schema error so the SDK can
 	// return 400 instead of letting the bad string reach the route as a 500.
 	it('rejects malformed updated_before with a Zod error (AC-T6)', () => {
-		const result = schema.safeParse({ updated_before: 'not-a-date' })
+		const result = schema.safeParse({ workspace_id: uuid, updated_before: 'not-a-date' })
 		expect(result.success).toBe(false)
 		if (!result.success) {
 			expect(result.error.issues[0]?.path).toEqual(['updated_before'])
@@ -206,7 +230,7 @@ describe('list_objects schema', () => {
 	})
 
 	it('rejects malformed updated_after with a Zod error', () => {
-		const result = schema.safeParse({ updated_after: 'yesterday' })
+		const result = schema.safeParse({ workspace_id: uuid, updated_after: 'yesterday' })
 		expect(result.success).toBe(false)
 		if (!result.success) {
 			expect(result.error.issues[0]?.path).toEqual(['updated_after'])
@@ -214,31 +238,36 @@ describe('list_objects schema', () => {
 	})
 
 	it('accepts sort = updated_at_asc / updated_at_desc', () => {
-		expect(schema.parse({ sort: 'updated_at_asc' }).sort).toBe('updated_at_asc')
-		expect(schema.parse({ sort: 'updated_at_desc' }).sort).toBe('updated_at_desc')
+		expect(schema.parse({ workspace_id: uuid, sort: 'updated_at_asc' }).sort).toBe('updated_at_asc')
+		expect(schema.parse({ workspace_id: uuid, sort: 'updated_at_desc' }).sort).toBe(
+			'updated_at_desc',
+		)
 	})
 
 	it('rejects unknown sort values', () => {
-		expect(() => schema.parse({ sort: 'created_at_asc' })).toThrow()
+		expect(() => schema.parse({ workspace_id: uuid, sort: 'created_at_asc' })).toThrow()
 	})
 
 	it('accepts metadata_eq as a field->value record', () => {
-		const result = schema.parse({ metadata_eq: { segment: 'enterprise', confidence: 'high' } })
+		const result = schema.parse({
+			workspace_id: uuid,
+			metadata_eq: { segment: 'enterprise', confidence: 'high' },
+		})
 		expect(result.metadata_eq).toEqual({ segment: 'enterprise', confidence: 'high' })
 	})
 
 	it('omits metadata_eq when not supplied', () => {
-		const result = schema.parse({})
+		const result = schema.parse({ workspace_id: uuid })
 		expect(result.metadata_eq).toBeUndefined()
 	})
 
 	it('defaults include_archived to false so archived rows stay hidden unless the caller opts in', () => {
-		const result = schema.parse({})
+		const result = schema.parse({ workspace_id: uuid })
 		expect(result.include_archived).toBe(false)
 	})
 
 	it('accepts include_archived = true when the caller wants archived rows', () => {
-		const result = schema.parse({ include_archived: true })
+		const result = schema.parse({ workspace_id: uuid, include_archived: true })
 		expect(result.include_archived).toBe(true)
 	})
 })
@@ -251,9 +280,9 @@ describe('search_objects schema', () => {
 		expect(result.q).toBe('test')
 	})
 
-	it('accepts an optional cursor for snapshot-consistent pagination', () => {
+	it('does not accept a cursor param — ranked search cannot use the keyset', () => {
 		const result = schema.parse({ q: 'test', cursor: 'anything' })
-		expect(result.cursor).toBe('anything')
+		expect((result as Record<string, unknown>).cursor).toBeUndefined()
 	})
 
 	it('rejects empty q', () => {
@@ -709,7 +738,6 @@ describe('get_comments schema', () => {
 		const result = schema.parse({ entity_id: uuid })
 		expect(result.entity_id).toBe(uuid)
 		expect(result.limit).toBe(50)
-		expect(result.offset).toBe(0)
 	})
 
 	it('rejects missing entity_id', () => {
@@ -724,8 +752,14 @@ describe('get_comments schema', () => {
 		expect(() => schema.parse({ entity_id: uuid, limit: 200 })).toThrow()
 	})
 
-	it('rejects negative offset', () => {
-		expect(() => schema.parse({ entity_id: uuid, offset: -1 })).toThrow()
+	it('accepts an optional cursor for snapshot-consistent pagination', () => {
+		const result = schema.parse({ entity_id: uuid, cursor: 'anything' })
+		expect(result.cursor).toBe('anything')
+	})
+
+	it('does not accept an offset param — cursor covers pagination', () => {
+		const result = schema.parse({ entity_id: uuid, offset: 5 })
+		expect((result as Record<string, unknown>).offset).toBeUndefined()
 	})
 })
 
@@ -1294,13 +1328,23 @@ describe('empty input schema tools', () => {
 	})
 })
 
+describe('workspace_id required on create_objects and list_objects', () => {
+	it('create_objects requires workspace_id', () => {
+		const shape = tools.create_objects.inputSchema.shape
+		expect(shape.workspace_id.isOptional()).toBe(false)
+	})
+
+	it('list_objects requires workspace_id', () => {
+		const shape = tools.list_objects.inputSchema.shape
+		expect(shape.workspace_id.isOptional()).toBe(false)
+	})
+})
+
 describe('workspace_id optional on most tools', () => {
 	const toolsWithOptionalWorkspace = [
-		'create_objects',
 		'get_objects',
 		'update_objects',
 		'delete_object',
-		'list_objects',
 		'search_objects',
 		'list_relationships',
 		'delete_relationship',

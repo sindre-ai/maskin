@@ -18,7 +18,6 @@ vi.mock('node:fs', () => ({
 
 import { registerAppResource, registerAppTool } from '@modelcontextprotocol/ext-apps/server'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import { RESPONSE_SCOPING_ENV_VAR } from '../response-scoping'
 import {
 	HERO_CARD_TYPE_DEFAULTS,
 	type HeroCardTypeAnnotation,
@@ -129,13 +128,6 @@ describe('tool handlers', () => {
 		vi.clearAllMocks()
 		handlers = new Map()
 
-		// After T1 the response-scoping default flipped to ON. This suite pins
-		// the pre-scoping legacy URL/content contract for every registered tool;
-		// the scoped-path assertions live in response-scoping/response-cap/
-		// verification-harness suites. Explicitly opt out here so the legacy
-		// contract stays testable.
-		process.env[RESPONSE_SCOPING_ENV_VAR] = '0'
-
 		vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
 			handlers.set(name as string, handler as (args: Record<string, unknown>) => Promise<unknown>)
 		})
@@ -146,7 +138,6 @@ describe('tool handlers', () => {
 	afterEach(() => {
 		vi.useRealTimers()
 		vi.restoreAllMocks()
-		delete process.env[RESPONSE_SCOPING_ENV_VAR]
 	})
 
 	function getHandler(name: string) {
@@ -202,6 +193,37 @@ describe('tool handlers', () => {
 			expect(parsed).toMatchObject(mockResult)
 		})
 
+		it('strips per-viewer/session bookkeeping fields from each returned node', async () => {
+			mockFetchSuccess({
+				nodes: [
+					{
+						id: 'obj-1',
+						type: 'bet',
+						$id: 'bet-1',
+						activeSessionId: 'session-1',
+						activeSessionCurrentActivity: 'thinking',
+						unread_count: 3,
+						subscriber_count: 2,
+					},
+				],
+				edges: [],
+			})
+
+			const handler = getHandler('create_objects')
+			const result = (await handler({
+				workspace_id: 'ws-default-123',
+				nodes: [{ $id: 'bet-1', type: 'bet', status: 'active' }],
+				edges: [],
+			})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.nodes[0]).not.toHaveProperty('activeSessionId')
+			expect(parsed.nodes[0]).not.toHaveProperty('activeSessionCurrentActivity')
+			expect(parsed.nodes[0]).not.toHaveProperty('unread_count')
+			expect(parsed.nodes[0]).not.toHaveProperty('subscriber_count')
+			expect(parsed.nodes[0].id).toBe('obj-1')
+		})
+
 		it('uses workspace_id from args over default', async () => {
 			mockFetchSuccess({})
 
@@ -223,18 +245,10 @@ describe('tool handlers', () => {
 		})
 
 		it('attaches file_ids on a node by replaying each as an `attached` relationship', async () => {
-			// The handler now always fetches /api/workspaces up-front (for the
-			// setup block); route the mocks by URL so per-call order is stable
-			// regardless of setup-block plumbing.
+			// Route the mocks by URL so the /api/graph vs /api/relationships calls
+			// are distinguishable regardless of call order.
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
 				const u = String(url)
-				if (u.endsWith('/api/workspaces')) {
-					return {
-						ok: true,
-						headers: new Headers(),
-						json: () => Promise.resolve([{ id: 'ws-default-123', settings: {} }]),
-					} as Response
-				}
 				if (u.endsWith('/api/graph')) {
 					return {
 						ok: true,
@@ -307,60 +321,12 @@ describe('tool handlers', () => {
 			expect(parsed.file_attachments).toBeUndefined()
 		})
 
-		it('fills in the lowest configured status when a node omits status', async () => {
-			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
-				const urlStr = url as string
-				if (urlStr.endsWith('/api/workspaces')) {
-					return {
-						ok: true,
-						json: () =>
-							Promise.resolve([
-								{
-									id: 'ws-default-123',
-									settings: {
-										statuses: {
-											bet: ['signal', 'qualified', 'define', 'active'],
-											insight: ['new', 'clustered'],
-										},
-									},
-								},
-							]),
-					} as Response
-				}
-				return {
-					ok: true,
-					json: () =>
-						Promise.resolve({ nodes: [{ $id: 'bet-1', id: 'b1', type: 'bet' }], edges: [] }),
-				} as Response
-			})
-
-			const handler = getHandler('create_objects')
-			await handler({
-				nodes: [
-					{ $id: 'bet-1', type: 'bet' },
-					{ $id: 'insight-1', type: 'insight' },
-				],
-				edges: [],
-			})
-
-			const graphCall = vi
-				.mocked(fetch)
-				.mock.calls.find((c) => (c[0] as string).endsWith('/api/graph'))
-			expect(graphCall).toBeDefined()
-			const graphBody = JSON.parse((graphCall?.[1] as RequestInit).body as string)
-			expect(graphBody.nodes[0].status).toBe('signal')
-			expect(graphBody.nodes[1].status).toBe('new')
-		})
-
-		it('fetches workspace settings exactly once even when every node has an explicit status', async () => {
-			// The setup-block wiring reuses the same workspace fetch that powers
-			// lowest-status inference — even when inference isn't needed we still
-			// need `settings.statuses` for `elevated_status`, so
-			// the fetch happens unconditionally (but only once per call).
+		it('does not fetch /api/workspaces — status and workspace_id are required on input', async () => {
 			mockFetchSuccess({ nodes: [{ $id: 'x', id: 'real-x', type: 'task' }], edges: [] })
 
 			const handler = getHandler('create_objects')
 			await handler({
+				workspace_id: 'ws-default-123',
 				nodes: [{ $id: 'x', type: 'task', status: 'todo' }],
 				edges: [],
 			})
@@ -368,23 +334,7 @@ describe('tool handlers', () => {
 			const wsCalls = vi
 				.mocked(fetch)
 				.mock.calls.filter((c) => (c[0] as string).endsWith('/api/workspaces'))
-			expect(wsCalls).toHaveLength(1)
-		})
-
-		it('throws a clear error when status is omitted and the type has no configured statuses', async () => {
-			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-				ok: true,
-				json: () =>
-					Promise.resolve([{ id: 'ws-default-123', settings: { statuses: { bet: ['signal'] } } }]),
-			} as Response)
-
-			const handler = getHandler('create_objects')
-			await expect(
-				handler({
-					nodes: [{ $id: 'x', type: 'custom_thing' }],
-					edges: [],
-				}),
-			).rejects.toThrow(/get_workspace_schema/)
+			expect(wsCalls).toHaveLength(0)
 		})
 	})
 
@@ -593,13 +543,15 @@ describe('tool handlers', () => {
 			mockFetchSuccess([])
 
 			const handler = getHandler('list_objects')
-			await handler({ type: 'task', limit: 10, offset: 5 })
+			await handler({ type: 'task', limit: 10 })
 
 			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
 			expect(calledUrl).toContain('/api/objects?')
 			expect(calledUrl).toContain('type=task')
-			expect(calledUrl).toContain('limit=10')
-			expect(calledUrl).toContain('offset=5')
+			// The cursor walk always fetches one extra row (the "has more"
+			// sentinel), so the requested limit of 10 becomes 11 on the wire.
+			expect(calledUrl).toContain('limit=11')
+			expect(calledUrl).toContain('snapshot_at=')
 		})
 
 		it('forwards updated_before and updated_after to the route', async () => {
@@ -655,15 +607,16 @@ describe('tool handlers', () => {
 			expect(calledUrl).toContain('order=desc')
 		})
 
-		it('omits sort + order when no sort is passed (additive only)', async () => {
+		it('sorts by createdAt (the cursor walk order), not updatedAt, when no sort is passed', async () => {
 			mockFetchSuccess([])
 
 			const handler = getHandler('list_objects')
 			await handler({ type: 'task' })
 
 			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
-			expect(calledUrl).not.toContain('sort=')
-			expect(calledUrl).not.toContain('order=')
+			expect(calledUrl).toContain('sort=createdAt')
+			expect(calledUrl).toContain('order=desc')
+			expect(calledUrl).not.toContain('sort=updatedAt')
 		})
 
 		it('forwards each metadata_eq entry as metadata.<field>=<value>', async () => {
@@ -2478,8 +2431,11 @@ describe('tool handlers', () => {
 				const handler = getHandler('list_workspace_skills')
 				const result = (await handler({})) as { content: Array<{ text: string }> }
 
-				expect(fetch).toHaveBeenCalledWith(
-					'http://localhost:3000/api/workspaces/ws-default-123/skills',
+				const call = vi.mocked(fetch).mock.calls[0]
+				const calledUrl = call[0] as string
+				expect(calledUrl).toContain('http://localhost:3000/api/workspaces/ws-default-123/skills?')
+				expect(calledUrl).toContain('snapshot_at=')
+				expect(call[1]).toEqual(
 					expect.objectContaining({
 						method: 'GET',
 						headers: expect.objectContaining({
@@ -2499,8 +2455,10 @@ describe('tool handlers', () => {
 				const handler = getHandler('list_workspace_skills')
 				await handler({ workspace_id: 'ws-custom' })
 
-				expect(fetch).toHaveBeenCalledWith(
-					'http://localhost:3000/api/workspaces/ws-custom/skills',
+				const call = vi.mocked(fetch).mock.calls[0]
+				const calledUrl = call[0] as string
+				expect(calledUrl).toContain('http://localhost:3000/api/workspaces/ws-custom/skills?')
+				expect(call[1]).toEqual(
 					expect.objectContaining({
 						headers: expect.objectContaining({ 'X-Workspace-Id': 'ws-custom' }),
 					}),
@@ -2629,7 +2587,7 @@ describe('tool handlers', () => {
 			mockFetchSuccess([])
 
 			const handler = getHandler('get_comments')
-			await handler({ entity_id: objectId, limit: 25, offset: 5 })
+			await handler({ entity_id: objectId, limit: 25 })
 
 			const call = vi.mocked(fetch).mock.calls[0]
 			const url = call[0] as string
@@ -2638,7 +2596,6 @@ describe('tool handlers', () => {
 			expect(url).toContain(`entity_id=${objectId}`)
 			expect(url).toContain('action=commented')
 			expect(url).toContain('limit=25')
-			expect(url).toContain('offset=5')
 			expect((call[1] as RequestInit).method).toBe('GET')
 		})
 
@@ -2646,7 +2603,7 @@ describe('tool handlers', () => {
 			mockFetchSuccess([])
 
 			const handler = getHandler('get_comments')
-			await handler({ entity_id: objectId, workspace_id: 'ws-custom', limit: 50, offset: 0 })
+			await handler({ entity_id: objectId, workspace_id: 'ws-custom', limit: 50 })
 
 			expect(fetch).toHaveBeenCalledWith(
 				expect.any(String),
@@ -3486,12 +3443,16 @@ describe('tool handlers', () => {
 			}
 
 			expect(result.structuredContent.heroCard.objects).toHaveLength(25)
-			expect(result.structuredContent.heroCard.totalCount).toBe(100)
+			// The cursor walk fetches `limit + 1` as a "has more" sentinel and the
+			// requested limit is capped at LIST_ENDPOINT_MAX_LIMIT - 1 (99) so the
+			// sentinel stays within the API's hard cap of 100 — so a 100-row
+			// fixture yields 99 kept rows, not 100.
+			expect(result.structuredContent.heroCard.totalCount).toBe(99)
 			expect(result.structuredContent.heroCard.page).toMatchObject({
 				limit: 25,
 				hasMore: true,
 			})
-			expect(result.structuredContent.objects).toHaveLength(100)
+			expect(result.structuredContent.objects).toHaveLength(99)
 		})
 
 		it('emits a list heroCard for list_actors with type=actor rows', async () => {
@@ -3840,8 +3801,18 @@ describe('tool handlers', () => {
 						ok: true,
 						json: () =>
 							Promise.resolve([
-								{ id: 'ws-1', name: 'Maskin', role: 'owner' },
-								{ id: 'ws-2', name: 'Reflect Studio', role: 'member' },
+								{
+									id: 'ws-1',
+									name: 'Maskin',
+									role: 'owner',
+									createdAt: '2026-02-01T00:00:00.000Z',
+								},
+								{
+									id: 'ws-2',
+									name: 'Reflect Studio',
+									role: 'member',
+									createdAt: '2026-01-01T00:00:00.000Z',
+								},
 							]),
 					} as Response
 				}
@@ -3891,7 +3862,9 @@ describe('tool handlers', () => {
 					heroCard: { kind: string; totalCount?: number }
 				}
 			}
-			expect(calls.some((u) => u.includes('limit=1') && u.includes('offset=0'))).toBe(true)
+			// The cursor walk fetches one extra row (the "has more" sentinel), so
+			// the requested limit of 1 becomes 2 on the wire.
+			expect(calls.some((u) => u.includes('limit=2') && u.includes('offset=0'))).toBe(true)
 			expect(result.structuredContent.heroCard.kind).toBe('list')
 			expect(result.structuredContent.heroCard.totalCount).toBe(1234)
 		})
@@ -4000,7 +3973,9 @@ describe('tool handlers', () => {
 				structuredContent: { heroCard: { kind: string; totalCount?: number } }
 			}
 			const triggersCalls = calls.filter((u) => u.includes('/api/triggers'))
-			expect(triggersCalls.some((u) => u.includes('limit=1') && u.includes('offset=0'))).toBe(true)
+			// The cursor walk fetches one extra row (the "has more" sentinel), so
+			// the requested limit of 1 becomes 2 on the wire.
+			expect(triggersCalls.some((u) => u.includes('limit=2') && u.includes('offset=0'))).toBe(true)
 			expect(result.structuredContent.heroCard.kind).toBe('list')
 			expect(result.structuredContent.heroCard.totalCount).toBe(987)
 		})
@@ -4531,27 +4506,11 @@ describe('tool handlers', () => {
 			({ ok: true, headers: new Headers(), json: () => Promise.resolve(data) }) as Response
 
 		it('create_objects — response is bare, without a setup block', async () => {
-			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
-				const u = String(url)
-				if (u.endsWith('/api/workspaces')) {
-					return setupOkJson([
-						{
-							id: 'ws-default-123',
-							settings: {
-								statuses: { bet: ['signal', 'qualified'] },
-								llm_keys: { anthropic: 'sk-ant-test' },
-							},
-						},
-					])
-				}
-				if (u.endsWith('/api/graph')) {
-					return setupOkJson({ nodes: [{ $id: 'b1', id: 'bet-1', type: 'bet' }], edges: [] })
-				}
-				return setupOkJson({})
-			})
+			mockFetchSuccess({ nodes: [{ $id: 'b1', id: 'bet-1', type: 'bet' }], edges: [] })
 			const handler = getHandler('create_objects')
 			const result = (await handler({
-				nodes: [{ $id: 'b1', type: 'bet' }],
+				workspace_id: 'ws-default-123',
+				nodes: [{ $id: 'b1', type: 'bet', status: 'signal' }],
 				edges: [],
 			})) as { content: Array<{ text: string }> }
 			const parsed = JSON.parse(result.content[0].text)
@@ -4808,9 +4767,6 @@ describe('url field injection', () => {
 	}
 
 	beforeEach(() => {
-		// url-injection suite pins the legacy content JSON dump — see the same
-		// note on the tool handlers suite above.
-		process.env[RESPONSE_SCOPING_ENV_VAR] = '0'
 		vi.mocked(McpServer).mockImplementation(() => ({ registerResource: vi.fn(), connect: vi.fn() }))
 		vi.mocked(registerAppTool).mockReset()
 		vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
@@ -4826,7 +4782,6 @@ describe('url field injection', () => {
 	afterEach(() => {
 		vi.useRealTimers()
 		vi.restoreAllMocks()
-		delete process.env[RESPONSE_SCOPING_ENV_VAR]
 	})
 
 	it('omits url when webAppBaseUrl is not configured', async () => {
@@ -4941,6 +4896,7 @@ describe('url field injection', () => {
 
 			const handler = getUrlHandler('create_objects')
 			const result = (await handler({
+				workspace_id: 'ws-default-123',
 				nodes: [{ $id: 'bet-1', type: 'bet', status: 'active' }],
 				edges: [],
 			})) as { content: Array<{ text: string }> }

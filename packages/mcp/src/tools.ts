@@ -52,18 +52,17 @@ const optionalWorkspaceId = z
 		'Workspace ID to operate in. If omitted, uses the default workspace (DEFAULT_WORKSPACE_ID). Call list_workspaces to discover available workspaces.',
 	)
 
-// create_loop is the one write that creates a brand-new, ambiguously-scoped
-// object (name only, no existing id to inherit a workspace from) with side
-// effects that are expensive to undo (triggers start firing). Requiring an
-// explicit workspace_id here — instead of silently falling back to
-// DEFAULT_WORKSPACE_ID like every other tool — means a loop can never land in
-// the wrong workspace by omission.
+// Used by writes/reads that create or enumerate ambiguously-scoped
+// resources (a brand-new loop with no existing id to inherit a workspace
+// from, or an object listing/creation call) with side effects or result sets
+// that are expensive to get wrong. Requiring an explicit workspace_id here —
+// instead of silently falling back to DEFAULT_WORKSPACE_ID like tools that
+// operate on an already-identified resource — means a call can never land in
+// or leak from the wrong workspace by omission.
 const requiredWorkspaceId = z
 	.string()
 	.uuid()
-	.describe(
-		'Workspace ID to create the loop in. Call list_workspaces to discover available workspaces.',
-	)
+	.describe('Workspace ID to operate in. Call list_workspaces to discover available workspaces.')
 
 // Single agent-facing param covering everything needed to run an agent on a
 // specific LLM. The actor record still stores provider and config as two
@@ -203,9 +202,9 @@ export const tools = {
 	// ─── Objects ─────────────────────────────────────────────
 	create_objects: {
 		description:
-			'Create one or more objects — of any type this workspace defines (built-ins like insight/bet/task, or a custom type) — with optional relationships in a single atomic operation. To create a Loop — a persistent closed-loop agent process — use the dedicated create_loop tool instead, which wires the trigger and membership metadata correctly. For a single object, provide one node with no edges. For multiple related objects, use $id references in edges to link them. Edges can also reference existing object UUIDs to connect new objects to existing ones. ALWAYS call get_workspace_schema first — it returns the authoritative, live list of valid statuses per object type, metadata fields, and relationship types for this workspace (these are workspace-configurable, so they vary between workspaces and cannot be assumed). To attach files to a created object, upload them first with create_file (or pick existing ones with list_files) and pass the returned ids in `file_ids` on the node. Attached files appear under the object in the UI and are returned alongside the object in get_objects. When referring to created or connected objects in human-facing output (comments, summaries, notifications, descriptions), use the object\'s title — not its UUID. Returned nodes include the title; edges include sourceTitle and targetTitle for the same reason. UUIDs should only appear in human-facing text when two objects share a near-identical title and disambiguation is needed — in that case append a short id suffix (e.g. "Bets and Threads v4 (ca957490)"). Use UUIDs freely inside tool arguments. Omit `status` unless the user explicitly asked for a specific one — a new object starts at the lowest (first) status configured for its type in this workspace (e.g. bet → signal, insight → new); statuses are earned through the workspace\'s promotion flow, not drafted at creation.',
+			'Create one or more objects with optional relationships in a single atomic operation. Use get_workspace_schema to see more details on objects and relationships. To create a Loop — a persistent closed-loop agent process — use the dedicated create_loop tool instead, which wires the trigger and membership metadata correctly. For a single object, provide one node with no edges. For multiple related objects, use $id references in edges to link them. Edges can also reference existing object UUIDs to connect new objects to existing ones. ALWAYS call get_workspace_schema first — it returns the authoritative, live list of valid statuses per object type, metadata fields, and relationship types for this workspace (these are workspace-configurable, so they vary between workspaces and cannot be assumed). To attach files to a created object, upload them first with create_file (or pick existing ones with list_files) and pass the returned ids in `file_ids` on the node. Attached files appear under the object in the UI and are returned alongside the object in get_objects. When referring to created or connected objects in human-facing output (comments, summaries, notifications, descriptions), use the object\'s title — not its UUID. Returned nodes include the title; edges include sourceTitle and targetTitle for the same reason. UUIDs should only appear in human-facing text when two objects share a near-identical title and disambiguation is needed — in that case append a short id suffix (e.g. "Bets and Threads v4 (ca957490)"). Use UUIDs freely inside tool arguments.',
 		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
+			workspace_id: requiredWorkspaceId,
 			nodes: z
 				.array(
 					z.object({
@@ -213,15 +212,19 @@ export const tools = {
 						type: z
 							.string()
 							.describe(
-								"Object type — any type this workspace defines (built-ins like insight/bet/task, or a custom type). Call get_workspace_schema first for this workspace's actual configured types; do not assume a fixed set.",
+								"Object type. Call get_workspace_schema first for this workspace's actual configured types; do not assume a fixed set.",
 							),
-						title: z.string().optional(),
-						content: z.string().optional(),
-						status: z
+						title: z.string().optional().describe('Short, human-readable title for the object.'),
+						content: z
 							.string()
 							.optional()
 							.describe(
-								"Object status. Bets are always created at `signal` — the founders' go/no-go gate — regardless of what is sent here; the server ignores this field for `bet` nodes and it can be omitted. Required for every other type.",
+								"The object's body — this is the meat of it. Keep it sharp: lead with the point, cut filler.",
+							),
+						status: z
+							.string()
+							.describe(
+								"Object status. Choose the first status by default. Only choose a different status when it's relevant.",
 							),
 						metadata: z
 							.record(z.unknown())
@@ -349,14 +352,12 @@ export const tools = {
 	},
 	list_objects: {
 		description:
-			'List insights, bets, and/or tasks in the workspace. Filter by type, status, driver, last-updated window, or custom metadata fields. Returns paginated results ordered by creation date unless `sort` is set. Rows with `status = "archived"` are hidden by default — pass `include_archived: true` to see them. When response scoping is enabled the server pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page. `offset` still works for backward compatibility.',
+			'List objects in the workspace. Filter by type, status, driver, last-updated window, or custom metadata fields. Returns paginated results ordered by creation date, newest first, unless `sort` is set. Rows with `status = "archived"` are hidden by default — pass `include_archived: true` to see them. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page. This applies uniformly to the default creation-date order and to `sort`-overridden updated-at order.',
 		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
+			workspace_id: requiredWorkspaceId,
 			type: z
 				.string()
-				.describe(
-					'Object type — any type this workspace defines (built-ins like insight/bet/task, or a custom type). Call get_workspace_schema to see the live list.',
-				)
+				.describe('Object type. Call get_workspace_schema to see the live list.')
 				.optional(),
 			status: z.string().optional(),
 			driver: z
@@ -384,13 +385,18 @@ export const tools = {
 				.describe(
 					'Sort by `updated_at`. Use `updated_at_asc` to walk oldest-stalled-first; `updated_at_desc` for most-recently-touched first. Omit to keep the default `createdAt desc` order.',
 				),
-			limit: z.number().int().min(1).max(100).optional(),
-			offset: z.number().int().min(0).optional(),
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(100)
+				.optional()
+				.describe('Max rows to return. Defaults to 25.'),
 			cursor: z
 				.string()
 				.optional()
 				.describe(
-					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call — rows inserted after that first call cannot leak into the stream.',
+					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call — rows inserted (or, under `sort`-overridden order, updated) after that first call cannot leak into the stream.',
 				),
 			metadata_eq: metadataEqSchema,
 			include_archived: z
@@ -403,7 +409,7 @@ export const tools = {
 	},
 	search_objects: {
 		description:
-			'Search objects by text in title or content, combined with optional type/status filters. Use this instead of list_objects when you need to find objects by keyword. To narrow by a custom metadata field, pass `metadata_eq` — e.g. `metadata_eq: {"promotion_mode": "human_approved"}`. Call get_workspace_schema first to see which fields exist per object type. Rows with `status = "archived"` are hidden by default — pass `include_archived: true` to see them. When response scoping is enabled the server pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
+			'Search objects by text in title or content, combined with optional type/status filters. Use this instead of list_objects when you need to find objects by keyword. To narrow by a custom metadata field, pass `metadata_eq` — e.g. `metadata_eq: {"promotion_mode": "human_approved"}`. Call get_workspace_schema first to see which fields exist per object type. Rows with `status = "archived"` are hidden by default — pass `include_archived: true` to see them. Paginated via `offset` (default page: 25) — search results are ranked by match quality, which is incompatible with cursor pagination, so there is no `cursor` param here (unlike list_objects). Every page of a multi-page walk is still pinned to the same snapshot, so inserts between calls cannot shift results across pages.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			q: z
@@ -429,14 +435,19 @@ export const tools = {
 				.describe(
 					'ISO-8601 timestamp. Half-open: returns rows with `updated_at > updated_after` (the bound itself is excluded).',
 				),
-			limit: z.number().int().min(1).max(100).optional(),
-			offset: z.number().int().min(0).optional(),
-			cursor: z
-				.string()
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(100)
 				.optional()
-				.describe(
-					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call.',
-				),
+				.describe('Max rows to return. Defaults to 25.'),
+			offset: z
+				.number()
+				.int()
+				.min(0)
+				.optional()
+				.describe('Rows to skip before the page starts. Defaults to 0.'),
 			metadata_eq: metadataEqSchema,
 			include_archived: z
 				.boolean()
@@ -448,7 +459,7 @@ export const tools = {
 	},
 	list_relationships: {
 		description:
-			'List relationships with optional filters. Use `object_id` to fetch every relationship connected to an object regardless of direction (matches either source or target). Use `source_id` / `target_id` only when direction matters. When response scoping is enabled the server pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
+			'List relationships with optional filters. Use `object_id` to fetch every relationship connected to an object regardless of direction (matches either source or target). Use `source_id` / `target_id` only when direction matters. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			object_id: z
@@ -461,8 +472,13 @@ export const tools = {
 			source_id: z.string().uuid().optional(),
 			target_id: z.string().uuid().optional(),
 			type: z.string().optional(),
-			limit: z.number().int().min(1).max(100).optional(),
-			offset: z.number().int().min(0).optional(),
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(100)
+				.optional()
+				.describe('Max rows to return. Defaults to 25.'),
 			cursor: z
 				.string()
 				.optional()
@@ -641,7 +657,7 @@ export const tools = {
 	},
 	list_actors: {
 		description:
-			"List actors (humans and agents). If workspace_id is provided, returns members of that workspace with their role. If omitted, returns actors across all workspaces the caller belongs to, each annotated with their workspace memberships. Each row includes the actor's short `description` (one-liner) — call `get_actor` for the full `system_prompt` (instructions), which is how to pick up context on a human teammate @mentioned in a comment. When `workspace_id` is set, each row also includes `connectedTriggers`/`connectedLoops` — the triggers and loops wired to that actor, each as `{ name, url }` (omitted when there are none, and always omitted for the cross-workspace listing, since a trigger/loop belongs to exactly one workspace). When response scoping is enabled the workspace-scoped path pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.",
+			"List actors (humans and agents). If workspace_id is provided, returns members of that workspace with their role. If omitted, returns actors across all workspaces the caller belongs to, each annotated with their workspace memberships. Each row includes the actor's short `description` (one-liner) — call `get_actor` for the full `system_prompt` (instructions), which is how to pick up context on a human teammate @mentioned in a comment. When `workspace_id` is set, each row also includes `connectedTriggers`/`connectedLoops` — the triggers and loops wired to that actor, each as `{ name, url }` (omitted when there are none, and always omitted for the cross-workspace listing, since a trigger/loop belongs to exactly one workspace). The workspace-scoped path pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page. The cross-workspace listing (no `workspace_id`) does not support cursor pagination — use `offset` to page it instead.",
 		inputSchema: z.object({
 			workspace_id: z
 				.string()
@@ -656,10 +672,15 @@ export const tools = {
 				.min(1)
 				.max(100)
 				.optional()
+				.describe('Max rows to return (1-100). Defaults to 25.'),
+			offset: z
+				.number()
+				.int()
+				.min(0)
+				.optional()
 				.describe(
-					'Max rows to return (1-100). Defaults to 25 when response scoping is enabled, or 50 otherwise.',
+					'Rows to skip. Only used for the cross-workspace listing (no `workspace_id`) — the workspace-scoped path pages via `cursor` instead. Defaults to 0.',
 				),
-			offset: z.number().int().min(0).optional().describe('Number of rows to skip. Defaults to 0.'),
 			cursor: z
 				.string()
 				.optional()
@@ -705,9 +726,15 @@ export const tools = {
 	},
 	list_workspaces: {
 		description:
-			'List workspaces accessible to the authenticated actor. Use this to discover workspace IDs, which can be passed to any workspace-scoped tool via the workspace_id parameter. When response scoping is enabled the server pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
+			'List workspaces accessible to the authenticated actor. Use this to discover workspace IDs, which can be passed to any workspace-scoped tool via the workspace_id parameter. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
 		inputSchema: z.object({
-			limit: z.number().int().min(1).max(100).optional(),
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(100)
+				.optional()
+				.describe('Max rows to return. Defaults to 25.'),
 			cursor: z
 				.string()
 				.optional()
@@ -811,11 +838,16 @@ export const tools = {
 	// NOT the same as per-agent skills (those live under an agent's own file store).
 	list_workspace_skills: {
 		description:
-			'List shared workspace skills — SKILL.md files stored once per workspace and attachable to any agent in the workspace. These are workspace-scoped and reusable across agents, NOT per-agent skills. Returns lightweight rows without the SKILL.md body; call get_workspace_skill to fetch full content. When response scoping is enabled the server pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
+			'List shared workspace skills — SKILL.md files stored once per workspace and attachable to any agent in the workspace. These are workspace-scoped and reusable across agents, NOT per-agent skills. Returns lightweight rows without the SKILL.md body; call get_workspace_skill to fetch full content. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			limit: z.number().int().min(1).max(100).optional(),
-			offset: z.number().int().min(0).optional(),
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(100)
+				.optional()
+				.describe('Max rows to return. Defaults to 25.'),
 			cursor: z
 				.string()
 				.optional()
@@ -906,12 +938,17 @@ export const tools = {
 	},
 	list_files: {
 		description:
-			'List files in the workspace, newest first. Pass `q` to filter by name substring. When response scoping is enabled the server pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
+			'List files in the workspace, newest first. Pass `q` to filter by name substring. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			q: z.string().optional().describe('Case-insensitive substring match on file name.'),
-			limit: z.number().int().min(1).max(200).optional(),
-			offset: z.number().int().min(0).optional(),
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(200)
+				.optional()
+				.describe('Max rows to return. Defaults to 25.'),
 			cursor: z
 				.string()
 				.optional()
@@ -958,7 +995,7 @@ export const tools = {
 	},
 	get_events: {
 		description:
-			'Get the workspace activity log. Every mutation (create, update, delete) is recorded as an event. Use this to see what changed, track agent activity, or audit changes. Pass `id` to fetch a single event by its numeric event_id (e.g. the one quoted in a trigger prompt). Filter by entity_type (object|relationship|integration) and action (created|updated|deleted|status_changed). When response scoping is enabled the server pages via a snapshot-consistent cursor — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
+			'Get the workspace activity log. Every mutation (create, update, delete) is recorded as an event. Use this to see what changed, track agent activity, or audit changes. Pass `id` to fetch a single event by its numeric event_id (e.g. the one quoted in a trigger prompt). Filter by entity_type (object|relationship|integration) and action (created|updated|deleted|status_changed). Paginated via a snapshot-consistent cursor — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z
@@ -980,12 +1017,17 @@ export const tools = {
 	},
 	get_comments: {
 		description:
-			'Get comments posted on a specific object, newest first. Threading is expressed via data.parentEventId on each row — replies reference the event id of the comment they reply to.',
+			'Get comments posted on a specific object, newest first. Threading is expressed via data.parentEventId on each row — replies reference the event id of the comment they reply to. Paginated via a snapshot-consistent cursor — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			entity_id: z.string().uuid().describe('Object ID to fetch comments for.'),
 			limit: z.number().int().min(1).max(100).default(50).describe('Defaults to 50.'),
-			offset: z.number().int().min(0).default(0).describe('Defaults to 0.'),
+			cursor: z
+				.string()
+				.optional()
+				.describe(
+					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call.',
+				),
 		}),
 	},
 	create_comment: {
@@ -1066,11 +1108,16 @@ export const tools = {
 	},
 	list_triggers: {
 		description:
-			'List all triggers in the workspace. When response scoping is enabled the server pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page. `limit`/`offset` still work for backward compatibility (default 50, max 100).',
+			'List all triggers in the workspace. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			limit: z.number().int().min(1).max(100).optional(),
-			offset: z.number().int().min(0).optional(),
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(100)
+				.optional()
+				.describe('Max rows to return. Defaults to 25.'),
 			cursor: z
 				.string()
 				.optional()
@@ -1207,10 +1254,16 @@ export const tools = {
 	},
 	list_loops: {
 		description:
-			'List every Loop in the workspace as a lean id/name index — each row is just `{id, workspaceId, name, url}`. Use this to find loop ids, then call get_loop with a specific id for live stats (status pill, entry/close conditions, member-object counts, median time-to-close) and the `steps` view (each trigger nested with its resolved agent). To list the objects currently inside a loop, call list_relationships with source_id=<loop id> and type="in_loop". When response scoping is enabled the server pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
+			'List every Loop in the workspace as a lean id/name index — each row is just `{id, workspaceId, name, url}`. Use this to find loop ids, then call get_loop with a specific id for live stats (status pill, entry/close conditions, member-object counts, median time-to-close) and the `steps` view (each trigger nested with its resolved agent). To list the objects currently inside a loop, call list_relationships with source_id=<loop id> and type="in_loop". Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			limit: z.number().int().min(1).max(100).optional(),
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(100)
+				.optional()
+				.describe('Max rows to return. Defaults to 25.'),
 			cursor: z
 				.string()
 				.optional()
@@ -1481,11 +1534,17 @@ export const tools = {
 	},
 	list_unread: {
 		description:
-			'List entities the current actor is subscribed to with unread activity (comments newer than the actor\'s last_read_event_id). Returns object summaries inline when entity_type="object". When response scoping is enabled the server pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
+			'List entities the current actor is subscribed to with unread activity (comments newer than the actor\'s last_read_event_id). Returns object summaries inline when entity_type="object". Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			entity_type: z.enum(['object']).optional(),
-			limit: z.number().int().min(1).max(100).optional(),
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(100)
+				.optional()
+				.describe('Max rows to return. Defaults to 25.'),
 			cursor: z
 				.string()
 				.optional()
@@ -1497,10 +1556,16 @@ export const tools = {
 	// ─── Integrations ─────────────────────────────────────────
 	list_integrations: {
 		description:
-			'List integrations connected to the workspace. When response scoping is enabled the server pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
+			'List integrations connected to the workspace. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			limit: z.number().int().min(1).max(100).optional(),
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(100)
+				.optional()
+				.describe('Max rows to return. Defaults to 25.'),
 			cursor: z
 				.string()
 				.optional()
@@ -1535,10 +1600,16 @@ export const tools = {
 	// ─── Extensions ──────────────────────────────────────────
 	list_extensions: {
 		description:
-			'List all available extensions and their status in the workspace. Returns registered extensions (e.g. "work") and any custom extensions defined in the workspace. Each extension bundles one or more object types with statuses, fields, and relationship types. Call this to discover what you can enable or create. When response scoping is enabled the server pages via a stable cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
+			'List all available extensions and their status in the workspace. Returns registered extensions (e.g. "work") and any custom extensions defined in the workspace. Each extension bundles one or more object types with statuses, fields, and relationship types. Call this to discover what you can enable or create. Paginated via a stable cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			limit: z.number().int().min(1).max(100).optional(),
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(100)
+				.optional()
+				.describe('Max rows to return. Defaults to 25.'),
 			cursor: z
 				.string()
 				.optional()

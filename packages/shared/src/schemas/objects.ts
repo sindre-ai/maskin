@@ -161,9 +161,10 @@ export const KNOWN_SORT_COLUMNS = [
  * Avoid .refine() here — ZodEffects breaks @hono/zod-openapi query param extraction. */
 const sortFieldSchema = z.string().max(200).default('createdAt')
 
-/** Snapshot-consistent cursor pagination fields (behind `MCP_RESPONSE_SCOPING`).
- *  All three are optional and additive — leaving them unset preserves the
- *  legacy offset/limit shape byte-for-byte. When `snapshot_at` is set, the
+/** Snapshot-consistent cursor pagination fields, used by the MCP server's
+ *  list/search tools. All three are optional and additive — leaving them
+ *  unset preserves the legacy offset/limit shape byte-for-byte. When
+ *  `snapshot_at` is set, the
  *  server applies `created_at <= snapshot_at` as an upper bound so inserts
  *  after the walk began cannot leak into the paginated stream. When the
  *  keyset pair (`cursor_created_at`, `cursor_id`) is set, the server seeks

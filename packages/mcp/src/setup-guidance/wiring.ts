@@ -274,8 +274,8 @@ export async function buildActorSetupBlockFromApi(
 
 /**
  * Async convenience: build the bet setup block by fetching workspace settings.
- * Callers that have already loaded the workspace row (e.g. `create_objects`'s
- * status-inference path) may pass it via `options.workspace` to skip the fetch.
+ * Callers that have already loaded the workspace row may pass it via
+ * `options.workspace` to skip the fetch.
  */
 export async function buildBetSetupBlockFromApi(
 	bet: BetInput,
