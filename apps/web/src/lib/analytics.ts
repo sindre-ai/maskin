@@ -571,3 +571,16 @@ export function trackLoopCreatedViaLanguage(p: {
 	loop_id: string
 	flow_id?: string | null
 }): void {
+	trackEvent(
+		'loop_created_via_language',
+		{
+			workspace_id: p.workspace_id,
+			loop_id: p.loop_id,
+			entity_id: p.loop_id,
+			entity_type: 'loop',
+			source: 'web',
+			flow_id: p.flow_id ?? null,
+		},
+		{ send_instantly: true },
+	)
+}

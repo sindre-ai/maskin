@@ -46,6 +46,7 @@ export function HumanDetailDialog({
 	const [systemPromptDraft, setSystemPromptDraft] = useState('')
 	const [roleError, setRoleError] = useState<string | null>(null)
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: actorId is the reset trigger — drafts and the role error must clear when the dialog switches actors, even though the effect body never reads actorId.
 	useEffect(() => {
 		setDescriptionDraft(actor?.description ?? '')
 		setSystemPromptDraft(actor?.system_prompt ?? '')

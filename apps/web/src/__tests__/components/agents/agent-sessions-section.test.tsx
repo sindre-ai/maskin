@@ -8,15 +8,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildActorResponse, buildSessionResponse } from '../../factories'
 import { createWorkspaceWrapper } from '../../setup'
 
-const openWithContext = vi.fn()
-const useChatMock = vi.fn(() => ({ openWithContext }))
+const navigateMock = vi.fn()
 
-vi.mock('@/lib/chat-context', async () => {
-	const actual = await vi.importActual<typeof import('@/lib/chat-context')>('@/lib/chat-context')
-	return {
-		...actual,
-		useChat: () => useChatMock(),
-	}
+vi.mock('@tanstack/react-router', async () => {
+	const { mockTanStackRouter } = await import('../../mocks/router')
+	return { ...mockTanStackRouter(), useNavigate: () => navigateMock }
 })
 
 const sessionsData = vi.fn()
@@ -33,8 +29,7 @@ vi.mock('@/hooks/use-events', () => ({
 
 describe('AgentSessionsSection', () => {
 	beforeEach(() => {
-		openWithContext.mockReset()
-		useChatMock.mockClear()
+		navigateMock.mockReset()
 		sessionsData.mockReset()
 	})
 
@@ -140,9 +135,11 @@ describe('AgentSessionsSection', () => {
 		)
 		await userEvent.click(screen.getByRole('button', { name: 'Continue in chat' }))
 
-		expect(openWithContext).toHaveBeenCalledWith(
-			[{ kind: 'agent', id: 'agent-chat', name: 'Cass' }],
-			'Refresh the landing hero copy',
+		expect(navigateMock).toHaveBeenCalledWith(
+			expect.objectContaining({
+				to: '/$workspaceId/chats/new',
+				search: { agentId: 'agent-chat', agentName: 'Cass' },
+			}),
 		)
 	})
 

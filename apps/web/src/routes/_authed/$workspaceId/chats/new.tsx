@@ -196,11 +196,11 @@ function NewConversationPage() {
 			<div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
 				<div className="flex flex-col gap-1.5">
 					<span className="text-xs font-medium text-muted-foreground">To</span>
-					<div className="flex flex-wrap items-center gap-1.5 rounded-md border border-border bg-bg-surface p-2">
+					<div className="flex flex-wrap items-center gap-1.5 rounded-md border border-border bg-card p-2">
 						{participants.map((p) => (
 							<span
 								key={p.id}
-								className="inline-flex items-center gap-1.5 rounded-full border border-border bg-bg px-2 py-0.5 text-xs"
+								className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-2 py-0.5 text-xs"
 							>
 								<ActorAvatar id={p.id} name={p.name} type={p.type} size="sm" />
 								{p.name}

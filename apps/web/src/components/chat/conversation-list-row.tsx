@@ -18,8 +18,8 @@ export function ConversationListRow({ workspaceId, conversation }: ConversationL
 		<Link
 			to="/$workspaceId/chats/$conversationId"
 			params={{ workspaceId, conversationId: conversation.id }}
-			activeProps={{ className: 'bg-bg-hover' }}
-			className="flex items-start gap-2.5 rounded-md px-2.5 py-2 text-left hover:bg-bg-hover"
+			activeProps={{ className: 'bg-accent' }}
+			className="flex items-start gap-2.5 rounded-md px-2.5 py-2 text-left hover:bg-accent"
 		>
 			<div className="mt-0.5 flex shrink-0 items-center -space-x-1.5">
 				{visibleParticipants.map((p) => (

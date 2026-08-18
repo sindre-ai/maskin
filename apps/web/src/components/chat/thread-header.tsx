@@ -134,7 +134,7 @@ export function ThreadHeader({ workspaceId, conversationId }: ThreadHeaderProps)
 						/>
 					))}
 					{overflowCount > 0 ? (
-						<span className="flex h-5 w-5 items-center justify-center rounded-full bg-bg-surface text-[10px] font-medium text-muted-foreground ring-2 ring-background">
+						<span className="flex h-5 w-5 items-center justify-center rounded-full bg-card text-[10px] font-medium text-muted-foreground ring-2 ring-background">
 							+{overflowCount}
 						</span>
 					) : null}

@@ -3,10 +3,10 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { useWorkspaceSessions } from '@/hooks/use-sessions'
 import type { ActorResponse, SessionResponse } from '@/lib/api'
-import { useChat } from '@/lib/chat-context'
 import { cn } from '@/lib/cn'
 import { formatDurationBetween } from '@/lib/format-duration'
 import { useWorkspace } from '@/lib/workspace-context'
+import { useNavigate } from '@tanstack/react-router'
 import { AlertCircle, CheckCircle2, ChevronDown, ChevronUp, Clock, PauseCircle } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { SessionDetailPanel } from './session-detail-panel'
@@ -215,7 +215,8 @@ function SessionCard({
 	const state = deriveState(session.status)
 	const meta = STATE_META[state]
 	const active = isActive(state)
-	const { openWithContext } = useChat()
+	const navigate = useNavigate()
+	const { workspaceId } = useWorkspace()
 
 	const name = session.actionPrompt?.trim() || 'Untitled session'
 	const duration = formatDurationBetween(session.startedAt, session.completedAt)
@@ -300,10 +301,11 @@ function SessionCard({
 							size="sm"
 							className="h-7 rounded-md px-3 text-xs"
 							onClick={() =>
-								openWithContext(
-									[{ kind: 'agent', id: agent.id, name: agent.name }],
-									session.actionPrompt || undefined,
-								)
+								navigate({
+									to: '/$workspaceId/chats/new',
+									params: { workspaceId },
+									search: { agentId: agent.id, agentName: agent.name },
+								})
 							}
 						>
 							Continue in chat
