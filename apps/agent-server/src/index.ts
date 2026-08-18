@@ -43,7 +43,7 @@ import {
 
 const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/
 
-const MAX_PREVIEW_GUEST_PORTS = 8
+export const MAX_PREVIEW_GUEST_PORTS = 8
 
 const SESSION_REQUEST_SCHEMA = z
 	.object({
@@ -723,6 +723,22 @@ export function buildApp(deps: AppDeps): Hono {
 				guestPort,
 				previewUrl: `http://${agentServerInternalHost}:${existing.relayPort}`,
 			})
+		}
+
+		// The guest-side watcher reports every LISTEN socket it finds in range,
+		// not just intentional dev servers — cap how many distinct relays (and
+		// therefore host ssh-relay process pairs + shared host ports) a single
+		// session can claim, mirroring the upfront previewGuestPorts cap. Count
+		// in-flight attempts too (not just established relays) so concurrent
+		// requests for different new ports can't collectively slip past the cap
+		// before any of them lands in previewRelays. A re-request for a port
+		// that's already pending is exempt — it's coalescing onto existing work,
+		// not claiming a new slot.
+		if (
+			!state.pendingRelays.has(guestPort) &&
+			state.previewRelays.length + state.pendingRelays.size >= MAX_PREVIEW_GUEST_PORTS
+		) {
+			return c.json({ error: 'too_many_preview_ports' }, 429)
 		}
 
 		// Coalesce concurrent requests for the same port onto one in-flight

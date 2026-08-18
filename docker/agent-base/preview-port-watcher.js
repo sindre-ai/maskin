@@ -185,9 +185,21 @@ async function main() {
 	// case this script ever runs standalone).
 	await fs.writeFile(PREVIEW_PORTS_FILE, '{}', { flag: 'wx' }).catch(() => {})
 	for (;;) {
-		await tick()
+		// tick() already guards its own await points, but wrap it here too so
+		// the loop structurally can't die from a future unguarded await inside
+		// tick() — an unhandled rejection would otherwise crash this process
+		// (Node's default is to throw), silently ending preview-port relay for
+		// the rest of the session with no trace outside this process's own log.
+		try {
+			await tick()
+		} catch (err) {
+			log(`tick() threw unexpectedly: ${err?.stack ?? err}`)
+		}
 		await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS))
 	}
 }
 
-main()
+main().catch((err) => {
+	log(`fatal: watcher loop crashed: ${err?.stack ?? err}`)
+	process.exit(1)
+})
