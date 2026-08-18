@@ -353,7 +353,11 @@ describe('MCP list/search channel split (AC-T2 / AC-T4 / AC-U2)', () => {
 	]
 
 	for (const { tool, fixture, args } of scopingCases) {
-		it(`${tool}: flag ON keeps content ≤ 2KB and structuredContent full-fidelity`, async () => {
+		it(`${tool}: content channel carries the full JSON payload, not a lean summary`, async () => {
+			// The lean markdown-summary channel (AC-U2's original ≤2KB budget) was
+			// reverted — it left agents without enough detail in `content` to act
+			// on, so list/search tools went back to shipping the full payload
+			// there. `structuredContent` still carries the same data too.
 			process.env[RESPONSE_SCOPING_ENV_VAR] = '1'
 			fetchStubFor(fixture)
 			const handler = getHandler(tool)
@@ -361,27 +365,9 @@ describe('MCP list/search channel split (AC-T2 / AC-T4 / AC-U2)', () => {
 				content: Array<{ text: string }>
 				structuredContent?: Record<string, unknown>
 			}
-			const contentBytes = Buffer.byteLength(result.content[0].text, 'utf8')
-			expect(contentBytes).toBeLessThanOrEqual(CONTENT_SUMMARY_BUDGET_BYTES)
-
-			// AC-U2: content must be a summary, never `JSON.stringify(structuredContent)`
-			// or `JSON.stringify(fullPayload)`. Assert the content isn't the JSON dump
-			// itself (starts with `-` for list rows, not `[` or `{`).
-			expect(result.content[0].text.startsWith('[')).toBe(false)
-			expect(result.content[0].text.startsWith('{')).toBe(false)
-			// Never equals the structured channel's JSON.
-			if (result.structuredContent) {
-				const structuredJson = JSON.stringify(result.structuredContent, null, 2)
-				expect(result.content[0].text).not.toBe(structuredJson)
-			}
-			// Content is markdown list — starts with "- " or the empty label.
-			expect(/^(- |No |… )/.test(result.content[0].text)).toBe(true)
-			// AC-U2: every summary row carries a deep link back into the web app.
-			// The seven scoped list/search tools all wire a `url` through the
-			// SummaryRow so the rendered markdown carries `](https://maskin.io/`
-			// once per row. Empty fixtures skip this — but the scoping cases seed
-			// 50 rows, so the summary always has at least one linked row.
-			expect(result.content[0].text).toContain('](https://maskin.io/')
+			expect(() => JSON.parse(result.content[0].text)).not.toThrow()
+			// Not a markdown summary line (`- ...`) or the empty-label shape.
+			expect(/^(- |No |… )/.test(result.content[0].text)).toBe(false)
 		})
 	}
 
@@ -427,12 +413,12 @@ describe('MCP list/search channel split (AC-T2 / AC-T4 / AC-U2)', () => {
 		expect(result.structuredContent.page.next_cursor).toBe(result.structuredContent.next_cursor)
 	})
 
-	it('summary lines carry the deep link even when the enriched row has one', async () => {
+	it('content JSON carries the deep link for each enriched row', async () => {
 		process.env[RESPONSE_SCOPING_ENV_VAR] = '1'
 		fetchStubFor([objectRow(1)])
 		const handler = getHandler('list_objects')
 		const result = (await handler({})) as { content: Array<{ text: string }> }
-		expect(result.content[0].text).toContain('](https://maskin.io/')
+		expect(result.content[0].text).toContain('https://maskin.io/')
 	})
 
 	it('list_objects: flag ON keeps the fetched `limit` within the API cap even when caller passes the max', async () => {
@@ -459,19 +445,22 @@ describe('MCP list/search channel split (AC-T2 / AC-T4 / AC-U2)', () => {
 		expect(Number(limitParam)).toBeLessThanOrEqual(100)
 	})
 
-	it('flag toggle is honoured mid-process without a restart (AC-T4)', async () => {
+	it('flag toggle changes pagination shape mid-process without a restart, content stays full JSON (AC-T4)', async () => {
 		const fixture = [objectRow(1), objectRow(2)]
 		fetchStubFor(fixture)
 		const handler = getHandler('list_objects')
 
-		// After T1 the default is ON — the legacy shape is now opt-in via `= '0'`.
 		process.env[RESPONSE_SCOPING_ENV_VAR] = '0'
-		const off1 = (await handler({})) as { content: Array<{ text: string }> }
+		const off1 = (await handler({})) as {
+			content: Array<{ text: string }>
+			structuredContent: { next_cursor?: string }
+		}
 		expect(off1.content[0].text.startsWith('[')).toBe(true)
+		expect(off1.structuredContent.next_cursor).toBeUndefined()
 
 		process.env[RESPONSE_SCOPING_ENV_VAR] = '1'
 		const on = (await handler({})) as { content: Array<{ text: string }> }
-		expect(on.content[0].text.startsWith('-')).toBe(true)
+		expect(() => JSON.parse(on.content[0].text)).not.toThrow()
 
 		process.env[RESPONSE_SCOPING_ENV_VAR] = '0'
 		const off2 = (await handler({})) as { content: Array<{ text: string }> }
