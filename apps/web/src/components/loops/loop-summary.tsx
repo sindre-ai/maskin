@@ -1,16 +1,16 @@
 import type { LoopSummary as LoopSummaryType } from '@/lib/api'
 
 // The "read it in four sentences" contract at the top of loop detail. Each
-// sentence is built purely from real loop data (guarantee, entry/close
+// sentence is built purely from real loop data (content, entry/close
 // conditions, live counts) with conservative fallbacks so an under-specified
 // loop still reads cleanly and always produces exactly four sentences.
 export function buildLoopSummarySentences(loop: LoopSummaryType): string[] {
 	const sentences: string[] = []
 
-	const guarantee = loop.guarantee?.trim()
+	const content = loop.content?.trim()
 	sentences.push(
-		guarantee && guarantee.length > 0
-			? guarantee
+		content && content.length > 0
+			? content
 			: `${loop.name ?? 'This loop'} keeps the workspace moving on its own.`,
 	)
 
@@ -22,20 +22,16 @@ export function buildLoopSummarySentences(loop: LoopSummaryType): string[] {
 	)
 
 	const close = loop.closeCondition?.trim()
-	if (close && close.length > 0) {
-		sentences.push(`A cycle closes when ${lowerFirst(close)}.`)
-	} else if (loop.humanDecisionPoints && loop.humanDecisionPoints > 0) {
-		const n = loop.humanDecisionPoints
-		sentences.push(`It stops for you at ${n} decision point${n === 1 ? '' : 's'}.`)
-	} else {
-		sentences.push('Cycles close once their work is done.')
-	}
+	sentences.push(
+		close && close.length > 0
+			? `A cycle closes when ${lowerFirst(close)}.`
+			: 'Cycles close once their work is done.',
+	)
 
 	if (loop.pill === 'waiting_on_you') {
-		const n = loop.humanDecisionPoints
-		sentences.push(
-			`Right now it is waiting on you${n && n > 0 ? `, with ${n} decision point${n === 1 ? '' : 's'} open` : ''}.`,
-		)
+		sentences.push('Right now it is waiting on you.')
+	} else if (loop.pill === 'draft') {
+		sentences.push('Right now it is a draft — not live yet.')
 	} else if (loop.pill === 'paused') {
 		sentences.push('Right now it is paused.')
 	} else if (loop.inProgressCount > 0) {

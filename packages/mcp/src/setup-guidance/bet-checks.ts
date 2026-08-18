@@ -5,7 +5,7 @@ function safeCheck(name: string, run: () => SetupCheck | null): SetupCheck | nul
 	try {
 		return run()
 	} catch (err) {
-		console.error(`[setup-guidance] bet check '${name}' threw, degrading to unknown:`, err)
+		console.error(`[setup-guidance] object check '${name}' threw, degrading to unknown:`, err)
 		return {
 			name,
 			status: 'unknown',
@@ -14,43 +14,73 @@ function safeCheck(name: string, run: () => SetupCheck | null): SetupCheck | nul
 	}
 }
 
-function agentsRunnable(ctx: BetCheckContext): SetupCheck | null {
-	if (ctx.workspace.hasLlmKey || ctx.workspace.hasClaudeOAuth) return null
+const MIN_CONTENT_LENGTH = 200
+
+function contentQuality(bet: BetInput): SetupCheck | null {
+	const content = bet.content?.trim() ?? ''
+	if (content.length >= MIN_CONTENT_LENGTH) return null
 	return {
-		name: 'agents_runnable',
+		name: 'content_quality',
 		status: 'warn',
 		message:
-			'No LLM credentials on this workspace — any agent asked to work on this object will fail to start a session.',
+			content.length === 0
+				? `This ${bet.type} has no content yet — ask the user to add more detail so agents and collaborators know what it's about.`
+				: `This ${bet.type}'s content is only ${content.length} character${content.length === 1 ? '' : 's'} — ask the user to add more detail (aim for ${MIN_CONTENT_LENGTH}+).`,
 		fix: {
-			tool: 'set_llm_api_key',
-			args_hint: 'anthropic or openai key, or import a Claude Pro/Max subscription',
-			why: 'Sessions read workspace-level llm_keys or claude_oauth to authenticate the model call.',
+			tool: 'update_objects',
+			args_hint: 'set content: "<a fuller description>" on the object',
+			why: 'Thin content gives agents and collaborators little to act on.',
 		},
 	}
 }
 
-function elevatedStatus(bet: BetInput, ctx: BetCheckContext): SetupCheck | null {
-	const order = ctx.statusOrder ?? []
-	if (order.length === 0 || !bet.status) return null
-	const lowest = order[0]
-	if (bet.status === lowest) return null
-	if (!order.includes(bet.status)) return null
+function driverSet(bet: BetInput): SetupCheck {
+	if (!bet.driver) {
+		return {
+			name: 'driver_set',
+			status: 'warn',
+			message: `This ${bet.type} has no driver — ask the user to add one so someone is accountable for moving it forward.`,
+			fix: {
+				tool: 'update_objects',
+				args_hint: 'set driver: "<actor id>" on the object',
+				why: 'Without a driver, nobody owns pushing this forward.',
+			},
+		}
+	}
 	return {
-		name: 'elevated_status',
+		name: 'driver_set',
 		status: 'warn',
-		message: `Status "${bet.status}" is above the entry status "${lowest}" for ${bet.type}s in this workspace — usually earned, not set at creation.`,
+		message: `This ${bet.type} is driven by ${bet.driver} — ask the user to confirm this is the right driver.`,
 		fix: {
 			tool: 'update_objects',
-			args_hint: `set status: "${lowest}" (or leave off — create_objects defaults to the lowest configured status)`,
-			why: 'Elevated statuses skip the earlier stages of review, discovery, or qualification.',
+			args_hint: 'set driver: "<actor id>" to change the owner',
+			why: 'Objects are sometimes created with a placeholder or wrong driver — confirm ownership before work starts.',
+		},
+	}
+}
+
+function statusProgression(bet: BetInput, ctx: BetCheckContext): SetupCheck | null {
+	const order = ctx.statusOrder ?? []
+	if (order.length < 2 || !bet.status) return null
+	const [first, next] = order
+	if (bet.status !== first) return null
+	return {
+		name: 'status_progression',
+		status: 'warn',
+		message: `This ${bet.type} is at the entry status "${first}" — ask the user if it should be progressed to "${next}".`,
+		fix: {
+			tool: 'update_objects',
+			args_hint: `set status: "${next}"`,
+			why: `Objects sitting at the entry status ("${first}") may already be ready to move forward.`,
 		},
 	}
 }
 
 export function checkBet(bet: BetInput, ctx: BetCheckContext): SetupCheck[] {
 	const results: (SetupCheck | null)[] = [
-		safeCheck('agents_runnable', () => agentsRunnable(ctx)),
-		safeCheck('elevated_status', () => elevatedStatus(bet, ctx)),
+		safeCheck('content_quality', () => contentQuality(bet)),
+		safeCheck('driver_set', () => driverSet(bet)),
+		safeCheck('status_progression', () => statusProgression(bet, ctx)),
 	]
 	return sortByPriority(results.filter((c): c is SetupCheck => c !== null))
 }

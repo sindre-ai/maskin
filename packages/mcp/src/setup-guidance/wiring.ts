@@ -7,17 +7,21 @@
  *     `buildBetSetupBlock`) take pre-fetched data and return a `SetupBlock` —
  *     used by the read-side get handlers that already load the underlying rows.
  *   - **Async fetch-and-compose helpers** (`buildActorSetupBlockFromApi`,
- *     `buildBetSetupBlockFromApi`, `buildLoopSetupBlockFromApi`) do the
- *     fetching themselves and are used by mutation handlers where data isn't
- *     already in hand.
+ *     `buildBetSetupBlockFromApi`, `buildLoopSetupBlockFromApi`) do any
+ *     necessary fetching themselves and are used by mutation handlers where
+ *     data isn't already in hand. `buildActorSetupBlockFromApi` fetches the
+ *     actor's attached-skill count (one call, skipped for non-agent actors) —
+ *     system prompt and MCP server count are read directly off the actor row
+ *     the caller already has.
  *
  * `safeBuildSetupBlock` wraps any compute in a single `unknown` check on
  * failure so the primary tool response always ships.
  *
- * Extra API-call budget per mutation tool call:
- *   - actor (create/update):    1 (workspace)
+ * Extra API-call budget per mutation/read tool call:
+ *   - actor (update/get):       ≤1 (workspace-skills count — skipped for `type !== 'agent'`
+ *                                and skipped when the caller already passes `skillCount`)
  *   - bet   (create/update):    1 (workspace — reused for status order)
- *   - loop  (create/update):    ≤4 (workspace, integrations, triggers, actors)
+ *   - loop  (create/update/get): ≤3 (integrations, triggers, actors)
  */
 
 import { checkActor, checkBet, checkLoop } from './index'
@@ -165,7 +169,7 @@ export function composeLoopSteps(
 			? {
 					id: actor.id as string,
 					name: (actor.name as string | undefined) ?? null,
-					systemPrompt: (actor.systemPrompt as string | undefined) ?? null,
+					description: (actor.description as string | undefined) ?? null,
 				}
 			: null
 		return {
@@ -194,9 +198,9 @@ export function buildBetSetupBlock(
 
 /**
  * Merge multiple bet setup blocks (from a batched create/update) into one.
- * De-duplicates by (name + message) so a single workspace-level warn like
- * `agents_runnable` only appears once even across many nodes, while per-node
- * warns (`elevated_status` with different messages) all survive.
+ * De-duplicates by (name + message) so a shared warn only appears once even
+ * across many nodes, while per-node warns (`elevated_status` with different
+ * messages) all survive.
  */
 export function mergeBetSetupBlocks(blocks: SetupBlock[]): SetupBlock {
 	const seen = new Set<string>()
@@ -244,19 +248,27 @@ async function loadWorkspace(
 }
 
 /**
- * Async convenience: build the actor setup block by fetching workspace
- * settings, delegating to the pure check module. Load failure yields a single
- * `unknown` check via `safeBuildSetupBlock`.
+ * Async convenience: build the actor setup block. Fetches the actor's total
+ * attached-skill count via `GET /api/actors/:id/workspace-skills` — the only
+ * piece of `checkActor`'s input the caller doesn't already have on hand.
+ * Skipped for non-agent actors (since `checkActor` returns `[]` for them) and
+ * skipped whenever `actor.skillCount` is already set — callers that already
+ * have the count on hand (e.g. `get_actor`, whose `GET /api/actors/:id`
+ * response embeds `skills` inline) should pass it directly.
  */
 export async function buildActorSetupBlockFromApi(
 	actor: ActorInput,
 	apiCall: ApiCaller,
-	options: { workspaceId?: string; defaultWorkspaceId?: string },
 ): Promise<SetupBlock> {
 	return safeBuildSetupBlock('setup', async () => {
-		const workspace = await loadWorkspace(apiCall, options.workspaceId, options.defaultWorkspaceId)
-		const readiness = readWorkspaceLlmReadiness(workspace?.settings ?? undefined)
-		return buildBlock(checkActor(actor, { workspace: readiness }))
+		if (actor.type !== 'agent' || actor.skillCount !== undefined) {
+			return buildBlock(checkActor(actor))
+		}
+		const skills = await apiCall('GET', `/api/actors/${actor.id}/workspace-skills`, undefined, {
+			skipWorkspace: true,
+		})
+		const skillCount = Array.isArray(skills) ? skills.length : 0
+		return buildBlock(checkActor({ ...actor, skillCount }))
 	})
 }
 
@@ -286,29 +298,27 @@ export async function buildBetSetupBlockFromApi(
 }
 
 /**
- * Async convenience: build the loop setup block by fetching workspace
- * settings, connected integrations, and step trigger/agent rows in parallel.
- * `triggerIds` should be the union of the loop's pre-existing trigger ids and
- * any inline steps just created — both must already exist in the DB.
+ * Async convenience: build the loop setup block by fetching connected
+ * integrations and step trigger/agent rows in parallel. `triggerIds` should
+ * be the union of the loop's pre-existing trigger ids and any inline steps
+ * just created — both must already exist in the DB.
  */
 export async function buildLoopSetupBlockFromApi(
 	loop: LoopInput,
 	apiCall: ApiCaller,
 	options: {
 		workspaceId?: string
-		defaultWorkspaceId?: string
 		triggerIds: string[]
 		memberCount: number
 	},
 ): Promise<SetupBlock> {
 	return safeBuildSetupBlock('setup', async () => {
 		// No per-source `.catch()` here: a partial fetch failure (e.g.
-		// /api/integrations errors but /api/workspaces succeeds) must not be
+		// /api/integrations errors but /api/triggers succeeds) must not be
 		// silently treated as "found nothing" — that would produce a confident
 		// but wrong `connectors_connected` warning instead of degrading the
 		// whole block to `unknown` via the outer `safeBuildSetupBlock`.
-		const [workspace, integrationsRows, triggerRows] = await Promise.all([
-			loadWorkspace(apiCall, options.workspaceId, options.defaultWorkspaceId),
+		const [integrationsRows, triggerRows] = await Promise.all([
 			apiCall('GET', '/api/integrations', undefined, { workspaceId: options.workspaceId }),
 			options.triggerIds.length > 0
 				? apiCall('GET', '/api/triggers', undefined, { workspaceId: options.workspaceId })
@@ -337,7 +347,6 @@ export async function buildLoopSetupBlockFromApi(
 				: []
 		const steps = composeLoopSteps(options.triggerIds, matchedTriggers, actorRows)
 		return buildLoopSetupBlock(loop, {
-			workspace: readWorkspaceLlmReadiness(workspace?.settings ?? undefined),
 			connectedProviders: readConnectedProviders(integrationsRows),
 			steps,
 			memberCount: options.memberCount,

@@ -9,6 +9,7 @@ import {
 	relationships,
 	sessions,
 	subscriptions,
+	triggers,
 	workspaces,
 } from '@maskin/db/schema'
 import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
@@ -1588,6 +1589,32 @@ app.openapi(updateObjectRoute, async (c) => {
 				actorId,
 				bet: row,
 			})
+		}
+
+		// Pausing a loop must pause its work: every trigger referenced in the
+		// loop's metadata.trigger_ids stops firing while the loop is paused, and
+		// resumes when the loop leaves paused. This PATCH is the single choke
+		// point for loop status writes — the frontend's pause/resume button and
+		// the MCP update_loop tool both land here — so it's implemented once
+		// rather than duplicated per caller.
+		if (action === 'status_changed' && current.type === 'loop') {
+			const enteringPaused = row.status === 'paused' && current.status !== 'paused'
+			const leavingPaused = current.status === 'paused' && row.status !== 'paused'
+			if (enteringPaused || leavingPaused) {
+				const meta = (row.metadata as Record<string, unknown> | null) ?? {}
+				const rawTriggerIds = meta.trigger_ids
+				const triggerIds = Array.isArray(rawTriggerIds)
+					? rawTriggerIds.filter((v): v is string => typeof v === 'string')
+					: []
+				if (triggerIds.length > 0) {
+					await tx
+						.update(triggers)
+						.set({ enabled: leavingPaused, updatedAt: new Date() })
+						.where(
+							and(eq(triggers.workspaceId, current.workspaceId), inArray(triggers.id, triggerIds)),
+						)
+				}
+			}
 		}
 	})
 
