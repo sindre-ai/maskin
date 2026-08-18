@@ -201,6 +201,62 @@ describe('Workspaces Integration', () => {
 			expect(body.settings.display_names).toBeDefined()
 		})
 
+		it('enables the work, knowledge and crm extensions with their defaults', async () => {
+			const app = createApp()
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Extensions Default' }),
+			)
+
+			expect(res.status).toBe(201)
+			const body = await res.json()
+			expect(body.settings.enabled_modules).toEqual(['work', 'knowledge', 'crm'])
+
+			// The row that actually landed in Postgres carries each enabled
+			// module's own defaults, so the Articles/Contacts/Companies tabs have
+			// statuses and display names behind them from the first render.
+			const [row] = await db
+				.select({ settings: workspacesTable.settings })
+				.from(workspacesTable)
+				.where(eq(workspacesTable.id, body.id))
+			const settings = row?.settings as {
+				enabled_modules: string[]
+				display_names: Record<string, string>
+				statuses: Record<string, string[]>
+				field_definitions: Record<string, Array<{ name: string }>>
+				relationship_types: string[]
+			}
+			expect(settings.enabled_modules).toEqual(['work', 'knowledge', 'crm'])
+			expect(settings.display_names).toMatchObject({
+				knowledge: 'Article',
+				contact: 'Contact',
+				company: 'Company',
+			})
+			expect(settings.statuses.knowledge).toEqual(['draft', 'validated', 'deprecated'])
+			expect(settings.statuses.contact).toContain('new_lead')
+			expect(settings.statuses.company).toContain('prospect')
+			expect(settings.field_definitions.contact?.map((f) => f.name)).toContain('linkedin_url')
+			expect(settings.relationship_types).toEqual(
+				expect.arrayContaining(['informs', 'about', 'works_at']),
+			)
+		})
+
+		it('honours an explicit enabled_modules list on create', async () => {
+			const app = createApp()
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/workspaces', {
+					name: 'Work Only',
+					settings: { enabled_modules: ['work'] },
+				}),
+			)
+
+			expect(res.status).toBe(201)
+			const body = await res.json()
+			expect(body.settings.enabled_modules).toEqual(['work'])
+			expect(body.settings.statuses.contact).toBeUndefined()
+		})
+
 		it('lists workspaces for the current actor', async () => {
 			const app = createApp()
 
