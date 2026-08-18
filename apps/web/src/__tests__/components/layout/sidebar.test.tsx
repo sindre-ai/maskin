@@ -55,7 +55,11 @@ vi.mock('@/components/ui/sidebar', () => ({
 	),
 	SidebarMenuItem: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 	SidebarRail: () => <div />,
-	SidebarTrigger: () => <button type="button">Toggle</button>,
+	SidebarTrigger: ({ title, className }: { title?: string; className?: string }) => (
+		<button type="button" title={title} className={className}>
+			Toggle
+		</button>
+	),
 	useSidebar: () => ({ setOpenMobile }),
 }))
 
@@ -130,6 +134,13 @@ describe('AppSidebar', () => {
 	it('renders WorkspaceSwitcher in the header', () => {
 		render(<AppSidebar />)
 		expect(screen.getByTestId('workspace-switcher')).toBeInTheDocument()
+	})
+
+	it('pairs the workspace switcher with a collapse control that hides on the rail', () => {
+		render(<AppSidebar />)
+		const collapse = screen.getByTitle('Collapse sidebar')
+		expect(collapse).toBeInTheDocument()
+		expect(collapse.className).toContain('group-data-[collapsible=icon]:hidden')
 	})
 
 	it('renders a Chats nav item linking to the full-screen chats surface', () => {

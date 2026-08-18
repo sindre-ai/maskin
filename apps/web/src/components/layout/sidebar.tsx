@@ -7,6 +7,7 @@ import {
 	SidebarHeader,
 	SidebarMenu,
 	SidebarRail,
+	SidebarTrigger,
 } from '@/components/ui/sidebar'
 import { useChatUnreadCount } from '@/hooks/use-chat-unread'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
@@ -69,7 +70,19 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 	return (
 		<Sidebar collapsible="icon" {...props}>
 			<SidebarHeader className="h-11 justify-center">
-				<WorkspaceSwitcher />
+				{/* v2 pairs the workspace name with an explicit collapse control
+				    (mockup line 62). SidebarRail still handles the drag edge; this
+				    is the discoverable affordance. It has no place on the rail
+				    itself — there the workspace tile expands the sidebar. */}
+				<div className="flex items-center gap-1">
+					<div className="min-w-0 flex-1">
+						<WorkspaceSwitcher />
+					</div>
+					<SidebarTrigger
+						title="Collapse sidebar"
+						className="size-7 shrink-0 text-muted-foreground hover:text-foreground group-data-[collapsible=icon]:hidden"
+					/>
+				</div>
 			</SidebarHeader>
 			<SidebarContent>
 				<SidebarGroup>
