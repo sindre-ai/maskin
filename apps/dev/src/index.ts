@@ -155,6 +155,25 @@ if (process.env.NODE_ENV === 'production') {
 				sourceSessionId: session.sourceSessionId ?? undefined,
 			}
 		},
+		// Interactive sessions get no ACTION_PROMPT env var — agent-run.sh's
+		// interactive branch reads its first turn from stdin, fed by whatever
+		// POSTs /sessions/:id/input. Mirrors session-manager.ts's launchContainer()
+		// seed-turn step for the local-Docker path; without this, remotely
+		// dispatched interactive sessions boot but their `claude` process blocks
+		// forever on stdin, never receiving the user's opening message.
+		seedInteractiveTurn: async (sessionId) => {
+			const [session] = await db.select().from(sessions).where(eq(sessions.id, sessionId)).limit(1)
+			if (!session || !session.interactive || session.actionPrompt.trim().length === 0) return
+			const seedTurnMessageId = (
+				session.config as { conversation?: { message_id?: number } } | null
+			)?.conversation?.message_id
+			await sessionManager.writeInput(
+				sessionId,
+				{ type: 'user', message: { role: 'user', content: session.actionPrompt } },
+				undefined,
+				seedTurnMessageId,
+			)
+		},
 	})
 	sessionDispatchQueue.setDispatchFn(dispatcher.dispatch)
 	sessionManager.setDispatchQueue(sessionDispatchQueue)

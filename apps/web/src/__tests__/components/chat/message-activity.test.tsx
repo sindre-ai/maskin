@@ -59,4 +59,23 @@ describe('MessageActivity', () => {
 		fireEvent.click(screen.getByRole('button', { name: /toggle workspace coach activity/i }))
 		expect(screen.getByText('Using search_objects')).toBeInTheDocument()
 	})
+
+	it('auto-expands and shows a failure notice for a session that failed to start', () => {
+		render(<MessageActivity turn={buildTurn({ failed: true })} />, { wrapper: TestWrapper })
+		expect(screen.getByText('Workspace Coach failed to start')).toBeInTheDocument()
+		expect(screen.getByText('The session could not be started.')).toBeInTheDocument()
+	})
+
+	it('shows the failure error message when the failed session recorded one', () => {
+		render(
+			<MessageActivity
+				turn={buildTurn({
+					failed: true,
+					steps: [{ id: '1', kind: 'error', text: 'No available LLM credentials' }],
+				})}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		expect(screen.getByText('No available LLM credentials')).toBeInTheDocument()
+	})
 })

@@ -2082,10 +2082,9 @@ describe('SessionManager', () => {
 			const session = buildSession({ status: 'completed', result: { exit_code: 0 } })
 			mockResults.update = [] // .returning() → no row: UPDATE matched nothing (already terminal)
 			// 1st select: markRemoteSessionComplete's own usage extraction (reads
-			// session_logs) — empty means "no usage found". 2nd select: final-
-			// message extraction, same fallback shape. 3rd select: the best-effort
-			// lookup used only to enrich the dropped-signal log line.
-			mockResults.selectQueue = [[], [], [session]]
+			// session_logs) — empty means "no usage found". 2nd select: the best-
+			// effort lookup used only to enrich the dropped-signal log line.
+			mockResults.selectQueue = [[], [session]]
 			const warnSpy = vi.spyOn(logger, 'warn')
 
 			await manager.markRemoteSessionComplete(session.id, 1)
@@ -2170,11 +2169,10 @@ describe('SessionManager', () => {
 				new Error('connection reset'),
 				new Error('connection reset'),
 			]
-			// 1st select: usage extraction (empty = no-op). 2nd select: final-
-			// message extraction (empty = no-op). 3rd select: the fallback lookup
-			// itself throws — the DB is still unreachable.
-			mockResults.selectQueue = [[], []]
-			mockResults.selectErrorQueue = [undefined, undefined, new Error('connection reset')]
+			// 1st select: usage extraction (empty = no-op). 2nd select: the fallback
+			// lookup itself throws — the DB is still unreachable.
+			mockResults.selectQueue = [[]]
+			mockResults.selectErrorQueue = [undefined, new Error('connection reset')]
 			const initialInsertCount = calls.inserts.length
 
 			await expect(manager.markRemoteSessionComplete('some-session-id', 137)).resolves.toBe(false)
@@ -3430,7 +3428,6 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
-				[], // extractSessionFinalMessage fallback
 				[otherSession], // hasOtherActiveSessions: agent still has live work
 			]
 
@@ -3445,80 +3442,6 @@ describe('SessionManager', () => {
 					typeof u === 'object' && u !== null && 'agentState' in (u as Record<string, unknown>),
 			)
 			expect(actorUpdate).toBeUndefined()
-		})
-	})
-
-	describe('handleCompletion() — final_message capture', () => {
-		beforeEach(() => {
-			vi.spyOn(AgentStorageManager.prototype, 'pushAgentFiles').mockResolvedValue(undefined)
-			mockClassifyCreditExhaustion.mockReturnValue(null)
-		})
-
-		it("captures the agent's final answer into session.result.final_message from the in-memory stdout tail", async () => {
-			const session = buildSession({ status: 'running' })
-			;(
-				manager as unknown as {
-					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
-				}
-			).activeSessions.set(session.id, {
-				tempDir: '/tmp/test',
-				stdoutTail: JSON.stringify({
-					type: 'result',
-					subtype: 'success',
-					result: '```json maskin_agent_builder_result\n{"kind":"created"}\n```',
-				}),
-			})
-
-			mockResults.selectQueue = [
-				[session], // handleCompletion: load session
-			]
-
-			await (
-				manager as unknown as {
-					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
-				}
-			).handleCompletion(session.id, 'container-abc', 0)
-
-			const sessionUpdate = calls.updates.find(
-				(u): u is { result: { exit_code: number; final_message?: string } } =>
-					typeof u === 'object' &&
-					u !== null &&
-					'result' in (u as Record<string, unknown>) &&
-					typeof (u as Record<string, unknown>).result === 'object',
-			)
-			expect(sessionUpdate?.result?.final_message).toBe(
-				'```json maskin_agent_builder_result\n{"kind":"created"}\n```',
-			)
-		})
-
-		it('omits final_message from session.result when no stream-json result event is found anywhere', async () => {
-			const session = buildSession({ status: 'running' })
-			;(
-				manager as unknown as {
-					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
-				}
-			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
-
-			mockResults.selectQueue = [
-				[session], // handleCompletion: load session
-				[], // extractSessionUsage fallback
-				[], // extractSessionFinalMessage fallback
-			]
-
-			await (
-				manager as unknown as {
-					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
-				}
-			).handleCompletion(session.id, 'container-abc', 0)
-
-			const sessionUpdate = calls.updates.find(
-				(u): u is { result: { exit_code: number; final_message?: string } } =>
-					typeof u === 'object' &&
-					u !== null &&
-					'result' in (u as Record<string, unknown>) &&
-					typeof (u as Record<string, unknown>).result === 'object',
-			)
-			expect(sessionUpdate?.result?.final_message).toBeUndefined()
 		})
 	})
 
@@ -3730,7 +3653,6 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
-				[], // extractSessionFinalMessage fallback
 				[], // hasOtherActiveSessions
 				[], // existing runtime failover retry lookup
 				[
@@ -3824,7 +3746,6 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[session], // handleCompletion: load session
 				[], // extractSessionUsage fallback
-				[], // extractSessionFinalMessage fallback
 				[], // hasOtherActiveSessions
 				[
 					{

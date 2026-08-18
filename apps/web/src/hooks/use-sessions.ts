@@ -67,11 +67,15 @@ export function useActiveSessionsForActor(actorId: string, workspaceId: string) 
 	})
 }
 
-// Powers the conversation thread's typing indicator — any in-flight agent
-// turn for the conversation is a normal `sessions` row with
-// `config.conversation.conversation_id` set. SSE invalidation of the broad
-// `['sessions']` prefix on any session event (see sse-invalidation.ts) keeps
-// this fresh without a poll interval.
+// Powers the conversation thread's typing indicator and failed-session
+// notices. Deliberately NOT filtered to status=running — a session that
+// fails before ever reaching `running` needs to be visible too, otherwise
+// the chat surface shows nothing when a session fails to start. Returns the
+// conversation's most recent sessions (default limit, newest first);
+// useConversationActivity derives the latest session per actor and branches
+// on its status from there. SSE invalidation of the broad `['sessions']`
+// prefix on any session event (see sse-invalidation.ts) keeps this fresh
+// without a poll interval.
 export function useActiveSessionsForConversation(
 	workspaceId: string,
 	conversationId: string | null,
@@ -81,7 +85,6 @@ export function useActiveSessionsForConversation(
 		queryFn: () =>
 			api.sessions.list(workspaceId, {
 				conversation_id: conversationId as string,
-				status: 'running',
 			}),
 		enabled: !!workspaceId && !!conversationId,
 	})
