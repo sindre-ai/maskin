@@ -41,6 +41,8 @@ import { type BetStatusResult, buildBetStatuses } from '@/lib/bet-status'
 import { cn } from '@/lib/cn'
 import { getStatusColor } from '@/lib/constants'
 import {
+	DEFAULT_ORDER,
+	DEFAULT_SORT,
 	fromUrlSearch,
 	toBoardParams,
 	toDisplaySettingsBody,
@@ -117,12 +119,12 @@ export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
 			filterBy,
 			attention,
 			// ORDER BY rests on Last updated (mockup script 8725) — an absent param
-			// reads as `updatedAt` rather than pinning it into every URL.
-			sort: typeof search.sort === 'string' ? search.sort : 'updatedAt',
+			// reads as the shared default rather than pinning it into every URL.
+			sort: typeof search.sort === 'string' ? search.sort : DEFAULT_SORT,
 			order:
 				typeof search.order === 'string' && ['asc', 'desc'].includes(search.order)
 					? (search.order as 'asc' | 'desc')
-					: 'desc',
+					: DEFAULT_ORDER,
 			q: typeof search.q === 'string' ? search.q : undefined,
 			// GROUP BY rests on State (mockup 994–999). `none` is the explicit
 			// "ungrouped" choice — without a sentinel, clearing the param would just
@@ -650,13 +652,13 @@ function ObjectsPage() {
 	}, [])
 
 	// "Reset to default" from the Display menu — restores every display axis on
-	// the shared model: order back to created-desc, no grouping, all filters
+	// the shared model: order back to the route default, no grouping, all filters
 	// (status/driver/metadata) cleared, archived hidden, columns back to the
 	// default set. `view` and `q` are deliberately untouched (separate surfaces).
 	const handleResetToDefault = useCallback(() => {
 		const cleared: Record<string, string | undefined> = {
-			sort: 'updatedAt',
-			order: 'desc',
+			sort: DEFAULT_SORT,
+			order: DEFAULT_ORDER,
 			groupBy: undefined,
 			status: undefined,
 			driver: undefined,
@@ -725,8 +727,8 @@ function ObjectsPage() {
 
 	const urlIsInDefaultShape = useMemo(
 		() =>
-			(!searchParams.sort || searchParams.sort === 'updatedAt') &&
-			(!searchParams.order || searchParams.order === 'desc') &&
+			(!searchParams.sort || searchParams.sort === DEFAULT_SORT) &&
+			(!searchParams.order || searchParams.order === DEFAULT_ORDER) &&
 			(!searchParams.groupBy || searchParams.groupBy === 'status') &&
 			!searchParams.status &&
 			!searchParams.driver &&
@@ -835,22 +837,22 @@ function ObjectsPage() {
 	// toggle analytics with source: 'user'. The silent restore above bypasses
 	// this handler (it calls `setExpanded` directly), so every fire here is
 	// user-initiated by construction. `expanded` on the analytics payload is
-	// the net direction of the update — true when a group's open count grew
-	// (user opened a group), false when it shrank (user closed one).
+	// the net direction of the update — true when the number of explicitly
+	// collapsed groups shrank (user opened one), false when it grew.
 	const handleExpandedChange = useCallback(
 		(next: Record<string, boolean>) => {
-			// Strip falsy entries — ListView only ever writes `true` values, and
-			// closing a group is modeled by the key's absence (DataTable-era
-			// blobs round-trip cleanly through this same contract).
-			const nextMap: Record<string, boolean> = {}
-			for (const [id, on] of Object.entries(next)) if (on) nextMap[id] = true
-			const prevOpen = Object.values(expanded).filter(Boolean).length
-			const nextOpen = Object.values(nextMap).filter(Boolean).length
+			// Keep the map verbatim, `false` entries included. Groups now rest
+			// open, so a collapse is recorded as an explicit `false` — dropping
+			// it would silently re-open the group on the next render. DataTable-
+			// era blobs (only `true` values) still round-trip unchanged.
+			const nextMap: Record<string, boolean> = { ...next }
+			const prevClosed = Object.values(expanded).filter((v) => v === false).length
+			const nextClosed = Object.values(nextMap).filter((v) => v === false).length
 			setExpanded(nextMap)
 			patchViewState(workspaceId, displaySettingsKey, { expandedGroupIds: nextMap })
 			trackObjectsListGroupToggled({
 				source: 'user',
-				expanded: nextOpen > prevOpen,
+				expanded: nextClosed < prevClosed,
 				objectType: typeFilter ?? null,
 			})
 		},
@@ -1371,8 +1373,8 @@ function ObjectsPage() {
 				params: { workspaceId },
 				search: {
 					type: value || undefined,
-					sort: 'updatedAt',
-					order: 'desc',
+					sort: DEFAULT_SORT,
+					order: DEFAULT_ORDER,
 					status: undefined,
 					driver: undefined,
 					filterBy: undefined,
@@ -1497,7 +1499,7 @@ function ObjectsPage() {
 				onViewChange={(next) => {
 					setView(next)
 					if (next === 'list' && sort === BOARD_MANUAL_SORT) {
-						updateSearch({ sort: 'updatedAt', order: 'desc' })
+						updateSearch({ sort: DEFAULT_SORT, order: DEFAULT_ORDER })
 					}
 					// One analytics line per user-initiated switch so we can count
 					// distinct operators reaching for Board (the bet's success
@@ -1534,6 +1536,8 @@ function ObjectsPage() {
 						statusesByType={statusesByType}
 						workspaceId={workspaceId}
 						isLoading={boardQuery.isLoading}
+						isError={boardQuery.isError}
+						error={boardQuery.error}
 						actors={actors}
 						selectedIds={selectedIds}
 						onObjectSelectionChange={handleObjectSelectionChange}
@@ -1585,7 +1589,11 @@ function ObjectsPage() {
 				onOpenLinks={handleOpenLinks}
 				onAnswerAsks={() => setAsksOpen(true)}
 				askCount={askCount}
-				onArchive={handleBulkArchive}
+				// Archive is offered only where `Show archived` is — otherwise an
+				// archived row leaves the list with no toggle to bring it back,
+				// stranding it. Both gate on `supportsIncludeArchived` (bet-only
+				// per T5) so the action and its escape hatch stay in lockstep.
+				onArchive={supportsIncludeArchived ? handleBulkArchive : undefined}
 				onDelete={handleBulkDelete}
 				onClear={clearSelection}
 			/>

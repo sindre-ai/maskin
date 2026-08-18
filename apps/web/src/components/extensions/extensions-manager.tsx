@@ -5,7 +5,7 @@ import { useCustomExtensions } from '@/hooks/use-custom-extensions'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
 import { useUpdateWorkspace } from '@/hooks/use-workspaces'
 import { useWorkspace } from '@/lib/workspace-context'
-import { getAllWebModules, getWebModule } from '@maskin/module-sdk'
+import { getAllWebModules, getWebModule, mergeModuleDefaultSettings } from '@maskin/module-sdk'
 import { Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
@@ -32,25 +32,11 @@ export function ExtensionsManager() {
 
 	const enableModule = (moduleId: string) => {
 		const next = [...enabledModules, moduleId]
-		let mergedSettings: Record<string, unknown> = { ...settings, enabled_modules: next }
-
-		const mod = getWebModule(moduleId)
-		const defaults = mod?.defaultSettings
-		if (defaults) {
-			const currentDisplayNames = (settings?.display_names as Record<string, string>) ?? {}
-			const currentStatuses = (settings?.statuses as Record<string, string[]>) ?? {}
-			mergedSettings = {
-				...mergedSettings,
-				display_names: {
-					...defaults.display_names,
-					...currentDisplayNames,
-				},
-				statuses: {
-					...defaults.statuses,
-					...currentStatuses,
-				},
-			}
-		}
+		// Same merge the backend runs when a workspace is created with this module
+		// already enabled, so enabling later lands in an identical state.
+		const mergedSettings = mergeModuleDefaultSettings({ ...settings, enabled_modules: next }, [
+			getWebModule(moduleId)?.defaultSettings,
+		])
 
 		updateWorkspace.mutate(
 			{ settings: mergedSettings },

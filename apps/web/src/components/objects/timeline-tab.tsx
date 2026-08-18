@@ -1,7 +1,9 @@
 import { ActivityComment } from '@/components/activity/activity-comment'
 import { computeUnreadEventIds } from '@/components/activity/object-activity'
 import { PhaseDivider } from '@/components/activity/phase-divider'
+import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { ObjectReference } from '@/components/shared/object-reference'
+import { QueryStateError } from '@/components/shared/query-state'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -166,7 +168,12 @@ function newStatusOf(event: EventResponse): string | null {
 
 export function TimelineTab({ object }: { object: ObjectResponse }) {
 	const { workspaceId } = useWorkspace()
-	const { data: graph } = useObjectGraph(workspaceId, object.id)
+	const {
+		data: graph,
+		isLoading: isGraphLoading,
+		isError: isGraphError,
+		error: graphError,
+	} = useObjectGraph(workspaceId, object.id)
 	const events = graph?.events
 	const relationships = graph?.relationships
 	const connectedObjects = graph?.connected_objects
@@ -426,6 +433,25 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 				</div>
 				{open && <ol className="m-0 list-none p-0">{row.rows.map(renderEntry)}</ol>}
 			</li>
+		)
+	}
+
+	// Loading → error → empty. "No activity yet." is a claim about the object,
+	// so it may only be made once the graph has resolved — a pending or failed
+	// fetch has the same empty `events` array and must not read as one.
+	if (isGraphLoading) {
+		return (
+			<div className="w-full min-w-0 pt-2.5">
+				<ListSkeleton rows={3} />
+			</div>
+		)
+	}
+
+	if (isGraphError) {
+		return (
+			<div className="w-full min-w-0 pt-2.5">
+				<QueryStateError title="Couldn't load activity" error={graphError} />
+			</div>
 		)
 	}
 

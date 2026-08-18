@@ -1,7 +1,37 @@
 import { ObjectDetailShell } from '@/components/objects/object-detail-shell'
 import { fireEvent, render, screen } from '@testing-library/react'
+import * as React from 'react'
 import { buildObjectResponse } from '../../factories'
 import { createWorkspaceWrapper } from '../../setup'
+
+// The properties drawer's open/closed bit is persisted under the `__chrome__`
+// display-settings row, so the toggle only flips once that write lands. A
+// stateful store stands in for the round-trip, seeded collapsed.
+const settingsStore: {
+	settings: { objectDetailSidebarCollapsed: boolean }
+	subscribers: Set<() => void>
+} = {
+	settings: { objectDetailSidebarCollapsed: true },
+	subscribers: new Set(),
+}
+vi.mock('@/hooks/use-user-display-settings', () => ({
+	useUserDisplaySettings: () => {
+		const [, force] = React.useReducer((x: number) => x + 1, 0)
+		React.useEffect(() => {
+			settingsStore.subscribers.add(force)
+			return () => {
+				settingsStore.subscribers.delete(force)
+			}
+		}, [])
+		return { data: { settings: settingsStore.settings }, isFetched: true }
+	},
+	useUpdateUserDisplaySettings: () => ({
+		mutate: ({ settings }: { settings: { objectDetailSidebarCollapsed: boolean } }) => {
+			settingsStore.settings = settings
+			for (const sub of settingsStore.subscribers) sub()
+		},
+	}),
+}))
 
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../../mocks/router')
@@ -17,6 +47,7 @@ vi.mock('@/hooks/use-subscriptions', () => ({
 vi.mock('@/hooks/use-mobile', () => ({
 	useIsMobile: () => false,
 	useIsTouchViewport: () => false,
+	useIsDesktopViewport: () => true,
 }))
 
 // CommentInput dependencies — stub the API-driven hooks it reaches for.
@@ -58,6 +89,11 @@ vi.mock('@/hooks/use-relationships', () => ({
 vi.mock('@/components/shared/markdown-content', () => ({
 	MarkdownContent: ({ content }: { content: string }) => <div>{content}</div>,
 }))
+
+beforeEach(() => {
+	settingsStore.settings = { objectDetailSidebarCollapsed: true }
+	settingsStore.subscribers.clear()
+})
 
 describe('ObjectDetailShell', () => {
 	const workspace = {

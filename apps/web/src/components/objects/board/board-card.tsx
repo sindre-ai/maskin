@@ -38,14 +38,14 @@ export function BoardCard({
 	onAdvance,
 	advanceLabel,
 }: BoardCardProps) {
-	const owner = object.driver ? actors?.find((a) => a.id === object.driver) : null
+	const driver = object.driver ? actors?.find((a) => a.id === object.driver) : null
 	const availableProperties =
 		columns.length > 0
 			? columns
 			: [
 					{ id: 'status', label: 'Status', canHide: true },
 					{ id: 'type', label: 'Type', canHide: true },
-					{ id: 'owner', label: 'Owner', canHide: true },
+					{ id: 'driver', label: 'Driver', canHide: true },
 					{ id: 'updatedAt', label: 'Updated', canHide: true },
 				]
 	const visibleProperties = availableProperties.filter(
@@ -113,7 +113,7 @@ export function BoardCard({
 							property={property}
 							object={object}
 							actors={actors}
-							owner={owner}
+							driver={driver}
 						/>
 					))}
 				</div>
@@ -130,21 +130,23 @@ function PropertyValue({
 	property,
 	object,
 	actors,
-	owner,
+	driver,
 }: {
 	property: DisplayPanelColumn
 	object: ObjectResponse
 	actors?: ActorListItem[]
-	owner?: ActorListItem | null
+	driver?: ActorListItem | null
 }) {
 	switch (property.id) {
 		case 'status':
 			return null
 		case 'type':
 			return <TypeBadge type={object.type} />
-		case 'owner':
-			return owner ? (
-				<ActorAvatar id={owner.id} name={owner.name} type={owner.type} className="shrink-0" />
+		// The route's Display panel emits `driver` column ids; the card cased on
+		// the retired `owner` id, so the avatar never rendered on a board card.
+		case 'driver':
+			return driver ? (
+				<ActorAvatar id={driver.id} name={driver.name} type={driver.type} className="shrink-0" />
 			) : null
 		case 'createdBy': {
 			const actor = actors?.find((a) => a.id === object.createdBy)

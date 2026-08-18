@@ -6,11 +6,17 @@ import { useIsMobile } from '@/hooks/use-mobile'
 import { useNotifications } from '@/hooks/use-notifications'
 import { useDeleteObject, useObjectGraph, useObjects, useUpdateObject } from '@/hooks/use-objects'
 import { useScrollToTopEmitter } from '@/hooks/use-scroll-to-top-emitter'
+import {
+	useUpdateUserDisplaySettings,
+	useUserDisplaySettings,
+} from '@/hooks/use-user-display-settings'
 import { useWorkspaceMembers } from '@/hooks/use-workspaces'
-import type { ObjectResponse } from '@/lib/api'
+import { deriveSidebarViewport, trackSidebarToggle } from '@/lib/analytics'
+import type { DisplaySettingsBody, ObjectResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
+import { CHROME_KEY } from '@maskin/shared'
 import { useNavigate } from '@tanstack/react-router'
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ObjectAskBanner } from './object-ask-banner'
 import { ObjectDetailBody } from './object-detail-body'
 import { getAsk } from './object-detail-fixtures'
@@ -78,14 +84,81 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 
 	// Right-side properties drawer (mockup 1371–1499). Desktop pushes the app
 	// shell aside via `contentPush`; mobile opens the primitive's Sheet.
-	const [sidebarOpen, setSidebarOpen] = useState(false)
+	// Open/closed is persisted per actor under the `__chrome__` sentinel row —
+	// carried over from the retired ObjectDocument surface along with the
+	// ⌘/Ctrl+I chord and the `sidebar_toggle` metric below.
+	const settingsQuery = useUserDisplaySettings(workspaceId, CHROME_KEY)
+	const upsertSettings = useUpdateUserDisplaySettings(workspaceId)
+	const persistedSettings = settingsQuery.data?.settings
+	// The drawer rests closed at every viewport until the operator opens it —
+	// the shell's shipped default. Once the settings query has fetched, the
+	// persisted `objectDetailSidebarCollapsed` bit takes over.
+	const sidebarOpen =
+		settingsQuery.isFetched && typeof persistedSettings?.objectDetailSidebarCollapsed === 'boolean'
+			? !persistedSettings.objectDetailSidebarCollapsed
+			: false
 	const [sidebarOpenMobile, setSidebarOpenMobile] = useState(false)
+
+	const setSidebarOpen = useCallback(
+		(open: boolean) => {
+			const nextSettings: DisplaySettingsBody = {
+				...(persistedSettings ?? {}),
+				objectDetailSidebarCollapsed: !open,
+			}
+			upsertSettings.mutate({ objectType: CHROME_KEY, settings: nextSettings })
+		},
+		[persistedSettings, upsertSettings],
+	)
+
+	// One toggle callback the header button, the chord, and any programmatic
+	// caller share. Mobile flips the transient Sheet; tablet + desktop write
+	// the persisted bit.
 	const handleToggleSidebar = useCallback(() => {
 		if (isMobile) setSidebarOpenMobile((open) => !open)
-		else setSidebarOpen((open) => !open)
-	}, [isMobile])
+		else setSidebarOpen(!sidebarOpen)
+	}, [isMobile, sidebarOpen, setSidebarOpen])
 	const sidebarExpanded = isMobile ? sidebarOpenMobile : sidebarOpen
 	const contentPush = !isMobile && sidebarOpen ? SIDEBAR_WIDTH : undefined
+
+	// ⌘/Ctrl+I toggles the right sidebar. Shares `handleToggleSidebar` with the
+	// PanelRight header button so both entry points flow through the same
+	// mobile-vs-persisted branch, and both are observable to the
+	// `sidebar_toggle` analytics effect below.
+	useEffect(() => {
+		const handler = (e: KeyboardEvent) => {
+			if (!((e.metaKey || e.ctrlKey) && (e.key === 'i' || e.key === 'I'))) return
+			const target = e.target as HTMLElement | null
+			if (target) {
+				const tag = target.tagName
+				if (tag === 'INPUT' || tag === 'TEXTAREA' || target.isContentEditable) return
+			}
+			e.preventDefault()
+			handleToggleSidebar()
+		}
+		document.addEventListener('keydown', handler)
+		return () => document.removeEventListener('keydown', handler)
+	}, [handleToggleSidebar])
+
+	// Emit `sidebar_toggle` on every transition — covers the PanelRight button,
+	// the ⌘/Ctrl+I shortcut, Sheet ESC/overlay close on mobile, and any
+	// programmatic toggle. The mount pass is skipped so first paint isn't
+	// counted as a toggle. `object_id` is read via a ref so mid-flight route
+	// changes don't re-fire the effect just because the id string changed.
+	const objectIdRef = useRef(object.id)
+	objectIdRef.current = object.id
+	const sidebarMountedRef = useRef(false)
+	useEffect(() => {
+		if (!sidebarMountedRef.current) {
+			sidebarMountedRef.current = true
+			return
+		}
+		const width = typeof window !== 'undefined' ? window.innerWidth : 1024
+		trackSidebarToggle({
+			state: sidebarExpanded ? 'open' : 'closed',
+			viewport: deriveSidebarViewport(width),
+			object_id: objectIdRef.current,
+		})
+	}, [sidebarExpanded])
 
 	// Carried over from the retired ObjectDocument surface: the object page
 	// used to emit scroll_to_top from its body render path. The shell replaces
@@ -223,14 +296,17 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 							</TabsContent>
 						</Tabs>
 
-						{/* Sticky composer with a gradient mask, mockup 1357. */}
 						<div className="sticky bottom-0 z-[6] bg-gradient-to-b from-transparent via-background to-background pb-4 pt-6">
-							<CommentInput workspaceId={workspaceId} objectId={object.id} focusRef={answerRef} />
-							{composerHint && (
-								<p className="mt-1.5 truncate pl-9 text-[11.5px] text-muted-foreground">
-									{composerHint}
-								</p>
-							)}
+							{/* The mockup gives the composer one hint slot (1362); on object
+							    detail its content names the agent that will read what you
+							    write, so it replaces the keyboard hint rather than stacking
+							    a second line beneath the card. */}
+							<CommentInput
+								workspaceId={workspaceId}
+								objectId={object.id}
+								focusRef={answerRef}
+								hint={composerHint || undefined}
+							/>
 						</div>
 					</div>
 				</div>

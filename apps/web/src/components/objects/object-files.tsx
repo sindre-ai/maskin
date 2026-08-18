@@ -239,9 +239,7 @@ export function ObjectFiles({
 			className={cn('rounded-md transition-colors', isDragging && 'bg-accent/5')}
 		>
 			<div className="flex items-center gap-2 mb-2">
-				<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-					Files ({totalCount})
-				</h3>
+				<h3 className="eyebrow">Files ({totalCount})</h3>
 				<div className="flex-1" />
 				<ResponsivePopover>
 					<ResponsivePopoverTrigger asChild>

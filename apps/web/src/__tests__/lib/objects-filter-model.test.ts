@@ -13,7 +13,10 @@ const baseModel = (): ObjectsFilterModel => defaultObjectsFilterModel()
 
 describe('objects-filter-model', () => {
 	describe('defaultObjectsFilterModel', () => {
-		it('defaults to sort=createdAt, order=desc, empty metadata, archived off', () => {
+		it('defaults to the route-wide sort/order, empty metadata, archived off', () => {
+			// Single-sourced with the route: the Objects list rests on last-updated.
+			expect(DEFAULT_SORT).toBe('updatedAt')
+			expect(DEFAULT_ORDER).toBe('desc')
 			const model = defaultObjectsFilterModel()
 			expect(model).toEqual({
 				sort: DEFAULT_SORT,

@@ -91,7 +91,15 @@ vi.mock('@/hooks/use-user-display-settings', () => ({
 	useUpdateUserDisplaySettings: () => ({ mutate: vi.fn() }),
 }))
 
-vi.mock('@/components/objects/bulk-action-bar', () => ({ BulkActionBar: () => null }))
+// Capture the bulk bar's props so the Archive gate can be asserted without
+// driving a selection through the mocked ListView.
+const bulkBarCapture = vi.hoisted(() => ({ lastProps: null as Record<string, unknown> | null }))
+vi.mock('@/components/objects/bulk-action-bar', () => ({
+	BulkActionBar: (props: Record<string, unknown>) => {
+		bulkBarCapture.lastProps = props
+		return null
+	},
+}))
 vi.mock('@/components/layout/page-header', () => ({
 	PageHeader: ({
 		title,
@@ -291,6 +299,18 @@ describe('ObjectsPage chip strip — Include: archived', () => {
 
 	// "Clear all" itself is gated on >1 active pill in the toolbar (mockup 920's
 	// `objPillsMany`), so the single-filter case asserts the pill, not the action.
+	// Archive must not be offered where `Show archived` isn't: an archived task
+	// or insight would leave the list with no toggle to bring it back.
+	it('offers the bulk Archive action on the bet tab and withholds it elsewhere', () => {
+		searchState.current.type = 'bet'
+		render(<ObjectsPage />)
+		expect(bulkBarCapture.lastProps?.onArchive).toBeTypeOf('function')
+
+		searchState.current.type = 'task'
+		render(<ObjectsPage />)
+		expect(bulkBarCapture.lastProps?.onArchive).toBeUndefined()
+	})
+
 	it('renders the chip strip when only the archived flag is on (no status/driver)', () => {
 		searchState.current.includeArchived = 1
 		render(<ObjectsPage />)

@@ -27,7 +27,10 @@ vi.mock('@/hooks/use-custom-extensions', () => ({
 	useCustomExtensions: () => mockCustomExtensions.current,
 }))
 
-vi.mock('@maskin/module-sdk', () => ({
+vi.mock('@maskin/module-sdk', async (importOriginal) => ({
+	// Real mergeModuleDefaultSettings — the merge itself is the behaviour under
+	// test here; only the registry lookups are stubbed.
+	...(await importOriginal<typeof import('@maskin/module-sdk')>()),
 	getAllWebModules: () => mockGetAllWebModules(),
 	getWebModule: (id: string) => mockGetWebModule(id),
 }))

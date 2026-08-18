@@ -223,6 +223,35 @@ describe('TimelineTab', () => {
 		expect(screen.getByText('No activity yet.')).toBeInTheDocument()
 	})
 
+	// Loading → error → empty: a pending or failed graph fetch has the same
+	// empty `events` array as a genuinely quiet object and must not claim
+	// "No activity yet."
+	it('shows a skeleton instead of the empty state while the graph is loading', () => {
+		const object = buildObjectResponse({ id: 'obj-1', type: 'bet' })
+		vi.mocked(useObjectGraph).mockReturnValue({ data: undefined, isLoading: true } as never)
+
+		const { container } = render(<TimelineTab object={object} />, {
+			wrapper: createWorkspaceWrapper(),
+		})
+
+		expect(screen.queryByText('No activity yet.')).not.toBeInTheDocument()
+		expect(container.querySelectorAll('.animate-pulse').length).toBeGreaterThan(0)
+	})
+
+	it('shows an error card instead of the empty state when the graph fetch fails', () => {
+		const object = buildObjectResponse({ id: 'obj-1', type: 'bet' })
+		vi.mocked(useObjectGraph).mockReturnValue({
+			data: undefined,
+			isError: true,
+			error: new Error('boom'),
+		} as never)
+
+		render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
+
+		expect(screen.queryByText('No activity yet.')).not.toBeInTheDocument()
+		expect(screen.getByText("Couldn't load activity")).toBeInTheDocument()
+	})
+
 	it('falls back to a denormalized title when the linked object is not in the graph', () => {
 		const object = buildObjectResponse({ id: 'obj-1', type: 'bet' })
 		mockGraph(

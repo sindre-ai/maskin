@@ -99,9 +99,11 @@ export function ListRow({
 						aria-hidden="true"
 						className={cn(
 							// Touch viewports have no hover, so the checkbox is always
-							// visible there and the dot always yields to it.
+							// visible there and the dot always yields to it. `pointer-coarse`
+							// carries iPad landscape, which sits at the `lg` breakpoint but
+							// still has no hover.
 							'pointer-events-none absolute size-2 rounded-[2px] bg-current transition-opacity',
-							'group-hover:opacity-0 max-[1024.02px]:opacity-0',
+							'group-hover:opacity-0 max-lg:opacity-0 pointer-coarse:opacity-0',
 							typeDot.text,
 						)}
 					/>
@@ -116,7 +118,8 @@ export function ListRow({
 						'shrink-0 touch-none select-none transition-opacity',
 						// Hidden-but-present at rest so the 44px tap target survives on
 						// touch, where there is no hover to reveal it.
-						showRestingDot && 'opacity-0 group-hover:opacity-100 max-[1024.02px]:opacity-100',
+						showRestingDot &&
+							'opacity-0 group-hover:opacity-100 max-lg:opacity-100 pointer-coarse:opacity-100',
 					)}
 				/>
 			</span>

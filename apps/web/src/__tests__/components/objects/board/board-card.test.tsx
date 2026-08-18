@@ -52,7 +52,7 @@ beforeEach(() => {
 })
 
 describe('BoardCard', () => {
-	it('renders the title, status, type, owner, and updated timestamp', () => {
+	it('renders the title, status, type, driver, and updated timestamp', () => {
 		const actors = [buildActorListItem({ id: 'actor-7', name: 'Magnus' })]
 		const obj = buildObjectResponse({
 			id: 'obj-1',
@@ -102,10 +102,10 @@ describe('BoardCard', () => {
 				columns={[
 					{ id: 'title', label: 'Title', canHide: false },
 					{ id: 'status', label: 'Status', canHide: true },
-					{ id: 'owner', label: 'Owner', canHide: true },
+					{ id: 'driver', label: 'Driver', canHide: true },
 					{ id: 'metadata.priority', label: 'priority', canHide: true },
 				]}
-				columnVisibility={{ owner: false }}
+				columnVisibility={{ driver: false }}
 			/>,
 		)
 

@@ -49,6 +49,52 @@ test.describe('Object detail — properties drawer', () => {
 			expect(scrollWidth).toBeLessThanOrEqual(0)
 		})
 
+		// Ported from the retired ObjectDocument surface onto the shell: the
+		// ⌘/Ctrl+I chord shares the header button's toggle path, and on
+		// non-mobile the open/closed bit is persisted per actor under the
+		// `__chrome__` display-settings row, so it survives a reload.
+		test(`⌘/Ctrl+I toggles the drawer and the state persists at ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+
+			const bet = await account.api.createObject(account.workspaceId, {
+				type: 'bet',
+				title: 'Chord bet',
+				status: 'active',
+			})
+
+			await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
+			await expect(page.getByRole('heading', { level: 1, name: 'Chord bet' })).toBeVisible({
+				timeout: 15000,
+			})
+
+			const toggle = page.getByRole('button', { name: 'Properties' })
+			await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+
+			await page.keyboard.press('Control+i')
+			await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+
+			await page.keyboard.press('Control+i')
+			await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+
+			// Mobile's drawer is a transient Sheet by design; the persisted bit
+			// only governs the inline drawer at >=768.
+			if (vp.width >= 768) {
+				await page.keyboard.press('Control+i')
+				await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+				await page.reload()
+				await expect(page.getByRole('heading', { level: 1, name: 'Chord bet' })).toBeVisible({
+					timeout: 15000,
+				})
+				await expect(page.getByRole('button', { name: 'Properties' })).toHaveAttribute(
+					'aria-expanded',
+					'true',
+				)
+			}
+		})
+
 		test(`segmented control switches Timeline ⇄ Related at ${vp.label}`, async ({
 			page,
 			account,

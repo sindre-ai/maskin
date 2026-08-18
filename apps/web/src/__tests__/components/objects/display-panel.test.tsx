@@ -402,10 +402,10 @@ describe('DisplayPanel', () => {
 		})
 
 		it('renders sections in the mockup order (694–716)', async () => {
-			// Mockup 696–716 pins ORDERING → GROUPING → FILTERS → PROPERTIES →
+			// Mockup 926–966 pins FILTER BY → GROUP BY → ORDER BY → SHOW IN LIST →
 			// Show archived → Reset all. Guard the DOM order so a future refactor
-			// can't silently slide a section past its neighbour. (Filter by has no
-			// mockup section of its own; it sits with the other filter controls.)
+			// can't silently slide a section past its neighbour. (The value pickers
+			// — "Filters" — ride directly under the axis they configure.)
 			const user = userEvent.setup()
 			renderPanel({
 				includeArchived: false,
@@ -420,10 +420,10 @@ describe('DisplayPanel', () => {
 				.getAllByText(/^(Filter by|Filters|Grouping|Ordering|Properties|Show archived|Reset all)$/)
 				.map((el) => el.textContent)
 			expect(headers).toEqual([
-				'Ordering',
-				'Grouping',
 				'Filter by',
 				'Filters',
+				'Grouping',
+				'Ordering',
 				'Properties',
 				'Show archived',
 				'Reset all',

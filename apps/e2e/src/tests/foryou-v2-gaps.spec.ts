@@ -129,15 +129,26 @@ test.describe('For You v2 — decision card gaps', () => {
 			await banner.getByRole('button', { name: 'Cancel reply' }).click()
 			await expect(page.getByTestId('reply-banner')).toHaveCount(0)
 
-			// 457–472 — the `+` menu is reachable on touch and carries the three
-			// real affordances; the hint line sits beside it.
+			// 457–472 / 8571–8575 — the `+` menu is reachable on touch and carries
+			// all four affordances; the hint line sits beside it.
 			const plus = card.getByRole('button', { name: 'Add a file, object, or mention' })
 			await expect(plus).toBeVisible()
 			await plus.click()
 			await expect(page.getByRole('menuitem', { name: 'Attach a file' })).toBeVisible()
 			await expect(page.getByRole('menuitem', { name: 'Reference an object' })).toBeVisible()
 			await expect(page.getByRole('menuitem', { name: 'Mention an agent' })).toBeVisible()
-			await page.keyboard.press('Escape')
+
+			// "Attach a decision" opens the option editor; the options post as
+			// metadata.chips and come back as quick-reply chips on the comment.
+			await page.getByRole('menuitem', { name: 'Attach a decision' }).click()
+			const editor = card.getByTestId('decision-attachment')
+			await expect(editor).toBeVisible()
+			await editor.getByRole('textbox', { name: 'Decision option' }).fill('Ship it')
+			await editor.getByRole('button', { name: 'Add' }).click()
+			await expect(editor).toContainText('Ship it')
+			await editor.getByRole('button', { name: 'Remove option Ship it' }).click()
+			await expect(editor).not.toContainText('Ship it')
+
 			await expect(card.getByText(/to send/)).toBeVisible()
 		})
 	}

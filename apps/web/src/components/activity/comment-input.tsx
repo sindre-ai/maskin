@@ -1,12 +1,12 @@
 import { SlashPicker, type SlashPickerResult } from '@/components/chat/slash-picker'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import {
 	DropdownMenu,
 	DropdownMenuContent,
 	DropdownMenuItem,
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { Input } from '@/components/ui/input'
 import { useActors } from '@/hooks/use-actors'
 import { useDictation } from '@/hooks/use-dictation'
 import { useCreateComment } from '@/hooks/use-events'
@@ -37,6 +37,11 @@ interface CommentInputProps {
 	// forwards its textarea ref so callers can programmatically focus the answer
 	// control (e.g. the ask banner's "Answer it ↓" button).
 	focusRef?: React.Ref<HTMLTextAreaElement>
+	// Replaces the composer's own keyboard hint in the control row. The mockup
+	// gives this slot one line, so a caller with something more useful to say
+	// (object detail names the agent that will read the comment) passes it here
+	// rather than stacking a second line beneath the card.
+	hint?: React.ReactNode
 }
 
 function randomDraftId(): string {
@@ -64,6 +69,7 @@ export function CommentInput({
 	onSubmitted,
 	mentionDropdownPlacement = 'below',
 	focusRef,
+	hint,
 }: CommentInputProps) {
 	const actor = getStoredActor()
 	const createComment = useCreateComment(workspaceId, objectId)
@@ -600,7 +606,8 @@ export function CommentInput({
 								</DropdownMenuContent>
 							</DropdownMenu>
 							<span className="min-w-0 flex-1 truncate text-[11.5px] text-muted-foreground">
-								{isMobile ? 'Tap ↑ to send' : 'Enter to send · @ to mention · + to attach'}
+								{hint ??
+									(isMobile ? 'Tap ↑ to send' : 'Enter to send · @ to mention · + to attach')}
 							</span>
 							{dictation.supported ? (
 								<Button

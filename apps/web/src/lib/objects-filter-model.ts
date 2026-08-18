@@ -51,8 +51,11 @@ export interface ObjectsFilterModelInput {
 	columnVisibility?: VisibilityState
 }
 
-export const DEFAULT_SORT = 'createdAt'
-export const DEFAULT_ORDER = 'desc'
+// The Objects list's resting order, single-sourced. The route's `validateSearch`
+// seeds the URL from these and the Display panel reads them to decide whether
+// the current order is an override worth surfacing — so the two cannot drift.
+export const DEFAULT_SORT = 'updatedAt'
+export const DEFAULT_ORDER: 'asc' | 'desc' = 'desc'
 
 export function defaultObjectsFilterModel(): ObjectsFilterModel {
 	return { sort: DEFAULT_SORT, order: DEFAULT_ORDER, metadata: {}, includeArchived: false }

@@ -276,6 +276,38 @@ describe('BoardView', () => {
 		expect(screen.queryByTestId('board-view')).not.toBeInTheDocument()
 	})
 
+	// Loading → error → empty: "No statuses configured" is a claim about the
+	// workspace, so a first paint or a failed fetch (both column-less) must not
+	// read as one.
+	it('shows a skeleton, not the no-statuses empty state, while a column-less board loads', () => {
+		render(
+			<BoardView
+				objectType="task"
+				workspaceId="ws-1"
+				statusesByType={{ insight: ['new'] }}
+				objects={[]}
+				isLoading
+			/>,
+		)
+		expect(screen.queryByText('No statuses configured')).not.toBeInTheDocument()
+		expect(screen.getAllByTestId('board-card-skeleton').length).toBeGreaterThan(0)
+	})
+
+	it('shows the error card, not the no-statuses empty state, when the board query fails', () => {
+		render(
+			<BoardView
+				objectType="task"
+				workspaceId="ws-1"
+				statusesByType={{ insight: ['new'] }}
+				objects={[]}
+				isError
+				error={new Error('boom')}
+			/>,
+		)
+		expect(screen.queryByText('No statuses configured')).not.toBeInTheDocument()
+		expect(screen.getByText("Couldn't load the board")).toBeInTheDocument()
+	})
+
 	it('renders skeleton placeholders for every column while loading', () => {
 		render(
 			<BoardView

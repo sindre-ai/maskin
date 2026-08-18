@@ -38,6 +38,55 @@ describe('CommentInput', () => {
 		expect(await screen.findByText('Attach a file')).toBeInTheDocument()
 		expect(screen.getByText('Reference an object')).toBeInTheDocument()
 		expect(screen.getByText('Mention an agent')).toBeInTheDocument()
+		expect(screen.getByText('Attach a decision')).toBeInTheDocument()
+	})
+
+	it('attaches decision options and posts them as metadata.chips', async () => {
+		const user = userEvent.setup()
+		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
+
+		await user.click(screen.getByRole('button', { name: 'Add a file, object, or mention' }))
+		await user.click(await screen.findByText('Attach a decision'))
+
+		const option = screen.getByRole('textbox', { name: 'Decision option' })
+		await user.type(option, 'Ship it{Enter}')
+		await user.type(option, 'Hold{Enter}')
+		expect(screen.getByTestId('decision-attachment')).toHaveTextContent('Ship it')
+
+		// An option can be taken back off before sending.
+		await user.click(screen.getByRole('button', { name: 'Remove option Hold' }))
+		expect(screen.queryByText('Hold')).not.toBeInTheDocument()
+
+		await user.type(
+			screen.getByPlaceholderText('Write a comment... Use @ to mention an agent'),
+			'Which way do we go?',
+		)
+		await user.click(screen.getByRole('button', { name: /send/i }))
+
+		expect(mockMutate).toHaveBeenCalledWith(
+			expect.objectContaining({
+				entity_id: 'obj-1',
+				content: 'Which way do we go?',
+				metadata: { chips: ['Ship it'] },
+			}),
+			expect.any(Object),
+		)
+	})
+
+	it('sends no metadata when no decision is attached', async () => {
+		const user = userEvent.setup()
+		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
+
+		await user.type(
+			screen.getByPlaceholderText('Write a comment... Use @ to mention an agent'),
+			'Just a comment',
+		)
+		await user.click(screen.getByRole('button', { name: /send/i }))
+
+		expect(mockMutate).toHaveBeenCalledWith(
+			expect.not.objectContaining({ metadata: expect.anything() }),
+			expect.any(Object),
+		)
 	})
 
 	it('renders no mic when the browser has no SpeechRecognition', () => {

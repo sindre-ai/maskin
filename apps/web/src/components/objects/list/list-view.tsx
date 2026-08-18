@@ -291,7 +291,11 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 	)
 
 	// Infinite scroll sentinel — mirror of DataTable's: gated on hasNextPage /
-	// isFetchingNextPage / isError so a failure doesn't retry-loop.
+	// isFetchingNextPage / isError so a failure doesn't retry-loop. `isEmpty` is
+	// a dep because the empty branch renders its own sentinel node: without it
+	// the observer would keep watching the unmounted one and stall paging.
+	const isEmpty = data.length === 0
+	// biome-ignore lint/correctness/useExhaustiveDependencies: `isEmpty` re-arms the observer when the empty branch swaps in its own sentinel node
 	useEffect(() => {
 		if (!sentinelRef.current || !hasNextPage || isFetchingNextPage || isError) return
 		const observer = new IntersectionObserver(
@@ -302,7 +306,7 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 		)
 		observer.observe(sentinelRef.current)
 		return () => observer.disconnect()
-	}, [hasNextPage, isFetchingNextPage, isError, fetchNextPage])
+	}, [hasNextPage, isFetchingNextPage, isError, fetchNextPage, isEmpty])
 
 	const renderRows = (rows: ObjectResponse[]) =>
 		rows.map((object) => (
@@ -339,22 +343,36 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 	}
 
 	if (data.length === 0) {
-		return hasActiveFilters ? (
-			<EmptyState
-				title={emptyTitle ?? 'No objects match these filters.'}
-				action={
-					onClearFilters ? (
-						<Button variant="outline" size="sm" onClick={onClearFilters}>
-							Clear all filters
-						</Button>
-					) : undefined
-				}
-			/>
-		) : (
-			<EmptyState
-				title={emptyTitle ?? 'No objects found'}
-				description="Create your first object to get started"
-			/>
+		// The sentinel stays mounted even with nothing to show. Client-side
+		// narrowing (the Attention axis) can empty the loaded pages while
+		// matches remain unloaded — dropping the sentinel here would stop the
+		// infinite query dead and report "none" over a partial fetch.
+		return (
+			<div ref={scrollRef} className={cn('min-h-0 flex-1 overflow-auto', 'touch-pan-y')}>
+				{hasActiveFilters ? (
+					<EmptyState
+						title={emptyTitle ?? 'No objects match these filters.'}
+						action={
+							onClearFilters ? (
+								<Button variant="outline" size="sm" onClick={onClearFilters}>
+									Clear all filters
+								</Button>
+							) : undefined
+						}
+					/>
+				) : (
+					<EmptyState
+						title={emptyTitle ?? 'No objects found'}
+						description="Create your first object to get started"
+					/>
+				)}
+				<div ref={sentinelRef} className="h-1" />
+				{isFetchingNextPage && (
+					<div className="py-2">
+						<ListSkeleton rows={2} />
+					</div>
+				)}
+			</div>
 		)
 	}
 

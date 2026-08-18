@@ -45,8 +45,11 @@ vi.mock('@/components/shared/agent-working-badge', () => ({
 }))
 
 // jsdom does not support IntersectionObserver; the sentinel effect needs it.
+// Observed nodes are recorded so a test can assert the infinite-scroll sentinel
+// is actually being watched.
+const observedNodes: Element[] = []
 globalThis.IntersectionObserver = vi.fn().mockImplementation(() => ({
-	observe: vi.fn(),
+	observe: (node: Element) => observedNodes.push(node),
 	unobserve: vi.fn(),
 	disconnect: vi.fn(),
 }))
@@ -360,6 +363,23 @@ describe('ListView', () => {
 		renderListView({ data: [], hasActiveFilters: false })
 		expect(screen.getByText('No objects found')).toBeInTheDocument()
 		expect(screen.queryByRole('button', { name: 'Clear all filters' })).toBeNull()
+	})
+
+	// A client-side narrowing (the Attention axis) can empty the loaded pages
+	// while matches remain unloaded — the empty state must keep paging alive
+	// rather than report "none" over a partial fetch.
+	it('keeps the infinite-scroll sentinel mounted while the rendered set is empty', () => {
+		observedNodes.length = 0
+		renderListView({
+			data: [],
+			hasActiveFilters: true,
+			emptyTitle: 'No bets waiting on you right now.',
+			hasNextPage: true,
+			fetchNextPage: vi.fn(),
+		})
+
+		expect(screen.getByText('No bets waiting on you right now.')).toBeInTheDocument()
+		expect(observedNodes.length).toBe(1)
 	})
 
 	// Mockup 995: the group a row belongs to stays readable while its rows scroll.

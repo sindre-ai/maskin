@@ -1,5 +1,6 @@
 import type { DisplayPanelColumn } from '@/components/objects/data-table/display-panel'
 import { EmptyState } from '@/components/shared/empty-state'
+import { QueryStateError } from '@/components/shared/query-state'
 import { useBulkUpdateObjects } from '@/hooks/use-objects'
 import { api } from '@/lib/api'
 import type {
@@ -51,6 +52,8 @@ interface BoardViewProps {
 	workspaceId: string
 	actors?: ActorListItem[]
 	isLoading?: boolean
+	isError?: boolean
+	error?: Error | null
 	selectedIds?: string[]
 	onObjectSelectionChange?: (id: string, selected: boolean) => void
 	onObjectRangeSelectionChange?: (ids: string[]) => void
@@ -245,6 +248,8 @@ export function BoardView({
 	workspaceId,
 	actors,
 	isLoading,
+	isError,
+	error,
 	selectedIds = [],
 	onObjectSelectionChange,
 	onObjectRangeSelectionChange,
@@ -439,7 +444,15 @@ export function BoardView({
 		})
 	}, [displayObjects])
 
+	// Loading → error → empty. "No statuses configured" is a workspace
+	// mis-configuration claim, so it may only be made once the query has
+	// actually resolved with nothing — a first paint or a failed fetch also has
+	// zero columns and must not read as one.
 	if (columns.length === 0) {
+		if (isLoading) return <BoardSkeleton />
+		if (isError) {
+			return <QueryStateError title="Couldn't load the board" error={error} />
+		}
 		return (
 			<EmptyState
 				title="No statuses configured"
@@ -1089,6 +1102,29 @@ function DraggableBoardCard({
 				onAdvance={onAdvance && nextStatus ? () => onAdvance(object.id, nextStatus) : undefined}
 				advanceLabel={nextLabel ? `Move to ${humanizeStatus(nextLabel)}` : undefined}
 			/>
+		</div>
+	)
+}
+
+// First-paint placeholder for the whole board — the column shells the real
+// board renders, before any column data exists to render them from.
+function BoardSkeleton() {
+	return (
+		<div className="flex gap-3 overflow-x-auto pb-2">
+			{Array.from({ length: 3 }).map((_, columnIndex) => (
+				<div
+					// biome-ignore lint/suspicious/noArrayIndexKey: static skeleton columns never reorder
+					key={`board-skeleton-${columnIndex}`}
+					className="flex w-[280px] shrink-0 flex-col gap-2"
+				>
+					{Array.from({ length: SKELETON_CARDS_PER_COLUMN }).map((_, cardIndex) => (
+						<CardSkeleton
+							// biome-ignore lint/suspicious/noArrayIndexKey: static skeleton rows never reorder
+							key={`board-skeleton-${columnIndex}-${cardIndex}`}
+						/>
+					))}
+				</div>
+			))}
 		</div>
 	)
 }

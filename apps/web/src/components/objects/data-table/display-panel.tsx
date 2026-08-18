@@ -1,6 +1,5 @@
 import { type FieldDefinition, FieldValueInput } from '@/components/objects/field-value-input'
 import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
 import {
 	DropdownMenu,
 	DropdownMenuCheckboxItem,
@@ -19,6 +18,7 @@ import { Separator } from '@/components/ui/separator'
 import { Switch } from '@/components/ui/switch'
 import type { ActorListItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { DEFAULT_ORDER, DEFAULT_SORT } from '@/lib/objects-filter-model'
 import { SAFE_METADATA_FIELD_NAME_RE } from '@maskin/shared'
 import type { VisibilityState } from '@tanstack/react-table'
 import {
@@ -28,6 +28,7 @@ import {
 	ChevronDown,
 	LayoutGrid,
 	List as ListIcon,
+	RotateCcw,
 	SlidersHorizontal,
 } from 'lucide-react'
 import { useState } from 'react'
@@ -112,36 +113,30 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
 	return <p className="eyebrow">{children}</p>
 }
 
-// Bordered picker toggle used inside this popover (View, Properties). The
-// `border-accent bg-accent text-accent-foreground` active state is reserved for
-// picker toggles inside popovers. Filter state that lives in the page toolbar
-// (FilterTabs active, FilterChip) uses the plain `bg-muted text-foreground
-// font-medium` style instead.
-function PillButton({
+// The mockup's PROPERTIES pill (line 710): borderless, fully rounded, filled
+// with the muted surface when the property is shown and transparent when it is
+// hidden. Deliberately not the bordered popover-picker treatment — a bordered
+// pill reads as a button you press once, and this row is a set of toggles whose
+// on/off state has to be legible at a glance across six of them.
+function PropertyPill({
 	active,
-	disabled,
 	onClick,
 	children,
-	title,
 }: {
 	active?: boolean
-	disabled?: boolean
 	onClick?: () => void
 	children: React.ReactNode
-	title?: string
 }) {
 	return (
 		<button
 			type="button"
-			disabled={disabled}
-			title={title}
+			aria-pressed={active}
 			onClick={onClick}
 			className={cn(
-				'inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs transition-colors',
+				'inline-flex items-center rounded-full px-2.5 py-[3px] text-xs transition-colors',
 				active
-					? 'border-accent bg-accent text-accent-foreground'
-					: 'border-border bg-card text-muted-foreground hover:text-foreground hover:border-border-strong',
-				disabled && 'cursor-not-allowed opacity-50 hover:text-muted-foreground hover:border-border',
+					? 'bg-muted font-semibold text-foreground'
+					: 'font-medium text-muted-foreground hover:bg-muted hover:text-foreground',
 			)}
 		>
 			{children}
@@ -275,6 +270,9 @@ export function DisplayPanel({
 			: columns
 
 	const sortLabel = orderingColumns.find((c) => c.id === sort)?.label
+	// Fallback for the trigger when the active sort isn't one of the offered
+	// columns — name the route default rather than a hardcoded column.
+	const defaultSortLabel = orderingColumns.find((c) => c.id === DEFAULT_SORT)?.label ?? DEFAULT_SORT
 	const groupLabel = groupingColumns.find((c) => c.id === groupBy)?.label
 
 	const typeEntries = Object.entries(statusesByType).filter(([, statuses]) => statuses.length > 0)
@@ -317,7 +315,7 @@ export function DisplayPanel({
 	// they surface as a subtle text reading rather than another chip. Renders
 	// only when non-default; collapses <640px so the toolbar stays clean on
 	// mobile (the iconOnly variant already carries the filter count pill).
-	const isNonDefaultSort = !!sort && (sort !== 'createdAt' || order !== 'desc')
+	const isNonDefaultSort = !!sort && (sort !== DEFAULT_SORT || order !== DEFAULT_ORDER)
 	const hasGrouping = !!groupBy
 	const showInlineReading = !iconOnly && (isNonDefaultSort || hasGrouping || includeArchived)
 	const inlineSortLabel = sortLabel ?? sort
@@ -342,20 +340,28 @@ export function DisplayPanel({
 						)}
 					</Button>
 				) : (
-					<Button variant="outline" size="sm" className="gap-1.5">
-						<SlidersHorizontal size={14} />
+					/* Mockup 692: a quiet text affordance with a caret, not a bordered
+					   button. The active-filter count stays — the toolbar's removable
+					   pills only cover the axes it renders, so this is the one place
+					   a filter set from anywhere is always countable. */
+					<Button
+						variant="ghost"
+						size="sm"
+						className="h-7 gap-1.5 px-3 text-xs font-semibold text-muted-foreground hover:text-foreground"
+					>
 						Display
 						{hasActiveFilters && (
-							<span className="ml-1 rounded-full bg-primary text-primary-foreground text-xs px-1.5 py-0.5">
+							<span className="rounded-full bg-primary px-1.5 py-0.5 text-xs text-primary-foreground">
 								{activeFilterCount}
 							</span>
 						)}
+						<ChevronDown size={12} className="opacity-60" />
 					</Button>
 				)}
 			</ResponsivePopoverTrigger>
 			<ResponsivePopoverContent align="end" accessibleTitle="Display" className="md:w-80 md:p-0">
 				<div className="min-h-0 overflow-y-auto md:max-h-[480px] text-left">
-					{/* View — segmented List | Board rail (mockup 932–937). */}
+					{/* View — segmented List | Board rail (mockup 694–697). */}
 					{showView && (
 						<>
 							<div className="p-1.5">
@@ -659,7 +665,7 @@ export function DisplayPanel({
 												size="sm"
 												className="h-7 flex-1 justify-between gap-1.5 px-2 text-xs"
 											>
-												<span className="truncate capitalize">{sortLabel ?? 'Created'}</span>
+												<span className="truncate capitalize">{sortLabel ?? defaultSortLabel}</span>
 												<ChevronDown size={12} className="shrink-0 opacity-60" />
 											</Button>
 										</DropdownMenuTrigger>
@@ -693,32 +699,31 @@ export function DisplayPanel({
 						</>
 					)}
 
-					{/* SHOW IN LIST — checkbox rows (mockup 956–962). */}
+					{/* PROPERTIES — a wrapped row of toggle pills (mockup 709–712).
+					 * One pill per hideable column; filled = shown in the list. */}
 					{showProperties && (
 						<>
 							<div className="p-1.5">
 								<div className="px-2.5 pt-1 pb-1">
-									<SectionHeader>Show in list</SectionHeader>
+									<SectionHeader>Properties</SectionHeader>
 								</div>
-								{hideableColumns.map((col) => {
-									const isVisible = columnVisibility?.[col.id] !== false
-									return (
-										<label
-											key={col.id}
-											htmlFor={`display-col-${col.id}`}
-											className="flex cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-1.5 text-xs transition-colors hover:bg-accent"
-										>
-											<Checkbox
-												id={`display-col-${col.id}`}
-												checked={isVisible}
-												onCheckedChange={() => onColumnVisibilityChange?.(col.id, !isVisible)}
-											/>
-											<span className="min-w-0 flex-1 truncate capitalize text-foreground">
-												{col.label}
-											</span>
-										</label>
-									)
-								})}
+								<div
+									data-testid="display-properties"
+									className="flex flex-wrap gap-1 px-2.5 pt-0.5 pb-1.5"
+								>
+									{hideableColumns.map((col) => {
+										const isVisible = columnVisibility?.[col.id] !== false
+										return (
+											<PropertyPill
+												key={col.id}
+												active={isVisible}
+												onClick={() => onColumnVisibilityChange?.(col.id, !isVisible)}
+											>
+												<span className="capitalize">{col.label}</span>
+											</PropertyPill>
+										)
+									})}
+								</div>
 							</div>
 							<Separator />
 						</>
@@ -754,8 +759,9 @@ export function DisplayPanel({
 						</div>
 					)}
 
-					{/* Reset to default — restores every display axis. Always the
-						final row, matching the mockup's footer action. */}
+					{/* Reset all — restores every display axis. Always the final row
+						(mockup 716), with the muted "auto-saves" note that tells the
+						operator these choices persist without an explicit Save. */}
 					{onResetToDefault && (
 						<>
 							<Separator />
@@ -763,9 +769,11 @@ export function DisplayPanel({
 								<button
 									type="button"
 									onClick={onResetToDefault}
-									className="w-full rounded-lg px-2.5 py-2 text-left text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+									className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
 								>
-									Reset to default
+									<RotateCcw size={12} aria-hidden="true" />
+									<span className="flex-1">Reset all</span>
+									<span className="text-[10.5px] text-border-strong">auto-saves</span>
 								</button>
 							</div>
 						</>
