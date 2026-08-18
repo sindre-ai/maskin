@@ -1193,9 +1193,14 @@ export interface HeroCardObject {
 	title: string | null
 	status: string | null
 	driver?: HeroCardActor | null
-	contextLine: string
+	// Required for every hero card kind except actors — actor rows already
+	// carry `status` (role) and `description` (one-liner), so a synthesized
+	// "type · role" summary line is redundant and actors omit it.
+	contextLine?: string
 	badges?: string[]
 	url?: string
+	// Actor-only: the raw role, independent of `status`'s isSystem/type fallback.
+	role?: string | null
 	// Full detail fields — populated by get_actor, ignored by list display
 	description?: string | null
 	systemPrompt?: string | null
@@ -1536,14 +1541,6 @@ interface RawWorkspace {
 	updatedAt?: string | null
 }
 
-function buildActorContextLine(actor: RawActor): string {
-	const kind = actor.type || 'actor'
-	const parts: string[] = [kind]
-	if (actor.role) parts.push(actor.role)
-	else if (actor.email) parts.push(actor.email)
-	return parts.join(' · ')
-}
-
 function buildActorHeroCardObject(actor: RawActor, includeDetails = false): HeroCardObject {
 	const status = actor.isSystem ? 'system' : (actor.role ?? actor.type ?? null)
 	const obj: HeroCardObject = {
@@ -1554,7 +1551,7 @@ function buildActorHeroCardObject(actor: RawActor, includeDetails = false): Hero
 		// Actors don't have a "driver" — that field is for objects (bet/task/
 		// insight) owned/driven by an actor. Omitted rather than null so it
 		// doesn't show up in the response at all.
-		contextLine: buildActorContextLine(actor),
+		role: actor.role ?? null,
 		// The short one-liner is cheap and useful in list view too, unlike the
 		// heavier includeDetails-only fields below (system_prompt, tools, etc.),
 		// which are reserved for get_actor's full record.
