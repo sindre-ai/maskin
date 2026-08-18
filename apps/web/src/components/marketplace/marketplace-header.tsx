@@ -16,7 +16,7 @@ export function MarketplaceHeaderIdentity({ count }: MarketplaceHeaderIdentityPr
 					className="shrink-0 text-sm text-muted-foreground tabular-nums"
 					data-testid="marketplace-count"
 				>
-					{count} in the marketplace
+					{count} in the catalog
 				</span>
 			) : null}
 		</div>
