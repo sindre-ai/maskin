@@ -15,12 +15,32 @@ import type {
 // own try/catch entirely (its log line below never appears) and crashes the
 // whole process, since Node terminates on any unhandled rejection by
 // default. Registering a listener disables that default-crash behavior, so
-// this narrowly swallows only Argos-originated rejections (identified by
-// their stack referencing the @argos-ci packages) and preserves normal
-// crash-on-unhandled-rejection behavior for anything else.
+// this narrowly swallows only Argos-originated rejections and preserves
+// normal crash-on-unhandled-rejection behavior for anything else.
+//
+// Detection can't rely on the stack path `@argos-ci`: by the time the
+// rejection surfaces here Node has formatted the stack with short basenames
+// (`api-client index.js`, `core index.js`), so the package prefix is gone.
+// Match on @argos-ci/api-client's own error class name (`APIError`) and the
+// product's well-known message markers as well.
+const ARGOS_MESSAGE_MARKERS = [
+	'screenshot capacity',
+	'Free Plan',
+	'Argos repository token',
+	'Argos',
+]
+function isArgosError(reason: unknown): boolean {
+	if (!(reason instanceof Error)) return false
+	const message = reason.message ?? ''
+	const stack = reason.stack ?? ''
+	return (
+		reason.name === 'APIError' ||
+		stack.includes('@argos-ci') ||
+		ARGOS_MESSAGE_MARKERS.some((marker) => message.includes(marker))
+	)
+}
 process.on('unhandledRejection', (reason) => {
-	const stack = reason instanceof Error ? reason.stack : undefined
-	if (stack?.includes('@argos-ci')) {
+	if (isArgosError(reason)) {
 		console.error(
 			'[argos] unhandled rejection from Argos upload, continuing without upload:',
 			reason,
