@@ -1422,7 +1422,7 @@ describe('tool handlers', () => {
 			const parsed = JSON.parse(result.content[0].text)
 			expect(parsed.attached_skills).toBeUndefined()
 			expect(parsed.partial_failure).toBeUndefined()
-			expect(parsed.skills_not_attached_reason).toMatch(/auto_create_workspace/)
+			expect(parsed.skills_not_attached_reason).toBeUndefined()
 		})
 	})
 
@@ -3876,8 +3876,34 @@ describe('tool handlers', () => {
 					json: async () => ({
 						id: actorId,
 						llm_provider: 'openai',
-						llm_config: { api_key: 'sk-test' },
+						llm_config: { model: 'gpt-4o' },
 					}),
+				} as Response
+			})
+
+			const handler = getHandler('update_actor')
+			const result = (await handler({
+				id: actorId,
+				llm_config: { provider: 'openai', model: 'gpt-4o' },
+			})) as { content: Array<{ text: string }> }
+
+			expect(patchedBody).toMatchObject({
+				llm_provider: 'openai',
+				llm_config: { model: 'gpt-4o' },
+			})
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.llm_config).toEqual({ provider: 'openai', model: 'gpt-4o' })
+			expect(parsed.llm_provider).toBeUndefined()
+		})
+
+		it('strips api_key from llm_config — per-agent API key overrides are not a supported path', async () => {
+			let patchedBody: unknown
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+				patchedBody = JSON.parse(init?.body as string)
+				return {
+					ok: true,
+					headers: new Headers(),
+					json: async () => ({ id: actorId, llm_provider: 'openai' }),
 				} as Response
 			})
 
@@ -3887,13 +3913,12 @@ describe('tool handlers', () => {
 				llm_config: { provider: 'openai', api_key: 'sk-test' },
 			})) as { content: Array<{ text: string }> }
 
-			expect(patchedBody).toMatchObject({
-				llm_provider: 'openai',
-				llm_config: { api_key: 'sk-test' },
-			})
+			expect(patchedBody).toMatchObject({ llm_provider: 'openai' })
+			expect((patchedBody as Record<string, unknown>).llm_config).toBeUndefined()
+			// mergeLlmConfig reconstitutes { provider } from llm_provider on the way
+			// back out — api_key never made it into either the request or response.
 			const parsed = JSON.parse(result.content[0].text)
-			expect(parsed.llm_config).toEqual({ provider: 'openai', api_key: 'sk-test' })
-			expect(parsed.llm_provider).toBeUndefined()
+			expect(parsed.llm_config).toEqual({ provider: 'openai' })
 		})
 
 		it('adds the actor to a workspace when workspace_id is provided', async () => {
