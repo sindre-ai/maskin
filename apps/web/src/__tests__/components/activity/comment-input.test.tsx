@@ -20,12 +20,34 @@ vi.mock('@/hooks/use-actors', () => ({
 	useActors: () => mockUseActors(),
 }))
 
+// The attachment queue is exercised for its contract only: what the composer
+// hands to `submitDraft` when files are in play.
+const mockDraftSubmit = vi.fn()
+let mockDraftFiles: {
+	tempId: string
+	name: string
+	sizeBytes: number
+	status: string
+	progress: number
+}[] = []
+vi.mock('@/lib/pending-comments-context', () => ({
+	useDraft: () => ({
+		files: mockDraftFiles,
+		attach: vi.fn(),
+		remove: vi.fn(),
+		submit: mockDraftSubmit,
+		discard: vi.fn(),
+	}),
+}))
+
 describe('CommentInput', () => {
 	beforeEach(() => {
 		mockMutate.mockClear()
 		mockIsPending = false
 		mockGetStoredActor.mockReturnValue({ id: 'actor-1', name: 'Alice', type: 'human' })
 		mockUseActors.mockReturnValue({ data: [] })
+		mockDraftSubmit.mockClear()
+		mockDraftFiles = []
 	})
 
 	it("offers the + menu's three real affordances and the composer hint", async () => {
@@ -71,6 +93,35 @@ describe('CommentInput', () => {
 			}),
 			expect.any(Object),
 		)
+	})
+
+	it('carries an attachment and decision options on the same comment', async () => {
+		mockDraftFiles = [
+			{ tempId: 'f-1', name: 'metrics.png', sizeBytes: 1024, status: 'uploaded', progress: 100 },
+		]
+		const user = userEvent.setup()
+		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
+
+		await user.click(screen.getByRole('button', { name: 'Add a file, object, or mention' }))
+		// Attaching a file no longer locks the decision affordance out.
+		expect(await screen.findByText('Attach a decision')).not.toHaveAttribute('data-disabled', '')
+		await user.click(screen.getByText('Attach a decision'))
+
+		await user.type(screen.getByRole('textbox', { name: 'Decision option' }), 'Ship it{Enter}')
+		await user.type(
+			screen.getByPlaceholderText('Write a comment... Use @ to mention an agent'),
+			'Chart attached — which way?',
+		)
+		await user.click(screen.getByRole('button', { name: /send/i }))
+
+		// The queued path carries the same metadata shape as the direct one, and
+		// the direct mutation is not used when files are in play.
+		expect(mockDraftSubmit).toHaveBeenCalledWith({
+			content: 'Chart attached — which way?',
+			mentions: [],
+			metadata: { chips: ['Ship it'] },
+		})
+		expect(mockMutate).not.toHaveBeenCalled()
 	})
 
 	it('sends no metadata when no decision is attached', async () => {

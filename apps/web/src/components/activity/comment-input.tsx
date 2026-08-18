@@ -263,6 +263,18 @@ export function CommentInput({
 		setDecisionChips((prev) => prev.filter((c) => c !== chip))
 	}, [])
 
+	// The one place a comment's structured extras are built. Both submit paths
+	// — the direct POST and the attachment queue — spread this, so they cannot
+	// drift apart. The same caps `createCommentSchema` enforces server-side are
+	// re-applied here, since chips can also arrive from a restored draft.
+	const buildMetadata = useCallback((): Record<string, unknown> | undefined => {
+		const chips = decisionChips
+			.map((chip) => chip.trim().slice(0, MAX_DECISION_CHIP_LENGTH))
+			.filter((chip) => chip.length > 0)
+			.slice(0, MAX_DECISION_CHIPS)
+		return chips.length > 0 ? { chips } : undefined
+	}, [decisionChips])
+
 	const overLimit = content.length > COMMENT_MAX_LENGTH
 	const showCounter = content.length >= COMMENT_MAX_LENGTH * COUNTER_VISIBILITY_THRESHOLD
 
@@ -286,11 +298,19 @@ export function CommentInput({
 			return actor && trimmed.includes(`@${actor.name}`)
 		})
 
+		const metadata = buildMetadata()
+
 		if (hasAttachments) {
 			// Hand the submission to the pending-comments queue. Uploads (if still
 			// in flight) and the final POST will continue in the background even
-			// if the user navigates away from this page.
-			draft.submit({ content: trimmed, mentions: activeMentions })
+			// if the user navigates away from this page. The queue carries the
+			// same metadata the direct path sends, so an attachment and a
+			// decision can ride one comment.
+			draft.submit({
+				content: trimmed,
+				mentions: activeMentions,
+				...(metadata ? { metadata } : {}),
+			})
 			resetComposer()
 			onSubmitted?.()
 			return
@@ -302,7 +322,7 @@ export function CommentInput({
 				content: trimmed,
 				mentions: activeMentions.length > 0 ? activeMentions : undefined,
 				parent_event_id: parentEventId,
-				...(decisionChips.length > 0 ? { metadata: { chips: decisionChips } } : {}),
+				...(metadata ? { metadata } : {}),
 			},
 			{
 				onSuccess: () => {
@@ -321,7 +341,7 @@ export function CommentInput({
 		onSubmitted,
 		hasAttachments,
 		draft,
-		decisionChips,
+		buildMetadata,
 		resetComposer,
 	])
 
@@ -578,11 +598,7 @@ export function CommentInput({
 								</DropdownMenuTrigger>
 								<DropdownMenuContent align="start" className="w-[250px]">
 									<DropdownMenuItem
-										// A decision rides `metadata` on the direct POST; the
-										// attachment queue (pending-comments-context) carries no
-										// metadata yet, so the two can't be combined without
-										// silently dropping the options.
-										disabled={attachmentLimitReached || decisionChips.length > 0}
+										disabled={attachmentLimitReached}
 										onSelect={() => fileInputRef.current?.click()}
 									>
 										<Paperclip size={15} aria-hidden />
@@ -596,10 +612,7 @@ export function CommentInput({
 										<AtSign size={15} aria-hidden />
 										Mention an agent
 									</DropdownMenuItem>
-									<DropdownMenuItem
-										disabled={hasAttachments}
-										onSelect={() => setDecisionOpen(true)}
-									>
+									<DropdownMenuItem onSelect={() => setDecisionOpen(true)}>
 										<ListChecks size={15} aria-hidden />
 										Attach a decision
 									</DropdownMenuItem>

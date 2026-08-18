@@ -15,5 +15,6 @@ coverage/
 .claude/plans/
 .pnpmfile.cjs
 .worktrees/
+.claude/worktrees/
 .playwright-mcp/
 .tokensave/
