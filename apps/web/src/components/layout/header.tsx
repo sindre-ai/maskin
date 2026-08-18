@@ -74,6 +74,12 @@ const routeConfig: Record<string, RouteConfig> = {
 		parent: '/_authed/$workspaceId/loops/',
 		primary: 'loop',
 	},
+	// The mockup (1584) shows a middle crumb — `Loops › Not tied to a loop › name`
+	// — but that middle term is the trigger's owning loop, or the literal
+	// "Not tied to a loop" only when it has none. Crumbs here are derived from the
+	// route, which cannot know either. A hardcoded middle crumb would be wrong on
+	// every loop-owned trigger, so the chain stays `Loops › name`. Restoring it
+	// means letting the page publish its own crumb, since only it has the loop.
 	'/_authed/$workspaceId/loops/': { label: 'Loops', primary: 'loop' },
 	'/_authed/$workspaceId/loops/new': {
 		label: 'New loop',
