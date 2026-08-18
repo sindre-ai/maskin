@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 const mockUseActors = vi.fn()
 const mockUseWorkspaceSessions = vi.fn()
+const mockDeriveAgentStatus = vi.fn(() => 'idle')
 const mockRunMutate = vi.fn()
 const mockPauseMutate = vi.fn()
 
@@ -42,7 +43,7 @@ vi.mock('@/hooks/use-sessions', () => ({
 }))
 
 vi.mock('@/lib/agent-status', () => ({
-	deriveAgentStatus: (_id: string, _map: Map<string, unknown>) => 'idle',
+	deriveAgentStatus: (_id: string, _map: Map<string, unknown>) => mockDeriveAgentStatus(),
 	getLatestSession: () => null,
 	groupSessionsByAgent: () => new Map(),
 }))
@@ -108,6 +109,7 @@ describe('AgentsPage', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
 		mockUseWorkspaceSessions.mockReturnValue({ data: [] })
+		mockDeriveAgentStatus.mockReturnValue('idle')
 	})
 
 	it('shows loading skeleton when actors are loading', () => {
@@ -241,5 +243,16 @@ describe('AgentsPage', () => {
 		})
 		render(<AgentsPage />)
 		expect(screen.getByRole('button', { name: /Idle \(1\)/ })).toBeInTheDocument()
+	})
+
+	it('counts an agent with an active running session under the Working tab even when agentState is paused', () => {
+		mockUseActors.mockReturnValue({
+			data: [{ id: 'a1', name: 'Agent One', type: 'agent', email: null, agentState: 'paused' }],
+			isLoading: false,
+		})
+		mockDeriveAgentStatus.mockReturnValue('working')
+		render(<AgentsPage />)
+		expect(screen.getByRole('button', { name: /Working \(1\)/ })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /Idle \(0\)/ })).toBeInTheDocument()
 	})
 })
