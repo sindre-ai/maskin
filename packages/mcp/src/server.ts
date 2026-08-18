@@ -1182,14 +1182,25 @@ export interface HeroCardActor {
 	type: string | null
 }
 
+export interface HeroCardLink {
+	name: string
+	url?: string
+}
+
 export interface HeroCardObject {
 	id: string
 	type: string
 	title: string | null
 	status: string | null
-	driver: HeroCardActor | null
-	contextLine: string
+	driver?: HeroCardActor | null
+	// Required for every hero card kind except actors — actor rows already
+	// carry `status` (role) and `description` (one-liner), so a synthesized
+	// "type · role" summary line is redundant and actors omit it.
+	contextLine?: string
 	badges?: string[]
+	url?: string
+	// Actor-only: the raw role, independent of `status`'s isSystem/type fallback.
+	role?: string | null
 	// Full detail fields — populated by get_actor, ignored by list display
 	description?: string | null
 	systemPrompt?: string | null
@@ -1200,6 +1211,9 @@ export interface HeroCardObject {
 	// Full detail fields — populated by list_triggers
 	actionPrompt?: string | null
 	config?: Record<string, unknown> | null
+	// Populated by list_actors — the triggers/loops wired to this actor.
+	connectedTriggers?: HeroCardLink[]
+	connectedLoops?: HeroCardLink[]
 }
 
 export type HeroCardKind = 'single' | 'list' | 'empty'
@@ -1527,14 +1541,6 @@ interface RawWorkspace {
 	updatedAt?: string | null
 }
 
-function buildActorContextLine(actor: RawActor): string {
-	const kind = actor.type || 'actor'
-	const parts: string[] = [kind]
-	if (actor.role) parts.push(actor.role)
-	else if (actor.email) parts.push(actor.email)
-	return parts.join(' · ')
-}
-
 function buildActorHeroCardObject(actor: RawActor, includeDetails = false): HeroCardObject {
 	const status = actor.isSystem ? 'system' : (actor.role ?? actor.type ?? null)
 	const obj: HeroCardObject = {
@@ -1542,11 +1548,16 @@ function buildActorHeroCardObject(actor: RawActor, includeDetails = false): Hero
 		type: 'actor',
 		title: actor.name ?? null,
 		status,
-		driver: null,
-		contextLine: buildActorContextLine(actor),
+		// Actors don't have a "driver" — that field is for objects (bet/task/
+		// insight) owned/driven by an actor. Omitted rather than null so it
+		// doesn't show up in the response at all.
+		role: actor.role ?? null,
+		// The short one-liner is cheap and useful in list view too, unlike the
+		// heavier includeDetails-only fields below (system_prompt, tools, etc.),
+		// which are reserved for get_actor's full record.
+		description: actor.description ?? null,
 	}
 	if (includeDetails) {
-		obj.description = actor.description ?? null
 		obj.systemPrompt = actor.system_prompt ?? null
 		obj.tools = actor.tools ?? null
 		obj.llmProvider = actor.llm_provider ?? null
@@ -1569,7 +1580,9 @@ function buildWorkspaceHeroCardObject(workspace: RawWorkspace): HeroCardObject {
 		type: 'workspace',
 		title: workspace.name ?? null,
 		status: workspace.role ?? 'active',
-		driver: null,
+		// Workspaces don't have a "driver" — that field is for objects (bet/
+		// task/insight) owned/driven by an actor. Omitted rather than null so
+		// it doesn't show up in the response at all (mirrors actor cards).
 		contextLine: buildWorkspaceContextLine(workspace),
 	}
 }
@@ -1735,6 +1748,106 @@ async function resolveActors(
 		if (!out.has(id)) out.set(id, { id, name: null, type: null })
 	}
 	return out
+}
+
+// Bounds each actor's connected-triggers/loops arrays, so one heavily-wired
+// actor doesn't dominate the list. This is a per-actor cap only, not a
+// total-response cap — list_actors carries no token-cap trimming (see the
+// exclusion comment in response-cap.ts), so a page of many heavily-wired
+// actors is still uncapped in aggregate. Deliberately left that way: real
+// workspaces don't approach the row/link counts needed to threaten the
+// token ceiling, and adding list_actors to response-cap.ts's trimming would
+// need its own recovery story (no natural per-row fetch-by-id boundary the
+// way list_objects has get_objects).
+const MAX_CONNECTED_LINKS_PER_ACTOR = 20
+
+interface ActorLinks {
+	triggersByActor: Map<string, HeroCardLink[]>
+	loopsByActor: Map<string, HeroCardLink[]>
+}
+
+function pushLink(map: Map<string, HeroCardLink[]>, actorId: string, link: HeroCardLink): void {
+	const existing = map.get(actorId)
+	if (existing) {
+		if (existing.length < MAX_CONNECTED_LINKS_PER_ACTOR) existing.push(link)
+		return
+	}
+	map.set(actorId, [link])
+}
+
+/**
+ * Best-effort lookup of the triggers and loops wired to every actor in a
+ * workspace, for `list_actors`' `connectedTriggers`/`connectedLoops` fields.
+ * A trigger carries a single `targetActorId` (`packages/db/src/schema.ts`);
+ * a loop derives `agentIds` server-side from its member triggers
+ * (`apps/dev/src/routes/loops.ts`). Both endpoints return every workspace row
+ * when called without a `limit`/`id` filter, so this is two requests total
+ * regardless of how many actors are on the current page — not an N+1 over
+ * the actors being listed. The two requests run concurrently (no data
+ * dependency between them) and each has its own try/catch, so one failing
+ * doesn't affect the other and neither failure fails `list_actors` itself
+ * (mirrors `resolveActors`) — a triggers/loops outage just degrades to
+ * missing links.
+ */
+async function resolveActorLinks(config: McpConfig, workspaceId: string): Promise<ActorLinks> {
+	const [triggersByActor, loopsByActor] = await Promise.all([
+		resolveTriggerLinks(config, workspaceId),
+		resolveLoopLinks(config, workspaceId),
+	])
+	return { triggersByActor, loopsByActor }
+}
+
+async function resolveTriggerLinks(
+	config: McpConfig,
+	workspaceId: string,
+): Promise<Map<string, HeroCardLink[]>> {
+	const triggersByActor = new Map<string, HeroCardLink[]>()
+	const baseUrl = config.webAppBaseUrl ? stripTrailingSlash(config.webAppBaseUrl) : null
+	try {
+		const rawTriggers = (await apiCall(config, 'GET', '/api/triggers', undefined, {
+			workspaceId,
+		})) as Array<{ id: string; name?: string | null; targetActorId?: string | null }>
+		for (const t of rawTriggers) {
+			if (!t.targetActorId) continue
+			const name = t.name || `Trigger ${t.id.slice(0, 8)}`
+			pushLink(triggersByActor, t.targetActorId, {
+				name,
+				...(baseUrl
+					? { url: buildWebAppHref(baseUrl, workspaceId, { kind: 'trigger', id: t.id }) }
+					: {}),
+			})
+		}
+	} catch (err) {
+		console.error('[MCP] Failed to resolve connected triggers for list_actors:', err)
+	}
+	return triggersByActor
+}
+
+async function resolveLoopLinks(
+	config: McpConfig,
+	workspaceId: string,
+): Promise<Map<string, HeroCardLink[]>> {
+	const loopsByActor = new Map<string, HeroCardLink[]>()
+	const baseUrl = config.webAppBaseUrl ? stripTrailingSlash(config.webAppBaseUrl) : null
+	try {
+		const rawLoops = (await apiCall(config, 'GET', '/api/loops', undefined, {
+			workspaceId,
+		})) as { loops?: Array<{ id: string; name?: string | null; agentIds?: string[] }> }
+		for (const loop of rawLoops.loops ?? []) {
+			const name = loop.name || 'Untitled loop'
+			for (const agentId of loop.agentIds ?? []) {
+				pushLink(loopsByActor, agentId, {
+					name,
+					...(baseUrl
+						? { url: buildWebAppHref(baseUrl, workspaceId, { kind: 'loop', id: loop.id }) }
+						: {}),
+				})
+			}
+		}
+	} catch (err) {
+		console.error('[MCP] Failed to resolve connected loops for list_actors:', err)
+	}
+	return loopsByActor
 }
 
 function loadHtml(config: McpConfig, filename: string): string {
@@ -3016,7 +3129,38 @@ export function createMcpServer(config: McpConfig) {
 				: { nextCursor: null, trimmed: rawRows }
 			const rows = trimmed as RawActor[]
 			const trimmedData = Array.isArray(data) ? (data as unknown[]).slice(0, rows.length) : data
-			const heroObjects = rows.map((a) => buildActorHeroCardObject(a))
+			// URLs aren't part of buildActorHeroCardObject's output — they come
+			// from addUrl(), which needs a workspace id. Compute them here and
+			// fold them into each hero object so structuredContent is the sole
+			// carrier of the response (no separate `content` text channel).
+			const wsId = args.workspace_id ?? config.defaultWorkspaceId
+			const enriched =
+				wsId && Array.isArray(trimmedData)
+					? (trimmedData as Array<Record<string, unknown>>).map((a) =>
+							addUrl(a, config, wsId, { kind: 'actor', id: a.id as string }),
+						)
+					: trimmedData
+			const enrichedRows: Array<Record<string, unknown>> = Array.isArray(enriched)
+				? (enriched as Array<Record<string, unknown>>)
+				: []
+			// Connected triggers/loops only resolve for a single, known workspace —
+			// the cross-workspace branch (no workspace_id) lists actors from many
+			// workspaces at once, and a trigger/loop belongs to exactly one.
+			const actorLinks = workspaceScoped
+				? await resolveActorLinks(config, args.workspace_id as string)
+				: null
+			const heroObjects = rows.map((a, idx) => {
+				let obj = buildActorHeroCardObject(a)
+				const url = pickUrl(enrichedRows[idx])
+				if (url) obj = { ...obj, url }
+				if (actorLinks) {
+					const connectedTriggers = actorLinks.triggersByActor.get(a.id)
+					const connectedLoops = actorLinks.loopsByActor.get(a.id)
+					if (connectedTriggers?.length) obj = { ...obj, connectedTriggers }
+					if (connectedLoops?.length) obj = { ...obj, connectedLoops }
+				}
+				return obj
+			})
 			const totalCount = parseTotalCountHeader(response, heroObjects.length)
 			const heroCard: HeroCardPayload =
 				heroObjects.length === 0
@@ -3035,26 +3179,6 @@ export function createMcpServer(config: McpConfig) {
 										offset + Math.min(heroObjects.length, HERO_CARD_UI_PAGE_SIZE) < totalCount,
 								},
 							}
-			const wsId = args.workspace_id ?? config.defaultWorkspaceId
-			const enriched =
-				wsId && Array.isArray(trimmedData)
-					? (trimmedData as Array<Record<string, unknown>>).map((a) =>
-							addUrl(a, config, wsId, { kind: 'actor', id: a.id as string }),
-						)
-					: trimmedData
-			const enrichedRows: Array<Record<string, unknown>> = Array.isArray(enriched)
-				? (enriched as Array<Record<string, unknown>>)
-				: []
-			const summaryRows: SummaryRow[] = rows.map((actor, idx) => {
-				const kind = actor.type ?? 'actor'
-				const metaParts = [kind]
-				if (actor.role) metaParts.push(actor.role)
-				return {
-					title: actor.name ?? `${kind} ${actor.id.slice(0, 8)}`,
-					url: pickUrl(enrichedRows[idx]),
-					meta: metaParts.join(' · '),
-				}
-			})
 			return {
 				_meta: uiMeta(
 					'list_actors',
@@ -3062,12 +3186,6 @@ export function createMcpServer(config: McpConfig) {
 					args.workspace_id,
 					pickCollectionResourceUri(heroCard),
 				),
-				content: [
-					{
-						type: 'text' as const,
-						text: buildListContentText(enriched, summaryRows, 'No actors.'),
-					},
-				],
 				structuredContent: {
 					heroCard,
 					...(nextCursor
@@ -3082,7 +3200,16 @@ export function createMcpServer(config: McpConfig) {
 							}
 						: {}),
 				},
-			}
+				// The SDK's CallToolResult type requires `content` because Zod's
+				// `Infer` treats a `ZodDefault` field as required on the output side,
+				// even though nothing in the SDK's tool-dispatch path (`mcp.js`'s
+				// `Promise.resolve(cb(args, extra))`) actually validates the return
+				// value against that schema — this handler genuinely omits `content`
+				// at runtime (see the `list_actors: flag ... never emits a content
+				// channel` tests); this is a static-type artifact only, not a real
+				// contract violation.
+				// biome-ignore lint/suspicious/noExplicitAny: see comment above.
+			} as any
 		},
 	)
 
