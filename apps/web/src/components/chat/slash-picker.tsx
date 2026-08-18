@@ -569,7 +569,7 @@ function ActiveKindList({
 					type="button"
 					onClick={onLoadMore}
 					disabled={loadingMore}
-					className="flex w-full items-center justify-center gap-2 rounded px-2 py-2 text-text-secondary text-xs hover:bg-bg-hover disabled:opacity-60"
+					className="flex w-full items-center justify-center gap-2 rounded px-2 py-2 text-muted-foreground text-xs hover:bg-accent disabled:opacity-60"
 				>
 					{loadingMore ? <Spinner /> : null}
 					{loadingMore ? 'Loading…' : 'Load more'}
