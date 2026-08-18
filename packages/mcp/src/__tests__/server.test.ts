@@ -3611,7 +3611,9 @@ describe('tool handlers', () => {
 					return {
 						ok: true,
 						json: () =>
-							Promise.resolve({ loops: [{ id: 'l-1', name: 'Architecture review', agentIds: ['a-1'] }] }),
+							Promise.resolve({
+								loops: [{ id: 'l-1', name: 'Architecture review', agentIds: ['a-1'] }],
+							}),
 					} as Response
 				}
 				return { ok: true, json: () => Promise.resolve([]) } as Response
