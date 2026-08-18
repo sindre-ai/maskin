@@ -23,14 +23,14 @@ test.describe('Loops list page', () => {
 			await account.api.createObject(account.workspaceId, {
 				type: 'loop',
 				title: 'Customer feedback',
-				status: 'running',
+				status: 'learning',
 				content: 'Every customer who gives feedback hears back within 30 days',
 			})
 
 			await page.goto(`/${account.workspaceId}/loops`)
 
 			await expect(page.getByText('Customer feedback')).toBeVisible({ timeout: 10000 })
-			await expect(page.getByTestId('loop-pill')).toHaveText('Running')
+			await expect(page.getByTestId('loop-pill')).toHaveText('Learning')
 			await expect(page.getByText(/in progress/i)).toBeVisible()
 		})
 	}
