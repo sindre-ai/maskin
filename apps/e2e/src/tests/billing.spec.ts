@@ -11,6 +11,11 @@ import { SHIP_GATE_VIEWPORTS, VIEWPORTS } from '../helpers/viewports'
  * specs assert that graceful unconfigured fallback, the "Payment, details and
  * invoices" disclosure (mockup 2883-2946) opening and closing, and the
  * empty-invoices state at every ship-gate viewport, plus light/dark theme.
+ *
+ * A fixture workspace has run no agent sessions, so the model-usage block
+ * (mockup 2803-2813) renders its no-usage line and the usage-details
+ * disclosure (2841-2858) its empty explanation — both driven by
+ * GET /api/sessions/usage, never by a placeholder figure.
  */
 
 async function setTheme(page: Page, theme: 'light' | 'dark') {
@@ -65,6 +70,57 @@ test.describe('Settings — Billing page', () => {
 			// …and closing it hides them again.
 			await page.getByRole('button', { name: /Payment, details and invoices/ }).click()
 			await expect(page.getByRole('heading', { name: 'PAYMENT METHOD' })).toHaveCount(0)
+		})
+
+		test(`renders the model-usage block and usage details at ${viewport.label}`, async ({
+			page,
+			account,
+		}) => {
+			await setTheme(page, 'light')
+			await page.setViewportSize({ width: viewport.width, height: viewport.height })
+			await openBillingPage(page, account.workspaceId)
+
+			// Usage block: a fresh workspace has no session cost, so it says so
+			// rather than rendering a $0.00 that looks like a real bill.
+			await expect(page.getByText('No model usage recorded this month yet.')).toBeVisible({
+				timeout: 10000,
+			})
+			await expect(page.getByText(/resets/).first()).toBeVisible()
+
+			// Usage details start collapsed and open on click.
+			await expect(page.getByText(/No agent has finished a session this month/)).toHaveCount(0)
+			await page.getByRole('button', { name: /Usage details/ }).click()
+			await expect(page.getByText(/No agent has finished a session this month/)).toBeVisible()
+			await page.getByRole('button', { name: /Usage details/ }).click()
+			await expect(page.getByText(/No agent has finished a session this month/)).toHaveCount(0)
+
+			// The page itself must never scroll sideways at any ship-gate width.
+			const overflows = await page.evaluate(
+				() => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+			)
+			expect(overflows).toBe(false)
+		})
+
+		test(`renders the payment method and billing detail rows at ${viewport.label}`, async ({
+			page,
+			account,
+		}) => {
+			await setTheme(page, 'light')
+			await page.setViewportSize({ width: viewport.width, height: viewport.height })
+			await openBillingPage(page, account.workspaceId)
+
+			await page.getByRole('button', { name: /Payment, details and invoices/ }).click()
+
+			// No payment has ever succeeded here, so the card-present state must
+			// not be claimed (mockup 2894-2905).
+			await expect(page.getByText(/No card on file/)).toBeVisible()
+			await expect(page.getByText(/A card is on file with Stripe/)).toHaveCount(0)
+
+			// Billing details is a row list, one row per field the API returns
+			// (mockup 2911-2916). No next-charge row without a next charge date.
+			await expect(page.getByText('Billing email')).toBeVisible()
+			await expect(page.getByText('Plan', { exact: true })).toBeVisible()
+			await expect(page.getByText('Next charge')).toHaveCount(0)
 		})
 
 		test(`shows the Stripe not-configured notice at ${viewport.label}`, async ({

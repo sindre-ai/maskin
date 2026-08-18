@@ -1,3 +1,9 @@
+import {
+	BillingUsageDetails,
+	BillingUsageSummary,
+	type WorkspaceModelUsage,
+	useWorkspaceModelUsage,
+} from '@/components/settings/billing-usage'
 import { EmptyState } from '@/components/shared/empty-state'
 import { Skeleton } from '@/components/shared/loading-skeleton'
 import { RelativeTime } from '@/components/shared/relative-time'
@@ -32,6 +38,7 @@ import {
 	useStartCheckout,
 } from '@/hooks/use-billing'
 import type { BillingInvoiceResponse, BillingPlanResponse } from '@/lib/api'
+import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Elements, PaymentElement, useElements, useStripe } from '@stripe/react-stripe-js'
 import { loadStripe } from '@stripe/stripe-js'
@@ -64,9 +71,23 @@ const INVOICE_DATE_FORMAT = new Intl.DateTimeFormat('en-GB', {
 	year: 'numeric',
 })
 
+/**
+ * The warn variant of the plan banner (mockup 2797). Only states the billing
+ * row can actually hold get a warning — there is no trial or usage-limit field
+ * to warn about, so those variants are not rendered.
+ */
+function planWarning(status: string): string | null {
+	if (status === 'declined')
+		return 'The last payment was declined. Update the card on Stripe to activate this plan.'
+	if (status === 'past_due')
+		return 'This subscription is past due. Settle it on Stripe to keep the workspace running.'
+	return null
+}
+
 function BillingPage() {
 	const { workspaceId } = useWorkspace()
 	const { data, isLoading } = useBillingSummary(workspaceId)
+	const usage = useWorkspaceModelUsage(workspaceId)
 	const [checkoutOpen, setCheckoutOpen] = useState(false)
 
 	if (isLoading || !data) {
@@ -86,8 +107,10 @@ function BillingPage() {
 				plan={data.plan}
 				configured={data.configured}
 				testMode={data.testMode}
+				usage={usage}
 				onChangePlan={() => setCheckoutOpen(true)}
 			/>
+			<BillingUsageDetails usage={usage} />
 			<AccountDisclosure
 				workspaceId={workspaceId}
 				plan={data.plan}
@@ -116,19 +139,32 @@ function PlanBanner({
 	plan,
 	configured,
 	testMode,
+	usage,
 	onChangePlan,
 }: {
 	workspaceId: string
 	plan: BillingPlanResponse
 	configured: boolean
 	testMode: boolean
+	usage: WorkspaceModelUsage
 	onChangePlan: () => void
 }) {
 	const portal = useOpenPortal(workspaceId)
+	const warning = planWarning(plan.status)
 
 	return (
-		<div className="overflow-hidden rounded-xl border border-border bg-card">
-			<div className="flex flex-wrap items-center gap-4 border-b border-border bg-muted/40 px-4 py-4">
+		<div
+			className={cn(
+				'overflow-hidden rounded-xl border bg-card',
+				warning ? 'border-warning' : 'border-border',
+			)}
+		>
+			<div
+				className={cn(
+					'flex flex-wrap items-center gap-4 border-b border-border px-4 py-4',
+					warning ? 'bg-warning/10' : 'bg-muted/40',
+				)}
+			>
 				<div className="min-w-0 flex-1 sm:min-w-[210px]">
 					<div className="flex flex-wrap items-center gap-2">
 						<h2 className="text-[15px] font-bold tracking-tight text-foreground">
@@ -163,7 +199,15 @@ function PlanBanner({
 					</Button>
 				</div>
 			</div>
-			<div className="px-4 py-4">
+			<div className="flex flex-col gap-3 px-4 py-4">
+				{warning && (
+					<p aria-live="polite" className="text-xs font-medium leading-relaxed text-warning">
+						{warning}
+					</p>
+				)}
+				{/* Usage block (mockup 2803–2813) — the figure only, no meter: the
+				    "of $X included" ceiling has no field on any billing response. */}
+				<BillingUsageSummary usage={usage} />
 				<p className="text-xs leading-relaxed text-muted-foreground">
 					Subscription and invoicing run on Stripe. Everything Stripe knows about this workspace —
 					card, address, tax ID, cancellation — is managed there.
@@ -171,7 +215,7 @@ function PlanBanner({
 				{!configured && (
 					<p
 						aria-live="polite"
-						className="mt-3 rounded-lg border border-border bg-muted px-3 py-2 text-sm text-muted-foreground"
+						className="rounded-lg border border-border bg-muted px-3 py-2 text-sm text-muted-foreground"
 					>
 						Stripe is not configured for this instance. Billing is disabled until the server is set
 						up with Stripe keys.
@@ -203,6 +247,34 @@ function AccountDisclosure({
 			? 'no invoices yet'
 			: `${invoices.length} invoice${invoices.length === 1 ? '' : 's'}`
 
+	// A Stripe Customer is created only after a payment succeeds, so an active
+	// plan is the only state in which a card is provably on file.
+	const hasCardOnFile = plan.status === 'active'
+
+	const planLabel = plan.planLabel ?? plan.planId
+	const detailRows: {
+		key: string
+		value: string
+		action?: { label: string; onClick: () => void }
+	}[] = [
+		{
+			key: 'Billing email',
+			value: invoiceEmail ?? 'Not set',
+			action: { label: 'Edit', onClick: () => portal.mutate() },
+		},
+		{
+			key: 'Plan',
+			value:
+				plan.priceCents !== null
+					? `${planLabel} · ${formatAmount(plan.priceCents, plan.currency)} / month`
+					: planLabel,
+			action: { label: 'Edit', onClick: () => portal.mutate() },
+		},
+		...(plan.nextChargeAt
+			? [{ key: 'Next charge', value: INVOICE_DATE_FORMAT.format(new Date(plan.nextChargeAt)) }]
+			: []),
+	]
+
 	return (
 		<Collapsible open={open} onOpenChange={setOpen} className="border-t border-border pt-4">
 			<CollapsibleTrigger className="flex w-full items-center gap-3 text-left transition-opacity hover:opacity-70">
@@ -221,44 +293,74 @@ function AccountDisclosure({
 					<div className="grid gap-6 md:grid-cols-2">
 						<div>
 							<h3 className="eyebrow mb-2">PAYMENT METHOD</h3>
-							{/* The summary endpoint carries no payment-method field, so the
-							    mockup's brand / •••• last4 / expiry state cannot be rendered
-							    honestly. The dashed panel states only what is always true and
-							    routes to the Stripe portal, which owns the card. */}
-							<div className="flex flex-wrap items-center gap-3 rounded-xl border border-dashed border-input bg-muted/30 p-4">
-								<p className="min-w-0 flex-1 text-xs leading-relaxed text-muted-foreground sm:min-w-[180px]">
-									Card details are held by Stripe — Maskin never stores your card number.
-								</p>
-								<Button
-									className="shrink-0"
-									disabled={!configured || portal.isPending}
-									onClick={() => portal.mutate()}
-								>
-									Manage card
-								</Button>
-							</div>
+							{/* Two states (mockup 2894–2905). A Stripe Customer — and therefore
+							    a charged card — exists only once a payment succeeded, so an
+							    active plan is the card-present state. The brand tile, •••• last4
+							    and expiry stay out: the summary endpoint returns no
+							    payment-method fields, and a plausible-looking card would be a
+							    fabrication. */}
+							{hasCardOnFile ? (
+								<div className="flex flex-wrap items-center gap-3 rounded-xl border border-border p-4">
+									<p className="min-w-0 flex-1 text-xs leading-relaxed text-muted-foreground sm:min-w-[180px]">
+										A card is on file with Stripe for this workspace. Stripe holds it — Maskin never
+										stores your card number.
+									</p>
+									<Button
+										variant="outline"
+										className="shrink-0"
+										disabled={!configured || portal.isPending}
+										onClick={() => portal.mutate()}
+									>
+										Update
+									</Button>
+								</div>
+							) : (
+								<div className="flex flex-wrap items-center gap-3 rounded-xl border border-dashed border-input bg-muted/30 p-4">
+									<p className="min-w-0 flex-1 text-xs leading-relaxed text-muted-foreground sm:min-w-[180px]">
+										No card on file. Stripe handles the payment — Maskin never stores your card
+										number.
+									</p>
+									<Button
+										className="shrink-0"
+										disabled={!configured || portal.isPending}
+										onClick={() => portal.mutate()}
+									>
+										Manage card
+									</Button>
+								</div>
+							)}
 						</div>
 
 						<div>
 							<h3 className="eyebrow mb-2">BILLING DETAILS</h3>
-							<div className="rounded-xl border border-border">
-								<div className="flex items-center gap-3 px-4 py-2">
-									<span className="w-[88px] shrink-0 text-xs text-muted-foreground">
-										Billing email
-									</span>
-									<span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">
-										{invoiceEmail ?? 'Not set'}
-									</span>
-									<Button
-										variant="ghost"
-										size="sm"
-										className="shrink-0 text-muted-foreground"
-										disabled={!configured || portal.isPending}
-										onClick={() => portal.mutate()}
+							{/* A repeating row list (mockup 2911–2916). Every row is a field the
+							    summary endpoint returns — company, VAT and address live only in
+							    Stripe, so they are not listed here. */}
+							<div className="rounded-xl border border-border px-4">
+								{detailRows.map((row) => (
+									<div
+										key={row.key}
+										className="flex items-center gap-3 border-b border-border py-1.5 last:border-b-0"
 									>
-										Edit
-									</Button>
-								</div>
+										<span className="w-[88px] shrink-0 text-xs text-muted-foreground">
+											{row.key}
+										</span>
+										<span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">
+											{row.value}
+										</span>
+										{row.action && (
+											<Button
+												variant="ghost"
+												size="sm"
+												className="shrink-0 text-muted-foreground"
+												disabled={!configured || portal.isPending}
+												onClick={row.action.onClick}
+											>
+												{row.action.label}
+											</Button>
+										)}
+									</div>
+								))}
 							</div>
 						</div>
 					</div>
@@ -393,7 +495,9 @@ function CheckoutDialog({
 
 				<div className="space-y-4">
 					{/* Order summary (mockup 3018–3031), reduced to the lines the API
-					    actually returns — there is no included-usage or overage field. */}
+					    actually returns — there is no included-usage or overage field, and
+					    the plan chooser (3021–3023) has nothing to choose between: the
+					    instance resolves exactly one plan from STRIPE_PRICE_ID. */}
 					<div className="space-y-2.5 rounded-xl border border-border bg-muted/30 p-3">
 						<div className="flex items-center gap-3 text-xs">
 							<span className="min-w-0 flex-1 text-muted-foreground">Subscription</span>
@@ -404,6 +508,13 @@ function CheckoutDialog({
 							<span className="flex-1 text-[12.5px] font-semibold text-foreground">Due today</span>
 							<span className="text-[17px] font-bold tracking-tight text-foreground">{price}</span>
 						</div>
+						{/* Terms fine print (mockup 3030), restricted to what the checkout
+						    actually does: one PaymentIntent now, everything after it on
+						    Stripe. No renewal or included-usage claim — neither is modelled. */}
+						<p className="text-[11px] leading-relaxed text-muted-foreground">
+							One charge of {price} today. Your plan, card and any future charges are managed on
+							Stripe.
+						</p>
 					</div>
 
 					<div className="space-y-2">
@@ -529,6 +640,10 @@ function CheckoutForm({
 
 	return (
 		<form onSubmit={handleSubmit} className="space-y-4">
+			{/* The mockup's NAME ON CARD / COUNTRY / POSTAL CODE fields (3046–3062)
+			    are not re-created here: PaymentElement collects cardholder billing
+			    details itself where the payment method needs them, and a card-owner
+			    field outside the Element would put card data on our page. */}
 			<PaymentElement />
 			<p aria-live="polite" className="text-sm text-error">
 				{error}

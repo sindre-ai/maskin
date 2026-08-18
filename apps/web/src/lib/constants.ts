@@ -41,6 +41,10 @@ export const statusColors: Record<string, { bg: string; text: string }> = {
 	paid: { bg: 'bg-status-succeeded-bg', text: 'text-status-succeeded-text' },
 	inactive: { bg: 'bg-status-parked-bg', text: 'text-status-parked-text' },
 	past_due: { bg: 'bg-status-at_risk-bg', text: 'text-status-at_risk-text' },
+	// billing.ts:381 writes 'declined' when a payment fails. Without an entry it
+	// falls through to StatusBadge's zinc-700 default — a dark pill with
+	// low-contrast text, on the one card a user needs to be able to read.
+	declined: { bg: 'bg-status-failed-bg', text: 'text-status-failed-text' },
 	canceled: { bg: 'bg-status-discarded-bg', text: 'text-status-discarded-text' },
 }
 
