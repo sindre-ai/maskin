@@ -2,7 +2,11 @@ import { PageHeader } from '@/components/layout/page-header'
 import { LoopGrid } from '@/components/marketplace/loop-grid'
 import { MarketplaceHeaderIdentity } from '@/components/marketplace/marketplace-header'
 import { EmptyState } from '@/components/shared/empty-state'
+import { FilterTabs } from '@/components/shared/filter-tabs'
+import { CardSkeleton } from '@/components/shared/loading-skeleton'
+import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
+import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useInstalledLoops } from '@/hooks/use-installed-loops'
 import { useInstalledMarketplaceItems, useMarketplaceLoops } from '@/hooks/use-marketplace-loops'
@@ -15,7 +19,6 @@ import type {
 	MarketplaceLoopSummary,
 } from '@/lib/api'
 import { api } from '@/lib/api'
-import { cn } from '@/lib/cn'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useQueries } from '@tanstack/react-query'
@@ -58,7 +61,7 @@ function MarketplacePage() {
 	const [query, setQuery] = useState('')
 	const trimmedQuery = query.trim()
 
-	const { data, isLoading, isError } = useMarketplaceLoops()
+	const { data, isLoading, isError, error, refetch } = useMarketplaceLoops()
 	const counts = data?.counts
 	const loops = data?.loops ?? []
 	const useCaseItems = useMemo(() => buildUseCaseItems(counts), [counts])
@@ -183,7 +186,7 @@ function MarketplacePage() {
 					type="search"
 					value={query}
 					onChange={(e) => setQuery(e.target.value)}
-					placeholder="Search the marketplace…"
+					placeholder="Filter the catalog…"
 					aria-label="Filter marketplace"
 					className="w-full shrink-0 md:w-80"
 				/>
@@ -191,19 +194,41 @@ function MarketplacePage() {
 
 			<div className="flex-1 min-w-0">
 				{isError ? (
-					<p className="text-sm text-muted-foreground">
-						Couldn't load the marketplace right now. Try refreshing.
-					</p>
+					<QueryStateError
+						title="Couldn't load the marketplace"
+						error={error ?? new Error('Try refreshing.')}
+						onRetry={refetch ? () => refetch() : undefined}
+					/>
 				) : isLoading ? (
-					<p className="text-sm text-muted-foreground">Loading marketplace…</p>
+					<div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
+						<CardSkeleton />
+						<CardSkeleton />
+						<CardSkeleton />
+						<CardSkeleton />
+						<CardSkeleton />
+						<CardSkeleton />
+					</div>
 				) : isMarketplaceEmpty ? (
-					<p className="text-sm text-muted-foreground">
-						No loops yet — check back once Maskin publishes the first one.
-					</p>
+					<EmptyState
+						title="No loops yet"
+						description="Check back once Maskin publishes the first one."
+					/>
 				) : isFilterEmpty ? (
 					<EmptyState
-						title="No matches"
-						description="Try a different search term or clear the filters."
+						title="Nothing in the catalog matches those filters."
+						action={
+							<Button
+								type="button"
+								variant="outline"
+								size="sm"
+								onClick={() => {
+									setQuery('')
+									setActiveFilter('all')
+								}}
+							>
+								Clear filters
+							</Button>
+						}
 					/>
 				) : (
 					<LoopGrid
@@ -233,36 +258,20 @@ function ChipStrip({
 	counts: MarketplaceLoopCounts | undefined
 	itemCounts: Partial<Record<MarketplaceItemType, number>>
 }) {
+	const tabs = items.map((item) => ({
+		label: item.label,
+		value: item.value,
+		count: countForFilter(item.value, counts, itemCounts),
+	}))
 	return (
-		<div className="flex gap-1.5 overflow-x-auto px-1 pb-1">
-			{items.map((item) => {
-				const count = countForFilter(item.value, counts, itemCounts)
-				const isActive = active === item.value
-				return (
-					<button
-						key={item.value}
-						type="button"
-						onClick={() => onSelect(item.value)}
-						className={cn(
-							'shrink-0 rounded-full border px-3 py-1 text-xs font-medium whitespace-nowrap transition-colors',
-							isActive
-								? 'border-foreground bg-foreground text-background'
-								: 'border-border bg-background text-muted-foreground hover:text-foreground',
-						)}
-					>
-						{item.label}
-						{typeof count === 'number' ? (
-							<>
-								{' '}
-								<span className={cn('ml-1.5 tabular-nums', isActive ? 'opacity-80' : 'opacity-60')}>
-									{count}
-								</span>
-							</>
-						) : null}
-					</button>
-				)
-			})}
-		</div>
+		<FilterTabs
+			aria-label="Catalog filters"
+			variant="pill"
+			tabs={tabs}
+			value={active}
+			onChange={(value) => onSelect(value)}
+			className="px-1 pb-1 max-sm:[&>button]:min-h-11"
+		/>
 	)
 }
 
