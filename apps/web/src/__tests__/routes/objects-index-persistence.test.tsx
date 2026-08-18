@@ -222,7 +222,8 @@ describe('ObjectsPage group-expansion + scroll-anchor persistence', () => {
 
 		const props = listViewCapture.__lvCapture.lastProps
 		expect(props).not.toBeNull()
-		// Empty expansion record — all groups collapsed by default.
+		// Empty expansion record — every group rests open, and the map only ever
+		// records an explicit collapse.
 		expect(props?.expanded).toEqual({})
 	}, 10_000)
 
@@ -265,5 +266,28 @@ describe('ObjectsPage group-expansion + scroll-anchor persistence', () => {
 
 		expect(mockState.__dsUpsertCalls).toBe(callsBefore + 1)
 		expect(mockState.__dsLastUpsertBody?.groupExpanded).toEqual({ 'status:active': true })
+	}, 10_000)
+
+	// Groups rest open, so a collapse is written as an explicit `false`. Dropping
+	// falsy entries here would discard the collapse and re-open the group on the
+	// next render — the map has to round-trip verbatim.
+	it('keeps an explicit collapse in the expanded map and persists it', async () => {
+		mount()
+		await flushHydrateAndWriteThrough()
+
+		const onExpandedChange = listViewCapture.__lvCapture.lastProps?.onExpandedChange as
+			| ((next: Record<string, boolean>) => void)
+			| undefined
+		expect(onExpandedChange).toBeDefined()
+
+		await act(async () => {
+			onExpandedChange?.({ 'status:active': false })
+		})
+		expect(listViewCapture.__lvCapture.lastProps?.expanded).toEqual({ 'status:active': false })
+
+		await act(async () => {
+			await new Promise((r) => setTimeout(r, 700))
+		})
+		expect(mockState.__dsLastUpsertBody?.groupExpanded).toEqual({ 'status:active': false })
 	}, 10_000)
 })

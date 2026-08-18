@@ -19,7 +19,7 @@ test.describe('AuxiliaryActionMenu — Properties group on bet detail', () => {
 			})
 
 			await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
-			await expect(page.getByPlaceholder('Untitled')).toHaveValue(bet.title ?? '', {
+			await expect(page.getByRole('heading', { level: 1, name: bet.title ?? '' })).toBeVisible({
 				timeout: 10_000,
 			})
 
@@ -44,7 +44,7 @@ test.describe('AuxiliaryActionMenu — Properties group on bet detail', () => {
 		})
 
 		await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
-		await expect(page.getByPlaceholder('Untitled')).toHaveValue(bet.title ?? '', {
+		await expect(page.getByRole('heading', { level: 1, name: bet.title ?? '' })).toBeVisible({
 			timeout: 10_000,
 		})
 
