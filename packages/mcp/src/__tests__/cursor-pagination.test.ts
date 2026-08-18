@@ -195,6 +195,13 @@ describe('cursor pagination — seven previously-unpaginated tools', () => {
 		rowsField: string
 		/** How to read the id off a row in structuredContent (for overlap check). */
 		getId: (row: unknown) => string
+		/**
+		 * Extract the row array from `JSON.parse(content[0].text)`. Defaults to
+		 * reading the same `rowsField` key structuredContent uses; only
+		 * `get_events` ships content as a bare array instead of a wrapped
+		 * object, so it overrides this.
+		 */
+		contentRowsOf?: (parsed: unknown) => unknown[]
 	}
 
 	const cases: ToolCase[] = [
@@ -232,6 +239,7 @@ describe('cursor pagination — seven previously-unpaginated tools', () => {
 			wrapApiResponse: (rows) => rows,
 			rowsField: 'events',
 			getId: (row) => String((row as { id: number }).id).padStart(20, '0'),
+			contentRowsOf: (parsed) => parsed as unknown[],
 		},
 	]
 
@@ -281,6 +289,37 @@ describe('cursor pagination — seven previously-unpaginated tools', () => {
 					expect(firstIds.has(c.getId(row))).toBe(false)
 				}
 			})
+
+			it('content channel mirrors the paginated page, not the full unpaginated fixture', async () => {
+				// Regression guard: server.ts previously fed the raw, unpaginated
+				// `result` into buildListContentText() for list_workspaces /
+				// list_integrations / list_unread (and list_extensions, tested
+				// separately below), so `content` leaked every row regardless of
+				// the requested page. Fixed to pass the paginated rows instead.
+				const fixture = Array.from({ length: 30 }, (_, i) => c.buildRow(i))
+				stubFetch(c.wrapApiResponse(fixture))
+				const handler = getHandler(c.tool)
+				const result = (await handler({ ...(c.args ?? {}), limit: 10 })) as PageResponse
+
+				const structuredRows = result.structuredContent?.[c.rowsField] as unknown[]
+				expect(structuredRows.length).toBe(10)
+
+				const parsed = JSON.parse(result.content[0].text)
+				const contentRows = (
+					c.contentRowsOf ?? ((p) => (p as Record<string, unknown>)[c.rowsField])
+				)(parsed) as unknown[]
+				expect(Array.isArray(contentRows)).toBe(true)
+				// The bug this guards: content built from the raw unpaginated
+				// `result` would carry all 30 fixture rows here instead of the
+				// requested 10-row page.
+				expect(contentRows.length).toBe(10)
+				expect(contentRows.length).toBeLessThan(fixture.length)
+
+				const structuredIds = new Set(structuredRows.map(c.getId))
+				for (const row of contentRows) {
+					expect(structuredIds.has(c.getId(row))).toBe(true)
+				}
+			})
 		})
 	}
 
@@ -322,6 +361,27 @@ describe('cursor pagination — seven previously-unpaginated tools', () => {
 			expect(secondRows.length).toBe(10)
 			for (const row of secondRows) {
 				expect(firstIds.has(row.id)).toBe(false)
+			}
+		})
+
+		it('content channel mirrors the paginated page, not the full unpaginated fixture', async () => {
+			// Regression guard: server.ts previously fed the raw, unpaginated
+			// `result` into buildListContentText() here too, so `content` leaked
+			// every extension regardless of the requested page.
+			stubFetch(extensionsWorkspaceFixture(30))
+			const handler = getHandler('list_extensions')
+			const result = (await handler({ limit: 10 })) as PageResponse
+
+			const structuredRows = result.structuredContent?.extensions as Array<{ id: string }>
+			expect(structuredRows.length).toBe(10)
+
+			const parsed = JSON.parse(result.content[0].text) as { extensions: Array<{ id: string }> }
+			expect(Array.isArray(parsed.extensions)).toBe(true)
+			expect(parsed.extensions.length).toBe(10)
+
+			const structuredIds = new Set(structuredRows.map((r) => r.id))
+			for (const row of parsed.extensions) {
+				expect(structuredIds.has(row.id)).toBe(true)
 			}
 		})
 	})

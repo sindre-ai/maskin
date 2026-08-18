@@ -28,11 +28,7 @@ import {
 } from './cursor.js'
 import { READ_TOOL_NAMES, buildReadErrorBody, toolErrorResponse } from './read-error.js'
 import { applyResponseTokenCap } from './response-cap.js'
-import {
-	type SummaryRow,
-	buildContentSummary,
-	isResponseScopingEnabled,
-} from './response-scoping.js'
+import { type SummaryRow, isResponseScopingEnabled } from './response-scoping.js'
 import {
 	type ApiCaller as SetupApiCaller,
 	buildActorSetupBlockFromApi,
@@ -128,22 +124,21 @@ function addUrl(
 }
 
 /**
- * Build the `content` text for a list/search tool response. When response
- * scoping is on (the default after T1), returns a lean markdown summary
- * bounded by the summary byte budget (AC-T2); when off, returns a compact
- * `JSON.stringify(fullPayload)` — the pre-scoping dump minus the pretty-print
- * whitespace (T1 dropped `null, 2` across every handler). `structuredContent`
- * (built by the caller) is never touched either way — the full enriched
- * payload always survives on the structured channel.
+ * Build the `content` text for a list/search tool response. Always returns
+ * a compact `JSON.stringify(fullPayload)` — the lean markdown-summary
+ * channel (one line per row, full payload only on `structuredContent`) was
+ * tried under `MCP_RESPONSE_SCOPING` but left agents without enough detail
+ * in the `content` channel to act on, so every list/search tool went back
+ * to shipping the full payload there. `structuredContent` is unaffected
+ * either way — the full enriched payload always survives on the structured
+ * channel too. Cursor pagination (`resolveListPagination`/`encodeNextCursor`,
+ * still gated by `isResponseScopingEnabled`) is unrelated and stays on.
  */
 function buildListContentText(
 	fullPayload: unknown,
-	rows: SummaryRow[],
-	emptyLabel: string,
+	_rows: SummaryRow[],
+	_emptyLabel: string,
 ): string {
-	if (isResponseScopingEnabled()) {
-		return buildContentSummary(rows, { emptyLabel })
-	}
 	return JSON.stringify(fullPayload)
 }
 
@@ -3584,7 +3579,7 @@ export function createMcpServer(config: McpConfig) {
 				content: [
 					{
 						type: 'text' as const,
-						text: buildListContentText(result, summaryRows, 'No workspaces.'),
+						text: buildListContentText({ workspaces: pagedRows }, summaryRows, 'No workspaces.'),
 					},
 				],
 				structuredContent: {
@@ -5498,7 +5493,7 @@ export function createMcpServer(config: McpConfig) {
 				content: [
 					{
 						type: 'text' as const,
-						text: buildListContentText(result, summaryRows, 'No unread items.'),
+						text: buildListContentText({ items: pagedItems }, summaryRows, 'No unread items.'),
 					},
 				],
 				structuredContent: {
@@ -5862,7 +5857,11 @@ export function createMcpServer(config: McpConfig) {
 				content: [
 					{
 						type: 'text' as const,
-						text: buildListContentText(result, summaryRows, 'No integrations.'),
+						text: buildListContentText(
+							{ integrations: pagedRows },
+							summaryRows,
+							'No integrations.',
+						),
 					},
 				],
 				structuredContent: {
@@ -6105,7 +6104,7 @@ export function createMcpServer(config: McpConfig) {
 				content: [
 					{
 						type: 'text' as const,
-						text: buildListContentText(result, summaryRows, 'No extensions.'),
+						text: buildListContentText({ extensions: pagedRows }, summaryRows, 'No extensions.'),
 					},
 				],
 				structuredContent: {
