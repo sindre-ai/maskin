@@ -231,6 +231,9 @@ function AccountDisclosure({
 	plan,
 	configured,
 	invoiceEmail,
+	// No per-invoice Download in v1 — a product decision, not a missing feature.
+	// The invoices table carries only a stripePaymentIntentId, so there is no
+	// hosted URL or PDF to link; adding one means a backend change first.
 	invoices,
 }: {
 	workspaceId: string
