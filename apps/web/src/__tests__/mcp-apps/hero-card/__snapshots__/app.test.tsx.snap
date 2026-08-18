@@ -11,7 +11,7 @@ exports[`HeroCardApp — schema-driven render per type > renders the insight var
     target="_blank"
   >
     <article
-      class="flex flex-col gap-2.5 px-4 py-3.5 bg-card border border-border rounded-[10px] max-w-[540px] transition-colors hover:border-border-hover"
+      class="flex flex-col gap-2.5 px-4 py-3.5 bg-card border border-border rounded-[10px] max-w-[540px] transition-colors hover:border-border-strong"
     >
       <div
         class="flex items-center gap-2"
@@ -49,7 +49,7 @@ exports[`HeroCardApp — schema-driven render per type > renders the insight var
         class="flex items-center gap-2.5 pt-2 border-t border-border mt-0.5"
       >
         <span
-          class="ml-auto inline-flex items-center gap-1.5 text-xs font-medium text-foreground px-2.5 py-1 rounded-md bg-transparent border border-border group-hover:bg-muted group-hover:border-border-hover transition-colors min-h-[28px]"
+          class="ml-auto inline-flex items-center gap-1.5 text-xs font-medium text-foreground px-2.5 py-1 rounded-md bg-transparent border border-border group-hover:bg-muted group-hover:border-border-strong transition-colors min-h-[28px]"
         >
           Open in Maskin
           <svg
@@ -92,7 +92,7 @@ exports[`HeroCardApp — schema-driven render per type > renders the task varian
     target="_blank"
   >
     <article
-      class="flex flex-col gap-2.5 px-4 py-3.5 bg-card border border-border rounded-[10px] max-w-[540px] transition-colors hover:border-border-hover"
+      class="flex flex-col gap-2.5 px-4 py-3.5 bg-card border border-border rounded-[10px] max-w-[540px] transition-colors hover:border-border-strong"
     >
       <div
         class="flex items-center gap-2"
@@ -157,7 +157,7 @@ exports[`HeroCardApp — schema-driven render per type > renders the task varian
           Magnus
         </span>
         <span
-          class="ml-auto inline-flex items-center gap-1.5 text-xs font-medium text-foreground px-2.5 py-1 rounded-md bg-transparent border border-border group-hover:bg-muted group-hover:border-border-hover transition-colors min-h-[28px]"
+          class="ml-auto inline-flex items-center gap-1.5 text-xs font-medium text-foreground px-2.5 py-1 rounded-md bg-transparent border border-border group-hover:bg-muted group-hover:border-border-strong transition-colors min-h-[28px]"
         >
           Open in Maskin
           <svg
@@ -200,7 +200,7 @@ exports[`HeroCardApp — schema-driven render per type > renders the trigger var
     target="_blank"
   >
     <article
-      class="flex flex-col gap-2.5 px-4 py-3.5 bg-card border border-border rounded-[10px] max-w-[540px] transition-colors hover:border-border-hover"
+      class="flex flex-col gap-2.5 px-4 py-3.5 bg-card border border-border rounded-[10px] max-w-[540px] transition-colors hover:border-border-strong"
     >
       <div
         class="flex items-center gap-2"
@@ -265,7 +265,7 @@ exports[`HeroCardApp — schema-driven render per type > renders the trigger var
           Observer
         </span>
         <span
-          class="ml-auto inline-flex items-center gap-1.5 text-xs font-medium text-foreground px-2.5 py-1 rounded-md bg-transparent border border-border group-hover:bg-muted group-hover:border-border-hover transition-colors min-h-[28px]"
+          class="ml-auto inline-flex items-center gap-1.5 text-xs font-medium text-foreground px-2.5 py-1 rounded-md bg-transparent border border-border group-hover:bg-muted group-hover:border-border-strong transition-colors min-h-[28px]"
         >
           Open in Maskin
           <svg
