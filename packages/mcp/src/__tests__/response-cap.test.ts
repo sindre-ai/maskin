@@ -163,6 +163,76 @@ describe('applyResponseTokenCap', () => {
 		expect([...keptIds, ...omittedIds]).toEqual(rows.map((r) => r.id))
 	})
 
+	// `content` now ships the same full-JSON payload as `structuredContent`
+	// (the lean markdown-summary channel was reverted), so a trim that only
+	// rewrote `structuredContent` would leave `content` at its full, pre-trim
+	// size — the loop could never converge under the cap. `capContentToStructured`
+	// mirrors `content[0].text` to the just-trimmed `structuredContent` on every
+	// iteration to fix that. These tests exercise it directly.
+	describe('content channel mirroring (capContentToStructured)', () => {
+		function makeFullJsonResponse(rows: Array<ReturnType<typeof makeObject>>) {
+			// Mirrors the real shape server.ts produces post-revert: `content` is
+			// `JSON.stringify(enriched)` — a bare row array — while
+			// `structuredContent` is the richer wrapped object.
+			return {
+				_meta: { ui: { resourceUri: 'ui://objects' } },
+				content: [{ type: 'text', text: JSON.stringify(rows) }],
+				structuredContent: {
+					heroCard: { kind: 'list', tool: 'list_objects' },
+					objects: rows,
+					page: { limit: rows.length, offset: 0 },
+				},
+			}
+		}
+
+		it('rewrites content[0].text to mirror the trimmed structuredContent, not the original untrimmed payload', () => {
+			const rows = Array.from({ length: 6 }, (_, i) => makeObject(String(i), 1))
+			const response = makeFullJsonResponse(rows)
+			const result = applyResponseTokenCap('list_objects', response, { maxTokens: 1000 })
+
+			expect(result.truncated).toBe(true)
+			const capped = result.response as {
+				content: Array<{ text: string }>
+				structuredContent: { objects: Array<{ id: string }> }
+			}
+
+			// The regression this guards: before the fix, content stayed the full
+			// 6-row JSON dump on every trim iteration, so the loop's post-trim
+			// size check never saw content shrink — it could drop every row and
+			// still overshoot the cap.
+			expect(capped.structuredContent.objects.length).toBeLessThan(rows.length)
+			const parsedContent = JSON.parse(capped.content[0].text)
+			expect(parsedContent).toEqual(capped.structuredContent)
+
+			// The whole point: content's own byte size shrank along with the row
+			// cap, instead of staying pinned at the original 6-row dump.
+			const originalContentBytes = Buffer.byteLength(response.content[0].text, 'utf8')
+			const cappedContentBytes = Buffer.byteLength(capped.content[0].text, 'utf8')
+			expect(cappedContentBytes).toBeLessThan(originalContentBytes)
+		})
+
+		it('leaves content untouched when a multi-block content array is present (only rewrites the single-text-block shape every list/search tool emits)', () => {
+			const rows = Array.from({ length: 6 }, (_, i) => makeObject(String(i), 1))
+			const originalContent = [
+				{ type: 'text', text: 'first block' },
+				{ type: 'text', text: 'second block' },
+			]
+			const response = {
+				content: originalContent,
+				structuredContent: {
+					heroCard: { kind: 'list', tool: 'list_objects' },
+					objects: rows,
+					page: { limit: rows.length, offset: 0 },
+				},
+			}
+			const result = applyResponseTokenCap('list_objects', response, { maxTokens: 1000 })
+
+			expect(result.truncated).toBe(true)
+			const capped = result.response as { content: unknown }
+			expect(capped.content).toEqual(originalContent)
+		})
+	})
+
 	it('preserves pre-existing _meta.ui when populating truncation metadata', () => {
 		const rows = Array.from({ length: 6 }, (_, i) => makeObject(String(i), 1))
 		const response = makeListObjectsResponse(rows)
