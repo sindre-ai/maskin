@@ -6,10 +6,10 @@
 // need to declare previewGuestPorts upfront in create_session: any port the
 // agent's own process opens within the range below is picked up automatically.
 //
-// Results are written to PREVIEW_PORTS_FILE, which a FileChanged hook (see
-// docker/agent-base/hooks/preview-ports-changed.sh) surfaces to Claude as
-// additionalContext the moment a new mapping appears — the agent never has
-// to know to poll this file itself.
+// Results are written to PREVIEW_PORTS_FILE, which a PostToolUse hook (see
+// docker/agent-base/hooks/preview-ports-changed.sh) reads after every tool
+// call and surfaces to Claude as additionalContext the first time a mapping
+// appears — the agent never has to know to poll this file itself.
 //
 // Requires AGENT_SERVER_URL, SESSION_ID, and BROWSER_CDP_URL to be set (the
 // caller in agent-run.sh only starts this when all three are present).
@@ -18,11 +18,11 @@ const fs = require('node:fs/promises')
 
 const AGENT_SERVER_URL = process.env.AGENT_SERVER_URL
 const SESSION_ID = process.env.SESSION_ID
-// Lives inside the working directory (not just /agent) because Claude Code's
-// FileChanged hook matcher watches literal filenames relative to cwd — see
-// docker/agent-base/hooks/preview-ports-changed.sh and its settings.json
-// registration for the other half of this.
-const PREVIEW_PORTS_FILE = process.env.PREVIEW_PORTS_FILE || '/agent/workspace/.preview-ports.json'
+// Lives directly under /agent, not inside /agent/workspace, so it never
+// shows up in `git status`/`git add -A` inside the agent's own checkout —
+// see docker/agent-base/hooks/preview-ports-changed.sh, which reads the same
+// path.
+const PREVIEW_PORTS_FILE = process.env.PREVIEW_PORTS_FILE || '/agent/.preview-ports.json'
 
 // Must match DEV_SERVER_HOST_PORT_RANGE_START/END in
 // apps/agent-server/src/services/microsandbox.ts — that's the only range the
@@ -126,7 +126,7 @@ async function tick() {
 }
 
 async function main() {
-	// Pre-create an empty mappings file so a FileChanged hook watching it has
+	// Pre-create an empty mappings file so the PostToolUse hook reading it has
 	// something to diff against from session start (entrypoint.sh already does
 	// this before the agent user's process tree starts, but guard here too in
 	// case this script ever runs standalone).

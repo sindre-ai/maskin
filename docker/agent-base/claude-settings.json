@@ -1,8 +1,8 @@
 {
 	"hooks": {
-		"FileChanged": [
+		"PostToolUse": [
 			{
-				"matcher": ".preview-ports.json",
+				"matcher": ".*",
 				"hooks": [
 					{
 						"type": "command",
