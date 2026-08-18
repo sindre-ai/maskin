@@ -54,7 +54,7 @@ type ViewMode = 'rendered' | 'source'
 
 function SourceView({ text }: { text: string }) {
 	return (
-		<pre className="rounded-md border border-border bg-bg-surface p-4 text-xs font-mono whitespace-pre-wrap break-words overflow-x-auto text-text">
+		<pre className="rounded-md border border-border bg-muted p-4 text-xs font-mono whitespace-pre-wrap break-words overflow-x-auto text-foreground">
 			{text}
 		</pre>
 	)
@@ -102,7 +102,7 @@ function HtmlPreview({ html, name }: { html: string; name: string }) {
 	// past the page's narrower container, up to roughly the viewport width.
 	const srcDoc = useMemo(() => prepareMiniAppHtml(html), [html])
 	return (
-		<div className="resize overflow-hidden rounded-md border border-border bg-bg-surface w-full h-[60vh] min-h-[20vh] max-h-[200vh] max-w-[calc(100vw-4rem)]">
+		<div className="resize overflow-hidden rounded-md border border-border bg-muted w-full h-[60vh] min-h-[20vh] max-h-[200vh] max-w-[calc(100vw-4rem)]">
 			<iframe
 				title={`Preview of ${name}`}
 				srcDoc={srcDoc}
@@ -263,7 +263,7 @@ export function FileBody({ file, onReviseWithAnnotations, isRevising = false }: 
 		const b64 = file.encoding === 'base64' ? file.content : btoa(file.content)
 		const src = `data:${file.mimeType};base64,${b64}`
 		return (
-			<div className="rounded-md border border-border bg-bg-surface p-4">
+			<div className="rounded-md border border-border bg-muted p-4">
 				<img src={src} alt={file.name} className="max-w-full h-auto rounded" />
 			</div>
 		)
