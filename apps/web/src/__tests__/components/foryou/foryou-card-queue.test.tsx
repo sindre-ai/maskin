@@ -95,17 +95,18 @@ describe('ForYouCardQueue', () => {
 		callbacksByKey.clear()
 	})
 
-	it('renders the empty state with brief and loops links when the queue is empty', () => {
+	it('renders the caught-up state with only the loops link when the queue is empty', () => {
 		render(<ForYouCardQueue workspaceId="ws-1" queue={[]} />)
 
 		expect(screen.getByText("You're caught up")).toBeInTheDocument()
 		expect(screen.queryByTestId('stub-card')).not.toBeInTheDocument()
 
-		const briefLink = screen.getByRole('link', { name: "Today's brief" })
-		expect(briefLink).toHaveAttribute('to', '/$workspaceId/briefing')
-
 		const loopsLink = screen.getByRole('link', { name: /review loops/i })
 		expect(loopsLink).toHaveAttribute('to', '/$workspaceId/loops')
+
+		// The Brief affordance moved to the shared top nav — the caught-up panel
+		// carries a single onward action (mockup 503–512).
+		expect(screen.queryByRole('link', { name: /brief/i })).not.toBeInTheDocument()
 	})
 
 	it('renders the first item in the queue and the remaining count', () => {
@@ -255,6 +256,29 @@ describe('ForYouCardQueue', () => {
 		expect(bar?.className).not.toContain('bg-background/95')
 		expect(bar?.className).not.toContain('border-t')
 		expect(bar?.className).not.toContain('backdrop-blur-sm')
+	})
+
+	it('renders both bar buttons as 44px outline controls carrying the arrow-key hints', () => {
+		render(<ForYouCardQueue workspaceId="ws-1" queue={[buildItem('a')]} />)
+
+		const keep = screen.getByRole('button', { name: 'Keep unread' })
+		const markRead = screen.getByRole('button', { name: 'Mark as read' })
+		for (const button of [keep, markRead]) {
+			expect(button).toHaveClass('h-11')
+			// Neither is the filled primary any more — the mockup's bar is two
+			// equal-weight outline buttons.
+			expect(button.className).not.toContain('bg-primary')
+		}
+		// The hints are decorative: aria-hidden so they stay out of the name.
+		expect(keep.querySelector('kbd')).toHaveTextContent('←')
+		expect(markRead.querySelector('kbd')).toHaveTextContent('→')
+	})
+
+	it('seeds the current card from pinnedKey instead of the front of the queue', () => {
+		const queue = [buildItem('a'), buildItem('b')]
+		render(<ForYouCardQueue workspaceId="ws-1" queue={queue} pinnedKey="object:b" />)
+
+		expect(screen.getByTestId('stub-card')).toHaveTextContent('b')
 	})
 
 	it('keeps the current card pinned when a background refetch re-sorts the queue ahead of it', () => {

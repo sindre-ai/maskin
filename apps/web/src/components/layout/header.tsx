@@ -67,10 +67,11 @@ const routeConfig: Record<string, RouteConfig> = {
 		label: 'Property Details',
 		parent: '/_authed/$workspaceId/settings/objects/',
 	},
-	'/_authed/$workspaceId/triggers/': { label: 'Triggers', primary: 'loop' },
+	// `/triggers` redirects to `/loops` in v2, so trigger detail hangs off Loops
+	// — a "Triggers" crumb would link to a page that bounces.
 	'/_authed/$workspaceId/triggers/$triggerId': {
 		label: 'Trigger Details',
-		parent: '/_authed/$workspaceId/triggers/',
+		parent: '/_authed/$workspaceId/loops/',
 		primary: 'loop',
 	},
 	'/_authed/$workspaceId/loops/': { label: 'Loops', primary: 'loop' },
@@ -98,7 +99,6 @@ const routeConfig: Record<string, RouteConfig> = {
 const hiddenRoutes = new Set(['__root__', '/_authed', '/_authed/', '/_authed/$workspaceId'])
 
 const OBJECT_DETAIL_ROUTE_ID = '/_authed/$workspaceId/objects/$objectId'
-const FOR_YOU_ROUTE_ID = '/_authed/$workspaceId/'
 
 /**
  * The shared top nav — mockup lines 155–279.
@@ -148,11 +148,6 @@ export function Header() {
 	// menu — landing users on the generic object picker is disorienting when
 	// they're mid-edit on a specific object. New chat/loop/agent/search stay.
 	const isObjectDetail = leafMatch?.routeId === OBJECT_DETAIL_ROUTE_ID
-	// The For You page still renders its own create affordance. Until that
-	// screen lands and drops it, showing the nav's split New too would be a
-	// visible duplicate.
-	const isForYouPage = leafMatch?.routeId === FOR_YOU_ROUTE_ID
-
 	const isDetail = crumbs.length > 1
 	const headingText = title ?? leafConfig?.label
 
@@ -215,13 +210,11 @@ export function Header() {
 			<NavSearch />
 			{actions}
 			<span aria-hidden="true" className="mx-0.5 h-5 w-px shrink-0 bg-border" />
-			{!isForYouPage && (
-				<NewMenu
-					onNewChat={() => navigate({ to: '/$workspaceId/chats/new', params: { workspaceId } })}
-					hideObjectSection={isObjectDetail}
-					primaryKind={leafConfig?.primary ?? 'chat'}
-				/>
-			)}
+			<NewMenu
+				onNewChat={() => navigate({ to: '/$workspaceId/chats/new', params: { workspaceId } })}
+				hideObjectSection={isObjectDetail}
+				primaryKind={leafConfig?.primary ?? 'chat'}
+			/>
 		</header>
 	)
 }

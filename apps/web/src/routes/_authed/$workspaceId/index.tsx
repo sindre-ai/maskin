@@ -1,22 +1,18 @@
+import { BriefDrawer } from '@/components/foryou/brief-drawer'
 import { ForYouCardQueue } from '@/components/foryou/foryou-card-queue'
 import {
 	type FeedMode,
 	type FeedSort,
 	ForYouHeader,
 	ForYouHeaderActions,
-	ForYouHeaderIdentity,
 } from '@/components/foryou/foryou-header'
 import { ForYouListRow } from '@/components/foryou/foryou-list-row'
-import { NewConversationComposer } from '@/components/foryou/new-conversation-composer'
 import { NorthStarPromptCard } from '@/components/foryou/north-star-prompt-card'
 import { OnboardingPromptCard } from '@/components/foryou/onboarding-prompt-card'
 import { SparseComposer } from '@/components/foryou/sparse-composer'
 import { PageHeader } from '@/components/layout/page-header'
-import { EmptyState } from '@/components/shared/empty-state'
-import { FilterTabs } from '@/components/shared/filter-tabs'
 import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
-import { Button } from '@/components/ui/button'
 import { useBets } from '@/hooks/use-bets'
 import { useMarkRead, useMarkUnread, useUnread } from '@/hooks/use-subscriptions'
 import {
@@ -24,12 +20,10 @@ import {
 	useUserDisplaySettings,
 } from '@/hooks/use-user-display-settings'
 import type { DisplaySettingsBody, UnreadItem } from '@/lib/api'
-import { cn } from '@/lib/cn'
-import { useNewConversationComposer } from '@/lib/new-conversation-context'
+import { typeLabel } from '@/lib/constants'
 import { useWorkspace } from '@/lib/workspace-context'
 import { CHROME_KEY } from '@maskin/shared'
 import { createFileRoute } from '@tanstack/react-router'
-import { Plus } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
@@ -66,10 +60,12 @@ function ForYouRedesign() {
 	const items = data?.items ?? []
 	const markRead = useMarkRead(workspaceId)
 	const markUnread = useMarkUnread(workspaceId)
-	const { open: composerOpen, setOpen: setComposerOpen } = useNewConversationComposer()
 
 	const [typeFilter, setTypeFilter] = useState<string | undefined>(undefined)
 	const [sort, setSort] = useState<FeedSort>('priority')
+	const [briefOpen, setBriefOpen] = useState(false)
+	// Item the user picked in List mode — the card queue opens parked on it.
+	const [pinnedKey, setPinnedKey] = useState<string | null>(null)
 
 	// Feed mode (cards/list) is persisted per actor under the `__chrome__`
 	// sentinel display-settings row — the same store the object-detail sidebar
@@ -143,6 +139,9 @@ function ForYouRedesign() {
 		}
 		if (sort === 'latest') {
 			return base.slice().sort(byLatestDesc)
+		}
+		if (sort === 'oldest') {
+			return base.slice().sort((a, b) => byLatestDesc(b, a))
 		}
 		return base.slice().sort((a, b) => {
 			const aAttention = a.max_unread_attention ?? -1
@@ -238,12 +237,21 @@ function ForYouRedesign() {
 			})
 		}
 
-		const count = snapshot.length
-		toast(`Marked ${count} thread${count === 1 ? '' : 's'} as read`, {
+		toast('All caught up', {
 			duration: UNDO_WINDOW_MS,
 			action: { label: 'Undo', onClick: restore },
 		})
 	}, [markItemRead, markItemUnread, visibleRegular])
+
+	// Picking a row in List mode returns to Cards parked on that item (mockup
+	// 490) — the card's own "Open →" stays the route into object detail.
+	const handleSelectListItem = useCallback(
+		(item: UnreadItem) => {
+			setPinnedKey(itemKey(item))
+			handleModeChange('cards')
+		},
+		[handleModeChange],
+	)
 
 	// Alt+U shortcut mirrors the visible "Mark all read" button in
 	// ForYouHeaderActions — power-user keyboard access alongside the click target.
@@ -256,14 +264,6 @@ function ForYouRedesign() {
 		window.addEventListener('keydown', onKeydown)
 		return () => window.removeEventListener('keydown', onKeydown)
 	}, [handleMarkAllRead])
-
-	const composer = (
-		<NewConversationComposer
-			workspaceId={workspaceId}
-			open={composerOpen}
-			onOpenChange={setComposerOpen}
-		/>
-	)
 
 	if (isLoading || betsLoading) {
 		return (
@@ -299,12 +299,13 @@ function ForYouRedesign() {
 				data-testid="foryou-redesign-root"
 			>
 				<PageHeader
-					stickyIdentity={<ForYouHeaderIdentity unreadCount={unreadRegular.length} />}
+					title="For you"
+					subtitle={unreadRegular.length === 0 ? 'All caught up' : `${unreadRegular.length} unread`}
 					actions={
 						<ForYouHeaderActions
-							onStartConversation={() => setComposerOpen(true)}
 							onMarkAllRead={handleMarkAllRead}
 							markAllReadDisabled={unreadRegular.length === 0}
+							onOpenBrief={() => setBriefOpen(true)}
 						/>
 					}
 					scrollLocked={mode === 'cards' && queue.length > 0}
@@ -335,12 +336,14 @@ function ForYouRedesign() {
 						</div>
 					)}
 					{mode === 'list' ? (
-						<div className="border-t border-border">
-							{filteredRegular.map((item) => (
+						<div className="mx-auto flex w-full max-w-[760px] flex-col gap-2">
+							{queue.map((item) => (
 								<ForYouListRow
 									key={`${item.entity_type}-${item.entity_id}`}
-									workspaceId={workspaceId}
 									item={item}
+									current={itemKey(item) === pinnedKey}
+									subtitle={listRowSubtitle(item)}
+									onSelect={handleSelectListItem}
 								/>
 							))}
 						</div>
@@ -348,10 +351,11 @@ function ForYouRedesign() {
 						<ForYouCardQueue
 							workspaceId={workspaceId}
 							queue={queue}
+							pinnedKey={pinnedKey}
 							sparseComposer={sparseComposerNode}
 						/>
 					)}
-					{mode === 'list' && typeFilter === 'mentions' && filteredRegular.length === 0 && (
+					{mode === 'list' && typeFilter === 'mentions' && queue.length === 0 && (
 						<p className="py-10 text-center text-sm text-muted-foreground">No unread mentions.</p>
 					)}
 					{mode === 'list' && sparseComposerNode ? (
@@ -359,9 +363,16 @@ function ForYouRedesign() {
 					) : null}
 				</div>
 			</div>
-			{composer}
+			<BriefDrawer workspaceId={workspaceId} open={briefOpen} onOpenChange={setBriefOpen} />
 		</>
 	)
+}
+
+// List rows carry a muted sub line under the title. Only fields the unread feed
+// actually returns — the object's type and how much of the thread is new.
+function listRowSubtitle(item: UnreadItem): string {
+	const type = item.object?.type
+	return [type ? typeLabel(type) : null, `${item.unread_count} unread`].filter(Boolean).join(' · ')
 }
 
 // Shared keydown guard for the `Alt+U` For You bulk-mark-read shortcut. Alt on

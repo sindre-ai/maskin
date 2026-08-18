@@ -333,6 +333,21 @@ describe('Header', () => {
 		expect(screen.getByRole('textbox', { name: 'Search the workspace' })).toBeInTheDocument()
 	})
 
+	// For You used to render its own create affordance, so the nav suppressed the
+	// split New there. That page-level duplicate is gone, so the nav owns it on
+	// every screen now — one create control, one place.
+	it('renders the split New control on For You too', () => {
+		vi.mocked(useMatches).mockReturnValue([
+			{
+				routeId: '/_authed/$workspaceId/',
+				pathname: '/ws-1',
+				params: { workspaceId: 'ws-1' },
+			},
+		] as unknown as ReturnType<typeof useMatches>)
+		render(<Header />)
+		expect(screen.getByRole('button', { name: 'More ways to start' })).toBeInTheDocument()
+	})
+
 	it('renders the screen title as the nav row heading', () => {
 		// A sticky identity from an earlier case would take the title's slot.
 		vi.mocked(usePageHeader).mockReturnValue({

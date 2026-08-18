@@ -86,3 +86,27 @@ export const QUICK_REPLY_CHIPS: readonly CardAction[] = [
 	{ id: 'looks_good', label: 'Looks good', tone: 'secondary' },
 	{ id: 'need_context', label: 'Need more context', tone: 'secondary' },
 ]
+
+// Chips offered *after* a decision has been committed on a decision card. The
+// mockup drops any quick reply that echoes an option the user just picked
+// (`cuAfterQuick`, mockup 5962) — "Approved" reads as noise right under a
+// receipt that already says "You chose Approve" — and falls back to a
+// forward-looking pair when the filter empties the row.
+export const AFTER_DECISION_FALLBACK_CHIPS: readonly CardAction[] = [
+	{ id: 'rollback_plan', label: 'Show me the rollback plan', tone: 'secondary' },
+	{ id: 'loop_me_in', label: 'Loop me on the results', tone: 'secondary' },
+]
+
+export function afterDecisionChips(
+	options: readonly CardAction[] = CARD_ACTIONS.decision,
+	chips: readonly CardAction[] = QUICK_REPLY_CHIPS,
+): readonly CardAction[] {
+	const heads = options
+		.map((option) => option.label.split(' ')[0]?.toLowerCase() ?? '')
+		.filter((head) => head.length > 0)
+	const kept = chips.filter((chip) => {
+		const label = chip.label.toLowerCase()
+		return !heads.some((head) => label.includes(head))
+	})
+	return kept.length > 0 ? kept : AFTER_DECISION_FALLBACK_CHIPS
+}

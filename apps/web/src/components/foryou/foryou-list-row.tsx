@@ -2,49 +2,53 @@ import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
 import type { UnreadItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { Link } from '@tanstack/react-router'
 
 interface ForYouListRowProps {
-	workspaceId: string
 	item: UnreadItem
+	// Set while this row's item is the one the card queue is parked on.
+	current?: boolean
+	// Selecting a row jumps back to Cards pinned on this item (mockup 490) —
+	// list mode is a chooser for the queue, not a shortcut past it. The card's
+	// own "Open →" stays the route into object detail.
+	onSelect: (item: UnreadItem) => void
+	// Right-hand meta line under the title — the active sort's rank word plus
+	// the item's type, e.g. "Most urgent · Bet".
+	subtitle?: string
 }
 
-// Single-line row used when the header toggle switches the feed to List
-// mode. Deliberately carries no chips or buttons — the redesign's list mode
-// is a scan surface, not an action surface. Click drops the user into the
-// object detail where the full card actions live.
-export function ForYouListRow({ workspaceId, item }: ForYouListRowProps) {
-	const isMentioned = item.mentioning_unread_count > 0
-	const isUnread = item.unread_count > 0
+// List-mode row (mockup 489–498): a 12px-radius card carrying the 38px type
+// tile, the title, a muted sub line and the object's status dot-word. Rendered
+// as a <button> because it selects rather than navigates.
+export function ForYouListRow({ item, current, onSelect, subtitle }: ForYouListRowProps) {
 	const title = item.object?.title || 'Untitled'
 	const type = item.object?.type
+	const status = item.object?.status
 
 	return (
-		<Link
-			to="/$workspaceId/objects/$objectId"
-			params={{ workspaceId, objectId: item.entity_id }}
-			className="group flex items-center gap-3 border-b border-border px-3 py-2 text-sm hover:bg-muted/60 focus-visible:bg-muted focus-visible:outline-none"
+		<button
+			type="button"
+			onClick={() => onSelect(item)}
 			aria-label={title}
+			aria-current={current ? 'true' : undefined}
+			className={cn(
+				'flex w-full items-start gap-3 rounded-xl border px-4 py-3 text-left transition-colors',
+				current
+					? 'border-border-strong bg-muted/50'
+					: 'border-border bg-card hover:border-border-strong',
+			)}
 		>
-			<span
-				aria-hidden
-				className={cn(
-					'h-2 w-2 shrink-0 rounded-full',
-					isMentioned ? 'bg-warning' : isUnread ? 'bg-primary' : 'bg-transparent',
+			{type ? <TypeBadge type={type} variant="tile" size="lg" /> : null}
+			<span className="min-w-0 flex-1">
+				<span className="block truncate text-sm font-semibold text-foreground">{title}</span>
+				{subtitle && (
+					<span className="mt-0.5 block truncate text-xs text-muted-foreground">{subtitle}</span>
 				)}
-			/>
-			<span
-				className={cn(
-					'min-w-0 flex-1 truncate',
-					isUnread ? 'font-medium text-foreground' : 'text-muted-foreground',
-				)}
-			>
-				{title}
 			</span>
-			<span className="hidden shrink-0 items-center gap-1 sm:flex">
-				{type ? <TypeBadge type={type} /> : null}
-				{item.object?.status ? <StatusBadge status={item.object.status} /> : null}
-			</span>
-		</Link>
+			{status ? (
+				<span className="shrink-0 pt-0.5">
+					<StatusBadge status={status} variant="dot-word" />
+				</span>
+			) : null}
+		</button>
 	)
 }
