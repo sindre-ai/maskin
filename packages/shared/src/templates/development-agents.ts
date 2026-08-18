@@ -327,128 +327,6 @@ When you do notify, \`metadata.actions\` MUST be a native JSON array, not a stri
 		llmConfig: { model: 'claude-sonnet-4-6' },
 		skills: [
 			{
-				name: 'workspace-observer-onboarding',
-				content: `---
-name: workspace-observer-onboarding
-description: Guides the Workspace Coach to run onboarding for a new workspace — detecting an empty workspace, creating an onboarding session, identifying the owner, and posting context prompts in sequence to get the workspace to its first bet.
----
-
-# Workspace Coach Onboarding
-
-## When to run
-
-Run this skill when your observation detects a workspace that:
-- Has \`onboarding_enabled = true\` (read from \`list_workspaces\` — exit silently if \`false\`)
-- Was created within the last 24 hours (check \`createdAt\` on the workspace)
-- Has zero bets (no objects of type \`bet\` exist in the workspace)
-
-If an \`onboarding_session\` object already exists for this workspace, exit silently — onboarding is already underway.
-
-## What to do
-
-### 1. Create the onboarding session
-
-Call \`create_objects\` to create a single object:
-- \`type: onboarding_session\`
-- \`title: "Getting your workspace ready"\`
-- \`status: active\`
-- \`content\`: brief description of what this session is — "A guided conversation to capture the context agents need to run quality bets. Takes 5–10 minutes."
-
-Save the returned object ID — all prompts in the next step are comments posted on this object.
-
-### 2. Identify the workspace owner
-
-List workspace members and identify the human actor (type != "agent") who created the workspace or is listed as owner. Keep the owner's actor ID and the workspace ID handy — every knowledge write in step 4 needs them.
-
-### 3. Post prompts in sequence
-
-Post the five prompts below as comments on the onboarding session object, in order. **Wait for a reply to each prompt before posting the next one.** Capture each reply as a knowledge object (see step 4).
-
-The tone is conversational — you are an assistant asking questions, not a form. Write each prompt as a short message.
-
-**Prompt 1 — Product vision** (\`prompt_key: product_vision\`)
-> What does your product do and who is it for? A sentence or two is enough — just enough for agents to understand what you're building and what outcome you're going for.
-
-**Prompt 2 — ICP** (\`prompt_key: icp\`)
-> Who is your ideal customer? The sharper the better — role, company type, the specific pain they have. If you have real customers already, describe one of them.
-
-**Prompt 3 — First-bet hypothesis** (\`prompt_key: first_bet_hypothesis\`)
-> What's the single most important thing to figure out or build right now? This becomes your first bet — what would move the needle most if it worked?
-
-**Prompt 4 — North Star metric** (\`prompt_key: north_star_metric\`)
-> How will you know the product is working? Name one number — the metric that, if it goes up, you're succeeding.
-
-**Prompt 5 — Customer evidence** (\`prompt_key: customer_evidence\`)
-> What have you already heard from customers or potential customers? Even a single quote or observation is useful — agents use this to calibrate bet quality and avoid building the wrong thing.
-
-### 4. Capture each reply as a knowledge object AND an \`about\` edge — one atomic call
-
-After each reply, call \`create_objects\` **once** with both the knowledge node and the \`about\` edge in the same batch. The knowledge row and its edge must commit together — no bare-knowledge row about the workspace owner may survive.
-
-The edge target depends on the prompt:
-
-- \`product_vision\`, \`icp\`, \`first_bet_hypothesis\`, \`customer_evidence\` → **owner-targeted**: edge target = the workspace owner's actor id, \`metadata.subject_kind = "workspace_owner"\`.
-- \`north_star_metric\` → **workspace-targeted**: edge target = the workspace id, \`metadata.subject_kind = "workspace"\`.
-
-Payload shape (owner-targeted example):
-
-\`\`\`json
-{
-  "nodes": [
-    {
-      "$id": "k1",
-      "type": "knowledge",
-      "title": "Product vision",
-      "status": "validated",
-      "content": "<owner's reply verbatim, or a clean restatement if conversational>",
-      "metadata": {
-        "source": "workspace_onboarding",
-        "prompt_key": "product_vision",
-        "subject_kind": "workspace_owner",
-        "subject_id": "<owner-actor-uuid>",
-        "claim": "<one-sentence restatement of what the reply asserts>",
-        "confidence": "medium",
-        "valid_from": "<ISO timestamp of the reply>",
-        "valid_to": null,
-        "tags": ["onboarding", "provenance:workspace_onboarding"]
-      }
-    }
-  ],
-  "edges": [
-    { "source": "k1", "target": "<owner-actor-uuid>", "type": "about" },
-    { "source": "k1", "target": "<onboarding-session-object-id>", "type": "relates_to" }
-  ]
-}
-\`\`\`
-
-For \`north_star_metric\`, swap the \`about\` target to the workspace id and set \`subject_kind\` / \`subject_id\` to \`"workspace"\` / \`<workspace-uuid>\`.
-
-Field notes:
-- \`claim\` is a one-sentence normalized restatement so downstream agents can reason without re-reading the raw reply.
-- \`source\` is the fixed string \`"workspace_onboarding"\` — this identifies the row as coming from this skill.
-- \`confidence\` defaults to \`"medium"\` for owner self-report; bump to \`"high"\` if the reply cites a concrete customer or metric.
-- \`valid_from\` is the reply's timestamp; \`valid_to\` stays \`null\` until superseded.
-- Keep the existing \`relates_to → onboarding_session\` edge in the same batch so the session view still lists its captures.
-
-Do NOT write anything to the actor's \`memory\` field. That field is reserved for operating Config (approval gates, Slack id, escalation rules) per the ratified user-info model — Facts live only as knowledge objects with an \`about\` edge.
-
-### 5. Close the session
-
-After all five prompts are answered (or if the owner stops responding after 24h), update the onboarding session:
-- \`status: done\`
-- Add a closing comment: "Done — agents now have the context they need. Your first bet can start anytime."
-
-## What NOT to do
-
-- Do not run this for workspaces older than 24h, even if they have zero bets
-- Do not post all five prompts at once — sequence matters; each answer informs the next question
-- Do not create the onboarding session more than once per workspace
-- Do not capture knowledge objects if the owner did not reply — only record actual answers
-- Do not create the knowledge row and the \`about\` edge in separate calls — they must commit in the same \`create_objects\` transaction
-- Do not write to \`actors.memory\` — that field is Config, not Facts
-`,
-			},
-			{
 				name: 'handbook-update',
 				content: `---
 name: handbook-update
@@ -945,6 +823,89 @@ Insights in either state are NOT in-flight work and do NOT need a driver of your
 		name: 'Strategist',
 		tools: strategistTools,
 		skills: [
+			{
+				name: 'workspace-first-bet',
+				content: `---
+name: workspace-first-bet
+description: The Strategist's half of first use — read the Knowledge the Research Agent wrote about a brand-new workspace, draft the one bet worth opening first, and put the open-or-hold call to the owner.
+---
+
+# First use — the first bet
+
+## When to run
+
+Only when the Research Agent @mentions you on a first-use context card. It runs
+once per workspace.
+
+**Guard before anything else.** Call \`list_objects\` with \`type: bet\`. If the
+workspace already has a bet, first use has already produced one — exit silently.
+
+## Why this exists
+
+A workspace with nothing in it gives the owner nothing to decide. One bet, argued
+from what was actually researched, is the smallest thing that makes the product
+legible: here is a scoped hypothesis, here is the evidence, here is the one call
+only you can make.
+
+## 1. Read the context
+
+Call \`list_objects\` with \`type: knowledge\` and read every object carrying
+\`metadata.source = "workspace_first_use"\`. That, plus their \`provenance\`, is your
+whole evidence base. You have no customer data, no history, and no roadmap —
+do not write as if you do.
+
+## 2. Draft one bet
+
+Pick the single thing where the evidence is strongest, not the most ambitious
+one. Create it with \`create_objects\`:
+
+- \`type: bet\`, \`status: signal\` — the stage before anything is real. Nothing is
+  scoped, nothing is assigned, no agent picks up work against a signal. This is
+  deliberately earlier than the \`qualified\` entry stage in \`shape-and-run-a-bet\`:
+  nothing about a first-use bet has been through discovery, and For You renders a
+  bet in \`signal\` as a proposal with open / refine / dismiss. Once the owner opens
+  it, \`shape-and-run-a-bet\` is the method from there on.
+- \`title\` — what would change, in the owner's language.
+- \`content\` — four short parts, in this order:
+  - **Goal** — the outcome, with a number if the evidence supports one.
+  - **Evidence** — which knowledge objects argue for it, and what they rest on.
+  - **Timeline** — one cycle, with a mid-point review.
+  - **Stops for you** — what this bet would never do without asking.
+- \`metadata.source\`: \`workspace_first_use\`.
+- Edge it \`relates_to\` every knowledge object you argued from, in the same
+  \`create_objects\` batch. A bet with no edge back to its evidence is an
+  assertion, not a bet.
+
+## 3. Put the call to the owner
+
+Post **one** comment on the bet:
+
+- Say what you read and why this one rather than the others.
+- Pass \`refs\` — the knowledge objects behind it, so the owner can open the
+  argument rather than take your word:
+  \`{ "kind": "object", "tag": "KNOWLEDGE", "label": "<title>", "object_id": "<id>" }\`
+- Pass \`mentions: ["<owner actor id>"]\`.
+- Name the decision honestly: open it now, hold it while more evidence gathers,
+  or drop it and bring the next one. Say what each choice actually does, and say
+  which is reversible.
+
+A bet in \`signal\` renders in For You as a proposed bet, so the owner gets those
+options as buttons — your comment supplies the reasoning under them, not a
+restatement of the buttons.
+
+## 4. Stop
+
+Do not draft tasks. Do not move the bet out of \`signal\`. Do not assign anyone.
+Everything after the owner's call belongs to a different session.
+
+## What NOT to do
+
+- Do not invent evidence, numbers, or customer quotes.
+- Do not open more than one bet.
+- Do not create the bet without its \`relates_to\` edges in the same batch.
+- Do not post a second comment chasing a reply — an unread card comes back on
+  its own.`,
+			},
 			{
 				name: 'shape-and-run-a-bet',
 				content: `---
@@ -2133,6 +2094,114 @@ Every object you create MUST be linked. No orphans.
 		description: 'Conducts deep web research for bets and insights; route research requests here.',
 		tools: researchAgentTools,
 		llmConfig: { model: 'claude-sonnet-4-6' },
+		skills: [
+			{
+				name: 'workspace-first-use',
+				content: `---
+name: workspace-first-use
+description: The Research Agent's half of first use — research the company behind a brand-new workspace, write what holds up as Knowledge, and put it in front of the owner to confirm before every other agent inherits it.
+---
+
+# First use — the context every agent starts from
+
+## When to run
+
+Only when a session hands you a first-use prompt naming the workspace, its owner
+and the Strategist to hand off to. It runs once per workspace, immediately after
+the workspace is created.
+
+**Guard before anything else.** Call \`list_objects\` with \`type: knowledge\`. If
+any object already carries \`metadata.source = "workspace_first_use"\`, first use
+has already run — exit silently. Do not post, do not research, do not hand off.
+
+## Why this exists
+
+Everything every agent in this workspace does afterwards is argued from what you
+write here. The owner has not told us anything yet — they signed up and landed on
+a queue. So the job is to find what can be found, be explicit about the source of
+each claim, and then ask the one question you genuinely cannot answer: is this
+right?
+
+## 1. Research
+
+You have the workspace name, the owner's name, and their email domain. That is
+usually enough to find the company. Use \`web_search\` and \`web_fetch\`.
+
+Look for, in this order of usefulness:
+
+- **What the company does** — the product, who pays for it, in the company's own
+  words. The site is the source.
+- **How this team is structured** — where the owner's function sits relative to
+  the rest of the business.
+- **Where work of this kind usually stalls** — the pattern across comparable
+  teams, not a guess about this one.
+
+Stop at three. A fourth thin claim costs more than it adds.
+
+## 2. Write only what a source supports
+
+Call \`create_objects\` **once**, with every knowledge node in the same batch.
+
+For each one:
+
+- \`type: knowledge\`, \`status: draft\` — it is not validated until the owner says so.
+- \`title\` — the claim as a noun phrase ("What Acme does"), not a sentence.
+- \`content\` — two or three sentences. What you found, and where.
+- \`metadata.source\` — the fixed string \`workspace_first_use\`. The guard above
+  reads this.
+- \`metadata.claim\` — one-sentence normalised restatement.
+- \`metadata.provenance\` — the URL or the named pattern the claim rests on. Every
+  object needs one.
+- \`metadata.confidence\` — \`high\` only when a primary source states it outright.
+- \`metadata.valid_from\` — now, ISO.
+
+**Leave out what you cannot source.** If the owner's seniority, team size or
+roadmap is not stated anywhere you can check, do not write an object about it —
+and say so in the card below. Naming the gap is worth more than filling it.
+
+## 3. Put it in front of the owner
+
+Create one \`onboarding_session\` object:
+
+- \`title: "The context every agent starts from"\`
+- \`status: active\`
+- \`content\`: one line on what this card is for.
+- \`metadata.source\`: \`workspace_first_use\`, \`metadata.first_use_card\`: \`context\`.
+
+Then post **one** comment on it:
+
+- Address the owner directly. Say what you read, what held up, and what you left
+  alone because nothing supported it.
+- Pass \`refs\` — one entry per knowledge object you wrote:
+  \`{ "kind": "object", "tag": "KNOWLEDGE", "label": "<title>", "object_id": "<id>", "detail": "<the source>" }\`
+- Pass \`mentions: ["<owner actor id>"]\` so the card reaches their queue.
+- Pass \`metadata.chips: ["Looks right", "Something is wrong", "Add a source"]\`.
+  These are the three replies that actually change what happens next; do not
+  invent a fourth.
+
+Say plainly that whether it is right is the one thing you cannot check yourself,
+and that a correction now is cheaper than every agent inheriting a wrong reading.
+
+## 4. Hand off
+
+Post a second comment on the same card, \`mentions\` the Strategist actor id given
+in your prompt, telling it the knowledge is written and it should draft the first
+bet. That mention spawns their session — you do not draft the bet yourself.
+
+Then stop. Do not wait for the owner's reply; if they correct something, a new
+session brings it back to you.
+
+## What NOT to do
+
+- Do not write a knowledge object you cannot attribute to a source.
+- Do not guess at the owner's role, seniority, or priorities.
+- Do not create the knowledge objects in separate \`create_objects\` calls — one
+  batch, so a half-written context can never be read by another agent.
+- Do not set \`status: validated\` on anything the owner has not confirmed.
+- Do not post more than two comments on the card.
+- Do not write to the owner's \`memory\` field — facts live as knowledge objects.`,
+			},
+		],
 		systemPrompt: `You are the Research Agent for this workspace. You are a multi-purpose external intelligence agent that handles both proactive research sweeps and on-demand content extraction.
 
 ## Skills to load at runtime

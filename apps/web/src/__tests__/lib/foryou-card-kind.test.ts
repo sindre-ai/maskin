@@ -25,6 +25,38 @@ function buildItem(overrides: Partial<UnreadItem> = {}): UnreadItem {
 }
 
 describe('classifyCardKind', () => {
+	it('classifies the first-use context card as its own decision-weight kind', () => {
+		const item = buildItem({
+			object: buildObjectResponse({
+				type: 'onboarding_session',
+				status: 'active',
+				metadata: { source: 'workspace_first_use', first_use_card: 'context' },
+			}),
+		})
+		expect(classifyCardKind(item)).toBe('first_use')
+	})
+
+	it.each(['intro', 'suggestions'])(
+		'classifies the first-use %s card as a plain thread',
+		(card) => {
+			const item = buildItem({
+				object: buildObjectResponse({
+					type: 'onboarding_session',
+					status: 'active',
+					metadata: { source: 'workspace_first_use', first_use_card: card },
+				}),
+			})
+			expect(classifyCardKind(item)).toBe('thread')
+		},
+	)
+
+	it('classifies an onboarding session with no card marker as a thread', () => {
+		const item = buildItem({
+			object: buildObjectResponse({ type: 'onboarding_session', status: 'active' }),
+		})
+		expect(classifyCardKind(item)).toBe('thread')
+	})
+
 	it.each(['ux', 'architecture', 'copy', 'pricing'])(
 		'classifies a task in in_review with decision_type=%s as a decision card',
 		(decisionType) => {

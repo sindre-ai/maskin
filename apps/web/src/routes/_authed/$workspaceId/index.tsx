@@ -8,7 +8,6 @@ import {
 } from '@/components/foryou/foryou-header'
 import { ForYouListRow } from '@/components/foryou/foryou-list-row'
 import { NorthStarPromptCard } from '@/components/foryou/north-star-prompt-card'
-import { OnboardingPromptCard } from '@/components/foryou/onboarding-prompt-card'
 import { SparseComposer } from '@/components/foryou/sparse-composer'
 import { PageHeader } from '@/components/layout/page-header'
 import { CardSkeleton } from '@/components/shared/loading-skeleton'
@@ -119,11 +118,6 @@ function ForYouRedesign() {
 	// composer for vertical space once the on-screen keyboard is up on mobile.
 	const [composerFocused, setComposerFocused] = useState(false)
 
-	const onboardingItems = useMemo(
-		() => items.filter((item) => item.object?.type === 'onboarding_session'),
-		[items],
-	)
-
 	// `priority` (default) sorts by the sender's attention score (1-5) on each
 	// card's highest-scored unread comment, highest first; unscored comments
 	// sort below any scored one. Ties (including all-unscored) fall back to
@@ -131,7 +125,11 @@ function ForYouRedesign() {
 	// the alternative surfaced by the sort control per the design directions
 	// task.
 	const sortedRegular = useMemo(() => {
-		const base = items.filter((item) => item.object?.type !== 'onboarding_session')
+		// First-use cards (`onboarding_session`) used to render in a lane of their
+		// own above the queue. They are ordinary queue cards now — the same
+		// mark-read, keep-unread, decision and reply affordances as everything
+		// else — so they sort with the rest.
+		const base = items.slice()
 		const byLatestDesc = (a: UnreadItem, b: UnreadItem) => {
 			const at = a.latest_activity_at ? new Date(a.latest_activity_at).getTime() : 0
 			const bt = b.latest_activity_at ? new Date(b.latest_activity_at).getTime() : 0
@@ -284,12 +282,9 @@ function ForYouRedesign() {
 			/>
 		) : null
 
-	const isSparse = filteredRegular.length + onboardingItems.length < 3
+	const isSparse = filteredRegular.length < 3
 	const sparseComposerNode = isSparse ? (
-		<SparseComposer
-			itemsCount={filteredRegular.length + onboardingItems.length}
-			onFocusChange={setComposerFocused}
-		/>
+		<SparseComposer itemsCount={filteredRegular.length} onFocusChange={setComposerFocused} />
 	) : null
 
 	return (
@@ -324,17 +319,6 @@ function ForYouRedesign() {
 				/>
 
 				<div className="flex flex-1 min-h-0 flex-col">
-					{onboardingItems.length > 0 && (
-						<div className="mb-3 space-y-3">
-							{onboardingItems.map((item) => (
-								<OnboardingPromptCard
-									key={`${item.entity_type}-${item.entity_id}`}
-									workspaceId={workspaceId}
-									item={item}
-								/>
-							))}
-						</div>
-					)}
 					{mode === 'list' ? (
 						<div className="mx-auto flex w-full max-w-[760px] flex-col gap-2">
 							{queue.map((item) => (

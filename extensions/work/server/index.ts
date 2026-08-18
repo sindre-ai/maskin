@@ -28,6 +28,15 @@ const LOOP_FIELDS: FieldDefinition[] = [
 	{ name: 'installed_from_marketplace_loop_id', type: 'text' },
 ]
 
+// First-use conversation cards (the Chief of Staff's introduction, the
+// marketplace suggestions, the Research agent's context confirmation). Declared
+// server-side only — deliberately absent from `objectTypeTabs` in ../web, so it
+// is a valid type agents can write without adding an "Onboarding sessions" tab
+// to the Objects page. `apps/dev/src/routes/subscriptions.ts` already treats
+// this type specially: any agent comment on one counts as unread for the owner
+// without needing an @mention, which is what makes first use land in For You.
+const ONBOARDING_SESSION_STATUSES = ['active', 'done']
+
 const workExtension: ModuleDefinition = {
 	id: MODULE_ID,
 	name: MODULE_NAME,
@@ -74,6 +83,12 @@ const workExtension: ModuleDefinition = {
 			defaultStatuses: LOOP_STATUSES,
 			defaultFields: LOOP_FIELDS,
 		},
+		{
+			type: 'onboarding_session',
+			label: 'Onboarding',
+			icon: 'sparkles',
+			defaultStatuses: ONBOARDING_SESSION_STATUSES,
+		},
 	],
 	defaultSettings: {
 		display_names: {
@@ -82,6 +97,7 @@ const workExtension: ModuleDefinition = {
 			task: 'Task',
 			commitment: 'Commitment',
 			loop: 'Loop',
+			onboarding_session: 'Onboarding',
 		},
 		statuses: {
 			insight: ['new', 'processing', 'clustered', 'scored', 'parked', 'discarded'],
@@ -89,6 +105,7 @@ const workExtension: ModuleDefinition = {
 			task: ['todo', 'in_progress', 'in_review', 'validated', 'done', 'discarded'],
 			commitment: COMMITMENT_STATUSES,
 			loop: LOOP_STATUSES,
+			onboarding_session: ONBOARDING_SESSION_STATUSES,
 		},
 		field_definitions: {
 			commitment: COMMITMENT_FIELDS,

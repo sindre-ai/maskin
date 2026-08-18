@@ -315,8 +315,10 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 		const objectType = item.object?.type
 		const objectStatus = item.object?.status
 		const summary = item.object?.content?.trim()
+		// Both kinds render the heavier footer — full-width option buttons with a
+		// rationale each — rather than the flat chip row.
 		const decisionActions: readonly CardAction[] | null =
-			cardKind === 'decision' ? CARD_ACTIONS.decision : null
+			cardKind === 'decision' || cardKind === 'first_use' ? CARD_ACTIONS[cardKind] : null
 		const decisionSettled = decisionPhase.status !== 'idle'
 		// Chips are hidden while a decision is still open, and come back once it
 		// has been made — minus any chip that just echoes an option (mockup 5962).

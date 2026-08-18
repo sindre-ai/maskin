@@ -1,15 +1,8 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import {
-	events,
-	actors,
-	workspaceMembers,
-	workspaceOnboardingPrompts,
-	workspaces,
-} from '@maskin/db/schema'
+import { events, actors, workspaceMembers, workspaces } from '@maskin/db/schema'
 import {
 	WORKSPACE_ADMIN_DIFF_FIELDS,
-	WORKSPACE_COACH_DEFAULT,
 	computeChanges,
 	createWorkspaceSchema,
 	updateWorkspaceAdminSchema,
@@ -24,6 +17,7 @@ import { errorSchema, idParamSchema, workspaceResponseSchema } from '../lib/open
 import { serialize, serializeArray } from '../lib/serialize'
 import { isWorkspaceMember, isWorkspaceOwner } from '../lib/workspace-auth'
 import type { AgentStorageManager } from '../services/agent-storage'
+import { resolveFirstUseAgents, runFirstUse } from '../services/first-use'
 import type { SessionManager } from '../services/session-manager'
 import {
 	SeedAgentError,
@@ -185,6 +179,27 @@ app.openapi(createWorkspaceRoute, async (c) => {
 		bootstrapDefaultAgents(db, agentStorage, workspace.id, actorId).catch((err) =>
 			logger.error('workspace bootstrap failed', { workspaceId: workspace.id, err }),
 		)
+	}
+
+	// Post-commit: first use. The two seeded cards are written before the
+	// response so the owner's very first For You render already has a queue;
+	// the research session that writes the rest is started from inside
+	// `runFirstUse` and awaited only as far as the create call.
+	const agents = await resolveFirstUseAgents(db, workspace.id)
+	if (agents) {
+		const [owner] = await db
+			.select({ name: actors.name })
+			.from(actors)
+			.where(eq(actors.id, actorId))
+			.limit(1)
+		await runFirstUse(db, c.get('sessionManager') ?? null, {
+			workspaceId: workspace.id,
+			workspaceName: workspace.name,
+			ownerActorId: actorId,
+			ownerName: owner?.name ?? 'there',
+			agents,
+			agentsWorking: true,
+		})
 	}
 
 	return c.json(serialize(workspace) as z.infer<typeof workspaceResponseSchema>, 201)
@@ -355,14 +370,6 @@ const updateWorkspaceOnboardingRoute = createRoute({
 	},
 })
 
-const ONBOARDING_PROMPT_TYPES = [
-	'product_vision',
-	'icp',
-	'first_bet_hypothesis',
-	'north_star_metric',
-	'customer_evidence',
-] as const
-
 app.openapi(updateWorkspaceOnboardingRoute, (async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
@@ -386,32 +393,27 @@ app.openapi(updateWorkspaceOnboardingRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 	}
 
+	// Flipping the flag on re-runs first use for a workspace that missed it —
+	// one created before first use shipped, or one whose seed failed. Both
+	// halves are idempotent, so an already-onboarded workspace is a no-op.
 	if (body.onboarding_enabled) {
-		await db
-			.insert(workspaceOnboardingPrompts)
-			.values(ONBOARDING_PROMPT_TYPES.map((promptType) => ({ workspaceId: id, promptType })))
-			.onConflictDoNothing()
-
-		const [coach] = await db
-			.select({ id: actors.id })
-			.from(actors)
-			.innerJoin(workspaceMembers, eq(workspaceMembers.actorId, actors.id))
-			.where(
-				and(eq(workspaceMembers.workspaceId, id), eq(actors.name, WORKSPACE_COACH_DEFAULT.name)),
-			)
-			.limit(1)
-
-		if (coach) {
-			c.get('sessionManager')
-				.createSession(id, {
-					actorId: coach.id,
-					actionPrompt:
-						'A workspace has been enabled for onboarding (onboarding_enabled flipped to true). Run the workspace-observer-onboarding skill.\n\nBefore starting: check whether this workspace already has an onboarding_session object. If one exists, exit silently.\n\nIf none exists, follow the workspace-observer-onboarding skill to:\n1. Create the onboarding_session object.\n2. Subscribe the workspace owner.\n3. Post the five context prompts in sequence, waiting for each reply before the next.\n4. For each reply, call create_objects ONCE with both the knowledge node and the `about` edge in the same batch — owner-targeted prompts (product_vision, icp, first_bet_hypothesis, customer_evidence) edge to the workspace owner\'s actor id; the north_star_metric prompt edges to the workspace id. Populate metadata.source = "workspace_onboarding", subject_kind, subject_id, claim, confidence, valid_from, valid_to per the skill. Do NOT write to the actor\'s memory field.\n5. Close the session when all prompts are answered (or after 24h).',
-					createdBy: actorId,
-				})
-				.catch((err) =>
-					logger.error('Failed to create onboarding session', { workspaceId: id, err }),
-				)
+		const agents = await resolveFirstUseAgents(db, id)
+		if (agents) {
+			const [owner] = await db
+				.select({ name: actors.name })
+				.from(actors)
+				.where(eq(actors.id, actorId))
+				.limit(1)
+			await runFirstUse(db, c.get('sessionManager') ?? null, {
+				workspaceId: id,
+				workspaceName: updated.name,
+				ownerActorId: actorId,
+				ownerName: owner?.name ?? 'there',
+				agents,
+				agentsWorking: true,
+			})
+		} else {
+			logger.warn('onboarding enabled but first-use agents are missing', { workspaceId: id })
 		}
 	}
 

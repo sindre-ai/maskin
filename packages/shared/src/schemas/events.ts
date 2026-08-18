@@ -15,6 +15,55 @@ export const eventQuerySchema = z.object({
 
 export const COMMENT_MAX_LENGTH = 2000
 export const COMMENT_MAX_ATTACHMENTS = 10
+export const COMMENT_MAX_REFS = 6
+
+/**
+ * A typed reference rendered as a chip under a comment — the agent pointing at
+ * something concrete it wrote, or at a part of the product it is explaining.
+ *
+ * Lives as a first-class field on the comment rather than inside `metadata`
+ * because `safeMetadataSchema` only admits primitives and arrays of
+ * primitives, and a ref is an object.
+ */
+export const commentRefSchema = z
+	.object({
+		kind: z
+			.enum(['object', 'page'])
+			.describe(
+				'`object` links to something in this workspace; `page` links to a product surface.',
+			),
+		tag: z
+			.string()
+			.min(1)
+			.max(12)
+			.describe('Short uppercase type marker shown on the chip, e.g. KNOWLEDGE, BET, LOOP, PAGE.'),
+		label: z
+			.string()
+			.min(1)
+			.max(80)
+			.describe('Chip text — the title of the thing being referenced.'),
+		object_id: z
+			.string()
+			.uuid()
+			.optional()
+			.describe('Required for kind `object` — the object this chip opens.'),
+		path: z
+			.string()
+			.max(120)
+			.regex(/^[a-z0-9\-/]*$/, 'Path must be a workspace-relative route segment')
+			.optional()
+			.describe('Required for kind `page` — workspace-relative route, e.g. `chats` or `loops`.'),
+		detail: z
+			.string()
+			.max(600)
+			.optional()
+			.describe('Optional sentence revealed inline when the reader expands the chip.'),
+	})
+	.refine((ref) => (ref.kind === 'object' ? Boolean(ref.object_id) : Boolean(ref.path)), {
+		message: 'kind "object" requires object_id; kind "page" requires path',
+	})
+
+export type CommentRef = z.infer<typeof commentRefSchema>
 
 export const createCommentSchema = z.object({
 	entity_id: z.string().uuid().describe('Object ID to post the comment on.'),
@@ -49,6 +98,13 @@ export const createCommentSchema = z.object({
 		.optional()
 		.describe(
 			`First upload files with create_file (or pick existing ones with list_files) and pass the returned file ids here (max ${COMMENT_MAX_ATTACHMENTS}). Attached files appear as clickable cards under the posted comment.`,
+		),
+	refs: z
+		.array(commentRefSchema)
+		.max(COMMENT_MAX_REFS)
+		.optional()
+		.describe(
+			`Up to ${COMMENT_MAX_REFS} typed reference chips rendered under the comment. Use these instead of pasting ids when you want the reader to be able to open what you are talking about — one chip per object you wrote or product surface you are explaining.`,
 		),
 	metadata: safeMetadataSchema
 		.optional()
