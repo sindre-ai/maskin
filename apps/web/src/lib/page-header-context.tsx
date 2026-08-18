@@ -1,6 +1,11 @@
 import { type ReactNode, createContext, useCallback, useContext, useState } from 'react'
 
 interface PageHeaderState {
+	// The screen's own title and muted trailing count for the shared top nav's
+	// per-screen <h1> (mockup lines 159–201). A page that sets neither falls
+	// back to the route's label, so no screen is ever untitled.
+	title?: string
+	subtitle?: string
 	actions?: ReactNode
 	stickyIdentity?: ReactNode
 	// CSS width value (e.g. '18rem') the current route wants the app shell
@@ -15,6 +20,8 @@ interface PageHeaderState {
 }
 
 interface PageHeaderContextValue extends PageHeaderState {
+	setTitle: (title: string | undefined) => void
+	setSubtitle: (subtitle: string | undefined) => void
 	setActions: (actions: ReactNode) => void
 	setStickyIdentity: (stickyIdentity: ReactNode) => void
 	setContentPush: (contentPush: string | undefined) => void
@@ -22,6 +29,8 @@ interface PageHeaderContextValue extends PageHeaderState {
 }
 
 const PageHeaderContext = createContext<PageHeaderContextValue>({
+	setTitle: () => {},
+	setSubtitle: () => {},
 	setActions: () => {},
 	setStickyIdentity: () => {},
 	setContentPush: () => {},
@@ -30,6 +39,14 @@ const PageHeaderContext = createContext<PageHeaderContextValue>({
 
 export function PageHeaderProvider({ children }: { children: ReactNode }) {
 	const [state, setState] = useState<PageHeaderState>({})
+
+	const setTitle = useCallback((title: string | undefined) => {
+		setState((prev) => ({ ...prev, title }))
+	}, [])
+
+	const setSubtitle = useCallback((subtitle: string | undefined) => {
+		setState((prev) => ({ ...prev, subtitle }))
+	}, [])
 
 	const setActions = useCallback((actions: ReactNode) => {
 		setState((prev) => ({ ...prev, actions }))
@@ -49,7 +66,15 @@ export function PageHeaderProvider({ children }: { children: ReactNode }) {
 
 	return (
 		<PageHeaderContext.Provider
-			value={{ ...state, setActions, setStickyIdentity, setContentPush, setScrollLocked }}
+			value={{
+				...state,
+				setTitle,
+				setSubtitle,
+				setActions,
+				setStickyIdentity,
+				setContentPush,
+				setScrollLocked,
+			}}
 		>
 			{children}
 		</PageHeaderContext.Provider>
