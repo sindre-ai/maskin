@@ -371,6 +371,6 @@ describe('MarketplacePage', () => {
 		// "Clear filters" resets both the search box and the active chip.
 		await user.click(screen.getByRole('button', { name: 'Clear filters' }))
 		expect(input).toHaveValue('')
-		expect(screen.getByRole('button', { name: /^All\s/ }).className).toMatch(/border-foreground/)
+		expect(screen.getByRole('button', { name: /^All\s/ }).className).toMatch(/border-border-strong/)
 	})
 })

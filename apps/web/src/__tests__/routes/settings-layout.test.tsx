@@ -27,9 +27,12 @@ describe('SettingsLayout', () => {
 		mockMatchRoute.mockReturnValue(false)
 	})
 
-	it('renders Settings heading', () => {
+	// The "Settings" title is not this layout's — in v2 it belongs to the shared
+	// top nav, which renders the per-screen <h1> (mockup lines 195-199). This
+	// layout owns only the section nav and the outlet.
+	it('renders no heading of its own', () => {
 		render(<SettingsLayout />)
-		expect(screen.getByRole('heading', { name: 'Settings' })).toBeInTheDocument()
+		expect(screen.queryByRole('heading')).not.toBeInTheDocument()
 	})
 
 	it('renders the six settings sections in mockup order', () => {
