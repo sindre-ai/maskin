@@ -137,7 +137,45 @@ export type AppDeps = {
 	 * what every existing test expects.
 	 */
 	readyState?: { ready: boolean }
+	/**
+	 * Shared with `main()`'s boot-time `reconcileOnBoot` pass for the same
+	 * reason as `sessionExitCodes`/`sessionLogRouters` above — a session that
+	 * survived a restart and still has a browser sidecar must be reattached
+	 * into the SAME map `POST /sessions/:id/preview-ports` reads from, or
+	 * that route 404s forever for it post-restart. Omitted → buildApp creates
+	 * its own fresh map (fine for any caller, e.g. tests, that never shares
+	 * it with a reconcile pass).
+	 */
+	sessionPreviewState?: SessionPreviewState
 }
+
+/**
+ * Per-session state for the dynamic preview-port relay feature — see
+ * `sessionPreviewState`'s declaration below for the full rationale. Named as
+ * a type (rather than left inline) so `AppDeps` and `ReconcileOnBootDeps`
+ * can share the exact same shape instead of two structurally-equal but
+ * independently-drifting inline object types.
+ */
+export type SessionPreviewState = Map<
+	string,
+	{
+		browserSidecar: BrowserSidecar
+		previewRelays: SshRelay[]
+		/**
+		 * Coalesces concurrent `POST /sessions/:id/preview-ports` calls for the
+		 * SAME guestPort onto a single in-flight `establishPreviewPortRelay`
+		 * attempt. Without this, two requests that land before the first
+		 * resolves (a real scenario — the guest-side watcher polls every 2s,
+		 * well inside `establishPreviewPortRelay`'s multi-second worst case)
+		 * would each open their own relay onto the same guest port, wasting
+		 * two slots out of the fixed 3000-12000 range and breaking the
+		 * idempotency this route otherwise guarantees. Entries are removed as
+		 * soon as their attempt settles — this map holds only requests
+		 * currently in flight, never a durable cache.
+		 */
+		pendingRelays: Map<number, Promise<SshRelay | null>>
+	}
+>
 
 const LOG_FLUSH_INTERVAL_MS = 2_000
 const LOG_FLUSH_MAX_LINES = 100
@@ -497,11 +535,11 @@ export function buildApp(deps: AppDeps): Hono {
 	// SAME array reference passed to monitorSession, so relays pushed onto it
 	// after boot are cleaned up by monitorSession's existing teardown path
 	// with no further wiring — see the `relay.stop()` loops in monitorSession
-	// and its crash/spawn-failure handlers below.
-	const sessionPreviewState = new Map<
-		string,
-		{ browserSidecar: BrowserSidecar; previewRelays: SshRelay[] }
-	>()
+	// and its crash/spawn-failure handlers below. Injectable via deps so
+	// main()'s boot-time reconcile pass can reattach a restart-surviving
+	// session's sidecar into the same map this route reads from — see
+	// AppDeps.sessionPreviewState.
+	const sessionPreviewState: SessionPreviewState = deps.sessionPreviewState ?? new Map()
 
 	app.get('/health', async (c) => {
 		// `ok` must track msb liveness — a box whose `msb` is missing or broken
@@ -687,21 +725,40 @@ export function buildApp(deps: AppDeps): Hono {
 			})
 		}
 
-		const relay = await establishPreviewPortRelay(
-			id,
-			guestPort,
-			deps.env.AGENT_SERVER_SSH_KEY_PATH,
-			deps.msb,
-		)
+		// Coalesce concurrent requests for the same port onto one in-flight
+		// attempt instead of racing two establishPreviewPortRelay calls — see
+		// SessionPreviewState.pendingRelays' doc comment for why this matters
+		// (the guest-side watcher's 2s poll loop makes the race a real,
+		// frequently-hit case, not a theoretical one).
+		let pending = state.pendingRelays.get(guestPort)
+		if (!pending) {
+			pending = establishPreviewPortRelay(
+				id,
+				guestPort,
+				deps.env.AGENT_SERVER_SSH_KEY_PATH,
+				deps.msb,
+			)
+			state.pendingRelays.set(guestPort, pending)
+			void pending.finally(() => state.pendingRelays.delete(guestPort))
+		}
+		const relay = await pending
 		if (!relay) {
+			logger.warn('dynamic preview port relay failed to establish', {
+				sessionId: id,
+				guestPort,
+			})
 			return c.json({ error: 'relay_failed' }, 502)
 		}
-		state.previewRelays.push(relay)
-		logger.info('dynamic preview port relay established', {
-			sessionId: id,
-			guestPort,
-			relayPort: relay.relayPort,
-		})
+		// A second/third caller that awaited the same `pending` promise above
+		// would otherwise push this exact relay onto previewRelays again.
+		if (!state.previewRelays.includes(relay)) {
+			state.previewRelays.push(relay)
+			logger.info('dynamic preview port relay established', {
+				sessionId: id,
+				guestPort,
+				relayPort: relay.relayPort,
+			})
+		}
 		return c.json(
 			{ guestPort, previewUrl: `http://${agentServerInternalHost}:${relay.relayPort}` },
 			201,
@@ -845,7 +902,11 @@ export function buildApp(deps: AppDeps): Hono {
 		// doc comment above for why this array reference is also what
 		// monitorSession tears down at session end.
 		if (browserSidecar) {
-			sessionPreviewState.set(body.sessionId, { browserSidecar, previewRelays })
+			sessionPreviewState.set(body.sessionId, {
+				browserSidecar,
+				previewRelays,
+				pendingRelays: new Map(),
+			})
 		}
 		try {
 			let result: Awaited<ReturnType<typeof spawnSession>>
@@ -1092,6 +1153,13 @@ export type ReconcileOnBootDeps = {
 	msb: MicrosandboxDeps
 	sessionLogRouters: Map<string, (line: string) => void>
 	sessionExitCodes: Map<string, number>
+	/**
+	 * Same map buildApp's `POST /sessions/:id/preview-ports` route reads from
+	 * — see AppDeps.sessionPreviewState. Omitted → a session reattached below
+	 * that has a browser sidecar never gets an entry, so that route 404s for
+	 * it for the rest of its lifetime post-restart.
+	 */
+	sessionPreviewState?: SessionPreviewState
 	fetchImpl?: typeof fetch
 }
 
@@ -1229,6 +1297,23 @@ export async function reconcileOnBoot(deps: ReconcileOnBootDeps): Promise<void> 
 			: null
 		if (browserSidecar) browserSidecarNames.delete(sidecarName)
 
+		// Reattach into the SAME sessionPreviewState map POST
+		// /sessions/:id/preview-ports reads from — without this, a reattached
+		// session's guest-side port watcher (still polling from before the
+		// restart) gets a permanent 404 from that route, silently disabling
+		// dynamic preview relay for the rest of the session even though the
+		// sidecar itself is alive. Empty on reattach: any relay opened before
+		// the restart lived in the old process's memory only and is gone with
+		// it — the watcher will simply re-report the port and get a fresh relay.
+		const previewRelays: SshRelay[] = []
+		if (browserSidecar) {
+			deps.sessionPreviewState?.set(name, {
+				browserSidecar,
+				previewRelays,
+				pendingRelays: new Map(),
+			})
+		}
+
 		void monitorSession(
 			name,
 			sessionDir,
@@ -1239,12 +1324,18 @@ export async function reconcileOnBoot(deps: ReconcileOnBootDeps): Promise<void> 
 			deps.sessionLogRouters,
 			deps.sessionExitCodes,
 			browserSidecar,
-		).catch((err) => {
-			logger.error('reconcile-on-boot: reattached monitorSession crashed', {
-				sessionId: name,
-				error: String(err),
+			previewRelays,
+		)
+			.catch((err) => {
+				logger.error('reconcile-on-boot: reattached monitorSession crashed', {
+					sessionId: name,
+					error: String(err),
+				})
+				for (const relay of previewRelays) relay.stop()
 			})
-		})
+			.finally(() => {
+				deps.sessionPreviewState?.delete(name)
+			})
 	}
 
 	// Any browser sidecar left unmatched belongs to a session that's either an
@@ -1317,9 +1408,11 @@ async function main(): Promise<void> {
 
 	// Created here (rather than inside buildApp) so the boot-time reconcile
 	// pass below can reattach monitorSession into the same maps the HTTP
-	// handlers read from — see AppDeps.sessionLogRouters/sessionExitCodes.
+	// handlers read from — see
+	// AppDeps.sessionLogRouters/sessionExitCodes/sessionPreviewState.
 	const sessionLogRouters = new Map<string, (line: string) => void>()
 	const sessionExitCodes = new Map<string, number>()
+	const sessionPreviewState: SessionPreviewState = new Map()
 	const drainState = { draining: false }
 	// Starts false so POST /sessions 503s until reconcileOnBoot below finishes —
 	// see AppDeps.readyState for why that gate has to be closed before any new
@@ -1333,6 +1426,7 @@ async function main(): Promise<void> {
 		warmer,
 		sessionLogRouters,
 		sessionExitCodes,
+		sessionPreviewState,
 		drainState,
 		readyState,
 	})
@@ -1347,7 +1441,14 @@ async function main(): Promise<void> {
 	// `.finally` flips it whether reconcile succeeded, failed, or no-opped
 	// (AGENT_SERVER_ID/MASKIN_BASE_URL unset), so a box is never stuck
 	// rejecting sessions forever.
-	void reconcileOnBoot({ env, storage, msb, sessionLogRouters, sessionExitCodes })
+	void reconcileOnBoot({
+		env,
+		storage,
+		msb,
+		sessionLogRouters,
+		sessionExitCodes,
+		sessionPreviewState,
+	})
 		.catch((err) => {
 			logger.error('reconcile-on-boot failed unexpectedly', { error: String(err) })
 		})

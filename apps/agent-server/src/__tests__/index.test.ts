@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
 	FORCED_STOP_EXIT_CODE,
 	SESSION_EXIT_CODE_SENTINEL_TTL_MS,
+	type SessionPreviewState,
 	buildApp,
 	reconcileOnBoot,
 } from '../index'
@@ -1066,6 +1067,86 @@ describe('POST /sessions browserRequired wiring', () => {
 			})
 			expect(res.status).toBe(502)
 		})
+
+		it('coalesces two concurrent requests for the same port into a single relay instead of racing two', async () => {
+			// Regression coverage: the idempotency check (state.previewRelays.find)
+			// is synchronous, but establishing a relay is a multi-await async round
+			// trip — two requests for the same port that land before the first
+			// resolves used to each call establishPreviewPortRelay independently,
+			// opening two relays onto the same guest port (wasting a slot out of
+			// the fixed range and breaking the idempotency guarantee, since the
+			// two callers could get different previewUrls). The guest-side
+			// watcher's own 2s poll loop makes this a realistic, not merely
+			// theoretical, race — see preview-port-watcher.js's inFlight guard,
+			// added alongside this server-side fix as defense in depth.
+			const { run, cdpPollReady, tcpPollReady } = makeSidecarAwareRunner()
+			const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+			let findPortInRangeCalls = 0
+			let releaseGate: (() => void) | undefined
+			const gate = new Promise<void>((resolve) => {
+				releaseGate = resolve
+			})
+			const app = buildApp({
+				env,
+				storage: null,
+				msb: {
+					msbBin: '/usr/local/bin/msb',
+					run,
+					sleep: async () => {},
+					now: () => 0,
+					findPort: makePortAllocator(39222),
+					// Gated so both concurrent requests below are guaranteed to reach
+					// the route's pendingRelays check before either's relay attempt
+					// resolves — a real race, not one that depends on incidental
+					// microtask ordering.
+					findPortInRange: async () => {
+						findPortInRangeCalls++
+						await gate
+						return 4100
+					},
+					cdpPollReady,
+					tcpPollReady,
+				},
+			})
+			await app.request('/sessions', {
+				method: 'POST',
+				headers: {
+					'content-type': 'application/json',
+					authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+				},
+				body: JSON.stringify({
+					sessionId: 'sess-race',
+					image: 'maskin/agent-base:latest',
+					env: {},
+					browserRequired: true,
+				}),
+			})
+
+			const req1 = app.request('/sessions/sess-race/preview-ports', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ guestPort: 5173 }),
+			})
+			const req2 = app.request('/sessions/sess-race/preview-ports', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ guestPort: 5173 }),
+			})
+			// Let both requests reach and call findPortInRange before releasing it.
+			await new Promise((r) => setTimeout(r, 10))
+			releaseGate?.()
+
+			const [res1, res2] = await Promise.all([req1, req2])
+			expect(res1.status).toBe(201)
+			expect(res2.status).toBe(201)
+			const body1 = (await res1.json()) as { previewUrl: string }
+			const body2 = (await res2.json()) as { previewUrl: string }
+			// Same relay for both — proves only one establishPreviewPortRelay
+			// attempt actually ran; the second request coalesced onto it instead
+			// of opening its own relay onto the same guest port.
+			expect(body1.previewUrl).toBe(body2.previewUrl)
+			expect(findPortInRangeCalls).toBe(1)
+		})
 	})
 })
 
@@ -1607,6 +1688,68 @@ describe('reconcileOnBoot', () => {
 		// reattached rather than force-removed as an unmatched orphan sidecar.
 		expect(calls.find((c) => c.args[0] === 'remove')).toBeUndefined()
 		expect(sessionLogRouters.has('sess-claimed')).toBe(true)
+	})
+
+	it('reattaches a claimed session sidecar into sessionPreviewState so POST /sessions/:id/preview-ports works after a restart', async () => {
+		// Regression coverage: reconcileOnBoot used to reattach monitorSession
+		// (and sessionLogRouters/sessionExitCodes) for a session that survived a
+		// restart, but never wrote into sessionPreviewState — so a session with
+		// a live, reattached browser sidecar would get a permanent 404 from
+		// POST /sessions/:id/preview-ports for the rest of its lifetime, with no
+		// error surfaced anywhere. This drives the fix end-to-end: build the app
+		// and call reconcileOnBoot against the SAME sessionPreviewState map (the
+		// way main() wires them together), then hit the route through the app.
+		const { run } = makeReconcileRunner([
+			{ name: 'sess-restarted', status: 'Running' },
+			{ name: 'anko-browser-sess-restarted', status: 'Running' },
+		])
+		const env = makeEnv({
+			AGENT_SESSION_ROOT: sessionRoot,
+			MASKIN_BASE_URL: 'http://maskin.test',
+			AGENT_SERVER_ID: '123e4567-e89b-12d3-a456-426614174000',
+		})
+		const fetchImpl = vi.fn(async (_url: string, _init: RequestInit) => ({
+			ok: true,
+			json: async () => ({ marked_failed: [], orphan_sandboxes: [] }),
+		}))
+		const msb = {
+			msbBin: '/usr/local/bin/msb',
+			run,
+			findPort: (() => {
+				let next = 39222
+				return async () => next++
+			})(),
+			findPortInRange: (() => {
+				let next = 4200
+				return async () => next++
+			})(),
+			cdpPollReady: async () => {},
+			tcpPollReady: async () => {},
+		}
+		const sessionPreviewState: SessionPreviewState = new Map()
+		const app = buildApp({ env, storage: null, msb, sessionPreviewState })
+
+		await reconcileOnBoot({
+			env,
+			storage: null,
+			msb,
+			sessionLogRouters: new Map(),
+			sessionExitCodes: new Map(),
+			sessionPreviewState,
+			fetchImpl: fetchImpl as unknown as typeof fetch,
+		})
+
+		// No bearer token — this route is VM-facing, same trust model as /complete.
+		const res = await app.request('/sessions/sess-restarted/preview-ports', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ guestPort: 5173 }),
+		})
+		expect(res.status).toBe(201)
+		expect(await res.json()).toEqual({
+			guestPort: 5173,
+			previewUrl: 'http://host.microsandbox.internal:4200',
+		})
 	})
 
 	it('removes a browser sidecar directly when its owning session no longer exists', async () => {
