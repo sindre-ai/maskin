@@ -28,7 +28,7 @@ export function SidebarActivity({ workspaceId }: { workspaceId: string }) {
 	if (agents.length === 0) {
 		return (
 			<SidebarGroup data-testid="sidebar-activity" className="group-data-[collapsible=icon]:hidden">
-				<SidebarGroupLabel>Activity</SidebarGroupLabel>
+				<SidebarGroupLabel>Live agents</SidebarGroupLabel>
 				<SidebarGroupContent>
 					<SidebarMenu>
 						<SidebarMenuItem>
@@ -49,7 +49,7 @@ export function SidebarActivity({ workspaceId }: { workspaceId: string }) {
 
 	return (
 		<SidebarGroup data-testid="sidebar-activity" className="group-data-[collapsible=icon]:hidden">
-			<SidebarGroupLabel>Activity</SidebarGroupLabel>
+			<SidebarGroupLabel>Live agents</SidebarGroupLabel>
 			<SidebarGroupContent>
 				<SidebarMenu>
 					{visibleAgents.map((agent) => (
@@ -104,7 +104,7 @@ function SidebarActivityLoading() {
 			data-testid="sidebar-activity-loading"
 			className="group-data-[collapsible=icon]:hidden"
 		>
-			<SidebarGroupLabel>Activity</SidebarGroupLabel>
+			<SidebarGroupLabel>Live agents</SidebarGroupLabel>
 			<SidebarGroupContent>
 				<SidebarMenu>
 					{Array.from({ length: 3 }).map((_, i) => (
