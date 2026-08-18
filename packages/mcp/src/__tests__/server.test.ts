@@ -3551,6 +3551,84 @@ describe('tool handlers', () => {
 			expect(obj && 'connectedLoops' in obj).toBe(false)
 		})
 
+		it('list_actors caps connectedTriggers/connectedLoops at 20 per actor (MAX_CONNECTED_LINKS_PER_ACTOR)', async () => {
+			const manyTriggers = Array.from({ length: 25 }, (_, i) => ({
+				id: `t-${i}`,
+				name: `Trigger ${i}`,
+				targetActorId: 'a-1',
+			}))
+			const manyLoops = Array.from({ length: 25 }, (_, i) => ({
+				id: `l-${i}`,
+				name: `Loop ${i}`,
+				agentIds: ['a-1'],
+			}))
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/actors')) {
+					return {
+						ok: true,
+						headers: new Headers({ 'X-Total-Count': '1' }),
+						json: () => Promise.resolve([{ id: 'a-1', type: 'agent', name: 'Architect' }]),
+					} as Response
+				}
+				if (urlStr.includes('/api/triggers')) {
+					return { ok: true, json: () => Promise.resolve(manyTriggers) } as Response
+				}
+				if (urlStr.includes('/api/loops')) {
+					return { ok: true, json: () => Promise.resolve({ loops: manyLoops }) } as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+			const handler = getHandler('list_actors')
+			const result = (await handler({ workspace_id: 'ws-1' })) as {
+				structuredContent: {
+					heroCard: {
+						object?: { connectedTriggers?: unknown[]; connectedLoops?: unknown[] }
+					}
+				}
+			}
+			const obj = result.structuredContent.heroCard.object
+			expect(obj?.connectedTriggers).toHaveLength(20)
+			expect(obj?.connectedLoops).toHaveLength(20)
+		})
+
+		it('list_actors still succeeds with links omitted when /api/triggers and /api/loops fail independently', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/actors')) {
+					return {
+						ok: true,
+						headers: new Headers({ 'X-Total-Count': '1' }),
+						json: () => Promise.resolve([{ id: 'a-1', type: 'agent', name: 'Architect' }]),
+					} as Response
+				}
+				// Triggers lookup fails outright...
+				if (urlStr.includes('/api/triggers')) {
+					throw new Error('triggers service unavailable')
+				}
+				// ...while loops resolves fine, proving one failing doesn't affect the other.
+				if (urlStr.includes('/api/loops')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve({ loops: [{ id: 'l-1', name: 'Architecture review', agentIds: ['a-1'] }] }),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+			const handler = getHandler('list_actors')
+			const result = (await handler({ workspace_id: 'ws-1' })) as {
+				structuredContent: {
+					heroCard: {
+						object?: { connectedTriggers?: unknown; connectedLoops?: Array<{ name: string }> }
+					}
+				}
+			}
+			const obj = result.structuredContent.heroCard.object
+			expect(obj && 'connectedTriggers' in obj).toBe(false)
+			expect(obj?.connectedLoops).toEqual([{ name: 'Architecture review' }])
+		})
+
 		it('emits a single heroCard for get_actor', async () => {
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
 				const urlStr = url as string

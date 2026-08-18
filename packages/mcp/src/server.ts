@@ -1747,9 +1747,15 @@ async function resolveActors(
 	return out
 }
 
-// Bounds each actor's connected-triggers/loops arrays so a heavily-wired
-// agent can't blow up list_actors' response — list_actors carries no
-// token-cap trimming (see the exclusion comment in response-cap.ts).
+// Bounds each actor's connected-triggers/loops arrays, so one heavily-wired
+// actor doesn't dominate the list. This is a per-actor cap only, not a
+// total-response cap — list_actors carries no token-cap trimming (see the
+// exclusion comment in response-cap.ts), so a page of many heavily-wired
+// actors is still uncapped in aggregate. Deliberately left that way: real
+// workspaces don't approach the row/link counts needed to threaten the
+// token ceiling, and adding list_actors to response-cap.ts's trimming would
+// need its own recovery story (no natural per-row fetch-by-id boundary the
+// way list_objects has get_objects).
 const MAX_CONNECTED_LINKS_PER_ACTOR = 20
 
 interface ActorLinks {
@@ -1774,14 +1780,26 @@ function pushLink(map: Map<string, HeroCardLink[]>, actorId: string, link: HeroC
  * (`apps/dev/src/routes/loops.ts`). Both endpoints return every workspace row
  * when called without a `limit`/`id` filter, so this is two requests total
  * regardless of how many actors are on the current page — not an N+1 over
- * the actors being listed. Failures are swallowed (mirrors `resolveActors`)
- * so a triggers/loops outage degrades to missing links, not a failed call.
+ * the actors being listed. The two requests run concurrently (no data
+ * dependency between them) and each has its own try/catch, so one failing
+ * doesn't affect the other and neither failure fails `list_actors` itself
+ * (mirrors `resolveActors`) — a triggers/loops outage just degrades to
+ * missing links.
  */
 async function resolveActorLinks(config: McpConfig, workspaceId: string): Promise<ActorLinks> {
-	const triggersByActor = new Map<string, HeroCardLink[]>()
-	const loopsByActor = new Map<string, HeroCardLink[]>()
-	const baseUrl = config.webAppBaseUrl ? stripTrailingSlash(config.webAppBaseUrl) : null
+	const [triggersByActor, loopsByActor] = await Promise.all([
+		resolveTriggerLinks(config, workspaceId),
+		resolveLoopLinks(config, workspaceId),
+	])
+	return { triggersByActor, loopsByActor }
+}
 
+async function resolveTriggerLinks(
+	config: McpConfig,
+	workspaceId: string,
+): Promise<Map<string, HeroCardLink[]>> {
+	const triggersByActor = new Map<string, HeroCardLink[]>()
+	const baseUrl = config.webAppBaseUrl ? stripTrailingSlash(config.webAppBaseUrl) : null
 	try {
 		const rawTriggers = (await apiCall(config, 'GET', '/api/triggers', undefined, {
 			workspaceId,
@@ -1799,7 +1817,15 @@ async function resolveActorLinks(config: McpConfig, workspaceId: string): Promis
 	} catch (err) {
 		console.error('[MCP] Failed to resolve connected triggers for list_actors:', err)
 	}
+	return triggersByActor
+}
 
+async function resolveLoopLinks(
+	config: McpConfig,
+	workspaceId: string,
+): Promise<Map<string, HeroCardLink[]>> {
+	const loopsByActor = new Map<string, HeroCardLink[]>()
+	const baseUrl = config.webAppBaseUrl ? stripTrailingSlash(config.webAppBaseUrl) : null
 	try {
 		const rawLoops = (await apiCall(config, 'GET', '/api/loops', undefined, {
 			workspaceId,
@@ -1818,8 +1844,7 @@ async function resolveActorLinks(config: McpConfig, workspaceId: string): Promis
 	} catch (err) {
 		console.error('[MCP] Failed to resolve connected loops for list_actors:', err)
 	}
-
-	return { triggersByActor, loopsByActor }
+	return loopsByActor
 }
 
 function loadHtml(config: McpConfig, filename: string): string {
