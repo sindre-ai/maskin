@@ -1579,7 +1579,9 @@ function buildWorkspaceHeroCardObject(workspace: RawWorkspace): HeroCardObject {
 		type: 'workspace',
 		title: workspace.name ?? null,
 		status: workspace.role ?? 'active',
-		driver: null,
+		// Workspaces don't have a "driver" — that field is for objects (bet/
+		// task/insight) owned/driven by an actor. Omitted rather than null so
+		// it doesn't show up in the response at all (mirrors actor cards).
 		contextLine: buildWorkspaceContextLine(workspace),
 	}
 }
