@@ -83,6 +83,11 @@ class SkillNameConflictError extends Error {
 const installLoopBodySchema = z.object({
 	loopId: z.string().uuid(),
 	workspaceId: z.string().uuid(),
+	// Which marketplace surface started the install. Only the detail view sends
+	// `'detail'` — the catalog surface omits it, keeping the two populations
+	// distinguishable on `loop_installed`. Never derived server-side from any
+	// layout/URL heuristic; it is set exclusively at the detail call site.
+	source: z.enum(['detail']).optional(),
 })
 
 const listInstalledLoopsQuerySchema = z.object({
@@ -209,9 +214,9 @@ app.openapi(listInstalledLoopsRoute, async (c) => {
 // in packages/db/src/schema.ts. `metadata.trigger_ids` is seeded with every
 // trigger this install provisions so `GET /api/loops` picks up the right
 // agents (it derives `agentIds` from each trigger's `targetActorId`).
-// `entry_condition` / `close_condition` are deliberately left unset — a
-// marketplace install has no authored pipeline definition, only the running
-// process.
+// `entry_condition` / `close_condition` / `human_decision_points` are
+// deliberately left unset — a marketplace install has no authored pipeline
+// definition, only the running process.
 const installLoopRoute = createRoute({
 	method: 'post',
 	path: '/',
@@ -254,7 +259,7 @@ app.openapi(installLoopRoute, async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const agentStorage = c.get('agentStorage')
-	const { loopId, workspaceId } = c.req.valid('json')
+	const { loopId, workspaceId, source } = c.req.valid('json')
 
 	// 1. Caller must belong to the target workspace. We check resource-scoped
 	//    membership here rather than via the workspace-id header because the
@@ -511,11 +516,7 @@ app.openapi(installLoopRoute, async (c) => {
 					type: 'loop',
 					title: loop.name,
 					content: loop.description,
-					// Marketplace templates are pre-vetted, but the loop is still new to
-					// this workspace's data — start it at `learning` rather than
-					// `fully_autonomous` so its first runs get a look before it's fully
-					// trusted here.
-					status: 'learning',
+					status: 'running',
 					createdBy: actorId,
 					metadata: {
 						installed_from_marketplace_loop_id: loopId,
@@ -600,6 +601,7 @@ app.openapi(installLoopRoute, async (c) => {
 		workspaceId,
 		actorId,
 		provisioned,
+		source,
 	})
 
 	return c.json(
