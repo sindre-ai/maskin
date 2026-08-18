@@ -1,8 +1,9 @@
 import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
-// v2 Object detail gate (mockup 1029–1502). The page bar carries the
-// breadcrumb, a Properties toggle and the overflow menu; the drawer it opens
+// v2 Object detail gate (mockup 1029–1502). The page bar carries a Properties
+// toggle and the overflow menu — the shared nav row owns the breadcrumb chain
+// for detail routes; the drawer the toggle opens
 // holds driver / status / custom fields / subscribed / files. Below the
 // document, one Activity heading with a Timeline | Related segmented control,
 // and a composer pinned to the bottom of the scroll region.

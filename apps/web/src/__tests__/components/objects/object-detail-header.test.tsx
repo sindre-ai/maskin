@@ -45,11 +45,13 @@ const baseProps = {
 }
 
 describe('ObjectDetailHeader', () => {
-	it('renders breadcrumb with Objects link and object title', () => {
+	// The shared nav row owns the `Objects › <name>` chain for detail routes, so
+	// the in-page bar carries actions only — two breadcrumbs would compete.
+	it('renders no breadcrumb of its own', () => {
 		const object = buildObjectResponse({ title: 'My Bet' })
 		render(<ObjectDetailHeader {...baseProps} object={object} />, { wrapper: makeWrapper() })
-		expect(screen.getByRole('link', { name: 'Objects' })).toHaveAttribute('href')
-		expect(screen.getByText('My Bet')).toBeInTheDocument()
+		expect(screen.queryByRole('link', { name: 'Objects' })).toBeNull()
+		expect(screen.queryByText('My Bet')).toBeNull()
 	})
 
 	it('renders the properties toggle when the host wires it', async () => {

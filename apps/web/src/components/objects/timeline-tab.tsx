@@ -12,7 +12,7 @@ import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { OBJECT_DIFF_FIELDS, findChange, getChangesFromEventData } from '@maskin/shared'
 import { formatEventDescription } from '@maskin/shared'
-import { ArrowDown } from 'lucide-react'
+import { ArrowDown, ChevronDown } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 /**
@@ -39,6 +39,47 @@ type TimelineEntry =
 			newStatus: string | null
 			reference?: { verb: string; objectId: string; object?: ObjectResponse }
 	  }
+
+/** A collapsed run of low-signal rows (mockup 1205–1219). */
+interface TimelineFold {
+	kind: 'fold'
+	key: string
+	rows: TimelineEntry[]
+}
+
+type StreamRow = TimelineEntry | TimelineFold
+
+/** A run of this many consecutive low-signal rows collapses behind one pill. */
+const FOLD_MIN_RUN = 4
+
+/**
+ * Collapse consecutive runs of routine machine chatter — plain updates, session
+ * rows, link rows — into a single fold. Comments and status changes are the
+ * spine of the story and are never folded, so the unread divider's target and
+ * every phase boundary stay reachable.
+ */
+function foldRuns(entries: TimelineEntry[]): StreamRow[] {
+	const out: StreamRow[] = []
+	let run: TimelineEntry[] = []
+	const flush = () => {
+		if (run.length === 0) return
+		if (run.length >= FOLD_MIN_RUN) {
+			out.push({ kind: 'fold', key: `fold-${run[0]?.key}`, rows: run })
+		} else {
+			out.push(...run)
+		}
+		run = []
+	}
+	for (const entry of entries) {
+		if (entry.kind === 'event' && !entry.isStatusChange) run.push(entry)
+		else {
+			flush()
+			out.push(entry)
+		}
+	}
+	flush()
+	return out
+}
 
 type ChipTone = 'status' | 'session' | 'link' | 'update' | 'created' | 'signal'
 
@@ -322,6 +363,18 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 
 	const showPhases = filter === 'all' && phases.length > 1
 
+	// Expanded folds, keyed by the fold's first row. Transient — a fold is a
+	// reading affordance, not view state worth persisting.
+	const [expandedFolds, setExpandedFolds] = useState<ReadonlySet<string>>(new Set())
+	const toggleFold = (key: string) => {
+		setExpandedFolds((prev) => {
+			const next = new Set(prev)
+			if (next.has(key)) next.delete(key)
+			else next.add(key)
+			return next
+		})
+	}
+
 	const renderEntry = (entry: TimelineEntry) => {
 		const divider =
 			showUnreadDivider && entry.kind === 'comment' && entry.event.id === firstUnreadId ? (
@@ -341,6 +394,37 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 				) : (
 					<EventRow entry={entry} actorsById={actorsById} workspaceId={workspaceId} />
 				)}
+			</li>
+		)
+	}
+
+	const renderRow = (row: StreamRow) => {
+		if (row.kind !== 'fold') return renderEntry(row)
+		const open = expandedFolds.has(row.key)
+		return (
+			<li key={row.key} className="list-none">
+				<div className="relative py-1 pl-9">
+					<span
+						aria-hidden="true"
+						className="absolute left-[3px] top-3 size-[7px] rounded-full bg-border"
+					/>
+					<button
+						type="button"
+						aria-expanded={open}
+						onClick={() => toggleFold(row.key)}
+						className="inline-flex h-[26px] items-center gap-2 rounded-full border border-dashed border-border px-3 transition-colors hover:border-border-strong hover:bg-muted/40"
+					>
+						<span className="text-[11.5px] font-semibold text-muted-foreground">
+							{open ? 'Hide' : `${row.rows.length} more updates`}
+						</span>
+						<ChevronDown
+							size={10}
+							aria-hidden="true"
+							className={cn('text-muted-foreground transition-transform', open && 'rotate-180')}
+						/>
+					</button>
+				</div>
+				{open && <ol className="m-0 list-none p-0">{row.rows.map(renderEntry)}</ol>}
 			</li>
 		)
 	}
@@ -417,13 +501,13 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 										onToggle={() => togglePhase(phase.key)}
 									/>
 									{!collapsed && (
-										<ol className="m-0 list-none p-0">{phase.rows.map(renderEntry)}</ol>
+										<ol className="m-0 list-none p-0">{foldRuns(phase.rows).map(renderRow)}</ol>
 									)}
 								</div>
 							)
 						})
 					) : (
-						<ol className="m-0 list-none p-0">{visible.map(renderEntry)}</ol>
+						<ol className="m-0 list-none p-0">{foldRuns(visible).map(renderRow)}</ol>
 					)}
 				</div>
 			)}

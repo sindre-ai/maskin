@@ -48,10 +48,7 @@ export function ItemCard({ workspaceId, item, install, installedEntity }: ItemCa
 				</span>
 				<div className="min-w-0 flex-1">
 					<h3 className="truncate text-[13.5px] font-bold text-foreground">{name}</h3>
-					<div
-						className={cn(KIND_LABEL_BASE, 'mt-0.5', KIND_LABEL_CLASS[item.item_type])}
-						data-testid="item-card-kind"
-					>
+					<div className={cn(KIND_LABEL_BASE, 'mt-0.5', KIND_LABEL_CLASS[item.item_type])}>
 						{ITEM_TYPE_LABEL[item.item_type]}
 					</div>
 				</div>

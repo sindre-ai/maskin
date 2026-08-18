@@ -2,8 +2,8 @@ import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 // T1 shell gate — verifies the object-detail hero renders above a static
-// <h1> at each ship-gate viewport (375 / 768 / 1024): breadcrumb with a
-// back-to-Objects link, identity row (type tag, status trigger, driver
+// <h1> at each ship-gate viewport (375 / 768 / 1024): the nav row's
+// back-to-Objects breadcrumb, identity row (type tag, status trigger, driver
 // picker) above the title, overflow menu, and no horizontal scroll. The
 // identity row still hosts [data-hero-status-trigger] so the sticky-nav
 // chip can smooth-scroll here and focus the picker.
@@ -71,14 +71,17 @@ test.describe('Object detail — above-title hero (static shell)', () => {
 					.first(),
 			).toBeVisible()
 
-			// Breadcrumb: the Objects crumb is a link back to the list. At ≥768px
-			// the sidebar nav and the app-bar breadcrumb also render an "Objects"
-			// link, so scope to the shell breadcrumb (the one containing the
-			// current-title crumb) to keep the lookup single-match.
-			const shellBreadcrumb = page
-				.getByRole('navigation', { name: 'breadcrumb' })
-				.filter({ has: page.getByRole('link', { name: HEADER_TITLE }) })
-			await expect(shellBreadcrumb.getByRole('link', { name: 'Objects' })).toBeVisible()
+			// Breadcrumb: the shared nav row owns the `Objects › …` chain for
+			// detail routes; the in-page bar carries actions only. The chain is
+			// hidden below `md:` (see layout/header.tsx), so only assert it where
+			// it renders.
+			if (vp.width >= 768) {
+				await expect(
+					page.getByRole('navigation', { name: 'breadcrumb' }).getByRole('link', {
+						name: 'Objects',
+					}),
+				).toBeVisible()
+			}
 
 			// Overflow menu hosts the actions (Archive + Delete for bets).
 			const overflow = page.getByRole('button', { name: /more actions/i })

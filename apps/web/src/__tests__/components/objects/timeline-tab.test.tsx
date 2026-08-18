@@ -333,4 +333,59 @@ describe('TimelineTab', () => {
 
 		expect(screen.getAllByRole('listitem')).toHaveLength(2)
 	})
+	// Mockup 1205–1219: a run of routine machine chatter collapses behind one
+	// dashed pill; comments and status changes are never folded away.
+	it('folds a run of routine updates and expands it in place', async () => {
+		const user = userEvent.setup()
+		const object = buildObjectResponse({ id: 'obj-1', type: 'bet' })
+		mockGraph(
+			Array.from({ length: 5 }, (_, i) =>
+				buildEventResponse({
+					id: 10 + i,
+					action: 'updated',
+					entityType: 'bet',
+					entityId: 'obj-1',
+					actorId: 'actor-1',
+					createdAt: `2026-01-0${i + 1}T00:00:00Z`,
+				}),
+			),
+			[],
+			[],
+			object,
+		)
+
+		render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
+
+		expect(screen.queryByRole('listitem')).not.toBeNull()
+		const fold = screen.getByRole('button', { name: /5 more updates/ })
+		expect(fold).toHaveAttribute('aria-expanded', 'false')
+
+		await user.click(fold)
+		expect(screen.getByRole('button', { name: /Hide/ })).toHaveAttribute('aria-expanded', 'true')
+		expect(screen.getAllByText('Update')).toHaveLength(5)
+	})
+
+	it('leaves short runs unfolded', () => {
+		const object = buildObjectResponse({ id: 'obj-1', type: 'bet' })
+		mockGraph(
+			Array.from({ length: 3 }, (_, i) =>
+				buildEventResponse({
+					id: 20 + i,
+					action: 'updated',
+					entityType: 'bet',
+					entityId: 'obj-1',
+					actorId: 'actor-1',
+					createdAt: `2026-02-0${i + 1}T00:00:00Z`,
+				}),
+			),
+			[],
+			[],
+			object,
+		)
+
+		render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
+
+		expect(screen.queryByRole('button', { name: /more updates/ })).toBeNull()
+		expect(screen.getAllByText('Update')).toHaveLength(3)
+	})
 })

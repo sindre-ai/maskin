@@ -1,14 +1,5 @@
-import {
-	Breadcrumb,
-	BreadcrumbItem,
-	BreadcrumbLink,
-	BreadcrumbList,
-	BreadcrumbPage,
-	BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb'
 import { Button } from '@/components/ui/button'
 import type { MemberResponse, ObjectResponse } from '@/lib/api'
-import { Link } from '@tanstack/react-router'
 import { PanelRight } from 'lucide-react'
 import { useState } from 'react'
 import { TypeBadge } from '../shared/type-badge'
@@ -31,9 +22,15 @@ interface ObjectDetailHeaderProps {
 }
 
 /**
- * The page-level bar above the document (mockup 1033–1039): breadcrumb on the
- * left, properties toggle + overflow menu right-aligned, one hairline rule
- * underneath. The document scrolls in its own region below it.
+ * The page-level bar above the document (mockup 1033–1039): the properties
+ * toggle and overflow menu, right-aligned over one hairline rule. The document
+ * scrolls in its own region below it.
+ *
+ * The mockup puts an `Objects › <name>` crumb at the left of this bar, but the
+ * shared nav row already renders that chain for detail routes
+ * (`layout/header.tsx`'s `routeConfig`). Two competing breadcrumbs is worse
+ * than one in the "wrong" place, so the nav keeps the chain and this bar
+ * carries actions only — which is also why this route publishes no `title`.
  */
 export function ObjectDetailHeader({
 	object,
@@ -50,38 +47,7 @@ export function ObjectDetailHeader({
 	const [menuOpen, setMenuOpen] = useState(false)
 
 	return (
-		<div className="flex flex-none flex-wrap items-center gap-2 border-b border-border pb-3">
-			<Breadcrumb className="min-w-0 flex-1">
-				<BreadcrumbList className="flex-nowrap">
-					<BreadcrumbItem className="shrink-0">
-						<BreadcrumbLink asChild>
-							<Link
-								to="/$workspaceId/objects"
-								params={{ workspaceId }}
-								search={{
-									type: undefined,
-									status: undefined,
-									driver: undefined,
-									filterBy: undefined,
-									attention: undefined,
-									sort: 'createdAt',
-									order: 'desc',
-									q: undefined,
-									groupBy: undefined,
-									ids: undefined,
-									includeArchived: undefined,
-								}}
-							>
-								Objects
-							</Link>
-						</BreadcrumbLink>
-					</BreadcrumbItem>
-					<BreadcrumbSeparator />
-					<BreadcrumbItem className="min-w-0">
-						<BreadcrumbPage className="truncate">{object.title ?? 'Untitled'}</BreadcrumbPage>
-					</BreadcrumbItem>
-				</BreadcrumbList>
-			</Breadcrumb>
+		<div className="flex flex-none flex-wrap items-center justify-end gap-2 border-b border-border pb-3">
 			{onTogglePropertiesRequest && (
 				<Button
 					variant="outline"

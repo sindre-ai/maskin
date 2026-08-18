@@ -311,7 +311,7 @@ function SearchView() {
 							onChange={(group) => updateSearch({ group })}
 							className="min-w-0 max-sm:[&>button]:min-h-11"
 						/>
-						<p className="ml-auto shrink-0 text-[11.5px] text-muted-foreground">
+						<p className="ml-auto min-w-0 max-w-full truncate text-[11.5px] text-muted-foreground">
 							{visibleCount} result{visibleCount === 1 ? '' : 's'} for{' '}
 							<strong className="font-semibold text-foreground">"{query}"</strong>
 						</p>
