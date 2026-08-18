@@ -1249,14 +1249,14 @@ export const tools = {
 						.boolean()
 						.optional()
 						.describe(
-							'Provision a Chromium CDP browser sidecar and inject BROWSER_CDP_URL so a playwright MCP server can attach. Auto-enabled when the actor already has an MCP server referencing ${BROWSER_CDP_URL} — set explicitly only when you also need previewGuestPorts.',
+							'Provision a Chromium CDP browser sidecar and inject BROWSER_CDP_URL so a playwright MCP server can attach. Auto-enabled when the actor already has an MCP server referencing ${BROWSER_CDP_URL}.',
 						),
 					previewGuestPorts: z
 						.array(z.number().int().positive().max(65535))
 						.max(8)
 						.optional()
 						.describe(
-							"Guest port(s) inside the session to publish on the browser sidecar bridge (e.g. 5173 for a Vite dev server), so the sidecar's Playwright can reach a dev server the agent boots locally inside its own session — no external deploy needed. Implies browserRequired.",
+							"Usually unnecessary: once a browser sidecar is attached (see browserRequired), any dev-server port the agent starts on its own inside 3000-12000 (e.g. Vite's default 5173) is detected and relayed automatically — the agent's Playwright tool can reach it directly, and the agent is told the URL automatically. Only set this to pre-declare a port so its relay URL (PREVIEW_URL env var) is available from the very first turn, before the dev server itself has started listening. Implies browserRequired.",
 						),
 				})
 				.optional()

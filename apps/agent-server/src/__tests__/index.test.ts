@@ -823,6 +823,250 @@ describe('POST /sessions browserRequired wiring', () => {
 		// unaffected by the preview-port failure) — session still gets allow@private.
 		expect(sessionCreate?.args).toContain('allow@private')
 	})
+
+	describe('POST /sessions/:id/preview-ports', () => {
+		it('opens a relay on demand for a session with a browser sidecar and returns previewUrl', async () => {
+			const { run, cdpPollReady, tcpPollReady } = makeSidecarAwareRunner()
+			const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+			const app = buildApp({
+				env,
+				storage: null,
+				msb: {
+					msbBin: '/usr/local/bin/msb',
+					run,
+					sleep: async () => {},
+					now: () => 0,
+					findPort: makePortAllocator(39222),
+					findPortInRange: makePortAllocator(3800),
+					cdpPollReady,
+					tcpPollReady,
+				},
+			})
+
+			const createRes = await app.request('/sessions', {
+				method: 'POST',
+				headers: {
+					'content-type': 'application/json',
+					authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+				},
+				body: JSON.stringify({
+					sessionId: 'sess-dynrelay',
+					image: 'maskin/agent-base:latest',
+					env: {},
+					browserRequired: true,
+				}),
+			})
+			expect(createRes.status).toBe(201)
+
+			// No bearer token — this route is VM-facing, same trust model as /complete.
+			const res = await app.request('/sessions/sess-dynrelay/preview-ports', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ guestPort: 5173 }),
+			})
+			expect(res.status).toBe(201)
+			expect(await res.json()).toEqual({
+				guestPort: 5173,
+				previewUrl: 'http://host.microsandbox.internal:3800',
+			})
+		})
+
+		it('is idempotent for a port it already has a relay for, without allocating a second relay', async () => {
+			const { run, cdpPollReady, tcpPollReady } = makeSidecarAwareRunner()
+			const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+			const app = buildApp({
+				env,
+				storage: null,
+				msb: {
+					msbBin: '/usr/local/bin/msb',
+					run,
+					sleep: async () => {},
+					now: () => 0,
+					findPort: makePortAllocator(39222),
+					findPortInRange: makePortAllocator(3900),
+					cdpPollReady,
+					tcpPollReady,
+				},
+			})
+			await app.request('/sessions', {
+				method: 'POST',
+				headers: {
+					'content-type': 'application/json',
+					authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+				},
+				body: JSON.stringify({
+					sessionId: 'sess-idempotent',
+					image: 'maskin/agent-base:latest',
+					env: {},
+					browserRequired: true,
+				}),
+			})
+
+			const first = await app.request('/sessions/sess-idempotent/preview-ports', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ guestPort: 5173 }),
+			})
+			expect(first.status).toBe(201)
+			const firstBody = (await first.json()) as { previewUrl: string }
+
+			const second = await app.request('/sessions/sess-idempotent/preview-ports', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ guestPort: 5173 }),
+			})
+			expect(second.status).toBe(200)
+			const secondBody = (await second.json()) as { previewUrl: string }
+			// Same relay returned — a second call to findPortInRange (which would
+			// yield 3901) must not have happened for the already-relayed port.
+			expect(secondBody.previewUrl).toBe(firstBody.previewUrl)
+		})
+
+		it('returns 404 for a session with no browser sidecar', async () => {
+			const { run, cdpPollReady, tcpPollReady } = makeSidecarAwareRunner()
+			const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+			const app = buildApp({
+				env,
+				storage: null,
+				msb: {
+					msbBin: '/usr/local/bin/msb',
+					run,
+					sleep: async () => {},
+					now: () => 0,
+					findPort: makePortAllocator(39222),
+					cdpPollReady,
+					tcpPollReady,
+				},
+			})
+			await app.request('/sessions', {
+				method: 'POST',
+				headers: {
+					'content-type': 'application/json',
+					authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+				},
+				body: JSON.stringify({
+					sessionId: 'sess-nosidecar',
+					image: 'maskin/agent-base:latest',
+					env: {},
+				}),
+			})
+
+			const res = await app.request('/sessions/sess-nosidecar/preview-ports', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ guestPort: 5173 }),
+			})
+			expect(res.status).toBe(404)
+		})
+
+		it('returns 404 for a session id agent-server has never seen', async () => {
+			const { run } = makeRunner()
+			const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+			const app = buildApp({ env, storage: null, msb: { msbBin: '/usr/local/bin/msb', run } })
+
+			const res = await app.request('/sessions/sess-unknown/preview-ports', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ guestPort: 5173 }),
+			})
+			expect(res.status).toBe(404)
+		})
+
+		it('rejects an invalid session id with 400', async () => {
+			const { run } = makeRunner()
+			const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+			const app = buildApp({ env, storage: null, msb: { msbBin: '/usr/local/bin/msb', run } })
+
+			const res = await app.request('/sessions/-bad/preview-ports', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ guestPort: 5173 }),
+			})
+			expect(res.status).toBe(400)
+		})
+
+		it('rejects a guestPort outside DEV_SERVER_HOST_PORT_RANGE with 400', async () => {
+			const { run, cdpPollReady, tcpPollReady } = makeSidecarAwareRunner()
+			const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+			const app = buildApp({
+				env,
+				storage: null,
+				msb: {
+					msbBin: '/usr/local/bin/msb',
+					run,
+					sleep: async () => {},
+					now: () => 0,
+					findPort: makePortAllocator(39222),
+					cdpPollReady,
+					tcpPollReady,
+				},
+			})
+			await app.request('/sessions', {
+				method: 'POST',
+				headers: {
+					'content-type': 'application/json',
+					authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+				},
+				body: JSON.stringify({
+					sessionId: 'sess-badport',
+					image: 'maskin/agent-base:latest',
+					env: {},
+					browserRequired: true,
+				}),
+			})
+
+			const res = await app.request('/sessions/sess-badport/preview-ports', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ guestPort: 80 }),
+			})
+			expect(res.status).toBe(400)
+		})
+
+		it('returns 502 when the relay fails to establish', async () => {
+			const { run, cdpPollReady } = makeSidecarAwareRunner()
+			const env = makeEnv({ AGENT_SESSION_ROOT: sessionRoot })
+			const app = buildApp({
+				env,
+				storage: null,
+				msb: {
+					msbBin: '/usr/local/bin/msb',
+					run,
+					sleep: async () => {},
+					now: () => 0,
+					findPort: makePortAllocator(39222),
+					findPortInRange: makePortAllocator(3950),
+					cdpPollReady,
+					// SSH-relay readiness always times out — the sidecar's own CDP
+					// readiness (cdpPollReady) is a separate dependency, so the
+					// sidecar itself still provisions successfully.
+					tcpPollReady: async () => {
+						throw new Error('not ready')
+					},
+				},
+			})
+			await app.request('/sessions', {
+				method: 'POST',
+				headers: {
+					'content-type': 'application/json',
+					authorization: `Bearer ${env.AGENT_SERVER_SECRET}`,
+				},
+				body: JSON.stringify({
+					sessionId: 'sess-relayfail',
+					image: 'maskin/agent-base:latest',
+					env: {},
+					browserRequired: true,
+				}),
+			})
+
+			const res = await app.request('/sessions/sess-relayfail/preview-ports', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ guestPort: 5173 }),
+			})
+			expect(res.status).toBe(502)
+		})
+	})
 })
 
 describe('POST /sessions/:id/complete', () => {

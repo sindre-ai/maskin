@@ -1,0 +1,15 @@
+{
+	"hooks": {
+		"FileChanged": [
+			{
+				"matcher": ".preview-ports.json",
+				"hooks": [
+					{
+						"type": "command",
+						"command": "/agent-hooks/preview-ports-changed.sh"
+					}
+				]
+			}
+		]
+	}
+}

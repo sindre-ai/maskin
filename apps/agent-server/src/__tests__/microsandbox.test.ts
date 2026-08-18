@@ -11,6 +11,7 @@ import {
 	cleanupBrowserSidecar,
 	ensureAgentServerSshKey,
 	ensureSessionSkeleton,
+	establishPreviewPortRelay,
 	formatOverflowEnvFile,
 	listSandboxNames,
 	provisionBrowserSidecar,
@@ -959,6 +960,71 @@ describe('startSshRelay', () => {
 				spawnProcess: fakeSpawnProcess(),
 			}),
 		).rejects.toThrow(/Invalid session id/)
+	})
+})
+
+describe('establishPreviewPortRelay', () => {
+	const sshKeyPath = '/root/.agent-server/ssh/relay_key'
+
+	it('resolves a range-bounded relay port and opens a relay into it', async () => {
+		const seenRanges: Array<[number, number]> = []
+		const relay = await establishPreviewPortRelay('sess-dyn1', 5173, sshKeyPath, {
+			msbBin: '/usr/local/bin/msb',
+			run: async () => ({ stdout: '', stderr: '' }),
+			findPortInRange: async (_host: string, rangeStart: number, rangeEnd: number) => {
+				seenRanges.push([rangeStart, rangeEnd])
+				return 3800
+			},
+			findPort: makePortAllocator(40100),
+			tcpPollReady: async () => {},
+			sshBin: '/usr/bin/ssh',
+			spawnProcess: fakeSpawnProcess(),
+		})
+		expect(relay).not.toBeNull()
+		expect(relay?.relayPort).toBe(3800)
+		expect(relay?.targetName).toBe('sess-dyn1')
+		expect(relay?.targetGuestPort).toBe(5173)
+		// establishPreviewPortRelay must draw from the same range the sidecar's
+		// standing grant actually covers — a caller-guessed port outside it
+		// would silently never be reachable.
+		expect(seenRanges).toEqual([[3000, 12000]])
+		relay?.stop()
+	})
+
+	it('releases the port reservation whether the relay succeeds or fails', async () => {
+		const relay = await establishPreviewPortRelay('sess-dyn2', 5173, sshKeyPath, {
+			msbBin: '/usr/local/bin/msb',
+			run: async () => ({ stdout: '', stderr: '' }),
+			findPortInRange: async () => 3801,
+			findPort: makePortAllocator(40200),
+			tcpPollReady: async () => {
+				throw new Error('not ready')
+			},
+			sshBin: '/usr/bin/ssh',
+			spawnProcess: fakeSpawnProcess(),
+		})
+		expect(relay).toBeNull()
+		// Re-resolving the same port must succeed — proof the first attempt's
+		// reservation was actually released rather than leaked as "still held".
+		const result = await resolvePreviewPortMappings([5173], {
+			msbBin: '/usr/local/bin/msb',
+			run: async () => ({ stdout: '', stderr: '' }),
+			findPortInRange: async () => 3801,
+		})
+		expect(result.mappings).toEqual([{ guestPort: 5173, relayPort: 3801 }])
+		result.release()
+	})
+
+	it('returns null without spawning anything when port resolution fails', async () => {
+		const relay = await establishPreviewPortRelay('sess-dyn3', 5173, sshKeyPath, {
+			msbBin: '/usr/local/bin/msb',
+			run: async () => ({ stdout: '', stderr: '' }),
+			findPortInRange: async () => {
+				throw new Error('no free ports')
+			},
+			spawnProcess: fakeSpawnProcess(),
+		})
+		expect(relay).toBeNull()
 	})
 })
 
