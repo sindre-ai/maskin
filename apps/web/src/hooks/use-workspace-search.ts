@@ -4,6 +4,7 @@ import { useLoops } from '@/hooks/use-loops'
 import { useSearchObjects } from '@/hooks/use-objects'
 import { useTriggers } from '@/hooks/use-triggers'
 import type { ObjectResponse } from '@/lib/api'
+import { statusLabel } from '@/lib/constants'
 import { useMemo } from 'react'
 
 /**
@@ -142,7 +143,10 @@ export function useWorkspaceSearch(
 				group: 'objects',
 				kind: object.type.toUpperCase(),
 				title: object.title ?? 'Untitled',
-				sub: '',
+				// Status rides the muted title suffix, the same slot loops and
+				// automations already use, so the trailing column stays a uniform
+				// kind label across every result type (mockup 2544).
+				sub: statusLabel(object.status),
 				snippet: object.content ?? '',
 				to: '/$workspaceId/objects/$objectId',
 				params: { workspaceId, objectId: object.id },

@@ -139,7 +139,11 @@ test.describe('Marketplace detail pages', () => {
 		// locator.click() — never auto-scrolls, so the first "not yet installed"
 		// card must be scrolled into view first: with enough marketplace items
 		// already installed in this workspace, it can sit below the fold.
-		const chip = card.getByText(/^(Agent|Trigger|Skill|Integration)$/)
+		// `.first()` is the card's kind eyebrow: a single-type loop card now also
+		// carries a kind chip below the description with the same label, so an
+		// unqualified match is ambiguous. Either element proves the point — both
+		// are inert text under the card's full-bleed overlay link.
+		const chip = card.getByText(/^(Agent|Trigger|Skill|Integration)$/).first()
 		await chip.scrollIntoViewIfNeeded()
 		const chipBox = await chip.boundingBox()
 		if (!chipBox) throw new Error('missing chip bounding box')
@@ -169,18 +173,17 @@ test.describe('Marketplace detail pages', () => {
 		await expect(page).toHaveURL(new RegExp(`/${account.workspaceId}/marketplace$`))
 	})
 
-	// Guards a ratified Direction A invariant: on the loop detail page,
-	// "Remove from workspace" in the overflow menu uninstalls immediately —
-	// there is no confirmation dialog between the click and the mutation. If a
-	// future refactor accidentally reintroduces a modal (the catalog card's
-	// Remove goes through UninstallDialog by design, so it's easy to wire the
-	// same path up here), this test fails. Behavioral invariant only — one
-	// viewport is enough. The same invariant is also covered at the unit
-	// level in apps/web/src/__tests__/components/marketplace/marketplace-loop-detail.test.tsx;
+	// Removing a loop discards every agent, trigger and skill it provisioned
+	// and there is no undo, so the detail page's overflow Remove must open the
+	// same UninstallDialog the catalog card uses — never mutate on select. This
+	// spec previously asserted the opposite (immediate uninstall); that was a
+	// safety defect, not a ratified direction. Behavioural invariant only — one
+	// viewport is enough. Mirrored at the unit level in
+	// apps/web/src/__tests__/components/marketplace/marketplace-loop-detail.test.tsx;
 	// this E2E gate is the real-stack backstop that catches API-level breakage
 	// (e.g. the bundle-install 500 root-caused 2026-08-13) which a component
 	// test with mocked mutations can't see.
-	test('overflow "Remove from workspace" uninstalls with no confirmation dialog', async ({
+	test('overflow "Remove from workspace" confirms before uninstalling', async ({
 		page,
 		account,
 	}) => {
@@ -211,12 +214,7 @@ test.describe('Marketplace detail pages', () => {
 		const overflowButton = detail.getByRole('button', { name: 'Loop actions' })
 		await expect(overflowButton).toBeVisible({ timeout: 20000 })
 
-		// Baseline: no dialog is on the page before we open the menu. Any
-		// `role="dialog"` or `role="alertdialog"` that appears between the click
-		// and the mutation would be the regression this test exists to catch.
 		expect(await page.getByRole('dialog').count()).toBe(0)
-		expect(await page.getByRole('alertdialog').count()).toBe(0)
-
 		const urlBefore = page.url()
 
 		await overflowButton.click()
@@ -224,24 +222,31 @@ test.describe('Marketplace detail pages', () => {
 		await expect(removeItem).toBeVisible()
 		await removeItem.click()
 
-		// Assert the invariant *synchronously* right after the click — a
-		// confirmation modal would render before the mutation could resolve, so
-		// checking now (not after a wait) is what distinguishes "no dialog" from
-		// "dialog opened and quickly closed."
-		expect(await page.getByRole('dialog').count()).toBe(0)
-		expect(await page.getByRole('alertdialog').count()).toBe(0)
+		// The confirmation stands between the click and the mutation, and it
+		// carries the keep-or-discard choice for the provisioned items.
+		const dialog = page.getByRole('dialog')
+		await expect(dialog).toBeVisible()
+		await expect(dialog.getByText(`Remove ${loopName}?`)).toBeVisible()
+		await expect(dialog.getByText('Remove everything')).toBeVisible()
+		await expect(dialog.getByText('Keep agents, triggers, and skills')).toBeVisible()
 
-		// Removal takes effect: the header flips back to the not-installed state
-		// (InstallButton reappears, overflow disappears). No navigation occurs —
-		// the page stays on the detail URL throughout. Poll with `waitFor` for
-		// the state change but re-check the dialog invariant one more time on
-		// the way out.
+		// Cancelling leaves the install untouched — the loop is still installed
+		// and the page has not navigated.
+		await dialog.getByRole('button', { name: 'Cancel' }).click()
+		await expect(dialog).toHaveCount(0)
+		await expect(overflowButton).toBeVisible()
+		await expect(detail.getByRole('button', { name: /^install$/i })).toHaveCount(0)
+		expect(page.url()).toBe(urlBefore)
+
+		// Confirming is what actually removes it.
+		await overflowButton.click()
+		await page.getByRole('menuitem', { name: 'Remove from workspace' }).click()
+		await page.getByRole('dialog').getByRole('button', { name: 'Remove' }).click()
+
 		await expect(detail.getByRole('button', { name: /^install$/i })).toBeVisible({
 			timeout: 20000,
 		})
 		await expect(overflowButton).toHaveCount(0)
 		expect(page.url()).toBe(urlBefore)
-		expect(await page.getByRole('dialog').count()).toBe(0)
-		expect(await page.getByRole('alertdialog').count()).toBe(0)
 	})
 })

@@ -81,9 +81,14 @@ test.describe('Marketplace install state', () => {
 			)
 			expect(overflowPx).toBeLessThanOrEqual(1)
 
-			// Remove from the ⋯ menu and confirm the catalog card reverts.
+			// Remove from the ⋯ menu — it opens the confirmation dialog rather
+			// than uninstalling on select — then confirm and check the catalog
+			// card reverts.
 			await overflow.click()
 			await page.getByRole('menuitem', { name: 'Remove from workspace' }).click()
+			const confirmDialog = page.getByRole('dialog')
+			await expect(confirmDialog).toBeVisible()
+			await confirmDialog.getByRole('button', { name: 'Remove' }).click()
 			await expect(detail.getByRole('button', { name: /^install$/i })).toBeVisible({
 				timeout: 20000,
 			})
@@ -146,6 +151,7 @@ test.describe('Marketplace install state', () => {
 		await page.emulateMedia({ colorScheme: 'light' })
 		await detail.getByRole('button', { name: 'Loop actions' }).click()
 		await page.getByRole('menuitem', { name: 'Remove from workspace' }).click()
+		await page.getByRole('dialog').getByRole('button', { name: 'Remove' }).click()
 		await expect(detail.getByRole('button', { name: /^install$/i })).toBeVisible({
 			timeout: 20000,
 		})

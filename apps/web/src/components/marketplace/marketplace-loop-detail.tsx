@@ -11,7 +11,6 @@ import {
 	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { useUninstallLoop } from '@/hooks/use-installed-loops'
 import type { InstalledLoopRow, MarketplaceLoopItem, MarketplaceLoopSummary } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { stepAsksYou } from '@/lib/marketplace-asks'
@@ -23,6 +22,7 @@ import { InstallButton } from './install-button'
 import { ITEM_TYPE_LABEL, loopKind } from './item-type-label'
 import { MarketplaceDetailHeader } from './marketplace-detail-header'
 import { AsksSection, FlowSection, PermissionsSection, RunsSection } from './marketplace-disclosure'
+import { UninstallDialog } from './uninstall-dialog'
 
 interface MarketplaceLoopDetailProps {
 	workspaceId: string
@@ -102,50 +102,74 @@ function HeaderActions({
 	install?: InstalledLoopRow
 }) {
 	const [forkOpen, setForkOpen] = useState(false)
+	const [uninstallOpen, setUninstallOpen] = useState(false)
 	const locked = install?.isLocked ?? false
-	const uninstall = useUninstallLoop(workspaceId)
 
 	// Not installed — the primary Install is the only action.
 	if (!install) {
 		return <InstallButton workspaceId={workspaceId} loopId={loop.id} source="detail" />
 	}
 
+	// Installed loops with a provisioned object get a Manage link to it (mockup
+	// 2613). Older installs have nothing for Manage to point at, so Remove takes
+	// the primary slot instead — the same fallback the catalogue card uses — and
+	// drops out of the ⋯ menu so the destructive action never renders twice.
+	const canManage = Boolean(install.objectId)
+
 	return (
 		<>
-			{/* Installed loops with a provisioned object get a Manage link to it
-			    (mockup 2613); older installs without one fall through to the ⋯ menu. */}
 			{install.objectId ? (
 				<Button asChild size="sm" variant="outline">
 					<Link to="/$workspaceId/loops/$loopId" params={{ workspaceId, loopId: install.objectId }}>
 						Manage
 					</Link>
 				</Button>
+			) : (
+				<Button size="sm" variant="outline" onClick={() => setUninstallOpen(true)}>
+					Remove
+				</Button>
+			)}
+
+			{locked || canManage ? (
+				<DropdownMenu>
+					<DropdownMenuTrigger asChild>
+						<Button variant="ghost" size="icon" className="h-7 w-7" aria-label="Loop actions">
+							<MoreHorizontal size={16} />
+						</Button>
+					</DropdownMenuTrigger>
+					<DropdownMenuContent align="end">
+						{locked ? (
+							<>
+								<DropdownMenuLabel>Loop actions</DropdownMenuLabel>
+								<DropdownMenuItem onSelect={() => setForkOpen(true)}>
+									Fork this loop
+								</DropdownMenuItem>
+								{canManage ? <DropdownMenuSeparator /> : null}
+							</>
+						) : null}
+						{canManage ? (
+							<DropdownMenuItem
+								className="text-error focus:text-error"
+								onSelect={() => setUninstallOpen(true)}
+							>
+								Remove from workspace
+							</DropdownMenuItem>
+						) : null}
+					</DropdownMenuContent>
+				</DropdownMenu>
 			) : null}
 
-			<DropdownMenu>
-				<DropdownMenuTrigger asChild>
-					<Button variant="ghost" size="icon" className="h-7 w-7" aria-label="Loop actions">
-						<MoreHorizontal size={16} />
-					</Button>
-				</DropdownMenuTrigger>
-				<DropdownMenuContent align="end">
-					{locked ? (
-						<>
-							<DropdownMenuLabel>Loop actions</DropdownMenuLabel>
-							<DropdownMenuItem onSelect={() => setForkOpen(true)}>Fork this loop</DropdownMenuItem>
-							<DropdownMenuSeparator />
-						</>
-					) : null}
-					<DropdownMenuItem
-						className="text-error focus:text-error"
-						onSelect={() =>
-							uninstall.mutate({ installedLoopId: install.id, keepProvisionedItems: false })
-						}
-					>
-						Remove from workspace
-					</DropdownMenuItem>
-				</DropdownMenuContent>
-			</DropdownMenu>
+			{/* Removing discards provisioned agents, triggers and skills, so it
+			    always routes through the same confirmation the catalogue card
+			    uses — never a bare menu-select mutation. */}
+			<UninstallDialog
+				open={uninstallOpen}
+				onOpenChange={setUninstallOpen}
+				workspaceId={workspaceId}
+				installedLoopId={install.id}
+				loopName={loop.name}
+				isLocked={locked}
+			/>
 
 			{locked ? (
 				<ForkDialog

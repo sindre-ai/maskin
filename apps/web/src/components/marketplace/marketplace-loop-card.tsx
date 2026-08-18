@@ -9,7 +9,13 @@ import type {
 } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { Link } from '@tanstack/react-router'
-import { KIND_LABEL_BASE, KIND_LABEL_CLASS, kindLabel, loopKind } from './item-type-label'
+import {
+	ITEM_TYPE_LABEL,
+	KIND_LABEL_BASE,
+	KIND_LABEL_CLASS,
+	kindLabel,
+	loopKind,
+} from './item-type-label'
 import { LoopInstallControls } from './loop-install-controls'
 import { UpdateAvailableBanner } from './update-available-banner'
 
@@ -93,13 +99,10 @@ export function MarketplaceLoopCard({
 			{isBundle && items && items.length > 0 ? (
 				<CompositionChipRow items={items} />
 			) : (
-				<div className="flex flex-wrap gap-1">
-					{loop.item_types.map((type) => (
-						<span key={type} className="eyebrow rounded-full bg-muted px-2 py-0.5">
-							{type}
-						</span>
-					))}
-				</div>
+				// Single-type cards carry the same chip row (mockup 2593); with no
+				// item detail loaded for them they name what the card installs by
+				// kind rather than dropping to raw `item_type` strings.
+				<KindChipRow itemTypes={loop.item_types} />
 			)}
 
 			{showUpdateBanner ? <UpdateAvailableBanner newVersion={install.availableVersion} /> : null}
@@ -219,6 +222,29 @@ function CompositionChipRow({ items }: { items: MarketplaceLoopItem[] }) {
 				})}
 			</div>
 		</TooltipProvider>
+	)
+}
+
+function KindChipRow({ itemTypes }: { itemTypes: MarketplaceItemType[] }) {
+	if (itemTypes.length === 0) return null
+
+	return (
+		<div className="flex flex-wrap gap-1" aria-label="Card composition" data-testid="kind-chip-row">
+			{itemTypes.map((type) => (
+				<span
+					key={type}
+					className="inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-muted py-0.5 pr-2 pl-0.5 text-[11px] font-medium text-muted-foreground"
+				>
+					<span
+						aria-hidden="true"
+						className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-border bg-muted text-[9px] font-semibold leading-none"
+					>
+						◆
+					</span>
+					<span className="truncate">{ITEM_TYPE_LABEL[type]}</span>
+				</span>
+			))}
+		</div>
 	)
 }
 

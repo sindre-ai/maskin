@@ -152,6 +152,33 @@ describe('SearchView', () => {
 		expect(mark?.textContent).toBe('Alpha')
 	})
 
+	it('gives every row the same trailing kind column, with object status in the title suffix', () => {
+		searchState.current.q = 'relay'
+		searchResultsRef.current = {
+			data: [
+				buildObjectResponse({
+					id: 'obj-1',
+					title: 'Relay Insight',
+					type: 'insight',
+					status: 'in_progress',
+				}),
+			],
+			isFetching: false,
+		}
+		actorsRef.current = {
+			data: [{ id: 'a-1', type: 'agent', name: 'Relay', description: 'Handles handoffs.' }],
+		}
+
+		render(<SearchView />)
+
+		// Mockup 2544: the right edge reads as one uniform kind label across
+		// entity types — the object row no longer breaks it with a status pill.
+		expect(screen.getByText('INSIGHT')).toBeInTheDocument()
+		expect(screen.getByText('AGENT')).toBeInTheDocument()
+		const row = screen.getByRole('button', { name: /Relay Insight/ })
+		expect(row.textContent).toContain('— In progress')
+	})
+
 	it('groups results per entity and heads each group with its own count', () => {
 		searchState.current.q = 'relay'
 		searchResultsRef.current = {

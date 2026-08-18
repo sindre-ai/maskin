@@ -231,7 +231,7 @@ describe('MarketplaceLoopCard', () => {
 			expect(screen.queryByLabelText('Bundle composition')).not.toBeInTheDocument()
 		})
 
-		it('falls back to the type-badge row when items have not loaded yet', () => {
+		it('falls back to the kind chip row when items have not loaded yet', () => {
 			render(
 				<MarketplaceLoopCard
 					workspaceId={workspaceId}
@@ -240,6 +240,23 @@ describe('MarketplaceLoopCard', () => {
 				{ wrapper: TestWrapper },
 			)
 			expect(screen.queryByLabelText('Bundle composition')).not.toBeInTheDocument()
+			expect(screen.getByLabelText('Card composition')).toBeInTheDocument()
+		})
+
+		it('names the kinds it installs on a single-type card, never the raw item type', () => {
+			render(
+				<MarketplaceLoopCard
+					workspaceId={workspaceId}
+					loop={loop({ item_types: ['skill'] })}
+					items={[item({ id: 's1', itemType: 'skill', name: 'Cluster feedback' })]}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+			// Mockup 2593: every card carries a chip row. A single-type card has
+			// no bundle to describe, so it names its kind — "Skill", not "skill".
+			const row = screen.getByLabelText('Card composition')
+			expect(row).toHaveTextContent('Skill')
+			expect(screen.queryByText('skill')).not.toBeInTheDocument()
 		})
 	})
 })

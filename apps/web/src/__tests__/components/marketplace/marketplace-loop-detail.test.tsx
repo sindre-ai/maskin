@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -268,37 +268,70 @@ describe('MarketplaceLoopDetail', () => {
 		expect(screen.getByText('0 steps')).toBeInTheDocument()
 	})
 
-	it('shows Remove in the overflow menu and uninstalls without a confirmation dialog', async () => {
+	it('routes the overflow-menu Remove through the confirmation dialog instead of uninstalling', async () => {
 		render(
 			<MarketplaceLoopDetail
 				workspaceId={workspaceId}
 				loop={loop()}
 				items={[]}
-				install={installRow()}
+				install={installRow({ objectId: 'obj-1' })}
 			/>,
 			{ wrapper: TestWrapper },
 		)
 		expect(screen.queryByRole('button', { name: /^install$/i })).not.toBeInTheDocument()
-		// Baseline: no dialog on the page before the flow starts. Any
-		// role="dialog" or role="alertdialog" that appears between the Remove
-		// click and the mutation would be the regression this test exists to
-		// catch (the catalog card's Remove goes through UninstallDialog by
-		// design, so it's easy to wire the same path up here by mistake).
 		expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-		expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
 
 		const user = userEvent.setup()
 		await user.click(screen.getByRole('button', { name: 'Loop actions' }))
-		const remove = await screen.findByText('Remove from workspace')
-		expect(remove).toBeInTheDocument()
-		await user.click(remove)
-		expect(api.installedLoops.uninstall).toHaveBeenCalledWith('ws-1', 'inst-1', false)
+		await user.click(await screen.findByText('Remove from workspace'))
 
-		// Assert the invariant synchronously right after the click — a
-		// confirmation modal would render before the mutation could resolve, so
-		// checking now (not after a wait) is what distinguishes "no dialog"
-		// from "dialog opened and quickly closed."
-		expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-		expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+		// Removing discards provisioned agents, triggers and skills, so the menu
+		// item may only ever open the confirmation — never mutate on select.
+		const dialog = await screen.findByRole('dialog')
+		expect(dialog).toBeInTheDocument()
+		expect(
+			screen.getByText('Remove Customer Continuous Discovery?', { exact: false }),
+		).toBeInTheDocument()
+		expect(api.installedLoops.uninstall).not.toHaveBeenCalled()
+	})
+
+	it('uninstalls only after the dialog is confirmed', async () => {
+		render(
+			<MarketplaceLoopDetail
+				workspaceId={workspaceId}
+				loop={loop()}
+				items={[]}
+				install={installRow({ objectId: 'obj-1' })}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		const user = userEvent.setup()
+		await user.click(screen.getByRole('button', { name: 'Loop actions' }))
+		await user.click(await screen.findByText('Remove from workspace'))
+		await user.click(
+			within(await screen.findByRole('dialog')).getByRole('button', { name: 'Remove' }),
+		)
+		expect(api.installedLoops.uninstall).toHaveBeenCalledWith('ws-1', 'inst-1', false)
+	})
+
+	it('gives an install with no provisioned object a primary Remove that confirms first', async () => {
+		render(
+			<MarketplaceLoopDetail
+				workspaceId={workspaceId}
+				loop={loop()}
+				items={[]}
+				install={installRow({ objectId: null })}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		// Nothing for Manage to point at, so Remove takes the primary slot and
+		// the ⋯ menu (which would only repeat it) is not rendered.
+		expect(screen.queryByRole('link', { name: 'Manage' })).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Loop actions' })).not.toBeInTheDocument()
+
+		const user = userEvent.setup()
+		await user.click(screen.getByRole('button', { name: 'Remove' }))
+		expect(await screen.findByRole('dialog')).toBeInTheDocument()
+		expect(api.installedLoops.uninstall).not.toHaveBeenCalled()
 	})
 })

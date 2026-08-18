@@ -478,14 +478,11 @@ function ResultRow({
 				) : null}
 			</span>
 
-			<span className="mt-0.5 shrink-0">
-				{row.object ? (
-					<StatusBadge status={row.object.status} />
-				) : (
-					<span className="font-mono text-[9.5px] font-semibold tracking-[0.05em] text-muted-foreground">
-						{row.kind}
-					</span>
-				)}
+			{/* One uniform kind column for every result type (mockup 2544) — an
+			    object's status rides the muted title suffix instead of a pill, so
+			    cross-entity rows stay scannable down a single edge. */}
+			<span className="mt-0.5 shrink-0 font-mono text-[9.5px] font-semibold tracking-[0.05em] text-muted-foreground">
+				{row.kind}
 			</span>
 		</button>
 	)

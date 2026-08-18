@@ -91,6 +91,48 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			expect(overflow).toBeLessThanOrEqual(1)
 		})
 
+		test('every result row ends in the same kind column, object status inline', async ({
+			page,
+			account,
+		}) => {
+			const kindToken = `${TOKEN}kind`
+			const agent = await account.api.createAgentActor(`${kindToken} Agent`)
+			await account.api.addWorkspaceMember(account.workspaceId, agent.id)
+			await account.api.createObject(account.workspaceId, {
+				type: 'insight',
+				title: `${kindToken} Insight`,
+				content: `${kindToken} field notes`,
+				status: 'active',
+			})
+
+			await page.goto(`/${account.workspaceId}/search?q=${kindToken}`)
+			await waitForAppReady(page)
+
+			const objectRow = page.getByRole('button', { name: new RegExp(`${kindToken} Insight`) })
+			await expect(objectRow).toBeVisible({ timeout: 20000 })
+			const agentRow = page.getByRole('button', { name: new RegExp(`${kindToken} Agent`) })
+			await expect(agentRow).toBeVisible()
+
+			// Mockup 2544: the trailing column is the same uniform kind label on
+			// every row, so the right edge stays scannable across entity types.
+			await expect(objectRow).toContainText('INSIGHT')
+			await expect(agentRow).toContainText('AGENT')
+
+			// The object's status rides the muted title suffix instead of a
+			// competing pill in the kind column.
+			await expect(objectRow).toContainText('— Active')
+
+			// Both kind labels sit on the same right edge (within a pixel).
+			const objectKind = objectRow.getByText('INSIGHT')
+			const agentKind = agentRow.getByText('AGENT')
+			const objectBox = await objectKind.boundingBox()
+			const agentBox = await agentKind.boundingBox()
+			if (!objectBox || !agentBox) throw new Error('missing kind-column bounding box')
+			expect(
+				Math.abs(objectBox.x + objectBox.width - (agentBox.x + agentBox.width)),
+			).toBeLessThanOrEqual(1)
+		})
+
 		test('a nonsense query offers the palette; clearing lands on the idle state', async ({
 			page,
 			account,
