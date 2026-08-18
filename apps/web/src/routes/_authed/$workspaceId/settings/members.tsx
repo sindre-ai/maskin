@@ -2,6 +2,7 @@ import { HumanDetailDialog } from '@/components/settings/human-detail-dialog'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
+import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -56,7 +57,7 @@ const ROLE_OPTIONS = ['owner', 'admin', 'member'] as const
 
 function MembersPage() {
 	const { workspaceId } = useWorkspace()
-	const { data: members, isLoading } = useWorkspaceMembers(workspaceId)
+	const { data: members, isLoading, isError, error, refetch } = useWorkspaceMembers(workspaceId)
 	const addMember = useAddWorkspaceMember(workspaceId)
 	const updateRole = useUpdateWorkspaceMemberRole(workspaceId)
 	const removeMember = useRemoveWorkspaceMember(workspaceId)

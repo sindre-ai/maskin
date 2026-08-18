@@ -1,0 +1,1071 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics="">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:ital,wght@0,400..900;1,400..900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;background:#fff;height:100%}
+body{font-family:'Schibsted Grotesk',system-ui,sans-serif;-webkit-font-smoothing:antialiased;-webkit-tap-highlight-color:transparent}
+a{color:#18181b}a:hover{color:#4f46e5}
+input::placeholder{color:#b0b0b6}
+[data-scroll]::-webkit-scrollbar{width:9px}
+[data-scroll]::-webkit-scrollbar-thumb{background:#e4e4e7;border-radius:99px}
+[data-hscroll]::-webkit-scrollbar{display:none}
+@keyframes popUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+</style>
+</helmet>
+
+<div style="height:100%;background:#fff;color:#18181b;font-size:13px;display:flex;flex-direction:column;overflow:hidden">
+
+  <div style="flex:none;display:flex;justify-content:center;padding:12px clamp(12px,3vw,28px) 2px">
+  <div style="width:min(700px,100%);display:flex;align-items:center;gap:6px">
+    <div data-hscroll="" style="flex:1;min-width:0;display:flex;align-items:center;gap:6px;overflow-x:auto;scrollbar-width:none">
+    <sc-if value="{{ notEmbedded }}" hint-placeholder-val="{{ true }}"><div style="display:flex;gap:2px;margin-right:4px;flex:none">
+      <sc-for list="{{ tabs }}" as="t" hint-placeholder-count="4">
+        <span style="display:inline-flex;align-items:center;height:28px;padding:0 11px;border-radius:8px;font-size:12.5px;font-weight:{{ t.fw }};color:{{ t.fg }};background:{{ t.bg }};cursor:pointer" style-hover="color:#18181b">{{ t.label }}</span>
+      </sc-for>
+    </div></sc-if>
+    <sc-if value="{{ filtersOn }}" hint-placeholder-val="{{ false }}">
+    <sc-for list="{{ objOpts }}" as="f" hint-placeholder-count="4">
+      <span onClick="{{ f.go }}" style="display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 12px;border-radius:99px;background:{{ f.chipBg }};color:{{ f.chipFg }};border:1px solid {{ f.chipBd }};font-size:11.5px;font-weight:600;cursor:pointer;white-space:nowrap;flex:none" style-hover="border-color:#c4c4cc">{{ f.label }}<span style="font-size:10.5px;font-weight:600;color:{{ f.chipCount }}">{{ f.count }}</span></span>
+    </sc-for>
+    </sc-if>
+    </div>
+    <div style="position:relative;flex:none">
+      <span onClick="{{ toggleMore }}" title="More" style="display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:9px;border:1px solid #e4e4e7;background:#fff;font-size:13px;font-weight:700;color:#71717a;cursor:pointer" style-hover="border-color:#c4c4cc;color:#18181b">···</span>
+      <sc-if value="{{ moreOpen }}" hint-placeholder-val="{{ false }}">
+        <div onClick="{{ closeMore }}" style="position:fixed;inset:0;z-index:40"></div>
+        <div style="position:absolute;top:36px;right:0;z-index:41;width:250px;background:#fff;border:1px solid #e4e4e7;border-radius:13px;box-shadow:0 12px 34px rgba(0,0,0,.1);padding:6px;animation:popUp .15s ease">
+          <sc-for list="{{ moreOpts }}" as="m" hint-placeholder-count="4">
+            <div onClick="{{ m.go }}" style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;font-size:12px;font-weight:600;color:{{ m.fg }};cursor:pointer" style-hover="background:#f6f6f7">
+              <span style="flex:1;min-width:0">{{ m.label }}</span>
+              <span style="font-size:10.5px;color:#c4c4cc;flex:none">{{ m.count }}</span>
+            </div>
+          </sc-for>
+        </div>
+      </sc-if>
+    </div>
+    <div style="position:relative;flex:none">
+      <span onClick="{{ toggleMenu }}" data-comment-anchor="477d5639fb-span" style="display:inline-flex;align-items:center;gap:7px;height:30px;padding:0 12px;border-radius:9px;border:1px solid #e4e4e7;background:#fff;font-size:11.5px;font-weight:600;color:#52525b;cursor:pointer" style-hover="border-color:#c4c4cc;color:#18181b">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16"></path><path d="M7 12h10"></path><path d="M10 18h4"></path></svg>
+        <span style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ menuLabel }}</span>
+        <span style="font-size:9px;color:#c4c4cc">{{ menuCaret }}</span>
+      </span>
+      <sc-if value="{{ menuOpen }}" hint-placeholder-val="{{ false }}">
+        <div onClick="{{ closeMenu }}" style="position:fixed;inset:0;z-index:40"></div>
+        <div style="position:absolute;top:36px;right:0;z-index:41;width:264px;background:#fff;border:1px solid #e4e4e7;border-radius:13px;box-shadow:0 12px 34px rgba(0,0,0,.1);padding:6px;animation:popUp .15s ease">
+          <div style="padding:7px 10px 4px;font:700 8.5px 'JetBrains Mono',monospace;letter-spacing:.11em;color:#b0b0b6">VIEW</div>
+          <sc-for list="{{ viewOpts }}" as="t" hint-placeholder-count="2">
+            <div onClick="{{ t.go }}" style="display:flex;align-items:center;gap:9px;padding:7px 10px;border-radius:8px;font-size:12px;font-weight:{{ t.fw }};color:{{ t.fg }};cursor:pointer" style-hover="background:#f6f6f7">
+              <sc-if value="{{ t.isList }}" hint-placeholder-val="{{ true }}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" style="flex:none"><path d="M4 7h16"></path><path d="M4 12h16"></path><path d="M4 17h11"></path></svg></sc-if>
+              <sc-if value="{{ t.isCards }}" hint-placeholder-val="{{ false }}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" style="flex:none"><rect x="3" y="4" width="18" height="7" rx="2"></rect><rect x="3" y="14" width="18" height="7" rx="2"></rect></svg></sc-if>
+              <span style="flex:1;min-width:0">{{ t.label }}</span>
+              <span style="width:13px;font-size:11px;color:#18181b;flex:none">{{ t.check }}</span>
+            </div>
+          </sc-for>
+          <div onClick="{{ filtersToggle }}" style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:8px;font-size:12px;font-weight:{{ filtersFw }};color:{{ filtersFg }};cursor:pointer" style-hover="background:#f6f6f7">
+            <span style="flex:1;min-width:0">Filter pills</span>
+            <span style="width:13px;font-size:11px;color:#18181b;flex:none">{{ filtersCheck }}</span>
+          </div>
+          <div style="height:1px;background:#f0f0f2;margin:5px 4px"></div>
+          <div style="padding:7px 10px 4px;font:700 8.5px 'JetBrains Mono',monospace;letter-spacing:.11em;color:#b0b0b6">SHOW</div>
+          <sc-for list="{{ objOpts }}" as="t" hint-placeholder-count="5">
+            <div onClick="{{ t.go }}" style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:8px;font-size:12px;font-weight:{{ t.fw }};color:{{ t.fg }};cursor:pointer" style-hover="background:#f6f6f7">
+              <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ t.label }}</span>
+              <span style="font-size:10.5px;color:#c4c4cc;flex:none">{{ t.count }}</span>
+              <span style="width:13px;font-size:11px;color:#18181b;flex:none">{{ t.check }}</span>
+            </div>
+          </sc-for>
+          <div style="height:1px;background:#f0f0f2;margin:5px 4px"></div>
+          <div style="padding:7px 10px 4px;font:700 8.5px 'JetBrains Mono',monospace;letter-spacing:.11em;color:#b0b0b6">SORT</div>
+          <sc-for list="{{ sortOpts }}" as="t" hint-placeholder-count="2">
+            <div onClick="{{ t.go }}" style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:8px;font-size:12px;font-weight:{{ t.fw }};color:{{ t.fg }};cursor:pointer" style-hover="background:#f6f6f7">
+              <span style="flex:1;min-width:0">{{ t.label }}</span>
+              <span style="width:13px;font-size:11px;color:#18181b;flex:none">{{ t.check }}</span>
+            </div>
+          </sc-for>
+        </div>
+      </sc-if>
+    </div>
+  </div>
+  </div>
+
+  <div data-scroll="" style="flex:1;min-height:0;overflow-y:auto;display:flex;justify-content:center;padding:0 clamp(12px,3vw,28px) 60px">
+  <div style="width:min(700px,100%);display:flex;flex-direction:column">
+
+    <sc-for list="{{ sections }}" as="s" hint-placeholder-count="2">
+    <div style="display:flex;flex-direction:column;gap:{{ s.gap }}">
+      <div style="height:6px"></div>
+
+      <sc-for list="{{ s.groups }}" as="g" hint-placeholder-count="3">
+      <div style="background:{{ g.bg }};border:{{ g.border }};border-radius:14px;box-shadow:{{ g.shadow }};overflow:hidden;display:flex;flex-direction:column;gap:{{ g.gap }}">
+
+      <sc-if value="{{ g.isGroup }}" hint-placeholder-val="{{ false }}">
+        <div onClick="{{ g.toggle }}" style="display:flex;align-items:center;gap:9px;padding:11px 12px 11px 14px;background:#fff;border-bottom:1px solid #ececee;cursor:pointer" style-hover="background:#fafafa">
+          <span style="font:700 8px 'JetBrains Mono',monospace;letter-spacing:.08em;color:#a1a1aa;flex:none">{{ g.tag }}</span>
+          <span style="flex:1;min-width:0;font-size:12.5px;font-weight:700;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ g.title }}</span>
+          <span onClick="{{ g.bulkGo }}" style="font-size:10.5px;font-weight:600;color:#a1a1aa;cursor:pointer;flex:none;white-space:nowrap" style-hover="color:#18181b">{{ g.bulkLabel }}</span>
+          <span style="font-size:10.5px;color:#a1a1aa;flex:none">{{ g.openLabel }}</span>
+          <span style="font-size:10px;color:#c4c4cc;flex:none">{{ g.caret }}</span>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ g.showItems }}" hint-placeholder-val="{{ true }}">
+      <div style="display:flex;flex-direction:column;gap:{{ g.gap }}">
+      <sc-for list="{{ g.items }}" as="c" hint-placeholder-count="1">
+      <div data-screen-label="Feed card" style="background:#fff;border:{{ c.border }};border-top:{{ c.sepTop }};border-radius:{{ c.radius }};box-shadow:{{ c.shadow }};overflow:hidden">
+
+        <sc-if value="{{ c.isRow }}" hint-placeholder-val="{{ true }}">
+        <div onClick="{{ c.toggleOpen }}" style="display:flex;align-items:center;gap:12px;padding:13px 16px;cursor:pointer" style-hover="background:#fafafa">
+          <div style="flex:1;min-width:0">
+            <div style="font-size:13.5px;font-weight:600;letter-spacing:-.008em;color:#18181b;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ c.tldr }}</div>
+            <div style="display:flex;align-items:center;gap:8px;margin-top:3px;font-size:11px;color:#a1a1aa;white-space:nowrap;overflow:hidden">
+              <span style="color:{{ c.stFg }};font-weight:500;flex:none">{{ c.stText }}</span>
+              <span style="min-width:0;overflow:hidden;text-overflow:ellipsis">{{ c.who }}</span>
+              <span style="color:{{ c.waitFg }};flex:none">{{ c.waitNote }}</span>
+            </div>
+          </div>
+          <span style="font:500 10px 'JetBrains Mono',monospace;color:#c4c4cc;flex:none">{{ c.time }}</span>
+        </div>
+        </sc-if>
+
+        <sc-if value="{{ c.isFull }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;flex-direction:column;gap:12px;padding:17px 20px 18px;border-top:{{ c.fullTopBorder }}">
+
+          <div style="display:flex;align-items:baseline;gap:10px;padding-bottom:11px;border-bottom:1px solid #f0f0f2">
+            <span style="flex:1;min-width:0;font-size:11px;color:#a1a1aa;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><span style="font:700 8px 'JetBrains Mono',monospace;letter-spacing:.08em;color:#a1a1aa">{{ c.objTag }}</span> <span onClick="{{ c.openObj }}" style="font-weight:700;color:#52525b;cursor:pointer;border-bottom:1px solid #e4e4e7" style-hover="color:#18181b;border-color:#18181b">{{ c.objName }} ↗</span> · from {{ c.src }}</span>
+            <span style="font-size:11px;font-weight:500;color:{{ c.stFg }};flex:none">{{ c.stText }}</span>
+            <span style="font:500 10px 'JetBrains Mono',monospace;color:#c4c4cc;flex:none">{{ c.time }}</span>
+            <sc-if value="{{ c.canCollapse }}" hint-placeholder-val="{{ false }}"><span onClick="{{ c.heroGo }}" title="Collapse" style="align-self:center;width:22px;height:22px;border-radius:6px;display:grid;place-items:center;color:#c4c4cc;font-size:11px;flex:none;cursor:{{ c.heroCursor }}" style-hover="background:#f6f6f7;color:#18181b">⌃</span></sc-if>
+          </div>
+
+          <div onClick="{{ c.heroGo }}" style="font-size:18px;font-weight:700;letter-spacing:-.015em;line-height:1.32;color:#18181b;text-wrap:pretty;cursor:{{ c.heroCursor }}">{{ c.tldr }}</div>
+          <p style="margin:-4px 0 0;font-size:13px;line-height:1.55;color:#52525b;text-wrap:pretty;max-width:58ch">{{ c.why }}</p>
+
+          <div style="display:grid;grid-template-columns:{{ c.cols }};gap:9px">
+            <sc-for list="{{ c.options }}" as="o" hint-placeholder-count="2">
+              <div style="display:flex;flex-direction:column;background:#fff;border:{{ o.border }};border-radius:13px;overflow:hidden;opacity:{{ o.dim }}" style-hover="opacity:1">
+
+                <sc-if value="{{ o.isPost }}" hint-placeholder-val="{{ false }}">
+                  <div style="padding:12px 13px 11px;border-bottom:1px solid #f0f0f2">
+                    <div style="display:flex;align-items:center;gap:8px">
+                      <span style="width:26px;height:26px;border-radius:50%;background:#0a66c2;color:#fff;display:grid;place-items:center;font-weight:700;font-size:10px;flex:none">in</span>
+                      <div style="flex:1;min-width:0">
+                        <div style="font-size:11.5px;font-weight:700;line-height:1.2">{{ o.author }}</div>
+                        <div style="font-size:9.5px;color:#a1a1aa;line-height:1.3">{{ o.byline }}</div>
+                      </div>
+                      <span onClick="{{ o.zoom }}" style="font-size:10.5px;font-weight:700;color:#c4c4cc;cursor:pointer;flex:none" style-hover="color:#18181b">Open ↗</span>
+                    </div>
+                    <p style="margin:9px 0 0;font-size:12.5px;line-height:1.55;color:#3f3f46;white-space:pre-line;text-wrap:pretty;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:{{ o.lines }};overflow:hidden">{{ o.body }}</p>
+                    <div style="display:flex;align-items:center;gap:10px;margin-top:9px">
+                      <span onClick="{{ o.expand }}" style="font-size:11px;font-weight:700;color:#52525b;cursor:pointer" style-hover="color:#18181b">{{ o.moreShown }}</span>
+                      <span style="font-size:10.5px;color:#c4c4cc">{{ o.meta }}</span>
+                    </div>
+                  </div>
+                </sc-if>
+
+                <sc-if value="{{ o.isMail }}" hint-placeholder-val="{{ false }}">
+                  <div style="padding:12px 13px 11px;border-bottom:1px solid #f0f0f2">
+                    <div style="display:flex;align-items:center;gap:8px">
+                      <span style="flex:1;min-width:0;font:700 8.5px 'JetBrains Mono',monospace;letter-spacing:.11em;color:#b0b0b6">{{ o.draftLabel }}</span>
+                      <span onClick="{{ o.zoom }}" style="font-size:10.5px;font-weight:700;color:#c4c4cc;cursor:pointer;flex:none" style-hover="color:#18181b">Open ↗</span>
+                    </div>
+                    <div style="margin-top:8px;display:flex;flex-direction:column;gap:3px">
+                      <div style="display:flex;gap:7px;font-size:11.5px"><span style="color:#b0b0b6;width:32px;flex:none">To</span><span style="font-weight:600;min-width:0">{{ o.to }}</span></div>
+                      <sc-if value="{{ o.subject }}" hint-placeholder-val="{{ true }}">
+                        <div style="display:flex;gap:7px;font-size:11.5px"><span style="color:#b0b0b6;width:32px;flex:none">Subj</span><span style="font-weight:600;min-width:0">{{ o.subject }}</span></div>
+                      </sc-if>
+                    </div>
+                    <p style="margin:9px 0 0;font-size:12.5px;line-height:1.55;color:#3f3f46;white-space:pre-line;text-wrap:pretty;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:{{ o.lines }};overflow:hidden">{{ o.body }}</p>
+                    <span onClick="{{ o.expand }}" style="display:inline-block;margin-top:8px;font-size:11px;font-weight:700;color:#52525b;cursor:pointer" style-hover="color:#18181b">{{ o.moreShown }}</span>
+                  </div>
+                </sc-if>
+
+                <sc-if value="{{ o.isVisual }}" hint-placeholder-val="{{ false }}">
+                  <div onClick="{{ o.zoom }}" style="aspect-ratio:4/3;background:repeating-linear-gradient(135deg,#f4f4f5 0 9px,#ececee 9px 18px);border-bottom:1px solid #ececee;display:grid;place-items:center;padding:10px;cursor:zoom-in">
+                    <span style="font:700 8.5px 'JetBrains Mono',monospace;letter-spacing:.08em;color:#a1a1aa;background:#fff;border:1px solid #ececee;border-radius:6px;padding:5px 9px;text-align:center;line-height:1.5;white-space:pre-line">{{ o.slot }}</span>
+                  </div>
+                </sc-if>
+
+                <sc-if value="{{ o.consHas }}" hint-placeholder-val="{{ true }}">
+                  <div style="padding:11px 13px 10px;display:flex;flex-direction:column;gap:5px">
+                    <sc-for list="{{ o.cons }}" as="n" hint-placeholder-count="3">
+                      <div style="display:flex;gap:7px;font-size:11.5px;line-height:1.45;color:{{ n.fg }}"><span style="color:#d4d4d8;flex:none">·</span><span style="min-width:0;text-wrap:pretty">{{ n.t }}</span></div>
+                    </sc-for>
+                  </div>
+                </sc-if>
+
+                <div onClick="{{ o.go }}" data-tap="" style="margin-top:auto;display:flex;align-items:center;gap:9px;min-height:44px;padding:10px 14px;background:{{ o.barBg }};color:{{ o.barFg }};cursor:pointer;transition:background .15s,transform .1s" style-hover="opacity:.88" style-active="transform:scale(.985)">
+                  <span style="flex:1;min-width:0;font-size:{{ o.barSize }};font-weight:{{ o.barFw }};letter-spacing:-.01em;text-align:right">{{ o.barLabel }}</span>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+
+          <sc-for list="{{ c.chat }}" as="x" hint-placeholder-count="0">
+            <div style="display:flex;gap:8px;animation:popUp .18s ease">
+              <span style="width:20px;height:20px;border-radius:{{ x.avRad }};background:{{ x.avBg }};color:{{ x.avFg }};display:grid;place-items:center;font-weight:700;font-size:8px;flex:none">{{ x.avI }}</span>
+              <div style="flex:1;min-width:0;font-size:11.5px;line-height:1.5;color:#3f3f46"><span style="font-weight:700;color:#18181b">{{ x.name }}</span> · {{ x.text }}</div>
+            </div>
+          </sc-for>
+
+          <div style="display:flex;align-items:center;gap:9px;border:1px solid #e4e4e7;border-radius:14px;background:#fff;padding:6px 6px 6px 11px">
+            <span style="width:30px;height:30px;border-radius:50%;border:1px solid #ececee;display:grid;place-items:center;color:#71717a;font-size:16px;cursor:pointer;flex:none" style-hover="border-color:#c4c4cc;color:#18181b">+</span>
+            <input value="{{ c.compVal }}" onChange="{{ c.onComp }}" onKeyDown="{{ c.onKey }}" placeholder="{{ c.ph }}" style="flex:1;min-width:0;border:none;outline:none;font:inherit;font-size:13.5px;background:transparent;color:#18181b;padding:8px 0">
+            <span style="width:30px;height:30px;border-radius:50%;border:1px solid #ececee;display:grid;place-items:center;color:#71717a;cursor:pointer;flex:none" style-hover="border-color:#c4c4cc;color:#18181b"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"></path><path d="M19 10v1a7 7 0 0 1-14 0v-1"></path><path d="M12 19v3"></path></svg></span>
+            <span onClick="{{ c.send }}" data-tap="" title="Send" style="width:30px;height:30px;border-radius:50%;background:{{ c.sendBg }};color:{{ c.sendFg }};display:grid;place-items:center;font-size:14px;cursor:{{ c.sendCursor }};flex:none" style-hover="opacity:.85">↑</span>
+          </div>
+
+        </div>
+        </sc-if>
+
+        <sc-if value="{{ c.isDone }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;align-items:center;gap:10px;padding:12px 16px;background:#f0fdf4;animation:popUp .18s ease">
+          <span style="width:19px;height:19px;border-radius:50%;background:#16a34a;color:#fff;display:grid;place-items:center;font-size:10px;flex:none">✓</span>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:12.5px;font-weight:700;color:#15803d;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ c.doneLabel }}</div>
+            <div style="font-size:10.5px;color:#7cbb92;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ c.doneLine }}</div>
+          </div>
+          <span onClick="{{ c.undo }}" style="font-size:11px;font-weight:700;color:#15803d;cursor:pointer;border:1px solid #bbf7d0;background:#fff;border-radius:8px;padding:5px 11px;flex:none" style-hover="border-color:#16a34a">Undo</span>
+        </div>
+        </sc-if>
+
+      </div>
+      </sc-for>
+      </div>
+      </sc-if>
+
+      </div>
+      </sc-for>
+
+      <sc-if value="{{ s.hasMore }}" hint-placeholder-val="{{ false }}">
+        <span onClick="{{ s.moreGo }}" style="align-self:flex-start;margin-top:4px;padding:8px 14px;border:1px solid #e4e4e7;border-radius:10px;background:#fff;font-size:12px;font-weight:600;color:#52525b;cursor:pointer" style-hover="border-color:#18181b;color:#18181b">{{ s.moreLabel }}</span>
+      </sc-if>
+    </div>
+    </sc-for>
+
+    <div style="display:flex;align-items:center;justify-content:center;gap:8px;padding:34px 0 10px;color:#c4c4cc;font-size:11.5px">
+      <span style="height:1px;width:40px;background:#e4e4e7"></span>{{ tail }}<span style="height:1px;width:40px;background:#e4e4e7"></span>
+    </div>
+
+    <sc-if value="{{ hasUndismiss }}" hint-placeholder-val="{{ false }}">
+      <span onClick="{{ undismiss }}" style="align-self:center;font-size:11.5px;font-weight:600;color:#a1a1aa;cursor:pointer" style-hover="color:#18181b">Bring dismissed cards back</span>
+    </sc-if>
+
+  </div>
+  </div>
+
+  <sc-if value="{{ modalOpen }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ modalClose }}" style="position:fixed;inset:0;z-index:60;background:rgba(24,24,27,.45);display:grid;place-items:center;padding:24px">
+      <div onClick="{{ eatClick }}" data-scroll="" style="width:min(560px,100%);max-height:84vh;overflow-y:auto;background:#fff;border-radius:16px;box-shadow:0 24px 70px rgba(0,0,0,.3);padding:16px 20px 20px;animation:popUp .18s ease">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="flex:1;min-width:0;font:700 8.5px 'JetBrains Mono',monospace;letter-spacing:.11em;color:#b0b0b6">{{ modalLabel }}</span>
+          <span onClick="{{ modalClose }}" style="width:26px;height:26px;border-radius:7px;display:grid;place-items:center;color:#a1a1aa;font-size:13px;cursor:pointer;flex:none" style-hover="background:#f6f6f7;color:#18181b">✕</span>
+        </div>
+        <sc-if value="{{ modalIsPost }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;align-items:center;gap:8px;margin-top:10px">
+            <span style="width:28px;height:28px;border-radius:50%;background:#0a66c2;color:#fff;display:grid;place-items:center;font-weight:700;font-size:10px;flex:none">in</span>
+            <div style="min-width:0"><div style="font-size:12px;font-weight:700">{{ modalAuthor }}</div><div style="font-size:10px;color:#a1a1aa">{{ modalByline }}</div></div>
+          </div>
+        </sc-if>
+        <sc-if value="{{ modalIsMail }}" hint-placeholder-val="{{ false }}">
+          <div style="margin-top:10px;display:flex;flex-direction:column;gap:3px">
+            <div style="display:flex;gap:8px;font-size:12px"><span style="color:#b0b0b6;width:36px;flex:none">To</span><span style="font-weight:600;min-width:0">{{ modalTo }}</span></div>
+            <div style="display:flex;gap:8px;font-size:12px"><span style="color:#b0b0b6;width:36px;flex:none">Subj</span><span style="font-weight:600;min-width:0">{{ modalSubject }}</span></div>
+          </div>
+        </sc-if>
+        <sc-if value="{{ modalIsVisual }}" hint-placeholder-val="{{ false }}">
+          <div style="margin-top:10px;aspect-ratio:4/3;background:repeating-linear-gradient(135deg,#f4f4f5 0 9px,#ececee 9px 18px);border:1px solid #ececee;border-radius:10px;display:grid;place-items:center;padding:10px">
+            <span style="font:700 9px 'JetBrains Mono',monospace;letter-spacing:.08em;color:#a1a1aa;background:#fff;border:1px solid #ececee;border-radius:6px;padding:6px 10px;text-align:center;line-height:1.5;white-space:pre-line">{{ modalSlot }}</span>
+          </div>
+        </sc-if>
+        <sc-if value="{{ modalHasBody }}" hint-placeholder-val="{{ false }}">
+          <p style="margin:12px 0 0;font-size:13px;line-height:1.6;color:#3f3f46;white-space:pre-line;text-wrap:pretty">{{ modalBody }}</p>
+        </sc-if>
+      </div>
+    </div>
+  </sc-if>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;embedded&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Layout&quot;}}">
+const T = (av, name, time, text, re) => ({ av, name, time, text, re });
+
+class Component extends DCLogic {
+  state = { ws: "dev", view: "compact", objFilter: "all", sort: "attention", showFilters: false, menuOpen: false, moreOpen: false, modal: null,
+            open: {}, gcol: {}, decided: {}, comp: {}, chat: {}, inspect: {}, expand: {}, pending: {}, replied: {}, dismissed: {}, showAll: false, hist: {} };
+
+  AV() {
+    return {
+      dev: { avI: "Dv", avBg: "#dbeafe", avFg: "#1d4ed8", avRad: "3px" },
+      reviewer: { avI: "Cr", avBg: "#fef3c7", avFg: "#b45309", avRad: "3px" },
+      designer: { avI: "De", avBg: "#fae8ff", avFg: "#a21caf", avRad: "50% 50% 50% 5px" },
+      coach: { avI: "Wc", avBg: "#ede9fe", avFg: "#6d28d9", avRad: "13px 4px 13px 4px" },
+      analyst: { avI: "Pa", avBg: "#ccfbf1", avFg: "#0f766e", avRad: "7px" },
+      content: { avI: "Ct", avBg: "#eef2ff", avFg: "#4338ca", avRad: "9px" },
+      growth: { avI: "Gr", avBg: "#dcfce7", avFg: "#15803d", avRad: "50%" },
+      outreach: { avI: "Ou", avBg: "#e0f2fe", avFg: "#0369a1", avRad: "5px" },
+      rep: { avI: "Sr", avBg: "#e0f2fe", avFg: "#0369a1", avRad: "5px" },
+      prospector: { avI: "Pr", avBg: "#fef9c3", avFg: "#a16207", avRad: "50% 5px 50% 5px" },
+      seb: { avI: "S", avBg: "#18181b", avFg: "#fff", avRad: "50%" },
+      network: { avI: "Nw", avBg: "#ffe4e6", avFg: "#be123c", avRad: "11px 3px 11px 3px" },
+      you: { avI: "S", avBg: "#18181b", avFg: "#fff", avRad: "50%" },
+    };
+  }
+
+  WS() {
+    return { dev: { name: "Development", mark: "D", bg: "#dbeafe", fg: "#1d4ed8" },
+             growth: { name: "Growth", mark: "G", bg: "#dcfce7", fg: "#15803d" } };
+  }
+
+  DATA() {
+    if (this._d) return this._d;
+    this._d = [
+        { id: "trigger", p: "reviewer", who: "Code Reviewer", time: "5H", kind: "decision",
+          st: "In review", stFg: "#b45309", stDot: "#f59e0b",
+          src: "Build loop", goal: "approved bets ship, nothing merges unreviewed",
+          tldr: "Merge the trigger settings rewrite?",
+          why: "A page people use every day was rewritten, 956 lines across 7 files, and no human has opened it in a browser. Review is done: two blockers found and fixed, 5/5 test runs pass.",
+          ask: "I can't judge how it feels to click through, so the merge is your call.",
+          cols: "repeat(auto-fit,minmax(190px,1fr))",
+          receipts: [{ tag: "TASK", fg: "#0e7490", name: "Trigger detail" }, { tag: "PR", fg: "#52525b", name: "#1212" }],
+          quick: ["What did the screenshots change?"],
+          ack: "Holding the merge and writing your reason on the task.",
+          options: [
+            { id: "merge", label: "Merge it", rec: true,
+              cons: [{ t: "Ships to everyone today" }, { t: "7 screenshot diffs go out unseen by a person", neg: true }, { t: "Rollback is a single revert" }] },
+            { id: "argos", label: "Screenshots first",
+              cons: [{ t: "7 diffs get human eyes" }, { t: "Merge waits about a day", neg: true }, { t: "Nothing else is blocked meanwhile" }] },
+          ],
+          done: { merge: "merged, task moves to validated", argos: "held, screenshot review queued" },
+          transcript: [
+            T("dev", "Developer", "YEST 14:02", "Picked up the trigger settings page. Rebuilding it on the shared parts instead of the old one-off layout."),
+            T("dev", "Developer", "YEST 19:40", "Done. 956 lines across 7 files. Switching the trigger type now swaps the whole form, which is the part I would look at hardest."),
+            T("reviewer", "Code Reviewer", "23:15", "First pass: two blockers. The type switch lost the values you had typed, and the page crashed with no trigger selected."),
+            T("dev", "Developer", "03:40", "Both fixed. Values are kept when you switch, and the empty case shows the picker instead of crashing.", "Code Reviewer · two blockers"),
+            T("reviewer", "Code Reviewer", "04:07", "Second pass: I re-ran both round-one blockers rather than trusting the fix notes; both hold. The page's own test run is green.", "Developer · both fixed"),
+            T("reviewer", "Code Reviewer", "04:11", "I could not open a browser in my sandbox, so I never saw the page myself. A quick human click-through is worth it."),
+          ] },
+
+        { id: "patch", p: "reviewer", who: "Code Reviewer", time: "3H", kind: "blocked",
+          obj: { id: "loops", tag: "BET", tagFg: "#4f46e5", title: "Loops — index and loop detail" },
+          st: "Failed check", stFg: "#b91c1c", stDot: "#ef4444",
+          src: "Build loop", goal: "approved bets ship, nothing merges unreviewed",
+          tldr: "Finish the edit card, or cut it?",
+          why: "Nothing in the app can hand the edit card a change, so the one thing this bet was meant to prove stays unproven. The card itself is built; the wiring is about a day.",
+          ask: "Cutting it changes what the bet claims, so I won't send it back or cut it alone.",
+          cols: "repeat(auto-fit,minmax(190px,1fr))",
+          receipts: [{ tag: "TASK", fg: "#0e7490", name: "Proposed edit card" }, { tag: "BET", fg: "#4f46e5", name: "Loops index and detail" }],
+          quick: ["How long to wire it up?", "Who owns the chat side?"],
+          ack: "Understood — I'll write that on the task and send it back.",
+          options: [
+            { id: "back", label: "Send it back", rec: true,
+              cons: [{ t: "Card opens from chat" }, { t: "Test runs on a real loop" }, { t: "Bet lands about a day later", neg: true }] },
+            { id: "cut", label: "Cut it",
+              cons: [{ t: "Bet ships without it" }, { t: "The core claim stays unproven", neg: true }, { t: "Refiled as its own bet" }] },
+          ],
+          done: { back: "sent back, developer picks it up", cut: "cut from the bet, filed for later" },
+          transcript: [
+            T("reviewer", "Code Reviewer", "09:26", "The card only ever gets handed an empty change, so it can never show anything to a person."),
+            T("dev", "Developer", "09:31", "The chat side that produces the change is a different task. I can wire a path through in a day.", "Code Reviewer · card never opens"),
+          ] },
+
+        { id: "loopdetail", p: "reviewer", who: "Code Reviewer", time: "4H", kind: "decision",
+          obj: { id: "loops", tag: "BET", tagFg: "#4f46e5", title: "Loops — index and loop detail" },
+          st: "In review", stFg: "#b45309", stDot: "#f59e0b",
+          src: "Build loop", goal: "approved bets ship, nothing merges unreviewed",
+          tldr: "Merge the loop detail page?",
+          why: "The loop page now explains a loop in four sentences from real data, and it sits idle with 4/4 checks passing. Summary, current activity, and an undoable changes log are all built.",
+          ask: "Merging now or holding for the edit card is sequencing, and sequencing is yours.",
+          cols: "repeat(auto-fit,minmax(190px,1fr))",
+          receipts: [{ tag: "TASK", fg: "#0e7490", name: "Loop detail" }, { tag: "PR", fg: "#52525b", name: "#1219" }],
+          quick: ["Does it work on a phone?"],
+          ack: "Noted — I'll check that and come back.",
+          options: [
+            { id: "merge", label: "Merge it", rec: true,
+              cons: [{ t: "Loop page is live today" }, { t: "Changes log ships with undo" }, { t: "Edit card lands separately later", neg: true }] },
+            { id: "wait", label: "Wait for edit card",
+              cons: [{ t: "Both tasks land together" }, { t: "A finished page sits unmerged", neg: true }] },
+          ],
+          done: { merge: "merged, loop page live", wait: "held to ship with the edit card" },
+          transcript: [
+            T("dev", "Developer", "06:12", "Rebuilt on top of the existing loop screen rather than a new one. Changes log has undo on each row."),
+          ] },
+
+        { id: "loopsign", p: "designer", who: "Designer", time: "6H", kind: "fyi",
+          obj: { id: "loops", tag: "BET", tagFg: "#4f46e5", title: "Loops — index and loop detail" },
+          st: "In progress", stFg: "#71717a", stDot: "#a1a1aa",
+          src: "Design loop", goal: "the rebuild matches the mockup before more screens start",
+          tldr: "Loop design review is parked",
+          why: "Both loop screens wait on the edit card; reviewing now would mean reviewing twice. I checked the blocker myself rather than assuming: the card really cannot open.",
+          ask: "No call needed; this is so the quiet reads as waiting, not stalling.",
+          cols: "repeat(auto-fit,minmax(190px,1fr))",
+          receipts: [{ tag: "TASK", fg: "#0e7490", name: "Designer sign-off" }],
+          quick: [],
+          ack: "Understood.",
+          options: [
+            { id: "ok", label: "Got it", rec: true,
+              cons: [{ t: "Review starts when the card opens" }, { t: "You hear from me then, not before" }] },
+          ],
+          done: { ok: "acknowledged" },
+          transcript: [
+            T("designer", "Designer", "07:40", "Blocked on the edit card. I will pick this up the moment it can open."),
+          ] },
+
+        { id: "signoff", p: "designer", who: "Designer", time: "7H", kind: "decision",
+          st: "Waiting on you", stFg: "#4338ca", stDot: "#6366f1",
+          src: "Design loop", goal: "the rebuild matches the mockup before more screens start",
+          tldr: "Does the Objects rebuild match?",
+          why: "13 screens are blocked until someone confirms the rebuild matches the mockup. It is built from 23 shared patterns and checked at phone size in light and dark.",
+          ask: "Whether it looks right is your eye, not mine, so the sign-off waits on you.",
+          cols: "repeat(auto-fit,minmax(150px,1fr))",
+          receipts: [{ tag: "BET", fg: "#4f46e5", name: "Shared component library" }],
+          quick: ["Show me it next to the mockup", "What are the 13 screens?"],
+          ack: "I'll check that before I post the sign-off.",
+          options: [
+            { id: "light", kind: "visual", label: "Looks right", rec: true, slot: "OBJECTS PAGE\n375px · LIGHT",
+              cons: [{ t: "13 screens unblock today" }, { t: "Pixel drift is accepted as-is", neg: true }] },
+            { id: "dark", kind: "visual", label: "Looks right", slot: "OBJECTS PAGE\n375px · DARK",
+              cons: [{ t: "Same sign-off, dark mode" }, { t: "13 screens unblock today" }] },
+            { id: "back", kind: "visual", label: "Something is off", slot: "THE MOCKUP\nMaskin App.html",
+              cons: [{ t: "Rebuild loops once more" }, { t: "13 screens keep waiting", neg: true }, { t: "Your notes go on the task" }] },
+          ],
+          done: { light: "signed off, 13 screens unblocked", dark: "signed off, 13 screens unblocked", back: "sent back with your notes" },
+          transcript: [
+            T("dev", "Developer", "YEST", "Rebuilt using the shared parts we already had, rather than making new ones. 23 patterns in total."),
+            T("designer", "Designer", "09:21", "I am only checking it against the mockup. This is not a chance to change the design."),
+          ] },
+
+        { id: "mac", p: "coach", who: "Workspace Coach", time: "1D", kind: "blocked",
+          st: "Blocked", stFg: "#b91c1c", stDot: "#ef4444",
+          src: "Trigger · stuck work", goal: "the workspace tells you when work has stopped moving",
+          tldr: "Rent a cloud Mac?",
+          why: "Three iPhone tasks have sat still for 3 days on one blocker: no Mac and no physical phone. The code side of each is already reviewed.",
+          ask: "Renting hardware is money out the door, so I won't commit spend alone.",
+          cols: "repeat(auto-fit,minmax(190px,1fr))",
+          receipts: [{ tag: "TASK", fg: "#0e7490", name: "3 blocked tasks" }],
+          quick: ["What does a Mac runner cost?", "Can we borrow one for a day?"],
+          ack: "Noted — I'll price that and come back on the same card.",
+          options: [
+            { id: "rent", label: "Rent a cloud Mac", rec: true,
+              cons: [{ t: "3 tasks unblock at once" }, { t: "Setup takes about a day" }, { t: "Adds a monthly line item", neg: true }] },
+            { id: "park", label: "Park all three",
+              cons: [{ t: "Nothing on iPhone can finish", neg: true }, { t: "3 days idle becomes open-ended", neg: true }, { t: "Re-raised weekly until cleared" }] },
+          ],
+          done: { rent: "runner requested, tasks unblocked", park: "all three parked, flagged weekly" },
+          transcript: [
+            T("coach", "Workspace Coach", "08:02", "Same blocker on all three: no Mac and no physical iPhone. The code side of each is already reviewed."),
+            T("dev", "Developer", "08:20", "A rented Mac would clear all three in an afternoon."),
+          ] },
+
+        { id: "posthog", p: "analyst", who: "Product Analyst", time: "1D", kind: "decision",
+          st: "Waiting on you", stFg: "#4338ca", stDot: "#6366f1",
+          src: "Measurement loop", goal: "no bet counts as live until we can actually measure it",
+          tldr: "Deploy now, or measure later?",
+          why: "The two search events fire correctly but land nowhere, so the bet cannot be called live. Both events are verified from test runs, with the right details attached.",
+          ask: "We agreed no bet is live until numbers arrive, so breaking our own rule is yours to do, not mine.",
+          cols: "repeat(auto-fit,minmax(190px,1fr))",
+          receipts: [{ tag: "BET", fg: "#4f46e5", name: "Search and command palette" }],
+          quick: ["What does putting it online involve?", "Can we measure it later?"],
+          ack: "Understood — I'll write that up on the bet.",
+          options: [
+            { id: "deploy", label: "Put it online", rec: true,
+              cons: [{ t: "Numbers arrive from day one" }, { t: "Bet flips to live when it lands" }, { t: "One deploy ahead of schedule", neg: true }] },
+            { id: "later", label: "Measure later",
+              cons: [{ t: "Ships on the planned date" }, { t: "Early usage goes uncounted", neg: true }, { t: "Our live rule gets its first exception", neg: true }] },
+          ],
+          done: { deploy: "deploy requested, bet goes live when it lands", later: "shipping without measurement, flagged on the bet" },
+          transcript: [
+            T("analyst", "Product Analyst", "10:41", "Both events fire and carry the right details. I have proof from the tests, not from the live product."),
+            T("analyst", "Product Analyst", "10:44", "We agreed last month that a bet is not live until the numbers actually arrive somewhere."),
+          ] },
+
+        { id: "ext", p: "coach", who: "Workspace Coach", time: "2D", kind: "fyi",
+          st: "For information", stFg: "#71717a", stDot: "#a1a1aa",
+          src: "Trigger · missing screen", goal: "what we said we shipped is actually there",
+          tldr: "Extensions section is missing",
+          why: "Settings ships 5 of the design's 6 sections, and nobody has picked the gap up. I checked the live product against the design section by section; Extensions is the only miss.",
+          ask: "Build now or leave it is a roadmap call, so I've queued nothing.",
+          cols: "repeat(auto-fit,minmax(190px,1fr))",
+          receipts: [{ tag: "TASK", fg: "#0e7490", name: "Extensions settings" }],
+          quick: ["Is anyone using extensions yet?"],
+          ack: "Fine — I'll leave it on the list.",
+          options: [
+            { id: "build", label: "Build it this cycle", rec: true,
+              cons: [{ t: "Settings matches the design" }, { t: "Takes a task from this cycle", neg: true }] },
+            { id: "leave", label: "Leave it",
+              cons: [{ t: "Cycle stays as planned" }, { t: "Shipped and designed keep diverging", neg: true }] },
+          ],
+          done: { build: "queued for this cycle", leave: "left on the backlog" },
+          transcript: [
+            T("coach", "Workspace Coach", "AUG 11", "Checked the live product against the design: only the Extensions section is missing."),
+          ] },
+        { id: "searchbet", p: "dev", who: "Developer", time: "2H", kind: "fyi",
+          st: "In progress", stFg: "#71717a", stDot: "#a1a1aa",
+          src: "Build loop", goal: "approved bets ship, nothing merges unreviewed",
+          tldr: "Search hits review Thursday",
+          why: "Search is 2 tasks from finished; the palette now reads the real graph instead of a fixed list. Keyboard-only navigation and last-five searches remain, both small.",
+          ask: "No call needed unless you want the last two cut to ship sooner.",
+          cols: "repeat(auto-fit,minmax(190px,1fr))",
+          receipts: [{ tag: "BET", fg: "#4f46e5", name: "Search and command palette" }],
+          quick: ["When does it hit review?"],
+          ack: "I'll post the date on the bet.",
+          options: [
+            { id: "ok", label: "Got it", rec: true,
+              cons: [{ t: "Review lands Thursday" }, { t: "7 of 9 tasks are done" }] },
+            { id: "narrow", label: "Cut the last two",
+              cons: [{ t: "Ships tomorrow instead" }, { t: "Keyboard nav slips to later", neg: true }, { t: "Recent searches slip with it", neg: true }] },
+          ],
+          done: { ok: "acknowledged", narrow: "scope cut, two tasks moved out of the bet" },
+          transcript: [
+            T("dev", "Developer", "07:55", "Palette reads the real graph now. Objects, loops and people all resolve, including ones created this morning."),
+            T("analyst", "Product Analyst", "08:10", "Both events are already being counted, so the moment it is live we can see whether anyone searches twice."),
+          ] },
+
+        { id: "feedinsight", p: "analyst", who: "Product Analyst", time: "8H", kind: "decision",
+          st: "Waiting on you", stFg: "#4338ca", stDot: "#6366f1",
+          src: "Measurement loop", goal: "no bet counts as live until we can actually measure it",
+          tldr: "Is the feed too long?",
+          why: "71 of 100 sessions end without a single decision, and the decisions that happen cluster on the first card. The two-week readout is done and the pattern holds across every account.",
+          ask: "Shortening the feed decides which agents get seen at all, so the trade is yours.",
+          cols: "repeat(auto-fit,minmax(190px,1fr))",
+          receipts: [{ tag: "INSIGHT", fg: "#b45309", name: "Reading is not deciding" }],
+          quick: ["Is it the same people every time?", "What do they do instead?"],
+          ack: "I'll pull that apart and come back on this card.",
+          options: [
+            { id: "fewer", label: "Show fewer cards", rec: true,
+              cons: [{ t: "Feed drops from 9 cards to 3" }, { t: "Goes on the next bet as a change" }, { t: "6 cards a day go unseen", neg: true }] },
+            { id: "watch", label: "Watch two more weeks",
+              cons: [{ t: "Sample doubles to 200 sessions" }, { t: "2 more weeks of undecided feeds", neg: true }] },
+          ],
+          done: { fewer: "saved as an insight, feed length goes on the next bet", watch: "left open, re-checked in two weeks" },
+          transcript: [
+            T("analyst", "Product Analyst", "06:33", "I split the readout by account rather than assuming ours skews it. The pattern holds everywhere: long feeds get read like a newsletter."),
+            T("coach", "Workspace Coach", "06:48", "Worth saying: a card nobody decides on still costs the agent that wrote it."),
+          ] },
+
+        { id: "guardrails", p: "coach", who: "Workspace Coach", time: "5H", kind: "blocked",
+          st: "Overdue", stFg: "#b91c1c", stDot: "#ef4444",
+          src: "Trigger · stuck work", goal: "the workspace tells you when work has stopped moving",
+          tldr: "Your guardrails task, day nine",
+          why: "The outreach guardrails have sat in your name for 9 days with 2 tasks queued behind them. A draft is an hour of my time; approving it is about 15 minutes of yours.",
+          ask: "Only you can say what the outreach agent must never say, so I can draft it but not approve it.",
+          cols: "repeat(auto-fit,minmax(190px,1fr))",
+          receipts: [{ tag: "TASK", fg: "#0e7490", name: "Write the outreach guardrails" }],
+          quick: ["Draft it for me to edit", "What is waiting behind it?"],
+          ack: "I'll draft it and put it back in your name to approve.",
+          options: [
+            { id: "draft", label: "Draft it for me", rec: true,
+              cons: [{ t: "Draft back in your name today" }, { t: "2 blocked tasks move this week" }, { t: "Still costs you 15 minutes to approve", neg: true }] },
+            { id: "keep", label: "Leave it with me",
+              cons: [{ t: "Stays fully in your words" }, { t: "Day 9 becomes day 12 before I nudge", neg: true }] },
+          ],
+          done: { draft: "draft coming back for your approval today", keep: "kept in your name, nudge in three days" },
+          transcript: [
+            T("coach", "Workspace Coach", "08:14", "Ninth day. This is the only task in the workspace older than a week that has no blocker written on it."),
+          ] },
+
+        { id: "contacts", p: "outreach", who: "Outreach agent", time: "3H", kind: "decision",
+          st: "Waiting on you", stFg: "#4338ca", stDot: "#6366f1",
+          src: "Cold outreach loop", goal: "first touch turns into a booked meeting",
+          tldr: "Three replies out, Ida held?",
+          why: "4 people replied overnight, 3 asking for a call, all warm from the meetup list. The reply is drafted below; Ida's pricing question is held unanswered.",
+          ask: "Price is the one thing I never answer, so nothing sends until you say go.",
+          cols: "repeat(auto-fit,minmax(220px,1fr))",
+          receipts: [{ tag: "CONTACT", fg: "#0f766e", name: "4 replies since yesterday" }],
+          quick: ["What did Ida actually ask?", "Who else is on the list?"],
+          ack: "I'll adjust it and hold the send until you say go.",
+          options: [
+            { id: "send", kind: "mail", label: "Send the three", rec: true,
+              to: "Ida Ruud, Ola Berg, Mette Lindqvist", subject: "Half an hour next week?",
+              body: "Hi Ida,\n\nThanks for coming back. Easiest next step is half an hour where you bring one decision your team is stuck on, and we build the loop around it while you watch.\n\nTuesday or Thursday afternoon both work. If neither does, send me a time and I will take it.\n\nOn your pricing question, Sindre will answer that himself rather than have me guess.\n\nBest,\nProduct Therapy",
+              cons: [{ t: "3 calls likely booked this week" }, { t: "Ida stays with you" }, { t: "Her pricing answer waits on your reply", neg: true }] },
+            { id: "me", label: "I'll write Ida",
+              cons: [{ t: "Pricing answered in your words" }, { t: "The other 3 sends hold meanwhile", neg: true }, { t: "Draft stays ready" }] },
+          ],
+          done: { send: "three sent, Ida left for you", me: "Ida left to you, other three held" },
+          transcript: [
+            T("outreach", "Outreach agent", "05:12", "Ola Berg and Mette Lindqvist both replied within an hour of each other, both asking when the next session is."),
+            T("outreach", "Outreach agent", "05:19", "Ida Ruud asked directly what a team of twelve would pay. I have not answered."),
+          ] },
+
+        { id: "linkedindm", p: "rep", who: "Sales Rep", time: "1H", kind: "decision",
+          st: "Waiting on your approval", stFg: "#4338ca", stDot: "#6366f1",
+          src: "Outreach loop · revival", goal: "no message leaves the workspace without your yes",
+          tldr: "Mette's LinkedIn message, redrafted",
+          why: "Mette soft-declined in May, and Konsolidator has since shipped an AI layer, so her objection has aged. The draft is locked dev-first with loop hooks and revised with the Maskin intro you asked for.",
+          ask: "No message leaves the workspace without your yes, so this one waits.",
+          cols: "minmax(0,1fr)",
+          receipts: [{ tag: "CONTACT", fg: "#0f766e", name: "Mette — Head of Eng, Konsolidator" }],
+          quick: [],
+          ack: "I'll rewrite it and put it back here for approval.",
+          options: [
+            { id: "approve", kind: "mail", label: "Approve and send", rec: true,
+              draftLabel: "LINKEDIN MESSAGE", to: "Mette · Head of Engineering, Konsolidator",
+              body: "Hej Mette,\n\nHusker du sagde I fokuserede på at løfte udviklerne med AI. Det er faktisk præcis vores lane.\n\nMaskin er et workspace hvor AI-agenter og mennesker arbejder side om side, og I kan selv bygge de loops der giver mening hos jer.\n\nEn af dem vores kunder bruger: agenter der reviewer PRs, ikke for kode-style, men om ændringen faktisk lever op til det forventede outcome. Devs kan blive på arkitektur og strategy.\n\nJeg er nysgerrig på hvordan I griber det an hos jer. Er en 15 min snak noget?\n\nDbh Seb",
+              cons: [{ t: "Goes as LinkedIn direct today" }, { t: "The pending InMail stays untouched" }, { t: "A second decline closes her for good", neg: true }] },
+          ],
+          done: { approve: "sent on LinkedIn direct, reply tracked on the contact" },
+          transcript: [
+            T("prospector", "Prospector", "06:25", "Her May objection has aged badly. Konsolidator launched an AI layer built for CFOs and controllers in June, and the CEO is publicly bullish on internal dev productivity. Company-level signal is enough for a bump."),
+            T("coach", "Workspace Coach", "06:28", "Reopen date pulled back to today. Your call: draft it yourself, or hand it to Sales Rep with a brief."),
+            T("seb", "Sebastian", "20:07", "Let's reach out to her and tell her how product teams, including developers, can use Maskin."),
+            T("coach", "Workspace Coach", "20:08", "Flag before we route: \"product teams incl. devs\" is closer to a broaden bump than the dev-first reframe, and the broaden shape is the exact objection she raised in May.", "Sebastian · reach out to her"),
+            T("seb", "Sebastian", "20:13", "Keep it on developers: loops around customer feedback, agents reviewing each other's PRs against the expected outcome rather than code style, and telling the customer when their request is in production."),
+            T("coach", "Workspace Coach", "20:15", "Locked — dev-first with loop hooks. Sales Rep: warm-ceiling founder touch, LinkedIn direct, not the pending InMail. Pick one hook, don't stack. Danish is fine.", "Sebastian · keep it on developers"),
+            T("rep", "Sales Rep", "20:17", "Draft ready. Hook: PR review as outcome review — strongest for a Head of Eng and no overlap with the May thread."),
+            T("seb", "Sebastian", "20:18", "It's good, but you're missing the introduction to Maskin — the workspace with AI agents and humans, and the ability to build loops.", "Sales Rep · draft ready"),
+            T("rep", "Sales Rep", "20:19", "Revised with the Maskin intro in the second paragraph. Ready for your approval.", "Sebastian · missing the intro"),
+          ] },
+
+        { id: "gig", p: "network", who: "Network agent", time: "1D", kind: "decision",
+          st: "Reply by Aug 14", stFg: "#b45309", stDot: "#f59e0b",
+          src: "Network loop", goal: "we take the work that pays for the month and teaches us something",
+          tldr: "Take the Nordlys four weeks?",
+          why: "Nordlys offers 160k DKK for 4 weeks of support-agent work, but it takes about half the time now going into the meetup and webinar. The ask came warm through Kasper and the terms are checked.",
+          ask: "It trades a paid month against our own events, and that trade is yours.",
+          cols: "repeat(auto-fit,minmax(190px,1fr))",
+          receipts: [{ tag: "GIG", fg: "#be123c", name: "Nordlys Studio — support agents" }],
+          quick: ["What happens to the webinar?", "Who else could take it?"],
+          ack: "I'll put that to them and come back before Aug 14.",
+          options: [
+            { id: "take", label: "Take it", rec: true,
+              cons: [{ t: "160k DKK fixed, Sep 1 start" }, { t: "2 days on site in Oslo" }, { t: "Webinar prep loses half its time", neg: true }] },
+            { id: "counter", label: "Counter three weeks",
+              cons: [{ t: "Webinar keeps its runway" }, { t: "Starts Sep 15 instead" }, { t: "They can walk at 3 weeks", neg: true }] },
+          ],
+          done: { take: "accepted, kickoff booked for Sep 1", counter: "counter sent, waiting on Nordlys" },
+          transcript: [
+            T("network", "Network agent", "AUG 11", "They came through Kasper, so this is a warm ask, not a tender. They have already tried it themselves and stopped."),
+            T("network", "Network agent", "AUG 11", "Their support lead wants their people to keep answering the hard tickets. That is our argument, not something we have to sell them."),
+          ] },
+
+        { id: "meetup", p: "content", who: "Content agent", time: "1D", kind: "decision",
+          obj: { id: "meetupbet", tag: "BET", tagFg: "#4f46e5", title: "AI PM meetup — Aug 25" },
+          st: "Waiting on you", stFg: "#4338ca", stDot: "#6366f1",
+          src: "LinkedIn loop", goal: "every bet that needs an audience gets a post, nothing publishes without you",
+          tldr: "Run the second meetup post?",
+          why: "9 of 70 seats are taken and the call-off threshold hits in 6 days. A second post is written, this one naming what we build on stage.",
+          ask: "Nothing publishes without you, so tomorrow's 08:30 slot waits on your yes.",
+          cols: "repeat(auto-fit,minmax(220px,1fr))",
+          receipts: [{ tag: "BET", fg: "#4f46e5", name: "AI PM meetup Aug 25" }],
+          quick: ["Can we push the date?", "Who else could share it?"],
+          ack: "Rewriting against that and coming back before the posting slot.",
+          options: [
+            { id: "publish", kind: "post", label: "Post tomorrow 08:30", rec: true,
+              author: "Sebastian Krumhausen", byline: "Product Therapy · now", meta: "links in first comment",
+              body: "Two weeks out from our Copenhagen meetup. Here is what we will actually do in the room.\n\nTuesday Aug 25, Republikken, 16:30. Free. 70 seats, filling.\n\nIn the live demo we take a real product decision from someone in the room and build a closed loop around it, in Maskin. Shape it as a bet with a success metric and a kill threshold. Wire an agent into the workspace to run the outreach and write back what it heard. Watch the bet update itself in front of you over the two hours we are together.\n\nRest of the agenda: what Y Combinator's AI-native playbook gets right, where our experience at Maskin diverges from theirs, and a Q&A on the question that keeps coming up in these rooms. What does my job look like when agents do the executing.",
+              cons: [{ t: "Takes tomorrow's 08:30 slot" }, { t: "Says what happens in the room" }, { t: "Last organic shot before the call-off", neg: true }] },
+            { id: "hold", label: "Hold and promote",
+              cons: [{ t: "Paid reach replaces a 5th post" }, { t: "Spends money against a 9-person count", neg: true }, { t: "Budget question opens on the bet" }] },
+          ],
+          done: { publish: "scheduled for Aug 13, 08:30", hold: "held, budget question raised on the bet" },
+          transcript: [
+            T("content", "Content agent", "12:04", "The first post reached 861 people, 4 reactions, 2 comments."),
+            T("growth", "Growth agent", "09:51", "9 signed up this morning. I could not read the Meetup number — that tool failed again."),
+          ] },
+
+        { id: "counts", p: "growth", who: "Growth agent", time: "1D", kind: "fyi",
+          obj: { id: "meetupbet", tag: "BET", tagFg: "#4f46e5", title: "AI PM meetup — Aug 25" },
+          st: "For information", stFg: "#71717a", stDot: "#a1a1aa",
+          src: "Event loop", goal: "each event fills before we spend money on the next one",
+          tldr: "The 9 is Luma-only",
+          why: "The Meetup reader has failed 3 mornings running, so the count on the meetup card is Luma alone and the real total may be higher. I re-ran the reader each morning rather than assuming; it times out on a loaded page.",
+          ask: "Say whether an hour of hand counting is worth a two-source number.",
+          cols: "repeat(auto-fit,minmax(190px,1fr))",
+          receipts: [{ tag: "TASK", fg: "#0e7490", name: "Fix the Meetup reader" }],
+          quick: ["Can you count it by hand today?"],
+          ack: "I'll count it by hand and post the number.",
+          options: [
+            { id: "manual", label: "Count by hand today", rec: true,
+              cons: [{ t: "Real total posted by tonight" }, { t: "Costs an hour", neg: true }, { t: "Reader fix stays queued" }] },
+            { id: "ok", label: "Luma is enough",
+              cons: [{ t: "No time spent" }, { t: "Call-off decision rests on one source", neg: true }] },
+          ],
+          done: { manual: "counting by hand, number posted today", ok: "using the Luma number only" },
+          transcript: [
+            T("growth", "Growth agent", "09:51", "Same failure as yesterday and the day before. The page loads but the reader times out."),
+          ] },
+
+        { id: "techbbq", p: "growth", who: "Growth agent", time: "3D", kind: "decision",
+          st: "Deadline in 3 days", stFg: "#b45309", stDot: "#f59e0b",
+          src: "Trigger · partnership deadline", goal: "promises get kept before the deadline that pays for them",
+          tldr: "TechBBQ post before Aug 15",
+          why: "The partnership post is due in 3 days; miss it and we lose the ticket, the platform access, and the 25% code. Post and newsletter are both written.",
+          ask: "It publishes in your name, so it doesn't go out without you.",
+          cols: "repeat(auto-fit,minmax(220px,1fr))",
+          receipts: [{ tag: "BET", fg: "#4f46e5", name: "Partner with TechBBQ" }],
+          quick: ["Send the newsletter the same day?", "Who signs the partner agreement?"],
+          ack: "I'll adjust it and come back before Aug 15.",
+          options: [
+            { id: "post", kind: "post", label: "Post it today", rec: true,
+              author: "Sebastian Krumhausen", byline: "Product Therapy · now", meta: "code lives on Meetup",
+              body: "Product Therapy is a TechBBQ community partner this year.\n\nFor anyone in our network, that means 25% off a ticket. Bella Center Copenhagen, 26 and 27 August. Roughly 10,000 attendees last year. 2,578 from startups, 282 from scaleups, 1,731 investors. The week the Nordic ecosystem is in one room.\n\nThe code lives on our Product Therapy Copenhagen Meetup page. Join the group if you are not already, grab it there, and use it at checkout when you register on ti.to.",
+              cons: [{ t: "Aug 15 promise kept early" }, { t: "Code stays on the Meetup page" }, { t: "One more post in a crowded week", neg: true }] },
+            { id: "direct", label: "Code in the post",
+              cons: [{ t: "One less step for readers" }, { t: "We never see who joins", neg: true }, { t: "Meetup group gains nothing", neg: true }] },
+          ],
+          done: { post: "published, Aug 15 promise kept", direct: "published with the code in the post" },
+          transcript: [
+            T("growth", "Growth agent", "AUG 5", "They accepted us as a community partner. This is not the side event — that is still ours to arrange and pay for."),
+            T("content", "Content agent", "AUG 11", "I left the code off the post on purpose, so people join the group to get it."),
+          ] },
+
+        { id: "webinar", p: "content", who: "Content agent", time: "2D", kind: "decision",
+          st: "Waiting on you", stFg: "#4338ca", stDot: "#6366f1",
+          src: "Event loop", goal: "each event fills before we spend money on the next one",
+          tldr: "Announce the Sep 9 webinar?",
+          why: "The webinar is 4 weeks out and announced to 0 people. The invite to the 214-person meetup list is written and held.",
+          ask: "It mails 214 real inboxes, so I won't send it alone.",
+          cols: "repeat(auto-fit,minmax(220px,1fr))",
+          receipts: [{ tag: "BET", fg: "#4f46e5", name: "Global webinar Sep 9" }],
+          quick: ["Send after the meetup instead?", "Add it to the meetup post?"],
+          ack: "I'll hold it and re-raise this after the meetup.",
+          options: [
+            { id: "send", kind: "mail", label: "Send it", rec: true,
+              to: "Meetup list · 214 people", subject: "From doing tasks to designing loops — Sep 9, online",
+              body: "Hi,\n\nYou came to a Product Therapy session before, so you get this first.\n\nOn Sep 9 we are running the same session online, for anyone who is not in Copenhagen: From Doing Tasks to Designing Loops. One hour. Free.\n\nWe take a real product decision, shape it as a bet, and hand the execution to an agent while you watch what it writes back.\n\nIf you are coming to the Copenhagen meetup on Aug 25, come to both. They are different rooms with the same idea.",
+              cons: [{ t: "214 warm contacts hear first" }, { t: "4 weeks of sign-up runway" }, { t: "Second email in their inbox this month", neg: true }] },
+            { id: "wait", label: "Wait until Aug 26",
+              cons: [{ t: "One email instead of two" }, { t: "Meetup gets the spotlight alone" }, { t: "Runway shrinks to 2 weeks", neg: true }] },
+          ],
+          done: { send: "sending tomorrow 09:00", wait: "held until Aug 26" },
+          transcript: [
+            T("content", "Content agent", "AUG 10", "The list is people who attended before, so this is a warm audience, not a cold send."),
+          ] },
+
+        { id: "readout", p: "growth", who: "Growth agent", time: "4D", kind: "fyi",
+          st: "For information", stFg: "#71717a", stDot: "#a1a1aa",
+          src: "LinkedIn loop", goal: "every bet that needs an audience gets a post, nothing publishes without you",
+          tldr: "Announcements do not convert",
+          why: "3 announcement posts produced 2 sign-ups from 861 people reached at best; the one post naming what happens in the room beat all three. I compared all 4 rather than trusting the feel of it.",
+          ask: "Making this a standing rule shapes every future post, so it's yours to set.",
+          cols: "repeat(auto-fit,minmax(190px,1fr))",
+          receipts: [{ tag: "INSIGHT", fg: "#b45309", name: "Announcements do not convert" }],
+          quick: ["Show me the three posts"],
+          ack: "Good — I'll write it that way from now on.",
+          options: [
+            { id: "adopt", label: "Make it the rule", rec: true,
+              cons: [{ t: "Every future post names specifics" }, { t: "Applies from Thursday's post on" }, { t: "4 posts is still a thin base", neg: true }] },
+            { id: "ignore", label: "Not enough to go on",
+              cons: [{ t: "No rule from a small sample" }, { t: "Next post may repeat the miss", neg: true }] },
+          ],
+          done: { adopt: "saved as a rule for future posts", ignore: "noted, no change" },
+          transcript: [
+            T("growth", "Growth agent", "AUG 8", "Reach was fine every time. Sign-ups only moved when the post said what would happen in the room."),
+          ] },
+        { id: "loopspost", p: "content", who: "Content agent", time: "5H", kind: "decision",
+          st: "Waiting on you", stFg: "#4338ca", stDot: "#6366f1",
+          src: "LinkedIn loop", goal: "every bet that needs an audience gets a post, nothing publishes without you",
+          tldr: "Post your week in numbers?",
+          why: "The last 4 posts were announcements, and we already know those do not convert. This one is written from your own week: 11 things reached you, 9 decided, about 40 minutes total.",
+          ask: "It publishes your own numbers, so say the word before it queues.",
+          cols: "repeat(auto-fit,minmax(220px,1fr))",
+          receipts: [{ tag: "INSIGHT", fg: "#b45309", name: "Announcements do not convert" }],
+          quick: ["Can we name the numbers?", "Post it before or after the meetup?"],
+          ack: "I'll rewrite against that and put it back in the queue.",
+          options: [
+            { id: "publish", kind: "post", label: "Post Thursday 08:30", rec: true,
+              author: "Sebastian Krumhausen", byline: "Product Therapy · now", meta: "no link, no CTA",
+              body: "The question I get in every room: what is left for me to do when the agents do the executing.\n\nHere is our own answer, from running the company this way for four months.\n\nLast week eleven things reached me. I decided nine of them. The two I did not decide are still sitting there, which is the point — nothing published, merged or sent without a yes.\n\nWhat I actually did: said no to shipping a page nobody had opened in a browser. Held a post because it said nothing specific. Signed off a rebuild against a mockup. Priced a piece of work. About forty minutes of decisions across the week.\n\nThe job did not disappear. It got smaller and much harder to hide from.",
+              cons: [{ t: "Takes Thursday's 08:30 slot" }, { t: "Specifics, no invitation at the end" }, { t: "Your real numbers go public", neg: true }] },
+            { id: "hold", label: "Hold past the meetup",
+              cons: [{ t: "Week stays private" }, { t: "Meetup posts get the room" }, { t: "The shape that converts sits unused", neg: true }] },
+          ],
+          done: { publish: "scheduled for Thursday, 08:30", hold: "held until Aug 26" },
+          transcript: [
+            T("content", "Content agent", "07:20", "Numbers are from your own week in the workspace. Say the word and I take them out."),
+            T("growth", "Growth agent", "07:44", "This is the shape that worked last time — specifics, no invitation at the end."),
+          ] },
+
+        { id: "threeposts", p: "content", who: "Content agent", time: "4H", kind: "decision",
+          st: "Waiting on you", stFg: "#4338ca", stDot: "#6366f1",
+          src: "LinkedIn loop", goal: "every bet that needs an audience gets a post, nothing publishes without you",
+          tldr: "Which reader do we write for?",
+          why: "The meetup is 6 days out and the room is half empty; one post goes out tomorrow. Three versions are written, one each for the stranger, the returner, and the sceptic.",
+          ask: "The voice is yours, so pick the reader before the slot passes.",
+          cols: "repeat(auto-fit,minmax(220px,1fr))",
+          receipts: [{ tag: "BET", fg: "#4f46e5", name: "AI PM meetup Aug 25" }],
+          quick: ["Mix the first and the third?", "Which one fits the last post?"],
+          ack: "I'll write that version and put all four back here.",
+          options: [
+            { id: "proof", kind: "post", label: "A · Proof", rec: true,
+              author: "Sebastian Krumhausen", byline: "Product Therapy · now",
+              body: "Most demos of agents are recorded. Ours is not.\n\nOn Aug 25 in Copenhagen we take a product decision from someone in the room, shape it as a bet with a kill threshold, and hand the execution to an agent while everyone watches what it writes back. If it fails on stage, you see that too.\n\nRepublikken, 16:30. Free. 35 of 70 seats left.",
+              cons: [{ t: "Closest to what worked in June" }, { t: "Written for the sceptic" }, { t: "Says little to past attendees", neg: true }] },
+            { id: "invite", kind: "post", label: "B · Invitation",
+              author: "Sebastian Krumhausen", byline: "Product Therapy · now",
+              body: "Fourth Product Therapy session, and the first where we run the whole thing inside the workspace we use ourselves.\n\nBring one decision you are stuck on. We will build the loop around it in the room, and you leave with it running.\n\nAug 25, Republikken, 16:30. Free, 70 seats, half gone.",
+              cons: [{ t: "Warmest to people who came before" }, { t: "Asks them to bring a decision" }, { t: "Means little to strangers", neg: true }] },
+            { id: "argument", kind: "post", label: "C · Argument",
+              author: "Sebastian Krumhausen", byline: "Product Therapy · now",
+              body: "The uncomfortable version of the agent question: if an agent can execute, what is the product manager for.\n\nOur answer after four months of working this way is that the job shrinks to the decisions nobody can delegate, and gets much harder to hide from. Eleven things reached me last week. I decided nine.\n\nWe are arguing this out loud on Aug 25 in Copenhagen. Come disagree.",
+              cons: [{ t: "Most likely to draw comments" }, { t: "Fewest sign-ups on past form", neg: true }, { t: "Stakes the claim publicly" }] },
+          ],
+          done: { proof: "Draft A scheduled for tomorrow 08:30", invite: "Draft B scheduled for tomorrow 08:30", argument: "Draft C scheduled for tomorrow 08:30" },
+          transcript: [
+            T("content", "Content agent", "06:40", "All three are within ten words of each other in length. A is the one closest to what worked in June."),
+            T("growth", "Growth agent", "06:52", "C will get the most comments and the fewest sign-ups, if the last four posts are anything to go by."),
+          ] },
+
+        { id: "covers", p: "designer", who: "Designer", time: "7H", kind: "decision",
+          st: "Waiting on you", stFg: "#4338ca", stDot: "#6366f1",
+          src: "Design loop", goal: "every post that goes out looks like it came from us",
+          tldr: "Pick the meetup post cover",
+          why: "The meetup post goes out with one cover; 3 are drawn in our existing type and colours, so any is safe. They differ in how much they say before the post is read.",
+          ask: "This is taste, so the pick is yours.",
+          cols: "repeat(auto-fit,minmax(150px,1fr))",
+          receipts: [{ tag: "BET", fg: "#4f46e5", name: "AI PM meetup Aug 25" }],
+          quick: ["Show them at post size", "Try the date bigger"],
+          ack: "I'll redo them that way and come back.",
+          options: [
+            { id: "cv1", kind: "visual", label: "Date card", rec: true, slot: "COVER 1\nDATE CARD\n1200×627",
+              cons: [{ t: "Reads in one glance" }, { t: "Says nothing about the format", neg: true }] },
+            { id: "cv2", kind: "visual", label: "Room photo", slot: "COVER 2\nROOM PHOTO\n1200×627",
+              cons: [{ t: "Proof a room shows up" }, { t: "June photo, not this event", neg: true }] },
+            { id: "cv3", kind: "visual", label: "Loop diagram", slot: "COVER 3\nLOOP DIAGRAM\n1200×627",
+              cons: [{ t: "Shows the actual idea" }, { t: "Needs a second of reading", neg: true }] },
+          ],
+          done: { cv1: "cover 1 attached to the post", cv2: "cover 2 attached to the post", cv3: "cover 3 attached to the post" },
+          transcript: [
+            T("designer", "Designer", "05:58", "I drew six and cut to these three myself. The other three are parked on the bet if you want them."),
+          ] },
+    ];
+    return this._d;
+  }
+
+  setComp(id, v) { const comp = { ...this.state.comp }; comp[id] = v; this.setState({ comp }); }
+  push(id, row) { const chat = { ...this.state.chat }; chat[id] = (chat[id] || []).concat([row]); this.setState({ chat }); }
+  send(c, text) {
+    const t = (text !== undefined ? text : this.state.comp[c.id] || "").trim();
+    if (!t) return;
+    this.push(c.id, { who: "you", text: t });
+    this.setComp(c.id, "");
+    if (!this.state.open[c.id]) { const open = { ...this.state.open }; open[c.id] = true; this.setState({ open }); }
+    this.setState({ replied: { ...this.state.replied, [c.id]: true } });
+    setTimeout(() => this.push(c.id, { who: "agent", text: c.ack }), 650);
+  }
+  toggleOpen(id) { const open = { ...this.state.open }; open[id] = !open[id]; this.setState({ open }); }
+  toggleExpand(k) { const expand = { ...this.state.expand }; expand[k] = !expand[k]; this.setState({ expand }); }
+
+  build(c0, cardsView, grouped, first) {
+    const st = this.state, AV = this.AV(), av = AV[c0.p];
+    const dec = st.decided[c0.id];
+    const open = cardsView || !!st.open[c0.id];
+    const rec = c0.options.find((o) => o.rec) || c0.options[0];
+    const decide = (o) => this.setState({ decided: { ...this.state.decided, [c0.id]: o } });
+    const mkModal = (o) => () => this.setState({ modal: { kind: o.kind, label: o.label, author: o.author, byline: o.byline, body: o.body, to: o.to, subject: o.subject, slot: o.slot } });
+    const options = c0.options.slice().sort((a, b) => (a.rec ? 1 : 0) - (b.rec ? 1 : 0)).map((o) => {
+      const ek = c0.id + ":" + o.id, ex = st.expand[ek];
+      const zoomable = o.kind === "post" || o.kind === "mail" || o.kind === "visual";
+      return { ...o, key: o.id,
+        isPost: o.kind === "post", isMail: o.kind === "mail", isVisual: o.kind === "visual",
+        consHas: !!(o.cons && o.cons.length),
+        cons: (o.cons || []).map((n, i) => ({ key: i, t: n.t, fg: n.neg ? "#b45309" : "#52525b" })),
+        lines: ex ? 99 : 14, more: ex ? "Show less" : "Read all",
+        moreShown: ex ? "Show less" : ((o.body || "").length > 900 ? "Read all" : ""),
+        draftLabel: o.draftLabel || "EMAIL DRAFT",
+        expand: () => this.toggleExpand(ek),
+        zoom: zoomable ? mkModal(o) : undefined,
+        border: "1px solid #ececee",
+        dim: o.rec ? "1" : ".82", barFw: o.rec ? 650 : 600, barSize: o.rec ? "13.5px" : "12.5px",
+        barBg: st.pending[c0.id] === o.id ? (o.rec ? "#3f3f46" : "#f4f4f5") : (o.rec ? "#18181b" : "#fff"),
+        barFg: o.rec ? "#fff" : "#18181b",
+        barLabel: st.pending[c0.id] === o.id ? o.label + "…" : o.label,
+        go: () => { if (st.pending[c0.id]) return;
+          this.setState({ pending: { ...this.state.pending, [c0.id]: o.id } });
+          setTimeout(() => { const p = { ...this.state.pending }; delete p[c0.id]; this.setState({ pending: p }); decide(o); }, 420); } };
+    });
+    const extra = st.hist[c0.id] || 0, shown = Math.min(c0.transcript.length, 1 + extra);
+    const tail = c0.transcript.slice(-shown), remaining = c0.transcript.length - shown;
+    const waiting = !dec && !!st.replied[c0.id];
+    const old = /^(\d+)D$/.test(c0.time) || c0.time === "YEST" || /^[A-Z]{3} \d+$/.test(c0.time);
+    return { ...c0, ...av, key: c0.id,
+      stText: waiting ? "Waiting on " + c0.who : c0.st,
+      stFg: waiting ? "#0f766e" : c0.stFg,
+      isWaiting: waiting,
+      waitNote: !dec && !waiting && c0.kind !== "fyi" && old ? "held " + (c0.time === "YEST" ? "since yesterday" : /^\d+D$/.test(c0.time) ? c0.time.replace("D", "") + " days" : "over a week") : "",
+      waitFg: "#b45309",
+      isDone: !!dec, isRow: !dec && !open, isFull: !dec && open,
+      canCollapse: !cardsView,
+      fullTopBorder: "none",
+      border: grouped ? "none" : "1px solid #ececee",
+      sepTop: grouped ? (first ? "none" : "1px solid #f0f0f2") : "1px solid #ececee",
+      radius: grouped ? "0" : "14px",
+      shadow: grouped ? "none" : (open && !dec ? "0 6px 22px rgba(0,0,0,.06)" : "0 1px 2px rgba(0,0,0,.03)"),
+      caret: open ? "⌃" : "⌄",
+      toggleOpen: () => this.toggleOpen(c0.id),
+      heroGo: cardsView ? undefined : () => this.toggleOpen(c0.id),
+      heroCursor: cardsView ? "default" : "pointer",
+      objTag: (c0.obj ? c0.obj.tag : (c0.receipts[0] || {}).tag) || "",
+      objFg: (c0.obj ? c0.obj.tagFg : (c0.receipts[0] || {}).fg) || "#a1a1aa",
+      objName: c0.obj ? c0.obj.title : (c0.receipts[0] || {}).name || "",
+      options,
+      latestHas: tail.length > 0,
+      latest: tail.map((m, i) => ({ key: c0.transcript.length - tail.length + i, ...m, clamp: 3,
+        fade: extra && i < Math.min(3, extra) ? ".62" : "1",
+        indent: m.re ? "34px" : "0",
+        hasRe: !!m.re, re: m.re || "", ...(AV[m.av] || AV.you) })),
+      earlierCount: remaining ? "↑ " + remaining + (remaining === 1 ? " earlier message" : " earlier messages") : "",
+      toggleEarlier: () => this.setState({ hist: { ...this.state.hist, [c0.id]: extra + 3 } }),
+      collapseHist: extra ? () => this.setState({ hist: { ...this.state.hist, [c0.id]: 0 } }) : undefined,
+      collapseHistLabel: extra ? "Collapse" : "",
+      doneLabel: dec ? dec.label : "",
+      doneLine: dec ? c0.done[dec.id] : "",
+      undo: () => { const d = { ...st.decided }; delete d[c0.id]; this.setState({ decided: d }); },
+      chat: (st.chat[c0.id] || []).map((x, i) => ({ key: i, name: x.who === "you" ? "Sindre" : c0.who, text: x.text, ...(x.who === "you" ? AV.you : av) })),
+      openObj: (e) => { e.stopPropagation(); },
+      compVal: st.comp[c0.id] || "",
+      sendBg: (st.comp[c0.id] || "").trim() ? "#18181b" : "#ececee",
+      sendFg: (st.comp[c0.id] || "").trim() ? "#fff" : "#b0b0b6",
+      sendCursor: (st.comp[c0.id] || "").trim() ? "pointer" : "default",
+      onComp: (e) => this.setComp(c0.id, e.target.value),
+      onKey: (e) => { if (e.key === "Enter") this.send(c0); },
+      send: () => this.send(c0),
+      ph: "Reply to " + c0.who + "…" };
+  }
+
+  renderVals() {
+    const st = this.state, WS = this.WS()[st.ws], cardsView = st.view === "cards";
+    const all = this.DATA();
+    const hrs = (t) => { if (t === "YEST") return 26; const m = /^(\d+)([HD])$/.exec(t); return m ? +m[1] * (m[2] === "D" ? 24 : 1) : 999; };
+    const objOf = (c) => (c.obj ? c.obj.tag : (c.receipts[0] || {}).tag) || "TASK";
+    let visible = (st.objFilter === "all" ? all : all.filter((c) => objOf(c) === st.objFilter)).filter((c) => !st.dismissed[c.id]);
+    if (st.sort === "chrono") visible = visible.slice().sort((a, b) => hrs(a.time) - hrs(b.time));
+
+    const order = [], byObj = {};
+    visible.forEach((c) => {
+      const k = c.obj ? "o:" + c.obj.id : "s:" + c.id;
+      if (!byObj[k]) { byObj[k] = { key: k, obj: c.obj || null, raw: [] }; order.push(byObj[k]); }
+      byObj[k].raw.push(c);
+    });
+
+    const gap = cardsView ? "12px" : "7px";
+    const groups = order.map((g) => {
+      const many = g.raw.length > 1;
+      const collapsed = many && !!st.gcol[g.key];
+      const ranked = g.raw.slice().sort((a, b) => (st.decided[a.id] ? 1 : 0) - (st.decided[b.id] ? 1 : 0));
+      const items = ranked.map((c, i) => this.build(c, cardsView, many, i === 0));
+      const undecided = items.filter((c) => !c.isDone);
+      const openHere = ranked.filter((c) => c.kind !== "fyi" && !st.decided[c.id] && !st.replied[c.id]);
+      return { key: g.key, isGroup: many, showItems: !collapsed, items,
+        tag: many ? g.obj.tag : "", tagFg: many ? g.obj.tagFg : "", title: many ? g.obj.title : "",
+        count: "",
+        bulkLabel: many && openHere.length > 1 ? "Take all " + openHere.length + " suggested" : "",
+        bulkGo: (e) => { if (e && e.stopPropagation) e.stopPropagation();
+          const d = { ...this.state.decided };
+          openHere.forEach((c) => { d[c.id] = c.options.find((o) => o.rec) || c.options[0]; });
+          this.setState({ decided: d }); },
+        openLabel: many ? (undecided.length ? undecided.length + " need you" : "all handled") : "",
+        caret: collapsed ? "⌄" : "⌃",
+        toggle: () => { const gc = { ...st.gcol }; gc[g.key] = !gc[g.key]; this.setState({ gcol: gc }); },
+        bg: many ? "#fff" : "transparent", border: many ? "1px solid #ececee" : "none",
+        shadow: many ? "0 1px 2px rgba(0,0,0,.03)" : "none", gap: many ? "0" : gap,
+        allDone: items.every((c) => c.isDone),
+        allSettled: items.every((c) => c.isDone || c.isWaiting) && items.some((c) => c.isWaiting),
+        anyFyiOnly: items.every((c) => c.kind === "fyi") };
+    });
+
+    const bucket = (g) => (g.allDone ? "done" : g.allSettled ? "waiting" : g.anyFyiOnly ? "fyi" : "needs");
+    const needs = groups.filter((g) => bucket(g) === "needs");
+    const waiting = groups.filter((g) => bucket(g) === "waiting");
+    const fyi = groups.filter((g) => bucket(g) === "fyi");
+    const done = groups.filter((g) => bucket(g) === "done");
+    const doneCount = groups.reduce((n, g) => n + g.items.filter((c) => c.isDone).length, 0);
+    const cap = 5, capped = false;
+    const sections = [];
+    if (needs.length) sections.push({ key: "needs", label: "Decision needed", gap,
+      groups: capped ? needs.slice(0, cap) : needs,
+      hasMore: capped, moreLabel: capped ? "Show " + (needs.length - cap) + " more" : "",
+      moreGo: () => this.setState({ showAll: true }) });
+    if (waiting.length) sections.push({ key: "waiting", label: "Waiting on agents", groups: waiting, gap });
+    if (fyi.length) sections.push({ key: "fyi", label: "FYI", groups: fyi, gap });
+    if (done.length) sections.push({ key: "done", label: "Handled today", groups: done, gap });
+
+    const typeDefs = [["all", "Everything"], ["BET", "Bets"], ["TASK", "Tasks"], ["CONTACT", "Contacts"], ["GIG", "Gigs"], ["PR", "Pull requests"], ["INSIGHT", "Insights"]];
+    const objOpts = typeDefs.filter(([k]) => k === "all" || all.some((c) => objOf(c) === k)).map(([k, label]) => ({ key: k, label,
+      count: k === "all" ? all.length : all.filter((c) => objOf(c) === k).length,
+      fw: st.objFilter === k ? 700 : 500, fg: st.objFilter === k ? "#18181b" : "#52525b",
+      check: st.objFilter === k ? "✓" : "",
+      chipBg: st.objFilter === k ? "#18181b" : "#fff",
+      chipFg: st.objFilter === k ? "#fff" : "#52525b",
+      chipBd: st.objFilter === k ? "#18181b" : "#ececee",
+      chipCount: st.objFilter === k ? "rgba(255,255,255,.55)" : "#b0b0b6",
+      go: () => this.setState({ objFilter: k }) }));
+    const viewOpts = [["compact", "List"], ["cards", "Cards"]].map(([k, label]) => ({ key: k, label,
+      isList: k === "compact", isCards: k === "cards",
+      fw: st.view === k ? 700 : 500, fg: st.view === k ? "#18181b" : "#52525b",
+      check: st.view === k ? "✓" : "",
+      go: () => this.setState({ view: k }) }));
+    const sortOpts = [["attention", "By attention"], ["chrono", "Chronological"]].map(([k, label]) => ({ key: k, label,
+      fw: st.sort === k ? 700 : 500, fg: st.sort === k ? "#18181b" : "#52525b",
+      check: st.sort === k ? "✓" : "",
+      go: () => this.setState({ sort: k }) }));
+    const menuParts = [cardsView ? "Cards" : "List"];
+    if (st.objFilter !== "all") menuParts.push((typeDefs.find((d) => d[0] === st.objFilter) || [])[1] || st.objFilter);
+    if (st.sort === "chrono") menuParts.push("Chronological");
+    const totalOpen = all.filter((c) => c.kind !== "fyi" && !st.decided[c.id]).length;
+
+    const tabs = ["For you"].map((label, i) => ({
+      key: label, label, fw: i === 0 ? 700 : 500, fg: i === 0 ? "#18181b" : "#a1a1aa", bg: i === 0 ? "#f4f4f5" : "transparent" }));
+
+    const M = st.modal;
+    return { sections,
+      notEmbedded: !this.props.embedded,
+      filtersOn: st.showFilters,
+      filtersToggle: () => this.setState({ showFilters: !st.showFilters }),
+      filtersFw: st.showFilters ? 700 : 500,
+      filtersFg: st.showFilters ? "#18181b" : "#52525b",
+      filtersCheck: st.showFilters ? "✓" : "",
+      modalOpen: !!M,
+      modalClose: () => this.setState({ modal: null }),
+      eatClick: (e) => e.stopPropagation(),
+      modalLabel: M ? (M.kind === "mail" ? "EMAIL DRAFT" : M.kind === "post" ? "LINKEDIN POST" : M.label) : "",
+      modalIsPost: !!(M && M.kind === "post"), modalIsMail: !!(M && M.kind === "mail"), modalIsVisual: !!(M && M.kind === "visual"),
+      modalHasBody: !!(M && M.body),
+      modalAuthor: M ? M.author : "", modalByline: M ? M.byline : "", modalBody: M ? M.body : "",
+      modalTo: M ? M.to : "", modalSubject: M ? M.subject : "", modalSlot: M ? M.slot : "",
+      tail: !sections.length ? (st.objFilter !== "all" ? "Nothing of this kind in the feed" : "Feed cleared") : doneCount ? "You have handled " + doneCount + " today" : "Nothing older than four days",
+      hasUndismiss: !!Object.keys(st.dismissed).length,
+      undismiss: () => this.setState({ dismissed: {} }),
+      objOpts, viewOpts, sortOpts,
+      moreOpen: st.moreOpen,
+      toggleMore: () => this.setState({ moreOpen: !st.moreOpen }),
+      closeMore: () => this.setState({ moreOpen: false }),
+      moreOpts: (() => {
+        const openFyi = all.filter((c) => c.kind === "fyi" && !st.decided[c.id]);
+        const openAll = all.filter((c) => c.kind !== "fyi" && !st.decided[c.id] && !st.replied[c.id]);
+        const bulk = (list) => () => { const d = { ...this.state.decided };
+          list.forEach((c) => { d[c.id] = c.options.find((o) => o.rec) || c.options[0]; });
+          this.setState({ decided: d, moreOpen: false }); };
+        return [
+          { key: "fyi", label: "Dismiss all FYIs", count: openFyi.length || "", fg: openFyi.length ? "#52525b" : "#c4c4cc", go: openFyi.length ? bulk(openFyi) : () => this.setState({ moreOpen: false }) },
+          { key: "sugg", label: "Take every suggested option", count: openAll.length || "", fg: openAll.length ? "#52525b" : "#c4c4cc", go: openAll.length ? bulk(openAll) : () => this.setState({ moreOpen: false }) },
+          { key: "dismiss", label: "Dismiss all", count: (openFyi.length + openAll.length) || "", fg: openFyi.length + openAll.length ? "#52525b" : "#c4c4cc",
+            go: () => { const dm = { ...this.state.dismissed };
+              openFyi.concat(openAll).forEach((c) => { dm[c.id] = true; });
+              this.setState({ dismissed: dm, moreOpen: false }); } },
+          { key: "collapse", label: "Collapse all groups", count: "", fg: "#52525b",
+            go: () => { const gc = {}; all.forEach((c) => { if (c.obj) gc["o:" + c.obj.id] = true; }); this.setState({ gcol: gc, moreOpen: false }); } },
+        ];
+      })(),
+      menuOpen: st.menuOpen,
+      menuLabel: menuParts.join(" · "),
+      menuCaret: st.menuOpen ? "⌃" : "⌄",
+      toggleMenu: () => this.setState({ menuOpen: !st.menuOpen }),
+      closeMenu: () => this.setState({ menuOpen: false }),
+      tabs,
+      feedSummary: totalOpen ? totalOpen + " waiting on you" : "All clear" };
+  }
+}
+</script>
+</body>
+</html>

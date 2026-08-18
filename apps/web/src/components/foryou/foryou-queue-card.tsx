@@ -308,10 +308,10 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 					className={cn(
 						'relative flex h-full flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-lg cursor-grab touch-pan-y',
 						exitDir
-							? 'transition-[transform,opacity] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]'
+							? 'transition-[transform,opacity] duration-slide ease-emphasized'
 							: isDragging
 								? 'transition-none'
-								: 'transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]',
+								: 'transition-transform duration-slide ease-emphasized',
 					)}
 					style={{
 						transform: exitTransform ?? dragTransform,

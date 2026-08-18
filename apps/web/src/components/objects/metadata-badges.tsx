@@ -29,7 +29,8 @@ export function MetadataBadgesView({
 							size="icon"
 							className="text-muted-foreground hover:text-error opacity-0 group-hover:opacity-100 transition-opacity ml-0.5"
 							onClick={() => onRemove(key)}
-							title="Remove field"
+							title={`Remove ${key} field`}
+							aria-label={`Remove ${key} field`}
 						>
 							<X className="h-3 w-3" />
 						</Button>

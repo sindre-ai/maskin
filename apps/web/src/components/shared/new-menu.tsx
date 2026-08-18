@@ -74,7 +74,7 @@ export function NewMenu({ onNewChat, hideObjectSection }: NewMenuProps) {
 									key={item.subtype}
 									onSelect={() => setCreateConfig({ type: 'object', subtype: item.subtype })}
 								>
-									<span className={`h-2.5 w-2.5 shrink-0 rounded-[3px] ${item.swatchClassName}`} />
+									<span className={`h-2.5 w-2.5 shrink-0 rounded-sm ${item.swatchClassName}`} />
 									New {item.label.toLowerCase()}
 								</DropdownMenuItem>
 							))}

@@ -246,7 +246,7 @@ function HeroCardList({
 
 	return (
 		<div className="p-3">
-			<div className="flex flex-col bg-card border border-border rounded-[10px] max-w-[540px] overflow-hidden">
+			<div className="flex flex-col bg-card border border-border rounded-lg max-w-[540px] overflow-hidden">
 				<header className="flex items-center gap-2 px-4 py-3 border-b border-border">
 					<div className="flex items-center justify-center w-3.5 h-3.5 rounded-sm bg-primary text-primary-foreground text-[9px] leading-none font-bold shrink-0">
 						M

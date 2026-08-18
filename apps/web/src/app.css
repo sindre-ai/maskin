@@ -211,6 +211,32 @@
 	--shadow-md: 0 4px 12px rgba(24, 24, 27, 0.06);
 	--shadow-lg: 0 12px 34px rgba(0, 0, 0, 0.1);
 	--shadow-xl: 0 24px 70px rgba(0, 0, 0, 0.3);
+
+	/* Motion scale — v2 design system (see .claude/skills/maskin-design/tokens/motion.css).
+	   Named durations + easings so surfaces don't hardcode raw ms values.
+	   Guidance: 150 on colour/border, 180 on fades, 200 on shadow +
+	   transform, 250 on nav/panel state, slide on drawer/sheet slide-in.
+	   Tailwind v4 auto-generates `ease-<name>` utilities from --ease-*, but
+	   not `duration-<name>` from --duration-* — the semantic durations that
+	   don't map onto Tailwind's built-in numeric scale (180, 250, slide) get
+	   explicit @utility blocks below. */
+	--duration-180: 180ms;
+	--duration-250: 250ms;
+	--duration-slide: 300ms;
+
+	--ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+	--ease-emphasized: cubic-bezier(0.16, 1, 0.3, 1);
+	--ease-out: ease-out;
+}
+
+@utility duration-180 {
+	transition-duration: var(--duration-180);
+}
+@utility duration-250 {
+	transition-duration: var(--duration-250);
+}
+@utility duration-slide {
+	transition-duration: var(--duration-slide);
 }
 
 /* ------------------------------------------------------------------------- */
@@ -526,6 +552,22 @@
 	.dark mark {
 		background-color: color-mix(in oklab, var(--brand) 20%, transparent);
 		color: var(--brand);
+	}
+
+	/* Reduced motion — kill animations and transitions, don't just slow
+	   them. Mirrors .claude/skills/maskin-design/tokens/motion.css so every
+	   animated surface (Tailwind utilities, Radix data-state animations,
+	   custom keyframes) inherits the preference without per-component
+	   wiring. */
+	@media (prefers-reduced-motion: reduce) {
+		*,
+		*::before,
+		*::after {
+			animation-duration: 0.001ms !important;
+			animation-iteration-count: 1 !important;
+			transition-duration: 0.001ms !important;
+			scroll-behavior: auto !important;
+		}
 	}
 }
 
