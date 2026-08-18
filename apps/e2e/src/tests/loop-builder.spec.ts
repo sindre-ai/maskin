@@ -7,10 +7,7 @@ const EXAMPLE_CHIP = /Notify me weekly with a summary of new customer feedback/i
 
 test.describe('Loop builder — language-only create flow', () => {
 	for (const viewport of SHIP_GATE_VIEWPORTS) {
-		test(`empty → draft → adjust → create → done at ${viewport.label}`, async ({
-			page,
-			account,
-		}) => {
+		test(`empty → draft → create → done at ${viewport.label}`, async ({ page, account }) => {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
 			// The mounted Composer never reaches the backend on this surface — its
 			// `onSend` only re-parses the sentence locally. The create-flow must
@@ -45,14 +42,15 @@ test.describe('Loop builder — language-only create flow', () => {
 			await expect(planCard).toBeVisible({ timeout: 10000 })
 			await expect(page.getByText('not created yet')).toBeVisible()
 
-			// Adjust switches the card to editable fields.
-			await page.getByRole('button', { name: /adjust/i }).click()
-			await expect(page.getByRole('textbox', { name: /object type name/i })).toBeVisible()
-
-			// Save returns to the read-only proposed view.
-			await page.getByRole('button', { name: /^save$/i }).click()
+			// Language is the only way in — the card offers no builder path: no
+			// Adjust, no form fields, and a footer of Start over + Create loop only.
+			await expect(page.getByRole('button', { name: /adjust/i })).toBeHidden()
 			await expect(page.getByRole('button', { name: /^save$/i })).toBeHidden()
-			await expect(page.getByText('PROPOSED LOOP')).toBeVisible()
+			await expect(
+				page.getByRole('region', { name: /proposed loop/i }).getByRole('textbox'),
+			).toHaveCount(0)
+			await expect(page.getByRole('button', { name: /^start over$/i })).toBeVisible()
+			await expect(page.getByRole('button', { name: /create loop/i })).toBeVisible()
 
 			// No loop object exists before Create.
 			const loopsDuring = (await account.api.listObjects(account.workspaceId)).filter(

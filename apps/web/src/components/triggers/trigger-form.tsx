@@ -20,6 +20,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { useAutoSave } from '@/hooks/use-auto-save'
 import { useCustomExtensions } from '@/hooks/use-custom-extensions'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
+import { useEntityEvents } from '@/hooks/use-events'
 import { useIntegrations, useProviders } from '@/hooks/use-integrations'
 import { useWorkspaceSessions } from '@/hooks/use-sessions'
 import type { ProviderEventDefinition, TriggerResponse, WorkspaceWithRole } from '@/lib/api'
@@ -594,13 +595,19 @@ export function TriggerForm({
 		setSlackFilterState(EMPTY_SLACK_FILTER_STATE)
 	}
 
+	// Integration-sourced event types (GitHub, Linear, …) have no workspace
+	// field definitions — their conditions address the event payload by path
+	// (`action`, `pull_request.merged`), the same shape the Slack filters write
+	// and `evaluateConditions` already resolves. So a missing field-def list
+	// means a free-text field, not a disabled section.
 	const addCondition = () => {
-		if (fieldDefs.length === 0) return
 		const first = fieldDefs[0]
-		const ops = OPERATORS_BY_TYPE[first.type] ?? OPERATORS_BY_TYPE.text
+		const ops = first
+			? (OPERATORS_BY_TYPE[first.type] ?? OPERATORS_BY_TYPE.text)
+			: OPERATORS_BY_TYPE.text
 		setConditions([
 			...conditions,
-			{ id: crypto.randomUUID(), field: first.name, operator: ops[0].value, value: '' },
+			{ id: crypto.randomUUID(), field: first?.name ?? '', operator: ops[0].value, value: '' },
 		])
 	}
 
@@ -650,6 +657,13 @@ export function TriggerForm({
 	})
 
 	const triggerId = initialValues?.id
+	// Suggestion chips are the zero state of the language bar: they only stand
+	// in for a transcript that isn't there yet (mockup 1821–1827). Shares the
+	// `events.byEntity` cache entry TriggerHistory already reads, so gating on
+	// it costs no extra request.
+	const { data: triggerEvents } = useEntityEvents(workspaceId, triggerId ?? '')
+	const hasChanges = (triggerEvents ?? []).some((e) => e.entityId === triggerId)
+
 	const handleUtterance = useCallback(
 		async (_content: string) => {
 			// An in-place language patch has no backend contract yet — hand the
@@ -888,38 +902,38 @@ export function TriggerForm({
 						</section>
 					)}
 
-					{isInternal && (
-						<section className="mt-5">
-							<h2 className="eyebrow">ADDITIONAL CONDITIONS</h2>
-							<div className="mt-2.5 flex flex-col gap-2">
-								{conditions.map((condition, index) => (
-									<ConditionEditor
-										key={condition.id}
-										condition={condition}
-										fieldDefs={fieldDefs}
-										onChange={(updates) => updateCondition(index, updates)}
-										onRemove={() => removeCondition(index)}
-									/>
-								))}
-								{fieldDefs.length > 0 ? (
-									<Button
-										variant="ghost"
-										size="sm"
-										onClick={addCondition}
-										className="min-h-11 w-fit border border-dashed border-border font-semibold text-muted-foreground hover:border-border-strong hover:text-foreground sm:min-h-8"
-									>
-										<Plus size={14} className="mr-1.5" />
-										Add condition
-									</Button>
-								) : conditions.length === 0 ? (
-									<p className="text-xs text-muted-foreground">
-										No properties defined for {entityType}s. Configure them in{' '}
-										<span className="underline">Properties</span> settings to add conditions.
-									</p>
-								) : null}
-							</div>
-						</section>
-					)}
+					{/* Any event trigger gets conditions (mockup 1698–1710), not just
+					    the ones backed by workspace field definitions. */}
+					<section className="mt-5">
+						<h2 className="eyebrow">ADDITIONAL CONDITIONS</h2>
+						<div className="mt-2.5 flex flex-col gap-2">
+							{conditions.map((condition, index) => (
+								<ConditionEditor
+									key={condition.id}
+									condition={condition}
+									fieldDefs={fieldDefs}
+									onChange={(updates) => updateCondition(index, updates)}
+									onRemove={() => removeCondition(index)}
+								/>
+							))}
+							<Button
+								variant="ghost"
+								size="sm"
+								onClick={addCondition}
+								className="min-h-11 w-fit border border-dashed border-border font-semibold text-muted-foreground hover:border-border-strong hover:text-foreground sm:min-h-8"
+							>
+								<Plus size={14} className="mr-1.5" />
+								Add condition
+							</Button>
+							{fieldDefs.length === 0 && (
+								<p className="text-xs text-muted-foreground">
+									{isInternal
+										? `No properties defined for ${entityType}s — name a field on the event payload, or configure properties in settings.`
+										: 'Name a field on the event payload, e.g. action or pull_request.merged.'}
+								</p>
+							)}
+						</div>
+					</section>
 				</>
 			)}
 
@@ -1093,7 +1107,7 @@ export function TriggerForm({
 					className="pointer-events-none h-5 bg-gradient-to-b from-transparent to-background"
 				/>
 				<div className="pb-[max(0.625rem,env(safe-area-inset-bottom))]">
-					{isCreated && (
+					{isCreated && !hasChanges && (
 						<div className="flex flex-wrap gap-1.5 pb-2.5" aria-label="Suggested changes">
 							{UTTERANCE_SUGGESTIONS.map((suggestion) => (
 								<Button
@@ -1174,18 +1188,28 @@ function ConditionEditor({
 
 	return (
 		<div className="flex flex-wrap items-center gap-1.5">
-			<Select value={condition.field} onValueChange={handleFieldChange}>
-				<SelectTrigger className="min-h-11 sm:min-h-8">
-					<SelectValue />
-				</SelectTrigger>
-				<SelectContent>
-					{fieldDefs.map((f) => (
-						<SelectItem key={f.name} value={f.name}>
-							{f.name}
-						</SelectItem>
-					))}
-				</SelectContent>
-			</Select>
+			{fieldDefs.length === 0 ? (
+				<Input
+					value={condition.field}
+					onChange={(e) => onChange({ field: e.target.value })}
+					placeholder="event field"
+					aria-label="Condition field"
+					className="min-h-11 w-40 font-mono text-xs sm:min-h-8"
+				/>
+			) : (
+				<Select value={condition.field} onValueChange={handleFieldChange}>
+					<SelectTrigger className="min-h-11 sm:min-h-8">
+						<SelectValue />
+					</SelectTrigger>
+					<SelectContent>
+						{fieldDefs.map((f) => (
+							<SelectItem key={f.name} value={f.name}>
+								{f.name}
+							</SelectItem>
+						))}
+					</SelectContent>
+				</Select>
+			)}
 
 			<Select
 				value={condition.operator}

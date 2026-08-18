@@ -175,13 +175,13 @@ describe('objects-filter-model', () => {
 	})
 
 	describe('toDisplaySettingsBody', () => {
-		it('always persists sort/order/columnVisibility and nulls an absent groupBy', () => {
+		it('always persists sort/order/columnVisibility and marks an absent groupBy as none', () => {
 			const model = { ...fromUrlSearch({ columnVisibility: { createdBy: false } }) }
 			const body = toDisplaySettingsBody(model)
 			expect(body).toMatchObject({
 				sort: DEFAULT_SORT,
 				order: DEFAULT_ORDER,
-				groupBy: null,
+				groupBy: 'none',
 				columnVisibility: { createdBy: false },
 			})
 			expect(body.filters).toBeUndefined()

@@ -778,9 +778,10 @@ function BoardColumn({
 				<span className="shrink-0 text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
 					{humanizeStatus(label)}
 				</span>
+				{/* Plain count (mockup 976) — the loaded-of-total reading moved to the
+				    column note slot on the right (mockup 978). */}
 				<span className="shrink-0 text-[11px] font-semibold tabular-nums text-muted-foreground/60">
-					{objects.length}
-					{total > objects.length ? `/${total}` : ''}
+					{total}
 				</span>
 				{needsYouCount > 0 && (
 					<span
@@ -788,6 +789,11 @@ function BoardColumn({
 						className="shrink-0 truncate rounded-[5px] bg-ask-surface px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-[0.06em] text-warning"
 					>
 						{needsYouCount} need you
+					</span>
+				)}
+				{total > objects.length && (
+					<span className="ml-auto min-w-0 truncate text-[10px] text-muted-foreground/60">
+						{objects.length} of {total} loaded
 					</span>
 				)}
 			</div>

@@ -1,6 +1,6 @@
 import { Composer } from '@/components/chat/chat'
 import { PageHeader } from '@/components/layout/page-header'
-import { LoopPlanCard, draftFromPlan, mergeDraftOntoPlan } from '@/components/loops/loop-plan-card'
+import { LoopPlanCard, defaultLoopName } from '@/components/loops/loop-plan-card'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { useCreateObject } from '@/hooks/use-objects'
@@ -10,7 +10,6 @@ import { cn } from '@/lib/cn'
 import { type LoopPlan, parseLoopDescription } from '@/lib/loop-plan'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
-import { Sparkles } from 'lucide-react'
 import { useCallback, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 
@@ -76,8 +75,6 @@ function LoopBuilderPage() {
 	const [thread, setThread] = useState<ThreadItem[]>([])
 	const [utterance, setUtterance] = useState('')
 	const [plan, setPlan] = useState<LoopPlan | null>(null)
-	const [draft, setDraft] = useState(plan ? draftFromPlan(plan) : null)
-	const [mode, setMode] = useState<'proposed' | 'editing'>('proposed')
 	const [createdId, setCreatedId] = useState<string | null>(null)
 	const [creating, setCreating] = useState(false)
 
@@ -86,8 +83,6 @@ function LoopBuilderPage() {
 			const parsed = parseLoopDescription(description, { statusChains })
 			setUtterance(description)
 			setPlan(parsed)
-			setDraft(draftFromPlan(parsed))
-			setMode('proposed')
 			setCreatedId(null)
 			setThread((prev) => [...prev, { role: 'user', content: description }])
 		},
@@ -114,17 +109,14 @@ function LoopBuilderPage() {
 
 	const resetAll = useCallback(() => {
 		setPlan(null)
-		setDraft(null)
 		setUtterance('')
-		setMode('proposed')
 		setCreatedId(null)
 		setThread([])
 	}, [])
 
 	const handleCreate = useCallback(async () => {
-		if (!plan || !draft || creating) return
-		const merged = mergeDraftOntoPlan(plan, draft)
-		const title = draft.name.trim() || `${merged.objectTypes[0]?.name ?? 'Loop'} loop`
+		if (!plan || creating) return
+		const title = defaultLoopName(plan)
 		setCreating(true)
 		try {
 			const created = await createObject.mutateAsync({
@@ -134,10 +126,9 @@ function LoopBuilderPage() {
 				// safeMetadataSchema only accepts primitives/arrays — store the plan
 				// snapshot as a JSON string so the created loop carries the exact
 				// preview (object types + state chain, triggers, agents, stop point).
-				metadata: { plan: JSON.stringify(merged) },
+				metadata: { plan: JSON.stringify(plan) },
 			})
 			setCreatedId(created.id)
-			setMode('proposed')
 			// Call site owned by T2: emit the accept event once per created loop so
 			// the success metric (distinct accepting workspaces) is measurable.
 			trackLoopCreatedViaLanguage({ workspace_id: workspaceId, loop_id: created.id })
@@ -146,12 +137,12 @@ function LoopBuilderPage() {
 		} finally {
 			setCreating(false)
 		}
-	}, [plan, draft, creating, createObject, workspaceId])
+	}, [plan, creating, createObject, workspaceId])
 
 	// A sentence Maskin can't draw: it named no source it listens to and no end
 	// it reports to, so there is nothing to wire between (mockup 2094–2106).
 	const needsClarifying = plan !== null && plan.triggers.length === 0 && !plan.stopForOperator
-	const showBlueprint = plan !== null && draft !== null && !needsClarifying
+	const showBlueprint = plan !== null && !needsClarifying
 	const asking = plan === null
 
 	// What Maskin actually did with the sentence (mockup 2108–2117). Derived
@@ -171,6 +162,16 @@ function LoopBuilderPage() {
 		if (plan.stopForOperator) done.push('Marked where it stops for you')
 		return done
 	}, [plan])
+
+	// The still-open step, rendered as the pulsing row under the ✓ list
+	// (mockup 2113–2115). Named from what the plan is actually missing, so it
+	// never pulses on a plan that is already complete.
+	const pendingStep = useMemo(() => {
+		if (!plan || needsClarifying) return null
+		if (plan.triggers.length === 0) return 'Still looking for what starts it'
+		if (!plan.stopForOperator) return 'Still working out where it should stop for you'
+		return null
+	}, [plan, needsClarifying])
 
 	return (
 		<>
@@ -229,12 +230,7 @@ function LoopBuilderPage() {
 								))}
 							</div>
 						</>
-					) : (
-						<div className="flex items-center gap-2 text-xs text-muted-foreground">
-							<Sparkles size={14} aria-hidden className="text-brand" />
-							<span>Describing your loop — refine below.</span>
-						</div>
-					)}
+					) : null}
 
 					{thread.length > 0 && (
 						<div className="mt-5 flex flex-col gap-3">
@@ -316,6 +312,18 @@ function LoopBuilderPage() {
 									{step}
 								</li>
 							))}
+							{pendingStep && (
+								<li
+									aria-live="polite"
+									className="flex items-baseline gap-2.5 text-[12.5px] leading-snug text-muted-foreground"
+								>
+									<span
+										aria-hidden
+										className="size-[7px] shrink-0 animate-pulse rounded-full bg-muted-foreground motion-reduce:animate-none"
+									/>
+									{pendingStep}
+								</li>
+							)}
 						</ul>
 					)}
 
@@ -361,15 +369,10 @@ function LoopBuilderPage() {
 					aria-label="Proposed loop"
 					className="flex min-w-0 flex-1 flex-col md:basis-[430px] md:grow-[1.1]"
 				>
-					{showBlueprint && draft ? (
+					{showBlueprint && plan ? (
 						<LoopPlanCard
 							plan={plan}
-							draft={draft}
-							mode={mode}
 							workspaceId={workspaceId}
-							onDraftChange={setDraft}
-							onAdjust={() => setMode('editing')}
-							onSave={() => setMode('proposed')}
 							onCreate={() => void handleCreate()}
 							onStartOver={resetAll}
 							creating={creating}

@@ -267,33 +267,38 @@ export function LoopFlow({
 
 	const asksYou = loop?.pill === 'waiting_on_you'
 
+	// `⟨primitives⟩ · ⟨triggers on⟩ · ⟨cycles⟩` — every part read off real data,
+	// and any part with nothing to say drops out rather than printing a zero.
+	const enabledTriggerCount = triggers.filter((t) => t.enabled).length
+	const objectTypeCount = new Set(childObjects.map((o) => o.type)).size
+	const inProgress = loop?.inProgressCount ?? 0
+	const closed = loop?.closedCount ?? 0
+	const median = formatDuration(loop?.medianTimeToCloseMs)
+	const cycleParts: string[] = []
+	if (inProgress > 0)
+		cycleParts.push(`${inProgress} ${inProgress === 1 ? 'cycle is' : 'cycles are'} running`)
+	if (closed > 0) cycleParts.push(`${closed} ${closed === 1 ? 'cycle has' : 'cycles have'} closed`)
+	if (median) cycleParts.push(`median close ${median}`)
+	const rightNowNote = [
+		objectTypeCount > 0
+			? `${objectTypeCount} object ${objectTypeCount === 1 ? 'type' : 'types'}`
+			: null,
+		`${enabledTriggerCount} of ${triggers.length} ${triggers.length === 1 ? 'trigger' : 'triggers'} on`,
+		`${distinctAgentIds.length} ${distinctAgentIds.length === 1 ? 'agent' : 'agents'}`,
+		...cycleParts,
+	]
+		.filter(Boolean)
+		.join(' · ')
+
 	return (
 		<div>
-			<div className="flex items-center gap-2.5 mb-2.5">
-				<h2 className="text-sm font-semibold text-foreground">The loop, right now</h2>
-				<span className="eyebrow">
-					{triggers.length} {triggers.length === 1 ? 'trigger' : 'triggers'} ·{' '}
-					{distinctAgentIds.length} {distinctAgentIds.length === 1 ? 'agent' : 'agents'}
-					{childObjects.length > 0 &&
-						` · ${childObjects.length} ${childObjects.length === 1 ? 'object' : 'objects'}`}
+			{/* One note line: primitives · triggers on · cycles (mockup 1891). */}
+			<div className="flex items-center gap-2.5 mb-3">
+				<h2 className="shrink-0 text-sm font-semibold text-foreground">The loop, right now</h2>
+				<span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
+					{rightNowNote}
 				</span>
 			</div>
-
-			{(loop?.inProgressCount ?? 0) + (loop?.closedCount ?? 0) > 0 &&
-				(() => {
-					const inProgress = loop?.inProgressCount ?? 0
-					const closed = loop?.closedCount ?? 0
-					const median = formatDuration(loop?.medianTimeToCloseMs)
-					return (
-						<p className="mb-3 text-xs text-muted-foreground">
-							{inProgress > 0 &&
-								`${inProgress} ${inProgress === 1 ? 'cycle is' : 'cycles are'} running`}
-							{inProgress > 0 && closed > 0 && ' · '}
-							{closed > 0 && `${closed} ${closed === 1 ? 'cycle has' : 'cycles have'} closed`}
-							{median && ` · median close ${median}`}
-						</p>
-					)
-				})()}
 
 			{distinctAgentIds.length > 1 && (
 				<div className="flex flex-wrap items-center gap-1.5 mb-3">

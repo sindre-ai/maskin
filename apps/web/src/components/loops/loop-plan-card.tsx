@@ -2,56 +2,14 @@ import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/cn'
 import { type LoopPlan, describeLoopPlan, summariseLoopPlan } from '@/lib/loop-plan'
 import { Link } from '@tanstack/react-router'
 import { Check, Plus } from 'lucide-react'
 
-export interface PlanEditDraft {
-	name: string
-	objectTypeName: string
-	stateChain: string[]
-	agentName: string
-	stopForOperator: string
-}
-
 export function defaultLoopName(plan: LoopPlan): string {
 	const base = plan.objectTypes[0]?.name ?? 'Loop'
 	return `${base} loop`
-}
-
-export function draftFromPlan(plan: LoopPlan): PlanEditDraft {
-	const firstType = plan.objectTypes[0]
-	const firstAgent = plan.agents[0]
-	return {
-		name: defaultLoopName(plan),
-		objectTypeName: firstType?.name ?? '',
-		stateChain: firstType?.stateChain ?? [],
-		agentName: firstAgent?.name ?? '',
-		stopForOperator: plan.stopForOperator ?? '',
-	}
-}
-
-export function mergeDraftOntoPlan(plan: LoopPlan, draft: PlanEditDraft): LoopPlan {
-	const objectTypes = plan.objectTypes.map((t, i) =>
-		i === 0
-			? {
-					...t,
-					name: draft.objectTypeName.trim() || t.name,
-					stateChain: draft.stateChain.length > 0 ? draft.stateChain : t.stateChain,
-				}
-			: t,
-	)
-	const agents = plan.agents.map((a, i) =>
-		i === 0 ? { ...a, name: draft.agentName.trim() || a.name } : a,
-	)
-	return {
-		...plan,
-		objectTypes,
-		agents,
-		stopForOperator: draft.stopForOperator.trim() || plan.stopForOperator,
-	}
 }
 
 function SectionLabel({ children, className }: { children: string; className?: string }) {
@@ -70,11 +28,6 @@ function NewBadge({ children }: { children: string }) {
 
 export interface LoopPlanCardProps {
 	plan: LoopPlan
-	draft: PlanEditDraft
-	mode: 'proposed' | 'editing'
-	onDraftChange: (draft: PlanEditDraft) => void
-	onAdjust: () => void
-	onSave: () => void
 	onCreate: () => void
 	onStartOver: () => void
 	creating?: boolean
@@ -85,11 +38,6 @@ export interface LoopPlanCardProps {
 
 export function LoopPlanCard({
 	plan,
-	draft,
-	mode,
-	onDraftChange,
-	onAdjust,
-	onSave,
 	onCreate,
 	onStartOver,
 	creating,
@@ -97,18 +45,7 @@ export function LoopPlanCard({
 	createdId,
 	workspaceId,
 }: LoopPlanCardProps) {
-	const editing = mode === 'editing'
-
-	const setStateChain = (raw: string) =>
-		onDraftChange({
-			...draft,
-			stateChain: raw
-				.split(',')
-				.map((s) => s.trim())
-				.filter(Boolean),
-		})
-
-	const title = created ? 'Loop created' : draft.name.trim() || defaultLoopName(plan)
+	const title = created ? 'Loop created' : defaultLoopName(plan)
 
 	return (
 		<div className="flex flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
@@ -138,51 +75,35 @@ export function LoopPlanCard({
 							plan.objectTypes.map((t, i) => (
 								<div key={`${t.type}-${i}`} className="rounded-xl border border-border bg-card p-3">
 									<div className="flex flex-wrap items-center gap-2">
-										{editing && i === 0 ? (
-											<Input
-												value={draft.objectTypeName}
-												onChange={(e) =>
-													onDraftChange({ ...draft, objectTypeName: e.target.value })
-												}
-												className="h-8 w-44 text-sm"
-												aria-label="Object type name"
-											/>
-										) : (
-											<span className="inline-flex items-center rounded-md bg-muted px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-wider text-foreground">
-												{t.name}
-											</span>
-										)}
+										<span className="inline-flex items-center rounded-md bg-muted px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-wider text-foreground">
+											{t.name}
+										</span>
 										{t.isNew && <NewBadge>NEW TYPE</NewBadge>}
 										<span className="text-xs text-muted-foreground">{t.role}</span>
 										{t.live && (
-											<span className="ml-auto text-[11px] text-muted-foreground">
-												tracked live
+											<span className="ml-auto whitespace-nowrap text-[11px] text-muted-foreground">
+												{t.live}
 											</span>
 										)}
 									</div>
-									{editing && i === 0 ? (
-										<Input
-											value={draft.stateChain.join(', ')}
-											onChange={(e) => setStateChain(e.target.value)}
-											className="mt-2.5 h-8 text-sm"
-											placeholder="todo, in_progress, done"
-											aria-label="State chain"
-										/>
-									) : (
-										t.stateChain.length > 0 && (
-											<div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-												{t.stateChain.map((state, si) => (
-													<span key={state} className="inline-flex items-center gap-1.5">
-														<StatusBadge status={state} />
-														{si < t.stateChain.length - 1 && (
-															<span aria-hidden className="text-xs text-muted-foreground">
-																→
-															</span>
-														)}
-													</span>
-												))}
-											</div>
-										)
+									{t.readOnly && t.note ? (
+										<p className="mt-2.5 text-[11.5px] leading-snug text-muted-foreground">
+											{t.note}
+										</p>
+									) : null}
+									{!t.readOnly && t.stateChain.length > 0 && (
+										<div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+											{t.stateChain.map((state, si) => (
+												<span key={state} className="inline-flex items-center gap-1.5">
+													<StatusBadge status={state} />
+													{si < t.stateChain.length - 1 && (
+														<span aria-hidden className="text-xs text-muted-foreground">
+															→
+														</span>
+													)}
+												</span>
+											))}
+										</div>
 									)}
 								</div>
 							))
@@ -260,16 +181,7 @@ export function LoopPlanCard({
 								>
 									<ActorAvatar name={a.name} type="agent" />
 									<div className="min-w-0 flex-1">
-										{editing && i === 0 ? (
-											<Input
-												value={draft.agentName}
-												onChange={(e) => onDraftChange({ ...draft, agentName: e.target.value })}
-												className="h-8 text-sm"
-												aria-label="Agent name"
-											/>
-										) : (
-											<p className="truncate text-sm font-semibold text-foreground">{a.name}</p>
-										)}
+										<p className="truncate text-sm font-semibold text-foreground">{a.name}</p>
 										<p className="truncate text-xs text-muted-foreground">{a.role}</p>
 									</div>
 									<span className="shrink-0 whitespace-nowrap font-mono text-[9.5px] font-semibold text-muted-foreground">
@@ -285,16 +197,7 @@ export function LoopPlanCard({
 					<section>
 						<SectionLabel>WHERE IT WILL STOP FOR YOU</SectionLabel>
 						<div className="mt-2.5 rounded-xl border border-ask-border bg-ask-surface px-3 py-2.5">
-							{editing ? (
-								<Input
-									value={draft.stopForOperator}
-									onChange={(e) => onDraftChange({ ...draft, stopForOperator: e.target.value })}
-									className="h-8 text-sm"
-									aria-label="Stop for operator"
-								/>
-							) : (
-								<p className="text-xs leading-relaxed text-foreground">{plan.stopForOperator}</p>
-							)}
+							<p className="text-xs leading-relaxed text-foreground">{plan.stopForOperator}</p>
 						</div>
 					</section>
 				)}
@@ -315,15 +218,6 @@ export function LoopPlanCard({
 							Start over
 						</Button>
 					</>
-				) : editing ? (
-					<>
-						<Button size="sm" onClick={onSave}>
-							Save
-						</Button>
-						<Button size="sm" variant="ghost" onClick={onStartOver} disabled={creating}>
-							Start over
-						</Button>
-					</>
 				) : (
 					<>
 						<span className="mr-auto min-w-[180px] flex-1 text-[11px] leading-relaxed text-muted-foreground">
@@ -331,9 +225,6 @@ export function LoopPlanCard({
 						</span>
 						<Button size="sm" variant="ghost" onClick={onStartOver} disabled={creating}>
 							Start over
-						</Button>
-						<Button size="sm" variant="ghost" onClick={onAdjust} disabled={creating}>
-							Adjust
 						</Button>
 						<Button size="sm" onClick={onCreate} disabled={creating}>
 							{creating ? (

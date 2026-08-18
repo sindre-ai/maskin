@@ -36,6 +36,11 @@ test.describe('Object detail — properties drawer', () => {
 			await expect(page.getByText('driver')).toBeVisible()
 			await expect(page.getByText('Custom fields')).toBeVisible()
 			await expect(page.getByText('Subscribed')).toBeVisible()
+			// SUBSCRIBED carries the header note that says where the viewer stands
+			// (mockup 1473), and FILES reads plainly when nothing is attached
+			// (mockup 1495) rather than showing a dropzone.
+			await expect(page.getByText('you are not on this one')).toBeVisible()
+			await expect(page.getByText('Nothing attached.')).toBeVisible()
 
 			// No horizontal page scroll with the drawer open.
 			const scrollWidth = await page.evaluate(
@@ -109,4 +114,39 @@ test.describe('Object detail — properties drawer', () => {
 			await expect(composer).toBeVisible()
 		})
 	}
+
+	test('a subscriber row names why they are on it, and the composer names its listener', async ({
+		page,
+		account,
+	}) => {
+		await page.setViewportSize({ width: 1024, height: 768 })
+
+		const agent = await account.api.createAgentActor('Relay')
+		await account.api.addWorkspaceMember(account.workspaceId, agent.id)
+		const bet = await account.api.createObject(account.workspaceId, {
+			type: 'bet',
+			title: 'Driven bet',
+			status: 'active',
+		})
+
+		await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
+		await expect(page.getByRole('heading', { level: 1, name: 'Driven bet' })).toBeVisible({
+			timeout: 15000,
+		})
+
+		// Hand the bet to the agent through the hero driver picker.
+		await page
+			.getByRole('combobox')
+			.filter({ hasText: /driver/i })
+			.first()
+			.click()
+		await page.getByRole('option', { name: /Relay/ }).click()
+
+		// The composer hint names the agent that reads what you write (mockup 1362).
+		await expect(page.getByText('Relay is listening')).toBeVisible({ timeout: 10000 })
+
+		await page.getByRole('button', { name: 'Properties' }).click()
+		// The creator is auto-subscribed, and the row says why they are on it.
+		await expect(page.getByText('you', { exact: true })).toBeVisible()
+	})
 })

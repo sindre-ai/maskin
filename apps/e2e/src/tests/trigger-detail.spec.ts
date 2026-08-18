@@ -201,4 +201,79 @@ test.describe('Trigger detail page', () => {
 		await expect(ask).toBeVisible()
 		await page.emulateMedia({ colorScheme: 'light' })
 	})
+
+	for (const viewport of SHIP_GATE_VIEWPORTS) {
+		test(`ADDITIONAL CONDITIONS is offered on any event trigger at ${viewport.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: viewport.width, height: viewport.height })
+
+			const agent = await account.api.createAgentActor('Relay')
+			await account.api.addWorkspaceMember(account.workspaceId, agent.id)
+			const trigger = await account.api.createTrigger(account.workspaceId, {
+				name: 'Conditioned',
+				type: 'event',
+				action_prompt: 'Summarise the new event',
+				target_actor_id: agent.id,
+				config: { entity_type: 'insight', action: 'created' },
+			})
+
+			await page.goto(`/${account.workspaceId}/triggers/${trigger.id}`)
+			await expect(page.getByRole('heading', { name: 'ADDITIONAL CONDITIONS' })).toBeVisible({
+				timeout: 10000,
+			})
+
+			// The section is reachable on touch — no hover-only reveal — and adding
+			// a condition works even with no workspace field definitions, which is
+			// the case for every integration-sourced event type.
+			const addCondition = page.getByRole('button', { name: 'Add condition' })
+			await expect(addCondition).toBeVisible()
+			await addCondition.click()
+			const field = page.getByRole('textbox', { name: 'Condition field' })
+			await expect(field).toBeVisible()
+			await field.fill('action')
+			await expect(field).toHaveValue('action')
+
+			// Condition rows read in both colour modes.
+			await page.emulateMedia({ colorScheme: 'dark' })
+			await expect(field).toBeVisible()
+			await page.emulateMedia({ colorScheme: 'light' })
+			await expect(field).toBeVisible()
+		})
+	}
+
+	test('suggestion chips stand down once the trigger has a CHANGES transcript', async ({
+		page,
+		account,
+	}) => {
+		await page.setViewportSize({ width: 1024, height: 768 })
+
+		const agent = await account.api.createAgentActor('Relay')
+		await account.api.addWorkspaceMember(account.workspaceId, agent.id)
+		const trigger = await account.api.createTrigger(account.workspaceId, {
+			name: 'Fresh trigger',
+			type: 'event',
+			action_prompt: 'Summarise the new event',
+			target_actor_id: agent.id,
+			config: { entity_type: 'insight', action: 'created' },
+		})
+
+		await page.goto(`/${account.workspaceId}/triggers/${trigger.id}`)
+		// Nothing has been said yet, so the chips stand in for the transcript.
+		await expect(page.getByRole('button', { name: 'Run it weekly instead' })).toBeVisible({
+			timeout: 10000,
+		})
+
+		// Editing through the form autosaves and writes a `trigger.updated`
+		// event — that event log is the CHANGES transcript.
+		await page
+			.getByPlaceholder('Describe what the agent should do when this trigger fires...')
+			.fill('Summarise the new event and notify me')
+		await expect(page.getByText('Saved')).toHaveCSS('opacity', '1', { timeout: 10000 })
+		await page.reload()
+
+		await expect(page.getByRole('heading', { name: 'CHANGES' })).toBeVisible({ timeout: 10000 })
+		await expect(page.getByRole('button', { name: 'Run it weekly instead' })).toBeHidden()
+	})
 })

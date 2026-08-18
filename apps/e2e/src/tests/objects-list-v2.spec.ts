@@ -87,13 +87,71 @@ test.describe('Objects list — v2 control row', () => {
 
 			await page.getByRole('button', { name: /^Display/ }).click()
 
-			// Segmented List | Board rail first (mockup 932–937), then the sections.
+			// Segmented List | Board rail first (mockup 694–697), then the sections.
 			await expect(page.getByRole('button', { name: 'List' })).toBeVisible()
 			await expect(page.getByRole('button', { name: 'Board' })).toBeVisible()
 			await expect(page.getByText('Filter by')).toBeVisible()
-			await expect(page.getByText('Show in list')).toBeVisible()
+			await expect(page.getByText('Properties')).toBeVisible()
 			await expect(page.getByText('Show archived')).toBeVisible()
-			await expect(page.getByText('Reset to default')).toBeVisible()
+			await expect(page.getByText('Reset all')).toBeVisible()
+		})
+
+		test(`the list rests grouped by state with its groups open at ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+
+			await account.api.createObject(account.workspaceId, {
+				type: 'bet',
+				title: 'Active grouped bet',
+				status: 'active',
+			})
+			await account.api.createObject(account.workspaceId, {
+				type: 'bet',
+				title: 'Done grouped bet',
+				status: 'done',
+			})
+
+			// No groupBy in the URL — the resting state is State (mockup 994–999).
+			await page.goto(`/${account.workspaceId}/objects?type=bet`)
+
+			const activeGroup = page.getByRole('button', { expanded: true, name: /active/i })
+			await expect(activeGroup).toBeVisible({ timeout: 15000 })
+			// Groups start open, so both rows are reachable without a click.
+			await expect(page.getByText('Active grouped bet')).toBeVisible()
+			await expect(page.getByText('Done grouped bet')).toBeVisible()
+
+			// Collapsing is still one tap, and it only takes its own group down.
+			await activeGroup.click()
+			await expect(page.getByText('Active grouped bet')).toBeHidden()
+			await expect(page.getByText('Done grouped bet')).toBeVisible()
+		})
+
+		test(`the list rests in last-updated order at ${vp.label}`, async ({ page, account }) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+
+			const first = await account.api.createObject(account.workspaceId, {
+				type: 'bet',
+				title: 'Older bet',
+				status: 'active',
+			})
+			await account.api.createObject(account.workspaceId, {
+				type: 'bet',
+				title: 'Newer bet',
+				status: 'active',
+			})
+			// Touching the older row makes it the most recently updated — under a
+			// created-desc default it would still sort second.
+			await account.api.updateObject(first.id, account.workspaceId, {
+				content: 'touched so it sorts first',
+			})
+
+			await page.goto(`/${account.workspaceId}/objects?type=bet`)
+			await expect(page.getByText('Older bet')).toBeVisible({ timeout: 15000 })
+
+			const rows = page.locator('[data-obj-id]')
+			await expect(rows.first()).toContainText('Older bet')
 		})
 
 		test(`switching the FILTER BY axis re-drives the chip row at ${vp.label}`, async ({

@@ -191,10 +191,10 @@ describe('validateSearch', () => {
 			type: undefined,
 			status: undefined,
 			driver: undefined,
-			sort: 'createdAt',
+			sort: 'updatedAt',
 			order: 'desc',
 			q: undefined,
-			groupBy: undefined,
+			groupBy: 'status',
 		})
 	})
 

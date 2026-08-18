@@ -22,7 +22,15 @@ export interface PlanObjectType {
 	type: string
 	name: string
 	role: string
-	live: boolean
+	/** Right-aligned live reading on the type card (mockup 2170 `t.live`).
+	 *  Derived from the plan itself — `new type · N states` for a type the
+	 *  workspace has no vocabulary for, `reused` for one it already runs. Never
+	 *  a fixed label, and never a count we don't actually have. */
+	live: string | null
+	/** Types the loop links but never moves (mockup 2183–2185). A read-only type
+	 *  shows `note` instead of a state chain. */
+	readOnly?: boolean
+	note?: string
 	stateChain: string[]
 	/** True when the workspace has no vocabulary for this type yet — rendered as
 	 *  the `NEW TYPE` badge (mockup 2168). Derived from `ParseOptions.statusChains`,
@@ -144,24 +152,42 @@ export function parseLoopDescription(description: string, options: ParseOptions 
 	// nothing is claimed to be new — the badge only ever appears on real signal.
 	const isNewType = (type: string) => (knownTypes ? !knownTypes.has(type) : false)
 
+	const primaryIsNew = isNewType(detected.type)
 	const objectTypes: PlanObjectType[] = [
 		{
 			type: detected.type,
 			name: detected.spec.name,
 			role: objectTypeRole(detected.spec, cue.summaryInterval),
-			live: false,
+			live: liveReading(primaryIsNew, stateChain.length),
 			stateChain,
-			isNew: isNewType(detected.type),
+			isNew: primaryIsNew,
 		},
 	]
 	if (cue.note) {
+		const noteIsNew = isNewType('note')
 		objectTypes.push({
 			type: 'note',
 			name: 'Note',
 			role: 'Captured notes',
-			live: false,
+			live: liveReading(noteIsNew, 2),
 			stateChain: ['new', 'done'],
-			isNew: isNewType('note'),
+			isNew: noteIsNew,
+		})
+	}
+	// A type the sentence only reports to — the loop links it, never moves it
+	// through states (mockup 2183–2185). Detected from the notify cue when the
+	// recipient is a different type from the one being moved.
+	const readOnly = detectReadOnlyType(lower, detected.type)
+	if (readOnly) {
+		objectTypes.push({
+			type: readOnly.type,
+			name: readOnly.name,
+			role: readOnly.role,
+			live: 'reused',
+			readOnly: true,
+			note: readOnly.note,
+			stateChain: [],
+			isNew: false,
 		})
 	}
 
@@ -204,6 +230,44 @@ export function parseLoopDescription(description: string, options: ParseOptions 
 		agents,
 		stopForOperator: detectStop(lower, cue),
 	}
+}
+
+/** `t.live` — what the workspace already has for this type. */
+function liveReading(isNew: boolean, stateCount: number): string {
+	return isNew ? `new type · ${stateCount} states` : 'reused'
+}
+
+const READ_ONLY_VOCAB: Record<string, { name: string; role: string; note: string }> = {
+	customer: {
+		name: 'Customer',
+		role: 'who hears back',
+		note: 'linked, never changed by this loop',
+	},
+	client: {
+		name: 'Client',
+		role: 'who hears back',
+		note: 'linked, never changed by this loop',
+	},
+	account: {
+		name: 'Account',
+		role: 'who the work belongs to',
+		note: 'linked, never changed by this loop',
+	},
+}
+
+/** A party the sentence only reports to — "reply to the customer", "notify the
+ *  account". The loop links it and never moves it, so the card shows a note
+ *  where a state chain would be (mockup 2183–2185). Requires an explicit report
+ *  verb so a passing mention ("customer feedback") never invents a type. */
+function detectReadOnlyType(lower: string, movedType: string) {
+	const match = lower.match(
+		/\b(?:notify|tell|inform|update|email|message|reply to|report to|respond to)\s+(?:the\s+)?(customers?|clients?|accounts?)\b/,
+	)
+	if (!match) return null
+	const noun = match[1].replace(/s$/, '')
+	if (noun === movedType) return null
+	const spec = READ_ONLY_VOCAB[noun]
+	return spec ? { type: noun, ...spec } : null
 }
 
 function detectObjectType(lower: string): DetectedType {

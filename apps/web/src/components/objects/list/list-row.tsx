@@ -188,7 +188,11 @@ export function ListRow({
 			{showUpdated && object.updatedAt && (
 				<RelativeTime
 					date={object.updatedAt}
-					className="w-8 shrink-0 text-right text-xs tabular-nums text-muted-foreground"
+					compact
+					// Mockup 764: a 30px right-aligned age column. `min-w` rather than a
+					// hard width, and nowrap, so a day/month token ("Jan 15") widens
+					// the column instead of wrapping onto a second line.
+					className="min-w-8 shrink-0 whitespace-nowrap text-right text-xs tabular-nums text-muted-foreground"
 				/>
 			)}
 			<button

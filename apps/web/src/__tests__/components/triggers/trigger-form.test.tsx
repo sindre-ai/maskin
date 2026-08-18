@@ -4,9 +4,10 @@ import userEvent from '@testing-library/user-event'
 import { buildTriggerResponse, buildWorkspaceWithRole } from '../../factories'
 import { TestWrapper } from '../../setup'
 
-const { useAutoSave } = vi.hoisted(() => {
+const { useAutoSave, useEntityEvents } = vi.hoisted(() => {
 	const useAutoSave = vi.fn()
-	return { useAutoSave }
+	const useEntityEvents = vi.fn()
+	return { useAutoSave, useEntityEvents }
 })
 
 vi.mock('@/hooks/use-auto-save', () => ({
@@ -28,6 +29,10 @@ vi.mock('@/hooks/use-custom-extensions', () => ({
 
 vi.mock('@/hooks/use-sessions', () => ({
 	useWorkspaceSessions: () => ({ data: [] }),
+}))
+
+vi.mock('@/hooks/use-events', () => ({
+	useEntityEvents: (...args: unknown[]) => useEntityEvents(...args),
 }))
 
 vi.mock('@tanstack/react-router', () => ({
@@ -77,6 +82,7 @@ describe('TriggerForm', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
 		useAutoSave.mockReturnValue({ showSaved: false })
+		useEntityEvents.mockReturnValue({ data: [] })
 	})
 
 	it('renders the trigger name as an in-place editable heading', () => {
@@ -395,5 +401,47 @@ describe('TriggerForm', () => {
 				target_actor_id: 'agent-1',
 			}),
 		)
+	})
+
+	it('offers ADDITIONAL CONDITIONS on any event trigger, even with no field definitions', async () => {
+		const user = userEvent.setup()
+		// `workspace.settings` is empty, so this entity type has no field
+		// definitions — the same shape every integration-sourced type has.
+		render(
+			<TriggerForm
+				{...defaultProps}
+				isCreated
+				initialValues={buildTriggerResponse({
+					type: 'event',
+					config: { entity_type: 'insight', action: 'created' },
+				})}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+
+		expect(screen.getByRole('heading', { name: 'ADDITIONAL CONDITIONS' })).toBeInTheDocument()
+
+		await user.click(screen.getByRole('button', { name: /add condition/i }))
+		const field = screen.getByRole('textbox', { name: 'Condition field' })
+		expect(field).toBeInTheDocument()
+
+		await user.type(field, 'action')
+		expect(field).toHaveValue('action')
+	})
+
+	it('drops the suggestion chips once the trigger has a CHANGES transcript', () => {
+		const trigger = buildTriggerResponse()
+		const { rerender } = render(
+			<TriggerForm {...defaultProps} isCreated initialValues={trigger} />,
+			{ wrapper: TestWrapper },
+		)
+		expect(screen.getByRole('button', { name: 'Run it weekly instead' })).toBeInTheDocument()
+
+		useEntityEvents.mockReturnValue({
+			data: [{ id: 1, entityId: trigger.id, action: 'updated', actorId: 'a-1', createdAt: null }],
+		})
+		rerender(<TriggerForm {...defaultProps} isCreated initialValues={trigger} />)
+
+		expect(screen.queryByRole('button', { name: 'Run it weekly instead' })).not.toBeInTheDocument()
 	})
 })

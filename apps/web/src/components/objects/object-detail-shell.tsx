@@ -32,6 +32,12 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 	const { data: actors } = useActors(workspaceId)
 	const { data: graph } = useObjectGraph(workspaceId, object.id)
 	const { data: allObjects } = useObjects(workspaceId)
+	// Mockup 1362 `composerHint` — names the agent that will read what you write
+	// here. Only rendered when an agent actually drives the object.
+	const driverActor = object.driver ? actors?.find((a) => a.id === object.driver) : undefined
+	const composerHint =
+		driverActor && driverActor.type === 'agent' ? `${driverActor.name} is listening` : null
+
 	const settings = workspace.settings as Record<string, unknown>
 	const statuses = (settings?.statuses as Record<string, string[]> | undefined)?.[object.type] ?? []
 
@@ -126,10 +132,10 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 						driver: prev.driver,
 						filterBy: prev.filterBy,
 						attention: prev.attention,
-						sort: prev.sort ?? 'createdAt',
+						sort: prev.sort ?? 'updatedAt',
 						order: prev.order ?? 'desc',
 						q: prev.q,
-						groupBy: prev.groupBy,
+						groupBy: prev.groupBy ?? 'status',
 						ids: prev.ids,
 						includeArchived: prev.includeArchived,
 					}),
@@ -220,6 +226,11 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 						{/* Sticky composer with a gradient mask, mockup 1357. */}
 						<div className="sticky bottom-0 z-[6] bg-gradient-to-b from-transparent via-background to-background pb-4 pt-6">
 							<CommentInput workspaceId={workspaceId} objectId={object.id} focusRef={answerRef} />
+							{composerHint && (
+								<p className="mt-1.5 truncate pl-9 text-[11.5px] text-muted-foreground">
+									{composerHint}
+								</p>
+							)}
 						</div>
 					</div>
 				</div>

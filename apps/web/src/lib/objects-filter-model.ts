@@ -139,7 +139,10 @@ export function toDisplaySettingsBody(
 	> = {
 		sort: model.sort,
 		order: model.order,
-		groupBy: model.groupBy ?? null,
+		// GROUP BY rests on State, so an absent group is the operator's explicit
+		// "None" — persist it as the `none` sentinel the URL uses. `null` would
+		// be indistinguishable from "never chose", which now means State.
+		groupBy: model.groupBy ?? 'none',
 		columnVisibility: model.columnVisibility,
 	}
 	const filters: { status?: string; driver?: string; metadata?: Record<string, string> } = {}

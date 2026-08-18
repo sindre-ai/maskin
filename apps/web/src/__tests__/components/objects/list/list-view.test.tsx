@@ -134,10 +134,8 @@ describe('ListView', () => {
 		expect(headers[1]?.textContent).toContain('done')
 		expect(headers[1]?.textContent).toContain('1')
 
-		// Rows land under their owning group (expanded group in DOM).
-		act(() => {
-			headers[0]?.click()
-		})
+		// Groups render open by default (mockup 995), so rows are already in the
+		// DOM under their owning group.
 		expect(screen.getByText('Alpha')).toBeInTheDocument()
 		expect(screen.getByText('Gamma')).toBeInTheDocument()
 	})
@@ -168,8 +166,9 @@ describe('ListView', () => {
 		// Status tag (StatusBadge dot-word renders the de-underscored status).
 		expect(screen.getByText('in progress')).toBeInTheDocument()
 
-		// Updated-time (RelativeTime) renders something for a known date.
-		expect(screen.getByText(/ago/i)).toBeInTheDocument()
+		// Updated-time (RelativeTime, compact age column) renders something for a
+		// known date — "3d", "2h", "now", or a "5 Jul" fallback past a month.
+		expect(screen.getByText(/^(now|\d+[mhd]|\w{3} \d+|\d+ \w{3})$/)).toBeInTheDocument()
 
 		// Per-row open chevron.
 		expect(screen.getAllByRole('button', { name: /open object/i })).not.toHaveLength(0)
@@ -220,9 +219,9 @@ describe('ListView', () => {
 		expect(screen.getAllByRole('checkbox')[2]).toBeChecked()
 	})
 
-	it('caps a group at six rows with an expandable "Show N more" affordance', async () => {
+	it('caps a group at forty rows with an expandable "Show N more" affordance', async () => {
 		const user = userEvent.setup()
-		const data = Array.from({ length: 8 }, (_, i) =>
+		const data = Array.from({ length: 42 }, (_, i) =>
 			buildObjectResponse({
 				id: `obj-${i + 1}`,
 				title: `Row ${i + 1}`,
@@ -231,16 +230,13 @@ describe('ListView', () => {
 			}),
 		)
 		renderListView({ data, grouping: ['status'] as GroupingState })
-		act(() => {
-			groupHeaders()[0]?.click()
-		})
 
-		expect(screen.getAllByRole('checkbox')).toHaveLength(6)
+		expect(screen.getAllByRole('checkbox')).toHaveLength(40)
 		const showMore = screen.getByRole('button', { name: /show 2 more/i })
 		expect(showMore).toBeInTheDocument()
 
 		await user.click(showMore)
-		expect(screen.getAllByRole('checkbox')).toHaveLength(8)
+		expect(screen.getAllByRole('checkbox')).toHaveLength(42)
 		expect(screen.queryByRole('button', { name: /show 2 more/i })).toBeNull()
 	})
 
@@ -251,13 +247,7 @@ describe('ListView', () => {
 			buildObjectResponse({ id: 'obj-2', title: 'Beta', status: 'done', updatedAt: deployedAt }),
 		]
 		renderListView({ data, grouping: ['status'] as GroupingState })
-		// Expand both groups so collapsing one can be checked against the other.
-		act(() => {
-			groupHeaders()[0]?.click()
-		})
-		act(() => {
-			groupHeaders()[1]?.click()
-		})
+		// Both groups start open, so collapsing one can be checked against the other.
 		expect(screen.getByText('Alpha')).toBeInTheDocument()
 		expect(screen.getByText('Beta')).toBeInTheDocument()
 
@@ -342,10 +332,10 @@ describe('ListView', () => {
 		// ui/checkbox renders a native checkbox role.
 		expect(screen.getAllByRole('checkbox').length).toBeGreaterThan(0)
 		// shared/status-badge renders the status word (dot-word variant).
-		// shared/relative-time renders the "x ago" timestamp.
+		// shared/relative-time renders the compact age token.
 		// shared/actor-avatar is absent (no driver) — null driver renders nothing.
 		expect(screen.getAllByText('done').length).toBeGreaterThan(0)
-		expect(screen.getByText(/ago/i)).toBeInTheDocument()
+		expect(screen.getByText(/^(now|\d+[mhd]|\w{3} \d+|\d+ \w{3})$/)).toBeInTheDocument()
 	})
 	// Mockup 1021–1022: the empty state names the filters that produced it and
 	// offers a single action that clears them.

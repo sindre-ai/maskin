@@ -12,7 +12,7 @@ describe('parseLoopDescription — acceptance example', () => {
 				type: 'feedback',
 				name: 'Feedback',
 				role: 'Submissions from customers',
-				live: false,
+				live: 'reused',
 				stateChain: ['new', 'triage', 'approved', 'published'],
 				isNew: false,
 			},
@@ -85,7 +85,7 @@ describe('parseLoopDescription — cue words', () => {
 			type: 'note',
 			name: 'Note',
 			role: 'Captured notes',
-			live: false,
+			live: 'reused',
 			stateChain: ['new', 'done'],
 			isNew: false,
 		})
@@ -223,5 +223,35 @@ describe('describeLoopPlan / summariseLoopPlan', () => {
 		expect(describeLoopPlan(parseLoopDescription(''))).toBe(
 			'Nothing is drafted yet — say what should happen.',
 		)
+	})
+})
+
+describe('parseLoopDescription — live reading and read-only types', () => {
+	it('reads a type the workspace has no vocabulary for as a new type', () => {
+		const plan = parseLoopDescription(AC_EXAMPLE, { statusChains: { task: ['todo', 'done'] } })
+		expect(plan.objectTypes[0].isNew).toBe(true)
+		expect(plan.objectTypes[0].live).toBe('new type · 4 states')
+	})
+
+	it('reads a type the workspace already runs as reused', () => {
+		const plan = parseLoopDescription(AC_EXAMPLE, {
+			statusChains: { feedback: ['new', 'done'] },
+		})
+		expect(plan.objectTypes[0].isNew).toBe(false)
+		expect(plan.objectTypes[0].live).toBe('reused')
+	})
+
+	it('adds a read-only type only when the sentence reports back to it', () => {
+		const reporting = parseLoopDescription(
+			'when a task is done, have the Delivery agent notify the customer',
+		)
+		const readOnly = reporting.objectTypes.find((t) => t.readOnly)
+		expect(readOnly?.type).toBe('customer')
+		expect(readOnly?.note).toBe('linked, never changed by this loop')
+		expect(readOnly?.stateChain).toEqual([])
+
+		// A passing mention ("customer feedback") must not invent a type.
+		const passing = parseLoopDescription(AC_EXAMPLE)
+		expect(passing.objectTypes.some((t) => t.readOnly)).toBe(false)
 	})
 })

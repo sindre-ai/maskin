@@ -57,8 +57,8 @@ describe('DisplayPanel', () => {
 		expect(screen.getByText('2')).toBeInTheDocument()
 	})
 
-	// The View control is now a segmented List | Board rail with no label of its
-	// own (mockup 932–937), and Properties became "Show in list" (956–962).
+	// The View control is a segmented List | Board rail with no label of its own
+	// (mockup 694–697); Properties is a row of toggle pills (mockup 709–712).
 	it('opens panel and renders the section headers', async () => {
 		const user = userEvent.setup()
 		renderPanel({
@@ -68,7 +68,7 @@ describe('DisplayPanel', () => {
 		expect(screen.getByText('Filters')).toBeInTheDocument()
 		expect(screen.getByText('Grouping')).toBeInTheDocument()
 		expect(screen.getByText('Ordering')).toBeInTheDocument()
-		expect(screen.getByText('Show in list')).toBeInTheDocument()
+		expect(screen.getByText('Properties')).toBeInTheDocument()
 	})
 
 	it('renders both List and Board pills when board is supported (default)', async () => {
@@ -153,22 +153,25 @@ describe('DisplayPanel', () => {
 		expect(props.onDriverFilterChange).toHaveBeenCalledWith(undefined)
 	})
 
-	it('renders one checkbox per hideable column in Show in list', async () => {
+	it('renders one Properties pill per hideable column, pressed when shown', async () => {
 		const user = userEvent.setup()
 		renderPanel({ columnVisibility: { status: true, owner: false, createdAt: true } })
 		await user.click(screen.getByRole('button', { name: /display/i }))
-		expect(screen.getByRole('checkbox', { name: 'Status' })).toBeInTheDocument()
-		expect(screen.getByRole('checkbox', { name: 'Owner' })).toBeInTheDocument()
-		expect(screen.getByRole('checkbox', { name: 'Created' })).toBeInTheDocument()
-		// Non-hideable column does not get a row
-		expect(screen.queryByRole('checkbox', { name: 'Title' })).toBeNull()
+		// Scoped to the pill row — "Created" is also an option in the Sort by menu.
+		const pills = within(screen.getByTestId('display-properties'))
+		expect(pills.getByRole('button', { name: 'Status' })).toHaveAttribute('aria-pressed', 'true')
+		expect(pills.getByRole('button', { name: 'Owner' })).toHaveAttribute('aria-pressed', 'false')
+		expect(pills.getByRole('button', { name: 'Created' })).toHaveAttribute('aria-pressed', 'true')
+		// Non-hideable column does not get a pill
+		expect(pills.queryByRole('button', { name: 'Title' })).toBeNull()
 	})
 
-	it('toggles a column when its Show in list checkbox is clicked', async () => {
+	it('toggles a column when its Properties pill is clicked', async () => {
 		const user = userEvent.setup()
 		const { props } = renderPanel({ columnVisibility: { status: true } })
 		await user.click(screen.getByRole('button', { name: /display/i }))
-		await user.click(screen.getByRole('checkbox', { name: 'Status' }))
+		const pills = within(screen.getByTestId('display-properties'))
+		await user.click(pills.getByRole('button', { name: 'Status' }))
 		expect(props.onColumnVisibilityChange).toHaveBeenCalledWith('status', false)
 	})
 
@@ -398,10 +401,11 @@ describe('DisplayPanel', () => {
 			expect(screen.getByText('1')).toBeInTheDocument()
 		})
 
-		it('renders sections in the mockup order (923–966)', async () => {
-			// Mockup 931–964 pins FILTER BY → GROUP BY → ORDER BY → SHOW IN LIST
-			// → Show archived → Reset. Guard the DOM order so a future refactor
-			// can't silently slide a section past its neighbour.
+		it('renders sections in the mockup order (694–716)', async () => {
+			// Mockup 696–716 pins ORDERING → GROUPING → FILTERS → PROPERTIES →
+			// Show archived → Reset all. Guard the DOM order so a future refactor
+			// can't silently slide a section past its neighbour. (Filter by has no
+			// mockup section of its own; it sits with the other filter controls.)
 			const user = userEvent.setup()
 			renderPanel({
 				includeArchived: false,
@@ -413,18 +417,16 @@ describe('DisplayPanel', () => {
 			})
 			await user.click(screen.getByRole('button', { name: /display/i }))
 			const headers = screen
-				.getAllByText(
-					/^(Filter by|Filters|Grouping|Ordering|Show in list|Show archived|Reset to default)$/,
-				)
+				.getAllByText(/^(Filter by|Filters|Grouping|Ordering|Properties|Show archived|Reset all)$/)
 				.map((el) => el.textContent)
 			expect(headers).toEqual([
+				'Ordering',
+				'Grouping',
 				'Filter by',
 				'Filters',
-				'Grouping',
-				'Ordering',
-				'Show in list',
+				'Properties',
 				'Show archived',
-				'Reset to default',
+				'Reset all',
 			])
 		})
 
@@ -477,12 +479,12 @@ describe('DisplayPanel', () => {
 		})
 	})
 
-	describe('Reset to default', () => {
+	describe('Reset all', () => {
 		it('does not render the footer row when onResetToDefault is unset', async () => {
 			const user = userEvent.setup()
 			renderPanel()
 			await user.click(screen.getByRole('button', { name: /display/i }))
-			expect(screen.queryByRole('button', { name: /reset to default/i })).toBeNull()
+			expect(screen.queryByRole('button', { name: /reset all/i })).toBeNull()
 		})
 
 		it('renders and calls onResetToDefault when clicked', async () => {
@@ -490,7 +492,7 @@ describe('DisplayPanel', () => {
 			const onResetToDefault = vi.fn()
 			renderPanel({ onResetToDefault })
 			await user.click(screen.getByRole('button', { name: /display/i }))
-			await user.click(screen.getByRole('button', { name: /reset to default/i }))
+			await user.click(screen.getByRole('button', { name: /reset all/i }))
 			expect(onResetToDefault).toHaveBeenCalledTimes(1)
 		})
 	})

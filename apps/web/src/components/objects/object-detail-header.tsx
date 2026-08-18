@@ -99,6 +99,8 @@ export function ObjectDetailIdentity({
 	return (
 		<div className="mb-3">
 			<div className="mb-2.5 flex flex-wrap items-center gap-2">
+				{/* The type's glyph leads the meta row (mockup 1058 `odTypeIcon`). */}
+				<TypeBadge type={object.type} variant="tile" />
 				<TypeBadge type={object.type} />
 				{statuses.length > 0 && (
 					<StatusSelect

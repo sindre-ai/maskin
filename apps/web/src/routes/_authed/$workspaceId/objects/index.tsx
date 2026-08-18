@@ -116,13 +116,18 @@ export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
 			driver: typeof search.driver === 'string' ? search.driver : undefined,
 			filterBy,
 			attention,
-			sort: typeof search.sort === 'string' ? search.sort : 'createdAt',
+			// ORDER BY rests on Last updated (mockup script 8725) — an absent param
+			// reads as `updatedAt` rather than pinning it into every URL.
+			sort: typeof search.sort === 'string' ? search.sort : 'updatedAt',
 			order:
 				typeof search.order === 'string' && ['asc', 'desc'].includes(search.order)
 					? (search.order as 'asc' | 'desc')
 					: 'desc',
 			q: typeof search.q === 'string' ? search.q : undefined,
-			groupBy: typeof search.groupBy === 'string' ? search.groupBy : undefined,
+			// GROUP BY rests on State (mockup 994–999). `none` is the explicit
+			// "ungrouped" choice — without a sentinel, clearing the param would just
+			// fall back to the default again.
+			groupBy: typeof search.groupBy === 'string' ? search.groupBy : 'status',
 			ids: typeof search.ids === 'string' ? search.ids : undefined,
 			includeArchived: includeArchived ? (1 as const) : undefined,
 			...metadataFilters,
@@ -145,13 +150,15 @@ function ObjectsPage() {
 		sort,
 		order,
 		q,
-		groupBy,
+		groupBy: groupByParam,
 		ids: idsFilter,
 		includeArchived: includeArchivedParam,
 		filterBy: filterByParam,
 		attention,
 	} = searchParams
 	const includeArchived = includeArchivedParam === 1
+	// `none` is the URL's way of saying "explicitly ungrouped".
+	const groupBy = groupByParam === 'none' ? undefined : groupByParam
 	// Status is the resting axis — an absent param reads as Status rather than
 	// pinning a default into every URL that links here.
 	const filterBy: DisplayPanelFilterAxis = filterByParam ?? 'status'
@@ -648,7 +655,7 @@ function ObjectsPage() {
 	// default set. `view` and `q` are deliberately untouched (separate surfaces).
 	const handleResetToDefault = useCallback(() => {
 		const cleared: Record<string, string | undefined> = {
-			sort: 'createdAt',
+			sort: 'updatedAt',
 			order: 'desc',
 			groupBy: undefined,
 			status: undefined,
@@ -718,9 +725,9 @@ function ObjectsPage() {
 
 	const urlIsInDefaultShape = useMemo(
 		() =>
-			(!searchParams.sort || searchParams.sort === 'createdAt') &&
+			(!searchParams.sort || searchParams.sort === 'updatedAt') &&
 			(!searchParams.order || searchParams.order === 'desc') &&
-			!searchParams.groupBy &&
+			(!searchParams.groupBy || searchParams.groupBy === 'status') &&
 			!searchParams.status &&
 			!searchParams.driver &&
 			Object.keys(metadataFilters).length === 0,
@@ -1355,7 +1362,7 @@ function ObjectsPage() {
 			// Same story for the session view-state — an expansion or scroll
 			// anchor built on the outgoing tab must not leak back onto it if the
 			// user returns. Drop the store slot and reset local expanded so the
-			// destination tab starts with all groups closed.
+			// destination tab starts at its own defaults.
 			clearViewState(workspaceId, displaySettingsKey)
 			setExpanded({})
 			setCapturedAnchor(undefined)
@@ -1364,14 +1371,14 @@ function ObjectsPage() {
 				params: { workspaceId },
 				search: {
 					type: value || undefined,
-					sort: 'createdAt',
+					sort: 'updatedAt',
 					order: 'desc',
 					status: undefined,
 					driver: undefined,
 					filterBy: undefined,
 					attention: undefined,
 					q: undefined,
-					groupBy: undefined,
+					groupBy: 'status',
 					ids: undefined,
 					includeArchived: undefined,
 				},
@@ -1474,7 +1481,7 @@ function ObjectsPage() {
 				order={order}
 				onOrderChange={(value) => updateSearch({ order: value })}
 				groupBy={groupBy}
-				onGroupByChange={(value) => updateSearch({ groupBy: value })}
+				onGroupByChange={(value) => updateSearch({ groupBy: value ?? 'none' })}
 				includeArchived={supportsIncludeArchived ? includeArchived : undefined}
 				archivedCount={archivedCount}
 				onIncludeArchivedChange={
@@ -1490,7 +1497,7 @@ function ObjectsPage() {
 				onViewChange={(next) => {
 					setView(next)
 					if (next === 'list' && sort === BOARD_MANUAL_SORT) {
-						updateSearch({ sort: 'createdAt', order: 'desc' })
+						updateSearch({ sort: 'updatedAt', order: 'desc' })
 					}
 					// One analytics line per user-initiated switch so we can count
 					// distinct operators reaching for Board (the bet's success

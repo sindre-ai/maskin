@@ -17,6 +17,7 @@ export function AssignedInChatRow({
 	agentId,
 	agentType = 'agent',
 	isWorking = false,
+	feedsLoopName,
 }: {
 	conversation: ConversationListItemResponse
 	workspaceId: string
@@ -25,6 +26,9 @@ export function AssignedInChatRow({
 	agentType?: string
 	/** True when that agent has a live session right now. */
 	isWorking?: boolean
+	/** Which loop this work feeds (mockup 1569 `k.feeds`) — the loop that runs
+	 *  the agent the work was handed to. Omitted when no loop uses that agent. */
+	feedsLoopName?: string
 }) {
 	const when = conversation.lastMessageAt ?? conversation.createdAt
 
@@ -60,6 +64,11 @@ export function AssignedInChatRow({
 					)}
 				</div>
 			</div>
+			{feedsLoopName && (
+				<span className="hidden shrink-0 whitespace-nowrap text-[11px] text-muted-foreground lg:inline">
+					feeds {feedsLoopName}
+				</span>
+			)}
 			<span
 				className={cn(
 					'inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap text-[11px] font-semibold',

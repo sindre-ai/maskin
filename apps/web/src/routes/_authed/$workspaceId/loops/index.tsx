@@ -5,6 +5,7 @@ import { DisplayPanel } from '@/components/objects/data-table/display-panel'
 import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picker'
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
+import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
 import { TriggerRow } from '@/components/triggers/trigger-row'
 import { Button } from '@/components/ui/button'
@@ -55,7 +56,13 @@ export const Route = createFileRoute('/_authed/$workspaceId/loops/')({
 
 function LoopsPage() {
 	const { workspaceId } = useWorkspace()
-	const { data: loops, isLoading: loopsLoading } = useLoops(workspaceId)
+	const {
+		data: loops,
+		isLoading: loopsLoading,
+		isError: isLoopsError,
+		error: loopsError,
+		refetch: refetchLoops,
+	} = useLoops(workspaceId)
 	const { data: triggers } = useTriggers(workspaceId)
 	const { data: actors } = useActors(workspaceId)
 	const { data: sessions } = useWorkspaceSessions(workspaceId)
@@ -129,6 +136,19 @@ function LoopsPage() {
 		return rows
 	}, [conversationPages])
 
+	// Which loop a chat-assigned piece of work feeds (mockup 1569 `k.feeds`) —
+	// the loop that runs the agent it was handed to. Loops carry `agentIds`, so
+	// this is a real association rather than an invented conversation↔loop link.
+	const loopNameByAgentId = useMemo(() => {
+		const map = new Map<string, string>()
+		for (const loop of loops ?? []) {
+			for (const agentId of loop.agentIds) {
+				if (!map.has(agentId)) map.set(agentId, loop.name ?? 'Untitled loop')
+			}
+		}
+		return map
+	}, [loops])
+
 	const hasLoops = sortedLoops.length > 0
 
 	return (
@@ -150,6 +170,14 @@ function LoopsPage() {
 			/>
 			{loopsLoading ? (
 				<ListSkeleton />
+			) : isLoopsError && !loops ? (
+				// A failed fetch must not fall through to "No loops running here
+				// yet" — that would claim the workspace is empty when it isn't.
+				<QueryStateError
+					title="Couldn't load loops"
+					error={loopsError ?? new Error('Something went wrong.')}
+					onRetry={() => refetchLoops()}
+				/>
 			) : (
 				<div className="space-y-10">
 					<section className="flex flex-col">
@@ -185,15 +213,20 @@ function LoopsPage() {
 						)}
 					</section>
 
-					{standaloneTriggers.length > 0 && (
-						<section>
-							<header className="flex items-center gap-2.5 px-1">
-								<h2 className="text-sm font-bold text-foreground">Not tied to a loop</h2>
-								<p className="text-[11px] text-muted-foreground">
-									workspace-wide automations that run on their own
-								</p>
-								<span aria-hidden="true" className="h-px flex-1 bg-border" />
-							</header>
+					<section>
+						<header className="flex items-center gap-2.5 px-1">
+							<h2 className="text-sm font-bold text-foreground">Not tied to a loop</h2>
+							<p className="text-[11px] text-muted-foreground">
+								workspace-wide automations that run on their own
+							</p>
+							<span aria-hidden="true" className="h-px flex-1 bg-border" />
+						</header>
+						{standaloneTriggers.length === 0 ? (
+							<EmptyState
+								title="No workspace-wide automations yet"
+								description="Automations that run on their own — outside any loop — show up here."
+							/>
+						) : (
 							<div className="flex flex-col gap-2 pt-3">
 								{standaloneTriggers.map((trigger) => {
 									const agent = actors?.find((a) => a.id === trigger.targetActorId)
@@ -213,18 +246,23 @@ function LoopsPage() {
 									)
 								})}
 							</div>
-						</section>
-					)}
+						)}
+					</section>
 
-					{assignedInChat.length > 0 && (
-						<section>
-							<header className="flex items-center gap-2.5 px-1">
-								<h2 className="text-sm font-bold text-foreground">Assigned in chat</h2>
-								<p className="text-[11px] text-muted-foreground">
-									work you handed an agent yourself — outside any cycle
-								</p>
-								<span aria-hidden="true" className="h-px flex-1 bg-border" />
-							</header>
+					<section>
+						<header className="flex items-center gap-2.5 px-1">
+							<h2 className="text-sm font-bold text-foreground">Assigned in chat</h2>
+							<p className="text-[11px] text-muted-foreground">
+								work you handed an agent yourself — outside any cycle
+							</p>
+							<span aria-hidden="true" className="h-px flex-1 bg-border" />
+						</header>
+						{assignedInChat.length === 0 ? (
+							<EmptyState
+								title="Nothing handed to an agent in chat"
+								description="Work you hand an agent yourself — outside any cycle — shows up here."
+							/>
+						) : (
 							<div className="flex flex-col gap-2 pt-3">
 								{assignedInChat.map(({ conversation, agent }) => (
 									<AssignedInChatRow
@@ -235,11 +273,12 @@ function LoopsPage() {
 										agentType={agent.actorType}
 										agentName={agent.actorName}
 										isWorking={workingAgentIds.has(agent.actorId)}
+										feedsLoopName={loopNameByAgentId.get(agent.actorId)}
 									/>
 								))}
 							</div>
-						</section>
-					)}
+						)}
+					</section>
 				</div>
 			)}
 			<CreatePicker open={createPickerOpen} onOpenChange={setCreatePickerOpen} defaultType="loop" />

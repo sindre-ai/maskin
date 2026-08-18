@@ -1,11 +1,6 @@
-import {
-	LoopPlanCard,
-	defaultLoopName,
-	draftFromPlan,
-	mergeDraftOntoPlan,
-} from '@/components/loops/loop-plan-card'
+import { LoopPlanCard, defaultLoopName } from '@/components/loops/loop-plan-card'
 import type { LoopPlan } from '@/lib/loop-plan'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -15,7 +10,7 @@ const plan: LoopPlan = {
 			type: 'feedback',
 			name: 'Feedback',
 			role: 'Submissions from customers',
-			live: false,
+			live: 'new type · 4 states',
 			stateChain: ['new', 'triage', 'approved', 'published'],
 			isNew: true,
 		},
@@ -37,11 +32,6 @@ const plan: LoopPlan = {
 function baseProps(overrides: Partial<Parameters<typeof LoopPlanCard>[0]> = {}) {
 	return {
 		plan,
-		draft: draftFromPlan(plan),
-		mode: 'proposed' as const,
-		onDraftChange: vi.fn(),
-		onAdjust: vi.fn(),
-		onSave: vi.fn(),
 		onCreate: vi.fn(),
 		onStartOver: vi.fn(),
 		workspaceId: 'ws-1',
@@ -49,41 +39,7 @@ function baseProps(overrides: Partial<Parameters<typeof LoopPlanCard>[0]> = {}) 
 	}
 }
 
-describe('draftFromPlan / mergeDraftOntoPlan', () => {
-	it('derives an editable draft from the parsed plan', () => {
-		const draft = draftFromPlan(plan)
-		expect(draft.name).toBe('Feedback loop')
-		expect(draft.objectTypeName).toBe('Feedback')
-		expect(draft.stateChain).toEqual(['new', 'triage', 'approved', 'published'])
-		expect(draft.agentName).toBe('Feedback agent')
-		expect(draft.stopForOperator).toBe('before it proceeds')
-	})
-
-	it('merges edits into the plan so they carry into Create', () => {
-		const merged = mergeDraftOntoPlan(plan, {
-			name: 'Customer feedback loop',
-			objectTypeName: 'Feedback',
-			stateChain: ['new', 'done'],
-			agentName: 'Triage bot',
-			stopForOperator: 'before approval',
-		})
-		expect(merged.objectTypes[0].stateChain).toEqual(['new', 'done'])
-		expect(merged.agents[0].name).toBe('Triage bot')
-		expect(merged.stopForOperator).toBe('before approval')
-	})
-
-	it('falls back to the plan when an edit is blanked out', () => {
-		const merged = mergeDraftOntoPlan(plan, {
-			...draftFromPlan(plan),
-			agentName: '   ',
-			stateChain: [],
-			stopForOperator: '',
-		})
-		expect(merged.agents[0].name).toBe('Feedback agent')
-		expect(merged.objectTypes[0].stateChain).toEqual(['new', 'triage', 'approved', 'published'])
-		expect(merged.stopForOperator).toBe('before it proceeds')
-	})
-
+describe('defaultLoopName', () => {
 	it('derives the default loop name from the first object type', () => {
 		expect(defaultLoopName(plan)).toBe('Feedback loop')
 	})
@@ -114,22 +70,44 @@ describe('LoopPlanCard', () => {
 		expect(onCreate).not.toHaveBeenCalled()
 	})
 
-	it('switches to editable fields on Adjust and carries edits into the draft', async () => {
-		const user = userEvent.setup()
-		const onAdjust = vi.fn()
-		const onDraftChange = vi.fn()
-		const props = baseProps({ mode: 'proposed', onAdjust, onDraftChange })
-		const { rerender } = render(<LoopPlanCard {...props} />)
+	it('offers no builder path — the footer is Start over + Create loop only', () => {
+		render(<LoopPlanCard {...baseProps()} />)
+		expect(screen.queryByRole('button', { name: /adjust/i })).not.toBeInTheDocument()
+		expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /^start over$/i })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /create loop/i })).toBeInTheDocument()
+	})
 
-		await user.click(screen.getByRole('button', { name: /adjust/i }))
-		expect(onAdjust).toHaveBeenCalled()
+	it('shows the live reading on a type card instead of a fixed label', () => {
+		render(<LoopPlanCard {...baseProps()} />)
+		expect(screen.getByText('new type · 4 states')).toBeInTheDocument()
+		expect(screen.queryByText('tracked live')).not.toBeInTheDocument()
+	})
 
-		rerender(<LoopPlanCard {...baseProps({ mode: 'editing', onDraftChange })} />)
-		const nameInput = screen.getByRole('textbox', { name: /object type name/i })
-		fireEvent.change(nameInput, { target: { value: 'Reviews' } })
-		expect(onDraftChange).toHaveBeenCalledWith(
-			expect.objectContaining({ objectTypeName: 'Reviews' }),
+	it('renders a note instead of a state chain for a read-only type', () => {
+		render(
+			<LoopPlanCard
+				{...baseProps({
+					plan: {
+						...plan,
+						objectTypes: [
+							...plan.objectTypes,
+							{
+								type: 'customer',
+								name: 'Customer',
+								role: 'who hears back',
+								live: 'reused',
+								readOnly: true,
+								note: 'linked, never changed by this loop',
+								stateChain: [],
+								isNew: false,
+							},
+						],
+					},
+				})}
+			/>,
 		)
+		expect(screen.getByText('linked, never changed by this loop')).toBeInTheDocument()
 	})
 
 	it('calls onCreate when Create loop is pressed', async () => {

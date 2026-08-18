@@ -22,9 +22,9 @@ import {
 } from 'react'
 import { ListRow } from './list-row'
 
-/** Rows shown per group before "Show N more" reveals the rest — keeps the
- *  collapsed-by-default list light, matching the mockup's per-group cap. */
-const LIST_GROUP_ROW_CAP = 6
+/** Rows shown per group before "Show N more" reveals the rest — the mockup's
+ *  own per-group cap (script 6748 `CAP = 40`). */
+const LIST_GROUP_ROW_CAP = 40
 
 // Imperative handle the Objects route uses to read the first-visible row at
 // navigate-away time and to restore the scroll position on a POP landing.
@@ -225,7 +225,7 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 
 	const toggleGroup = useCallback(
 		(group: ListGroup) => {
-			const open = expanded[group.key] === true
+			const open = expanded[group.key] !== false
 			onExpandedChange({ ...expanded, [group.key]: !open })
 		},
 		[expanded, onExpandedChange],
@@ -268,7 +268,7 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 					const target = dataRef.current.find((o) => o.id === rowId)
 					if (target) {
 						const groupKey = `${groupByValue}:${getObjectGroupValue(target, groupByValue)}`
-						if (expandedRef.current[groupKey] !== true) {
+						if (expandedRef.current[groupKey] === false) {
 							onExpandedChangeRef.current?.({
 								...expandedRef.current,
 								[groupKey]: true,
@@ -364,7 +364,9 @@ export const ListView = forwardRef<ListViewHandle, ListViewProps>(function ListV
 				{groups === null
 					? renderRows(rows)
 					: groups.map((group) => {
-							const open = expanded[group.key] === true
+							// Groups render open (mockup 995 `g.open` defaults true) — the
+							// expanded map only ever records an explicit collapse.
+							const open = expanded[group.key] !== false
 							const capped = revealedGroups.has(group.key)
 								? group.rows
 								: group.rows.slice(0, LIST_GROUP_ROW_CAP)

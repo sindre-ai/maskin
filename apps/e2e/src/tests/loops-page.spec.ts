@@ -209,4 +209,79 @@ test.describe('Loops list page', () => {
 			timeout: 10000,
 		})
 	})
+
+	for (const viewport of SHIP_GATE_VIEWPORTS) {
+		test(`a failed loops fetch shows the error card, not the empty state, at ${viewport.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: viewport.width, height: viewport.height })
+
+			await page.route('**/api/loops**', (route) =>
+				route.fulfill({
+					status: 500,
+					contentType: 'application/json',
+					body: JSON.stringify({ error: 'Internal Server Error' }),
+				}),
+			)
+
+			await page.goto(`/${account.workspaceId}/loops`)
+
+			await expect(page.getByText("Couldn't load loops")).toBeVisible({ timeout: 10000 })
+			// The empty state would claim the workspace has no loops — it must not
+			// stand in for a fetch that failed.
+			await expect(page.getByText('No loops running here yet')).toBeHidden()
+
+			// The retry control is reachable on touch and reads in both modes.
+			const retry = page.getByRole('button', { name: /try again|retry/i })
+			await expect(retry).toBeVisible()
+			await page.emulateMedia({ colorScheme: 'dark' })
+			await expect(page.getByText("Couldn't load loops")).toBeVisible()
+			await page.emulateMedia({ colorScheme: 'light' })
+		})
+
+		test(`both non-loop groups render with their own empty states at ${viewport.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: viewport.width, height: viewport.height })
+
+			await page.goto(`/${account.workspaceId}/loops`)
+
+			// /triggers redirects here, so this list is the only way in — the two
+			// sections must announce themselves even with nothing in them.
+			await expect(page.getByText('Not tied to a loop')).toBeVisible({ timeout: 10000 })
+			await expect(page.getByText('No workspace-wide automations yet')).toBeVisible()
+			await expect(page.getByText('Assigned in chat')).toBeVisible()
+			await expect(page.getByText('Nothing handed to an agent in chat')).toBeVisible()
+		})
+	}
+
+	test('an assigned-in-chat row names the loop the work feeds', async ({ page, account }) => {
+		await page.setViewportSize({ width: 1280, height: 900 })
+
+		const agent = await account.api.createAgentActor('Relay')
+		await account.api.addWorkspaceMember(account.workspaceId, agent.id)
+		const trigger = await account.api.createTrigger(account.workspaceId, {
+			name: 'Feeds the loop',
+			type: 'event',
+			action_prompt: 'Watch for new insights',
+			target_actor_id: agent.id,
+			config: { entity_type: 'insight', action: 'created' },
+		})
+		await account.api.createObject(account.workspaceId, {
+			type: 'loop',
+			title: 'Churn watch',
+			status: 'running',
+			metadata: { trigger_ids: [trigger.id] },
+		})
+		await account.api.createConversation(account.workspaceId, {
+			title: 'Look into the churn spike',
+			participant_actor_ids: [agent.id],
+		})
+
+		await page.goto(`/${account.workspaceId}/loops`)
+		await expect(page.getByText('Look into the churn spike')).toBeVisible({ timeout: 10000 })
+		await expect(page.getByText('feeds Churn watch')).toBeVisible()
+	})
 })

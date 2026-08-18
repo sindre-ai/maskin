@@ -4,7 +4,7 @@ import { useActors } from '@/hooks/use-actors'
 import type { ActorListItem, EventResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { formatEventDescription } from '@maskin/shared'
-import { Activity, ChevronDown } from 'lucide-react'
+import { ChevronDown } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
 const DEFAULT_LIMIT = 6
@@ -50,39 +50,45 @@ export function LoopActivity({
 	const shown = expanded ? rows : rows.slice(0, DEFAULT_LIMIT)
 
 	return (
-		<section className="rounded-xl border border-border bg-card shadow-sm">
-			<div className="flex items-center gap-2 border-b border-border px-4 py-3">
-				<Activity size={14} className="text-muted-foreground" aria-hidden="true" />
-				<h2 className="text-sm font-semibold text-foreground">Latest activity</h2>
-				<span className="eyebrow">what the agents did last</span>
-			</div>
+		// Plain heading + hairline rule (mockup 1949–1950) — the same register as
+		// the sibling Changes section, not a bordered card.
+		<section>
+			<header className="flex items-center gap-2.5">
+				<h2 className="text-sm font-bold text-foreground">Latest activity</h2>
+				<span className="text-[11px] text-muted-foreground">what the agents did last</span>
+				<span aria-hidden="true" className="h-px flex-1 bg-border" />
+			</header>
 
 			{shown.length === 0 ? (
-				<p className="px-4 py-4 text-sm text-muted-foreground">No activity yet.</p>
+				<p className="pt-3.5 text-sm text-muted-foreground">No activity yet.</p>
 			) : (
-				<ul className="divide-y divide-border">
+				<ul className="flex flex-col gap-3.5 pt-3.5">
 					{shown.map((event) => {
 						const actor = actorsById.get(event.actorId)
 						return (
-							<li key={event.id} className="flex items-center gap-2.5 px-4 py-2.5">
+							<li key={event.id} className="flex gap-2.5">
 								<ActorAvatar
 									id={event.actorId}
 									name={actor?.name ?? 'Unknown'}
 									type={actor?.type ?? 'agent'}
-									className="shrink-0"
+									className="mt-px shrink-0"
 								/>
-								<p className="flex-1 min-w-0 truncate text-[12.5px] text-foreground">
-									{actor && <span className="font-semibold">{actor.name} </span>}
-									<span className="text-muted-foreground">
+								<div className="min-w-0 flex-1">
+									<div className="flex flex-wrap items-baseline gap-2">
+										<span className="text-[12.5px] font-bold text-foreground">
+											{actor?.name ?? 'Unknown'}
+										</span>
+										{event.createdAt && (
+											<RelativeTime
+												date={event.createdAt}
+												className="font-mono text-[10px] text-muted-foreground"
+											/>
+										)}
+									</div>
+									<p className="mt-0.5 text-[12.5px] leading-relaxed text-muted-foreground">
 										{formatEventDescription(event, { actorsById })}
-									</span>
-								</p>
-								{event.createdAt && (
-									<RelativeTime
-										date={event.createdAt}
-										className="shrink-0 text-xs text-muted-foreground"
-									/>
-								)}
+									</p>
+								</div>
 							</li>
 						)
 					})}
@@ -93,7 +99,7 @@ export function LoopActivity({
 				<button
 					type="button"
 					onClick={() => setExpanded((v) => !v)}
-					className="flex w-full items-center justify-center gap-1 border-t border-border px-4 py-2 text-xs text-muted-foreground hover:text-foreground"
+					className="mt-3 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
 				>
 					<ChevronDown
 						size={13}

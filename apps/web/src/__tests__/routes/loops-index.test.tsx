@@ -208,7 +208,10 @@ describe('LoopsPage', () => {
 		render(<LoopsPage />)
 
 		expect(screen.getByText('Customer feedback')).toBeInTheDocument()
-		expect(screen.queryByText('Not tied to a loop')).not.toBeInTheDocument()
+		// The section always renders — /triggers redirects here, so it is the only
+		// way in; with nothing standalone it shows its own empty state.
+		expect(screen.getByText('Not tied to a loop')).toBeInTheDocument()
+		expect(screen.getByText('No workspace-wide automations yet')).toBeInTheDocument()
 	})
 
 	it('keeps a trigger standalone even when it shares an agent with a loop', () => {
@@ -273,7 +276,7 @@ describe('LoopsPage', () => {
 		expect(link.getAttribute('params')).toBeDefined()
 	})
 
-	it('does not render "Assigned in chat" when no conversation has an agent', () => {
+	it('renders the "Assigned in chat" empty state when no conversation has an agent', () => {
 		mockUseConversations.mockReturnValue({
 			data: {
 				pages: [{ conversations: [buildConversation({ participants: [] })], has_more: false }],
@@ -282,7 +285,8 @@ describe('LoopsPage', () => {
 
 		render(<LoopsPage />)
 
-		expect(screen.queryByText('Assigned in chat')).not.toBeInTheDocument()
+		expect(screen.getByText('Assigned in chat')).toBeInTheDocument()
+		expect(screen.getByText('Nothing handed to an agent in chat')).toBeInTheDocument()
 	})
 
 	it('renders the list skeleton while loops are loading', () => {
@@ -291,5 +295,35 @@ describe('LoopsPage', () => {
 		const { container } = render(<LoopsPage />)
 		expect(screen.queryByText('No loops running here yet')).not.toBeInTheDocument()
 		expect(container.querySelector('.animate-pulse')).toBeInTheDocument()
+	})
+
+	it('shows the error card, not the empty state, when the loops fetch fails', () => {
+		mockUseLoops.mockReturnValue({
+			data: undefined,
+			isLoading: false,
+			isError: true,
+			error: new Error('boom'),
+			refetch: vi.fn(),
+		})
+
+		render(<LoopsPage />)
+
+		expect(screen.getByText("Couldn't load loops")).toBeInTheDocument()
+		expect(screen.queryByText('No loops running here yet')).not.toBeInTheDocument()
+	})
+
+	it('names the loop an assigned-in-chat row feeds, via the agent that runs it', () => {
+		mockUseLoops.mockReturnValue({
+			data: [buildLoop({ name: 'Churn watch', agentIds: ['actor-1'] })],
+			isLoading: false,
+		})
+		mockUseActors.mockReturnValue({ data: [buildActor({ id: 'actor-1', name: 'Compass' })] })
+		mockUseConversations.mockReturnValue({
+			data: { pages: [{ conversations: [buildConversation()], has_more: false }] },
+		})
+
+		render(<LoopsPage />)
+
+		expect(screen.getByText('feeds Churn watch')).toBeInTheDocument()
 	})
 })

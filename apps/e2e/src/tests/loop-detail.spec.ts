@@ -69,8 +69,14 @@ test.describe('Loop detail page', () => {
 			await expect(
 				page.getByText('Normalises the Slack event into the shared source'),
 			).toBeVisible()
-			// T2 sections — latest activity and the changes log with undo.
+			// The right-now note reads as one line: primitives · triggers on ·
+			// cycles (mockup 1891).
+			await expect(page.getByText(/of \d+ trigger(s)? on/)).toBeVisible()
+			// T2 sections — latest activity and the changes log with undo. Latest
+			// activity is a plain heading + rule, the same register as Changes
+			// (mockup 1949–1950) — no bordered card around it.
 			await expect(page.getByRole('heading', { name: 'Latest activity' })).toBeVisible()
+			await expect(page.getByText('what the agents did last')).toBeVisible()
 			await expect(page.getByRole('heading', { name: 'Changes' })).toBeVisible()
 			await expect(page.getByRole('button', { name: /undo/i }).first()).toBeVisible()
 
