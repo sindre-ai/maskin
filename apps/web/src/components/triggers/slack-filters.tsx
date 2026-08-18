@@ -90,7 +90,7 @@ function EmojiList({ value, onChange, placeholder }: EmojiListProps) {
 							<span>:{name}:</span>
 							<button
 								type="button"
-								className="rounded-sm hover:bg-bg-hover"
+								className="rounded-sm hover:bg-accent"
 								onClick={() => remove(name)}
 								aria-label={`Remove ${name}`}
 							>
@@ -154,7 +154,7 @@ export function SlackFilters({
 
 	if (!integrationId) {
 		return (
-			<div className="rounded-md border border-border bg-bg-surface px-3 py-2 text-xs text-muted-foreground">
+			<div className="rounded-md border border-border bg-muted px-3 py-2 text-xs text-muted-foreground">
 				Connect Slack to add channel and user filters.
 			</div>
 		)

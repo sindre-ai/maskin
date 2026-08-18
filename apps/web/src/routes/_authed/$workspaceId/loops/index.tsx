@@ -1,36 +1,52 @@
+import { PageHeader } from '@/components/layout/page-header'
+import { AssignedInChatRow } from '@/components/loops/assigned-in-chat-row'
 import { LoopRow } from '@/components/loops/loop-row'
-import { ActorAvatar } from '@/components/shared/actor-avatar'
+import { DisplayPanel } from '@/components/objects/data-table/display-panel'
 import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picker'
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
-import { RelativeTime } from '@/components/shared/relative-time'
+import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
 import { TriggerRow } from '@/components/triggers/trigger-row'
 import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
+import { useConversationsInfinite } from '@/hooks/use-conversations'
 import { useLoops } from '@/hooks/use-loops'
 import { useWorkspaceSessions } from '@/hooks/use-sessions'
 import { useTriggers } from '@/hooks/use-triggers'
+import { useUpdateTrigger } from '@/hooks/use-triggers'
+import {
+	useUpdateUserDisplaySettings,
+	useUserDisplaySettings,
+} from '@/hooks/use-user-display-settings'
+import { getActiveAgentSessions } from '@/lib/agent-status'
+import type {
+	ConversationListItemResponse,
+	ConversationParticipantResponse,
+	DisplaySettingsBody,
+	LoopSummary,
+} from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link, createFileRoute } from '@tanstack/react-router'
-import { useEffect, useMemo, useState } from 'react'
+import { RefreshCw } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
-// "Assigned in chat" rows are agent sessions the operator kicked off directly —
-// a session with no trigger is not part of an automated loop cycle, so it is
-// exactly "work you handed an agent yourself, outside any cycle".
-const SESSION_STATE_LABEL: Record<string, string> = {
-	waiting: 'Queued',
-	starting: 'Starting',
-	running: 'Working',
-	completed: 'Done',
-	paused: 'Paused',
-	failed: 'Failed',
-	timeout: 'Timed out',
-	cancelled: 'Cancelled',
-}
+// Display settings are keyed by object type; `loop` is a real object type, so
+// the loops list persists its ordering in the same store Objects uses.
+const LOOP_SETTINGS_KEY = 'loop'
+const DEFAULT_SORT = 'updatedAt'
+const DEFAULT_ORDER: 'asc' | 'desc' = 'desc'
 
-function sessionStateLabel(status: string): string {
-	return SESSION_STATE_LABEL[status] ?? status
+const LOOP_ORDER_COLUMNS = [
+	{ id: 'updatedAt', label: 'Last activity', canHide: false },
+	{ id: 'name', label: 'Name', canHide: false },
+	{ id: 'inProgressCount', label: 'In progress', canHide: false },
+]
+
+function compareLoops(a: LoopSummary, b: LoopSummary, sort: string): number {
+	if (sort === 'name') return (a.name ?? '').localeCompare(b.name ?? '')
+	if (sort === 'inProgressCount') return a.inProgressCount - b.inProgressCount
+	return new Date(a.updatedAt ?? 0).getTime() - new Date(b.updatedAt ?? 0).getTime()
 }
 
 export const Route = createFileRoute('/_authed/$workspaceId/loops/')({
@@ -40,11 +56,35 @@ export const Route = createFileRoute('/_authed/$workspaceId/loops/')({
 
 function LoopsPage() {
 	const { workspaceId } = useWorkspace()
-	const { data: loops, isLoading: loopsLoading } = useLoops(workspaceId)
+	const {
+		data: loops,
+		isLoading: loopsLoading,
+		isError: isLoopsError,
+		error: loopsError,
+		refetch: refetchLoops,
+	} = useLoops(workspaceId)
 	const { data: triggers } = useTriggers(workspaceId)
 	const { data: actors } = useActors(workspaceId)
 	const { data: sessions } = useWorkspaceSessions(workspaceId)
+	const { data: conversationPages } = useConversationsInfinite(workspaceId)
+	const updateTrigger = useUpdateTrigger(workspaceId)
 	const [createPickerOpen, setCreatePickerOpen] = useState(false)
+
+	const settingsQuery = useUserDisplaySettings(workspaceId, LOOP_SETTINGS_KEY)
+	const upsertSettings = useUpdateUserDisplaySettings(workspaceId)
+	const persistedSettings = settingsQuery.data?.settings
+	const sort = persistedSettings?.sort ?? DEFAULT_SORT
+	const order = persistedSettings?.order ?? DEFAULT_ORDER
+
+	const writeSettings = useCallback(
+		(patch: DisplaySettingsBody | null) => {
+			upsertSettings.mutate({
+				objectType: LOOP_SETTINGS_KEY,
+				settings: patch === null ? {} : { ...(persistedSettings ?? {}), ...patch },
+			})
+		},
+		[upsertSettings, persistedSettings],
+	)
 
 	useEffect(() => {
 		function onKeydown(event: KeyboardEvent) {
@@ -56,79 +96,138 @@ function LoopsPage() {
 		return () => window.removeEventListener('keydown', onKeydown)
 	}, [])
 
+	const sortedLoops = useMemo(() => {
+		const list = [...(loops ?? [])]
+		list.sort((a, b) => (order === 'asc' ? 1 : -1) * compareLoops(a, b, sort))
+		return list
+	}, [loops, sort, order])
+
+	// `LoopSummary.triggerIds` is the canonical membership field — a trigger is
+	// standalone iff no loop names it. (The previous target-actor heuristic hid
+	// any standalone trigger that happened to share an agent with a loop.)
 	const standaloneTriggers = useMemo(() => {
 		if (!triggers) return []
-		// A trigger is standalone iff no loop names it in metadata.trigger_ids.
-		// The read API resolves loop → trigger via loop.metadata.trigger_ids, so
-		// membership is expressed on the loop side. useLoops projects that as
-		// agentIds, not trigger ids — so we derive tied trigger ids from any
-		// loop that shares the target actor. That's a coarse heuristic; the
-		// canonical membership lives on the loop's metadata, and if it becomes
-		// wrong for a workspace we'd surface trigger_ids on LoopSummary. For
-		// now: a trigger is tied to a loop when its targetActorId is in some
-		// loop's agentIds set.
-		const tiedActorIds = new Set<string>()
-		for (const loop of loops ?? []) {
-			for (const id of loop.agentIds) tiedActorIds.add(id)
-		}
-		return triggers.filter((t) => !(t.targetActorId && tiedActorIds.has(t.targetActorId)))
+		const tied = new Set((loops ?? []).flatMap((l) => l.triggerIds))
+		return triggers.filter((t) => !tied.has(t.id))
 	}, [loops, triggers])
 
-	const hasLoops = (loops?.length ?? 0) > 0
-	// Task spec: the "Not tied to a loop" section only surfaces for workspaces
-	// that have both loops AND standalone triggers — a workspace with no loops
-	// falls through to the empty state.
-	const hasStandalone = hasLoops && standaloneTriggers.length > 0
-	// Work handed an agent directly in chat — sessions with no triggering
-	// automation (triggerId null) are outside any cycle. Show the most recent.
+	// Agents with a live session right now — colours the loop rows' busy line
+	// and the "Assigned in chat" state dot.
+	const workingAgentIds = useMemo(
+		() => new Set(getActiveAgentSessions(sessions ?? []).map((s) => s.actorId)),
+		[sessions],
+	)
+
+	// Work handed an agent directly in a chat thread — outside any cycle. The
+	// first page is enough; these rows are a recent-activity glance, not a log.
 	const assignedInChat = useMemo(() => {
-		if (!sessions) return []
-		return sessions
-			.filter((s) => s.triggerId === null && !!s.actorId)
-			.sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime())
-			.slice(0, 5)
-	}, [sessions])
-	const hasAssignedInChat = hasLoops && assignedInChat.length > 0
+		const conversations = conversationPages?.pages?.[0]?.conversations ?? []
+		const rows: {
+			conversation: ConversationListItemResponse
+			agent: ConversationParticipantResponse
+		}[] = []
+		for (const conversation of conversations) {
+			if (conversation.archived) continue
+			const agent = conversation.participants.find((p) => p.actorType === 'agent')
+			if (!agent) continue
+			rows.push({ conversation, agent })
+			if (rows.length === 5) break
+		}
+		return rows
+	}, [conversationPages])
+
+	// Which loop a chat-assigned piece of work feeds (mockup 1569 `k.feeds`) —
+	// the loop that runs the agent it was handed to. Loops carry `agentIds`, so
+	// this is a real association rather than an invented conversation↔loop link.
+	const loopNameByAgentId = useMemo(() => {
+		const map = new Map<string, string>()
+		for (const loop of loops ?? []) {
+			for (const agentId of loop.agentIds) {
+				if (!map.has(agentId)) map.set(agentId, loop.name ?? 'Untitled loop')
+			}
+		}
+		return map
+	}, [loops])
+
+	const hasLoops = sortedLoops.length > 0
 
 	return (
 		<div>
+			<PageHeader
+				title="Loops"
+				subtitle={String(loops?.length ?? 0)}
+				actions={
+					<DisplayPanel
+						showView={false}
+						columns={LOOP_ORDER_COLUMNS}
+						sort={sort}
+						order={order}
+						onSortChange={(value) => writeSettings({ sort: value })}
+						onOrderChange={(value) => writeSettings({ order: value })}
+						onResetToDefault={() => writeSettings(null)}
+					/>
+				}
+			/>
 			{loopsLoading ? (
 				<ListSkeleton />
-			) : !hasLoops ? (
-				<EmptyState
-					title="No loops running here yet"
-					description="Loops are persistent, multi-agent processes — a named pipeline that continuously ingests work, routes it through several agents, and surfaces decisions to you. Install one from the Marketplace, or start a new one."
-					action={
-						<Button size="sm" variant="outline" asChild>
-							<Link to="/$workspaceId/marketplace" params={{ workspaceId }}>
-								Browse the Marketplace
-							</Link>
-						</Button>
-					}
+			) : isLoopsError && !loops ? (
+				// A failed fetch must not fall through to "No loops running here
+				// yet" — that would claim the workspace is empty when it isn't.
+				<QueryStateError
+					title="Couldn't load loops"
+					error={loopsError ?? new Error('Something went wrong.')}
+					onRetry={() => refetchLoops()}
 				/>
 			) : (
-				<div className="space-y-8">
-					{hasLoops && (
-						<section className="space-y-2">
-							<p className="text-[13px] leading-[1.55] text-muted-foreground">
-								Persistent multi-agent pipelines running in this workspace.
+				<div className="space-y-10">
+					<section className="flex flex-col">
+						{hasLoops ? (
+							sortedLoops.map((loop) => (
+								<LoopRow
+									key={loop.id}
+									loop={loop}
+									actors={actors}
+									busyAgentCount={loop.agentIds.filter((id) => workingAgentIds.has(id)).length}
+								/>
+							))
+						) : (
+							<EmptyState
+								icon={<RefreshCw size={22} aria-hidden="true" />}
+								title="No loops running here yet"
+								description="Loops are persistent, multi-agent processes — a named pipeline that continuously ingests work, routes it through several agents, and surfaces decisions to you. Install one from the Marketplace, or start a new one."
+								action={
+									<div className="flex items-center gap-2">
+										<Button size="sm" asChild>
+											<Link to="/$workspaceId/loops/new" params={{ workspaceId }}>
+												Start a loop
+											</Link>
+										</Button>
+										<Button size="sm" variant="outline" asChild>
+											<Link to="/$workspaceId/marketplace" params={{ workspaceId }}>
+												Browse the Marketplace
+											</Link>
+										</Button>
+									</div>
+								}
+							/>
+						)}
+					</section>
+
+					<section>
+						<header className="flex items-center gap-2.5 px-1">
+							<h2 className="text-sm font-bold text-foreground">Not tied to a loop</h2>
+							<p className="text-[11px] text-muted-foreground">
+								workspace-wide automations that run on their own
 							</p>
-							<div className="space-y-2">
-								{loops?.map((loop) => (
-									<LoopRow key={loop.id} loop={loop} actors={actors} />
-								))}
-							</div>
-						</section>
-					)}
-					{hasStandalone && (
-						<section className="space-y-2">
-							<div>
-								<h2 className="text-sm font-medium text-foreground">Not tied to a loop</h2>
-								<p className="text-[13px] leading-[1.55] text-muted-foreground">
-									Workspace-wide automations that run on their own.
-								</p>
-							</div>
-							<div className="space-y-2">
+							<span aria-hidden="true" className="h-px flex-1 bg-border" />
+						</header>
+						{standaloneTriggers.length === 0 ? (
+							<EmptyState
+								title="No workspace-wide automations yet"
+								description="Automations that run on their own — outside any loop — show up here."
+							/>
+						) : (
+							<div className="flex flex-col gap-2 pt-3">
 								{standaloneTriggers.map((trigger) => {
 									const agent = actors?.find((a) => a.id === trigger.targetActorId)
 									return (
@@ -136,57 +235,50 @@ function LoopsPage() {
 											key={trigger.id}
 											trigger={trigger}
 											workspaceId={workspaceId}
+											agentId={agent?.id}
+											agentType={agent?.type}
 											agentName={agent?.name ?? 'Unknown'}
+											isToggling={updateTrigger.isPending}
+											onToggleEnabled={(next) =>
+												updateTrigger.mutate({ id: trigger.id, data: { enabled: next } })
+											}
 										/>
 									)
 								})}
 							</div>
-						</section>
-					)}
-					{hasAssignedInChat && (
-						<section className="space-y-2">
-							<div>
-								<h2 className="text-sm font-medium text-foreground">Assigned in chat</h2>
-								<p className="text-[13px] leading-[1.55] text-muted-foreground">
-									Work you handed an agent yourself, outside any cycle.
-								</p>
+						)}
+					</section>
+
+					<section>
+						<header className="flex items-center gap-2.5 px-1">
+							<h2 className="text-sm font-bold text-foreground">Assigned in chat</h2>
+							<p className="text-[11px] text-muted-foreground">
+								work you handed an agent yourself — outside any cycle
+							</p>
+							<span aria-hidden="true" className="h-px flex-1 bg-border" />
+						</header>
+						{assignedInChat.length === 0 ? (
+							<EmptyState
+								title="Nothing handed to an agent in chat"
+								description="Work you hand an agent yourself — outside any cycle — shows up here."
+							/>
+						) : (
+							<div className="flex flex-col gap-2 pt-3">
+								{assignedInChat.map(({ conversation, agent }) => (
+									<AssignedInChatRow
+										key={conversation.id}
+										conversation={conversation}
+										workspaceId={workspaceId}
+										agentId={agent.actorId}
+										agentType={agent.actorType}
+										agentName={agent.actorName}
+										isWorking={workingAgentIds.has(agent.actorId)}
+										feedsLoopName={loopNameByAgentId.get(agent.actorId)}
+									/>
+								))}
 							</div>
-							<div className="space-y-2">
-								{assignedInChat.map((session) => {
-									const agent = actors?.find((a) => a.id === session.actorId)
-									return (
-										<div
-											key={session.id}
-											className="flex items-center gap-3 rounded-lg border border-border bg-card p-4"
-										>
-											{agent && <ActorAvatar id={agent.id} name={agent.name} type={agent.type} />}
-											<div className="flex-1 min-w-0">
-												<div className="flex items-center gap-2">
-													<p className="text-sm font-medium text-foreground truncate">
-														{agent?.name ?? 'Agent'}
-													</p>
-													<span className="text-[10px] font-medium text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
-														{sessionStateLabel(session.status)}
-													</span>
-												</div>
-												<p className="text-[13px] leading-[1.55] text-muted-foreground line-clamp-2 mt-0.5">
-													{session.actionPrompt}
-												</p>
-												<p className="text-[13px] leading-[1.55] text-muted-foreground/60 mt-0.5">
-													{session.currentActivity ?? 'No recent activity'}
-													{session.createdAt && (
-														<>
-															{' · '}Started <RelativeTime date={session.createdAt} />
-														</>
-													)}
-												</p>
-											</div>
-										</div>
-									)
-								})}
-							</div>
-						</section>
-					)}
+						)}
+					</section>
 				</div>
 			)}
 			<CreatePicker open={createPickerOpen} onOpenChange={setCreatePickerOpen} defaultType="loop" />
