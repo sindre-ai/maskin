@@ -285,10 +285,10 @@ export function LoopPlanCard({
 				)}
 			</div>
 
-			<div className="flex flex-wrap items-center gap-2 border-t border-border bg-muted px-5 py-3">
+			<div className="flex flex-wrap items-center gap-2 border-t border-border bg-muted px-5 py-3 pb-[calc(0.75rem_+_env(safe-area-inset-bottom))] md:pb-3">
 				{created ? (
 					<>
-						<Button size="sm" asChild>
+						<Button size="sm" className="min-h-11 md:min-h-9" asChild>
 							<Link
 								to="/$workspaceId/loops/$loopId"
 								params={{ workspaceId, loopId: createdId ?? '' }}
@@ -296,16 +296,22 @@ export function LoopPlanCard({
 								Open loop
 							</Link>
 						</Button>
-						<Button size="sm" variant="ghost" onClick={onDone}>
+						<Button size="sm" variant="ghost" className="min-h-11 md:min-h-9" onClick={onDone}>
 							Done
 						</Button>
 					</>
 				) : editing ? (
 					<>
-						<Button size="sm" onClick={onSave}>
+						<Button size="sm" className="min-h-11 md:min-h-9" onClick={onSave}>
 							Save
 						</Button>
-						<Button size="sm" variant="ghost" onClick={onDone} disabled={creating}>
+						<Button
+							size="sm"
+							variant="ghost"
+							className="min-h-11 md:min-h-9"
+							onClick={onDone}
+							disabled={creating}
+						>
 							Done
 						</Button>
 					</>
@@ -314,10 +320,15 @@ export function LoopPlanCard({
 						<span className="mr-auto text-[11px] text-muted-foreground">
 							Nothing is created until you press Create loop.
 						</span>
-						<Button size="sm" variant="ghost" onClick={onAdjust}>
+						<Button size="sm" variant="ghost" className="min-h-11 md:min-h-9" onClick={onAdjust}>
 							Adjust
 						</Button>
-						<Button size="sm" onClick={onCreate} disabled={creating}>
+						<Button
+							size="sm"
+							className="min-h-11 md:min-h-9"
+							onClick={onCreate}
+							disabled={creating}
+						>
 							{creating ? (
 								'Creating…'
 							) : (
@@ -327,7 +338,13 @@ export function LoopPlanCard({
 								</>
 							)}
 						</Button>
-						<Button size="sm" variant="ghost" onClick={onDone} disabled={creating}>
+						<Button
+							size="sm"
+							variant="ghost"
+							className="min-h-11 md:min-h-9"
+							onClick={onDone}
+							disabled={creating}
+						>
 							Done
 						</Button>
 					</>

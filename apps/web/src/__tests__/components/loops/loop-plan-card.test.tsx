@@ -143,4 +143,25 @@ describe('LoopPlanCard', () => {
 		await user.click(screen.getByRole('button', { name: /^done$/i }))
 		expect(onDone).toHaveBeenCalled()
 	})
+
+	it('promotes proposed-mode footer buttons to a 44px touch target on mobile', () => {
+		render(<LoopPlanCard {...baseProps()} />)
+		for (const name of [/adjust/i, /create loop/i, /^done$/i]) {
+			expect(screen.getByRole('button', { name })).toHaveClass('min-h-11', 'md:min-h-9')
+		}
+	})
+
+	it('promotes editing-mode footer buttons to a 44px touch target on mobile', () => {
+		render(<LoopPlanCard {...baseProps({ mode: 'editing' })} />)
+		for (const name of [/^save$/i, /^done$/i]) {
+			expect(screen.getByRole('button', { name })).toHaveClass('min-h-11', 'md:min-h-9')
+		}
+	})
+
+	it('reserves iOS safe-area padding on the action bar', () => {
+		const { container } = render(<LoopPlanCard {...baseProps()} />)
+		const actionBar = container.querySelector('.border-t.bg-muted')
+		expect(actionBar).not.toBeNull()
+		expect(actionBar?.className).toContain('pb-[calc(0.75rem_+_env(safe-area-inset-bottom))]')
+	})
 })
