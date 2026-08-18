@@ -157,9 +157,16 @@ export interface ApplyResponseTokenCapResult {
  * rows response so the caller sees `_meta.truncated=true` and can fall back
  * to the fetch_handle.
  *
+ * `content` now carries the same full-JSON payload as `structuredContent`
+ * (list/search tools no longer emit a separately-bounded lean-markdown
+ * summary), so every trim also rewrites `content[0].text` to mirror the
+ * capped `structuredContent` — otherwise the untrimmed text channel would
+ * keep the full row count on the wire and the loop could never converge
+ * under the token cap.
+ *
  * The response argument is not mutated — we build a shallow copy of
- * `structuredContent` and `_meta` on every trim so callers holding a
- * reference to the original see nothing change.
+ * `structuredContent`, `content`, and `_meta` on every trim so callers
+ * holding a reference to the original see nothing change.
  */
 export function applyResponseTokenCap(
 	toolName: string,
@@ -249,9 +256,30 @@ function buildCappedResponse(
 	)
 	return {
 		...rsp,
+		content: capContentToStructured(rsp.content, cappedStructured),
 		structuredContent: cappedStructured,
 		_meta: meta,
 	}
+}
+
+/**
+ * Mirror `content[0].text` to the just-trimmed `structuredContent` so the
+ * text channel shrinks in lockstep with the row cap instead of shipping the
+ * full, pre-trim payload on every iteration of the trim loop. Only rewrites
+ * the shape every list/search tool actually emits — a single `{ type:
+ * 'text' }` block — and leaves anything else (e.g. a tool with no `content`
+ * channel at all) untouched.
+ */
+function capContentToStructured(
+	content: unknown,
+	cappedStructured: Record<string, unknown>,
+): unknown {
+	if (!Array.isArray(content) || content.length !== 1) return content
+	const block = content[0]
+	if (!block || typeof block !== 'object' || (block as { type?: unknown }).type !== 'text') {
+		return content
+	}
+	return [{ type: 'text', text: JSON.stringify(cappedStructured) }]
 }
 
 /**

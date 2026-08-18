@@ -280,12 +280,12 @@ describe('AC-U3 verification harness — contract replay of typical Claude Code 
 				content: Array<{ text: string }>
 				structuredContent?: Record<string, unknown>
 			}
-			// Content is either a markdown summary or the "no rows" empty label —
-			// never a JSON dump. Structured channel, when present, is a real
-			// object (never a string).
+			// Content is the full JSON payload (the lean markdown-summary channel
+			// was reverted — it left agents without enough detail to act on).
+			// Structured channel, when present, is a real object (never a string).
 			expect(result.content).toBeDefined()
 			expect(result.content[0].text.length).toBeGreaterThan(0)
-			expect(/^(- |No |… )/.test(result.content[0].text)).toBe(true)
+			expect(() => JSON.parse(result.content[0].text)).not.toThrow()
 			if (result.structuredContent) {
 				expect(typeof result.structuredContent).toBe('object')
 				expect(Array.isArray(result.structuredContent)).toBe(false)
@@ -369,7 +369,7 @@ describe('AC-T4 verification harness — ON → OFF → ON toggle parity across 
 				content: Array<{ text: string }>
 				structuredContent?: Record<string, unknown>
 			}
-			expect(/^(- |No |… )/.test(on1.content[0].text)).toBe(true)
+			expect(() => JSON.parse(on1.content[0].text)).not.toThrow()
 
 			process.env[RESPONSE_SCOPING_ENV_VAR] = '0'
 			const off = (await handler(args ?? {})) as {
@@ -561,18 +561,20 @@ describe('AC-T7 verification harness — seeded p95 fixture never busts the 15K 
 })
 
 // ─────────────────────────────────────────────────────────────────
-// T1 DoD #7 — before/after size assertion for the lean default
+// Content channel parity — reverted lean default
 // ─────────────────────────────────────────────────────────────────
 //
-// Anchors the DoD claim that flipping `MCP_RESPONSE_SCOPING` on materially
-// shrinks a list tool's default-page response. `list_objects` with a
-// realistic 5-row fixture is the smallest case that still carries object
-// content bodies + metadata (the fat that dominates the pre-scoping shape),
-// so a ≥60% cut here is a fair proxy for the bet's headline metric.
-// If this assertion ever slips below the threshold, the lean default has
-// drifted and the token savings the bet promises no longer hold.
+// The "Lean MCP responses" bet's T1 change made `MCP_RESPONSE_SCOPING=on`
+// swap the `content` channel from a full JSON dump to a lean markdown
+// summary, on the claim that a ≥60% size cut was worth the information
+// loss. In practice the summary left agents without enough detail in
+// `content` to act on, so the swap was reverted: `content` is the full
+// JSON payload in both flag states now (only pagination — cursor vs.
+// offset — still varies with the flag). This test anchors that the content
+// channel no longer shrinks under scoping, so a future regression that
+// reintroduces the lean summary fails loudly here.
 
-describe('T1 DoD #7 — lean default is materially smaller than the pre-scoping full-content default', () => {
+describe('Content channel parity — content size no longer depends on MCP_RESPONSE_SCOPING', () => {
 	let handlers: Map<string, Handler>
 
 	beforeEach(() => {
@@ -585,7 +587,7 @@ describe('T1 DoD #7 — lean default is materially smaller than the pre-scoping 
 		delete process.env[RESPONSE_SCOPING_ENV_VAR]
 	})
 
-	it('list_objects: scoped default is ≥60% smaller than the pre-scoping content-channel dump', async () => {
+	it('list_objects: scoped-on content is the same full JSON dump as scoped-off, not a lean summary', async () => {
 		const fixture = Array.from({ length: 5 }, (_, i) => objectRow(i))
 		const handler = handlers.get('list_objects')
 		if (!handler) throw new Error('list_objects handler not registered')
@@ -604,8 +606,8 @@ describe('T1 DoD #7 — lean default is materially smaller than the pre-scoping 
 		// Sanity: both channels carry SOMETHING for the same fixture.
 		expect(legacyContentBytes).toBeGreaterThan(0)
 		expect(scopedContentBytes).toBeGreaterThan(0)
-		// The lean summary is at most 40% of the pre-scoping content dump —
-		// i.e. ≥60% reduction, matching the bet's headline ship metric.
-		expect(scopedContentBytes).toBeLessThan(legacyContentBytes * 0.4)
+		// Both are the full JSON dump — no lean-summary size cut anymore.
+		expect(() => JSON.parse(on.content[0].text)).not.toThrow()
+		expect(scopedContentBytes).toBeGreaterThanOrEqual(legacyContentBytes * 0.9)
 	})
 })
