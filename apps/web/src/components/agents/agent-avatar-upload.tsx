@@ -126,7 +126,7 @@ export function AgentAvatarUpload({
 					onClick={handlePick}
 					disabled={isUploading}
 					className={cn(
-						'inline-flex min-h-11 items-center gap-1.5 self-start rounded-md px-2 py-1 text-sm text-muted-foreground transition-colors hover:bg-bg-hover hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50',
+						'inline-flex min-h-11 items-center gap-1.5 self-start rounded-md px-2 py-1 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50',
 					)}
 					aria-label="Upload avatar image"
 				>
