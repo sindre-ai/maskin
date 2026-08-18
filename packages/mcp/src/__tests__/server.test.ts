@@ -1513,16 +1513,41 @@ describe('tool handlers', () => {
 						})
 					if (u.includes('/api/actors?ids='))
 						return okJson([
-							{ id: 'agent-1', type: 'agent' },
-							{ id: 'agent-2', type: 'agent' },
+							{ id: 'agent-1', type: 'agent', name: 'Lead Qualifier' },
+							{ id: 'agent-2', type: 'agent', name: 'Sweeper' },
 						])
 					if (u.endsWith('/api/triggers') && method === 'POST') {
 						triggerCounter += 1
 						return okJson({ id: `trig-${triggerCounter}` })
 					}
+					if (u.endsWith('/api/triggers') && (method === 'GET' || method === undefined)) {
+						return okJson([
+							{
+								id: 'trig-1',
+								name: 'Qualify',
+								targetActorId: 'agent-1',
+								actionPrompt: 'Qualify the lead',
+							},
+							{
+								id: 'trig-2',
+								name: 'Weekly sweep',
+								targetActorId: 'agent-2',
+								actionPrompt: 'Sweep stale leads',
+							},
+						])
+					}
 					if (u.endsWith('/api/graph'))
 						return okJson({
-							nodes: [{ $id: 'loop', id: 'loop-1', workspaceId: 'ws-default-123', type: 'loop' }],
+							nodes: [
+								{
+									$id: 'loop',
+									id: 'loop-1',
+									workspaceId: 'ws-default-123',
+									type: 'loop',
+									driver: null,
+									activeSessionId: null,
+								},
+							],
 							edges: [{ id: 'edge-1', type: 'in_loop' }],
 						})
 					throw new Error(`Unexpected fetch: ${method ?? 'GET'} ${u}`)
@@ -1531,8 +1556,8 @@ describe('tool handlers', () => {
 				const handler = getHandler('create_loop')
 				const result = (await handler({
 					name: 'Lead qualification',
-					guarantee: 'Every lead gets an answer',
-					status: 'running',
+					content: 'Every lead gets an answer',
+					status: 'learning',
 					entry_condition: 'A lead is created',
 					close_condition: 'The lead is won or lost',
 					closed_statuses: { lead: ['won', 'lost'] },
@@ -1599,7 +1624,7 @@ describe('tool handlers', () => {
 					type: 'loop',
 					title: 'Lead qualification',
 					content: 'Every lead gets an answer',
-					status: 'running',
+					status: 'learning',
 				})
 				expect(graphBody.nodes[0].metadata.trigger_ids).toEqual(['trig-1', 'trig-2'])
 				expect(graphBody.nodes[0].metadata.entry_condition).toBe('A lead is created')
@@ -1610,8 +1635,21 @@ describe('tool handlers', () => {
 
 				const parsed = JSON.parse(result.content[0].text)
 				expect(parsed.loop.id).toBe('loop-1')
-				expect(parsed.trigger_ids).toEqual(['trig-1', 'trig-2'])
+				expect(parsed.loop.driver).toBeUndefined()
+				expect(parsed.loop.activeSessionId).toBeUndefined()
 				expect(parsed.created_step_trigger_ids).toEqual(['trig-1', 'trig-2'])
+				expect(parsed.steps).toEqual([
+					expect.objectContaining({
+						triggerId: 'trig-1',
+						triggerName: 'Qualify',
+						agent: expect.objectContaining({ id: 'agent-1', name: 'Lead Qualifier' }),
+					}),
+					expect.objectContaining({
+						triggerId: 'trig-2',
+						triggerName: 'Weekly sweep',
+						agent: expect.objectContaining({ id: 'agent-2', name: 'Sweeper' }),
+					}),
+				])
 			})
 
 			it('rejects unknown trigger ids before creating anything', async () => {
@@ -1776,9 +1814,9 @@ describe('tool handlers', () => {
 				expect(relationshipDeletes).toEqual(['rel-old'])
 
 				const parsed = JSON.parse(result.content[0].text)
-				expect(parsed.trigger_ids).toEqual(['trig-old', 'trig-add'])
 				expect(parsed.added_object_ids).toEqual(['obj-new'])
 				expect(parsed.removed_object_ids).toEqual(['obj-gone'])
+				expect(Array.isArray(parsed.steps)).toBe(true)
 			})
 		})
 

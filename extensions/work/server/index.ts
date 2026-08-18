@@ -15,16 +15,18 @@ const COMMITMENT_FIELDS: FieldDefinition[] = [
 	{ name: 'last_breach_at', type: 'date' },
 ]
 
-// The new `loop` type: a named, persistent multi-agent process wrapping
-// triggers + agents + a pipeline of object states. `archived` is a silent
-// terminal (mirrors the bet convention) and is kept out of the attention-worthy
-// set. Metadata fields are plain text per T1's decision — no DSL until an
-// orchestration runtime exists to consume it.
-const LOOP_STATUSES = ['running', 'waiting', 'paused', 'archived']
+// The `loop` type: a named, iterative multi-agent process wrapping triggers +
+// agents + a pipeline of object states. `status` is a graduated-trust ladder
+// (draft → learning → supervised → fully_autonomous), not an on/off toggle;
+// `paused` can be reached from any point on that ladder and disables every
+// trigger the loop references (see the status hook in
+// `apps/dev/src/routes/objects.ts`'s `PATCH /:id`). Metadata fields are plain
+// text per T1's decision — no DSL until an orchestration runtime exists to
+// consume it.
+const LOOP_STATUSES = ['draft', 'paused', 'learning', 'supervised', 'fully_autonomous']
 const LOOP_FIELDS: FieldDefinition[] = [
 	{ name: 'entry_condition', type: 'text' },
 	{ name: 'close_condition', type: 'text' },
-	{ name: 'human_decision_points', type: 'number' },
 	{ name: 'installed_from_marketplace_loop_id', type: 'text' },
 ]
 

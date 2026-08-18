@@ -844,9 +844,13 @@ describe('create_trigger schema', () => {
 describe('create_loop schema', () => {
 	const schema = tools.create_loop.inputSchema
 
-	it('applies defaults: running status, empty steps/trigger_ids/object_ids', () => {
-		const result = schema.parse({ name: 'Lead loop' })
-		expect(result.status).toBe('running')
+	it('requires workspace_id', () => {
+		expect(() => schema.parse({ name: 'Lead loop' })).toThrow()
+	})
+
+	it('applies defaults: draft status, empty steps/trigger_ids/object_ids', () => {
+		const result = schema.parse({ workspace_id: uuid, name: 'Lead loop' })
+		expect(result.status).toBe('draft')
 		expect(result.steps).toEqual([])
 		expect(result.trigger_ids).toEqual([])
 		expect(result.object_ids).toEqual([])
@@ -854,6 +858,7 @@ describe('create_loop schema', () => {
 
 	it('accepts an event step and a cron step', () => {
 		const result = schema.parse({
+			workspace_id: uuid,
 			name: 'Lead loop',
 			steps: [
 				{
@@ -878,6 +883,7 @@ describe('create_loop schema', () => {
 	it('rejects a step with an invalid event action', () => {
 		expect(() =>
 			schema.parse({
+				workspace_id: uuid,
 				name: 'X',
 				steps: [
 					{
@@ -892,7 +898,7 @@ describe('create_loop schema', () => {
 	})
 
 	it('rejects an unknown loop status', () => {
-		expect(() => schema.parse({ name: 'X', status: 'sideways' })).toThrow()
+		expect(() => schema.parse({ workspace_id: uuid, name: 'X', status: 'sideways' })).toThrow()
 	})
 })
 
