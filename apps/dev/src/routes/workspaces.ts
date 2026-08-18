@@ -14,7 +14,6 @@ import {
 	createWorkspaceSchema,
 	updateWorkspaceAdminSchema,
 	updateWorkspaceSchema,
-	workspaceSettingsSchema,
 } from '@maskin/shared'
 import { and, eq } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
@@ -23,6 +22,7 @@ import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, workspaceResponseSchema } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import { isWorkspaceMember, isWorkspaceOwner } from '../lib/workspace-auth'
+import { buildNewWorkspaceSettings } from '../lib/workspace-defaults'
 import type { AgentStorageManager } from '../services/agent-storage'
 import type { SessionManager } from '../services/session-manager'
 import {
@@ -101,7 +101,7 @@ app.openapi(createWorkspaceRoute, async (c) => {
 	const actorId = c.get('actorId')
 	const body = c.req.valid('json')
 
-	const settings = workspaceSettingsSchema.parse(body.settings ?? {})
+	const settings = buildNewWorkspaceSettings(body.settings)
 
 	let workspace: typeof workspaces.$inferSelect | null
 	try {
