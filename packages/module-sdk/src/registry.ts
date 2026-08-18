@@ -1,4 +1,6 @@
 import type {
+	FieldDefinition,
+	ModuleDefaultSettings,
 	ModuleDefinition,
 	ModuleWebDefinition,
 	NavItemDefinition,
@@ -170,4 +172,56 @@ export function getEnabledObjectTypeTabs(enabledModuleIds: string[]): ObjectType
 /** Clear all frontend modules (for testing) */
 export function clearWebModules(): void {
 	webModules.clear()
+}
+
+// ── Module default settings merging ────────────────────────────────
+
+/**
+ * Fold a set of module-contributed default settings into a workspace settings
+ * object. Existing values always win — enabling a module never overwrites a
+ * workspace's own display names, statuses or field definitions, it only fills
+ * in the keys the module introduces. `relationship_types` is unioned.
+ */
+export function mergeModuleDefaultSettings<T extends Record<string, unknown>>(
+	settings: T,
+	moduleDefaults: Array<ModuleDefaultSettings | undefined>,
+): T {
+	const present = moduleDefaults.filter((d): d is ModuleDefaultSettings => Boolean(d))
+	if (present.length === 0) return settings
+
+	const displayNames: Record<string, string> = {}
+	const statuses: Record<string, string[]> = {}
+	const fieldDefinitions: Record<string, FieldDefinition[]> = {}
+	const relationshipTypes: string[] = []
+
+	for (const defaults of present) {
+		Object.assign(displayNames, defaults.display_names)
+		Object.assign(statuses, defaults.statuses)
+		Object.assign(fieldDefinitions, defaults.field_definitions)
+		if (defaults.relationship_types) relationshipTypes.push(...defaults.relationship_types)
+	}
+
+	const current = settings as Record<string, unknown>
+	const currentRelationshipTypes = Array.isArray(current.relationship_types)
+		? (current.relationship_types as string[])
+		: []
+
+	return {
+		...settings,
+		display_names: { ...displayNames, ...((current.display_names as object) ?? {}) },
+		statuses: { ...statuses, ...((current.statuses as object) ?? {}) },
+		field_definitions: { ...fieldDefinitions, ...((current.field_definitions as object) ?? {}) },
+		relationship_types: [...new Set([...currentRelationshipTypes, ...relationshipTypes])],
+	} as T
+}
+
+/** Merge the default settings of the given server modules into workspace settings. */
+export function applyModuleDefaults<T extends Record<string, unknown>>(
+	settings: T,
+	moduleIds: string[],
+): T {
+	return mergeModuleDefaultSettings(
+		settings,
+		moduleIds.map((id) => defaultRegistry.getModuleDefaultSettings(id)),
+	)
 }

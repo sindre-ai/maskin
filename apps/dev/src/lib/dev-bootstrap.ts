@@ -92,6 +92,7 @@ import {
 	TEAM_OPS_SKILL_IDS,
 	TEAM_OPS_TRIGGER_IDS,
 } from './marketplace-loops/team-ops-loop'
+import { buildNewWorkspaceSettings } from './workspace-defaults'
 
 const MARKETPLACE_SEED_CONFIGS: readonly MarketplaceLoopSeedConfig[] = [
 	{
@@ -350,6 +351,7 @@ export async function maybeBootstrapDev(
 			.insert(workspaces)
 			.values({
 				name: 'My Workspace',
+				settings: buildNewWorkspaceSettings(),
 				createdBy: actor.id,
 			})
 			.returning()

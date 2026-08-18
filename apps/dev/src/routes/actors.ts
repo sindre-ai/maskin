@@ -30,7 +30,6 @@ import {
 	WORKSPACE_COACH_DEFAULT,
 	createActorSchema,
 	updateActorSchema,
-	workspaceSettingsSchema,
 } from '@maskin/shared'
 import { and, asc, count, countDistinct, desc, eq, inArray, or, sql } from 'drizzle-orm'
 import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
@@ -46,6 +45,7 @@ import {
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import { isWorkspaceMember } from '../lib/workspace-auth'
+import { buildNewWorkspaceSettings } from '../lib/workspace-defaults'
 import type { AgentStorageManager } from '../services/agent-storage'
 import type { SessionManager } from '../services/session-manager'
 import { bootstrapDefaultAgents } from '../services/workspace-bootstrap'
@@ -205,9 +205,7 @@ app.openapi(createActorRoute, async (c) => {
 	let workspaceId: string | undefined
 
 	if (shouldCreateWorkspace) {
-		const defaultSettings = workspaceSettingsSchema.parse({
-			enabled_modules: ['work', 'knowledge'],
-		})
+		const defaultSettings = buildNewWorkspaceSettings()
 		const created = await db.transaction(async (tx) => {
 			const [workspace] = await tx
 				.insert(workspaces)
