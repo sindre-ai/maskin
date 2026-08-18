@@ -14,6 +14,8 @@ import { ImageWarmer } from './services/image-warmer'
 import { InputQueue } from './services/input-queue'
 import {
 	type BrowserSidecar,
+	DEV_SERVER_HOST_PORT_RANGE_END,
+	DEV_SERVER_HOST_PORT_RANGE_START,
 	type MicrosandboxDeps,
 	type PreviewPortMapping,
 	type PullPolicy,
@@ -21,6 +23,7 @@ import {
 	cleanupBrowserSidecar,
 	defaultRunner,
 	ensureAgentServerSshKey,
+	establishPreviewPortRelay,
 	launchSessionExec,
 	listSandboxNames,
 	provisionBrowserSidecar,
@@ -40,7 +43,7 @@ import {
 
 const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/
 
-const MAX_PREVIEW_GUEST_PORTS = 8
+export const MAX_PREVIEW_GUEST_PORTS = 8
 
 const SESSION_REQUEST_SCHEMA = z
 	.object({
@@ -79,6 +82,20 @@ const SESSION_REQUEST_SCHEMA = z
 		message: 'previewGuestPorts requires browserRequired to be true',
 		path: ['previewGuestPorts'],
 	})
+
+// POST /sessions/:id/preview-ports body — a session's own guest-side port
+// watcher reports a port it just started listening on. Bounded to the exact
+// range the browser sidecar's standing allow@host:tcp grant covers (see
+// DEV_SERVER_HOST_PORT_RANGE in microsandbox.ts) — a port outside it could
+// never be relayed anyway, so reject it at the boundary instead of doing the
+// relay work first and failing later.
+const PREVIEW_PORT_REQUEST_SCHEMA = z.object({
+	guestPort: z
+		.number()
+		.int()
+		.min(DEV_SERVER_HOST_PORT_RANGE_START)
+		.max(DEV_SERVER_HOST_PORT_RANGE_END),
+})
 
 export type AppDeps = {
 	env: AgentServerEnv
@@ -120,7 +137,45 @@ export type AppDeps = {
 	 * what every existing test expects.
 	 */
 	readyState?: { ready: boolean }
+	/**
+	 * Shared with `main()`'s boot-time `reconcileOnBoot` pass for the same
+	 * reason as `sessionExitCodes`/`sessionLogRouters` above — a session that
+	 * survived a restart and still has a browser sidecar must be reattached
+	 * into the SAME map `POST /sessions/:id/preview-ports` reads from, or
+	 * that route 404s forever for it post-restart. Omitted → buildApp creates
+	 * its own fresh map (fine for any caller, e.g. tests, that never shares
+	 * it with a reconcile pass).
+	 */
+	sessionPreviewState?: SessionPreviewState
 }
+
+/**
+ * Per-session state for the dynamic preview-port relay feature — see
+ * `sessionPreviewState`'s declaration below for the full rationale. Named as
+ * a type (rather than left inline) so `AppDeps` and `ReconcileOnBootDeps`
+ * can share the exact same shape instead of two structurally-equal but
+ * independently-drifting inline object types.
+ */
+export type SessionPreviewState = Map<
+	string,
+	{
+		browserSidecar: BrowserSidecar
+		previewRelays: SshRelay[]
+		/**
+		 * Coalesces concurrent `POST /sessions/:id/preview-ports` calls for the
+		 * SAME guestPort onto a single in-flight `establishPreviewPortRelay`
+		 * attempt. Without this, two requests that land before the first
+		 * resolves (a real scenario — the guest-side watcher polls every 2s,
+		 * well inside `establishPreviewPortRelay`'s multi-second worst case)
+		 * would each open their own relay onto the same guest port, wasting
+		 * two slots out of the fixed 3000-12000 range and breaking the
+		 * idempotency this route otherwise guarantees. Entries are removed as
+		 * soon as their attempt settles — this map holds only requests
+		 * currently in flight, never a durable cache.
+		 */
+		pendingRelays: Map<number, Promise<SshRelay | null>>
+	}
+>
 
 const LOG_FLUSH_INTERVAL_MS = 2_000
 const LOG_FLUSH_MAX_LINES = 100
@@ -463,6 +518,29 @@ export function buildApp(deps: AppDeps): Hono {
 	// endpoints for monitorSession. Injectable via deps (see AppDeps.sessionExitCodes).
 	const sessionExitCodes = deps.sessionExitCodes ?? new Map<string, number>()
 
+	// The microVM can reach us at host.microsandbox.internal (written into the
+	// VM's /etc/hosts by microsandbox) on our own PORT — used both to bake
+	// AGENT_SERVER_URL/PREVIEW_URL into a session's boot-time env and to build
+	// the previewUrl POST /sessions/:id/preview-ports returns for a
+	// dynamically-relayed port.
+	const agentServerInternalHost =
+		deps.env.AGENT_SERVER_INTERNAL_HOST ?? 'host.microsandbox.internal'
+
+	// Tracks the live browser sidecar + preview relays for sessions that have
+	// one, keyed by session id. Populated in POST /sessions right after
+	// provisionBrowserSidecar succeeds, mutated by POST
+	// /sessions/:id/preview-ports as the guest reports new ports, and read by
+	// that same route to relay into an already-Running session without
+	// re-provisioning anything. The `previewRelays` array stored here is the
+	// SAME array reference passed to monitorSession, so relays pushed onto it
+	// after boot are cleaned up by monitorSession's existing teardown path
+	// with no further wiring — see the `relay.stop()` loops in monitorSession
+	// and its crash/spawn-failure handlers below. Injectable via deps so
+	// main()'s boot-time reconcile pass can reattach a restart-surviving
+	// session's sidecar into the same map this route reads from — see
+	// AppDeps.sessionPreviewState.
+	const sessionPreviewState: SessionPreviewState = deps.sessionPreviewState ?? new Map()
+
 	app.get('/health', async (c) => {
 		// `ok` must track msb liveness — a box whose `msb` is missing or broken
 		// is not healthy, even though the process is up. readMsbVersion returns
@@ -605,6 +683,104 @@ export function buildApp(deps: AppDeps): Hono {
 		return c.json({ ok: true })
 	})
 
+	// POST /sessions/:id/preview-ports — a session's own guest-side dev-server
+	// port watcher calls this the moment it sees a new LISTEN socket, so a
+	// relay into it can be opened on demand instead of requiring the caller to
+	// declare previewGuestPorts upfront in POST /sessions. Registered before
+	// requireBearer for the same reason as /complete and /logs/ingest above:
+	// the VM holds no AGENT_SERVER_SECRET, only the 122-bit session id +
+	// host-loopback reachability guard this.
+	app.post('/sessions/:id/preview-ports', async (c) => {
+		const { id } = c.req.param()
+		if (!SESSION_ID_RE.test(id)) return c.json({ error: 'Invalid session id' }, 400)
+
+		const state = sessionPreviewState.get(id)
+		if (!state) {
+			// No browser sidecar for this session (browserRequired wasn't set, or
+			// the sidecar failed to provision) — nothing to relay into.
+			return c.json({ error: 'no_browser_sidecar_for_session' }, 404)
+		}
+
+		let raw: unknown
+		try {
+			raw = await c.req.json()
+		} catch {
+			return c.json({ error: 'invalid_json' }, 400)
+		}
+		const parsed = PREVIEW_PORT_REQUEST_SCHEMA.safeParse(raw)
+		if (!parsed.success) {
+			return c.json({ error: 'invalid_request', details: parsed.error.flatten() }, 400)
+		}
+		const { guestPort } = parsed.data
+
+		// Idempotent — the watcher may re-report a port it already has a relay
+		// for (its own process restarting, a retried request, ...). Return the
+		// existing mapping instead of opening a second relay onto the same
+		// guest port.
+		const existing = state.previewRelays.find((relay) => relay.targetGuestPort === guestPort)
+		if (existing) {
+			return c.json({
+				guestPort,
+				previewUrl: `http://${agentServerInternalHost}:${existing.relayPort}`,
+			})
+		}
+
+		// The guest-side watcher reports every LISTEN socket it finds in range,
+		// not just intentional dev servers — cap how many distinct relays (and
+		// therefore host ssh-relay process pairs + shared host ports) a single
+		// session can claim, mirroring the upfront previewGuestPorts cap. Count
+		// in-flight attempts too (not just established relays) so concurrent
+		// requests for different new ports can't collectively slip past the cap
+		// before any of them lands in previewRelays. A re-request for a port
+		// that's already pending is exempt — it's coalescing onto existing work,
+		// not claiming a new slot.
+		if (
+			!state.pendingRelays.has(guestPort) &&
+			state.previewRelays.length + state.pendingRelays.size >= MAX_PREVIEW_GUEST_PORTS
+		) {
+			return c.json({ error: 'too_many_preview_ports' }, 429)
+		}
+
+		// Coalesce concurrent requests for the same port onto one in-flight
+		// attempt instead of racing two establishPreviewPortRelay calls — see
+		// SessionPreviewState.pendingRelays' doc comment for why this matters
+		// (the guest-side watcher's 2s poll loop makes the race a real,
+		// frequently-hit case, not a theoretical one).
+		let pending = state.pendingRelays.get(guestPort)
+		if (!pending) {
+			pending = establishPreviewPortRelay(
+				id,
+				guestPort,
+				deps.env.AGENT_SERVER_SSH_KEY_PATH,
+				deps.msb,
+			)
+			state.pendingRelays.set(guestPort, pending)
+			void pending.finally(() => state.pendingRelays.delete(guestPort))
+		}
+		const relay = await pending
+		if (!relay) {
+			logger.warn('dynamic preview port relay failed to establish', {
+				sessionId: id,
+				guestPort,
+			})
+			return c.json({ error: 'relay_failed' }, 502)
+		}
+		// A second/third caller that awaited the same `pending` promise above
+		// would otherwise push this exact relay onto previewRelays again.
+		if (!state.previewRelays.includes(relay)) {
+			state.previewRelays.push(relay)
+			logger.info('dynamic preview port relay established', {
+				sessionId: id,
+				guestPort,
+				relayPort: relay.relayPort,
+			})
+		}
+		return c.json(
+			{ guestPort, previewUrl: `http://${agentServerInternalHost}:${relay.relayPort}` },
+			201,
+		)
+	})
+
 	// All other /sessions routes require the shared bearer token.
 	const requireBearer = bearerAuth({ expectedSecret: deps.env.AGENT_SERVER_SECRET })
 	app.use('/sessions', requireBearer)
@@ -670,10 +846,7 @@ export function buildApp(deps: AppDeps): Hono {
 		const pullPolicy: PullPolicy = warmHit ? 'if-missing' : 'always'
 
 		// Inject AGENT_SERVER_URL so agent-run.sh can stream interactive input
-		// from this server. The microVM can reach us at host.microsandbox.internal
-		// (written into the VM's /etc/hosts by microsandbox) on our own PORT.
-		const agentServerInternalHost =
-			deps.env.AGENT_SERVER_INTERNAL_HOST ?? 'host.microsandbox.internal'
+		// from this server (agentServerInternalHost is computed once above).
 		const sessionEnv: Record<string, string> = {
 			...body.env,
 			AGENT_SERVER_URL: `http://${agentServerInternalHost}:${deps.env.PORT}`,
@@ -739,6 +912,18 @@ export function buildApp(deps: AppDeps): Hono {
 		}
 
 		const previewRelays: SshRelay[] = []
+		// Register before spawnSession so the state is already in place by the
+		// time the VM is up and its guest-side port watcher could plausibly
+		// reach POST /sessions/:id/preview-ports — see sessionPreviewState's
+		// doc comment above for why this array reference is also what
+		// monitorSession tears down at session end.
+		if (browserSidecar) {
+			sessionPreviewState.set(body.sessionId, {
+				browserSidecar,
+				previewRelays,
+				pendingRelays: new Map(),
+			})
+		}
 		try {
 			let result: Awaited<ReturnType<typeof spawnSession>>
 			try {
@@ -859,6 +1044,7 @@ export function buildApp(deps: AppDeps): Hono {
 				})
 				.finally(() => {
 					inputQueue.drainSession(body.sessionId)
+					sessionPreviewState.delete(body.sessionId)
 				})
 
 			// Launch msb exec in the background. entrypoint.sh finds the trigger and
@@ -884,6 +1070,7 @@ export function buildApp(deps: AppDeps): Hono {
 			// Don't orphan the sidecar or any preview relays — spawnSession failed
 			// before monitorSession would have torn them down. Best-effort, idempotent.
 			for (const relay of previewRelays) relay.stop()
+			sessionPreviewState.delete(body.sessionId)
 			if (browserSidecar) {
 				await cleanupBrowserSidecar(browserSidecar, deps.msb).catch(() => {})
 			}
@@ -982,6 +1169,13 @@ export type ReconcileOnBootDeps = {
 	msb: MicrosandboxDeps
 	sessionLogRouters: Map<string, (line: string) => void>
 	sessionExitCodes: Map<string, number>
+	/**
+	 * Same map buildApp's `POST /sessions/:id/preview-ports` route reads from
+	 * — see AppDeps.sessionPreviewState. Omitted → a session reattached below
+	 * that has a browser sidecar never gets an entry, so that route 404s for
+	 * it for the rest of its lifetime post-restart.
+	 */
+	sessionPreviewState?: SessionPreviewState
 	fetchImpl?: typeof fetch
 }
 
@@ -1119,6 +1313,23 @@ export async function reconcileOnBoot(deps: ReconcileOnBootDeps): Promise<void> 
 			: null
 		if (browserSidecar) browserSidecarNames.delete(sidecarName)
 
+		// Reattach into the SAME sessionPreviewState map POST
+		// /sessions/:id/preview-ports reads from — without this, a reattached
+		// session's guest-side port watcher (still polling from before the
+		// restart) gets a permanent 404 from that route, silently disabling
+		// dynamic preview relay for the rest of the session even though the
+		// sidecar itself is alive. Empty on reattach: any relay opened before
+		// the restart lived in the old process's memory only and is gone with
+		// it — the watcher will simply re-report the port and get a fresh relay.
+		const previewRelays: SshRelay[] = []
+		if (browserSidecar) {
+			deps.sessionPreviewState?.set(name, {
+				browserSidecar,
+				previewRelays,
+				pendingRelays: new Map(),
+			})
+		}
+
 		void monitorSession(
 			name,
 			sessionDir,
@@ -1129,12 +1340,18 @@ export async function reconcileOnBoot(deps: ReconcileOnBootDeps): Promise<void> 
 			deps.sessionLogRouters,
 			deps.sessionExitCodes,
 			browserSidecar,
-		).catch((err) => {
-			logger.error('reconcile-on-boot: reattached monitorSession crashed', {
-				sessionId: name,
-				error: String(err),
+			previewRelays,
+		)
+			.catch((err) => {
+				logger.error('reconcile-on-boot: reattached monitorSession crashed', {
+					sessionId: name,
+					error: String(err),
+				})
+				for (const relay of previewRelays) relay.stop()
 			})
-		})
+			.finally(() => {
+				deps.sessionPreviewState?.delete(name)
+			})
 	}
 
 	// Any browser sidecar left unmatched belongs to a session that's either an
@@ -1207,9 +1424,11 @@ async function main(): Promise<void> {
 
 	// Created here (rather than inside buildApp) so the boot-time reconcile
 	// pass below can reattach monitorSession into the same maps the HTTP
-	// handlers read from — see AppDeps.sessionLogRouters/sessionExitCodes.
+	// handlers read from — see
+	// AppDeps.sessionLogRouters/sessionExitCodes/sessionPreviewState.
 	const sessionLogRouters = new Map<string, (line: string) => void>()
 	const sessionExitCodes = new Map<string, number>()
+	const sessionPreviewState: SessionPreviewState = new Map()
 	const drainState = { draining: false }
 	// Starts false so POST /sessions 503s until reconcileOnBoot below finishes —
 	// see AppDeps.readyState for why that gate has to be closed before any new
@@ -1223,6 +1442,7 @@ async function main(): Promise<void> {
 		warmer,
 		sessionLogRouters,
 		sessionExitCodes,
+		sessionPreviewState,
 		drainState,
 		readyState,
 	})
@@ -1237,7 +1457,14 @@ async function main(): Promise<void> {
 	// `.finally` flips it whether reconcile succeeded, failed, or no-opped
 	// (AGENT_SERVER_ID/MASKIN_BASE_URL unset), so a box is never stuck
 	// rejecting sessions forever.
-	void reconcileOnBoot({ env, storage, msb, sessionLogRouters, sessionExitCodes })
+	void reconcileOnBoot({
+		env,
+		storage,
+		msb,
+		sessionLogRouters,
+		sessionExitCodes,
+		sessionPreviewState,
+	})
 		.catch((err) => {
 			logger.error('reconcile-on-boot failed unexpectedly', { error: String(err) })
 		})

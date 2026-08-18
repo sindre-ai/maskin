@@ -282,6 +282,22 @@ setup_github_credential_helper() {
   echo "[system] GitHub credential helper configured for github.com"
 }
 
+# Start the guest-side watcher that auto-relays dev-server ports the agent
+# starts on its own (see preview-port-watcher.js and POST
+# /sessions/:id/preview-ports in apps/agent-server). Only meaningful when
+# there's a browser sidecar to relay into (BROWSER_CDP_URL set) and a live
+# agent-server to call back into (AGENT_SERVER_URL resolved above,
+# SESSION_ID set) — a no-op session (local Docker path, no browser) skips
+# this entirely. Best-effort: failure to start just means auto-relay isn't
+# available this session, same posture as the CDP retry proxy above.
+start_preview_port_watcher() {
+  if [ -z "$BROWSER_CDP_URL" ] || [ -z "$AGENT_SERVER_URL" ] || [ -z "$SESSION_ID" ]; then
+    return
+  fi
+  node /preview-port-watcher.js > /tmp/preview-port-watcher.log 2>&1 &
+  echo "[system] preview-port watcher started (pid $!)"
+}
+
 # Run the agent
 run_agent() {
   # Pipe output to the agent-server's log ingest endpoint so the Maskin UI
@@ -465,5 +481,6 @@ build_context
 setup_mcps
 setup_claude_credentials
 setup_github_credential_helper
+start_preview_port_watcher
 
 run_agent

@@ -73,8 +73,11 @@ const DENY_HOST_ALIAS_IPV6_RESET_RULE = 'deny@[fd42:6d73:62::/48]'
 // port into the sidecar's own rules before the session VM exists. Verified
 // live: a port inside the range works end-to-end, a port outside it is
 // refused immediately (the range is a real restriction, not allow-all).
-const DEV_SERVER_HOST_PORT_RANGE_START = 3000
-const DEV_SERVER_HOST_PORT_RANGE_END = 12000
+// Exported so index.ts can bound-check a guest-reported port for the dynamic
+// POST /sessions/:id/preview-ports route (see establishPreviewPortRelay
+// below) against the same range this file actually grants on the sidecar.
+export const DEV_SERVER_HOST_PORT_RANGE_START = 3000
+export const DEV_SERVER_HOST_PORT_RANGE_END = 12000
 const DEV_SERVER_HOST_PORT_RANGE = `${DEV_SERVER_HOST_PORT_RANGE_START}-${DEV_SERVER_HOST_PORT_RANGE_END}`
 
 // SSH-relay networking: when the browser sidecar needs to reach a session's
@@ -995,6 +998,44 @@ export async function startSshRelay(
 			safeKill(tunnelProc)
 			safeKill(serveProc)
 		},
+	}
+}
+
+/**
+ * Resolve a single host relay port from DEV_SERVER_HOST_PORT_RANGE and open
+ * an SSH relay into it — the same resolvePreviewPortMappings + startSshRelay
+ * + release() sequence POST /sessions runs for upfront-declared
+ * previewGuestPorts, factored out so a session can also request a relay for
+ * a port it starts listening on after boot (see POST
+ * /sessions/:id/preview-ports). targetName must be a live, already-Running
+ * sandbox — same requirement as startSshRelay itself. Returns null on any
+ * failure — never throws.
+ */
+export async function establishPreviewPortRelay(
+	targetName: string,
+	guestPort: number,
+	sshKeyPath: string,
+	deps: MicrosandboxDeps,
+): Promise<SshRelay | null> {
+	let resolved: PreviewPortResolution
+	try {
+		resolved = await resolvePreviewPortMappings([guestPort], deps)
+	} catch (err) {
+		logger.warn('dynamic preview port resolution failed', {
+			targetName,
+			guestPort,
+			error: String(err),
+		})
+		return null
+	}
+	try {
+		const mapping = resolved.mappings[0]
+		if (!mapping) return null
+		return await startSshRelay(targetName, guestPort, sshKeyPath, deps, {
+			relayPort: mapping.relayPort,
+		})
+	} finally {
+		resolved.release()
 	}
 }
 
