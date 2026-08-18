@@ -32,6 +32,13 @@ function buildItem(overrides: Partial<UnreadItem> = {}): UnreadItem {
 }
 
 describe('ForYouListRow', () => {
+	it('ends the row with the status dot and the trailing meta', () => {
+		render(<ForYouListRow item={buildItem()} onSelect={vi.fn()} meta="3 new" />)
+
+		expect(screen.getByLabelText('Status active')).toBeInTheDocument()
+		expect(screen.getByText('3 new')).toBeInTheDocument()
+	})
+
 	it('selects the item instead of navigating to object detail', async () => {
 		const user = userEvent.setup()
 		const onSelect = vi.fn()

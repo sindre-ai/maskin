@@ -93,7 +93,12 @@ export function MessageBubble({ workspaceId, message }: MessageBubbleProps) {
 				{fileList ? <div className="mt-1.5">{fileList}</div> : null}
 				{message.content.length > 0 ? (
 					<div className="mt-1 text-[13.5px] leading-[1.6]">
-						<MarkdownContent content={message.content} size="sm" />
+						{/* `renderVisuals` turns a ```chart fenced block into the bounded
+						    data-viz card (mockup 660–679). Agents are told how to emit one
+						    in `createCommentSchema`'s content description, and the same
+						    parser backs object comments — no new payload, just the render
+						    path the chat surface was missing. */}
+						<MarkdownContent content={message.content} size="sm" renderVisuals />
 					</div>
 				) : null}
 				{hasContext ? (

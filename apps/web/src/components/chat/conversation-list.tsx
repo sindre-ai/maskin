@@ -89,11 +89,27 @@ export function ConversationList({
 							title={EMPTY_COPY[filter].title}
 							description={EMPTY_COPY[filter].description}
 							action={
-								<Button asChild variant="link" size="sm">
-									<Link to="/$workspaceId/chats/new" params={{ workspaceId }}>
-										Start a new one →
-									</Link>
-								</Button>
+								// Under a filter, "Start a new one" was a trap: the new chat
+								// is unarchived/unpinned/read, so it lands outside the list
+								// the reader is looking at. Clearing the filter is the only
+								// action that shows anything.
+								filter === 'all' ? (
+									<Button asChild variant="link" size="sm">
+										<Link to="/$workspaceId/chats/new" params={{ workspaceId }}>
+											Start a new one →
+										</Link>
+									</Button>
+								) : (
+									<Button asChild variant="link" size="sm">
+										<Link
+											to="/$workspaceId/chats"
+											params={{ workspaceId }}
+											search={{ filter: undefined, wide: undefined }}
+										>
+											View all chats →
+										</Link>
+									</Button>
+								)
 							}
 						/>
 					) : (
@@ -107,12 +123,20 @@ export function ConversationList({
 								</div>
 							))}
 							{hasNextPage ? (
+								// The sentinel is the loader; its label only claims to be
+								// loading while a page is actually in flight (mockup 545–549).
 								<div
 									ref={sentinelRef}
 									className="flex items-center justify-center gap-2 px-3 pt-4 pb-2.5 text-[11px] text-muted-foreground"
 								>
-									{isFetchingNextPage ? <Spinner /> : null}
-									Loading older conversations…
+									{isFetchingNextPage ? (
+										<>
+											<Spinner />
+											Loading older conversations…
+										</>
+									) : (
+										'Older conversations load as you scroll'
+									)}
 								</div>
 							) : (
 								<div className="px-3 pt-3 text-center text-[10.5px] text-muted-foreground">

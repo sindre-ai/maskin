@@ -14,12 +14,15 @@ interface ForYouListRowProps {
 	// Right-hand meta line under the title — the active sort's rank word plus
 	// the item's type, e.g. "Most urgent · Bet".
 	subtitle?: string
+	// Trailing meta beside the status dot-word (mockup 492–496) — how much of
+	// the row is new, read straight off the unread feed.
+	meta?: string
 }
 
 // List-mode row (mockup 489–498): a 12px-radius card carrying the 38px type
 // tile, the title, a muted sub line and the object's status dot-word. Rendered
 // as a <button> because it selects rather than navigates.
-export function ForYouListRow({ item, current, onSelect, subtitle }: ForYouListRowProps) {
+export function ForYouListRow({ item, current, onSelect, subtitle, meta }: ForYouListRowProps) {
 	const title = item.object?.title || 'Untitled'
 	const type = item.object?.type
 	const status = item.object?.status
@@ -44,9 +47,10 @@ export function ForYouListRow({ item, current, onSelect, subtitle }: ForYouListR
 					<span className="mt-0.5 block truncate text-xs text-muted-foreground">{subtitle}</span>
 				)}
 			</span>
-			{status ? (
-				<span className="shrink-0 pt-0.5">
-					<StatusBadge status={status} variant="dot-word" />
+			{status || meta ? (
+				<span className="flex shrink-0 items-center gap-1.5 pt-0.5 text-[11.5px] font-semibold text-muted-foreground">
+					{status ? <StatusBadge status={status} variant="dot-word" /> : null}
+					{meta ? <span>{meta}</span> : null}
 				</span>
 			) : null}
 		</button>

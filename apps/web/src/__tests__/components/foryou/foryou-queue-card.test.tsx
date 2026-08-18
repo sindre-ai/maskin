@@ -177,6 +177,48 @@ describe('ForYouQueueCard', () => {
 		})
 	})
 
+	describe('reply target', () => {
+		it('aims the card composer at a picked message and cancels back to the thread', () => {
+			mockUseEntityEvents.mockReturnValue({
+				data: [
+					buildEventResponse({
+						id: 5,
+						action: 'commented',
+						actorId: 'other',
+						data: { content: 'Which copy should we ship?' },
+					}),
+				],
+			})
+			render(
+				<ForYouQueueCard
+					workspaceId="ws-1"
+					item={buildItem({
+						object: buildObjectResponse({
+							id: 'obj-1',
+							title: 'Bet',
+							type: 'insight',
+							status: 'active',
+						}),
+					})}
+					onProcessed={vi.fn()}
+					onRestored={vi.fn()}
+					onCommitScheduled={vi.fn()}
+					onCommitSettled={vi.fn()}
+				/>,
+				{ wrapper: TestWrapper },
+			)
+
+			expect(screen.queryByTestId('reply-banner')).not.toBeInTheDocument()
+			fireEvent.click(screen.getByRole('button', { name: 'Reply' }))
+
+			const banner = screen.getByTestId('reply-banner')
+			expect(banner).toHaveTextContent('Replying to Other')
+
+			fireEvent.click(within(banner).getByRole('button', { name: 'Cancel reply' }))
+			expect(screen.queryByTestId('reply-banner')).not.toBeInTheDocument()
+		})
+	})
+
 	describe('decision → decided-receipt', () => {
 		function renderDecisionCard(onProcessed = vi.fn(), onRestored = vi.fn()) {
 			const item = buildItem({
@@ -223,6 +265,15 @@ describe('ForYouQueueCard', () => {
 				vi.advanceTimersByTime(3000)
 			})
 			expect(screen.getByTestId('decision-receipt')).toHaveTextContent('Reversible for 3s')
+		})
+
+		it('marks the recommended option with a REC chip', () => {
+			renderDecisionCard()
+			const approve = screen.getByRole('button', { name: /Approve/i })
+			expect(within(approve).getByTestId('decision-rec')).toHaveTextContent('Rec')
+			// Only the recommended option carries it.
+			const sendBack = screen.getByRole('button', { name: /Send back/i })
+			expect(within(sendBack).queryByTestId('decision-rec')).not.toBeInTheDocument()
 		})
 
 		it('"Reverse this" returns to the decision block and the comment is never posted', () => {
@@ -545,7 +596,7 @@ describe('ForYouQueueCard', () => {
 			expect(band).toHaveTextContent(
 				'Signup drop-off concentrates on step two of the onboarding flow.',
 			)
-			expect(band.querySelector('.line-clamp-2')).not.toBeNull()
+			expect(band.querySelector('.line-clamp-3')).not.toBeNull()
 		})
 
 		it('is absent when the object has no content', () => {

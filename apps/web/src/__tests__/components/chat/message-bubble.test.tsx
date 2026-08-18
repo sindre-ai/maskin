@@ -45,6 +45,20 @@ function renderBubble(message: MessageResponse) {
 	return render(<MessageBubble workspaceId="ws-1" message={message} />, { wrapper: TestWrapper })
 }
 
+const CHART_MESSAGE = [
+	'Signup completion by step:',
+	'',
+	'```chart',
+	JSON.stringify({
+		type: 'bar',
+		x: 'step',
+		series: ['completed'],
+		data: [{ step: 'Email', completed: 820 }],
+		caption: 'Drop-off concentrates on step two.',
+	}),
+	'```',
+].join('\n')
+
 describe('MessageBubble', () => {
 	it('renders an own message as an ink plate with no avatar or name', () => {
 		renderBubble(buildMessage({ actorId: 'me', actorName: 'Me', actorType: 'human' }))
@@ -92,5 +106,15 @@ describe('MessageBubble', () => {
 		expect(screen.getByText('Billing Agent joined')).toBeInTheDocument()
 		expect(container.querySelectorAll('.bg-border')).toHaveLength(2)
 		expect(container.querySelector('.rounded-full')).toBeNull()
+	})
+})
+
+describe('MessageBubble — agent data-viz', () => {
+	it('renders a fenced chart block from an incoming agent message as a visual', () => {
+		renderBubble(buildMessage({ content: CHART_MESSAGE }))
+
+		// The caption belongs to the rendered figure, not to a code block.
+		expect(screen.getByText('Drop-off concentrates on step two.')).toBeInTheDocument()
+		expect(screen.queryByText(/"type": "bar"/)).not.toBeInTheDocument()
 	})
 })

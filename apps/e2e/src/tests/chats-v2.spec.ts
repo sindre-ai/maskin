@@ -91,7 +91,10 @@ test.describe('Chats v2 — filter menu', () => {
 
 		await openFilter(page, 'Archived')
 		await expect(page.getByText('Nothing archived yet')).toBeVisible({ timeout: 15_000 })
-		await expect(page.getByRole('link', { name: 'Start a new one →' })).toBeVisible()
+		// A new chat is never archived — offering one here would send the reader
+		// somewhere this filter still cannot show (mockup 542–544).
+		await expect(page.getByRole('link', { name: 'Start a new one →' })).toHaveCount(0)
+		await expect(page.getByRole('link', { name: 'View all chats →' })).toBeVisible()
 	})
 })
 

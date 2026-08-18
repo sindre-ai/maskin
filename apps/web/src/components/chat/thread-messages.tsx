@@ -14,6 +14,17 @@ import { MessageBubble } from './message-bubble'
 import { MessageDivider, isNewDay } from './message-divider'
 import { ResumeBanner } from './resume-banner'
 
+// A thread nobody has touched in this long reads as history rather than as a
+// live conversation — the mockup's `chatIsOld` note (623–625).
+const OLD_THREAD_DAYS = 30
+
+export function isOldThread(lastMessageAt: string | null | undefined, now = new Date()): boolean {
+	if (!lastMessageAt) return false
+	const then = new Date(lastMessageAt).getTime()
+	if (Number.isNaN(then)) return false
+	return now.getTime() - then > OLD_THREAD_DAYS * 86_400_000
+}
+
 interface ThreadMessagesProps {
 	workspaceId: string
 	conversationId: string
@@ -83,6 +94,11 @@ export function ThreadMessages({ workspaceId, conversationId, className }: Threa
 			data-testid="thread-messages"
 			className={cn('flex flex-1 flex-col gap-4 overflow-y-auto px-3 pt-4 pb-2', className)}
 		>
+			{isOldThread(conversation?.lastMessageAt) ? (
+				<p className="text-center text-[10.5px] leading-[1.5] text-muted-foreground">
+					Retrieved from your history · the reasoning is still on file
+				</p>
+			) : null}
 			<ResumeBanner
 				messages={messages}
 				lastReadMessageId={conversation?.last_read_message_id ?? null}

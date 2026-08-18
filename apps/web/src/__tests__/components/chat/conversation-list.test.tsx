@@ -62,7 +62,9 @@ describe('ConversationList', () => {
 		})
 		render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
 
-		expect(await screen.findByText(/Loading older conversations/)).toBeInTheDocument()
+		// The sentinel only claims to be loading while a page is actually in
+		// flight; idle it advertises the scroll affordance (mockup 545–549).
+		expect(await screen.findByText(/Older conversations load as you scroll/)).toBeInTheDocument()
 		expect(screen.queryByText(/That's the whole history/)).not.toBeInTheDocument()
 	})
 
@@ -71,7 +73,10 @@ describe('ConversationList', () => {
 		render(<ConversationList workspaceId="ws-1" filter="archived" />, { wrapper: TestWrapper })
 
 		expect(await screen.findByText('Nothing archived yet')).toBeInTheDocument()
-		expect(screen.getByRole('link', { name: 'Start a new one →' })).toBeInTheDocument()
+		// A new chat is never archived, so offering one here sends the reader
+		// somewhere this list will still not show it (mockup 542–544).
+		expect(screen.queryByRole('link', { name: 'Start a new one →' })).not.toBeInTheDocument()
+		expect(screen.getByRole('link', { name: 'View all chats →' })).toBeInTheDocument()
 	})
 
 	it('shows the generic empty copy for a filter with no matches', async () => {

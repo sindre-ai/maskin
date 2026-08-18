@@ -17,6 +17,11 @@ vi.mock('@/hooks/use-conversations', () => ({
 	useCreateConversation: () => ({ mutateAsync: createConversationMutateAsync, isPending: false }),
 }))
 
+const mockUseObjects = vi.fn(() => ({ data: [] }))
+vi.mock('@/hooks/use-objects', () => ({
+	useObjects: (...args: unknown[]) => mockUseObjects(...(args as [])),
+}))
+
 vi.mock('@/hooks/use-actors', () => ({
 	useDefaultChatAgent: () => ({ id: 'agent-1', name: 'Workspace Coach' }),
 	useActors: () => ({ data: [] }),
@@ -39,8 +44,90 @@ vi.mock('@/components/chat/chat', () => ({
 	),
 }))
 
-import { BriefDrawer, splitBriefHeadline } from '@/components/foryou/brief-drawer'
+import {
+	BriefDrawer,
+	briefMentionedIds,
+	briefSpokenText,
+	splitBriefHeadline,
+} from '@/components/foryou/brief-drawer'
+import { estimateDurationMs, formatClock } from '@/components/foryou/brief-playback'
 import { TestWrapper } from '../../setup'
+
+const OBJECT_ID = '11111111-2222-4333-8444-555555555555'
+
+function buildBriefObject() {
+	return {
+		id: OBJECT_ID,
+		workspaceId: 'ws-1',
+		type: 'bet',
+		title: 'Cut signup friction',
+		status: 'active',
+		content: '',
+		metadata: {},
+		createdBy: 'actor-1',
+		createdAt: null,
+		updatedAt: null,
+	}
+}
+
+/** Minimal SpeechSynthesis stand-in — jsdom ships none, which is exactly the
+ *  unsupported branch the drawer has to degrade into. */
+function installSpeechSynthesis() {
+	const speak = vi.fn()
+	Object.defineProperty(window, 'speechSynthesis', {
+		configurable: true,
+		value: { speak, cancel: vi.fn() },
+	})
+	Object.defineProperty(window, 'SpeechSynthesisUtterance', {
+		configurable: true,
+		value: class {
+			text: string
+			onboundary: unknown = null
+			onend: unknown = null
+			onerror: unknown = null
+			constructor(text: string) {
+				this.text = text
+			}
+		},
+	})
+	return speak
+}
+
+function removeSpeechSynthesis() {
+	// @ts-expect-error — deleting an optional test-only global
+	window.speechSynthesis = undefined
+	// @ts-expect-error — deleting an optional test-only global
+	window.SpeechSynthesisUtterance = undefined
+}
+
+describe('briefSpokenText', () => {
+	it('strips markdown syntax and the raw id lines', () => {
+		const spoken = briefSpokenText(
+			'# Acme brief\n\n- **Cut signup friction** [active]\n  id: `abc`\n\nSee [the bet](/ws/objects/1).',
+		)
+		expect(spoken).toBe('Acme brief Cut signup friction [active] See the bet.')
+	})
+})
+
+describe('briefMentionedIds', () => {
+	it('collects every distinct object id the brief names', () => {
+		const ids = briefMentionedIds(`- **A bet**\n  id: \`${OBJECT_ID}\`\n  id: \`${OBJECT_ID}\``)
+		expect(ids).toEqual([OBJECT_ID])
+	})
+
+	it('returns nothing for a brief with no ids', () => {
+		expect(briefMentionedIds('# Acme brief\n\nNothing to see.')).toEqual([])
+	})
+})
+
+describe('brief playback readouts', () => {
+	it('estimates a duration from the word count and formats it as a clock', () => {
+		expect(estimateDurationMs('')).toBe(0)
+		expect(estimateDurationMs(new Array(170).fill('word').join(' '))).toBe(60_000)
+		expect(formatClock(60_000)).toBe('1:00')
+		expect(formatClock(5_500)).toBe('0:06')
+	})
+})
 
 describe('splitBriefHeadline', () => {
 	it('lifts a leading H1 out of the markdown body', () => {
@@ -59,6 +146,7 @@ describe('splitBriefHeadline', () => {
 describe('BriefDrawer', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
+		mockUseObjects.mockReturnValue({ data: [] })
 		mockUseBriefing.mockReturnValue({
 			data: { workspace_id: 'ws-1', markdown: '# Your Monday brief\n\nTwo bets need a read.' },
 			isLoading: false,
@@ -83,6 +171,62 @@ describe('BriefDrawer', () => {
 		expect(screen.getByText('Your brief')).toBeInTheDocument()
 		expect(screen.getByRole('heading', { name: 'Your Monday brief' })).toBeInTheDocument()
 		expect(screen.getByText('Two bets need a read.')).toBeInTheDocument()
+	})
+
+	it('renders no player when the browser has no SpeechSynthesis', () => {
+		removeSpeechSynthesis()
+		render(<BriefDrawer workspaceId="ws-1" open onOpenChange={vi.fn()} />, {
+			wrapper: TestWrapper,
+		})
+
+		expect(screen.queryByTestId('brief-player')).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Listen instead' })).not.toBeInTheDocument()
+		// The prose is still there — read mode is the fallback, not an error.
+		expect(screen.getByText('Two bets need a read.')).toBeInTheDocument()
+	})
+
+	it('plays the brief through SpeechSynthesis and swaps the prose for listen mode', async () => {
+		const speak = installSpeechSynthesis()
+		const user = userEvent.setup()
+		render(<BriefDrawer workspaceId="ws-1" open onOpenChange={vi.fn()} />, {
+			wrapper: TestWrapper,
+		})
+
+		expect(screen.getByTestId('brief-player')).toBeInTheDocument()
+		await user.click(screen.getByRole('button', { name: 'Read the brief aloud' }))
+		expect(speak).toHaveBeenCalledTimes(1)
+		expect(screen.getByRole('button', { name: 'Stop reading the brief' })).toBeInTheDocument()
+
+		await user.click(screen.getByRole('button', { name: 'Listen instead' }))
+		expect(screen.queryByText('Two bets need a read.')).not.toBeInTheDocument()
+		await user.click(screen.getByRole('button', { name: 'Read instead' }))
+		expect(screen.getByText('Two bets need a read.')).toBeInTheDocument()
+		removeSpeechSynthesis()
+	})
+
+	it('lists the objects the brief names as MENTIONED chips', () => {
+		mockUseBriefing.mockReturnValue({
+			data: {
+				workspace_id: 'ws-1',
+				markdown: `# Your Monday brief\n\n- **Cut signup friction** [active]\n  id: \`${OBJECT_ID}\``,
+			},
+			isLoading: false,
+			isError: false,
+			error: null,
+			refetch: vi.fn(),
+		})
+		mockUseObjects.mockReturnValue({ data: [buildBriefObject()] } as never)
+
+		render(<BriefDrawer workspaceId="ws-1" open onOpenChange={vi.fn()} />, {
+			wrapper: TestWrapper,
+		})
+
+		expect(screen.getByText('Mentioned')).toBeInTheDocument()
+		// The chip is a link into the object; the brief body also prints the
+		// title in bold, hence the role query.
+		const chip = screen.getByRole('link', { name: /Cut signup friction/ })
+		expect(chip).toBeInTheDocument()
+		expect(screen.getByLabelText('Status active')).toBeInTheDocument()
 	})
 
 	it('closes on Escape', async () => {

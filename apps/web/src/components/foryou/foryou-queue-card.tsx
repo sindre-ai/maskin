@@ -11,7 +11,7 @@ import { useCreateComment } from '@/hooks/use-events'
 import { useMarkRead, useMarkUnread } from '@/hooks/use-subscriptions'
 import { useSwipeToMarkRead } from '@/hooks/use-swipe-to-mark-read'
 import { trackForyouCardAction, trackForyouCardShown } from '@/lib/analytics'
-import type { UnreadItem } from '@/lib/api'
+import type { EventResponse, UnreadItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import {
 	CARD_ACTIONS,
@@ -22,7 +22,7 @@ import {
 	classifyCardKind,
 } from '@/lib/foryou-card-kind'
 import { Link } from '@tanstack/react-router'
-import { ArrowUp, CheckIcon, X } from 'lucide-react'
+import { ArrowUp, CheckIcon, CornerDownLeft, X } from 'lucide-react'
 import {
 	type TransitionEvent,
 	type UIEvent,
@@ -131,6 +131,15 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 		}, [markUnread, item.entity_type, objectId])
 
 		const replyTarget = firstUnreadRootId ?? latestRootId ?? undefined
+		// A message the reader explicitly aimed at with the row's reply control.
+		// It overrides the default thread target for the card's one composer and
+		// its chips, and puts the "Replying to <name>" banner above them
+		// (mockup 446–448).
+		const [replyTo, setReplyTo] = useState<{ eventId: number; name: string } | null>(null)
+		const activeReplyTarget = replyTo?.eventId ?? replyTarget
+		const handleReplyTo = useCallback((event: EventResponse, authorName: string) => {
+			setReplyTo({ eventId: event.id, name: authorName })
+		}, [])
 		const quickReply = useCreateComment(workspaceId, objectId)
 
 		// Exit-fling animation, shared by drag-commit, button-commit, and skip —
@@ -204,7 +213,7 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 				})
 				decisionTimer.current = setTimeout(() => {
 					quickReply.mutate(
-						{ entity_id: objectId, content: action.label, parent_event_id: replyTarget },
+						{ entity_id: objectId, content: action.label, parent_event_id: activeReplyTarget },
 						{
 							onSuccess: () => {
 								setDecisionPhase({ status: 'committed', action })
@@ -215,7 +224,7 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 					)
 				}, DECISION_REVERSE_WINDOW_MS)
 			},
-			[emitAction, quickReply, objectId, replyTarget, handleMarkRead, beginExit],
+			[emitAction, quickReply, objectId, activeReplyTarget, handleMarkRead, beginExit],
 		)
 
 		const reverseDecision = useCallback(() => {
@@ -242,16 +251,17 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 			(action: CardAction) => {
 				emitAction(action.id)
 				quickReply.mutate(
-					{ entity_id: objectId, content: action.label, parent_event_id: replyTarget },
+					{ entity_id: objectId, content: action.label, parent_event_id: activeReplyTarget },
 					{
 						onSuccess: () => {
 							handleMarkRead()
+							setReplyTo(null)
 							toast(`✓ ${action.label}`)
 						},
 					},
 				)
 			},
-			[quickReply, objectId, replyTarget, handleMarkRead, emitAction],
+			[quickReply, objectId, activeReplyTarget, handleMarkRead, emitAction],
 		)
 
 		useImperativeHandle(ref, () => ({ commit: () => commit('mark-read'), skip: handleSkip }), [
@@ -430,7 +440,7 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 							className="shrink-0 border-b border-border bg-muted/25 px-3.5 py-2.5"
 						>
 							<p className="eyebrow">Summary</p>
-							<div className="mt-1.5 line-clamp-2 text-[12.5px] leading-relaxed text-muted-foreground md:line-clamp-3">
+							<div className="mt-1.5 line-clamp-3 text-[12.5px] leading-relaxed text-muted-foreground">
 								{summary}
 							</div>
 						</div>
@@ -465,6 +475,8 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 												replies={node.replies}
 												workspaceId={workspaceId}
 												objectId={objectId}
+												onReplyTo={handleReplyTo}
+												collapsibleReplies
 											/>
 										))}
 									</div>
@@ -487,6 +499,8 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 												replies={node.replies}
 												workspaceId={workspaceId}
 												objectId={objectId}
+												onReplyTo={handleReplyTo}
+												collapsibleReplies
 												dividerBeforeReplyId={
 													dividerInsideThread ? (firstUnreadEventId ?? undefined) : undefined
 												}
@@ -551,11 +565,26 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 													</span>
 												)}
 											</span>
-											{action.tone === 'primary' && (
-												<kbd className="shrink-0 rounded border border-current px-1.5 py-0.5 font-mono text-[10px] opacity-70">
-													↵
-												</kbd>
-											)}
+											<span className="flex shrink-0 items-center gap-1.5">
+												{action.recommended && (
+													<span
+														data-testid="decision-rec"
+														className={cn(
+															'rounded-[5px] px-1.5 py-0.5 font-mono text-[8px] font-bold uppercase tracking-[0.06em]',
+															action.tone === 'primary'
+																? 'bg-brand-foreground/15 text-brand-foreground'
+																: 'bg-brand-subtle text-brand-subtle-foreground',
+														)}
+													>
+														Rec
+													</span>
+												)}
+												{action.tone === 'primary' && (
+													<kbd className="rounded border border-current px-1.5 py-0.5 font-mono text-[10px] opacity-70">
+														↵
+													</kbd>
+												)}
+											</span>
 										</button>
 									))}
 								</div>
@@ -629,11 +658,32 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 							</div>
 						)}
 
+						{replyTo && (
+							<div
+								data-testid="reply-banner"
+								className="mb-1.5 flex items-center gap-2 rounded-[9px] border border-brand-subtle-foreground/30 bg-brand-subtle py-1.5 pl-3 pr-2.5 text-[11.5px] text-brand-subtle-foreground"
+							>
+								<CornerDownLeft size={12} aria-hidden className="shrink-0" />
+								<span className="min-w-0 flex-1 truncate">
+									Replying to <span className="font-bold">{replyTo.name}</span>
+								</span>
+								<button
+									type="button"
+									onClick={() => setReplyTo(null)}
+									aria-label="Cancel reply"
+									className="grid size-[22px] shrink-0 place-items-center rounded-md hover:bg-brand-subtle-foreground/15"
+								>
+									<X size={12} aria-hidden />
+								</button>
+							</div>
+						)}
+
 						<CommentInput
 							workspaceId={workspaceId}
 							objectId={objectId}
-							parentEventId={replyTarget}
+							parentEventId={activeReplyTarget}
 							mentionDropdownPlacement="above"
+							onSubmitted={() => setReplyTo(null)}
 						/>
 					</div>
 				</div>

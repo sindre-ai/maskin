@@ -5,6 +5,7 @@ import {
 	type SlashPickerResult,
 } from '@/components/chat/slash-picker'
 import { CreatePicker } from '@/components/shared/create-picker'
+import { TypeBadge } from '@/components/shared/type-badge'
 import { UploadProgress } from '@/components/shared/upload-progress'
 import { Button } from '@/components/ui/button'
 import {
@@ -13,8 +14,10 @@ import {
 	DropdownMenuItem,
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
+import { useAvailableObjectTypes } from '@/hooks/use-available-object-types'
 import { useDictation } from '@/hooks/use-dictation'
 import { useUploadFile } from '@/hooks/use-files'
 import { deriveEntryAgentRole, trackSpecialistSummonedManually } from '@/lib/analytics'
@@ -136,7 +139,15 @@ export function Composer({
 	const slashPosRef = useRef<number | null>(null)
 	const fileInputRef = useRef<HTMLInputElement | null>(null)
 	const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+	// `/` opens the create list (mockup 761–771). The chosen type seeds the
+	// shipped create surface; the mockup's FROM-THIS-CHAT panel additionally
+	// pre-fills the name/fields from the conversation, which needs a `seed`
+	// prop on <CreatePicker> that doesn't exist yet — see the composer note
+	// where it is rendered.
 	const [createOpen, setCreateOpen] = useState(false)
+	const [createSubtype, setCreateSubtype] = useState<string | undefined>(undefined)
+	const [turnIntoOpen, setTurnIntoOpen] = useState(false)
+	const objectTypes = useAvailableObjectTypes()
 	const abortControllersRef = useRef<Map<string, AbortController>>(new Map())
 	const uploadFile = useUploadFile(workspaceId)
 	const dictation = useDictation(
@@ -215,8 +226,7 @@ export function Composer({
 			const prev = pos >= 2 ? next[pos - 2] : ''
 			if (prev !== '' && !/\s/.test(prev)) return
 			slashPosRef.current = pos - 1
-			setPickerKind(null)
-			setPickerOpen(true)
+			setTurnIntoOpen(true)
 		},
 		[setValue],
 	)
@@ -236,6 +246,16 @@ export function Composer({
 			return prev.slice(0, pos) + prev.slice(pos + 1)
 		})
 	}, [setValue])
+
+	const openCreateFor = useCallback(
+		(subtype: string | undefined) => {
+			setCreateSubtype(subtype)
+			setTurnIntoOpen(false)
+			consumeSlashTrigger()
+			setCreateOpen(true)
+		},
+		[consumeSlashTrigger],
+	)
 
 	const handlePickerSelect = useCallback(
 		(result: SlashPickerResult) => {
@@ -381,6 +401,43 @@ export function Composer({
 					<span aria-hidden className="pointer-events-none absolute left-2 bottom-2 h-0 w-0" />
 				}
 			/>
+			<Popover
+				open={turnIntoOpen}
+				onOpenChange={(next) => {
+					setTurnIntoOpen(next)
+					if (!next) slashPosRef.current = null
+				}}
+			>
+				<PopoverAnchor asChild>
+					<span aria-hidden className="pointer-events-none absolute bottom-2 left-2 h-0 w-0" />
+				</PopoverAnchor>
+				<PopoverContent
+					align="start"
+					side="top"
+					sideOffset={8}
+					className="w-[320px] p-1.5"
+					onOpenAutoFocus={(e) => e.preventDefault()}
+					aria-label="Turn this into an object"
+				>
+					<p className="eyebrow px-2 pb-1 pt-1.5">Turn this into an object</p>
+					<ul className="flex list-none flex-col p-0">
+						{objectTypes.map((type) => (
+							<li key={type.value}>
+								<button
+									type="button"
+									onClick={() => openCreateFor(type.value)}
+									className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left hover:bg-accent hover:text-accent-foreground"
+								>
+									<TypeBadge type={type.value} variant="tile" />
+									<span className="min-w-0 flex-1 truncate text-[12.5px] font-semibold">
+										{type.label}
+									</span>
+								</button>
+							</li>
+						))}
+					</ul>
+				</PopoverContent>
+			</Popover>
 			<SelectionChips
 				selection={selection}
 				onRemoveAgent={onRemoveAgent}
@@ -479,7 +536,7 @@ export function Composer({
 								<AtSign size={15} aria-hidden />
 								Mention an agent
 							</DropdownMenuItem>
-							<DropdownMenuItem onSelect={() => setCreateOpen(true)}>
+							<DropdownMenuItem onSelect={() => openCreateFor(undefined)}>
 								<Sparkles size={15} aria-hidden />
 								Create an object
 							</DropdownMenuItem>
@@ -535,10 +592,16 @@ export function Composer({
 				</div>
 			</form>
 			{/* "Turn this into an object" — reuses the shipped creation flow rather
-			    than the mockup's bespoke modal. It opens empty: seeding it from the
-			    conversation needs a `seed` prop on CreatePicker, which is owned
-			    elsewhere. */}
-			<CreatePicker open={createOpen} onOpenChange={setCreateOpen} defaultType="object" />
+			    than the mockup's bespoke FROM-THIS-CHAT modal (800–848). The picked
+			    type is seeded; the conversation itself is not, because pre-filling
+			    the name / field table / "CONTEXT IT INHERITS" block needs a `seed`
+			    prop on CreatePicker, which is owned elsewhere. */}
+			<CreatePicker
+				open={createOpen}
+				onOpenChange={setCreateOpen}
+				defaultType="object"
+				defaultObjectSubtype={createSubtype}
+			/>
 		</div>
 	)
 }

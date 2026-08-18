@@ -343,6 +343,7 @@ function ForYouRedesign() {
 									item={item}
 									current={itemKey(item) === pinnedKey}
 									subtitle={listRowSubtitle(item)}
+									meta={`${item.unread_count} new`}
 									onSelect={handleSelectListItem}
 								/>
 							))}
@@ -369,10 +370,12 @@ function ForYouRedesign() {
 }
 
 // List rows carry a muted sub line under the title. Only fields the unread feed
-// actually returns — the object's type and how much of the thread is new.
+// actually returns — the object's type, plus its owning status word. How much
+// of the thread is new rides the trailing meta beside the status dot instead
+// (mockup 492–496).
 function listRowSubtitle(item: UnreadItem): string {
 	const type = item.object?.type
-	return [type ? typeLabel(type) : null, `${item.unread_count} unread`].filter(Boolean).join(' · ')
+	return type ? typeLabel(type) : ''
 }
 
 // Shared keydown guard for the `Alt+U` For You bulk-mark-read shortcut. Alt on

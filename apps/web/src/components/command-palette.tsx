@@ -1,27 +1,97 @@
-import { useObjects, useSearchObjects } from '@/hooks/use-objects'
+import { ActorAvatar } from '@/components/shared/actor-avatar'
+import { type CreatableType, CreatePicker } from '@/components/shared/create-picker'
+import { TypeBadge } from '@/components/shared/type-badge'
+import { useAvailableObjectTypes } from '@/hooks/use-available-object-types'
+import { useObjects } from '@/hooks/use-objects'
+import { useMarkRead, useUnread } from '@/hooks/use-subscriptions'
+import { type SearchRow, useWorkspaceSearch } from '@/hooks/use-workspace-search'
 import {
 	type TaxonomyEntityType,
 	trackCommandPaletteOpened,
 	trackSearchResultOpened,
 } from '@/lib/analytics'
 import type { ObjectResponse } from '@/lib/api'
+import { cn } from '@/lib/cn'
 import { useCommandPalette } from '@/lib/command-palette-context'
-import { typeLabel } from '@/lib/constants'
 import { highlightText } from '@/lib/search-highlight'
 import { pushRecentObject, pushRecentSearch } from '@/lib/search-recents'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
 import { Command } from 'cmdk'
-import { ArrowRight, MessagesSquare, Search } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+	Bot,
+	Check,
+	CircleDot,
+	LayoutGrid,
+	type LucideIcon,
+	MessagesSquare,
+	Plus,
+	RefreshCw,
+	Search,
+	Settings,
+	Sparkles,
+	Store,
+	Table2,
+	Zap,
+} from 'lucide-react'
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { toast } from 'sonner'
 
 const SEARCH_DEBOUNCE_MS = 300
+// The mockup caps the workspace index at six rows so the Commands / Go to
+// groups stay reachable without scrolling (mockup 5812).
+const MAX_JUMP_ROWS = 6
 
-// v2 restyle — the ⌘K palette. Solid popover surface (no glass, no blur),
-// warm-neutral tokens, indigo brand on the See-all footer, `.eyebrow` mono
-// section labels matching the mockup's menu specimen. `shouldFilter={false}`
-// + server-side ranking via useSearchObjects keeps the ordering identical to
-// the /search view — one command layer shared across both surfaces.
+// v2 restyle — the ⌘K palette (mockup 3234–3259). Four groups: Commands,
+// Go to (every primary view), Jump to (the workspace index — chats, loops,
+// agents, objects, automations, via the same hook the /search view uses) and
+// a terminal Search row. Solid popover surface (no glass, no blur),
+// `.eyebrow` mono section labels, a right-aligned kind column and a ↵ chip on
+// the highlighted row. `shouldFilter={false}` + server-side ranking keeps the
+// ordering identical to /search — one command layer shared across both.
+
+interface PaletteRow {
+	id: string
+	group: string
+	/** Right-aligned kind column: COMMAND / GO TO / the entity's own kind / SEARCH. */
+	kind: string
+	title: string
+	sub?: string
+	icon: ReactNode
+	run: () => void
+	/** Only object rows carry the analytics + recents side effects. */
+	object?: ObjectResponse
+}
+
+function GlyphTile({ icon: Icon }: { icon: LucideIcon }) {
+	return (
+		<span
+			aria-hidden="true"
+			className="grid size-[22px] shrink-0 place-items-center rounded-md bg-muted text-muted-foreground"
+		>
+			<Icon className="size-[13px]" />
+		</span>
+	)
+}
+
+const GROUP_GLYPH: Record<string, LucideIcon> = {
+	chats: MessagesSquare,
+	loops: RefreshCw,
+	agents: Bot,
+	automations: Zap,
+	objects: Table2,
+}
+
+const VIEWS: { title: string; path: (workspaceId: string) => string; icon: LucideIcon }[] = [
+	{ title: 'For you', path: (w) => `/${w}`, icon: CircleDot },
+	{ title: 'Chats', path: (w) => `/${w}/chats`, icon: MessagesSquare },
+	{ title: 'Loops', path: (w) => `/${w}/loops`, icon: RefreshCw },
+	{ title: 'Agents', path: (w) => `/${w}/agents`, icon: Bot },
+	{ title: 'Objects', path: (w) => `/${w}/objects`, icon: Table2 },
+	{ title: 'Marketplace', path: (w) => `/${w}/marketplace`, icon: Store },
+	{ title: 'Settings', path: (w) => `/${w}/settings`, icon: Settings },
+]
+
 export function CommandPalette() {
 	const { open, setOpen } = useCommandPalette()
 	const { workspaceId } = useWorkspace()
@@ -38,8 +108,23 @@ export function CommandPalette() {
 		return () => clearTimeout(t)
 	}, [query])
 
-	const { data: searchResults } = useSearchObjects(workspaceId, { q: debouncedQuery })
+	// The workspace index behind "Jump to" — chats, loops, agents, objects and
+	// automations, the same hook the /search view ranks with.
+	const { rows: searchRows } = useWorkspaceSearch(workspaceId, { q: debouncedQuery })
 	const { data: objects } = useObjects(workspaceId)
+	const objectTypes = useAvailableObjectTypes()
+
+	// Mark all read runs the real per-entity mutation over the unread feed —
+	// the same call For You's own bulk action makes.
+	const { data: unread } = useUnread(workspaceId)
+	const markRead = useMarkRead(workspaceId)
+
+	// Mounted only once a create command runs, so the palette's own close
+	// doesn't tear the create surface down with it.
+	const [createTarget, setCreateTarget] = useState<{
+		type: CreatableType
+		subtype?: string
+	} | null>(null)
 
 	const navigateTo = useCallback(
 		(path: string) => {
@@ -52,6 +137,33 @@ export function CommandPalette() {
 	const openChat = useCallback(() => {
 		navigateTo(`/${workspaceId}/chats/new`)
 	}, [navigateTo, workspaceId])
+
+	const openCreate = useCallback(
+		(type: CreatableType, subtype?: string) => {
+			setCreateTarget({ type, subtype })
+			setOpen(false)
+		},
+		[setOpen],
+	)
+
+	const markAllRead = useCallback(() => {
+		const items = (unread?.items ?? []).filter(
+			(item) => item.unread_count > 0 && (item.latest_event_id ?? 0) > 0,
+		)
+		setOpen(false)
+		if (items.length === 0) {
+			toast('Nothing unread')
+			return
+		}
+		for (const item of items) {
+			markRead.mutate({
+				entityType: item.entity_type,
+				entityId: item.entity_id,
+				lastEventId: item.latest_event_id as number,
+			})
+		}
+		toast('All caught up')
+	}, [markRead, setOpen, unread])
 
 	// One `command_palette_opened` per open transition, fired on any route —
 	// the success-metric funnel denominator. The /search route fires the same
@@ -80,15 +192,20 @@ export function CommandPalette() {
 		[navigateTo, workspaceId],
 	)
 
+	const openSearchRow = useCallback(
+		(row: SearchRow) => {
+			if (row.object) {
+				openObject(row.object)
+				return
+			}
+			navigate({ to: row.to, params: row.params })
+			setOpen(false)
+		},
+		[navigate, openObject, setOpen],
+	)
+
 	const trimmedQuery = query.trim()
 	const hasQuery = trimmedQuery.length > 0
-	const doesNotMatch = (title: string) =>
-		hasQuery && !title.toLowerCase().includes(trimmedQuery.toLowerCase())
-	const navItems = [
-		{ title: 'Bets Dashboard', path: `/${workspaceId}` },
-		{ title: 'All Objects', path: `/${workspaceId}/objects` },
-		{ title: 'Agents', path: `/${workspaceId}/agents` },
-	].filter((n) => !doesNotMatch(n.title))
 
 	const seeAll = useCallback(() => {
 		if (!trimmedQuery) return
@@ -102,6 +219,15 @@ export function CommandPalette() {
 			search: { q: trimmedQuery },
 		})
 	}, [navigate, setOpen, trimmedQuery, workspaceId])
+
+	const openSearchView = useCallback(() => {
+		if (trimmedQuery) {
+			seeAll()
+			return
+		}
+		setOpen(false)
+		navigate({ to: '/$workspaceId/search', params: { workspaceId }, search: {} })
+	}, [navigate, seeAll, setOpen, trimmedQuery, workspaceId])
 
 	// The global key handler is registered once; reading seeAll through a ref
 	// keeps it current without re-binding the listener on every keystroke.
@@ -147,120 +273,221 @@ export function CommandPalette() {
 		return () => document.removeEventListener('keydown', handler)
 	}, [openChat, setOpen])
 
-	if (!open) return null
+	const matchesQuery = useCallback(
+		(...fields: (string | undefined)[]) => {
+			if (!hasQuery) return true
+			const needle = trimmedQuery.toLowerCase()
+			return fields.some((field) => (field ?? '').toLowerCase().includes(needle))
+		},
+		[hasQuery, trimmedQuery],
+	)
 
-	// Empty state → quick-jump recent objects. Active query → server-ranked
-	// results, never the client list, so both search surfaces show the same
-	// order as the /search view.
-	const items = hasQuery ? (searchResults ?? []) : (objects ?? []).slice(0, 20)
+	const commandRows = useMemo(() => {
+		const rows: PaletteRow[] = [
+			{
+				id: 'new-chat',
+				group: 'Commands',
+				kind: 'COMMAND',
+				title: 'New chat',
+				sub: 'talk to your agents',
+				icon: <GlyphTile icon={MessagesSquare} />,
+				run: openChat,
+			},
+			...objectTypes.map((type) => ({
+				id: `new-${type.value}`,
+				group: 'Commands',
+				kind: 'COMMAND',
+				title: `New ${type.label.replace(/s$/, '').toLowerCase()}`,
+				sub: 'an agent structures it from what you say',
+				icon: <GlyphTile icon={Plus} />,
+				run: () => openCreate('object', type.value),
+			})),
+			{
+				id: 'new-loop',
+				group: 'Commands',
+				kind: 'COMMAND',
+				title: 'New loop',
+				sub: 'describe it and Maskin wires it',
+				icon: <GlyphTile icon={RefreshCw} />,
+				run: () => navigateTo(`/${workspaceId}/loops/new`),
+			},
+			{
+				id: 'new-agent',
+				group: 'Commands',
+				kind: 'COMMAND',
+				title: 'New agent',
+				sub: 'hire one for an outcome',
+				icon: <GlyphTile icon={Sparkles} />,
+				run: () => openCreate('agent'),
+			},
+			{
+				id: 'mark-all-read',
+				group: 'Commands',
+				kind: 'COMMAND',
+				title: 'Mark all read',
+				sub: 'clear For you',
+				icon: <GlyphTile icon={Check} />,
+				run: markAllRead,
+			},
+		]
+		return rows.filter((row) => matchesQuery(row.title, row.sub, 'command'))
+	}, [matchesQuery, markAllRead, navigateTo, objectTypes, openChat, openCreate, workspaceId])
+
+	const goToRows = useMemo(() => {
+		return VIEWS.filter((view) => matchesQuery(view.title, 'go to')).map((view) => ({
+			id: `go-${view.title}`,
+			group: 'Go to',
+			kind: 'GO TO',
+			title: view.title,
+			icon: <GlyphTile icon={view.icon} />,
+			run: () => navigateTo(view.path(workspaceId)),
+		}))
+	}, [matchesQuery, navigateTo, workspaceId])
+
+	const jumpRows = useMemo(() => {
+		if (hasQuery) {
+			return searchRows.slice(0, MAX_JUMP_ROWS).map((row) => ({
+				id: `jump-${row.group}-${row.id}`,
+				group: 'Jump to',
+				kind: row.kind,
+				title: row.title,
+				sub: row.sub || undefined,
+				icon: row.object ? (
+					<TypeBadge
+						type={row.object.type}
+						variant="tile"
+						className="size-[22px] shrink-0 rounded-md"
+					/>
+				) : row.group === 'agents' ? (
+					<ActorAvatar
+						id={row.id}
+						name={row.title}
+						type="agent"
+						className="size-[22px] shrink-0 text-[9px]"
+					/>
+				) : (
+					<GlyphTile icon={GROUP_GLYPH[row.group] ?? LayoutGrid} />
+				),
+				run: () => openSearchRow(row),
+				object: row.object,
+			}))
+		}
+		return (objects ?? []).slice(0, MAX_JUMP_ROWS).map((object) => ({
+			id: `jump-object-${object.id}`,
+			group: 'Jump to',
+			kind: object.type.toUpperCase(),
+			title: object.title ?? 'Untitled',
+			icon: (
+				<TypeBadge type={object.type} variant="tile" className="size-[22px] shrink-0 rounded-md" />
+			),
+			run: () => openObject(object),
+			object,
+		}))
+	}, [hasQuery, objects, openObject, openSearchRow, searchRows])
+
+	const searchTerminalRow: PaletteRow = {
+		id: 'search-everything',
+		group: 'Search',
+		kind: 'SEARCH',
+		title: hasQuery ? `Search everything for “${trimmedQuery}”` : 'Open search',
+		sub: hasQuery
+			? `${searchRows.length} ${searchRows.length === 1 ? 'match' : 'matches'} · filterable results`
+			: 'browse and filter the whole workspace',
+		icon: <GlyphTile icon={Search} />,
+		run: openSearchView,
+	}
+
+	const groups: { label: string; rows: PaletteRow[] }[] = [
+		{ label: 'Commands', rows: commandRows },
+		{ label: 'Go to', rows: goToRows },
+		{ label: 'Jump to', rows: jumpRows },
+		{ label: 'Search', rows: [searchTerminalRow] },
+	].filter((group) => group.rows.length > 0)
 
 	return (
-		<div className="fixed inset-0 z-50 flex items-start justify-center pt-[18vh] max-sm:items-end max-sm:pt-0">
-			<button
-				type="button"
-				aria-label="Close palette"
-				className="fixed inset-0 bg-foreground/40"
-				onClick={() => setOpen(false)}
-			/>
-			<div className="relative w-full max-w-xl mx-auto overflow-hidden border border-border bg-popover text-popover-foreground shadow-xl max-sm:max-h-[92dvh] max-sm:flex max-sm:flex-col max-sm:rounded-t-2xl max-sm:rounded-b-none max-sm:pb-[env(safe-area-inset-bottom)] sm:w-[calc(100%-2rem)] sm:rounded-2xl">
-				<Command
-					shouldFilter={false}
-					className="w-full max-sm:min-h-0 max-sm:flex-1 max-sm:flex max-sm:flex-col"
-				>
-					<div className="flex items-center gap-2 border-b border-border px-3.5">
-						<Search aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
-						<Command.Input
-							value={query}
-							onValueChange={setQuery}
-							placeholder="Run a command or jump to…"
-							className="h-12 w-full bg-transparent text-[13.5px] text-foreground placeholder:text-muted-foreground outline-none"
-							autoFocus
-						/>
-						<kbd className="hidden shrink-0 items-center rounded-md border border-border bg-secondary px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground sm:inline-flex">
-							Esc
-						</kbd>
-					</div>
-					<Command.List className="max-h-[360px] overflow-auto p-1.5 max-sm:max-h-none max-sm:min-h-0 max-sm:flex-1">
-						<Command.Empty className="px-3 py-8 text-center text-[12.5px] text-muted-foreground">
-							{hasQuery ? `No command or shortcut matches “${query}”.` : 'No results found.'}
-						</Command.Empty>
-
-						{!doesNotMatch('chat with agents') && (
-							<Command.Group>
-								<div className="eyebrow px-2.5 pb-1 pt-2">Actions</div>
-								<Command.Item
-									className="flex items-center gap-2 rounded-md px-2.5 py-1.5 text-[12.5px] font-medium text-foreground cursor-pointer data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground"
-									onSelect={openChat}
-								>
-									<MessagesSquare aria-hidden="true" className="size-3.5 text-muted-foreground" />
-									<span className="flex-1">Chat with agents…</span>
-									<kbd className="rounded-md border border-border bg-secondary px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
-										⌘J
-									</kbd>
-								</Command.Item>
-							</Command.Group>
-						)}
-
-						{navItems.length > 0 && (
-							<Command.Group>
-								<div className="eyebrow px-2.5 pb-1 pt-2">Navigation</div>
-								{navItems.map((item) => (
-									<Command.Item
-										key={item.title}
-										className="flex items-center gap-2 rounded-md px-2.5 py-1.5 text-[12.5px] font-medium text-foreground cursor-pointer data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground"
-										onSelect={() => navigateTo(item.path)}
-									>
-										<ArrowRight aria-hidden="true" className="size-3.5 text-muted-foreground" />
-										<span className="flex-1">{item.title}</span>
-									</Command.Item>
-								))}
-							</Command.Group>
-						)}
-
-						{items.length > 0 && (
-							<Command.Group>
-								<div className="eyebrow px-2.5 pb-1 pt-2">Objects</div>
-								{items.map((obj) => (
-									<Command.Item
-										key={obj.id}
-										value={`${obj.title ?? ''} ${obj.type}`}
-										className="flex items-center gap-2 rounded-md px-2.5 py-1.5 text-[12.5px] font-medium text-foreground cursor-pointer data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground"
-										onSelect={() => openObject(obj)}
-									>
-										<span className="min-w-0 flex-1 truncate">
-											{highlightText(obj.title ?? 'Untitled', hasQuery ? query : '')}
-										</span>
-										<span className="ml-auto shrink-0 font-mono text-[10.5px] uppercase tracking-wide text-muted-foreground">
-											{typeLabel(obj.type)}
-										</span>
-									</Command.Item>
-								))}
-							</Command.Group>
-						)}
-					</Command.List>
-					{hasQuery && items.length > 0 && (
-						<button
-							type="button"
-							onClick={seeAll}
-							className="group flex shrink-0 items-center justify-between gap-2 border-t border-border bg-popover px-3.5 py-2.5 text-left transition-colors hover:bg-accent"
+		<>
+			{open && (
+				<div className="fixed inset-0 z-50 flex items-start justify-center pt-[18vh] max-sm:items-end max-sm:pt-0">
+					<button
+						type="button"
+						aria-label="Close palette"
+						className="fixed inset-0 bg-foreground/40"
+						onClick={() => setOpen(false)}
+					/>
+					<div className="relative w-full max-w-xl mx-auto overflow-hidden border border-border bg-popover text-popover-foreground shadow-xl max-sm:max-h-[92dvh] max-sm:flex max-sm:flex-col max-sm:rounded-t-2xl max-sm:rounded-b-none max-sm:pb-[env(safe-area-inset-bottom)] sm:w-[calc(100%-2rem)] sm:rounded-2xl">
+						<Command
+							shouldFilter={false}
+							className="w-full max-sm:min-h-0 max-sm:flex-1 max-sm:flex max-sm:flex-col"
 						>
-							<span className="text-[12.5px] font-semibold text-brand transition-colors group-hover:text-brand-hover">
-								See all {items.length} result{items.length === 1 ? '' : 's'}
-							</span>
-							<ArrowRight
-								aria-hidden="true"
-								className="size-3.5 text-brand transition-colors group-hover:text-brand-hover"
-							/>
-						</button>
-					)}
-					<div className="flex shrink-0 items-center gap-3.5 border-t border-border bg-secondary px-4 py-2 text-[10.5px] text-muted-foreground">
-						<span>↑↓ navigate</span>
-						<span>↵ run</span>
-						<span>⌘↵ search everything</span>
-						<span className="ml-auto">esc closes</span>
+							<div className="flex items-center gap-2 border-b border-border px-3.5">
+								<Search aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+								<Command.Input
+									value={query}
+									onValueChange={setQuery}
+									placeholder="Run a command or jump to…"
+									className="h-12 w-full bg-transparent text-[13.5px] text-foreground placeholder:text-muted-foreground outline-none"
+									autoFocus
+								/>
+								<kbd className="hidden shrink-0 items-center rounded-md border border-border bg-secondary px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground sm:inline-flex">
+									Esc
+								</kbd>
+							</div>
+							<Command.List className="max-h-[360px] overflow-auto p-1.5 max-sm:max-h-none max-sm:min-h-0 max-sm:flex-1">
+								<Command.Empty className="px-3 py-8 text-center text-[12.5px] text-muted-foreground">
+									{`No command or shortcut matches “${query}”.`}
+								</Command.Empty>
+
+								{groups.map((group) => (
+									<Command.Group key={group.label}>
+										<div className="eyebrow px-2.5 pb-1 pt-2">{group.label}</div>
+										{group.rows.map((row) => (
+											<Command.Item
+												key={row.id}
+												value={row.id}
+												className={cn(
+													'group flex items-center gap-2.5 rounded-md px-2.5 py-1.5 cursor-pointer',
+													'data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground',
+												)}
+												onSelect={row.run}
+											>
+												{row.icon}
+												<span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-foreground">
+													{highlightText(row.title, hasQuery ? trimmedQuery : '')}
+													{row.sub ? (
+														<span className="font-normal text-muted-foreground"> — {row.sub}</span>
+													) : null}
+												</span>
+												<span className="shrink-0 font-mono text-[9.5px] font-semibold tracking-[0.05em] text-muted-foreground">
+													{row.kind}
+												</span>
+												<kbd className="hidden shrink-0 rounded-md border border-border bg-secondary px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground group-data-[selected=true]:inline-flex">
+													↵
+												</kbd>
+											</Command.Item>
+										))}
+									</Command.Group>
+								))}
+							</Command.List>
+							<div className="flex shrink-0 items-center gap-3.5 border-t border-border bg-secondary px-4 py-2 text-[10.5px] text-muted-foreground">
+								<span>↑↓ navigate</span>
+								<span>↵ run</span>
+								<span>⌘↵ search everything</span>
+								<span className="ml-auto">esc closes</span>
+							</div>
+						</Command>
 					</div>
-				</Command>
-			</div>
-		</div>
+				</div>
+			)}
+			{createTarget && (
+				<CreatePicker
+					open
+					onOpenChange={(next) => {
+						if (!next) setCreateTarget(null)
+					}}
+					defaultType={createTarget.type}
+					defaultObjectSubtype={createTarget.subtype}
+				/>
+			)}
+		</>
 	)
 }

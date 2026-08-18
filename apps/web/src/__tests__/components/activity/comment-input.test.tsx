@@ -28,6 +28,23 @@ describe('CommentInput', () => {
 		mockUseActors.mockReturnValue({ data: [] })
 	})
 
+	it("offers the + menu's three real affordances and the composer hint", async () => {
+		const user = userEvent.setup()
+		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
+
+		expect(screen.getByText('Enter to send · @ to mention · + to attach')).toBeInTheDocument()
+
+		await user.click(screen.getByRole('button', { name: 'Add a file, object, or mention' }))
+		expect(await screen.findByText('Attach a file')).toBeInTheDocument()
+		expect(screen.getByText('Reference an object')).toBeInTheDocument()
+		expect(screen.getByText('Mention an agent')).toBeInTheDocument()
+	})
+
+	it('renders no mic when the browser has no SpeechRecognition', () => {
+		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
+		expect(screen.queryByRole('button', { name: /dictate/i })).not.toBeInTheDocument()
+	})
+
 	it('returns null when no stored actor', () => {
 		mockGetStoredActor.mockReturnValue(null)
 		const { container } = render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)

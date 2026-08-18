@@ -46,6 +46,12 @@ export interface CardAction {
 	// Only the decision actions carry one; sign_off / proposed_bet / quick-reply
 	// stay chip-shaped with no rationale.
 	rationale?: string
+	// Marks the option the card recommends — rendered as the mockup's `REC`
+	// chip (mockup 419–424). It is a property of the *action registry* below,
+	// the same static class of data as `label` and `rationale`; no per-item
+	// recommendation is computed from the object, and nothing in the API
+	// returns one, so exactly one option per kind carries it.
+	recommended?: boolean
 }
 
 // Kind → ordered list of affordances. First is always the primary action.
@@ -57,6 +63,7 @@ export const CARD_ACTIONS: Record<Exclude<CardKind, 'thread'>, readonly CardActi
 			label: 'Approve',
 			tone: 'primary',
 			rationale: 'I agree with the direction — proceed',
+			recommended: true,
 		},
 		{
 			id: 'send_back',
@@ -66,12 +73,12 @@ export const CARD_ACTIONS: Record<Exclude<CardKind, 'thread'>, readonly CardActi
 		},
 	],
 	sign_off: [
-		{ id: 'sign_off', label: 'Sign off', tone: 'primary' },
+		{ id: 'sign_off', label: 'Sign off', tone: 'primary', recommended: true },
 		{ id: 'send_back', label: 'Send back', tone: 'secondary' },
 		{ id: 'snooze_24h', label: 'Snooze 24h', tone: 'secondary' },
 	],
 	proposed_bet: [
-		{ id: 'open_bet', label: 'Open bet', tone: 'primary' },
+		{ id: 'open_bet', label: 'Open bet', tone: 'primary', recommended: true },
 		{ id: 'refine', label: 'Refine first', tone: 'secondary' },
 		{ id: 'dismiss', label: 'Dismiss', tone: 'secondary' },
 	],

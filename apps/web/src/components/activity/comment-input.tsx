@@ -1,13 +1,22 @@
+import { SlashPicker, type SlashPickerResult } from '@/components/chat/slash-picker'
 import { Button } from '@/components/ui/button'
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { useActors } from '@/hooks/use-actors'
+import { useDictation } from '@/hooks/use-dictation'
 import { useCreateComment } from '@/hooks/use-events'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { getStoredActor } from '@/lib/auth'
+import { EMPTY_CHAT_SELECTION } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
 import { formatSize } from '@/lib/file-utils'
 import { useDraft } from '@/lib/pending-comments-context'
 import { COMMENT_MAX_ATTACHMENTS, COMMENT_MAX_LENGTH } from '@maskin/shared'
-import { ArrowUp, Paperclip, X } from 'lucide-react'
+import { ArrowUp, AtSign, Box, Mic, Paperclip, Plus, X } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ActorAvatar } from '../shared/actor-avatar'
 import { MentionedText } from '../shared/mentioned-text'
@@ -60,6 +69,10 @@ export function CommentInput({
 	const [mentionFilter, setMentionFilter] = useState('')
 	const [selectedIndex, setSelectedIndex] = useState(0)
 	const [isDraggingFile, setIsDraggingFile] = useState(false)
+	// "Reference an object" reuses the composer's own picker rather than a
+	// second search UI; the pick is inserted as the canonical markdown object
+	// link the comment API documents (`[title](/<ws>/objects/<id>)`).
+	const [objectPickerOpen, setObjectPickerOpen] = useState(false)
 
 	const inputRef = useRef<HTMLTextAreaElement>(null)
 	const overlayRef = useRef<HTMLDivElement>(null)
@@ -170,6 +183,54 @@ export function CommentInput({
 		setShowMentions(false)
 		setMentionFilter('')
 	}, [])
+
+	// Appends dictated phrases to the draft. Renders nothing at all when the
+	// browser has no SpeechRecognition — never a dead control.
+	const dictation = useDictation(
+		useCallback((text: string) => {
+			setContent((prev) => (prev.length === 0 ? text : `${prev.trimEnd()} ${text}`))
+		}, []),
+	)
+
+	const insertAtCursor = useCallback((snippet: string) => {
+		const textarea = inputRef.current
+		setContent((prev) => {
+			const pos = textarea?.selectionStart ?? prev.length
+			const before = prev.slice(0, pos)
+			const after = prev.slice(pos)
+			const spacer = before.length > 0 && !/\s$/.test(before) ? ' ' : ''
+			const next = `${before}${spacer}${snippet} ${after}`
+			requestAnimationFrame(() => {
+				const caret = before.length + spacer.length + snippet.length + 1
+				textarea?.focus()
+				textarea?.setSelectionRange(caret, caret)
+			})
+			return next
+		})
+	}, [])
+
+	const handleObjectPicked = useCallback(
+		(result: SlashPickerResult) => {
+			if (result.kind === 'object') {
+				const title = result.ref.title?.trim() || 'object'
+				insertAtCursor(`[${title}](/${workspaceId}/objects/${result.ref.id})`)
+			} else if (result.kind === 'agent') {
+				insertAtCursor(`@${result.ref.name}`)
+				setMentions((prev) => (prev.includes(result.ref.id) ? prev : [...prev, result.ref.id]))
+			}
+			setObjectPickerOpen(false)
+		},
+		[insertAtCursor, workspaceId],
+	)
+
+	// Opens the @-mention flow the textarea already owns instead of a parallel
+	// picker — one mention path, one dropdown.
+	const startMention = useCallback(() => {
+		insertAtCursor('@')
+		setShowMentions(true)
+		setMentionFilter('')
+		setSelectedIndex(0)
+	}, [insertAtCursor])
 
 	const overLimit = content.length > COMMENT_MAX_LENGTH
 	const showCounter = content.length >= COMMENT_MAX_LENGTH * COUNTER_VISIBILITY_THRESHOLD
@@ -393,6 +454,83 @@ export function CommentInput({
 								style={{ minHeight: '28px', maxHeight: `${MAX_INPUT_HEIGHT_PX}px` }}
 							/>
 						</div>
+						{/* Control row — `+` menu, hint, mic, send (mockup 457–472). */}
+						<div className="flex items-center gap-2 px-1.5 pb-1.5">
+							<SlashPicker
+								workspaceId={workspaceId}
+								open={objectPickerOpen}
+								onOpenChange={setObjectPickerOpen}
+								onSelect={handleObjectPicked}
+								selected={EMPTY_CHAT_SELECTION}
+								initialKindId="item"
+								anchor={
+									<span
+										aria-hidden
+										className="pointer-events-none absolute bottom-1 left-2 h-0 w-0"
+									/>
+								}
+							/>
+							<DropdownMenu>
+								<DropdownMenuTrigger asChild>
+									<Button
+										type="button"
+										size="icon"
+										variant="outline"
+										className="h-7 w-7 shrink-0 rounded-full text-muted-foreground"
+										aria-label="Add a file, object, or mention"
+									>
+										<Plus size={15} aria-hidden />
+									</Button>
+								</DropdownMenuTrigger>
+								<DropdownMenuContent align="start" className="w-[250px]">
+									<DropdownMenuItem
+										disabled={attachmentLimitReached}
+										onSelect={() => fileInputRef.current?.click()}
+									>
+										<Paperclip size={15} aria-hidden />
+										Attach a file
+									</DropdownMenuItem>
+									<DropdownMenuItem onSelect={() => setObjectPickerOpen(true)}>
+										<Box size={15} aria-hidden />
+										Reference an object
+									</DropdownMenuItem>
+									<DropdownMenuItem onSelect={startMention}>
+										<AtSign size={15} aria-hidden />
+										Mention an agent
+									</DropdownMenuItem>
+								</DropdownMenuContent>
+							</DropdownMenu>
+							<span className="min-w-0 flex-1 truncate text-[11.5px] text-muted-foreground">
+								{isMobile ? 'Tap ↑ to send' : 'Enter to send · @ to mention · + to attach'}
+							</span>
+							{dictation.supported ? (
+								<Button
+									type="button"
+									size="icon"
+									variant={dictation.recording ? 'destructive' : 'outline'}
+									className={cn(
+										'h-7 w-7 shrink-0 rounded-full',
+										dictation.recording ? 'animate-pulse' : 'text-muted-foreground',
+									)}
+									onClick={dictation.toggle}
+									aria-pressed={dictation.recording}
+									aria-label={dictation.recording ? 'Stop dictating' : 'Dictate a comment'}
+								>
+									<Mic size={14} aria-hidden />
+								</Button>
+							) : null}
+							<Button
+								size="icon"
+								variant="ghost"
+								className="h-7 w-7 shrink-0 rounded-full"
+								disabled={!content.trim() || createComment.isPending || overLimit}
+								title={isUploadingAny ? 'Send (uploads continue in background)' : 'Send'}
+								aria-label="Send comment"
+								onClick={handleSubmit}
+							>
+								<ArrowUp size={14} />
+							</Button>
+						</div>
 					</div>
 					{showCounter && (
 						<div
@@ -416,32 +554,6 @@ export function CommentInput({
 						e.target.value = ''
 					}}
 				/>
-				<Button
-					size="icon"
-					variant="ghost"
-					className="shrink-0 h-8 w-8"
-					disabled={attachmentLimitReached}
-					title={
-						attachmentLimitReached
-							? `Maximum ${COMMENT_MAX_ATTACHMENTS} attachments`
-							: 'Attach file'
-					}
-					aria-label="Attach file"
-					onClick={() => fileInputRef.current?.click()}
-				>
-					<Paperclip size={14} />
-				</Button>
-				<Button
-					size="icon"
-					variant="ghost"
-					className="shrink-0 h-8 w-8"
-					disabled={!content.trim() || createComment.isPending || overLimit}
-					title={isUploadingAny ? 'Send (uploads continue in background)' : 'Send'}
-					aria-label="Send comment"
-					onClick={handleSubmit}
-				>
-					<ArrowUp size={14} />
-				</Button>
 			</div>
 
 			{/* @mention autocomplete dropdown */}
