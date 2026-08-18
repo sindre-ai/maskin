@@ -7,7 +7,10 @@ export const graphNodeSchema = z.object({
 	type: objectTypeSchema,
 	title: z.string().optional(),
 	content: z.string().optional(),
-	status: z.string(),
+	// Optional: bets are always created at `signal` (the founders' go/no-go gate)
+	// regardless of what a caller sends — the server ignores this field for bets.
+	// Non-bet types still need a status; the graph route returns 400 if omitted.
+	status: z.string().optional(),
 	metadata: safeMetadataSchema.optional(),
 	driver: z.string().uuid().optional(),
 })
