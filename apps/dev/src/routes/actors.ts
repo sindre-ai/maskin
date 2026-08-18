@@ -623,6 +623,13 @@ const getActorRoute = createRoute({
 	summary: 'Get actor by ID',
 	request: {
 		params: idParamSchema,
+		headers: z.object({
+			'x-workspace-id': z
+				.string()
+				.uuid()
+				.optional()
+				.describe("When provided, the response includes the actor's `role` in this workspace."),
+		}),
 	},
 	responses: {
 		200: {
@@ -639,8 +646,9 @@ const getActorRoute = createRoute({
 app.openapi(getActorRoute, (async (c) => {
 	const db = c.get('db')
 	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
-	const [[actor], skills] = await Promise.all([
+	const [[actor], skills, [membership]] = await Promise.all([
 		db
 			.select({
 				id: actors.id,
@@ -668,13 +676,23 @@ app.openapi(getActorRoute, (async (c) => {
 			.from(agentSkills)
 			.innerJoin(workspaceSkills, eq(agentSkills.workspaceSkillId, workspaceSkills.id))
 			.where(eq(agentSkills.actorId, id)),
+		workspaceId
+			? db
+					.select({ role: workspaceMembers.role })
+					.from(workspaceMembers)
+					.where(
+						and(eq(workspaceMembers.actorId, id), eq(workspaceMembers.workspaceId, workspaceId)),
+					)
+					.limit(1)
+			: Promise.resolve([]),
 	])
 
 	if (!actor) {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
-	return c.json(serialize({ ...actor, skills }) as z.infer<typeof actorResponseSchema>)
+	const role = workspaceId ? (membership?.role ?? null) : undefined
+	return c.json(serialize({ ...actor, skills, role }) as z.infer<typeof actorResponseSchema>)
 }) as RouteHandler<typeof getActorRoute, Env>)
 
 // PATCH /:id - Update actor

@@ -78,6 +78,11 @@ export const actorResponseSchema = z.object({
 	updatedAt: z.string().nullable(),
 	installedLoopId: z.string().uuid().nullable().optional(),
 	skills: z.array(actorSkillSchema).optional(),
+	// Populated only when X-Workspace-Id is provided — the actor's membership
+	// role in that specific workspace (mirrors the `role` field on the
+	// workspace-scoped branch of GET /actors). Null if the actor isn't a
+	// member of that workspace.
+	role: z.string().nullable().optional(),
 })
 
 export const actorWithKeySchema = actorResponseSchema.extend({

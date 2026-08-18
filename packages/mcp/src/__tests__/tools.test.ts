@@ -1266,6 +1266,24 @@ describe('list_actors schema', () => {
 	})
 })
 
+describe('get_actor schema', () => {
+	const schema = tools.get_actor.inputSchema
+
+	it('accepts id alone', () => {
+		const result = schema.parse({ id: uuid })
+		expect(result.workspace_id).toBeUndefined()
+	})
+
+	it('accepts optional workspace_id', () => {
+		const result = schema.parse({ id: uuid, workspace_id: uuid })
+		expect(result.workspace_id).toBe(uuid)
+	})
+
+	it('rejects invalid workspace_id', () => {
+		expect(() => schema.parse({ id: uuid, workspace_id: 'not-a-uuid' })).toThrow()
+	})
+})
+
 describe('empty input schema tools', () => {
 	it('list_workspaces accepts empty object', () => {
 		expect(tools.list_workspaces.inputSchema.parse({})).toEqual({})
@@ -1297,6 +1315,7 @@ describe('workspace_id optional on most tools', () => {
 		'list_integrations',
 		'connect_integration',
 		'disconnect_integration',
+		'get_actor',
 	]
 
 	for (const name of toolsWithOptionalWorkspace) {
