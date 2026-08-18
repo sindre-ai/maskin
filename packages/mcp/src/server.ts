@@ -33,11 +33,9 @@ import {
 	buildActorSetupBlockFromApi,
 	buildBetSetupBlock,
 	buildBetSetupBlockFromApi,
-	buildLoopSetupBlock,
 	buildLoopSetupBlockFromApi,
 	composeLoopSteps,
 	mergeBetSetupBlocks,
-	readConnectedProviders,
 	readStatusOrder,
 	readWorkspaceLlmReadiness,
 	safeBuildSetupBlock,
@@ -407,6 +405,14 @@ function setupApiCaller(config: McpConfig): SetupApiCaller {
 	return (method, path, body, options) => apiCall(config, method, path, body, options)
 }
 
+/** Count configured MCP servers on an actor's `tools`, excluding the built-in `maskin` entry. */
+function countNonMaskinMcpServers(tools: unknown): number {
+	const mcpServers = (tools as { mcpServers?: Record<string, unknown> } | null | undefined)
+		?.mcpServers
+	if (!mcpServers || typeof mcpServers !== 'object') return 0
+	return Object.keys(mcpServers).filter((name) => name !== 'maskin').length
+}
+
 /** Parse an `X-Total-Count`-style header, falling back to a default. */
 function parseTotalCountHeader(response: Response, fallback: number): number {
 	const raw = response.headers.get('x-total-count')
@@ -595,8 +601,13 @@ interface LoopStepInput {
 		  }
 }
 
-/** Map an inline loop step to a `POST /api/triggers` request body. */
-function buildStepTriggerBody(step: LoopStepInput): Record<string, unknown> {
+/**
+ * Map an inline loop step to a `POST /api/triggers` request body. `enabled`
+ * defaults to true; callers creating steps on a loop whose effective status
+ * is `paused` pass `false` so a newly-authored step doesn't start firing on
+ * a loop that isn't supposed to be running anything yet.
+ */
+function buildStepTriggerBody(step: LoopStepInput, enabled = true): Record<string, unknown> {
 	if ('cron' in step.when) {
 		return {
 			name: step.name,
@@ -604,7 +615,7 @@ function buildStepTriggerBody(step: LoopStepInput): Record<string, unknown> {
 			config: { expression: step.when.cron },
 			action_prompt: step.prompt,
 			target_actor_id: step.agent_id,
-			enabled: true,
+			enabled,
 		}
 	}
 	const triggerConfig: Record<string, unknown> = {
@@ -618,8 +629,85 @@ function buildStepTriggerBody(step: LoopStepInput): Record<string, unknown> {
 		config: triggerConfig,
 		action_prompt: step.prompt,
 		target_actor_id: step.agent_id,
-		enabled: true,
+		enabled,
 	}
+}
+
+/**
+ * Best-effort disable/enable a batch of triggers (used when a loop is
+ * created/updated with an effective status of `paused`, or leaves `paused`).
+ * Returns the ids that failed to update rather than throwing — a loop write
+ * must not fail just because one trigger PATCH hiccuped; the caller surfaces
+ * failures in the response instead of silently swallowing them.
+ */
+async function setTriggersEnabled(
+	config: McpConfig,
+	triggerIds: string[],
+	enabled: boolean,
+	workspaceId: string | undefined,
+): Promise<string[]> {
+	const failed: string[] = []
+	await Promise.all(
+		triggerIds.map(async (triggerId) => {
+			try {
+				await apiCall(config, 'PATCH', `/api/triggers/${triggerId}`, { enabled }, { workspaceId })
+			} catch {
+				failed.push(triggerId)
+			}
+		}),
+	)
+	return failed
+}
+
+/**
+ * Fetch the resolved step view (trigger + nested agent) for a loop's
+ * trigger ids — the same `composeLoopSteps` shape the `setup` block uses,
+ * reused here so create_loop/update_loop responses show agents nested under
+ * their trigger instead of a bare id list. Best-effort: a fetch failure
+ * degrades to an empty array rather than failing the primary write.
+ */
+async function fetchLoopStepsView(
+	config: McpConfig,
+	workspaceId: string | undefined,
+	triggerIds: string[],
+): Promise<ReturnType<typeof composeLoopSteps>> {
+	if (triggerIds.length === 0) return []
+	try {
+		const triggerRows = await apiCall(config, 'GET', '/api/triggers', undefined, { workspaceId })
+		const matchedTriggers = Array.isArray(triggerRows)
+			? (triggerRows as Array<Record<string, unknown>>).filter((t) =>
+					triggerIds.includes(t.id as string),
+				)
+			: []
+		const agentIds = Array.from(
+			new Set(
+				matchedTriggers
+					.map((t) => t.targetActorId)
+					.filter((v): v is string => typeof v === 'string'),
+			),
+		)
+		const actorRows =
+			agentIds.length > 0
+				? await apiCall(
+						config,
+						'GET',
+						`/api/actors?ids=${agentIds.map(encodeURIComponent).join(',')}`,
+						undefined,
+						{ workspaceId },
+					)
+				: []
+		return composeLoopSteps(triggerIds, matchedTriggers, actorRows)
+	} catch (err) {
+		console.error('[loops] failed to build steps view, degrading to empty:', err)
+		return []
+	}
+}
+
+/** Strip fields that don't apply to a loop (a loop is never driven or run
+ *  directly — its steps are the triggers that do the work). */
+function stripLoopOnlyFields(entity: Record<string, unknown>): Record<string, unknown> {
+	const { driver: _driver, activeSessionId: _activeSessionId, ...rest } = entity
+	return rest
 }
 
 /**
@@ -2091,6 +2179,8 @@ export function createMcpServer(config: McpConfig) {
 				? { ...enrichedResult, file_attachments: fileAttachments }
 				: enrichedResult
 
+			// No setup block on create — matches create_actor/create_loop: creates
+			// stay bare, setup guidance surfaces on update_* and get_* include:['setup'].
 			return {
 				_meta: meta('create_objects', config, workspace_id),
 				content: [{ type: 'text' as const, text: JSON.stringify(baseBody) }],
@@ -2232,6 +2322,8 @@ export function createMcpServer(config: McpConfig) {
 									id: withUrl.id as string,
 									type: withUrl.type as string,
 									status: (withUrl.status as string | undefined) ?? null,
+									content: (withUrl.content as string | undefined) ?? null,
+									driver: (withUrl.driver as string | undefined) ?? null,
 								},
 								readWorkspaceLlmReadiness(sharedWorkspaceSettings),
 								readStatusOrder(sharedWorkspaceSettings, withUrl.type as string),
@@ -2525,12 +2617,20 @@ export function createMcpServer(config: McpConfig) {
 			)
 			const perObjectSetup = await Promise.all(
 				successfulObjectResults.map((r) => {
-					const obj = r.result as { id?: string; type?: string; status?: string | null }
+					const obj = r.result as {
+						id?: string
+						type?: string
+						status?: string | null
+						content?: string | null
+						driver?: string | null
+					}
 					return buildBetSetupBlockFromApi(
 						{
 							id: obj.id ?? r.id,
 							type: obj.type ?? '',
 							status: obj.status ?? null,
+							content: obj.content ?? null,
+							driver: obj.driver ?? null,
 						},
 						setupApiCaller(config),
 						{
@@ -2932,6 +3032,9 @@ export function createMcpServer(config: McpConfig) {
 			// skills from day one and should be wired into a trigger/loop, but not
 			// always (e.g. a manually-invoked, prompt-only agent), so surface the
 			// gap and let the caller confirm with the user rather than assuming.
+			// No setup block on create — matches create_objects/create_loop: creates
+			// stay bare, checkActor's fuller checks (system prompt, skills, MCP,
+			// dry-run) surface on update_actor via the `setup` block instead.
 			if (createBody.type === 'agent') {
 				const callerMcpServers = (
 					createBody.tools as { mcpServers?: Record<string, unknown> } | undefined
@@ -3143,6 +3246,25 @@ export function createMcpServer(config: McpConfig) {
 			if (connectedTriggers?.length) withUrl = { ...withUrl, connectedTriggers }
 			if (connectedLoops?.length) withUrl = { ...withUrl, connectedLoops }
 			if (wsId) heroObject = { ...heroObject, url: pickUrl(withUrl) }
+
+			// Agents only — checkActor returns [] for humans, and get_actor stays
+			// bare for them rather than attaching an empty setup block. skillCount
+			// comes straight off this GET's `skills` field (no extra API call).
+			if (result.type === 'agent') {
+				const setup = await buildActorSetupBlockFromApi(
+					{
+						id: result.id,
+						name: result.name ?? null,
+						type: result.type ?? null,
+						systemPrompt: result.system_prompt ?? null,
+						skillCount: result.skills?.length ?? 0,
+						nonMaskinMcpServerCount: countNonMaskinMcpServers(result.tools),
+					},
+					setupApiCaller(config),
+				)
+				withUrl = { ...withUrl, setup }
+			}
+
 			const heroCard: HeroCardPayload = {
 				kind: 'single',
 				tool: 'get_actor',
@@ -3221,9 +3343,10 @@ export function createMcpServer(config: McpConfig) {
 						id: actorId ?? id,
 						name: (actor as { name?: string | null }).name ?? null,
 						type: (actor as { type?: string | null }).type ?? null,
+						systemPrompt: (actor as { system_prompt?: string | null }).system_prompt ?? null,
+						nonMaskinMcpServerCount: countNonMaskinMcpServers((actor as { tools?: unknown }).tools),
 					},
 					setupApiCaller(config),
-					{ workspaceId: workspace_id, defaultWorkspaceId: config.defaultWorkspaceId },
 				)
 				const responseBody = { ...(withUrl as Record<string, unknown>), setup }
 				return {
@@ -3284,9 +3407,10 @@ export function createMcpServer(config: McpConfig) {
 					id: actorId ?? id,
 					name: (actor as { name?: string | null }).name ?? null,
 					type: (actor as { type?: string | null }).type ?? null,
+					systemPrompt: (actor as { system_prompt?: string | null }).system_prompt ?? null,
+					nonMaskinMcpServerCount: countNonMaskinMcpServers((actor as { tools?: unknown }).tools),
 				},
 				setupApiCaller(config),
-				{ workspaceId: workspace_id, defaultWorkspaceId: config.defaultWorkspaceId },
 			)
 
 			return {
@@ -4443,16 +4567,18 @@ export function createMcpServer(config: McpConfig) {
 			const {
 				workspace_id,
 				name,
-				guarantee,
+				content,
 				status,
 				entry_condition,
 				close_condition,
-				human_decision_points,
 				closed_statuses,
 			} = args
 			const stepList = (args.steps ?? []) as LoopStepInput[]
 			const existingTriggerIds = args.trigger_ids ?? []
 			const memberObjectIds = args.object_ids ?? []
+			// `status` always has a value here — the schema defaults it to
+			// 'draft'. Only `paused` starts a loop's triggers disabled.
+			const startEnabled = status !== 'paused'
 
 			// Validate everything up-front so nothing is created on a bad request.
 			await Promise.all([
@@ -4489,7 +4615,7 @@ export function createMcpServer(config: McpConfig) {
 						config,
 						'POST',
 						'/api/triggers',
-						buildStepTriggerBody(step),
+						buildStepTriggerBody(step, startEnabled),
 						{ workspaceId: workspace_id, idempotencyKey: `mcp:create_loop:step:${randomUUID()}` },
 					)) as { id: string }
 					stepTriggerIds.push(created.id)
@@ -4499,18 +4625,16 @@ export function createMcpServer(config: McpConfig) {
 				const metadata: Record<string, unknown> = { trigger_ids: allTriggerIds }
 				if (entry_condition !== undefined) metadata.entry_condition = entry_condition
 				if (close_condition !== undefined) metadata.close_condition = close_condition
-				if (human_decision_points !== undefined)
-					metadata.human_decision_points = human_decision_points
 				if (closed_statuses !== undefined) metadata.closed_statuses = closed_statuses
 
 				const node: Record<string, unknown> = {
 					$id: 'loop',
 					type: 'loop',
 					title: name,
-					status: status ?? 'running',
+					status,
 					metadata,
 				}
-				if (guarantee !== undefined) node.content = guarantee
+				if (content !== undefined) node.content = content
 				const edges = memberObjectIds.map((objectId) => ({
 					source: 'loop',
 					target: objectId,
@@ -4535,20 +4659,38 @@ export function createMcpServer(config: McpConfig) {
 				throw err
 			}
 
+			const allTriggerIds = [...new Set([...existingTriggerIds, ...stepTriggerIds])]
+
+			// Pre-existing triggers attached via `trigger_ids` were created by an
+			// earlier call and default to enabled — if this loop starts paused,
+			// disable them too so "paused" is true of every step, not just the
+			// ones authored inline in this call. Best-effort: a failure here
+			// surfaces as a warning rather than rolling back an already-created,
+			// otherwise-successful loop.
+			const disableFailures =
+				!startEnabled && existingTriggerIds.length > 0
+					? await setTriggersEnabled(config, existingTriggerIds, false, workspace_id)
+					: []
+
 			const created = graphResult.nodes[0]
 			const wsId =
 				(created?.workspaceId as string | undefined) ?? workspace_id ?? config.defaultWorkspaceId
 			const loopWithUrl =
 				created && wsId
-					? addUrl(created, config, wsId, { kind: 'loop', id: created.id })
-					: (created ?? null)
-			const allTriggerIds = [...new Set([...existingTriggerIds, ...stepTriggerIds])]
+					? addUrl(stripLoopOnlyFields(created), config, wsId, { kind: 'loop', id: created.id })
+					: created
+						? stripLoopOnlyFields(created)
+						: null
+			const steps = await fetchLoopStepsView(config, workspace_id, allTriggerIds)
 			const responseBody: Record<string, unknown> = {
 				loop: loopWithUrl,
-				trigger_ids: allTriggerIds,
-				member_edges: graphResult.edges,
+				steps,
+				member_objects: graphResult.edges,
 			}
 			if (stepTriggerIds.length > 0) responseBody.created_step_trigger_ids = stepTriggerIds
+			if (disableFailures.length > 0) {
+				responseBody.trigger_pause_warnings = `Loop created as paused, but these pre-existing triggers could not be disabled — pause them manually: ${disableFailures.join(', ')}`
+			}
 
 			return {
 				_meta: meta('create_loop', config, (args as { workspace_id?: string }).workspace_id),
@@ -4570,11 +4712,10 @@ export function createMcpServer(config: McpConfig) {
 				workspace_id,
 				id,
 				name,
-				guarantee,
+				content,
 				status,
 				entry_condition,
 				close_condition,
-				human_decision_points,
 				closed_statuses,
 				add_steps,
 				add_trigger_ids,
@@ -4596,6 +4737,16 @@ export function createMcpServer(config: McpConfig) {
 						`Object ${id} has type '${String(existing.type)}', not 'loop'. update_loop only operates on loops — use update_objects for other objects, and list_loops to find loop ids.`,
 					)
 				}
+
+				// The loop's status after this call — its own PATCH if `status` was
+				// passed, else whatever it already was. Only `paused` means new
+				// steps should start disabled; an explicit status transition
+				// to/from `paused` is handled centrally by the PATCH /api/objects/:id
+				// hook (apps/dev/src/routes/objects.ts), which also covers the
+				// frontend's pause/resume button — this only needs to handle steps
+				// being *added* to an already-paused loop in the same or a later call.
+				const effectiveStatus = status ?? (existing.status as string | undefined)
+				const stepsStartEnabled = effectiveStatus !== 'paused'
 
 				await Promise.all([
 					assertTriggersExist(config, add_trigger_ids ?? [], workspace_id),
@@ -4628,7 +4779,7 @@ export function createMcpServer(config: McpConfig) {
 							config,
 							'POST',
 							'/api/triggers',
-							buildStepTriggerBody(step),
+							buildStepTriggerBody(step, stepsStartEnabled),
 							{
 								workspaceId: workspace_id,
 								idempotencyKey: `mcp:update_loop:step:${randomUUID()}`,
@@ -4655,13 +4806,11 @@ export function createMcpServer(config: McpConfig) {
 					if (triggerIdsChanged) metadataPatch.trigger_ids = mergedTriggerIds
 					if (entry_condition !== undefined) metadataPatch.entry_condition = entry_condition
 					if (close_condition !== undefined) metadataPatch.close_condition = close_condition
-					if (human_decision_points !== undefined)
-						metadataPatch.human_decision_points = human_decision_points
 					if (closed_statuses !== undefined) metadataPatch.closed_statuses = closed_statuses
 
 					const body: Record<string, unknown> = {}
 					if (name !== undefined) body.title = name
-					if (guarantee !== undefined) body.content = guarantee
+					if (content !== undefined) body.content = content
 					if (status !== undefined) body.status = status
 					if (Object.keys(metadataPatch).length > 0) body.metadata = metadataPatch
 
@@ -4680,6 +4829,16 @@ export function createMcpServer(config: McpConfig) {
 					)
 					throw err
 				}
+
+				// Pre-existing triggers attached via `add_trigger_ids` default to
+				// enabled — if the loop's effective status is `paused`, disable them
+				// too so pausing stays true of every step, not just ones just
+				// authored inline. Best-effort: a failure surfaces as a warning
+				// rather than undoing an otherwise-successful update.
+				const disableFailures =
+					!stepsStartEnabled && (add_trigger_ids ?? []).length > 0
+						? await setTriggersEnabled(config, add_trigger_ids ?? [], false, workspace_id)
+						: []
 
 				// Membership adds — POST /api/relationships is idempotent on
 				// (source, target, type), so re-adding an existing member is safe.
@@ -4738,13 +4897,9 @@ export function createMcpServer(config: McpConfig) {
 
 				const wsId =
 					(loopRow.workspaceId as string | undefined) ?? workspace_id ?? config.defaultWorkspaceId
-				const loopWithUrl = wsId ? addUrl(loopRow, config, wsId, { kind: 'loop', id }) : loopRow
-				const responseBody: Record<string, unknown> = { loop: loopWithUrl }
-				if (stepTriggerIds.length > 0) responseBody.created_step_trigger_ids = stepTriggerIds
-				if (triggerIdsChanged) responseBody.trigger_ids = mergedTriggerIds
-				if (addedObjectIds.length > 0) responseBody.added_object_ids = addedObjectIds
-				if (removedObjectIds.length > 0) responseBody.removed_object_ids = removedObjectIds
-				if (notMembers.length > 0) responseBody.not_members_skipped = notMembers
+				const loopWithUrl = wsId
+					? addUrl(stripLoopOnlyFields(loopRow), config, wsId, { kind: 'loop', id })
+					: stripLoopOnlyFields(loopRow)
 
 				// Member count is intentionally best-effort: re-listing every in_loop
 				// edge just for the setup block would blow the ≤4-extra-call budget.
@@ -4761,6 +4916,19 @@ export function createMcpServer(config: McpConfig) {
 								)
 							: []
 				const memberCount = addedObjectIds.length > 0 ? addedObjectIds.length : 1
+
+				const responseBody: Record<string, unknown> = {
+					loop: loopWithUrl,
+					steps: await fetchLoopStepsView(config, workspace_id, effectiveTriggerIds),
+				}
+				if (stepTriggerIds.length > 0) responseBody.created_step_trigger_ids = stepTriggerIds
+				if (addedObjectIds.length > 0) responseBody.added_object_ids = addedObjectIds
+				if (removedObjectIds.length > 0) responseBody.removed_object_ids = removedObjectIds
+				if (notMembers.length > 0) responseBody.not_members_skipped = notMembers
+				if (disableFailures.length > 0) {
+					responseBody.trigger_pause_warnings = `Loop is paused, but these newly-attached triggers could not be disabled — pause them manually: ${disableFailures.join(', ')}`
+				}
+
 				responseBody.setup = await buildLoopSetupBlockFromApi(
 					{
 						id,
@@ -4773,7 +4941,6 @@ export function createMcpServer(config: McpConfig) {
 					setupApiCaller(config),
 					{
 						workspaceId: workspace_id,
-						defaultWorkspaceId: config.defaultWorkspaceId,
 						triggerIds: effectiveTriggerIds,
 						memberCount,
 					},
@@ -4813,12 +4980,21 @@ export function createMcpServer(config: McpConfig) {
 				getSortValue: (row) => (row.createdAt as string | null | undefined) ?? null,
 				getId: (row) => row.id as string,
 			})
-			const enriched = pagedLoops.map((loop) =>
-				addUrl(loop, config, (loop.workspaceId as string | undefined) ?? wsId, {
+			// Deliberately lean: id/workspaceId/name/url only, so listing many
+			// loops stays cheap. Live stats, conditions, steps, and the rest of
+			// the loop row live on get_loop — call it with a specific id to get
+			// the full picture (and the trigger+agent-nested `steps` view).
+			const enriched = pagedLoops.map((loop) => {
+				const trimmed: Record<string, unknown> = {
+					id: loop.id,
+					workspaceId: loop.workspaceId,
+					name: loop.name,
+				}
+				return addUrl(trimmed, config, (loop.workspaceId as string | undefined) ?? wsId, {
 					kind: 'loop',
 					id: loop.id as string,
-				}),
-			)
+				})
+			})
 			return {
 				_meta: meta('list_loops', config, (args as { workspace_id?: string }).workspace_id),
 				content: [
@@ -4844,7 +5020,7 @@ export function createMcpServer(config: McpConfig) {
 			_meta: {},
 		},
 		async (args) => {
-			const { workspace_id, id, include } = args
+			const { workspace_id, id } = args
 			const data = (await apiCall(
 				config,
 				'GET',
@@ -4862,65 +5038,38 @@ export function createMcpServer(config: McpConfig) {
 				(loop.workspaceId as string | undefined) ?? workspace_id ?? config.defaultWorkspaceId
 			const loopWithUrl = wsId ? addUrl(loop, config, wsId, { kind: 'loop', id }) : loop
 
-			const responseBody: Record<string, unknown> = { loop: loopWithUrl }
-			if (Array.isArray(include) && include.includes('setup')) {
-				responseBody.setup = await safeBuildSetupBlock('loop_setup', async () => {
-					const triggerIds = Array.isArray(loop.triggerIds)
-						? (loop.triggerIds as string[]).filter((t): t is string => typeof t === 'string')
-						: []
-					const inProgress = typeof loop.inProgressCount === 'number' ? loop.inProgressCount : 0
-					const closed = typeof loop.closedCount === 'number' ? loop.closedCount : 0
-					const [workspace, integrations, triggerRows] = await Promise.all([
-						getWorkspace(config, wsId as string),
-						apiCall(config, 'GET', '/api/integrations', undefined, {
-							workspaceId: workspace_id,
-						}),
-						triggerIds.length > 0
-							? apiCall(config, 'GET', '/api/triggers', undefined, {
-									workspaceId: workspace_id,
-								})
-							: Promise.resolve([]),
-					])
-					const workspaceReadiness = readWorkspaceLlmReadiness(workspace.settings)
-					const connectedProviders = readConnectedProviders(integrations)
-					const triggerIdSet = new Set(triggerIds)
-					const scopedTriggers = Array.isArray(triggerRows)
-						? triggerRows.filter((t) => triggerIdSet.has((t as { id?: string }).id as string))
-						: []
-					const agentIds = Array.from(
-						new Set(
-							scopedTriggers
-								.map((t) => (t as { targetActorId?: string }).targetActorId)
-								.filter((a): a is string => typeof a === 'string' && a.length > 0),
-						),
-					)
-					const actorRows =
-						agentIds.length > 0
-							? await apiCall(
-									config,
-									'GET',
-									`/api/actors?ids=${agentIds.map(encodeURIComponent).join(',')}`,
-									undefined,
-									{ workspaceId: workspace_id },
-								)
-							: []
-					const steps = composeLoopSteps(triggerIds, scopedTriggers, actorRows)
-					return buildLoopSetupBlock(
-						{
-							id: id as string,
-							name: (loop.name as string | undefined) ?? null,
-							entryCondition: (loop.entryCondition as string | undefined) ?? null,
-							closeCondition: (loop.closeCondition as string | undefined) ?? null,
-						},
-						{
-							workspace: workspaceReadiness,
-							connectedProviders,
-							steps,
-							memberCount: inProgress + closed,
-						},
-					)
-				})
-			}
+			// Same nested trigger+agent view create_loop/update_loop return by
+			// default (fetchLoopStepsView) — get_loop previously only exposed
+			// flat `loop.triggerIds`/`loop.agentIds`, forcing a caller to
+			// separately fetch list_triggers + list_actors and correlate them by
+			// hand to see which agent runs which step.
+			const triggerIds = Array.isArray(loop.triggerIds)
+				? (loop.triggerIds as string[]).filter((t): t is string => typeof t === 'string')
+				: []
+			const steps = await fetchLoopStepsView(config, workspace_id, triggerIds)
+
+			const responseBody: Record<string, unknown> = { loop: loopWithUrl, steps }
+
+			// get_loop already has the loop's own inProgressCount/closedCount from
+			// /api/loops, so — unlike update_loop's best-effort member count — this
+			// is the real number, not a floor.
+			const memberCount =
+				(typeof loop.inProgressCount === 'number' ? loop.inProgressCount : 0) +
+				(typeof loop.closedCount === 'number' ? loop.closedCount : 0)
+			responseBody.setup = await buildLoopSetupBlockFromApi(
+				{
+					id,
+					name: (loop.name as string | null | undefined) ?? null,
+					entryCondition: (loop.entryCondition as string | null | undefined) ?? null,
+					closeCondition: (loop.closeCondition as string | null | undefined) ?? null,
+				},
+				setupApiCaller(config),
+				{
+					workspaceId: workspace_id,
+					triggerIds,
+					memberCount,
+				},
+			)
 
 			return {
 				_meta: meta('get_loop', config, (args as { workspace_id?: string }).workspace_id),

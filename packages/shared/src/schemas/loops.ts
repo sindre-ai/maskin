@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { LOOP_STATUSES } from './objects'
 
 /**
  * Response schema for `GET /api/loops` — the list-view read shape T3 renders
@@ -7,12 +8,15 @@ import { z } from 'zod'
  * bet/loops-first-class names each derivation and its source.
  *
  * `pill` composes the object's stored lifecycle status with a per-viewer
- * `waiting_on_viewer` flag so the frontend can render "Running" vs
+ * `waiting_on_viewer` flag so the frontend can render e.g. "Learning" vs
  * "Waiting on you" from a single field without re-implementing the composite
- * signal client-side. Fields intentionally match the design spec attached to
+ * signal client-side. `waiting_on_you` only ever overrides the three "live"
+ * statuses (`learning` | `supervised` | `fully_autonomous`) — `draft` and
+ * `paused` are not "live" and always render as themselves regardless of
+ * unread activity. Fields intentionally match the design spec attached to
  * the parent bet — status pill, per-loop stats, agent-avatar chips.
  */
-export const loopPillSchema = z.enum(['running', 'waiting_on_you', 'paused', 'archived'])
+export const loopPillSchema = z.enum([...LOOP_STATUSES, 'waiting_on_you'])
 
 export const loopSummarySchema = z.object({
 	id: z.string().uuid(),
@@ -20,10 +24,10 @@ export const loopSummarySchema = z.object({
 	/** Free-text loop name — mirrors `objects.title`. Nullable for parity with
 	 * the underlying objects table (untitled loops are legal). */
 	name: z.string().nullable(),
-	/** Full loop guarantee / description — mirrors `objects.content`. */
-	guarantee: z.string().nullable(),
+	/** Full loop description — mirrors `objects.content`. */
+	content: z.string().nullable(),
 	/** Raw lifecycle status enum stored on `objects.status`. */
-	status: z.enum(['running', 'waiting', 'paused', 'archived']),
+	status: z.enum(LOOP_STATUSES),
 	/** Composite badge signal: `status` combined with `waiting_on_viewer` so
 	 * the frontend renders one badge without branching on both fields. */
 	pill: loopPillSchema,
@@ -31,8 +35,6 @@ export const loopSummarySchema = z.object({
 	entryCondition: z.string().nullable(),
 	/** Plain-language close condition — metadata field, may be omitted. */
 	closeCondition: z.string().nullable(),
-	/** Number of human decision points named on the loop — metadata field. */
-	humanDecisionPoints: z.number().int().nonnegative().nullable(),
 	/** Objects (bets/tasks/insights) currently being processed by this loop —
 	 * COUNT of objects reached via an `in_loop` relationship edge (source=loop,
 	 * target=child; child objects carry no `metadata.loop_id` back-reference)

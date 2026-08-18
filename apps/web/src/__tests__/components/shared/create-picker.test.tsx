@@ -217,7 +217,7 @@ describe('CreatePicker', () => {
 		)
 	})
 
-	it('creates a loop object with status "running" and navigates to the loop detail page', async () => {
+	it('creates a loop object with status "draft" and navigates to the loop detail page', async () => {
 		const user = userEvent.setup()
 		vi.mocked(api.objects.create).mockResolvedValue({
 			id: 'loop-5',
@@ -225,7 +225,7 @@ describe('CreatePicker', () => {
 			type: 'loop',
 			title: 'Support triage',
 			content: null,
-			status: 'running',
+			status: 'draft',
 			metadata: null,
 			driver: null,
 			activeSessionId: null,
@@ -237,7 +237,7 @@ describe('CreatePicker', () => {
 		renderWithWorkspace(
 			<CreatePicker open onOpenChange={onOpenChange} defaultType="loop" />,
 			// Loop status doesn't come from the workspace's per-type status list —
-			// this asserts it stays 'running' even when the workspace has no
+			// this asserts it stays 'draft' even when the workspace has no
 			// matching entry (or a misleading one) for 'loop'.
 			{ settings: { statuses: { bet: ['active'] } } },
 		)
@@ -247,7 +247,7 @@ describe('CreatePicker', () => {
 		expect(vi.mocked(api.objects.create).mock.calls[0]?.[1]).toMatchObject({
 			type: 'loop',
 			title: 'Support triage',
-			status: 'running',
+			status: 'draft',
 		})
 		await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false))
 		expect(navigateSpy).toHaveBeenCalledWith(

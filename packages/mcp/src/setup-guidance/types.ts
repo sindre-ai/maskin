@@ -43,12 +43,11 @@ export type LoopStep = {
 	agent: {
 		id: string
 		name?: string | null
-		systemPrompt?: string | null
+		description?: string | null
 	} | null
 }
 
 export type LoopCheckContext = {
-	workspace: WorkspaceLlmReadiness
 	/** Provider names currently connected in this workspace (e.g. `['github', 'slack']`). */
 	connectedProviders: string[]
 	steps: LoopStep[]
@@ -70,18 +69,26 @@ export type BetCheckContext = {
 	statusOrder?: string[]
 }
 
+/**
+ * Despite the name (kept for continuity with the original bet-only check),
+ * this input shape and `checkBet` apply to every object type — insight, task,
+ * bet, or any workspace-defined extension type.
+ */
 export type BetInput = {
 	id: string
 	type: string
 	status?: string | null
-}
-
-export type ActorCheckContext = {
-	workspace: WorkspaceLlmReadiness
+	content?: string | null
+	driver?: string | null
 }
 
 export type ActorInput = {
 	id: string
 	name?: string | null
 	type?: string | null
+	systemPrompt?: string | null
+	/** Total workspace skills currently attached to this actor. */
+	skillCount?: number
+	/** Count of configured MCP servers, excluding the built-in `maskin` entry. */
+	nonMaskinMcpServerCount?: number
 }

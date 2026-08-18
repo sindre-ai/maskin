@@ -45,14 +45,25 @@ export const COMMITMENT_ATTENTION_STATUSES = ['at-risk', 'breached'] as const
 export type CommitmentAttentionStatus = (typeof COMMITMENT_ATTENTION_STATUSES)[number]
 
 /**
- * Loop statuses used by the new (post-T1-rename) pipeline concept: a
- * persistent multi-agent process wrapping triggers + agents + a pipeline of
- * object states. `archived` is silent (mirrors the bet convention), so it is
- * NOT part of the attention-worthy set surfaced to the For You feed. Kept
- * here alongside the extension registration so backend code paths that need
- * the enum (read API, migrations, guards) stay pinned to one source of truth.
+ * Loop statuses used by the (post-T1-rename) pipeline concept: an iterative
+ * multi-agent process wrapping triggers + agents + a pipeline of object
+ * states. This is a graduated-trust ladder, not an on/off toggle — a loop
+ * starts as a `draft`, earns more autonomy as it proves itself
+ * (`learning` → `supervised` → `fully_autonomous`), and can be `paused` from
+ * any point on that ladder. Pausing a loop disables every trigger referenced
+ * in its `metadata.trigger_ids` (see the loop-status hook in
+ * `apps/dev/src/routes/objects.ts`'s `PATCH /:id`); leaving `paused`
+ * re-enables them. Kept here alongside the extension registration so backend
+ * code paths that need the enum (read API, migrations, guards) stay pinned to
+ * one source of truth.
  */
-export const LOOP_STATUSES = ['running', 'waiting', 'paused', 'archived'] as const
+export const LOOP_STATUSES = [
+	'draft',
+	'paused',
+	'learning',
+	'supervised',
+	'fully_autonomous',
+] as const
 export type LoopStatus = (typeof LOOP_STATUSES)[number]
 
 export const createObjectSchema = z.object({

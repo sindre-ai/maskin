@@ -139,7 +139,7 @@ export function CreatePicker({
 				const created = await createObject.mutateAsync({
 					type: 'loop',
 					title: trimmed,
-					status: 'running',
+					status: 'draft',
 				})
 				trackObjectCreated({
 					entity_id: created.id,

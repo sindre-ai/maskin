@@ -8,13 +8,13 @@ describe('LoopHeader', () => {
 	it('renders the loop name, pill, and description', () => {
 		const loop = buildLoopSummary({
 			name: 'Customer feedback loop',
-			guarantee: 'Every customer hears back within 30 days',
-			pill: 'running',
+			content: 'Every customer hears back within 30 days',
+			pill: 'learning',
 		})
 		render(<LoopHeader loop={loop} onTogglePause={vi.fn()} isTogglingPause={false} />)
 
 		expect(screen.getByText('Customer feedback loop')).toBeInTheDocument()
-		expect(screen.getByText('Running')).toBeInTheDocument()
+		expect(screen.getByText('Learning')).toBeInTheDocument()
 		expect(screen.getByText('Every customer hears back within 30 days')).toBeInTheDocument()
 	})
 
@@ -30,12 +30,12 @@ describe('LoopHeader', () => {
 		expect(screen.getByText('Untitled loop')).toBeInTheDocument()
 	})
 
-	it('calls onTogglePause with "Pause loop" when running', async () => {
+	it('calls onTogglePause with "Pause loop" when live', async () => {
 		const user = userEvent.setup()
 		const onTogglePause = vi.fn()
 		render(
 			<LoopHeader
-				loop={buildLoopSummary({ status: 'running' })}
+				loop={buildLoopSummary({ status: 'learning' })}
 				onTogglePause={onTogglePause}
 				isTogglingPause={false}
 			/>,

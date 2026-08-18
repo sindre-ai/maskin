@@ -1,13 +1,13 @@
 ---
 title: Loops
 slug: loops
-description: The loop primitive — persistent multi-agent processes with triggers as steps, objects flowing through in_loop edges, and a feedback step that closes the loop.
-last_updated: 2026-08-11
+description: The loop primitive — iterative multi-agent processes with triggers as steps, objects flowing through in_loop edges, and a feedback step that closes the loop.
+last_updated: 2026-08-18
 ---
 
 # Loops
 
-A **loop** is a persistent multi-agent process: a goal wrapped around triggers, agents, and
+A **loop** is an iterative multi-agent process: a goal wrapped around triggers, agents, and
 objects changing state. Almost everything can be modeled as a loop — when an object reaches its
 end state, the learning should feed back into improving the loop or seed the next object through
 the same loop.
@@ -18,16 +18,24 @@ A loop is not a separate table. It is composed from existing primitives:
 
 | Piece | Where it lives |
 |-------|----------------|
-| The loop itself | `objects` row with `type = 'loop'` (statuses: `running`, `waiting`, `paused`, `archived`) |
-| Steps | Ordinary `triggers` rows, referenced by the loop's `metadata.trigger_ids` |
+| The loop itself | `objects` row with `type = 'loop'` (statuses: `draft`, `learning`, `supervised`, `fully_autonomous`, `paused` — see [Status](#status-a-graduated-trust-ladder)) |
+| Steps | Ordinary `triggers` rows, referenced by the loop's `metadata.trigger_ids` — a step and a trigger are the same thing |
 | Agents | The `target_actor_id` of each step trigger (must be an agent actor) |
 | Member objects | `in_loop` relationship edges — source = loop, target = member object (any type) |
 | Entry / close conditions | `metadata.entry_condition`, `metadata.close_condition` (plain language) |
-| Human decision points | `metadata.human_decision_points` (count) |
 | Per-loop terminal statuses | `metadata.closed_statuses` — `{ "<type>": ["status", ...] }` |
 
 Member objects can be **any workspace-defined type**, including custom types added via
 extensions. Loop membership is the edge, never a back-reference on the member.
+
+## Status: a graduated trust ladder
+
+`status` is not an on/off toggle — it tracks how much autonomy a loop has earned in this
+workspace: `draft` (set up but not live) → `learning` → `supervised` → `fully_autonomous`, in
+increasing order of trust. `paused` can be reached from any point on that ladder and disables
+every trigger the loop references — nothing fires until it leaves `paused`. That behavior lives
+in `PATCH /api/objects/:id` (`apps/dev/src/routes/objects.ts`), so it applies uniformly whether
+the status change comes from the web UI's pause/resume button or the MCP `update_loop` tool.
 
 ## Open vs closed loops
 
@@ -51,9 +59,11 @@ agent actors, so human participation always flows through an agent step.
 ## Derived read API
 
 `GET /api/loops` (`apps/dev/src/routes/loops.ts`) returns every loop in the workspace with
-derived stats: a composite `pill` (`running` / `waiting_on_you` / `paused` / `archived`),
-in-progress and closed member counts, median time-to-close, the step trigger ids, and the
-distinct agent ids those triggers fire.
+derived stats: a composite `pill` (`draft` / `learning` / `supervised` / `fully_autonomous` /
+`paused` / `waiting_on_you`), in-progress and closed member counts, median time-to-close, the
+step trigger ids, and the distinct agent ids those triggers fire. `waiting_on_you` only overrides
+the three "live" statuses (`learning` / `supervised` / `fully_autonomous`) when a member object
+has unread activity — `draft` and `paused` always render as themselves.
 
 Whether a member counts as **closed** is resolved per loop: the loop's own
 `metadata.closed_statuses` entry for the member's type wins; otherwise the built-in fallback
@@ -66,9 +76,13 @@ The MCP server exposes loops as first-class tools (`packages/mcp`):
 
 - **`create_loop`** — one call creates the whole loop: the loop object, inline `steps` (each
   becomes a trigger — `when: { cron }` or `when: { object_type, action, filter? }`), attached
-  pre-existing `trigger_ids`, `in_loop` edges for `object_ids`, and `closed_statuses`. All ids,
-  types, and statuses are validated against the workspace before anything is created; if the
-  loop insert fails, just-created step triggers are rolled back.
+  pre-existing `trigger_ids`, `in_loop` edges for `object_ids`, and `closed_statuses`. A step and
+  a trigger are the same thing; `steps` authors new ones inline, `trigger_ids` attaches existing
+  ones. All ids, types, and statuses are validated against the workspace before anything is
+  created; if the loop insert fails, just-created step triggers are rolled back. The response
+  returns `steps` — each trigger with its resolved agent nested directly under it — rather than a
+  flat trigger-id list plus a separate agent-id list. Creating (or updating) a loop with an
+  effective status of `paused` starts its triggers disabled.
 - **`update_loop`** — rename/status/conditions, `add_steps`, `add_trigger_ids` /
   `remove_trigger_ids` (safe read-modify-write of `metadata.trigger_ids`), `add_object_ids` /
   `remove_object_ids` (membership edges), `closed_statuses`.

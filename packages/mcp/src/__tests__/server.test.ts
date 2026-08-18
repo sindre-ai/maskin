@@ -1466,16 +1466,41 @@ describe('tool handlers', () => {
 						})
 					if (u.includes('/api/actors?ids='))
 						return okJson([
-							{ id: 'agent-1', type: 'agent' },
-							{ id: 'agent-2', type: 'agent' },
+							{ id: 'agent-1', type: 'agent', name: 'Lead Qualifier' },
+							{ id: 'agent-2', type: 'agent', name: 'Sweeper' },
 						])
 					if (u.endsWith('/api/triggers') && method === 'POST') {
 						triggerCounter += 1
 						return okJson({ id: `trig-${triggerCounter}` })
 					}
+					if (u.endsWith('/api/triggers') && (method === 'GET' || method === undefined)) {
+						return okJson([
+							{
+								id: 'trig-1',
+								name: 'Qualify',
+								targetActorId: 'agent-1',
+								actionPrompt: 'Qualify the lead',
+							},
+							{
+								id: 'trig-2',
+								name: 'Weekly sweep',
+								targetActorId: 'agent-2',
+								actionPrompt: 'Sweep stale leads',
+							},
+						])
+					}
 					if (u.endsWith('/api/graph'))
 						return okJson({
-							nodes: [{ $id: 'loop', id: 'loop-1', workspaceId: 'ws-default-123', type: 'loop' }],
+							nodes: [
+								{
+									$id: 'loop',
+									id: 'loop-1',
+									workspaceId: 'ws-default-123',
+									type: 'loop',
+									driver: null,
+									activeSessionId: null,
+								},
+							],
 							edges: [{ id: 'edge-1', type: 'in_loop' }],
 						})
 					throw new Error(`Unexpected fetch: ${method ?? 'GET'} ${u}`)
@@ -1484,8 +1509,8 @@ describe('tool handlers', () => {
 				const handler = getHandler('create_loop')
 				const result = (await handler({
 					name: 'Lead qualification',
-					guarantee: 'Every lead gets an answer',
-					status: 'running',
+					content: 'Every lead gets an answer',
+					status: 'learning',
 					entry_condition: 'A lead is created',
 					close_condition: 'The lead is won or lost',
 					closed_statuses: { lead: ['won', 'lost'] },
@@ -1552,7 +1577,7 @@ describe('tool handlers', () => {
 					type: 'loop',
 					title: 'Lead qualification',
 					content: 'Every lead gets an answer',
-					status: 'running',
+					status: 'learning',
 				})
 				expect(graphBody.nodes[0].metadata.trigger_ids).toEqual(['trig-1', 'trig-2'])
 				expect(graphBody.nodes[0].metadata.entry_condition).toBe('A lead is created')
@@ -1563,8 +1588,21 @@ describe('tool handlers', () => {
 
 				const parsed = JSON.parse(result.content[0].text)
 				expect(parsed.loop.id).toBe('loop-1')
-				expect(parsed.trigger_ids).toEqual(['trig-1', 'trig-2'])
+				expect(parsed.loop.driver).toBeUndefined()
+				expect(parsed.loop.activeSessionId).toBeUndefined()
 				expect(parsed.created_step_trigger_ids).toEqual(['trig-1', 'trig-2'])
+				expect(parsed.steps).toEqual([
+					expect.objectContaining({
+						triggerId: 'trig-1',
+						triggerName: 'Qualify',
+						agent: expect.objectContaining({ id: 'agent-1', name: 'Lead Qualifier' }),
+					}),
+					expect.objectContaining({
+						triggerId: 'trig-2',
+						triggerName: 'Weekly sweep',
+						agent: expect.objectContaining({ id: 'agent-2', name: 'Sweeper' }),
+					}),
+				])
 			})
 
 			it('rejects unknown trigger ids before creating anything', async () => {
@@ -1729,9 +1767,9 @@ describe('tool handlers', () => {
 				expect(relationshipDeletes).toEqual(['rel-old'])
 
 				const parsed = JSON.parse(result.content[0].text)
-				expect(parsed.trigger_ids).toEqual(['trig-old', 'trig-add'])
 				expect(parsed.added_object_ids).toEqual(['obj-new'])
 				expect(parsed.removed_object_ids).toEqual(['obj-gone'])
+				expect(Array.isArray(parsed.steps)).toBe(true)
 			})
 		})
 
@@ -1771,6 +1809,55 @@ describe('tool handlers', () => {
 					reason: expect.stringMatching(/not found/i),
 					next: { tool: 'list_loops', hint: expect.stringContaining('list_loops') },
 				})
+			})
+
+			it('nests each trigger with its resolved agent (id/name/description) under `steps`', async () => {
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+					const u = String(url)
+					if (u.includes('/api/loops?id=loop-1')) {
+						return okJson({
+							loops: [
+								{
+									id: 'loop-1',
+									workspaceId: 'ws-default-123',
+									name: 'Lead loop',
+									triggerIds: ['trig-a', 'trig-b'],
+								},
+							],
+						})
+					}
+					if (u.includes('/api/triggers')) {
+						return okJson([
+							{ id: 'trig-a', name: 'Qualify', targetActorId: 'agent-a' },
+							{ id: 'trig-b', name: 'Capture', targetActorId: null },
+						])
+					}
+					if (u.includes('/api/actors')) {
+						return okJson([
+							{ id: 'agent-a', name: 'Qualifier', description: 'Qualifies inbound leads.' },
+						])
+					}
+					throw new Error(`Unexpected fetch: ${u}`)
+				})
+
+				const handler = getHandler('get_loop')
+				const result = (await handler({ id: 'loop-1' })) as { content: Array<{ text: string }> }
+				const parsed = JSON.parse(result.content[0].text)
+
+				expect(parsed.loop.id).toBe('loop-1')
+				const steps = parsed.steps as Array<{
+					triggerId: string
+					agent: { id: string; name: string; description: string } | null
+				}>
+				expect(steps).toHaveLength(2)
+				expect(steps[0].triggerId).toBe('trig-a')
+				expect(steps[0].agent).toEqual({
+					id: 'agent-a',
+					name: 'Qualifier',
+					description: 'Qualifies inbound leads.',
+				})
+				expect(steps[1].triggerId).toBe('trig-b')
+				expect(steps[1].agent).toBeNull()
 			})
 		})
 
@@ -4414,7 +4501,7 @@ describe('tool handlers', () => {
 		})
 	})
 
-	describe('setup block on create/update responses', () => {
+	describe('setup block on create/update/get responses', () => {
 		const setupOkJson = (data: unknown) =>
 			({ ok: true, headers: new Headers(), json: () => Promise.resolve(data) }) as Response
 
@@ -4586,6 +4673,79 @@ describe('tool handlers', () => {
 			// Primary response still contains the created actor.
 			expect(parsed.id).toBe('actor-1')
 			expect(parsed.setup).toBeUndefined()
+		})
+
+		it('get_actor — response includes a setup block for agents', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const u = String(url)
+				if (u.includes('/api/actors/agent-1')) {
+					return setupOkJson({
+						id: 'agent-1',
+						type: 'agent',
+						name: 'Bot',
+						system_prompt: 'short',
+						tools: { mcpServers: { maskin: {} } },
+						skills: [],
+					})
+				}
+				return setupOkJson([])
+			})
+			const handler = getHandler('get_actor')
+			const result = (await handler({ id: 'agent-1' })) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.setup).toBeDefined()
+			expect(Array.isArray(parsed.setup.checks)).toBe(true)
+			expect(
+				parsed.setup.checks.some((c: { name: string }) => c.name === 'system_prompt_quality'),
+			).toBe(true)
+			expect(parsed.setup.checks.some((c: { name: string }) => c.name === 'mcp_configured')).toBe(
+				true,
+			)
+		})
+
+		it('get_actor — stays bare for human actors', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const u = String(url)
+				if (u.includes('/api/actors/human-1')) {
+					return setupOkJson({ id: 'human-1', type: 'human', name: 'Alice' })
+				}
+				return setupOkJson([])
+			})
+			const handler = getHandler('get_actor')
+			const result = (await handler({ id: 'human-1' })) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.setup).toBeUndefined()
+		})
+
+		it('get_loop — response includes a setup block', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const u = String(url)
+				if (u.includes('/api/loops?id=loop-1')) {
+					return setupOkJson({
+						loops: [
+							{
+								id: 'loop-1',
+								workspaceId: 'ws-default-123',
+								name: 'Test loop',
+								entryCondition: null,
+								closeCondition: null,
+								triggerIds: [],
+								inProgressCount: 0,
+								closedCount: 0,
+							},
+						],
+					})
+				}
+				return setupOkJson([])
+			})
+			const handler = getHandler('get_loop')
+			const result = (await handler({ id: 'loop-1' })) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.setup).toBeDefined()
+			expect(Array.isArray(parsed.setup.checks)).toBe(true)
+			expect(parsed.setup.checks.some((c: { name: string }) => c.name === 'conditions_set')).toBe(
+				true,
+			)
 		})
 	})
 })

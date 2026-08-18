@@ -209,9 +209,9 @@ app.openapi(listInstalledLoopsRoute, async (c) => {
 // in packages/db/src/schema.ts. `metadata.trigger_ids` is seeded with every
 // trigger this install provisions so `GET /api/loops` picks up the right
 // agents (it derives `agentIds` from each trigger's `targetActorId`).
-// `entry_condition` / `close_condition` / `human_decision_points` are
-// deliberately left unset — a marketplace install has no authored pipeline
-// definition, only the running process.
+// `entry_condition` / `close_condition` are deliberately left unset — a
+// marketplace install has no authored pipeline definition, only the running
+// process.
 const installLoopRoute = createRoute({
 	method: 'post',
 	path: '/',
@@ -511,7 +511,11 @@ app.openapi(installLoopRoute, async (c) => {
 					type: 'loop',
 					title: loop.name,
 					content: loop.description,
-					status: 'running',
+					// Marketplace templates are pre-vetted, but the loop is still new to
+					// this workspace's data — start it at `learning` rather than
+					// `fully_autonomous` so its first runs get a look before it's fully
+					// trusted here.
+					status: 'learning',
 					createdBy: actorId,
 					metadata: {
 						installed_from_marketplace_loop_id: loopId,
