@@ -3225,19 +3225,30 @@ export function createMcpServer(config: McpConfig) {
 			const result = (await apiCall(config, 'GET', `/api/actors/${args.id}`, undefined, {
 				skipWorkspace: true,
 			})) as RawActor
-			const heroCard: HeroCardPayload = {
-				kind: 'single',
-				tool: 'get_actor',
-				object: buildActorHeroCardObject(result, true),
-			}
-			const workspaceId = (args as { workspace_id?: string }).workspace_id
+			const workspaceId = args.workspace_id
 			const wsId = workspaceId ?? config.defaultWorkspaceId
-			const withUrl = wsId
+			// Connected triggers/loops only resolve for a single, known workspace —
+			// mirrors list_actors' resolveActorLinks call.
+			const actorLinks = wsId ? await resolveActorLinks(config, wsId) : null
+			const connectedTriggers = actorLinks?.triggersByActor.get(result.id)
+			const connectedLoops = actorLinks?.loopsByActor.get(result.id)
+			let heroObject = buildActorHeroCardObject(result, true)
+			if (connectedTriggers?.length) heroObject = { ...heroObject, connectedTriggers }
+			if (connectedLoops?.length) heroObject = { ...heroObject, connectedLoops }
+			let withUrl: Record<string, unknown> = wsId
 				? addUrl(result as unknown as Record<string, unknown>, config, wsId, {
 						kind: 'actor',
 						id: result.id,
 					})
-				: result
+				: (result as unknown as Record<string, unknown>)
+			if (connectedTriggers?.length) withUrl = { ...withUrl, connectedTriggers }
+			if (connectedLoops?.length) withUrl = { ...withUrl, connectedLoops }
+			if (wsId) heroObject = { ...heroObject, url: pickUrl(withUrl) }
+			const heroCard: HeroCardPayload = {
+				kind: 'single',
+				tool: 'get_actor',
+				object: heroObject,
+			}
 			return {
 				_meta: uiMeta('get_actor', config, workspaceId, UI_RESOURCES.heroCard),
 				content: [{ type: 'text' as const, text: JSON.stringify(withUrl) }],

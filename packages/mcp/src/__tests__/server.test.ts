@@ -3670,6 +3670,81 @@ describe('tool handlers', () => {
 			})
 		})
 
+		it('get_actor includes connectedTriggers/connectedLoops when workspace_id is given', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/actors/a-1')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve({ id: 'a-1', type: 'agent', name: 'Designer', email: null }),
+					} as Response
+				}
+				if (urlStr.includes('/api/triggers')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve([{ id: 't-1', name: 'Nightly review', targetActorId: 'a-1' }]),
+					} as Response
+				}
+				if (urlStr.includes('/api/loops')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve({
+								loops: [{ id: 'l-1', name: 'Architecture review', agentIds: ['a-1'] }],
+							}),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+			const handler = getHandler('get_actor')
+			const result = (await handler({ id: 'a-1', workspace_id: 'ws-1' })) as {
+				content: Array<{ text: string }>
+				structuredContent: {
+					heroCard: {
+						object?: {
+							connectedTriggers?: Array<{ name: string }>
+							connectedLoops?: Array<{ name: string }>
+						}
+					}
+				}
+			}
+			const obj = result.structuredContent.heroCard.object
+			expect(obj?.connectedTriggers).toEqual([{ name: 'Nightly review' }])
+			expect(obj?.connectedLoops).toEqual([{ name: 'Architecture review' }])
+			// The text content channel carries the same links as the raw record.
+			const parsed = JSON.parse(result.content[0].text) as {
+				connectedTriggers?: Array<{ name: string }>
+				connectedLoops?: Array<{ name: string }>
+			}
+			expect(parsed.connectedTriggers).toEqual([{ name: 'Nightly review' }])
+			expect(parsed.connectedLoops).toEqual([{ name: 'Architecture review' }])
+		})
+
+		it('get_actor omits connectedTriggers/connectedLoops when the actor has no links', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/actors/a-1')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve({ id: 'a-1', type: 'agent', name: 'Designer', email: null }),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+			const handler = getHandler('get_actor')
+			const result = (await handler({ id: 'a-1' })) as {
+				structuredContent: {
+					heroCard: { object?: { connectedTriggers?: unknown; connectedLoops?: unknown } }
+				}
+			}
+			const obj = result.structuredContent.heroCard.object
+			expect(obj && 'connectedTriggers' in obj).toBe(false)
+			expect(obj && 'connectedLoops' in obj).toBe(false)
+		})
+
 		it('emits a list heroCard for list_workspaces with type=workspace rows', async () => {
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
 				const urlStr = url as string
