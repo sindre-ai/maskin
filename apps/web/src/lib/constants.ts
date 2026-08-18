@@ -1,3 +1,5 @@
+import { Lightbulb, type LucideIcon, SquareCheck, Target } from 'lucide-react'
+
 export const statusColors: Record<string, { bg: string; text: string }> = {
 	new: { bg: 'bg-status-new-bg', text: 'text-status-new-text' },
 	todo: { bg: 'bg-status-todo-bg', text: 'text-status-todo-text' },
@@ -32,12 +34,23 @@ export const statusColors: Record<string, { bg: string; text: string }> = {
 	snapshotting: { bg: 'bg-status-processing-bg', text: 'text-status-processing-text' },
 	waiting_for_input: { bg: 'bg-status-blocked-bg', text: 'text-status-blocked-text' },
 	timeout: { bg: 'bg-status-failed-bg', text: 'text-status-failed-text' },
+	// Billing lifecycle. Without these, StatusBadge falls through to its
+	// hardcoded zinc-700/zinc-300 default, which is a dark pill with low-contrast
+	// text on a white invoice row. `past_due` and `canceled` are included because
+	// apps/dev/src/routes/billing.ts can write them.
+	paid: { bg: 'bg-status-succeeded-bg', text: 'text-status-succeeded-text' },
+	inactive: { bg: 'bg-status-parked-bg', text: 'text-status-parked-text' },
+	past_due: { bg: 'bg-status-at_risk-bg', text: 'text-status-at_risk-text' },
+	canceled: { bg: 'bg-status-discarded-bg', text: 'text-status-discarded-text' },
 }
 
-export const typeIcons: Record<string, string> = {
-	insight: '💡',
-	bet: '🎯',
-	task: '☐',
+// Lucide glyphs per object type, for the TypeBadge tile. These replaced an
+// emoji map (💡 🎯 ☐) that nothing rendered — the design system forbids emoji
+// outright, so it could only ever have been a latent violation.
+export const typeIcons: Record<string, LucideIcon> = {
+	insight: Lightbulb,
+	bet: Target,
+	task: SquareCheck,
 }
 
 export const typeColors: Record<string, { bg: string; text: string }> = {

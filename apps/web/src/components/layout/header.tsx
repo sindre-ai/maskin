@@ -74,6 +74,11 @@ const routeConfig: Record<string, RouteConfig> = {
 		primary: 'loop',
 	},
 	'/_authed/$workspaceId/loops/': { label: 'Loops', primary: 'loop' },
+	'/_authed/$workspaceId/loops/new': {
+		label: 'New loop',
+		parent: '/_authed/$workspaceId/loops/',
+		primary: 'loop',
+	},
 	'/_authed/$workspaceId/loops/$loopId': {
 		label: 'Loop Details',
 		parent: '/_authed/$workspaceId/loops/',

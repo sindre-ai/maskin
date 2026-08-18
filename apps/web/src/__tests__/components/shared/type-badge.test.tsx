@@ -25,4 +25,24 @@ describe('TypeBadge', () => {
 		const badge = screen.getByText('insight')
 		expect(badge.className).not.toContain('uppercase')
 	})
+
+	it('renders the tile variant as a tinted square carrying the type glyph', () => {
+		const { container } = render(<TypeBadge type="bet" variant="tile" />)
+		const tile = container.firstElementChild as HTMLElement
+		expect(tile.className).toContain('bg-type-bet-bg')
+		expect(tile.className).toContain('size-[30px]')
+		expect(tile.querySelector('svg')).toBeInTheDocument()
+	})
+
+	it('sizes the tile up for list rows and detail headers', () => {
+		const { container } = render(<TypeBadge type="task" variant="tile" size="lg" />)
+		expect((container.firstElementChild as HTMLElement).className).toContain('size-[38px]')
+	})
+
+	it('falls back to a neutral tile for an unknown extension type', () => {
+		const { container } = render(<TypeBadge type="mystery" variant="tile" />)
+		const tile = container.firstElementChild as HTMLElement
+		expect(tile.className).toContain('bg-muted')
+		expect(tile.querySelector('svg')).toBeNull()
+	})
 })
