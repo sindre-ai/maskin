@@ -8,7 +8,7 @@ This skill exists so any Maskin surface — product screens, decks, docs, throwa
 
 The parent bet's owner decision on 2026-08-14 switched the design source of truth to `Maskin App v2 Standalone.html` and replaced the earlier warm-paper direction. This skill is the reference the v2 rebuild reads from — colours, radii, shadows, type, motion, and the shared component vocabulary all come out of this file.
 
-Note on scope: the v2 file bundles **one prototype — the For You feed, v4**, packaged as a self-contained "bundled page." It fully specifies the For You route and, through its top-nav row, filter chips, card recipes, menu popovers and modal viewer, defines the shared vocabulary the other routes must reuse. The other routes do **not** have per-view v2 mockups; the audit walks them against the tokens and patterns extracted from this file. `MOCKUP-INDEX.md` names which routes read from a specific section and which extrapolate.
+Note on scope: the v2 file is the **full app prototype** — one shell containing all fourteen product screens, flattened so the For You feed (formerly a separate imported document) is inlined. It specifies every route, plus the shared vocabulary they hold in common: sidebar and icon rail, top-nav row, filter chips, card recipes, menu popovers, modals and overlays. `MOCKUP-INDEX.md` maps each screen to its line range and its owning route.
 
 Key deltas from the earlier warm-paper direction:
 
@@ -111,7 +111,7 @@ Empty states use the same vocabulary as cards — a 12–14px-radius card with `
 
 The v2 mockup renders the For You feed's patterns in full. Enumerated from the mockup plus `apps/web/src/components/` in the shipped app:
 
-- **In the v2 mockup (line refs in `MOCKUP-INDEX.md`)** — top nav row (tabs + filter chips + `···` more menu + view menu + settings icon), grouped-card container, feed card (row / full / collapsed / done), send affordance, dismissed tail, modal viewer (post / mail / visual / body).
+- **In the v2 mockup (line refs in `MOCKUP-INDEX.md`)** — sidebar + icon rail, top nav row (per-screen title, workspace search, split New button + menu), grouped-card container, feed card (row / full / collapsed / done), send affordance, dismissed tail, modal viewer (post / mail / visual / body), command palette, create picker, properties sidebar, and the per-screen sections listed in the index.
 - `components/ui/` (shadcn / Radix primitives) — Button, ButtonGroup, Input, Textarea, Label, Select, Checkbox, RadioGroup, Switch, Badge, Card, Separator, Tabs, Table, Tooltip, Popover, DropdownMenu, Dialog, Sheet, Breadcrumb, Calendar, Collapsible, Skeleton, Spinner.
 - `components/objects/` — TypeBadge, StatusBadge, ObjectReference, MetadataBadges, VerifiedChip, LoopCard, BetCard, LinkedObjects, RelatedObjectsTable, BulkActionBar, PropertySelect, FieldValueInput.
 - `components/activity/` — ActivityComment, ActivityItem, ActionBanner, PhaseDivider, DecisionChips, RelationshipNode, CommentInput, UndoWriteChip, PendingCommentRow, MentionSessionCard, StreamingIndicator.
@@ -124,7 +124,7 @@ The v2 mockup renders the For You feed's patterns in full. Enumerated from the m
 | Path | What |
 |---|---|
 | `maskin-app-v2.html` | The bundled v2 mockup — open in a browser to walk it side-by-side. |
-| `maskin-app-v2.dc.html` + `support.js` | The extracted `.dc` markup + runtime. Read the markup by line using `MOCKUP-INDEX.md`. Does not render standalone — open the bundle above for that. |
+| `maskin-app-v2.dc.html` + `support.js` | The flattened `.dc` markup (9048 lines: markup 1–3469, runtime script 3470–9048) + its runtime. Read the markup by line using `MOCKUP-INDEX.md`. Does not render standalone — open the bundle above for that. |
 | `MOCKUP-INDEX.md` | Section → route/component map. Start here when reviewing a screen. |
 | `tokens/colors.css` | Zinc + indigo palette, semantic, object-type, and agent-identity tokens; dark-mode swap. |
 | `tokens/typography.css` | Families, weights, dense size scale, line-heights, tracking, and named recipes. |
