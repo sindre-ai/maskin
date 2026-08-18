@@ -5095,24 +5095,25 @@ export function createMcpServer(config: McpConfig) {
 						getId: (row) => row.id as string,
 					})
 				: { page: loops, nextCursor: null }
-			const enriched = pagedLoops.map((loop) =>
-				addUrl(loop, config, (loop.workspaceId as string | undefined) ?? wsId, {
+			// Deliberately lean: id/workspaceId/name/url only, so listing many
+			// loops stays cheap. Live stats, conditions, steps, and the rest of
+			// the loop row live on get_loop — call it with a specific id to get
+			// the full picture (and the trigger+agent-nested `steps` view).
+			const enriched = pagedLoops.map((loop) => {
+				const trimmed: Record<string, unknown> = {
+					id: loop.id,
+					workspaceId: loop.workspaceId,
+					name: loop.name,
+				}
+				return addUrl(trimmed, config, (loop.workspaceId as string | undefined) ?? wsId, {
 					kind: 'loop',
 					id: loop.id as string,
-				}),
-			)
-			const summaryRows: SummaryRow[] = enriched.map((loop) => {
-				const status = typeof loop.status === 'string' ? loop.status : undefined
-				const openness =
-					loop.closed === false ? 'open' : loop.closed === true ? 'closed' : undefined
-				const metaParts = [status, openness].filter((v): v is string => Boolean(v))
-				return {
-					title:
-						typeof loop.title === 'string' && loop.title.length > 0 ? loop.title : 'Untitled loop',
-					url: pickUrl(loop),
-					meta: metaParts.length > 0 ? metaParts.join(' · ') : undefined,
-				}
+				})
 			})
+			const summaryRows: SummaryRow[] = enriched.map((loop) => ({
+				title: typeof loop.name === 'string' && loop.name.length > 0 ? loop.name : 'Untitled loop',
+				url: pickUrl(loop),
+			}))
 			return {
 				_meta: meta('list_loops', config, (args as { workspace_id?: string }).workspace_id),
 				content: [
