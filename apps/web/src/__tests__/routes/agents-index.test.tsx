@@ -24,7 +24,12 @@ vi.mock('@/hooks/use-sessions', () => ({
 	useWorkspaceSessions: (wsId?: string) => useWorkspaceSessionsMock(wsId),
 }))
 vi.mock('@/components/layout/page-header', () => ({
-	PageHeader: ({ title }: { title: string }) => <h1>{title}</h1>,
+	PageHeader: ({ title, subtitle }: { title: string; subtitle?: string }) => (
+		<h1>
+			{title}
+			{subtitle ? <span>{subtitle}</span> : null}
+		</h1>
+	),
 }))
 vi.mock('@/components/shared/create-picker', () => ({
 	CreatePicker: () => null,
@@ -32,10 +37,15 @@ vi.mock('@/components/shared/create-picker', () => ({
 }))
 vi.mock('@/components/shared/route-error', () => ({ RouteError: () => <div>Error</div> }))
 vi.mock('@/components/shared/empty-state', () => ({
-	EmptyState: ({ title }: { title: string }) => <div>{title}</div>,
+	EmptyState: ({ title, action }: { title: string; action?: React.ReactNode }) => (
+		<div>
+			{title}
+			{action}
+		</div>
+	),
 }))
 vi.mock('@/components/shared/loading-skeleton', () => ({
-	CardSkeleton: () => <div data-testid="card-skeleton" />,
+	ListSkeleton: () => <div data-testid="list-skeleton" />,
 }))
 
 type ViewCapture = { lastProps: Record<string, unknown> | null }
@@ -66,21 +76,36 @@ beforeEach(() => {
 })
 
 describe('AgentsPage', () => {
-	it('shows loading skeletons while actors are loading', () => {
+	it('shows a row-shaped loading skeleton while actors are loading', () => {
 		useActorsMock.mockReturnValue({ data: undefined, isLoading: true })
 		mount()
-		expect(screen.getAllByTestId('card-skeleton')).toHaveLength(3)
+		// The loaded surface is a row list, so the skeleton must preview rows.
+		expect(screen.getByTestId('list-skeleton')).toBeInTheDocument()
 		expect(screen.queryByTestId('agents-index-view')).not.toBeInTheDocument()
 	})
 
-	it('shows an empty state when the workspace has no agents', () => {
+	it('shows the zero state with a create action when the workspace has no agents', () => {
 		useActorsMock.mockReturnValue({
 			data: [buildActorListItem({ type: 'human' })],
 			isLoading: false,
 		})
 		mount()
-		expect(screen.getByText('No agents in this workspace')).toBeInTheDocument()
+		expect(screen.getByText('Nobody on this team yet.')).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Create an agent' })).toBeInTheDocument()
 		expect(screen.queryByTestId('agents-index-view')).not.toBeInTheDocument()
+	})
+
+	it('publishes the title and the agent count to the nav row', () => {
+		useActorsMock.mockReturnValue({
+			data: [
+				buildActorListItem({ id: 'agent-a', type: 'agent' }),
+				buildActorListItem({ id: 'agent-b', type: 'agent' }),
+			],
+			isLoading: false,
+		})
+		mount()
+		expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Agents')
+		expect(screen.getByText('2 agents · each owns one outcome')).toBeInTheDocument()
 	})
 
 	it('passes only agent-typed actors and their sessions to the index view', () => {

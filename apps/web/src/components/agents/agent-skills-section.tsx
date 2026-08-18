@@ -1,3 +1,4 @@
+import { AgentSectionHeading } from '@/components/agents/agent-section-heading'
 import { Skills } from '@/components/agents/skills'
 import { Button } from '@/components/ui/button'
 import { useAgentSkillAttachments } from '@/hooks/use-agent-skill-attachments'
@@ -17,30 +18,32 @@ export function AgentSkillsSection({ agent }: { agent: ActorResponse }) {
 	const total = workspaceCount + personalCount
 
 	return (
-		<section
-			aria-label="Skills"
-			className="overflow-hidden rounded-xl border border-border bg-card"
-		>
-			<div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2.5">
-				<span className="eyebrow">Skills</span>
-				<span
-					className="text-[11px] tabular-nums text-muted-foreground"
-					aria-label={`${total} skill${total === 1 ? '' : 's'} attached`}
-				>
-					· {total}
-				</span>
-				<Button
-					type="button"
-					size="sm"
-					variant="ghost"
-					className="ml-auto h-7 px-2 text-xs font-medium"
-					aria-pressed={managing}
-					onClick={() => setManaging((v) => !v)}
-				>
-					{managing ? 'Done' : 'Manage'}
-				</Button>
-			</div>
-			<div className="px-4 py-4">
+		<section aria-labelledby="agent-skills-heading" className="flex flex-col gap-2.5">
+			<AgentSectionHeading
+				id="agent-skills-heading"
+				title="Skills"
+				note={
+					<span
+						className="shrink-0 text-[11px] tabular-nums text-muted-foreground"
+						aria-label={`${total} skill${total === 1 ? '' : 's'} attached`}
+					>
+						· {total}
+					</span>
+				}
+				action={
+					<Button
+						type="button"
+						size="sm"
+						variant="ghost"
+						className="h-7 shrink-0 px-2 text-xs font-medium"
+						aria-pressed={managing}
+						onClick={() => setManaging((v) => !v)}
+					>
+						{managing ? 'Done' : 'Manage'}
+					</Button>
+				}
+			/>
+			<div className="rounded-xl border border-border bg-card px-4 py-4">
 				<Skills actorId={agent.id} readOnly={!managing} />
 			</div>
 		</section>

@@ -30,23 +30,29 @@ test.describe('Agent detail — Instructions section + edit modal', () => {
 			// Warning must be visible on touch viewports too (no hover-reveal).
 			await expect(dialog.getByRole('button', { name: 'Save' })).toBeVisible()
 
-			// EDITED badge appears once the draft diverges from the saved value.
-			await expect(dialog.getByText(/edited/i)).toBeHidden()
+			// The badge reports unsaved changes — there is no stored default prompt
+			// to diff against, so it never claims "edited away from default".
+			await expect(dialog.getByText(/unsaved/i)).toBeHidden()
 			const textarea = dialog.getByLabel('System prompt')
 			await textarea.fill(edited)
-			await expect(dialog.getByText(/edited/i)).toBeVisible()
+			await expect(dialog.getByText(/unsaved/i)).toBeVisible()
 
-			// Reset restores the saved value and clears the EDITED state.
-			await dialog.getByRole('button', { name: /reset to default/i }).click()
+			// The meta line under the textarea tracks the draft (mockup 3089).
+			await expect(dialog.getByText(/\d+ paragraphs? · \d+ words?/)).toBeVisible()
+
+			// Revert restores the saved value and clears the unsaved state.
+			await dialog.getByRole('button', { name: /revert changes/i }).click()
 			await expect(textarea).toHaveValue(original)
-			await expect(dialog.getByText(/edited/i)).toBeHidden()
+			await expect(dialog.getByText(/unsaved/i)).toBeHidden()
 
 			// Edit again and save.
 			await textarea.fill(edited)
 			await dialog.getByRole('button', { name: 'Save' }).click()
 
-			// Dialog closes.
+			// Dialog closes, and the toast confirms the save rather than repeating
+			// the running-sessions caveat already shown inline.
 			await expect(dialog).toBeHidden()
+			await expect(page.getByText('Instructions saved')).toBeVisible()
 
 			// Persisted value shows on the surface after save.
 			await expect(section.getByText(edited)).toBeVisible()
@@ -91,6 +97,36 @@ test.describe('Agent detail — Instructions section + edit modal', () => {
 			await expect(section.getByText(original)).toBeVisible()
 			const refreshed = await account.api.getActor(agent.id)
 			expect(refreshed.system_prompt).toBe(original)
+		})
+		test(`collapses a long prompt behind Show all @ ${vp.label}`, async ({ page, account }) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+
+			const paragraphs = [
+				'First paragraph of a very long system prompt.',
+				'Second paragraph that still fits above the fold.',
+				'Third paragraph that must be hidden until expanded.',
+				'Fourth paragraph that must be hidden until expanded.',
+			]
+			const agent = await account.api.createAgentActor('Lon Longprompt')
+			await account.api.addWorkspaceMember(account.workspaceId, agent.id)
+			await account.api.updateActor(agent.id, { system_prompt: paragraphs.join('\n\n') })
+
+			await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
+			const section = page.getByRole('region', { name: 'Instructions' })
+			await expect(section).toBeVisible({ timeout: 10_000 })
+
+			// Only the first two paragraphs render until expanded.
+			await expect(section.getByText(paragraphs[0])).toBeVisible()
+			await expect(section.getByText(paragraphs[1])).toBeVisible()
+			await expect(section.getByText(paragraphs[3])).toHaveCount(0)
+
+			const toggle = section.getByRole('button', { name: /Show all \d+ lines/ })
+			await expect(toggle).toBeVisible()
+			await toggle.click()
+			await expect(section.getByText(paragraphs[3])).toBeVisible()
+
+			await section.getByRole('button', { name: 'Show less' }).click()
+			await expect(section.getByText(paragraphs[3])).toHaveCount(0)
 		})
 	}
 })

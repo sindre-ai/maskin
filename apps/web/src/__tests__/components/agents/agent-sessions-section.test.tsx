@@ -16,12 +16,15 @@ vi.mock('@tanstack/react-router', async () => {
 })
 
 const sessionsData = vi.fn()
+const createSessionMutate = vi.fn()
 
 vi.mock('@/hooks/use-sessions', () => ({
 	useWorkspaceSessions: () => ({ data: sessionsData(), isLoading: false }),
 	useSessionLogs: () => ({ data: [], isLoading: false }),
-	useCreateSession: () => ({ mutate: vi.fn(), isPending: false }),
+	useCreateSession: () => ({ mutate: createSessionMutate, isPending: false }),
 }))
+
+vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 vi.mock('@/hooks/use-events', () => ({
 	useSessionAffectedObjects: () => ({ affectedObjects: [], isLoading: false }),
@@ -31,6 +34,40 @@ describe('AgentSessionsSection', () => {
 	beforeEach(() => {
 		navigateMock.mockReset()
 		sessionsData.mockReset()
+		createSessionMutate.mockReset()
+	})
+
+	it('offers Restart on a running session and reruns the same prompt', async () => {
+		const agent = buildActorResponse({ id: 'agent-a', type: 'agent' })
+		sessionsData.mockReturnValue([
+			buildSessionResponse({
+				id: 's-run',
+				actorId: 'agent-a',
+				status: 'running',
+				actionPrompt: 'Sweep the backlog',
+			}),
+		])
+		render(<AgentSessionsSection agent={agent} />, { wrapper: createWorkspaceWrapper() })
+
+		await userEvent.click(screen.getAllByRole('button', { name: /restart/i })[0])
+		expect(createSessionMutate).toHaveBeenCalledWith(
+			{ actor_id: 'agent-a', action_prompt: 'Sweep the backlog' },
+			expect.anything(),
+		)
+	})
+
+	it('does not offer Restart on a completed session', () => {
+		const agent = buildActorResponse({ id: 'agent-a', type: 'agent' })
+		sessionsData.mockReturnValue([
+			buildSessionResponse({
+				id: 's-done',
+				actorId: 'agent-a',
+				status: 'completed',
+				actionPrompt: 'Already finished',
+			}),
+		])
+		render(<AgentSessionsSection agent={agent} />, { wrapper: createWorkspaceWrapper() })
+		expect(screen.queryByRole('button', { name: /restart/i })).not.toBeInTheDocument()
 	})
 
 	it('renders the section header with a running count for active sessions', () => {
@@ -43,7 +80,20 @@ describe('AgentSessionsSection', () => {
 		render(<AgentSessionsSection agent={agent} />, { wrapper: createWorkspaceWrapper() })
 
 		expect(screen.getByRole('heading', { name: 'Sessions', level: 2 })).toBeInTheDocument()
-		expect(screen.getByText('1 running')).toBeInTheDocument()
+		// Mockup 2427 — the note says what you can do here, not how many are running.
+		expect(screen.getByText('open, pause or restart')).toBeInTheDocument()
+	})
+
+	it('turns the section note amber while the agent itself is paused', () => {
+		const agent = buildActorResponse({ id: 'agent-a', type: 'agent', agentState: 'paused' })
+		sessionsData.mockReturnValue([
+			buildSessionResponse({ id: 's-1', actorId: 'agent-a', status: 'paused' }),
+		])
+		render(<AgentSessionsSection agent={agent} />, { wrapper: createWorkspaceWrapper() })
+
+		const note = screen.getByText('held where they stopped — enable the agent to resume')
+		expect(note).toBeInTheDocument()
+		expect(note.className).toContain('text-warning')
 	})
 
 	it('shows an empty-state hint when the agent has no sessions', () => {

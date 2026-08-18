@@ -1,4 +1,8 @@
-import { AgentUsageBlock } from '@/components/agents/agent-usage-block'
+import {
+	AgentUsageBlock,
+	describeBudget,
+	readTokenBudget,
+} from '@/components/agents/agent-usage-block'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -108,7 +112,8 @@ describe('AgentUsageBlock', () => {
 		const deltas = screen.getAllByText(/\+50%|\+150%|\+\d+%/)
 		expect(deltas.length).toBeGreaterThan(0)
 		expect(screen.getByText('TOKENS / MONTH')).toBeInTheDocument()
-		expect(screen.getByText(/Budget: No cap/)).toBeInTheDocument()
+		// No cap configured — the budget row reports the month's spend instead.
+		expect(screen.getByText(/No cap — .* this month/)).toBeInTheDocument()
 	})
 
 	it('switches the range when a period tab is clicked', async () => {
@@ -130,5 +135,27 @@ describe('AgentUsageBlock', () => {
 			wrapper: createWorkspaceWrapper(),
 		})
 		expect(await screen.findAllByText('No usage yet')).not.toHaveLength(0)
+	})
+})
+
+describe('budget helpers', () => {
+	it('reads a positive numeric cap out of the agent llm_config', () => {
+		expect(readTokenBudget({ token_budget_month: 1_000_000 })).toBe(1_000_000)
+		expect(readTokenBudget({ token_budget_month: '2500000' })).toBe(2_500_000)
+	})
+
+	it('treats a missing, zero, negative or unparseable cap as no cap', () => {
+		expect(readTokenBudget(null)).toBeNull()
+		expect(readTokenBudget({})).toBeNull()
+		expect(readTokenBudget({ token_budget_month: 0 })).toBeNull()
+		expect(readTokenBudget({ token_budget_month: -5 })).toBeNull()
+		expect(readTokenBudget({ token_budget_month: 'unlimited' })).toBeNull()
+	})
+
+	it('reports utilisation, over-budget and no-cap in plain language', () => {
+		expect(describeBudget(250_000, 1_000_000)).toBe('25% of the monthly budget used')
+		expect(describeBudget(0, 1_000_000)).toBe('0% of the monthly budget used')
+		expect(describeBudget(1_200_000, 1_000_000)).toMatch(/^Over budget — .+ this month$/)
+		expect(describeBudget(4_200, null)).toMatch(/^No cap — .+ this month$/)
 	})
 })

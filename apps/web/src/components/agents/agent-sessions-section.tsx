@@ -1,14 +1,24 @@
+import { AgentSectionHeading } from '@/components/agents/agent-section-heading'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
-import { useWorkspaceSessions } from '@/hooks/use-sessions'
+import { useCreateSession, useWorkspaceSessions } from '@/hooks/use-sessions'
 import type { ActorResponse, SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { formatDurationBetween } from '@/lib/format-duration'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
-import { AlertCircle, CheckCircle2, ChevronDown, ChevronUp, Clock, PauseCircle } from 'lucide-react'
+import {
+	AlertCircle,
+	CheckCircle2,
+	ChevronDown,
+	ChevronUp,
+	Clock,
+	PauseCircle,
+	RotateCcw,
+} from 'lucide-react'
 import { useMemo, useState } from 'react'
+import { toast } from 'sonner'
 import { SessionDetailPanel } from './session-detail-panel'
 
 type SessionState = 'running' | 'waiting' | 'paused' | 'completed' | 'failed'
@@ -141,32 +151,25 @@ export function AgentSessionsSection({ agent }: { agent: ActorResponse }) {
 		return list.sort(sortSessions)
 	}, [sessions, agent.id])
 
-	const runningCount = useMemo(
-		() => agentSessions.filter((s) => isActive(deriveState(s.status))).length,
-		[agentSessions],
-	)
+	// Mockup 2427: the note tells you what you can do here, and turns amber to
+	// explain why nothing is moving while the agent itself is paused.
+	const isAgentPaused = agent.agentState === 'paused'
+	const note = isAgentPaused
+		? 'held where they stopped — enable the agent to resume'
+		: 'open, pause or restart'
 
 	return (
-		<section
-			aria-labelledby="agent-sessions-heading"
-			className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4"
-		>
-			<div className="flex items-center gap-2">
-				<h2
-					id="agent-sessions-heading"
-					className="text-sm font-semibold tracking-tight text-foreground"
-				>
-					Sessions
-				</h2>
-				<span className="text-[11px] text-muted-foreground">
-					{runningCount > 0
-						? `${runningCount} running`
-						: agentSessions.length > 0
-							? `${agentSessions.length} total`
-							: 'none yet'}
-				</span>
-				<div className="mx-2 h-px flex-1 bg-border" aria-hidden />
-			</div>
+		<section aria-labelledby="agent-sessions-heading" className="flex flex-col gap-2.5">
+			<AgentSectionHeading
+				id="agent-sessions-heading"
+				title="Sessions"
+				note={note}
+				noteClassName={
+					isAgentPaused
+						? 'min-w-0 truncate text-[11px] text-warning'
+						: 'min-w-0 truncate text-[11px] text-muted-foreground'
+				}
+			/>
 
 			{isLoading ? (
 				<div className="flex items-center justify-center py-6">
@@ -218,10 +221,41 @@ function SessionCard({
 	const navigate = useNavigate()
 	const { workspaceId } = useWorkspace()
 
+	const createSession = useCreateSession(workspaceId)
+
 	const name = session.actionPrompt?.trim() || 'Untitled session'
 	const duration = formatDurationBetween(session.startedAt, session.completedAt)
 	const phases = useMemo(() => derivePhases(session, state), [session, state])
 	const StateIcon = meta.Icon
+
+	// Mockup 2444 offers Restart on running / paused / waiting rows. There is no
+	// restart endpoint — a restart is a fresh run of the same prompt, which is
+	// exactly what `useCreateSession` does.
+	const prompt = session.actionPrompt?.trim() ?? ''
+	const canRestart =
+		prompt.length > 0 && (state === 'running' || state === 'paused' || state === 'waiting')
+
+	const handleRestart = () =>
+		createSession.mutate(
+			{ actor_id: agent.id, action_prompt: prompt },
+			{
+				onSuccess: () => toast.success('Session restarted'),
+				onError: () => toast.error(`Couldn't restart this session for ${agent.name}`),
+			},
+		)
+
+	const restartButton = (
+		<Button
+			size="sm"
+			variant="outline"
+			className="h-7 rounded-md px-2.5 text-xs"
+			onClick={handleRestart}
+			disabled={createSession.isPending}
+		>
+			<RotateCcw size={12} aria-hidden />
+			{createSession.isPending ? 'Restarting…' : 'Restart'}
+		</Button>
+	)
 
 	return (
 		<div
@@ -258,6 +292,7 @@ function SessionCard({
 				>
 					{meta.label}
 				</span>
+				{canRestart && <span className="hidden shrink-0 md:inline-flex">{restartButton}</span>}
 				<button
 					type="button"
 					onClick={() => setOpen((v) => !v)}
@@ -318,6 +353,7 @@ function SessionCard({
 						>
 							Full log
 						</Button>
+						{canRestart && <span className="md:hidden">{restartButton}</span>}
 					</div>
 				</div>
 			)}

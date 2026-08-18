@@ -1,12 +1,15 @@
 import { AgentsIndexView } from '@/components/agents/agents-index-view'
+import { PageHeader } from '@/components/layout/page-header'
 import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picker'
 import { EmptyState } from '@/components/shared/empty-state'
-import { CardSkeleton } from '@/components/shared/loading-skeleton'
+import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
+import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useWorkspaceSessions } from '@/hooks/use-sessions'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
+import { Users } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/agents/')({
@@ -32,14 +35,17 @@ function AgentsPage() {
 
 	const agents = useMemo(() => (actors ?? []).filter((a) => a.type === 'agent'), [actors])
 
+	// The nav row draws the title and this muted count — PageHeader renders
+	// nothing inline (mockup's `agentsHeadSub`).
+	const subtitle = agents.length
+		? `${agents.length} agent${agents.length === 1 ? '' : 's'} · each owns one outcome`
+		: undefined
+
 	if (isLoading) {
 		return (
 			<div>
-				<div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
-					<CardSkeleton />
-					<CardSkeleton />
-					<CardSkeleton />
-				</div>
+				<PageHeader title="Agents" />
+				<ListSkeleton />
 				<CreatePicker
 					open={createPickerOpen}
 					onOpenChange={setCreatePickerOpen}
@@ -51,10 +57,14 @@ function AgentsPage() {
 
 	return (
 		<div>
+			<PageHeader title="Agents" subtitle={subtitle} />
 			{agents.length === 0 ? (
 				<EmptyState
-					title="No agents in this workspace"
-					description="Create an agent to get started with automation"
+					emphasis="page"
+					icon={<Users size={28} aria-hidden />}
+					title="Nobody on this team yet."
+					description="Agents own one outcome each and run on their own. Add the first one to get started."
+					action={<Button onClick={() => setCreatePickerOpen(true)}>Create an agent</Button>}
 				/>
 			) : (
 				<AgentsIndexView workspaceId={workspaceId} agents={agents} sessions={sessions ?? []} />

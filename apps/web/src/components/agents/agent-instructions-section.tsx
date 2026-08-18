@@ -1,3 +1,4 @@
+import { AgentSectionHeading } from '@/components/agents/agent-section-heading'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -13,43 +14,87 @@ import { Textarea } from '@/components/ui/textarea'
 import { useUpdateActor } from '@/hooks/use-actors'
 import type { ActorResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
-import { AlertTriangle } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 
 const RUNNING_SESSIONS_WARNING =
 	'Running sessions finish on the old prompt. New sessions pick this up.'
 const EMPTY_PROMPT_PLACEHOLDER = 'No instructions set yet.'
+/** Paragraphs shown before the prompt collapses (mockup 2502–2504). */
+const COLLAPSED_PARAGRAPHS = 2
+
+function splitParagraphs(prompt: string): string[] {
+	return prompt
+		.split(/\n\s*\n/)
+		.map((p) => p.trim())
+		.filter(Boolean)
+}
+
+/** "N paragraphs · N words" for the modal's meta line (mockup 3089). */
+export function describeDraft(draft: string): string {
+	const paragraphs = splitParagraphs(draft).length
+	const words = draft.trim() ? draft.trim().split(/\s+/).length : 0
+	return `${paragraphs} paragraph${paragraphs === 1 ? '' : 's'} · ${words} word${
+		words === 1 ? '' : 's'
+	}`
+}
 
 export function AgentInstructionsSection({ agent }: { agent: ActorResponse }) {
 	const [open, setOpen] = useState(false)
+	const [expanded, setExpanded] = useState(false)
 	const prompt = agent.system_prompt?.trim() ?? ''
 
+	const paragraphs = useMemo(() => splitParagraphs(prompt), [prompt])
+	const lineCount = prompt ? prompt.split('\n').length : 0
+	// A long system prompt otherwise pushes every following section off screen.
+	const isTruncatable = paragraphs.length > COLLAPSED_PARAGRAPHS
+	const shown = expanded || !isTruncatable ? paragraphs : paragraphs.slice(0, COLLAPSED_PARAGRAPHS)
+
 	return (
-		<section
-			aria-labelledby="agent-instructions-heading"
-			className="flex flex-col gap-2 rounded-xl border border-border bg-card p-4"
-		>
-			<div className="flex items-center gap-2">
-				<h2
-					id="agent-instructions-heading"
-					className="text-sm font-semibold tracking-tight text-foreground"
-				>
-					Instructions
-				</h2>
-				<span className="eyebrow">system prompt</span>
-				<div className="mx-2 h-px flex-1 bg-border" aria-hidden />
-				<Button
-					variant="ghost"
-					size="sm"
-					className="h-7 px-2 text-xs font-medium"
-					onClick={() => setOpen(true)}
-				>
-					Edit
-				</Button>
-			</div>
-			<div className="whitespace-pre-wrap rounded-md border border-border bg-muted/40 px-4 py-3 font-mono text-xs leading-relaxed text-muted-foreground">
-				{prompt || <span className="italic">{EMPTY_PROMPT_PLACEHOLDER}</span>}
+		<section aria-labelledby="agent-instructions-heading" className="flex flex-col gap-2.5">
+			<AgentSectionHeading
+				id="agent-instructions-heading"
+				title="Instructions"
+				note="system prompt"
+				action={
+					<Button
+						variant="ghost"
+						size="sm"
+						className="h-7 shrink-0 px-2 text-xs font-medium"
+						onClick={() => setOpen(true)}
+					>
+						Edit
+					</Button>
+				}
+			/>
+			<div className="rounded-xl border border-border bg-muted/40 px-4 py-4 text-[12.5px] leading-[1.65] text-foreground">
+				{prompt ? (
+					<div className="flex flex-col gap-2.5">
+						{shown.map((paragraph, i) => (
+							// Paragraph order is the content's identity here — the prompt has
+							// no per-paragraph key.
+							// biome-ignore lint/suspicious/noArrayIndexKey: paragraphs are positional
+							<p key={i} className="whitespace-pre-wrap">
+								{paragraph}
+							</p>
+						))}
+						{isTruncatable && (
+							<Button
+								variant="ghost"
+								size="sm"
+								className="h-7 w-fit px-2 text-[11.5px] font-medium text-muted-foreground hover:text-foreground"
+								aria-expanded={expanded}
+								onClick={() => setExpanded((v) => !v)}
+							>
+								{expanded ? 'Show less' : `Show all ${lineCount} lines`}
+								{expanded ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
+							</Button>
+						)}
+					</div>
+				) : (
+					<span className="italic text-muted-foreground">{EMPTY_PROMPT_PLACEHOLDER}</span>
+				)}
 			</div>
 			<AgentInstructionsEditModal agent={agent} open={open} onOpenChange={setOpen} />
 		</section>
@@ -83,7 +128,7 @@ export function AgentInstructionsEditModal({ agent, open, onOpenChange }: EditMo
 			{ id: agent.id, data: { system_prompt: draft } },
 			{
 				onSuccess: () => {
-					toast.success(RUNNING_SESSIONS_WARNING)
+					toast.success('Instructions saved')
 					onOpenChange(false)
 				},
 				onError: () => toast.error(`Couldn't save instructions for ${agent.name}`),
@@ -110,12 +155,14 @@ export function AgentInstructionsEditModal({ agent, open, onOpenChange }: EditMo
 							{agent.name} · system prompt
 						</ResponsiveDialogDescription>
 					</div>
+					{/* There is no stored "default" prompt to diff against, so this badge
+					    reports what it can actually know: there are unsaved changes. */}
 					{isDirty && (
 						<Badge
 							variant="outline"
 							className="border-warning/40 bg-warning/10 font-mono text-[10px] font-bold uppercase tracking-widest text-warning"
 						>
-							Edited
+							Unsaved
 						</Badge>
 					)}
 				</ResponsiveDialogHeader>
@@ -143,7 +190,7 @@ export function AgentInstructionsEditModal({ agent, open, onOpenChange }: EditMo
 						onClick={() => setDraft(saved)}
 						disabled={!isDirty}
 					>
-						Reset to default
+						Revert changes
 					</Button>
 					<div className="flex items-center gap-2">
 						<Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>

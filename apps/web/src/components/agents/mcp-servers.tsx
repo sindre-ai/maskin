@@ -331,6 +331,10 @@ function ServerCard({
 					)}
 				</p>
 			</div>
+			{/* Transport scope, right-aligned (mockup 2496). */}
+			<span className="shrink-0 text-[10.5px] text-muted-foreground">
+				{http ? 'http' : 'stdio'}
+			</span>
 			{!readOnly &&
 				(confirmDelete ? (
 					<div className="flex items-center gap-1 shrink-0">

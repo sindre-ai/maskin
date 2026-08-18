@@ -64,8 +64,9 @@ describe('AgentInstructionsSection', () => {
 			scope.getByText('Running sessions finish on the old prompt. New sessions pick this up.'),
 		).toBeInTheDocument()
 
-		// EDITED badge is not visible before the draft is dirty.
-		expect(scope.queryByText(/edited/i)).not.toBeInTheDocument()
+		// The badge reports unsaved changes — there is no stored default prompt to
+		// diff against, so it does not claim "edited away from default".
+		expect(scope.queryByText(/unsaved/i)).not.toBeInTheDocument()
 
 		const textarea = scope.getByLabelText('System prompt') as HTMLTextAreaElement
 		expect(textarea.value).toBe('Original prompt.')
@@ -73,7 +74,7 @@ describe('AgentInstructionsSection', () => {
 		await userEvent.clear(textarea)
 		await userEvent.type(textarea, 'New prompt.')
 
-		expect(scope.getByText(/edited/i)).toBeInTheDocument()
+		expect(scope.getByText(/unsaved/i)).toBeInTheDocument()
 
 		let savedArgs: { id: string; data: { system_prompt: string } } | undefined
 		let savedHandlers: { onSuccess?: () => void; onError?: () => void } | undefined
@@ -94,7 +95,7 @@ describe('AgentInstructionsSection', () => {
 		await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
 	})
 
-	it('Reset to default reverts the draft to the saved prompt without saving', async () => {
+	it('Revert changes restores the draft to the saved prompt without saving', async () => {
 		const agent = buildActorResponse({
 			id: 'agent-reset',
 			type: 'agent',
@@ -108,11 +109,11 @@ describe('AgentInstructionsSection', () => {
 
 		await userEvent.clear(textarea)
 		await userEvent.type(textarea, 'Local edit that never gets saved.')
-		expect(scope.getByText(/edited/i)).toBeInTheDocument()
+		expect(scope.getByText(/unsaved/i)).toBeInTheDocument()
 
-		await userEvent.click(scope.getByRole('button', { name: /reset to default/i }))
+		await userEvent.click(scope.getByRole('button', { name: /revert changes/i }))
 		expect(textarea.value).toBe('Baseline prompt.')
-		expect(scope.queryByText(/edited/i)).not.toBeInTheDocument()
+		expect(scope.queryByText(/unsaved/i)).not.toBeInTheDocument()
 		expect(updateMutate).not.toHaveBeenCalled()
 		// Modal stays open after reset.
 		expect(screen.getByRole('dialog')).toBeInTheDocument()

@@ -17,6 +17,9 @@ test.describe('Agent detail — Sessions section', () => {
 			const section = page.getByRole('region', { name: 'Sessions' })
 			await expect(section).toBeVisible({ timeout: 10_000 })
 
+			// The section note says what you can do here (mockup 2427), not a count.
+			await expect(section.getByText('open, pause or restart')).toBeVisible()
+
 			// Empty state shows when the agent hasn't run anything yet — proves the
 			// section renders even without data on the deployed slot.
 			await expect(section.getByText('No sessions yet. Runs will show up here.')).toBeVisible()

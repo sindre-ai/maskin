@@ -9,7 +9,8 @@ import type { DisplayPanelColumn } from '@/components/objects/data-table/display
 import { DisplayPanel } from '@/components/objects/data-table/display-panel'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { EmptyState } from '@/components/shared/empty-state'
-import { Input } from '@/components/ui/input'
+import { FilterTabs } from '@/components/shared/filter-tabs'
+import { Badge } from '@/components/ui/badge'
 import {
 	useUpdateUserDisplaySettings,
 	useUserDisplaySettings,
@@ -22,7 +23,7 @@ import {
 } from '@/lib/agent-status'
 import type { ActorListItem, DisplaySettingsBody, SessionResponse } from '@/lib/api'
 import { Link } from '@tanstack/react-router'
-import { Search } from 'lucide-react'
+import { ChevronRight } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 const AGENTS_DISPLAY_KEY = 'agents'
@@ -51,6 +52,13 @@ const GROUPING_COLUMNS: DisplayPanelColumn[] = [
 	{ id: 'status', label: 'Status', canHide: false },
 	{ id: 'kind', label: 'Kind', canHide: false },
 ]
+
+// Leading dot for each status chip — semantic tokens only, never a raw colour.
+const STATUS_DOT: Record<StatusBucket, string> = {
+	working: 'bg-status-in_progress-text',
+	idle: 'bg-muted-foreground',
+	failed: 'bg-status-failed-text',
+}
 
 export const STATUS_GROUP_META: Record<StatusBucket, { label: string; note: string }> = {
 	working: { label: 'Working', note: 'Agents with a session in progress' },
@@ -81,7 +89,6 @@ export function AgentsIndexView({
 	agents: ActorListItem[]
 	sessions: SessionResponse[]
 }) {
-	const [query, setQuery] = useState('')
 	const [sort, setSort] = useState('name')
 	const [order, setOrder] = useState<'asc' | 'desc'>('asc')
 	const [groupBy, setGroupBy] = useState<string | undefined>('status')
@@ -150,10 +157,9 @@ export function AgentsIndexView({
 		() =>
 			rows.filter((row) => {
 				const bucket = portraitStatusToFilter(row.portrait)
-				if (activeStatuses.length > 0 && !activeStatuses.includes(bucket)) return false
-				return matchesAgentQuery(row.agent, query)
+				return activeStatuses.length === 0 || activeStatuses.includes(bucket)
 			}),
-		[rows, activeStatuses, query],
+		[rows, activeStatuses],
 	)
 
 	const sortedRows = useMemo(() => {
@@ -228,23 +234,38 @@ export function AgentsIndexView({
 	const showSessions = columnVisibility.sessions !== false
 	const showStatus = columnVisibility.status !== false
 
+	// Counts come off the pre-filter `rows` so a chip's number stays stable while
+	// that chip is the active filter (mockup 2290–2293).
+	const statusCounts = useMemo(() => {
+		const counts: Record<StatusBucket, number> = { working: 0, idle: 0, failed: 0 }
+		for (const row of rows) counts[portraitStatusToFilter(row.portrait)]++
+		return counts
+	}, [rows])
+
+	const statusTabs = useMemo(
+		() => [
+			{ label: 'All', value: undefined, count: rows.length },
+			...AGENT_STATUSES.map((bucket) => ({
+				label: STATUS_GROUP_META[bucket].label,
+				value: bucket as string,
+				count: statusCounts[bucket],
+				dot: STATUS_DOT[bucket],
+			})),
+		],
+		[rows.length, statusCounts],
+	)
+
 	return (
 		<div>
 			<div className="mb-4 flex flex-wrap items-center gap-2 md:gap-3">
-				<div className="relative min-w-0 max-w-full flex-1 sm:max-w-xs">
-					<Search
-						size={14}
-						className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"
-					/>
-					<Input
-						type="search"
-						value={query}
-						onChange={(e) => setQuery(e.target.value)}
-						placeholder="Search agents…"
-						aria-label="Search agents"
-						className="h-8 pl-8 text-sm"
-					/>
-				</div>
+				<FilterTabs
+					variant="pill"
+					aria-label="Filter agents by status"
+					className="min-w-0 flex-1"
+					tabs={statusTabs}
+					value={statusFilter}
+					onChange={setStatusFilter}
+				/>
 				<DisplayPanel
 					columns={COLUMNS}
 					orderingColumns={ORDERING_COLUMNS}
@@ -263,16 +284,20 @@ export function AgentsIndexView({
 					groupBy={groupBy}
 					onGroupByChange={setGroupBy}
 					onResetFilters={() => setStatusFilter(undefined)}
+					onResetToDefault={() => {
+						setStatusFilter(undefined)
+						setSort('name')
+						setOrder('asc')
+						setGroupBy('status')
+						setColumnVisibility({})
+					}}
 					showView={false}
 					iconOnly
 				/>
 			</div>
 
 			{sortedRows.length === 0 ? (
-				<EmptyState
-					title={query ? 'No matches' : 'No agents match the filters'}
-					description={query ? 'Try a different search term.' : 'Try clearing the status filter.'}
-				/>
+				<EmptyState title="No agents in that state right now." />
 			) : (
 				<div className="space-y-6">
 					{groups.map((group) => (
@@ -338,9 +363,9 @@ function AgentGroupSection({
 					</span>
 				)}
 			</div>
-			{group.rows.length > 0 ? (
-				<ul className="overflow-hidden rounded-xl border border-border bg-card">
-					{group.rows.map((row) => (
+			<ul className="overflow-hidden rounded-xl border border-border bg-card">
+				{group.rows.length > 0 ? (
+					group.rows.map((row) => (
 						<AgentRowItem
 							key={row.agent.id}
 							workspaceId={workspaceId}
@@ -350,11 +375,14 @@ function AgentGroupSection({
 							showSessions={showSessions}
 							showStatus={showStatus}
 						/>
-					))}
-				</ul>
-			) : (
-				<EmptyState compact title={`No ${group.label.toLowerCase()} agents`} className="py-6" />
-			)}
+					))
+				) : (
+					// Inline row inside the list frame, not a centred block (mockup 2324).
+					<li className="px-4 py-3 text-[11.5px] text-muted-foreground">
+						{`No ${group.label.toLowerCase()} agents right now.`}
+					</li>
+				)}
+			</ul>
 		</section>
 	)
 }
@@ -375,52 +403,64 @@ function AgentRowItem({
 	showStatus: boolean
 }) {
 	const { agent, portrait, latestSession } = row
-	const segments: string[] = []
-	if (showKind) segments.push(deriveAgentKind(agent))
-	if (showActivity) segments.push(describeFocus(portrait, latestSession))
-	if (showSessions) {
-		segments.push(`${row.sessionCount} session${row.sessionCount === 1 ? '' : 's'}`)
-	}
-	const metaLine = segments.join(' · ')
+	// Mockup 2330 puts a mono uppercase KIND badge beside the name. `ActorListItem`
+	// carries the workspace-membership role when the row came from the members
+	// join; everything else is just an agent.
+	const kind = showKind ? agent.role?.trim() || 'Agent' : undefined
+	const outcome = agent.description?.split('\n')[0]?.trim() || 'No outcome set yet'
+	const sessionsLabel = `${row.sessionCount} session${row.sessionCount === 1 ? '' : 's'}`
 
 	return (
-		<li className="flex items-center gap-3 px-4 py-2.5 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-border">
-			<ActorAvatar name={agent.name} type={agent.type} size="md" className="shrink-0" />
-			<div className="flex min-w-0 flex-1 flex-col gap-0.5">
-				<Link
-					to="/$workspaceId/agents/$agentId"
-					params={{ workspaceId, agentId: agent.id }}
-					className="truncate text-sm font-medium text-foreground hover:underline"
-				>
-					{agent.name}
-				</Link>
-				<p
-					className="truncate text-xs text-muted-foreground"
-					title={metaLine}
-					aria-label={metaLine}
-				>
-					{metaLine || '\u00A0'}
-				</p>
-			</div>
-			{showStatus && (
-				<div className="shrink-0 pl-1">
-					<AgentStatusPill status={portrait} />
+		<li className="[&:not(:last-child)]:border-b [&:not(:last-child)]:border-border">
+			{/* The whole row is the click target (mockup 2327), not just the name. */}
+			<Link
+				to="/$workspaceId/agents/$agentId"
+				params={{ workspaceId, agentId: agent.id }}
+				className="group flex items-center gap-3 px-4 py-3 transition-colors duration-150 hover:bg-muted/50 md:gap-3.5"
+			>
+				<ActorAvatar
+					name={agent.name}
+					type={agent.type}
+					size="lg"
+					id={agent.id}
+					className="shrink-0"
+				/>
+				<div className="flex min-w-0 flex-1 flex-col gap-0.5">
+					<span className="flex min-w-0 items-center gap-2">
+						<span className="truncate text-[13.5px] font-bold text-foreground">{agent.name}</span>
+						{kind && (
+							<Badge
+								variant="outline"
+								className="shrink-0 px-1.5 py-0 font-mono text-[9px] font-bold uppercase tracking-[0.09em]"
+							>
+								{kind}
+							</Badge>
+						)}
+					</span>
+					<span className="truncate text-xs text-muted-foreground" title={outcome}>
+						{outcome}
+					</span>
 				</div>
-			)}
+				{showActivity && (
+					<span className="hidden w-[200px] shrink-0 truncate text-[11.5px] text-muted-foreground lg:block">
+						{describeFocus(portrait, latestSession)}
+					</span>
+				)}
+				{showSessions && (
+					<span className="hidden w-[74px] shrink-0 text-[11.5px] tabular-nums text-muted-foreground md:block">
+						{sessionsLabel}
+					</span>
+				)}
+				{showStatus && (
+					<span className="shrink-0 text-[11px]">
+						<AgentStatusPill status={portrait} />
+					</span>
+				)}
+				<ChevronRight
+					className="size-3.5 shrink-0 text-muted-foreground transition-colors duration-150 group-hover:text-foreground"
+					aria-hidden
+				/>
+			</Link>
 		</li>
-	)
-}
-
-function matchesAgentQuery(
-	agent: { name: string; description?: string | null },
-	query: string,
-): boolean {
-	if (!query) return true
-	const needle = query.trim().toLowerCase()
-	if (!needle) return true
-	return (
-		agent.name.toLowerCase().includes(needle) ||
-		(agent.description?.toLowerCase().includes(needle) ?? false) ||
-		deriveAgentKind(agent).toLowerCase().includes(needle)
 	)
 }

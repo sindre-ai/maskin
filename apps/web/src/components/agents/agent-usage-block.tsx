@@ -6,13 +6,14 @@ import type { ActorResponse, SessionUsageResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useMemo, useState } from 'react'
 
-type Preset = '24h' | '7d' | '30d' | 'all'
+type Preset = '24h' | '7d' | '30d' | '90d' | 'all'
 
 const DAY_MS = 86_400_000
 const PRESETS: { id: Preset; label: string; days: number | 'all' }[] = [
 	{ id: '24h', label: '24h', days: 1 },
 	{ id: '7d', label: '7d', days: 7 },
 	{ id: '30d', label: '30d', days: 30 },
+	{ id: '90d', label: '90d', days: 90 },
 	{ id: 'all', label: 'All', days: 'all' },
 ]
 
@@ -20,8 +21,12 @@ const CHART_LABEL_BY_PRESET: Record<Preset, string> = {
 	'24h': 'TOKENS / DAY',
 	'7d': 'TOKENS / WEEK',
 	'30d': 'TOKENS / MONTH',
+	'90d': 'TOKENS / QUARTER',
 	all: 'TOKENS / RANGE',
 }
+
+/** Trailing-30-day window the budget reads, independent of the selected period. */
+const BUDGET_WINDOW_DAYS = 30
 
 const compact = new Intl.NumberFormat('en-US', {
 	notation: 'compact',
@@ -38,8 +43,9 @@ function presetRange(preset: Preset, createdAt?: string | null): { from: Date; t
 		const from = new Date(Math.min(fromMs, to.getTime() - DAY_MS))
 		return { from, to }
 	}
-	const days = preset === '24h' ? 1 : preset === '7d' ? 7 : 30
-	return { from: new Date(to.getTime() - days * DAY_MS), to }
+	const days = PRESETS.find((p) => p.id === preset)?.days
+	const span = typeof days === 'number' ? days : 30
+	return { from: new Date(to.getTime() - span * DAY_MS), to }
 }
 
 function priorRange(range: { from: Date; to: Date }): { from: Date; to: Date } {
@@ -79,6 +85,26 @@ function formatAverage(count: number, buckets: number, unit: string): string {
 	return `${compact.format(per)} ${unit}/day avg`
 }
 
+/**
+ * Monthly token cap, read from the agent's free-form `llm_config`. Nothing in
+ * the web app writes it yet — `updateActorSchema`'s `llmConfigSchema` strips
+ * unknown keys, so a cap set from here would be silently dropped by the API.
+ * The read side is live so the bar and label reflect a cap the moment one
+ * exists (mockup 2395–2410).
+ */
+export function readTokenBudget(llmConfig: Record<string, unknown> | null): number | null {
+	const raw = llmConfig?.token_budget_month
+	const value = typeof raw === 'string' ? Number(raw) : raw
+	if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return null
+	return value
+}
+
+export function describeBudget(monthTokens: number, budget: number | null): string {
+	if (budget === null) return `No cap — ${compact.format(monthTokens)} this month`
+	if (monthTokens > budget) return `Over budget — ${compact.format(monthTokens)} this month`
+	return `${Math.round((monthTokens / budget) * 100)}% of the monthly budget used`
+}
+
 const DELTA_TONE_CLASS: Record<'up' | 'down' | 'flat', string> = {
 	up: 'text-success',
 	down: 'text-error',
@@ -94,11 +120,21 @@ export function AgentUsageBlock({
 }) {
 	const [preset, setPreset] = useState<Preset>('30d')
 	const range = useMemo(() => presetRange(preset, agent.createdAt), [preset, agent.createdAt])
+	// Fixed trailing-30-day window so switching the period tab never changes the
+	// budget reading.
+	const budgetRange = useMemo(() => {
+		const to = new Date()
+		return { from: new Date(to.getTime() - BUDGET_WINDOW_DAYS * DAY_MS), to }
+	}, [])
 	const prior = useMemo(() => priorRange(range), [range])
 	const bucket = useMemo(() => pickBucket(range.from.getTime(), range.to.getTime()), [range])
 
 	const currentQuery = useSessionUsage(workspaceId, agent.id, range.from, range.to)
 	const priorQuery = useSessionUsage(workspaceId, agent.id, prior.from, prior.to)
+	const budgetQuery = useSessionUsage(workspaceId, agent.id, budgetRange.from, budgetRange.to)
+
+	const budget = readTokenBudget(agent.llm_config)
+	const monthTokens = totalTokens(budgetQuery.data?.totals)
 
 	const currentTokens = totalTokens(currentQuery.data?.totals)
 	const priorTokens = totalTokens(priorQuery.data?.totals)
@@ -162,7 +198,7 @@ export function AgentUsageBlock({
 					chartLabel={CHART_LABEL_BY_PRESET[preset]}
 					periodStart={periodStart}
 					averageLine={formatAverage(currentTokens, bucketCount, 'tokens')}
-					showBudget
+					budget={{ cap: budget, monthTokens }}
 					className="border-b border-border md:border-b-0 md:border-r"
 				/>
 				<UsageColumn
@@ -189,7 +225,7 @@ function UsageColumn({
 	chartLabel,
 	periodStart,
 	averageLine,
-	showBudget = false,
+	budget,
 	className,
 }: {
 	title: string
@@ -200,7 +236,7 @@ function UsageColumn({
 	chartLabel: string
 	periodStart: string
 	averageLine: string
-	showBudget?: boolean
+	budget?: { cap: number | null; monthTokens: number }
 	className?: string
 }) {
 	return (
@@ -238,14 +274,35 @@ function UsageColumn({
 				<span className="ml-auto tabular-nums">{averageLine}</span>
 			</div>
 
-			{showBudget && (
-				<div className="mt-1 flex items-center gap-2 border-t border-border pt-3">
-					<div className="h-1 flex-1 rounded-full bg-muted">
-						<span className="block h-1 w-0 rounded-full bg-primary/40" />
-					</div>
-					<span className="text-[10px] font-medium text-muted-foreground">Budget: No cap</span>
-				</div>
-			)}
+			{budget && <BudgetRow cap={budget.cap} monthTokens={budget.monthTokens} />}
+		</div>
+	)
+}
+
+/**
+ * Monthly token budget (mockup 2395–2410) — a utilisation bar plus a plain-
+ * language reading. `bg-accent` is never used on a text-free bar; see
+ * `.claude/rules/known-pitfalls.md`.
+ */
+function BudgetRow({ cap, monthTokens }: { cap: number | null; monthTokens: number }) {
+	const ratio = cap === null ? 0 : Math.min(1, monthTokens / cap)
+	const over = cap !== null && monthTokens > cap
+	const near = cap !== null && !over && ratio >= 0.8
+	const barClass = over ? 'bg-error' : near ? 'bg-warning' : 'bg-muted-foreground'
+	const labelClass = over ? 'text-error' : near ? 'text-warning' : 'text-muted-foreground'
+
+	return (
+		<div className="mt-1 flex flex-col gap-2 border-t border-border pt-3">
+			<div className="h-1 w-full overflow-hidden rounded-full bg-muted">
+				<span
+					aria-hidden
+					className={cn('block h-1 rounded-full transition-[width] duration-150', barClass)}
+					style={{ width: `${Math.round((over ? 1 : ratio) * 100)}%` }}
+				/>
+			</div>
+			<span className={cn('text-[10.5px] font-medium', labelClass)}>
+				{describeBudget(monthTokens, cap)}
+			</span>
 		</div>
 	)
 }

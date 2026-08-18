@@ -181,7 +181,16 @@ export function describeFocus(status: PortraitStatus, session?: SessionResponse)
 }
 
 /** Pill used by any surface that shows an agent's portrait status as a row/card badge. */
-export function AgentStatusPill({ status }: { status: PortraitStatus }) {
+export function AgentStatusPill({
+	status,
+	pulse = false,
+}: {
+	status: PortraitStatus
+	/** Swaps the leading glyph for a status dot that pulses while the agent is
+	 *  live — the agent-detail header's treatment (mockup 2360). Everywhere else
+	 *  keeps the icon so the pill still reads at row density. */
+	pulse?: boolean
+}) {
 	const meta = STATUS_META[status]
 	const isRunning = status === 'running'
 	return (
@@ -192,7 +201,12 @@ export function AgentStatusPill({ status }: { status: PortraitStatus }) {
 				meta.pillText,
 			)}
 		>
-			{isRunning ? (
+			{pulse ? (
+				<span
+					aria-hidden="true"
+					className={cn('size-1.5 rounded-full', meta.dot, isRunning && 'animate-pulse')}
+				/>
+			) : isRunning ? (
 				<Spinner className="size-3" aria-hidden="true" />
 			) : (
 				<meta.Icon className="size-3" aria-hidden="true" />
@@ -207,6 +221,8 @@ interface StatusMeta {
 	Icon: typeof Pause
 	pillBg: string
 	pillText: string
+	/** Semantic token class for the dot form of the pill. */
+	dot: string
 }
 
 const STATUS_META: Record<PortraitStatus, StatusMeta> = {
@@ -215,24 +231,28 @@ const STATUS_META: Record<PortraitStatus, StatusMeta> = {
 		Icon: Play,
 		pillBg: 'bg-status-in_progress-bg',
 		pillText: 'text-status-in_progress-text',
+		dot: 'bg-status-in_progress-text',
 	},
 	paused: {
 		label: 'Paused',
 		Icon: Pause,
 		pillBg: 'bg-muted',
 		pillText: 'text-muted-foreground',
+		dot: 'bg-muted-foreground',
 	},
 	idle: {
 		label: 'Idle',
 		Icon: Pause,
 		pillBg: 'bg-muted',
 		pillText: 'text-muted-foreground',
+		dot: 'bg-muted-foreground',
 	},
 	failed: {
 		label: 'Failed',
 		Icon: AlertTriangle,
 		pillBg: 'bg-status-failed-bg',
 		pillText: 'text-status-failed-text',
+		dot: 'bg-status-failed-text',
 	},
 }
 

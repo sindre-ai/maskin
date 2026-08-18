@@ -155,52 +155,56 @@ describe('AgentsIndexView', () => {
 				[agentAda()],
 				[buildSessionResponse({ id: 's-ada', actorId: 'agent-ada', status: 'running' })],
 			)
-			expect(screen.queryByText('No working agents')).not.toBeInTheDocument()
-			expect(screen.getByText('No idle agents')).toBeInTheDocument()
-			expect(screen.getByText('No failed agents')).toBeInTheDocument()
+			expect(screen.queryByText('No working agents right now.')).not.toBeInTheDocument()
+			expect(screen.getByText('No idle agents right now.')).toBeInTheDocument()
+			expect(screen.getByText('No failed agents right now.')).toBeInTheDocument()
 		})
 	})
 
-	describe('search', () => {
-		it('filters rows by name, kind, and description text', async () => {
+	describe('status chips', () => {
+		it('renders a chip per bucket with counts computed before filtering', async () => {
 			const user = userEvent.setup()
-			mount([agentAda(), agentBrian()], [])
-			expect(screen.getAllByRole('listitem')).toHaveLength(2)
+			mount([agentAda(), agentBrian(), agentCy()], [brianRunningSession()])
 
-			// Kind ('Researcher' from Ada's description first line).
-			await user.type(screen.getByRole('searchbox'), 'research')
-			expect(screen.getByRole('link', { name: 'Ada' })).toBeInTheDocument()
-			expect(screen.queryByRole('link', { name: 'Brian' })).not.toBeInTheDocument()
+			const strip = screen.getByRole('group', { name: 'Filter agents by status' })
+			expect(within(strip).getByRole('button', { name: 'All (3)' })).toBeInTheDocument()
+			expect(within(strip).getByRole('button', { name: 'Working (1)' })).toBeInTheDocument()
+			expect(within(strip).getByRole('button', { name: 'Idle (1)' })).toBeInTheDocument()
+			expect(within(strip).getByRole('button', { name: 'Failed (1)' })).toBeInTheDocument()
 
-			// Name.
-			await user.clear(screen.getByRole('searchbox'))
-			await user.type(screen.getByRole('searchbox'), 'bri')
-			expect(screen.getByRole('link', { name: 'Brian' })).toBeInTheDocument()
-			expect(screen.queryByRole('link', { name: 'Ada' })).not.toBeInTheDocument()
+			// Selecting a chip filters the list but leaves every count untouched.
+			await user.click(within(strip).getByRole('button', { name: 'Working (1)' }))
+			expect(screen.getByRole('link', { name: /Brian/ })).toBeInTheDocument()
+			expect(screen.queryByRole('link', { name: /Ada/ })).not.toBeInTheDocument()
+			expect(within(strip).getByRole('button', { name: 'All (3)' })).toBeInTheDocument()
+			expect(within(strip).getByRole('button', { name: 'Idle (1)' })).toHaveAttribute(
+				'aria-pressed',
+				'false',
+			)
+			expect(within(strip).getByRole('button', { name: 'Working (1)' })).toHaveAttribute(
+				'aria-pressed',
+				'true',
+			)
 
-			// Description body (not just the first line).
-			await user.clear(screen.getByRole('searchbox'))
-			await user.type(screen.getByRole('searchbox'), 'owns depth')
-			expect(screen.getByRole('link', { name: 'Ada' })).toBeInTheDocument()
-			expect(screen.queryByRole('link', { name: 'Brian' })).not.toBeInTheDocument()
+			// Back to All.
+			await user.click(within(strip).getByRole('button', { name: 'All (3)' }))
+			expect(screen.getByRole('link', { name: /Ada/ })).toBeInTheDocument()
 		})
 
-		it('shows a No matches empty state when the query matches nothing', async () => {
-			const user = userEvent.setup()
-			mount([agentAda()], [])
-			await user.type(screen.getByRole('searchbox'), 'zzz')
-			expect(screen.getByText('No matches')).toBeInTheDocument()
-			expect(screen.getByText('Try a different search term.')).toBeInTheDocument()
+		it('has no per-screen search input — workspace search lives in the nav row', () => {
+			mount([agentAda(), agentBrian()], [])
+			expect(screen.queryByRole('searchbox')).not.toBeInTheDocument()
 		})
 	})
 
 	describe('rows', () => {
-		it('renders name, kind, activity, session count, and status pill per row', () => {
+		it('renders the whole row as one link with a kind badge, outcome, activity, count and pill', () => {
 			const bob = buildActorListItem({
 				id: 'agent-bob',
 				name: 'Bob',
 				type: 'agent',
 				description: 'Architect',
+				role: 'member',
 			})
 			const sessions = [
 				buildSessionResponse({
@@ -217,10 +221,21 @@ describe('AgentsIndexView', () => {
 				}),
 			]
 			mount([bob], sessions)
-			const row = screen.getAllByRole('listitem')[0]
-			expect(within(row).getByRole('link', { name: 'Bob' })).toBeInTheDocument()
-			expect(within(row).getByText('Architect · Standing by · 2 sessions')).toBeInTheDocument()
+			// One link covering the whole row, not just the name (mockup 2327).
+			const link = screen.getByRole('link')
+			const row = link.closest('li') as HTMLElement
+			expect(link).toHaveTextContent('Bob')
+			expect(within(row).getByText('member')).toBeInTheDocument()
+			expect(within(row).getByText('Architect')).toBeInTheDocument()
+			expect(within(row).getByText('Standing by')).toBeInTheDocument()
+			expect(within(row).getByText('2 sessions')).toBeInTheDocument()
 			expect(within(row).getByText('Idle')).toBeInTheDocument()
+		})
+
+		it('falls back to an Agent kind badge when the row carries no membership role', () => {
+			mount([agentBrian()], [])
+			const row = screen.getByRole('link').closest('li') as HTMLElement
+			expect(within(row).getByText('Agent')).toBeInTheDocument()
 		})
 	})
 
@@ -228,20 +243,43 @@ describe('AgentsIndexView', () => {
 		it('filters rows by status through the Display menu and resets the filter', async () => {
 			const user = userEvent.setup()
 			mount([agentAda(), agentBrian()], [brianRunningSession()])
-			expect(screen.getByRole('link', { name: 'Brian' })).toBeInTheDocument()
-			expect(screen.getByRole('link', { name: 'Ada' })).toBeInTheDocument()
+			expect(screen.getByRole('link', { name: /Brian/ })).toBeInTheDocument()
+			expect(screen.getByRole('link', { name: /Ada/ })).toBeInTheDocument()
 
 			await user.click(screen.getByRole('button', { name: 'Display' }))
 			await user.click(screen.getByRole('button', { name: /\+ status/i }))
 			await user.click(screen.getByRole('menuitemcheckbox', { name: 'working' }))
 
-			expect(screen.getByRole('link', { name: 'Brian' })).toBeInTheDocument()
-			expect(screen.queryByRole('link', { name: 'Ada' })).not.toBeInTheDocument()
+			expect(screen.getByRole('link', { name: /Brian/ })).toBeInTheDocument()
+			expect(screen.queryByRole('link', { name: /Ada/ })).not.toBeInTheDocument()
 			expect(screen.queryByRole('heading', { name: /idle/i })).not.toBeInTheDocument()
 
-			await user.click(screen.getByRole('button', { name: /reset/i }))
-			expect(screen.getByRole('link', { name: 'Ada' })).toBeInTheDocument()
+			await user.click(screen.getByRole('button', { name: 'Reset' }))
+			expect(screen.getByRole('link', { name: /Ada/ })).toBeInTheDocument()
 		})
+
+		it('Reset to default clears the status filter, sort, order and grouping together', async () => {
+			const user = userEvent.setup()
+			mount([agentAda(), agentBrian(), agentCy()], [brianRunningSession()])
+
+			const strip = screen.getByRole('group', { name: 'Filter agents by status' })
+			await user.click(within(strip).getByRole('button', { name: 'Working (1)' }))
+			expect(screen.queryByRole('link', { name: /Ada/ })).not.toBeInTheDocument()
+
+			await user.click(screen.getByRole('button', { name: 'Display' }))
+			await pickFromDisplayPanel(user, 'Group by', 'Kind')
+			expect(screen.getByRole('heading', { name: 'Architect' })).toBeInTheDocument()
+
+			await user.click(screen.getByRole('button', { name: 'Reset to default' }))
+
+			expect(screen.getByRole('link', { name: /Ada/ })).toBeInTheDocument()
+			expect(screen.getByRole('heading', { name: /working/i })).toBeInTheDocument()
+			expect(screen.queryByRole('heading', { name: 'Architect' })).not.toBeInTheDocument()
+			expect(within(strip).getByRole('button', { name: 'All (3)' })).toHaveAttribute(
+				'aria-pressed',
+				'true',
+			)
+		}, 10_000)
 
 		it('groups by kind through the Display menu and back to a single list', async () => {
 			const user = userEvent.setup()
@@ -256,7 +294,7 @@ describe('AgentsIndexView', () => {
 			expect(screen.getByRole('heading', { name: 'Reviewer' })).toBeInTheDocument()
 
 			await pickFromDisplayPanel(user, 'Group by', 'None')
-			expect(screen.getByRole('link', { name: 'Ada' })).toBeInTheDocument()
+			expect(screen.getByRole('link', { name: /Ada/ })).toBeInTheDocument()
 			expect(screen.queryByRole('heading', { name: 'Researcher' })).not.toBeInTheDocument()
 			expect(screen.getAllByRole('listitem')).toHaveLength(3)
 		})
@@ -350,8 +388,8 @@ describe('AgentsIndexView', () => {
 			}
 			mount([agentAda(), agentBrian()], [brianRunningSession()])
 			await flushHydrateAndWriteThrough()
-			expect(screen.getByText('No agents match the filters')).toBeInTheDocument()
-			expect(screen.queryByRole('link', { name: 'Ada' })).not.toBeInTheDocument()
+			expect(screen.getByText('No agents in that state right now.')).toBeInTheDocument()
+			expect(screen.queryByRole('link', { name: /Ada/ })).not.toBeInTheDocument()
 		}, 10_000)
 
 		it('hydrates a persisted status filter and column visibility on mount', async () => {
@@ -367,9 +405,11 @@ describe('AgentsIndexView', () => {
 			expect(screen.getByRole('heading', { name: /working/i })).toBeInTheDocument()
 			expect(screen.queryByRole('heading', { name: /idle/i })).not.toBeInTheDocument()
 			expect(screen.queryByRole('heading', { name: /failed/i })).not.toBeInTheDocument()
-			// kind:false hides the kind segment; activity + session count remain.
-			const row = screen.getByRole('listitem')
-			expect(within(row).getByText('Crunching numbers · 1 session')).toBeInTheDocument()
+			// kind:false drops the badge; the activity and session columns remain.
+			const row = screen.getByRole('link').closest('li') as HTMLElement
+			expect(within(row).queryByText('Agent')).not.toBeInTheDocument()
+			expect(within(row).getByText('Crunching numbers')).toBeInTheDocument()
+			expect(within(row).getByText('1 session')).toBeInTheDocument()
 		}, 10_000)
 	})
 })

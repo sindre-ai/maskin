@@ -28,9 +28,12 @@ test.describe('Agent detail — header and Usage block', () => {
 			await expect(page.getByText('Owns one outcome:')).toBeVisible()
 			await expect(page.getByText(outcome)).toBeVisible()
 
-			// Header team pill shows the workspace name and the pause toggle
-			// (Run when idle) is reachable.
-			await expect(page.getByRole('button', { name: /^Run$/ })).toBeVisible()
+			// The agent-level action lives in the shared nav row (mockup 2351) and
+			// is reachable at every viewport…
+			const runButton = page.getByRole('button', { name: /^Run$/ })
+			await expect(runButton).toBeVisible()
+			// …and no longer sits in the page body beside the outcome line.
+			await expect(page.locator('.max-w-3xl').getByRole('button', { name: /^Run$/ })).toHaveCount(0)
 
 			// Usage block: label, tabs, both columns, budget line.
 			const usage = page.getByRole('region', { name: 'Usage' })
@@ -41,12 +44,17 @@ test.describe('Agent detail — header and Usage block', () => {
 			await expect(usage.getByText('tokens used')).toBeVisible()
 			await expect(usage.getByText('sessions', { exact: true })).toBeVisible()
 			await expect(usage.getByText('TOKENS / MONTH')).toBeVisible()
-			await expect(usage.getByText(/Budget: No cap/)).toBeVisible()
+			// No cap is configured, so the budget row reports the month's spend.
+			await expect(usage.getByText(/No cap — .+ this month/)).toBeVisible()
 
 			// Switching to 7d re-labels the chart — proves the tabs drive the
 			// window, not just cosmetic state.
 			await usage.getByRole('button', { name: '7d' }).click()
 			await expect(usage.getByText('TOKENS / WEEK')).toBeVisible()
+
+			// 90d is the mockup's third period (2381) and gets its own label.
+			await usage.getByRole('button', { name: '90d' }).click()
+			await expect(usage.getByText('TOKENS / QUARTER')).toBeVisible()
 
 			// The header and Usage block render in both colour schemes.
 			for (const scheme of ['light', 'dark'] as const) {
