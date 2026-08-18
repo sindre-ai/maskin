@@ -3165,7 +3165,16 @@ export function createMcpServer(config: McpConfig) {
 							}
 						: {}),
 				},
-			}
+				// The SDK's CallToolResult type requires `content` because Zod's
+				// `Infer` treats a `ZodDefault` field as required on the output side,
+				// even though nothing in the SDK's tool-dispatch path (`mcp.js`'s
+				// `Promise.resolve(cb(args, extra))`) actually validates the return
+				// value against that schema — this handler genuinely omits `content`
+				// at runtime (see the `list_actors: flag ... never emits a content
+				// channel` tests); this is a static-type artifact only, not a real
+				// contract violation.
+				// biome-ignore lint/suspicious/noExplicitAny: see comment above.
+			} as any
 		},
 	)
 
