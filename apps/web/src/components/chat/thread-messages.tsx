@@ -1,13 +1,18 @@
 import { EmptyState } from '@/components/shared/empty-state'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
-import { flattenMessagesOldestFirst, useConversationMessages } from '@/hooks/use-conversation'
+import {
+	flattenMessagesOldestFirst,
+	useConversation,
+	useConversationMessages,
+} from '@/hooks/use-conversation'
 import { useConversationActivity } from '@/hooks/use-conversation-activity'
 import { cn } from '@/lib/cn'
 import { useEffect, useRef, useState } from 'react'
 import { MessageActivity } from './message-activity'
 import { MessageBubble } from './message-bubble'
 import { MessageDivider, isNewDay } from './message-divider'
+import { ResumeBanner } from './resume-banner'
 
 interface ThreadMessagesProps {
 	workspaceId: string
@@ -18,6 +23,7 @@ interface ThreadMessagesProps {
 export function ThreadMessages({ workspaceId, conversationId, className }: ThreadMessagesProps) {
 	const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
 		useConversationMessages(conversationId, workspaceId)
+	const { data: conversation } = useConversation(conversationId, workspaceId)
 	const messages = flattenMessagesOldestFirst(data)
 	const { byReplyMessageId, byTriggerMessageId, fallback } = useConversationActivity(
 		workspaceId,
@@ -75,10 +81,14 @@ export function ThreadMessages({ workspaceId, conversationId, className }: Threa
 			ref={scrollerRef}
 			onScroll={handleScroll}
 			data-testid="thread-messages"
-			className={cn('flex flex-1 flex-col overflow-y-auto p-3', className)}
+			className={cn('flex flex-1 flex-col gap-4 overflow-y-auto px-3 pt-4 pb-2', className)}
 		>
+			<ResumeBanner
+				messages={messages}
+				lastReadMessageId={conversation?.last_read_message_id ?? null}
+			/>
 			{hasNextPage ? (
-				<div className="flex justify-center pb-3">
+				<div className="flex justify-center">
 					<Button
 						type="button"
 						variant="ghost"
@@ -90,7 +100,7 @@ export function ThreadMessages({ workspaceId, conversationId, className }: Threa
 					</Button>
 				</div>
 			) : null}
-			<div className="flex flex-col gap-3">
+			<div className="flex flex-col gap-4">
 				{messages.map((message, index) => {
 					const prev = messages[index - 1]
 					const isLast = index === messages.length - 1
@@ -107,11 +117,11 @@ export function ThreadMessages({ workspaceId, conversationId, className }: Threa
 								<MessageDivider date={message.createdAt} />
 							) : null}
 							{turnsAbove.map((turn) => (
-								<MessageActivity key={turn.sessionId} turn={turn} />
+								<MessageActivity key={turn.sessionId} workspaceId={workspaceId} turn={turn} />
 							))}
 							<MessageBubble workspaceId={workspaceId} message={message} />
 							{turnsBelowHere.map((turn) => (
-								<MessageActivity key={turn.sessionId} turn={turn} />
+								<MessageActivity key={turn.sessionId} workspaceId={workspaceId} turn={turn} />
 							))}
 						</div>
 					)

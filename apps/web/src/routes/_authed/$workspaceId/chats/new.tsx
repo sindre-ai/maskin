@@ -10,7 +10,7 @@ import { EMPTY_CHAT_SELECTION, chatSelectionReducer } from '@/lib/chat-selection
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { Command } from 'cmdk'
-import { X } from 'lucide-react'
+import { Search, X } from 'lucide-react'
 import { useCallback, useMemo, useReducer, useState } from 'react'
 
 interface NewChatSearch {
@@ -37,9 +37,14 @@ export const Route = createFileRoute('/_authed/$workspaceId/chats/new')({
 	}),
 })
 
-const QUICK_START_CHIPS = [
-	'Help me plan a new bet',
-	"What's the status on our current bets?",
+// Zero-state suggestions (mockup 739–748). Clicking one *prefills* the
+// composer — it never sends, so the draft is still editable before it goes.
+const CHAT_SUGGESTIONS = [
+	'Catch me up on billing',
+	'Why is the retry window still open?',
+	"Draft Acme's note before Thursday",
+	'Which accounts went quiet this week?',
+	'Turn the onboarding cluster into a bet',
 ] as const
 
 interface Participant {
@@ -71,7 +76,7 @@ function NewConversationPage() {
 	const [isPickerFocused, setIsPickerFocused] = useState(false)
 	const [selection, dispatchSelection] = useReducer(chatSelectionReducer, EMPTY_CHAT_SELECTION)
 	const [error, setError] = useState<string | null>(null)
-	const [chipSending, setChipSending] = useState(false)
+	const [draft, setDraft] = useState('')
 
 	const seedObject = search.objectId
 		? { id: search.objectId, title: search.objectTitle ?? null, type: search.objectType ?? null }
@@ -174,27 +179,42 @@ function NewConversationPage() {
 		],
 	)
 
-	const handleChipClick = useCallback(
-		async (text: string) => {
-			setChipSending(true)
-			try {
-				await handleSend(text)
-			} catch {
-				// error already surfaced via `error` state
-			} finally {
-				setChipSending(false)
-			}
-		},
-		[handleSend],
-	)
-
 	return (
 		<div className="flex min-h-0 flex-1 flex-col">
-			<div className="flex h-12 shrink-0 items-center border-b border-border px-3">
-				<h1 className="text-sm font-semibold">New chat</h1>
+			<div className="flex shrink-0 items-center gap-2.5 border-b border-border px-[clamp(14px,3vw,28px)] py-3">
+				<span className="eyebrow tracking-[0.16em] text-foreground">New chat</span>
+				<span aria-hidden className="text-border-strong">
+					/
+				</span>
+				<span className="min-w-0 truncate text-xs text-muted-foreground">
+					it becomes a conversation you can come back to
+				</span>
 			</div>
-			<div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
-				<div className="flex flex-col gap-1.5">
+			<div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-[clamp(14px,3vw,28px)] py-6">
+				<div className="mx-auto w-full max-w-[660px]">
+					<h2 className="text-[clamp(20px,2.4vw,26px)] font-bold leading-tight tracking-[-0.025em]">
+						What are we working on?
+					</h2>
+					<p className="mt-2 max-w-[52ch] text-[13.5px] leading-relaxed text-balance text-muted-foreground">
+						Your agents are already inside the work — the loops they run, the objects they keep
+						current, the sessions live right now. You don't have to paste any of it in.
+					</p>
+					<div className="mt-5 flex flex-col gap-1.5">
+						{CHAT_SUGGESTIONS.map((suggestion) => (
+							<Button
+								key={suggestion}
+								type="button"
+								variant="outline"
+								className="h-auto w-full justify-start gap-2.5 whitespace-normal rounded-[11px] px-3.5 py-2.5 text-left text-[13px] font-normal"
+								onClick={() => setDraft(suggestion)}
+							>
+								<Search size={12} className="shrink-0 text-muted-foreground" aria-hidden />
+								<span className="min-w-0 flex-1">{suggestion}</span>
+							</Button>
+						))}
+					</div>
+				</div>
+				<div className="mx-auto flex w-full max-w-[660px] flex-col gap-1.5">
 					<span className="text-xs font-medium text-muted-foreground">To</span>
 					<div className="flex flex-wrap items-center gap-1.5 rounded-md border border-border bg-card p-2">
 						{participants.map((p) => (
@@ -251,22 +271,6 @@ function NewConversationPage() {
 				</div>
 
 				<div className="flex flex-1 flex-col justify-end gap-3">
-					{participants.length > 0 ? (
-						<div className="flex flex-wrap gap-1.5">
-							{QUICK_START_CHIPS.map((chip) => (
-								<Button
-									key={chip}
-									type="button"
-									variant="outline"
-									size="sm"
-									onClick={() => void handleChipClick(chip)}
-									disabled={chipSending || createConversation.isPending}
-								>
-									{chip}
-								</Button>
-							))}
-						</div>
-					) : null}
 					<Composer
 						workspaceId={workspaceId}
 						onSend={handleSend}
@@ -283,6 +287,8 @@ function NewConversationPage() {
 						externalError={error}
 						onDismissExternalError={() => setError(null)}
 						textareaLabel="Message this conversation"
+						value={draft}
+						onValueChange={setDraft}
 					/>
 				</div>
 			</div>
