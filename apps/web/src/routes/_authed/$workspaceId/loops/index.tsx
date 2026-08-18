@@ -99,22 +99,36 @@ function LoopsPage() {
 					title="No loops running here yet"
 					description="Loops are persistent, multi-agent processes — a named pipeline that continuously ingests work, routes it through several agents, and surfaces decisions to you. Install one from the Marketplace, or start a new one."
 					action={
-						<Button size="sm" variant="outline" asChild>
-							<Link to="/$workspaceId/marketplace" params={{ workspaceId }}>
-								Browse the Marketplace
-							</Link>
-						</Button>
+						<div className="flex items-center gap-2">
+							<Button size="sm" asChild>
+								<Link to="/$workspaceId/loops/new" params={{ workspaceId }}>
+									Start a loop
+								</Link>
+							</Button>
+							<Button size="sm" variant="outline" asChild>
+								<Link to="/$workspaceId/marketplace" params={{ workspaceId }}>
+									Browse the Marketplace
+								</Link>
+							</Button>
+						</div>
 					}
 				/>
 			) : (
 				<div className="space-y-10">
 					{hasLoops && (
 						<section className="space-y-3">
-							<header className="space-y-1">
-								<div className="eyebrow">Loops</div>
-								<p className="text-[13px] leading-[1.55] text-muted-foreground">
-									Persistent multi-agent pipelines running in this workspace.
-								</p>
+							<header className="flex items-start justify-between gap-3">
+								<div className="space-y-1">
+									<div className="eyebrow">Loops</div>
+									<p className="text-[13px] leading-[1.55] text-muted-foreground">
+										Persistent multi-agent pipelines running in this workspace.
+									</p>
+								</div>
+								<Button size="sm" asChild>
+									<Link to="/$workspaceId/loops/new" params={{ workspaceId }}>
+										Start a loop
+									</Link>
+								</Button>
 							</header>
 							<div className="space-y-2">
 								{loops?.map((loop) => (
