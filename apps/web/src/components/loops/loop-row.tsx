@@ -2,9 +2,7 @@ import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { RelativeTime } from '@/components/shared/relative-time'
 import type { ActorListItem, LoopSummary } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { formatLoopMedianMs } from '@/lib/loop-duration'
 import { Link } from '@tanstack/react-router'
-import { ChevronRight } from 'lucide-react'
 import { LOOP_PILL_STYLES } from './loop-pill'
 
 // Plain-language "what happened last" line, derived purely from the loop's live
@@ -13,38 +11,37 @@ import { LOOP_PILL_STYLES } from './loop-pill'
 // much of the loop's work is still moving through it.
 function lastActivityText(loop: LoopSummary): string {
 	switch (loop.pill) {
-		case 'waiting_on_you':
-			return 'Waiting on you'
-		case 'draft':
-			return 'Draft — not live yet'
+		case 'waiting_on_you': {
+			const n = loop.humanDecisionPoints
+			return n && n > 0
+				? `Waiting on you — ${n} decision point${n === 1 ? '' : 's'} open`
+				: 'Waiting on you'
+		}
 		case 'paused':
 			return 'Paused — not running'
+		case 'archived':
+			return 'Archived'
 		default:
 			if (loop.inProgressCount > 0)
 				return `${loop.inProgressCount} item${loop.inProgressCount === 1 ? '' : 's'} in progress`
 			if (loop.closedCount > 0)
 				return `${loop.closedCount} item${loop.closedCount === 1 ? '' : 's'} completed`
-			return LOOP_PILL_STYLES[loop.pill].label
+			return 'Running'
 	}
 }
 
 export function LoopRow({
 	loop,
 	actors,
+	busyAgentCount = 0,
 }: {
 	loop: LoopSummary
 	actors: ActorListItem[] | undefined
+	/** How many of this loop's agents have a live session right now — drives the
+	 *  green "busy" line under the stage label (mockup 1536). */
+	busyAgentCount?: number
 }) {
 	const pill = LOOP_PILL_STYLES[loop.pill]
-	const isWaiting = loop.pill === 'waiting_on_you'
-	const isLive =
-		loop.pill === 'learning' || loop.pill === 'supervised' || loop.pill === 'fully_autonomous'
-	const inProgressColor = isWaiting
-		? 'text-warning'
-		: isLive
-			? 'text-success'
-			: 'text-muted-foreground'
-	const median = formatLoopMedianMs(loop.medianTimeToCloseMs)
 	const agentCards = loop.agentIds
 		.map((id) => actors?.find((a) => a.id === id))
 		.filter((a): a is ActorListItem => Boolean(a))
@@ -55,60 +52,69 @@ export function LoopRow({
 		<Link
 			to="/$workspaceId/loops/$loopId"
 			params={{ workspaceId: loop.workspaceId, loopId: loop.id }}
-			className="flex items-center gap-3 rounded-lg border border-border bg-card p-4 hover:bg-accent/50 transition-colors"
+			className="group flex items-center gap-3.5 rounded-xl border-b border-border px-3.5 py-4 transition-colors duration-150 hover:bg-muted"
 		>
-			<div className="flex flex-col items-center gap-1">
-				<span className={cn('h-3 w-3 rounded-full shrink-0', pill.dot)} />
-			</div>
-			<div className="flex-1 min-w-0">
-				<div className="flex items-center gap-2">
-					<p className="text-sm font-medium text-foreground truncate">
-						{loop.name ?? 'Untitled loop'}
-					</p>
-					<span data-testid="loop-pill" className={cn('text-[10px] font-medium', pill.text)}>
-						{pill.label}
-					</span>
-				</div>
-				{loop.content && (
-					<p className="text-xs text-muted-foreground line-clamp-2 mt-0.5">{loop.content}</p>
+			<span
+				title={pill.label}
+				className={cn(
+					'mx-1 h-2 w-2 shrink-0 rounded-full',
+					pill.dot,
+					loop.pill === 'running' && 'animate-pulse',
+				)}
+			/>
+			<div className="min-w-0 flex-1 leading-[1.35]">
+				<p className="truncate text-sm font-bold tracking-[-0.01em] text-foreground">
+					{loop.name ?? 'Untitled loop'}
+				</p>
+				{loop.guarantee && (
+					<p className="mt-0.5 truncate text-xs text-muted-foreground">{loop.guarantee}</p>
 				)}
 				{(activity || loop.updatedAt) && (
-					<div className="flex items-center gap-1.5 mt-1.5 text-xs text-muted-foreground min-w-0">
+					<div className="mt-1.5 flex min-w-0 items-center gap-1.5 text-[11.5px] text-muted-foreground">
 						{lastActor && (
 							<ActorAvatar id={lastActor.id} name={lastActor.name} type={lastActor.type} />
 						)}
-						<span className="truncate">{activity}</span>
 						{loop.updatedAt && (
-							<>
-								<span aria-hidden="true">·</span>
-								<RelativeTime date={loop.updatedAt} className="shrink-0" />
-							</>
+							<RelativeTime
+								date={loop.updatedAt}
+								className="shrink-0 font-mono text-[10px] tracking-[0.04em]"
+							/>
 						)}
-					</div>
-				)}
-				{agentCards.length > 0 && (
-					<div className="flex items-center gap-1 mt-2">
-						{agentCards.slice(0, 5).map((agent) => (
-							<ActorAvatar key={agent.id} id={agent.id} name={agent.name} type={agent.type} />
-						))}
-						{agentCards.length > 5 && (
-							<span className="text-[10px] text-muted-foreground ml-1">
-								+{agentCards.length - 5}
-							</span>
-						)}
+						<span className="truncate">{activity}</span>
 					</div>
 				)}
 			</div>
-			<div className="flex flex-col items-end gap-0.5 shrink-0 text-right">
-				<p className={cn('text-sm font-medium', inProgressColor)}>
-					{loop.inProgressCount} in progress
+			<div className="shrink-0 text-right leading-[1.35]">
+				{/* Stage stands in for the mockup's per-loop stage label (1535).
+				    `LoopSummary` carries no stage field, so this reads the pill —
+				    a real stage needs a `stage` column on `loopSummarySchema`. */}
+				<p data-testid="loop-pill" className={cn('text-xs font-semibold', pill.text)}>
+					{pill.label}
 				</p>
-				<p className="text-xs text-muted-foreground">
-					{loop.closedCount} closed
-					{median && <> · {median}</>}
-				</p>
+				{busyAgentCount > 0 && (
+					<p className="mt-0.5 whitespace-nowrap text-[11px] text-success">
+						{busyAgentCount} busy now
+					</p>
+				)}
 			</div>
-			<ChevronRight size={15} className="shrink-0 text-muted-foreground/60" aria-hidden="true" />
+			{agentCards.length > 0 && (
+				<div className="hidden shrink-0 pl-2 md:flex">
+					{agentCards.slice(0, 5).map((agent) => (
+						<ActorAvatar
+							key={agent.id}
+							id={agent.id}
+							name={agent.name}
+							type={agent.type}
+							className="-ml-1.5 ring-2 ring-card first:ml-0"
+						/>
+					))}
+					{agentCards.length > 5 && (
+						<span className="ml-1 self-center text-[10px] text-muted-foreground">
+							+{agentCards.length - 5}
+						</span>
+					)}
+				</div>
+			)}
 		</Link>
 	)
 }
