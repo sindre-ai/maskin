@@ -386,4 +386,35 @@ describe('ListView', () => {
 		expect(header?.className).toContain('sticky')
 		expect(header?.className).toContain('top-0')
 	})
+	// Mockup fixture 6655 (`nyOf`): rows blocking the user float to the top of
+	// the pool rather than getting a synthetic group of their own.
+	it('floats rows with a pending ask to the top of an ungrouped list', () => {
+		const asks = new Map([['o3', buildNotificationResponse({ objectId: 'o3', status: 'pending' })]])
+		renderListView({
+			data: [
+				buildObjectResponse({ id: 'o1', title: 'First' }),
+				buildObjectResponse({ id: 'o2', title: 'Second' }),
+				buildObjectResponse({ id: 'o3', title: 'Blocked on you' }),
+			],
+			asksByObjectId: asks,
+		})
+		const ids = Array.from(document.querySelectorAll('[data-obj-id]')).map((el) =>
+			el.getAttribute('data-obj-id'),
+		)
+		expect(ids).toEqual(['o3', 'o1', 'o2'])
+	})
+
+	it('leaves the order untouched when nothing is waiting on the user', () => {
+		renderListView({
+			data: [
+				buildObjectResponse({ id: 'o1', title: 'First' }),
+				buildObjectResponse({ id: 'o2', title: 'Second' }),
+			],
+			asksByObjectId: new Map(),
+		})
+		const ids = Array.from(document.querySelectorAll('[data-obj-id]')).map((el) =>
+			el.getAttribute('data-obj-id'),
+		)
+		expect(ids).toEqual(['o1', 'o2'])
+	})
 })
