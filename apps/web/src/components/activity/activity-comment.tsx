@@ -5,7 +5,7 @@ import type { ActorListItem, EventResponse, SessionResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { Link, useNavigate } from '@tanstack/react-router'
-import { Reply } from 'lucide-react'
+import { ChevronDown, Reply } from 'lucide-react'
 import { useState } from 'react'
 import { ActorAvatar } from '../shared/actor-avatar'
 import { AgentOutput } from '../shared/agent-output'
@@ -27,13 +27,22 @@ interface ActivityCommentProps {
 	dividerBeforeReplyId?: number
 	divider?: React.ReactNode
 	isUnread?: boolean
+	// When set, the reply affordance hands the target up to the caller (the For
+	// You card, which owns one shared composer and shows a "Replying to <name>"
+	// banner — mockup 446–448) instead of opening this comment's own inline
+	// composer.
+	onReplyTo?: (event: EventResponse, authorName: string) => void
+	// Root messages with replies collapse behind a "N replies · <note>" toggle
+	// (mockup 369). Off by default so the object-detail feed keeps showing the
+	// whole thread inline.
+	collapsibleReplies?: boolean
 }
 
 interface CommentRowProps {
 	event: EventResponse
 	actors: ActorListItem[]
 	workspaceId: string
-	onReply?: () => void
+	onReply?: (authorName: string) => void
 	isUnread?: boolean
 	isDecisionPoint?: boolean
 }
@@ -173,7 +182,7 @@ function CommentRow({
 				{onReply && (
 					<button
 						type="button"
-						onClick={onReply}
+						onClick={() => onReply(actor?.name ?? 'this message')}
 						aria-label="Reply"
 						/* Always visible on touch (no hover capability); fades behind hover/focus on mouse devices. */
 						className="opacity-100 can-hover:opacity-0 can-hover:group-hover:opacity-100 focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-foreground self-end shrink-0 p-1 -m-1"
@@ -205,15 +214,32 @@ export function ActivityComment({
 	dividerBeforeReplyId,
 	divider,
 	isUnread,
+	onReplyTo,
+	collapsibleReplies,
 }: ActivityCommentProps) {
 	const { data: actors } = useActors(workspaceId)
 	const [showReplyInput, setShowReplyInput] = useState(false)
-	const openReplyInput = () => setShowReplyInput(true)
 	const hasReplies = replies.length > 0
 	const actorList = actors ?? []
 	const isDecisionPoint = hasDecisionChips(event)
 	const currentActorId = getStoredActor()?.id
 	const alreadyReplied = !!currentActorId && replies.some((r) => r.actorId === currentActorId)
+	// Collapsed by default when the caller opts in — the toggle carries the
+	// count and a note naming who spoke last, both read off the replies
+	// themselves (mockup 369).
+	const [repliesOpen, setRepliesOpen] = useState(false)
+	const collapsed = !!collapsibleReplies && hasReplies && !repliesOpen
+	const lastReply = replies[replies.length - 1]
+	const lastReplyAuthor = actorList.find((a) => a.id === lastReply?.actorId)?.name
+	const threadNote = lastReplyAuthor ? `last from ${lastReplyAuthor}` : null
+
+	const handleReply = (authorName: string) => {
+		if (onReplyTo) {
+			onReplyTo(event, authorName)
+			return
+		}
+		setShowReplyInput(true)
+	}
 
 	return (
 		<div id={`comment-${event.id}`} className="group">
@@ -221,7 +247,7 @@ export function ActivityComment({
 				event={event}
 				actors={actorList}
 				workspaceId={workspaceId}
-				onReply={hasReplies ? undefined : openReplyInput}
+				onReply={hasReplies && !onReplyTo ? undefined : handleReply}
 				isUnread={isUnread}
 				isDecisionPoint={isDecisionPoint}
 			/>
@@ -240,7 +266,24 @@ export function ActivityComment({
 				</div>
 			)}
 
-			{hasReplies && (
+			{collapsed && (
+				<button
+					type="button"
+					onClick={() => setRepliesOpen(true)}
+					aria-expanded={false}
+					className="ml-7 mt-1.5 inline-flex items-center gap-1.5 text-left"
+				>
+					<span className="text-[11px] font-semibold text-muted-foreground hover:text-foreground">
+						{replies.length} {replies.length === 1 ? 'reply' : 'replies'}
+					</span>
+					{threadNote && (
+						<span className="text-[10.5px] text-muted-foreground">· {threadNote}</span>
+					)}
+					<ChevronDown size={11} className="text-muted-foreground" aria-hidden />
+				</button>
+			)}
+
+			{hasReplies && !collapsed && (
 				<div className="ml-7 space-y-1.5">
 					{replies.map((reply, idx) => (
 						<div key={reply.id}>
@@ -249,7 +292,7 @@ export function ActivityComment({
 								event={reply}
 								actors={actorList}
 								workspaceId={workspaceId}
-								onReply={idx === replies.length - 1 ? openReplyInput : undefined}
+								onReply={idx === replies.length - 1 ? handleReply : undefined}
 							/>
 						</div>
 					))}

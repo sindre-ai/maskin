@@ -1,12 +1,21 @@
 const AUTH_KEY = 'maskin-api-key'
 const ACTOR_KEY = 'maskin-actor'
 
-// Migrate localStorage keys from old ai-native naming
+// Migrate localStorage keys from old ai-native naming.
+//
+// This runs at module import, so it executes in every environment that pulls in
+// the api client — including ones with no usable storage (Safari private mode,
+// storage disabled by policy, a non-DOM test environment). Reading a missing or
+// throwing `localStorage` there must not take down the import.
 function migrateKey(oldKey: string, newKey: string) {
-	const old = localStorage.getItem(oldKey)
-	if (old && !localStorage.getItem(newKey)) {
-		localStorage.setItem(newKey, old)
-		localStorage.removeItem(oldKey)
+	try {
+		const old = localStorage.getItem(oldKey)
+		if (old && !localStorage.getItem(newKey)) {
+			localStorage.setItem(newKey, old)
+			localStorage.removeItem(oldKey)
+		}
+	} catch {
+		// No storage to migrate — the app falls back to an unauthenticated read.
 	}
 }
 migrateKey('ai-native-api-key', AUTH_KEY)
