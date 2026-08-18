@@ -213,7 +213,7 @@ function LoopBuilderPage() {
 						</div>
 					)}
 
-					<div className="mt-5">
+					<div className="mt-5 pb-[env(safe-area-inset-bottom)] md:pb-0">
 						<Composer
 							workspaceId={workspaceId}
 							onSend={handleSend}
