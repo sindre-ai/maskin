@@ -37,6 +37,7 @@ import {
 	or,
 	sql,
 } from 'drizzle-orm'
+import { trackGithubInstallationValidated } from '../lib/analytics/github-install-events'
 import { claimLoopActiveDay, trackLoopActiveDay, utcDayString } from '../lib/analytics/loop-events'
 import {
 	detectChiefOfStaffDomainOutput,
@@ -1751,6 +1752,30 @@ export class SessionManager extends EventEmitter {
 		}
 		const gatedAgentToolsMcpServers = stripFailedIdentities(agentToolsMcpServers, preflightVerdicts)
 		const gatedSessionMcpServers = stripFailedIdentities(sessionMcpServers, preflightVerdicts)
+
+		// Ship-metric emission for the multi-github-install bet: one event per
+		// resolved GitHub install at launch, capturing whether the per-owner
+		// wiring (env var + MCP entry) + preflight write-scope probe cleared.
+		// Fire-and-forget — capturePosthogEvent never throws or blocks.
+		if (resolvedGithubInstalls.length > 0) {
+			const verdictByMcpName = new Map(preflightVerdicts.map((v) => [v.name, v]))
+			for (const install of resolvedGithubInstalls) {
+				const mcpName = `github-${install.ownerLogin.toLowerCase()}`
+				const envKey = `GITHUB_TOKEN_${githubOwnerLoginToEnvKey(install.ownerLogin)}`
+				const envVarPresent = envVars[envKey] === install.token
+				const mcpEntryPresent = mcpName in gatedSessionMcpServers
+				const verdict = verdictByMcpName.get(mcpName)
+				const pushSucceeded = verdict ? verdict.healthy : envVarPresent && mcpEntryPresent
+				void trackGithubInstallationValidated({
+					workspaceId: session.workspaceId,
+					installationCount: resolvedGithubInstalls.length,
+					ownerLogin: install.ownerLogin,
+					envVarPresent,
+					mcpEntryPresent,
+					pushSucceeded,
+				})
+			}
+		}
 
 		if (agentTools && Object.keys(agentTools).length > 0) {
 			const gatedAgentTools = gatedAgentToolsMcpServers
