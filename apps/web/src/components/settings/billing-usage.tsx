@@ -39,34 +39,70 @@ export function formatUsd(amount: number): string {
 }
 
 /**
- * The headline figure inside the plan banner (mockup 2803–2813) — total, period
- * and reset date. No meter: the "of $X included" denominator has no API field.
+ * One labelled figure in the plan strip (mockup 2853–2867). The strip is three
+ * of these in a row; the page owns the first (PLAN) and this file owns the two
+ * that come from the usage endpoint.
+ */
+export function BillingStat({
+	label,
+	value,
+	sub,
+}: {
+	label: string
+	value: React.ReactNode
+	sub?: string
+}) {
+	return (
+		<div className="min-w-[130px] flex-1 leading-tight">
+			<div className="text-[10.5px] font-bold tracking-[0.07em] text-muted-foreground">{label}</div>
+			<div className="mt-1">{value}</div>
+			{sub ? <div className="mt-0.5 text-[11.5px] text-muted-foreground">{sub}</div> : null}
+		</div>
+	)
+}
+
+/**
+ * The usage half of the plan strip (mockup 2858–2867): what ran this month and
+ * when the window turns over.
+ *
+ * The mockup's third stat is LEFT — included allowance minus spend, with a
+ * meter under it. Neither `GET /api/billing` nor the usage endpoint carries an
+ * allowance, so there is no denominator to subtract from or fill a meter with.
+ * RESETS is the honest stat in that slot: it is the one thing about the period
+ * the API does know.
  */
 export function BillingUsageSummary({ usage }: { usage: WorkspaceModelUsage }) {
 	if (usage.isLoading) {
-		return <Skeleton className="h-8 w-48" />
+		return <Skeleton className="h-12 w-64" />
 	}
 
 	return (
-		<div className="flex flex-wrap items-baseline gap-3">
-			<p className="min-w-0 flex-1 sm:min-w-[190px]">
-				{usage.hasUsage ? (
-					<>
-						<span className="text-[27px] font-bold tabular-nums tracking-tight text-foreground">
+		<>
+			<BillingStat
+				label="USED THIS MONTH"
+				value={
+					usage.hasUsage ? (
+						<span className="text-lg font-bold tabular-nums tracking-tight text-foreground">
 							{formatUsd(usage.totalCostUsd)}
 						</span>
-						<span className="ml-2 text-xs text-muted-foreground">model usage this month</span>
-					</>
-				) : (
-					<span className="text-xs text-muted-foreground">
-						No model usage recorded this month yet.
+					) : (
+						<span className="text-xs text-muted-foreground">
+							No model usage recorded this month yet.
+						</span>
+					)
+				}
+				sub={usage.hasUsage ? 'billed at cost, no markup' : undefined}
+			/>
+			<BillingStat
+				label="RESETS"
+				value={
+					<span className="text-lg font-bold tracking-tight text-foreground">
+						{DAY_FORMAT.format(usage.resetsAt)}
 					</span>
-				)}
-			</p>
-			<p className="text-xs text-muted-foreground sm:text-right">
-				since {DAY_FORMAT.format(usage.periodStart)} · resets {DAY_FORMAT.format(usage.resetsAt)}
-			</p>
-		</div>
+				}
+				sub={`since ${DAY_FORMAT.format(usage.periodStart)}`}
+			/>
+		</>
 	)
 }
 
