@@ -214,7 +214,8 @@ test.describe('Object detail — properties drawer', () => {
 			.first()
 			.getByRole('button', { name: 'Properties', exact: true })
 			.click()
-		// The creator is auto-subscribed, and the row says why they are on it.
-		await expect(page.getByText('you', { exact: true })).toBeVisible()
+		// The creator is auto-subscribed, and the row says why they are on it —
+		// the mockup's wording (1441).
+		await expect(page.getByText('you own the outcome')).toBeVisible()
 	})
 })

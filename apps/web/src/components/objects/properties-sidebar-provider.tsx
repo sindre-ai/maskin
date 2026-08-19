@@ -7,7 +7,9 @@ import * as React from 'react'
 // 288px = 18rem expanded. Collapsed is fully off-canvas (0 width).
 // Exported so consumers that push other layout (doc body margin, header
 // margin) share this single source of truth instead of re-hardcoding it.
-export const SIDEBAR_WIDTH = '18rem'
+// Mockup `odDrawerW` — the drawer scales with the viewport rather than sitting
+// at a fixed 18rem, so a long custom-field value has room to read.
+export const SIDEBAR_WIDTH = 'clamp(300px, 26vw, 360px)'
 
 /**
  * Fork of shadcn's `SidebarProvider` for the object-detail right sidebar.
