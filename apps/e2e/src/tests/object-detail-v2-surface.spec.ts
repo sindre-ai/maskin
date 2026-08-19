@@ -91,6 +91,48 @@ test.describe('Object detail — v2 surface', () => {
 		})
 	}
 
+	// The v2 shell reads as a document, but it is still the place you fix an
+	// object's title and body. Both were lost when the route moved off
+	// ObjectDocument; this pins them to the shell.
+	test('renames in place and edits the body, and both survive a reload', async ({
+		page,
+		account,
+	}) => {
+		await page.setViewportSize({ width: 1024, height: 768 })
+
+		const bet = await account.api.createObject(account.workspaceId, {
+			type: 'bet',
+			title: 'Before rename',
+			status: 'active',
+			content: 'Original body.',
+		})
+
+		await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
+		const heading = page.getByRole('heading', { level: 1 })
+		await expect(heading).toHaveText('Before rename', { timeout: 15000 })
+
+		// At rest the title is a real heading — the field only appears on click.
+		await expect(page.getByLabel('Object title')).toHaveCount(0)
+		await heading.click()
+		const titleField = page.getByLabel('Object title')
+		await expect(titleField).toBeVisible()
+		await titleField.fill('After rename')
+		await titleField.press('Enter')
+		await expect(heading).toHaveText('After rename')
+
+		// The body opens its editor on click, the same way it did pre-v2.
+		await page.locator('.prose').first().click()
+		const bodyField = page.locator('textarea').first()
+		await bodyField.fill('Rewritten body.')
+		await bodyField.blur()
+
+		await page.reload()
+		await expect(page.getByRole('heading', { level: 1 })).toHaveText('After rename', {
+			timeout: 15000,
+		})
+		await expect(page.getByText('Rewritten body.')).toBeVisible()
+	})
+
 	// The bar, the status chip and the composer all read from colour tokens, so
 	// they must stay legible in both schemes.
 	for (const scheme of ['light', 'dark'] as const) {

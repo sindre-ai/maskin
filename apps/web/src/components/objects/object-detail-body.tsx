@@ -21,8 +21,8 @@ export function ObjectDetailBody({
 }: {
 	object: ObjectResponse
 	workspaceId: string
-	/** Commits an edited body. Omitted by read-only hosts (the MCP-app embed),
-	 *  which keeps the rendered markdown non-editable. */
+	/** Wire this to make the document body editable in place, the way the
+	 *  pre-v2 surface did. Omitted by read-only hosts (the MCP-app embed). */
 	onContentChange?: (content: string) => void
 }) {
 	const fold = getDocumentFold(object)
@@ -40,16 +40,14 @@ export function ObjectDetailBody({
 			{/* Editable when the host wires a commit handler — an empty body still
 			    renders the editor so a new object can be written into, which a
 			    truthy-content guard alone would make impossible. */}
-			{onContentChange ? (
+			{object.content || onContentChange ? (
 				<MarkdownContent
 					content={object.content ?? ''}
 					size="doc"
 					className="max-w-[75ch]"
+					editable={Boolean(onContentChange)}
 					onChange={onContentChange}
-					editable
 				/>
-			) : object.content ? (
-				<MarkdownContent content={object.content} size="doc" className="max-w-[75ch]" />
 			) : null}
 
 			{fold && <DocumentFold fold={fold} />}
