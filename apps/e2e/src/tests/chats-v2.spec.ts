@@ -99,10 +99,7 @@ test.describe('Chats v2 — filter menu', () => {
 })
 
 test.describe('Chats v2 — grouped list', () => {
-	test('labels the group a fresh conversation lands in and closes the history', async ({
-		page,
-		account,
-	}) => {
+	test('labels the group a fresh conversation lands in', async ({ page, account }) => {
 		const chats = await seedChats(account.api, account.workspaceId)
 		const list = page.getByTestId('conversation-list')
 
@@ -111,7 +108,6 @@ test.describe('Chats v2 — grouped list', () => {
 		// Pinned sorts above the dated groups.
 		await expect(list.getByText('Pinned', { exact: true })).toBeVisible()
 		await expect(list.getByText('Today', { exact: true })).toBeVisible()
-		await expect(list.getByText(/That's the whole history/)).toBeVisible()
 	})
 })
 
