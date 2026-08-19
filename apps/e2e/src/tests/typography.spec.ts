@@ -188,17 +188,22 @@ test.describe('Typography — object detail', () => {
 		expect(maxWidthPx as number).toBeLessThan(768)
 	})
 
-	test('title heading uses font-semibold', async ({ page, account }) => {
+	test('title input uses font-semibold', async ({ page, account }) => {
 		const obj = await createObjectWithContent(account.api, account.workspaceId)
 
 		await setTheme(page, 'light')
 		await page.goto(`/${account.workspaceId}/objects/${obj.id}`)
 		await waitForApp(page)
 
+		// The title still renders as an editable textarea (the object-detail
+		// static-shell rebuild referenced elsewhere in this spec file hasn't
+		// landed in this branch) — see object-document.tsx.
 		const fontWeight = await page.evaluate(() => {
-			const titleEl = document.querySelector<HTMLElement>('h1')
-			if (!titleEl) return null
-			return getComputedStyle(titleEl).getPropertyValue('font-weight')
+			const titleInput = document.querySelector<HTMLTextAreaElement>(
+				'textarea[placeholder="Untitled"]',
+			)
+			if (!titleInput) return null
+			return getComputedStyle(titleInput).getPropertyValue('font-weight')
 		})
 
 		// font-semibold = 600
