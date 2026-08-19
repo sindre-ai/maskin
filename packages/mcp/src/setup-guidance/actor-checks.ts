@@ -94,6 +94,21 @@ function mcpConfigured(actor: ActorInput): SetupCheck | null {
 	return null
 }
 
+function automationWired(actor: ActorInput): SetupCheck | null {
+	if (actor.wiredToAutomation) return null
+	return {
+		name: 'automation_wired',
+		status: 'warn',
+		message:
+			"This agent isn't wired into any trigger or loop yet, so nothing will make it run on its own — ask the user whether it should be added to one.",
+		fix: {
+			tool: 'create_trigger',
+			args_hint: `target_actor_id: "${actor.id}" + a cron/event/reminder config (or add a step targeting this actor via create_loop/update_loop)`,
+			why: 'Without a trigger or loop, this agent only ever runs when explicitly invoked via run_agent.',
+		},
+	}
+}
+
 function dryRunSuggested(actor: ActorInput): SetupCheck {
 	return {
 		name: 'dry_run_suggested',
@@ -115,6 +130,7 @@ export function checkActor(actor: ActorInput): SetupCheck[] {
 		safeCheck('system_prompt_quality', () => systemPromptQuality(actor)),
 		safeCheck('skills_attached', () => skillsAttached(actor)),
 		safeCheck('mcp_configured', () => mcpConfigured(actor)),
+		safeCheck('automation_wired', () => automationWired(actor)),
 		safeCheck('dry_run_suggested', () => dryRunSuggested(actor)),
 	]
 	return sortByPriority(results.filter((c): c is SetupCheck => c !== null))

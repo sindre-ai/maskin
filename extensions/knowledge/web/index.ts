@@ -5,7 +5,7 @@ const knowledgeWebExtension: ModuleWebDefinition = {
 	id: MODULE_ID,
 	name: MODULE_NAME,
 	navItems: [],
-	objectTypeTabs: [{ label: 'Articles', value: 'knowledge' }],
+	objectTypeTabs: [{ label: 'Knowledge', value: 'knowledge' }],
 	defaultSettings: KNOWLEDGE_DEFAULT_SETTINGS,
 }
 
