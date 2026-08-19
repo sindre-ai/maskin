@@ -1,7 +1,9 @@
+import { NewMenu } from '@/components/shared/new-menu'
 import { Button } from '@/components/ui/button'
 import type { MemberResponse, ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { getTypeColor, typeIcons, typeLabel } from '@/lib/constants'
+import { getStatusColor, getTypeColor, statusLabel, typeIcons, typeLabel } from '@/lib/constants'
+import { useNavigate } from '@tanstack/react-router'
 import { PanelRight } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { AuxiliaryActionMenu } from './auxiliary-action-menu'
@@ -35,7 +37,18 @@ export function ObjectDetailBarActions({
 	const [menuOpen, setMenuOpen] = useState(false)
 
 	return (
+		// Mockup order (919–950): the overflow menu, then the drawer toggle. The
+		// split New button follows, rendered by the shared nav so this route uses
+		// the same one as every other screen.
 		<div className="flex shrink-0 items-center gap-2">
+			<AuxiliaryActionMenu
+				object={object}
+				onDeleteRequest={onDeleteRequest}
+				onArchiveRequest={onArchiveRequest}
+				workspaceId={workspaceId}
+				open={menuOpen}
+				onOpenChange={setMenuOpen}
+			/>
 			{onTogglePropertiesRequest && (
 				<Button
 					variant="outline"
@@ -51,14 +64,6 @@ export function ObjectDetailBarActions({
 					<PanelRight className="size-3.5" />
 				</Button>
 			)}
-			<AuxiliaryActionMenu
-				object={object}
-				onDeleteRequest={onDeleteRequest}
-				onArchiveRequest={onArchiveRequest}
-				workspaceId={workspaceId}
-				open={menuOpen}
-				onOpenChange={setMenuOpen}
-			/>
 		</div>
 	)
 }
@@ -69,6 +74,26 @@ export function ObjectDetailBarActions({
  * bar — the mockup reads type/state/owner before the h1. Hosts
  * [data-hero-status-trigger] for the sticky-nav sprout-back.
  */
+/**
+ * The read-only reading of the status pill (mockup `odSkCaret` is empty when a
+ * type carries no schema statuses): same shape as the picker, no caret, not a
+ * control — the object still says what state it is in.
+ */
+function StatusPill({ status }: { status: string }) {
+	const tone = getStatusColor(status)
+	return (
+		<span className="inline-flex items-center gap-1.5 rounded-[7px] border border-transparent px-2 py-[3px]">
+			<span className={cn('shrink-0', tone.text)}>
+				<span aria-hidden="true" className="block size-[7px] rounded-full bg-current" />
+			</span>
+			<span className="text-muted-foreground">Status</span>
+			<span className="font-semibold capitalize text-secondary-foreground">
+				{statusLabel(status)}
+			</span>
+		</span>
+	)
+}
+
 const TITLE_CLASS =
 	'text-[clamp(20px,2.4vw,25px)] font-bold leading-[1.2] tracking-[-0.02em] text-foreground'
 
@@ -108,12 +133,6 @@ export function ObjectDetailIdentity({
 		else setTitleDraft(object.title ?? '')
 	}
 
-	const autosize = (el: HTMLTextAreaElement | null) => {
-		if (!el) return
-		el.style.height = 'auto'
-		el.style.height = `${el.scrollHeight}px`
-	}
-
 	return (
 		<div>
 			<div className="flex flex-wrap items-center gap-2 text-[11.5px] text-muted-foreground">
@@ -121,7 +140,7 @@ export function ObjectDetailIdentity({
 				    a 13px stroke in the type's own colour, not a filled tile. */}
 				{Icon && <Icon aria-hidden="true" className={cn('size-[13px] shrink-0', typeColor.text)} />}
 				<span>{typeLabel(object.type)}</span>
-				{statuses.length > 0 && (
+				{statuses.length > 0 ? (
 					<StatusSelect
 						current={object.status}
 						options={statuses}
@@ -129,6 +148,8 @@ export function ObjectDetailIdentity({
 						variant="chip"
 						heroAnchor
 					/>
+				) : (
+					object.status && <StatusPill status={object.status} />
 				)}
 				<OwnerSelect
 					members={members}
@@ -139,16 +160,13 @@ export function ObjectDetailIdentity({
 			</div>
 
 			{editingTitle ? (
-				<textarea
+				<input
 					// biome-ignore lint/a11y/noAutofocus: the field only exists once the reader asks to rename
 					autoFocus
 					value={titleDraft}
 					aria-label="Object title"
-					rows={1}
-					ref={autosize}
 					onChange={(e) => {
 						setTitleDraft(e.target.value)
-						autosize(e.target)
 					}}
 					onBlur={commitTitle}
 					onKeyDown={(e) => {
@@ -161,19 +179,16 @@ export function ObjectDetailIdentity({
 							setEditingTitle(false)
 						}
 					}}
-					className={cn(
-						TITLE_CLASS,
-						'mt-2.5 w-full resize-none overflow-hidden border-none bg-transparent p-0 outline-none',
-					)}
+					className={cn(TITLE_CLASS, 'mt-2.5 w-full border-none bg-transparent p-0 outline-none')}
 				/>
 			) : (
 				<h1
 					className={cn(
 						'mt-2.5',
 						TITLE_CLASS,
-						onTitleChange && 'cursor-text rounded-sm transition-colors hover:bg-muted/50',
+						onTitleChange && 'cursor-text rounded-lg transition-colors hover:bg-muted/60',
 					)}
-					title={onTitleChange ? 'Click to rename' : undefined}
+					title={onTitleChange ? 'Click to edit' : undefined}
 					tabIndex={onTitleChange ? 0 : undefined}
 					onClick={onTitleChange ? () => setEditingTitle(true) : undefined}
 					onKeyDown={

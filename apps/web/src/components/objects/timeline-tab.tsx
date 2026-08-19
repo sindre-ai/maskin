@@ -665,10 +665,10 @@ function EventRow({
 	// row rather than a trailer on someone's name.
 	if (entry.isRelationship && entry.reference) {
 		return (
-			<div className="relative flex flex-wrap items-center gap-x-2.5 gap-y-1 py-[7px] pl-9">
+			<div className="relative flex flex-wrap items-center gap-x-2.5 gap-y-1 py-1 pl-9">
 				<span
 					aria-hidden="true"
-					className="absolute left-[10px] top-3.5 size-2 rounded-[2px] border-[1.5px] border-border-strong bg-background"
+					className="absolute left-[10px] top-[9px] size-2 rounded-[2px] border-[1.5px] border-border-strong bg-background"
 				/>
 				{entry.time && (
 					<RelativeTime
@@ -692,11 +692,11 @@ function EventRow({
 		// Mockup 1177–1191: a hollow 8px node on the rail, the time in its own
 		// 46px column, then one sentence — the event's weight comes from the
 		// bold actor name, not from a filled dot or an uppercase badge.
-		<div className="relative py-2 pl-9">
+		<div className="relative py-1 pl-9">
 			<span
 				aria-hidden="true"
 				className={cn(
-					'absolute left-[10px] top-[13px] size-2 rounded-full border-2 bg-background',
+					'absolute left-[10px] top-[9px] size-2 rounded-full border-2 bg-background',
 					DOT_TONE_CLASSES[entry.chipTone],
 				)}
 			/>

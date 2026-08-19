@@ -127,7 +127,10 @@ test.describe('Sticky nav — bet identity', () => {
 })
 
 test.describe('"Create an object" section in the header New menu', () => {
-	test('is absent on /objects/:id and present on /objects', async ({ page, account }) => {
+	// The object page carries the same split New button as every other screen
+	// (mockup 925–946), so its menu offers the same sections — the earlier
+	// contract that hid "Create an object" here is superseded.
+	test('is present on /objects/:id and on /objects', async ({ page, account }) => {
 		await page.setViewportSize(WIDE_DESKTOP)
 
 		const bet = await account.api.createObject(account.workspaceId, {
@@ -147,7 +150,7 @@ test.describe('"Create an object" section in the header New menu', () => {
 		const newButton = page.locator('header').getByRole('button', { name: 'More ways to start' })
 		await expect(newButton).toBeVisible()
 		await newButton.click()
-		await expect(page.getByText('Create an object')).toHaveCount(0)
+		await expect(page.getByText('Create an object')).toBeVisible()
 		await page.keyboard.press('Escape')
 
 		await page.goto(`/${account.workspaceId}/objects`)

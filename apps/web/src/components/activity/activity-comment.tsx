@@ -173,7 +173,9 @@ function CommentRow({
 			<div
 				className={cn(
 					'relative flex items-start rounded-md transition-colors',
-					isBubble ? 'z-[1] gap-[11px] py-2.5' : '-mx-1 gap-2 px-1 py-1 hover:bg-secondary/50',
+					// Mockup 1281–1284: 24px avatar, 10px gutter, 2px of vertical air —
+					// the timeline is read as a stream, so rows sit close together.
+					isBubble ? 'z-[1] gap-2.5 py-0.5' : '-mx-1 gap-2 px-1 py-1 hover:bg-secondary/50',
 					isDecisionPoint && !isBubble && 'pl-3',
 				)}
 			>
@@ -195,38 +197,48 @@ function CommentRow({
 				<div
 					className={cn(
 						'flex-1 min-w-0',
-						isBubble && 'rounded-xl bg-muted/60 px-3.5 py-[11px] text-[13px] leading-[1.55]',
+						isBubble && 'rounded-[11px] bg-muted/60 px-2.5 py-1.5 text-[12.5px] leading-[1.5]',
 					)}
 				>
-					<div className={cn('flex items-baseline gap-2', isBubble && 'gap-[7px]')}>
-						<div
-							className={cn(
-								'min-w-0 flex items-baseline gap-1.5 flex-wrap',
-								isBubble ? 'shrink' : 'flex-1',
-							)}
-						>
+					{/* Bubbled, the name and time run inline with the message so a
+					    long history stays on one screen (mockup 1285). */}
+					{isBubble ? (
+						<>
 							{nameEl}
+							<RelativeTime
+								date={event.createdAt}
+								className="mx-1.5 font-mono text-[10px] tabular-nums text-border-strong"
+							/>
 							{isDecisionPoint && (
-								<span className="text-[10px] font-medium leading-none px-1.5 py-0.5 rounded-full bg-accent text-accent-foreground">
+								<span className="mr-1.5 rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-medium leading-none text-accent-foreground">
 									Needs you
 								</span>
 							)}
+						</>
+					) : (
+						<div className="flex items-baseline gap-2">
+							<div className="min-w-0 flex flex-1 items-baseline gap-1.5 flex-wrap">
+								{nameEl}
+								{isDecisionPoint && (
+									<span className="text-[10px] font-medium leading-none px-1.5 py-0.5 rounded-full bg-accent text-accent-foreground">
+										Needs you
+									</span>
+								)}
+							</div>
+							<RelativeTime
+								date={event.createdAt}
+								className="text-muted-foreground font-mono tabular-nums shrink-0 w-14 text-right text-xs"
+							/>
 						</div>
-						<RelativeTime
-							date={event.createdAt}
-							className={cn(
-								'text-muted-foreground font-mono tabular-nums shrink-0',
-								isBubble ? 'text-[10px]' : 'w-14 text-right text-xs',
-							)}
-						/>
-					</div>
+					)}
 					{clampable && !expanded ? (
-						// Clamped, the message is a plain excerpt so "Show more" can sit
-						// on the end of the sentence rather than under it (mockup 1006).
-						<p className="mt-1 text-[13px] leading-[1.55]">
-							{clampComment(content)}
+						// Clamped, the message is a plain excerpt so it can run inline
+						// after the name and "Show more" can sit on the end of the
+						// sentence rather than under it (mockup 1285–1286).
+						<>
+							<span>{clampComment(content)}</span>
 							{showMoreButton}
-						</p>
+						</>
 					) : (
 						<>
 							<AgentOutput
@@ -235,7 +247,7 @@ function CommentRow({
 								mentionActors={actors}
 								onMentionClick={handleMentionClick}
 								size="sm"
-								className="mt-1"
+								className={cn(isBubble ? 'inline [&_p:first-child]:inline [&_p]:my-0' : 'mt-1')}
 								renderVisuals
 							/>
 							{clampable && showMoreButton}
