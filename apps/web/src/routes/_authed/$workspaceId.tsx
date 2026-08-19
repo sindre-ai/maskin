@@ -14,6 +14,7 @@ import { api } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { CommandPaletteProvider } from '@/lib/command-palette-context'
+import { deriveConversationTitle } from '@/lib/conversation-title'
 import { setFaroUser } from '@/lib/faro'
 import { isHiddenRouteId, migrateLegacySidebarState, viewKeyFromRouteId } from '@/lib/nav-view-keys'
 import { NewConversationProvider } from '@/lib/new-conversation-context'
@@ -25,7 +26,6 @@ import {
 	setCapturingEnabled,
 } from '@/lib/posthog'
 import { WorkspaceContext, useWorkspace } from '@/lib/workspace-context'
-import { NEW_CONVERSATION_PLACEHOLDER_TITLE } from '@maskin/shared'
 import { Outlet, createFileRoute, useMatches, useNavigate } from '@tanstack/react-router'
 import { type ReactNode, useEffect, useMemo, useRef } from 'react'
 
@@ -183,7 +183,7 @@ function PendingPromptBootstrap() {
 		localStorage.removeItem('maskin_pending_prompt')
 		createConversation
 			.mutateAsync({
-				title: NEW_CONVERSATION_PLACEHOLDER_TITLE,
+				title: deriveConversationTitle(prompt, defaultAgent.name),
 				participant_actor_ids: [defaultAgent.id],
 				initial_message: prompt,
 			})
