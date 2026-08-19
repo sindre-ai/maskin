@@ -13,7 +13,15 @@ import { ObjectEvidenceBlock } from './object-evidence-block'
  * the mockup keeps them in the properties drawer's CUSTOM FIELDS section
  * (1447–1455), so rendering them twice was drift.
  */
-export function ObjectDetailBody({ object }: { object: ObjectResponse }) {
+export function ObjectDetailBody({
+	object,
+	onContentChange,
+}: {
+	object: ObjectResponse
+	/** Wire this to make the document body editable in place, the way the
+	 *  pre-v2 surface did. Omitted by read-only hosts. */
+	onContentChange?: (content: string) => void
+}) {
 	const fold = getDocumentFold(object)
 	const evidence = getEvidence(object)
 
@@ -21,8 +29,14 @@ export function ObjectDetailBody({ object }: { object: ObjectResponse }) {
 		// The mockup runs the body at the document scale and holds it to a 75ch
 		// measure (1105–1122); sections below it sit on the same column.
 		<div className="mt-4 flex flex-col gap-3.5">
-			{object.content ? (
-				<MarkdownContent content={object.content} size="doc" className="max-w-[75ch]" />
+			{object.content || onContentChange ? (
+				<MarkdownContent
+					content={object.content ?? ''}
+					size="doc"
+					className="max-w-[75ch]"
+					editable={Boolean(onContentChange)}
+					onChange={onContentChange}
+				/>
 			) : null}
 
 			{fold && <DocumentFold fold={fold} />}

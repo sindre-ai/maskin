@@ -3,7 +3,7 @@ import type { MemberResponse, ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { getTypeColor, typeIcons, typeLabel } from '@/lib/constants'
 import { PanelRight } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { AuxiliaryActionMenu } from './auxiliary-action-menu'
 import { OwnerSelect, StatusSelect } from './property-selects'
 
@@ -82,21 +82,50 @@ export function ObjectDetailBarActions({
  * bar — the mockup reads type/state/owner before the h1. Hosts
  * [data-hero-status-trigger] for the sticky-nav sprout-back.
  */
+const TITLE_CLASS =
+	'text-[clamp(20px,2.4vw,25px)] font-bold leading-[1.2] tracking-[-0.02em] text-foreground'
+
 export function ObjectDetailIdentity({
 	object,
 	statuses,
 	members,
 	onStatusChange,
 	onDriverChange,
+	onTitleChange,
 }: {
 	object: ObjectResponse
 	statuses: string[]
 	members: MemberResponse[]
 	onStatusChange: (status: string) => void
 	onDriverChange: (driver: string | null) => void
+	/** Wire this to make the title editable in place. Omitted by read-only
+	 *  hosts (the MCP-app embed), which keeps the plain heading. */
+	onTitleChange?: (title: string) => void
 }) {
 	const Icon = typeIcons[object.type]
 	const typeColor = getTypeColor(object.type)
+
+	// Click-to-edit, the same shape the body uses: the heading stays a real
+	// <h1> at rest and only becomes a field once you ask for it, so the
+	// document reads as the mockup draws it and still renames in place.
+	const [editingTitle, setEditingTitle] = useState(false)
+	const [titleDraft, setTitleDraft] = useState(object.title ?? '')
+	useEffect(() => {
+		if (!editingTitle) setTitleDraft(object.title ?? '')
+	}, [object.title, editingTitle])
+
+	const commitTitle = () => {
+		setEditingTitle(false)
+		const next = titleDraft.trim()
+		if (next && next !== object.title) onTitleChange?.(next)
+		else setTitleDraft(object.title ?? '')
+	}
+
+	const autosize = (el: HTMLTextAreaElement | null) => {
+		if (!el) return
+		el.style.height = 'auto'
+		el.style.height = `${el.scrollHeight}px`
+	}
 
 	return (
 		<div>
@@ -122,9 +151,57 @@ export function ObjectDetailIdentity({
 				/>
 			</div>
 
-			<h1 className="mt-2.5 text-[clamp(20px,2.4vw,25px)] font-bold leading-[1.2] tracking-[-0.02em] text-foreground">
-				{object.title ?? 'Untitled'}
-			</h1>
+			{editingTitle ? (
+				<textarea
+					// biome-ignore lint/a11y/noAutofocus: the field only exists once the reader asks to rename
+					autoFocus
+					value={titleDraft}
+					aria-label="Object title"
+					rows={1}
+					ref={autosize}
+					onChange={(e) => {
+						setTitleDraft(e.target.value)
+						autosize(e.target)
+					}}
+					onBlur={commitTitle}
+					onKeyDown={(e) => {
+						if (e.key === 'Enter' && !e.shiftKey) {
+							e.preventDefault()
+							e.currentTarget.blur()
+						}
+						if (e.key === 'Escape') {
+							setTitleDraft(object.title ?? '')
+							setEditingTitle(false)
+						}
+					}}
+					className={cn(
+						TITLE_CLASS,
+						'mt-2.5 w-full resize-none overflow-hidden border-none bg-transparent p-0 outline-none',
+					)}
+				/>
+			) : (
+				<h1
+					className={cn(
+						'mt-2.5',
+						TITLE_CLASS,
+						onTitleChange && 'cursor-text rounded-sm transition-colors hover:bg-muted/50',
+					)}
+					title={onTitleChange ? 'Click to rename' : undefined}
+					tabIndex={onTitleChange ? 0 : undefined}
+					onClick={onTitleChange ? () => setEditingTitle(true) : undefined}
+					onKeyDown={
+						onTitleChange
+							? (e) => {
+									if (e.key !== 'Enter' && e.key !== ' ') return
+									e.preventDefault()
+									setEditingTitle(true)
+								}
+							: undefined
+					}
+				>
+					{object.title ?? 'Untitled'}
+				</h1>
+			)}
 		</div>
 	)
 }

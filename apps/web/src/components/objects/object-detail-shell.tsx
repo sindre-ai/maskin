@@ -191,6 +191,20 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 		})
 	}, [object.id, object.status, object.type, updateObject])
 
+	const handleUpdateTitle = useCallback(
+		(title: string) => {
+			updateObject.mutate({ id: object.id, data: { title } })
+		},
+		[object.id, updateObject],
+	)
+
+	const handleUpdateContent = useCallback(
+		(content: string) => {
+			updateObject.mutate({ id: object.id, data: { content } })
+		},
+		[object.id, updateObject],
+	)
+
 	const handleUpdateDriver = useCallback(
 		(driver: string | null) => {
 			updateObject.mutate({ id: object.id, data: { driver } })
@@ -269,6 +283,7 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 							members={members ?? []}
 							onStatusChange={handleUpdateStatus}
 							onDriverChange={handleUpdateDriver}
+							onTitleChange={handleUpdateTitle}
 						/>
 
 						{askText && (
@@ -281,7 +296,7 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 							/>
 						)}
 
-						<ObjectDetailBody object={object} />
+						<ObjectDetailBody object={object} onContentChange={handleUpdateContent} />
 
 						{/* One Activity rule + a 2-way segmented control (mockup
 						    1138–1143): the label is a mono micro-heading, not a
