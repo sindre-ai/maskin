@@ -7,6 +7,7 @@ import {
 	workspaceOnboardingPrompts,
 	workspaces,
 } from '@maskin/db/schema'
+import { mergeModuleDefaultSettings } from '@maskin/module-sdk'
 import {
 	WORKSPACE_ADMIN_DIFF_FIELDS,
 	WORKSPACE_COACH_DEFAULT,
@@ -87,7 +88,8 @@ app.openapi(createWorkspaceRoute, async (c) => {
 	const actorId = c.get('actorId')
 	const body = c.req.valid('json')
 
-	const settings = workspaceSettingsSchema.parse(body.settings ?? {})
+	const parsedSettings = workspaceSettingsSchema.parse(body.settings ?? {})
+	const settings = mergeModuleDefaultSettings(parsedSettings, parsedSettings.enabled_modules)
 
 	const workspace = await db.transaction(async (tx) => {
 		const [ws] = await tx

@@ -24,6 +24,7 @@ import {
 	workspaceSkills,
 	workspaces,
 } from '@maskin/db/schema'
+import { mergeModuleDefaultSettings } from '@maskin/module-sdk'
 import {
 	type AgentState,
 	PLATFORM_MCP_PRESET,
@@ -204,9 +205,11 @@ app.openapi(createActorRoute, async (c) => {
 	let workspaceId: string | undefined
 
 	if (shouldCreateWorkspace) {
-		const defaultSettings = workspaceSettingsSchema.parse({
-			enabled_modules: ['work', 'knowledge'],
-		})
+		const enabledModules = ['work', 'crm', 'knowledge']
+		const defaultSettings = mergeModuleDefaultSettings(
+			workspaceSettingsSchema.parse({ enabled_modules: enabledModules }),
+			enabledModules,
+		)
 		const created = await db.transaction(async (tx) => {
 			const [workspace] = await tx
 				.insert(workspaces)

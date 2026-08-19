@@ -7,6 +7,8 @@ import {
 	workspaceMembers,
 	workspaces,
 } from '@maskin/db/schema'
+import { mergeModuleDefaultSettings } from '@maskin/module-sdk'
+import { workspaceSettingsSchema } from '@maskin/shared'
 import { and, eq, isNotNull } from 'drizzle-orm'
 import { emitWorkspaceFirstReady } from './analytics/install-telemetry'
 import {
@@ -338,11 +340,18 @@ export async function maybeBootstrapDev(db: Database): Promise<DevBootstrapResul
 
 	if (!actor) throw new Error('dev bootstrap: failed to create actor')
 
+	const enabledModules = ['work', 'crm', 'knowledge']
+	const settings = mergeModuleDefaultSettings(
+		workspaceSettingsSchema.parse({ enabled_modules: enabledModules }),
+		enabledModules,
+	)
+
 	const workspace = await db.transaction(async (tx) => {
 		const [ws] = await tx
 			.insert(workspaces)
 			.values({
 				name: 'My Workspace',
+				settings,
 				createdBy: actor.id,
 			})
 			.returning()
