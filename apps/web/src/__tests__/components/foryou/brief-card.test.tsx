@@ -1,5 +1,6 @@
-import { render, screen } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { useState } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@tanstack/react-router', async () => {
@@ -7,9 +8,9 @@ vi.mock('@tanstack/react-router', async () => {
 	return mockTanStackRouter()
 })
 
-const mockUseBriefing = vi.fn()
+const mockUseSpokenBrief = vi.fn()
 vi.mock('@/hooks/use-briefing', () => ({
-	useBriefing: (...args: unknown[]) => mockUseBriefing(...args),
+	useSpokenBrief: (...args: unknown[]) => mockUseSpokenBrief(...args),
 }))
 
 const mockUseObjects = vi.fn(() => ({ data: [] }))
@@ -18,22 +19,18 @@ vi.mock('@/hooks/use-objects', () => ({
 }))
 
 vi.mock('@/hooks/use-actors', () => ({
-	useDefaultChatAgent: () => ({ id: 'agent-1', name: 'Workspace Coach' }),
+	useDefaultChatAgent: () => ({ id: 'agent-1', name: 'Chief of Staff' }),
 	useActors: () => ({ data: [] }),
 	useActor: () => ({ data: undefined }),
 }))
 
-import {
-	BriefCard,
-	briefMentionedIds,
-	briefSpokenText,
-	briefTranscript,
-	splitBriefHeadline,
-} from '@/components/foryou/brief-card'
-import { estimateDurationMs, formatClock } from '@/hooks/use-brief-playback'
+import { BriefCard } from '@/components/foryou/brief-card'
 import { TestWrapper } from '../../setup'
 
 const OBJECT_ID = '11111111-2222-4333-8444-555555555555'
+
+const SCRIPT =
+	'Cut signup friction is the one worth your attention today. Three of five tasks are done, and nothing else is blocked.'
 
 function buildBriefObject() {
 	return {
@@ -50,183 +47,167 @@ function buildBriefObject() {
 	}
 }
 
-/** Minimal SpeechSynthesis stand-in — jsdom ships none, which is exactly the
- *  unsupported branch the drawer has to degrade into. */
+function buildSpokenBrief(overrides: Record<string, unknown> = {}) {
+	return {
+		workspace_id: 'ws-1',
+		headline: 'Cut signup friction is the one worth your attention today.',
+		script: SCRIPT,
+		mentioned_ids: [OBJECT_ID],
+		generated_at: '2026-08-19T08:00:00.000Z',
+		source: 'agent' as const,
+		agent: { id: 'agent-1', name: 'Chief of Staff' },
+		model: 'claude-haiku-4-5-20251001',
+		...overrides,
+	}
+}
+
+/**
+ * Minimal SpeechSynthesis stand-in — jsdom ships none, which is exactly the
+ * unsupported branch the card has to degrade into.
+ *
+ * `speak` fires `onend` on the next microtask, the way a real engine finishes
+ * an utterance. Without that the hook stops after the first sentence, since
+ * it queues the next one from the previous one's `onend`.
+ */
 function installSpeechSynthesis() {
-	const speak = vi.fn()
+	const speak = vi.fn((utterance: { text: string; onend: (() => void) | null }) => {
+		queueMicrotask(() => act(() => utterance.onend?.()))
+	})
 	Object.defineProperty(window, 'speechSynthesis', {
 		configurable: true,
-		value: { speak, cancel: vi.fn() },
+		value: {
+			speak,
+			cancel: vi.fn(),
+			getVoices: () => [],
+			addEventListener: vi.fn(),
+			removeEventListener: vi.fn(),
+		},
 	})
 	Object.defineProperty(window, 'SpeechSynthesisUtterance', {
 		configurable: true,
 		value: class {
 			text: string
-			onboundary: unknown = null
-			onend: unknown = null
-			onerror: unknown = null
+			rate = 1
+			pitch = 1
+			voice: unknown = null
+			onboundary: ((event: { charIndex: number }) => void) | null = null
+			onend: (() => void) | null = null
+			onerror: (() => void) | null = null
 			constructor(text: string) {
 				this.text = text
 			}
 		},
 	})
-	return speak
+	return { speak }
 }
 
 function removeSpeechSynthesis() {
-	// `installSpeechSynthesis` defines these as non-writable, so they have to be
-	// redefined rather than assigned back to undefined.
-	Object.defineProperty(window, 'speechSynthesis', { configurable: true, value: undefined })
-	Object.defineProperty(window, 'SpeechSynthesisUtterance', {
-		configurable: true,
-		value: undefined,
-	})
+	Reflect.deleteProperty(window, 'speechSynthesis')
+	Reflect.deleteProperty(window, 'SpeechSynthesisUtterance')
 }
 
-describe('briefSpokenText', () => {
-	it('strips markdown syntax and the raw id lines', () => {
-		const spoken = briefSpokenText(
-			'# Acme brief\n\n- **Cut signup friction** [active]\n  id: `abc`\n\nSee [the bet](/ws/objects/1).',
-		)
-		expect(spoken).toBe('Acme brief Cut signup friction [active] See the bet.')
+/**
+ * A `useSpokenBrief` stand-in that yields nothing until `refetch` is called —
+ * the on-demand contract the card is built around. It holds the value in real
+ * component state so a refetch re-renders the card, which is the whole point:
+ * the card has to play the script it receives, not the empty one it rendered
+ * with.
+ */
+function mockOnDemandBrief(brief = buildSpokenBrief()) {
+	const refetch = vi.fn()
+	mockUseSpokenBrief.mockImplementation(() => {
+		const [data, setData] = useState<unknown>(undefined)
+		refetch.mockImplementation(async () => {
+			setData(brief)
+			return { data: brief }
+		})
+		return { data, isFetching: false, isError: false, error: null, refetch }
 	})
-})
-
-describe('briefMentionedIds', () => {
-	it('collects every distinct object id the brief names', () => {
-		const ids = briefMentionedIds(`- **A bet**\n  id: \`${OBJECT_ID}\`\n  id: \`${OBJECT_ID}\``)
-		expect(ids).toEqual([OBJECT_ID])
-	})
-
-	it('returns nothing for a brief with no ids', () => {
-		expect(briefMentionedIds('# Acme brief\n\nNothing to see.')).toEqual([])
-	})
-})
-
-describe('brief playback readouts', () => {
-	it('estimates a duration from the word count and formats it as a clock', () => {
-		expect(estimateDurationMs('')).toBe(0)
-		expect(estimateDurationMs(new Array(170).fill('word').join(' '))).toBe(60_000)
-		expect(formatClock(60_000)).toBe('1:00')
-		expect(formatClock(5_500)).toBe('0:06')
-	})
-})
-
-describe('briefTranscript', () => {
-	it('drops the machine id lines but keeps the prose', () => {
-		const transcript = briefTranscript(
-			`- **A bet**\n  id: \`${OBJECT_ID}\`\n\nTwo bets need a read.`,
-		)
-		expect(transcript).not.toContain(OBJECT_ID)
-		expect(transcript).toContain('Two bets need a read.')
-	})
-})
-
-describe('splitBriefHeadline', () => {
-	it('lifts a leading H1 out of the markdown body', () => {
-		const { headline, body } = splitBriefHeadline('# Acme — workspace briefing\n\nBody line.')
-		expect(headline).toBe('Acme — workspace briefing')
-		expect(body.trim()).toBe('Body line.')
-	})
-
-	it('leaves the document intact when it has no leading heading', () => {
-		const { headline, body } = splitBriefHeadline('Just a paragraph.')
-		expect(headline).toBeNull()
-		expect(body).toBe('Just a paragraph.')
-	})
-})
+	return { refetch }
+}
 
 describe('BriefCard', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
+		removeSpeechSynthesis()
 		mockUseObjects.mockReturnValue({ data: [] })
-		mockUseBriefing.mockReturnValue({
-			data: { workspace_id: 'ws-1', markdown: '# Your Monday brief\n\nTwo bets need a read.' },
-			isLoading: false,
-			isError: false,
-			error: null,
-			refetch: vi.fn(),
-		})
 	})
 
-	it('renders collapsed as the feed\u2019s first card, with the body hidden', () => {
+	it('generates nothing until the reader asks for it', () => {
+		const { refetch } = mockOnDemandBrief()
 		render(<BriefCard workspaceId="ws-1" />, { wrapper: TestWrapper })
 
-		expect(screen.getByTestId('brief-card')).toBeInTheDocument()
-		expect(screen.getByText("Today's brief")).toBeInTheDocument()
-		expect(screen.queryByText('Two bets need a read.')).not.toBeInTheDocument()
+		expect(refetch).not.toHaveBeenCalled()
+		expect(screen.getByText(/tap to play/)).toBeInTheDocument()
 	})
 
-	it('reveals the headline when opened, and leads with the player over the prose', async () => {
-		installSpeechSynthesis()
-		const user = userEvent.setup()
+	it('writes the brief when the card is expanded', async () => {
+		const { refetch } = mockOnDemandBrief()
 		render(<BriefCard workspaceId="ws-1" />, { wrapper: TestWrapper })
 
-		await user.click(screen.getByRole('button', { name: "Today's brief" }))
-		expect(screen.getByText('Your Monday brief')).toBeInTheDocument()
-		expect(screen.getByTestId('brief-player')).toBeInTheDocument()
-		// The brief is made to be listened to — the transcript stays folded.
-		expect(screen.queryByText('Two bets need a read.')).not.toBeInTheDocument()
-		removeSpeechSynthesis()
+		await userEvent.click(screen.getByRole('button', { name: "Today's brief" }))
+		await waitFor(() => expect(refetch).toHaveBeenCalledTimes(1))
 	})
 
-	it('renders no player when the browser has no SpeechSynthesis', async () => {
-		removeSpeechSynthesis()
-		const user = userEvent.setup()
+	it('speaks the script rather than markdown when play is pressed', async () => {
+		const { speak } = installSpeechSynthesis()
+		mockOnDemandBrief()
 		render(<BriefCard workspaceId="ws-1" />, { wrapper: TestWrapper })
 
-		await user.click(screen.getByRole('button', { name: "Today's brief" }))
+		await userEvent.click(screen.getByRole('button', { name: 'Read the brief aloud' }))
+
+		// One utterance per sentence, and every one is plain prose.
+		await waitFor(() => expect(speak).toHaveBeenCalledTimes(2))
+		const spoken = speak.mock.calls.map((call) => call[0].text)
+		expect(spoken.join(' ')).toBe(SCRIPT)
+		for (const text of spoken) {
+			expect(text).not.toMatch(/[#*`]|id:/)
+		}
+	})
+
+	it('renders the transcript unconditionally when the browser cannot speak', async () => {
+		mockOnDemandBrief()
+		render(<BriefCard workspaceId="ws-1" />, { wrapper: TestWrapper })
+
+		expect(screen.queryByRole('button', { name: 'Read the brief aloud' })).not.toBeInTheDocument()
+		await userEvent.click(screen.getByRole('button', { name: "Today's brief" }))
+
+		expect(await screen.findByText(SCRIPT)).toBeInTheDocument()
 		expect(screen.queryByTestId('brief-player')).not.toBeInTheDocument()
-		expect(screen.queryByRole('button', { name: /Show the transcript/ })).not.toBeInTheDocument()
-		// With nothing to listen to, the transcript is the brief.
-		expect(screen.getByText('Two bets need a read.')).toBeInTheDocument()
 	})
 
-	it('plays the brief from the collapsed header without opening it', async () => {
-		const speak = installSpeechSynthesis()
-		const user = userEvent.setup()
-		render(<BriefCard workspaceId="ws-1" />, { wrapper: TestWrapper })
-
-		await user.click(screen.getByRole('button', { name: 'Read the brief aloud' }))
-		expect(speak).toHaveBeenCalledTimes(1)
-		expect(screen.queryByText('Two bets need a read.')).not.toBeInTheDocument()
-		removeSpeechSynthesis()
-	})
-
-	it('unfolds and re-folds the transcript', async () => {
-		installSpeechSynthesis()
-		const user = userEvent.setup()
-		render(<BriefCard workspaceId="ws-1" />, { wrapper: TestWrapper })
-
-		await user.click(screen.getByRole('button', { name: "Today's brief" }))
-		await user.click(screen.getByRole('button', { name: 'Prefer to read? Show the transcript' }))
-		expect(screen.getByText('Two bets need a read.')).toBeInTheDocument()
-
-		await user.click(screen.getByRole('button', { name: 'Hide the transcript' }))
-		expect(screen.queryByText('Two bets need a read.')).not.toBeInTheDocument()
-		removeSpeechSynthesis()
-	})
-
-	it('lists the objects the brief names as MENTIONED chips', async () => {
-		mockUseBriefing.mockReturnValue({
-			data: {
-				workspace_id: 'ws-1',
-				markdown: `# Your Monday brief\n\n- **Cut signup friction** [active]\n  id: \`${OBJECT_ID}\``,
-			},
-			isLoading: false,
-			isError: false,
-			error: null,
-			refetch: vi.fn(),
-		})
+	it('lists the objects the brief named', async () => {
 		mockUseObjects.mockReturnValue({ data: [buildBriefObject()] } as never)
-
-		const user = userEvent.setup()
+		mockOnDemandBrief()
 		render(<BriefCard workspaceId="ws-1" />, { wrapper: TestWrapper })
-		await user.click(screen.getByRole('button', { name: "Today's brief" }))
 
-		expect(screen.getByText('Mentioned')).toBeInTheDocument()
-		// The chip is a link into the object, carrying its status as a word.
-		expect(screen.getByRole('link', { name: /Cut signup friction/ })).toBeInTheDocument()
-		expect(screen.getByLabelText('Status active')).toHaveTextContent('Active')
+		await userEvent.click(screen.getByRole('button', { name: "Today's brief" }))
+
+		expect(await screen.findByText('Mentioned')).toBeInTheDocument()
+		expect(screen.getByText('Cut signup friction')).toBeInTheDocument()
+	})
+
+	it('credits the agent that wrote it once there is a brief', async () => {
+		installSpeechSynthesis()
+		mockOnDemandBrief()
+		render(<BriefCard workspaceId="ws-1" />, { wrapper: TestWrapper })
+
+		await userEvent.click(screen.getByRole('button', { name: "Today's brief" }))
+		expect(await screen.findByText(/by Chief of Staff/)).toBeInTheDocument()
+	})
+
+	it('surfaces a retry when the brief could not be written', async () => {
+		const refetch = vi.fn()
+		mockUseSpokenBrief.mockReturnValue({
+			data: undefined,
+			isFetching: false,
+			isError: true,
+			error: new Error('nope'),
+			refetch,
+		})
+		render(<BriefCard workspaceId="ws-1" />, { wrapper: TestWrapper })
+
+		await userEvent.click(screen.getByRole('button', { name: "Today's brief" }))
+		expect(await screen.findByText("Couldn't write the brief")).toBeInTheDocument()
 	})
 })

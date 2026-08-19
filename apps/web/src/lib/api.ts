@@ -705,6 +705,9 @@ export const api = {
 
 	briefing: {
 		get: (workspaceId: string) => request<BriefingResponse>('/briefing', { workspaceId }),
+		/** POST because it generates — one model call, only when asked for. */
+		spoken: (workspaceId: string) =>
+			request<SpokenBriefResponse>('/briefing/spoken', { method: 'POST', workspaceId }),
 	},
 
 	subscriptions: {
@@ -1120,6 +1123,21 @@ export interface UnreadResponse {
 export interface BriefingResponse {
 	workspace_id: string
 	markdown: string
+}
+
+/**
+ * The human-facing brief. `script` is spoken prose written by the workspace's
+ * default agent — no markdown, no ids, nothing for the client to strip.
+ */
+export interface SpokenBriefResponse {
+	workspace_id: string
+	headline: string
+	script: string
+	mentioned_ids: string[]
+	generated_at: string
+	source: 'cache' | 'agent' | 'fallback'
+	agent: { id: string; name: string } | null
+	model: string | null
 }
 
 export interface UserDisplaySettingsResponse {

@@ -1,71 +1,12 @@
-import { MarkdownContent } from '@/components/shared/markdown-content'
 import { QueryStateError } from '@/components/shared/query-state'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { type BriefPlayback, formatClock, useBriefPlayback } from '@/hooks/use-brief-playback'
-import { useBriefing } from '@/hooks/use-briefing'
+import { useSpokenBrief } from '@/hooks/use-briefing'
 import { useObjects } from '@/hooks/use-objects'
 import { cn } from '@/lib/cn'
 import { Link } from '@tanstack/react-router'
-import { ChevronDown, ChevronUp, Pause, Play } from 'lucide-react'
-import { useMemo, useState } from 'react'
-
-// Splits the briefing markdown into its leading H1 (rendered as the card's
-// headline) and the rest of the document. The backend composes the briefing
-// with a `# {workspace} — workspace briefing` heading; when it doesn't, the
-// whole document falls through to the body.
-export function splitBriefHeadline(markdown: string): { headline: string | null; body: string } {
-	const match = markdown.match(/^\s*#\s+(.+?)\s*(?:\n|$)/)
-	if (!match) return { headline: null, body: markdown }
-	return { headline: match[1] ?? null, body: markdown.slice(match[0].length) }
-}
-
-/**
- * The prose, without the machine plumbing. `renderWorkspaceBriefing` prints an
- * ``id: `<uuid>` `` line under every object it lists so the ids can be resolved
- * (see `briefMentionedIds`); those lines are addressing, not writing, and the
- * mockup's transcript is clean paragraphs.
- */
-export function briefTranscript(markdown: string): string {
-	return markdown
-		.split('\n')
-		.filter((line) => !/^\s*id:\s*`/.test(line))
-		.join('\n')
-}
-
-const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi
-
-/**
- * Object ids the brief names. `renderWorkspaceBriefing` prints an
- * ``id: `<uuid>` `` line under every bet it lists and links objects as
- * markdown hrefs, so the ids are really in the document — the MENTIONED row
- * resolves them against the workspace object list rather than inventing
- * references.
- */
-export function briefMentionedIds(markdown: string): string[] {
-	const seen = new Set<string>()
-	for (const match of markdown.matchAll(UUID_RE)) {
-		seen.add(match[0].toLowerCase())
-	}
-	return [...seen]
-}
-
-/**
- * Flattens the brief markdown into something worth speaking: drops heading
- * hashes, list bullets, emphasis/backtick syntax, the raw `id:` lines and
- * link targets (keeping the link text).
- */
-export function briefSpokenText(markdown: string): string {
-	return markdown
-		.split('\n')
-		.filter((line) => !/^\s*id:\s*`/.test(line))
-		.join('\n')
-		.replace(/```[\s\S]*?```/g, ' ')
-		.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
-		.replace(/[#>*_`]/g, '')
-		.replace(/^\s*-\s+/gm, '')
-		.replace(/\s+/g, ' ')
-		.trim()
-}
+import { ChevronDown, ChevronUp, Loader2, Pause, Play } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
 // The chip's leading swatch is the object type's own colour, drawn as the
 // mockup's 7px square. Written out as literals so Tailwind's class scanner
@@ -135,19 +76,22 @@ function BriefPlayer({ playback }: { playback: BriefPlayback }) {
  * prose stays folded behind "Prefer to read? Show the transcript", since the
  * brief is meant to be listened to.
  *
- * Playback runs through the browser's SpeechSynthesis (see `useBriefPlayback`)
- * — `GET /briefing` returns markdown only, so there is no audio asset and no
- * server TTS; where the browser has no SpeechSynthesis there is no player and
- * the transcript is simply the body. `/$workspaceId/briefing` stays as the
- * deep-linkable full page.
+ * The brief is written on demand. Nothing is generated on render: the first
+ * press of play (or the first expand) calls `POST /briefing/spoken`, where the
+ * workspace's own agent writes it as prose. That keeps a feed visit free and
+ * means the model only runs for people who actually want the brief.
+ *
+ * Playback is the browser's SpeechSynthesis (see `useBriefPlayback`) — there
+ * is no audio asset and no server TTS. Where the browser has no
+ * SpeechSynthesis there is no player and the transcript is simply shown.
+ * `/$workspaceId/briefing` stays as the deep-linkable agent document.
  */
 export function BriefCard({ workspaceId }: { workspaceId: string }) {
 	const [open, setOpen] = useState(false)
-	const { data, isLoading, isError, error, refetch } = useBriefing(workspaceId)
+	const { data, isFetching, isError, error, refetch } = useSpokenBrief(workspaceId)
 
-	const markdown = data?.markdown ?? ''
-	const { headline, body } = splitBriefHeadline(markdown)
-	const playback = useBriefPlayback(useMemo(() => briefSpokenText(markdown), [markdown]))
+	const script = data?.script ?? ''
+	const playback = useBriefPlayback(script)
 	// The brief leads with the player and keeps the prose folded away (the
 	// mockup's `briefMode: "listen"` default). With no SpeechSynthesis there is
 	// nothing to listen to, so the transcript is all there is.
@@ -156,21 +100,70 @@ export function BriefCard({ workspaceId }: { workspaceId: string }) {
 
 	const { data: objects } = useObjects(workspaceId)
 	const mentioned = useMemo(() => {
-		if (!markdown || !objects) return []
-		const ids = new Set(briefMentionedIds(markdown))
+		if (!data || !objects) return []
+		const ids = new Set(data.mentioned_ids.map((id) => id.toLowerCase()))
 		return objects.filter((object) => ids.has(object.id.toLowerCase()))
-	}, [markdown, objects])
+	}, [data, objects])
+
+	// Generating and then playing are one gesture from the reader's side: press
+	// play, hear the brief. It cannot be `await refetch()` then `toggle()`,
+	// though — that `toggle` is closed over the render where the script was
+	// still empty, so it would fetch and then speak nothing. Instead the press
+	// records an intent, and an effect plays once the script actually exists.
+	const [pendingPlay, setPendingPlay] = useState(false)
+
+	const ensureBrief = useCallback(() => {
+		if (!data && !isFetching) void refetch()
+	}, [data, isFetching, refetch])
+
+	const handlePlay = useCallback(() => {
+		if (playback.playing) {
+			playback.stop()
+			return
+		}
+		if (data) {
+			playback.toggle()
+			return
+		}
+		setPendingPlay(true)
+		ensureBrief()
+	}, [data, ensureBrief, playback])
+
+	useEffect(() => {
+		if (!pendingPlay) return
+		// A failed write clears the intent too, or the card would try to speak
+		// every time the query settles.
+		if (isError) {
+			setPendingPlay(false)
+			return
+		}
+		if (!data || isFetching || playback.playing) return
+		setPendingPlay(false)
+		playback.toggle()
+	}, [data, isError, isFetching, pendingPlay, playback])
+
+	const handleExpand = useCallback(() => {
+		setOpen((prev) => {
+			if (!prev) ensureBrief()
+			return !prev
+		})
+	}, [ensureBrief])
 
 	// The mockup's meta line reads "Thursday · 08:30 · 2:14 · by Relay" at rest
-	// and counts up while it plays. `GET /briefing` returns markdown only — no
-	// cut time and no narrator — so ours is the weekday plus how long it runs.
+	// and counts up while it plays. Until the brief has been generated there is
+	// no duration to show and no narrator to name, so it invites the press
+	// instead of asserting a length it doesn't know yet.
 	const weekday = new Date().toLocaleDateString(undefined, { weekday: 'long' })
 	const duration = formatClock(playback.estimatedTotalMs)
-	const meta = !playback.supported
-		? weekday
-		: playback.playing
-			? `${formatClock(playback.elapsedMs)} / ${duration}`
-			: `${weekday} · ${duration}`
+	const meta = isFetching
+		? 'Writing your brief…'
+		: !data
+			? `${weekday} · tap to play`
+			: !playback.supported
+				? `${weekday}${data.agent ? ` · by ${data.agent.name}` : ''}`
+				: playback.playing
+					? `${formatClock(playback.elapsedMs)} / ${duration}`
+					: `${weekday} · ${duration}${data.agent ? ` · by ${data.agent.name}` : ''}`
 
 	return (
 		<div
@@ -181,17 +174,24 @@ export function BriefCard({ workspaceId }: { workspaceId: string }) {
 				{playback.supported && (
 					<button
 						type="button"
-						className="grid size-[34px] shrink-0 place-items-center rounded-lg bg-brief-foreground/15 text-brief-foreground transition-colors duration-150 hover:bg-brief-foreground/25"
-						onClick={playback.toggle}
+						className="grid size-[34px] shrink-0 place-items-center rounded-lg bg-brief-foreground/15 text-brief-foreground transition-colors duration-150 hover:bg-brief-foreground/25 disabled:opacity-60"
+						onClick={handlePlay}
+						disabled={isFetching}
 						aria-pressed={playback.playing}
 						aria-label={playback.playing ? 'Stop reading the brief' : 'Read the brief aloud'}
 					>
-						{playback.playing ? <Pause size={12} aria-hidden /> : <Play size={12} aria-hidden />}
+						{isFetching ? (
+							<Loader2 size={12} className="animate-spin" aria-hidden />
+						) : playback.playing ? (
+							<Pause size={12} aria-hidden />
+						) : (
+							<Play size={12} aria-hidden />
+						)}
 					</button>
 				)}
 				<button
 					type="button"
-					onClick={() => setOpen((prev) => !prev)}
+					onClick={handleExpand}
 					aria-expanded={open}
 					aria-label="Today's brief"
 					className="flex min-w-0 flex-1 items-center gap-3 text-left"
@@ -208,21 +208,19 @@ export function BriefCard({ workspaceId }: { workspaceId: string }) {
 
 			{open && (
 				<div className="border-t border-border bg-background px-[18px] py-4 text-foreground">
-					{isLoading ? (
-						<p className="py-2 text-sm text-muted-foreground">Loading the brief…</p>
+					{isFetching && !data ? (
+						<p className="py-2 text-sm text-muted-foreground">Writing your brief…</p>
 					) : isError ? (
 						<QueryStateError
-							title="Couldn't load briefing"
+							title="Couldn't write the brief"
 							error={error instanceof Error ? error : new Error('Unknown error')}
 							onRetry={() => refetch()}
 						/>
-					) : (
+					) : data ? (
 						<>
-							{headline && (
-								<div className="text-base font-bold leading-[1.35] tracking-[-0.015em] text-pretty">
-									{headline}
-								</div>
-							)}
+							<div className="text-base font-bold leading-[1.35] tracking-[-0.015em] text-pretty">
+								{data.headline}
+							</div>
 
 							{playback.supported && (
 								<>
@@ -238,9 +236,14 @@ export function BriefCard({ workspaceId }: { workspaceId: string }) {
 							)}
 
 							{showTranscript && (
-								<div className="mt-3.5">
-									<MarkdownContent content={briefTranscript(body)} />
-								</div>
+								// Deliberately not MarkdownContent: the script is spoken
+								// prose, so there is no markdown in it to render.
+								<p
+									data-testid="brief-transcript"
+									className="mt-3.5 whitespace-pre-line text-[13.5px] leading-[1.6] text-foreground"
+								>
+									{data.script}
+								</p>
 							)}
 
 							{mentioned.length > 0 && (
@@ -281,7 +284,7 @@ export function BriefCard({ workspaceId }: { workspaceId: string }) {
 								</>
 							)}
 						</>
-					)}
+					) : null}
 				</div>
 			)}
 		</div>
