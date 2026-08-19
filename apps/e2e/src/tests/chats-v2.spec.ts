@@ -224,8 +224,19 @@ test.describe('Chats v2 — new chat zero state', () => {
 			const composer = page.getByLabel('Message this conversation')
 			await expect(composer).toHaveValue('')
 
-			await page.getByRole('button', { name: 'Catch me up on billing' }).click()
-			await expect(composer).toHaveValue('Catch me up on billing')
+			// The draft header names who the chat is addressed to (mockup 616–623).
+			await expect(
+				page.getByRole('button', { name: /Change who you are talking to/ }),
+			).toBeVisible()
+			// The tagline is the first thing to truncate away in a narrow header.
+			if (vp.width >= 768) {
+				await expect(
+					page.getByText('answers first, hands it on if someone else owns it'),
+				).toBeVisible()
+			}
+
+			await page.getByRole('button', { name: /What needs a decision from me today/ }).click()
+			await expect(composer).toHaveValue('What needs a decision from me today?')
 			// Prefill only — nothing was sent, so we're still on the draft route.
 			await expect(page).toHaveURL(/\/chats\/new/)
 		})
