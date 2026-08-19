@@ -70,7 +70,7 @@ describe('checkLoop — first-test fixture (bet DoD #8)', () => {
 		expect(connectors?.fix?.args_hint.toLowerCase()).toContain('posthog')
 
 		const prose = toProseBlock(checks)
-		expect(prose).toMatch(/Ask the user/)
+		expect(prose).toMatch(/relay these setup gaps to the user/)
 	})
 })
 
@@ -345,6 +345,37 @@ describe('checkActor', () => {
 		expect(two.find((c) => c.name === 'mcp_configured')).toBeUndefined()
 	})
 
+	it('warns when the agent is not wired into any trigger or loop', () => {
+		const notWired = checkActor({
+			id: 'a1',
+			type: 'agent',
+			systemPrompt: fullPrompt,
+			skillCount: 2,
+			nonMaskinMcpServerCount: 2,
+		})
+		expect(notWired.find((c) => c.name === 'automation_wired')?.status).toBe('warn')
+
+		const explicitlyNotWired = checkActor({
+			id: 'a1',
+			type: 'agent',
+			systemPrompt: fullPrompt,
+			skillCount: 2,
+			nonMaskinMcpServerCount: 2,
+			wiredToAutomation: false,
+		})
+		expect(explicitlyNotWired.find((c) => c.name === 'automation_wired')?.status).toBe('warn')
+
+		const wired = checkActor({
+			id: 'a1',
+			type: 'agent',
+			systemPrompt: fullPrompt,
+			skillCount: 2,
+			nonMaskinMcpServerCount: 2,
+			wiredToAutomation: true,
+		})
+		expect(wired.find((c) => c.name === 'automation_wired')).toBeUndefined()
+	})
+
 	it('always asks about a dry run for agents', () => {
 		const checks = checkActor({
 			id: 'a1',
@@ -352,6 +383,7 @@ describe('checkActor', () => {
 			systemPrompt: fullPrompt,
 			skillCount: 2,
 			nonMaskinMcpServerCount: 2,
+			wiredToAutomation: true,
 		})
 		expect(checks).toEqual([
 			{
@@ -407,7 +439,7 @@ describe('findMentionedProviders', () => {
 })
 
 describe('toProseBlock', () => {
-	it('returns "Ask the user" prose that lists each check with its fix hint', () => {
+	it('returns forceful, imperative prose that lists each check with its fix hint', () => {
 		const checks = checkLoop(
 			loop({ entryCondition: null, closeCondition: null }),
 			ctx({
@@ -417,7 +449,8 @@ describe('toProseBlock', () => {
 			}),
 		)
 		const prose = toProseBlock(checks)
-		expect(prose.startsWith('Ask the user:')).toBe(true)
+		expect(prose.startsWith('IMPORTANT — before ending your turn')).toBe(true)
+		expect(prose).toMatch(/do not skip this silently/)
 		expect(prose).toMatch(/1\./)
 		expect(prose).toContain('update_trigger')
 	})

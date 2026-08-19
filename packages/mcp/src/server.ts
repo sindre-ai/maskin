@@ -1871,6 +1871,28 @@ async function resolveActorLinks(config: McpConfig, workspaceId: string): Promis
 	return { triggersByActor, loopsByActor }
 }
 
+/**
+ * Resolve the `wiredToAutomation` input to `checkActor`'s setup check. Only
+ * meaningful for agents with a known workspace — returns `undefined`
+ * otherwise, which `checkActor` treats as "not wired" (the conservative
+ * default). Callers that already have `ActorLinks` on hand for their own
+ * output fields (e.g. `get_actor`'s `connectedTriggers`/`connectedLoops`)
+ * should read those directly instead of calling this, to avoid a duplicate
+ * workspace-wide triggers+loops fetch.
+ */
+async function resolveWiredToAutomation(
+	config: McpConfig,
+	wsId: string | undefined,
+	actorType: string | null | undefined,
+	actorId: string,
+): Promise<boolean | undefined> {
+	if (actorType !== 'agent' || !wsId) return undefined
+	const links = await resolveActorLinks(config, wsId)
+	return Boolean(
+		links.triggersByActor.get(actorId)?.length || links.loopsByActor.get(actorId)?.length,
+	)
+}
+
 async function resolveTriggerLinks(
 	config: McpConfig,
 	workspaceId: string,
@@ -2253,9 +2275,11 @@ export function createMcpServer(config: McpConfig) {
 			const wsId = workspace_id ?? config.defaultWorkspaceId
 			// Setup context is fetched once per get_objects call and shared across
 			// every object in the batch — one extra API call (the workspace row)
-			// regardless of how many ids were requested. `checkBet` handles
-			// arbitrary object types via `statusOrder`; for loops the deep
-			// check-set lives on `get_loop include:['setup']`.
+			// regardless of how many ids were requested. Always fetched — `setup`
+			// is an always-on block on get_objects, not opt-in. `checkBet` handles
+			// arbitrary object types via `statusOrder`; for loops the deeper
+			// check-set lives on `get_loop`, which always returns its own richer
+			// `setup` block.
 			//
 			// When the shared fetch throws we capture the error and let
 			// `safeBuildSetupBlock` rethrow it per-object so each block collapses
@@ -2263,7 +2287,7 @@ export function createMcpServer(config: McpConfig) {
 			// when we actually couldn't check would be a false negative.
 			let sharedWorkspaceSettings: Record<string, unknown> | null = null
 			let sharedWorkspaceError: unknown = null
-			if (includeSet.has('setup') && wsId) {
+			if (wsId) {
 				try {
 					const workspace = await getWorkspace(config, wsId)
 					sharedWorkspaceSettings = workspace.settings
@@ -2314,22 +2338,20 @@ export function createMcpServer(config: McpConfig) {
 					if (includeSet.has('files') && graph && 'files' in graph) {
 						extras.files = graph.files
 					}
-					if (includeSet.has('setup')) {
-						extras.setup = await safeBuildSetupBlock('object_setup', async () => {
-							if (sharedWorkspaceError) throw sharedWorkspaceError
-							return buildBetSetupBlock(
-								{
-									id: withUrl.id as string,
-									type: withUrl.type as string,
-									status: (withUrl.status as string | undefined) ?? null,
-									content: (withUrl.content as string | undefined) ?? null,
-									driver: (withUrl.driver as string | undefined) ?? null,
-								},
-								readWorkspaceLlmReadiness(sharedWorkspaceSettings),
-								readStatusOrder(sharedWorkspaceSettings, withUrl.type as string),
-							)
-						})
-					}
+					extras.setup = await safeBuildSetupBlock('object_setup', async () => {
+						if (sharedWorkspaceError) throw sharedWorkspaceError
+						return buildBetSetupBlock(
+							{
+								id: withUrl.id as string,
+								type: withUrl.type as string,
+								status: (withUrl.status as string | undefined) ?? null,
+								content: (withUrl.content as string | undefined) ?? null,
+								driver: (withUrl.driver as string | undefined) ?? null,
+							},
+							readWorkspaceLlmReadiness(sharedWorkspaceSettings),
+							readStatusOrder(sharedWorkspaceSettings, withUrl.type as string),
+						)
+					})
 					return { ...r, result: { object: projectedObject, ...extras } }
 				}),
 			)
@@ -3007,6 +3029,7 @@ export function createMcpServer(config: McpConfig) {
 			// which chunks into ≤50-id calls, so a bad ID doesn't discard the actor or
 			// the skills that did attach.
 			const skillIds = attach_skill_ids ?? []
+			let attachedSkillCount = 0
 			if (skillIds.length > 0 && result.id) {
 				if (createBody.auto_create_workspace) {
 					// auto_create_workspace mints a brand-new, empty workspace and makes
@@ -3019,6 +3042,9 @@ export function createMcpServer(config: McpConfig) {
 				} else {
 					const attached = await attachSkillsBatch(config, result.id, skillIds)
 					result.attached_skills = attached
+					attachedSkillCount = attached.filter(
+						(entry) => !(entry as { error?: string })?.error,
+					).length
 					if (attached.some((entry) => (entry as { error?: string })?.error)) {
 						result.partial_failure = true
 						result.partial_failure_reason =
@@ -3027,31 +3053,24 @@ export function createMcpServer(config: McpConfig) {
 				}
 			}
 
-			// Reminders for agents only — tools/skills/automation are meaningless for
-			// humans. These are advisory, not blocking: most agents need tools and
-			// skills from day one and should be wired into a trigger/loop, but not
-			// always (e.g. a manually-invoked, prompt-only agent), so surface the
-			// gap and let the caller confirm with the user rather than assuming.
-			// No setup block on create — matches create_objects/create_loop: creates
-			// stay bare, checkActor's fuller checks (system prompt, skills, MCP,
-			// dry-run) surface on update_actor via the `setup` block instead.
-			if (createBody.type === 'agent') {
-				const callerMcpServers = (
-					createBody.tools as { mcpServers?: Record<string, unknown> } | undefined
-				)?.mcpServers
-				if (!callerMcpServers || Object.keys(callerMcpServers).length === 0) {
-					result.tools_reminder =
-						'No MCP tools were configured beyond the built-in Maskin connection. Most agents need at least one external tool to actually take action on their job — confirm with the user whether this agent should have tools, and add them with update_actor if so.'
-				}
-
-				if (skillIds.length === 0) {
-					result.skills_reminder =
-						'No skills were attached to this agent. Skills are what make an agent expert-level rather than just a well-written prompt — confirm with the user whether an existing workspace skill (list_workspace_skills) should be attached, or a new one authored (create_workspace_skill).'
-				}
-
-				result.automation_reminder =
-					"This agent isn't wired into any trigger or loop yet, so nothing will make it run on its own. Confirm with the user whether it should be added to one (create_trigger / create_loop) — most agents should be, but not always (e.g. one meant to be run manually via run_agent)."
-			}
+			// Same setup block update_actor/get_actor return (checkActor short-
+			// circuits to `[]` for humans, so this stays a harmless empty block for
+			// them). skillCount and wiredToAutomation are known for free here —
+			// skills were just attached (or not) above, and nothing could reference
+			// this brand-new actor's id before it existed — so this costs zero extra
+			// API calls beyond actor creation itself.
+			result.setup = await buildActorSetupBlockFromApi(
+				{
+					id: result.id,
+					name: (result.name as string | null | undefined) ?? null,
+					type: (createBody.type as string | null | undefined) ?? null,
+					systemPrompt: (createBody.system_prompt as string | undefined) ?? null,
+					skillCount: attachedSkillCount,
+					nonMaskinMcpServerCount: countNonMaskinMcpServers(createBody.tools),
+					wiredToAutomation: false,
+				},
+				setupApiCaller(config),
+			)
 
 			const wsId = targetWorkspace ?? config.defaultWorkspaceId
 			const withUrl =
@@ -3249,7 +3268,9 @@ export function createMcpServer(config: McpConfig) {
 
 			// Agents only — checkActor returns [] for humans, and get_actor stays
 			// bare for them rather than attaching an empty setup block. skillCount
-			// comes straight off this GET's `skills` field (no extra API call).
+			// comes straight off this GET's `skills` field, and wiredToAutomation off
+			// the `actorLinks` already fetched above for connectedTriggers/
+			// connectedLoops — neither needs an extra API call.
 			if (result.type === 'agent') {
 				const setup = await buildActorSetupBlockFromApi(
 					{
@@ -3259,6 +3280,7 @@ export function createMcpServer(config: McpConfig) {
 						systemPrompt: result.system_prompt ?? null,
 						skillCount: result.skills?.length ?? 0,
 						nonMaskinMcpServerCount: countNonMaskinMcpServers(result.tools),
+						wiredToAutomation: Boolean(connectedTriggers?.length || connectedLoops?.length),
 					},
 					setupApiCaller(config),
 				)
@@ -3333,18 +3355,19 @@ export function createMcpServer(config: McpConfig) {
 
 			if (!hasSkillOps) {
 				const wsId = workspace_id ?? config.defaultWorkspaceId
-				const actorId = (actor as { id?: string }).id
-				const withUrl =
-					wsId && actorId
-						? addUrl(actor as Record<string, unknown>, config, wsId, { kind: 'actor', id: actorId })
-						: actor
+				const actorId = (actor as { id?: string }).id ?? id
+				const actorType = (actor as { type?: string | null }).type ?? null
+				const withUrl = wsId
+					? addUrl(actor as Record<string, unknown>, config, wsId, { kind: 'actor', id: actorId })
+					: actor
 				const setup = await buildActorSetupBlockFromApi(
 					{
-						id: actorId ?? id,
+						id: actorId,
 						name: (actor as { name?: string | null }).name ?? null,
-						type: (actor as { type?: string | null }).type ?? null,
+						type: actorType,
 						systemPrompt: (actor as { system_prompt?: string | null }).system_prompt ?? null,
 						nonMaskinMcpServerCount: countNonMaskinMcpServers((actor as { tools?: unknown }).tools),
+						wiredToAutomation: await resolveWiredToAutomation(config, wsId, actorType, actorId),
 					},
 					setupApiCaller(config),
 				)
@@ -3379,11 +3402,11 @@ export function createMcpServer(config: McpConfig) {
 						}
 
 			const wsId2 = workspace_id ?? config.defaultWorkspaceId
-			const actorId = (actor as { id?: string }).id
-			const actorWithUrl =
-				wsId2 && actorId
-					? addUrl(actor as Record<string, unknown>, config, wsId2, { kind: 'actor', id: actorId })
-					: actor
+			const actorId = (actor as { id?: string }).id ?? id
+			const actorType = (actor as { type?: string | null }).type ?? null
+			const actorWithUrl = wsId2
+				? addUrl(actor as Record<string, unknown>, config, wsId2, { kind: 'actor', id: actorId })
+				: actor
 			const output: Record<string, unknown> = { actor: actorWithUrl }
 			if (attachIds.length) {
 				output.attached_skills = attachEntries
@@ -3404,11 +3427,12 @@ export function createMcpServer(config: McpConfig) {
 
 			output.setup = await buildActorSetupBlockFromApi(
 				{
-					id: actorId ?? id,
+					id: actorId,
 					name: (actor as { name?: string | null }).name ?? null,
-					type: (actor as { type?: string | null }).type ?? null,
+					type: actorType,
 					systemPrompt: (actor as { system_prompt?: string | null }).system_prompt ?? null,
 					nonMaskinMcpServerCount: countNonMaskinMcpServers((actor as { tools?: unknown }).tools),
+					wiredToAutomation: await resolveWiredToAutomation(config, wsId2, actorType, actorId),
 				},
 				setupApiCaller(config),
 			)
@@ -4690,6 +4714,26 @@ export function createMcpServer(config: McpConfig) {
 			if (stepTriggerIds.length > 0) responseBody.created_step_trigger_ids = stepTriggerIds
 			if (disableFailures.length > 0) {
 				responseBody.trigger_pause_warnings = `Loop created as paused, but these pre-existing triggers could not be disabled — pause them manually: ${disableFailures.join(', ')}`
+			}
+
+			// Same setup block update_loop/get_loop return. graphResult.edges.length
+			// is the exact member count (not a floor) since these are the edges this
+			// very call just created.
+			if (created?.id) {
+				responseBody.setup = await buildLoopSetupBlockFromApi(
+					{
+						id: created.id as string,
+						name: (created.title as string | null | undefined) ?? name ?? null,
+						entryCondition: entry_condition ?? null,
+						closeCondition: close_condition ?? null,
+					},
+					setupApiCaller(config),
+					{
+						workspaceId: workspace_id,
+						triggerIds: allTriggerIds,
+						memberCount: graphResult.edges.length,
+					},
+				)
 			}
 
 			return {
