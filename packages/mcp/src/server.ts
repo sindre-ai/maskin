@@ -2991,6 +2991,24 @@ export function createMcpServer(config: McpConfig) {
 		},
 		async (args) => {
 			const { workspace_id, role, attach_skill_ids, llm_config, ...createBody } = args
+
+			// Mirrors the server-side default in apps/dev/src/routes/actors.ts
+			// (`body.auto_create_workspace ?? body.type === 'human'`) so this predicts
+			// exactly whether POST /api/actors will mint a workspace on its own. If it
+			// won't (agents by default, or auto_create_workspace explicitly false) and
+			// no workspace_id/default workspace is available either, the actor would be
+			// created with no workspace membership at all — fail fast instead of
+			// silently creating an orphaned actor.
+			const willAutoCreateWorkspace =
+				(createBody as { auto_create_workspace?: boolean }).auto_create_workspace ??
+				createBody.type === 'human'
+			const resolvedWorkspace = workspace_id ?? config.defaultWorkspaceId
+			if (!willAutoCreateWorkspace && !resolvedWorkspace) {
+				throw new Error(
+					'workspace_id is required to create an agent (unless auto_create_workspace is true) — pass workspace_id so the agent is added to a workspace on creation.',
+				)
+			}
+
 			const rawResult = (await apiCall(
 				config,
 				'POST',

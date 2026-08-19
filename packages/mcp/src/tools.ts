@@ -550,7 +550,7 @@ export const tools = {
 	},
 	create_actor: {
 		description:
-			'Create a new actor (human or agent). Returns the actor details and API key (only shown once). If workspace_id is provided, the actor is added as a member with the given role — this is how to add a brand-new actor to a workspace as part of creating them. To add an already-existing actor to a workspace, use update_actor with workspace_id/role instead. If auto_create_workspace is true (default for humans), a new, empty workspace is created instead. For agents, set tools.mcpServers and/or attach_skill_ids so the agent has its MCP servers and skills from the start. attach_skill_ids requires workspace_id — with auto_create_workspace the new workspace has no existing skills, so any attach_skill_ids passed alongside it are ignored.',
+			'Create a new actor (human or agent). Returns the actor details and API key (only shown once). If workspace_id is provided, the actor is added as a member with the given role — this is how to add a brand-new actor to a workspace as part of creating them. To add an already-existing actor to a workspace, use update_actor with workspace_id/role instead. If auto_create_workspace is true (default for humans), a new, empty workspace is created instead. Agents default to auto_create_workspace=false, so workspace_id is effectively required when type is "agent" — omitting both fails the call rather than silently creating a workspace-less agent. For agents, set tools.mcpServers and/or attach_skill_ids so the agent has its MCP servers and skills from the start. attach_skill_ids requires workspace_id — with auto_create_workspace the new workspace has no existing skills, so any attach_skill_ids passed alongside it are ignored.',
 		inputSchema: z.object({
 			type: z.enum(['human', 'agent']),
 			name: z.string().min(1).describe('Name of actor'),
@@ -565,7 +565,9 @@ export const tools = {
 				.string()
 				.uuid()
 				.optional()
-				.describe('Add the new actor to this existing workspace'),
+				.describe(
+					'Add the new actor to this existing workspace. Required when type is "agent" unless auto_create_workspace is explicitly true — the call fails otherwise rather than creating an agent with no workspace.',
+				),
 			role: z
 				.enum(['owner', 'admin', 'member'])
 				.default('member')
@@ -574,9 +576,10 @@ export const tools = {
 				),
 			description: z
 				.string()
+				.min(1)
 				.max(80)
 				.describe(
-					'Short one-liner (max 80 chars) summarizing the actor. For agents this is shown on the Agents page list and sub-page so teammates can tell agents apart at a glance.',
+					'Required, non-empty short one-liner (max 80 chars) summarizing the actor. For agents this is shown on the Agents page list and sub-page so teammates can tell agents apart at a glance — do not pass an empty or placeholder string.',
 				),
 			system_prompt: z
 				.string()
@@ -612,9 +615,10 @@ export const tools = {
 				.describe('New email address for the actor. Only meaningful for humans.'),
 			description: z
 				.string()
+				.min(1)
 				.max(80)
 				.optional()
-				.describe('Short one-liner (max 80 chars) summarizing the actor.'),
+				.describe('Short, non-empty one-liner (max 80 chars) summarizing the actor.'),
 			system_prompt: z
 				.string()
 				.optional()

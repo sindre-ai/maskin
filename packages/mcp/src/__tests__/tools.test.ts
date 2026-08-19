@@ -439,6 +439,10 @@ describe('create_actor schema', () => {
 		expect(() => schema.parse({ type: 'human', name: 'Alice' })).toThrow()
 	})
 
+	it('rejects empty-string description', () => {
+		expect(() => schema.parse({ type: 'agent', name: 'Bot', description: '' })).toThrow()
+	})
+
 	it('accepts optional workspace_id and role', () => {
 		const result = schema.parse({
 			type: 'agent',
@@ -529,6 +533,15 @@ describe('update_actor schema', () => {
 
 	it('rejects non-UUID entries in detach_skill_ids', () => {
 		expect(() => schema.parse({ id: uuid, detach_skill_ids: ['not-a-uuid'] })).toThrow()
+	})
+
+	it('allows description to be omitted (leaves it unchanged)', () => {
+		const result = schema.parse({ id: uuid })
+		expect(result.description).toBeUndefined()
+	})
+
+	it('rejects an empty-string description', () => {
+		expect(() => schema.parse({ id: uuid, description: '' })).toThrow()
 	})
 
 	it('defaults attach_skill_ids and detach_skill_ids to undefined when omitted', () => {
