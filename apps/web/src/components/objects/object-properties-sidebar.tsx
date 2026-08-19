@@ -7,10 +7,12 @@ import { Button } from '@/components/ui/button'
 import { Sidebar, SidebarContent, SidebarHeader, useSidebar } from '@/components/ui/sidebar'
 import { useActors } from '@/hooks/use-actors'
 import { useNotifications } from '@/hooks/use-notifications'
+import { useObjectGraph } from '@/hooks/use-objects'
 import { useSubscribe, useSubscribers, useUnsubscribe } from '@/hooks/use-subscriptions'
-import type { MemberResponse, ObjectResponse, RelationshipResponse } from '@/lib/api'
+import type { ActorListItem, MemberResponse, ObjectResponse, RelationshipResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { X } from 'lucide-react'
+import { useMemo } from 'react'
 import { MetadataProperties } from './metadata-properties'
 import { ObjectFiles } from './object-files'
 import { OwnerSelect, StatusSelect } from './property-selects'
@@ -163,10 +165,35 @@ function SubscribedSection({
 	workspaceId: string
 }) {
 	const { data: subscribers } = useSubscribers(workspaceId, 'object', object.id)
+	const { data: graph } = useObjectGraph(workspaceId, object.id)
+	const { data: actors } = useActors(workspaceId)
 	const subscribe = useSubscribe(workspaceId)
 	const unsubscribe = useUnsubscribe(workspaceId)
 	const currentActorId = getStoredActor()?.id
-	const rows = subscribers?.actors ?? []
+
+	// Everyone who gets timeline updates, in the mockup's order (8394–8400):
+	// you, then the driver, then whoever has posted here. The subscriber list
+	// alone under-reports it — the driver and the agents posting to the object
+	// are on it whether or not they ever pressed Subscribe.
+	const rows = useMemo(() => {
+		const byId = new Map<string, ActorListItem>()
+		for (const actor of actors ?? []) byId.set(actor.id, actor)
+
+		const ordered: string[] = []
+		const push = (id: string | null | undefined) => {
+			if (!id || ordered.includes(id) || !byId.has(id)) return
+			ordered.push(id)
+		}
+
+		if (object.is_subscribed) push(currentActorId)
+		push(object.driver)
+		for (const actor of subscribers?.actors ?? []) push(actor.id)
+		for (const event of graph?.events ?? []) {
+			if (event.action === 'commented') push(event.actorId)
+		}
+
+		return ordered.slice(0, 5).map((id) => byId.get(id) as ActorListItem)
+	}, [actors, subscribers, graph, object.is_subscribed, object.driver, currentActorId])
 
 	return (
 		<div className="flex flex-col">
@@ -180,7 +207,12 @@ function SubscribedSection({
 				<ul className="mt-2 flex flex-col">
 					{rows.map((actor) => (
 						<li key={actor.id} className="flex items-center gap-2.5 rounded-lg px-2 py-1.5">
-							<ActorAvatar id={actor.id} name={actor.name} type={actor.type} className="shrink-0" />
+							<ActorAvatar
+								id={actor.id}
+								name={actor.name}
+								type={actor.type}
+								className="size-[22px] shrink-0 text-[9px]"
+							/>
 							<span className="min-w-0 flex-1 leading-tight">
 								<span className="block truncate text-[12.5px] font-semibold text-foreground">
 									{actor.name}
