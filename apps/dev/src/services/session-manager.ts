@@ -37,6 +37,7 @@ import {
 	or,
 	sql,
 } from 'drizzle-orm'
+import { trackAgentSessionStartedWithPrompt } from '../lib/analytics/agent-session-events'
 import { claimLoopActiveDay, trackLoopActiveDay, utcDayString } from '../lib/analytics/loop-events'
 import {
 	detectChiefOfStaffDomainOutput,
@@ -1322,14 +1323,28 @@ export class SessionManager extends EventEmitter {
 		const conversationPreamble = sessionConfig.conversation
 			? 'You are in a live, interactive chat conversation — a human just messaged you directly and is on the other end waiting for a reply, separate from any of your usual autonomous workflows described below. The ONLY way your reply becomes visible to them is by calling the post_conversation_message tool — reading data or taking other actions is invisible to them by itself. Staying silent is sometimes the right call, but only when a reply genuinely adds nothing; do not default to silence just because it is available.\n\n'
 			: ''
+		const resolvedSystemPrompt = `${conversationPreamble}${agent.systemPrompt ?? 'You are a helpful AI agent.'}`
 
 		const envVars: Record<string, string> = {
 			SESSION_ID: session.id,
 			AGENT_RUNTIME: (sessionConfig.runtime as string) ?? 'claude-code',
-			SYSTEM_PROMPT: `${conversationPreamble}${agent.systemPrompt ?? 'You are a helpful AI agent.'}`,
+			SYSTEM_PROMPT: resolvedSystemPrompt,
 			MASKIN_API_URL: process.env.MASKIN_BACKEND_URL ?? 'http://host.docker.internal:3000',
 			MASKIN_WORKSPACE_ID: session.workspaceId,
 		}
+
+		// Fire-and-forget prompt-size emit — the parent bet's second ship metric
+		// (per-agent preamble token reduction) needs per-launch systemPrompt size
+		// samples in PostHog. Runs on every launch (start + resume) since both
+		// build a container from the current systemPrompt; session_id keeps the
+		// samples dedup-able downstream.
+		void trackAgentSessionStartedWithPrompt({
+			workspaceId: session.workspaceId,
+			sessionId: session.id,
+			agentId: agent.id,
+			agentName: agent.name,
+			systemPrompt: resolvedSystemPrompt,
+		})
 
 		// Interactive sessions have no opening ACTION_PROMPT — the first user turn
 		// arrives via POST /api/sessions/:id/input over the attached stdin stream.
