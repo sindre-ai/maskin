@@ -1380,6 +1380,55 @@ describe('tool handlers', () => {
 			expect(parsed.partial_failure).toBeUndefined()
 			expect(parsed.skills_not_attached_reason).toBeUndefined()
 		})
+
+		it('rejects creating an agent with no workspace_id and no default workspace configured', async () => {
+			const fetchSpy = vi.spyOn(globalThis, 'fetch')
+			const handlersNoWs = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>()
+			vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
+				handlersNoWs.set(
+					name as string,
+					handler as (args: Record<string, unknown>) => Promise<unknown>,
+				)
+			})
+			createMcpServer({ ...config, defaultWorkspaceId: '' })
+			const handler = handlersNoWs.get('create_actor')
+			if (!handler) throw new Error('Handler create_actor not registered')
+
+			await expect(handler({ type: 'agent', name: 'Bot' })).rejects.toThrow(/workspace_id/)
+			// Must fail before ever calling POST /api/actors — no orphaned agent created.
+			expect(fetchSpy).not.toHaveBeenCalled()
+		})
+
+		it('does not require workspace_id for a human (auto_create_workspace defaults to true)', async () => {
+			mockFetchSuccess({ id: 'human-1', type: 'human', name: 'Alice' })
+
+			const handler = getHandler('create_actor')
+			const result = (await handler({ type: 'human', name: 'Alice' })) as {
+				content: Array<{ text: string }>
+			}
+			expect(JSON.parse(result.content[0].text).id).toBe('human-1')
+		})
+
+		it('does not require workspace_id for an agent with auto_create_workspace explicitly true', async () => {
+			const handlersNoWs = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>()
+			vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
+				handlersNoWs.set(
+					name as string,
+					handler as (args: Record<string, unknown>) => Promise<unknown>,
+				)
+			})
+			createMcpServer({ ...config, defaultWorkspaceId: '' })
+			const handler = handlersNoWs.get('create_actor')
+			if (!handler) throw new Error('Handler create_actor not registered')
+			mockFetchSuccess({ id: 'actor-new', type: 'agent', name: 'Bot', workspace_id: 'ws-auto' })
+
+			const result = (await handler({
+				type: 'agent',
+				name: 'Bot',
+				auto_create_workspace: true,
+			})) as { content: Array<{ text: string }> }
+			expect(JSON.parse(result.content[0].text).id).toBe('actor-new')
+		})
 	})
 
 	describe('get_objects handler (partial failure)', () => {
