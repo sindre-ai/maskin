@@ -22,7 +22,7 @@ import {
 } from '@/hooks/use-actors'
 import { useDuration } from '@/hooks/use-duration'
 import { useEvents } from '@/hooks/use-events'
-import { useInstalledPackages } from '@/hooks/use-installed-packages'
+import { useInstalledLoops } from '@/hooks/use-installed-loops'
 import {
 	useActiveSessionsForActor,
 	useActorSessionsInfinite,
@@ -31,7 +31,6 @@ import {
 	useSessionLogs,
 } from '@/hooks/use-sessions'
 import type { ActorListItem, ActorResponse, EventResponse, SessionResponse } from '@/lib/api'
-import { useChat } from '@/lib/chat-context'
 import { cn } from '@/lib/cn'
 import { formatDurationBetween } from '@/lib/format-duration'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -86,8 +85,8 @@ interface AgentDocumentViewProps {
 	isPausePending?: boolean
 	showSaved?: boolean
 	isManaged?: boolean
-	onForkPackage?: () => void
-	managedPackageName?: string
+	onForkLoop?: () => void
+	managedLoopName?: string
 }
 
 function useConfigExpanded() {
@@ -130,8 +129,8 @@ export function AgentDocumentView({
 	isPausePending = false,
 	showSaved = false,
 	isManaged = false,
-	onForkPackage,
-	managedPackageName,
+	onForkLoop,
+	managedLoopName,
 }: AgentDocumentViewProps) {
 	const [nameDraft, setNameDraft] = useState(agent.name)
 	const [descriptionDraft, setDescriptionDraft] = useState(agent.description ?? '')
@@ -273,10 +272,10 @@ export function AgentDocumentView({
 				{isManaged && (
 					<span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
 						<span>🔒</span>
-						<span>Managed{managedPackageName ? ` · ${managedPackageName}` : ''}</span>
+						<span>Managed{managedLoopName ? ` · ${managedLoopName}` : ''}</span>
 						<button
 							type="button"
-							onClick={onForkPackage}
+							onClick={onForkLoop}
 							className="text-primary hover:underline cursor-pointer"
 						>
 							Fork to edit
@@ -365,12 +364,12 @@ export function AgentDocumentView({
 					{isManaged && (
 						<span className="ml-auto flex items-center gap-1 normal-case tracking-normal font-normal text-[11px] text-muted-foreground">
 							<span>🔒</span>
-							<span>Managed{managedPackageName ? ` · ${managedPackageName}` : ''}</span>
+							<span>Managed{managedLoopName ? ` · ${managedLoopName}` : ''}</span>
 							<button
 								type="button"
 								onClick={(e) => {
 									e.stopPropagation()
-									onForkPackage?.()
+									onForkLoop?.()
 								}}
 								className="text-primary hover:underline cursor-pointer"
 							>
@@ -704,7 +703,6 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 	const resetActor = useResetActor(workspaceId)
 	const run = useAgentRun(workspaceId)
 	const pause = useAgentPause(workspaceId)
-	const { openWithContext } = useChat()
 	const navigate = useNavigate()
 	const { data: allEvents } = useEvents(workspaceId, { limit: '50' })
 	const { data: activeSessions } = useActiveSessionsForActor(agent.id, workspaceId)
@@ -721,12 +719,12 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 		[allEvents, agent.id],
 	)
 
-	// Managed package detection
-	const isManaged = !!agent.installedPackageId
-	const { data: installedPackagesData } = useInstalledPackages(workspaceId)
+	// Managed loop detection
+	const isManaged = !!agent.installedLoopId
+	const { data: installedLoopsData } = useInstalledLoops(workspaceId)
 	const installRecord = useMemo(
-		() => installedPackagesData?.installs.find((i) => i.id === agent.installedPackageId) ?? null,
-		[installedPackagesData, agent.installedPackageId],
+		() => installedLoopsData?.installs.find((i) => i.id === agent.installedLoopId) ?? null,
+		[installedLoopsData, agent.installedLoopId],
 	)
 	const [forkOpen, setForkOpen] = useState(false)
 
@@ -879,7 +877,11 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 					)
 				}
 				onNewConversation={() =>
-					openWithContext([{ kind: 'agent', id: agent.id, name: agent.name }])
+					navigate({
+						to: '/$workspaceId/chats/new',
+						params: { workspaceId },
+						search: { agentId: agent.id, agentName: agent.name },
+					})
 				}
 				onPause={() =>
 					pause.mutate(agent.id, {
@@ -889,16 +891,16 @@ export function AgentDocument({ agent }: { agent: ActorResponse }) {
 				isRunPending={run.isPending}
 				isPausePending={pause.isPending}
 				isManaged={isManaged}
-				onForkPackage={() => setForkOpen(true)}
-				managedPackageName={installRecord?.packageName}
+				onForkLoop={() => setForkOpen(true)}
+				managedLoopName={installRecord?.loopName}
 			/>
 			{isManaged && installRecord && (
 				<ForkDialog
 					open={forkOpen}
 					onOpenChange={setForkOpen}
 					workspaceId={workspaceId}
-					installedPackageId={installRecord.id}
-					packageName={installRecord.packageName}
+					installedLoopId={installRecord.id}
+					loopName={installRecord.loopName}
 					installedVersion={installRecord.installedVersion}
 					pendingVersion={installRecord.hasUpdate ? installRecord.availableVersion : null}
 				/>

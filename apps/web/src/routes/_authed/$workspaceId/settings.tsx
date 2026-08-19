@@ -22,7 +22,6 @@ function SettingsLayout() {
 
 	return (
 		<div className="mx-auto w-full max-w-4xl">
-			<h1 className="text-lg font-semibold text-foreground mb-6">Settings</h1>
 			<div className="flex flex-col md:flex-row gap-6 md:gap-8">
 				<nav className="md:w-48 md:shrink-0">
 					<ul className="flex md:flex-col gap-0.5 overflow-x-auto pb-2 md:pb-0">

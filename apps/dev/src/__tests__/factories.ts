@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { Database } from '@maskin/db'
 import {
 	actors,
+	conversations,
 	notifications,
 	objects,
 	relationships,
@@ -50,12 +51,19 @@ export function buildWorkspace(overrides?: Record<string, unknown>) {
 		name: `Workspace ${n}`,
 		settings: {
 			enabled_modules: ['work'],
-			display_names: { insight: 'Insight', bet: 'Bet', task: 'Task', loop: 'Loop' },
+			display_names: {
+				insight: 'Insight',
+				bet: 'Bet',
+				task: 'Task',
+				commitment: 'Commitment',
+				loop: 'Loop',
+			},
 			statuses: {
 				insight: ['new', 'processing', 'clustered', 'discarded'],
 				bet: ['signal', 'proposed', 'active', 'completed', 'succeeded', 'failed', 'paused'],
 				task: ['todo', 'in_progress', 'done', 'blocked'],
-				loop: ['holding', 'at-risk', 'breached'],
+				commitment: ['holding', 'at-risk', 'breached'],
+				loop: ['running', 'waiting', 'paused', 'archived'],
 			},
 			field_definitions: {},
 			relationship_types: ['informs', 'breaks_into', 'blocks', 'relates_to', 'duplicates'],
@@ -563,6 +571,23 @@ export async function insertNotification(
 		...overrides,
 	})
 	const rows = await db.insert(notifications).values(data).returning()
+	return rows[0]
+}
+
+export async function insertConversation(
+	db: Database,
+	workspaceId: string,
+	createdBy: string,
+	overrides?: Record<string, unknown>,
+) {
+	const n = next()
+	const data = {
+		workspaceId,
+		createdBy,
+		title: `Conversation ${n}`,
+		...overrides,
+	}
+	const rows = await db.insert(conversations).values(data).returning()
 	return rows[0]
 }
 

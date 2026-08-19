@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<!--
+  Maskin · Mini-apps bet · Seed curriculum mini-app.
+  This file IS the slot contract: all curriculum content lives in the
+  <script id="maskin-state"> JSON node below (exposed as window.__MASKIN_APP_DATA__).
+  Nothing else in this file holds content; the renderer draws everything from the slot.
+  The platform owns CSP and the sandboxed iframe; this file adds none.
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title></title>
+<style>
+  :root {
+    --background:#fafafa; --foreground:#18181b;
+    --card:#ffffff; --card-foreground:#18181b;
+    --border:#e4e4e7; --input:#e4e4e7;
+    --muted:#f4f4f5; --muted-foreground:#71717a;
+    --primary:#2f5bd9; --primary-foreground:#ffffff;
+    --secondary:#f4f4f5; --secondary-foreground:#27272a;
+    --accent:#eef2ff; --accent-foreground:#2f5bd9;
+    --destructive:#dc2626; --ring:#93b4ff;
+    --radius:10px;
+    --st-in-progress-fg:#1d4ed8; --st-in-progress-bg:#eff6ff; --st-in-progress-border:#bfdbfe;
+    --st-blocked-fg:#b91c1c; --st-blocked-bg:#fef2f2; --st-blocked-border:#fecaca;
+    --st-paused-fg:#b45309; --st-paused-bg:#fffbeb; --st-paused-border:#fde68a;
+    --st-active-fg:#047857; --st-active-bg:#ecfdf5; --st-active-border:#a7f3d0;
+    --st-done-fg:#52525b; --st-done-bg:#f4f4f5; --st-done-border:#e4e4e7;
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  html,body { height:100%; }
+  body { font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif; color:var(--foreground); background:var(--background); }
+  a { color:inherit; text-decoration:none; }
+  .frame { min-height:100vh; padding:24px; -webkit-overflow-scrolling:touch; }
+  .appdoc { max-width:760px; margin:0 auto; background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:28px; }
+  .apphead { border-bottom:1px solid var(--border); padding-bottom:16px; margin-bottom:18px; }
+  .apphead .top { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .apphead h1 { font-size:22px; line-height:1.25; text-wrap:balance; }
+  .apphead .sub { color:var(--muted-foreground); margin-top:4px; }
+  .metric { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-top:14px; flex-wrap:wrap; }
+  .metric .stat { display:flex; align-items:baseline; gap:6px; }
+  .metric .stat .n { font-size:20px; font-weight:650; }
+  .track { flex:1; min-width:140px; height:8px; border-radius:999px; background:var(--muted); overflow:hidden; }
+  .track > i { display:block; height:100%; width:0%; background:var(--primary); border-radius:999px; transition:width .3s ease; }
+  .module { border:1px solid var(--border); border-radius:var(--radius); margin-bottom:12px; overflow:hidden; }
+  .module > header { display:flex; align-items:center; gap:10px; padding:12px 16px; background:var(--card); }
+  .module > header .mname { font-weight:600; font-size:14.5px; }
+  .module > header .count { margin-left:auto; color:var(--muted-foreground); font-size:12.5px; }
+  .item { display:flex; align-items:center; gap:12px; padding:11px 16px; border-top:1px solid var(--border); min-height:44px; }
+  .item .tt { flex:1; min-width:0; }
+  .item .tt .t { font-weight:500; }
+  .item .tt .s { color:var(--muted-foreground); font-size:12.5px; margin-top:1px; }
+  .badge { display:inline-flex; align-items:center; border-radius:999px; padding:2px 9px; font-size:11.5px; font-weight:550; flex:none; }
+  .b-inp { background:var(--st-in-progress-bg); color:var(--st-in-progress-fg); border:1px solid var(--st-in-progress-border); }
+  .b-done { background:var(--st-done-bg); color:var(--st-done-fg); border:1px solid var(--st-done-border); }
+  .b-plan { background:var(--card); color:var(--muted-foreground); border:1px solid var(--border); }
+  .type { display:inline-flex; align-items:center; border:1px solid var(--border); border-radius:6px; padding:2px 7px; font-size:11px; color:var(--muted-foreground); flex:none; text-transform:capitalize; }
+  .ghost-link { border:none; background:none; color:var(--primary); font-weight:550; padding:6px 8px; min-height:32px; border-radius:6px; font:inherit; cursor:pointer; flex:none; }
+  .ghost-link:hover { background:var(--accent); }
+  :focus-visible { outline:2px solid var(--ring); outline-offset:2px; }
+  @media (max-width:639px) {
+    .frame { padding:14px 12px; }
+    .appdoc { padding:20px 16px; }
+    .item { flex-wrap:wrap; }
+    .item .open { width:100%; display:flex; justify-content:flex-end; }
+  }
+</style>
+</head>
+<body>
+<div class="frame"><div class="appdoc" id="root"></div></div>
+
+<script id="maskin-state" type="application/json">
+{
+  "file": "pm-curriculum.html",
+  "app": {
+    "title": "PM Learning Curriculum",
+    "subtitle": "Live over the workspace's knowledge objects — updated every night by an agent.",
+    "type": "mini-app"
+  },
+  "modules": [
+    { "id": "01", "title": "The Artifacts pattern", "items": [
+        "1c6dd791-7ef2-421d-a8a9-8264d55e2e2d",
+        "1556bcc9-5387-4b17-82ab-34401656d518",
+        "122b026c-fe9b-4613-8e17-661a67eb0e82"
+    ] },
+    { "id": "02", "title": "Authoring & delivery", "items": [
+        "c5546144-446f-468e-aefb-2e5f9e0d604a",
+        "04043f9b-ff0b-4d96-abaf-07a0533c4138"
+    ] },
+    { "id": "03", "title": "Live surfaces", "items": [
+        "caee5407-7984-4ca0-8657-47b8b268864a",
+        "a3edcacc-198a-4ab3-bfac-831f5ff20482"
+    ] }
+  ],
+  "items": [
+    {
+      "id": "1c6dd791-7ef2-421d-a8a9-8264d55e2e2d",
+      "type": "knowledge",
+      "status": "validated",
+      "title": "The Artifacts pattern is becoming a category — LLM-generated sandboxed mini-apps over user data is now a target shape platforms feel compelled to ship",
+      "url": "https://maskin.io/fe944fe6-7b45-478c-afc7-b889cea63c08/objects/1c6dd791-7ef2-421d-a8a9-8264d55e2e2d",
+      "summary": "The Claude Artifacts pattern — LLM-generated sandboxed single-file mini-apps over user data — has crossed from one vendor's feature into a category platforms feel compelled to replicate."
+    },
+    {
+      "id": "1556bcc9-5387-4b17-82ab-34401656d518",
+      "type": "insight",
+      "status": "clustered",
+      "title": "Datasette Apps positioned as the open-source equivalent of Claude Artifacts",
+      "url": "https://maskin.io/fe944fe6-7b45-478c-afc7-b889cea63c08/objects/1556bcc9-5387-4b17-82ab-34401656d518",
+      "summary": "Willison's datasette-apps is framed explicitly as wanting \"a Claude Artifacts equivalent\" for Datasette."
+    },
+    {
+      "id": "122b026c-fe9b-4613-8e17-661a67eb0e82",
+      "type": "insight",
+      "status": "clustered",
+      "title": "Sandboxed iframe + immutable CSP becomes the security model for LLM-generated mini-apps with DB access",
+      "url": "https://maskin.io/fe944fe6-7b45-478c-afc7-b889cea63c08/objects/122b026c-fe9b-4613-8e17-661a67eb0e82",
+      "summary": "Sandboxed iframe with an injected immutable Content-Security-Policy is the security primitive for letting LLMs generate apps that read and write a real database."
+    },
+    {
+      "id": "c5546144-446f-468e-aefb-2e5f9e0d604a",
+      "type": "knowledge",
+      "status": "validated",
+      "title": "Full schema in a copy-ready prompt + single-file HTML out is the friction-minimizing UX for LLM-generated mini-apps",
+      "url": "https://maskin.io/fe944fe6-7b45-478c-afc7-b889cea63c08/objects/c5546144-446f-468e-aefb-2e5f9e0d604a",
+      "summary": "Schema-in-prompt + single-file HTML out + a brokered data interface + BYO-LLM is the low-friction authoring loop."
+    },
+    {
+      "id": "04043f9b-ff0b-4d96-abaf-07a0533c4138",
+      "type": "insight",
+      "status": "clustered",
+      "title": "[Community] 'Vibe coding for PMs' has crossed from meme to mandatory — Karpathy's tweet → Collins Word of Year → MIT breakthrough tech → PM bootcamp curricula",
+      "url": "https://maskin.io/fe944fe6-7b45-478c-afc7-b889cea63c08/objects/04043f9b-ff0b-4d96-abaf-07a0533c4138",
+      "summary": "\"Vibe coding for PMs\" has crossed from meme to a hiring filter and productivity expectation — the PM-who-builds class is growing."
+    },
+    {
+      "id": "caee5407-7984-4ca0-8657-47b8b268864a",
+      "type": "insight",
+      "status": "clustered",
+      "title": "[Anthropic/Claude Code] Artifacts call MCP connectors on every view (Week 29, July 13-17) — published artifacts become live surfaces",
+      "url": "https://maskin.io/fe944fe6-7b45-478c-afc7-b889cea63c08/objects/caee5407-7984-4ca0-8657-47b8b268864a",
+      "summary": "Published Artifacts can call MCP connectors on every view — a dashboard shows live data instead of a snapshot from the build session."
+    },
+    {
+      "id": "a3edcacc-198a-4ab3-bfac-831f5ff20482",
+      "type": "insight",
+      "status": "clustered",
+      "title": "Willison ships an invisible-iframe pattern for agent-driven UI smoke-tests — opacity:0 + pointer-events:none + sandbox lets an agent test its own generated app without touching the user's view",
+      "url": "https://maskin.io/fe944fe6-7b45-478c-afc7-b889cea63c08/objects/a3edcacc-198a-4ab3-bfac-831f5ff20482",
+      "summary": "Willison's app_debug() runs an agent's generated app in an invisible, non-interactive sandboxed iframe so the agent can smoke-test its own UI."
+    }
+  ]
+}
+</script>
+
+<script>
+(function () {
+  "use strict";
+
+  function readState() {
+    if (typeof window.__MASKIN_APP_DATA__ !== "undefined" && window.__MASKIN_APP_DATA__) {
+      return window.__MASKIN_APP_DATA__;
+    }
+    var node = document.getElementById("maskin-state");
+    if (node) {
+      try { return JSON.parse(node.textContent); } catch (e) {}
+    }
+    return null;
+  }
+
+  var state = readState();
+  window.__MASKIN_APP_DATA__ = state;
+  if (state && state.app && state.app.title) {
+    document.title = state.app.title;
+  }
+  var root = document.getElementById("root");
+  if (!state || !state.app || !state.modules || !state.items || !root) {
+    if (root) {
+      root.innerHTML = '<div style="color:var(--muted-foreground);padding:24px">Unable to load app state.</div>';
+    }
+    return;
+  }
+
+  function esc(s) {
+    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+
+  var itemById = {};
+  state.items.forEach(function (it) { itemById[it.id] = it; });
+
+  var statusLabel = { validated: "Validated", clustered: "Clustered", new: "New" };
+  var badgeClass = { validated: "b-done", clustered: "b-inp" };
+
+  function labelFor(status) {
+    return statusLabel[status] || status.charAt(0).toUpperCase() + status.slice(1);
+  }
+
+  var all = [];
+  state.modules.forEach(function (m) { m.items.forEach(function (id) { if (itemById[id]) all.push(itemById[id]); }); });
+  var doneCount = all.filter(function (it) { return it.status === "validated"; }).length;
+  var pct = all.length ? Math.round((doneCount / all.length) * 100) : 0;
+
+  var currentIdx = state.modules.length - 1;
+  state.modules.forEach(function (m, i) {
+    if (m.items.some(function (id) { return itemById[id] && itemById[id].status !== "validated"; })) {
+      if (i < currentIdx) currentIdx = i;
+    }
+  });
+  var moduleOf = (currentIdx + 1) + " of " + state.modules.length;
+
+  var html = "";
+  html += '<header class="apphead">';
+  html += '<div class="top"><h1>' + esc(state.app.title) + '</h1>';
+  html += '<span class="type">' + esc(state.app.type) + '</span></div>';
+  html += '<p class="sub">' + esc(state.app.subtitle) + '</p>';
+  html += '<div class="metric">';
+  html += '<div class="stat"><span class="n">' + pct + '%</span><span style="color:var(--muted-foreground)"> · module ' + esc(moduleOf) + '</span></div>';
+  html += '<div class="track"><i style="width:' + pct + '%"></i></div>';
+  html += '</div></header>';
+
+  state.modules.forEach(function (m) {
+    var items = m.items.map(function (id) { return itemById[id]; }).filter(Boolean);
+    var done = items.filter(function (it) { return it.status === "validated"; }).length;
+    html += '<section class="module">';
+    html += '<header><span class="mname">' + esc(m.id) + ' · ' + esc(m.title) + '</span>';
+    html += '<span class="count">' + done + '/' + items.length + ' done</span></header>';
+    items.forEach(function (it) {
+      var cls = badgeClass[it.status] || "b-plan";
+      html += '<div class="item">';
+      html += '<div class="tt"><div class="t">' + esc(it.title) + '</div>';
+      html += '<div class="s">' + esc(it.type) + ' · ' + esc(it.summary) + '</div></div>';
+      html += '<span class="badge ' + cls + '">' + esc(labelFor(it.status)) + '</span>';
+      html += '<div class="open"><a class="ghost-link" href="' + esc(it.url) + '" target="_blank" rel="noopener noreferrer">View object</a></div>';
+      html += '</div>';
+    });
+    html += '</section>';
+  });
+
+  root.innerHTML = html;
+})();
+</script>
+</body>
+</html>

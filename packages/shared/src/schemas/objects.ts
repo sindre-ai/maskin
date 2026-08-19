@@ -27,18 +27,44 @@ export const TERMINAL_BET_STATUSES = ['succeeded', 'failed', 'paused'] as const
 export type TerminalBetStatus = (typeof TERMINAL_BET_STATUSES)[number]
 
 /**
- * Loop statuses that warrant an unread-feed entry when transitioned into —
- * the "your standing commitment needs attention" signal that mirrors the
- * bet's terminal-status signal. `holding` is deliberately omitted: a Loop
- * settling back into holding is quiet news, not a For You surface. Shared
- * between the briefing composer (`apps/dev/src/services/workspace-briefing.ts`,
- * where these Loops sort ahead of holding) and the unread-feed join
+ * Commitment statuses that warrant an unread-feed entry when transitioned
+ * into — the "your standing commitment needs attention" signal that mirrors
+ * the bet's terminal-status signal. `holding` is deliberately omitted: a
+ * commitment settling back into holding is quiet news, not a For You surface.
+ * Shared between the briefing composer (`apps/dev/src/services/workspace-briefing.ts`,
+ * where these commitments sort ahead of holding) and the unread-feed join
  * (`apps/dev/src/routes/subscriptions.ts`, where a `status_changed` into
  * these values enters the feed). Single source of truth so the two surfaces
  * can't drift.
+ *
+ * Named `commitment` after the T1 architecture-decision rename of the
+ * legacy `loop` object type — the pipeline/automation concept now owns the
+ * `loop` name. See `packages/db/drizzle/0050_rename_loop_to_commitment.sql`.
  */
-export const LOOP_ATTENTION_STATUSES = ['at-risk', 'breached'] as const
-export type LoopAttentionStatus = (typeof LOOP_ATTENTION_STATUSES)[number]
+export const COMMITMENT_ATTENTION_STATUSES = ['at-risk', 'breached'] as const
+export type CommitmentAttentionStatus = (typeof COMMITMENT_ATTENTION_STATUSES)[number]
+
+/**
+ * Loop statuses used by the (post-T1-rename) pipeline concept: an iterative
+ * multi-agent process wrapping triggers + agents + a pipeline of object
+ * states. This is a graduated-trust ladder, not an on/off toggle — a loop
+ * starts as a `draft`, earns more autonomy as it proves itself
+ * (`learning` → `supervised` → `fully_autonomous`), and can be `paused` from
+ * any point on that ladder. Pausing a loop disables every trigger referenced
+ * in its `metadata.trigger_ids` (see the loop-status hook in
+ * `apps/dev/src/routes/objects.ts`'s `PATCH /:id`); leaving `paused`
+ * re-enables them. Kept here alongside the extension registration so backend
+ * code paths that need the enum (read API, migrations, guards) stay pinned to
+ * one source of truth.
+ */
+export const LOOP_STATUSES = [
+	'draft',
+	'paused',
+	'learning',
+	'supervised',
+	'fully_autonomous',
+] as const
+export type LoopStatus = (typeof LOOP_STATUSES)[number]
 
 export const createObjectSchema = z.object({
 	id: z.string().uuid().optional(),
@@ -135,9 +161,10 @@ export const KNOWN_SORT_COLUMNS = [
  * Avoid .refine() here — ZodEffects breaks @hono/zod-openapi query param extraction. */
 const sortFieldSchema = z.string().max(200).default('createdAt')
 
-/** Snapshot-consistent cursor pagination fields (behind `MCP_RESPONSE_SCOPING`).
- *  All three are optional and additive — leaving them unset preserves the
- *  legacy offset/limit shape byte-for-byte. When `snapshot_at` is set, the
+/** Snapshot-consistent cursor pagination fields, used by the MCP server's
+ *  list/search tools. All three are optional and additive — leaving them
+ *  unset preserves the legacy offset/limit shape byte-for-byte. When
+ *  `snapshot_at` is set, the
  *  server applies `created_at <= snapshot_at` as an upper bound so inserts
  *  after the walk began cannot leak into the paginated stream. When the
  *  keyset pair (`cursor_created_at`, `cursor_id`) is set, the server seeks

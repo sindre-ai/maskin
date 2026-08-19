@@ -32,19 +32,19 @@ describe('GET /api/briefing (integration)', () => {
 		const workspace = await insertWorkspace(db, actor.id)
 
 		await insertObject(db, workspace.id, actor.id, {
-			type: 'loop',
+			type: 'commitment',
 			status: 'breached',
 			title: 'Onboarding NPS floor',
 			metadata: { floor: '≥40 NPS', cadence: 'monthly' },
 		})
 		await insertObject(db, workspace.id, actor.id, {
-			type: 'loop',
+			type: 'commitment',
 			status: 'at-risk',
 			title: 'Customer bugs fixed <1 day',
 			metadata: { floor: '<1 day median TTR', cadence: 'weekly' },
 		})
 		await insertObject(db, workspace.id, actor.id, {
-			type: 'loop',
+			type: 'commitment',
 			status: 'holding',
 			title: 'Weekly release cadence',
 			metadata: { floor: 'ship at least 1/week', cadence: 'weekly' },
@@ -62,10 +62,10 @@ describe('GET /api/briefing (integration)', () => {
 		expect(body.workspace_id).toBe(workspace.id)
 
 		const md = body.markdown
-		expect(md).toContain('## Loops')
+		expect(md).toContain('## Commitments')
 
 		// Breached must sort ahead of at-risk, at-risk ahead of holding.
-		const loopSection = md.slice(md.indexOf('## Loops'))
+		const loopSection = md.slice(md.indexOf('## Commitments'))
 		const breachedIdx = loopSection.indexOf('Onboarding NPS floor')
 		const atRiskIdx = loopSection.indexOf('Customer bugs fixed <1 day')
 		const holdingIdx = loopSection.indexOf('Weekly release cadence')
@@ -91,6 +91,6 @@ describe('GET /api/briefing (integration)', () => {
 
 		expect(res.status).toBe(200)
 		const { markdown } = (await res.json()) as { markdown: string }
-		expect(markdown).not.toContain('## Loops')
+		expect(markdown).not.toContain('## Commitments')
 	})
 })

@@ -88,13 +88,13 @@ test.describe('Objects list retains view state across back-nav', () => {
 			// the top. Wait for the first row to render before scrolling.
 			await expect(page.getByText('Scroll Anchor Row 59')).toBeVisible({ timeout: 10_000 })
 
-			// The DataTable's scroller is the closest `.overflow-auto` ancestor
-			// of a `[data-drag-row]`. Selecting the first `.overflow-auto` in
-			// the document is unsafe — on iPad the app sidebar becomes visible
-			// at ≥md and carries its own overflow-auto ahead of the list in
-			// DOM order.
+			// The list's scroller is the closest `.overflow-auto` ancestor of a
+			// `[data-obj-id]` row. Selecting the first `.overflow-auto` in the
+			// document is unsafe — on iPad the app sidebar becomes visible at
+			// ≥md and carries its own overflow-auto ahead of the list in DOM
+			// order.
 			await page.evaluate(() => {
-				const anchor = document.querySelector('[data-drag-row]')
+				const anchor = document.querySelector('[data-obj-id]')
 				const scroller = anchor?.closest('.overflow-auto') as HTMLElement | null
 				if (scroller) scroller.scrollTop = 2400
 			})
@@ -103,11 +103,11 @@ test.describe('Objects list retains view state across back-nav', () => {
 
 			// Capture the row currently at the top of the viewport.
 			const firstVisibleRowText = await page.evaluate(() => {
-				const anchor = document.querySelector('[data-drag-row]')
+				const anchor = document.querySelector('[data-obj-id]')
 				const scroller = anchor?.closest('.overflow-auto') as HTMLElement | null
 				if (!scroller) return null
 				const scrollerRect = scroller.getBoundingClientRect()
-				const rows = Array.from(scroller.querySelectorAll('[data-drag-row]'))
+				const rows = Array.from(scroller.querySelectorAll('[data-obj-id]'))
 				for (const row of rows) {
 					const rect = row.getBoundingClientRect()
 					if (rect.bottom > scrollerRect.top + 1) return row.textContent
@@ -121,21 +121,21 @@ test.describe('Objects list retains view state across back-nav', () => {
 			// session view-state store with the first-visible row id before
 			// the navigate. Restore on back-nav reads from that store.
 			const clickTargetRowId = await page.evaluate(() => {
-				const anchor = document.querySelector('[data-drag-row]')
+				const anchor = document.querySelector('[data-obj-id]')
 				const scroller = anchor?.closest('.overflow-auto') as HTMLElement | null
 				if (!scroller) return null
 				const scrollerRect = scroller.getBoundingClientRect()
-				const rows = Array.from(scroller.querySelectorAll('[data-drag-row]'))
+				const rows = Array.from(scroller.querySelectorAll('[data-obj-id]'))
 				for (const row of rows) {
 					const rect = row.getBoundingClientRect()
 					if (rect.top > scrollerRect.top + 20) {
-						return (row as HTMLElement).getAttribute('data-drag-row')
+						return (row as HTMLElement).getAttribute('data-obj-id')
 					}
 				}
 				return null
 			})
 			expect(clickTargetRowId).toBeTruthy()
-			await page.locator(`[data-drag-row="${clickTargetRowId}"]`).click()
+			await page.locator(`[data-obj-id="${clickTargetRowId}"]`).click()
 			await expect(page).toHaveURL(/\/objects\//, { timeout: 10_000 })
 			await page.goBack()
 
@@ -148,11 +148,11 @@ test.describe('Objects list retains view state across back-nav', () => {
 
 			// The row that was first-visible before back-nav is at the top again.
 			const restoredFirstVisibleRowText = await page.evaluate(() => {
-				const anchor = document.querySelector('[data-drag-row]')
+				const anchor = document.querySelector('[data-obj-id]')
 				const scroller = anchor?.closest('.overflow-auto') as HTMLElement | null
 				if (!scroller) return null
 				const scrollerRect = scroller.getBoundingClientRect()
-				const rows = Array.from(scroller.querySelectorAll('[data-drag-row]'))
+				const rows = Array.from(scroller.querySelectorAll('[data-obj-id]'))
 				for (const row of rows) {
 					const rect = row.getBoundingClientRect()
 					if (rect.bottom > scrollerRect.top + 1) return row.textContent

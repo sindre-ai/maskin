@@ -80,7 +80,7 @@ describe('TriggersPage', () => {
 		mockUseActors.mockReturnValue({ data: [agent] })
 		render(<TriggersPage />)
 		expect(screen.getByText('Daily Sync')).toBeInTheDocument()
-		expect(screen.getByText(/Runs on schedule/)).toBeInTheDocument()
+		expect(screen.getByText(/Runs every hour at minute 0/)).toBeInTheDocument()
 		expect(screen.getByText(/My Agent/)).toBeInTheDocument()
 	})
 

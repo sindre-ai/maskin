@@ -1,4 +1,4 @@
-import { CreatePicker } from '@/components/shared/create-picker'
+import { NewMenu } from '@/components/shared/new-menu'
 import {
 	Breadcrumb,
 	BreadcrumbItem,
@@ -9,11 +9,11 @@ import {
 } from '@/components/ui/breadcrumb'
 import { Button } from '@/components/ui/button'
 import { SidebarTrigger } from '@/components/ui/sidebar'
-import { useChat } from '@/lib/chat-context'
 import { usePageHeader } from '@/lib/page-header-context'
-import { useMatches, useRouter } from '@tanstack/react-router'
-import { ArrowLeft, Plus, Sparkles } from 'lucide-react'
-import { Fragment, useState } from 'react'
+import { useWorkspace } from '@/lib/workspace-context'
+import { useMatches, useNavigate, useRouter } from '@tanstack/react-router'
+import { ArrowLeft } from 'lucide-react'
+import { Fragment } from 'react'
 
 interface RouteConfig {
 	label: string
@@ -27,7 +27,7 @@ const routeConfig: Record<string, RouteConfig> = {
 		label: 'Object Details',
 		parent: '/_authed/$workspaceId/objects/',
 	},
-	'/_authed/$workspaceId/agents': { label: 'Agents' },
+	'/_authed/$workspaceId/agents/': { label: 'Agents' },
 	'/_authed/$workspaceId/settings/': { label: 'Settings' },
 	'/_authed/$workspaceId/settings/keys': {
 		label: 'Billing',
@@ -60,6 +60,24 @@ const routeConfig: Record<string, RouteConfig> = {
 		label: 'Trigger Details',
 		parent: '/_authed/$workspaceId/triggers/',
 	},
+	'/_authed/$workspaceId/loops/': {
+		label: 'Loops',
+	},
+	'/_authed/$workspaceId/loops/$loopId': {
+		label: 'Loop Details',
+		parent: '/_authed/$workspaceId/loops/',
+	},
+	'/_authed/$workspaceId/marketplace/': {
+		label: 'Marketplace',
+	},
+	'/_authed/$workspaceId/marketplace/$loopId/': {
+		label: 'Marketplace Item',
+		parent: '/_authed/$workspaceId/marketplace/',
+	},
+	'/_authed/$workspaceId/marketplace/$loopId/$itemId': {
+		label: 'Marketplace Item',
+		parent: '/_authed/$workspaceId/marketplace/$loopId/',
+	},
 }
 
 const hiddenRoutes = new Set(['__root__', '/_authed', '/_authed/', '/_authed/$workspaceId'])
@@ -70,9 +88,9 @@ const FOR_YOU_ROUTE_ID = '/_authed/$workspaceId/'
 export function Header() {
 	const matches = useMatches()
 	const { actions, stickyIdentity } = usePageHeader()
-	const { setOpen: setChatOpen } = useChat()
+	const { workspaceId } = useWorkspace()
+	const navigate = useNavigate()
 	const router = useRouter()
-	const [createOpen, setCreateOpen] = useState(false)
 
 	// Find the leaf (last non-hidden) match
 	const leafMatch = [...matches].reverse().find((m) => !hiddenRoutes.has(m.routeId))
@@ -98,9 +116,9 @@ export function Header() {
 		crumbs.push({ label: leafConfig.label, path: leafMatch.pathname })
 	}
 
-	// Object-detail pages drop the global `+ Create` — the button lands users on
-	// the generic picker, which is disorienting when they're mid-edit on a
-	// specific object. Kept on every list surface (Objects, Agents, Triggers).
+	// Object-detail pages drop the "Create an object" section from the New
+	// menu — landing users on the generic object picker is disorienting when
+	// they're mid-edit on a specific object. New chat/loop/agent/search stay.
 	const isObjectDetail = leafMatch?.routeId === OBJECT_DETAIL_ROUTE_ID
 	// The For You page's own header already surfaces equivalent actions
 	// (title, "Today's brief", "New") — the global Create/Chat icons here
@@ -193,32 +211,14 @@ export function Header() {
 				)}
 				<div className="ml-auto flex shrink-0 items-center gap-2">
 					{actions}
-					{!isObjectDetail && !isForYouPage && (
-						<Button
-							variant="ghost"
-							size="icon"
-							className="h-7 w-7"
-							onClick={() => setCreateOpen(true)}
-							aria-label="Create new"
-							title="Create new…"
-						>
-							<Plus size={15} />
-						</Button>
-					)}
 					{!isForYouPage && (
-						<Button
-							variant="ghost"
-							size="icon"
-							className="h-7 w-7"
-							onClick={() => setChatOpen(true)}
-							aria-label="Open chat"
-						>
-							<Sparkles size={15} />
-						</Button>
+						<NewMenu
+							onNewChat={() => navigate({ to: '/$workspaceId/chats/new', params: { workspaceId } })}
+							hideObjectSection={isObjectDetail}
+						/>
 					)}
 				</div>
 			</div>
-			<CreatePicker open={createOpen} onOpenChange={setCreateOpen} />
 		</header>
 	)
 }

@@ -1,4 +1,5 @@
 import type { DisplayPanelColumn } from '@/components/objects/data-table/display-panel'
+import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { AgentWorkingBadge } from '@/components/shared/agent-working-badge'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { StatusBadge } from '@/components/shared/status-badge'
@@ -48,12 +49,12 @@ export function BoardCard({
 			data-state={isSelected ? 'selected' : undefined}
 			aria-selected={isSelected}
 			className={cn(
-				'relative flex flex-col gap-2 rounded-md border border-border bg-card p-3 text-sm transition-colors hover:bg-accent/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+				'relative flex flex-col gap-2 rounded-xl border border-border bg-card p-3 text-sm transition-colors hover:bg-accent/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
 				'data-[state=selected]:border-accent data-[state=selected]:bg-accent/40 data-[state=selected]:ring-2 data-[state=selected]:ring-accent/30',
 			)}
 		>
 			<div className="flex items-start justify-between gap-2">
-				<span className="line-clamp-2 min-w-0 font-medium text-foreground">
+				<span className="line-clamp-2 min-w-0 font-semibold text-foreground">
 					{object.title || 'Untitled'}
 				</span>
 				{showStatus && <StatusBadge status={object.status} className="shrink-0" />}
@@ -71,7 +72,7 @@ export function BoardCard({
 							property={property}
 							object={object}
 							actors={actors}
-							ownerName={owner?.name}
+							owner={owner}
 						/>
 					))}
 				</div>
@@ -88,12 +89,12 @@ function PropertyValue({
 	property,
 	object,
 	actors,
-	ownerName,
+	owner,
 }: {
 	property: DisplayPanelColumn
 	object: ObjectResponse
 	actors?: ActorListItem[]
-	ownerName?: string
+	owner?: ActorListItem | null
 }) {
 	switch (property.id) {
 		case 'status':
@@ -101,7 +102,9 @@ function PropertyValue({
 		case 'type':
 			return <TypeBadge type={object.type} />
 		case 'owner':
-			return ownerName ? <span className="truncate">{ownerName}</span> : null
+			return owner ? (
+				<ActorAvatar id={owner.id} name={owner.name} type={owner.type} className="shrink-0" />
+			) : null
 		case 'createdBy': {
 			const actor = actors?.find((a) => a.id === object.createdBy)
 			return actor ? <span className="truncate">{actor.name}</span> : null

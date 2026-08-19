@@ -10,6 +10,12 @@ vi.mock('@/hooks/use-subscriptions', () => ({
 	useUnread: vi.fn(() => ({ data: { items: [] } })),
 }))
 
+// SidebarFavorites resolves pinned ids through useFiles; with nothing pinned the
+// group renders nothing, and the hook must not hit the real API in this suite.
+vi.mock('@/hooks/use-files', () => ({
+	useFiles: vi.fn(() => ({ data: undefined })),
+}))
+
 vi.mock('@maskin/module-sdk', () => ({
 	getEnabledObjectTypeTabs: vi.fn((ids: string[]) =>
 		ids.includes('work') ? [{ label: 'Bets', value: 'bet' }] : [],
@@ -18,11 +24,6 @@ vi.mock('@maskin/module-sdk', () => ({
 
 vi.mock('@/lib/workspace-context', () => ({
 	useWorkspace: () => ({ workspaceId: 'ws-1' }),
-}))
-
-const setChatOpen = vi.fn()
-vi.mock('@/lib/chat-context', () => ({
-	useChat: () => ({ setOpen: setChatOpen }),
 }))
 
 vi.mock('@tanstack/react-router', async () => {
@@ -79,6 +80,7 @@ describe('AppSidebar', () => {
 	it('renders core navigation items', () => {
 		render(<AppSidebar />)
 		expect(screen.getByText('For You')).toBeInTheDocument()
+		expect(screen.getByText('Chats')).toBeInTheDocument()
 		expect(screen.getByText('Agents')).toBeInTheDocument()
 		expect(screen.getByText('Triggers')).toBeInTheDocument()
 	})
@@ -122,10 +124,10 @@ describe('AppSidebar', () => {
 		expect(screen.getByTestId('workspace-switcher')).toBeInTheDocument()
 	})
 
-	it('does not render a chat launcher — lives in the app header now', () => {
+	it('renders a Chats nav item linking to the full-screen chats surface', () => {
 		vi.mocked(useEnabledModules).mockReturnValue(['work'])
 		render(<AppSidebar />)
-		expect(screen.queryByText('Chat')).not.toBeInTheDocument()
+		expect(screen.getByText('Chats')).toBeInTheDocument()
 	})
 
 	it('shows an unread count next to For You when there are unread threads', () => {

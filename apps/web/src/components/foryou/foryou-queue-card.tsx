@@ -6,7 +6,7 @@ import { TypeBadge } from '@/components/shared/type-badge'
 import { Button } from '@/components/ui/button'
 import { useEntityThread } from '@/hooks/use-entity-thread'
 import { useCreateComment } from '@/hooks/use-events'
-import { useMarkRead } from '@/hooks/use-subscriptions'
+import { useMarkRead, useMarkUnread } from '@/hooks/use-subscriptions'
 import { useSwipeToMarkRead } from '@/hooks/use-swipe-to-mark-read'
 import { trackForyouCardAction, trackForyouCardShown } from '@/lib/analytics'
 import type { UnreadItem } from '@/lib/api'
@@ -68,6 +68,9 @@ interface ForYouQueueCardProps {
 type DecisionPhase =
 	| { status: 'idle' }
 	| { status: 'receipt'; action: CardAction; deadline: number }
+	// The reverse window elapsed AND the threaded reply really posted — the
+	// receipt's reason rows render from this real commit, not static JSX.
+	| { status: 'committed'; action: CardAction }
 
 export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCardProps>(
 	function ForYouQueueCard(
@@ -109,6 +112,14 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 			markRead.mutate({ entityType: item.entity_type, entityId: objectId, lastEventId: target })
 		}, [markRead, item.entity_type, objectId, item.latest_event_id, latestEventId])
 
+		// Not used as a swipe gesture here (queue cards are always unread) —
+		// wired into the hook purely so Undo has a real reverse mutation to
+		// call after a mark-read commit has already landed.
+		const markUnread = useMarkUnread(workspaceId)
+		const handleMarkUnread = useCallback(() => {
+			markUnread.mutate({ entityType: item.entity_type, entityId: objectId })
+		}, [markUnread, item.entity_type, objectId])
+
 		const replyTarget = firstUnreadRootId ?? latestRootId ?? undefined
 		const quickReply = useCreateComment(workspaceId, objectId)
 
@@ -146,6 +157,7 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 			commit,
 		} = useSwipeToMarkRead({
 			onMarkRead: handleMarkRead,
+			onMarkUnread: handleMarkUnread,
 			analytics: { entity_type: item.entity_type, entity_id: objectId },
 			onCommitScheduled: () => {
 				beginExit('right')
@@ -158,8 +170,6 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 			onCommitSettled: () => onCommitSettled(itemKey),
 			onSwipeLeft: handleSkip,
 		})
-
-		const [summaryExpanded, setSummaryExpanded] = useState(false)
 
 		// Decision → decided-receipt is fully independent of the swipe hook: its
 		// own phase state, own timer, own "Reverse this" undo. Defer-then-commit
@@ -187,6 +197,7 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 						{ entity_id: objectId, content: action.label, parent_event_id: replyTarget },
 						{
 							onSuccess: () => {
+								setDecisionPhase({ status: 'committed', action })
 								handleMarkRead()
 								beginExit('right')
 							},
@@ -238,10 +249,22 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 			handleSkip,
 		])
 
+		// Everything older than the unread boundary starts collapsed — the card's
+		// job is triaging what's new, not re-reading history. "Read more" reveals
+		// it on demand; there's no re-collapse since the reveal is one-directional.
+		const [earlierExpanded, setEarlierExpanded] = useState(false)
+		const boundaryIndex =
+			firstUnreadRootId !== null
+				? nodes.findIndex((node) => node.root.id === firstUnreadRootId)
+				: -1
+		const earlierNodes = boundaryIndex > 0 ? nodes.slice(0, boundaryIndex) : []
+		const visibleNodes =
+			earlierExpanded || earlierNodes.length === 0 ? nodes : nodes.slice(boundaryIndex)
+		const earlierCount = earlierNodes.reduce((sum, node) => sum + 1 + node.replies.length, 0)
+
 		const title = item.object?.title ?? 'Untitled'
 		const objectType = item.object?.type
 		const objectStatus = item.object?.status
-		const insightPreview = (item.object?.content ?? '').trim()
 		const chipActions: readonly CardAction[] =
 			cardKind === 'sign_off' || cardKind === 'proposed_bet'
 				? CARD_ACTIONS[cardKind]
@@ -283,7 +306,7 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 					data-testid="foryou-queue-card"
 					data-card-kind={cardKind}
 					className={cn(
-						'relative flex h-full max-h-[680px] flex-col overflow-hidden rounded-[18px] border border-border bg-background shadow-md cursor-grab touch-pan-y',
+						'relative flex h-full flex-col overflow-hidden rounded-[18px] border border-border bg-background shadow-md cursor-grab touch-pan-y',
 						exitDir
 							? 'transition-[transform,opacity] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]'
 							: isDragging
@@ -301,33 +324,28 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 					onTransitionEnd={handleExitTransitionEnd}
 				>
 					{/* Header */}
-					<div className="flex items-start gap-3 border-b border-border px-4 py-3">
-						{objectType && <TypeBadge type={objectType} />}
-						<div className="min-w-0 flex-1">
-							<Link
-								to="/$workspaceId/objects/$objectId"
-								params={{ workspaceId, objectId }}
-								className="block truncate text-[15px] font-semibold leading-snug text-foreground hover:underline"
-								title={title}
-							>
-								{title}
-							</Link>
-							<div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-								{objectStatus && <StatusBadge status={objectStatus} variant="dot-word" />}
-								{item.latest_activity_at && (
-									<>
-										{objectStatus && (
-											<span aria-hidden className="opacity-50">
-												·
-											</span>
-										)}
-										<RelativeTime
-											date={item.latest_activity_at}
-											className="font-mono tabular-nums"
-										/>
-									</>
-								)}
-							</div>
+					<div className="flex items-center gap-2 border-b border-border px-4 py-3">
+						{objectType && <TypeBadge type={objectType} variant="mono" className="shrink-0" />}
+						<Link
+							to="/$workspaceId/objects/$objectId"
+							params={{ workspaceId, objectId }}
+							className="min-w-0 flex-1 truncate text-[15px] font-semibold leading-snug text-foreground hover:underline"
+							title={title}
+						>
+							{title}
+						</Link>
+						<div className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+							{objectStatus && <StatusBadge status={objectStatus} variant="dot-word" />}
+							{item.latest_activity_at && (
+								<>
+									{objectStatus && (
+										<span aria-hidden className="opacity-50">
+											·
+										</span>
+									)}
+									<RelativeTime date={item.latest_activity_at} className="font-mono tabular-nums" />
+								</>
+							)}
 						</div>
 						<Button size="sm" variant="outline" className="h-8 shrink-0 text-xs" asChild>
 							<Link to="/$workspaceId/objects/$objectId" params={{ workspaceId, objectId }}>
@@ -336,39 +354,22 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 						</Button>
 					</div>
 
-					{/* Summary strip */}
-					{insightPreview && (
-						<div className="border-b border-border bg-secondary/25 px-4 py-2.5">
-							<div className="flex items-center justify-between gap-2">
-								<p className="text-[9.5px] font-bold uppercase tracking-wider text-muted-foreground">
-									✦ Summary
-								</p>
-								<button
-									type="button"
-									onClick={() => setSummaryExpanded((v) => !v)}
-									className="shrink-0 text-[10.5px] font-medium text-muted-foreground hover:text-foreground"
-								>
-									{summaryExpanded ? 'Hide' : 'Show full'}
-								</button>
-							</div>
-							<p
-								className={cn(
-									'mt-1 text-[13px] leading-relaxed text-muted-foreground',
-									!summaryExpanded && 'line-clamp-3',
-								)}
-							>
-								{insightPreview}
-							</p>
-						</div>
-					)}
-
 					{/* Thread */}
 					<div className="min-h-[170px] flex-1 overflow-y-auto px-4 py-3">
 						{nodes.length === 0 ? (
 							<p className="py-4 text-center text-sm text-muted-foreground">Loading…</p>
 						) : (
 							<div className="space-y-1.5">
-								{nodes.map((node) => {
+								{earlierNodes.length > 0 && !earlierExpanded && (
+									<button
+										type="button"
+										onClick={() => setEarlierExpanded(true)}
+										className="mb-1.5 w-full rounded-md border border-border bg-secondary/40 py-1.5 text-center text-xs font-medium text-muted-foreground hover:bg-secondary hover:text-foreground"
+									>
+										Read more ({earlierCount} earlier)
+									</button>
+								)}
+								{visibleNodes.map((node) => {
 									const dividerOnRoot =
 										firstUnreadEventId !== null && firstUnreadEventId === node.root.id
 									const dividerInsideThread =
@@ -400,27 +401,54 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 						{decisionActions && decisionPhase.status === 'idle' && (
 							<div
 								data-testid="decision-block"
-								className="mb-3 flex flex-col gap-2 rounded-md bg-status-in_review-bg p-3 md:flex-row"
+								className="mb-3 rounded-md bg-status-in_review-bg p-2.5"
 							>
-								{decisionActions.map((action) => (
-									<Button
-										key={action.id}
-										size="sm"
-										variant={action.tone === 'primary' ? 'default' : 'outline'}
-										data-action-id={action.id}
-										className={cn(
-											'h-9 flex-1 justify-center text-sm font-medium',
-											action.tone === 'secondary' && 'bg-background',
-										)}
-										onClick={() => chooseDecision(action)}
-									>
-										{action.label}
-									</Button>
-								))}
+								<div className="flex items-center gap-2 px-1 pb-2">
+									<span className="text-[12px] font-semibold text-status-in_review-text">
+										Decision needed
+									</span>
+								</div>
+								<div className="flex flex-col gap-1.5">
+									{decisionActions.map((action) => (
+										<button
+											key={action.id}
+											type="button"
+											data-action-id={action.id}
+											className={cn(
+												'flex min-h-12 w-full touch-manipulation items-center justify-between gap-3 rounded-md px-3 py-2 text-left text-[13.5px] font-medium transition-colors',
+												action.tone === 'primary'
+													? 'bg-foreground text-background hover:bg-foreground/90'
+													: 'border border-border bg-background text-foreground hover:bg-secondary',
+											)}
+											onClick={() => chooseDecision(action)}
+										>
+											<span className="flex min-w-0 flex-col">
+												<span className="truncate">{action.label}</span>
+												{action.rationale && (
+													<span
+														className={cn(
+															'truncate text-[11px] font-normal',
+															action.tone === 'primary'
+																? 'text-background/70'
+																: 'text-muted-foreground',
+														)}
+													>
+														{action.rationale}
+													</span>
+												)}
+											</span>
+											{action.tone === 'primary' && (
+												<kbd className="shrink-0 rounded border border-current px-1.5 py-0.5 font-mono text-[10px] opacity-70">
+													↵
+												</kbd>
+											)}
+										</button>
+									))}
+								</div>
 							</div>
 						)}
 
-						{decisionPhase.status === 'receipt' && (
+						{(decisionPhase.status === 'receipt' || decisionPhase.status === 'committed') && (
 							<div
 								data-testid="decision-receipt"
 								className="mb-3 rounded-md border border-border bg-status-active-bg p-3"
@@ -429,19 +457,32 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 									<CheckIcon size={14} />
 									You chose {decisionPhase.action.label}
 								</div>
-								<div className="mt-2 flex items-center justify-between gap-2">
-									<Button
-										size="sm"
-										variant="outline"
-										className="h-7 bg-background text-xs"
-										onClick={reverseDecision}
-									>
-										Reverse this
-									</Button>
-									<span className="text-xs text-muted-foreground">
-										Reversible for {secondsLeft}s
-									</span>
-								</div>
+								{decisionPhase.status === 'committed' ? (
+									<div className="mt-2 space-y-1 border-t border-status-active-text/20 pt-2 text-xs text-status-active-text/80">
+										<p className="flex items-center gap-1.5">
+											<CheckIcon size={12} />
+											Your choice was posted to the thread
+										</p>
+										<p className="flex items-center gap-1.5">
+											<CheckIcon size={12} />
+											Card marked read and advanced
+										</p>
+									</div>
+								) : (
+									<div className="mt-2 flex items-center justify-between gap-2">
+										<Button
+											size="sm"
+											variant="outline"
+											className="h-7 bg-background text-xs"
+											onClick={reverseDecision}
+										>
+											Reverse this
+										</Button>
+										<span className="text-xs text-muted-foreground">
+											Reversible for {secondsLeft}s
+										</span>
+									</div>
+								)}
 							</div>
 						)}
 

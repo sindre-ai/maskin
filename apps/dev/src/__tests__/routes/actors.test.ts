@@ -83,16 +83,13 @@ describe('Actors Routes', () => {
 			expect(inserted.tools?.mcpServers.maskin.url).toBe('https://custom/mcp')
 		})
 
-		it('seeds Workspace Coach with a generated apiKey when auto-creating a workspace', async () => {
+		it('auto-creates a workspace with only the creator as owner — no default agents seeded', async () => {
 			const actor = buildActor({ type: 'human' })
-			const coach = buildActor({ type: 'agent', name: 'Workspace Coach', isSystem: true })
 			const { app, mockResults, calls } = createTestApp(actorsRoutes, '/api/actors')
 			mockResults.insertQueue = [
 				[actor], // human actor insert (already has apiKey via generateApiKey)
 				[{ id: randomUUID(), name: 'ws' }], // workspaces insert
 				[{}], // owner workspaceMembers insert
-				[coach], // Workspace Coach actor insert — must carry apiKey
-				[{}], // Workspace Coach workspaceMembers insert
 			]
 
 			const res = await app.request(
@@ -100,15 +97,12 @@ describe('Actors Routes', () => {
 			)
 
 			expect(res.status).toBe(201)
-			// inserts: [actor, workspace, owner-member, coach, coach-member]
-			const coachInsert = calls.inserts[3] as { apiKey?: string; isSystem?: boolean }
-			expect(coachInsert.isSystem).toBe(true)
-			expect(coachInsert.apiKey).toBeDefined()
-			expect(coachInsert.apiKey).toMatch(/^ank_/)
-
-			// And it must NOT be the same key as the creator's key
-			const creatorInsert = calls.inserts[0] as { apiKey?: string }
-			expect(coachInsert.apiKey).not.toBe(creatorInsert.apiKey)
+			// inserts: [actor, workspace, owner-member] — nothing else
+			expect(calls.inserts.length).toBe(3)
+			const insertedNames = calls.inserts
+				.filter((v): v is { name?: string } => typeof v === 'object' && v !== null && 'name' in v)
+				.map((v) => v.name)
+			expect(insertedNames).not.toContain('Workspace Coach')
 		})
 
 		it('does not default tools when creating a human actor', async () => {
@@ -405,6 +399,44 @@ describe('Actors Routes', () => {
 			expect(res.status).toBe(200)
 			const body = await res.json()
 			expect(body.skills).toEqual([])
+		})
+
+		it('omits role when no X-Workspace-Id header is provided', async () => {
+			const actor = buildActor()
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [[actor], []]
+
+			const res = await app.request(jsonGet(`/api/actors/${actor.id}`))
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.role).toBeUndefined()
+		})
+
+		it("returns the actor's membership role when X-Workspace-Id is provided", async () => {
+			const wsId = randomUUID()
+			const actor = buildActor()
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [[actor], [], [{ role: 'admin' }]]
+
+			const res = await app.request(jsonGet(`/api/actors/${actor.id}`, { 'x-workspace-id': wsId }))
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.role).toBe('admin')
+		})
+
+		it('returns role: null when the actor is not a member of the given workspace', async () => {
+			const wsId = randomUUID()
+			const actor = buildActor()
+			const { app, mockResults } = createTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [[actor], [], []]
+
+			const res = await app.request(jsonGet(`/api/actors/${actor.id}`, { 'x-workspace-id': wsId }))
+
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.role).toBeNull()
 		})
 	})
 

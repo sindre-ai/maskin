@@ -180,12 +180,48 @@ describe('tool handlers', () => {
 					headers: expect.objectContaining({
 						Authorization: 'Bearer ank_testkey123',
 						'X-Workspace-Id': 'ws-default-123',
+						// Backend attributes analytics like knowledge_object_created's
+						// `created_via` field off this header — every outbound MCP call
+						// must self-declare so the create/read routes don't have to
+						// guess from actorType alone.
+						'X-Client-Source': 'mcp',
 					}),
 				}),
 			)
 
 			const parsed = JSON.parse(result.content[0].text)
-			expect(parsed).toEqual(mockResult)
+			expect(parsed).toMatchObject(mockResult)
+		})
+
+		it('strips per-viewer/session bookkeeping fields from each returned node', async () => {
+			mockFetchSuccess({
+				nodes: [
+					{
+						id: 'obj-1',
+						type: 'bet',
+						$id: 'bet-1',
+						activeSessionId: 'session-1',
+						activeSessionCurrentActivity: 'thinking',
+						unread_count: 3,
+						subscriber_count: 2,
+					},
+				],
+				edges: [],
+			})
+
+			const handler = getHandler('create_objects')
+			const result = (await handler({
+				workspace_id: 'ws-default-123',
+				nodes: [{ $id: 'bet-1', type: 'bet', status: 'active' }],
+				edges: [],
+			})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.nodes[0]).not.toHaveProperty('activeSessionId')
+			expect(parsed.nodes[0]).not.toHaveProperty('activeSessionCurrentActivity')
+			expect(parsed.nodes[0]).not.toHaveProperty('unread_count')
+			expect(parsed.nodes[0]).not.toHaveProperty('subscriber_count')
+			expect(parsed.nodes[0].id).toBe('obj-1')
 		})
 
 		it('uses workspace_id from args over default', async () => {
@@ -209,21 +245,27 @@ describe('tool handlers', () => {
 		})
 
 		it('attaches file_ids on a node by replaying each as an `attached` relationship', async () => {
-			// First fetch: POST /api/graph returns the created node with its real
-			// UUID + type. Subsequent fetches are the per-file relationship POSTs.
-			vi.spyOn(globalThis, 'fetch')
-				.mockResolvedValueOnce({
+			// Route the mocks by URL so the /api/graph vs /api/relationships calls
+			// are distinguishable regardless of call order.
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const u = String(url)
+				if (u.endsWith('/api/graph')) {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () =>
+							Promise.resolve({
+								nodes: [{ $id: 'bet-1', id: 'real-bet-id', type: 'bet' }],
+								edges: [],
+							}),
+					} as Response
+				}
+				return {
 					ok: true,
-					json: () =>
-						Promise.resolve({
-							nodes: [{ $id: 'bet-1', id: 'real-bet-id', type: 'bet' }],
-							edges: [],
-						}),
-				} as Response)
-				.mockResolvedValue({
-					ok: true,
+					headers: new Headers(),
 					json: () => Promise.resolve({ id: 'rel-1' }),
-				} as Response)
+				} as Response
+			})
 
 			const handler = getHandler('create_objects')
 			const result = (await handler({
@@ -278,6 +320,22 @@ describe('tool handlers', () => {
 			const parsed = JSON.parse(result.content[0].text)
 			expect(parsed.file_attachments).toBeUndefined()
 		})
+
+		it('does not fetch /api/workspaces — status and workspace_id are required on input', async () => {
+			mockFetchSuccess({ nodes: [{ $id: 'x', id: 'real-x', type: 'task' }], edges: [] })
+
+			const handler = getHandler('create_objects')
+			await handler({
+				workspace_id: 'ws-default-123',
+				nodes: [{ $id: 'x', type: 'task', status: 'todo' }],
+				edges: [],
+			})
+
+			const wsCalls = vi
+				.mocked(fetch)
+				.mock.calls.filter((c) => (c[0] as string).endsWith('/api/workspaces'))
+			expect(wsCalls).toHaveLength(0)
+		})
 	})
 
 	describe('get_objects handler', () => {
@@ -289,7 +347,9 @@ describe('tool handlers', () => {
 				content: Array<{ text: string }>
 			}
 
-			expect(fetch).toHaveBeenCalledTimes(2)
+			// One graph fetch per id, plus one shared workspace fetch for the
+			// always-on `setup` block (shared across the whole batch, not per id).
+			expect(fetch).toHaveBeenCalledTimes(3)
 			expect(fetch).toHaveBeenCalledWith(
 				'http://localhost:3000/api/objects/id-1/graph',
 				expect.anything(),
@@ -361,9 +421,10 @@ describe('tool handlers', () => {
 			expect(result.structuredContent.heroCard.relationships).toBeUndefined()
 
 			// Canonical object body lives at `objects[]` — one entry per successful id,
-			// carrying only `object` (no relationships/connected_objects/events/files).
+			// carrying only `object` and the always-on `setup` block (no
+			// relationships/connected_objects/events/files).
 			const first = result.structuredContent.objects[0]
-			expect(Object.keys(first).sort()).toEqual(['object'])
+			expect(Object.keys(first).sort()).toEqual(['object', 'setup'])
 			// Per-object payload: exactly the core six (url is omitted when
 			// webAppBaseUrl isn't configured on the test rig — the injection is
 			// covered separately in the `url field injection` suite).
@@ -485,13 +546,15 @@ describe('tool handlers', () => {
 			mockFetchSuccess([])
 
 			const handler = getHandler('list_objects')
-			await handler({ type: 'task', limit: 10, offset: 5 })
+			await handler({ type: 'task', limit: 10 })
 
 			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
 			expect(calledUrl).toContain('/api/objects?')
 			expect(calledUrl).toContain('type=task')
-			expect(calledUrl).toContain('limit=10')
-			expect(calledUrl).toContain('offset=5')
+			// The cursor walk always fetches one extra row (the "has more"
+			// sentinel), so the requested limit of 10 becomes 11 on the wire.
+			expect(calledUrl).toContain('limit=11')
+			expect(calledUrl).toContain('snapshot_at=')
 		})
 
 		it('forwards updated_before and updated_after to the route', async () => {
@@ -547,15 +610,16 @@ describe('tool handlers', () => {
 			expect(calledUrl).toContain('order=desc')
 		})
 
-		it('omits sort + order when no sort is passed (additive only)', async () => {
+		it('sorts by createdAt (the cursor walk order), not updatedAt, when no sort is passed', async () => {
 			mockFetchSuccess([])
 
 			const handler = getHandler('list_objects')
 			await handler({ type: 'task' })
 
 			const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
-			expect(calledUrl).not.toContain('sort=')
-			expect(calledUrl).not.toContain('order=')
+			expect(calledUrl).toContain('sort=createdAt')
+			expect(calledUrl).toContain('order=desc')
+			expect(calledUrl).not.toContain('sort=updatedAt')
 		})
 
 		it('forwards each metadata_eq entry as metadata.<field>=<value>', async () => {
@@ -765,7 +829,9 @@ describe('tool handlers', () => {
 			}
 
 			const parsed = JSON.parse(result.content[0].text)
-			const attachments = parsed.filter((e: { type: string }) => e.type === 'file_attachment')
+			const attachments = parsed.results.filter(
+				(e: { type: string }) => e.type === 'file_attachment',
+			)
 			expect(attachments).toHaveLength(2)
 			expect(attachments.every((a: { success: boolean }) => a.success)).toBe(true)
 			expect(attachments.every((a: { skipped?: boolean }) => !a.skipped)).toBe(true)
@@ -809,7 +875,9 @@ describe('tool handlers', () => {
 			expect(relPosts).toHaveLength(0)
 
 			const parsed = JSON.parse(result.content[0].text)
-			const attachments = parsed.filter((e: { type: string }) => e.type === 'file_attachment')
+			const attachments = parsed.results.filter(
+				(e: { type: string }) => e.type === 'file_attachment',
+			)
 			expect(attachments).toHaveLength(1)
 			expect(attachments[0].success).toBe(true)
 			expect(attachments[0].skipped).toBe(true)
@@ -889,7 +957,9 @@ describe('tool handlers', () => {
 			expect((calls[1][1] as RequestInit).method).toBe('DELETE')
 
 			const parsed = JSON.parse(result.content[0].text)
-			const detachments = parsed.filter((e: { type: string }) => e.type === 'file_detachment')
+			const detachments = parsed.results.filter(
+				(e: { type: string }) => e.type === 'file_detachment',
+			)
 			expect(detachments).toHaveLength(1)
 			expect(detachments[0].success).toBe(true)
 		})
@@ -911,9 +981,9 @@ describe('tool handlers', () => {
 			})) as { content: Array<{ text: string }> }
 
 			const parsed = JSON.parse(result.content[0].text)
-			expect(parsed[0].type).toBe('file_detachment')
-			expect(parsed[0].success).toBe(false)
-			expect(parsed[0].error).toMatch(/no attached relationship/i)
+			expect(parsed.results[0].type).toBe('file_detachment')
+			expect(parsed.results[0].success).toBe(false)
+			expect(parsed.results[0].error).toMatch(/no attached relationship/i)
 		})
 	})
 
@@ -945,15 +1015,31 @@ describe('tool handlers', () => {
 		})
 
 		it('adds to workspace when workspace_id provided', async () => {
-			vi.spyOn(globalThis, 'fetch')
-				.mockResolvedValueOnce({
-					ok: true,
-					json: () => Promise.resolve({ id: 'actor-new' }),
-				} as Response)
-				.mockResolvedValueOnce({
-					ok: true,
-					json: () => Promise.resolve({}),
-				} as Response)
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const u = String(url)
+				if (u.endsWith('/api/actors')) {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () => Promise.resolve({ id: 'actor-new' }),
+					} as Response
+				}
+				if (u.endsWith('/api/workspaces/ws-123/members')) {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () => Promise.resolve({}),
+					} as Response
+				}
+				if (u.endsWith('/api/workspaces')) {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () => Promise.resolve([{ id: 'ws-123', settings: {} }]),
+					} as Response
+				}
+				return { ok: true, headers: new Headers(), json: () => Promise.resolve({}) } as Response
+			})
 
 			const handler = getHandler('create_actor')
 			const result = (await handler({
@@ -962,8 +1048,7 @@ describe('tool handlers', () => {
 				workspace_id: 'ws-123',
 			})) as { content: Array<{ text: string }> }
 
-			expect(fetch).toHaveBeenCalledTimes(2)
-			expect(fetch).toHaveBeenLastCalledWith(
+			expect(fetch).toHaveBeenCalledWith(
 				'http://localhost:3000/api/workspaces/ws-123/members',
 				expect.objectContaining({ method: 'POST' }),
 			)
@@ -972,10 +1057,382 @@ describe('tool handlers', () => {
 			expect(parsed.workspace_id).toBe('ws-123')
 			expect(parsed.role).toBe('member')
 		})
+
+		it('splits the merged llm_config into llm_provider + llm_config on the POST body', async () => {
+			// config.defaultWorkspaceId is set, so create_actor also fires a
+			// members POST — isolate the /api/actors call specifically rather
+			// than assuming it's the only (or last) fetch call.
+			let actorsPostBody: unknown
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+				if (String(url) === 'http://localhost:3000/api/actors') {
+					actorsPostBody = JSON.parse(init?.body as string)
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: async () => ({
+							id: 'actor-new',
+							llm_provider: 'anthropic',
+							llm_config: { model: 'claude-opus-4-6' },
+						}),
+					} as Response
+				}
+				return { ok: true, headers: new Headers(), json: async () => ({}) } as Response
+			})
+
+			const handler = getHandler('create_actor')
+			const result = (await handler({
+				type: 'agent',
+				name: 'Bot',
+				llm_config: { provider: 'anthropic', model: 'claude-opus-4-6' },
+			})) as { content: Array<{ text: string }> }
+
+			expect(actorsPostBody).toMatchObject({
+				llm_provider: 'anthropic',
+				llm_config: { model: 'claude-opus-4-6' },
+			})
+			// The two API columns come back merged into one llm_config field, mirroring the input shape.
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.llm_config).toEqual({ provider: 'anthropic', model: 'claude-opus-4-6' })
+			expect(parsed.llm_provider).toBeUndefined()
+		})
+
+		it('attaches skills on creation in a single batched call', async () => {
+			const skillId1 = '660e8400-e29b-41d4-a716-446655440001'
+			const skillId2 = '660e8400-e29b-41d4-a716-446655440002'
+			const mockSkill1 = { id: skillId1, name: 'My Skill' }
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+				const u = String(url)
+				const method = (init as RequestInit | undefined)?.method
+				if (u.endsWith('/api/actors') && method === 'POST') {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () => Promise.resolve({ id: 'actor-new' }),
+					} as Response
+				}
+				if (u.endsWith('/api/workspaces/ws-123/members')) {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () => Promise.resolve({}),
+					} as Response
+				}
+				if (u.endsWith('/workspace-skills/batch')) {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () =>
+							Promise.resolve([
+								{ workspaceSkillId: skillId1, success: true, skill: mockSkill1 },
+								{
+									workspaceSkillId: skillId2,
+									success: false,
+									error: 'Workspace skill not found',
+								},
+							]),
+					} as Response
+				}
+				if (u.endsWith('/api/workspaces')) {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () => Promise.resolve([{ id: 'ws-123', settings: {} }]),
+					} as Response
+				}
+				return { ok: true, headers: new Headers(), json: () => Promise.resolve({}) } as Response
+			})
+
+			const handler = getHandler('create_actor')
+			const result = (await handler({
+				type: 'agent',
+				name: 'Bot',
+				workspace_id: 'ws-123',
+				attach_skill_ids: [skillId1, skillId2],
+			})) as { content: Array<{ text: string }> }
+
+			expect(fetch).toHaveBeenCalledWith(
+				'http://localhost:3000/api/actors/actor-new/workspace-skills/batch',
+				expect.objectContaining({ method: 'POST' }),
+			)
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.attached_skills).toEqual([
+				mockSkill1,
+				{ skill_id: skillId2, error: 'Workspace skill not found' },
+			])
+			expect(parsed.partial_failure).toBe(true)
+		})
+
+		it('marks all requested skills failed when the batch call itself throws', async () => {
+			const skillId1 = '660e8400-e29b-41d4-a716-446655440001'
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const u = String(url)
+				if (u.endsWith('/api/actors')) {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () => Promise.resolve({ id: 'actor-new' }),
+					} as Response
+				}
+				if (u.endsWith('/api/workspaces/ws-123/members')) {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () => Promise.resolve({}),
+					} as Response
+				}
+				if (u.endsWith('/workspace-skills/batch')) {
+					return {
+						ok: false,
+						status: 500,
+						headers: new Headers(),
+						text: () => Promise.resolve('Internal error'),
+					} as Response
+				}
+				return { ok: true, headers: new Headers(), json: () => Promise.resolve([]) } as Response
+			})
+
+			const handler = getHandler('create_actor')
+			const result = (await handler({
+				type: 'agent',
+				name: 'Bot',
+				workspace_id: 'ws-123',
+				attach_skill_ids: [skillId1],
+			})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.partial_failure).toBe(true)
+			expect(parsed.attached_skills[0].skill_id).toBe(skillId1)
+			expect(typeof parsed.attached_skills[0].error).toBe('string')
+		})
+
+		it('chunks more than 50 skill ids into multiple batched calls and merges results in order', async () => {
+			const skillIds = Array.from(
+				{ length: 51 },
+				(_, i) => `00000000-0000-4000-8000-${i.toString(16).padStart(12, '0')}`,
+			)
+			const chunk1 = skillIds.slice(0, 50)
+			const chunk2 = skillIds.slice(50)
+			let batchCall = 0
+
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+				const u = String(url)
+				const method = (init as RequestInit | undefined)?.method
+				if (u.endsWith('/api/actors') && method === 'POST') {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () => Promise.resolve({ id: 'actor-new' }),
+					} as Response
+				}
+				if (u.endsWith('/api/workspaces/ws-123/members')) {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () => Promise.resolve({}),
+					} as Response
+				}
+				if (u.endsWith('/workspace-skills/batch')) {
+					batchCall += 1
+					const chunk = batchCall === 1 ? chunk1 : chunk2
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () =>
+							Promise.resolve(
+								chunk.map((id) => ({ workspaceSkillId: id, success: true, skill: { id } })),
+							),
+					} as Response
+				}
+				if (u.endsWith('/api/workspaces')) {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () => Promise.resolve([{ id: 'ws-123', settings: {} }]),
+					} as Response
+				}
+				return { ok: true, headers: new Headers(), json: () => Promise.resolve({}) } as Response
+			})
+
+			const handler = getHandler('create_actor')
+			const result = (await handler({
+				type: 'agent',
+				name: 'Bot',
+				workspace_id: 'ws-123',
+				attach_skill_ids: skillIds,
+			})) as { content: Array<{ text: string }> }
+
+			const batchCalls = vi
+				.mocked(fetch)
+				.mock.calls.filter((c) => (c[0] as string).endsWith('/workspace-skills/batch'))
+			expect(batchCalls).toHaveLength(2)
+			const sentChunks = batchCalls.map(
+				(call) =>
+					(JSON.parse(call[1]?.body as string) as { workspaceSkillIds: string[] })
+						.workspaceSkillIds,
+			)
+			expect(sentChunks[0]).toEqual(chunk1)
+			expect(sentChunks[1]).toEqual(chunk2)
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.attached_skills).toEqual(skillIds.map((id) => ({ id })))
+		})
+
+		it('merges results across chunks when one chunk succeeds and another throws', async () => {
+			const skillIds = Array.from(
+				{ length: 51 },
+				(_, i) => `00000000-0000-4000-8000-${i.toString(16).padStart(12, '0')}`,
+			)
+			const chunk1 = skillIds.slice(0, 50)
+			const chunk2 = skillIds.slice(50)
+			let batchCall = 0
+
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const u = String(url)
+				if (u.endsWith('/api/actors')) {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () => Promise.resolve({ id: 'actor-new' }),
+					} as Response
+				}
+				if (u.endsWith('/api/workspaces/ws-123/members')) {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () => Promise.resolve({}),
+					} as Response
+				}
+				if (u.endsWith('/workspace-skills/batch')) {
+					batchCall += 1
+					if (batchCall === 1) {
+						return {
+							ok: true,
+							headers: new Headers(),
+							json: () =>
+								Promise.resolve(
+									chunk1.map((id) => ({ workspaceSkillId: id, success: true, skill: { id } })),
+								),
+						} as Response
+					}
+					return {
+						ok: false,
+						status: 500,
+						headers: new Headers(),
+						text: () => Promise.resolve('Internal error'),
+					} as Response
+				}
+				return { ok: true, headers: new Headers(), json: () => Promise.resolve([]) } as Response
+			})
+
+			const handler = getHandler('create_actor')
+			const result = (await handler({
+				type: 'agent',
+				name: 'Bot',
+				workspace_id: 'ws-123',
+				attach_skill_ids: skillIds,
+			})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.partial_failure).toBe(true)
+			expect(parsed.attached_skills.slice(0, 50)).toEqual(chunk1.map((id) => ({ id })))
+			expect(parsed.attached_skills[50].skill_id).toBe(chunk2[0])
+			expect(typeof parsed.attached_skills[50].error).toBe('string')
+		})
+
+		it('skips skill attachment and explains why when auto_create_workspace is combined with attach_skill_ids', async () => {
+			const skillId1 = '660e8400-e29b-41d4-a716-446655440001'
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const u = String(url)
+				if (u.endsWith('/api/actors')) {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () => Promise.resolve({ id: 'actor-new', workspace_id: 'ws-auto' }),
+					} as Response
+				}
+				// setup-block fetches (workspaces) return an empty list so no
+				// membership/batch calls follow from the setup path either.
+				return { ok: true, headers: new Headers(), json: () => Promise.resolve([]) } as Response
+			})
+
+			const handler = getHandler('create_actor')
+			const result = (await handler({
+				type: 'agent',
+				name: 'Bot',
+				auto_create_workspace: true,
+				attach_skill_ids: [skillId1],
+			})) as { content: Array<{ text: string }> }
+
+			// No membership call (the backend already added the actor to its
+			// auto-created workspace) and no batch attach call (the requested
+			// skills can't live in a workspace that was just created empty).
+			const memberCalls = vi
+				.mocked(fetch)
+				.mock.calls.filter((c) => (c[0] as string).includes('/members'))
+			expect(memberCalls).toHaveLength(0)
+			const batchCalls = vi
+				.mocked(fetch)
+				.mock.calls.filter((c) => (c[0] as string).endsWith('/workspace-skills/batch'))
+			expect(batchCalls).toHaveLength(0)
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.attached_skills).toBeUndefined()
+			expect(parsed.partial_failure).toBeUndefined()
+			expect(parsed.skills_not_attached_reason).toBeUndefined()
+		})
+
+		it('rejects creating an agent with no workspace_id and no default workspace configured', async () => {
+			const fetchSpy = vi.spyOn(globalThis, 'fetch')
+			const handlersNoWs = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>()
+			vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
+				handlersNoWs.set(
+					name as string,
+					handler as (args: Record<string, unknown>) => Promise<unknown>,
+				)
+			})
+			createMcpServer({ ...config, defaultWorkspaceId: '' })
+			const handler = handlersNoWs.get('create_actor')
+			if (!handler) throw new Error('Handler create_actor not registered')
+
+			await expect(handler({ type: 'agent', name: 'Bot' })).rejects.toThrow(/workspace_id/)
+			// Must fail before ever calling POST /api/actors — no orphaned agent created.
+			expect(fetchSpy).not.toHaveBeenCalled()
+		})
+
+		it('does not require workspace_id for a human (auto_create_workspace defaults to true)', async () => {
+			mockFetchSuccess({ id: 'human-1', type: 'human', name: 'Alice' })
+
+			const handler = getHandler('create_actor')
+			const result = (await handler({ type: 'human', name: 'Alice' })) as {
+				content: Array<{ text: string }>
+			}
+			expect(JSON.parse(result.content[0].text).id).toBe('human-1')
+		})
+
+		it('does not require workspace_id for an agent with auto_create_workspace explicitly true', async () => {
+			const handlersNoWs = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>()
+			vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
+				handlersNoWs.set(
+					name as string,
+					handler as (args: Record<string, unknown>) => Promise<unknown>,
+				)
+			})
+			createMcpServer({ ...config, defaultWorkspaceId: '' })
+			const handler = handlersNoWs.get('create_actor')
+			if (!handler) throw new Error('Handler create_actor not registered')
+			mockFetchSuccess({ id: 'actor-new', type: 'agent', name: 'Bot', workspace_id: 'ws-auto' })
+
+			const result = (await handler({
+				type: 'agent',
+				name: 'Bot',
+				auto_create_workspace: true,
+			})) as { content: Array<{ text: string }> }
+			expect(JSON.parse(result.content[0].text).id).toBe('actor-new')
+		})
 	})
 
 	describe('get_objects handler (partial failure)', () => {
-		it('returns success false for failed IDs without rejecting', async () => {
+		it('returns a structured error for failed IDs without rejecting', async () => {
 			vi.spyOn(globalThis, 'fetch')
 				.mockResolvedValueOnce({
 					ok: true,
@@ -997,7 +1454,527 @@ describe('tool handlers', () => {
 			expect(parsed[0].success).toBe(true)
 			expect(parsed[0].result).toEqual({ id: 'id-1', title: 'OK' })
 			expect(parsed[1].success).toBe(false)
-			expect(parsed[1].error).toContain('API error 404')
+			// Per-id sub-error follows the same `{ tool, reason, next }` shape as
+			// top-level tool errors (T2).
+			expect(parsed[1].error).toMatchObject({
+				tool: 'get_objects',
+				reason: expect.stringMatching(/not found/i),
+				next: { tool: 'search_objects', hint: expect.any(String) },
+			})
+			expect(parsed[1].error.next.hint).toContain('search_objects')
+		})
+	})
+
+	describe('loop tool handlers', () => {
+		const okJson = (data: unknown) =>
+			({ ok: true, headers: new Headers(), json: () => Promise.resolve(data) }) as Response
+
+		const workspaceRow = {
+			id: 'ws-default-123',
+			name: 'WS',
+			settings: {
+				statuses: {
+					task: ['todo', 'done'],
+					lead: ['new', 'qualified', 'won', 'lost'],
+					loop: ['running', 'waiting', 'paused', 'archived'],
+				},
+			},
+		}
+
+		describe('list_loops', () => {
+			it('GETs /api/loops with the workspace header and returns the loops', async () => {
+				mockFetchSuccess({
+					loops: [{ id: 'loop-1', workspaceId: 'ws-default-123', name: 'Lead loop' }],
+				})
+
+				const handler = getHandler('list_loops')
+				const result = (await handler({})) as { content: Array<{ text: string }> }
+
+				expect(fetch).toHaveBeenCalledWith(
+					'http://localhost:3000/api/loops',
+					expect.objectContaining({
+						method: 'GET',
+						headers: expect.objectContaining({ 'X-Workspace-Id': 'ws-default-123' }),
+					}),
+				)
+				const parsed = JSON.parse(result.content[0].text)
+				expect(parsed.loops).toHaveLength(1)
+				expect(parsed.loops[0].id).toBe('loop-1')
+			})
+		})
+
+		describe('create_loop', () => {
+			it('creates inline step triggers and POSTs the loop node + in_loop edges to /api/graph', async () => {
+				let triggerCounter = 0
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+					const u = String(url)
+					const method = (init as RequestInit | undefined)?.method
+					if (u.endsWith('/api/workspaces')) return okJson([workspaceRow])
+					if (u.includes('/api/objects/'))
+						return okJson({
+							id: u.split('/').pop(),
+							workspaceId: 'ws-default-123',
+							type: 'task',
+						})
+					if (u.includes('/api/actors?ids='))
+						return okJson([
+							{ id: 'agent-1', type: 'agent', name: 'Lead Qualifier' },
+							{ id: 'agent-2', type: 'agent', name: 'Sweeper' },
+						])
+					if (u.endsWith('/api/triggers') && method === 'POST') {
+						triggerCounter += 1
+						return okJson({ id: `trig-${triggerCounter}` })
+					}
+					if (u.endsWith('/api/triggers') && (method === 'GET' || method === undefined)) {
+						return okJson([
+							{
+								id: 'trig-1',
+								name: 'Qualify',
+								targetActorId: 'agent-1',
+								actionPrompt: 'Qualify the lead',
+							},
+							{
+								id: 'trig-2',
+								name: 'Weekly sweep',
+								targetActorId: 'agent-2',
+								actionPrompt: 'Sweep stale leads',
+							},
+						])
+					}
+					if (u.endsWith('/api/graph'))
+						return okJson({
+							nodes: [
+								{
+									$id: 'loop',
+									id: 'loop-1',
+									workspaceId: 'ws-default-123',
+									type: 'loop',
+									driver: null,
+									activeSessionId: null,
+								},
+							],
+							edges: [{ id: 'edge-1', type: 'in_loop' }],
+						})
+					if (u.endsWith('/api/integrations')) return okJson([])
+					throw new Error(`Unexpected fetch: ${method ?? 'GET'} ${u}`)
+				})
+
+				const handler = getHandler('create_loop')
+				const result = (await handler({
+					name: 'Lead qualification',
+					content: 'Every lead gets an answer',
+					status: 'learning',
+					entry_condition: 'A lead is created',
+					close_condition: 'The lead is won or lost',
+					closed_statuses: { lead: ['won', 'lost'] },
+					steps: [
+						{
+							name: 'Qualify',
+							agent_id: 'agent-1',
+							prompt: 'Qualify the lead',
+							when: {
+								object_type: 'lead',
+								action: 'status_changed',
+								filter: { status: 'new' },
+							},
+						},
+						{
+							name: 'Weekly sweep',
+							agent_id: 'agent-2',
+							prompt: 'Sweep stale leads',
+							when: { cron: '0 9 * * 1' },
+						},
+					],
+					trigger_ids: [],
+					object_ids: ['obj-1'],
+				})) as { content: Array<{ text: string }> }
+
+				// Step triggers: one event trigger + one cron trigger.
+				const triggerCalls = vi
+					.mocked(fetch)
+					.mock.calls.filter(
+						(c) =>
+							String(c[0]).endsWith('/api/triggers') &&
+							(c[1] as RequestInit | undefined)?.method === 'POST',
+					)
+				expect(triggerCalls).toHaveLength(2)
+				const triggerBodies = triggerCalls.map((c) =>
+					JSON.parse((c[1] as RequestInit).body as string),
+				)
+				expect(triggerBodies[0]).toMatchObject({
+					name: 'Qualify',
+					type: 'event',
+					target_actor_id: 'agent-1',
+					config: {
+						entity_type: 'lead',
+						action: 'status_changed',
+						filter: { status: 'new' },
+					},
+				})
+				expect(triggerBodies[1]).toMatchObject({
+					name: 'Weekly sweep',
+					type: 'cron',
+					target_actor_id: 'agent-2',
+					config: { expression: '0 9 * * 1' },
+				})
+
+				// Graph body: loop node with the wired metadata + membership edge.
+				const graphCall = vi
+					.mocked(fetch)
+					.mock.calls.find((c) => String(c[0]).endsWith('/api/graph'))
+				expect(graphCall).toBeDefined()
+				const graphBody = JSON.parse((graphCall?.[1] as RequestInit).body as string)
+				expect(graphBody.nodes).toHaveLength(1)
+				expect(graphBody.nodes[0]).toMatchObject({
+					$id: 'loop',
+					type: 'loop',
+					title: 'Lead qualification',
+					content: 'Every lead gets an answer',
+					status: 'learning',
+				})
+				expect(graphBody.nodes[0].metadata.trigger_ids).toEqual(['trig-1', 'trig-2'])
+				expect(graphBody.nodes[0].metadata.entry_condition).toBe('A lead is created')
+				expect(graphBody.nodes[0].metadata.closed_statuses).toEqual({
+					lead: ['won', 'lost'],
+				})
+				expect(graphBody.edges).toEqual([{ source: 'loop', target: 'obj-1', type: 'in_loop' }])
+
+				const parsed = JSON.parse(result.content[0].text)
+				expect(parsed.loop.id).toBe('loop-1')
+				expect(parsed.loop.driver).toBeUndefined()
+				expect(parsed.loop.activeSessionId).toBeUndefined()
+				expect(parsed.created_step_trigger_ids).toEqual(['trig-1', 'trig-2'])
+				expect(parsed.steps).toEqual([
+					expect.objectContaining({
+						triggerId: 'trig-1',
+						triggerName: 'Qualify',
+						agent: expect.objectContaining({ id: 'agent-1', name: 'Lead Qualifier' }),
+					}),
+					expect.objectContaining({
+						triggerId: 'trig-2',
+						triggerName: 'Weekly sweep',
+						agent: expect.objectContaining({ id: 'agent-2', name: 'Sweeper' }),
+					}),
+				])
+				// Both steps have agents and a member was linked in — no gaps to flag.
+				expect(parsed.setup).toBeDefined()
+				expect(
+					parsed.setup.checks.some((c: { name: string }) => c.name === 'steps_have_agents'),
+				).toBe(false)
+				expect(parsed.setup.checks.some((c: { name: string }) => c.name === 'has_members')).toBe(
+					false,
+				)
+			})
+
+			it('rejects unknown trigger ids before creating anything', async () => {
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+					const u = String(url)
+					if (u.endsWith('/api/triggers')) return okJson([{ id: 'trig-known' }])
+					throw new Error(`Unexpected fetch: ${u}`)
+				})
+
+				const handler = getHandler('create_loop')
+				await expect(
+					handler({
+						name: 'Broken loop',
+						trigger_ids: ['trig-unknown'],
+						steps: [],
+						object_ids: [],
+					}),
+				).rejects.toThrow(/Unknown trigger id/)
+
+				// No graph call — nothing was created.
+				const graphCalls = vi
+					.mocked(fetch)
+					.mock.calls.filter((c) => String(c[0]).endsWith('/api/graph'))
+				expect(graphCalls).toHaveLength(0)
+			})
+
+			it('rejects closed_statuses referencing a status the workspace does not define', async () => {
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+					const u = String(url)
+					if (u.endsWith('/api/workspaces')) return okJson([workspaceRow])
+					throw new Error(`Unexpected fetch: ${u}`)
+				})
+
+				const handler = getHandler('create_loop')
+				await expect(
+					handler({
+						name: 'Bad statuses',
+						closed_statuses: { lead: ['exploded'] },
+						steps: [],
+						trigger_ids: [],
+						object_ids: [],
+					}),
+				).rejects.toThrow(/unknown status/)
+			})
+
+			it('deletes just-created step triggers when the graph insert fails', async () => {
+				const deleted: string[] = []
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+					const u = String(url)
+					const method = (init as RequestInit | undefined)?.method
+					if (u.endsWith('/api/workspaces')) return okJson([workspaceRow])
+					if (u.includes('/api/actors?ids=')) return okJson([{ id: 'agent-1', type: 'agent' }])
+					if (u.endsWith('/api/triggers') && method === 'POST') return okJson({ id: 'trig-orphan' })
+					if (u.includes('/api/triggers/') && method === 'DELETE') {
+						deleted.push(u.split('/').pop() as string)
+						return okJson({ deleted: true })
+					}
+					if (u.endsWith('/api/graph'))
+						return {
+							ok: false,
+							status: 400,
+							text: () => Promise.resolve('Invalid status'),
+						} as Response
+					throw new Error(`Unexpected fetch: ${method ?? 'GET'} ${u}`)
+				})
+
+				const handler = getHandler('create_loop')
+				await expect(
+					handler({
+						name: 'Rollback loop',
+						steps: [
+							{
+								name: 'Step',
+								agent_id: 'agent-1',
+								prompt: 'Do work',
+								when: { object_type: 'task', action: 'created' },
+							},
+						],
+						trigger_ids: [],
+						object_ids: [],
+					}),
+				).rejects.toThrow()
+
+				expect(deleted).toEqual(['trig-orphan'])
+			})
+		})
+
+		describe('update_loop', () => {
+			it('rejects objects that are not loops', async () => {
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+					const u = String(url)
+					if (u.includes('/api/objects/'))
+						return okJson({ id: 'obj-7', type: 'bet', workspaceId: 'ws-default-123' })
+					throw new Error(`Unexpected fetch: ${u}`)
+				})
+
+				const handler = getHandler('update_loop')
+				await expect(handler({ id: 'obj-7', name: 'New name' })).rejects.toThrow(/not 'loop'/)
+			})
+
+			it('read-modify-writes trigger_ids and adds/removes in_loop membership edges', async () => {
+				const relationshipDeletes: string[] = []
+				let patchBody: Record<string, unknown> | undefined
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+					const u = String(url)
+					const method = (init as RequestInit | undefined)?.method
+					if (u.endsWith('/api/objects/loop-1') && method === 'GET')
+						return okJson({
+							id: 'loop-1',
+							type: 'loop',
+							workspaceId: 'ws-default-123',
+							metadata: { trigger_ids: ['trig-old'] },
+						})
+					if (u.endsWith('/api/objects/loop-1') && method === 'PATCH') {
+						patchBody = JSON.parse((init as RequestInit).body as string)
+						return okJson({
+							id: 'loop-1',
+							type: 'loop',
+							workspaceId: 'ws-default-123',
+							metadata: patchBody?.metadata,
+						})
+					}
+					if (u.endsWith('/api/objects/obj-new') && method === 'GET')
+						return okJson({ id: 'obj-new', workspaceId: 'ws-default-123', type: 'lead' })
+					if (u.endsWith('/api/triggers') && (method === 'GET' || method === undefined))
+						return okJson([{ id: 'trig-add' }])
+					if (u.endsWith('/api/relationships') && method === 'POST')
+						return okJson({ id: 'rel-new' })
+					if (u.includes('/api/relationships?source_id=loop-1'))
+						return okJson([{ id: 'rel-old', targetId: 'obj-gone' }])
+					if (u.endsWith('/api/relationships/rel-old') && method === 'DELETE') {
+						relationshipDeletes.push('rel-old')
+						return okJson({ deleted: true })
+					}
+					throw new Error(`Unexpected fetch: ${method ?? 'GET'} ${u}`)
+				})
+
+				const handler = getHandler('update_loop')
+				const result = (await handler({
+					id: 'loop-1',
+					add_trigger_ids: ['trig-add'],
+					add_object_ids: ['obj-new'],
+					remove_object_ids: ['obj-gone'],
+				})) as { content: Array<{ text: string }> }
+
+				expect(patchBody?.metadata).toEqual({ trigger_ids: ['trig-old', 'trig-add'] })
+
+				const relPost = vi
+					.mocked(fetch)
+					.mock.calls.find(
+						(c) =>
+							String(c[0]).endsWith('/api/relationships') &&
+							(c[1] as RequestInit | undefined)?.method === 'POST',
+					)
+				expect(relPost).toBeDefined()
+				const relBody = JSON.parse((relPost?.[1] as RequestInit).body as string)
+				expect(relBody).toMatchObject({
+					source_id: 'loop-1',
+					target_id: 'obj-new',
+					type: 'in_loop',
+				})
+				expect(relationshipDeletes).toEqual(['rel-old'])
+
+				const parsed = JSON.parse(result.content[0].text)
+				expect(parsed.added_object_ids).toEqual(['obj-new'])
+				expect(parsed.removed_object_ids).toEqual(['obj-gone'])
+				expect(Array.isArray(parsed.steps)).toBe(true)
+			})
+		})
+
+		describe('get_loop', () => {
+			it('GETs /api/loops?id= and returns the single loop', async () => {
+				mockFetchSuccess({
+					loops: [{ id: 'loop-1', workspaceId: 'ws-default-123', name: 'Lead loop' }],
+				})
+
+				const handler = getHandler('get_loop')
+				const result = (await handler({ id: 'loop-1' })) as { content: Array<{ text: string }> }
+
+				expect(fetch).toHaveBeenCalledWith(
+					'http://localhost:3000/api/loops?id=loop-1',
+					expect.objectContaining({
+						method: 'GET',
+						headers: expect.objectContaining({ 'X-Workspace-Id': 'ws-default-123' }),
+					}),
+				)
+				const parsed = JSON.parse(result.content[0].text)
+				expect(parsed.loop.id).toBe('loop-1')
+			})
+
+			it('returns a structured not-found error when the loops array is empty', async () => {
+				mockFetchSuccess({ loops: [] })
+
+				const handler = getHandler('get_loop')
+				const result = (await handler({ id: 'missing-loop' })) as {
+					isError?: boolean
+					structuredContent?: {
+						error?: { tool: string; reason: string; next: { tool: string; hint: string } }
+					}
+				}
+				expect(result.isError).toBe(true)
+				expect(result.structuredContent?.error).toMatchObject({
+					tool: 'get_loop',
+					reason: expect.stringMatching(/not found/i),
+					next: { tool: 'list_loops', hint: expect.stringContaining('list_loops') },
+				})
+			})
+
+			it('nests each trigger with its resolved agent (id/name/description) under `steps`', async () => {
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+					const u = String(url)
+					if (u.includes('/api/loops?id=loop-1')) {
+						return okJson({
+							loops: [
+								{
+									id: 'loop-1',
+									workspaceId: 'ws-default-123',
+									name: 'Lead loop',
+									triggerIds: ['trig-a', 'trig-b'],
+								},
+							],
+						})
+					}
+					if (u.includes('/api/triggers')) {
+						return okJson([
+							{ id: 'trig-a', name: 'Qualify', targetActorId: 'agent-a' },
+							{ id: 'trig-b', name: 'Capture', targetActorId: null },
+						])
+					}
+					if (u.includes('/api/actors')) {
+						return okJson([
+							{ id: 'agent-a', name: 'Qualifier', description: 'Qualifies inbound leads.' },
+						])
+					}
+					throw new Error(`Unexpected fetch: ${u}`)
+				})
+
+				const handler = getHandler('get_loop')
+				const result = (await handler({ id: 'loop-1' })) as { content: Array<{ text: string }> }
+				const parsed = JSON.parse(result.content[0].text)
+
+				expect(parsed.loop.id).toBe('loop-1')
+				const steps = parsed.steps as Array<{
+					triggerId: string
+					agent: { id: string; name: string; description: string } | null
+				}>
+				expect(steps).toHaveLength(2)
+				expect(steps[0].triggerId).toBe('trig-a')
+				expect(steps[0].agent).toEqual({
+					id: 'agent-a',
+					name: 'Qualifier',
+					description: 'Qualifies inbound leads.',
+				})
+				expect(steps[1].triggerId).toBe('trig-b')
+				expect(steps[1].agent).toBeNull()
+			})
+		})
+
+		describe('delete_loop', () => {
+			it('rejects objects that are not loops', async () => {
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+					const u = String(url)
+					if (u.includes('/api/objects/'))
+						return okJson({ id: 'obj-7', type: 'bet', workspaceId: 'ws-default-123' })
+					throw new Error(`Unexpected fetch: ${u}`)
+				})
+
+				const handler = getHandler('delete_loop')
+				await expect(handler({ id: 'obj-7' })).rejects.toThrow(/not 'loop'/)
+			})
+
+			it('deletes every in_loop edge then the loop object, leaving members untouched', async () => {
+				const relationshipDeletes: string[] = []
+				let objectDeleted = false
+				// Two membership rows exist; each GET at offset=0 returns whatever is
+				// left after the previous page's deletes, mirroring how the real API
+				// behaves once rows are removed.
+				const remaining = [
+					{ id: 'rel-1', targetId: 'obj-a' },
+					{ id: 'rel-2', targetId: 'obj-b' },
+				]
+				vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+					const u = String(url)
+					const method = (init as RequestInit | undefined)?.method
+					if (u.endsWith('/api/objects/loop-1') && method === 'GET')
+						return okJson({ id: 'loop-1', type: 'loop', workspaceId: 'ws-default-123' })
+					if (u.includes('/api/relationships?source_id=loop-1')) return okJson([...remaining])
+					if (u.startsWith('http://localhost:3000/api/relationships/') && method === 'DELETE') {
+						const relId = u.split('/').pop() as string
+						relationshipDeletes.push(relId)
+						const idx = remaining.findIndex((r) => r.id === relId)
+						if (idx >= 0) remaining.splice(idx, 1)
+						return okJson({ deleted: true })
+					}
+					if (u.endsWith('/api/objects/loop-1') && method === 'DELETE') {
+						objectDeleted = true
+						return okJson({ deleted: true })
+					}
+					throw new Error(`Unexpected fetch: ${method ?? 'GET'} ${u}`)
+				})
+
+				const handler = getHandler('delete_loop')
+				const result = (await handler({ id: 'loop-1' })) as { content: Array<{ text: string }> }
+
+				expect(relationshipDeletes.sort()).toEqual(['rel-1', 'rel-2'])
+				expect(objectDeleted).toBe(true)
+
+				const parsed = JSON.parse(result.content[0].text)
+				expect(parsed.deleted).toBe(true)
+				expect(parsed.removed_member_object_ids.sort()).toEqual(['obj-a', 'obj-b'])
+			})
 		})
 	})
 
@@ -1145,16 +2122,16 @@ describe('tool handlers', () => {
 
 	describe('get_started handler', () => {
 		const workspace = { id: 'ws-1', name: 'My Workspace' }
-		const packages = [
+		const loops = [
 			{
-				id: 'pkg-dev-1',
+				id: 'loop-dev-1',
 				name: 'Development',
 				description: 'Product team shipping software',
 				use_case: 'development',
 				item_types: ['actor', 'trigger'],
 			},
 			{
-				id: 'pkg-growth-1',
+				id: 'loop-growth-1',
 				name: 'Growth',
 				description: 'Founder running a launch pipeline',
 				use_case: 'growth',
@@ -1162,12 +2139,12 @@ describe('tool handlers', () => {
 			},
 		]
 
-		it('lists marketplace packages when no package_id is given', async () => {
+		it('lists marketplace loops when no loop_id is given', async () => {
 			vi.spyOn(globalThis, 'fetch')
 				.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([workspace]) } as Response)
 				.mockResolvedValueOnce({
 					ok: true,
-					json: () => Promise.resolve({ packages }),
+					json: () => Promise.resolve({ loops }),
 				} as Response)
 
 			const handler = getHandler('get_started')
@@ -1177,17 +2154,17 @@ describe('tool handlers', () => {
 			expect(text).toContain('My Workspace')
 			expect(text).toContain('Development')
 			expect(text).toContain('Growth')
-			expect(text).toContain('pkg-dev-1')
-			expect(text).toContain('package_id')
+			expect(text).toContain('loop-dev-1')
+			expect(text).toContain('loop_id')
 			expect(text).toContain('confirm: true')
 		})
 
-		it('returns empty-marketplace message when catalog has no packages', async () => {
+		it('returns empty-marketplace message when marketplace has no loops', async () => {
 			vi.spyOn(globalThis, 'fetch')
 				.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([workspace]) } as Response)
 				.mockResolvedValueOnce({
 					ok: true,
-					json: () => Promise.resolve({ packages: [] }),
+					json: () => Promise.resolve({ loops: [] }),
 				} as Response)
 
 			const handler = getHandler('get_started')
@@ -1195,16 +2172,20 @@ describe('tool handlers', () => {
 			const text = result.content[0].text
 
 			expect(text).toContain('marketplace')
-			expect(text).not.toContain('package_id')
+			expect(text).not.toContain('loop_id')
 		})
 
-		it('installs package when package_id and confirm: true are provided', async () => {
+		it('installs loop when loop_id and confirm: true are provided', async () => {
 			const fetchSpy = vi
 				.spyOn(globalThis, 'fetch')
 				.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([workspace]) } as Response)
 				.mockResolvedValueOnce({
 					ok: true,
-					json: () => Promise.resolve({ provisioned: { actors: 3, triggers: 5, skills: 2 } }),
+					json: () =>
+						Promise.resolve({
+							objectId: 'loop-obj-1',
+							provisioned: { actors: 3, triggers: 5, skills: 2 },
+						}),
 				} as Response)
 				.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([]) } as Response)
 				.mockResolvedValueOnce({
@@ -1214,20 +2195,23 @@ describe('tool handlers', () => {
 
 			const handler = getHandler('get_started')
 			const result = (await handler({
-				package_id: 'pkg-dev-1',
+				loop_id: 'loop-dev-1',
 				confirm: true,
 			})) as { content: Array<{ text: string }> }
 			const text = result.content[0].text
 
 			expect(text).toContain('installed')
 			expect(text).toContain('My Workspace')
+			expect(text).toContain('/ws-1/loops/loop-obj-1')
 
 			const installCall = fetchSpy.mock.calls.find(
-				([, opts]) => (opts as RequestInit)?.method === 'POST',
+				([u, opts]) =>
+					(opts as RequestInit)?.method === 'POST' &&
+					(u as string).includes('/api/installed-loops'),
 			)
 			if (!installCall) throw new Error('install call not found')
 			const installBody = JSON.parse((installCall[1] as RequestInit).body as string)
-			expect(installBody.packageId).toBe('pkg-dev-1')
+			expect(installBody.loopId).toBe('loop-dev-1')
 			expect(installBody.workspaceId).toBe('ws-1')
 		})
 
@@ -1250,7 +2234,7 @@ describe('tool handlers', () => {
 				} as Response)
 
 			const handler = getHandler('get_started')
-			await handler({ package_id: 'pkg-dev-1', confirm: true, workspace_name: 'Acme' })
+			await handler({ loop_id: 'loop-dev-1', confirm: true, workspace_name: 'Acme' })
 
 			const patchCall = fetchSpy.mock.calls.find(
 				([u, opts]) =>
@@ -1274,8 +2258,12 @@ describe('tool handlers', () => {
 		})
 	})
 
-	describe('error handling', () => {
-		it('throws with API error message', async () => {
+	describe('error handling (read-side structured errors, T2)', () => {
+		// Read-side handlers convert thrown API errors into a structured
+		// `{ error: { tool, reason, next: { tool, hint } } }` response so the
+		// caller sees the failing tool, why it failed, and which tool to try
+		// next — instead of a bare transport-level throw.
+		it('returns invalid_param error and echoes the API detail in reason', async () => {
 			mockFetchError(
 				400,
 				JSON.stringify({
@@ -1287,10 +2275,23 @@ describe('tool handlers', () => {
 			)
 
 			const handler = getHandler('list_objects')
-			await expect(handler({})).rejects.toThrow('API error 400')
+			const result = (await handler({})) as {
+				isError?: boolean
+				structuredContent?: {
+					error?: { tool: string; reason: string; next: { tool: string; hint: string } }
+				}
+			}
+			expect(result.isError).toBe(true)
+			const err = result.structuredContent?.error
+			expect(err?.tool).toBe('list_objects')
+			expect(err?.reason).toMatch(/invalid argument/i)
+			expect(err?.reason).toContain('Validation failed')
+			// Invalid-param → same tool with a corrective example.
+			expect(err?.next.tool).toBe('list_objects')
+			expect(err?.next.hint).toContain('list_objects')
 		})
 
-		it('throws with suggestion when available', async () => {
+		it('returns permission error with the API suggestion preserved in reason', async () => {
 			mockFetchError(
 				401,
 				JSON.stringify({
@@ -1299,19 +2300,36 @@ describe('tool handlers', () => {
 			)
 
 			const handler = getHandler('list_objects')
-			await expect(handler({})).rejects.toThrow('Hint: Check your API key')
+			const result = (await handler({})) as {
+				structuredContent?: {
+					error?: { tool: string; reason: string; next: { tool: string; hint: string } }
+				}
+			}
+			const err = result.structuredContent?.error
+			expect(err?.tool).toBe('list_objects')
+			expect(err?.reason).toMatch(/permission denied/i)
+			expect(err?.reason).toContain('Hint: Check your API key')
+			// Auth failure → point at list_workspaces so the caller can confirm access.
+			expect(err?.next.tool).toBe('list_workspaces')
 		})
 
-		it('throws with raw text for non-JSON error', async () => {
+		it('returns server error for 5xx and echoes the raw response body', async () => {
 			mockFetchError(500, 'Internal Server Error')
 
 			const handler = getHandler('list_objects')
-			await expect(handler({})).rejects.toThrow('Internal Server Error')
+			const result = (await handler({})) as {
+				structuredContent?: {
+					error?: { tool: string; reason: string; next: { tool: string; hint: string } }
+				}
+			}
+			const err = result.structuredContent?.error
+			expect(err?.reason).toContain('Internal Server Error')
+			expect(err?.next.tool).toBe('list_objects')
 		})
 	})
 
 	describe('auth validation', () => {
-		it('throws when no API key configured', async () => {
+		it('returns a structured permission error when no API key configured', async () => {
 			const noKeyHandlers = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>()
 			vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
 				noKeyHandlers.set(
@@ -1323,7 +2341,17 @@ describe('tool handlers', () => {
 
 			const handler = noKeyHandlers.get('list_objects')
 			if (!handler) throw new Error('Handler list_objects not registered')
-			await expect(handler({})).rejects.toThrow('Not authenticated')
+			const result = (await handler({})) as {
+				isError?: boolean
+				structuredContent?: {
+					error?: { tool: string; reason: string; next: { tool: string; hint: string } }
+				}
+			}
+			expect(result.isError).toBe(true)
+			const err = result.structuredContent?.error
+			expect(err?.tool).toBe('list_objects')
+			expect(err?.reason).toContain('Not authenticated')
+			expect(err?.next.tool).toBe('list_workspaces')
 		})
 
 		it('hosted-MCP setup hint mentions the Authorization header, not env vars', async () => {
@@ -1338,7 +2366,10 @@ describe('tool handlers', () => {
 
 			const handler = httpHandlers.get('list_objects')
 			if (!handler) throw new Error('Handler list_objects not registered')
-			await expect(handler({})).rejects.toThrow(/Authorization: Bearer/)
+			const result = (await handler({})) as {
+				structuredContent?: { error?: { reason: string } }
+			}
+			expect(result.structuredContent?.error?.reason).toMatch(/Authorization: Bearer/)
 		})
 
 		it('hosted-MCP missing-workspace hint mentions the X-Workspace-Id header', async () => {
@@ -1353,7 +2384,10 @@ describe('tool handlers', () => {
 
 			const handler = httpHandlers.get('list_objects')
 			if (!handler) throw new Error('Handler list_objects not registered')
-			await expect(handler({})).rejects.toThrow(/X-Workspace-Id/)
+			const result = (await handler({})) as {
+				structuredContent?: { error?: { reason: string } }
+			}
+			expect(result.structuredContent?.error?.reason).toMatch(/X-Workspace-Id/)
 		})
 	})
 
@@ -1458,8 +2492,11 @@ describe('tool handlers', () => {
 				const handler = getHandler('list_workspace_skills')
 				const result = (await handler({})) as { content: Array<{ text: string }> }
 
-				expect(fetch).toHaveBeenCalledWith(
-					'http://localhost:3000/api/workspaces/ws-default-123/skills',
+				const call = vi.mocked(fetch).mock.calls[0]
+				const calledUrl = call[0] as string
+				expect(calledUrl).toContain('http://localhost:3000/api/workspaces/ws-default-123/skills?')
+				expect(calledUrl).toContain('snapshot_at=')
+				expect(call[1]).toEqual(
 					expect.objectContaining({
 						method: 'GET',
 						headers: expect.objectContaining({
@@ -1479,8 +2516,10 @@ describe('tool handlers', () => {
 				const handler = getHandler('list_workspace_skills')
 				await handler({ workspace_id: 'ws-custom' })
 
-				expect(fetch).toHaveBeenCalledWith(
-					'http://localhost:3000/api/workspaces/ws-custom/skills',
+				const call = vi.mocked(fetch).mock.calls[0]
+				const calledUrl = call[0] as string
+				expect(calledUrl).toContain('http://localhost:3000/api/workspaces/ws-custom/skills?')
+				expect(call[1]).toEqual(
 					expect.objectContaining({
 						headers: expect.objectContaining({ 'X-Workspace-Id': 'ws-custom' }),
 					}),
@@ -1581,7 +2620,7 @@ describe('tool handlers', () => {
 			})
 		})
 
-		it('throws when no workspace is configured and none provided', async () => {
+		it('returns structured invalid_param error when no workspace is configured and none provided', async () => {
 			vi.clearAllMocks()
 			const handlersNoWs = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>()
 			vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
@@ -1594,213 +2633,11 @@ describe('tool handlers', () => {
 
 			const handler = handlersNoWs.get('list_workspace_skills')
 			if (!handler) throw new Error('handler missing')
-			await expect(handler({})).rejects.toThrow(/No workspace specified/)
-		})
-	})
-
-	describe('set_llm_api_key handler', () => {
-		// PATCHes the workspace with a single-provider delta. The server deep-
-		// merges llm_keys, so the MCP tool is a straight pass-through — no
-		// read-modify-write. One fetch call per invocation.
-		it('PATCHes only the target provider and returns masked last4', async () => {
-			mockFetchSuccess({ id: 'ws-default-123', name: 'My Workspace', settings: {} })
-
-			const handler = getHandler('set_llm_api_key')
-			const result = (await handler({
-				provider: 'anthropic',
-				api_key: 'sk-ant-new-key-WXYZ',
-			})) as { content: Array<{ text: string }> }
-
-			expect(fetch).toHaveBeenCalledTimes(1)
-			const [patchCall] = vi.mocked(fetch).mock.calls
-			expect(patchCall[0]).toBe('http://localhost:3000/api/workspaces/ws-default-123')
-			expect(patchCall[1]?.method).toBe('PATCH')
-			const body = JSON.parse(patchCall[1]?.body as string)
-			expect(body.settings.llm_keys).toEqual({ anthropic: 'sk-ant-new-key-WXYZ' })
-
-			const parsed = JSON.parse(result.content[0].text)
-			expect(parsed).toEqual({ success: true, provider: 'anthropic', last4: 'WXYZ' })
-			expect(result.content[0].text).not.toContain('sk-ant-new-key-WXYZ')
-		})
-
-		it('uses workspace_id from args over default', async () => {
-			mockFetchSuccess({ id: 'ws-custom', name: 'Other', settings: {} })
-
-			const handler = getHandler('set_llm_api_key')
-			await handler({ workspace_id: 'ws-custom', provider: 'openai', api_key: 'sk-foo' })
-
-			const [patchCall] = vi.mocked(fetch).mock.calls
-			expect(patchCall[0]).toBe('http://localhost:3000/api/workspaces/ws-custom')
-		})
-
-		it('back-to-back sets for both providers each send only their own delta', async () => {
-			vi.spyOn(globalThis, 'fetch')
-				.mockResolvedValueOnce({
-					ok: true,
-					json: () => Promise.resolve({ id: 'ws-default-123', name: 'My', settings: {} }),
-				} as Response)
-				.mockResolvedValueOnce({
-					ok: true,
-					json: () => Promise.resolve({ id: 'ws-default-123', name: 'My', settings: {} }),
-				} as Response)
-
-			const handler = getHandler('set_llm_api_key')
-			await handler({ provider: 'anthropic', api_key: 'sk-ant-ABCD' })
-			await handler({ provider: 'openai', api_key: 'sk-openai-EFGH' })
-
-			const [firstCall, secondCall] = vi.mocked(fetch).mock.calls
-			expect(JSON.parse(firstCall[1]?.body as string).settings.llm_keys).toEqual({
-				anthropic: 'sk-ant-ABCD',
-			})
-			expect(JSON.parse(secondCall[1]?.body as string).settings.llm_keys).toEqual({
-				openai: 'sk-openai-EFGH',
-			})
-		})
-	})
-
-	describe('get_llm_api_keys handler', () => {
-		it('reads settings.llm_keys and returns masked status per provider', async () => {
-			mockFetchSuccess([
-				{
-					id: 'ws-default-123',
-					name: 'My Workspace',
-					settings: {
-						llm_keys: { anthropic: 'sk-ant-abcdEFGH', openai: 'sk-opq-MNOP' },
-					},
-				},
-			])
-
-			const handler = getHandler('get_llm_api_keys')
-			const result = (await handler({})) as { content: Array<{ text: string }> }
-
-			const parsed = JSON.parse(result.content[0].text)
-			expect(parsed).toEqual({
-				anthropic: { set: true, last4: 'EFGH' },
-				openai: { set: true, last4: 'MNOP' },
-			})
-			expect(result.content[0].text).not.toContain('sk-ant-abcdEFGH')
-		})
-
-		it('returns { set: false } for missing providers', async () => {
-			mockFetchSuccess([{ id: 'ws-default-123', name: 'My Workspace', settings: { llm_keys: {} } }])
-
-			const handler = getHandler('get_llm_api_keys')
-			const result = (await handler({})) as { content: Array<{ text: string }> }
-
-			const parsed = JSON.parse(result.content[0].text)
-			expect(parsed).toEqual({
-				anthropic: { set: false },
-				openai: { set: false },
-			})
-		})
-	})
-
-	describe('delete_llm_api_key handler', () => {
-		it('PATCHes the target provider to null so the server strips it', async () => {
-			mockFetchSuccess({ id: 'ws-default-123', name: 'My Workspace', settings: {} })
-
-			const handler = getHandler('delete_llm_api_key')
-			const result = (await handler({ provider: 'anthropic' })) as {
-				content: Array<{ text: string }>
+			const result = (await handler({})) as {
+				structuredContent?: { error?: { reason: string; next: { tool: string } } }
 			}
-
-			expect(fetch).toHaveBeenCalledTimes(1)
-			const [patchCall] = vi.mocked(fetch).mock.calls
-			expect(patchCall[0]).toBe('http://localhost:3000/api/workspaces/ws-default-123')
-			expect(patchCall[1]?.method).toBe('PATCH')
-			const body = JSON.parse(patchCall[1]?.body as string)
-			expect(body.settings.llm_keys).toEqual({ anthropic: null })
-			const parsed = JSON.parse(result.content[0].text)
-			expect(parsed).toEqual({ success: true, provider: 'anthropic' })
-		})
-
-		it('delete on an unset provider still sends one PATCH and reports success', async () => {
-			// Server-side deep-merge treats null as "delete if present"; deleting
-			// a missing provider is a no-op there, so the MCP tool still returns
-			// success without needing to inspect current state.
-			mockFetchSuccess({ id: 'ws-default-123', name: 'My Workspace', settings: {} })
-
-			const handler = getHandler('delete_llm_api_key')
-			const result = (await handler({ provider: 'openai' })) as {
-				content: Array<{ text: string }>
-			}
-
-			expect(fetch).toHaveBeenCalledTimes(1)
-			const [patchCall] = vi.mocked(fetch).mock.calls
-			const body = JSON.parse(patchCall[1]?.body as string)
-			expect(body.settings.llm_keys).toEqual({ openai: null })
-			expect(JSON.parse(result.content[0].text)).toEqual({ success: true, provider: 'openai' })
-		})
-	})
-
-	describe('import_claude_subscription handler', () => {
-		it('POSTs /api/claude-oauth/import with camelCased token fields', async () => {
-			const mockResult = { success: true, subscription_type: 'max', expires_at: 1 }
-			mockFetchSuccess(mockResult)
-
-			const handler = getHandler('import_claude_subscription')
-			await handler({
-				access_token: 'at',
-				refresh_token: 'rt',
-				expires_at: 1_700_000_000_000,
-				subscription_type: 'max',
-				scopes: ['read'],
-			})
-
-			expect(fetch).toHaveBeenCalledWith(
-				'http://localhost:3000/api/claude-oauth/import',
-				expect.objectContaining({
-					method: 'POST',
-					headers: expect.objectContaining({
-						Authorization: 'Bearer ank_testkey123',
-						'X-Workspace-Id': 'ws-default-123',
-					}),
-				}),
-			)
-			const fetchCall = vi.mocked(fetch).mock.calls[0]
-			const body = JSON.parse(fetchCall[1]?.body as string)
-			expect(body).toEqual({
-				accessToken: 'at',
-				refreshToken: 'rt',
-				expiresAt: 1_700_000_000_000,
-				subscriptionType: 'max',
-				scopes: ['read'],
-			})
-		})
-	})
-
-	describe('get_claude_subscription_status handler', () => {
-		it('GETs /api/claude-oauth/status and returns payload', async () => {
-			const mockResult = {
-				connected: true,
-				valid: true,
-				subscription_type: 'max',
-				expires_at: 1,
-			}
-			mockFetchSuccess(mockResult)
-
-			const handler = getHandler('get_claude_subscription_status')
-			const result = (await handler({})) as { content: Array<{ text: string }> }
-
-			expect(fetch).toHaveBeenCalledWith(
-				'http://localhost:3000/api/claude-oauth/status',
-				expect.objectContaining({ method: 'GET' }),
-			)
-			expect(JSON.parse(result.content[0].text)).toEqual(mockResult)
-		})
-	})
-
-	describe('disconnect_claude_subscription handler', () => {
-		it('DELETEs /api/claude-oauth', async () => {
-			mockFetchSuccess({ success: true })
-
-			const handler = getHandler('disconnect_claude_subscription')
-			await handler({})
-
-			expect(fetch).toHaveBeenCalledWith(
-				'http://localhost:3000/api/claude-oauth',
-				expect.objectContaining({ method: 'DELETE' }),
-			)
+			expect(result.structuredContent?.error?.reason).toMatch(/No workspace specified/)
+			expect(result.structuredContent?.error?.next.tool).toBe('list_workspace_skills')
 		})
 	})
 
@@ -1811,7 +2648,7 @@ describe('tool handlers', () => {
 			mockFetchSuccess([])
 
 			const handler = getHandler('get_comments')
-			await handler({ entity_id: objectId, limit: 25, offset: 5 })
+			await handler({ entity_id: objectId, limit: 25 })
 
 			const call = vi.mocked(fetch).mock.calls[0]
 			const url = call[0] as string
@@ -1820,7 +2657,6 @@ describe('tool handlers', () => {
 			expect(url).toContain(`entity_id=${objectId}`)
 			expect(url).toContain('action=commented')
 			expect(url).toContain('limit=25')
-			expect(url).toContain('offset=5')
 			expect((call[1] as RequestInit).method).toBe('GET')
 		})
 
@@ -1828,7 +2664,7 @@ describe('tool handlers', () => {
 			mockFetchSuccess([])
 
 			const handler = getHandler('get_comments')
-			await handler({ entity_id: objectId, workspace_id: 'ws-custom', limit: 50, offset: 0 })
+			await handler({ entity_id: objectId, workspace_id: 'ws-custom', limit: 50 })
 
 			expect(fetch).toHaveBeenCalledWith(
 				expect.any(String),
@@ -2118,6 +2954,146 @@ describe('tool handlers', () => {
 					/Enum fields require at least one value/,
 				)
 			})
+
+			it('appends a value to an enum field via add_values', async () => {
+				const before: Record<string, FieldDef[]> = {
+					task: [{ name: 'priority', type: 'enum', values: ['low'] }],
+				}
+				const after: Record<string, FieldDef[]> = {
+					task: [{ name: 'priority', type: 'enum', values: ['low', 'high'] }],
+				}
+				mockRmwSequence(before, after)
+
+				const handler = getHandler('update_workspace_field')
+				await handler({ type: 'task', name: 'priority', add_values: ['high'] })
+
+				expect(lastPatchBody().settings.field_definitions.task[0]?.values).toEqual(['low', 'high'])
+			})
+
+			it('is a no-op when an added value is already present', async () => {
+				const same: Record<string, FieldDef[]> = {
+					task: [{ name: 'priority', type: 'enum', values: ['low'] }],
+				}
+				mockRmwSequence(same, same)
+
+				const handler = getHandler('update_workspace_field')
+				await handler({ type: 'task', name: 'priority', add_values: ['low'] })
+
+				expect(lastPatchBody().settings.field_definitions.task[0]?.values).toEqual(['low'])
+			})
+
+			it('removes a value from an enum field via remove_values', async () => {
+				const before: Record<string, FieldDef[]> = {
+					task: [{ name: 'priority', type: 'enum', values: ['low', 'high'] }],
+				}
+				const after: Record<string, FieldDef[]> = {
+					task: [{ name: 'priority', type: 'enum', values: ['low'] }],
+				}
+				mockRmwSequence(before, after)
+
+				const handler = getHandler('update_workspace_field')
+				await handler({ type: 'task', name: 'priority', remove_values: ['high'] })
+
+				expect(lastPatchBody().settings.field_definitions.task[0]?.values).toEqual(['low'])
+			})
+
+			it('is a no-op when a removed value is already absent', async () => {
+				const same: Record<string, FieldDef[]> = {
+					task: [{ name: 'priority', type: 'enum', values: ['low'] }],
+				}
+				mockRmwSequence(same, same)
+
+				const handler = getHandler('update_workspace_field')
+				await handler({ type: 'task', name: 'priority', remove_values: ['high'] })
+
+				expect(lastPatchBody().settings.field_definitions.task[0]?.values).toEqual(['low'])
+			})
+
+			it('applies add_values before remove_values in the same call', async () => {
+				const before: Record<string, FieldDef[]> = {
+					task: [{ name: 'priority', type: 'enum', values: ['low'] }],
+				}
+				const after: Record<string, FieldDef[]> = {
+					task: [{ name: 'priority', type: 'enum', values: ['medium'] }],
+				}
+				mockRmwSequence(before, after)
+
+				const handler = getHandler('update_workspace_field')
+				await handler({
+					type: 'task',
+					name: 'priority',
+					add_values: ['medium'],
+					remove_values: ['low'],
+				})
+
+				expect(lastPatchBody().settings.field_definitions.task[0]?.values).toEqual(['medium'])
+			})
+
+			it('applies add_values/remove_values on top of a values replacement in the same call', async () => {
+				const before: Record<string, FieldDef[]> = {
+					task: [{ name: 'priority', type: 'enum', values: ['low'] }],
+				}
+				const after: Record<string, FieldDef[]> = {
+					task: [{ name: 'priority', type: 'enum', values: ['medium', 'high'] }],
+				}
+				mockRmwSequence(before, after)
+
+				const handler = getHandler('update_workspace_field')
+				await handler({
+					type: 'task',
+					name: 'priority',
+					values: ['medium', 'urgent'],
+					add_values: ['high'],
+					remove_values: ['urgent'],
+				})
+
+				expect(lastPatchBody().settings.field_definitions.task[0]?.values).toEqual([
+					'medium',
+					'high',
+				])
+			})
+
+			it('populates a missing values list via add_values instead of throwing', async () => {
+				const before: Record<string, FieldDef[]> = {
+					task: [{ name: 'priority', type: 'enum' }],
+				}
+				const after: Record<string, FieldDef[]> = {
+					task: [{ name: 'priority', type: 'enum', values: ['low'] }],
+				}
+				mockRmwSequence(before, after)
+
+				const handler = getHandler('update_workspace_field')
+				await handler({ type: 'task', name: 'priority', add_values: ['low'] })
+
+				expect(lastPatchBody().settings.field_definitions.task[0]?.values).toEqual(['low'])
+			})
+
+			it('throws when add_values/remove_values are used on a non-enum field', async () => {
+				vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve([buildWorkspace({ task: [{ name: 'tag', type: 'text' }] })]),
+				} as Response)
+
+				const handler = getHandler('update_workspace_field')
+				await expect(handler({ type: 'task', name: 'tag', add_values: ['x'] })).rejects.toThrow(
+					/not "enum"/,
+				)
+			})
+
+			it('throws when clearing all values via remove_values leaves the enum empty', async () => {
+				vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+					ok: true,
+					json: () =>
+						Promise.resolve([
+							buildWorkspace({ task: [{ name: 'priority', type: 'enum', values: ['low'] }] }),
+						]),
+				} as Response)
+
+				const handler = getHandler('update_workspace_field')
+				await expect(
+					handler({ type: 'task', name: 'priority', remove_values: ['low'] }),
+				).rejects.toThrow(/Enum fields require at least one value/)
+			})
 		})
 
 		describe('delete_workspace_field', () => {
@@ -2141,89 +3117,6 @@ describe('tool handlers', () => {
 				expect(lastPatchBody().settings.field_definitions.task).toEqual(after.task)
 				const parsed = JSON.parse(result.content[0].text)
 				expect(parsed).toMatchObject({ deleted: 'tag', success: true })
-			})
-		})
-
-		describe('add_workspace_enum_value', () => {
-			it('appends the value to an enum field', async () => {
-				const before: Record<string, FieldDef[]> = {
-					task: [{ name: 'priority', type: 'enum', values: ['low'] }],
-				}
-				const after: Record<string, FieldDef[]> = {
-					task: [{ name: 'priority', type: 'enum', values: ['low', 'high'] }],
-				}
-				mockRmwSequence(before, after)
-
-				const handler = getHandler('add_workspace_enum_value')
-				await handler({ type: 'task', name: 'priority', value: 'high' })
-
-				expect(lastPatchBody().settings.field_definitions.task[0]?.values).toEqual(['low', 'high'])
-			})
-
-			it('throws when the field is not an enum', async () => {
-				vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
-					ok: true,
-					json: () => Promise.resolve([buildWorkspace({ task: [{ name: 'tag', type: 'text' }] })]),
-				} as Response)
-
-				const handler = getHandler('add_workspace_enum_value')
-				await expect(handler({ type: 'task', name: 'tag', value: 'x' })).rejects.toThrow(
-					/not "enum"/,
-				)
-			})
-
-			it('throws when the field does not exist', async () => {
-				vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
-					ok: true,
-					json: () => Promise.resolve([buildWorkspace({ task: [] })]),
-				} as Response)
-
-				const handler = getHandler('add_workspace_enum_value')
-				await expect(handler({ type: 'task', name: 'missing', value: 'x' })).rejects.toThrow(
-					/not found on type "task"/,
-				)
-			})
-		})
-
-		describe('remove_workspace_enum_value', () => {
-			it('removes the value from the enum field', async () => {
-				const before: Record<string, FieldDef[]> = {
-					task: [{ name: 'priority', type: 'enum', values: ['low', 'high'] }],
-				}
-				const after: Record<string, FieldDef[]> = {
-					task: [{ name: 'priority', type: 'enum', values: ['low'] }],
-				}
-				mockRmwSequence(before, after)
-
-				const handler = getHandler('remove_workspace_enum_value')
-				await handler({ type: 'task', name: 'priority', value: 'high' })
-
-				expect(lastPatchBody().settings.field_definitions.task[0]?.values).toEqual(['low'])
-			})
-
-			it('is a no-op when the value is already absent (still PATCHes once)', async () => {
-				const same: Record<string, FieldDef[]> = {
-					task: [{ name: 'priority', type: 'enum', values: ['low'] }],
-				}
-				mockRmwSequence(same, same)
-
-				const handler = getHandler('remove_workspace_enum_value')
-				await handler({ type: 'task', name: 'priority', value: 'high' })
-
-				expect(lastPatchBody().settings.field_definitions.task[0]?.values).toEqual(['low'])
-			})
-
-			it('throws when the enum field has no values list', async () => {
-				vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
-					ok: true,
-					json: () =>
-						Promise.resolve([buildWorkspace({ task: [{ name: 'priority', type: 'enum' }] })]),
-				} as Response)
-
-				const handler = getHandler('remove_workspace_enum_value')
-				await expect(handler({ type: 'task', name: 'priority', value: 'low' })).rejects.toThrow(
-					/has no values list/,
-				)
 			})
 		})
 
@@ -2611,12 +3504,16 @@ describe('tool handlers', () => {
 			}
 
 			expect(result.structuredContent.heroCard.objects).toHaveLength(25)
-			expect(result.structuredContent.heroCard.totalCount).toBe(100)
+			// The cursor walk fetches `limit + 1` as a "has more" sentinel and the
+			// requested limit is capped at LIST_ENDPOINT_MAX_LIMIT - 1 (99) so the
+			// sentinel stays within the API's hard cap of 100 — so a 100-row
+			// fixture yields 99 kept rows, not 100.
+			expect(result.structuredContent.heroCard.totalCount).toBe(99)
 			expect(result.structuredContent.heroCard.page).toMatchObject({
 				limit: 25,
 				hasMore: true,
 			})
-			expect(result.structuredContent.objects).toHaveLength(100)
+			expect(result.structuredContent.objects).toHaveLength(99)
 		})
 
 		it('emits a list heroCard for list_actors with type=actor rows', async () => {
@@ -2653,6 +3550,194 @@ describe('tool handlers', () => {
 			expect(result.structuredContent.heroCard.totalCount).toBe(2)
 			expect(result.structuredContent.heroCard.objects?.[0]?.type).toBe('actor')
 			expect(result.structuredContent.heroCard.objects?.[0]?.title).toBe('Sebastian')
+		})
+
+		it('list_actors includes the short one-liner description and omits driver', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/actors')) {
+					return {
+						ok: true,
+						headers: new Headers({ 'X-Total-Count': '1' }),
+						json: () =>
+							Promise.resolve([
+								{
+									id: 'a-1',
+									type: 'agent',
+									name: 'Architect',
+									description:
+										'Owns technical architecture; route architecture decision tasks here.',
+								},
+							]),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+			const handler = getHandler('list_actors')
+			const result = (await handler({ workspace_id: 'ws-1' })) as {
+				structuredContent: {
+					heroCard: { kind: string; object?: { description?: string; driver?: unknown } }
+				}
+			}
+			// totalCount is 2 from the X-Total-Count header check above; here it's 1
+			// so a single actor + totalCount 1 collapses to the 'single' shape.
+			const obj = result.structuredContent.heroCard.object
+			expect(obj?.description).toBe(
+				'Owns technical architecture; route architecture decision tasks here.',
+			)
+			expect(obj && 'driver' in obj).toBe(false)
+		})
+
+		it('list_actors resolves connectedTriggers/connectedLoops when workspace_id is set (no url — webAppBaseUrl unset in this suite)', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/actors')) {
+					return {
+						ok: true,
+						headers: new Headers({ 'X-Total-Count': '1' }),
+						json: () => Promise.resolve([{ id: 'a-1', type: 'agent', name: 'Architect' }]),
+					} as Response
+				}
+				if (urlStr.includes('/api/triggers')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve([
+								{ id: 't-1', name: 'On new bet', targetActorId: 'a-1' },
+								{ id: 't-2', name: 'Unrelated', targetActorId: 'a-2' },
+							]),
+					} as Response
+				}
+				if (urlStr.includes('/api/loops')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve({
+								loops: [{ id: 'l-1', name: 'Architecture review', agentIds: ['a-1', 'a-2'] }],
+							}),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+			const handler = getHandler('list_actors')
+			const result = (await handler({ workspace_id: 'ws-1' })) as {
+				structuredContent: {
+					heroCard: {
+						object?: {
+							connectedTriggers?: Array<{ name: string; url?: string }>
+							connectedLoops?: Array<{ name: string; url?: string }>
+						}
+					}
+				}
+			}
+			const obj = result.structuredContent.heroCard.object
+			expect(obj?.connectedTriggers).toEqual([{ name: 'On new bet' }])
+			expect(obj?.connectedLoops).toEqual([{ name: 'Architecture review' }])
+		})
+
+		it('list_actors omits connectedTriggers/connectedLoops for the cross-workspace listing', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/actors')) {
+					return {
+						ok: true,
+						headers: new Headers({ 'X-Total-Count': '1' }),
+						json: () => Promise.resolve([{ id: 'a-1', type: 'agent', name: 'Architect' }]),
+					} as Response
+				}
+				// If list_actors called /api/triggers or /api/loops here, that would be
+				// a bug — there's no single workspace to scope them to.
+				throw new Error(`unexpected fetch: ${urlStr}`)
+			})
+			const handler = getHandler('list_actors')
+			const result = (await handler({})) as {
+				structuredContent: {
+					heroCard: { object?: { connectedTriggers?: unknown; connectedLoops?: unknown } }
+				}
+			}
+			const obj = result.structuredContent.heroCard.object
+			expect(obj && 'connectedTriggers' in obj).toBe(false)
+			expect(obj && 'connectedLoops' in obj).toBe(false)
+		})
+
+		it('list_actors caps connectedTriggers/connectedLoops at 20 per actor (MAX_CONNECTED_LINKS_PER_ACTOR)', async () => {
+			const manyTriggers = Array.from({ length: 25 }, (_, i) => ({
+				id: `t-${i}`,
+				name: `Trigger ${i}`,
+				targetActorId: 'a-1',
+			}))
+			const manyLoops = Array.from({ length: 25 }, (_, i) => ({
+				id: `l-${i}`,
+				name: `Loop ${i}`,
+				agentIds: ['a-1'],
+			}))
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/actors')) {
+					return {
+						ok: true,
+						headers: new Headers({ 'X-Total-Count': '1' }),
+						json: () => Promise.resolve([{ id: 'a-1', type: 'agent', name: 'Architect' }]),
+					} as Response
+				}
+				if (urlStr.includes('/api/triggers')) {
+					return { ok: true, json: () => Promise.resolve(manyTriggers) } as Response
+				}
+				if (urlStr.includes('/api/loops')) {
+					return { ok: true, json: () => Promise.resolve({ loops: manyLoops }) } as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+			const handler = getHandler('list_actors')
+			const result = (await handler({ workspace_id: 'ws-1' })) as {
+				structuredContent: {
+					heroCard: {
+						object?: { connectedTriggers?: unknown[]; connectedLoops?: unknown[] }
+					}
+				}
+			}
+			const obj = result.structuredContent.heroCard.object
+			expect(obj?.connectedTriggers).toHaveLength(20)
+			expect(obj?.connectedLoops).toHaveLength(20)
+		})
+
+		it('list_actors still succeeds with links omitted when /api/triggers and /api/loops fail independently', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/actors')) {
+					return {
+						ok: true,
+						headers: new Headers({ 'X-Total-Count': '1' }),
+						json: () => Promise.resolve([{ id: 'a-1', type: 'agent', name: 'Architect' }]),
+					} as Response
+				}
+				// Triggers lookup fails outright...
+				if (urlStr.includes('/api/triggers')) {
+					throw new Error('triggers service unavailable')
+				}
+				// ...while loops resolves fine, proving one failing doesn't affect the other.
+				if (urlStr.includes('/api/loops')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve({
+								loops: [{ id: 'l-1', name: 'Architecture review', agentIds: ['a-1'] }],
+							}),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+			const handler = getHandler('list_actors')
+			const result = (await handler({ workspace_id: 'ws-1' })) as {
+				structuredContent: {
+					heroCard: {
+						object?: { connectedTriggers?: unknown; connectedLoops?: Array<{ name: string }> }
+					}
+				}
+			}
+			const obj = result.structuredContent.heroCard.object
+			expect(obj && 'connectedTriggers' in obj).toBe(false)
+			expect(obj?.connectedLoops).toEqual([{ name: 'Architecture review' }])
 		})
 
 		it('emits a single heroCard for get_actor', async () => {
@@ -2694,6 +3779,81 @@ describe('tool handlers', () => {
 			})
 		})
 
+		it('get_actor includes connectedTriggers/connectedLoops when workspace_id is given', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/actors/a-1')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve({ id: 'a-1', type: 'agent', name: 'Designer', email: null }),
+					} as Response
+				}
+				if (urlStr.includes('/api/triggers')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve([{ id: 't-1', name: 'Nightly review', targetActorId: 'a-1' }]),
+					} as Response
+				}
+				if (urlStr.includes('/api/loops')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve({
+								loops: [{ id: 'l-1', name: 'Architecture review', agentIds: ['a-1'] }],
+							}),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+			const handler = getHandler('get_actor')
+			const result = (await handler({ id: 'a-1', workspace_id: 'ws-1' })) as {
+				content: Array<{ text: string }>
+				structuredContent: {
+					heroCard: {
+						object?: {
+							connectedTriggers?: Array<{ name: string }>
+							connectedLoops?: Array<{ name: string }>
+						}
+					}
+				}
+			}
+			const obj = result.structuredContent.heroCard.object
+			expect(obj?.connectedTriggers).toEqual([{ name: 'Nightly review' }])
+			expect(obj?.connectedLoops).toEqual([{ name: 'Architecture review' }])
+			// The text content channel carries the same links as the raw record.
+			const parsed = JSON.parse(result.content[0].text) as {
+				connectedTriggers?: Array<{ name: string }>
+				connectedLoops?: Array<{ name: string }>
+			}
+			expect(parsed.connectedTriggers).toEqual([{ name: 'Nightly review' }])
+			expect(parsed.connectedLoops).toEqual([{ name: 'Architecture review' }])
+		})
+
+		it('get_actor omits connectedTriggers/connectedLoops when the actor has no links', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/actors/a-1')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve({ id: 'a-1', type: 'agent', name: 'Designer', email: null }),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+			const handler = getHandler('get_actor')
+			const result = (await handler({ id: 'a-1' })) as {
+				structuredContent: {
+					heroCard: { object?: { connectedTriggers?: unknown; connectedLoops?: unknown } }
+				}
+			}
+			const obj = result.structuredContent.heroCard.object
+			expect(obj && 'connectedTriggers' in obj).toBe(false)
+			expect(obj && 'connectedLoops' in obj).toBe(false)
+		})
+
 		it('emits a list heroCard for list_workspaces with type=workspace rows', async () => {
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
 				const urlStr = url as string
@@ -2702,8 +3862,18 @@ describe('tool handlers', () => {
 						ok: true,
 						json: () =>
 							Promise.resolve([
-								{ id: 'ws-1', name: 'Maskin', role: 'owner' },
-								{ id: 'ws-2', name: 'Reflect Studio', role: 'member' },
+								{
+									id: 'ws-1',
+									name: 'Maskin',
+									role: 'owner',
+									createdAt: '2026-02-01T00:00:00.000Z',
+								},
+								{
+									id: 'ws-2',
+									name: 'Reflect Studio',
+									role: 'member',
+									createdAt: '2026-01-01T00:00:00.000Z',
+								},
 							]),
 					} as Response
 				}
@@ -2753,7 +3923,9 @@ describe('tool handlers', () => {
 					heroCard: { kind: string; totalCount?: number }
 				}
 			}
-			expect(calls.some((u) => u.includes('limit=1') && u.includes('offset=0'))).toBe(true)
+			// The cursor walk fetches one extra row (the "has more" sentinel), so
+			// the requested limit of 1 becomes 2 on the wire.
+			expect(calls.some((u) => u.includes('limit=2') && u.includes('offset=0'))).toBe(true)
 			expect(result.structuredContent.heroCard.kind).toBe('list')
 			expect(result.structuredContent.heroCard.totalCount).toBe(1234)
 		})
@@ -2862,7 +4034,9 @@ describe('tool handlers', () => {
 				structuredContent: { heroCard: { kind: string; totalCount?: number } }
 			}
 			const triggersCalls = calls.filter((u) => u.includes('/api/triggers'))
-			expect(triggersCalls.some((u) => u.includes('limit=1') && u.includes('offset=0'))).toBe(true)
+			// The cursor walk fetches one extra row (the "has more" sentinel), so
+			// the requested limit of 1 becomes 2 on the wire.
+			expect(triggersCalls.some((u) => u.includes('limit=2') && u.includes('offset=0'))).toBe(true)
 			expect(result.structuredContent.heroCard.kind).toBe('list')
 			expect(result.structuredContent.heroCard.totalCount).toBe(987)
 		})
@@ -3058,44 +4232,6 @@ describe('tool handlers', () => {
 		})
 	})
 
-	describe('record_widget_event handler', () => {
-		it('forwards click_through events to the telemetry sink', async () => {
-			const events: unknown[] = []
-			const localConfig = {
-				...config,
-				telemetrySink: (event: unknown) => events.push(event),
-			}
-			const localHandlers = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>()
-			vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
-				localHandlers.set(
-					name as string,
-					handler as (args: Record<string, unknown>) => Promise<unknown>,
-				)
-			})
-			createMcpServer(localConfig)
-			const handler = localHandlers.get('record_widget_event')
-			if (!handler) throw new Error('record_widget_event not registered')
-			await handler({
-				widget_name: 'hero-card',
-				event: 'click_through',
-				tool_name: 'get_objects',
-				card_kind: 'single',
-				object_type: 'bet',
-				object_id: 'bet-9',
-			})
-			const widgetEvents = events.filter(
-				(e): e is { event_type: string; event: string } =>
-					(e as { event_type?: unknown })?.event_type === 'widget_event',
-			)
-			expect(widgetEvents).toHaveLength(1)
-			expect(widgetEvents[0]).toMatchObject({
-				event_type: 'widget_event',
-				event: 'click_through',
-				widget_name: 'hero-card',
-			})
-		})
-	})
-
 	describe('update_actor handler', () => {
 		const actorId = '550e8400-e29b-41d4-a716-446655440000'
 		const skillId1 = '660e8400-e29b-41d4-a716-446655440001'
@@ -3111,23 +4247,185 @@ describe('tool handlers', () => {
 				content: Array<{ text: string }>
 			}
 
-			expect(fetch).toHaveBeenCalledTimes(1)
 			const parsed = JSON.parse(result.content[0].text)
-			expect(parsed).toEqual(mockActor)
+			expect(parsed).toMatchObject(mockActor)
+			expect(parsed.setup).toBeDefined()
 		})
 
-		it('attaches skills and wraps response under actor key', async () => {
+		it('splits the merged llm_config into llm_provider + llm_config on the PATCH body', async () => {
+			let patchedBody: unknown
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+				patchedBody = JSON.parse(init?.body as string)
+				return {
+					ok: true,
+					headers: new Headers(),
+					json: async () => ({
+						id: actorId,
+						llm_provider: 'openai',
+						llm_config: { model: 'gpt-4o' },
+					}),
+				} as Response
+			})
+
+			const handler = getHandler('update_actor')
+			const result = (await handler({
+				id: actorId,
+				llm_config: { provider: 'openai', model: 'gpt-4o' },
+			})) as { content: Array<{ text: string }> }
+
+			expect(patchedBody).toMatchObject({
+				llm_provider: 'openai',
+				llm_config: { model: 'gpt-4o' },
+			})
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.llm_config).toEqual({ provider: 'openai', model: 'gpt-4o' })
+			expect(parsed.llm_provider).toBeUndefined()
+		})
+
+		it('strips api_key from llm_config — per-agent API key overrides are not a supported path', async () => {
+			let patchedBody: unknown
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+				patchedBody = JSON.parse(init?.body as string)
+				return {
+					ok: true,
+					headers: new Headers(),
+					json: async () => ({ id: actorId, llm_provider: 'openai' }),
+				} as Response
+			})
+
+			const handler = getHandler('update_actor')
+			const result = (await handler({
+				id: actorId,
+				llm_config: { provider: 'openai', api_key: 'sk-test' },
+			})) as { content: Array<{ text: string }> }
+
+			expect(patchedBody).toMatchObject({ llm_provider: 'openai' })
+			expect((patchedBody as Record<string, unknown>).llm_config).toBeUndefined()
+			// mergeLlmConfig reconstitutes { provider } from llm_provider on the way
+			// back out — api_key never made it into either the request or response.
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.llm_config).toEqual({ provider: 'openai' })
+		})
+
+		it('adds the actor to a workspace when workspace_id is provided', async () => {
+			const workspaceId = '770e8400-e29b-41d4-a716-446655440003'
+			// A fresh object per test — the handler mutates the actor in place to
+			// attach workspace_id/role, and mockActor is shared across this describe
+			// block, so reusing it here would leak state into later tests.
+			const freshActor = { id: actorId, name: 'Test Actor' }
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const u = String(url)
+				if (u.endsWith(`/api/actors/${actorId}`)) {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () => Promise.resolve(freshActor),
+					} as Response
+				}
+				if (u.endsWith(`/api/workspaces/${workspaceId}/members`)) {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () => Promise.resolve({ actorId, workspaceId, role: 'owner' }),
+					} as Response
+				}
+				return { ok: true, headers: new Headers(), json: () => Promise.resolve([]) } as Response
+			})
+
+			const handler = getHandler('update_actor')
+			// getHandler bypasses the MCP SDK's zod parsing layer, so the schema's
+			// role default('member') never applies here — pass it explicitly, as a
+			// real client's parsed call would.
+			const result = (await handler({
+				id: actorId,
+				workspace_id: workspaceId,
+				role: 'owner',
+			})) as { content: Array<{ text: string }> }
+
+			expect(fetch).toHaveBeenCalledWith(
+				`http://localhost:3000/api/workspaces/${workspaceId}/members`,
+				expect.objectContaining({ method: 'POST' }),
+			)
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.workspace_id).toBe(workspaceId)
+			expect(parsed.role).toBe('owner')
+			expect(parsed.workspace_membership_error).toBeUndefined()
+		})
+
+		it('records workspace_membership_error without throwing when add-member fails', async () => {
+			const workspaceId = '770e8400-e29b-41d4-a716-446655440003'
+			const freshActor = { id: actorId, name: 'Test Actor' }
 			vi.spyOn(globalThis, 'fetch')
 				.mockResolvedValueOnce({
 					ok: true,
 					headers: new Headers(),
-					json: () => Promise.resolve(mockActor),
+					json: () => Promise.resolve(freshActor),
 				} as Response)
+				.mockRejectedValueOnce(new Error('workspace not found'))
+
+			const handler = getHandler('update_actor')
+			const result = (await handler({
+				id: actorId,
+				workspace_id: workspaceId,
+				role: 'member',
+			})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.workspace_membership_error).toContain('workspace not found')
+			expect(parsed.workspace_id).toBeUndefined()
+		})
+
+		it('folds a membership failure into partial_failure when combined with skill ops', async () => {
+			const workspaceId = '770e8400-e29b-41d4-a716-446655440003'
+			const freshActor = { id: actorId, name: 'Test Actor' }
+			vi.spyOn(globalThis, 'fetch')
 				.mockResolvedValueOnce({
 					ok: true,
 					headers: new Headers(),
-					json: () => Promise.resolve(mockSkill),
+					json: () => Promise.resolve(freshActor),
 				} as Response)
+				.mockRejectedValueOnce(new Error('workspace not found'))
+				.mockResolvedValueOnce({
+					ok: true,
+					headers: new Headers(),
+					json: () =>
+						Promise.resolve([{ workspaceSkillId: skillId1, success: true, skill: mockSkill }]),
+				} as Response)
+
+			const handler = getHandler('update_actor')
+			const result = (await handler({
+				id: actorId,
+				workspace_id: workspaceId,
+				role: 'member',
+				attach_skill_ids: [skillId1],
+			})) as { content: Array<{ text: string }> }
+
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.partial_failure).toBe(true)
+			expect(parsed.actor.workspace_membership_error).toContain('workspace not found')
+			expect(parsed.attached_skills).toHaveLength(1)
+		})
+
+		it('attaches skills via one batched call and wraps response under actor key', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const u = String(url)
+				if (u.endsWith(`/api/actors/${actorId}`)) {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () => Promise.resolve(mockActor),
+					} as Response
+				}
+				if (u.endsWith('/workspace-skills/batch')) {
+					return {
+						ok: true,
+						headers: new Headers(),
+						json: () =>
+							Promise.resolve([{ workspaceSkillId: skillId1, success: true, skill: mockSkill }]),
+					} as Response
+				}
+				return { ok: true, headers: new Headers(), json: () => Promise.resolve([]) } as Response
+			})
 
 			const handler = getHandler('update_actor')
 			const result = (await handler({
@@ -3135,7 +4433,10 @@ describe('tool handlers', () => {
 				attach_skill_ids: [skillId1],
 			})) as { content: Array<{ text: string }> }
 
-			expect(fetch).toHaveBeenCalledTimes(2)
+			expect(fetch).toHaveBeenCalledWith(
+				`http://localhost:3000/api/actors/${actorId}/workspace-skills/batch`,
+				expect.objectContaining({ method: 'POST' }),
+			)
 			const parsed = JSON.parse(result.content[0].text)
 			expect(parsed.actor).toEqual(mockActor)
 			expect(parsed.attached_skills).toHaveLength(1)
@@ -3180,7 +4481,8 @@ describe('tool handlers', () => {
 				.mockResolvedValueOnce({
 					ok: true,
 					headers: new Headers(),
-					json: () => Promise.resolve(mockSkill),
+					json: () =>
+						Promise.resolve([{ workspaceSkillId: skillId1, success: true, skill: mockSkill }]),
 				} as Response)
 				.mockResolvedValueOnce({
 					ok: true,
@@ -3211,9 +4513,12 @@ describe('tool handlers', () => {
 					json: () => Promise.resolve(mockActor),
 				} as Response)
 				.mockResolvedValueOnce({
-					ok: false,
-					status: 404,
-					text: () => Promise.resolve('Not found'),
+					ok: true,
+					headers: new Headers(),
+					json: () =>
+						Promise.resolve([
+							{ workspaceSkillId: skillId1, success: false, error: 'Workspace skill not found' },
+						]),
 				} as Response)
 
 			const handler = getHandler('update_actor')
@@ -3254,6 +4559,358 @@ describe('tool handlers', () => {
 			await expect(
 				handler({ id: actorId, attach_skill_ids: [skillId1], detach_skill_ids: [skillId1] }),
 			).rejects.toThrow(/attach_skill_ids and detach_skill_ids/)
+		})
+	})
+
+	describe('setup block on create/update/get responses', () => {
+		const setupOkJson = (data: unknown) =>
+			({ ok: true, headers: new Headers(), json: () => Promise.resolve(data) }) as Response
+
+		it('create_objects — response is bare, without a setup block', async () => {
+			mockFetchSuccess({ nodes: [{ $id: 'b1', id: 'bet-1', type: 'bet' }], edges: [] })
+			const handler = getHandler('create_objects')
+			const result = (await handler({
+				workspace_id: 'ws-default-123',
+				nodes: [{ $id: 'b1', type: 'bet', status: 'signal' }],
+				edges: [],
+			})) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.setup).toBeUndefined()
+		})
+
+		it('update_objects — response includes a well-shaped setup block wrapping results', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+				const u = String(url)
+				const method = (init as RequestInit | undefined)?.method
+				if (u.includes('/api/objects/') && method === 'PATCH') {
+					return setupOkJson({ id: 'obj-1', type: 'bet', title: 'Updated' })
+				}
+				if (u.endsWith('/api/workspaces')) {
+					return setupOkJson([
+						{ id: 'ws-default-123', settings: { llm_keys: { anthropic: 'sk-ant-test' } } },
+					])
+				}
+				return setupOkJson([])
+			})
+			const handler = getHandler('update_objects')
+			const result = (await handler({
+				updates: [{ id: '11111111-1111-1111-1111-111111111111', title: 'Updated' }],
+			})) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(Array.isArray(parsed.results)).toBe(true)
+			expect(parsed.setup).toBeDefined()
+			expect(Array.isArray(parsed.setup.next_steps)).toBe(true)
+		})
+
+		it('create_actor — response includes a setup block, replacing the old ad-hoc reminder fields', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const u = String(url)
+				if (u.endsWith('/api/actors')) {
+					return setupOkJson({ id: 'actor-1', type: 'agent', name: 'Bot' })
+				}
+				if (u.endsWith('/api/workspaces')) {
+					return setupOkJson([{ id: 'ws-default-123', settings: {} }])
+				}
+				return setupOkJson({})
+			})
+			const handler = getHandler('create_actor')
+			const result = (await handler({ type: 'agent', name: 'Bot' })) as {
+				content: Array<{ text: string }>
+			}
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.tools_reminder).toBeUndefined()
+			expect(parsed.skills_reminder).toBeUndefined()
+			expect(parsed.automation_reminder).toBeUndefined()
+			expect(parsed.setup).toBeDefined()
+			expect(Array.isArray(parsed.setup.checks)).toBe(true)
+			const checkNames = parsed.setup.checks.map((c: { name: string }) => c.name)
+			// No tools, no skills, no wiring, no system prompt — a brand-new agent
+			// with none of these set should surface all four gaps.
+			expect(checkNames).toContain('system_prompt_quality')
+			expect(checkNames).toContain('skills_attached')
+			expect(checkNames).toContain('mcp_configured')
+			expect(checkNames).toContain('automation_wired')
+		})
+
+		it('create_actor — setup block reflects skills actually attached, at no extra API cost', async () => {
+			const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+				const u = String(url)
+				const method = (init as RequestInit | undefined)?.method
+				if (u.endsWith('/api/actors')) {
+					return setupOkJson({ id: 'actor-1', type: 'agent', name: 'Bot' })
+				}
+				if (u.endsWith('/api/actors/actor-1/workspace-skills/batch') && method === 'POST') {
+					return setupOkJson([{ success: true, skill: { id: 'skill-1', name: 'Test Skill' } }])
+				}
+				return setupOkJson({})
+			})
+			const handler = getHandler('create_actor')
+			const result = (await handler({
+				type: 'agent',
+				name: 'Bot',
+				workspace_id: 'ws-default-123',
+				attach_skill_ids: ['skill-1'],
+			})) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			// One skill attached (not zero, not two+) → still warns "only one".
+			expect(parsed.setup.checks.some((c: { name: string }) => c.name === 'skills_attached')).toBe(
+				true,
+			)
+			// skillCount is known from the attach call itself — no dedicated
+			// workspace-skills GET is issued to compute the setup block.
+			const skillCountFetch = fetchSpy.mock.calls.find(([u]) =>
+				String(u).endsWith('/api/actors/actor-1/workspace-skills'),
+			)
+			expect(skillCountFetch).toBeUndefined()
+		})
+
+		it('update_actor — response includes a setup block', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const u = String(url)
+				if (u.includes('/api/actors/')) {
+					return setupOkJson({ id: 'actor-1', type: 'agent', name: 'Renamed' })
+				}
+				if (u.endsWith('/api/workspaces')) {
+					return setupOkJson([{ id: 'ws-default-123', settings: {} }])
+				}
+				return setupOkJson([])
+			})
+			const handler = getHandler('update_actor')
+			const result = (await handler({
+				id: '550e8400-e29b-41d4-a716-446655440000',
+				name: 'Renamed',
+			})) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.setup).toBeDefined()
+			expect(Array.isArray(parsed.setup.checks)).toBe(true)
+		})
+
+		it('create_loop — response includes a setup block', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+				const u = String(url)
+				const method = (init as RequestInit | undefined)?.method
+				if (u.endsWith('/api/graph')) {
+					return setupOkJson({
+						nodes: [{ $id: 'loop', id: 'loop-1', workspaceId: 'ws-default-123', type: 'loop' }],
+						edges: [],
+					})
+				}
+				if (u.endsWith('/api/workspaces')) {
+					return setupOkJson([{ id: 'ws-default-123', settings: {} }])
+				}
+				if (u.endsWith('/api/integrations')) return setupOkJson([])
+				if (u.endsWith('/api/triggers') && (method === 'GET' || method === undefined)) {
+					return setupOkJson([])
+				}
+				return setupOkJson({})
+			})
+			const handler = getHandler('create_loop')
+			const result = (await handler({
+				name: 'Test loop',
+				steps: [],
+				trigger_ids: [],
+				object_ids: [],
+			})) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.setup).toBeDefined()
+			expect(Array.isArray(parsed.setup.checks)).toBe(true)
+			// Zero steps and zero members on a brand-new loop → both must surface.
+			expect(
+				parsed.setup.checks.some((c: { name: string }) => c.name === 'steps_have_agents'),
+			).toBe(true)
+			expect(parsed.setup.checks.some((c: { name: string }) => c.name === 'has_members')).toBe(true)
+		})
+
+		it('update_loop — response includes a setup block', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+				const u = String(url)
+				const method = (init as RequestInit | undefined)?.method
+				if (u.endsWith('/api/objects/loop-1') && method === 'GET') {
+					return setupOkJson({
+						id: 'loop-1',
+						type: 'loop',
+						workspaceId: 'ws-default-123',
+						metadata: { trigger_ids: [] },
+					})
+				}
+				if (u.endsWith('/api/objects/loop-1') && method === 'PATCH') {
+					return setupOkJson({
+						id: 'loop-1',
+						type: 'loop',
+						workspaceId: 'ws-default-123',
+						title: 'Renamed',
+					})
+				}
+				if (u.endsWith('/api/workspaces')) {
+					return setupOkJson([{ id: 'ws-default-123', settings: {} }])
+				}
+				if (u.endsWith('/api/integrations')) return setupOkJson([])
+				if (u.endsWith('/api/triggers') && (method === 'GET' || method === undefined)) {
+					return setupOkJson([])
+				}
+				return setupOkJson({})
+			})
+			const handler = getHandler('update_loop')
+			const result = (await handler({ id: 'loop-1', name: 'Renamed' })) as {
+				content: Array<{ text: string }>
+			}
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.setup).toBeDefined()
+			expect(Array.isArray(parsed.setup.checks)).toBe(true)
+		})
+
+		it('create_actor — setup block unaffected by an unrelated workspace fetch failure', async () => {
+			// create_actor's setup block needs zero extra fetches (skillCount is
+			// known synchronously, wiredToAutomation is hardcoded `false`), so an
+			// unrelated /api/workspaces 500 — e.g. from some other concurrent call —
+			// must not degrade it to `unknown`.
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const u = String(url)
+				if (u.endsWith('/api/actors')) {
+					return setupOkJson({ id: 'actor-1', type: 'agent', name: 'Bot' })
+				}
+				if (u.endsWith('/api/workspaces')) {
+					return {
+						ok: false,
+						status: 500,
+						headers: new Headers(),
+						text: () => Promise.resolve('boom'),
+					} as Response
+				}
+				return setupOkJson({})
+			})
+			const handler = getHandler('create_actor')
+			const result = (await handler({ type: 'agent', name: 'Bot' })) as {
+				content: Array<{ text: string }>
+			}
+			const parsed = JSON.parse(result.content[0].text)
+			// Primary response still contains the created actor.
+			expect(parsed.id).toBe('actor-1')
+			expect(parsed.setup).toBeDefined()
+			expect(parsed.setup.checks.every((c: { status: string }) => c.status !== 'unknown')).toBe(
+				true,
+			)
+		})
+
+		it('create_actor — setup block is present but empty for humans, since checkActor has nothing to say', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const u = String(url)
+				if (u.endsWith('/api/actors')) {
+					return setupOkJson({ id: 'human-1', type: 'human', name: 'Alice' })
+				}
+				return setupOkJson({})
+			})
+			const handler = getHandler('create_actor')
+			const result = (await handler({ type: 'human', name: 'Alice' })) as {
+				content: Array<{ text: string }>
+			}
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.setup).toBeDefined()
+			expect(parsed.setup.checks).toEqual([])
+			expect(parsed.setup.prose).toBe('')
+		})
+
+		it('get_actor — response includes a setup block for agents', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const u = String(url)
+				if (u.includes('/api/actors/agent-1')) {
+					return setupOkJson({
+						id: 'agent-1',
+						type: 'agent',
+						name: 'Bot',
+						system_prompt: 'short',
+						tools: { mcpServers: { maskin: {} } },
+						skills: [],
+					})
+				}
+				return setupOkJson([])
+			})
+			const handler = getHandler('get_actor')
+			const result = (await handler({ id: 'agent-1' })) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.setup).toBeDefined()
+			expect(Array.isArray(parsed.setup.checks)).toBe(true)
+			expect(
+				parsed.setup.checks.some((c: { name: string }) => c.name === 'system_prompt_quality'),
+			).toBe(true)
+			expect(parsed.setup.checks.some((c: { name: string }) => c.name === 'mcp_configured')).toBe(
+				true,
+			)
+			// No triggers/loops target this actor in the mocked workspace → warn.
+			expect(parsed.setup.checks.some((c: { name: string }) => c.name === 'automation_wired')).toBe(
+				true,
+			)
+		})
+
+		it('get_actor — omits the automation_wired warning when a trigger already targets the agent', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const u = String(url)
+				if (u.includes('/api/actors/agent-1')) {
+					return setupOkJson({
+						id: 'agent-1',
+						type: 'agent',
+						name: 'Bot',
+						system_prompt: 'x'.repeat(200),
+						tools: { mcpServers: { maskin: {}, slack: {} } },
+						skills: [{ id: 'skill-1' }, { id: 'skill-2' }],
+					})
+				}
+				if (u.endsWith('/api/triggers')) {
+					return setupOkJson([{ id: 'trig-1', name: 'Follow up', targetActorId: 'agent-1' }])
+				}
+				return setupOkJson([])
+			})
+			const handler = getHandler('get_actor')
+			const result = (await handler({ id: 'agent-1' })) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.setup.checks.some((c: { name: string }) => c.name === 'automation_wired')).toBe(
+				false,
+			)
+		})
+
+		it('get_actor — stays bare for human actors', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const u = String(url)
+				if (u.includes('/api/actors/human-1')) {
+					return setupOkJson({ id: 'human-1', type: 'human', name: 'Alice' })
+				}
+				return setupOkJson([])
+			})
+			const handler = getHandler('get_actor')
+			const result = (await handler({ id: 'human-1' })) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.setup).toBeUndefined()
+		})
+
+		it('get_loop — response includes a setup block', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const u = String(url)
+				if (u.includes('/api/loops?id=loop-1')) {
+					return setupOkJson({
+						loops: [
+							{
+								id: 'loop-1',
+								workspaceId: 'ws-default-123',
+								name: 'Test loop',
+								entryCondition: null,
+								closeCondition: null,
+								triggerIds: [],
+								inProgressCount: 0,
+								closedCount: 0,
+							},
+						],
+					})
+				}
+				return setupOkJson([])
+			})
+			const handler = getHandler('get_loop')
+			const result = (await handler({ id: 'loop-1' })) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.setup).toBeDefined()
+			expect(Array.isArray(parsed.setup.checks)).toBe(true)
+			expect(parsed.setup.checks.some((c: { name: string }) => c.name === 'conditions_set')).toBe(
+				true,
+			)
 		})
 	})
 })
@@ -3404,6 +5061,7 @@ describe('url field injection', () => {
 
 			const handler = getUrlHandler('create_objects')
 			const result = (await handler({
+				workspace_id: 'ws-default-123',
 				nodes: [{ $id: 'bet-1', type: 'bet', status: 'active' }],
 				edges: [],
 			})) as { content: Array<{ text: string }> }
@@ -3427,12 +5085,10 @@ describe('url field injection', () => {
 				updates: [{ id: objectId, title: 'Updated' }],
 			})) as { content: Array<{ text: string }> }
 
-			const parsed = JSON.parse(result.content[0].text) as Array<{
-				type: string
-				success: boolean
-				result: { url: string }
-			}>
-			const objectEntry = parsed.find((e) => e.type === 'object' && e.success)
+			const parsed = JSON.parse(result.content[0].text) as {
+				results: Array<{ type: string; success: boolean; result: { url: string } }>
+			}
+			const objectEntry = parsed.results.find((e) => e.type === 'object' && e.success)
 			expect(objectEntry?.result.url).toBe(
 				`https://maskin.example.com/ws-default-123/objects/${objectId}`,
 			)
@@ -3472,7 +5128,7 @@ describe('url field injection', () => {
 			expect(parsed.url).toBe(`https://maskin.example.com/ws-default-123/agents/${testUuid}`)
 		})
 
-		it('list_actors — url added to each actor in content', async () => {
+		it('list_actors — url added to each actor in structuredContent', async () => {
 			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
 				ok: true,
 				headers: new Headers(),
@@ -3480,10 +5136,62 @@ describe('url field injection', () => {
 			} as Response)
 
 			const handler = getUrlHandler('list_actors')
-			const result = (await handler({})) as { content: Array<{ text: string }> }
+			const result = (await handler({})) as {
+				structuredContent: { heroCard: { kind: string; object?: { url?: string } } }
+			}
 
-			const parsed = JSON.parse(result.content[0].text) as Array<{ id: string; url: string }>
-			expect(parsed[0].url).toBe('https://maskin.example.com/ws-default-123/agents/actor-2')
+			expect(result.structuredContent.heroCard.object?.url).toBe(
+				'https://maskin.example.com/ws-default-123/agents/actor-2',
+			)
+		})
+
+		it('list_actors — connectedTriggers/connectedLoops carry deep links when webAppBaseUrl is configured', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/actors')) {
+					return {
+						ok: true,
+						headers: new Headers({ 'X-Total-Count': '1' }),
+						json: () => Promise.resolve([{ id: 'actor-2', type: 'agent', name: 'Worker' }]),
+					} as Response
+				}
+				if (urlStr.includes('/api/triggers')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve([{ id: 'trig-1', name: 'On new bet', targetActorId: 'actor-2' }]),
+					} as Response
+				}
+				if (urlStr.includes('/api/loops')) {
+					return {
+						ok: true,
+						json: () =>
+							Promise.resolve({
+								loops: [{ id: 'loop-1', name: 'Architecture review', agentIds: ['actor-2'] }],
+							}),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+
+			const handler = getUrlHandler('list_actors')
+			const result = (await handler({ workspace_id: 'ws-1' })) as {
+				structuredContent: {
+					heroCard: {
+						object?: {
+							connectedTriggers?: Array<{ name: string; url?: string }>
+							connectedLoops?: Array<{ name: string; url?: string }>
+						}
+					}
+				}
+			}
+
+			expect(result.structuredContent.heroCard.object?.connectedTriggers).toEqual([
+				{ name: 'On new bet', url: 'https://maskin.example.com/ws-1/triggers/trig-1' },
+			])
+			expect(result.structuredContent.heroCard.object?.connectedLoops).toEqual([
+				{ name: 'Architecture review', url: 'https://maskin.example.com/ws-1/loops/loop-1' },
+			])
 		})
 	})
 

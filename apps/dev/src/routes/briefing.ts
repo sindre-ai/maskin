@@ -1,6 +1,7 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
 import type { StorageProvider } from '@maskin/storage'
+import { validationFailureHook } from '../lib/errors'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { renderWorkspaceBriefing } from '../services/workspace-briefing'
 
@@ -12,7 +13,7 @@ type Env = {
 	}
 }
 
-const app = new OpenAPIHono<Env>()
+const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 const briefingResponseSchema = z.object({
 	workspace_id: z.string().uuid(),

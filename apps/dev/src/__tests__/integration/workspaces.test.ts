@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { generateApiKey } from '@maskin/auth'
-import { actors, workspaceMembers, workspaces as workspacesTable } from '@maskin/db/schema'
+import { workspaceMembers, workspaces as workspacesTable } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
 import { insertActor } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
@@ -16,53 +15,10 @@ vi.mock('../../lib/analytics/posthog', () => ({
 	capturePosthogEvent: capturePosthogEventMock,
 }))
 
-// Wrap seedDefaultAgentActors so specific tests can inject a partial-success
-// failure (agents 1-3 written, agent 4 throws) without touching the real
-// production seed for the happy-path tests. The default implementation is the
-// real function — only failure tests use `mockImplementationOnce`.
-const { seedDefaultAgentActorsMock } = vi.hoisted(() => ({
-	seedDefaultAgentActorsMock: vi.fn(),
-}))
-vi.mock('../../services/workspace-bootstrap', async () => {
-	const actual = await vi.importActual<typeof import('../../services/workspace-bootstrap')>(
-		'../../services/workspace-bootstrap',
-	)
-	seedDefaultAgentActorsMock.mockImplementation(
-		(...args: Parameters<typeof actual.seedDefaultAgentActors>) =>
-			actual.seedDefaultAgentActors(...args),
-	)
-	return {
-		...actual,
-		seedDefaultAgentActors: seedDefaultAgentActorsMock,
-	}
-})
-
 const { default: workspacesRoutes } = await import('../../routes/workspaces')
-const { SeedAgentError } = await import('../../services/workspace-bootstrap')
-
-const DEFAULT_AGENT_NAMES = [
-	'Workspace Coach',
-	'Chief of Staff',
-	'Workspace Driver',
-	'Strategist',
-	'Insights Triage Agent',
-	'Research Agent',
-]
 
 function createApp() {
 	return createIntegrationApp({ path: '/api/workspaces', module: workspacesRoutes })
-}
-
-async function agentNamesFor(workspaceId: string): Promise<string[]> {
-	const rows = await db
-		.select({ name: actors.name })
-		.from(workspaceMembers)
-		.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
-		.where(eq(workspaceMembers.workspaceId, workspaceId))
-	return rows
-		.map((r) => r.name)
-		.filter((n) => DEFAULT_AGENT_NAMES.includes(n))
-		.sort()
 }
 
 async function memberActorIdsFor(workspaceId: string): Promise<string[]> {
@@ -333,107 +289,31 @@ describe('Workspaces Integration', () => {
 			const listRes = await app.request(jsonGet(`/api/workspaces/${ws.id}/members`))
 			expect(listRes.status).toBe(200)
 			const members = await listRes.json()
-			// Creator (owner) + all 6 default agents (seeded atomically inside the
-			// create transaction) + the newly-added member = 8.
-			expect(members).toHaveLength(8)
+			// Creator (owner) + the newly-added member = 2. No default agents are
+			// auto-seeded on workspace creation.
+			expect(members).toHaveLength(2)
 			const roles = members.map((m: { role: string }) => m.role).sort()
-			expect(roles).toEqual([
-				'member',
-				'member',
-				'member',
-				'member',
-				'member',
-				'member',
-				'member',
-				'owner',
-			])
+			expect(roles).toEqual(['member', 'owner'])
 		})
 	})
 
-	describe('default agent seeding', () => {
-		it('seeds all default agents atomically inside the create transaction', async () => {
+	describe('no default agent seeding', () => {
+		it('creates a workspace with only the creator as a member — no agents auto-seeded', async () => {
 			const app = createApp()
 
 			const createRes = await app.request(
-				jsonRequest('POST', '/api/workspaces', { name: 'Default Agents' }),
+				jsonRequest('POST', '/api/workspaces', { name: 'No Default Agents' }),
 			)
 			expect(createRes.status).toBe(201)
 			const ws = await createRes.json()
 
-			expect(await agentNamesFor(ws.id)).toEqual([...DEFAULT_AGENT_NAMES].sort())
+			const memberIds = await memberActorIdsFor(ws.id)
+			expect(memberIds).toEqual([getTestActorId()])
 		})
 
-		it('creates two workspaces for the same creator with default agents each and no cross-contamination', async () => {
-			const app = createApp()
-
-			const first = await (
-				await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Same Tenant A' }))
-			).json()
-			const second = await (
-				await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Same Tenant B' }))
-			).json()
-
-			expect(first.id).not.toBe(second.id)
-			expect(await agentNamesFor(first.id)).toEqual([...DEFAULT_AGENT_NAMES].sort())
-			expect(await agentNamesFor(second.id)).toEqual([...DEFAULT_AGENT_NAMES].sort())
-
-			// Agent actor rows are distinct between workspaces — a workspace's
-			// members must not overlap another workspace's, otherwise
-			// permissions/skills would leak across tenants.
-			const firstAgentIds = new Set(
-				(
-					await db
-						.select({ actorId: workspaceMembers.actorId })
-						.from(workspaceMembers)
-						.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
-						.where(eq(workspaceMembers.workspaceId, first.id))
-				)
-					.map((r) => r.actorId)
-					.filter((id) => id !== getTestActorId()),
-			)
-			const secondAgentIds = (
-				await db
-					.select({ actorId: workspaceMembers.actorId })
-					.from(workspaceMembers)
-					.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
-					.where(eq(workspaceMembers.workspaceId, second.id))
-			)
-				.map((r) => r.actorId)
-				.filter((id) => id !== getTestActorId())
-			for (const id of secondAgentIds) expect(firstAgentIds.has(id)).toBe(false)
-		})
-
-		it('re-invoking the seeding path against an already-seeded workspace inserts zero new agent rows', async () => {
-			const app = createApp()
-
-			const first = await app.request(
-				jsonRequest('POST', '/api/workspaces', { name: 'Idempotent Seed' }),
-			)
-			const ws = await first.json()
-
-			const initial = await db
-				.select({ actorId: workspaceMembers.actorId })
-				.from(workspaceMembers)
-				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
-				.where(eq(workspaceMembers.workspaceId, ws.id))
-			const initialAgents = initial.filter(() => true)
-
-			const { seedDefaultAgentActors } = await import('../../services/workspace-bootstrap')
-			await seedDefaultAgentActors(db, ws.id, getTestActorId())
-
-			const after = await db
-				.select({ actorId: workspaceMembers.actorId })
-				.from(workspaceMembers)
-				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
-				.where(eq(workspaceMembers.workspaceId, ws.id))
-
-			expect(after.length).toBe(initialAgents.length)
-		})
-
-		it('leaves three pre-existing workspaces byte-identical when a new workspace is seeded', async () => {
+		it('leaves three pre-existing workspaces byte-identical when a new workspace is created', async () => {
 			// Create three workspaces with their own actor lists directly, bypassing
-			// the seed path — these represent workspaces that existed before the T2
-			// code path shipped.
+			// the create route — these represent workspaces that existed before.
 			const preExistingIds: string[] = []
 			const snapshots = new Map<string, string[]>()
 			for (let i = 0; i < 3; i++) {
@@ -462,85 +342,19 @@ describe('Workspaces Integration', () => {
 				snapshots.set(ws.id, await memberActorIdsFor(ws.id))
 			}
 
-			// Now run the new seed path against a fresh workspace via the route.
+			// Now create a fresh workspace via the route.
 			const app = createApp()
 			const res = await app.request(
-				jsonRequest('POST', '/api/workspaces', { name: 'Fresh Seeded' }),
+				jsonRequest('POST', '/api/workspaces', { name: 'Fresh Workspace' }),
 			)
 			expect(res.status).toBe(201)
 
 			// Every pre-existing workspace's member list is byte-identical to its
-			// snapshot — the new code path didn't touch them.
+			// snapshot — creating a new workspace didn't touch them.
 			for (const id of preExistingIds) {
 				const now = await memberActorIdsFor(id)
 				expect(now).toEqual(snapshots.get(id))
 			}
-		})
-
-		it('returns 500 naming the failed agent and rolls back workspace/member/actor rows when seeding fails on the 4th agent', async () => {
-			// Simulate the "fourth agent fails" case: the seed helper writes agents
-			// 1-3 into the caller's transaction, then throws SeedAgentError for
-			// insights_triage. The route's `db.transaction` must roll back every
-			// row — including the three partial actor inserts.
-			seedDefaultAgentActorsMock.mockImplementationOnce(async (tx, wsId, createdBy) => {
-				for (const name of ['Workspace Coach', 'Workspace Driver', 'Strategist']) {
-					const [created] = await tx
-						.insert(actors)
-						.values({
-							type: 'agent',
-							name,
-							apiKey: generateApiKey().key,
-							createdBy: createdBy as string,
-						})
-						.returning()
-					if (created) {
-						await tx.insert(workspaceMembers).values({
-							workspaceId: wsId as string,
-							actorId: created.id,
-							role: 'member',
-						})
-					}
-				}
-				throw new SeedAgentError('insights_triage', new Error('mock failure on 4th agent'))
-			})
-
-			const workspacesBefore = await db.select({ id: workspacesTable.id }).from(workspacesTable)
-			const membersBefore = await db
-				.select({ actorId: workspaceMembers.actorId, workspaceId: workspaceMembers.workspaceId })
-				.from(workspaceMembers)
-			const actorsBefore = await db.select({ id: actors.id }).from(actors)
-
-			const app = createApp()
-			const res = await app.request(
-				jsonRequest('POST', '/api/workspaces', { name: 'Should Rollback' }),
-			)
-
-			expect(res.status).toBe(500)
-			const body = (await res.json()) as {
-				error: { code: string; message: string; details?: { field: string; message: string }[] }
-			}
-			expect(body.error.code).toBe('INTERNAL_ERROR')
-			expect(body.error.message).toContain('insights_triage')
-			expect(body.error.details).toEqual(
-				expect.arrayContaining([{ field: 'agent_id', message: 'insights_triage' }]),
-			)
-
-			// No workspace row, no member row, no actor row survived the aborted request.
-			const workspacesAfter = await db.select({ id: workspacesTable.id }).from(workspacesTable)
-			expect(workspacesAfter.length).toBe(workspacesBefore.length)
-
-			const membersAfter = await db
-				.select({ actorId: workspaceMembers.actorId, workspaceId: workspaceMembers.workspaceId })
-				.from(workspaceMembers)
-			expect(membersAfter.length).toBe(membersBefore.length)
-
-			const actorsAfter = await db.select({ id: actors.id }).from(actors)
-			expect(actorsAfter.length).toBe(actorsBefore.length)
-
-			// PostHog `workspace_created` must NOT fire — the workspace never
-			// committed. Emitting on the rollback path would poison the activation
-			// cohort with phantom workspaces.
-			expect(capturePosthogEventMock).not.toHaveBeenCalled()
 		})
 
 		it('emits the workspace_created PostHog event exactly once per successful creation with workspace_id in properties', async () => {
@@ -565,25 +379,14 @@ describe('Workspaces Integration', () => {
 	})
 
 	describe('default chat agent', () => {
-		async function chiefOfStaffIdFor(workspaceId: string): Promise<string | undefined> {
-			const rows = await db
-				.select({ actorId: actors.id, name: actors.name })
-				.from(workspaceMembers)
-				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
-				.where(eq(workspaceMembers.workspaceId, workspaceId))
-			return rows.find((r) => r.name === 'Chief of Staff')?.actorId
-		}
-
-		it('defaults a newly created workspace to its own Chief of Staff actor', async () => {
+		it('leaves default_agent_id unset for a newly created workspace', async () => {
 			const app = createApp()
 
-			const res = await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Default CoS' }))
+			const res = await app.request(jsonRequest('POST', '/api/workspaces', { name: 'No CoS' }))
 			expect(res.status).toBe(201)
 			const ws = await res.json()
 
-			const chiefId = await chiefOfStaffIdFor(ws.id)
-			expect(chiefId).toBeDefined()
-			expect(ws.settings.default_agent_id).toBe(chiefId)
+			expect(ws.settings.default_agent_id).toBeUndefined()
 		})
 
 		it('does not overwrite an explicit default_agent_id supplied at creation', async () => {

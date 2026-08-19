@@ -330,7 +330,7 @@ When you do notify, \`metadata.actions\` MUST be a native JSON array, not a stri
 				name: 'workspace-observer-onboarding',
 				content: `---
 name: workspace-observer-onboarding
-description: Guides the Workspace Coach to run onboarding for a new workspace — detecting an empty workspace, creating an onboarding session, subscribing the owner, and posting context prompts in sequence to get the workspace to its first bet.
+description: Guides the Workspace Coach to run onboarding for a new workspace — detecting an empty workspace, creating an onboarding session, identifying the owner, and posting context prompts in sequence to get the workspace to its first bet.
 ---
 
 # Workspace Coach Onboarding
@@ -356,11 +356,9 @@ Call \`create_objects\` to create a single object:
 
 Save the returned object ID — all prompts in the next step are comments posted on this object.
 
-### 2. Subscribe the workspace owner
+### 2. Identify the workspace owner
 
-Call \`subscribe\` with the onboarding session object ID and the workspace owner's actor ID. This ensures the owner receives the prompts via their For You feed.
-
-To find the workspace owner: list workspace members and identify the human actor (type != "agent") who created the workspace or is listed as owner.
+List workspace members and identify the human actor (type != "agent") who created the workspace or is listed as owner. Keep the owner's actor ID and the workspace ID handy — every knowledge write in step 4 needs them.
 
 ### 3. Post prompts in sequence
 
@@ -368,29 +366,71 @@ Post the five prompts below as comments on the onboarding session object, in ord
 
 The tone is conversational — you are an assistant asking questions, not a form. Write each prompt as a short message.
 
-**Prompt 1 — Product vision**
+**Prompt 1 — Product vision** (\`prompt_key: product_vision\`)
 > What does your product do and who is it for? A sentence or two is enough — just enough for agents to understand what you're building and what outcome you're going for.
 
-**Prompt 2 — ICP**
+**Prompt 2 — ICP** (\`prompt_key: icp\`)
 > Who is your ideal customer? The sharper the better — role, company type, the specific pain they have. If you have real customers already, describe one of them.
 
-**Prompt 3 — First-bet hypothesis**
+**Prompt 3 — First-bet hypothesis** (\`prompt_key: first_bet_hypothesis\`)
 > What's the single most important thing to figure out or build right now? This becomes your first bet — what would move the needle most if it worked?
 
-**Prompt 4 — North Star metric**
+**Prompt 4 — North Star metric** (\`prompt_key: north_star_metric\`)
 > How will you know the product is working? Name one number — the metric that, if it goes up, you're succeeding.
 
-**Prompt 5 — Customer evidence**
+**Prompt 5 — Customer evidence** (\`prompt_key: customer_evidence\`)
 > What have you already heard from customers or potential customers? Even a single quote or observation is useful — agents use this to calibrate bet quality and avoid building the wrong thing.
 
-### 4. Capture responses as knowledge objects
+### 4. Capture each reply as a knowledge object AND an \`about\` edge — one atomic call
 
-After each reply, call \`create_objects\` to save the response:
-- \`type: knowledge\`
-- \`title\`: a short label for the response (e.g. "Product vision", "ICP", "North Star metric")
-- \`status: active\`
-- \`content\`: the owner's reply verbatim, or a clean restatement if the reply is conversational
-- Link the knowledge object to the onboarding session via a \`relates_to\` relationship
+After each reply, call \`create_objects\` **once** with both the knowledge node and the \`about\` edge in the same batch. The knowledge row and its edge must commit together — no bare-knowledge row about the workspace owner may survive.
+
+The edge target depends on the prompt:
+
+- \`product_vision\`, \`icp\`, \`first_bet_hypothesis\`, \`customer_evidence\` → **owner-targeted**: edge target = the workspace owner's actor id, \`metadata.subject_kind = "workspace_owner"\`.
+- \`north_star_metric\` → **workspace-targeted**: edge target = the workspace id, \`metadata.subject_kind = "workspace"\`.
+
+Payload shape (owner-targeted example):
+
+\`\`\`json
+{
+  "nodes": [
+    {
+      "$id": "k1",
+      "type": "knowledge",
+      "title": "Product vision",
+      "status": "validated",
+      "content": "<owner's reply verbatim, or a clean restatement if conversational>",
+      "metadata": {
+        "source": "workspace_onboarding",
+        "prompt_key": "product_vision",
+        "subject_kind": "workspace_owner",
+        "subject_id": "<owner-actor-uuid>",
+        "claim": "<one-sentence restatement of what the reply asserts>",
+        "confidence": "medium",
+        "valid_from": "<ISO timestamp of the reply>",
+        "valid_to": null,
+        "tags": ["onboarding", "provenance:workspace_onboarding"]
+      }
+    }
+  ],
+  "edges": [
+    { "source": "k1", "target": "<owner-actor-uuid>", "type": "about" },
+    { "source": "k1", "target": "<onboarding-session-object-id>", "type": "relates_to" }
+  ]
+}
+\`\`\`
+
+For \`north_star_metric\`, swap the \`about\` target to the workspace id and set \`subject_kind\` / \`subject_id\` to \`"workspace"\` / \`<workspace-uuid>\`.
+
+Field notes:
+- \`claim\` is a one-sentence normalized restatement so downstream agents can reason without re-reading the raw reply.
+- \`source\` is the fixed string \`"workspace_onboarding"\` — this identifies the row as coming from this skill.
+- \`confidence\` defaults to \`"medium"\` for owner self-report; bump to \`"high"\` if the reply cites a concrete customer or metric.
+- \`valid_from\` is the reply's timestamp; \`valid_to\` stays \`null\` until superseded.
+- Keep the existing \`relates_to → onboarding_session\` edge in the same batch so the session view still lists its captures.
+
+Do NOT write anything to the actor's \`memory\` field. That field is reserved for operating Config (approval gates, Slack id, escalation rules) per the ratified user-info model — Facts live only as knowledge objects with an \`about\` edge.
 
 ### 5. Close the session
 
@@ -404,6 +444,8 @@ After all five prompts are answered (or if the owner stops responding after 24h)
 - Do not post all five prompts at once — sequence matters; each answer informs the next question
 - Do not create the onboarding session more than once per workspace
 - Do not capture knowledge objects if the owner did not reply — only record actual answers
+- Do not create the knowledge row and the \`about\` edge in separate calls — they must commit in the same \`create_objects\` transaction
+- Do not write to \`actors.memory\` — that field is Config, not Facts
 `,
 			},
 			{
@@ -1442,66 +1484,66 @@ Post one short comment on the target object:
 - Treat absence of counter-evidence as confirmation. Absence is just absence.`,
 			},
 			{
-				name: 'graduate-succeeded-bet-to-loop',
+				name: 'graduate-succeeded-bet-to-commitment',
 				content: `---
-name: graduate-succeeded-bet-to-loop
-description: Load when a bet transitions to \`succeeded\` (or when reviewing recently-succeeded bets on the daily sweep) to decide whether the bet codifies a standing capability that should graduate into a Loop — the standing-commitment object type sibling to bets. A Loop is created at \`holding\` with an explicit \`floor\` and \`cadence\`, and provenance to the source bet via a \`derived_from\` edge. Graduation is a **proposal**, not an action: this skill drafts the Loop, posts it as a recommendation @mentioning a founder, and waits for a human to approve before the Loop is created. Never auto-create the Loop object.
+name: graduate-succeeded-bet-to-commitment
+description: Load when a bet transitions to \`succeeded\` (or when reviewing recently-succeeded bets on the daily sweep) to decide whether the bet codifies a standing capability that should graduate into a Commitment — the standing-commitment object type sibling to bets. A Commitment is created at \`holding\` with an explicit \`floor\` and \`cadence\`, and provenance to the source bet via a \`derived_from\` edge. Graduation is a **proposal**, not an action: this skill drafts the Commitment, posts it as a recommendation @mentioning a founder, and waits for a human to approve before the Commitment is created. Never auto-create the Commitment object.
 ---
 
-# Graduate a succeeded bet to a Loop
+# Graduate a succeeded bet to a Commitment
 
-A Loop is a standing commitment that survives after a bet closes. Bets like *"we can land 20 bets/day"* or *"customer bugs fixed <1 day"* prove a capability during their live period, then squat in \`live\` or \`succeeded\` and quietly become folklore. A Loop is how the workspace enforces those promises on an ongoing basis: it names the floor, names the cadence the floor is measured over, and moves between three health states so the team can see when a standing commitment is slipping.
+A Commitment is a standing commitment that survives after a bet closes. Bets like *"we can land 20 bets/day"* or *"customer bugs fixed <1 day"* prove a capability during their live period, then squat in \`live\` or \`succeeded\` and quietly become folklore. A Commitment is how the workspace enforces those promises on an ongoing basis: it names the floor, names the cadence the floor is measured over, and moves between three health states so the team can see when a standing commitment is slipping.
 
-Loops live alongside bets as a first-class object type. Do not confuse a Loop with a bet in \`live\` — a bet is a time-boxed wager with an end date; a Loop has no end date and no verdict, only a floor and a cadence that hold indefinitely.
+Commitments live alongside bets as a first-class object type. Do not confuse a Commitment with a bet in \`live\` — a bet is a time-boxed wager with an end date; a Commitment has no end date and no verdict, only a floor and a cadence that hold indefinitely. And do not confuse a Commitment with the \`loop\` object type introduced by bet/loops-first-class — that \`loop\` type is a persistent multi-agent pipeline concept, unrelated to standing commitments beyond the former shared name.
 
 ## When to run this skill
 
 - A bet just transitioned \`live → succeeded\` and its hypothesis names a capability that should hold after the bet closes (a rate, a latency, a coverage number, a throughput floor).
-- During your daily sweep of recently-terminal bets, you find a \`succeeded\` bet whose \`## Success\` metric describes a standing commitment ("we can X per week", "we resolve Y under Z hours") that has no matching Loop yet.
-- A human @mentions you on a \`succeeded\` bet with \`graduate\`, \`loop\`, or \`standing commitment\`.
+- During your daily sweep of recently-terminal bets, you find a \`succeeded\` bet whose \`## Success\` metric describes a standing commitment ("we can X per week", "we resolve Y under Z hours") that has no matching Commitment yet.
+- A human @mentions you on a \`succeeded\` bet with \`graduate\`, \`commitment\`, or \`standing commitment\`.
 
-Do NOT run this skill for bets that were one-off shipments (a UI polish, a migration, a launch) — those succeed and close. A Loop is only justified when the bet codified an ongoing capability that the team wants to keep true.
+Do NOT run this skill for bets that were one-off shipments (a UI polish, a migration, a launch) — those succeed and close. A Commitment is only justified when the bet codified an ongoing capability that the team wants to keep true.
 
-## The Loop object contract (from T1)
+## The Commitment object contract
 
-- \`type: 'loop'\`
-- \`status\`: one of \`holding | at-risk | breached\`. New Loops always start at \`holding\`.
+- \`type: 'commitment'\`
+- \`status\`: one of \`holding | at-risk | breached\`. New Commitments always start at \`holding\`.
 - \`metadata.floor\` — the number or observable that must hold (e.g. \`"20 bets/day"\`, \`"<1 day median resolution"\`). Plain language.
 - \`metadata.cadence\` — the window the floor is measured over (e.g. \`"weekly"\`, \`"rolling 30 days"\`).
-- \`metadata.source_bet_id\` — the UUID of the bet this Loop was graduated from. Also present as the \`derived_from\` edge; the metadata field is a convenience.
+- \`metadata.source_bet_id\` — the UUID of the bet this Commitment was graduated from. Also present as the \`derived_from\` edge; the metadata field is a convenience.
 - \`metadata.last_breach_at\` — a date, set later by the health-check trigger when the floor is missed inside its cadence window. Leave empty on creation.
-- Provenance edge: create a \`derived_from\` relationship from the Loop → source bet. This is the canonical link; the metadata field is a mirror.
+- Provenance edge: create a \`derived_from\` relationship from the Commitment → source bet. This is the canonical link; the metadata field is a mirror.
 
-Statuses in plain terms: \`holding\` = healthy. \`at-risk\` = the floor was missed once recently but the team has not confirmed the slip. \`breached\` = the floor is being missed against its cadence and the team should act. The daily Loop health scan trigger stamps \`last_breach_at\` and moves the status; you do not touch status when creating the Loop.
+Statuses in plain terms: \`holding\` = healthy. \`at-risk\` = the floor was missed once recently but the team has not confirmed the slip. \`breached\` = the floor is being missed against its cadence and the team should act. The daily Commitment health scan trigger stamps \`last_breach_at\` and moves the status; you do not touch status when creating the Commitment.
 
 ## What you do — proposal, not creation
 
-You propose the Loop. A human approves. Auto-graduation is explicitly out of scope for this bet (see the parent bet's "Not doing: auto-approving graduations"). Sequence:
+You propose the Commitment. A human approves. Auto-graduation is explicitly out of scope for this bet (see the parent bet's "Not doing: auto-approving graduations"). Sequence:
 
-1. Read the succeeded bet's \`## Success\` block. Extract: the number, the observable it applies to, and the window it was measured over. If any of the three cannot be named plainly, the bet is not Loop-worthy — stop.
-2. Draft the Loop proposal as a comment on the succeeded bet titled \`Loop proposal — <short capability name>\`. Include:
+1. Read the succeeded bet's \`## Success\` block. Extract: the number, the observable it applies to, and the window it was measured over. If any of the three cannot be named plainly, the bet is not Commitment-worthy — stop.
+2. Draft the Commitment proposal as a comment on the succeeded bet titled \`Commitment proposal — <short capability name>\`. Include:
    - The floor as a plain-language sentence.
    - The cadence as a plain-language sentence.
    - Why this bet codifies a standing capability rather than a one-off shipment.
-   - The exact fields you'd set: \`type='loop'\`, \`status='holding'\`, \`metadata.floor\`, \`metadata.cadence\`, \`metadata.source_bet_id = <this bet's UUID>\`.
-   - The \`derived_from\` edge from the new Loop → this bet.
-3. @mention a founder (per \`maskin-voice\`, resolve via \`list_actors\`; strategy/UX decisions to Sebastian, architecture to Magnus — capability-holding is a strategy call, so default to Sebastian) with a single question: *"Should we graduate this into a Loop?"*
-4. Stop. Do not \`create_objects\` the Loop yourself. The human replies with an approval; the Loop is created by whoever picks up the approval (this may be you in a follow-up session, or a human directly).
+   - The exact fields you'd set: \`type='commitment'\`, \`status='holding'\`, \`metadata.floor\`, \`metadata.cadence\`, \`metadata.source_bet_id = <this bet's UUID>\`.
+   - The \`derived_from\` edge from the new Commitment → this bet.
+3. @mention a founder (per \`maskin-voice\`, resolve via \`list_actors\`; strategy/UX decisions to Sebastian, architecture to Magnus — capability-holding is a strategy call, so default to Sebastian) with a single question: *"Should we graduate this into a Commitment?"*
+4. Stop. Do not \`create_objects\` the Commitment yourself. The human replies with an approval; the Commitment is created by whoever picks up the approval (this may be you in a follow-up session, or a human directly).
 
-When the approval lands and you (or another agent) do create the Loop, use \`create_objects(type='loop', status='holding', metadata={...})\` and \`create_relationships(source_id=<loop-id>, target_id=<bet-id>, type='derived_from')\`. Never invent a fifth status or a fifth metadata field — the schema is fixed at three statuses and four metadata fields.
+When the approval lands and you (or another agent) do create the Commitment, use \`create_objects(type='commitment', status='holding', metadata={...})\` and \`create_relationships(source_id=<commitment-id>, target_id=<bet-id>, type='derived_from')\`. Never invent a fifth status or a fifth metadata field — the schema is fixed at three statuses and four metadata fields.
 
-## Reads — always \`type='loop'\`
+## Reads — always \`type='commitment'\`
 
-To check whether a Loop already exists for this capability, use \`list_objects(type='loop')\` and inspect titles + \`metadata.source_bet_id\`, or \`list_relationships(target_id=<bet-id>, type='derived_from')\`. **Never** use \`metadata_eq\` to fetch Loops — the \`type='loop'\` filter is the contract. Metadata equality on a free-text \`floor\` or \`cadence\` string is not a valid selector.
+To check whether a Commitment already exists for this capability, use \`list_objects(type='commitment')\` and inspect titles + \`metadata.source_bet_id\`, or \`list_relationships(target_id=<bet-id>, type='derived_from')\`. **Never** use \`metadata_eq\` to fetch Commitments — the \`type='commitment'\` filter is the contract. Metadata equality on a free-text \`floor\` or \`cadence\` string is not a valid selector.
 
 ## What you never do
 
-- Auto-create a Loop object without a human approval on the proposal comment. Auto-graduation is explicitly off for this workspace.
-- Move the succeeded bet back to \`live\` to "keep the standing capability alive" — that is exactly the folklore trap Loops are meant to replace.
-- Create a Loop for a one-off shipment. If the bet succeeded but the outcome does not describe an ongoing capability, no Loop.
+- Auto-create a Commitment object without a human approval on the proposal comment. Auto-graduation is explicitly off for this workspace.
+- Move the succeeded bet back to \`live\` to "keep the standing capability alive" — that is exactly the folklore trap Commitments are meant to replace.
+- Create a Commitment for a one-off shipment. If the bet succeeded but the outcome does not describe an ongoing capability, no Commitment.
 - Skip the \`derived_from\` edge. The provenance link is how the Coach and the health scan find the source bet later.
 - Add metadata fields beyond \`floor\`, \`cadence\`, \`source_bet_id\`, \`last_breach_at\`. If a fifth field feels necessary, that is a schema change and belongs in a bet, not a workaround here.
-- Use \`metadata_eq\` on any Loop read. Always \`type='loop'\` + status.`,
+- Use \`metadata_eq\` on any Commitment read. Always \`type='commitment'\` + status.`,
 			},
 			{
 				name: 'maskin-voice',
@@ -2297,13 +2339,13 @@ export const DEVELOPMENT_TRIGGERS: SeedTrigger[] = [
 			'Analyze CTO validation sessions from the past 7 days. When the CTO finds issues, both the Senior Developer (author) AND the Code Reviewer (reviewer) missed something — these sessions reveal systemic gaps.\n\n1. Find CTO sessions (last 7d). Read each and note: task, bet, verdict (PASS/FAIL/CONDITIONAL PASS), and specifically what was wrong (for FAIL/CONDITIONAL PASS).\n2. Classify failure types — unwired integrations, missing infrastructure, silent failures, version mismatches, incomplete flows, missing dependencies.\n3. Attribution — Senior Developer gap, Code Reviewer gap, systemic gap (neither could reasonably catch alone).\n4. Look for patterns across sessions and against prior analyses.\n5. Create insights for notable findings. Tag with metadata tags "cto-validation-pattern".\n6. If no notable patterns, exit silently.',
 	},
 	{
-		name: 'Daily Loop Health Scan',
+		name: 'Daily Commitment Health Scan',
 		type: 'cron',
 		config: { expression: '0 8 * * *' },
 		targetActor$id: 'workspace_coach',
 		enabled: true,
 		actionPrompt:
-			"Run the daily Loop health scan. Loops are standing commitments graduated from succeeded bets — the object type sibling to bets, with statuses `holding | at-risk | breached` and metadata `floor, cadence, source_bet_id, last_breach_at`. This scan checks whether each Loop's floor is holding against its cadence window and stamps `metadata.last_breach_at` when a floor is missed.\n\nSteps:\n\n1. Enumerate every Loop in the workspace: `list_objects(type='loop')`. **Never** use `metadata_eq` — the `type='loop'` filter is the contract. Skip Loops with no `metadata.floor` or no `metadata.cadence` set (they are half-created; do not touch them).\n2. For each Loop, walk the `derived_from` edge to the source bet: `list_relationships(source_id=<loop-id>, type='derived_from')`, then `get_objects` on the target to read the bet's `## Success` block, `metadata.posthog_query`, and any `## Validation evidence sources`. These name where the real-world measurement comes from.\n3. Read the floor against the cadence window from the source. Concretely: if `metadata.cadence` says `weekly`, evaluate the last 7 days; `rolling 30 days`, evaluate the last 30 days; a plain-language cadence, use your judgment based on the number and unit named. If the workspace has a connected analytics source (posthog, or another integration named in the bet) that can answer the floor question, query it. If no data source can answer it, note that as a data gap in your insight and do not stamp anything.\n4. If the floor is missed within the cadence window: update the Loop with `metadata.last_breach_at = <today's ISO date>` and set status to `breached` via `update_objects`. If the floor is missed once but not sustained across the window (a single dip), set status to `at-risk` and stamp `last_breach_at` with the date of the dip. If the floor is holding, do not touch the Loop.\n5. For every Loop you moved to `at-risk` or `breached`, create one insight titled with the Loop's name and the new state (e.g. `Loop \"customer bugs fixed <1 day\" is breached`). Content: the floor, the cadence, the measurement window checked, what the data source returned, and a link to the source bet reached via the `derived_from` edge. Tag with `metadata.tags: ['loop-health']` and `metadata.source: 'workspace_observer'` so the Insight Curator can cluster and the Chief-of-Staff briefing view surfaces it alongside stalled bets.\n6. If every Loop is `holding` and no floor was missed, exit silently. No insights, no comments.\n\nHard rules:\n- Only ever query Loops with `type='loop'` + status filter. Never `metadata_eq`.\n- Never invent measurements the data source did not return. If the source is unreachable, note that as a data gap in an insight and skip the stamp for that Loop.\n- Do not touch Loops in `holding` unless a floor miss demands moving them to `at-risk` or `breached`.\n- Do not create a Loop yourself — graduation is proposed by the Strategist on a succeeded bet and approved by a human. This scan is enforcement, not creation.",
+			"Run the daily Commitment health scan. Commitments are standing commitments graduated from succeeded bets — the object type sibling to bets, with statuses `holding | at-risk | breached` and metadata `floor, cadence, source_bet_id, last_breach_at`. This scan checks whether each Commitment's floor is holding against its cadence window and stamps `metadata.last_breach_at` when a floor is missed.\n\nSteps:\n\n1. Enumerate every Commitment in the workspace: `list_objects(type='commitment')`. **Never** use `metadata_eq` — the `type='commitment'` filter is the contract. Skip Commitments with no `metadata.floor` or no `metadata.cadence` set (they are half-created; do not touch them).\n2. For each Commitment, walk the `derived_from` edge to the source bet: `list_relationships(source_id=<commitment-id>, type='derived_from')`, then `get_objects` on the target to read the bet's `## Success` block, `metadata.posthog_query`, and any `## Validation evidence sources`. These name where the real-world measurement comes from.\n3. Read the floor against the cadence window from the source. Concretely: if `metadata.cadence` says `weekly`, evaluate the last 7 days; `rolling 30 days`, evaluate the last 30 days; a plain-language cadence, use your judgment based on the number and unit named. If the workspace has a connected analytics source (posthog, or another integration named in the bet) that can answer the floor question, query it. If no data source can answer it, note that as a data gap in your insight and do not stamp anything.\n4. If the floor is missed within the cadence window: update the Commitment with `metadata.last_breach_at = <today's ISO date>` and set status to `breached` via `update_objects`. If the floor is missed once but not sustained across the window (a single dip), set status to `at-risk` and stamp `last_breach_at` with the date of the dip. If the floor is holding, do not touch the Commitment.\n5. For every Commitment you moved to `at-risk` or `breached`, create one insight titled with the Commitment's name and the new state (e.g. `Commitment \"customer bugs fixed <1 day\" is breached`). Content: the floor, the cadence, the measurement window checked, what the data source returned, and a link to the source bet reached via the `derived_from` edge. Tag with `metadata.tags: ['commitment-health']` and `metadata.source: 'workspace_observer'` so the Insight Curator can cluster and the Chief-of-Staff briefing view surfaces it alongside stalled bets.\n6. If every Commitment is `holding` and no floor was missed, exit silently. No insights, no comments.\n\nHard rules:\n- Only ever query Commitments with `type='commitment'` + status filter. Never `metadata_eq`.\n- Never invent measurements the data source did not return. If the source is unreachable, note that as a data gap in an insight and skip the stamp for that Commitment.\n- Do not touch Commitments in `holding` unless a floor miss demands moving them to `at-risk` or `breached`.\n- Do not create a Commitment yourself — graduation is proposed by the Strategist on a succeeded bet and approved by a human. This scan is enforcement, not creation.",
 	},
 	{
 		name: 'Strategist research on signup',

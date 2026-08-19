@@ -31,6 +31,21 @@ WORKDIR /agent/workspace
 COPY entrypoint.sh /entrypoint.sh
 COPY agent-run.sh /agent-run.sh
 COPY github-credential-helper.sh /agent-github-credential-helper.sh
+COPY cdp-retry-proxy.js /cdp-retry-proxy.js
+COPY preview-port-watcher.js /preview-port-watcher.js
 RUN chmod +x /entrypoint.sh /agent-run.sh /agent-github-credential-helper.sh
+
+# PostToolUse hook that surfaces a newly-relayed dev-server preview port to
+# Claude automatically — see preview-port-watcher.js (writes the mappings
+# file this hook reads) and hooks/preview-ports-changed.sh (the hook
+# itself; PostToolUse is used because it's the hook event that actually
+# supports hookSpecificOutput.additionalContext — FileChanged does not).
+# Baked into every session's default settings so no per-task configuration
+# is needed for the auto-relay flow to reach the agent.
+COPY hooks/preview-ports-changed.sh /agent-hooks/preview-ports-changed.sh
+RUN chmod +x /agent-hooks/preview-ports-changed.sh
+RUN mkdir -p /home/agent/.claude
+COPY claude-settings.json /home/agent/.claude/settings.json
+RUN chown -R agent:agent /home/agent/.claude
 
 ENTRYPOINT ["/entrypoint.sh"]

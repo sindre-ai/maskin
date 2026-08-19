@@ -11,7 +11,13 @@ const uuid = '550e8400-e29b-41d4-a716-446655440000'
 describe('workspaceSettingsSchema', () => {
 	it('provides all defaults when given empty object', () => {
 		const result = workspaceSettingsSchema.parse({})
-		expect(result.display_names).toEqual({ insight: 'Insight', bet: 'Bet', task: 'Task' })
+		expect(result.display_names).toEqual({
+			insight: 'Insight',
+			bet: 'Bet',
+			task: 'Task',
+			loop: 'Loop',
+			commitment: 'Commitment',
+		})
 		expect(result.statuses.insight).toEqual([
 			'new',
 			'processing',

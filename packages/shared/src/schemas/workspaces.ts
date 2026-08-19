@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { LOOP_STATUSES } from './objects'
 
 const fieldDefinitionSchema = z.object({
 	name: z.string(),
@@ -76,6 +77,8 @@ export const workspaceSettingsSchema = z.object({
 		insight: 'Insight',
 		bet: 'Bet',
 		task: 'Task',
+		commitment: 'Commitment',
+		loop: 'Loop',
 	}),
 	statuses: z.record(z.array(z.string())).default({
 		insight: ['new', 'processing', 'clustered', 'scored', 'parked', 'discarded'],
@@ -94,6 +97,8 @@ export const workspaceSettingsSchema = z.object({
 			'archived',
 		],
 		task: ['todo', 'in_progress', 'in_review', 'validated', 'done', 'discarded'],
+		commitment: ['holding', 'at-risk', 'breached'],
+		loop: [...LOOP_STATUSES],
 	}),
 	field_definitions: z.record(z.array(fieldDefinitionSchema)).default({
 		bet: [{ name: 'archive_reason', type: 'text', required: false }],
@@ -103,8 +108,14 @@ export const workspaceSettingsSchema = z.object({
 		.array(z.string())
 		.default(['informs', 'breaks_into', 'blocks', 'relates_to', 'duplicates']),
 	custom_extensions: z.record(customExtensionEntrySchema).default({}),
-	enabled_modules: z.array(z.string()).default(['work']),
+	enabled_modules: z.array(z.string()).default(['work', 'crm', 'knowledge']),
 	max_concurrent_sessions: z.coerce.number().int().min(1).max(50).default(3),
+	// Chat sessions bypass max_concurrent_sessions entirely (a live human is
+	// waiting), but still need *some* aggregate ceiling so a workspace with
+	// many conversations can't spawn unbounded concurrent containers. Default
+	// is generous relative to max_concurrent_sessions since chat is meant to
+	// stay responsive even when the background/trigger budget is saturated.
+	max_concurrent_chat_sessions: z.coerce.number().int().min(1).max(200).default(20),
 	llm_keys: z
 		.object({
 			// `null` on PATCH signals deletion of that provider; see the deep-merge
@@ -180,6 +191,13 @@ export const workspaceSettingsSchema = z.object({
 	// Staff prototype bet so owner chats route through CoS instead of Workspace
 	// Coach when this is populated.
 	default_agent_id: z.string().uuid().nullable().optional(),
+	// File ids (uuid strings) pinned into the sidebar Favorites group by the
+	// Mini-apps bet. References only — the sidebar resolves each id against the
+	// live file object, so the nightly regen's in-place byte swap flows through
+	// reopen-after-regen, and a deleted file stops appearing instead of
+	// dead-linking. PATCH /api/workspaces/:id shallow-merges top-level keys, so
+	// pin/unpin writes replace the whole array.
+	pinned_files: z.array(z.string().uuid()).default([]),
 	// Public "method site" publishing config (ADR #6 on the Publish bet).
 	// `enabled` is the master switch — false by default so a workspace opts in
 	// before any object metadata surfaces at /method/*. `version` bumps on any

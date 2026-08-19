@@ -219,4 +219,159 @@ describe('SessionManager.stopSession — remote agent-server routing (Integratio
 		expect(row?.cacheReadInputTokens).toBe(20)
 		expect(row?.durationMs).toBe(5000)
 	})
+
+	// Regression coverage for the null-exit-code race documented in
+	// docs/runbooks/agent-session-failures-2026-08-11.md, Issue 3: stopSession()
+	// used to write result.exit_code: null unconditionally and authoritatively,
+	// so a genuine /complete report that landed moments later (carrying the
+	// agent's real exit code) matched 0 rows in the CAS UPDATE and silently
+	// no-op'd — session 4d1f3c8b ended up stored with exit_code: null even
+	// though msb's own log showed it successfully reported exitCode: 1.
+	//
+	// stopSession()'s null write is now marked provisional (stoppedByUser:
+	// true in markRemoteSessionComplete's opts, persisted as
+	// result.stopped_by_user), and a later genuine report is allowed to
+	// overwrite a row still carrying that marker.
+	describe('exit-code race between an explicit stop and a genuine completion report', () => {
+		it('stopSession() writes a provisional null exit code marked stopped_by_user', async () => {
+			const server = await insertAgentServer()
+			const session = await insertSession(db, workspaceId, actorId, actorId, {
+				status: 'running',
+				agentServerId: server.id,
+				containerId: 'sandbox-under-test',
+			})
+
+			const fetchSpy = vi
+				.spyOn(globalThis, 'fetch')
+				.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }))
+
+			const manager = new SessionManager(db, stubStorage())
+			try {
+				await manager.stopSession(session.id)
+			} finally {
+				fetchSpy.mockRestore()
+				await manager.stop()
+			}
+
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('failed')
+			expect(row?.result).toMatchObject({ exit_code: null, stopped_by_user: true })
+		})
+
+		it("a genuine /complete report overwrites stopSession()'s provisional null exit code with the real one", async () => {
+			const session = await insertSession(db, workspaceId, actorId, actorId, {
+				status: 'running',
+			})
+
+			const manager = new SessionManager(db, stubStorage())
+			try {
+				// Simulate stopSession()'s eager, provisional write winning the race
+				// first (as if a stop request landed just before the agent's own
+				// exit trap fired).
+				await manager.markRemoteSessionComplete(session.id, null, { stoppedByUser: true })
+
+				const [afterStop] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+				expect(afterStop?.status).toBe('failed')
+				expect(afterStop?.result).toMatchObject({ exit_code: null, stopped_by_user: true })
+
+				// The agent-server's monitorSession loop was still alive and its
+				// genuine completion report (real exit code) arrives moments later.
+				await manager.markRemoteSessionComplete(session.id, 1)
+			} finally {
+				await manager.stop()
+			}
+
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('failed')
+			// The real exit code must win — not stay stuck at null — and the
+			// provisional marker must be cleared by the genuine report.
+			expect(row?.result).toMatchObject({ exit_code: 1 })
+			expect((row?.result as { stopped_by_user?: boolean } | null)?.stopped_by_user).toBeFalsy()
+
+			// Both the provisional and the corrected write produced a terminal
+			// event — an operator inspecting the audit log can see the exit code
+			// was corrected, not just silently dropped.
+			const eventRows = await db.select().from(events).where(eq(events.entityId, session.id))
+			expect(eventRows.filter((e) => e.action === 'session_failed')).toHaveLength(2)
+		})
+
+		// The logging side of this behavior (item 3 in the runbook's suggested
+		// fix — surfacing the previously-silent no-op) is covered by a mocked-DB
+		// unit test instead: apps/dev/src/__tests__/services/session-manager.test.ts,
+		// "logs a warning with the dropped exit code when the CAS update matches
+		// no row". Vitest's console/stdout attribution under this suite's
+		// `pool: 'forks', poolOptions: { forks: { singleFork: true } }` config
+		// (see apps/dev/vitest.integration.config.ts) intercepts `console.log`
+		// per-test in a way that defeats `vi.spyOn(console, 'log')` here — the
+		// real log line was confirmed (by hand, against this exact scenario) to
+		// print with the correct msg/sessionId/droppedExitCode/currentStatus,
+		// but that isn't reliably assertable from this test file. The behavioral
+		// (data-integrity) half of this scenario — that the stale report is
+		// correctly ignored and never overwrites the genuine completion — is
+		// still fully covered below.
+		it('a genuine /complete report is still dropped once a real (non-provisional) completion already landed', async () => {
+			const session = await insertSession(db, workspaceId, actorId, actorId, {
+				status: 'running',
+			})
+
+			const manager = new SessionManager(db, stubStorage())
+			try {
+				// First genuine report lands normally (e.g. exitCode 0, success).
+				await manager.markRemoteSessionComplete(session.id, 0)
+				// A second, stale/duplicate report must not overwrite it.
+				await manager.markRemoteSessionComplete(session.id, 1)
+			} finally {
+				await manager.stop()
+			}
+
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('completed')
+			expect(row?.result).toMatchObject({ exit_code: 0 })
+
+			const eventRows = await db.select().from(events).where(eq(events.entityId, session.id))
+			expect(eventRows.filter((e) => e.action === 'session_completed')).toHaveLength(1)
+			expect(eventRows.filter((e) => e.action === 'session_failed')).toHaveLength(0)
+		})
+
+		it('a late explicit stop never clobbers an already-terminal (genuinely completed) session', async () => {
+			const session = await insertSession(db, workspaceId, actorId, actorId, {
+				status: 'running',
+			})
+
+			const manager = new SessionManager(db, stubStorage())
+			try {
+				await manager.markRemoteSessionComplete(session.id, 0)
+				// A stop request that arrives after the session already completed
+				// naturally must not downgrade it to failed/null.
+				await manager.markRemoteSessionComplete(session.id, null, { stoppedByUser: true })
+			} finally {
+				await manager.stop()
+			}
+
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('completed')
+			expect(row?.result).toMatchObject({ exit_code: 0 })
+		})
+
+		it('happy path — a genuine completion report with no concurrent stop lands normally', async () => {
+			const session = await insertSession(db, workspaceId, actorId, actorId, {
+				status: 'running',
+			})
+
+			const manager = new SessionManager(db, stubStorage())
+			try {
+				await manager.markRemoteSessionComplete(session.id, 0)
+			} finally {
+				await manager.stop()
+			}
+
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('completed')
+			expect(row?.result).toMatchObject({ exit_code: 0 })
+			expect((row?.result as { stopped_by_user?: boolean } | null)?.stopped_by_user).toBeFalsy()
+
+			const eventRows = await db.select().from(events).where(eq(events.entityId, session.id))
+			expect(eventRows.filter((e) => e.action === 'session_completed')).toHaveLength(1)
+		})
+	})
 })

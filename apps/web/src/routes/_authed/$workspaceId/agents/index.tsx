@@ -4,20 +4,18 @@ import {
 	getPortraitStatus,
 	portraitStatusToFilter,
 } from '@/components/agents/agent-portrait-card'
-import { PageHeader } from '@/components/layout/page-header'
 import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picker'
 import { EmptyState } from '@/components/shared/empty-state'
 import { FilterTabs } from '@/components/shared/filter-tabs'
 import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
-import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { useActors, useAgentPause, useAgentRun } from '@/hooks/use-actors'
 import { useWorkspaceSessions } from '@/hooks/use-sessions'
 import { deriveAgentStatus, getLatestSession, groupSessionsByAgent } from '@/lib/agent-status'
 import type { ActorResponse, SessionResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
-import { Plus } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 
@@ -33,6 +31,7 @@ function AgentsPage() {
 	const { data: actors, isLoading } = useActors(workspaceId)
 	const { data: sessions } = useWorkspaceSessions(workspaceId)
 	const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+	const [query, setQuery] = useState('')
 	const [createPickerOpen, setCreatePickerOpen] = useState(false)
 
 	useEffect(() => {
@@ -71,14 +70,18 @@ function AgentsPage() {
 		return c
 	}, [agents.length, portraitStatuses])
 
+	const trimmedQuery = query.trim()
+
 	const filtered = useMemo(
 		() =>
-			statusFilter === 'all'
-				? agents
-				: agents.filter(
-						(a) => portraitStatusToFilter(portraitStatuses.get(a.id) ?? 'idle') === statusFilter,
-					),
-		[agents, statusFilter, portraitStatuses],
+			agents
+				.filter(
+					(a) =>
+						statusFilter === 'all' ||
+						portraitStatusToFilter(portraitStatuses.get(a.id) ?? 'idle') === statusFilter,
+				)
+				.filter((a) => matchesAgentQuery(a, trimmedQuery)),
+		[agents, statusFilter, portraitStatuses, trimmedQuery],
 	)
 
 	const tabs: { label: string; value: StatusFilter; count: number }[] = [
@@ -88,17 +91,9 @@ function AgentsPage() {
 		{ label: 'Failed', value: 'failed', count: counts.failed },
 	]
 
-	const newButton = (
-		<Button size="sm" className="gap-1.5" onClick={() => setCreatePickerOpen(true)}>
-			<Plus size={14} />
-			New
-		</Button>
-	)
-
 	if (isLoading) {
 		return (
 			<div>
-				<PageHeader title="Agents" actions={newButton} />
 				<div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
 					<CardSkeleton />
 					<CardSkeleton />
@@ -115,8 +110,6 @@ function AgentsPage() {
 
 	return (
 		<div>
-			<PageHeader title="Agents" actions={newButton} />
-
 			{agents.length === 0 ? (
 				<EmptyState
 					title="No agents in this workspace"
@@ -124,25 +117,41 @@ function AgentsPage() {
 				/>
 			) : (
 				<>
-					<FilterTabs
-						tabs={tabs}
-						value={statusFilter}
-						onChange={setStatusFilter}
-						aria-label="Agent status filter"
-						className="mb-4"
-					/>
-
-					<div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
-						{filtered.map((agent) => (
-							<AgentPortraitCardItem
-								key={agent.id}
-								workspaceId={workspaceId}
-								agent={agent as ActorResponse}
-								status={portraitStatuses.get(agent.id) ?? 'idle'}
-								latestSession={getLatestSession(agent.id, sessionsByAgent)}
-							/>
-						))}
+					<div className="mb-4 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+						<FilterTabs
+							tabs={tabs}
+							value={statusFilter}
+							onChange={setStatusFilter}
+							aria-label="Agent status filter"
+						/>
+						<Input
+							type="search"
+							value={query}
+							onChange={(e) => setQuery(e.target.value)}
+							placeholder="Search agents…"
+							aria-label="Filter agents"
+							className="w-full shrink-0 md:w-80"
+						/>
 					</div>
+
+					{filtered.length === 0 ? (
+						<EmptyState
+							title="No matches"
+							description="Try a different search term or clear the filters."
+						/>
+					) : (
+						<div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
+							{filtered.map((agent) => (
+								<AgentPortraitCardItem
+									key={agent.id}
+									workspaceId={workspaceId}
+									agent={agent as ActorResponse}
+									status={portraitStatuses.get(agent.id) ?? 'idle'}
+									latestSession={getLatestSession(agent.id, sessionsByAgent)}
+								/>
+							))}
+						</div>
+					)}
 				</>
 			)}
 			<CreatePicker
@@ -191,5 +200,17 @@ function AgentPortraitCardItem({
 			isRunPending={runMutation.isPending}
 			isPausePending={pauseMutation.isPending}
 		/>
+	)
+}
+
+function matchesAgentQuery(
+	agent: { name: string; description?: string | null },
+	query: string,
+): boolean {
+	if (!query) return true
+	const needle = query.toLowerCase()
+	return (
+		agent.name.toLowerCase().includes(needle) ||
+		(agent.description?.toLowerCase().includes(needle) ?? false)
 	)
 }

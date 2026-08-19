@@ -122,7 +122,7 @@ describe('BulkActionBar', () => {
 		renderBar()
 		const bar = screen.getByRole('region', { name: 'Bulk actions' })
 		expect(bar.className).toMatch(/overflow-x-auto/)
-		expect(bar.className).toMatch(/rounded-md/)
+		expect(bar.className).toMatch(/rounded-xl/)
 		expect(bar.className).toMatch(/bg-popover/)
 		expect(within(bar).getByText('selected').className).toMatch(/hidden/)
 		expect(within(bar).getByText('selected').className).toMatch(/sm:inline/)
@@ -230,6 +230,26 @@ describe('BulkActionBar', () => {
 		expect(onCopyTitle).toHaveBeenCalledTimes(1)
 		expect(onCopyTitleAsLink).toHaveBeenCalledTimes(1)
 		expect(onOpenLinks).toHaveBeenCalledTimes(1)
+	})
+
+	it('renders an archive button when onArchive is provided', () => {
+		renderBar({ onArchive: vi.fn() })
+		expect(screen.getByRole('button', { name: 'Archive selected' })).toBeInTheDocument()
+	})
+
+	it('does not render an archive button when onArchive is not provided', () => {
+		renderBar({ onArchive: undefined })
+		expect(screen.queryByRole('button', { name: 'Archive selected' })).toBeNull()
+	})
+
+	it('fires onArchive and emits a bulk_edit_commit archive event when Archive is clicked', () => {
+		const onArchive = vi.fn()
+		renderBar({ onArchive })
+		fireEvent.click(screen.getByRole('button', { name: 'Archive selected' }))
+		expect(onArchive).toHaveBeenCalledTimes(1)
+		expect(trackBulkEditCommit).toHaveBeenCalledWith(
+			expect.objectContaining({ action: 'archive', selected_count: 3 }),
+		)
 	})
 
 	it('uses singular labels when exactly one row is selected', () => {

@@ -3,11 +3,21 @@ import type {
 	ActorResponse,
 	AgentState,
 	DisplaySettingsBody,
+	ListLoopsResponse,
+	LoopSummary,
 	SafeMetadata,
 	TriggerResponse,
 } from '@maskin/shared'
 
-export type { ActorListItem, ActorResponse, AgentState, DisplaySettingsBody, TriggerResponse }
+export type {
+	ActorListItem,
+	ActorResponse,
+	AgentState,
+	DisplaySettingsBody,
+	ListLoopsResponse,
+	LoopSummary,
+	TriggerResponse,
+}
 import { getApiKey } from './auth'
 import { API_BASE } from './constants'
 
@@ -52,6 +62,12 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 	const apiKey = getApiKey()
 
 	const reqHeaders: Record<string, string> = {
+		// Marks this call as originating from the web UI so route-level
+		// analytics (e.g. knowledge_object_created / _read) can attribute
+		// `created_via` / `accessed_via` without inferring from actorType.
+		// Overridable via `headers` for the (currently zero) callers that
+		// need to spoof a different source.
+		'X-Client-Source': 'ui',
 		...headers,
 	}
 
@@ -345,6 +361,12 @@ export const api = {
 			}),
 	},
 
+	loops: {
+		list: (workspaceId: string) => request<ListLoopsResponse>('/loops', { workspaceId }),
+		activity: (id: string, workspaceId: string) =>
+			request<{ events: EventResponse[] }>(`/loops/${id}/activity`, { workspaceId }),
+	},
+
 	triggers: {
 		list: (workspaceId: string) => request<TriggerResponse[]>('/triggers', { workspaceId }),
 		get: (id: string, workspaceId: string) =>
@@ -530,6 +552,12 @@ export const api = {
 			}),
 		swap: (workspaceId: string) =>
 			request<{ success: boolean }>('/claude-oauth/swap', { method: 'POST', workspaceId }),
+		rename: (workspaceId: string, slot: ClaudeOAuthSlot, nickname: string) =>
+			request<{ success: boolean }>('/claude-oauth/nickname', {
+				method: 'PATCH',
+				body: { slot, nickname },
+				workspaceId,
+			}),
 	},
 
 	billing: {
@@ -545,57 +573,60 @@ export const api = {
 			request<{ ok: true }>('/billing/cancel', { method: 'POST', workspaceId }),
 	},
 
-	catalogPackages: {
+	marketplaceLoops: {
 		list: (params?: { type?: string; use_case?: string; q?: string }) => {
 			const qs = params
 				? `?${new URLSearchParams(
 						Object.entries(params).filter(([, v]) => v !== undefined) as [string, string][],
 					)}`
 				: ''
-			return request<CatalogPackagesListResponse>(`/catalog/packages${qs}`)
+			return request<MarketplaceLoopsListResponse>(`/marketplace/loops${qs}`)
 		},
-		get: (id: string) => request<CatalogPackageDetailResponse>(`/catalog/packages/${id}`),
+		get: (id: string) => request<MarketplaceLoopDetailResponse>(`/marketplace/loops/${id}`),
 	},
 
-	catalogItems: {
+	marketplaceItems: {
 		install: (itemId: string, workspaceId: string) =>
-			request<CatalogItemInstallResponse>(`/catalog/items/${encodeURIComponent(itemId)}/install`, {
-				method: 'POST',
-				body: { workspaceId },
-				workspaceId,
-			}),
+			request<MarketplaceItemInstallResponse>(
+				`/marketplace/items/${encodeURIComponent(itemId)}/install`,
+				{
+					method: 'POST',
+					body: { workspaceId },
+					workspaceId,
+				},
+			),
 		installed: (workspaceId: string) =>
-			request<CatalogItemsInstalledResponse>(
-				`/catalog/items/installed?workspaceId=${encodeURIComponent(workspaceId)}`,
+			request<MarketplaceItemsInstalledResponse>(
+				`/marketplace/items/installed?workspaceId=${encodeURIComponent(workspaceId)}`,
 				{ workspaceId },
 			),
 		uninstall: (itemId: string, workspaceId: string, keepProvisionedItems: boolean) =>
-			request<{ deleted: boolean }>(`/catalog/items/${encodeURIComponent(itemId)}/uninstall`, {
+			request<{ deleted: boolean }>(`/marketplace/items/${encodeURIComponent(itemId)}/uninstall`, {
 				method: 'DELETE',
 				body: { workspaceId, keepProvisionedItems },
 				workspaceId,
 			}),
 	},
 
-	installedPackages: {
+	installedLoops: {
 		list: (workspaceId: string) =>
-			request<InstalledPackagesListResponse>(
-				`/installed-packages?workspaceId=${encodeURIComponent(workspaceId)}`,
+			request<InstalledLoopsListResponse>(
+				`/installed-loops?workspaceId=${encodeURIComponent(workspaceId)}`,
 				{ workspaceId },
 			),
-		install: (workspaceId: string, packageId: string) =>
-			request<InstalledPackageInstallResponse>('/installed-packages', {
+		install: (workspaceId: string, loopId: string) =>
+			request<InstalledLoopInstallResponse>('/installed-loops', {
 				method: 'POST',
-				body: { packageId, workspaceId },
+				body: { loopId, workspaceId },
 				workspaceId,
 			}),
-		fork: (workspaceId: string, installedPackageId: string) =>
-			request<InstalledPackageForkResponse>(`/installed-packages/${installedPackageId}/fork`, {
+		fork: (workspaceId: string, installedLoopId: string) =>
+			request<InstalledLoopForkResponse>(`/installed-loops/${installedLoopId}/fork`, {
 				method: 'POST',
 				workspaceId,
 			}),
-		uninstall: (workspaceId: string, installedPackageId: string, keepProvisionedItems: boolean) =>
-			request<{ deleted: boolean }>(`/installed-packages/${installedPackageId}`, {
+		uninstall: (workspaceId: string, installedLoopId: string, keepProvisionedItems: boolean) =>
+			request<{ deleted: boolean }>(`/installed-loops/${installedLoopId}`, {
 				method: 'DELETE',
 				body: { keepProvisionedItems },
 				workspaceId,
@@ -750,6 +781,54 @@ export const api = {
 			}),
 	},
 
+	conversations: {
+		list: (workspaceId: string, params?: Record<string, string>) => {
+			const qs = params ? `?${new URLSearchParams(params)}` : ''
+			return request<ConversationListResponse>(`/conversations${qs}`, { workspaceId })
+		},
+		get: (id: string, workspaceId: string) =>
+			request<ConversationDetailResponse>(`/conversations/${id}`, { workspaceId }),
+		create: (workspaceId: string, data: CreateConversationInput) =>
+			request<ConversationDetailResponse>('/conversations', {
+				method: 'POST',
+				body: data,
+				workspaceId,
+			}),
+		update: (id: string, workspaceId: string, data: UpdateConversationInput) =>
+			request<ConversationDetailResponse>(`/conversations/${id}`, {
+				method: 'PATCH',
+				body: data,
+				workspaceId,
+			}),
+		addParticipants: (id: string, workspaceId: string, actorIds: string[]) =>
+			request<ConversationParticipantResponse[]>(`/conversations/${id}/participants`, {
+				method: 'POST',
+				body: { actor_ids: actorIds },
+				workspaceId,
+			}),
+		removeParticipant: (id: string, actorId: string, workspaceId: string) =>
+			request<void>(`/conversations/${id}/participants/${actorId}`, {
+				method: 'DELETE',
+				workspaceId,
+			}),
+		messages: (id: string, workspaceId: string, params?: Record<string, string>) => {
+			const qs = params ? `?${new URLSearchParams(params)}` : ''
+			return request<MessagesListResponse>(`/conversations/${id}/messages${qs}`, { workspaceId })
+		},
+		postMessage: (id: string, workspaceId: string, data: PostMessageInput) =>
+			request<MessageResponse>(`/conversations/${id}/messages`, {
+				method: 'POST',
+				body: data,
+				workspaceId,
+			}),
+		updateMe: (id: string, workspaceId: string, data: UpdateConversationParticipantStateInput) =>
+			request<ConversationParticipantStateResponse>(`/conversations/${id}/me`, {
+				method: 'PATCH',
+				body: data,
+				workspaceId,
+			}),
+	},
+
 	files: {
 		list: (
 			workspaceId: string,
@@ -788,6 +867,7 @@ export interface ClaudeOAuthSlotInfo {
 	subscription_type?: string
 	expires_at: number
 	fingerprint?: string
+	nickname?: string
 }
 
 export interface ClaudeOAuthExchangeResponse {
@@ -795,6 +875,7 @@ export interface ClaudeOAuthExchangeResponse {
 	slot?: ClaudeOAuthSlot
 	subscription_type?: string
 	expires_at: number
+	nickname?: string
 }
 
 export interface ClaudeOAuthStatusResponse {
@@ -820,6 +901,7 @@ export interface ClaudeOAuthImportInput {
 	subscriptionType?: string
 	scopes?: string[]
 	slot?: ClaudeOAuthSlot
+	nickname?: string
 }
 
 export type BillingPlan = 'trial' | 'pro' | 'team' | 'byollm'
@@ -894,6 +976,10 @@ export interface UnreadItem {
 	// Count of unread events on the entity that actually @-mention the viewer.
 	// Drives the "Mentioned" pill on the For You card when > 0.
 	mentioning_unread_count: number
+	// Highest attention score (1-5) among the entity's unread comments. null
+	// when no unread comment carries a score — sorts below scored comments in
+	// the Priority sort.
+	max_unread_attention: number | null
 	latest_event_id: number | null
 	latest_activity_at: string | null
 	object?: ObjectResponse
@@ -1260,6 +1346,126 @@ export interface UpdateFileInput {
 	annotations?: FileAnnotation[]
 }
 
+// Conversation entity fields are camelCase (Drizzle column names passed
+// through `serialize()`, which only stringifies Dates — it does not
+// snake_case). Only per-viewer computed fields (pinned, archived,
+// unread_count, snippet, last_read_message_id) are literal keys added by the
+// route handler, and those happen to already read as snake_case/plain words.
+// See apps/dev/src/lib/openapi-schemas.ts (conversation*ResponseSchema).
+export interface ConversationParticipantResponse {
+	actorId: string
+	actorName: string
+	actorType: 'human' | 'agent'
+	joinedAt: string | null
+	addedBy: string | null
+}
+
+export interface ConversationListItemResponse {
+	id: string
+	workspaceId: string
+	title: string
+	createdBy: string
+	lastMessageAt: string | null
+	createdAt: string | null
+	updatedAt: string | null
+	pinned: boolean
+	archived: boolean
+	unread_count: number
+	snippet: string | null
+	participants: ConversationParticipantResponse[]
+}
+
+export interface ConversationListResponse {
+	conversations: ConversationListItemResponse[]
+	has_more: boolean
+}
+
+export interface ConversationDetailResponse {
+	id: string
+	workspaceId: string
+	title: string
+	createdBy: string
+	lastMessageAt: string | null
+	createdAt: string | null
+	updatedAt: string | null
+	pinned: boolean
+	archived: boolean
+	last_read_message_id: number | null
+	participants: ConversationParticipantResponse[]
+}
+
+export interface ConversationParticipantStateResponse {
+	pinned: boolean
+	archived: boolean
+	last_read_message_id: number | null
+}
+
+export interface MessageAttachment {
+	file_id: string
+	name?: string
+	mime_type?: string
+	size_bytes?: number
+}
+
+export interface MessageContextObject {
+	id: string
+	title?: string
+	type?: string
+}
+
+export interface MessageContextNotification {
+	id: string
+	title?: string
+}
+
+export interface MessageMetadata {
+	attachments?: MessageAttachment[]
+	mentions?: string[]
+	context_objects?: MessageContextObject[]
+	context_notifications?: MessageContextNotification[]
+}
+
+export interface MessageResponse {
+	id: number
+	conversationId: string
+	actorId: string
+	actorName: string
+	actorType: 'human' | 'agent'
+	kind: 'message' | 'system'
+	content: string
+	metadata: MessageMetadata | null
+	sessionId: string | null
+	createdAt: string | null
+}
+
+export interface MessagesListResponse {
+	messages: MessageResponse[]
+	has_more: boolean
+}
+
+export interface CreateConversationInput {
+	title: string
+	participant_actor_ids: string[]
+	initial_message?: string
+	initial_message_metadata?: MessageMetadata
+}
+
+export interface UpdateConversationInput {
+	title: string
+}
+
+export interface UpdateConversationParticipantStateInput {
+	pinned?: boolean
+	archived?: boolean
+	last_read_message_id?: number
+}
+
+export interface PostMessageInput {
+	content: string
+	metadata?: MessageMetadata
+	session_id?: string
+}
+
 export interface SessionConfigInput {
 	/** Start the container with stdin attached so subsequent user turns can be delivered via the input route. */
 	interactive?: boolean
@@ -1428,66 +1634,67 @@ export interface ImportMappingInput {
 	csvOptions?: CsvOptions
 }
 
-export type CatalogItemType = 'actor' | 'trigger' | 'skill' | 'integration'
+export type MarketplaceItemType = 'actor' | 'trigger' | 'skill' | 'integration'
 
-export interface CatalogPackageSummary {
+export interface MarketplaceLoopSummary {
 	id: string
 	name: string
 	slug: string
 	description: string
 	version: string
 	use_case: string | null
-	item_types: CatalogItemType[]
+	item_types: MarketplaceItemType[]
 	created_at: string | null
 	updated_at: string | null
 }
 
-export interface CatalogPackageItem {
+export interface MarketplaceLoopItem {
 	id: string
-	package_id: string
-	item_type: CatalogItemType
+	loop_id: string
+	item_type: MarketplaceItemType
 	source_item_id: string
 	item_snapshot: Record<string, unknown>
 	created_at: string | null
 }
 
-export interface CatalogPackageCounts {
+export interface MarketplaceLoopCounts {
 	total: number
-	by_type: Record<CatalogItemType, number>
+	by_type: Record<MarketplaceItemType, number>
 	by_use_case: Record<string, number>
 }
 
-export interface CatalogPackagesListResponse {
-	packages: CatalogPackageSummary[]
-	counts: CatalogPackageCounts
+export interface MarketplaceLoopsListResponse {
+	loops: MarketplaceLoopSummary[]
+	counts: MarketplaceLoopCounts
 }
 
-export interface CatalogPackageDetailResponse {
-	package: CatalogPackageSummary
-	items: CatalogPackageItem[]
+export interface MarketplaceLoopDetailResponse {
+	loop: MarketplaceLoopSummary
+	items: MarketplaceLoopItem[]
 }
 
-export interface CatalogItemInstallResponse {
+export interface MarketplaceItemInstallResponse {
 	id: string
-	item_type: CatalogItemType
+	item_type: MarketplaceItemType
 	name: string
 }
 
-export interface CatalogItemInstalledEntry {
-	catalog_item_id: string
+export interface MarketplaceItemInstalledEntry {
+	marketplace_item_id: string
 	entity_id: string
 	entity_type: 'actor' | 'trigger' | 'skill' | 'integration'
 }
 
-export interface CatalogItemsInstalledResponse {
-	items: CatalogItemInstalledEntry[]
+export interface MarketplaceItemsInstalledResponse {
+	items: MarketplaceItemInstalledEntry[]
 }
 
-export interface InstalledPackageRow {
+export interface InstalledLoopRow {
 	id: string
 	workspaceId: string
-	sourcePackageId: string
-	packageName: string
+	sourceLoopId: string
+	objectId: string | null
+	loopName: string
 	installedVersion: string
 	isLocked: boolean
 	forkedAt: string | null
@@ -1497,14 +1704,15 @@ export interface InstalledPackageRow {
 	hasUpdate: boolean
 }
 
-export interface InstalledPackagesListResponse {
-	installs: InstalledPackageRow[]
+export interface InstalledLoopsListResponse {
+	installs: InstalledLoopRow[]
 }
 
-interface InstalledPackageInstallResponse {
+interface InstalledLoopInstallResponse {
 	id: string
 	workspaceId: string
-	sourcePackageId: string
+	sourceLoopId: string
+	objectId: string | null
 	installedVersion: string
 	isLocked: boolean
 	forkedAt: string | null
@@ -1513,10 +1721,11 @@ interface InstalledPackageInstallResponse {
 	provisioned: { actors: number; triggers: number; skills: number; integrations: number }
 }
 
-interface InstalledPackageForkResponse {
+interface InstalledLoopForkResponse {
 	id: string
 	workspaceId: string
-	sourcePackageId: string
+	sourceLoopId: string
+	objectId: string | null
 	installedVersion: string
 	isLocked: boolean
 	forkedAt: string | null

@@ -19,9 +19,10 @@ import {
 	sessions,
 	workspaces,
 } from '@maskin/db/schema'
-import { githubOwnerLoginToEnvKey } from '@maskin/shared'
+import { type SessionResult, githubOwnerLoginToEnvKey } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import {
+	type SQL,
 	and,
 	asc,
 	count as countFn,
@@ -36,11 +37,8 @@ import {
 	or,
 	sql,
 } from 'drizzle-orm'
-import {
-	claimLoopActiveDay,
-	trackLoopActiveDay,
-	utcDayString,
-} from '../lib/analytics/catalog-events'
+import { trackAgentSessionStartedWithPrompt } from '../lib/analytics/agent-session-events'
+import { claimLoopActiveDay, trackLoopActiveDay, utcDayString } from '../lib/analytics/loop-events'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import {
 	detectChiefOfStaffDomainOutput,
@@ -150,7 +148,14 @@ export interface CreateSessionParams {
 	 *     attached so subsequent user turns can be delivered via
 	 *     `ContainerManager.write()`. The value is also persisted to
 	 *     `sessions.interactive` so downstream routes (e.g. the input route)
-	 *     can gate on it without re-parsing config.
+	 *     can gate on it without re-parsing config. When interactive, the
+	 *     `actionPrompt` string is sent as the first stdin turn once the
+	 *     container's stdin is attached (see `launchContainer`), rather than
+	 *     as the `ACTION_PROMPT` env var used for non-interactive sessions.
+	 *   - `conversation?: { conversation_id: string }` — when present,
+	 *     `conversation_id` is also persisted to `sessions.conversationId` so
+	 *     `findActiveConversationSession` can look sessions up without a
+	 *     JSONB path scan.
 	 *   - everything else is passed through as-is to the container env/runtime.
 	 */
 	config?: Record<string, unknown>
@@ -383,6 +388,8 @@ export class SessionManager extends EventEmitter {
 	): Promise<typeof sessions.$inferSelect> {
 		const config = params.config ?? {}
 		const interactive = config.interactive === true
+		const conversationId =
+			(config.conversation as { conversation_id?: string } | undefined)?.conversation_id ?? null
 
 		// Pre-flight billing cap. Only enforced when no BYO credentials are
 		// present — BYO routes (OAuth, custom_llm, api_key) take precedence over
@@ -413,6 +420,7 @@ export class SessionManager extends EventEmitter {
 				actionPrompt: params.actionPrompt,
 				config,
 				interactive,
+				conversationId,
 				createdBy: params.createdBy,
 				sourceSessionId: params.sourceSessionId,
 			})
@@ -442,6 +450,35 @@ export class SessionManager extends EventEmitter {
 		return session
 	}
 
+	/**
+	 * Find a currently-usable interactive session for a (conversation, agent)
+	 * pair — i.e. one that can accept a writeInput() call right now. Fast-path
+	 * optimization for the conversation responder; the DB's
+	 * sessions_conversation_actor_active_uniq partial unique index is the
+	 * authoritative guard against double-spawn, this just avoids an
+	 * unnecessary createSession attempt in the common case. Only matches
+	 * `running` (not `pending`/`starting`) since writeInput needs a live
+	 * stdin attachment, which only exists once launchContainer has completed.
+	 */
+	async findActiveConversationSession(
+		conversationId: string,
+		actorId: string,
+	): Promise<typeof sessions.$inferSelect | null> {
+		const [row] = await this.db
+			.select()
+			.from(sessions)
+			.where(
+				and(
+					eq(sessions.conversationId, conversationId),
+					eq(sessions.actorId, actorId),
+					eq(sessions.interactive, true),
+					eq(sessions.status, 'running'),
+				),
+			)
+			.limit(1)
+		return row ?? null
+	}
+
 	async startSession(sessionId: string): Promise<void> {
 		const [session] = await this.db
 			.select()
@@ -453,8 +490,18 @@ export class SessionManager extends EventEmitter {
 			throw new Error(`Session ${sessionId} not found or not in pending/queued state`)
 		}
 
-		// Check workspace concurrency limit — queue instead of rejecting
-		const hasCapacity = await this.hasCapacity(session.workspaceId)
+		// Chat sessions (conversationId set) are exempt from the workspace concurrency
+		// limit — a live human is waiting on the other end, which is more urgent than
+		// queuing behind background/trigger sessions. They also don't count against
+		// other sessions' capacity — see the isNull(conversationId) filter in hasCapacity().
+		// They still have their own, separate aggregate cap (hasChatCapacity) so a
+		// workspace with many conversations can't spawn unbounded containers.
+		const isChatSession = Boolean(session.conversationId)
+
+		// Check the applicable concurrency limit — queue instead of rejecting
+		const hasCapacity = isChatSession
+			? await this.hasChatCapacity(session.workspaceId)
+			: await this.hasCapacity(session.workspaceId)
 		if (!hasCapacity) {
 			await this.db
 				.update(sessions)
@@ -521,6 +568,7 @@ export class SessionManager extends EventEmitter {
 				session.actorId,
 				session.workspaceId,
 				tempDir,
+				{ sessionId },
 			)
 			await this.reportSkillPullFailures(sessionId, pullResult)
 			await this.writeWorkspaceBriefing(session.workspaceId, tempDir, sessionId)
@@ -597,6 +645,20 @@ export class SessionManager extends EventEmitter {
 				})
 				.where(eq(sessions.id, sessionId))
 
+			// Notify the frontend the session is actually running now — without
+			// this, useActiveSessionsForConversation (and other "agent is
+			// working" surfaces) never refetch past their last 'pending'-status
+			// snapshot from session_created, so the chat typing indicator never
+			// appears even though the agent is live.
+			await this.db.insert(events).values({
+				workspaceId: session.workspaceId,
+				actorId: session.actorId,
+				action: 'session_started',
+				entityType: 'session',
+				entityId: sessionId,
+				data: {},
+			})
+
 			logger.info(`Session started: ${sessionId}`, { containerId })
 
 			const sessionStartLatencyMs = session.createdAt
@@ -669,11 +731,19 @@ export class SessionManager extends EventEmitter {
 	 * unknown fields), but IS tacked onto the JSON envelope persisted in
 	 * `session_logs` so reload-from-history can render attached file cards on
 	 * the user turn without a second POST to `/files`.
+	 *
+	 * `conversationMessageId`, if provided, is the same kind of Maskin-only
+	 * side-channel tag (never sent to the CLI) — the `messages.id` of the chat
+	 * message that triggered this turn. It lets the frontend segment a single
+	 * long-running interactive session's accumulated logs back into per-message
+	 * chunks, so the chat UI can show a separate activity dropdown under each
+	 * message instead of one dropdown that mixes every turn of the conversation.
 	 */
 	async writeInput(
 		sessionId: string,
 		payload: StreamJsonUserMessage,
 		maskinAttachments?: unknown[],
+		conversationMessageId?: number,
 	): Promise<void> {
 		const [session] = await this.db
 			.select()
@@ -701,10 +771,13 @@ export class SessionManager extends EventEmitter {
 		// stdin as a stdout-stream log row so historical transcripts and the
 		// live SSE feed can render the user's turn alongside the agent's
 		// reply.
-		const persistedEnvelope =
-			maskinAttachments && maskinAttachments.length > 0
-				? { ...payload, maskin_attachments: maskinAttachments }
-				: payload
+		const persistedEnvelope = {
+			...payload,
+			...(maskinAttachments && maskinAttachments.length > 0
+				? { maskin_attachments: maskinAttachments }
+				: {}),
+			...(conversationMessageId !== undefined ? { maskin_message_id: conversationMessageId } : {}),
+		}
 		const [log] = await this.db
 			.insert(sessionLogs)
 			.values({
@@ -789,7 +862,31 @@ export class SessionManager extends EventEmitter {
 			// gone (e.g. after a redeploy), so it can never call back to report
 			// completion. Treat this explicit, successful stop as authoritative
 			// instead of waiting on a callback that might never arrive.
-			await this.markRemoteSessionComplete(sessionId, null)
+			//
+			// This write is provisional, not final: the agent-server's own
+			// monitorSession loop is usually still alive (a stop request doesn't
+			// kill that process) and will independently POST a genuine
+			// /sessions/:id/complete report a few seconds later with a real exit
+			// code (see FORCED_STOP_EXIT_CODE in apps/agent-server/src/index.ts).
+			// stoppedByUser marks this row so that later report is allowed to
+			// overwrite it instead of silently losing the race — see
+			// markRemoteSessionComplete's CAS condition below.
+			//
+			// A `false` return means the provisional write couldn't even be
+			// confirmed (DB unreachable) — this method's own caller already
+			// treats the sandbox-level stop as successful (the remote kill
+			// already happened), so there's nothing to retry or rethrow here;
+			// just make the gap visible in logs instead of swallowing it
+			// silently, since the genuine /complete report may also race a
+			// down DB and there'd otherwise be no trace of either write.
+			const confirmed = await this.markRemoteSessionComplete(sessionId, null, {
+				stoppedByUser: true,
+			})
+			if (!confirmed) {
+				logger.warn('Provisional stop write could not be confirmed (DB unreachable)', {
+					sessionId,
+				})
+			}
 			return
 		}
 
@@ -906,10 +1003,18 @@ export class SessionManager extends EventEmitter {
 		}
 	}
 
-	private async markSessionFailedAfterContainerLoss(
-		sessionId: string,
-		workspaceId: string,
-	): Promise<void> {
+	/**
+	 * Self-heal a session row that the DB still shows as active but whose
+	 * container/stdin is actually gone — e.g. a local Docker container that
+	 * exited or was reaped while this process wasn't watching it (a backend
+	 * restart drops the in-memory `watchContainerExit` poll and
+	 * `ContainerManager.stdinStreams` entry, leaving the row orphaned at
+	 * `running`). Also used directly by callers (e.g. the conversation
+	 * responder) that already know from a failed `writeInput` that a session
+	 * is dead, so the row stops blocking `sessions_conversation_actor_active_uniq`
+	 * for a fresh session.
+	 */
+	async markSessionFailedAfterContainerLoss(sessionId: string, workspaceId: string): Promise<void> {
 		const [existing] = await this.db
 			.select({ startedAt: sessions.startedAt, createdAt: sessions.createdAt })
 			.from(sessions)
@@ -1001,7 +1106,7 @@ export class SessionManager extends EventEmitter {
 				session.actorId,
 				session.workspaceId,
 				tempDir,
-				{ overwrite: true },
+				{ overwrite: true, sessionId },
 			)
 			await this.reportSkillPullFailures(sessionId, pullResult)
 			await this.writeWorkspaceBriefing(session.workspaceId, tempDir, sessionId)
@@ -1023,6 +1128,17 @@ export class SessionManager extends EventEmitter {
 					updatedAt: new Date(),
 				})
 				.where(eq(sessions.id, sessionId))
+
+			// Same rationale as the fresh-start path above — without this the
+			// frontend never learns the resumed session is running again.
+			await this.db.insert(events).values({
+				workspaceId: session.workspaceId,
+				actorId: session.actorId,
+				action: 'session_resumed',
+				entityType: 'session',
+				entityId: sessionId,
+				data: {},
+			})
 
 			await this.insertSystemLog(sessionId, 'Session resumed from snapshot')
 
@@ -1083,6 +1199,9 @@ export class SessionManager extends EventEmitter {
 				and(
 					eq(sessions.workspaceId, workspaceId),
 					inArray(sessions.status, ['starting', 'running']),
+					// Chat sessions don't count against the workspace's session budget —
+					// see the isChatSession bypass in startSession().
+					isNull(sessions.conversationId),
 				),
 			)
 
@@ -1090,9 +1209,42 @@ export class SessionManager extends EventEmitter {
 	}
 
 	/**
+	 * Separate aggregate cap for chat sessions (see the isChatSession bypass in
+	 * startSession()) — they don't compete with max_concurrent_sessions, but
+	 * still need a ceiling so a workspace with many active conversations can't
+	 * spawn unbounded concurrent containers.
+	 */
+	private async hasChatCapacity(workspaceId: string): Promise<boolean> {
+		const [workspace] = await this.db
+			.select()
+			.from(workspaces)
+			.where(eq(workspaces.id, workspaceId))
+			.limit(1)
+
+		const settings = (workspace?.settings as WorkspaceSettings) ?? {}
+		const maxConcurrentChat = settings.max_concurrent_chat_sessions ?? 20
+
+		const [result] = await this.db
+			.select({ count: countFn() })
+			.from(sessions)
+			.where(
+				and(
+					eq(sessions.workspaceId, workspaceId),
+					inArray(sessions.status, ['starting', 'running']),
+					isNotNull(sessions.conversationId),
+				),
+			)
+
+		return !result || result.count < maxConcurrentChat
+	}
+
+	/**
 	 * Drain the queue: start queued sessions for a workspace until capacity is full or queue is empty.
 	 * Called after a session completes, fails, or times out, and from the watchdog as a safety net.
-	 * Uses a per-workspace lock to prevent concurrent drain calls from racing.
+	 * Uses a per-workspace lock to prevent concurrent drain calls from racing. Chat and non-chat
+	 * sessions are drained as two independent scopes, each gated by its own capacity check — a
+	 * combined loop would let an over-budget chat queue block behind a full non-chat budget (or
+	 * vice versa) since "oldest queued" wouldn't necessarily match whichever budget just freed up.
 	 */
 	private async drainQueue(workspaceId: string): Promise<void> {
 		// Prevent concurrent drains for the same workspace
@@ -1100,37 +1252,56 @@ export class SessionManager extends EventEmitter {
 		this.drainingWorkspaces.add(workspaceId)
 
 		try {
-			while (await this.hasCapacity(workspaceId)) {
-				// Atomically claim the oldest queued session by transitioning its status.
-				// If two callers race, only one gets a non-empty result from the UPDATE.
-				const [nextQueued] = await this.db
-					.select()
-					.from(sessions)
-					.where(and(eq(sessions.workspaceId, workspaceId), eq(sessions.status, 'queued')))
-					.orderBy(sessions.createdAt)
-					.limit(1)
-
-				if (!nextQueued) break
-
-				const [claimed] = await this.db
-					.update(sessions)
-					.set({ status: 'pending', updatedAt: new Date() })
-					.where(and(eq(sessions.id, nextQueued.id), eq(sessions.status, 'queued')))
-					.returning()
-
-				if (!claimed) break
-
-				logger.info(`Draining queue: starting session ${claimed.id}`, { workspaceId })
-				// Await start so capacity check on next iteration reflects the new running session
-				await this.startSession(claimed.id).catch((err) =>
-					logger.error('Failed to start queued session', {
-						sessionId: claimed.id,
-						error: String(err),
-					}),
-				)
-			}
+			await this.drainQueueScoped(
+				workspaceId,
+				() => this.hasCapacity(workspaceId),
+				isNull(sessions.conversationId),
+			)
+			await this.drainQueueScoped(
+				workspaceId,
+				() => this.hasChatCapacity(workspaceId),
+				isNotNull(sessions.conversationId),
+			)
 		} finally {
 			this.drainingWorkspaces.delete(workspaceId)
+		}
+	}
+
+	private async drainQueueScoped(
+		workspaceId: string,
+		hasCapacity: () => Promise<boolean>,
+		scopeFilter: SQL,
+	): Promise<void> {
+		while (await hasCapacity()) {
+			// Atomically claim the oldest queued session in this scope by transitioning
+			// its status. If two callers race, only one gets a non-empty UPDATE result.
+			const [nextQueued] = await this.db
+				.select()
+				.from(sessions)
+				.where(
+					and(eq(sessions.workspaceId, workspaceId), eq(sessions.status, 'queued'), scopeFilter),
+				)
+				.orderBy(sessions.createdAt)
+				.limit(1)
+
+			if (!nextQueued) break
+
+			const [claimed] = await this.db
+				.update(sessions)
+				.set({ status: 'pending', updatedAt: new Date() })
+				.where(and(eq(sessions.id, nextQueued.id), eq(sessions.status, 'queued')))
+				.returning()
+
+			if (!claimed) break
+
+			logger.info(`Draining queue: starting session ${claimed.id}`, { workspaceId })
+			// Await start so capacity check on next iteration reflects the new running session
+			await this.startSession(claimed.id).catch((err) =>
+				logger.error('Failed to start queued session', {
+					sessionId: claimed.id,
+					error: String(err),
+				}),
+			)
 		}
 	}
 
@@ -1163,13 +1334,41 @@ export class SessionManager extends EventEmitter {
 		const llmConfig = (agent.llmConfig as Record<string, unknown>) ?? {}
 		const sessionConfig = session.config as Record<string, unknown>
 
+		// A conversation-triggered session's own system prompt is the agent's
+		// full persona/workflow doc (often long and domain-specific, e.g. an
+		// autonomous bet-shaping or triage workflow) — it says nothing about
+		// being in a live chat. Without this preamble, that framing only lives
+		// in the first user turn (see conversation-responder.ts) where it has
+		// to compete with everything below it; agents observably fall back to
+		// their usual autonomous behavior (reading data, taking actions) and
+		// never call post_conversation_message, so the human sees no reply at
+		// all. Prepending it to SYSTEM_PROMPT instead makes it agent-agnostic
+		// and load-bearing regardless of how the agent's own prompt is written.
+		const conversationPreamble = sessionConfig.conversation
+			? 'You are in a live, interactive chat conversation — a human just messaged you directly and is on the other end waiting for a reply, separate from any of your usual autonomous workflows described below. The ONLY way your reply becomes visible to them is by calling the post_conversation_message tool — reading data or taking other actions is invisible to them by itself. Staying silent is sometimes the right call, but only when a reply genuinely adds nothing; do not default to silence just because it is available.\n\n'
+			: ''
+		const resolvedSystemPrompt = `${conversationPreamble}${agent.systemPrompt ?? 'You are a helpful AI agent.'}`
+
 		const envVars: Record<string, string> = {
 			SESSION_ID: session.id,
 			AGENT_RUNTIME: (sessionConfig.runtime as string) ?? 'claude-code',
-			SYSTEM_PROMPT: agent.systemPrompt ?? 'You are a helpful AI agent.',
+			SYSTEM_PROMPT: resolvedSystemPrompt,
 			MASKIN_API_URL: process.env.MASKIN_BACKEND_URL ?? 'http://host.docker.internal:3000',
 			MASKIN_WORKSPACE_ID: session.workspaceId,
 		}
+
+		// Fire-and-forget prompt-size emit — the parent bet's second ship metric
+		// (per-agent preamble token reduction) needs per-launch systemPrompt size
+		// samples in PostHog. Runs on every launch (start + resume) since both
+		// build a container from the current systemPrompt; session_id keeps the
+		// samples dedup-able downstream.
+		void trackAgentSessionStartedWithPrompt({
+			workspaceId: session.workspaceId,
+			sessionId: session.id,
+			agentId: agent.id,
+			agentName: agent.name,
+			systemPrompt: resolvedSystemPrompt,
+		})
 
 		// Interactive sessions have no opening ACTION_PROMPT — the first user turn
 		// arrives via POST /api/sessions/:id/input over the attached stdin stream.
@@ -1787,6 +1986,35 @@ export class SessionManager extends EventEmitter {
 
 		if (session.interactive) {
 			await this.containers.attachStdin(session.id, containerId)
+			if (session.actionPrompt.trim().length > 0) {
+				// First turn on a freshly-attached interactive stdin. Generalizes
+				// actionPrompt beyond the non-interactive ACTION_PROMPT env var: an
+				// interactive session creator can seed the CLI's first turn this
+				// way — the conversation-responder uses it to inject full
+				// conversation history, since interactive sessions get no
+				// ACTION_PROMPT env var at all.
+				const seedTurnMessageId = (
+					session.config as { conversation?: { message_id?: number } } | null
+				)?.conversation?.message_id
+				await this.writeInput(
+					session.id,
+					{
+						type: 'user',
+						message: { role: 'user', content: session.actionPrompt },
+					},
+					undefined,
+					seedTurnMessageId,
+				).catch((err) => {
+					// Don't fail session startup over the seed turn — the session is
+					// still usable via a later /input call, just without its opening
+					// context. Surface loudly since a silently context-less chat
+					// agent is a confusing failure mode for callers relying on this.
+					logger.error('Failed to deliver initial interactive turn', {
+						sessionId: session.id,
+						error: err instanceof Error ? err.message : String(err),
+					})
+				})
+			}
 		}
 
 		return containerId
@@ -2348,8 +2576,8 @@ export class SessionManager extends EventEmitter {
 			)
 		}
 
-		// Ship-metric emit. If this session belongs to a managed-catalog actor
-		// (carries `metadata.installed_package_id`), claim the per-(workspace,
+		// Ship-metric emit. If this session belongs to a managed-marketplace actor
+		// (carries `metadata.installed_loop_id`), claim the per-(workspace,
 		// install, UTC day) idempotency slot and emit `loop_active_day` to
 		// PostHog when the claim is won. Both the lookup and the emit are
 		// best-effort — analytics failures must not affect the completion
@@ -2446,8 +2674,8 @@ export class SessionManager extends EventEmitter {
 	}
 
 	/**
-	 * If the completing session's actor is part of a managed-catalog install
-	 * (carries `metadata.installed_package_id`), claim today's idempotency
+	 * If the completing session's actor is part of a managed-marketplace install
+	 * (carries `metadata.installed_loop_id`), claim today's idempotency
 	 * slot and emit `loop_active_day`. Returns silently when the actor isn't
 	 * a managed install or when today has already been claimed for that
 	 * install — both are normal no-ops.
@@ -2460,11 +2688,11 @@ export class SessionManager extends EventEmitter {
 			.limit(1)
 
 		const meta = (actor?.metadata as Record<string, unknown> | null) ?? null
-		const installedPackageId = meta?.installed_package_id
-		if (typeof installedPackageId !== 'string' || installedPackageId.length === 0) return
+		const installedLoopId = meta?.installed_loop_id
+		if (typeof installedLoopId !== 'string' || installedLoopId.length === 0) return
 
 		const utcDay = utcDayString()
-		const claim = await claimLoopActiveDay(this.db, installedPackageId, utcDay)
+		const claim = await claimLoopActiveDay(this.db, installedLoopId, utcDay)
 		if (!claim) return
 
 		// Guard against a misaligned actor metadata (workspace_id mismatch is
@@ -2476,20 +2704,20 @@ export class SessionManager extends EventEmitter {
 			logger.warn('loop_active_day workspace mismatch', {
 				actorWorkspace: workspaceId,
 				installWorkspace: claim.workspaceId,
-				installedPackageId,
+				installedLoopId,
 			})
 		}
 
 		await trackLoopActiveDay({
-			installedPackageId: claim.installedPackageId,
-			packageId: claim.packageId,
-			packageSlug: claim.packageSlug,
+			installedLoopId: claim.installedLoopId,
+			loopId: claim.loopId,
+			loopSlug: claim.loopSlug,
 			workspaceId: claim.workspaceId,
 			utcDay,
 		})
 
 		logger.info('loop_active_day emitted', {
-			installedPackageId: claim.installedPackageId,
+			installedLoopId: claim.installedLoopId,
 			workspaceId: claim.workspaceId,
 			utcDay,
 		})
@@ -3223,7 +3451,53 @@ export class SessionManager extends EventEmitter {
 	private static readonly CAS_UPDATE_RETRIES = 3
 	private static readonly CAS_UPDATE_RETRY_DELAY_MS = 150
 
-	async markRemoteSessionComplete(sessionId: string, exitCode: number | null): Promise<void> {
+	/**
+	 * True if a terminal-or-transitional row is still eligible to be
+	 * overwritten by an incoming completion signal.
+	 *
+	 * Normally a terminal row is final — but `stopSession()` writes a
+	 * *provisional* terminal row (marked `result.stopped_by_user`) before the
+	 * agent-server's own async monitor has had a chance to report the real
+	 * exit code. Without this escape hatch, that later genuine report always
+	 * loses the CAS (0 rows match) and is silently dropped — the exact bug
+	 * this method exists to fix (see docs/runbooks/agent-session-failures-2026-08-11.md,
+	 * Issue 3). A genuine report (`stoppedByUser === false`) is allowed to
+	 * overwrite such a row; a stop request is never allowed to clobber an
+	 * already-terminal row (genuine or provisional).
+	 */
+	private static canOverwriteTerminalRow(
+		existing: Pick<typeof sessions.$inferSelect, 'status' | 'result'>,
+		stoppedByUser: boolean,
+	): boolean {
+		if (
+			!(SessionManager.TERMINAL_OR_TRANSITIONAL_STATUSES as readonly string[]).includes(
+				existing.status,
+			)
+		) {
+			return true
+		}
+		if (stoppedByUser) return false
+		return existing.result?.stopped_by_user === true
+	}
+
+	/**
+	 * Returns `false` only when the outcome could not be confirmed at all —
+	 * the CAS UPDATE failed after retries AND the fallback read-only lookup
+	 * also failed, so we have no idea what state the row is in. Every other
+	 * path (row updated, session not found, already resolved by a concurrent
+	 * call) is a legitimate terminal outcome and returns `true`, even though
+	 * no write happened in the "already resolved" cases — retrying those
+	 * wouldn't change anything. Callers that can meaningfully retry (e.g. the
+	 * `/complete` HTTP route, which can return a non-2xx to trigger the
+	 * agent-server's own retry loop) should surface a `false` return as a
+	 * failure instead of reporting success.
+	 */
+	async markRemoteSessionComplete(
+		sessionId: string,
+		exitCode: number | null,
+		opts: { stoppedByUser?: boolean } = {},
+	): Promise<boolean> {
+		const stoppedByUser = opts.stoppedByUser ?? false
 		const status = exitCode === 0 ? 'completed' : 'failed'
 
 		// Extract token / cost usage from the remote session's stdout tail.
@@ -3244,6 +3518,10 @@ export class SessionManager extends EventEmitter {
 			})
 		}
 
+		const result: SessionResult = stoppedByUser
+			? { exit_code: exitCode, stopped_by_user: true }
+			: { exit_code: exitCode }
+
 		// A thrown DB error here (distinct from a clean 0-row CAS miss) must not
 		// permanently strand the session: giving up immediately would skip the
 		// audit event, the terminal system log (which SSE /logs/stream clients
@@ -3260,7 +3538,7 @@ export class SessionManager extends EventEmitter {
 					.update(sessions)
 					.set({
 						status,
-						result: { exit_code: exitCode },
+						result,
 						completedAt: new Date(),
 						updatedAt: new Date(),
 						currentActivity: null,
@@ -3278,7 +3556,17 @@ export class SessionManager extends EventEmitter {
 					.where(
 						and(
 							eq(sessions.id, sessionId),
-							notInArray(sessions.status, [...SessionManager.TERMINAL_OR_TRANSITIONAL_STATUSES]),
+							stoppedByUser
+								? notInArray(sessions.status, [...SessionManager.TERMINAL_OR_TRANSITIONAL_STATUSES])
+								: or(
+										notInArray(sessions.status, [
+											...SessionManager.TERMINAL_OR_TRANSITIONAL_STATUSES,
+										]),
+										// Allow a genuine completion report to overwrite a row
+										// still carrying stopSession()'s provisional marker — see
+										// canOverwriteTerminalRow's comment above.
+										sql`(${sessions.result} ->> 'stopped_by_user') = 'true'`,
+									),
 						),
 					)
 					.returning()
@@ -3321,18 +3609,36 @@ export class SessionManager extends EventEmitter {
 					sessionId,
 					error: String(err),
 				})
-				return
+				// Unlike the no-op branches below, this means we genuinely don't know
+				// the row's state — the DB is unreachable, not just "already
+				// resolved." A caller that can retry should treat this as a failure.
+				return false
 			}
-			if (!fallback) return
+			if (!fallback) {
+				logger.warn('Completion signal dropped — session not found (fallback lookup)', {
+					sessionId,
+					droppedExitCode: exitCode,
+					droppedStoppedByUser: stoppedByUser,
+				})
+				return true
+			}
 			// Another call already resolved this session while our retries were
 			// failing (its own report landed, or a concurrent call won the CAS) —
-			// no-op to avoid a duplicate terminal event.
-			if (
-				(SessionManager.TERMINAL_OR_TRANSITIONAL_STATUSES as readonly string[]).includes(
-					fallback.status,
+			// no-op to avoid a duplicate terminal event, unless this is a genuine
+			// report allowed to overwrite stopSession()'s provisional row (see
+			// canOverwriteTerminalRow's comment above).
+			if (!SessionManager.canOverwriteTerminalRow(fallback, stoppedByUser)) {
+				logger.warn(
+					'Completion signal dropped — session already terminal (fallback lookup after CAS error)',
+					{
+						sessionId,
+						droppedExitCode: exitCode,
+						droppedStoppedByUser: stoppedByUser,
+						currentStatus: fallback.status,
+						currentResult: fallback.result,
+					},
 				)
-			) {
-				return
+				return true
 			}
 			// Best-effort: try once more to persist the status directly (not
 			// CAS-guarded — the read above just confirmed no other call has
@@ -3344,7 +3650,7 @@ export class SessionManager extends EventEmitter {
 					.update(sessions)
 					.set({
 						status,
-						result: { exit_code: exitCode },
+						result,
 						completedAt: new Date(),
 						updatedAt: new Date(),
 						currentActivity: null,
@@ -3370,8 +3676,36 @@ export class SessionManager extends EventEmitter {
 		}
 
 		// No row matched: either the session doesn't exist, or it was already
-		// terminal/transitional (this call lost the race, or is a stale retry).
-		if (!updated) return
+		// terminal/transitional (this call lost the race, or is a stale retry,
+		// or a genuine report arrived after a provisional stop row that this
+		// call wasn't itself eligible to overwrite). Previously this was a
+		// silent no-op — surfacing it here is what makes a dropped exit code
+		// (see docs/runbooks/agent-session-failures-2026-08-11.md, Issue 3)
+		// diagnosable from app logs alone instead of requiring host log
+		// spelunking.
+		if (!updated) {
+			let existing: typeof sessions.$inferSelect | undefined
+			try {
+				;[existing] = await this.db
+					.select()
+					.from(sessions)
+					.where(eq(sessions.id, sessionId))
+					.limit(1)
+			} catch (err) {
+				logger.warn('Failed to look up session while logging a dropped completion signal', {
+					sessionId,
+					error: String(err),
+				})
+			}
+			logger.warn('Completion signal dropped — session already terminal or not found', {
+				sessionId,
+				droppedExitCode: exitCode,
+				droppedStoppedByUser: stoppedByUser,
+				currentStatus: existing?.status ?? null,
+				currentResult: existing?.result ?? null,
+			})
+			return true
+		}
 
 		try {
 			if (!(await this.hasOtherActiveSessions(updated.actorId, sessionId))) {
@@ -3395,7 +3729,7 @@ export class SessionManager extends EventEmitter {
 				action: `session_${status}`,
 				entityType: 'session',
 				entityId: sessionId,
-				data: { exit_code: exitCode },
+				data: { exit_code: exitCode, stopped_by_user: stoppedByUser },
 			})
 		} catch (err) {
 			logger.error('Failed to insert remote session completion event', {
@@ -3410,20 +3744,21 @@ export class SessionManager extends EventEmitter {
 		}
 
 		// Terminal system log is required for SSE /logs/stream clients to close.
-		await this.insertSystemLog(sessionId, `Session ${status} with exit code ${exitCode}`).catch(
-			(err) => {
-				logger.error('Failed to write terminal system log for remote session', {
-					sessionId,
-					error: String(err),
-				})
-				this.emit('log', {
-					sessionId,
-					logId: -Date.now(),
-					stream: 'system',
-					data: `Session ${status} with exit code ${exitCode}`,
-				})
-			},
-		)
+		const terminalLogMessage = stoppedByUser
+			? `Session ${status} — explicitly stopped, exit code not yet known`
+			: `Session ${status} with exit code ${exitCode}`
+		await this.insertSystemLog(sessionId, terminalLogMessage).catch((err) => {
+			logger.error('Failed to write terminal system log for remote session', {
+				sessionId,
+				error: String(err),
+			})
+			this.emit('log', {
+				sessionId,
+				logId: -Date.now(),
+				stream: 'system',
+				data: terminalLogMessage,
+			})
+		})
 
 		await this.clearActiveSession(sessionId)
 		sessionGithubLogClassifier.unregisterSession(sessionId)
@@ -3432,7 +3767,8 @@ export class SessionManager extends EventEmitter {
 		)
 		this.cosThinnessContext.delete(sessionId)
 
-		logger.info(`Remote session ${status}: ${sessionId}`, { exitCode })
+		logger.info(`Remote session ${status}: ${sessionId}`, { exitCode, stoppedByUser })
+		return true
 	}
 
 	/** Clear activeSessionId on any object linked to this session. */

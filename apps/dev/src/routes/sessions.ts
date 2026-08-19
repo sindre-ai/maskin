@@ -12,7 +12,7 @@ import {
 } from '@maskin/shared'
 import { and, asc, desc, eq, gt, lt, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
-import { createApiError, formatZodError } from '../lib/errors'
+import { createApiError, validationFailureHook } from '../lib/errors'
 import { logger } from '../lib/logger'
 import {
 	errorSchema,
@@ -32,21 +32,7 @@ type Env = {
 	}
 }
 
-const app = new OpenAPIHono<Env>({
-	defaultHook: (result, c) => {
-		if (!result.success) {
-			return c.json(
-				createApiError(
-					'VALIDATION_ERROR',
-					'Request validation failed',
-					formatZodError(result.error),
-				),
-				400,
-			)
-		}
-		return undefined
-	},
-})
+const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 /** Load a session and verify it belongs to the caller's workspace. */
 async function loadSessionWithAuth(db: Database, sessionId: string, workspaceId: string) {
@@ -141,6 +127,14 @@ app.openapi(listSessionsRoute, (async (c) => {
 		// under either kind of triggering comment in a single query.
 		conditions.push(
 			sql`(${sessions.config}->'mention'->>'object_id' = ${query.mention_object_id} OR ${sessions.config}->'thread_reply'->>'object_id' = ${query.mention_object_id})`,
+		)
+	}
+	if (query.conversation_id) {
+		// Conversation-triggered sessions (see conversation-responder.ts) —
+		// lets the UI show a "this agent is responding" indicator for a
+		// conversation the same way mention_object_id does for object comments.
+		conditions.push(
+			sql`${sessions.config}->'conversation'->>'conversation_id' = ${query.conversation_id}`,
 		)
 	}
 	// Half-open contract — Zod has already validated these as ISO-8601 strings.

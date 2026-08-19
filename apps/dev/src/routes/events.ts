@@ -6,7 +6,7 @@ import { createCommentSchema, eventQuerySchema } from '@maskin/shared'
 import { and, asc, desc, eq, gt, gte, inArray, lt, or, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import { trackAgentCommentPosted } from '../lib/analytics/comment-events'
-import { createApiError } from '../lib/errors'
+import { createApiError, validationFailureHook } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { insertNotificationsWithEvents } from '../lib/notifications'
 import { errorSchema, eventResponseSchema, workspaceIdHeader } from '../lib/openapi-schemas'
@@ -23,7 +23,7 @@ type Env = {
 	}
 }
 
-const app = new OpenAPIHono<Env>()
+const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 // GET /api/events - SSE stream (plain Hono, not OpenAPI)
 app.get('/', async (c) => {
@@ -230,6 +230,7 @@ app.openapi(createCommentRoute, (async (c) => {
 					parentEventId,
 					attachmentFileIds: body.attachment_file_ids,
 					metadata: body.metadata,
+					attention: body.attention,
 				},
 			})
 			.returning()

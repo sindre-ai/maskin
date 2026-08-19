@@ -230,19 +230,25 @@ const STATUS_META: Record<PortraitStatus, StatusMeta> = {
 
 /**
  * Maps the loaded agent + session data to a PortraitStatus.
- * Prefers the persisted `agentState` (running/paused/failed take precedence),
- * but falls back to session-derived status for the 'failed' signal that the
- * backend may not have backfilled yet, and for surfacing in-flight sessions
- * that started before agentState landed.
+ *
+ * A live active session is ground truth — if the agent has a session currently
+ * running/starting/pending it IS working right now, even if the persisted
+ * `agentState` still reads `paused` or `failed` from a prior lifecycle (state
+ * transitions to `running` land asynchronously, and a resume kicks off a new
+ * session before the column is updated). Without this override, an agent with
+ * an in-flight session is hidden from the Working filter.
+ *
+ * Otherwise defer to the persisted `agentState`, falling back to session-derived
+ * 'failed' when the backend hasn't backfilled it yet.
  */
 export function getPortraitStatus(
 	agent: { agentState?: AgentState | null },
 	sessionStatus: 'working' | 'idle' | 'failed',
 ): PortraitStatus {
+	if (sessionStatus === 'working') return 'running'
 	if (agent.agentState === 'running') return 'running'
 	if (agent.agentState === 'paused') return 'paused'
 	if (agent.agentState === 'failed') return 'failed'
-	if (sessionStatus === 'working') return 'running'
 	if (sessionStatus === 'failed') return 'failed'
 	return 'idle'
 }

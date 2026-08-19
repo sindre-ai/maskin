@@ -8,7 +8,8 @@ import {
 	updateNotificationSchema,
 } from '@maskin/shared'
 import { and, eq, inArray } from 'drizzle-orm'
-import { createApiError } from '../lib/errors'
+import { trackCreateNotificationCalled } from '../lib/analytics/notification-events'
+import { createApiError, validationFailureHook } from '../lib/errors'
 import { logger } from '../lib/logger'
 import {
 	errorSchema,
@@ -29,7 +30,7 @@ type Env = {
 	}
 }
 
-const app = new OpenAPIHono<Env>()
+const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 // POST /api/notifications
 const createNotificationRoute = createRoute({
@@ -66,6 +67,7 @@ const createNotificationRoute = createRoute({
 app.openapi(createNotificationRoute, async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
+	const actorType = c.get('actorType')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const body = c.req.valid('json')
 
@@ -96,6 +98,18 @@ app.openapi(createNotificationRoute, async (c) => {
 		entityType: 'notification',
 		entityId: created.id,
 		data: created,
+	})
+
+	// Fire-and-forget ship-metric emit: the parent bet needs a PostHog-visible
+	// count of agent-initiated notification creates over 7 days post-migration.
+	// Filter to agent actors only so human UI actions don't pollute the count.
+	void trackCreateNotificationCalled({
+		db,
+		workspaceId,
+		actorId,
+		actorType,
+		notificationId: created.id,
+		notificationType: created.type,
 	})
 
 	return c.json(serialize(created) as z.infer<typeof notificationResponseSchema>, 201)

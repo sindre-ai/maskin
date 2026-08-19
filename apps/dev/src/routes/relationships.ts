@@ -5,7 +5,7 @@ import { createRelationshipSchema, relationshipQuerySchema } from '@maskin/share
 import { and, asc, desc, eq, inArray, or } from 'drizzle-orm'
 import { maybeEmitKnowledgeReferenceFromEdge } from '../lib/analytics/knowledge-events'
 import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
-import { createApiError } from '../lib/errors'
+import { createApiError, validationFailureHook } from '../lib/errors'
 import {
 	errorSchema,
 	idParamSchema,
@@ -23,7 +23,7 @@ type Env = {
 	}
 }
 
-const app = new OpenAPIHono<Env>()
+const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 // POST /api/relationships
 const createRelationshipRoute = createRoute({

@@ -8,9 +8,11 @@ import { initBackNavTracker } from './lib/back-nav-tracker'
 import { consumeMagicLink } from './lib/magic-link'
 import { initPosthog } from './lib/posthog'
 import { queryClient } from './lib/query'
+import { initSentry } from './lib/sentry'
 import { ThemeProvider } from './lib/theme'
 import { routeTree } from './routeTree.gen'
 
+initSentry()
 // Consume any #key=... fragment before the router mounts so the auth guard sees the key.
 consumeMagicLink()
 initPosthog()

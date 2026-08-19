@@ -1,12 +1,33 @@
 import type { FieldDefinition, ModuleDefinition } from '@maskin/module-sdk'
 import { MODULE_ID, MODULE_NAME } from '../shared.js'
 
-const LOOP_STATUSES = ['holding', 'at-risk', 'breached']
-const LOOP_FIELDS: FieldDefinition[] = [
+// The former `loop` object type — standing commitments graduated from
+// succeeded bets — was renamed to `commitment` in T1 of bet/loops-first-class
+// so the `loop` name could be reused for the new pipeline concept below.
+// Fields and statuses are unchanged from the pre-rename shape, only the type
+// name moved. Data migration lives in
+// `packages/db/drizzle/0050_rename_loop_to_commitment.sql`.
+const COMMITMENT_STATUSES = ['holding', 'at-risk', 'breached']
+const COMMITMENT_FIELDS: FieldDefinition[] = [
 	{ name: 'floor', type: 'text' },
 	{ name: 'cadence', type: 'text' },
 	{ name: 'source_bet_id', type: 'text' },
 	{ name: 'last_breach_at', type: 'date' },
+]
+
+// The `loop` type: a named, iterative multi-agent process wrapping triggers +
+// agents + a pipeline of object states. `status` is a graduated-trust ladder
+// (draft → learning → supervised → fully_autonomous), not an on/off toggle;
+// `paused` can be reached from any point on that ladder and disables every
+// trigger the loop references (see the status hook in
+// `apps/dev/src/routes/objects.ts`'s `PATCH /:id`). Metadata fields are plain
+// text per T1's decision — no DSL until an orchestration runtime exists to
+// consume it.
+const LOOP_STATUSES = ['draft', 'paused', 'learning', 'supervised', 'fully_autonomous']
+const LOOP_FIELDS: FieldDefinition[] = [
+	{ name: 'entry_condition', type: 'text' },
+	{ name: 'close_condition', type: 'text' },
+	{ name: 'installed_from_marketplace_loop_id', type: 'text' },
 ]
 
 const workExtension: ModuleDefinition = {
@@ -42,6 +63,13 @@ const workExtension: ModuleDefinition = {
 			defaultStatuses: ['todo', 'in_progress', 'in_review', 'validated', 'done', 'discarded'],
 		},
 		{
+			type: 'commitment',
+			label: 'Commitment',
+			icon: 'shield',
+			defaultStatuses: COMMITMENT_STATUSES,
+			defaultFields: COMMITMENT_FIELDS,
+		},
+		{
 			type: 'loop',
 			label: 'Loop',
 			icon: 'repeat',
@@ -54,15 +82,18 @@ const workExtension: ModuleDefinition = {
 			insight: 'Insight',
 			bet: 'Bet',
 			task: 'Task',
+			commitment: 'Commitment',
 			loop: 'Loop',
 		},
 		statuses: {
 			insight: ['new', 'processing', 'clustered', 'scored', 'parked', 'discarded'],
 			bet: ['signal', 'qualified', 'define', 'active', 'live', 'succeeded', 'failed', 'paused'],
 			task: ['todo', 'in_progress', 'in_review', 'validated', 'done', 'discarded'],
+			commitment: COMMITMENT_STATUSES,
 			loop: LOOP_STATUSES,
 		},
 		field_definitions: {
+			commitment: COMMITMENT_FIELDS,
 			loop: LOOP_FIELDS,
 		},
 	},

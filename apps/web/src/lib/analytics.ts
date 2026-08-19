@@ -48,7 +48,6 @@ type TaxonomyEntityType =
 	| 'trigger'
 	| 'relationship'
 	| 'file'
-	| 'loop'
 
 type EventSource = 'web' | 'mcp' | 'trigger'
 
@@ -132,6 +131,30 @@ export function trackChatSessionStarted(
 	})
 }
 
+// Sindre message telemetry. `sindre_message_sent` fires per user turn posted
+// to the interactive session; `sindre_message_received` fires per unique
+// assistant `message.id` observed on the SSE stream. Together they let PostHog
+// tally adoption (workspaces with a completed exchange) and detect the
+// "chat not working" failure mode (sent-without-received per session), which
+// was the parent bet's kill criterion. `workspace_id` + `actor_id` ride via
+// the PostHog super-properties registered on workspace mount; only the
+// per-event contract goes here.
+export function trackSindreMessageSent(p: { session_id: string }): void {
+	trackEvent('sindre_message_sent', { session_id: p.session_id })
+}
+
+export function trackSindreMessageReceived(p: {
+	session_id: string
+	model: string | null
+	tokens: number | null
+}): void {
+	trackEvent('sindre_message_received', {
+		session_id: p.session_id,
+		model: p.model,
+		tokens: p.tokens,
+	})
+}
+
 // Fires when the owner picks a non-default agent from the slash-picker instead
 // of letting the default (Chief of Staff, once T3 wires it) route the chat.
 // One of the three thinness events for the Chief of Staff stub bet — a hit
@@ -199,6 +222,19 @@ export function trackObjectAttachedFile(
 	})
 }
 
+// Ship-metric event for the Mini-apps bet. Fires when a hosted .html mini-app
+// file opens in the workspace Files viewer; the call site gates on
+// `isHtml(mimeType)` so non-mini-app file opens never emit (no regression to
+// existing viewer analytics). The day-7 metric keys off `entity_id` (the file
+// id) to count workspaces where the same mini-app was opened on 7 consecutive
+// days, so exactly-once-per-open emission is enforced at the call site.
+
+export function trackMiniAppFileViewed(
+	p: BaseProps & { entity_type: 'file'; file_name: string },
+): void {
+	trackEvent('mini_app_file_viewed', { ...fillBase(p), file_name: p.file_name })
+}
+
 // For You sparse-state composer. `items_count` is the rendered item count on
 // the For You feed at the moment of the event (0–2 for the sparse range).
 // `workspace_id` rides via PostHog super-properties registered on workspace
@@ -247,8 +283,9 @@ export function trackSidebarAgentActivityExpanded(p: { workspaceId: string }): v
 // `item_key` is the stable route-agnostic identifier (`for-you`, `objects`,
 // `marketplace`, …) — never the display label, which is i18n-flexible. `source`
 // distinguishes the top-nav slot from the footer slot so the ratio can be
-// sliced before/after T4 moves Marketplace between them.
-export type NavItemSource = 'top-nav' | 'footer'
+// sliced before/after T4 moves Marketplace between them. `favorites` covers the
+// Mini-apps bet's pinned sidebar group.
+export type NavItemSource = 'top-nav' | 'footer' | 'favorites'
 
 export function trackNavItemClicked(p: { item_key: string; source: NavItemSource }): void {
 	trackEvent('nav_item_clicked', { item_key: p.item_key, source: p.source })
@@ -288,7 +325,7 @@ export function trackNorthStarPromptResponse(p: { workspace_id: string }): void 
 // `platform_device='ios'` in PostHog. Intentionally lighter than the v1
 // taxonomy helpers above — there's no `entity_id` because the commit spans
 // many objects; `selected_count` carries the n instead.
-export type BulkEditCommitAction = 'status_change' | 'owner_change' | 'copy' | 'delete'
+export type BulkEditCommitAction = 'status_change' | 'owner_change' | 'copy' | 'archive' | 'delete'
 export type PlatformDevice = 'ios' | 'android' | 'desktop'
 
 export function trackBulkEditCommit(p: {
@@ -337,6 +374,14 @@ export function trackObjectsListGroupToggled(p: {
 	})
 }
 
+// Board-view arrival, mirroring the List's on-mount event so both surfaces
+// carry the same sliceable telemetry. Diagnostic only — the Objects list-and-
+// board bet treats drag-persist-on-reload (not a behavioral metric) as its
+// observable success, so this fires per board mount just for observability.
+export function trackObjectsBoardArrived(p: { objectType: string | null }): void {
+	trackEvent('objects_board_arrived', { objectType: p.objectType })
+}
+
 // Ship-metric event for the sticky-nav-hero bet. Fires once per completed
 // scroll-to-top gesture on an object-detail page — the user must scroll ≥ 1
 // viewport down inside the app scroll container and return near the top before
@@ -361,23 +406,6 @@ export function trackScrollToTop(
 		scroll_depth_at_start_px: p.scroll_depth_at_start_px,
 		viewports_scrolled: p.viewports_scrolled,
 	})
-}
-
-// Ship-metric events for the Loops primitive bet. `loop_viewed` fires once per
-// Loop detail page mount; `loop_graduated` fires once per Loop created from the
-// web (paired with `bet_created` — same call site pattern in `useCreateObject`).
-// `source_bet_id` mirrors the Loop's `metadata.source_bet_id` so PostHog can
-// join Loop reads back to the bet that produced them.
-export function trackLoopViewed(
-	p: BaseProps & { entity_type: 'loop'; source_bet_id: string | null },
-): void {
-	trackEvent('loop_viewed', { ...fillBase(p), source_bet_id: p.source_bet_id })
-}
-
-export function trackLoopGraduated(
-	p: BaseProps & { entity_type: 'loop'; source_bet_id: string | null },
-): void {
-	trackEvent('loop_graduated', { ...fillBase(p), source_bet_id: p.source_bet_id })
 }
 
 // Ship-metric events for the bidirectional swipe-to-read/unread bet on the For
@@ -472,5 +500,32 @@ export function trackForyouCardAction(p: {
 		card_kind: p.card_kind,
 		card_id: p.card_id,
 		action_id: p.action_id,
+	})
+}
+
+// Per-mutation event for the Bulk select bet's ship metric (avg ≥5 objects
+// changed per cleanup session, baseline 1). Fires once per successful object
+// mutation from the three object hooks — single update, single delete, and one
+// per ok result in a bulk update. `workspace_id`, `actor_id` ride via the
+// PostHog super-properties registered on workspace mount, and `$session_id` is
+// stamped natively by posthog-js — so the caller only supplies the four
+// bespoke props. `mutation_type` is 'status' when the patch carries a status
+// field, 'delete' for a delete, and 'field' for any other write (title,
+// content, metadata, driver). `bulk_batch_size` is 1 for single ops and the
+// selected count for a bulk op, matching the HogQL query's expected shape.
+export type ObjectMutationType = 'status' | 'field' | 'delete'
+export type ObjectMutationVia = 'single' | 'bulk'
+
+export function trackObjectUpdated(p: {
+	object_id: string
+	mutation_type: ObjectMutationType
+	via: ObjectMutationVia
+	bulk_batch_size: number
+}): void {
+	trackEvent('object_updated', {
+		object_id: p.object_id,
+		mutation_type: p.mutation_type,
+		via: p.via,
+		bulk_batch_size: p.bulk_batch_size,
 	})
 }

@@ -1285,14 +1285,73 @@ describe('Objects Integration', () => {
 			expect(rows).toHaveLength(3)
 		})
 
-		it('ignores the keyset seek when sort does not resolve to createdAt', async () => {
-			// The `(created_at, id)` keyset seek only produces a result set
-			// consistent with the ORDER BY when the walk is actually sorted by
-			// createdAt. Pairing a `sort=updatedAt` walk with a cursor built from
-			// a createdAt/id tuple would filter on a column unrelated to the
-			// ORDER BY — silently dropping rows whose createdAt/updatedAt rank
-			// disagree. Row 2 here is created last but updated first, so a
-			// createdAt-based seek anchored on row 1 would wrongly exclude it.
+		it('supports the keyset seek in updatedAt order when sort=updatedAt (mirrors the createdAt snapshot guarantee)', async () => {
+			const app = createApp()
+			const actorId = getTestActorId()
+
+			// Seed 30 tasks with strictly increasing `updatedAt` but createdAt in
+			// the OPPOSITE order — proves the seek is genuinely keyed on
+			// updatedAt, not accidentally still correct because createdAt agrees.
+			const baseMs = new Date('2026-03-01T00:00:00.000Z').getTime()
+			const seeded: Array<{ id: string; updatedAt: Date }> = []
+			for (let i = 0; i < 30; i++) {
+				const created = await insertObject(db, workspaceId, actorId, {
+					type: 'task',
+					status: 'todo',
+					title: `UpdSeed ${String(i).padStart(2, '0')}`,
+					createdAt: new Date(baseMs - i * 60_000),
+					updatedAt: new Date(baseMs + i * 60_000),
+				})
+				seeded.push({ id: created.id, updatedAt: created.updatedAt as Date })
+			}
+
+			const snapshotAt = seeded[seeded.length - 1].updatedAt.toISOString()
+
+			const page1Res = await app.request(
+				jsonGet(
+					`/api/objects?type=task&limit=25&order=desc&sort=updatedAt&snapshot_at=${encodeURIComponent(snapshotAt)}`,
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(page1Res.status).toBe(200)
+			const page1 = (await page1Res.json()) as Array<{ id: string; updatedAt: string }>
+			expect(page1).toHaveLength(25)
+
+			// Mid-pagination insert with `updatedAt` past the snapshot boundary —
+			// must stay out of the walk entirely, the same guarantee createdAt
+			// sorting has, just expressed against `updatedAt` instead.
+			const intruder = await insertObject(db, workspaceId, actorId, {
+				type: 'task',
+				status: 'todo',
+				title: 'Mid-pagination intruder (updatedAt)',
+				createdAt: new Date(baseMs - 999 * 60_000),
+				updatedAt: new Date(baseMs + 999 * 60_000),
+			})
+
+			// The `updatedAt` value stands in for `cursor_created_at` — the query
+			// param name stays fixed regardless of which column the walk is
+			// actually keyed on (see `buildCursorConditions` in objects.ts).
+			const lastOfPage1 = page1[page1.length - 1]
+			const page2Url = `/api/objects?type=task&limit=25&order=desc&sort=updatedAt&snapshot_at=${encodeURIComponent(snapshotAt)}&cursor_created_at=${encodeURIComponent(lastOfPage1.updatedAt)}&cursor_id=${encodeURIComponent(lastOfPage1.id)}`
+			const page2Res = await app.request(jsonGet(page2Url, { 'x-workspace-id': workspaceId }))
+			expect(page2Res.status).toBe(200)
+			const page2 = (await page2Res.json()) as Array<{ id: string }>
+
+			expect(page2).toHaveLength(5)
+			const page1Ids = new Set(page1.map((row) => row.id))
+			for (const row of page2) {
+				expect(page1Ids.has(row.id)).toBe(false)
+			}
+			const walked = [...page1.map((r) => r.id), ...page2.map((r) => r.id)]
+			expect([...walked].sort()).toEqual(seeded.map((r) => r.id).sort())
+			expect(walked).not.toContain(intruder.id)
+		})
+
+		it('ignores the keyset seek for a sort column that is neither createdAt nor updatedAt', async () => {
+			// Only createdAt/updatedAt have the (column, id) index support a
+			// keyset seek relies on — any other sort column (title here) must
+			// still fall back to no-seek, returning every row unfiltered by the
+			// cursor rather than silently mis-seeking on an unrelated column.
 			const app = createApp()
 			const actorId = getTestActorId()
 			const baseMs = new Date('2026-02-02T00:00:00.000Z').getTime()
@@ -1300,36 +1359,32 @@ describe('Objects Integration', () => {
 			const row0 = await insertObject(db, workspaceId, actorId, {
 				type: 'task',
 				status: 'todo',
-				title: 'Row 0 — oldest created, most recently updated',
+				title: 'A - first alphabetically',
 				createdAt: new Date(baseMs),
-				updatedAt: new Date(baseMs + 300 * 60_000),
+				updatedAt: new Date(baseMs),
 			})
 			const row1 = await insertObject(db, workspaceId, actorId, {
 				type: 'task',
 				status: 'todo',
-				title: 'Row 1 — cursor anchor',
+				title: 'B - cursor anchor',
 				createdAt: new Date(baseMs + 60_000),
-				updatedAt: new Date(baseMs + 200 * 60_000),
+				updatedAt: new Date(baseMs + 60_000),
 			})
 			const row2 = await insertObject(db, workspaceId, actorId, {
 				type: 'task',
 				status: 'todo',
-				title: 'Row 2 — newest created, least recently updated',
+				title: 'C - last alphabetically',
 				createdAt: new Date(baseMs + 120_000),
-				updatedAt: new Date(baseMs + 100 * 60_000),
+				updatedAt: new Date(baseMs + 120_000),
 			})
 
-			// Cursor anchored on row 1's (createdAt, id) — as if a prior page had
-			// been walked in createdAt order — combined with `sort=updatedAt`.
-			const url = `/api/objects?type=task&limit=10&order=desc&sort=updatedAt&cursor_created_at=${encodeURIComponent(row1.createdAt.toISOString())}&cursor_id=${encodeURIComponent(row1.id)}`
+			const url = `/api/objects?type=task&limit=10&order=asc&sort=title&cursor_created_at=${encodeURIComponent(row1.createdAt.toISOString())}&cursor_id=${encodeURIComponent(row1.id)}`
 			const res = await app.request(jsonGet(url, { 'x-workspace-id': workspaceId }))
 			expect(res.status).toBe(200)
-			const rows = (await res.json()) as Array<{ id: string; updatedAt: string }>
+			const rows = (await res.json()) as Array<{ id: string }>
 
-			// A createdAt-based seek would incorrectly exclude row2 (createdAt is
-			// not strictly less than row1's) even though row2 legitimately sorts
-			// after row1 in updatedAt-desc order. The seek must be skipped
-			// entirely, so all three rows are returned, ordered by updatedAt desc.
+			// The seek is skipped entirely, so all three rows come back in
+			// title-asc order.
 			expect(rows.map((r) => r.id)).toEqual([row0.id, row1.id, row2.id])
 		})
 

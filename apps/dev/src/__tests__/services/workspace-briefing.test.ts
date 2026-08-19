@@ -339,12 +339,17 @@ describe('renderWorkspaceBriefing', () => {
 		const ws = buildWorkspace({
 			name: 'Custom',
 			settings: {
-				display_names: { insight: 'Signal', bet: 'Initiative', task: 'Action', loop: 'Cycle' },
+				display_names: {
+					insight: 'Signal',
+					bet: 'Initiative',
+					task: 'Action',
+					commitment: 'Cycle',
+				},
 			},
 		})
 		const loop = buildObject({
 			workspaceId: ws.id,
-			type: 'loop',
+			type: 'commitment',
 			status: 'holding',
 			title: 'Bugs fixed under 1 day',
 		})
@@ -366,7 +371,7 @@ describe('renderWorkspaceBriefing', () => {
 		mockResults.selectQueue = [[ws], [], [], [], [], []]
 
 		const result = await renderWorkspaceBriefing(db, storage, ws.id)
-		expect(result).not.toContain('## Loops')
+		expect(result).not.toContain('## Commitments')
 	})
 
 	it('renders Loops in a single section with breached before at-risk before holding', async () => {
@@ -380,7 +385,7 @@ describe('renderWorkspaceBriefing', () => {
 		const now = Date.now()
 		const holdingOld = buildObject({
 			workspaceId: ws.id,
-			type: 'loop',
+			type: 'commitment',
 			status: 'holding',
 			title: 'Bugs fixed under 1 day',
 			metadata: { floor: 'p50 < 24h', cadence: 'weekly' },
@@ -388,7 +393,7 @@ describe('renderWorkspaceBriefing', () => {
 		})
 		const atRisk = buildObject({
 			workspaceId: ws.id,
-			type: 'loop',
+			type: 'commitment',
 			status: 'at-risk',
 			title: 'Onboarding TTFV',
 			metadata: { floor: 'p50 < 10m' },
@@ -396,7 +401,7 @@ describe('renderWorkspaceBriefing', () => {
 		})
 		const breached = buildObject({
 			workspaceId: ws.id,
-			type: 'loop',
+			type: 'commitment',
 			status: 'breached',
 			title: 'Weekly release cadence',
 			metadata: { cadence: 'weekly' },
@@ -407,8 +412,8 @@ describe('renderWorkspaceBriefing', () => {
 		mockResults.selectQueue = [[ws], [], [], [], [], [holdingOld, atRisk, breached]]
 
 		const result = await renderWorkspaceBriefing(db, storage, ws.id)
-		expect(result).toContain('## Loops')
-		const loopSection = result.slice(result.indexOf('## Loops'))
+		expect(result).toContain('## Commitments')
+		const loopSection = result.slice(result.indexOf('## Commitments'))
 		const breachedIdx = loopSection.indexOf('Weekly release cadence')
 		const atRiskIdx = loopSection.indexOf('Onboarding TTFV')
 		const holdingIdx = loopSection.indexOf('Bugs fixed under 1 day')
@@ -425,7 +430,7 @@ describe('renderWorkspaceBriefing', () => {
 		const ws = buildWorkspace()
 		const loop = buildObject({
 			workspaceId: ws.id,
-			type: 'loop',
+			type: 'commitment',
 			status: 'at-risk',
 			title: 'Customer bugs fixed <1 day',
 			metadata: { floor: 'p50 < 24h', cadence: 'weekly' },
@@ -445,7 +450,7 @@ describe('renderWorkspaceBriefing', () => {
 		mockResults.selectQueue = [[ws], [], [], [], [], []]
 
 		const result = await renderWorkspaceBriefing(db, storage, ws.id)
-		expect(result).not.toContain('## Loops')
+		expect(result).not.toContain('## Commitments')
 	})
 
 	it('renders a Loops section with health state, floor and cadence when loops exist', async () => {
@@ -454,7 +459,7 @@ describe('renderWorkspaceBriefing', () => {
 		const ws = buildWorkspace()
 		const loop = buildObject({
 			workspaceId: ws.id,
-			type: 'loop',
+			type: 'commitment',
 			status: 'at-risk',
 			title: 'Customer bugs fixed < 1 day',
 			metadata: { floor: '< 24h median', cadence: 'weekly' },
@@ -462,7 +467,7 @@ describe('renderWorkspaceBriefing', () => {
 		mockResults.selectQueue = [[ws], [], [], [], [], [loop]]
 
 		const result = await renderWorkspaceBriefing(db, storage, ws.id)
-		expect(result).toContain('## Loops')
+		expect(result).toContain('## Commitments')
 		expect(result).toContain('**Customer bugs fixed < 1 day** [at-risk]')
 		expect(result).toContain('floor: < 24h median')
 		expect(result).toContain('cadence: weekly')
@@ -479,19 +484,19 @@ describe('renderWorkspaceBriefing', () => {
 		const ws = buildWorkspace()
 		const breached = buildObject({
 			workspaceId: ws.id,
-			type: 'loop',
+			type: 'commitment',
 			status: 'breached',
 			title: 'Breached loop',
 		})
 		const atRisk = buildObject({
 			workspaceId: ws.id,
-			type: 'loop',
+			type: 'commitment',
 			status: 'at-risk',
 			title: 'At-risk loop',
 		})
 		const holding = buildObject({
 			workspaceId: ws.id,
-			type: 'loop',
+			type: 'commitment',
 			status: 'holding',
 			title: 'Holding loop',
 		})
@@ -511,11 +516,11 @@ describe('renderWorkspaceBriefing', () => {
 		const storage = createMockStorage()
 		const ws = buildWorkspace({
 			name: 'Custom loops',
-			settings: { display_names: { loop: 'Standard' } },
+			settings: { display_names: { commitment: 'Standard' } },
 		})
 		const loop = buildObject({
 			workspaceId: ws.id,
-			type: 'loop',
+			type: 'commitment',
 			status: 'holding',
 			title: 'Some standard',
 		})

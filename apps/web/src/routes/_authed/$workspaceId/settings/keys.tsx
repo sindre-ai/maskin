@@ -1,4 +1,5 @@
 import { BillingSection } from '@/components/settings/billing-section'
+import { FormError } from '@/components/shared/form-error'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -18,8 +19,8 @@ import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
-import { ChevronDown, ChevronRight, Eye, EyeOff, Unplug } from 'lucide-react'
-import { useCallback, useState } from 'react'
+import { ChevronDown, ChevronRight, Eye, EyeOff, Pencil, Unplug } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/settings/keys')({
 	component: KeysPage,
@@ -54,6 +55,8 @@ function KeysPage() {
 		</div>
 	)
 }
+
+const NICKNAME_PLACEHOLDER = 'Add a nickname'
 
 // Map a classified failover reason (written by the classifier in T4/T6) to
 // the customer-facing line shown next to the unhealthy primary. Reasons
@@ -217,6 +220,26 @@ function SlotCard({
 		onSuccess,
 	})
 
+	const renameMutation = useMutation({
+		mutationFn: (nickname: string) => api.claudeOauth.rename(workspaceId, slot, nickname),
+		onSuccess,
+		onError: () => setNicknameDraft(info?.nickname ?? ''),
+	})
+
+	const [nicknameDraft, setNicknameDraft] = useState(info?.nickname ?? '')
+	useEffect(() => {
+		setNicknameDraft(info?.nickname ?? '')
+	}, [info?.nickname])
+
+	const nicknameInputRef = useRef<HTMLInputElement>(null)
+
+	const handleNicknameBlur = () => {
+		const trimmed = nicknameDraft.trim()
+		if (trimmed !== (info?.nickname ?? '')) {
+			renameMutation.mutate(trimmed)
+		}
+	}
+
 	const label = slot === 'primary' ? 'Primary' : 'Backup'
 	const isActive = connected && activeSlot === slot && Boolean(info)
 	const isUnhealthy = slot === 'primary' && Boolean(unhealthyReasonLine)
@@ -268,6 +291,40 @@ function SlotCard({
 					>
 						In use
 					</span>
+				)}
+			</div>
+			<div>
+				<div className="flex items-center gap-1 w-fit max-w-full">
+					<input
+						ref={nicknameInputRef}
+						type="text"
+						value={nicknameDraft}
+						onChange={(e) => {
+							setNicknameDraft(e.target.value)
+							if (renameMutation.isError) renameMutation.reset()
+						}}
+						onBlur={handleNicknameBlur}
+						onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+						placeholder={NICKNAME_PLACEHOLDER}
+						maxLength={60}
+						size={Math.max(nicknameDraft.length, NICKNAME_PLACEHOLDER.length)}
+						disabled={renameMutation.isPending}
+						aria-label={`Nickname for ${label} slot`}
+						data-testid={`slot-${slot}-nickname`}
+						className="min-w-0 max-w-full bg-transparent border-none outline-none text-sm font-medium text-foreground placeholder:text-muted-foreground/70 focus:outline-none px-0 py-0 disabled:opacity-60"
+					/>
+					<button
+						type="button"
+						onClick={() => nicknameInputRef.current?.focus()}
+						className="shrink-0 text-muted-foreground/60 hover:text-foreground transition-colors"
+						aria-label={`Edit nickname for ${label} slot`}
+						tabIndex={-1}
+					>
+						<Pencil size={12} />
+					</button>
+				</div>
+				{renameMutation.isError && (
+					<FormError error={renameMutation.error?.message || 'Could not save nickname'} />
 				)}
 			</div>
 			<div className="flex items-center gap-2 flex-wrap">
@@ -488,7 +545,7 @@ function LLMKeysEditor({
 			delete updatedKeys[provider]
 		}
 		updateWorkspace.mutate({
-			settings: { ...settings, llm_keys: updatedKeys },
+			settings: { llm_keys: updatedKeys },
 		})
 	}
 
@@ -578,7 +635,7 @@ function CustomLlmEditor({
 			small_fast_model: smallModel.trim() || null,
 		}
 		updateWorkspace.mutate({
-			settings: { ...settings, custom_llm: next },
+			settings: { custom_llm: next },
 		})
 	}
 

@@ -1,12 +1,6 @@
 import { FilterTabs } from '@/components/shared/filter-tabs'
+import { NewMenu } from '@/components/shared/new-menu'
 import { Button } from '@/components/ui/button'
-import {
-	DropdownMenu,
-	DropdownMenuContent,
-	DropdownMenuItem,
-	DropdownMenuSeparator,
-	DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import {
 	ResponsivePopover,
@@ -23,7 +17,6 @@ import {
 	LayoutGrid,
 	List,
 	Newspaper,
-	Plus,
 	SlidersHorizontal,
 } from 'lucide-react'
 
@@ -58,7 +51,6 @@ export function ForYouHeaderIdentity({ unreadCount }: ForYouHeaderIdentityProps)
 
 interface ForYouHeaderActionsProps {
 	onStartConversation: () => void
-	onCreateObject: (type: 'bet' | 'insight' | 'task') => void
 	// Optional so the button only renders where a caller wires it up — kept out
 	// of test render helpers that don't pass it.
 	onMarkAllRead?: () => void
@@ -67,9 +59,10 @@ interface ForYouHeaderActionsProps {
 
 // "Mark all read" + "Today's brief" + "New" projected into the global header's
 // actions slot — replaces the generic Create/Chat icon buttons on the For You route.
+// The New menu itself is the shared `NewMenu` (see components/shared/new-menu.tsx)
+// so its contents never drift from the menu on every other page.
 export function ForYouHeaderActions({
 	onStartConversation,
-	onCreateObject,
 	onMarkAllRead,
 	markAllReadDisabled,
 }: ForYouHeaderActionsProps) {
@@ -101,23 +94,7 @@ export function ForYouHeaderActions({
 				<Newspaper size={14} aria-hidden />
 				<span className="hidden sm:inline">Today's brief</span>
 			</Button>
-			<DropdownMenu>
-				<DropdownMenuTrigger asChild>
-					<Button size="sm" aria-label="New" className="h-8 gap-1.5 px-2 sm:px-3">
-						<Plus size={14} aria-hidden />
-						<span className="hidden sm:inline">New</span>
-					</Button>
-				</DropdownMenuTrigger>
-				<DropdownMenuContent align="end" className="min-w-[200px]">
-					<DropdownMenuItem onSelect={onStartConversation}>Start conversation</DropdownMenuItem>
-					<DropdownMenuSeparator />
-					<DropdownMenuItem onSelect={() => onCreateObject('bet')}>New bet</DropdownMenuItem>
-					<DropdownMenuItem onSelect={() => onCreateObject('insight')}>
-						New insight
-					</DropdownMenuItem>
-					<DropdownMenuItem onSelect={() => onCreateObject('task')}>New task</DropdownMenuItem>
-				</DropdownMenuContent>
-			</DropdownMenu>
+			<NewMenu onNewChat={onStartConversation} />
 		</div>
 	)
 }

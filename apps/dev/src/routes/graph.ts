@@ -5,7 +5,7 @@ import { getAllValidTypes, getEnabledModuleIds } from '@maskin/module-sdk'
 import { createGraphSchema } from '@maskin/shared'
 import { and, eq, inArray } from 'drizzle-orm'
 import { maybeEmitKnowledgeReferenceFromEdge } from '../lib/analytics/knowledge-events'
-import { createApiError, createInvalidTypeError } from '../lib/errors'
+import { createApiError, createInvalidTypeError, validationFailureHook } from '../lib/errors'
 import {
 	findKnowledgeDuplicate,
 	isDuplicateTitle,
@@ -31,7 +31,7 @@ type Env = {
 	}
 }
 
-const app = new OpenAPIHono<Env>()
+const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 const graphResponseSchema = z.object({
 	nodes: z.array(objectResponseSchema.extend({ $id: z.string() })),
@@ -119,29 +119,51 @@ app.openapi(createGraphRoute, async (c) => {
 		}
 	}
 
-	// Validate statuses against workspace settings
+	// Resolve each node's effective status:
+	//   - Bets always land at `signal` (the founders' go/no-go gate) — the caller
+	//     value is ignored. Prevents agents from programmatically skipping intake
+	//     by creating bets already in `define`/`active`/etc.
+	//   - Every other type requires a caller-supplied status.
+	// Values are then validated against the workspace's configured status list.
 	const statuses = settings?.statuses
-	if (statuses) {
-		for (const node of body.nodes) {
-			const validStatuses = statuses[node.type]
-			if (validStatuses && !validStatuses.includes(node.status)) {
-				return c.json(
-					createApiError(
-						'BAD_REQUEST',
-						`Invalid status '${node.status}' for type '${node.type}' on node '${node.$id}'`,
-						[
-							{
-								field: `nodes[${node.$id}].status`,
-								message: `'${node.status}' is not valid for type '${node.type}'`,
-								expected: validStatuses.map((s) => `'${s}'`).join(' | '),
-								received: `'${node.status}'`,
-							},
-						],
-						`Valid statuses for '${node.type}': ${validStatuses.join(', ')}`,
-					),
-					400,
-				)
-			}
+	const resolvedStatuses = new Map<string, string>()
+	for (const node of body.nodes) {
+		const resolved = node.type === 'bet' ? 'signal' : node.status
+		if (resolved === undefined) {
+			return c.json(
+				createApiError(
+					'BAD_REQUEST',
+					`Missing status for type '${node.type}' on node '${node.$id}'`,
+					[
+						{
+							field: `nodes[${node.$id}].status`,
+							message: `status is required for type '${node.type}'`,
+						},
+					],
+				),
+				400,
+			)
+		}
+		resolvedStatuses.set(node.$id, resolved)
+
+		const validStatuses = statuses?.[node.type]
+		if (validStatuses && !validStatuses.includes(resolved)) {
+			return c.json(
+				createApiError(
+					'BAD_REQUEST',
+					`Invalid status '${resolved}' for type '${node.type}' on node '${node.$id}'`,
+					[
+						{
+							field: `nodes[${node.$id}].status`,
+							message: `'${resolved}' is not valid for type '${node.type}'`,
+							expected: validStatuses.map((s) => `'${s}'`).join(' | '),
+							received: `'${resolved}'`,
+						},
+					],
+					`Valid statuses for '${node.type}': ${validStatuses.join(', ')}`,
+				),
+				400,
+			)
 		}
 	}
 
@@ -241,6 +263,10 @@ app.openapi(createGraphRoute, async (c) => {
 			const createdNodes: (typeof objects.$inferSelect & { $id: string })[] = []
 
 			for (const node of body.nodes) {
+				const status = resolvedStatuses.get(node.$id)
+				if (status === undefined) {
+					throw new Error(`Missing resolved status for node '${node.$id}'`)
+				}
 				const [created] = await tx
 					.insert(objects)
 					.values({
@@ -248,7 +274,7 @@ app.openapi(createGraphRoute, async (c) => {
 						type: node.type,
 						title: node.title,
 						content: node.content,
-						status: node.status,
+						status,
 						metadata: node.metadata,
 						driver: node.driver,
 						createdBy: actorId,

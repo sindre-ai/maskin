@@ -13,6 +13,7 @@ import {
 	getModule,
 	getValidObjectTypes,
 	getWebModule,
+	mergeModuleDefaultSettings,
 	registerModule,
 	registerWebModule,
 } from '../registry'
@@ -255,6 +256,60 @@ describe('getEnabledModuleIds', () => {
 		expect(getEnabledModuleIds({ enabled_modules: 'work' })).toEqual(['work'])
 		expect(getEnabledModuleIds({ enabled_modules: 42 })).toEqual(['work'])
 		expect(getEnabledModuleIds({ enabled_modules: true })).toEqual(['work'])
+	})
+})
+
+describe('mergeModuleDefaultSettings', () => {
+	const workModule: ModuleDefinition = {
+		id: 'work',
+		name: 'Work',
+		version: '0.1.0',
+		objectTypes: [],
+		defaultSettings: {
+			display_names: { insight: 'Insight' },
+			statuses: { insight: ['new', 'processing'] },
+		},
+	}
+
+	const crmModule: ModuleDefinition = {
+		id: 'crm',
+		name: 'CRM',
+		version: '0.1.0',
+		objectTypes: [],
+		defaultSettings: {
+			display_names: { contact: 'Person' },
+			statuses: { contact: ['new_lead', 'converted'] },
+		},
+	}
+
+	it('layers enabled modules default display_names and statuses under settings', () => {
+		registerModule(workModule)
+		registerModule(crmModule)
+		const result = mergeModuleDefaultSettings({}, ['work', 'crm'])
+		expect(result.display_names).toEqual({ insight: 'Insight', contact: 'Person' })
+		expect(result.statuses).toEqual({
+			insight: ['new', 'processing'],
+			contact: ['new_lead', 'converted'],
+		})
+	})
+
+	it('lets existing settings values win over module defaults per key', () => {
+		registerModule(crmModule)
+		const result = mergeModuleDefaultSettings({ display_names: { contact: 'Custom Contact' } }, [
+			'crm',
+		])
+		expect(result.display_names).toEqual({ contact: 'Custom Contact' })
+	})
+
+	it('ignores module ids with no registered defaultSettings', () => {
+		registerModule(workModule)
+		const result = mergeModuleDefaultSettings({}, ['work', 'nonexistent'])
+		expect(result.display_names).toEqual({ insight: 'Insight' })
+	})
+
+	it('preserves other settings keys untouched', () => {
+		const result = mergeModuleDefaultSettings({ max_concurrent_sessions: 5 }, [])
+		expect(result.max_concurrent_sessions).toBe(5)
 	})
 })
 

@@ -6,11 +6,14 @@ import {
 	actors,
 	agentFiles,
 	agentSkills,
+	conversationParticipants,
 	files,
 	imports,
 	integrations,
+	messages,
 	notifications,
 	objects,
+	orphanThreadDetections,
 	readState,
 	relationships,
 	sessionLogs,
@@ -21,6 +24,7 @@ import {
 	workspaceSkills,
 	workspaces,
 } from '@maskin/db/schema'
+import { mergeModuleDefaultSettings } from '@maskin/module-sdk'
 import {
 	type AgentState,
 	PLATFORM_MCP_PRESET,
@@ -31,7 +35,7 @@ import {
 } from '@maskin/shared'
 import { and, asc, count, countDistinct, desc, eq, inArray, or, sql } from 'drizzle-orm'
 import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
-import { createApiError } from '../lib/errors'
+import { createApiError, validationFailureHook } from '../lib/errors'
 import { logger } from '../lib/logger'
 import {
 	actorListItemSchema,
@@ -45,7 +49,6 @@ import { serialize, serializeArray } from '../lib/serialize'
 import { isWorkspaceMember } from '../lib/workspace-auth'
 import type { AgentStorageManager } from '../services/agent-storage'
 import type { SessionManager } from '../services/session-manager'
-import { bootstrapDefaultAgents } from '../services/workspace-bootstrap'
 
 type Env = {
 	Variables: {
@@ -62,7 +65,7 @@ const DEFAULT_RUN_ACTION_PROMPT = 'Resume your assigned work.'
 
 const RUNNING_SESSION_STATUSES = ['pending', 'starting', 'queued', 'running', 'snapshotting']
 
-const app = new OpenAPIHono<Env>()
+const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 // POST / - Create actor (signup)
 const createActorRoute = createRoute({
@@ -202,9 +205,11 @@ app.openapi(createActorRoute, async (c) => {
 	let workspaceId: string | undefined
 
 	if (shouldCreateWorkspace) {
-		const defaultSettings = workspaceSettingsSchema.parse({
-			enabled_modules: ['work', 'knowledge'],
-		})
+		const enabledModules = ['work', 'crm', 'knowledge']
+		const defaultSettings = mergeModuleDefaultSettings(
+			workspaceSettingsSchema.parse({ enabled_modules: enabledModules }),
+			enabledModules,
+		)
 		const created = await db.transaction(async (tx) => {
 			const [workspace] = await tx
 				.insert(workspaces)
@@ -223,44 +228,11 @@ app.openapi(createActorRoute, async (c) => {
 				role: 'owner',
 			})
 
-			// Seed Workspace Coach — the built-in meta-agent shipped with every workspace.
-			// apiKey is required: without it, the agent's container boots with an empty
-			// Bearer token and MCP writes either 401 or — worse — fall back to a key
-			// that resolves to a different actor, misattributing every comment.
-			const [coach] = await tx
-				.insert(actors)
-				.values({
-					type: WORKSPACE_COACH_DEFAULT.type,
-					name: WORKSPACE_COACH_DEFAULT.name,
-					isSystem: WORKSPACE_COACH_DEFAULT.isSystem,
-					systemPrompt: WORKSPACE_COACH_DEFAULT.systemPrompt,
-					llmProvider: WORKSPACE_COACH_DEFAULT.llmProvider,
-					llmConfig: WORKSPACE_COACH_DEFAULT.llmConfig,
-					tools: WORKSPACE_COACH_DEFAULT.tools,
-					apiKey: generateApiKey().key,
-					createdBy: actor.id,
-				})
-				.returning()
-
-			if (!coach) throw new Error('Failed to seed Workspace Coach actor')
-
-			await tx.insert(workspaceMembers).values({
-				workspaceId: workspace.id,
-				actorId: coach.id,
-				role: 'member',
-			})
-
 			return workspace
 		})
 
 		if (created) {
 			workspaceId = created.id
-			const agentStorage = c.get('agentStorage')
-			if (agentStorage) {
-				await bootstrapDefaultAgents(db, agentStorage, created.id, actor.id).catch((err) =>
-					logger.error('workspace bootstrap failed', { workspaceId: created.id, err }),
-				)
-			}
 		}
 	}
 
@@ -620,6 +592,13 @@ const getActorRoute = createRoute({
 	summary: 'Get actor by ID',
 	request: {
 		params: idParamSchema,
+		headers: z.object({
+			'x-workspace-id': z
+				.string()
+				.uuid()
+				.optional()
+				.describe("When provided, the response includes the actor's `role` in this workspace."),
+		}),
 	},
 	responses: {
 		200: {
@@ -636,8 +615,9 @@ const getActorRoute = createRoute({
 app.openapi(getActorRoute, (async (c) => {
 	const db = c.get('db')
 	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
-	const [[actor], skills] = await Promise.all([
+	const [[actor], skills, [membership]] = await Promise.all([
 		db
 			.select({
 				id: actors.id,
@@ -655,7 +635,7 @@ app.openapi(getActorRoute, (async (c) => {
 				agentStateUpdatedAt: actors.agentStateUpdatedAt,
 				createdAt: actors.createdAt,
 				updatedAt: actors.updatedAt,
-				installedPackageId: sql<string | null>`${actors.metadata}->>'installed_package_id'`,
+				installedLoopId: sql<string | null>`${actors.metadata}->>'installed_loop_id'`,
 			})
 			.from(actors)
 			.where(eq(actors.id, id))
@@ -665,13 +645,23 @@ app.openapi(getActorRoute, (async (c) => {
 			.from(agentSkills)
 			.innerJoin(workspaceSkills, eq(agentSkills.workspaceSkillId, workspaceSkills.id))
 			.where(eq(agentSkills.actorId, id)),
+		workspaceId
+			? db
+					.select({ role: workspaceMembers.role })
+					.from(workspaceMembers)
+					.where(
+						and(eq(workspaceMembers.actorId, id), eq(workspaceMembers.workspaceId, workspaceId)),
+					)
+					.limit(1)
+			: Promise.resolve([]),
 	])
 
 	if (!actor) {
 		return c.json(createApiError('NOT_FOUND', 'Actor not found'), 404)
 	}
 
-	return c.json(serialize({ ...actor, skills }) as z.infer<typeof actorResponseSchema>)
+	const role = workspaceId ? (membership?.role ?? null) : undefined
+	return c.json(serialize({ ...actor, skills, role }) as z.infer<typeof actorResponseSchema>)
 }) as RouteHandler<typeof getActorRoute, Env>)
 
 // PATCH /:id - Update actor
@@ -1009,6 +999,20 @@ app.openapi(deleteActorRoute, (async (c) => {
 		await tx.delete(subscriptions).where(eq(subscriptions.actorId, id))
 		await tx.delete(readState).where(eq(readState.actorId, id))
 
+		// Delete orphan-thread-detection ledger rows expecting a reply from this actor
+		await tx
+			.delete(orphanThreadDetections)
+			.where(eq(orphanThreadDetections.expectedReplyActorId, id))
+
+		// conversation_participants.actor_id/added_by are RESTRICT FKs to
+		// actors.id with no cascade — null out added_by on surviving rows,
+		// then drop this actor's own participant rows.
+		await tx
+			.update(conversationParticipants)
+			.set({ addedBy: null })
+			.where(eq(conversationParticipants.addedBy, id))
+		await tx.delete(conversationParticipants).where(eq(conversationParticipants.actorId, id))
+
 		// Reassign objects
 		await tx.update(objects).set({ driver: null }).where(eq(objects.driver, id))
 		await tx.update(objects).set({ createdBy: actorId }).where(eq(objects.createdBy, id))
@@ -1016,6 +1020,9 @@ app.openapi(deleteActorRoute, (async (c) => {
 		// Reassign workspace artifacts authored by this agent
 		await tx.update(files).set({ createdBy: actorId }).where(eq(files.createdBy, id))
 		await tx.update(imports).set({ createdBy: actorId }).where(eq(imports.createdBy, id))
+		// messages.actor_id is NOT NULL with no cascade — reassign authorship
+		// to the deleting actor rather than deleting message history.
+		await tx.update(messages).set({ actorId }).where(eq(messages.actorId, id))
 		await tx
 			.update(workspaceSkills)
 			.set({ createdBy: null })

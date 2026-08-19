@@ -130,6 +130,37 @@ export function getEnabledModuleIds(
 	return Array.isArray(raw) ? raw : ['work']
 }
 
+/**
+ * Layers each enabled module's `display_names`/`statuses` defaults under a
+ * workspace's own settings — same merge order as the Settings UI's manual
+ * "enable module" toggle (module defaults first, explicit settings win per
+ * key), so a workspace created with a module already enabled ends up with
+ * the same effective settings as one where the module was toggled on by
+ * hand (board columns, tab labels, etc. all depend on these keys being
+ * present per-type in workspace settings, not just the module's own
+ * registration).
+ */
+export function mergeModuleDefaultSettings(
+	settings: Record<string, unknown>,
+	enabledModuleIds: string[],
+): Record<string, unknown> {
+	let displayNames: Record<string, string> = {}
+	let statuses: Record<string, string[]> = {}
+
+	for (const moduleId of enabledModuleIds) {
+		const defaults = defaultRegistry.getModuleDefaultSettings(moduleId)
+		if (!defaults) continue
+		displayNames = { ...displayNames, ...defaults.display_names }
+		statuses = { ...statuses, ...defaults.statuses }
+	}
+
+	return {
+		...settings,
+		display_names: { ...displayNames, ...(settings.display_names as object) },
+		statuses: { ...statuses, ...(settings.statuses as object) },
+	}
+}
+
 export function clearModules(): void {
 	defaultRegistry.clear()
 }

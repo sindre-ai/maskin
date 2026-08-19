@@ -120,7 +120,7 @@ test.describe('Sticky nav — bet identity', () => {
 	})
 })
 
-test.describe('+ Create button on nav', () => {
+test.describe('"Create an object" section in the header New menu', () => {
 	test('is absent on /objects/:id and present on /objects', async ({ page, account }) => {
 		await page.setViewportSize(WIDE_DESKTOP)
 
@@ -134,19 +134,29 @@ test.describe('+ Create button on nav', () => {
 		await expect(page.locator('textarea').first()).toHaveValue('Nav Create removal check', {
 			timeout: 10000,
 		})
-		await expect(page.locator('header').getByRole('button', { name: /create new/i })).toHaveCount(0)
+		// The New menu itself stays available on object-detail pages (chat/loop/
+		// agent/search still reachable) — only "Create an object" is hidden.
+		const newButton = page.locator('header').getByRole('button', { name: /^new$/i })
+		await expect(newButton).toBeVisible()
+		await newButton.click()
+		await expect(page.getByText('Create an object')).toHaveCount(0)
+		await page.keyboard.press('Escape')
 
 		await page.goto(`/${account.workspaceId}/objects`)
-		await expect(page.locator('header').getByRole('button', { name: /create new/i })).toBeVisible()
+		await page.locator('header').getByRole('button', { name: /^new$/i }).click()
+		await expect(page.getByText('Create an object')).toBeVisible()
 	})
 
 	test('is present on /agents and /triggers list surfaces', async ({ page, account }) => {
 		await page.setViewportSize(WIDE_DESKTOP)
 
 		await page.goto(`/${account.workspaceId}/agents`)
-		await expect(page.locator('header').getByRole('button', { name: /create new/i })).toBeVisible()
+		await page.locator('header').getByRole('button', { name: /^new$/i }).click()
+		await expect(page.getByText('Create an object')).toBeVisible()
+		await page.keyboard.press('Escape')
 
 		await page.goto(`/${account.workspaceId}/triggers`)
-		await expect(page.locator('header').getByRole('button', { name: /create new/i })).toBeVisible()
+		await page.locator('header').getByRole('button', { name: /^new$/i }).click()
+		await expect(page.getByText('Create an object')).toBeVisible()
 	})
 })

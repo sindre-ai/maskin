@@ -1,3 +1,4 @@
+import './lib/sentry'
 import './extensions'
 import path from 'node:path'
 import { serve } from '@hono/node-server'
@@ -7,12 +8,18 @@ import { PgNotifyBridge } from '@maskin/realtime'
 import { S3StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
 import { createApp } from './app-factory'
-import { type DevBootstrapResult, maybeBootstrapDev, seedCatalogIfEmpty } from './lib/dev-bootstrap'
+import { emitInstallCompleted } from './lib/analytics/install-telemetry'
+import {
+	type DevBootstrapResult,
+	maybeBootstrapDev,
+	seedMarketplaceIfEmpty,
+} from './lib/dev-bootstrap'
 import { logger } from './lib/logger'
 import { AgentStorageManager } from './services/agent-storage'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
+import { LoopVersionPusher } from './services/loop-version-pusher'
+import { OrphanThreadDetector } from './services/orphan-thread-detector'
 import { OverageUsageReconciler } from './services/overage-usage-reconciler'
-import { PackageVersionPusher } from './services/package-version-pusher'
 import { RuntimeTelemetry } from './services/runtime-telemetry'
 import { SessionDispatchQueue } from './services/session-dispatch-queue'
 import { SessionDispatcher } from './services/session-dispatcher'
@@ -119,9 +126,13 @@ const overageUsageReconciler = new OverageUsageReconciler(db)
 overageUsageReconciler.start()
 logger.info('Overage usage reconciler started')
 
-const packageVersionPusher = new PackageVersionPusher(db, agentStorage)
-packageVersionPusher.start()
-logger.info('Package version pusher started')
+const loopVersionPusher = new LoopVersionPusher(db, agentStorage)
+loopVersionPusher.start()
+logger.info('Loop version pusher started')
+
+const orphanThreadDetector = new OrphanThreadDetector(db)
+orphanThreadDetector.start()
+logger.info('Orphan thread detector started')
 
 // Session dispatch queue absorbs backpressure when no agent-server has
 // capacity and retries failed dispatches. In production the SessionDispatcher
@@ -149,6 +160,25 @@ if (process.env.NODE_ENV === 'production') {
 				sourceSessionId: session.sourceSessionId ?? undefined,
 			}
 		},
+		// Interactive sessions get no ACTION_PROMPT env var — agent-run.sh's
+		// interactive branch reads its first turn from stdin, fed by whatever
+		// POSTs /sessions/:id/input. Mirrors session-manager.ts's launchContainer()
+		// seed-turn step for the local-Docker path; without this, remotely
+		// dispatched interactive sessions boot but their `claude` process blocks
+		// forever on stdin, never receiving the user's opening message.
+		seedInteractiveTurn: async (sessionId) => {
+			const [session] = await db.select().from(sessions).where(eq(sessions.id, sessionId)).limit(1)
+			if (!session || !session.interactive || session.actionPrompt.trim().length === 0) return
+			const seedTurnMessageId = (
+				session.config as { conversation?: { message_id?: number } } | null
+			)?.conversation?.message_id
+			await sessionManager.writeInput(
+				sessionId,
+				{ type: 'user', message: { role: 'user', content: session.actionPrompt } },
+				undefined,
+				seedTurnMessageId,
+			)
+		},
 	})
 	sessionDispatchQueue.setDispatchFn(dispatcher.dispatch)
 	sessionManager.setDispatchQueue(sessionDispatchQueue)
@@ -170,14 +200,14 @@ logger.info(`Starting server on port ${port}`)
 
 let bootstrap: DevBootstrapResult | null = null
 try {
-	bootstrap = await maybeBootstrapDev(db, agentStorage)
+	bootstrap = await maybeBootstrapDev(db)
 	if (bootstrap) {
 		logger.info('Dev bootstrap created default actor + workspace', {
 			actorEmail: bootstrap.actorEmail,
 			workspaceName: bootstrap.workspaceName,
 		})
 	}
-	await seedCatalogIfEmpty(db)
+	await seedMarketplaceIfEmpty(db)
 } catch (err) {
 	logger.error('Dev bootstrap failed', { error: err instanceof Error ? err.message : String(err) })
 }
@@ -223,6 +253,10 @@ ${mcpSetup}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 `
 	process.stdout.write(banner)
+	// TTV instrumentation: server is reachable on localhost, so this is the
+	// canonical "install_completed" moment for the open-source launch bet.
+	// Fire-and-forget — never blocks or throws.
+	emitInstallCompleted().catch(() => {})
 	sessionManager.warmAgentBaseImage().catch((err) => {
 		logger.error('Failed to build agent-base image — sessions will fail until image is available', {
 			error: err instanceof Error ? err.message : String(err),

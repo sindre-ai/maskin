@@ -5,10 +5,11 @@ import { type Dispatch, type SetStateAction, useCallback } from 'react'
 import { toast } from 'sonner'
 import type { z } from 'zod'
 import {
+	type ObjectMutationType,
 	trackBetArchived,
 	trackBetCreated,
 	trackBetStatusChanged,
-	trackLoopGraduated,
+	trackObjectUpdated,
 } from '../lib/analytics'
 import type {
 	BulkUpdateObjectsInput,
@@ -22,10 +23,31 @@ import { queryKeys } from '../lib/query-keys'
 type CreateObjectInput = z.input<typeof createObjectSchema>
 type UpdateObjectInput = z.input<typeof updateObjectSchema>
 
-export function useObjects(workspaceId: string, filters?: Record<string, string>) {
+// Derives the `object_updated` event's `mutation_type` from a patch shape.
+// A patch that touches `status` is classified as a status change; everything
+// else (title, content, metadata, driver) rolls up to 'field'. The bet's
+// HogQL groups per-session counts regardless, so the finer split is diagnostic
+// — it lets the Analyst slice status changes vs. field edits without a schema
+// change if the bet ever comes back to life.
+function deriveMutationType(patch: {
+	status?: unknown
+	title?: unknown
+	content?: unknown
+	metadata?: unknown
+	driver?: unknown
+}): Exclude<ObjectMutationType, 'delete'> {
+	return patch.status !== undefined ? 'status' : 'field'
+}
+
+export function useObjects(
+	workspaceId: string,
+	filters?: Record<string, string>,
+	options?: { enabled?: boolean },
+) {
 	return useQuery({
 		queryKey: queryKeys.objects.list(workspaceId, filters),
 		queryFn: () => api.objects.list(workspaceId, filters),
+		enabled: options?.enabled ?? true,
 	})
 }
 
@@ -76,17 +98,6 @@ export function useCreateObject(workspaceId: string) {
 			if (data.type === 'bet') {
 				trackBetCreated({ entity_id: data.id, entity_type: 'bet' })
 			}
-			if (data.type === 'loop') {
-				const metadata = data.metadata as Record<string, unknown> | null
-				const rawSourceBetId = metadata?.source_bet_id
-				const sourceBetId =
-					typeof rawSourceBetId === 'string' && rawSourceBetId.length > 0 ? rawSourceBetId : null
-				trackLoopGraduated({
-					entity_id: data.id,
-					entity_type: 'loop',
-					source_bet_id: sourceBetId,
-				})
-			}
 		},
 		onSettled: (_data, _err, variables) => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
@@ -133,6 +144,12 @@ export function useUpdateObject(workspaceId: string) {
 					to: nextStatus,
 				})
 			}
+			trackObjectUpdated({
+				object_id: data.id,
+				mutation_type: deriveMutationType(variables.data),
+				via: 'single',
+				bulk_batch_size: 1,
+			})
 		},
 		onSettled: (_data, _err, { id }) => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(id) })
@@ -270,6 +287,19 @@ export function useBulkUpdateObjects(workspaceId: string) {
 		onError: (_err, _vars, ctx) => {
 			if (ctx) rollbackBulkPatch(queryClient, ctx)
 		},
+		onSuccess: (data, { ids, patch }) => {
+			const mutationType = deriveMutationType(patch)
+			const bulkBatchSize = ids.length
+			for (const result of data.results) {
+				if (!result.ok) continue
+				trackObjectUpdated({
+					object_id: result.id,
+					mutation_type: mutationType,
+					via: 'bulk',
+					bulk_batch_size: bulkBatchSize,
+				})
+			}
+		},
 		onSettled: (data, _err, { ids }) => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.bets.all(workspaceId) })
@@ -403,6 +433,14 @@ export function useDeleteObject(workspaceId: string) {
 			toast.success('Object deleted')
 			if (ctx?.type === 'bet') {
 				trackBetArchived({ entity_id: ctx.id, entity_type: 'bet' })
+			}
+			if (ctx?.id) {
+				trackObjectUpdated({
+					object_id: ctx.id,
+					mutation_type: 'delete',
+					via: 'single',
+					bulk_batch_size: 1,
+				})
 			}
 		},
 		onSettled: () => {

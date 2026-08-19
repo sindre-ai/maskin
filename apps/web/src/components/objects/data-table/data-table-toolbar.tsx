@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type { ActorListItem } from '@/lib/api'
 import type { VisibilityState } from '@tanstack/react-table'
-import { Plus, Search, Upload } from 'lucide-react'
+import { Search, Upload } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { ColumnInfo } from './data-table-controls'
 import { DisplayPanel, type DisplayPanelView } from './display-panel'
@@ -43,14 +43,14 @@ interface DataTableToolbarProps {
 	// Show — per-view visibility flags. Only surfaced when the caller opts in.
 	includeArchived?: boolean
 	onIncludeArchivedChange?: (value: boolean) => void
+	// Reset every display axis to defaults. Only surfaced when the caller opts in.
+	onResetToDefault?: () => void
 	// View switcher
 	view?: DisplayPanelView
 	onViewChange?: (view: DisplayPanelView) => void
 	boardSupported?: boolean
 	// Import
 	onImportClick: () => void
-	// New — opens the shared create picker
-	onNewClick: () => void
 }
 
 export function DataTableToolbar({
@@ -80,11 +80,11 @@ export function DataTableToolbar({
 	onGroupByChange,
 	includeArchived,
 	onIncludeArchivedChange,
+	onResetToDefault,
 	view,
 	onViewChange,
 	boardSupported,
 	onImportClick,
-	onNewClick,
 }: DataTableToolbarProps) {
 	const [localSearch, setLocalSearch] = useState(search ?? '')
 	const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined)
@@ -155,21 +155,18 @@ export function DataTableToolbar({
 				onGroupByChange={onGroupByChange}
 				includeArchived={includeArchived}
 				onIncludeArchivedChange={onIncludeArchivedChange}
+				onResetToDefault={onResetToDefault}
 			/>
 
-			{/* Actions — Import is occasional, New is primary. Ordered per the
-			 * 2026-05-30 button hierarchy call. `basis-full` below xl keeps the
-			 * action cluster on its own predictable row when there isn't enough
-			 * inline room (iPad landscape included); `xl:basis-auto` restores
-			 * the single-row layout on wider viewports. */}
+			{/* Actions — Import is occasional; New now lives only in the global
+			 * header (see header.tsx). `basis-full` below xl keeps the action
+			 * cluster on its own predictable row when there isn't enough inline
+			 * room (iPad landscape included); `xl:basis-auto` restores the
+			 * single-row layout on wider viewports. */}
 			<div className="ml-auto flex basis-full items-center justify-end gap-2 xl:basis-auto">
 				<Button variant="ghost" size="sm" className="gap-1.5" onClick={onImportClick}>
 					<Upload size={14} />
 					Import
-				</Button>
-				<Button size="sm" className="gap-1.5" onClick={onNewClick}>
-					<Plus size={14} />
-					New
 				</Button>
 			</div>
 		</div>

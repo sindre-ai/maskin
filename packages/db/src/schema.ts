@@ -37,9 +37,9 @@ export const actors = pgTable('actors', {
 	isSystem: boolean('is_system').notNull().default(false),
 	agentState: text('agent_state').notNull().default('idle').$type<AgentState>(),
 	agentStateUpdatedAt: timestamp('agent_state_updated_at', { withTimezone: true }),
-	// Per-row marker keys for managed-package installs. Nullable everywhere;
-	// install-provisioned rows carry { installed_package_id, source_item_id }
-	// so the T5 version-push cron can find them. See catalogPackages comment.
+	// Per-row marker keys for managed-loop installs. Nullable everywhere;
+	// install-provisioned rows carry { installed_loop_id, source_item_id }
+	// so the T5 version-push cron can find them. See marketplaceLoops comment.
 	metadata: jsonb('metadata'),
 	// biome-ignore lint/suspicious/noExplicitAny: self-referential FK requires type escape
 	createdBy: uuid('created_by').references((): any => actors.id),
@@ -260,6 +260,14 @@ export const sessions = pgTable(
 		actionPrompt: text('action_prompt').notNull(),
 		config: jsonb('config').notNull().default({}),
 		interactive: boolean('interactive').notNull().default(false),
+		// Denormalized from config.conversation.conversation_id — same treatment
+		// `interactive` already got — so the conversation-responder's "does a
+		// running interactive session already exist for this (conversation,
+		// agent)?" lookup can use an indexed column instead of an unindexed
+		// JSONB path scan.
+		conversationId: uuid('conversation_id').references((): AnyPgColumn => conversations.id, {
+			onDelete: 'set null',
+		}),
 		result: jsonb('result').$type<SessionResult>(),
 		snapshotPath: text('snapshot_path'),
 		sourceSessionId: uuid('source_session_id'),
@@ -293,6 +301,19 @@ export const sessions = pgTable(
 		index('sessions_agent_server_active_idx')
 			.on(t.agentServerId, t.status)
 			.where(sql`${t.agentServerId} IS NOT NULL`),
+		// Backs the conversation-responder's "is there already a running
+		// interactive session for this (conversation, agent)?" lookup.
+		index('sessions_conversation_actor_idx')
+			.on(t.conversationId, t.actorId)
+			.where(sql`${t.conversationId} IS NOT NULL`),
+		// Authoritative concurrency guard, not just an optimization: at most one
+		// interactive session may be actively spawning/running for a given
+		// (conversation, agent) pair. Enforced at the DB layer because the
+		// application-level lookup-then-insert in evaluateAndRespond has a race
+		// window between two near-simultaneous replies from the same agent.
+		uniqueIndex('sessions_conversation_actor_active_uniq')
+			.on(t.conversationId, t.actorId)
+			.where(sql`${t.interactive} = true AND ${t.status} IN ('pending','starting','running')`),
 	],
 )
 
@@ -311,6 +332,109 @@ export const sessionLogs = pgTable(
 	},
 	(t) => [index('session_logs_session_idx').on(t.sessionId, t.createdAt)],
 )
+
+// ── Conversations ────────────────────────────────────────────────────────
+
+export const conversations = pgTable(
+	'conversations',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id)
+			.notNull(),
+		title: text('title').notNull(),
+		createdBy: uuid('created_by')
+			.references(() => actors.id)
+			.notNull(),
+		// Denormalized so "my conversations ordered by last activity" is a plain
+		// index scan instead of a MAX(messages.id) aggregate per row. Bumped in
+		// the same transaction as every message insert.
+		lastMessageAt: timestamp('last_message_at', { withTimezone: true }).notNull().defaultNow(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [index('conversations_ws_last_message_at_idx').on(t.workspaceId, t.lastMessageAt)],
+)
+
+export type Conversation = typeof conversations.$inferSelect
+export type NewConversation = typeof conversations.$inferInsert
+
+// ── Conversation Participants ──────────────────────────────────────────────
+//
+// Per-user pin/archive/read state lives here rather than on `conversations` —
+// two humans in the same conversation can have independently pinned/archived/
+// read state. `leftAt` is a soft-remove (not a DELETE) so a re-added
+// participant keeps their prior pin/archive/read history and a removed
+// participant keeps a stable author FK on their historical messages.
+
+export const conversationParticipants = pgTable(
+	'conversation_participants',
+	{
+		conversationId: uuid('conversation_id')
+			.references(() => conversations.id, { onDelete: 'cascade' })
+			.notNull(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id)
+			.notNull(),
+		addedBy: uuid('added_by').references(() => actors.id),
+		joinedAt: timestamp('joined_at', { withTimezone: true }).notNull().defaultNow(),
+		leftAt: timestamp('left_at', { withTimezone: true }),
+		pinned: boolean('pinned').notNull().default(false),
+		archived: boolean('archived').notNull().default(false),
+		// High-water mark into messages.id (bigserial, monotonic).
+		lastReadMessageId: bigint('last_read_message_id', { mode: 'number' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		primaryKey({ columns: [t.conversationId, t.actorId] }),
+		// Leading column actorId (reverse of the PK's leading column) — required
+		// for "list my active conversations" to be an index scan.
+		index('conversation_participants_actor_active_idx')
+			.on(t.actorId, t.conversationId)
+			.where(sql`${t.leftAt} IS NULL`),
+	],
+)
+
+export type ConversationParticipant = typeof conversationParticipants.$inferSelect
+export type NewConversationParticipant = typeof conversationParticipants.$inferInsert
+
+// ── Messages ────────────────────────────────────────────────────────────────
+//
+// One row per chat turn in a conversation, human- or agent-authored.
+// `sessionId` links an agent-authored message back to the session that
+// produced it (NULL for human messages) — cost/token drill-down is a join at
+// read time, same nullable-FK shape as notifications.sessionId and
+// agentFiles.sessionId. sessionId is intentionally NOT unique: an
+// interactive session is long-lived and reused across many replies in the
+// same conversation (see conversation-responder.ts), so many messages
+// legitimately share one session_id over that session's lifetime.
+
+export const messages = pgTable(
+	'messages',
+	{
+		id: bigserial('id', { mode: 'number' }).primaryKey(),
+		conversationId: uuid('conversation_id')
+			.references(() => conversations.id, { onDelete: 'cascade' })
+			.notNull(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id)
+			.notNull(),
+		kind: text('kind').notNull().default('message'),
+		content: text('content').notNull(),
+		metadata: jsonb('metadata'),
+		sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'set null' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index('messages_conversation_id_idx').on(t.conversationId, t.id),
+		index('messages_session_id_idx').on(t.sessionId),
+		check('messages_kind_check', sql`${t.kind} IN ('message', 'system')`),
+	],
+)
+
+export type Message = typeof messages.$inferSelect
+export type NewMessage = typeof messages.$inferInsert
 
 // ── Agent Files ────────────────────────────────────────────────────────────
 
@@ -782,27 +906,33 @@ export const workspaceOnboardingPrompts = pgTable(
 export type WorkspaceOnboardingPrompt = typeof workspaceOnboardingPrompts.$inferSelect
 export type NewWorkspaceOnboardingPrompt = typeof workspaceOnboardingPrompts.$inferInsert
 
-// ── Catalog Packages ──────────────────────────────────────────────────────────
+// ── Marketplace Loops ──────────────────────────────────────────────────────────
 //
 // Vetted, installable bundles of actors, triggers, skills,
-// and integrations. Any workspace can install a package and Maskin pushes
-// version updates to locked installs via the cron in T5. A package is a single
-// row here; the elements it ships with live in `catalog_package_items` as
-// frozen snapshots, one per published version.
+// and integrations. Any workspace can install a loop and Maskin pushes
+// version updates to locked installs via the cron in T5. A marketplace loop is
+// a single row here; the elements it ships with live in `marketplace_loop_items`
+// as frozen snapshots, one per published version.
+//
+// Not to be confused with the `objects` table's `type = 'loop'` rows (the
+// loops-first-class bet's "persistent multi-agent process" concept) — a
+// marketplace loop is the installable *template*; installing one creates a
+// `type = 'loop'` object that is the *running instance*, linked back via
+// `installedLoops.objectId` and `objects.metadata.installed_from_marketplace_loop_id`.
 //
 // Re-provisioning convention — every actor/trigger/skill/integration row
-// created by an install must carry `metadata.installed_package_id` (the
-// `installed_packages.id` row) and `metadata.source_item_id` (the
-// `catalog_package_items.source_item_id` it was provisioned from). The
+// created by an install must carry `metadata.installed_loop_id` (the
+// `installed_loops.id` row) and `metadata.source_item_id` (the
+// `marketplace_loop_items.source_item_id` it was provisioned from). The
 // version-push cron uses both keys to find what to update and to resolve
-// intra-package wiring (e.g. a trigger whose `target_actor_id` points at an
-// agent in the same package) against the snapshot graph instead of the live
+// intra-loop wiring (e.g. a trigger whose `target_actor_id` points at an
+// agent in the same loop) against the snapshot graph instead of the live
 // publisher workspace. Carried as a nullable `metadata jsonb` column on each
 // of the four element tables (added by 0035_install_metadata.sql) so non-
 // install rows pay nothing and install rows are findable by a partial
-// expression index on `metadata->>'installed_package_id'`.
+// expression index on `metadata->>'installed_loop_id'`.
 
-export const catalogPackages = pgTable('catalog_packages', {
+export const marketplaceLoops = pgTable('marketplace_loops', {
 	id: uuid('id').defaultRandom().primaryKey(),
 	name: text('name').notNull(),
 	slug: text('slug').notNull().unique(),
@@ -813,62 +943,69 @@ export const catalogPackages = pgTable('catalog_packages', {
 	updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 })
 
-export type CatalogPackage = typeof catalogPackages.$inferSelect
-export type NewCatalogPackage = typeof catalogPackages.$inferInsert
+export type MarketplaceLoop = typeof marketplaceLoops.$inferSelect
+export type NewMarketplaceLoop = typeof marketplaceLoops.$inferInsert
 
-// ── Catalog Package Items ─────────────────────────────────────────────────────
+// ── Marketplace Loop Items ─────────────────────────────────────────────────────
 //
-// Frozen snapshots of each element that ships with a published package.
-// `source_item_id` is the original actor/trigger/skill/integration id in the
-// publishing workspace — kept so intra-package wiring inside `item_snapshot`
-// (e.g. a `target_actor_id` referencing another item in the same package) can
+// Frozen snapshots of each element that ships with a published marketplace
+// loop. `source_item_id` is the original actor/trigger/skill/integration id in
+// the publishing workspace — kept so intra-loop wiring inside `item_snapshot`
+// (e.g. a `target_actor_id` referencing another item in the same loop) can
 // be resolved against this set of rows during install and re-provisioning.
 
-export const catalogPackageItems = pgTable(
-	'catalog_package_items',
+export const marketplaceLoopItems = pgTable(
+	'marketplace_loop_items',
 	{
 		id: uuid('id').defaultRandom().primaryKey(),
-		packageId: uuid('package_id')
+		loopId: uuid('loop_id')
 			.notNull()
-			.references(() => catalogPackages.id, { onDelete: 'cascade' }),
+			.references(() => marketplaceLoops.id, { onDelete: 'cascade' }),
 		itemType: text('item_type').notNull(),
 		sourceItemId: uuid('source_item_id').notNull(),
 		itemSnapshot: jsonb('item_snapshot').notNull(),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [
-		index('catalog_package_items_package_idx').on(t.packageId),
-		index('catalog_package_items_package_source_idx').on(t.packageId, t.sourceItemId),
+		index('marketplace_loop_items_loop_idx').on(t.loopId),
+		index('marketplace_loop_items_loop_source_idx').on(t.loopId, t.sourceItemId),
 		check(
-			'catalog_package_items_item_type_check',
+			'marketplace_loop_items_item_type_check',
 			sql`${t.itemType} IN ('actor', 'trigger', 'skill', 'integration')`,
 		),
 	],
 )
 
-export type CatalogPackageItem = typeof catalogPackageItems.$inferSelect
-export type NewCatalogPackageItem = typeof catalogPackageItems.$inferInsert
+export type MarketplaceLoopItem = typeof marketplaceLoopItems.$inferSelect
+export type NewMarketplaceLoopItem = typeof marketplaceLoopItems.$inferInsert
 
-// ── Installed Packages ────────────────────────────────────────────────────────
+// ── Installed Loops ────────────────────────────────────────────────────────────
 //
-// One row per package installed into a workspace. `is_locked` defaults to true
-// — Maskin owns the install and pushes version updates via the cron in T5
-// until the workspace explicitly forks. Forking sets `forked_at` and flips
-// `is_locked` to false; the row is preserved so install lineage survives the
-// fork. The `source_locked_idx` keys the cron's "all locked installs of this
-// package" lookup; the `(workspace_id, source_package_id)` unique key prevents
-// double-installs of the same catalog package into one workspace.
+// One row per marketplace loop installed into a workspace. `is_locked`
+// defaults to true — Maskin owns the install and pushes version updates via
+// the cron in T5 until the workspace explicitly forks. Forking sets
+// `forked_at` and flips `is_locked` to false; the row is preserved so install
+// lineage survives the fork. The `source_locked_idx` keys the cron's "all
+// locked installs of this loop" lookup; the `(workspace_id, source_loop_id)`
+// unique key prevents double-installs of the same marketplace loop into one
+// workspace.
+//
+// `objectId` points at the `objects` row (`type = 'loop'`) created at install
+// time to represent this install as a running loops-first-class Loop — see
+// the comment above `marketplaceLoops`. Nullable because it's only set inside
+// the install transaction after the object insert returns its id.
 
-export const installedPackages = pgTable(
-	'installed_packages',
+export const installedLoops = pgTable(
+	'installed_loops',
 	{
 		id: uuid('id').defaultRandom().primaryKey(),
 		workspaceId: uuid('workspace_id')
 			.notNull()
 			.references(() => workspaces.id, { onDelete: 'cascade' }),
-		sourcePackageId: uuid('source_package_id')
+		sourceLoopId: uuid('source_loop_id')
 			.notNull()
-			.references(() => catalogPackages.id),
+			.references(() => marketplaceLoops.id),
+		objectId: uuid('object_id').references(() => objects.id),
 		installedVersion: text('installed_version').notNull(),
 		isLocked: boolean('is_locked').notNull().default(true),
 		forkedAt: timestamp('forked_at', { withTimezone: true }),
@@ -876,34 +1013,34 @@ export const installedPackages = pgTable(
 		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [
-		unique('installed_packages_ws_source_uniq').on(t.workspaceId, t.sourcePackageId),
-		index('installed_packages_source_locked_idx').on(t.sourcePackageId, t.isLocked),
+		unique('installed_loops_ws_source_uniq').on(t.workspaceId, t.sourceLoopId),
+		index('installed_loops_source_locked_idx').on(t.sourceLoopId, t.isLocked),
 	],
 )
 
-export type InstalledPackage = typeof installedPackages.$inferSelect
-export type NewInstalledPackage = typeof installedPackages.$inferInsert
+export type InstalledLoop = typeof installedLoops.$inferSelect
+export type NewInstalledLoop = typeof installedLoops.$inferInsert
 
 // ── Loop Active Days ──────────────────────────────────────────────────────────
 //
-// One row per (installed_package_id, UTC day) that has emitted a
+// One row per (installed_loop_id, UTC day) that has emitted a
 // `loop_active_day` PostHog event. The PRIMARY KEY is the idempotency
 // guarantee: the session-completion path runs INSERT ... ON CONFLICT DO
 // NOTHING and only fires the analytics event when the insert actually
 // added a row. The ON DELETE CASCADE drops the rows automatically when an
 // install is deleted, so an install re-created later for the same
-// workspace + package can emit `loop_active_day` again from day one.
+// workspace + loop can emit `loop_active_day` again from day one.
 
 export const loopActiveDays = pgTable(
 	'loop_active_days',
 	{
-		installedPackageId: uuid('installed_package_id')
+		installedLoopId: uuid('installed_loop_id')
 			.notNull()
-			.references(() => installedPackages.id, { onDelete: 'cascade' }),
+			.references(() => installedLoops.id, { onDelete: 'cascade' }),
 		utcDay: text('utc_day').notNull(),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 	},
-	(t) => [primaryKey({ columns: [t.installedPackageId, t.utcDay] })],
+	(t) => [primaryKey({ columns: [t.installedLoopId, t.utcDay] })],
 )
 
 export type LoopActiveDay = typeof loopActiveDays.$inferSelect
@@ -974,3 +1111,42 @@ export const sessionDispatchAttempts = pgTable(
 
 export type SessionDispatchAttempt = typeof sessionDispatchAttempts.$inferSelect
 export type NewSessionDispatchAttempt = typeof sessionDispatchAttempts.$inferInsert
+
+// ── Orphan Thread Detections ────────────────────────────────────────────────
+//
+// Idempotency ledger for the `orphan_thread_detected` analytics signal. One
+// row per root comment (`root_comment_event_id` is the UNIQUE key) so the
+// detector can run on an interval without double-firing the PostHog event
+// when a slow tick overlaps a faster one. The ledger row is written in the
+// same transaction as the capture attempt — if PostHog is down the row is
+// still written (the signal is best-effort by design; see the service's
+// docstring) so we never re-scan an already-decided thread.
+
+export const orphanThreadDetections = pgTable(
+	'orphan_thread_detections',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id)
+			.notNull(),
+		objectId: uuid('object_id').notNull(),
+		rootCommentEventId: bigint('root_comment_event_id', { mode: 'number' }).notNull(),
+		expectedReplyActorId: uuid('expected_reply_actor_id')
+			.references(() => actors.id)
+			.notNull(),
+		hoursWithoutReply: numeric('hours_without_reply', { precision: 10, scale: 2 }).notNull(),
+		threadKind: text('thread_kind').notNull(),
+		detectedAt: timestamp('detected_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		unique('orphan_thread_detections_root_comment_event_id_uniq').on(t.rootCommentEventId),
+		check(
+			'orphan_thread_detections_thread_kind_check',
+			sql`${t.threadKind} IN ('decision_required','question','flag')`,
+		),
+		index('orphan_thread_detections_detected_at_idx').on(t.detectedAt),
+	],
+)
+
+export type OrphanThreadDetection = typeof orphanThreadDetections.$inferSelect
+export type NewOrphanThreadDetection = typeof orphanThreadDetections.$inferInsert

@@ -5,6 +5,7 @@ import type {
 	EventResponse,
 	ImportResponse,
 	IntegrationResponse,
+	LoopSummary,
 	NotificationResponse,
 	ObjectResponse,
 	RelationshipResponse,
@@ -199,11 +200,34 @@ export function buildTriggerResponse(overrides: Partial<TriggerResponse> = {}): 
 		workspaceId: 'ws-1',
 		name: 'Test Trigger',
 		type: 'cron',
-		config: { schedule: '0 * * * *' },
+		config: { expression: '0 * * * *' },
 		actionPrompt: 'Run something',
 		targetActorId: 'actor-1',
 		enabled: true,
 		createdBy: 'actor-1',
+		createdAt: null,
+		updatedAt: null,
+		...overrides,
+	}
+}
+
+export function buildLoopSummary(overrides: Partial<LoopSummary> = {}): LoopSummary {
+	const id = overrides.id ?? nextId('loop')
+	return {
+		id,
+		workspaceId: 'ws-1',
+		name: 'Test loop',
+		content: 'What the loop does',
+		status: 'learning',
+		pill: 'learning',
+		entryCondition: null,
+		closeCondition: null,
+		inProgressCount: 0,
+		closedCount: 0,
+		medianTimeToCloseMs: null,
+		agentIds: [],
+		triggerIds: [],
+		waitingOnViewer: false,
 		createdAt: null,
 		updatedAt: null,
 		...overrides,

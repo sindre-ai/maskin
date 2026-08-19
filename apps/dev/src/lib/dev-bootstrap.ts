@@ -2,110 +2,205 @@ import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import {
 	actors,
-	catalogPackageItems,
-	catalogPackages,
+	marketplaceLoopItems,
+	marketplaceLoops,
 	workspaceMembers,
 	workspaces,
 } from '@maskin/db/schema'
-import { CHIEF_OF_STAFF_DEFAULT, WORKSPACE_COACH_DEFAULT } from '@maskin/shared'
+import { mergeModuleDefaultSettings } from '@maskin/module-sdk'
+import { workspaceSettingsSchema } from '@maskin/shared'
 import { and, eq, isNotNull } from 'drizzle-orm'
-import type { AgentStorageManager } from '../services/agent-storage'
-import { bootstrapDefaultAgents } from '../services/workspace-bootstrap'
+import { emitWorkspaceFirstReady } from './analytics/install-telemetry'
 import {
 	CCD_ACTOR_IDS,
-	CCD_PACKAGE,
+	CCD_LOOP,
 	CCD_SKILL_IDS,
 	CCD_TRIGGER_IDS,
-} from './catalog-packages/ccd-package'
+} from './marketplace-loops/ccd-loop'
 import {
 	DEV_PIPELINE_ACTOR_IDS,
-	DEV_PIPELINE_PACKAGE,
+	DEV_PIPELINE_LOOP,
 	DEV_PIPELINE_SKILL_IDS,
 	DEV_PIPELINE_TRIGGER_IDS,
-} from './catalog-packages/dev-pipeline-package'
+} from './marketplace-loops/dev-pipeline-loop'
 import {
-	type CatalogPackageSeedConfig,
+	GROWTH_BET_ACTOR_IDS,
+	GROWTH_BET_LOOP,
+	GROWTH_BET_SKILL_IDS,
+	GROWTH_BET_TRIGGER_IDS,
+} from './marketplace-loops/growth-bet-loop'
+import {
+	GROWTH_BRAND_DEMAND_ACTOR_IDS,
+	GROWTH_BRAND_DEMAND_LOOP,
+	GROWTH_BRAND_DEMAND_SKILL_IDS,
+	GROWTH_BRAND_DEMAND_TRIGGER_IDS,
+} from './marketplace-loops/growth-brand-demand-loop'
+import {
+	GROWTH_CONTENT_INSIGHT_ACTOR_IDS,
+	GROWTH_CONTENT_INSIGHT_LOOP,
+	GROWTH_CONTENT_INSIGHT_SKILL_IDS,
+	GROWTH_CONTENT_INSIGHT_TRIGGER_IDS,
+} from './marketplace-loops/growth-content-insight-loop'
+import {
+	GROWTH_DEAL_RELATIONSHIP_ACTOR_IDS,
+	GROWTH_DEAL_RELATIONSHIP_LOOP,
+	GROWTH_DEAL_RELATIONSHIP_SKILL_IDS,
+	GROWTH_DEAL_RELATIONSHIP_TRIGGER_IDS,
+} from './marketplace-loops/growth-deal-relationship-loop'
+import {
+	GROWTH_LEAD_GEN_ACTOR_IDS,
+	GROWTH_LEAD_GEN_LOOP,
+	GROWTH_LEAD_GEN_SKILL_IDS,
+	GROWTH_LEAD_GEN_TRIGGER_IDS,
+} from './marketplace-loops/growth-lead-gen-loop'
+import {
+	GROWTH_MEETING_ACTOR_IDS,
+	GROWTH_MEETING_LOOP,
+	GROWTH_MEETING_SKILL_IDS,
+	GROWTH_MEETING_TRIGGER_IDS,
+} from './marketplace-loops/growth-meeting-loop'
+import {
+	GROWTH_OPS_KNOWLEDGE_ACTOR_IDS,
+	GROWTH_OPS_KNOWLEDGE_LOOP,
+	GROWTH_OPS_KNOWLEDGE_SKILL_IDS,
+	GROWTH_OPS_KNOWLEDGE_TRIGGER_IDS,
+} from './marketplace-loops/growth-ops-knowledge-loop'
+import {
+	GROWTH_SDR_OUTREACH_ACTOR_IDS,
+	GROWTH_SDR_OUTREACH_LOOP,
+	GROWTH_SDR_OUTREACH_SKILL_IDS,
+	GROWTH_SDR_OUTREACH_TRIGGER_IDS,
+} from './marketplace-loops/growth-sdr-outreach-loop'
+import {
+	type MarketplaceLoopSeedConfig,
 	getActorData,
 	getSkillData,
 	getTriggerData,
-} from './catalog-packages/package-data'
-import { actorSnapshot, skillSnapshot, triggerSnapshot } from './catalog-packages/package-snapshot'
+} from './marketplace-loops/loop-data'
+import { actorSnapshot, skillSnapshot, triggerSnapshot } from './marketplace-loops/loop-snapshot'
 import {
 	STRATEGY_GROWTH_ACTOR_IDS,
-	STRATEGY_GROWTH_PACKAGE,
+	STRATEGY_GROWTH_LOOP,
 	STRATEGY_GROWTH_SKILL_IDS,
 	STRATEGY_GROWTH_TRIGGER_IDS,
-} from './catalog-packages/strategy-growth-package'
+} from './marketplace-loops/strategy-growth-loop'
 import {
 	TEAM_OPS_ACTOR_IDS,
-	TEAM_OPS_PACKAGE,
+	TEAM_OPS_LOOP,
 	TEAM_OPS_SKILL_IDS,
 	TEAM_OPS_TRIGGER_IDS,
-} from './catalog-packages/team-ops-package'
-import { logger } from './logger'
+} from './marketplace-loops/team-ops-loop'
 
-const CATALOG_SEED_CONFIGS: readonly CatalogPackageSeedConfig[] = [
+const MARKETPLACE_SEED_CONFIGS: readonly MarketplaceLoopSeedConfig[] = [
 	{
-		package: CCD_PACKAGE,
+		loop: CCD_LOOP,
 		actorIds: CCD_ACTOR_IDS,
 		triggerIds: CCD_TRIGGER_IDS,
 		skillIds: CCD_SKILL_IDS,
 	},
 	{
-		package: DEV_PIPELINE_PACKAGE,
+		loop: DEV_PIPELINE_LOOP,
 		actorIds: DEV_PIPELINE_ACTOR_IDS,
 		triggerIds: DEV_PIPELINE_TRIGGER_IDS,
 		skillIds: DEV_PIPELINE_SKILL_IDS,
 	},
 	{
-		package: STRATEGY_GROWTH_PACKAGE,
+		loop: STRATEGY_GROWTH_LOOP,
 		actorIds: STRATEGY_GROWTH_ACTOR_IDS,
 		triggerIds: STRATEGY_GROWTH_TRIGGER_IDS,
 		skillIds: STRATEGY_GROWTH_SKILL_IDS,
 	},
 	{
-		package: TEAM_OPS_PACKAGE,
+		loop: TEAM_OPS_LOOP,
 		actorIds: TEAM_OPS_ACTOR_IDS,
 		triggerIds: TEAM_OPS_TRIGGER_IDS,
 		skillIds: TEAM_OPS_SKILL_IDS,
 	},
+	{
+		loop: GROWTH_LEAD_GEN_LOOP,
+		actorIds: GROWTH_LEAD_GEN_ACTOR_IDS,
+		triggerIds: GROWTH_LEAD_GEN_TRIGGER_IDS,
+		skillIds: GROWTH_LEAD_GEN_SKILL_IDS,
+	},
+	{
+		loop: GROWTH_SDR_OUTREACH_LOOP,
+		actorIds: GROWTH_SDR_OUTREACH_ACTOR_IDS,
+		triggerIds: GROWTH_SDR_OUTREACH_TRIGGER_IDS,
+		skillIds: GROWTH_SDR_OUTREACH_SKILL_IDS,
+	},
+	{
+		loop: GROWTH_DEAL_RELATIONSHIP_LOOP,
+		actorIds: GROWTH_DEAL_RELATIONSHIP_ACTOR_IDS,
+		triggerIds: GROWTH_DEAL_RELATIONSHIP_TRIGGER_IDS,
+		skillIds: GROWTH_DEAL_RELATIONSHIP_SKILL_IDS,
+	},
+	{
+		loop: GROWTH_CONTENT_INSIGHT_LOOP,
+		actorIds: GROWTH_CONTENT_INSIGHT_ACTOR_IDS,
+		triggerIds: GROWTH_CONTENT_INSIGHT_TRIGGER_IDS,
+		skillIds: GROWTH_CONTENT_INSIGHT_SKILL_IDS,
+	},
+	{
+		loop: GROWTH_BRAND_DEMAND_LOOP,
+		actorIds: GROWTH_BRAND_DEMAND_ACTOR_IDS,
+		triggerIds: GROWTH_BRAND_DEMAND_TRIGGER_IDS,
+		skillIds: GROWTH_BRAND_DEMAND_SKILL_IDS,
+	},
+	{
+		loop: GROWTH_BET_LOOP,
+		actorIds: GROWTH_BET_ACTOR_IDS,
+		triggerIds: GROWTH_BET_TRIGGER_IDS,
+		skillIds: GROWTH_BET_SKILL_IDS,
+	},
+	{
+		loop: GROWTH_OPS_KNOWLEDGE_LOOP,
+		actorIds: GROWTH_OPS_KNOWLEDGE_ACTOR_IDS,
+		triggerIds: GROWTH_OPS_KNOWLEDGE_TRIGGER_IDS,
+		skillIds: GROWTH_OPS_KNOWLEDGE_SKILL_IDS,
+	},
+	{
+		loop: GROWTH_MEETING_LOOP,
+		actorIds: GROWTH_MEETING_ACTOR_IDS,
+		triggerIds: GROWTH_MEETING_TRIGGER_IDS,
+		skillIds: GROWTH_MEETING_SKILL_IDS,
+	},
 ]
 
-export interface CatalogSyncResult {
+export interface MarketplaceSyncResult {
 	inserted: string[]
 	updated: string[]
 	unchanged: string[]
 }
 
 /**
- * Syncs the global catalog with the four installable Loop bundles (Discover &
+ * Syncs the global marketplace with the installable Loop bundles (Discover &
  * Research, Build & Ship, Strategy & Growth, Team Ops & Retro), upserting by
- * slug. A package missing from catalog_packages is inserted; a package whose
+ * slug. A loop missing from marketplace_loops is inserted; a loop whose
  * code-defined version differs from the stored row is updated in place (its
- * catalog_package_items are replaced wholesale); a package whose version
+ * marketplace_loop_items are replaced wholesale); a loop whose version
  * matches is left untouched. Safe to call on every startup/deploy.
  *
- * Bumping a package's `version` is the deliberate signal that propagates a
- * change: `PackageVersionPusher` (services/package-version-pusher.ts) polls
- * hourly for installed_packages rows whose installedVersion has fallen behind
- * catalogPackages.version and re-provisions locked installs accordingly.
+ * Bumping a loop's `version` is the deliberate signal that propagates a
+ * change: `LoopVersionPusher` (services/loop-version-pusher.ts) polls
+ * hourly for installed_loops rows whose installedVersion has fallen behind
+ * marketplaceLoops.version and re-provisions locked installs accordingly.
  *
- * Reuses the exact same package configs + snapshot data the publish-*.ts
- * scripts publish to a shared catalog DB, so local dev never drifts from what
- * those scripts ship (see apps/dev/src/lib/catalog-packages/).
+ * Reuses the exact same loop configs + snapshot data the publish-*.ts
+ * scripts publish to a shared marketplace DB, so local dev never drifts from what
+ * those scripts ship (see apps/dev/src/lib/marketplace-loops/).
  *
  * No env guards here — production seeding goes through this function too, via
- * `scripts/seed-catalog.ts` (wired into the Docker boot sequence). Env-gating
- * lives in `seedCatalogIfEmpty` below, the dev-server-boot entrypoint.
+ * `scripts/seed-marketplace.ts` (wired into the Docker boot sequence). Env-gating
+ * lives in `seedMarketplaceIfEmpty` below, the dev-server-boot entrypoint.
  */
-export async function seedCatalogPackages(db: Database): Promise<CatalogSyncResult> {
+export async function seedMarketplaceLoops(db: Database): Promise<MarketplaceSyncResult> {
 	const existingRows = await db
 		.select({
-			id: catalogPackages.id,
-			slug: catalogPackages.slug,
-			version: catalogPackages.version,
+			id: marketplaceLoops.id,
+			slug: marketplaceLoops.slug,
+			version: marketplaceLoops.version,
 		})
-		.from(catalogPackages)
+		.from(marketplaceLoops)
 	const existingBySlug = new Map(existingRows.map((r) => [r.slug, r]))
 
 	const inserted: string[] = []
@@ -113,10 +208,10 @@ export async function seedCatalogPackages(db: Database): Promise<CatalogSyncResu
 	const unchanged: string[] = []
 
 	await db.transaction(async (tx) => {
-		for (const config of CATALOG_SEED_CONFIGS) {
-			const existing = existingBySlug.get(config.package.slug)
-			if (existing && existing.version === config.package.version) {
-				unchanged.push(config.package.slug)
+		for (const config of MARKETPLACE_SEED_CONFIGS) {
+			const existing = existingBySlug.get(config.loop.slug)
+			if (existing && existing.version === config.loop.version) {
+				unchanged.push(config.loop.slug)
 				continue
 			}
 
@@ -128,58 +223,58 @@ export async function seedCatalogPackages(db: Database): Promise<CatalogSyncResu
 			for (const t of triggerRows) {
 				if (!publishedActorIds.has(t.targetActorId)) {
 					throw new Error(
-						`${config.package.slug}: trigger ${t.id} (${t.name}) targets actor ${t.targetActorId}, which is not in the seeded actor set.`,
+						`${config.loop.slug}: trigger ${t.id} (${t.name}) targets actor ${t.targetActorId}, which is not in the seeded actor set.`,
 					)
 				}
 			}
 
-			let packageId: string
+			let loopId: string
 			if (existing) {
 				await tx
-					.update(catalogPackages)
+					.update(marketplaceLoops)
 					.set({
-						name: config.package.name,
-						description: config.package.description,
-						version: config.package.version,
-						useCase: config.package.useCase,
+						name: config.loop.name,
+						description: config.loop.description,
+						version: config.loop.version,
+						useCase: config.loop.useCase,
 						updatedAt: new Date(),
 					})
-					.where(eq(catalogPackages.id, existing.id))
-				await tx.delete(catalogPackageItems).where(eq(catalogPackageItems.packageId, existing.id))
-				packageId = existing.id
-				updated.push(config.package.slug)
+					.where(eq(marketplaceLoops.id, existing.id))
+				await tx.delete(marketplaceLoopItems).where(eq(marketplaceLoopItems.loopId, existing.id))
+				loopId = existing.id
+				updated.push(config.loop.slug)
 			} else {
-				const [pkg] = await tx
-					.insert(catalogPackages)
+				const [loop] = await tx
+					.insert(marketplaceLoops)
 					.values({
-						slug: config.package.slug,
-						name: config.package.name,
-						description: config.package.description,
-						version: config.package.version,
-						useCase: config.package.useCase,
+						slug: config.loop.slug,
+						name: config.loop.name,
+						description: config.loop.description,
+						version: config.loop.version,
+						useCase: config.loop.useCase,
 					})
 					.returning()
 
-				if (!pkg) throw new Error(`${config.package.slug}: catalog_packages insert returned no row`)
-				packageId = pkg.id
-				inserted.push(config.package.slug)
+				if (!loop) throw new Error(`${config.loop.slug}: marketplace_loops insert returned no row`)
+				loopId = loop.id
+				inserted.push(config.loop.slug)
 			}
 
-			await tx.insert(catalogPackageItems).values([
+			await tx.insert(marketplaceLoopItems).values([
 				...actorRows.map((actorRow) => ({
-					packageId,
+					loopId,
 					itemType: 'actor' as const,
 					sourceItemId: actorRow.id,
 					itemSnapshot: actorSnapshot(actorRow),
 				})),
 				...triggerRows.map((triggerRow) => ({
-					packageId,
+					loopId,
 					itemType: 'trigger' as const,
 					sourceItemId: triggerRow.id,
 					itemSnapshot: triggerSnapshot(triggerRow),
 				})),
 				...skillRows.map((skillRow) => ({
-					packageId,
+					loopId,
 					itemType: 'skill' as const,
 					sourceItemId: skillRow.id,
 					itemSnapshot: skillSnapshot(
@@ -195,15 +290,15 @@ export async function seedCatalogPackages(db: Database): Promise<CatalogSyncResu
 }
 
 /**
- * Dev-server-boot entrypoint for catalog seeding — called unconditionally from
+ * Dev-server-boot entrypoint for marketplace seeding — called unconditionally from
  * index.ts on every startup, so it no-ops itself outside local dev. Production
- * seeding is a deliberate, separate step: see `seedCatalogPackages` above.
+ * seeding is a deliberate, separate step: see `seedMarketplaceLoops` above.
  */
-export async function seedCatalogIfEmpty(db: Database): Promise<void> {
+export async function seedMarketplaceIfEmpty(db: Database): Promise<void> {
 	if (process.env.NODE_ENV === 'production') return
 	if (process.env.MASKIN_AUTO_BOOTSTRAP === 'false') return
 
-	await seedCatalogPackages(db)
+	await seedMarketplaceLoops(db)
 }
 
 export interface DevBootstrapResult {
@@ -225,10 +320,7 @@ export interface DevBootstrapResult {
  *
  * Skipped in production or when MASKIN_AUTO_BOOTSTRAP=false.
  */
-export async function maybeBootstrapDev(
-	db: Database,
-	agentStorage?: AgentStorageManager,
-): Promise<DevBootstrapResult | null> {
+export async function maybeBootstrapDev(db: Database): Promise<DevBootstrapResult | null> {
 	if (process.env.NODE_ENV === 'production') return null
 	if (process.env.MASKIN_AUTO_BOOTSTRAP === 'false') return null
 
@@ -248,11 +340,18 @@ export async function maybeBootstrapDev(
 
 	if (!actor) throw new Error('dev bootstrap: failed to create actor')
 
+	const enabledModules = ['work', 'crm', 'knowledge']
+	const settings = mergeModuleDefaultSettings(
+		workspaceSettingsSchema.parse({ enabled_modules: enabledModules }),
+		enabledModules,
+	)
+
 	const workspace = await db.transaction(async (tx) => {
 		const [ws] = await tx
 			.insert(workspaces)
 			.values({
 				name: 'My Workspace',
+				settings,
 				createdBy: actor.id,
 			})
 			.returning()
@@ -265,81 +364,15 @@ export async function maybeBootstrapDev(
 			role: 'owner',
 		})
 
-		// Seed Workspace Coach — the built-in meta-agent shipped with every workspace.
-		// apiKey is required (see comment in actors.ts) — without it the agent's
-		// container has no identity to authenticate MCP writes with.
-		const [coach] = await tx
-			.insert(actors)
-			.values({
-				type: WORKSPACE_COACH_DEFAULT.type,
-				name: WORKSPACE_COACH_DEFAULT.name,
-				isSystem: WORKSPACE_COACH_DEFAULT.isSystem,
-				systemPrompt: WORKSPACE_COACH_DEFAULT.systemPrompt,
-				llmProvider: WORKSPACE_COACH_DEFAULT.llmProvider,
-				llmConfig: WORKSPACE_COACH_DEFAULT.llmConfig,
-				tools: WORKSPACE_COACH_DEFAULT.tools,
-				apiKey: generateApiKey().key,
-				createdBy: actor.id,
-			})
-			.returning()
-
-		if (!coach) throw new Error('dev bootstrap: failed to seed Workspace Coach actor')
-
-		await tx.insert(workspaceMembers).values({
-			workspaceId: ws.id,
-			actorId: coach.id,
-			role: 'member',
-		})
-
-		// Seed Chief of Staff synchronously so we can capture its actor id and
-		// pin it as this workspace's default chat agent in the same tx.
-		// bootstrapDefaultAgents() also has an idempotent CoS name-check so the
-		// post-commit call will simply skip this actor.
-		const [chief] = await tx
-			.insert(actors)
-			.values({
-				type: CHIEF_OF_STAFF_DEFAULT.type,
-				name: CHIEF_OF_STAFF_DEFAULT.name,
-				isSystem: CHIEF_OF_STAFF_DEFAULT.isSystem,
-				systemPrompt: CHIEF_OF_STAFF_DEFAULT.systemPrompt,
-				llmProvider: CHIEF_OF_STAFF_DEFAULT.llmProvider,
-				llmConfig: CHIEF_OF_STAFF_DEFAULT.llmConfig,
-				tools: CHIEF_OF_STAFF_DEFAULT.tools,
-				apiKey: generateApiKey().key,
-				createdBy: actor.id,
-			})
-			.returning()
-
-		if (!chief) throw new Error('dev bootstrap: failed to seed Chief of Staff actor')
-
-		await tx.insert(workspaceMembers).values({
-			workspaceId: ws.id,
-			actorId: chief.id,
-			role: 'member',
-		})
-
-		// Pin Chief of Staff as the default chat agent for this workspace.
-		// Reversible via `pnpm --filter @maskin/dev exec tsx scripts/seed-default-agent.ts --unset`.
-		await tx
-			.update(workspaces)
-			.set({ settings: { default_agent_id: chief.id } })
-			.where(eq(workspaces.id, ws.id))
-
 		return ws
 	})
 
 	if (!workspace) throw new Error('dev bootstrap: failed to create workspace')
 
-	// Seed Driver and Strategist async (Workspace Coach was already seeded above).
-	// bootstrapDefaultAgents is idempotent — it skips Workspace Coach by name.
-	if (agentStorage) {
-		bootstrapDefaultAgents(db, agentStorage, workspace.id, actor.id).catch((err) =>
-			logger.error('dev bootstrap: default agent seeding failed', {
-				workspaceId: workspace.id,
-				err,
-			}),
-		)
-	}
+	// TTV instrumentation: this is the first (and per findExistingCredentials
+	// only) workspace the auto-bootstrap creates for a fresh install.
+	// Fire-and-forget — never blocks or throws.
+	emitWorkspaceFirstReady({ workspaceId: workspace.id, actorId: actor.id }).catch(() => {})
 
 	return {
 		apiKey: key,

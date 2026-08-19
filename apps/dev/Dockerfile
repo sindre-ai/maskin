@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 FROM node:20-alpine
 RUN corepack enable
 
@@ -20,31 +21,51 @@ COPY apps/dev/package.json apps/dev/package.json
 COPY apps/web/package.json apps/web/package.json
 COPY apps/e2e/package.json apps/e2e/package.json
 
-RUN pnpm install --frozen-lockfile
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
+# Cache mount persists pnpm's content-addressable store across builds on the
+# same host, independent of whether the layer above hit Docker's own cache —
+# avoids re-downloading unchanged deps whenever the lockfile changes.
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+	pnpm config set store-dir /pnpm/store && \
+	pnpm install --frozen-lockfile
 
+# Each target's COPY+RUN pair is kept adjacent (instead of batching all COPYs
+# up front) so an apps/dev-only or apps/web-only change doesn't force Docker
+# to treat earlier, unrelated targets as invalidated. Building via `turbo run`
+# (not `pnpm --filter=X build`, which calls each package's script directly and
+# bypasses turbo entirely) is what breaks the cascade for cases Docker's own
+# layer chain can't avoid (e.g. an apps/dev change forcing the apps/web layer
+# to "execute"): turbo checks its persisted per-package task hashes against
+# the --mount=type=cache turbo dir and replays cached output in seconds
+# instead of re-running an unaffected build.
 COPY packages/ packages/
 COPY extensions/ extensions/
+RUN --mount=type=cache,id=turbo,target=/app/.turbo \
+	NODE_OPTIONS=--max-old-space-size=1536 pnpm exec turbo run build --filter='./packages/*'
+
 COPY apps/dev/ apps/dev/
-COPY apps/web/ apps/web/
+RUN --mount=type=cache,id=turbo,target=/app/.turbo \
+	NODE_OPTIONS=--max-old-space-size=1536 pnpm exec turbo run build --filter=@maskin/dev
 
 # Vite reads `import.meta.env.VITE_*` from `process.env` at build time, but a
 # Docker ARG alone is not exposed to the shell environment of a RUN command —
-# it's only substitutable via `$VAR`. Promote to ENV so pnpm --filter=@maskin/web
-# build actually bakes the values into the SPA bundle. Empty defaults keep local
+# it's only substitutable via `$VAR`. Promote to ENV so the @maskin/web build
+# actually bakes the values into the SPA bundle. Empty defaults keep local
 # `docker build` (without --build-arg) working.
 ARG VITE_POSTHOG_KEY=""
 ARG VITE_POSTHOG_HOST=""
 ENV VITE_POSTHOG_KEY=$VITE_POSTHOG_KEY
 ENV VITE_POSTHOG_HOST=$VITE_POSTHOG_HOST
 
-# Build sequentially to stay within 8GB server memory
-RUN NODE_OPTIONS=--max-old-space-size=1536 pnpm --filter='./packages/*' build
-RUN NODE_OPTIONS=--max-old-space-size=1536 pnpm --filter=@maskin/dev build
-RUN NODE_OPTIONS=--max-old-space-size=1536 pnpm --filter=@maskin/web build
+COPY apps/web/ apps/web/
+RUN --mount=type=cache,id=turbo,target=/app/.turbo \
+	NODE_OPTIONS=--max-old-space-size=1536 pnpm exec turbo run build --filter=@maskin/web
 
 COPY docker/agent-base/ docker/agent-base/
+COPY docker/browser-sidecar/ docker/browser-sidecar/
 
 ENV NODE_ENV=production
 ENV STATIC_DIR=/app/apps/web/dist
 EXPOSE 3000
-CMD ["sh", "-c", "node packages/db/dist/migrate.js && pnpm --filter @maskin/dev exec tsx scripts/seed-catalog.ts && node apps/dev/dist/index.js"]
+CMD ["sh", "-c", "node packages/db/dist/migrate.js && pnpm --filter @maskin/dev exec tsx scripts/seed-marketplace.ts && node apps/dev/dist/index.js"]

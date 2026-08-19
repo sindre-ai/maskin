@@ -323,4 +323,69 @@ describe('Claude OAuth Routes — slot writes (integration)', () => {
 		expect(body.slots.primary?.subscription_type).toBe('max-5x')
 		expect(body.slots.backup?.subscription_type).toBe('pro')
 	})
+
+	it('PATCH /nickname sets a nickname without disturbing the slot tokens', async () => {
+		const ws = await insertWorkspace(db, getTestActorId(), {
+			settings: { enabled_modules: ['work'], claude_oauth: { primary: seededPrimary } },
+		})
+
+		const res = await makeApp().request(
+			jsonRequest(
+				'PATCH',
+				'/api/claude-oauth/nickname',
+				{ slot: 'primary', nickname: 'Work account' },
+				{ 'x-workspace-id': ws.id },
+			),
+		)
+		expect(res.status).toBe(200)
+
+		const oauth = (await readClaudeOAuth(ws.id)) as {
+			primary?: { encryptedAccessToken: string; nickname?: string }
+		}
+		expect(oauth.primary?.nickname).toBe('Work account')
+		expect(oauth.primary?.encryptedAccessToken).toBe('primary-enc-access')
+
+		const statusRes = await makeApp().request(
+			jsonGet('/api/claude-oauth/status', { 'x-workspace-id': ws.id }),
+		)
+		const statusBody = (await statusRes.json()) as { slots: { primary?: { nickname?: string } } }
+		expect(statusBody.slots.primary?.nickname).toBe('Work account')
+	})
+
+	it('PATCH /nickname clears an existing nickname when given an empty string', async () => {
+		const ws = await insertWorkspace(db, getTestActorId(), {
+			settings: {
+				enabled_modules: ['work'],
+				claude_oauth: { primary: { ...seededPrimary, nickname: 'Old name' } },
+			},
+		})
+
+		await makeApp().request(
+			jsonRequest(
+				'PATCH',
+				'/api/claude-oauth/nickname',
+				{ slot: 'primary', nickname: '' },
+				{ 'x-workspace-id': ws.id },
+			),
+		)
+
+		const oauth = (await readClaudeOAuth(ws.id)) as { primary?: { nickname?: string } }
+		expect(oauth.primary?.nickname).toBeUndefined()
+	})
+
+	it('PATCH /nickname returns 404 for a slot with no credentials', async () => {
+		const ws = await insertWorkspace(db, getTestActorId(), {
+			settings: { enabled_modules: ['work'], claude_oauth: { primary: seededPrimary } },
+		})
+
+		const res = await makeApp().request(
+			jsonRequest(
+				'PATCH',
+				'/api/claude-oauth/nickname',
+				{ slot: 'backup', nickname: 'Backup account' },
+				{ 'x-workspace-id': ws.id },
+			),
+		)
+		expect(res.status).toBe(404)
+	})
 })

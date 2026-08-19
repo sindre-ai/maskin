@@ -7,6 +7,7 @@
 		"dev:win": "node scripts/dev.mjs",
 		"dev:external": "bash scripts/dev-external.sh",
 		"dev:external:win": "node scripts/dev-external.mjs",
+		"dev:no-docker": "bash scripts/dev-no-docker.sh",
 		"build": "turbo build",
 		"test": "turbo test --concurrency=4",
 		"test:integration": "turbo test:integration",

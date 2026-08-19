@@ -1,9 +1,9 @@
 import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
-test.describe('Loop card — object detail', () => {
+test.describe('Commitment card — object detail', () => {
 	for (const viewport of SHIP_GATE_VIEWPORTS) {
-		test(`holding loop renders title, chip, floor, cadence, source-bet link at ${viewport.label}`, async ({
+		test(`holding commitment renders title, chip, floor, cadence, source-bet link at ${viewport.label}`, async ({
 			page,
 			account,
 		}) => {
@@ -15,8 +15,8 @@ test.describe('Loop card — object detail', () => {
 				status: 'succeeded',
 			})
 
-			const loop = await account.api.createObject(account.workspaceId, {
-				type: 'loop',
+			const commitment = await account.api.createObject(account.workspaceId, {
+				type: 'commitment',
 				title: 'Customer bugs fixed <1 day',
 				status: 'holding',
 				metadata: {
@@ -26,12 +26,12 @@ test.describe('Loop card — object detail', () => {
 				},
 			})
 
-			await page.goto(`/${account.workspaceId}/objects/${loop.id}`)
+			await page.goto(`/${account.workspaceId}/objects/${commitment.id}`)
 			await expect(page.locator('textarea').first()).toHaveValue('Customer bugs fixed <1 day', {
 				timeout: 10000,
 			})
 
-			const card = page.getByTestId('loop-card')
+			const card = page.getByTestId('commitment-card')
 			await expect(card).toBeVisible()
 			await expect(card.getByText('holding')).toBeVisible()
 			await expect(card.getByText('<1 day median')).toBeVisible()
@@ -49,14 +49,14 @@ test.describe('Loop card — object detail', () => {
 		})
 	}
 
-	test('breached loop renders red chip and last_breach_at at 1024×768', async ({
+	test('breached commitment renders red chip and last_breach_at at 1024×768', async ({
 		page,
 		account,
 	}) => {
 		await page.setViewportSize({ width: 1024, height: 768 })
 
-		const loop = await account.api.createObject(account.workspaceId, {
-			type: 'loop',
+		const commitment = await account.api.createObject(account.workspaceId, {
+			type: 'commitment',
 			title: 'Weekly ship cadence',
 			status: 'breached',
 			metadata: {
@@ -66,12 +66,12 @@ test.describe('Loop card — object detail', () => {
 			},
 		})
 
-		await page.goto(`/${account.workspaceId}/objects/${loop.id}`)
+		await page.goto(`/${account.workspaceId}/objects/${commitment.id}`)
 		await expect(page.locator('textarea').first()).toHaveValue('Weekly ship cadence', {
 			timeout: 10000,
 		})
 
-		const card = page.getByTestId('loop-card')
+		const card = page.getByTestId('commitment-card')
 		await expect(card).toBeVisible()
 		await expect(card.getByText('breached')).toBeVisible()
 		await expect(card.getByText('Last breach')).toBeVisible()

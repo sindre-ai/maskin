@@ -8,7 +8,7 @@ import {
 	userDisplaySettingsResponseSchema,
 } from '@maskin/shared'
 import { and, eq } from 'drizzle-orm'
-import { createApiError } from '../lib/errors'
+import { createApiError, validationFailureHook } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 
@@ -20,7 +20,7 @@ type Env = {
 	}
 }
 
-const app = new OpenAPIHono<Env>()
+const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 // V1 only reads/writes the `'default'` row per (actor, object_type). The
 // `name` column is reserved for the Board View bet's saved views — see

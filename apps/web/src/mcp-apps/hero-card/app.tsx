@@ -1,5 +1,5 @@
 ﻿import { CompactEmpty } from '@/mcp-apps/shared/compact-empty'
-import { useCallTool, useToolResult, useWebAppContext } from '@/mcp-apps/shared/mcp-app-provider'
+import { useToolResult, useWebAppContext } from '@/mcp-apps/shared/mcp-app-provider'
 import { renderMcpApp } from '@/mcp-apps/shared/render'
 import { type WorkspaceSchema, useWorkspaceSchema } from '@/mcp-apps/shared/use-workspace-schema'
 import {
@@ -9,7 +9,7 @@ import {
 	useWebAppHref,
 } from '@/mcp-apps/shared/web-app-link'
 import { ExternalLink, User } from 'lucide-react'
-import { Component, type ErrorInfo, type ReactNode, useEffect, useMemo, useRef } from 'react'
+import { Component, type ErrorInfo, type ReactNode, useMemo } from 'react'
 
 interface HeroCardActor {
 	id: string
@@ -23,7 +23,10 @@ interface HeroCardObject {
 	title: string | null
 	status: string | null
 	driver: HeroCardActor | null
-	contextLine: string
+	// Omitted for actor rows — status (role) and description already cover it.
+	contextLine?: string
+	// Actor-only: the raw role, independent of status's isSystem/type fallback.
+	role?: string | null
 	badges?: string[]
 }
 
@@ -52,8 +55,6 @@ function HeroCardApp() {
 	const heroCard = toolResult ? extractHeroCard(toolResult.result) : null
 	const toolName = toolResult?.toolName ?? 'unknown'
 
-	useRenderTelemetry(heroCard, toolName)
-
 	if (!toolResult) {
 		return <div className="p-4 text-muted-foreground text-sm">Waiting for data...</div>
 	}
@@ -79,7 +80,7 @@ function HeroCardApp() {
 	if (!heroCard.object) {
 		return <CompactEmpty toolName={heroCard.tool} label="no object" />
 	}
-	return <HeroCardSingle object={heroCard.object} toolName={toolName} />
+	return <HeroCardSingle object={heroCard.object} />
 }
 
 function HeroCardEmpty({ toolName }: { toolName: string }) {
@@ -114,24 +115,10 @@ function useHeroObjectHref(object: HeroCardObject): string | null {
 	return objectHref
 }
 
-function HeroCardSingle({ object, toolName }: { object: HeroCardObject; toolName: string }) {
-	const callTool = useCallTool()
+function HeroCardSingle({ object }: { object: HeroCardObject }) {
 	const href = useHeroObjectHref(object)
 	const { schema } = useWorkspaceSchema()
 	const typeLabel = schema?.types?.[object.type]?.display_name ?? object.type
-
-	const onCtaClick = () => {
-		callTool('record_widget_event', {
-			widget_name: 'hero-card',
-			event: 'click_through',
-			tool_name: toolName,
-			card_kind: 'single',
-			object_type: object.type,
-			object_id: object.id,
-		}).catch(() => {
-			// Telemetry must never block navigation — swallow.
-		})
-	}
 
 	const content = (
 		<article className="flex flex-col gap-2.5 px-4 py-3.5 bg-card border border-border rounded-[10px] max-w-[540px] transition-colors hover:border-border-hover">
@@ -146,9 +133,11 @@ function HeroCardSingle({ object, toolName }: { object: HeroCardObject; toolName
 			<h3 className="text-[15px] font-semibold leading-snug text-foreground m-0 line-clamp-1">
 				{object.title || 'Untitled'}
 			</h3>
-			<p className="text-[13px] text-muted-foreground leading-relaxed m-0 line-clamp-1">
-				{object.contextLine}
-			</p>
+			{(object.contextLine || object.role) && (
+				<p className="text-[13px] text-muted-foreground leading-relaxed m-0 line-clamp-1">
+					{object.contextLine || object.role}
+				</p>
+			)}
 			<div className="flex items-center gap-2.5 pt-2 border-t border-border mt-0.5">
 				{object.driver?.name &&
 					(object.driver.type !== 'agent' ? (
@@ -178,7 +167,6 @@ function HeroCardSingle({ object, toolName }: { object: HeroCardObject; toolName
 					href={href}
 					target="_blank"
 					rel="noreferrer"
-					onClick={onCtaClick}
 					className="group block max-w-[540px] no-underline text-foreground"
 				>
 					{content}
@@ -253,7 +241,6 @@ function HeroCardList({
 	toolName: string
 }) {
 	const { schema } = useWorkspaceSchema()
-	const callTool = useCallTool()
 
 	const visible = objects.slice(0, MAX_VISIBLE_ROWS)
 	const totalRemainder = Math.max(0, totalCount - visible.length)
@@ -261,17 +248,6 @@ function HeroCardList({
 	const ctaTarget = useMemo(() => buildListCtaTarget(toolName, objects), [toolName, objects])
 	const ctaHref = useWebAppHref(ctaTarget)
 	const pluralLabel = pickPluralLabel(toolName, schema, objects)
-
-	const onCtaClick = () => {
-		callTool('record_widget_event', {
-			widget_name: 'hero-card',
-			event: 'click_through',
-			tool_name: toolName,
-			card_kind: 'list',
-		}).catch(() => {
-			// Telemetry must never block navigation — swallow.
-		})
-	}
 
 	return (
 		<div className="p-3">
@@ -304,7 +280,6 @@ function HeroCardList({
 							href={ctaHref}
 							target="_blank"
 							rel="noreferrer"
-							onClick={onCtaClick}
 							className="ml-auto inline-flex items-center gap-1.5 text-xs font-medium text-foreground px-2.5 py-1 rounded-md bg-transparent border border-border hover:bg-muted hover:border-border-hover transition-colors min-h-[28px]"
 						>
 							Open in Maskin
@@ -342,7 +317,7 @@ function HeroCardListRow({
 				</span>
 			) : null}
 			<span className="ml-auto text-[11.5px] text-muted-foreground tabular-nums truncate shrink-0 max-w-[160px]">
-				{row.contextLine || typeLabel}
+				{row.contextLine || row.role || typeLabel}
 			</span>
 		</>
 	)
@@ -373,26 +348,6 @@ function RawFallback({
 	)?.text
 	if (!text) return <div className="p-4 text-muted-foreground text-sm">No data received</div>
 	return <div className="p-4 text-sm text-foreground whitespace-pre-wrap">{text}</div>
-}
-
-function useRenderTelemetry(heroCard: HeroCardPayload | null, toolName: string) {
-	const callTool = useCallTool()
-	const firedRef = useRef(false)
-	useEffect(() => {
-		if (firedRef.current) return
-		if (!heroCard) return
-		firedRef.current = true
-		callTool('record_widget_event', {
-			widget_name: 'hero-card',
-			event: 'render_success',
-			tool_name: toolName,
-			card_kind: heroCard.kind,
-			object_type: heroCard.object?.type,
-			object_id: heroCard.object?.id,
-		}).catch(() => {
-			// Telemetry must never throw out of the render path — swallow.
-		})
-	}, [heroCard, toolName, callTool])
 }
 
 interface ErrorBoundaryProps {
@@ -427,20 +382,7 @@ class HeroCardErrorBoundary extends Component<ErrorBoundaryProps, { hasError: bo
 }
 
 function HeroCardRoot() {
-	const callTool = useCallTool()
-	const toolResult = useToolResult()
 	const onRenderError = (error: Error) => {
-		const heroCard = toolResult ? extractHeroCard(toolResult.result) : null
-		callTool('record_widget_event', {
-			widget_name: 'hero-card',
-			event: 'render_error',
-			tool_name: toolResult?.toolName ?? 'unknown',
-			card_kind: heroCard?.kind ?? 'empty',
-			object_type: heroCard?.object?.type,
-			object_id: heroCard?.object?.id,
-		}).catch(() => {
-			// Telemetry must never block the error UI — swallow.
-		})
 		console.error('[hero-card] render error', error)
 	}
 	return (

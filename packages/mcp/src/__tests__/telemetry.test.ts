@@ -112,19 +112,51 @@ describe('MCP telemetry wrapper', () => {
 		expect(mutations).toHaveLength(0)
 	})
 
-	it('still records a tool_call event when the underlying handler throws', async () => {
+	it('still records a tool_call event when a mutation handler throws', async () => {
 		// Force the API call to fail so the original handler throws.
 		vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
 			return new Response('boom', { status: 500 })
 		})
 
-		const handler = getHandler('list_workspaces')
-		await expect(handler({})).rejects.toThrow()
+		// Mutation tools intentionally re-throw so upstream telemetry stays intact;
+		// read-side handlers convert failures into a structured `{ error: {...} }`
+		// response (T2) — that path is covered by the size-event test below.
+		const handler = getHandler('delete_object')
+		await expect(
+			handler({ workspace_id: wsId, id: '00000000-0000-0000-0000-0000000000cc' }),
+		).rejects.toThrow()
 
 		// The wrapper records the failed call before re-throwing.
 		const toolCalls = recorded.filter((r) => r.event_type === 'tool_call')
 		expect(toolCalls).toHaveLength(1)
-		expect(toolCalls[0].tool_name).toBe('list_workspaces')
+		expect(toolCalls[0].tool_name).toBe('delete_object')
+	})
+
+	it('records a tool_call_response_size event when a read handler surfaces a structured error (T2)', async () => {
+		// Read-side handlers return `{ isError: true, structuredContent: { error: {...} } }`
+		// instead of throwing, so the size event still fires and captures the
+		// error envelope's byte cost.
+		vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+			return new Response('boom', { status: 500 })
+		})
+
+		const handler = getHandler('list_workspaces')
+		const result = (await handler({})) as {
+			isError?: boolean
+			structuredContent?: { error?: { tool: string } }
+		}
+		expect(result.isError).toBe(true)
+		expect(result.structuredContent?.error?.tool).toBe('list_workspaces')
+
+		const toolCalls = recorded.filter((r) => r.event_type === 'tool_call')
+		expect(toolCalls).toHaveLength(1)
+		const sizeEvents = recorded.filter((r) => r.event_type === 'tool_call_response_size')
+		expect(sizeEvents).toHaveLength(1)
+		const [evt] = sizeEvents
+		if (evt.event_type !== 'tool_call_response_size') throw new Error('narrowing')
+		expect(evt.tool_name).toBe('list_workspaces')
+		expect(evt.truncated).toBe(false)
+		expect(evt.content_bytes).toBeGreaterThan(0)
 	})
 
 	it('covers every MCP write tool in MUTATION_TOOL_KINDS', async () => {
@@ -136,13 +168,8 @@ describe('MCP telemetry wrapper', () => {
 		// explicitly opted out below.
 		const { MUTATION_TOOL_KINDS } = await import('../telemetry')
 		const NON_CRUD_WRITE_TOOLS = new Set([
-			'add_workspace_member',
-			'regenerate_api_key',
 			'connect_integration',
 			'disconnect_integration',
-			'set_llm_api_key',
-			'import_claude_subscription',
-			'disconnect_claude_subscription',
 			'stop_session',
 			'pause_session',
 			'resume_session',
@@ -212,16 +239,19 @@ describe('MCP telemetry wrapper', () => {
 		expect(evt.content_bytes).toBeGreaterThan(0)
 	})
 
-	it('does not emit a tool_call_response_size event when the underlying handler throws', async () => {
+	it('does not emit a tool_call_response_size event when a mutation handler throws', async () => {
 		// On throw the response shape is undefined; we already record the
 		// tool_call event (covered above) but skip the size event because there
-		// is no payload to measure.
+		// is no payload to measure. Read-side handlers instead return a
+		// structured error and DO emit a size event — see the T2 test above.
 		vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
 			return new Response('boom', { status: 500 })
 		})
 
-		const handler = getHandler('list_workspaces')
-		await expect(handler({})).rejects.toThrow()
+		const handler = getHandler('delete_object')
+		await expect(
+			handler({ workspace_id: wsId, id: '00000000-0000-0000-0000-0000000000dd' }),
+		).rejects.toThrow()
 
 		const sizeEvents = recorded.filter((r) => r.event_type === 'tool_call_response_size')
 		expect(sizeEvents).toHaveLength(0)
