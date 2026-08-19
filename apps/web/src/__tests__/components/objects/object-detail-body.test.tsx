@@ -16,22 +16,15 @@ describe('ObjectDetailBody', () => {
 		expect(screen.getByText(/Some paragraph/)).toBeInTheDocument()
 	})
 
-	it('renders key/value rows for public metadata entries', () => {
+	// Custom fields belong to the properties drawer's CUSTOM FIELDS section
+	// (mockup 1447–1455) — the body carries the document, not the metadata.
+	it('leaves custom fields to the properties drawer', () => {
 		const object = buildObjectResponse({
 			metadata: { priority: 'high', team: 'alpha', _hidden: 'secret' },
 		})
-		render(<ObjectDetailBody object={object} />)
-		expect(screen.getByText('priority')).toBeInTheDocument()
-		expect(screen.getByText('high')).toBeInTheDocument()
-		expect(screen.getByText('team')).toBeInTheDocument()
-		expect(screen.getByText('alpha')).toBeInTheDocument()
-		// Underscore-prefixed fixture keys stay out of the kv rows
-		expect(screen.queryByText('_hidden')).not.toBeInTheDocument()
-	})
-
-	it('skips kv rows when only underscore keys exist', () => {
-		const object = buildObjectResponse({ metadata: { _ask: 'question?' } })
 		const { container } = render(<ObjectDetailBody object={object} />)
+		expect(screen.queryByText('priority')).not.toBeInTheDocument()
+		expect(screen.queryByText('team')).not.toBeInTheDocument()
 		expect(container.querySelector('dl')).toBeNull()
 	})
 

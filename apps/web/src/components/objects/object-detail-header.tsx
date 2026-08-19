@@ -1,12 +1,13 @@
 import { Button } from '@/components/ui/button'
 import type { MemberResponse, ObjectResponse } from '@/lib/api'
+import { cn } from '@/lib/cn'
+import { getTypeColor, typeIcons, typeLabel } from '@/lib/constants'
 import { PanelRight } from 'lucide-react'
 import { useState } from 'react'
-import { TypeBadge } from '../shared/type-badge'
 import { AuxiliaryActionMenu } from './auxiliary-action-menu'
 import { OwnerSelect, StatusSelect } from './property-selects'
 
-interface ObjectDetailHeaderProps {
+interface ObjectDetailBarActionsProps {
 	object: ObjectResponse
 	workspaceId: string
 	statuses: string[]
@@ -22,17 +23,12 @@ interface ObjectDetailHeaderProps {
 }
 
 /**
- * The page-level bar above the document (mockup 1033–1039): the properties
- * toggle and overflow menu, right-aligned over one hairline rule. The document
- * scrolls in its own region below it.
- *
- * The mockup puts an `Objects › <name>` crumb at the left of this bar, but the
- * shared nav row already renders that chain for detail routes
- * (`layout/header.tsx`'s `routeConfig`). Two competing breadcrumbs is worse
- * than one in the "wrong" place, so the nav keeps the chain and this bar
- * carries actions only — which is also why this route publishes no `title`.
+ * The two icon affordances the detail bar carries (mockup 1036–1039): the
+ * properties-drawer toggle and the overflow menu, both 28px squares on a
+ * hairline. The bar itself — `Objects › <name>` — is the shared nav's detail
+ * variant, which this cluster is published into as `actions`.
  */
-export function ObjectDetailHeader({
+export function ObjectDetailBarActions({
 	object,
 	workspaceId,
 	statuses,
@@ -43,21 +39,24 @@ export function ObjectDetailHeader({
 	onArchiveRequest,
 	onTogglePropertiesRequest,
 	propertiesOpen,
-}: ObjectDetailHeaderProps) {
+}: ObjectDetailBarActionsProps) {
 	const [menuOpen, setMenuOpen] = useState(false)
 
 	return (
-		<div className="flex flex-none flex-wrap items-center justify-end gap-2 border-b border-border pb-3">
+		<div className="flex shrink-0 items-center gap-2">
 			{onTogglePropertiesRequest && (
 				<Button
 					variant="outline"
 					size="icon"
-					className="shrink-0"
+					className={cn(
+						'size-7 shrink-0 rounded-lg text-muted-foreground',
+						propertiesOpen && 'bg-secondary text-foreground',
+					)}
 					onClick={onTogglePropertiesRequest}
 					aria-label="Properties"
 					aria-expanded={propertiesOpen}
 				>
-					<PanelRight size={15} />
+					<PanelRight className="size-3.5" />
 				</Button>
 			)}
 			<AuxiliaryActionMenu
@@ -78,10 +77,10 @@ export function ObjectDetailHeader({
 }
 
 /**
- * Type tag, status chip and driver chip, then the title (mockup 1056–1096).
- * Lives inside the reader column, not the bar — the mockup reads type/state/
- * owner before the h1. Hosts [data-hero-status-trigger] for the sticky-nav
- * sprout-back.
+ * Type glyph and word, status chip and driver chip on one 11.5px meta line,
+ * then the title (mockup 1056–1096). Lives inside the reader column, not the
+ * bar — the mockup reads type/state/owner before the h1. Hosts
+ * [data-hero-status-trigger] for the sticky-nav sprout-back.
  */
 export function ObjectDetailIdentity({
 	object,
@@ -96,12 +95,16 @@ export function ObjectDetailIdentity({
 	onStatusChange: (status: string) => void
 	onDriverChange: (driver: string | null) => void
 }) {
+	const Icon = typeIcons[object.type]
+	const typeColor = getTypeColor(object.type)
+
 	return (
-		<div className="mb-3">
-			<div className="mb-2.5 flex flex-wrap items-center gap-2">
-				{/* The type's glyph leads the meta row (mockup 1058 `odTypeIcon`). */}
-				<TypeBadge type={object.type} variant="tile" />
-				<TypeBadge type={object.type} />
+		<div>
+			<div className="flex flex-wrap items-center gap-2 text-[11.5px] text-muted-foreground">
+				{/* The type's glyph leads the meta row (mockup 1058 `odTypeIcon`) —
+				    a 13px stroke in the type's own colour, not a filled tile. */}
+				{Icon && <Icon aria-hidden="true" className={cn('size-[13px] shrink-0', typeColor.text)} />}
+				<span>{typeLabel(object.type)}</span>
 				{statuses.length > 0 && (
 					<StatusSelect
 						current={object.status}
@@ -119,7 +122,7 @@ export function ObjectDetailIdentity({
 				/>
 			</div>
 
-			<h1 className="text-[clamp(20px,2.4vw,25px)] font-bold leading-tight tracking-[-0.02em] text-foreground">
+			<h1 className="mt-2.5 text-[clamp(20px,2.4vw,25px)] font-bold leading-[1.2] tracking-[-0.02em] text-foreground">
 				{object.title ?? 'Untitled'}
 			</h1>
 		</div>

@@ -1,4 +1,7 @@
-import { ObjectDetailHeader, ObjectDetailIdentity } from '@/components/objects/object-detail-header'
+import {
+	ObjectDetailBarActions,
+	ObjectDetailIdentity,
+} from '@/components/objects/object-detail-header'
 import type { MemberResponse } from '@/lib/api'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
@@ -44,12 +47,12 @@ const baseProps = {
 	onDeleteRequest: vi.fn(),
 }
 
-describe('ObjectDetailHeader', () => {
-	// The shared nav row owns the `Objects › <name>` chain for detail routes, so
-	// the in-page bar carries actions only — two breadcrumbs would compete.
+describe('ObjectDetailBarActions', () => {
+	// The crumb is published to the shared nav's detail bar, which renders it
+	// alongside this cluster — the cluster itself carries actions only.
 	it('renders no breadcrumb of its own', () => {
 		const object = buildObjectResponse({ title: 'My Bet' })
-		render(<ObjectDetailHeader {...baseProps} object={object} />, { wrapper: makeWrapper() })
+		render(<ObjectDetailBarActions {...baseProps} object={object} />, { wrapper: makeWrapper() })
 		expect(screen.queryByRole('link', { name: 'Objects' })).toBeNull()
 		expect(screen.queryByText('My Bet')).toBeNull()
 	})
@@ -59,7 +62,7 @@ describe('ObjectDetailHeader', () => {
 		const object = buildObjectResponse({ title: 'My Bet' })
 		const onTogglePropertiesRequest = vi.fn()
 		render(
-			<ObjectDetailHeader
+			<ObjectDetailBarActions
 				{...baseProps}
 				object={object}
 				onTogglePropertiesRequest={onTogglePropertiesRequest}
@@ -75,7 +78,7 @@ describe('ObjectDetailHeader', () => {
 
 	it('omits the properties toggle when no handler is wired', () => {
 		const object = buildObjectResponse({ title: 'My Bet' })
-		render(<ObjectDetailHeader {...baseProps} object={object} />, { wrapper: makeWrapper() })
+		render(<ObjectDetailBarActions {...baseProps} object={object} />, { wrapper: makeWrapper() })
 		expect(screen.queryByRole('button', { name: 'Properties' })).toBeNull()
 	})
 })
@@ -92,9 +95,10 @@ describe('ObjectDetailIdentity', () => {
 		const object = buildObjectResponse({ type: 'bet', status: 'active' })
 		render(<ObjectDetailIdentity {...identityProps} object={object} />, { wrapper: makeWrapper() })
 
-		expect(screen.getByText('bet')).toBeInTheDocument()
+		expect(screen.getByText('Bet')).toBeInTheDocument()
 		expect(screen.getByText('active')).toBeInTheDocument()
-		expect(screen.getByText('Driver: Unassigned')).toBeInTheDocument()
+		expect(screen.getByText('Driver')).toBeInTheDocument()
+		expect(screen.getByText('Unassigned')).toBeInTheDocument()
 	})
 
 	it('renders the h1 title as static text (not an editable textarea)', () => {
@@ -119,7 +123,7 @@ describe('ObjectDetailIdentity', () => {
 		const object = buildObjectResponse({ type: 'bet' })
 		render(<ObjectDetailIdentity {...identityProps} object={object} />, { wrapper: makeWrapper() })
 
-		await user.click(screen.getByText('Driver: Unassigned'))
+		await user.click(screen.getByText('Driver'))
 		const items = await screen.findAllByRole('option')
 		const labels = items.map((el) => el.textContent ?? '')
 		expect(labels.some((l) => l.includes('Unassigned'))).toBe(true)
@@ -128,14 +132,14 @@ describe('ObjectDetailIdentity', () => {
 	})
 })
 
-describe('ObjectDetailHeader overflow menu', () => {
+describe('ObjectDetailBarActions overflow menu', () => {
 	it('overflow menu exposes archive and delete actions', async () => {
 		const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never })
 		const object = buildObjectResponse({ type: 'bet' })
 		const onDeleteRequest = vi.fn()
 		const onArchiveRequest = vi.fn()
 		render(
-			<ObjectDetailHeader
+			<ObjectDetailBarActions
 				{...baseProps}
 				object={object}
 				onDeleteRequest={onDeleteRequest}

@@ -167,6 +167,7 @@ describe('Header', () => {
 			setSubtitle: vi.fn(),
 			setActions: vi.fn(),
 			setStickyIdentity: vi.fn(),
+			setCrumb: vi.fn(),
 			setContentPush: vi.fn(),
 			setScrollLocked: vi.fn(),
 		})
@@ -183,6 +184,7 @@ describe('Header', () => {
 			setSubtitle: vi.fn(),
 			setActions: vi.fn(),
 			setStickyIdentity: vi.fn(),
+			setCrumb: vi.fn(),
 			setContentPush: vi.fn(),
 			setScrollLocked: vi.fn(),
 		})
@@ -211,6 +213,7 @@ describe('Header', () => {
 			setSubtitle: vi.fn(),
 			setActions: vi.fn(),
 			setStickyIdentity: vi.fn(),
+			setCrumb: vi.fn(),
 			setContentPush: vi.fn(),
 			setScrollLocked: vi.fn(),
 		})
@@ -241,6 +244,7 @@ describe('Header', () => {
 			setSubtitle: vi.fn(),
 			setActions: vi.fn(),
 			setStickyIdentity: vi.fn(),
+			setCrumb: vi.fn(),
 			setContentPush: vi.fn(),
 			setScrollLocked: vi.fn(),
 		})
@@ -273,6 +277,7 @@ describe('Header', () => {
 			setSubtitle: vi.fn(),
 			setActions: vi.fn(),
 			setStickyIdentity: vi.fn(),
+			setCrumb: vi.fn(),
 			setContentPush: vi.fn(),
 			setScrollLocked: vi.fn(),
 		})
@@ -345,6 +350,7 @@ describe('Header', () => {
 			setSubtitle: vi.fn(),
 			setActions: vi.fn(),
 			setStickyIdentity: vi.fn(),
+			setCrumb: vi.fn(),
 			setContentPush: vi.fn(),
 			setScrollLocked: vi.fn(),
 		})

@@ -110,10 +110,10 @@ describe('ObjectDetailShell', () => {
 			metadata: { _ask: 'Should we ship this?' },
 		})
 		render(<ObjectDetailShell object={object} />, {
-			wrapper: createWorkspaceWrapper(workspace),
+			wrapper: createWorkspaceWrapper(workspace, { renderPageHeader: true }),
 		})
-		expect(screen.getByText('Open question')).toBeInTheDocument()
-		expect(screen.getByText('Should we ship this?')).toBeInTheDocument()
+		expect(screen.getByText(/Open question/)).toBeInTheDocument()
+		expect(screen.getByText(/Should we ship this\?/)).toBeInTheDocument()
 	})
 
 	it('Answer it moves focus to the answer control', () => {
@@ -122,10 +122,10 @@ describe('ObjectDetailShell', () => {
 			metadata: { _ask: 'Should we ship this?' },
 		})
 		render(<ObjectDetailShell object={object} />, {
-			wrapper: createWorkspaceWrapper(workspace),
+			wrapper: createWorkspaceWrapper(workspace, { renderPageHeader: true }),
 		})
 
-		const textarea = screen.getByPlaceholderText(/write a comment/i)
+		const textarea = screen.getByPlaceholderText(/commands, @ mentions/i)
 		const answerButton = screen.getByRole('button', { name: /answer it/i })
 		fireEvent.click(answerButton)
 		expect(document.activeElement).toBe(textarea)
@@ -134,17 +134,18 @@ describe('ObjectDetailShell', () => {
 	it('omits the ask banner when no _ask metadata', () => {
 		const object = buildObjectResponse({ type: 'bet' })
 		render(<ObjectDetailShell object={object} />, {
-			wrapper: createWorkspaceWrapper(workspace),
+			wrapper: createWorkspaceWrapper(workspace, { renderPageHeader: true }),
 		})
-		expect(screen.queryByText('Open question')).not.toBeInTheDocument()
+		expect(screen.queryByText(/Open question/)).not.toBeInTheDocument()
 	})
 
 	it('renders comment input at the bottom of the shell', () => {
 		const object = buildObjectResponse({ type: 'bet' })
 		render(<ObjectDetailShell object={object} />, {
-			wrapper: createWorkspaceWrapper(workspace),
+			wrapper: createWorkspaceWrapper(workspace, { renderPageHeader: true }),
 		})
-		expect(screen.getByPlaceholderText(/write a comment/i)).toBeInTheDocument()
+		// The object page's composer is the single-row bar (mockup 1358–1366).
+		expect(screen.getByPlaceholderText(/commands, @ mentions/i)).toBeInTheDocument()
 	})
 
 	// Mockup 1138–1143: one Activity heading + a 2-way Timeline | Related
@@ -152,7 +153,7 @@ describe('ObjectDetailShell', () => {
 	it('mounts a Timeline / Related segmented control below the body', () => {
 		const object = buildObjectResponse({ type: 'bet' })
 		render(<ObjectDetailShell object={object} />, {
-			wrapper: createWorkspaceWrapper(workspace),
+			wrapper: createWorkspaceWrapper(workspace, { renderPageHeader: true }),
 		})
 		expect(screen.queryByRole('tab', { name: /^Activity$/ })).toBeNull()
 		expect(screen.getByRole('tab', { name: /^Timeline$/ })).toBeInTheDocument()
@@ -163,7 +164,7 @@ describe('ObjectDetailShell', () => {
 	it('mounts the properties drawer behind the header toggle', () => {
 		const object = buildObjectResponse({ type: 'bet' })
 		render(<ObjectDetailShell object={object} />, {
-			wrapper: createWorkspaceWrapper(workspace),
+			wrapper: createWorkspaceWrapper(workspace, { renderPageHeader: true }),
 		})
 		const toggle = screen.getByRole('button', { name: 'Properties' })
 		expect(toggle).toHaveAttribute('aria-expanded', 'false')

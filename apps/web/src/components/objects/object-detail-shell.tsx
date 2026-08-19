@@ -20,7 +20,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ObjectAskBanner } from './object-ask-banner'
 import { ObjectDetailBody } from './object-detail-body'
 import { getAsk } from './object-detail-fixtures'
-import { ObjectDetailHeader, ObjectDetailIdentity } from './object-detail-header'
+import { ObjectDetailBarActions, ObjectDetailIdentity } from './object-detail-header'
 import { DeleteConfirmDialog } from './object-document'
 import { ObjectPropertiesSidebar } from './object-properties-sidebar'
 import { PropertiesSidebarProvider, SIDEBAR_WIDTH } from './properties-sidebar-provider'
@@ -38,12 +38,6 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 	const { data: actors } = useActors(workspaceId)
 	const { data: graph } = useObjectGraph(workspaceId, object.id)
 	const { data: allObjects } = useObjects(workspaceId)
-	// Mockup 1362 `composerHint` — names the agent that will read what you write
-	// here. Only rendered when an agent actually drives the object.
-	const driverActor = object.driver ? actors?.find((a) => a.id === object.driver) : undefined
-	const composerHint =
-		driverActor && driverActor.type === 'agent' ? `${driverActor.name} is listening` : null
-
 	const settings = workspace.settings as Record<string, unknown>
 	const statuses = (settings?.statuses as Record<string, string[]> | undefined)?.[object.type] ?? []
 
@@ -77,6 +71,17 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 		? actors?.find((a) => a.id === liveAsk.sourceActorId)
 		: undefined
 	const askText = liveAsk ? (liveAsk.content ?? liveAsk.title) : getAsk(object)
+
+	// Memoised so the published crumb keeps a stable identity across renders.
+	const crumb = useMemo(
+		() => ({
+			parentLabel: 'Objects',
+			parentTo: '/$workspaceId/objects',
+			parentParams: { workspaceId },
+			label: object.title ?? 'Untitled',
+		}),
+		[workspaceId, object.title],
+	)
 
 	const answerRef = useRef<HTMLTextAreaElement>(null)
 	const [confirmDelete, setConfirmDelete] = useState(false)
@@ -231,25 +236,33 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 
 	return (
 		<>
-			<PageHeader contentPush={contentPush} scrollLocked />
+			{/* `Objects › <name>` with the drawer toggle and overflow menu on the
+			    right — the mockup's whole detail bar (1033–1039). Published to the
+			    shared nav so the screen carries one bar, not two. */}
+			<PageHeader
+				crumb={crumb}
+				actions={
+					<ObjectDetailBarActions
+						object={object}
+						workspaceId={workspaceId}
+						statuses={statuses}
+						members={members ?? []}
+						onStatusChange={handleUpdateStatus}
+						onDriverChange={handleUpdateDriver}
+						onDeleteRequest={() => setConfirmDelete(true)}
+						onArchiveRequest={object.type === 'bet' ? handleArchive : undefined}
+						onTogglePropertiesRequest={handleToggleSidebar}
+						propertiesOpen={sidebarExpanded}
+					/>
+				}
+				contentPush={contentPush}
+				scrollLocked
+			/>
 			<div className="flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden">
-				<ObjectDetailHeader
-					object={object}
-					workspaceId={workspaceId}
-					statuses={statuses}
-					members={members ?? []}
-					onStatusChange={handleUpdateStatus}
-					onDriverChange={handleUpdateDriver}
-					onDeleteRequest={() => setConfirmDelete(true)}
-					onArchiveRequest={object.type === 'bet' ? handleArchive : undefined}
-					onTogglePropertiesRequest={handleToggleSidebar}
-					propertiesOpen={sidebarExpanded}
-				/>
-
 				{/* The document owns the only scroll region on this screen, so the
 				    bar above stays put and the composer can pin to its bottom. */}
-				<div className="min-h-0 flex-1 overflow-y-auto">
-					<div className="mx-auto flex w-full min-w-0 max-w-3xl flex-col pt-5">
+				<div className="min-h-0 flex-1 overflow-y-auto px-[clamp(14px,3vw,24px)] pt-[clamp(18px,3vw,30px)]">
+					<div className="mx-auto flex w-full min-w-0 max-w-[680px] flex-col">
 						<ObjectDetailIdentity
 							object={object}
 							statuses={statuses}
@@ -270,19 +283,20 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 
 						<ObjectDetailBody object={object} />
 
-						{/* One Activity heading + rule + a 2-way segmented control
-						    (mockup 1138–1143). TabsList/TabsTrigger stay at their
-						    shadcn defaults per apps/web/CLAUDE.md's no-size-override
-						    rule, so the control is taller than the mockup's 28px pair. */}
-						<Tabs defaultValue="timeline" className="mt-8">
+						{/* One Activity rule + a 2-way segmented control (mockup
+						    1138–1143): the label is a mono micro-heading, not a
+						    section title, and the switch rides the rule's right end. */}
+						<Tabs defaultValue="timeline" className="mb-1 mt-11">
 							<div className="flex items-center gap-2.5">
-								<span className="shrink-0 text-sm font-bold text-foreground">Activity</span>
-								<div className="h-px flex-1 bg-border" />
-								<TabsList className="shrink-0">
+								<span className="shrink-0 font-mono text-[10px] font-bold uppercase tracking-[0.11em] text-muted-foreground">
+									Activity
+								</span>
+								<div className="h-px flex-1 bg-muted" />
+								<TabsList variant="segmented" className="shrink-0">
 									<TabsTrigger value="timeline">Timeline</TabsTrigger>
 									<TabsTrigger value="related">
 										Related
-										<span className="ml-1.5 tabular-nums text-muted-foreground">
+										<span className="text-[10.5px] tabular-nums text-border-strong">
 											{relatedCount}
 										</span>
 									</TabsTrigger>
@@ -296,16 +310,17 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 							</TabsContent>
 						</Tabs>
 
-						<div className="sticky bottom-0 z-[6] bg-gradient-to-b from-transparent via-background to-background pb-4 pt-6">
-							{/* The mockup gives the composer one hint slot (1362); on object
-							    detail its content names the agent that will read what you
-							    write, so it replaces the keyboard hint rather than stacking
-							    a second line beneath the card. */}
+						{/* The mockup's composer is a single bar — `+`, the field, mic and
+						    send on one row (1358–1366), with no hint line under it. */}
+						<div className="sticky bottom-0 z-[6] mt-1.5 bg-gradient-to-b from-transparent via-background via-20% to-background pb-4 pt-[22px]">
 							<CommentInput
 								workspaceId={workspaceId}
 								objectId={object.id}
 								focusRef={answerRef}
-								hint={composerHint || undefined}
+								variant="bar"
+								// The full prompt wraps to three lines in a 375px bar, so the
+								// phone gets the short form.
+								placeholder={isMobile ? 'Comment…' : 'Comment — / commands, @ mentions'}
 							/>
 						</div>
 					</div>

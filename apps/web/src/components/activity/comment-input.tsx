@@ -42,6 +42,14 @@ interface CommentInputProps {
 	// (object detail names the agent that will read the comment) passes it here
 	// rather than stacking a second line beneath the card.
 	hint?: React.ReactNode
+	// `stacked` is the feed composer: an avatar, a growing field, and a control
+	// row carrying the hint. `bar` is the single-row composer the object detail
+	// page pins to the bottom of its document (mockup 1358–1366) — no avatar, no
+	// hint, controls inline with the field.
+	variant?: 'stacked' | 'bar'
+	// Overrides the composer's own placeholder. The bar reads
+	// "Comment — / commands, @ mentions" on object detail.
+	placeholder?: string
 }
 
 function randomDraftId(): string {
@@ -70,7 +78,10 @@ export function CommentInput({
 	mentionDropdownPlacement = 'below',
 	focusRef,
 	hint,
+	variant = 'stacked',
+	placeholder,
 }: CommentInputProps) {
+	const isBar = variant === 'bar'
 	const actor = getStoredActor()
 	const createComment = useCreateComment(workspaceId, objectId)
 	const { data: actors } = useActors(workspaceId)
@@ -117,15 +128,31 @@ export function CommentInput({
 	const attachmentLimitReached = attachments.length >= COMMENT_MAX_ATTACHMENTS
 	const isUploadingAny = attachments.some((f) => f.status === 'uploading')
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: content drives the resize, including programmatic setContent (mention insert, post-submit reset)
-	useLayoutEffect(() => {
+	const fitHeight = useCallback(() => {
 		const ta = inputRef.current
 		if (!ta) return
 		ta.style.height = 'auto'
 		const overflows = ta.scrollHeight > MAX_INPUT_HEIGHT_PX
 		ta.style.height = `${Math.min(ta.scrollHeight, MAX_INPUT_HEIGHT_PX)}px`
 		ta.style.overflowY = overflows ? 'auto' : 'hidden'
-	}, [content])
+	}, [])
+
+	// biome-ignore lint/correctness/useExhaustiveDependencies: content drives the resize, including programmatic setContent (mention insert, post-submit reset)
+	useLayoutEffect(() => {
+		fitHeight()
+	}, [content, fitHeight])
+
+	// The field's own width also drives how many lines the draft wraps to, and
+	// it settles after first paint — the bar composer shares its row with the
+	// `+`, mic and send buttons, so measuring only on mount leaves the field
+	// several lines too tall on a narrow viewport. Re-fit whenever it resizes.
+	useLayoutEffect(() => {
+		const ta = inputRef.current
+		if (!ta || typeof ResizeObserver === 'undefined') return
+		const observer = new ResizeObserver(() => fitHeight())
+		observer.observe(ta)
+		return () => observer.disconnect()
+	}, [fitHeight])
 
 	const handleScroll = useCallback(() => {
 		const overlay = overlayRef.current
@@ -416,6 +443,89 @@ export function CommentInput({
 
 	if (!actor) return null
 
+	// `+` menu and its object picker — shared by both composer layouts.
+	const controlsLeft = (
+		<>
+			<SlashPicker
+				workspaceId={workspaceId}
+				open={objectPickerOpen}
+				onOpenChange={setObjectPickerOpen}
+				onSelect={handleObjectPicked}
+				selected={EMPTY_CHAT_SELECTION}
+				initialKindId="item"
+				anchor={
+					<span aria-hidden className="pointer-events-none absolute bottom-1 left-2 h-0 w-0" />
+				}
+			/>
+			<DropdownMenu>
+				<DropdownMenuTrigger asChild>
+					<Button
+						type="button"
+						size="icon"
+						variant="outline"
+						className="h-7 w-7 shrink-0 rounded-full text-muted-foreground"
+						aria-label="Add a file, object, or mention"
+					>
+						<Plus size={15} aria-hidden />
+					</Button>
+				</DropdownMenuTrigger>
+				<DropdownMenuContent align="start" className="w-[250px]">
+					<DropdownMenuItem
+						disabled={attachmentLimitReached}
+						onSelect={() => fileInputRef.current?.click()}
+					>
+						<Paperclip size={15} aria-hidden />
+						Attach a file
+					</DropdownMenuItem>
+					<DropdownMenuItem onSelect={() => setObjectPickerOpen(true)}>
+						<Box size={15} aria-hidden />
+						Reference an object
+					</DropdownMenuItem>
+					<DropdownMenuItem onSelect={startMention}>
+						<AtSign size={15} aria-hidden />
+						Mention an agent
+					</DropdownMenuItem>
+					<DropdownMenuItem onSelect={() => setDecisionOpen(true)}>
+						<ListChecks size={15} aria-hidden />
+						Attach a decision
+					</DropdownMenuItem>
+				</DropdownMenuContent>
+			</DropdownMenu>
+		</>
+	)
+
+	const controlsRight = (
+		<>
+			{dictation.supported ? (
+				<Button
+					type="button"
+					size="icon"
+					variant={dictation.recording ? 'destructive' : 'outline'}
+					className={cn(
+						'h-7 w-7 shrink-0 rounded-full',
+						dictation.recording ? 'animate-pulse' : 'text-muted-foreground',
+					)}
+					onClick={dictation.toggle}
+					aria-pressed={dictation.recording}
+					aria-label={dictation.recording ? 'Stop dictating' : 'Dictate a comment'}
+				>
+					<Mic size={14} aria-hidden />
+				</Button>
+			) : null}
+			<Button
+				size="icon"
+				variant="ghost"
+				className="h-7 w-7 shrink-0 rounded-full"
+				disabled={!content.trim() || createComment.isPending || overLimit}
+				title={isUploadingAny ? 'Send (uploads continue in background)' : 'Send'}
+				aria-label="Send comment"
+				onClick={handleSubmit}
+			>
+				<ArrowUp size={14} />
+			</Button>
+		</>
+	)
+
 	return (
 		<div
 			className={cn(
@@ -433,8 +543,8 @@ export function CommentInput({
 			}}
 			onDrop={handleDrop}
 		>
-			<div className="flex items-start gap-2">
-				<ActorAvatar name={actor.name} type={actor.type} size="sm" className="mt-1" />
+			<div className={cn('flex items-start gap-2', isBar && 'gap-0')}>
+				{!isBar && <ActorAvatar name={actor.name} type={actor.type} size="sm" className="mt-1" />}
 				{/* min-w-0 lets the flex child shrink below its textarea's intrinsic
 				    content width — without it, a long unbroken token (URL, paste)
 				    pushes the row past the card and the page scrolls horizontally
@@ -442,8 +552,9 @@ export function CommentInput({
 				<div className="min-w-0 flex-1">
 					<div
 						className={cn(
-							'rounded-md border transition-colors',
-							overLimit ? 'border-error' : 'border-border',
+							'border transition-colors',
+							isBar ? 'rounded-2xl bg-background shadow-sm' : 'rounded-md',
+							overLimit ? 'border-error' : isBar ? 'border-input' : 'border-border',
 						)}
 					>
 						{hasAttachments && (
@@ -474,41 +585,48 @@ export function CommentInput({
 								))}
 							</ul>
 						)}
-						<div className="relative">
-							<div
-								ref={overlayRef}
-								aria-hidden
-								className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-2 py-1 text-base"
-								style={{ minHeight: '28px' }}
-							>
-								<MentionedText
-									content={content}
-									actors={mentionableActors}
-									mentionClassName="rounded bg-primary/10 text-primary"
-								/>
-								{/* Trailing zero-width space keeps the overlay height in sync when content ends with a newline */}
-								{content.endsWith('\n') && '​'}
-							</div>
-							{/* wrap="soft" + break-words match the overlay's whitespace-pre-wrap
+						<div className={cn(isBar && 'flex items-center gap-2 px-2 py-1.5')}>
+							{isBar && controlsLeft}
+							<div className={cn('relative', isBar && 'min-w-0 flex-1')}>
+								<div
+									ref={overlayRef}
+									aria-hidden
+									className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-2 py-1 text-base"
+									style={{ minHeight: '28px' }}
+								>
+									<MentionedText
+										content={content}
+										actors={mentionableActors}
+										mentionClassName="rounded bg-primary/10 text-primary"
+									/>
+									{/* Trailing zero-width space keeps the overlay height in sync when content ends with a newline */}
+									{content.endsWith('\n') && '​'}
+								</div>
+								{/* wrap="soft" + break-words match the overlay's whitespace-pre-wrap
 							    break-words so the textarea's scrollHeight (which the
 							    useLayoutEffect resize reads) reflects the wrapped layout
 							    instead of one runaway line. text-base stays for the iOS
 							    Safari zoom-on-focus guard (#655). */}
-							<textarea
-								ref={setTextareaRef}
-								value={content}
-								onChange={handleInput}
-								onKeyDown={handleKeyDown}
-								onScroll={handleScroll}
-								placeholder={
-									isMobile ? 'Write a comment...' : 'Write a comment... Use @ to mention an agent'
-								}
-								rows={1}
-								wrap="soft"
-								aria-invalid={overLimit || undefined}
-								className="relative w-full resize-none overflow-x-hidden overflow-y-hidden break-words border-0 bg-transparent px-2 py-1 text-base text-transparent placeholder:text-muted-foreground caret-foreground focus:outline-none focus:ring-0"
-								style={{ minHeight: '28px', maxHeight: `${MAX_INPUT_HEIGHT_PX}px` }}
-							/>
+								<textarea
+									ref={setTextareaRef}
+									value={content}
+									onChange={handleInput}
+									onKeyDown={handleKeyDown}
+									onScroll={handleScroll}
+									placeholder={
+										placeholder ??
+										(isMobile
+											? 'Write a comment...'
+											: 'Write a comment... Use @ to mention an agent')
+									}
+									rows={1}
+									wrap="soft"
+									aria-invalid={overLimit || undefined}
+									className="relative w-full resize-none overflow-x-hidden overflow-y-hidden break-words border-0 bg-transparent px-2 py-1 text-base text-transparent placeholder:text-muted-foreground caret-foreground focus:outline-none focus:ring-0"
+									style={{ minHeight: '28px', maxHeight: `${MAX_INPUT_HEIGHT_PX}px` }}
+								/>
+							</div>
+							{isBar && controlsRight}
 						</div>
 						{(decisionOpen || decisionChips.length > 0) && (
 							<div
@@ -568,88 +686,19 @@ export function CommentInput({
 								</p>
 							</div>
 						)}
-						{/* Control row — `+` menu, hint, mic, send (mockup 457–472). */}
-						<div className="flex items-center gap-2 px-1.5 pb-1.5">
-							<SlashPicker
-								workspaceId={workspaceId}
-								open={objectPickerOpen}
-								onOpenChange={setObjectPickerOpen}
-								onSelect={handleObjectPicked}
-								selected={EMPTY_CHAT_SELECTION}
-								initialKindId="item"
-								anchor={
-									<span
-										aria-hidden
-										className="pointer-events-none absolute bottom-1 left-2 h-0 w-0"
-									/>
-								}
-							/>
-							<DropdownMenu>
-								<DropdownMenuTrigger asChild>
-									<Button
-										type="button"
-										size="icon"
-										variant="outline"
-										className="h-7 w-7 shrink-0 rounded-full text-muted-foreground"
-										aria-label="Add a file, object, or mention"
-									>
-										<Plus size={15} aria-hidden />
-									</Button>
-								</DropdownMenuTrigger>
-								<DropdownMenuContent align="start" className="w-[250px]">
-									<DropdownMenuItem
-										disabled={attachmentLimitReached}
-										onSelect={() => fileInputRef.current?.click()}
-									>
-										<Paperclip size={15} aria-hidden />
-										Attach a file
-									</DropdownMenuItem>
-									<DropdownMenuItem onSelect={() => setObjectPickerOpen(true)}>
-										<Box size={15} aria-hidden />
-										Reference an object
-									</DropdownMenuItem>
-									<DropdownMenuItem onSelect={startMention}>
-										<AtSign size={15} aria-hidden />
-										Mention an agent
-									</DropdownMenuItem>
-									<DropdownMenuItem onSelect={() => setDecisionOpen(true)}>
-										<ListChecks size={15} aria-hidden />
-										Attach a decision
-									</DropdownMenuItem>
-								</DropdownMenuContent>
-							</DropdownMenu>
-							<span className="min-w-0 flex-1 truncate text-[11.5px] text-muted-foreground">
-								{hint ??
-									(isMobile ? 'Tap ↑ to send' : 'Enter to send · @ to mention · + to attach')}
-							</span>
-							{dictation.supported ? (
-								<Button
-									type="button"
-									size="icon"
-									variant={dictation.recording ? 'destructive' : 'outline'}
-									className={cn(
-										'h-7 w-7 shrink-0 rounded-full',
-										dictation.recording ? 'animate-pulse' : 'text-muted-foreground',
-									)}
-									onClick={dictation.toggle}
-									aria-pressed={dictation.recording}
-									aria-label={dictation.recording ? 'Stop dictating' : 'Dictate a comment'}
-								>
-									<Mic size={14} aria-hidden />
-								</Button>
-							) : null}
-							<Button
-								size="icon"
-								variant="ghost"
-								className="h-7 w-7 shrink-0 rounded-full"
-								disabled={!content.trim() || createComment.isPending || overLimit}
-								title={isUploadingAny ? 'Send (uploads continue in background)' : 'Send'}
-								aria-label="Send comment"
-								onClick={handleSubmit}
-							>
-								<ArrowUp size={14} />
-							</Button>
-						</div>
+						{/* Control row — `+` menu, hint, mic, send (mockup 457–472). The
+						    bar variant hoists these controls up beside the field
+						    instead, so this row renders only when stacked. */}
+						{!isBar && (
+							<div className="flex items-center gap-2 px-1.5 pb-1.5">
+								{controlsLeft}
+								<span className="min-w-0 flex-1 truncate text-[11.5px] text-muted-foreground">
+									{hint ??
+										(isMobile ? 'Tap ↑ to send' : 'Enter to send · @ to mention · + to attach')}
+								</span>
+								{controlsRight}
+							</div>
+						)}
 					</div>
 					{showCounter && (
 						<div

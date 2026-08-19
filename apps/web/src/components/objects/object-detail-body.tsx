@@ -4,33 +4,26 @@ import { cn } from '@/lib/cn'
 import { ChevronRight } from 'lucide-react'
 import { useState } from 'react'
 import { MarkdownContent } from '../shared/markdown-content'
-import { formatValue } from './metadata-badges'
 import { getDocumentFold, getEvidence } from './object-detail-fixtures'
 import { ObjectEvidenceBlock } from './object-evidence-block'
 
+/**
+ * The document body: the lead paragraph, the doc blocks, the fold pill and the
+ * evidence cards (mockup 1105–1136). Custom fields are deliberately not here —
+ * the mockup keeps them in the properties drawer's CUSTOM FIELDS section
+ * (1447–1455), so rendering them twice was drift.
+ */
 export function ObjectDetailBody({ object }: { object: ObjectResponse }) {
 	const fold = getDocumentFold(object)
 	const evidence = getEvidence(object)
-	const kvRows = kvEntries(object)
 
 	return (
-		<div className="space-y-8">
+		// The mockup runs the body at the document scale and holds it to a 75ch
+		// measure (1105–1122); sections below it sit on the same column.
+		<div className="mt-4 flex flex-col gap-3.5">
 			{object.content ? (
-				<MarkdownContent content={object.content} className="max-w-[75ch]" />
+				<MarkdownContent content={object.content} size="doc" className="max-w-[75ch]" />
 			) : null}
-
-			{kvRows.length > 0 && (
-				<dl className="divide-y divide-border rounded-md border border-border">
-					{kvRows.map(([key, value]) => (
-						<div key={key} className="flex items-baseline gap-3 px-3 py-2">
-							<dt className="w-32 shrink-0 truncate text-xs text-muted-foreground">{key}</dt>
-							<dd className="min-w-0 flex-1 break-words text-sm text-foreground">
-								{formatValue(value)}
-							</dd>
-						</div>
-					))}
-				</dl>
-			)}
 
 			{fold && <DocumentFold fold={fold} />}
 
@@ -60,12 +53,4 @@ function DocumentFold({ fold }: { fold: { title: string; markdown: string } }) {
 			</CollapsibleContent>
 		</Collapsible>
 	)
-}
-
-// Public (non-underscore) metadata entries render as the body's key/value rows.
-// `_`-prefixed keys are fixture/private keys (ask, evidence, fold) and stay out.
-function kvEntries(object: ObjectResponse): [string, unknown][] {
-	const metadata = object.metadata
-	if (!metadata) return []
-	return Object.entries(metadata).filter(([key]) => !key.startsWith('_'))
 }

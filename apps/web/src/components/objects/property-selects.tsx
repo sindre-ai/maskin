@@ -39,13 +39,22 @@ export function StatusSelect({
 	const dot = getStatusColor(current)
 	return (
 		<Select value={current} onValueChange={onChange}>
-			<SelectTrigger data-hero-status-trigger={heroAnchor ? '' : undefined}>
+			<SelectTrigger
+				size={isChip ? 'chip' : 'default'}
+				// The status chip is the one chip that keeps a resting hairline
+				// (mockup `odSkBc`); the driver beside it takes one only on hover.
+				className={cn(isChip && 'rounded-md border-border py-[3px] pl-[7px] pr-1.5')}
+				data-hero-status-trigger={heroAnchor ? '' : undefined}
+				title={isChip ? 'Change status' : undefined}
+			>
 				{isChip ? (
-					<span className={cn('inline-flex items-center gap-1.5', dot.text)}>
-						<span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-current" />
-						<span className="font-mono font-bold uppercase tracking-[0.09em]">
-							{current.replace(/_/g, ' ')}
-						</span>
+					<span
+						className={cn(
+							'font-mono text-[9.5px] font-bold uppercase leading-none tracking-[0.09em]',
+							dot.text,
+						)}
+					>
+						{current.replace(/_/g, ' ')}
 					</span>
 				) : (
 					<SelectValue />
@@ -92,22 +101,38 @@ export function OwnerSelect({
 
 	return (
 		<Select value={currentOwnerId ?? UNASSIGNED_OWNER} onValueChange={handleChange}>
-			<SelectTrigger>
+			<SelectTrigger
+				size={isChip ? 'chip' : 'default'}
+				className={cn(isChip && 'gap-1.5 pl-1.5 pr-2')}
+				title={isChip ? 'Change who drives this' : undefined}
+			>
 				<SelectValue>
 					{current ? (
 						<span className="inline-flex items-center gap-1.5">
 							{!compact && !isChip && current.type !== 'agent' && (
 								<User className="size-3 text-amber-600 shrink-0" />
 							)}
-							<ActorAvatar name={current.name} type={current.type} size="sm" />
+							<ActorAvatar
+								name={current.name}
+								type={current.type}
+								size="sm"
+								className={cn(isChip && 'size-[15px] text-[8px]')}
+							/>
 							{!compact && (
 								<span className="text-muted-foreground">{isChip ? 'Driver' : 'Driver:'}</span>
 							)}
-							<span className={cn(isChip && 'font-semibold text-foreground')}>{current.name}</span>
+							<span className={cn(isChip && 'font-semibold text-secondary-foreground')}>
+								{current.name}
+							</span>
 						</span>
 					) : currentOwnerId ? (
 						<span className="italic text-muted-foreground">
 							Unknown ({currentOwnerId.slice(0, 8)})
+						</span>
+					) : isChip ? (
+						<span className="inline-flex items-center gap-1.5">
+							<span className="text-muted-foreground">Driver</span>
+							<span className="font-semibold text-secondary-foreground">Unassigned</span>
 						</span>
 					) : (
 						<span className="text-muted-foreground">

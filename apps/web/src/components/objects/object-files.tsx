@@ -7,6 +7,7 @@ import {
 } from '@/components/ui/responsive-popover'
 import { useActors } from '@/hooks/use-actors'
 import { useCreateFile, useFiles } from '@/hooks/use-files'
+import { useObjectFileAttachments } from '@/hooks/use-object-file-attachments'
 import { useCreateRelationship } from '@/hooks/use-relationships'
 import {
 	useUpdateUserDisplaySettings,
@@ -15,7 +16,7 @@ import {
 import { trackEvent } from '@/lib/analytics'
 import type { FileListItem, RelationshipResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { formatSize, readFileAsBase64 } from '@/lib/file-utils'
+import { formatSize } from '@/lib/file-utils'
 import { Link } from '@tanstack/react-router'
 import { Check, Columns3, File as FileIcon, Loader2, Plus } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -100,12 +101,14 @@ export function ObjectFiles({
 
 	const { data: files = [] } = useFiles(workspaceId, { ids: candidateFileIds })
 
-	const createFile = useCreateFile(workspaceId)
-	const createRelationship = useCreateRelationship(workspaceId, objectId)
+	const { upload: handleUpload, isUploading } = useObjectFileAttachments({
+		workspaceId,
+		objectId,
+		objectType,
+	})
 
 	const inputRef = useRef<HTMLInputElement>(null)
 	const [isDragging, setIsDragging] = useState(false)
-	const [isUploading, setIsUploading] = useState(false)
 	const [visible, setVisible] = useState<Record<ToggleableProperty, boolean>>(DEFAULT_VISIBLE)
 
 	// Per-actor visibility persistence under `object_type = "files"`. Reuses the
@@ -149,36 +152,6 @@ export function ObjectFiles({
 		}, 500)
 		return () => clearTimeout(handle)
 	}, [visible])
-
-	const handleUpload = useCallback(
-		async (incoming: File[]) => {
-			setIsUploading(true)
-			try {
-				for (const file of incoming) {
-					const content = await readFileAsBase64(file)
-					const created = await createFile.mutateAsync({
-						name: file.name,
-						mime_type: file.type || 'application/octet-stream',
-						content,
-						encoding: 'base64',
-					})
-					await createRelationship.mutateAsync({
-						source_type: objectType,
-						source_id: objectId,
-						target_type: 'file',
-						target_id: created.id,
-						type: ATTACHED_REL_TYPE,
-					})
-					toast.success(`Uploaded ${file.name}`)
-				}
-			} catch (err) {
-				toast.error(err instanceof Error ? err.message : 'Failed to upload file')
-			} finally {
-				setIsUploading(false)
-			}
-		},
-		[createFile, createRelationship, objectId, objectType],
-	)
 
 	const handleFileChange = useCallback(
 		(e: React.ChangeEvent<HTMLInputElement>) => {
