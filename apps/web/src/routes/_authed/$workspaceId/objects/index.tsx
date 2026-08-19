@@ -1439,17 +1439,19 @@ function ObjectsPageV2() {
 		[displaySettingsKey, workspaceId, navigate],
 	)
 
-	// `actions` is a node published into the shared nav row — PageHeader's
-	// effect deps are `[actions]`, so a fresh node every render would re-set
-	// context state on every pass. Memoised for that reason.
-	const headerActions = useMemo(
+	// Published into the shared nav row's *left* cluster, immediately after the
+	// <h1> — the mockup puts the type tabs beside "Objects" (146–153), not out
+	// beyond the search field. PageHeader's effect deps are `[titleTabs]`, so a
+	// fresh node every render would re-set context state on every pass;
+	// memoised for that reason.
+	const headerTabs = useMemo(
 		() => (
 			<FilterTabs
 				tabs={tabsWithCounts}
 				value={typeFilter}
 				onChange={handleTypeFilterChange}
 				aria-label="Type filter"
-				className="min-w-0"
+				className="ml-[14px] min-w-0"
 			/>
 		),
 		[tabsWithCounts, typeFilter, handleTypeFilterChange],
@@ -1463,7 +1465,7 @@ function ObjectsPageV2() {
 			<PageHeader
 				title="Objects"
 				subtitle={String(allObjects.length)}
-				actions={headerActions}
+				titleTabs={headerTabs}
 				scrollLocked
 			/>
 			{idsFilter && (

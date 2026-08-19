@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -56,14 +56,17 @@ vi.mock('@tanstack/react-query', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('@tanstack/react-query')>()
 	return {
 		...actual,
+		// Only the board query returns `{ columns }`. The rest (tasks and
+		// breaks_into rels, which feed the bet-status derivation) are mapped
+		// over, so they have to be arrays.
 		useQuery: (options: { queryKey?: readonly unknown[] }) => ({
-			data: options?.queryKey?.[0] === 'notifications' ? [] : { columns: [] },
+			data: options?.queryKey?.[1] === 'board' ? { columns: [] } : [],
 			isLoading: false,
 			isSuccess: true,
 			isError: false,
 		}),
 		useInfiniteQuery: () => ({
-			data: { pages: [[]] },
+			data: { pages: [objectsState.rows] },
 			hasNextPage: false,
 			isFetchingNextPage: false,
 			isError: false,
@@ -98,6 +101,11 @@ vi.mock('@/hooks/use-user-display-settings', () => ({
 	useUpdateUserDisplaySettings: () => ({ mutate: vi.fn() }),
 }))
 
+// Rows the infinite query hands back. Mutable so a test can load a list without
+// re-mocking the query layer; defaults to empty, which is what every test that
+// only cares about the chip strip expects.
+const objectsState = vi.hoisted(() => ({ rows: [] as Array<Record<string, unknown>> }))
+
 // Capture the bulk bar's props so the Archive gate can be asserted without
 // driving a selection through the mocked ListView.
 const bulkBarCapture = vi.hoisted(() => ({ lastProps: null as Record<string, unknown> | null }))
@@ -108,18 +116,24 @@ vi.mock('@/components/objects/bulk-action-bar', () => ({
 	},
 }))
 vi.mock('@/components/layout/page-header', () => ({
+	// The type tabs go out as `titleTabs` (the nav row's left cluster, beside
+	// the <h1>), not as `actions` — the stand-in renders both so a regression
+	// back to the right-hand cluster shows up here.
 	PageHeader: ({
 		title,
 		subtitle,
 		actions,
+		titleTabs,
 	}: {
 		title?: string
 		subtitle?: string
 		actions?: React.ReactNode
+		titleTabs?: React.ReactNode
 	}) => (
 		<div data-testid="page-header">
 			<h1>{title}</h1>
 			<span data-testid="page-subtitle">{subtitle}</span>
+			<span data-testid="page-title-tabs">{titleTabs}</span>
 			{actions}
 		</div>
 	),
@@ -262,6 +276,8 @@ beforeEach(() => {
 		attention: undefined,
 	}
 	navigateMock.mockClear()
+	objectsState.rows = []
+	bulkBarCapture.lastProps = null
 })
 
 describe('ObjectsPage chip strip — Include: archived', () => {
@@ -444,5 +460,15 @@ describe('ObjectsPage — board single-card advance', () => {
 		const [, opts] = advance()
 		opts.onError?.(new Error('Network blew up'))
 		expect(toastCapture.error).toHaveBeenCalledWith('Failed to move object')
+	})
+})
+
+describe('ObjectsPage bulk edit', () => {
+	it("publishes the type tabs into the nav row's left cluster, not its actions slot", () => {
+		render(<ObjectsPage />)
+
+		// `titleTabs` lands beside the <h1>; `actions` lands past the search
+		// field. The tabs belong in the first (mockup 146-153).
+		expect(screen.getByTestId('page-title-tabs').textContent).not.toBe('')
 	})
 })
