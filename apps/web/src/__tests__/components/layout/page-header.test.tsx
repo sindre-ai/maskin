@@ -4,6 +4,7 @@ import { render } from '@testing-library/react'
 const mockSetTitle = vi.fn()
 const mockSetSubtitle = vi.fn()
 const mockSetActions = vi.fn()
+const mockSetTitleTabs = vi.fn()
 const mockSetStickyIdentity = vi.fn()
 const mockSetCrumb = vi.fn()
 const mockSetContentPush = vi.fn()
@@ -14,6 +15,7 @@ vi.mock('@/lib/page-header-context', () => ({
 		setTitle: mockSetTitle,
 		setSubtitle: mockSetSubtitle,
 		setActions: mockSetActions,
+		setTitleTabs: mockSetTitleTabs,
 		setStickyIdentity: mockSetStickyIdentity,
 		setCrumb: mockSetCrumb,
 		setContentPush: mockSetContentPush,
@@ -26,10 +28,18 @@ describe('PageHeader', () => {
 		mockSetTitle.mockClear()
 		mockSetSubtitle.mockClear()
 		mockSetActions.mockClear()
+		mockSetTitleTabs.mockClear()
 		mockSetStickyIdentity.mockClear()
 		mockSetCrumb.mockClear()
 		mockSetContentPush.mockClear()
 		mockSetScrollLocked.mockClear()
+	})
+
+	it('publishes titleTabs separately from actions — they land in different clusters', () => {
+		const tabs = <button type="button">All</button>
+		render(<PageHeader titleTabs={tabs} />)
+		expect(mockSetTitleTabs).toHaveBeenCalledWith(tabs)
+		expect(mockSetActions).toHaveBeenCalledWith(null)
 	})
 
 	it('calls setActions on mount with provided actions', () => {

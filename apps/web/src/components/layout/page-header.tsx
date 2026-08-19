@@ -5,6 +5,7 @@ export function PageHeader({
 	title,
 	subtitle,
 	actions,
+	titleTabs,
 	stickyIdentity,
 	crumb,
 	contentPush,
@@ -16,6 +17,9 @@ export function PageHeader({
 	// Muted count or context that sits beside the title in the nav row.
 	subtitle?: string
 	actions?: React.ReactNode
+	// Controls that sit beside the <h1> in the nav row's left cluster instead
+	// of out by search and New — see PageHeaderContext.
+	titleTabs?: React.ReactNode
 	stickyIdentity?: React.ReactNode
 	// A detail screen's own `Parent › Name` crumb. Publishing one collapses the
 	// shared nav to the compact detail bar the mockup draws above the document.
@@ -32,6 +36,7 @@ export function PageHeader({
 		setTitle,
 		setSubtitle,
 		setActions,
+		setTitleTabs,
 		setStickyIdentity,
 		setCrumb,
 		setContentPush,
@@ -52,6 +57,11 @@ export function PageHeader({
 		setActions(actions ?? null)
 		return () => setActions(null)
 	}, [actions, setActions])
+
+	useEffect(() => {
+		setTitleTabs(titleTabs ?? null)
+		return () => setTitleTabs(null)
+	}, [titleTabs, setTitleTabs])
 
 	useEffect(() => {
 		setStickyIdentity(stickyIdentity ?? null)

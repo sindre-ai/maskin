@@ -137,7 +137,7 @@ const OBJECT_DETAIL_ROUTE_ID = '/_authed/$workspaceId/objects/$objectId'
  */
 export function Header() {
 	const matches = useMatches()
-	const { title, subtitle, actions, stickyIdentity, crumb } = usePageHeader()
+	const { title, subtitle, actions, titleTabs, stickyIdentity, crumb } = usePageHeader()
 	const { workspaceId } = useWorkspace()
 	const navigate = useNavigate()
 	const router = useRouter()
@@ -262,6 +262,11 @@ export function Header() {
 					)}
 				</div>
 			) : null}
+
+			{/* Beside the title, before the right-hand cluster — the Objects type
+			    tabs live in the left cluster (mockup 148–152), not out with search
+			    and New. */}
+			{titleTabs}
 
 			{/* `ml-auto` lives on the group, not on a spacer span: an auto margin
 			    absorbs free space before flex-grow does, so a spacer would starve the
