@@ -143,7 +143,7 @@ beforeEach(() => {
 
 describe('ObjectDetailShell sidebar_toggle instrumentation', () => {
 	// Ship-metric event for the object-detail-sidebar bet, ported from the
-	// retired ObjectDocument surface along with the ⌘/Ctrl+I chord and the
+	// retired ObjectDocument surface along with the ⌘/Ctrl+⇧+\ chord and the
 	// persisted `objectDetailSidebarCollapsed` bit. Every open/close of the
 	// right sidebar must fire — the exit gate revokes the feature if this
 	// event stays at 0/day for 7 consecutive days.
@@ -168,11 +168,11 @@ describe('ObjectDetailShell sidebar_toggle instrumentation', () => {
 		})
 	})
 
-	it('fires when the ⌘/Ctrl+I shortcut toggles the sidebar', async () => {
+	it('fires when the ⌘/Ctrl+⇧+\\ shortcut toggles the sidebar', async () => {
 		const user = userEvent.setup()
 		renderShell('obj-shortcut')
 
-		await user.keyboard('{Control>}i{/Control}')
+		await user.keyboard('{Control>}{Shift>}\\{/Shift}{/Control}')
 
 		expect(trackSidebarToggleMock).toHaveBeenCalledTimes(1)
 		expect(trackSidebarToggleMock).toHaveBeenCalledWith({

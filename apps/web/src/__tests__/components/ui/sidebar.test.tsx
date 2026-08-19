@@ -31,7 +31,9 @@ function fireCmd(key: string, extra: Partial<KeyboardEventInit> = {}) {
 }
 
 describe('SidebarProvider + SidebarRightProvider — dual-instance shortcut wiring', () => {
-	it('⌘B toggles only the left instance', () => {
+	// ⌘\ and ⌘⇧\ replaced ⌘B and ⌘I so the document editor can own bold and
+	// italic wherever it is focused.
+	it('⌘\\ toggles only the left instance', () => {
 		render(
 			<SidebarProvider defaultOpen={true}>
 				<LeftStatePeek />
@@ -44,13 +46,13 @@ describe('SidebarProvider + SidebarRightProvider — dual-instance shortcut wiri
 		expect(screen.getByTestId('left-state').textContent).toBe('open')
 		expect(screen.getByTestId('right-state').textContent).toBe('closed')
 
-		fireCmd('b')
+		fireCmd('\\')
 
 		expect(screen.getByTestId('left-state').textContent).toBe('closed')
 		expect(screen.getByTestId('right-state').textContent).toBe('closed')
 	})
 
-	it('⌘I toggles only the right instance', () => {
+	it('⌘⇧\\ toggles only the right instance', () => {
 		render(
 			<SidebarProvider defaultOpen={true}>
 				<LeftStatePeek />
@@ -60,13 +62,13 @@ describe('SidebarProvider + SidebarRightProvider — dual-instance shortcut wiri
 			</SidebarProvider>,
 		)
 
-		fireCmd('i')
+		fireCmd('\\', { shiftKey: true })
 
 		expect(screen.getByTestId('left-state').textContent).toBe('open')
 		expect(screen.getByTestId('right-state').textContent).toBe('open')
 	})
 
-	it('Ctrl+I toggles the right instance (Windows/Linux)', () => {
+	it('Ctrl+⇧+\\ toggles the right instance (Windows/Linux)', () => {
 		render(
 			<SidebarRightProvider defaultOpen={false}>
 				<RightStatePeek />
@@ -74,20 +76,20 @@ describe('SidebarProvider + SidebarRightProvider — dual-instance shortcut wiri
 		)
 
 		act(() => {
-			fireEvent.keyDown(window, { key: 'i', ctrlKey: true })
+			fireEvent.keyDown(window, { key: '\\', ctrlKey: true, shiftKey: true })
 		})
 
 		expect(screen.getByTestId('right-state').textContent).toBe('open')
 	})
 
-	it('does not fire on ⌘⇧I — leaves inspect-element chord alone', () => {
+	it("does not fire on ⌘I — that is the editor's italic now", () => {
 		render(
 			<SidebarRightProvider defaultOpen={false}>
 				<RightStatePeek />
 			</SidebarRightProvider>,
 		)
 
-		fireCmd('I', { shiftKey: true })
+		fireCmd('i')
 
 		expect(screen.getByTestId('right-state').textContent).toBe('closed')
 	})
@@ -102,7 +104,7 @@ describe('SidebarRightProvider — controlled vs uncontrolled', () => {
 		)
 
 		expect(screen.getByTestId('right-state').textContent).toBe('closed')
-		fireCmd('i')
+		fireCmd('\\', { shiftKey: true })
 		expect(screen.getByTestId('right-state').textContent).toBe('open')
 	})
 
@@ -127,11 +129,11 @@ describe('SidebarRightProvider — controlled vs uncontrolled', () => {
 		render(<Host />)
 
 		expect(screen.getByTestId('right-state').textContent).toBe('closed')
-		fireCmd('i')
+		fireCmd('\\', { shiftKey: true })
 		expect(onOpenChange).toHaveBeenCalledWith(true)
 		expect(screen.getByTestId('right-state').textContent).toBe('open')
 
-		fireCmd('i')
+		fireCmd('\\', { shiftKey: true })
 		expect(onOpenChange).toHaveBeenLastCalledWith(false)
 		expect(screen.getByTestId('right-state').textContent).toBe('closed')
 	})
@@ -143,7 +145,7 @@ describe('SidebarRightProvider — controlled vs uncontrolled', () => {
 				<RightStatePeek />
 			</SidebarRightProvider>,
 		)
-		fireCmd('i')
+		fireCmd('\\', { shiftKey: true })
 		expect(document.cookie).toBe(originalCookie)
 		expect(document.cookie).not.toContain('sidebar_state_right')
 	})
@@ -223,7 +225,7 @@ describe('Sidebar component — side="right" routing', () => {
 		)
 
 		expect(screen.getByTestId('left-state').textContent).toBe('open')
-		fireCmd('b')
+		fireCmd('\\')
 		expect(screen.getByTestId('left-state').textContent).toBe('closed')
 	})
 })

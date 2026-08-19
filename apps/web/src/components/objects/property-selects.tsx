@@ -9,15 +9,16 @@ import {
 } from '@/components/ui/select'
 import type { MemberResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { getStatusColor } from '@/lib/constants'
+import { getStatusColor, statusLabel } from '@/lib/constants'
 import { User } from 'lucide-react'
 import { ActorAvatar } from '../shared/actor-avatar'
 
-/** `default` is the plain trigger the properties drawer uses. `chip` is the
- *  document's identity-row reading (mockup 1058–1094): a mono uppercase status
- *  chip and an `[avatar] Driver <Name>` chip. Both keep the shadcn trigger's
- *  own height / border / padding — only the label treatment changes. */
-export type PropertySelectVariant = 'default' | 'chip'
+/** `default` is the plain form trigger. `chip` is the document's meta-line
+ *  reading (mockup 1058–1094): a `• Status <value>` pill and an
+ *  `[avatar] Driver <Name>` pill. `row` is the properties drawer's reading
+ *  (1352–1396): the value fills its column and only takes a hairline on hover
+ *  or while open, so the drawer reads as a list of values rather than a form. */
+export type PropertySelectVariant = 'default' | 'chip' | 'row'
 
 export function StatusSelect({
 	current,
@@ -36,19 +37,27 @@ export function StatusSelect({
 	heroAnchor?: boolean
 }) {
 	const isChip = variant === 'chip'
+	const isRow = variant === 'row'
 	const dot = getStatusColor(current)
 	return (
 		<Select value={current} onValueChange={onChange}>
 			<SelectTrigger
-				size={isChip ? 'chip' : 'default'}
+				size={isChip || isRow ? 'chip' : 'default'}
 				// The status pill mirrors the driver pill beside it (mockup
 				// 1060–1066): a dot in the status's colour, the word "Status", then
 				// the value — so the meta line reads as one row of like controls.
-				className={cn(isChip && 'gap-1.5 rounded-[7px] px-2 py-[3px]')}
+				className={cn(
+					isChip && 'gap-1.5 rounded-[7px] px-2 py-[3px]',
+					isRow && 'w-full justify-between rounded-lg px-[7px] py-1 text-[12.5px]',
+				)}
 				data-hero-status-trigger={heroAnchor ? '' : undefined}
 				title={isChip ? 'Change status' : undefined}
 			>
-				{isChip ? (
+				{isRow ? (
+					<span className={cn('min-w-0 truncate font-semibold', dot.text)}>
+						{statusLabel(current)}
+					</span>
+				) : isChip ? (
 					<span className="inline-flex items-center gap-1.5">
 						<span className={cn('shrink-0', dot.text)}>
 							<span aria-hidden="true" className="block size-[7px] rounded-full bg-current" />
@@ -96,6 +105,7 @@ export function OwnerSelect({
 }) {
 	const current = members.find((m) => m.actorId === currentOwnerId)
 	const isChip = variant === 'chip'
+	const isRow = variant === 'row'
 
 	const handleChange = (value: string) => {
 		onChange(value === UNASSIGNED_OWNER ? null : value)
@@ -104,8 +114,11 @@ export function OwnerSelect({
 	return (
 		<Select value={currentOwnerId ?? UNASSIGNED_OWNER} onValueChange={handleChange}>
 			<SelectTrigger
-				size={isChip ? 'chip' : 'default'}
-				className={cn(isChip && 'gap-1.5 pl-1.5 pr-2')}
+				size={isChip || isRow ? 'chip' : 'default'}
+				className={cn(
+					isChip && 'gap-1.5 pl-1.5 pr-2',
+					isRow && 'w-full justify-between rounded-lg px-[7px] py-1 text-[12.5px]',
+				)}
 				title={isChip ? 'Change who drives this' : undefined}
 			>
 				<SelectValue>
@@ -118,12 +131,19 @@ export function OwnerSelect({
 								name={current.name}
 								type={current.type}
 								size="sm"
-								className={cn(isChip && 'size-[15px] text-[8px]')}
+								className={cn(
+									isChip && 'size-[15px] text-[8px]',
+									isRow && 'size-[17px] text-[8.5px]',
+								)}
 							/>
 							{!compact && (
 								<span className="text-muted-foreground">{isChip ? 'Driver' : 'Driver:'}</span>
 							)}
-							<span className={cn(isChip && 'font-semibold text-secondary-foreground')}>
+							<span
+								className={cn(
+									(isChip || isRow) && 'min-w-0 truncate font-semibold text-secondary-foreground',
+								)}
+							>
 								{current.name}
 							</span>
 						</span>

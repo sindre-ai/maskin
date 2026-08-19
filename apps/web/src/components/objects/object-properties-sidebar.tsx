@@ -5,10 +5,12 @@ import { StatusBadge } from '@/components/shared/status-badge'
 import { SubscribeToggle } from '@/components/shared/subscribe-toggle'
 import { Button } from '@/components/ui/button'
 import { Sidebar, SidebarContent, SidebarHeader, useSidebar } from '@/components/ui/sidebar'
+import { useActors } from '@/hooks/use-actors'
+import { useNotifications } from '@/hooks/use-notifications'
 import { useSubscribers } from '@/hooks/use-subscriptions'
 import type { MemberResponse, ObjectResponse, RelationshipResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
-import { PanelRight } from 'lucide-react'
+import { X } from 'lucide-react'
 import { MetadataProperties } from './metadata-properties'
 import { ObjectFiles } from './object-files'
 import { OwnerSelect, StatusSelect } from './property-selects'
@@ -41,6 +43,13 @@ export function ObjectPropertiesSidebar({
 	onUpdateStatus: (status: string) => void
 	onUpdateDriver: (driver: string | null) => void
 }) {
+	const { data: actors } = useActors(workspaceId)
+	const creatorName = actors?.find((a) => a.id === object.createdBy)?.name
+	const { data: pendingAsks } = useNotifications(workspaceId, { type: 'needs_input' })
+	const needsYou = (pendingAsks ?? []).some(
+		(n) => n.objectId === object.id && n.status === 'pending',
+	)
+
 	return (
 		<Sidebar
 			side="right"
@@ -62,31 +71,57 @@ export function ObjectPropertiesSidebar({
 								members={members}
 								currentOwnerId={object.driver ?? null}
 								onChange={onUpdateDriver}
+								variant="row"
 								compact
 							/>
 						</CorePropertyRow>
 					)}
 					<CorePropertyRow label="status">
 						{statuses.length > 0 ? (
-							<StatusSelect current={object.status} options={statuses} onChange={onUpdateStatus} />
+							<StatusSelect
+								current={object.status}
+								options={statuses}
+								onChange={onUpdateStatus}
+								variant="row"
+							/>
 						) : (
 							<StatusBadge status={object.status} />
 						)}
 					</CorePropertyRow>
-					{object.activeSessionId && (
+					{/* `attention` says who the object is waiting on (mockup `odCore`):
+					    amber when it needs the reader, green while an agent has it. */}
+					{needsYou ? (
+						<CorePropertyRow label="attention">
+							<span className="text-[12.5px] font-semibold text-warning">Needs you</span>
+						</CorePropertyRow>
+					) : object.activeSessionId ? (
 						<CorePropertyRow label="attention">
 							<AgentWorkingBadge sessionId={object.activeSessionId} workspaceId={workspaceId} />
 						</CorePropertyRow>
-					)}
+					) : null}
 					<CorePropertyRow label="type">
-						<span className="text-xs text-foreground">{object.type}</span>
+						<span className="text-[12.5px] font-semibold text-secondary-foreground">
+							{object.type}
+						</span>
 					</CorePropertyRow>
 					<CorePropertyRow label="created">
-						<RelativeTime date={object.createdAt} className="text-xs text-foreground" />
+						{/* `<when> · <who>` — the mockup pairs the date with its author. */}
+						<span className="flex min-w-0 items-center gap-1.5 text-[12.5px] font-semibold text-muted-foreground">
+							<RelativeTime date={object.createdAt} />
+							{creatorName && (
+								<>
+									<span aria-hidden="true">·</span>
+									<span className="truncate">{creatorName}</span>
+								</>
+							)}
+						</span>
 					</CorePropertyRow>
 					{shouldShowUpdatedChip(object.createdAt, object.updatedAt) && (
 						<CorePropertyRow label="updated">
-							<RelativeTime date={object.updatedAt} className="text-xs text-foreground" />
+							<RelativeTime
+								date={object.updatedAt}
+								className="text-[12.5px] font-semibold text-muted-foreground"
+							/>
 						</CorePropertyRow>
 					)}
 				</div>
@@ -206,12 +241,12 @@ function CollapseToggle() {
 			type="button"
 			variant="ghost"
 			size="icon"
-			className="h-7 w-7"
+			className="size-7 text-muted-foreground"
 			onClick={toggleSidebar}
 			aria-label={state === 'expanded' ? 'Collapse properties' : 'Expand properties'}
 			aria-expanded={state === 'expanded'}
 		>
-			<PanelRight size={15} />
+			<X size={16} />
 		</Button>
 	)
 }

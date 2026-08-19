@@ -14,7 +14,7 @@ export const SIDEBAR_WIDTH = '18rem'
  * Mirrors `ChatSidebarProvider` — the two differences from the upstream
  * primitive are the ones the app-wide left `AppSidebar` establishes precedent
  * for:
- *   1. Binds the ⌘/Ctrl+I chord (not ⌘B — the left nav owns that; nesting two
+ *   1. Binds the ⌘/Ctrl+⇧+\ chord (not ⌘\ — the left nav owns that; nesting two
  *      upstream providers would double-toggle).
  *   2. Fixed-positioned outer wrapper so the sidebar renders on top of its
  *      slot instead of trying to reserve horizontal space in the parent flex
