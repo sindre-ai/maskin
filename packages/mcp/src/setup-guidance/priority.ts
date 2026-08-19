@@ -21,6 +21,7 @@ const CHECK_ORDER: Record<string, number> = {
 	steps_have_agents: 20,
 	skills_attached: 21,
 	mcp_configured: 22,
+	automation_wired: 23,
 	// connectors — providers the prompts reference
 	connectors_connected: 40,
 	// content & ownership — objects
