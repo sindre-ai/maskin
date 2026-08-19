@@ -673,7 +673,8 @@ function EventRow({
 				{entry.time && (
 					<RelativeTime
 						date={entry.time}
-						className="w-[46px] shrink-0 text-[10px] tabular-nums text-border-strong"
+						compact
+						className="w-[46px] shrink-0 text-[10px] uppercase tabular-nums text-border-strong"
 					/>
 				)}
 				<span className="shrink-0 text-[12.5px] text-muted-foreground">{entry.reference.verb}</span>
@@ -704,7 +705,8 @@ function EventRow({
 				{entry.time && (
 					<RelativeTime
 						date={entry.time}
-						className="w-[46px] shrink-0 text-[10px] tabular-nums text-border-strong"
+						compact
+						className="w-[46px] shrink-0 text-[10px] uppercase tabular-nums text-border-strong"
 					/>
 				)}
 				<span className="font-bold text-foreground">{who}</span>

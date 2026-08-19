@@ -126,7 +126,8 @@ export function RelatedTab({ object }: { object: ObjectResponse }) {
 									)}
 									<RelativeTime
 										date={row.object.updatedAt ?? row.object.createdAt}
-										className="w-[38px] shrink-0 text-right text-[10px] tabular-nums text-border-strong"
+										compact
+										className="w-[38px] shrink-0 text-right text-[10px] uppercase tabular-nums text-border-strong"
 									/>
 									{/* The link covers the row so the whole thing opens the object;
 								    the remove button sits above it so × still hits ×. */}
