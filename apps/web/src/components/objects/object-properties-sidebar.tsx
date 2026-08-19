@@ -2,12 +2,12 @@ import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { AgentWorkingBadge } from '@/components/shared/agent-working-badge'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { StatusBadge } from '@/components/shared/status-badge'
-import { SubscribeToggle } from '@/components/shared/subscribe-toggle'
+
 import { Button } from '@/components/ui/button'
 import { Sidebar, SidebarContent, SidebarHeader, useSidebar } from '@/components/ui/sidebar'
 import { useActors } from '@/hooks/use-actors'
 import { useNotifications } from '@/hooks/use-notifications'
-import { useSubscribers } from '@/hooks/use-subscriptions'
+import { useSubscribe, useSubscribers, useUnsubscribe } from '@/hooks/use-subscriptions'
 import type { MemberResponse, ObjectResponse, RelationshipResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { X } from 'lucide-react'
@@ -163,11 +163,13 @@ function SubscribedSection({
 	workspaceId: string
 }) {
 	const { data: subscribers } = useSubscribers(workspaceId, 'object', object.id)
+	const subscribe = useSubscribe(workspaceId)
+	const unsubscribe = useUnsubscribe(workspaceId)
 	const currentActorId = getStoredActor()?.id
 	const rows = subscribers?.actors ?? []
 
 	return (
-		<>
+		<div className="flex flex-col">
 			<div className="flex items-center gap-2">
 				<SectionLabel>Subscribed</SectionLabel>
 				<span className="min-w-0 flex-1 truncate text-[10.5px] text-muted-foreground">
@@ -191,15 +193,23 @@ function SubscribedSection({
 					))}
 				</ul>
 			)}
-			<div className="mt-2">
-				<SubscribeToggle
-					workspaceId={workspaceId}
-					entityType="object"
-					entityId={object.id}
-					isSubscribed={object.is_subscribed}
-				/>
-			</div>
-		</>
+			{/* A labelled control, not an avatar stack — the rows above already
+			    say who is on it (mockup 1445). */}
+			<Button
+				type="button"
+				variant="outline"
+				size="sm"
+				className="mt-2 h-auto self-start rounded-lg px-2.5 py-1.5 text-[11.5px] font-semibold text-muted-foreground"
+				disabled={subscribe.isPending || unsubscribe.isPending}
+				onClick={() =>
+					object.is_subscribed
+						? unsubscribe.mutate({ entityType: 'object', entityId: object.id })
+						: subscribe.mutate({ entityType: 'object', entityId: object.id })
+				}
+			>
+				{object.is_subscribed ? 'Unsubscribe' : 'Subscribe'}
+			</Button>
+		</div>
 	)
 }
 
@@ -209,10 +219,10 @@ function subscriberReason(
 	object: ObjectResponse,
 	currentActorId: string | undefined,
 ): string {
-	if (actorId === currentActorId) return 'you'
-	if (actorId === object.driver) return 'drives this'
+	if (actorId === currentActorId) return 'you own the outcome'
+	if (actorId === object.driver) return 'drives this object'
 	if (actorId === object.createdBy) return 'created it'
-	return 'following updates'
+	return 'posts to this timeline'
 }
 
 // The drawer's mono section markers (mockup 1437, 1479, 1490).

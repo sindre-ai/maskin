@@ -158,16 +158,19 @@ test.describe('Object detail — v2 surface', () => {
 		// No toolbar until something is selected.
 		await expect(page.getByRole('button', { name: 'Bold' })).toHaveCount(0)
 
-		await page.locator('.prose p').first().evaluate((el) => {
-			const range = document.createRange()
-			const node = el.firstChild as Node
-			range.setStart(node, 0)
-			range.setEnd(node, 7)
-			const selection = window.getSelection()
-			selection?.removeAllRanges()
-			selection?.addRange(range)
-			el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
-		})
+		await page
+			.locator('.prose p')
+			.first()
+			.evaluate((el) => {
+				const range = document.createRange()
+				const node = el.firstChild as Node
+				range.setStart(node, 0)
+				range.setEnd(node, 7)
+				const selection = window.getSelection()
+				selection?.removeAllRanges()
+				selection?.addRange(range)
+				el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+			})
 
 		const bold = page.getByRole('button', { name: 'Bold' })
 		await expect(bold).toBeVisible()
@@ -233,9 +236,9 @@ test.describe('Object detail — v2 surface', () => {
 		})
 
 		await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
-		await expect(page.getByRole('heading', { level: 1, name: 'Drawer detail probe' })).toBeVisible(
-			{ timeout: 15000 },
-		)
+		await expect(page.getByRole('heading', { level: 1, name: 'Drawer detail probe' })).toBeVisible({
+			timeout: 15000,
+		})
 		await page
 			.locator('main header')
 			.first()
@@ -246,6 +249,15 @@ test.describe('Object detail — v2 surface', () => {
 		// `<when> · <who>` — the creator rides the created row.
 		await expect(page.getByText(/^E2E /).last()).toBeVisible()
 		await expect(page.getByRole('button', { name: /Collapse properties/ })).toBeVisible()
+
+		// SUBSCRIBED states the reason per row and offers a labelled control,
+		// not an avatar stack (mockup 1437–1445).
+		await expect(page.getByText('you own the outcome')).toBeVisible()
+		await expect(page.getByRole('button', { name: /^Unsubscribe$/ })).toBeVisible()
+
+		// FILES reads plainly when nothing is attached.
+		await expect(page.getByRole('heading', { name: 'Files' })).toBeVisible()
+		await expect(page.getByText('Nothing attached.')).toBeVisible()
 	})
 
 	// The bar, the status chip and the composer all read from colour tokens, so
