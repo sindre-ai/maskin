@@ -19,6 +19,7 @@ import {
 	useUpdateTrigger,
 } from '@/hooks/use-triggers'
 import { trackTriggerUpdated } from '@/lib/analytics'
+import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { Check, MoreHorizontal, Pause, Play, Trash2 } from 'lucide-react'
@@ -152,6 +153,24 @@ function TriggerDetailPage() {
 								<Check size={13} />
 								Saved
 							</span>
+							{/* Whether the trigger is live reads in the header, beside the
+							    menu that flips it (mockup's `td` header pill). */}
+							<span
+								data-testid="trigger-enabled-pill"
+								className={cn(
+									'inline-flex h-7 items-center gap-1.5 rounded-lg border border-border px-2.5 text-[11.5px] font-semibold',
+									trigger?.enabled ? 'text-success' : 'text-muted-foreground',
+								)}
+							>
+								<span
+									aria-hidden="true"
+									className={cn(
+										'size-1.5 shrink-0 rounded-full',
+										trigger?.enabled ? 'bg-success' : 'bg-muted-foreground',
+									)}
+								/>
+								{trigger?.enabled ? 'Enabled' : 'Paused'}
+							</span>
 							<DropdownMenu>
 								<DropdownMenuTrigger asChild>
 									<Button
@@ -197,7 +216,6 @@ function TriggerDetailPage() {
 				initialValues={trigger}
 				onAutoCreate={!isCreated ? handleAutoCreate : undefined}
 				onSave={isCreated ? handleSave : undefined}
-				onToggleEnabled={isCreated ? handleToggleEnabled : undefined}
 				onSavedChange={handleSavedChange}
 				isPending={createTrigger.isPending || updateTrigger.isPending}
 				error={createTrigger.error || updateTrigger.error}

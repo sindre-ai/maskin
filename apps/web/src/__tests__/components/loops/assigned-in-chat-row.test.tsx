@@ -74,7 +74,7 @@ describe('AssignedInChatRow', () => {
 		expect(screen.getByRole('link')).toHaveAttribute('href', '/ws-1/chats/conv-1')
 	})
 
-	it('shows "Working" only while that agent has a live session', () => {
+	it('shows "Working now" only while that agent has a live session', () => {
 		const { rerender } = render(
 			<AssignedInChatRow
 				conversation={buildConversation()}
@@ -92,6 +92,18 @@ describe('AssignedInChatRow', () => {
 				isWorking
 			/>,
 		)
-		expect(screen.getByText('Working')).toBeInTheDocument()
+		expect(screen.getByText('Working now')).toBeInTheDocument()
+	})
+
+	it("puts the operator's own turn ahead of the agent's", () => {
+		render(
+			<AssignedInChatRow
+				conversation={buildConversation({ unread_count: 2 })}
+				workspaceId="ws-1"
+				agentName="Compass"
+				isWorking
+			/>,
+		)
+		expect(screen.getByText('Waiting on you')).toBeInTheDocument()
 	})
 })

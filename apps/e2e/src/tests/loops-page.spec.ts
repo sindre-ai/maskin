@@ -23,14 +23,16 @@ test.describe('Loops list page', () => {
 			await account.api.createObject(account.workspaceId, {
 				type: 'loop',
 				title: 'Customer feedback',
-				status: 'running',
+				status: 'supervised',
 				content: 'Every customer who gives feedback hears back within 30 days',
 			})
 
 			await page.goto(`/${account.workspaceId}/loops`)
 
 			await expect(page.getByText('Customer feedback')).toBeVisible({ timeout: 10000 })
-			await expect(page.getByTestId('loop-pill')).toHaveText('Running')
+			await expect(page.getByTestId('loop-pill')).toHaveText('Supervised')
+			// The row's right cluster is one line: what is in flight, then the stage.
+			await expect(page.getByTestId('loop-stage')).toBeVisible()
 		})
 
 		test(`/triggers redirects to /loops and lists its triggers there at ${viewport.label}`, async ({
@@ -123,12 +125,12 @@ test.describe('Loops list page', () => {
 		await account.api.createObject(account.workspaceId, {
 			type: 'loop',
 			title: 'Alpha loop',
-			status: 'running',
+			status: 'supervised',
 		})
 		await account.api.createObject(account.workspaceId, {
 			type: 'loop',
 			title: 'Zulu loop',
-			status: 'running',
+			status: 'supervised',
 		})
 
 		await page.goto(`/${account.workspaceId}/loops`)
@@ -272,7 +274,7 @@ test.describe('Loops list page', () => {
 		await account.api.createObject(account.workspaceId, {
 			type: 'loop',
 			title: 'Churn watch',
-			status: 'running',
+			status: 'supervised',
 			metadata: { trigger_ids: [trigger.id] },
 		})
 		await account.api.createConversation(account.workspaceId, {

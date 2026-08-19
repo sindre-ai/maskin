@@ -2,6 +2,7 @@ import { LoopRow } from '@/components/loops/loop-row'
 import type { ActorListItem, LoopSummary } from '@/lib/api'
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
+import { buildActorListItem, buildLoopSummary } from '../../factories'
 
 vi.mock('@tanstack/react-router', () => ({
 	Link: ({
@@ -30,47 +31,30 @@ vi.mock('@tanstack/react-router', () => ({
 }))
 
 function buildLoop(overrides: Partial<LoopSummary> = {}): LoopSummary {
-	return {
+	return buildLoopSummary({
 		id: 'loop-1',
 		workspaceId: 'ws-1',
 		name: 'Customer feedback',
-		guarantee: 'Every customer who gives feedback hears back within 30 days',
-		status: 'running',
-		pill: 'running',
-		entryCondition: null,
-		closeCondition: null,
-		humanDecisionPoints: null,
+		content: 'Every customer who gives feedback hears back within 30 days',
+		status: 'supervised',
+		pill: 'supervised',
 		inProgressCount: 6,
 		closedCount: 128,
 		medianTimeToCloseMs: 11 * 24 * 3600 * 1000,
-		agentIds: [],
-		triggerIds: [],
-		waitingOnViewer: false,
-		createdAt: null,
-		updatedAt: null,
 		...overrides,
-	}
+	})
 }
 
 function buildActor(overrides: Partial<ActorListItem> = {}): ActorListItem {
-	return {
-		id: 'actor-1',
-		type: 'agent',
-		name: 'Compass',
-		email: null,
-		description: null,
-		isSystem: false,
-		agentState: 'idle',
-		...overrides,
-	}
+	return buildActorListItem({ id: 'actor-1', type: 'agent', name: 'Compass', ...overrides })
 }
 
 describe('LoopRow', () => {
-	it('renders the state dot, name, one-line outcome, and stage label', () => {
+	it('renders the name, one-line outcome, and the loop stage it is on', () => {
 		render(<LoopRow loop={buildLoop()} actors={[]} />)
 
 		expect(screen.getByText('Customer feedback')).toBeInTheDocument()
-		expect(screen.getByTestId('loop-pill')).toHaveTextContent('Running')
+		expect(screen.getByTestId('loop-pill')).toHaveTextContent('Supervised')
 		expect(
 			screen.getByText('Every customer who gives feedback hears back within 30 days'),
 		).toBeInTheDocument()
@@ -80,12 +64,18 @@ describe('LoopRow', () => {
 		).toMatch(/truncate/)
 	})
 
-	it('renders the green busy line only when agents on the loop are live', () => {
-		const { rerender } = render(<LoopRow loop={buildLoop()} actors={[]} />)
-		expect(screen.queryByText(/busy now/)).not.toBeInTheDocument()
+	it('stacks avatars for the loop agents that are working right now', () => {
+		const actors = [
+			buildActor({ id: 'a1', name: 'Compass' }),
+			buildActor({ id: 'a2', name: 'Sentinel' }),
+		]
+		const loop = buildLoop({ agentIds: ['a1', 'a2'] })
 
-		rerender(<LoopRow loop={buildLoop()} actors={[]} busyAgentCount={2} />)
-		expect(screen.getByText('2 busy now')).toBeInTheDocument()
+		const { rerender } = render(<LoopRow loop={loop} actors={actors} />)
+		expect(screen.queryByTitle('Working now')).not.toBeInTheDocument()
+
+		rerender(<LoopRow loop={loop} actors={actors} busyAgentIds={new Set(['a1'])} />)
+		expect(screen.getByTitle('Working now')).toBeInTheDocument()
 	})
 
 	it('renders "Waiting on you" pill when the loop is waiting', () => {
@@ -94,46 +84,28 @@ describe('LoopRow', () => {
 		expect(screen.getByTestId('loop-pill')).toHaveTextContent('Waiting on you')
 	})
 
-	it('renders "X items in progress" as the last-activity line while work is active', () => {
+	it('counts what is in flight while work is moving through the loop', () => {
 		render(<LoopRow loop={buildLoop({ inProgressCount: 6, closedCount: 128 })} actors={[]} />)
 
-		expect(screen.getByText('6 items in progress')).toBeInTheDocument()
+		expect(screen.getByTestId('loop-stage')).toHaveTextContent('6 in progress')
 	})
 
-	it('renders "X items completed" as last activity when nothing is in progress', () => {
+	it('falls back to what the loop has closed when nothing is in flight', () => {
 		render(<LoopRow loop={buildLoop({ inProgressCount: 0, closedCount: 5 })} actors={[]} />)
 
-		expect(screen.getByText('5 items completed')).toBeInTheDocument()
+		expect(screen.getByTestId('loop-stage')).toHaveTextContent('5 closed')
 	})
 
-	it('renders "Paused — not running" as last activity when paused', () => {
-		render(<LoopRow loop={buildLoop({ pill: 'paused' })} actors={[]} />)
+	it('never prints a zero count on an idle loop', () => {
+		render(<LoopRow loop={buildLoop({ inProgressCount: 0, closedCount: 0 })} actors={[]} />)
 
-		expect(screen.getByText('Paused — not running')).toBeInTheDocument()
+		expect(screen.getByTestId('loop-stage')).toHaveTextContent('Nothing in flight')
 	})
 
-	it('renders the decision-point count in last activity when waiting on the viewer', () => {
-		render(
-			<LoopRow
-				loop={buildLoop({ pill: 'waiting_on_you', humanDecisionPoints: 3, inProgressCount: 0 })}
-				actors={[]}
-			/>,
-		)
+	it('renders "Paused" as the stage when the loop is paused', () => {
+		render(<LoopRow loop={buildLoop({ pill: 'paused', status: 'paused' })} actors={[]} />)
 
-		expect(screen.getByText('Waiting on you — 3 decision points open')).toBeInTheDocument()
-	})
-
-	it("renders the first agent's avatar next to the last-activity line", () => {
-		const actors = [
-			buildActor({ id: 'a1', name: 'Compass' }),
-			buildActor({ id: 'a2', name: 'Sentinel' }),
-		]
-		render(
-			<LoopRow loop={buildLoop({ agentIds: ['a1', 'a2'], inProgressCount: 2 })} actors={actors} />,
-		)
-
-		expect(screen.getByText('2 items in progress')).toBeInTheDocument()
-		expect(screen.getAllByTitle('Compass').length).toBeGreaterThan(0)
+		expect(screen.getByTestId('loop-pill')).toHaveTextContent('Paused')
 	})
 
 	it("renders agent avatars for the loop's agents (up to 5)", () => {

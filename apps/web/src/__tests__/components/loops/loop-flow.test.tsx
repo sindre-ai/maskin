@@ -322,13 +322,20 @@ describe('LoopFlow', () => {
 		expect(screen.getByText(/median close 2d/)).toBeInTheDocument()
 	})
 
-	it('flags steps with "asks you" when the loop is waiting on the viewer', async () => {
+	it('flags the step whose own instruction stops for a human', async () => {
 		const triggers = [
 			buildTriggerResponse({
 				id: 't1',
 				targetActorId: 'relay',
 				type: 'event',
-				actionPrompt: 'A step asking for input',
+				actionPrompt: 'Draft the reply and ask me before it goes out',
+				config: {},
+			}),
+			buildTriggerResponse({
+				id: 't2',
+				targetActorId: 'relay',
+				type: 'event',
+				actionPrompt: 'Normalise the payload into the shared source contract',
 				config: {},
 			}),
 		]
@@ -344,6 +351,9 @@ describe('LoopFlow', () => {
 			{ wrapper: wrapper() },
 		)
 
-		expect(await screen.findByText('asks you')).toBeInTheDocument()
+		// Exactly one of the two steps asks — the badge is a property of the step,
+		// not of the loop being in a waiting state.
+		expect(await screen.findAllByText('asks you')).toHaveLength(1)
+		expect(screen.getByRole('button', { name: /asks you/i })).toBeInTheDocument()
 	})
 })

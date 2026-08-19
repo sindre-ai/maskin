@@ -1,3 +1,4 @@
+import { toggleMarkdownMarker } from '@/components/shared/markdown-content'
 import { splitMarkdownMarkers } from '@/lib/markdown-markers'
 
 const markers = (source: string) =>
@@ -43,5 +44,33 @@ describe('splitMarkdownMarkers', () => {
 
 	it('spans a bold run that wraps across lines', () => {
 		expect(markers('**one\ntwo**')).toEqual(['**', '**'])
+	})
+})
+
+describe('toggleMarkdownMarker', () => {
+	it('wraps the selected run', () => {
+		expect(toggleMarkdownMarker('one two three', 4, 7, '**')).toEqual({
+			value: 'one **two** three',
+			start: 6,
+			end: 9,
+		})
+	})
+
+	it('unwraps a run that already carries the marker', () => {
+		expect(toggleMarkdownMarker('one **two** three', 6, 9, '**')).toEqual({
+			value: 'one two three',
+			start: 4,
+			end: 7,
+		})
+	})
+
+	// `**word **` is not emphasis — markdown renders the asterisks literally.
+	it('leaves padding outside the markers', () => {
+		expect(toggleMarkdownMarker('one two three', 4, 8, '**').value).toBe('one **two** three')
+		expect(toggleMarkdownMarker('one two three', 3, 8, '**').value).toBe('one **two** three')
+	})
+
+	it('does nothing when the selection is only whitespace', () => {
+		expect(toggleMarkdownMarker('one   two', 3, 6, '**').value).toBe('one   two')
 	})
 })

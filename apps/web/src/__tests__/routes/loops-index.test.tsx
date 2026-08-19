@@ -67,29 +67,23 @@ vi.mock('@/lib/workspace-context', () => ({
 
 import { Route } from '@/routes/_authed/$workspaceId/loops/index'
 
+import { buildLoopSummary } from '../factories'
+
 const LoopsPage = (Route as unknown as { component: React.FC }).component
 
 function buildLoop(overrides: Partial<LoopSummary> = {}): LoopSummary {
-	return {
+	return buildLoopSummary({
 		id: 'loop-1',
 		workspaceId: 'ws-1',
 		name: 'Customer feedback',
-		guarantee: 'Every customer who gives feedback hears back within 30 days',
-		status: 'running',
-		pill: 'running',
-		entryCondition: null,
-		closeCondition: null,
-		humanDecisionPoints: null,
+		content: 'Every customer who gives feedback hears back within 30 days',
+		status: 'supervised',
+		pill: 'supervised',
 		inProgressCount: 6,
 		closedCount: 128,
 		medianTimeToCloseMs: 11 * 24 * 3600 * 1000,
-		agentIds: [],
-		triggerIds: [],
-		waitingOnViewer: false,
-		createdAt: null,
-		updatedAt: null,
 		...overrides,
-	}
+	})
 }
 
 function buildActor(overrides: Partial<ActorListItem> = {}): ActorListItem {
@@ -260,7 +254,7 @@ describe('LoopsPage', () => {
 		expect(screen.getByText('Assigned in chat')).toBeInTheDocument()
 		expect(screen.getByText('Look into the recent churn spike')).toBeInTheDocument()
 		expect(screen.getByText('Compass')).toBeInTheDocument()
-		expect(screen.getByText('Working')).toBeInTheDocument()
+		expect(screen.getByText('Working now')).toBeInTheDocument()
 	})
 
 	it('links an assigned-in-chat row back to its conversation', () => {

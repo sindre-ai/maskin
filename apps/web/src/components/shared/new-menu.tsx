@@ -1,3 +1,4 @@
+import { ImportDialog } from '@/components/imports/import-dialog'
 import { type CreatableType, CreatePicker } from '@/components/shared/create-picker'
 import { Button } from '@/components/ui/button'
 import {
@@ -9,10 +10,12 @@ import {
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useAvailableObjectTypes } from '@/hooks/use-available-object-types'
+import { useImportToast } from '@/hooks/use-imports'
 import { cn } from '@/lib/cn'
 import { useCommandPalette } from '@/lib/command-palette-context'
 import { defaultTypeColor, objectTypeDescriptions, typeColors } from '@/lib/constants'
-import { Bot, ChevronDown, MessageSquare, Plus, RefreshCw, Search } from 'lucide-react'
+import { useWorkspace } from '@/lib/workspace-context'
+import { Bot, ChevronDown, MessageSquare, Plus, RefreshCw, Search, Upload } from 'lucide-react'
 import { useState } from 'react'
 
 interface CreateConfig {
@@ -47,10 +50,17 @@ const PRIMARY_TITLE: Record<PrimaryKind, string> = {
 	agent: 'New agent — describe what it should own',
 }
 
+function ImportFlow({ onOpenChange }: { onOpenChange: (open: boolean) => void }) {
+	const { workspaceId } = useWorkspace()
+	const { startTracking } = useImportToast(workspaceId)
+	return <ImportDialog open onOpenChange={onOpenChange} onImportStarted={startTracking} />
+}
+
 // The single "+ New" control used everywhere (global header, For You page) so
 // the trigger and dropdown contents can never drift apart between pages.
 export function NewMenu({ onNewChat, hideObjectSection, primaryKind }: NewMenuProps) {
 	const [createConfig, setCreateConfig] = useState<CreateConfig | null>(null)
+	const [importOpen, setImportOpen] = useState(false)
 	const { setOpen: setPaletteOpen } = useCommandPalette()
 	// The menu lists the types this workspace actually defines — modules and
 	// custom extensions included. Hardcoding the three built-ins hid every
@@ -160,9 +170,26 @@ export function NewMenu({ onNewChat, hideObjectSection, primaryKind }: NewMenuPr
 							Find a past conversation
 							<DropdownMenuShortcut>⌘K</DropdownMenuShortcut>
 						</DropdownMenuItem>
+						{/* Import lives in the New menu, not a page toolbar (mockup 245–247):
+						    bringing a CSV in is a way of starting something, and it is not
+						    specific to whichever list happens to be on screen. */}
+						<DropdownMenuItem onSelect={() => setImportOpen(true)}>
+							<Upload size={14} className="text-muted-foreground" />
+							<span className="min-w-0 flex-1">
+								<span className="block text-sm">Import</span>
+								<span className="block truncate text-xs text-muted-foreground">
+									Bring files, docs, or a CSV into the workspace
+								</span>
+							</span>
+						</DropdownMenuItem>
 					</DropdownMenuContent>
 				</DropdownMenu>
 			</div>
+			{/* Mounted only while open: it owns the import toast subscription, which
+			    needs a QueryClient and a workspace. Keeping that behind the open flag
+			    means the New button itself carries no data dependency, so every
+			    surface that renders it stays cheap. */}
+			{importOpen && <ImportFlow onOpenChange={setImportOpen} />}
 			<CreatePicker
 				open={createConfig !== null}
 				onOpenChange={(next) => {

@@ -43,7 +43,7 @@ test.describe('Loop detail — PROPOSED EDIT', () => {
 			const loop = await account.api.createObject(account.workspaceId, {
 				type: 'loop',
 				title: 'Feedback loop',
-				status: 'running',
+				status: 'supervised',
 				metadata: { plan: STORED_PLAN },
 			})
 
@@ -79,7 +79,7 @@ test.describe('Loop detail — PROPOSED EDIT', () => {
 		const loop = await account.api.createObject(account.workspaceId, {
 			type: 'loop',
 			title: 'Feedback loop',
-			status: 'running',
+			status: 'supervised',
 			metadata: { plan: STORED_PLAN },
 		})
 
@@ -108,7 +108,7 @@ test.describe('Loop detail — PROPOSED EDIT', () => {
 		const loop = await account.api.createObject(account.workspaceId, {
 			type: 'loop',
 			title: 'Feedback loop',
-			status: 'running',
+			status: 'supervised',
 			metadata: { plan: STORED_PLAN },
 		})
 

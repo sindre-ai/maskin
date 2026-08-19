@@ -11,7 +11,7 @@ test.describe('Loop detail page', () => {
 			const loop = await account.api.createObject(account.workspaceId, {
 				type: 'loop',
 				title: 'Customer feedback loop',
-				status: 'running',
+				status: 'supervised',
 				content: 'Every customer who gives feedback hears back within 30 days',
 			})
 			const trigger = await account.api.createTrigger(account.workspaceId, {
@@ -72,11 +72,9 @@ test.describe('Loop detail page', () => {
 			// The right-now note reads as one line: primitives · triggers on ·
 			// cycles (mockup 1891).
 			await expect(page.getByText(/of \d+ trigger(s)? on/)).toBeVisible()
-			// T2 sections — latest activity and the changes log with undo. Latest
-			// activity is a plain heading + rule, the same register as Changes
-			// (mockup 1949–1950) — no bordered card around it.
-			await expect(page.getByRole('heading', { name: 'Latest activity' })).toBeVisible()
-			await expect(page.getByText('what the agents did last')).toBeVisible()
+			// Activity reads as the object timeline does — a mono ACTIVITY rule over
+			// the same rail — followed by the changes log with undo (mockup 1927).
+			await expect(page.getByRole('heading', { name: 'Activity' })).toBeVisible()
 			await expect(page.getByRole('heading', { name: 'Changes' })).toBeVisible()
 			await expect(page.getByRole('button', { name: /undo/i }).first()).toBeVisible()
 
@@ -107,7 +105,7 @@ test.describe('Loop detail page', () => {
 			const loop = await account.api.createObject(account.workspaceId, {
 				type: 'loop',
 				title: 'Brand new loop',
-				status: 'running',
+				status: 'supervised',
 			})
 			const trigger = await account.api.createTrigger(account.workspaceId, {
 				name: 'Nightly sweep',
@@ -140,7 +138,7 @@ test.describe('Loop detail page', () => {
 		const loop = await account.api.createObject(account.workspaceId, {
 			type: 'loop',
 			title: 'Feedback loop',
-			status: 'running',
+			status: 'supervised',
 		})
 
 		await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
@@ -167,16 +165,22 @@ test.describe('Loop detail page', () => {
 		const loop = await account.api.createObject(account.workspaceId, {
 			type: 'loop',
 			title: 'Billing reliability loop',
-			status: 'running',
+			status: 'supervised',
 		})
 
 		await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
-		await expect(page.getByTestId('loop-pill')).toHaveText('Running', { timeout: 10000 })
+		await expect(page.getByTestId('loop-pill')).toHaveText('Supervised', { timeout: 10000 })
 
 		await page.getByRole('button', { name: 'More' }).click()
 		await page.getByRole('menuitem', { name: 'Pause loop' }).click()
 
 		await expect(page.getByTestId('loop-pill')).toHaveText('Paused', { timeout: 10000 })
+
+		// Resuming puts the loop back on the rung it was paused from, rather than
+		// demoting it to the bottom of the autonomy ladder.
+		await page.getByRole('button', { name: 'More' }).click()
+		await page.getByRole('menuitem', { name: 'Resume loop' }).click()
+		await expect(page.getByTestId('loop-pill')).toHaveText('Supervised', { timeout: 10000 })
 	})
 
 	test('clicking a loop row from /loops navigates to the dedicated detail page, not the generic object page', async ({
@@ -188,7 +192,7 @@ test.describe('Loop detail page', () => {
 		const loop = await account.api.createObject(account.workspaceId, {
 			type: 'loop',
 			title: 'Churn early-warning loop',
-			status: 'running',
+			status: 'supervised',
 		})
 
 		await page.goto(`/${account.workspaceId}/loops`)

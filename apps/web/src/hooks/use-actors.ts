@@ -1,3 +1,4 @@
+import { CHIEF_OF_STAFF_DEFAULT } from '@maskin/shared'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMemo } from 'react'
 import { toast } from 'sonner'
@@ -15,12 +16,13 @@ export function useActors(workspaceId?: string, options?: { enabled?: boolean })
 
 /**
  * Resolves the agent a new one-shot conversation should default to: the
- * workspace's configured `default_agent_id` setting, falling back to the
- * "Workspace Coach" actor by name — same derivation the old sidebar chat
- * panel used in `$workspaceId.tsx` before the full-screen chats surface
- * replaced it. Used by any entry point that starts a chat without the user
- * explicitly picking participants (e.g. the For You sparse composer, the
- * landing-page pending-prompt handoff).
+ * workspace's configured `default_agent_id` setting, then the "Chief of Staff"
+ * actor by name — the workspace's boundary agent and the default chat surface
+ * for owner conversations — and finally the "Workspace Coach", which is what
+ * every workspace had before the Chief of Staff shipped. Used by any entry
+ * point that starts a chat without the user explicitly picking participants
+ * (the For You sparse composer, the landing-page pending-prompt handoff, and
+ * the New loop hand-off).
  */
 export function useDefaultChatAgent(): { id: string; name: string } | null {
 	const { workspace, workspaceId } = useWorkspace()
@@ -33,6 +35,8 @@ export function useDefaultChatAgent(): { id: string; name: string } | null {
 			const pinned = actors.find((a) => a.id === defaultId)
 			if (pinned) return { id: pinned.id, name: pinned.name }
 		}
+		const chief = actors.find((a) => a.type === 'agent' && a.name === CHIEF_OF_STAFF_DEFAULT.name)
+		if (chief) return { id: chief.id, name: chief.name }
 		const coach = actors.find((a) => a.type === 'agent' && a.name === 'Workspace Coach')
 		return coach ? { id: coach.id, name: coach.name } : null
 	}, [actors, workspace])

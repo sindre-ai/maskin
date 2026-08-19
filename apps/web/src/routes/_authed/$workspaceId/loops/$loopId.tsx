@@ -3,7 +3,7 @@ import { LoopActivity } from '@/components/loops/loop-activity'
 import { LoopChanges } from '@/components/loops/loop-changes'
 import { LoopFirstRunBanner } from '@/components/loops/loop-first-run-banner'
 import { LoopFlow } from '@/components/loops/loop-flow'
-import { LOOP_PILL_STYLES } from '@/components/loops/loop-pill'
+import { LOOP_PILL_STYLES, isLoopLive } from '@/components/loops/loop-pill'
 import {
 	LoopProposedEdit,
 	type PlanDiffRow,
@@ -11,6 +11,7 @@ import {
 	readStoredPlan,
 } from '@/components/loops/loop-proposed-edit'
 import { LoopStats } from '@/components/loops/loop-stats'
+import { LoopStatusMenu } from '@/components/loops/loop-status-menu'
 import { LoopSummary } from '@/components/loops/loop-summary'
 import { LoopUtteranceInput } from '@/components/loops/loop-utterance-input'
 import { EmptyState } from '@/components/shared/empty-state'
@@ -30,18 +31,33 @@ import { useLoop, useLoopActivity } from '@/hooks/use-loops'
 import { useObject, useObjects, useUpdateObject } from '@/hooks/use-objects'
 import { useRelationships } from '@/hooks/use-relationships'
 import { useTriggers } from '@/hooks/use-triggers'
+import type { LoopSummary as LoopSummaryType } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { type LoopPlan, parseLoopDescription } from '@/lib/loop-plan'
 import { useWorkspace } from '@/lib/workspace-context'
+import { LOOP_STATUSES } from '@maskin/shared'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { MoreHorizontal, Pause, Play } from 'lucide-react'
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 /** Relationship type marking loop membership — mirrors
  * `LOOP_MEMBERSHIP_RELATIONSHIP_TYPE` in `apps/dev/src/routes/loops.ts`.
  * Source is the loop, target is the child object. */
 const LOOP_MEMBERSHIP_RELATIONSHIP_TYPE = 'in_loop'
+
+/** The rung a paused loop should climb back onto. Written to the loop row when
+ *  it is paused; a loop paused before this existed (or by the MCP tool) has no
+ *  record of one, so it resumes under supervision rather than guessing higher. */
+const DEFAULT_RESUME_STATUS: LoopSummaryType['status'] = 'supervised'
+
+function readResumeStatus(metadata: Record<string, unknown> | null | undefined) {
+	const stored = metadata?.resume_status
+	if (typeof stored !== 'string' || stored === 'paused') return DEFAULT_RESUME_STATUS
+	return LOOP_STATUSES.includes(stored as LoopSummaryType['status'])
+		? (stored as LoopSummaryType['status'])
+		: DEFAULT_RESUME_STATUS
+}
 
 export const Route = createFileRoute('/_authed/$workspaceId/loops/$loopId')({
 	component: LoopDetailPage,
@@ -81,15 +97,18 @@ function LoopDetailPage() {
 	const { data: activityEvents } = useLoopActivity(loopId, workspaceId)
 	const updateObject = useUpdateObject(workspaceId)
 
+	const crumb = useMemo(
+		() => ({
+			parentLabel: 'Loops',
+			parentTo: '/$workspaceId/loops',
+			parentParams: { workspaceId },
+			label: loop?.name ?? 'Untitled loop',
+		}),
+		[workspaceId, loop?.name],
+	)
+
 	const composerRef = useRef<HTMLDivElement>(null)
 	const [proposedEdit, setProposedEdit] = useState<ProposedEdit | null>(null)
-
-	const focusComposer = useCallback(() => {
-		const node = composerRef.current
-		if (!node) return
-		node.scrollIntoView({ block: 'end', behavior: 'smooth' })
-		node.querySelector('textarea')?.focus()
-	}, [])
 
 	// An utterance is read back as a diff against the plan snapshot `/loops/new`
 	// wrote to `metadata.plan`. Loops without one (marketplace installs, MCP
@@ -162,6 +181,11 @@ function LoopDetailPage() {
 	const isInstalledFromMarketplace = typeof installedFromMarketplaceLoopId === 'string'
 	const pill = LOOP_PILL_STYLES[loop.pill]
 	const isPaused = loop.status === 'paused'
+	// Pausing disables every trigger the loop references (PATCH /api/objects/:id
+	// owns that hook), so resuming has to put the loop back on the rung it was
+	// on — not silently demote a fully autonomous loop to the bottom of the
+	// ladder. The rung is remembered on the row itself when we pause it.
+	const resumeStatus = readResumeStatus(object?.metadata)
 	// Built but never run: no children have entered it and nothing has happened.
 	const isPreFirstRun = childIds.length === 0 && (activityEvents?.length ?? 0) === 0
 	const hasChanges = (events ?? []).some((e) => e.entityId === loopId)
@@ -169,13 +193,24 @@ function LoopDetailPage() {
 	const togglePause = () =>
 		updateObject.mutate({
 			id: loop.id,
-			data: { status: isPaused ? 'running' : 'paused' },
+			data: isPaused
+				? { status: resumeStatus }
+				: {
+						status: 'paused',
+						metadata: { ...(object?.metadata ?? {}), resume_status: loop.status },
+					},
 		})
+
+	const setStatus = (status: LoopSummaryType['status']) =>
+		updateObject.mutate(
+			{ id: loop.id, data: { status } },
+			{ onError: () => toast.error('Could not change the status') },
+		)
 
 	return (
 		<>
 			<PageHeader
-				title={loop.name ?? 'Untitled loop'}
+				crumb={crumb}
 				actions={
 					<>
 						<span
@@ -190,7 +225,7 @@ function LoopDetailPage() {
 								className={cn(
 									'size-1.5 rounded-full',
 									pill.dot,
-									loop.pill === 'running' && 'animate-pulse',
+									isLoopLive(loop.pill) && 'animate-pulse motion-reduce:animate-none',
 								)}
 							/>
 							{pill.label}
@@ -223,13 +258,14 @@ function LoopDetailPage() {
 					</>
 				}
 			/>
-			<div className="mx-auto flex w-full max-w-3xl flex-col">
+			<div className="mx-auto flex w-full max-w-[700px] flex-col">
+				<LoopStatusMenu loop={loop} onChange={setStatus} disabled={updateObject.isPending} />
 				<h1 className="text-2xl font-bold leading-tight tracking-[-0.025em] text-foreground">
 					{loop.name ?? 'Untitled loop'}
 				</h1>
 
 				<div className="mt-3.5">
-					<LoopSummary loop={loop} onEdit={focusComposer} />
+					<LoopSummary loop={loop} />
 				</div>
 
 				{isInstalledFromMarketplace && (
@@ -262,8 +298,13 @@ function LoopDetailPage() {
 					/>
 				</div>
 
-				<div className="mt-7">
-					<LoopActivity workspaceId={workspaceId} events={activityEvents} />
+				<div className="mt-9">
+					<LoopActivity
+						workspaceId={workspaceId}
+						loopId={loop.id}
+						activityEvents={activityEvents}
+						entityEvents={events}
+					/>
 				</div>
 
 				<div className="mt-7">

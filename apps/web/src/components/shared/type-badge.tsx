@@ -4,13 +4,18 @@ import { defaultTypeColor, typeColors, typeIcons } from '@/lib/constants'
 
 export function TypeBadge({
 	type,
+	label,
 	className,
 	variant = 'badge',
 	size = 'sm',
 }: {
 	type: string
+	/** The workspace's display name for this type ("Article", "Company"). Falls
+	 *  back to the raw type key, which is what every caller passed before the
+	 *  `pill` variant needed a human label. */
+	label?: string
 	className?: string
-	variant?: 'badge' | 'mono' | 'tile' | 'dot'
+	variant?: 'badge' | 'mono' | 'pill' | 'tile' | 'dot'
 	/** `tile` only: 30px in card headers, 38px in list rows and detail headers. */
 	size?: 'sm' | 'lg'
 }) {
@@ -47,6 +52,26 @@ export function TypeBadge({
 				)}
 			>
 				{Icon && <Icon className={size === 'lg' ? 'size-[18px]' : 'size-[15px]'} />}
+			</span>
+		)
+	}
+
+	// The Objects list row's type column (mockup 754): a fixed-width muted
+	// plate carrying the type's display name in sentence case. Fixed width, not
+	// intrinsic — every title in the list then starts on the same x, which is
+	// what makes a mixed-type list scan as one column of titles rather than a
+	// ragged left edge. Overlong names ellipsize inside the plate.
+	if (variant === 'pill') {
+		return (
+			<span
+				title={label ?? type}
+				className={cn(
+					'inline-block w-16 shrink-0 truncate rounded-[5px] bg-muted px-2 py-0.5 text-center',
+					'text-[10.5px] font-semibold text-muted-foreground/70',
+					className,
+				)}
+			>
+				{label ?? type}
 			</span>
 		)
 	}

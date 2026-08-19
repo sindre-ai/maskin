@@ -36,6 +36,7 @@ export function ObjectDetailBody({
 					className="max-w-[75ch]"
 					editable={Boolean(onContentChange)}
 					onChange={onContentChange}
+					editorLabel="Description"
 				/>
 			) : null}
 

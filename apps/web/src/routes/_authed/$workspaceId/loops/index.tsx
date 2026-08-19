@@ -151,11 +151,21 @@ function LoopsPage() {
 
 	const hasLoops = sortedLoops.length > 0
 
+	// `6 loops · 1 waiting on you` (mockup 163) — the second half only appears
+	// when something is actually waiting, so a quiet workspace reads quietly.
+	const subtitle = useMemo(() => {
+		const total = loops?.length ?? 0
+		const waiting = (loops ?? []).filter((l) => l.pill === 'waiting_on_you').length
+		const parts = [`${total} ${total === 1 ? 'loop' : 'loops'}`]
+		if (waiting > 0) parts.push(`${waiting} waiting on you`)
+		return parts.join(' · ')
+	}, [loops])
+
 	return (
 		<div>
 			<PageHeader
 				title="Loops"
-				subtitle={String(loops?.length ?? 0)}
+				subtitle={subtitle}
 				actions={
 					<DisplayPanel
 						showView={false}
@@ -183,12 +193,7 @@ function LoopsPage() {
 					<section className="flex flex-col">
 						{hasLoops ? (
 							sortedLoops.map((loop) => (
-								<LoopRow
-									key={loop.id}
-									loop={loop}
-									actors={actors}
-									busyAgentCount={loop.agentIds.filter((id) => workingAgentIds.has(id)).length}
-								/>
+								<LoopRow key={loop.id} loop={loop} actors={actors} busyAgentIds={workingAgentIds} />
 							))
 						) : (
 							<EmptyState

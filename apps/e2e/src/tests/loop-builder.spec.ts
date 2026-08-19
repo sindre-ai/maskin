@@ -1,103 +1,69 @@
 import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
-// The first example sentence on the "Start a loop" page. It drafts a feedback
-// loop whose default name is "<Object type> loop".
-const EXAMPLE_CHIP = /Notify me weekly with a summary of new customer feedback/i
+// The first example sentence on the "New loop" page.
+const EXAMPLE_CHIP = /When a customer reports a bug in Slack/i
 
-test.describe('Loop builder — language-only create flow', () => {
+test.describe('New loop — language hands off to the Chief of Staff', () => {
 	for (const viewport of SHIP_GATE_VIEWPORTS) {
-		test(`empty → draft → create → done at ${viewport.label}`, async ({ page, account }) => {
+		test(`describing a loop opens a conversation with the Chief of Staff at ${viewport.label}`, async ({
+			page,
+			account,
+		}) => {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
-			// The mounted Composer never reaches the backend on this surface — its
-			// `onSend` only re-parses the sentence locally. The create-flow must
-			// write nothing at all until "Create loop" is pressed.
+			// Nothing on this screen writes a loop — the loop is built in the chat
+			// the sentence opens, not here.
 			const loopsBefore = (await account.api.listObjects(account.workspaceId)).filter(
 				(o) => o.type === 'loop',
 			)
 
 			await page.goto(`/${account.workspaceId}/loops/new`)
 
-			// AC-2 / empty state: nothing is drafted until a description is given.
-			// v2 empty state carries copy that begins "The loop appears here…".
-			await expect(page.getByText(/The loop appears here/i)).toBeVisible({ timeout: 10000 })
+			await expect(page.getByRole('heading', { name: 'What should the loop do?' })).toBeVisible({
+				timeout: 10000,
+			})
+			// The three primitives a loop is made of are named before you speak.
+			await expect(page.getByText('OBJECT TYPE')).toBeVisible()
+			await expect(page.getByText('TRIGGER', { exact: true })).toBeVisible()
+			await expect(page.getByText('AGENT', { exact: true })).toBeVisible()
 
-			// Layout gate: single-column stacked below md, two-pane side-by-side at md+.
-			// The design spec puts the split at md: (≥768px) — regressing to lg: would
-			// leave iPad portrait users stacked, which is what this assertion catches.
-			const describeBox = await page
-				.getByRole('region', { name: /describe your loop/i })
-				.boundingBox()
-			const proposedBox = await page.getByRole('region', { name: /proposed loop/i }).boundingBox()
-			if (!describeBox || !proposedBox) throw new Error('layout regions missing bounding boxes')
-			if (viewport.width >= 768) {
-				expect(proposedBox.x).toBeGreaterThan(describeBox.x + describeBox.width / 2)
-			} else {
-				expect(proposedBox.y).toBeGreaterThanOrEqual(describeBox.y + describeBox.height - 1)
-			}
+			const composer = page.getByRole('textbox', { name: /describe your loop/i })
+			await composer.fill('Chase every unpaid invoice for me, and tell me before anything is sent')
+			await composer.press('Enter')
 
-			// Tap an example chip → the proposed loop card appears, not yet created.
-			await page.getByRole('button', { name: EXAMPLE_CHIP }).click()
-			const planCard = page.getByText('PROPOSED LOOP')
-			await expect(planCard).toBeVisible({ timeout: 10000 })
-			await expect(page.getByText('not created yet')).toBeVisible()
-
-			// Language is the only way in — the card offers no builder path: no
-			// Adjust, no form fields, and a footer of Start over + Create loop only.
-			await expect(page.getByRole('button', { name: /adjust/i })).toBeHidden()
-			await expect(page.getByRole('button', { name: /^save$/i })).toBeHidden()
+			// It lands in the conversation itself, with the sentence already sent.
+			await expect(page).toHaveURL(new RegExp(`${account.workspaceId}/chats/[0-9a-f-]{36}`), {
+				timeout: 15000,
+			})
 			await expect(
-				page.getByRole('region', { name: /proposed loop/i }).getByRole('textbox'),
-			).toHaveCount(0)
-			await expect(page.getByRole('button', { name: /^start over$/i })).toBeVisible()
-			await expect(page.getByRole('button', { name: /create loop/i })).toBeVisible()
+				page.getByText('Chase every unpaid invoice for me, and tell me before anything is sent'),
+			).toBeVisible({ timeout: 10000 })
+			await expect(page.getByText('Chief of Staff').first()).toBeVisible()
 
-			// No loop object exists before Create.
-			const loopsDuring = (await account.api.listObjects(account.workspaceId)).filter(
-				(o) => o.type === 'loop',
-			)
-			expect(loopsDuring.length).toBe(loopsBefore.length)
-
-			// Create loop → the card flips to "created" and a real loop object is
-			// persisted matching the preview name.
-			await page.getByRole('button', { name: /create loop/i }).click()
-			await expect(page.getByText('Loop created')).toBeVisible({ timeout: 10000 })
-			await expect(page.getByText('created')).toBeVisible()
-
+			// Still no loop object — the screen created a conversation, not a loop.
 			const loopsAfter = (await account.api.listObjects(account.workspaceId)).filter(
 				(o) => o.type === 'loop',
 			)
-			expect(loopsAfter.length).toBe(loopsBefore.length + 1)
-			expect(loopsAfter[loopsAfter.length - 1].title).toMatch(/ loop$/)
-
-			// Start over clears back to a fresh draft.
-			await page.getByRole('button', { name: /^start over$/i }).click()
-			await expect(page.getByText(/The loop appears here/i)).toBeVisible()
+			expect(loopsAfter.length).toBe(loopsBefore.length)
 		})
 
-		test(`an under-specified sentence asks for the missing half at ${viewport.label}`, async ({
+		test(`an example sentence starts the same conversation at ${viewport.label}`, async ({
 			page,
 			account,
 		}) => {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
 
 			await page.goto(`/${account.workspaceId}/loops/new`)
-			await expect(page.getByText(/The loop appears here/i)).toBeVisible({ timeout: 10000 })
+			await expect(page.getByRole('button', { name: EXAMPLE_CHIP })).toBeVisible({ timeout: 10000 })
 
-			const composer = page.getByRole('textbox', { name: /describe your loop/i })
-			await composer.fill('track customer feedback')
-			await composer.press('Enter')
+			await page.getByRole('button', { name: EXAMPLE_CHIP }).click()
 
-			// No source it listens to and no end it reports to — nothing to draw.
-			await expect(
-				page.getByText(/Nothing to draw yet\. A loop needs a source it listens to/),
-			).toBeVisible({ timeout: 10000 })
-			await expect(page.getByText('PROPOSED LOOP')).toBeHidden()
-
-			// Tapping a fill-in chip extends the sentence and drafts the plan.
-			await page.getByRole('button', { name: '…when it comes in' }).click()
-			await expect(page.getByText('PROPOSED LOOP')).toBeVisible({ timeout: 10000 })
-			await expect(page.getByText('not created yet')).toBeVisible()
+			await expect(page).toHaveURL(new RegExp(`${account.workspaceId}/chats/[0-9a-f-]{36}`), {
+				timeout: 15000,
+			})
+			await expect(page.getByText(/When a customer reports a bug in Slack/i).first()).toBeVisible({
+				timeout: 10000,
+			})
 		})
 	}
 })

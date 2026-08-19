@@ -262,7 +262,6 @@ export function TriggerForm({
 	initialValues,
 	onAutoCreate,
 	onSave,
-	onToggleEnabled,
 	onSavedChange,
 	isPending: _isPending = false,
 	error,
@@ -274,7 +273,6 @@ export function TriggerForm({
 	initialValues?: TriggerResponse
 	onAutoCreate?: (payload: TriggerFormPayload) => void
 	onSave?: (payload: TriggerFormPayload) => void
-	onToggleEnabled?: () => void
 	/** Debounced autosave state, lifted so the shared top nav can render the
 	 *  `✓ Saved` marker in the header row (mockup 1586). */
 	onSavedChange?: (saved: boolean) => void
@@ -1052,46 +1050,11 @@ export function TriggerForm({
 				>
 					i
 				</span>
-				<div>
-					<p className="eyebrow mb-1">What happens</p>
-					<p className="text-[12.5px] leading-relaxed text-foreground">{summary}</p>
-				</div>
+				<p className="text-[12.5px] leading-relaxed text-foreground">{summary}</p>
 			</section>
 
 			{isCreated && initialValues && (
 				<TriggerHistory workspaceId={workspaceId} triggerId={initialValues.id} />
-			)}
-
-			{/* Status pill + text toggle (mockup 1813–1816) */}
-			{isCreated && (
-				<div className="mt-6 flex flex-wrap items-center gap-3">
-					<span
-						className={cn(
-							'inline-flex h-[26px] items-center gap-1.5 rounded-full px-3 text-[11.5px] font-semibold',
-							enabled ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground',
-						)}
-					>
-						<span
-							aria-hidden="true"
-							className={cn(
-								'size-1.5 rounded-full',
-								enabled ? 'bg-success' : 'bg-muted-foreground',
-							)}
-						/>
-						{enabled ? 'Enabled' : 'Disabled'}
-					</span>
-					<Button
-						variant="outline"
-						size="sm"
-						className="min-h-11 sm:min-h-9"
-						onClick={() => {
-							setEnabled(!enabled)
-							onToggleEnabled?.()
-						}}
-					>
-						{enabled ? 'Disable' : 'Enable'}
-					</Button>
-				</div>
 			)}
 
 			{error && (
@@ -1128,7 +1091,7 @@ export function TriggerForm({
 						disabled={!isCreated}
 						pending={false}
 						surface="pulse-bar"
-						placeholder="Say what should change…"
+						placeholder="Change the schedule, or what it stops for…"
 						selection={EMPTY_CHAT_SELECTION}
 						onRemoveAgent={() => {}}
 						onRemoveObject={() => {}}
@@ -1136,9 +1099,6 @@ export function TriggerForm({
 						onRemoveFile={() => {}}
 						textareaLabel="Say what should change about this trigger"
 					/>
-					<p className="mt-1.5 text-[11px] text-muted-foreground">
-						Say what should change — it edits the trigger above
-					</p>
 				</div>
 			</div>
 		</div>

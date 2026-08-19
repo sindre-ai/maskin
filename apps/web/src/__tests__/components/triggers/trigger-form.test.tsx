@@ -145,7 +145,7 @@ describe('TriggerForm', () => {
 		const user = userEvent.setup()
 		render(<TriggerForm {...defaultProps} />, { wrapper: TestWrapper })
 
-		const summary = screen.getByText('What happens').closest('section')
+		const summary = screen.getByText(/will be prompted to act/).closest('section')
 		expect(summary).not.toBeNull()
 
 		await user.click(screen.getByRole('radio', { name: /Reminder/i }))
@@ -182,8 +182,8 @@ describe('TriggerForm', () => {
 	it('replaces the bottom save bar with the sticky language edit bar', () => {
 		render(<TriggerForm {...defaultProps} isCreated />, { wrapper: TestWrapper })
 		expect(screen.queryByText('Editing — every change saves automatically')).not.toBeInTheDocument()
-		const caption = screen.getByText('Say what should change — it edits the trigger above')
-		expect(caption.parentElement?.parentElement?.className).toMatch(/sticky bottom-0/)
+		const composer = screen.getByPlaceholderText('Change the schedule, or what it stops for…')
+		expect(composer.closest('.sticky')?.className).toMatch(/bottom-0/)
 	})
 
 	it('gives radios a 44px touch target on mobile and collapses to one column', async () => {
@@ -219,7 +219,7 @@ describe('TriggerForm', () => {
 
 	it('announces the summary region to assistive tech via aria-live', () => {
 		render(<TriggerForm {...defaultProps} />, { wrapper: TestWrapper })
-		const summary = screen.getByText('What happens').closest('section')
+		const summary = screen.getByText(/will be prompted to act/).closest('section')
 		expect(summary?.getAttribute('aria-live')).toBe('polite')
 	})
 
@@ -273,21 +273,6 @@ describe('TriggerForm', () => {
 		).toBeInTheDocument()
 	})
 
-	it('shows enabled/disabled toggle for created triggers and flips on click', async () => {
-		const user = userEvent.setup()
-		const onToggleEnabled = vi.fn()
-		render(<TriggerForm {...defaultProps} isCreated onToggleEnabled={onToggleEnabled} />, {
-			wrapper: TestWrapper,
-		})
-
-		expect(screen.getByText('Enabled')).toBeInTheDocument()
-		await user.click(screen.getByRole('button', { name: 'Disable' }))
-
-		expect(onToggleEnabled).toHaveBeenCalledTimes(1)
-		expect(screen.getByText('Disabled')).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: 'Enable' })).toBeInTheDocument()
-	})
-
 	it('pre-fills form when initialValues provided', () => {
 		const trigger = buildTriggerResponse({
 			name: 'My Trigger',
@@ -304,7 +289,6 @@ describe('TriggerForm', () => {
 
 		expect(screen.getByDisplayValue('My Trigger')).toBeInTheDocument()
 		expect(screen.getByDisplayValue('Do the thing')).toBeInTheDocument()
-		expect(screen.getByText('Disabled')).toBeInTheDocument()
 	})
 
 	it('reconciles the title to a rename that landed while the field was dirty', async () => {

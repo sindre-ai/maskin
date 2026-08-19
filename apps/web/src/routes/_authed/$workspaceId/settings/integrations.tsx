@@ -52,7 +52,7 @@ function IntegrationsPage() {
 						className="flex items-center gap-3 rounded-xl border border-border bg-card p-3 transition-colors hover:bg-muted"
 					>
 						<span className="min-w-0 flex-1">
-							<span className="block truncate text-sm font-medium text-foreground">
+							<span className="block truncate text-[13px] font-semibold text-foreground">
 								{link.title}
 							</span>
 							<span className="block truncate text-xs text-muted-foreground">{link.detail}</span>

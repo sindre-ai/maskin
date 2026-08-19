@@ -31,6 +31,12 @@ export function AssignedInChatRow({
 	feedsLoopName?: string
 }) {
 	const when = conversation.lastMessageAt ?? conversation.createdAt
+	const state =
+		conversation.unread_count > 0
+			? { label: 'Waiting on you', className: 'text-warning' }
+			: isWorking
+				? { label: 'Working now', className: 'text-success' }
+				: { label: 'Idle', className: 'text-muted-foreground' }
 
 	return (
 		<Link
@@ -69,20 +75,10 @@ export function AssignedInChatRow({
 					feeds {feedsLoopName}
 				</span>
 			)}
-			<span
-				className={cn(
-					'inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap text-[11px] font-semibold',
-					isWorking ? 'text-success' : 'text-muted-foreground',
-				)}
-			>
-				<span
-					aria-hidden="true"
-					className={cn(
-						'size-1.5 shrink-0 rounded-full',
-						isWorking ? 'animate-pulse bg-success' : 'bg-border-strong',
-					)}
-				/>
-				{isWorking ? 'Working' : 'Idle'}
+			{/* One word for where the handed-off work stands (mockup `k.stateLabel`):
+			    the operator's own turn comes first, then the agent's. */}
+			<span className={cn('shrink-0 whitespace-nowrap text-[11px] font-semibold', state.className)}>
+				{state.label}
 			</span>
 		</Link>
 	)

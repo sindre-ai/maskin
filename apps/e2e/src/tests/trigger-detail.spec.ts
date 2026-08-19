@@ -33,7 +33,7 @@ test.describe('Trigger detail page', () => {
 			await expect(page.getByRole('heading', { name: 'WHEN THIS HAPPENS' })).toBeVisible()
 			await expect(page.getByRole('heading', { name: 'DO THIS' })).toBeVisible()
 			await expect(page.getByRole('heading', { name: 'USING THIS AGENT' })).toBeVisible()
-			await expect(page.getByText('What happens')).toBeVisible()
+			await expect(page.getByText(/will be prompted to act/)).toBeVisible()
 			await expect(page.getByText('Summarise the new event into the shared source')).toBeVisible()
 
 			// The meta row carries the type chip, the agent and the loop context.
@@ -41,14 +41,14 @@ test.describe('Trigger detail page', () => {
 			await expect(page.getByText('Relay').first()).toBeVisible()
 
 			// The plain-language read-back reflects the current event config.
-			const summary = page.getByText('What happens').locator('xpath=..')
+			const summary = page.getByText(/will be prompted to act/)
 			await expect(summary).toContainText('When a insight is created')
 			await expect(summary).toContainText('Relay')
 
-			// The language bar's caption must stay on screen at 375px — it lives
-			// inside a sticky region and is the only "change it by talking" cue.
+			// The language bar must stay on screen at 375px — it is the only
+			// "change it by talking" path on this screen.
 			await expect(
-				page.getByText('Say what should change — it edits the trigger above'),
+				page.getByPlaceholder('Change the schedule, or what it stops for…'),
 			).toBeVisible()
 		})
 	}
@@ -81,9 +81,8 @@ test.describe('Trigger detail page', () => {
 		// The per-type description text updates in place.
 		await expect(page.getByText(/Fires on a recurring schedule/i)).toBeVisible()
 		// The pinned summary re-renders live to the schedule.
-		const summary = page.getByText('What happens').locator('xpath=..')
+		const summary = page.getByText(/will be prompted to act/)
 		await expect(summary).toContainText('Runs every day')
-		await expect(summary).toContainText('prompted to act')
 	})
 
 	test('autosave emits trigger_updated and shows the Saved indicator after an edit', async ({
@@ -104,8 +103,10 @@ test.describe('Trigger detail page', () => {
 
 		await page.goto(`/${account.workspaceId}/triggers/${trigger.id}`)
 
-		// A saved trigger shows the enabled pill at the bottom of the reader column.
-		await expect(page.getByText('Enabled')).toBeVisible({ timeout: 10000 })
+		// A saved trigger shows the enabled pill in the header row.
+		await expect(page.getByTestId('trigger-enabled-pill')).toHaveText('Enabled', {
+			timeout: 10000,
+		})
 
 		const prompt = page.getByPlaceholder(
 			'Describe what the agent should do when this trigger fires...',
@@ -164,15 +165,18 @@ test.describe('Trigger detail page', () => {
 		})
 
 		await page.goto(`/${account.workspaceId}/triggers/${trigger.id}`)
-		await expect(page.getByText('Enabled')).toBeVisible({ timeout: 10000 })
+		const pill = page.getByTestId('trigger-enabled-pill')
+		await expect(pill).toHaveText('Enabled', { timeout: 10000 })
 
 		await page.getByRole('button', { name: 'More' }).click()
 		await page.getByRole('menuitem', { name: 'Pause trigger' }).click()
 
-		await expect(page.getByText('Disabled')).toBeVisible({ timeout: 10000 })
+		await expect(pill).toHaveText('Paused', { timeout: 10000 })
 
 		await page.reload()
-		await expect(page.getByText('Disabled')).toBeVisible({ timeout: 10000 })
+		await expect(page.getByTestId('trigger-enabled-pill')).toHaveText('Paused', {
+			timeout: 10000,
+		})
 	})
 
 	test('IT STOPS FOR YOU WHEN reads in both colour modes', async ({ page, account }) => {

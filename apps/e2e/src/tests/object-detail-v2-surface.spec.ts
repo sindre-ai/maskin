@@ -136,9 +136,9 @@ test.describe('Object detail — v2 surface', () => {
 		await expect(page.getByText('Rewritten body.')).toBeVisible()
 	})
 
-	// The body is a lightweight markdown surface: select text and a floating
-	// B / I / <> toolbar edits the source in place (mockup 1030–1035).
-	test('a selection in the body raises the formatting toolbar and applies it', async ({
+	// The body is a lightweight markdown surface, but the toolbar belongs to the
+	// editor: highlighting prose you are only reading must not raise it.
+	test('the formatting toolbar rises on an editor selection, never on a view one', async ({
 		page,
 		account,
 	}) => {
@@ -155,9 +155,10 @@ test.describe('Object detail — v2 surface', () => {
 			timeout: 15000,
 		})
 
-		// No toolbar until something is selected.
-		await expect(page.getByRole('button', { name: 'Bold' })).toHaveCount(0)
+		const bold = page.getByRole('button', { name: 'Bold' })
+		await expect(bold).toHaveCount(0)
 
+		// Selecting while reading leaves the page quiet.
 		await page
 			.locator('.prose p')
 			.first()
@@ -169,15 +170,25 @@ test.describe('Object detail — v2 surface', () => {
 				const selection = window.getSelection()
 				selection?.removeAllRanges()
 				selection?.addRange(range)
-				el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
 			})
+		await expect(bold).toHaveCount(0)
 
-		const bold = page.getByRole('button', { name: 'Bold' })
+		// Same seven characters, this time in the editor.
+		await page.locator('.prose p').first().click()
+		const body = page.getByRole('textbox', { name: 'Description' })
+		await expect(body).toBeFocused()
+		await body.press('ControlOrMeta+Home')
+		for (let i = 0; i < 7; i += 1) await body.press('Shift+ArrowRight')
+
 		await expect(bold).toBeVisible()
 		await expect(page.getByRole('button', { name: 'Italic' })).toBeVisible()
 		await expect(page.getByRole('button', { name: 'Code' })).toBeVisible()
 
+		// mousedown, not click — the toolbar must act without stealing the caret.
 		await bold.dispatchEvent('mousedown')
+		await expect(body).toHaveValue('**Charges** retry for three days.')
+
+		await body.press('ControlOrMeta+Enter')
 		await page.reload()
 		await expect(page.getByRole('heading', { level: 1, name: 'Formatting probe' })).toBeVisible({
 			timeout: 15000,

@@ -55,6 +55,10 @@ interface ActivityCommentProps {
 	// (mockup 369). Off by default so the object-detail feed keeps showing the
 	// whole thread inline.
 	collapsibleReplies?: boolean
+	// Renders the thread pill even on a message with no replies yet, labelled
+	// `Reply` — the loop's Activity stream makes answering an agent the point,
+	// so the affordance can't be a hover-only icon there.
+	persistentReply?: boolean
 	// Reading of the row itself — see CommentVariant.
 	variant?: CommentVariant
 }
@@ -198,12 +202,7 @@ function CommentRow({
 						/>
 					)}
 				</div>
-				<div
-					className={cn(
-						'flex-1 min-w-0',
-						isBubble && 'rounded-[11px] bg-muted/60 px-2.5 py-1.5 text-[12.5px] leading-[1.5]',
-					)}
-				>
+				<div className={cn('flex-1 min-w-0', isBubble && 'py-[3px] text-[12.5px] leading-[1.5]')}>
 					{/* Bubbled, the name and time run inline with the message so a
 					    long history stays on one screen (mockup 1285). */}
 					{isBubble ? (
@@ -325,6 +324,7 @@ export function ActivityComment({
 	isUnread,
 	onReplyTo,
 	collapsibleReplies,
+	persistentReply,
 	variant = 'plain',
 }: ActivityCommentProps) {
 	const { data: actors } = useActors(workspaceId)
@@ -363,11 +363,13 @@ export function ActivityComment({
 	// Mockup 1288: the thread toggle is a pill inside the message, carrying just
 	// the count. The plain reading keeps the "last from <name>" note, which the
 	// feed has room for.
-	const threadToggle = collapsed ? (
+	// With no replies yet the pill opens the composer instead of an empty thread.
+	const showThreadToggle = collapsed || (!!persistentReply && !hasReplies && !showReplyInput)
+	const threadToggle = showThreadToggle ? (
 		<button
 			type="button"
-			onClick={() => setRepliesOpen(true)}
-			aria-expanded={false}
+			onClick={() => (hasReplies ? setRepliesOpen(true) : setShowReplyInput(true))}
+			aria-expanded={hasReplies ? false : undefined}
 			className={cn(
 				'mt-1.5 inline-flex items-center gap-2 text-left',
 				isBubble
@@ -381,7 +383,7 @@ export function ActivityComment({
 					isBubble ? 'text-brand' : 'text-muted-foreground hover:text-foreground',
 				)}
 			>
-				{replies.length} {replies.length === 1 ? 'reply' : 'replies'}
+				{hasReplies ? `${replies.length} ${replies.length === 1 ? 'reply' : 'replies'}` : 'Reply'}
 			</span>
 			{threadNote && !isBubble && (
 				<span className="text-[10.5px] text-muted-foreground">· {threadNote}</span>
@@ -396,7 +398,7 @@ export function ActivityComment({
 				event={event}
 				actors={actorList}
 				workspaceId={workspaceId}
-				onReply={hasReplies && !onReplyTo ? undefined : handleReply}
+				onReply={persistentReply || (hasReplies && !onReplyTo) ? undefined : handleReply}
 				isUnread={isUnread}
 				isDecisionPoint={isDecisionPoint}
 				variant={variant}
@@ -440,7 +442,7 @@ export function ActivityComment({
 			)}
 
 			{showReplyInput && (
-				<div className="ml-7 mt-2">
+				<div className={cn('mt-2', isBubble ? 'ml-[41px]' : 'ml-7')}>
 					<CommentInput workspaceId={workspaceId} objectId={objectId} parentEventId={event.id} />
 				</div>
 			)}

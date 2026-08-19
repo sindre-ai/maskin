@@ -1,7 +1,5 @@
-import { Button } from '@/components/ui/button'
 import type { LoopSummary as LoopSummaryType } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { Pencil } from 'lucide-react'
 
 /** One run of the summary story. `emphasis` marks the key noun the mockup
  *  renders at full ink and weight against the muted body (mockup 1865). */
@@ -28,10 +26,13 @@ export function loopSummarySentenceText(sentence: LoopSummarySentence): string {
 export function buildLoopSummarySentences(loop: LoopSummaryType): LoopSummarySentence[] {
 	const sentences: LoopSummarySentence[] = []
 
-	const guarantee = loop.guarantee?.trim()
+	// `content` is the loop's outcome line — the field #1396 renamed from
+	// `guarantee`. It is the one sentence the list row shows too, so the story
+	// opens on the same promise the operator scanned.
+	const outcome = loop.content?.trim()
 	sentences.push(
-		guarantee && guarantee.length > 0
-			? [em(guarantee)]
+		outcome && outcome.length > 0
+			? [em(outcome)]
 			: [em(loop.name ?? 'This loop'), seg(' keeps the workspace moving on its own.')],
 	)
 
@@ -43,26 +44,14 @@ export function buildLoopSummarySentences(loop: LoopSummaryType): LoopSummarySen
 	)
 
 	const close = loop.closeCondition?.trim()
-	if (close && close.length > 0) {
-		sentences.push([seg('A cycle closes when '), em(lowerFirst(close)), seg('.')])
-	} else if (loop.humanDecisionPoints && loop.humanDecisionPoints > 0) {
-		const n = loop.humanDecisionPoints
-		sentences.push([
-			seg('It stops for you at '),
-			em(`${n} decision point${n === 1 ? '' : 's'}`),
-			seg('.'),
-		])
-	} else {
-		sentences.push([seg('Cycles close once their work is done.')])
-	}
+	sentences.push(
+		close && close.length > 0
+			? [seg('A cycle closes when '), em(lowerFirst(close)), seg('.')]
+			: [seg('Cycles close once their work is done.')],
+	)
 
 	if (loop.pill === 'waiting_on_you') {
-		const n = loop.humanDecisionPoints
-		sentences.push([
-			seg('Right now it is '),
-			em('waiting on you'),
-			seg(n && n > 0 ? `, with ${n} decision point${n === 1 ? '' : 's'} open.` : '.'),
-		])
+		sentences.push([seg('Right now it is '), em('waiting on you'), seg('.')])
 	} else if (loop.pill === 'paused') {
 		sentences.push([seg('Right now it is '), em('paused'), seg('.')])
 	} else if (loop.inProgressCount > 0) {
@@ -90,15 +79,7 @@ function lowerFirst(s: string): string {
 	return s.length === 0 ? s : (s[0] as string).toLowerCase() + s.slice(1)
 }
 
-export function LoopSummary({
-	loop,
-	onEdit,
-}: {
-	loop: LoopSummaryType
-	/** Focuses the composer at the bottom of the reader column — "say what
-	 *  should change" is the only edit path (mockup 1868–1870). */
-	onEdit?: () => void
-}) {
+export function LoopSummary({ loop }: { loop: LoopSummaryType }) {
 	const sentences = buildLoopSummarySentences(loop)
 	return (
 		<section>
@@ -116,17 +97,6 @@ export function LoopSummary({
 					</p>
 				))}
 			</div>
-			{onEdit && (
-				<div className="mt-3 flex flex-wrap items-center gap-2.5">
-					<Button variant="outline" size="sm" onClick={onEdit}>
-						<Pencil size={13} className="mr-1.5" aria-hidden="true" />
-						Edit this loop
-					</Button>
-					<span className="text-[11.5px] text-muted-foreground">
-						say what should change — no builder
-					</span>
-				</div>
-			)}
 		</section>
 	)
 }

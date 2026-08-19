@@ -15,6 +15,9 @@ import { useState } from 'react'
 // loop can't fan out into a request storm.
 const MAX_COMPANION_LOOKUPS = 30
 
+/** Sentinel for the mockup's second pill — the steps that stop for a human. */
+const ASKS_FILTER = 'asks'
+
 interface StageColumn {
 	value: string
 	label: string
@@ -78,6 +81,19 @@ function triggerFromStatus(trigger: TriggerResponse): string | null {
 	const config = trigger.config as { from_status?: unknown } | null
 	const fromStatus = config?.from_status
 	return typeof fromStatus === 'string' && fromStatus.length > 0 ? fromStatus : null
+}
+
+/**
+ * A step "asks you" when its own instruction stops for a human — the mockup's
+ * `s.badgeAsk` and the `Asks you` filter pill. Triggers carry no first-class
+ * flag for this yet, so it is read from the action prompt the operator wrote;
+ * a `stops_for_human` column on `triggers` would replace this read wholesale.
+ */
+const ASKS_OPERATOR_RE =
+	/\b(?:ask|asks|confirm|confirms|approve|approves|approval|check)\b[^.!?]{0,40}\b(?:me|you|human|operator)\b/i
+
+export function stepAsksYou(trigger: TriggerResponse): boolean {
+	return ASKS_OPERATOR_RE.test(trigger.actionPrompt ?? '')
 }
 
 function formatDuration(ms: number | null | undefined): string | null {
@@ -190,7 +206,9 @@ export function LoopFlow({
 	childObjects: ObjectResponse[]
 	loop?: LoopSummary
 }) {
-	const [agentFilter, setAgentFilter] = useState<string | null>(null)
+	// `null` = all steps, `'asks'` = only the steps that stop for the operator,
+	// anything else = that agent's steps (mockup's pill strip).
+	const [stepFilter, setStepFilter] = useState<string | null>(null)
 	const { workspace } = useWorkspace()
 	const actorsById = new Map((actors ?? []).map((a) => [a.id, a]))
 	const childrenById = new Map(childObjects.map((c) => [c.id, c]))
@@ -244,7 +262,12 @@ export function LoopFlow({
 	}
 
 	const distinctAgentIds = Array.from(new Set(triggers.map((t) => t.targetActorId)))
-	const matchesFilter = (t: TriggerResponse) => !agentFilter || t.targetActorId === agentFilter
+	const asksYouCount = triggers.filter(stepAsksYou).length
+	const matchesFilter = (t: TriggerResponse) => {
+		if (stepFilter === null) return true
+		if (stepFilter === ASKS_FILTER) return stepAsksYou(t)
+		return t.targetActorId === stepFilter
+	}
 	const shownComesIn = comesInTriggers.filter(matchesFilter)
 	const shownAlongside = cronTriggers.filter(matchesFilter)
 
@@ -260,12 +283,10 @@ export function LoopFlow({
 		0,
 	)
 	const flowEmpty =
-		agentFilter !== null &&
+		stepFilter !== null &&
 		shownComesIn.length === 0 &&
 		shownAlongside.length === 0 &&
 		shownGapTriggerCount === 0
-
-	const asksYou = loop?.pill === 'waiting_on_you'
 
 	// `⟨primitives⟩ · ⟨triggers on⟩ · ⟨cycles⟩` — every part read off real data,
 	// and any part with nothing to say drops out rather than printing a zero.
@@ -300,33 +321,52 @@ export function LoopFlow({
 				</span>
 			</div>
 
-			{distinctAgentIds.length > 1 && (
-				<div className="flex flex-wrap items-center gap-1.5 mb-3">
+			{/* Step pills (mockup 1897–1905): all steps, the ones that stop for you,
+			    then one per agent with its own plate — filtering the flow below. */}
+			<div className="mb-3 flex flex-wrap items-center gap-1.5">
+				<button
+					type="button"
+					aria-pressed={stepFilter === null}
+					onClick={() => setStepFilter(null)}
+					className={pillClasses(stepFilter === null)}
+				>
+					All steps
+					<span className="text-[10.5px] text-border-strong">{triggers.length}</span>
+				</button>
+				{asksYouCount > 0 && (
 					<button
 						type="button"
-						onClick={() => setAgentFilter(null)}
-						className={pillClasses(agentFilter === null)}
+						aria-pressed={stepFilter === ASKS_FILTER}
+						onClick={() => setStepFilter(stepFilter === ASKS_FILTER ? null : ASKS_FILTER)}
+						className={pillClasses(stepFilter === ASKS_FILTER)}
 					>
-						All steps
-						<span className="text-[10.5px] text-border-strong">{triggers.length}</span>
+						Asks you
+						<span className="text-[10.5px] text-border-strong">{asksYouCount}</span>
 					</button>
-					{distinctAgentIds.map((agentId) => {
-						const agent = actorsById.get(agentId)
-						const count = triggers.filter((t) => t.targetActorId === agentId).length
-						return (
-							<button
-								key={agentId}
-								type="button"
-								onClick={() => setAgentFilter(agentFilter === agentId ? null : agentId)}
-								className={pillClasses(agentFilter === agentId)}
-							>
-								{agent?.name ?? 'Unknown agent'}
-								<span className="text-[10.5px] text-border-strong">{count}</span>
-							</button>
-						)
-					})}
-				</div>
-			)}
+				)}
+				{distinctAgentIds.map((agentId) => {
+					const agent = actorsById.get(agentId)
+					const count = triggers.filter((t) => t.targetActorId === agentId).length
+					return (
+						<button
+							key={agentId}
+							type="button"
+							aria-pressed={stepFilter === agentId}
+							onClick={() => setStepFilter(stepFilter === agentId ? null : agentId)}
+							className={pillClasses(stepFilter === agentId)}
+						>
+							<ActorAvatar
+								id={agentId}
+								name={agent?.name ?? 'Unknown agent'}
+								type={agent?.type ?? 'agent'}
+								className="size-[15px] text-[7.5px]"
+							/>
+							{agent?.name ?? 'Unknown agent'}
+							<span className="text-[10.5px] text-border-strong">{count}</span>
+						</button>
+					)
+				})}
+			</div>
 
 			<div className="border border-border rounded-xl bg-card p-3 flex flex-col gap-4 shadow-sm">
 				{shownComesIn.length > 0 && (
@@ -344,7 +384,7 @@ export function LoopFlow({
 									workspaceId={workspaceId}
 									trigger={t}
 									agent={actorsById.get(t.targetActorId)}
-									asksYou={asksYou}
+									asksYou={stepAsksYou(t)}
 								/>
 							))}
 						</div>
@@ -392,7 +432,7 @@ export function LoopFlow({
 											workspaceId={workspaceId}
 											trigger={t}
 											agent={actorsById.get(t.targetActorId)}
-											asksYou={asksYou}
+											asksYou={stepAsksYou(t)}
 										/>
 									))}
 								</div>
@@ -422,7 +462,7 @@ export function LoopFlow({
 									workspaceId={workspaceId}
 									trigger={t}
 									agent={actorsById.get(t.targetActorId)}
-									asksYou={asksYou}
+									asksYou={stepAsksYou(t)}
 								/>
 							))}
 						</div>
