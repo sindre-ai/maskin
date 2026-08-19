@@ -25,11 +25,6 @@ import { serialize, serializeArray } from '../lib/serialize'
 import { isWorkspaceMember, isWorkspaceOwner } from '../lib/workspace-auth'
 import type { AgentStorageManager } from '../services/agent-storage'
 import type { SessionManager } from '../services/session-manager'
-import {
-	SeedAgentError,
-	bootstrapDefaultAgents,
-	seedDefaultAgentActors,
-} from '../services/workspace-bootstrap'
 
 type Env = {
 	Variables: {
@@ -94,66 +89,27 @@ app.openapi(createWorkspaceRoute, async (c) => {
 
 	const settings = workspaceSettingsSchema.parse(body.settings ?? {})
 
-	let workspace: typeof workspaces.$inferSelect | null
-	try {
-		workspace = await db.transaction(async (tx) => {
-			const [ws] = await tx
-				.insert(workspaces)
-				.values({
-					name: body.name,
-					settings,
-					createdBy: actorId,
-				})
-				.returning()
-
-			if (!ws) return null
-
-			// Auto-add creator as owner
-			await tx.insert(workspaceMembers).values({
-				workspaceId: ws.id,
-				actorId,
-				role: 'owner',
+	const workspace = await db.transaction(async (tx) => {
+		const [ws] = await tx
+			.insert(workspaces)
+			.values({
+				name: body.name,
+				settings,
+				createdBy: actorId,
 			})
+			.returning()
 
-			// Seed all default agents (Coach, Chief of Staff, Driver, Strategist,
-			// Insights Triage, Research Agent) inside the same transaction. If any
-			// one fails the tx rolls back — no half-seeded workspace lingers behind
-			// a partial success.
-			// Skills, workspace_skill files, and triggers are seeded post-commit
-			// because they hit S3 and can't be rolled back inside a DB transaction.
-			const agentIds = await seedDefaultAgentActors(tx, ws.id, actorId)
+		if (!ws) return null
 
-			// Pin Chief of Staff as the default chat agent unless the caller
-			// explicitly requested a different (or no) default in the create body.
-			if (settings.default_agent_id === undefined && agentIds.chief_of_staff) {
-				const nextSettings = { ...settings, default_agent_id: agentIds.chief_of_staff }
-				await tx.update(workspaces).set({ settings: nextSettings }).where(eq(workspaces.id, ws.id))
-				ws.settings = nextSettings
-			}
-
-			return ws
+		// Auto-add creator as owner
+		await tx.insert(workspaceMembers).values({
+			workspaceId: ws.id,
+			actorId,
+			role: 'owner',
 		})
-	} catch (err) {
-		if (err instanceof SeedAgentError) {
-			logger.error('Workspace create rolled back — default agent seed failed', {
-				agentId: err.agentId,
-				errorClass: err.errorClass,
-				cause: err.cause instanceof Error ? err.cause.message : String(err.cause),
-			})
-			return c.json(
-				createApiError(
-					'INTERNAL_ERROR',
-					`Failed to seed default agent "${err.agentId}": ${err.errorClass}`,
-					[
-						{ field: 'agent_id', message: err.agentId },
-						{ field: 'error_class', message: err.errorClass },
-					],
-				),
-				500,
-			)
-		}
-		throw err
-	}
+
+		return ws
+	})
 
 	if (!workspace) {
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create workspace'), 500)
@@ -166,17 +122,6 @@ app.openapi(createWorkspaceRoute, async (c) => {
 		workspace_name: workspace.name,
 		created_by: actorId,
 	})
-
-	// Post-commit: seed the default agents' skills + triggers. The actor + member
-	// rows are already committed by seedDefaultAgentActors, so this call is a
-	// no-op for actors (name check hits every one) and only writes
-	// workspace_skills + agent_skills + triggers.
-	const agentStorage = c.get('agentStorage')
-	if (agentStorage) {
-		bootstrapDefaultAgents(db, agentStorage, workspace.id, actorId).catch((err) =>
-			logger.error('workspace bootstrap failed', { workspaceId: workspace.id, err }),
-		)
-	}
 
 	return c.json(serialize(workspace) as z.infer<typeof workspaceResponseSchema>, 201)
 })
