@@ -44,7 +44,11 @@ test.describe('Settings v2 surface', () => {
 			for (const section of SECTIONS) {
 				await gotoSettings(page, account.workspaceId, section.path)
 
-				const link = page.getByRole('link', { name: section.label, exact: true }).first()
+				// Scoped by the rail's accessible name: a sub-page also renders the
+				// detail bar's crumb nav, which comes first in the DOM, so an
+				// unscoped `.first()` resolves into the wrong landmark.
+				const nav = page.getByRole('navigation', { name: 'Settings sections' })
+				const link = nav.getByRole('link', { name: section.label, exact: true })
 				await expect(link).toBeVisible({ timeout: 10000 })
 				await expect(link).toHaveClass(/bg-muted/)
 
@@ -150,9 +154,11 @@ test.describe('Settings v2 surface', () => {
 
 			await trigger.click()
 			await expect(page.getByRole('heading', { name: 'PAYMENT METHOD' })).toBeVisible()
-			await expect(
-				page.getByText('Card details are held by Stripe — Maskin never stores your card number.'),
-			).toBeVisible()
+			// A seeded workspace has never paid, so there is no Stripe Customer and
+			// no card — this is the card-absent copy. The card-present string was
+			// asserted here before and exists nowhere in the app, so the assertion
+			// could never pass.
+			await expect(page.getByText(/No card on file\. Stripe handles the payment/)).toBeVisible()
 
 			await trigger.click()
 			await expect(page.getByRole('heading', { name: 'PAYMENT METHOD' })).toHaveCount(0)
@@ -246,4 +252,81 @@ test.describe('Settings > General — labels and Appearance', () => {
 			}
 		})
 	}
+})
+
+/**
+ * Billing's plan strip and plan grid (mockup 2851–2900).
+ *
+ * The catalogue is marketing copy, so what is worth asserting is the shape of
+ * the surface and the rule that keeps it honest: on an instance with no Stripe
+ * configured nothing is purchasable, so no card may offer a checkout.
+ */
+test.describe('Settings > Billing — plan strip and plans', () => {
+	for (const viewport of SHIP_GATE_VIEWPORTS) {
+		test(`the strip shows plan, usage and reset stats at ${viewport.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: viewport.width, height: viewport.height })
+			await gotoSettings(page, account.workspaceId, '/billing')
+
+			for (const label of ['PLAN', 'USED THIS MONTH', 'RESETS']) {
+				await expect(page.getByText(label, { exact: true })).toBeVisible({ timeout: 10000 })
+			}
+			// No meter is drawn — there is no included-usage denominator to fill it.
+			await expect(page.locator('[role="progressbar"]')).toHaveCount(0)
+			await expectNoHorizontalOverflow(page)
+		})
+
+		test(`the four tiers render and collapse at ${viewport.label}`, async ({ page, account }) => {
+			await page.setViewportSize({ width: viewport.width, height: viewport.height })
+			await gotoSettings(page, account.workspaceId, '/billing')
+
+			for (const tier of ['TRIAL', 'PRO', 'TEAM', 'ENTERPRISE']) {
+				await expect(page.getByText(tier, { exact: true })).toBeVisible({ timeout: 10000 })
+			}
+			await expect(page.getByText('MOST POPULAR')).toBeVisible()
+
+			// The CTAs must be reachable on touch, not hover-revealed.
+			const ctas = page.getByRole('button', { name: /Contact sales|Choose |Current plan/ })
+			await expect(ctas.first()).toBeVisible()
+
+			const toggle = page.getByRole('button', { name: 'Hide plans' })
+			await toggle.click()
+			await expect(page.getByText('TRIAL', { exact: true })).toHaveCount(0)
+			await page.getByRole('button', { name: 'Show plans' }).click()
+			await expect(page.getByText('TRIAL', { exact: true })).toBeVisible()
+
+			await expectNoHorizontalOverflow(page)
+		})
+	}
+
+	// Nothing can be sold without Stripe, so nothing may claim to sell.
+	test('offers no checkout CTA while Stripe is unconfigured', async ({ page, account }) => {
+		await gotoSettings(page, account.workspaceId, '/billing')
+
+		await expect(page.getByText('ENTERPRISE', { exact: true })).toBeVisible({ timeout: 10000 })
+		await expect(page.getByRole('button', { name: /^Choose (Trial|Pro|Team)$/ })).toHaveCount(0)
+		await expect(page.getByRole('button', { name: 'Choose a plan' })).toBeDisabled()
+	})
+
+	// The featured card's border and badge are tokens, so they must survive the
+	// theme flip rather than washing out on one side of it.
+	test('the featured card stays legible in light and dark mode', async ({ page, account }) => {
+		for (const theme of ['light', 'dark'] as const) {
+			await page.addInitScript((t) => localStorage.setItem('maskin-theme', t), theme)
+			await gotoSettings(page, account.workspaceId, '/billing')
+
+			const badge = page.getByText('MOST POPULAR')
+			await expect(badge).toBeVisible({ timeout: 10000 })
+			const colors = await badge.evaluate((el) => {
+				const cs = getComputedStyle(el)
+				return { bg: cs.backgroundColor, fg: cs.color }
+			})
+			// bg-foreground / text-background — inverted, and inverted the other way
+			// round in dark mode.
+			expect(colors.bg).toBe(theme === 'light' ? 'rgb(24, 24, 27)' : 'rgb(250, 250, 250)')
+			expect(colors.fg).toBe(theme === 'light' ? 'rgb(255, 255, 255)' : 'rgb(9, 9, 11)')
+		}
+	})
 })

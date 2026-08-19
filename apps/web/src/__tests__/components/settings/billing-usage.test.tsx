@@ -61,8 +61,10 @@ describe('BillingUsageSummary', () => {
 		const { container } = render(<BillingUsageSummary usage={buildUsage()} />)
 
 		expect(screen.getByText('$12.50')).toBeInTheDocument()
-		expect(screen.getByText('model usage this month')).toBeInTheDocument()
-		expect(screen.getByText(/resets/)).toBeInTheDocument()
+		expect(screen.getByText('USED THIS MONTH')).toBeInTheDocument()
+		// RESETS stands in for the mockup's LEFT stat — there is no allowance to
+		// subtract from, and for the same reason no meter is drawn.
+		expect(screen.getByText('RESETS')).toBeInTheDocument()
 		expect(container.querySelector('[style*="width"]')).toBeNull()
 	})
 

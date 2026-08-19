@@ -96,7 +96,8 @@ describe('BillingPage', () => {
 		expect(screen.getByRole('heading', { name: 'Free' })).toBeInTheDocument()
 		expect(screen.getByText('No active subscription')).toBeInTheDocument()
 		expect(screen.getByText(/Stripe is not configured for this instance/)).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: 'Change plan' })).toBeDisabled()
+		// Inactive plan — the strip offers "Choose a plan", not "Change plan".
+		expect(screen.getByRole('button', { name: 'Choose a plan' })).toBeDisabled()
 	})
 
 	it('keeps the payment disclosure closed when there are no invoices and opens it on Show', async () => {
@@ -160,7 +161,7 @@ describe('BillingPage', () => {
 		render(<BillingPage />, { wrapper: TestWrapper })
 
 		expect(await screen.findByText('No model usage recorded this month yet.')).toBeInTheDocument()
-		expect(screen.getByText(/resets/)).toBeInTheDocument()
+		expect(screen.getByText('RESETS')).toBeInTheDocument()
 	})
 
 	// Mockup 2797 — the warn variant, limited to states the billing row holds.
@@ -331,5 +332,139 @@ describe('BillingPage', () => {
 		const badge = within(row).getByText('paid')
 		expect(badge.className).not.toContain('bg-zinc-700')
 		expect(badge.className).toContain('bg-status-succeeded-bg')
+	})
+})
+
+/**
+ * The plan grid (mockup 2880–2900). The catalogue is marketing copy, so the
+ * rules that matter are about which card can take money: exactly one plan is
+ * sold per instance, and no card may quote a price that checkout would not
+ * charge.
+ */
+describe('BillingPage > plans', () => {
+	beforeEach(() => {
+		vi.clearAllMocks()
+		mockSummary.current = buildSummary()
+	})
+
+	function plansGrid() {
+		// The grid follows the PLANS label; scope card queries to it so the
+		// strip's own figures never satisfy an assertion about a card.
+		const heading = screen.getByRole('heading', { name: 'PLANS' })
+		const section = heading.closest('div')?.parentElement
+		if (!section) throw new Error('plans section not found')
+		return within(section)
+	}
+
+	it('lists the four published tiers with the Pro card badged', () => {
+		render(<BillingPage />, { wrapper: TestWrapper })
+
+		const grid = plansGrid()
+		for (const name of ['TRIAL', 'PRO', 'TEAM', 'ENTERPRISE']) {
+			expect(grid.getByText(name)).toBeInTheDocument()
+		}
+		expect(grid.getByText('MOST POPULAR')).toBeInTheDocument()
+	})
+
+	it('hides and restores the grid from the Hide plans control', async () => {
+		const user = userEvent.setup()
+		render(<BillingPage />, { wrapper: TestWrapper })
+
+		expect(screen.getByText('TRIAL')).toBeInTheDocument()
+		await user.click(screen.getByRole('button', { name: 'Hide plans' }))
+		expect(screen.queryByText('TRIAL')).not.toBeInTheDocument()
+
+		await user.click(screen.getByRole('button', { name: 'Show plans' }))
+		expect(screen.getByText('TRIAL')).toBeInTheDocument()
+	})
+
+	// Stripe unconfigured: nothing can be bought, so no card may offer to sell.
+	it('offers no live plan CTA while Stripe is unconfigured', () => {
+		render(<BillingPage />, { wrapper: TestWrapper })
+
+		expect(screen.queryByRole('button', { name: /^Choose (Pro|Team|Trial)$/ })).toBeNull()
+		expect(plansGrid().getAllByRole('button', { name: 'Contact sales' })).toHaveLength(4)
+	})
+
+	// The instance sells whatever STRIPE_PRICE_ID resolves to — here Pro. Only
+	// that card gets a checkout; the rest are a shop window.
+	it('makes only the sold tier purchasable and sends the others to sales', () => {
+		mockSummary.current = buildSummary({
+			configured: true,
+			plan: {
+				planId: 'pro',
+				planLabel: 'Pro',
+				status: 'inactive',
+				priceCents: 2000,
+				currency: 'usd',
+				nextChargeAt: null,
+			},
+		})
+		render(<BillingPage />, { wrapper: TestWrapper })
+
+		const grid = plansGrid()
+		expect(grid.getByRole('button', { name: 'Choose Pro' })).toBeEnabled()
+		expect(grid.queryByRole('button', { name: 'Choose Team' })).toBeNull()
+		expect(grid.getAllByRole('button', { name: 'Contact sales' })).toHaveLength(3)
+	})
+
+	it('opens the checkout dialog from the sold tier CTA', async () => {
+		mockSummary.current = buildSummary({
+			configured: true,
+			publishableKey: 'pk_test_123',
+			plan: {
+				planId: 'pro',
+				planLabel: 'Pro',
+				status: 'inactive',
+				priceCents: 2000,
+				currency: 'usd',
+				nextChargeAt: null,
+			},
+		})
+		const user = userEvent.setup()
+		render(<BillingPage />, { wrapper: TestWrapper })
+
+		await user.click(plansGrid().getByRole('button', { name: 'Choose Pro' }))
+		expect(screen.getByText('Subscribe to Pro')).toBeInTheDocument()
+	})
+
+	// The catalogue advertises Pro at $20. If the instance's price is something
+	// else, the card must say what checkout will actually take.
+	it('quotes the server price on the sold card, not the catalogue price', () => {
+		mockSummary.current = buildSummary({
+			configured: true,
+			plan: {
+				planId: 'pro',
+				planLabel: 'Pro',
+				status: 'inactive',
+				priceCents: 12000,
+				currency: 'usd',
+				nextChargeAt: null,
+			},
+		})
+		render(<BillingPage />, { wrapper: TestWrapper })
+
+		const grid = plansGrid()
+		expect(grid.getByText('$120.00')).toBeInTheDocument()
+		expect(grid.queryByText('$20')).toBeNull()
+	})
+
+	it('marks the active plan as current and does not offer to sell it again', () => {
+		mockSummary.current = buildSummary({
+			configured: true,
+			plan: {
+				planId: 'pro',
+				planLabel: 'Pro',
+				status: 'active',
+				priceCents: 2000,
+				currency: 'usd',
+				nextChargeAt: null,
+			},
+		})
+		render(<BillingPage />, { wrapper: TestWrapper })
+
+		const grid = plansGrid()
+		expect(grid.getByRole('button', { name: 'Current plan' })).toBeDisabled()
+		expect(grid.queryByRole('button', { name: 'Choose Pro' })).toBeNull()
 	})
 })

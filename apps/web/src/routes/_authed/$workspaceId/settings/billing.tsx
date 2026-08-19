@@ -1,4 +1,5 @@
 import {
+	BillingStat,
 	BillingUsageDetails,
 	BillingUsageSummary,
 	type WorkspaceModelUsage,
@@ -6,7 +7,6 @@ import {
 } from '@/components/settings/billing-usage'
 import { EmptyState } from '@/components/shared/empty-state'
 import { Skeleton } from '@/components/shared/loading-skeleton'
-import { RelativeTime } from '@/components/shared/relative-time'
 import { RouteError } from '@/components/shared/route-error'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { Badge } from '@/components/ui/badge'
@@ -38,11 +38,13 @@ import {
 	useStartCheckout,
 } from '@/hooks/use-billing'
 import type { BillingInvoiceResponse, BillingPlanResponse } from '@/lib/api'
+import { BILLING_PLAN_TIERS, type BillingPlanTier } from '@/lib/billing-plans'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Elements, PaymentElement, useElements, useStripe } from '@stripe/react-stripe-js'
 import { loadStripe } from '@stripe/stripe-js'
 import { createFileRoute } from '@tanstack/react-router'
+import { Check } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/settings/billing')({
@@ -84,6 +86,18 @@ function planWarning(status: string): string | null {
 	return null
 }
 
+/**
+ * The PLAN column's sub-line (mockup 2856). Renewal is stated here as an
+ * absolute date rather than repeated as a "Next charge" row — the disclosure
+ * below already carries that row.
+ */
+function planSubLine(plan: BillingPlanResponse): string {
+	if (plan.priceCents === null) return 'No active subscription'
+	const price = `${formatAmount(plan.priceCents, plan.currency)} / month`
+	if (!plan.nextChargeAt) return price
+	return `${price} · renews ${INVOICE_DATE_FORMAT.format(new Date(plan.nextChargeAt))}`
+}
+
 function BillingPage() {
 	const { workspaceId } = useWorkspace()
 	const { data, isLoading } = useBillingSummary(workspaceId)
@@ -102,13 +116,18 @@ function BillingPage() {
 
 	return (
 		<div className="flex max-w-[940px] flex-col gap-6">
-			<PlanBanner
+			<PlanSummary
 				workspaceId={workspaceId}
 				plan={data.plan}
 				configured={data.configured}
 				testMode={data.testMode}
 				usage={usage}
 				onChangePlan={() => setCheckoutOpen(true)}
+			/>
+			<PlansSection
+				plan={data.plan}
+				configured={data.configured}
+				onChoosePlan={() => setCheckoutOpen(true)}
 			/>
 			<BillingUsageDetails usage={usage} />
 			<AccountDisclosure
@@ -134,7 +153,15 @@ function BillingPage() {
 	)
 }
 
-function PlanBanner({
+/**
+ * The plan strip (mockup 2851–2877): three stats in a row, the change-plan
+ * action, and the warn note when the subscription is unhealthy.
+ *
+ * The mockup's meter under the stats is not drawn. It fills used-against-
+ * included, and no endpoint reports an included allowance — a meter with an
+ * invented ceiling would be a claim about money the server never made.
+ */
+function PlanSummary({
 	workspaceId,
 	plan,
 	configured,
@@ -151,41 +178,31 @@ function PlanBanner({
 }) {
 	const portal = useOpenPortal(workspaceId)
 	const warning = planWarning(plan.status)
+	const isActive = plan.status === 'active'
 
 	return (
 		<div
 			className={cn(
-				'overflow-hidden rounded-xl border bg-card',
+				'flex flex-col gap-3.5 rounded-2xl border bg-card p-4',
 				warning ? 'border-warning' : 'border-border',
 			)}
 		>
-			<div
-				className={cn(
-					'flex flex-wrap items-center gap-4 border-b border-border px-4 py-4',
-					warning ? 'bg-warning/10' : 'bg-muted/40',
-				)}
-			>
-				<div className="min-w-0 flex-1 sm:min-w-[210px]">
-					<div className="flex flex-wrap items-center gap-2">
-						<h2 className="text-[15px] font-bold tracking-tight text-foreground">
-							{plan.planLabel ?? plan.planId}
-						</h2>
-						<StatusBadge status={plan.status} />
-						{testMode && <Badge variant="outline">Test mode</Badge>}
-					</div>
-					<p className="mt-1 text-xs text-muted-foreground">
-						{plan.priceCents !== null
-							? `${formatAmount(plan.priceCents, plan.currency)} / month`
-							: 'No active subscription'}
-						{plan.nextChargeAt ? (
-							<span>
-								{' '}
-								· next charge <RelativeTime date={plan.nextChargeAt} />
-							</span>
-						) : null}
-					</p>
-				</div>
-				<div className="flex shrink-0 gap-2">
+			<div className="flex flex-wrap items-start gap-x-6 gap-y-4">
+				<BillingStat
+					label="PLAN"
+					value={
+						<span className="flex flex-wrap items-center gap-2">
+							<h2 className="text-lg font-bold tracking-tight text-foreground">
+								{plan.planLabel ?? plan.planId}
+							</h2>
+							<StatusBadge status={plan.status} />
+							{testMode && <Badge variant="outline">Test mode</Badge>}
+						</span>
+					}
+					sub={planSubLine(plan)}
+				/>
+				<BillingUsageSummary usage={usage} />
+				<div className="flex shrink-0 flex-wrap gap-2">
 					<Button
 						variant="outline"
 						disabled={!configured || portal.isPending}
@@ -194,35 +211,205 @@ function PlanBanner({
 						{portal.isPending && <Spinner className="size-4" />}
 						Manage on Stripe
 					</Button>
-					<Button onClick={onChangePlan} disabled={!configured}>
-						Change plan
+					<Button variant="outline" onClick={onChangePlan} disabled={!configured}>
+						{isActive ? 'Change plan' : 'Choose a plan'}
 					</Button>
 				</div>
 			</div>
-			<div className="flex flex-col gap-3 px-4 py-4">
-				{warning && (
-					<p aria-live="polite" className="text-xs font-medium leading-relaxed text-warning">
-						{warning}
-					</p>
-				)}
-				{/* Usage block (mockup 2803–2813) — the figure only, no meter: the
-				    "of $X included" ceiling has no field on any billing response. */}
-				<BillingUsageSummary usage={usage} />
-				<p className="text-xs leading-relaxed text-muted-foreground">
-					Subscription and invoicing run on Stripe. Everything Stripe knows about this workspace —
-					card, address, tax ID, cancellation — is managed there.
+
+			{/* The mockup's amber note (2874) — shown only for states the billing
+			    row actually holds, so there is no trial-exhaustion variant. */}
+			{warning && (
+				<p
+					aria-live="polite"
+					className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2.5 text-xs font-medium leading-relaxed text-warning"
+				>
+					{warning}
 				</p>
-				{!configured && (
-					<p
-						aria-live="polite"
-						className="rounded-lg border border-border bg-muted px-3 py-2 text-sm text-muted-foreground"
-					>
-						Stripe is not configured for this instance. Billing is disabled until the server is set
-						up with Stripe keys.
-					</p>
-				)}
-			</div>
+			)}
+
+			<p className="text-xs leading-relaxed text-muted-foreground">
+				Subscription and invoicing run on Stripe. Everything Stripe knows about this workspace —
+				card, address, tax ID, cancellation — is managed there.
+			</p>
+
+			{!configured && (
+				<p
+					aria-live="polite"
+					className="rounded-lg border border-border bg-muted px-3 py-2 text-sm text-muted-foreground"
+				>
+					Stripe is not configured for this instance. Billing is disabled until the server is set up
+					with Stripe keys.
+				</p>
+			)}
 		</div>
+	)
+}
+
+/**
+ * The published tiers (mockup 2880–2900), behind a Show/Hide toggle.
+ *
+ * An instance sells exactly one price — whatever `STRIPE_PRICE_ID` resolves to,
+ * which is what `GET /api/billing` returns and what checkout charges. So only
+ * the card matching that plan id can start a checkout, and it shows the API's
+ * real price rather than the catalogue's advertised one: a card reading
+ * "$200/month" that opened a $20 payment sheet would be a lie about money.
+ * Every other tier states its published price and sends you to a conversation.
+ */
+function PlansSection({
+	plan,
+	configured,
+	onChoosePlan,
+}: {
+	plan: BillingPlanResponse
+	configured: boolean
+	onChoosePlan: () => void
+}) {
+	const [shown, setShown] = useState(true)
+
+	return (
+		<div>
+			<div className="mb-3 flex items-center gap-3">
+				<h2 className="settings-label min-w-0 flex-1">PLANS</h2>
+				<button
+					type="button"
+					onClick={() => setShown((v) => !v)}
+					className="shrink-0 text-[11.5px] font-semibold text-muted-foreground transition-colors hover:text-foreground"
+				>
+					{shown ? 'Hide plans' : 'Show plans'}
+				</button>
+			</div>
+			{shown && (
+				<div className="grid items-stretch gap-3 sm:grid-cols-2 xl:grid-cols-4">
+					{BILLING_PLAN_TIERS.map((tier) => (
+						<PlanCard
+							key={tier.id}
+							tier={tier}
+							plan={plan}
+							configured={configured}
+							onChoosePlan={onChoosePlan}
+						/>
+					))}
+				</div>
+			)}
+		</div>
+	)
+}
+
+function PlanCard({
+	tier,
+	plan,
+	configured,
+	onChoosePlan,
+}: {
+	tier: BillingPlanTier
+	plan: BillingPlanResponse
+	configured: boolean
+	onChoosePlan: () => void
+}) {
+	// The workspace is *on* this tier, and paying for it.
+	const isCurrent = plan.status === 'active' && plan.planId === tier.id
+	// This tier is the one checkout would charge for.
+	const isSold = configured && plan.planId === tier.id && !tier.contactOnly
+	const isFeatured = tier.featured && !isCurrent
+
+	// A sold tier quotes the server's price, never the catalogue's.
+	const amount =
+		isSold && plan.priceCents !== null ? formatAmount(plan.priceCents, plan.currency) : tier.amount
+	const per = isSold && plan.priceCents !== null ? '/month' : tier.per
+
+	return (
+		<div
+			className={cn(
+				'relative flex flex-col gap-2.5 rounded-xl border-[1.5px] bg-card p-4',
+				isCurrent
+					? 'border-foreground'
+					: isFeatured
+						? 'border-brand/40 shadow-md'
+						: 'border-border',
+			)}
+		>
+			{isFeatured && (
+				<span className="absolute -top-2.5 left-3.5 rounded-md bg-foreground px-2 py-0.5 text-[9px] font-bold tracking-[0.07em] text-background">
+					MOST POPULAR
+				</span>
+			)}
+			<span className="text-[10.5px] font-bold tracking-[0.07em] text-muted-foreground">
+				{tier.name.toUpperCase()}
+			</span>
+			<span className="flex items-baseline gap-1">
+				<span className="text-[22px] font-bold tracking-tight text-foreground">{amount}</span>
+				{per && <span className="text-[11px] text-muted-foreground">{per}</span>}
+			</span>
+			<p className="text-[11.5px] leading-relaxed text-muted-foreground">{tier.tagline}</p>
+			<ul className="flex flex-1 flex-col gap-1.5 pt-0.5">
+				{tier.features.map((feature) => (
+					<li
+						key={feature}
+						className="flex gap-2 text-[11.5px] leading-snug text-secondary-foreground"
+					>
+						<Check size={11} className="mt-0.5 shrink-0 text-brand" aria-hidden="true" />
+						<span>{feature}</span>
+					</li>
+				))}
+			</ul>
+			<PlanCardAction
+				tier={tier}
+				isCurrent={isCurrent}
+				isSold={isSold}
+				isFeatured={!!isFeatured}
+				onChoosePlan={onChoosePlan}
+			/>
+		</div>
+	)
+}
+
+function PlanCardAction({
+	tier,
+	isCurrent,
+	isSold,
+	isFeatured,
+	onChoosePlan,
+}: {
+	tier: BillingPlanTier
+	isCurrent: boolean
+	isSold: boolean
+	isFeatured: boolean
+	onChoosePlan: () => void
+}) {
+	if (isCurrent) {
+		return (
+			<Button variant="outline" disabled className="w-full">
+				Current plan
+			</Button>
+		)
+	}
+	if (isSold) {
+		return (
+			<Button
+				variant={isFeatured ? 'default' : 'outline'}
+				onClick={onChoosePlan}
+				className="w-full"
+			>
+				Choose {tier.name}
+			</Button>
+		)
+	}
+	// Not self-serve on this instance — Enterprise never is, and a tier this
+	// instance does not sell has no price here to charge.
+	return (
+		<Button
+			variant="outline"
+			disabled
+			className="w-full"
+			title={
+				tier.contactOnly
+					? 'Enterprise is arranged directly — talk to us.'
+					: 'This instance does not sell this plan through checkout — talk to us to switch.'
+			}
+		>
+			Contact sales
+		</Button>
 	)
 }
 

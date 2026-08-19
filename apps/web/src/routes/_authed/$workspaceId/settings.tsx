@@ -26,7 +26,10 @@ function SettingsLayout() {
 			    the page body — PageHeader publishes it and renders nothing here. */}
 			<PageHeader title="Settings" subtitle={workspace?.name} />
 			<div className="flex flex-col gap-6 md:flex-row md:gap-8">
-				<nav className="md:w-[172px] md:shrink-0 md:border-r md:border-border-subtle md:pr-2">
+				<nav
+					aria-label="Settings sections"
+					className="md:w-[172px] md:shrink-0 md:border-r md:border-border-subtle md:pr-2"
+				>
 					<ul className="flex gap-0.5 overflow-x-auto pb-2 md:flex-col md:pb-0">
 						{settingsNav.map((item) => {
 							const isActive = item.exact

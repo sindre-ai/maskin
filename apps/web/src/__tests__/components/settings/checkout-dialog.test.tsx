@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -84,7 +84,8 @@ function activeSummary(): BillingSummaryResponse {
 async function openCheckout() {
 	const user = userEvent.setup()
 	render(<BillingPage />, { wrapper: TestWrapper })
-	await user.click(screen.getByRole('button', { name: 'Change plan' }))
+	// The fixture plan is inactive, so the strip's action reads "Choose a plan".
+	await user.click(screen.getByRole('button', { name: 'Choose a plan' }))
 	return user
 }
 
@@ -101,7 +102,10 @@ describe('Billing > CheckoutDialog', () => {
 		expect(screen.getByText('Subscribe to Pro')).toBeInTheDocument()
 		expect(screen.getByText(/Billing for Vaerksted/)).toBeInTheDocument()
 		expect(screen.getByText('Due today')).toBeInTheDocument()
-		expect(screen.getByText('$20.00')).toBeInTheDocument()
+		// Scoped to the dialog: the Pro card on the page behind it quotes the same
+		// price, because a sold tier renders the API's amount and not the
+		// catalogue's.
+		expect(within(screen.getByRole('dialog')).getByText('$20.00')).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Subscribe · $20.00 / month' })).toBeInTheDocument()
 	})
 
