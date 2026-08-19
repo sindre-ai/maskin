@@ -2049,7 +2049,7 @@ describe('monitorSession — flushLogs retry and drop marker', () => {
 			push?.('hello world')
 
 			// First flush fires after LOG_FLUSH_INTERVAL_MS (2s) and fails; the
-			// retry fires after LOG_FLUSH_RETRY_DELAY_MS (2s) and succeeds.
+			// retry fires after the first backoff delay (2s) and succeeds.
 			await vi.advanceTimersByTimeAsync(2_000)
 			await vi.advanceTimersByTimeAsync(2_000)
 		} finally {
@@ -2139,6 +2139,9 @@ describe('monitorSession — flushLogs retry and drop marker', () => {
 			.mockRejectedValueOnce(new Error('network blip 1'))
 			.mockRejectedValueOnce(new Error('network blip 2'))
 			.mockRejectedValueOnce(new Error('network blip 3'))
+			.mockRejectedValueOnce(new Error('network blip 4'))
+			.mockRejectedValueOnce(new Error('network blip 5'))
+			.mockRejectedValueOnce(new Error('network blip 6'))
 			.mockResolvedValueOnce({ ok: true, json: async () => ({}) })
 		vi.stubGlobal('fetch', logsFetch)
 
@@ -2157,13 +2160,16 @@ describe('monitorSession — flushLogs retry and drop marker', () => {
 			expect(push).toBeDefined()
 			push?.('first batch, will be dropped')
 
-			// LOG_FLUSH_RETRIES = 3: initial attempt + 2 retries, 2s apart, plus
-			// the initial 2s flush-interval wait before the first attempt.
+			// LOG_FLUSH_RETRIES = 6 with exponential backoff (2s, 4s, 8s, 16s, 16s
+			// capped), plus the initial 2s flush-interval wait before attempt 1.
 			await vi.advanceTimersByTimeAsync(2_000) // scheduled flush fires, attempt 1 fails
 			await vi.advanceTimersByTimeAsync(2_000) // attempt 2 fails
-			await vi.advanceTimersByTimeAsync(2_000) // attempt 3 fails, retries exhausted
+			await vi.advanceTimersByTimeAsync(4_000) // attempt 3 fails
+			await vi.advanceTimersByTimeAsync(8_000) // attempt 4 fails
+			await vi.advanceTimersByTimeAsync(16_000) // attempt 5 fails
+			await vi.advanceTimersByTimeAsync(16_000) // attempt 6 fails, retries exhausted
 
-			expect(logsFetch).toHaveBeenCalledTimes(3)
+			expect(logsFetch).toHaveBeenCalledTimes(6)
 
 			// A later line arriving after the drop schedules the next flush, which
 			// should carry both the marker and the new line.
@@ -2173,16 +2179,16 @@ describe('monitorSession — flushLogs retry and drop marker', () => {
 			vi.useRealTimers()
 		}
 
-		expect(logsFetch).toHaveBeenCalledTimes(4)
-		const fourthCall = logsFetch.mock.calls[3]
-		if (!fourthCall) throw new Error('logsFetch was not called a fourth time')
-		const body = JSON.parse(fourthCall[1].body as string) as {
+		expect(logsFetch).toHaveBeenCalledTimes(7)
+		const seventhCall = logsFetch.mock.calls[6]
+		if (!seventhCall) throw new Error('logsFetch was not called a seventh time')
+		const body = JSON.parse(seventhCall[1].body as string) as {
 			logs: Array<{ stream: string; content: string }>
 		}
 		expect(body.logs).toEqual([
 			{
 				stream: 'stdout',
-				content: '[system] 1 log lines failed to reach Maskin after 3 attempts and were dropped\n',
+				content: '[system] 1 log lines failed to reach Maskin after 6 attempts and were dropped\n',
 			},
 			{ stream: 'stdout', content: 'second batch, should succeed' },
 		])
@@ -2228,11 +2234,147 @@ describe('monitorSession — flushLogs retry and drop marker', () => {
 
 			await vi.advanceTimersByTimeAsync(2_000) // scheduled flush fires, attempt 1: 401
 			await vi.advanceTimersByTimeAsync(2_000) // attempt 2: 401
-			await vi.advanceTimersByTimeAsync(2_000) // attempt 3: 401, retries exhausted
+			await vi.advanceTimersByTimeAsync(4_000) // attempt 3: 401
+			await vi.advanceTimersByTimeAsync(8_000) // attempt 4: 401
+			await vi.advanceTimersByTimeAsync(16_000) // attempt 5: 401
+			await vi.advanceTimersByTimeAsync(16_000) // attempt 6: 401, retries exhausted
 		} finally {
 			vi.useRealTimers()
 		}
 
-		expect(logsFetch).toHaveBeenCalledTimes(3)
+		expect(logsFetch).toHaveBeenCalledTimes(6)
+	})
+})
+
+describe('monitorSession — completion report retry and drop marker', () => {
+	// Same reattach-via-reconcileOnBoot approach as the flushLogs describe
+	// above, but the runner reports the sandbox gone on the second `list` call
+	// so waitForCompletion resolves quickly and monitorSession reaches its
+	// completion-report retry loop.
+	function makeCompletingRunner(sessionName: string) {
+		const calls: Array<{ args: readonly string[] }> = []
+		const run = async (
+			_bin: string,
+			args: readonly string[],
+		): Promise<{ stdout: string; stderr: string }> => {
+			calls.push({ args })
+			if (args[0] === 'list') {
+				const listCallCount = calls.filter((c) => c.args[0] === 'list').length
+				// First list call is listSandboxNames' boot snapshot; every call
+				// after that belongs to monitorSession's waitForCompletion poll.
+				return {
+					stdout: JSON.stringify(
+						listCallCount === 1 ? [{ name: sessionName, status: 'Running' }] : [],
+					),
+					stderr: '',
+				}
+			}
+			return { stdout: '', stderr: '' }
+		}
+		return run
+	}
+
+	afterEach(() => {
+		vi.unstubAllGlobals()
+	})
+
+	it('retries a failed completion report and succeeds on a later attempt', async () => {
+		const sessionId = 'sess-report-retry'
+		const run = makeCompletingRunner(sessionId)
+		const env = makeEnv({
+			AGENT_SESSION_ROOT: sessionRoot,
+			MASKIN_BASE_URL: 'http://maskin.test',
+			AGENT_SERVER_ID: '123e4567-e89b-12d3-a456-426614174000',
+		})
+		const reconcileFetch = vi.fn(async () => ({
+			ok: true,
+			json: async () => ({ marked_failed: [], orphan_sandboxes: [] }),
+		}))
+		await mkdir(join(sessionRoot, sessionId), { recursive: true })
+
+		const completionFetch = vi
+			.fn()
+			.mockRejectedValueOnce(new Error('network blip'))
+			.mockResolvedValueOnce({ ok: true, json: async () => ({}) })
+		vi.stubGlobal('fetch', completionFetch)
+
+		vi.useFakeTimers()
+		try {
+			await reconcileOnBoot({
+				env,
+				storage: null,
+				msb: { msbBin: '/usr/local/bin/msb', run },
+				sessionLogRouters: new Map(),
+				sessionExitCodes: new Map(),
+				fetchImpl: reconcileFetch as unknown as typeof fetch,
+			})
+
+			// waitForCompletion's first poll (5s) sees the sandbox gone and
+			// resolves; the first report attempt fires immediately after and
+			// fails, the retry fires after the first backoff delay (5s) and
+			// succeeds.
+			await vi.advanceTimersByTimeAsync(5_000)
+			await vi.advanceTimersByTimeAsync(5_000)
+		} finally {
+			vi.useRealTimers()
+		}
+
+		expect(completionFetch).toHaveBeenCalledTimes(2)
+		const secondCall = completionFetch.mock.calls[1]
+		if (!secondCall) throw new Error('completionFetch was not called a second time')
+		const [url, init] = secondCall as [string, RequestInit]
+		expect(url).toBe(`http://maskin.test/api/internal/agent-servers/sessions/${sessionId}/complete`)
+		const body = JSON.parse(init.body as string) as { exitCode: number }
+		expect(body.exitCode).toBe(0)
+	})
+
+	it('drops the completion report after exhausting retries and logs the orphan warning', async () => {
+		const sessionId = 'sess-report-drop'
+		const run = makeCompletingRunner(sessionId)
+		const env = makeEnv({
+			AGENT_SESSION_ROOT: sessionRoot,
+			MASKIN_BASE_URL: 'http://maskin.test',
+			AGENT_SERVER_ID: '123e4567-e89b-12d3-a456-426614174000',
+		})
+		const reconcileFetch = vi.fn(async () => ({
+			ok: true,
+			json: async () => ({ marked_failed: [], orphan_sandboxes: [] }),
+		}))
+		await mkdir(join(sessionRoot, sessionId), { recursive: true })
+
+		const completionFetch = vi.fn(async () => {
+			throw new Error('network down')
+		})
+		vi.stubGlobal('fetch', completionFetch)
+		const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {})
+
+		vi.useFakeTimers()
+		try {
+			await reconcileOnBoot({
+				env,
+				storage: null,
+				msb: { msbBin: '/usr/local/bin/msb', run },
+				sessionLogRouters: new Map(),
+				sessionExitCodes: new Map(),
+				fetchImpl: reconcileFetch as unknown as typeof fetch,
+			})
+
+			// REPORT_RETRIES = 6 with exponential backoff (5s, 10s, 20s, 40s, 40s
+			// capped), plus the initial 5s waitForCompletion poll before attempt 1.
+			await vi.advanceTimersByTimeAsync(5_000) // waitForCompletion resolves, attempt 1 fails
+			await vi.advanceTimersByTimeAsync(5_000) // attempt 2 fails
+			await vi.advanceTimersByTimeAsync(10_000) // attempt 3 fails
+			await vi.advanceTimersByTimeAsync(20_000) // attempt 4 fails
+			await vi.advanceTimersByTimeAsync(40_000) // attempt 5 fails
+			await vi.advanceTimersByTimeAsync(40_000) // attempt 6 fails, retries exhausted
+		} finally {
+			vi.useRealTimers()
+		}
+
+		expect(completionFetch).toHaveBeenCalledTimes(6)
+		expect(errorSpy).toHaveBeenCalledWith(
+			'session completion report failed after all retries — session may appear running until watchdog fires',
+			expect.objectContaining({ sessionId, exitCode: 0 }),
+		)
 	})
 })

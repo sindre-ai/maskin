@@ -285,8 +285,15 @@ async function monitorSession(
 	let logBuffer: Array<{ stream: 'stdout' | 'stderr'; content: string }> = []
 	let flushTimer: NodeJS.Timeout | null = null
 
-	const LOG_FLUSH_RETRIES = 3
-	const LOG_FLUSH_RETRY_DELAY_MS = 2_000
+	// 6 attempts with exponential backoff (2s, 4s, 8s, 16s, 16s — capped) give a
+	// worst-case retry window of ~46s. This is deliberately longer than the flat
+	// 3-attempts/2s (~4s total) it replaces: that budget was too short to survive
+	// the ~27-30s zero-healthy-backend gaps seen during Maskin API rolling
+	// deploys (Sentry MASKIN-AGENT-SERVER-1; see also the 2026-08-14 session
+	// freeze incident), which dropped real log batches on every affected session.
+	const LOG_FLUSH_RETRIES = 6
+	const LOG_FLUSH_RETRY_BASE_DELAY_MS = 2_000
+	const LOG_FLUSH_RETRY_MAX_DELAY_MS = 16_000
 
 	const flushLogs = async (): Promise<void> => {
 		if (!maskinBaseUrl || logBuffer.length === 0) {
@@ -334,7 +341,11 @@ async function monitorSession(
 					error: String(err),
 				})
 				if (attempt < LOG_FLUSH_RETRIES) {
-					await sleep(LOG_FLUSH_RETRY_DELAY_MS)
+					const delay = Math.min(
+						LOG_FLUSH_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1),
+						LOG_FLUSH_RETRY_MAX_DELAY_MS,
+					)
+					await sleep(delay)
 				}
 			}
 		}
@@ -408,12 +419,20 @@ async function monitorSession(
 	}
 
 	if (maskinBaseUrl) {
-		// Retry up to 3 times with a 5s gap. Cleanup (deleteSessionDir + removeSandbox)
-		// only runs after a successful report so the sandbox is never silently orphaned:
-		// if we clean up before reporting, there is nothing left to retry with and the
-		// session row in apps/dev stays `running` until the 2-hour watchdog reaper fires.
-		const REPORT_RETRIES = 3
-		const REPORT_RETRY_DELAY_MS = 5_000
+		// 6 attempts with exponential backoff (5s, 10s, 20s, 40s, 40s — capped)
+		// give a worst-case retry window of ~115s. This replaces a flat
+		// 3-attempts/5s budget (~10s total) that was too short to survive the
+		// ~27-30s zero-healthy-backend gaps seen during Maskin API rolling
+		// deploys (Sentry MASKIN-AGENT-SERVER-2; see also the flushLogs retry
+		// budget above and the 2026-08-14 session freeze incident) — a session
+		// whose report fell in that window silently orphaned as `running` until
+		// the 2-hour watchdog reaper caught it. Cleanup (deleteSessionDir +
+		// removeSandbox) only runs after a successful report so the sandbox is
+		// never silently orphaned: if we clean up before reporting, there is
+		// nothing left to retry with.
+		const REPORT_RETRIES = 6
+		const REPORT_RETRY_BASE_DELAY_MS = 5_000
+		const REPORT_RETRY_MAX_DELAY_MS = 40_000
 		let reported = false
 		for (let attempt = 1; attempt <= REPORT_RETRIES; attempt++) {
 			try {
@@ -449,7 +468,11 @@ async function monitorSession(
 					error: String(err),
 				})
 				if (attempt < REPORT_RETRIES) {
-					await sleep(REPORT_RETRY_DELAY_MS)
+					const delay = Math.min(
+						REPORT_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1),
+						REPORT_RETRY_MAX_DELAY_MS,
+					)
+					await sleep(delay)
 				}
 			}
 		}
