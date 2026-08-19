@@ -14,6 +14,7 @@ import { useIsMobile } from '@/hooks/use-mobile'
 import { getStoredActor } from '@/lib/auth'
 import { EMPTY_CHAT_SELECTION } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
+import { getTypeColor } from '@/lib/constants'
 import { formatSize } from '@/lib/file-utils'
 import { useDraft } from '@/lib/pending-comments-context'
 import { COMMENT_MAX_ATTACHMENTS, COMMENT_MAX_LENGTH } from '@maskin/shared'
@@ -102,6 +103,11 @@ export function CommentInput({
 	const [decisionChips, setDecisionChips] = useState<string[]>([])
 	const [chipDraft, setChipDraft] = useState('')
 	const [decisionOpen, setDecisionOpen] = useState(false)
+	// Objects picked from "Reference an object" ride the comment as chips and
+	// land on the timeline as real references (mockup `refList`).
+	const [references, setReferences] = useState<Array<{ id: string; title: string; type: string }>>(
+		[],
+	)
 
 	const inputRef = useRef<HTMLTextAreaElement>(null)
 	const overlayRef = useRef<HTMLDivElement>(null)
@@ -257,15 +263,19 @@ export function CommentInput({
 	const handleObjectPicked = useCallback(
 		(result: SlashPickerResult) => {
 			if (result.kind === 'object') {
-				const title = result.ref.title?.trim() || 'object'
-				insertAtCursor(`[${title}](/${workspaceId}/objects/${result.ref.id})`)
+				const picked = {
+					id: result.ref.id,
+					title: result.ref.title?.trim() || 'Untitled',
+					type: result.ref.type ?? 'object',
+				}
+				setReferences((prev) => (prev.some((r) => r.id === picked.id) ? prev : [...prev, picked]))
 			} else if (result.kind === 'agent') {
 				insertAtCursor(`@${result.ref.name}`)
 				setMentions((prev) => (prev.includes(result.ref.id) ? prev : [...prev, result.ref.id]))
 			}
 			setObjectPickerOpen(false)
 		},
-		[insertAtCursor, workspaceId],
+		[insertAtCursor],
 	)
 
 	// Opens the @-mention flow the textarea already owns instead of a parallel
@@ -299,8 +309,10 @@ export function CommentInput({
 			.map((chip) => chip.trim().slice(0, MAX_DECISION_CHIP_LENGTH))
 			.filter((chip) => chip.length > 0)
 			.slice(0, MAX_DECISION_CHIPS)
-		return chips.length > 0 ? { chips } : undefined
-	}, [decisionChips])
+		const refs = references.map((r) => r.id)
+		if (chips.length === 0 && refs.length === 0) return undefined
+		return { ...(chips.length > 0 ? { chips } : {}), ...(refs.length > 0 ? { refs } : {}) }
+	}, [decisionChips, references])
 
 	const overLimit = content.length > COMMENT_MAX_LENGTH
 	const showCounter = content.length >= COMMENT_MAX_LENGTH * COUNTER_VISIBILITY_THRESHOLD
@@ -311,12 +323,13 @@ export function CommentInput({
 		setDecisionChips([])
 		setChipDraft('')
 		setDecisionOpen(false)
+		setReferences([])
 		draftIdRef.current = randomDraftId()
 	}, [])
 
 	const handleSubmit = useCallback(() => {
 		const trimmed = content.trim()
-		if (!trimmed) return
+		if (!trimmed && references.length === 0) return
 		if (content.length > COMMENT_MAX_LENGTH) return
 
 		// Reconcile mentions: only include actors whose @Name is still in the text
@@ -370,6 +383,7 @@ export function CommentInput({
 		draft,
 		buildMetadata,
 		resetComposer,
+		references.length,
 	])
 
 	const handleFilesPicked = useCallback(
@@ -477,7 +491,12 @@ export function CommentInput({
 						<Paperclip size={15} aria-hidden />
 						Attach a file
 					</DropdownMenuItem>
-					<DropdownMenuItem onSelect={() => setObjectPickerOpen(true)}>
+					<DropdownMenuItem
+						// Opened on the next tick: the menu closes first, and its
+						// focus-return would otherwise land as an outside-click on the
+						// picker and shut it again the moment it mounts.
+						onSelect={() => window.setTimeout(() => setObjectPickerOpen(true), 0)}
+					>
 						<Box size={15} aria-hidden />
 						Reference an object
 					</DropdownMenuItem>
@@ -516,7 +535,9 @@ export function CommentInput({
 				size="icon"
 				variant="ghost"
 				className="h-7 w-7 shrink-0 rounded-full"
-				disabled={!content.trim() || createComment.isPending || overLimit}
+				disabled={
+					(!content.trim() && references.length === 0) || createComment.isPending || overLimit
+				}
 				title={isUploadingAny ? 'Send (uploads continue in background)' : 'Send'}
 				aria-label="Send comment"
 				onClick={handleSubmit}
@@ -557,6 +578,35 @@ export function CommentInput({
 							overLimit ? 'border-error' : isBar ? 'border-input' : 'border-border',
 						)}
 					>
+						{references.length > 0 && (
+							<ul className="flex flex-wrap gap-1.5 p-1.5 pb-0">
+								{references.map((ref) => (
+									<li
+										key={ref.id}
+										className="flex items-center gap-1.5 rounded-lg border border-border bg-background px-2 py-1"
+									>
+										<span
+											aria-hidden="true"
+											className={cn('size-[7px] shrink-0 rounded-[2px]', getTypeColor(ref.type).bg)}
+										/>
+										<span className="font-mono text-[8px] font-bold uppercase tracking-[0.09em] text-muted-foreground">
+											{ref.type}
+										</span>
+										<span className="max-w-[180px] truncate text-xs font-semibold text-foreground">
+											{ref.title}
+										</span>
+										<button
+											type="button"
+											aria-label={`Remove reference to ${ref.title}`}
+											onClick={() => setReferences((prev) => prev.filter((r) => r.id !== ref.id))}
+											className="text-border transition-colors hover:text-destructive"
+										>
+											<X size={12} />
+										</button>
+									</li>
+								))}
+							</ul>
+						)}
 						{hasAttachments && (
 							<ul className="flex flex-wrap gap-1.5 p-1.5">
 								{attachments.map((file) => (

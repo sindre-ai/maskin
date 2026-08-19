@@ -1,4 +1,5 @@
 import { HumanDetailDialog } from '@/components/settings/human-detail-dialog'
+import { ObjectReference } from '@/components/shared/object-reference'
 import { useActor, useActors } from '@/hooks/use-actors'
 import { useFiles } from '@/hooks/use-files'
 import type { ActorListItem, EventResponse, SessionResponse } from '@/lib/api'
@@ -21,6 +22,14 @@ const COMMENT_DISALLOWED_ELEMENTS = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']
 // Long agent comments are clamped so the timeline stays readable at a glance
 // (mockup 6261–6268): past 300 characters the bubble shows the first 230, cut
 // at a word boundary, behind a Show more / Show less toggle.
+/** Object ids the composer attached to the comment via `metadata.refs`. */
+function readReferencedObjectIds(event: EventResponse): string[] {
+	const metadata = event.data?.metadata as Record<string, unknown> | undefined
+	const refs = metadata?.refs
+	if (!Array.isArray(refs)) return []
+	return refs.filter((id): id is string => typeof id === 'string' && id.length > 0)
+}
+
 const CLAMP_OVER = 300
 const CLAMP_TO = 230
 
@@ -103,6 +112,7 @@ function CommentRow({
 
 	const isAgent = actor?.type === 'agent'
 	const clampable = isBubble && content.length > CLAMP_OVER
+	const referencedObjectIds = readReferencedObjectIds(event)
 
 	const avatarClass = isBubble
 		? 'size-[30px] border-[3px] border-background text-[11px]'
@@ -248,6 +258,21 @@ function CommentRow({
 						</>
 					)}
 					{footer && <div>{footer}</div>}
+					{/* Objects the author attached from the composer, as real
+					    references (mockup `refList`). */}
+					{referencedObjectIds.length > 0 && (
+						<div className="mt-2 flex flex-wrap gap-1.5">
+							{referencedObjectIds.map((refId) => (
+								<ObjectReference
+									key={refId}
+									objectId={refId}
+									workspaceId={workspaceId}
+									variant="inline"
+									className="text-xs"
+								/>
+							))}
+						</div>
+					)}
 					{hasTaskList(event) && <CommentTaskList event={event} workspaceId={workspaceId} />}
 					{attachmentFileIds.length > 0 && (
 						<ul className="mt-1.5 space-y-1">

@@ -62,10 +62,10 @@ test.describe('Object detail — properties drawer', () => {
 		})
 
 		// Ported from the retired ObjectDocument surface onto the shell: the
-		// ⌘/Ctrl+I chord shares the header button's toggle path, and on
+		// ⌘/Ctrl+⇧+\ chord shares the header button's toggle path, and on
 		// non-mobile the open/closed bit is persisted per actor under the
 		// `__chrome__` display-settings row, so it survives a reload.
-		test(`⌘/Ctrl+I toggles the drawer and the state persists at ${vp.label}`, async ({
+		test(`⌘/Ctrl+⇧+\\ toggles the drawer and the state persists at ${vp.label}`, async ({
 			page,
 			account,
 		}) => {
@@ -95,17 +95,17 @@ test.describe('Object detail — properties drawer', () => {
 			// is open, so the toggle's own attribute is unreadable there.
 			const drawerHeading = page.getByText('Properties', { exact: true }).last()
 
-			await page.keyboard.press('Control+i')
+			await page.keyboard.press('Control+Shift+Backslash')
 			await expect(drawerHeading).toBeInViewport()
 
-			await page.keyboard.press('Control+i')
+			await page.keyboard.press('Control+Shift+Backslash')
 			await expect(toggle).toHaveAttribute('aria-expanded', 'false')
 			await expect(drawerHeading).not.toBeInViewport()
 
 			// Mobile's drawer is a transient Sheet by design; the persisted bit
 			// only governs the inline drawer at >=768.
 			if (vp.width >= 768) {
-				await page.keyboard.press('Control+i')
+				await page.keyboard.press('Control+Shift+Backslash')
 				await expect(toggle).toHaveAttribute('aria-expanded', 'true')
 				await page.reload()
 				await expect(page.getByRole('heading', { level: 1, name: 'Chord bet' })).toBeVisible({

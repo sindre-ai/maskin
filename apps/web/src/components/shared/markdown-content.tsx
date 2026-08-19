@@ -61,6 +61,45 @@ function readCodeSource(child: ReactNode): string {
 	return ''
 }
 
+/**
+ * Toggle a markdown marker around `[start, end)` — `**` for bold, `_` for
+ * italic, backtick for code. Wrapping an already-wrapped range unwraps it, so
+ * the same shortcut is its own undo (mockup 8493–8506).
+ */
+export function toggleMarkdownMarker(
+	value: string,
+	start: number,
+	end: number,
+	marker: string,
+): { value: string; start: number; end: number } {
+	const before = value.slice(Math.max(0, start - marker.length), start)
+	const after = value.slice(end, end + marker.length)
+	if (before === marker && after === marker) {
+		return {
+			value:
+				value.slice(0, start - marker.length) +
+				value.slice(start, end) +
+				value.slice(end + marker.length),
+			start: start - marker.length,
+			end: end - marker.length,
+		}
+	}
+	return {
+		value: value.slice(0, start) + marker + value.slice(start, end) + marker + value.slice(end),
+		start: start + marker.length,
+		end: end + marker.length,
+	}
+}
+
+/** ⌘B / ⌘I / ⌘E — the three the mockup binds. */
+const SHORTCUT_MARKERS: Record<string, string> = { b: '**', i: '_', e: '`' }
+
+interface SelectionToolbarState {
+	x: number
+	y: number
+	text: string
+}
+
 export function MarkdownContent({
 	content,
 	onChange,
@@ -97,6 +136,8 @@ export function MarkdownContent({
 	// Height of the rendered prose view at the moment edit mode is entered.
 	// Used as a floor so the box doesn't shrink when headings/lists collapse to plain text.
 	const [lockedHeight, setLockedHeight] = useState<number | undefined>(undefined)
+	// Floating B / I / <> over a selection in the rendered view (mockup 1030–1035).
+	const [selectionToolbar, setSelectionToolbar] = useState<SelectionToolbarState | null>(null)
 
 	const handleBlur = useCallback(() => {
 		setEditing(false)
@@ -112,6 +153,59 @@ export function MarkdownContent({
 		setDraft(initialDraft)
 		setEditing(true)
 	}
+
+	// A selection in the view arms the toolbar; clicking away or selecting
+	// nothing disarms it.
+	const handleSelectionUp = useCallback(() => {
+		if (!editable) return
+		window.setTimeout(() => {
+			const selection = window.getSelection()
+			const text = selection ? String(selection).trim() : ''
+			if (!text || !selection?.rangeCount) {
+				setSelectionToolbar(null)
+				return
+			}
+			const rect = selection.getRangeAt(0).getBoundingClientRect()
+			setSelectionToolbar({ x: (rect.left + rect.right) / 2, y: rect.top - 8, text })
+		}, 0)
+	}, [editable])
+
+	// The toolbar edits the markdown source, not the rendered output: it finds
+	// the selected text in the source and toggles the marker around it.
+	const applyMarkerToSelection = useCallback(
+		(marker: string) => {
+			const active = selectionToolbar
+			setSelectionToolbar(null)
+			if (!active) return
+			const index = content.indexOf(active.text)
+			if (index < 0) return
+			const next = toggleMarkdownMarker(content, index, index + active.text.length, marker)
+			window.getSelection()?.removeAllRanges()
+			if (next.value !== content) onChange?.(next.value)
+		},
+		[selectionToolbar, content, onChange],
+	)
+
+	const handleEditorKeyDown = useCallback(
+		(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+			if (e.key === 'Escape') {
+				setEditing(false)
+				setDraft(content)
+				return
+			}
+			if (!(e.metaKey || e.ctrlKey)) return
+			const marker = SHORTCUT_MARKERS[e.key.toLowerCase()]
+			if (!marker) return
+			e.preventDefault()
+			const el = e.currentTarget
+			const next = toggleMarkdownMarker(el.value, el.selectionStart, el.selectionEnd, marker)
+			setDraft(next.value)
+			requestAnimationFrame(() => {
+				el.setSelectionRange(next.start, next.end)
+			})
+		},
+		[content],
+	)
 
 	const adjustHeight = useCallback(() => {
 		const ta = textareaRef.current
@@ -182,13 +276,21 @@ export function MarkdownContent({
 		return (
 			<Textarea
 				ref={textareaRef}
-				className="w-full bg-transparent text-sm text-muted-foreground font-sans resize-none outline-none border-none p-0 focus:outline-none overflow-hidden"
-				style={{ minHeight: lockedHeight, lineHeight: '1.7142857' }}
+				// At the document scale the field is the view: same type, same
+				// measure, same plate, so nothing shifts when you start typing.
+				className={cn(
+					'w-full resize-none overflow-hidden border-none font-sans outline-none focus:outline-none',
+					size === 'doc'
+						? 'max-w-[75ch] rounded-[9px] bg-muted/60 px-2 py-1 text-[15px] text-foreground'
+						: 'bg-transparent p-0 text-sm text-muted-foreground',
+				)}
+				style={{ minHeight: lockedHeight, lineHeight: size === 'doc' ? '1.65' : '1.7142857' }}
 				value={draft}
 				onChange={(e) => {
 					setDraft(e.target.value)
 					adjustHeight()
 				}}
+				onKeyDown={handleEditorKeyDown}
 				onBlur={handleBlur}
 				autoFocus
 			/>
@@ -207,40 +309,83 @@ export function MarkdownContent({
 	}
 
 	return (
-		<div
-			ref={containerRef}
-			className={className}
-			onClick={() => {
-				if (editable) startEditing(content)
-			}}
-			onKeyDown={(e) => {
-				if (editable && (e.key === 'Enter' || e.key === ' ')) startEditing(content)
-			}}
-			tabIndex={editable ? 0 : undefined}
-		>
-			<div
-				className={cn(
-					'prose dark:prose-invert prose-sm max-w-none prose-headings:text-foreground prose-p:text-muted-foreground prose-p:leading-[1.7142857] prose-li:text-muted-foreground prose-a:text-primary prose-strong:text-foreground prose-code:text-primary prose-code:bg-card prose-code:px-1 prose-code:rounded',
-					'break-words [&_pre]:overflow-x-auto [&_pre]:max-w-full [&_img]:max-w-full [&_table]:block [&_table]:overflow-x-auto [&_table]:max-w-full',
-					size === 'xs' && '[&_p]:text-xs [&_p]:leading-normal [&_li]:text-xs [&_a]:text-xs',
-					size === 'doc' && [
-						'[&_p]:text-[15px] [&_p]:leading-[1.65] [&_p]:text-foreground [&_p]:mb-2 [&_p]:mt-0',
-						'[&_h1]:text-[13px] [&_h2]:text-[13px] [&_h3]:text-[13px] [&_h4]:text-[13px]',
-						'[&_:is(h1,h2,h3,h4)]:font-bold [&_:is(h1,h2,h3,h4)]:tracking-[-0.01em] [&_:is(h1,h2,h3,h4)]:mb-1 [&_:is(h1,h2,h3,h4)]:mt-3.5',
-						'[&_li]:text-sm [&_li]:leading-[1.6] [&_li]:text-foreground [&_li]:my-0',
-						"[&_ul]:list-none [&_ul]:pl-0 [&_ul]:my-0 [&_ul]:mb-2.5 [&_ul]:flex [&_ul]:flex-col [&_ul]:gap-[5px] [&_ul>li]:relative [&_ul>li]:pl-[22px] [&_ul>li]:before:absolute [&_ul>li]:before:left-0 [&_ul>li]:before:text-border-strong [&_ul>li]:before:content-['—']",
-					],
-				)}
-			>
-				<ReactMarkdown
-					remarkPlugins={remarkPlugins as unknown as never[]}
-					disallowedElements={disallowedElements}
-					unwrapDisallowed={Boolean(disallowedElements && disallowedElements.length > 0)}
-					components={components}
+		<>
+			{/* Fixed to the selection, above it (mockup 1030–1035). The buttons act
+			    on mousedown so the browser never clears the selection first. */}
+			{selectionToolbar && (
+				<div
+					className="fixed z-[60] flex -translate-x-1/2 -translate-y-full gap-0.5 rounded-[9px] bg-primary p-[3px] shadow-lg"
+					style={{ left: selectionToolbar.x, top: selectionToolbar.y }}
 				>
-					{content}
-				</ReactMarkdown>
+					{(
+						[
+							{ marker: '**', label: 'Bold', glyph: 'B', className: 'font-extrabold' },
+							{ marker: '_', label: 'Italic', glyph: 'I', className: 'font-semibold italic' },
+							{
+								marker: '`',
+								label: 'Code',
+								glyph: '<>',
+								className: 'font-mono text-[11px] font-semibold',
+							},
+						] as const
+					).map((action) => (
+						<button
+							key={action.label}
+							type="button"
+							title={action.label}
+							aria-label={action.label}
+							onMouseDown={(e) => {
+								e.preventDefault()
+								applyMarkerToSelection(action.marker)
+							}}
+							className={cn(
+								'grid size-[26px] place-items-center rounded-[7px] text-[12.5px] text-primary-foreground transition-colors hover:bg-secondary-foreground/25',
+								action.className,
+							)}
+						>
+							{action.glyph}
+						</button>
+					))}
+				</div>
+			)}
+			<div
+				ref={containerRef}
+				className={className}
+				onMouseUp={handleSelectionUp}
+				onClick={() => {
+					// Selecting text must not drop you into the editor and lose it.
+					if (!editable || String(window.getSelection() ?? '').trim()) return
+					startEditing(content)
+				}}
+				onKeyDown={(e) => {
+					if (editable && (e.key === 'Enter' || e.key === ' ')) startEditing(content)
+				}}
+				tabIndex={editable ? 0 : undefined}
+			>
+				<div
+					className={cn(
+						'prose dark:prose-invert prose-sm max-w-none prose-headings:text-foreground prose-p:text-muted-foreground prose-p:leading-[1.7142857] prose-li:text-muted-foreground prose-a:text-primary prose-strong:text-foreground prose-code:text-primary prose-code:bg-card prose-code:px-1 prose-code:rounded',
+						'break-words [&_pre]:overflow-x-auto [&_pre]:max-w-full [&_img]:max-w-full [&_table]:block [&_table]:overflow-x-auto [&_table]:max-w-full',
+						size === 'xs' && '[&_p]:text-xs [&_p]:leading-normal [&_li]:text-xs [&_a]:text-xs',
+						size === 'doc' && [
+							'[&_p]:text-[15px] [&_p]:leading-[1.65] [&_p]:text-foreground [&_p]:mb-2 [&_p]:mt-0',
+							'[&_h1]:text-[13px] [&_h2]:text-[13px] [&_h3]:text-[13px] [&_h4]:text-[13px]',
+							'[&_:is(h1,h2,h3,h4)]:font-bold [&_:is(h1,h2,h3,h4)]:tracking-[-0.01em] [&_:is(h1,h2,h3,h4)]:mb-1 [&_:is(h1,h2,h3,h4)]:mt-3.5',
+							'[&_li]:text-sm [&_li]:leading-[1.6] [&_li]:text-foreground [&_li]:my-0',
+							"[&_ul]:list-none [&_ul]:pl-0 [&_ul]:my-0 [&_ul]:mb-2.5 [&_ul]:flex [&_ul]:flex-col [&_ul]:gap-[5px] [&_ul>li]:relative [&_ul>li]:pl-[22px] [&_ul>li]:before:absolute [&_ul>li]:before:left-0 [&_ul>li]:before:text-border-strong [&_ul>li]:before:content-['—']",
+						],
+					)}
+				>
+					<ReactMarkdown
+						remarkPlugins={remarkPlugins as unknown as never[]}
+						disallowedElements={disallowedElements}
+						unwrapDisallowed={Boolean(disallowedElements && disallowedElements.length > 0)}
+						components={components}
+					>
+						{content}
+					</ReactMarkdown>
+				</div>
 			</div>
-		</div>
+		</>
 	)
 }

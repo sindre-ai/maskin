@@ -136,6 +136,118 @@ test.describe('Object detail — v2 surface', () => {
 		await expect(page.getByText('Rewritten body.')).toBeVisible()
 	})
 
+	// The body is a lightweight markdown surface: select text and a floating
+	// B / I / <> toolbar edits the source in place (mockup 1030–1035).
+	test('a selection in the body raises the formatting toolbar and applies it', async ({
+		page,
+		account,
+	}) => {
+		await page.setViewportSize({ width: 1024, height: 768 })
+		const bet = await account.api.createObject(account.workspaceId, {
+			type: 'bet',
+			title: 'Formatting probe',
+			status: 'active',
+			content: 'Charges retry for three days.',
+		})
+
+		await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
+		await expect(page.getByRole('heading', { level: 1, name: 'Formatting probe' })).toBeVisible({
+			timeout: 15000,
+		})
+
+		// No toolbar until something is selected.
+		await expect(page.getByRole('button', { name: 'Bold' })).toHaveCount(0)
+
+		await page.locator('.prose p').first().evaluate((el) => {
+			const range = document.createRange()
+			const node = el.firstChild as Node
+			range.setStart(node, 0)
+			range.setEnd(node, 7)
+			const selection = window.getSelection()
+			selection?.removeAllRanges()
+			selection?.addRange(range)
+			el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+		})
+
+		const bold = page.getByRole('button', { name: 'Bold' })
+		await expect(bold).toBeVisible()
+		await expect(page.getByRole('button', { name: 'Italic' })).toBeVisible()
+		await expect(page.getByRole('button', { name: 'Code' })).toBeVisible()
+
+		await bold.dispatchEvent('mousedown')
+		await page.reload()
+		await expect(page.getByRole('heading', { level: 1, name: 'Formatting probe' })).toBeVisible({
+			timeout: 15000,
+		})
+		// The word came back bold, so the marker reached the stored markdown.
+		await expect(page.locator('.prose strong')).toHaveText('Charges')
+	})
+
+	// "Reference an object" attaches removable chips that post as real
+	// references on the timeline.
+	test('the composer references an object and it lands on the timeline', async ({
+		page,
+		account,
+	}) => {
+		await page.setViewportSize({ width: 1024, height: 768 })
+		const bet = await account.api.createObject(account.workspaceId, {
+			type: 'bet',
+			title: 'Reference probe',
+			status: 'active',
+		})
+		await account.api.createObject(account.workspaceId, {
+			type: 'task',
+			title: 'Referenced task',
+			status: 'todo',
+		})
+
+		await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
+		await expect(page.getByRole('heading', { level: 1, name: 'Reference probe' })).toBeVisible({
+			timeout: 15000,
+		})
+
+		await page.getByRole('button', { name: /Add a file, object, or mention/i }).click()
+		await page.getByRole('menuitem', { name: /Reference an object/i }).click()
+		await page.getByPlaceholder('Search items…').fill('Referenced task')
+		await page.getByRole('option').filter({ hasText: 'Referenced task' }).first().click()
+
+		// A removable chip, not a pasted link.
+		const chip = page.getByRole('button', { name: /Remove reference to Referenced task/ })
+		await expect(chip).toBeVisible()
+
+		await page.getByPlaceholder(/^Comment/).fill('Linking the task.')
+		await page.getByRole('button', { name: /send comment/i }).click()
+
+		await expect(chip).toHaveCount(0)
+		await expect(page.getByText('Linking the task.')).toBeVisible()
+		await expect(page.getByRole('link', { name: /Referenced task/ }).first()).toBeVisible()
+	})
+
+	// The drawer states who the object waits on and who made it.
+	test('the properties drawer carries attention and the creator', async ({ page, account }) => {
+		await page.setViewportSize({ width: 1024, height: 768 })
+		const bet = await account.api.createObject(account.workspaceId, {
+			type: 'bet',
+			title: 'Drawer detail probe',
+			status: 'active',
+		})
+
+		await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
+		await expect(page.getByRole('heading', { level: 1, name: 'Drawer detail probe' })).toBeVisible(
+			{ timeout: 15000 },
+		)
+		await page
+			.locator('main header')
+			.first()
+			.getByRole('button', { name: 'Properties', exact: true })
+			.click()
+
+		await expect(page.getByText('created', { exact: true })).toBeVisible()
+		// `<when> · <who>` — the creator rides the created row.
+		await expect(page.getByText(/^E2E /).last()).toBeVisible()
+		await expect(page.getByRole('button', { name: /Collapse properties/ })).toBeVisible()
+	})
+
 	// The bar, the status chip and the composer all read from colour tokens, so
 	// they must stay legible in both schemes.
 	for (const scheme of ['light', 'dark'] as const) {

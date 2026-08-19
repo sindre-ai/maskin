@@ -125,13 +125,14 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 	const sidebarExpanded = isMobile ? sidebarOpenMobile : sidebarOpen
 	const contentPush = !isMobile && sidebarOpen ? SIDEBAR_WIDTH : undefined
 
-	// ⌘/Ctrl+I toggles the right sidebar. Shares `handleToggleSidebar` with the
-	// PanelRight header button so both entry points flow through the same
-	// mobile-vs-persisted branch, and both are observable to the
-	// `sidebar_toggle` analytics effect below.
+	// ⌘⇧\ toggles the properties drawer. It was ⌘I until the document editor
+	// claimed ⌘I for italic. Shares `handleToggleSidebar` with the header
+	// button so both entry points flow through the same mobile-vs-persisted
+	// branch, and both are observable to the `sidebar_toggle` effect below.
 	useEffect(() => {
 		const handler = (e: KeyboardEvent) => {
-			if (!((e.metaKey || e.ctrlKey) && (e.key === 'i' || e.key === 'I'))) return
+			// Shift makes the backslash a pipe on most layouts — accept both.
+			if (!((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === '\\' || e.key === '|'))) return
 			const target = e.target as HTMLElement | null
 			if (target) {
 				const tag = target.tagName
