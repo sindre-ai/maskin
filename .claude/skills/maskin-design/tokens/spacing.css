@@ -1,0 +1,53 @@
+/* v2 spacing — the mockup uses a mix of 4/6/8/10/12/14/16/18/20/24/28 px
+   values inline. This scale is the derived set; every layout in v2 falls on
+   one of these steps. */
+
+:root {
+  /* --- scale --- */
+  --space-0: 0;
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 6px;
+  --space-4: 8px;
+  --space-5: 10px;
+  --space-6: 11px;      /* nav-item padding-y */
+  --space-7: 12px;      /* card padding */
+  --space-8: 14px;      /* row gap in dense lists, briefing padding */
+  --space-9: 16px;
+  --space-10: 18px;
+  --space-11: 20px;
+  --space-12: 24px;     /* section padding */
+  --space-13: 28px;     /* wide inline padding */
+  --space-14: 32px;
+
+  /* --- fluid inline padding used by the top-level page shell --- */
+  --gap-page: clamp(12px, 3vw, 28px);
+
+  /* --- gaps between siblings --- */
+  --gap-tight: 4px;
+  --gap-snug: 6px;
+  --gap-default: 8px;
+  --gap-loose: 12px;
+  --gap-section: 20px;
+
+  /* --- layout constants (from the mockup shell) --- */
+  --sidebar-w: 260px;         /* full sidebar */
+  --iconrail-w: 52px;         /* icon rail on collapsed layout */
+  --topnav-h: 56px;           /* shared top nav height */
+  --brief-max: 700px;         /* "Today's brief" pill max width on For You */
+  --palette-w: min(560px, 92vw);
+  --new-picker-w: min(560px, 92vw);
+  --mobile-drawer-w: min(320px, 88vw);
+
+  /* --- touch targets --- */
+  --touch-min: 44px;          /* enforced via [data-tap] at pointer:coarse */
+
+  /* --- interactive control heights (from v2) --- */
+  --h-chip: 24px;             /* palette result glyph tile */
+  --h-tab: 28px;              /* filter/tab pill */
+  --h-input: 30px;            /* nav search input */
+  --h-icon-tile: 32px;        /* icon rail item, avatar chip */
+  --h-btn-sm: 32px;
+  --h-btn: 38px;              /* toast media button */
+  --h-avatar-lg: 40px;
+}

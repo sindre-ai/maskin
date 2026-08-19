@@ -1,0 +1,80 @@
+/* v2 motion — six named animations from the mockup's inline <style>, plus
+   the standard durations/easings used across transitions. Everything
+   respects prefers-reduced-motion. */
+
+:root {
+  /* --- durations --- */
+  --dur-150: 150ms;     /* colour / border */
+  --dur-180: 180ms;     /* fade-in on the brief drawer */
+  --dur-200: 200ms;     /* shadow + transform */
+  --dur-250: 250ms;     /* nav / panel state */
+  --dur-slide: 300ms;   /* drawer slide-in */
+
+  /* --- easings --- */
+  --ease-standard: cubic-bezier(.4, 0, .2, 1);
+  --ease-emphasized: cubic-bezier(.16, 1, .3, 1);     /* springy submit */
+  --ease-out: ease-out;
+}
+
+/* --- keyframes taken verbatim from v2 --- */
+
+@keyframes orbitPulse {
+  0%, 100% { opacity: .5; }
+  50% { opacity: 1; }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideInR {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+@keyframes slideInL {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+
+@keyframes popUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Mic recording pulse — 6px ring outward, red-500 half-opacity fade. */
+@keyframes micPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, .5); }
+  50%      { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+}
+
+/* Audio waveform equaliser. */
+@keyframes eq {
+  0%, 100% { height: 5px; }
+  50%      { height: 16px; }
+}
+
+/* Typing indicator (three dots). */
+@keyframes typedot {
+  0%, 60%, 100% { transform: translateY(0);  opacity: .45; }
+  30%           { transform: translateY(-4px); opacity: 1; }
+}
+
+/* Spinner (rare — only for a small "working…" indicator; use a skeleton on
+   large areas instead). */
+@keyframes mkSpin {
+  to { transform: rotate(1turn); }
+}
+
+/* --- reduced motion — disable everything, don't just slow it. --- */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
