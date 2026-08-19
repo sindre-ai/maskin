@@ -606,6 +606,20 @@
 		color: var(--muted-foreground);
 	}
 
+	/* Settings section label — the mockup's other uppercase label, used only on
+	   the Settings surface ("WORKSPACE NAME", "APPEARANCE", "PRIVACY & DATA",
+	   "PLANS", "PAYMENT METHOD", "BILLING DETAILS", "INVOICES", mockup 2697,
+	   2704, 2710, 2789, 2864, 2881, 2891). It is the body sans at 11px with
+	   near-flat tracking, not `.eyebrow`'s 8px mono — Settings labels sit above
+	   full-width form blocks and need to read as headings, not micro-captions. */
+	.settings-label {
+		font-size: 0.6875rem; /* 11px */
+		font-weight: 600;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		color: var(--muted-foreground);
+	}
+
 	/* Full-contrast prose: @tailwindcss/typography sets paragraph/list-item color
 	   to var(--tw-prose-body), which resolves to a muted tone inside .prose.
 	   The compound selector (.agent-output p/li) has higher specificity than the

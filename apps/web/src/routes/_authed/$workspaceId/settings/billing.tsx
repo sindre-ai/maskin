@@ -295,7 +295,7 @@ function AccountDisclosure({
 				<div className="flex flex-col gap-6">
 					<div className="grid gap-6 md:grid-cols-2">
 						<div>
-							<h3 className="eyebrow mb-2">PAYMENT METHOD</h3>
+							<h3 className="settings-label mb-2.5">PAYMENT METHOD</h3>
 							{/* Two states (mockup 2894–2905). A Stripe Customer — and therefore
 							    a charged card — exists only once a payment succeeded, so an
 							    active plan is the card-present state. The brand tile, •••• last4
@@ -335,7 +335,7 @@ function AccountDisclosure({
 						</div>
 
 						<div>
-							<h3 className="eyebrow mb-2">BILLING DETAILS</h3>
+							<h3 className="settings-label mb-2.5">BILLING DETAILS</h3>
 							{/* A repeating row list (mockup 2911–2916). Every row is a field the
 							    summary endpoint returns — company, VAT and address live only in
 							    Stripe, so they are not listed here. */}
@@ -369,7 +369,7 @@ function AccountDisclosure({
 					</div>
 
 					<div>
-						<h3 className="eyebrow mb-2">INVOICES</h3>
+						<h3 className="settings-label mb-2.5">INVOICES</h3>
 						{invoices.length === 0 ? (
 							<div className="rounded-xl border border-border bg-muted/30">
 								<EmptyState

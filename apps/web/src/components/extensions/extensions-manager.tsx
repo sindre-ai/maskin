@@ -139,7 +139,7 @@ export function ExtensionsManager() {
 							className="flex items-center justify-between gap-4 rounded-xl border border-border bg-card p-3"
 						>
 							<div className="min-w-0">
-								<span className="block truncate text-sm font-medium">{mod.name}</span>
+								<span className="block truncate text-[13px] font-semibold">{mod.name}</span>
 								{mod.objectTypeTabs.length > 0 && (
 									<span className="block truncate text-xs text-muted-foreground">
 										{mod.objectTypeTabs.map((t) => t.label).join(', ')}
@@ -160,7 +160,7 @@ export function ExtensionsManager() {
 						className="flex items-center justify-between gap-4 rounded-xl border border-border bg-card p-3"
 					>
 						<div className="min-w-0">
-							<span className="block truncate text-sm font-medium">{ext.name}</span>
+							<span className="block truncate text-[13px] font-semibold">{ext.name}</span>
 							{ext.tabs.length > 0 && (
 								<span className="block truncate text-xs text-muted-foreground">
 									{ext.tabs.map((t) => t.label).join(', ')}

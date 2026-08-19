@@ -184,3 +184,66 @@ test.describe('Settings v2 surface', () => {
 		}
 	})
 })
+
+/**
+ * General's two typographic decisions (mockup 2697–2709).
+ *
+ * The section labels are the 11px sans caps, not the 8px mono `.eyebrow` used
+ * for the app's other micro-labels; and the selected Appearance option is the
+ * solid near-black pill. Both are colour/size choices no structural assertion
+ * catches — `--secondary` (#f6f6f7) on a white card renders as no selection at
+ * all in light mode, which is exactly the failure mode this covers.
+ */
+test.describe('Settings > General — labels and Appearance', () => {
+	for (const viewport of SHIP_GATE_VIEWPORTS) {
+		test(`section labels use the 11px sans style at ${viewport.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: viewport.width, height: viewport.height })
+			await gotoSettings(page, account.workspaceId)
+
+			for (const name of ['WORKSPACE NAME', 'APPEARANCE', 'PRIVACY & DATA']) {
+				const label = page.getByRole('heading', { name })
+				await expect(label).toBeVisible({ timeout: 10000 })
+				const style = await label.evaluate((el) => {
+					const cs = getComputedStyle(el)
+					return { fontSize: cs.fontSize, fontFamily: cs.fontFamily, weight: cs.fontWeight }
+				})
+				expect(style.fontSize).toBe('11px')
+				expect(style.fontFamily).not.toMatch(/mono/i)
+				expect(Number(style.weight)).toBeGreaterThanOrEqual(600)
+			}
+		})
+
+		test(`the selected Appearance option is a filled pill at ${viewport.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: viewport.width, height: viewport.height })
+
+			for (const theme of ['light', 'dark'] as const) {
+				await page.addInitScript((t) => localStorage.setItem('maskin-theme', t), theme)
+				await gotoSettings(page, account.workspaceId)
+
+				const selected = page.getByRole('button', { name: theme === 'light' ? 'Light' : 'Dark' })
+				await expect(selected).toBeVisible({ timeout: 10000 })
+
+				// The pill's fill must be the near-black (light) / near-white (dark)
+				// --primary, and its label the paired foreground — never the
+				// near-white --secondary, which is invisible on the white card.
+				const fill = await selected.evaluate((el) => {
+					const cs = getComputedStyle(el)
+					return { bg: cs.backgroundColor, fg: cs.color }
+				})
+				expect(fill.bg).toBe(theme === 'light' ? 'rgb(24, 24, 27)' : 'rgb(250, 250, 250)')
+				expect(fill.fg).toBe(theme === 'light' ? 'rgb(255, 255, 255)' : 'rgb(24, 24, 27)')
+
+				// The other two stay unfilled.
+				const unselected = page.getByRole('button', { name: 'System' })
+				const unselectedBg = await unselected.evaluate((el) => getComputedStyle(el).backgroundColor)
+				expect(unselectedBg).toBe('rgba(0, 0, 0, 0)')
+			}
+		})
+	}
+})
