@@ -184,15 +184,36 @@ export function describeFocus(status: PortraitStatus, session?: SessionResponse)
 export function AgentStatusPill({
 	status,
 	pulse = false,
+	variant = 'pill',
 }: {
 	status: PortraitStatus
 	/** Swaps the leading glyph for a status dot that pulses while the agent is
 	 *  live — the agent-detail header's treatment (mockup 2360). Everywhere else
 	 *  keeps the icon so the pill still reads at row density. */
 	pulse?: boolean
+	/** `inline` drops the plate: a 6px dot and the label in the status colour,
+	 *  which is how the agents list draws it (mockup 2337). `bare` drops the dot
+	 *  too, leaving the coloured word alone — the agent-detail identity row
+	 *  (mockup 2321). The filled pill is for a card, where the status has to hold
+	 *  its own against a portrait. */
+	variant?: 'pill' | 'inline' | 'bare'
 }) {
 	const meta = STATUS_META[status]
 	const isRunning = status === 'running'
+	if (variant === 'bare') {
+		return <span className={cn('font-semibold', meta.inlineText)}>{meta.label}</span>
+	}
+	if (variant === 'inline') {
+		return (
+			<span className={cn('inline-flex items-center gap-1.5 font-semibold', meta.inlineText)}>
+				<span
+					aria-hidden="true"
+					className={cn('size-1.5 shrink-0 rounded-full', meta.dot, isRunning && 'animate-pulse')}
+				/>
+				{meta.label}
+			</span>
+		)
+	}
 	return (
 		<span
 			className={cn(
@@ -223,6 +244,8 @@ interface StatusMeta {
 	pillText: string
 	/** Semantic token class for the dot form of the pill. */
 	dot: string
+	/** Label colour for the plate-less `inline` variant. */
+	inlineText: string
 }
 
 const STATUS_META: Record<PortraitStatus, StatusMeta> = {
@@ -232,6 +255,7 @@ const STATUS_META: Record<PortraitStatus, StatusMeta> = {
 		pillBg: 'bg-status-in_progress-bg',
 		pillText: 'text-status-in_progress-text',
 		dot: 'bg-status-in_progress-text',
+		inlineText: 'text-status-in_progress-text',
 	},
 	// `text-muted-foreground` on `bg-muted` is 4.39:1 in light mode — below the
 	// 4.5:1 WCAG AA floor at the 11px the agent header renders this pill at, so
@@ -242,6 +266,7 @@ const STATUS_META: Record<PortraitStatus, StatusMeta> = {
 		pillBg: 'bg-muted',
 		pillText: 'text-foreground',
 		dot: 'bg-muted-foreground',
+		inlineText: 'text-muted-foreground',
 	},
 	idle: {
 		label: 'Idle',
@@ -249,6 +274,7 @@ const STATUS_META: Record<PortraitStatus, StatusMeta> = {
 		pillBg: 'bg-muted',
 		pillText: 'text-foreground',
 		dot: 'bg-muted-foreground',
+		inlineText: 'text-muted-foreground',
 	},
 	failed: {
 		label: 'Failed',
@@ -256,6 +282,7 @@ const STATUS_META: Record<PortraitStatus, StatusMeta> = {
 		pillBg: 'bg-status-failed-bg',
 		pillText: 'text-status-failed-text',
 		dot: 'bg-status-failed-text',
+		inlineText: 'text-status-failed-text',
 	},
 }
 

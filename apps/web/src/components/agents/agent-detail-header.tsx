@@ -41,18 +41,20 @@ export function AgentDetailHeader({
 	return (
 		<header className="flex flex-col gap-3">
 			<div className="flex flex-wrap items-center gap-3">
-				{/* Read-only until POST /api/actors/:id/avatar exists — there is no
-				    backend to accept an upload yet. */}
+				{/* 56px, 16px radius, solid identity plate (mockup 2318). Read-only
+				    until POST /api/actors/:id/avatar exists — there is no backend to
+				    accept an upload yet. */}
 				<ActorAvatar
 					name={agent.name}
 					type={agent.type}
 					size="xl"
-					className="rounded-2xl"
+					tone="strong"
+					className="size-14 rounded-2xl text-[22px] font-bold"
 					id={agent.id}
 				/>
 				<div className="flex min-w-0 flex-1 flex-col gap-1.5">
 					<div className="flex flex-wrap items-center gap-2.5">
-						<h1 className="min-w-0 flex-1 truncate text-xl font-semibold tracking-tight text-foreground sm:text-2xl">
+						<h1 className="min-w-0 flex-1 truncate text-[clamp(19px,2.1vw,22px)] font-bold tracking-[-0.02em] text-foreground">
 							<EditableField
 								value={agent.name}
 								label="Agent name"
@@ -60,18 +62,19 @@ export function AgentDetailHeader({
 								onSave={(next) => {
 									if (next) save({ name: next }, 'the name')
 								}}
-								inputClassName="text-xl font-semibold tracking-tight sm:text-2xl"
+								inputClassName="text-[clamp(19px,2.1vw,22px)] font-bold tracking-[-0.02em]"
 							/>
 						</h1>
-						{/* Dot form of the single status renderer — it pulses while live
-						    (mockup 2360). */}
+						{/* The bare coloured word — no dot, no plate. v2 dropped both here
+						    because the name already carries the eye and the identity row
+						    should read as one line of text (mockup 2321). */}
 						<span className="text-[11px]">
-							<AgentStatusPill status={portrait} pulse />
+							<AgentStatusPill status={portrait} variant="bare" />
 						</span>
 						<Select value={workspace.id} disabled>
 							<SelectTrigger
 								aria-label="Team"
-								className="h-7 rounded-full border-dashed px-2.5 text-[11px] font-medium text-muted-foreground"
+								className="h-[22px] gap-1.5 rounded-full border-dashed bg-muted/40 px-2.5 py-0 text-[11px] font-semibold text-muted-foreground"
 							>
 								<SelectValue />
 							</SelectTrigger>
@@ -80,7 +83,7 @@ export function AgentDetailHeader({
 							</SelectContent>
 						</Select>
 					</div>
-					<p className="flex flex-wrap items-center gap-1 text-sm text-muted-foreground">
+					<p className="flex flex-wrap items-center gap-1 text-[13px] text-muted-foreground">
 						<span className="text-muted-foreground">Owns one outcome: </span>
 						<EditableField
 							value={agent.description ?? ''}
@@ -90,11 +93,8 @@ export function AgentDetailHeader({
 							maxLength={ACTOR_DESCRIPTION_MAX_LENGTH}
 							placeholder="What does this agent own?"
 							onSave={(next) => save({ description: next }, 'the outcome')}
-							className={cn(
-								'text-sm',
-								agent.description?.trim() ? 'text-foreground' : 'text-muted-foreground',
-							)}
-							inputClassName="text-sm"
+							className="text-[13px] text-muted-foreground"
+							inputClassName="text-[13px]"
 						/>
 					</p>
 				</div>
