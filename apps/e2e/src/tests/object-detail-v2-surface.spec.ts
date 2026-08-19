@@ -186,6 +186,50 @@ test.describe('Object detail — v2 surface', () => {
 		await expect(page.locator('.prose strong')).toHaveText('Charges')
 	})
 
+	// Clicking into the body must change nothing but the affordance — the
+	// mockup renders view and edit at identical size and width.
+	test('the body editor opens focused, at the same size, with its markers dimmed', async ({
+		page,
+		account,
+	}) => {
+		await page.setViewportSize({ width: 1024, height: 768 })
+		const bet = await account.api.createObject(account.workspaceId, {
+			type: 'bet',
+			title: 'Editor probe',
+			status: 'active',
+			content: 'Enterprise **trials** block on backups.',
+		})
+
+		await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
+		await expect(page.getByRole('heading', { level: 1, name: 'Editor probe' })).toBeVisible({
+			timeout: 15000,
+		})
+
+		const viewSize = await page
+			.locator('.prose p')
+			.first()
+			.evaluate((el) => getComputedStyle(el).fontSize)
+
+		await page.locator('.prose').first().click()
+		const field = page.locator('textarea').first()
+		await expect(field).toBeFocused()
+		expect(await field.evaluate((el) => getComputedStyle(el).fontSize)).toBe(viewSize)
+
+		// The delimiters are pushed back so the sentence still reads while you
+		// edit it; the overlay carries the text, the field carries the caret.
+		await expect(page.getByText('trials', { exact: true })).toBeVisible()
+		await expect(page.getByText('Esc', { exact: true })).toBeVisible()
+
+		// ⌘↵ commits.
+		await field.fill('Enterprise **trials** block on backups. Edited.')
+		await field.press('ControlOrMeta+Enter')
+		await page.reload()
+		await expect(page.getByRole('heading', { level: 1, name: 'Editor probe' })).toBeVisible({
+			timeout: 15000,
+		})
+		await expect(page.getByText(/Edited\./)).toBeVisible()
+	})
+
 	// "Reference an object" attaches removable chips that post as real
 	// references on the timeline.
 	test('the composer references an object and it lands on the timeline', async ({

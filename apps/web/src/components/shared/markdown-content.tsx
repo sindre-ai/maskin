@@ -2,6 +2,7 @@ import { CommentVisual, isVisualLanguage } from '@/components/activity/comment-v
 import { Textarea } from '@/components/ui/textarea'
 import type { ActorListItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { splitMarkdownMarkers } from '@/lib/markdown-markers'
 import { remarkPlugins } from '@maskin/markdown/plugins'
 import {
 	Children,
@@ -9,6 +10,7 @@ import {
 	type ReactNode,
 	isValidElement,
 	useCallback,
+	useEffect,
 	useLayoutEffect,
 	useMemo,
 	useRef,
@@ -91,6 +93,169 @@ export function toggleMarkdownMarker(
 	}
 }
 
+/**
+ * Where a click in the *rendered* prose lands in the *markdown source*.
+ *
+ * `nodeText` is the text node the click hit; finding it in the source and
+ * adding the offset within it puts the caret under the pointer. Inline markup
+ * (`**bold**`, links) shifts the answer by the marker characters, so this is a
+ * near-miss rather than an exact map — still far better than the alternative,
+ * which is every click landing at character 0. Returns null when the run can't
+ * be located, and the caller falls back to the end of the document.
+ */
+export function caretOffsetInSource(
+	source: string,
+	nodeText: string,
+	offsetInNode: number,
+): number | null {
+	const probe = nodeText.trim()
+	if (probe.length === 0) return null
+	const at = source.indexOf(probe)
+	if (at < 0) return null
+	// The rendered node may carry leading whitespace the source doesn't.
+	const lead = nodeText.length - nodeText.trimStart().length
+	const within = Math.max(0, Math.min(offsetInNode - lead, probe.length))
+	return at + within
+}
+
+/**
+ * Source offset for one end of a DOM range. Only a text node can be mapped —
+ * an offset into an element is a child index, not a character position.
+ */
+function offsetOfRangeEnd(source: string, node: Node, offset: number): number | null {
+	if (node.nodeType !== Node.TEXT_NODE) return null
+	return caretOffsetInSource(source, node.textContent ?? '', offset)
+}
+
+/** Reads the caret position under a point, across both browser spellings. */
+function caretOffsetAtPoint(x: number, y: number, source: string): number | null {
+	const doc = document as Document & {
+		caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null
+		caretRangeFromPoint?: (x: number, y: number) => Range | null
+	}
+	let node: Node | null = null
+	let offset = 0
+	if (typeof doc.caretPositionFromPoint === 'function') {
+		const pos = doc.caretPositionFromPoint(x, y)
+		if (pos) {
+			node = pos.offsetNode
+			offset = pos.offset
+		}
+	} else if (typeof doc.caretRangeFromPoint === 'function') {
+		const range = doc.caretRangeFromPoint(x, y)
+		if (range) {
+			node = range.startContainer
+			offset = range.startOffset
+		}
+	}
+	if (!node || node.nodeType !== Node.TEXT_NODE) return null
+	return caretOffsetInSource(source, node.textContent ?? '', offset)
+}
+
+/**
+ * One line of a markdown list: indent, marker, the space after it, an optional
+ * task checkbox, then the item's own text.
+ */
+const LIST_LINE = /^(\s*)([-*+]|\d+[.)])(\s+)(\[[ xX]\]\s+)?(.*)$/
+/** What one Tab step is worth. Two spaces — the nesting width remark reads. */
+const INDENT = '  '
+
+/** A rewritten textarea value plus where the selection should sit after it. */
+export interface EditorEdit {
+	value: string
+	start: number
+	end: number
+}
+
+/** The lines the selection touches, as a [start, end) slice of `value`. */
+function touchedLines(value: string, start: number, end: number): [number, number] {
+	const from = value.lastIndexOf('\n', start - 1) + 1
+	const nextBreak = value.indexOf('\n', end)
+	return [from, nextBreak === -1 ? value.length : nextBreak]
+}
+
+/**
+ * Enter inside a list carries the marker down to the next line, and Enter on an
+ * item that was left empty ends the list instead of laying down another marker
+ * — the two behaviours every markdown editor has and a bare textarea doesn't.
+ *
+ * Returns null when the caret isn't in a list, so Enter falls through to the
+ * browser's own newline.
+ */
+export function continueListOnEnter(value: string, start: number, end: number): EditorEdit | null {
+	// A selection replaces its own range; only a collapsed caret continues.
+	if (start !== end) return null
+	const [lineStart, lineEnd] = touchedLines(value, start, start)
+	const match = LIST_LINE.exec(value.slice(lineStart, lineEnd))
+	if (!match) return null
+	const indent = match[1] ?? ''
+	const marker = match[2] ?? ''
+	const spacing = match[3] ?? ''
+	const checkbox = match[4]
+	const body = match[5] ?? ''
+
+	if (body.trim().length === 0) {
+		// Drop the marker and leave the caret on the now-blank line.
+		return {
+			value: value.slice(0, lineStart) + value.slice(start),
+			start: lineStart,
+			end: lineStart,
+		}
+	}
+
+	const ordered = /^(\d+)([.)])$/.exec(marker)
+	const nextMarker = ordered ? `${Number(ordered[1]) + 1}${ordered[2]}` : marker
+	const inserted = `\n${indent}${nextMarker}${spacing}${checkbox ? '[ ] ' : ''}`
+	const caret = start + inserted.length
+	return { value: value.slice(0, start) + inserted + value.slice(start), start: caret, end: caret }
+}
+
+/**
+ * True where Tab means "indent" rather than "leave this field": inside a list
+ * item, or across a selection that spans lines. Everywhere else Tab keeps
+ * moving focus, so the editor never becomes a keyboard trap.
+ */
+export function isIndentContext(value: string, start: number, end: number): boolean {
+	if (value.slice(start, end).includes('\n')) return true
+	const [lineStart, lineEnd] = touchedLines(value, start, start)
+	return LIST_LINE.test(value.slice(lineStart, lineEnd))
+}
+
+/** Shifts every line the selection touches one step in or out. */
+export function shiftIndent(
+	value: string,
+	start: number,
+	end: number,
+	outdent: boolean,
+): EditorEdit {
+	const [blockStart, blockEnd] = touchedLines(value, start, end)
+	let firstDelta = 0
+	let totalDelta = 0
+	const shifted = value
+		.slice(blockStart, blockEnd)
+		.split('\n')
+		.map((line, index) => {
+			if (outdent) {
+				const removed = /^(?:\t| {1,2})/.exec(line)?.[0] ?? ''
+				if (index === 0) firstDelta = -removed.length
+				totalDelta -= removed.length
+				return line.slice(removed.length)
+			}
+			// A blank line gets no indent — that would only leave trailing spaces.
+			if (line.length === 0) return line
+			if (index === 0) firstDelta = INDENT.length
+			totalDelta += INDENT.length
+			return INDENT + line
+		})
+		.join('\n')
+
+	return {
+		value: value.slice(0, blockStart) + shifted + value.slice(blockEnd),
+		start: Math.max(blockStart, start + firstDelta),
+		end: Math.max(blockStart, end + totalDelta),
+	}
+}
+
 /** ⌘B / ⌘I / ⌘E — the three the mockup binds. */
 const SHORTCUT_MARKERS: Record<string, string> = { b: '**', i: '_', e: '`' }
 
@@ -98,6 +263,10 @@ interface SelectionToolbarState {
 	x: number
 	y: number
 	text: string
+	// Where the selection sits in the markdown *source*. Null when the range
+	// couldn't be mapped, and the marker falls back to a first-match search.
+	start: number | null
+	end: number | null
 }
 
 export function MarkdownContent({
@@ -133,6 +302,12 @@ export function MarkdownContent({
 	const [draft, setDraft] = useState(content)
 	const containerRef = useRef<HTMLDivElement>(null)
 	const textareaRef = useRef<HTMLTextAreaElement>(null)
+	// Selection an in-progress edit (list continuation, indent, ⌘B) asked for,
+	// applied by a layout effect once the new value is on screen.
+	const pendingSelectionRef = useRef<{ start: number; end: number } | null>(null)
+	// Source offset the caret should take when the editor mounts — set from the
+	// click that opened it. Null means "end of the document".
+	const pendingCaretRef = useRef<number | null>(null)
 	// Height of the rendered prose view at the moment edit mode is entered.
 	// Used as a floor so the box doesn't shrink when headings/lists collapse to plain text.
 	const [lockedHeight, setLockedHeight] = useState<number | undefined>(undefined)
@@ -146,10 +321,11 @@ export function MarkdownContent({
 		}
 	}, [draft, content, onChange])
 
-	const startEditing = (initialDraft: string) => {
+	const startEditing = (initialDraft: string, caret: number | null = null) => {
 		if (containerRef.current) {
 			setLockedHeight(containerRef.current.offsetHeight)
 		}
+		pendingCaretRef.current = caret
 		setDraft(initialDraft)
 		setEditing(true)
 	}
@@ -165,10 +341,24 @@ export function MarkdownContent({
 				setSelectionToolbar(null)
 				return
 			}
-			const rect = selection.getRangeAt(0).getBoundingClientRect()
-			setSelectionToolbar({ x: (rect.left + rect.right) / 2, y: rect.top - 8, text })
+			const range = selection.getRangeAt(0)
+			const rect = range.getBoundingClientRect()
+			// Map both ends through their own text node. The probe is the whole
+			// run the selection sits in, so selecting the second "retry" in a
+			// paragraph resolves to *that* one — a bare text search would always
+			// have formatted the first.
+			const from = offsetOfRangeEnd(content, range.startContainer, range.startOffset)
+			const to = offsetOfRangeEnd(content, range.endContainer, range.endOffset)
+			const mapped = from !== null && to !== null && to > from
+			setSelectionToolbar({
+				x: (rect.left + rect.right) / 2,
+				y: rect.top - 8,
+				text,
+				start: mapped ? from : null,
+				end: mapped ? to : null,
+			})
 		}, 0)
-	}, [editable])
+	}, [editable, content])
 
 	// The toolbar edits the markdown source, not the rendered output: it finds
 	// the selected text in the source and toggles the marker around it.
@@ -177,34 +367,15 @@ export function MarkdownContent({
 			const active = selectionToolbar
 			setSelectionToolbar(null)
 			if (!active) return
-			const index = content.indexOf(active.text)
-			if (index < 0) return
-			const next = toggleMarkdownMarker(content, index, index + active.text.length, marker)
+			// `?? ` not `||` — a selection at offset 0 is a real range.
+			const from = active.start ?? content.indexOf(active.text)
+			if (from < 0) return
+			const to = active.end ?? from + active.text.length
+			const next = toggleMarkdownMarker(content, from, to, marker)
 			window.getSelection()?.removeAllRanges()
 			if (next.value !== content) onChange?.(next.value)
 		},
 		[selectionToolbar, content, onChange],
-	)
-
-	const handleEditorKeyDown = useCallback(
-		(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-			if (e.key === 'Escape') {
-				setEditing(false)
-				setDraft(content)
-				return
-			}
-			if (!(e.metaKey || e.ctrlKey)) return
-			const marker = SHORTCUT_MARKERS[e.key.toLowerCase()]
-			if (!marker) return
-			e.preventDefault()
-			const el = e.currentTarget
-			const next = toggleMarkdownMarker(el.value, el.selectionStart, el.selectionEnd, marker)
-			setDraft(next.value)
-			requestAnimationFrame(() => {
-				el.setSelectionRange(next.start, next.end)
-			})
-		},
-		[content],
 	)
 
 	const adjustHeight = useCallback(() => {
@@ -216,9 +387,101 @@ export function MarkdownContent({
 		ta.style.height = `${Math.max(scrollHeight, min)}px`
 	}, [lockedHeight])
 
+	// Rewrites the field and asks for a caret position once React has committed
+	// the new value. Deliberately *not* a requestAnimationFrame callback: a
+	// frame can be delayed past the next keystroke, which restores a stale caret
+	// mid-word and scatters the characters. The layout effect below runs before
+	// paint and before any further input, so the caret can't arrive late.
+	const applyEdit = useCallback((edit: EditorEdit) => {
+		pendingSelectionRef.current = { start: edit.start, end: edit.end }
+		setDraft(edit.value)
+	}, [])
+
+	const handleEditorKeyDown = useCallback(
+		(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+			if (e.key === 'Escape') {
+				setEditing(false)
+				setDraft(content)
+				return
+			}
+			const el = e.currentTarget
+			// Tab is claimed only where it means indentation — see isIndentContext.
+			if (e.key === 'Tab' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+				if (!isIndentContext(el.value, el.selectionStart, el.selectionEnd)) return
+				e.preventDefault()
+				applyEdit(shiftIndent(el.value, el.selectionStart, el.selectionEnd, e.shiftKey))
+				return
+			}
+			if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+				const edit = continueListOnEnter(el.value, el.selectionStart, el.selectionEnd)
+				if (!edit) return
+				e.preventDefault()
+				applyEdit(edit)
+				return
+			}
+			if (!(e.metaKey || e.ctrlKey)) return
+			// ⌘⏎ commits, mirroring Escape's revert — otherwise the only way out
+			// of a full-page editor is to find something else to click.
+			if (e.key === 'Enter') {
+				e.preventDefault()
+				e.currentTarget.blur()
+				return
+			}
+			const marker = SHORTCUT_MARKERS[e.key.toLowerCase()]
+			if (!marker) return
+			e.preventDefault()
+			applyEdit(toggleMarkdownMarker(el.value, el.selectionStart, el.selectionEnd, marker))
+		},
+		[content, applyEdit],
+	)
+
 	useLayoutEffect(() => {
-		if (editing) adjustHeight()
+		if (!editing) return
+		adjustHeight()
+		const ta = textareaRef.current
+		if (!ta || document.activeElement === ta) return
+		ta.focus()
+		const end = ta.value.length
+		ta.setSelectionRange(end, end)
 	}, [editing, adjustHeight])
+
+	// Runs after every commit; a no-op unless an edit left a caret request.
+	useLayoutEffect(() => {
+		const pending = pendingSelectionRef.current
+		if (!pending) return
+		pendingSelectionRef.current = null
+		const ta = textareaRef.current
+		if (!ta) return
+		ta.setSelectionRange(pending.start, pending.end)
+		adjustHeight()
+	})
+
+	// Focus is taken here rather than with `autoFocus` so the caret can land
+	// where the click did. Keyed on `editing` alone: re-running on a height
+	// change would yank the caret back mid-typing.
+	useLayoutEffect(() => {
+		if (!editing) return
+		const ta = textareaRef.current
+		if (!ta) return
+		ta.focus()
+		const caret = Math.min(pendingCaretRef.current ?? ta.value.length, ta.value.length)
+		ta.setSelectionRange(caret, caret)
+		pendingCaretRef.current = null
+	}, [editing])
+
+	// The toolbar is pinned to viewport coordinates captured at selection time,
+	// so it detaches from its text the moment anything scrolls. Dismiss instead
+	// of leaving it floating over unrelated content.
+	useEffect(() => {
+		if (!selectionToolbar) return
+		const dismiss = () => setSelectionToolbar(null)
+		window.addEventListener('scroll', dismiss, true)
+		window.addEventListener('resize', dismiss)
+		return () => {
+			window.removeEventListener('scroll', dismiss, true)
+			window.removeEventListener('resize', dismiss)
+		}
+	}, [selectionToolbar])
 
 	const components = useMemo<Components>(() => {
 		// Inline code spans that contain a bare URL render as a clickable link instead
@@ -273,18 +536,20 @@ export function MarkdownContent({
 	}, [mentionActors, onMentionClick, renderVisuals])
 
 	if (editable && editing) {
-		return (
+		const isDoc = size === 'doc'
+		// The primitive sets `md:text-sm` and a focus ring. At the document scale
+		// both have to go, or the copy shrinks a pixel and a stray ring appears
+		// the moment you click in — the field has to *be* the view, exactly.
+		const field = (
 			<Textarea
 				ref={textareaRef}
-				// At the document scale the field is the view: same type, same
-				// measure, same plate, so nothing shifts when you start typing.
 				className={cn(
-					'w-full resize-none overflow-hidden border-none font-sans outline-none focus:outline-none',
-					size === 'doc'
-						? 'max-w-[75ch] rounded-[9px] bg-muted/60 px-2 py-1 text-[15px] text-foreground'
+					'w-full resize-none overflow-hidden border-none font-sans outline-none focus:outline-none focus-visible:ring-0 focus-visible:ring-offset-0',
+					isDoc
+						? 'relative min-h-0 rounded-[9px] bg-transparent px-2 py-1 text-[15px] text-transparent caret-foreground md:text-[15px]'
 						: 'bg-transparent p-0 text-sm text-muted-foreground',
 				)}
-				style={{ minHeight: lockedHeight, lineHeight: size === 'doc' ? '1.65' : '1.7142857' }}
+				style={{ minHeight: lockedHeight, lineHeight: isDoc ? '1.65' : '1.7142857' }}
 				value={draft}
 				onChange={(e) => {
 					setDraft(e.target.value)
@@ -292,8 +557,42 @@ export function MarkdownContent({
 				}}
 				onKeyDown={handleEditorKeyDown}
 				onBlur={handleBlur}
-				autoFocus
 			/>
+		)
+
+		if (!isDoc) return field
+
+		return (
+			<div className="-ml-2 flex w-[calc(100%+8px)] max-w-[75ch] flex-col">
+				{/* What you read is the overlay; the textarea over it is transparent
+				    but for its caret. Same font, size, leading, padding and wrapping,
+				    so every glyph lands in the same place — which is what lets the
+				    delimiters recede without the caret drifting off the text. */}
+				<div className="relative rounded-[9px] bg-muted/60 ring-1 ring-border">
+					<div
+						aria-hidden="true"
+						className="pointer-events-none absolute inset-0 whitespace-pre-wrap break-words px-2 py-1 text-[15px] leading-[1.65] text-foreground"
+					>
+						{splitMarkdownMarkers(draft).map((segment, index) => (
+							<span
+								// biome-ignore lint/suspicious/noArrayIndexKey: segments are positional by construction
+								key={index}
+								className={cn(segment.isMarker && 'text-border-strong')}
+							>
+								{segment.text}
+							</span>
+						))}
+						{/* Keeps the overlay's height in step when the draft ends in a newline. */}
+						{draft.endsWith('\n') && '\u200b'}
+					</div>
+					{field}
+				</div>
+				<p className="mt-1.5 px-2 text-[10.5px] text-muted-foreground">
+					<kbd className="font-mono">Esc</kbd> to cancel · <kbd className="font-mono">⌘↵</kbd> to
+					save · <kbd className="font-mono">⌘B</kbd> <kbd className="font-mono">⌘I</kbd>{' '}
+					<kbd className="font-mono">⌘E</kbd> to format
+				</p>
+			</div>
 		)
 	}
 
@@ -350,12 +649,30 @@ export function MarkdownContent({
 			)}
 			<div
 				ref={containerRef}
-				className={className}
+				className={cn(
+					className,
+					// The doc view sits on the editor's own plate and measure, so the
+					// swap into edit mode moves nothing (mockup 1027–1037).
+					size === 'doc' &&
+						editable &&
+						'-ml-2 w-[calc(100%+8px)] max-w-[75ch] cursor-text rounded-[9px] px-2 py-1 transition-colors hover:bg-muted/60',
+				)}
 				onMouseUp={handleSelectionUp}
-				onClick={() => {
+				onClick={(e) => {
+					if (!editable) return
+					// Links, task checkboxes and any other control in the body have to
+					// keep working — swallowing their click into the editor makes the
+					// rendered document unusable as a document.
+					if (
+						(e.target as HTMLElement).closest(
+							'a,button,input,select,textarea,summary,[role="button"]',
+						)
+					) {
+						return
+					}
 					// Selecting text must not drop you into the editor and lose it.
-					if (!editable || String(window.getSelection() ?? '').trim()) return
-					startEditing(content)
+					if (String(window.getSelection() ?? '').trim()) return
+					startEditing(content, caretOffsetAtPoint(e.clientX, e.clientY, content))
 				}}
 				onKeyDown={(e) => {
 					if (editable && (e.key === 'Enter' || e.key === ' ')) startEditing(content)

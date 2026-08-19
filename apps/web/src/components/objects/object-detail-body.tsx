@@ -33,13 +33,7 @@ export function ObjectDetailBody({
 				<MarkdownContent
 					content={object.content ?? ''}
 					size="doc"
-					// The view sits on the same plate the editor uses — click it and
-					// nothing moves (mockup 1027–1037).
-					className={cn(
-						'max-w-[75ch] rounded-[9px]',
-						onContentChange &&
-							'-ml-2 w-[calc(100%+8px)] cursor-text px-2 py-1 transition-colors hover:bg-muted/60',
-					)}
+					className="max-w-[75ch]"
 					editable={Boolean(onContentChange)}
 					onChange={onContentChange}
 				/>

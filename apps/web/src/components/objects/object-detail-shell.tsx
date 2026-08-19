@@ -277,7 +277,10 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 				{/* The document owns the only scroll region on this screen, so the
 				    bar above stays put and the composer can pin to its bottom. */}
 				<div className="min-h-0 flex-1 overflow-y-auto px-[clamp(14px,3vw,24px)] pt-[clamp(18px,3vw,30px)]">
-					<div className="mx-auto flex w-full min-w-0 max-w-[680px] flex-col">
+					{/* `min-h-full` + the spacer below put the composer on the bottom of
+					    the viewport while the document is short, without giving up the
+					    sticky behaviour once it grows past one screen. */}
+					<div className="mx-auto flex min-h-full w-full min-w-0 max-w-[680px] flex-col">
 						<ObjectDetailIdentity
 							object={object}
 							statuses={statuses}
@@ -325,6 +328,8 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 								<RelatedTab object={object} />
 							</TabsContent>
 						</Tabs>
+
+						<div aria-hidden="true" className="min-h-6 flex-1" />
 
 						{/* The mockup's composer is a single bar — `+`, the field, mic and
 						    send on one row (1358–1366), with no hint line under it. */}
