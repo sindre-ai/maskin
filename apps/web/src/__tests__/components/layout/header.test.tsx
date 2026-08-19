@@ -166,6 +166,7 @@ describe('Header', () => {
 			setTitle: vi.fn(),
 			setSubtitle: vi.fn(),
 			setActions: vi.fn(),
+			setTitleTabs: vi.fn(),
 			setStickyIdentity: vi.fn(),
 			setCrumb: vi.fn(),
 			setContentPush: vi.fn(),
@@ -176,6 +177,31 @@ describe('Header', () => {
 		expect(screen.getByRole('button', { name: 'Custom Action' })).toBeInTheDocument()
 	})
 
+	it('puts titleTabs beside the heading, ahead of the search and New cluster', () => {
+		vi.mocked(usePageHeader).mockReturnValue({
+			actions: null,
+			titleTabs: <button type="button">All</button>,
+			stickyIdentity: null,
+			setTitle: vi.fn(),
+			setSubtitle: vi.fn(),
+			setActions: vi.fn(),
+			setTitleTabs: vi.fn(),
+			setStickyIdentity: vi.fn(),
+			setCrumb: vi.fn(),
+			setContentPush: vi.fn(),
+			setScrollLocked: vi.fn(),
+		})
+
+		render(<Header />)
+		const tab = screen.getByRole('button', { name: 'All' })
+		const search = screen.getByRole('button', { name: /search the workspace/i })
+
+		// The mockup's left cluster is `<h1>` → tabs → spacer, so the tabs come
+		// before the search field. Anything published as `actions` instead lands
+		// past it, in the right-hand cluster.
+		expect(tab.compareDocumentPosition(search) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+	})
+
 	it('only shows the hamburger SidebarTrigger below md', () => {
 		vi.mocked(usePageHeader).mockReturnValue({
 			actions: null,
@@ -183,6 +209,7 @@ describe('Header', () => {
 			setTitle: vi.fn(),
 			setSubtitle: vi.fn(),
 			setActions: vi.fn(),
+			setTitleTabs: vi.fn(),
 			setStickyIdentity: vi.fn(),
 			setCrumb: vi.fn(),
 			setContentPush: vi.fn(),
@@ -212,6 +239,7 @@ describe('Header', () => {
 			setTitle: vi.fn(),
 			setSubtitle: vi.fn(),
 			setActions: vi.fn(),
+			setTitleTabs: vi.fn(),
 			setStickyIdentity: vi.fn(),
 			setCrumb: vi.fn(),
 			setContentPush: vi.fn(),
@@ -243,6 +271,7 @@ describe('Header', () => {
 			setTitle: vi.fn(),
 			setSubtitle: vi.fn(),
 			setActions: vi.fn(),
+			setTitleTabs: vi.fn(),
 			setStickyIdentity: vi.fn(),
 			setCrumb: vi.fn(),
 			setContentPush: vi.fn(),
@@ -276,6 +305,7 @@ describe('Header', () => {
 			setTitle: vi.fn(),
 			setSubtitle: vi.fn(),
 			setActions: vi.fn(),
+			setTitleTabs: vi.fn(),
 			setStickyIdentity: vi.fn(),
 			setCrumb: vi.fn(),
 			setContentPush: vi.fn(),
@@ -349,6 +379,7 @@ describe('Header', () => {
 			setTitle: vi.fn(),
 			setSubtitle: vi.fn(),
 			setActions: vi.fn(),
+			setTitleTabs: vi.fn(),
 			setStickyIdentity: vi.fn(),
 			setCrumb: vi.fn(),
 			setContentPush: vi.fn(),

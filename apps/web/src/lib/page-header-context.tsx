@@ -20,6 +20,11 @@ interface PageHeaderState {
 	title?: string
 	subtitle?: string
 	actions?: ReactNode
+	// Controls that belong beside the <h1>, inside the left cluster, rather
+	// than out in the right-hand cluster with search and New — the Objects
+	// screen's type tabs (mockup 146–153, `margin-left:14px` on the h1's
+	// sibling, before the `margin-left:auto` spacer).
+	titleTabs?: ReactNode
 	stickyIdentity?: ReactNode
 	crumb?: PageHeaderCrumb
 	// CSS width value (e.g. '18rem') the current route wants the app shell
@@ -37,6 +42,7 @@ interface PageHeaderContextValue extends PageHeaderState {
 	setTitle: (title: string | undefined) => void
 	setSubtitle: (subtitle: string | undefined) => void
 	setActions: (actions: ReactNode) => void
+	setTitleTabs: (titleTabs: ReactNode) => void
 	setStickyIdentity: (stickyIdentity: ReactNode) => void
 	setCrumb: (crumb: PageHeaderCrumb | undefined) => void
 	setContentPush: (contentPush: string | undefined) => void
@@ -47,6 +53,7 @@ const PageHeaderContext = createContext<PageHeaderContextValue>({
 	setTitle: () => {},
 	setSubtitle: () => {},
 	setActions: () => {},
+	setTitleTabs: () => {},
 	setStickyIdentity: () => {},
 	setCrumb: () => {},
 	setContentPush: () => {},
@@ -66,6 +73,10 @@ export function PageHeaderProvider({ children }: { children: ReactNode }) {
 
 	const setActions = useCallback((actions: ReactNode) => {
 		setState((prev) => ({ ...prev, actions }))
+	}, [])
+
+	const setTitleTabs = useCallback((titleTabs: ReactNode) => {
+		setState((prev) => ({ ...prev, titleTabs }))
 	}, [])
 
 	const setStickyIdentity = useCallback((stickyIdentity: ReactNode) => {
@@ -91,6 +102,7 @@ export function PageHeaderProvider({ children }: { children: ReactNode }) {
 				setTitle,
 				setSubtitle,
 				setActions,
+				setTitleTabs,
 				setStickyIdentity,
 				setCrumb,
 				setContentPush,

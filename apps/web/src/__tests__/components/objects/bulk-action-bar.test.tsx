@@ -201,6 +201,81 @@ describe('BulkActionBar', () => {
 	// Coverage of the CSS guard itself lives in app-css-motion.test.ts. The
 	// bar's transition is narrowed to transform + opacity per the v2 spec's
 	// "shadow + transform" tier at --duration-200.
+	it('offers Select all only while rows remain unselected', () => {
+		const onSelectAll = vi.fn()
+		const { rerender } = renderBar({ selectedCount: 3, totalCount: 12, onSelectAll })
+
+		const link = screen.getByRole('button', { name: 'Select all 12' })
+		fireEvent.click(link)
+		expect(onSelectAll).toHaveBeenCalledTimes(1)
+
+		// Everything is selected — there is nothing left for the link to do.
+		rerender(
+			<BulkActionBar
+				selectedCount={12}
+				totalCount={12}
+				onSelectAll={onSelectAll}
+				onClear={vi.fn()}
+			/>,
+		)
+		expect(screen.queryByRole('button', { name: /Select all/ })).not.toBeInTheDocument()
+	})
+
+	it('selects all on "a" and archives on "e"', () => {
+		const onSelectAll = vi.fn()
+		const onArchive = vi.fn()
+		renderBar({ selectedCount: 3, totalCount: 12, onSelectAll, onArchive })
+
+		act(() => {
+			window.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }))
+		})
+		expect(onSelectAll).toHaveBeenCalledTimes(1)
+
+		act(() => {
+			window.dispatchEvent(new KeyboardEvent('keydown', { key: 'e', bubbles: true }))
+		})
+		expect(onArchive).toHaveBeenCalledTimes(1)
+		expect(vi.mocked(trackBulkEditCommit)).toHaveBeenCalledWith(
+			expect.objectContaining({ action: 'archive', selected_count: 3 }),
+		)
+	})
+
+	it('ignores the bare-letter shortcuts while the user is typing', () => {
+		const onSelectAll = vi.fn()
+		const onArchive = vi.fn()
+		renderBar({ selectedCount: 3, totalCount: 12, onSelectAll, onArchive })
+
+		const input = document.createElement('input')
+		document.body.appendChild(input)
+		input.focus()
+		act(() => {
+			input.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }))
+			input.dispatchEvent(new KeyboardEvent('keydown', { key: 'e', bubbles: true }))
+		})
+
+		expect(onSelectAll).not.toHaveBeenCalled()
+		expect(onArchive).not.toHaveBeenCalled()
+		input.remove()
+	})
+
+	it("does not claim ⌘A — that is the browser's select-all", () => {
+		const onSelectAll = vi.fn()
+		renderBar({ selectedCount: 3, totalCount: 12, onSelectAll })
+
+		act(() => {
+			window.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', metaKey: true, bubbles: true }))
+		})
+		expect(onSelectAll).not.toHaveBeenCalled()
+	})
+
+	it('hands the selection to a new chat from "Ask an agent"', () => {
+		const onAskAgent = vi.fn()
+		renderBar({ selectedCount: 3, onAskAgent })
+
+		fireEvent.click(screen.getByRole('button', { name: 'Ask an agent' }))
+		expect(onAskAgent).toHaveBeenCalledTimes(1)
+	})
+
 	it('keeps its transform+opacity transition class regardless of prefers-reduced-motion', () => {
 		setMatchMedia(true)
 		renderBar()
