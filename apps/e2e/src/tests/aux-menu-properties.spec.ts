@@ -26,8 +26,11 @@ test.describe('AuxiliaryActionMenu — Properties group on bet detail', () => {
 			await page.getByRole('button', { name: /more actions/i }).click()
 
 			// Status + Driver rows appear inside the menu / sheet at these widths.
-			await expect(page.getByText(/^Status$/)).toBeVisible()
-			await expect(page.getByText(/^Driver$/)).toBeVisible()
+			// Scoped to the menu — the identity row above the title carries its own
+			// "Status" and "Driver" labels on its picker pills.
+			const menu = page.getByRole('menu').or(page.getByRole('dialog')).first()
+			await expect(menu.getByText(/^Status$/)).toBeVisible()
+			await expect(menu.getByText(/^Driver$/)).toBeVisible()
 		})
 	}
 

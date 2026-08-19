@@ -39,16 +39,19 @@ test.describe('Object detail — v2 surface', () => {
 				timeout: 15000,
 			})
 
-			// The detail bar replaces the search + New cluster on this route.
+			// The detail bar drops the workspace search but keeps the split New
+			// button every screen carries, ordered ⋯ → properties → New.
 			const bar = page.locator('main header').first()
 			await expect(bar.getByRole('link', { name: 'Objects' })).toBeVisible()
 			await expect(bar.getByText(TITLE)).toBeVisible()
-			await expect(bar.getByRole('button', { name: /^New$/ })).toHaveCount(0)
-			await expect(bar.getByRole('button', { name: 'Properties', exact: true })).toBeVisible()
 			await expect(bar.getByRole('button', { name: /more actions/i })).toBeVisible()
+			await expect(bar.getByRole('button', { name: 'Properties', exact: true })).toBeVisible()
+			await expect(bar.getByRole('button', { name: /^New / })).toBeVisible()
+			await expect(bar.getByRole('button', { name: /More ways to start/ })).toBeVisible()
 
-			// Meta line above the title: type word, status chip, driver chip.
+			// Meta line above the title: type word, a Status pill and a Driver pill.
 			await expect(page.getByText('Bet', { exact: true }).first()).toBeVisible()
+			await expect(page.getByText('Status', { exact: true })).toBeVisible()
 			await expect(page.locator('[data-hero-status-trigger]')).toBeVisible()
 			await expect(
 				page

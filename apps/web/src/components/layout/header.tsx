@@ -178,6 +178,12 @@ export function Header() {
 					{crumb.label}
 				</span>
 				{actions}
+				{/* The same split New button every screen carries, last in the row
+				    (mockup 925–946 puts it at `order:10`). */}
+				<NewMenu
+					onNewChat={() => navigate({ to: '/$workspaceId/chats/new', params: { workspaceId } })}
+					primaryKind={leafConfig?.primary ?? 'chat'}
+				/>
 			</header>
 		)
 	}

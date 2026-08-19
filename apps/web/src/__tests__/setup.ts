@@ -1,6 +1,7 @@
 /// <reference types="vitest/globals" />
 import '@testing-library/jest-dom'
 import type { WorkspaceWithRole } from '@/lib/api'
+import { CommandPaletteProvider } from '@/lib/command-palette-context'
 import { PageHeaderProvider, usePageHeader } from '@/lib/page-header-context'
 import { WorkspaceContext, type WorkspaceContextValue } from '@/lib/workspace-context'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -165,6 +166,8 @@ export function createWorkspaceWrapper(
 		workspaceId: workspace.id,
 		sseStatus: 'connected',
 	}
+	// The palette provider rides along because shell components (the New menu in
+	// the object page's detail bar) reach for it; the app always has one.
 	return ({ children }: { children: ReactNode }) =>
 		React.createElement(
 			QueryClientProvider,
@@ -172,13 +175,17 @@ export function createWorkspaceWrapper(
 			React.createElement(
 				WorkspaceContext.Provider,
 				{ value: ctxValue },
-				renderPageHeader
-					? React.createElement(
-							PageHeaderProvider,
-							null,
-							React.createElement(PageHeaderOutlet, null, children),
-						)
-					: children,
+				React.createElement(
+					CommandPaletteProvider,
+					null,
+					renderPageHeader
+						? React.createElement(
+								PageHeaderProvider,
+								null,
+								React.createElement(PageHeaderOutlet, null, children),
+							)
+						: children,
+				),
 			),
 		)
 }

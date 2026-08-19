@@ -41,20 +41,22 @@ export function StatusSelect({
 		<Select value={current} onValueChange={onChange}>
 			<SelectTrigger
 				size={isChip ? 'chip' : 'default'}
-				// The status chip is the one chip that keeps a resting hairline
-				// (mockup `odSkBc`); the driver beside it takes one only on hover.
-				className={cn(isChip && 'rounded-md border-border py-[3px] pl-[7px] pr-1.5')}
+				// The status pill mirrors the driver pill beside it (mockup
+				// 1060–1066): a dot in the status's colour, the word "Status", then
+				// the value — so the meta line reads as one row of like controls.
+				className={cn(isChip && 'gap-1.5 rounded-[7px] px-2 py-[3px]')}
 				data-hero-status-trigger={heroAnchor ? '' : undefined}
 				title={isChip ? 'Change status' : undefined}
 			>
 				{isChip ? (
-					<span
-						className={cn(
-							'font-mono text-[9.5px] font-bold uppercase leading-none tracking-[0.09em]',
-							dot.text,
-						)}
-					>
-						{current.replace(/_/g, ' ')}
+					<span className="inline-flex items-center gap-1.5">
+						<span className={cn('shrink-0', dot.text)}>
+							<span aria-hidden="true" className="block size-[7px] rounded-full bg-current" />
+						</span>
+						<span className="text-muted-foreground">Status</span>
+						<span className="font-semibold capitalize text-secondary-foreground">
+							{current.replace(/_/g, ' ')}
+						</span>
 					</span>
 				) : (
 					<SelectValue />
