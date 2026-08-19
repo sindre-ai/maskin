@@ -170,4 +170,43 @@ describe('SessionDispatcher.dispatch — sticky retry Integration', () => {
 		expect(updated.agentServerId).toBe(pinned.id)
 		expect(updated.status).toBe('running')
 	})
+
+	/**
+	 * getStickyAssignment() must not honor a pin to a server the operator has
+	 * since taken out of rotation — a bare `agent_servers.id` lookup with no
+	 * status filter would otherwise route a brand-new session start to a
+	 * server intentionally being drained/disabled, unlike
+	 * pickLeastLoadedServer()'s `status = 'active'` filter.
+	 */
+	it('falls back to a fresh active server when the pinned server has been drained', async () => {
+		const drained = await insertServer({ url: 'http://drained:3001', max: 10 })
+		const fresh = await insertServer({ url: 'http://fresh:3001', max: 10 })
+		const session = await insertSession(db, workspaceId, actorId, actorId, {
+			status: 'starting',
+			agentServerId: drained.id,
+		})
+		// Operator drains the server after the session was pinned but before the retry.
+		await db.update(agentServers).set({ status: 'draining' }).where(eq(agentServers.id, drained.id))
+
+		const client = makeClient()
+		const dispatcher = new SessionDispatcher({
+			db,
+			buildStartRequest: async (sessionId) => ({
+				sessionId,
+				image: 'agent-base:latest',
+				env: { SESSION_ID: sessionId },
+			}),
+			clientFactory: () => client,
+		})
+
+		const result = await dispatcher.dispatch(session.id, `dispatch:${session.id}`)
+
+		expect(result).toEqual({ kind: 'dispatched' })
+		expect(client.startSession).toHaveBeenCalledWith(
+			expect.objectContaining({ sessionId: session.id }),
+		)
+		const [updated] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+		expect(updated.agentServerId).toBe(fresh.id)
+		expect(updated.status).toBe('running')
+	})
 })
