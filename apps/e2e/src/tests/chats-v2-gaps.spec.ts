@@ -46,9 +46,10 @@ test.describe('Chats v2 — list affordances', () => {
 		const list = page.getByTestId('conversation-list')
 		await expect(list).toBeVisible({ timeout: 15_000 })
 
-		// One page of history: the terminal line, never a permanent spinner label.
-		await expect(list.getByText(/That's the whole history/)).toBeVisible({ timeout: 15_000 })
+		// One page of history: the list just ends — no scroll affordance and no
+		// permanent spinner label left behind.
 		await expect(list.getByText('Loading older conversations…')).toHaveCount(0)
+		await expect(list.getByText('Older conversations load as you scroll')).toHaveCount(0)
 	})
 })
 
@@ -74,10 +75,14 @@ test.describe('Chats v2 — agent data-viz card', () => {
 			await expect(page.getByTestId('thread-messages')).toBeVisible({ timeout: 15_000 })
 
 			// The fenced spec becomes the bounded visual, not a literal code block.
-			await expect(page.getByText('Drop-off concentrates on step two.')).toBeVisible({
+			// Scoped to the transcript: the left pane's row snippet is the raw
+			// message, caption JSON and all, so a page-wide match resolves to two
+			// elements at every viewport wide enough to show the list.
+			const transcript = page.getByTestId('thread-messages')
+			await expect(transcript.getByText('Drop-off concentrates on step two.')).toBeVisible({
 				timeout: 15_000,
 			})
-			await expect(page.getByText('"type": "bar"')).toHaveCount(0)
+			await expect(transcript.getByText('"type": "bar"')).toHaveCount(0)
 
 			const overflow = await page.evaluate(() => {
 				const el = document.scrollingElement

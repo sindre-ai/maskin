@@ -92,7 +92,10 @@ export function ThreadMessages({ workspaceId, conversationId, className }: Threa
 			ref={scrollerRef}
 			onScroll={handleScroll}
 			data-testid="thread-messages"
-			className={cn('flex flex-1 flex-col gap-4 overflow-y-auto px-3 pt-4 pb-2', className)}
+			className={cn(
+				'flex flex-1 flex-col gap-[18px] overflow-y-auto px-[var(--chat-gut)] pt-[18px] pb-1.5',
+				className,
+			)}
 		>
 			{isOldThread(conversation?.lastMessageAt) ? (
 				<p className="text-center text-[10.5px] leading-[1.5] text-muted-foreground">
@@ -129,13 +132,30 @@ export function ThreadMessages({ workspaceId, conversationId, className }: Threa
 					const turnsBelowHere = isLast ? [...turnsBelow, ...fallback] : turnsBelow
 					return (
 						<div key={message.id} className="flex flex-col gap-1">
-							{isNewDay(message.createdAt, prev?.createdAt ?? null) ? (
+							{/* A divider separates two days; there is nothing above the
+							    first message to separate it from, so the thread doesn't
+							    open with a "Today" rule floating over its own first line. */}
+							{index > 0 && isNewDay(message.createdAt, prev?.createdAt ?? null) ? (
 								<MessageDivider date={message.createdAt} />
 							) : null}
-							{turnsAbove.map((turn) => (
-								<MessageActivity key={turn.sessionId} workspaceId={workspaceId} turn={turn} />
-							))}
-							<MessageBubble workspaceId={workspaceId} message={message} />
+							{/* A finished turn belongs to the reply it produced, so it
+							    renders *inside* that message under the agent's name
+							    rather than as a separate row above it — which read as
+							    a stray line belonging to nothing. Live turns stay
+							    standalone below their trigger, where they carry their
+							    own avatar. */}
+							<MessageBubble
+								workspaceId={workspaceId}
+								message={message}
+								activity={turnsAbove.map((turn) => (
+									<MessageActivity
+										key={turn.sessionId}
+										workspaceId={workspaceId}
+										turn={turn}
+										layout="inline"
+									/>
+								))}
+							/>
 							{turnsBelowHere.map((turn) => (
 								<MessageActivity key={turn.sessionId} workspaceId={workspaceId} turn={turn} />
 							))}

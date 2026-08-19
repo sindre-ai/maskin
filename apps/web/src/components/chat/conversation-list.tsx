@@ -122,6 +122,10 @@ export function ConversationList({
 									))}
 								</div>
 							))}
+							{/* Nothing marks the end of the list. The mockup's
+							    "that's the whole history — N conversations" footer was
+							    a running total nobody asked for, printed under every
+							    short list; the last row ending is signal enough. */}
 							{hasNextPage ? (
 								// The sentinel is the loader; its label only claims to be
 								// loading while a page is actually in flight (mockup 545–549).
@@ -138,12 +142,7 @@ export function ConversationList({
 										'Older conversations load as you scroll'
 									)}
 								</div>
-							) : (
-								<div className="px-3 pt-3 text-center text-[10.5px] text-muted-foreground">
-									That's the whole history — {conversations.length}{' '}
-									{conversations.length === 1 ? 'conversation' : 'conversations'} in this workspace.
-								</div>
-							)}
+							) : null}
 						</>
 					)}
 				</div>

@@ -11,6 +11,10 @@ import { MessageDivider } from './message-divider'
 interface MessageBubbleProps {
 	workspaceId: string
 	message: MessageResponse
+	/** The agent's finished chain-of-thought for the turn that produced this
+	 *  message, rendered as a muted line under the name (mockup screenshots).
+	 *  Only ever present on an agent message. */
+	activity?: React.ReactNode
 }
 
 /**
@@ -20,7 +24,7 @@ interface MessageBubbleProps {
  * message — human or agent — renders left-aligned on the page background
  * (not a card, mockup 648–658) with a `REFERENCED` rail beneath the body.
  */
-export function MessageBubble({ workspaceId, message }: MessageBubbleProps) {
+export function MessageBubble({ workspaceId, message, activity }: MessageBubbleProps) {
 	const actor = getStoredActor()
 	const isOwn = message.actorId === actor?.id
 	const attachments = message.metadata?.attachments ?? []
@@ -66,7 +70,11 @@ export function MessageBubble({ workspaceId, message }: MessageBubbleProps) {
 						<span className="whitespace-pre-wrap text-balance">{message.content}</span>
 					) : null}
 				</div>
-				<RelativeTime date={message.createdAt} className="text-[10px] text-muted-foreground" />
+				<RelativeTime
+					date={message.createdAt}
+					format="clock"
+					className="text-[10px] text-muted-foreground"
+				/>
 			</div>
 		)
 	}
@@ -87,9 +95,11 @@ export function MessageBubble({ workspaceId, message }: MessageBubbleProps) {
 					</span>
 					<RelativeTime
 						date={message.createdAt}
+						format="clock"
 						className="shrink-0 text-[10px] text-muted-foreground"
 					/>
 				</div>
+				{activity ? <div className="mt-0.5">{activity}</div> : null}
 				{fileList ? <div className="mt-1.5">{fileList}</div> : null}
 				{message.content.length > 0 ? (
 					<div className="mt-1 text-[13.5px] leading-[1.6]">
@@ -102,23 +112,25 @@ export function MessageBubble({ workspaceId, message }: MessageBubbleProps) {
 					</div>
 				) : null}
 				{hasContext ? (
-					<div className="mt-2 flex flex-wrap items-center gap-x-3.5 gap-y-1.5 border-t border-border pt-2">
+					<div className="mt-[7px] flex flex-wrap items-center gap-2 border-t border-border-subtle pt-[7px]">
 						<span className="eyebrow shrink-0">Referenced</span>
 						{contextObjects.map((o) => (
 							<ObjectReference
 								key={o.id}
 								objectId={o.id}
 								workspaceId={workspaceId}
-								className="text-[11.5px]"
+								variant="pill"
 							/>
 						))}
 						{contextNotifications.map((n) => (
 							<span
 								key={n.id}
-								className="inline-flex items-center gap-1.5 text-[11.5px] text-muted-foreground"
+								className="inline-flex max-w-full items-center gap-[7px] rounded-[9px] border border-border bg-card py-1 pr-2.5 pl-2 text-[11.5px] text-muted-foreground"
 							>
 								<Bell size={11} aria-hidden />
-								<span className="max-w-[12rem] truncate">{n.title?.trim() || n.id}</span>
+								<span className="min-w-0 truncate font-semibold text-foreground">
+									{n.title?.trim() || n.id}
+								</span>
 							</span>
 						))}
 					</div>

@@ -24,7 +24,7 @@ import { deriveEntryAgentRole, trackSpecialistSummonedManually } from '@/lib/ana
 import type { ChatSelection, ChatSelectionAction } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
 import { readFileAsBase64 } from '@/lib/file-utils'
-import { AtSign, Box, Mic, Paperclip, Plus, Send, Sparkles, X } from 'lucide-react'
+import { ArrowUp, AtSign, Box, Mic, Paperclip, Plus, Sparkles, X } from 'lucide-react'
 import {
 	type ChangeEvent,
 	type FormEvent,
@@ -587,7 +587,9 @@ export function Composer({
 						disabled={!canSend}
 						aria-label="Send message"
 					>
-						{showSpinner ? <Spinner /> : <Send size={14} />}
+						{/* An up-arrow, not a paper plane — v2's send glyph across every
+						    composer (mockup 543). */}
+						{showSpinner ? <Spinner /> : <ArrowUp size={15} />}
 					</Button>
 				</div>
 			</form>

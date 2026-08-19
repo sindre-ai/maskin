@@ -43,7 +43,11 @@ function ConversationThreadPage() {
 		<div className="flex min-h-0 flex-1 flex-col">
 			<ThreadHeader workspaceId={workspaceId} conversationId={conversationId} />
 			<ThreadMessages workspaceId={workspaceId} conversationId={conversationId} />
-			<div className="border-t border-border p-2">
+			{/* No rule above the composer (mockup 517): the composer draws its own
+			    border, and a second full-bleed hairline behind it cut the thread in
+			    half. The gutter matches the header's and the transcript's so the
+			    three stack on one vertical edge. */}
+			<div className="shrink-0 px-[var(--chat-gut)] pt-2.5 pb-3.5">
 				<ThreadComposer workspaceId={workspaceId} conversationId={conversationId} />
 			</div>
 		</div>

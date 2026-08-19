@@ -10,10 +10,25 @@ export function TypeBadge({
 }: {
 	type: string
 	className?: string
-	variant?: 'badge' | 'mono' | 'tile'
+	variant?: 'badge' | 'mono' | 'tile' | 'dot'
 	/** `tile` only: 30px in card headers, 38px in list rows and detail headers. */
 	size?: 'sm' | 'lg'
 }) {
+	// The smallest form the type takes: a solid dot in the type's own colour,
+	// for places that need the type present but not read — a citation chip
+	// where the object's name is the content and the type is only a category
+	// cue (mockup 440's `r.dot`). `bg-current` inherits the type's text token,
+	// so the one colour map still drives it.
+	if (variant === 'dot') {
+		const colors = typeColors[type] ?? defaultTypeColor
+		return (
+			<span
+				aria-hidden="true"
+				className={cn('size-1.5 shrink-0 rounded-full bg-current', colors.text, className)}
+			/>
+		)
+	}
+
 	// The tile is the type's visual anchor — a tinted square with the type's
 	// lucide glyph, used wherever an object is the subject of a row or card
 	// rather than a mention in running text.

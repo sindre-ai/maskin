@@ -5,6 +5,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useConversation } from '@/hooks/use-conversation'
 import { useUpdateConversation, useUpdateConversationMe } from '@/hooks/use-conversations'
 import { useIsMobile } from '@/hooks/use-mobile'
+import { cn } from '@/lib/cn'
 import { useNavigate, useSearch } from '@tanstack/react-router'
 import {
 	Archive,
@@ -12,9 +13,7 @@ import {
 	ArrowLeft,
 	Maximize2,
 	Minimize2,
-	Pencil,
 	Pin,
-	PinOff,
 	Plus,
 	X,
 } from 'lucide-react'
@@ -68,7 +67,9 @@ export function ThreadHeader({ workspaceId, conversationId }: ThreadHeaderProps)
 	}
 
 	if (!conversation) {
-		return <div className="flex h-12 shrink-0 items-center border-b border-border px-3" />
+		return (
+			<div className="flex h-12 shrink-0 items-center border-b border-border px-[var(--chat-gut)]" />
+		)
 	}
 
 	const participants = conversation.participants
@@ -76,7 +77,7 @@ export function ThreadHeader({ workspaceId, conversationId }: ThreadHeaderProps)
 	const overflowCount = participants.length - visibleAvatars.length
 
 	return (
-		<div className="flex shrink-0 flex-col gap-1 border-b border-border px-3 pt-2 pb-1.5">
+		<div className="flex shrink-0 flex-col gap-1 border-b border-border px-[var(--chat-gut)] pt-2 pb-1.5">
 			<div className="flex items-start gap-2.5">
 				{isMobile ? (
 					<Button
@@ -110,26 +111,25 @@ export function ThreadHeader({ workspaceId, conversationId }: ThreadHeaderProps)
 						className="h-7 min-w-0 flex-1 text-[13px] font-bold"
 					/>
 				) : (
-					<>
-						<h2 className="min-w-0 flex-1 line-clamp-2 text-[13px] font-bold leading-[1.35] tracking-[-0.01em] text-balance">
-							{conversation.title}
-						</h2>
+					// The title *is* the rename affordance (mockup 311 draws no
+					// pencil beside it) — a dedicated icon button pushed the title
+					// into a third of the row at 768px and duplicated a target the
+					// heading can carry itself.
+					<h2 className="min-w-0 flex-1">
 						<Tooltip>
 							<TooltipTrigger asChild>
-								<Button
+								<button
 									type="button"
-									variant="ghost"
-									size="icon"
-									className="h-6 w-6 shrink-0"
 									onClick={startEditingTitle}
-									aria-label="Rename conversation"
+									aria-label={`Rename conversation — ${conversation.title}`}
+									className="w-full rounded-md px-1 py-0.5 text-left line-clamp-2 text-[13px] font-bold leading-[1.35] tracking-[-0.01em] text-balance hover:bg-accent"
 								>
-									<Pencil size={13} />
-								</Button>
+									{conversation.title}
+								</button>
 							</TooltipTrigger>
 							<TooltipContent>Rename</TooltipContent>
 						</Tooltip>
-					</>
+					</h2>
 				)}
 				{isMobile ? null : (
 					<Tooltip>
@@ -204,14 +204,22 @@ export function ThreadHeader({ workspaceId, conversationId }: ThreadHeaderProps)
 							type="button"
 							variant="ghost"
 							size="icon"
-							className="h-6 w-6 shrink-0"
+							className={cn(
+								'h-6 w-6 shrink-0',
+								// Pinned is a *state*, so it holds an indigo plate rather
+								// than swapping to a different glyph (mockup 7804–7806).
+								// PinOff read as "this button unpins" — i.e. as the action,
+								// not the current state — which is the wrong tense for a toggle.
+								conversation.pinned &&
+									'bg-brand-subtle text-brand-subtle-foreground hover:bg-brand-subtle',
+							)}
 							onClick={() =>
 								updateMe.mutate({ id: conversationId, data: { pinned: !conversation.pinned } })
 							}
 							aria-label={conversation.pinned ? 'Unpin conversation' : 'Pin conversation'}
 							aria-pressed={conversation.pinned}
 						>
-							{conversation.pinned ? <PinOff size={14} /> : <Pin size={14} />}
+							<Pin size={14} fill={conversation.pinned ? 'currentColor' : 'none'} />
 						</Button>
 					</TooltipTrigger>
 					<TooltipContent>{conversation.pinned ? 'Unpin' : 'Pin'}</TooltipContent>

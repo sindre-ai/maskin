@@ -409,19 +409,32 @@ app.openapi(listConversationsRoute, (async (c) => {
 					.groupBy(messages.conversationId),
 		Promise.all(
 			page.map(async (r) => {
+				// The sender comes back with the preview so the row can say who is
+				// talking. Left-joined: a message from an actor that has since been
+				// deleted still yields its text rather than dropping the snippet.
 				const [latest] = await db
-					.select({ content: messages.content })
+					.select({
+						content: messages.content,
+						actorId: messages.actorId,
+						actorName: actors.name,
+					})
 					.from(messages)
+					.leftJoin(actors, eq(actors.id, messages.actorId))
 					.where(eq(messages.conversationId, r.conversation.id))
 					.orderBy(desc(messages.id))
 					.limit(1)
-				return { conversationId: r.conversation.id, snippet: latest?.content ?? null }
+				return {
+					conversationId: r.conversation.id,
+					snippet: latest?.content ?? null,
+					snippetActorId: latest?.actorId ?? null,
+					snippetActorName: latest?.actorName ?? null,
+				}
 			}),
 		),
 	])
 
 	const unreadByConversation = new Map(unreadRows.map((r) => [r.conversationId, r.unreadCount]))
-	const snippetByConversation = new Map(snippets.map((s) => [s.conversationId, s.snippet]))
+	const snippetByConversation = new Map(snippets.map((s) => [s.conversationId, s]))
 
 	return c.json({
 		conversations: page.map((r) => ({
@@ -429,7 +442,9 @@ app.openapi(listConversationsRoute, (async (c) => {
 			pinned: r.participant.pinned,
 			archived: r.participant.archived,
 			unread_count: unreadByConversation.get(r.conversation.id) ?? 0,
-			snippet: snippetByConversation.get(r.conversation.id) ?? null,
+			snippet: snippetByConversation.get(r.conversation.id)?.snippet ?? null,
+			snippet_actor_id: snippetByConversation.get(r.conversation.id)?.snippetActorId ?? null,
+			snippet_actor_name: snippetByConversation.get(r.conversation.id)?.snippetActorName ?? null,
 			participants: participantsByConversation.get(r.conversation.id) ?? [],
 		})) as z.infer<typeof conversationListItemResponseSchema>[],
 		has_more: hasMore,

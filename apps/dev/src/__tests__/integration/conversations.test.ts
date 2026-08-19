@@ -186,12 +186,23 @@ describe('Conversations Integration', () => {
 			)
 			expect(listRes.status).toBe(200)
 			const list = (await listRes.json()) as {
-				conversations: Array<{ id: string; unread_count: number; snippet: string | null }>
+				conversations: Array<{
+					id: string
+					unread_count: number
+					snippet: string | null
+					snippet_actor_id: string | null
+					snippet_actor_name: string | null
+				}>
 			}
 			expect(list.conversations).toHaveLength(1)
 			expect(list.conversations[0]?.id).toBe(conversation.id)
 			expect(list.conversations[0]?.unread_count).toBe(1)
 			expect(list.conversations[0]?.snippet).toBe('first message')
+			// The preview carries its author across the actors join, so the list
+			// row can say "Owner: first message" rather than attributing every
+			// preview to whoever is reading it.
+			expect(list.conversations[0]?.snippet_actor_id).toBe(ownerId)
+			expect(list.conversations[0]?.snippet_actor_name).toBeTruthy()
 
 			// Stranger (workspace member, not a conversation participant) sees nothing.
 			const { app: strangerApp } = createConversationsApp(stranger.id)
