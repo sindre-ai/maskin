@@ -11,6 +11,21 @@ import {
 	sessionWorkspaceKey,
 } from '../services/session-workspace'
 
+// Windows-only local-dev caveat (does not affect CI, which runs on Linux): these
+// tests shell out to `tar`, and on a machine where Git for Windows' `usr\bin`
+// precedes `System32` on PATH, `execFile('tar', …)` resolves to Git's MSYS-flavored
+// tar.exe instead of the Windows-native bsdtar. MSYS's runtime does its own
+// Windows-→POSIX argv conversion, which can mangle an absolute Windows path
+// passed as a plain argument (e.g. the `-C <sessionDir>` extraction target),
+// producing spurious "Cannot open: No such file or directory" failures that have
+// nothing to do with the code under test. Neither `MSYS2_ARG_CONV_EXCL=*` nor
+// `MSYS_NO_PATHCONV=1` fixes it. If you hit this locally, reordering PATH so
+// `C:\Windows\System32` comes before Git's `usr\bin` (or running under WSL) works
+// around it. A separate, real bug — GNU tar's remote-archive heuristic misreading
+// an absolute `C:\...` archive-file argument as a `host:path` remote spec — was
+// fixed for good in `session-workspace.ts` by passing the archive as a relative
+// filename with `cwd` set to the staging dir.
+
 class InMemoryStorage implements StorageProvider {
 	private objects = new Map<string, Buffer>()
 
