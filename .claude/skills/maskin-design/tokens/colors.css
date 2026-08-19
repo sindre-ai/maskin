@@ -1,0 +1,136 @@
+/* v2 palette — Tailwind's cool zinc scale with an indigo-600 accent.
+   Values are the exact hexes the mockup uses inline. Object-type dots and
+   agent-identity swatches sit outside the neutral trunk and are named here
+   so nothing hardcodes them downstream. */
+
+:root {
+  /* --- surface / neutrals (cool zinc) --- */
+  --surface: #ffffff;                /* card and app background */
+  --surface-muted: #fafafa;          /* zinc-50, page bg on the marketing shell + For You brief */
+  --surface-alt: #f4f4f5;            /* zinc-100, subtle sunken bands */
+  --surface-hover: #f0f0f2;          /* nav-item hover */
+  --surface-hover-2: #ececee;        /* icon-tile hover */
+  --surface-strong: #3f3f46;         /* zinc-700, the dark "Today's brief" pill on For You */
+
+  /* --- rule / hairline --- */
+  --rule: #ececee;                   /* 1px card + input border */
+  --rule-2: #f0f0f2;                 /* internal dividers inside a card */
+  --rule-strong: #c4c4cc;            /* focus/hover border promotion */
+  --rule-input: #e4e4e7;             /* input outline */
+
+  /* --- ink (text) --- */
+  --ink: #18181b;                    /* zinc-950, primary text */
+  --ink-2: #3f3f46;                  /* zinc-700, secondary text */
+  --ink-3: #52525b;                  /* zinc-600, body */
+  --ink-4: #71717a;                  /* zinc-500, meta */
+  --ink-5: #a1a1aa;                  /* zinc-400, muted meta */
+  --ink-placeholder: #b0b0b6;        /* input placeholder */
+
+  /* --- accent --- */
+  --accent: #4f46e5;                 /* indigo-600, the only live/click colour */
+  --accent-strong: #4338ca;          /* indigo-700, hover on the accent */
+  --accent-deep: #3730a3;            /* indigo-800, accent link hover */
+  --accent-tint: #e0e7ff;            /* indigo-100, quiet accent fills */
+  --accent-tint-2: #eef2ff;          /* indigo-50, quieter fills */
+  --accent-tint-3: #e8edff;          /* a warmer indigo-tinted surface used on chips */
+  --accent-fg-strong: #4338ca;       /* text-on-tint reads as indigo-700 */
+  --accent-fg-quiet: #6366f1;        /* indigo-500 for mid-emphasis */
+  --accent-fg-quieter: #818cf8;      /* indigo-400 for de-emphasised meta */
+  --accent-fg-quietest: #a5b4fc;     /* indigo-300, used in dark-on-dark toast actions */
+  --accent-fg-quietest-2: #c7d2fe;   /* indigo-200 hover on the toast action */
+
+  /* --- semantic --- */
+  --success: #16a34a;                /* green-600 */
+  --success-strong: #15803d;         /* green-700 */
+  --success-tint: #dcfce7;           /* green-100 */
+  --success-tint-2: #bbf7d0;         /* green-200 */
+
+  --warning: #d97706;                /* amber-600 */
+  --warning-strong: #b45309;         /* amber-700 */
+  --warning-tint: #fef3c7;           /* amber-100 (used on the Forge avatar tint) */
+
+  --danger: #dc2626;                 /* red-600 */
+  --danger-strong: #b91c1c;          /* red-700 */
+  --danger-mic: #ef4444;             /* red-500, the mic-pulse ring */
+
+  --info: #0ea5e9;                   /* sky-500, occasional info dot */
+  --info-strong: #0369a1;            /* sky-700 */
+  --info-tint: #e0f2fe;              /* sky-100 */
+
+  /* --- object-type dots (used as 8-10px dots or 3px card top-rules) ---
+     Object types are the shipped `AVATAR_PALETTE` hues; per-type dots on
+     lists must draw from this set, not from ad-hoc greys. */
+  --obj-doc: #94a3b8;                /* slate-400 — Doc */
+  --obj-insight: #fbbf24;            /* amber-400 — Insight (surfaces as `fbbf24` in v2) */
+  --obj-bet: #f59e0b;                /* amber-500 — Bet (used with the amber ink) */
+  --obj-task: #22c55e;               /* green-500 — Task */
+  --obj-knowledge: #7c3aed;          /* violet-600 — Knowledge */
+
+  /* --- agent identity (verbatim from v2's AV table, ~line 3313 of the mockup) ---
+     These are the agent avatar tint/text pairs. Use `AVATAR_PALETTE` in the
+     app, not these values directly — they are declared here so a designer can
+     mock the same characters without re-deriving them. */
+  --agent-relay-tint: #dcfce7;   --agent-relay-fg: #15803d;   --agent-relay-strong: #16a34a;
+  --agent-compass-tint: #eef2ff; --agent-compass-fg: #4338ca; --agent-compass-strong: #4f46e5;
+  --agent-forge-tint: #fef3c7;   --agent-forge-fg: #b45309;   --agent-forge-strong: #d97706;
+  --agent-sentinel-tint: #ede9fe;--agent-sentinel-fg: #6d28d9;--agent-sentinel-strong: #7c3aed;
+  --agent-quill-tint: #fae8ff;   --agent-quill-fg: #a21caf;   --agent-quill-strong: #c026d3;
+  --agent-you-tint: #e0e7ff;     --agent-you-fg: #4338ca;
+
+  /* --- overlays --- */
+  --overlay-dim: rgba(0, 0, 0, .35);       /* modal backdrop */
+  --overlay-strong: rgba(0, 0, 0, .55);    /* dark video/media overlay */
+
+  /* --- shadow --- */
+  --shadow-card: 0 1px 4px rgba(0, 0, 0, .12);
+  --shadow-modal: 0 8px 24px rgba(0, 0, 0, .25);
+  --shadow-mic-pulse: 0 0 0 0 rgba(239, 68, 68, .5);   /* keyframe start; ring expands to 6px 0-alpha */
+}
+
+/* Dark-mode is a full token swap. v2's inline mockup renders light only, so
+   this swap is derived by inverting the trunk against the same zinc scale and
+   promoting the accent one step lighter. Every UI surface must read from
+   these tokens — no component may hardcode a hex in either theme. */
+[data-theme="dark"], html.dark {
+  --surface: #0a0a0b;
+  --surface-muted: #18181b;
+  --surface-alt: #27272a;
+  --surface-hover: #27272a;
+  --surface-hover-2: #3f3f46;
+  --surface-strong: #d4d4d8;
+
+  --rule: #27272a;
+  --rule-2: #1f1f22;
+  --rule-strong: #52525b;
+  --rule-input: #27272a;
+
+  --ink: #fafafa;
+  --ink-2: #e4e4e7;
+  --ink-3: #d4d4d8;
+  --ink-4: #a1a1aa;
+  --ink-5: #71717a;
+  --ink-placeholder: #52525b;
+
+  --accent: #818cf8;                 /* indigo-400 */
+  --accent-strong: #a5b4fc;
+  --accent-deep: #c7d2fe;
+  --accent-tint: #312e81;            /* indigo-900 */
+  --accent-tint-2: #1e1b4b;
+  --accent-tint-3: #312e81;
+  --accent-fg-strong: #c7d2fe;
+  --accent-fg-quiet: #a5b4fc;
+  --accent-fg-quieter: #818cf8;
+  --accent-fg-quietest: #6366f1;
+  --accent-fg-quietest-2: #4f46e5;
+
+  --overlay-dim: rgba(0, 0, 0, .6);
+  --shadow-card: 0 1px 4px rgba(0, 0, 0, .5);
+  --shadow-modal: 0 8px 24px rgba(0, 0, 0, .6);
+}
+
+/* Follow system preference by default, override with [data-theme]. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+  }
+}
