@@ -52,21 +52,32 @@ test.describe('Object detail — properties drawer', () => {
 				timeout: 15000,
 			})
 
-			const toggle = page.getByRole('button', { name: 'Properties', exact: true })
+			// Scoped to the detail bar — the drawer body and the files table carry
+			// their own "…properties" controls.
+			const toggle = page
+				.locator('main header')
+				.first()
+				.getByRole('button', { name: 'Properties', exact: true })
 			await expect(toggle).toBeVisible()
 			await expect(toggle).toHaveAttribute('aria-expanded', 'false')
 
 			await toggle.click()
-			await expectDrawerOpen(page, vp.width)
+			// At mobile the drawer is a Sheet, which makes the rest of the page
+			// inert — the bar's toggle leaves the a11y tree, so the open state is
+			// read off the drawer itself there.
+			if (vp.width >= 768) {
+				await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+			}
 
 			// The drawer's own sections (mockup 1381–1499).
+			// The drawer's lowercase row label — distinct from the identity row's
+			// "Driver" chip above the title.
 			await expect(page.getByText('driver', { exact: true })).toBeVisible()
 			await expect(page.getByText('Custom fields')).toBeVisible()
 			await expect(page.getByText('Subscribed')).toBeVisible()
 			// SUBSCRIBED carries the header note that says where the viewer stands
-			// (mockup 1473), and FILES reads plainly when nothing is attached
-			// (mockup 1495) rather than showing a dropzone. Creating an object
-			// subscribes its author, so this actor is on it.
+			// (mockup 1473) — the creator is auto-subscribed — and FILES reads
+			// plainly when nothing is attached (mockup 1495), not as a dropzone.
 			await expect(page.getByText('everyone here gets timeline updates')).toBeVisible()
 			await expect(page.getByText('Nothing attached.')).toBeVisible()
 
@@ -98,14 +109,25 @@ test.describe('Object detail — properties drawer', () => {
 				timeout: 15000,
 			})
 
-			const toggle = page.getByRole('button', { name: 'Properties', exact: true })
+			// Scoped to the detail bar — the drawer body and the files table carry
+			// their own "…properties" controls.
+			const toggle = page
+				.locator('main header')
+				.first()
+				.getByRole('button', { name: 'Properties', exact: true })
 			await expect(toggle).toHaveAttribute('aria-expanded', 'false')
 
-			await page.keyboard.press('Control+i')
-			await expectDrawerOpen(page, vp.width)
+			// The drawer's own heading is the open/closed signal that reads the
+			// same at every viewport: mobile's Sheet makes the bar inert while it
+			// is open, so the toggle's own attribute is unreadable there.
+			const drawerHeading = page.getByText('Properties', { exact: true }).last()
 
 			await page.keyboard.press('Control+i')
-			await expectDrawerClosed(page, vp.width)
+			await expect(drawerHeading).toBeInViewport()
+
+			await page.keyboard.press('Control+i')
+			await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+			await expect(drawerHeading).not.toBeInViewport()
 
 			// Mobile's drawer is a transient Sheet by design; the persisted bit
 			// only governs the inline drawer at >=768.
@@ -116,10 +138,7 @@ test.describe('Object detail — properties drawer', () => {
 				await expect(page.getByRole('heading', { level: 1, name: 'Chord bet' })).toBeVisible({
 					timeout: 15000,
 				})
-				await expect(page.getByRole('button', { name: 'Properties', exact: true })).toHaveAttribute(
-					'aria-expanded',
-					'true',
-				)
+				await expect(toggle).toHaveAttribute('aria-expanded', 'true')
 			}
 		})
 
@@ -178,7 +197,7 @@ test.describe('Object detail — properties drawer', () => {
 			})
 
 			await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
-			const composer = page.getByPlaceholder(/write a comment/i)
+			const composer = page.getByPlaceholder(/^Comment/)
 			await expect(composer).toBeVisible({ timeout: 15000 })
 
 			await page.mouse.move(vp.width / 2, vp.height / 2)
@@ -189,10 +208,7 @@ test.describe('Object detail — properties drawer', () => {
 		})
 	}
 
-	test('a subscriber row names why they are on it, and the composer names its listener', async ({
-		page,
-		account,
-	}) => {
+	test('a subscriber row names why they are on it', async ({ page, account }) => {
 		await page.setViewportSize({ width: 1024, height: 768 })
 
 		const agent = await account.api.createAgentActor('Relay')
@@ -215,11 +231,16 @@ test.describe('Object detail — properties drawer', () => {
 			.first()
 			.click()
 		await page.getByRole('option', { name: /Relay/ }).click()
+		// The driver chip carries the agent now (mockup 1063–1094). The composer
+		// stays a bare bar — the mockup gives it no hint line.
+		await expect(page.getByText('Relay').first()).toBeVisible({ timeout: 10000 })
+		await expect(page.getByText('Relay is listening')).toHaveCount(0)
 
-		// The composer hint names the agent that reads what you write (mockup 1362).
-		await expect(page.getByText('Relay is listening')).toBeVisible({ timeout: 10000 })
-
-		await page.getByRole('button', { name: 'Properties', exact: true }).click()
+		await page
+			.locator('main header')
+			.first()
+			.getByRole('button', { name: 'Properties', exact: true })
+			.click()
 		// The creator is auto-subscribed, and the row says why they are on it.
 		await expect(page.getByText('you', { exact: true })).toBeVisible()
 	})

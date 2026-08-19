@@ -127,7 +127,10 @@ function setViewport(px: number) {
 
 function renderShell(id: string) {
 	return render(<ObjectDetailShell object={buildObjectResponse({ id, type: 'bet' })} />, {
-		wrapper: createWorkspaceWrapper({ settings: { statuses: { bet: ['active'] } } }),
+		wrapper: createWorkspaceWrapper(
+			{ settings: { statuses: { bet: ['active'] } } },
+			{ renderPageHeader: true },
+		),
 	})
 }
 

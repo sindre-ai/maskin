@@ -5,6 +5,7 @@ const mockSetTitle = vi.fn()
 const mockSetSubtitle = vi.fn()
 const mockSetActions = vi.fn()
 const mockSetStickyIdentity = vi.fn()
+const mockSetCrumb = vi.fn()
 const mockSetContentPush = vi.fn()
 const mockSetScrollLocked = vi.fn()
 
@@ -14,6 +15,7 @@ vi.mock('@/lib/page-header-context', () => ({
 		setSubtitle: mockSetSubtitle,
 		setActions: mockSetActions,
 		setStickyIdentity: mockSetStickyIdentity,
+		setCrumb: mockSetCrumb,
 		setContentPush: mockSetContentPush,
 		setScrollLocked: mockSetScrollLocked,
 	}),
@@ -25,6 +27,7 @@ describe('PageHeader', () => {
 		mockSetSubtitle.mockClear()
 		mockSetActions.mockClear()
 		mockSetStickyIdentity.mockClear()
+		mockSetCrumb.mockClear()
 		mockSetContentPush.mockClear()
 		mockSetScrollLocked.mockClear()
 	})

@@ -76,7 +76,10 @@ export function MarkdownContent({
 	onChange?: (value: string) => void
 	editable?: boolean
 	className?: string
-	size?: 'sm' | 'xs'
+	/** `doc` is the v2 document scale a detail page's body renders at (mockup
+	 *  1105–1122): a 15px lead paragraph, 12.5px bold micro-headings, 14px/1.65
+	 *  running copy, and em-dash list markers. */
+	size?: 'sm' | 'xs' | 'doc'
 	disallowedElements?: string[]
 	mentionActors?: ActorListItem[]
 	onMentionClick?: (actor: ActorListItem) => void
@@ -220,6 +223,14 @@ export function MarkdownContent({
 					'prose dark:prose-invert prose-sm max-w-none prose-headings:text-foreground prose-p:text-muted-foreground prose-p:leading-[1.7142857] prose-li:text-muted-foreground prose-a:text-primary prose-strong:text-foreground prose-code:text-primary prose-code:bg-card prose-code:px-1 prose-code:rounded',
 					'break-words [&_pre]:overflow-x-auto [&_pre]:max-w-full [&_img]:max-w-full [&_table]:block [&_table]:overflow-x-auto [&_table]:max-w-full',
 					size === 'xs' && '[&_p]:text-xs [&_p]:leading-normal [&_li]:text-xs [&_a]:text-xs',
+					size === 'doc' && [
+						'[&_p]:text-sm [&_p]:leading-[1.65] [&_p]:text-foreground [&_p]:mb-2 [&_p]:mt-0',
+						'[&>p:first-child]:text-[15px] [&>p:first-child]:mb-4',
+						'[&_h1]:text-[12.5px] [&_h2]:text-[12.5px] [&_h3]:text-[12.5px] [&_h4]:text-[12.5px]',
+						'[&_:is(h1,h2,h3,h4)]:font-bold [&_:is(h1,h2,h3,h4)]:tracking-[-0.01em] [&_:is(h1,h2,h3,h4)]:mb-[7px] [&_:is(h1,h2,h3,h4)]:mt-[19px]',
+						'[&_li]:text-[13px] [&_li]:leading-[1.6] [&_li]:text-foreground [&_li]:my-0',
+						"[&_ul]:list-none [&_ul]:pl-0 [&_ul]:my-0 [&_ul]:mb-2.5 [&_ul]:flex [&_ul]:flex-col [&_ul]:gap-[5px] [&_ul>li]:relative [&_ul>li]:pl-[22px] [&_ul>li]:before:absolute [&_ul>li]:before:left-0 [&_ul>li]:before:text-border-strong [&_ul>li]:before:content-['—']",
+					],
 				)}
 			>
 				<ReactMarkdown

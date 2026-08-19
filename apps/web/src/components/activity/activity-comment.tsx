@@ -18,6 +18,16 @@ import { MentionSessionCard } from './mention-session-card'
 
 const COMMENT_DISALLOWED_ELEMENTS = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']
 
+// Long agent comments are clamped so the timeline stays readable at a glance
+// (mockup 6261–6268): past 300 characters the bubble shows the first 230, cut
+// at a word boundary, behind a Show more / Show less toggle.
+const CLAMP_OVER = 300
+const CLAMP_TO = 230
+
+function clampComment(content: string): string {
+	return `${content.slice(0, CLAMP_TO).replace(/\s+\S*$/, '')}…`
+}
+
 interface ActivityCommentProps {
 	event: EventResponse
 	replies?: EventResponse[]
@@ -36,7 +46,17 @@ interface ActivityCommentProps {
 	// (mockup 369). Off by default so the object-detail feed keeps showing the
 	// whole thread inline.
 	collapsibleReplies?: boolean
+	// Reading of the row itself — see CommentVariant.
+	variant?: CommentVariant
 }
+
+/**
+ * `plain` is the feed reading — avatar, name, time, text on the page surface.
+ * `bubble` is the object-detail timeline reading (mockup 1236–1243): a 30px
+ * avatar ringed in the page colour so it sits over the timeline rail, and the
+ * message body in a muted rounded card with the name and time inside it.
+ */
+export type CommentVariant = 'plain' | 'bubble'
 
 interface CommentRowProps {
 	event: EventResponse
@@ -45,6 +65,10 @@ interface CommentRowProps {
 	onReply?: (authorName: string) => void
 	isUnread?: boolean
 	isDecisionPoint?: boolean
+	variant?: CommentVariant
+	/** Rendered under the message text — inside the bubble when bubbled, so the
+	 *  decision chips and thread toggle read as part of the message. */
+	footer?: React.ReactNode
 }
 
 function CommentRow({
@@ -54,7 +78,11 @@ function CommentRow({
 	onReply,
 	isUnread,
 	isDecisionPoint,
+	variant = 'plain',
+	footer,
 }: CommentRowProps) {
+	const isBubble = variant === 'bubble'
+	const [expanded, setExpanded] = useState(false)
 	const { data: actor } = useActor(event.actorId)
 	const content = (event.data?.content as string) ?? ''
 	const attachmentFileIds = (event.data?.attachmentFileIds as string[] | undefined) ?? []
@@ -80,6 +108,11 @@ function CommentRow({
 	}
 
 	const isAgent = actor?.type === 'agent'
+	const clampable = isBubble && content.length > CLAMP_OVER
+
+	const avatarClass = isBubble
+		? 'size-[30px] border-[3px] border-background text-[11px]'
+		: undefined
 
 	const avatarEl = actor ? (
 		isAgent ? (
@@ -89,16 +122,28 @@ function CommentRow({
 				aria-hidden="true"
 				tabIndex={-1}
 			>
-				<ActorAvatar name={actor.name} type={actor.type} size="sm" />
+				<ActorAvatar name={actor.name} type={actor.type} size="sm" className={avatarClass} />
 			</Link>
 		) : (
 			<ActorAvatar
 				name={actor.name}
 				type={actor.type}
 				size="sm"
+				className={avatarClass}
 				onClick={() => setHumanDialogActorId(actor.id)}
 			/>
 		)
+	) : null
+
+	const showMoreButton = clampable ? (
+		<button
+			type="button"
+			onClick={() => setExpanded((open) => !open)}
+			aria-expanded={expanded}
+			className="ml-1.5 whitespace-nowrap text-[11.5px] font-semibold text-secondary-foreground hover:underline"
+		>
+			{expanded ? 'Show less' : 'Show more'}
+		</button>
 	) : null
 
 	const nameEl = !actor ? (
@@ -127,11 +172,12 @@ function CommentRow({
 		<>
 			<div
 				className={cn(
-					'relative flex items-start gap-2 py-1 px-1 -mx-1 rounded-md hover:bg-secondary/50 transition-colors',
-					isDecisionPoint && 'pl-3',
+					'relative flex items-start rounded-md transition-colors',
+					isBubble ? 'z-[1] gap-[11px] py-2.5' : '-mx-1 gap-2 px-1 py-1 hover:bg-secondary/50',
+					isDecisionPoint && !isBubble && 'pl-3',
 				)}
 			>
-				{isDecisionPoint && (
+				{isDecisionPoint && !isBubble && (
 					<span
 						aria-hidden
 						className="absolute left-1 top-2 bottom-2 w-0.5 rounded-full bg-primary"
@@ -146,9 +192,19 @@ function CommentRow({
 						/>
 					)}
 				</div>
-				<div className="flex-1 min-w-0">
-					<div className="flex items-baseline gap-2">
-						<div className="flex-1 min-w-0 flex items-baseline gap-1.5 flex-wrap">
+				<div
+					className={cn(
+						'flex-1 min-w-0',
+						isBubble && 'rounded-xl bg-muted/60 px-3.5 py-[11px] text-[13px] leading-[1.55]',
+					)}
+				>
+					<div className={cn('flex items-baseline gap-2', isBubble && 'gap-[7px]')}>
+						<div
+							className={cn(
+								'min-w-0 flex items-baseline gap-1.5 flex-wrap',
+								isBubble ? 'shrink' : 'flex-1',
+							)}
+						>
 							{nameEl}
 							{isDecisionPoint && (
 								<span className="text-[10px] font-medium leading-none px-1.5 py-0.5 rounded-full bg-accent text-accent-foreground">
@@ -158,18 +214,34 @@ function CommentRow({
 						</div>
 						<RelativeTime
 							date={event.createdAt}
-							className="text-muted-foreground text-xs font-mono tabular-nums w-14 shrink-0 text-right"
+							className={cn(
+								'text-muted-foreground font-mono tabular-nums shrink-0',
+								isBubble ? 'text-[10px]' : 'w-14 text-right text-xs',
+							)}
 						/>
 					</div>
-					<AgentOutput
-						content={content}
-						disallowedElements={COMMENT_DISALLOWED_ELEMENTS}
-						mentionActors={actors}
-						onMentionClick={handleMentionClick}
-						size="sm"
-						className="mt-1"
-						renderVisuals
-					/>
+					{clampable && !expanded ? (
+						// Clamped, the message is a plain excerpt so "Show more" can sit
+						// on the end of the sentence rather than under it (mockup 1006).
+						<p className="mt-1 text-[13px] leading-[1.55]">
+							{clampComment(content)}
+							{showMoreButton}
+						</p>
+					) : (
+						<>
+							<AgentOutput
+								content={content}
+								disallowedElements={COMMENT_DISALLOWED_ELEMENTS}
+								mentionActors={actors}
+								onMentionClick={handleMentionClick}
+								size="sm"
+								className="mt-1"
+								renderVisuals
+							/>
+							{clampable && showMoreButton}
+						</>
+					)}
+					{footer && <div>{footer}</div>}
 					{hasTaskList(event) && <CommentTaskList event={event} workspaceId={workspaceId} />}
 					{attachmentFileIds.length > 0 && (
 						<ul className="mt-1.5 space-y-1">
@@ -232,6 +304,7 @@ export function ActivityComment({
 	isUnread,
 	onReplyTo,
 	collapsibleReplies,
+	variant = 'plain',
 }: ActivityCommentProps) {
 	const { data: actors } = useActors(workspaceId)
 	const [showReplyInput, setShowReplyInput] = useState(false)
@@ -257,6 +330,45 @@ export function ActivityComment({
 		setShowReplyInput(true)
 	}
 
+	const isBubble = variant === 'bubble'
+
+	const decisionBlock =
+		isDecisionPoint && !alreadyReplied ? (
+			<div className={cn('mt-1.5', !isBubble && 'ml-7')}>
+				<DecisionChips event={event} objectId={objectId} workspaceId={workspaceId} />
+			</div>
+		) : null
+
+	// Mockup 1288: the thread toggle is a pill inside the message, carrying just
+	// the count. The plain reading keeps the "last from <name>" note, which the
+	// feed has room for.
+	const threadToggle = collapsed ? (
+		<button
+			type="button"
+			onClick={() => setRepliesOpen(true)}
+			aria-expanded={false}
+			className={cn(
+				'mt-1.5 inline-flex items-center gap-2 text-left',
+				isBubble
+					? 'rounded-full border border-border bg-background px-[11px] py-1 transition-colors hover:border-brand-subtle'
+					: 'ml-7 gap-1.5',
+			)}
+		>
+			<span
+				className={cn(
+					'text-[11px] font-semibold',
+					isBubble ? 'text-brand' : 'text-muted-foreground hover:text-foreground',
+				)}
+			>
+				{replies.length} {replies.length === 1 ? 'reply' : 'replies'}
+			</span>
+			{threadNote && !isBubble && (
+				<span className="text-[10.5px] text-muted-foreground">· {threadNote}</span>
+			)}
+			<ChevronDown size={11} className="text-muted-foreground" aria-hidden />
+		</button>
+	) : null
+
 	return (
 		<div id={`comment-${event.id}`} className="group">
 			<CommentRow
@@ -266,41 +378,31 @@ export function ActivityComment({
 				onReply={hasReplies && !onReplyTo ? undefined : handleReply}
 				isUnread={isUnread}
 				isDecisionPoint={isDecisionPoint}
+				variant={variant}
+				footer={
+					isBubble ? (
+						<>
+							{decisionBlock}
+							{threadToggle}
+						</>
+					) : undefined
+				}
 			/>
 
-			{isDecisionPoint && !alreadyReplied && (
-				<div className="ml-7 mt-1.5">
-					<DecisionChips event={event} objectId={objectId} workspaceId={workspaceId} />
-				</div>
-			)}
+			{!isBubble && decisionBlock}
 
 			{mentionSessions.length > 0 && (
-				<div className="ml-7 mt-1 space-y-1">
+				<div className={cn('mt-1 space-y-1', isBubble ? 'ml-[41px]' : 'ml-7')}>
 					{mentionSessions.map((session) => (
 						<MentionSessionCard key={session.id} session={session} workspaceId={workspaceId} />
 					))}
 				</div>
 			)}
 
-			{collapsed && (
-				<button
-					type="button"
-					onClick={() => setRepliesOpen(true)}
-					aria-expanded={false}
-					className="ml-7 mt-1.5 inline-flex items-center gap-1.5 text-left"
-				>
-					<span className="text-[11px] font-semibold text-muted-foreground hover:text-foreground">
-						{replies.length} {replies.length === 1 ? 'reply' : 'replies'}
-					</span>
-					{threadNote && (
-						<span className="text-[10.5px] text-muted-foreground">· {threadNote}</span>
-					)}
-					<ChevronDown size={11} className="text-muted-foreground" aria-hidden />
-				</button>
-			)}
+			{!isBubble && threadToggle}
 
 			{hasReplies && !collapsed && (
-				<div className="ml-7 space-y-1.5">
+				<div className={cn('space-y-1.5', variant === 'bubble' ? 'ml-[41px]' : 'ml-7')}>
 					{replies.map((reply, idx) => (
 						<div key={reply.id}>
 							{divider && dividerBeforeReplyId === reply.id && divider}
@@ -309,6 +411,7 @@ export function ActivityComment({
 								actors={actorList}
 								workspaceId={workspaceId}
 								onReply={idx === replies.length - 1 ? handleReply : undefined}
+								variant={variant}
 							/>
 						</div>
 					))}

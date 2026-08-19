@@ -58,12 +58,14 @@ describe('RelatedTab', () => {
 
 		render(<RelatedTab object={owner} />, { wrapper: createWorkspaceWrapper() })
 
-		expect(screen.getByText('Related (2)')).toBeInTheDocument()
+		// The count lives on the group label — the segmented control above the
+		// tab carries the total (mockup 1157–1159).
+		expect(screen.getByText('2')).toBeInTheDocument()
 		expect(screen.getByText('Alpha')).toBeInTheDocument()
 		expect(screen.getByText('Beta')).toBeInTheDocument()
 	})
 
-	it('renders the type / name / status / when columns', () => {
+	it('renders each row as type / name / status / when, under its edge label', () => {
 		const owner = buildObjectResponse({ id: 'obj-1', type: 'bet' })
 		const linked = buildObjectResponse({ id: 'obj-2', title: 'Alpha' })
 		mockGraph(
@@ -73,11 +75,11 @@ describe('RelatedTab', () => {
 
 		render(<RelatedTab object={owner} />, { wrapper: createWorkspaceWrapper() })
 
-		// Column headers — sort buttons expose the label text.
-		expect(screen.getByRole('button', { name: /^Title$/i })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /^Type$/i })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /^Status$/i })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /^When$/i })).toBeInTheDocument()
+		// No column headers and no sort — the list is a reading of the graph.
+		expect(screen.queryByRole('columnheader')).toBeNull()
+		expect(screen.getByText('informs')).toBeInTheDocument()
+		expect(screen.getByText('Alpha')).toBeInTheDocument()
+		expect(screen.getByRole('link', { name: 'Alpha' })).toBeInTheDocument()
 	})
 
 	it('renders the empty state with an add-link CTA when no relationships exist', () => {
@@ -86,9 +88,9 @@ describe('RelatedTab', () => {
 
 		render(<RelatedTab object={owner} />, { wrapper: createWorkspaceWrapper() })
 
-		expect(screen.getByText('Related (0)')).toBeInTheDocument()
 		expect(screen.getByText(/No related objects yet/i)).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /Add link/i })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /Link an object/i })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /Upload a file/i })).toBeInTheDocument()
 	})
 
 	it('CTA in the empty state reveals the add-link form', async () => {
@@ -98,7 +100,7 @@ describe('RelatedTab', () => {
 
 		render(<RelatedTab object={owner} />, { wrapper: createWorkspaceWrapper() })
 
-		await user.click(screen.getByRole('button', { name: /Add link/i }))
+		await user.click(screen.getByRole('button', { name: /Link an object/i }))
 
 		expect(screen.getByPlaceholderText(/Search objects/i)).toBeInTheDocument()
 	})

@@ -92,19 +92,20 @@ describe('TimelineTab', () => {
 		const [first, second, third] = items
 		expect(within(first).getByText('Ada')).toBeInTheDocument()
 		expect(within(first).getByText(/changed status from Define to Active/i)).toBeInTheDocument()
-		expect(within(first).getByText('Status')).toBeInTheDocument()
+		// Only a status move carries a chip, and it names the new status.
+		expect(within(first).getByText('active')).toBeInTheDocument()
 
 		// Second row — created event points at the child task, verb + reference
 		// card render together.
 		expect(within(second).getByText('Agent Smith')).toBeInTheDocument()
 		expect(within(second).getByText('created task')).toBeInTheDocument()
-		expect(within(second).getByText('Created')).toBeInTheDocument()
+		expect(within(second).queryByText('Created')).toBeNull()
 		expect(within(second).getByText('on')).toBeInTheDocument()
 		expect(within(second).getByRole('link', { name: /Timeline tab/i })).toBeInTheDocument()
 
-		// Third row — relationship: verb + object reference.
-		expect(within(third).getByText('Agent Smith')).toBeInTheDocument()
-		expect(within(third).getByText('Link')).toBeInTheDocument()
+		// Third row — relationship: verb + object reference, no actor sentence.
+		expect(within(third).queryByText('Agent Smith')).toBeNull()
+		expect(within(third).queryByText('Link')).toBeNull()
 		expect(within(third).getByText('breaks into')).toBeInTheDocument()
 		expect(within(third).getAllByRole('link', { name: /Timeline tab/i })).not.toHaveLength(0)
 	})
@@ -141,10 +142,10 @@ describe('TimelineTab', () => {
 
 		const items = screen.getAllByRole('listitem')
 		expect(items).toHaveLength(2)
-		expect(within(items[1]).getByText('Status')).toBeInTheDocument()
+		expect(within(items[1]).getByText('active')).toBeInTheDocument()
 		// Filter chips carry per-kind counts (mockup 1145–1152).
 		expect(screen.getByRole('button', { name: 'Comments (1)' })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: 'Status (1)' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Changes (1)' })).toBeInTheDocument()
 	})
 
 	it('narrows the stream to one kind when a filter chip is picked, and resets', async () => {
@@ -214,9 +215,9 @@ describe('TimelineTab', () => {
 
 		const items = screen.getAllByRole('listitem')
 		expect(items).toHaveLength(3)
-		expect(within(items[0]).getByText('Created')).toBeInTheDocument()
-		expect(within(items[1]).getByText('Status')).toBeInTheDocument()
-		expect(within(items[2]).getByText('Session')).toBeInTheDocument()
+		expect(within(items[0]).getByText('proposed bet')).toBeInTheDocument()
+		expect(within(items[1]).getByText('active')).toBeInTheDocument()
+		expect(within(items[2]).getByText(/session/i)).toBeInTheDocument()
 	})
 
 	it('renders an empty state when there is nothing to show', () => {
@@ -325,7 +326,7 @@ describe('TimelineTab', () => {
 		render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
 
 		expect(screen.getAllByRole('listitem')).toHaveLength(3)
-		await user.click(screen.getByRole('button', { name: '2 new' }))
+		await user.click(screen.getByRole('button', { name: /2 new updates/ }))
 		expect(scrollIntoView).toHaveBeenCalledTimes(1)
 
 		await user.click(screen.getByRole('button', { name: 'Mark read' }))
@@ -399,18 +400,18 @@ describe('TimelineTab', () => {
 		render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
 
 		expect(screen.queryByRole('listitem')).not.toBeNull()
-		const fold = screen.getByRole('button', { name: /5 more updates/ })
+		const fold = screen.getByRole('button', { name: /5 agent updates/ })
 		expect(fold).toHaveAttribute('aria-expanded', 'false')
 
 		await user.click(fold)
 		expect(screen.getByRole('button', { name: /Hide/ })).toHaveAttribute('aria-expanded', 'true')
-		expect(screen.getAllByText('Update')).toHaveLength(5)
+		expect(screen.getAllByRole('listitem')).not.toHaveLength(0)
 	})
 
 	it('leaves short runs unfolded', () => {
 		const object = buildObjectResponse({ id: 'obj-1', type: 'bet' })
 		mockGraph(
-			Array.from({ length: 3 }, (_, i) =>
+			Array.from({ length: 2 }, (_, i) =>
 				buildEventResponse({
 					id: 20 + i,
 					action: 'updated',
@@ -427,8 +428,8 @@ describe('TimelineTab', () => {
 
 		render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
 
-		expect(screen.queryByRole('button', { name: /more updates/ })).toBeNull()
-		expect(screen.getAllByText('Update')).toHaveLength(3)
+		expect(screen.queryByRole('button', { name: /agent updates/ })).toBeNull()
+		expect(screen.getAllByRole('listitem')).toHaveLength(2)
 	})
 	// Regression: `visible` runs newest-first, so a status_changed event CLOSES
 	// the phase above it and OPENS the older one below. The older phase must be

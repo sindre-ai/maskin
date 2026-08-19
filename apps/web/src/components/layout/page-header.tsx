@@ -1,4 +1,4 @@
-import { usePageHeader } from '@/lib/page-header-context'
+import { type PageHeaderCrumb, usePageHeader } from '@/lib/page-header-context'
 import { useEffect } from 'react'
 
 export function PageHeader({
@@ -6,6 +6,7 @@ export function PageHeader({
 	subtitle,
 	actions,
 	stickyIdentity,
+	crumb,
 	contentPush,
 	scrollLocked,
 }: {
@@ -16,6 +17,9 @@ export function PageHeader({
 	subtitle?: string
 	actions?: React.ReactNode
 	stickyIdentity?: React.ReactNode
+	// A detail screen's own `Parent › Name` crumb. Publishing one collapses the
+	// shared nav to the compact detail bar the mockup draws above the document.
+	crumb?: PageHeaderCrumb
 	// CSS width value the app shell should be pushed left by while this page
 	// is mounted — see PageHeaderContext.
 	contentPush?: string
@@ -24,8 +28,15 @@ export function PageHeader({
 	// PageHeaderContext.
 	scrollLocked?: boolean
 }) {
-	const { setTitle, setSubtitle, setActions, setStickyIdentity, setContentPush, setScrollLocked } =
-		usePageHeader()
+	const {
+		setTitle,
+		setSubtitle,
+		setActions,
+		setStickyIdentity,
+		setCrumb,
+		setContentPush,
+		setScrollLocked,
+	} = usePageHeader()
 
 	useEffect(() => {
 		setTitle(title)
@@ -46,6 +57,11 @@ export function PageHeader({
 		setStickyIdentity(stickyIdentity ?? null)
 		return () => setStickyIdentity(null)
 	}, [stickyIdentity, setStickyIdentity])
+
+	useEffect(() => {
+		setCrumb(crumb)
+		return () => setCrumb(undefined)
+	}, [crumb, setCrumb])
 
 	useEffect(() => {
 		setContentPush(contentPush)
