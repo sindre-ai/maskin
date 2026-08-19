@@ -155,8 +155,8 @@ const CHIP_TONE_CLASSES: Record<ChipTone, string> = {
 }
 
 const DOT_TONE_CLASSES: Record<ChipTone, string> = {
-	status: 'border-foreground',
-	session: 'border-primary',
+	status: 'border-border-strong',
+	session: 'border-border-strong',
 	link: 'border-border-strong',
 	update: 'border-border-strong',
 	created: 'border-border-strong',
@@ -493,16 +493,16 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 		const open = expandedFolds.has(row.key)
 		return (
 			<li key={row.key} className="list-none">
-				<div className="relative py-1 pl-9">
+				<div className="relative py-[2px] pl-9">
 					<span
 						aria-hidden="true"
-						className="absolute left-[11px] top-3 size-[7px] rounded-full bg-border"
+						className="absolute left-[11px] top-[9px] size-[7px] rounded-full bg-border"
 					/>
 					<button
 						type="button"
 						aria-expanded={open}
 						onClick={() => toggleFold(row.key)}
-						className="inline-flex h-[26px] items-center gap-2 rounded-full border border-dashed border-border px-3 transition-colors hover:border-border-strong hover:bg-muted/40"
+						className="inline-flex h-6 items-center gap-2 rounded-full border border-dashed border-border px-[11px] transition-colors hover:border-border-strong hover:bg-muted/40"
 					>
 						<span className="text-[11.5px] font-semibold text-muted-foreground">
 							{open ? `Hide ${row.rows.length} updates` : `${row.rows.length} agent updates`}
@@ -631,7 +631,7 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 
 function UnreadDivider({ count, onMarkRead }: { count: number; onMarkRead: () => void }) {
 	return (
-		<div className="relative z-[3] flex items-center gap-2.5 py-3">
+		<div className="relative z-[3] flex items-center gap-2.5 pb-1.5 pt-2">
 			<span aria-hidden="true" className="h-px flex-1 bg-brand/40" />
 			<span className="rounded-full bg-brand/10 px-2.5 py-1 font-mono text-[9px] font-bold uppercase tracking-[0.11em] text-brand">
 				{count} new
@@ -668,7 +668,7 @@ function EventRow({
 			<div className="relative flex flex-wrap items-center gap-x-2.5 gap-y-1 py-1 pl-9">
 				<span
 					aria-hidden="true"
-					className="absolute left-[10px] top-[9px] size-2 rounded-[2px] border-[1.5px] border-border-strong bg-background"
+					className="absolute left-[10px] top-[11px] size-2 rounded-[2px] border-[1.5px] border-border-strong bg-background"
 				/>
 				{entry.time && (
 					<RelativeTime
@@ -693,11 +693,11 @@ function EventRow({
 		// Mockup 1177–1191: a hollow 8px node on the rail, the time in its own
 		// 46px column, then one sentence — the event's weight comes from the
 		// bold actor name, not from a filled dot or an uppercase badge.
-		<div className="relative py-1 pl-9">
+		<div className="relative py-[3px] pl-9">
 			<span
 				aria-hidden="true"
 				className={cn(
-					'absolute left-[10px] top-[9px] size-2 rounded-full border-2 bg-background',
+					'absolute left-[10px] top-2 size-2 rounded-full border-2 bg-background',
 					DOT_TONE_CLASSES[entry.chipTone],
 				)}
 			/>

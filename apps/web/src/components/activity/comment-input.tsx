@@ -564,6 +564,51 @@ export function CommentInput({
 		</>
 	)
 
+	const referenceChips = references.length > 0 && (
+		<ul className={cn('flex flex-wrap gap-1.5', isBar ? 'px-1 pb-[7px]' : 'p-1.5 pb-0')}>
+			{references.map((ref) => (
+				<li
+					key={ref.id}
+					className={cn(
+						'flex items-center gap-1.5',
+						isBar
+							? 'rounded-full border border-brand/25 bg-brand/10 px-2.5 py-1'
+							: 'rounded-lg border border-border bg-background px-2 py-1',
+					)}
+				>
+					<span
+						aria-hidden="true"
+						className={cn('size-[7px] shrink-0 rounded-[2px]', getTypeColor(ref.type).bg)}
+					/>
+					{!isBar && (
+						<span className="font-mono text-[8px] font-bold uppercase tracking-[0.09em] text-muted-foreground">
+							{ref.type}
+						</span>
+					)}
+					<span
+						className={cn(
+							'max-w-[180px] truncate text-[11.5px] font-semibold',
+							isBar ? 'text-brand' : 'text-foreground',
+						)}
+					>
+						{ref.title}
+					</span>
+					<button
+						type="button"
+						aria-label={`Remove reference to ${ref.title}`}
+						onClick={() => setReferences((prev) => prev.filter((r) => r.id !== ref.id))}
+						className={cn(
+							'transition-colors',
+							isBar ? 'text-brand/45 hover:text-brand' : 'text-border hover:text-destructive',
+						)}
+					>
+						<X size={12} />
+					</button>
+				</li>
+			))}
+		</ul>
+	)
+
 	return (
 		<div
 			className={cn(
@@ -588,6 +633,7 @@ export function CommentInput({
 				    pushes the row past the card and the page scrolls horizontally
 				    instead of the field growing vertically. */}
 				<div className="min-w-0 flex-1">
+					{isBar && referenceChips}
 					<div
 						className={cn(
 							'border transition-colors',
@@ -595,35 +641,7 @@ export function CommentInput({
 							overLimit ? 'border-error' : isBar ? 'border-input' : 'border-border',
 						)}
 					>
-						{references.length > 0 && (
-							<ul className="flex flex-wrap gap-1.5 p-1.5 pb-0">
-								{references.map((ref) => (
-									<li
-										key={ref.id}
-										className="flex items-center gap-1.5 rounded-lg border border-border bg-background px-2 py-1"
-									>
-										<span
-											aria-hidden="true"
-											className={cn('size-[7px] shrink-0 rounded-[2px]', getTypeColor(ref.type).bg)}
-										/>
-										<span className="font-mono text-[8px] font-bold uppercase tracking-[0.09em] text-muted-foreground">
-											{ref.type}
-										</span>
-										<span className="max-w-[180px] truncate text-xs font-semibold text-foreground">
-											{ref.title}
-										</span>
-										<button
-											type="button"
-											aria-label={`Remove reference to ${ref.title}`}
-											onClick={() => setReferences((prev) => prev.filter((r) => r.id !== ref.id))}
-											className="text-border transition-colors hover:text-destructive"
-										>
-											<X size={12} />
-										</button>
-									</li>
-								))}
-							</ul>
-						)}
+						{!isBar && referenceChips}
 						{hasAttachments && (
 							<ul className="flex flex-wrap gap-1.5 p-1.5">
 								{attachments.map((file) => (

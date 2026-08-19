@@ -645,7 +645,7 @@ export function MarkdownContent({
 				    but for its caret. Same font, size, leading, padding and wrapping,
 				    so every glyph lands in the same place — which is what lets the
 				    delimiters recede without the caret drifting off the text. */}
-				<div className="relative rounded-[9px] bg-muted/60 ring-1 ring-border">
+				<div className="relative rounded-[9px] bg-muted/60">
 					<div
 						ref={docOverlayRef}
 						aria-hidden="true"
