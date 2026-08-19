@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -7,6 +7,24 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 // Repo root, four levels up from this test file (apps/dev/src/__tests__/scripts).
 const REPO_ROOT = resolve(__dirname, '..', '..', '..', '..', '..')
 const SCRIPT = join(REPO_ROOT, 'scripts', 'gh-pr-merge-auto.sh')
+
+// On Windows, `bash` on PATH usually resolves to C:\Windows\System32\bash.exe
+// (the WSL launcher), which can't run this script against Windows temp paths.
+// Prefer Git for Windows' real bash if it's installed.
+function resolveBash(): string {
+	if (process.platform === 'win32') {
+		const candidates = [
+			process.env.GIT_BASH_PATH,
+			'C:\\Program Files\\Git\\bin\\bash.exe',
+			'C:\\Program Files (x86)\\Git\\bin\\bash.exe',
+		].filter((p): p is string => Boolean(p))
+		const found = candidates.find((p) => existsSync(p))
+		if (found) return found
+	}
+	return 'bash'
+}
+
+const BASH_BIN = resolveBash()
 
 interface StubOptions {
 	// stdout/stderr per attempt, indexed by attempt number (1-based via GH_STUB_STATE).
@@ -39,7 +57,7 @@ esac
 }
 
 function runWrapper(ghBin: string, args: string[]): { status: number; stderr: string } {
-	const result = spawnSync('bash', [SCRIPT, ...args], {
+	const result = spawnSync(BASH_BIN, [SCRIPT, ...args], {
 		env: {
 			...process.env,
 			GH_BIN: ghBin,
