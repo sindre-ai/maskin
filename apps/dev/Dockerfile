@@ -43,6 +43,7 @@ RUN NODE_OPTIONS=--max-old-space-size=1536 pnpm --filter=@maskin/dev build
 RUN NODE_OPTIONS=--max-old-space-size=1536 pnpm --filter=@maskin/web build
 
 COPY docker/agent-base/ docker/agent-base/
+COPY docker/browser-sidecar/ docker/browser-sidecar/
 
 ENV NODE_ENV=production
 ENV STATIC_DIR=/app/apps/web/dist

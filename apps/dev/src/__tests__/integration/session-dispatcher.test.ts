@@ -1,4 +1,7 @@
-import { agentServers } from '@maskin/db/schema'
+import { agentServers, sessions } from '@maskin/db/schema'
+import { eq } from 'drizzle-orm'
+import { vi } from 'vitest'
+import type { AgentServerClient, StartSessionRequest } from '../../services/agent-server-client'
 import { SessionDispatcher } from '../../services/session-dispatcher'
 import { insertSession, insertWorkspace } from '../factories'
 import { db, getTestActorId, sql } from './global-setup'
@@ -97,5 +100,74 @@ describe('SessionDispatcher.pickLeastLoadedServer Integration', () => {
 		const picked = await makeDispatcher().pickLeastLoadedServer()
 		expect(picked?.server.id).toBe(light.id)
 		expect(picked?.active).toBe(1)
+	})
+})
+
+describe('SessionDispatcher.dispatch — sticky retry Integration', () => {
+	let workspaceId: string
+	let actorId: string
+
+	beforeEach(async () => {
+		actorId = getTestActorId()
+		const ws = await insertWorkspace(db, actorId)
+		workspaceId = ws.id
+		// global-setup truncates sessions but NOT agent_servers — clear it here.
+		await sql`TRUNCATE agent_servers CASCADE`
+	})
+
+	function makeClient(): AgentServerClient {
+		const startSession = vi.fn(async (req: StartSessionRequest) => ({
+			sessionId: req.sessionId,
+			sandboxName: `sb-${req.sessionId}`,
+			connection: { host: 'agent.test', port: 3001 },
+		}))
+		return { startSession, postJson: vi.fn() } as unknown as AgentServerClient
+	}
+
+	/**
+	 * Regression for MASKIN-DEV-6: a dispatch attempt that claimed a slot on
+	 * server A and was then interrupted (e.g. a deploy restart) leaves the
+	 * session pinned to A with no matching agent_servers change. A naive retry
+	 * that re-runs pickLeastLoadedServer() would choose B (emptier) and get
+	 * rejected by claimSlot's same-server check, wrongly reporting a
+	 * permanent_failure. The dispatcher must retry against the server the
+	 * session is already pinned to.
+	 */
+	it('retries against the already-pinned server instead of a less-loaded one', async () => {
+		const pinned = await insertServer({ url: 'http://pinned:3001', max: 10 })
+		// An emptier server exists so a fresh pickLeastLoadedServer() would
+		// clearly prefer it over `pinned` — proving the retry stays sticky.
+		await insertServer({ url: 'http://emptier:3001', max: 10 })
+		for (let i = 0; i < 5; i++) {
+			await insertSession(db, workspaceId, actorId, actorId, {
+				status: 'running',
+				agentServerId: pinned.id,
+			})
+		}
+		const session = await insertSession(db, workspaceId, actorId, actorId, {
+			status: 'starting',
+			agentServerId: pinned.id,
+		})
+
+		const client = makeClient()
+		const dispatcher = new SessionDispatcher({
+			db,
+			buildStartRequest: async (sessionId) => ({
+				sessionId,
+				image: 'agent-base:latest',
+				env: { SESSION_ID: sessionId },
+			}),
+			clientFactory: () => client,
+		})
+
+		const result = await dispatcher.dispatch(session.id, `dispatch:${session.id}`)
+
+		expect(result).toEqual({ kind: 'dispatched' })
+		expect(client.startSession).toHaveBeenCalledWith(
+			expect.objectContaining({ sessionId: session.id }),
+		)
+		const [updated] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+		expect(updated.agentServerId).toBe(pinned.id)
+		expect(updated.status).toBe('running')
 	})
 })
