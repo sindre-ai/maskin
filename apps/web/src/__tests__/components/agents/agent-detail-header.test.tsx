@@ -35,7 +35,9 @@ describe('AgentDetailHeader', () => {
 		expect(screen.getByText('No outcome set yet')).toBeInTheDocument()
 	})
 
-	it('shows a running agent with a live status dot', () => {
+	// v2 dropped the dot and the plate here — the identity row is one line of
+	// text, so the status is the coloured word alone (mockup 2321).
+	it('states a running agent as a bare coloured word, with no dot or plate', () => {
 		const agent = buildActorResponse({
 			id: 'agent-run',
 			type: 'agent',
@@ -45,8 +47,10 @@ describe('AgentDetailHeader', () => {
 		const { container } = render(<AgentDetailHeader agent={agent} portrait="running" />, {
 			wrapper: createWorkspaceWrapper(),
 		})
-		expect(screen.getByText('Running')).toBeInTheDocument()
-		expect(container.querySelector('.animate-pulse')).not.toBeNull()
+		const status = screen.getByText('Running')
+		expect(status.className).toContain('text-status-in_progress-text')
+		expect(status.className).not.toContain('bg-status-in_progress-bg')
+		expect(container.querySelector('.animate-pulse')).toBeNull()
 	})
 
 	it('does not pulse when the agent is idle', () => {

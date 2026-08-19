@@ -1,10 +1,9 @@
 import { AgentSectionHeading } from '@/components/agents/agent-section-heading'
 import { McpServers } from '@/components/agents/mcp-servers'
-import { Button } from '@/components/ui/button'
 import { useUpdateActor } from '@/hooks/use-actors'
 import type { ActorResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
-import { useCallback, useState } from 'react'
+import { useCallback } from 'react'
 
 function countServers(tools: Record<string, unknown> | null): number {
 	if (!tools) return 0
@@ -15,7 +14,6 @@ function countServers(tools: Record<string, unknown> | null): number {
 export function AgentToolsSection({ agent }: { agent: ActorResponse }) {
 	const { workspaceId } = useWorkspace()
 	const updateActor = useUpdateActor(workspaceId)
-	const [managing, setManaging] = useState(false)
 
 	const total = countServers(agent.tools)
 
@@ -39,21 +37,9 @@ export function AgentToolsSection({ agent }: { agent: ActorResponse }) {
 						· {total}
 					</span>
 				}
-				action={
-					<Button
-						type="button"
-						size="sm"
-						variant="ghost"
-						className="h-7 shrink-0 px-2 text-xs font-medium"
-						aria-pressed={managing}
-						onClick={() => setManaging((v) => !v)}
-					>
-						{managing ? 'Done' : 'Manage'}
-					</Button>
-				}
 			/>
 			<div className="rounded-xl border border-border bg-card px-4 py-4">
-				<McpServers tools={agent.tools} onUpdate={handleUpdate} readOnly={!managing} />
+				<McpServers tools={agent.tools} onUpdate={handleUpdate} />
 			</div>
 		</section>
 	)

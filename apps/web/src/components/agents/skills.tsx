@@ -209,6 +209,22 @@ function WorkspaceSkillsSection({
 				</p>
 			)}
 
+			{/* Attached rows first, the attach affordance under them — v2 reads the
+			    list top-down and puts the "add another" control at the end of it
+			    (mockup 2450–2456). */}
+			{!isLoading && attached.length > 0 && (
+				<div className="space-y-2">
+					{attached.map((skill) => (
+						<AttachedSkillRow
+							key={skill.id}
+							skill={skill}
+							onRemove={() => detachSkill.mutate(skill.id)}
+							readOnly={readOnly}
+						/>
+					))}
+				</div>
+			)}
+
 			{!readOnly && !isLoading && available.length > 0 && (
 				<ResponsivePopover open={open} onOpenChange={handleOpenChange}>
 					<ResponsivePopoverTrigger asChild>
@@ -279,19 +295,6 @@ function WorkspaceSkillsSection({
 						</Command>
 					</ResponsivePopoverContent>
 				</ResponsivePopover>
-			)}
-
-			{!isLoading && attached.length > 0 && (
-				<div className="mt-2 space-y-2">
-					{attached.map((skill) => (
-						<AttachedSkillRow
-							key={skill.id}
-							skill={skill}
-							onRemove={() => detachSkill.mutate(skill.id)}
-							readOnly={readOnly}
-						/>
-					))}
-				</div>
 			)}
 		</div>
 	)
