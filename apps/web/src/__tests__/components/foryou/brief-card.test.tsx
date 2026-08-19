@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -12,11 +12,6 @@ vi.mock('@/hooks/use-briefing', () => ({
 	useBriefing: (...args: unknown[]) => mockUseBriefing(...args),
 }))
 
-const createConversationMutateAsync = vi.fn()
-vi.mock('@/hooks/use-conversations', () => ({
-	useCreateConversation: () => ({ mutateAsync: createConversationMutateAsync, isPending: false }),
-}))
-
 const mockUseObjects = vi.fn(() => ({ data: [] }))
 vi.mock('@/hooks/use-objects', () => ({
 	useObjects: (...args: unknown[]) => mockUseObjects(...(args as [])),
@@ -28,28 +23,13 @@ vi.mock('@/hooks/use-actors', () => ({
 	useActor: () => ({ data: undefined }),
 }))
 
-// The chat Composer drags in the whole chat surface (uploads, slash picker,
-// SSE); the drawer only cares that a send routes through onSend.
-vi.mock('@/components/chat/chat', () => ({
-	Composer: ({
-		onSend,
-		placeholder,
-	}: {
-		onSend: (content: string) => Promise<void>
-		placeholder?: string
-	}) => (
-		<button type="button" onClick={() => void onSend('Turn this into a task')}>
-			{placeholder}
-		</button>
-	),
-}))
-
 import {
-	BriefDrawer,
+	BriefCard,
 	briefMentionedIds,
 	briefSpokenText,
+	briefTranscript,
 	splitBriefHeadline,
-} from '@/components/foryou/brief-drawer'
+} from '@/components/foryou/brief-card'
 import { estimateDurationMs, formatClock } from '@/hooks/use-brief-playback'
 import { TestWrapper } from '../../setup'
 
@@ -94,10 +74,13 @@ function installSpeechSynthesis() {
 }
 
 function removeSpeechSynthesis() {
-	// @ts-expect-error — deleting an optional test-only global
-	window.speechSynthesis = undefined
-	// @ts-expect-error — deleting an optional test-only global
-	window.SpeechSynthesisUtterance = undefined
+	// `installSpeechSynthesis` defines these as non-writable, so they have to be
+	// redefined rather than assigned back to undefined.
+	Object.defineProperty(window, 'speechSynthesis', { configurable: true, value: undefined })
+	Object.defineProperty(window, 'SpeechSynthesisUtterance', {
+		configurable: true,
+		value: undefined,
+	})
 }
 
 describe('briefSpokenText', () => {
@@ -129,6 +112,16 @@ describe('brief playback readouts', () => {
 	})
 })
 
+describe('briefTranscript', () => {
+	it('drops the machine id lines but keeps the prose', () => {
+		const transcript = briefTranscript(
+			`- **A bet**\n  id: \`${OBJECT_ID}\`\n\nTwo bets need a read.`,
+		)
+		expect(transcript).not.toContain(OBJECT_ID)
+		expect(transcript).toContain('Two bets need a read.')
+	})
+})
+
 describe('splitBriefHeadline', () => {
 	it('lifts a leading H1 out of the markdown body', () => {
 		const { headline, body } = splitBriefHeadline('# Acme — workspace briefing\n\nBody line.')
@@ -143,7 +136,7 @@ describe('splitBriefHeadline', () => {
 	})
 })
 
-describe('BriefDrawer', () => {
+describe('BriefCard', () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
 		mockUseObjects.mockReturnValue({ data: [] })
@@ -156,55 +149,65 @@ describe('BriefDrawer', () => {
 		})
 	})
 
-	it('renders nothing until it is opened', () => {
-		render(<BriefDrawer workspaceId="ws-1" open={false} onOpenChange={vi.fn()} />, {
-			wrapper: TestWrapper,
-		})
-		expect(screen.queryByTestId('brief-drawer')).not.toBeInTheDocument()
+	it('renders collapsed as the feed\u2019s first card, with the body hidden', () => {
+		render(<BriefCard workspaceId="ws-1" />, { wrapper: TestWrapper })
+
+		expect(screen.getByTestId('brief-card')).toBeInTheDocument()
+		expect(screen.getByText("Today's brief")).toBeInTheDocument()
+		expect(screen.queryByText('Two bets need a read.')).not.toBeInTheDocument()
 	})
 
-	it('renders the briefing headline and body when open', () => {
-		render(<BriefDrawer workspaceId="ws-1" open onOpenChange={vi.fn()} />, {
-			wrapper: TestWrapper,
-		})
+	it('reveals the headline when opened, and leads with the player over the prose', async () => {
+		installSpeechSynthesis()
+		const user = userEvent.setup()
+		render(<BriefCard workspaceId="ws-1" />, { wrapper: TestWrapper })
 
-		expect(screen.getByText('Your brief')).toBeInTheDocument()
-		expect(screen.getByRole('heading', { name: 'Your Monday brief' })).toBeInTheDocument()
-		expect(screen.getByText('Two bets need a read.')).toBeInTheDocument()
-	})
-
-	it('renders no player when the browser has no SpeechSynthesis', () => {
+		await user.click(screen.getByRole('button', { name: "Today's brief" }))
+		expect(screen.getByText('Your Monday brief')).toBeInTheDocument()
+		expect(screen.getByTestId('brief-player')).toBeInTheDocument()
+		// The brief is made to be listened to — the transcript stays folded.
+		expect(screen.queryByText('Two bets need a read.')).not.toBeInTheDocument()
 		removeSpeechSynthesis()
-		render(<BriefDrawer workspaceId="ws-1" open onOpenChange={vi.fn()} />, {
-			wrapper: TestWrapper,
-		})
+	})
 
+	it('renders no player when the browser has no SpeechSynthesis', async () => {
+		removeSpeechSynthesis()
+		const user = userEvent.setup()
+		render(<BriefCard workspaceId="ws-1" />, { wrapper: TestWrapper })
+
+		await user.click(screen.getByRole('button', { name: "Today's brief" }))
 		expect(screen.queryByTestId('brief-player')).not.toBeInTheDocument()
-		expect(screen.queryByRole('button', { name: 'Listen instead' })).not.toBeInTheDocument()
-		// The prose is still there — read mode is the fallback, not an error.
+		expect(screen.queryByRole('button', { name: /Show the transcript/ })).not.toBeInTheDocument()
+		// With nothing to listen to, the transcript is the brief.
 		expect(screen.getByText('Two bets need a read.')).toBeInTheDocument()
 	})
 
-	it('plays the brief through SpeechSynthesis and swaps the prose for listen mode', async () => {
+	it('plays the brief from the collapsed header without opening it', async () => {
 		const speak = installSpeechSynthesis()
 		const user = userEvent.setup()
-		render(<BriefDrawer workspaceId="ws-1" open onOpenChange={vi.fn()} />, {
-			wrapper: TestWrapper,
-		})
+		render(<BriefCard workspaceId="ws-1" />, { wrapper: TestWrapper })
 
-		expect(screen.getByTestId('brief-player')).toBeInTheDocument()
 		await user.click(screen.getByRole('button', { name: 'Read the brief aloud' }))
 		expect(speak).toHaveBeenCalledTimes(1)
-		expect(screen.getByRole('button', { name: 'Stop reading the brief' })).toBeInTheDocument()
-
-		await user.click(screen.getByRole('button', { name: 'Listen instead' }))
 		expect(screen.queryByText('Two bets need a read.')).not.toBeInTheDocument()
-		await user.click(screen.getByRole('button', { name: 'Read instead' }))
-		expect(screen.getByText('Two bets need a read.')).toBeInTheDocument()
 		removeSpeechSynthesis()
 	})
 
-	it('lists the objects the brief names as MENTIONED chips', () => {
+	it('unfolds and re-folds the transcript', async () => {
+		installSpeechSynthesis()
+		const user = userEvent.setup()
+		render(<BriefCard workspaceId="ws-1" />, { wrapper: TestWrapper })
+
+		await user.click(screen.getByRole('button', { name: "Today's brief" }))
+		await user.click(screen.getByRole('button', { name: 'Prefer to read? Show the transcript' }))
+		expect(screen.getByText('Two bets need a read.')).toBeInTheDocument()
+
+		await user.click(screen.getByRole('button', { name: 'Hide the transcript' }))
+		expect(screen.queryByText('Two bets need a read.')).not.toBeInTheDocument()
+		removeSpeechSynthesis()
+	})
+
+	it('lists the objects the brief names as MENTIONED chips', async () => {
 		mockUseBriefing.mockReturnValue({
 			data: {
 				workspace_id: 'ws-1',
@@ -217,50 +220,13 @@ describe('BriefDrawer', () => {
 		})
 		mockUseObjects.mockReturnValue({ data: [buildBriefObject()] } as never)
 
-		render(<BriefDrawer workspaceId="ws-1" open onOpenChange={vi.fn()} />, {
-			wrapper: TestWrapper,
-		})
+		const user = userEvent.setup()
+		render(<BriefCard workspaceId="ws-1" />, { wrapper: TestWrapper })
+		await user.click(screen.getByRole('button', { name: "Today's brief" }))
 
 		expect(screen.getByText('Mentioned')).toBeInTheDocument()
-		// The chip is a link into the object; the brief body also prints the
-		// title in bold, hence the role query.
-		const chip = screen.getByRole('link', { name: /Cut signup friction/ })
-		expect(chip).toBeInTheDocument()
-		expect(screen.getByLabelText('Status active')).toBeInTheDocument()
-	})
-
-	it('closes on Escape', async () => {
-		const user = userEvent.setup()
-		const onOpenChange = vi.fn()
-		render(<BriefDrawer workspaceId="ws-1" open onOpenChange={onOpenChange} />, {
-			wrapper: TestWrapper,
-		})
-
-		await user.keyboard('{Escape}')
-		expect(onOpenChange).toHaveBeenCalledWith(false)
-	})
-
-	it('sends a follow-up through useCreateConversation and closes the drawer', async () => {
-		const user = userEvent.setup()
-		const onOpenChange = vi.fn()
-		createConversationMutateAsync.mockResolvedValue({ id: 'conv-1' })
-		render(<BriefDrawer workspaceId="ws-1" open onOpenChange={onOpenChange} />, {
-			wrapper: TestWrapper,
-		})
-
-		await user.click(
-			screen.getByRole('button', {
-				name: 'Ask Workspace Coach to turn any of this into a task…',
-			}),
-		)
-
-		await waitFor(() =>
-			expect(createConversationMutateAsync).toHaveBeenCalledWith({
-				title: 'Workspace Coach',
-				participant_actor_ids: ['agent-1'],
-				initial_message: 'Turn this into a task',
-			}),
-		)
-		expect(onOpenChange).toHaveBeenCalledWith(false)
+		// The chip is a link into the object, carrying its status as a word.
+		expect(screen.getByRole('link', { name: /Cut signup friction/ })).toBeInTheDocument()
+		expect(screen.getByLabelText('Status active')).toHaveTextContent('Active')
 	})
 })

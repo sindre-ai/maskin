@@ -19,7 +19,6 @@ import { useMemo } from 'react'
 import { NavUser } from './nav-user'
 import { SidebarActivity } from './sidebar-activity'
 import { SidebarNavItem, type SidebarNavItemDef } from './sidebar-nav-item'
-import { SidebarReleaseCard } from './sidebar-release-card'
 import { WorkspaceSwitcher } from './workspace-switcher'
 
 const FOR_YOU_ROUTE = '/$workspaceId' as const
@@ -116,7 +115,6 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 				<SidebarMenu>
 					<SidebarNavItem item={marketplaceItem} source="footer" />
 				</SidebarMenu>
-				<SidebarReleaseCard />
 				<SidebarActivity workspaceId={workspaceId} />
 				<NavUser />
 			</SidebarFooter>
