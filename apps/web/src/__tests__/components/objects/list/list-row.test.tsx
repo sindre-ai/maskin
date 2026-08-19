@@ -1,5 +1,5 @@
 import { ListRow } from '@/components/objects/list/list-row'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import type { ButtonHTMLAttributes, ReactNode } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import {
@@ -31,25 +31,42 @@ const baseProps = {
 
 function renderRow(overrides: Partial<React.ComponentProps<typeof ListRow>> = {}) {
 	const object = buildObjectResponse({ id: 'obj-1', type: 'bet', title: 'Ship the thing' })
-	return render(<ListRow {...baseProps} object={object} isSelected={false} {...overrides} />)
+	return {
+		object,
+		...render(<ListRow {...baseProps} object={object} isSelected={false} {...overrides} />),
+	}
 }
 
 describe('ListRow select affordance', () => {
-	// Mockup 1002–1006: a type dot at rest, a checkbox once anything is selected.
-	it('shows the resting type dot alongside a hidden checkbox when nothing is selected', () => {
-		const { container } = renderRow({ anySelected: false, isSelected: false })
+	// Mockup 756–758: a star at rest, a checkbox once anything is selected.
+	it('shows the resting star alongside a hover-revealed checkbox when nothing is selected', () => {
+		renderRow({ anySelected: false, isSelected: false })
+		expect(screen.getByRole('button', { name: 'Star' })).toBeInTheDocument()
 		const checkbox = screen.getByRole('checkbox', { name: 'Select row' })
 		expect(checkbox).toHaveAttribute('data-state', 'unchecked')
 		expect(checkbox.className).toContain('opacity-0')
-		expect(container.querySelector('span[aria-hidden="true"].rounded-\\[2px\\]')).not.toBeNull()
 	})
 
-	it('reveals an empty checkbox on every row once any row is selected', () => {
-		const { container } = renderRow({ anySelected: true, isSelected: false })
+	it('draws a filled star and offers to unstar once the row is starred', () => {
+		const onToggleStar = vi.fn()
+		const { object } = renderRow({
+			anySelected: false,
+			isSelected: false,
+			isStarred: true,
+			onToggleStar,
+		})
+		const star = screen.getByRole('button', { name: 'Unstar' })
+		expect(star).toHaveTextContent('★')
+		fireEvent.click(star)
+		expect(onToggleStar).toHaveBeenCalledWith(object.id)
+	})
+
+	it('replaces the star with a checkbox on every row once any row is selected', () => {
+		renderRow({ anySelected: true, isSelected: false })
+		expect(screen.queryByRole('button', { name: /star/i })).toBeNull()
 		const checkbox = screen.getByRole('checkbox', { name: 'Select row' })
 		expect(checkbox).toHaveAttribute('data-state', 'unchecked')
 		expect(checkbox.className).not.toContain('opacity-0')
-		expect(container.querySelector('span[aria-hidden="true"].rounded-\\[2px\\]')).toBeNull()
 	})
 
 	it('renders a checked checkbox for the selected row', () => {

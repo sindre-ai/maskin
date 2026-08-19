@@ -1,8 +1,8 @@
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/cn'
-import { statusColors } from '@/lib/constants'
+import { statusColors, statusLabel } from '@/lib/constants'
 
-type StatusBadgeVariant = 'default' | 'dot-word'
+type StatusBadgeVariant = 'default' | 'dot-word' | 'word'
 
 export function StatusBadge({
 	status,
@@ -17,6 +17,20 @@ export function StatusBadge({
 }) {
 	const colors = statusColors[status] ?? { bg: 'bg-zinc-700', text: 'text-zinc-300' }
 	const label = status.replace(/_/g, ' ')
+
+	// The bare status word — no dot, no pill. The Objects list row carries
+	// status as coloured text (mockup 759); a dot beside it would double the
+	// colour signal inside 11px of space.
+	if (variant === 'word') {
+		return (
+			<span
+				className={cn('shrink-0 whitespace-nowrap font-medium', colors.text, className)}
+				aria-label={`Status ${label}`}
+			>
+				{statusLabel(status)}
+			</span>
+		)
+	}
 
 	if (variant === 'dot-word') {
 		return (
