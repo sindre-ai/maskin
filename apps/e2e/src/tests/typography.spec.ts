@@ -1,6 +1,6 @@
-import { argosScreenshot } from '@argos-ci/playwright'
 import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
+import { safeArgosScreenshot } from '../helpers/argos.helper'
 import { VIEWPORTS } from '../helpers/viewports'
 
 /**
@@ -449,7 +449,7 @@ test.describe('Typography — visual regression screenshots', () => {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
 			await page.goto(`/${account.workspaceId}`)
 			await waitForApp(page)
-			await argosScreenshot(page, `typography-${label}-light`)
+			await safeArgosScreenshot(page, `typography-${label}-light`)
 		})
 
 		test(`dark mode screenshot at ${label}`, async ({ page, account }) => {
@@ -457,7 +457,7 @@ test.describe('Typography — visual regression screenshots', () => {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
 			await page.goto(`/${account.workspaceId}`)
 			await waitForApp(page)
-			await argosScreenshot(page, `typography-${label}-dark`)
+			await safeArgosScreenshot(page, `typography-${label}-dark`)
 
 			const isDark = await page.evaluate(() => document.documentElement.classList.contains('dark'))
 			expect(isDark).toBe(true)
