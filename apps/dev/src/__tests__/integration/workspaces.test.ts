@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto'
 import { OpenAPIHono } from '@hono/zod-openapi'
-import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import {
 	actors,
@@ -43,31 +42,22 @@ vi.mock('../../lib/analytics/posthog', () => ({
 	capturePosthogEvent: capturePosthogEventMock,
 }))
 
-// Wrap seedDefaultAgentActors so specific tests can inject a partial-success
-// failure (agents 1-3 written, agent 4 throws) without touching the real
-// production seed for the happy-path tests. The default implementation is the
-// real function — only failure tests use `mockImplementationOnce`.
-const { seedDefaultAgentActorsMock } = vi.hoisted(() => ({
-	seedDefaultAgentActorsMock: vi.fn(),
-}))
-vi.mock('../../services/workspace-bootstrap', async () => {
-	const actual = await vi.importActual<typeof import('../../services/workspace-bootstrap')>(
-		'../../services/workspace-bootstrap',
-	)
-	seedDefaultAgentActorsMock.mockImplementation(
-		(...args: Parameters<typeof actual.seedDefaultAgentActors>) =>
-			actual.seedDefaultAgentActors(...args),
-	)
-	return {
-		...actual,
-		seedDefaultAgentActors: seedDefaultAgentActorsMock,
-	}
+// Failure injection for the partial-seed rollback test. provisionWorkspace()
+// calls seedDefaultAgentActors() module-internally, so mocking that export
+// wouldn't intercept it — instead we mock the `@maskin/auth` boundary it really
+// crosses and make one generateApiKey() call throw. That runs the *real* seed
+// code, so the test covers production rollback behaviour rather than a
+// hand-rolled stand-in. Defaults to the genuine implementation; only the
+// rollback test arms a failure via mockImplementationOnce.
+const { generateApiKeyMock } = vi.hoisted(() => ({ generateApiKeyMock: vi.fn() }))
+vi.mock('@maskin/auth', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('@maskin/auth')>()
+	generateApiKeyMock.mockImplementation(actual.generateApiKey)
+	return { ...actual, generateApiKey: generateApiKeyMock }
 })
 
 const { default: workspacesRoutes } = await import('../../routes/workspaces')
-const { SeedAgentError, bootstrapDefaultAgents } = await import(
-	'../../services/workspace-bootstrap'
-)
+const { bootstrapDefaultAgents } = await import('../../services/workspace-bootstrap')
 const { AgentStorageManager } = await import('../../services/agent-storage')
 
 function createMemoryStorage(): StorageProvider {
@@ -606,31 +596,19 @@ describe('Workspaces Integration', () => {
 		})
 
 		it('returns 500 naming the failed agent and rolls back workspace/member/actor rows when seeding fails on the 4th agent', async () => {
-			// Simulate the "fourth agent fails" case: the seed helper writes agents
-			// 1-3 into the caller's transaction, then throws SeedAgentError for
-			// strategist. The route's `db.transaction` must roll back every
-			// row — including the three partial actor inserts.
-			seedDefaultAgentActorsMock.mockImplementationOnce(async (tx, wsId, createdBy) => {
-				for (const name of ['Workspace Coach', 'Chief of Staff', 'Driver']) {
-					const [created] = await tx
-						.insert(actors)
-						.values({
-							type: 'agent',
-							name,
-							apiKey: generateApiKey().key,
-							createdBy: createdBy as string,
-						})
-						.returning()
-					if (created) {
-						await tx.insert(workspaceMembers).values({
-							workspaceId: wsId as string,
-							actorId: created.id,
-							role: 'member',
-						})
-					}
-				}
-				throw new SeedAgentError('strategist', new Error('mock failure on 4th agent'))
-			})
+			// Agents seed in DEFAULT_AGENT_IDS order — Workspace Coach, Chief of
+			// Staff, Driver, then Strategist. Each mints an API key first, so
+			// throwing on the 4th generateApiKey() call fails strategist after
+			// agents 1-3 are already written into the transaction. Everything —
+			// including those three partial actor inserts — must roll back.
+			const realGenerateApiKey = generateApiKeyMock.getMockImplementation()
+			generateApiKeyMock
+				.mockImplementationOnce(realGenerateApiKey)
+				.mockImplementationOnce(realGenerateApiKey)
+				.mockImplementationOnce(realGenerateApiKey)
+				.mockImplementationOnce(() => {
+					throw new Error('mock failure on 4th agent')
+				})
 
 			const workspacesBefore = await db.select({ id: workspacesTable.id }).from(workspacesTable)
 			const membersBefore = await db

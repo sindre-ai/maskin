@@ -7,18 +7,11 @@ import {
 	workspaceMembers,
 	workspaces,
 } from '@maskin/db/schema'
-import { mergeModuleDefaultSettings } from '@maskin/module-sdk'
-import {
-	CHIEF_OF_STAFF_DEFAULT,
-	WORKSPACE_COACH_DEFAULT,
-	workspaceSettingsSchema,
-} from '@maskin/shared'
 import { and, eq, isNotNull } from 'drizzle-orm'
 import type { AgentStorageManager } from '../services/agent-storage'
 import type { SessionManager } from '../services/session-manager'
-import { bootstrapDefaultAgents } from '../services/workspace-bootstrap'
+import { provisionWorkspace } from '../services/workspace-bootstrap'
 import { emitWorkspaceFirstReady } from './analytics/install-telemetry'
-import { logger } from './logger'
 import {
 	CCD_ACTOR_IDS,
 	CCD_LOOP,
@@ -98,7 +91,6 @@ import {
 	TEAM_OPS_SKILL_IDS,
 	TEAM_OPS_TRIGGER_IDS,
 } from './marketplace-loops/team-ops-loop'
-import { buildChiefOfStaffKickoffPrompt } from './onboarding/chief-of-staff-kickoff'
 
 const MARKETPLACE_SEED_CONFIGS: readonly MarketplaceLoopSeedConfig[] = [
 	{
@@ -353,129 +345,19 @@ export async function maybeBootstrapDev(
 
 	if (!actor) throw new Error('dev bootstrap: failed to create actor')
 
-	const enabledModules = ['work', 'crm', 'knowledge']
-	const settings = mergeModuleDefaultSettings(
-		workspaceSettingsSchema.parse({ enabled_modules: enabledModules }),
-		enabledModules,
-	)
-
-	let chiefOfStaffId: string | undefined
-	const workspace = await db.transaction(async (tx) => {
-		const [ws] = await tx
-			.insert(workspaces)
-			.values({
-				name: 'My Workspace',
-				settings,
-				createdBy: actor.id,
-			})
-			.returning()
-
-		if (!ws) return null
-
-		await tx.insert(workspaceMembers).values({
-			workspaceId: ws.id,
-			actorId: actor.id,
-			role: 'owner',
-		})
-
-		// Seed Workspace Coach — the built-in meta-agent shipped with every workspace.
-		// apiKey is required (see comment in actors.ts) — without it the agent's
-		// container has no identity to authenticate MCP writes with.
-		const [coach] = await tx
-			.insert(actors)
-			.values({
-				type: WORKSPACE_COACH_DEFAULT.type,
-				name: WORKSPACE_COACH_DEFAULT.name,
-				description: WORKSPACE_COACH_DEFAULT.description ?? null,
-				isSystem: WORKSPACE_COACH_DEFAULT.isSystem,
-				systemPrompt: WORKSPACE_COACH_DEFAULT.systemPrompt,
-				llmProvider: WORKSPACE_COACH_DEFAULT.llmProvider,
-				llmConfig: WORKSPACE_COACH_DEFAULT.llmConfig,
-				tools: WORKSPACE_COACH_DEFAULT.tools,
-				apiKey: generateApiKey().key,
-				createdBy: actor.id,
-			})
-			.returning()
-
-		if (!coach) throw new Error('dev bootstrap: failed to seed Workspace Coach actor')
-
-		await tx.insert(workspaceMembers).values({
-			workspaceId: ws.id,
-			actorId: coach.id,
-			role: 'member',
-		})
-
-		// Seed Chief of Staff synchronously so we can capture its actor id and
-		// pin it as this workspace's default chat agent in the same tx.
-		// bootstrapDefaultAgents() also has an idempotent CoS name-check so the
-		// post-commit call will simply skip this actor.
-		const [chief] = await tx
-			.insert(actors)
-			.values({
-				type: CHIEF_OF_STAFF_DEFAULT.type,
-				name: CHIEF_OF_STAFF_DEFAULT.name,
-				description: CHIEF_OF_STAFF_DEFAULT.description ?? null,
-				isSystem: CHIEF_OF_STAFF_DEFAULT.isSystem,
-				systemPrompt: CHIEF_OF_STAFF_DEFAULT.systemPrompt,
-				llmProvider: CHIEF_OF_STAFF_DEFAULT.llmProvider,
-				llmConfig: CHIEF_OF_STAFF_DEFAULT.llmConfig,
-				tools: CHIEF_OF_STAFF_DEFAULT.tools,
-				apiKey: generateApiKey().key,
-				createdBy: actor.id,
-			})
-			.returning()
-
-		if (!chief) throw new Error('dev bootstrap: failed to seed Chief of Staff actor')
-		chiefOfStaffId = chief.id
-
-		await tx.insert(workspaceMembers).values({
-			workspaceId: ws.id,
-			actorId: chief.id,
-			role: 'member',
-		})
-
-		// Pin Chief of Staff as the default chat agent for this workspace.
-		// Reversible via `pnpm --filter @maskin/dev exec tsx scripts/seed-default-agent.ts --unset`.
-		await tx
-			.update(workspaces)
-			.set({ settings: { ...settings, default_agent_id: chief.id } })
-			.where(eq(workspaces.id, ws.id))
-
-		return ws
+	// Same provisioning path as POST /api/workspaces and signup: full default
+	// agent roster, skills, triggers, default loops, pinned chat agent, and the
+	// Chief of Staff welcome session.
+	const workspace = await provisionWorkspace({
+		db,
+		agentStorage,
+		sessionManager,
+		name: 'My Workspace',
+		ownerActorId: actor.id,
+		settings: { enabled_modules: ['work', 'crm', 'knowledge'] },
 	})
 
 	if (!workspace) throw new Error('dev bootstrap: failed to create workspace')
-
-	// Seed Driver and Strategist async (Workspace Coach was already seeded above).
-	// bootstrapDefaultAgents is idempotent — it skips Workspace Coach by name.
-	if (agentStorage) {
-		bootstrapDefaultAgents(db, agentStorage, workspace.id, actor.id, sessionManager).catch((err) =>
-			logger.error('dev bootstrap: default agent seeding failed', {
-				workspaceId: workspace.id,
-				err,
-			}),
-		)
-	}
-
-	// Chief of Staff was seeded synchronously above (not by bootstrapDefaultAgents,
-	// which only ever sees it as pre-existing here) — kick its welcome session
-	// directly rather than relying on an actor.created event trigger, which
-	// can't fire before this point anyway (see the long comment in
-	// bootstrapDefaultAgents).
-	if (sessionManager && chiefOfStaffId) {
-		sessionManager
-			.createSession(workspace.id, {
-				actorId: chiefOfStaffId,
-				actionPrompt: buildChiefOfStaffKickoffPrompt(actor),
-				createdBy: actor.id,
-			})
-			.catch((err) =>
-				logger.error('dev bootstrap: Chief of Staff welcome session failed', {
-					workspaceId: workspace.id,
-					err,
-				}),
-			)
-	}
 
 	// TTV instrumentation: this is the first (and per findExistingCredentials
 	// only) workspace the auto-bootstrap creates for a fresh install; agents

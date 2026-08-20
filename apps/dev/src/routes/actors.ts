@@ -24,14 +24,12 @@ import {
 	workspaceSkills,
 	workspaces,
 } from '@maskin/db/schema'
-import { mergeModuleDefaultSettings } from '@maskin/module-sdk'
 import {
 	type AgentState,
 	PLATFORM_MCP_PRESET,
 	WORKSPACE_COACH_DEFAULT,
 	createActorSchema,
 	updateActorSchema,
-	workspaceSettingsSchema,
 } from '@maskin/shared'
 import { and, asc, count, countDistinct, desc, eq, inArray, or, sql } from 'drizzle-orm'
 import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
@@ -49,7 +47,7 @@ import { serialize, serializeArray } from '../lib/serialize'
 import { isWorkspaceMember } from '../lib/workspace-auth'
 import type { AgentStorageManager } from '../services/agent-storage'
 import type { SessionManager } from '../services/session-manager'
-import { bootstrapDefaultAgents } from '../services/workspace-bootstrap'
+import { provisionWorkspace } from '../services/workspace-bootstrap'
 
 type Env = {
 	Variables: {
@@ -206,75 +204,24 @@ app.openapi(createActorRoute, async (c) => {
 	let workspaceId: string | undefined
 
 	if (shouldCreateWorkspace) {
-		const enabledModules = ['work', 'crm', 'knowledge']
-		const defaultSettings = mergeModuleDefaultSettings(
-			workspaceSettingsSchema.parse({ enabled_modules: enabledModules }),
-			enabledModules,
-		)
-		const created = await db.transaction(async (tx) => {
-			const [workspace] = await tx
-				.insert(workspaces)
-				.values({
-					name: `${body.name}'s Workspace`,
-					settings: defaultSettings,
-					createdBy: actor.id,
-				})
-				.returning()
-
-			if (!workspace) return null
-
-			await tx.insert(workspaceMembers).values({
-				workspaceId: workspace.id,
-				actorId: actor.id,
-				role: 'owner',
-			})
-
-			// Seed Workspace Coach — the built-in meta-agent shipped with every workspace.
-			// apiKey is required: without it, the agent's container boots with an empty
-			// Bearer token and MCP writes either 401 or — worse — fall back to a key
-			// that resolves to a different actor, misattributing every comment.
-			const [coach] = await tx
-				.insert(actors)
-				.values({
-					type: WORKSPACE_COACH_DEFAULT.type,
-					name: WORKSPACE_COACH_DEFAULT.name,
-					description: WORKSPACE_COACH_DEFAULT.description ?? null,
-					isSystem: WORKSPACE_COACH_DEFAULT.isSystem,
-					systemPrompt: WORKSPACE_COACH_DEFAULT.systemPrompt,
-					llmProvider: WORKSPACE_COACH_DEFAULT.llmProvider,
-					llmConfig: WORKSPACE_COACH_DEFAULT.llmConfig,
-					tools: WORKSPACE_COACH_DEFAULT.tools,
-					apiKey: generateApiKey().key,
-					createdBy: actor.id,
-				})
-				.returning()
-
-			if (!coach) throw new Error('Failed to seed Workspace Coach actor')
-
-			await tx.insert(workspaceMembers).values({
-				workspaceId: workspace.id,
-				actorId: coach.id,
-				role: 'member',
-			})
-
-			return workspace
+		// Same provisioning path as POST /api/workspaces and the dev bootstrap:
+		// full default agent roster, skills, triggers, default loops, pinned chat
+		// agent, and the Chief of Staff welcome session.
+		const created = await provisionWorkspace({
+			db,
+			agentStorage: c.get('agentStorage'),
+			sessionManager: c.get('sessionManager'),
+			name: `${body.name}'s Workspace`,
+			ownerActorId: actor.id,
+			settings: { enabled_modules: ['work', 'crm', 'knowledge'] },
+		}).catch((err) => {
+			// Signup must still succeed with a usable account even if provisioning
+			// breaks — the actor row is already committed at this point.
+			logger.error('signup workspace provisioning failed', { actorId: actor.id, err })
+			return null
 		})
 
-		if (created) {
-			workspaceId = created.id
-			const agentStorage = c.get('agentStorage')
-			if (agentStorage) {
-				await bootstrapDefaultAgents(
-					db,
-					agentStorage,
-					created.id,
-					actor.id,
-					c.get('sessionManager'),
-				).catch((err) =>
-					logger.error('workspace bootstrap failed', { workspaceId: created.id, err }),
-				)
-			}
-		}
+		if (created) workspaceId = created.id
 	}
 
 	// Return actor WITHOUT api_key, but WITH it in the expected response field.
