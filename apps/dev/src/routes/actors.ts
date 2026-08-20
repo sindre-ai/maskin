@@ -35,6 +35,7 @@ import {
 } from '@maskin/shared'
 import { and, asc, count, countDistinct, desc, eq, inArray, or, sql } from 'drizzle-orm'
 import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
+import { isEnterpriseActor } from '../lib/enterprise-allowlist'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { logger } from '../lib/logger'
 import {
@@ -232,7 +233,7 @@ app.openapi(createActorRoute, async (c) => {
 			const ownedPlans = await ownedWorkspacePlans(tx, actor.id)
 			const effectiveTier = computeEffectiveTier(ownedPlans, candidatePlan)
 			const cap = ownershipCapForTier(effectiveTier)
-			if (cap !== null && ownedPlans.length >= cap) {
+			if (cap !== null && ownedPlans.length >= cap && !isEnterpriseActor(actor.id)) {
 				logger.warn('Skipping auto-workspace creation: actor at ownership cap', {
 					actorId: actor.id,
 					effectiveTier,

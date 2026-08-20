@@ -2,6 +2,7 @@ import type { Database } from '@maskin/db'
 import { events, workspaceCreditLedger, workspaces } from '@maskin/db/schema'
 import { workspaceSettingsSchema } from '@maskin/shared'
 import { eq, sql } from 'drizzle-orm'
+import { isEnterpriseWorkspace } from './enterprise-allowlist'
 import {
 	canUseCreditBalance,
 	getWorkspacePlanCap,
@@ -37,6 +38,7 @@ export async function debitCreditForSession(params: {
 	const billing = wsSettings.billing
 	if (billing?.plan !== 'pro' && billing?.plan !== 'team') return
 	if (!canUseCreditBalance(billing.plan, billing)) return
+	if (await isEnterpriseWorkspace(db, workspaceId)) return
 
 	const capCents = getWorkspacePlanCap(wsSettings)
 	if (capCents === null) return

@@ -21,6 +21,7 @@ import {
 } from '@maskin/shared'
 import { and, eq } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
+import { isEnterpriseActor } from '../lib/enterprise-allowlist'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import {
 	billingAfterByoTransition,
@@ -145,7 +146,7 @@ app.openapi(createWorkspaceRoute, async (c) => {
 			const ownedPlans = await ownedWorkspacePlans(tx, actorId)
 			const effectiveTier = computeEffectiveTier(ownedPlans, candidatePlan)
 			const cap = ownershipCapForTier(effectiveTier)
-			if (cap !== null && ownedPlans.length >= cap) {
+			if (cap !== null && ownedPlans.length >= cap && !isEnterpriseActor(actorId)) {
 				return { kind: 'cap_exceeded' as const, effectiveTier, used: ownedPlans.length, cap }
 			}
 
@@ -628,7 +629,11 @@ app.openapi(addMemberRoute, (async (c) => {
 		// seat cap is a workspace-scoped aggregate (COUNT across all members),
 		// not a per-row invariant a UNIQUE constraint alone could enforce.
 		const [locked] = await tx
-			.select({ id: workspaces.id, settings: workspaces.settings })
+			.select({
+				id: workspaces.id,
+				settings: workspaces.settings,
+				billingOwnerId: workspaces.billingOwnerId,
+			})
 			.from(workspaces)
 			.where(eq(workspaces.id, workspaceId))
 			.for('update')
@@ -636,7 +641,7 @@ app.openapi(addMemberRoute, (async (c) => {
 		if (!locked) return { kind: 'ws_not_found' as const }
 
 		// Agents never count toward the seat cap and are never blocked by it.
-		if (targetActor.type === 'human') {
+		if (targetActor.type === 'human' && !isEnterpriseActor(locked.billingOwnerId)) {
 			const plan = resolvePlanTier(locked.settings)
 			const cap = seatCapForPlan(plan)
 			if (cap !== null) {

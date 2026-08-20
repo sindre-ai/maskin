@@ -97,6 +97,26 @@ describe('checkPlanCap / canUseCreditBalance — soft cap matrix (Integration)',
 		const wsSettings = billingSettings({ plan: 'pro', credit_balance_cents: 0 })
 		await expect(checkPlanCap({ db, workspaceId, wsSettings })).resolves.toBeUndefined()
 	})
+
+	describe('enterprise allowlist bypass', () => {
+		const ORIGINAL_ENV = process.env.MASKIN_ENTERPRISE_ACTOR_IDS
+
+		afterEach(() => {
+			if (ORIGINAL_ENV === undefined) {
+				// biome-ignore lint/performance/noDelete: assigning undefined coerces to the string "undefined" in Node.js
+				delete process.env.MASKIN_ENTERPRISE_ACTOR_IDS
+			} else {
+				process.env.MASKIN_ENTERPRISE_ACTOR_IDS = ORIGINAL_ENV
+			}
+		})
+
+		it('never blocks a workspace bill-owned by an allowlisted actor, even far over cap on trial', async () => {
+			await seedOverCapUsage()
+			process.env.MASKIN_ENTERPRISE_ACTOR_IDS = actorId
+			const wsSettings = billingSettings({ plan: 'trial', credit_balance_cents: 0 })
+			await expect(checkPlanCap({ db, workspaceId, wsSettings })).resolves.toBeUndefined()
+		})
+	})
 })
 
 describe('debitCreditForSession (Integration)', () => {

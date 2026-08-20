@@ -580,4 +580,64 @@ describe('Workspace capacity (seat cap + ownership cap) Integration', () => {
 			expect(await humanMemberCount(ws.id)).toBe(2)
 		})
 	})
+
+	describe('enterprise allowlist bypass', () => {
+		const ORIGINAL_ENV = process.env.MASKIN_ENTERPRISE_ACTOR_IDS
+
+		afterEach(() => {
+			if (ORIGINAL_ENV === undefined) {
+				// biome-ignore lint/performance/noDelete: assigning undefined coerces to the string "undefined" in Node.js
+				delete process.env.MASKIN_ENTERPRISE_ACTOR_IDS
+			} else {
+				process.env.MASKIN_ENTERPRISE_ACTOR_IDS = ORIGINAL_ENV
+			}
+		})
+
+		it('lets an allowlisted actor exceed the trial ownership cap', async () => {
+			process.env.MASKIN_ENTERPRISE_ACTOR_IDS = getTestActorId()
+			const app = createApp()
+			const first = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Enterprise Owned #1' }),
+			)
+			expect(first.status).toBe(201)
+
+			const second = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Enterprise Owned #2' }),
+			)
+			expect(second.status).toBe(201)
+		})
+
+		it('lets a workspace bill-owned by an allowlisted actor exceed the trial seat cap', async () => {
+			process.env.MASKIN_ENTERPRISE_ACTOR_IDS = getTestActorId()
+			const app = createApp()
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Enterprise Seats' }),
+			)
+			const ws = await createRes.json()
+
+			const other = await insertActor(db, { name: 'Enterprise Second Human' })
+			const res = await app.request(
+				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, { actor_id: other.id }),
+			)
+			expect(res.status).toBe(201)
+			expect(await humanMemberCount(ws.id)).toBe(2)
+		})
+
+		it('still enforces the seat cap once the actor is removed from the allowlist', async () => {
+			process.env.MASKIN_ENTERPRISE_ACTOR_IDS = getTestActorId()
+			const app = createApp()
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Enterprise Then Not' }),
+			)
+			const ws = await createRes.json()
+
+			// biome-ignore lint/performance/noDelete: assigning undefined coerces to the string "undefined" in Node.js
+			delete process.env.MASKIN_ENTERPRISE_ACTOR_IDS
+			const other = await insertActor(db, { name: 'Blocked Second Human' })
+			const res = await app.request(
+				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, { actor_id: other.id }),
+			)
+			expect(res.status).toBe(403)
+		})
+	})
 })

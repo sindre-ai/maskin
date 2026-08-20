@@ -8,6 +8,7 @@ import {
 } from './billing-defaults'
 import { type SubscriptionProbe, resolveClaudeCredentialsWithFailover } from './claude-failover'
 import type { OAuthSlotKind } from './claude-oauth-slots'
+import { isEnterpriseWorkspace } from './enterprise-allowlist'
 import type { WorkspaceSettings } from './types'
 
 const DEFAULT_CHAT_MODEL: Record<'anthropic' | 'openai' | 'ollama', string> = {
@@ -249,6 +250,7 @@ export async function checkPlanCap(params: {
 	const billing = params.wsSettings.billing
 	const plan = (billing?.plan ?? 'trial') as MaskinPlan | 'byollm'
 	if (!MASKIN_PLAN_ROUTED_PLANS.has(plan)) return
+	if (await isEnterpriseWorkspace(params.db, params.workspaceId)) return
 
 	const maskinPlan = plan as MaskinPlan
 	const cap = effectivePlanCap(maskinPlan, billing?.hard_cap_usd_cents ?? undefined)
