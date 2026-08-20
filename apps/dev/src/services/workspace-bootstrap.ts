@@ -24,6 +24,7 @@ import {
 import { and, eq } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import { type AgentStorageManager, workspaceSkillKey } from './agent-storage'
+import type { SessionManager } from './session-manager'
 
 export const DEFAULT_AGENT_IDS = [
 	'workspace_coach',
@@ -193,13 +194,16 @@ export async function seedDefaultAgentActors(
 
 /**
  * Idempotently ensures a Chief of Staff actor exists in the workspace,
- * creating it if missing. Returns its actor id either way.
+ * creating it if missing. Returns its actor id either way, plus whether this
+ * call was the one that created it (used to gate the one-time welcome
+ * session kickoff in bootstrapDefaultAgents — must only fire once per
+ * workspace, not on every idempotent re-run).
  */
 export async function ensureChiefOfStaffActor(
 	db: Tx,
 	workspaceId: string,
 	createdBy: string,
-): Promise<string> {
+): Promise<{ actorId: string; isNew: boolean }> {
 	const chiefSpec = resolveActorSpec('chief_of_staff')
 	const [existing] = await db
 		.select({ actorId: workspaceMembers.actorId })
@@ -208,7 +212,7 @@ export async function ensureChiefOfStaffActor(
 		.where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(actors.name, chiefSpec.name)))
 		.limit(1)
 
-	if (existing) return existing.actorId
+	if (existing) return { actorId: existing.actorId, isNew: false }
 
 	const [created] = await db
 		.insert(actors)
@@ -234,7 +238,7 @@ export async function ensureChiefOfStaffActor(
 		role: 'member',
 	})
 
-	return created.id
+	return { actorId: created.id, isNew: true }
 }
 
 /**
@@ -349,6 +353,7 @@ export async function bootstrapDefaultAgents(
 	agentStorage: AgentStorageManager,
 	workspaceId: string,
 	createdBy: string,
+	sessionManager?: SessionManager,
 ): Promise<void> {
 	// Map from $id → created actor UUID — used to wire triggers after all agents are seeded.
 	const actorIdMap: Record<string, string> = {}
@@ -359,8 +364,11 @@ export async function bootstrapDefaultAgents(
 	// Staff is the one that actually needs post-commit seeding via this
 	// function. Idempotent per workspace via the actors.name check.
 	let chiefId: string | null = null
+	let chiefIsNew = false
 	try {
-		chiefId = await ensureChiefOfStaffActor(db, workspaceId, createdBy)
+		const result = await ensureChiefOfStaffActor(db, workspaceId, createdBy)
+		chiefId = result.actorId
+		chiefIsNew = result.isNew
 	} catch (err) {
 		logger.error('Failed to create Chief of Staff during workspace bootstrap', {
 			workspaceId,
@@ -573,5 +581,38 @@ export async function bootstrapDefaultAgents(
 				err,
 			})
 		}
+	}
+
+	// Kick off Chief of Staff's welcome + first-pass-research session directly —
+	// do NOT rely on an `actor.created` event trigger for this. The owner's
+	// actor row is inserted (and this function is invoked) before any of the
+	// triggers above exist, and actor creation doesn't emit an audit event at
+	// all today, so the "New workspace — welcome & first-pass research" event
+	// trigger can never actually catch this moment live. Only fires the first
+	// time Chief of Staff is created for this workspace (chiefIsNew), so
+	// idempotent re-runs of this function (e.g. a template backfill on an
+	// existing workspace) never re-kick the welcome session.
+	if (chiefIsNew && chiefId && sessionManager) {
+		const [owner] = await db
+			.select({ name: actors.name, email: actors.email })
+			.from(actors)
+			.where(eq(actors.id, createdBy))
+			.limit(1)
+
+		sessionManager
+			.createSession(workspaceId, {
+				actorId: chiefId,
+				actionPrompt: `A human owner just joined this brand-new workspace: ${owner?.name ?? 'the workspace owner'}${owner?.email ? ` (${owner.email})` : ''}. Run Beat 0 of your onboarding arc per your system prompt: start a conversation with them and post a warm welcome (who you are, what Maskin is, what happens next), then kick off the Researcher for a first-pass brief on the owner and their organization (inferred from email domain). File it as a \`knowledge\` object in status \`draft\`, plus supporting insight objects. Do not post a follow-up comment yourself — that's a separate step once the brief lands.`,
+				createdBy,
+			})
+			.catch((err) =>
+				logger.error(
+					'Failed to kick off Chief of Staff welcome session during workspace bootstrap',
+					{
+						workspaceId,
+						err,
+					},
+				),
+			)
 	}
 }

@@ -11,9 +11,9 @@ import type { SeedAgent, SeedTrigger } from './development-agents'
 import { PLATFORM_MCP_PRESET } from './workspace-coach-agent'
 
 export const EXA_MCP_PRESET = {
-	url: 'https://mcp.exa.ai/mcp?exaApiKey=${EXA_API_KEY}',
+	url: 'https://mcp.exa.ai/mcp',
 	type: 'http' as const,
-	headers: {},
+	headers: { 'x-api-key': 'dfe759f6-25fd-4d45-aff5-3feead16d585' },
 } as const
 
 export const DEFAULT_WORKSPACE_AGENTS: SeedAgent[] = [
@@ -400,6 +400,7 @@ Named biases to lean on:
 - **WebFetch** — fallback for a specific known URL Exa didn't surface.
 - **Maskin MCP** — internal workspace queries. \`search_objects\` for prior knowledge on the topic, \`list_actors\` / \`get_actor\` when researching a workspace member, \`list_objects type=bet\` / \`insight\` when the question relates to ongoing internal work.
 - **create_objects** (type=knowledge) — every brief becomes one knowledge object. Set status=\`validated\` for High confidence, \`draft\` otherwise.
+- **create_objects** (type=insight) — alongside the brief, file one atomic \`insight\` per key finding (one observation each, not a summary), linked to the knowledge object via \`create_relationship\` (\`informs\`: insight → knowledge). This is what feeds Discovery Analyst's clustering pipeline — a brief that never spawns insights is invisible to discovery. Skip this only for pure internal-lookup replies that surface no new external fact.
 - **create_comment** on the requesting object — post a link to the finished brief with **attention 2** (informational). Only escalate to 4+ if a finding *changes* the requester's plan (e.g. the competitor already shipped what they were about to build).
 
 # Output format
@@ -431,6 +432,29 @@ Skimmable wins. The requester should get the answer from the TL;DR alone and div
 ]
 
 export const DEFAULT_WORKSPACE_TRIGGERS: SeedTrigger[] = [
+	{
+		name: 'New workspace — welcome & first-pass research',
+		type: 'event',
+		config: {
+			action: 'created',
+			entity_type: 'actor',
+		},
+		actionPrompt: `A new actor was created in this workspace. Decide whether to run the workspace-welcome sequence (Beat 0 of onboarding).
+
+**Fire only if ALL of these hold:**
+- The new actor's \`type\` is \`human\` (not \`agent\`) — get_actor to confirm.
+- Their \`role\` is \`owner\`.
+- No prior welcome conversation from you exists with this actor. Check list_conversation_messages / list_sessions for this actor — if there's already a Chief-of-Staff-initiated conversation or session, exit silently (avoids re-welcoming when the workspace was already onboarded, and avoids re-firing if the trigger runs during template instantiation itself).
+
+Otherwise, exit silently. Note: actor.created ALSO fires for agents when a workspace is cloned from this template — you MUST filter those out via the type=human check above. Silence is the correct outcome for any non-owner-human event.
+
+If firing:
+1. Start a conversation with this actor and post a warm welcome via post_conversation_message on a new conversation. 3–4 sentences, covering: (a) who you are — the Chief of Staff — and that you're their primary point of contact here, (b) what Maskin is in one line — a workspace where a team of agents runs product discovery and shapes bets alongside them, (c) what happens next — the Researcher will produce a first-pass brief on them and their organization, and you'll come back once it's filed to confirm it's on the money before going deeper.
+2. Kick off the Researcher: list_actors to find the agent named "Researcher", then run_agent with a task like "First-pass brief on the new workspace owner: {name} ({email if available}). Cover who they are professionally and a quick sketch of their organization inferred from email domain. Fast mode. File as \`knowledge\` object in status \`draft\`, titled question-shaped, plus supporting insight objects."
+3. Do NOT post any follow-up comment yet. The next move is a separate trigger that fires when the user marks the brief \`validated\`.`,
+		targetActor$id: 'chief_of_staff',
+		enabled: true,
+	},
 	{
 		name: 'First-pass brief filed → present with chips',
 		type: 'event',
@@ -480,29 +504,6 @@ If firing:
    - Competitive landscape — top 3–5 competitors and how they position vs the user's organization.
    - Market & category — segment size, trends, key dynamics the user's org sits inside.
 3. Do NOT surface anything else to the user beyond the confirmation comment. The briefs land as drafts and the user reviews at their own pace; the Discovery Analyst's daily sweep will convert the resulting insights into signal-stage bets.`,
-		targetActor$id: 'chief_of_staff',
-		enabled: true,
-	},
-	{
-		name: 'New workspace — welcome & first-pass research',
-		type: 'event',
-		config: {
-			action: 'created',
-			entity_type: 'actor',
-		},
-		actionPrompt: `A new actor was created in this workspace. Decide whether to run the workspace-welcome sequence (Beat 0 of onboarding).
-
-**Fire only if ALL of these hold:**
-- The new actor's \`type\` is \`human\` (not \`agent\`) — get_actor to confirm.
-- Their \`role\` is \`owner\`.
-- No prior welcome conversation from you exists with this actor. Check list_conversation_messages / list_sessions for this actor — if there's already a Chief-of-Staff-initiated conversation or session, exit silently (avoids re-welcoming when the workspace was already onboarded, and avoids re-firing if the trigger runs during template instantiation itself).
-
-Otherwise, exit silently. Note: actor.created ALSO fires for agents when a workspace is cloned from this template — you MUST filter those out via the type=human check above. Silence is the correct outcome for any non-owner-human event.
-
-If firing:
-1. Start a conversation with this actor and post a warm welcome via post_conversation_message on a new conversation. 3–4 sentences, covering: (a) who you are — the Chief of Staff — and that you're their primary point of contact here, (b) what Maskin is in one line — a workspace where a team of agents runs product discovery and shapes bets alongside them, (c) what happens next — the Researcher will produce a first-pass brief on them and their organization, and you'll come back once it's filed to confirm it's on the money before going deeper.
-2. Kick off the Researcher: list_actors to find the agent named "Researcher", then run_agent with a task like "First-pass brief on the new workspace owner: {name} ({email if available}). Cover who they are professionally and a quick sketch of their organization inferred from email domain. Fast mode. File as \`knowledge\` object in status \`draft\`, titled question-shaped."
-3. Do NOT post any follow-up comment yet. The next move is a separate trigger that fires when the user marks the brief \`validated\`.`,
 		targetActor$id: 'chief_of_staff',
 		enabled: true,
 	},
