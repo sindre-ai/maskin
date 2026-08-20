@@ -285,7 +285,7 @@ function SessionRow({
 	onStop: () => void
 }) {
 	return (
-		<div className="rounded-lg border border-border bg-bg-surface p-3 flex items-start gap-3 hover:border-border-hover hover:bg-bg-hover transition-colors">
+		<div className="rounded-lg border border-border bg-card p-3 flex items-start gap-3 hover:border-border-strong hover:bg-accent transition-colors">
 			<button
 				type="button"
 				onClick={onSelect}

@@ -155,7 +155,7 @@ function ActorAgentRow({
 			href={href}
 			target="_blank"
 			rel="noreferrer"
-			className="block rounded-lg border border-border bg-card p-4 shadow-md transition-colors hover:border-border-hover no-underline"
+			className="block rounded-lg border border-border bg-card p-4 shadow-md transition-colors hover:border-border-strong no-underline"
 		>
 			{content}
 		</a>
