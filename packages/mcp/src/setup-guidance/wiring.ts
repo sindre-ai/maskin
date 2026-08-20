@@ -18,8 +18,12 @@
  * failure so the primary tool response always ships.
  *
  * Extra API-call budget per mutation/read tool call:
- *   - actor (update/get):       ≤1 (workspace-skills count — skipped for `type !== 'agent'`
- *                                and skipped when the caller already passes `skillCount`)
+ *   - actor (create/update/get): ≤1 (workspace-skills count — skipped for `type !== 'agent'`
+ *                                and skipped when the caller already passes `skillCount`).
+ *                                `wiredToAutomation` is free where the handler already fetches
+ *                                triggers+loops for its own output (get_actor), costs ≤2 more
+ *                                calls where it doesn't (update_actor), and is free-and-exact
+ *                                on create_actor (`false` — a brand-new actor can't be wired).
  *   - bet   (create/update):    1 (workspace — reused for status order)
  *   - loop  (create/update/get): ≤3 (integrations, triggers, actors)
  */

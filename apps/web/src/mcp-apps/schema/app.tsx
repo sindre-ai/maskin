@@ -191,7 +191,7 @@ function TypeSection({
 			</div>
 
 			{adding && (
-				<div className="border-t border-border px-4 py-3 bg-bg-surface">
+				<div className="border-t border-border px-4 py-3 bg-card">
 					<NewFieldForm
 						typeName={typeName}
 						existingNames={typeSchema.fields.map((f) => f.name)}
@@ -279,7 +279,7 @@ function FieldRow({
 					{(field.values ?? []).map((value) => (
 						<span
 							key={value}
-							className="inline-flex items-center gap-1 rounded-md border border-border bg-bg-surface px-2 py-0.5 text-xs text-foreground"
+							className="inline-flex items-center gap-1 rounded-md border border-border bg-card px-2 py-0.5 text-xs text-foreground"
 						>
 							{value}
 							<button

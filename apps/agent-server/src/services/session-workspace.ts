@@ -89,7 +89,14 @@ export async function pullSessionWorkspace(
 			// - agent-server snapshots: entries rooted at `.` (e.g. `./workspace/…`)
 			// - Docker copyFrom snapshots: entries rooted at `agent` (e.g. `agent/workspace/…`)
 			// In both cases stripping one component lands files at `sessionDir/workspace/…`.
-			await execFile('tar', ['-xzf', archivePath, '-C', sessionDir, '--strip-components=1'])
+			// The archive operand is passed as a bare filename with `cwd: stage` (not the
+			// absolute path) — GNU tar on Windows misreads an absolute `C:\...` archive
+			// argument as a `host:path` remote spec and tries to rsh/ssh to a host named "C".
+			await execFile(
+				'tar',
+				['-xzf', 'workspace.tar.gz', '-C', sessionDir, '--strip-components=1'],
+				{ cwd: stage },
+			)
 			restored = true
 		} finally {
 			await rm(stage, { recursive: true, force: true })
@@ -160,7 +167,7 @@ export async function pushSessionWorkspace(
 		// `-C sessionDir` + `.` packs entries relative to sessionDir with a leading
 		// `.` component (e.g. `./workspace/…`). pullSessionWorkspace uses
 		// --strip-components=1 which strips that `.`, landing files at newDir/*.
-		await execFile('tar', ['-C', sessionDir, '-czf', archivePath, '.'])
+		await execFile('tar', ['-C', sessionDir, '-czf', 'workspace.tar.gz', '.'], { cwd: stage })
 		const buf = await readFile(archivePath)
 
 		let lastErr: unknown

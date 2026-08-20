@@ -92,7 +92,7 @@ export async function backfillAll(db: Database): Promise<{
 		const createdBy = ws.createdBy
 
 		const didPin = await db.transaction(async (tx) => {
-			const chiefId = await ensureChiefOfStaffActor(tx, ws.id, createdBy)
+			const { actorId: chiefId } = await ensureChiefOfStaffActor(tx, ws.id, createdBy)
 			const pinned = await pinDefaultAgentIfUnset(tx, ws.id, chiefId)
 			if (pinned) {
 				await tx.insert(events).values({
