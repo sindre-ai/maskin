@@ -11,6 +11,7 @@ import {
 	workspaceSkills,
 	workspaces,
 } from '@maskin/db/schema'
+import { mergeModuleDefaultSettings } from '@maskin/module-sdk'
 import {
 	CHIEF_OF_STAFF_DEFAULT,
 	DEFAULT_WORKSPACE_AGENTS,
@@ -20,8 +21,10 @@ import {
 	WORKSPACE_COACH_DEFAULT,
 	parseSkillMd,
 	skillNameSchema,
+	workspaceSettingsSchema,
 } from '@maskin/shared'
 import { and, eq } from 'drizzle-orm'
+import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { logger } from '../lib/logger'
 import { buildChiefOfStaffKickoffPrompt } from '../lib/onboarding/chief-of-staff-kickoff'
 import { type AgentStorageManager, workspaceSkillKey } from './agent-storage'
@@ -622,4 +625,142 @@ export async function bootstrapDefaultAgents(
 				),
 			)
 	}
+}
+
+/**
+ * The single, canonical "make a fully-provisioned workspace" path.
+ *
+ * Every caller that mints a workspace — signup (`POST /api/actors`), explicit
+ * creation (`POST /api/workspaces`), and the dev auto-bootstrap — goes through
+ * this so a workspace is never half-furnished depending on which door it came
+ * in by. Previously each path hand-rolled its own subset: signup seeded only
+ * Workspace Coach in-transaction and left the rest to a post-commit call,
+ * dev-bootstrap seeded Coach + Chief of Staff, and only the workspaces route
+ * seeded the full roster in-transaction or emitted `workspace_created`.
+ *
+ * In-transaction (rolled back as a unit on failure):
+ *   - the `workspaces` row + the owner's `workspace_members` row
+ *   - all seven default agent actors and their membership rows
+ *   - pinning Chief of Staff as `settings.default_agent_id`
+ *
+ * Post-commit (each step non-fatal — these hit S3 / PostHog / the container
+ * runtime, none of which can participate in a DB transaction):
+ *   - the `workspace_created` analytics event
+ *   - skills, workspace_skill files, triggers, and the default Loop objects
+ *   - Chief of Staff's welcome + first-pass-research session
+ *
+ * `bootstrapDefaultAgents` is awaited rather than fired-and-forgotten: callers
+ * hand the workspace straight to a user (or to an agent that immediately lists
+ * its triggers), and racing that against skill/trigger/loop seeding is what
+ * made freshly-created workspaces look emptier than freshly-signed-up ones.
+ *
+ * Throws SeedAgentError if a default agent fails to seed, so the caller can
+ * surface which agent broke instead of a generic 500.
+ */
+export async function provisionWorkspace(params: {
+	db: Database
+	agentStorage: AgentStorageManager | undefined
+	sessionManager: SessionManager | undefined
+	name: string
+	ownerActorId: string
+	/** Raw settings from the request body, if any — parsed and merged here. */
+	settings?: unknown
+}): Promise<typeof workspaces.$inferSelect | null> {
+	const { db, agentStorage, sessionManager, name, ownerActorId } = params
+
+	const parsedSettings = workspaceSettingsSchema.parse(params.settings ?? {})
+	const settings = mergeModuleDefaultSettings(parsedSettings, parsedSettings.enabled_modules)
+
+	let chiefOfStaffId: string | undefined
+
+	const workspace = await db.transaction(async (tx) => {
+		const [ws] = await tx
+			.insert(workspaces)
+			.values({ name, settings, createdBy: ownerActorId })
+			.returning()
+
+		if (!ws) {
+			// An insert...returning() that yields no row is an anomaly, not an
+			// expected branch. Log it here so the generic 500 the callers turn
+			// this into is traceable to a cause.
+			logger.error('provisionWorkspace: workspaces insert returned no row', {
+				name,
+				ownerActorId,
+			})
+			return null
+		}
+
+		await tx.insert(workspaceMembers).values({
+			workspaceId: ws.id,
+			actorId: ownerActorId,
+			role: 'owner',
+		})
+
+		const agentIds = await seedDefaultAgentActors(tx, ws.id, ownerActorId)
+		chiefOfStaffId = agentIds.chief_of_staff
+
+		// Pin Chief of Staff as the default chat agent unless the caller
+		// explicitly requested a different (or no) default in the create body.
+		if (parsedSettings.default_agent_id === undefined && agentIds.chief_of_staff) {
+			const nextSettings = { ...settings, default_agent_id: agentIds.chief_of_staff }
+			await tx.update(workspaces).set({ settings: nextSettings }).where(eq(workspaces.id, ws.id))
+			ws.settings = nextSettings
+		}
+
+		return ws
+	})
+
+	if (!workspace) return null
+
+	// Fire-and-forget by design — the analytics client never throws (see posthog.ts).
+	void capturePosthogEvent('workspace_created', workspace.id, {
+		workspace_id: workspace.id,
+		workspace_name: workspace.name,
+		created_by: ownerActorId,
+	})
+
+	// The actor + member rows are already committed above, so this call is a
+	// no-op for actors (its name check hits every one) and only writes
+	// workspace_skills + agent_skills + triggers + the default loop objects.
+	if (agentStorage) {
+		await bootstrapDefaultAgents(
+			db,
+			agentStorage,
+			workspace.id,
+			ownerActorId,
+			sessionManager,
+		).catch((err) => logger.error('workspace bootstrap failed', { workspaceId: workspace.id, err }))
+	} else {
+		// Not a silent branch: without agentStorage the workspace ships with its
+		// agents but no skills, no triggers and no default Loop objects. That is
+		// a wiring bug everywhere except tests that deliberately opt out.
+		logger.warn('provisionWorkspace: no agentStorage — skipped skills, triggers and loops', {
+			workspaceId: workspace.id,
+		})
+	}
+
+	// Chief of Staff was seeded synchronously above, so bootstrapDefaultAgents
+	// only ever sees it as pre-existing (chiefIsNew === false) and skips its own
+	// kickoff — fire the welcome session here instead. It can't be driven by an
+	// `actor.created` event trigger either: the owner's actor row predates every
+	// trigger in this workspace.
+	if (chiefOfStaffId && sessionManager) {
+		const [owner] = await db
+			.select({ name: actors.name, email: actors.email })
+			.from(actors)
+			.where(eq(actors.id, ownerActorId))
+			.limit(1)
+
+		sessionManager
+			.createSession(workspace.id, {
+				actorId: chiefOfStaffId,
+				actionPrompt: buildChiefOfStaffKickoffPrompt(owner ?? {}),
+				createdBy: ownerActorId,
+			})
+			.catch((err) =>
+				logger.error('Chief of Staff welcome session failed', { workspaceId: workspace.id, err }),
+			)
+	}
+
+	return workspace
 }
