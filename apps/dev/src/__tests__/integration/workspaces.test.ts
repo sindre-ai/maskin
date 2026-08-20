@@ -1,18 +1,37 @@
 import { randomUUID } from 'node:crypto'
+import { OpenAPIHono } from '@hono/zod-openapi'
 import { generateApiKey } from '@maskin/auth'
+import type { Database } from '@maskin/db'
 import {
 	actors,
 	agentSkills,
+	objects,
 	triggers,
 	workspaceMembers,
 	workspaceSkills,
 	workspaces as workspacesTable,
 } from '@maskin/db/schema'
+import type { PgNotifyBridge } from '@maskin/realtime'
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
+import { createApiError, formatZodError } from '../../lib/errors'
 import { insertActor } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
-import { createIntegrationApp, db, getTestActorId } from './global-setup'
+import { db, getTestActorId } from './global-setup'
+
+// POST /api/workspaces kicks off the Chief of Staff welcome session
+// fire-and-forget (.catch(), not awaited) right after the create transaction
+// commits, so the route needs a sessionManager in context even though these
+// tests don't assert on session creation itself.
+type Env = {
+	Variables: {
+		db: Database
+		actorId: string
+		actorType: string
+		notifyBridge: PgNotifyBridge
+		sessionManager: { createSession: (...args: unknown[]) => Promise<unknown> }
+	}
+}
 
 // PostHog is invoked as `void capturePosthogEvent(...)` from the create route.
 // Spy on the module so we can assert emit-once on success and no-emit on
@@ -92,7 +111,33 @@ const DEFAULT_AGENT_NAMES = [
 ]
 
 function createApp() {
-	return createIntegrationApp({ path: '/api/workspaces', module: workspacesRoutes })
+	const app = new OpenAPIHono<Env>({
+		defaultHook: (result, c) => {
+			if (!result.success) {
+				return c.json(
+					createApiError(
+						'VALIDATION_ERROR',
+						'Request validation failed',
+						formatZodError(result.error),
+					),
+					400,
+				)
+			}
+			return undefined
+		},
+	})
+
+	app.use('*', async (c, next) => {
+		c.set('db', db)
+		c.set('actorId', getTestActorId())
+		c.set('actorType', 'human')
+		c.set('notifyBridge', {} as PgNotifyBridge)
+		c.set('sessionManager', { createSession: vi.fn().mockResolvedValue({}) })
+		await next()
+	})
+
+	app.route('/api/workspaces', workspacesRoutes)
+	return app
 }
 
 async function agentNamesFor(workspaceId: string): Promise<string[]> {
@@ -530,6 +575,77 @@ describe('Workspaces Integration', () => {
 				.from(triggers)
 				.where(eq(triggers.workspaceId, ws.id))
 			expect(triggerRows).toHaveLength(11)
+		})
+
+		it('seeds the Discovery → Bet and Workspace Improvements loops wired to their triggers', async () => {
+			const app = createApp()
+
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Loops Seeded' }),
+			)
+			const ws = await createRes.json()
+
+			const agentStorage = new AgentStorageManager(createMemoryStorage(), db)
+			await bootstrapDefaultAgents(db, agentStorage, ws.id, getTestActorId())
+
+			const loopRows = await db
+				.select({ id: objects.id, title: objects.title, metadata: objects.metadata })
+				.from(objects)
+				.where(and(eq(objects.workspaceId, ws.id), eq(objects.type, 'loop')))
+
+			expect(loopRows.map((r) => r.title).sort()).toEqual([
+				'Discovery → Bet',
+				'Workspace Improvements',
+			])
+
+			const triggerRows = await db
+				.select({ id: triggers.id, name: triggers.name })
+				.from(triggers)
+				.where(eq(triggers.workspaceId, ws.id))
+			const triggerIdByName = new Map(triggerRows.map((t) => [t.name, t.id]))
+
+			const discoveryBetLoop = loopRows.find((r) => r.title === 'Discovery → Bet')
+			const discoveryBetTriggerIds =
+				(discoveryBetLoop?.metadata as { trigger_ids?: string[] } | null)?.trigger_ids ?? []
+			expect(new Set(discoveryBetTriggerIds)).toEqual(
+				new Set([
+					triggerIdByName.get('Daily discovery sweep'),
+					triggerIdByName.get('Shape the bet'),
+				]),
+			)
+
+			const workspaceImprovementsLoop = loopRows.find((r) => r.title === 'Workspace Improvements')
+			const workspaceImprovementsTriggerIds =
+				(workspaceImprovementsLoop?.metadata as { trigger_ids?: string[] } | null)?.trigger_ids ??
+				[]
+			expect(new Set(workspaceImprovementsTriggerIds)).toEqual(
+				new Set([
+					triggerIdByName.get('Workspace Coach — daily sweep'),
+					triggerIdByName.get('Workspace Coach — session completed (onboarding)'),
+					triggerIdByName.get('Cluster & recommend'),
+					triggerIdByName.get('Capture outcome'),
+				]),
+			)
+		})
+
+		it('re-invoking bootstrapDefaultAgents inserts zero new loop objects', async () => {
+			const app = createApp()
+
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Idempotent Loop Seed' }),
+			)
+			const ws = await createRes.json()
+
+			const agentStorage = new AgentStorageManager(createMemoryStorage(), db)
+			await bootstrapDefaultAgents(db, agentStorage, ws.id, getTestActorId())
+			await bootstrapDefaultAgents(db, agentStorage, ws.id, getTestActorId())
+
+			const loopRows = await db
+				.select({ id: objects.id })
+				.from(objects)
+				.where(and(eq(objects.workspaceId, ws.id), eq(objects.type, 'loop')))
+
+			expect(loopRows).toHaveLength(2)
 		})
 
 		it('leaves three pre-existing workspaces byte-identical when a new workspace is seeded', async () => {

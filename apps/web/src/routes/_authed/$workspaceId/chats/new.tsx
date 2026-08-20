@@ -131,6 +131,14 @@ function NewConversationPage() {
 			// Sent as structured metadata (rendered as chips by MessageBubble)
 			// rather than inlined into the message text.
 			const metadata: MessageMetadata = {}
+			if (selection.files.length > 0) {
+				metadata.attachments = selection.files.map((f) => ({
+					file_id: f.fileId,
+					name: f.name,
+					mime_type: f.mimeType ?? 'application/octet-stream',
+					size_bytes: f.sizeBytes,
+				}))
+			}
 			if (objects.length > 0) {
 				metadata.context_objects = objects.map((o) => ({
 					id: o.id,

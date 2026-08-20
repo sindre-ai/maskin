@@ -296,7 +296,13 @@ app.openapi(createActorRoute, async (c) => {
 			workspaceId = created.id
 			const agentStorage = c.get('agentStorage')
 			if (agentStorage) {
-				await bootstrapDefaultAgents(db, agentStorage, created.id, actor.id).catch((err) =>
+				await bootstrapDefaultAgents(
+					db,
+					agentStorage,
+					created.id,
+					actor.id,
+					c.get('sessionManager'),
+				).catch((err) =>
 					logger.error('workspace bootstrap failed', { workspaceId: created.id, err }),
 				)
 			}

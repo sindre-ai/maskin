@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { buildCreateWorkspaceBody, buildWorkspace } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
-import { createTestApp } from '../setup'
+import { createSessionTestApp, createTestApp } from '../setup'
 
 const { default: workspacesRoutes } = await import('../../routes/workspaces')
 
@@ -15,12 +15,18 @@ describe('Workspaces Routes', () => {
 
 		it('creates a workspace and adds the creator as owner, returning 201', async () => {
 			const ws = buildWorkspace()
-			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			const { app, mockResults, calls, sessionManager } = createSessionTestApp(
+				workspacesRoutes,
+				'/api/workspaces',
+			)
 			mockResults.insertQueue = [
 				[ws], // workspaces insert
 				[{}], // owner workspaceMembers insert
 			]
 			mockResults.insert = [defaultAgentInsertFallback]
+			// Chief of Staff's welcome session is kicked off fire-and-forget
+			// (.catch(), not awaited) right after the transaction commits.
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({})
 
 			const res = await app.request(
 				jsonRequest('POST', '/api/workspaces', buildCreateWorkspaceBody()),
@@ -41,9 +47,13 @@ describe('Workspaces Routes', () => {
 			// doesn't reflect what was actually passed to .values()), so build it
 			// with the settings the route would have written for this request.
 			const ws = buildWorkspace({ settings: { default_agent_id: explicitAgentId } })
-			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+			const { app, mockResults, sessionManager } = createSessionTestApp(
+				workspacesRoutes,
+				'/api/workspaces',
+			)
 			mockResults.insertQueue = [[ws], [{}]]
 			mockResults.insert = [defaultAgentInsertFallback]
+			;(sessionManager.createSession as ReturnType<typeof vi.fn>).mockResolvedValue({})
 
 			const res = await app.request(
 				jsonRequest('POST', '/api/workspaces', {
