@@ -33,6 +33,28 @@ jobs:
             pnpm install --frozen-lockfile
             pnpm turbo run build --filter=@maskin/agent-server...
 
+            # Systemd reads /opt/maskin/apps/agent-server/.env (EnvironmentFile)
+            # on start. Rewrite the SENTRY_RELEASE line so this deploy's SHA is
+            # what the restarted process sees — Sentry then tags every captured
+            # event with release.commit_id = this SHA, which is what the T5
+            # watcher uses to correlate an error back to the merging PR.
+            #
+            # Resolve the SHA locally on the remote from what we just checked
+            # out, not from ${{ github.sha }}. On a workflow_dispatch re-run,
+            # github.sha is bound to the trigger's SHA while `git reset --hard
+            # origin/main` moves to a possibly-newer HEAD — the release name
+            # must match the code actually running, not the trigger event.
+            RELEASE_SHA=$(git rev-parse HEAD)
+
+            ENV_FILE=/opt/maskin/apps/agent-server/.env
+            touch "$ENV_FILE"
+            # Strip any prior SENTRY_RELEASE line, then append the fresh one.
+            # `set -e` above turns a grep no-match into a fatal exit — bypass
+            # with `|| true` so a first-ever deploy (no prior line) works.
+            (grep -v '^SENTRY_RELEASE=' "$ENV_FILE" || true) > "$ENV_FILE.tmp"
+            echo "SENTRY_RELEASE=$RELEASE_SHA" >> "$ENV_FILE.tmp"
+            mv "$ENV_FILE.tmp" "$ENV_FILE"
+
             # KillMode=process on this unit means a restart only replaces the
             # dispatcher — live microVM sessions are left running untouched.
             systemctl restart maskin-agent-server

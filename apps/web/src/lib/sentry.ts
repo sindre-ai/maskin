@@ -15,6 +15,11 @@ export function initSentry(): void {
 		Sentry.init({
 			dsn,
 			environment: import.meta.env.MODE,
+			// VITE_SENTRY_RELEASE is passed as a Docker build ARG (baked into the SPA
+			// bundle at build time) — see apps/dev/Dockerfile. Coalesce to undefined
+			// so that an unset ARG (which Vite bakes as literal "") doesn't produce
+			// events tagged with an empty-string release name in the Sentry UI.
+			release: import.meta.env.VITE_SENTRY_RELEASE || undefined,
 			sendDefaultPii: false,
 		})
 		initialized = true
