@@ -1,0 +1,83 @@
+name: Sentry release
+
+# For every commit that lands on main, create a Sentry release keyed to the
+# merge SHA and finalize it for each of the three Sentry projects. The T5
+# watcher (prod-error → auto_bug) relies on this to resolve a captured
+# error's `release.commit_id` back to the merging PR. Without a finalized
+# release, the watcher falls back to file-path + 14-day recency.
+#
+# The step is skipped silently unless SENTRY_AUTH_TOKEN is configured — that
+# secret is provisioned once by a human alongside T2's Sentry projects. Until
+# then this workflow is a no-op, which keeps `main` deployable while the
+# Sentry side is being set up. Once the token exists, every subsequent push
+# starts creating releases without any further code change.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: sentry-release-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    # SENTRY_ORG_SLUG lives as a repo variable so a rename of the Sentry org
+    # doesn't require secret rotation. Project slugs are literals below —
+    # T2's brief pins them to maskin-dev/maskin-agent-server/maskin-web.
+    env:
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+      SENTRY_ORG: ${{ vars.SENTRY_ORG_SLUG }}
+      SENTRY_RELEASE: ${{ github.sha }}
+    strategy:
+      # A missing project in Sentry (e.g. T2 landed maskin-dev but not
+      # maskin-web yet) is a soft failure — the other two still finalize.
+      fail-fast: false
+      matrix:
+        project:
+          - maskin-dev
+          - maskin-agent-server
+          - maskin-web
+    steps:
+      - uses: actions/checkout@v4
+        # sentry-cli --auto walks local git history to compute the commit range
+        # between the previous finalized release and this one. Full history
+        # (fetch-depth: 0) guarantees the previous release's SHA is reachable
+        # even when a burst of commits pushes it past the shallow default,
+        # which is worth the small extra clone cost for release cadence.
+        with:
+          fetch-depth: 0
+
+      - name: Skip when SENTRY_AUTH_TOKEN is unset
+        id: gate
+        run: |
+          if [ -z "${SENTRY_AUTH_TOKEN:-}" ]; then
+            echo "SENTRY_AUTH_TOKEN not configured — skipping release for ${{ matrix.project }}"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install sentry-cli
+        if: steps.gate.outputs.run == 'true'
+        # Pinned major version — sentry-cli is stable across minor releases
+        # but a v3 → v4 could quietly change flag semantics on a release step
+        # that only runs from CI, so we lock the major.
+        run: curl -sL https://sentry.io/get-cli/ | INSTALL_DIR=/usr/local/bin SENTRY_CLI_VERSION=2.42.2 bash
+
+      - name: Create + set-commits + finalize release for ${{ matrix.project }}
+        if: steps.gate.outputs.run == 'true'
+        env:
+          SENTRY_PROJECT: ${{ matrix.project }}
+        run: |
+          set -euo pipefail
+          sentry-cli releases new "$SENTRY_RELEASE"
+          # --auto walks the local git log to attach the commit range between
+          # the previous finalized release and this one. --ignore-missing keeps
+          # this step green when one of the three projects hasn't seen a prior
+          # release yet (falls back to a single-commit range instead of
+          # exiting non-zero for that project).
+          sentry-cli releases set-commits "$SENTRY_RELEASE" --auto --ignore-missing
+          sentry-cli releases finalize "$SENTRY_RELEASE"

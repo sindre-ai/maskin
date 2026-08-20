@@ -19,6 +19,12 @@ if (dsn && enabled) {
 		Sentry.init({
 			dsn,
 			environment: process.env.NODE_ENV ?? 'development',
+			// SENTRY_RELEASE is set to the deploy's git SHA by the Dockerfile / systemd
+			// EnvironmentFile. Coalesce to undefined so an operator writing a bare
+			// `SENTRY_RELEASE=` in a .env file doesn't tag every event with an
+			// empty-string release name. A truly missing value degrades the T5 watcher's
+			// correlation to file-path+recency rather than crashing boot.
+			release: process.env.SENTRY_RELEASE || undefined,
 			tracesSampleRate: 0.1,
 			sendDefaultPii: false,
 		})
