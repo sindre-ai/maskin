@@ -51,3 +51,21 @@ describe('MessageBubble mentions', () => {
 		expect(screen.queryByLabelText('Attached context')).not.toBeInTheDocument()
 	})
 })
+
+describe('MessageBubble context objects/notifications', () => {
+	it('renders one chip per selected object and notification, in order', () => {
+		const message = buildMessage({
+			metadata: {
+				context_objects: [
+					{ id: 'obj-1', title: 'First bet', type: 'bet' },
+					{ id: 'obj-2', title: 'Second bet', type: 'bet' },
+				],
+				context_notifications: [{ id: 'notif-1', title: 'Heads up' }],
+			},
+		})
+		render(<MessageBubble workspaceId="ws-1" message={message} />, { wrapper: TestWrapper })
+		expect(screen.getByText('First bet')).toBeInTheDocument()
+		expect(screen.getByText('Second bet')).toBeInTheDocument()
+		expect(screen.getByText('Heads up')).toBeInTheDocument()
+	})
+})
