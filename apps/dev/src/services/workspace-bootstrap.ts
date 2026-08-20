@@ -679,7 +679,16 @@ export async function provisionWorkspace(params: {
 			.values({ name, settings, createdBy: ownerActorId })
 			.returning()
 
-		if (!ws) return null
+		if (!ws) {
+			// An insert...returning() that yields no row is an anomaly, not an
+			// expected branch. Log it here so the generic 500 the callers turn
+			// this into is traceable to a cause.
+			logger.error('provisionWorkspace: workspaces insert returned no row', {
+				name,
+				ownerActorId,
+			})
+			return null
+		}
 
 		await tx.insert(workspaceMembers).values({
 			workspaceId: ws.id,
@@ -721,6 +730,13 @@ export async function provisionWorkspace(params: {
 			ownerActorId,
 			sessionManager,
 		).catch((err) => logger.error('workspace bootstrap failed', { workspaceId: workspace.id, err }))
+	} else {
+		// Not a silent branch: without agentStorage the workspace ships with its
+		// agents but no skills, no triggers and no default Loop objects. That is
+		// a wiring bug everywhere except tests that deliberately opt out.
+		logger.warn('provisionWorkspace: no agentStorage — skipped skills, triggers and loops', {
+			workspaceId: workspace.id,
+		})
 	}
 
 	// Chief of Staff was seeded synchronously above, so bootstrapDefaultAgents

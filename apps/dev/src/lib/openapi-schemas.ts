@@ -88,6 +88,12 @@ export const actorResponseSchema = z.object({
 export const actorWithKeySchema = actorResponseSchema.extend({
 	api_key: z.string(),
 	workspace_id: z.string().uuid().optional(),
+	// Set only on the signup path, and only when auto-provisioning was
+	// attempted and failed. The actor row is already committed by then, so
+	// signup still returns 201 with a usable api_key — but the caller needs to
+	// distinguish "no workspace because none was asked for" from "no workspace
+	// because provisioning broke", which a bare missing `workspace_id` cannot.
+	workspace_provisioning_failed: z.boolean().optional(),
 })
 
 export const actorWithRoleSchema = actorListItemSchema.extend({

@@ -47,7 +47,7 @@ import { serialize, serializeArray } from '../lib/serialize'
 import { isWorkspaceMember } from '../lib/workspace-auth'
 import type { AgentStorageManager } from '../services/agent-storage'
 import type { SessionManager } from '../services/session-manager'
-import { provisionWorkspace } from '../services/workspace-bootstrap'
+import { SeedAgentError, provisionWorkspace } from '../services/workspace-bootstrap'
 
 type Env = {
 	Variables: {
@@ -202,26 +202,51 @@ app.openapi(createActorRoute, async (c) => {
 	// Auto-create personal workspace (default true for humans, false for agents)
 	const shouldCreateWorkspace = body.auto_create_workspace ?? body.type === 'human'
 	let workspaceId: string | undefined
+	let workspaceProvisioningFailed = false
 
 	if (shouldCreateWorkspace) {
 		// Same provisioning path as POST /api/workspaces and the dev bootstrap:
 		// full default agent roster, skills, triggers, default loops, pinned chat
 		// agent, and the Chief of Staff welcome session.
-		const created = await provisionWorkspace({
-			db,
-			agentStorage: c.get('agentStorage'),
-			sessionManager: c.get('sessionManager'),
-			name: `${body.name}'s Workspace`,
-			ownerActorId: actor.id,
-			settings: { enabled_modules: ['work', 'crm', 'knowledge'] },
-		}).catch((err) => {
-			// Signup must still succeed with a usable account even if provisioning
-			// breaks — the actor row is already committed at this point.
-			logger.error('signup workspace provisioning failed', { actorId: actor.id, err })
-			return null
-		})
+		//
+		// Unlike POST /api/workspaces (which 500s naming the failed agent), signup
+		// cannot fail the request: the actor row is already committed above and
+		// unretryable — a second attempt with the same email 409s. So it returns
+		// 201 with a usable api_key and reports the failure via
+		// `workspace_provisioning_failed` instead of leaving the caller to infer
+		// it from an absent `workspace_id`.
+		let created: Awaited<ReturnType<typeof provisionWorkspace>> = null
+		try {
+			created = await provisionWorkspace({
+				db,
+				agentStorage: c.get('agentStorage'),
+				sessionManager: c.get('sessionManager'),
+				name: `${body.name}'s Workspace`,
+				ownerActorId: actor.id,
+				settings: { enabled_modules: ['work', 'crm', 'knowledge'] },
+			})
+			if (!created) {
+				logger.error('signup workspace provisioning returned no workspace row', {
+					actorId: actor.id,
+				})
+			}
+		} catch (err) {
+			// Log the seeded-agent detail when we have it, so this failure is as
+			// diagnosable as the 500 the workspaces route returns for the same bug.
+			if (err instanceof SeedAgentError) {
+				logger.error('signup workspace provisioning failed — default agent seed failed', {
+					actorId: actor.id,
+					agentId: err.agentId,
+					errorClass: err.errorClass,
+					cause: err.cause instanceof Error ? err.cause.message : String(err.cause),
+				})
+			} else {
+				logger.error('signup workspace provisioning failed', { actorId: actor.id, err })
+			}
+		}
 
 		if (created) workspaceId = created.id
+		else workspaceProvisioningFailed = true
 	}
 
 	// Return actor WITHOUT api_key, but WITH it in the expected response field.
@@ -236,6 +261,7 @@ app.openapi(createActorRoute, async (c) => {
 			llm_config: llmConfig,
 			api_key: key,
 			...(workspaceId && { workspace_id: workspaceId }),
+			...(workspaceProvisioningFailed && { workspace_provisioning_failed: true }),
 		} as z.infer<typeof actorWithKeySchema>,
 		201,
 	)

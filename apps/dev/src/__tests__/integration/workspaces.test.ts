@@ -21,7 +21,9 @@ import { db, getTestActorId } from './global-setup'
 // POST /api/workspaces kicks off the Chief of Staff welcome session
 // fire-and-forget (.catch(), not awaited) right after the create transaction
 // commits, so the route needs a sessionManager in context even though these
-// tests don't assert on session creation itself.
+// tests don't assert on session creation itself. It also needs an agentStorage:
+// provisionWorkspace() skips skills, triggers and loops entirely when that is
+// absent, which would leave the route's own post-commit phase untested.
 type Env = {
 	Variables: {
 		db: Database
@@ -29,6 +31,7 @@ type Env = {
 		actorType: string
 		notifyBridge: PgNotifyBridge
 		sessionManager: { createSession: (...args: unknown[]) => Promise<unknown> }
+		agentStorage: InstanceType<typeof AgentStorageManager>
 	}
 }
 
@@ -101,7 +104,7 @@ const DEFAULT_AGENT_NAMES = [
 	'Knowledge Curator',
 ]
 
-function createApp() {
+function createApp(agentStorage = new AgentStorageManager(createMemoryStorage(), db)) {
 	const app = new OpenAPIHono<Env>({
 		defaultHook: (result, c) => {
 			if (!result.success) {
@@ -124,6 +127,7 @@ function createApp() {
 		c.set('actorType', 'human')
 		c.set('notifyBridge', {} as PgNotifyBridge)
 		c.set('sessionManager', { createSession: vi.fn().mockResolvedValue({}) })
+		c.set('agentStorage', agentStorage)
 		await next()
 	})
 
@@ -390,11 +394,11 @@ describe('Workspaces Integration', () => {
 			)
 			const ws = await createRes.json()
 
-			// bootstrapDefaultAgents is fire-and-forget post-commit in the route —
-			// invoke it directly (awaited) so skill/trigger assertions aren't racy.
-			const agentStorage = new AgentStorageManager(createMemoryStorage(), db)
-			await bootstrapDefaultAgents(db, agentStorage, ws.id, getTestActorId())
-
+			// No manual bootstrapDefaultAgents call: provisionWorkspace awaits it
+			// post-commit, so everything below must already be queryable by the
+			// time the 201 lands. That is the property under test — asserting it
+			// here is what covers the route -> provisionWorkspace -> bootstrap
+			// wiring rather than bootstrapDefaultAgents in isolation.
 			const [chief] = await db
 				.select({ id: actors.id })
 				.from(workspaceMembers)
@@ -458,9 +462,7 @@ describe('Workspaces Integration', () => {
 			)
 			const ws = await createRes.json()
 
-			const agentStorage = new AgentStorageManager(createMemoryStorage(), db)
-			await bootstrapDefaultAgents(db, agentStorage, ws.id, getTestActorId())
-
+			// Seeded by provisionWorkspace during the request — see above.
 			const loopRows = await db
 				.select({ id: objects.id, title: objects.title, metadata: objects.metadata })
 				.from(objects)
