@@ -97,6 +97,7 @@ app.openapi(createWorkspaceRoute, async (c) => {
 	const settings = mergeModuleDefaultSettings(parsedSettings, parsedSettings.enabled_modules)
 
 	let workspace: typeof workspaces.$inferSelect | null
+	let chiefOfStaffId: string | undefined
 	try {
 		workspace = await db.transaction(async (tx) => {
 			const [ws] = await tx
@@ -124,6 +125,7 @@ app.openapi(createWorkspaceRoute, async (c) => {
 			// Skills, workspace_skill files, and triggers are seeded post-commit
 			// because they hit S3 and can't be rolled back inside a DB transaction.
 			const agentIds = await seedDefaultAgentActors(tx, ws.id, actorId)
+			chiefOfStaffId = agentIds.chief_of_staff
 
 			// Pin Chief of Staff as the default chat agent unless the caller
 			// explicitly requested a different (or no) default in the create body.
@@ -175,9 +177,31 @@ app.openapi(createWorkspaceRoute, async (c) => {
 	// workspace_skills + agent_skills + triggers.
 	const agentStorage = c.get('agentStorage')
 	if (agentStorage) {
-		bootstrapDefaultAgents(db, agentStorage, workspace.id, actorId).catch((err) =>
-			logger.error('workspace bootstrap failed', { workspaceId: workspace.id, err }),
+		bootstrapDefaultAgents(db, agentStorage, workspace.id, actorId, c.get('sessionManager')).catch(
+			(err) => logger.error('workspace bootstrap failed', { workspaceId: workspace.id, err }),
 		)
+	}
+
+	// Chief of Staff was seeded synchronously above by seedDefaultAgentActors
+	// (bootstrapDefaultAgents only ever sees it as pre-existing here) — kick its
+	// welcome session directly rather than relying on an actor.created event
+	// trigger, which can't fire before this point anyway.
+	if (chiefOfStaffId) {
+		const [owner] = await db
+			.select({ name: actors.name, email: actors.email })
+			.from(actors)
+			.where(eq(actors.id, actorId))
+			.limit(1)
+
+		c.get('sessionManager')
+			.createSession(workspace.id, {
+				actorId: chiefOfStaffId,
+				actionPrompt: `A human owner just joined this brand-new workspace: ${owner?.name ?? 'the workspace owner'}${owner?.email ? ` (${owner.email})` : ''}. Run Beat 0 of your onboarding arc per your system prompt: start a conversation with them and post a warm welcome (who you are, what Maskin is, what happens next), then kick off the Researcher for a first-pass brief on the owner and their organization (inferred from email domain). File it as a \`knowledge\` object in status \`draft\`, plus supporting insight objects. Do not post a follow-up comment yourself — that's a separate step once the brief lands.`,
+				createdBy: actorId,
+			})
+			.catch((err) =>
+				logger.error('Chief of Staff welcome session failed', { workspaceId: workspace.id, err }),
+			)
 	}
 
 	return c.json(serialize(workspace) as z.infer<typeof workspaceResponseSchema>, 201)

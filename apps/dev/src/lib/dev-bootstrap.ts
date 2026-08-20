@@ -15,6 +15,7 @@ import {
 } from '@maskin/shared'
 import { and, eq, isNotNull } from 'drizzle-orm'
 import type { AgentStorageManager } from '../services/agent-storage'
+import type { SessionManager } from '../services/session-manager'
 import { bootstrapDefaultAgents } from '../services/workspace-bootstrap'
 import { emitWorkspaceFirstReady } from './analytics/install-telemetry'
 import { logger } from './logger'
@@ -330,6 +331,7 @@ export interface DevBootstrapResult {
 export async function maybeBootstrapDev(
 	db: Database,
 	agentStorage?: AgentStorageManager,
+	sessionManager?: SessionManager,
 ): Promise<DevBootstrapResult | null> {
 	if (process.env.NODE_ENV === 'production') return null
 	if (process.env.MASKIN_AUTO_BOOTSTRAP === 'false') return null
@@ -356,6 +358,7 @@ export async function maybeBootstrapDev(
 		enabledModules,
 	)
 
+	let chiefOfStaffId: string | undefined
 	const workspace = await db.transaction(async (tx) => {
 		const [ws] = await tx
 			.insert(workspaces)
@@ -422,6 +425,7 @@ export async function maybeBootstrapDev(
 			.returning()
 
 		if (!chief) throw new Error('dev bootstrap: failed to seed Chief of Staff actor')
+		chiefOfStaffId = chief.id
 
 		await tx.insert(workspaceMembers).values({
 			workspaceId: ws.id,
@@ -444,12 +448,32 @@ export async function maybeBootstrapDev(
 	// Seed Driver and Strategist async (Workspace Coach was already seeded above).
 	// bootstrapDefaultAgents is idempotent — it skips Workspace Coach by name.
 	if (agentStorage) {
-		bootstrapDefaultAgents(db, agentStorage, workspace.id, actor.id).catch((err) =>
+		bootstrapDefaultAgents(db, agentStorage, workspace.id, actor.id, sessionManager).catch((err) =>
 			logger.error('dev bootstrap: default agent seeding failed', {
 				workspaceId: workspace.id,
 				err,
 			}),
 		)
+	}
+
+	// Chief of Staff was seeded synchronously above (not by bootstrapDefaultAgents,
+	// which only ever sees it as pre-existing here) — kick its welcome session
+	// directly rather than relying on an actor.created event trigger, which
+	// can't fire before this point anyway (see the long comment in
+	// bootstrapDefaultAgents).
+	if (sessionManager && chiefOfStaffId) {
+		sessionManager
+			.createSession(workspace.id, {
+				actorId: chiefOfStaffId,
+				actionPrompt: `A human owner just joined this brand-new workspace: ${actor.name ?? 'the workspace owner'}${actor.email ? ` (${actor.email})` : ''}. Run Beat 0 of your onboarding arc per your system prompt: start a conversation with them and post a warm welcome (who you are, what Maskin is, what happens next), then kick off the Researcher for a first-pass brief on the owner and their organization (inferred from email domain). File it as a \`knowledge\` object in status \`draft\`, plus supporting insight objects. Do not post a follow-up comment yourself — that's a separate step once the brief lands.`,
+				createdBy: actor.id,
+			})
+			.catch((err) =>
+				logger.error('dev bootstrap: Chief of Staff welcome session failed', {
+					workspaceId: workspace.id,
+					err,
+				}),
+			)
 	}
 
 	// TTV instrumentation: this is the first (and per findExistingCredentials
