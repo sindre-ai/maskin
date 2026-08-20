@@ -9,6 +9,7 @@ import {
 } from '@maskin/db/schema'
 import { mergeModuleDefaultSettings } from '@maskin/module-sdk'
 import {
+	type BillingPlan,
 	WORKSPACE_ADMIN_DIFF_FIELDS,
 	WORKSPACE_COACH_DEFAULT,
 	computeChanges,
@@ -51,8 +52,18 @@ import {
 } from '../lib/workspace-capacity'
 import type { AgentStorageManager } from '../services/agent-storage'
 import type { SessionManager } from '../services/session-manager'
+import {
+	SeedAgentError,
+	bootstrapDefaultAgents,
+	seedDefaultAgentActors,
+} from '../services/workspace-bootstrap'
 
 type WorkspaceBilling = WorkspaceSettings['billing']
+
+type WorkspaceCreateOutcome =
+	| { kind: 'cap_exceeded'; effectiveTier: BillingPlan; used: number; cap: number }
+	| { kind: 'insert_failed' }
+	| { kind: 'created'; workspace: typeof workspaces.$inferSelect }
 
 type Env = {
 	Variables: {
@@ -123,40 +134,79 @@ app.openapi(createWorkspaceRoute, async (c) => {
 	const settings = mergeModuleDefaultSettings(parsedSettings, parsedSettings.enabled_modules)
 	const candidatePlan = resolvePlanTier(settings)
 
-	const outcome = await db.transaction(async (tx) => {
-		// Serializes ownership-cap claims for this actor against any concurrent
-		// workspace creation / transfer-ownership acceptance racing the same
-		// actor's cap. See lockActorForOwnershipClaim's docstring.
-		await lockActorForOwnershipClaim(tx, actorId)
+	let outcome: WorkspaceCreateOutcome
+	try {
+		outcome = await db.transaction(async (tx) => {
+			// Serializes ownership-cap claims for this actor against any concurrent
+			// workspace creation / transfer-ownership acceptance racing the same
+			// actor's cap. See lockActorForOwnershipClaim's docstring.
+			await lockActorForOwnershipClaim(tx, actorId)
 
-		const ownedPlans = await ownedWorkspacePlans(tx, actorId)
-		const effectiveTier = computeEffectiveTier(ownedPlans, candidatePlan)
-		const cap = ownershipCapForTier(effectiveTier)
-		if (cap !== null && ownedPlans.length >= cap) {
-			return { kind: 'cap_exceeded' as const, effectiveTier, used: ownedPlans.length, cap }
-		}
+			const ownedPlans = await ownedWorkspacePlans(tx, actorId)
+			const effectiveTier = computeEffectiveTier(ownedPlans, candidatePlan)
+			const cap = ownershipCapForTier(effectiveTier)
+			if (cap !== null && ownedPlans.length >= cap) {
+				return { kind: 'cap_exceeded' as const, effectiveTier, used: ownedPlans.length, cap }
+			}
 
-		const [ws] = await tx
-			.insert(workspaces)
-			.values({
-				name: body.name,
-				settings,
-				createdBy: actorId,
-				billingOwnerId: actorId,
+			const [ws] = await tx
+				.insert(workspaces)
+				.values({
+					name: body.name,
+					settings,
+					createdBy: actorId,
+					billingOwnerId: actorId,
+				})
+				.returning()
+
+			if (!ws) return { kind: 'insert_failed' as const }
+
+			// Auto-add creator as owner
+			await tx.insert(workspaceMembers).values({
+				workspaceId: ws.id,
+				actorId,
+				role: 'owner',
 			})
-			.returning()
 
-		if (!ws) return { kind: 'insert_failed' as const }
+			// Seed all default agents (Coach, Chief of Staff, Driver, Strategist,
+			// Discovery Analyst, Researcher) inside the same transaction. If any
+			// one fails the tx rolls back — no half-seeded workspace lingers behind
+			// a partial success.
+			// Skills, workspace_skill files, and triggers are seeded post-commit
+			// because they hit S3 and can't be rolled back inside a DB transaction.
+			const agentIds = await seedDefaultAgentActors(tx, ws.id, actorId)
 
-		// Auto-add creator as owner
-		await tx.insert(workspaceMembers).values({
-			workspaceId: ws.id,
-			actorId,
-			role: 'owner',
+			// Pin Chief of Staff as the default chat agent unless the caller
+			// explicitly requested a different (or no) default in the create body.
+			if (settings.default_agent_id === undefined && agentIds.chief_of_staff) {
+				const nextSettings = { ...settings, default_agent_id: agentIds.chief_of_staff }
+				await tx.update(workspaces).set({ settings: nextSettings }).where(eq(workspaces.id, ws.id))
+				ws.settings = nextSettings
+			}
+
+			return { kind: 'created' as const, workspace: ws }
 		})
-
-		return { kind: 'created' as const, workspace: ws }
-	})
+	} catch (err) {
+		if (err instanceof SeedAgentError) {
+			logger.error('Workspace create rolled back — default agent seed failed', {
+				agentId: err.agentId,
+				errorClass: err.errorClass,
+				cause: err.cause instanceof Error ? err.cause.message : String(err.cause),
+			})
+			return c.json(
+				createApiError(
+					'INTERNAL_ERROR',
+					`Failed to seed default agent "${err.agentId}": ${err.errorClass}`,
+					[
+						{ field: 'agent_id', message: err.agentId },
+						{ field: 'error_class', message: err.errorClass },
+					],
+				),
+				500,
+			)
+		}
+		throw err
+	}
 
 	if (outcome.kind === 'cap_exceeded') {
 		throw new OwnershipCapExceededError({
@@ -178,6 +228,17 @@ app.openapi(createWorkspaceRoute, async (c) => {
 		workspace_name: workspace.name,
 		created_by: actorId,
 	})
+
+	// Post-commit: seed the default agents' skills + triggers. The actor + member
+	// rows are already committed by seedDefaultAgentActors, so this call is a
+	// no-op for actors (name check hits every one) and only writes
+	// workspace_skills + agent_skills + triggers.
+	const agentStorage = c.get('agentStorage')
+	if (agentStorage) {
+		bootstrapDefaultAgents(db, agentStorage, workspace.id, actorId).catch((err) =>
+			logger.error('workspace bootstrap failed', { workspaceId: workspace.id, err }),
+		)
+	}
 
 	return c.json(serialize(workspace) as z.infer<typeof workspaceResponseSchema>, 201)
 })

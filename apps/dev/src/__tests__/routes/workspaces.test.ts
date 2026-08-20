@@ -7,6 +7,12 @@ const { default: workspacesRoutes } = await import('../../routes/workspaces')
 
 describe('Workspaces Routes', () => {
 	describe('POST /api/workspaces', () => {
+		// Each of the 6 default agents does one actor insert + one
+		// workspaceMembers insert inside the create transaction (seedDefaultAgentActors);
+		// mockResults.insert is the static fallback once insertQueue is exhausted, so
+		// unconfigured agent/member inserts still resolve to a row with an id.
+		const defaultAgentInsertFallback = { id: randomUUID() }
+
 		it('creates a workspace and adds the creator as owner, returning 201', async () => {
 			const ws = buildWorkspace()
 			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
@@ -14,6 +20,7 @@ describe('Workspaces Routes', () => {
 				[ws], // workspaces insert
 				[{}], // owner workspaceMembers insert
 			]
+			mockResults.insert = [defaultAgentInsertFallback]
 
 			const res = await app.request(
 				jsonRequest('POST', '/api/workspaces', buildCreateWorkspaceBody()),
@@ -23,8 +30,8 @@ describe('Workspaces Routes', () => {
 			const body = await res.json()
 			expect(body.id).toBe(ws.id)
 			expect(body.name).toBe(ws.name)
-			// No default agents are auto-seeded — just the workspace + owner member.
-			expect(calls.inserts).toHaveLength(2)
+			// workspace + owner-member + 6 default agents × (actor + member) = 14.
+			expect(calls.inserts).toHaveLength(14)
 			expect(calls.inserts[1]).toMatchObject({ workspaceId: ws.id, role: 'owner' })
 		})
 
@@ -36,6 +43,7 @@ describe('Workspaces Routes', () => {
 			const ws = buildWorkspace({ settings: { default_agent_id: explicitAgentId } })
 			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
 			mockResults.insertQueue = [[ws], [{}]]
+			mockResults.insert = [defaultAgentInsertFallback]
 
 			const res = await app.request(
 				jsonRequest('POST', '/api/workspaces', {
