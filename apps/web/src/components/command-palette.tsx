@@ -96,6 +96,8 @@ export function CommandPalette() {
 	const { open, setOpen } = useCommandPalette()
 	const { workspaceId } = useWorkspace()
 	const navigate = useNavigate()
+	const panelRef = useRef<HTMLDivElement>(null)
+	const triggerRef = useRef<HTMLElement | null>(null)
 
 	const [query, setQuery] = useState('')
 	const [debouncedQuery, setDebouncedQuery] = useState('')
@@ -146,7 +148,7 @@ export function CommandPalette() {
 		[setOpen],
 	)
 
-	const markAllRead = useCallback(() => {
+	const markAllRead = useCallback(async () => {
 		const items = (unread?.items ?? []).filter(
 			(item) => item.unread_count > 0 && (item.latest_event_id ?? 0) > 0,
 		)
@@ -155,14 +157,23 @@ export function CommandPalette() {
 			toast('Nothing unread')
 			return
 		}
-		for (const item of items) {
-			markRead.mutate({
-				entityType: item.entity_type,
-				entityId: item.entity_id,
-				lastEventId: item.latest_event_id as number,
+		const results = await Promise.allSettled(
+			items.map((item) =>
+				markRead.mutateAsync({
+					entityType: item.entity_type,
+					entityId: item.entity_id,
+					lastEventId: item.latest_event_id as number,
+				}),
+			),
+		)
+		const failed = results.filter((r) => r.status === 'rejected').length
+		if (failed === 0) {
+			toast('All caught up')
+		} else {
+			toast.error(`${items.length - failed} of ${items.length} marked read`, {
+				description: 'Some items failed — try again.',
 			})
 		}
-		toast('All caught up')
 	}, [markRead, setOpen, unread])
 
 	// One `command_palette_opened` per open transition, fired on any route —
@@ -173,8 +184,13 @@ export function CommandPalette() {
 	useEffect(() => {
 		if (open && !prevOpen.current) {
 			trackCommandPaletteOpened({ surface: 'command_palette' })
+			// Remember what had focus so it can be restored on close — a dialog
+			// must never strand focus on a removed element.
+			triggerRef.current = document.activeElement as HTMLElement | null
 		} else if (!open && prevOpen.current) {
 			setQuery('')
+			triggerRef.current?.focus?.()
+			triggerRef.current = null
 		}
 		prevOpen.current = open
 	}, [open])
@@ -226,7 +242,7 @@ export function CommandPalette() {
 			return
 		}
 		setOpen(false)
-		navigate({ to: '/$workspaceId/search', params: { workspaceId }, search: {} })
+		navigate({ to: '/$workspaceId/search', params: { workspaceId }, search: { q: '' } })
 	}, [navigate, seeAll, setOpen, trimmedQuery, workspaceId])
 
 	// The global key handler is registered once; reading seeAll through a ref
@@ -266,6 +282,24 @@ export function CommandPalette() {
 					setQuery('')
 				} else {
 					setOpen(false)
+				}
+			}
+			if (e.key === 'Tab' && panelRef.current) {
+				// Trap focus inside the panel while it's open — a dialog must not
+				// leak Tab into the page behind it.
+				const focusable = panelRef.current.querySelectorAll<HTMLElement>(
+					'a[href], button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+				)
+				if (focusable.length === 0) return
+				const first = focusable[0] as HTMLElement
+				const last = focusable[focusable.length - 1] as HTMLElement
+				const active = document.activeElement
+				if (e.shiftKey && active === first) {
+					e.preventDefault()
+					last.focus()
+				} else if (!e.shiftKey && active === last) {
+					e.preventDefault()
+					first.focus()
 				}
 			}
 		}
@@ -414,7 +448,14 @@ export function CommandPalette() {
 						className="fixed inset-0 bg-foreground/40"
 						onClick={() => setOpen(false)}
 					/>
-					<div className="relative w-full max-w-xl mx-auto overflow-hidden border border-border bg-popover text-popover-foreground shadow-xl max-sm:max-h-[92dvh] max-sm:flex max-sm:flex-col max-sm:rounded-t-2xl max-sm:rounded-b-none max-sm:pb-[env(safe-area-inset-bottom)] sm:w-[calc(100%-2rem)] sm:rounded-2xl">
+					<div
+						ref={panelRef}
+						// biome-ignore lint/a11y/useSemanticElements: native <dialog> is against project convention (apps/web/CLAUDE.md) — this is the same ARIA div-based modal pattern Radix's own Dialog primitive renders under the hood.
+						role="dialog"
+						aria-modal="true"
+						aria-label="Command palette"
+						className="relative w-full max-w-xl mx-auto overflow-hidden border border-border bg-popover text-popover-foreground shadow-xl max-sm:max-h-[92dvh] max-sm:flex max-sm:flex-col max-sm:rounded-t-2xl max-sm:rounded-b-none max-sm:pb-[env(safe-area-inset-bottom)] sm:w-[calc(100%-2rem)] sm:rounded-2xl"
+					>
 						<Command
 							shouldFilter={false}
 							className="w-full max-sm:min-h-0 max-sm:flex-1 max-sm:flex max-sm:flex-col"

@@ -92,7 +92,7 @@ describe('ForYouHeaderActions', () => {
 		const user = userEvent.setup()
 		const onStartConversation = vi.fn()
 		renderActions({ onStartConversation })
-		await user.click(screen.getByRole('button', { name: /^new$/i }))
+		await user.click(screen.getByRole('button', { name: 'More ways to start' }))
 		await user.click(screen.getByRole('menuitem', { name: /new chat/i }))
 		expect(onStartConversation).toHaveBeenCalledTimes(1)
 	})
@@ -100,7 +100,7 @@ describe('ForYouHeaderActions', () => {
 	it('opens CreatePicker seeded to the right object subtype from New bet', async () => {
 		const user = userEvent.setup()
 		renderActions()
-		await user.click(screen.getByRole('button', { name: /^new$/i }))
+		await user.click(screen.getByRole('button', { name: 'More ways to start' }))
 		await user.click(screen.getByRole('menuitem', { name: /new bet/i }))
 
 		const picker = screen.getByTestId('create-picker')

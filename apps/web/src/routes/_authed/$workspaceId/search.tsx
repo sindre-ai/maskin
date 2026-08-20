@@ -1,0 +1,242 @@
+import { ActorAvatar } from '@/components/shared/actor-avatar'
+import { EmptyState } from '@/components/shared/empty-state'
+import { ListSkeleton } from '@/components/shared/loading-skeleton'
+import { RouteError } from '@/components/shared/route-error'
+import { TypeBadge } from '@/components/shared/type-badge'
+import { Input } from '@/components/ui/input'
+import { useObjects } from '@/hooks/use-objects'
+import {
+	SEARCH_GROUPS,
+	SEARCH_GROUP_LABEL,
+	type SearchRow,
+	useWorkspaceSearch,
+} from '@/hooks/use-workspace-search'
+import { type TaxonomyEntityType, trackSearchResultOpened } from '@/lib/analytics'
+import type { ObjectResponse } from '@/lib/api'
+import { highlightText } from '@/lib/search-highlight'
+import {
+	getRecentObjectIds,
+	getRecentSearches,
+	pushRecentObject,
+	pushRecentSearch,
+} from '@/lib/search-recents'
+import { useWorkspace } from '@/lib/workspace-context'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { Search } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+
+const COMMIT_DEBOUNCE_MS = 300
+
+export const Route = createFileRoute('/_authed/$workspaceId/search')({
+	component: SearchPage,
+	errorComponent: ({ error }) => <RouteError error={error} />,
+	validateSearch: (search: Record<string, unknown>) => ({
+		q: typeof search.q === 'string' ? search.q : '',
+	}),
+})
+
+function ResultRow({
+	row,
+	query,
+	onOpen,
+}: {
+	row: SearchRow
+	query: string
+	onOpen: (row: SearchRow) => void
+}) {
+	return (
+		<button
+			type="button"
+			onClick={() => onOpen(row)}
+			className="flex w-full items-start gap-2.5 px-3 py-2.5 text-left transition-colors duration-150 hover:bg-muted"
+		>
+			{row.object ? (
+				<TypeBadge type={row.object.type} variant="tile" className="mt-0.5 size-[22px] shrink-0" />
+			) : row.group === 'agents' ? (
+				<ActorAvatar
+					id={row.id}
+					name={row.title}
+					type="agent"
+					className="mt-0.5 size-[22px] shrink-0 text-[9px]"
+				/>
+			) : (
+				<span className="mt-0.5 size-[22px] shrink-0 rounded-md bg-muted" aria-hidden="true" />
+			)}
+			<span className="min-w-0 flex-1">
+				<span className="block truncate text-[13px] font-medium text-foreground">
+					{highlightText(row.title, query)}
+					{row.sub ? <span className="font-normal text-muted-foreground"> — {row.sub}</span> : null}
+				</span>
+				{row.snippet && (
+					<span className="mt-0.5 block truncate text-[12px] text-muted-foreground">
+						{highlightText(row.snippet, query)}
+					</span>
+				)}
+			</span>
+		</button>
+	)
+}
+
+/**
+ * The cross-entity search view (mockup 2526–2545) — the "Search everything"
+ * destination from both the command palette and the top nav's workspace
+ * search field. Renders the same `useWorkspaceSearch` index those surfaces
+ * rank with, grouped by entity type, so results never disagree between them.
+ */
+function SearchPage() {
+	const { workspaceId } = useWorkspace()
+	const { q } = Route.useSearch()
+	const navigate = useNavigate()
+	const [query, setQuery] = useState(q)
+
+	// URL is the source of truth; typing commits into it after a short debounce
+	// so every keystroke doesn't grow browser history or thrash `useSearch()`
+	// consumers. `replace: true` keeps back-navigation at the page that linked
+	// here, not at every intermediate keystroke.
+	useEffect(() => {
+		const timer = setTimeout(() => {
+			if (query.trim() === q.trim()) return
+			navigate({
+				to: '/$workspaceId/search',
+				params: { workspaceId },
+				search: { q: query },
+				replace: true,
+			})
+		}, COMMIT_DEBOUNCE_MS)
+		return () => clearTimeout(timer)
+	}, [query, q, navigate, workspaceId])
+
+	// Stay in sync when `q` changes from outside this component (e.g. the
+	// command palette's "Search everything" hands off with `q` already set).
+	useEffect(() => {
+		setQuery(q)
+	}, [q])
+
+	const trimmedQuery = q.trim()
+	useEffect(() => {
+		if (trimmedQuery) pushRecentSearch(workspaceId, trimmedQuery)
+	}, [trimmedQuery, workspaceId])
+
+	const { data: objects } = useObjects(workspaceId)
+	const { rows, countsByGroup, total, isPending } = useWorkspaceSearch(workspaceId, { q })
+
+	const recentSearches = useMemo(
+		() => (trimmedQuery ? [] : getRecentSearches(workspaceId)),
+		[trimmedQuery, workspaceId],
+	)
+	const recentObjects = useMemo(() => {
+		if (trimmedQuery) return []
+		const byId = new Map((objects ?? []).map((object) => [object.id, object]))
+		return getRecentObjectIds(workspaceId)
+			.map((id) => byId.get(id))
+			.filter((object): object is ObjectResponse => Boolean(object))
+	}, [trimmedQuery, workspaceId, objects])
+
+	const openRow = (row: SearchRow) => {
+		if (row.object) {
+			trackSearchResultOpened({
+				entity_id: row.object.id,
+				entity_type: row.object.type as TaxonomyEntityType,
+				surface: 'search_view',
+			})
+			pushRecentObject(workspaceId, row.object.id)
+		}
+		navigate({ to: row.to, params: row.params })
+	}
+
+	return (
+		<div className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-5 px-4 py-6 sm:px-6">
+			<div className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 focus-within:border-border-hover">
+				<Search aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+				<Input
+					value={query}
+					onChange={(e) => setQuery(e.target.value)}
+					placeholder="Search chats, loops, agents, objects…"
+					aria-label="Search the workspace"
+					className="h-auto border-0 bg-transparent p-0 text-[13.5px] shadow-none focus-visible:ring-0"
+					autoFocus
+				/>
+			</div>
+
+			{!trimmedQuery ? (
+				recentSearches.length === 0 && recentObjects.length === 0 ? (
+					<EmptyState title="Search across chats, loops, agents, objects and automations" />
+				) : (
+					<div className="flex flex-col gap-5">
+						{recentSearches.length > 0 && (
+							<div>
+								<div className="eyebrow pb-2">Recent searches</div>
+								<div className="flex flex-wrap gap-1.5">
+									{recentSearches.map((recent) => (
+										<button
+											key={recent}
+											type="button"
+											onClick={() => setQuery(recent)}
+											className="rounded-full border border-border bg-card px-2.5 py-1 text-[12px] text-foreground transition-colors duration-150 hover:border-border-hover"
+										>
+											{recent}
+										</button>
+									))}
+								</div>
+							</div>
+						)}
+						{recentObjects.length > 0 && (
+							<div>
+								<div className="eyebrow pb-2">Recently opened</div>
+								<div className="flex flex-col divide-y divide-border rounded-lg border border-border">
+									{recentObjects.map((object) => (
+										<ResultRow
+											key={object.id}
+											query=""
+											onOpen={openRow}
+											row={{
+												id: object.id,
+												group: 'objects',
+												kind: object.type.toUpperCase(),
+												title: object.title ?? 'Untitled',
+												sub: '',
+												snippet: '',
+												to: '/$workspaceId/objects/$objectId',
+												params: { workspaceId, objectId: object.id },
+												object,
+											}}
+										/>
+									))}
+								</div>
+							</div>
+						)}
+					</div>
+				)
+			) : isPending ? (
+				<ListSkeleton rows={6} />
+			) : total === 0 ? (
+				<EmptyState
+					title={`No matches for "${trimmedQuery}"`}
+					description="Try a different search term."
+				/>
+			) : (
+				<div className="flex flex-col gap-5">
+					{SEARCH_GROUPS.filter((group) => countsByGroup[group] > 0).map((group) => (
+						<div key={group}>
+							<div className="eyebrow pb-2">
+								{SEARCH_GROUP_LABEL[group]} · {countsByGroup[group]}
+							</div>
+							<div className="flex flex-col divide-y divide-border rounded-lg border border-border">
+								{rows
+									.filter((row) => row.group === group)
+									.map((row) => (
+										<ResultRow
+											key={`${row.group}-${row.id}`}
+											row={row}
+											query={trimmedQuery}
+											onOpen={openRow}
+										/>
+									))}
+							</div>
+						</div>
+					))}
+				</div>
+			)}
+		</div>
+	)
+}

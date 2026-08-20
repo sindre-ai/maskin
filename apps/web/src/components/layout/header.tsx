@@ -27,6 +27,7 @@ interface RouteConfig {
 
 const routeConfig: Record<string, RouteConfig> = {
 	'/_authed/$workspaceId/': { label: 'For you' },
+	'/_authed/$workspaceId/search': { label: 'Search' },
 	'/_authed/$workspaceId/objects/': { label: 'Objects', primary: 'object' },
 	'/_authed/$workspaceId/objects/$objectId': {
 		label: 'Object Details',
