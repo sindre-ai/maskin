@@ -21,6 +21,7 @@ import { and, eq } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { logger } from '../lib/logger'
+import { buildChiefOfStaffKickoffPrompt } from '../lib/onboarding/chief-of-staff-kickoff'
 import { errorSchema, idParamSchema, workspaceResponseSchema } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import { isWorkspaceMember, isWorkspaceOwner } from '../lib/workspace-auth'
@@ -119,7 +120,7 @@ app.openapi(createWorkspaceRoute, async (c) => {
 			})
 
 			// Seed all default agents (Coach, Chief of Staff, Driver, Strategist,
-			// Discovery Analyst, Researcher) inside the same transaction. If any
+			// Signal Analyst, Researcher, Knowledge Curator) inside the same transaction. If any
 			// one fails the tx rolls back — no half-seeded workspace lingers behind
 			// a partial success.
 			// Skills, workspace_skill files, and triggers are seeded post-commit
@@ -196,7 +197,7 @@ app.openapi(createWorkspaceRoute, async (c) => {
 		c.get('sessionManager')
 			.createSession(workspace.id, {
 				actorId: chiefOfStaffId,
-				actionPrompt: `A human owner just joined this brand-new workspace: ${owner?.name ?? 'the workspace owner'}${owner?.email ? ` (${owner.email})` : ''}. Run Beat 0 of your onboarding arc per your system prompt: start a conversation with them and post a warm welcome (who you are, what Maskin is, what happens next), then kick off the Researcher for a first-pass brief on the owner and their organization (inferred from email domain). File it as a \`knowledge\` object in status \`draft\`, plus supporting insight objects. Do not post a follow-up comment yourself — that's a separate step once the brief lands.`,
+				actionPrompt: buildChiefOfStaffKickoffPrompt(owner ?? {}),
 				createdBy: actorId,
 			})
 			.catch((err) =>

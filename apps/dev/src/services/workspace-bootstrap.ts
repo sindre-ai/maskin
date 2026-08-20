@@ -23,6 +23,7 @@ import {
 } from '@maskin/shared'
 import { and, eq } from 'drizzle-orm'
 import { logger } from '../lib/logger'
+import { buildChiefOfStaffKickoffPrompt } from '../lib/onboarding/chief-of-staff-kickoff'
 import { type AgentStorageManager, workspaceSkillKey } from './agent-storage'
 import type { SessionManager } from './session-manager'
 
@@ -31,8 +32,9 @@ export const DEFAULT_AGENT_IDS = [
 	'chief_of_staff',
 	'driver',
 	'strategist',
-	'discovery_analyst',
+	'signal_analyst',
 	'researcher',
+	'knowledge_curator',
 ] as const
 
 type DefaultAgentId = (typeof DEFAULT_AGENT_IDS)[number]
@@ -402,7 +404,12 @@ export async function bootstrapDefaultAgents(
 			),
 		)
 		.limit(1)
-	if (coachRow) actorIdMap.workspace_coach = coachRow.actorId
+	if (coachRow) {
+		actorIdMap.workspace_coach = coachRow.actorId
+		for (const skill of WORKSPACE_COACH_DEFAULT.skills ?? []) {
+			await attachSkill(db, agentStorage, workspaceId, createdBy, coachRow.actorId, skill)
+		}
+	}
 
 	for (const agent of DEFAULT_WORKSPACE_AGENTS) {
 		// Idempotent: check if an actor with this name already exists in the workspace.
@@ -509,7 +516,7 @@ export async function bootstrapDefaultAgents(
 		}
 	}
 
-	// Create the default Loop objects (Discovery → Bet, Workspace Improvements),
+	// Create the default Loop objects (Bet discovery loop, Workspace improvements),
 	// wiring metadata.trigger_ids to the triggers seeded above. Idempotent per
 	// workspace via the objects.title check, mirroring the agent/trigger checks
 	// above.
@@ -602,7 +609,7 @@ export async function bootstrapDefaultAgents(
 		sessionManager
 			.createSession(workspaceId, {
 				actorId: chiefId,
-				actionPrompt: `A human owner just joined this brand-new workspace: ${owner?.name ?? 'the workspace owner'}${owner?.email ? ` (${owner.email})` : ''}. Run Beat 0 of your onboarding arc per your system prompt: start a conversation with them and post a warm welcome (who you are, what Maskin is, what happens next), then kick off the Researcher for a first-pass brief on the owner and their organization (inferred from email domain). File it as a \`knowledge\` object in status \`draft\`, plus supporting insight objects. Do not post a follow-up comment yourself — that's a separate step once the brief lands.`,
+				actionPrompt: buildChiefOfStaffKickoffPrompt(owner ?? {}),
 				createdBy,
 			})
 			.catch((err) =>

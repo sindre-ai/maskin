@@ -98,6 +98,7 @@ import {
 	TEAM_OPS_SKILL_IDS,
 	TEAM_OPS_TRIGGER_IDS,
 } from './marketplace-loops/team-ops-loop'
+import { buildChiefOfStaffKickoffPrompt } from './onboarding/chief-of-staff-kickoff'
 
 const MARKETPLACE_SEED_CONFIGS: readonly MarketplaceLoopSeedConfig[] = [
 	{
@@ -465,7 +466,7 @@ export async function maybeBootstrapDev(
 		sessionManager
 			.createSession(workspace.id, {
 				actorId: chiefOfStaffId,
-				actionPrompt: `A human owner just joined this brand-new workspace: ${actor.name ?? 'the workspace owner'}${actor.email ? ` (${actor.email})` : ''}. Run Beat 0 of your onboarding arc per your system prompt: start a conversation with them and post a warm welcome (who you are, what Maskin is, what happens next), then kick off the Researcher for a first-pass brief on the owner and their organization (inferred from email domain). File it as a \`knowledge\` object in status \`draft\`, plus supporting insight objects. Do not post a follow-up comment yourself — that's a separate step once the brief lands.`,
+				actionPrompt: buildChiefOfStaffKickoffPrompt(actor),
 				createdBy: actor.id,
 			})
 			.catch((err) =>
