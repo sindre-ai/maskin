@@ -392,7 +392,7 @@ describe('Workspaces Integration', () => {
 			expect(after.length).toBe(initialAgents.length)
 		})
 
-		it('attaches the continuous-onboarding and maskin-way-of-working workspace skills and creates all 15 triggers', async () => {
+		it('attaches the continuous-onboarding and maskin-way-of-working workspace skills and creates all 17 triggers', async () => {
 			const app = createApp()
 
 			const createRes = await app.request(
@@ -457,10 +457,10 @@ describe('Workspaces Integration', () => {
 				.select({ name: triggers.name })
 				.from(triggers)
 				.where(eq(triggers.workspaceId, ws.id))
-			expect(triggerRows).toHaveLength(15)
+			expect(triggerRows).toHaveLength(17)
 		})
 
-		it('seeds the Bet discovery loop, Workspace improvements, and Knowledge Wiki loops wired to their triggers', async () => {
+		it('seeds the Bet discovery loop, Workspace improvements, Knowledge Wiki, and Competitor intelligence loops wired to their triggers', async () => {
 			const app = createApp()
 
 			const createRes = await app.request(
@@ -478,6 +478,7 @@ describe('Workspaces Integration', () => {
 
 			expect(loopRows.map((r) => r.title).sort()).toEqual([
 				'Bet discovery loop',
+				'Competitor intelligence',
 				'Knowledge Wiki → digest',
 				'Workspace improvements',
 			])
@@ -522,6 +523,17 @@ describe('Workspaces Integration', () => {
 					triggerIdByName.get('Compile the twice-weekly digest'),
 				]),
 			)
+
+			const competitorIntelligenceLoop = loopRows.find((r) => r.title === 'Competitor intelligence')
+			const competitorIntelligenceTriggerIds =
+				(competitorIntelligenceLoop?.metadata as { trigger_ids?: string[] } | null)?.trigger_ids ??
+				[]
+			expect(new Set(competitorIntelligenceTriggerIds)).toEqual(
+				new Set([
+					triggerIdByName.get('Weekly competitor sweep'),
+					triggerIdByName.get('Monthly list revalidation'),
+				]),
+			)
 		})
 
 		it('re-invoking bootstrapDefaultAgents inserts zero new loop objects', async () => {
@@ -541,7 +553,7 @@ describe('Workspaces Integration', () => {
 				.from(objects)
 				.where(and(eq(objects.workspaceId, ws.id), eq(objects.type, 'loop')))
 
-			expect(loopRows).toHaveLength(3)
+			expect(loopRows).toHaveLength(4)
 		})
 
 		it('leaves three pre-existing workspaces byte-identical when a new workspace is seeded', async () => {

@@ -396,6 +396,8 @@ You are the Researcher — the go-to specialist when any agent (or human) in thi
 
 Your job is one thing: produce **briefs**, not conversation. Every session ends with a \`knowledge\` object filed in the workspace that a specific requester can cite in their own work.
 
+You also own the **Competitor intelligence loop**: continuous monitoring of every company object tagged \`metadata.role=competitor\`. A weekly sweep benchmarks each competitor for new material (launches, pricing, roadmap moves, hires) and files one insight per notable finding, linked to the company via \`informs\`; a separate monthly pass re-derives the monitored list itself — proposing adds, drops, and corrections — and waits for a human to confirm rather than editing the list unilaterally. Both passes post one consolidated comment on the loop and stay silent when there's nothing notable.
+
 # Decision framework
 When you receive a research request:
 1. **Clarify silently, don't stall.** If the question is ambiguous, restate the specific interpretation you're running with in the brief's TL;DR — don't kick it back to the requester unless the ambiguity is genuinely load-bearing (e.g. two totally different companies share the name).
@@ -787,6 +789,28 @@ If nothing worth flagging today, file nothing — silence is a valid outcome.`,
 		targetActor$id: 'workspace_coach',
 		enabled: true,
 	},
+	{
+		name: 'Weekly competitor sweep',
+		type: 'cron',
+		config: {
+			expression: '0 7 * * 1',
+		},
+		actionPrompt:
+			"Run the weekly competitor intelligence sweep. Build your working set by listing company objects with metadata.role=competitor (list_objects type=company) — do not rely only on in_loop membership, the set is role-driven. For each competing company, search the last ~7 days of material using Exa (primary) and WebSearch/WebFetch (fallback): product launches, feature/roadmap changes, pricing, press releases, executive moves and notable hires, company social media, annual/reporting results, and anything else relevant to this workspace and its users. Update each company object's content with any material benchmark line (dated, sourced). File ONE insight per notable finding — metadata.tags: ['competitor-intel', <company name>] — with source and confidence in content, linked to the company via an 'informs' edge. Do not file generic noise as an insight. At the end post ONE consolidated comment on this loop: notable companies grouped, one line per item with its link. If a single item is genuinely important (a material launch, funding, hire, or pivot), @mention the right human in that bullet — Sebk (design/ux/strategy/business) for strategy/positioning/UX/business items, Magnus (tech) for technical/engineering/dev items — and set attention to 4 only for a truly material move. Otherwise attention 2. If nothing notable this week, post NOTHING (silence is correct).",
+		targetActor$id: 'researcher',
+		enabled: true,
+	},
+	{
+		name: 'Monthly list revalidation',
+		type: 'cron',
+		config: {
+			expression: '0 9 20 * *',
+		},
+		actionPrompt:
+			'Run the monthly competitive list revalidation. Re-derive the working set: list company objects with metadata.role=competitor, and check whether that set is still the right one to monitor. Using Exa/Web: (1) surface any new or newly-significant competitor or category entrant from the last 30 days that should join (including a company the workspace already tracks under a non-competitor role); (2) flag any current competitor that looks dead, defunct, pivoted, or merged — with a credible source and date; (3) confirm each current member is still a real competitor worth monitoring. Post ONE comment on this loop with exactly three sections — ADD (proposed additions), DROP (proposed drops/merges, each sourced), CORRECT (list corrections) — and @mention Sebk on it to confirm. Do NOT add, remove, or re-role companies yourself; propose and wait for the human decision. Attention 2 by default; 4 only if a competitor materially disappeared or a new one is a genuine near-term threat.',
+		targetActor$id: 'researcher',
+		enabled: true,
+	},
 ]
 
 /**
@@ -856,5 +880,16 @@ export const DEFAULT_WORKSPACE_LOOPS: SeedLoop[] = [
 		closeCondition:
 			"The digest is compiled, posted as one comment on the loop, and the Homepage + Status page are refreshed. (Folding is continuous; the loop never fully 'closes' a member object — each pass leaves the wiki current.)",
 		triggerNames: ['Fold new knowledge into the wiki', 'Compile the twice-weekly digest'],
+	},
+	{
+		$id: 'competitor_intelligence',
+		name: 'Competitor intelligence',
+		content:
+			'Continuous competitive monitoring and benchmarking. The loop watches every company object tagged metadata.role=competitor. The Researcher reviews, benchmarks, and monitors each for announcements (product launches, features, pricing, press releases, hires, social media, annual reports) and files every notable finding as an insight. Important findings get the right human tagged. The monitored list itself is re-validated monthly to stay current.',
+		entryCondition:
+			'A company object is tagged `metadata.role=competitor` (joins the monitored set), OR the weekly sweep / monthly list-revalidation cron fires.',
+		closeCondition:
+			'This loop never fully closes — it is continuous monitoring; each weekly sweep and monthly revalidation pass leaves the competitor list and benchmarks current.',
+		triggerNames: ['Weekly competitor sweep', 'Monthly list revalidation'],
 	},
 ]
