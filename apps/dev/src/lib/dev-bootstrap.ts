@@ -8,9 +8,16 @@ import {
 	workspaces,
 } from '@maskin/db/schema'
 import { mergeModuleDefaultSettings } from '@maskin/module-sdk'
-import { workspaceSettingsSchema } from '@maskin/shared'
+import {
+	CHIEF_OF_STAFF_DEFAULT,
+	WORKSPACE_COACH_DEFAULT,
+	workspaceSettingsSchema,
+} from '@maskin/shared'
 import { and, eq, isNotNull } from 'drizzle-orm'
+import type { AgentStorageManager } from '../services/agent-storage'
+import { bootstrapDefaultAgents } from '../services/workspace-bootstrap'
 import { emitWorkspaceFirstReady } from './analytics/install-telemetry'
+import { logger } from './logger'
 import {
 	CCD_ACTOR_IDS,
 	CCD_LOOP,
@@ -320,7 +327,10 @@ export interface DevBootstrapResult {
  *
  * Skipped in production or when MASKIN_AUTO_BOOTSTRAP=false.
  */
-export async function maybeBootstrapDev(db: Database): Promise<DevBootstrapResult | null> {
+export async function maybeBootstrapDev(
+	db: Database,
+	agentStorage?: AgentStorageManager,
+): Promise<DevBootstrapResult | null> {
 	if (process.env.NODE_ENV === 'production') return null
 	if (process.env.MASKIN_AUTO_BOOTSTRAP === 'false') return null
 
@@ -364,13 +374,87 @@ export async function maybeBootstrapDev(db: Database): Promise<DevBootstrapResul
 			role: 'owner',
 		})
 
+		// Seed Workspace Coach — the built-in meta-agent shipped with every workspace.
+		// apiKey is required (see comment in actors.ts) — without it the agent's
+		// container has no identity to authenticate MCP writes with.
+		const [coach] = await tx
+			.insert(actors)
+			.values({
+				type: WORKSPACE_COACH_DEFAULT.type,
+				name: WORKSPACE_COACH_DEFAULT.name,
+				description: WORKSPACE_COACH_DEFAULT.description ?? null,
+				isSystem: WORKSPACE_COACH_DEFAULT.isSystem,
+				systemPrompt: WORKSPACE_COACH_DEFAULT.systemPrompt,
+				llmProvider: WORKSPACE_COACH_DEFAULT.llmProvider,
+				llmConfig: WORKSPACE_COACH_DEFAULT.llmConfig,
+				tools: WORKSPACE_COACH_DEFAULT.tools,
+				apiKey: generateApiKey().key,
+				createdBy: actor.id,
+			})
+			.returning()
+
+		if (!coach) throw new Error('dev bootstrap: failed to seed Workspace Coach actor')
+
+		await tx.insert(workspaceMembers).values({
+			workspaceId: ws.id,
+			actorId: coach.id,
+			role: 'member',
+		})
+
+		// Seed Chief of Staff synchronously so we can capture its actor id and
+		// pin it as this workspace's default chat agent in the same tx.
+		// bootstrapDefaultAgents() also has an idempotent CoS name-check so the
+		// post-commit call will simply skip this actor.
+		const [chief] = await tx
+			.insert(actors)
+			.values({
+				type: CHIEF_OF_STAFF_DEFAULT.type,
+				name: CHIEF_OF_STAFF_DEFAULT.name,
+				description: CHIEF_OF_STAFF_DEFAULT.description ?? null,
+				isSystem: CHIEF_OF_STAFF_DEFAULT.isSystem,
+				systemPrompt: CHIEF_OF_STAFF_DEFAULT.systemPrompt,
+				llmProvider: CHIEF_OF_STAFF_DEFAULT.llmProvider,
+				llmConfig: CHIEF_OF_STAFF_DEFAULT.llmConfig,
+				tools: CHIEF_OF_STAFF_DEFAULT.tools,
+				apiKey: generateApiKey().key,
+				createdBy: actor.id,
+			})
+			.returning()
+
+		if (!chief) throw new Error('dev bootstrap: failed to seed Chief of Staff actor')
+
+		await tx.insert(workspaceMembers).values({
+			workspaceId: ws.id,
+			actorId: chief.id,
+			role: 'member',
+		})
+
+		// Pin Chief of Staff as the default chat agent for this workspace.
+		// Reversible via `pnpm --filter @maskin/dev exec tsx scripts/seed-default-agent.ts --unset`.
+		await tx
+			.update(workspaces)
+			.set({ settings: { ...settings, default_agent_id: chief.id } })
+			.where(eq(workspaces.id, ws.id))
+
 		return ws
 	})
 
 	if (!workspace) throw new Error('dev bootstrap: failed to create workspace')
 
+	// Seed Driver and Strategist async (Workspace Coach was already seeded above).
+	// bootstrapDefaultAgents is idempotent — it skips Workspace Coach by name.
+	if (agentStorage) {
+		bootstrapDefaultAgents(db, agentStorage, workspace.id, actor.id).catch((err) =>
+			logger.error('dev bootstrap: default agent seeding failed', {
+				workspaceId: workspace.id,
+				err,
+			}),
+		)
+	}
+
 	// TTV instrumentation: this is the first (and per findExistingCredentials
-	// only) workspace the auto-bootstrap creates for a fresh install.
+	// only) workspace the auto-bootstrap creates for a fresh install; agents
+	// have just been seeded as workspace members and can run against it.
 	// Fire-and-forget — never blocks or throws.
 	emitWorkspaceFirstReady({ workspaceId: workspace.id, actorId: actor.id }).catch(() => {})
 
