@@ -50,7 +50,7 @@ export function buildSignupCaptureKnowledge(input: SignupCaptureInput): SignupCa
 		status: SIGNUP_CAPTURE_STATUS,
 		title: `Signup context — ${name}`,
 		content: [
-			`**${name}** joined as **${role}** at **${organization}**.`,
+			`**${name}** works as **${role}** at **${organization}**.`,
 			'',
 			"This is the workspace's source of truth for who signed up — Researcher uses it to put together a first-pass brief.",
 			'',
