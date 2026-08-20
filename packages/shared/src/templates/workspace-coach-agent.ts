@@ -116,8 +116,8 @@ export const WORKSPACE_COACH_DEFAULT = {
 	type: 'agent' as const,
 	isSystem: true,
 	systemPrompt: WORKSPACE_COACH_SYSTEM_PROMPT,
-	llmProvider: 'anthropic',
-	llmConfig: { model: 'claude-sonnet-4-6' },
+	llmProvider: null,
+	llmConfig: null,
 	tools: {
 		mcpServers: {
 			maskin: PLATFORM_MCP_PRESET,

@@ -80,7 +80,7 @@ function resolveActorSpec(agentId: DefaultAgentId): ActorSpec {
 			isSystem: WORKSPACE_COACH_DEFAULT.isSystem,
 			systemPrompt: WORKSPACE_COACH_DEFAULT.systemPrompt,
 			llmProvider: WORKSPACE_COACH_DEFAULT.llmProvider,
-			llmConfig: WORKSPACE_COACH_DEFAULT.llmConfig as Record<string, unknown>,
+			llmConfig: WORKSPACE_COACH_DEFAULT.llmConfig as Record<string, unknown> | null,
 			tools: WORKSPACE_COACH_DEFAULT.tools as Record<string, unknown>,
 		}
 	}
@@ -92,7 +92,7 @@ function resolveActorSpec(agentId: DefaultAgentId): ActorSpec {
 			isSystem: CHIEF_OF_STAFF_DEFAULT.isSystem,
 			systemPrompt: CHIEF_OF_STAFF_DEFAULT.systemPrompt,
 			llmProvider: CHIEF_OF_STAFF_DEFAULT.llmProvider,
-			llmConfig: CHIEF_OF_STAFF_DEFAULT.llmConfig as Record<string, unknown>,
+			llmConfig: CHIEF_OF_STAFF_DEFAULT.llmConfig as Record<string, unknown> | null,
 			tools: CHIEF_OF_STAFF_DEFAULT.tools as Record<string, unknown>,
 		}
 	}

@@ -200,8 +200,8 @@ export const CHIEF_OF_STAFF_DEFAULT = {
 	type: 'agent' as const,
 	isSystem: true,
 	systemPrompt: CHIEF_OF_STAFF_SYSTEM_PROMPT,
-	llmProvider: 'anthropic',
-	llmConfig: { model: 'claude-sonnet-4-6' },
+	llmProvider: null,
+	llmConfig: null,
 	tools: {
 		mcpServers: {
 			maskin: PLATFORM_MCP_PRESET,
