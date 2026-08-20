@@ -654,6 +654,7 @@ app.openapi(createObjectRoute, async (c) => {
 				workspaceId,
 				knowledgeObjectId: created.id,
 				metadata: created.metadata,
+				humanActorId: actorId,
 			}).catch((err) =>
 				logger.error('Failed to post signup welcome comment', {
 					workspaceId,

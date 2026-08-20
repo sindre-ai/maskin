@@ -12,6 +12,7 @@ import { jsonRequest } from '../helpers'
 import { db, getTestActorId } from './global-setup'
 
 const { default: objectsRoutes } = await import('../../routes/objects')
+const { default: subscriptionsRoutes } = await import('../../routes/subscriptions')
 
 const KNOWLEDGE_WORKSPACE_SETTINGS = {
 	enabled_modules: ['work', 'knowledge'],
@@ -70,6 +71,7 @@ function createObjectsApp(sessionManager: SessionManager) {
 	})
 
 	app.route('/api/objects', objectsRoutes)
+	app.route('/api/subscriptions', subscriptionsRoutes)
 	return app
 }
 
@@ -89,9 +91,10 @@ describe('Signup welcome comment — Chief of Staff comments, Researcher gets sp
 		workspaceId = ws.id
 	})
 
-	it('posts a Chief-of-Staff comment mentioning Researcher and spawns a Researcher session', async () => {
+	it('posts a Chief-of-Staff comment mentioning Researcher and the signed-up human, and spawns a Researcher session', async () => {
 		const chief = await seedAgent(workspaceId, 'Chief of Staff')
 		const researcher = await seedAgent(workspaceId, 'Researcher')
+		const humanActorId = getTestActorId()
 		const sessionManager = {
 			createSession: vi.fn().mockResolvedValue(undefined),
 		} as unknown as SessionManager
@@ -120,8 +123,10 @@ describe('Signup welcome comment — Chief of Staff comments, Researcher gets sp
 		expect(commentEvent).toBeDefined()
 		expect(commentEvent.actorId).toBe(chief.id)
 		const data = commentEvent.data as { content: string; mentions: string[] }
-		expect(data.mentions).toEqual([researcher.id])
+		expect(data.mentions).toEqual(expect.arrayContaining([researcher.id, humanActorId]))
+		expect(data.mentions).toHaveLength(2)
 		expect(data.content).toContain('Ada Testowski')
+		expect(data.content).toContain('@Researcher')
 
 		expect(sessionManager.createSession).toHaveBeenCalledWith(
 			workspaceId,
@@ -131,6 +136,23 @@ describe('Signup welcome comment — Chief of Staff comments, Researcher gets sp
 				actionPrompt: expect.stringContaining(created.id),
 			}),
 		)
+		// Only Researcher (the agent mention) gets a spawned session — the human
+		// mention must never trigger one.
+		expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
+
+		// The human mention is what makes this comment surface on their For You
+		// page: GET /api/subscriptions/unread matches on events.data.mentions
+		// containing the viewer's actor id.
+		const unreadRes = await app.request(
+			jsonRequest('GET', '/api/subscriptions/unread', undefined, { 'x-workspace-id': workspaceId }),
+		)
+		expect(unreadRes.status).toBe(200)
+		const unread = (await unreadRes.json()) as {
+			items: Array<{ entity_id: string; mentioning_unread_count: number }>
+		}
+		const item = unread.items.find((i) => i.entity_id === created.id)
+		expect(item).toBeDefined()
+		expect(item?.mentioning_unread_count).toBeGreaterThan(0)
 	})
 
 	it('does not trigger a comment or session for a knowledge object that is not signup_capture', async () => {

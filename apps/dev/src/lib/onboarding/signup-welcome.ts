@@ -21,6 +21,8 @@ export interface PostSignupWelcomeCommentInput {
 	workspaceId: string
 	knowledgeObjectId: string
 	metadata: unknown
+	/** The human who just signed up (the caller that created the knowledge object) — @-mentioned alongside Researcher so the comment surfaces on their For You page. */
+	humanActorId: string
 }
 
 async function resolveAgentIdByName(
@@ -59,7 +61,7 @@ async function resolveAgentIdByName(
 export async function postSignupWelcomeComment(
 	input: PostSignupWelcomeCommentInput,
 ): Promise<void> {
-	const { db, sessionManager, workspaceId, knowledgeObjectId } = input
+	const { db, sessionManager, workspaceId, knowledgeObjectId, humanActorId } = input
 	const metadata = (input.metadata ?? {}) as SignupCaptureMetadata
 	const name = metadata.name?.trim()
 	const organization = metadata.organization?.trim()
@@ -79,14 +81,20 @@ export async function postSignupWelcomeComment(
 		return
 	}
 
-	const content = `Hi ${name || 'there'} 👋 Welcome to Maskin — I'm Chief of Staff, I make sure the right agent picks up your work. I've asked Researcher to put together a first-pass brief on you${organization ? ` and ${organization}` : ''} so the workspace has real context from day one. I'll let you know as soon as it's ready to review.`
+	// @-mention both Researcher (kicks off its session, below) and the human
+	// who just signed up. The human mention is what makes this comment surface
+	// on their For You page — `GET /api/subscriptions/unread` matches on
+	// `events.data.mentions` containing the viewer's actor id, and postComment
+	// auto-subscribes every mentioned actor regardless of type.
+	const displayName = name || 'there'
+	const content = `Hi ${displayName} 👋 Welcome to Maskin — I'm Chief of Staff, I make sure the right agent picks up your work. @Researcher — please put together a first-pass brief on ${displayName}${organization ? ` and ${organization}` : ''} so the workspace has real context from day one. @${displayName} — if anything here looks off or you'd like to add more before Researcher gets started, just reply and I'll make sure it gets folded in.`
 
 	const { comment, agentMentions } = await postComment(db, {
 		workspaceId,
 		actorId: chiefOfStaffId,
 		entityId: knowledgeObjectId,
 		content,
-		mentions: [researcherId],
+		mentions: [researcherId, humanActorId],
 		attention: 3,
 	})
 
