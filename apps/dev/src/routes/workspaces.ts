@@ -119,7 +119,7 @@ app.openapi(createWorkspaceRoute, async (c) => {
 			})
 
 			// Seed all default agents (Coach, Chief of Staff, Driver, Strategist,
-			// Discovery Analyst, Researcher) inside the same transaction. If any
+			// Signal Analyst, Researcher, Knowledge Curator) inside the same transaction. If any
 			// one fails the tx rolls back — no half-seeded workspace lingers behind
 			// a partial success.
 			// Skills, workspace_skill files, and triggers are seeded post-commit

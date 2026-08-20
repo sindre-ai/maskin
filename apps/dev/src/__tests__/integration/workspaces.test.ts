@@ -106,8 +106,9 @@ const DEFAULT_AGENT_NAMES = [
 	'Chief of Staff',
 	'Driver',
 	'Strategist',
-	'Discovery Analyst',
+	'Signal Analyst',
 	'Researcher',
+	'Knowledge Curator',
 ]
 
 function createApp() {
@@ -293,11 +294,12 @@ describe('Workspaces Integration', () => {
 			const listRes = await app.request(jsonGet(`/api/workspaces/${ws.id}/members`))
 			expect(listRes.status).toBe(200)
 			const members = await listRes.json()
-			// Creator (owner) + all 6 default agents (seeded atomically inside the
-			// create transaction) + the newly-added member = 8.
-			expect(members).toHaveLength(8)
+			// Creator (owner) + all 7 default agents (seeded atomically inside the
+			// create transaction) + the newly-added member = 9.
+			expect(members).toHaveLength(9)
 			const roles = members.map((m: { role: string }) => m.role).sort()
 			expect(roles).toEqual([
+				'member',
 				'member',
 				'member',
 				'member',
@@ -390,7 +392,7 @@ describe('Workspaces Integration', () => {
 			expect(after.length).toBe(initialAgents.length)
 		})
 
-		it('attaches the continuous-onboarding workspace skill to Chief of Staff and creates all 11 triggers', async () => {
+		it('attaches the continuous-onboarding and maskin-way-of-working workspace skills and creates all 15 triggers', async () => {
 			const app = createApp()
 
 			const createRes = await app.request(
@@ -422,20 +424,43 @@ describe('Workspaces Integration', () => {
 				)
 			expect(skillRows).toHaveLength(1)
 
+			const continuousOnboardingSkillId = skillRows[0]?.id
+			if (!continuousOnboardingSkillId) throw new Error('continuous-onboarding skill not seeded')
 			const attachRows = await db
 				.select({ actorId: agentSkills.actorId })
 				.from(agentSkills)
-				.where(eq(agentSkills.workspaceSkillId, skillRows[0]?.id))
+				.where(eq(agentSkills.workspaceSkillId, continuousOnboardingSkillId))
 			expect(attachRows.map((r) => r.actorId)).toContain(chief?.id)
+
+			// The shared "Maskin way of working" skill is attached to every default
+			// agent (mirrored from the Template workspace) — Coach, Chief of Staff,
+			// Driver, Strategist, Signal Analyst, Researcher, Knowledge Curator.
+			const [wayOfWorkingSkill] = await db
+				.select({ id: workspaceSkills.id })
+				.from(workspaceSkills)
+				.where(
+					and(
+						eq(workspaceSkills.workspaceId, ws.id),
+						eq(workspaceSkills.name, 'maskin-way-of-working'),
+					),
+				)
+				.limit(1)
+			const wayOfWorkingSkillId = wayOfWorkingSkill?.id
+			if (!wayOfWorkingSkillId) throw new Error('maskin-way-of-working skill not seeded')
+			const wayOfWorkingAttachRows = await db
+				.select({ actorId: agentSkills.actorId })
+				.from(agentSkills)
+				.where(eq(agentSkills.workspaceSkillId, wayOfWorkingSkillId))
+			expect(wayOfWorkingAttachRows).toHaveLength(7)
 
 			const triggerRows = await db
 				.select({ name: triggers.name })
 				.from(triggers)
 				.where(eq(triggers.workspaceId, ws.id))
-			expect(triggerRows).toHaveLength(11)
+			expect(triggerRows).toHaveLength(15)
 		})
 
-		it('seeds the Discovery → Bet and Workspace Improvements loops wired to their triggers', async () => {
+		it('seeds the Bet discovery loop, Workspace improvements, and Knowledge Wiki loops wired to their triggers', async () => {
 			const app = createApp()
 
 			const createRes = await app.request(
@@ -452,8 +477,9 @@ describe('Workspaces Integration', () => {
 				.where(and(eq(objects.workspaceId, ws.id), eq(objects.type, 'loop')))
 
 			expect(loopRows.map((r) => r.title).sort()).toEqual([
-				'Discovery → Bet',
-				'Workspace Improvements',
+				'Bet discovery loop',
+				'Knowledge Wiki → digest',
+				'Workspace improvements',
 			])
 
 			const triggerRows = await db
@@ -462,17 +488,19 @@ describe('Workspaces Integration', () => {
 				.where(eq(triggers.workspaceId, ws.id))
 			const triggerIdByName = new Map(triggerRows.map((t) => [t.name, t.id]))
 
-			const discoveryBetLoop = loopRows.find((r) => r.title === 'Discovery → Bet')
+			const discoveryBetLoop = loopRows.find((r) => r.title === 'Bet discovery loop')
 			const discoveryBetTriggerIds =
 				(discoveryBetLoop?.metadata as { trigger_ids?: string[] } | null)?.trigger_ids ?? []
 			expect(new Set(discoveryBetTriggerIds)).toEqual(
 				new Set([
-					triggerIdByName.get('Daily discovery sweep'),
+					triggerIdByName.get('Triage new insight'),
+					triggerIdByName.get('Daily signal sweep'),
+					triggerIdByName.get('Weekly deep revalidation'),
 					triggerIdByName.get('Shape the bet'),
 				]),
 			)
 
-			const workspaceImprovementsLoop = loopRows.find((r) => r.title === 'Workspace Improvements')
+			const workspaceImprovementsLoop = loopRows.find((r) => r.title === 'Workspace improvements')
 			const workspaceImprovementsTriggerIds =
 				(workspaceImprovementsLoop?.metadata as { trigger_ids?: string[] } | null)?.trigger_ids ??
 				[]
@@ -482,6 +510,16 @@ describe('Workspaces Integration', () => {
 					triggerIdByName.get('Workspace Coach — session completed (onboarding)'),
 					triggerIdByName.get('Cluster & recommend'),
 					triggerIdByName.get('Capture outcome'),
+				]),
+			)
+
+			const knowledgeWikiLoop = loopRows.find((r) => r.title === 'Knowledge Wiki → digest')
+			const knowledgeWikiTriggerIds =
+				(knowledgeWikiLoop?.metadata as { trigger_ids?: string[] } | null)?.trigger_ids ?? []
+			expect(new Set(knowledgeWikiTriggerIds)).toEqual(
+				new Set([
+					triggerIdByName.get('Fold new knowledge into the wiki'),
+					triggerIdByName.get('Compile the twice-weekly digest'),
 				]),
 			)
 		})
@@ -503,7 +541,7 @@ describe('Workspaces Integration', () => {
 				.from(objects)
 				.where(and(eq(objects.workspaceId, ws.id), eq(objects.type, 'loop')))
 
-			expect(loopRows).toHaveLength(2)
+			expect(loopRows).toHaveLength(3)
 		})
 
 		it('leaves three pre-existing workspaces byte-identical when a new workspace is seeded', async () => {

@@ -31,8 +31,9 @@ export const DEFAULT_AGENT_IDS = [
 	'chief_of_staff',
 	'driver',
 	'strategist',
-	'discovery_analyst',
+	'signal_analyst',
 	'researcher',
+	'knowledge_curator',
 ] as const
 
 type DefaultAgentId = (typeof DEFAULT_AGENT_IDS)[number]
@@ -402,7 +403,12 @@ export async function bootstrapDefaultAgents(
 			),
 		)
 		.limit(1)
-	if (coachRow) actorIdMap.workspace_coach = coachRow.actorId
+	if (coachRow) {
+		actorIdMap.workspace_coach = coachRow.actorId
+		for (const skill of WORKSPACE_COACH_DEFAULT.skills ?? []) {
+			await attachSkill(db, agentStorage, workspaceId, createdBy, coachRow.actorId, skill)
+		}
+	}
 
 	for (const agent of DEFAULT_WORKSPACE_AGENTS) {
 		// Idempotent: check if an actor with this name already exists in the workspace.

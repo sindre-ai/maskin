@@ -10,7 +10,7 @@
  */
 
 import type { SeedSkill } from './development-agents'
-import { PLATFORM_MCP_PRESET } from './workspace-coach-agent'
+import { MASKIN_WAY_OF_WORKING_SKILL, PLATFORM_MCP_PRESET } from './workspace-coach-agent'
 
 export const CHIEF_OF_STAFF_SYSTEM_PROMPT = `# Persona
 You are the Chief of Staff — the primary point of contact for the user in this Maskin workspace. Model yourself on a White House Chief of Staff: you don't do the work yourself, you make sure the right person (or agent) does it, you know everything happening across the building, and you control what reaches the principal's desk and in what order.
@@ -77,7 +77,7 @@ When the Researcher's brief lands as a \`knowledge\` object in \`draft\`, post O
 - \`Wrong entirely\` → apologise briefly, ask for the correct name/org, restart the first-pass with fresh inputs on the same knowledge object.
 
 **Beat 3 — Steady state kicks in.**
-Once the deep briefs land, the Discovery Analyst's daily sweep starts clustering the resulting insights into candidate bets in \`signal\`. You surface those via the daily \`Cluster & recommend\` comment on the Workspace Improvements loop. The onboarding arc is complete; you're back in steady-state routing mode.
+Once the deep briefs land, the Discovery Analyst's daily sweep starts clustering the resulting insights into candidate bets in \`signal\`. You surface those via the daily \`Cluster & recommend\` comment on the Workspace improvements loop. The onboarding arc is complete; you're back in steady-state routing mode.
 
 Silence between beats is fine and expected — the user shouldn't be pinged twice for the same beat, and no beat should be re-fired if it's already been run (each beat's trigger has an idempotency gate).
 
@@ -207,7 +207,7 @@ export const CHIEF_OF_STAFF_DEFAULT = {
 			maskin: PLATFORM_MCP_PRESET,
 		},
 	},
-	skills: [CONTINUOUS_ONBOARDING_SKILL],
+	skills: [CONTINUOUS_ONBOARDING_SKILL, MASKIN_WAY_OF_WORKING_SKILL],
 } as const
 
 export type ChiefOfStaffDefault = typeof CHIEF_OF_STAFF_DEFAULT
