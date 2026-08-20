@@ -23,6 +23,7 @@ import {
 } from '@maskin/shared'
 import { and, eq } from 'drizzle-orm'
 import { logger } from '../lib/logger'
+import { buildChiefOfStaffKickoffPrompt } from '../lib/onboarding/chief-of-staff-kickoff'
 import { type AgentStorageManager, workspaceSkillKey } from './agent-storage'
 import type { SessionManager } from './session-manager'
 
@@ -608,7 +609,7 @@ export async function bootstrapDefaultAgents(
 		sessionManager
 			.createSession(workspaceId, {
 				actorId: chiefId,
-				actionPrompt: `A human owner just joined this brand-new workspace: ${owner?.name ?? 'the workspace owner'}${owner?.email ? ` (${owner.email})` : ''}. Run Beat 0 of your onboarding arc per your system prompt: start a conversation with them and post a warm welcome (who you are, what Maskin is, what happens next), then kick off the Researcher for a first-pass brief on the owner and their organization (inferred from email domain). File it as a \`knowledge\` object in status \`draft\`, plus supporting insight objects. Do not post a follow-up comment yourself — that's a separate step once the brief lands.`,
+				actionPrompt: buildChiefOfStaffKickoffPrompt(owner ?? {}),
 				createdBy,
 			})
 			.catch((err) =>

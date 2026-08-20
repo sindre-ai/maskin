@@ -136,6 +136,16 @@ describe('Signup welcome comment — Chief of Staff comments, Researcher gets sp
 				actionPrompt: expect.stringContaining(created.id),
 			}),
 		)
+		const researcherCall = (sessionManager.createSession as ReturnType<typeof vi.fn>).mock.calls[0]
+		const researcherPrompt = researcherCall[1].actionPrompt as string
+		// Research inputs: name, email, organization, role — all four, plus the
+		// human's actor id so Researcher can @-mention them in its reply.
+		expect(researcherPrompt).toContain('Ada Testowski')
+		expect(researcherPrompt).toContain('integration@test.com')
+		expect(researcherPrompt).toContain('Acme Robotics')
+		expect(researcherPrompt).toContain('Head of Product')
+		expect(researcherPrompt).toContain(humanActorId)
+		expect(researcherPrompt.toLowerCase()).toContain('add files')
 		// Only Researcher (the agent mention) gets a spawned session — the human
 		// mention must never trigger one.
 		expect(sessionManager.createSession).toHaveBeenCalledTimes(1)

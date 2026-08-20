@@ -65,10 +65,17 @@ export async function postSignupWelcomeComment(
 	const metadata = (input.metadata ?? {}) as SignupCaptureMetadata
 	const name = metadata.name?.trim()
 	const organization = metadata.organization?.trim()
+	const role = metadata.role?.trim()
 
-	const [chiefOfStaffId, researcherId] = await Promise.all([
+	const [chiefOfStaffId, researcherId, human] = await Promise.all([
 		resolveAgentIdByName(db, workspaceId, CHIEF_OF_STAFF_NAME),
 		resolveAgentIdByName(db, workspaceId, RESEARCHER_NAME),
+		db
+			.select({ email: actors.email })
+			.from(actors)
+			.where(eq(actors.id, humanActorId))
+			.limit(1)
+			.then((rows) => rows[0]),
 	])
 
 	if (!chiefOfStaffId || !researcherId) {
@@ -114,8 +121,10 @@ export async function postSignupWelcomeComment(
 			actionPrompt: buildSignupResearchPrompt({
 				knowledgeObjectId,
 				name,
+				email: human?.email ?? undefined,
 				organization,
-				role: metadata.role?.trim(),
+				role,
+				humanActorId,
 				notificationId: researcherMention.notificationId,
 			}),
 			config: {
@@ -140,8 +149,10 @@ export async function postSignupWelcomeComment(
 function buildSignupResearchPrompt(ctx: {
 	knowledgeObjectId: string
 	name?: string
+	email?: string
 	organization?: string
 	role?: string
+	humanActorId: string
 	notificationId: string
 }): string {
 	const who = [ctx.name, ctx.role, ctx.organization ? `at ${ctx.organization}` : undefined]
@@ -150,11 +161,15 @@ function buildSignupResearchPrompt(ctx: {
 	return [
 		`Chief of Staff @mentioned you on this workspace's signup-context knowledge object (id: ${ctx.knowledgeObjectId}) to run a first-pass research brief on the new user${who ? ` (${who})` : ''}.`,
 		'',
+		`Signup info on record — name: ${ctx.name ?? 'unknown'}, email: ${ctx.email ?? 'unknown'}, organization: ${ctx.organization ?? 'unknown'}, role: ${ctx.role ?? 'unknown'}. Use all four as your research inputs — the email domain is often the fastest way to the company's own site.`,
+		`User's actor ID (use this in \`mentions\` on step 5): ${ctx.humanActorId}`,
+		'',
 		'Do a fast-mode pass (public sources only — company site, professional profile pages, published talks/posts):',
-		`1. Read knowledge object ${ctx.knowledgeObjectId} (get_objects) for the signup info already on it, then research the person and their organization.`,
-		`2. Update that SAME knowledge object (update_objects on ${ctx.knowledgeObjectId}) with what you find — it is the workspace's single source of truth for the owner, so enrich it in place rather than filing a second one for this pass.`,
-		'3. File one atomic `insight` object per key finding (create_objects), same as any other brief, linked back with an `informs` relationship (insight → knowledge).',
-		`4. Post a short reply comment on ${ctx.knowledgeObjectId} summarizing what you found, so it surfaces to the user.`,
-		`5. Mark notification ${ctx.notificationId} as resolved once done.`,
+		`1. Read knowledge object ${ctx.knowledgeObjectId} (get_objects) to confirm the signup info above.`,
+		'2. Research the person and their organization using their name, email, organization, and role.',
+		`3. Update that SAME knowledge object (update_objects on ${ctx.knowledgeObjectId}) with what you find — it is the workspace's single source of truth for the owner, so enrich it in place rather than filing a second one for this pass.`,
+		'4. File one atomic `insight` object per key finding (create_objects), same as any other brief, linked back with an `informs` relationship (insight → knowledge).',
+		`5. Post a NEW reply comment on ${ctx.knowledgeObjectId} presenting what you found — a short TL;DR is enough, the detail lives on the object you just updated. @-mention the user (include their actor ID above in \`mentions\`) and ask whether they'd like to add files or have you research anything further.`,
+		`6. Mark notification ${ctx.notificationId} as resolved once done.`,
 	].join('\n')
 }
