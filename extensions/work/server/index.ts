@@ -45,15 +45,7 @@ const workExtension: ModuleDefinition = {
 			type: 'bet',
 			label: 'Bet',
 			icon: 'target',
-			defaultStatuses: [
-				'signal',
-				'define',
-				'active',
-				'live',
-				'succeeded',
-				'failed',
-				'paused',
-			],
+			defaultStatuses: ['signal', 'define', 'active', 'live', 'succeeded', 'failed', 'paused'],
 		},
 		{
 			type: 'task',

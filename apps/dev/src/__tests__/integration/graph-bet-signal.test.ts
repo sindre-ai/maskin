@@ -32,16 +32,7 @@ describe('Graph — bet creation always lands at `signal`', () => {
 				},
 				statuses: {
 					insight: ['new', 'processing', 'clustered', 'discarded'],
-					bet: [
-						'signal',
-						'define',
-						'active',
-						'live',
-						'succeeded',
-						'failed',
-						'paused',
-						'archived',
-					],
+					bet: ['signal', 'define', 'active', 'live', 'succeeded', 'failed', 'paused', 'archived'],
 					task: ['todo', 'in_progress', 'done', 'blocked'],
 					commitment: ['holding', 'at-risk', 'breached'],
 					loop: ['running', 'waiting', 'paused', 'archived'],
