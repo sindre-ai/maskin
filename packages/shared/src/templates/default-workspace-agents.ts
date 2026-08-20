@@ -418,21 +418,6 @@ Every brief is a **knowledge object** with this structure:
 
 Skimmable wins. The requester should get the answer from the TL;DR alone and dive in only if they need the receipts.
 
-# Onboarding: researching the workspace owner
-When Chief of Staff kicks you off to research the new workspace owner (a first-pass or deep-dive brief about the owner and/or their organization — you'll recognize it from the task naming the owner by name/email rather than a bet, competitor, or market topic), you own the full loop end to end. Chief of Staff's job stops at the handoff; do not wait for it to present your findings or ask the user anything on your behalf.
-
-1. Research and file as usual (knowledge object + supporting insight objects, per above).
-2. **Post the ask yourself.** \`create_comment\` on the knowledge object you just filed:
-   - \`mentions\`: the workspace owner (\`list_actors\`, filter human + role=owner).
-   - \`content\`: 1-2 sentence TL;DR of what you found, then ask directly — "Want me to go deeper (org details, competitors, market), or is this enough for now?"
-   - \`metadata.chips\`: \`["Go deeper", "That's enough"]\`
-   - \`attention\`: 3.
-3. **You will be woken on their reply** (you're a thread participant, no re-mention needed). Read it and act:
-   - Affirmative / "Go deeper" / any steer toward more → run three deep-mode briefs (org deep dive, competitive landscape, market & category), each filed the same way (knowledge + insights). Then update the original brief's status to \`validated\`. Post one short comment confirming the deep pass landed — no further question needed, this is the end of the loop.
-   - "That's enough" / negative → update the original brief's status to \`validated\` and reply with a one-line acknowledgment. Done.
-   - Correction to a fact ("actually I work at X, not Y") → redo the affected research with the correction folded in, update the SAME knowledge object (don't create a duplicate), and re-ask once.
-4. Never let this thread go silent after the user replies — a reply with no acknowledgment reads as ignored.
-
 # Worked examples
 
 **External company brief.** Request: "What's Anthropic's enterprise pricing?" Fast mode. Exa search "Anthropic enterprise pricing 2026", WebFetch anthropic.com/pricing and the press page, cross-check against one recent article. TL;DR: "Anthropic publishes per-model API pricing on anthropic.com/pricing; enterprise deals are custom-quoted (no public tier). Sales contact required for volume pricing." Confidence: Medium (public docs current, custom-quote inference from a single press mention). File as knowledge, comment on the requesting bet with attention 2.
@@ -464,9 +449,61 @@ export const DEFAULT_WORKSPACE_TRIGGERS: SeedTrigger[] = [
 Otherwise, exit silently. Note: actor.created ALSO fires for agents when a workspace is cloned from this template — you MUST filter those out via the type=human check above. Silence is the correct outcome for any non-owner-human event.
 
 If firing:
-1. Start a conversation with this actor and post a warm welcome via post_conversation_message on a new conversation. 3–4 sentences, covering: (a) who you are — the Chief of Staff — and that you're their primary point of contact here, (b) what Maskin is in one line — a workspace where a team of agents runs product discovery and shapes bets alongside them, (c) what happens next — the Researcher will produce a first-pass brief on them and their organization and will follow up directly once it's filed to confirm it's on the money before going deeper.
+1. Start a conversation with this actor and post a warm welcome via post_conversation_message on a new conversation. 3–4 sentences, covering: (a) who you are — the Chief of Staff — and that you're their primary point of contact here, (b) what Maskin is in one line — a workspace where a team of agents runs product discovery and shapes bets alongside them, (c) what happens next — the Researcher will produce a first-pass brief on them and their organization, and you'll come back once it's filed to confirm it's on the money before going deeper.
 2. Kick off the Researcher: list_actors to find the agent named "Researcher", then run_agent with a task like "First-pass brief on the new workspace owner: {name} ({email if available}). Cover who they are professionally and a quick sketch of their organization inferred from email domain. Fast mode. File as \`knowledge\` object in status \`draft\`, titled question-shaped, plus supporting insight objects."
-3. Your job for this beat ends here. The Researcher owns presenting the brief to the user and asking whether to go deeper, per its own system prompt — do not post a follow-up comment yourself.`,
+3. Do NOT post any follow-up comment yet. The next move is a separate trigger that fires when the user marks the brief \`validated\`.`,
+		targetActor$id: 'chief_of_staff',
+		enabled: true,
+	},
+	{
+		name: 'First-pass brief filed → present with chips',
+		type: 'event',
+		config: {
+			action: 'created',
+			entity_type: 'knowledge',
+		},
+		actionPrompt: `A knowledge object was just created. Decide whether this is the onboarding first-pass user/org brief and, if so, present it to the user for confirmation.
+
+**Fire only if ALL of these hold:**
+- The knowledge object's driver is the Researcher (get_objects → check driver, match against the actor named "Researcher" via list_actors).
+- Its status is \`draft\` (not something already published).
+- It is the FIRST knowledge object ever created in this workspace by the Researcher. Check list_objects(type=knowledge, driver=<Researcher id>) — if there are prior Researcher-authored knowledge objects, this isn't the onboarding first-pass; exit silently.
+- Its content is the user/organization brief (title/body clearly references the workspace owner + their org). If it's some other kind of brief, exit silently.
+
+Otherwise, exit silently.
+
+If firing:
+1. Post ONE comment on this knowledge object (create_comment, attention 3) addressed to the workspace owner. 2–3 sentences, warm: "Here's a first pass on who you are and where you work — take a skim and let me know. If it's on the money, I'll set the Researcher loose on a proper deep dive (your org, competitors, the market you're in)."
+2. On that same comment, attach \`metadata.chips = ["Looks right", "Needs correction", "Wrong entirely"]\` so the user can tap-reply. No free-text prompting needed — the chips are the whole UX.
+3. Do NOT change the knowledge status yourself. The user's tap is what confirms the brief; you'll act on their reply per the onboarding arc in your system prompt (Beat 2).`,
+		targetActor$id: 'chief_of_staff',
+		enabled: true,
+	},
+	{
+		name: 'First-pass brief validated → deep research',
+		type: 'event',
+		config: {
+			action: 'status_changed',
+			entity_type: 'knowledge',
+			filter: {
+				status: 'validated',
+			},
+		},
+		actionPrompt: `A knowledge object just moved to \`validated\`. Decide whether this is the workspace owner's initial user/org brief and whether the deep-research pass should start.
+
+**Fire only if BOTH hold:**
+- This is the FIRST knowledge object ever validated in this workspace. Check list_objects(type=knowledge, status=validated) — if more than one exists (i.e. any prior validated knowledge), exit silently, the deep pass has already been kicked off before.
+- Its content is the user/organization first-pass brief (title/body clearly references the workspace owner + their org). If it's some other kind of validated knowledge, exit silently.
+
+Otherwise, exit silently.
+
+If firing:
+1. Post ONE comment on this knowledge object (attention 2, informational) confirming the deep pass is starting and listing what will be produced.
+2. Find the Researcher: list_actors to locate the agent named "Researcher". Then kick off THREE deep-mode briefs via run_agent (one call per brief, each filed as its own \`knowledge\` object in status \`draft\`, question-shaped titles):
+   - Organization deep dive — products, positioning, size, recent moves, funding if applicable.
+   - Competitive landscape — top 3–5 competitors and how they position vs the user's organization.
+   - Market & category — segment size, trends, key dynamics the user's org sits inside.
+3. Do NOT surface anything else to the user beyond the confirmation comment. The briefs land as drafts and the user reviews at their own pace; the Discovery Analyst's daily sweep will convert the resulting insights into signal-stage bets.`,
 		targetActor$id: 'chief_of_staff',
 		enabled: true,
 	},
