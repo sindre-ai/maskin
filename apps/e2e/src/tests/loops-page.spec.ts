@@ -2,18 +2,15 @@ import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 test.describe('Loops list page', () => {
+	// Empty-state rendering for the Loops list is already covered at the
+	// component level (loops-index.test.tsx via a mocked empty list). An E2E
+	// "empty workspace" check was removed here for the same reason a matching
+	// one was removed from states-vocabulary.spec.ts: new workspaces auto-seed
+	// the Discovery -> Bet and Workspace Improvements loops (#1433), so a
+	// genuinely loop-free workspace isn't reliably reachable through the real
+	// signup flow this fixture uses. See CI run for PR #1403.
+
 	for (const viewport of SHIP_GATE_VIEWPORTS) {
-		test(`empty workspace renders the empty state at ${viewport.label}`, async ({
-			page,
-			account,
-		}) => {
-			await page.setViewportSize({ width: viewport.width, height: viewport.height })
-
-			await page.goto(`/${account.workspaceId}/loops`)
-
-			await expect(page.getByText('No loops running here yet')).toBeVisible({ timeout: 10000 })
-		})
-
 		test(`renders a loop row with derived stats at ${viewport.label}`, async ({
 			page,
 			account,
@@ -29,9 +26,13 @@ test.describe('Loops list page', () => {
 
 			await page.goto(`/${account.workspaceId}/loops`)
 
-			await expect(page.getByText('Customer feedback')).toBeVisible({ timeout: 10000 })
-			await expect(page.getByTestId('loop-pill')).toHaveText('Learning')
-			await expect(page.getByText(/in progress/i)).toBeVisible()
+			// Workspaces now come with the Discovery -> Bet and Workspace
+			// Improvements loops pre-seeded (#1433), so scope every assertion to
+			// this test's own row instead of the page as a whole.
+			const row = page.getByRole('link', { name: /Customer feedback/ })
+			await expect(row).toBeVisible({ timeout: 10000 })
+			await expect(row.getByTestId('loop-pill')).toHaveText('Learning')
+			await expect(row.getByText(/in progress/i)).toBeVisible()
 		})
 	}
 

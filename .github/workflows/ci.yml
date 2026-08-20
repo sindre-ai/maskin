@@ -196,6 +196,13 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_e2e
           INTEGRATION_ENCRYPTION_KEY: 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
           ARGOS_TOKEN: ${{ secrets.ARGOS_TOKEN }}
+          # Argos's upload() can reject via a promise that safe-argos-reporter.ts's
+          # own try/catch doesn't end up wrapping (see that file's comment) — an
+          # unhandled rejection there must never fail an otherwise-green shard.
+          # `warn` is a Node-level backstop: it stops any unhandled rejection from
+          # escalating to a process crash, regardless of listener registration
+          # timing inside the reporter.
+          NODE_OPTIONS: --unhandled-rejections=warn
 
       - name: Upload Playwright report
         if: always()
