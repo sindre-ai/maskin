@@ -3,6 +3,7 @@ import { generateApiKey } from '@maskin/auth'
 import {
 	actors,
 	agentSkills,
+	objects,
 	triggers,
 	workspaceMembers,
 	workspaceSkills,
@@ -388,6 +389,77 @@ describe('Workspaces Integration', () => {
 				.from(triggers)
 				.where(eq(triggers.workspaceId, ws.id))
 			expect(triggerRows).toHaveLength(11)
+		})
+
+		it('seeds the Discovery → Bet and Workspace Improvements loops wired to their triggers', async () => {
+			const app = createApp()
+
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Loops Seeded' }),
+			)
+			const ws = await createRes.json()
+
+			const agentStorage = new AgentStorageManager(createMemoryStorage(), db)
+			await bootstrapDefaultAgents(db, agentStorage, ws.id, getTestActorId())
+
+			const loopRows = await db
+				.select({ id: objects.id, title: objects.title, metadata: objects.metadata })
+				.from(objects)
+				.where(and(eq(objects.workspaceId, ws.id), eq(objects.type, 'loop')))
+
+			expect(loopRows.map((r) => r.title).sort()).toEqual([
+				'Discovery → Bet',
+				'Workspace Improvements',
+			])
+
+			const triggerRows = await db
+				.select({ id: triggers.id, name: triggers.name })
+				.from(triggers)
+				.where(eq(triggers.workspaceId, ws.id))
+			const triggerIdByName = new Map(triggerRows.map((t) => [t.name, t.id]))
+
+			const discoveryBetLoop = loopRows.find((r) => r.title === 'Discovery → Bet')
+			const discoveryBetTriggerIds =
+				(discoveryBetLoop?.metadata as { trigger_ids?: string[] } | null)?.trigger_ids ?? []
+			expect(new Set(discoveryBetTriggerIds)).toEqual(
+				new Set([
+					triggerIdByName.get('Daily discovery sweep'),
+					triggerIdByName.get('Shape the bet'),
+				]),
+			)
+
+			const workspaceImprovementsLoop = loopRows.find((r) => r.title === 'Workspace Improvements')
+			const workspaceImprovementsTriggerIds =
+				(workspaceImprovementsLoop?.metadata as { trigger_ids?: string[] } | null)?.trigger_ids ??
+				[]
+			expect(new Set(workspaceImprovementsTriggerIds)).toEqual(
+				new Set([
+					triggerIdByName.get('Workspace Coach — daily sweep'),
+					triggerIdByName.get('Workspace Coach — session completed (onboarding)'),
+					triggerIdByName.get('Cluster & recommend'),
+					triggerIdByName.get('Capture outcome'),
+				]),
+			)
+		})
+
+		it('re-invoking bootstrapDefaultAgents inserts zero new loop objects', async () => {
+			const app = createApp()
+
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Idempotent Loop Seed' }),
+			)
+			const ws = await createRes.json()
+
+			const agentStorage = new AgentStorageManager(createMemoryStorage(), db)
+			await bootstrapDefaultAgents(db, agentStorage, ws.id, getTestActorId())
+			await bootstrapDefaultAgents(db, agentStorage, ws.id, getTestActorId())
+
+			const loopRows = await db
+				.select({ id: objects.id })
+				.from(objects)
+				.where(and(eq(objects.workspaceId, ws.id), eq(objects.type, 'loop')))
+
+			expect(loopRows).toHaveLength(2)
 		})
 
 		it('leaves three pre-existing workspaces byte-identical when a new workspace is seeded', async () => {
