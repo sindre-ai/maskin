@@ -11,8 +11,6 @@ export interface StripeEnv {
 	priceTeam: string
 	proHardCapTokens: number
 	teamHardCapTokens: number
-	/** Metered price backing the overage-billing meter (see `reportOverageBlock`). */
-	priceOverageBlock: string
 }
 
 interface CheckoutInputs {
@@ -21,6 +19,15 @@ interface CheckoutInputs {
 	successUrl: string
 	cancelUrl: string
 	existingCustomerId?: string | null
+}
+
+interface CreditCheckoutInputs {
+	workspaceId: string
+	amountUsdCents: number
+	successUrl: string
+	cancelUrl: string
+	/** Always required — only pro/team workspaces with an active subscription (and thus a Stripe customer) reach this. */
+	existingCustomerId: string
 }
 
 let cachedClient: Stripe | null = null
@@ -36,7 +43,6 @@ export function readStripeEnv(env: NodeJS.ProcessEnv = process.env): StripeEnv {
 		'STRIPE_WEBHOOK_SECRET',
 		'STRIPE_PRICE_PRO',
 		'STRIPE_PRICE_TEAM',
-		'STRIPE_PRICE_OVERAGE_BLOCK',
 		'MASKIN_PRO_HARD_CAP_TOKENS',
 		'MASKIN_TEAM_HARD_CAP_TOKENS',
 	] as const
@@ -64,7 +70,6 @@ export function readStripeEnv(env: NodeJS.ProcessEnv = process.env): StripeEnv {
 		webhookSecret: env.STRIPE_WEBHOOK_SECRET as string,
 		pricePro: env.STRIPE_PRICE_PRO as string,
 		priceTeam: env.STRIPE_PRICE_TEAM as string,
-		priceOverageBlock: env.STRIPE_PRICE_OVERAGE_BLOCK as string,
 		proHardCapTokens: parseTokenCap('MASKIN_PRO_HARD_CAP_TOKENS'),
 		teamHardCapTokens: parseTokenCap('MASKIN_TEAM_HARD_CAP_TOKENS'),
 	}
@@ -105,44 +110,6 @@ export function hardCapForPlan(plan: PaidMaskinPlan, env: StripeEnv): number {
 	return plan === 'pro' ? env.proHardCapTokens : env.teamHardCapTokens
 }
 
-/** Corresponds to the `event_name` configured on the overage Meter in Stripe (Phase 0 dashboard setup). */
-export const OVERAGE_METER_EVENT_NAME = 'maskin_overage_block'
-
-/**
- * Report one overage block (`OVERAGE_BLOCK_TOKENS` of usage, billed at
- * `OVERAGE_BLOCK_PRICE_USD`) to Stripe via the Billing Meters API. Callers
- * must claim the block in `workspace_overage_usage` first (unique per
- * workspace/period/block) and pass a idempotency key derived from that same
- * tuple — Stripe's own idempotency layer is defense in depth on top of the DB
- * claim, not a substitute for it.
- */
-export async function reportOverageBlock(
-	stripe: Stripe,
-	params: { customerId: string; blockIdempotencyKey: string },
-): Promise<Stripe.Billing.MeterEvent> {
-	const response = await stripe.billing.meterEvents.create(
-		{
-			event_name: OVERAGE_METER_EVENT_NAME,
-			payload: { value: '1', stripe_customer_id: params.customerId },
-		},
-		{ idempotencyKey: params.blockIdempotencyKey },
-	)
-	return response
-}
-
-/**
- * Find the subscription item carrying the metered overage price, if any.
- * Presence (not the customer's payment status) is what `overage_enabled`
- * tracks — a subscription only has this item once Checkout attached it.
- */
-export function overageItemIdFromSubscription(
-	subscription: Stripe.Subscription,
-	env: StripeEnv,
-): string | null {
-	const item = subscription.items?.data?.find((i) => i.price?.id === env.priceOverageBlock)
-	return item?.id ?? null
-}
-
 /**
  * Build the args for a Checkout Session that creates a Stripe Customer
  * tagged with our workspaceId. The customer is the durable link between
@@ -161,10 +128,7 @@ export async function createCheckoutSession(
 		client_reference_id: inputs.workspaceId,
 		success_url: inputs.successUrl,
 		cancel_url: inputs.cancelUrl,
-		// Metered prices take no `quantity` — Stripe reports usage separately via
-		// meter events (see `reportOverageBlock`). Attaching it at checkout time
-		// means overage is available from day one, with no separate opt-in flow.
-		line_items: [{ price: priceId, quantity: 1 }, { price: env.priceOverageBlock }],
+		line_items: [{ price: priceId, quantity: 1 }],
 		metadata: { workspace_id: inputs.workspaceId, plan: inputs.plan },
 		subscription_data: {
 			metadata: { workspace_id: inputs.workspaceId, plan: inputs.plan },
@@ -177,6 +141,50 @@ export async function createCheckoutSession(
 	logger.info('Stripe checkout session created', {
 		workspaceId: inputs.workspaceId,
 		plan: inputs.plan,
+		sessionId: session.id,
+	})
+	return session
+}
+
+/** Metadata discriminator the webhook uses to route a `mode: 'payment'` checkout.session.completed to the credit-topup branch instead of the subscription-mirroring branch. */
+export const CREDIT_TOPUP_METADATA_KIND = 'credit_topup'
+
+/**
+ * One-time-payment Checkout Session for a prepaid usage-credits top-up. Uses
+ * inline `price_data` (no pre-created Stripe Price) since the amount is
+ * user-chosen. Always attached to the workspace's existing Stripe Customer —
+ * this flow is only reachable from an already-paid pro/team subscription
+ * (see `POST /billing/credits/checkout`), never a fresh checkout.
+ */
+export async function createCreditCheckoutSession(
+	stripe: Stripe,
+	inputs: CreditCheckoutInputs,
+): Promise<Stripe.Checkout.Session> {
+	const session = await stripe.checkout.sessions.create({
+		mode: 'payment',
+		customer: inputs.existingCustomerId,
+		client_reference_id: inputs.workspaceId,
+		success_url: inputs.successUrl,
+		cancel_url: inputs.cancelUrl,
+		line_items: [
+			{
+				price_data: {
+					currency: 'usd',
+					product_data: { name: 'Maskin usage credits' },
+					unit_amount: inputs.amountUsdCents,
+				},
+				quantity: 1,
+			},
+		],
+		metadata: {
+			workspace_id: inputs.workspaceId,
+			kind: CREDIT_TOPUP_METADATA_KIND,
+			amount_usd_cents: String(inputs.amountUsdCents),
+		},
+	})
+	logger.info('Stripe credit top-up checkout session created', {
+		workspaceId: inputs.workspaceId,
+		amountUsdCents: inputs.amountUsdCents,
 		sessionId: session.id,
 	})
 	return session

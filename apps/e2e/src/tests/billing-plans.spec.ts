@@ -20,9 +20,7 @@ async function mockUsage(
 		tokens_used: number
 		hard_cap_tokens: number | null
 		period_resets_in_ms: number | null
-		overage_enabled?: boolean
-		overage_blocks_used?: number
-		overage_usd_charged?: number
+		credit_balance_cents?: number
 	},
 ) {
 	await page.route('**/api/billing/usage*', async (route) => {
@@ -33,10 +31,7 @@ async function mockUsage(
 				period_start: null,
 				stripe_customer_id: null,
 				stripe_subscription_id: null,
-				overage_enabled: false,
-				overage_blocks_used: 0,
-				overage_usd_charged: 0,
-				overage_block_tokens: 32_000_000,
+				credit_balance_cents: 0,
 				...usage,
 			}),
 		})
@@ -121,7 +116,7 @@ test.describe('Billing plans — Settings UI', () => {
 	})
 
 	for (const vp of SHIP_GATE_VIEWPORTS) {
-		test(`shows the overage chip (not a hard-block) once a pro workspace is over cap with overage enabled — ${vp.label}`, async ({
+		test(`shows the credit balance (not a hard-block) once a pro workspace is over cap with a balance — ${vp.label}`, async ({
 			page,
 			account,
 		}) => {
@@ -131,24 +126,62 @@ test.describe('Billing plans — Settings UI', () => {
 				tokens_used: 40_000_000,
 				hard_cap_tokens: 32_000_000,
 				period_resets_in_ms: 20 * 24 * 60 * 60 * 1000,
-				overage_enabled: true,
-				overage_blocks_used: 2,
-				overage_usd_charged: 40,
+				credit_balance_cents: 4_000,
 			})
 
 			await page.setViewportSize({ width: vp.width, height: vp.height })
 			await page.goto(`/${account.workspaceId}/settings/keys`)
 
 			await expect(page.getByText('Pro — $20/mo')).toBeVisible()
-			await expect(page.getByText(/\+2 overage blocks · \$40 this period/)).toBeVisible()
+			await expect(page.getByText('$40.00 usage credits')).toBeVisible()
+			await expect(page.getByRole('button', { name: 'Buy usage credits' })).toBeVisible()
 
-			// Over-cap-with-overage is expected, billable usage, not a failure —
-			// the bar must render in the warning/primary tone, never the error
-			// color reserved for the true hard-blocked case.
+			// Over-cap-with-a-balance is expected, already-paid-for usage, not a
+			// failure — the bar must render in the warning/primary tone, never
+			// the error color reserved for the true hard-blocked case.
 			const bar = page.getByRole('progressbar')
 			await expect(bar).toBeVisible()
 			const barClass = await bar.getAttribute('class')
 			expect(barClass).not.toContain('bg-error')
+		})
+	}
+
+	for (const vp of SHIP_GATE_VIEWPORTS) {
+		test(`buy usage credits dialog opens, submits, and redirects to the mocked Stripe checkout url — ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await mockUsage(page, {
+				plan: 'pro',
+				status: 'active',
+				tokens_used: 10_000_000,
+				hard_cap_tokens: 32_000_000,
+				period_resets_in_ms: 20 * 24 * 60 * 60 * 1000,
+				credit_balance_cents: 0,
+			})
+
+			const mockCheckoutUrl = `${BASE}/${account.workspaceId}/settings/keys?billing=mock-credit-checkout`
+			await page.route('**/api/billing/credits/checkout', async (route) => {
+				await route.fulfill({
+					status: 200,
+					contentType: 'application/json',
+					body: JSON.stringify({ url: mockCheckoutUrl, session_id: 'cs_credit_mock' }),
+				})
+			})
+
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+			await page.goto(`/${account.workspaceId}/settings/keys`)
+
+			await expect(page.getByText('Pro — $20/mo')).toBeVisible()
+			// Reachable/tappable at every ship-gate viewport, including 375px —
+			// ResponsiveDialog becomes a bottom sheet below 768px for exactly this.
+			await page.getByRole('button', { name: 'Buy usage credits' }).click()
+			await expect(page.getByRole('dialog')).toBeVisible()
+
+			await page.getByRole('button', { name: '$25' }).click()
+			await page.getByRole('button', { name: 'Buy $25' }).click()
+
+			await page.waitForURL((url) => url.toString().includes('billing=mock-credit-checkout'))
 		})
 	}
 })

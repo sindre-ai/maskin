@@ -1,12 +1,10 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { workspaceOverageUsage, workspaces } from '@maskin/db/schema'
-import { workspaceSettingsSchema } from '@maskin/shared'
-import { and, count, eq, isNotNull } from 'drizzle-orm'
+import { workspaces } from '@maskin/db/schema'
+import { CREDIT_TOPUP_MAX_USD, CREDIT_TOPUP_MIN_USD, workspaceSettingsSchema } from '@maskin/shared'
+import { eq } from 'drizzle-orm'
 import {
 	DEFAULT_PERIOD_LENGTH_MS,
-	OVERAGE_BLOCK_PRICE_USD,
-	OVERAGE_BLOCK_TOKENS,
 	PRO_HARD_CAP_DEFAULT_TOKENS,
 	TEAM_HARD_CAP_DEFAULT_TOKENS,
 	TRIAL_HARD_CAP_DEFAULT_TOKENS,
@@ -21,7 +19,12 @@ import {
 } from '../lib/llm-source-mutex'
 import { logger } from '../lib/logger'
 import { errorSchema, workspaceIdHeader } from '../lib/openapi-schemas'
-import { createCheckoutSession, getStripeClient, readStripeEnv } from '../lib/stripe'
+import {
+	createCheckoutSession,
+	createCreditCheckoutSession,
+	getStripeClient,
+	readStripeEnv,
+} from '../lib/stripe'
 import type { WorkspaceSettings } from '../lib/types'
 
 /**
@@ -108,13 +111,9 @@ const usageResponseSchema = z.object({
 	period_resets_in_ms: z.number().int().nullable(),
 	stripe_customer_id: z.string().nullable(),
 	stripe_subscription_id: z.string().nullable(),
-	// Overage billing: only meaningful for pro/team. `overage_blocks_used`
-	// only counts blocks Stripe has actually confirmed (reported_at IS NOT
-	// NULL) — in-flight claims aren't shown as billed yet.
-	overage_enabled: z.boolean(),
-	overage_blocks_used: z.number().int().nonnegative(),
-	overage_usd_charged: z.number().nonnegative(),
-	overage_block_tokens: z.number().int().positive(),
+	// Prepaid usage-credits balance, in USD cents. Only meaningful for
+	// pro/team — see `lib/credit-billing.ts`.
+	credit_balance_cents: z.number().int().nonnegative(),
 })
 
 const usageRoute = createRoute({
@@ -190,21 +189,10 @@ app.openapi(usageRoute, async (c) => {
 
 	const resetsIn = Math.max(0, periodEndMs - Date.now())
 
-	const overageEnabled = billing?.overage_enabled === true
-	let overageBlocksUsed = 0
-	if ((plan === 'pro' || plan === 'team') && periodStartSec !== null) {
-		const [row] = await db
-			.select({ count: count() })
-			.from(workspaceOverageUsage)
-			.where(
-				and(
-					eq(workspaceOverageUsage.workspaceId, workspaceId),
-					eq(workspaceOverageUsage.periodStart, periodStartSec),
-					isNotNull(workspaceOverageUsage.reportedAt),
-				),
-			)
-		overageBlocksUsed = row?.count ?? 0
-	}
+	const creditBalanceCents =
+		typeof billing?.credit_balance_cents === 'number' && billing.credit_balance_cents > 0
+			? Math.floor(billing.credit_balance_cents)
+			: 0
 
 	logger.info('Billing usage read', {
 		workspaceId,
@@ -212,7 +200,7 @@ app.openapi(usageRoute, async (c) => {
 		status,
 		tokensUsed,
 		hardCap,
-		overageBlocksUsed,
+		creditBalanceCents,
 	})
 
 	return c.json(
@@ -225,10 +213,7 @@ app.openapi(usageRoute, async (c) => {
 			period_resets_in_ms: plan === 'byollm' ? null : resetsIn,
 			stripe_customer_id: billing?.stripe_customer_id ?? null,
 			stripe_subscription_id: billing?.stripe_subscription_id ?? null,
-			overage_enabled: overageEnabled,
-			overage_blocks_used: overageBlocksUsed,
-			overage_usd_charged: overageBlocksUsed * OVERAGE_BLOCK_PRICE_USD,
-			overage_block_tokens: OVERAGE_BLOCK_TOKENS,
+			credit_balance_cents: creditBalanceCents,
 		},
 		200,
 	)
@@ -290,6 +275,115 @@ app.openapi(checkoutRoute, async (c) => {
 		logger.error('Stripe checkout session creation failed', {
 			workspaceId,
 			plan,
+			error: err instanceof Error ? err.message : String(err),
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create checkout session'), 500)
+	}
+})
+
+const buyCreditsBodySchema = z.object({
+	amount_usd_cents: z
+		.number()
+		.int()
+		.min(CREDIT_TOPUP_MIN_USD * 100)
+		.max(CREDIT_TOPUP_MAX_USD * 100),
+	success_url: z.string().url(),
+	cancel_url: z.string().url(),
+})
+
+const buyCreditsRoute = createRoute({
+	method: 'post',
+	path: '/credits/checkout',
+	tags: ['billing'],
+	summary: 'Start a Stripe Checkout session for a one-time usage-credits top-up',
+	request: {
+		headers: workspaceIdHeader,
+		body: {
+			content: { 'application/json': { schema: buyCreditsBodySchema } },
+			required: true,
+		},
+	},
+	responses: {
+		200: {
+			description: 'Checkout session created',
+			content: { 'application/json': { schema: checkoutResponseSchema } },
+		},
+		400: {
+			description: 'Workspace is not eligible to buy usage credits',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Workspace not found',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		500: {
+			description: 'Stripe misconfigured or upstream failure',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(buyCreditsRoute, async (c) => {
+	const db = c.get('db')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { amount_usd_cents, success_url, cancel_url } = c.req.valid('json')
+
+	const [workspace] = await db
+		.select({ id: workspaces.id, settings: workspaces.settings })
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId))
+		.limit(1)
+
+	if (!workspace) {
+		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
+
+	const settingsParse = workspaceSettingsSchema.partial().safeParse(workspace.settings ?? {})
+	const billing = settingsParse.success ? settingsParse.data.billing : undefined
+
+	// Same eligibility as spending a balance (`canUseCreditBalance`), minus
+	// the balance>0 check since we're about to add to it: plan must be
+	// pro/team, subscription active, and a Stripe customer already on file
+	// (guaranteed once a paid checkout has completed).
+	const eligible =
+		(billing?.plan === 'pro' || billing?.plan === 'team') &&
+		billing.status === 'active' &&
+		Boolean(billing.stripe_customer_id)
+	if (!eligible) {
+		return c.json(
+			createApiError('BAD_REQUEST', 'Workspace is not eligible to buy usage credits'),
+			400,
+		)
+	}
+
+	let stripeEnv: ReturnType<typeof readStripeEnv>
+	try {
+		stripeEnv = readStripeEnv()
+	} catch (err) {
+		logger.error('Stripe is not configured', {
+			error: err instanceof Error ? err.message : String(err),
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Stripe is not configured'), 500)
+	}
+
+	const stripe = getStripeClient(stripeEnv)
+	try {
+		const session = await createCreditCheckoutSession(stripe, {
+			workspaceId,
+			amountUsdCents: amount_usd_cents,
+			successUrl: success_url,
+			cancelUrl: cancel_url,
+			existingCustomerId: billing?.stripe_customer_id as string,
+		})
+		if (!session.url) {
+			logger.error('Stripe credit top-up checkout session missing url', { sessionId: session.id })
+			return c.json(createApiError('INTERNAL_ERROR', 'Stripe returned no checkout url'), 500)
+		}
+		return c.json({ url: session.url, session_id: session.id }, 200)
+	} catch (err) {
+		logger.error('Stripe credit top-up checkout session creation failed', {
+			workspaceId,
+			amountUsdCents: amount_usd_cents,
 			error: err instanceof Error ? err.message : String(err),
 		})
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create checkout session'), 500)

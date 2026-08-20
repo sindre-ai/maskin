@@ -12,6 +12,7 @@ vi.mock('@/lib/api', () => ({
 		billing: {
 			usage: vi.fn(),
 			checkout: vi.fn(),
+			buyCredits: vi.fn(),
 		},
 	},
 }))
@@ -27,10 +28,7 @@ const baseUsage = {
 	period_resets_in_ms: 30 * 24 * 60 * 60 * 1000,
 	stripe_customer_id: null,
 	stripe_subscription_id: null,
-	overage_enabled: false,
-	overage_blocks_used: 0,
-	overage_usd_charged: 0,
-	overage_block_tokens: 32_000_000,
+	credit_balance_cents: 0,
 }
 
 describe('formatTokens', () => {
@@ -273,7 +271,7 @@ describe('BillingSection', () => {
 		expect(currentPlanButton).toBeDisabled()
 	})
 
-	it('shows the overage chip and a non-alarming bar when blocks have been billed', async () => {
+	it('shows the credit balance and Buy usage credits button, non-alarming bar with a balance available', async () => {
 		vi.mocked(api.billing.usage).mockResolvedValue({
 			...baseUsage,
 			plan: 'pro',
@@ -282,9 +280,7 @@ describe('BillingSection', () => {
 			tokens_used: 40_000_000,
 			stripe_customer_id: 'cus_x',
 			stripe_subscription_id: 'sub_x',
-			overage_enabled: true,
-			overage_blocks_used: 2,
-			overage_usd_charged: 40,
+			credit_balance_cents: 4_000,
 		})
 
 		render(
@@ -294,13 +290,14 @@ describe('BillingSection', () => {
 		)
 
 		await screen.findByText('Pro — $20/mo')
-		expect(screen.getByText(/\+2 overage blocks · \$40 this period/)).toBeInTheDocument()
-		// Overage is expected, billable usage — the bar must not read as an error.
+		expect(screen.getByText('$40.00 usage credits')).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Buy usage credits' })).toBeInTheDocument()
+		// A spendable balance is expected, already-paid-for usage — the bar must not read as an error.
 		const bar = screen.getByRole('progressbar')
 		expect(bar.className).not.toContain('bg-error')
 	})
 
-	it('shows the hard-blocked (error) bar when over cap without overage enabled', async () => {
+	it('shows the hard-blocked (error) bar when over cap with a zero credit balance', async () => {
 		vi.mocked(api.billing.usage).mockResolvedValue({
 			...baseUsage,
 			plan: 'pro',
@@ -309,9 +306,7 @@ describe('BillingSection', () => {
 			tokens_used: 40_000_000,
 			stripe_customer_id: 'cus_x',
 			stripe_subscription_id: 'sub_x',
-			overage_enabled: false,
-			overage_blocks_used: 0,
-			overage_usd_charged: 0,
+			credit_balance_cents: 0,
 		})
 
 		render(
@@ -321,9 +316,57 @@ describe('BillingSection', () => {
 		)
 
 		await screen.findByText('Pro — $20/mo')
-		expect(screen.queryByText(/overage block/)).not.toBeInTheDocument()
+		expect(screen.getByText('$0.00 usage credits')).toBeInTheDocument()
 		const bar = screen.getByRole('progressbar')
 		expect(bar.className).toContain('bg-error')
+	})
+
+	it('buys usage credits and redirects to the Stripe checkout url', async () => {
+		const user = userEvent.setup()
+		vi.mocked(api.billing.usage).mockResolvedValue({
+			...baseUsage,
+			plan: 'pro',
+			status: 'active',
+			hard_cap_tokens: 32_000_000,
+			stripe_customer_id: 'cus_x',
+			stripe_subscription_id: 'sub_x',
+			credit_balance_cents: 0,
+		})
+		vi.mocked(api.billing.buyCredits).mockResolvedValue({
+			url: 'https://checkout.stripe.com/c/cs_credit_1',
+			session_id: 'cs_credit_1',
+		})
+
+		const original = window.location
+		Object.defineProperty(window, 'location', {
+			writable: true,
+			value: { ...original, href: 'http://localhost/settings/keys', assign: vi.fn() },
+		})
+
+		render(
+			<TestWrapper>
+				<BillingSection workspaceId="ws-1" byollmAllowed />
+			</TestWrapper>,
+		)
+
+		await screen.findByText('Pro — $20/mo')
+		await user.click(screen.getByRole('button', { name: 'Buy usage credits' }))
+		expect(await screen.findByRole('dialog')).toBeInTheDocument()
+
+		await user.click(screen.getByRole('button', { name: '$25' }))
+		await user.click(screen.getByRole('button', { name: 'Buy $25' }))
+
+		await vi.waitFor(() => {
+			expect(api.billing.buyCredits).toHaveBeenCalledWith(
+				'ws-1',
+				expect.objectContaining({ amount_usd_cents: 2_500 }),
+			)
+		})
+		await vi.waitFor(() => {
+			expect(window.location.href).toBe('https://checkout.stripe.com/c/cs_credit_1')
+		})
+
+		Object.defineProperty(window, 'location', { writable: true, value: original })
 	})
 
 	it('toggles the plan comparison grid via Compare plans / Hide plans', async () => {

@@ -1,7 +1,14 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
-import { events, actors, webhookDeliveries, workspaceMembers, workspaces } from '@maskin/db/schema'
+import {
+	events,
+	actors,
+	webhookDeliveries,
+	workspaceCreditLedger,
+	workspaceMembers,
+	workspaces,
+} from '@maskin/db/schema'
 import { workspaceSettingsSchema } from '@maskin/shared'
 import { and, eq, sql } from 'drizzle-orm'
 import type Stripe from 'stripe'
@@ -9,11 +16,11 @@ import { createApiError } from '../lib/errors'
 import { settingsAfterPaidPlanActivation } from '../lib/llm-source-mutex'
 import { logger } from '../lib/logger'
 import {
+	CREDIT_TOPUP_METADATA_KIND,
 	getStripeClient,
 	hardCapForPlan,
 	isHandledStripeEvent,
 	mapSubscriptionStatus,
-	overageItemIdFromSubscription,
 	planForPriceId,
 	priceIdFromSubscription,
 	readStripeEnv,
@@ -240,6 +247,63 @@ async function applyEvent(
 		switch (event.type) {
 			case 'checkout.session.completed': {
 				const session = event.data.object as Stripe.Checkout.Session
+				if (session.mode === 'payment' && session.metadata?.kind === CREDIT_TOPUP_METADATA_KIND) {
+					// Prepaid usage-credits top-up: money has already been captured
+					// by Stripe — credit the balance unconditionally (eligibility
+					// gates *spending* the balance later, not receiving money
+					// already paid for). Reuses the row lock taken above; must NOT
+					// touch plan/status/period_* — only `next.credit_balance_cents`
+					// changes here, so this intentionally never falls into the
+					// subscription-shaped mutation below.
+					const amountCents = Number(
+						session.metadata?.amount_usd_cents ?? session.amount_total ?? Number.NaN,
+					)
+					if (!Number.isFinite(amountCents) || amountCents <= 0) {
+						logger.error('Credit top-up checkout.session.completed with invalid amount', {
+							sessionId: session.id,
+							workspaceId,
+						})
+						break
+					}
+					const currentBalance =
+						typeof current.credit_balance_cents === 'number' && current.credit_balance_cents > 0
+							? current.credit_balance_cents
+							: 0
+					const balanceAfter = currentBalance + amountCents
+					next = { ...next, credit_balance_cents: balanceAfter }
+
+					const ledgerClaim = await tx
+						.insert(workspaceCreditLedger)
+						.values({
+							workspaceId,
+							type: 'topup',
+							amountCents,
+							balanceAfterCents: balanceAfter,
+							stripeCheckoutSessionId: session.id,
+						})
+						.onConflictDoNothing({
+							target: [workspaceCreditLedger.stripeCheckoutSessionId],
+							where: sql`${workspaceCreditLedger.type} = 'topup' AND ${workspaceCreditLedger.stripeCheckoutSessionId} IS NOT NULL`,
+						})
+						.returning({ id: workspaceCreditLedger.id })
+
+					if (ledgerClaim[0]?.id) {
+						const systemActorId = await getOrCreateStripeSystemActor(tx, workspaceId)
+						await tx.insert(events).values({
+							workspaceId,
+							actorId: systemActorId,
+							action: 'workspace_credit_topup',
+							entityType: 'workspace',
+							entityId: workspaceId,
+							data: {
+								amount_cents: amountCents,
+								balance_after_cents: balanceAfter,
+								stripe_checkout_session_id: session.id,
+							},
+						})
+					}
+					break
+				}
 				const subscriptionId =
 					typeof session.subscription === 'string'
 						? session.subscription
@@ -268,7 +332,6 @@ async function applyEvent(
 				const sub = event.data.object as Stripe.Subscription
 				const priceId = priceIdFromSubscription(sub)
 				const plan = priceId ? planForPriceId(priceId, stripeEnv) : null
-				const overageItemId = overageItemIdFromSubscription(sub, stripeEnv)
 				next = {
 					...next,
 					plan: plan ?? next.plan,
@@ -280,8 +343,6 @@ async function applyEvent(
 					hard_cap_tokens: plan ? hardCapForPlan(plan, stripeEnv) : next.hard_cap_tokens,
 					period_start: sub.current_period_start ?? next.period_start,
 					period_end: sub.current_period_end ?? next.period_end,
-					overage_enabled: overageItemId !== null,
-					stripe_overage_item_id: overageItemId,
 				}
 				break
 			}
@@ -294,8 +355,6 @@ async function applyEvent(
 					status: 'canceled',
 					hard_cap_tokens: null,
 					period_start: sub.canceled_at ?? next.period_start,
-					overage_enabled: false,
-					stripe_overage_item_id: null,
 				}
 				break
 			}
@@ -328,27 +387,6 @@ async function applyEvent(
 			.update(workspaces)
 			.set({ settings: merged, updatedAt: new Date() })
 			.where(eq(workspaces.id, workspaceId))
-
-		// Audit log per `.claude/rules/known-pitfalls.md` ("Missing Events Audit
-		// Log"). Only fires when overage entitlement actually flips, not on
-		// every webhook delivery, so a workspace that's merely renewing doesn't
-		// accumulate no-op rows. Event types that don't touch `overage_enabled`
-		// in the switch above (checkout.session.completed, invoice.*) leave it
-		// `undefined` on `next` — normalize both sides to booleans before
-		// comparing, or `undefined !== false` would fire this on every delivery.
-		const previousOverageEnabled = current.overage_enabled ?? false
-		const nextOverageEnabled = next.overage_enabled ?? false
-		if (nextOverageEnabled !== previousOverageEnabled) {
-			const systemActorId = await getOrCreateStripeSystemActor(tx, workspaceId)
-			await tx.insert(events).values({
-				workspaceId,
-				actorId: systemActorId,
-				action: 'workspace_billing_overage_updated',
-				entityType: 'workspace',
-				entityId: workspaceId,
-				data: { overage_enabled: nextOverageEnabled, previous: previousOverageEnabled },
-			})
-		}
 	})
 }
 

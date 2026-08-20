@@ -1,3 +1,4 @@
+import { BuyCreditsDialog } from '@/components/settings/buy-credits-dialog'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import {
@@ -12,7 +13,9 @@ import { Label } from '@/components/ui/label'
 import { useBillingCancel, useBillingUsage, useStripeCheckout } from '@/hooks/use-billing'
 import type { BillingPlan, BillingStatus, BillingUsageResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { queryKeys } from '@/lib/query-keys'
 import { OWNERSHIP_CAPS, SEAT_CAPS } from '@maskin/shared'
+import { useQueryClient } from '@tanstack/react-query'
 import { Check, ChevronDown, ChevronRight, ExternalLink } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
@@ -29,6 +32,10 @@ export function formatTokens(n: number): string {
 	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`
 	if (n >= 1_000) return `${(n / 1_000).toFixed(n >= 10_000 ? 0 : 1)}k`
 	return `${n}`
+}
+
+export function formatCredits(cents: number): string {
+	return `$${(cents / 100).toFixed(2)}`
 }
 
 export function formatResetsIn(ms: number | null): string {
@@ -94,8 +101,7 @@ const PLAN_CONFIG: PlanCardConfig[] = [
 		tagline: 'For teams running real workflows day to day.',
 		features: [
 			`${formatTokens(CAP_DEFAULTS.pro)} tokens of usage included each month`,
-			// $20 mirrors OVERAGE_BLOCK_PRICE_USD in apps/dev/src/lib/billing-defaults.ts.
-			`$20 per extra ${formatTokens(CAP_DEFAULTS.pro)} of usage after that, no markup`,
+			'Buy usage credits any time to keep going past your included tokens',
 			formatOwnershipCap(OWNERSHIP_CAPS.pro),
 			formatSeatCap(SEAT_CAPS.pro),
 			'Hosted by Maskin — no API key needed',
@@ -109,7 +115,7 @@ const PLAN_CONFIG: PlanCardConfig[] = [
 		tagline: 'Heavier loops, volume rates, one invoice.',
 		features: [
 			`${formatTokens(CAP_DEFAULTS.team)} tokens of usage included each month`,
-			`$20 per extra ${formatTokens(CAP_DEFAULTS.pro)} of usage after that, same rate as Pro`,
+			'Buy usage credits any time to keep going past your included tokens',
 			formatOwnershipCap(OWNERSHIP_CAPS.team),
 			formatSeatCap(SEAT_CAPS.team),
 			'Hosted by Maskin — no API key needed',
@@ -239,12 +245,39 @@ export function BillingSection({
 }) {
 	const usageQuery = useBillingUsage(workspaceId)
 	const checkout = useStripeCheckout(workspaceId)
+	const queryClient = useQueryClient()
 	const [switchOpen, setSwitchOpen] = useState(false)
+	const [buyCreditsOpen, setBuyCreditsOpen] = useState(false)
 	// null = no explicit user choice yet — fall back to a computed default once
 	// `usage` is known (collapsed for paid+active plans, expanded otherwise).
 	// Declared here (not after the early returns below) so the hook is always
 	// called on every render regardless of loading/error state.
 	const [plansOpenOverride, setPlansOpenOverride] = useState<boolean | null>(null)
+
+	// Coming back from Stripe Checkout (?billing=success / credit_success) —
+	// the cached usage snapshot is now stale, and useBillingUsage's 10s
+	// staleTime means a plain remount won't refetch it, so the page would
+	// keep showing pre-upgrade state until an unrelated refresh. Force a
+	// refetch, then once more after a short delay in case the webhook (which
+	// applies the actual plan/balance change) is still in flight. Strip the
+	// param either way so a manual page refresh doesn't re-trigger this.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: queryClient is a stable singleton; including it would rerun this on every render
+	useEffect(() => {
+		const params = new URLSearchParams(window.location.search)
+		const billingParam = params.get('billing')
+		if (!billingParam) return
+
+		params.delete('billing')
+		const next = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ''}`
+		window.history.replaceState(null, '', next)
+
+		if (billingParam !== 'success' && billingParam !== 'credit_success') return
+		const invalidate = () =>
+			queryClient.invalidateQueries({ queryKey: queryKeys.billing.usage(workspaceId) })
+		invalidate()
+		const timeout = setTimeout(invalidate, 2000)
+		return () => clearTimeout(timeout)
+	}, [workspaceId])
 
 	const handleUpgrade = (plan: 'pro' | 'team') => {
 		const base = window.location.href.split('?')[0]
@@ -300,9 +333,8 @@ export function BillingSection({
 		<div>
 			<Label className="mb-1 text-bold">Maskin Subscription</Label>
 			<p className="text-xs text-muted-foreground mb-3">
-				Hosted LLM — pay Maskin, no API key needed. Included tokens per period, then{' '}
-				{formatTokens(CAP_DEFAULTS.pro)}-token blocks at $20 each — no hard stop, no surprise
-				invoice.
+				Hosted LLM — pay Maskin, no API key needed. Included tokens per period, then buy prepaid
+				usage credits any time to keep going — you choose the amount, nothing is auto-charged.
 			</p>
 
 			<UsageBanner
@@ -315,6 +347,7 @@ export function BillingSection({
 				pct={pct}
 				periodMs={periodMs}
 				resetsIn={resetsIn}
+				onBuyCredits={() => setBuyCreditsOpen(true)}
 			/>
 
 			{checkout.isError && (
@@ -357,6 +390,12 @@ export function BillingSection({
 				workspaceId={workspaceId}
 				byollmAllowed={byollmAllowed}
 			/>
+
+			<BuyCreditsDialog
+				open={buyCreditsOpen}
+				onOpenChange={setBuyCreditsOpen}
+				workspaceId={workspaceId}
+			/>
 		</div>
 	)
 }
@@ -371,6 +410,7 @@ function UsageBanner({
 	pct,
 	periodMs,
 	resetsIn,
+	onBuyCredits,
 }: {
 	usage: BillingUsageResponse
 	badge: { label: string; tone: string }
@@ -381,16 +421,17 @@ function UsageBanner({
 	pct: number
 	periodMs: number | null
 	resetsIn: string
+	onBuyCredits: () => void
 }) {
-	// Once overage billing is active, hitting/crossing the included allotment is
-	// an expected, billable event — not a problem — so it no longer earns the
-	// alarmed banner border or bar color. Those stay reserved for the workspace
-	// actually being blocked (no overage available) or the subscription itself
-	// being unhealthy (past_due/canceled).
-	const canOverage = isPaid && usage.overage_enabled
-	const hardBlocked = pct >= 100 && !canOverage
+	// While a prepaid credit balance is available, hitting/crossing the included
+	// allotment is an expected, already-paid-for event — not a problem — so it
+	// no longer earns the alarmed banner border or bar color. Those stay
+	// reserved for the workspace actually being blocked (no balance left) or
+	// the subscription itself being unhealthy (past_due/canceled).
+	const hasCredits = isPaid && usage.credit_balance_cents > 0
+	const hardBlocked = pct >= 100 && !hasCredits
 	const needsAttention =
-		usage.status === 'past_due' || usage.status === 'canceled' || (pct >= 85 && !canOverage)
+		usage.status === 'past_due' || usage.status === 'canceled' || (pct >= 85 && !hasCredits)
 
 	return (
 		<div
@@ -442,12 +483,17 @@ function UsageBanner({
 							tabIndex={-1}
 						/>
 					</div>
-					{usage.overage_blocks_used > 0 && (
-						<p className="mt-1 text-xs text-muted-foreground">
-							+{usage.overage_blocks_used} overage block{usage.overage_blocks_used > 1 ? 's' : ''} ·
-							${usage.overage_usd_charged} this period
-						</p>
-					)}
+				</div>
+			)}
+
+			{isPaid && (
+				<div className="flex items-center justify-between gap-2">
+					<span className="text-xs text-muted-foreground">
+						{formatCredits(usage.credit_balance_cents)} usage credits
+					</span>
+					<Button size="sm" variant="outline" onClick={onBuyCredits}>
+						Buy usage credits
+					</Button>
 				</div>
 			)}
 

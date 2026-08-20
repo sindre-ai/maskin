@@ -223,6 +223,10 @@ export type SessionUsageResponse = z.infer<typeof sessionUsageResponseSchema>
  * - agent_server_lost     The agent-server restarted and no longer holds
  *                         the microsandbox for this session — the work is
  *                         irrecoverable and the row is closed out.
+ * - plan_cap_exceeded     The session was deliberately stopped mid-run by
+ *                         SessionManager's budget watchdog because workspace
+ *                         usage crossed the plan cap with no usage credits
+ *                         left to cover it — not a provider-side failure.
  */
 export const failureReasonCodeSchema = z.enum([
 	'session_limit',
@@ -237,6 +241,7 @@ export const failureReasonCodeSchema = z.enum([
 	'rate_limit_error',
 	'insufficient_credits',
 	'agent_server_lost',
+	'plan_cap_exceeded',
 ])
 export type FailureReasonCode = z.infer<typeof failureReasonCodeSchema>
 

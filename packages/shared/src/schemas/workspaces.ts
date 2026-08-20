@@ -172,13 +172,14 @@ export const workspaceSettingsSchema = z.object({
 			period_end: z.number().nullable().optional(),
 			hard_cap_tokens: z.number().nullable().optional(),
 			status: z.enum(['active', 'past_due', 'canceled', 'incomplete']).optional(),
-			// Overage billing: true once the Stripe subscription carries the
-			// metered overage price as a line item (written by the webhook on
-			// customer.subscription.created/updated, cleared on .deleted). Gates
-			// the soft-cap branch in `checkPlanCap`/`canUseOverage` — trial never
-			// gets overage regardless of this flag.
-			overage_enabled: z.boolean().optional(),
-			stripe_overage_item_id: z.string().nullable().optional(),
+			// Prepaid usage-credits balance, in USD cents. Depletes as
+			// `maskin_plan` usage crosses the plan's included cap
+			// (lib/credit-billing.ts); topped up via
+			// `POST /billing/credits/checkout` + the Stripe webhook's
+			// `mode: 'payment'` branch. Persists across plan downgrades — it's
+			// the customer's money, not forfeited — but is only spendable while
+			// `canUseCreditBalance()` (pro/team + status active) is true.
+			credit_balance_cents: z.number().int().nonnegative().optional(),
 		})
 		.optional(),
 	// North Star onboarding prompt answer — stored when a user submits the

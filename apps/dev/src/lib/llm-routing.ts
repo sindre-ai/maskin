@@ -175,18 +175,29 @@ function effectivePeriodEnd(
 	return null
 }
 
+/** Spendable prepaid credit balance in cents, clamped to ≥0 defensively (writes are clamped too — see `lib/credit-billing.ts`). */
+export function creditBalanceCents(billing: WorkspaceSettings['billing']): number {
+	const raw = billing?.credit_balance_cents
+	return typeof raw === 'number' && raw > 0 ? Math.floor(raw) : 0
+}
+
 /**
- * True once a workspace may keep running past its hard cap and get billed
- * per-block overage instead of being blocked. Trial never qualifies — overage
- * requires a paid plan with a card on file, which is what `overage_enabled`
- * (written by the Stripe webhook once the metered line item is confirmed on
- * the subscription) and an `active` status together represent. `past_due`/
- * `canceled` intentionally still hard-block: a workspace that can't be billed
- * for its base plan shouldn't be allowed to run up unbillable overage either.
+ * True once a workspace over its plan cap may keep running by drawing down
+ * its prepaid credit balance instead of being hard-blocked. Trial never
+ * qualifies — spending credits requires a paid plan with a card on file,
+ * which `stripe_customer_id` and an `active` status together represent.
+ * `past_due`/`canceled` intentionally still hard-block: a workspace that
+ * can't be billed for its base plan shouldn't be allowed to draw down its
+ * balance either.
  */
-export function canUseOverage(plan: MaskinPlan, billing: WorkspaceSettings['billing']): boolean {
+export function canUseCreditBalance(
+	plan: MaskinPlan,
+	billing: WorkspaceSettings['billing'],
+): boolean {
 	if (plan === 'trial') return false
-	return billing?.overage_enabled === true && billing?.status === 'active'
+	if (billing?.status !== 'active') return false
+	if (!billing?.stripe_customer_id) return false
+	return creditBalanceCents(billing) > 0
 }
 
 /**
@@ -197,9 +208,10 @@ export function canUseOverage(plan: MaskinPlan, billing: WorkspaceSettings['bill
  *
  * No-op when the workspace is not on a maskin-plan-routed plan or when no cap
  * applies (e.g., paid plan pre-Stripe). Throws `PlanCapExceededError` when the
- * cap is exceeded and overage billing isn't available for this workspace
- * (`canUseOverage`) — otherwise lets the caller through; actual overage usage
- * is metered separately at session-completion time (`lib/overage-billing.ts`).
+ * cap is exceeded and no prepaid credit balance is available for this
+ * workspace (`canUseCreditBalance`) — otherwise lets the caller through;
+ * the balance is actually debited separately at session-completion time
+ * (`lib/credit-billing.ts`).
  */
 export async function checkPlanCap(params: {
 	db: Database
@@ -224,7 +236,7 @@ export async function checkPlanCap(params: {
 
 	const used = await getWorkspacePlanTokenUsage(params.db, params.workspaceId, periodStartMs)
 	if (used < cap) return
-	if (canUseOverage(maskinPlan, billing)) return
+	if (canUseCreditBalance(maskinPlan, billing)) return
 
 	throw new PlanCapExceededError({
 		plan: maskinPlan,

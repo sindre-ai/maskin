@@ -576,6 +576,12 @@ export const api = {
 				body,
 				workspaceId,
 			}),
+		buyCredits: (workspaceId: string, body: BillingBuyCreditsInput) =>
+			request<BillingCheckoutResponse>('/billing/credits/checkout', {
+				method: 'POST',
+				body,
+				workspaceId,
+			}),
 		usage: (workspaceId: string) =>
 			request<BillingUsageResponse>('/billing/usage', { workspaceId }),
 		cancel: (workspaceId: string) =>
@@ -927,6 +933,12 @@ export interface BillingCheckoutResponse {
 	session_id: string
 }
 
+export interface BillingBuyCreditsInput {
+	amount_usd_cents: number
+	success_url: string
+	cancel_url: string
+}
+
 export interface BillingUsageResponse {
 	plan: BillingPlan
 	status: BillingStatus
@@ -936,10 +948,7 @@ export interface BillingUsageResponse {
 	period_resets_in_ms: number | null
 	stripe_customer_id: string | null
 	stripe_subscription_id: string | null
-	overage_enabled: boolean
-	overage_blocks_used: number
-	overage_usd_charged: number
-	overage_block_tokens: number
+	credit_balance_cents: number
 }
 
 // Types derived from backend response schemas

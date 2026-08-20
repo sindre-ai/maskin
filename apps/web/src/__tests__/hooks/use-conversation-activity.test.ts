@@ -1,4 +1,6 @@
-import { renderHook, waitFor } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { act, renderHook, waitFor } from '@testing-library/react'
+import React, { type ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/api', () => ({
@@ -10,9 +12,24 @@ vi.mock('@/lib/api', () => ({
 	},
 }))
 
-import { useConversationActivity } from '@/hooks/use-conversation-activity'
+const navigateMock = vi.fn()
+vi.mock('@tanstack/react-router', () => ({
+	Link: ({ children }: { children: ReactNode }) => children,
+	useNavigate: () => navigateMock,
+}))
+
+vi.mock('sonner', () => ({
+	toast: { error: vi.fn() },
+}))
+
+import {
+	useConversationActivity,
+	useSessionBudgetStopToast,
+} from '@/hooks/use-conversation-activity'
 import type { MessageResponse, SessionLogResponse, SessionResponse } from '@/lib/api'
 import { api } from '@/lib/api'
+import { queryKeys } from '@/lib/query-keys'
+import { toast } from 'sonner'
 import { TestWrapper } from '../setup'
 
 const workspaceId = 'ws-1'
@@ -92,6 +109,13 @@ function toolUse(name: string) {
 
 function resultEnvelope() {
 	return JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'done' })
+}
+
+function createWrapper() {
+	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
+	const wrapper = ({ children }: { children: ReactNode }) =>
+		React.createElement(QueryClientProvider, { client: queryClient }, children)
+	return { wrapper, queryClient }
 }
 
 beforeEach(() => {
@@ -415,5 +439,93 @@ describe('useConversationActivity', () => {
 		expect(result.current.byTriggerMessageId.size).toBe(0)
 		expect(result.current.byReplyMessageId.size).toBe(0)
 		expect(result.current.fallback).toEqual([])
+	})
+})
+
+function budgetFailureReason() {
+	return {
+		provider: 'maskin',
+		reason_code: 'plan_cap_exceeded',
+		human_message:
+			'Session stopped — usage exceeded the plan cap and no usage credits are available.',
+		http_status: null,
+		reset_at: null,
+		verbatim_output: null,
+	}
+}
+
+describe('useSessionBudgetStopToast', () => {
+	it('toasts the plan-limit message once a running session transitions to failed with plan_cap_exceeded', async () => {
+		vi.mocked(api.sessions.list).mockResolvedValueOnce([
+			buildSession({ id: 'sess-1', status: 'running' }),
+		])
+		const { wrapper, queryClient } = createWrapper()
+		const queryKey = queryKeys.sessions.byConversation(workspaceId, conversationId)
+		renderHook(() => useSessionBudgetStopToast(workspaceId, conversationId), { wrapper })
+		// Wait for the *data* to land, not just for the queryFn to have been
+		// called — otherwise the cache mutation below can race the in-flight
+		// fetch and become the first (untoasted) observation of this session.
+		await waitFor(() =>
+			expect(queryClient.getQueryData(queryKey)).toMatchObject([{ status: 'running' }]),
+		)
+		expect(toast.error).not.toHaveBeenCalled()
+
+		act(() => {
+			queryClient.setQueryData(queryKey, [
+				buildSession({
+					id: 'sess-1',
+					status: 'failed',
+					result: { exit_code: 143, failure_reason: budgetFailureReason() },
+				}),
+			])
+		})
+
+		await waitFor(() => expect(toast.error).toHaveBeenCalledTimes(1))
+		expect(toast.error).toHaveBeenCalledWith(
+			'Plan limit reached — buy usage credits or upgrade to keep going',
+			expect.objectContaining({ action: expect.objectContaining({ label: 'Go to Billing' }) }),
+		)
+	})
+
+	it('does not toast for a session that was already failed on first load', async () => {
+		vi.mocked(api.sessions.list).mockResolvedValueOnce([
+			buildSession({
+				id: 'sess-1',
+				status: 'failed',
+				result: { exit_code: 143, failure_reason: budgetFailureReason() },
+			}),
+		])
+		const { wrapper } = createWrapper()
+		renderHook(() => useSessionBudgetStopToast(workspaceId, conversationId), { wrapper })
+		await waitFor(() => expect(api.sessions.list).toHaveBeenCalledTimes(1))
+
+		expect(toast.error).not.toHaveBeenCalled()
+	})
+
+	it('does not toast a running-to-failed transition for an unrelated failure reason', async () => {
+		vi.mocked(api.sessions.list).mockResolvedValueOnce([
+			buildSession({ id: 'sess-1', status: 'running' }),
+		])
+		const { wrapper, queryClient } = createWrapper()
+		const queryKey = queryKeys.sessions.byConversation(workspaceId, conversationId)
+		renderHook(() => useSessionBudgetStopToast(workspaceId, conversationId), { wrapper })
+		await waitFor(() =>
+			expect(queryClient.getQueryData(queryKey)).toMatchObject([{ status: 'running' }]),
+		)
+
+		act(() => {
+			queryClient.setQueryData(queryKey, [
+				buildSession({
+					id: 'sess-1',
+					status: 'failed',
+					result: { error: 'Claude credentials not connected' },
+				}),
+			])
+		})
+		await waitFor(() =>
+			expect(queryClient.getQueryData(queryKey)).toMatchObject([{ status: 'failed' }]),
+		)
+
+		expect(toast.error).not.toHaveBeenCalled()
 	})
 })

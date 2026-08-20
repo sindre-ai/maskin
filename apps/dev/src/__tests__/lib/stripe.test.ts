@@ -1,16 +1,16 @@
 import type Stripe from 'stripe'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+	CREDIT_TOPUP_METADATA_KIND,
 	createCheckoutSession,
+	createCreditCheckoutSession,
 	hardCapForPlan,
 	isHandledStripeEvent,
 	mapSubscriptionStatus,
-	overageItemIdFromSubscription,
 	planForPriceId,
 	priceIdForPlan,
 	priceIdFromSubscription,
 	readStripeEnv,
-	reportOverageBlock,
 	resetStripeClientForTests,
 	resolveWorkspaceIdFromEvent,
 } from '../../lib/stripe'
@@ -20,7 +20,6 @@ const VALID_ENV = {
 	STRIPE_WEBHOOK_SECRET: 'whsec_x',
 	STRIPE_PRICE_PRO: 'price_pro',
 	STRIPE_PRICE_TEAM: 'price_team',
-	STRIPE_PRICE_OVERAGE_BLOCK: 'price_overage_block',
 	MASKIN_PRO_HARD_CAP_TOKENS: '32000000',
 	MASKIN_TEAM_HARD_CAP_TOKENS: '320000000',
 }
@@ -177,10 +176,7 @@ describe('createCheckoutSession', () => {
 		expect(params.mode).toBe('subscription')
 		expect(params.client_reference_id).toBe('ws-1')
 		expect(params.metadata?.workspace_id).toBe('ws-1')
-		expect(params.line_items).toEqual([
-			{ price: 'price_pro', quantity: 1 },
-			{ price: 'price_overage_block' },
-		])
+		expect(params.line_items).toEqual([{ price: 'price_pro', quantity: 1 }])
 	})
 
 	it('reuses an existing Stripe customer when one is supplied', async () => {
@@ -203,44 +199,30 @@ describe('createCheckoutSession', () => {
 	})
 })
 
-describe('overageItemIdFromSubscription', () => {
-	const env = readStripeEnv(VALID_ENV)
-
-	it('finds the subscription item carrying the metered overage price', () => {
-		const sub = {
-			items: {
-				data: [
-					{ id: 'si_base', price: { id: 'price_pro' } },
-					{ id: 'si_overage', price: { id: 'price_overage_block' } },
-				],
-			},
-		} as unknown as Stripe.Subscription
-		expect(overageItemIdFromSubscription(sub, env)).toBe('si_overage')
-	})
-
-	it('returns null when the subscription has no overage item', () => {
-		const sub = {
-			items: { data: [{ id: 'si_base', price: { id: 'price_pro' } }] },
-		} as unknown as Stripe.Subscription
-		expect(overageItemIdFromSubscription(sub, env)).toBeNull()
-	})
-})
-
-describe('reportOverageBlock', () => {
-	it('reports a single meter event with a deterministic idempotency key', async () => {
-		const create = vi.fn().mockResolvedValue({ identifier: 'evt_1' })
-		const stripe = { billing: { meterEvents: { create } } } as unknown as Stripe
-		const result = await reportOverageBlock(stripe, {
-			customerId: 'cus_1',
-			blockIdempotencyKey: 'ws-1:1700000000:1',
+describe('createCreditCheckoutSession', () => {
+	it('builds a one-time payment-mode session with dynamic price_data', async () => {
+		const create = vi
+			.fn()
+			.mockResolvedValue({ id: 'cs_credit_1', url: 'https://stripe.test/checkout/cs_credit_1' })
+		const stripe = { checkout: { sessions: { create } } } as unknown as Stripe
+		const session = await createCreditCheckoutSession(stripe, {
+			workspaceId: 'ws-1',
+			amountUsdCents: 2_500,
+			successUrl: 'https://app.test/success',
+			cancelUrl: 'https://app.test/cancel',
+			existingCustomerId: 'cus_existing',
 		})
-		expect(result.identifier).toBe('evt_1')
-		expect(create).toHaveBeenCalledWith(
-			{
-				event_name: 'maskin_overage_block',
-				payload: { value: '1', stripe_customer_id: 'cus_1' },
-			},
-			{ idempotencyKey: 'ws-1:1700000000:1' },
-		)
+		expect(session.id).toBe('cs_credit_1')
+		expect(create).toHaveBeenCalledTimes(1)
+		const params = create.mock.calls[0]?.[0] as Stripe.Checkout.SessionCreateParams
+		expect(params.mode).toBe('payment')
+		expect(params.customer).toBe('cus_existing')
+		expect(params.client_reference_id).toBe('ws-1')
+		expect(params.metadata?.kind).toBe(CREDIT_TOPUP_METADATA_KIND)
+		expect(params.metadata?.amount_usd_cents).toBe('2500')
+		const lineItem = params.line_items?.[0] as Stripe.Checkout.SessionCreateParams.LineItem
+		expect(lineItem.quantity).toBe(1)
+		expect(lineItem.price_data?.unit_amount).toBe(2_500)
+		expect(lineItem.price_data?.currency).toBe('usd')
 	})
 })

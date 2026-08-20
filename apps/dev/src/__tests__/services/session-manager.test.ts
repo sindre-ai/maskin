@@ -3906,6 +3906,102 @@ describe('SessionManager', () => {
 		})
 	})
 
+	describe('handleCompletion() — budget-stopped sessions', () => {
+		beforeEach(() => {
+			vi.spyOn(AgentStorageManager.prototype, 'pushAgentFiles').mockResolvedValue(undefined)
+			mockClassifyCreditExhaustion.mockReturnValue(null)
+		})
+
+		it('synthesizes a plan_cap_exceeded failure_reason from the reason enforceRunningSessionBudget recorded', async () => {
+			const session = buildSession({ status: 'running' })
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
+			;(manager as unknown as { budgetStopped: Map<string, string> }).budgetStopped.set(
+				session.id,
+				'usage exceeded the plan cap and no usage credits are available',
+			)
+
+			mockResults.selectQueue = [[session], []]
+
+			// 143 = SIGTERM, the exit code stopSession()'s container kill produces —
+			// carries no stdout signal for classifyCreditExhaustion to classify.
+			await (
+				manager as unknown as {
+					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', 143)
+
+			const expectedReason = {
+				provider: 'maskin',
+				reason_code: 'plan_cap_exceeded',
+				human_message:
+					'Session stopped — usage exceeded the plan cap and no usage credits are available.',
+				http_status: null,
+				reset_at: null,
+				verbatim_output: null,
+			}
+
+			const sessionUpdate = calls.updates.find(
+				(u): u is { status: string; result: Record<string, unknown> } =>
+					typeof u === 'object' &&
+					u !== null &&
+					'status' in (u as Record<string, unknown>) &&
+					'result' in (u as Record<string, unknown>),
+			)
+			expect(sessionUpdate).toMatchObject({
+				status: 'failed',
+				result: { exit_code: 143, failure_reason: expectedReason },
+			})
+
+			const eventInsert = calls.inserts.find(
+				(i): i is { action: string; data: Record<string, unknown> } =>
+					typeof i === 'object' &&
+					i !== null &&
+					(i as { action?: string }).action === 'session_failed',
+			)
+			expect(eventInsert?.data).toMatchObject({ failure_reason: expectedReason })
+
+			// The map entry is consumed — a later, unrelated completion for the
+			// same session id (e.g. a retried session reusing nothing, purely
+			// hypothetical here) must not replay a stale reason.
+			expect(
+				(manager as unknown as { budgetStopped: Map<string, string> }).budgetStopped.has(
+					session.id,
+				),
+			).toBe(false)
+		})
+
+		it('leaves a normal (non-budget-stopped) failure unaffected', async () => {
+			const session = buildSession({ status: 'running' })
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
+
+			mockResults.selectQueue = [[session], []]
+
+			await (
+				manager as unknown as {
+					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', 1)
+
+			const sessionUpdate = calls.updates.find(
+				(u): u is { status: string; result: Record<string, unknown> } =>
+					typeof u === 'object' &&
+					u !== null &&
+					'status' in (u as Record<string, unknown>) &&
+					'result' in (u as Record<string, unknown>),
+			)
+			expect(sessionUpdate).toMatchObject({ status: 'failed', result: { exit_code: 1 } })
+			expect(sessionUpdate?.result).not.toHaveProperty('failure_reason')
+		})
+	})
+
 	describe('resolveGithubRepoSlug()', () => {
 		// T8 — sourcing chain for the container's GITHUB_REPO env var, consumed by
 		// the git credential helper as a `?repo=` hint on token-mint requests

@@ -99,13 +99,16 @@ export const TEAM_HARD_CAP_DEFAULT_TOKENS = 320_000_000
 export const DEFAULT_PERIOD_LENGTH_MS = 30 * 24 * 60 * 60 * 1000
 
 /**
- * Overage billing: once a pro/team workspace with `billing.overage_enabled`
- * exceeds its hard cap, it keeps running and is billed `OVERAGE_BLOCK_PRICE_USD`
- * per `OVERAGE_BLOCK_TOKENS` of additional usage via a Stripe metered price
- * (see `lib/stripe.ts#reportOverageBlock`). The block size is pinned to the
- * Pro cap on purpose — Pro ($20/32M) and Team ($200/320M) already resolve to
- * the same $0.625-per-1M-token rate, so overage at this size is literally
- * "the same rate, no markup" rather than a new number to justify.
+ * Usage-credit conversion rate: 1 cent of prepaid balance buys this many
+ * `maskin_plan` tokens once a pro/team workspace exceeds its hard cap (see
+ * `lib/credit-billing.ts`). Deliberately the same $20-per-32M-token rate as
+ * the old block-based overage pricing this replaced
+ * (20 * 100 cents / 32_000_000 tokens = 1 cent / 16_000 tokens) — this is a
+ * mechanism change (prepaid vs. metered-after-the-fact), not a repricing.
  */
-export const OVERAGE_BLOCK_TOKENS = PRO_HARD_CAP_DEFAULT_TOKENS
-export const OVERAGE_BLOCK_PRICE_USD = 20
+export const CREDIT_TOKENS_PER_USD_CENT = 16_000
+
+/** Rounds up — Maskin never under-charges a fractional cent of credit usage. */
+export function tokensToCreditCents(tokens: number): number {
+	return Math.ceil(tokens / CREDIT_TOKENS_PER_USD_CENT)
+}

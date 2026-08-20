@@ -7,6 +7,7 @@ import {
 	useConversation,
 	useConversationMessages,
 } from '@/hooks/use-conversation'
+import { useSessionBudgetStopToast } from '@/hooks/use-conversation-activity'
 import { useUpdateConversationMe } from '@/hooks/use-conversations'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
@@ -24,6 +25,7 @@ function ConversationThreadPage() {
 	const { data: messagesData } = useConversationMessages(conversationId, workspaceId)
 	const updateMe = useUpdateConversationMe(workspaceId)
 	const lastMarkedRef = useRef<number | null>(null)
+	useSessionBudgetStopToast(workspaceId, conversationId)
 
 	// Mark the newest message read once it's loaded — mirrors the "open = read"
 	// convention used elsewhere (subscriptions markRead on open).

@@ -19,7 +19,6 @@ import { AgentStorageManager } from './services/agent-storage'
 import { GmailWatchRenewer } from './services/gmail-watch-renewer'
 import { LoopVersionPusher } from './services/loop-version-pusher'
 import { OrphanThreadDetector } from './services/orphan-thread-detector'
-import { OverageUsageReconciler } from './services/overage-usage-reconciler'
 import { RuntimeTelemetry } from './services/runtime-telemetry'
 import { SessionDispatchQueue } from './services/session-dispatch-queue'
 import { SessionDispatcher } from './services/session-dispatcher'
@@ -121,10 +120,6 @@ logger.info('Webhook deliveries cleaner started')
 const webhookDeliveriesReconciler = new WebhookDeliveriesReconciler(db)
 webhookDeliveriesReconciler.start()
 logger.info('Webhook deliveries reconciler started')
-
-const overageUsageReconciler = new OverageUsageReconciler(db)
-overageUsageReconciler.start()
-logger.info('Overage usage reconciler started')
 
 const loopVersionPusher = new LoopVersionPusher(db, agentStorage)
 loopVersionPusher.start()

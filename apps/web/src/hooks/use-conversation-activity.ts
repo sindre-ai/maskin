@@ -7,7 +7,10 @@ import {
 import { api } from '@/lib/api'
 import type { MessageResponse, SessionResponse } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
+import { toastSessionBudgetStopped } from '@/lib/session-errors'
 import { useQueries } from '@tanstack/react-query'
+import { useNavigate } from '@tanstack/react-router'
+import { useEffect, useRef } from 'react'
 import { useActiveSessionsForConversation } from './use-sessions'
 
 export interface MessageTurnActivity {
@@ -204,4 +207,36 @@ export function useConversationActivity(
 	})
 
 	return { byReplyMessageId, byTriggerMessageId, fallback }
+}
+
+/**
+ * Toasts the same "plan limit reached" message shown when a new session is
+ * blocked from starting, but for a session that was already running and got
+ * killed mid-conversation by SessionManager's budget watchdog — otherwise an
+ * interactive chat session just goes quiet with the reason only visible if
+ * the user happens to scroll up and read the inline error notice.
+ *
+ * Only fires on an observed running→failed transition (tracked per session
+ * id in a ref), not for a session that was already in a failed state on
+ * first load — opening an old, already-failed conversation shouldn't toast.
+ */
+export function useSessionBudgetStopToast(
+	workspaceId: string,
+	conversationId: string | null,
+): void {
+	const { data: sessions } = useActiveSessionsForConversation(workspaceId, conversationId)
+	const navigate = useNavigate()
+	const seenStatusRef = useRef<Map<string, string>>(new Map())
+
+	useEffect(() => {
+		for (const session of sessions ?? []) {
+			const prevStatus = seenStatusRef.current.get(session.id)
+			seenStatusRef.current.set(session.id, session.status)
+			if (prevStatus === undefined || prevStatus === session.status) continue
+			if (session.status !== 'failed' && session.status !== 'timeout') continue
+			const reason = parseFailureReason(session.result as Record<string, unknown> | null)
+			if (reason?.reason_code !== 'plan_cap_exceeded') continue
+			toastSessionBudgetStopped(navigate, workspaceId)
+		}
+	}, [sessions, navigate, workspaceId])
 }

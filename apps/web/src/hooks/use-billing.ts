@@ -1,4 +1,4 @@
-import { type BillingCheckoutInput, api } from '@/lib/api'
+import { type BillingBuyCreditsInput, type BillingCheckoutInput, api } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
@@ -22,6 +22,12 @@ export function useBillingUsage(workspaceId: string) {
 export function useStripeCheckout(workspaceId: string) {
 	return useMutation({
 		mutationFn: (input: BillingCheckoutInput) => api.billing.checkout(workspaceId, input),
+	})
+}
+
+export function useBuyCredits(workspaceId: string) {
+	return useMutation({
+		mutationFn: (input: BillingBuyCreditsInput) => api.billing.buyCredits(workspaceId, input),
 	})
 }
 

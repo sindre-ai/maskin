@@ -8,10 +8,11 @@ vi.mock('../../lib/stripe', async () => {
 		...actual,
 		getStripeClient: vi.fn(() => ({}) as unknown),
 		createCheckoutSession: vi.fn(),
+		createCreditCheckoutSession: vi.fn(),
 	}
 })
 
-import { createCheckoutSession } from '../../lib/stripe'
+import { createCheckoutSession, createCreditCheckoutSession } from '../../lib/stripe'
 import billingRoutes from '../../routes/billing'
 import { jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
@@ -28,7 +29,6 @@ const VALID_ENV = {
 	STRIPE_WEBHOOK_SECRET: 'whsec_x',
 	STRIPE_PRICE_PRO: 'price_pro',
 	STRIPE_PRICE_TEAM: 'price_team',
-	STRIPE_PRICE_OVERAGE_BLOCK: 'price_overage_block',
 	MASKIN_PRO_HARD_CAP_TOKENS: PRO_ENV_SENTINEL,
 	MASKIN_TEAM_HARD_CAP_TOKENS: TEAM_ENV_SENTINEL,
 }
@@ -43,6 +43,7 @@ const clearEnv = () => {
 
 beforeEach(() => {
 	vi.mocked(createCheckoutSession).mockReset()
+	vi.mocked(createCreditCheckoutSession).mockReset()
 	clearEnv()
 	setupEnv()
 })
@@ -192,6 +193,168 @@ describe('POST /api/billing/checkout', () => {
 			),
 		)
 		expect(res.status).toBe(500)
+	})
+})
+
+describe('POST /api/billing/credits/checkout', () => {
+	it('returns 400 when the workspace plan is not pro/team', async () => {
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.select = [
+			{ id: workspaceId, settings: { billing: { plan: 'trial', status: 'active' } } },
+		]
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/billing/credits/checkout',
+				{
+					amount_usd_cents: 2_500,
+					success_url: 'https://app.test/success',
+					cancel_url: 'https://app.test/cancel',
+				},
+				{ 'X-Workspace-Id': workspaceId },
+			),
+		)
+		expect(res.status).toBe(400)
+		expect(createCreditCheckoutSession).not.toHaveBeenCalled()
+	})
+
+	it('returns 400 when the workspace has no stripe_customer_id on file', async () => {
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.select = [
+			{ id: workspaceId, settings: { billing: { plan: 'pro', status: 'active' } } },
+		]
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/billing/credits/checkout',
+				{
+					amount_usd_cents: 2_500,
+					success_url: 'https://app.test/success',
+					cancel_url: 'https://app.test/cancel',
+				},
+				{ 'X-Workspace-Id': workspaceId },
+			),
+		)
+		expect(res.status).toBe(400)
+	})
+
+	it('returns 400 when the amount is below the minimum', async () => {
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.select = [
+			{
+				id: workspaceId,
+				settings: {
+					billing: { plan: 'pro', status: 'active', stripe_customer_id: 'cus_x' },
+				},
+			},
+		]
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/billing/credits/checkout',
+				{
+					amount_usd_cents: 100,
+					success_url: 'https://app.test/success',
+					cancel_url: 'https://app.test/cancel',
+				},
+				{ 'X-Workspace-Id': workspaceId },
+			),
+		)
+		expect(res.status).toBe(400)
+	})
+
+	it('returns 400 when the amount is above the maximum', async () => {
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.select = [
+			{
+				id: workspaceId,
+				settings: {
+					billing: { plan: 'pro', status: 'active', stripe_customer_id: 'cus_x' },
+				},
+			},
+		]
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/billing/credits/checkout',
+				{
+					amount_usd_cents: 100_000,
+					success_url: 'https://app.test/success',
+					cancel_url: 'https://app.test/cancel',
+				},
+				{ 'X-Workspace-Id': workspaceId },
+			),
+		)
+		expect(res.status).toBe(400)
+	})
+
+	it('returns the checkout URL for an eligible pro workspace', async () => {
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.select = [
+			{
+				id: workspaceId,
+				settings: {
+					billing: { plan: 'pro', status: 'active', stripe_customer_id: 'cus_x' },
+				},
+			},
+		]
+		vi.mocked(createCreditCheckoutSession).mockResolvedValue({
+			id: 'cs_credit_1',
+			url: 'https://checkout.stripe.com/c/cs_credit_1',
+		} as Awaited<ReturnType<typeof createCreditCheckoutSession>>)
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/billing/credits/checkout',
+				{
+					amount_usd_cents: 2_500,
+					success_url: 'https://app.test/success',
+					cancel_url: 'https://app.test/cancel',
+				},
+				{ 'X-Workspace-Id': workspaceId },
+			),
+		)
+		expect(res.status).toBe(200)
+		const body = await res.json()
+		expect(body).toEqual({
+			url: 'https://checkout.stripe.com/c/cs_credit_1',
+			session_id: 'cs_credit_1',
+		})
+		expect(createCreditCheckoutSession).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.objectContaining({
+				workspaceId,
+				amountUsdCents: 2_500,
+				existingCustomerId: 'cus_x',
+			}),
+		)
+	})
+
+	it('returns 404 when workspace is missing', async () => {
+		const { app } = createTestApp(billingRoutes, '/api/billing')
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				'/api/billing/credits/checkout',
+				{
+					amount_usd_cents: 2_500,
+					success_url: 'https://app.test/success',
+					cancel_url: 'https://app.test/cancel',
+				},
+				{ 'X-Workspace-Id': randomUUID() },
+			),
+		)
+		expect(res.status).toBe(404)
 	})
 })
 
@@ -531,7 +694,7 @@ describe('GET /api/billing/usage', () => {
 		expect(body).toMatchObject({ plan: 'pro', hard_cap_tokens: 32_000_000 })
 	})
 
-	it('reports overage_enabled and confirmed block counts for a pro workspace over cap', async () => {
+	it('reports the prepaid credit balance for a pro workspace over cap', async () => {
 		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 		const workspaceId = randomUUID()
 		const periodStart = Math.floor(Date.now() / 1000) - 7 * 24 * 60 * 60
@@ -545,27 +708,21 @@ describe('GET /api/billing/usage', () => {
 							status: 'active',
 							hard_cap_tokens: 32_000_000,
 							period_start: periodStart,
-							overage_enabled: true,
+							credit_balance_cents: 4_000,
 						},
 					},
 				},
 			],
 			[{ inputTokens: 40_000_000, outputTokens: 0 }], // sessions sum — over cap
-			[{ count: 2 }], // confirmed overage blocks this period
 		]
 
 		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
 		expect(res.status).toBe(200)
 		const body = await res.json()
-		expect(body).toMatchObject({
-			overage_enabled: true,
-			overage_blocks_used: 2,
-			overage_usd_charged: 40,
-			overage_block_tokens: 32_000_000,
-		})
+		expect(body).toMatchObject({ credit_balance_cents: 4_000 })
 	})
 
-	it('reports zero overage blocks when overage is not enabled', async () => {
+	it('reports a zero credit balance when none is stored', async () => {
 		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 		const workspaceId = randomUUID()
 		const periodStart = Math.floor(Date.now() / 1000) - 7 * 24 * 60 * 60
@@ -579,20 +736,15 @@ describe('GET /api/billing/usage', () => {
 				},
 			],
 			[],
-			[],
 		]
 
 		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
 		expect(res.status).toBe(200)
 		const body = await res.json()
-		expect(body).toMatchObject({
-			overage_enabled: false,
-			overage_blocks_used: 0,
-			overage_usd_charged: 0,
-		})
+		expect(body).toMatchObject({ credit_balance_cents: 0 })
 	})
 
-	it('reports no overage fields for a trial workspace', async () => {
+	it('reports a zero credit balance for a trial workspace', async () => {
 		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 		const workspaceId = randomUUID()
 		mockResults.selectQueue = [[{ id: workspaceId, settings: {} }], []]
@@ -600,12 +752,7 @@ describe('GET /api/billing/usage', () => {
 		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
 		expect(res.status).toBe(200)
 		const body = await res.json()
-		expect(body).toMatchObject({
-			plan: 'trial',
-			overage_enabled: false,
-			overage_blocks_used: 0,
-			overage_usd_charged: 0,
-		})
+		expect(body).toMatchObject({ plan: 'trial', credit_balance_cents: 0 })
 	})
 
 	it('floors a fractional period_start so the response schema accepts it', async () => {

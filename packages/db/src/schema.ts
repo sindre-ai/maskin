@@ -771,15 +771,13 @@ export const webhookDeliveries = pgTable(
 	],
 )
 
-// ── Workspace Overage Usage ─────────────────────────────────────────────────
-// Idempotency ledger for Stripe metered overage billing. Once a pro/team
-// workspace with `billing.overage_enabled` exceeds its hard cap, each new
-// block of `OVERAGE_BLOCK_TOKENS` consumed claims a row here (unique per
-// workspace/period/block index) before the block is reported to Stripe as a
-// meter event. The claim-before-report ordering, mirrored on
-// `webhookDeliveries`, means a crash or retry between the claim and the
-// Stripe call can never double-charge — `reportedAt IS NULL` marks a claim
-// whose Stripe report never confirmed, which the overage reconciler retries.
+// ── Workspace Overage Usage (retired) ───────────────────────────────────────
+// Idempotency ledger for the old Stripe-metered overage billing mechanism —
+// once a pro/team workspace exceeded its hard cap, each new block of usage
+// claimed a row here before being reported to Stripe as a meter event.
+// Retired in favor of the prepaid usage-credits model (see
+// `workspaceCreditLedger` below); no longer written to. Kept, unmigrated, so
+// historical rows stay queryable for support/finance.
 
 export const workspaceOverageUsage = pgTable(
 	'workspace_overage_usage',
@@ -814,6 +812,54 @@ export const workspaceOverageUsage = pgTable(
 		index('workspace_overage_usage_unreported_idx')
 			.on(t.reportedAt)
 			.where(sql`${t.reportedAt} IS NULL`),
+	],
+)
+
+// ── Workspace Credit Ledger ─────────────────────────────────────────────────
+// Append-only audit + idempotency ledger for the prepaid usage-credits
+// balance cached at `workspaces.settings.billing.credit_balance_cents`. Two
+// row kinds:
+//   'topup' — written inside the Stripe webhook's existing row-locked
+//     transaction (routes/stripe-webhook.ts) when a `mode: 'payment'`
+//     Checkout session completes. `stripeCheckoutSessionId` is the
+//     idempotency key (defense-in-depth on top of `webhookDeliveries` dedup).
+//   'debit' — written on `maskin_plan` session completion once a pro/team
+//     workspace over its hard cap has a spendable balance
+//     (lib/credit-billing.ts). `sessionId` is the idempotency key — a session
+//     can debit the balance at most once even if completion fires twice.
+// The balance itself lives on `workspaces.settings` (JSONB) for O(1) reads on
+// `GET /billing/usage`; this table exists so a double-fired debit/topup can't
+// double-apply, and so support can reconstruct what happened to a balance.
+
+export const workspaceCreditLedger = pgTable(
+	'workspace_credit_ledger',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id)
+			.notNull(),
+		// 'topup' | 'debit'
+		type: text('type').notNull(),
+		// Signed cents: positive for topup, negative for debit.
+		amountCents: integer('amount_cents').notNull(),
+		// Balance snapshot immediately after this entry applied — audit only.
+		balanceAfterCents: integer('balance_after_cents').notNull(),
+		// Idempotency key for 'topup' rows only.
+		stripeCheckoutSessionId: text('stripe_checkout_session_id'),
+		// Idempotency key for 'debit' rows only. Nullable because topup rows
+		// have no session; `set null` on delete mirrors
+		// `workspaceOverageUsage.sessionId`.
+		sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'set null' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		uniqueIndex('workspace_credit_ledger_topup_uniq')
+			.on(t.stripeCheckoutSessionId)
+			.where(sql`${t.type} = 'topup' AND ${t.stripeCheckoutSessionId} IS NOT NULL`),
+		uniqueIndex('workspace_credit_ledger_debit_session_uniq')
+			.on(t.sessionId)
+			.where(sql`${t.type} = 'debit' AND ${t.sessionId} IS NOT NULL`),
+		index('workspace_credit_ledger_workspace_created_idx').on(t.workspaceId, t.createdAt),
 	],
 )
 

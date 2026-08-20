@@ -18,7 +18,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { useActors } from '@/hooks/use-actors'
 import { useBets } from '@/hooks/use-bets'
 import { useCreateSession } from '@/hooks/use-sessions'
-import { ApiError } from '@/lib/api'
+import { toastSessionCreateError } from '@/lib/session-errors'
 import { useNavigate } from '@tanstack/react-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
@@ -94,28 +94,7 @@ export function NewConversationComposer({
 						toast.error(err instanceof Error ? err.message : 'Failed to open agent page')
 					})
 				},
-				onError: (err) => {
-					if (err instanceof ApiError && err.code === 'PLAN_CAP_EXCEEDED') {
-						const isTrial = err.planCapContext?.plan === 'trial'
-						toast.error(
-							isTrial
-								? 'Trial limit reached — upgrade to keep going'
-								: 'Plan limit reached — add a payment method to keep going',
-							{
-								action: {
-									label: 'Go to Billing',
-									onClick: () =>
-										navigate({
-											to: '/$workspaceId/settings/keys',
-											params: { workspaceId },
-										}),
-								},
-							},
-						)
-						return
-					}
-					toast.error(err instanceof Error ? err.message : 'Failed to start conversation')
-				},
+				onError: (err) => toastSessionCreateError(err, navigate, workspaceId),
 			},
 		)
 	}, [agentId, betId, message, openBets, createSession, navigate, onOpenChange, workspaceId])
