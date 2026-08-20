@@ -11,7 +11,9 @@ import type { createObjectSchema } from './objects'
  * - `type`            : 'knowledge' (uses the existing knowledge module)
  * - `status`          : 'validated' — direct user input, no review needed
  * - `title`           : `Signup context — {name}`
- * - `content`         : human-readable markdown with name / org / role
+ * - `content`         : short narrative markdown (name / org / role are
+ *   structured metadata, not restated as a bold-label fact sheet — the
+ *   object-detail Properties sidebar already surfaces `metadata.*` fields)
  * - `metadata.source` : 'signup_capture' — T4 filters knowledge objects on this
  * - `metadata.name|org|role` : structured copies so T4 doesn't parse content
  * - `metadata.summary`, `confidence`, `tags`, `last_validated_at`
@@ -48,11 +50,11 @@ export function buildSignupCaptureKnowledge(input: SignupCaptureInput): SignupCa
 		status: SIGNUP_CAPTURE_STATUS,
 		title: `Signup context — ${name}`,
 		content: [
-			`**Name:** ${name}`,
-			`**Organization:** ${organization}`,
-			`**Role:** ${role}`,
+			`**${name}** joined as **${role}** at **${organization}**.`,
 			'',
-			'_Captured at signup. Source of truth for new-workspace context._',
+			"This is the workspace's source of truth for who signed up — Researcher uses it to put together a first-pass brief.",
+			'',
+			'_Captured at signup._',
 		].join('\n'),
 		metadata: {
 			source: SIGNUP_CAPTURE_SOURCE,
