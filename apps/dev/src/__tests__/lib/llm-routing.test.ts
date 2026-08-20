@@ -23,7 +23,7 @@ import {
 	LLM_ROUTE_OAUTH,
 	PlanCapExceededError,
 	checkPlanCap,
-	getWorkspacePlanTokenUsage,
+	getWorkspacePlanUsdCentsUsage,
 	readFallbackConfig,
 	resolveLlmRoute,
 } from '../../lib/llm-routing'
@@ -69,7 +69,7 @@ function emptySettings(): WorkspaceSettings {
  * workspace" and returns null without touching claude_oauth data.
  */
 function dbWithFallbackUsage(
-	rows: Array<{ inputTokens: number; outputTokens: number }>,
+	rows: Array<{ inputTokens: number; outputTokens: number; totalCostUsd?: string | null }>,
 	workspaceRow?: { id: string; settings: Record<string, unknown> },
 ) {
 	const where = vi.fn(() => {
@@ -485,33 +485,34 @@ describe('resolveLlmRoute priority order', () => {
 	})
 })
 
-describe('getWorkspacePlanTokenUsage', () => {
-	it('sums input + output across maskin_plan sessions, treating null as 0', async () => {
+describe('getWorkspacePlanUsdCentsUsage', () => {
+	it("sums each session's reported dollar cost, falling back to a flat token rate when unreported", async () => {
 		const db = dbWithSessionUsage([
-			{ inputTokens: 5000, outputTokens: 1000 },
-			// biome-ignore lint/suspicious/noExplicitAny: simulating null DB columns
-			{ inputTokens: null as any, outputTokens: 250 },
-			{ inputTokens: 750, outputTokens: 0 },
+			{ totalCostUsd: '1.00', inputTokens: 0, outputTokens: 0 },
+			{ totalCostUsd: '0.50', inputTokens: 0, outputTokens: 0 },
+			// No reported cost — falls back to 16,000 tokens/cent: 16,000 -> 1 cent.
+			{ totalCostUsd: null, inputTokens: 16_000, outputTokens: 0 },
 		])
-		expect(await getWorkspacePlanTokenUsage(db, 'ws-1', 0)).toBe(7000)
+		expect(await getWorkspacePlanUsdCentsUsage(db, 'ws-1', 0)).toBe(151)
 	})
 
 	it('returns 0 when the workspace has no maskin_plan sessions', async () => {
 		const db = dbWithSessionUsage([])
-		expect(await getWorkspacePlanTokenUsage(db, 'ws-2')).toBe(0)
+		expect(await getWorkspacePlanUsdCentsUsage(db, 'ws-2')).toBe(0)
 	})
 })
 
 describe('checkPlanCap', () => {
-	const ORIG_TRIAL_CAP = process.env.MASKIN_TRIAL_HARD_CAP_TOKENS
+	const ORIG_TRIAL_CAP = process.env.MASKIN_TRIAL_HARD_CAP_USD_CENTS
 
 	afterEach(() => {
-		if (ORIG_TRIAL_CAP === undefined) process.env.MASKIN_TRIAL_HARD_CAP_TOKENS = undefined
-		else process.env.MASKIN_TRIAL_HARD_CAP_TOKENS = ORIG_TRIAL_CAP
+		if (ORIG_TRIAL_CAP === undefined) process.env.MASKIN_TRIAL_HARD_CAP_USD_CENTS = undefined
+		else process.env.MASKIN_TRIAL_HARD_CAP_USD_CENTS = ORIG_TRIAL_CAP
 	})
 
 	it('treats missing billing as trial — enforces cap when over limit', async () => {
-		const db = dbWithSessionUsage([{ inputTokens: 8_000_001, outputTokens: 0 }])
+		// Trial default is $5.00 (500 cents); $5.01 of reported cost is over.
+		const db = dbWithSessionUsage([{ totalCostUsd: '5.01', inputTokens: 0, outputTokens: 0 }])
 		const err = await checkPlanCap({
 			db,
 			workspaceId: 'ws-1',
@@ -519,41 +520,41 @@ describe('checkPlanCap', () => {
 		}).catch((e) => e)
 		expect(err).toBeInstanceOf(PlanCapExceededError)
 		expect(err.plan).toBe('trial')
-		expect(err.cap).toBe(8_000_000)
+		expect(err.cap).toBe(500)
 	})
 
 	it('is a no-op for byollm — explicit opt-out', async () => {
 		const settings = emptySettings()
-		settings.billing = { plan: 'byollm', hard_cap_tokens: 100, period_start: 0 }
-		const db = dbWithSessionUsage([{ inputTokens: 9999, outputTokens: 0 }])
+		settings.billing = { plan: 'byollm', hard_cap_usd_cents: 100, period_start: 0 }
+		const db = dbWithSessionUsage([{ totalCostUsd: '99.00', inputTokens: 0, outputTokens: 0 }])
 		await expect(
 			checkPlanCap({ db, workspaceId: 'ws-1', wsSettings: settings }),
 		).resolves.toBeUndefined()
 	})
 
 	it.each(['pro', 'team'] as const)(
-		'is a no-op for %s when Stripe has not written hard_cap_tokens (fail-open pre-Task 5)',
+		'is a no-op for %s when Stripe has not written hard_cap_usd_cents (fail-open pre-Task 5)',
 		async (plan) => {
 			const settings = emptySettings()
 			settings.billing = { plan, period_start: Math.floor(Date.now() / 1000) - 60 }
-			const db = dbWithSessionUsage([{ inputTokens: 50_000_000, outputTokens: 0 }])
+			const db = dbWithSessionUsage([{ totalCostUsd: '500.00', inputTokens: 0, outputTokens: 0 }])
 			await expect(
 				checkPlanCap({ db, workspaceId: 'ws-1', wsSettings: settings }),
 			).resolves.toBeUndefined()
 		},
 	)
 
-	it('throws PlanCapExceededError when usage equals hard_cap_tokens', async () => {
+	it('throws PlanCapExceededError when usage equals hard_cap_usd_cents', async () => {
 		// period_start is stored in Unix SECONDS (Stripe format).
 		const periodStartSec = Math.floor(Date.now() / 1000) - 60
 		const settings = emptySettings()
 		settings.billing = {
 			plan: 'pro',
-			hard_cap_tokens: 1_000_000,
+			hard_cap_usd_cents: 1_000,
 			period_start: periodStartSec,
 		}
 		const db = dbWithSessionUsage([
-			{ inputTokens: 600_000, outputTokens: 400_000 }, // exactly at cap
+			{ totalCostUsd: '10.00', inputTokens: 0, outputTokens: 0 }, // exactly at cap ($10.00 = 1000¢)
 		])
 		const err = await checkPlanCap({
 			db,
@@ -562,8 +563,8 @@ describe('checkPlanCap', () => {
 		}).catch((e) => e)
 		expect(err).toBeInstanceOf(PlanCapExceededError)
 		expect(err.plan).toBe('pro')
-		expect(err.used).toBe(1_000_000)
-		expect(err.cap).toBe(1_000_000)
+		expect(err.used).toBe(1_000)
+		expect(err.cap).toBe(1_000)
 		// period_end is in ms: period_start (seconds → ms) + 30 days.
 		expect(err.periodEnd).toBe(periodStartSec * 1000 + 30 * 24 * 60 * 60 * 1000)
 	})
@@ -573,11 +574,11 @@ describe('checkPlanCap', () => {
 		const settings = emptySettings()
 		settings.billing = {
 			plan: 'pro',
-			hard_cap_tokens: 100,
+			hard_cap_usd_cents: 1,
 			period_start: 1,
 			period_end: 999_999,
 		}
-		const db = dbWithSessionUsage([{ inputTokens: 100, outputTokens: 0 }])
+		const db = dbWithSessionUsage([{ totalCostUsd: '0.01', inputTokens: 0, outputTokens: 0 }])
 		const err = await checkPlanCap({
 			db,
 			workspaceId: 'ws-1',
@@ -587,11 +588,11 @@ describe('checkPlanCap', () => {
 		expect(err.periodEnd).toBe(999_999 * 1000)
 	})
 
-	it('uses MASKIN_TRIAL_HARD_CAP_TOKENS when trial has no explicit cap', async () => {
-		process.env.MASKIN_TRIAL_HARD_CAP_TOKENS = '50000'
+	it('uses MASKIN_TRIAL_HARD_CAP_USD_CENTS when trial has no explicit cap', async () => {
+		process.env.MASKIN_TRIAL_HARD_CAP_USD_CENTS = '50'
 		const settings = emptySettings()
 		settings.billing = { plan: 'trial' }
-		const db = dbWithSessionUsage([{ inputTokens: 50_000, outputTokens: 0 }])
+		const db = dbWithSessionUsage([{ totalCostUsd: '0.50', inputTokens: 0, outputTokens: 0 }])
 		const err = await checkPlanCap({
 			db,
 			workspaceId: 'ws-1',
@@ -599,27 +600,27 @@ describe('checkPlanCap', () => {
 		}).catch((e) => e)
 		expect(err).toBeInstanceOf(PlanCapExceededError)
 		expect(err.plan).toBe('trial')
-		expect(err.cap).toBe(50_000)
+		expect(err.cap).toBe(50)
 		// Trial with no period_start has periodEnd: null — frontend handles it.
 		expect(err.periodEnd).toBeNull()
 	})
 
-	it('falls back to 8M trial default when env var is unset/invalid', async () => {
-		process.env.MASKIN_TRIAL_HARD_CAP_TOKENS = undefined
+	it('falls back to the $5.00 trial default when env var is unset/invalid', async () => {
+		process.env.MASKIN_TRIAL_HARD_CAP_USD_CENTS = undefined
 		const settings = emptySettings()
 		settings.billing = { plan: 'trial' }
-		const db = dbWithSessionUsage([{ inputTokens: 8_000_000, outputTokens: 0 }])
+		const db = dbWithSessionUsage([{ totalCostUsd: '5.00', inputTokens: 0, outputTokens: 0 }])
 		await expect(
 			checkPlanCap({ db, workspaceId: 'ws-1', wsSettings: settings }),
 		).rejects.toBeInstanceOf(PlanCapExceededError)
 	})
 
-	it('explicit billing.hard_cap_tokens overrides the trial default', async () => {
-		process.env.MASKIN_TRIAL_HARD_CAP_TOKENS = '50000'
+	it('explicit billing.hard_cap_usd_cents overrides the trial default', async () => {
+		process.env.MASKIN_TRIAL_HARD_CAP_USD_CENTS = '50'
 		const settings = emptySettings()
-		settings.billing = { plan: 'trial', hard_cap_tokens: 200_000 }
-		const db = dbWithSessionUsage([{ inputTokens: 60_000, outputTokens: 0 }])
-		// Used (60k) is below explicit cap (200k) even though it exceeds env default (50k).
+		settings.billing = { plan: 'trial', hard_cap_usd_cents: 200 }
+		const db = dbWithSessionUsage([{ totalCostUsd: '0.60', inputTokens: 0, outputTokens: 0 }])
+		// Used (60¢) is below explicit cap (200¢) even though it exceeds env default (50¢).
 		await expect(
 			checkPlanCap({ db, workspaceId: 'ws-1', wsSettings: settings }),
 		).resolves.toBeUndefined()
@@ -628,8 +629,8 @@ describe('checkPlanCap', () => {
 	it('resolveLlmRoute rejects with PlanCapExceededError when over the cap', async () => {
 		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
 		const settings = emptySettings()
-		settings.billing = { plan: 'pro', hard_cap_tokens: 100, period_start: 0 }
-		const db = dbWithSessionUsage([{ inputTokens: 200, outputTokens: 0 }])
+		settings.billing = { plan: 'pro', hard_cap_usd_cents: 100, period_start: 0 }
+		const db = dbWithSessionUsage([{ totalCostUsd: '2.00', inputTokens: 0, outputTokens: 0 }])
 		await expect(
 			resolveLlmRoute({
 				db,

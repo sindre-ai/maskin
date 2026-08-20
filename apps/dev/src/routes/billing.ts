@@ -5,13 +5,13 @@ import { CREDIT_TOPUP_MAX_USD, CREDIT_TOPUP_MIN_USD, workspaceSettingsSchema } f
 import { eq } from 'drizzle-orm'
 import {
 	DEFAULT_PERIOD_LENGTH_MS,
-	PRO_HARD_CAP_DEFAULT_TOKENS,
-	TEAM_HARD_CAP_DEFAULT_TOKENS,
-	TRIAL_HARD_CAP_DEFAULT_TOKENS,
+	PRO_HARD_CAP_DEFAULT_USD_CENTS,
+	TEAM_HARD_CAP_DEFAULT_USD_CENTS,
+	TRIAL_HARD_CAP_DEFAULT_USD_CENTS,
 	parsePositiveIntEnv,
 } from '../lib/billing-defaults'
 import { createApiError } from '../lib/errors'
-import { getWorkspacePlanTokenUsage } from '../lib/llm-routing'
+import { getWorkspacePlanUsdCentsUsage } from '../lib/llm-routing'
 import {
 	billingAfterCancel,
 	cancelActivePaidSubscription,
@@ -28,24 +28,27 @@ import {
 import type { WorkspaceSettings } from '../lib/types'
 
 /**
- * Fallback hard caps for paid plans when `billing.hard_cap_tokens` hasn't been
- * populated yet (delayed Stripe webhook, partial state after a webhook
- * failure). Read from env first via the shared `parsePositiveIntEnv` (so
- * `lib/stripe.ts`'s boot-time strict parse and this defensive read agree on
- * what a "valid" cap looks like), then fall through to the documented
- * literals. We parse env locally instead of reusing `readStripeEnv` because
- * that helper throws when Stripe is unconfigured, and `/api/billing/usage`
- * must keep serving usage to workspaces regardless.
+ * Fallback hard caps (USD cents) for paid plans when
+ * `billing.hard_cap_usd_cents` hasn't been populated yet (delayed Stripe
+ * webhook, partial state after a webhook failure). Read from env first via
+ * the shared `parsePositiveIntEnv` (so `lib/stripe.ts`'s boot-time strict
+ * parse and this defensive read agree on what a "valid" cap looks like),
+ * then fall through to the documented literals. We parse env locally instead
+ * of reusing `readStripeEnv` because that helper throws when Stripe is
+ * unconfigured, and `/api/billing/usage` must keep serving usage to
+ * workspaces regardless.
  */
 function planHardCapFallback(plan: 'trial' | 'pro' | 'team' | 'byollm'): number | null {
 	switch (plan) {
 		case 'trial':
 		case 'byollm':
-			return TRIAL_HARD_CAP_DEFAULT_TOKENS
+			return TRIAL_HARD_CAP_DEFAULT_USD_CENTS
 		case 'pro':
-			return parsePositiveIntEnv('MASKIN_PRO_HARD_CAP_TOKENS') ?? PRO_HARD_CAP_DEFAULT_TOKENS
+			return parsePositiveIntEnv('MASKIN_PRO_HARD_CAP_USD_CENTS') ?? PRO_HARD_CAP_DEFAULT_USD_CENTS
 		case 'team':
-			return parsePositiveIntEnv('MASKIN_TEAM_HARD_CAP_TOKENS') ?? TEAM_HARD_CAP_DEFAULT_TOKENS
+			return (
+				parsePositiveIntEnv('MASKIN_TEAM_HARD_CAP_USD_CENTS') ?? TEAM_HARD_CAP_DEFAULT_USD_CENTS
+			)
 	}
 }
 
@@ -105,8 +108,11 @@ const checkoutRoute = createRoute({
 const usageResponseSchema = z.object({
 	plan: z.enum(['trial', 'pro', 'team', 'byollm']),
 	status: z.enum(['active', 'past_due', 'canceled', 'incomplete']),
-	tokens_used: z.number().int().nonnegative(),
-	hard_cap_tokens: z.number().int().positive().nullable(),
+	// Actual dollar cost incurred this period, in USD cents — not a token
+	// count, since different agents can run different models with different
+	// $/token ratios.
+	usd_cents_used: z.number().int().nonnegative(),
+	hard_cap_usd_cents: z.number().int().positive().nullable(),
 	period_start: z.number().int().nonnegative().nullable(),
 	period_resets_in_ms: z.number().int().nullable(),
 	stripe_customer_id: z.string().nullable(),
@@ -156,9 +162,9 @@ app.openapi(usageRoute, async (c) => {
 	// unbounded, and the row in Settings has a consistent "X / Y · resets in Zd".
 	const plan = billing?.plan ?? 'trial'
 	const status = billing?.status ?? 'active'
-	const hardCap =
-		billing?.hard_cap_tokens && billing.hard_cap_tokens > 0
-			? billing.hard_cap_tokens
+	const hardCapCents =
+		billing?.hard_cap_usd_cents && billing.hard_cap_usd_cents > 0
+			? billing.hard_cap_usd_cents
 			: planHardCapFallback(plan)
 	// `billing.period_start` is a Unix SECONDS value — the Stripe webhook
 	// writes `subscription.current_period_start` straight through, and Stripe
@@ -184,8 +190,8 @@ app.openapi(usageRoute, async (c) => {
 				? periodStartSec * 1000 + DEFAULT_PERIOD_LENGTH_MS
 				: Date.now() + DEFAULT_PERIOD_LENGTH_MS
 
-	const tokensUsed =
-		plan !== 'byollm' ? await getWorkspacePlanTokenUsage(db, workspaceId, periodStartMs) : 0
+	const usdCentsUsed =
+		plan !== 'byollm' ? await getWorkspacePlanUsdCentsUsage(db, workspaceId, periodStartMs) : 0
 
 	const resetsIn = Math.max(0, periodEndMs - Date.now())
 
@@ -198,8 +204,8 @@ app.openapi(usageRoute, async (c) => {
 		workspaceId,
 		plan,
 		status,
-		tokensUsed,
-		hardCap,
+		usdCentsUsed,
+		hardCapCents,
 		creditBalanceCents,
 	})
 
@@ -207,8 +213,8 @@ app.openapi(usageRoute, async (c) => {
 		{
 			plan,
 			status,
-			tokens_used: tokensUsed,
-			hard_cap_tokens: hardCap,
+			usd_cents_used: usdCentsUsed,
+			hard_cap_usd_cents: hardCapCents,
 			period_start: periodStartSec,
 			period_resets_in_ms: plan === 'byollm' ? null : resetsIn,
 			stripe_customer_id: billing?.stripe_customer_id ?? null,

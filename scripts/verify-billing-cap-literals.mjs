@@ -2,8 +2,8 @@
 /**
  * Enforces the billing-cap literal contract.
  *
- * TRIAL_HARD_CAP_DEFAULT_TOKENS, PRO_HARD_CAP_DEFAULT_TOKENS, and
- * TEAM_HARD_CAP_DEFAULT_TOKENS are the single source of truth in:
+ * TRIAL_HARD_CAP_DEFAULT_USD_CENTS, PRO_HARD_CAP_DEFAULT_USD_CENTS, and
+ * TEAM_HARD_CAP_DEFAULT_USD_CENTS are the single source of truth in:
  *
  *   1. apps/dev/src/lib/billing-defaults.ts            (source of truth — TS)
  *   2. .env.example                                    (operator-facing default)
@@ -31,16 +31,16 @@ const errors = []
 const observed = []
 
 // Site 1 — apps/dev/src/lib/billing-defaults.ts (source of truth)
-// All three cap values are read from here; downstream sites are compared against them.
+// All three cap values (USD cents) are read from here; downstream sites are compared against them.
 const expected = { trial: 0, pro: 0, team: 0 }
 {
 	const path = 'apps/dev/src/lib/billing-defaults.ts'
 	const source = read(path)
-	const trialMatch = source.match(/TRIAL_HARD_CAP_DEFAULT_TOKENS\s*=\s*([\d_]+)/)
-	const proMatch = source.match(/PRO_HARD_CAP_DEFAULT_TOKENS\s*=\s*([\d_]+)/)
-	const teamMatch = source.match(/TEAM_HARD_CAP_DEFAULT_TOKENS\s*=\s*([\d_]+)/)
+	const trialMatch = source.match(/TRIAL_HARD_CAP_DEFAULT_USD_CENTS\s*=\s*([\d_]+)/)
+	const proMatch = source.match(/PRO_HARD_CAP_DEFAULT_USD_CENTS\s*=\s*([\d_]+)/)
+	const teamMatch = source.match(/TEAM_HARD_CAP_DEFAULT_USD_CENTS\s*=\s*([\d_]+)/)
 	if (!trialMatch || !proMatch || !teamMatch) {
-		errors.push(`${path}: could not find TRIAL/PRO/TEAM_HARD_CAP_DEFAULT_TOKENS literals`)
+		errors.push(`${path}: could not find TRIAL/PRO/TEAM_HARD_CAP_DEFAULT_USD_CENTS literals`)
 	} else {
 		expected.trial = Number(stripUnderscores(trialMatch[1]))
 		expected.pro = Number(stripUnderscores(proMatch[1]))
@@ -53,10 +53,10 @@ const expected = { trial: 0, pro: 0, team: 0 }
 {
 	const path = '.env.example'
 	const source = read(path)
-	const proMatch = source.match(/^MASKIN_PRO_HARD_CAP_TOKENS=([\d_]+)/m)
-	const teamMatch = source.match(/^MASKIN_TEAM_HARD_CAP_TOKENS=([\d_]+)/m)
+	const proMatch = source.match(/^MASKIN_PRO_HARD_CAP_USD_CENTS=([\d_]+)/m)
+	const teamMatch = source.match(/^MASKIN_TEAM_HARD_CAP_USD_CENTS=([\d_]+)/m)
 	if (!proMatch || !teamMatch) {
-		errors.push(`${path}: could not find MASKIN_PRO/TEAM_HARD_CAP_TOKENS entries`)
+		errors.push(`${path}: could not find MASKIN_PRO/TEAM_HARD_CAP_USD_CENTS entries`)
 	} else {
 		const pro = Number(stripUnderscores(proMatch[1]))
 		const team = Number(stripUnderscores(teamMatch[1]))
@@ -72,14 +72,14 @@ const expected = { trial: 0, pro: 0, team: 0 }
 
 // Site 3 — apps/web/src/__tests__/components/settings/billing-section.test.tsx
 //
-// The web test pins `hard_cap_tokens` literals in several places (trial cap +
+// The web test pins `hard_cap_usd_cents` literals in several places (trial cap +
 // the Pro and Team upgrade flows). Rather than match a brittle index of
 // occurrences, we enforce:
 //
-//   - every `hard_cap_tokens: <number>` literal is one of {trial, pro, team}
+//   - every `hard_cap_usd_cents: <number>` literal is one of {trial, pro, team}
 //   - the Pro and Team caps each appear at least once
 //
-// This catches both drift (a Pro literal silently becoming 32_500_000) and
+// This catches both drift (a Pro literal silently becoming 2_500) and
 // stray values (a fourth allowed cap creeping in).
 {
 	const path = 'apps/web/src/__tests__/components/settings/billing-section.test.tsx'
@@ -87,18 +87,18 @@ const expected = { trial: 0, pro: 0, team: 0 }
 	const ALLOWED = new Set([expected.trial, expected.pro, expected.team])
 	const seen = new Set()
 	let foundAny = false
-	for (const match of source.matchAll(/hard_cap_tokens:\s*([\d_]+)/g)) {
+	for (const match of source.matchAll(/hard_cap_usd_cents:\s*([\d_]+)/g)) {
 		foundAny = true
 		const value = Number(stripUnderscores(match[1]))
 		seen.add(value)
 		if (!ALLOWED.has(value)) {
 			errors.push(
-				`${path}: hard_cap_tokens literal ${value} is not one of ${[...ALLOWED].join(', ')}`,
+				`${path}: hard_cap_usd_cents literal ${value} is not one of ${[...ALLOWED].join(', ')}`,
 			)
 		}
 	}
 	if (!foundAny) {
-		errors.push(`${path}: no hard_cap_tokens literals found — has the test been renamed?`)
+		errors.push(`${path}: no hard_cap_usd_cents literals found — has the test been renamed?`)
 	}
 	if (!seen.has(expected.pro)) {
 		errors.push(`${path}: missing Pro cap (${expected.pro}) — frontend no longer pins it`)
@@ -115,8 +115,8 @@ const expected = { trial: 0, pro: 0, team: 0 }
 
 // Site 4 — apps/web/src/components/settings/billing-section.tsx (CAP_DEFAULTS)
 //
-// Drives the token counts shown in the plan comparison cards via
-// formatTokens(CAP_DEFAULTS.<plan>) — must match the backend source of truth.
+// Drives the dollar amounts shown in the plan comparison cards via
+// formatCredits(CAP_DEFAULTS.<plan>) — must match the backend source of truth.
 {
 	const path = 'apps/web/src/components/settings/billing-section.tsx'
 	const source = read(path)
@@ -153,5 +153,5 @@ if (errors.length > 0) {
 }
 
 console.log(
-	`verify-billing-cap-literals: OK — trial=${expected.trial}, pro=${expected.pro}, team=${expected.team} across 4 sites`,
+	`verify-billing-cap-literals: OK — trial=${expected.trial}, pro=${expected.pro}, team=${expected.team} (USD cents) across 4 sites`,
 )

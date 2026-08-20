@@ -159,7 +159,7 @@ export const workspaceSettingsSchema = z.object({
 	// `sessions.config.llm_route = 'maskin_plan'`. Mutually exclusive with
 	// `custom_llm` / Claude OAuth / workspace `llm_keys.anthropic` at the
 	// write layer; the router enforces the precedence at read time.
-	// `period_start`, `period_end`, and `hard_cap_tokens` are written by the
+	// `period_start`, `period_end`, and `hard_cap_usd_cents` are written by the
 	// Stripe webhook; `status` mirrors the Stripe subscription status string.
 	// `period_end` is the Stripe `current_period_end` — surfaced on the
 	// `PLAN_CAP_EXCEEDED` error so the frontend can show a reset ETA.
@@ -170,7 +170,11 @@ export const workspaceSettingsSchema = z.object({
 			stripe_subscription_id: z.string().nullable().optional(),
 			period_start: z.number().nullable().optional(),
 			period_end: z.number().nullable().optional(),
-			hard_cap_tokens: z.number().nullable().optional(),
+			// Included-usage cap for the period, in USD cents. Different agents
+			// can run different model tiers with different $/token ratios, so the
+			// cap (and the usage compared against it) is tracked in actual dollar
+			// cost rather than a token count — see lib/llm-routing.ts.
+			hard_cap_usd_cents: z.number().nullable().optional(),
 			status: z.enum(['active', 'past_due', 'canceled', 'incomplete']).optional(),
 			// Prepaid usage-credits balance, in USD cents. Depletes as
 			// `maskin_plan` usage crosses the plan's included cap

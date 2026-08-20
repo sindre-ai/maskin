@@ -340,7 +340,7 @@ async function applyEvent(
 						next.stripe_customer_id,
 					stripe_subscription_id: sub.id,
 					status: mapSubscriptionStatus(sub.status),
-					hard_cap_tokens: plan ? hardCapForPlan(plan, stripeEnv) : next.hard_cap_tokens,
+					hard_cap_usd_cents: plan ? hardCapForPlan(plan, stripeEnv) : next.hard_cap_usd_cents,
 					period_start: sub.current_period_start ?? next.period_start,
 					period_end: sub.current_period_end ?? next.period_end,
 				}
@@ -353,7 +353,7 @@ async function applyEvent(
 					plan: 'byollm',
 					stripe_subscription_id: null,
 					status: 'canceled',
-					hard_cap_tokens: null,
+					hard_cap_usd_cents: null,
 					period_start: sub.canceled_at ?? next.period_start,
 				}
 				break

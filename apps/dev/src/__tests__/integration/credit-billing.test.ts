@@ -7,6 +7,10 @@ import { insertSession, insertWorkspace } from '../factories'
 import { db, getTestActorId } from './global-setup'
 
 const PERIOD_START_SEC = 1_700_000_000
+// $10.00 included per period — usage and cap are tracked in USD cents (not
+// token counts) since different agents can run different model tiers with
+// different $/token ratios; see lib/llm-routing.ts.
+const CAP_CENTS = 1_000
 
 function billingSettings(
 	overrides: Partial<NonNullable<WorkspaceSettings['billing']>>,
@@ -15,7 +19,7 @@ function billingSettings(
 		billing: {
 			plan: 'pro',
 			status: 'active',
-			hard_cap_tokens: 1_000,
+			hard_cap_usd_cents: CAP_CENTS,
 			period_start: PERIOD_START_SEC,
 			stripe_customer_id: 'cus_test',
 			...overrides,
@@ -34,12 +38,13 @@ describe('checkPlanCap / canUseCreditBalance — soft cap matrix (Integration)',
 	})
 
 	async function seedOverCapUsage() {
-		// hard_cap_tokens is 1000 in `billingSettings` — one session with 2000
-		// input tokens is already past cap regardless of plan.
+		// The cap is $10.00 (CAP_CENTS); a session that reported $20.00 of its
+		// own cost is already well past cap regardless of plan.
 		await insertSession(db, workspaceId, actorId, actorId, {
 			status: 'completed',
 			config: { llm_route: 'maskin_plan' },
-			inputTokens: 2000,
+			totalCostUsd: '20.00',
+			inputTokens: 0,
 			outputTokens: 0,
 			createdAt: new Date(PERIOD_START_SEC * 1000 + 1000),
 		})
@@ -88,7 +93,7 @@ describe('checkPlanCap / canUseCreditBalance — soft cap matrix (Integration)',
 	})
 
 	it('does not block when usage is under cap regardless of balance', async () => {
-		// No sessions seeded — usage is 0, well under the 1000-token cap.
+		// No sessions seeded — usage is $0, well under the $10.00 cap.
 		const wsSettings = billingSettings({ plan: 'pro', credit_balance_cents: 0 })
 		await expect(checkPlanCap({ db, workspaceId, wsSettings })).resolves.toBeUndefined()
 	})
@@ -108,7 +113,7 @@ describe('debitCreditForSession (Integration)', () => {
 				billing: {
 					plan: 'pro',
 					status: 'active',
-					hard_cap_tokens: 1_000,
+					hard_cap_usd_cents: CAP_CENTS,
 					period_start: PERIOD_START_SEC,
 					stripe_customer_id: 'cus_test',
 					credit_balance_cents: creditBalanceCents,
@@ -120,11 +125,13 @@ describe('debitCreditForSession (Integration)', () => {
 		return ws
 	}
 
-	async function seedOverCapSession(inputTokens: number) {
+	/** `totalCostUsdDollars` is the session's own reported cost, e.g. "10.01" for $10.01. */
+	async function seedSessionWithCost(totalCostUsdDollars: string) {
 		const session = await insertSession(db, workspaceId, actorId, actorId, {
 			status: 'completed',
 			config: { llm_route: 'maskin_plan' },
-			inputTokens,
+			totalCostUsd: totalCostUsdDollars,
+			inputTokens: 0,
 			outputTokens: 0,
 			createdAt: new Date(PERIOD_START_SEC * 1000 + 1000),
 		})
@@ -136,11 +143,10 @@ describe('debitCreditForSession (Integration)', () => {
 		return billingSettings({ plan: 'pro', credit_balance_cents: creditBalanceCents })
 	}
 
-	it('debits the balance for tokens over cap and writes a ledger row + audit event', async () => {
+	it('debits the balance for cost over cap and writes a ledger row + audit event', async () => {
 		await seedWorkspace(10_000)
-		// 2000 tokens over the 1000 cap = 1000 overage tokens.
-		// CREDIT_TOKENS_PER_USD_CENT = 16_000 -> ceil(1000/16_000) = 1 cent.
-		const session = await seedOverCapSession(2_000)
+		// $10.01 reported cost against a $10.00 cap = 1 cent over.
+		const session = await seedSessionWithCost('10.01')
 
 		await debitCreditForSession({
 			db,
@@ -172,7 +178,7 @@ describe('debitCreditForSession (Integration)', () => {
 
 	it('is idempotent per session — a re-fired completion does not double-debit', async () => {
 		await seedWorkspace(10_000)
-		const session = await seedOverCapSession(2_000)
+		const session = await seedSessionWithCost('10.01')
 
 		const debit = () =>
 			debitCreditForSession({
@@ -204,8 +210,8 @@ describe('debitCreditForSession (Integration)', () => {
 		// session through (a $0 balance is blocked earlier, by checkPlanCap) —
 		// but the balance is smaller than what this session actually owes.
 		await seedWorkspace(1)
-		// 32_000 tokens over cap -> ceil(32000/16000) = 2 cents owed, but balance is 1.
-		const session = await seedOverCapSession(1_000 + 32_000)
+		// $10.02 reported cost against a $10.00 cap = 2 cents owed, but balance is 1.
+		const session = await seedSessionWithCost('10.02')
 
 		await debitCreditForSession({
 			db,
@@ -232,8 +238,8 @@ describe('debitCreditForSession (Integration)', () => {
 
 	it('applies concurrent debits from two different sessions without losing an update', async () => {
 		await seedWorkspace(10_000)
-		const sessionA = await seedOverCapSession(2_000)
-		const sessionB = await seedOverCapSession(2_000)
+		const sessionA = await seedSessionWithCost('20.00')
+		const sessionB = await seedSessionWithCost('20.00')
 
 		await Promise.all([
 			debitCreditForSession({
@@ -255,12 +261,12 @@ describe('debitCreditForSession (Integration)', () => {
 		const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId))
 		if (!ws) throw new Error('workspace not found')
 		const settings = ws.settings as WorkspaceSettings
-		// Both sessions pushed usage to 4000 tokens total (3000 over the 1000
-		// cap once both are counted), but each debit call computes its cost off
-		// cumulative usage at the time it runs — the row lock guarantees both
-		// debits land, not a specific total, so assert the ledger recorded two
-		// distinct debits and the balance reflects their sum rather than a lost
-		// update from one overwriting the other.
+		// Both sessions pushed usage to $40 total ($30 over the $10 cap once both
+		// are counted), but each debit call computes its cost off cumulative
+		// usage at the time it runs — the row lock guarantees both debits land,
+		// not a specific total, so assert the ledger recorded two distinct
+		// debits and the balance reflects their sum rather than a lost update
+		// from one overwriting the other.
 		const ledgerRows = await db
 			.select()
 			.from(workspaceCreditLedger)

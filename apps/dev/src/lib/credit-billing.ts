@@ -2,15 +2,22 @@ import type { Database } from '@maskin/db'
 import { events, workspaceCreditLedger, workspaces } from '@maskin/db/schema'
 import { workspaceSettingsSchema } from '@maskin/shared'
 import { eq, sql } from 'drizzle-orm'
-import { tokensToCreditCents } from './billing-defaults'
-import { canUseCreditBalance, getWorkspacePlanCap, getWorkspacePlanTokenUsage } from './llm-routing'
+import {
+	canUseCreditBalance,
+	getWorkspacePlanCap,
+	getWorkspacePlanUsdCentsUsage,
+} from './llm-routing'
 import type { WorkspaceSettings } from './types'
 
 /**
- * Debits the workspace's prepaid credit balance for tokens this session
- * consumed beyond the plan's included cap. Idempotent per session via the
- * partial unique index on `workspace_credit_ledger.session_id` — a re-fired
- * completion (crash/retry) is a safe no-op, not a double-debit.
+ * Debits the workspace's prepaid credit balance for the dollar cost this
+ * session incurred beyond the plan's included cap. Both `used` and `cap` are
+ * already USD cents (see `getWorkspacePlanUsdCentsUsage`), so — unlike the
+ * flat per-token rate this replaced — no token→dollar conversion happens
+ * here: the overage is real cost, reflecting whichever model tier actually
+ * ran. Idempotent per session via the partial unique index on
+ * `workspace_credit_ledger.session_id` — a re-fired completion (crash/retry)
+ * is a safe no-op, not a double-debit.
  *
  * Unlike the old block-based overage reporter this replaces, this never
  * calls Stripe: the balance was already paid for at top-up time
@@ -31,16 +38,13 @@ export async function debitCreditForSession(params: {
 	if (billing?.plan !== 'pro' && billing?.plan !== 'team') return
 	if (!canUseCreditBalance(billing.plan, billing)) return
 
-	const cap = getWorkspacePlanCap(wsSettings)
-	if (cap === null) return
+	const capCents = getWorkspacePlanCap(wsSettings)
+	if (capCents === null) return
 
 	const periodStartMs =
 		typeof billing.period_start === 'number' ? billing.period_start * 1000 : undefined
-	const used = await getWorkspacePlanTokenUsage(db, workspaceId, periodStartMs)
-	const overageTokens = Math.max(0, used - cap)
-	if (overageTokens <= 0) return
-
-	const costCents = tokensToCreditCents(overageTokens)
+	const usedCents = await getWorkspacePlanUsdCentsUsage(db, workspaceId, periodStartMs)
+	const costCents = Math.max(0, usedCents - capCents)
 	if (costCents <= 0) return
 
 	await db.transaction(async (tx) => {
@@ -116,8 +120,7 @@ export async function debitCreditForSession(params: {
 			entityType: 'session',
 			entityId: sessionId,
 			data: {
-				tokens_over_cap: overageTokens,
-				cost_cents: costCents,
+				usd_cents_over_cap: costCents,
 				debited_cents: actualDebitCents,
 				balance_after_cents: balanceAfter,
 			},

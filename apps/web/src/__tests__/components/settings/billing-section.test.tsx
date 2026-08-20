@@ -1,8 +1,12 @@
-// 8_000_000 / 32_000_000 / 320_000_000 below mirror TRIAL_HARD_CAP_DEFAULT_TOKENS /
-// PRO_HARD_CAP_DEFAULT_TOKENS / TEAM_HARD_CAP_DEFAULT_TOKENS in
+// 500 / 2_000 / 20_000 (USD cents) below mirror TRIAL_HARD_CAP_DEFAULT_USD_CENTS /
+// PRO_HARD_CAP_DEFAULT_USD_CENTS / TEAM_HARD_CAP_DEFAULT_USD_CENTS in
 // apps/dev/src/lib/billing-defaults.ts and the .env.example
-// MASKIN_*_HARD_CAP_TOKENS defaults. Keep in sync when bumping.
-import { BillingSection, formatResetsIn, formatTokens } from '@/components/settings/billing-section'
+// MASKIN_*_HARD_CAP_USD_CENTS defaults. Keep in sync when bumping.
+import {
+	BillingSection,
+	formatCredits,
+	formatResetsIn,
+} from '@/components/settings/billing-section'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { TestWrapper } from '../../setup'
@@ -22,8 +26,8 @@ import { api } from '@/lib/api'
 const baseUsage = {
 	plan: 'trial' as const,
 	status: 'active' as const,
-	tokens_used: 0,
-	hard_cap_tokens: 8_000_000,
+	usd_cents_used: 0,
+	hard_cap_usd_cents: 500,
 	period_start: null,
 	period_resets_in_ms: 30 * 24 * 60 * 60 * 1000,
 	stripe_customer_id: null,
@@ -31,18 +35,11 @@ const baseUsage = {
 	credit_balance_cents: 0,
 }
 
-describe('formatTokens', () => {
-	it('renders raw numbers under 1k', () => {
-		expect(formatTokens(0)).toBe('0')
-		expect(formatTokens(999)).toBe('999')
-	})
-	it('uses k for thousands', () => {
-		expect(formatTokens(1_500)).toBe('1.5k')
-		expect(formatTokens(12_000)).toBe('12k')
-	})
-	it('uses M for millions', () => {
-		expect(formatTokens(1_500_000)).toBe('1.5M')
-		expect(formatTokens(32_000_000)).toBe('32M')
+describe('formatCredits', () => {
+	it('renders cents as a dollar amount', () => {
+		expect(formatCredits(0)).toBe('$0.00')
+		expect(formatCredits(125)).toBe('$1.25')
+		expect(formatCredits(2_000)).toBe('$20.00')
 	})
 })
 
@@ -68,7 +65,7 @@ describe('BillingSection', () => {
 	it('renders trial plan with both upgrade buttons and the usage line', async () => {
 		vi.mocked(api.billing.usage).mockResolvedValue({
 			...baseUsage,
-			tokens_used: 25_000,
+			usd_cents_used: 125,
 		})
 
 		render(
@@ -78,7 +75,7 @@ describe('BillingSection', () => {
 		)
 
 		await screen.findByText('Trial')
-		expect(screen.getByText('25k / 8.0M tokens')).toBeInTheDocument()
+		expect(screen.getByText('$1.25 / $5.00 used')).toBeInTheDocument()
 		// Trial (non-paid-active) plans start with the comparison grid expanded.
 		expect(screen.getByRole('button', { name: 'Upgrade to Pro' })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Upgrade to Team' })).toBeInTheDocument()
@@ -93,8 +90,8 @@ describe('BillingSection', () => {
 			...baseUsage,
 			plan: 'pro',
 			status: 'active',
-			tokens_used: 12_000_000,
-			hard_cap_tokens: 32_000_000,
+			usd_cents_used: 750,
+			hard_cap_usd_cents: 2_000,
 			period_start: Date.now() - 7 * 24 * 60 * 60 * 1000,
 			period_resets_in_ms: 23 * 24 * 60 * 60 * 1000,
 			stripe_customer_id: 'cus_x',
@@ -108,7 +105,7 @@ describe('BillingSection', () => {
 		)
 
 		await screen.findByText('Pro — $20/mo')
-		expect(screen.getByText(/12M \/ 32M tokens/)).toBeInTheDocument()
+		expect(screen.getByText(/\$7\.50 \/ \$20\.00 used/)).toBeInTheDocument()
 		expect(screen.getByText(/resets in 23d/)).toBeInTheDocument()
 		expect(screen.getByRole('link', { name: /Manage in Stripe/ })).toBeInTheDocument()
 
@@ -127,8 +124,8 @@ describe('BillingSection', () => {
 			...baseUsage,
 			plan: 'team',
 			status: 'active',
-			hard_cap_tokens: 320_000_000,
-			tokens_used: 1_000_000,
+			hard_cap_usd_cents: 20_000,
+			usd_cents_used: 100,
 			stripe_customer_id: 'cus_x',
 			stripe_subscription_id: 'sub_x',
 		})
@@ -151,7 +148,7 @@ describe('BillingSection', () => {
 			...baseUsage,
 			plan: 'byollm',
 			status: 'canceled',
-			hard_cap_tokens: null,
+			hard_cap_usd_cents: null,
 			period_resets_in_ms: null,
 		})
 
@@ -210,7 +207,7 @@ describe('BillingSection', () => {
 		vi.mocked(api.billing.usage).mockResolvedValue({
 			...baseUsage,
 			plan: 'pro',
-			hard_cap_tokens: 32_000_000,
+			hard_cap_usd_cents: 2_000,
 			stripe_customer_id: 'cus_x',
 			stripe_subscription_id: 'sub_x',
 		})
@@ -234,7 +231,7 @@ describe('BillingSection', () => {
 			...baseUsage,
 			plan: 'pro',
 			status: 'active',
-			hard_cap_tokens: 32_000_000,
+			hard_cap_usd_cents: 2_000,
 			stripe_customer_id: 'cus_x',
 			stripe_subscription_id: 'sub_x',
 		})
@@ -257,7 +254,7 @@ describe('BillingSection', () => {
 	it('shows a disabled "Current plan" button on the plan card matching the active plan', async () => {
 		vi.mocked(api.billing.usage).mockResolvedValue({
 			...baseUsage,
-			tokens_used: 25_000,
+			usd_cents_used: 125,
 		})
 
 		render(
@@ -276,8 +273,8 @@ describe('BillingSection', () => {
 			...baseUsage,
 			plan: 'pro',
 			status: 'active',
-			hard_cap_tokens: 32_000_000,
-			tokens_used: 40_000_000,
+			hard_cap_usd_cents: 2_000,
+			usd_cents_used: 2_500,
 			stripe_customer_id: 'cus_x',
 			stripe_subscription_id: 'sub_x',
 			credit_balance_cents: 4_000,
@@ -302,8 +299,8 @@ describe('BillingSection', () => {
 			...baseUsage,
 			plan: 'pro',
 			status: 'active',
-			hard_cap_tokens: 32_000_000,
-			tokens_used: 40_000_000,
+			hard_cap_usd_cents: 2_000,
+			usd_cents_used: 2_500,
 			stripe_customer_id: 'cus_x',
 			stripe_subscription_id: 'sub_x',
 			credit_balance_cents: 0,
@@ -327,7 +324,7 @@ describe('BillingSection', () => {
 			...baseUsage,
 			plan: 'pro',
 			status: 'active',
-			hard_cap_tokens: 32_000_000,
+			hard_cap_usd_cents: 2_000,
 			stripe_customer_id: 'cus_x',
 			stripe_subscription_id: 'sub_x',
 			credit_balance_cents: 0,
@@ -375,7 +372,7 @@ describe('BillingSection', () => {
 			...baseUsage,
 			plan: 'pro',
 			status: 'active',
-			hard_cap_tokens: 32_000_000,
+			hard_cap_usd_cents: 2_000,
 			stripe_customer_id: 'cus_x',
 			stripe_subscription_id: 'sub_x',
 		})

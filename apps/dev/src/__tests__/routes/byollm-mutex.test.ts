@@ -39,8 +39,8 @@ const STRIPE_ENV = {
 	STRIPE_WEBHOOK_SECRET: 'whsec_x',
 	STRIPE_PRICE_PRO: 'price_pro',
 	STRIPE_PRICE_TEAM: 'price_team',
-	MASKIN_PRO_HARD_CAP_TOKENS: '32000000',
-	MASKIN_TEAM_HARD_CAP_TOKENS: '320000000',
+	MASKIN_PRO_HARD_CAP_USD_CENTS: '2000',
+	MASKIN_TEAM_HARD_CAP_USD_CENTS: '20000',
 }
 const setStripeEnv = () => {
 	for (const [k, v] of Object.entries(STRIPE_ENV)) process.env[k] = v
@@ -84,7 +84,7 @@ describe('BYOLLM ↔ paid plan mutex — PATCH /api/workspaces/:id', () => {
 							status: 'active',
 							stripe_subscription_id: 'sub_live',
 							stripe_customer_id: 'cus_live',
-							hard_cap_tokens: 320_000_000,
+							hard_cap_usd_cents: 20_000,
 						},
 					},
 				},

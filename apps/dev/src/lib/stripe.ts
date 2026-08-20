@@ -9,8 +9,10 @@ export interface StripeEnv {
 	webhookSecret: string
 	pricePro: string
 	priceTeam: string
-	proHardCapTokens: number
-	teamHardCapTokens: number
+	/** USD cents. */
+	proHardCapUsdCents: number
+	/** USD cents. */
+	teamHardCapUsdCents: number
 }
 
 interface CheckoutInputs {
@@ -43,14 +45,16 @@ export function readStripeEnv(env: NodeJS.ProcessEnv = process.env): StripeEnv {
 		'STRIPE_WEBHOOK_SECRET',
 		'STRIPE_PRICE_PRO',
 		'STRIPE_PRICE_TEAM',
-		'MASKIN_PRO_HARD_CAP_TOKENS',
-		'MASKIN_TEAM_HARD_CAP_TOKENS',
+		'MASKIN_PRO_HARD_CAP_USD_CENTS',
+		'MASKIN_TEAM_HARD_CAP_USD_CENTS',
 	] as const
 	const missing = required.filter((k) => !env[k])
 	if (missing.length > 0) {
 		throw new Error(`Stripe env vars missing: ${missing.join(', ')}`)
 	}
-	const parseTokenCap = (key: 'MASKIN_PRO_HARD_CAP_TOKENS' | 'MASKIN_TEAM_HARD_CAP_TOKENS') => {
+	const parseCapCents = (
+		key: 'MASKIN_PRO_HARD_CAP_USD_CENTS' | 'MASKIN_TEAM_HARD_CAP_USD_CENTS',
+	) => {
 		// Boot-time strict variant: env was just confirmed non-empty by the
 		// `missing` check above, so a `null` return from the shared parser means
 		// the value is malformed (non-digit, zero, or negative). Throw so misconfig
@@ -70,8 +74,8 @@ export function readStripeEnv(env: NodeJS.ProcessEnv = process.env): StripeEnv {
 		webhookSecret: env.STRIPE_WEBHOOK_SECRET as string,
 		pricePro: env.STRIPE_PRICE_PRO as string,
 		priceTeam: env.STRIPE_PRICE_TEAM as string,
-		proHardCapTokens: parseTokenCap('MASKIN_PRO_HARD_CAP_TOKENS'),
-		teamHardCapTokens: parseTokenCap('MASKIN_TEAM_HARD_CAP_TOKENS'),
+		proHardCapUsdCents: parseCapCents('MASKIN_PRO_HARD_CAP_USD_CENTS'),
+		teamHardCapUsdCents: parseCapCents('MASKIN_TEAM_HARD_CAP_USD_CENTS'),
 	}
 }
 
@@ -106,8 +110,9 @@ export function planForPriceId(priceId: string, env: StripeEnv): PaidMaskinPlan 
 	return null
 }
 
+/** Returns the plan's hard cap in USD cents. */
 export function hardCapForPlan(plan: PaidMaskinPlan, env: StripeEnv): number {
-	return plan === 'pro' ? env.proHardCapTokens : env.teamHardCapTokens
+	return plan === 'pro' ? env.proHardCapUsdCents : env.teamHardCapUsdCents
 }
 
 /**

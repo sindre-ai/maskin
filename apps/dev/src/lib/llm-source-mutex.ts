@@ -155,7 +155,7 @@ export function billingAfterCancel(
 		stripe_subscription_id: null,
 		status: 'canceled',
 		period_start: Math.floor(Date.now() / 1000),
-		hard_cap_tokens: null,
+		hard_cap_usd_cents: null,
 	}
 }
 

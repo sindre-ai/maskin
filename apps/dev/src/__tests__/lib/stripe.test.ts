@@ -20,8 +20,8 @@ const VALID_ENV = {
 	STRIPE_WEBHOOK_SECRET: 'whsec_x',
 	STRIPE_PRICE_PRO: 'price_pro',
 	STRIPE_PRICE_TEAM: 'price_team',
-	MASKIN_PRO_HARD_CAP_TOKENS: '32000000',
-	MASKIN_TEAM_HARD_CAP_TOKENS: '320000000',
+	MASKIN_PRO_HARD_CAP_USD_CENTS: '2000',
+	MASKIN_TEAM_HARD_CAP_USD_CENTS: '20000',
 }
 
 beforeEach(() => {
@@ -36,8 +36,8 @@ describe('readStripeEnv', () => {
 	it('parses a valid env block', () => {
 		const env = readStripeEnv(VALID_ENV)
 		expect(env.pricePro).toBe('price_pro')
-		expect(env.proHardCapTokens).toBe(32_000_000)
-		expect(env.teamHardCapTokens).toBe(320_000_000)
+		expect(env.proHardCapUsdCents).toBe(2_000)
+		expect(env.teamHardCapUsdCents).toBe(20_000)
 	})
 
 	it('throws when a required var is missing', () => {
@@ -46,13 +46,13 @@ describe('readStripeEnv', () => {
 	})
 
 	it('throws when a cap is non-numeric', () => {
-		expect(() => readStripeEnv({ ...VALID_ENV, MASKIN_PRO_HARD_CAP_TOKENS: 'abc' })).toThrow(
+		expect(() => readStripeEnv({ ...VALID_ENV, MASKIN_PRO_HARD_CAP_USD_CENTS: 'abc' })).toThrow(
 			/positive integer string/,
 		)
 	})
 
 	it('throws when a cap is zero or negative', () => {
-		expect(() => readStripeEnv({ ...VALID_ENV, MASKIN_TEAM_HARD_CAP_TOKENS: '0' })).toThrow(
+		expect(() => readStripeEnv({ ...VALID_ENV, MASKIN_TEAM_HARD_CAP_USD_CENTS: '0' })).toThrow(
 			/positive integer string/,
 		)
 	})
@@ -72,9 +72,9 @@ describe('priceIdForPlan / planForPriceId / hardCapForPlan', () => {
 		expect(planForPriceId('price_unknown', env)).toBeNull()
 	})
 
-	it('returns the configured token cap for each plan', () => {
-		expect(hardCapForPlan('pro', env)).toBe(32_000_000)
-		expect(hardCapForPlan('team', env)).toBe(320_000_000)
+	it('returns the configured USD-cent cap for each plan', () => {
+		expect(hardCapForPlan('pro', env)).toBe(2_000)
+		expect(hardCapForPlan('team', env)).toBe(20_000)
 	})
 })
 

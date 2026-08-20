@@ -17,8 +17,8 @@ import billingRoutes from '../../routes/billing'
 import { jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
 
-// Sentinel cap values that are intentionally NOT the literal defaults
-// (32_000_000 / 320_000_000), AND chosen arithmetically far from them so that
+// Sentinel cap values (USD cents) that are intentionally NOT the literal
+// defaults (2_000 / 20_000), AND chosen arithmetically far from them so that
 // a swapped or off-by-one test value couldn't accidentally satisfy a literal-
 // default assertion. Pi / Euler digits keep them memorable.
 const PRO_ENV_SENTINEL = '31415926'
@@ -29,8 +29,8 @@ const VALID_ENV = {
 	STRIPE_WEBHOOK_SECRET: 'whsec_x',
 	STRIPE_PRICE_PRO: 'price_pro',
 	STRIPE_PRICE_TEAM: 'price_team',
-	MASKIN_PRO_HARD_CAP_TOKENS: PRO_ENV_SENTINEL,
-	MASKIN_TEAM_HARD_CAP_TOKENS: TEAM_ENV_SENTINEL,
+	MASKIN_PRO_HARD_CAP_USD_CENTS: PRO_ENV_SENTINEL,
+	MASKIN_TEAM_HARD_CAP_USD_CENTS: TEAM_ENV_SENTINEL,
 }
 
 const setupEnv = () => {
@@ -373,8 +373,8 @@ describe('GET /api/billing/usage', () => {
 		expect(body).toMatchObject({
 			plan: 'trial',
 			status: 'active',
-			tokens_used: 0,
-			hard_cap_tokens: 8_000_000,
+			usd_cents_used: 0,
+			hard_cap_usd_cents: 500,
 			stripe_customer_id: null,
 			stripe_subscription_id: null,
 			period_start: null,
@@ -382,7 +382,7 @@ describe('GET /api/billing/usage', () => {
 		expect(body.period_resets_in_ms).toBeGreaterThan(0)
 	})
 
-	it('sums input + output tokens across maskin_plan sessions since period_start', async () => {
+	it('sums dollar cost across maskin_plan sessions since period_start', async () => {
 		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 		const workspaceId = randomUUID()
 		// `billing.period_start` is a Unix SECONDS value — the Stripe webhook
@@ -397,7 +397,7 @@ describe('GET /api/billing/usage', () => {
 						billing: {
 							plan: 'pro',
 							status: 'active',
-							hard_cap_tokens: 32_000_000,
+							hard_cap_usd_cents: 2_000,
 							period_start: periodStart,
 							stripe_customer_id: 'cus_x',
 							stripe_subscription_id: 'sub_x',
@@ -406,9 +406,12 @@ describe('GET /api/billing/usage', () => {
 				},
 			],
 			[
-				{ inputTokens: 1000, outputTokens: 200 },
-				{ inputTokens: 5000, outputTokens: 800 },
-				{ inputTokens: null, outputTokens: 50 },
+				// Two sessions report their own cost directly ($5.00 + $2.50); a
+				// third never reported one and falls back to the flat token rate
+				// (16,000 tokens/cent): 16,000 tokens -> 1 cent. Total: 751 cents.
+				{ totalCostUsd: '5.00', inputTokens: 1000, outputTokens: 200 },
+				{ totalCostUsd: '2.50', inputTokens: 5000, outputTokens: 800 },
+				{ totalCostUsd: null, inputTokens: 16_000, outputTokens: 0 },
 			],
 		]
 
@@ -418,8 +421,8 @@ describe('GET /api/billing/usage', () => {
 		expect(body).toMatchObject({
 			plan: 'pro',
 			status: 'active',
-			tokens_used: 7050,
-			hard_cap_tokens: 32_000_000,
+			usd_cents_used: 751,
+			hard_cap_usd_cents: 2_000,
 			period_start: periodStart,
 			stripe_customer_id: 'cus_x',
 			stripe_subscription_id: 'sub_x',
@@ -451,7 +454,7 @@ describe('GET /api/billing/usage', () => {
 		expect(body).toMatchObject({
 			plan: 'byollm',
 			status: 'canceled',
-			tokens_used: 0,
+			usd_cents_used: 0,
 			period_resets_in_ms: null,
 		})
 	})
@@ -462,8 +465,8 @@ describe('GET /api/billing/usage', () => {
 		expect(res.status).toBe(404)
 	})
 
-	it('falls back to env-driven cap when a Pro workspace has no hard_cap_tokens', async () => {
-		process.env.MASKIN_PRO_HARD_CAP_TOKENS = '40000000'
+	it('falls back to env-driven cap when a Pro workspace has no hard_cap_usd_cents', async () => {
+		process.env.MASKIN_PRO_HARD_CAP_USD_CENTS = '4000'
 		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 		const workspaceId = randomUUID()
 		mockResults.selectQueue = [
@@ -479,11 +482,11 @@ describe('GET /api/billing/usage', () => {
 		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
 		expect(res.status).toBe(200)
 		const body = await res.json()
-		expect(body).toMatchObject({ plan: 'pro', hard_cap_tokens: 40_000_000 })
+		expect(body).toMatchObject({ plan: 'pro', hard_cap_usd_cents: 4_000 })
 	})
 
-	it('falls back to env-driven cap when a Team workspace has no hard_cap_tokens', async () => {
-		process.env.MASKIN_TEAM_HARD_CAP_TOKENS = '80000000'
+	it('falls back to env-driven cap when a Team workspace has no hard_cap_usd_cents', async () => {
+		process.env.MASKIN_TEAM_HARD_CAP_USD_CENTS = '40000'
 		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 		const workspaceId = randomUUID()
 		mockResults.selectQueue = [
@@ -499,22 +502,22 @@ describe('GET /api/billing/usage', () => {
 		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
 		expect(res.status).toBe(200)
 		const body = await res.json()
-		expect(body).toMatchObject({ plan: 'team', hard_cap_tokens: 80_000_000 })
+		expect(body).toMatchObject({ plan: 'team', hard_cap_usd_cents: 40_000 })
 	})
 
-	it('falls back to plan default when stored hard_cap_tokens is zero or negative', async () => {
-		// Regression: the `billing?.hard_cap_tokens && billing.hard_cap_tokens > 0`
+	it('falls back to plan default when stored hard_cap_usd_cents is zero or negative', async () => {
+		// Regression: the `billing?.hard_cap_usd_cents && billing.hard_cap_usd_cents > 0`
 		// guard's false branch was untested. A 0 (or negative) value stored on the
 		// workspace must NOT be treated as "an explicit cap" — the env/literal
 		// fallback should kick in just like when the field is missing. Also pin
-		// `hard_cap_tokens: 1` as the boundary value of the `> 0` guard: a
+		// `hard_cap_usd_cents: 1` as the boundary value of the `> 0` guard: a
 		// positive integer is honored verbatim, even at the smallest possible
 		// value, so callers can't accidentally tip into the fallback by saving 1.
-		// And with env unset, the Pro response must equal the literal 32M
+		// And with env unset, the Pro response must equal the literal $20.00
 		// default — the env-driven test above only proves the false branch hits
 		// the sentinel, not the literal that fires in prod when the env is
 		// missing.
-		for (const k of ['MASKIN_PRO_HARD_CAP_TOKENS']) delete process.env[k]
+		for (const k of ['MASKIN_PRO_HARD_CAP_USD_CENTS']) delete process.env[k]
 		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 		const zeroWs = randomUUID()
 		const negWs = randomUUID()
@@ -523,21 +526,21 @@ describe('GET /api/billing/usage', () => {
 			[
 				{
 					id: zeroWs,
-					settings: { billing: { plan: 'pro', status: 'active', hard_cap_tokens: 0 } },
+					settings: { billing: { plan: 'pro', status: 'active', hard_cap_usd_cents: 0 } },
 				},
 			],
 			[],
 			[
 				{
 					id: negWs,
-					settings: { billing: { plan: 'team', status: 'active', hard_cap_tokens: -5 } },
+					settings: { billing: { plan: 'team', status: 'active', hard_cap_usd_cents: -5 } },
 				},
 			],
 			[],
 			[
 				{
 					id: oneWs,
-					settings: { billing: { plan: 'pro', status: 'active', hard_cap_tokens: 1 } },
+					settings: { billing: { plan: 'pro', status: 'active', hard_cap_usd_cents: 1 } },
 				},
 			],
 			[],
@@ -545,12 +548,12 @@ describe('GET /api/billing/usage', () => {
 
 		const zeroRes = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': zeroWs }))
 		expect(zeroRes.status).toBe(200)
-		// Env is unset, so the fallback path resolves to the literal 32M default
-		// — the actual prod failure mode (no env, stored 0). Proves the route
-		// took the `> 0` false branch all the way to the literal.
+		// Env is unset, so the fallback path resolves to the literal $20.00
+		// default — the actual prod failure mode (no env, stored 0). Proves the
+		// route took the `> 0` false branch all the way to the literal.
 		expect(await zeroRes.json()).toMatchObject({
 			plan: 'pro',
-			hard_cap_tokens: 32_000_000,
+			hard_cap_usd_cents: 2_000,
 		})
 
 		const negRes = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': negWs }))
@@ -558,19 +561,19 @@ describe('GET /api/billing/usage', () => {
 		// Team env is still set to the sentinel by setupEnv — fallback hits env.
 		expect(await negRes.json()).toMatchObject({
 			plan: 'team',
-			hard_cap_tokens: Number(TEAM_ENV_SENTINEL),
+			hard_cap_usd_cents: Number(TEAM_ENV_SENTINEL),
 		})
 
 		const oneRes = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': oneWs }))
 		expect(oneRes.status).toBe(200)
 		expect(await oneRes.json()).toMatchObject({
 			plan: 'pro',
-			hard_cap_tokens: 1,
+			hard_cap_usd_cents: 1,
 		})
 	})
 
 	it('falls back to literal Pro/Team defaults when env caps are unset', async () => {
-		for (const k of ['MASKIN_PRO_HARD_CAP_TOKENS', 'MASKIN_TEAM_HARD_CAP_TOKENS']) {
+		for (const k of ['MASKIN_PRO_HARD_CAP_USD_CENTS', 'MASKIN_TEAM_HARD_CAP_USD_CENTS']) {
 			delete process.env[k]
 		}
 		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
@@ -585,15 +588,15 @@ describe('GET /api/billing/usage', () => {
 
 		const proRes = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': proWs }))
 		expect(proRes.status).toBe(200)
-		expect(await proRes.json()).toMatchObject({ plan: 'pro', hard_cap_tokens: 32_000_000 })
+		expect(await proRes.json()).toMatchObject({ plan: 'pro', hard_cap_usd_cents: 2_000 })
 
 		const teamRes = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': teamWs }))
 		expect(teamRes.status).toBe(200)
-		expect(await teamRes.json()).toMatchObject({ plan: 'team', hard_cap_tokens: 320_000_000 })
+		expect(await teamRes.json()).toMatchObject({ plan: 'team', hard_cap_usd_cents: 20_000 })
 	})
 
 	it('falls back to literal default when the env cap is malformed', async () => {
-		process.env.MASKIN_TEAM_HARD_CAP_TOKENS = 'not-a-number'
+		process.env.MASKIN_TEAM_HARD_CAP_USD_CENTS = 'not-a-number'
 		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 		const workspaceId = randomUUID()
 		mockResults.selectQueue = [
@@ -603,10 +606,10 @@ describe('GET /api/billing/usage', () => {
 
 		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
 		expect(res.status).toBe(200)
-		expect(await res.json()).toMatchObject({ plan: 'team', hard_cap_tokens: 320_000_000 })
+		expect(await res.json()).toMatchObject({ plan: 'team', hard_cap_usd_cents: 20_000 })
 	})
 
-	it('still honours an explicit billing.hard_cap_tokens when set', async () => {
+	it('still honours an explicit billing.hard_cap_usd_cents when set', async () => {
 		// Regression: the env/literal fallback only kicks in when the stored
 		// value is missing. An explicit positive value always wins.
 		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
@@ -616,7 +619,7 @@ describe('GET /api/billing/usage', () => {
 				{
 					id: workspaceId,
 					settings: {
-						billing: { plan: 'pro', status: 'active', hard_cap_tokens: 12_345_678 },
+						billing: { plan: 'pro', status: 'active', hard_cap_usd_cents: 12_345 },
 					},
 				},
 			],
@@ -625,7 +628,7 @@ describe('GET /api/billing/usage', () => {
 
 		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
 		expect(res.status).toBe(200)
-		expect(await res.json()).toMatchObject({ hard_cap_tokens: 12_345_678 })
+		expect(await res.json()).toMatchObject({ hard_cap_usd_cents: 12_345 })
 	})
 
 	it('uses stored period_end for period_resets_in_ms when present', async () => {
@@ -644,7 +647,7 @@ describe('GET /api/billing/usage', () => {
 						billing: {
 							plan: 'pro',
 							status: 'active',
-							hard_cap_tokens: 32_000_000,
+							hard_cap_usd_cents: 2_000,
 							period_start: periodStart,
 							period_end: periodEnd,
 						},
@@ -678,7 +681,7 @@ describe('GET /api/billing/usage', () => {
 						billing: {
 							plan: 'pro',
 							status: 'active',
-							hard_cap_tokens: 32_000_000,
+							hard_cap_usd_cents: 2_000,
 							period_start: -1.5,
 						},
 					},
@@ -691,7 +694,7 @@ describe('GET /api/billing/usage', () => {
 		expect(res.status).toBe(200)
 		const body = await res.json()
 		expect(body.period_start).toBeNull()
-		expect(body).toMatchObject({ plan: 'pro', hard_cap_tokens: 32_000_000 })
+		expect(body).toMatchObject({ plan: 'pro', hard_cap_usd_cents: 2_000 })
 	})
 
 	it('reports the prepaid credit balance for a pro workspace over cap', async () => {
@@ -706,7 +709,7 @@ describe('GET /api/billing/usage', () => {
 						billing: {
 							plan: 'pro',
 							status: 'active',
-							hard_cap_tokens: 32_000_000,
+							hard_cap_usd_cents: 2_000,
 							period_start: periodStart,
 							credit_balance_cents: 4_000,
 						},
@@ -767,7 +770,7 @@ describe('GET /api/billing/usage', () => {
 						billing: {
 							plan: 'pro',
 							status: 'active',
-							hard_cap_tokens: 32_000_000,
+							hard_cap_usd_cents: 2_000,
 							period_start: periodStart + 0.42,
 						},
 					},

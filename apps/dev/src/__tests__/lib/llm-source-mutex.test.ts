@@ -87,14 +87,14 @@ describe('billingAfterByoTransition', () => {
 			status: 'active' as const,
 			stripe_subscription_id: 'sub_99',
 			stripe_customer_id: 'cus_99',
-			hard_cap_tokens: 96_000_000,
+			hard_cap_usd_cents: 6_000,
 		}
 		expect(billingAfterByoTransition(current)).toEqual({
 			plan: 'byollm',
 			status: 'canceled',
 			stripe_subscription_id: null,
 			stripe_customer_id: 'cus_99',
-			hard_cap_tokens: 96_000_000,
+			hard_cap_usd_cents: 6_000,
 		})
 	})
 })
@@ -106,14 +106,14 @@ describe('billingAfterCancel', () => {
 			status: 'active' as const,
 			stripe_subscription_id: 'sub_99',
 			stripe_customer_id: 'cus_99',
-			hard_cap_tokens: 96_000_000,
+			hard_cap_usd_cents: 6_000,
 		}
 		expect(billingAfterCancel(current, true)).toEqual({
 			plan: 'byollm',
 			status: 'canceled',
 			stripe_subscription_id: null,
 			stripe_customer_id: 'cus_99',
-			hard_cap_tokens: 96_000_000,
+			hard_cap_usd_cents: 6_000,
 		})
 	})
 
@@ -123,16 +123,16 @@ describe('billingAfterCancel', () => {
 			status: 'active' as const,
 			stripe_subscription_id: 'sub_99',
 			stripe_customer_id: 'cus_99',
-			hard_cap_tokens: 96_000_000,
+			hard_cap_usd_cents: 6_000,
 		}
 		const result = billingAfterCancel(current, false)
 		expect(result?.plan).toBe('trial')
 		expect(result?.status).toBe('canceled')
 		expect(result?.stripe_subscription_id).toBeNull()
 		expect(result?.stripe_customer_id).toBe('cus_99')
-		// hard_cap_tokens is cleared so the trial default cap (not the paid
+		// hard_cap_usd_cents is cleared so the trial default cap (not the paid
 		// plan's cap) applies going forward.
-		expect(result?.hard_cap_tokens).toBeNull()
+		expect(result?.hard_cap_usd_cents).toBeNull()
 		expect(typeof result?.period_start).toBe('number')
 	})
 

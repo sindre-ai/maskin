@@ -942,8 +942,10 @@ export interface BillingBuyCreditsInput {
 export interface BillingUsageResponse {
 	plan: BillingPlan
 	status: BillingStatus
-	tokens_used: number
-	hard_cap_tokens: number | null
+	// Actual dollar cost incurred this period, in USD cents — see
+	// apps/dev/src/routes/billing.ts.
+	usd_cents_used: number
+	hard_cap_usd_cents: number | null
 	period_start: number | null
 	period_resets_in_ms: number | null
 	stripe_customer_id: string | null

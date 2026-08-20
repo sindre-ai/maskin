@@ -17,8 +17,8 @@ async function mockUsage(
 	usage: {
 		plan: 'trial' | 'pro' | 'team' | 'byollm'
 		status: 'active' | 'past_due' | 'canceled' | 'incomplete'
-		tokens_used: number
-		hard_cap_tokens: number | null
+		usd_cents_used: number
+		hard_cap_usd_cents: number | null
 		period_resets_in_ms: number | null
 		credit_balance_cents?: number
 	},
@@ -88,8 +88,8 @@ test.describe('Billing plans — Settings UI', () => {
 		await mockUsage(page, {
 			plan: 'pro',
 			status: 'past_due',
-			tokens_used: 30_000_000,
-			hard_cap_tokens: 32_000_000,
+			usd_cents_used: 1_900,
+			hard_cap_usd_cents: 2_000,
 			period_resets_in_ms: 5 * 24 * 60 * 60 * 1000,
 		})
 
@@ -123,8 +123,8 @@ test.describe('Billing plans — Settings UI', () => {
 			await mockUsage(page, {
 				plan: 'pro',
 				status: 'active',
-				tokens_used: 40_000_000,
-				hard_cap_tokens: 32_000_000,
+				usd_cents_used: 2_500,
+				hard_cap_usd_cents: 2_000,
 				period_resets_in_ms: 20 * 24 * 60 * 60 * 1000,
 				credit_balance_cents: 4_000,
 			})
@@ -154,8 +154,8 @@ test.describe('Billing plans — Settings UI', () => {
 			await mockUsage(page, {
 				plan: 'pro',
 				status: 'active',
-				tokens_used: 10_000_000,
-				hard_cap_tokens: 32_000_000,
+				usd_cents_used: 600,
+				hard_cap_usd_cents: 2_000,
 				period_resets_in_ms: 20 * 24 * 60 * 60 * 1000,
 				credit_balance_cents: 0,
 			})

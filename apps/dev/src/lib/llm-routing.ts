@@ -3,7 +3,7 @@ import { sessions } from '@maskin/db/schema'
 import { and, eq, gte, sql } from 'drizzle-orm'
 import {
 	DEFAULT_PERIOD_LENGTH_MS,
-	TRIAL_HARD_CAP_DEFAULT_TOKENS,
+	TRIAL_HARD_CAP_DEFAULT_USD_CENTS,
 	parsePositiveIntEnv,
 } from './billing-defaults'
 import { type SubscriptionProbe, resolveClaudeCredentialsWithFailover } from './claude-failover'
@@ -37,7 +37,7 @@ export type LlmRoute =
 /**
  * Workspaces on these plans are routed through Maskin's funded OR account.
  * Trial is included so BYOLLM-less users can try the product without their
- * own credentials — capped low via `MASKIN_TRIAL_HARD_CAP_TOKENS`.
+ * own credentials — capped low via `MASKIN_TRIAL_HARD_CAP_USD_CENTS`.
  */
 const MASKIN_PLAN_ROUTED_PLANS = new Set(['pro', 'team', 'trial'])
 
@@ -79,12 +79,27 @@ export function readFallbackConfig(env: NodeJS.ProcessEnv = process.env): Fallba
 }
 
 /**
- * Sums input+output tokens across the workspace's maskin_plan sessions since
- * `periodStart` (or all-time when undefined — used for trial buckets that don't
- * have a billing period yet). The route filter is what makes paid + trial usage
- * cheap to query, even as the sessions table grows.
+ * Legacy fallback rate used only when a maskin_plan session never reported
+ * its own `total_cost_usd` (e.g. a runtime whose CLI stream never emitted a
+ * `result` event). Real cost — which reflects whatever model actually ran —
+ * is always preferred; this exists so a missing report doesn't silently read
+ * as $0 of usage.
  */
-export async function getWorkspacePlanTokenUsage(
+export const FALLBACK_TOKENS_PER_USD_CENT = 16_000
+
+/**
+ * Sums actual dollar cost (in USD cents, rounded up) across the workspace's
+ * maskin_plan sessions since `periodStart` (or all-time when undefined — used
+ * for trial buckets that don't have a billing period yet). Prefers each
+ * session's own reported `total_cost_usd` (populated from the CLI's own
+ * reported cost, so it reflects whichever model actually ran) and falls back
+ * to a flat token-rate estimate only for sessions that never reported one.
+ * Tracking dollars instead of raw tokens is what lets different agents run
+ * different models — each with a different $/token ratio — without the cap
+ * silently over- or under-counting usage. The route filter is what makes
+ * paid + trial usage cheap to query, even as the sessions table grows.
+ */
+export async function getWorkspacePlanUsdCentsUsage(
 	db: Database,
 	workspaceId: string,
 	periodStartMs?: number,
@@ -98,33 +113,44 @@ export async function getWorkspacePlanTokenUsage(
 	}
 	const rows = await db
 		.select({
+			totalCostUsd: sessions.totalCostUsd,
 			inputTokens: sessions.inputTokens,
 			outputTokens: sessions.outputTokens,
 		})
 		.from(sessions)
 		.where(and(...conds))
 
-	let total = 0
+	let totalCents = 0
 	for (const row of rows) {
-		total += row.inputTokens ?? 0
-		total += row.outputTokens ?? 0
+		const reportedUsd = row.totalCostUsd !== null ? Number(row.totalCostUsd) : Number.NaN
+		if (Number.isFinite(reportedUsd) && reportedUsd > 0) {
+			totalCents += reportedUsd * 100
+			continue
+		}
+		const tokens = (row.inputTokens ?? 0) + (row.outputTokens ?? 0)
+		totalCents += tokens / FALLBACK_TOKENS_PER_USD_CENT
 	}
-	return total
+	// Round once on the aggregate, not per-row, so small per-session fractions
+	// of a cent don't compound into meaningfully over-counted usage.
+	return Math.ceil(totalCents)
 }
 
 export type MaskinPlan = 'trial' | 'pro' | 'team'
 
 interface PlanCapContext {
 	plan: MaskinPlan
+	/** USD cents. */
 	used: number
+	/** USD cents. */
 	cap: number
 	periodEnd: number | null
 }
 
 /**
  * Surfaces as HTTP 402 with `{ code: 'PLAN_CAP_EXCEEDED', plan, used, cap,
- * period_end }`. The frontend (Task dcfe3afe) reads `period_end` to render a
- * reset ETA and a typed upgrade CTA.
+ * period_end }`. `used`/`cap` are USD cents (dollar cost, not token counts —
+ * see `getWorkspacePlanUsdCentsUsage`). The frontend (Task dcfe3afe) reads
+ * `period_end` to render a reset ETA and a typed upgrade CTA.
  */
 export class PlanCapExceededError extends Error {
 	readonly plan: MaskinPlan
@@ -134,7 +160,7 @@ export class PlanCapExceededError extends Error {
 
 	constructor(ctx: PlanCapContext) {
 		super(
-			`${ctx.plan} plan cap exceeded: ${ctx.used.toLocaleString()} of ${ctx.cap.toLocaleString()} tokens used this period.`,
+			`${ctx.plan} plan cap exceeded: $${(ctx.used / 100).toFixed(2)} of $${(ctx.cap / 100).toFixed(2)} used this period.`,
 		)
 		this.name = 'PlanCapExceededError'
 		this.plan = ctx.plan
@@ -145,16 +171,18 @@ export class PlanCapExceededError extends Error {
 }
 
 function readTrialDefaultCap(env: NodeJS.ProcessEnv = process.env): number {
-	return parsePositiveIntEnv('MASKIN_TRIAL_HARD_CAP_TOKENS', env) ?? TRIAL_HARD_CAP_DEFAULT_TOKENS
+	return (
+		parsePositiveIntEnv('MASKIN_TRIAL_HARD_CAP_USD_CENTS', env) ?? TRIAL_HARD_CAP_DEFAULT_USD_CENTS
+	)
 }
 
 /**
- * Returns the configured cap for a maskin_plan workspace, or `null` when no cap
- * applies (paid plan whose Stripe webhook hasn't written `hard_cap_tokens` yet
- * — we fail open until Task 5 lands).
+ * Returns the configured cap (USD cents) for a maskin_plan workspace, or
+ * `null` when no cap applies (paid plan whose Stripe webhook hasn't written
+ * `hard_cap_usd_cents` yet — we fail open until Task 5 lands).
  */
-function effectivePlanCap(plan: MaskinPlan, hardCap: number | undefined): number | null {
-	if (typeof hardCap === 'number' && hardCap >= 0) return hardCap
+function effectivePlanCap(plan: MaskinPlan, hardCapCents: number | undefined): number | null {
+	if (typeof hardCapCents === 'number' && hardCapCents >= 0) return hardCapCents
 	if (plan === 'trial') return readTrialDefaultCap()
 	return null
 }
@@ -163,7 +191,7 @@ export function getWorkspacePlanCap(wsSettings: WorkspaceSettings): number | nul
 	const billing = wsSettings.billing
 	const plan = (billing?.plan ?? 'trial') as MaskinPlan | 'byollm'
 	if (!MASKIN_PLAN_ROUTED_PLANS.has(plan)) return null
-	return effectivePlanCap(plan as MaskinPlan, billing?.hard_cap_tokens ?? undefined)
+	return effectivePlanCap(plan as MaskinPlan, billing?.hard_cap_usd_cents ?? undefined)
 }
 
 function effectivePeriodEnd(
@@ -223,18 +251,18 @@ export async function checkPlanCap(params: {
 	if (!MASKIN_PLAN_ROUTED_PLANS.has(plan)) return
 
 	const maskinPlan = plan as MaskinPlan
-	const cap = effectivePlanCap(maskinPlan, billing?.hard_cap_tokens ?? undefined)
+	const cap = effectivePlanCap(maskinPlan, billing?.hard_cap_usd_cents ?? undefined)
 	if (cap === null) return
 
 	// billing.period_start / period_end are Unix SECONDS (Stripe writes them
 	// straight from current_period_start/end). Convert to ms before passing to
-	// getWorkspacePlanTokenUsage (which feeds new Date()) and effectivePeriodEnd.
+	// getWorkspacePlanUsdCentsUsage (which feeds new Date()) and effectivePeriodEnd.
 	const periodStartMs =
 		typeof billing?.period_start === 'number' ? billing.period_start * 1000 : undefined
 	const periodEndMs =
 		typeof billing?.period_end === 'number' ? billing.period_end * 1000 : undefined
 
-	const used = await getWorkspacePlanTokenUsage(params.db, params.workspaceId, periodStartMs)
+	const used = await getWorkspacePlanUsdCentsUsage(params.db, params.workspaceId, periodStartMs)
 	if (used < cap) return
 	if (canUseCreditBalance(maskinPlan, billing)) return
 

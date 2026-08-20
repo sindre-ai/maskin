@@ -14,9 +14,9 @@
 import { logger } from './logger'
 
 /**
- * Upper bound on parsed env caps. Stripe usage is denominated in tokens; even
- * Pro-tier wholesale consumption would never reach this magnitude in a period.
- * The point of the clamp is purely to reject pathological inputs (`"1e308"`
+ * Upper bound on parsed env caps. Billing caps are denominated in USD cents;
+ * even Pro-tier wholesale consumption would never reach this magnitude in a
+ * period. The point of the clamp is purely to reject pathological inputs (`"1e308"`
  * passes `Number.isFinite && > 0` but would silently overflow downstream
  * arithmetic). `MAX_SAFE_INTEGER` is the conservative ceiling.
  *
@@ -85,30 +85,22 @@ export function parsePositiveIntEnv(
 }
 
 /**
- * Fallback hard caps for paid plans when `billing.hard_cap_tokens` hasn't been
- * populated yet (delayed Stripe webhook, partial state after a webhook
- * failure). Mirrored in `.env.example` and the frontend billing tests — change
- * here and the CI `verify-billing-cap-literals` step will fail until the other
- * sites are updated.
+ * Fallback hard caps for paid plans when `billing.hard_cap_usd_cents` hasn't
+ * been populated yet (delayed Stripe webhook, partial state after a webhook
+ * failure), in USD cents. Mirrored in `.env.example` and the frontend billing
+ * tests — change here and the CI `verify-billing-cap-literals` step will fail
+ * until the other sites are updated.
+ *
+ * Each plan's included-usage cap equals its monthly price in dollars — the
+ * same $5/$20/$200 numbers previously expressed as 8M/32M/320M tokens at the
+ * old flat rate of 16,000 tokens per cent. Switching to a dollar cap (instead
+ * of a token count) is what lets different agents run different models with
+ * different $/token ratios without the cap silently over- or under-counting
+ * usage.
  */
-export const TRIAL_HARD_CAP_DEFAULT_TOKENS = 8_000_000
-export const PRO_HARD_CAP_DEFAULT_TOKENS = 32_000_000
-export const TEAM_HARD_CAP_DEFAULT_TOKENS = 320_000_000
+export const TRIAL_HARD_CAP_DEFAULT_USD_CENTS = 500
+export const PRO_HARD_CAP_DEFAULT_USD_CENTS = 2_000
+export const TEAM_HARD_CAP_DEFAULT_USD_CENTS = 20_000
 
 /** Billing periods on paid plans run ~30 days; used when Stripe hasn't written `period_end` yet. */
 export const DEFAULT_PERIOD_LENGTH_MS = 30 * 24 * 60 * 60 * 1000
-
-/**
- * Usage-credit conversion rate: 1 cent of prepaid balance buys this many
- * `maskin_plan` tokens once a pro/team workspace exceeds its hard cap (see
- * `lib/credit-billing.ts`). Deliberately the same $20-per-32M-token rate as
- * the old block-based overage pricing this replaced
- * (20 * 100 cents / 32_000_000 tokens = 1 cent / 16_000 tokens) — this is a
- * mechanism change (prepaid vs. metered-after-the-fact), not a repricing.
- */
-export const CREDIT_TOKENS_PER_USD_CENT = 16_000
-
-/** Rounds up — Maskin never under-charges a fractional cent of credit usage. */
-export function tokensToCreditCents(tokens: number): number {
-	return Math.ceil(tokens / CREDIT_TOKENS_PER_USD_CENT)
-}

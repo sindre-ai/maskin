@@ -44,7 +44,6 @@ import {
 import { trackAgentSessionStartedWithPrompt } from '../lib/analytics/agent-session-events'
 import { claimLoopActiveDay, trackLoopActiveDay, utcDayString } from '../lib/analytics/loop-events'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
-import { tokensToCreditCents } from '../lib/billing-defaults'
 import {
 	isClaudeFailoverEnabled,
 	recordRuntimeClaudeOAuthBackupExhausted,
@@ -76,6 +75,7 @@ import {
 import { isSlackBotToken } from '../lib/integrations/providers/slack/mcp-server'
 import { getProvider } from '../lib/integrations/registry'
 import {
+	FALLBACK_TOKENS_PER_USD_CENT,
 	LLM_ROUTE_MASKIN_PLAN,
 	LLM_ROUTE_OAUTH,
 	type LlmRoute,
@@ -84,7 +84,7 @@ import {
 	checkPlanCap,
 	creditBalanceCents,
 	getWorkspacePlanCap,
-	getWorkspacePlanTokenUsage,
+	getWorkspacePlanUsdCentsUsage,
 	resolveLlmRoute,
 } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
@@ -2720,8 +2720,8 @@ export class SessionManager extends EventEmitter {
 	 * process per segment, and each segment's `result` event only reports
 	 * that segment's own usage — overwriting would silently drop whatever was
 	 * already accumulated from earlier segments. Called on both pause and
-	 * completion so `getWorkspacePlanTokenUsage` (which sums these columns
-	 * for cap/billing display) reflects tokens spent even when a session
+	 * completion so `getWorkspacePlanUsdCentsUsage` (which sums these columns
+	 * for cap/billing display) reflects cost incurred even when a session
 	 * never reaches a terminal 'completed' status — pausing is the common
 	 * case for interactive sessions sitting idle between turns.
 	 *
@@ -2803,9 +2803,9 @@ export class SessionManager extends EventEmitter {
 	 * workspace that has little or no credit balance left the entire time.
 	 *
 	 * Combines the workspace's already-persisted usage from other sessions
-	 * (`getWorkspacePlanTokenUsage`, which reads this session's own
-	 * inputTokens/outputTokens columns too — still NULL/0 while it's
-	 * running, since those are only written on pause/completion) with a
+	 * (`getWorkspacePlanUsdCentsUsage`, which reads this session's own
+	 * totalCostUsd/inputTokens/outputTokens columns too — still NULL/0 while
+	 * it's running, since those are only written on pause/completion) with a
 	 * fresh live scan of *this* session's own logs
 	 * (`sumRunningSessionUsage`), so no separate persistence step is needed
 	 * here — nothing is written until the session actually stops, at which
@@ -2831,18 +2831,26 @@ export class SessionManager extends EventEmitter {
 		const plan = billing?.plan
 		if (plan !== 'pro' && plan !== 'team') return
 
-		const cap = getWorkspacePlanCap(wsSettings)
-		if (cap === null) return
+		const capCents = getWorkspacePlanCap(wsSettings)
+		if (capCents === null) return
 
 		const periodStartMs =
 			typeof billing?.period_start === 'number' ? billing.period_start * 1000 : undefined
-		const [persistedUsed, liveUsage] = await Promise.all([
-			getWorkspacePlanTokenUsage(this.db, session.workspaceId, periodStartMs),
+		const [persistedUsedCents, liveUsage] = await Promise.all([
+			getWorkspacePlanUsdCentsUsage(this.db, session.workspaceId, periodStartMs),
 			sumRunningSessionUsage(this.db, session.id),
 		])
-		const liveTokens = (liveUsage?.inputTokens ?? 0) + (liveUsage?.outputTokens ?? 0)
-		const totalUsed = persistedUsed + liveTokens
-		if (totalUsed < cap) return
+		// Same preference order as getWorkspacePlanUsdCentsUsage: the live
+		// scan's own reported totalCostUsd first, a flat token-rate estimate
+		// only when that's unavailable (e.g. no `result` event parsed yet).
+		const liveCents = liveUsage
+			? liveUsage.totalCostUsd && liveUsage.totalCostUsd > 0
+				? liveUsage.totalCostUsd * 100
+				: ((liveUsage.inputTokens ?? 0) + (liveUsage.outputTokens ?? 0)) /
+					FALLBACK_TOKENS_PER_USD_CENT
+			: 0
+		const totalUsedCents = persistedUsedCents + Math.ceil(liveCents)
+		if (totalUsedCents < capCents) return
 
 		let stopReason: string | null = null
 		if (!canUseCreditBalance(plan, billing)) {
@@ -2851,8 +2859,7 @@ export class SessionManager extends EventEmitter {
 			// rejected, so this one shouldn't be allowed to keep running either.
 			stopReason = 'usage exceeded the plan cap and no usage credits are available'
 		} else {
-			const overageTokens = totalUsed - cap
-			const costCentsNeeded = tokensToCreditCents(overageTokens)
+			const costCentsNeeded = totalUsedCents - capCents
 			const balance = creditBalanceCents(billing)
 			if (costCentsNeeded > balance) {
 				stopReason = 'usage exceeded the plan cap and your remaining usage credits'
@@ -2863,8 +2870,8 @@ export class SessionManager extends EventEmitter {
 		logger.warn('Stopping running session over budget', {
 			sessionId: session.id,
 			workspaceId: session.workspaceId,
-			totalUsed,
-			cap,
+			totalUsedCents,
+			capCents,
 			reason: stopReason,
 		})
 		await this.insertSystemLog(session.id, `Session stopped: ${stopReason}.`).catch((err) =>
@@ -2881,7 +2888,7 @@ export class SessionManager extends EventEmitter {
 				action: 'session_budget_stopped',
 				entityType: 'session',
 				entityId: session.id,
-				data: { total_used_tokens: totalUsed, cap, reason: stopReason },
+				data: { total_used_usd_cents: totalUsedCents, cap_usd_cents: capCents, reason: stopReason },
 			})
 			.catch((err) =>
 				logger.warn('Failed to insert session_budget_stopped event', {

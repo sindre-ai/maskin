@@ -20,8 +20,8 @@ const VALID_ENV = {
 	STRIPE_WEBHOOK_SECRET: 'whsec_x',
 	STRIPE_PRICE_PRO: 'price_pro',
 	STRIPE_PRICE_TEAM: 'price_team',
-	MASKIN_PRO_HARD_CAP_TOKENS: '32000000',
-	MASKIN_TEAM_HARD_CAP_TOKENS: '320000000',
+	MASKIN_PRO_HARD_CAP_USD_CENTS: '2000',
+	MASKIN_TEAM_HARD_CAP_USD_CENTS: '20000',
 }
 
 const setupEnv = () => {
@@ -287,7 +287,7 @@ describe('POST /api/webhooks/stripe', () => {
 			stripe_customer_id: 'cus_99',
 			stripe_subscription_id: 'sub_99',
 			status: 'active',
-			hard_cap_tokens: 320_000_000,
+			hard_cap_usd_cents: 20_000,
 			period_start: 1_700_000_000,
 			period_end: 1_702_592_000,
 		})
@@ -415,7 +415,7 @@ describe('POST /api/webhooks/stripe', () => {
 
 	it('preserves fields across interleaved deliveries (lost-update regression)', async () => {
 		// Two Stripe webhooks for the same workspace land within seconds:
-		//   delivery A: customer.subscription.created — writes plan, hard_cap_tokens, period_start
+		//   delivery A: customer.subscription.created — writes plan, hard_cap_usd_cents, period_start
 		//   delivery B: checkout.session.completed   — writes stripe_customer_id, stripe_subscription_id, status
 		// Without SELECT … FOR UPDATE inside a transaction, B can read settings
 		// before A's UPDATE commits, mutate its own slice, and clobber A's plan
@@ -441,7 +441,7 @@ describe('POST /api/webhooks/stripe', () => {
 						billing: {
 							plan: 'team',
 							status: 'active',
-							hard_cap_tokens: 320_000_000,
+							hard_cap_usd_cents: 20_000,
 							period_start: 1_700_000_000,
 							stripe_subscription_id: 'sub_42',
 							stripe_customer_id: 'cus_42',
@@ -492,7 +492,7 @@ describe('POST /api/webhooks/stripe', () => {
 		// the lost-update bug would surface here as plan='trial' or missing cap.
 		expect(workspaceUpdates[1]?.settings.billing).toMatchObject({
 			plan: 'team',
-			hard_cap_tokens: 320_000_000,
+			hard_cap_usd_cents: 20_000,
 			period_start: 1_700_000_000,
 			stripe_customer_id: 'cus_42',
 			stripe_subscription_id: 'sub_42',
@@ -520,7 +520,7 @@ describe('POST /api/webhooks/stripe', () => {
 						billing: {
 							plan: 'pro',
 							status: 'active',
-							hard_cap_tokens: 32_000_000,
+							hard_cap_usd_cents: 2_000,
 							period_start: 1_700_000_000,
 							period_end: 1_702_592_000,
 							stripe_customer_id: 'cus_existing',

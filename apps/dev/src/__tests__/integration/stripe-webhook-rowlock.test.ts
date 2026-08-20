@@ -54,10 +54,10 @@ describe('Stripe webhook row-lock Integration', () => {
 		// Tx A writes the subscription slice and holds the lock long enough that
 		// B's SELECT FOR UPDATE attempts to acquire while A still owns it.
 		// Without `.for('update')` in a transaction, B would read A's pre-commit
-		// snapshot and clobber A's plan / hard_cap_tokens on UPDATE.
+		// snapshot and clobber A's plan / hard_cap_usd_cents on UPDATE.
 		const patchA = {
 			plan: 'pro',
-			hard_cap_tokens: 96_000_000,
+			hard_cap_usd_cents: 6_000,
 			period_start: 1_700_000_000,
 		}
 		const patchB = {
@@ -90,7 +90,7 @@ describe('Stripe webhook row-lock Integration', () => {
 		const finalBilling = (final?.settings as { billing?: Record<string, unknown> })?.billing
 		expect(finalBilling).toMatchObject({
 			plan: 'pro',
-			hard_cap_tokens: 96_000_000,
+			hard_cap_usd_cents: 6_000,
 			period_start: 1_700_000_000,
 			stripe_customer_id: 'cus_42',
 			stripe_subscription_id: 'sub_42',

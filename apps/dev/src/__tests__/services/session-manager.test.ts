@@ -214,19 +214,19 @@ describe('SessionManager', () => {
 
 		it('rejects pre-insert when the workspace is over its plan cap', async () => {
 			// Workspace select returns a pro plan at cap; the cap query then
-			// returns rows that sum to ≥ hard_cap_tokens. The session insert mock
-			// is intentionally left configured so we can prove the insert is never
-			// reached.
+			// returns rows whose reported dollar cost sums to ≥ hard_cap_usd_cents.
+			// The session insert mock is intentionally left configured so we can
+			// prove the insert is never reached.
 			mockResults.selectQueue = [
 				[
 					{
 						id: 'ws-1',
 						settings: {
-							billing: { plan: 'pro', hard_cap_tokens: 100, period_start: 0 },
+							billing: { plan: 'pro', hard_cap_usd_cents: 100, period_start: 0 },
 						},
 					},
 				],
-				[{ inputTokens: 100, outputTokens: 0 }],
+				[{ totalCostUsd: '1.00', inputTokens: 0, outputTokens: 0 }],
 			]
 			const sessionRow = buildSession({ status: 'pending' })
 			mockResults.insertQueue = [[sessionRow], []]

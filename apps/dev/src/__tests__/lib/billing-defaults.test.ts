@@ -1,18 +1,28 @@
 import { describe, expect, it } from 'vitest'
-import { CREDIT_TOKENS_PER_USD_CENT, tokensToCreditCents } from '../../lib/billing-defaults'
+import { MAX_ENV_CAP, parsePositiveIntEnv } from '../../lib/billing-defaults'
 
-describe('tokensToCreditCents', () => {
-	it('converts an exact multiple of the rate with no rounding', () => {
-		expect(tokensToCreditCents(CREDIT_TOKENS_PER_USD_CENT)).toBe(1)
-		expect(tokensToCreditCents(CREDIT_TOKENS_PER_USD_CENT * 5)).toBe(5)
+describe('parsePositiveIntEnv', () => {
+	it('parses a valid positive integer string', () => {
+		expect(parsePositiveIntEnv('CAP', { CAP: '2000' })).toBe(2000)
 	})
 
-	it('rounds up any remainder — Maskin never under-charges a fractional cent', () => {
-		expect(tokensToCreditCents(1)).toBe(1)
-		expect(tokensToCreditCents(CREDIT_TOKENS_PER_USD_CENT + 1)).toBe(2)
+	it('returns null when unset or blank', () => {
+		expect(parsePositiveIntEnv('CAP', {})).toBeNull()
+		expect(parsePositiveIntEnv('CAP', { CAP: '' })).toBeNull()
 	})
 
-	it('returns 0 for 0 tokens', () => {
-		expect(tokensToCreditCents(0)).toBe(0)
+	it('rejects non-digit shapes (scientific notation, decimals, underscores)', () => {
+		expect(parsePositiveIntEnv('CAP', { CAP: '1e9' })).toBeNull()
+		expect(parsePositiveIntEnv('CAP', { CAP: '1.5' })).toBeNull()
+		expect(parsePositiveIntEnv('CAP', { CAP: '2_000' })).toBeNull()
+	})
+
+	it('rejects zero and negative values', () => {
+		expect(parsePositiveIntEnv('CAP', { CAP: '0' })).toBeNull()
+		expect(parsePositiveIntEnv('CAP', { CAP: '-5' })).toBeNull()
+	})
+
+	it('clamps pathologically long digit strings to MAX_ENV_CAP', () => {
+		expect(parsePositiveIntEnv('CAP', { CAP: '9'.repeat(30) })).toBe(MAX_ENV_CAP)
 	})
 })

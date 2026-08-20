@@ -28,12 +28,6 @@ const PLAN_LABEL: Record<BillingPlan, string> = {
 
 const STRIPE_BILLING_PORTAL = 'https://billing.stripe.com/p/login/maskin'
 
-export function formatTokens(n: number): string {
-	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`
-	if (n >= 1_000) return `${(n / 1_000).toFixed(n >= 10_000 ? 0 : 1)}k`
-	return `${n}`
-}
-
 export function formatCredits(cents: number): string {
 	return `$${(cents / 100).toFixed(2)}`
 }
@@ -63,12 +57,12 @@ function formatSeatCap(n: number | null): string {
 	return `Up to ${n} members per workspace`
 }
 
-// 8_000_000 / 32_000_000 / 320_000_000 below mirror TRIAL_HARD_CAP_DEFAULT_TOKENS /
-// PRO_HARD_CAP_DEFAULT_TOKENS / TEAM_HARD_CAP_DEFAULT_TOKENS in
+// 500 / 2_000 / 20_000 (USD cents) below mirror TRIAL_HARD_CAP_DEFAULT_USD_CENTS /
+// PRO_HARD_CAP_DEFAULT_USD_CENTS / TEAM_HARD_CAP_DEFAULT_USD_CENTS in
 // apps/dev/src/lib/billing-defaults.ts and the .env.example
-// MASKIN_*_HARD_CAP_TOKENS defaults. Keep in sync when bumping — enforced by
-// scripts/verify-billing-cap-literals.mjs.
-const CAP_DEFAULTS = { trial: 8_000_000, pro: 32_000_000, team: 320_000_000 } as const
+// MASKIN_*_HARD_CAP_USD_CENTS defaults. Keep in sync when bumping — enforced
+// by scripts/verify-billing-cap-literals.mjs.
+const CAP_DEFAULTS = { trial: 500, pro: 2_000, team: 20_000 } as const
 
 interface PlanCardConfig {
 	plan: BillingPlan
@@ -87,7 +81,7 @@ const PLAN_CONFIG: PlanCardConfig[] = [
 		priceSuffix: '/14 days',
 		tagline: 'Full product, no card. $5 of usage on the house.',
 		features: [
-			`${formatTokens(CAP_DEFAULTS.trial)} tokens included`,
+			`${formatCredits(CAP_DEFAULTS.trial)} of usage included`,
 			formatOwnershipCap(OWNERSHIP_CAPS.trial),
 			formatSeatCap(SEAT_CAPS.trial),
 			'Hosted by Maskin — no API key needed',
@@ -100,8 +94,8 @@ const PLAN_CONFIG: PlanCardConfig[] = [
 		priceSuffix: '/mo',
 		tagline: 'For teams running real workflows day to day.',
 		features: [
-			`${formatTokens(CAP_DEFAULTS.pro)} tokens of usage included each month`,
-			'Buy usage credits any time to keep going past your included tokens',
+			`${formatCredits(CAP_DEFAULTS.pro)} of usage included each month`,
+			'Buy usage credits any time to keep going past your included usage',
 			formatOwnershipCap(OWNERSHIP_CAPS.pro),
 			formatSeatCap(SEAT_CAPS.pro),
 			'Hosted by Maskin — no API key needed',
@@ -114,8 +108,8 @@ const PLAN_CONFIG: PlanCardConfig[] = [
 		priceSuffix: '/mo',
 		tagline: 'Heavier loops, volume rates, one invoice.',
 		features: [
-			`${formatTokens(CAP_DEFAULTS.team)} tokens of usage included each month`,
-			'Buy usage credits any time to keep going past your included tokens',
+			`${formatCredits(CAP_DEFAULTS.team)} of usage included each month`,
+			'Buy usage credits any time to keep going past your included usage',
 			formatOwnershipCap(OWNERSHIP_CAPS.team),
 			formatSeatCap(SEAT_CAPS.team),
 			'Hosted by Maskin — no API key needed',
@@ -320,8 +314,8 @@ export function BillingSection({
 	const isByo = usage.plan === 'byollm'
 	const isPaid = usage.plan === 'pro' || usage.plan === 'team'
 	const isTrial = usage.plan === 'trial'
-	const cap = usage.hard_cap_tokens ?? 0
-	const pct = cap > 0 ? Math.min(100, Math.round((usage.tokens_used / cap) * 100)) : 0
+	const cap = usage.hard_cap_usd_cents ?? 0
+	const pct = cap > 0 ? Math.min(100, Math.round((usage.usd_cents_used / cap) * 100)) : 0
 	const periodMs = usage.period_resets_in_ms
 	const resetsIn = formatResetsIn(periodMs)
 
@@ -333,8 +327,9 @@ export function BillingSection({
 		<div>
 			<Label className="mb-1 text-bold">Maskin Subscription</Label>
 			<p className="text-xs text-muted-foreground mb-3">
-				Hosted LLM — pay Maskin, no API key needed. Included tokens per period, then buy prepaid
-				usage credits any time to keep going — you choose the amount, nothing is auto-charged.
+				Hosted LLM — pay Maskin, no API key needed. Included usage per period, billed at actual
+				dollar cost, then buy prepaid usage credits any time to keep going — you choose the amount,
+				nothing is auto-charged.
 			</p>
 
 			<UsageBanner
@@ -464,7 +459,7 @@ function UsageBanner({
 				<div>
 					<div className="flex items-baseline justify-between text-xs text-muted-foreground">
 						<span>
-							{formatTokens(usage.tokens_used)} / {formatTokens(cap)} tokens
+							{formatCredits(usage.usd_cents_used)} / {formatCredits(cap)} used
 						</span>
 						{periodMs !== null && periodMs > 0 && periodMs < DAY_MS ? (
 							<PeriodCountdown ms={periodMs} label={isTrial ? 'expires' : 'resets'} />
