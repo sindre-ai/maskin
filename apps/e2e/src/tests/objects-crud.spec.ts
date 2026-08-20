@@ -6,9 +6,12 @@ test.describe('Objects CRUD', () => {
 
 		// Header "New" menu → "New task" opens the CreatePicker dialog pre-seeded
 		// to the task subtype, so no type-selector step is shown.
-		// The objects list toolbar has its own "New" button too — scope to the
-		// global header so this exercises the header's New menu specifically.
-		await page.locator('header').getByRole('button', { name: /^new$/i }).click()
+		// The split New button's primary half runs the screen's default create
+		// action directly (no menu) — the chevron half opens the full menu, so
+		// that's the one that exposes "New task". The objects list toolbar has
+		// its own "New" button too — scope to the global header so this
+		// exercises the header's New menu specifically.
+		await page.locator('header').getByRole('button', { name: 'More ways to start' }).click()
 		await page.getByRole('menuitem', { name: /new task/i }).click()
 
 		await page.getByPlaceholder('What are you creating?').fill('E2E Test Object')
@@ -74,7 +77,8 @@ test.describe('Objects CRUD', () => {
 
 		// The objects list toolbar has its own "New" button too — scope to the
 		// global header so this exercises the header's New menu specifically.
-		await page.locator('header').getByRole('button', { name: /^new$/i }).click()
+		// See the note above: the chevron half opens the menu with "New insight".
+		await page.locator('header').getByRole('button', { name: 'More ways to start' }).click()
 		await page.getByRole('menuitem', { name: /new insight/i }).click()
 
 		// Seeded with a defaultType, so the picker skips straight to the title input.
