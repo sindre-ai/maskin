@@ -132,11 +132,13 @@ export async function evaluateAndRespond(ctx: {
 		mentions?: string[]
 		context_objects?: Array<{ id: string; title?: string; type?: string }>
 		context_notifications?: Array<{ id: string; title?: string }>
+		attachments?: Array<{ file_id: string; name?: string; mime_type?: string }>
 	} | null
 	const mentioned = new Set(metadata?.mentions ?? [])
-	// The composer sends attached objects/notifications as structured metadata
-	// (rendered as chips in the UI) rather than inlined into `content` — rebuild
-	// a compact context block here so the agent's prompt still carries it.
+	// The composer sends attached objects/notifications/files as structured
+	// metadata (rendered as chips in the UI) rather than inlined into
+	// `content` — rebuild a compact context block here so the agent's prompt
+	// still carries it.
 	const messageForPrompt = { ...message, content: appendContextBlock(message.content, metadata) }
 
 	const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
@@ -461,21 +463,25 @@ async function checkRelevance(params: {
 }
 
 /**
- * Rebuilds the compact "Context objects:" / "Context notifications:" block
- * the composer used to inline directly into message content — now that the
- * composer sends this as structured metadata (so the UI can render chips
- * instead of literal text), the agent-facing prompt has to reconstruct it.
+ * Rebuilds the compact "Context objects:" / "Context notifications:" /
+ * "Attached files:" block the composer used to inline directly into message
+ * content — now that the composer sends this as structured metadata (so the
+ * UI can render chips instead of literal text), the agent-facing prompt has
+ * to reconstruct it. Attached files are listed by id + name only; the agent
+ * has to call the `get_file` MCP tool to actually read the content.
  */
 function appendContextBlock(
 	content: string,
 	metadata: {
 		context_objects?: Array<{ id: string; title?: string; type?: string }>
 		context_notifications?: Array<{ id: string; title?: string }>
+		attachments?: Array<{ file_id: string; name?: string; mime_type?: string }>
 	} | null,
 ): string {
 	const objects = metadata?.context_objects ?? []
 	const notifications = metadata?.context_notifications ?? []
-	if (objects.length === 0 && notifications.length === 0) return content
+	const attachments = metadata?.attachments ?? []
+	if (objects.length === 0 && notifications.length === 0 && attachments.length === 0) return content
 	const lines: string[] = [content, '', '---']
 	if (objects.length > 0) {
 		lines.push('Context objects:')
@@ -491,6 +497,15 @@ function appendContextBlock(
 		for (const n of notifications) {
 			const label = n.title?.trim() || n.id
 			lines.push(`- ${label} — id: ${n.id}`)
+		}
+	}
+	if (attachments.length > 0) {
+		if (objects.length > 0 || notifications.length > 0) lines.push('')
+		lines.push('Attached files (call the get_file MCP tool with the file id to read the content):')
+		for (const f of attachments) {
+			const label = f.name?.trim() || f.file_id
+			const mimeTag = f.mime_type ? ` (${f.mime_type})` : ''
+			lines.push(`- ${label}${mimeTag} — file id: ${f.file_id}`)
 		}
 	}
 	return lines.join('\n')

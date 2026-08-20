@@ -1070,6 +1070,63 @@ describe('Conversations Integration', () => {
 			expect(params.actionPrompt).toContain(`hey <@${agent.id}>`)
 		})
 
+		it('includes attached files in the spawned session prompt with instructions to fetch them', async () => {
+			const agent = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, agent.id)
+			const { app: ownerApp } = createConversationsApp(ownerId)
+			const created = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Attachment prompt test', participant_actor_ids: [agent.id] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+			const [triggering] = await db
+				.insert(messages)
+				.values({
+					conversationId: conversation.id,
+					actorId: ownerId,
+					content: 'can you please give a summary of this file?',
+					metadata: {
+						mentions: [agent.id],
+						attachments: [
+							{
+								file_id: '11111111-1111-1111-1111-111111111111',
+								name: 'report.pdf',
+								mime_type: 'application/pdf',
+							},
+						],
+					},
+				})
+				.returning()
+			if (!triggering) throw new Error('failed to insert triggering message')
+
+			const sessionManager = {
+				createSession: vi.fn().mockResolvedValue({ id: 'new-session-id' }),
+				findActiveConversationSession: vi.fn().mockResolvedValue(null),
+				writeInput: vi.fn().mockResolvedValue(undefined),
+			}
+			await evaluateAndRespond({
+				db,
+				// biome-ignore lint/suspicious/noExplicitAny: test double, real type lives in session-manager.ts
+				sessionManager: sessionManager as any,
+				workspaceId,
+				conversationId: conversation.id,
+				messageId: triggering.id,
+			})
+
+			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
+			const [, params] = sessionManager.createSession.mock.calls[0] as [
+				string,
+				Record<string, unknown>,
+			]
+			expect(params.actionPrompt).toContain('report.pdf')
+			expect(params.actionPrompt).toContain('11111111-1111-1111-1111-111111111111')
+			expect(params.actionPrompt).toContain('get_file')
+		})
+
 		it('falls back to spawning fresh when writeInput to the existing session fails', async () => {
 			const agent = await insertActor(db, { type: 'agent' })
 			await addMember(workspaceId, agent.id)
