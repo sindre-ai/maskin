@@ -4,6 +4,7 @@ import { workspaceMembers, workspaces as workspacesTable } from '@maskin/db/sche
 import type { PgNotifyBridge } from '@maskin/realtime'
 import { and, eq } from 'drizzle-orm'
 import { createApiError, formatZodError } from '../../lib/errors'
+import { countHumanMembers } from '../../lib/workspace-capacity'
 import { insertActor, insertWorkspace } from '../factories'
 import { jsonRequest } from '../helpers'
 import { createIntegrationApp, db, getTestActorId } from './global-setup'
@@ -16,6 +17,7 @@ type Env = {
 		actorId: string
 		actorType: string
 		notifyBridge: PgNotifyBridge
+		sessionManager: { createSession: (...args: unknown[]) => Promise<unknown> }
 	}
 }
 
@@ -51,6 +53,7 @@ function createAppAsActor(actorId: string) {
 		c.set('actorId', actorId)
 		c.set('actorType', 'human')
 		c.set('notifyBridge', {} as PgNotifyBridge)
+		c.set('sessionManager', { createSession: async () => ({}) })
 		await next()
 	})
 	// The assignability check between workspacesRoutes' own (narrower) Env and
@@ -79,12 +82,11 @@ async function setPlan(workspaceId: string, plan: 'trial' | 'pro' | 'team' | 'by
 		throw new Error(`setPlan(${plan}) failed: ${res.status} ${await res.text()}`)
 }
 
+// Delegates to the production helper rather than re-deriving the join —
+// a plain `workspace_members` count would also tally the 6 seeded default
+// agent actors, which never count toward the human seat cap.
 async function humanMemberCount(workspaceId: string): Promise<number> {
-	const rows = await db
-		.select({ actorId: workspaceMembers.actorId })
-		.from(workspaceMembers)
-		.where(eq(workspaceMembers.workspaceId, workspaceId))
-	return rows.length
+	return countHumanMembers(db, workspaceId)
 }
 
 async function getWorkspace(workspaceId: string) {

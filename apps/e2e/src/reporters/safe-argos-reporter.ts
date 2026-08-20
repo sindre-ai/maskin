@@ -97,5 +97,15 @@ export default class SafeArgosReporter implements Reporter {
 		} catch (error) {
 			console.error('[argos] upload failed, continuing without Argos upload:', error)
 		}
+		// Belt-and-suspenders beyond the try/catch above and the process-level
+		// handlers up top: @argos-ci/core's upload() has been observed to reject
+		// via a promise that isn't part of the chain awaited by
+		// ArgosReporter.onEnd() (see the file-level comment), so the rejection
+		// can surface after this function has already returned normally —
+		// too late for either guard to intercept it. Pinning the exit code to
+		// Playwright's own verdict here means a late/stray Argos rejection can
+		// no longer flip a shard that actually passed into a CI failure, no
+		// matter which async path it takes.
+		process.exitCode = result.status === 'passed' ? 0 : 1
 	}
 }

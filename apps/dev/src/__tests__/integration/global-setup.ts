@@ -16,6 +16,7 @@ type Env = {
 		actorId: string
 		actorType: string
 		notifyBridge: PgNotifyBridge
+		sessionManager: { createSession: (...args: unknown[]) => Promise<unknown> }
 	}
 }
 
@@ -54,6 +55,12 @@ export function createIntegrationApp(
 		c.set('actorId', testActorId)
 		c.set('actorType', 'human')
 		c.set('notifyBridge', {} as PgNotifyBridge)
+		// Routes fire-and-forget a welcome/onboarding session via
+		// c.get('sessionManager').createSession(...) (see routes/workspaces.ts) —
+		// unlike agentStorage, this is read unguarded, so every route mounted
+		// through this shared harness needs a stub here even if the test never
+		// asserts on session creation itself.
+		c.set('sessionManager', { createSession: async () => ({}) })
 		await next()
 	})
 

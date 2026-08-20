@@ -468,41 +468,56 @@ describe('Workspaces Integration', () => {
 		it('creates two workspaces for the same creator with default agents each and no cross-contamination', async () => {
 			const app = createApp()
 
-			const first = await (
-				await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Same Tenant A' }))
-			).json()
-			const second = await (
-				await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Same Tenant B' }))
-			).json()
+			// The ownership cap (trial tier: 1 owned workspace) would otherwise
+			// block the second create below — bypass it via the enterprise
+			// allowlist so this test can focus on its actual subject: agent-seed
+			// isolation between two workspaces owned by the same creator.
+			const ORIGINAL_ENV = process.env.MASKIN_ENTERPRISE_ACTOR_IDS
+			process.env.MASKIN_ENTERPRISE_ACTOR_IDS = getTestActorId()
+			try {
+				const first = await (
+					await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Same Tenant A' }))
+				).json()
+				const second = await (
+					await app.request(jsonRequest('POST', '/api/workspaces', { name: 'Same Tenant B' }))
+				).json()
 
-			expect(first.id).not.toBe(second.id)
-			expect(await agentNamesFor(first.id)).toEqual([...DEFAULT_AGENT_NAMES].sort())
-			expect(await agentNamesFor(second.id)).toEqual([...DEFAULT_AGENT_NAMES].sort())
+				expect(first.id).not.toBe(second.id)
+				expect(await agentNamesFor(first.id)).toEqual([...DEFAULT_AGENT_NAMES].sort())
+				expect(await agentNamesFor(second.id)).toEqual([...DEFAULT_AGENT_NAMES].sort())
 
-			// Agent actor rows are distinct between workspaces — a workspace's
-			// members must not overlap another workspace's, otherwise
-			// permissions/skills would leak across tenants.
-			const firstAgentIds = new Set(
-				(
+				// Agent actor rows are distinct between workspaces — a workspace's
+				// members must not overlap another workspace's, otherwise
+				// permissions/skills would leak across tenants.
+				const firstAgentIds = new Set(
+					(
+						await db
+							.select({ actorId: workspaceMembers.actorId })
+							.from(workspaceMembers)
+							.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+							.where(eq(workspaceMembers.workspaceId, first.id))
+					)
+						.map((r) => r.actorId)
+						.filter((id) => id !== getTestActorId()),
+				)
+				const secondAgentIds = (
 					await db
 						.select({ actorId: workspaceMembers.actorId })
 						.from(workspaceMembers)
 						.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
-						.where(eq(workspaceMembers.workspaceId, first.id))
+						.where(eq(workspaceMembers.workspaceId, second.id))
 				)
 					.map((r) => r.actorId)
-					.filter((id) => id !== getTestActorId()),
-			)
-			const secondAgentIds = (
-				await db
-					.select({ actorId: workspaceMembers.actorId })
-					.from(workspaceMembers)
-					.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
-					.where(eq(workspaceMembers.workspaceId, second.id))
-			)
-				.map((r) => r.actorId)
-				.filter((id) => id !== getTestActorId())
-			for (const id of secondAgentIds) expect(firstAgentIds.has(id)).toBe(false)
+					.filter((id) => id !== getTestActorId())
+				for (const id of secondAgentIds) expect(firstAgentIds.has(id)).toBe(false)
+			} finally {
+				if (ORIGINAL_ENV === undefined) {
+					// biome-ignore lint/performance/noDelete: assigning undefined coerces to the string "undefined" in Node.js
+					delete process.env.MASKIN_ENTERPRISE_ACTOR_IDS
+				} else {
+					process.env.MASKIN_ENTERPRISE_ACTOR_IDS = ORIGINAL_ENV
+				}
+			}
 		})
 
 		it('re-invoking the seeding path against an already-seeded workspace inserts zero new agent rows', async () => {
