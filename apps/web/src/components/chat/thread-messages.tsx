@@ -1,10 +1,14 @@
 import { EmptyState } from '@/components/shared/empty-state'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
-import { flattenMessagesOldestFirst, useConversationMessages } from '@/hooks/use-conversation'
+import {
+	flattenMessagesOldestFirst,
+	useConversation,
+	useConversationMessages,
+} from '@/hooks/use-conversation'
 import { useConversationActivity } from '@/hooks/use-conversation-activity'
 import { cn } from '@/lib/cn'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { MessageActivity } from './message-activity'
 import { MessageBubble } from './message-bubble'
 import { MessageDivider, isNewDay } from './message-divider'
@@ -19,6 +23,14 @@ export function ThreadMessages({ workspaceId, conversationId, className }: Threa
 	const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
 		useConversationMessages(conversationId, workspaceId)
 	const messages = flattenMessagesOldestFirst(data)
+	// Reuses the same query the route already fetches for the header/composer
+	// (queryKeys.conversations.detail) — no extra network round trip.
+	const { data: conversation } = useConversation(conversationId, workspaceId)
+	const participantNames = useMemo(() => {
+		const map = new Map<string, string>()
+		for (const p of conversation?.participants ?? []) map.set(p.actorId, p.actorName)
+		return map
+	}, [conversation])
 	const { byReplyMessageId, byTriggerMessageId, fallback } = useConversationActivity(
 		workspaceId,
 		conversationId,
@@ -109,7 +121,11 @@ export function ThreadMessages({ workspaceId, conversationId, className }: Threa
 							{turnsAbove.map((turn) => (
 								<MessageActivity key={turn.sessionId} turn={turn} />
 							))}
-							<MessageBubble workspaceId={workspaceId} message={message} />
+							<MessageBubble
+								workspaceId={workspaceId}
+								message={message}
+								participantNames={participantNames}
+							/>
 							{turnsBelowHere.map((turn) => (
 								<MessageActivity key={turn.sessionId} turn={turn} />
 							))}
