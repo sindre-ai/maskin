@@ -23,6 +23,16 @@ import type { DispatchResult } from './session-dispatch-queue'
  * The session row's `agent_server_id` is set BEFORE the POST so any concurrent
  * dispatcher sees the slot consumed when computing load. If the POST fails the
  * field is rolled back, freeing the slot before the queue retries.
+ *
+ * If a dispatch attempt is interrupted after claiming a slot but before it
+ * either completes or rolls back (e.g. the process is killed mid-dispatch by
+ * a deploy), the session is left pinned to that server. A retry MUST target
+ * the same server it's already pinned to — `dispatch()` checks for this via
+ * `getStickyAssignment()` before falling back to `pickLeastLoadedServer()`.
+ * Without this, a retry that picks a different (now less-loaded) server would
+ * have its claim rejected by `claimSlot`'s same-server check and be wrongly
+ * reported as a `permanent_failure`, discarding a session that was likely
+ * still recoverable. See MASKIN-DEV-6.
  */
 
 export type StartSessionRequestBuilder = (sessionId: string) => Promise<StartSessionRequest | null>
@@ -80,7 +90,8 @@ export class SessionDispatcher {
 	 * slot on failure.
 	 */
 	dispatch = async (sessionId: string, idempotencyKey: string): Promise<DispatchResult> => {
-		const picked = await this.pickLeastLoadedServer()
+		const picked =
+			(await this.getStickyAssignment(sessionId)) ?? (await this.pickLeastLoadedServer())
 		if (!picked) {
 			return { kind: 'no_capacity' }
 		}
@@ -97,7 +108,16 @@ export class SessionDispatcher {
 
 		// Fetch the secret only after committing to this server so the full pool's
 		// bearer tokens are never in memory at the same time.
-		const secret = await this.fetchSecret(picked.server.id)
+		let secret: string | null
+		try {
+			secret = await this.fetchSecret(picked.server.id)
+		} catch (err) {
+			await this.releaseSlot(sessionId, picked.server.id)
+			return {
+				kind: 'transient_failure',
+				error: `fetchSecret threw: ${err instanceof Error ? err.message : String(err)}`,
+			}
+		}
 		if (!secret) {
 			await this.releaseSlot(sessionId, picked.server.id)
 			return {
@@ -176,6 +196,80 @@ export class SessionDispatcher {
 				error: message,
 			})
 			return { kind: 'transient_failure', error: message }
+		}
+	}
+
+	/**
+	 * If `sessionId` is already pinned to a server from an earlier, interrupted
+	 * dispatch attempt, returns that server so the retry stays sticky to it
+	 * instead of `pickLeastLoadedServer()` choosing a different one (which
+	 * `claimSlot` would then correctly refuse — see the class-level doc
+	 * comment / MASKIN-DEV-6). Returns `null` when the session isn't pinned
+	 * yet. If it's pinned to a server row that no longer exists (e.g.
+	 * decommissioned mid-dispatch) or that has since transitioned away from
+	 * `active` (e.g. an operator started draining/disabling it while the
+	 * session was pinned), releases the stale pin and returns `null` so the
+	 * caller falls through to a fresh `pickLeastLoadedServer()` pick — mirrors
+	 * that method's own `status = 'active'` filter so a retry never lands on a
+	 * server the operator has intentionally taken out of rotation.
+	 */
+	private async getStickyAssignment(sessionId: string): Promise<PickedServer | null> {
+		const [session] = await this.db
+			.select({ agentServerId: sessions.agentServerId })
+			.from(sessions)
+			.where(eq(sessions.id, sessionId))
+			.limit(1)
+		if (!session?.agentServerId) return null
+
+		const serverId = session.agentServerId
+		const [row] = await this.db
+			.select({
+				id: agentServers.id,
+				url: agentServers.url,
+				status: agentServers.status,
+				max: agentServers.maxConcurrentSessions,
+				active: sql<number>`COALESCE((
+					SELECT COUNT(*)::int
+					FROM sessions
+					WHERE sessions.agent_server_id = agent_servers.id
+					  AND sessions.status IN ('starting','running')
+				), 0)`,
+			})
+			.from(agentServers)
+			.where(eq(agentServers.id, serverId))
+			.limit(1)
+
+		if (!row || row.status !== 'active') {
+			await this.releaseStickyPin(sessionId, serverId)
+			return null
+		}
+
+		return {
+			server: { id: row.id, url: row.url },
+			active: Number(row.active) || 0,
+			max: row.max,
+		}
+	}
+
+	/**
+	 * Releases a stale sticky pin found by `getStickyAssignment()`. Unlike the
+	 * `releaseSlot()` calls in `dispatch()` (which run inside branches that
+	 * already return a typed `DispatchResult` on failure), this one runs
+	 * *before* `dispatch()` has committed to a server for this attempt — so a
+	 * DB error here must not throw out of `getStickyAssignment()` and propagate
+	 * as an unhandled rejection. On failure we log and still return, and the
+	 * caller falls through to `pickLeastLoadedServer()` regardless; the stale
+	 * pin is retried on the next dispatch attempt.
+	 */
+	private async releaseStickyPin(sessionId: string, serverId: string): Promise<void> {
+		try {
+			await this.releaseSlot(sessionId, serverId)
+		} catch (err) {
+			logger.warn('Failed to release stale sticky pin', {
+				sessionId,
+				agentServerId: serverId,
+				error: err instanceof Error ? err.message : String(err),
+			})
 		}
 	}
 
