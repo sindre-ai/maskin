@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto'
+import { OpenAPIHono } from '@hono/zod-openapi'
 import { generateApiKey } from '@maskin/auth'
+import type { Database } from '@maskin/db'
 import {
 	actors,
 	agentSkills,
@@ -9,11 +11,27 @@ import {
 	workspaceSkills,
 	workspaces as workspacesTable,
 } from '@maskin/db/schema'
+import type { PgNotifyBridge } from '@maskin/realtime'
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
+import { createApiError, formatZodError } from '../../lib/errors'
 import { insertActor } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
-import { createIntegrationApp, db, getTestActorId } from './global-setup'
+import { db, getTestActorId } from './global-setup'
+
+// POST /api/workspaces kicks off the Chief of Staff welcome session
+// fire-and-forget (.catch(), not awaited) right after the create transaction
+// commits, so the route needs a sessionManager in context even though these
+// tests don't assert on session creation itself.
+type Env = {
+	Variables: {
+		db: Database
+		actorId: string
+		actorType: string
+		notifyBridge: PgNotifyBridge
+		sessionManager: { createSession: (...args: unknown[]) => Promise<unknown> }
+	}
+}
 
 // PostHog is invoked as `void capturePosthogEvent(...)` from the create route.
 // Spy on the module so we can assert emit-once on success and no-emit on
@@ -93,7 +111,33 @@ const DEFAULT_AGENT_NAMES = [
 ]
 
 function createApp() {
-	return createIntegrationApp({ path: '/api/workspaces', module: workspacesRoutes })
+	const app = new OpenAPIHono<Env>({
+		defaultHook: (result, c) => {
+			if (!result.success) {
+				return c.json(
+					createApiError(
+						'VALIDATION_ERROR',
+						'Request validation failed',
+						formatZodError(result.error),
+					),
+					400,
+				)
+			}
+			return undefined
+		},
+	})
+
+	app.use('*', async (c, next) => {
+		c.set('db', db)
+		c.set('actorId', getTestActorId())
+		c.set('actorType', 'human')
+		c.set('notifyBridge', {} as PgNotifyBridge)
+		c.set('sessionManager', { createSession: vi.fn().mockResolvedValue({}) })
+		await next()
+	})
+
+	app.route('/api/workspaces', workspacesRoutes)
+	return app
 }
 
 async function agentNamesFor(workspaceId: string): Promise<string[]> {

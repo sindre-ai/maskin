@@ -49,6 +49,20 @@ process.on('unhandledRejection', (reason) => {
 	process.exitCode = 1
 })
 
+// Belt-and-suspenders for the same class of bug: if the orphaned promise
+// surfaces as an uncaughtException instead of an unhandledRejection (the two
+// are easy to conflate when reasoning about a bundled, minified dependency),
+// apply the identical Argos-only filter so this can't reintroduce the crash
+// under a different Node event name.
+process.on('uncaughtException', (error) => {
+	if (isArgosError(error)) {
+		console.error('[argos] uncaught exception from Argos upload, continuing without upload:', error)
+		return
+	}
+	console.error('Uncaught exception:', error)
+	process.exitCode = 1
+})
+
 /**
  * Wraps the Argos reporter so an upload failure (free-plan screenshot quota,
  * outage, auth) can't fail the whole Playwright run. Argos's own onEnd()
