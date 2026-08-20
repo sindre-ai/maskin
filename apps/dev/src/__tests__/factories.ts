@@ -46,6 +46,7 @@ export function buildActor(overrides?: Record<string, unknown>) {
 
 export function buildWorkspace(overrides?: Record<string, unknown>) {
 	const n = next()
+	const createdBy = randomUUID()
 	return {
 		id: randomUUID(),
 		name: `Workspace ${n}`,
@@ -74,7 +75,12 @@ export function buildWorkspace(overrides?: Record<string, unknown>) {
 		// byollmAllowed gate don't all need an explicit override. Tests for the
 		// gate itself pass `{ byollmAllowed: false }`. See PR #970.
 		byollmAllowed: true,
-		createdBy: randomUUID(),
+		// Defaults to the same actor as createdBy (matches the real
+		// POST /api/workspaces / POST /api/actors behavior — see
+		// insertWorkspace below) so plain buildWorkspace() output satisfies
+		// workspaceResponseSchema's required billingOwnerId out of the box.
+		billingOwnerId: createdBy,
+		createdBy,
 		createdAt: new Date(),
 		updatedAt: new Date(),
 		...overrides,
