@@ -2,8 +2,10 @@ import { randomUUID } from 'node:crypto'
 import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import {
+	events,
 	actors,
 	agentSkills,
+	objects,
 	triggers,
 	workspaceMembers,
 	workspaceSkills,
@@ -12,6 +14,7 @@ import {
 import {
 	CHIEF_OF_STAFF_DEFAULT,
 	DEFAULT_WORKSPACE_AGENTS,
+	DEFAULT_WORKSPACE_LOOPS,
 	DEFAULT_WORKSPACE_TRIGGERS,
 	type SeedSkill,
 	WORKSPACE_COACH_DEFAULT,
@@ -453,7 +456,10 @@ export async function bootstrapDefaultAgents(
 		}
 	}
 
-	// Create triggers for all seeded agents.
+	// Create triggers for all seeded agents. Track each trigger's id by name so
+	// the default loops below (whose steps reference triggers by name) can wire
+	// metadata.trigger_ids without a second lookup pass.
+	const triggerIdByName: Record<string, string> = {}
 	for (const trigger of DEFAULT_WORKSPACE_TRIGGERS) {
 		const targetActorId = actorIdMap[trigger.targetActor$id]
 		if (!targetActorId) continue
@@ -465,23 +471,105 @@ export async function bootstrapDefaultAgents(
 			.where(and(eq(triggers.workspaceId, workspaceId), eq(triggers.name, trigger.name)))
 			.limit(1)
 
-		if (existingTrigger) continue
+		if (existingTrigger) {
+			triggerIdByName[trigger.name] = existingTrigger.id
+			continue
+		}
 
 		try {
-			await db.insert(triggers).values({
-				workspaceId,
-				name: trigger.name,
-				type: trigger.type,
-				config: trigger.config as Record<string, unknown>,
-				actionPrompt: trigger.actionPrompt,
-				targetActorId,
-				enabled: trigger.enabled,
-				createdBy,
-			})
+			const [created] = await db
+				.insert(triggers)
+				.values({
+					workspaceId,
+					name: trigger.name,
+					type: trigger.type,
+					config: trigger.config as Record<string, unknown>,
+					actionPrompt: trigger.actionPrompt,
+					targetActorId,
+					enabled: trigger.enabled,
+					createdBy,
+				})
+				.returning({ id: triggers.id })
+
+			if (created) triggerIdByName[trigger.name] = created.id
 		} catch (err) {
 			logger.error('Failed to create trigger during workspace bootstrap', {
 				workspaceId,
 				triggerName: trigger.name,
+				err,
+			})
+		}
+	}
+
+	// Create the default Loop objects (Discovery → Bet, Workspace Improvements),
+	// wiring metadata.trigger_ids to the triggers seeded above. Idempotent per
+	// workspace via the objects.title check, mirroring the agent/trigger checks
+	// above.
+	for (const loop of DEFAULT_WORKSPACE_LOOPS) {
+		const [existingLoop] = await db
+			.select({ id: objects.id })
+			.from(objects)
+			.where(
+				and(
+					eq(objects.workspaceId, workspaceId),
+					eq(objects.type, 'loop'),
+					eq(objects.title, loop.name),
+				),
+			)
+			.limit(1)
+
+		if (existingLoop) continue
+
+		const triggerIds = loop.triggerNames
+			.map((name) => triggerIdByName[name])
+			.filter((id): id is string => Boolean(id))
+
+		if (triggerIds.length === 0) {
+			logger.error('Skipped seeding default loop — none of its triggers were created', {
+				workspaceId,
+				loopName: loop.name,
+			})
+			continue
+		}
+
+		try {
+			const [created] = await db
+				.insert(objects)
+				.values({
+					workspaceId,
+					type: 'loop',
+					title: loop.name,
+					content: loop.content,
+					status: 'learning',
+					createdBy,
+					metadata: {
+						entry_condition: loop.entryCondition,
+						close_condition: loop.closeCondition,
+						trigger_ids: triggerIds,
+					},
+				})
+				.returning()
+
+			if (!created) {
+				logger.error('Failed to create default loop object during workspace bootstrap', {
+					workspaceId,
+					loopName: loop.name,
+				})
+				continue
+			}
+
+			await db.insert(events).values({
+				workspaceId,
+				actorId: createdBy,
+				action: 'created',
+				entityType: 'loop',
+				entityId: created.id,
+				data: created,
+			})
+		} catch (err) {
+			logger.error('Failed to create default loop during workspace bootstrap', {
+				workspaceId,
+				loopName: loop.name,
 				err,
 			})
 		}

@@ -77,7 +77,7 @@ When the Researcher's brief lands as a \`knowledge\` object in \`draft\`, post O
 - \`Wrong entirely\` → apologise briefly, ask for the correct name/org, restart the first-pass with fresh inputs on the same knowledge object.
 
 **Beat 3 — Steady state kicks in.**
-Once the deep briefs land, the Discovery Analyst's daily sweep starts clustering the resulting insights into candidate bets in \`signal\`. You surface those via the daily \`Cluster & recommend\` comment on the Workspace improvements loop. The onboarding arc is complete; you're back in steady-state routing mode.
+Once the deep briefs land, the Discovery Analyst's daily sweep starts clustering the resulting insights into candidate bets in \`signal\`. You surface those via the daily \`Cluster & recommend\` comment on the Workspace Improvements loop. The onboarding arc is complete; you're back in steady-state routing mode.
 
 Silence between beats is fine and expected — the user shouldn't be pinged twice for the same beat, and no beat should be re-fired if it's already been run (each beat's trigger has an idempotency gate).
 
@@ -152,11 +152,11 @@ Do not re-run Step 0 in a workspace where any \`validated\` knowledge object or 
 
 ## Step 6 — Escalate the workspace's first candidate bets
 
-Discovery Analyst posts its daily clusters on the **Product discovery → shape** loop and stages bets in \`signal\`. Its posts don't @mention the human — by design, you triage.
+Discovery Analyst posts its daily clusters on the **Discovery → Bet** loop and stages bets in \`signal\`. Its posts don't @mention the human — by design, you triage.
 
 Once per workspace, when the *first* candidate bets land in \`signal\` (\`list_objects(type=bet, status=signal)\` → ≥1 result AND \`list_objects(type=bet)\` filtered to statuses in [qualified, define, active, live, succeeded, failed] → 0 results), surface them:
 
-- Post ONE consolidated comment on the **Product discovery → shape** loop (\`create_comment\`, \`entity_id\` = loop id) with:
+- Post ONE consolidated comment on the **Discovery → Bet** loop (\`create_comment\`, \`entity_id\` = loop id) with:
   - \`mentions\`: the workspace owner(s)
   - \`attention\`: 4
   - \`content\`: "First candidate bets are ready. [N] clusters, [M] bets. Which should we promote to \`qualified\` and take deeper?" Followed by a short plain-text list, one line per bet: \`- [Title] ([link])\`. No headers, no bold labels.
