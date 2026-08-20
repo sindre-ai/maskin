@@ -33,6 +33,7 @@ function buildWorkspace(
 		role: 'owner',
 		settings: {},
 		byollmAllowed: false,
+		billingOwnerId: null,
 		createdBy: null,
 		createdAt: null,
 		updatedAt: null,
@@ -46,6 +47,7 @@ function buildWorkspaceResponse(
 	return {
 		settings: {},
 		byollmAllowed: false,
+		billingOwnerId: null,
 		createdBy: null,
 		createdAt: null,
 		updatedAt: null,

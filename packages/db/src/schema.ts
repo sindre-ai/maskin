@@ -49,19 +49,30 @@ export const actors = pgTable('actors', {
 
 // ── Workspaces ──────────────────────────────────────────────────────────────
 
-export const workspaces = pgTable('workspaces', {
-	id: uuid('id').defaultRandom().primaryKey(),
-	name: text('name').notNull(),
-	settings: jsonb('settings').notNull().default({}),
-	onboardingEnabled: boolean('onboarding_enabled').notNull().default(true),
-	// Admin-only entitlement: workspaces default to the Maskin-provided LLM plan
-	// (trial → pro/team). Only workspaces explicitly flagged here may use
-	// BYO LLM credentials (Claude OAuth, custom_llm, llm_keys). See PR #970.
-	byollmAllowed: boolean('byollm_allowed').notNull().default(false),
-	createdBy: uuid('created_by').references(() => actors.id),
-	createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
-	updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
-})
+export const workspaces = pgTable(
+	'workspaces',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		name: text('name').notNull(),
+		settings: jsonb('settings').notNull().default({}),
+		onboardingEnabled: boolean('onboarding_enabled').notNull().default(true),
+		// Admin-only entitlement: workspaces default to the Maskin-provided LLM plan
+		// (trial → pro/team). Only workspaces explicitly flagged here may use
+		// BYO LLM credentials (Claude OAuth, custom_llm, llm_keys). See PR #970.
+		byollmAllowed: boolean('byollm_allowed').notNull().default(false),
+		// Single accountable human payer for this workspace's plan. Distinct from
+		// workspaceMembers.role='owner' (access control; many allowed per
+		// workspace). Must always reference a CURRENT member of this workspace —
+		// enforced at the app layer, not a DB constraint. Only ever mutated via
+		// POST /api/workspaces/:id/transfer-ownership. Gates the per-actor
+		// workspace-ownership cap (see apps/dev/src/lib/workspace-capacity.ts).
+		billingOwnerId: uuid('billing_owner_id').references(() => actors.id),
+		createdBy: uuid('created_by').references(() => actors.id),
+		createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
+	},
+	(t) => [index('workspaces_billing_owner_idx').on(t.billingOwnerId)],
+)
 
 // ── Workspace Members ───────────────────────────────────────────────────────
 

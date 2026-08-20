@@ -340,7 +340,16 @@ export const api = {
 					method: 'POST',
 					body: data,
 				}),
+			remove: (workspaceId: string, actorId: string) =>
+				request<{ removed: true }>(`/workspaces/${workspaceId}/members/${actorId}`, {
+					method: 'DELETE',
+				}),
 		},
+		transferOwnership: (workspaceId: string, newOwnerActorId: string) =>
+			request<WorkspaceResponse>(`/workspaces/${workspaceId}/transfer-ownership`, {
+				method: 'POST',
+				body: { new_owner_actor_id: newOwnerActorId },
+			}),
 	},
 
 	relationships: {
@@ -1102,6 +1111,9 @@ export interface WorkspaceResponse {
 	name: string
 	settings: Record<string, unknown>
 	byollmAllowed: boolean
+	// Single accountable human payer for this workspace's plan — read-only,
+	// server-set. See apps/dev/src/lib/workspace-capacity.ts.
+	billingOwnerId: string | null
 	createdBy: string | null
 	createdAt: string | null
 	updatedAt: string | null

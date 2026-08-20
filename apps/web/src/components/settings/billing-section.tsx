@@ -12,6 +12,7 @@ import { Label } from '@/components/ui/label'
 import { useBillingCancel, useBillingUsage, useStripeCheckout } from '@/hooks/use-billing'
 import type { BillingPlan, BillingStatus, BillingUsageResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { OWNERSHIP_CAPS, SEAT_CAPS } from '@maskin/shared'
 import { Check, ChevronDown, ChevronRight, ExternalLink } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
@@ -39,6 +40,22 @@ export function formatResetsIn(ms: number | null): string {
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
+// SEAT_CAPS / OWNERSHIP_CAPS come from @maskin/shared (packages/shared/src/billing-caps.ts) —
+// the same numbers the backend enforces on invite (SEAT_CAP_EXCEEDED) and on
+// workspace creation / ownership transfer (OWNERSHIP_CAP_EXCEEDED), so this
+// copy can't drift out of sync with what's actually enforced.
+function formatOwnershipCap(n: number | null): string {
+	if (n === null) return 'Unlimited workspaces you can own'
+	if (n === 1) return '1 workspace you can own'
+	return `Up to ${n} workspaces you can own`
+}
+
+function formatSeatCap(n: number | null): string {
+	if (n === null) return 'Unlimited members per workspace'
+	if (n === 1) return 'Just you — invite others on a paid plan'
+	return `Up to ${n} members per workspace`
+}
+
 // 8_000_000 / 32_000_000 / 320_000_000 below mirror TRIAL_HARD_CAP_DEFAULT_TOKENS /
 // PRO_HARD_CAP_DEFAULT_TOKENS / TEAM_HARD_CAP_DEFAULT_TOKENS in
 // apps/dev/src/lib/billing-defaults.ts and the .env.example
@@ -64,6 +81,8 @@ const PLAN_CONFIG: PlanCardConfig[] = [
 		tagline: 'Full product, no card. $5 of usage on the house.',
 		features: [
 			`${formatTokens(CAP_DEFAULTS.trial)} tokens included`,
+			formatOwnershipCap(OWNERSHIP_CAPS.trial),
+			formatSeatCap(SEAT_CAPS.trial),
 			'Hosted by Maskin — no API key needed',
 		],
 	},
@@ -77,6 +96,8 @@ const PLAN_CONFIG: PlanCardConfig[] = [
 			`${formatTokens(CAP_DEFAULTS.pro)} tokens of usage included each month`,
 			// $20 mirrors OVERAGE_BLOCK_PRICE_USD in apps/dev/src/lib/billing-defaults.ts.
 			`$20 per extra ${formatTokens(CAP_DEFAULTS.pro)} of usage after that, no markup`,
+			formatOwnershipCap(OWNERSHIP_CAPS.pro),
+			formatSeatCap(SEAT_CAPS.pro),
 			'Hosted by Maskin — no API key needed',
 		],
 	},
@@ -89,6 +110,8 @@ const PLAN_CONFIG: PlanCardConfig[] = [
 		features: [
 			`${formatTokens(CAP_DEFAULTS.team)} tokens of usage included each month`,
 			`$20 per extra ${formatTokens(CAP_DEFAULTS.pro)} of usage after that, same rate as Pro`,
+			formatOwnershipCap(OWNERSHIP_CAPS.team),
+			formatSeatCap(SEAT_CAPS.team),
 			'Hosted by Maskin — no API key needed',
 		],
 	},
@@ -100,6 +123,8 @@ const PLAN_CONFIG: PlanCardConfig[] = [
 		tagline: 'Bring your own LLM. Pay by invoice. Full control.',
 		features: [
 			'No Maskin-hosted token cap',
+			formatOwnershipCap(OWNERSHIP_CAPS.byollm),
+			formatSeatCap(SEAT_CAPS.byollm),
 			'Use your own Claude Pro/Max, Anthropic API key, or custom endpoint',
 		],
 	},

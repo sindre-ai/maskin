@@ -100,6 +100,10 @@ export const workspaceResponseSchema = z.object({
 	settings: jsonbField.transform((v) => v ?? {}),
 	onboardingEnabled: z.boolean(),
 	byollmAllowed: z.boolean(),
+	// Single accountable human payer for this workspace's plan — read-only,
+	// server-set. See apps/dev/src/lib/workspace-capacity.ts. Nullable during
+	// the migration window before every row is backfilled.
+	billingOwnerId: z.string().uuid().nullable(),
 	createdBy: z.string().uuid().nullable(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),

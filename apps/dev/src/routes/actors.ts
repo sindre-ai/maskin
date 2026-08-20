@@ -47,6 +47,13 @@ import {
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import { isWorkspaceMember } from '../lib/workspace-auth'
+import {
+	computeEffectiveTier,
+	lockActorForOwnershipClaim,
+	ownedWorkspacePlans,
+	ownershipCapForTier,
+	resolvePlanTier,
+} from '../lib/workspace-capacity'
 import type { AgentStorageManager } from '../services/agent-storage'
 import type { SessionManager } from '../services/session-manager'
 
@@ -210,13 +217,37 @@ app.openapi(createActorRoute, async (c) => {
 			workspaceSettingsSchema.parse({ enabled_modules: enabledModules }),
 			enabledModules,
 		)
+		const candidatePlan = resolvePlanTier(defaultSettings)
 		const created = await db.transaction(async (tx) => {
+			// A brand-new actor always owns zero workspaces, so this check is
+			// trivially-always-passing in practice — kept for consistency with
+			// every other billing-owner claim path (create workspace, transfer
+			// ownership) and as defense-in-depth. A signup endpoint must never
+			// hard-fail because of a workspace-side entitlement problem: on cap
+			// failure, skip auto-workspace creation silently rather than
+			// rejecting the actor creation (same response shape as an explicit
+			// auto_create_workspace: false).
+			await lockActorForOwnershipClaim(tx, actor.id)
+			const ownedPlans = await ownedWorkspacePlans(tx, actor.id)
+			const effectiveTier = computeEffectiveTier(ownedPlans, candidatePlan)
+			const cap = ownershipCapForTier(effectiveTier)
+			if (cap !== null && ownedPlans.length >= cap) {
+				logger.warn('Skipping auto-workspace creation: actor at ownership cap', {
+					actorId: actor.id,
+					effectiveTier,
+					used: ownedPlans.length,
+					cap,
+				})
+				return null
+			}
+
 			const [workspace] = await tx
 				.insert(workspaces)
 				.values({
 					name: `${body.name}'s Workspace`,
 					settings: defaultSettings,
 					createdBy: actor.id,
+					billingOwnerId: actor.id,
 				})
 				.returning()
 

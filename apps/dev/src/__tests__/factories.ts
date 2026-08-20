@@ -527,7 +527,13 @@ export async function insertWorkspace(
 	actorId: string,
 	overrides?: Record<string, unknown>,
 ) {
-	const data = buildWorkspace({ createdBy: actorId, ...overrides })
+	// billingOwnerId defaults to the creating actor (matches the real
+	// POST /api/workspaces / POST /api/actors behavior) so every workspace
+	// this factory produces is internally consistent for the seat/ownership
+	// cap checks in apps/dev/src/lib/workspace-capacity.ts. Pass
+	// `billingOwnerId: null` (or another actor id) in overrides to test the
+	// unowned/reassigned cases explicitly.
+	const data = buildWorkspace({ createdBy: actorId, billingOwnerId: actorId, ...overrides })
 	const rows = await db.insert(workspaces).values(data).returning()
 	const ws = rows[0]
 	await db.insert(workspaceMembers).values({

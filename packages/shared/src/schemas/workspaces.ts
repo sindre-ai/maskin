@@ -239,3 +239,12 @@ export const updateWorkspaceAdminSchema = z
 export const workspaceParamsSchema = z.object({
 	id: z.string().uuid(),
 })
+
+// Body for POST /api/workspaces/:id/transfer-ownership. The new owner must
+// already be an existing HUMAN member of the workspace — transfer never
+// creates a new membership and never targets an agent. See
+// apps/dev/src/lib/workspace-capacity.ts for the ownership-cap semantics this
+// route enforces against the new owner.
+export const transferBillingOwnershipSchema = z.object({
+	new_owner_actor_id: z.string().uuid(),
+})

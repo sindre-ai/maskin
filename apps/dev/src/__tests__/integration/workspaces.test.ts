@@ -53,8 +53,16 @@ describe('Workspaces Integration', () => {
 		it('lists workspaces for the current actor', async () => {
 			const app = createApp()
 
-			// Create two workspaces
-			await app.request(jsonRequest('POST', '/api/workspaces', { name: 'WS 1' }))
+			// A trial-tier actor may only own one workspace (see
+			// workspace-capacity.test.ts) — upgrade the first before creating a
+			// second, so this test exercises listing rather than the ownership cap.
+			const first = await app.request(jsonRequest('POST', '/api/workspaces', { name: 'WS 1' }))
+			const ws1 = await first.json()
+			await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws1.id}`, {
+					settings: { billing: { plan: 'pro' } },
+				}),
+			)
 			await app.request(jsonRequest('POST', '/api/workspaces', { name: 'WS 2' }))
 
 			const res = await app.request(jsonGet('/api/workspaces'))
@@ -272,6 +280,13 @@ describe('Workspaces Integration', () => {
 				jsonRequest('POST', '/api/workspaces', { name: 'Members Test' }),
 			)
 			const ws = await createRes.json()
+			// Trial's seat cap is 1 (owner only) — bump to pro so a second member
+			// can actually be added (see workspace-capacity.test.ts for cap coverage).
+			await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: { billing: { plan: 'pro' } },
+				}),
+			)
 
 			// Create another actor to add as member
 			const newActor = await insertActor(db, { name: 'New Member', email: 'member@test.com' })

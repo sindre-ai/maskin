@@ -186,8 +186,12 @@ describe('Workspaces Routes', () => {
 			const wsId = randomUUID()
 			const actorId = randomUUID()
 			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
-			// isWorkspaceMember(callerId, wsId) → one row (caller is a member)
-			mockResults.selectQueue = [[{ actorId: 'test-actor-id' }]]
+			mockResults.selectQueue = [
+				[{ actorId: 'test-actor-id' }], // isWorkspaceMember(callerId, wsId)
+				[{ type: 'human' }], // target actor type lookup
+				[{ id: wsId, settings: {} }], // workspace row locked FOR UPDATE (trial plan)
+				[{ n: 0 }], // countHumanMembers — 0 < trial cap 1
+			]
 			mockResults.insert = [{}]
 
 			const res = await app.request(
