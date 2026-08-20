@@ -392,7 +392,7 @@ describe('Workspaces Integration', () => {
 			expect(after.length).toBe(initialAgents.length)
 		})
 
-		it('attaches the continuous-onboarding and maskin-way-of-working workspace skills and creates all 17 triggers', async () => {
+		it('attaches the continuous-onboarding and maskin-way-of-working workspace skills and creates all 15 triggers', async () => {
 			const app = createApp()
 
 			const createRes = await app.request(
@@ -457,7 +457,7 @@ describe('Workspaces Integration', () => {
 				.select({ name: triggers.name })
 				.from(triggers)
 				.where(eq(triggers.workspaceId, ws.id))
-			expect(triggerRows).toHaveLength(17)
+			expect(triggerRows).toHaveLength(15)
 		})
 
 		it('seeds the Bet discovery loop, Workspace improvements, Knowledge Wiki, and Competitor intelligence loops wired to their triggers', async () => {
