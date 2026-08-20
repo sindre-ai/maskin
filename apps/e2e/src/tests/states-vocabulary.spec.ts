@@ -5,7 +5,10 @@ test.describe('Shared state vocabulary — loading / empty / error / offline', (
 
 	test('offline banner appears when navigator.onLine flips to false', async ({ page, account }) => {
 		await page.goto(`/${account.workspaceId}/`)
-		await page.waitForLoadState('networkidle')
+		await page.waitForLoadState('load')
+		// SSE keeps a connection open indefinitely, so 'networkidle' never fires — see
+		// the same pattern in visual.spec.ts / typography.spec.ts.
+		await page.waitForTimeout(300)
 
 		await page.evaluate(() => {
 			Object.defineProperty(navigator, 'onLine', {
