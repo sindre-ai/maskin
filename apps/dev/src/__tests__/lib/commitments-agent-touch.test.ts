@@ -1,8 +1,4 @@
-import {
-	DEVELOPMENT_AGENTS,
-	DEVELOPMENT_TRIGGERS,
-	WORKSPACE_COACH_SYSTEM_PROMPT,
-} from '@maskin/shared'
+import { DEVELOPMENT_AGENTS, DEVELOPMENT_TRIGGERS } from '@maskin/shared'
 import { describe, expect, it } from 'vitest'
 
 // Renamed post-T1 on bet/loops-first-class: the `loop` object type used to
@@ -10,35 +6,13 @@ import { describe, expect, it } from 'vitest'
 // type so the `loop` name can be reused for the multi-agent-pipeline
 // concept. These assertions pin the agent-facing prompts to the new type
 // name so agents stop querying the pre-rename type after the data migration.
-describe('Commitments — Workspace Coach (Chief of Staff) awareness', () => {
-	it('names Commitments as an object type and cites all three statuses', () => {
-		expect(WORKSPACE_COACH_SYSTEM_PROMPT).toMatch(/Commitment/)
-		for (const status of ['holding', 'at-risk', 'breached']) {
-			expect(WORKSPACE_COACH_SYSTEM_PROMPT).toContain(status)
-		}
-	})
-
-	it('teaches that at-risk and breached Commitments are briefing-worthy alongside stalled bets', () => {
-		expect(WORKSPACE_COACH_SYSTEM_PROMPT).toMatch(/briefing-worthy/i)
-		expect(WORKSPACE_COACH_SYSTEM_PROMPT).toMatch(/alongside stalled bets/i)
-	})
-
-	it('names the four Commitment metadata fields', () => {
-		for (const field of ['floor', 'cadence', 'source_bet_id', 'last_breach_at']) {
-			expect(WORKSPACE_COACH_SYSTEM_PROMPT).toContain(field)
-		}
-	})
-
-	it('cites the derived_from edge for source-bet provenance', () => {
-		expect(WORKSPACE_COACH_SYSTEM_PROMPT).toContain('derived_from')
-	})
-
-	it("reads Commitments via type='commitment' and forbids metadata_eq for Commitment fetches", () => {
-		expect(WORKSPACE_COACH_SYSTEM_PROMPT).toContain("type='commitment'")
-		const commitmentSection = WORKSPACE_COACH_SYSTEM_PROMPT.split('## Commitments')[1] ?? ''
-		expect(commitmentSection).toMatch(/(never|do not|don't)[^.]*metadata_eq/i)
-	})
-})
+//
+// The global Workspace Coach's Commitments-awareness section (previously
+// asserted here) was dropped when WORKSPACE_COACH_SYSTEM_PROMPT was replaced
+// wholesale with the Template workspace's Workspace Coach persona — that
+// prompt doesn't cover Commitments. The DEVELOPMENT_AGENTS-scoped Strategist
+// skill and Workspace Coach trigger below are untouched by that change and
+// still carry the Commitments contract for the `development` loop template.
 
 describe('Commitments — Strategist graduation skill', () => {
 	const strategist = DEVELOPMENT_AGENTS.find((a) => a.$id === 'strategist')
