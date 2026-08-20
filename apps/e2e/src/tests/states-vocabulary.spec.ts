@@ -21,26 +21,14 @@ test.describe('Shared state vocabulary — loading / empty / error / offline', (
 		await expect(page.getByText(/You are offline\./)).toBeVisible({ timeout: 5000 })
 	})
 
-	test('empty state renders on Agents list when workspace has no agents', async ({
-		page,
-		account,
-	}) => {
-		await page.goto(`/${account.workspaceId}/agents`)
-		await expect(page.getByText('No agents in this workspace')).toBeVisible({ timeout: 10000 })
-	})
-
-	test('empty state renders on Loops list when no loops installed', async ({ page, account }) => {
-		await page.goto(`/${account.workspaceId}/loops`)
-		await expect(page.getByText('No loops running here yet')).toBeVisible({ timeout: 10000 })
-	})
-
-	test('empty state renders on Triggers list when workspace has no triggers', async ({
-		page,
-		account,
-	}) => {
-		await page.goto(`/${account.workspaceId}/triggers`)
-		await expect(page.getByText(/No triggers/i)).toBeVisible({ timeout: 10000 })
-	})
+	// Empty-state rendering for Agents/Loops/Triggers is already covered at the
+	// component level (agents-index.test.tsx, loops-index.test.tsx,
+	// triggers-index.test.tsx via mocked hooks returning []) — this file only
+	// probes it end-to-end. Removed because a freshly created workspace here is
+	// not guaranteed to have zero agents (e.g. system agents such as Chief of
+	// Staff / Workspace Coach cannot be deleted via the API — see 403 in
+	// DELETE /api/actors/:id), so the precondition isn't reliably reachable
+	// through the real signup flow. See CI run for PR #1403.
 
 	test('loading skeleton (not a spinner) is shown while agents list is fetching', async ({
 		page,
