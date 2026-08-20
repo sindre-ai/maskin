@@ -46,7 +46,7 @@ For a single object, pass one node and no edges. For a graph — a bet with thre
 | `nodes` | `array` (1–50) | yes | Objects to create. |
 | `nodes[].$id` | `string` | yes | Client-side temporary ID for cross-referencing in `edges`. Echoed back on each returned node so you can pair the server-assigned UUID with the handle you sent. |
 | `nodes[].type` | `string` | yes | Object type (e.g. `insight`, `bet`, `task`, `meeting`). Must be a type enabled on the workspace. |
-| `nodes[].status` | `string` | yes | Must be a valid status for `type` in this workspace. Defaults: insight → `new\|processing\|clustered\|scored\|parked\|discarded`; bet → `signal\|qualified\|define\|active\|live\|succeeded\|failed\|paused`; task → `todo\|in_progress\|in_review\|validated\|done\|discarded`. |
+| `nodes[].status` | `string` | yes | Must be a valid status for `type` in this workspace. Defaults: insight → `new\|processing\|clustered\|scored\|parked\|discarded`; bet → `signal\|define\|active\|live\|succeeded\|failed\|paused`; task → `todo\|in_progress\|in_review\|validated\|done\|discarded`. |
 | `nodes[].title` | `string` | no | Human-readable title. |
 | `nodes[].content` | `string` | no | Markdown body — the object's spec / description. |
 | `nodes[].metadata` | `object` | no | Free-form key/value custom fields. Call `get_workspace_schema` to see what's defined. |

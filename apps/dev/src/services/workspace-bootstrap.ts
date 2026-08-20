@@ -516,7 +516,7 @@ export async function bootstrapDefaultAgents(
 		}
 	}
 
-	// Create the default Loop objects (Discovery → Bet, Workspace Improvements),
+	// Create the default Loop objects (Bet discovery loop, Workspace improvements),
 	// wiring metadata.trigger_ids to the triggers seeded above. Idempotent per
 	// workspace via the objects.title check, mirroring the agent/trigger checks
 	// above.

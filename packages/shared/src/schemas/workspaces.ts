@@ -87,7 +87,6 @@ export const workspaceSettingsSchema = z.object({
 		// notification fan-out. Add other terminal states there, not archived.
 		bet: [
 			'signal',
-			'qualified',
 			'define',
 			'active',
 			'live',
