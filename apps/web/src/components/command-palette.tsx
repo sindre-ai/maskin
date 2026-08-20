@@ -1,10 +1,9 @@
-import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { type CreatableType, CreatePicker } from '@/components/shared/create-picker'
-import { TypeBadge } from '@/components/shared/type-badge'
+import { SearchRowIcon, SearchRowTitle } from '@/components/shared/search-row'
 import { useAvailableObjectTypes } from '@/hooks/use-available-object-types'
 import { useObjects } from '@/hooks/use-objects'
 import { useMarkRead, useUnread } from '@/hooks/use-subscriptions'
-import { type SearchRow, useWorkspaceSearch } from '@/hooks/use-workspace-search'
+import { type SearchRow, matches, useWorkspaceSearch } from '@/hooks/use-workspace-search'
 import {
 	type TaxonomyEntityType,
 	trackCommandPaletteOpened,
@@ -13,7 +12,6 @@ import {
 import type { ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useCommandPalette } from '@/lib/command-palette-context'
-import { highlightText } from '@/lib/search-highlight'
 import { pushRecentObject, pushRecentSearch } from '@/lib/search-recents'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useNavigate } from '@tanstack/react-router'
@@ -308,12 +306,8 @@ export function CommandPalette() {
 	}, [openChat, setOpen])
 
 	const matchesQuery = useCallback(
-		(...fields: (string | undefined)[]) => {
-			if (!hasQuery) return true
-			const needle = trimmedQuery.toLowerCase()
-			return fields.some((field) => (field ?? '').toLowerCase().includes(needle))
-		},
-		[hasQuery, trimmedQuery],
+		(...fields: (string | undefined)[]) => matches(trimmedQuery, ...fields),
+		[trimmedQuery],
 	)
 
 	const commandRows = useMemo(() => {
@@ -386,21 +380,14 @@ export function CommandPalette() {
 				kind: row.kind,
 				title: row.title,
 				sub: row.sub || undefined,
-				icon: row.object ? (
-					<TypeBadge
-						type={row.object.type}
-						variant="tile"
-						className="size-[22px] shrink-0 rounded-md"
-					/>
-				) : row.group === 'agents' ? (
-					<ActorAvatar
+				icon: (
+					<SearchRowIcon
 						id={row.id}
-						name={row.title}
-						type="agent"
-						className="size-[22px] shrink-0 text-[9px]"
+						title={row.title}
+						group={row.group}
+						object={row.object}
+						fallback={<GlyphTile icon={GROUP_GLYPH[row.group] ?? LayoutGrid} />}
 					/>
-				) : (
-					<GlyphTile icon={GROUP_GLYPH[row.group] ?? LayoutGrid} />
 				),
 				run: () => openSearchRow(row),
 				object: row.object,
@@ -412,7 +399,13 @@ export function CommandPalette() {
 			kind: object.type.toUpperCase(),
 			title: object.title ?? 'Untitled',
 			icon: (
-				<TypeBadge type={object.type} variant="tile" className="size-[22px] shrink-0 rounded-md" />
+				<SearchRowIcon
+					id={object.id}
+					title={object.title ?? 'Untitled'}
+					group="objects"
+					object={object}
+					fallback={null}
+				/>
 			),
 			run: () => openObject(object),
 			object,
@@ -492,12 +485,12 @@ export function CommandPalette() {
 												onSelect={row.run}
 											>
 												{row.icon}
-												<span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-foreground">
-													{highlightText(row.title, hasQuery ? trimmedQuery : '')}
-													{row.sub ? (
-														<span className="font-normal text-muted-foreground"> — {row.sub}</span>
-													) : null}
-												</span>
+												<SearchRowTitle
+													title={row.title}
+													sub={row.sub}
+													query={hasQuery ? trimmedQuery : ''}
+													className="min-w-0 flex-1 font-semibold"
+												/>
 												<span className="shrink-0 font-mono text-[9.5px] font-semibold tracking-[0.05em] text-muted-foreground">
 													{row.kind}
 												</span>

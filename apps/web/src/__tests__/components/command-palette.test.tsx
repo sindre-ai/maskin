@@ -42,6 +42,11 @@ vi.mock('@/hooks/use-objects', () => ({
 
 vi.mock('@/hooks/use-workspace-search', () => ({
 	useWorkspaceSearch: vi.fn(() => ({ rows: [] })),
+	matches: (query: string, ...fields: (string | null | undefined)[]) => {
+		if (!query) return true
+		const needle = query.toLowerCase()
+		return fields.some((field) => (field ?? '').toLowerCase().includes(needle))
+	},
 }))
 
 vi.mock('@/hooks/use-available-object-types', () => ({

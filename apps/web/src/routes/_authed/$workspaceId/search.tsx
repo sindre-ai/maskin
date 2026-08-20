@@ -1,8 +1,7 @@
-import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { EmptyState } from '@/components/shared/empty-state'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
-import { TypeBadge } from '@/components/shared/type-badge'
+import { SearchRowIcon, SearchRowTitle } from '@/components/shared/search-row'
 import { Input } from '@/components/ui/input'
 import { useObjects } from '@/hooks/use-objects'
 import {
@@ -50,23 +49,23 @@ function ResultRow({
 			onClick={() => onOpen(row)}
 			className="flex w-full items-start gap-2.5 px-3 py-2.5 text-left transition-colors duration-150 hover:bg-muted"
 		>
-			{row.object ? (
-				<TypeBadge type={row.object.type} variant="tile" className="mt-0.5 size-[22px] shrink-0" />
-			) : row.group === 'agents' ? (
-				<ActorAvatar
-					id={row.id}
-					name={row.title}
-					type="agent"
-					className="mt-0.5 size-[22px] shrink-0 text-[9px]"
-				/>
-			) : (
-				<span className="mt-0.5 size-[22px] shrink-0 rounded-md bg-muted" aria-hidden="true" />
-			)}
+			<SearchRowIcon
+				id={row.id}
+				title={row.title}
+				group={row.group}
+				object={row.object}
+				className="mt-0.5"
+				fallback={
+					<span className="mt-0.5 size-[22px] shrink-0 rounded-md bg-muted" aria-hidden="true" />
+				}
+			/>
 			<span className="min-w-0 flex-1">
-				<span className="block truncate text-[13px] font-medium text-foreground">
-					{highlightText(row.title, query)}
-					{row.sub ? <span className="font-normal text-muted-foreground"> — {row.sub}</span> : null}
-				</span>
+				<SearchRowTitle
+					title={row.title}
+					sub={row.sub}
+					query={query}
+					className="block font-medium"
+				/>
 				{row.snippet && (
 					<span className="mt-0.5 block truncate text-[12px] text-muted-foreground">
 						{highlightText(row.snippet, query)}

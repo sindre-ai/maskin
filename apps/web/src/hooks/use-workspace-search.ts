@@ -57,7 +57,7 @@ export interface WorkspaceSearchResult {
 	isPending: boolean
 }
 
-function matches(query: string, ...fields: (string | null | undefined)[]): boolean {
+export function matches(query: string, ...fields: (string | null | undefined)[]): boolean {
 	if (!query) return true
 	const needle = query.toLowerCase()
 	return fields.some((field) => (field ?? '').toLowerCase().includes(needle))

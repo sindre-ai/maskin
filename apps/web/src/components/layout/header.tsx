@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/breadcrumb'
 import { Button } from '@/components/ui/button'
 import { SidebarTrigger } from '@/components/ui/sidebar'
+import { isHiddenRouteId } from '@/lib/nav-view-keys'
 import { usePageHeader } from '@/lib/page-header-context'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useMatches, useNavigate, useRouter } from '@tanstack/react-router'
@@ -103,8 +104,6 @@ const routeConfig: Record<string, RouteConfig> = {
 	},
 }
 
-const hiddenRoutes = new Set(['__root__', '/_authed', '/_authed/', '/_authed/$workspaceId'])
-
 const OBJECT_DETAIL_ROUTE_ID = '/_authed/$workspaceId/objects/$objectId'
 
 /**
@@ -128,7 +127,7 @@ export function Header() {
 	const router = useRouter()
 
 	// Find the leaf (last non-hidden) match
-	const leafMatch = [...matches].reverse().find((m) => !hiddenRoutes.has(m.routeId))
+	const leafMatch = [...matches].reverse().find((m) => !isHiddenRouteId(m.routeId))
 	const leafConfig = leafMatch ? routeConfig[leafMatch.routeId] : undefined
 
 	// Build crumb chain by walking parent references
