@@ -25,6 +25,9 @@ import { insertConversationMessage } from './conversation-messages'
  * possible through this path.
  */
 
+const describeError = (err: unknown): string =>
+	err instanceof Error ? err.stack || err.message : String(err)
+
 /** Guards against a stream that never emits a newline eating memory. */
 const MAX_BUFFERED_PARTIAL_BYTES = 256 * 1024
 /** Bounds the in-process dedupe cache; the DB unique index is authoritative. */
@@ -55,9 +58,12 @@ export class InteractiveTurnFinalizer {
 	 * Never throws — a finalizer fault must not break log ingest.
 	 */
 	async onStdout(sessionId: string, chunk: string, logId: number): Promise<void> {
+		let lines: string[] = []
 		try {
 			const carried = this.buffers.get(sessionId) ?? ''
-			const { lines, remainder } = splitLines(carried + chunk)
+			const split = splitLines(carried + chunk)
+			lines = split.lines
+			const { remainder } = split
 
 			if (remainder.length > MAX_BUFFERED_PARTIAL_BYTES) {
 				logger.warn(
@@ -69,15 +75,26 @@ export class InteractiveTurnFinalizer {
 			} else {
 				this.buffers.delete(sessionId)
 			}
-
-			for (const line of lines) {
-				const result = parseResultLine(line)
-				if (result) await this.postFinalOutput(sessionId, result, logId)
-			}
 		} catch (err) {
 			logger.error(
-				`Interactive turn finalizer failed for session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
+				`Interactive turn finalizer failed to split stdout for session ${sessionId}: ${describeError(err)}`,
 			)
+			return
+		}
+
+		// Per line, not per chunk: one line that fails to post must not discard the
+		// result lines after it in the same chunk. The buffer has already advanced,
+		// so a dropped line is a permanently lost reply — the exact silence this
+		// service exists to prevent. Log it loudly enough to be actionable.
+		for (const line of lines) {
+			try {
+				const result = parseResultLine(line)
+				if (result) await this.postFinalOutput(sessionId, result, logId)
+			} catch (err) {
+				logger.error(
+					`Interactive turn finalizer failed to post final output for session ${sessionId} (log ${logId}): ${describeError(err)}`,
+				)
+			}
 		}
 	}
 
@@ -98,7 +115,14 @@ export class InteractiveTurnFinalizer {
 		logId: number,
 	): Promise<void> {
 		const gate = await this.loadGate(sessionId)
-		if (!gate?.interactive || !gate.conversationId) return
+		if (!gate) return
+		if (!gate.interactive) return
+		if (!gate.conversationId) {
+			logger.warn(
+				`Interactive session ${sessionId} produced final output before a conversation was attached; dropping this turn's reply`,
+			)
+			return
+		}
 
 		const text = result.text.trim()
 		// A turn that produced no text has nothing to say — most often the agent
@@ -142,6 +166,14 @@ export class InteractiveTurnFinalizer {
 		}
 	}
 
+	/**
+	 * Only conclusive lookups are cached. A missing row, or an interactive
+	 * session whose conversationId has not been written yet, is a transient
+	 * state — caching it would drop every subsequent final output for that
+	 * session for the life of the process, with the cache entry never revisited
+	 * (forgetSession is the only eviction). Re-querying costs one indexed read
+	 * per result line in the rare unresolved case.
+	 */
 	private async loadGate(sessionId: string): Promise<SessionGate | null> {
 		const cached = this.gates.get(sessionId)
 		if (cached !== undefined) return cached
@@ -157,9 +189,16 @@ export class InteractiveTurnFinalizer {
 			.where(eq(sessions.id, sessionId))
 			.limit(1)
 
-		const gate = row ?? null
-		this.gates.set(sessionId, gate)
-		return gate
+		if (!row) {
+			logger.warn(
+				`Interactive turn finalizer found no session row for ${sessionId}; not caching the miss`,
+			)
+			return null
+		}
+
+		if (row.interactive && !row.conversationId) return row
+		this.gates.set(sessionId, row)
+		return row
 	}
 
 	/**

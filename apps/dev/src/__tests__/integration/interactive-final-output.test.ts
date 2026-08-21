@@ -1,4 +1,4 @@
-import { events, conversations, messages, sessionLogs } from '@maskin/db/schema'
+import { events, conversations, messages, sessionLogs, sessions } from '@maskin/db/schema'
 import { and, desc, eq } from 'drizzle-orm'
 import { InteractiveTurnFinalizer } from '../../services/interactive-turn-finalizer'
 import { insertActor, insertSession, insertWorkspace } from '../factories'
@@ -217,6 +217,65 @@ describe('Interactive turn finalizer', () => {
 		await feed(detached.id, `${resultLine({ duration_ms: 7 })}\n`)
 
 		expect(await messagesFor(conversationId)).toHaveLength(0)
+	})
+
+	it('recovers once a conversation is attached, rather than caching the miss forever', async () => {
+		const session = await seedSession({ conversationId: null })
+		if (!session) throw new Error('no session')
+
+		// First turn lands before the conversation is wired up. The old cache
+		// stored this unresolved gate and dropped every later turn of the session.
+		await feed(
+			session.id,
+			`${resultLine({ duration_ms: 1 })}
+`,
+		)
+		expect(await messagesFor(conversationId)).toHaveLength(0)
+
+		await db.update(sessions).set({ conversationId }).where(eq(sessions.id, session.id))
+
+		await feed(
+			session.id,
+			`${resultLine({ duration_ms: 2 })}
+`,
+		)
+
+		const rows = await messagesFor(conversationId)
+		expect(rows).toHaveLength(1)
+		expect(rows[0]?.content).toBe('Here is the answer.')
+	})
+
+	it('posts a later result line even when an earlier one in the same chunk fails', async () => {
+		const session = await seedSession()
+		if (!session) throw new Error('no session')
+
+		// The buffer advances past every line in the chunk, so a per-chunk catch
+		// would lose the second reply permanently.
+		const failing = resultLine({ result: 'first', duration_ms: 1 })
+		const surviving = resultLine({ result: 'second', duration_ms: 2 })
+
+		type TurnResolver = {
+			resolveTurnMessageId(sessionId: string, logId: number): Promise<number | null>
+		}
+		const seam = finalizer as unknown as TurnResolver
+		const original = seam.resolveTurnMessageId.bind(seam)
+		let calls = 0
+		seam.resolveTurnMessageId = async (sessionId: string, logId: number) => {
+			calls += 1
+			if (calls === 1) throw new Error('transient db fault')
+			return original(sessionId, logId)
+		}
+
+		await feed(
+			session.id,
+			`${failing}
+${surviving}
+`,
+		)
+
+		const rows = await messagesFor(conversationId)
+		expect(rows).toHaveLength(1)
+		expect(rows[0]?.content).toBe('second')
 	})
 
 	it('attributes the output to the chat message whose turn produced it', async () => {
