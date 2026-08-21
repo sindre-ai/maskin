@@ -419,7 +419,7 @@ app.openapi(connectRoute, (async (c) => {
 	// Build install URL based on auth type
 	let installUrl: string
 	if (resolved.customAuth) {
-		installUrl = resolved.customAuth.getInstallUrl(state)
+		installUrl = await Promise.resolve(resolved.customAuth.getInstallUrl(state))
 	} else if (resolved.config.auth.type === 'oauth2') {
 		const redirectUri = buildRedirectUri(c.req.url, providerName, c.req.header())
 		const handler = new OAuth2Handler(resolved.config.auth.config)

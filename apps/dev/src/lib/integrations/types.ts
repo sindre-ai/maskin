@@ -160,7 +160,7 @@ export interface StoredCredentials {
 }
 
 export interface CustomAuthHandler {
-	getInstallUrl(state: string): string
+	getInstallUrl(state: string): string | Promise<string>
 	handleCallback(params: Record<string, string>): Promise<StoredCredentials>
 	getAccessToken(credentials: StoredCredentials): Promise<string>
 }

@@ -71,6 +71,11 @@ const INTEGRATION_MCP_PRESETS: Record<string, McpServer> = {
 		url: 'https://mcp.posthog.com/mcp',
 		headers: { Authorization: 'Bearer ${POSTHOG_TOKEN}' },
 	},
+	ubersuggest: {
+		type: 'http',
+		url: 'https://ubersuggest-mcp.neilpatelapi.com/mcp',
+		headers: { Authorization: 'Bearer ${UBERSUGGEST_TOKEN}' },
+	},
 }
 
 const PLATFORM_MCP_PRESET: McpServer = {
