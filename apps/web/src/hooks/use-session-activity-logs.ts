@@ -1,3 +1,4 @@
+import { isSessionIdleAwaitingInput } from '@/components/agents/session-log-transcript'
 import { api } from '@/lib/api'
 import type { SessionLogResponse } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
@@ -14,8 +15,25 @@ const PAGE_SIZE = 500
  */
 const MAX_PAGES_PER_POLL = 5
 
-/** Poll interval while a session is live. */
-const POLL_MS = 3000
+/**
+ * Poll interval while a turn is actually in flight.
+ *
+ * End-to-end latency is this plus the agent-server's log flush interval
+ * (LOG_FLUSH_INTERVAL_MS in apps/agent-server/src/index.ts), because
+ * production sessions run on a separate agent-server box that batches stdout
+ * and POSTs it to apps/dev, which inserts into `session_logs` — the table we
+ * read here. Both terms are 1s, so a line surfaces in ~1s typical / ~2s worst
+ * case. Lowering only one of the two buys nothing.
+ */
+const ACTIVE_POLL_MS = 1000
+
+/**
+ * Poll interval once the session has come to rest awaiting the next user
+ * turn. A chat tab can sit open all day in this state; there's no reason to
+ * hit the API every second when we know nothing is being produced. The next
+ * user message flips it back to active within one tick.
+ */
+const IDLE_POLL_MS = 5000
 
 /**
  * Streams a live session's logs by accumulating pages rather than re-reading
@@ -53,7 +71,8 @@ export function useSessionActivityLogs(workspaceId: string, sessionIds: string[]
 		queries: sessionIds.map((sessionId) => ({
 			queryKey: [...queryKeys.sessions.logs(sessionId), 'activity'],
 			queryFn: () => fetchNewLogs(accumulated.current, sessionId, workspaceId),
-			refetchInterval: POLL_MS,
+			refetchInterval: (query: { state: { data?: SessionLogResponse[] } }) =>
+				isAwaitingNextTurn(query.state.data) ? IDLE_POLL_MS : ACTIVE_POLL_MS,
 		})),
 	})
 }
@@ -93,4 +112,17 @@ async function fetchNewLogs(
 	}
 
 	return store.get(sessionId) ?? []
+}
+
+/**
+ * True once the session's most recent stdout envelope is a `result` — the
+ * turn finished and the CLI is blocked reading stdin for the next one.
+ *
+ * Delegates to the same predicate the transcript uses to decide whether to
+ * show a live dropdown, so the poll rate and the UI can't disagree about
+ * whether something is in flight.
+ */
+function isAwaitingNextTurn(logs: SessionLogResponse[] | undefined): boolean {
+	if (!logs || logs.length === 0) return false
+	return isSessionIdleAwaitingInput(logs)
 }
