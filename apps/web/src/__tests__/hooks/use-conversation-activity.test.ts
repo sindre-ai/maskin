@@ -288,7 +288,7 @@ describe('useConversationActivity', () => {
 		expect(api.sessions.logs).not.toHaveBeenCalled()
 	})
 
-	it('surfaces a timed-out session as an error turn, same as a failed one', async () => {
+	it('shows nothing at all for a timed-out session — the 2h backstop is expected, not an error', async () => {
 		vi.mocked(api.sessions.list).mockResolvedValue([
 			buildSession({
 				id: 'sess-1',
@@ -304,17 +304,11 @@ describe('useConversationActivity', () => {
 			() => useConversationActivity(workspaceId, conversationId, messages),
 			{ wrapper: TestWrapper },
 		)
-		await waitFor(() => expect(result.current.byTriggerMessageId.get(10)).toBeDefined())
+		await waitFor(() => expect(api.sessions.list).toHaveBeenCalled())
 
-		expect(result.current.byTriggerMessageId.get(10)).toMatchObject([
-			{
-				sessionId: 'sess-1',
-				actorId: 'agent-1',
-				inProgress: false,
-				failed: true,
-				steps: [{ kind: 'error', text: 'Session timed out' }],
-			},
-		])
+		expect(result.current.byTriggerMessageId.size).toBe(0)
+		expect(result.current.byReplyMessageId.size).toBe(0)
+		expect(result.current.fallback).toEqual([])
 		// Logs are never fetched for a timed-out session either.
 		expect(api.sessions.logs).not.toHaveBeenCalled()
 	})

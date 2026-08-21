@@ -4,10 +4,8 @@ import {
 	isSessionIdleAwaitingInput,
 	segmentActivityByMessage,
 } from '@/components/agents/session-log-transcript'
-import { api } from '@/lib/api'
 import type { MessageResponse, SessionResponse } from '@/lib/api'
-import { queryKeys } from '@/lib/query-keys'
-import { useQueries } from '@tanstack/react-query'
+import { useSessionActivityLogs } from './use-session-activity-logs'
 import { useActiveSessionsForConversation } from './use-sessions'
 
 export interface MessageTurnActivity {
@@ -98,21 +96,19 @@ export function useConversationActivity(
 	}
 	const latestSessions = [...latestByActor.values()]
 	const activeSessions = latestSessions.filter((s) => s.status === 'running')
-	// 'timeout' is a distinct terminal status from 'failed' (session-manager.ts's
-	// reaper sets it after the 2-hour backstop, with the same `result: { error }`
-	// shape as a failure) — treated the same as 'failed' here so a timed-out
-	// session doesn't fall through both buckets and go invisible again.
-	const failedSessions = latestSessions.filter(
-		(s) => s.status === 'failed' || s.status === 'timeout',
-	)
+	// 'timeout' is deliberately NOT surfaced. The 2-hour backstop
+	// (session-manager.ts's reaper) is expected lifecycle, not a failure: the
+	// next message in this conversation spawns a fresh interactive session
+	// seeded with the recent history (see conversation-responder.ts's
+	// spawnConversationSession), so the user never loses context and has
+	// nothing to act on. Showing "failed to start / Session timed out" for it
+	// was alarming noise. Genuine failures ('failed') still surface.
+	const failedSessions = latestSessions.filter((s) => s.status === 'failed')
 
-	const logsQueries = useQueries({
-		queries: activeSessions.map((session) => ({
-			queryKey: [...queryKeys.sessions.logs(session.id), 'all'],
-			queryFn: () => api.sessions.logs(session.id, workspaceId, { limit: '500' }),
-			refetchInterval: 3000,
-		})),
-	})
+	const logsQueries = useSessionActivityLogs(
+		workspaceId,
+		activeSessions.map((s) => s.id),
+	)
 
 	const byReplyMessageId = new Map<number, MessageTurnActivity[]>()
 	const byTriggerMessageId = new Map<number, MessageTurnActivity[]>()
