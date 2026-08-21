@@ -1,11 +1,15 @@
 import { CommandPalette } from '@/components/command-palette'
 import { Header } from '@/components/layout/header'
+import { LegacyCommandPalette } from '@/components/layout/legacy/command-palette'
+import { LegacyHeader } from '@/components/layout/legacy/header'
+import { LegacyAppSidebar } from '@/components/layout/legacy/sidebar'
 import { MobileNav } from '@/components/layout/mobile-nav'
 import { AppSidebar } from '@/components/layout/sidebar'
 import { RouteError } from '@/components/shared/route-error'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
 import { useDefaultChatAgent } from '@/hooks/use-actors'
 import { useCreateConversation } from '@/hooks/use-conversations'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { usePersistedSidebarOpen } from '@/hooks/use-persisted-sidebar-open'
 import { useSSE } from '@/hooks/use-sse'
@@ -45,6 +49,11 @@ function WorkspaceLayout() {
 		() => workspaces?.find((w) => w.id === workspaceId),
 		[workspaces, workspaceId],
 	)
+
+	// The single flag boundary for the v2 redesign. Everything below renders
+	// either the v2 shell or the pre-v2 one restored under components/layout/legacy.
+	// If you find yourself reading this flag anywhere else, the boundary is wrong.
+	const newDesign = useFeatureFlag('new-design')
 
 	const matches = useMatches()
 	const leafMatch = [...matches].reverse().find((m) => !isHiddenRouteId(m.routeId))
@@ -91,19 +100,24 @@ function WorkspaceLayout() {
 					<PendingCommentsProvider workspaceId={workspaceId}>
 						<PageHeaderProvider>
 							<ContentPushShell>
-								<SidebarProvider open={open} onOpenChange={setOpen} className="h-screen !min-h-0">
-									<AppSidebar />
+								<SidebarProvider
+									open={open}
+									onOpenChange={setOpen}
+									className="h-screen !min-h-0"
+									data-shell={newDesign ? 'v2' : 'v1'}
+								>
+									{newDesign ? <AppSidebar /> : <LegacyAppSidebar />}
 									<SidebarInset className="min-w-0">
-										<Header />
+										{newDesign ? <Header /> : <LegacyHeader />}
 										<MainScrollArea>
 											<Outlet />
 										</MainScrollArea>
 									</SidebarInset>
-									<MobileNav />
+									{newDesign && <MobileNav />}
 								</SidebarProvider>
 							</ContentPushShell>
 						</PageHeaderProvider>
-						<CommandPalette />
+						{newDesign ? <CommandPalette /> : <LegacyCommandPalette />}
 					</PendingCommentsProvider>
 				</CommandPaletteProvider>
 			</NewConversationProvider>
