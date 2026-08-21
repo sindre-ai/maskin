@@ -188,13 +188,48 @@ export function useConversationActivity(
 		// of that in a single tick, which is worse than the alarming notice it
 		// replaced.
 		//
-		// A reply this actor posted at or after the session started means the
-		// turn did finish and the timeout is just the idle backstop cleaning up
-		// afterwards — nothing to say. Otherwise the user needs to know.
-		if (messagesFromSession(messages, session).length > 0) continue
+		// Scope this to the CURRENT turn, not the whole session. An interactive
+		// session is reused for the entire conversation (see
+		// use-session-activity-logs.ts), so "this actor replied at some point
+		// since the session started" is true for every conversation past its
+		// first exchange — testing that would suppress the notice on exactly
+		// the common path, leaving the user staring at a question with no
+		// spinner, no notice and no error. The turn is unanswered only if a
+		// message from someone else arrived after this actor's most recent
+		// reply.
+		// No floor from `startedAt`: the message that triggered a turn is posted
+		// *before* the session responding to it starts, so seeding the cutoff
+		// with the start time would exclude the very message being waited on.
+		// With no replies yet, every message in the thread is unanswered.
+		const actorReplies = messagesFromSession(messages, session)
+		let lastReplyAt = Number.NEGATIVE_INFINITY
+		for (const reply of actorReplies) {
+			if (!reply.createdAt) continue
+			const at = new Date(reply.createdAt).getTime()
+			if (!Number.isNaN(at) && at > lastReplyAt) lastReplyAt = at
+		}
+		const unanswered = messages
+			.flatMap((m) => {
+				if (m.actorId === session.actorId) return []
+				const at = m.createdAt ? new Date(m.createdAt).getTime() : Number.NaN
+				if (Number.isNaN(at)) {
+					// Undated message (mirrors messagesFromSession's leniency). We
+					// can't prove it landed after a reply, so only count it as
+					// unanswered when there is no reply to order it against.
+					return lastReplyAt === Number.NEGATIVE_INFINITY
+						? [{ message: m, at: Number.NEGATIVE_INFINITY }]
+						: []
+				}
+				return at <= lastReplyAt ? [] : [{ message: m, at }]
+			})
+			.sort((a, b) => a.at - b.at)
+		if (unanswered.length === 0) continue
 
-		const config = session.config as { conversation?: { message_id?: number } } | null
-		const messageId = config?.conversation?.message_id
+		// Anchor to the message that actually went unanswered. `config.
+		// conversation.message_id` is the message that *created* the session,
+		// which on a reused session is the first message of the conversation —
+		// hours above the one the user is waiting on.
+		const messageId = unanswered[0]?.message.id
 		const turn: MessageTurnActivity = {
 			sessionId: session.id,
 			actorId: session.actorId,
@@ -220,7 +255,16 @@ export function useConversationActivity(
 	activeSessions.forEach((session, sessionIndex) => {
 		const query = logsQueries[sessionIndex]
 		const logs = query?.data ?? []
-		if (query?.isError && logs.length === 0) {
+		// A failing poll must never leave a turn spinning. Note this is
+		// deliberately NOT gated on `logs.length === 0`: React Query keeps the
+		// last successful `data` and useSessionActivityLogs additionally
+		// accumulates into a ref, so an empty array only ever means the very
+		// FIRST fetch failed. The realistic degradation — polling worked, then
+		// started failing — arrives here with logs still populated, and gating
+		// on emptiness would fall straight through to `inProgress: true` and
+		// spin for as long as the API stays down.
+		const logsFailed = query?.isError === true
+		if (logsFailed && logs.length === 0) {
 			// Nothing to segment, and no way to know what the agent is doing.
 			// Say so, instead of falling through to a spinner that never
 			// resolves.
@@ -271,8 +315,21 @@ export function useConversationActivity(
 			list.push({
 				sessionId: session.id,
 				actorId: session.actorId,
-				steps: lastSegment.steps,
-				inProgress: true,
+				// Keep the steps we already have — they're still the best
+				// account of the turn — but stop claiming it's live when we
+				// can no longer read the logs that would prove it.
+				steps: logsFailed
+					? [
+							...lastSegment.steps,
+							{
+								id: `${session.id}-logs-stalled`,
+								kind: 'error' as const,
+								text: "Couldn't load this turn's activity — retrying.",
+							},
+						]
+					: lastSegment.steps,
+				inProgress: !logsFailed,
+				...(logsFailed ? { interrupted: true } : {}),
 			})
 			byTriggerMessageId.set(lastSegment.conversationMessageId, list)
 		}
@@ -285,7 +342,8 @@ export function useConversationActivity(
 				sessionId: session.id,
 				actorId: session.actorId,
 				steps: unassigned,
-				inProgress: true,
+				inProgress: !logsFailed,
+				...(logsFailed ? { interrupted: true } : {}),
 			})
 		}
 	})
