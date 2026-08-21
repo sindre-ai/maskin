@@ -2065,6 +2065,65 @@ describe('monitorSession — flushLogs retry and drop marker', () => {
 		expect(body.logs).toEqual([{ stream: 'stdout', content: 'hello world' }])
 	})
 
+	it('abandons log delivery for the whole session on a 410, without retrying', async () => {
+		// A session hard-deleted while its sandbox is still alive makes every
+		// further ingest fail the session_logs foreign key, so Maskin answers a
+		// terminal 410. Retrying (6 attempts, ~46s) achieves nothing and repeats
+		// for every remaining batch — the storm behind Sentry MASKIN-DEV-5 /
+		// MASKIN-AGENT-SERVER-1. One warn, no retries, and no further POSTs.
+		const sessionId = 'sess-flush-gone'
+		const run = makeAlwaysRunningRunner(sessionId)
+		const env = makeEnv({
+			AGENT_SESSION_ROOT: sessionRoot,
+			MASKIN_BASE_URL: 'http://maskin.test',
+			AGENT_SERVER_ID: '123e4567-e89b-12d3-a456-426614174000',
+		})
+		const reconcileFetch = vi.fn(async () => ({
+			ok: true,
+			json: async () => ({ marked_failed: [], orphan_sandboxes: [] }),
+		}))
+		const sessionLogRouters = new Map<string, (line: string) => void>()
+
+		const logsFetch = vi.fn().mockResolvedValue({ ok: false, status: 410, json: async () => ({}) })
+		vi.stubGlobal('fetch', logsFetch)
+		const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+		const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {})
+
+		vi.useFakeTimers()
+		try {
+			await reconcileOnBoot({
+				env,
+				storage: null,
+				msb: { msbBin: '/usr/local/bin/msb', run },
+				sessionLogRouters,
+				sessionExitCodes: new Map(),
+				fetchImpl: reconcileFetch as unknown as typeof fetch,
+			})
+
+			const push = sessionLogRouters.get(sessionId)
+			expect(push).toBeDefined()
+			push?.('first line')
+			await vi.advanceTimersByTimeAsync(2_000)
+			// A later batch must not re-attempt delivery either.
+			push?.('second line')
+			await vi.advanceTimersByTimeAsync(60_000)
+		} finally {
+			vi.useRealTimers()
+		}
+
+		expect(logsFetch).toHaveBeenCalledTimes(1)
+		expect(warnSpy).toHaveBeenCalledWith(
+			'Maskin reports session is gone — abandoning log delivery',
+			expect.objectContaining({ sessionId, droppedLines: 1 }),
+		)
+		expect(errorSpy).not.toHaveBeenCalledWith(
+			'failed to POST logs to Maskin after all retries, batch dropped',
+			expect.anything(),
+		)
+		warnSpy.mockRestore()
+		errorSpy.mockRestore()
+	})
+
 	it('warns when the server reports fewer accepted lines than were sent, without retrying', async () => {
 		// Regression coverage: a 200 response can still mean a partial batch —
 		// the server rejects any oversized/invalid line rather than failing the
@@ -2194,7 +2253,7 @@ describe('monitorSession — flushLogs retry and drop marker', () => {
 		])
 	})
 
-	it('retries and drops a batch when Maskin resolves with a non-ok status (no network error)', async () => {
+	it('drops a batch without retrying when Maskin resolves with a non-retryable status', async () => {
 		const sessionId = 'sess-flush-http-error'
 		const run = makeAlwaysRunningRunner(sessionId)
 		const env = makeEnv({
@@ -2209,13 +2268,17 @@ describe('monitorSession — flushLogs retry and drop marker', () => {
 		const sessionLogRouters = new Map<string, (line: string) => void>()
 
 		// A resolved 401 never rejects fetch() — it must still be treated as a
-		// failure (retried, then dropped with a marker), not silently accepted.
+		// failure (dropped with a marker), not silently accepted. It must NOT be
+		// retried, though: a rejected bearer token is a config fault that answers
+		// 401 identically six times over, so spending the retry budget on it only
+		// delays the drop and multiplies the Sentry noise.
 		const logsFetch = vi.fn(async () => ({
 			ok: false,
 			status: 401,
 			json: async () => ({}),
 		}))
 		vi.stubGlobal('fetch', logsFetch)
+		const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {})
 
 		vi.useFakeTimers()
 		try {
@@ -2230,19 +2293,20 @@ describe('monitorSession — flushLogs retry and drop marker', () => {
 
 			const push = sessionLogRouters.get(sessionId)
 			expect(push).toBeDefined()
-			push?.('will be dropped after 401s')
+			push?.('will be dropped after a 401')
 
-			await vi.advanceTimersByTimeAsync(2_000) // scheduled flush fires, attempt 1: 401
-			await vi.advanceTimersByTimeAsync(2_000) // attempt 2: 401
-			await vi.advanceTimersByTimeAsync(4_000) // attempt 3: 401
-			await vi.advanceTimersByTimeAsync(8_000) // attempt 4: 401
-			await vi.advanceTimersByTimeAsync(16_000) // attempt 5: 401
-			await vi.advanceTimersByTimeAsync(16_000) // attempt 6: 401, retries exhausted
+			await vi.advanceTimersByTimeAsync(2_000) // scheduled flush fires: 401, dropped
+			await vi.advanceTimersByTimeAsync(48_000) // no retry occupies the old ~46s window
 		} finally {
 			vi.useRealTimers()
 		}
 
-		expect(logsFetch).toHaveBeenCalledTimes(6)
+		expect(logsFetch).toHaveBeenCalledTimes(1)
+		expect(errorSpy).toHaveBeenCalledWith(
+			'Maskin rejected log batch as non-retryable, batch dropped',
+			expect.objectContaining({ sessionId, status: 401, droppedLines: 1 }),
+		)
+		errorSpy.mockRestore()
 	})
 })
 

@@ -295,8 +295,16 @@ async function monitorSession(
 	const LOG_FLUSH_RETRY_BASE_DELAY_MS = 2_000
 	const LOG_FLUSH_RETRY_MAX_DELAY_MS = 16_000
 
+	// Set when Maskin tells us this session is permanently un-ingestable (410 —
+	// the `sessions` row was hard-deleted while the sandbox was still alive).
+	// Retrying, or even buffering, is pointless from that moment on: every
+	// subsequent batch fails the same foreign-key check. Without this latch a
+	// single orphaned session burns 6 retries per batch for the rest of the
+	// sandbox's life — the storm behind Sentry MASKIN-DEV-5 / MASKIN-AGENT-SERVER-1.
+	let logDeliveryAbandoned = false
+
 	const flushLogs = async (): Promise<void> => {
-		if (!maskinBaseUrl || logBuffer.length === 0) {
+		if (!maskinBaseUrl || logDeliveryAbandoned || logBuffer.length === 0) {
 			logBuffer = []
 			return
 		}
@@ -314,6 +322,27 @@ async function monitorSession(
 						body: JSON.stringify({ logs: batch }),
 					},
 				)
+				// 410 Gone: the session no longer exists in Maskin's DB. Terminal —
+				// stop streaming for this session entirely rather than retrying.
+				if (res.status === 410) {
+					logDeliveryAbandoned = true
+					logger.warn('Maskin reports session is gone — abandoning log delivery', {
+						sessionId,
+						droppedLines: batch.length,
+					})
+					return
+				}
+				// Other 4xx responses are client-side faults (bad token, malformed
+				// batch) that repeat identically on retry. Only 408/429 and 5xx are
+				// worth the retry budget.
+				if (!res.ok && res.status < 500 && res.status !== 408 && res.status !== 429) {
+					logger.error('Maskin rejected log batch as non-retryable, batch dropped', {
+						sessionId,
+						status: res.status,
+						droppedLines: batch.length,
+					})
+					return
+				}
 				if (!res.ok) {
 					throw new Error(`Maskin log ingest responded with ${res.status}`)
 				}

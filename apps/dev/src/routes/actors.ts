@@ -46,6 +46,7 @@ import {
 import { serialize, serializeArray } from '../lib/serialize'
 import { isWorkspaceMember } from '../lib/workspace-auth'
 import type { AgentStorageManager } from '../services/agent-storage'
+import { stopSessionsForActors } from '../services/session-cleanup'
 import type { SessionManager } from '../services/session-manager'
 import { SeedAgentError, provisionWorkspace } from '../services/workspace-bootstrap'
 
@@ -977,6 +978,15 @@ app.openapi(deleteActorRoute, (async (c) => {
 	}
 
 	const existingData = { ...existing }
+
+	// Stop before delete. The cascade below removes this actor's session rows,
+	// but a sandbox already running on an agent-server keeps executing as an
+	// agent the user believes they just deleted, keeps holding its capacity
+	// slot until the 2h timeout, and keeps POSTing logs against a session_id
+	// that no longer exists. Best-effort and outside the transaction — see
+	// stopSessionsForActors.
+	await stopSessionsForActors(db, c.get('sessionManager'), [id])
+
 	await db.transaction(async (tx) => {
 		// Delete session logs for sessions owned by this actor
 		const actorSessions = await tx

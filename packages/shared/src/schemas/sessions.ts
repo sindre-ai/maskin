@@ -237,6 +237,12 @@ export const failureReasonCodeSchema = z.enum([
 	'rate_limit_error',
 	'insufficient_credits',
 	'agent_server_lost',
+	// The session could not be handed to any agent-server before the dispatch
+	// queue ran out of attempts. Recoverable by starting a new session.
+	'dispatch_failed',
+	// The session's agent was deleted (or removed by a loop uninstall/version
+	// push) while the session was still live, so it was stopped mid-run.
+	'agent_deleted',
 ])
 export type FailureReasonCode = z.infer<typeof failureReasonCodeSchema>
 

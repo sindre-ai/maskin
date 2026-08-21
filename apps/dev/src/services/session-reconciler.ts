@@ -56,7 +56,17 @@ export interface ReconcileResult {
 }
 
 export class SessionReconciler {
-	constructor(private db: Database) {}
+	/**
+	 * @param appendSystemLog Appends a `system`-stream line to a session's
+	 * transcript (SessionManager's insertSystemLog). Optional and best-effort.
+	 * The `failure_reason` written below only renders in the session detail
+	 * panel; a user watching the live log stream of a session whose sandbox was
+	 * lost otherwise sees it stop mid-sentence with no explanation.
+	 */
+	constructor(
+		private db: Database,
+		private appendSystemLog?: (sessionId: string, content: string) => Promise<void>,
+	) {}
 
 	async reconcile(input: ReconcileInput): Promise<ReconcileResult> {
 		const sandboxSet = new Set(input.sandboxes)
@@ -145,5 +155,19 @@ export class SessionReconciler {
 			entityId: sessionId,
 			data: { exit_code: null, failure_reason: FAILURE_REASON },
 		})
+
+		if (this.appendSystemLog) {
+			try {
+				await this.appendSystemLog(sessionId, FAILURE_REASON.human_message)
+			} catch (err) {
+				// Never let a log write undo the failed-marking above — a session
+				// left non-terminal holds its capacity slot until the timeout
+				// backstop, which is strictly worse than a missing log line.
+				logger.warn('Failed to append agent_server_lost log line', {
+					sessionId,
+					error: err instanceof Error ? err.message : String(err),
+				})
+			}
+		}
 	}
 }

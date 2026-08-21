@@ -2978,7 +2978,17 @@ export class SessionManager extends EventEmitter {
 		)
 	}
 
-	private async insertSystemLog(sessionId: string, content: string): Promise<void> {
+	/**
+	 * Append a `system`-stream line to a session's log and push it out over SSE.
+	 *
+	 * Public because the session lifecycle has failure paths that live outside
+	 * this class — the dispatch queue giving up, the reconciler finding a lost
+	 * sandbox, an agent being deleted mid-run — and each one is invisible to the
+	 * user unless it says so in the transcript they're actually watching. A
+	 * `result.failure_reason` alone only renders once the session detail panel is
+	 * open; the log line is what appears in the live stream.
+	 */
+	async insertSystemLog(sessionId: string, content: string): Promise<void> {
 		const [log] = await this.db
 			.insert(sessionLogs)
 			.values({ sessionId, stream: 'system', content })
