@@ -625,20 +625,26 @@ app.openapi(getSessionLogsRoute, (async (c) => {
 
 	const conditions = [eq(sessionLogs.sessionId, id)]
 	if (query.since) conditions.push(gt(sessionLogs.id, query.since))
+	if (query.before) conditions.push(lt(sessionLogs.id, query.before))
 	if (query.stream) conditions.push(eq(sessionLogs.stream, query.stream))
 
 	// `desc` takes the newest `limit` rows; reverse them before returning so
 	// the response is always in ascending id order regardless of which end
 	// the caller asked for. Consumers (the chat activity segmenter, the log
 	// transcript) all assume chronological order.
+	//
+	// `before` always implies taking the newest rows below that bound — the
+	// caller is walking backward and wants the page immediately preceding
+	// what it already holds, not the oldest rows in the whole session.
+	const takeNewest = query.before !== undefined || query.order === 'desc'
 	const rows = await db
 		.select()
 		.from(sessionLogs)
 		.where(and(...conditions))
 		.limit(query.limit)
-		.orderBy(query.order === 'desc' ? desc(sessionLogs.id) : asc(sessionLogs.id))
+		.orderBy(takeNewest ? desc(sessionLogs.id) : asc(sessionLogs.id))
 
-	const results = query.order === 'desc' ? rows.reverse() : rows
+	const results = takeNewest ? rows.reverse() : rows
 
 	return c.json(serializeArray(results) as z.infer<typeof sessionLogResponseSchema>[])
 }) as RouteHandler<typeof getSessionLogsRoute, Env>)

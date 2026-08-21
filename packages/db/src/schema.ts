@@ -310,6 +310,12 @@ export const sessions = pgTable(
 		uniqueIndex('sessions_conversation_actor_active_uniq')
 			.on(t.conversationId, t.actorId)
 			.where(sql`${t.interactive} = true AND ${t.status} IN ('pending','starting','running')`),
+		// Backs the session-log retention sweep. Interactive sessions are excluded
+		// from the index entirely — their logs are never pruned, so a chat keeps
+		// its full activity trace for as long as the conversation exists.
+		index('sessions_prune_candidates_idx')
+			.on(t.completedAt)
+			.where(sql`${t.interactive} = false AND ${t.completedAt} IS NOT NULL`),
 	],
 )
 
@@ -326,7 +332,15 @@ export const sessionLogs = pgTable(
 		content: text('content').notNull(),
 		createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
 	},
-	(t) => [index('session_logs_session_idx').on(t.sessionId, t.createdAt)],
+	(t) => [
+		// Serves the retention sweep's per-session (session_id, created_at < cutoff)
+		// range delete.
+		index('session_logs_session_idx').on(t.sessionId, t.createdAt),
+		// Serves every hot read: the logs route's `since` (id >) and `before` (id <)
+		// cursors, and the turn finalizer's backward walk to the nearest
+		// maskin_message_id envelope. (session_id, created_at) cannot order by id.
+		index('session_logs_session_id_id_idx').on(t.sessionId, t.id),
+	],
 )
 
 // ── Conversations ────────────────────────────────────────────────────────
@@ -438,6 +452,13 @@ export const messages = pgTable(
 	(t) => [
 		index('messages_conversation_id_idx').on(t.conversationId, t.id),
 		index('messages_session_id_idx').on(t.sessionId),
+		// Idempotency guard for auto-posted end-of-turn agent output. Load-bearing:
+		// the Docker log stream replays a live session's ENTIRE log on first
+		// connect (`tail: 'all'`), so without this an apps/dev restart would
+		// re-post every past turn of every live chat. See migration 0061.
+		uniqueIndex('messages_final_output_dedupe_uniq')
+			.on(t.sessionId, sql`((${t.metadata}->'final_output'->>'dedupe_key'))`)
+			.where(sql`(${t.metadata}->'final_output'->>'dedupe_key') IS NOT NULL`),
 		check('messages_kind_check', sql`${t.kind} IN ('message', 'system')`),
 	],
 )

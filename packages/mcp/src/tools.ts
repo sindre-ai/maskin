@@ -1064,7 +1064,7 @@ export const tools = {
 		}),
 	},
 	post_conversation_message: {
-		description: `Post a reply into a conversation you are a participant in. You were invoked because you decided (or were @mentioned) that a reply might add value — read the recent messages with list_conversation_messages first if you need more context than what triggered this session. Only call this when a reply genuinely helps; silence is a valid outcome, and posting "okay" or "got it" style acknowledgements with nothing else adds noise, not value. Hard limit: ${MESSAGE_MAX_LENGTH} characters.`,
+		description: `Post a message into a conversation you are a participant in, mid-turn. You do NOT need this tool for your actual reply: whatever you write at the end of your turn is posted into the chat automatically. Use it for an interim note — most usefully a short heads-up, before you start something that will take a while, saying what you are going into so the human isn't left waiting in silence. That is optional; skip it when the message just wants a direct answer. Read the recent messages with list_conversation_messages first if you need more context than what triggered this session. Posting "okay" or "got it" style acknowledgements with nothing else adds noise, not value. Hard limit: ${MESSAGE_MAX_LENGTH} characters.`,
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			conversation_id: z.string().uuid(),

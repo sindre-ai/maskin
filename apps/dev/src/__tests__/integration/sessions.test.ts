@@ -572,6 +572,82 @@ describe('Sessions Integration', () => {
 			expect(sinceLogs[0].id).toBeGreaterThan(log1.id)
 		})
 
+		it('pages backward with the before cursor', async () => {
+			const app = createSessionApp()
+			const headers = { 'x-workspace-id': workspaceId }
+			const session = await insertSession(db, workspaceId, agentActorId, getTestActorId())
+			if (!session) throw new Error('no session')
+			const log1 = await insertSessionLog(db, session.id, { content: 'one' })
+			const log2 = await insertSessionLog(db, session.id, { content: 'two' })
+			const log3 = await insertSessionLog(db, session.id, { content: 'three' })
+			if (!log1 || !log2 || !log3) throw new Error('no logs')
+
+			// `since` can only walk forward, so it cannot reach the earlier
+			// history of a session a client only hydrated the tail of.
+			const res = await app.request(
+				jsonGet(`/api/sessions/${session.id}/logs?before=${log3.id}`, headers),
+			)
+			expect(res.status).toBe(200)
+			const logs = await res.json()
+			expect(logs.map((l: { id: number }) => l.id)).toEqual([log1.id, log2.id])
+		})
+
+		it('takes the newest rows below the before cursor, still ascending', async () => {
+			const app = createSessionApp()
+			const headers = { 'x-workspace-id': workspaceId }
+			const session = await insertSession(db, workspaceId, agentActorId, getTestActorId())
+			if (!session) throw new Error('no session')
+			const seeded = []
+			for (let i = 0; i < 5; i++) {
+				seeded.push(await insertSessionLog(db, session.id, { content: `line ${i}` }))
+			}
+			const last = seeded[4]
+			if (!last) throw new Error('no logs')
+
+			// The caller is walking backward and wants the page immediately
+			// preceding what it holds — not the oldest rows in the session.
+			const res = await app.request(
+				jsonGet(`/api/sessions/${session.id}/logs?before=${last.id}&limit=2`, headers),
+			)
+			const logs = await res.json()
+			expect(logs.map((l: { id: number }) => l.id)).toEqual([seeded[2]?.id, seeded[3]?.id])
+		})
+
+		it('supports a bounded window when before and since are combined', async () => {
+			const app = createSessionApp()
+			const headers = { 'x-workspace-id': workspaceId }
+			const session = await insertSession(db, workspaceId, agentActorId, getTestActorId())
+			if (!session) throw new Error('no session')
+			const seeded = []
+			for (let i = 0; i < 4; i++) {
+				seeded.push(await insertSessionLog(db, session.id, { content: `line ${i}` }))
+			}
+			const res = await app.request(
+				jsonGet(
+					`/api/sessions/${session.id}/logs?since=${seeded[0]?.id}&before=${seeded[3]?.id}`,
+					headers,
+				),
+			)
+			const logs = await res.json()
+			expect(logs.map((l: { id: number }) => l.id)).toEqual([seeded[1]?.id, seeded[2]?.id])
+		})
+
+		it('returns an empty page when before is past the start of the session', async () => {
+			const app = createSessionApp()
+			const headers = { 'x-workspace-id': workspaceId }
+			const session = await insertSession(db, workspaceId, agentActorId, getTestActorId())
+			if (!session) throw new Error('no session')
+			const log1 = await insertSessionLog(db, session.id, { content: 'one' })
+			if (!log1) throw new Error('no log')
+
+			const res = await app.request(
+				jsonGet(`/api/sessions/${session.id}/logs?before=${log1.id}`, headers),
+			)
+			expect(res.status).toBe(200)
+			// This is how the client learns it has reached the beginning.
+			expect(await res.json()).toEqual([])
+		})
+
 		// A long-lived interactive chat session accumulates logs for the whole
 		// conversation. The default `asc` ordering combined with `limit` hands
 		// back the OLDEST rows, which pinned the chat transcript to the start

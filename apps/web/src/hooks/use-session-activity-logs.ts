@@ -2,8 +2,9 @@ import { isSessionIdleAwaitingInput } from '@/components/agents/session-log-tran
 import { api } from '@/lib/api'
 import type { SessionLogResponse } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
+import type { UseQueryResult } from '@tanstack/react-query'
 import { useQueries, useQueryClient } from '@tanstack/react-query'
-import { useRef } from 'react'
+import { useCallback, useRef, useState } from 'react'
 
 /** Max rows the logs endpoint will return in one call (see `sessionLogQuerySchema`). */
 const PAGE_SIZE = 500
@@ -14,6 +15,12 @@ const PAGE_SIZE = 500
  * further behind on every tick and never converge.
  */
 const MAX_PAGES_PER_POLL = 5
+/**
+ * Backward pages a single session may load in one mount (~3000 rows). Bounds
+ * client memory on a very long-lived interactive session; the UI says so
+ * rather than silently stopping.
+ */
+const MAX_BACKFILL_PAGES = 6
 
 /**
  * Poll interval while a turn is actually in flight.
@@ -73,26 +80,55 @@ const ACTIVE_GRACE_MS = 30_000
  * `lastMessageAt` is the newest conversation message's timestamp (ms); see
  * ACTIVE_GRACE_MS for why the poll rate needs it.
  */
+export interface SessionBackfillState {
+	/** A full page came back last time, so there is probably more before it. */
+	hasOlder: boolean
+	isLoading: boolean
+	/** Hit MAX_BACKFILL_PAGES — the client stops rather than growing forever. */
+	exhausted: boolean
+}
+
+export interface SessionActivityLogs {
+	queries: UseQueryResult<SessionLogResponse[], Error>[]
+	/** Fetch the page of logs immediately before the oldest one held. */
+	loadOlder: (sessionId: string) => Promise<void>
+	backfill: Map<string, SessionBackfillState>
+}
+
 export function useSessionActivityLogs(
 	workspaceId: string,
 	sessionIds: string[],
 	lastMessageAt: number | null = null,
-) {
+	/**
+	 * Which of `sessionIds` are still live and should be polled. Sessions
+	 * absent from this set are fetched once and then left alone — that's how a
+	 * terminal session's history can be loaded on demand without putting a
+	 * finished conversation back on a 1s timer. Defaults to polling all.
+	 */
+	pollableSessionIds?: Set<string>,
+): SessionActivityLogs {
 	const queryClient = useQueryClient()
 
 	// Accumulated rows per session. A ref (not state) because the query
 	// results below are what drive rendering — mutating this during a queryFn
 	// must not itself schedule a render.
 	const accumulated = useRef(new Map<string, SessionLogResponse[]>())
+	const pagesLoaded = useRef(new Map<string, number>())
+	const backfilling = useRef(new Set<string>())
+	const [backfill, setBackfill] = useState(new Map<string, SessionBackfillState>())
 
 	// Drop sessions we're no longer watching so a long-lived tab doesn't hold
 	// every session's transcript it has ever seen.
 	const watching = new Set(sessionIds)
 	for (const id of accumulated.current.keys()) {
-		if (!watching.has(id)) accumulated.current.delete(id)
+		if (!watching.has(id)) {
+			accumulated.current.delete(id)
+			pagesLoaded.current.delete(id)
+			backfilling.current.delete(id)
+		}
 	}
 
-	return useQueries({
+	const queries = useQueries({
 		queries: sessionIds.map((sessionId) => {
 			const queryKey = [...queryKeys.sessions.logs(sessionId), 'activity']
 			return {
@@ -114,10 +150,79 @@ export function useSessionActivityLogs(
 					return fetchNewLogs(store, sessionId, workspaceId)
 				},
 				refetchInterval: (query: { state: { data?: SessionLogResponse[] } }) =>
-					activityPollInterval(query.state.data, lastMessageAt),
+					pollableSessionIds && !pollableSessionIds.has(sessionId)
+						? (false as const)
+						: activityPollInterval(query.state.data, lastMessageAt),
 			}
 		}),
-	})
+	}) as UseQueryResult<SessionLogResponse[], Error>[]
+
+	/**
+	 * Page backward from the oldest row currently held for a session.
+	 *
+	 * Older rows are prepended; the forward cursor is the TAIL of the same
+	 * array, so backfilling never disturbs polling. The merged array is written
+	 * back with a fresh identity because the ref is invisible to React — without
+	 * a new array the query cache holds the same reference and nothing re-renders.
+	 */
+	const loadOlder = useCallback(
+		async (sessionId: string) => {
+			if (backfilling.current.has(sessionId)) return
+			const store = accumulated.current
+			const existing = store.get(sessionId) ?? []
+			const oldestId = existing[0]?.id
+			if (oldestId === undefined) return
+			if ((pagesLoaded.current.get(sessionId) ?? 0) >= MAX_BACKFILL_PAGES) return
+
+			backfilling.current.add(sessionId)
+			setBackfill((prev) => nextBackfill(prev, sessionId, { isLoading: true }))
+			try {
+				const rows = await api.sessions.logs(sessionId, workspaceId, {
+					limit: String(PAGE_SIZE),
+					order: 'desc',
+					before: String(oldestId),
+				})
+
+				const current = store.get(sessionId) ?? []
+				const seen = new Set(current.map((l) => l.id))
+				const fresh = rows.filter((l) => !seen.has(l.id))
+				if (fresh.length > 0) {
+					const merged = [...current, ...fresh].sort((a, b) => a.id - b.id)
+					store.set(sessionId, merged)
+					queryClient.setQueryData([...queryKeys.sessions.logs(sessionId), 'activity'], [...merged])
+				}
+
+				const pages = (pagesLoaded.current.get(sessionId) ?? 0) + 1
+				pagesLoaded.current.set(sessionId, pages)
+				setBackfill((prev) =>
+					nextBackfill(prev, sessionId, {
+						isLoading: false,
+						hasOlder: rows.length === PAGE_SIZE,
+						exhausted: pages >= MAX_BACKFILL_PAGES,
+					}),
+				)
+			} catch {
+				// Leave hasOlder as-is so the control stays available to retry.
+				setBackfill((prev) => nextBackfill(prev, sessionId, { isLoading: false }))
+			} finally {
+				backfilling.current.delete(sessionId)
+			}
+		},
+		[queryClient, workspaceId],
+	)
+
+	return { queries, loadOlder, backfill }
+}
+
+function nextBackfill(
+	prev: Map<string, SessionBackfillState>,
+	sessionId: string,
+	patch: Partial<SessionBackfillState>,
+): Map<string, SessionBackfillState> {
+	const next = new Map(prev)
+	const current = prev.get(sessionId) ?? { hasOlder: true, isLoading: false, exhausted: false }
+	next.set(sessionId, { ...current, ...patch })
+	return next
 }
 
 async function fetchNewLogs(

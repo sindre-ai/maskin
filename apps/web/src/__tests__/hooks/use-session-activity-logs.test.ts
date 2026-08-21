@@ -39,7 +39,7 @@ describe('useSessionActivityLogs', () => {
 			wrapper: TestWrapper,
 		})
 
-		await waitFor(() => expect(result.current[0]?.data).toHaveLength(2))
+		await waitFor(() => expect(result.current.queries[0]?.data).toHaveLength(2))
 
 		// The first request must ask for the newest page. Without this an
 		// interactive chat session past the row limit stays pinned to the
@@ -60,12 +60,12 @@ describe('useSessionActivityLogs', () => {
 			wrapper: TestWrapper,
 		})
 
-		await waitFor(() => expect(result.current[0]?.data).toHaveLength(2))
+		await waitFor(() => expect(result.current.queries[0]?.data).toHaveLength(2))
 
-		await result.current[0]?.refetch?.()
+		await result.current.queries[0]?.refetch?.()
 
-		await waitFor(() => expect(result.current[0]?.data).toHaveLength(3))
-		expect(result.current[0]?.data?.map((l) => l.id)).toEqual([1, 2, 3])
+		await waitFor(() => expect(result.current.queries[0]?.data).toHaveLength(3))
+		expect(result.current.queries[0]?.data?.map((l) => l.id)).toEqual([1, 2, 3])
 		expect(api.sessions.logs).toHaveBeenLastCalledWith(
 			sessionId,
 			workspaceId,
@@ -84,9 +84,9 @@ describe('useSessionActivityLogs', () => {
 			wrapper: TestWrapper,
 		})
 
-		await waitFor(() => expect(result.current[0]?.data).toHaveLength(2))
+		await waitFor(() => expect(result.current.queries[0]?.data).toHaveLength(2))
 		vi.mocked(api.sessions.logs).mockClear()
-		await result.current[0]?.refetch?.()
+		await result.current.queries[0]?.refetch?.()
 
 		expect(api.sessions.logs).toHaveBeenCalledTimes(1)
 	})
@@ -104,15 +104,15 @@ describe('useSessionActivityLogs', () => {
 
 		vi.mocked(api.sessions.logs).mockResolvedValueOnce([buildLog(1), buildLog(2)])
 		const first = renderHook(() => useSessionActivityLogs(workspaceId, [sessionId]), { wrapper })
-		await waitFor(() => expect(first.result.current[0]?.data).toHaveLength(2))
+		await waitFor(() => expect(first.result.current.queries[0]?.data).toHaveLength(2))
 		first.unmount()
 
 		vi.mocked(api.sessions.logs).mockClear()
 		vi.mocked(api.sessions.logs).mockResolvedValue([buildLog(3)])
 		const second = renderHook(() => useSessionActivityLogs(workspaceId, [sessionId]), { wrapper })
-		await waitFor(() => expect(second.result.current[0]?.data).toHaveLength(3))
+		await waitFor(() => expect(second.result.current.queries[0]?.data).toHaveLength(3))
 
-		expect(second.result.current[0]?.data?.map((l) => l.id)).toEqual([1, 2, 3])
+		expect(second.result.current.queries[0]?.data?.map((l) => l.id)).toEqual([1, 2, 3])
 		expect(api.sessions.logs).toHaveBeenLastCalledWith(
 			sessionId,
 			workspaceId,
@@ -129,11 +129,11 @@ describe('useSessionActivityLogs', () => {
 			wrapper: TestWrapper,
 		})
 
-		await waitFor(() => expect(result.current[0]?.data).toHaveLength(2))
-		await result.current[0]?.refetch?.()
+		await waitFor(() => expect(result.current.queries[0]?.data).toHaveLength(2))
+		await result.current.queries[0]?.refetch?.()
 
-		await waitFor(() => expect(result.current[0]?.data).toHaveLength(3))
-		expect(result.current[0]?.data?.map((l) => l.id)).toEqual([1, 2, 3])
+		await waitFor(() => expect(result.current.queries[0]?.data).toHaveLength(3))
+		expect(result.current.queries[0]?.data?.map((l) => l.id)).toEqual([1, 2, 3])
 	})
 })
 
@@ -169,5 +169,92 @@ describe('activityPollInterval', () => {
 
 	it('returns to the idle interval once the grace window has passed', () => {
 		expect(activityPollInterval(finishedTurn, now - 60_000, now)).toBe(5000)
+	})
+})
+
+describe('useSessionActivityLogs backward paging', () => {
+	it('pages backward from the oldest held row and prepends', async () => {
+		vi.mocked(api.sessions.logs).mockResolvedValueOnce([buildLog(500), buildLog(501)])
+
+		const { result } = renderHook(() => useSessionActivityLogs(workspaceId, [sessionId]), {
+			wrapper: TestWrapper,
+		})
+		await waitFor(() => expect(result.current.queries[0]?.data).toHaveLength(2))
+
+		vi.mocked(api.sessions.logs).mockResolvedValueOnce([buildLog(498), buildLog(499)])
+		await result.current.loadOlder(sessionId)
+
+		expect(api.sessions.logs).toHaveBeenLastCalledWith(
+			sessionId,
+			workspaceId,
+			expect.objectContaining({ order: 'desc', before: '500' }),
+		)
+		await waitFor(() =>
+			expect(result.current.queries[0]?.data?.map((l) => l.id)).toEqual([498, 499, 500, 501]),
+		)
+	})
+
+	it('leaves the forward cursor on the tail so polling is unaffected', async () => {
+		vi.mocked(api.sessions.logs).mockResolvedValueOnce([buildLog(500), buildLog(501)])
+		const { result } = renderHook(() => useSessionActivityLogs(workspaceId, [sessionId]), {
+			wrapper: TestWrapper,
+		})
+		await waitFor(() => expect(result.current.queries[0]?.data).toHaveLength(2))
+
+		vi.mocked(api.sessions.logs).mockResolvedValueOnce([buildLog(498)])
+		await result.current.loadOlder(sessionId)
+
+		// Backfilling prepends; the next poll must still resume from the newest
+		// row held (501), not from the oldest one we just pulled in.
+		vi.mocked(api.sessions.logs).mockResolvedValue([])
+		await result.current.queries[0]?.refetch()
+		expect(api.sessions.logs).toHaveBeenLastCalledWith(
+			sessionId,
+			workspaceId,
+			expect.objectContaining({ since: '501' }),
+		)
+	})
+
+	it('dedupes rows that overlap what is already held', async () => {
+		vi.mocked(api.sessions.logs).mockResolvedValueOnce([buildLog(10), buildLog(11)])
+		const { result } = renderHook(() => useSessionActivityLogs(workspaceId, [sessionId]), {
+			wrapper: TestWrapper,
+		})
+		await waitFor(() => expect(result.current.queries[0]?.data).toHaveLength(2))
+
+		vi.mocked(api.sessions.logs).mockResolvedValueOnce([buildLog(9), buildLog(10)])
+		await result.current.loadOlder(sessionId)
+
+		await waitFor(() =>
+			expect(result.current.queries[0]?.data?.map((l) => l.id)).toEqual([9, 10, 11]),
+		)
+	})
+
+	it('reports hasOlder false when a short page comes back', async () => {
+		vi.mocked(api.sessions.logs).mockResolvedValueOnce([buildLog(10)])
+		const { result } = renderHook(() => useSessionActivityLogs(workspaceId, [sessionId]), {
+			wrapper: TestWrapper,
+		})
+		await waitFor(() => expect(result.current.queries[0]?.data).toHaveLength(1))
+
+		vi.mocked(api.sessions.logs).mockResolvedValueOnce([buildLog(9)])
+		await result.current.loadOlder(sessionId)
+
+		await waitFor(() => expect(result.current.backfill.get(sessionId)?.hasOlder).toBe(false))
+	})
+
+	it('does not poll sessions left out of the pollable set', async () => {
+		vi.mocked(api.sessions.logs).mockResolvedValue([buildLog(1)])
+
+		const { result } = renderHook(
+			() => useSessionActivityLogs(workspaceId, [sessionId], null, new Set<string>()),
+			{ wrapper: TestWrapper },
+		)
+		await waitFor(() => expect(result.current.queries[0]?.data).toHaveLength(1))
+
+		// A terminal session's history is fetched once on opt-in and then left
+		// alone — putting a finished conversation back on a 1s timer would be a
+		// pure cost with nothing to show for it.
+		expect(result.current.queries[0]?.isRefetching).toBe(false)
 	})
 })

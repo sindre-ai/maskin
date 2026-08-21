@@ -1,11 +1,14 @@
 import { parseFailureReason } from '@/components/agents/session-detail-panel'
-import type { ActivityStep } from '@/components/agents/session-log-transcript'
+import type {
+	ActivityStep,
+	MessageActivitySegment,
+} from '@/components/agents/session-log-transcript'
 import {
 	isSessionIdleAwaitingInput,
 	segmentActivityByMessage,
 } from '@/components/agents/session-log-transcript'
 import type { MessageResponse, SessionResponse } from '@/lib/api'
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSessionActivityLogs } from './use-session-activity-logs'
 import { useActiveSessionsForConversation } from './use-sessions'
 
@@ -25,6 +28,30 @@ export interface MessageTurnActivity {
 	 * to know that.
 	 */
 	interrupted?: boolean
+	/**
+	 * The agent's end-of-turn output, read straight from this turn's `result`
+	 * envelope, shown only until the persisted `final_output` message arrives.
+	 *
+	 * The backend posts that message for real (interactive-turn-finalizer.ts);
+	 * this exists so the reply appears the moment the turn closes rather than
+	 * after the next poll + SSE invalidation round-trip. It is derived, not
+	 * stateful — once the persisted row shows up in `messages`, the same render
+	 * that draws the real bubble stops producing this one, so there is no
+	 * duplicate frame to flicker through.
+	 */
+	pendingFinalOutput?: {
+		text: string
+		isError: boolean
+		/** Stable across polls (embeds the result's log id) — safe as a React key. */
+		key: string
+		/**
+		 * Set when the persisted row still hasn't appeared well after the turn
+		 * closed, i.e. the backend insert probably failed. The text keeps
+		 * showing — losing the agent's answer would be worse — but it is
+		 * labelled as unsaved rather than silently passed off as a message.
+		 */
+		unconfirmed?: boolean
+	}
 }
 
 export interface ConversationActivity {
@@ -58,6 +85,17 @@ export interface ConversationActivity {
 	 * this edge case.
 	 */
 	fallback: MessageTurnActivity[]
+	/**
+	 * Reaches one step further back into this conversation's activity: pulls in
+	 * the next not-yet-loaded terminal session, or, once they're all loaded,
+	 * pages backward through the oldest one's logs.
+	 *
+	 * Opening an old chat deliberately loads no terminal-session logs — a
+	 * finished conversation shouldn't fetch thousands of rows just to be read.
+	 * This is the opt-in.
+	 */
+	loadOlderActivity: () => void
+	olderActivity: { available: boolean; isLoading: boolean; exhausted: boolean }
 }
 
 /**
@@ -123,10 +161,34 @@ export function useConversationActivity(
 		if (!Number.isNaN(at) && (lastMessageAt === null || at > lastMessageAt)) lastMessageAt = at
 	}
 
-	const logsQueries = useSessionActivityLogs(
+	// Terminal sessions are opt-in. Opening an old conversation must not kick
+	// off log fetches for every session it ever had — but the user needs a way
+	// to reach that history, so `loadOlderActivity` adds them one at a time.
+	const [historySessionIds, setHistorySessionIds] = useState<string[]>([])
+	const terminalSessions = latestSessions.filter((s) => s.status !== 'running')
+	const watchedSessions = [
+		...activeSessions,
+		...terminalSessions.filter((s) => historySessionIds.includes(s.id)),
+	]
+	const pollableSessionIds = new Set(activeSessions.map((s) => s.id))
+
+	const {
+		queries: logsQueryList,
+		loadOlder,
+		backfill,
+	} = useSessionActivityLogs(
 		workspaceId,
-		activeSessions.map((s) => s.id),
+		watchedSessions.map((s) => s.id),
 		lastMessageAt,
+		pollableSessionIds,
+	)
+
+	// Keyed by session id, NOT by array index. `watchedSessions` and
+	// `activeSessions` diverge the moment a terminal session is opted into, and
+	// index-based pairing would then silently hand one session's logs to
+	// another — the kind of bug that looks like a rendering glitch.
+	const logsBySession = new Map(
+		watchedSessions.map((session, index) => [session.id, logsQueryList[index]]),
 	)
 
 	// A failing logs query used to be indistinguishable from a quiet session:
@@ -135,8 +197,8 @@ export function useConversationActivity(
 	// surfaced in the UI below; log it once per session so it isn't invisible
 	// in telemetry either.
 	const loggedLogErrors = useRef(new Set<string>())
-	const erroredSessionIds = activeSessions
-		.filter((_, index) => logsQueries[index]?.isError)
+	const erroredSessionIds = watchedSessions
+		.filter((s) => logsBySession.get(s.id)?.isError)
 		.map((s) => s.id)
 	const erroredKey = erroredSessionIds.join(',')
 	useEffect(() => {
@@ -146,6 +208,12 @@ export function useConversationActivity(
 			console.error('[chat] failed to load session activity logs', id)
 		}
 	}, [erroredKey])
+
+	// key -> when we first rendered this pending output. Drives the
+	// `unconfirmed` label when the persisted row never shows up. A ref, not
+	// state: it must not trigger a re-render, and the poll that would surface
+	// the real message re-renders anyway.
+	const pendingFirstSeen = useRef(new Map<string, number>())
 
 	const byReplyMessageId = new Map<number, MessageTurnActivity[]>()
 	const byTriggerMessageId = new Map<number, MessageTurnActivity[]>()
@@ -252,9 +320,12 @@ export function useConversationActivity(
 		}
 	}
 
-	activeSessions.forEach((session, sessionIndex) => {
-		const query = logsQueries[sessionIndex]
+	for (const session of watchedSessions) {
+		const query = logsBySession.get(session.id)
 		const logs = query?.data ?? []
+		// A terminal session contributes history only: its turns are all
+		// finished, so nothing here should ever render as in progress.
+		const isLive = session.status === 'running'
 		// A failing poll must never leave a turn spinning. Note this is
 		// deliberately NOT gated on `logs.length === 0`: React Query keeps the
 		// last successful `data` and useSessionActivityLogs additionally
@@ -281,13 +352,22 @@ export function useConversationActivity(
 				inProgress: false,
 				interrupted: true,
 			})
-			return
+			continue
 		}
 		const { segments, unassigned } = segmentActivityByMessage(logs)
-		const idle = isSessionIdleAwaitingInput(logs)
+		const idle = !isLive || isSessionIdleAwaitingInput(logs)
 
-		const agentMessages = messagesFromSession(messages, session)
+		const agentMessages = mcpRepliesFromSession(messages, session)
 		const replySegments = segments.filter((s) => s.containsReply)
+
+		// Pair closed turns' `result` envelopes with the final_output messages
+		// already persisted for this session, in order. Anything past that count
+		// hasn't landed in the DB yet, so it renders optimistically from the log.
+		// Ordinal pairing rather than id matching, for the same reason the reply
+		// pairing above uses it: messages.sessionId is null for HTTP-transport MCP.
+		const resultSegments = segments.filter((s) => s.result)
+		const finalOutputMessages = finalOutputsFromSession(messages, session)
+		const persistedFinalCount = finalOutputMessages.length
 		const pairedCount = Math.min(replySegments.length, agentMessages.length)
 		for (let i = 0; i < pairedCount; i++) {
 			const message = agentMessages[i]
@@ -299,8 +379,59 @@ export function useConversationActivity(
 				actorId: session.actorId,
 				steps: segment.steps,
 				inProgress: false,
+				...pendingFinalOutputFor(
+					segment,
+					resultSegments,
+					persistedFinalCount,
+					session.id,
+					pendingFirstSeen.current,
+				),
 			})
 			byReplyMessageId.set(message.id, list)
+		}
+
+		// A turn that closed without calling the reply tool produced no MCP
+		// message to anchor to, so the pairing above never emitted it — yet it
+		// is exactly the turn whose end-of-turn output is now the reply.
+		//
+		// It is emitted whether or not its output is still pending. Skipping
+		// the already-persisted ones would make the whole dropdown — thinking,
+		// tool calls, the lot — vanish the instant the agent's message landed,
+		// which is precisely when the user wants to look at it.
+		const pairedSegments = new Set(replySegments.slice(0, pairedCount))
+		for (const segment of resultSegments) {
+			if (pairedSegments.has(segment)) continue
+			const pending = pendingFinalOutputFor(
+				segment,
+				resultSegments,
+				persistedFinalCount,
+				session.id,
+				pendingFirstSeen.current,
+			)
+			const turn: MessageTurnActivity = {
+				sessionId: session.id,
+				actorId: session.actorId,
+				steps: segment.steps,
+				inProgress: false,
+				...pending,
+			}
+
+			// Once the output exists as a real message, anchor the dropdown to
+			// it — above the answer it produced, matching how MCP replies pair.
+			// Until then there is no such message, so it hangs off the turn's
+			// trigger alongside the optimistic bubble.
+			const persisted = pending.pendingFinalOutput
+				? undefined
+				: finalOutputMessages[resultSegments.indexOf(segment)]
+			if (persisted) {
+				const list = byReplyMessageId.get(persisted.id) ?? []
+				list.push(turn)
+				byReplyMessageId.set(persisted.id, list)
+			} else {
+				const list = byTriggerMessageId.get(segment.conversationMessageId) ?? []
+				list.push(turn)
+				byTriggerMessageId.set(segment.conversationMessageId, list)
+			}
 		}
 
 		// The live turn is the last segment overall, unless it's already one
@@ -310,7 +441,12 @@ export function useConversationActivity(
 		const lastSegmentAlreadyPaired =
 			lastSegmentPairedIndex !== -1 && lastSegmentPairedIndex < pairedCount
 
-		if (!idle && lastSegment && !lastSegmentAlreadyPaired) {
+		const lastSegmentEmittedAsFinal =
+			lastSegment !== undefined &&
+			resultSegments.includes(lastSegment) &&
+			!pairedSegments.has(lastSegment)
+
+		if (!idle && lastSegment && !lastSegmentAlreadyPaired && !lastSegmentEmittedAsFinal) {
 			const list = byTriggerMessageId.get(lastSegment.conversationMessageId) ?? []
 			list.push({
 				sessionId: session.id,
@@ -330,6 +466,13 @@ export function useConversationActivity(
 					: lastSegment.steps,
 				inProgress: !logsFailed,
 				...(logsFailed ? { interrupted: true } : {}),
+				...pendingFinalOutputFor(
+					lastSegment,
+					resultSegments,
+					persistedFinalCount,
+					session.id,
+					pendingFirstSeen.current,
+				),
 			})
 			byTriggerMessageId.set(lastSegment.conversationMessageId, list)
 		}
@@ -346,9 +489,96 @@ export function useConversationActivity(
 				...(logsFailed ? { interrupted: true } : {}),
 			})
 		}
-	})
+	}
 
-	return { byReplyMessageId, byTriggerMessageId, fallback }
+	// The oldest session whose activity is already loaded — the only one that
+	// can have anything before it, since activity within a session is
+	// contiguous. `latestSessions` is newest-first (see the route's ordering),
+	// so the last watched entry is the oldest.
+	const oldestWatched = watchedSessions[watchedSessions.length - 1]
+	const nextHistorySession = terminalSessions.find((s) => !historySessionIds.includes(s.id))
+	const oldestBackfill = oldestWatched ? backfill.get(oldestWatched.id) : undefined
+
+	const loadOlderActivity = useCallback(() => {
+		// Prefer pulling in the next unwatched terminal session — that's a whole
+		// session's worth of history, versus one more page of an already-open
+		// one. Only page backward once every session is already being read.
+		if (nextHistorySession) {
+			setHistorySessionIds((prev) =>
+				prev.includes(nextHistorySession.id) ? prev : [...prev, nextHistorySession.id],
+			)
+			return
+		}
+		if (oldestWatched) void loadOlder(oldestWatched.id)
+	}, [nextHistorySession, oldestWatched, loadOlder])
+
+	// How many agent messages in the thread have no activity loaded for them.
+	//
+	// The existence of an unwatched terminal session is NOT the signal: a chat
+	// spawns a fresh session per turn and they go terminal almost immediately,
+	// so gating on that put the control on screen after the agent's second
+	// message — offering to load history that was already fully on screen.
+	// What actually warrants the offer is agent replies whose trace is missing.
+	const uncoveredAgentMessages = messages.filter(
+		(m) => m.actorType === 'agent' && !byReplyMessageId.has(m.id),
+	).length
+	const hasMeaningfulHistory = uncoveredAgentMessages >= UNCOVERED_ACTIVITY_THRESHOLD
+
+	const olderActivity = {
+		available:
+			hasMeaningfulHistory &&
+			(Boolean(nextHistorySession) || (oldestBackfill?.hasOlder ?? Boolean(oldestWatched))),
+		isLoading: oldestBackfill?.isLoading ?? false,
+		exhausted: !nextHistorySession && (oldestBackfill?.exhausted ?? false),
+	}
+
+	return { byReplyMessageId, byTriggerMessageId, fallback, loadOlderActivity, olderActivity }
+}
+
+/** How long a pending output may go unpersisted before we say so. */
+const FINAL_OUTPUT_STALE_MS = 45_000
+
+/**
+ * Agent replies without loaded activity before offering to load more.
+ *
+ * Reaching back is a real cost — a cold page against a permanently-retained
+ * log table — so it should be offered when there is genuinely a stretch of
+ * history to recover, not on every chat that has run more than one turn.
+ */
+const UNCOVERED_ACTIVITY_THRESHOLD = 20
+
+/**
+ * Decides whether this segment's end-of-turn output should render
+ * optimistically, i.e. whether its persisted message has arrived yet.
+ *
+ * Returns a spreadable partial so callers stay a single object literal.
+ */
+function pendingFinalOutputFor(
+	segment: MessageActivitySegment,
+	resultSegments: MessageActivitySegment[],
+	persistedFinalCount: number,
+	sessionId: string,
+	firstSeen: Map<string, number>,
+): Pick<MessageTurnActivity, 'pendingFinalOutput'> {
+	const result = segment.result
+	if (!result) return {}
+	// Everything up to `persistedFinalCount` already exists as a real message.
+	if (resultSegments.indexOf(segment) < persistedFinalCount) return {}
+
+	const key = `${sessionId}-final-${result.logId}`
+	const seenAt = firstSeen.get(key)
+	const now = Date.now()
+	if (seenAt === undefined) firstSeen.set(key, now)
+	const unconfirmed = seenAt !== undefined && now - seenAt > FINAL_OUTPUT_STALE_MS
+
+	return {
+		pendingFinalOutput: {
+			text: result.text,
+			isError: result.isError,
+			key,
+			...(unconfirmed ? { unconfirmed: true } : {}),
+		},
+	}
 }
 
 /**
@@ -368,4 +598,28 @@ function messagesFromSession(
 		if (startedAt === null || !m.createdAt) return true
 		return new Date(m.createdAt).getTime() >= startedAt
 	})
+}
+
+/**
+ * This session's messages that the agent posted itself, mid-turn, via the
+ * post_conversation_message MCP tool.
+ *
+ * Auto-posted end-of-turn output is excluded: it pairs with a segment's
+ * `result`, not with a `containsReply` segment. Counting both in one list
+ * would shift the reply pairing by one every turn and anchor each dropdown
+ * under the wrong message.
+ */
+function mcpRepliesFromSession(
+	messages: MessageResponse[],
+	session: SessionResponse,
+): MessageResponse[] {
+	return messagesFromSession(messages, session).filter((m) => m.metadata?.source !== 'final_output')
+}
+
+/** This session's auto-posted end-of-turn messages, oldest first. */
+function finalOutputsFromSession(
+	messages: MessageResponse[],
+	session: SessionResponse,
+): MessageResponse[] {
+	return messagesFromSession(messages, session).filter((m) => m.metadata?.source === 'final_output')
 }

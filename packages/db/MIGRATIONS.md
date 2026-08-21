@@ -11,6 +11,7 @@ A table is "hot" when it is written to on the synchronous path of an external re
 | Table | Why it's hot |
 |-------|--------------|
 | `webhook_deliveries` | Written on every Slack / integration webhook. The route holds the request open until the claim row commits. Lock contention here stalls every provider retry. |
+| `session_logs` | Written synchronously inside the Docker log-stream loop and inside the agent-server's `POST /sessions/:id/logs` reconcile request. A `SHARE` lock here stalls remote log ingest until that POST times out, and the agent-server then retries the whole batch. |
 
 When adding a table here, briefly note *why* it qualifies — the bar is "external caller will time out if writes block for more than a few seconds," not "it has a lot of rows."
 

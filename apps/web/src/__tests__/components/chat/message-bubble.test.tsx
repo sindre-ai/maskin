@@ -69,3 +69,45 @@ describe('MessageBubble context objects/notifications', () => {
 		expect(screen.getByText('Heads up')).toBeInTheDocument()
 	})
 })
+
+describe('MessageBubble pending final output', () => {
+	const agentMessage = () =>
+		buildMessage({
+			actorId: 'agent-1',
+			actorName: 'Builder',
+			actorType: 'agent',
+			content: 'Here is **the answer**.',
+			metadata: { source: 'final_output' },
+			createdAt: null,
+		})
+
+	it('shows a finishing-up status instead of a timestamp while unsaved', () => {
+		render(<MessageBubble workspaceId="ws-1" message={agentMessage()} pending />, {
+			wrapper: TestWrapper,
+		})
+		expect(screen.getByText('Finishing up…')).toBeInTheDocument()
+	})
+
+	it('says the output is not saved once the persisted row is overdue', () => {
+		render(<MessageBubble workspaceId="ws-1" message={agentMessage()} pending unconfirmed />, {
+			wrapper: TestWrapper,
+		})
+		// The text stays on screen — losing the agent's answer would be worse
+		// than showing it unlabelled — but it is not passed off as saved.
+		expect(screen.getByText('Not saved yet')).toBeInTheDocument()
+		expect(screen.getByText('the answer')).toBeInTheDocument()
+	})
+
+	it('renders the pending content as markdown, not escaped text', () => {
+		render(<MessageBubble workspaceId="ws-1" message={agentMessage()} pending />, {
+			wrapper: TestWrapper,
+		})
+		expect(screen.getByText('the answer').tagName).toBe('STRONG')
+	})
+
+	it('renders a normal timestamp when not pending', () => {
+		const message = { ...agentMessage(), createdAt: new Date().toISOString() }
+		render(<MessageBubble workspaceId="ws-1" message={message} />, { wrapper: TestWrapper })
+		expect(screen.queryByText('Finishing up…')).not.toBeInTheDocument()
+	})
+})
