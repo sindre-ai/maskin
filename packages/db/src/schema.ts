@@ -339,6 +339,13 @@ export const conversations = pgTable(
 			.references(() => workspaces.id)
 			.notNull(),
 		title: text('title').notNull(),
+		// Who owns `title`. 'none' → never auto-titled, 'initial' → auto-titled
+		// once and still eligible for one refinement, 'refined' → final auto
+		// title, 'manual' → renamed by a human, never overwrite. The background
+		// titler (services/conversation-titler.ts) claims a transition here with
+		// a conditional UPDATE before calling the LLM, which is what makes it
+		// safe to fire from every message post without a lock.
+		titleAutoState: text('title_auto_state').notNull().default('none'),
 		createdBy: uuid('created_by')
 			.references(() => actors.id)
 			.notNull(),
@@ -349,7 +356,13 @@ export const conversations = pgTable(
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 	},
-	(t) => [index('conversations_ws_last_message_at_idx').on(t.workspaceId, t.lastMessageAt)],
+	(t) => [
+		index('conversations_ws_last_message_at_idx').on(t.workspaceId, t.lastMessageAt),
+		check(
+			'conversations_title_auto_state_check',
+			sql`${t.titleAutoState} IN ('none', 'initial', 'refined', 'manual')`,
+		),
+	],
 )
 
 export type Conversation = typeof conversations.$inferSelect

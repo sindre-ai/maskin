@@ -192,4 +192,35 @@ test.describe('Chats — full-screen multi-party chat', () => {
 		}
 		await partnerPage.context().close()
 	})
+
+	for (const vp of SHIP_GATE_VIEWPORTS) {
+		test(`a chat started from the UI gets a placeholder title, not the agent's name, at ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+			const agentName = `E2E Titler Agent ${Date.now()}`
+			const agent = await account.api.createAgentActor(agentName)
+			await account.api.addWorkspaceMember(account.workspaceId, agent.id)
+
+			await page.goto(
+				`/${account.workspaceId}/chats/new?agentId=${agent.id}&agentName=${encodeURIComponent(agentName)}`,
+			)
+			const composer = page.getByLabel('Message this conversation')
+			await composer.fill('The deploy pipeline keeps failing on the migrate step')
+			await composer.press('Enter')
+
+			await page.waitForURL(/\/chats\/[0-9a-f-]{36}/, { timeout: 15_000 })
+			const heading = page.getByRole('heading').first()
+			await expect(heading).toBeVisible({ timeout: 10_000 })
+
+			// The title is either still the placeholder or already replaced by the
+			// backend auto-titler (conversation-titler.ts) — both are correct, and
+			// which one you get depends on whether the environment has an LLM
+			// credential. What must never come back is the old behaviour of naming
+			// the conversation after its participants. The generated text itself
+			// isn't asserted: that would need a live model.
+			await expect(heading).not.toHaveText(agentName)
+		})
+	}
 })
