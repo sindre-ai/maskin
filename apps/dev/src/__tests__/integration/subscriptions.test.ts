@@ -1403,6 +1403,45 @@ describe('Subscriptions Integration', () => {
 		expect(item).toBeDefined()
 		expect(item.unread_count).toBe(1)
 	})
+
+	// Regression: mention ids arrive from the request body, so they can name an
+	// actor that no longer exists (deleted, or a stale client cache). Inserting
+	// one into subscriptions.actor_id violates subscriptions_actor_id_fkey and
+	// rolls back the entire comment transaction (Sentry MASKIN-DEV-8).
+	it('posts the comment and skips the subscription when a mention names a non-existent actor', async () => {
+		const appA = appAs(aId)
+		const headersA = { 'x-workspace-id': workspaceId }
+
+		const obj = await appA
+			.request(jsonRequest('POST', '/api/objects', buildCreateObjectBody(), headersA))
+			.then((r) => r.json())
+
+		const ghostActorId = '3e16ed51-e5e1-4b57-959f-7eda01b21bea'
+		const commentRes = await appA.request(
+			jsonRequest(
+				'POST',
+				'/api/events',
+				{
+					action: 'commented',
+					entity_type: 'object',
+					entity_id: obj.id,
+					content: `Hello @${ghostActorId}`,
+					mentions: [ghostActorId, bId],
+				},
+				headersA,
+			),
+		)
+		expect(commentRes.status).toBe(201)
+
+		// The real mentioned actor is still subscribed...
+		const subs = await db.execute(
+			sql`select actor_id, source from subscriptions where entity_id = ${obj.id}`,
+		)
+		const rows = subs as unknown as Array<{ actor_id: string; source: string }>
+		expect(rows.some((r) => r.actor_id === bId && r.source === 'mentioned')).toBe(true)
+		// ...and the ghost simply produced no row.
+		expect(rows.some((r) => r.actor_id === ghostActorId)).toBe(false)
+	})
 })
 
 // Silence "unused import" complaints for helpers we kept around for future tests.
