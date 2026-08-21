@@ -106,9 +106,18 @@ export async function stopSessionsForActors(
 
 	if (live.length === 0) return { stopped: [], failed: [] }
 
+	// `Promise.resolve().then(...)` — not a bare `sessionManager.stopSession(...)`
+	// — so a *synchronous* throw becomes a rejected promise that
+	// `Promise.allSettled` can absorb. Thrown straight out of the `map`
+	// callback it would escape `allSettled` entirely and reject this function,
+	// turning a best-effort cleanup into a 500 that aborts the caller's delete.
 	const outcomes = await Promise.allSettled(
 		live.map((row) =>
-			withTimeout(sessionManager.stopSession(row.id), STOP_TIMEOUT_MS, `stopSession ${row.id}`),
+			withTimeout(
+				Promise.resolve().then(() => sessionManager.stopSession(row.id)),
+				STOP_TIMEOUT_MS,
+				`stopSession ${row.id}`,
+			),
 		),
 	)
 
