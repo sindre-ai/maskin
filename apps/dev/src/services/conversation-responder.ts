@@ -511,8 +511,8 @@ function appendContextBlock(
 	return lines.join('\n')
 }
 
-/** Shared `{actorName}: {content}` transcript join, used both for the relevance check and the seed prompt. */
-function formatConversationTranscript(
+/** Shared `{actorName}: {content}` transcript join, used by the relevance check, the seed prompt, and the auto-titler. */
+export function formatConversationTranscript(
 	history: Array<{ actorName: string; content: string }>,
 ): string {
 	return history.map((m) => `${m.actorName}: ${m.content}`).join('\n')

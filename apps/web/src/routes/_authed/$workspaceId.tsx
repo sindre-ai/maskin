@@ -21,6 +21,7 @@ import {
 	setCapturingEnabled,
 } from '@/lib/posthog'
 import { WorkspaceContext, useWorkspace } from '@/lib/workspace-context'
+import { NEW_CONVERSATION_PLACEHOLDER_TITLE } from '@maskin/shared'
 import { Outlet, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
@@ -190,7 +191,7 @@ function PendingPromptBootstrap() {
 		localStorage.removeItem('maskin_pending_prompt')
 		createConversation
 			.mutateAsync({
-				title: defaultAgent.name,
+				title: NEW_CONVERSATION_PLACEHOLDER_TITLE,
 				participant_actor_ids: [defaultAgent.id],
 				initial_message: prompt,
 			})

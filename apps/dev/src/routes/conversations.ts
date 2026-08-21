@@ -32,6 +32,7 @@ import {
 } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
 import { evaluateAndRespond } from '../services/conversation-responder'
+import { maybeGenerateConversationTitle } from '../services/conversation-titler'
 import type { SessionManager } from '../services/session-manager'
 
 type Env = {
@@ -300,6 +301,15 @@ app.openapi(createConversationRoute, (async (c) => {
 				error: String(err),
 			}),
 		)
+		// Independent of the responder, not chained to it: a slow or failing
+		// agent reply must not delay the title replacing its placeholder.
+		maybeGenerateConversationTitle({ db, workspaceId, conversationId: conversation.id }).catch(
+			(err: unknown) =>
+				logger.error('Conversation auto-title failed', {
+					conversationId: conversation.id,
+					error: String(err),
+				}),
+		)
 	}
 
 	const participantsByConversation = await loadParticipantsByConversation(db, [conversation.id])
@@ -511,7 +521,10 @@ app.openapi(updateConversationRoute, (async (c) => {
 
 	const [updated] = await db
 		.update(conversations)
-		.set({ title: body.title, updatedAt: new Date() })
+		// A human rename permanently opts the conversation out of auto-titling
+		// (conversation-titler.ts) — otherwise the refinement pass would
+		// overwrite whatever they just typed.
+		.set({ title: body.title, titleAutoState: 'manual', updatedAt: new Date() })
 		.where(eq(conversations.id, id))
 		.returning()
 	if (!updated) return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
@@ -863,6 +876,13 @@ app.openapi(postMessageRoute, (async (c) => {
 			messageId: created.id,
 			error: String(err),
 		}),
+	)
+
+	// Independent of the responder, not chained to it: a slow or failing agent
+	// reply must not delay the title. No-ops unless this conversation is due
+	// for its initial or refined title (see conversation-titler.ts).
+	maybeGenerateConversationTitle({ db, workspaceId, conversationId: id }).catch((err: unknown) =>
+		logger.error('Conversation auto-title failed', { conversationId: id, error: String(err) }),
 	)
 
 	return c.json(
