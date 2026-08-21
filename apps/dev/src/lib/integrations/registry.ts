@@ -16,6 +16,7 @@ import {
 	resolveExternalId as linearResolveExternalId,
 } from './providers/linear/config'
 import { linearEventNormalizer } from './providers/linear/webhooks'
+import { config as notionConfig } from './providers/notion/config'
 import { config as posthogConfig } from './providers/posthog/config'
 import { config as skjaldConfig } from './providers/skjald/config'
 import { reapSlackUserLinks } from './providers/slack/account-link'
@@ -33,6 +34,7 @@ import {
 import { slackWebhookFanOut } from './providers/slack/fan-out'
 import { probeSlackTierOnInstall } from './providers/slack/tier-cache'
 import { slackEventNormalizer } from './providers/slack/webhooks'
+import { config as figmaConfig } from './providers/figma/config'
 import { ubersuggestAuth } from './providers/ubersuggest/auth'
 import { config as ubersuggestConfig } from './providers/ubersuggest/config'
 
@@ -102,6 +104,14 @@ providers.set('posthog', {
 
 providers.set('skjald', {
 	config: skjaldConfig,
+})
+
+providers.set('notion', {
+	config: notionConfig,
+})
+
+providers.set('figma', {
+	config: figmaConfig,
 })
 
 providers.set('ubersuggest', {

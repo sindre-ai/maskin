@@ -71,10 +71,22 @@ const INTEGRATION_MCP_PRESETS: Record<string, McpServer> = {
 		url: 'https://mcp.posthog.com/mcp',
 		headers: { Authorization: 'Bearer ${POSTHOG_TOKEN}' },
 	},
+	notion: {
+		type: 'stdio',
+		command: 'npx',
+		args: ['-y', '@notionhq/notion-mcp-server'],
+		env: { NOTION_TOKEN: '${NOTION_TOKEN}' },
+	},
 	ubersuggest: {
 		type: 'http',
 		url: 'https://ubersuggest-mcp.neilpatelapi.com/mcp',
 		headers: { Authorization: 'Bearer ${UBERSUGGEST_TOKEN}' },
+	},
+	figma: {
+		type: 'stdio',
+		command: 'npx',
+		args: ['-y', 'figma-mcp'],
+		env: { FIGMA_API_KEY: '${FIGMA_TOKEN}' },
 	},
 }
 
