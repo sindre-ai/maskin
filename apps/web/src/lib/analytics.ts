@@ -529,3 +529,23 @@ export function trackObjectUpdated(p: {
 		bulk_batch_size: p.bulk_batch_size,
 	})
 }
+
+// Fires when a reviewer checks all three breakpoints on an in_review task.
+// `breakpoints_checked` is comma-joined (e.g. 'desktop,tablet,mobile') to
+// stay within the AnalyticsProps string constraint while remaining queryable
+// in HogQL via `like` or `extract`.
+export function trackMobileViewportCheckRecorded(p: {
+	task_id: string
+	bet_id: string | null
+	viewport_pass: boolean
+	breakpoints_checked: string[]
+	reviewer_actor_id: string
+}): void {
+	trackEvent('mobile_viewport_check_recorded', {
+		task_id: p.task_id,
+		bet_id: p.bet_id,
+		viewport_pass: p.viewport_pass,
+		breakpoints_checked: p.breakpoints_checked.join(','),
+		reviewer_actor_id: p.reviewer_actor_id,
+	})
+}
