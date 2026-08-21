@@ -191,21 +191,22 @@ jobs:
         run: pnpm --filter @maskin/e2e exec playwright install-deps chromium
 
       - name: Run E2E tests (shard ${{ matrix.shard }}/5)
-        # Shard 2 is hitting Argos's free-plan screenshot quota (unrelated to
-        # test correctness); allow it to fail without blocking the required
-        # check until the quota/plan issue is resolved.
-        continue-on-error: ${{ matrix.shard == 2 }}
         run: pnpm --filter @maskin/e2e exec playwright test --shard=${{ matrix.shard }}/5
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_e2e
           INTEGRATION_ENCRYPTION_KEY: 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
+          # Argos visual-regression uploads are opt-in and never gate a PR: the
+          # free-plan screenshot quota is shared across all shards of all runs,
+          # so an exhausted quota fails the upload for reasons unrelated to the
+          # code under test. Only pushes to `main` capture and upload; on PRs
+          # `isArgosEnabled()` is false, so the reporter is not registered and
+          # `safeArgosScreenshot()` is a no-op.
+          ARGOS_ENABLED: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
           ARGOS_TOKEN: ${{ secrets.ARGOS_TOKEN }}
-          # Argos's upload() can reject via a promise that safe-argos-reporter.ts's
-          # own try/catch doesn't end up wrapping (see that file's comment) — an
-          # unhandled rejection there must never fail an otherwise-green shard.
-          # `warn` is a Node-level backstop: it stops any unhandled rejection from
-          # escalating to a process crash, regardless of listener registration
-          # timing inside the reporter.
+          # Backstop for the enabled (main) path: Argos's upload() can reject via
+          # a promise that safe-argos-reporter.ts's own try/catch doesn't end up
+          # wrapping (see that file's comment). `warn` stops an unhandled
+          # rejection from escalating to a process crash.
           NODE_OPTIONS: --unhandled-rejections=warn
 
       - name: Upload Playwright report
