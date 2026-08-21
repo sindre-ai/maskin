@@ -282,6 +282,42 @@ describe('POST /api/internal/agent-servers/sessions/:id/logs', () => {
 		)
 	})
 
+	it('returns a terminal 410 when the session row no longer exists', async () => {
+		// A session hard-deleted while its sandbox is still alive (deleting an
+		// actor, uninstalling a loop, a loop version push) makes every further
+		// insert fail the session_logs foreign key. That's permanent, so a 500
+		// would send the agent-server into its 6-attempt retry loop for every
+		// remaining batch of the sandbox's life — Sentry MASKIN-DEV-5 /
+		// MASKIN-AGENT-SERVER-1. 410 tells the client to stop streaming.
+		const { app, sessionManager } = createSessionTestApp(
+			agentServerReconcileRoutes,
+			'/api/internal/agent-servers',
+		)
+		const fkError = new Error('Failed query: insert into "session_logs" ...')
+		fkError.cause = Object.assign(new Error('violates foreign key constraint'), { code: '23503' })
+		sessionManager.appendRemoteSessionLogs = vi.fn().mockRejectedValue(fkError)
+		const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {})
+		const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+		const res = await app.request(
+			jsonRequest(
+				'POST',
+				logsPath(),
+				{ logs: [{ stream: 'stdout', content: 'orphaned line' }] },
+				{ Authorization: `Bearer ${SECRET}` },
+			),
+		)
+
+		expect(res.status).toBe(410)
+		const body = await res.json()
+		expect(body.error.code).toBe('NOT_FOUND')
+		expect(warnSpy).toHaveBeenCalledWith(
+			'Dropping logs for a session that no longer exists',
+			expect.objectContaining({ sessionId, droppedLines: 1 }),
+		)
+		expect(errorSpy).not.toHaveBeenCalled()
+	})
+
 	it('returns 401 when the Authorization header is missing', async () => {
 		const { app } = createSessionTestApp(agentServerReconcileRoutes, '/api/internal/agent-servers')
 

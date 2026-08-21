@@ -409,13 +409,20 @@ app.openapi(addMemberRoute, (async (c) => {
 		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
 	}
 
-	await db.insert(workspaceMembers).values({
-		workspaceId,
-		actorId: actor_id,
-		role: role || 'member',
-	})
+	// Idempotent: re-adding an existing member is a no-op, not a 23505 crash
+	const inserted = await db
+		.insert(workspaceMembers)
+		.values({
+			workspaceId,
+			actorId: actor_id,
+			role: role || 'member',
+		})
+		.onConflictDoNothing({
+			target: [workspaceMembers.workspaceId, workspaceMembers.actorId],
+		})
+		.returning({ actorId: workspaceMembers.actorId })
 
-	return c.json({ added: true }, 201)
+	return c.json({ added: inserted.length > 0 }, 201)
 }) as RouteHandler<typeof addMemberRoute, Env>)
 
 // GET /api/workspaces/:id/members

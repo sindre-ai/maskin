@@ -40,12 +40,15 @@ import {
 	buildSkillInsert,
 	buildTriggerInsert,
 } from '../services/loop-provisioning'
+import { stopSessionsForActors } from '../services/session-cleanup'
+import type { SessionManager } from '../services/session-manager'
 
 type Env = {
 	Variables: {
 		db: Database
 		actorId: string
 		agentStorage: AgentStorageManager
+		sessionManager: SessionManager
 	}
 }
 
@@ -615,6 +618,15 @@ app.openapi(uninstallItemRoute, (async (c) => {
 	// Set only on the skill hard-delete branch below; cleaned up from S3 after
 	// the tx commits (see the post-commit block), mirroring installed-loops.ts.
 	let removedSkillId: string | null = null
+
+	// Stop before delete. Unlike the loop-uninstall route this branch knows its
+	// target actor up front and always deletes it, so the stop can happen ahead
+	// of the transaction rather than after it. A sandbox left running belongs to
+	// an agent the user just uninstalled and holds agent-server capacity until
+	// the 2h timeout — see session-cleanup.ts.
+	if (type === 'actor' && !keepProvisionedItems) {
+		await stopSessionsForActors(db, c.get('sessionManager'), [entityId], c.get('actorId'))
+	}
 
 	await db.transaction(async (tx) => {
 		if (keepProvisionedItems) {

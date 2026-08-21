@@ -33,7 +33,7 @@ export const createCommentSchema = z.object({
 		.max(50)
 		.optional()
 		.describe(
-			"Array of actor UUIDs. For each @mentioned agent actor, the server creates a needs_input notification AND spawns a session that lets the agent read the comment and reply on the same object. @mention human actors whenever you need their input, decision, or attention: they get a notification about the comment, so this is the right way to pull a human into the loop. Don't mention humans gratuitously, but don't hesitate to mention them when their input would actually unblock you.",
+			"Array of actor UUIDs. For each @mentioned agent actor, the server creates a needs_input notification AND spawns a session that lets the agent read the comment and reply on the same object. @mention human actors whenever you need their input, decision, or attention: they get a notification about the comment, so this is the right way to pull a human into the loop. Don't mention humans gratuitously, but don't hesitate to mention them when their input would actually unblock you. Every id must come from a live list_actors call — never retype a UUID from memory, from your system prompt, or from an earlier message, because a single wrong character silently mentions nobody. Ids that match no actor are dropped and reported back in the response's `unresolved_mentions`; if you see that field, look the actor up with list_actors and post a follow-up comment with the corrected mention.",
 		),
 	parent_event_id: z
 		.number()

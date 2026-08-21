@@ -97,6 +97,53 @@ describe('SessionReconciler.reconcile', () => {
 		})
 	})
 
+	it('writes the failure reason into the session transcript', async () => {
+		// `result.failure_reason` only renders once the session detail panel is
+		// open. A user watching the live log stream of a session whose sandbox
+		// was lost otherwise just sees it stop mid-sentence.
+		const { db } = makeFakeDb([
+			{
+				id: 'session-lost',
+				workspaceId: 'ws-1',
+				actorId: 'actor-1',
+				containerId: 'sandbox-lost',
+				status: 'running',
+			},
+		])
+		const appendSystemLog = vi.fn().mockResolvedValue(undefined)
+
+		const reconciler = new SessionReconciler(db as never, appendSystemLog)
+		await reconciler.reconcile({ agentServerId, sandboxes: [] })
+
+		expect(appendSystemLog).toHaveBeenCalledWith(
+			'session-lost',
+			expect.stringMatching(/agent server restarted.*start a new session/i),
+		)
+	})
+
+	it('still marks the session failed when the transcript write throws', async () => {
+		// A session left non-terminal holds its capacity slot until the timeout
+		// backstop — strictly worse than a missing log line.
+		const { db, updates } = makeFakeDb([
+			{
+				id: 'session-lost',
+				workspaceId: 'ws-1',
+				actorId: 'actor-1',
+				containerId: 'sandbox-lost',
+				status: 'running',
+			},
+		])
+
+		const reconciler = new SessionReconciler(
+			db as never,
+			vi.fn().mockRejectedValue(new Error('log write failed')),
+		)
+		const result = await reconciler.reconcile({ agentServerId, sandboxes: [] })
+
+		expect(result.markedFailed).toEqual(['session-lost'])
+		expect(updates[0]?.values).toMatchObject({ status: 'failed' })
+	})
+
 	it('returns sandbox names the DB does not claim as orphans for the caller to remove', async () => {
 		const { db } = makeFakeDb([
 			{

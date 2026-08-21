@@ -1584,13 +1584,19 @@ export const tools = {
 	},
 	connect_integration: {
 		description:
-			'Start an integration connection flow for a provider (e.g. "github"). Returns an install_url that must be opened in a browser to complete the OAuth/installation flow. The callback is handled automatically by the server.',
+			'Start an integration connection flow for a provider (e.g. "github"). OAuth providers return an install_url that must be opened in a browser to complete the flow; the callback is handled automatically by the server. API-key providers (e.g. "posthog") require `api_key` and are activated immediately, with no install_url.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			provider: z
 				.string()
 				.describe(
 					'Provider name (e.g. "github"). Call list_integration_providers to see available providers.',
+				),
+			api_key: z
+				.string()
+				.optional()
+				.describe(
+					'API key for providers whose auth type is "api_key" (e.g. "posthog"). Required for those providers and ignored for OAuth providers.',
 				),
 		}),
 	},
