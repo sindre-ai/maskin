@@ -725,14 +725,96 @@ describe('useConversationActivity — auto-posted final output', () => {
 		expect(result.current.byReplyMessageId.has(3)).toBe(false)
 	})
 
+	it('keeps the activity dropdown after the persisted message arrives', async () => {
+		// Regression: the turn used to be emitted only while its output was
+		// still pending, so the thinking/tool-use dropdown vanished the moment
+		// the agent's message landed — exactly when the user wants to open it.
+		const { result } = setup(
+			[
+				buildMessage({ id: 1, content: 'go' }),
+				buildMessage({
+					id: 2,
+					actorId: 'agent-1',
+					actorType: 'agent',
+					content: 'All done.',
+					metadata: { source: 'final_output', final_output: { dedupe_key: 'a' } },
+					createdAt: new Date(2000).toISOString(),
+				}),
+			],
+			[
+				buildLog({ id: 1, content: taggedUserTurn(1, 'go') }),
+				buildLog({ id: 2, content: toolUse('search_objects') }),
+				buildLog({ id: 3, content: finalResult('All done.') }),
+			],
+		)
+
+		// Anchored to the message it produced, the way MCP replies pair — so
+		// the trail sits directly above the answer it explains.
+		await waitFor(() => expect(result.current.byReplyMessageId.has(2)).toBe(true))
+		const turn = result.current.byReplyMessageId.get(2)?.[0]
+		expect(turn?.steps.map((s) => s.text)).toEqual(['Using search_objects'])
+		expect(turn?.pendingFinalOutput).toBeUndefined()
+	})
+
+	it('does not offer to load older activity for a short conversation', async () => {
+		// Regression: any terminal session used to flip this on, and a chat
+		// spawns one per turn — so the control appeared after the agent's
+		// second message, offering history that was already fully on screen.
+		vi.mocked(api.sessions.list).mockResolvedValue([
+			buildSession({ id: 'sess-live', status: 'running', startedAt }),
+			buildSession({ id: 'sess-old', status: 'timeout', startedAt }),
+		])
+		vi.mocked(api.sessions.logs).mockResolvedValue([])
+
+		const { result } = renderHook(
+			() =>
+				useConversationActivity(workspaceId, conversationId, [
+					buildMessage({ id: 1, content: 'hi' }),
+					buildMessage({ id: 2, actorId: 'agent-1', actorType: 'agent', content: 'hello' }),
+				]),
+			{ wrapper: TestWrapper },
+		)
+
+		await waitFor(() => expect(api.sessions.logs).toHaveBeenCalled())
+		expect(result.current.olderActivity.available).toBe(false)
+	})
+
+	it('offers to load older activity once enough replies have no trace', async () => {
+		vi.mocked(api.sessions.list).mockResolvedValue([
+			buildSession({ id: 'sess-old', status: 'timeout', startedAt }),
+		])
+		vi.mocked(api.sessions.logs).mockResolvedValue([])
+
+		const many = Array.from({ length: 25 }, (_, i) =>
+			buildMessage({
+				id: i + 1,
+				actorId: 'agent-1',
+				actorType: 'agent',
+				content: `reply ${i}`,
+			}),
+		)
+
+		const { result } = renderHook(
+			() => useConversationActivity(workspaceId, conversationId, many),
+			{ wrapper: TestWrapper },
+		)
+
+		await waitFor(() => expect(result.current.olderActivity.available).toBe(true))
+	})
+
 	it('does not fetch logs for a terminal session until asked', async () => {
 		vi.mocked(api.sessions.list).mockResolvedValue([
 			buildSession({ id: sessionId, status: 'timeout', startedAt }),
 		])
 		vi.mocked(api.sessions.logs).mockResolvedValue([])
 
+		// Enough untraced replies that the control is genuinely on offer —
+		// otherwise there is nothing to click and the assertion below is vacuous.
+		const many = Array.from({ length: 25 }, (_, i) =>
+			buildMessage({ id: i + 1, actorId: 'agent-1', actorType: 'agent', content: `reply ${i}` }),
+		)
 		const { result } = renderHook(
-			() => useConversationActivity(workspaceId, conversationId, [buildMessage({ id: 1 })]),
+			() => useConversationActivity(workspaceId, conversationId, many),
 			{ wrapper: TestWrapper },
 		)
 

@@ -366,7 +366,8 @@ export function useConversationActivity(
 		// Ordinal pairing rather than id matching, for the same reason the reply
 		// pairing above uses it: messages.sessionId is null for HTTP-transport MCP.
 		const resultSegments = segments.filter((s) => s.result)
-		const persistedFinalCount = finalOutputsFromSession(messages, session).length
+		const finalOutputMessages = finalOutputsFromSession(messages, session)
+		const persistedFinalCount = finalOutputMessages.length
 		const pairedCount = Math.min(replySegments.length, agentMessages.length)
 		for (let i = 0; i < pairedCount; i++) {
 			const message = agentMessages[i]
@@ -389,10 +390,14 @@ export function useConversationActivity(
 			byReplyMessageId.set(message.id, list)
 		}
 
-		// A turn that closed without calling the reply tool produced no message
-		// to anchor to, so the pairing above never emitted it — yet it is
-		// exactly the turn whose end-of-turn output is now the reply. Emit it
-		// under the message that triggered it, finished, carrying its result.
+		// A turn that closed without calling the reply tool produced no MCP
+		// message to anchor to, so the pairing above never emitted it — yet it
+		// is exactly the turn whose end-of-turn output is now the reply.
+		//
+		// It is emitted whether or not its output is still pending. Skipping
+		// the already-persisted ones would make the whole dropdown — thinking,
+		// tool calls, the lot — vanish the instant the agent's message landed,
+		// which is precisely when the user wants to look at it.
 		const pairedSegments = new Set(replySegments.slice(0, pairedCount))
 		for (const segment of resultSegments) {
 			if (pairedSegments.has(segment)) continue
@@ -403,16 +408,30 @@ export function useConversationActivity(
 				session.id,
 				pendingFirstSeen.current,
 			)
-			if (!pending.pendingFinalOutput) continue
-			const list = byTriggerMessageId.get(segment.conversationMessageId) ?? []
-			list.push({
+			const turn: MessageTurnActivity = {
 				sessionId: session.id,
 				actorId: session.actorId,
 				steps: segment.steps,
 				inProgress: false,
 				...pending,
-			})
-			byTriggerMessageId.set(segment.conversationMessageId, list)
+			}
+
+			// Once the output exists as a real message, anchor the dropdown to
+			// it — above the answer it produced, matching how MCP replies pair.
+			// Until then there is no such message, so it hangs off the turn's
+			// trigger alongside the optimistic bubble.
+			const persisted = pending.pendingFinalOutput
+				? undefined
+				: finalOutputMessages[resultSegments.indexOf(segment)]
+			if (persisted) {
+				const list = byReplyMessageId.get(persisted.id) ?? []
+				list.push(turn)
+				byReplyMessageId.set(persisted.id, list)
+			} else {
+				const list = byTriggerMessageId.get(segment.conversationMessageId) ?? []
+				list.push(turn)
+				byTriggerMessageId.set(segment.conversationMessageId, list)
+			}
 		}
 
 		// The live turn is the last segment overall, unless it's already one
@@ -493,8 +512,22 @@ export function useConversationActivity(
 		if (oldestWatched) void loadOlder(oldestWatched.id)
 	}, [nextHistorySession, oldestWatched, loadOlder])
 
+	// How many agent messages in the thread have no activity loaded for them.
+	//
+	// The existence of an unwatched terminal session is NOT the signal: a chat
+	// spawns a fresh session per turn and they go terminal almost immediately,
+	// so gating on that put the control on screen after the agent's second
+	// message — offering to load history that was already fully on screen.
+	// What actually warrants the offer is agent replies whose trace is missing.
+	const uncoveredAgentMessages = messages.filter(
+		(m) => m.actorType === 'agent' && !byReplyMessageId.has(m.id),
+	).length
+	const hasMeaningfulHistory = uncoveredAgentMessages >= UNCOVERED_ACTIVITY_THRESHOLD
+
 	const olderActivity = {
-		available: Boolean(nextHistorySession) || (oldestBackfill?.hasOlder ?? Boolean(oldestWatched)),
+		available:
+			hasMeaningfulHistory &&
+			(Boolean(nextHistorySession) || (oldestBackfill?.hasOlder ?? Boolean(oldestWatched))),
 		isLoading: oldestBackfill?.isLoading ?? false,
 		exhausted: !nextHistorySession && (oldestBackfill?.exhausted ?? false),
 	}
@@ -504,6 +537,15 @@ export function useConversationActivity(
 
 /** How long a pending output may go unpersisted before we say so. */
 const FINAL_OUTPUT_STALE_MS = 45_000
+
+/**
+ * Agent replies without loaded activity before offering to load more.
+ *
+ * Reaching back is a real cost — a cold page against a permanently-retained
+ * log table — so it should be offered when there is genuinely a stretch of
+ * history to recover, not on every chat that has run more than one turn.
+ */
+const UNCOVERED_ACTIVITY_THRESHOLD = 20
 
 /**
  * Decides whether this segment's end-of-turn output should render
