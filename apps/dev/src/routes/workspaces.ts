@@ -17,7 +17,7 @@ import {
 	updateWorkspaceSchema,
 } from '@maskin/shared'
 import { and, eq } from 'drizzle-orm'
-import { isEnterpriseActor } from '../lib/enterprise-allowlist'
+import { byollmEntitled, isEnterpriseActor } from '../lib/enterprise-allowlist'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import {
 	billingAfterByoTransition,
@@ -201,7 +201,16 @@ app.openapi(listWorkspacesRoute, async (c) => {
 		.innerJoin(workspaces, eq(workspaceMembers.workspaceId, workspaces.id))
 		.where(eq(workspaceMembers.actorId, actorId))
 
-	return c.json(serializeArray(results) as z.infer<typeof workspaceWithRoleSchema>[])
+	// Report the *effective* entitlement, not the raw column — an enterprise
+	// billing owner is entitled on every workspace they own without a
+	// per-workspace grant. This list is the only place the frontend reads the
+	// flag from, so it gates the whole settings UI.
+	const withEntitlement = results.map((row) => ({
+		...row,
+		byollmAllowed: byollmEntitled(row),
+	}))
+
+	return c.json(serializeArray(withEntitlement) as z.infer<typeof workspaceWithRoleSchema>[])
 })
 
 // PATCH /api/workspaces/:id
@@ -276,7 +285,7 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 		// Entitlement gate: every workspace defaults to the Maskin-provided LLM
 		// plan; only ops-flagged exception workspaces may add a BYO Anthropic/
 		// OpenAI key or enable custom_llm. See PR #970.
-		if (!existing.byollmAllowed && patchAddsAnyByoCredential(body.settings)) {
+		if (!byollmEntitled(existing) && patchAddsAnyByoCredential(body.settings)) {
 			return c.json(
 				createApiError(
 					'FORBIDDEN',

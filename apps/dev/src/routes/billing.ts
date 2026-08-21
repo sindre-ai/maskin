@@ -10,6 +10,7 @@ import {
 	TRIAL_HARD_CAP_DEFAULT_USD_CENTS,
 	parsePositiveIntEnv,
 } from '../lib/billing-defaults'
+import { byollmEntitled } from '../lib/enterprise-allowlist'
 import { createApiError } from '../lib/errors'
 import { getWorkspacePlanUsdCentsUsage } from '../lib/llm-routing'
 import {
@@ -424,6 +425,7 @@ app.openapi(cancelRoute, async (c) => {
 			id: workspaces.id,
 			settings: workspaces.settings,
 			byollmAllowed: workspaces.byollmAllowed,
+			billingOwnerId: workspaces.billingOwnerId,
 		})
 		.from(workspaces)
 		.where(eq(workspaces.id, workspaceId))
@@ -453,7 +455,7 @@ app.openapi(cancelRoute, async (c) => {
 		}
 	}
 
-	const downgraded = billingAfterCancel(billing, workspace.byollmAllowed)
+	const downgraded = billingAfterCancel(billing, byollmEntitled(workspace))
 	if (downgraded) {
 		await db
 			.update(workspaces)

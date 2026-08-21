@@ -14,6 +14,7 @@ import {
 	writeFailoverState,
 	writeSlot,
 } from '../lib/claude-oauth-slots'
+import { byollmEntitled } from '../lib/enterprise-allowlist'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import {
 	billingAfterByoTransition,
@@ -392,7 +393,7 @@ app.openapi(importRoute, (async (c) => {
 		// Every workspace defaults to the Maskin-provided LLM plan; only
 		// ops-flagged exception workspaces may import a BYO Claude subscription.
 		// See PR #970.
-		if (!ws.byollmAllowed) return 'not-allowed'
+		if (!byollmEntitled(ws)) return 'not-allowed'
 
 		const settings = (ws.settings as WorkspaceSettings) ?? {}
 		const currentFailover = readFailoverState(settings.claude_oauth)

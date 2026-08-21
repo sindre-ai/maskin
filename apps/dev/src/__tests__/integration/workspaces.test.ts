@@ -303,6 +303,59 @@ describe('Workspaces Integration', () => {
 			expect(listed?.byollmAllowed).toBe(true)
 		})
 
+		it('entitles an enterprise billing owner without any per-workspace grant', async () => {
+			const app = createApp()
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Enterprise Owner Entitlement' }),
+			)
+			const ws = await createRes.json()
+			expect(ws.byollmAllowed).toBe(false)
+
+			// The allowlist is read from process.env at call time, so flipping it
+			// here exercises exactly what a founder deployment configures.
+			const prev = process.env.MASKIN_ENTERPRISE_ACTOR_IDS
+			process.env.MASKIN_ENTERPRISE_ACTOR_IDS = getTestActorId()
+			try {
+				const listRes = await app.request(jsonGet('/api/workspaces'))
+				const list = (await listRes.json()) as Array<{ id: string; byollmAllowed: boolean }>
+				expect(list.find((w) => w.id === ws.id)?.byollmAllowed).toBe(true)
+
+				const res = await app.request(
+					jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+						settings: { llm_keys: { anthropic: 'sk-ant-enterprise' } },
+					}),
+				)
+				expect(res.status).toBe(200)
+				const body = await res.json()
+				expect(body.settings.llm_keys.anthropic).toBe('sk-ant-enterprise')
+			} finally {
+				// '' parses to an empty allowlist, same as unset.
+				process.env.MASKIN_ENTERPRISE_ACTOR_IDS = prev ?? ''
+			}
+		})
+
+		it('leaves non-allowlisted owners blocked while an allowlist is configured', async () => {
+			const app = createApp()
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Non Allowlisted Owner' }),
+			)
+			const ws = await createRes.json()
+
+			const prev = process.env.MASKIN_ENTERPRISE_ACTOR_IDS
+			process.env.MASKIN_ENTERPRISE_ACTOR_IDS = randomUUID()
+			try {
+				const res = await app.request(
+					jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+						settings: { llm_keys: { anthropic: 'sk-ant-blocked' } },
+					}),
+				)
+				expect(res.status).toBe(403)
+			} finally {
+				// '' parses to an empty allowlist, same as unset.
+				process.env.MASKIN_ENTERPRISE_ACTOR_IDS = prev ?? ''
+			}
+		})
+
 		it('blocks adding a BYO anthropic key when not entitled', async () => {
 			const app = createApp()
 			const createRes = await app.request(

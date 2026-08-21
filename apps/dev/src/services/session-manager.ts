@@ -52,6 +52,7 @@ import {
 import { getValidOAuthToken } from '../lib/claude-oauth'
 import { debitCreditForSession } from '../lib/credit-billing'
 import { classifyCreditExhaustion } from '../lib/credit-classifier'
+import { byollmEntitled } from '../lib/enterprise-allowlist'
 import { frontendBaseUrl } from '../lib/file-urls'
 import {
 	GITHUB_PREFLIGHT_SLACK_CHANNEL,
@@ -1421,7 +1422,7 @@ export class SessionManager extends EventEmitter {
 			.limit(1)
 		const wsSettings = (ws?.settings as WorkspaceSettings) ?? {}
 		const wsLlmKeys = wsSettings.llm_keys ?? {}
-		const byollmAllowed = ws?.byollmAllowed ?? false
+		const byollmAllowed = ws ? byollmEntitled(ws) : false
 
 		let routeTaken: LlmRoute | null = null
 		let oauthSlotTaken: string | undefined

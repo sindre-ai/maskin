@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+	byollmEntitled,
 	isEnterpriseActor,
 	isEnterpriseWorkspace,
 	parseEnterpriseActorIds,
@@ -59,5 +60,26 @@ describe('isEnterpriseWorkspace', () => {
 			},
 		}
 		await expect(isEnterpriseWorkspace(db as never, 'ws-1', {})).resolves.toBe(false)
+	})
+})
+
+describe('byollmEntitled', () => {
+	const env = { MASKIN_ENTERPRISE_ACTOR_IDS: ACTOR_A }
+
+	it('is true when the per-workspace ops grant is set, whoever owns billing', () => {
+		expect(byollmEntitled({ byollmAllowed: true, billingOwnerId: ACTOR_B }, env)).toBe(true)
+	})
+
+	it('is true for an enterprise billing owner without a per-workspace grant', () => {
+		expect(byollmEntitled({ byollmAllowed: false, billingOwnerId: ACTOR_A }, env)).toBe(true)
+	})
+
+	it('is false for a non-enterprise owner with no grant', () => {
+		expect(byollmEntitled({ byollmAllowed: false, billingOwnerId: ACTOR_B }, env)).toBe(false)
+		expect(byollmEntitled({ byollmAllowed: null, billingOwnerId: null }, env)).toBe(false)
+	})
+
+	it('ignores the allowlist entirely when it is unset', () => {
+		expect(byollmEntitled({ byollmAllowed: false, billingOwnerId: ACTOR_A }, {})).toBe(false)
 	})
 })

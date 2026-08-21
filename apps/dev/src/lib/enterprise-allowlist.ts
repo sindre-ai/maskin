@@ -7,7 +7,8 @@ const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 
 /**
  * Actor IDs exempt from every plan-tier limit (seat cap, ownership cap, $
- * hard cap, credit debiting) on every workspace they bill-own. Read from
+ * hard cap, credit debiting) — and BYO-LLM entitled (`byollmEntitled`) — on
+ * every workspace they bill-own. Read from
  * MASKIN_ENTERPRISE_ACTOR_IDS (comma-separated UUIDs) rather than a code
  * constant, so the account IDs never appear in the diff/PR history. See
  * PR #970.
@@ -58,4 +59,27 @@ export async function isEnterpriseWorkspace(
 		.limit(1)
 	if (!row?.billingOwnerId) return false
 	return allowlist.has(row.billingOwnerId.toLowerCase())
+}
+
+/**
+ * A workspace's effective BYO-LLM entitlement: the ops-granted per-workspace
+ * flag, OR an enterprise billing owner.
+ *
+ * Enterprise actors are exempt from every plan-tier limit already (seat cap,
+ * ownership cap, $ hard cap, credit debiting), so requiring a separate
+ * per-workspace `byollm_allowed` grant on top of that just means flipping a
+ * flag on every workspace they bill-own. Deriving it from the same allowlist
+ * keeps the two consistent.
+ *
+ * Deliberately NOT derived from `billing.plan === 'byollm'`: that plan is the
+ * *result* of connecting a BYO credential (`billingAfterByoTransition`), so
+ * keying the gate on it would be circular — and `customer.subscription.deleted`
+ * writes `plan: 'byollm'` without checking entitlement, which would let any
+ * workspace self-grant BYO by canceling its subscription.
+ */
+export function byollmEntitled(
+	ws: { byollmAllowed: boolean | null; billingOwnerId: string | null },
+	env: NodeJS.ProcessEnv = process.env,
+): boolean {
+	return ws.byollmAllowed === true || isEnterpriseActor(ws.billingOwnerId, env)
 }
