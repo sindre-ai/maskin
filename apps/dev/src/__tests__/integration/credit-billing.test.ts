@@ -256,7 +256,60 @@ describe('debitCreditForSession (Integration)', () => {
 		expect(ledgerRow.balanceAfterCents).toBe(0)
 	})
 
-	it('applies concurrent debits from two different sessions without losing an update', async () => {
+	it('bills each of two sequential sessions only its own slice of the overage', async () => {
+		// Regression test for the cumulative-overage double-charge.
+		// `getWorkspacePlanUsdCentsUsage` returns usage for the whole period, so
+		// naively debiting (used - cap) per session re-charges the running total
+		// every time: session A took $10, then session B took the full $30
+		// instead of its own $20 — $40 billed for $30 of real overage.
+		await seedWorkspace(10_000)
+
+		const sessionA = await seedSessionWithCost('20.00')
+		await debitCreditForSession({
+			db,
+			workspaceId,
+			sessionId: sessionA.id,
+			actorId,
+			wsSettings: wsSettingsFor(10_000),
+		})
+
+		// $20 used against a $10 cap = $10 over.
+		const [afterA] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId))
+		if (!afterA) throw new Error('workspace not found')
+		expect((afterA.settings as WorkspaceSettings).billing?.credit_balance_cents).toBe(9_000)
+
+		const sessionB = await seedSessionWithCost('20.00')
+		await debitCreditForSession({
+			db,
+			workspaceId,
+			sessionId: sessionB.id,
+			actorId,
+			// Balance as it now stands after A's debit.
+			wsSettings: wsSettingsFor(9_000),
+		})
+
+		const [afterB] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId))
+		if (!afterB) throw new Error('workspace not found')
+		// $40 used, $10 cap => $30 total overage. A already accounted for $10,
+		// so B owes its own $20 — NOT the full $30. Balance: 10000 - 3000.
+		expect((afterB.settings as WorkspaceSettings).billing?.credit_balance_cents).toBe(7_000)
+
+		const ledgerRows = await db
+			.select()
+			.from(workspaceCreditLedger)
+			.where(eq(workspaceCreditLedger.workspaceId, workspaceId))
+		expect(ledgerRows).toHaveLength(2)
+		const totalDebited = ledgerRows.reduce((sum, row) => sum + -row.amountCents, 0)
+		expect(totalDebited).toBe(3_000)
+		const bySession = new Map(ledgerRows.map((r) => [r.sessionId, r]))
+		expect(bySession.get(sessionA.id)?.amountCents).toBe(-1_000)
+		expect(bySession.get(sessionB.id)?.amountCents).toBe(-2_000)
+		// Each row records the slice it accounted for, so the sum equals the
+		// period's real overage rather than the re-charged running total.
+		expect(ledgerRows.reduce((sum, row) => sum + row.accountedOverageCents, 0)).toBe(3_000)
+	})
+
+	it('never bills more than the real overage when two sessions complete concurrently', async () => {
 		await seedWorkspace(10_000)
 		const sessionA = await seedSessionWithCost('20.00')
 		const sessionB = await seedSessionWithCost('20.00')
@@ -281,18 +334,67 @@ describe('debitCreditForSession (Integration)', () => {
 		const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId))
 		if (!ws) throw new Error('workspace not found')
 		const settings = ws.settings as WorkspaceSettings
-		// Both sessions pushed usage to $40 total ($30 over the $10 cap once both
-		// are counted), but each debit call computes its cost off cumulative
-		// usage at the time it runs — the row lock guarantees both debits land,
-		// not a specific total, so assert the ledger recorded two distinct
-		// debits and the balance reflects their sum rather than a lost update
-		// from one overwriting the other.
+
+		// Both sessions' costs are already on the sessions table before either
+		// debit runs, so cumulative usage is $40 either way — $30 over the $10
+		// cap. The row lock serializes the two calls: whichever runs first
+		// accounts for the whole $30, the second finds nothing left to bill and
+		// writes no row. Exactly $30 is taken regardless of interleaving — the
+		// old code billed $40 here.
 		const ledgerRows = await db
 			.select()
 			.from(workspaceCreditLedger)
 			.where(eq(workspaceCreditLedger.workspaceId, workspaceId))
-		expect(ledgerRows).toHaveLength(2)
 		const totalDebited = ledgerRows.reduce((sum, row) => sum + -row.amountCents, 0)
-		expect(settings.billing?.credit_balance_cents).toBe(10_000 - totalDebited)
+		expect(totalDebited).toBe(3_000)
+		expect(settings.billing?.credit_balance_cents).toBe(7_000)
+	})
+
+	it('does not re-bill written-off overage after a later top-up', async () => {
+		// A session that outspends the balance has the excess forgiven. Because
+		// the ledger records the accounted slice separately from the clamped
+		// money taken, topping up must not resurrect those written-off cents.
+		await seedWorkspace(500)
+		const sessionA = await seedSessionWithCost('20.00')
+		await debitCreditForSession({
+			db,
+			workspaceId,
+			sessionId: sessionA.id,
+			actorId,
+			wsSettings: wsSettingsFor(500),
+		})
+		// Owed $10, only $5 available — $5 taken, $5 written off.
+		const [afterA] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId))
+		if (!afterA) throw new Error('workspace not found')
+		expect((afterA.settings as WorkspaceSettings).billing?.credit_balance_cents).toBe(0)
+
+		// Simulate a top-up, then run one more session.
+		await db
+			.update(workspaces)
+			.set({
+				settings: {
+					...(afterA.settings as WorkspaceSettings),
+					billing: {
+						...(afterA.settings as WorkspaceSettings).billing,
+						credit_balance_cents: 10_000,
+					},
+				},
+			})
+			.where(eq(workspaces.id, workspaceId))
+
+		const sessionB = await seedSessionWithCost('5.00')
+		await debitCreditForSession({
+			db,
+			workspaceId,
+			sessionId: sessionB.id,
+			actorId,
+			wsSettings: wsSettingsFor(10_000),
+		})
+
+		const [afterB] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId))
+		if (!afterB) throw new Error('workspace not found')
+		// $25 used, $10 cap => $15 total overage; A accounted for $10, so B owes
+		// its own $5 only. The $5 written off during A stays forgiven.
+		expect((afterB.settings as WorkspaceSettings).billing?.credit_balance_cents).toBe(9_500)
 	})
 })

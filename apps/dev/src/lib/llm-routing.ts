@@ -101,7 +101,12 @@ export const FALLBACK_TOKENS_PER_USD_CENT = 16_000
  * paid + trial usage cheap to query, even as the sessions table grows.
  */
 export async function getWorkspacePlanUsdCentsUsage(
-	db: Database,
+	// `Pick<…, 'select'>` (the `Queryable` shape from lib/workspace-capacity.ts)
+	// rather than `Database` so callers can pass a `tx`. credit-billing.ts must
+	// read this INSIDE its row-locked transaction — reading it outside would
+	// let a concurrent debit change the cumulative total between the read and
+	// the write.
+	db: Pick<Database, 'select'>,
 	workspaceId: string,
 	periodStartMs?: number,
 ): Promise<number> {

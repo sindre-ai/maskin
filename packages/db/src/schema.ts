@@ -844,6 +844,14 @@ export const workspaceCreditLedger = pgTable(
 		amountCents: integer('amount_cents').notNull(),
 		// Balance snapshot immediately after this entry applied — audit only.
 		balanceAfterCents: integer('balance_after_cents').notNull(),
+		// Debit rows: how many cents of cumulative period overage this row
+		// accounts for, BEFORE clamping to the available balance. Deliberately
+		// distinct from `amountCents` (what was actually taken): a session that
+		// outspends the balance has its excess written off, so billing the next
+		// session off summed `amountCents` would re-charge those written-off
+		// cents after a top-up. `lib/credit-billing.ts` sums this over the
+		// period so each session is billed only its own slice. 0 on topup rows.
+		accountedOverageCents: integer('accounted_overage_cents').notNull().default(0),
 		// Idempotency key for 'topup' rows only.
 		stripeCheckoutSessionId: text('stripe_checkout_session_id'),
 		// Idempotency key for 'debit' rows only. Nullable because topup rows
