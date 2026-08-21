@@ -918,10 +918,10 @@ Read the \`Triggering event\` in your action prompt, then load the relevant skil
 
 ## Object statuses in this workspace
 
-Bet: \`signal\`, \`qualified\`, \`define\`, \`active\`, \`live\`, \`succeeded\`, \`failed\`, \`paused\`.
+Bet: \`signal\`, \`define\`, \`active\`, \`live\`, \`succeeded\`, \`failed\`, \`paused\`.
 Insight: \`new\`, \`processing\`, \`clustered\`, \`scored\`, \`parked\`, \`discarded\`.
 
-\`qualified\`, \`scored\`, and \`parked\` were added by the Bet Council layer. Never reference statuses outside these lists.
+\`scored\` and \`parked\` were added by the Bet Council layer. Never reference statuses outside these lists.
 
 ## Insight resting states — NOT stuck, NOT orphaned
 
@@ -949,7 +949,7 @@ Insights in either state are NOT in-flight work and do NOT need a driver of your
 				name: 'shape-and-run-a-bet',
 				content: `---
 name: shape-and-run-a-bet
-description: The canonical method for shaping and running bets. Read this before drafting any bet, before promoting to active, and before transitioning to live. Enforces a fixed live-period circuit breaker and a minimal description format. Bets enter at \`qualified\` (post-T2 schema) — the council's promote-door creates them with \`promotion_mode\` set; legacy \`signal\` is retained only for the in-flight bets that pre-date the Bet Council.
+description: The canonical method for shaping and running bets. Read this before drafting any bet, before promoting to active, and before transitioning to live. Enforces a fixed live-period circuit breaker and a minimal description format. Bets enter at \`define\` (post-T2 schema) — the council's promote-door creates them with \`promotion_mode\` set; legacy \`signal\` is retained only for the in-flight bets that pre-date the Bet Council.
 ---
 
 # Shape and run a bet
@@ -958,24 +958,23 @@ A bet is a wager with a fixed live period. Commit to the end date before any wor
 
 ## Lifecycle
 
-\`qualified → define → active → live → succeeded | failed | paused\`
+\`define → active → live → succeeded | failed | paused\`
 
-- **qualified** — the council (or a fast-track event) has promoted a \`clustered\` insight into a bet. The bet exists as a placeholder with hypothesis + intent; shaping has not started. \`promotion_mode\` is set at this moment (always \`human_approved\` until ≥10 calibration promotions land; only after that does the auto path apply).
-- **define** — shaping. Repo must be identified and set on the bet before this phase can progress.
+- **define** — the council (or a fast-track event, or a human promoting a \`signal\` bet) has moved a \`clustered\` insight into a bet and shaping begins. \`promotion_mode\` is set at this moment (always \`human_approved\` until ≥10 calibration promotions land; only after that does the auto path apply). Repo must be identified and set on the bet before this phase can progress.
 - **active** — building. Riskiest-assumption test runs first, before broader scope.
 - **live** — measuring. Clock starts here, not at active.
 - \`## Experiment verdict\` and \`## Retro\` are added by the Bet Steward at their lifecycle events — never pre-populated.
 
-**Legacy \`signal\`.** Three in-flight bets pre-date the Bet Council and still carry the retired \`signal\` status. The schema retains it (\`signal → qualified → define → active → live → …\`) so they continue to validate. Do NOT create new bets at \`signal\`. Treat any future \`signal\`-state bet as a bug and route it to the Pipeline Monitor.
+**Legacy \`signal\`.** Three in-flight bets pre-date the Bet Council and still carry the retired \`signal\` status. The schema retains it (\`signal → define → active → live → …\`) so they continue to validate. Do NOT create new bets at \`signal\`. Treat any future \`signal\`-state bet as a bug and route it to the Pipeline Monitor.
 
 ## Where bets come from
 
 Every new bet is created by one of:
 
-1. **Bet Council promote-door** — \`strategic-intake-review\` routes a \`clustered\` insight through Promote (composite ≥30 + autonomy gate passes) or through Escalate (Sebastian accepts a recommendation). The Strategist creates the bet at \`qualified\` with \`metadata.promotion_mode\` set, and \`informs\` edges to the source insight(s).
-2. **Fast-track event** — an urgent + reversible + classified trigger (customer-blocking bug / security / churn-risk / external-deadline) routes through the fast-track lane in \`strategic-intake-review\`. Bet is created at \`qualified\` with \`promotion_mode=human_approved\`, flagged for retroactive D1+D6 reconciliation at the next council.
+1. **Bet Council promote-door** — \`strategic-intake-review\` routes a \`clustered\` insight through Promote (composite ≥30 + autonomy gate passes) or through Escalate (Sebastian accepts a recommendation). The Strategist creates the bet at \`define\` with \`metadata.promotion_mode\` set, and \`informs\` edges to the source insight(s).
+2. **Fast-track event** — an urgent + reversible + classified trigger (customer-blocking bug / security / churn-risk / external-deadline) routes through the fast-track lane in \`strategic-intake-review\`. Bet is created at \`define\` with \`promotion_mode=human_approved\`, flagged for retroactive D1+D6 reconciliation at the next council.
 
-Bets do not appear from nowhere. If you find a \`qualified\` bet without an \`informs\` edge to a source insight (or to a fast-track trigger event), surface it to the Pipeline Monitor.
+Bets do not appear from nowhere. If you find a \`define\` bet without an \`informs\` edge to a source insight (or to a fast-track trigger event), surface it to the Pipeline Monitor.
 
 ## Attachments (read at define)
 
@@ -1039,7 +1038,7 @@ Leave a line for the outcome to be filled during active.]
 - Risks, usability notes, feasibility flags — inline asides only, not separate headers.
 - If you can't say it plainly, you don't understand it yet.
 
-## \`promotion_mode\` (required at \`qualified\`)
+## \`promotion_mode\` (required at \`define\`)
 
 Every bet carries \`metadata.promotion_mode\` from the moment of creation. Set it before any other field.
 
@@ -1088,8 +1087,8 @@ Pick **2, 4, or 6 weeks**. Shape scope to fit — never the reverse. Default at 
 
 ## End-to-end flow
 
-1. Council promote-door (or fast-track) creates the bet at \`qualified\` with \`promotion_mode\` set, \`informs\` edges to source insight(s), and Sebastian @-mentioned in the digest.
-2. Strategist or assignee picks up at \`qualified\` and shapes through \`define\`. Sets \`metadata.repo\`. Runs the Commitment gate (including the autonomy-gate parity checks) before \`→ active\`.
+1. Council promote-door (or fast-track) creates the bet at \`define\` with \`promotion_mode\` set, \`informs\` edges to source insight(s), and Sebastian @-mentioned in the digest.
+2. Strategist or assignee shapes the bet. Sets \`metadata.repo\`. Runs the Commitment gate (including the autonomy-gate parity checks) before \`→ active\`.
 3. On \`active\`: first test runs before broader scope. Bet Steward posts build note.
 4. On tasks done + test passed: Bet Steward recommends \`→ live\`.
 5. On \`live\`: Bet Steward posts day-one note (review date, baseline, where evidence will come from). Daily scan begins.
@@ -2093,7 +2092,7 @@ Insights: \`new → processing → (scored) → clustered | parked | discarded\`
 - **parked** — *valid* but not actionable now (real but premature, or blocked externally). One-line reason; revisit on sweeps. Use this instead of forcing a real signal into \`discarded\`.
 - **discarded** — noise, duplicate, or no actionable content. Always a one-line reason.
 
-Bets: you create bets **only in \`signal\`**. Non-terminal (still in play) = \`signal\`, \`qualified\`, \`define\`, \`active\`, \`live\`.
+Bets: you create bets **only in \`signal\`**. Non-terminal (still in play) = \`signal\`, \`define\`, \`active\`, \`live\`.
 
 ## Per-event triage (the common path — handle inline, no skill load needed)
 

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import {
 	actors,
 	agentFiles,
@@ -10,6 +11,7 @@ import {
 	subscriptions,
 	workspaceMembers,
 	workspaceSkills,
+	workspaces,
 } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
 import {
@@ -268,5 +270,81 @@ describe('Actors Integration — MCP create_actor + attach flow', () => {
 		expect(rows).toHaveLength(1)
 		expect(rows[0].workspaceId).toBe(ws.id)
 		expect(rows[0].role).toBe('member')
+	})
+})
+
+describe('Actors Integration — signup workspace provisioning', () => {
+	// Signup used to seed only Workspace Coach in-transaction and leave the rest
+	// of the roster to a post-commit call, so a signed-up workspace was furnished
+	// differently from one created via POST /api/workspaces. Both now share
+	// provisionWorkspace(), so the auto-created workspace must come out with the
+	// full default agent roster and a pinned default chat agent.
+	const DEFAULT_AGENT_NAMES = [
+		'Chief of Staff',
+		'Driver',
+		'Knowledge Curator',
+		'Researcher',
+		'Signal Analyst',
+		'Strategist',
+		'Workspace Coach',
+	]
+
+	it('auto-creates a workspace seeded with the full default agent roster', async () => {
+		const app = createApp()
+
+		const res = await app.request(
+			jsonRequest('POST', '/api/actors', {
+				type: 'human',
+				name: 'Provisioned Human',
+				email: `provisioned-${randomUUID()}@example.com`,
+				password: 'correct-horse-battery',
+			}),
+		)
+		expect(res.status).toBe(201)
+		const body = await res.json()
+		expect(body.workspace_id).toBeTruthy()
+
+		const memberNames = await db
+			.select({ name: actors.name })
+			.from(workspaceMembers)
+			.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+			.where(eq(workspaceMembers.workspaceId, body.workspace_id))
+
+		const agentNames = memberNames
+			.map((r) => r.name)
+			.filter((n) => DEFAULT_AGENT_NAMES.includes(n))
+			.sort()
+		expect(agentNames).toEqual(DEFAULT_AGENT_NAMES)
+	})
+
+	it('pins Chief of Staff as the auto-created workspace default chat agent', async () => {
+		const app = createApp()
+
+		const res = await app.request(
+			jsonRequest('POST', '/api/actors', {
+				type: 'human',
+				name: 'Pinned Default',
+				email: `pinned-${randomUUID()}@example.com`,
+				password: 'correct-horse-battery',
+			}),
+		)
+		expect(res.status).toBe(201)
+		const { workspace_id: workspaceId } = await res.json()
+
+		const [ws] = await db
+			.select({ settings: workspaces.settings })
+			.from(workspaces)
+			.where(eq(workspaces.id, workspaceId))
+			.limit(1)
+
+		const defaultAgentId = (ws?.settings as { default_agent_id?: string } | null)?.default_agent_id
+		expect(defaultAgentId).toBeTruthy()
+
+		const [chief] = await db
+			.select({ name: actors.name })
+			.from(actors)
+			.where(eq(actors.id, defaultAgentId as string))
+			.limit(1)
+		expect(chief?.name).toBe('Chief of Staff')
 	})
 })

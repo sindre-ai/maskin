@@ -7,7 +7,7 @@ const { default: workspacesRoutes } = await import('../../routes/workspaces')
 
 describe('Workspaces Routes', () => {
 	describe('POST /api/workspaces', () => {
-		// Each of the 6 default agents does one actor insert + one
+		// Each of the 7 default agents does one actor insert + one
 		// workspaceMembers insert inside the create transaction (seedDefaultAgentActors);
 		// mockResults.insert is the static fallback once insertQueue is exhausted, so
 		// unconfigured agent/member inserts still resolve to a row with an id.
@@ -36,8 +36,8 @@ describe('Workspaces Routes', () => {
 			const body = await res.json()
 			expect(body.id).toBe(ws.id)
 			expect(body.name).toBe(ws.name)
-			// workspace + owner-member + 6 default agents × (actor + member) = 14.
-			expect(calls.inserts).toHaveLength(14)
+			// workspace + owner-member + 7 default agents × (actor + member) = 16.
+			expect(calls.inserts).toHaveLength(16)
 			expect(calls.inserts[1]).toMatchObject({ workspaceId: ws.id, role: 'owner' })
 		})
 

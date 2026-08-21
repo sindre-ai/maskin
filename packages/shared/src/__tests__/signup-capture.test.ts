@@ -58,9 +58,9 @@ describe('buildSignupCaptureKnowledge', () => {
 		expect(payload.type).toBe('knowledge')
 		expect(payload.status).toBe(SIGNUP_CAPTURE_STATUS)
 		expect(payload.title).toBe('Signup context — Ada Lovelace')
-		expect(payload.content).toContain('**Name:** Ada Lovelace')
-		expect(payload.content).toContain('**Organization:** Analytical Engine Co.')
-		expect(payload.content).toContain('**Role:** Founder')
+		expect(payload.content).toContain('**Ada Lovelace**')
+		expect(payload.content).toContain('**Founder**')
+		expect(payload.content).toContain('**Analytical Engine Co.**')
 
 		const meta = payload.metadata as Record<string, unknown>
 		expect(meta.source).toBe(SIGNUP_CAPTURE_SOURCE)

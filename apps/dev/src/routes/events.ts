@@ -1,17 +1,18 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, actors, files, objects, subscriptions } from '@maskin/db/schema'
+import { events, actors, files, objects } from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { createCommentSchema, eventQuerySchema } from '@maskin/shared'
 import { and, asc, desc, eq, gt, gte, inArray, lt, or, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import { trackAgentCommentPosted } from '../lib/analytics/comment-events'
+import { postComment } from '../lib/comments'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { logger } from '../lib/logger'
-import { insertNotificationsWithEvents } from '../lib/notifications'
 import { errorSchema, eventResponseSchema, workspaceIdHeader } from '../lib/openapi-schemas'
 import { serializeArray } from '../lib/serialize'
 import type { SessionManager } from '../services/session-manager'
+import { autoSubscribe } from '../services/subscriptions'
 
 type Env = {
 	Variables: {
@@ -215,136 +216,29 @@ app.openapi(createCommentRoute, (async (c) => {
 		body.parent_event_id,
 	)
 
-	const { comment, agentMentions, mentionedSubscriberCount } = await db.transaction(async (tx) => {
-		const results = await tx
-			.insert(events)
-			.values({
-				workspaceId,
-				actorId,
-				action: 'commented',
-				entityType: 'object',
-				entityId: body.entity_id,
-				data: {
-					content: body.content,
-					mentions: body.mentions,
-					parentEventId,
-					attachmentFileIds: body.attachment_file_ids,
-					metadata: body.metadata,
-					attention: body.attention,
-				},
-			})
-			.returning()
-
-		const created = results[0]
-		if (!created) {
-			throw new Error('Failed to create comment')
-		}
-
-		const mentions: Array<{ agentId: string; notificationId: string }> = []
-
-		// Create notifications for @mentioned agents (batched)
-		if (body.mentions?.length) {
-			const mentionedActors = await tx
-				.select({ id: actors.id, type: actors.type, name: actors.name })
-				.from(actors)
-				.where(inArray(actors.id, body.mentions))
-
-			const agentActors = mentionedActors.filter((a) => a.type === 'agent')
-
-			if (agentActors.length > 0) {
-				const createdNotifications = await insertNotificationsWithEvents(tx, {
-					workspaceId,
-					actorId,
-					rows: agentActors.map((agent) => ({
-						workspaceId,
-						type: 'needs_input' as const,
-						title: '@mentioned by comment',
-						content: body.content,
-						sourceActorId: actorId,
-						targetActorId: agent.id,
-						objectId: body.entity_id,
-						status: 'pending' as const,
-					})),
-				})
-
-				for (const notification of createdNotifications) {
-					if (notification.targetActorId) {
-						mentions.push({
-							agentId: notification.targetActorId,
-							notificationId: notification.id,
-						})
-					}
-				}
-			}
-		}
-
-		// Auto-subscribe the commenter — anyone who comments on an entity
-		// starts watching it for future activity (Slack-channel-style). On
-		// conflict we keep the existing source so author/manual subscriptions
-		// are never downgraded to 'commenter'.
-		await tx
-			.insert(subscriptions)
-			.values({
-				workspaceId,
-				actorId,
-				entityType: created.entityType,
-				entityId: created.entityId,
-				source: 'commenter',
-			})
-			.onConflictDoNothing({
-				target: [subscriptions.actorId, subscriptions.entityType, subscriptions.entityId],
-			})
-
-		// Auto-subscribe the thread OP when this is a reply, so they're
-		// notified of all follow-up messages — Slack participant model. Skip
-		// when the OP is the same as the current commenter (already subscribed
-		// above). onConflictDoNothing preserves any existing source.
-		if (parentEventId !== undefined && opActorId && opActorId !== actorId) {
-			await tx
-				.insert(subscriptions)
-				.values({
-					workspaceId,
-					actorId: opActorId,
-					entityType: created.entityType,
-					entityId: created.entityId,
-					source: 'commenter',
-				})
-				.onConflictDoNothing({
-					target: [subscriptions.actorId, subscriptions.entityType, subscriptions.entityId],
-				})
-		}
-
-		// Auto-subscribe @-mentioned actors so the comment reaches their For You
-		// page even if they weren't already subscribed. Dedup the mention list
-		// and skip the commenter (they were just auto-subscribed above).
-		// onConflictDoNothing preserves any existing source — a mention never
-		// downgrades manual/author/commenter.
-		let mentionedSubscriberCount = 0
-		if (body.mentions?.length) {
-			const uniqueMentioned = Array.from(new Set(body.mentions)).filter((id) => id !== actorId)
-			if (uniqueMentioned.length > 0) {
-				await tx
-					.insert(subscriptions)
-					.values(
-						uniqueMentioned.map((mentionedActorId) => ({
-							workspaceId,
-							actorId: mentionedActorId,
-							entityType: created.entityType,
-							entityId: created.entityId,
-							source: 'mentioned' as const,
-						})),
-					)
-					.onConflictDoNothing({
-						target: [subscriptions.actorId, subscriptions.entityType, subscriptions.entityId],
-					})
-				mentionedSubscriberCount = uniqueMentioned.length
-			}
-		}
-
-		return { comment: created, agentMentions: mentions, mentionedSubscriberCount }
+	const { comment, agentMentions } = await postComment(db, {
+		workspaceId,
+		actorId,
+		entityId: body.entity_id,
+		content: body.content,
+		mentions: body.mentions,
+		parentEventId,
+		attachmentFileIds: body.attachment_file_ids,
+		metadata: body.metadata,
+		attention: body.attention,
 	})
 
+	// Auto-subscribe the thread OP when this is a reply, so they're notified of
+	// all follow-up messages — Slack participant model. Skip when the OP is the
+	// same as the current commenter (already subscribed by postComment).
 	if (parentEventId !== undefined && opActorId && opActorId !== actorId) {
+		await autoSubscribe(db, {
+			workspaceId,
+			actorId: opActorId,
+			entityType: comment.entityType,
+			entityId: comment.entityId,
+			source: 'commenter',
+		})
 		logger.info('Auto-subscribed thread OP to commented object', {
 			objectId: body.entity_id,
 			commentEventId: comment.id,
@@ -352,11 +246,14 @@ app.openapi(createCommentRoute, (async (c) => {
 		})
 	}
 
-	if (mentionedSubscriberCount > 0) {
+	const uniqueMentionedCount = body.mentions?.length
+		? Array.from(new Set(body.mentions)).filter((id) => id !== actorId).length
+		: 0
+	if (uniqueMentionedCount > 0) {
 		logger.info('Auto-subscribed @-mentioned actors to commented object', {
 			objectId: body.entity_id,
 			commentEventId: comment.id,
-			mentionedSubscriberCount,
+			mentionedSubscriberCount: uniqueMentionedCount,
 		})
 	}
 
