@@ -288,11 +288,47 @@ describe('useConversationActivity', () => {
 		expect(api.sessions.logs).not.toHaveBeenCalled()
 	})
 
-	it('surfaces a timed-out session as an error turn, same as a failed one', async () => {
+	it('shows nothing for a timed-out session that already replied — the 2h backstop is expected, not an error', async () => {
 		vi.mocked(api.sessions.list).mockResolvedValue([
 			buildSession({
 				id: 'sess-1',
 				status: 'timeout',
+				startedAt: '2026-01-01T00:00:00.000Z',
+				config: { conversation: { conversation_id: conversationId, message_id: 10 } },
+				result: { error: 'Session timed out' },
+			}),
+		])
+		vi.mocked(api.sessions.logs).mockResolvedValue([])
+		const messages = [
+			buildMessage({ id: 10, actorId: 'human-1', content: 'hi' }),
+			buildMessage({
+				id: 11,
+				actorId: 'agent-1',
+				actorType: 'agent',
+				content: 'done',
+				createdAt: '2026-01-01T00:01:00.000Z',
+			}),
+		]
+
+		const { result } = renderHook(
+			() => useConversationActivity(workspaceId, conversationId, messages),
+			{ wrapper: TestWrapper },
+		)
+		await waitFor(() => expect(api.sessions.list).toHaveBeenCalled())
+
+		expect(result.current.byTriggerMessageId.size).toBe(0)
+		expect(result.current.byReplyMessageId.size).toBe(0)
+		expect(result.current.fallback).toEqual([])
+		// Logs are never fetched for a timed-out session either.
+		expect(api.sessions.logs).not.toHaveBeenCalled()
+	})
+
+	it('surfaces a timed-out session that never replied as interrupted, not as a failure', async () => {
+		vi.mocked(api.sessions.list).mockResolvedValue([
+			buildSession({
+				id: 'sess-1',
+				status: 'timeout',
+				startedAt: '2026-01-01T00:00:00.000Z',
 				config: { conversation: { conversation_id: conversationId, message_id: 10 } },
 				result: { error: 'Session timed out' },
 			}),
@@ -304,19 +340,124 @@ describe('useConversationActivity', () => {
 			() => useConversationActivity(workspaceId, conversationId, messages),
 			{ wrapper: TestWrapper },
 		)
-		await waitFor(() => expect(result.current.byTriggerMessageId.get(10)).toBeDefined())
+		await waitFor(() => expect(result.current.byTriggerMessageId.size).toBe(1))
 
-		expect(result.current.byTriggerMessageId.get(10)).toMatchObject([
-			{
-				sessionId: 'sess-1',
-				actorId: 'agent-1',
-				inProgress: false,
-				failed: true,
-				steps: [{ kind: 'error', text: 'Session timed out' }],
-			},
+		const turns = result.current.byTriggerMessageId.get(10)
+		expect(turns).toHaveLength(1)
+		expect(turns?.[0]).toMatchObject({
+			sessionId: 'sess-1',
+			interrupted: true,
+			inProgress: false,
+		})
+		// Not a failure — it must not get the red "failed to start" treatment.
+		expect(turns?.[0]?.failed).toBeUndefined()
+		expect(turns?.[0]?.steps).toHaveLength(1)
+	})
+
+	it('surfaces a failing logs query instead of an endless contentless spinner', async () => {
+		vi.mocked(api.sessions.list).mockResolvedValue([
+			buildSession({ id: 'sess-1', status: 'running', startedAt: '2026-01-01T00:00:00.000Z' }),
 		])
-		// Logs are never fetched for a timed-out session either.
-		expect(api.sessions.logs).not.toHaveBeenCalled()
+		vi.mocked(api.sessions.logs).mockRejectedValue(new Error('403'))
+		const messages = [buildMessage({ id: 10, actorId: 'human-1', content: 'hi' })]
+
+		const { result } = renderHook(
+			() => useConversationActivity(workspaceId, conversationId, messages),
+			{ wrapper: TestWrapper },
+		)
+		await waitFor(() => expect(result.current.fallback).toHaveLength(1))
+
+		expect(result.current.fallback[0]).toMatchObject({
+			sessionId: 'sess-1',
+			interrupted: true,
+			inProgress: false,
+		})
+		expect(result.current.fallback[0]?.steps[0]?.kind).toBe('error')
+	})
+
+	it('surfaces a reused session that answered an earlier turn but timed out mid-turn', async () => {
+		// Regression: the suppression check used to ask "did this actor reply at
+		// any point since the session started". An interactive session is reused
+		// for the whole conversation, so that was true for every conversation
+		// past its first exchange — the notice was suppressed on the common path
+		// and the user was left with no spinner, no notice and no error.
+		vi.mocked(api.sessions.list).mockResolvedValue([
+			buildSession({
+				id: 'sess-1',
+				status: 'timeout',
+				startedAt: '2026-01-01T00:00:00.000Z',
+				config: { conversation: { conversation_id: conversationId, message_id: 10 } },
+			}),
+		])
+		vi.mocked(api.sessions.logs).mockResolvedValue([])
+		const messages = [
+			buildMessage({ id: 10, actorId: 'human-1', createdAt: '2026-01-01T00:00:10.000Z' }),
+			buildMessage({
+				id: 11,
+				actorId: 'agent-1',
+				actorType: 'agent',
+				content: 'answer to turn 1',
+				createdAt: '2026-01-01T00:01:00.000Z',
+			}),
+			// Turn 2 — never answered, the session was reaped instead.
+			buildMessage({ id: 12, actorId: 'human-1', createdAt: '2026-01-01T00:02:00.000Z' }),
+		]
+
+		const { result } = renderHook(
+			() => useConversationActivity(workspaceId, conversationId, messages),
+			{ wrapper: TestWrapper },
+		)
+		await waitFor(() => expect(result.current.byTriggerMessageId.size).toBe(1))
+
+		// Anchored to the message actually left unanswered (12), NOT to the
+		// message that created the session (10).
+		expect(result.current.byTriggerMessageId.has(12)).toBe(true)
+		expect(result.current.byTriggerMessageId.get(12)?.[0]).toMatchObject({
+			sessionId: 'sess-1',
+			interrupted: true,
+			inProgress: false,
+		})
+	})
+
+	it('stops a turn spinning when the logs poll starts failing after it already had logs', async () => {
+		// Regression: the error branch was gated on `logs.length === 0`, which is
+		// only ever true when the FIRST fetch fails. A poll that worked and then
+		// broke kept its last-good data, skipped the branch and spun forever.
+		vi.mocked(api.sessions.list).mockResolvedValue([
+			buildSession({ id: 'sess-1', status: 'running', startedAt: '2026-01-01T00:00:00.000Z' }),
+		])
+		vi.mocked(api.sessions.logs).mockResolvedValueOnce([
+			buildLog({ id: 1, content: taggedUserTurn(10, 'hi') }),
+			buildLog({ id: 2, content: toolUse('Read') }),
+		])
+		const messages = [buildMessage({ id: 10, actorId: 'human-1', content: 'hi' })]
+
+		const { result } = renderHook(
+			() => useConversationActivity(workspaceId, conversationId, messages),
+			{ wrapper: TestWrapper },
+		)
+		// First poll succeeds — the turn is legitimately in flight.
+		await waitFor(() =>
+			expect(result.current.byTriggerMessageId.get(10)?.[0]).toMatchObject({
+				inProgress: true,
+			}),
+		)
+
+		// Every subsequent poll fails.
+		vi.mocked(api.sessions.logs).mockRejectedValue(new Error('503'))
+		await waitFor(
+			() =>
+				expect(result.current.byTriggerMessageId.get(10)?.[0]).toMatchObject({
+					inProgress: false,
+					interrupted: true,
+				}),
+			{ timeout: 5000 },
+		)
+
+		// The steps we already had are preserved, plus an error step.
+		const steps = result.current.byTriggerMessageId.get(10)?.[0]?.steps ?? []
+		expect(steps.length).toBeGreaterThan(1)
+		expect(steps[steps.length - 1]?.kind).toBe('error')
 	})
 
 	it('prefers the classified failure_reason.human_message over a generic result.error for a session that failed mid-run', async () => {
@@ -391,9 +532,11 @@ describe('useConversationActivity', () => {
 			wrapper: TestWrapper,
 		})
 		await waitFor(() =>
-			expect(api.sessions.logs).toHaveBeenCalledWith('sess-2', workspaceId, {
-				limit: '500',
-			}),
+			expect(api.sessions.logs).toHaveBeenCalledWith(
+				'sess-2',
+				workspaceId,
+				expect.objectContaining({ order: 'desc' }),
+			),
 		)
 
 		expect(result.current.byTriggerMessageId.get(10)).toBeUndefined()

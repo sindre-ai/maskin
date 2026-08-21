@@ -34,6 +34,13 @@ type Env = {
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
+/**
+ * Keep-alive interval for the session log stream. Kept below the 60s idle
+ * timeout common to reverse proxies, and below the web client's silence
+ * watchdog in `apps/web/src/lib/sse.ts`.
+ */
+const SSE_HEARTBEAT_MS = 15_000
+
 /** Load a session and verify it belongs to the caller's workspace. */
 async function loadSessionWithAuth(db: Database, sessionId: string, workspaceId: string) {
 	const [session] = await db
@@ -620,12 +627,18 @@ app.openapi(getSessionLogsRoute, (async (c) => {
 	if (query.since) conditions.push(gt(sessionLogs.id, query.since))
 	if (query.stream) conditions.push(eq(sessionLogs.stream, query.stream))
 
-	const results = await db
+	// `desc` takes the newest `limit` rows; reverse them before returning so
+	// the response is always in ascending id order regardless of which end
+	// the caller asked for. Consumers (the chat activity segmenter, the log
+	// transcript) all assume chronological order.
+	const rows = await db
 		.select()
 		.from(sessionLogs)
 		.where(and(...conditions))
 		.limit(query.limit)
-		.orderBy(asc(sessionLogs.id))
+		.orderBy(query.order === 'desc' ? desc(sessionLogs.id) : asc(sessionLogs.id))
+
+	const results = query.order === 'desc' ? rows.reverse() : rows
 
 	return c.json(serializeArray(results) as z.infer<typeof sessionLogResponseSchema>[])
 }) as RouteHandler<typeof getSessionLogsRoute, Env>)
@@ -670,6 +683,10 @@ app.get('/:id/logs/stream', async (c) => {
 	// Include 'paused' so a client subscribing to an already-paused session
 	// receives replay + done instead of hanging in the keep-alive loop below.
 	const terminalStatuses = ['completed', 'failed', 'timeout', 'paused']
+
+	// Disable proxy response buffering so frames reach the browser as they're
+	// written rather than when an intermediary's buffer happens to fill.
+	c.header('X-Accel-Buffering', 'no')
 
 	return streamSSE(c, async (stream) => {
 		// Check if session is already in terminal state
@@ -790,8 +807,19 @@ app.get('/:id/logs/stream', async (c) => {
 		// the client disconnected. Promise.race makes the sleep abort-aware:
 		// resolveClose() fires immediately on abort so we don't wait the full
 		// interval before discovering the client is gone.
+		//
+		// The comment frame is what actually keeps it alive — sleeping alone
+		// writes nothing, so a quiet session (an agent thinking for a minute)
+		// looks idle to every proxy on the path and gets reaped. See the same
+		// fix on the workspace events stream in routes/events.ts.
 		while (!closed) {
-			await Promise.race([stream.sleep(20000), closeSignal])
+			await Promise.race([stream.sleep(SSE_HEARTBEAT_MS), closeSignal])
+			if (closed) break
+			try {
+				await stream.write(': ping\n\n')
+			} catch {
+				break
+			}
 		}
 	})
 })
