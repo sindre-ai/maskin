@@ -1,4 +1,8 @@
-const BASE_URL = 'http://localhost:5173'
+import { recordCreatedObject } from './smoke-ledger'
+
+// Overridable so the same helpers can drive a remote target (e.g. the
+// post-deploy production smoke run). Absent the env var this is unchanged.
+const BASE_URL = process.env.PLAYWRIGHT_BASE_URL ?? 'http://localhost:5173'
 
 interface CreateActorResponse {
 	id: string
@@ -173,7 +177,11 @@ export class TestAPI {
 			body: JSON.stringify(data),
 		})
 		if (!res.ok) throw new Error(`createObject failed: ${res.status}`)
-		return res.json()
+		const created: ObjectResponse = await res.json()
+		// No-ops outside smoke mode; in smoke mode it lets teardown delete exactly
+		// what this run made instead of clearing the whole workspace.
+		recordCreatedObject(created.id)
+		return created
 	}
 
 	async listObjects(workspaceId: string): Promise<ObjectResponse[]> {
@@ -458,6 +466,24 @@ export class TestAPI {
 		if (!res.ok) throw new Error(`updateConversationMe failed: ${res.status}`)
 		return res.json()
 	}
+}
+
+/**
+ * Authenticate as an already-existing actor and return its identity + API key.
+ * Used by the production smoke run, which must reuse a pre-provisioned actor
+ * rather than signing up a fresh one against a live database.
+ */
+export async function loginTestActor(
+	email: string,
+	password: string,
+): Promise<CreateActorResponse> {
+	const res = await fetch(`${BASE_URL}/api/auth/login`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ email, password }),
+	})
+	if (!res.ok) throw new Error(`loginTestActor failed: ${res.status}`)
+	return res.json()
 }
 
 export async function createTestActor(

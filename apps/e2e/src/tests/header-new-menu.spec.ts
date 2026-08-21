@@ -46,7 +46,7 @@ test.describe('Header New menu', () => {
 		})
 	}
 
-	test('New chat navigates to the new-conversation composer', async ({ page, account }) => {
+	test('New chat navigates to the new-conversation composer @smoke', async ({ page, account }) => {
 		// For You has its own inline composer for "New chat" (see
 		// ForYouHeaderActions/onStartConversation) — every other page navigates
 		// to the full-screen new-conversation composer, so this asserts against
@@ -60,7 +60,10 @@ test.describe('Header New menu', () => {
 		await expect(page.getByRole('heading', { name: 'New chat' })).toBeVisible({ timeout: 10000 })
 	})
 
-	test('New task opens CreatePicker seeded to the task subtype', async ({ page, account }) => {
+	test('New task opens CreatePicker seeded to the task subtype @smoke', async ({
+		page,
+		account,
+	}) => {
 		await page.goto(`/${account.workspaceId}`)
 
 		await headerNewTrigger(page).click()

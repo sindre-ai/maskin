@@ -1,6 +1,6 @@
 import { expect, test } from '../fixtures/auth.fixture'
 
-test.describe('Workspace Navigation', () => {
+test.describe('Workspace Navigation', { tag: '@smoke' }, () => {
 	test('can navigate to workspace pages via sidebar', async ({ page, account }) => {
 		await page.goto(`/${account.workspaceId}`)
 

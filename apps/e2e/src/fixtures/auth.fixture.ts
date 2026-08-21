@@ -1,5 +1,6 @@
 import { test as base, expect } from '@playwright/test'
 import { TestAPI, createTestActor } from '../helpers/api.helper'
+import { getSmokeConfig, resolveSmokeAccount, trackObjectsCreatedInBrowser } from '../helpers/smoke'
 
 interface TestAccount {
 	apiKey: string
@@ -15,18 +16,43 @@ interface AuthFixtures {
 
 export const test = base.extend<AuthFixtures>({
 	account: async ({ page }, use, testInfo) => {
-		const actor = await createTestActor({
-			name: `E2E ${testInfo.title.slice(0, 30)} ${Date.now()}`,
-			email: `e2e-${Date.now()}@test.com`,
-		})
+		// Smoke mode (production canary) reuses a permanent, pre-provisioned
+		// tenant. Signing up here would create a real actor and auto-provision a
+		// real workspace in the production database on *every test* — including
+		// tests that otherwise only read. When the SMOKE_* vars are absent this
+		// branch is skipped entirely and behaviour is unchanged.
+		const smoke = getSmokeConfig()
 
-		const api = new TestAPI(actor.api_key)
-		const workspaces = await api.listWorkspaces()
-		const workspace = workspaces[0]
+		// Objects the specs create through the UI never pass through TestAPI, so
+		// they are captured here instead. Attached before navigation so no create
+		// response is missed.
+		if (smoke) trackObjectsCreatedInBrowser(page)
 
-		if (!workspace) {
-			throw new Error('No workspace found after actor creation')
-		}
+		const { actor, api, workspace } = smoke
+			? await (async () => {
+					const { actor, api } = await resolveSmokeAccount(smoke)
+					const workspaces = await api.listWorkspaces()
+					const workspace = workspaces.find((w) => w.id === smoke.workspaceId)
+					if (!workspace) {
+						throw new Error(
+							`Smoke actor is not a member of SMOKE_WORKSPACE_ID ${smoke.workspaceId}`,
+						)
+					}
+					return { actor, api, workspace }
+				})()
+			: await (async () => {
+					const actor = await createTestActor({
+						name: `E2E ${testInfo.title.slice(0, 30)} ${Date.now()}`,
+						email: `e2e-${Date.now()}@test.com`,
+					})
+					const api = new TestAPI(actor.api_key)
+					const workspaces = await api.listWorkspaces()
+					const workspace = workspaces[0]
+					if (!workspace) {
+						throw new Error('No workspace found after actor creation')
+					}
+					return { actor, api, workspace }
+				})()
 
 		// Inject auth into localStorage before any page navigation. Also mark the
 		// per-workspace North Star prompt as answered — the For You landing route

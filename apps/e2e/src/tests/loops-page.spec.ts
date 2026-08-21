@@ -36,7 +36,7 @@ test.describe('Loops list page', () => {
 		})
 	}
 
-	test('sidebar Loops entry navigates to /loops', async ({ page, account }) => {
+	test('sidebar Loops entry navigates to /loops @smoke', async ({ page, account }) => {
 		await page.setViewportSize({ width: 1024, height: 768 })
 		await page.goto(`/${account.workspaceId}`)
 

@@ -20,7 +20,10 @@ test.describe('Workspace switcher (SidebarHeader pill)', () => {
 		})
 	}
 
-	test('opens the switcher and marks the current workspace (AC-U2)', async ({ page, account }) => {
+	test('opens the switcher and marks the current workspace (AC-U2) @smoke', async ({
+		page,
+		account,
+	}) => {
 		await page.setViewportSize({ width: 1024, height: 768 })
 		await page.goto(`/${account.workspaceId}`)
 		await expect(page).toHaveURL(new RegExp(account.workspaceId), { timeout: 10_000 })

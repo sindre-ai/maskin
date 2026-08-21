@@ -1,6 +1,6 @@
 import { expect, test } from '../fixtures/auth.fixture'
 
-test.describe('Objects CRUD', () => {
+test.describe('Objects CRUD', { tag: '@smoke' }, () => {
 	test('can create an object via the header New menu', async ({ page, account }) => {
 		await page.goto(`/${account.workspaceId}/objects`)
 

@@ -52,7 +52,7 @@ test.describe('Marketplace detail pages', () => {
 		})
 	}
 
-	test('opens an item detail page from the Agents section and links back to its loop', async ({
+	test('opens an item detail page from the Agents section and links back to its loop @smoke', async ({
 		page,
 		account,
 	}) => {

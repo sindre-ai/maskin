@@ -1,0 +1,105 @@
+name: Production smoke
+
+# Fired by a Coolify post-deploy webhook that POSTs to
+#   https://api.github.com/repos/<owner>/<repo>/dispatches
+#   { "event_type": "coolify-deploy" }
+# with a GitHub PAT (repo scope). Also runnable by hand.
+on:
+  repository_dispatch:
+    types: [coolify-deploy]
+  workflow_dispatch:
+
+# A newer deploy supersedes an in-flight canary for the older one.
+concurrency:
+  group: smoke-prod
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: Smoke against production
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('pnpm-lock.yaml') }}
+
+      - name: Install Chromium
+        run: |
+          if [ "${{ steps.playwright-cache.outputs.cache-hit }}" = "true" ]; then
+            pnpm --filter @maskin/e2e exec playwright install-deps chromium
+          else
+            pnpm --filter @maskin/e2e exec playwright install --with-deps chromium
+          fi
+
+      # The dispatch can arrive before Coolify has finished swapping containers.
+      # Wait for the deployment to answer before judging it.
+      - name: Wait for production to be healthy
+        env:
+          SMOKE_BASE_URL: ${{ secrets.SMOKE_BASE_URL }}
+        run: |
+          if [ -z "$SMOKE_BASE_URL" ]; then
+            echo "::error::SMOKE_BASE_URL secret is not set"
+            exit 1
+          fi
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$SMOKE_BASE_URL/api/health" || true)
+            if [ "$code" = "200" ]; then
+              echo "Healthy after $i attempt(s)."
+              exit 0
+            fi
+            echo "Attempt $i: /api/health returned '$code' — retrying in 5s"
+            sleep 5
+          done
+          echo "::error::$SMOKE_BASE_URL/api/health never returned 200"
+          exit 1
+
+      # No build, no Postgres, no migrations — this exercises a remote host.
+      # ARGOS_TOKEN is deliberately not passed: no visual snapshots in production.
+      - name: Run smoke suite
+        env:
+          CI: 'true'
+          PLAYWRIGHT_BASE_URL: ${{ secrets.SMOKE_BASE_URL }}
+          SMOKE_WORKSPACE_ID: ${{ secrets.SMOKE_WORKSPACE_ID }}
+          SMOKE_LOGIN_EMAIL: ${{ secrets.SMOKE_LOGIN_EMAIL }}
+          SMOKE_LOGIN_PASSWORD: ${{ secrets.SMOKE_LOGIN_PASSWORD }}
+          NODE_OPTIONS: --unhandled-rejections=warn
+        run: pnpm --filter @maskin/e2e test:e2e:smoke
+
+      - name: Notify Slack on failure
+        if: failure()
+        env:
+          SLACK_SMOKE_WEBHOOK: ${{ secrets.SLACK_SMOKE_WEBHOOK }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -z "$SLACK_SMOKE_WEBHOOK" ]; then
+            echo "::warning::SLACK_SMOKE_WEBHOOK not set — skipping notification"
+            exit 0
+          fi
+          text=":rotating_light: Production smoke FAILED — ${{ github.repository }} @ ${{ github.sha }} (${{ github.event_name }}) <$RUN_URL|open the failing run>"
+          payload=$(jq -nc --arg text "$text" '{text: $text}')
+          curl -sS -X POST -H 'Content-Type: application/json' -d "$payload" "$SLACK_SMOKE_WEBHOOK"
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-playwright-report
+          path: apps/e2e/playwright-report/
+          retention-days: 7
