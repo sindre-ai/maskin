@@ -36,7 +36,14 @@ describe('session_logs foreign key on a deleted session (Integration)', () => {
 		workspaceId = ws.id
 	})
 
-	it('deletes a session row and its logs together', async () => {
+	it('refuses to delete a session that still has logs, because the FK does not cascade', async () => {
+		// `session_logs.session_id` is a plain reference with no `onDelete`
+		// (schema.ts) — deleting a session out from under its logs is rejected,
+		// not cascaded. This is why every delete path
+		// (actors.ts, installed-loops.ts, marketplace-loops.ts,
+		// loop-version-pusher.ts) deletes session_logs BEFORE sessions inside its
+		// transaction: the ordering is load-bearing, not incidental tidiness.
+		// Adding a cascade, or reordering those two deletes, breaks here first.
 		const session = await insertSession(db, workspaceId, actorId, actorId)
 		await db.insert(sessionLogs).values({
 			sessionId: session.id,
@@ -44,13 +51,42 @@ describe('session_logs foreign key on a deleted session (Integration)', () => {
 			content: 'a line written while the session still existed',
 		})
 
+		let caught: unknown
+		try {
+			await db.delete(sessions).where(eq(sessions.id, session.id))
+		} catch (err) {
+			caught = err
+		}
+		expect(caught).toBeInstanceOf(Error)
+		// Same shape the log-ingest route depends on: the SQLSTATE arrives on the
+		// error's `cause`, not on the error itself.
+		const cause = (caught as Error).cause as { code?: string } | undefined
+		expect(cause?.code ?? (caught as { code?: string }).code).toBe('23503')
+
+		// The row is still there — the delete was rejected, not partially applied.
+		const stillThere = await db.select().from(sessions).where(eq(sessions.id, session.id))
+		expect(stillThere).toHaveLength(1)
+	})
+
+	it('deletes a session row once its logs are removed first, as the routes do', async () => {
+		const session = await insertSession(db, workspaceId, actorId, actorId)
+		await db.insert(sessionLogs).values({
+			sessionId: session.id,
+			stream: 'stdout',
+			content: 'a line written while the session still existed',
+		})
+
+		// The production ordering.
+		await db.delete(sessionLogs).where(eq(sessionLogs.sessionId, session.id))
 		await db.delete(sessions).where(eq(sessions.id, session.id))
 
-		const remaining = await db
+		const remainingLogs = await db
 			.select()
 			.from(sessionLogs)
 			.where(eq(sessionLogs.sessionId, session.id))
-		expect(remaining).toHaveLength(0)
+		expect(remainingLogs).toHaveLength(0)
+		const remainingSessions = await db.select().from(sessions).where(eq(sessions.id, session.id))
+		expect(remainingSessions).toHaveLength(0)
 	})
 
 	it('rejects a log append for a deleted session with SQLSTATE 23503', async () => {
