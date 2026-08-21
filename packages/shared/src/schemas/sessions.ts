@@ -140,6 +140,15 @@ export const sessionQuerySchema = z.object({
 
 export const sessionLogQuerySchema = z.object({
 	since: z.coerce.number().int().optional(),
+	/**
+	 * Half-open, exclusive: rows satisfy `id < before`. Pages BACKWARD from a
+	 * known id, which `since` cannot do — it is how a client reaches the
+	 * earlier history of a long-lived interactive session it only hydrated
+	 * the tail of. Implies newest-first selection regardless of `order`; the
+	 * response is still returned in ascending id order. Combining `before`
+	 * with `since` is legal and yields the bounded window `since < id < before`.
+	 */
+	before: z.coerce.number().int().optional(),
 	stream: z.enum(['stdout', 'stderr', 'system']).optional(),
 	limit: z.coerce.number().int().min(1).max(500).default(100),
 	/**

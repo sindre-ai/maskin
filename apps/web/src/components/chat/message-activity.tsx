@@ -1,4 +1,5 @@
 import type { ActivityStep } from '@/components/agents/session-log-transcript'
+import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Spinner } from '@/components/ui/spinner'
 import { useActor } from '@/hooks/use-actors'
@@ -9,6 +10,16 @@ import { useEffect, useRef, useState } from 'react'
 
 interface MessageActivityProps {
 	turn: MessageTurnActivity
+	/**
+	 * Reaches further back into the conversation's activity. Passed to the
+	 * OLDEST rendered turn only — activity within a conversation is contiguous,
+	 * so only the oldest loaded turn can have anything before it, and one
+	 * control is both sufficient and the only placement that doesn't scatter
+	 * identical buttons down the thread.
+	 */
+	onLoadOlder?: () => void
+	isLoadingOlder?: boolean
+	olderExhausted?: boolean
 }
 
 /**
@@ -18,7 +29,12 @@ interface MessageActivityProps {
  * turns auto-expand and keep streaming in new steps; finished turns default
  * to collapsed unless the user has toggled one open manually.
  */
-export function MessageActivity({ turn }: MessageActivityProps) {
+export function MessageActivity({
+	turn,
+	onLoadOlder,
+	isLoadingOlder,
+	olderExhausted,
+}: MessageActivityProps) {
 	const { data: actor } = useActor(turn.actorId)
 	const [manuallyToggled, setManuallyToggled] = useState(false)
 	const attention = turn.failed === true || turn.interrupted === true
@@ -37,7 +53,10 @@ export function MessageActivity({ turn }: MessageActivityProps) {
 		el.scrollTop = el.scrollHeight
 	}, [turn.steps.length, open])
 
-	if (!turn.inProgress && !attention && turn.steps.length === 0) return null
+	// A turn with nothing to show is normally not worth a row — unless it is
+	// carrying the "load earlier activity" entry point, which would otherwise
+	// disappear on exactly the old conversations that need it.
+	if (!turn.inProgress && !attention && turn.steps.length === 0 && !onLoadOlder) return null
 
 	const name = actor?.name ?? 'Agent'
 
@@ -81,7 +100,26 @@ export function MessageActivity({ turn }: MessageActivityProps) {
 						turn.failed ? 'text-error' : 'text-muted-foreground',
 					)}
 				>
-					{turn.steps.length === 0 ? (
+					{onLoadOlder ? (
+						<div className="flex justify-start pb-1">
+							<Button
+								type="button"
+								variant="ghost"
+								size="sm"
+								onClick={onLoadOlder}
+								disabled={isLoadingOlder || olderExhausted}
+							>
+								{isLoadingOlder ? (
+									<Spinner />
+								) : olderExhausted ? (
+									'Start of activity'
+								) : (
+									'Load earlier activity'
+								)}
+							</Button>
+						</div>
+					) : null}
+					{turn.steps.length === 0 && !onLoadOlder ? (
 						<span>{turn.failed ? 'The session could not be started.' : 'Starting…'}</span>
 					) : (
 						turn.steps.map((step) => (

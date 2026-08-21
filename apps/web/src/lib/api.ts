@@ -1350,11 +1350,27 @@ export interface MessageContextNotification {
 	title?: string
 }
 
+export interface MessageFinalOutput {
+	dedupe_key: string
+	/** The chat message whose turn produced this output, when resolvable. */
+	message_id?: number | null
+	is_error?: boolean
+	subtype?: string
+	truncated?: boolean
+}
+
 export interface MessageMetadata {
 	attachments?: MessageAttachment[]
 	mentions?: string[]
 	context_objects?: MessageContextObject[]
 	context_notifications?: MessageContextNotification[]
+	/**
+	 * Backend-owned; stripped from anything a client sends. 'final_output'
+	 * marks an agent's automatically-posted end-of-turn reply, as opposed to
+	 * one it posted mid-turn via the post_conversation_message MCP tool.
+	 */
+	source?: 'final_output'
+	final_output?: MessageFinalOutput
 }
 
 export interface MessageResponse {

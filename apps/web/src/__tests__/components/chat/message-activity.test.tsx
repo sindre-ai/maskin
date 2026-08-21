@@ -79,3 +79,36 @@ describe('MessageActivity', () => {
 		expect(screen.getByText('No available LLM credentials')).toBeInTheDocument()
 	})
 })
+
+describe('MessageActivity load-earlier control', () => {
+	it('renders the control inside the expanded panel and calls it once', () => {
+		const onLoadOlder = vi.fn()
+		render(
+			<MessageActivity
+				turn={buildTurn({ steps: [{ id: '1', kind: 'tool_use', text: 'Using search' }] })}
+				onLoadOlder={onLoadOlder}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		fireEvent.click(screen.getByLabelText(/Toggle .* activity/))
+		fireEvent.click(screen.getByRole('button', { name: 'Load earlier activity' }))
+		expect(onLoadOlder).toHaveBeenCalledTimes(1)
+	})
+
+	it('disables the control and says so once exhausted', () => {
+		render(<MessageActivity turn={buildTurn()} onLoadOlder={vi.fn()} olderExhausted />, {
+			wrapper: TestWrapper,
+		})
+		fireEvent.click(screen.getByLabelText(/Toggle .* activity/))
+		expect(screen.getByRole('button', { name: 'Start of activity' })).toBeDisabled()
+	})
+
+	it('still renders a zero-step turn when it carries the load-earlier control', () => {
+		// Without this the entry point would vanish on exactly the old
+		// conversations that need it — a finished turn with no loaded steps.
+		const { container } = render(<MessageActivity turn={buildTurn()} onLoadOlder={vi.fn()} />, {
+			wrapper: TestWrapper,
+		})
+		expect(container).not.toBeEmptyDOMElement()
+	})
+})

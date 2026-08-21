@@ -625,6 +625,82 @@ describe('Conversations Integration', () => {
 		})
 	})
 
+	describe('server-owned message metadata', () => {
+		it('strips a client-claimed final_output marker', async () => {
+			const { app } = createConversationsApp(ownerId)
+			const created = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Metadata', participant_actor_ids: [] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${conversation.id}/messages`,
+					{
+						content: 'not really a final output',
+						metadata: {
+							source: 'final_output',
+							final_output: { dedupe_key: 'forged' },
+							mentions: [],
+						},
+					},
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(201)
+
+			// The frontend reconciles its optimistic bubble against `source`, so a
+			// forged marker would strand that bubble on screen permanently.
+			const body = (await res.json()) as { metadata: Record<string, unknown> | null }
+			expect(body.metadata?.source).toBeUndefined()
+			expect(body.metadata?.final_output).toBeUndefined()
+			expect(body.metadata?.mentions).toEqual([])
+		})
+
+		it('still posts the message, bumps lastMessageAt and logs the event', async () => {
+			// The insert path moved into a shared helper so the turn finalizer can
+			// reuse it — this pins the route's behaviour as unchanged.
+			const { app } = createConversationsApp(ownerId)
+			const created = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Helper', participant_actor_ids: [] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${conversation.id}/messages`,
+					{ content: 'hello there' },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(201)
+
+			const [row] = await db
+				.select()
+				.from(conversations)
+				.where(eq(conversations.id, conversation.id))
+			expect(row?.lastMessageAt).not.toBeNull()
+
+			const eventRows = await db
+				.select()
+				.from(events)
+				.where(and(eq(events.entityId, conversation.id), eq(events.action, 'message_posted')))
+			expect(eventRows).toHaveLength(1)
+		})
+	})
+
 	describe('messages.session_id', () => {
 		it('allows multiple messages to share the same session_id (interactive sessions are reused across replies)', async () => {
 			const agent = await insertActor(db, { type: 'agent' })
