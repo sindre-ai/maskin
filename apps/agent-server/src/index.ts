@@ -177,7 +177,14 @@ export type SessionPreviewState = Map<
 	}
 >
 
-const LOG_FLUSH_INTERVAL_MS = 2_000
+// How long a session's stdout sits in this box's buffer before being POSTed
+// to apps/dev's /agent-server-reconcile ingest route. This is the DOMINANT
+// term in end-to-end chat latency: the web client polls session_logs from the
+// DB, so nothing can appear in the transcript until this flush lands. Keep it
+// at or below the web client's active poll interval (ACTIVE_POLL_MS in
+// apps/web/src/hooks/use-session-activity-logs.ts) — raising it there without
+// raising it here just adds dead time.
+const LOG_FLUSH_INTERVAL_MS = 1_000
 const LOG_FLUSH_MAX_LINES = 100
 
 // Comfortably under the log-ingest route's per-line cap (currently 1MB, see

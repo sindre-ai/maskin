@@ -142,6 +142,17 @@ export const sessionLogQuerySchema = z.object({
 	since: z.coerce.number().int().optional(),
 	stream: z.enum(['stdout', 'stderr', 'system']).optional(),
 	limit: z.coerce.number().int().min(1).max(500).default(100),
+	/**
+	 * Which end of the log to take `limit` rows from. `asc` (the default,
+	 * and the historical behaviour) returns the OLDEST rows — correct when
+	 * paging forward from a `since` cursor, but wrong for hydrating a view
+	 * of a long-lived session: an interactive chat session accumulates logs
+	 * for the whole conversation, so `asc` + `limit` pins the client to the
+	 * beginning of the conversation forever. `desc` takes the newest rows
+	 * instead (still returned in ascending id order) so callers can hydrate
+	 * the tail and then page forward with `since`.
+	 */
+	order: z.enum(['asc', 'desc']).default('asc'),
 })
 
 export const sessionParamsSchema = z.object({

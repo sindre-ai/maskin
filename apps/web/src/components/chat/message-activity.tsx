@@ -21,11 +21,12 @@ interface MessageActivityProps {
 export function MessageActivity({ turn }: MessageActivityProps) {
 	const { data: actor } = useActor(turn.actorId)
 	const [manuallyToggled, setManuallyToggled] = useState(false)
-	const [open, setOpen] = useState(turn.inProgress || turn.failed === true)
+	const attention = turn.failed === true || turn.interrupted === true
+	const [open, setOpen] = useState(turn.inProgress || attention)
 	useEffect(() => {
 		if (manuallyToggled) return
-		setOpen(turn.inProgress || turn.failed === true)
-	}, [turn.inProgress, turn.failed, manuallyToggled])
+		setOpen(turn.inProgress || attention)
+	}, [turn.inProgress, attention, manuallyToggled])
 
 	const stepsRef = useRef<HTMLDivElement | null>(null)
 	// biome-ignore lint/correctness/useExhaustiveDependencies: pin scroll to bottom whenever a new step arrives while open
@@ -36,7 +37,7 @@ export function MessageActivity({ turn }: MessageActivityProps) {
 		el.scrollTop = el.scrollHeight
 	}, [turn.steps.length, open])
 
-	if (!turn.inProgress && !turn.failed && turn.steps.length === 0) return null
+	if (!turn.inProgress && !attention && turn.steps.length === 0) return null
 
 	const name = actor?.name ?? 'Agent'
 
@@ -57,9 +58,15 @@ export function MessageActivity({ turn }: MessageActivityProps) {
 				aria-label={`Toggle ${name} activity`}
 			>
 				{turn.inProgress && <Spinner />}
-				{turn.failed && <AlertTriangle size={12} className="shrink-0" />}
-				<span role={turn.failed ? 'alert' : undefined}>
-					{turn.failed ? `${name} failed to start` : turn.inProgress ? `${name} is working…` : name}
+				{attention && <AlertTriangle size={12} className="shrink-0" />}
+				<span role={attention ? 'alert' : undefined}>
+					{turn.failed
+						? `${name} failed to start`
+						: turn.interrupted
+							? `${name} stopped before finishing`
+							: turn.inProgress
+								? `${name} is working…`
+								: name}
 				</span>
 				<ChevronDown
 					size={12}

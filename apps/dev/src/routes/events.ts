@@ -31,6 +31,15 @@ type Env = {
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
+/**
+ * How often the events stream writes a keep-alive comment frame. Must stay
+ * comfortably below the shortest idle timeout of any proxy in front of us
+ * (60s is the common default) — and below the client's silence watchdog in
+ * `apps/web/src/lib/sse.ts`, which force-reconnects if it goes this long
+ * without hearing anything.
+ */
+const SSE_HEARTBEAT_MS = 15_000
+
 // GET /api/events - SSE stream (plain Hono, not OpenAPI)
 app.get('/', async (c) => {
 	const db = c.get('db')
@@ -45,6 +54,11 @@ app.get('/', async (c) => {
 		)
 
 	const lastEventId = c.req.header('Last-Event-ID')
+
+	// Disable proxy response buffering (nginx / Traefik). Without this an
+	// intermediary can hold our frames until its buffer fills, which both
+	// delays events and defeats the heartbeat below.
+	c.header('X-Accel-Buffering', 'no')
 
 	return streamSSE(c, async (stream) => {
 		// Replay missed events if Last-Event-ID is provided
@@ -79,13 +93,32 @@ app.get('/', async (c) => {
 
 		bridge.on('event', handler)
 
+		let aborted = false
 		stream.onAbort(() => {
+			aborted = true
 			bridge.off('event', handler)
 		})
 
-		// Keep connection alive
-		while (true) {
-			await stream.sleep(30000)
+		// Heartbeat. This loop used to only `sleep()`, writing nothing — an
+		// idle stream sent zero bytes indefinitely, so any intermediary
+		// (Traefik, LB, mobile NAT) reaped it as idle. When the drop is
+		// half-open the browser's fetch never errors, so the client sat
+		// "connected" receiving nothing until the user reloaded the page.
+		// Writing a comment frame well inside the typical 60s idle timeout
+		// keeps the connection provably alive, and gives the client's own
+		// liveness watchdog (see apps/web/src/lib/sse.ts) a signal to
+		// measure against.
+		while (!aborted) {
+			await stream.sleep(SSE_HEARTBEAT_MS)
+			if (aborted) break
+			try {
+				// A bare comment line: ignored by the EventSource protocol,
+				// but it's real bytes on the wire, which is the whole point.
+				await stream.write(': ping\n\n')
+			} catch {
+				// Peer is gone — the write failed rather than onAbort firing.
+				break
+			}
 		}
 	})
 })
