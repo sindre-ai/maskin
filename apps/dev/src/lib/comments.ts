@@ -24,6 +24,14 @@ export interface PostCommentInput {
 export interface PostCommentResult {
 	comment: typeof events.$inferSelect
 	agentMentions: AgentMention[]
+	/**
+	 * Mention ids from the request that matched no row in `actors`. Callers
+	 * surface these back to the client — an agent posting over MCP typically
+	 * transcribed a UUID out of its system prompt and fumbled a character, and
+	 * silently dropping the mention means the human it was trying to reach is
+	 * never notified.
+	 */
+	unresolvedMentions: string[]
 }
 
 /**
@@ -78,6 +86,7 @@ export async function postComment(
 		// both notifications and subscriptions — inserting an unknown id into
 		// `subscriptions.actor_id` violates its FK and aborts the whole comment.
 		let existingMentionedIds: string[] = []
+		let unresolvedMentions: string[] = []
 
 		if (input.mentions?.length) {
 			const mentionedActors = await tx
@@ -86,6 +95,8 @@ export async function postComment(
 				.where(inArray(actors.id, input.mentions))
 
 			existingMentionedIds = mentionedActors.map((a) => a.id)
+			const existingSet = new Set(existingMentionedIds)
+			unresolvedMentions = Array.from(new Set(input.mentions)).filter((id) => !existingSet.has(id))
 
 			const agentActors = mentionedActors.filter((a) => a.type === 'agent')
 
@@ -157,6 +168,6 @@ export async function postComment(
 			}
 		}
 
-		return { comment, agentMentions }
+		return { comment, agentMentions, unresolvedMentions }
 	})
 }

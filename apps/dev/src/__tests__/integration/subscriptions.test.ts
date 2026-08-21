@@ -1433,6 +1433,11 @@ describe('Subscriptions Integration', () => {
 		)
 		expect(commentRes.status).toBe(201)
 
+		// The caller is told which mention evaporated, and what to do about it.
+		const commentBody = await commentRes.json()
+		expect(commentBody.unresolved_mentions).toEqual([ghostActorId])
+		expect(commentBody.warning).toContain('list_actors')
+
 		// The real mentioned actor is still subscribed...
 		const subs = await db.execute(
 			sql`select actor_id, source from subscriptions where entity_id = ${obj.id}`,
