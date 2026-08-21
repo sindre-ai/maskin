@@ -1,24 +1,8 @@
 import { expect, test } from '../fixtures/auth.fixture'
+import { grantByollmAllowed } from '../helpers/plan.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 const BASE = 'http://localhost:5173'
-
-// Workspaces default to byollmAllowed: false — the Maskin-provided LLM plan.
-// Only ops-flagged exception workspaces may bring their own Claude
-// subscription / API key / custom endpoint. See PR #970.
-async function grantByollmAllowed(apiKey: string, workspaceId: string) {
-	const res = await fetch(`${BASE}/api/workspaces/admin/${workspaceId}`, {
-		method: 'PATCH',
-		headers: {
-			'Content-Type': 'application/json',
-			Authorization: `Bearer ${apiKey}`,
-		},
-		body: JSON.stringify({ byollm_allowed: true }),
-	})
-	if (!res.ok) {
-		throw new Error(`Grant byollm_allowed failed: ${res.status} ${await res.text()}`)
-	}
-}
 
 test.describe('BYOLLM entitlement gate — settings UI', () => {
 	test('hides BYO controls for a non-entitled workspace', async ({ page, account }) => {

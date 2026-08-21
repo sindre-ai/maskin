@@ -184,8 +184,18 @@ app.openapi(listWorkspacesRoute, async (c) => {
 			id: workspaces.id,
 			name: workspaces.name,
 			settings: workspaces.settings,
+			// The BYO-LLM entitlement flag drives whether the settings UI renders
+			// the Claude subscription / API-key controls at all. Omitting it here
+			// made every workspace look non-entitled in the frontend even after an
+			// ops grant, because the sidebar workspace list is the only source the
+			// UI reads it from. See PR #970.
+			onboardingEnabled: workspaces.onboardingEnabled,
+			byollmAllowed: workspaces.byollmAllowed,
+			billingOwnerId: workspaces.billingOwnerId,
+			createdBy: workspaces.createdBy,
 			role: workspaceMembers.role,
 			createdAt: workspaces.createdAt,
+			updatedAt: workspaces.updatedAt,
 		})
 		.from(workspaceMembers)
 		.innerJoin(workspaces, eq(workspaceMembers.workspaceId, workspaces.id))

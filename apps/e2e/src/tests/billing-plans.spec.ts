@@ -47,7 +47,9 @@ test.describe('Billing plans — Settings UI', () => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
 			await page.goto(`/${account.workspaceId}/settings/keys`)
 
-			await expect(page.getByText('Trial')).toBeVisible()
+			// Scoped to the banner — the plan comparison grid renders its own
+			// "TRIAL" card label, which an unscoped getByText also matches.
+			await expect(page.getByTestId('usage-banner').getByText('Trial')).toBeVisible()
 			await expect(page.getByRole('button', { name: 'Upgrade to Pro' })).toBeVisible()
 			await expect(page.getByRole('button', { name: 'Upgrade to Team' })).toBeVisible()
 		})
@@ -178,7 +180,8 @@ test.describe('Billing plans — Settings UI', () => {
 			await page.getByRole('button', { name: 'Buy usage credits' }).click()
 			await expect(page.getByRole('dialog')).toBeVisible()
 
-			await page.getByRole('button', { name: '$25' }).click()
+			// exact — otherwise the dialog's "Buy $25" submit also matches.
+			await page.getByRole('button', { name: '$25', exact: true }).click()
 			await page.getByRole('button', { name: 'Buy $25' }).click()
 
 			await page.waitForURL((url) => url.toString().includes('billing=mock-credit-checkout'))

@@ -286,6 +286,23 @@ describe('Workspaces Integration', () => {
 			expect(ws.byollmAllowed).toBe(false)
 		})
 
+		it('returns byollmAllowed on GET /api/workspaces so the settings UI can gate on it', async () => {
+			const app = createApp()
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Entitlement In List' }),
+			)
+			const ws = await createRes.json()
+			await app.request(
+				jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, { byollm_allowed: true }),
+			)
+
+			const listRes = await app.request(jsonGet('/api/workspaces'))
+			expect(listRes.status).toBe(200)
+			const list = (await listRes.json()) as Array<{ id: string; byollmAllowed: boolean }>
+			const listed = list.find((w) => w.id === ws.id)
+			expect(listed?.byollmAllowed).toBe(true)
+		})
+
 		it('blocks adding a BYO anthropic key when not entitled', async () => {
 			const app = createApp()
 			const createRes = await app.request(

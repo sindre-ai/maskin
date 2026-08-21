@@ -1,6 +1,7 @@
 import type { Browser, Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
 import { type TestAPI, createTestActor } from '../helpers/api.helper'
+import { grantPlanHeadroom } from '../helpers/plan.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 /**
@@ -28,7 +29,9 @@ async function signInAsActor(
 	return page
 }
 
-async function setUpConversation(api: TestAPI, workspaceId: string) {
+async function setUpConversation(api: TestAPI, workspaceId: string, apiKey: string) {
+	// A trial workspace allows a single human seat — this spec needs two.
+	await grantPlanHeadroom(apiKey, workspaceId)
 	const secondHuman = await createTestActor({ name: `E2E Chat Partner ${Date.now()}` })
 	await api.addWorkspaceMember(workspaceId, secondHuman.id)
 	const agent = await api.createAgentActor(`E2E Chat Agent ${Date.now()}`)
@@ -53,6 +56,7 @@ test.describe('Chats — full-screen multi-party chat', () => {
 			const { conversation, secondHuman } = await setUpConversation(
 				account.api,
 				account.workspaceId,
+				account.apiKey,
 			)
 
 			await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
@@ -101,7 +105,11 @@ test.describe('Chats — full-screen multi-party chat', () => {
 		account,
 		browser,
 	}) => {
-		const { conversation, secondHuman } = await setUpConversation(account.api, account.workspaceId)
+		const { conversation, secondHuman } = await setUpConversation(
+			account.api,
+			account.workspaceId,
+			account.apiKey,
+		)
 
 		await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
 		await expect(page.getByRole('heading', { name: 'E2E multi-party chat' })).toBeVisible({
@@ -140,7 +148,11 @@ test.describe('Chats — full-screen multi-party chat', () => {
 
 	test('mobile back button returns to the conversation list', async ({ page, account }) => {
 		await page.setViewportSize({ width: 375, height: 812 })
-		const { conversation } = await setUpConversation(account.api, account.workspaceId)
+		const { conversation } = await setUpConversation(
+			account.api,
+			account.workspaceId,
+			account.apiKey,
+		)
 
 		await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
 		await expect(page.getByRole('heading', { name: 'E2E multi-party chat' })).toBeVisible({
@@ -157,7 +169,11 @@ test.describe('Chats — full-screen multi-party chat', () => {
 		account,
 		browser,
 	}) => {
-		const { conversation, secondHuman } = await setUpConversation(account.api, account.workspaceId)
+		const { conversation, secondHuman } = await setUpConversation(
+			account.api,
+			account.workspaceId,
+			account.apiKey,
+		)
 		await account.api.postConversationMessage(conversation.id, account.workspaceId, {
 			content: 'Visible in both themes',
 		})

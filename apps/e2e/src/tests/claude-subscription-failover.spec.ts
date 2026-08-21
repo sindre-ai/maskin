@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
+import { grantByollmAllowed } from '../helpers/plan.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 const BASE = 'http://localhost:5173'
@@ -38,23 +39,6 @@ async function getWorkspaceSettings(apiKey: string, workspaceId: string) {
 	const ws = list.find((w) => w.id === workspaceId)
 	if (!ws) throw new Error(`Workspace ${workspaceId} not found`)
 	return ws.settings
-}
-
-// Workspaces default to byollmAllowed: false — the platform-provided LLM plan.
-// These specs exercise the Claude OAuth UI directly, so grant entitlement
-// first (mirrors an ops-flagged exception workspace). See PR #970.
-async function grantByollmAllowed(apiKey: string, workspaceId: string) {
-	const res = await fetch(`${BASE}/api/workspaces/admin/${workspaceId}`, {
-		method: 'PATCH',
-		headers: {
-			'Content-Type': 'application/json',
-			Authorization: `Bearer ${apiKey}`,
-		},
-		body: JSON.stringify({ byollm_allowed: true }),
-	})
-	if (!res.ok) {
-		throw new Error(`Grant byollm_allowed failed: ${res.status} ${await res.text()}`)
-	}
 }
 
 const seedPrimary = {
