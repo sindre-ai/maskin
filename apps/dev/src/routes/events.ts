@@ -9,7 +9,12 @@ import { trackAgentCommentPosted } from '../lib/analytics/comment-events'
 import { postComment } from '../lib/comments'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { logger } from '../lib/logger'
-import { errorSchema, eventResponseSchema, workspaceIdHeader } from '../lib/openapi-schemas'
+import {
+	createCommentResponseSchema,
+	errorSchema,
+	eventResponseSchema,
+	workspaceIdHeader,
+} from '../lib/openapi-schemas'
 import { serializeArray } from '../lib/serialize'
 import type { SessionManager } from '../services/session-manager'
 import { autoSubscribe } from '../services/subscriptions'
@@ -184,7 +189,7 @@ const createCommentRoute = createRoute({
 	responses: {
 		201: {
 			description: 'Comment event created',
-			content: { 'application/json': { schema: eventResponseSchema } },
+			content: { 'application/json': { schema: createCommentResponseSchema } },
 		},
 		400: {
 			description: 'Invalid request',
@@ -249,7 +254,7 @@ app.openapi(createCommentRoute, (async (c) => {
 		body.parent_event_id,
 	)
 
-	const { comment, agentMentions } = await postComment(db, {
+	const { comment, agentMentions, unresolvedMentions } = await postComment(db, {
 		workspaceId,
 		actorId,
 		entityId: body.entity_id,
@@ -279,8 +284,10 @@ app.openapi(createCommentRoute, (async (c) => {
 		})
 	}
 
+	const unresolvedSet = new Set(unresolvedMentions)
 	const uniqueMentionedCount = body.mentions?.length
-		? Array.from(new Set(body.mentions)).filter((id) => id !== actorId).length
+		? Array.from(new Set(body.mentions)).filter((id) => id !== actorId && !unresolvedSet.has(id))
+				.length
 		: 0
 	if (uniqueMentionedCount > 0) {
 		logger.info('Auto-subscribed @-mentioned actors to commented object', {
@@ -373,7 +380,24 @@ app.openapi(createCommentRoute, (async (c) => {
 		)
 	}
 
-	return c.json(serializeArray([comment])[0] as z.infer<typeof eventResponseSchema>, 201)
+	const serialized = serializeArray([comment])[0] as z.infer<typeof createCommentResponseSchema>
+
+	// Tell the caller when a mention resolved to nothing. Agents posting over
+	// MCP frequently transcribe an actor UUID out of their system prompt and
+	// fumble a character; without this the comment posts, the mention silently
+	// evaporates, and nobody learns the human was never reached.
+	if (unresolvedMentions.length > 0) {
+		logger.warn('Comment mentioned actor ids that do not exist', {
+			objectId: body.entity_id,
+			commentEventId: comment.id,
+			actorId,
+			unresolvedMentions,
+		})
+		serialized.unresolved_mentions = unresolvedMentions
+		serialized.warning = `The comment was posted, but ${unresolvedMentions.length} @mention id(s) matched no actor and were ignored, so nobody was notified for them: ${unresolvedMentions.join(', ')}. Do not retype actor UUIDs from memory or from your system prompt — call list_actors to look up the correct id, then post a follow-up comment with the corrected mention.`
+	}
+
+	return c.json(serialized, 201)
 }) as RouteHandler<typeof createCommentRoute, Env>)
 
 type ResolvedParent = { parentEventId: number | undefined; opActorId: string | null }

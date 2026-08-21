@@ -12,7 +12,7 @@ import {
 import type { PgNotifyBridge } from '@maskin/realtime'
 import { skjaldTranscriptionCompletedPayloadSchema } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, isNotNull } from 'drizzle-orm'
 import { trackSlackMentionReceived } from '../lib/analytics/loop-events'
 import { markSlackMention } from '../lib/analytics/slack-attribution'
 import { decrypt, encrypt } from '../lib/crypto'
@@ -212,7 +212,7 @@ app.openapi(connectRoute, (async (c) => {
 		const body = (await c.req.json().catch(() => ({}))) as { api_key?: string }
 		const apiKey = body.api_key
 		if (!apiKey) {
-			logger.error(`api_key provider ${providerName} missing request body api_key`)
+			logger.warn(`api_key provider ${providerName} missing request body api_key`)
 			return c.json(
 				createApiError('BAD_REQUEST', `Provider ${providerName} requires an API key`),
 				400,
@@ -235,6 +235,9 @@ app.openapi(connectRoute, (async (c) => {
 			})
 			.onConflictDoUpdate({
 				target: [integrations.workspaceId, integrations.provider, integrations.externalId],
+				// The matching unique index is partial (WHERE external_id IS NOT NULL),
+				// so Postgres only accepts this conflict target with the same predicate.
+				targetWhere: isNotNull(integrations.externalId),
 				set: {
 					status: 'active',
 					credentials: encryptedCredentials,

@@ -88,7 +88,10 @@ app.openapi(reconcileRoute, async (c) => {
 
 	const body = c.req.valid('json')
 	const db = c.get('db')
-	const reconciler = new SessionReconciler(db)
+	const sessionManager = c.get('sessionManager')
+	const reconciler = new SessionReconciler(db, (sessionId, content) =>
+		sessionManager.insertSystemLog(sessionId, content),
+	)
 
 	const { markedFailed, orphanSandboxes } = await reconciler.reconcile({
 		agentServerId: body.agent_server_id,
@@ -162,6 +165,11 @@ const logIngestRoute = createRoute({
 		},
 		400: {
 			description: 'Every line in the batch failed per-line validation',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		410: {
+			description:
+				'The session row no longer exists — the caller should drop the batch and stop streaming logs for this session',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		401: {
@@ -266,14 +274,44 @@ app.openapi(logIngestRoute, async (c) => {
 		// entire tool_result.
 		const message = String(err)
 		const cause = err instanceof Error ? err.cause : undefined
+		const causeCode =
+			cause && typeof cause === 'object' && 'code' in cause
+				? (cause as { code?: unknown }).code
+				: undefined
+
+		// SQLSTATE 23503 = foreign_key_violation: `session_logs.session_id` has
+		// no matching `sessions` row. The session was hard-deleted while its
+		// sandbox was still alive (deleting an actor, uninstalling a loop, or a
+		// loop version push all `delete(sessions)` by actorId — see
+		// routes/actors.ts, routes/installed-loops.ts, services/loop-version-pusher.ts),
+		// but the agent-server keeps streaming for the rest of that sandbox's
+		// life. This is PERMANENT: the row is never coming back, so a 500 here
+		// just sends the batch into flushLogs()'s 6-attempt/~46s retry loop,
+		// which fails identically and then errors again on the next batch — the
+		// two halves of Sentry MASKIN-DEV-5 (3902 events) and
+		// MASKIN-AGENT-SERVER-1 (1330 dropped batches), both from the same
+		// handful of orphaned sessions. Answer 410 Gone instead: the client
+		// treats a non-retryable status as terminal, drops the batch without
+		// retrying, and stops streaming for this session entirely.
+		if (causeCode === '23503') {
+			logger.warn('Dropping logs for a session that no longer exists', {
+				sessionId: id,
+				droppedLines: validLogs.length,
+			})
+			return c.json(
+				createApiError(
+					ApiErrorCode.NOT_FOUND,
+					'Session no longer exists — stop streaming logs for it',
+				),
+				410,
+			)
+		}
+
 		logger.error('Failed to append remote session logs', {
 			sessionId: id,
 			error: message.length > 500 ? `${message.slice(0, 500)}...[truncated]` : message,
 			causeName: cause instanceof Error ? cause.constructor.name : undefined,
-			causeCode:
-				cause && typeof cause === 'object' && 'code' in cause
-					? (cause as { code?: unknown }).code
-					: undefined,
+			causeCode,
 			causeMessage: cause instanceof Error ? cause.message : undefined,
 		})
 		return c.json(createApiError(ApiErrorCode.INTERNAL_ERROR, 'Failed to persist log batch'), 500)

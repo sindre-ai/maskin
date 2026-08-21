@@ -40,6 +40,7 @@ describe('Slack provider config', () => {
 			'chat:write',
 			'chat:write.customize',
 			'commands',
+			'files:read',
 			'im:history',
 			'im:write',
 			'links:read',
