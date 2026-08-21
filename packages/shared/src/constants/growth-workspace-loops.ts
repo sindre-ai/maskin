@@ -16,7 +16,6 @@ export const GROWTH_ACTOR_PROSPECTOR = '718b7634-12b8-4948-b414-04f70b2dd179'
 export const GROWTH_ACTOR_QUALIFIER = 'cbaebf86-2963-47d7-98bd-752e5824e7c9'
 export const GROWTH_ACTOR_HUBSPOT_LIAISON = '41733775-afc4-4fa6-8944-e1257daaf0b0'
 export const GROWTH_ACTOR_SALES_REP = '9d524e03-37a8-47aa-a49c-019ff2ae99c2'
-export const GROWTH_ACTOR_SALES_REP_COFOUNDER = '892c231b-1507-44d5-8de7-c4f2d3c4cbd3'
 export const GROWTH_ACTOR_RUNE_VAERK = 'b26eb652-6256-4848-94cc-205f07f7f346'
 export const GROWTH_ACTOR_SALES_COACH = 'f1c28aee-0fdb-45f5-a2ed-d7ef64964164'
 export const GROWTH_ACTOR_DEAL_CLOSER = '7a7ed101-57d0-45af-8203-0bcdb4bcc2b1'
@@ -59,7 +58,7 @@ export const GROWTH_LOOP_LEAD_GEN_QUALIFICATION_DESCRIPTION =
 	'Sources net-new ICP companies and contacts, scores and routes them by fit and persona, and keeps the CRM in sync with the pipeline.'
 
 // ── SDR Outreach Loop ─────────────────────────────────────────────────────────
-// Sales Rep, Sales Rep (Co-founder), Rune Værk, Sales Coach — runs daily
+// Sales Rep, Rune Værk, Sales Coach — runs daily
 // territory-based outbound and coaches messaging on what's converting.
 
 export const GROWTH_LOOP_SDR_OUTREACH_SLUG = 'sdr-outreach-loop'

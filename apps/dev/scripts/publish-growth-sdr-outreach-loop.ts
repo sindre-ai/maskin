@@ -1,6 +1,6 @@
 // One-shot publisher for the SDR Outreach Loop marketplace bundle.
 //
-// Snapshots Sales Rep, Sales Rep (Co-founder), Rune Værk, and Sales Coach, plus
+// Snapshots Sales Rep, Rune Værk, and Sales Coach, plus
 // every trigger they drive, from the checked-in data/growth-actors.json +
 // data/growth-triggers.json (captured live from the Growth workspace) into a
 // single `marketplace_loops` row at version 1.0.0 plus one
