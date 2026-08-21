@@ -57,6 +57,25 @@ export type SSEStatus = 'connecting' | 'connected' | 'disconnected'
  */
 const SILENCE_TIMEOUT_MS = 40_000
 
+/**
+ * A failure that retrying cannot fix — currently 401/403.
+ *
+ * Retrying these is worse than useless: the credentials are wrong and will
+ * stay wrong, so the client would hammer `/api/events` forever while showing
+ * the user a generic "disconnected" chip that reads as a flaky network. The
+ * subscription ends instead, and the error reaches `onError` so the caller
+ * can say something actionable.
+ */
+export class SSEFatalError extends Error {
+	constructor(
+		message: string,
+		readonly status: number,
+	) {
+		super(message)
+		this.name = 'SSEFatalError'
+	}
+}
+
 export interface SSECallbacks {
 	onEvent: (event: SSEEvent) => void
 	onError?: (err: unknown) => void
@@ -82,6 +101,12 @@ export function connectSSE(workspaceId: string, callbacks: SSECallbacks): AbortC
 	let watchdog: ReturnType<typeof setTimeout> | null = null
 	let stopped = false
 	let hasConnectedBefore = false
+	// Consecutive failed attempts, reset by a successful open. Drives the
+	// backoff so a backend that is down (rather than flaky) isn't retried at
+	// one request per second for as long as the tab stays open.
+	let attempts = 0
+
+	const nextRetryDelay = () => Math.min(RETRY_BASE_MS * 2 ** attempts++, RETRY_MAX_MS)
 
 	const clearWatchdog = () => {
 		if (watchdog !== null) {
@@ -133,6 +158,12 @@ export function connectSSE(workspaceId: string, callbacks: SSECallbacks): AbortC
 				// HTML error page from the proxy — or a 401 — registers as a
 				// healthy connection that simply never yields an event.
 				if (response && !response.ok) {
+					if (response.status === 401 || response.status === 403) {
+						throw new SSEFatalError(
+							'Your session is no longer authorized — reload the page or sign in again.',
+							response.status,
+						)
+					}
 					throw new Error(`SSE failed: ${response.status}`)
 				}
 				const contentType = response?.headers?.get?.('content-type')
@@ -140,6 +171,7 @@ export function connectSSE(workspaceId: string, callbacks: SSECallbacks): AbortC
 					throw new Error(`SSE bad content-type: ${contentType}`)
 				}
 
+				attempts = 0
 				callbacks.onStatusChange?.('connected')
 				noteActivity()
 				if (hasConnectedBefore) callbacks.onReconnect?.()
@@ -180,8 +212,16 @@ export function connectSSE(workspaceId: string, callbacks: SSECallbacks): AbortC
 				if (stopped) throw err
 				callbacks.onStatusChange?.('disconnected')
 				callbacks.onError?.(err)
+				if (err instanceof SSEFatalError) {
+					// Throwing ends the subscription for good. Set `stopped`
+					// first so the watchdog and our own catch below don't
+					// resurrect it.
+					stopped = true
+					clearWatchdog()
+					throw err
+				}
 				// Returning (not throwing) tells fetch-event-source to retry.
-				return RETRY_DELAY_MS
+				return nextRetryDelay()
 			},
 			openWhenHidden: true,
 		})
@@ -193,7 +233,7 @@ export function connectSSE(workspaceId: string, callbacks: SSECallbacks): AbortC
 			if (stopped) return
 			callbacks.onStatusChange?.('disconnected')
 			clearWatchdog()
-			setTimeout(() => connect(), RETRY_DELAY_MS)
+			setTimeout(() => connect(), nextRetryDelay())
 		})
 	}
 
@@ -202,5 +242,16 @@ export function connectSSE(workspaceId: string, callbacks: SSECallbacks): AbortC
 	return controller
 }
 
-/** Backoff between reconnect attempts. Deliberately short — chat feels broken while disconnected. */
-const RETRY_DELAY_MS = 1_000
+/**
+ * First reconnect delay. Deliberately short — chat feels broken while
+ * disconnected, and the overwhelmingly common case is a single dropped
+ * connection that comes straight back.
+ */
+const RETRY_BASE_MS = 1_000
+
+/**
+ * Ceiling for the exponential backoff. A flaky connection recovers at the
+ * base delay; a backend that is genuinely down settles at one attempt every
+ * 30s instead of one per second for the lifetime of the tab.
+ */
+const RETRY_MAX_MS = 30_000

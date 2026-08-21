@@ -2,7 +2,7 @@ import { isSessionIdleAwaitingInput } from '@/components/agents/session-log-tran
 import { api } from '@/lib/api'
 import type { SessionLogResponse } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
-import { useQueries } from '@tanstack/react-query'
+import { useQueries, useQueryClient } from '@tanstack/react-query'
 import { useRef } from 'react'
 
 /** Max rows the logs endpoint will return in one call (see `sessionLogQuerySchema`). */
@@ -30,10 +30,26 @@ const ACTIVE_POLL_MS = 1000
 /**
  * Poll interval once the session has come to rest awaiting the next user
  * turn. A chat tab can sit open all day in this state; there's no reason to
- * hit the API every second when we know nothing is being produced. The next
- * user message flips it back to active within one tick.
+ * hit the API every second when we know nothing is being produced.
  */
 const IDLE_POLL_MS = 5000
+
+/**
+ * How long after the newest conversation message we stay on ACTIVE_POLL_MS
+ * regardless of what the held logs say.
+ *
+ * Without this the idle gate costs ~5s at the worst possible moment. The
+ * interval is derived from the logs we already hold, and the last envelope of
+ * a finished turn is a `result` — so the hook reads "idle". Sending a message
+ * doesn't change those logs, and when the responder reuses an already-running
+ * session no session row is mutated either, so nothing invalidates the
+ * `['sessions']` prefix (see sse-invalidation.ts) to shake it awake. The hook
+ * would only learn the new turn had started on the next 5s tick, wiping out
+ * the latency this hook exists to cut. Passing the newest message's timestamp
+ * in makes the option identity change on send, which reschedules the interval
+ * immediately rather than waiting out the idle tick.
+ */
+const ACTIVE_GRACE_MS = 30_000
 
 /**
  * Streams a live session's logs by accumulating pages rather than re-reading
@@ -53,8 +69,17 @@ const IDLE_POLL_MS = 5000
  * Instead: hydrate from the tail (`order: 'desc'`), then page forward from a
  * `since` cursor, appending as we go. Memory is bounded by the session's own
  * lifetime, which is what the transcript needs anyway.
+ *
+ * `lastMessageAt` is the newest conversation message's timestamp (ms); see
+ * ACTIVE_GRACE_MS for why the poll rate needs it.
  */
-export function useSessionActivityLogs(workspaceId: string, sessionIds: string[]) {
+export function useSessionActivityLogs(
+	workspaceId: string,
+	sessionIds: string[],
+	lastMessageAt: number | null = null,
+) {
+	const queryClient = useQueryClient()
+
 	// Accumulated rows per session. A ref (not state) because the query
 	// results below are what drive rendering — mutating this during a queryFn
 	// must not itself schedule a render.
@@ -68,12 +93,30 @@ export function useSessionActivityLogs(workspaceId: string, sessionIds: string[]
 	}
 
 	return useQueries({
-		queries: sessionIds.map((sessionId) => ({
-			queryKey: [...queryKeys.sessions.logs(sessionId), 'activity'],
-			queryFn: () => fetchNewLogs(accumulated.current, sessionId, workspaceId),
-			refetchInterval: (query: { state: { data?: SessionLogResponse[] } }) =>
-				isAwaitingNextTurn(query.state.data) ? IDLE_POLL_MS : ACTIVE_POLL_MS,
-		})),
+		queries: sessionIds.map((sessionId) => {
+			const queryKey = [...queryKeys.sessions.logs(sessionId), 'activity']
+			return {
+				queryKey,
+				queryFn: () => {
+					// The ref is per hook instance but the cache is global, so a
+					// remount (navigate away and back within gcTime) starts with an
+					// empty ref in front of a fully populated cache entry. Without
+					// this seed the first fetch would see no cursor, take the
+					// `order: 'desc'` hydrate branch, and overwrite an accumulated
+					// 3000-row transcript with the newest 500 — visibly truncating
+					// the conversation, which is the very bug this hook exists to
+					// fix.
+					const store = accumulated.current
+					if (!store.has(sessionId)) {
+						const cached = queryClient.getQueryData<SessionLogResponse[]>(queryKey)
+						if (cached && cached.length > 0) store.set(sessionId, cached)
+					}
+					return fetchNewLogs(store, sessionId, workspaceId)
+				},
+				refetchInterval: (query: { state: { data?: SessionLogResponse[] } }) =>
+					activityPollInterval(query.state.data, lastMessageAt),
+			}
+		}),
 	})
 }
 
@@ -106,23 +149,35 @@ async function fetchNewLogs(
 			)
 		}
 
-		// A short page means we've reached the tail; anything else means there
-		// may be more waiting and we should keep pulling.
-		if (rows.length < PAGE_SIZE) break
+		// A short page means we've reached the tail. A full page that was
+		// entirely duplicates leaves the cursor where it was, so continuing
+		// would just refetch the same 500 rows — stop on that too.
+		if (fresh.length === 0 || rows.length < PAGE_SIZE) break
 	}
 
 	return store.get(sessionId) ?? []
 }
 
 /**
- * True once the session's most recent stdout envelope is a `result` — the
- * turn finished and the CLI is blocked reading stdin for the next one.
+ * How often to re-read a session's logs.
  *
- * Delegates to the same predicate the transcript uses to decide whether to
- * show a live dropdown, so the poll rate and the UI can't disagree about
- * whether something is in flight.
+ * Idle means the session's most recent stdout envelope is a `result` — the
+ * turn finished and the CLI is blocked reading stdin for the next one. That
+ * check delegates to the same predicate the transcript uses to decide whether
+ * to show a live dropdown, so the poll rate and the UI can't disagree about
+ * whether something is in flight. A recent message overrides it (see
+ * ACTIVE_GRACE_MS), because a turn that has just been prompted hasn't
+ * produced any logs to read yet.
+ *
+ * Exported for tests: this is the whole of the latency behaviour, and it is
+ * awkward to observe through the query observer.
  */
-function isAwaitingNextTurn(logs: SessionLogResponse[] | undefined): boolean {
-	if (!logs || logs.length === 0) return false
-	return isSessionIdleAwaitingInput(logs)
+export function activityPollInterval(
+	logs: SessionLogResponse[] | undefined,
+	lastMessageAt: number | null,
+	now: number = Date.now(),
+): number {
+	if (lastMessageAt !== null && now - lastMessageAt < ACTIVE_GRACE_MS) return ACTIVE_POLL_MS
+	if (!logs || logs.length === 0) return ACTIVE_POLL_MS
+	return isSessionIdleAwaitingInput(logs) ? IDLE_POLL_MS : ACTIVE_POLL_MS
 }

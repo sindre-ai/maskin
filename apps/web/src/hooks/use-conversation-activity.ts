@@ -5,6 +5,7 @@ import {
 	segmentActivityByMessage,
 } from '@/components/agents/session-log-transcript'
 import type { MessageResponse, SessionResponse } from '@/lib/api'
+import { useEffect, useRef } from 'react'
 import { useSessionActivityLogs } from './use-session-activity-logs'
 import { useActiveSessionsForConversation } from './use-sessions'
 
@@ -16,6 +17,14 @@ export interface MessageTurnActivity {
 	inProgress: boolean
 	/** True when the session that would have produced this turn failed before (or shortly after) starting. */
 	failed?: boolean
+	/**
+	 * True when the turn stopped without either finishing or failing — the
+	 * session hit the 2-hour reaper mid-turn, or its activity couldn't be
+	 * loaded. Rendered neutrally rather than as a red failure: nothing is
+	 * broken, but the user is waiting on a reply that isn't coming and needs
+	 * to know that.
+	 */
+	interrupted?: boolean
 }
 
 export interface ConversationActivity {
@@ -96,19 +105,47 @@ export function useConversationActivity(
 	}
 	const latestSessions = [...latestByActor.values()]
 	const activeSessions = latestSessions.filter((s) => s.status === 'running')
-	// 'timeout' is deliberately NOT surfaced. The 2-hour backstop
-	// (session-manager.ts's reaper) is expected lifecycle, not a failure: the
-	// next message in this conversation spawns a fresh interactive session
-	// seeded with the recent history (see conversation-responder.ts's
-	// spawnConversationSession), so the user never loses context and has
-	// nothing to act on. Showing "failed to start / Session timed out" for it
-	// was alarming noise. Genuine failures ('failed') still surface.
 	const failedSessions = latestSessions.filter((s) => s.status === 'failed')
+	// 'timeout' is not a failure — the 2-hour backstop (session-manager.ts's
+	// reaper) is expected lifecycle, and the next message in this conversation
+	// spawns a fresh interactive session seeded with the recent history (see
+	// conversation-responder.ts's spawnConversationSession). Whether a given
+	// timeout is worth surfacing is decided per session below.
+	const timedOutSessions = latestSessions.filter((s) => s.status === 'timeout')
+
+	// Newest message in the thread — drives the log poll rate, so that sending
+	// a message doesn't have to wait out an idle tick before the transcript
+	// wakes up. See ACTIVE_GRACE_MS in use-session-activity-logs.ts.
+	let lastMessageAt: number | null = null
+	for (const message of messages) {
+		if (!message.createdAt) continue
+		const at = new Date(message.createdAt).getTime()
+		if (!Number.isNaN(at) && (lastMessageAt === null || at > lastMessageAt)) lastMessageAt = at
+	}
 
 	const logsQueries = useSessionActivityLogs(
 		workspaceId,
 		activeSessions.map((s) => s.id),
+		lastMessageAt,
 	)
+
+	// A failing logs query used to be indistinguishable from a quiet session:
+	// `data` is undefined, so the transcript rendered a contentless
+	// in-progress dropdown and the agent appeared to work forever. It's
+	// surfaced in the UI below; log it once per session so it isn't invisible
+	// in telemetry either.
+	const loggedLogErrors = useRef(new Set<string>())
+	const erroredSessionIds = activeSessions
+		.filter((_, index) => logsQueries[index]?.isError)
+		.map((s) => s.id)
+	const erroredKey = erroredSessionIds.join(',')
+	useEffect(() => {
+		for (const id of erroredKey ? erroredKey.split(',') : []) {
+			if (loggedLogErrors.current.has(id)) continue
+			loggedLogErrors.current.add(id)
+			console.error('[chat] failed to load session activity logs', id)
+		}
+	}, [erroredKey])
 
 	const byReplyMessageId = new Map<number, MessageTurnActivity[]>()
 	const byTriggerMessageId = new Map<number, MessageTurnActivity[]>()
@@ -141,17 +178,71 @@ export function useConversationActivity(
 		}
 	}
 
+	for (const session of timedOutSessions) {
+		// Suppressing every timeout outright is a silent failure. A session
+		// that timed out *mid-turn* leaves the user waiting on a reply that
+		// will never arrive — see .claude/rules/known-pitfalls.md, "Interactive
+		// Sessions Dispatched to a Remote Agent-Server Never Received Their
+		// First Turn", where a hung session sat in `running` with zero logs
+		// until this same reaper fired. Blanket suppression erases every trace
+		// of that in a single tick, which is worse than the alarming notice it
+		// replaced.
+		//
+		// A reply this actor posted at or after the session started means the
+		// turn did finish and the timeout is just the idle backstop cleaning up
+		// afterwards — nothing to say. Otherwise the user needs to know.
+		if (messagesFromSession(messages, session).length > 0) continue
+
+		const config = session.config as { conversation?: { message_id?: number } } | null
+		const messageId = config?.conversation?.message_id
+		const turn: MessageTurnActivity = {
+			sessionId: session.id,
+			actorId: session.actorId,
+			steps: [
+				{
+					id: `${session.id}-timeout`,
+					kind: 'error',
+					text: 'Send another message to continue — the next one starts a fresh session seeded with the recent history.',
+				},
+			],
+			inProgress: false,
+			interrupted: true,
+		}
+		if (typeof messageId === 'number') {
+			const list = byTriggerMessageId.get(messageId) ?? []
+			list.push(turn)
+			byTriggerMessageId.set(messageId, list)
+		} else {
+			fallback.push(turn)
+		}
+	}
+
 	activeSessions.forEach((session, sessionIndex) => {
-		const logs = logsQueries[sessionIndex]?.data ?? []
+		const query = logsQueries[sessionIndex]
+		const logs = query?.data ?? []
+		if (query?.isError && logs.length === 0) {
+			// Nothing to segment, and no way to know what the agent is doing.
+			// Say so, instead of falling through to a spinner that never
+			// resolves.
+			fallback.push({
+				sessionId: session.id,
+				actorId: session.actorId,
+				steps: [
+					{
+						id: `${session.id}-logs-error`,
+						kind: 'error',
+						text: "Couldn't load this turn's activity — retrying.",
+					},
+				],
+				inProgress: false,
+				interrupted: true,
+			})
+			return
+		}
 		const { segments, unassigned } = segmentActivityByMessage(logs)
 		const idle = isSessionIdleAwaitingInput(logs)
 
-		const startedAt = session.startedAt ? new Date(session.startedAt).getTime() : null
-		const agentMessages = messages.filter((m) => {
-			if (m.actorId !== session.actorId) return false
-			if (startedAt === null || !m.createdAt) return true
-			return new Date(m.createdAt).getTime() >= startedAt
-		})
+		const agentMessages = messagesFromSession(messages, session)
 		const replySegments = segments.filter((s) => s.containsReply)
 		const pairedCount = Math.min(replySegments.length, agentMessages.length)
 		for (let i = 0; i < pairedCount; i++) {
@@ -200,4 +291,23 @@ export function useConversationActivity(
 	})
 
 	return { byReplyMessageId, byTriggerMessageId, fallback }
+}
+
+/**
+ * Messages this actor posted at or after the session started.
+ *
+ * Scoped by `actorId` + start time rather than `messages.sessionId` for the
+ * reason given in useConversationActivity's doc comment — that column is null
+ * for HTTP-transport MCP replies, which is most of them.
+ */
+function messagesFromSession(
+	messages: MessageResponse[],
+	session: SessionResponse,
+): MessageResponse[] {
+	const startedAt = session.startedAt ? new Date(session.startedAt).getTime() : null
+	return messages.filter((m) => {
+		if (m.actorId !== session.actorId) return false
+		if (startedAt === null || !m.createdAt) return true
+		return new Date(m.createdAt).getTime() >= startedAt
+	})
 }
