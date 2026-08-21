@@ -985,7 +985,7 @@ app.openapi(deleteActorRoute, (async (c) => {
 	// slot until the 2h timeout, and keeps POSTing logs against a session_id
 	// that no longer exists. Best-effort and outside the transaction — see
 	// stopSessionsForActors.
-	await stopSessionsForActors(db, c.get('sessionManager'), [id])
+	await stopSessionsForActors(db, c.get('sessionManager'), [id], c.get('actorId'))
 
 	await db.transaction(async (tx) => {
 		// Delete session logs for sessions owned by this actor

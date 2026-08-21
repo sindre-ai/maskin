@@ -707,6 +707,48 @@ describe('Workspaces Integration', () => {
 			expect(rows).toHaveLength(1)
 			expect(rows[0]?.role).toBe('member')
 		})
+
+		it('does not downgrade an existing admin when re-added as a member', async () => {
+			const app = createApp()
+
+			const created = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Member No Downgrade' }),
+			)
+			expect(created.status).toBe(201)
+			const ws = await created.json()
+
+			const admin = await insertActor(db)
+
+			const first = await app.request(
+				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, {
+					actor_id: admin.id,
+					role: 'admin',
+				}),
+			)
+			expect(first.status).toBe(201)
+			expect(await first.json()).toEqual({ added: true })
+
+			// This is the reason the route uses onConflictDoNothing rather than
+			// onConflictDoUpdate: a re-add carrying the default role must not
+			// silently strip an existing admin of their privileges. With DoUpdate
+			// this second call rewrites role to 'member' and the assertion below
+			// fails.
+			const second = await app.request(
+				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, {
+					actor_id: admin.id,
+					role: 'member',
+				}),
+			)
+			expect(second.status).toBe(201)
+			expect(await second.json()).toEqual({ added: false })
+
+			const rows = await db
+				.select({ role: workspaceMembers.role })
+				.from(workspaceMembers)
+				.where(and(eq(workspaceMembers.workspaceId, ws.id), eq(workspaceMembers.actorId, admin.id)))
+			expect(rows).toHaveLength(1)
+			expect(rows[0]?.role).toBe('admin')
+		})
 	})
 
 	describe('default chat agent', () => {

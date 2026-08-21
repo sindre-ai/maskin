@@ -303,6 +303,12 @@ async function monitorSession(
 	// sandbox's life — the storm behind Sentry MASKIN-DEV-5 / MASKIN-AGENT-SERVER-1.
 	let logDeliveryAbandoned = false
 
+	// Statuses where a retry provably cannot change the outcome: a malformed or
+	// oversized batch, or a route/session that is gone. 410 is handled ahead of
+	// this as a terminal latch. Auth statuses are deliberately absent — see the
+	// comment at the check below.
+	const NON_RETRYABLE_LOG_STATUSES = new Set([400, 404, 413, 422])
+
 	const flushLogs = async (): Promise<void> => {
 		if (!maskinBaseUrl || logDeliveryAbandoned || logBuffer.length === 0) {
 			logBuffer = []
@@ -332,10 +338,14 @@ async function monitorSession(
 					})
 					return
 				}
-				// Other 4xx responses are client-side faults (bad token, malformed
-				// batch) that repeat identically on retry. Only 408/429 and 5xx are
-				// worth the retry budget.
-				if (!res.ok && res.status < 500 && res.status !== 408 && res.status !== 429) {
+				// A closed set of 4xx responses are client-side faults that repeat
+				// identically on retry, so they get dropped rather than burning the
+				// budget. Everything else — 5xx, 408, 429, and critically 401/403 —
+				// stays retryable: an AGENT_SERVER_SECRET rotation or a mid-deploy
+				// config gap produces auth failures in exactly the ~30s window this
+				// budget was widened to survive (see session-manager.ts's
+				// "secret rotation race").
+				if (!res.ok && NON_RETRYABLE_LOG_STATUSES.has(res.status)) {
 					logger.error('Maskin rejected log batch as non-retryable, batch dropped', {
 						sessionId,
 						status: res.status,

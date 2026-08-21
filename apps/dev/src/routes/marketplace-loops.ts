@@ -625,7 +625,7 @@ app.openapi(uninstallItemRoute, (async (c) => {
 	// an agent the user just uninstalled and holds agent-server capacity until
 	// the 2h timeout — see session-cleanup.ts.
 	if (type === 'actor' && !keepProvisionedItems) {
-		await stopSessionsForActors(db, c.get('sessionManager'), [entityId])
+		await stopSessionsForActors(db, c.get('sessionManager'), [entityId], c.get('actorId'))
 	}
 
 	await db.transaction(async (tx) => {

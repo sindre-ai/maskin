@@ -50,12 +50,43 @@ describe('stopSessionsForActors (Integration)', () => {
 				stopped.push(id)
 			}),
 			[agent.id],
+			actorId,
 		)
 
 		expect(stopped.sort()).toEqual([running.id, queued.id].sort())
 		expect(stopped).not.toContain(finished.id)
 		expect(stopped).not.toContain(otherAgents.id)
 		expect(result.failed).toEqual([])
+	})
+
+	it('skips a claimed-but-not-yet-started session that has no compute attached', async () => {
+		// A real `queued`/`pending` row has neither an agent-server nor a
+		// container — nothing has picked it up yet. SessionManager.stopSession
+		// throws `not found or has no container` for that shape, so attempting a
+		// stop produced an error-level, Sentry-visible line for the normal case.
+		// Nothing is stranded by skipping: there is no compute to stop.
+		const agent = await insertActor(db, { type: 'agent' })
+		const unclaimed = await insertSession(db, workspaceId, agent.id, actorId, {
+			status: 'queued',
+			containerId: null,
+			agentServerId: null,
+		})
+
+		const result = await stopSessionsForActors(
+			db,
+			stubSessionManager(async () => {
+				throw new Error('Session not found or has no container')
+			}),
+			[agent.id],
+			actorId,
+		)
+
+		expect(result).toEqual({ stopped: [], failed: [] })
+		expect(result.failed).not.toContain(unclaimed.id)
+
+		// And no audit event, because nothing happened to report.
+		const recorded = await db.select().from(events).where(eq(events.entityId, unclaimed.id))
+		expect(recorded).toHaveLength(0)
 	})
 
 	it('reports a failed stop without throwing, so the delete can still proceed', async () => {
@@ -70,15 +101,23 @@ describe('stopSessionsForActors (Integration)', () => {
 				throw new Error('agent-server unreachable')
 			}),
 			[agent.id],
+			actorId,
 		)
 
 		expect(result.failed).toEqual([session.id])
 		expect(result.stopped).toEqual([])
 	})
 
-	it('records an audit event that outlives the deleted session row', async () => {
+	it('records an audit event that outlives the deleted session row and the deleted agent', async () => {
 		// The session row is deleted moments later, so a `failure_reason` on it
 		// would never be seen — the events feed is the only surface left.
+		//
+		// The delete transaction ALSO runs
+		// `delete(events).where(eq(events.actorId, <agent>))` (actors.ts,
+		// marketplace-loops.ts). Attributing this event to the agent therefore
+		// wiped it milliseconds after writing it, which is the whole reason it
+		// is attributed to the deleting actor instead. Both deletes are
+		// replayed here so the event has to survive the real cascade.
 		const agent = await insertActor(db, { type: 'agent' })
 		const session = await insertSession(db, workspaceId, agent.id, actorId, {
 			status: 'running',
@@ -88,17 +127,25 @@ describe('stopSessionsForActors (Integration)', () => {
 			db,
 			stubSessionManager(async () => {}),
 			[agent.id],
+			actorId,
 		)
 		await db.delete(sessions).where(eq(sessions.id, session.id))
+		await db.delete(events).where(eq(events.actorId, agent.id))
 
 		const recorded = await db.select().from(events).where(eq(events.entityId, session.id))
 		expect(recorded).toHaveLength(1)
 		expect(recorded[0]?.action).toBe('session_failed')
+		// Attributed to the deleter, not the deleted agent — this is what makes
+		// it survive the line above.
+		expect(recorded[0]?.actorId).toBe(actorId)
 		const data = recorded[0]?.data as {
 			source: string
+			agent_actor_id: string
 			failure_reason: { reason_code: string }
 		}
 		expect(data.source).toBe('agent_deleted')
+		// The deleted agent is still identifiable from the payload.
+		expect(data.agent_actor_id).toBe(agent.id)
 		expect(data.failure_reason.reason_code).toBe('agent_deleted')
 	})
 
@@ -109,7 +156,12 @@ describe('stopSessionsForActors (Integration)', () => {
 		const stopSession = async () => {
 			throw new Error('should not be called')
 		}
-		const result = await stopSessionsForActors(db, stubSessionManager(stopSession), [agent.id])
+		const result = await stopSessionsForActors(
+			db,
+			stubSessionManager(stopSession),
+			[agent.id],
+			actorId,
+		)
 
 		expect(result).toEqual({ stopped: [], failed: [] })
 	})

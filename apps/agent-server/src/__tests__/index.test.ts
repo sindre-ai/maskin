@@ -2124,6 +2124,61 @@ describe('monitorSession — flushLogs retry and drop marker', () => {
 		errorSpy.mockRestore()
 	})
 
+	it('retries a 401 rather than dropping the batch', async () => {
+		// A 401 is NOT a permanent client fault here: an AGENT_SERVER_SECRET
+		// rotation or a mid-deploy config gap produces auth failures inside the
+		// same ~30s window the retry budget exists to survive. Dropping the batch
+		// on the first 401 silently deletes lines from the user's transcript.
+		const sessionId = 'sess-flush-401'
+		const run = makeAlwaysRunningRunner(sessionId)
+		const env = makeEnv({
+			AGENT_SESSION_ROOT: sessionRoot,
+			MASKIN_BASE_URL: 'http://maskin.test',
+			AGENT_SERVER_ID: '123e4567-e89b-12d3-a456-426614174000',
+		})
+		const reconcileFetch = vi.fn(async () => ({
+			ok: true,
+			json: async () => ({ marked_failed: [], orphan_sandboxes: [] }),
+		}))
+		const sessionLogRouters = new Map<string, (line: string) => void>()
+
+		// Fails auth twice (secret rotation in flight), then recovers.
+		const logsFetch = vi
+			.fn()
+			.mockResolvedValueOnce({ ok: false, status: 401, json: async () => ({}) })
+			.mockResolvedValueOnce({ ok: false, status: 401, json: async () => ({}) })
+			.mockResolvedValue({ ok: true, status: 200, json: async () => ({ accepted: 1 }) })
+		vi.stubGlobal('fetch', logsFetch)
+
+		vi.useFakeTimers()
+		try {
+			await reconcileOnBoot({
+				env,
+				storage: null,
+				msb: { msbBin: '/usr/local/bin/msb', run },
+				sessionLogRouters,
+				sessionExitCodes: new Map(),
+				fetchImpl: reconcileFetch as unknown as typeof fetch,
+			})
+
+			const push = sessionLogRouters.get(sessionId)
+			expect(push).toBeDefined()
+			push?.('line through the rotation')
+			await vi.advanceTimersByTimeAsync(60_000)
+		} finally {
+			vi.useRealTimers()
+		}
+
+		// Three attempts: two rejected, the third delivering the same batch.
+		expect(logsFetch).toHaveBeenCalledTimes(3)
+		const finalCall = logsFetch.mock.calls[2]
+		if (!finalCall) throw new Error('logsFetch was not retried to success')
+		const body = JSON.parse(finalCall[1].body as string) as {
+			logs: Array<{ stream: string; content: string }>
+		}
+		expect(body.logs).toEqual([{ stream: 'stdout', content: 'line through the rotation' }])
+	})
+
 	it('warns when the server reports fewer accepted lines than were sent, without retrying', async () => {
 		// Regression coverage: a 200 response can still mean a partial batch —
 		// the server rejects any oversized/invalid line rather than failing the
@@ -2267,14 +2322,22 @@ describe('monitorSession — flushLogs retry and drop marker', () => {
 		}))
 		const sessionLogRouters = new Map<string, (line: string) => void>()
 
-		// A resolved 401 never rejects fetch() — it must still be treated as a
-		// failure (dropped with a marker), not silently accepted. It must NOT be
-		// retried, though: a rejected bearer token is a config fault that answers
-		// 401 identically six times over, so spending the retry budget on it only
-		// delays the drop and multiplies the Sentry noise.
+		// A resolved 400 never rejects fetch() — it must still be treated as a
+		// failure (dropped with a marker), not silently accepted. A malformed
+		// batch is a genuine client fault that answers identically however many
+		// times it is sent, so it must not spend the retry budget.
+		//
+		// This assertion used a 401 until it was found to be the wrong call:
+		// auth failures are NOT a stable config fault here. An
+		// AGENT_SERVER_SECRET rotation or a mid-deploy config gap answers 401 for
+		// seconds and then recovers, inside the very window this retry budget was
+		// widened to survive. Dropping on the first 401 turns a transient
+		// rotation into permanent, unrecoverable loss of the user's transcript,
+		// whereas retrying a genuinely-bad token costs a bounded ~46s and then
+		// drops with the same marker. See the 401 test above.
 		const logsFetch = vi.fn(async () => ({
 			ok: false,
-			status: 401,
+			status: 400,
 			json: async () => ({}),
 		}))
 		vi.stubGlobal('fetch', logsFetch)
@@ -2293,9 +2356,9 @@ describe('monitorSession — flushLogs retry and drop marker', () => {
 
 			const push = sessionLogRouters.get(sessionId)
 			expect(push).toBeDefined()
-			push?.('will be dropped after a 401')
+			push?.('will be dropped after a 400')
 
-			await vi.advanceTimersByTimeAsync(2_000) // scheduled flush fires: 401, dropped
+			await vi.advanceTimersByTimeAsync(2_000) // scheduled flush fires: 400, dropped
 			await vi.advanceTimersByTimeAsync(48_000) // no retry occupies the old ~46s window
 		} finally {
 			vi.useRealTimers()
@@ -2304,7 +2367,7 @@ describe('monitorSession — flushLogs retry and drop marker', () => {
 		expect(logsFetch).toHaveBeenCalledTimes(1)
 		expect(errorSpy).toHaveBeenCalledWith(
 			'Maskin rejected log batch as non-retryable, batch dropped',
-			expect.objectContaining({ sessionId, status: 401, droppedLines: 1 }),
+			expect.objectContaining({ sessionId, status: 400, droppedLines: 1 }),
 		)
 		errorSpy.mockRestore()
 	})

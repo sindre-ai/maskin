@@ -7,9 +7,15 @@ import type { SessionManager } from './session-manager'
 
 /**
  * Statuses whose session still owns a live sandbox (or a queued dispatch that
- * is about to become one). Mirrors the CLAIMED_STATUSES set in
- * session-reconciler.ts — a row in any of these is not finished with its
- * compute, so deleting it strands whatever is running.
+ * is about to become one). A superset of the CLAIMED_STATUSES set in
+ * session-reconciler.ts: it adds `queued`, which that set deliberately excludes
+ * because a queued row has no container yet. Do NOT re-sync the two lists —
+ * a row in any of these is not finished with its compute, so deleting it
+ * strands whatever is running or is about to be.
+ *
+ * Being in this list makes a row a *candidate*. Rows with no compute attached
+ * yet (no agent-server, no container) are filtered out before a stop is
+ * attempted — see the filter in `stopSessionsForActors`.
  */
 const LIVE_STATUSES = [
 	'pending',
@@ -75,17 +81,28 @@ export async function stopSessionsForActors(
 	db: Database,
 	sessionManager: SessionManager,
 	actorIds: string[],
+	deletedByActorId: string,
 ): Promise<StopSessionsForActorsResult> {
 	if (actorIds.length === 0) return { stopped: [], failed: [] }
 
-	const live = await db
+	const candidates = await db
 		.select({
 			id: sessions.id,
 			workspaceId: sessions.workspaceId,
 			actorId: sessions.actorId,
+			agentServerId: sessions.agentServerId,
+			containerId: sessions.containerId,
 		})
 		.from(sessions)
 		.where(and(inArray(sessions.actorId, actorIds), inArray(sessions.status, [...LIVE_STATUSES])))
+
+	// A `queued`/`pending` row has been claimed by nothing yet: no agent-server,
+	// no container. `SessionManager.stopSession` throws
+	// `not found or has no container` for exactly that shape, so attempting a
+	// stop would log an error-level (Sentry-visible) line for what is the normal
+	// case — an error storm, in the fix meant to end one. Nothing is stranded by
+	// skipping them: with no compute attached there is nothing to stop.
+	const live = candidates.filter((row) => row.agentServerId !== null || row.containerId !== null)
 
 	if (live.length === 0) return { stopped: [], failed: [] }
 
@@ -115,19 +132,27 @@ export async function stopSessionsForActors(
 	// The session rows are about to be deleted, so a `failure_reason` on them
 	// would never be seen — the audit log is the only surface that outlives the
 	// delete, and it's what the workspace activity feed reads.
+	//
+	// Attributed to the actor performing the delete, NOT to `row.actorId`. Every
+	// caller's delete transaction also runs
+	// `delete(events).where(eq(events.actorId, <agent being deleted>))`
+	// (actors.ts, marketplace-loops.ts), so an event attributed to the agent is
+	// wiped milliseconds after it is written and never reaches the feed. The
+	// deleted agent is still identifiable from `data.agent_actor_id`.
 	if (stopped.length > 0 || failed.length > 0) {
 		await db
 			.insert(events)
 			.values(
 				live.map((row) => ({
 					workspaceId: row.workspaceId,
-					actorId: row.actorId,
+					actorId: deletedByActorId,
 					action: 'session_failed' as const,
 					entityType: 'session' as const,
 					entityId: row.id,
 					data: {
 						exit_code: null,
 						source: 'agent_deleted',
+						agent_actor_id: row.actorId,
 						stopped: stopped.includes(row.id),
 						failure_reason: {
 							provider: 'agent-server',
