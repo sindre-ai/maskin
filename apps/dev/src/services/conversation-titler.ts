@@ -117,9 +117,15 @@ export async function maybeGenerateConversationTitle(ctx: {
 		.returning({ id: conversations.id })
 	if (claimed.length === 0) return
 
-	// Any failure past this point must hand the claim back, or the conversation
-	// is stuck on its placeholder forever. Guarded on the target state so a
-	// manual rename that lands mid-call isn't clobbered back to an auto state.
+	// Set once the title write has committed. Past that point the claim must NOT
+	// be handed back: doing so would leave the conversation holding a real title
+	// with an eligible state, so the next message would re-run the pass and
+	// overwrite what was just written (with a second provider call).
+	let committed = false
+
+	// Any failure before that must hand the claim back, or the conversation is
+	// stuck on its placeholder forever. Guarded on the target state so a manual
+	// rename that lands mid-call isn't clobbered back to an auto state.
 	const releaseClaim = async () => {
 		try {
 			await db
@@ -206,6 +212,7 @@ export async function maybeGenerateConversationTitle(ctx: {
 			.where(and(eq(conversations.id, conversationId), eq(conversations.titleAutoState, target)))
 			.returning({ id: conversations.id })
 		if (updated.length === 0) return
+		committed = true
 
 		// Same action as the manual rename in routes/conversations.ts, with
 		// `auto` in the payload to distinguish them in the audit log. This is also what drives
@@ -222,16 +229,22 @@ export async function maybeGenerateConversationTitle(ctx: {
 			data: { title, auto: true, pass: target },
 		})
 	} catch (err) {
-		// Network error, non-2xx, malformed response, or the timeout above. The
-		// model's own output arrives via tool_calls and is handled there, so a
-		// throw here is always infra — release the claim so a later message can
-		// retry, and keep the current title.
+		// Network error, non-2xx, malformed response, or the timeout above — all
+		// infra, since the model's own output arrives via tool_calls and is
+		// handled there. Release the claim so a later message retries, and keep
+		// the current title.
+		//
+		// Unless the title already landed: a throw after that point (the events
+		// insert is the only candidate) means the audit row is missing and the
+		// SSE refresh never fired, but the title itself is correct and final.
+		// Releasing would turn that into a visible re-title on the next message.
 		logger.error('Conversation auto-title failed', {
 			conversationId,
 			workspaceId,
+			titleCommitted: committed,
 			error: String(err),
 		})
-		await releaseClaim()
+		if (!committed) await releaseClaim()
 	}
 }
 

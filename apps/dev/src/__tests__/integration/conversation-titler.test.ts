@@ -5,7 +5,6 @@ import {
 	conversationParticipants,
 	conversations,
 	messages,
-	workspaceMembers,
 	workspaces,
 } from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
@@ -184,7 +183,6 @@ describe('Conversation auto-titler Integration', () => {
 
 	it('never overwrites a manual rename', async () => {
 		const app = createConversationsApp(ownerId)
-		await db.insert(workspaceMembers).values({ workspaceId, actorId: ownerId, role: 'owner' })
 		// The PATCH route is participants-only.
 		await db.insert(conversationParticipants).values({ conversationId, actorId: ownerId })
 
@@ -214,6 +212,43 @@ describe('Conversation auto-titler Integration', () => {
 
 		// Back to 'none' so a later message retries, rather than being stuck.
 		expect(await readConversation()).toEqual({ title: 'New chat', titleAutoState: 'none' })
+	})
+
+	it('keeps the claim when the title landed but the audit-log insert failed', async () => {
+		await postMessages(1)
+		chat.mockResolvedValue(titleResponse('Deploy pipeline failing'))
+
+		// Fail only the events insert, leaving every other statement on the real
+		// connection. This is the one throw that can happen *after* the title
+		// write has already committed.
+		const failingDb = new Proxy(db, {
+			get(target, prop, receiver) {
+				if (prop === 'insert') {
+					return (table: unknown) => {
+						if (table === events) throw new Error('events insert exploded')
+						return target.insert(table as Parameters<typeof target.insert>[0])
+					}
+				}
+				return Reflect.get(target, prop, receiver)
+			},
+		}) as Database
+
+		await maybeGenerateConversationTitle({ db: failingDb, workspaceId, conversationId })
+
+		// The claim must NOT be released: the title is correct and final, so
+		// handing it back would re-run the pass on the next message and overwrite
+		// what the user is already looking at.
+		expect(await readConversation()).toEqual({
+			title: 'Deploy pipeline failing',
+			titleAutoState: 'initial',
+		})
+
+		// And a subsequent message must not re-title it.
+		chat.mockClear()
+		await postMessages(1)
+		await maybeGenerateConversationTitle({ db, workspaceId, conversationId })
+		expect(chat).not.toHaveBeenCalled()
+		expect((await readConversation()).title).toBe('Deploy pipeline failing')
 	})
 
 	it('keeps the title when the model returns no tool call', async () => {
