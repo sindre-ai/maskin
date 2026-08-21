@@ -672,6 +672,43 @@ describe('Workspaces Integration', () => {
 		})
 	})
 
+	describe('POST /api/workspaces/:id/members', () => {
+		it('is idempotent when the actor is already a member', async () => {
+			const app = createApp()
+
+			const created = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Member Dedup' }),
+			)
+			expect(created.status).toBe(201)
+			const ws = await created.json()
+
+			const newMember = await insertActor(db)
+
+			const first = await app.request(
+				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, { actor_id: newMember.id }),
+			)
+			expect(first.status).toBe(201)
+			expect(await first.json()).toEqual({ added: true })
+
+			// Re-adding used to violate workspace_members_workspace_id_actor_id_pk
+			// and surface as an unhandled 500 (Sentry MASKIN-DEV-9).
+			const second = await app.request(
+				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, { actor_id: newMember.id }),
+			)
+			expect(second.status).toBe(201)
+			expect(await second.json()).toEqual({ added: false })
+
+			const rows = await db
+				.select({ role: workspaceMembers.role })
+				.from(workspaceMembers)
+				.where(
+					and(eq(workspaceMembers.workspaceId, ws.id), eq(workspaceMembers.actorId, newMember.id)),
+				)
+			expect(rows).toHaveLength(1)
+			expect(rows[0]?.role).toBe('member')
+		})
+	})
+
 	describe('default chat agent', () => {
 		async function chiefOfStaffIdFor(workspaceId: string): Promise<string | undefined> {
 			const rows = await db
