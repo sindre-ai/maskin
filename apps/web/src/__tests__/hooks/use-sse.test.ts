@@ -1,3 +1,4 @@
+import { QueryClient } from '@tanstack/react-query'
 import { act, renderHook } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -49,7 +50,22 @@ describe('useSSE', () => {
 		expect(mockConnectSSE).toHaveBeenCalledWith('ws-1', {
 			onEvent: expect.any(Function),
 			onStatusChange: expect.any(Function),
+			onReconnect: expect.any(Function),
 		})
+	})
+
+	it('resyncs caches when the stream reconnects', () => {
+		const invalidateQueries = vi.spyOn(QueryClient.prototype, 'invalidateQueries')
+
+		renderHook(() => useSSE('ws-1'), { wrapper: TestWrapper })
+
+		const callbacks = mockConnectSSE.mock.calls[0]?.[1] as { onReconnect?: () => void } | undefined
+		callbacks?.onReconnect?.()
+
+		// Server-side replay is capped at 100 events, so anything cached during
+		// the disconnect may be stale — without this the chat transcript stays
+		// frozen after a dropped connection until the user reloads.
+		expect(invalidateQueries).toHaveBeenCalled()
 	})
 
 	it('does not connect when workspaceId is empty', () => {

@@ -572,6 +572,56 @@ describe('Sessions Integration', () => {
 			expect(sinceLogs[0].id).toBeGreaterThan(log1.id)
 		})
 
+		// A long-lived interactive chat session accumulates logs for the whole
+		// conversation. The default `asc` ordering combined with `limit` hands
+		// back the OLDEST rows, which pinned the chat transcript to the start
+		// of the conversation once a session passed the limit — the live turn
+		// was permanently outside the window. `order=desc` takes the newest
+		// rows instead, still returned oldest-first.
+		it('returns the newest rows, in ascending order, when order=desc', async () => {
+			const app = createSessionApp()
+			const headers = { 'x-workspace-id': workspaceId }
+
+			const session = await insertSession(db, workspaceId, agentActorId, getTestActorId())
+			const inserted = []
+			for (let i = 1; i <= 5; i++) {
+				inserted.push(
+					await insertSessionLog(db, session.id, { stream: 'stdout', content: `line ${i}` }),
+				)
+			}
+
+			const res = await app.request(
+				jsonGet(`/api/sessions/${session.id}/logs?order=desc&limit=2`, headers),
+			)
+			expect(res.status).toBe(200)
+			const logs = await res.json()
+
+			// The last two rows — not the first two.
+			expect(logs).toHaveLength(2)
+			expect(logs[0].id).toBe(inserted[3]?.id)
+			expect(logs[1].id).toBe(inserted[4]?.id)
+			expect(logs[0].id).toBeLessThan(logs[1].id)
+		})
+
+		it('returns the oldest rows when limit is applied without order=desc', async () => {
+			const app = createSessionApp()
+			const headers = { 'x-workspace-id': workspaceId }
+
+			const session = await insertSession(db, workspaceId, agentActorId, getTestActorId())
+			const inserted = []
+			for (let i = 1; i <= 5; i++) {
+				inserted.push(
+					await insertSessionLog(db, session.id, { stream: 'stdout', content: `line ${i}` }),
+				)
+			}
+
+			const res = await app.request(jsonGet(`/api/sessions/${session.id}/logs?limit=2`, headers))
+			const logs = await res.json()
+			expect(logs).toHaveLength(2)
+			expect(logs[0].id).toBe(inserted[0]?.id)
+			expect(logs[1].id).toBe(inserted[1]?.id)
+		})
+
 		it('returns 404 for logs of non-existent session', async () => {
 			const app = createSessionApp()
 			const headers = { 'x-workspace-id': workspaceId }

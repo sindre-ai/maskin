@@ -385,9 +385,11 @@ describe('useConversationActivity', () => {
 			wrapper: TestWrapper,
 		})
 		await waitFor(() =>
-			expect(api.sessions.logs).toHaveBeenCalledWith('sess-2', workspaceId, {
-				limit: '500',
-			}),
+			expect(api.sessions.logs).toHaveBeenCalledWith(
+				'sess-2',
+				workspaceId,
+				expect.objectContaining({ order: 'desc' }),
+			),
 		)
 
 		expect(result.current.byTriggerMessageId.get(10)).toBeUndefined()

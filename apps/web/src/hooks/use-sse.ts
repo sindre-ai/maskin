@@ -19,6 +19,16 @@ export function useSSE(workspaceId: string): SSEStatus {
 				invalidateFromSSE(queryClient, workspaceId, event)
 			},
 			onStatusChange: setStatus,
+			// A reconnect means we were disconnected for some interval. The
+			// server replays missed events from Last-Event-ID but caps that at
+			// 100, and a busy workspace blows through 100 events quickly — so
+			// anything cached during the gap may be stale. Invalidate broadly
+			// rather than trusting replay; this is what stops the chat
+			// transcript from staying frozen after a dropped connection until
+			// the user reloads the page.
+			onReconnect: () => {
+				queryClient.invalidateQueries()
+			},
 		})
 		controllerRef.current = controller
 
