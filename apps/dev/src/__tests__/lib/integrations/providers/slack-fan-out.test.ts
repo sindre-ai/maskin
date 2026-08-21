@@ -9,6 +9,16 @@ vi.mock('../../../../lib/integrations/oauth/token-manager', () => ({
 	},
 }))
 
+const loggerErrorMock = vi.hoisted(() => vi.fn())
+vi.mock('../../../../lib/logger', () => ({
+	logger: {
+		error: loggerErrorMock,
+		warn: vi.fn(),
+		info: vi.fn(),
+		debug: vi.fn(),
+	},
+}))
+
 vi.mock('../../../../lib/integrations/registry', () => ({
 	getProvider: vi.fn(() => ({ config: { name: 'slack' } })),
 }))
@@ -173,6 +183,7 @@ vi.mock('@maskin/db/schema', async (importOriginal) => {
 describe('slackWebhookFanOut', () => {
 	beforeEach(() => {
 		getValidTokenMock.mockReset().mockResolvedValue('xoxb-test')
+		loggerErrorMock.mockReset()
 	})
 
 	afterEach(() => {
@@ -289,6 +300,41 @@ describe('slackWebhookFanOut', () => {
 		const data = result[0]?.data as Record<string, unknown>
 		expect(data.maskin_file_ids).toHaveLength(1)
 		expect(storage.puts).toHaveLength(1)
+	})
+
+	// MASKIN-DEV-A: a 403 on file download means the install predates the
+	// `files:read` scope, not a transient failure — the logged message has to
+	// say that so triage doesn't chase a retry that can never succeed.
+	it('names the missing files:read scope when Slack answers a download with 403', async () => {
+		const { slackWebhookFanOut } = await import(
+			'../../../../lib/integrations/providers/slack/fan-out'
+		)
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+			ok: false,
+			status: 403,
+			arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)),
+		} as unknown as Response)
+
+		const { db } = makeFakeDb({
+			id: 'int-1',
+			provider: 'slack',
+			workspaceId: 'ws-1',
+			config: { system_actor_id: 'actor-1' },
+		})
+
+		await slackWebhookFanOut({
+			db: db as never,
+			storage: makeFakeStorage(),
+			integrationId: 'int-1',
+			workspaceId: 'ws-1',
+			normalized: makeEvent(fakeFiles()),
+		})
+
+		const persistFailure = loggerErrorMock.mock.calls.find(
+			(call) => call[0] === 'Slack fan-out: failed to persist file',
+		)
+		expect(persistFailure).toBeDefined()
+		expect(String(persistFailure?.[1]?.error)).toContain('files:read')
 	})
 
 	it('returns the event unchanged when storage is unavailable', async () => {
