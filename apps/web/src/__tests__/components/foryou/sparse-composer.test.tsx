@@ -117,7 +117,8 @@ describe('SparseComposer', () => {
 		await user.click(screen.getByRole('button', { name: 'Send message' }))
 		await waitFor(() => {
 			expect(createConversationMock).toHaveBeenCalledWith({
-				title: 'Workspace Coach',
+				// Placeholder only — the backend auto-titler replaces this.
+				title: 'New chat',
 				participant_actor_ids: ['agent-coach'],
 				initial_message: 'help me plan a launch',
 			})

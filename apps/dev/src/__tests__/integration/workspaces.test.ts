@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto'
 import { OpenAPIHono } from '@hono/zod-openapi'
-import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import {
 	actors,
@@ -22,7 +21,9 @@ import { db, getTestActorId } from './global-setup'
 // POST /api/workspaces kicks off the Chief of Staff welcome session
 // fire-and-forget (.catch(), not awaited) right after the create transaction
 // commits, so the route needs a sessionManager in context even though these
-// tests don't assert on session creation itself.
+// tests don't assert on session creation itself. It also needs an agentStorage:
+// provisionWorkspace() skips skills, triggers and loops entirely when that is
+// absent, which would leave the route's own post-commit phase untested.
 type Env = {
 	Variables: {
 		db: Database
@@ -30,6 +31,7 @@ type Env = {
 		actorType: string
 		notifyBridge: PgNotifyBridge
 		sessionManager: { createSession: (...args: unknown[]) => Promise<unknown> }
+		agentStorage: InstanceType<typeof AgentStorageManager>
 	}
 }
 
@@ -43,31 +45,22 @@ vi.mock('../../lib/analytics/posthog', () => ({
 	capturePosthogEvent: capturePosthogEventMock,
 }))
 
-// Wrap seedDefaultAgentActors so specific tests can inject a partial-success
-// failure (agents 1-3 written, agent 4 throws) without touching the real
-// production seed for the happy-path tests. The default implementation is the
-// real function — only failure tests use `mockImplementationOnce`.
-const { seedDefaultAgentActorsMock } = vi.hoisted(() => ({
-	seedDefaultAgentActorsMock: vi.fn(),
-}))
-vi.mock('../../services/workspace-bootstrap', async () => {
-	const actual = await vi.importActual<typeof import('../../services/workspace-bootstrap')>(
-		'../../services/workspace-bootstrap',
-	)
-	seedDefaultAgentActorsMock.mockImplementation(
-		(...args: Parameters<typeof actual.seedDefaultAgentActors>) =>
-			actual.seedDefaultAgentActors(...args),
-	)
-	return {
-		...actual,
-		seedDefaultAgentActors: seedDefaultAgentActorsMock,
-	}
+// Failure injection for the partial-seed rollback test. provisionWorkspace()
+// calls seedDefaultAgentActors() module-internally, so mocking that export
+// wouldn't intercept it — instead we mock the `@maskin/auth` boundary it really
+// crosses and make one generateApiKey() call throw. That runs the *real* seed
+// code, so the test covers production rollback behaviour rather than a
+// hand-rolled stand-in. Defaults to the genuine implementation; only the
+// rollback test arms a failure via mockImplementationOnce.
+const { generateApiKeyMock } = vi.hoisted(() => ({ generateApiKeyMock: vi.fn() }))
+vi.mock('@maskin/auth', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('@maskin/auth')>()
+	generateApiKeyMock.mockImplementation(actual.generateApiKey)
+	return { ...actual, generateApiKey: generateApiKeyMock }
 })
 
 const { default: workspacesRoutes } = await import('../../routes/workspaces')
-const { SeedAgentError, bootstrapDefaultAgents } = await import(
-	'../../services/workspace-bootstrap'
-)
+const { bootstrapDefaultAgents } = await import('../../services/workspace-bootstrap')
 const { AgentStorageManager } = await import('../../services/agent-storage')
 
 function createMemoryStorage(): StorageProvider {
@@ -106,11 +99,12 @@ const DEFAULT_AGENT_NAMES = [
 	'Chief of Staff',
 	'Driver',
 	'Strategist',
-	'Discovery Analyst',
+	'Signal Analyst',
 	'Researcher',
+	'Knowledge Curator',
 ]
 
-function createApp() {
+function createApp(agentStorage = new AgentStorageManager(createMemoryStorage(), db)) {
 	const app = new OpenAPIHono<Env>({
 		defaultHook: (result, c) => {
 			if (!result.success) {
@@ -133,6 +127,7 @@ function createApp() {
 		c.set('actorType', 'human')
 		c.set('notifyBridge', {} as PgNotifyBridge)
 		c.set('sessionManager', { createSession: vi.fn().mockResolvedValue({}) })
+		c.set('agentStorage', agentStorage)
 		await next()
 	})
 
@@ -293,11 +288,12 @@ describe('Workspaces Integration', () => {
 			const listRes = await app.request(jsonGet(`/api/workspaces/${ws.id}/members`))
 			expect(listRes.status).toBe(200)
 			const members = await listRes.json()
-			// Creator (owner) + all 6 default agents (seeded atomically inside the
-			// create transaction) + the newly-added member = 8.
-			expect(members).toHaveLength(8)
+			// Creator (owner) + all 7 default agents (seeded atomically inside the
+			// create transaction) + the newly-added member = 9.
+			expect(members).toHaveLength(9)
 			const roles = members.map((m: { role: string }) => m.role).sort()
 			expect(roles).toEqual([
+				'member',
 				'member',
 				'member',
 				'member',
@@ -390,7 +386,7 @@ describe('Workspaces Integration', () => {
 			expect(after.length).toBe(initialAgents.length)
 		})
 
-		it('attaches the continuous-onboarding workspace skill to Chief of Staff and creates all 11 triggers', async () => {
+		it('attaches the continuous-onboarding and maskin-way-of-working workspace skills and creates all 15 triggers', async () => {
 			const app = createApp()
 
 			const createRes = await app.request(
@@ -398,11 +394,11 @@ describe('Workspaces Integration', () => {
 			)
 			const ws = await createRes.json()
 
-			// bootstrapDefaultAgents is fire-and-forget post-commit in the route —
-			// invoke it directly (awaited) so skill/trigger assertions aren't racy.
-			const agentStorage = new AgentStorageManager(createMemoryStorage(), db)
-			await bootstrapDefaultAgents(db, agentStorage, ws.id, getTestActorId())
-
+			// No manual bootstrapDefaultAgents call: provisionWorkspace awaits it
+			// post-commit, so everything below must already be queryable by the
+			// time the 201 lands. That is the property under test — asserting it
+			// here is what covers the route -> provisionWorkspace -> bootstrap
+			// wiring rather than bootstrapDefaultAgents in isolation.
 			const [chief] = await db
 				.select({ id: actors.id })
 				.from(workspaceMembers)
@@ -422,20 +418,43 @@ describe('Workspaces Integration', () => {
 				)
 			expect(skillRows).toHaveLength(1)
 
+			const continuousOnboardingSkillId = skillRows[0]?.id
+			if (!continuousOnboardingSkillId) throw new Error('continuous-onboarding skill not seeded')
 			const attachRows = await db
 				.select({ actorId: agentSkills.actorId })
 				.from(agentSkills)
-				.where(eq(agentSkills.workspaceSkillId, skillRows[0]?.id))
+				.where(eq(agentSkills.workspaceSkillId, continuousOnboardingSkillId))
 			expect(attachRows.map((r) => r.actorId)).toContain(chief?.id)
+
+			// The shared "Maskin way of working" skill is attached to every default
+			// agent (mirrored from the Template workspace) — Coach, Chief of Staff,
+			// Driver, Strategist, Signal Analyst, Researcher, Knowledge Curator.
+			const [wayOfWorkingSkill] = await db
+				.select({ id: workspaceSkills.id })
+				.from(workspaceSkills)
+				.where(
+					and(
+						eq(workspaceSkills.workspaceId, ws.id),
+						eq(workspaceSkills.name, 'maskin-way-of-working'),
+					),
+				)
+				.limit(1)
+			const wayOfWorkingSkillId = wayOfWorkingSkill?.id
+			if (!wayOfWorkingSkillId) throw new Error('maskin-way-of-working skill not seeded')
+			const wayOfWorkingAttachRows = await db
+				.select({ actorId: agentSkills.actorId })
+				.from(agentSkills)
+				.where(eq(agentSkills.workspaceSkillId, wayOfWorkingSkillId))
+			expect(wayOfWorkingAttachRows).toHaveLength(7)
 
 			const triggerRows = await db
 				.select({ name: triggers.name })
 				.from(triggers)
 				.where(eq(triggers.workspaceId, ws.id))
-			expect(triggerRows).toHaveLength(11)
+			expect(triggerRows).toHaveLength(15)
 		})
 
-		it('seeds the Discovery → Bet and Workspace Improvements loops wired to their triggers', async () => {
+		it('seeds the Bet discovery loop, Workspace improvements, Knowledge Wiki, and Competitor intelligence loops wired to their triggers', async () => {
 			const app = createApp()
 
 			const createRes = await app.request(
@@ -443,17 +462,17 @@ describe('Workspaces Integration', () => {
 			)
 			const ws = await createRes.json()
 
-			const agentStorage = new AgentStorageManager(createMemoryStorage(), db)
-			await bootstrapDefaultAgents(db, agentStorage, ws.id, getTestActorId())
-
+			// Seeded by provisionWorkspace during the request — see above.
 			const loopRows = await db
 				.select({ id: objects.id, title: objects.title, metadata: objects.metadata })
 				.from(objects)
 				.where(and(eq(objects.workspaceId, ws.id), eq(objects.type, 'loop')))
 
 			expect(loopRows.map((r) => r.title).sort()).toEqual([
-				'Discovery → Bet',
-				'Workspace Improvements',
+				'Bet discovery loop',
+				'Competitor intelligence',
+				'Knowledge Wiki → digest',
+				'Workspace improvements',
 			])
 
 			const triggerRows = await db
@@ -462,17 +481,19 @@ describe('Workspaces Integration', () => {
 				.where(eq(triggers.workspaceId, ws.id))
 			const triggerIdByName = new Map(triggerRows.map((t) => [t.name, t.id]))
 
-			const discoveryBetLoop = loopRows.find((r) => r.title === 'Discovery → Bet')
+			const discoveryBetLoop = loopRows.find((r) => r.title === 'Bet discovery loop')
 			const discoveryBetTriggerIds =
 				(discoveryBetLoop?.metadata as { trigger_ids?: string[] } | null)?.trigger_ids ?? []
 			expect(new Set(discoveryBetTriggerIds)).toEqual(
 				new Set([
-					triggerIdByName.get('Daily discovery sweep'),
+					triggerIdByName.get('Triage new insight'),
+					triggerIdByName.get('Daily signal sweep'),
+					triggerIdByName.get('Weekly deep revalidation'),
 					triggerIdByName.get('Shape the bet'),
 				]),
 			)
 
-			const workspaceImprovementsLoop = loopRows.find((r) => r.title === 'Workspace Improvements')
+			const workspaceImprovementsLoop = loopRows.find((r) => r.title === 'Workspace improvements')
 			const workspaceImprovementsTriggerIds =
 				(workspaceImprovementsLoop?.metadata as { trigger_ids?: string[] } | null)?.trigger_ids ??
 				[]
@@ -482,6 +503,27 @@ describe('Workspaces Integration', () => {
 					triggerIdByName.get('Workspace Coach — session completed (onboarding)'),
 					triggerIdByName.get('Cluster & recommend'),
 					triggerIdByName.get('Capture outcome'),
+				]),
+			)
+
+			const knowledgeWikiLoop = loopRows.find((r) => r.title === 'Knowledge Wiki → digest')
+			const knowledgeWikiTriggerIds =
+				(knowledgeWikiLoop?.metadata as { trigger_ids?: string[] } | null)?.trigger_ids ?? []
+			expect(new Set(knowledgeWikiTriggerIds)).toEqual(
+				new Set([
+					triggerIdByName.get('Fold new knowledge into the wiki'),
+					triggerIdByName.get('Compile the twice-weekly digest'),
+				]),
+			)
+
+			const competitorIntelligenceLoop = loopRows.find((r) => r.title === 'Competitor intelligence')
+			const competitorIntelligenceTriggerIds =
+				(competitorIntelligenceLoop?.metadata as { trigger_ids?: string[] } | null)?.trigger_ids ??
+				[]
+			expect(new Set(competitorIntelligenceTriggerIds)).toEqual(
+				new Set([
+					triggerIdByName.get('Weekly competitor sweep'),
+					triggerIdByName.get('Monthly list revalidation'),
 				]),
 			)
 		})
@@ -503,7 +545,7 @@ describe('Workspaces Integration', () => {
 				.from(objects)
 				.where(and(eq(objects.workspaceId, ws.id), eq(objects.type, 'loop')))
 
-			expect(loopRows).toHaveLength(2)
+			expect(loopRows).toHaveLength(4)
 		})
 
 		it('leaves three pre-existing workspaces byte-identical when a new workspace is seeded', async () => {
@@ -556,31 +598,19 @@ describe('Workspaces Integration', () => {
 		})
 
 		it('returns 500 naming the failed agent and rolls back workspace/member/actor rows when seeding fails on the 4th agent', async () => {
-			// Simulate the "fourth agent fails" case: the seed helper writes agents
-			// 1-3 into the caller's transaction, then throws SeedAgentError for
-			// strategist. The route's `db.transaction` must roll back every
-			// row — including the three partial actor inserts.
-			seedDefaultAgentActorsMock.mockImplementationOnce(async (tx, wsId, createdBy) => {
-				for (const name of ['Workspace Coach', 'Chief of Staff', 'Driver']) {
-					const [created] = await tx
-						.insert(actors)
-						.values({
-							type: 'agent',
-							name,
-							apiKey: generateApiKey().key,
-							createdBy: createdBy as string,
-						})
-						.returning()
-					if (created) {
-						await tx.insert(workspaceMembers).values({
-							workspaceId: wsId as string,
-							actorId: created.id,
-							role: 'member',
-						})
-					}
-				}
-				throw new SeedAgentError('strategist', new Error('mock failure on 4th agent'))
-			})
+			// Agents seed in DEFAULT_AGENT_IDS order — Workspace Coach, Chief of
+			// Staff, Driver, then Strategist. Each mints an API key first, so
+			// throwing on the 4th generateApiKey() call fails strategist after
+			// agents 1-3 are already written into the transaction. Everything —
+			// including those three partial actor inserts — must roll back.
+			const realGenerateApiKey = generateApiKeyMock.getMockImplementation()
+			generateApiKeyMock
+				.mockImplementationOnce(realGenerateApiKey)
+				.mockImplementationOnce(realGenerateApiKey)
+				.mockImplementationOnce(realGenerateApiKey)
+				.mockImplementationOnce(() => {
+					throw new Error('mock failure on 4th agent')
+				})
 
 			const workspacesBefore = await db.select({ id: workspacesTable.id }).from(workspacesTable)
 			const membersBefore = await db
@@ -639,6 +669,85 @@ describe('Workspaces Integration', () => {
 			expect(event).toBe('workspace_created')
 			expect(distinctId).toBe(ws.id)
 			expect(properties.workspace_id).toBe(ws.id)
+		})
+	})
+
+	describe('POST /api/workspaces/:id/members', () => {
+		it('is idempotent when the actor is already a member', async () => {
+			const app = createApp()
+
+			const created = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Member Dedup' }),
+			)
+			expect(created.status).toBe(201)
+			const ws = await created.json()
+
+			const newMember = await insertActor(db)
+
+			const first = await app.request(
+				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, { actor_id: newMember.id }),
+			)
+			expect(first.status).toBe(201)
+			expect(await first.json()).toEqual({ added: true })
+
+			// Re-adding used to violate workspace_members_workspace_id_actor_id_pk
+			// and surface as an unhandled 500 (Sentry MASKIN-DEV-9).
+			const second = await app.request(
+				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, { actor_id: newMember.id }),
+			)
+			expect(second.status).toBe(201)
+			expect(await second.json()).toEqual({ added: false })
+
+			const rows = await db
+				.select({ role: workspaceMembers.role })
+				.from(workspaceMembers)
+				.where(
+					and(eq(workspaceMembers.workspaceId, ws.id), eq(workspaceMembers.actorId, newMember.id)),
+				)
+			expect(rows).toHaveLength(1)
+			expect(rows[0]?.role).toBe('member')
+		})
+
+		it('does not downgrade an existing admin when re-added as a member', async () => {
+			const app = createApp()
+
+			const created = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Member No Downgrade' }),
+			)
+			expect(created.status).toBe(201)
+			const ws = await created.json()
+
+			const admin = await insertActor(db)
+
+			const first = await app.request(
+				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, {
+					actor_id: admin.id,
+					role: 'admin',
+				}),
+			)
+			expect(first.status).toBe(201)
+			expect(await first.json()).toEqual({ added: true })
+
+			// This is the reason the route uses onConflictDoNothing rather than
+			// onConflictDoUpdate: a re-add carrying the default role must not
+			// silently strip an existing admin of their privileges. With DoUpdate
+			// this second call rewrites role to 'member' and the assertion below
+			// fails.
+			const second = await app.request(
+				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, {
+					actor_id: admin.id,
+					role: 'member',
+				}),
+			)
+			expect(second.status).toBe(201)
+			expect(await second.json()).toEqual({ added: false })
+
+			const rows = await db
+				.select({ role: workspaceMembers.role })
+				.from(workspaceMembers)
+				.where(and(eq(workspaceMembers.workspaceId, ws.id), eq(workspaceMembers.actorId, admin.id)))
+			expect(rows).toHaveLength(1)
+			expect(rows[0]?.role).toBe('admin')
 		})
 	})
 

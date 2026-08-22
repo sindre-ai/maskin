@@ -19,6 +19,7 @@ import {
 	KNOWLEDGE_WRITE_UNDO_WINDOW_MS,
 	OBJECT_DIFF_FIELDS,
 	SAFE_METADATA_FIELD_NAME_RE,
+	SIGNUP_CAPTURE_SOURCE,
 	TERMINAL_BET_STATUSES,
 	boardObjectQuerySchema,
 	boardObjectResponseSchema,
@@ -65,6 +66,7 @@ import { fileViewerUrl, frontendBaseUrl } from '../lib/file-urls'
 import { findKnowledgeDuplicate, isKnowledgeTitleUniqueViolation } from '../lib/knowledge-dedup'
 import { logger } from '../lib/logger'
 import { insertNotificationsWithEvents } from '../lib/notifications'
+import { postSignupWelcomeComment } from '../lib/onboarding/signup-welcome'
 import {
 	errorSchema,
 	idParamSchema,
@@ -76,6 +78,7 @@ import {
 import { serialize, serializeArray } from '../lib/serialize'
 import type { WorkspaceSettings } from '../lib/types'
 import { isWorkspaceHumanAdminOrOwner, isWorkspaceMember } from '../lib/workspace-auth'
+import type { SessionManager } from '../services/session-manager'
 import {
 	autoSubscribe,
 	getSubscriberCount,
@@ -88,6 +91,7 @@ type Env = {
 		db: Database
 		actorId: string
 		actorType: string
+		sessionManager: SessionManager
 	}
 }
 
@@ -495,6 +499,7 @@ app.openapi(createObjectRoute, async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const actorType = c.get('actorType')
+	const sessionManager = c.get('sessionManager')
 	const body = c.req.valid('json')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
@@ -641,6 +646,23 @@ app.openapi(createObjectRoute, async (c) => {
 			objectId: created.id,
 			createdVia: resolveCreatedVia(c.req.header(CLIENT_SOURCE_HEADER), actorType),
 		})
+
+		if ((created.metadata as Record<string, unknown> | null)?.source === SIGNUP_CAPTURE_SOURCE) {
+			postSignupWelcomeComment({
+				db,
+				sessionManager,
+				workspaceId,
+				knowledgeObjectId: created.id,
+				metadata: created.metadata,
+				humanActorId: actorId,
+			}).catch((err) =>
+				logger.error('Failed to post signup welcome comment', {
+					workspaceId,
+					knowledgeObjectId: created.id,
+					error: String(err),
+				}),
+			)
+		}
 	}
 
 	return c.json(serialize(created) as z.infer<typeof objectResponseSchema>, 201)

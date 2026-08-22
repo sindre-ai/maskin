@@ -15,9 +15,9 @@ describe('SDR Outreach Loop definition', () => {
 		expect(GROWTH_SDR_OUTREACH_LOOP.description.length).toBeGreaterThan(0)
 	})
 
-	it('ships four actors and their triggers, no duplicates', () => {
-		expect(GROWTH_SDR_OUTREACH_ACTOR_IDS.length).toBe(4)
-		expect(GROWTH_SDR_OUTREACH_TRIGGER_IDS.length).toBe(21)
+	it('ships three actors and their triggers, no duplicates', () => {
+		expect(GROWTH_SDR_OUTREACH_ACTOR_IDS.length).toBe(3)
+		expect(GROWTH_SDR_OUTREACH_TRIGGER_IDS.length).toBe(18)
 		expect(new Set(GROWTH_SDR_OUTREACH_ACTOR_IDS).size).toBe(GROWTH_SDR_OUTREACH_ACTOR_IDS.length)
 		expect(new Set(GROWTH_SDR_OUTREACH_TRIGGER_IDS).size).toBe(
 			GROWTH_SDR_OUTREACH_TRIGGER_IDS.length,

@@ -5,8 +5,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useConversation } from '@/hooks/use-conversation'
 import { useUpdateConversation, useUpdateConversationMe } from '@/hooks/use-conversations'
 import { useIsMobile } from '@/hooks/use-mobile'
+import { getStoredActor } from '@/lib/auth'
 import { useNavigate } from '@tanstack/react-router'
-import { Archive, ArchiveRestore, ArrowLeft, Copy, Pencil, Pin, PinOff } from 'lucide-react'
+import { Archive, ArchiveRestore, ArrowLeft, Copy, Pencil, Pin, PinOff, Users } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
 import { ParticipantsPopover } from './participants-popover'
@@ -56,8 +57,11 @@ export function ThreadHeader({ workspaceId, conversationId }: ThreadHeaderProps)
 	}
 
 	const participants = conversation.participants
-	const visibleAvatars = participants.slice(0, 3)
-	const overflowCount = participants.length - visibleAvatars.length
+	// The current user already knows they're in the chat — only show the others.
+	const currentActorId = getStoredActor()?.id
+	const otherParticipants = participants.filter((p) => p.actorId !== currentActorId)
+	const visibleAvatars = otherParticipants.slice(0, 3)
+	const overflowCount = otherParticipants.length - visibleAvatars.length
 
 	return (
 		<div className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3">
@@ -133,6 +137,9 @@ export function ThreadHeader({ workspaceId, conversationId }: ThreadHeaderProps)
 							className="ring-2 ring-background"
 						/>
 					))}
+					{visibleAvatars.length === 0 ? (
+						<Users size={15} className="text-muted-foreground" />
+					) : null}
 					{overflowCount > 0 ? (
 						<span className="flex h-5 w-5 items-center justify-center rounded-full bg-bg-surface text-[10px] font-medium text-muted-foreground ring-2 ring-background">
 							+{overflowCount}

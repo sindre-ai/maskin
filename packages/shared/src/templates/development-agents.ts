@@ -356,7 +356,7 @@ Call \`create_objects\` to create a single object:
 
 Save the returned object ID — all prompts in the next step are comments posted on this object.
 
-### 2. Identify the workspace owner
+### 2. Identify the user
 
 List workspace members and identify the human actor (type != "agent") who created the workspace or is listed as owner. Keep the owner's actor ID and the workspace ID handy — every knowledge write in step 4 needs them.
 
@@ -383,11 +383,11 @@ The tone is conversational — you are an assistant asking questions, not a form
 
 ### 4. Capture each reply as a knowledge object AND an \`about\` edge — one atomic call
 
-After each reply, call \`create_objects\` **once** with both the knowledge node and the \`about\` edge in the same batch. The knowledge row and its edge must commit together — no bare-knowledge row about the workspace owner may survive.
+After each reply, call \`create_objects\` **once** with both the knowledge node and the \`about\` edge in the same batch. The knowledge row and its edge must commit together — no bare-knowledge row about the user may survive.
 
 The edge target depends on the prompt:
 
-- \`product_vision\`, \`icp\`, \`first_bet_hypothesis\`, \`customer_evidence\` → **owner-targeted**: edge target = the workspace owner's actor id, \`metadata.subject_kind = "workspace_owner"\`.
+- \`product_vision\`, \`icp\`, \`first_bet_hypothesis\`, \`customer_evidence\` → **owner-targeted**: edge target = the user's actor id, \`metadata.subject_kind = "workspace_owner"\`.
 - \`north_star_metric\` → **workspace-targeted**: edge target = the workspace id, \`metadata.subject_kind = "workspace"\`.
 
 Payload shape (owner-targeted example):
@@ -540,7 +540,7 @@ Produce two artefacts:
 
 ### 5. Submit
 
-If **all drift items have a rationale**: create one notification (\`type: recommendation\`, \`target_actor_id\` = handbook owner, default Sebk \`3e16ed51-e5e1-4b87-959f-7eda01b21bea\`) titled \`Handbook update ready: <n> change(s)\`. Content includes the bullet list of changes with their whys. \`metadata.actions\`:
+If **all drift items have a rationale**: create one notification (\`type: recommendation\`, \`target_actor_id\` = handbook owner (resolve with \`list_actors\`)) titled \`Handbook update ready: <n> change(s)\`. Content includes the bullet list of changes with their whys. \`metadata.actions\`:
 
 - \`Apply\` → response \`apply\`
 - \`Edit before applying\` → response \`edit\`
@@ -709,7 +709,7 @@ description: The workspace's default branching strategy for any bet that produce
 - Every task PR under the bet targets \`bet/<short-slug>\`, **not \`main\`**.
 - Tasks that stack on each other branch off \`bet/<short-slug>\` (or off the parent task's branch if not yet merged); rebase + force-push when the parent lands on the bet branch.
 - Once the Code Reviewer approves and the CTO gives PASS, the Developer **merges the task PR into \`bet/<slug>\` autonomously** — no human approval needed for task-to-bet-branch merges.
-- One **umbrella PR** (\`bet/<short-slug> → main\`) opens when the last task is merged into the bet branch. That single PR is the bet's review window against main, and Magnus merges it at bet completion.
+- One **umbrella PR** (\`bet/<short-slug> → main\`) opens when the last task is merged into the bet branch. That single PR is the bet's review window against main, and the user merges it at bet completion.
 - The bet branch is **rebased onto \`main\` weekly** while it's open. Any developer working on the bet that week is responsible for one rebase cadence. If \`main\` moves fast, rebase more often.
 
 ## Merge ownership — who merges what
@@ -717,9 +717,9 @@ description: The workspace's default branching strategy for any bet that produce
 | Merge | Who |
 |---|---|
 | Task PR → \`bet/<slug>\` | Developer (autonomous, after CTO PASS) |
-| Umbrella PR \`bet/<slug>\` → \`main\` | Magnus (once at bet completion) |
+| Umbrella PR \`bet/<slug>\` → \`main\` | the user (once at bet completion) |
 
-**Never hold a task PR open waiting for Magnus.** Task PRs merge into the bet branch as soon as CTO PASS is issued. Magnus's only merge decision is the single umbrella PR at the end.
+**Never hold a task PR open waiting for the user.** Task PRs merge into the bet branch as soon as CTO PASS is issued. the user's only merge decision is the single umbrella PR at the end.
 
 ## When this skill applies
 
@@ -762,7 +762,7 @@ Shared-branch mode collapses N review windows into one and removes the standalon
 
 Post a single short comment when the branch is cut. No headers, no bullet lists, no runbook. Just one paragraph:
 
-> Using shared-branch mode: \`bet/<short-slug>\` is cut off \`main\`. All task PRs target it, not \`main\`. Developer merges task PRs into the bet branch autonomously after CTO PASS. Magnus merges one umbrella PR to \`main\` at bet completion.
+> Using shared-branch mode: \`bet/<short-slug>\` is cut off \`main\`. All task PRs target it, not \`main\`. Developer merges task PRs into the bet branch autonomously after CTO PASS. the user merges one umbrella PR to \`main\` at bet completion.
 
 That's it. The description is the durable spec — branching mechanics are operational context and belong in comments only. Never write a "Branch convention" section into the bet's \`content\` field.
 
@@ -778,7 +778,7 @@ That's it. The description is the durable spec — branching mechanics are opera
 - **Stacking PRs without re-targeting after parent merges.** If task B was opened against \`task/<a-id>\` and A then lands on the bet branch, B's base must be re-targeted via \`gh pr edit\`. GitHub does not do this for you.
 - **Opening the umbrella PR before the last task lands.** The umbrella is a snapshot of the whole bet. Open it last.
 - **Treating the bet branch as a free-for-all.** Tests must pass on the bet branch. A broken bet branch blocks every downstream task.
-- **Holding task PRs open waiting for Magnus.** Task PRs merge into the bet branch as soon as CTO PASS is issued. Magnus only touches the umbrella PR.
+- **Holding task PRs open waiting for the user.** Task PRs merge into the bet branch as soon as CTO PASS is issued. the user only touches the umbrella PR.
 
 ## Anti-patterns (don't do)
 
@@ -918,10 +918,10 @@ Read the \`Triggering event\` in your action prompt, then load the relevant skil
 
 ## Object statuses in this workspace
 
-Bet: \`signal\`, \`qualified\`, \`define\`, \`active\`, \`live\`, \`succeeded\`, \`failed\`, \`paused\`.
+Bet: \`signal\`, \`define\`, \`active\`, \`live\`, \`succeeded\`, \`failed\`, \`paused\`.
 Insight: \`new\`, \`processing\`, \`clustered\`, \`scored\`, \`parked\`, \`discarded\`.
 
-\`qualified\`, \`scored\`, and \`parked\` were added by the Bet Council layer. Never reference statuses outside these lists.
+\`scored\` and \`parked\` were added by the Bet Council layer. Never reference statuses outside these lists.
 
 ## Insight resting states — NOT stuck, NOT orphaned
 
@@ -949,7 +949,7 @@ Insights in either state are NOT in-flight work and do NOT need a driver of your
 				name: 'shape-and-run-a-bet',
 				content: `---
 name: shape-and-run-a-bet
-description: The canonical method for shaping and running bets. Read this before drafting any bet, before promoting to active, and before transitioning to live. Enforces a fixed live-period circuit breaker and a minimal description format. Bets enter at \`qualified\` (post-T2 schema) — the council's promote-door creates them with \`promotion_mode\` set; legacy \`signal\` is retained only for the in-flight bets that pre-date the Bet Council.
+description: The canonical method for shaping and running bets. Read this before drafting any bet, before promoting to active, and before transitioning to live. Enforces a fixed live-period circuit breaker and a minimal description format. Bets enter at \`define\` (post-T2 schema) — the council's promote-door creates them with \`promotion_mode\` set; legacy \`signal\` is retained only for the in-flight bets that pre-date the Bet Council.
 ---
 
 # Shape and run a bet
@@ -958,24 +958,23 @@ A bet is a wager with a fixed live period. Commit to the end date before any wor
 
 ## Lifecycle
 
-\`qualified → define → active → live → succeeded | failed | paused\`
+\`define → active → live → succeeded | failed | paused\`
 
-- **qualified** — the council (or a fast-track event) has promoted a \`clustered\` insight into a bet. The bet exists as a placeholder with hypothesis + intent; shaping has not started. \`promotion_mode\` is set at this moment (always \`human_approved\` until ≥10 calibration promotions land; only after that does the auto path apply).
-- **define** — shaping. Repo must be identified and set on the bet before this phase can progress.
+- **define** — the council (or a fast-track event, or a human promoting a \`signal\` bet) has moved a \`clustered\` insight into a bet and shaping begins. \`promotion_mode\` is set at this moment (always \`human_approved\` until ≥10 calibration promotions land; only after that does the auto path apply). Repo must be identified and set on the bet before this phase can progress.
 - **active** — building. Riskiest-assumption test runs first, before broader scope.
 - **live** — measuring. Clock starts here, not at active.
 - \`## Experiment verdict\` and \`## Retro\` are added by the Bet Steward at their lifecycle events — never pre-populated.
 
-**Legacy \`signal\`.** Three in-flight bets pre-date the Bet Council and still carry the retired \`signal\` status. The schema retains it (\`signal → qualified → define → active → live → …\`) so they continue to validate. Do NOT create new bets at \`signal\`. Treat any future \`signal\`-state bet as a bug and route it to the Pipeline Monitor.
+**Legacy \`signal\`.** Three in-flight bets pre-date the Bet Council and still carry the retired \`signal\` status. The schema retains it (\`signal → define → active → live → …\`) so they continue to validate. Do NOT create new bets at \`signal\`. Treat any future \`signal\`-state bet as a bug and route it to the Pipeline Monitor.
 
 ## Where bets come from
 
 Every new bet is created by one of:
 
-1. **Bet Council promote-door** — \`strategic-intake-review\` routes a \`clustered\` insight through Promote (composite ≥30 + autonomy gate passes) or through Escalate (Sebastian accepts a recommendation). The Strategist creates the bet at \`qualified\` with \`metadata.promotion_mode\` set, and \`informs\` edges to the source insight(s).
-2. **Fast-track event** — an urgent + reversible + classified trigger (customer-blocking bug / security / churn-risk / external-deadline) routes through the fast-track lane in \`strategic-intake-review\`. Bet is created at \`qualified\` with \`promotion_mode=human_approved\`, flagged for retroactive D1+D6 reconciliation at the next council.
+1. **Bet Council promote-door** — \`strategic-intake-review\` routes a \`clustered\` insight through Promote (composite ≥30 + autonomy gate passes) or through Escalate (the user accepts a recommendation). The Strategist creates the bet at \`define\` with \`metadata.promotion_mode\` set, and \`informs\` edges to the source insight(s).
+2. **Fast-track event** — an urgent + reversible + classified trigger (customer-blocking bug / security / churn-risk / external-deadline) routes through the fast-track lane in \`strategic-intake-review\`. Bet is created at \`define\` with \`promotion_mode=human_approved\`, flagged for retroactive D1+D6 reconciliation at the next council.
 
-Bets do not appear from nowhere. If you find a \`qualified\` bet without an \`informs\` edge to a source insight (or to a fast-track trigger event), surface it to the Pipeline Monitor.
+Bets do not appear from nowhere. If you find a \`define\` bet without an \`informs\` edge to a source insight (or to a fast-track trigger event), surface it to the Pipeline Monitor.
 
 ## Attachments (read at define)
 
@@ -1039,11 +1038,11 @@ Leave a line for the outcome to be filled during active.]
 - Risks, usability notes, feasibility flags — inline asides only, not separate headers.
 - If you can't say it plainly, you don't understand it yet.
 
-## \`promotion_mode\` (required at \`qualified\`)
+## \`promotion_mode\` (required at \`define\`)
 
 Every bet carries \`metadata.promotion_mode\` from the moment of creation. Set it before any other field.
 
-- **\`human_approved\`** — Sebastian approved this bet's creation (either by accepting an Escalate-door recommendation, or as the default during council dormancy). This is the value for every bet until the council has logged ≥10 calibration promotions. Always set on fast-tracked bets.
+- **\`human_approved\`** — the user approved this bet's creation (either by accepting an Escalate-door recommendation, or as the default during council dormancy). This is the value for every bet until the council has logged ≥10 calibration promotions. Always set on fast-tracked bets.
 - **\`auto\`** — only valid after ≥10 human-approved calibration promotions have landed AND the four-condition autonomy gate (Reversible · Effort=1 · Unambiguous alignment · Corroboration sub-A ≥4) passed for this specific bet. Until then: do not use.
 
 Setting \`promotion_mode=auto\` without the calibration threshold met is a bug. Surface it to the Pipeline Monitor.
@@ -1052,7 +1051,7 @@ The Commitment gate below cross-checks that the four autonomy-gate inputs (rever
 
 ## Commitment gate (\`→ active\`)
 
-The bet leaves \`define\` only when ALL of the following are true. The first six are shaping prerequisites; the last four mirror the autonomy gate so that whether the bet was promoted by Sebastian or by the auto path, the same four facts hold when work starts.
+The bet leaves \`define\` only when ALL of the following are true. The first six are shaping prerequisites; the last four mirror the autonomy gate so that whether the bet was promoted by the user or by the auto path, the same four facts hold when work starts.
 
 **Shaping prerequisites:**
 
@@ -1068,13 +1067,13 @@ The bet leaves \`define\` only when ALL of the following are true. The first six
 **Autonomy-gate parity** (re-evaluated at commit, not just at promotion):
 
 8. **Reversibility (two-way door).** The bet is still a two-way door: it can be paused or unwound within one cycle at low sunk cost. If shaping turned it into a one-way door (e.g. an irrevocable platform commitment surfaced during \`define\`), pause and re-route to Escalate before \`active\`.
-9. **Appetite ceiling.** Effort is still bounded at the appetite committed at promotion (small=1 / medium=3 / large=5). If shaping reveals the appetite needs to grow (e.g. small → medium), Sebastian must approve the new ceiling before \`active\`. Auto-promoted bets MUST stay at Effort=1; if shaping pushes them above small, revert \`promotion_mode\` to \`human_approved\` and surface to Sebastian.
+9. **Appetite ceiling.** Effort is still bounded at the appetite committed at promotion (small=1 / medium=3 / large=5). If shaping reveals the appetite needs to grow (e.g. small → medium), the user must approve the new ceiling before \`active\`. Auto-promoted bets MUST stay at Effort=1; if shaping pushes them above small, revert \`promotion_mode\` to \`human_approved\` and surface to the user.
 10. **Strategic alignment unchanged.** D1 ≥ 4 still holds and no new conflict against another active bet has appeared since promotion. The portfolio moves; re-check.
-11. **Corroboration floor still met.** D2 sub-A ≥ 4 still holds (≥3 independent sources, at least one behavioural/analytics). If recency decay or de-duplication during shaping dropped sub-A below 4, this bet should not be auto-running — revert \`promotion_mode\` to \`human_approved\` and surface to Sebastian.
+11. **Corroboration floor still met.** D2 sub-A ≥ 4 still holds (≥3 independent sources, at least one behavioural/analytics). If recency decay or de-duplication during shaping dropped sub-A below 4, this bet should not be auto-running — revert \`promotion_mode\` to \`human_approved\` and surface to the user.
 
 Items 8–11 are the four conditions the council's autonomy gate evaluates. Re-checking them at \`→ active\` is what keeps commitment and auto-promotion consistent: the council does not get to be the only point in the lifecycle where reversibility, appetite, alignment, and corroboration are tested.
 
-If any of 8–11 fails on a bet with \`promotion_mode=auto\`, downgrade to \`human_approved\` and notify Sebastian before continuing.
+If any of 8–11 fails on a bet with \`promotion_mode=auto\`, downgrade to \`human_approved\` and notify the user before continuing.
 
 ## Measurement gate (\`→ live\`)
 
@@ -1088,8 +1087,8 @@ Pick **2, 4, or 6 weeks**. Shape scope to fit — never the reverse. Default at 
 
 ## End-to-end flow
 
-1. Council promote-door (or fast-track) creates the bet at \`qualified\` with \`promotion_mode\` set, \`informs\` edges to source insight(s), and Sebastian @-mentioned in the digest.
-2. Strategist or assignee picks up at \`qualified\` and shapes through \`define\`. Sets \`metadata.repo\`. Runs the Commitment gate (including the autonomy-gate parity checks) before \`→ active\`.
+1. Council promote-door (or fast-track) creates the bet at \`define\` with \`promotion_mode\` set, \`informs\` edges to source insight(s), and the user @-mentioned in the digest.
+2. Strategist or assignee shapes the bet. Sets \`metadata.repo\`. Runs the Commitment gate (including the autonomy-gate parity checks) before \`→ active\`.
 3. On \`active\`: first test runs before broader scope. Bet Steward posts build note.
 4. On tasks done + test passed: Bet Steward recommends \`→ live\`.
 5. On \`live\`: Bet Steward posts day-one note (review date, baseline, where evidence will come from). Daily scan begins.
@@ -1120,7 +1119,7 @@ Before any clustering, drafting, or gate check, fetch these three knowledge obje
 
 3. **\`What we believe: build the right thing, not just things\`** — Maskin's anchors-first product philosophy. Why we exist: AI has shifted the binding constraint from execution to direction.
 
-How to fetch: \`search_objects(type='knowledge', q='<title fragment>')\`, take the top hit. If a doc returns \`deprecated\`, follow the \`supersedes\` edge to the current version. If a doc is missing entirely, do not block the work — log the gap, tag your output with \`canon-missing\`, proceed without that rule. Notify Sebk on the second consecutive run with the same gap.
+How to fetch: \`search_objects(type='knowledge', q='<title fragment>')\`, take the top hit. If a doc returns \`deprecated\`, follow the \`supersedes\` edge to the current version. If a doc is missing entirely, do not block the work — log the gap, tag your output with \`canon-missing\`, proceed without that rule. Notify the user on the second consecutive run with the same gap.
 
 The anchor and premise lists are short. Read them; do not reconstruct from memory. Numbering can shift.
 
@@ -1527,7 +1526,7 @@ You propose the Commitment. A human approves. Auto-graduation is explicitly out 
    - Why this bet codifies a standing capability rather than a one-off shipment.
    - The exact fields you'd set: \`type='commitment'\`, \`status='holding'\`, \`metadata.floor\`, \`metadata.cadence\`, \`metadata.source_bet_id = <this bet's UUID>\`.
    - The \`derived_from\` edge from the new Commitment → this bet.
-3. @mention a founder (per \`maskin-voice\`, resolve via \`list_actors\`; strategy/UX decisions to Sebastian, architecture to Magnus — capability-holding is a strategy call, so default to Sebastian) with a single question: *"Should we graduate this into a Commitment?"*
+3. @mention a founder (per \`maskin-voice\`, resolve via \`list_actors\`; route the decision to the user) with a single question: *"Should we graduate this into a Commitment?"*
 4. Stop. Do not \`create_objects\` the Commitment yourself. The human replies with an approval; the Commitment is created by whoever picks up the approval (this may be you in a follow-up session, or a human directly).
 
 When the approval lands and you (or another agent) do create the Commitment, use \`create_objects(type='commitment', status='holding', metadata={...})\` and \`create_relationships(source_id=<commitment-id>, target_id=<bet-id>, type='derived_from')\`. Never invent a fifth status or a fifth metadata field — the schema is fixed at three statuses and four metadata fields.
@@ -1570,14 +1569,9 @@ If you're writing headers, bullet points, bold labels, or more than 4 sentences 
 
 Any comment that requires a human decision — a direction pick, an approval, a checklist item, an open question, or a flag asking for a call — **must @mention the relevant human at the end**.
 
-**Always call \`list_actors\` first to resolve the UUID.** Never hardcode a human UUID — actor records change, and the lookup is the rule, not a fallback. Match the topic to the domain map, then mention the actor whose name matches:
+**Always call \`list_actors\` first to resolve the UUID.** Never hardcode a human UUID — actor records change, and the lookup is the rule, not a fallback. Resolve the user from \`list_actors\` (filter \`type: human\`); never hardcode an actor id. One mention per comment.
 
-- **Sebastian** (appears as \`Sebk\` in \`list_actors\`) → design, UX, business, strategy
-- **Magnus** → architecture, dev, PRs
-
-If a topic spans both, pick the one the *decision* sits in, not the one the *context* sits in — a copy decision in an architecture diff still goes to Sebastian; a perf fix on a design surface still goes to Magnus. One mention per comment unless the decision genuinely requires both.
-
-**Exception — design proposals and architecture decisions:** when a Designer or Architect is posting a proposal ready for approval (task moving to \`in_review\`), @mention the **Strategist** instead of a founder. The same \`list_actors\` call resolves the Strategist — match on the actor's title. The Strategist is the first decision-maker for design and architecture proposals and will escalate to a founder only if genuinely needed.
+**Exception — design proposals and architecture decisions:** when a Designer or Architect is posting a proposal ready for approval (task moving to \`in_review\`), @mention the **Strategist** instead of the user. The same \`list_actors\` call resolves the Strategist — match on the actor's title. The Strategist is the first decision-maker for design and architecture proposals and will escalate to the user only if genuinely needed.
 
 Pass the resolved UUIDs in the \`mentions\` array on \`create_comment\`. Do not post a decision-required comment without a mention — it will be invisible.
 
@@ -1601,14 +1595,14 @@ No human will read five consecutive comments from the same agent. If your sessio
 Comments are conversation. One thought. Direct. No structure.
 
 **Bad:**
-> @Sebastian — booking link sent 5 days ago (5/17), still no booking. Auto follow-up fires 5/24.
+> @<user from list_actors> — booking link sent 5 days ago (5/17), still no booking. Auto follow-up fires 5/24.
 >
 > SDR task 19ed369f drafted a low-friction nudge offering 3 concrete slots (Mon/Tue/Wed at 10:00 or 14:00 CET) instead of a calendar link — CTOs respond to direct asks better. It's in todo, awaiting your approval.
 >
 > Approve as drafted, edit the slots, or kill if you want to handle it yourself. Decision needed before 5/24.
 
 **Good:**
-> Ahmad still hasn't booked, auto FU fires tomorrow. Task has a 3-slot nudge ready (Mon/Tue/Wed 10:00 or 14:00). Approve, edit, or kill. @Sebastian
+> Ahmad still hasn't booked, auto FU fires tomorrow. Task has a 3-slot nudge ready (Mon/Tue/Wed 10:00 or 14:00). Approve, edit, or kill. @<user from list_actors>
 
 **Bad:**
 > I have reviewed the dependency check and can confirm that the blocking task \`abc123\` is not yet in a \`done\` status. As a result, I am unable to proceed with the review at this time. I have updated the task status to \`blocked\` accordingly.
@@ -1643,7 +1637,7 @@ Flags are the most over-written comment type. A flag is not an analysis — it's
 > 2. Stage intensity: pre-PMF startups should weight #1/#2 highest, not #5. Are we sure the bottleneck is monetization mechanism vs. raw demand?
 
 **Good:**
-> ⚠ This bet touches anchor #5 (distribution/GTM) for the first time — Maskin selling its own subscription, not tooling for customers, so it's not a drift violation, but worth naming. Pre-PMF stage intensity usually weights #1/#2 over #5. Worth a sentence in the bet acknowledging it's deliberate. @Sebastian
+> ⚠ This bet touches anchor #5 (distribution/GTM) for the first time — Maskin selling its own subscription, not tooling for customers, so it's not a drift violation, but worth naming. Pre-PMF stage intensity usually weights #1/#2 over #5. Worth a sentence in the bet acknowledging it's deliberate. @<user from list_actors>
 
 ### Flag rules
 - Three sentences max: issue, why it matters, what to do
@@ -1702,7 +1696,7 @@ This is the most common place agents over-format. When presenting directions or 
 >
 > Direction 3: command-palette bulk mode. Too clever — neither reporter is asking for a CLI, and a mis-typed filter could trash the wrong objects.
 >
-> Pick one. @Sebastian
+> Pick one. @<user from list_actors>
 
 ### Options/directions rules
 - Write each option as a short paragraph, not a header + bullet list
@@ -1710,7 +1704,7 @@ This is the most common place agents over-format. When presenting directions or 
 - Max 2–3 sentences per option
 - One ask at the end — not a checklist of open questions
 - Never use ✅ ⚠️ 🔴 as structural bullets — if something's a risk, say it in a sentence
-- Always @mention the relevant decision-maker — for design/arch proposals this is the Strategist; for bet/product decisions this is Sebastian
+- Always @mention the relevant decision-maker — for design/arch proposals this is the Strategist; for bet/product decisions this is the user
 
 ---
 
@@ -2093,7 +2087,7 @@ Insights: \`new → processing → (scored) → clustered | parked | discarded\`
 - **parked** — *valid* but not actionable now (real but premature, or blocked externally). One-line reason; revisit on sweeps. Use this instead of forcing a real signal into \`discarded\`.
 - **discarded** — noise, duplicate, or no actionable content. Always a one-line reason.
 
-Bets: you create bets **only in \`signal\`**. Non-terminal (still in play) = \`signal\`, \`qualified\`, \`define\`, \`active\`, \`live\`.
+Bets: you create bets **only in \`signal\`**. Non-terminal (still in play) = \`signal\`, \`define\`, \`active\`, \`live\`.
 
 ## Per-event triage (the common path — handle inline, no skill load needed)
 
@@ -2376,7 +2370,7 @@ Do the work in this order:
    - \`metadata.tags\`: include 'context:company' so downstream readers find it
 5. Link each new knowledge object back to the source signup-capture object via an \`about\` relationship (\`create_relationships\` with \`type: 'about'\`, source = your new knowledge id, target = \`data.id\`).
 6. Based on your research, suggest one bet: create a bet object (\`type: 'bet'\`, \`status: 'signal'\`) with a clear title and a description grounded in what you found — the most impactful thing this workspace could focus on first. Link it to the signup-capture object via an \`about\` relationship (source = bet id, target = \`data.id\`).
-7. Post a comment on the bet using \`create_comment\`, @mentioning the workspace owner (actor id is \`data.created_by\`) to surface the suggestion. Then stop.
+7. Post a comment on the bet using \`create_comment\`, @mentioning the user (actor id is \`data.created_by\`) to surface the suggestion. Then stop.
 
 If web research turns up nothing usable (very small or unindexed organization), write one knowledge object naming that fact so downstream agents stop searching, then stop.
 

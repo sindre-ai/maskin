@@ -12,6 +12,18 @@ interface MessageBubbleProps {
 	message: MessageResponse
 	/** actorId -> display name, from the conversation's participant list — used to label `metadata.mentions`. */
 	participantNames?: Map<string, string>
+	/**
+	 * Read from the live session log rather than the messages table — an
+	 * agent's end-of-turn output shown in the seconds before the backend's
+	 * persisted row arrives. Same box model as a real bubble so the swap
+	 * causes no layout shift; a dashed border and a status line in place of
+	 * the timestamp mark it as not-yet-saved.
+	 */
+	pending?: boolean
+	/** With `pending`: the persisted row is overdue, so say it isn't saved. */
+	unconfirmed?: boolean
+	/** With `pending`: the turn ended in an error result — tint accordingly. */
+	isError?: boolean
 }
 
 /**
@@ -21,7 +33,14 @@ interface MessageBubbleProps {
  * renders left-aligned with an avatar + name label, since a multi-party
  * conversation can't assume "the other side" is always the same speaker.
  */
-export function MessageBubble({ workspaceId, message, participantNames }: MessageBubbleProps) {
+export function MessageBubble({
+	workspaceId,
+	message,
+	participantNames,
+	pending,
+	unconfirmed,
+	isError,
+}: MessageBubbleProps) {
 	const actor = getStoredActor()
 	const isOwn = message.actorId === actor?.id
 	const attachments = message.metadata?.attachments ?? []
@@ -97,14 +116,22 @@ export function MessageBubble({ workspaceId, message, participantNames }: Messag
 			<div className="flex min-w-0 max-w-[85%] flex-col gap-1">
 				<div className="flex items-baseline gap-2">
 					<span className="truncate text-xs font-medium text-foreground">{message.actorName}</span>
-					<RelativeTime
-						date={message.createdAt}
-						className="shrink-0 text-[11px] text-muted-foreground"
-					/>
+					{pending ? (
+						<span className="shrink-0 text-[11px] text-muted-foreground">
+							{unconfirmed ? 'Not saved yet' : 'Finishing up…'}
+						</span>
+					) : (
+						<RelativeTime
+							date={message.createdAt}
+							className="shrink-0 text-[11px] text-muted-foreground"
+						/>
+					)}
 				</div>
 				<div
 					className={cn(
 						'flex flex-col gap-1 rounded-md border border-border bg-bg-surface px-3 py-2 text-sm',
+						pending && 'border-dashed',
+						pending && isError && 'border-error text-error',
 					)}
 				>
 					{hasContext ? (

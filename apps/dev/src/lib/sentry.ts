@@ -28,3 +28,30 @@ if (dsn && enabled) {
 }
 
 export { Sentry }
+
+// Closed allowlist of our own client components, used to tag Sentry events so
+// an error can be attributed to a caller (web UI vs MCP vs an agent CLI).
+//
+// Deliberately NOT the user-agent: that string carries browser and OS version
+// details, which are a fingerprinting vector and arguably personal data under
+// GDPR. These values name a piece of our software, never a person or device,
+// and stay useful for triage — see `sendDefaultPii: false` above, which we keep.
+const CLIENT_SOURCES = ['ui', 'mcp', 'agent', 'extension'] as const
+
+export type ClientSourceTag = (typeof CLIENT_SOURCES)[number] | 'other' | 'unknown'
+
+/**
+ * Map the caller-supplied `X-Client-Source` header onto a fixed tag value.
+ *
+ * The header is untrusted free text, so anything unrecognised collapses to
+ * `other` rather than being passed through — an unbounded tag would both
+ * explode Sentry's tag cardinality and let a caller smuggle arbitrary text
+ * (potentially personal data) into our error store.
+ */
+export function resolveClientSourceTag(header: string | undefined): ClientSourceTag {
+	if (!header) return 'unknown'
+	const normalized = header.trim().toLowerCase()
+	return (CLIENT_SOURCES as readonly string[]).includes(normalized)
+		? (normalized as ClientSourceTag)
+		: 'other'
+}

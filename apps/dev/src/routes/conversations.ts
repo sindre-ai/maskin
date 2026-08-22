@@ -15,6 +15,7 @@ import {
 	createConversationSchema,
 	messageQuerySchema,
 	postMessageSchema,
+	stripServerOwnedMetadata,
 	updateConversationParticipantStateSchema,
 	updateConversationSchema,
 } from '@maskin/shared'
@@ -31,7 +32,9 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
+import { insertConversationMessage } from '../services/conversation-messages'
 import { evaluateAndRespond } from '../services/conversation-responder'
+import { maybeGenerateConversationTitle } from '../services/conversation-titler'
 import type { SessionManager } from '../services/session-manager'
 
 type Env = {
@@ -264,7 +267,7 @@ app.openapi(createConversationRoute, (async (c) => {
 					conversationId: created.id,
 					actorId: callerId,
 					content: body.initial_message,
-					metadata: body.initial_message_metadata ?? null,
+					metadata: stripServerOwnedMetadata(body.initial_message_metadata) ?? null,
 				})
 				.returning()
 			initialMessage = msg
@@ -299,6 +302,15 @@ app.openapi(createConversationRoute, (async (c) => {
 				messageId: initialMessage?.id,
 				error: String(err),
 			}),
+		)
+		// Independent of the responder, not chained to it: a slow or failing
+		// agent reply must not delay the title replacing its placeholder.
+		maybeGenerateConversationTitle({ db, workspaceId, conversationId: conversation.id }).catch(
+			(err: unknown) =>
+				logger.error('Conversation auto-title failed', {
+					conversationId: conversation.id,
+					error: String(err),
+				}),
 		)
 	}
 
@@ -511,7 +523,10 @@ app.openapi(updateConversationRoute, (async (c) => {
 
 	const [updated] = await db
 		.update(conversations)
-		.set({ title: body.title, updatedAt: new Date() })
+		// A human rename permanently opts the conversation out of auto-titling
+		// (conversation-titler.ts) — otherwise the refinement pass would
+		// overwrite whatever they just typed.
+		.set({ title: body.title, titleAutoState: 'manual', updatedAt: new Date() })
 		.where(eq(conversations.id, id))
 		.returning()
 	if (!updated) return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
@@ -797,31 +812,21 @@ app.openapi(postMessageRoute, (async (c) => {
 		.where(eq(actors.id, callerId))
 		.limit(1)
 
-	const [created] = await db
-		.insert(messages)
-		.values({
-			conversationId: id,
-			actorId: callerId,
-			content: body.content,
-			metadata: body.metadata ?? null,
-			sessionId,
-		})
-		.returning()
-	if (!created) throw new Error('Failed to create message')
+	// `source` / `final_output` are backend-owned markers for auto-posted
+	// end-of-turn output. A client (or an agent via the MCP tool) must not be
+	// able to claim them — the frontend reconciles its optimistic bubble
+	// against `source`, so a forged one would strand that bubble forever.
+	const metadata = stripServerOwnedMetadata(body.metadata) ?? null
 
-	await db
-		.update(conversations)
-		.set({ lastMessageAt: created.createdAt ?? new Date(), updatedAt: new Date() })
-		.where(eq(conversations.id, id))
-
-	await db.insert(events).values({
+	const created = await insertConversationMessage(db, {
+		conversationId: id,
 		workspaceId,
 		actorId: callerId,
-		action: 'message_posted',
-		entityType: 'conversation',
-		entityId: id,
-		data: { message_id: created.id, author_actor_id: callerId },
+		content: body.content,
+		metadata,
+		sessionId,
 	})
+	if (!created) throw new Error('Failed to create message')
 
 	// @mentioning an agent who isn't yet an active participant should actually
 	// pull them into the conversation — otherwise evaluateAndRespond's
@@ -829,7 +834,7 @@ app.openapi(postMessageRoute, (async (c) => {
 	// them and the mention silently does nothing. Auto-join here, before
 	// evaluateAndRespond runs, so the freshly-mentioned agent is already a
 	// candidate for this very message.
-	const mentionedIds = body.metadata?.mentions ?? []
+	const mentionedIds = metadata?.mentions ?? []
 	if (mentionedIds.length > 0) {
 		const activeParticipants = await loadParticipantsByConversation(db, [id])
 		const activeIds = new Set((activeParticipants.get(id) ?? []).map((p) => p.actorId))
@@ -863,6 +868,13 @@ app.openapi(postMessageRoute, (async (c) => {
 			messageId: created.id,
 			error: String(err),
 		}),
+	)
+
+	// Independent of the responder, not chained to it: a slow or failing agent
+	// reply must not delay the title. No-ops unless this conversation is due
+	// for its initial or refined title (see conversation-titler.ts).
+	maybeGenerateConversationTitle({ db, workspaceId, conversationId: id }).catch((err: unknown) =>
+		logger.error('Conversation auto-title failed', { conversationId: id, error: String(err) }),
 	)
 
 	return c.json(
