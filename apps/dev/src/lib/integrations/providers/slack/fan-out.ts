@@ -76,6 +76,15 @@ async function downloadSlackFile(url: string, accessToken: string): Promise<Buff
 		redirect: 'follow',
 	})
 	if (!res.ok) {
+		// 403 here is almost always a missing `files:read` bot scope rather than a
+		// transient failure: an install that predates that scope keeps a valid token,
+		// so nothing else breaks and only file downloads 403. Say so in the message —
+		// the fix is re-installing the Slack app, not a retry.
+		if (res.status === 403) {
+			throw new Error(
+				'Slack file download failed: HTTP 403 — bot token is likely missing the `files:read` scope; reinstall the Slack app to re-consent',
+			)
+		}
 		throw new Error(`Slack file download failed: HTTP ${res.status}`)
 	}
 

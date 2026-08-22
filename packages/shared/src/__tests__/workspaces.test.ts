@@ -28,7 +28,6 @@ describe('workspaceSettingsSchema', () => {
 		])
 		expect(result.statuses.bet).toEqual([
 			'signal',
-			'qualified',
 			'define',
 			'active',
 			'live',

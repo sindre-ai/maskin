@@ -1,20 +1,12 @@
 import { SidebarMenuButton, SidebarMenuItem, useSidebar } from '@/components/ui/sidebar'
 import { type NavItemSource, trackNavItemClicked } from '@/lib/analytics'
+import type { NavItemDef } from '@/lib/nav-items'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link, useMatchRoute } from '@tanstack/react-router'
-import type { LucideIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
 
-export interface SidebarNavItemDef {
-	key: string
-	label: string
-	to: string
-	icon: LucideIcon
-	exact?: boolean
-}
-
 interface SidebarNavItemProps {
-	item: SidebarNavItemDef
+	item: NavItemDef
 	source: NavItemSource
 	// Route params beyond the workspace id (e.g. a dynamic `fileId` for the
 	// files viewer route). Merged over the workspace id on both match and link.
@@ -22,7 +14,7 @@ interface SidebarNavItemProps {
 	children?: ReactNode
 }
 
-// The Link and useMatchRoute generics require literal route strings; SidebarNavItemDef
+// The Link and useMatchRoute generics require literal route strings; NavItemDef
 // carries `to: string` so a single component can render every nav entry regardless of
 // route, so the router options are cast at the call site. TanStack Router validates the
 // path at runtime — passing an unknown route still fails loudly, just not at compile time.

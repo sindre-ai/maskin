@@ -5,11 +5,25 @@ import { RelativeTime } from '@/components/shared/relative-time'
 import type { MessageContextNotification, MessageContextObject, MessageResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
-import { Bell, Box } from 'lucide-react'
+import { Bell, Bot, Box } from 'lucide-react'
 
 interface MessageBubbleProps {
 	workspaceId: string
 	message: MessageResponse
+	/** actorId -> display name, from the conversation's participant list — used to label `metadata.mentions`. */
+	participantNames?: Map<string, string>
+	/**
+	 * Read from the live session log rather than the messages table — an
+	 * agent's end-of-turn output shown in the seconds before the backend's
+	 * persisted row arrives. Same box model as a real bubble so the swap
+	 * causes no layout shift; a dashed border and a status line in place of
+	 * the timestamp mark it as not-yet-saved.
+	 */
+	pending?: boolean
+	/** With `pending`: the persisted row is overdue, so say it isn't saved. */
+	unconfirmed?: boolean
+	/** With `pending`: the turn ended in an error result — tint accordingly. */
+	isError?: boolean
 }
 
 /**
@@ -19,13 +33,22 @@ interface MessageBubbleProps {
  * renders left-aligned with an avatar + name label, since a multi-party
  * conversation can't assume "the other side" is always the same speaker.
  */
-export function MessageBubble({ workspaceId, message }: MessageBubbleProps) {
+export function MessageBubble({
+	workspaceId,
+	message,
+	participantNames,
+	pending,
+	unconfirmed,
+	isError,
+}: MessageBubbleProps) {
 	const actor = getStoredActor()
 	const isOwn = message.actorId === actor?.id
 	const attachments = message.metadata?.attachments ?? []
 	const contextObjects = message.metadata?.context_objects ?? []
 	const contextNotifications = message.metadata?.context_notifications ?? []
-	const hasContext = contextObjects.length > 0 || contextNotifications.length > 0
+	const mentions = message.metadata?.mentions ?? []
+	const hasContext =
+		contextObjects.length > 0 || contextNotifications.length > 0 || mentions.length > 0
 
 	if (message.kind === 'system') {
 		return (
@@ -46,6 +69,8 @@ export function MessageBubble({ workspaceId, message }: MessageBubbleProps) {
 							<MessageContextChips
 								objects={contextObjects}
 								notifications={contextNotifications}
+								mentions={mentions}
+								participantNames={participantNames}
 								variant="own"
 							/>
 						) : null}
@@ -91,20 +116,30 @@ export function MessageBubble({ workspaceId, message }: MessageBubbleProps) {
 			<div className="flex min-w-0 max-w-[85%] flex-col gap-1">
 				<div className="flex items-baseline gap-2">
 					<span className="truncate text-xs font-medium text-foreground">{message.actorName}</span>
-					<RelativeTime
-						date={message.createdAt}
-						className="shrink-0 text-[11px] text-muted-foreground"
-					/>
+					{pending ? (
+						<span className="shrink-0 text-[11px] text-muted-foreground">
+							{unconfirmed ? 'Not saved yet' : 'Finishing up…'}
+						</span>
+					) : (
+						<RelativeTime
+							date={message.createdAt}
+							className="shrink-0 text-[11px] text-muted-foreground"
+						/>
+					)}
 				</div>
 				<div
 					className={cn(
 						'flex flex-col gap-1 rounded-md border border-border bg-bg-surface px-3 py-2 text-sm',
+						pending && 'border-dashed',
+						pending && isError && 'border-error text-error',
 					)}
 				>
 					{hasContext ? (
 						<MessageContextChips
 							objects={contextObjects}
 							notifications={contextNotifications}
+							mentions={mentions}
+							participantNames={participantNames}
 							variant="other"
 						/>
 					) : null}
@@ -137,12 +172,20 @@ export function MessageBubble({ workspaceId, message }: MessageBubbleProps) {
 interface MessageContextChipsProps {
 	objects: MessageContextObject[]
 	notifications: MessageContextNotification[]
+	mentions: string[]
+	participantNames?: Map<string, string>
 	/** "own" sits on the accent bubble background, "other" sits on bg-surface. */
 	variant: 'own' | 'other'
 }
 
-/** Renders attached context objects/notifications as a row of pill chips above the message text, instead of the raw "Context objects: — id: ..." text block the composer used to inline into content. */
-function MessageContextChips({ objects, notifications, variant }: MessageContextChipsProps) {
+/** Renders attached context objects/notifications/@mentions as a row of pill chips above the message text, instead of the raw "Context objects: — id: ..." text block the composer used to inline into content. */
+function MessageContextChips({
+	objects,
+	notifications,
+	mentions,
+	participantNames,
+	variant,
+}: MessageContextChipsProps) {
 	const chipClassName =
 		variant === 'own'
 			? 'inline-flex max-w-full items-center gap-1 rounded-full bg-accent-foreground/15 px-2 py-0.5 text-[11px]'
@@ -150,6 +193,14 @@ function MessageContextChips({ objects, notifications, variant }: MessageContext
 
 	return (
 		<ul className="flex flex-wrap gap-1" aria-label="Attached context">
+			{mentions.map((actorId) => (
+				<li key={actorId} className={chipClassName}>
+					<Bot size={11} aria-hidden />
+					<span className="max-w-[12rem] truncate">
+						@{participantNames?.get(actorId)?.trim() || actorId}
+					</span>
+				</li>
+			))}
 			{objects.map((o) => (
 				<li key={o.id} className={chipClassName}>
 					<Box size={11} aria-hidden />

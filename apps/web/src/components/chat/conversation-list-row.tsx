@@ -2,6 +2,7 @@ import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { UnreadBadge } from '@/components/shared/unread-badge'
 import type { ConversationListItemResponse } from '@/lib/api'
+import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { Link } from '@tanstack/react-router'
 import { Pin } from 'lucide-react'
@@ -12,7 +13,11 @@ interface ConversationListRowProps {
 }
 
 export function ConversationListRow({ workspaceId, conversation }: ConversationListRowProps) {
-	const visibleParticipants = conversation.participants.slice(0, 3)
+	// The current user already knows they're in the chat — only show the others.
+	// A solo conversation falls back to the full list so the row keeps an avatar.
+	const currentActorId = getStoredActor()?.id
+	const others = conversation.participants.filter((p) => p.actorId !== currentActorId)
+	const visibleParticipants = (others.length > 0 ? others : conversation.participants).slice(0, 3)
 
 	return (
 		<Link

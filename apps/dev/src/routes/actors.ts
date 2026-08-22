@@ -24,14 +24,12 @@ import {
 	workspaceSkills,
 	workspaces,
 } from '@maskin/db/schema'
-import { mergeModuleDefaultSettings } from '@maskin/module-sdk'
 import {
 	type AgentState,
 	PLATFORM_MCP_PRESET,
 	WORKSPACE_COACH_DEFAULT,
 	createActorSchema,
 	updateActorSchema,
-	workspaceSettingsSchema,
 } from '@maskin/shared'
 import { and, asc, count, countDistinct, desc, eq, inArray, or, sql } from 'drizzle-orm'
 import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
@@ -48,8 +46,9 @@ import {
 import { serialize, serializeArray } from '../lib/serialize'
 import { isWorkspaceMember } from '../lib/workspace-auth'
 import type { AgentStorageManager } from '../services/agent-storage'
+import { stopSessionsForActors } from '../services/session-cleanup'
 import type { SessionManager } from '../services/session-manager'
-import { bootstrapDefaultAgents } from '../services/workspace-bootstrap'
+import { SeedAgentError, provisionWorkspace } from '../services/workspace-bootstrap'
 
 type Env = {
 	Variables: {
@@ -204,77 +203,51 @@ app.openapi(createActorRoute, async (c) => {
 	// Auto-create personal workspace (default true for humans, false for agents)
 	const shouldCreateWorkspace = body.auto_create_workspace ?? body.type === 'human'
 	let workspaceId: string | undefined
+	let workspaceProvisioningFailed = false
 
 	if (shouldCreateWorkspace) {
-		const enabledModules = ['work', 'crm', 'knowledge']
-		const defaultSettings = mergeModuleDefaultSettings(
-			workspaceSettingsSchema.parse({ enabled_modules: enabledModules }),
-			enabledModules,
-		)
-		const created = await db.transaction(async (tx) => {
-			const [workspace] = await tx
-				.insert(workspaces)
-				.values({
-					name: `${body.name}'s Workspace`,
-					settings: defaultSettings,
-					createdBy: actor.id,
-				})
-				.returning()
-
-			if (!workspace) return null
-
-			await tx.insert(workspaceMembers).values({
-				workspaceId: workspace.id,
-				actorId: actor.id,
-				role: 'owner',
+		// Same provisioning path as POST /api/workspaces and the dev bootstrap:
+		// full default agent roster, skills, triggers, default loops, pinned chat
+		// agent, and the Chief of Staff welcome session.
+		//
+		// Unlike POST /api/workspaces (which 500s naming the failed agent), signup
+		// cannot fail the request: the actor row is already committed above and
+		// unretryable — a second attempt with the same email 409s. So it returns
+		// 201 with a usable api_key and reports the failure via
+		// `workspace_provisioning_failed` instead of leaving the caller to infer
+		// it from an absent `workspace_id`.
+		let created: Awaited<ReturnType<typeof provisionWorkspace>> = null
+		try {
+			created = await provisionWorkspace({
+				db,
+				agentStorage: c.get('agentStorage'),
+				sessionManager: c.get('sessionManager'),
+				name: `${body.name}'s Workspace`,
+				ownerActorId: actor.id,
+				settings: { enabled_modules: ['work', 'crm', 'knowledge'] },
 			})
-
-			// Seed Workspace Coach — the built-in meta-agent shipped with every workspace.
-			// apiKey is required: without it, the agent's container boots with an empty
-			// Bearer token and MCP writes either 401 or — worse — fall back to a key
-			// that resolves to a different actor, misattributing every comment.
-			const [coach] = await tx
-				.insert(actors)
-				.values({
-					type: WORKSPACE_COACH_DEFAULT.type,
-					name: WORKSPACE_COACH_DEFAULT.name,
-					description: WORKSPACE_COACH_DEFAULT.description ?? null,
-					isSystem: WORKSPACE_COACH_DEFAULT.isSystem,
-					systemPrompt: WORKSPACE_COACH_DEFAULT.systemPrompt,
-					llmProvider: WORKSPACE_COACH_DEFAULT.llmProvider,
-					llmConfig: WORKSPACE_COACH_DEFAULT.llmConfig,
-					tools: WORKSPACE_COACH_DEFAULT.tools,
-					apiKey: generateApiKey().key,
-					createdBy: actor.id,
+			if (!created) {
+				logger.error('signup workspace provisioning returned no workspace row', {
+					actorId: actor.id,
 				})
-				.returning()
-
-			if (!coach) throw new Error('Failed to seed Workspace Coach actor')
-
-			await tx.insert(workspaceMembers).values({
-				workspaceId: workspace.id,
-				actorId: coach.id,
-				role: 'member',
-			})
-
-			return workspace
-		})
-
-		if (created) {
-			workspaceId = created.id
-			const agentStorage = c.get('agentStorage')
-			if (agentStorage) {
-				await bootstrapDefaultAgents(
-					db,
-					agentStorage,
-					created.id,
-					actor.id,
-					c.get('sessionManager'),
-				).catch((err) =>
-					logger.error('workspace bootstrap failed', { workspaceId: created.id, err }),
-				)
+			}
+		} catch (err) {
+			// Log the seeded-agent detail when we have it, so this failure is as
+			// diagnosable as the 500 the workspaces route returns for the same bug.
+			if (err instanceof SeedAgentError) {
+				logger.error('signup workspace provisioning failed — default agent seed failed', {
+					actorId: actor.id,
+					agentId: err.agentId,
+					errorClass: err.errorClass,
+					cause: err.cause instanceof Error ? err.cause.message : String(err.cause),
+				})
+			} else {
+				logger.error('signup workspace provisioning failed', { actorId: actor.id, err })
 			}
 		}
+
+		if (created) workspaceId = created.id
+		else workspaceProvisioningFailed = true
 	}
 
 	// Return actor WITHOUT api_key, but WITH it in the expected response field.
@@ -289,6 +262,7 @@ app.openapi(createActorRoute, async (c) => {
 			llm_config: llmConfig,
 			api_key: key,
 			...(workspaceId && { workspace_id: workspaceId }),
+			...(workspaceProvisioningFailed && { workspace_provisioning_failed: true }),
 		} as z.infer<typeof actorWithKeySchema>,
 		201,
 	)
@@ -1004,6 +978,15 @@ app.openapi(deleteActorRoute, (async (c) => {
 	}
 
 	const existingData = { ...existing }
+
+	// Stop before delete. The cascade below removes this actor's session rows,
+	// but a sandbox already running on an agent-server keeps executing as an
+	// agent the user believes they just deleted, keeps holding its capacity
+	// slot until the 2h timeout, and keeps POSTing logs against a session_id
+	// that no longer exists. Best-effort and outside the transaction — see
+	// stopSessionsForActors.
+	await stopSessionsForActors(db, c.get('sessionManager'), [id], c.get('actorId'))
+
 	await db.transaction(async (tx) => {
 		// Delete session logs for sessions owned by this actor
 		const actorSessions = await tx

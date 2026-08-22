@@ -5781,23 +5781,22 @@ export function createMcpServer(config: McpConfig) {
 				config,
 				'POST',
 				`/api/integrations/${args.provider}/connect`,
-				undefined,
+				args.api_key ? { api_key: args.api_key } : undefined,
 				{ workspaceId: args.workspace_id },
 			)) as {
-				install_url: string
+				install_url?: string
 			}
+			// API-key providers activate synchronously and return no install_url.
+			const text = result.install_url
+				? `Open this URL in your browser to complete the installation:\n\n${result.install_url}\n\n${JSON.stringify(result)}`
+				: `Integration connected.\n\n${JSON.stringify(result)}`
 			return {
 				_meta: meta(
 					'connect_integration',
 					config,
 					(args as { workspace_id?: string }).workspace_id,
 				),
-				content: [
-					{
-						type: 'text' as const,
-						text: `Open this URL in your browser to complete the installation:\n\n${result.install_url}\n\n${JSON.stringify(result)}`,
-					},
-				],
+				content: [{ type: 'text' as const, text }],
 			}
 		},
 	)

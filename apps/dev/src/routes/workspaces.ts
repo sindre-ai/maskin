@@ -7,7 +7,6 @@ import {
 	workspaceOnboardingPrompts,
 	workspaces,
 } from '@maskin/db/schema'
-import { mergeModuleDefaultSettings } from '@maskin/module-sdk'
 import {
 	WORKSPACE_ADMIN_DIFF_FIELDS,
 	WORKSPACE_COACH_DEFAULT,
@@ -15,10 +14,8 @@ import {
 	createWorkspaceSchema,
 	updateWorkspaceAdminSchema,
 	updateWorkspaceSchema,
-	workspaceSettingsSchema,
 } from '@maskin/shared'
 import { and, eq } from 'drizzle-orm'
-import { capturePosthogEvent } from '../lib/analytics/posthog'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { errorSchema, idParamSchema, workspaceResponseSchema } from '../lib/openapi-schemas'
@@ -26,11 +23,7 @@ import { serialize, serializeArray } from '../lib/serialize'
 import { isWorkspaceMember, isWorkspaceOwner } from '../lib/workspace-auth'
 import type { AgentStorageManager } from '../services/agent-storage'
 import type { SessionManager } from '../services/session-manager'
-import {
-	SeedAgentError,
-	bootstrapDefaultAgents,
-	seedDefaultAgentActors,
-} from '../services/workspace-bootstrap'
+import { SeedAgentError, provisionWorkspace } from '../services/workspace-bootstrap'
 
 type Env = {
 	Variables: {
@@ -93,49 +86,19 @@ app.openapi(createWorkspaceRoute, async (c) => {
 	const actorId = c.get('actorId')
 	const body = c.req.valid('json')
 
-	const parsedSettings = workspaceSettingsSchema.parse(body.settings ?? {})
-	const settings = mergeModuleDefaultSettings(parsedSettings, parsedSettings.enabled_modules)
-
+	// All workspace provisioning — default agents, skills, triggers, default
+	// loops, the pinned chat agent, and Chief of Staff's welcome session — lives
+	// in provisionWorkspace() so this route, signup, and the dev auto-bootstrap
+	// all produce identically furnished workspaces.
 	let workspace: typeof workspaces.$inferSelect | null
-	let chiefOfStaffId: string | undefined
 	try {
-		workspace = await db.transaction(async (tx) => {
-			const [ws] = await tx
-				.insert(workspaces)
-				.values({
-					name: body.name,
-					settings,
-					createdBy: actorId,
-				})
-				.returning()
-
-			if (!ws) return null
-
-			// Auto-add creator as owner
-			await tx.insert(workspaceMembers).values({
-				workspaceId: ws.id,
-				actorId,
-				role: 'owner',
-			})
-
-			// Seed all default agents (Coach, Chief of Staff, Driver, Strategist,
-			// Discovery Analyst, Researcher) inside the same transaction. If any
-			// one fails the tx rolls back — no half-seeded workspace lingers behind
-			// a partial success.
-			// Skills, workspace_skill files, and triggers are seeded post-commit
-			// because they hit S3 and can't be rolled back inside a DB transaction.
-			const agentIds = await seedDefaultAgentActors(tx, ws.id, actorId)
-			chiefOfStaffId = agentIds.chief_of_staff
-
-			// Pin Chief of Staff as the default chat agent unless the caller
-			// explicitly requested a different (or no) default in the create body.
-			if (settings.default_agent_id === undefined && agentIds.chief_of_staff) {
-				const nextSettings = { ...settings, default_agent_id: agentIds.chief_of_staff }
-				await tx.update(workspaces).set({ settings: nextSettings }).where(eq(workspaces.id, ws.id))
-				ws.settings = nextSettings
-			}
-
-			return ws
+		workspace = await provisionWorkspace({
+			db,
+			agentStorage: c.get('agentStorage'),
+			sessionManager: c.get('sessionManager'),
+			name: body.name,
+			ownerActorId: actorId,
+			settings: body.settings,
 		})
 	} catch (err) {
 		if (err instanceof SeedAgentError) {
@@ -161,47 +124,6 @@ app.openapi(createWorkspaceRoute, async (c) => {
 
 	if (!workspace) {
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create workspace'), 500)
-	}
-
-	// Post-commit: emit workspace_created for the bet's activation-cohort query.
-	// Fire-and-forget by design — the analytics client never throws (see posthog.ts).
-	void capturePosthogEvent('workspace_created', workspace.id, {
-		workspace_id: workspace.id,
-		workspace_name: workspace.name,
-		created_by: actorId,
-	})
-
-	// Post-commit: seed the default agents' skills + triggers. The actor + member
-	// rows are already committed by seedDefaultAgentActors, so this call is a
-	// no-op for actors (name check hits every one) and only writes
-	// workspace_skills + agent_skills + triggers.
-	const agentStorage = c.get('agentStorage')
-	if (agentStorage) {
-		bootstrapDefaultAgents(db, agentStorage, workspace.id, actorId, c.get('sessionManager')).catch(
-			(err) => logger.error('workspace bootstrap failed', { workspaceId: workspace.id, err }),
-		)
-	}
-
-	// Chief of Staff was seeded synchronously above by seedDefaultAgentActors
-	// (bootstrapDefaultAgents only ever sees it as pre-existing here) — kick its
-	// welcome session directly rather than relying on an actor.created event
-	// trigger, which can't fire before this point anyway.
-	if (chiefOfStaffId) {
-		const [owner] = await db
-			.select({ name: actors.name, email: actors.email })
-			.from(actors)
-			.where(eq(actors.id, actorId))
-			.limit(1)
-
-		c.get('sessionManager')
-			.createSession(workspace.id, {
-				actorId: chiefOfStaffId,
-				actionPrompt: `A human owner just joined this brand-new workspace: ${owner?.name ?? 'the workspace owner'}${owner?.email ? ` (${owner.email})` : ''}. Run Beat 0 of your onboarding arc per your system prompt: start a conversation with them and post a warm welcome (who you are, what Maskin is, what happens next), then kick off the Researcher for a first-pass brief on the owner and their organization (inferred from email domain). File it as a \`knowledge\` object in status \`draft\`, plus supporting insight objects. Do not post a follow-up comment yourself — that's a separate step once the brief lands.`,
-				createdBy: actorId,
-			})
-			.catch((err) =>
-				logger.error('Chief of Staff welcome session failed', { workspaceId: workspace.id, err }),
-			)
 	}
 
 	return c.json(serialize(workspace) as z.infer<typeof workspaceResponseSchema>, 201)
@@ -487,13 +409,20 @@ app.openapi(addMemberRoute, (async (c) => {
 		return c.json(createApiError('FORBIDDEN', 'Not a member of this workspace'), 403)
 	}
 
-	await db.insert(workspaceMembers).values({
-		workspaceId,
-		actorId: actor_id,
-		role: role || 'member',
-	})
+	// Idempotent: re-adding an existing member is a no-op, not a 23505 crash
+	const inserted = await db
+		.insert(workspaceMembers)
+		.values({
+			workspaceId,
+			actorId: actor_id,
+			role: role || 'member',
+		})
+		.onConflictDoNothing({
+			target: [workspaceMembers.workspaceId, workspaceMembers.actorId],
+		})
+		.returning({ actorId: workspaceMembers.actorId })
 
-	return c.json({ added: true }, 201)
+	return c.json({ added: inserted.length > 0 }, 201)
 }) as RouteHandler<typeof addMemberRoute, Env>)
 
 // GET /api/workspaces/:id/members

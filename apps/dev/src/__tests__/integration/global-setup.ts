@@ -7,6 +7,7 @@ import { splitStatements } from '@maskin/db/migrate-utils'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import postgres from 'postgres'
 import { createApiError, formatZodError } from '../../lib/errors'
+import type { SessionManager } from '../../services/session-manager'
 
 type Env = {
 	Variables: {
@@ -14,6 +15,7 @@ type Env = {
 		actorId: string
 		actorType: string
 		notifyBridge: PgNotifyBridge
+		sessionManager: SessionManager
 	}
 }
 
@@ -52,6 +54,14 @@ export function createIntegrationApp(
 		c.set('actorId', testActorId)
 		c.set('actorType', 'human')
 		c.set('notifyBridge', {} as PgNotifyBridge)
+		// Routes that delete an actor/loop stop that actor's live sessions
+		// first (see stopSessionsForActors). No containers run under the
+		// integration harness, so a resolving stub is the honest stand-in —
+		// leaving this unset made the route read `undefined` and 500.
+		c.set('sessionManager', {
+			stopSession: async () => {},
+			createSession: async () => undefined,
+		} as unknown as SessionManager)
 		await next()
 	})
 

@@ -3,7 +3,7 @@ import './extensions'
 import path from 'node:path'
 import { serve } from '@hono/node-server'
 import { createDb, syncAgentServersFromEnv } from '@maskin/db'
-import { sessions } from '@maskin/db/schema'
+import { actors, sessions } from '@maskin/db/schema'
 import { PgNotifyBridge } from '@maskin/realtime'
 import { S3StorageProvider } from '@maskin/storage'
 import { eq } from 'drizzle-orm'
@@ -135,7 +135,12 @@ logger.info('Orphan thread detector started')
 // through the queue instead of spawning a local Docker container; outside
 // production the queue stays inert (every tick parks at no-capacity backoff)
 // so local-dev keeps its Docker-based session-manager path unchanged.
-const sessionDispatchQueue = new SessionDispatchQueue(db, async () => ({ kind: 'no_capacity' }))
+const sessionDispatchQueue = new SessionDispatchQueue(db, async () => ({ kind: 'no_capacity' }), {
+	// Dispatch exhaustion is otherwise invisible to the user watching the
+	// session: the log stream just stops. This puts the reason, and the
+	// "start a new session" recovery, into the transcript itself.
+	appendSystemLog: (sessionId, content) => sessionManager.insertSystemLog(sessionId, content),
+})
 if (process.env.NODE_ENV === 'production') {
 	const dispatcher = new SessionDispatcher({
 		db,
@@ -143,6 +148,20 @@ if (process.env.NODE_ENV === 'production') {
 			const [session] = await db.select().from(sessions).where(eq(sessions.id, sessionId)).limit(1)
 			if (!session) return null
 			if (session.status !== 'starting' && session.status !== 'pending') return null
+			// The session's actor can be hard-deleted between enqueue and dispatch
+			// (deleting an actor, uninstalling a loop, or a loop version push all
+			// remove agents and their sessions). buildLaunchSpec would throw for
+			// that, and the dispatcher classifies ANY throw as a transient failure
+			// — so a permanently undispatchable session burned all 5 attempts with
+			// backoff before erroring out (Sentry MASKIN-DEV-4, "buildStartRequest
+			// threw: Agent not found or not an agent type"). Returning null instead
+			// routes it straight to permanent_failure on the first attempt.
+			const [agent] = await db
+				.select({ type: actors.type })
+				.from(actors)
+				.where(eq(actors.id, session.actorId))
+				.limit(1)
+			if (!agent || agent.type !== 'agent') return null
 			const spec = await sessionManager.buildLaunchSpec(session)
 			return {
 				sessionId: session.id,

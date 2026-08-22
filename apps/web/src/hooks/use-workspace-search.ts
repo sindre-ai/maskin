@@ -57,7 +57,7 @@ export interface WorkspaceSearchResult {
 	isPending: boolean
 }
 
-function matches(query: string, ...fields: (string | null | undefined)[]): boolean {
+export function matches(query: string, ...fields: (string | null | undefined)[]): boolean {
 	if (!query) return true
 	const needle = query.toLowerCase()
 	return fields.some((field) => (field ?? '').toLowerCase().includes(needle))
@@ -109,14 +109,14 @@ export function useWorkspaceSearch(
 
 		for (const loop of loops ?? []) {
 			const name = loop.name ?? 'Untitled loop'
-			if (!matches(query, name, loop.guarantee, loop.entryCondition)) continue
+			if (!matches(query, name, loop.content, loop.entryCondition)) continue
 			rows.push({
 				id: loop.id,
 				group: 'loops',
 				kind: 'LOOP',
 				title: name,
 				sub: loop.status,
-				snippet: loop.guarantee ?? '',
+				snippet: loop.content ?? '',
 				to: '/$workspaceId/loops/$loopId',
 				params: { workspaceId, loopId: loop.id },
 			})

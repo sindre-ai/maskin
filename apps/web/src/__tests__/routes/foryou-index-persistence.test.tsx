@@ -44,10 +44,6 @@ vi.mock('@/hooks/use-bets', () => ({
 	useBets: () => ({ data: [], isLoading: false }),
 }))
 
-vi.mock('@/lib/new-conversation-context', () => ({
-	useNewConversationComposer: () => ({ open: false, setOpen: vi.fn() }),
-}))
-
 // Track the display-settings read (simulated 404 when null) and every upsert,
 // so tests can assert what the route persists and that unrelated settings
 // survive the spread.
@@ -118,9 +114,6 @@ vi.mock('@/components/foryou/north-star-prompt-card', () => ({
 }))
 vi.mock('@/components/foryou/onboarding-prompt-card', () => ({
 	OnboardingPromptCard: () => null,
-}))
-vi.mock('@/components/foryou/new-conversation-composer', () => ({
-	NewConversationComposer: () => null,
 }))
 vi.mock('@/components/shared/create-picker', () => ({
 	CreatePicker: () => null,

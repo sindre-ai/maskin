@@ -7,7 +7,6 @@ import {
 	ForYouHeaderIdentity,
 } from '@/components/foryou/foryou-header'
 import { ForYouListRow } from '@/components/foryou/foryou-list-row'
-import { NewConversationComposer } from '@/components/foryou/new-conversation-composer'
 import { NorthStarPromptCard } from '@/components/foryou/north-star-prompt-card'
 import { OnboardingPromptCard } from '@/components/foryou/onboarding-prompt-card'
 import { SparseComposer } from '@/components/foryou/sparse-composer'
@@ -25,7 +24,6 @@ import {
 } from '@/hooks/use-user-display-settings'
 import type { DisplaySettingsBody, UnreadItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { useNewConversationComposer } from '@/lib/new-conversation-context'
 import { useWorkspace } from '@/lib/workspace-context'
 import { CHROME_KEY } from '@maskin/shared'
 import { createFileRoute } from '@tanstack/react-router'
@@ -66,7 +64,6 @@ function ForYouRedesign() {
 	const items = data?.items ?? []
 	const markRead = useMarkRead(workspaceId)
 	const markUnread = useMarkUnread(workspaceId)
-	const { open: composerOpen, setOpen: setComposerOpen } = useNewConversationComposer()
 
 	const [typeFilter, setTypeFilter] = useState<string | undefined>(undefined)
 	const [sort, setSort] = useState<FeedSort>('priority')
@@ -257,14 +254,6 @@ function ForYouRedesign() {
 		return () => window.removeEventListener('keydown', onKeydown)
 	}, [handleMarkAllRead])
 
-	const composer = (
-		<NewConversationComposer
-			workspaceId={workspaceId}
-			open={composerOpen}
-			onOpenChange={setComposerOpen}
-		/>
-	)
-
 	if (isLoading || betsLoading) {
 		return (
 			<div className="flex flex-1 min-w-0 flex-col space-y-4" data-testid="foryou-redesign-root">
@@ -302,7 +291,6 @@ function ForYouRedesign() {
 					stickyIdentity={<ForYouHeaderIdentity unreadCount={unreadRegular.length} />}
 					actions={
 						<ForYouHeaderActions
-							onStartConversation={() => setComposerOpen(true)}
 							onMarkAllRead={handleMarkAllRead}
 							markAllReadDisabled={unreadRegular.length === 0}
 						/>
@@ -359,7 +347,6 @@ function ForYouRedesign() {
 					) : null}
 				</div>
 			</div>
-			{composer}
 		</>
 	)
 }

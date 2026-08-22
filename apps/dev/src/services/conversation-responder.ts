@@ -1,6 +1,6 @@
 import type { Database } from '@maskin/db'
 import { actors, conversationParticipants, messages, workspaces } from '@maskin/db/schema'
-import { and, count, desc, eq, isNull, ne } from 'drizzle-orm'
+import { and, count, desc, eq, isNull, ne, sql } from 'drizzle-orm'
 import { resolveChatCredentials } from '../lib/llm-routing'
 import type { LLMTool } from '../lib/llm/adapter'
 import { createLLMAdapter } from '../lib/llm/index'
@@ -108,11 +108,23 @@ export async function evaluateAndRespond(ctx: {
 	// Loop-prevention cap: walk from the most recent message back, count
 	// consecutive agent-authored messages at the tail (the new message is
 	// included, since it's already inserted at this point).
+	//
+	// Auto-posted end-of-turn output is excluded. The cap exists to bound
+	// responder-triggered agent-to-agent chains, and a final_output message
+	// cannot start one — the finalizer never calls evaluateAndRespond. Every
+	// agent turn now yields up to two rows (an optional MCP heads-up plus the
+	// automatic final output), so counting both would halve the effective cap
+	// and mute a conversation after ~3 turns.
 	const recent = await db
 		.select({ actorType: actors.type })
 		.from(messages)
 		.innerJoin(actors, eq(actors.id, messages.actorId))
-		.where(eq(messages.conversationId, conversationId))
+		.where(
+			and(
+				eq(messages.conversationId, conversationId),
+				sql`${messages.metadata}->>'source' IS DISTINCT FROM 'final_output'`,
+			),
+		)
 		.orderBy(desc(messages.id))
 		.limit(LOOKBACK_LIMIT)
 	let consecutiveAgents = 0
@@ -132,11 +144,13 @@ export async function evaluateAndRespond(ctx: {
 		mentions?: string[]
 		context_objects?: Array<{ id: string; title?: string; type?: string }>
 		context_notifications?: Array<{ id: string; title?: string }>
+		attachments?: Array<{ file_id: string; name?: string; mime_type?: string }>
 	} | null
 	const mentioned = new Set(metadata?.mentions ?? [])
-	// The composer sends attached objects/notifications as structured metadata
-	// (rendered as chips in the UI) rather than inlined into `content` — rebuild
-	// a compact context block here so the agent's prompt still carries it.
+	// The composer sends attached objects/notifications/files as structured
+	// metadata (rendered as chips in the UI) rather than inlined into
+	// `content` — rebuild a compact context block here so the agent's prompt
+	// still carries it.
 	const messageForPrompt = { ...message, content: appendContextBlock(message.content, metadata) }
 
 	const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
@@ -461,21 +475,25 @@ async function checkRelevance(params: {
 }
 
 /**
- * Rebuilds the compact "Context objects:" / "Context notifications:" block
- * the composer used to inline directly into message content — now that the
- * composer sends this as structured metadata (so the UI can render chips
- * instead of literal text), the agent-facing prompt has to reconstruct it.
+ * Rebuilds the compact "Context objects:" / "Context notifications:" /
+ * "Attached files:" block the composer used to inline directly into message
+ * content — now that the composer sends this as structured metadata (so the
+ * UI can render chips instead of literal text), the agent-facing prompt has
+ * to reconstruct it. Attached files are listed by id + name only; the agent
+ * has to call the `get_file` MCP tool to actually read the content.
  */
 function appendContextBlock(
 	content: string,
 	metadata: {
 		context_objects?: Array<{ id: string; title?: string; type?: string }>
 		context_notifications?: Array<{ id: string; title?: string }>
+		attachments?: Array<{ file_id: string; name?: string; mime_type?: string }>
 	} | null,
 ): string {
 	const objects = metadata?.context_objects ?? []
 	const notifications = metadata?.context_notifications ?? []
-	if (objects.length === 0 && notifications.length === 0) return content
+	const attachments = metadata?.attachments ?? []
+	if (objects.length === 0 && notifications.length === 0 && attachments.length === 0) return content
 	const lines: string[] = [content, '', '---']
 	if (objects.length > 0) {
 		lines.push('Context objects:')
@@ -493,11 +511,20 @@ function appendContextBlock(
 			lines.push(`- ${label} — id: ${n.id}`)
 		}
 	}
+	if (attachments.length > 0) {
+		if (objects.length > 0 || notifications.length > 0) lines.push('')
+		lines.push('Attached files (call the get_file MCP tool with the file id to read the content):')
+		for (const f of attachments) {
+			const label = f.name?.trim() || f.file_id
+			const mimeTag = f.mime_type ? ` (${f.mime_type})` : ''
+			lines.push(`- ${label}${mimeTag} — file id: ${f.file_id}`)
+		}
+	}
 	return lines.join('\n')
 }
 
-/** Shared `{actorName}: {content}` transcript join, used both for the relevance check and the seed prompt. */
-function formatConversationTranscript(
+/** Shared `{actorName}: {content}` transcript join, used by the relevance check, the seed prompt, and the auto-titler. */
+export function formatConversationTranscript(
 	history: Array<{ actorName: string; content: string }>,
 ): string {
 	return history.map((m) => `${m.actorName}: ${m.content}`).join('\n')
@@ -527,8 +554,8 @@ function buildConversationReplyPrompt(ctx: {
 		formatConversationTranscript(ctx.conversationHistory) || '(no prior messages)',
 		'"""',
 		'',
-		`The response can be any combination of: taking an action, or posting a reply via post_conversation_message. ${describeReplyExpectation(ctx)}`,
-		'IMPORTANT: taking an action (reading data, calling other tools) is invisible to the user by itself — they only see a reply once you call post_conversation_message. If you take actions first, still call post_conversation_message afterward to report back, unless you deliberately chose silence per the guidance above.',
+		`Your reply is whatever you write at the end of this turn — it is posted into the chat automatically, so finish with the actual response to them. ${describeReplyExpectation(ctx)}`,
+		"If this turn will take a while before you can answer — research, a long tool chain, work across several files — you may post a brief heads-up first with post_conversation_message so they aren't left waiting in silence. That's optional, and worth skipping when the message just wants a direct answer. Both the heads-up and your final reply appear in the chat, so don't repeat yourself.",
 		'',
 		`Conversation ID: ${ctx.conversationId}`,
 		`Author of the new message: ${ctx.authorName} (actor ID: ${ctx.authorActorId})`,
