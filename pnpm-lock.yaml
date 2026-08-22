@@ -138,6 +138,9 @@ importers:
       hono:
         specifier: ^4.12.14
         version: 4.12.14
+      jsdom:
+        specifier: ^25.0.0
+        version: 25.0.1
       postgres:
         specifier: ^3.4.9
         version: 3.4.9
@@ -160,6 +163,9 @@ importers:
       '@types/dockerode':
         specifier: ^3.3.0
         version: 3.3.47
+      '@types/jsdom':
+        specifier: ^30.0.0
+        version: 30.0.0
       '@types/node':
         specifier: ^25.6.0
         version: 25.6.0

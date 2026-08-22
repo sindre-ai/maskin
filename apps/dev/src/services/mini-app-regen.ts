@@ -51,11 +51,11 @@ export function buildDailyRegenActionPrompt(file: MiniAppFileRef): string {
 		`Regenerate the hosted mini-app "${file.name}" (file id ${file.id}) so it stays current.`,
 		'',
 		'Steps:',
-		'1. Fetch the current workspace objects this app should display (get_objects / search_objects).',
+		'1. Fetch the current workspace objects this app should display (get_objects / search_objects). Keep the list of object ids you fetched — the smoke-test in step 5 needs them.',
 		`2. Bake them into the data slot — the <script id="${MASKIN_STATE_SLOT_ID}" type="application/json"> node the app exposes as window.${MASKIN_APP_DATA_WINDOW_KEY} — keeping the slot contract the app already reads. All app data lives in that slot; nothing hardcoded outside it.`,
 		'3. Keep the file a single self-contained .html that renders offline (no network calls), matching the app template and the egress-blocked CSP.',
 		`4. Rewrite the file IN PLACE: call update_file on THIS SAME id (${file.id}) with the complete regenerated document in one atomic call. Never create a new object or copy — the pin keeps resolving this id. Validate the full document before the write so there is no broken intermediate state.`,
-		'5. Smoke-test the new file before considering it published: verify it still opens/renders and that the data slot carries the fresh objects.',
+		`5. Smoke-test the new file before considering it published: POST to /api/mini-apps/smoke-test with { "file_id": "${file.id}", "expected_object_ids": [<the ids from step 1>] }. The server renders the freshly-written html in an isolated sandbox and returns { ok, checks[] }. If ok is false, DO NOT treat the file as published — comment on the file with the failing check(s) and stop; the pinned prior version keeps serving until the next regen.`,
 		'',
 		'If the file no longer exists, recreate it with create_file using the same name and this slot contract, then continue.',
 	].join('\n')

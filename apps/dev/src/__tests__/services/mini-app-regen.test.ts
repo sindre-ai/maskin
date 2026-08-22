@@ -86,5 +86,10 @@ describe('mini-app regen routine', () => {
 		expect(prompt).toMatch(/smoke-test/i)
 		expect(prompt).toMatch(/before/i)
 		expect(prompt).toMatch(/publish/i)
+		// Points at the concrete harness endpoint, with the file id and the
+		// expected-ids handoff — the smoke-test isn't a vague suggestion.
+		expect(prompt).toMatch(/\/api\/mini-apps\/smoke-test/)
+		expect(prompt).toMatch(/expected_object_ids/)
+		expect(prompt).toContain(file.id)
 	})
 })
