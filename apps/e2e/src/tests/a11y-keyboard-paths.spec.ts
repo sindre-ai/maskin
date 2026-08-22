@@ -66,7 +66,7 @@ test.describe('keyboard-only interactive paths', () => {
 		await page.waitForTimeout(200)
 
 		await page.keyboard.press('ControlOrMeta+k')
-		const palette = page.getByPlaceholder('Search objects, navigate...')
+		const palette = page.getByPlaceholder('Run a command or jump to…')
 		await expect(palette).toBeVisible()
 		await expect(palette).toBeFocused()
 
@@ -92,7 +92,7 @@ test.describe('keyboard-only interactive paths', () => {
 		await page.waitForTimeout(200)
 
 		await page.keyboard.press('ControlOrMeta+k')
-		const palette = page.getByPlaceholder('Search objects, navigate...')
+		const palette = page.getByPlaceholder('Run a command or jump to…')
 		await expect(palette).toBeVisible()
 
 		for (let i = 0; i < 8; i++) {

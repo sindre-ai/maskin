@@ -36,14 +36,13 @@ const routeConfig: Record<string, RouteConfig> = {
 		primary: 'object',
 	},
 	'/_authed/$workspaceId/agents/': { label: 'Agents', primary: 'agent' },
-	'/_authed/$workspaceId/chats/': { label: 'Chats' },
 	// Triggers keeps its own list route (deep links and bookmarks still resolve)
 	// even though the v2 nav reaches triggers through Loops. Without an entry
 	// here the screen renders with no title at all.
 	//
-	// Screens that render their own <h1> in the page body (Briefing, the
-	// new-chat composer) are deliberately absent — an entry here would put a
-	// second heading of the same name in the nav row.
+	// Screens that render their own heading in the page body (Briefing, Chats'
+	// conversation list, the new-chat composer) are deliberately absent — an
+	// entry here would put a second heading of the same name in the nav row.
 	'/_authed/$workspaceId/triggers/': { label: 'Triggers', primary: 'loop' },
 	'/_authed/$workspaceId/settings/skills': {
 		label: 'Skills',

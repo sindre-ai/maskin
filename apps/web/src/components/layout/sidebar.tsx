@@ -62,7 +62,12 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 					<div className="min-w-0 flex-1">
 						<WorkspaceSwitcher />
 					</div>
+					{/* Named for what it does here, not the generic primitive label —
+					    the SidebarRail is also in the tree and also toggles, and two
+					    controls sharing one accessible name is ambiguous to a screen
+					    reader (and to any role-based query). */}
 					<SidebarTrigger
+						aria-label="Collapse sidebar"
 						title="Collapse sidebar"
 						className="size-7 shrink-0 text-muted-foreground hover:text-foreground group-data-[collapsible=icon]:hidden"
 					/>
