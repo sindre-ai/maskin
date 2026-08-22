@@ -315,6 +315,10 @@ export const api = {
 					method: 'POST',
 					body: data,
 				}),
+			// NOT YET LIVE — `apps/dev/src/routes/workspaces.ts` implements only POST
+			// and GET on `/{id}/members`; there is no PATCH or DELETE on
+			// `/{id}/members/{actorId}`. Landed ahead of the server work for the
+			// member-management screen; both calls 404 until those routes ship.
 			updateRole: (workspaceId: string, actorId: string, role: string) =>
 				request<MemberResponse>(`/workspaces/${workspaceId}/members/${actorId}`, {
 					method: 'PATCH',
@@ -548,6 +552,16 @@ export const api = {
 			}),
 	},
 
+	// NOT YET LIVE — no billing routes exist on the backend today. This client
+	// surface is landed ahead of the server work so the billing screens can be
+	// built against a settled shape; every call here currently 404s, so nothing
+	// in the app may call it until the routes ship.
+	//
+	// When the backend lands, re-check before wiring anything up: the paths
+	// (`/billing`, `/billing/checkout`, `/billing/complete`, `/billing/portal`),
+	// the request bodies, and `BillingSummaryResponse`/`BillingCheckoutResponse`
+	// below — they are a forward guess, not a contract the server has agreed to.
+	// The billing status tokens in `lib/constants.ts` are the matching half.
 	billing: {
 		summary: (workspaceId: string) => request<BillingSummaryResponse>('/billing', { workspaceId }),
 		startCheckout: (workspaceId: string, invoiceEmail?: string) =>
