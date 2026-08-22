@@ -43,9 +43,9 @@ test.describe('Loops list page', () => {
 		await page.getByRole('link', { name: 'Loops' }).click()
 
 		await expect(page).toHaveURL(new RegExp(`${account.workspaceId}/loops`), { timeout: 10000 })
-		await expect(
-			page.getByRole('navigation', { name: 'breadcrumb' }).getByText('Loops', { exact: true }),
-		).toBeVisible()
+		// v2 gives list routes a plain <h1> in the header; the breadcrumb chain is
+		// reserved for detail routes that have a parent to walk back to.
+		await expect(page.getByRole('heading', { name: 'Loops', level: 1 })).toBeVisible()
 	})
 
 	test('triggers page continues to render for workspaces with only triggers', async ({
@@ -69,9 +69,9 @@ test.describe('Loops list page', () => {
 
 		await page.goto(`/${account.workspaceId}/triggers`)
 
-		await expect(
-			page.getByRole('navigation', { name: 'breadcrumb' }).getByText('Triggers', { exact: true }),
-		).toBeVisible({ timeout: 10000 })
+		await expect(page.getByRole('heading', { name: 'Triggers', level: 1 })).toBeVisible({
+			timeout: 10000,
+		})
 		// This asserts the list itself renders, verifying the extraction of
 		// TriggerRow into a shared component did not regress the Triggers
 		// surface. describeTrigger() has rendered cron schedules in plain

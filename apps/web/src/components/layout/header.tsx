@@ -36,6 +36,20 @@ const routeConfig: Record<string, RouteConfig> = {
 		primary: 'object',
 	},
 	'/_authed/$workspaceId/agents/': { label: 'Agents', primary: 'agent' },
+	'/_authed/$workspaceId/chats/': { label: 'Chats' },
+	'/_authed/$workspaceId/chats/new': {
+		label: 'New chat',
+		parent: '/_authed/$workspaceId/chats/',
+	},
+	// Triggers keeps its own list route (deep links and bookmarks still resolve)
+	// even though the v2 nav reaches triggers through Loops. Without an entry
+	// here the screen renders with no title at all.
+	'/_authed/$workspaceId/triggers/': { label: 'Triggers', primary: 'loop' },
+	'/_authed/$workspaceId/briefing': { label: 'Briefing' },
+	'/_authed/$workspaceId/settings/skills': {
+		label: 'Skills',
+		parent: '/_authed/$workspaceId/settings/',
+	},
 	'/_authed/$workspaceId/settings/': { label: 'Settings' },
 	'/_authed/$workspaceId/settings/keys': {
 		label: 'LLM',
