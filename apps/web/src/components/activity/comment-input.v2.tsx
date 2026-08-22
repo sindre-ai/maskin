@@ -210,16 +210,20 @@ export function CommentInput({
 		}, []),
 	)
 
-	const insertAtCursor = useCallback((snippet: string) => {
+	// `trailingSpace` exists for the "@" opener: the mention dropdown stays open
+	// only while the text after the "@" contains no space (see handleInput), so
+	// seeding "@ " would close it on the very first keystroke.
+	const insertAtCursor = useCallback((snippet: string, { trailingSpace = true } = {}) => {
 		const textarea = inputRef.current
 		setContent((prev) => {
 			const pos = textarea?.selectionStart ?? prev.length
 			const before = prev.slice(0, pos)
 			const after = prev.slice(pos)
 			const spacer = before.length > 0 && !/\s$/.test(before) ? ' ' : ''
-			const next = `${before}${spacer}${snippet} ${after}`
+			const tail = trailingSpace ? ' ' : ''
+			const next = `${before}${spacer}${snippet}${tail}${after}`
 			requestAnimationFrame(() => {
-				const caret = before.length + spacer.length + snippet.length + 1
+				const caret = before.length + spacer.length + snippet.length + tail.length
 				textarea?.focus()
 				textarea?.setSelectionRange(caret, caret)
 			})
@@ -244,7 +248,7 @@ export function CommentInput({
 	// Opens the @-mention flow the textarea already owns instead of a parallel
 	// picker — one mention path, one dropdown.
 	const startMention = useCallback(() => {
-		insertAtCursor('@')
+		insertAtCursor('@', { trailingSpace: false })
 		setShowMentions(true)
 		setMentionFilter('')
 		setSelectedIndex(0)

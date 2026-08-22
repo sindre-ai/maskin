@@ -58,7 +58,13 @@ function CommentRow({
 	const { data: actor } = useActor(event.actorId)
 	const content = (event.data?.content as string) ?? ''
 	const attachmentFileIds = (event.data?.attachmentFileIds as string[] | undefined) ?? []
-	const { data: workspaceFiles } = useFiles(workspaceId)
+	// Scope the lookup to exactly the ids this comment references. An unfiltered
+	// useFiles(workspaceId) resolves against the 50 newest workspace files
+	// (apps/dev/src/routes/files.ts), so every attachment older than that window
+	// silently rendered as nothing at all.
+	const { data: attachedFiles, isPending: attachmentsPending } = useFiles(workspaceId, {
+		ids: attachmentFileIds,
+	})
 	const [humanDialogActorId, setHumanDialogActorId] = useState<string | null>(null)
 	const navigate = useNavigate()
 
@@ -168,8 +174,18 @@ function CommentRow({
 					{attachmentFileIds.length > 0 && (
 						<ul className="mt-1.5 space-y-1">
 							{attachmentFileIds.map((fileId) => {
-								const file = workspaceFiles?.find((f) => f.id === fileId)
-								if (!file) return null
+								const file = attachedFiles?.find((f) => f.id === fileId)
+								// Still loading: render nothing rather than flash "unavailable".
+								if (!file) {
+									if (attachmentsPending) return null
+									// Resolved and absent — the file was deleted or is not visible
+									// to this actor. Say so instead of dropping the attachment.
+									return (
+										<li key={fileId} className="text-muted-foreground text-xs italic">
+											Attachment unavailable
+										</li>
+									)
+								}
 								return (
 									<li key={fileId}>
 										<AttachedFileCard workspaceId={workspaceId} file={file} />

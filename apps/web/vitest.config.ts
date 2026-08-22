@@ -8,6 +8,10 @@ export default defineConfig({
 		setupFiles: ['src/__tests__/setup.ts'],
 		include: ['src/__tests__/**/*.test.{ts,tsx}'],
 		testTimeout: 15000,
+		// Pin the clock's zone so date-formatting assertions don't depend on the
+		// host. Locale is deliberately NOT pinned — RelativeTime formats in the
+		// viewer's locale on purpose, so tests assert shape, never English words.
+		env: { TZ: 'UTC' },
 		coverage: {
 			provider: 'v8',
 			reporter: ['text', 'lcov'],
