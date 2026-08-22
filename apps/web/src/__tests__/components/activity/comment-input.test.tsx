@@ -1,7 +1,18 @@
-import { CommentInput } from '@/components/activity/comment-input'
+import { CommentInput as CommentInputPublic } from '@/components/activity/comment-input'
+import { NewDesignProvider } from '@/lib/new-design-context'
 import { COMMENT_MAX_LENGTH } from '@maskin/shared'
 import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+
+// v2-composer assertions, so they render on the `new-design` side of the
+// boundary. `NewDesignProvider` defaults to false, which is the legacy branch.
+function CommentInput(props: React.ComponentProps<typeof CommentInputPublic>) {
+	return (
+		<NewDesignProvider value={true}>
+			<CommentInputPublic {...props} />
+		</NewDesignProvider>
+	)
+}
 
 const mockMutate = vi.fn()
 const mockGetStoredActor = vi.fn()
