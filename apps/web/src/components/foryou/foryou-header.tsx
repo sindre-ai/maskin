@@ -1,5 +1,4 @@
 import { FilterTabs } from '@/components/shared/filter-tabs'
-import { NewMenu } from '@/components/shared/new-menu'
 import { Button } from '@/components/ui/button'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import {
@@ -50,19 +49,18 @@ export function ForYouHeaderIdentity({ unreadCount }: ForYouHeaderIdentityProps)
 }
 
 interface ForYouHeaderActionsProps {
-	onStartConversation: () => void
 	// Optional so the button only renders where a caller wires it up — kept out
 	// of test render helpers that don't pass it.
 	onMarkAllRead?: () => void
 	markAllReadDisabled?: boolean
 }
 
-// "Mark all read" + "Today's brief" + "New" projected into the global header's
-// actions slot — replaces the generic Create/Chat icon buttons on the For You route.
-// The New menu itself is the shared `NewMenu` (see components/shared/new-menu.tsx)
-// so its contents never drift from the menu on every other page.
+// "Mark all read" + "Today's brief" projected into the global header's actions
+// slot — replaces the generic Create/Chat icon buttons on the For You route.
+// New chat is covered by the shared header's own `NewMenu` (header.tsx); this
+// component must not render a second one, or the row shows two "New chat"
+// buttons side by side.
 export function ForYouHeaderActions({
-	onStartConversation,
 	onMarkAllRead,
 	markAllReadDisabled,
 }: ForYouHeaderActionsProps) {
@@ -94,7 +92,6 @@ export function ForYouHeaderActions({
 				<Newspaper size={14} aria-hidden />
 				<span className="hidden sm:inline">Today's brief</span>
 			</Button>
-			<NewMenu onNewChat={onStartConversation} />
 		</div>
 	)
 }

@@ -14,8 +14,12 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 // contextual "New" button in the page body — locators here scope to the
 // global `header` element to target this menu specifically.
 
+// v2 split the header's "New" control in two: a primary half that runs the
+// screen's default create action directly (accessible name "New chat" /
+// "New object" / …) and a chevron half that opens the full menu. This file is
+// about the menu, so it always targets the chevron.
 function headerNewTrigger(page: Page) {
-	return page.locator('header').getByRole('button', { name: /^new$/i })
+	return page.locator('header').getByRole('button', { name: 'More ways to start' })
 }
 
 // Scopes to the open dropdown's content — the E2E fixture derives the test
@@ -24,7 +28,7 @@ function headerNewTrigger(page: Page) {
 // actor/workspace name in the sidebar on tests whose title contains that
 // phrase (e.g. this file's own "hides ... Create an object ..." test).
 function newMenu(page: Page) {
-	return page.getByRole('menu', { name: 'New' })
+	return page.getByRole('menu')
 }
 
 test.describe('Header New menu', () => {
@@ -114,7 +118,8 @@ test.describe('Header New menu', () => {
 		await headerNewTrigger(page).click()
 		await page.getByRole('menuitem', { name: /find a past conversation/i }).click()
 
-		await expect(page.getByPlaceholder('Search objects, navigate...')).toBeVisible()
+		// v2's palette rewrote its own prompt (components/command-palette.tsx).
+		await expect(page.getByPlaceholder('Run a command or jump to…')).toBeVisible()
 	})
 
 	test('hides "Create an object" but keeps the menu on an object-detail page', async ({
@@ -128,6 +133,8 @@ test.describe('Header New menu', () => {
 		})
 
 		await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
+		// The object title is an editable <textarea> (object-document.tsx), never a
+		// heading — wait on its value to know the object has loaded.
 		await expect(page.getByPlaceholder('Untitled')).toHaveValue(
 			'Header New menu object-detail check',
 			{ timeout: 10000 },

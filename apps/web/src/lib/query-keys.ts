@@ -13,6 +13,8 @@ export const queryKeys = {
 		detail: (id: string) => ['objects', 'detail', id] as const,
 		graph: (id: string) => ['objects', 'graph', id] as const,
 		references: (id: string) => ['objects', 'references', id] as const,
+		search: (workspaceId: string, params?: Record<string, string>) =>
+			['objects', workspaceId, 'search', params] as const,
 	},
 	bets: {
 		all: (workspaceId: string) => ['bets', workspaceId] as const,

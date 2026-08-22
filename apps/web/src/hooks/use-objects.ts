@@ -51,6 +51,24 @@ export function useObjects(
 	})
 }
 
+// Server-side text search over `GET /objects/search` — powers the command
+// palette's "Jump to" objects rows and the /search view. Unlike `useObjects`,
+// filtering happens on the server so it isn't limited to whatever page of the
+// list cache happens to be loaded.
+export function useSearchObjects(
+	workspaceId: string,
+	{ q, type, status }: { q: string; type?: string; status?: string },
+) {
+	const params: Record<string, string> = { q }
+	if (type) params.type = type
+	if (status) params.status = status
+	return useQuery({
+		queryKey: queryKeys.objects.search(workspaceId, params),
+		queryFn: () => api.objects.search(workspaceId, params),
+		enabled: !!workspaceId && q.trim().length > 0,
+	})
+}
+
 export function useObject(id: string, options?: { enabled?: boolean }) {
 	return useQuery({
 		queryKey: queryKeys.objects.detail(id),

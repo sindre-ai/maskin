@@ -58,4 +58,10 @@ export function getStatusColor(status: string) {
 	return statusColors[status] ?? defaultStatusColor
 }
 
+/** Underscore-separated status enum value → human-readable label, e.g.
+ *  `in_progress` → `in progress`. Same transform `StatusBadge` applies inline. */
+export function statusLabel(status: string): string {
+	return status.replace(/_/g, ' ')
+}
+
 export const API_BASE = '/api'

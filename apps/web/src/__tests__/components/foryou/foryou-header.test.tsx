@@ -11,33 +11,6 @@ vi.mock('@/lib/workspace-context', () => ({
 	useWorkspace: () => ({ workspaceId: 'ws-1' }),
 }))
 
-const setPaletteOpen = vi.fn()
-vi.mock('@/lib/command-palette-context', () => ({
-	useCommandPalette: () => ({ open: false, setOpen: setPaletteOpen }),
-}))
-
-// Stub the picker so this test doesn't need QueryClient/workspace-context
-// setup for the create flow — mirrors header.test.tsx's mock, since
-// ForYouHeaderActions renders the same shared NewMenu.
-vi.mock('@/components/shared/create-picker', () => ({
-	CreatePicker: ({
-		open,
-		defaultType,
-		defaultObjectSubtype,
-	}: {
-		open: boolean
-		defaultType?: string
-		defaultObjectSubtype?: string
-	}) =>
-		open ? (
-			<div
-				data-testid="create-picker"
-				data-type={defaultType}
-				data-subtype={defaultObjectSubtype}
-			/>
-		) : null,
-}))
-
 import {
 	ForYouHeader,
 	ForYouHeaderActions,
@@ -65,7 +38,6 @@ function renderHeader(overrides: Partial<React.ComponentProps<typeof ForYouHeade
 
 function renderActions(overrides: Partial<React.ComponentProps<typeof ForYouHeaderActions>> = {}) {
 	const props: React.ComponentProps<typeof ForYouHeaderActions> = {
-		onStartConversation: vi.fn(),
 		...overrides,
 	}
 	return { props, ...render(<ForYouHeaderActions {...props} />) }
@@ -88,24 +60,13 @@ describe('ForYouHeaderActions', () => {
 		})
 	})
 
-	it('opens the New menu and starts a conversation', async () => {
-		const user = userEvent.setup()
-		const onStartConversation = vi.fn()
-		renderActions({ onStartConversation })
-		await user.click(screen.getByRole('button', { name: /^new$/i }))
-		await user.click(screen.getByRole('menuitem', { name: /new chat/i }))
-		expect(onStartConversation).toHaveBeenCalledTimes(1)
-	})
-
-	it('opens CreatePicker seeded to the right object subtype from New bet', async () => {
-		const user = userEvent.setup()
+	// New chat is owned exclusively by the shared header's own NewMenu
+	// (header.tsx) — ForYouHeaderActions must not render a second "New chat"
+	// control, or the row shows two of them side by side.
+	it('does not render its own New menu', () => {
 		renderActions()
-		await user.click(screen.getByRole('button', { name: /^new$/i }))
-		await user.click(screen.getByRole('menuitem', { name: /new bet/i }))
-
-		const picker = screen.getByTestId('create-picker')
-		expect(picker).toHaveAttribute('data-type', 'object')
-		expect(picker).toHaveAttribute('data-subtype', 'bet')
+		expect(screen.queryByRole('button', { name: /new chat/i })).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'More ways to start' })).not.toBeInTheDocument()
 	})
 })
 

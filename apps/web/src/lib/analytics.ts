@@ -36,7 +36,7 @@ export function trackEvent(
 // the per-event contract: entity_id, entity_type, source, flow_id, plus any
 // event-specific fields.
 
-type TaxonomyEntityType =
+export type TaxonomyEntityType =
 	| 'object'
 	| 'agent'
 	| 'bet'
@@ -285,10 +285,27 @@ export function trackSidebarAgentActivityExpanded(p: { workspaceId: string }): v
 // distinguishes the top-nav slot from the footer slot so the ratio can be
 // sliced before/after T4 moves Marketplace between them. `favorites` covers the
 // Mini-apps bet's pinned sidebar group.
-export type NavItemSource = 'top-nav' | 'footer' | 'favorites'
+export type NavItemSource = 'top-nav' | 'footer' | 'favorites' | 'bottom-nav'
 
 export function trackNavItemClicked(p: { item_key: string; source: NavItemSource }): void {
 	trackEvent('nav_item_clicked', { item_key: p.item_key, source: p.source })
+}
+
+// Command palette / workspace search adoption events (nav-cleanup bet). One
+// `command_palette_opened` per open transition, on any route — the funnel
+// denominator. `search_result_opened` fires once per navigated-to result, on
+// either surface, so click-through can be compared between the palette's
+// "Jump to" rows and the /search view's result list.
+export type SearchSurface = 'command_palette' | 'search_view'
+
+export function trackCommandPaletteOpened(p: { surface: SearchSurface }): void {
+	trackEvent('command_palette_opened', { surface: p.surface })
+}
+
+export function trackSearchResultOpened(
+	p: BaseProps & { entity_type: TaxonomyEntityType; surface: SearchSurface },
+): void {
+	trackEvent('search_result_opened', { ...fillBase(p), surface: p.surface })
 }
 
 // Ship-metric events for the For You onboarding prompt bet — response rate =

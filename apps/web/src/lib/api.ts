@@ -639,6 +639,12 @@ export const api = {
 		},
 	},
 
+	featureFlags: {
+		// Per-actor, not per-workspace — no workspaceId. The backend resolves the
+		// booleans; the tester actor id list never reaches the browser.
+		get: () => request<{ flags: Record<string, boolean> }>('/feature-flags'),
+	},
+
 	userDisplaySettings: {
 		list: (workspaceId: string) =>
 			request<UserDisplaySettingsListResponse>('/user-display-settings', { workspaceId }),

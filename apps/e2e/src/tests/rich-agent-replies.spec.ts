@@ -57,9 +57,19 @@ test.describe('Rich agent replies — chart + live task checklist', () => {
 
 			// AC-U9 / AC-T5: the chart container must not overflow the comment row
 			// horizontally at any ship-gate viewport.
+			// recharts' ResponsiveContainer measures itself via ResizeObserver and
+			// remounts its SVG once real dimensions land — it can render 0×0 (or
+			// momentarily detach) on the very first paint. boundingBox() is a
+			// one-shot call with no auto-wait, so a single call right after the
+			// caption becomes visible can still race that remount and return null.
+			// Poll until it reports a real box instead.
 			const chartBox = caption.locator('..').first()
+			await expect
+				.poll(async () => (await chartBox.boundingBox())?.width ?? null, {
+					message: 'chart figure never reported a stable layout box',
+				})
+				.not.toBeNull()
 			const bbox = await chartBox.boundingBox()
-			expect(bbox).not.toBeNull()
 			if (bbox) {
 				expect(bbox.width).toBeLessThanOrEqual(viewport.width)
 			}
