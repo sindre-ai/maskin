@@ -91,4 +91,11 @@ export type ActorInput = {
 	skillCount?: number
 	/** Count of configured MCP servers, excluding the built-in `maskin` entry. */
 	nonMaskinMcpServerCount?: number
+	/**
+	 * Whether this agent already has at least one trigger or loop targeting it.
+	 * Omitted/false warns that nothing will make it run on its own.
+	 * `create_actor` always passes `false` for free — a brand-new actor can't
+	 * be referenced by a trigger that predates it.
+	 */
+	wiredToAutomation?: boolean
 }

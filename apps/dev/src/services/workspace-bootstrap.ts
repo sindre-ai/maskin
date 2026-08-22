@@ -2,8 +2,10 @@ import { randomUUID } from 'node:crypto'
 import { generateApiKey } from '@maskin/auth'
 import type { Database } from '@maskin/db'
 import {
+	events,
 	actors,
 	agentSkills,
+	objects,
 	triggers,
 	workspaceMembers,
 	workspaceSkills,
@@ -11,8 +13,10 @@ import {
 } from '@maskin/db/schema'
 import {
 	CHIEF_OF_STAFF_DEFAULT,
-	DEVELOPMENT_AGENTS,
-	DEVELOPMENT_TRIGGERS,
+	DEFAULT_WORKSPACE_AGENTS,
+	DEFAULT_WORKSPACE_LOOPS,
+	DEFAULT_WORKSPACE_TRIGGERS,
+	type SeedSkill,
 	WORKSPACE_COACH_DEFAULT,
 	parseSkillMd,
 	skillNameSchema,
@@ -20,21 +24,18 @@ import {
 import { and, eq } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import { type AgentStorageManager, workspaceSkillKey } from './agent-storage'
+import type { SessionManager } from './session-manager'
 
 export const DEFAULT_AGENT_IDS = [
 	'workspace_coach',
 	'chief_of_staff',
-	'workspace_driver',
+	'driver',
 	'strategist',
-	'insights_triage',
-	'research_agent',
+	'discovery_analyst',
+	'researcher',
 ] as const
 
 type DefaultAgentId = (typeof DEFAULT_AGENT_IDS)[number]
-
-const defaultAgents = DEVELOPMENT_AGENTS.filter((a) =>
-	DEFAULT_AGENT_IDS.includes(a.$id as DefaultAgentId),
-)
 
 // A caller can pass either the top-level Database or a Drizzle tx handle —
 // both expose the query-builder surface this file uses.
@@ -66,6 +67,7 @@ export class SeedAgentError extends Error {
 type ActorSpec = {
 	type: string
 	name: string
+	description: string | null
 	isSystem: boolean
 	systemPrompt: string
 	llmProvider: string | null
@@ -78,10 +80,11 @@ function resolveActorSpec(agentId: DefaultAgentId): ActorSpec {
 		return {
 			type: WORKSPACE_COACH_DEFAULT.type,
 			name: WORKSPACE_COACH_DEFAULT.name,
+			description: WORKSPACE_COACH_DEFAULT.description ?? null,
 			isSystem: WORKSPACE_COACH_DEFAULT.isSystem,
 			systemPrompt: WORKSPACE_COACH_DEFAULT.systemPrompt,
 			llmProvider: WORKSPACE_COACH_DEFAULT.llmProvider,
-			llmConfig: WORKSPACE_COACH_DEFAULT.llmConfig as Record<string, unknown>,
+			llmConfig: WORKSPACE_COACH_DEFAULT.llmConfig as Record<string, unknown> | null,
 			tools: WORKSPACE_COACH_DEFAULT.tools as Record<string, unknown>,
 		}
 	}
@@ -89,18 +92,20 @@ function resolveActorSpec(agentId: DefaultAgentId): ActorSpec {
 		return {
 			type: CHIEF_OF_STAFF_DEFAULT.type,
 			name: CHIEF_OF_STAFF_DEFAULT.name,
+			description: CHIEF_OF_STAFF_DEFAULT.description ?? null,
 			isSystem: CHIEF_OF_STAFF_DEFAULT.isSystem,
 			systemPrompt: CHIEF_OF_STAFF_DEFAULT.systemPrompt,
 			llmProvider: CHIEF_OF_STAFF_DEFAULT.llmProvider,
-			llmConfig: CHIEF_OF_STAFF_DEFAULT.llmConfig as Record<string, unknown>,
+			llmConfig: CHIEF_OF_STAFF_DEFAULT.llmConfig as Record<string, unknown> | null,
 			tools: CHIEF_OF_STAFF_DEFAULT.tools as Record<string, unknown>,
 		}
 	}
-	const agent = DEVELOPMENT_AGENTS.find((a) => a.$id === agentId)
-	if (!agent) throw new Error(`agent "${agentId}" missing from DEVELOPMENT_AGENTS`)
+	const agent = DEFAULT_WORKSPACE_AGENTS.find((a) => a.$id === agentId)
+	if (!agent) throw new Error(`agent "${agentId}" missing from DEFAULT_WORKSPACE_AGENTS`)
 	return {
 		type: 'agent',
 		name: agent.name,
+		description: agent.description ?? null,
 		isSystem: false,
 		systemPrompt: agent.systemPrompt,
 		llmProvider: null,
@@ -151,6 +156,7 @@ export async function seedDefaultAgentActors(
 				.values({
 					type: spec.type,
 					name: spec.name,
+					description: spec.description,
 					isSystem: spec.isSystem,
 					systemPrompt: spec.systemPrompt.replaceAll('{{self_id}}', ''),
 					llmProvider: spec.llmProvider,
@@ -188,13 +194,16 @@ export async function seedDefaultAgentActors(
 
 /**
  * Idempotently ensures a Chief of Staff actor exists in the workspace,
- * creating it if missing. Returns its actor id either way.
+ * creating it if missing. Returns its actor id either way, plus whether this
+ * call was the one that created it (used to gate the one-time welcome
+ * session kickoff in bootstrapDefaultAgents — must only fire once per
+ * workspace, not on every idempotent re-run).
  */
 export async function ensureChiefOfStaffActor(
 	db: Tx,
 	workspaceId: string,
 	createdBy: string,
-): Promise<string> {
+): Promise<{ actorId: string; isNew: boolean }> {
 	const chiefSpec = resolveActorSpec('chief_of_staff')
 	const [existing] = await db
 		.select({ actorId: workspaceMembers.actorId })
@@ -203,13 +212,14 @@ export async function ensureChiefOfStaffActor(
 		.where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(actors.name, chiefSpec.name)))
 		.limit(1)
 
-	if (existing) return existing.actorId
+	if (existing) return { actorId: existing.actorId, isNew: false }
 
 	const [created] = await db
 		.insert(actors)
 		.values({
 			type: chiefSpec.type,
 			name: chiefSpec.name,
+			description: chiefSpec.description,
 			isSystem: chiefSpec.isSystem,
 			systemPrompt: chiefSpec.systemPrompt.replaceAll('{{self_id}}', ''),
 			llmProvider: chiefSpec.llmProvider,
@@ -228,7 +238,7 @@ export async function ensureChiefOfStaffActor(
 		role: 'member',
 	})
 
-	return created.id
+	return { actorId: created.id, isNew: true }
 }
 
 /**
@@ -259,23 +269,106 @@ export async function pinDefaultAgentIfUnset(
 	return true
 }
 
+/**
+ * Creates the workspace_skill row (+ S3 object) for `skill` if it doesn't
+ * already exist in this workspace, and attaches it to `actorId`. Both
+ * inserts use onConflictDoNothing so this is safe to call repeatedly for the
+ * same actor/skill pair (e.g. Chief of Staff re-resolved via
+ * ensureChiefOfStaffActor on every bootstrap run).
+ */
+async function attachSkill(
+	db: Database,
+	agentStorage: AgentStorageManager,
+	workspaceId: string,
+	createdBy: string,
+	actorId: string,
+	skill: SeedSkill,
+): Promise<void> {
+	try {
+		let parsed: ReturnType<typeof parseSkillMd> | null = null
+		try {
+			parsed = parseSkillMd(skill.content)
+		} catch {
+			parsed = null
+		}
+		const description = parsed?.description ?? null
+		const isValid = parsed !== null && skillNameSchema.safeParse(parsed.name).success
+
+		const [existingSkill] = await db
+			.select({ id: workspaceSkills.id })
+			.from(workspaceSkills)
+			.where(
+				and(eq(workspaceSkills.workspaceId, workspaceId), eq(workspaceSkills.name, skill.name)),
+			)
+			.limit(1)
+
+		let skillId = existingSkill?.id
+		if (!skillId) {
+			const newSkillId = randomUUID()
+			const storageKey = workspaceSkillKey(workspaceId, newSkillId)
+			const sizeBytes = Buffer.byteLength(skill.content, 'utf-8')
+
+			const createdSkill = await db.transaction(async (tx) => {
+				const [row] = await tx
+					.insert(workspaceSkills)
+					.values({
+						id: newSkillId,
+						workspaceId,
+						name: skill.name,
+						description,
+						content: skill.content,
+						storageKey,
+						sizeBytes,
+						isValid,
+						createdBy,
+					})
+					.onConflictDoNothing()
+					.returning()
+
+				if (!row) return null
+				await agentStorage.putWorkspaceSkill(workspaceId, newSkillId, skill.content)
+				return row
+			})
+
+			skillId = createdSkill?.id ?? existingSkill?.id
+		}
+
+		if (skillId) {
+			await db
+				.insert(agentSkills)
+				.values({ actorId, workspaceSkillId: skillId })
+				.onConflictDoNothing()
+		}
+	} catch (err) {
+		logger.error('Failed to create/attach skill during workspace bootstrap', {
+			workspaceId,
+			skill: skill.name,
+			err,
+		})
+	}
+}
+
 export async function bootstrapDefaultAgents(
 	db: Database,
 	agentStorage: AgentStorageManager,
 	workspaceId: string,
 	createdBy: string,
+	sessionManager?: SessionManager,
 ): Promise<void> {
 	// Map from $id → created actor UUID — used to wire triggers after all agents are seeded.
 	const actorIdMap: Record<string, string> = {}
 
-	// Seed system agents that live outside DEVELOPMENT_AGENTS (Chief of Staff).
-	// Workspace Coach is seeded synchronously by the workspace-create paths, so
-	// its name-check would only ever hit "existing" here — Chief of Staff is the
-	// one that actually needs post-commit seeding via this function. Idempotent
-	// per workspace via the actors.name check.
+	// Seed system agents that live outside DEFAULT_WORKSPACE_AGENTS (Chief of
+	// Staff). Workspace Coach is seeded synchronously by the workspace-create
+	// paths, so its name-check below would only ever hit "existing" — Chief of
+	// Staff is the one that actually needs post-commit seeding via this
+	// function. Idempotent per workspace via the actors.name check.
 	let chiefId: string | null = null
+	let chiefIsNew = false
 	try {
-		chiefId = await ensureChiefOfStaffActor(db, workspaceId, createdBy)
+		const result = await ensureChiefOfStaffActor(db, workspaceId, createdBy)
+		chiefId = result.actorId
+		chiefIsNew = result.isNew
 	} catch (err) {
 		logger.error('Failed to create Chief of Staff during workspace bootstrap', {
 			workspaceId,
@@ -288,10 +381,30 @@ export async function bootstrapDefaultAgents(
 	// default_agent_id (e.g. dev-bootstrap already set it synchronously, or an
 	// owner picked a different default).
 	if (chiefId) {
+		actorIdMap.chief_of_staff = chiefId
 		await pinDefaultAgentIfUnset(db, workspaceId, chiefId)
+		for (const skill of CHIEF_OF_STAFF_DEFAULT.skills ?? []) {
+			await attachSkill(db, agentStorage, workspaceId, createdBy, chiefId, skill)
+		}
 	}
 
-	for (const agent of defaultAgents) {
+	// Workspace Coach was already seeded synchronously by the caller (see
+	// workspaces.ts / actors.ts / dev-bootstrap.ts) — resolve its actor id here
+	// so triggers targeting it can be wired below.
+	const [coachRow] = await db
+		.select({ actorId: workspaceMembers.actorId })
+		.from(workspaceMembers)
+		.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+		.where(
+			and(
+				eq(workspaceMembers.workspaceId, workspaceId),
+				eq(actors.name, WORKSPACE_COACH_DEFAULT.name),
+			),
+		)
+		.limit(1)
+	if (coachRow) actorIdMap.workspace_coach = coachRow.actorId
+
+	for (const agent of DEFAULT_WORKSPACE_AGENTS) {
 		// Idempotent: check if an actor with this name already exists in the workspace.
 		const [existing] = await db
 			.select({ actorId: workspaceMembers.actorId })
@@ -313,6 +426,7 @@ export async function bootstrapDefaultAgents(
 				.values({
 					type: 'agent',
 					name: agent.name,
+					description: agent.description ?? null,
 					systemPrompt,
 					tools: (agent.tools ?? null) as Record<string, unknown> | null,
 					llmConfig: (agent.llmConfig ?? null) as Record<string, unknown> | null,
@@ -343,64 +457,18 @@ export async function bootstrapDefaultAgents(
 			await db.insert(workspaceMembers).values({ workspaceId, actorId, role: 'member' })
 		}
 
-		// Seed skills for this agent. Runs for both newly-created and pre-existing actors so
-		// that Workspace Coach's skills (seeded synchronously in the workspace transaction)
-		// are still attached here. Both inserts use onConflictDoNothing so this is idempotent.
+		// Seed skills for this agent. Both inserts use onConflictDoNothing so
+		// this is idempotent across repeated bootstrap runs.
 		for (const skill of agent.skills ?? []) {
-			try {
-				let parsed: ReturnType<typeof parseSkillMd> | null = null
-				try {
-					parsed = parseSkillMd(skill.content)
-				} catch {
-					parsed = null
-				}
-				const description = parsed?.description ?? null
-				const isValid = parsed !== null && skillNameSchema.safeParse(parsed.name).success
-
-				const skillId = randomUUID()
-				const storageKey = workspaceSkillKey(workspaceId, skillId)
-				const sizeBytes = Buffer.byteLength(skill.content, 'utf-8')
-
-				const createdSkill = await db.transaction(async (tx) => {
-					const [row] = await tx
-						.insert(workspaceSkills)
-						.values({
-							id: skillId,
-							workspaceId,
-							name: skill.name,
-							description,
-							content: skill.content,
-							storageKey,
-							sizeBytes,
-							isValid,
-							createdBy,
-						})
-						.onConflictDoNothing()
-						.returning()
-
-					if (!row) return null
-					await agentStorage.putWorkspaceSkill(workspaceId, skillId, skill.content)
-					return row
-				})
-
-				if (createdSkill) {
-					await db
-						.insert(agentSkills)
-						.values({ actorId, workspaceSkillId: createdSkill.id })
-						.onConflictDoNothing()
-				}
-			} catch (err) {
-				logger.error('Failed to create/attach skill during workspace bootstrap', {
-					workspaceId,
-					skill: skill.name,
-					err,
-				})
-			}
+			await attachSkill(db, agentStorage, workspaceId, createdBy, actorId, skill)
 		}
 	}
 
-	// Create triggers for all seeded agents.
-	for (const trigger of DEVELOPMENT_TRIGGERS) {
+	// Create triggers for all seeded agents. Track each trigger's id by name so
+	// the default loops below (whose steps reference triggers by name) can wire
+	// metadata.trigger_ids without a second lookup pass.
+	const triggerIdByName: Record<string, string> = {}
+	for (const trigger of DEFAULT_WORKSPACE_TRIGGERS) {
 		const targetActorId = actorIdMap[trigger.targetActor$id]
 		if (!targetActorId) continue
 
@@ -411,19 +479,27 @@ export async function bootstrapDefaultAgents(
 			.where(and(eq(triggers.workspaceId, workspaceId), eq(triggers.name, trigger.name)))
 			.limit(1)
 
-		if (existingTrigger) continue
+		if (existingTrigger) {
+			triggerIdByName[trigger.name] = existingTrigger.id
+			continue
+		}
 
 		try {
-			await db.insert(triggers).values({
-				workspaceId,
-				name: trigger.name,
-				type: trigger.type,
-				config: trigger.config as Record<string, unknown>,
-				actionPrompt: trigger.actionPrompt,
-				targetActorId,
-				enabled: trigger.enabled,
-				createdBy,
-			})
+			const [created] = await db
+				.insert(triggers)
+				.values({
+					workspaceId,
+					name: trigger.name,
+					type: trigger.type,
+					config: trigger.config as Record<string, unknown>,
+					actionPrompt: trigger.actionPrompt,
+					targetActorId,
+					enabled: trigger.enabled,
+					createdBy,
+				})
+				.returning({ id: triggers.id })
+
+			if (created) triggerIdByName[trigger.name] = created.id
 		} catch (err) {
 			logger.error('Failed to create trigger during workspace bootstrap', {
 				workspaceId,
@@ -431,5 +507,112 @@ export async function bootstrapDefaultAgents(
 				err,
 			})
 		}
+	}
+
+	// Create the default Loop objects (Discovery → Bet, Workspace Improvements),
+	// wiring metadata.trigger_ids to the triggers seeded above. Idempotent per
+	// workspace via the objects.title check, mirroring the agent/trigger checks
+	// above.
+	for (const loop of DEFAULT_WORKSPACE_LOOPS) {
+		const [existingLoop] = await db
+			.select({ id: objects.id })
+			.from(objects)
+			.where(
+				and(
+					eq(objects.workspaceId, workspaceId),
+					eq(objects.type, 'loop'),
+					eq(objects.title, loop.name),
+				),
+			)
+			.limit(1)
+
+		if (existingLoop) continue
+
+		const triggerIds = loop.triggerNames
+			.map((name) => triggerIdByName[name])
+			.filter((id): id is string => Boolean(id))
+
+		if (triggerIds.length === 0) {
+			logger.error('Skipped seeding default loop — none of its triggers were created', {
+				workspaceId,
+				loopName: loop.name,
+			})
+			continue
+		}
+
+		try {
+			const [created] = await db
+				.insert(objects)
+				.values({
+					workspaceId,
+					type: 'loop',
+					title: loop.name,
+					content: loop.content,
+					status: 'learning',
+					createdBy,
+					metadata: {
+						entry_condition: loop.entryCondition,
+						close_condition: loop.closeCondition,
+						trigger_ids: triggerIds,
+					},
+				})
+				.returning()
+
+			if (!created) {
+				logger.error('Failed to create default loop object during workspace bootstrap', {
+					workspaceId,
+					loopName: loop.name,
+				})
+				continue
+			}
+
+			await db.insert(events).values({
+				workspaceId,
+				actorId: createdBy,
+				action: 'created',
+				entityType: 'loop',
+				entityId: created.id,
+				data: created,
+			})
+		} catch (err) {
+			logger.error('Failed to create default loop during workspace bootstrap', {
+				workspaceId,
+				loopName: loop.name,
+				err,
+			})
+		}
+	}
+
+	// Kick off Chief of Staff's welcome + first-pass-research session directly —
+	// do NOT rely on an `actor.created` event trigger for this. The owner's
+	// actor row is inserted (and this function is invoked) before any of the
+	// triggers above exist, and actor creation doesn't emit an audit event at
+	// all today, so the "New workspace — welcome & first-pass research" event
+	// trigger can never actually catch this moment live. Only fires the first
+	// time Chief of Staff is created for this workspace (chiefIsNew), so
+	// idempotent re-runs of this function (e.g. a template backfill on an
+	// existing workspace) never re-kick the welcome session.
+	if (chiefIsNew && chiefId && sessionManager) {
+		const [owner] = await db
+			.select({ name: actors.name, email: actors.email })
+			.from(actors)
+			.where(eq(actors.id, createdBy))
+			.limit(1)
+
+		sessionManager
+			.createSession(workspaceId, {
+				actorId: chiefId,
+				actionPrompt: `A human owner just joined this brand-new workspace: ${owner?.name ?? 'the workspace owner'}${owner?.email ? ` (${owner.email})` : ''}. Run Beat 0 of your onboarding arc per your system prompt: start a conversation with them and post a warm welcome (who you are, what Maskin is, what happens next), then kick off the Researcher for a first-pass brief on the owner and their organization (inferred from email domain). File it as a \`knowledge\` object in status \`draft\`, plus supporting insight objects. Do not post a follow-up comment yourself — that's a separate step once the brief lands.`,
+				createdBy,
+			})
+			.catch((err) =>
+				logger.error(
+					'Failed to kick off Chief of Staff welcome session during workspace bootstrap',
+					{
+						workspaceId,
+						err,
+					},
+				),
+			)
 	}
 }

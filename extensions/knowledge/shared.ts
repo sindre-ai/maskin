@@ -6,7 +6,7 @@ export const MODULE_NAME = 'Knowledge'
 
 export const KNOWLEDGE_STATUSES = ['draft', 'validated', 'deprecated']
 export const KNOWLEDGE_RELATIONSHIP_TYPES = ['supersedes', 'contradicts', 'about']
-export const KNOWLEDGE_DISPLAY_NAME = 'Article'
+export const KNOWLEDGE_DISPLAY_NAME = 'Knowledge'
 
 export const KNOWLEDGE_DOC_TYPES = [
 	'topic_page',

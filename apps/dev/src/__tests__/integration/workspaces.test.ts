@@ -1,10 +1,37 @@
 import { randomUUID } from 'node:crypto'
+import { OpenAPIHono } from '@hono/zod-openapi'
 import { generateApiKey } from '@maskin/auth'
-import { actors, workspaceMembers, workspaces as workspacesTable } from '@maskin/db/schema'
-import { eq } from 'drizzle-orm'
+import type { Database } from '@maskin/db'
+import {
+	actors,
+	agentSkills,
+	objects,
+	triggers,
+	workspaceMembers,
+	workspaceSkills,
+	workspaces as workspacesTable,
+} from '@maskin/db/schema'
+import type { PgNotifyBridge } from '@maskin/realtime'
+import type { StorageProvider } from '@maskin/storage'
+import { and, eq } from 'drizzle-orm'
+import { createApiError, formatZodError } from '../../lib/errors'
 import { insertActor } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
-import { createIntegrationApp, db, getTestActorId } from './global-setup'
+import { db, getTestActorId } from './global-setup'
+
+// POST /api/workspaces kicks off the Chief of Staff welcome session
+// fire-and-forget (.catch(), not awaited) right after the create transaction
+// commits, so the route needs a sessionManager in context even though these
+// tests don't assert on session creation itself.
+type Env = {
+	Variables: {
+		db: Database
+		actorId: string
+		actorType: string
+		notifyBridge: PgNotifyBridge
+		sessionManager: { createSession: (...args: unknown[]) => Promise<unknown> }
+	}
+}
 
 // PostHog is invoked as `void capturePosthogEvent(...)` from the create route.
 // Spy on the module so we can assert emit-once on success and no-emit on
@@ -38,19 +65,79 @@ vi.mock('../../services/workspace-bootstrap', async () => {
 })
 
 const { default: workspacesRoutes } = await import('../../routes/workspaces')
-const { SeedAgentError } = await import('../../services/workspace-bootstrap')
+const { SeedAgentError, bootstrapDefaultAgents } = await import(
+	'../../services/workspace-bootstrap'
+)
+const { AgentStorageManager } = await import('../../services/agent-storage')
+
+function createMemoryStorage(): StorageProvider {
+	const store = new Map<string, Buffer>()
+	return {
+		async put(key, data) {
+			store.set(key, Buffer.isBuffer(data) ? data : Buffer.from(data as Uint8Array))
+		},
+		async get(key) {
+			const buf = store.get(key)
+			if (!buf) throw new Error(`Not found: ${key}`)
+			return buf
+		},
+		async list(prefix) {
+			return [...store.keys()].filter((k) => k.startsWith(prefix))
+		},
+		async listWithMetadata(prefix) {
+			return [...store.entries()]
+				.filter(([k]) => k.startsWith(prefix))
+				.map(([key, buf]) => ({ key, size: buf.length }))
+		},
+		async delete(key) {
+			store.delete(key)
+		},
+		async exists(key) {
+			return store.has(key)
+		},
+		async ensureBucket() {
+			// no-op
+		},
+	}
+}
 
 const DEFAULT_AGENT_NAMES = [
 	'Workspace Coach',
 	'Chief of Staff',
-	'Workspace Driver',
+	'Driver',
 	'Strategist',
-	'Insights Triage Agent',
-	'Research Agent',
+	'Discovery Analyst',
+	'Researcher',
 ]
 
 function createApp() {
-	return createIntegrationApp({ path: '/api/workspaces', module: workspacesRoutes })
+	const app = new OpenAPIHono<Env>({
+		defaultHook: (result, c) => {
+			if (!result.success) {
+				return c.json(
+					createApiError(
+						'VALIDATION_ERROR',
+						'Request validation failed',
+						formatZodError(result.error),
+					),
+					400,
+				)
+			}
+			return undefined
+		},
+	})
+
+	app.use('*', async (c, next) => {
+		c.set('db', db)
+		c.set('actorId', getTestActorId())
+		c.set('actorType', 'human')
+		c.set('notifyBridge', {} as PgNotifyBridge)
+		c.set('sessionManager', { createSession: vi.fn().mockResolvedValue({}) })
+		await next()
+	})
+
+	app.route('/api/workspaces', workspacesRoutes)
+	return app
 }
 
 async function agentNamesFor(workspaceId: string): Promise<string[]> {
@@ -303,6 +390,122 @@ describe('Workspaces Integration', () => {
 			expect(after.length).toBe(initialAgents.length)
 		})
 
+		it('attaches the continuous-onboarding workspace skill to Chief of Staff and creates all 11 triggers', async () => {
+			const app = createApp()
+
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Skills And Triggers' }),
+			)
+			const ws = await createRes.json()
+
+			// bootstrapDefaultAgents is fire-and-forget post-commit in the route —
+			// invoke it directly (awaited) so skill/trigger assertions aren't racy.
+			const agentStorage = new AgentStorageManager(createMemoryStorage(), db)
+			await bootstrapDefaultAgents(db, agentStorage, ws.id, getTestActorId())
+
+			const [chief] = await db
+				.select({ id: actors.id })
+				.from(workspaceMembers)
+				.innerJoin(actors, eq(workspaceMembers.actorId, actors.id))
+				.where(and(eq(workspaceMembers.workspaceId, ws.id), eq(actors.name, 'Chief of Staff')))
+				.limit(1)
+			expect(chief).toBeDefined()
+
+			const skillRows = await db
+				.select({ id: workspaceSkills.id, name: workspaceSkills.name })
+				.from(workspaceSkills)
+				.where(
+					and(
+						eq(workspaceSkills.workspaceId, ws.id),
+						eq(workspaceSkills.name, 'continuous-onboarding'),
+					),
+				)
+			expect(skillRows).toHaveLength(1)
+
+			const attachRows = await db
+				.select({ actorId: agentSkills.actorId })
+				.from(agentSkills)
+				.where(eq(agentSkills.workspaceSkillId, skillRows[0]?.id))
+			expect(attachRows.map((r) => r.actorId)).toContain(chief?.id)
+
+			const triggerRows = await db
+				.select({ name: triggers.name })
+				.from(triggers)
+				.where(eq(triggers.workspaceId, ws.id))
+			expect(triggerRows).toHaveLength(11)
+		})
+
+		it('seeds the Discovery → Bet and Workspace Improvements loops wired to their triggers', async () => {
+			const app = createApp()
+
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Loops Seeded' }),
+			)
+			const ws = await createRes.json()
+
+			const agentStorage = new AgentStorageManager(createMemoryStorage(), db)
+			await bootstrapDefaultAgents(db, agentStorage, ws.id, getTestActorId())
+
+			const loopRows = await db
+				.select({ id: objects.id, title: objects.title, metadata: objects.metadata })
+				.from(objects)
+				.where(and(eq(objects.workspaceId, ws.id), eq(objects.type, 'loop')))
+
+			expect(loopRows.map((r) => r.title).sort()).toEqual([
+				'Discovery → Bet',
+				'Workspace Improvements',
+			])
+
+			const triggerRows = await db
+				.select({ id: triggers.id, name: triggers.name })
+				.from(triggers)
+				.where(eq(triggers.workspaceId, ws.id))
+			const triggerIdByName = new Map(triggerRows.map((t) => [t.name, t.id]))
+
+			const discoveryBetLoop = loopRows.find((r) => r.title === 'Discovery → Bet')
+			const discoveryBetTriggerIds =
+				(discoveryBetLoop?.metadata as { trigger_ids?: string[] } | null)?.trigger_ids ?? []
+			expect(new Set(discoveryBetTriggerIds)).toEqual(
+				new Set([
+					triggerIdByName.get('Daily discovery sweep'),
+					triggerIdByName.get('Shape the bet'),
+				]),
+			)
+
+			const workspaceImprovementsLoop = loopRows.find((r) => r.title === 'Workspace Improvements')
+			const workspaceImprovementsTriggerIds =
+				(workspaceImprovementsLoop?.metadata as { trigger_ids?: string[] } | null)?.trigger_ids ??
+				[]
+			expect(new Set(workspaceImprovementsTriggerIds)).toEqual(
+				new Set([
+					triggerIdByName.get('Workspace Coach — daily sweep'),
+					triggerIdByName.get('Workspace Coach — session completed (onboarding)'),
+					triggerIdByName.get('Cluster & recommend'),
+					triggerIdByName.get('Capture outcome'),
+				]),
+			)
+		})
+
+		it('re-invoking bootstrapDefaultAgents inserts zero new loop objects', async () => {
+			const app = createApp()
+
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Idempotent Loop Seed' }),
+			)
+			const ws = await createRes.json()
+
+			const agentStorage = new AgentStorageManager(createMemoryStorage(), db)
+			await bootstrapDefaultAgents(db, agentStorage, ws.id, getTestActorId())
+			await bootstrapDefaultAgents(db, agentStorage, ws.id, getTestActorId())
+
+			const loopRows = await db
+				.select({ id: objects.id })
+				.from(objects)
+				.where(and(eq(objects.workspaceId, ws.id), eq(objects.type, 'loop')))
+
+			expect(loopRows).toHaveLength(2)
+		})
+
 		it('leaves three pre-existing workspaces byte-identical when a new workspace is seeded', async () => {
 			// Create three workspaces with their own actor lists directly, bypassing
 			// the seed path — these represent workspaces that existed before the T2
@@ -314,6 +517,7 @@ describe('Workspaces Integration', () => {
 					.insert(workspacesTable)
 					.values({ name: `Pre-existing ${i}`, createdBy: getTestActorId() })
 					.returning()
+				if (!ws) throw new Error('failed to insert pre-existing workspace')
 				preExistingIds.push(ws.id)
 				await db.insert(workspaceMembers).values({
 					workspaceId: ws.id,
@@ -326,6 +530,7 @@ describe('Workspaces Integration', () => {
 						name: `Legacy Actor ${i}-${k}`,
 						email: `legacy-${i}-${k}@test.com`,
 					})
+					if (!extra) throw new Error('failed to insert legacy actor')
 					await db.insert(workspaceMembers).values({
 						workspaceId: ws.id,
 						actorId: extra.id,
@@ -335,15 +540,15 @@ describe('Workspaces Integration', () => {
 				snapshots.set(ws.id, await memberActorIdsFor(ws.id))
 			}
 
-			// Now run the new seed path against a fresh workspace via the route.
+			// Now create a fresh workspace via the route.
 			const app = createApp()
 			const res = await app.request(
-				jsonRequest('POST', '/api/workspaces', { name: 'Fresh Seeded' }),
+				jsonRequest('POST', '/api/workspaces', { name: 'Fresh Workspace' }),
 			)
 			expect(res.status).toBe(201)
 
 			// Every pre-existing workspace's member list is byte-identical to its
-			// snapshot — the new code path didn't touch them.
+			// snapshot — creating a new workspace didn't touch them.
 			for (const id of preExistingIds) {
 				const now = await memberActorIdsFor(id)
 				expect(now).toEqual(snapshots.get(id))
@@ -353,10 +558,10 @@ describe('Workspaces Integration', () => {
 		it('returns 500 naming the failed agent and rolls back workspace/member/actor rows when seeding fails on the 4th agent', async () => {
 			// Simulate the "fourth agent fails" case: the seed helper writes agents
 			// 1-3 into the caller's transaction, then throws SeedAgentError for
-			// insights_triage. The route's `db.transaction` must roll back every
+			// strategist. The route's `db.transaction` must roll back every
 			// row — including the three partial actor inserts.
 			seedDefaultAgentActorsMock.mockImplementationOnce(async (tx, wsId, createdBy) => {
-				for (const name of ['Workspace Coach', 'Workspace Driver', 'Strategist']) {
+				for (const name of ['Workspace Coach', 'Chief of Staff', 'Driver']) {
 					const [created] = await tx
 						.insert(actors)
 						.values({
@@ -374,7 +579,7 @@ describe('Workspaces Integration', () => {
 						})
 					}
 				}
-				throw new SeedAgentError('insights_triage', new Error('mock failure on 4th agent'))
+				throw new SeedAgentError('strategist', new Error('mock failure on 4th agent'))
 			})
 
 			const workspacesBefore = await db.select({ id: workspacesTable.id }).from(workspacesTable)
@@ -393,9 +598,9 @@ describe('Workspaces Integration', () => {
 				error: { code: string; message: string; details?: { field: string; message: string }[] }
 			}
 			expect(body.error.code).toBe('INTERNAL_ERROR')
-			expect(body.error.message).toContain('insights_triage')
+			expect(body.error.message).toContain('strategist')
 			expect(body.error.details).toEqual(
-				expect.arrayContaining([{ field: 'agent_id', message: 'insights_triage' }]),
+				expect.arrayContaining([{ field: 'agent_id', message: 'strategist' }]),
 			)
 
 			// No workspace row, no member row, no actor row survived the aborted request.

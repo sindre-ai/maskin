@@ -24,6 +24,7 @@ import {
 	workspaceSkills,
 	workspaces,
 } from '@maskin/db/schema'
+import { mergeModuleDefaultSettings } from '@maskin/module-sdk'
 import {
 	type AgentState,
 	PLATFORM_MCP_PRESET,
@@ -205,9 +206,11 @@ app.openapi(createActorRoute, async (c) => {
 	let workspaceId: string | undefined
 
 	if (shouldCreateWorkspace) {
-		const defaultSettings = workspaceSettingsSchema.parse({
-			enabled_modules: ['work', 'knowledge'],
-		})
+		const enabledModules = ['work', 'crm', 'knowledge']
+		const defaultSettings = mergeModuleDefaultSettings(
+			workspaceSettingsSchema.parse({ enabled_modules: enabledModules }),
+			enabledModules,
+		)
 		const created = await db.transaction(async (tx) => {
 			const [workspace] = await tx
 				.insert(workspaces)
@@ -235,6 +238,7 @@ app.openapi(createActorRoute, async (c) => {
 				.values({
 					type: WORKSPACE_COACH_DEFAULT.type,
 					name: WORKSPACE_COACH_DEFAULT.name,
+					description: WORKSPACE_COACH_DEFAULT.description ?? null,
 					isSystem: WORKSPACE_COACH_DEFAULT.isSystem,
 					systemPrompt: WORKSPACE_COACH_DEFAULT.systemPrompt,
 					llmProvider: WORKSPACE_COACH_DEFAULT.llmProvider,
@@ -260,7 +264,13 @@ app.openapi(createActorRoute, async (c) => {
 			workspaceId = created.id
 			const agentStorage = c.get('agentStorage')
 			if (agentStorage) {
-				await bootstrapDefaultAgents(db, agentStorage, created.id, actor.id).catch((err) =>
+				await bootstrapDefaultAgents(
+					db,
+					agentStorage,
+					created.id,
+					actor.id,
+					c.get('sessionManager'),
+				).catch((err) =>
 					logger.error('workspace bootstrap failed', { workspaceId: created.id, err }),
 				)
 			}

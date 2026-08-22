@@ -4,7 +4,7 @@ import type { FieldDefinition, ModuleDefaultSettings } from '@maskin/module-sdk'
 export const MODULE_ID = 'crm' as const
 export const MODULE_NAME = 'CRM'
 
-export const CONTACT_DISPLAY_NAME = 'Contact'
+export const CONTACT_DISPLAY_NAME = 'Person'
 export const COMPANY_DISPLAY_NAME = 'Company'
 
 export const CONTACT_STATUSES = [

@@ -347,7 +347,9 @@ describe('tool handlers', () => {
 				content: Array<{ text: string }>
 			}
 
-			expect(fetch).toHaveBeenCalledTimes(2)
+			// One graph fetch per id, plus one shared workspace fetch for the
+			// always-on `setup` block (shared across the whole batch, not per id).
+			expect(fetch).toHaveBeenCalledTimes(3)
 			expect(fetch).toHaveBeenCalledWith(
 				'http://localhost:3000/api/objects/id-1/graph',
 				expect.anything(),
@@ -419,9 +421,10 @@ describe('tool handlers', () => {
 			expect(result.structuredContent.heroCard.relationships).toBeUndefined()
 
 			// Canonical object body lives at `objects[]` — one entry per successful id,
-			// carrying only `object` (no relationships/connected_objects/events/files).
+			// carrying only `object` and the always-on `setup` block (no
+			// relationships/connected_objects/events/files).
 			const first = result.structuredContent.objects[0]
-			expect(Object.keys(first).sort()).toEqual(['object'])
+			expect(Object.keys(first).sort()).toEqual(['object', 'setup'])
 			// Per-object payload: exactly the core six (url is omitted when
 			// webAppBaseUrl isn't configured on the test rig — the injection is
 			// covered separately in the `url field injection` suite).
@@ -1377,6 +1380,55 @@ describe('tool handlers', () => {
 			expect(parsed.partial_failure).toBeUndefined()
 			expect(parsed.skills_not_attached_reason).toBeUndefined()
 		})
+
+		it('rejects creating an agent with no workspace_id and no default workspace configured', async () => {
+			const fetchSpy = vi.spyOn(globalThis, 'fetch')
+			const handlersNoWs = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>()
+			vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
+				handlersNoWs.set(
+					name as string,
+					handler as (args: Record<string, unknown>) => Promise<unknown>,
+				)
+			})
+			createMcpServer({ ...config, defaultWorkspaceId: '' })
+			const handler = handlersNoWs.get('create_actor')
+			if (!handler) throw new Error('Handler create_actor not registered')
+
+			await expect(handler({ type: 'agent', name: 'Bot' })).rejects.toThrow(/workspace_id/)
+			// Must fail before ever calling POST /api/actors — no orphaned agent created.
+			expect(fetchSpy).not.toHaveBeenCalled()
+		})
+
+		it('does not require workspace_id for a human (auto_create_workspace defaults to true)', async () => {
+			mockFetchSuccess({ id: 'human-1', type: 'human', name: 'Alice' })
+
+			const handler = getHandler('create_actor')
+			const result = (await handler({ type: 'human', name: 'Alice' })) as {
+				content: Array<{ text: string }>
+			}
+			expect(JSON.parse(result.content[0].text).id).toBe('human-1')
+		})
+
+		it('does not require workspace_id for an agent with auto_create_workspace explicitly true', async () => {
+			const handlersNoWs = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>()
+			vi.mocked(registerAppTool).mockImplementation((_server, name, _def, handler) => {
+				handlersNoWs.set(
+					name as string,
+					handler as (args: Record<string, unknown>) => Promise<unknown>,
+				)
+			})
+			createMcpServer({ ...config, defaultWorkspaceId: '' })
+			const handler = handlersNoWs.get('create_actor')
+			if (!handler) throw new Error('Handler create_actor not registered')
+			mockFetchSuccess({ id: 'actor-new', type: 'agent', name: 'Bot', workspace_id: 'ws-auto' })
+
+			const result = (await handler({
+				type: 'agent',
+				name: 'Bot',
+				auto_create_workspace: true,
+			})) as { content: Array<{ text: string }> }
+			expect(JSON.parse(result.content[0].text).id).toBe('actor-new')
+		})
 	})
 
 	describe('get_objects handler (partial failure)', () => {
@@ -1503,6 +1555,7 @@ describe('tool handlers', () => {
 							],
 							edges: [{ id: 'edge-1', type: 'in_loop' }],
 						})
+					if (u.endsWith('/api/integrations')) return okJson([])
 					throw new Error(`Unexpected fetch: ${method ?? 'GET'} ${u}`)
 				})
 
@@ -1603,6 +1656,14 @@ describe('tool handlers', () => {
 						agent: expect.objectContaining({ id: 'agent-2', name: 'Sweeper' }),
 					}),
 				])
+				// Both steps have agents and a member was linked in — no gaps to flag.
+				expect(parsed.setup).toBeDefined()
+				expect(
+					parsed.setup.checks.some((c: { name: string }) => c.name === 'steps_have_agents'),
+				).toBe(false)
+				expect(parsed.setup.checks.some((c: { name: string }) => c.name === 'has_members')).toBe(
+					false,
+				)
 			})
 
 			it('rejects unknown trigger ids before creating anything', async () => {
@@ -4541,7 +4602,7 @@ describe('tool handlers', () => {
 			expect(Array.isArray(parsed.setup.next_steps)).toBe(true)
 		})
 
-		it('create_actor — response is bare, without a setup block', async () => {
+		it('create_actor — response includes a setup block, replacing the old ad-hoc reminder fields', async () => {
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
 				const u = String(url)
 				if (u.endsWith('/api/actors')) {
@@ -4557,7 +4618,50 @@ describe('tool handlers', () => {
 				content: Array<{ text: string }>
 			}
 			const parsed = JSON.parse(result.content[0].text)
-			expect(parsed.setup).toBeUndefined()
+			expect(parsed.tools_reminder).toBeUndefined()
+			expect(parsed.skills_reminder).toBeUndefined()
+			expect(parsed.automation_reminder).toBeUndefined()
+			expect(parsed.setup).toBeDefined()
+			expect(Array.isArray(parsed.setup.checks)).toBe(true)
+			const checkNames = parsed.setup.checks.map((c: { name: string }) => c.name)
+			// No tools, no skills, no wiring, no system prompt — a brand-new agent
+			// with none of these set should surface all four gaps.
+			expect(checkNames).toContain('system_prompt_quality')
+			expect(checkNames).toContain('skills_attached')
+			expect(checkNames).toContain('mcp_configured')
+			expect(checkNames).toContain('automation_wired')
+		})
+
+		it('create_actor — setup block reflects skills actually attached, at no extra API cost', async () => {
+			const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+				const u = String(url)
+				const method = (init as RequestInit | undefined)?.method
+				if (u.endsWith('/api/actors')) {
+					return setupOkJson({ id: 'actor-1', type: 'agent', name: 'Bot' })
+				}
+				if (u.endsWith('/api/actors/actor-1/workspace-skills/batch') && method === 'POST') {
+					return setupOkJson([{ success: true, skill: { id: 'skill-1', name: 'Test Skill' } }])
+				}
+				return setupOkJson({})
+			})
+			const handler = getHandler('create_actor')
+			const result = (await handler({
+				type: 'agent',
+				name: 'Bot',
+				workspace_id: 'ws-default-123',
+				attach_skill_ids: ['skill-1'],
+			})) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			// One skill attached (not zero, not two+) → still warns "only one".
+			expect(parsed.setup.checks.some((c: { name: string }) => c.name === 'skills_attached')).toBe(
+				true,
+			)
+			// skillCount is known from the attach call itself — no dedicated
+			// workspace-skills GET is issued to compute the setup block.
+			const skillCountFetch = fetchSpy.mock.calls.find(([u]) =>
+				String(u).endsWith('/api/actors/actor-1/workspace-skills'),
+			)
+			expect(skillCountFetch).toBeUndefined()
 		})
 
 		it('update_actor — response includes a setup block', async () => {
@@ -4581,7 +4685,7 @@ describe('tool handlers', () => {
 			expect(Array.isArray(parsed.setup.checks)).toBe(true)
 		})
 
-		it('create_loop — response is bare, without a setup block', async () => {
+		it('create_loop — response includes a setup block', async () => {
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
 				const u = String(url)
 				const method = (init as RequestInit | undefined)?.method
@@ -4608,7 +4712,13 @@ describe('tool handlers', () => {
 				object_ids: [],
 			})) as { content: Array<{ text: string }> }
 			const parsed = JSON.parse(result.content[0].text)
-			expect(parsed.setup).toBeUndefined()
+			expect(parsed.setup).toBeDefined()
+			expect(Array.isArray(parsed.setup.checks)).toBe(true)
+			// Zero steps and zero members on a brand-new loop → both must surface.
+			expect(
+				parsed.setup.checks.some((c: { name: string }) => c.name === 'steps_have_agents'),
+			).toBe(true)
+			expect(parsed.setup.checks.some((c: { name: string }) => c.name === 'has_members')).toBe(true)
 		})
 
 		it('update_loop — response includes a setup block', async () => {
@@ -4649,7 +4759,11 @@ describe('tool handlers', () => {
 			expect(Array.isArray(parsed.setup.checks)).toBe(true)
 		})
 
-		it('create_actor — stays bare even when the workspace fetch fails', async () => {
+		it('create_actor — setup block unaffected by an unrelated workspace fetch failure', async () => {
+			// create_actor's setup block needs zero extra fetches (skillCount is
+			// known synchronously, wiredToAutomation is hardcoded `false`), so an
+			// unrelated /api/workspaces 500 — e.g. from some other concurrent call —
+			// must not degrade it to `unknown`.
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
 				const u = String(url)
 				if (u.endsWith('/api/actors')) {
@@ -4672,7 +4786,28 @@ describe('tool handlers', () => {
 			const parsed = JSON.parse(result.content[0].text)
 			// Primary response still contains the created actor.
 			expect(parsed.id).toBe('actor-1')
-			expect(parsed.setup).toBeUndefined()
+			expect(parsed.setup).toBeDefined()
+			expect(parsed.setup.checks.every((c: { status: string }) => c.status !== 'unknown')).toBe(
+				true,
+			)
+		})
+
+		it('create_actor — setup block is present but empty for humans, since checkActor has nothing to say', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const u = String(url)
+				if (u.endsWith('/api/actors')) {
+					return setupOkJson({ id: 'human-1', type: 'human', name: 'Alice' })
+				}
+				return setupOkJson({})
+			})
+			const handler = getHandler('create_actor')
+			const result = (await handler({ type: 'human', name: 'Alice' })) as {
+				content: Array<{ text: string }>
+			}
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.setup).toBeDefined()
+			expect(parsed.setup.checks).toEqual([])
+			expect(parsed.setup.prose).toBe('')
 		})
 
 		it('get_actor — response includes a setup block for agents', async () => {
@@ -4700,6 +4835,36 @@ describe('tool handlers', () => {
 			).toBe(true)
 			expect(parsed.setup.checks.some((c: { name: string }) => c.name === 'mcp_configured')).toBe(
 				true,
+			)
+			// No triggers/loops target this actor in the mocked workspace → warn.
+			expect(parsed.setup.checks.some((c: { name: string }) => c.name === 'automation_wired')).toBe(
+				true,
+			)
+		})
+
+		it('get_actor — omits the automation_wired warning when a trigger already targets the agent', async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const u = String(url)
+				if (u.includes('/api/actors/agent-1')) {
+					return setupOkJson({
+						id: 'agent-1',
+						type: 'agent',
+						name: 'Bot',
+						system_prompt: 'x'.repeat(200),
+						tools: { mcpServers: { maskin: {}, slack: {} } },
+						skills: [{ id: 'skill-1' }, { id: 'skill-2' }],
+					})
+				}
+				if (u.endsWith('/api/triggers')) {
+					return setupOkJson([{ id: 'trig-1', name: 'Follow up', targetActorId: 'agent-1' }])
+				}
+				return setupOkJson([])
+			})
+			const handler = getHandler('get_actor')
+			const result = (await handler({ id: 'agent-1' })) as { content: Array<{ text: string }> }
+			const parsed = JSON.parse(result.content[0].text)
+			expect(parsed.setup.checks.some((c: { name: string }) => c.name === 'automation_wired')).toBe(
+				false,
 			)
 		})
 
