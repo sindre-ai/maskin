@@ -16,7 +16,11 @@ test.describe('keyboard-only interactive paths', () => {
 		account,
 	}) => {
 		await page.goto(`/${account.workspaceId}`)
-		await page.waitForLoadState('networkidle')
+		// The app holds an SSE connection to /api/events, so 'networkidle' never
+		// fires — wait for 'load' plus a brief settle instead (the pattern the
+		// rest of this suite uses).
+		await page.waitForLoadState('load')
+		await page.waitForTimeout(200)
 
 		// Walk a handful of Tab stops and confirm each one lands on a real
 		// focusable node with a rendered focus indicator. axe checks static
@@ -55,7 +59,11 @@ test.describe('keyboard-only interactive paths', () => {
 		account,
 	}) => {
 		await page.goto(`/${account.workspaceId}`)
-		await page.waitForLoadState('networkidle')
+		// The app holds an SSE connection to /api/events, so 'networkidle' never
+		// fires — wait for 'load' plus a brief settle instead (the pattern the
+		// rest of this suite uses).
+		await page.waitForLoadState('load')
+		await page.waitForTimeout(200)
 
 		await page.keyboard.press('ControlOrMeta+k')
 		const palette = page.getByPlaceholder('Search objects, navigate...')
@@ -77,7 +85,11 @@ test.describe('keyboard-only interactive paths', () => {
 		// tree. Owning fix goes on the app-shell bet; this spec fails if the
 		// containment ever regresses further.
 		await page.goto(`/${account.workspaceId}`)
-		await page.waitForLoadState('networkidle')
+		// The app holds an SSE connection to /api/events, so 'networkidle' never
+		// fires — wait for 'load' plus a brief settle instead (the pattern the
+		// rest of this suite uses).
+		await page.waitForLoadState('load')
+		await page.waitForTimeout(200)
 
 		await page.keyboard.press('ControlOrMeta+k')
 		const palette = page.getByPlaceholder('Search objects, navigate...')

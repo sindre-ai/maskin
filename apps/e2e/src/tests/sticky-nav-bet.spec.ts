@@ -19,22 +19,15 @@ async function scrollHeroOff(page: import('@playwright/test').Page) {
 	await page.waitForTimeout(200)
 }
 
-// The sticky bet-identity projection (StickyBetIdentity chip that the page
-// header sprouted when the hero identity row scrolled out, + smooth-scroll-back
-// that focused the status picker) was shipped with the legacy ObjectDocumentView
-// header. bet/object-detail rebuilt the route around a static shell whose header
-// the bet enumerates as breadcrumb + overflow menu + type/status/driver only —
-// the shell keeps the `[data-hero-status-trigger]` anchor that projection
-// focuses, but re-attaching the chip (and its ⌘/shape persistence) is header
-// assembly owned by T5.
-//
-// Until T5 lands, this spec pins the interim contract: the rebuilt shell still
-// scrolls inside [data-scroll-root], still hosts the hero status picker, and
-// the app header's 44px invariant holds — while the not-yet-rebuilt sticky
-// chip must NOT sprout. Flip the "no sticky chip" assertion when T5 lands.
-test.describe('Sticky nav — bet identity (interim contract)', () => {
+// The sticky bet-identity projection: the hero identity row owns the title and
+// status picker while it is on screen, and the app header sprouts a compact
+// chip (title + status, StickyBetIdentity in object-document.tsx) once the hero
+// scrolls out. The v2 shell's header renders that projection through the page
+// header's `stickyIdentity` slot, so the chip is live — this spec pins the
+// handover in both directions rather than its earlier absence.
+test.describe('Sticky nav — bet identity', () => {
 	for (const viewport of [WIDE_DESKTOP, NARROW_DESKTOP, MOBILE]) {
-		test(`hero status picker present; no sticky chip until T5 (${viewport.width}px)`, async ({
+		test(`the header chip takes over when the hero scrolls out (${viewport.width}px)`, async ({
 			page,
 			account,
 		}) => {
@@ -57,16 +50,24 @@ test.describe('Sticky nav — bet identity (interim contract)', () => {
 			const statusTrigger = page.locator('[data-hero-status-trigger]')
 			await expect(statusTrigger).toBeVisible()
 
-			// No sticky chip in the header, before or after the hero scrolls out.
+			// While the hero is on screen it is the only identity — no duplicate in
+			// the header competing with it.
 			const header = page.locator('header')
 			await expect(header.getByText(STICKY_TITLE_MARKER)).toHaveCount(0)
 			await expect(header.getByRole('button', { name: /status active/i })).toHaveCount(0)
 
 			await scrollHeroOff(page)
 
+			// Hero gone, chip sprouted — identity is never absent from the screen.
 			await expect(statusTrigger).not.toBeInViewport()
+			await expect(header.getByText(STICKY_TITLE_MARKER)).toBeVisible()
+			await expect(header.getByRole('button', { name: /status active/i })).toBeVisible()
+
+			// The chip is the way back: clicking it returns the hero to view, and
+			// the chip stands down again.
+			await header.getByRole('button', { name: /status active/i }).click()
+			await expect(statusTrigger).toBeInViewport({ timeout: 10000 })
 			await expect(header.getByText(STICKY_TITLE_MARKER)).toHaveCount(0)
-			await expect(header.getByRole('button', { name: /status active/i })).toHaveCount(0)
 		})
 	}
 

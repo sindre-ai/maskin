@@ -144,7 +144,11 @@ test.describe('a11y route sweep (WCAG 2.1 AA)', () => {
 				await page.goto(path)
 				// Give React a beat to paint the first interactive state so the
 				// scan doesn't fire against an empty root before hydration lands.
-				await page.waitForLoadState('networkidle')
+				// The app holds an SSE connection to /api/events, so 'networkidle' never
+				// fires — wait for 'load' plus a brief settle instead (the pattern the
+				// rest of this suite uses).
+				await page.waitForLoadState('load')
+				await page.waitForTimeout(200)
 				await expect(page.locator('body')).toBeVisible()
 
 				await expectNoSeriousA11yViolations(page, `${route.label} · ${theme}`, {

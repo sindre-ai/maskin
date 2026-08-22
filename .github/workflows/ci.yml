@@ -131,6 +131,11 @@ jobs:
 
   verify-e2e:
     runs-on: ubuntu-latest
+    # A healthy shard finishes in ~6 minutes. Without a cap, one wedged shard
+    # (a spec waiting on something that can never happen — see the SSE /
+    # networkidle note in the a11y specs) runs to GitHub's 6-hour default and
+    # holds the PR open with no signal.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:

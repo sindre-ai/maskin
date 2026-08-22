@@ -118,7 +118,8 @@ test.describe('Header New menu', () => {
 		await headerNewTrigger(page).click()
 		await page.getByRole('menuitem', { name: /find a past conversation/i }).click()
 
-		await expect(page.getByPlaceholder('Search objects, navigate...')).toBeVisible()
+		// v2's palette rewrote its own prompt (components/command-palette.tsx).
+		await expect(page.getByPlaceholder('Run a command or jump to…')).toBeVisible()
 	})
 
 	test('hides "Create an object" but keeps the menu on an object-detail page', async ({
