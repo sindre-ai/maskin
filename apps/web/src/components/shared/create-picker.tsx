@@ -34,6 +34,7 @@ import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { TYPE_LABELS, getTypeColor } from '@/lib/constants'
 import { useWorkspace } from '@/lib/workspace-context'
+import { LOOP_STATUSES, type LoopStatus } from '@maskin/shared'
 import { useNavigate } from '@tanstack/react-router'
 import {
 	ArrowRight,
@@ -347,7 +348,11 @@ export function CreatePicker({
 				const created = await createObject.mutateAsync({
 					type: 'loop',
 					title: trimmed,
-					status: 'running',
+					// 'draft' is LOOP_STATUSES[0]. A value outside that enum is accepted by
+					// the free-text objects.status column and then silently coerced back to
+					// 'draft' by apps/dev/src/routes/loops.ts, so the row and the loops list
+					// would disagree. The loop goes live from its detail page, not here.
+					status: LOOP_STATUSES[0] satisfies LoopStatus,
 				})
 				trackObjectCreated({
 					entity_id: created.id,

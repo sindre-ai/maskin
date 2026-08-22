@@ -47,6 +47,7 @@ describe('CommentInput', () => {
 		mockGetStoredActor.mockReturnValue({ id: 'actor-1', name: 'Alice', type: 'human' })
 		mockUseActors.mockReturnValue({ data: [] })
 		mockDraftSubmit.mockClear()
+		mockDraftSubmit.mockReturnValue('queued')
 		mockDraftFiles = []
 	})
 
@@ -122,6 +123,32 @@ describe('CommentInput', () => {
 			metadata: { chips: ['Ship it'] },
 		})
 		expect(mockMutate).not.toHaveBeenCalled()
+	})
+
+	// `submitDraft` returns 'no-attachments' when the queue has nothing to send:
+	// the entry was never created, or every attachment was removed between the
+	// composer reading `hasAttachments` and the click. In the second case it also
+	// deletes the entry, so there is no queued row left to render a failure on.
+	// Dropping the comment there loses the user's text silently.
+	it('falls back to a direct post when the queue reports no attachments', async () => {
+		mockDraftFiles = [
+			{ tempId: 'f-1', name: 'metrics.png', sizeBytes: 1024, status: 'uploaded', progress: 100 },
+		]
+		mockDraftSubmit.mockReturnValue('no-attachments')
+		const user = userEvent.setup()
+		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
+
+		await user.type(
+			screen.getByPlaceholderText('Write a comment... Use @ to mention an agent'),
+			'Still worth saying',
+		)
+		await user.click(screen.getByRole('button', { name: /send/i }))
+
+		expect(mockDraftSubmit).toHaveBeenCalled()
+		expect(mockMutate).toHaveBeenCalledWith(
+			expect.objectContaining({ entity_id: 'obj-1', content: 'Still worth saying' }),
+			expect.anything(),
+		)
 	})
 
 	it('sends no metadata when no decision is attached', async () => {

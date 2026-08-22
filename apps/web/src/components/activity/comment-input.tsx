@@ -300,37 +300,50 @@ export function CommentInput({
 
 		const metadata = buildMetadata()
 
+		const postDirectly = () => {
+			createComment.mutate(
+				{
+					entity_id: objectId,
+					content: trimmed,
+					mentions: activeMentions.length > 0 ? activeMentions : undefined,
+					parent_event_id: parentEventId,
+					...(metadata ? { metadata } : {}),
+				},
+				{
+					onSuccess: () => {
+						resetComposer()
+						onSubmitted?.()
+					},
+				},
+			)
+		}
+
 		if (hasAttachments) {
 			// Hand the submission to the pending-comments queue. Uploads (if still
 			// in flight) and the final POST will continue in the background even
 			// if the user navigates away from this page. The queue carries the
 			// same metadata the direct path sends, so an attachment and a
 			// decision can ride one comment.
-			draft.submit({
+			const outcome = draft.submit({
 				content: trimmed,
 				mentions: activeMentions,
 				...(metadata ? { metadata } : {}),
 			})
+			// The queue has nothing to send — the entry was never created, or every
+			// attachment was removed between the `hasAttachments` read and this
+			// click. It also deletes the entry in that second case, so there is no
+			// queued row left to render a failure on. Post directly rather than
+			// resetting the composer, which would clear the comment as if it sent.
+			if (outcome === 'no-attachments') {
+				postDirectly()
+				return
+			}
 			resetComposer()
 			onSubmitted?.()
 			return
 		}
 
-		createComment.mutate(
-			{
-				entity_id: objectId,
-				content: trimmed,
-				mentions: activeMentions.length > 0 ? activeMentions : undefined,
-				parent_event_id: parentEventId,
-				...(metadata ? { metadata } : {}),
-			},
-			{
-				onSuccess: () => {
-					resetComposer()
-					onSubmitted?.()
-				},
-			},
-		)
+		postDirectly()
 	}, [
 		content,
 		mentions,
