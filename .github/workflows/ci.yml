@@ -135,7 +135,7 @@ jobs:
     # (a spec waiting on something that can never happen — see the SSE /
     # networkidle note in the a11y specs) runs to GitHub's 6-hour default and
     # holds the PR open with no signal.
-    timeout-minutes: 30
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
