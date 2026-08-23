@@ -36,6 +36,15 @@ function spine(page: Page) {
 	return dialog(page).locator('> div').first()
 }
 
+/** The type chips are `<label>`s wrapping an `sr-only` radio — the radio itself
+ *  is clipped to 1px and sits under its own label, so clicking it never lands.
+ *  Drive the label; assert the radio role separately. */
+function typeChip(page: Page, label: string) {
+	return dialog(page)
+		.locator('label')
+		.filter({ hasText: new RegExp(`^${label}$`) })
+}
+
 test.describe('Create overlay', () => {
 	for (const vp of SHIP_GATE_VIEWPORTS) {
 		test(`composer, type chips and send are reachable at ${vp.label}`, async ({
@@ -67,7 +76,7 @@ test.describe('Create overlay', () => {
 		await account.api.addWorkspaceMember(account.workspaceId, agent.id)
 
 		await openOverlay(page, account.workspaceId)
-		await page.getByRole('radio', { name: 'Bet' }).click()
+		await typeChip(page, 'Bet').click()
 
 		// The type is now a clearable pill, and the body names the type.
 		await expect(dialog(page).getByText('New bet')).toBeVisible()
@@ -144,7 +153,7 @@ test.describe('Create overlay', () => {
 		account,
 	}) => {
 		await openOverlay(page, account.workspaceId)
-		await page.getByRole('radio', { name: 'Bet' }).click()
+		await typeChip(page, 'Bet').click()
 		await expect(dialog(page).getByText('New bet')).toBeVisible()
 
 		await page.getByRole('dialog').getByLabel('Title', { exact: true }).press('Backspace')
@@ -177,7 +186,7 @@ test.describe('Create overlay', () => {
 			expect(emptyFill).not.toBe('rgba(0, 0, 0, 0)')
 			expect(emptyFill).not.toBe('transparent')
 
-			await page.getByRole('radio', { name: 'Bet' }).click()
+			await typeChip(page, 'Bet').click()
 			const typedFill = await spine(page).evaluate((el) => getComputedStyle(el).backgroundColor)
 			expect(typedFill).not.toBe('rgba(0, 0, 0, 0)')
 			expect(typedFill).not.toBe(emptyFill)
