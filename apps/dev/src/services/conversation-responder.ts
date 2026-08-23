@@ -1,6 +1,12 @@
 import type { Database } from '@maskin/db'
-import { actors, conversationParticipants, messages, workspaces } from '@maskin/db/schema'
-import { and, count, desc, eq, isNull, ne, sql } from 'drizzle-orm'
+import {
+	actors,
+	conversationParticipants,
+	conversationPendingTurns,
+	messages,
+	workspaces,
+} from '@maskin/db/schema'
+import { and, count, desc, eq, isNull, lte, ne, sql } from 'drizzle-orm'
 import { resolveChatCredentials } from '../lib/llm-routing'
 import type { LLMTool } from '../lib/llm/adapter'
 import { createLLMAdapter } from '../lib/llm/index'
@@ -51,8 +57,22 @@ export async function evaluateAndRespond(ctx: {
 	workspaceId: string
 	conversationId: string
 	messageId: number
+	options?: {
+		/**
+		 * Skip the relevance heuristic and treat every candidate agent as
+		 * responding — set by an explicit human retry, where "should I reply?"
+		 * has already been answered by the user clicking the button.
+		 */
+		forceRespond?: boolean
+		/**
+		 * The message is an edit of an already-posted message — prefix the
+		 * agent-facing turn so the agent knows it replaces the earlier version
+		 * rather than being a brand-new message.
+		 */
+		isEdit?: boolean
+	}
 }): Promise<void> {
-	const { db, sessionManager, workspaceId, conversationId, messageId } = ctx
+	const { db, sessionManager, workspaceId, conversationId, messageId, options } = ctx
 
 	const [message] = await db
 		.select({
@@ -151,7 +171,13 @@ export async function evaluateAndRespond(ctx: {
 	// metadata (rendered as chips in the UI) rather than inlined into
 	// `content` — rebuild a compact context block here so the agent's prompt
 	// still carries it.
-	const messageForPrompt = { ...message, content: appendContextBlock(message.content, metadata) }
+	const promptContent = appendContextBlock(message.content, metadata)
+	const messageForPrompt = {
+		...message,
+		content: options?.isEdit
+			? `[${message.authorName} edited an earlier message — the corrected version below replaces what they wrote before.]\n${promptContent}`
+			: promptContent,
+	}
 
 	const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
 	const wsSettings = (ws?.settings as WorkspaceSettings) ?? {}
@@ -174,7 +200,7 @@ export async function evaluateAndRespond(ctx: {
 			// real session launch, whose resolveLlmRoute is the sole authority
 			// on available credentials, be the final word.
 			const shouldRespond =
-				wasMentioned || isDirectConversation
+				options?.forceRespond || wasMentioned || isDirectConversation
 					? true
 					: await checkRelevance({
 							agent,
@@ -185,27 +211,49 @@ export async function evaluateAndRespond(ctx: {
 						})
 			if (!shouldRespond) return
 
-			const existing = await sessionManager.findActiveConversationSession(conversationId, agent.id)
+			const turnPayload = {
+				type: 'user' as const,
+				message: {
+					role: 'user' as const,
+					content: buildConversationTurnPrompt({
+						authorName: message.authorName,
+						authorType: message.authorType,
+						newMessageContent: messageForPrompt.content,
+						isDirectConversation,
+						wasMentioned,
+					}),
+				},
+			}
+
+			const existing = await sessionManager.findConversationSessionAnyActive(
+				conversationId,
+				agent.id,
+			)
+			if (existing && existing.status !== 'running') {
+				// The agent's session is still booting (pending/starting/queued) —
+				// its stdin isn't attached yet, so a writeInput would fail and a
+				// second createSession would lose to sessions_conversation_actor_
+				// active_uniq. Buffer the turn; drainPendingConversationTurns
+				// delivers it once the session comes up.
+				await bufferPendingTurn(db, {
+					conversationId,
+					agentId: agent.id,
+					messageId,
+					payload: turnPayload,
+				})
+				// Close the race: the session may have reached `running` (and
+				// already drained) between the lookup above and the buffer insert —
+				// nothing would ever drain this row, so re-check and drain now.
+				const nowRunning = await sessionManager.findActiveConversationSession(
+					conversationId,
+					agent.id,
+				)
+				if (nowRunning) await sessionManager.drainPendingConversationTurns(nowRunning.id)
+				return
+			}
 			if (existing) {
 				try {
-					await sessionManager.writeInput(
-						existing.id,
-						{
-							type: 'user',
-							message: {
-								role: 'user',
-								content: buildConversationTurnPrompt({
-									authorName: message.authorName,
-									authorType: message.authorType,
-									newMessageContent: messageForPrompt.content,
-									isDirectConversation,
-									wasMentioned,
-								}),
-							},
-						},
-						undefined,
-						messageId,
-					)
+					await sessionManager.writeInput(existing.id, turnPayload, undefined, messageId)
 					return
 				} catch (err) {
 					logger.warn(
@@ -231,6 +279,7 @@ export async function evaluateAndRespond(ctx: {
 			}
 
 			await spawnOrJoinConversationSession({
+				db,
 				sessionManager,
 				workspaceId,
 				conversationId,
@@ -251,13 +300,13 @@ export async function evaluateAndRespond(ctx: {
  * the same agent race (both found no existing running session and both try
  * to spawn), the DB's sessions_conversation_actor_active_uniq partial unique
  * index rejects the loser's insert — on that specific failure, look up the
- * race winner's session and join it via writeInput instead of dropping the
- * reply. A single lookup attempt, not a retry loop: if the winner's session
- * isn't visible as `running` yet (still starting), this reply is dropped —
- * an acceptable, rare failure mode rather than blocking on an open-ended
- * poll.
+ * race winner's session and join it: via writeInput when it is already
+ * `running`, or by buffering the turn in conversation_pending_turns when it
+ * is still booting (drainPendingConversationTurns delivers it once the
+ * session's stdin attaches). No reply is dropped on this path any more.
  */
 async function spawnOrJoinConversationSession(params: {
+	db: Database
 	sessionManager: SessionManager
 	workspaceId: string
 	conversationId: string
@@ -269,6 +318,7 @@ async function spawnOrJoinConversationSession(params: {
 	wasMentioned: boolean
 }): Promise<void> {
 	const {
+		db,
 		sessionManager,
 		workspaceId,
 		conversationId,
@@ -298,6 +348,27 @@ async function spawnOrJoinConversationSession(params: {
 			},
 			createdBy: message.actorId,
 		})
+		// The seed prompt above inlines recent history up to and including this
+		// message — any turn still buffered for this pair from a previous, dead
+		// session is already covered by it. Clear those rows so the post-boot
+		// drain doesn't re-deliver them as duplicates.
+		try {
+			await db
+				.delete(conversationPendingTurns)
+				.where(
+					and(
+						eq(conversationPendingTurns.conversationId, conversationId),
+						eq(conversationPendingTurns.actorId, agentId),
+						lte(conversationPendingTurns.messageId, messageId),
+					),
+				)
+		} catch (err) {
+			logger.warn('Failed to clear seed-covered pending turns', {
+				agentId,
+				conversationId,
+				error: String(err),
+			})
+		}
 		return
 	} catch (err) {
 		if (!isConversationSessionRaceViolation(err)) {
@@ -310,33 +381,40 @@ async function spawnOrJoinConversationSession(params: {
 		}
 	}
 
-	const winner = await sessionManager.findActiveConversationSession(conversationId, agentId)
+	const turnPayload = {
+		type: 'user' as const,
+		message: {
+			role: 'user' as const,
+			content: buildConversationTurnPrompt({
+				authorName: message.authorName,
+				authorType: message.authorType,
+				newMessageContent: message.content,
+				isDirectConversation,
+				wasMentioned,
+			}),
+		},
+	}
+
+	const winner = await sessionManager.findConversationSessionAnyActive(conversationId, agentId)
 	if (!winner) {
-		logger.warn('Conversation session race: no winner visible yet — dropping this reply', {
+		// The race winner already died between rejecting our insert and this
+		// lookup — vanishingly rare. The next message spawns a fresh session
+		// whose seed history covers this one.
+		logger.warn('Conversation session race: no winner visible — deferring to next spawn', {
 			agentId,
 			conversationId,
 		})
 		return
 	}
+	if (winner.status !== 'running') {
+		// Winner is still booting — same buffer-and-recheck as the primary path.
+		await bufferPendingTurn(db, { conversationId, agentId, messageId, payload: turnPayload })
+		const nowRunning = await sessionManager.findActiveConversationSession(conversationId, agentId)
+		if (nowRunning) await sessionManager.drainPendingConversationTurns(nowRunning.id)
+		return
+	}
 	await sessionManager
-		.writeInput(
-			winner.id,
-			{
-				type: 'user',
-				message: {
-					role: 'user',
-					content: buildConversationTurnPrompt({
-						authorName: message.authorName,
-						authorType: message.authorType,
-						newMessageContent: message.content,
-						isDirectConversation,
-						wasMentioned,
-					}),
-				},
-			},
-			undefined,
-			messageId,
-		)
+		.writeInput(winner.id, turnPayload, undefined, messageId)
 		.catch(async (err: unknown) => {
 			logger.warn('Failed to join winning conversation session after race', {
 				agentId,
@@ -359,6 +437,47 @@ async function spawnOrJoinConversationSession(params: {
 					}),
 				)
 		})
+}
+
+/**
+ * Buffers one turn for a (conversation, agent) pair whose session is still
+ * booting. Idempotent per (conversation, agent, message) via the table's
+ * unique index — a duplicate insert (e.g. a retried message) is a no-op.
+ * Never throws: a buffering failure degrades to the pre-buffer behaviour
+ * (the turn is covered by the next spawn's seed history).
+ */
+async function bufferPendingTurn(
+	db: Database,
+	params: {
+		conversationId: string
+		agentId: string
+		messageId: number
+		payload: { type: 'user'; message: { role: 'user'; content: string } }
+	},
+): Promise<void> {
+	try {
+		await db
+			.insert(conversationPendingTurns)
+			.values({
+				conversationId: params.conversationId,
+				actorId: params.agentId,
+				messageId: params.messageId,
+				payload: params.payload,
+			})
+			.onConflictDoNothing()
+		logger.info('Buffered conversation turn while agent session boots', {
+			agentId: params.agentId,
+			conversationId: params.conversationId,
+			messageId: params.messageId,
+		})
+	} catch (err) {
+		logger.error('Failed to buffer conversation turn', {
+			agentId: params.agentId,
+			conversationId: params.conversationId,
+			messageId: params.messageId,
+			error: String(err),
+		})
+	}
 }
 
 /** Walks err.cause chain for the sessions_conversation_actor_active_uniq unique violation (23505). */

@@ -16,6 +16,8 @@ vi.mock('@/hooks/use-conversation', () => ({
 	useConversationMessages: (...args: unknown[]) => useConversationMessages(...args),
 	useConversation: (...args: unknown[]) => useConversation(...args),
 	flattenMessagesOldestFirst: () => flattened,
+	useEditMessage: () => ({ mutate: vi.fn(), isPending: false }),
+	useRetryMessage: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
 const useConversationActivity = vi.fn()
@@ -40,6 +42,7 @@ function buildMessage(overrides: Partial<MessageResponse> & { id: number }): Mes
 		metadata: null,
 		sessionId: null,
 		createdAt: new Date().toISOString(),
+		editedAt: null,
 		...overrides,
 	}
 }

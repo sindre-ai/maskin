@@ -234,5 +234,6 @@ export function syntheticFinalOutputMessage(
 		metadata: { source: 'final_output' },
 		sessionId: turn.sessionId,
 		createdAt: null,
+		editedAt: null,
 	}
 }

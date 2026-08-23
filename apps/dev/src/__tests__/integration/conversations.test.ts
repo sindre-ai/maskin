@@ -1,6 +1,13 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, conversations, messages, sessions, workspaceMembers } from '@maskin/db/schema'
+import {
+	events,
+	conversationPendingTurns,
+	conversations,
+	messages,
+	sessions,
+	workspaceMembers,
+} from '@maskin/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { vi } from 'vitest'
 import { createApiError, formatZodError } from '../../lib/errors'
@@ -19,6 +26,8 @@ type Env = {
 		sessionManager: {
 			createSession: ReturnType<typeof vi.fn>
 			findActiveConversationSession: ReturnType<typeof vi.fn>
+			findConversationSessionAnyActive: ReturnType<typeof vi.fn>
+			drainPendingConversationTurns: ReturnType<typeof vi.fn>
 			writeInput: ReturnType<typeof vi.fn>
 		}
 	}
@@ -44,6 +53,8 @@ function createConversationsApp(actorId: string, actorType: 'human' | 'agent' = 
 	const sessionManager = {
 		createSession: vi.fn().mockResolvedValue({ id: 'fake-session-id' }),
 		findActiveConversationSession: vi.fn().mockResolvedValue(null),
+		findConversationSessionAnyActive: vi.fn().mockResolvedValue(null),
+		drainPendingConversationTurns: vi.fn().mockResolvedValue(undefined),
 		writeInput: vi.fn().mockResolvedValue(undefined),
 	}
 
@@ -920,6 +931,8 @@ describe('Conversations Integration', () => {
 			const sessionManager = {
 				createSession: vi.fn().mockResolvedValue({ id: 'new-session-id' }),
 				findActiveConversationSession: vi.fn().mockResolvedValue(null),
+				findConversationSessionAnyActive: vi.fn().mockResolvedValue(null),
+				drainPendingConversationTurns: vi.fn().mockResolvedValue(undefined),
 				writeInput: vi.fn().mockResolvedValue(undefined),
 			}
 			await evaluateAndRespond({
@@ -970,6 +983,8 @@ describe('Conversations Integration', () => {
 			const sessionManager = {
 				createSession: vi.fn().mockResolvedValue({ id: 'x' }),
 				findActiveConversationSession: vi.fn().mockResolvedValue(null),
+				findConversationSessionAnyActive: vi.fn().mockResolvedValue(null),
+				drainPendingConversationTurns: vi.fn().mockResolvedValue(undefined),
 				writeInput: vi.fn().mockResolvedValue(undefined),
 			}
 			await evaluateAndRespond({
@@ -1030,6 +1045,8 @@ describe('Conversations Integration', () => {
 			const sessionManager = {
 				createSession: vi.fn().mockResolvedValue({ id: 'x' }),
 				findActiveConversationSession: vi.fn().mockResolvedValue(null),
+				findConversationSessionAnyActive: vi.fn().mockResolvedValue(null),
+				drainPendingConversationTurns: vi.fn().mockResolvedValue(undefined),
 				writeInput: vi.fn().mockResolvedValue(undefined),
 			}
 			await evaluateAndRespond({
@@ -1070,7 +1087,11 @@ describe('Conversations Integration', () => {
 
 			const sessionManager = {
 				createSession: vi.fn().mockResolvedValue({ id: 'should-not-be-used' }),
-				findActiveConversationSession: vi.fn().mockResolvedValue({ id: 'existing-session-id' }),
+				findActiveConversationSession: vi.fn().mockResolvedValue(null),
+				findConversationSessionAnyActive: vi
+					.fn()
+					.mockResolvedValue({ id: 'existing-session-id', status: 'running', workspaceId }),
+				drainPendingConversationTurns: vi.fn().mockResolvedValue(undefined),
 				writeInput: vi.fn().mockResolvedValue(undefined),
 			}
 			await evaluateAndRespond({
@@ -1122,6 +1143,8 @@ describe('Conversations Integration', () => {
 			const sessionManager = {
 				createSession: vi.fn().mockResolvedValue({ id: 'new-session-id' }),
 				findActiveConversationSession: vi.fn().mockResolvedValue(null),
+				findConversationSessionAnyActive: vi.fn().mockResolvedValue(null),
+				drainPendingConversationTurns: vi.fn().mockResolvedValue(undefined),
 				writeInput: vi.fn().mockResolvedValue(undefined),
 			}
 			await evaluateAndRespond({
@@ -1182,6 +1205,8 @@ describe('Conversations Integration', () => {
 			const sessionManager = {
 				createSession: vi.fn().mockResolvedValue({ id: 'new-session-id' }),
 				findActiveConversationSession: vi.fn().mockResolvedValue(null),
+				findConversationSessionAnyActive: vi.fn().mockResolvedValue(null),
+				drainPendingConversationTurns: vi.fn().mockResolvedValue(undefined),
 				writeInput: vi.fn().mockResolvedValue(undefined),
 			}
 			await evaluateAndRespond({
@@ -1229,9 +1254,11 @@ describe('Conversations Integration', () => {
 
 			const sessionManager = {
 				createSession: vi.fn().mockResolvedValue({ id: 'new-session-id' }),
-				findActiveConversationSession: vi
+				findActiveConversationSession: vi.fn().mockResolvedValue(null),
+				findConversationSessionAnyActive: vi
 					.fn()
-					.mockResolvedValue({ id: 'dead-session-id', workspaceId }),
+					.mockResolvedValue({ id: 'dead-session-id', status: 'running', workspaceId }),
+				drainPendingConversationTurns: vi.fn().mockResolvedValue(undefined),
 				writeInput: vi.fn().mockRejectedValue(new Error('container gone')),
 				markSessionFailedAfterContainerLoss: vi.fn().mockResolvedValue(undefined),
 			}
@@ -1294,11 +1321,14 @@ describe('Conversations Integration', () => {
 			const sessionManager = {
 				// No existing session visible on the first lookup — goes straight to
 				// spawnOrJoinConversationSession, whose createSession hits the race
-				// violation simulated above.
-				findActiveConversationSession: vi
+				// violation simulated above. The winner lookup then finds a running
+				// session to join.
+				findActiveConversationSession: vi.fn().mockResolvedValue(null),
+				findConversationSessionAnyActive: vi
 					.fn()
 					.mockResolvedValueOnce(null)
-					.mockResolvedValueOnce({ id: 'winner-session-id', workspaceId }),
+					.mockResolvedValueOnce({ id: 'winner-session-id', status: 'running', workspaceId }),
+				drainPendingConversationTurns: vi.fn().mockResolvedValue(undefined),
 				createSession: vi.fn().mockRejectedValue(raceViolation),
 				writeInput: vi.fn().mockRejectedValue(new Error('container gone')),
 				markSessionFailedAfterContainerLoss: vi.fn().mockResolvedValue(undefined),
@@ -1322,6 +1352,426 @@ describe('Conversations Integration', () => {
 				'winner-session-id',
 				workspaceId,
 			)
+		})
+
+		it('buffers the turn instead of dropping it when the agent session is still booting', async () => {
+			const agent = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, agent.id)
+			const { app: ownerApp } = createConversationsApp(ownerId)
+			const created = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Boot buffer test', participant_actor_ids: [agent.id] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+			const [triggering] = await db
+				.insert(messages)
+				.values({ conversationId: conversation.id, actorId: ownerId, content: 'quick follow-up' })
+				.returning()
+			if (!triggering) throw new Error('failed to insert triggering message')
+
+			const sessionManager = {
+				createSession: vi.fn().mockResolvedValue({ id: 'should-not-be-used' }),
+				findActiveConversationSession: vi.fn().mockResolvedValue(null),
+				findConversationSessionAnyActive: vi
+					.fn()
+					.mockResolvedValue({ id: 'booting-session-id', status: 'starting', workspaceId }),
+				drainPendingConversationTurns: vi.fn().mockResolvedValue(undefined),
+				writeInput: vi.fn().mockResolvedValue(undefined),
+			}
+			await evaluateAndRespond({
+				db,
+				// biome-ignore lint/suspicious/noExplicitAny: test double, real type lives in session-manager.ts
+				sessionManager: sessionManager as any,
+				workspaceId,
+				conversationId: conversation.id,
+				messageId: triggering.id,
+			})
+
+			expect(sessionManager.writeInput).not.toHaveBeenCalled()
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+			const [buffered] = await db
+				.select()
+				.from(conversationPendingTurns)
+				.where(eq(conversationPendingTurns.messageId, triggering.id))
+			expect(buffered).toBeTruthy()
+			expect(buffered?.actorId).toBe(agent.id)
+			expect(buffered?.conversationId).toBe(conversation.id)
+			expect((buffered?.payload as { message: { content: string } }).message.content).toContain(
+				'quick follow-up',
+			)
+		})
+
+		it('drains the freshly buffered turn itself when the session reaches running mid-buffer', async () => {
+			const agent = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, agent.id)
+			const { app: ownerApp } = createConversationsApp(ownerId)
+			const created = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Boot race drain test', participant_actor_ids: [agent.id] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+			const [triggering] = await db
+				.insert(messages)
+				.values({ conversationId: conversation.id, actorId: ownerId, content: 'racing message' })
+				.returning()
+			if (!triggering) throw new Error('failed to insert triggering message')
+
+			const sessionManager = {
+				createSession: vi.fn(),
+				// Booting on the primary lookup, but running by the post-buffer
+				// re-check — the responder must drain the row it just wrote, since
+				// the post-boot drain has already come and gone.
+				findActiveConversationSession: vi
+					.fn()
+					.mockResolvedValue({ id: 'now-running-id', status: 'running', workspaceId }),
+				findConversationSessionAnyActive: vi
+					.fn()
+					.mockResolvedValue({ id: 'now-running-id', status: 'starting', workspaceId }),
+				drainPendingConversationTurns: vi.fn().mockResolvedValue(undefined),
+				writeInput: vi.fn().mockResolvedValue(undefined),
+			}
+			await evaluateAndRespond({
+				db,
+				// biome-ignore lint/suspicious/noExplicitAny: test double, real type lives in session-manager.ts
+				sessionManager: sessionManager as any,
+				workspaceId,
+				conversationId: conversation.id,
+				messageId: triggering.id,
+			})
+
+			expect(sessionManager.drainPendingConversationTurns).toHaveBeenCalledWith('now-running-id')
+		})
+
+		it('buffers the turn when the race-winner session is still booting', async () => {
+			const agent = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, agent.id)
+			const { app: ownerApp } = createConversationsApp(ownerId)
+			const created = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Race buffer test', participant_actor_ids: [agent.id] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+			const [triggering] = await db
+				.insert(messages)
+				.values({ conversationId: conversation.id, actorId: ownerId, content: 'race me' })
+				.returning()
+			if (!triggering) throw new Error('failed to insert triggering message')
+
+			const raceViolation = Object.assign(new Error('duplicate key value'), {
+				code: '23505',
+				constraint_name: 'sessions_conversation_actor_active_uniq',
+			})
+			const sessionManager = {
+				createSession: vi.fn().mockRejectedValue(raceViolation),
+				findActiveConversationSession: vi.fn().mockResolvedValue(null),
+				findConversationSessionAnyActive: vi
+					.fn()
+					.mockResolvedValueOnce(null)
+					.mockResolvedValueOnce({ id: 'winner-booting-id', status: 'pending', workspaceId }),
+				drainPendingConversationTurns: vi.fn().mockResolvedValue(undefined),
+				writeInput: vi.fn().mockResolvedValue(undefined),
+			}
+			await evaluateAndRespond({
+				db,
+				// biome-ignore lint/suspicious/noExplicitAny: test double, real type lives in session-manager.ts
+				sessionManager: sessionManager as any,
+				workspaceId,
+				conversationId: conversation.id,
+				messageId: triggering.id,
+			})
+
+			expect(sessionManager.writeInput).not.toHaveBeenCalled()
+			const [buffered] = await db
+				.select()
+				.from(conversationPendingTurns)
+				.where(eq(conversationPendingTurns.messageId, triggering.id))
+			expect(buffered).toBeTruthy()
+			expect(buffered?.actorId).toBe(agent.id)
+		})
+
+		it('clears seed-covered pending turns after spawning a fresh session', async () => {
+			const agent = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, agent.id)
+			const { app: ownerApp } = createConversationsApp(ownerId)
+			const created = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Seed cleanup test', participant_actor_ids: [agent.id] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+			// A stale buffered turn from a session that died before draining.
+			const [stale] = await db
+				.insert(messages)
+				.values({ conversationId: conversation.id, actorId: ownerId, content: 'stale turn' })
+				.returning()
+			if (!stale) throw new Error('failed to insert stale message')
+			await db.insert(conversationPendingTurns).values({
+				conversationId: conversation.id,
+				actorId: agent.id,
+				messageId: stale.id,
+				payload: { type: 'user', message: { role: 'user', content: 'stale turn' } },
+			})
+			const [triggering] = await db
+				.insert(messages)
+				.values({ conversationId: conversation.id, actorId: ownerId, content: 'fresh spawn' })
+				.returning()
+			if (!triggering) throw new Error('failed to insert triggering message')
+
+			const sessionManager = {
+				createSession: vi.fn().mockResolvedValue({ id: 'new-session-id' }),
+				findActiveConversationSession: vi.fn().mockResolvedValue(null),
+				findConversationSessionAnyActive: vi.fn().mockResolvedValue(null),
+				drainPendingConversationTurns: vi.fn().mockResolvedValue(undefined),
+				writeInput: vi.fn().mockResolvedValue(undefined),
+			}
+			await evaluateAndRespond({
+				db,
+				// biome-ignore lint/suspicious/noExplicitAny: test double, real type lives in session-manager.ts
+				sessionManager: sessionManager as any,
+				workspaceId,
+				conversationId: conversation.id,
+				messageId: triggering.id,
+			})
+
+			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
+			// The seed prompt inlines history through the triggering message, so
+			// the stale row (messageId < triggering) must be gone.
+			const remaining = await db
+				.select()
+				.from(conversationPendingTurns)
+				.where(eq(conversationPendingTurns.conversationId, conversation.id))
+			expect(remaining).toHaveLength(0)
+		})
+	})
+
+	describe('message editing', () => {
+		it('lets the author edit their message and stamps editedAt', async () => {
+			const agent = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, agent.id)
+			const { app } = createConversationsApp(ownerId)
+			const created = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{
+						title: 'Edit test',
+						participant_actor_ids: [agent.id],
+						initial_message: 'original wording',
+					},
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+			const [msg] = await db
+				.select()
+				.from(messages)
+				.where(eq(messages.conversationId, conversation.id))
+
+			const res = await app.request(
+				jsonRequest(
+					'PATCH',
+					`/api/conversations/${conversation.id}/messages/${msg?.id}`,
+					{ content: 'corrected wording' },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(200)
+			const body = (await res.json()) as { content: string; editedAt: string | null }
+			expect(body.content).toBe('corrected wording')
+			expect(body.editedAt).toBeTruthy()
+
+			const [updated] = await db
+				.select()
+				.from(messages)
+				.where(eq(messages.id, msg?.id ?? -1))
+			expect(updated?.content).toBe('corrected wording')
+			expect(updated?.editedAt).toBeTruthy()
+
+			const auditRows = await db
+				.select()
+				.from(events)
+				.where(and(eq(events.entityId, conversation.id), eq(events.action, 'message_updated')))
+			expect(auditRows).toHaveLength(1)
+		})
+
+		it('re-runs the responder when the newest message is edited', async () => {
+			const agent = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, agent.id)
+			const { app, sessionManager } = createConversationsApp(ownerId)
+			const created = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Edit responder test', participant_actor_ids: [agent.id] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+			const [msg] = await db
+				.insert(messages)
+				.values({ conversationId: conversation.id, actorId: ownerId, content: 'typo here' })
+				.returning()
+
+			const res = await app.request(
+				jsonRequest(
+					'PATCH',
+					`/api/conversations/${conversation.id}/messages/${msg?.id}`,
+					{ content: 'typo fixed' },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(200)
+			// Fire-and-forget responder — let the microtask queue drain.
+			await new Promise((resolve) => setTimeout(resolve, 50))
+			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
+			const [, params] = sessionManager.createSession.mock.calls[0] as [
+				string,
+				{ actionPrompt: string },
+			]
+			expect(params.actionPrompt).toContain('typo fixed')
+			expect(params.actionPrompt).toContain('edited an earlier message')
+		})
+
+		it('does not re-run the responder when an older message is edited', async () => {
+			const agent = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, agent.id)
+			const { app, sessionManager } = createConversationsApp(ownerId)
+			const created = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Old edit test', participant_actor_ids: [agent.id] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+			const [older] = await db
+				.insert(messages)
+				.values({ conversationId: conversation.id, actorId: ownerId, content: 'older message' })
+				.returning()
+			await db
+				.insert(messages)
+				.values({ conversationId: conversation.id, actorId: ownerId, content: 'newest message' })
+
+			const res = await app.request(
+				jsonRequest(
+					'PATCH',
+					`/api/conversations/${conversation.id}/messages/${older?.id}`,
+					{ content: 'older message, fixed' },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(200)
+			await new Promise((resolve) => setTimeout(resolve, 50))
+			expect(sessionManager.createSession).not.toHaveBeenCalled()
+		})
+
+		it("rejects editing someone else's message", async () => {
+			const other = await insertActor(db, { type: 'human' })
+			await addMember(workspaceId, other.id)
+			const { app } = createConversationsApp(ownerId)
+			const created = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Foreign edit test', participant_actor_ids: [other.id] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+			const [msg] = await db
+				.insert(messages)
+				.values({ conversationId: conversation.id, actorId: other.id, content: 'not yours' })
+				.returning()
+
+			const res = await app.request(
+				jsonRequest(
+					'PATCH',
+					`/api/conversations/${conversation.id}/messages/${msg?.id}`,
+					{ content: 'hijacked' },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(403)
+		})
+	})
+
+	describe('message retry', () => {
+		it('re-runs the responder for the message, forcing a reply', async () => {
+			const agent = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, agent.id)
+			const { app, sessionManager } = createConversationsApp(ownerId)
+			const created = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Retry test', participant_actor_ids: [agent.id] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+			const [msg] = await db
+				.insert(messages)
+				.values({ conversationId: conversation.id, actorId: ownerId, content: 'anyone there?' })
+				.returning()
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${conversation.id}/messages/${msg?.id}/retry`,
+					undefined,
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(202)
+			await new Promise((resolve) => setTimeout(resolve, 50))
+			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
+			const [, params] = sessionManager.createSession.mock.calls[0] as [
+				string,
+				{ actionPrompt: string; actorId: string },
+			]
+			expect(params.actorId).toBe(agent.id)
+			expect(params.actionPrompt).toContain('anyone there?')
+		})
+
+		it('returns 404 for a message outside the conversation', async () => {
+			const agent = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, agent.id)
+			const { app } = createConversationsApp(ownerId)
+			const created = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Retry 404 test', participant_actor_ids: [agent.id] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${conversation.id}/messages/999999999/retry`,
+					undefined,
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(404)
 		})
 	})
 })

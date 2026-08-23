@@ -789,6 +789,17 @@ export const api = {
 				body: data,
 				workspaceId,
 			}),
+		editMessage: (id: string, workspaceId: string, messageId: number, data: EditMessageInput) =>
+			request<MessageResponse>(`/conversations/${id}/messages/${messageId}`, {
+				method: 'PATCH',
+				body: data,
+				workspaceId,
+			}),
+		retryMessage: (id: string, workspaceId: string, messageId: number) =>
+			request<{ retried: boolean }>(`/conversations/${id}/messages/${messageId}/retry`, {
+				method: 'POST',
+				workspaceId,
+			}),
 		updateMe: (id: string, workspaceId: string, data: UpdateConversationParticipantStateInput) =>
 			request<ConversationParticipantStateResponse>(`/conversations/${id}/me`, {
 				method: 'PATCH',
@@ -1390,6 +1401,11 @@ export interface MessageResponse {
 	metadata: MessageMetadata | null
 	sessionId: string | null
 	createdAt: string | null
+	editedAt: string | null
+}
+
+export interface EditMessageInput {
+	content: string
 }
 
 export interface MessagesListResponse {

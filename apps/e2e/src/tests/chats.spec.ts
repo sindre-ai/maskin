@@ -194,6 +194,74 @@ test.describe('Chats — full-screen multi-party chat', () => {
 	})
 
 	for (const vp of SHIP_GATE_VIEWPORTS) {
+		test(`edits an own message inline and shows the (edited) marker at ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+			const { conversation } = await setUpConversation(account.api, account.workspaceId)
+
+			await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
+			const composer = page.getByLabel('Message this conversation')
+			await composer.fill('Original wording with a typo')
+			await composer.press('Enter')
+
+			const thread = page.getByTestId('thread-messages')
+			await expect(thread.getByText('Original wording with a typo')).toBeVisible({
+				timeout: 10_000,
+			})
+
+			// The action renders only once the optimistic bubble reconciles with
+			// the persisted row (a real message id) — and must be reachable
+			// without hover, so plain toBeVisible is the touch-viewport check.
+			const editButton = page.getByRole('button', { name: 'Edit message' })
+			await expect(editButton).toBeVisible({ timeout: 10_000 })
+			await editButton.click()
+
+			// After entering edit mode the icon button unmounts, so the label
+			// uniquely addresses the inline textarea.
+			const editor = page.getByLabel('Edit message')
+			await expect(editor).toHaveValue('Original wording with a typo')
+			await editor.fill('Corrected wording, no typo')
+			await page.getByRole('button', { name: 'Save' }).click()
+
+			await expect(thread.getByText('Corrected wording, no typo')).toBeVisible({
+				timeout: 10_000,
+			})
+			await expect(thread.getByText('(edited)')).toBeVisible({ timeout: 10_000 })
+
+			// The edit survives a reload — it was persisted, not just optimistic.
+			await page.reload()
+			await expect(thread.getByText('Corrected wording, no typo')).toBeVisible({
+				timeout: 10_000,
+			})
+			await expect(thread.getByText('(edited)')).toBeVisible({ timeout: 10_000 })
+		})
+
+		test(`retries an agent response from an own message at ${vp.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+			const { conversation } = await setUpConversation(account.api, account.workspaceId)
+
+			await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
+			const composer = page.getByLabel('Message this conversation')
+			await composer.fill('Anyone there? Please respond')
+			await composer.press('Enter')
+
+			const retryButton = page.getByRole('button', { name: 'Ask agents to respond again' })
+			await expect(retryButton).toBeVisible({ timeout: 10_000 })
+			await retryButton.click()
+
+			// The backend accepts the retry (202) and the UI confirms via toast.
+			await expect(page.getByText('Asked the agents to respond')).toBeVisible({
+				timeout: 10_000,
+			})
+		})
+	}
+
+	for (const vp of SHIP_GATE_VIEWPORTS) {
 		test(`a chat started from the UI gets a placeholder title, not the agent's name, at ${vp.label}`, async ({
 			page,
 			account,

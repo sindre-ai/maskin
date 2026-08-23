@@ -281,6 +281,7 @@ export const messageResponseSchema = z.object({
 	metadata: jsonbField,
 	sessionId: z.string().uuid().nullable(),
 	createdAt: z.string().nullable(),
+	editedAt: z.string().nullable(),
 })
 
 export const sessionLogResponseSchema = z.object({

@@ -122,6 +122,13 @@ export const postMessageSchema = z.object({
 	session_id: z.string().uuid().optional(),
 })
 
+export const editMessageSchema = z.object({
+	content: z
+		.string()
+		.min(1, 'Message cannot be empty')
+		.max(MESSAGE_MAX_LENGTH, `Message must be ${MESSAGE_MAX_LENGTH} characters or fewer.`),
+})
+
 export const messageQuerySchema = z.object({
 	before_id: z.coerce.number().int().positive().optional(),
 	after_id: z.coerce.number().int().positive().optional(),

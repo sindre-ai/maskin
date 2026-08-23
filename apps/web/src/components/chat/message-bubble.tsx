@@ -2,10 +2,14 @@ import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { AttachedFileCard } from '@/components/shared/attached-file-card'
 import { MarkdownContent } from '@/components/shared/markdown-content'
 import { RelativeTime } from '@/components/shared/relative-time'
+import { Button } from '@/components/ui/button'
+import { Textarea } from '@/components/ui/textarea'
+import { useEditMessage, useRetryMessage } from '@/hooks/use-conversation'
 import type { MessageContextNotification, MessageContextObject, MessageResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
-import { Bell, Bot, Box } from 'lucide-react'
+import { Bell, Bot, Box, Pencil, RotateCcw } from 'lucide-react'
+import { useState } from 'react'
 
 interface MessageBubbleProps {
 	workspaceId: string
@@ -43,6 +47,13 @@ export function MessageBubble({
 }: MessageBubbleProps) {
 	const actor = getStoredActor()
 	const isOwn = message.actorId === actor?.id
+	// Real, persisted, own message (not a system row, not an optimistic or
+	// synthetic bubble) — the only kind that can be edited or retried.
+	const canAct = isOwn && !pending && message.id > 0 && message.kind === 'message'
+	const [editing, setEditing] = useState(false)
+	const [draft, setDraft] = useState('')
+	const editMessage = useEditMessage(message.conversationId, workspaceId)
+	const retryMessage = useRetryMessage(message.conversationId, workspaceId)
 	const attachments = message.metadata?.attachments ?? []
 	const contextObjects = message.metadata?.context_objects ?? []
 	const contextNotifications = message.metadata?.context_notifications ?? []
@@ -61,9 +72,19 @@ export function MessageBubble({
 	}
 
 	if (isOwn) {
+		const startEditing = () => {
+			setDraft(message.content)
+			setEditing(true)
+		}
+		const saveEdit = () => {
+			const content = draft.trim()
+			setEditing(false)
+			if (content.length === 0 || content === message.content) return
+			editMessage.mutate({ messageId: message.id, content })
+		}
 		return (
 			<div className="flex justify-end">
-				<div className="flex max-w-[85%] flex-col gap-1">
+				<div className={cn('flex max-w-[85%] flex-col gap-1', editing && 'w-full')}>
 					<div className="flex flex-col gap-1 rounded-md bg-accent px-3 py-2 text-accent-foreground text-sm">
 						{hasContext ? (
 							<MessageContextChips
@@ -91,14 +112,62 @@ export function MessageBubble({
 								))}
 							</ul>
 						) : null}
-						{message.content.length > 0 ? (
+						{editing ? (
+							<div className="flex flex-col gap-2">
+								<Textarea
+									value={draft}
+									onChange={(e) => setDraft(e.target.value)}
+									onKeyDown={(e) => {
+										if (e.key === 'Enter' && !e.shiftKey) {
+											e.preventDefault()
+											saveEdit()
+										}
+										if (e.key === 'Escape') setEditing(false)
+									}}
+									aria-label="Edit message"
+									autoFocus
+									className="bg-bg text-foreground"
+								/>
+								<div className="flex justify-end gap-2">
+									<Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
+										Cancel
+									</Button>
+									<Button size="sm" onClick={saveEdit}>
+										Save
+									</Button>
+								</div>
+							</div>
+						) : message.content.length > 0 ? (
 							<span className="whitespace-pre-wrap">{message.content}</span>
 						) : null}
 					</div>
-					<RelativeTime
-						date={message.createdAt}
-						className="self-end text-[11px] text-muted-foreground"
-					/>
+					<div className="flex items-center justify-end gap-1">
+						{message.editedAt ? (
+							<span className="text-[11px] text-muted-foreground">(edited)</span>
+						) : null}
+						<RelativeTime date={message.createdAt} className="text-[11px] text-muted-foreground" />
+						{canAct && !editing ? (
+							<>
+								<button
+									type="button"
+									onClick={startEditing}
+									aria-label="Edit message"
+									className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground"
+								>
+									<Pencil size={12} aria-hidden />
+								</button>
+								<button
+									type="button"
+									onClick={() => retryMessage.mutate({ messageId: message.id })}
+									disabled={retryMessage.isPending}
+									aria-label="Ask agents to respond again"
+									className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+								>
+									<RotateCcw size={12} aria-hidden />
+								</button>
+							</>
+						) : null}
+					</div>
 				</div>
 			</div>
 		)
@@ -121,10 +190,15 @@ export function MessageBubble({
 							{unconfirmed ? 'Not saved yet' : 'Finishing up…'}
 						</span>
 					) : (
-						<RelativeTime
-							date={message.createdAt}
-							className="shrink-0 text-[11px] text-muted-foreground"
-						/>
+						<>
+							<RelativeTime
+								date={message.createdAt}
+								className="shrink-0 text-[11px] text-muted-foreground"
+							/>
+							{message.editedAt ? (
+								<span className="shrink-0 text-[11px] text-muted-foreground">(edited)</span>
+							) : null}
+						</>
 					)}
 				</div>
 				<div

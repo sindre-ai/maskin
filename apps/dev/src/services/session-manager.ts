@@ -12,6 +12,7 @@ import {
 	events,
 	actors,
 	agentServers,
+	conversationPendingTurns,
 	integrations,
 	objects,
 	relationships,
@@ -270,6 +271,14 @@ export class SessionManager extends EventEmitter {
 	/** Max time to wait for the log stream to drain before parsing usage. */
 	private static readonly LOGS_DRAIN_TIMEOUT_MS = 5000
 	/**
+	 * How long an interactive conversation session may sit with no log
+	 * activity (no user turn, no agent output) before the watchdog closes it
+	 * gracefully as `completed`. Well below the 2h hard timeout: an idle chat
+	 * container serves no one, and the conversation responder transparently
+	 * spawns a fresh session (seeded with history) on the next message.
+	 */
+	private static readonly CHAT_IDLE_CLOSE_MS = 30 * 60 * 1000
+	/**
 	 * Docker's logs(follow:true) endpoint can drop transient (HTTP keepalive
 	 * timeouts, Docker Desktop hiccups, network blips). Without reattaching,
 	 * `session_logs` stops growing and the idle watchdog ~10 min later mistakes
@@ -454,6 +463,88 @@ export class SessionManager extends EventEmitter {
 		return row ?? null
 	}
 
+	/**
+	 * Like findActiveConversationSession, but also matches sessions still on
+	 * their way up (pending/starting/queued). Used by the conversation
+	 * responder to decide between "write now" (running), "buffer the turn
+	 * until stdin attaches" (booting), and "spawn fresh" (none).
+	 */
+	async findConversationSessionAnyActive(
+		conversationId: string,
+		actorId: string,
+	): Promise<typeof sessions.$inferSelect | null> {
+		const [row] = await this.db
+			.select()
+			.from(sessions)
+			.where(
+				and(
+					eq(sessions.conversationId, conversationId),
+					eq(sessions.actorId, actorId),
+					eq(sessions.interactive, true),
+					inArray(sessions.status, ['pending', 'starting', 'queued', 'running']),
+				),
+			)
+			.limit(1)
+		return row ?? null
+	}
+
+	/**
+	 * Delivers every turn buffered in conversation_pending_turns for this
+	 * session's (conversation, agent) pair — messages that arrived while the
+	 * session was still booting. Rows are claimed atomically with
+	 * DELETE ... RETURNING so a concurrent drain (post-boot hook racing the
+	 * responder's own re-check) can't double-deliver a turn. A turn whose
+	 * writeInput fails is logged and NOT re-queued: if this session is dead,
+	 * the next spawned session's seed prompt inlines recent conversation
+	 * history, which covers the lost turn.
+	 */
+	async drainPendingConversationTurns(sessionId: string): Promise<void> {
+		const [session] = await this.db
+			.select({
+				interactive: sessions.interactive,
+				conversationId: sessions.conversationId,
+				actorId: sessions.actorId,
+			})
+			.from(sessions)
+			.where(eq(sessions.id, sessionId))
+			.limit(1)
+		if (!session?.interactive || !session.conversationId) return
+
+		const claimed = await this.db
+			.delete(conversationPendingTurns)
+			.where(
+				and(
+					eq(conversationPendingTurns.conversationId, session.conversationId),
+					eq(conversationPendingTurns.actorId, session.actorId),
+				),
+			)
+			.returning()
+		if (claimed.length === 0) return
+
+		claimed.sort((a, b) => a.messageId - b.messageId)
+		logger.info(`Draining ${claimed.length} buffered conversation turn(s)`, {
+			sessionId,
+			conversationId: session.conversationId,
+		})
+		for (const turn of claimed) {
+			try {
+				await this.writeInput(
+					sessionId,
+					turn.payload as StreamJsonUserMessage,
+					undefined,
+					turn.messageId,
+				)
+			} catch (err) {
+				logger.error('Failed to deliver buffered conversation turn — remaining turns dropped', {
+					sessionId,
+					messageId: turn.messageId,
+					error: String(err),
+				})
+				break
+			}
+		}
+	}
+
 	async startSession(sessionId: string): Promise<void> {
 		const [session] = await this.db
 			.select()
@@ -633,6 +724,19 @@ export class SessionManager extends EventEmitter {
 				entityId: sessionId,
 				data: {},
 			})
+
+			// Deliver any chat messages that arrived while this session was
+			// booting — buffered by the conversation responder instead of being
+			// dropped. Must run after the seed turn (written inside
+			// launchContainer) so turn order matches the conversation.
+			if (session.interactive && session.conversationId) {
+				await this.drainPendingConversationTurns(sessionId).catch((err) =>
+					logger.error('Failed to drain buffered conversation turns after start', {
+						sessionId,
+						error: String(err),
+					}),
+				)
+			}
 
 			logger.info(`Session started: ${sessionId}`, { containerId })
 
@@ -996,7 +1100,10 @@ export class SessionManager extends EventEmitter {
 			.where(eq(sessions.id, sessionId))
 			.limit(1)
 
-		await this.db
+		// CAS on non-terminal status: a session that already completed (e.g. the
+		// watchdog's graceful idle-chat close racing a failed writeInput) must
+		// not be retroactively flipped to failed.
+		const [flipped] = await this.db
 			.update(sessions)
 			.set({
 				status: 'failed',
@@ -1005,7 +1112,14 @@ export class SessionManager extends EventEmitter {
 				currentActivity: null,
 				updatedAt: new Date(),
 			})
-			.where(eq(sessions.id, sessionId))
+			.where(
+				and(
+					eq(sessions.id, sessionId),
+					notInArray(sessions.status, ['completed', 'failed', 'timeout']),
+				),
+			)
+			.returning({ id: sessions.id })
+		if (!flipped) return
 
 		await this.insertSystemLog(
 			sessionId,
@@ -2643,6 +2757,131 @@ export class SessionManager extends EventEmitter {
 		})
 	}
 
+	/**
+	 * Gracefully closes an idle interactive conversation session as
+	 * `completed`. The row is CAS-flipped to terminal BEFORE the container
+	 * teardown, so the local exit watcher (`handleCompletion`) and a remote
+	 * agent-server `/complete` report both see a terminal status and skip
+	 * reprocessing — neither can re-mark the session failed afterwards. A CAS
+	 * miss (something else already transitioned the row) is a silent no-op.
+	 */
+	private async completeIdleChatSession(session: typeof sessions.$inferSelect): Promise<void> {
+		const now = new Date()
+		const [updated] = await this.db
+			.update(sessions)
+			.set({
+				status: 'completed',
+				result: { summary: 'Conversation went idle — session closed' },
+				completedAt: now,
+				currentActivity: null,
+				updatedAt: now,
+			})
+			.where(and(eq(sessions.id, session.id), eq(sessions.status, 'running')))
+			.returning()
+		if (!updated) return
+
+		logger.info(`Completing idle chat session: ${session.id}`, {
+			conversationId: session.conversationId,
+		})
+
+		// Push learnings before destroying the container (local path only — a
+		// remote session's workspace is pushed from the agent-server side).
+		const sessionData = this.activeSessions.get(session.id)
+		if (sessionData) {
+			await this.agentStorage
+				.pushAgentFiles(session.actorId, session.workspaceId, session.id, sessionData.tempDir, {
+					actionPrompt: session.actionPrompt,
+				})
+				.catch((err) =>
+					logger.warn('Failed to push learnings on idle chat close', {
+						sessionId: session.id,
+						error: String(err),
+					}),
+				)
+		}
+
+		if (session.agentServerId) {
+			const [serverRow] = await this.db
+				.select({ id: agentServers.id, url: agentServers.url, secret: agentServers.secret })
+				.from(agentServers)
+				.where(eq(agentServers.id, session.agentServerId))
+				.limit(1)
+			if (serverRow) {
+				const client = new AgentServerClient({ server: serverRow })
+				await client.stopSession(session.id).catch((err) =>
+					logger.warn('Failed to stop remote sandbox for idle chat session', {
+						sessionId: session.id,
+						error: String(err),
+					}),
+				)
+			}
+		} else if (session.containerId) {
+			this.containers.detachStdin(session.id)
+			await this.containers.stop(session.containerId).catch((err) =>
+				logger.warn('Failed to stop idle chat container', {
+					sessionId: session.id,
+					containerId: session.containerId,
+					error: String(err),
+				}),
+			)
+			await this.containers.remove(session.containerId).catch((err) =>
+				logger.warn('Failed to remove idle chat container', {
+					sessionId: session.id,
+					containerId: session.containerId,
+					error: String(err),
+				}),
+			)
+		}
+
+		// Only sync the agent to idle if this was its last active session.
+		if (!(await this.hasOtherActiveSessions(session.actorId, session.id))) {
+			await this.db
+				.update(actors)
+				.set({ agentState: 'idle', agentStateUpdatedAt: now, updatedAt: now })
+				.where(eq(actors.id, session.actorId))
+				.catch((err) =>
+					logger.warn('Failed to sync agentState after idle chat close', {
+						sessionId: session.id,
+						error: String(err),
+					}),
+				)
+		}
+
+		await this.db.insert(events).values({
+			workspaceId: session.workspaceId,
+			actorId: session.actorId,
+			action: 'session_completed',
+			entityType: 'session',
+			entityId: session.id,
+			data: { reason: 'idle_conversation' },
+		})
+
+		this.telemetry.recordSessionEnded({
+			sessionId: session.id,
+			endReason: 'completed',
+			durationMs: elapsedMs(session.startedAt, session.createdAt),
+			agentServerUrl: LOCAL_RUNTIME_BUCKET,
+		})
+
+		// Prefix must stay 'Session completed' — the SSE /logs/stream endpoint
+		// matches it to emit its `done` event (TERMINAL_SYSTEM_LOGS in
+		// routes/sessions.ts).
+		await this.insertSystemLog(session.id, 'Session completed — conversation idle').catch((err) =>
+			logger.warn('Failed to write idle chat close system log', {
+				sessionId: session.id,
+				error: String(err),
+			}),
+		)
+
+		await this.clearActiveSession(session.id)
+		await this.cleanupBrowserSidecar(session.id)
+		await this.cleanupSession(session.id)
+
+		await this.drainQueue(session.workspaceId).catch((err) =>
+			logger.error('Failed to drain queue after idle chat close', { error: String(err) }),
+		)
+	}
+
 	private async runWatchdog(): Promise<void> {
 		const now = new Date()
 		const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000)
@@ -2654,7 +2893,17 @@ export class SessionManager extends EventEmitter {
 			.where(and(eq(sessions.status, 'running'), lt(sessions.timeoutAt, now)))
 
 		for (const session of timedOut) {
-			logger.warn(`Session timed out: ${session.id}`)
+			// An interactive chat session reaching its timeout is the natural end
+			// of an idle conversation, not a failure — the user simply stopped
+			// writing. Close it out as completed; the conversation responder
+			// spawns a fresh session on the next message. Everything below that
+			// tears down the container is identical either way.
+			const idleChatEnd = session.interactive && session.conversationId !== null
+			if (idleChatEnd) {
+				logger.info(`Idle chat session reached timeout, completing: ${session.id}`)
+			} else {
+				logger.warn(`Session timed out: ${session.id}`)
+			}
 
 			// Push learnings before destroying container
 			const sessionData = this.activeSessions.get(session.id)
@@ -2692,8 +2941,10 @@ export class SessionManager extends EventEmitter {
 			await this.db
 				.update(sessions)
 				.set({
-					status: 'timeout',
-					result: { error: 'Session timed out' },
+					status: idleChatEnd ? 'completed' : 'timeout',
+					result: idleChatEnd
+						? { summary: 'Conversation session ended after being idle' }
+						: { error: 'Session timed out' },
 					completedAt: now,
 					currentActivity: null,
 					updatedAt: now,
@@ -2717,20 +2968,26 @@ export class SessionManager extends EventEmitter {
 			await this.db.insert(events).values({
 				workspaceId: session.workspaceId,
 				actorId: session.actorId,
-				action: 'session_timeout',
+				action: idleChatEnd ? 'session_completed' : 'session_timeout',
 				entityType: 'session',
 				entityId: session.id,
-				data: {},
+				data: idleChatEnd ? { reason: 'idle_conversation' } : {},
 			})
 
 			this.telemetry.recordSessionEnded({
 				sessionId: session.id,
-				endReason: 'irrecoverable',
+				endReason: idleChatEnd ? 'completed' : 'irrecoverable',
 				durationMs: elapsedMs(session.startedAt, session.createdAt),
 				agentServerUrl: LOCAL_RUNTIME_BUCKET,
 			})
 
-			await this.insertSystemLog(session.id, 'Session timed out').catch((err) =>
+			// Prefix must stay 'Session completed' / 'Session timed out' — the SSE
+			// /logs/stream endpoint matches these prefixes to emit its `done` event
+			// (TERMINAL_SYSTEM_LOGS in routes/sessions.ts).
+			await this.insertSystemLog(
+				session.id,
+				idleChatEnd ? 'Session completed — conversation idle' : 'Session timed out',
+			).catch((err) =>
 				logger.warn('Failed to write timeout system log', {
 					sessionId: session.id,
 					error: String(err),
@@ -2766,14 +3023,19 @@ export class SessionManager extends EventEmitter {
 				),
 			)
 		for (const session of stuckAgentSessions) {
+			// Same graceful close-out for idle chat sessions as the primary reaper
+			// above — a conversation going quiet for 2h is not a failure.
+			const idleChatEnd = session.interactive && session.conversationId !== null
 			logger.warn('Reaping stuck agent-server session (no timeoutAt, past default 2h limit)', {
 				sessionId: session.id,
 			})
 			await this.db
 				.update(sessions)
 				.set({
-					status: 'timeout',
-					result: { error: 'Session timed out' },
+					status: idleChatEnd ? 'completed' : 'timeout',
+					result: idleChatEnd
+						? { summary: 'Conversation session ended after being idle' }
+						: { error: 'Session timed out' },
 					completedAt: now,
 					currentActivity: null,
 					updatedAt: now,
@@ -2781,6 +3043,42 @@ export class SessionManager extends EventEmitter {
 				.where(eq(sessions.id, session.id))
 			await this.drainQueue(session.workspaceId).catch((err) =>
 				logger.error('Failed to drain queue after stuck agent-server session reap', {
+					error: String(err),
+				}),
+			)
+		}
+
+		// 2.5 Gracefully complete idle interactive conversation sessions well
+		// before the 2h hard timeout. Idle is measured from the last
+		// session_logs row — a user turn (persisted by writeInput) or any agent
+		// output resets the clock, so a session mid-work is never touched. The
+		// close is a success, not a failure: the conversation responder spawns
+		// a fresh session (seeded with history) on the next message.
+		const chatIdleCutoff = new Date(Date.now() - SessionManager.CHAT_IDLE_CLOSE_MS)
+		const idleChatCandidates = await this.db
+			.select()
+			.from(sessions)
+			.where(
+				and(
+					eq(sessions.status, 'running'),
+					eq(sessions.interactive, true),
+					isNotNull(sessions.conversationId),
+					// Sessions younger than the idle window can't be idle-closed yet.
+					lt(sessions.startedAt, chatIdleCutoff),
+				),
+			)
+		for (const session of idleChatCandidates) {
+			const [lastLog] = await this.db
+				.select({ createdAt: sessionLogs.createdAt })
+				.from(sessionLogs)
+				.where(eq(sessionLogs.sessionId, session.id))
+				.orderBy(desc(sessionLogs.createdAt))
+				.limit(1)
+			const lastActivity = lastLog?.createdAt ?? session.startedAt
+			if (!lastActivity || lastActivity >= chatIdleCutoff) continue
+			await this.completeIdleChatSession(session).catch((err) =>
+				logger.error('Failed to complete idle chat session', {
+					sessionId: session.id,
 					error: String(err),
 				}),
 			)

@@ -1,6 +1,7 @@
 import { MessageBubble } from '@/components/chat/message-bubble'
 import type { MessageResponse } from '@/lib/api'
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { TestWrapper } from '../../setup'
 
@@ -20,6 +21,7 @@ function buildMessage(overrides: Partial<MessageResponse> = {}): MessageResponse
 		metadata: null,
 		sessionId: null,
 		createdAt: new Date().toISOString(),
+		editedAt: null,
 		...overrides,
 	}
 }
@@ -109,5 +111,36 @@ describe('MessageBubble pending final output', () => {
 		const message = { ...agentMessage(), createdAt: new Date().toISOString() }
 		render(<MessageBubble workspaceId="ws-1" message={message} />, { wrapper: TestWrapper })
 		expect(screen.queryByText('Finishing up…')).not.toBeInTheDocument()
+	})
+})
+
+describe('MessageBubble edit and retry', () => {
+	it('shows edit and retry actions on own persisted messages', () => {
+		render(<MessageBubble workspaceId="ws-1" message={buildMessage()} />, { wrapper: TestWrapper })
+		expect(screen.getByLabelText('Edit message')).toBeInTheDocument()
+		expect(screen.getByLabelText('Ask agents to respond again')).toBeInTheDocument()
+	})
+
+	it("hides the actions on other participants' messages", () => {
+		const message = buildMessage({ actorId: 'other-1', actorName: 'Someone Else' })
+		render(<MessageBubble workspaceId="ws-1" message={message} />, { wrapper: TestWrapper })
+		expect(screen.queryByLabelText('Edit message')).not.toBeInTheDocument()
+		expect(screen.queryByLabelText('Ask agents to respond again')).not.toBeInTheDocument()
+	})
+
+	it('opens an inline editor prefilled with the current content when edit is clicked', async () => {
+		const user = userEvent.setup()
+		render(<MessageBubble workspaceId="ws-1" message={buildMessage()} />, { wrapper: TestWrapper })
+		await user.click(screen.getByLabelText('Edit message'))
+		const editor = screen.getByLabelText('Edit message', { selector: 'textarea' })
+		expect(editor).toHaveValue('hey team')
+		expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument()
+	})
+
+	it('marks edited messages with an (edited) label', () => {
+		const message = buildMessage({ editedAt: new Date().toISOString() })
+		render(<MessageBubble workspaceId="ws-1" message={message} />, { wrapper: TestWrapper })
+		expect(screen.getByText('(edited)')).toBeInTheDocument()
 	})
 })
