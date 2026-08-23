@@ -7,14 +7,14 @@ export const queryKeys = {
 		listInfinite: (workspaceId: string, filters?: Record<string, unknown>) =>
 			['objects', workspaceId, 'listInfinite', filters] as const,
 		listInfinitePrefix: (workspaceId: string) => ['objects', workspaceId, 'listInfinite'] as const,
+		search: (workspaceId: string, params?: Record<string, unknown>) =>
+			['objects', workspaceId, 'search', params] as const,
 		board: (workspaceId: string, filters?: Record<string, unknown>) =>
 			['objects', workspaceId, 'board', filters] as const,
 		boardPrefix: (workspaceId: string) => ['objects', workspaceId, 'board'] as const,
 		detail: (id: string) => ['objects', 'detail', id] as const,
 		graph: (id: string) => ['objects', 'graph', id] as const,
 		references: (id: string) => ['objects', 'references', id] as const,
-		search: (workspaceId: string, params?: Record<string, string>) =>
-			['objects', workspaceId, 'search', params] as const,
 	},
 	bets: {
 		all: (workspaceId: string) => ['bets', workspaceId] as const,
@@ -29,6 +29,7 @@ export const queryKeys = {
 		messages: (id: string, filters?: Record<string, unknown>) =>
 			['conversations', 'detail', id, 'messages', filters] as const,
 		messagesPrefix: (id: string) => ['conversations', 'detail', id, 'messages'] as const,
+		unreadCount: (workspaceId: string) => ['conversations', workspaceId, 'unreadCount'] as const,
 	},
 	actors: {
 		all: (workspaceId?: string) => ['actors', workspaceId] as const,
@@ -116,6 +117,10 @@ export const queryKeys = {
 	},
 	briefing: {
 		current: (workspaceId: string) => ['briefing', workspaceId] as const,
+	},
+	billing: {
+		all: (workspaceId: string) => ['billing', workspaceId] as const,
+		summary: (workspaceId: string) => ['billing', workspaceId, 'summary'] as const,
 	},
 	subscriptions: {
 		subscribers: (entityType: string, entityId: string) =>

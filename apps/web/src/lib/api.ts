@@ -315,6 +315,19 @@ export const api = {
 					method: 'POST',
 					body: data,
 				}),
+			// NOT YET LIVE — `apps/dev/src/routes/workspaces.ts` implements only POST
+			// and GET on `/{id}/members`; there is no PATCH or DELETE on
+			// `/{id}/members/{actorId}`. Landed ahead of the server work for the
+			// member-management screen; both calls 404 until those routes ship.
+			updateRole: (workspaceId: string, actorId: string, role: string) =>
+				request<MemberResponse>(`/workspaces/${workspaceId}/members/${actorId}`, {
+					method: 'PATCH',
+					body: { role },
+				}),
+			remove: (workspaceId: string, actorId: string) =>
+				request<{ removed: boolean }>(`/workspaces/${workspaceId}/members/${actorId}`, {
+					method: 'DELETE',
+				}),
 		},
 	},
 
@@ -451,6 +464,10 @@ export const api = {
 			}),
 		stop: (id: string, workspaceId: string) =>
 			request<SessionResponse>(`/sessions/${id}/stop`, { method: 'POST', workspaceId }),
+		pause: (id: string, workspaceId: string) =>
+			request<SessionResponse>(`/sessions/${id}/pause`, { method: 'POST', workspaceId }),
+		resume: (id: string, workspaceId: string) =>
+			request<SessionResponse>(`/sessions/${id}/resume`, { method: 'POST', workspaceId }),
 		usage: (
 			workspaceId: string,
 			params: { actor_id: string; from: string; to: string; bucket: 'hour' | 'day' | 'week' },
@@ -535,6 +552,34 @@ export const api = {
 			}),
 	},
 
+	// NOT YET LIVE — no billing routes exist on the backend today. This client
+	// surface is landed ahead of the server work so the billing screens can be
+	// built against a settled shape; every call here currently 404s, so nothing
+	// in the app may call it until the routes ship.
+	//
+	// When the backend lands, re-check before wiring anything up: the paths
+	// (`/billing`, `/billing/checkout`, `/billing/complete`, `/billing/portal`),
+	// the request bodies, and `BillingSummaryResponse`/`BillingCheckoutResponse`
+	// below — they are a forward guess, not a contract the server has agreed to.
+	// The billing status tokens in `lib/constants.ts` are the matching half.
+	billing: {
+		summary: (workspaceId: string) => request<BillingSummaryResponse>('/billing', { workspaceId }),
+		startCheckout: (workspaceId: string, invoiceEmail?: string) =>
+			request<BillingCheckoutResponse>('/billing/checkout', {
+				method: 'POST',
+				body: invoiceEmail ? { invoiceEmail } : {},
+				workspaceId,
+			}),
+		complete: (workspaceId: string, paymentIntentId: string, invoiceEmail?: string) =>
+			request<BillingSummaryResponse>('/billing/complete', {
+				method: 'POST',
+				body: invoiceEmail ? { paymentIntentId, invoiceEmail } : { paymentIntentId },
+				workspaceId,
+			}),
+		portal: (workspaceId: string) =>
+			request<{ url: string }>('/billing/portal', { method: 'POST', workspaceId }),
+	},
+
 	marketplaceLoops: {
 		list: (params?: { type?: string; use_case?: string; q?: string }) => {
 			const qs = params
@@ -576,10 +621,10 @@ export const api = {
 				`/installed-loops?workspaceId=${encodeURIComponent(workspaceId)}`,
 				{ workspaceId },
 			),
-		install: (workspaceId: string, loopId: string) =>
+		install: (workspaceId: string, loopId: string, source?: 'detail') =>
 			request<InstalledLoopInstallResponse>('/installed-loops', {
 				method: 'POST',
-				body: { loopId, workspaceId },
+				body: { loopId, workspaceId, ...(source ? { source } : {}) },
 				workspaceId,
 			}),
 		fork: (workspaceId: string, installedLoopId: string) =>
@@ -1520,6 +1565,11 @@ export interface CreateCommentInput {
 	mentions?: string[]
 	parent_event_id?: number
 	attachment_file_ids?: string[]
+	/** Structured extras the backend already accepts on `POST /events`
+	 *  (`createCommentSchema.metadata`, a `safeMetadataSchema` record). Today the
+	 *  UI writes `{ chips: string[] }` from the composer's "Attach a decision"
+	 *  affordance; `DecisionChips` renders them under the posted comment. */
+	metadata?: Record<string, unknown>
 }
 
 // Imports
@@ -1686,4 +1736,37 @@ interface InstalledLoopForkResponse {
 	installedAt: string | null
 	updatedAt: string | null
 	detached: { actors: number; triggers: number; skills: number; integrations: number }
+}
+
+export interface BillingPlanResponse {
+	planId: string
+	planLabel: string | null
+	status: string
+	priceCents: number | null
+	currency: string
+	nextChargeAt: string | null
+}
+
+export interface BillingInvoiceResponse {
+	id: string
+	description: string
+	amountCents: number
+	currency: string
+	status: string
+	billedAt: string
+}
+
+export interface BillingSummaryResponse {
+	configured: boolean
+	testMode: boolean
+	publishableKey: string | null
+	plan: BillingPlanResponse
+	invoiceEmail: string | null
+	invoices: BillingInvoiceResponse[]
+}
+
+export interface BillingCheckoutResponse {
+	clientSecret: string
+	testMode: boolean
+	plan: BillingPlanResponse
 }
