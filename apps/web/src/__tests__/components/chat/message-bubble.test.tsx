@@ -144,3 +144,27 @@ describe('MessageBubble edit and retry', () => {
 		expect(screen.getByText('(edited)')).toBeInTheDocument()
 	})
 })
+
+describe('MessageBubble redo on agent responses', () => {
+	it('shows a redo action on an agent final-output message that knows its triggering message', () => {
+		const message = buildMessage({
+			actorId: 'agent-1',
+			actorName: 'Builder',
+			actorType: 'agent',
+			metadata: { source: 'final_output', final_output: { dedupe_key: 'k1', message_id: 42 } },
+		})
+		render(<MessageBubble workspaceId="ws-1" message={message} />, { wrapper: TestWrapper })
+		expect(screen.getByLabelText('Redo this response')).toBeInTheDocument()
+	})
+
+	it('hides the redo action when the triggering message is unknown', () => {
+		const message = buildMessage({
+			actorId: 'agent-1',
+			actorName: 'Builder',
+			actorType: 'agent',
+			metadata: { source: 'final_output', final_output: { dedupe_key: 'k1', message_id: null } },
+		})
+		render(<MessageBubble workspaceId="ws-1" message={message} />, { wrapper: TestWrapper })
+		expect(screen.queryByLabelText('Redo this response')).not.toBeInTheDocument()
+	})
+})

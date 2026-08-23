@@ -1,6 +1,7 @@
 import {
 	events,
 	agentServers,
+	conversationParticipants,
 	conversationPendingTurns,
 	conversations,
 	messages,
@@ -10,7 +11,7 @@ import {
 import type { StorageProvider } from '@maskin/storage'
 import { asc, eq } from 'drizzle-orm'
 import { SessionManager } from '../../services/session-manager'
-import { insertSession, insertSessionLog, insertWorkspace } from '../factories'
+import { insertActor, insertSession, insertSessionLog, insertWorkspace } from '../factories'
 import { db, getTestActorId, sql } from './global-setup'
 
 function stubStorage(): StorageProvider {
@@ -278,6 +279,87 @@ describe('SessionManager conversation-turn drain + idle chat close (Integration)
 			const eventRows = await db.select().from(events).where(eq(events.entityId, session.id))
 			expect(eventRows.some((e) => e.action === 'session_completed')).toBe(true)
 			expect(eventRows.some((e) => e.action === 'session_timeout')).toBe(false)
+		})
+
+		it('re-runs the responder for a human message no agent ever acted on', async () => {
+			const agent = await insertActor(db, { type: 'agent' })
+			const conversation = await insertConversation(workspaceId, actorId)
+			await db.insert(conversationParticipants).values([
+				{ conversationId: conversation.id, actorId },
+				{ conversationId: conversation.id, actorId: agent.id },
+			])
+			// A settled message (3 min old) with zero responder traces — the
+			// shape a backend restart leaves behind.
+			await db.insert(messages).values({
+				conversationId: conversation.id,
+				actorId,
+				content: 'is anyone going to answer this?',
+				createdAt: new Date(Date.now() - 3 * 60 * 1000),
+			})
+
+			const manager = new SessionManager(db, stubStorage())
+			try {
+				await manager.sweepUnansweredConversationMessages()
+			} finally {
+				await manager.stop()
+			}
+
+			// The responder ran and spawned a session for the agent — the reply
+			// pipeline is moving again instead of staying silent forever.
+			const spawned = await db
+				.select()
+				.from(sessions)
+				.where(eq(sessions.conversationId, conversation.id))
+			expect(spawned).toHaveLength(1)
+			expect(spawned[0]?.actorId).toBe(agent.id)
+			expect(spawned[0]?.interactive).toBe(true)
+		})
+
+		it('does not re-run for a message already delivered to a running session', async () => {
+			const agent = await insertActor(db, { type: 'agent' })
+			const conversation = await insertConversation(workspaceId, actorId)
+			await db.insert(conversationParticipants).values([
+				{ conversationId: conversation.id, actorId },
+				{ conversationId: conversation.id, actorId: agent.id },
+			])
+			// Session predates the message (reused long-lived chat session), so
+			// only the tagged stdin log row proves the turn was delivered.
+			const session = await insertSession(db, workspaceId, agent.id, actorId, {
+				status: 'running',
+				interactive: true,
+				conversationId: conversation.id,
+				createdAt: new Date(Date.now() - 10 * 60 * 1000),
+			})
+			const [message] = await db
+				.insert(messages)
+				.values({
+					conversationId: conversation.id,
+					actorId,
+					content: 'already handled',
+					createdAt: new Date(Date.now() - 3 * 60 * 1000),
+				})
+				.returning()
+			if (!message) throw new Error('failed to insert message')
+			await insertSessionLog(db, session.id, {
+				content: JSON.stringify({
+					type: 'user',
+					message: { role: 'user', content: 'already handled' },
+					maskin_message_id: message.id,
+				}),
+			})
+
+			const manager = new SessionManager(db, stubStorage())
+			try {
+				await manager.sweepUnansweredConversationMessages()
+			} finally {
+				await manager.stop()
+			}
+
+			const rows = await db
+				.select()
+				.from(sessions)
+				.where(eq(sessions.conversationId, conversation.id))
+			expect(rows).toHaveLength(1)
 		})
 
 		it('still marks a non-conversation session hitting the hard timeout as timeout', async () => {

@@ -54,6 +54,18 @@ export function MessageBubble({
 	const [draft, setDraft] = useState('')
 	const editMessage = useEditMessage(message.conversationId, workspaceId)
 	const retryMessage = useRetryMessage(message.conversationId, workspaceId)
+	// An agent's auto-posted end-of-turn reply carries the id of the chat
+	// message whose turn produced it — that's the message to re-run when the
+	// user wants the agent to redo this response ("regenerate").
+	const finalOutputMessageId = message.metadata?.final_output?.message_id
+	const redoMessageId =
+		!isOwn &&
+		!pending &&
+		message.id > 0 &&
+		message.metadata?.source === 'final_output' &&
+		typeof finalOutputMessageId === 'number'
+			? finalOutputMessageId
+			: null
 	const attachments = message.metadata?.attachments ?? []
 	const contextObjects = message.metadata?.context_objects ?? []
 	const contextNotifications = message.metadata?.context_notifications ?? []
@@ -238,6 +250,18 @@ export function MessageBubble({
 						<MarkdownContent content={message.content} size="sm" />
 					) : null}
 				</div>
+				{redoMessageId !== null ? (
+					<button
+						type="button"
+						onClick={() => retryMessage.mutate({ messageId: redoMessageId })}
+						disabled={retryMessage.isPending}
+						aria-label="Redo this response"
+						className="flex w-fit items-center gap-1 rounded p-0.5 text-[11px] text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+					>
+						<RotateCcw size={11} aria-hidden />
+						Redo
+					</button>
+				) : null}
 			</div>
 		</div>
 	)

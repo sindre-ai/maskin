@@ -13,7 +13,9 @@ import {
 	actors,
 	agentServers,
 	conversationPendingTurns,
+	conversations,
 	integrations,
+	messages,
 	objects,
 	relationships,
 	sessionLogs,
@@ -29,9 +31,11 @@ import {
 	count as countFn,
 	desc,
 	eq,
+	gte,
 	inArray,
 	isNotNull,
 	isNull,
+	like,
 	lt,
 	ne,
 	notInArray,
@@ -83,6 +87,9 @@ import {
 } from './agent-server-client'
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
 import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
+// Safe to import at runtime: conversation-responder only references this
+// module as `import type`, so there is no import cycle.
+import { evaluateAndRespond } from './conversation-responder'
 import { InteractiveTurnFinalizer } from './interactive-turn-finalizer'
 import { type RuntimeEndReason, RuntimeTelemetry } from './runtime-telemetry'
 import type { SessionDispatchQueue } from './session-dispatch-queue'
@@ -314,6 +321,8 @@ export class SessionManager extends EventEmitter {
 	 * without standing up Docker.
 	 */
 	readonly turnFinalizer: InteractiveTurnFinalizer
+	/** Message ids already retried once by sweepUnansweredConversationMessages. */
+	private readonly sweptMessageIds = new Set<number>()
 
 	constructor(
 		private db: Database,
@@ -2559,6 +2568,13 @@ export class SessionManager extends EventEmitter {
 					result: {
 						exit_code: exitCode,
 						...(failureReason ? { failure_reason: failureReason } : {}),
+						// Read (not deleted) here — the telemetry emit below still
+						// consumes the flag via stopRequested.delete(). Distinct from
+						// the remote path's provisional `stopped_by_user` marker
+						// (which gates markRemoteSessionComplete's CAS overwrite):
+						// this one only tells the UI to render a user-initiated stop
+						// as "stopped", not a failure.
+						...(this.stopRequested.has(sessionId) ? { user_stop_requested: true } : {}),
 					},
 					completedAt: new Date(),
 					updatedAt: new Date(),
@@ -3283,6 +3299,137 @@ export class SessionManager extends EventEmitter {
 				logger.error('Failed to drain queue in watchdog', { workspaceId, error: String(err) }),
 			)
 		}
+
+		// 8. Re-run the conversation responder for recent human messages no
+		// agent ever acted on. evaluateAndRespond is fire-and-forget in-process
+		// — a backend restart between a message's commit and its session spawn
+		// loses the reply with nothing to retry it. This sweep turns that
+		// permanent silence into a late answer.
+		await this.sweepUnansweredConversationMessages().catch((err) =>
+			logger.error('Conversation responder sweep failed', { error: String(err) }),
+		)
+	}
+
+	/**
+	 * Finds human messages 90s–15min old that are still the newest message in
+	 * a conversation with agent participants, where no trace of responder
+	 * handling exists — no session spawned since the message, no buffered
+	 * pending turn, and no user turn tagged with the message id delivered to
+	 * a session's stdin — and re-runs evaluateAndRespond for them. Each
+	 * message is swept at most once per process lifetime (in-memory set):
+	 * the sweep exists to recover from a restart, after which the set is
+	 * empty again, and a bounded one-shot retry can't turn a legitimately
+	 * declined group-chat message into a nag loop.
+	 */
+	async sweepUnansweredConversationMessages(): Promise<void> {
+		const now = Date.now()
+		const oldestCutoff = new Date(now - 15 * 60 * 1000)
+		const settleCutoff = new Date(now - 90 * 1000)
+
+		// Literal table names inside the correlated subqueries — interpolating
+		// Drizzle column objects here renders unqualified (see
+		// known-pitfalls.md's correlated-subquery entry).
+		const candidates = await this.db
+			.select({
+				id: messages.id,
+				conversationId: messages.conversationId,
+				workspaceId: conversations.workspaceId,
+				createdAt: messages.createdAt,
+			})
+			.from(messages)
+			.innerJoin(actors, eq(actors.id, messages.actorId))
+			.innerJoin(conversations, eq(conversations.id, messages.conversationId))
+			.where(
+				and(
+					eq(messages.kind, 'message'),
+					eq(actors.type, 'human'),
+					gte(messages.createdAt, oldestCutoff),
+					lt(messages.createdAt, settleCutoff),
+					sql`NOT EXISTS (
+						SELECT 1 FROM messages m2
+						WHERE m2.conversation_id = messages.conversation_id AND m2.id > messages.id
+					)`,
+					sql`EXISTS (
+						SELECT 1 FROM conversation_participants cp
+						JOIN actors a2 ON a2.id = cp.actor_id
+						WHERE cp.conversation_id = messages.conversation_id
+							AND cp.left_at IS NULL
+							AND a2.type = 'agent'
+					)`,
+				),
+			)
+			.limit(20)
+
+		for (const candidate of candidates) {
+			if (this.sweptMessageIds.has(candidate.id)) continue
+
+			// Handled if the responder buffered it for a booting session…
+			const [buffered] = await this.db
+				.select({ id: conversationPendingTurns.id })
+				.from(conversationPendingTurns)
+				.where(eq(conversationPendingTurns.messageId, candidate.id))
+				.limit(1)
+			if (buffered) continue
+
+			// …or spawned a session for it (any status — even a failed spawn
+			// proves the responder ran and surfaced its outcome in the chat)…
+			const spawnedSince = candidate.createdAt
+				? await this.db
+						.select({ id: sessions.id })
+						.from(sessions)
+						.where(
+							and(
+								eq(sessions.conversationId, candidate.conversationId),
+								gte(sessions.createdAt, candidate.createdAt),
+							),
+						)
+						.limit(1)
+				: []
+			if (spawnedSince.length > 0) continue
+
+			// …or delivered it to an already-running session's stdin (writeInput
+			// persists the turn envelope tagged with maskin_message_id; the tag
+			// is always the last JSON key, hence the closing brace in the match).
+			const [delivered] = await this.db
+				.select({ id: sessionLogs.id })
+				.from(sessionLogs)
+				.innerJoin(sessions, eq(sessions.id, sessionLogs.sessionId))
+				.where(
+					and(
+						eq(sessions.conversationId, candidate.conversationId),
+						like(sessionLogs.content, `%"maskin_message_id":${candidate.id}}%`),
+					),
+				)
+				.limit(1)
+			if (delivered) continue
+
+			this.rememberSweptMessage(candidate.id)
+			logger.info('Responder sweep re-running unhandled conversation message', {
+				conversationId: candidate.conversationId,
+				messageId: candidate.id,
+			})
+			await evaluateAndRespond({
+				db: this.db,
+				sessionManager: this,
+				workspaceId: candidate.workspaceId,
+				conversationId: candidate.conversationId,
+				messageId: candidate.id,
+			}).catch((err) =>
+				logger.error('Responder sweep evaluateAndRespond failed', {
+					conversationId: candidate.conversationId,
+					messageId: candidate.id,
+					error: String(err),
+				}),
+			)
+		}
+	}
+
+	private rememberSweptMessage(messageId: number): void {
+		if (this.sweptMessageIds.size >= 500) {
+			const oldest = this.sweptMessageIds.values().next().value
+			if (oldest !== undefined) this.sweptMessageIds.delete(oldest)
+		}
+		this.sweptMessageIds.add(messageId)
 	}
 
 	private async reportSkillPullFailures(
@@ -3741,7 +3888,18 @@ export class SessionManager extends EventEmitter {
 					.update(sessions)
 					.set({
 						status,
-						result,
+						// A genuine completion report is allowed to overwrite the
+						// provisional stopSession() write (see the CAS condition
+						// below), clearing the `stopped_by_user` marker that gates
+						// that overwrite — but the fact that the user asked for the
+						// stop must survive, or the UI flips a user-initiated stop
+						// into a scary "failed" a few seconds after showing it
+						// correctly. Carry it forward as `user_stop_requested`, a
+						// UI-only flag the CAS never looks at, so the row can't be
+						// overwritten a second time.
+						result: stoppedByUser
+							? result
+							: sql`${JSON.stringify(result)}::jsonb || (CASE WHEN ${sessions.result} ->> 'stopped_by_user' = 'true' OR ${sessions.result} ->> 'user_stop_requested' = 'true' THEN '{"user_stop_requested": true}'::jsonb ELSE '{}'::jsonb END)`,
 						completedAt: new Date(),
 						updatedAt: new Date(),
 						currentActivity: null,

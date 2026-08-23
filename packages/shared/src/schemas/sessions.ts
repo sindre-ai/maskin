@@ -291,5 +291,12 @@ export const sessionResultSchema = z.object({
 	// to overwrite a record still carrying this marker with the real exit code;
 	// it is never set on a genuine report itself.
 	stopped_by_user: z.boolean().optional(),
+	// The user asked for this session to stop. Unlike `stopped_by_user` (the
+	// provisional-write marker that gates markRemoteSessionComplete's CAS
+	// overwrite), this is a pure UI flag: it survives the genuine completion
+	// report so a user-initiated stop keeps rendering as "stopped", never as
+	// a failure. Set by the local handleCompletion path and carried forward
+	// by markRemoteSessionComplete when it overwrites a provisional stop.
+	user_stop_requested: z.boolean().optional(),
 })
 export type SessionResult = z.infer<typeof sessionResultSchema>

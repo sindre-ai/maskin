@@ -152,6 +152,7 @@ export function ThreadMessages({ workspaceId, conversationId, className }: Threa
 							{turnsAbove.map((turn, turnIndex) => (
 								<MessageActivity
 									key={`${turn.sessionId}-above-${turnIndex}`}
+									workspaceId={workspaceId}
 									turn={turn}
 									{...olderActivityProps(turn)}
 								/>
@@ -164,6 +165,7 @@ export function ThreadMessages({ workspaceId, conversationId, className }: Threa
 							{turnsBelowHere.map((turn, turnIndex) => (
 								<MessageActivity
 									key={`${turn.sessionId}-below-${turnIndex}`}
+									workspaceId={workspaceId}
 									turn={turn}
 									{...olderActivityProps(turn)}
 								/>

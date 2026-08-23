@@ -18,6 +18,12 @@ export interface MessageTurnActivity {
 	steps: ActivityStep[]
 	/** True for the single most recent turn of a session that hasn't reached a `result` envelope yet. */
 	inProgress: boolean
+	/**
+	 * True while the session is still booting (pending/starting/queued) — the
+	 * spinner shows so the user knows a reply is on its way, but there is no
+	 * live process to stop yet, so the stop control stays hidden.
+	 */
+	starting?: boolean
 	/** True when the session that would have produced this turn failed before (or shortly after) starting. */
 	failed?: boolean
 	/**
@@ -143,6 +149,13 @@ export function useConversationActivity(
 	}
 	const latestSessions = [...latestByActor.values()]
 	const activeSessions = latestSessions.filter((s) => s.status === 'running')
+	// A session on its way up. Container/VM boot is the single longest wait in
+	// a chat turn — without surfacing these, the user stares at a silent
+	// thread for the exact window where knowing "a reply is coming" matters
+	// most. (Once running, the session appears via activeSessions instead.)
+	const bootingSessions = latestSessions.filter(
+		(s) => s.status === 'pending' || s.status === 'starting' || s.status === 'queued',
+	)
 	const failedSessions = latestSessions.filter((s) => s.status === 'failed')
 	// 'timeout' is not a failure — the 2-hour backstop (session-manager.ts's
 	// reaper) is expected lifecycle, and the next message in this conversation
@@ -222,6 +235,14 @@ export function useConversationActivity(
 	for (const session of failedSessions) {
 		const config = session.config as { conversation?: { message_id?: number } } | null
 		const messageId = config?.conversation?.message_id
+		// A user-initiated stop lands as status 'failed' with a marker in
+		// result: `stopped_by_user` on the remote path's provisional write,
+		// `user_stop_requested` once the genuine completion report (or the
+		// local handleCompletion path) lands. Either way it's an expected
+		// outcome, not an error — render it neutrally, like the mid-turn
+		// timeout notice.
+		const stoppedByUser =
+			session.result?.stopped_by_user === true || session.result?.user_stop_requested === true
 		// A session that reached `running` and later died from classified credit/rate-limit
 		// exhaustion carries its message in `result.failure_reason.human_message`, not
 		// `result.error` (see classifyCreditExhaustion() in session-manager.ts) — prefer
@@ -230,13 +251,27 @@ export function useConversationActivity(
 		const errorText =
 			parseFailureReason(session.result)?.human_message ||
 			(typeof session.result?.error === 'string' ? session.result.error : undefined)
-		const turn: MessageTurnActivity = {
-			sessionId: session.id,
-			actorId: session.actorId,
-			steps: errorText ? [{ id: `${session.id}-error`, kind: 'error', text: errorText }] : [],
-			inProgress: false,
-			failed: true,
-		}
+		const turn: MessageTurnActivity = stoppedByUser
+			? {
+					sessionId: session.id,
+					actorId: session.actorId,
+					steps: [
+						{
+							id: `${session.id}-stopped`,
+							kind: 'error',
+							text: 'Stopped — send another message (or retry) to continue.',
+						},
+					],
+					inProgress: false,
+					interrupted: true,
+				}
+			: {
+					sessionId: session.id,
+					actorId: session.actorId,
+					steps: errorText ? [{ id: `${session.id}-error`, kind: 'error', text: errorText }] : [],
+					inProgress: false,
+					failed: true,
+				}
 		if (typeof messageId === 'number') {
 			const list = byTriggerMessageId.get(messageId) ?? []
 			list.push(turn)
@@ -310,6 +345,29 @@ export function useConversationActivity(
 			],
 			inProgress: false,
 			interrupted: true,
+		}
+		if (typeof messageId === 'number') {
+			const list = byTriggerMessageId.get(messageId) ?? []
+			list.push(turn)
+			byTriggerMessageId.set(messageId, list)
+		} else {
+			fallback.push(turn)
+		}
+	}
+
+	for (const session of bootingSessions) {
+		// A booting session was spawned for a specific message — anchor its
+		// "starting…" spinner there. (Reused sessions never sit in a booting
+		// status, so config.conversation.message_id is the right anchor here,
+		// unlike the timeout notice above.)
+		const config = session.config as { conversation?: { message_id?: number } } | null
+		const messageId = config?.conversation?.message_id
+		const turn: MessageTurnActivity = {
+			sessionId: session.id,
+			actorId: session.actorId,
+			steps: [],
+			inProgress: true,
+			starting: true,
 		}
 		if (typeof messageId === 'number') {
 			const list = byTriggerMessageId.get(messageId) ?? []
