@@ -11,7 +11,7 @@ test.describe('Loop detail page', () => {
 			const loop = await account.api.createObject(account.workspaceId, {
 				type: 'loop',
 				title: 'Customer feedback loop',
-				status: 'running',
+				status: 'learning',
 				content: 'Every customer who gives feedback hears back within 30 days',
 			})
 			const trigger = await account.api.createTrigger(account.workspaceId, {
@@ -85,7 +85,7 @@ test.describe('Loop detail page', () => {
 		const loop = await account.api.createObject(account.workspaceId, {
 			type: 'loop',
 			title: 'Feedback loop',
-			status: 'running',
+			status: 'learning',
 		})
 
 		await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
@@ -95,12 +95,15 @@ test.describe('Loop detail page', () => {
 		await input.fill('Tighten the close timeline')
 		await input.press('Enter')
 
-		// The utterance is forwarded to the chat-driven edit path: the chat
-		// panel opens with the message staged and sent.
-		await expect(page.getByRole('heading', { name: 'Chat' })).toBeVisible({
+		// The utterance is forwarded to the chat-driven edit path: navigates to
+		// a new chat with the loop attached via the `objectId` search param. The
+		// local input unmounts as part of that navigation (timing between the
+		// synchronous clear and the route swap isn't reliably observable), so
+		// the destination is the only thing worth asserting here.
+		await expect(page).toHaveURL(new RegExp(`chats/new\\?.*objectId=${loop.id}`), {
 			timeout: 10000,
 		})
-		await expect(input).toHaveValue('')
+		await expect(page.getByRole('heading', { name: 'New chat', exact: true })).toBeVisible()
 	})
 
 	test('Pause/Resume toggles the loop pill', async ({ page, account }) => {
@@ -109,13 +112,15 @@ test.describe('Loop detail page', () => {
 		const loop = await account.api.createObject(account.workspaceId, {
 			type: 'loop',
 			title: 'Billing reliability loop',
-			status: 'running',
+			status: 'learning',
 		})
 
 		await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
-		await expect(page.getByTestId('loop-pill')).toHaveText('Running', { timeout: 10000 })
+		await expect(page.getByTestId('loop-pill')).toHaveText('Learning', { timeout: 10000 })
 
-		await page.getByRole('button', { name: 'More' }).click()
+		// Exact — the v2 header's split New button adds a "More ways to start"
+		// control, which a substring match would also pick up.
+		await page.getByRole('button', { name: 'More', exact: true }).click()
 		await page.getByRole('menuitem', { name: 'Pause loop' }).click()
 
 		await expect(page.getByTestId('loop-pill')).toHaveText('Paused', { timeout: 10000 })
@@ -130,7 +135,7 @@ test.describe('Loop detail page', () => {
 		const loop = await account.api.createObject(account.workspaceId, {
 			type: 'loop',
 			title: 'Churn early-warning loop',
-			status: 'running',
+			status: 'learning',
 		})
 
 		await page.goto(`/${account.workspaceId}/loops`)

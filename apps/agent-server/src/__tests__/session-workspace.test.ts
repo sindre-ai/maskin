@@ -11,6 +11,21 @@ import {
 	sessionWorkspaceKey,
 } from '../services/session-workspace'
 
+// Windows-only local-dev caveat (does not affect CI, which runs on Linux): these
+// tests shell out to `tar`, and on a machine where Git for Windows' `usr\bin`
+// precedes `System32` on PATH, `execFile('tar', …)` resolves to Git's MSYS-flavored
+// tar.exe instead of the Windows-native bsdtar. MSYS's runtime does its own
+// Windows-→POSIX argv conversion, which can mangle an absolute Windows path
+// passed as a plain argument (e.g. the `-C <sessionDir>` extraction target),
+// producing spurious "Cannot open: No such file or directory" failures that have
+// nothing to do with the code under test. Neither `MSYS2_ARG_CONV_EXCL=*` nor
+// `MSYS_NO_PATHCONV=1` fixes it. If you hit this locally, reordering PATH so
+// `C:\Windows\System32` comes before Git's `usr\bin` (or running under WSL) works
+// around it. A separate, real bug — GNU tar's remote-archive heuristic misreading
+// an absolute `C:\...` archive-file argument as a `host:path` remote spec — was
+// fixed for good in `session-workspace.ts` by passing the archive as a relative
+// filename with `cwd` set to the staging dir.
+
 class InMemoryStorage implements StorageProvider {
 	private objects = new Map<string, Buffer>()
 
@@ -286,8 +301,38 @@ describe('pushSessionWorkspace — transient storage failures', () => {
 
 		expect(result.archiveBytes).toBeGreaterThan(0)
 		expect(storage.attempts).toBe(3)
-		expect(sleeps).toHaveLength(2)
+		// Note: linear (retryDelayMs * attempt) and exponential
+		// (retryDelayMs * 2 ** (attempt - 1)) agree on the first two delays, so
+		// these values alone do NOT pin the backoff shape. The shape is pinned by
+		// the four-failure test below, where the two formulas diverge
+		// ([…,8000,16000] vs […,6000,8000]). Asserted here anyway so a change to
+		// the base delay is caught at the cheapest test.
+		expect(sleeps).toEqual([2000, 4000])
 		expect(storage.keys()).toContain('session-workspaces/flaky-session.tar.gz')
+	})
+
+	it('survives a four-failure outage on the default retry budget', async () => {
+		// Four consecutive failures need a 5th attempt, so this succeeds only
+		// under DEFAULT_PUSH_RETRIES = 5. Reverting to the previous 3-attempt
+		// budget makes it throw. Deliberately does NOT pass `retries`, so the
+		// default is what is under test (Sentry MASKIN-AGENT-SERVER-3).
+		const storage = new FlakyStorage(4)
+		const sessionDir = join(tmpRoot, 'flaky-long-outage')
+		await mkdir(join(sessionDir, 'workspace'), { recursive: true })
+		await writeFile(join(sessionDir, 'workspace', 'file.txt'), 'hello')
+
+		const sleeps: number[] = []
+		const result = await pushSessionWorkspace(storage, 'flaky-session-3', sessionDir, {
+			sleep: async (ms) => {
+				sleeps.push(ms)
+			},
+		})
+
+		expect(result.archiveBytes).toBeGreaterThan(0)
+		expect(storage.attempts).toBe(5)
+		// 2 + 4 + 8 + 16 = 30s of backoff, and the 16s cap is exercised.
+		expect(sleeps).toEqual([2000, 4000, 8000, 16000])
+		expect(storage.keys()).toContain('session-workspaces/flaky-session-3.tar.gz')
 	})
 
 	it('surfaces the error (and forces the caller to notice) once retries are exhausted', async () => {

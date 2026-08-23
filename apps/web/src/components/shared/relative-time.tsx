@@ -1,5 +1,22 @@
 import { useEffect, useState } from 'react'
 
+// Compact form — the mockup's list rows carry a 30px right-aligned age column
+// ("2h", "1d", "4d"), so the unit stands alone with no "ago" suffix and dates
+// older than a month collapse to a day/month token ("Jan 15") rather than a
+// full locale date that would never fit.
+function formatCompact(date: Date): string {
+	const diff = Date.now() - date.getTime()
+	const minutes = Math.floor(diff / 60_000)
+	const hours = Math.floor(minutes / 60)
+	const days = Math.floor(hours / 24)
+
+	if (minutes < 1) return 'now'
+	if (minutes < 60) return `${minutes}m`
+	if (hours < 24) return `${hours}h`
+	if (days < 30) return `${days}d`
+	return date.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
+}
+
 function formatRelative(date: Date): string {
 	const now = Date.now()
 	const diff = now - date.getTime()
@@ -19,9 +36,12 @@ function formatRelative(date: Date): string {
 export function RelativeTime({
 	date,
 	className,
+	compact = false,
 }: {
 	date: string | null
 	className?: string
+	/** Age-column form: "2h" instead of "2h ago". */
+	compact?: boolean
 }) {
 	const [, setTick] = useState(0)
 
@@ -34,7 +54,7 @@ export function RelativeTime({
 
 	return (
 		<time className={className} dateTime={date} title={new Date(date).toLocaleString()}>
-			{formatRelative(new Date(date))}
+			{compact ? formatCompact(new Date(date)) : formatRelative(new Date(date))}
 		</time>
 	)
 }

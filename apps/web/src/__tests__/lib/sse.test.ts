@@ -12,7 +12,7 @@ vi.mock('@/lib/constants', () => ({
 	API_BASE: '/api',
 }))
 
-import { connectSSE } from '@/lib/sse'
+import { SSEFatalError, connectSSE } from '@/lib/sse'
 import { fetchEventSource } from '@microsoft/fetch-event-source'
 
 const workspaceId = 'ws-1'
@@ -70,15 +70,58 @@ describe('connectSSE', () => {
 	})
 
 	describe('onopen callback', () => {
-		it('calls onStatusChange with connected', async () => {
+		function getOnopen() {
+			const call = vi.mocked(fetchEventSource).mock.calls[0]
+			const opts = call[1] as { onopen: (response?: unknown) => Promise<void> }
+			return opts.onopen
+		}
+
+		function buildResponse(status: number, contentType = 'text/event-stream') {
+			return {
+				ok: status >= 200 && status < 300,
+				status,
+				headers: { get: (name: string) => (name === 'content-type' ? contentType : null) },
+			}
+		}
+
+		it('calls onStatusChange with connected on a healthy event-stream response', async () => {
 			const onStatusChange = vi.fn()
 			connectSSE(workspaceId, { onEvent: vi.fn(), onStatusChange })
 
-			const call = vi.mocked(fetchEventSource).mock.calls[0]
-			const opts = call[1] as { onopen: () => Promise<void> }
-			await opts.onopen()
+			await getOnopen()(buildResponse(200))
 
 			expect(onStatusChange).toHaveBeenCalledWith('connected')
+		})
+
+		// Overriding onopen replaces fetch-event-source's own validation, so a
+		// 502 HTML error page from the proxy would otherwise register as a
+		// healthy connection that simply never yields an event — the exact
+		// production failure this validation exists to catch. Passing a real
+		// response shape here matters: calling onopen() with no argument
+		// short-circuits every check and passes vacuously.
+		it('rejects a non-ok response instead of reporting connected', async () => {
+			const onStatusChange = vi.fn()
+			connectSSE(workspaceId, { onEvent: vi.fn(), onStatusChange })
+
+			await expect(getOnopen()(buildResponse(502, 'text/html'))).rejects.toThrow('SSE failed: 502')
+			expect(onStatusChange).not.toHaveBeenCalledWith('connected')
+		})
+
+		it('rejects an ok response that is not an event stream', async () => {
+			const onStatusChange = vi.fn()
+			connectSSE(workspaceId, { onEvent: vi.fn(), onStatusChange })
+
+			await expect(getOnopen()(buildResponse(200, 'text/html'))).rejects.toThrow('bad content-type')
+			expect(onStatusChange).not.toHaveBeenCalledWith('connected')
+		})
+
+		it('rejects 401 and 403 as fatal', async () => {
+			connectSSE(workspaceId, { onEvent: vi.fn() })
+			await expect(getOnopen()(buildResponse(401))).rejects.toBeInstanceOf(SSEFatalError)
+
+			vi.mocked(fetchEventSource).mockClear()
+			connectSSE(workspaceId, { onEvent: vi.fn() })
+			await expect(getOnopen()(buildResponse(403))).rejects.toBeInstanceOf(SSEFatalError)
 		})
 	})
 
@@ -197,18 +240,45 @@ describe('connectSSE', () => {
 	})
 
 	describe('onerror callback', () => {
+		function getOnerror() {
+			const call = vi.mocked(fetchEventSource).mock.calls[0]
+			const opts = call[1] as { onerror: (err: unknown) => number }
+			return opts.onerror
+		}
+
 		it('calls onStatusChange with disconnected and onError', () => {
 			const onStatusChange = vi.fn()
 			const onError = vi.fn()
 			connectSSE(workspaceId, { onEvent: vi.fn(), onStatusChange, onError })
 
-			const call = vi.mocked(fetchEventSource).mock.calls[0]
-			const opts = call[1] as { onerror: (err: unknown) => void }
 			const error = new Error('connection lost')
-			opts.onerror(error)
+			getOnerror()(error)
 
 			expect(onStatusChange).toHaveBeenCalledWith('disconnected')
 			expect(onError).toHaveBeenCalledWith(error)
+		})
+
+		it('backs off exponentially so a downed backend is not retried every second', () => {
+			connectSSE(workspaceId, { onEvent: vi.fn() })
+
+			const onerror = getOnerror()
+			const delays = [
+				onerror(new Error('1')),
+				onerror(new Error('2')),
+				onerror(new Error('3')),
+				onerror(new Error('4')),
+			]
+
+			expect(delays).toEqual([1000, 2000, 4000, 8000])
+		})
+
+		it('rethrows a fatal error so the subscription ends instead of looping on a revoked key', () => {
+			const onError = vi.fn()
+			connectSSE(workspaceId, { onEvent: vi.fn(), onError })
+
+			const fatal = new SSEFatalError('unauthorized', 401)
+			expect(() => getOnerror()(fatal)).toThrow(fatal)
+			expect(onError).toHaveBeenCalledWith(fatal)
 		})
 	})
 })

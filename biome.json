@@ -27,6 +27,8 @@
 			"drizzle",
 			".turbo",
 			"coverage",
+			"test-results",
+			"playwright-report",
 			"routeTree.gen.ts",
 			".claude",
 			".codex",

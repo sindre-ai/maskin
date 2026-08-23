@@ -47,6 +47,24 @@ describe('InputQueue', () => {
 		expect(received2).toEqual(['after\n'])
 	})
 
+	it('stale unregister from a replaced connection does not remove the new stream', async () => {
+		const queue = new InputQueue()
+		const staleUnregister = await queue.registerStream('s1', async () => true)
+
+		// VM reconnects — a new stream replaces the old one for the same session
+		const received: string[] = []
+		await queue.registerStream('s1', async (line) => {
+			received.push(line)
+			return true
+		})
+
+		// The dead connection's cleanup fires late (heartbeat failure / abort)
+		staleUnregister()
+
+		await queue.enqueue('s1', 'msg\n')
+		expect(received).toEqual(['msg\n'])
+	})
+
 	it('re-parks message and unregisters stream when flusher returns false', async () => {
 		const queue = new InputQueue()
 		const received: string[] = []

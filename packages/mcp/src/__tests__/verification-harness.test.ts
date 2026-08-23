@@ -23,7 +23,6 @@ import {
 	RESPONSE_TOKEN_CAP_ENV_VAR,
 	estimateResponseTokens,
 } from '../response-cap'
-import { RESPONSE_SCOPING_ENV_VAR } from '../response-scoping'
 import { createMcpServer } from '../server'
 
 const wsId = '00000000-0000-0000-0000-0000000000aa'
@@ -175,10 +174,8 @@ function setupServer(): Map<string, Handler> {
 // real network traffic, so this suite substitutes a hand-picked corpus of
 // request shapes that mirror what those clients actually send — the
 // no-params list read, the filtered list, the search query, the
-// object-anchored relationship walk, and so on. Each trace is replayed with
-// the flag ON and OFF; the invariant is that a pre-scoping consumer parsing
-// `content[0].text` as JSON still gets a valid parse when the flag is off,
-// and no trace throws under either state.
+// object-anchored relationship walk, and so on. The invariant is that every
+// trace responds without error and `content[0].text` parses as JSON.
 
 describe('AC-U3 verification harness — contract replay of typical Claude Code + workspace-agent traces', () => {
 	let handlers: Map<string, Handler>
@@ -190,7 +187,6 @@ describe('AC-U3 verification harness — contract replay of typical Claude Code 
 
 	afterEach(() => {
 		vi.restoreAllMocks()
-		delete process.env[RESPONSE_SCOPING_ENV_VAR]
 		delete process.env[RESPONSE_TOKEN_CAP_ENV_VAR]
 	})
 
@@ -198,6 +194,10 @@ describe('AC-U3 verification harness — contract replay of typical Claude Code 
 	// fixture the API would have returned. Chosen to cover the shapes the two
 	// callers actually use in production: Claude Code sessions and background
 	// workspace agents that page through workspace state.
+	//
+	// `list_actors` is intentionally absent — it has no `content` channel
+	// (structuredContent-only), so it can't participate in a content-channel
+	// parity loop. See the dedicated trace test below.
 	const traces: Array<{
 		trace: string
 		tool: string
@@ -215,12 +215,6 @@ describe('AC-U3 verification harness — contract replay of typical Claude Code 
 			tool: 'search_objects',
 			args: { q: 'response scoping' },
 			fixture: [objectRow(10)],
-		},
-		{
-			trace: 'claude-code: list_actors (default)',
-			tool: 'list_actors',
-			args: {},
-			fixture: [actorRow(1), actorRow(2)],
 		},
 		{
 			trace: 'workspace-agent: list_objects (filter by type=bet)',
@@ -255,24 +249,7 @@ describe('AC-U3 verification harness — contract replay of typical Claude Code 
 	]
 
 	for (const { trace, tool, args, fixture } of traces) {
-		it(`${trace}: flag OFF preserves the pre-scoping JSON-dump contract`, async () => {
-			delete process.env[RESPONSE_SCOPING_ENV_VAR]
-			stubFetch(fixture)
-			const handler = handlers.get(tool)
-			if (!handler) throw new Error(`handler ${tool} not registered`)
-			const result = (await handler(args)) as {
-				content: Array<{ text: string }>
-			}
-			// Pre-scoping consumers read `content[0].text` as JSON — the flag-off
-			// path must keep that contract byte-for-byte alive.
-			expect(result.content[0].text.startsWith('[')).toBe(true)
-			expect(() => JSON.parse(result.content[0].text)).not.toThrow()
-			const parsed = JSON.parse(result.content[0].text) as unknown[]
-			expect(parsed.length).toBe(fixture.length)
-		})
-
-		it(`${trace}: flag ON responds without error and without breaking the content channel`, async () => {
-			process.env[RESPONSE_SCOPING_ENV_VAR] = '1'
+		it(`${trace}: responds without error and without breaking the content channel`, async () => {
 			stubFetch(fixture)
 			const handler = handlers.get(tool)
 			if (!handler) throw new Error(`handler ${tool} not registered`)
@@ -280,32 +257,45 @@ describe('AC-U3 verification harness — contract replay of typical Claude Code 
 				content: Array<{ text: string }>
 				structuredContent?: Record<string, unknown>
 			}
-			// Content is either a markdown summary or the "no rows" empty label —
-			// never a JSON dump. Structured channel, when present, is a real
-			// object (never a string).
+			// Content is the full JSON payload (the lean markdown-summary channel
+			// was reverted — it left agents without enough detail to act on).
+			// Structured channel, when present, is a real object (never a string).
 			expect(result.content).toBeDefined()
 			expect(result.content[0].text.length).toBeGreaterThan(0)
-			expect(/^(- |No |… )/.test(result.content[0].text)).toBe(true)
+			expect(() => JSON.parse(result.content[0].text)).not.toThrow()
 			if (result.structuredContent) {
 				expect(typeof result.structuredContent).toBe('object')
 				expect(Array.isArray(result.structuredContent)).toBe(false)
 			}
 		})
 	}
+
+	it('claude-code: list_actors (default): responds via structuredContent only', async () => {
+		const fixture = [actorRow(1), actorRow(2)]
+		stubFetch(fixture)
+		const handler = handlers.get('list_actors')
+		if (!handler) throw new Error('handler list_actors not registered')
+		const result = (await handler({})) as {
+			content?: Array<{ text: string }>
+			structuredContent: { heroCard: { kind: string; objects?: unknown[] } }
+		}
+		expect(result.content).toBeUndefined()
+		expect(result.structuredContent.heroCard.kind).toBe('list')
+		expect(result.structuredContent.heroCard.objects).toHaveLength(fixture.length)
+	})
 })
 
 // ─────────────────────────────────────────────────────────────────
-// AC-T4 — flag-toggle parity ON → OFF → ON
+// Repeated-call determinism
 // ─────────────────────────────────────────────────────────────────
 //
-// Existing response-scoping tests cover OFF → ON → OFF on a single tool.
-// This suite generalises the toggle: for each of the seven scoped tools,
-// flip ON → OFF → ON on one handler instance and assert that (a) the OFF
-// pass returns the pre-scoping JSON dump byte-for-byte, and (b) the second
-// ON pass is byte-identical to the first ON pass. That second half is what
-// proves flag-off leaves no cached / process-level state behind.
+// Pagination and the token cap are always on now (no flag to toggle), so the
+// invariant this suite checks is simpler than it used to be: calling the
+// same handler twice against the same fixture produces byte-identical
+// output — no process-level state (snapshot timestamps, cursor state, trim
+// bookkeeping) leaks between calls.
 
-describe('AC-T4 verification harness — ON → OFF → ON toggle parity across all seven scoped tools', () => {
+describe('verification harness — repeated calls against the same fixture are deterministic', () => {
 	let handlers: Map<string, Handler>
 
 	beforeEach(() => {
@@ -315,7 +305,6 @@ describe('AC-T4 verification harness — ON → OFF → ON toggle parity across 
 
 	afterEach(() => {
 		vi.restoreAllMocks()
-		delete process.env[RESPONSE_SCOPING_ENV_VAR]
 		delete process.env[RESPONSE_TOKEN_CAP_ENV_VAR]
 	})
 
@@ -326,7 +315,6 @@ describe('AC-T4 verification harness — ON → OFF → ON toggle parity across 
 	}> = [
 		{ tool: 'list_objects', fixture: [objectRow(1), objectRow(2)] },
 		{ tool: 'search_objects', args: { q: 'anything' }, fixture: [objectRow(3), objectRow(4)] },
-		{ tool: 'list_actors', fixture: [actorRow(1), actorRow(2)] },
 		{
 			tool: 'list_relationships',
 			fixture: [relationshipRow(1), relationshipRow(2)],
@@ -340,85 +328,65 @@ describe('AC-T4 verification harness — ON → OFF → ON toggle parity across 
 	]
 
 	for (const { tool, args, fixture } of cases) {
-		it(`${tool}: ON → OFF → ON restores flag-on shape byte-for-byte`, async () => {
+		it(`${tool}: two calls against the same fixture return byte-identical content`, async () => {
 			stubFetch(fixture)
 			const handler = handlers.get(tool)
 			if (!handler) throw new Error(`handler ${tool} not registered`)
 
-			process.env[RESPONSE_SCOPING_ENV_VAR] = '1'
-			const on1 = (await handler(args ?? {})) as {
+			const first = (await handler(args ?? {})) as {
 				content: Array<{ text: string }>
 				structuredContent?: Record<string, unknown>
 			}
-			expect(/^(- |No |… )/.test(on1.content[0].text)).toBe(true)
+			expect(() => JSON.parse(first.content[0].text)).not.toThrow()
 
-			delete process.env[RESPONSE_SCOPING_ENV_VAR]
-			const off = (await handler(args ?? {})) as {
-				content: Array<{ text: string }>
-				_meta?: Record<string, unknown>
-			}
-			// Pre-scoping JSON dump — starts with `[`, no truncation metadata,
-			// no next_cursor threading.
-			expect(off.content[0].text.startsWith('[')).toBe(true)
-			expect(() => JSON.parse(off.content[0].text)).not.toThrow()
-			expect((off._meta as { truncated?: boolean } | undefined)?.truncated).toBeUndefined()
-
-			process.env[RESPONSE_SCOPING_ENV_VAR] = '1'
-			const on2 = (await handler(args ?? {})) as {
+			const second = (await handler(args ?? {})) as {
 				content: Array<{ text: string }>
 				structuredContent?: Record<string, unknown>
 			}
-			// The scoped content channel is deterministic given the same fixture —
-			// the snapshot timestamp lives in the (opaque, echoed-only) cursor,
-			// not in the visible summary — so the second ON must match the first.
-			expect(on2.content[0].text).toBe(on1.content[0].text)
-			// Structured channel presence tracks the first pass — either both
-			// have it or neither does. Small fixtures don't emit next_cursor, so
-			// some tools (list_relationships / list_files / list_workspace_skills)
-			// return no structuredContent under ON.
-			expect(Boolean(on2.structuredContent)).toBe(Boolean(on1.structuredContent))
+			expect(second.content[0].text).toBe(first.content[0].text)
+			expect(Boolean(second.structuredContent)).toBe(Boolean(first.structuredContent))
 		})
 	}
 
-	it('list_objects: token-cap truncation markers reappear on the second ON pass (no state leak)', async () => {
-		// Bigger fixture (26 == default scoped page + 1 sentinel row, so the
-		// "has more" cursor also fires) + lower cap so the wrapper's fetch_handle
-		// metadata is forced onto the response, exercising the "restores
-		// truncation markers, cursors, and channel-split" half of the AC-T4 brief.
+	it('list_actors: two calls against the same fixture return an identical structuredContent-only shape', async () => {
+		const fixture = [actorRow(1), actorRow(2)]
+		stubFetch(fixture)
+		const handler = handlers.get('list_actors')
+		if (!handler) throw new Error('handler list_actors not registered')
+
+		const first = (await handler({})) as { content?: unknown; structuredContent: unknown }
+		expect(first.content).toBeUndefined()
+
+		const second = (await handler({})) as { content?: unknown; structuredContent: unknown }
+		expect(second.content).toBeUndefined()
+		expect(second.structuredContent).toEqual(first.structuredContent)
+	})
+
+	it('list_objects: token-cap truncation markers reappear consistently across repeated calls', async () => {
+		// Bigger fixture (30 rows, well past the default 25-row page) + lower cap
+		// so the wrapper's fetch_handle metadata is forced onto the response.
 		const fixture = Array.from({ length: 30 }, (_, i) => objectRow(i))
 		stubFetch(fixture)
 		const handler = handlers.get('list_objects')
 		if (!handler) throw new Error('list_objects handler not registered')
 		process.env[RESPONSE_TOKEN_CAP_ENV_VAR] = '2000'
 
-		process.env[RESPONSE_SCOPING_ENV_VAR] = '1'
-		const on1 = (await handler({})) as {
+		const first = (await handler({})) as {
 			_meta: { truncated?: boolean; fetch_handle?: { tool: string; ids: string[] } }
 			structuredContent: { next_cursor?: string }
 		}
-		expect(on1._meta.truncated).toBe(true)
-		expect(on1._meta.fetch_handle?.tool).toBe('get_objects')
-		expect(typeof on1.structuredContent.next_cursor).toBe('string')
+		expect(first._meta.truncated).toBe(true)
+		expect(first._meta.fetch_handle?.tool).toBe('get_objects')
+		expect(typeof first.structuredContent.next_cursor).toBe('string')
 
-		delete process.env[RESPONSE_SCOPING_ENV_VAR]
-		const off = (await handler({})) as {
-			_meta?: { truncated?: boolean; fetch_handle?: unknown }
-			structuredContent?: { next_cursor?: string }
-		}
-		// Flag off: truncation markers are absent, cursor is absent.
-		expect(off._meta?.truncated).toBeUndefined()
-		expect(off._meta?.fetch_handle).toBeUndefined()
-		expect(off.structuredContent?.next_cursor).toBeUndefined()
-
-		process.env[RESPONSE_SCOPING_ENV_VAR] = '1'
-		const on2 = (await handler({})) as {
+		const second = (await handler({})) as {
 			_meta: { truncated?: boolean; fetch_handle?: { tool: string; ids: string[] } }
 			structuredContent: { next_cursor?: string }
 		}
-		expect(on2._meta.truncated).toBe(true)
-		expect(on2._meta.fetch_handle?.tool).toBe('get_objects')
-		expect(on2._meta.fetch_handle?.ids).toEqual(on1._meta.fetch_handle?.ids)
-		expect(typeof on2.structuredContent.next_cursor).toBe('string')
+		expect(second._meta.truncated).toBe(true)
+		expect(second._meta.fetch_handle?.tool).toBe('get_objects')
+		expect(second._meta.fetch_handle?.ids).toEqual(first._meta.fetch_handle?.ids)
+		expect(typeof second.structuredContent.next_cursor).toBe('string')
 	})
 })
 
@@ -451,12 +419,10 @@ describe('AC-T7 verification harness — seeded p95 fixture never busts the 15K 
 	beforeEach(() => {
 		vi.clearAllMocks()
 		handlers = setupServer()
-		process.env[RESPONSE_SCOPING_ENV_VAR] = '1'
 	})
 
 	afterEach(() => {
 		vi.restoreAllMocks()
-		delete process.env[RESPONSE_SCOPING_ENV_VAR]
 		delete process.env[RESPONSE_TOKEN_CAP_ENV_VAR]
 	})
 
@@ -516,5 +482,53 @@ describe('AC-T7 verification harness — seeded p95 fixture never busts the 15K 
 		if (!handler) throw new Error('list_objects handler not registered')
 		const result = await handler({})
 		expect(estimateResponseTokens(result)).toBeLessThanOrEqual(5000)
+	})
+})
+
+// ─────────────────────────────────────────────────────────────────
+// Content channel parity — no lean-summary regression
+// ─────────────────────────────────────────────────────────────────
+//
+// An earlier iteration of list/search tools swapped the `content` channel
+// for a lean markdown summary (one line per row, full payload only on
+// `structuredContent`) behind a flag. That left agents without enough
+// detail in `content` to act on, so it was reverted: `content` is always
+// the full JSON payload. This test anchors that so a future regression that
+// reintroduces the lean summary fails loudly here.
+
+describe('Content channel parity — content is always the full JSON dump, never a lean summary', () => {
+	let handlers: Map<string, Handler>
+
+	beforeEach(() => {
+		vi.clearAllMocks()
+		handlers = setupServer()
+	})
+
+	afterEach(() => {
+		vi.restoreAllMocks()
+	})
+
+	it('list_objects: content is the full JSON dump, not a lean per-row summary', async () => {
+		const fixture = Array.from({ length: 5 }, (_, i) => objectRow(i))
+		stubFetch(fixture)
+		const handler = handlers.get('list_objects')
+		if (!handler) throw new Error('list_objects handler not registered')
+
+		const result = (await handler({})) as {
+			content: Array<{ text: string }>
+			structuredContent: { objects: unknown[] }
+		}
+		const contentBytes = Buffer.byteLength(result.content[0].text, 'utf8')
+		// Compare against just `structuredContent.objects` — the same rows
+		// `content` carries — not the whole `structuredContent` object, which
+		// also carries a duplicated heroCard slice and page metadata and would
+		// unfairly inflate the baseline.
+		const objectsBytes = Buffer.byteLength(JSON.stringify(result.structuredContent.objects), 'utf8')
+
+		expect(contentBytes).toBeGreaterThan(0)
+		expect(() => JSON.parse(result.content[0].text)).not.toThrow()
+		// A lean per-row summary would be a small fraction of the row data's
+		// size; the full JSON dump is the same data, so it should match closely.
+		expect(contentBytes).toBeGreaterThanOrEqual(objectsBytes * 0.9)
 	})
 })

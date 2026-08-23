@@ -307,21 +307,24 @@ app.openapi(listLoopsRoute, (async (c) => {
 		waitingByLoop.set(row.loop_id, waitingByLoop.get(row.loop_id) === true || row.waiting === true)
 	}
 
+	const LIVE_STATUSES = new Set(['learning', 'supervised', 'fully_autonomous'])
+
 	const response = {
 		loops: loopRows.map((row) => {
 			const rawStatus = row.status
-			const status = ((): 'running' | 'waiting' | 'paused' | 'archived' => {
+			const status = ((): 'draft' | 'paused' | 'learning' | 'supervised' | 'fully_autonomous' => {
 				if (
-					rawStatus === 'running' ||
-					rawStatus === 'waiting' ||
+					rawStatus === 'draft' ||
 					rawStatus === 'paused' ||
-					rawStatus === 'archived'
+					rawStatus === 'learning' ||
+					rawStatus === 'supervised' ||
+					rawStatus === 'fully_autonomous'
 				) {
 					return rawStatus
 				}
 				// Unknown status (shouldn't happen with schema-validated statuses,
 				// but preserved so a manual UPDATE cannot 500 the endpoint).
-				return 'running'
+				return 'draft'
 			})()
 
 			const meta = (row.metadata as Record<string, unknown> | null) ?? {}
@@ -332,13 +335,6 @@ app.openapi(listLoopsRoute, (async (c) => {
 			const closeCondition =
 				typeof meta.close_condition === 'string' && meta.close_condition.length > 0
 					? meta.close_condition
-					: null
-			const humanDecisionPointsRaw = meta.human_decision_points
-			const humanDecisionPoints =
-				typeof humanDecisionPointsRaw === 'number' &&
-				Number.isFinite(humanDecisionPointsRaw) &&
-				humanDecisionPointsRaw >= 0
-					? Math.floor(humanDecisionPointsRaw)
 					: null
 
 			const stats = childStatsByLoop.get(row.id) ?? {
@@ -357,30 +353,29 @@ app.openapi(listLoopsRoute, (async (c) => {
 			)
 			const waitingOnViewer = waitingByLoop.get(row.id) === true
 
-			// Composite pill signal per T1(c). Lifecycle overrides everything:
-			// paused/archived stay grey regardless of read state; only `running`
-			// composes with waitingOnViewer. An explicit `waiting` status forces
-			// the amber "waiting" pill even if the viewer has no unread events —
-			// the workspace has already declared the loop needs attention.
-			const pill: 'running' | 'waiting_on_you' | 'paused' | 'archived' =
-				status === 'paused' || status === 'archived'
-					? status
-					: status === 'waiting'
-						? 'waiting_on_you'
-						: waitingOnViewer
-							? 'waiting_on_you'
-							: 'running'
+			// Composite pill signal. `draft`/`paused` are not "live" — they render
+			// as themselves regardless of read state. The three live statuses
+			// (learning/supervised/fully_autonomous) compose with waitingOnViewer:
+			// unread activity on a member object overrides the autonomy-stage
+			// label with the amber "waiting on you" pill.
+			const pill:
+				| 'draft'
+				| 'paused'
+				| 'learning'
+				| 'supervised'
+				| 'fully_autonomous'
+				| 'waiting_on_you' =
+				LIVE_STATUSES.has(status) && waitingOnViewer ? 'waiting_on_you' : status
 
 			return {
 				id: row.id,
 				workspaceId: row.workspaceId,
 				name: row.title,
-				guarantee: row.content,
+				content: row.content,
 				status,
 				pill,
 				entryCondition,
 				closeCondition,
-				humanDecisionPoints,
 				inProgressCount: stats.inProgressCount,
 				closedCount: stats.closedCount,
 				medianTimeToCloseMs: stats.medianCloseMs,

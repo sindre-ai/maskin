@@ -1,0 +1,12 @@
+/* v2 loads two families from Google Fonts. Weights/styles match what the
+   mockup actually declares in its inline <style> at line 12 of
+   maskin-app-v2.dc.html; do not add more without a matching mockup reference.
+   The shipped app self-hosts the same two families under
+   apps/web/public/fonts/ — this CDN import is the throwaway-mock convenience,
+   not the production pipeline. */
+
+/* Schibsted Grotesk — the UI font. Every screen and every block of running text. */
+@import url('https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:ital,wght@0,400..900;1,400..900&display=swap');
+
+/* JetBrains Mono — machine-shaped text: uppercase micro-labels, ids, counts, cron, meta. */
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap');

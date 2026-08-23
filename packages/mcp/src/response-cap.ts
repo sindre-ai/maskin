@@ -5,8 +5,7 @@
 // rows from the tail of `structuredContent`, populates
 // `_meta.truncated = true` and `_meta.fetch_handle = { tool, ids }`, and
 // leaves it to the caller to re-fetch the omitted rows via the get-by-id
-// counterpart. Fires only under `MCP_RESPONSE_SCOPING`; flag-off is byte-
-// identical to the pre-scoping response.
+// counterpart. Applied unconditionally on every response.
 //
 // Reuses T1's `bytes/4` token estimator so the cap check and the response-
 // size telemetry event count tokens the same way — otherwise the wrapper
@@ -14,25 +13,37 @@
 //
 // Row-carrying tools registered here:
 //
-//   list_objects        → get_objects (batch, `ids`)
-//   search_objects      → get_objects (batch, `ids`)
-//   list_files          → get_file    (single, `id`)
-//   list_workspace_skills → get_workspace_skill (single, `name`)
-//   list_relationships  → no get-by-id counterpart — see below
+//   list_objects              → get_objects (batch, `ids`)
+//   search_objects            → get_objects (batch, `ids`)
+//   list_files                → get_file    (single, `id`)
+//   list_workspace_skills     → get_workspace_skill (single, `name`)
+//   list_relationships        → no get-by-id counterpart — see below
+//   list_loops                → get_loop    (single, `id`)
+//   list_sessions             → get_session (single, `id`)
+//   list_unread               → no get-by-id counterpart
+//   list_integrations         → no get-by-id counterpart
+//   list_integration_providers → no get-by-id counterpart
+//   list_extensions           → no get-by-id counterpart (get_started is a
+//                               different operation)
 //
-// `list_actors` / `list_triggers` are omitted deliberately: their
-// `structuredContent` only carries the 25-item heroCard slice — the rich
-// rows never reach the structured channel, so there is nothing for the cap
-// to trim.
+// `list_actors` / `list_workspaces` / `list_triggers` are omitted deliberately:
+// their `structuredContent` only carries the 25-item heroCard slice, not a
+// separately-paginated rich row array like the tools above. `list_actors`
+// does fold a bounded amount of extra data onto each of those 25 objects
+// (`connectedTriggers`/`connectedLoops`, capped per-actor at
+// MAX_CONNECTED_LINKS_PER_ACTOR in server.ts) but is still left out here —
+// real workspaces don't approach the size needed to threaten the token
+// ceiling, and there's no natural get-by-id row to recover a trimmed actor
+// the way `list_objects` has `get_objects`.
 //
-// `list_relationships` IS registered despite having no `get_relationship`
-// tool: its rows carry unbounded `sourceTitle`/`targetTitle` strings (joined
-// from `objects.title`, which has no length cap), so overflow is a real
-// path. With no `fetchHandleTool`, trimmed rows have no one-hop recovery —
-// instead `rewriteNextCursor` below always redirects `next_cursor` to point
-// right after the last row still present in `structuredContent`, so a
-// follow-up call with that cursor returns exactly the trimmed tail next
-// (an extra round trip, but no permanently unrecoverable rows).
+// `list_relationships` — and the other tools without a `fetchHandleTool` —
+// carry rows whose enriched fields (titles, config blobs, extension type
+// definitions, etc.) can bust the cap on real workspaces. Trimmed rows without
+// a `fetchHandleTool` have no one-hop recovery — instead `rewriteNextCursor`
+// below redirects `next_cursor` to point right after the last row still
+// present in `structuredContent`, so a follow-up call with that cursor
+// returns exactly the trimmed tail next (an extra round trip, but no
+// permanently unrecoverable rows).
 
 import { decodeCursor, encodeCursor } from './cursor'
 import { estimateTokensFromBytes } from './telemetry'
@@ -86,6 +97,12 @@ export const TOKEN_CAP_TARGETS: Record<string, TokenCapDescriptor> = {
 		idField: 'name',
 	},
 	list_relationships: { rowsField: 'relationships' },
+	list_loops: { fetchHandleTool: 'get_loop', rowsField: 'loops' },
+	list_sessions: { fetchHandleTool: 'get_session', rowsField: 'sessions' },
+	list_unread: { rowsField: 'unread' },
+	list_integrations: { rowsField: 'integrations' },
+	list_integration_providers: { rowsField: 'providers' },
+	list_extensions: { rowsField: 'extensions' },
 }
 
 /**
@@ -139,9 +156,16 @@ export interface ApplyResponseTokenCapResult {
  * rows response so the caller sees `_meta.truncated=true` and can fall back
  * to the fetch_handle.
  *
+ * `content` now carries the same full-JSON payload as `structuredContent`
+ * (list/search tools no longer emit a separately-bounded lean-markdown
+ * summary), so every trim also rewrites `content[0].text` to mirror the
+ * capped `structuredContent` — otherwise the untrimmed text channel would
+ * keep the full row count on the wire and the loop could never converge
+ * under the token cap.
+ *
  * The response argument is not mutated — we build a shallow copy of
- * `structuredContent` and `_meta` on every trim so callers holding a
- * reference to the original see nothing change.
+ * `structuredContent`, `content`, and `_meta` on every trim so callers
+ * holding a reference to the original see nothing change.
  */
 export function applyResponseTokenCap(
 	toolName: string,
@@ -231,9 +255,30 @@ function buildCappedResponse(
 	)
 	return {
 		...rsp,
+		content: capContentToStructured(rsp.content, cappedStructured),
 		structuredContent: cappedStructured,
 		_meta: meta,
 	}
+}
+
+/**
+ * Mirror `content[0].text` to the just-trimmed `structuredContent` so the
+ * text channel shrinks in lockstep with the row cap instead of shipping the
+ * full, pre-trim payload on every iteration of the trim loop. Only rewrites
+ * the shape every list/search tool actually emits — a single `{ type:
+ * 'text' }` block — and leaves anything else (e.g. a tool with no `content`
+ * channel at all) untouched.
+ */
+function capContentToStructured(
+	content: unknown,
+	cappedStructured: Record<string, unknown>,
+): unknown {
+	if (!Array.isArray(content) || content.length !== 1) return content
+	const block = content[0]
+	if (!block || typeof block !== 'object' || (block as { type?: unknown }).type !== 'text') {
+		return content
+	}
+	return [{ type: 'text', text: JSON.stringify(cappedStructured) }]
 }
 
 /**

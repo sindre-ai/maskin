@@ -282,6 +282,22 @@ setup_github_credential_helper() {
   echo "[system] GitHub credential helper configured for github.com"
 }
 
+# Start the guest-side watcher that auto-relays dev-server ports the agent
+# starts on its own (see preview-port-watcher.js and POST
+# /sessions/:id/preview-ports in apps/agent-server). Only meaningful when
+# there's a browser sidecar to relay into (BROWSER_CDP_URL set) and a live
+# agent-server to call back into (AGENT_SERVER_URL resolved above,
+# SESSION_ID set) — a no-op session (local Docker path, no browser) skips
+# this entirely. Best-effort: failure to start just means auto-relay isn't
+# available this session, same posture as the CDP retry proxy above.
+start_preview_port_watcher() {
+  if [ -z "$BROWSER_CDP_URL" ] || [ -z "$AGENT_SERVER_URL" ] || [ -z "$SESSION_ID" ]; then
+    return
+  fi
+  node /preview-port-watcher.js > /tmp/preview-port-watcher.log 2>&1 &
+  echo "[system] preview-port watcher started (pid $!)"
+}
+
 # Run the agent
 run_agent() {
   # Pipe output to the agent-server's log ingest endpoint so the Maskin UI
@@ -382,6 +398,28 @@ run_agent() {
           # curl holds a long-lived HTTP connection; process substitution pipes
           # its output into claude's stdin so each newline-delimited JSON message
           # is delivered as a user turn without needing Docker stdin attach.
+          #
+          # The connection MUST be reconnected on any drop, mirroring log_tee's
+          # posture on the output side. Between turns this stream sits idle for
+          # however long the human takes to reply — exactly what NAT/proxy
+          # idle-timeouts reap. A single curl would then EOF claude's stdin and
+          # permanently wedge the session: the agent-server keeps parking turns
+          # (InputQueue.pending) that nothing ever reads, the user stares at
+          # silence, and the 2h reaper eventually kills the session (the
+          # wedged-chat incidents of Aug 21-23). On reconnect, registerStream
+          # flushes every parked turn, so nothing is lost across a drop. This
+          # subshell never exits on its own — it dies with the VM at teardown —
+          # which also means claude's stdin never sees EOF mid-conversation.
+          # The reconnect marker goes to stderr, NOT stdout: stdout of this
+          # substitution IS claude's stdin and must carry only NDJSON turns.
+          input_stream() {
+            while true; do
+              curl -4 -sN --no-buffer \
+                "${AGENT_SERVER_URL}/sessions/${SESSION_ID}/input/stream" || true
+              echo "[system] input stream disconnected — reconnecting" >&2
+              sleep 1
+            done
+          }
           set +o pipefail
           claude -p \
             --input-format stream-json \
@@ -390,8 +428,7 @@ run_agent() {
             --dangerously-skip-permissions \
             "${mcp_args[@]}" \
             2>&1 \
-            < <(curl -4 -sN --no-buffer \
-                "${AGENT_SERVER_URL}/sessions/${SESSION_ID}/input/stream") \
+            < <(input_stream) \
             | log_tee
           AGENT_EXIT_CODE=${PIPESTATUS[0]}
           set -o pipefail
@@ -465,5 +502,6 @@ build_context
 setup_mcps
 setup_claude_credentials
 setup_github_credential_helper
+start_preview_port_watcher
 
 run_agent

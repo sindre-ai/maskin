@@ -35,6 +35,49 @@ vi.mock('@/lib/auth', () => ({
 }))
 
 describe('ActivityComment', () => {
+	it('collapses replies behind a count + note toggle when asked', async () => {
+		const user = userEvent.setup()
+		const root = buildEventResponse({ id: 1, action: 'commented', data: { content: 'Root' } })
+		const replies = [
+			buildEventResponse({ id: 2, action: 'commented', data: { content: 'First reply' } }),
+			buildEventResponse({
+				id: 3,
+				actorId: 'actor-2',
+				action: 'commented',
+				data: { content: 'Second reply' },
+			}),
+		]
+		render(
+			<ActivityComment
+				event={root}
+				replies={replies}
+				workspaceId="ws-1"
+				objectId="obj-1"
+				collapsibleReplies
+			/>,
+		)
+
+		expect(screen.queryByText('First reply')).not.toBeInTheDocument()
+		const toggle = screen.getByRole('button', { name: /2 replies/ })
+		expect(toggle).toHaveTextContent('last from Bob')
+
+		await user.click(toggle)
+		expect(screen.getByText('First reply')).toBeInTheDocument()
+		expect(screen.getByText('Second reply')).toBeInTheDocument()
+	})
+
+	it('hands the reply target up to the caller instead of opening its own composer', async () => {
+		const user = userEvent.setup()
+		const onReplyTo = vi.fn()
+		const root = buildEventResponse({ id: 7, action: 'commented', data: { content: 'Root' } })
+		render(
+			<ActivityComment event={root} workspaceId="ws-1" objectId="obj-1" onReplyTo={onReplyTo} />,
+		)
+
+		await user.click(screen.getByRole('button', { name: 'Reply' }))
+		expect(onReplyTo).toHaveBeenCalledWith(root, 'Alice')
+	})
+
 	it('renders actor name', () => {
 		const event = buildEventResponse({
 			action: 'commented',

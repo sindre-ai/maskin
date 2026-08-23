@@ -34,7 +34,6 @@ const ALL_TOOL_NAMES = [
 	'delete_relationship',
 	'create_actor',
 	'update_actor',
-	'regenerate_api_key',
 	'list_actors',
 	'get_actor',
 	'create_workspace',
@@ -57,6 +56,9 @@ const ALL_TOOL_NAMES = [
 	'get_events',
 	'get_comments',
 	'create_comment',
+	'get_conversation',
+	'list_conversation_messages',
+	'post_conversation_message',
 	'create_trigger',
 	'update_trigger',
 	'delete_trigger',
@@ -78,28 +80,16 @@ const ALL_TOOL_NAMES = [
 	'get_notification',
 	'update_notification',
 	'delete_notification',
-	'subscribe',
-	'unsubscribe',
-	'list_subscribers',
 	'mark_read',
 	'list_unread',
 	'list_integrations',
 	'list_integration_providers',
 	'connect_integration',
 	'disconnect_integration',
-	'set_llm_api_key',
-	'get_llm_api_keys',
-	'delete_llm_api_key',
-	'import_claude_subscription',
-	'get_claude_subscription_status',
-	'disconnect_claude_subscription',
-	'rename_claude_subscription',
 	'list_extensions',
 	'create_extension',
 	'update_extension',
 	'delete_extension',
-	'record_widget_event',
-	'get_bet_widget_metrics',
 ]
 
 describe('tool definitions', () => {
@@ -123,22 +113,25 @@ describe('create_objects schema', () => {
 
 	it('accepts valid input with nodes', () => {
 		const result = schema.parse({
+			workspace_id: uuid,
 			nodes: [{ $id: 'bet-1', type: 'bet', status: 'active' }],
 		})
 		expect(result.nodes).toHaveLength(1)
 		expect(result.edges).toEqual([])
 	})
 
-	it('accepts optional workspace_id', () => {
-		const result = schema.parse({
-			workspace_id: uuid,
+	it('requires workspace_id', () => {
+		const result = schema.safeParse({
 			nodes: [{ $id: 'task-1', type: 'task', status: 'todo' }],
 		})
-		expect(result.workspace_id).toBe(uuid)
+		expect(result.success).toBe(false)
+		if (!result.success) {
+			expect(result.error.issues[0]?.path).toEqual(['workspace_id'])
+		}
 	})
 
 	it('rejects empty nodes array', () => {
-		expect(() => schema.parse({ nodes: [] })).toThrow()
+		expect(() => schema.parse({ workspace_id: uuid, nodes: [] })).toThrow()
 	})
 
 	it('rejects more than 50 nodes', () => {
@@ -147,18 +140,31 @@ describe('create_objects schema', () => {
 			type: 'task' as const,
 			status: 'todo',
 		}))
-		expect(() => schema.parse({ nodes })).toThrow()
+		expect(() => schema.parse({ workspace_id: uuid, nodes })).toThrow()
 	})
 
 	it('accepts any string as object type', () => {
 		const result = schema.parse({
+			workspace_id: uuid,
 			nodes: [{ $id: 'x', type: 'story', status: 'new' }],
 		})
 		expect(result.nodes[0].type).toBe('story')
 	})
 
+	it('requires status on every node', () => {
+		const result = schema.safeParse({
+			workspace_id: uuid,
+			nodes: [{ $id: 'x', type: 'insight' }],
+		})
+		expect(result.success).toBe(false)
+		if (!result.success) {
+			expect(result.error.issues[0]?.path).toEqual(['nodes', 0, 'status'])
+		}
+	})
+
 	it('defaults edges to empty array', () => {
 		const result = schema.parse({
+			workspace_id: uuid,
 			nodes: [{ $id: 'x', type: 'insight', status: 'new' }],
 		})
 		expect(result.edges).toEqual([])
@@ -168,36 +174,44 @@ describe('create_objects schema', () => {
 describe('list_objects schema', () => {
 	const schema = tools.list_objects.inputSchema
 
-	// Limit + offset are optional at the tool-schema layer so the server can
-	// pick the scoped default (25) when the flag is on; the API applies its
-	// own fallback when neither the client nor the server sets one.
-	it('leaves limit and offset undefined when not passed', () => {
-		const result = schema.parse({})
+	it('requires workspace_id', () => {
+		expect(() => schema.parse({})).toThrow()
+	})
+
+	// Limit is optional at the tool-schema layer so the server can pick the
+	// default page size (25) when the caller sets neither.
+	it('leaves limit undefined when not passed', () => {
+		const result = schema.parse({ workspace_id: uuid })
 		expect(result.limit).toBeUndefined()
-		expect(result.offset).toBeUndefined()
+	})
+
+	it('does not accept an offset param — cursor covers pagination for both sort orders', () => {
+		const result = schema.parse({ workspace_id: uuid, offset: 5 })
+		expect((result as Record<string, unknown>).offset).toBeUndefined()
 	})
 
 	it('accepts an optional cursor for snapshot-consistent pagination', () => {
-		const result = schema.parse({ cursor: 'anything' })
+		const result = schema.parse({ workspace_id: uuid, cursor: 'anything' })
 		expect(result.cursor).toBe('anything')
 	})
 
 	it('accepts optional type filter', () => {
-		const result = schema.parse({ type: 'bet' })
+		const result = schema.parse({ workspace_id: uuid, type: 'bet' })
 		expect(result.type).toBe('bet')
 	})
 
 	it('accepts any string as type filter', () => {
-		const result = schema.parse({ type: 'story' })
+		const result = schema.parse({ workspace_id: uuid, type: 'story' })
 		expect(result.type).toBe('story')
 	})
 
 	it('rejects limit above 100', () => {
-		expect(() => schema.parse({ limit: 101 })).toThrow()
+		expect(() => schema.parse({ workspace_id: uuid, limit: 101 })).toThrow()
 	})
 
 	it('accepts updated_before / updated_after as ISO-8601', () => {
 		const result = schema.parse({
+			workspace_id: uuid,
 			updated_before: '2026-06-30T12:00:00.000Z',
 			updated_after: '2026-06-29T12:00:00+02:00',
 		})
@@ -208,7 +222,7 @@ describe('list_objects schema', () => {
 	// AC-T6: malformed value surfaces as a Zod schema error so the SDK can
 	// return 400 instead of letting the bad string reach the route as a 500.
 	it('rejects malformed updated_before with a Zod error (AC-T6)', () => {
-		const result = schema.safeParse({ updated_before: 'not-a-date' })
+		const result = schema.safeParse({ workspace_id: uuid, updated_before: 'not-a-date' })
 		expect(result.success).toBe(false)
 		if (!result.success) {
 			expect(result.error.issues[0]?.path).toEqual(['updated_before'])
@@ -216,7 +230,7 @@ describe('list_objects schema', () => {
 	})
 
 	it('rejects malformed updated_after with a Zod error', () => {
-		const result = schema.safeParse({ updated_after: 'yesterday' })
+		const result = schema.safeParse({ workspace_id: uuid, updated_after: 'yesterday' })
 		expect(result.success).toBe(false)
 		if (!result.success) {
 			expect(result.error.issues[0]?.path).toEqual(['updated_after'])
@@ -224,31 +238,36 @@ describe('list_objects schema', () => {
 	})
 
 	it('accepts sort = updated_at_asc / updated_at_desc', () => {
-		expect(schema.parse({ sort: 'updated_at_asc' }).sort).toBe('updated_at_asc')
-		expect(schema.parse({ sort: 'updated_at_desc' }).sort).toBe('updated_at_desc')
+		expect(schema.parse({ workspace_id: uuid, sort: 'updated_at_asc' }).sort).toBe('updated_at_asc')
+		expect(schema.parse({ workspace_id: uuid, sort: 'updated_at_desc' }).sort).toBe(
+			'updated_at_desc',
+		)
 	})
 
 	it('rejects unknown sort values', () => {
-		expect(() => schema.parse({ sort: 'created_at_asc' })).toThrow()
+		expect(() => schema.parse({ workspace_id: uuid, sort: 'created_at_asc' })).toThrow()
 	})
 
 	it('accepts metadata_eq as a field->value record', () => {
-		const result = schema.parse({ metadata_eq: { segment: 'enterprise', confidence: 'high' } })
+		const result = schema.parse({
+			workspace_id: uuid,
+			metadata_eq: { segment: 'enterprise', confidence: 'high' },
+		})
 		expect(result.metadata_eq).toEqual({ segment: 'enterprise', confidence: 'high' })
 	})
 
 	it('omits metadata_eq when not supplied', () => {
-		const result = schema.parse({})
+		const result = schema.parse({ workspace_id: uuid })
 		expect(result.metadata_eq).toBeUndefined()
 	})
 
 	it('defaults include_archived to false so archived rows stay hidden unless the caller opts in', () => {
-		const result = schema.parse({})
+		const result = schema.parse({ workspace_id: uuid })
 		expect(result.include_archived).toBe(false)
 	})
 
 	it('accepts include_archived = true when the caller wants archived rows', () => {
-		const result = schema.parse({ include_archived: true })
+		const result = schema.parse({ workspace_id: uuid, include_archived: true })
 		expect(result.include_archived).toBe(true)
 	})
 })
@@ -261,9 +280,9 @@ describe('search_objects schema', () => {
 		expect(result.q).toBe('test')
 	})
 
-	it('accepts an optional cursor for snapshot-consistent pagination', () => {
+	it('does not accept a cursor param — ranked search cannot use the keyset', () => {
 		const result = schema.parse({ q: 'test', cursor: 'anything' })
-		expect(result.cursor).toBe('anything')
+		expect((result as Record<string, unknown>).cursor).toBeUndefined()
 	})
 
 	it('rejects empty q', () => {
@@ -394,32 +413,41 @@ describe('create_actor schema', () => {
 	const schema = tools.create_actor.inputSchema
 
 	it('accepts valid actor', () => {
-		const result = schema.parse({ type: 'agent', name: 'Bot' })
+		const result = schema.parse({ type: 'agent', name: 'Bot', description: 'Test agent' })
 		expect(result.type).toBe('agent')
 		expect(result.role).toBe('member')
 	})
 
 	it('defaults role to member', () => {
-		const result = schema.parse({ type: 'human', name: 'Alice' })
+		const result = schema.parse({ type: 'human', name: 'Alice', description: 'Test human' })
 		expect(result.role).toBe('member')
 	})
 
 	it('rejects missing name', () => {
-		expect(() => schema.parse({ type: 'human' })).toThrow()
+		expect(() => schema.parse({ type: 'human', description: 'Test human' })).toThrow()
 	})
 
 	it('rejects empty name', () => {
-		expect(() => schema.parse({ type: 'human', name: '' })).toThrow()
+		expect(() => schema.parse({ type: 'human', name: '', description: 'Test human' })).toThrow()
 	})
 
 	it('rejects invalid type', () => {
-		expect(() => schema.parse({ type: 'bot', name: 'X' })).toThrow()
+		expect(() => schema.parse({ type: 'bot', name: 'X', description: 'Test' })).toThrow()
+	})
+
+	it('rejects missing description', () => {
+		expect(() => schema.parse({ type: 'human', name: 'Alice' })).toThrow()
+	})
+
+	it('rejects empty-string description', () => {
+		expect(() => schema.parse({ type: 'agent', name: 'Bot', description: '' })).toThrow()
 	})
 
 	it('accepts optional workspace_id and role', () => {
 		const result = schema.parse({
 			type: 'agent',
 			name: 'Bot',
+			description: 'Test agent',
 			workspace_id: uuid,
 			role: 'owner',
 		})
@@ -428,18 +456,26 @@ describe('create_actor schema', () => {
 	})
 
 	it('accepts admin role, matching update_actor', () => {
-		const result = schema.parse({ type: 'agent', name: 'Bot', role: 'admin' })
+		const result = schema.parse({
+			type: 'agent',
+			name: 'Bot',
+			description: 'Test agent',
+			role: 'admin',
+		})
 		expect(result.role).toBe('admin')
 	})
 
 	it('rejects viewer — not a real workspace role', () => {
-		expect(() => schema.parse({ type: 'agent', name: 'Bot', role: 'viewer' })).toThrow()
+		expect(() =>
+			schema.parse({ type: 'agent', name: 'Bot', description: 'Test agent', role: 'viewer' }),
+		).toThrow()
 	})
 
 	it('accepts optional tools and attach_skill_ids', () => {
 		const result = schema.parse({
 			type: 'agent',
 			name: 'Bot',
+			description: 'Test agent',
 			tools: { mcpServers: { github: { command: 'npx' } } },
 			attach_skill_ids: [uuid],
 		})
@@ -448,7 +484,14 @@ describe('create_actor schema', () => {
 	})
 
 	it('rejects non-uuid attach_skill_ids', () => {
-		expect(() => schema.parse({ type: 'agent', name: 'Bot', attach_skill_ids: ['nope'] })).toThrow()
+		expect(() =>
+			schema.parse({
+				type: 'agent',
+				name: 'Bot',
+				description: 'Test agent',
+				attach_skill_ids: ['nope'],
+			}),
+		).toThrow()
 	})
 })
 
@@ -490,6 +533,15 @@ describe('update_actor schema', () => {
 
 	it('rejects non-UUID entries in detach_skill_ids', () => {
 		expect(() => schema.parse({ id: uuid, detach_skill_ids: ['not-a-uuid'] })).toThrow()
+	})
+
+	it('allows description to be omitted (leaves it unchanged)', () => {
+		const result = schema.parse({ id: uuid })
+		expect(result.description).toBeUndefined()
+	})
+
+	it('rejects an empty-string description', () => {
+		expect(() => schema.parse({ id: uuid, description: '' })).toThrow()
 	})
 
 	it('defaults attach_skill_ids and detach_skill_ids to undefined when omitted', () => {
@@ -699,7 +751,6 @@ describe('get_comments schema', () => {
 		const result = schema.parse({ entity_id: uuid })
 		expect(result.entity_id).toBe(uuid)
 		expect(result.limit).toBe(50)
-		expect(result.offset).toBe(0)
 	})
 
 	it('rejects missing entity_id', () => {
@@ -714,8 +765,14 @@ describe('get_comments schema', () => {
 		expect(() => schema.parse({ entity_id: uuid, limit: 200 })).toThrow()
 	})
 
-	it('rejects negative offset', () => {
-		expect(() => schema.parse({ entity_id: uuid, offset: -1 })).toThrow()
+	it('accepts an optional cursor for snapshot-consistent pagination', () => {
+		const result = schema.parse({ entity_id: uuid, cursor: 'anything' })
+		expect(result.cursor).toBe('anything')
+	})
+
+	it('does not accept an offset param — cursor covers pagination', () => {
+		const result = schema.parse({ entity_id: uuid, offset: 5 })
+		expect((result as Record<string, unknown>).offset).toBeUndefined()
 	})
 })
 
@@ -770,6 +827,27 @@ describe('create_comment schema', () => {
 	it('rejects non-positive parent_event_id', () => {
 		expect(() => schema.parse({ entity_id: uuid, content: 'hi', parent_event_id: 0 })).toThrow()
 	})
+
+	it('accepts attention scores from 1 to 5', () => {
+		for (let attention = 1; attention <= 5; attention++) {
+			const result = schema.parse({ entity_id: uuid, content: 'hi', attention })
+			expect(result.attention).toBe(attention)
+		}
+	})
+
+	it('leaves attention undefined when omitted', () => {
+		const result = schema.parse({ entity_id: uuid, content: 'hi' })
+		expect(result.attention).toBeUndefined()
+	})
+
+	it('rejects attention scores outside 1-5', () => {
+		expect(() => schema.parse({ entity_id: uuid, content: 'hi', attention: 0 })).toThrow()
+		expect(() => schema.parse({ entity_id: uuid, content: 'hi', attention: 6 })).toThrow()
+	})
+
+	it('rejects non-integer attention scores', () => {
+		expect(() => schema.parse({ entity_id: uuid, content: 'hi', attention: 3.5 })).toThrow()
+	})
 })
 
 describe('create_trigger schema', () => {
@@ -813,9 +891,13 @@ describe('create_trigger schema', () => {
 describe('create_loop schema', () => {
 	const schema = tools.create_loop.inputSchema
 
-	it('applies defaults: running status, empty steps/trigger_ids/object_ids', () => {
-		const result = schema.parse({ name: 'Lead loop' })
-		expect(result.status).toBe('running')
+	it('requires workspace_id', () => {
+		expect(() => schema.parse({ name: 'Lead loop' })).toThrow()
+	})
+
+	it('applies defaults: draft status, empty steps/trigger_ids/object_ids', () => {
+		const result = schema.parse({ workspace_id: uuid, name: 'Lead loop' })
+		expect(result.status).toBe('draft')
 		expect(result.steps).toEqual([])
 		expect(result.trigger_ids).toEqual([])
 		expect(result.object_ids).toEqual([])
@@ -823,6 +905,7 @@ describe('create_loop schema', () => {
 
 	it('accepts an event step and a cron step', () => {
 		const result = schema.parse({
+			workspace_id: uuid,
 			name: 'Lead loop',
 			steps: [
 				{
@@ -847,6 +930,7 @@ describe('create_loop schema', () => {
 	it('rejects a step with an invalid event action', () => {
 		expect(() =>
 			schema.parse({
+				workspace_id: uuid,
 				name: 'X',
 				steps: [
 					{
@@ -861,7 +945,7 @@ describe('create_loop schema', () => {
 	})
 
 	it('rejects an unknown loop status', () => {
-		expect(() => schema.parse({ name: 'X', status: 'sideways' })).toThrow()
+		expect(() => schema.parse({ workspace_id: uuid, name: 'X', status: 'sideways' })).toThrow()
 	})
 })
 
@@ -1229,6 +1313,24 @@ describe('list_actors schema', () => {
 	})
 })
 
+describe('get_actor schema', () => {
+	const schema = tools.get_actor.inputSchema
+
+	it('accepts id alone', () => {
+		const result = schema.parse({ id: uuid })
+		expect(result.workspace_id).toBeUndefined()
+	})
+
+	it('accepts optional workspace_id', () => {
+		const result = schema.parse({ id: uuid, workspace_id: uuid })
+		expect(result.workspace_id).toBe(uuid)
+	})
+
+	it('rejects invalid workspace_id', () => {
+		expect(() => schema.parse({ id: uuid, workspace_id: 'not-a-uuid' })).toThrow()
+	})
+})
+
 describe('empty input schema tools', () => {
 	it('list_workspaces accepts empty object', () => {
 		expect(tools.list_workspaces.inputSchema.parse({})).toEqual({})
@@ -1239,156 +1341,23 @@ describe('empty input schema tools', () => {
 	})
 })
 
-describe('set_llm_api_key schema', () => {
-	const schema = tools.set_llm_api_key.inputSchema
-
-	it('accepts anthropic + non-empty api_key', () => {
-		const result = schema.parse({ provider: 'anthropic', api_key: 'sk-ant-abc' })
-		expect(result.provider).toBe('anthropic')
-		expect(result.api_key).toBe('sk-ant-abc')
+describe('workspace_id required on create_objects and list_objects', () => {
+	it('create_objects requires workspace_id', () => {
+		const shape = tools.create_objects.inputSchema.shape
+		expect(shape.workspace_id.isOptional()).toBe(false)
 	})
 
-	it('accepts openai', () => {
-		const result = schema.parse({ provider: 'openai', api_key: 'sk-abc' })
-		expect(result.provider).toBe('openai')
-	})
-
-	it('rejects unknown provider', () => {
-		expect(() => schema.parse({ provider: 'google', api_key: 'x' })).toThrow()
-	})
-
-	it('rejects an empty api_key', () => {
-		expect(() => schema.parse({ provider: 'anthropic', api_key: '' })).toThrow()
-	})
-
-	it('rejects a missing api_key', () => {
-		expect(() => schema.parse({ provider: 'anthropic' })).toThrow()
-	})
-})
-
-describe('delete_llm_api_key schema', () => {
-	const schema = tools.delete_llm_api_key.inputSchema
-
-	it('accepts provider', () => {
-		expect(schema.parse({ provider: 'anthropic' }).provider).toBe('anthropic')
-	})
-
-	it('rejects unknown provider', () => {
-		expect(() => schema.parse({ provider: 'google' })).toThrow()
-	})
-})
-
-describe('get_llm_api_keys schema', () => {
-	const schema = tools.get_llm_api_keys.inputSchema
-
-	it('accepts empty object', () => {
-		expect(schema.parse({})).toEqual({})
-	})
-})
-
-describe('import_claude_subscription schema', () => {
-	const schema = tools.import_claude_subscription.inputSchema
-
-	it('accepts required token fields', () => {
-		const result = schema.parse({
-			access_token: 'a',
-			refresh_token: 'r',
-			expires_at: 123,
-		})
-		expect(result.access_token).toBe('a')
-		expect(result.refresh_token).toBe('r')
-		expect(result.expires_at).toBe(123)
-	})
-
-	it('rejects missing access_token', () => {
-		expect(() => schema.parse({ refresh_token: 'r', expires_at: 1 })).toThrow()
-	})
-
-	it('accepts optional subscription_type and scopes', () => {
-		const result = schema.parse({
-			access_token: 'a',
-			refresh_token: 'r',
-			expires_at: 1,
-			subscription_type: 'max',
-			scopes: ['read'],
-		})
-		expect(result.subscription_type).toBe('max')
-		expect(result.scopes).toEqual(['read'])
-	})
-
-	it('accepts an optional nickname', () => {
-		const result = schema.parse({
-			access_token: 'a',
-			refresh_token: 'r',
-			expires_at: 1,
-			nickname: 'Work account',
-		})
-		expect(result.nickname).toBe('Work account')
-	})
-
-	it('rejects a nickname over 60 characters', () => {
-		expect(() =>
-			schema.parse({
-				access_token: 'a',
-				refresh_token: 'r',
-				expires_at: 1,
-				nickname: 'x'.repeat(61),
-			}),
-		).toThrow()
-	})
-})
-
-describe('rename_claude_subscription schema', () => {
-	const schema = tools.rename_claude_subscription.inputSchema
-
-	it('accepts a slot and nickname', () => {
-		const result = schema.parse({ slot: 'backup', nickname: 'Overflow account' })
-		expect(result.slot).toBe('backup')
-		expect(result.nickname).toBe('Overflow account')
-	})
-
-	it('defaults slot to primary', () => {
-		const result = schema.parse({ nickname: 'Main account' })
-		expect(result.slot).toBe('primary')
-	})
-
-	it('accepts an empty string to clear the nickname', () => {
-		const result = schema.parse({ nickname: '' })
-		expect(result.nickname).toBe('')
-	})
-
-	it('rejects a nickname over 60 characters', () => {
-		expect(() => schema.parse({ nickname: 'x'.repeat(61) })).toThrow()
-	})
-
-	it('rejects a missing nickname', () => {
-		expect(() => schema.parse({ slot: 'primary' })).toThrow()
-	})
-})
-
-describe('get_claude_subscription_status schema', () => {
-	const schema = tools.get_claude_subscription_status.inputSchema
-
-	it('accepts empty object', () => {
-		expect(schema.parse({})).toEqual({})
-	})
-})
-
-describe('disconnect_claude_subscription schema', () => {
-	const schema = tools.disconnect_claude_subscription.inputSchema
-
-	it('accepts empty object', () => {
-		expect(schema.parse({})).toEqual({})
+	it('list_objects requires workspace_id', () => {
+		const shape = tools.list_objects.inputSchema.shape
+		expect(shape.workspace_id.isOptional()).toBe(false)
 	})
 })
 
 describe('workspace_id optional on most tools', () => {
 	const toolsWithOptionalWorkspace = [
-		'create_objects',
 		'get_objects',
 		'update_objects',
 		'delete_object',
-		'list_objects',
 		'search_objects',
 		'list_relationships',
 		'delete_relationship',
@@ -1403,13 +1372,7 @@ describe('workspace_id optional on most tools', () => {
 		'list_integrations',
 		'connect_integration',
 		'disconnect_integration',
-		'set_llm_api_key',
-		'get_llm_api_keys',
-		'delete_llm_api_key',
-		'import_claude_subscription',
-		'get_claude_subscription_status',
-		'disconnect_claude_subscription',
-		'rename_claude_subscription',
+		'get_actor',
 	]
 
 	for (const name of toolsWithOptionalWorkspace) {

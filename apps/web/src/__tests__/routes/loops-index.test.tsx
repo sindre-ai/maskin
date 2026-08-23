@@ -52,12 +52,11 @@ function buildLoop(overrides: Partial<LoopSummary> = {}): LoopSummary {
 		id: 'loop-1',
 		workspaceId: 'ws-1',
 		name: 'Customer feedback',
-		guarantee: 'Every customer who gives feedback hears back within 30 days',
-		status: 'running',
-		pill: 'running',
+		content: 'Every customer who gives feedback hears back within 30 days',
+		status: 'learning',
+		pill: 'learning',
 		entryCondition: null,
 		closeCondition: null,
-		humanDecisionPoints: null,
 		inProgressCount: 6,
 		closedCount: 128,
 		medianTimeToCloseMs: 11 * 24 * 3600 * 1000,
@@ -126,7 +125,6 @@ describe('LoopsPage', () => {
 	it('renders the empty state when there are no loops', () => {
 		render(<LoopsPage />)
 
-		expect(screen.getByRole('heading', { name: 'Loops' })).toBeInTheDocument()
 		expect(screen.getByText('No loops running here yet')).toBeInTheDocument()
 	})
 

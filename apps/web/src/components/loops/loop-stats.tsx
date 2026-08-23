@@ -4,11 +4,9 @@ import { formatLoopDurationMs } from '@/lib/loop-duration'
 
 export function LoopStats({ loop }: { loop: LoopSummary }) {
 	const isWaiting = loop.pill === 'waiting_on_you'
-	const inProgressColor = isWaiting
-		? 'text-warning'
-		: loop.pill === 'running'
-			? 'text-success'
-			: 'text-foreground'
+	const isLive =
+		loop.pill === 'learning' || loop.pill === 'supervised' || loop.pill === 'fully_autonomous'
+	const inProgressColor = isWaiting ? 'text-warning' : isLive ? 'text-success' : 'text-foreground'
 	const median = formatLoopDurationMs(loop.medianTimeToCloseMs)
 
 	const stats: { value: string; label: string; className?: string }[] = [

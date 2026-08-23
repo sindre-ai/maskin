@@ -1,7 +1,6 @@
 /// <reference types="vitest/globals" />
 import '@testing-library/jest-dom'
 import type { WorkspaceWithRole } from '@/lib/api'
-import { ChatProvider } from '@/lib/chat-context'
 import { WorkspaceContext, type WorkspaceContextValue } from '@/lib/workspace-context'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
@@ -20,6 +19,46 @@ if (typeof Element !== 'undefined') {
 		Element.prototype.scrollIntoView = () => {}
 	}
 }
+
+// Defensive polyfill: on some Node/jsdom/vitest version combinations,
+// `globalThis.localStorage` can come back `undefined` in the test environment (a global
+// storage getter shadowing jsdom's own implementation), which makes any module that
+// touches storage at import time throw. Where that happens, install a spec-shaped
+// in-memory Storage instead. This is a no-op when jsdom's storage is already present,
+// which is the common case — it's exported and covered directly by
+// `storage-polyfill.test.ts` since the failure condition doesn't reproduce in every
+// environment (notably not in this repo's CI, which pins Node 20), so nothing else
+// exercises this branch.
+export function installStoragePolyfill(
+	target: { localStorage?: Storage; sessionStorage?: Storage } = globalThis,
+) {
+	if (typeof target.localStorage !== 'undefined') return
+	const makeStorage = (): Storage => {
+		const store = new Map<string, string>()
+		return {
+			get length() {
+				return store.size
+			},
+			key: (i: number) => [...store.keys()][i] ?? null,
+			getItem: (k: string) => store.get(String(k)) ?? null,
+			setItem: (k: string, v: string) => {
+				store.set(String(k), String(v))
+			},
+			removeItem: (k: string) => {
+				store.delete(String(k))
+			},
+			clear: () => store.clear(),
+		} as Storage
+	}
+	for (const name of ['localStorage', 'sessionStorage'] as const) {
+		Object.defineProperty(target, name, {
+			value: makeStorage(),
+			configurable: true,
+			writable: true,
+		})
+	}
+}
+installStoragePolyfill()
 
 // Radix's `react-use-size` (used by Switch + others) reads ResizeObserver.
 if (typeof globalThis.ResizeObserver === 'undefined') {
@@ -117,10 +156,6 @@ export function createWorkspaceWrapper(overrides: Partial<WorkspaceWithRole> = {
 		React.createElement(
 			QueryClientProvider,
 			{ client: createTestQueryClient() },
-			React.createElement(
-				WorkspaceContext.Provider,
-				{ value: ctxValue },
-				React.createElement(ChatProvider, { workspaceId: workspace.id, children }),
-			),
+			React.createElement(WorkspaceContext.Provider, { value: ctxValue }, children),
 		)
 }

@@ -139,8 +139,11 @@ export function ForYouCardQueue({ workspaceId, queue, sparseComposer }: ForYouCa
 		<div className="flex flex-1 min-h-0 flex-col gap-4 pb-24">
 			{cards}
 
+			{/* The action bar clears the v2 shell's fixed bottom nav below 768px via
+			    --mobile-nav-h (app.css); the fallback keeps it flush to the viewport
+			    edge under the legacy shell, which has no bottom nav. */}
 			{currentItem ? (
-				<div className="fixed inset-x-0 bottom-0 z-10 flex justify-center px-4 py-3 md:sticky md:px-0 md:py-0">
+				<div className="fixed inset-x-0 bottom-[var(--mobile-nav-h,0px)] z-10 flex justify-center px-4 py-3 md:sticky md:px-0 md:py-0">
 					<div className="flex w-full max-w-[760px] items-center justify-between gap-3">
 						<Button
 							size="sm"
@@ -166,20 +169,18 @@ export function ForYouCardQueue({ workspaceId, queue, sparseComposer }: ForYouCa
 				<EmptyState
 					title="You're caught up"
 					description="Nothing needs you right now. The loops keep running — you'll hear when one does."
-					action={
-						<div className="flex flex-wrap items-center justify-center gap-3">
-							<Button size="sm" variant="outline" asChild>
-								<Link to="/$workspaceId/briefing" params={{ workspaceId }}>
-									Today's brief
-								</Link>
-							</Button>
-							<Button size="sm" variant="ghost" asChild>
-								<Link to="/$workspaceId/loops" params={{ workspaceId }}>
-									Review loops →
-								</Link>
-							</Button>
-						</div>
-					}
+					action=<div className="flex flex-wrap items-center justify-center gap-3">
+						<Button size="sm" variant="outline" asChild>
+							<Link to="/$workspaceId/briefing" params={{ workspaceId }}>
+								Today's brief
+							</Link>
+						</Button>
+						<Button size="sm" variant="ghost" asChild>
+							<Link to="/$workspaceId/loops" params={{ workspaceId }}>
+								Review loops →
+							</Link>
+						</Button>
+					</div>
 				/>
 			)}
 

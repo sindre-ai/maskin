@@ -4,10 +4,58 @@
 @custom-variant dark (&:is(.dark *));
 @custom-variant can-hover (@media (hover: hover));
 
+/* Self-hosted webfonts — the v2 mockup ships Schibsted Grotesk (variable
+   400–900) and JetBrains Mono (400/500/600/700). We serve them from
+   /public/fonts/ so the app has no runtime dependency on fonts.googleapis.com.
+   `font-display: swap` lets text render immediately in the metric-tuned
+   fallback below; the swap is CLS-neutral because the fallback box matches
+   the webfont box. Payload budget ≤120 KB (latin + latin-ext for both). */
+@font-face {
+	font-family: "Schibsted Grotesk";
+	font-style: normal;
+	font-weight: 400 900;
+	font-display: swap;
+	src: url("/fonts/schibsted-grotesk-latin.woff2") format("woff2");
+	unicode-range:
+		U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+		U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+	font-family: "Schibsted Grotesk";
+	font-style: normal;
+	font-weight: 400 900;
+	font-display: swap;
+	src: url("/fonts/schibsted-grotesk-latin-ext.woff2") format("woff2");
+	unicode-range: U+0100-024F, U+0259, U+1E00-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113,
+		U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+	font-family: "JetBrains Mono";
+	font-style: normal;
+	font-weight: 400 700;
+	font-display: swap;
+	src: url("/fonts/jetbrains-mono-latin.woff2") format("woff2");
+	unicode-range:
+		U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+		U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+	font-family: "JetBrains Mono";
+	font-style: normal;
+	font-weight: 400 700;
+	font-display: swap;
+	src: url("/fonts/jetbrains-mono-latin-ext.woff2") format("woff2");
+	unicode-range: U+0100-024F, U+0259, U+1E00-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113,
+		U+2C60-2C7F, U+A720-A7FF;
+}
+
 /* Metric-tuned fallback fonts.
-   Render box is matched to Schibsted Grotesk / JetBrains Mono before the
-   webfont arrives so the layout doesn't shift on font swap. Values are a
-   conservative first pass — T8 will pin them against measured CLS. */
+   Render box is matched to Schibsted Grotesk / JetBrains Mono so text laid
+   out in the fallback doesn't shift when the webfont swaps in. Values are
+   a conservative first pass — later work pins them against measured CLS. */
 @font-face {
 	font-family: "Schibsted Grotesk Fallback";
 	src: local("Arial"), local("Helvetica Neue"), local("Helvetica");
@@ -46,8 +94,22 @@
 	--color-destructive: var(--destructive);
 	--color-destructive-foreground: var(--destructive-foreground);
 	--color-border: var(--border);
+	--color-border-strong: var(--border-strong);
+	--color-border-hover: var(--border-hover);
 	--color-input: var(--input);
 	--color-ring: var(--ring);
+	--color-brand: var(--brand);
+	--color-brand-foreground: var(--brand-foreground);
+	--color-brand-hover: var(--brand-hover);
+
+	/* v2 brand — indigo accent for small surfaces (chip, focus ring, left rule).
+	   Not the app-wide solid button; that stays on --primary per v2. */
+	--color-brand: var(--brand);
+	--color-brand-foreground: var(--brand-foreground);
+	--color-brand-subtle: var(--brand-subtle);
+	--color-brand-subtle-foreground: var(--brand-subtle-foreground);
+	--color-ask-surface: var(--ask-surface);
+	--color-ask-border: var(--ask-border);
 
 	/* Semantic */
 	--color-success: var(--success);
@@ -115,6 +177,7 @@
 	--color-type-bet-text: var(--tp-bet-text);
 	--color-type-task-bg: var(--tp-task-bg);
 	--color-type-task-text: var(--tp-task-text);
+
 	--color-sidebar-ring: var(--sidebar-ring);
 	--color-sidebar-border: var(--sidebar-border);
 	--color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -123,6 +186,9 @@
 	--color-sidebar-primary: var(--sidebar-primary);
 	--color-sidebar-foreground: var(--sidebar-foreground);
 	--color-sidebar: var(--sidebar);
+
+	/* Motion — matches the mockup's popUp/hover timings */
+	--ease-brand: cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 @theme {
@@ -130,37 +196,112 @@
 		"Segoe UI", Roboto, sans-serif;
 	--font-mono: "JetBrains Mono", "JetBrains Mono Fallback", ui-monospace, Menlo, Consolas, monospace;
 
-	--radius-sm: calc(var(--radius) - 4px);
-	--radius-md: calc(var(--radius) - 2px);
-	--radius-lg: var(--radius);
-	--radius-xl: calc(var(--radius) + 4px);
+	/* v2 radius scale (mockup: pills, chips 8px; menus/icon buttons 9px; cards
+	   13–14px; large surfaces 16px). Base 10px keeps sm/md/lg/xl equidistant
+	   around the two most-used stops (8 and 14). */
+	--radius-sm: calc(var(--radius) - 4px); /* 6px  — subtle */
+	--radius-md: calc(var(--radius) - 2px); /* 8px  — chip / menu item */
+	--radius-lg: var(--radius); /* 10px — icon button / control */
+	--radius-xl: calc(var(--radius) + 4px); /* 14px — card / dropdown */
+	--radius-2xl: calc(var(--radius) + 6px); /* 16px — modal / large card */
+
+	/* v2 shadows — matches the mockup's dropdown and modal elevations. */
+	--shadow-xs: 0 1px 2px rgba(24, 24, 27, 0.04);
+	--shadow-sm: 0 1px 3px rgba(24, 24, 27, 0.06), 0 1px 2px rgba(24, 24, 27, 0.04);
+	--shadow-md: 0 4px 12px rgba(24, 24, 27, 0.06);
+	--shadow-lg: 0 12px 34px rgba(0, 0, 0, 0.1);
+	--shadow-xl: 0 24px 70px rgba(0, 0, 0, 0.3);
+
+	/* Motion scale — v2 design system (see .claude/skills/maskin-design/tokens/motion.css).
+	   Named durations + easings so surfaces don't hardcode raw ms values.
+	   Guidance: 150 on colour/border, 180 on fades, 200 on shadow +
+	   transform, 250 on nav/panel state, slide on drawer/sheet slide-in.
+	   Tailwind v4 auto-generates `ease-<name>` utilities from --ease-*, but
+	   not `duration-<name>` from --duration-* — the semantic durations that
+	   don't map onto Tailwind's built-in numeric scale (180, 250, slide) get
+	   explicit @utility blocks below. */
+	--duration-180: 180ms;
+	--duration-250: 250ms;
+	--duration-slide: 300ms;
+
+	--ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+	--ease-emphasized: cubic-bezier(0.16, 1, 0.3, 1);
+	--ease-out: ease-out;
 }
 
+@utility duration-180 {
+	transition-duration: var(--duration-180);
+}
+@utility duration-250 {
+	transition-duration: var(--duration-250);
+}
+@utility duration-slide {
+	transition-duration: var(--duration-slide);
+}
+
+/* ------------------------------------------------------------------------- */
+/* v2 tokens                                                                 */
+/*                                                                           */
+/* Palette source: `Maskin App v2 Standalone.html` (attached to the parent   */
+/* bet, 2026-08-14) — zinc neutrals (Tailwind zinc ramp) + indigo brand      */
+/* accent + amber warning, matching the maskin.io landing page. v2           */
+/* supersedes the 2026-08-11 cool-zinc palette in full — the neutral family  */
+/* is still zinc, but the exact hexes, the `--brand` / `--brand-subtle`      */
+/* tokens, and the type/status badge remaps are all v2.                      */
+/* Raw hex values in this block are intentional — this is the sole place a  */
+/* colour literal is allowed; every consumer downstream must go through a   */
+/* semantic token (bg-background, text-foreground, border-border, etc.).    */
+/* ------------------------------------------------------------------------- */
 :root {
-	--radius: 0.625rem;
-	--background: oklch(1 0 0);
-	--foreground: oklch(0.145 0.005 285.823);
-	--card: oklch(1 0 0);
-	--card-foreground: oklch(0.145 0.005 285.823);
-	--popover: oklch(1 0 0);
-	--popover-foreground: oklch(0.145 0.005 285.823);
-	--primary: oklch(0.205 0.006 285.885);
-	--primary-foreground: oklch(0.985 0 0);
-	--secondary: oklch(0.965 0.001 286.375);
-	--secondary-foreground: oklch(0.205 0.006 285.885);
-	--muted: oklch(0.965 0.001 286.375);
-	--muted-foreground: oklch(0.556 0.005 286.286);
-	--accent: oklch(0.965 0.001 286.375);
-	--accent-foreground: oklch(0.205 0.006 285.885);
-	--destructive: oklch(0.577 0.245 27.325);
-	--destructive-foreground: oklch(0.985 0 0);
-	--border: oklch(0.922 0.004 286.32);
-	--input: oklch(0.922 0.004 286.32);
-	--ring: oklch(0.708 0.005 286.344);
+	--radius: 0.625rem; /* 10px — base radius unit */
+
+	/* Neutral surface + text */
+	--background: #ffffff;
+	--foreground: #18181b;
+	--card: #ffffff;
+	--card-foreground: #18181b;
+	--popover: #ffffff;
+	--popover-foreground: #18181b;
+
+	/* Primary = the near-black used for solid buttons and titles */
+	--primary: #18181b;
+	--primary-foreground: #ffffff;
+
+	/* Secondary + muted surfaces */
+	--secondary: #f6f6f7;
+	--secondary-foreground: #18181b;
+	--muted: #f4f4f5;
+	--muted-foreground: #71717a;
+	--accent: #f6f6f7;
+	--accent-foreground: #18181b;
+
+	--destructive: #dc2626;
+	--destructive-foreground: #ffffff;
+
+	--border: #e4e4e7;
+	--border-strong: #c4c4cc;
+	--border-hover: #c4c4cc;
+	--input: #e4e4e7;
+	--ring: #a1a1aa;
+
+	/* Brand — the indigo used for links and primary actions on light surfaces */
+	--brand: #4f46e5;
+	--brand-foreground: #ffffff;
+	--brand-hover: #4338ca;
+
+	/* v2 brand accent (indigo-600 / indigo-50 chip). */
+	--brand: #4f46e5;
+	--brand-foreground: #ffffff;
+	--brand-subtle: #eef2ff;
+	--brand-subtle-foreground: #4338ca;
+
+	/* v2 ask banner — warm parchment surface, semantically distinct from brand-subtle. */
+	--ask-surface: #fffdf7;
+	--ask-border: #f0e6d2;
 
 	/* Semantic */
 	--success: #16a34a;
-	--warning: #d97706;
+	--warning: #b45309;
 	--error: #dc2626;
 
 	/* Status badges */
@@ -169,110 +310,136 @@
 	--st-todo-bg: #f4f4f5;
 	--st-todo-text: #71717a;
 	--st-processing-bg: #fef3c7;
-	--st-processing-text: #92400e;
+	--st-processing-text: #b45309;
 	--st-in_progress-bg: #dbeafe;
-	--st-in_progress-text: #1e40af;
+	--st-in_progress-text: #1d4ed8;
 	--st-active-bg: #dcfce7;
-	--st-active-text: #166534;
-	--st-signal-bg: #f3e8ff;
-	--st-signal-text: #6b21a8;
+	--st-active-text: #15803d;
+	--st-signal-bg: #ede9fe;
+	--st-signal-text: #6d28d9;
 	--st-proposed-bg: #e0e7ff;
-	--st-proposed-text: #3730a3;
+	--st-proposed-text: #4338ca;
 	--st-clustered-bg: #ccfbf1;
-	--st-clustered-text: #115e59;
-	--st-done-bg: #d1fae5;
-	--st-done-text: #065f46;
-	--st-completed-bg: #d1fae5;
-	--st-completed-text: #065f46;
-	--st-succeeded-bg: #d1fae5;
-	--st-succeeded-text: #065f46;
-	--st-blocked-bg: #fee2e2;
-	--st-blocked-text: #991b1b;
+	--st-clustered-text: #0f766e;
+	--st-done-bg: #dcfce7;
+	--st-done-text: #15803d;
+	--st-completed-bg: #dcfce7;
+	--st-completed-text: #15803d;
+	--st-succeeded-bg: #dcfce7;
+	--st-succeeded-text: #15803d;
+	--st-blocked-bg: #ffe4e6;
+	--st-blocked-text: #be123c;
+	/* Failed + breached read as danger (red family), separate from blocked's
+	   rose "waiting on someone" tone. Kept aligned across both badges so
+	   the two failure-mode states read as the same visual family. */
 	--st-failed-bg: #fee2e2;
-	--st-failed-text: #991b1b;
+	--st-failed-text: #b91c1c;
 	--st-paused-bg: #f4f4f5;
 	--st-paused-text: #71717a;
 	--st-discarded-bg: #f4f4f5;
 	--st-discarded-text: #a1a1aa;
-	--st-in_review-bg: #fff7ed;
-	--st-in_review-text: #c2410c;
+	--st-in_review-bg: #fef3c7;
+	--st-in_review-text: #b45309;
 	--st-validated-bg: #ede9fe;
-	--st-validated-text: #5b21b6;
+	--st-validated-text: #6d28d9;
 	--st-qualified-bg: #e0f2fe;
-	--st-qualified-text: #075985;
-	--st-define-bg: #ffedd5;
-	--st-define-text: #9a3412;
-	--st-live-bg: #a7f3d0;
-	--st-live-text: #047857;
+	--st-qualified-text: #0369a1;
+	--st-define-bg: #fef3c7;
+	--st-define-text: #a16207;
+	--st-live-bg: #dcfce7;
+	--st-live-text: #15803d;
 	--st-scored-bg: #fae8ff;
-	--st-scored-text: #86198f;
-	--st-parked-bg: #f5f5f4;
-	--st-parked-text: #57534e;
-	--st-archived-bg: #e7e5e4;
-	--st-archived-text: #57534e;
+	--st-scored-text: #a21caf;
+	--st-parked-bg: #f4f4f5;
+	--st-parked-text: #52525b;
+	--st-archived-bg: #ececee;
+	--st-archived-text: #52525b;
 	--st-holding-bg: #f4f4f5;
 	--st-holding-text: #52525b;
 	--st-at_risk-bg: #fef3c7;
-	--st-at_risk-text: #92400e;
+	--st-at_risk-text: #b45309;
 	--st-breached-bg: #fee2e2;
-	--st-breached-text: #991b1b;
+	--st-breached-text: #b91c1c;
 
 	/* Type badges */
 	--tp-insight-bg: #fef3c7;
-	--tp-insight-text: #92400e;
+	--tp-insight-text: #b45309;
 	--tp-bet-bg: #e0e7ff;
-	--tp-bet-text: #3730a3;
+	--tp-bet-text: #4338ca;
 	--tp-task-bg: #f4f4f5;
 	--tp-task-text: #71717a;
-	--sidebar: oklch(0.985 0 0);
-	--sidebar-foreground: oklch(0.145 0.005 285.823);
-	--sidebar-primary: oklch(0.205 0.006 285.885);
-	--sidebar-primary-foreground: oklch(0.985 0 0);
-	--sidebar-accent: oklch(0.965 0.001 286.375);
-	--sidebar-accent-foreground: oklch(0.205 0.006 285.885);
-	--sidebar-border: oklch(0.922 0.004 286.32);
-	--sidebar-ring: oklch(0.708 0.005 286.344);
+
+	/* Sidebar */
+	--sidebar: #fafafa;
+	--sidebar-foreground: #18181b;
+	--sidebar-primary: #18181b;
+	--sidebar-primary-foreground: #ffffff;
+	--sidebar-accent: #f4f4f5;
+	--sidebar-accent-foreground: #18181b;
+	--sidebar-border: #e4e4e7;
+	--sidebar-ring: #a1a1aa;
 }
 
 .dark {
-	--background: oklch(0.145 0.005 285.823);
-	--foreground: oklch(0.985 0 0);
-	--card: oklch(0.145 0.005 285.823);
-	--card-foreground: oklch(0.985 0 0);
-	--popover: oklch(0.145 0.005 285.823);
-	--popover-foreground: oklch(0.985 0 0);
-	--primary: oklch(0.985 0 0);
-	--primary-foreground: oklch(0.205 0.006 285.885);
-	--secondary: oklch(0.264 0.006 286.033);
-	--secondary-foreground: oklch(0.985 0 0);
-	--muted: oklch(0.264 0.006 286.033);
-	--muted-foreground: oklch(0.708 0.005 286.344);
-	--accent: oklch(0.264 0.006 286.033);
-	--accent-foreground: oklch(0.985 0 0);
-	--destructive: oklch(0.396 0.141 25.723);
-	--destructive-foreground: oklch(0.637 0.237 25.331);
-	--border: oklch(0.264 0.006 286.033);
-	--input: oklch(0.264 0.006 286.033);
-	--ring: oklch(0.556 0.005 286.286);
+	/* v2 dark theme.
+	   The mockup only ships the light palette; dark values are derived by
+	   inverting the zinc neutral ramp (zinc-950/900/800/400/200/50) and
+	   lifting the indigo brand two stops (light `#4f46e5` → dark `#818cf8`)
+	   so it reads on a `#09090b` field. Same zinc + indigo family — the
+	   ramp is inverted, the character is not. */
+	--background: #09090b;
+	--foreground: #fafafa;
+	--card: #18181b;
+	--card-foreground: #fafafa;
+	--popover: #18181b;
+	--popover-foreground: #fafafa;
 
-	/* Semantic */
-	--success: #22c55e;
-	--warning: #f59e0b;
-	--error: #ef4444;
+	--primary: #fafafa;
+	--primary-foreground: #18181b;
 
-	/* Status badges */
-	--st-new-bg: #3f3f46;
-	--st-new-text: #d4d4d8;
-	--st-todo-bg: #3f3f46;
-	--st-todo-text: #d4d4d8;
+	--secondary: #27272a;
+	--secondary-foreground: #fafafa;
+	--muted: #27272a;
+	--muted-foreground: #a1a1aa;
+	--accent: #27272a;
+	--accent-foreground: #fafafa;
+
+	--destructive: #f87171;
+	--destructive-foreground: #18181b;
+
+	--border: #27272a;
+	--border-strong: #3f3f46;
+	--border-hover: #3f3f46;
+	--input: #27272a;
+	--ring: #52525b;
+
+	/* Brand stays indigo but shifts one stop lighter so it reads on dark. */
+	--brand: #818cf8;
+	--brand-foreground: #18181b;
+	--brand-hover: #a5b4fc;
+	--brand-subtle: #1e1b4b;
+	--brand-subtle-foreground: #a5b4fc;
+
+	/* v2 ask banner — warm parchment surface, dark derived by cooling the warm ramp one stop. */
+	--ask-surface: #1c1a14;
+	--ask-border: #3a2d1e;
+
+	--success: #4ade80;
+	--warning: #fbbf24;
+	--error: #f87171;
+
+	--st-new-bg: #27272a;
+	--st-new-text: #a1a1aa;
+	--st-todo-bg: #27272a;
+	--st-todo-text: #a1a1aa;
 	--st-processing-bg: #422006;
 	--st-processing-text: #fbbf24;
 	--st-in_progress-bg: #172554;
 	--st-in_progress-text: #93c5fd;
 	--st-active-bg: #052e16;
 	--st-active-text: #86efac;
-	--st-signal-bg: #3b0764;
-	--st-signal-text: #c084fc;
+	--st-signal-bg: #2e1065;
+	--st-signal-text: #c4b5fd;
 	--st-proposed-bg: #1e1b4b;
 	--st-proposed-text: #a5b4fc;
 	--st-clustered-bg: #042f2e;
@@ -283,30 +450,30 @@
 	--st-completed-text: #6ee7b7;
 	--st-succeeded-bg: #022c22;
 	--st-succeeded-text: #6ee7b7;
-	--st-blocked-bg: #450a0a;
-	--st-blocked-text: #fca5a5;
+	--st-blocked-bg: #4c0519;
+	--st-blocked-text: #fda4af;
 	--st-failed-bg: #450a0a;
 	--st-failed-text: #fca5a5;
 	--st-paused-bg: #27272a;
 	--st-paused-text: #a1a1aa;
 	--st-discarded-bg: #27272a;
 	--st-discarded-text: #71717a;
-	--st-in_review-bg: #431407;
-	--st-in_review-text: #fdba74;
+	--st-in_review-bg: #422006;
+	--st-in_review-text: #fbbf24;
 	--st-validated-bg: #2e1065;
 	--st-validated-text: #c4b5fd;
 	--st-qualified-bg: #0c4a6e;
 	--st-qualified-text: #7dd3fc;
-	--st-define-bg: #7c2d12;
-	--st-define-text: #fdba74;
+	--st-define-bg: #422006;
+	--st-define-text: #fbbf24;
 	--st-live-bg: #064e3b;
 	--st-live-text: #34d399;
 	--st-scored-bg: #4a044e;
 	--st-scored-text: #e879f9;
-	--st-parked-bg: #292524;
-	--st-parked-text: #a8a29e;
-	--st-archived-bg: #292524;
-	--st-archived-text: #a8a29e;
+	--st-parked-bg: #27272a;
+	--st-parked-text: #a1a1aa;
+	--st-archived-bg: #18181b;
+	--st-archived-text: #a1a1aa;
 	--st-holding-bg: #27272a;
 	--st-holding-text: #a1a1aa;
 	--st-at_risk-bg: #422006;
@@ -314,21 +481,21 @@
 	--st-breached-bg: #450a0a;
 	--st-breached-text: #fca5a5;
 
-	/* Type badges */
 	--tp-insight-bg: #422006;
 	--tp-insight-text: #fbbf24;
 	--tp-bet-bg: #1e1b4b;
 	--tp-bet-text: #a5b4fc;
-	--tp-task-bg: #3f3f46;
-	--tp-task-text: #d4d4d8;
-	--sidebar: oklch(0.175 0.006 285.823);
-	--sidebar-foreground: oklch(0.985 0 0);
-	--sidebar-primary: oklch(0.985 0 0);
-	--sidebar-primary-foreground: oklch(0.205 0.006 285.885);
-	--sidebar-accent: oklch(0.264 0.006 286.033);
-	--sidebar-accent-foreground: oklch(0.985 0 0);
-	--sidebar-border: oklch(0.264 0.006 286.033);
-	--sidebar-ring: oklch(0.556 0.005 286.286);
+	--tp-task-bg: #27272a;
+	--tp-task-text: #a1a1aa;
+
+	--sidebar: #0a0a0b;
+	--sidebar-foreground: #fafafa;
+	--sidebar-primary: #fafafa;
+	--sidebar-primary-foreground: #18181b;
+	--sidebar-accent: #27272a;
+	--sidebar-accent-foreground: #fafafa;
+	--sidebar-border: #27272a;
+	--sidebar-ring: #52525b;
 }
 
 @layer base {
@@ -349,30 +516,74 @@
 		font-variant-numeric: tabular-nums;
 	}
 
-	/* Slim scrollbars — claude.ai-style thin track. Firefox uses the
-	   `scrollbar-width` rule; Chromium/Safari pick up the `-webkit-*`
-	   pseudo-elements. */
+	/* Slim scrollbars — matches the v2 mockup's 9px indigo-neutral track. */
 	* {
 		scrollbar-width: thin;
-		scrollbar-color: var(--border) transparent;
+		scrollbar-color: var(--border-strong) transparent;
 	}
 	*::-webkit-scrollbar {
-		width: 6px;
-		height: 6px;
+		width: 9px;
+		height: 9px;
 	}
 	*::-webkit-scrollbar-track {
 		background: transparent;
 	}
 	*::-webkit-scrollbar-thumb {
-		background-color: var(--border);
+		background-color: var(--border-strong);
 		border-radius: 9999px;
 	}
 	*::-webkit-scrollbar-thumb:hover {
-		background-color: var(--border-hover, var(--border));
+		background-color: var(--muted-foreground);
+	}
+}
+
+@layer base {
+	/* Search highlight (<mark>) — tuned to the v2 warm palette so the
+	   command palette and /search view highlights read cleanly in both
+	   themes. Light: soft amber wash + indigo text; dark: indigo tint with
+	   a lighter indigo text stop. Rounded so the highlight sits inside the
+	   cell without touching the row edges. */
+	mark {
+		background-color: color-mix(in oklab, var(--brand) 12%, transparent);
+		color: var(--brand-hover);
+		border-radius: var(--radius-sm);
+		padding: 0 2px;
+	}
+	.dark mark {
+		background-color: color-mix(in oklab, var(--brand) 20%, transparent);
+		color: var(--brand);
+	}
+
+	/* Reduced motion — kill animations and transitions, don't just slow
+	   them. Mirrors .claude/skills/maskin-design/tokens/motion.css so every
+	   animated surface (Tailwind utilities, Radix data-state animations,
+	   custom keyframes) inherits the preference without per-component
+	   wiring. */
+	@media (prefers-reduced-motion: reduce) {
+		*,
+		*::before,
+		*::after {
+			animation-duration: 0.001ms !important;
+			animation-iteration-count: 1 !important;
+			transition-duration: 0.001ms !important;
+			scroll-behavior: auto !important;
+		}
 	}
 }
 
 @layer utilities {
+	/* Micro eyebrow — the mockup's uppercase JetBrains Mono section labels
+	   ("VIEW", "SHOW", "SORT"). Locked to muted-foreground so it never
+	   competes with real headers. */
+	.eyebrow {
+		font-family: var(--font-mono);
+		font-size: 0.5rem; /* 8px — matches the v2 mockup exactly */
+		font-weight: 700;
+		letter-spacing: 0.11em;
+		text-transform: uppercase;
+		color: var(--muted-foreground);
+	}
+
 	/* Full-contrast prose: @tailwindcss/typography sets paragraph/list-item color
 	   to var(--tw-prose-body), which resolves to a muted tone inside .prose.
 	   The compound selector (.agent-output p/li) has higher specificity than the
@@ -405,5 +616,19 @@
 		background-color: var(--muted);
 		border: 1px solid var(--border);
 		border-radius: var(--radius);
+	}
+}
+
+/* The v2 shell pins a fixed bottom nav (layout/mobile-nav.tsx) below 768px, so
+   any other bottom-anchored bar must clear it or sit underneath, unclickable.
+   Bars read `var(--mobile-nav-h, 0px)` — the fallback keeps them flush against
+   the viewport edge under the legacy shell, which has no bottom nav. The value
+   is 44px of touch target + 12px of padding, plus the device's safe area. */
+[data-shell="v2"] {
+	--mobile-nav-h: calc(3.5rem + env(safe-area-inset-bottom));
+}
+@media (min-width: 768px) {
+	[data-shell="v2"] {
+		--mobile-nav-h: 0px;
 	}
 }

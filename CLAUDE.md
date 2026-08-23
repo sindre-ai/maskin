@@ -11,8 +11,8 @@ If the user asks how to start this repo, start it, set it up, or similar — fol
 3. **Extract the ready-made MCP command from the banner.** The banner prints a copy-pasteable `claude mcp add maskin -e API_BASE_URL=... -e API_KEY=ank_... -e WORKSPACE_ID=... -- pnpm --filter @maskin/mcp start` line with real credentials (the dev bootstrap auto-provisions a `dev@local` actor + `My Workspace` on a fresh DB, or looks up an existing actor if the DB already has one). Parse that exact line from the log output — do NOT reconstruct it by hand.
 4. **Run that exact `claude mcp add` command** for the user so the MCP server gets wired into Claude Code.
 5. **Reload plugins to pick up the new MCP server in this session** by running `/reload-plugins`. This is critical — it makes the Maskin MCP tools (including `get_started`) available immediately without closing and reopening Claude Code.
-6. **Ask the user which template they want.** Do NOT wait for them to paste a starter prompt. Ask directly, e.g.: "Which template should I set up? Options: (1) development — for building and shipping a product, (2) growth — for running a launch/outreach pipeline, (3) custom — a few questions and I'll tailor it. Just say 1, 2, 3, or 'dev' / 'growth' / 'custom'." Once they pick, call the `get_started` MCP tool with the corresponding `template` arg. `get_started` drives the rest (tailoring questions, preview, apply, pipeline kickoff).
-7. **Relay the "Connect your Claude subscription" prompt.** When `get_started` applies a template, its response includes a block directing the user to `<frontendUrl>/<workspaceId>/settings/keys` to import their Claude Pro/Max credentials — agent sessions cannot run without them. Render that prompt as written and wait for the user to confirm before kicking off the pipeline.
+6. **Call `get_started` with no args to see the loop menu.** Do NOT wait for the user to paste a starter prompt. Call the `get_started` MCP tool with no arguments (or just `workspace_id`). It returns a numbered list of marketplace loops with ids and descriptions. Read that list back to the user and ask (a) which loop they want to install and (b) whether they want to rename the workspace. Then call `get_started` again with `{ loop_id: "<id from the list>", confirm: true, workspace_name: "<name if they want to rename, else omit>" }` to install.
+7. **Relay the "Connect your Claude subscription" prompt.** When `get_started` installs a loop, its response includes a block directing the user to `<frontendUrl>/<workspaceId>/settings/keys` to import their Claude Pro/Max credentials — agent sessions cannot run without them. Render that prompt as written and wait for the user to confirm before kicking off the pipeline.
 
 Don't skip steps 2 or 5. The API key and workspace id only exist after the dev server boots and the auto-bootstrap runs; and without `/reload-plugins` the MCP tools won't be callable in the current session.
 
@@ -27,6 +27,7 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - `.claude/rules/input-validation.md` — input validation requirements at system boundaries (HTTP params, env vars, DB triggers)
 - `.claude/rules/structural-verification.md` — file placement and build configuration verification checklist
 - `.claude/rules/known-pitfalls.md` — registry of recurring bugs to check against before submitting code
+- `.claude/rules/feature-flags.md` — how to add, place, and retire a feature flag (one boundary per feature; visual layer only)
 - `.claude/rules/verification.md` — mandatory runtime-verification gates: integration tests for DB/route changes, E2E specs for frontend changes
 - `packages/db/MIGRATIONS.md` — migration conventions for hot tables (CONCURRENTLY indexes, chunked backfills); read before editing a `.sql` file produced by `pnpm db:generate`
 
@@ -46,7 +47,7 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - Agent execution: Docker-based container sessions in `apps/dev/src/services/session-manager.ts` — spins up ephemeral containers running Claude Code, Codex, or custom CLIs. Persistent agent files (skills, learnings, memory) stored in S3-compatible storage (SeaweedFS for dev). Sessions are trackable, streamable via SSE, pausable/resumable via snapshots.
 - Container management: `apps/dev/src/services/container-manager.ts` wraps dockerode
 - Agent file storage: `packages/storage` provides abstract `StorageProvider` interface with S3 implementation (`@aws-sdk/client-s3`). `apps/dev/src/services/agent-storage.ts` manages pull/push of agent files.
-- MCP server: `packages/mcp` wraps the API as 38 tools for external agents (stdio + HTTP transport)
+- MCP server: `packages/mcp` wraps the API as 73 tools for external agents (stdio + HTTP transport)
 - Workspace context passed via `X-Workspace-Id` header on all workspace-scoped routes
 
 ## Prerequisites
@@ -194,8 +195,38 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - `S3_ACCESS_KEY`, `S3_SECRET_KEY` — S3 credentials (default: `admin`/`admin` for dev)
 - `S3_REGION` — S3 region (default: `us-east-1`)
 - `CORS_ORIGIN` — comma-separated allowed origins for CORS (default: `http://localhost:5173`)
+- `FF_TESTER_ACTOR_IDS` — comma-separated actor UUIDs who get early access to flagged features (default: empty)
+- `FF_TESTER_FEATURES` — comma-separated flag ids those testers see (default: empty = every flag off for everyone)
 
 **Important**: All env vars used at runtime must be listed in `turbo.json` `globalPassThroughEnv`. Turbo filters env vars — unlisted ones are silently unavailable to dev/build tasks. When adding new env vars (e.g., for integrations), always add them there too.
+
+## Feature Flags
+
+Ship a feature to a couple of named testers before everyone else. Config is read
+at runtime from the `apps/dev` environment, so a rollout or rollback is an env
+change plus a backend restart — never a frontend rebuild.
+
+```
+FF_TESTER_ACTOR_IDS=<uuid>,<uuid>        # actors who get early access
+FF_TESTER_FEATURES=new-design            # flag ids those actors see
+```
+
+A flag has two states: **off**, or **on for the tester actors**. There is no
+"on for everyone" setting — shipping to everyone means *deleting* the flag, not
+promoting it, so the config can't become a graveyard of undeleted code.
+
+- Register every flag id in `FLAGS` in `apps/dev/src/lib/feature-flags.ts`;
+  unregistered ids always resolve to `false`.
+- Read it with `useFeatureFlag(id)` at **one** boundary, as high in the tree as
+  possible (shell or route layout) — never scattered across components. Third
+  call site for one flag means the boundary is wrong.
+- Flags are for the **visual layer only**. Never flag data-layer, API, or
+  migration changes — a user with the flag off hits the same backend.
+- Resolution happens server-side (`GET /api/feature-flags`); the tester actor
+  ids never reach the browser.
+
+Full guide, including the test-only `ff:<flagId>` localStorage override and the
+retirement checklist: `.claude/rules/feature-flags.md`.
 
 ## Principles
 1. Simple & intuitive

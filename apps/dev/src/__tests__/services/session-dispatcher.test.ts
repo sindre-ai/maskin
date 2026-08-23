@@ -1,3 +1,4 @@
+import { agentServers, sessions } from '@maskin/db/schema'
 import { describe, expect, it, vi } from 'vitest'
 import {
 	AgentServerAuthError,
@@ -21,6 +22,7 @@ type SessionStub = {
 
 function fakeDb(servers: ServerStub[], sessionsRows: SessionStub[]) {
 	const sessionsById = new Map(sessionsRows.map((s) => [s.id, s]))
+	const insertedEvents: Array<Record<string, unknown>> = []
 
 	// pickLeastLoadedServer issues .select({...}).from(agentServers).where(...).
 	// We satisfy that one shape and compute `active` from sessionsRows directly.
@@ -105,10 +107,23 @@ function fakeDb(servers: ServerStub[], sessionsRows: SessionStub[]) {
 		}),
 	})
 
+	// markDispatched inserts an `events` row (entityType 'session') once a
+	// session reaches 'running' — the frontend's live-activity surfaces (e.g.
+	// the chat typing indicator) rely on this to refetch past a stale
+	// 'pending' snapshot. No-op the write but record it for assertions.
+	const insert = (_table: unknown) => ({
+		values: (row: Record<string, unknown>) => {
+			insertedEvents.push(row)
+			return Promise.resolve()
+		},
+	})
+
 	return {
 		select,
 		update,
+		insert,
 		_sessions: sessionsById,
+		_insertedEvents: insertedEvents,
 	}
 }
 
@@ -305,7 +320,7 @@ describe('SessionDispatcher.dispatch', () => {
 			startedAt: null,
 		}
 		const startSession = vi.fn(async (_req: StartSessionRequest) => startResponse('s-1'))
-		const { dispatcher, client } = setup([sess], { startSession })
+		const { dispatcher, client, db } = setup([sess], { startSession })
 
 		const result = await dispatcher.dispatch('s-1', 'dispatch:s-1')
 
@@ -315,6 +330,15 @@ describe('SessionDispatcher.dispatch', () => {
 		expect(sess.agentServerId).toBe(SERVER.id)
 		expect(sess.status).toBe('running')
 		expect(sess.containerId).toBe('sb-s-1')
+		// Regression guard: without this event, live-activity surfaces (e.g.
+		// the chat typing indicator) never learn the session left 'pending'.
+		expect(db._insertedEvents).toContainEqual(
+			expect.objectContaining({
+				action: 'session_started',
+				entityType: 'session',
+				entityId: 's-1',
+			}),
+		)
 	})
 
 	it('maps 401 to permanent_failure and releases the slot', async () => {
@@ -383,6 +407,64 @@ describe('SessionDispatcher.dispatch', () => {
 		expect(sess.agentServerId).toBeNull()
 	})
 
+	it('seeds the initial interactive turn after a successful dispatch', async () => {
+		const sess: SessionStub = {
+			id: 's-1',
+			status: 'starting',
+			agentServerId: null,
+			containerId: null,
+			startedAt: null,
+		}
+		const startSession = vi.fn(async (_req: StartSessionRequest) => startResponse('s-1'))
+		const db = fakeDb([SERVER], [sess])
+		const client = makeClient({ startSession })
+		const seedInteractiveTurn = vi.fn(async () => {})
+		const dispatcher = new SessionDispatcher({
+			// biome-ignore lint/suspicious/noExplicitAny: fake DB
+			db: db as any,
+			buildStartRequest: async (sessionId) => defaultStartReq(sessionId),
+			clientFactory: () => client,
+			seedInteractiveTurn,
+		})
+
+		const result = await dispatcher.dispatch('s-1', 'dispatch:s-1')
+
+		expect(result).toEqual({ kind: 'dispatched' })
+		expect(seedInteractiveTurn).toHaveBeenCalledTimes(1)
+		expect(seedInteractiveTurn).toHaveBeenCalledWith('s-1')
+	})
+
+	it('still reports dispatched when seedInteractiveTurn throws', async () => {
+		const sess: SessionStub = {
+			id: 's-1',
+			status: 'starting',
+			agentServerId: null,
+			containerId: null,
+			startedAt: null,
+		}
+		const startSession = vi.fn(async (_req: StartSessionRequest) => startResponse('s-1'))
+		const db = fakeDb([SERVER], [sess])
+		const client = makeClient({ startSession })
+		const seedInteractiveTurn = vi.fn(async () => {
+			throw new Error('agent-server unreachable')
+		})
+		const dispatcher = new SessionDispatcher({
+			// biome-ignore lint/suspicious/noExplicitAny: fake DB
+			db: db as any,
+			buildStartRequest: async (sessionId) => defaultStartReq(sessionId),
+			clientFactory: () => client,
+			seedInteractiveTurn,
+		})
+
+		const result = await dispatcher.dispatch('s-1', 'dispatch:s-1')
+
+		// Sandbox is already up — a seed failure must not undo the dispatch or
+		// release the slot back to the pool.
+		expect(result).toEqual({ kind: 'dispatched' })
+		expect(sess.status).toBe('running')
+		expect(sess.agentServerId).toBe(SERVER.id)
+	})
+
 	it('returns transient_failure when buildStartRequest throws', async () => {
 		const sess: SessionStub = {
 			id: 's-1',
@@ -400,5 +482,142 @@ describe('SessionDispatcher.dispatch', () => {
 		expect(result.kind).toBe('transient_failure')
 		expect(startSession).not.toHaveBeenCalled()
 		expect(sess.agentServerId).toBeNull()
+	})
+})
+
+describe('SessionDispatcher.dispatch — sticky assignment', () => {
+	/**
+	 * getStickyAssignment() must not honor a pin to a server that has since
+	 * been taken out of rotation — a bare id lookup with no status filter
+	 * would otherwise route a brand-new session start to a server the
+	 * operator is draining/disabling, unlike pickLeastLoadedServer()'s
+	 * `status = 'active'` filter.
+	 */
+	it('releases a pin to a non-active server and falls back to a fresh pick', async () => {
+		const pinnedId = 'draining-server'
+		const freshId = 'fresh-server'
+		let released = false
+		const db = {
+			select: (_columns?: Record<string, unknown>) => ({
+				from: (table: unknown) => ({
+					where: (_predicate: unknown) => {
+						const rows =
+							table === sessions
+								? [{ agentServerId: pinnedId }]
+								: table === agentServers
+									? released
+										? [
+												{
+													id: freshId,
+													url: 'https://fresh.test',
+													secret: 'fresh-secret',
+													max: 10,
+													active: 0,
+												},
+											]
+										: [
+												{
+													id: pinnedId,
+													url: 'https://draining.test',
+													secret: 'draining-secret',
+													status: 'draining',
+													max: 10,
+												},
+											]
+									: []
+						const promise = Promise.resolve(rows) as Promise<typeof rows> & {
+							limit: (n: number) => Promise<typeof rows>
+						}
+						promise.limit = (n: number) => Promise.resolve(rows.slice(0, n))
+						return promise
+					},
+				}),
+			}),
+			update: (_table: unknown) => ({
+				set: (patch: Record<string, unknown>) => ({
+					where: (_predicate: unknown) => {
+						if (patch.agentServerId === null) released = true
+						const promise = Promise.resolve() as Promise<unknown> & {
+							returning: (proj?: unknown) => Promise<Array<{ id: string }>>
+						}
+						promise.returning = () => Promise.resolve([{ id: 's-1' }])
+						return promise
+					},
+				}),
+			}),
+			insert: (_table: unknown) => ({
+				values: (_row: Record<string, unknown>) => Promise.resolve(),
+			}),
+		}
+		const client = makeClient({
+			startSession: vi.fn(async (_req: StartSessionRequest) => startResponse('s-1')),
+		})
+		let targetedServer: AgentServerRow | undefined
+		const dispatcher = new SessionDispatcher({
+			// biome-ignore lint/suspicious/noExplicitAny: fake DB
+			db: db as any,
+			buildStartRequest: async (sessionId) => defaultStartReq(sessionId),
+			clientFactory: (server) => {
+				targetedServer = server
+				return client
+			},
+		})
+
+		const result = await dispatcher.dispatch('s-1', 'dispatch:s-1')
+
+		expect(released).toBe(true)
+		expect(targetedServer?.id).toBe(freshId)
+		expect(result).toEqual({ kind: 'dispatched' })
+	})
+
+	/**
+	 * If releasing a stale/non-active sticky pin itself fails (e.g. a DB
+	 * blip), that failure must not propagate out of dispatch() as an
+	 * unhandled rejection — every other failure mode in dispatch() resolves
+	 * to a typed DispatchResult, and this one must too.
+	 */
+	it('does not throw when releasing a stale sticky pin fails', async () => {
+		const db = {
+			select: (_columns?: Record<string, unknown>) => ({
+				from: (table: unknown) => ({
+					where: (_predicate: unknown) => {
+						// sessions lookup: pinned to a server whose row no longer exists.
+						// agentServers lookup: empty, both for the sticky check and the
+						// fresh pickLeastLoadedServer() fallback.
+						const rows = table === sessions ? [{ agentServerId: 'ghost-server' }] : []
+						const promise = Promise.resolve(rows) as Promise<typeof rows> & {
+							limit: (n: number) => Promise<typeof rows>
+						}
+						promise.limit = (n: number) => Promise.resolve(rows.slice(0, n))
+						return promise
+					},
+				}),
+			}),
+			update: (_table: unknown) => ({
+				set: (patch: Record<string, unknown>) => ({
+					where: (_predicate: unknown) => {
+						if (patch.agentServerId === null) {
+							return Promise.reject(new Error('connection reset'))
+						}
+						const promise = Promise.resolve() as Promise<unknown> & {
+							returning: (proj?: unknown) => Promise<Array<{ id: string }>>
+						}
+						promise.returning = () => Promise.resolve([])
+						return promise
+					},
+				}),
+			}),
+		}
+		const dispatcher = new SessionDispatcher({
+			// biome-ignore lint/suspicious/noExplicitAny: fake DB
+			db: db as any,
+			buildStartRequest: async () => defaultStartReq('s-ghost'),
+		})
+
+		const result = await dispatcher.dispatch('s-ghost', 'dispatch:s-ghost')
+
+		// No active servers exist once the (failed) stale-pin release falls
+		// through to a fresh pick — the call still resolves, it never throws.
+		expect(result).toEqual({ kind: 'no_capacity' })
 	})
 })

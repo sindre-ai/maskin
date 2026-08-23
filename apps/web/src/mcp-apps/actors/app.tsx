@@ -45,10 +45,6 @@ function ActorsApp() {
 			) : (
 				<div className="p-4 text-sm text-foreground">{text}</div>
 			)
-		case 'regenerate_api_key': {
-			const apiKey = isObject<{ api_key?: string }>(data) ? (data.api_key ?? '') : ''
-			return <RegeneratedApiKeyView apiKey={apiKey} />
-		}
 		default:
 			return isObject<ActorResponse>(data, 'id', 'name') ? (
 				<ActorDetailView actor={data} />
@@ -159,7 +155,7 @@ function ActorAgentRow({
 			href={href}
 			target="_blank"
 			rel="noreferrer"
-			className="block rounded-lg border border-border bg-card p-4 shadow-md transition-colors hover:border-border-hover no-underline"
+			className="block rounded-lg border border-border bg-card p-4 shadow-md transition-colors hover:border-border-strong no-underline"
 		>
 			{content}
 		</a>
@@ -247,24 +243,6 @@ function ActorCreatedView({ actor }: { actor: ActorWithKey }) {
 					</p>
 					<code className="text-xs font-mono text-foreground break-all">{actor.api_key}</code>
 				</div>
-			)}
-		</div>
-	)
-}
-
-function RegeneratedApiKeyView({ apiKey }: { apiKey: string }) {
-	return (
-		<div className="p-4 max-w-2xl">
-			<h2 className="text-lg font-semibold text-foreground mb-2">API Key Regenerated</h2>
-			{apiKey ? (
-				<div className="rounded border border-border bg-card p-3">
-					<p className="text-xs text-muted-foreground mb-1">
-						New API Key (save this — it cannot be retrieved later):
-					</p>
-					<code className="text-xs font-mono text-foreground break-all">{apiKey}</code>
-				</div>
-			) : (
-				<p className="text-sm text-muted-foreground">API key regenerated successfully.</p>
 			)}
 		</div>
 	)

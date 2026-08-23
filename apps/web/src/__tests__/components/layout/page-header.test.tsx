@@ -1,23 +1,32 @@
 import { PageHeader } from '@/components/layout/page-header'
 import { render } from '@testing-library/react'
 
+const mockSetTitle = vi.fn()
+const mockSetSubtitle = vi.fn()
 const mockSetActions = vi.fn()
 const mockSetStickyIdentity = vi.fn()
 const mockSetContentPush = vi.fn()
+const mockSetScrollLocked = vi.fn()
 
 vi.mock('@/lib/page-header-context', () => ({
 	usePageHeader: () => ({
+		setTitle: mockSetTitle,
+		setSubtitle: mockSetSubtitle,
 		setActions: mockSetActions,
 		setStickyIdentity: mockSetStickyIdentity,
 		setContentPush: mockSetContentPush,
+		setScrollLocked: mockSetScrollLocked,
 	}),
 }))
 
 describe('PageHeader', () => {
 	beforeEach(() => {
+		mockSetTitle.mockClear()
+		mockSetSubtitle.mockClear()
 		mockSetActions.mockClear()
 		mockSetStickyIdentity.mockClear()
 		mockSetContentPush.mockClear()
+		mockSetScrollLocked.mockClear()
 	})
 
 	it('calls setActions on mount with provided actions', () => {
@@ -76,5 +85,38 @@ describe('PageHeader', () => {
 		mockSetContentPush.mockClear()
 		unmount()
 		expect(mockSetContentPush).toHaveBeenCalledWith(undefined)
+	})
+
+	it('calls setScrollLocked on mount with the provided value', () => {
+		render(<PageHeader scrollLocked />)
+		expect(mockSetScrollLocked).toHaveBeenCalledWith(true)
+	})
+
+	it('calls setScrollLocked with false when unset', () => {
+		render(<PageHeader />)
+		expect(mockSetScrollLocked).toHaveBeenCalledWith(false)
+	})
+
+	it('calls setScrollLocked(false) on unmount', () => {
+		const { unmount } = render(<PageHeader scrollLocked />)
+		mockSetScrollLocked.mockClear()
+		unmount()
+		expect(mockSetScrollLocked).toHaveBeenCalledWith(false)
+	})
+
+	it('publishes the title and subtitle to the nav row instead of rendering them', () => {
+		const { container } = render(<PageHeader title="Loops" subtitle="4 running" />)
+		expect(mockSetTitle).toHaveBeenCalledWith('Loops')
+		expect(mockSetSubtitle).toHaveBeenCalledWith('4 running')
+		expect(container).toBeEmptyDOMElement()
+	})
+
+	it('clears the title and subtitle on unmount', () => {
+		const { unmount } = render(<PageHeader title="Loops" subtitle="4 running" />)
+		mockSetTitle.mockClear()
+		mockSetSubtitle.mockClear()
+		unmount()
+		expect(mockSetTitle).toHaveBeenCalledWith(undefined)
+		expect(mockSetSubtitle).toHaveBeenCalledWith(undefined)
 	})
 })

@@ -34,12 +34,11 @@ function buildLoop(overrides: Partial<LoopSummary> = {}): LoopSummary {
 		id: 'loop-1',
 		workspaceId: 'ws-1',
 		name: 'Customer feedback',
-		guarantee: 'Every customer who gives feedback hears back within 30 days',
-		status: 'running',
-		pill: 'running',
+		content: 'Every customer who gives feedback hears back within 30 days',
+		status: 'learning',
+		pill: 'learning',
 		entryCondition: null,
 		closeCondition: null,
-		humanDecisionPoints: null,
 		inProgressCount: 6,
 		closedCount: 128,
 		medianTimeToCloseMs: 11 * 24 * 3600 * 1000,
@@ -66,11 +65,11 @@ function buildActor(overrides: Partial<ActorListItem> = {}): ActorListItem {
 }
 
 describe('LoopRow', () => {
-	it('renders the running pill, name, guarantee, and stats', () => {
+	it('renders the autonomy-stage pill, name, content, and stats', () => {
 		render(<LoopRow loop={buildLoop()} actors={[]} />)
 
 		expect(screen.getByText('Customer feedback')).toBeInTheDocument()
-		expect(screen.getByText('Running')).toBeInTheDocument()
+		expect(screen.getByText('Learning')).toBeInTheDocument()
 		expect(
 			screen.getByText('Every customer who gives feedback hears back within 30 days'),
 		).toBeInTheDocument()
@@ -103,15 +102,17 @@ describe('LoopRow', () => {
 		expect(screen.getByText('Paused — not running')).toBeInTheDocument()
 	})
 
-	it('renders the decision-point count in last activity when waiting on the viewer', () => {
-		render(
-			<LoopRow
-				loop={buildLoop({ pill: 'waiting_on_you', humanDecisionPoints: 3, inProgressCount: 0 })}
-				actors={[]}
-			/>,
-		)
+	it('renders "Waiting on you" in last activity when waiting on the viewer', () => {
+		render(<LoopRow loop={buildLoop({ pill: 'waiting_on_you', inProgressCount: 0 })} actors={[]} />)
 
-		expect(screen.getByText('Waiting on you — 3 decision points open')).toBeInTheDocument()
+		// Appears twice: once as the pill badge, once as the last-activity line.
+		expect(screen.getAllByText('Waiting on you')).toHaveLength(2)
+	})
+
+	it('renders the draft label in last activity when the loop is a draft', () => {
+		render(<LoopRow loop={buildLoop({ pill: 'draft' })} actors={[]} />)
+
+		expect(screen.getByText('Draft — not live yet')).toBeInTheDocument()
 	})
 
 	it("renders the first agent's avatar next to the last-activity line", () => {

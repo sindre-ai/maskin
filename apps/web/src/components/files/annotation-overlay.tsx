@@ -169,7 +169,7 @@ export function AnnotationOverlay({
 	}
 
 	return (
-		<div className="resize overflow-hidden rounded-md border border-border bg-bg-surface w-full h-[60vh] min-h-[20vh] max-h-[200vh] max-w-[calc(100vw-4rem)] relative">
+		<div className="resize overflow-hidden rounded-md border border-border bg-muted w-full h-[60vh] min-h-[20vh] max-h-[200vh] max-w-[calc(100vw-4rem)] relative">
 			<iframe
 				ref={iframeRef}
 				title={`Preview of ${name}`}

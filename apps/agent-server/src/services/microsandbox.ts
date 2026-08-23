@@ -46,6 +46,40 @@ const PUBLIC_EGRESS_RULE = 'allow@public'
 const DNS_UDP_RULE = 'allow@any:udp:53'
 const DNS_TCP_RULE = 'allow@any:tcp:53'
 
+// msb 0.5.7's `allow@host:tcp` guest-to-host forwarding resets the
+// connection when `host.microsandbox.internal` resolves via IPv6 — the TCP
+// handshake completes, then the first data send gets RST'd. Confirmed via
+// live A/B testing on production (2026-08-17): 100% reproducible on the
+// IPv6 leg, 0% on IPv4, across curl, Node `fetch()`, and real Chromium/CDP.
+// See https://github.com/superradcompany/microsandbox/issues/1327. Denying
+// just the ULA range microsandbox synthesizes for the host alias (not a
+// blanket `deny@[::/0]`) makes the IPv6 attempt fail immediately and
+// cleanly with `Connection refused` at connect time instead of a
+// mid-transfer reset, so any dual-stack client falls back to the working
+// IPv4 leg automatically — verified live across all three client types
+// above. Public IPv6 egress for the sandbox is untouched, since the deny is
+// scoped to this ULA prefix rather than all of `::/0` (also verified live).
+// Matches microsandbox's default `ipv6Pool` (fd42:6d73:62::/48) — checked
+// against this deployment's actual guest addresses, not just the
+// documented default. Must be listed before any `allow@host:tcp:*` rule
+// (net-rules are first-match-wins).
+const DENY_HOST_ALIAS_IPV6_RESET_RULE = 'deny@[fd42:6d73:62::/48]'
+
+// Static allow@host:tcp range covering effectively every common local
+// dev-server port (3000 Node/CRA/Next/Rails, 4200 Angular, 4000/5000
+// Phoenix/Flask, 5173 Vite, 6006 Storybook, 8000/8080/8888 generic/Jupyter,
+// plus headroom for parallel instances on the same session) — granted once
+// on the browser sidecar instead of negotiating and pre-baking one exact
+// port into the sidecar's own rules before the session VM exists. Verified
+// live: a port inside the range works end-to-end, a port outside it is
+// refused immediately (the range is a real restriction, not allow-all).
+// Exported so index.ts can bound-check a guest-reported port for the dynamic
+// POST /sessions/:id/preview-ports route (see establishPreviewPortRelay
+// below) against the same range this file actually grants on the sidecar.
+export const DEV_SERVER_HOST_PORT_RANGE_START = 3000
+export const DEV_SERVER_HOST_PORT_RANGE_END = 12000
+const DEV_SERVER_HOST_PORT_RANGE = `${DEV_SERVER_HOST_PORT_RANGE_START}-${DEV_SERVER_HOST_PORT_RANGE_END}`
+
 // SSH-relay networking: when the browser sidecar needs to reach a session's
 // own dev-server preview port, agent-server opens `msb ssh serve <target>
 // --host 127.0.0.1 --port <sshPort>` plus a real `ssh -L` tunnel from a
@@ -186,6 +220,11 @@ export type MicrosandboxDeps = {
 	now?: () => number
 	// Overrideable in tests: allocate a free TCP port on the given bind address.
 	findPort?: (host: string) => Promise<number>
+	// Overrideable in tests: allocate a free TCP port within a specific range
+	// on the given bind address — used only for preview-port relay
+	// allocation (resolvePreviewPortMappings), which must land inside the
+	// browser sidecar's static DEV_SERVER_HOST_PORT_RANGE grant.
+	findPortInRange?: (host: string, rangeStart: number, rangeEnd: number) => Promise<number>
 	// Overrideable in tests: wait for the CDP endpoint to accept connections.
 	cdpPollReady?: (port: number) => Promise<void>
 	// Overrideable in tests: path to the `ssh` binary used for relay tunnels.
@@ -279,6 +318,10 @@ export function buildMsbCreateArgs(input: {
 		'--pull',
 		input.pullPolicy ?? 'always',
 		'--quiet',
+		// Must precede every allow@host:tcp rule below — see
+		// DENY_HOST_ALIAS_IPV6_RESET_RULE (first-match-wins).
+		'--net-rule',
+		DENY_HOST_ALIAS_IPV6_RESET_RULE,
 		'--net-rule',
 		`allow@${HOST_RULE_HOST}:tcp:${input.hostPort}`,
 		'--net-rule',
@@ -617,6 +660,56 @@ function releaseHostPort(port: number): void {
 	srv.close()
 }
 
+// Bounded retry count for findFreeHostPortInRange — enough headroom for
+// heavy concurrent session churn without spinning forever on a saturated
+// range.
+const RANGE_PORT_ALLOCATION_ATTEMPTS = 25
+
+/**
+ * Like findFreeHostPort, but constrained to a specific port range instead of
+ * letting the OS pick any ephemeral port. Used only for preview-port relay
+ * allocation (resolvePreviewPortMappings), so the chosen port falls inside
+ * the browser sidecar's static DEV_SERVER_HOST_PORT_RANGE grant (see
+ * provisionBrowserSidecar) without needing to bake an exact port into the
+ * sidecar's own rules ahead of time. Tries random candidates within the
+ * range (lower collision odds under concurrent allocation than scanning
+ * sequentially) and holds the winning port open the same way
+ * findFreeHostPort does — same TOCTOU protection, same releaseHostPort
+ * contract.
+ */
+function findFreeHostPortInRange(
+	host: string,
+	rangeStart: number,
+	rangeEnd: number,
+): Promise<number> {
+	const rangeSize = rangeEnd - rangeStart + 1
+	return new Promise((resolve, reject) => {
+		let lastErr: unknown
+		const tryNext = (attemptsLeft: number): void => {
+			if (attemptsLeft <= 0) {
+				reject(
+					new Error(
+						`no free port found in ${rangeStart}-${rangeEnd} after ${RANGE_PORT_ALLOCATION_ATTEMPTS} attempts`,
+						{ cause: lastErr },
+					),
+				)
+				return
+			}
+			const candidate = rangeStart + Math.floor(Math.random() * rangeSize)
+			const srv = createServer()
+			srv.once('error', (err) => {
+				lastErr = err
+				srv.close(() => tryNext(attemptsLeft - 1))
+			})
+			srv.listen(candidate, host, () => {
+				heldHostPorts.set(candidate, srv)
+				resolve(candidate)
+			})
+		}
+		tryNext(RANGE_PORT_ALLOCATION_ATTEMPTS)
+	})
+}
+
 export type PreviewPortResolution = {
 	mappings: PreviewPortMapping[]
 	/**
@@ -630,27 +723,33 @@ export type PreviewPortResolution = {
 /**
  * Resolve one free host-loopback port per requested guest port, reserved for
  * an eventual SSH-relay tunnel into that session port (see startSshRelay()
- * below). Call this before provisioning the browser sidecar so the reserved
- * port numbers are known ahead of baking them into the sidecar's own
- * `allow@host:tcp:<port>` net-rules — the sidecar's create-time rules must be
- * set before the session VM exists, even though the relay itself can only be
- * started once the session is Running.
+ * below). Ports are drawn from DEV_SERVER_HOST_PORT_RANGE — the browser
+ * sidecar grants that whole range unconditionally (see
+ * provisionBrowserSidecar), so unlike the old per-port design, the sidecar no
+ * longer needs these exact numbers baked into its own rules ahead of time.
+ * Call this before spawning the session purely so PREVIEW_URL can be baked
+ * into its boot-time env — the relay itself can still only be started once
+ * the session is Running.
  *
  * The returned reservations stay open (not just "looked free a moment ago")
- * until the caller invokes release() — hold it through provisionBrowserSidecar
- * and the eventual spawnSession + startSshRelay calls, then release once the
- * relay(s) have actually been started against these port numbers (success or
- * failure). See findFreeHostPort for why.
+ * until the caller invokes release() — hold it through the eventual
+ * spawnSession + startSshRelay calls, then release once the relay(s) have
+ * actually been started against these port numbers (success or failure). See
+ * findFreeHostPort for why.
  */
 export async function resolvePreviewPortMappings(
 	guestPorts: readonly number[],
 	deps: MicrosandboxDeps,
 ): Promise<PreviewPortResolution> {
-	const findPort = deps.findPort ?? findFreeHostPort
+	const findPort = deps.findPortInRange ?? findFreeHostPortInRange
 	const mappings: PreviewPortMapping[] = []
 	try {
 		for (const guestPort of guestPorts) {
-			const relayPort = await findPort(SSH_RELAY_BIND_HOST)
+			const relayPort = await findPort(
+				SSH_RELAY_BIND_HOST,
+				DEV_SERVER_HOST_PORT_RANGE_START,
+				DEV_SERVER_HOST_PORT_RANGE_END,
+			)
 			mappings.push({ guestPort, relayPort })
 		}
 	} catch (err) {
@@ -903,6 +1002,44 @@ export async function startSshRelay(
 }
 
 /**
+ * Resolve a single host relay port from DEV_SERVER_HOST_PORT_RANGE and open
+ * an SSH relay into it — the same resolvePreviewPortMappings + startSshRelay
+ * + release() sequence POST /sessions runs for upfront-declared
+ * previewGuestPorts, factored out so a session can also request a relay for
+ * a port it starts listening on after boot (see POST
+ * /sessions/:id/preview-ports). targetName must be a live, already-Running
+ * sandbox — same requirement as startSshRelay itself. Returns null on any
+ * failure — never throws.
+ */
+export async function establishPreviewPortRelay(
+	targetName: string,
+	guestPort: number,
+	sshKeyPath: string,
+	deps: MicrosandboxDeps,
+): Promise<SshRelay | null> {
+	let resolved: PreviewPortResolution
+	try {
+		resolved = await resolvePreviewPortMappings([guestPort], deps)
+	} catch (err) {
+		logger.warn('dynamic preview port resolution failed', {
+			targetName,
+			guestPort,
+			error: String(err),
+		})
+		return null
+	}
+	try {
+		const mapping = resolved.mappings[0]
+		if (!mapping) return null
+		return await startSshRelay(targetName, guestPort, sshKeyPath, deps, {
+			relayPort: mapping.relayPort,
+		})
+	} finally {
+		resolved.release()
+	}
+}
+
+/**
  * Fire-and-forget `msb exec <name>` to start the browser sidecar entrypoint
  * (Xvfb + Chromium + socat). `msb create` boots the VM but does NOT execute
  * CMD/ENTRYPOINT — `msb exec` is required. Mirrors `launchSessionExec`.
@@ -971,11 +1108,14 @@ export type BrowserSidecar = {
  * `http://<bridgeGateway>:<port>` via `allow@private`, since the bridge
  * gateway is a private RFC1918 address (see spawnSession's allowPrivateNet).
  *
- * This is the pre-PR-#1096 mechanism, reinstated as a fallback: the
- * SSH-relay + allow@host:tcp approach that replaced it is currently broken in
- * production (100% guest-side connection reset, msb 0.5.7 — see
- * https://github.com/superradcompany/microsandbox/issues/1327). Revert back
- * once that's fixed upstream and verified.
+ * This is the pre-PR-#1096 mechanism for the CDP port itself: the SSH-relay +
+ * allow@host:tcp approach that replaced it hit a separate msb bug (100%
+ * guest-side connection reset on IPv6 — see DENY_HOST_ALIAS_IPV6_RESET_RULE
+ * and https://github.com/superradcompany/microsandbox/issues/1327), now fixed
+ * for allow@host:tcp callers by pairing that rule with the deny above. The
+ * sidecar additionally carries a standing allow@host:tcp:<DEV_SERVER_HOST_PORT_RANGE>
+ * grant so it can reach a session's own dev server relayed onto the host
+ * loopback (see startSshRelay) without needing the exact port pre-baked in.
  *
  * The URL must be http:// (not ws://) — `@playwright/mcp --cdp-endpoint` performs
  * CDP discovery via `GET {url}/json/version` to find the browser's real
@@ -1026,6 +1166,16 @@ export async function provisionBrowserSidecar(
 		// reach Chrome without exposing unauthenticated CDP on public interfaces.
 		'-p',
 		`${bridgeGateway}:${hostPort}:${BROWSER_CDP_GUEST_PORT}`,
+		// Must precede every allow@host:tcp rule below — see
+		// DENY_HOST_ALIAS_IPV6_RESET_RULE (first-match-wins).
+		'--net-rule',
+		DENY_HOST_ALIAS_IPV6_RESET_RULE,
+		// Standing grant so the sidecar can reach a session's own dev server,
+		// relayed onto the host loopback via startSshRelay, without
+		// negotiating and pre-baking one exact port per session — see
+		// DEV_SERVER_HOST_PORT_RANGE.
+		'--net-rule',
+		`allow@${HOST_RULE_HOST}:tcp:${DEV_SERVER_HOST_PORT_RANGE}`,
 		// Sidecar needs public egress (Chromium asset fetches) and DNS.
 		'--net-rule',
 		PUBLIC_EGRESS_RULE,
@@ -1035,9 +1185,10 @@ export async function provisionBrowserSidecar(
 		DNS_TCP_RULE,
 	]
 
-	// Lets the sidecar reach a session's own preview-relay port(s) on the host
-	// loopback — unrelated to the CDP bridge-publish above, still uses the
-	// SSH-relay mechanism (see startSshRelay) for preview ports specifically.
+	// Escape hatch for a port outside DEV_SERVER_HOST_PORT_RANGE — not used
+	// by the current preview-port flow (resolvePreviewPortMappings always
+	// allocates inside that range, which the standing grant above already
+	// covers), kept for callers with an unusual fixed-port requirement.
 	if (options.extraAllowedHostPorts) {
 		for (const port of options.extraAllowedHostPorts) {
 			createArgs.push('--net-rule', `allow@${HOST_RULE_HOST}:tcp:${port}`)

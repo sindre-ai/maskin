@@ -10,6 +10,7 @@ function buildItem(overrides: Partial<UnreadItem> = {}): UnreadItem {
 		entity_id: 'obj-1',
 		unread_count: 0,
 		mentioning_unread_count: 0,
+		max_unread_attention: null,
 		latest_event_id: null,
 		latest_activity_at: null,
 		object: buildObjectResponse({ id: 'obj-1', type: 'bet', status: 'active' }),
@@ -40,15 +41,14 @@ describe('classifyCardKind', () => {
 	})
 
 	// Regression lock for the bug this task fixes: `in_review` is not a valid
-	// status for type `bet` (see workspace schema — bet accepts signal / qualified
-	// / define / active / live / succeeded / failed / paused / archived). A bet
+	// status for type `bet` (see workspace schema — bet accepts signal / define
+	// / active / live / succeeded / failed / paused / archived). A bet
 	// can never be in_review in prod, so the classifier must not key `decision`
 	// off `bet.status`. This test would fail if a reviewer tries to re-introduce
 	// the old bet→decision branch.
 	it('never classifies a bet as a decision card (bet has no in_review status in schema)', () => {
 		for (const status of [
 			'signal',
-			'qualified',
 			'define',
 			'active',
 			'live',

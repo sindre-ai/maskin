@@ -1,6 +1,14 @@
+import { vi } from 'vitest'
 import { buildCreateNotificationBody, buildNotification, buildWorkspaceMember } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
 import { createSessionTestApp, createTestApp } from '../setup'
+
+const { trackCreateNotificationCalledMock } = vi.hoisted(() => ({
+	trackCreateNotificationCalledMock: vi.fn().mockResolvedValue(undefined),
+}))
+vi.mock('../../lib/analytics/notification-events', () => ({
+	trackCreateNotificationCalled: trackCreateNotificationCalledMock,
+}))
 
 const { default: notificationsRoutes } = await import('../../routes/notifications')
 
@@ -8,6 +16,10 @@ const wsId = '00000000-0000-0000-0000-000000000001'
 const headers = { 'x-workspace-id': wsId }
 
 describe('Notifications Routes', () => {
+	beforeEach(() => {
+		trackCreateNotificationCalledMock.mockClear()
+	})
+
 	describe('POST /api/notifications', () => {
 		it('creates a notification and returns 201', async () => {
 			const notification = buildNotification({ workspaceId: wsId })
@@ -22,6 +34,60 @@ describe('Notifications Routes', () => {
 			const body = await res.json()
 			expect(body.id).toBe(notification.id)
 			expect(body.status).toBe('pending')
+		})
+
+		it('emits create_notification_called with agent actor context', async () => {
+			const notification = buildNotification({ workspaceId: wsId, type: 'decision_required' })
+			const { app, mockResults } = createTestApp(
+				notificationsRoutes,
+				'/api/notifications',
+				'agent-actor-id',
+				'agent',
+			)
+			mockResults.insertQueue = [[notification], []]
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/notifications', buildCreateNotificationBody(), headers),
+			)
+
+			expect(res.status).toBe(201)
+			expect(trackCreateNotificationCalledMock).toHaveBeenCalledOnce()
+			expect(trackCreateNotificationCalledMock).toHaveBeenCalledWith(
+				expect.objectContaining({
+					workspaceId: wsId,
+					actorId: 'agent-actor-id',
+					actorType: 'agent',
+					notificationId: notification.id,
+					notificationType: 'decision_required',
+				}),
+			)
+		})
+
+		it('still calls the emitter for human actors (the emitter itself decides whether to fire)', async () => {
+			const notification = buildNotification({ workspaceId: wsId })
+			const { app, mockResults } = createTestApp(notificationsRoutes, '/api/notifications')
+			mockResults.insertQueue = [[notification], []]
+
+			await app.request(
+				jsonRequest('POST', '/api/notifications', buildCreateNotificationBody(), headers),
+			)
+
+			expect(trackCreateNotificationCalledMock).toHaveBeenCalledOnce()
+			expect(trackCreateNotificationCalledMock).toHaveBeenCalledWith(
+				expect.objectContaining({ actorType: 'human' }),
+			)
+		})
+
+		it('skips the emitter when notification insert fails', async () => {
+			const { app, mockResults } = createTestApp(notificationsRoutes, '/api/notifications')
+			mockResults.insert = []
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/notifications', buildCreateNotificationBody(), headers),
+			)
+
+			expect(res.status).toBe(500)
+			expect(trackCreateNotificationCalledMock).not.toHaveBeenCalled()
 		})
 
 		it('returns 500 when insert fails', async () => {

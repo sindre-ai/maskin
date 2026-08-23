@@ -13,22 +13,18 @@ import { LOOP_PILL_STYLES } from './loop-pill'
 // much of the loop's work is still moving through it.
 function lastActivityText(loop: LoopSummary): string {
 	switch (loop.pill) {
-		case 'waiting_on_you': {
-			const n = loop.humanDecisionPoints
-			return n && n > 0
-				? `Waiting on you — ${n} decision point${n === 1 ? '' : 's'} open`
-				: 'Waiting on you'
-		}
+		case 'waiting_on_you':
+			return 'Waiting on you'
+		case 'draft':
+			return 'Draft — not live yet'
 		case 'paused':
 			return 'Paused — not running'
-		case 'archived':
-			return 'Archived'
 		default:
 			if (loop.inProgressCount > 0)
 				return `${loop.inProgressCount} item${loop.inProgressCount === 1 ? '' : 's'} in progress`
 			if (loop.closedCount > 0)
 				return `${loop.closedCount} item${loop.closedCount === 1 ? '' : 's'} completed`
-			return 'Running'
+			return LOOP_PILL_STYLES[loop.pill].label
 	}
 }
 
@@ -41,9 +37,11 @@ export function LoopRow({
 }) {
 	const pill = LOOP_PILL_STYLES[loop.pill]
 	const isWaiting = loop.pill === 'waiting_on_you'
+	const isLive =
+		loop.pill === 'learning' || loop.pill === 'supervised' || loop.pill === 'fully_autonomous'
 	const inProgressColor = isWaiting
 		? 'text-warning'
-		: loop.pill === 'running'
+		: isLive
 			? 'text-success'
 			: 'text-muted-foreground'
 	const median = formatLoopMedianMs(loop.medianTimeToCloseMs)
@@ -71,8 +69,8 @@ export function LoopRow({
 						{pill.label}
 					</span>
 				</div>
-				{loop.guarantee && (
-					<p className="text-xs text-muted-foreground line-clamp-2 mt-0.5">{loop.guarantee}</p>
+				{loop.content && (
+					<p className="text-xs text-muted-foreground line-clamp-2 mt-0.5">{loop.content}</p>
 				)}
 				{(activity || loop.updatedAt) && (
 					<div className="flex items-center gap-1.5 mt-1.5 text-xs text-muted-foreground min-w-0">

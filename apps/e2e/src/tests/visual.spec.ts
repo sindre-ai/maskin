@@ -1,5 +1,5 @@
-import { argosScreenshot } from '@argos-ci/playwright'
 import { expect, test } from '../fixtures/auth.fixture'
+import { safeArgosScreenshot } from '../helpers/argos.helper'
 
 // Visual regression snapshots via Argos CI.
 // These run in CI alongside functional specs; Argos compares against baselines
@@ -26,21 +26,21 @@ test.describe('Visual — For You (workspace landing)', () => {
 		await setTheme(page, 'light')
 		await page.goto(`/${account.workspaceId}`)
 		await waitForApp(page)
-		await argosScreenshot(page, 'for-you-light')
+		await safeArgosScreenshot(page, 'for-you-light')
 	})
 
 	test('dark mode', async ({ page, account }) => {
 		await setTheme(page, 'dark')
 		await page.goto(`/${account.workspaceId}`)
 		await waitForApp(page)
-		await argosScreenshot(page, 'for-you-dark')
+		await safeArgosScreenshot(page, 'for-you-dark')
 	})
 
 	test('mobile 375px', async ({ page, account }) => {
 		await page.setViewportSize({ width: 375, height: 812 })
 		await page.goto(`/${account.workspaceId}`)
 		await waitForApp(page)
-		await argosScreenshot(page, 'for-you-mobile-375')
+		await safeArgosScreenshot(page, 'for-you-mobile-375')
 	})
 })
 
@@ -49,21 +49,21 @@ test.describe('Visual — Objects list', () => {
 		await setTheme(page, 'light')
 		await page.goto(`/${account.workspaceId}/objects`)
 		await waitForApp(page)
-		await argosScreenshot(page, 'objects-list-light')
+		await safeArgosScreenshot(page, 'objects-list-light')
 	})
 
 	test('dark mode', async ({ page, account }) => {
 		await setTheme(page, 'dark')
 		await page.goto(`/${account.workspaceId}/objects`)
 		await waitForApp(page)
-		await argosScreenshot(page, 'objects-list-dark')
+		await safeArgosScreenshot(page, 'objects-list-dark')
 	})
 
 	test('mobile 375px', async ({ page, account }) => {
 		await page.setViewportSize({ width: 375, height: 812 })
 		await page.goto(`/${account.workspaceId}/objects`)
 		await waitForApp(page)
-		await argosScreenshot(page, 'objects-list-mobile-375')
+		await safeArgosScreenshot(page, 'objects-list-mobile-375')
 	})
 })
 
@@ -99,7 +99,7 @@ test.describe('Visual — Object detail (right sidebar)', () => {
 				// activity items whose actor-name contains a run-specific timestamp
 				// (seeded by the E2E auth fixture). Neither is a regression signal
 				// for the sidebar layout this snapshot tests.
-				await argosScreenshot(page, `object-detail-sidebar-${vp.label}-${mode}`, {
+				await safeArgosScreenshot(page, `object-detail-sidebar-${vp.label}-${mode}`, {
 					mask: [page.locator('time'), page.locator('.animate-slide-in')],
 				})
 			})

@@ -100,6 +100,22 @@ describe('get_objects `include:` expansions', () => {
 			if (urlStr.includes('/api/objects/bet-9/graph')) {
 				return { ok: true, json: () => Promise.resolve(GRAPH_PAYLOAD) } as Response
 			}
+			if (urlStr.includes('/api/workspaces')) {
+				// bet-9 has short content and no driver → the always-on setup check
+				// should surface `content_quality: warn` and `driver_set: warn` on
+				// every get_objects call.
+				return {
+					ok: true,
+					json: () =>
+						Promise.resolve([
+							{
+								id: 'ws-default-123',
+								name: 'Test WS',
+								settings: { statuses: { bet: ['signal', 'active'] } },
+							},
+						]),
+				} as Response
+			}
 			return { ok: true, json: () => Promise.resolve([]) } as Response
 		})
 	})
@@ -132,13 +148,13 @@ describe('get_objects `include:` expansions', () => {
 		}
 	}
 
-	describe('(a) default — `include: []` returns the T3 lean projection only', () => {
-		it('returns only {id, type, title, status, contextLine, url} on each object', async () => {
+	describe('(a) default — `include: []` returns the T3 lean projection plus the always-on setup block', () => {
+		it('returns only {id, type, title, status, contextLine, url} on each object, plus `setup`', async () => {
 			const result = await callGetObjects({ ids: ['bet-9'] })
 
 			expect(result.structuredContent.results[0].success).toBe(true)
 			const entry = result.structuredContent.objects[0]
-			expect(Object.keys(entry).sort()).toEqual(['object'])
+			expect(Object.keys(entry).sort()).toEqual(['object', 'setup'])
 			const projected = entry.object as Record<string, unknown>
 			expect(Object.keys(projected).sort()).toEqual([...CORE_OBJECT_KEYS].sort())
 			expect(projected.id).toBe('bet-9')
@@ -152,19 +168,19 @@ describe('get_objects `include:` expansions', () => {
 		it('behaves the same when `include` is omitted altogether', async () => {
 			const result = await callGetObjects({ ids: ['bet-9'] })
 			const entryKeys = Object.keys(result.structuredContent.objects[0]).sort()
-			expect(entryKeys).toEqual(['object'])
+			expect(entryKeys).toEqual(['object', 'setup'])
 		})
 
 		it('mirrors the projection onto structuredContent.objects[]', async () => {
 			const result = await callGetObjects({ ids: ['bet-9'] })
 			const first = result.structuredContent.objects[0]
-			expect(Object.keys(first).sort()).toEqual(['object'])
+			expect(Object.keys(first).sort()).toEqual(['object', 'setup'])
 			const projected = first.object as Record<string, unknown>
 			expect(Object.keys(projected).sort()).toEqual([...CORE_OBJECT_KEYS].sort())
 		})
 	})
 
-	describe('(b) each single `include: [X]` returns default + only block X', () => {
+	describe('(b) each single `include: [X]` returns default + setup + only block X', () => {
 		it.each(EXPANSION_BLOCK_KEYS)('adds only the `%s` block', async (block: ExpansionBlockKey) => {
 			const result = await callGetObjects({ ids: ['bet-9'], include: [block] })
 			const entry = result.structuredContent.objects[0]
@@ -173,8 +189,9 @@ describe('get_objects `include:` expansions', () => {
 			const projected = entry.object as Record<string, unknown>
 			expect(Object.keys(projected).sort()).toEqual([...CORE_OBJECT_KEYS].sort())
 
-			// The canonical body entry has exactly one extra top-level key: the block.
-			expect(Object.keys(entry).sort()).toEqual(['object', block].sort())
+			// The canonical body entry has exactly one extra top-level key beyond
+			// the always-on `setup`: the requested block.
+			expect(Object.keys(entry).sort()).toEqual(['object', 'setup', block].sort())
 			expect(Array.isArray(entry[block])).toBe(true)
 		})
 
@@ -182,8 +199,8 @@ describe('get_objects `include:` expansions', () => {
 			const result = await callGetObjects({ ids: ['bet-9'], include: ['content'] })
 			const entry = result.structuredContent.objects[0]
 
-			// Top-level entry still has only `object`.
-			expect(Object.keys(entry).sort()).toEqual(['object'])
+			// Top-level entry still has only `object` and the always-on `setup`.
+			expect(Object.keys(entry).sort()).toEqual(['object', 'setup'])
 
 			// The object body grows by exactly one field: `content`.
 			const projected = entry.object as Record<string, unknown>
@@ -192,7 +209,7 @@ describe('get_objects `include:` expansions', () => {
 		})
 	})
 
-	describe('(c) `include: [X, Y]` returns default + blocks X and Y and no others', () => {
+	describe('(c) `include: [X, Y]` returns default + setup + blocks X and Y and no others', () => {
 		it('adds both blocks and no others when include lists two', async () => {
 			const result = await callGetObjects({
 				ids: ['bet-9'],
@@ -200,7 +217,7 @@ describe('get_objects `include:` expansions', () => {
 			})
 			const entry = result.structuredContent.objects[0]
 
-			expect(Object.keys(entry).sort()).toEqual(['events', 'object', 'relationships'])
+			expect(Object.keys(entry).sort()).toEqual(['events', 'object', 'relationships', 'setup'])
 			expect(entry.relationships).toHaveLength(1)
 			expect(entry.events).toHaveLength(1)
 
@@ -216,9 +233,10 @@ describe('get_objects `include:` expansions', () => {
 			})
 			const entry = result.structuredContent.objects[0]
 
-			// content flows into the object body; the other 4 land as peers of `object`.
+			// content flows into the object body; the other 4 (plus the always-on
+			// `setup`) land as peers of `object`.
 			expect(Object.keys(entry).sort()).toEqual(
-				['object', 'relationships', 'connected_objects', 'events', 'files'].sort(),
+				['object', 'setup', 'relationships', 'connected_objects', 'events', 'files'].sort(),
 			)
 			const projected = entry.object as Record<string, unknown>
 			expect(Object.keys(projected).sort()).toEqual([...CORE_OBJECT_KEYS, 'content'].sort())
@@ -241,9 +259,68 @@ describe('get_objects `include:` expansions', () => {
 		it('accepts every enum value listed in the ADR', () => {
 			const parsed = tools.get_objects.inputSchema.safeParse({
 				ids: ['00000000-0000-0000-0000-000000000001'],
-				include: ['content', 'relationships', 'connected_objects', 'events', 'files'],
+				include: ['content', 'relationships', 'connected_objects', 'events', 'files', 'setup'],
 			})
 			expect(parsed.success).toBe(true)
+		})
+	})
+
+	describe('the `setup` block is always attached, regardless of `include`', () => {
+		it('attaches the same setup block whether or not `setup` is listed in `include`', async () => {
+			const without = await callGetObjects({ ids: ['bet-9'] })
+			const withSetup = await callGetObjects({ ids: ['bet-9'], include: ['setup'] })
+
+			for (const result of [without, withSetup]) {
+				const entry = result.structuredContent.objects[0] as Record<string, unknown>
+				expect(Object.keys(entry).sort()).toEqual(['object', 'setup'])
+
+				const setup = entry.setup as {
+					checks: Array<{ name: string; status: string }>
+					next_steps: unknown[]
+					prose: string
+				}
+				expect(setup).toBeDefined()
+				expect(Array.isArray(setup.checks)).toBe(true)
+				expect(Array.isArray(setup.next_steps)).toBe(true)
+				expect(typeof setup.prose).toBe('string')
+				// bet-9's content is short and it has no driver → both must surface.
+				expect(setup.checks.some((c) => c.name === 'content_quality')).toBe(true)
+				expect(setup.checks.some((c) => c.name === 'driver_set')).toBe(true)
+			}
+		})
+
+		it('degrades every object setup block to a single unknown check when the workspace fetch fails', async () => {
+			// Override the base mock: workspace fetch now 500s. The graph fetch
+			// still succeeds so the primary get_objects response comes back —
+			// only the setup block should collapse to unknown per object.
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+				const urlStr = url as string
+				if (urlStr.includes('/api/objects/bet-9/graph')) {
+					return { ok: true, json: () => Promise.resolve(GRAPH_PAYLOAD) } as Response
+				}
+				if (urlStr.includes('/api/workspaces')) {
+					return {
+						ok: false,
+						status: 500,
+						text: () => Promise.resolve('boom'),
+					} as Response
+				}
+				return { ok: true, json: () => Promise.resolve([]) } as Response
+			})
+
+			const result = await callGetObjects({ ids: ['bet-9'] })
+			const entry = result.structuredContent.objects[0] as Record<string, unknown>
+			expect(entry.object).toBeDefined()
+
+			const setup = entry.setup as {
+				checks: Array<{ name: string; status: string }>
+				next_steps: unknown[]
+				prose: string
+			}
+			expect(setup.checks).toHaveLength(1)
+			expect(setup.checks[0].status).toBe('unknown')
+			expect(setup.next_steps).toEqual([])
+			expect(setup.prose).toBe('')
 		})
 	})
 })

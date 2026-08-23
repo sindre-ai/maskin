@@ -34,6 +34,13 @@ type Env = {
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
+/**
+ * Keep-alive interval for the session log stream. Kept below the 60s idle
+ * timeout common to reverse proxies, and below the web client's silence
+ * watchdog in `apps/web/src/lib/sse.ts`.
+ */
+const SSE_HEARTBEAT_MS = 15_000
+
 /** Load a session and verify it belongs to the caller's workspace. */
 async function loadSessionWithAuth(db: Database, sessionId: string, workspaceId: string) {
 	const [session] = await db
@@ -127,6 +134,14 @@ app.openapi(listSessionsRoute, (async (c) => {
 		// under either kind of triggering comment in a single query.
 		conditions.push(
 			sql`(${sessions.config}->'mention'->>'object_id' = ${query.mention_object_id} OR ${sessions.config}->'thread_reply'->>'object_id' = ${query.mention_object_id})`,
+		)
+	}
+	if (query.conversation_id) {
+		// Conversation-triggered sessions (see conversation-responder.ts) —
+		// lets the UI show a "this agent is responding" indicator for a
+		// conversation the same way mention_object_id does for object comments.
+		conditions.push(
+			sql`${sessions.config}->'conversation'->>'conversation_id' = ${query.conversation_id}`,
 		)
 	}
 	// Half-open contract — Zod has already validated these as ISO-8601 strings.
@@ -610,14 +625,26 @@ app.openapi(getSessionLogsRoute, (async (c) => {
 
 	const conditions = [eq(sessionLogs.sessionId, id)]
 	if (query.since) conditions.push(gt(sessionLogs.id, query.since))
+	if (query.before) conditions.push(lt(sessionLogs.id, query.before))
 	if (query.stream) conditions.push(eq(sessionLogs.stream, query.stream))
 
-	const results = await db
+	// `desc` takes the newest `limit` rows; reverse them before returning so
+	// the response is always in ascending id order regardless of which end
+	// the caller asked for. Consumers (the chat activity segmenter, the log
+	// transcript) all assume chronological order.
+	//
+	// `before` always implies taking the newest rows below that bound — the
+	// caller is walking backward and wants the page immediately preceding
+	// what it already holds, not the oldest rows in the whole session.
+	const takeNewest = query.before !== undefined || query.order === 'desc'
+	const rows = await db
 		.select()
 		.from(sessionLogs)
 		.where(and(...conditions))
 		.limit(query.limit)
-		.orderBy(asc(sessionLogs.id))
+		.orderBy(takeNewest ? desc(sessionLogs.id) : asc(sessionLogs.id))
+
+	const results = takeNewest ? rows.reverse() : rows
 
 	return c.json(serializeArray(results) as z.infer<typeof sessionLogResponseSchema>[])
 }) as RouteHandler<typeof getSessionLogsRoute, Env>)
@@ -662,6 +689,10 @@ app.get('/:id/logs/stream', async (c) => {
 	// Include 'paused' so a client subscribing to an already-paused session
 	// receives replay + done instead of hanging in the keep-alive loop below.
 	const terminalStatuses = ['completed', 'failed', 'timeout', 'paused']
+
+	// Disable proxy response buffering so frames reach the browser as they're
+	// written rather than when an intermediary's buffer happens to fill.
+	c.header('X-Accel-Buffering', 'no')
 
 	return streamSSE(c, async (stream) => {
 		// Check if session is already in terminal state
@@ -782,8 +813,19 @@ app.get('/:id/logs/stream', async (c) => {
 		// the client disconnected. Promise.race makes the sleep abort-aware:
 		// resolveClose() fires immediately on abort so we don't wait the full
 		// interval before discovering the client is gone.
+		//
+		// The comment frame is what actually keeps it alive — sleeping alone
+		// writes nothing, so a quiet session (an agent thinking for a minute)
+		// looks idle to every proxy on the path and gets reaped. See the same
+		// fix on the workspace events stream in routes/events.ts.
 		while (!closed) {
-			await Promise.race([stream.sleep(20000), closeSignal])
+			await Promise.race([stream.sleep(SSE_HEARTBEAT_MS), closeSignal])
+			if (closed) break
+			try {
+				await stream.write(': ping\n\n')
+			} catch {
+				break
+			}
 		}
 	})
 })

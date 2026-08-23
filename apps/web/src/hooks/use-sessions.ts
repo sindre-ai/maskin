@@ -67,6 +67,35 @@ export function useActiveSessionsForActor(actorId: string, workspaceId: string) 
 	})
 }
 
+// Powers the conversation thread's typing indicator and failed-session
+// notices. Deliberately NOT filtered to status=running — a session that
+// fails before ever reaching `running` needs to be visible too, otherwise
+// the chat surface shows nothing when a session fails to start. Returns the
+// conversation's most recent sessions (default limit, newest first);
+// useConversationActivity derives the latest session per actor and branches
+// on its status from there. SSE invalidation of the broad `['sessions']`
+// prefix on any session event (see sse-invalidation.ts) keeps this fresh
+// without a poll interval.
+export function useActiveSessionsForConversation(
+	workspaceId: string,
+	conversationId: string | null,
+) {
+	return useQuery({
+		queryKey: queryKeys.sessions.byConversation(workspaceId, conversationId ?? ''),
+		queryFn: () =>
+			api.sessions.list(workspaceId, {
+				conversation_id: conversationId as string,
+			}),
+		enabled: !!workspaceId && !!conversationId,
+		// The chat transcript derives its entire live state from this list —
+		// activity only renders for sessions cached as `running`. Relying on
+		// SSE invalidation alone meant one dropped connection froze the
+		// transcript until the user reloaded. Poll as a floor so the worst
+		// case is a few seconds of lag rather than a dead UI.
+		refetchInterval: 5000,
+	})
+}
+
 export function useSessionErrorLog(
 	sessionId: string | null,
 	workspaceId: string,
