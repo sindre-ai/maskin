@@ -71,13 +71,16 @@ test.describe('Chats v2 — agent data-viz card', () => {
 			})
 
 			await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
-			await expect(page.getByTestId('thread-messages')).toBeVisible({ timeout: 15_000 })
+			const thread = page.getByTestId('thread-messages')
+			await expect(thread).toBeVisible({ timeout: 15_000 })
 
+			// Scoped to the thread: at iPad widths the conversation list is on
+			// screen too, and its preview snippet repeats the raw message body.
 			// The fenced spec becomes the bounded visual, not a literal code block.
-			await expect(page.getByText('Drop-off concentrates on step two.')).toBeVisible({
+			await expect(thread.getByText('Drop-off concentrates on step two.')).toBeVisible({
 				timeout: 15_000,
 			})
-			await expect(page.getByText('"type": "bar"')).toHaveCount(0)
+			await expect(thread.getByText('"type": "bar"')).toHaveCount(0)
 
 			const overflow = await page.evaluate(() => {
 				const el = document.scrollingElement
