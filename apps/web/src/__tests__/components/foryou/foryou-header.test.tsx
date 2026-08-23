@@ -39,6 +39,15 @@ describe('ForYouHeaderActions', () => {
 		expect(onOpenBrief).toHaveBeenCalledTimes(1)
 	})
 
+	// The nav row is 44px (`min-h-11`) and every control the shell puts in it is
+	// 30px. A taller action grows the row when these get published on load,
+	// which moves the whole page down and blows the CLS budget.
+	it('sizes both actions to the shared nav 30px control height', () => {
+		renderActions({ onMarkAllRead: vi.fn(), markAllReadDisabled: false })
+		expect(screen.getByRole('button', { name: /today.?s brief/i })).toHaveClass('h-[30px]')
+		expect(screen.getByRole('button', { name: /mark all as read/i })).toHaveClass('h-[30px]')
+	})
+
 	// New chat is owned exclusively by the shared top nav's own NewMenu
 	// (header.tsx) — ForYouHeaderActions must not render a second "New chat"
 	// control, or the row shows two of them side by side.
