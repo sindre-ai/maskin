@@ -69,7 +69,9 @@ export function useBriefPlayback(text: string): BriefPlayback {
 		setElapsedMs(0)
 	}, [])
 
-	// Speech keeps running after the drawer closes unless it's cancelled here.
+	// Cancels on unmount. Note this fires when the *hook owner* unmounts, which
+	// is not the same as the drawer closing — a caller that stays mounted across
+	// open/close must call `stop` itself when it closes (BriefDrawer does).
 	useEffect(() => stop, [stop])
 
 	// A new brief invalidates whatever is being spoken.

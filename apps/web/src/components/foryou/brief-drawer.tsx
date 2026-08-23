@@ -19,7 +19,7 @@ import {
 import { cn } from '@/lib/cn'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { Pause, Play } from 'lucide-react'
-import { useCallback, useMemo, useReducer, useState } from 'react'
+import { useCallback, useEffect, useMemo, useReducer, useState } from 'react'
 
 interface BriefDrawerProps {
 	workspaceId: string
@@ -145,6 +145,15 @@ export function BriefDrawer({ workspaceId, open, onOpenChange }: BriefDrawerProp
 	// SpeechSynthesis there is nothing to switch to, so read mode is forced.
 	const [listenMode, setListenMode] = useState(false)
 	const readMode = !playback.supported || !listenMode
+
+	// This component stays mounted for the life of the route — `open` only
+	// drives the Radix Sheet, so closing the drawer unmounts the sheet subtree
+	// but not the hook. Without this, speech carries on after the drawer is
+	// closed with no visible control left to stop it.
+	const stopPlayback = playback.stop
+	useEffect(() => {
+		if (!open) stopPlayback()
+	}, [open, stopPlayback])
 
 	const { data: objects } = useObjects(workspaceId)
 	const mentioned = useMemo(() => {

@@ -74,9 +74,10 @@ function buildBriefObject() {
  *  unsupported branch the drawer has to degrade into. */
 function installSpeechSynthesis() {
 	const speak = vi.fn()
+	const cancel = vi.fn()
 	Object.defineProperty(window, 'speechSynthesis', {
 		configurable: true,
-		value: { speak, cancel: vi.fn() },
+		value: { speak, cancel },
 	})
 	Object.defineProperty(window, 'SpeechSynthesisUtterance', {
 		configurable: true,
@@ -90,7 +91,7 @@ function installSpeechSynthesis() {
 			}
 		},
 	})
-	return speak
+	return { speak, cancel }
 }
 
 function removeSpeechSynthesis() {
@@ -185,8 +186,30 @@ describe('BriefDrawer', () => {
 		expect(screen.getByText('Two bets need a read.')).toBeInTheDocument()
 	})
 
+	it('stops speaking when the drawer is closed', async () => {
+		const { speak, cancel } = installSpeechSynthesis()
+		const user = userEvent.setup()
+		// The drawer stays mounted across open/close, so the hook's unmount
+		// cleanup never runs here — closing has to cancel speech on its own.
+		const { rerender } = render(<BriefDrawer workspaceId="ws-1" open onOpenChange={vi.fn()} />, {
+			wrapper: TestWrapper,
+		})
+
+		await user.click(screen.getByRole('button', { name: 'Read the brief aloud' }))
+		expect(speak).toHaveBeenCalledTimes(1)
+		cancel.mockClear()
+
+		rerender(<BriefDrawer workspaceId="ws-1" open={false} onOpenChange={vi.fn()} />)
+		expect(cancel).toHaveBeenCalled()
+
+		// Reopening must offer to play again, not show a stale Stop control.
+		rerender(<BriefDrawer workspaceId="ws-1" open onOpenChange={vi.fn()} />)
+		expect(screen.getByRole('button', { name: 'Read the brief aloud' })).toBeInTheDocument()
+		removeSpeechSynthesis()
+	})
+
 	it('plays the brief through SpeechSynthesis and swaps the prose for listen mode', async () => {
-		const speak = installSpeechSynthesis()
+		const { speak } = installSpeechSynthesis()
 		const user = userEvent.setup()
 		render(<BriefDrawer workspaceId="ws-1" open onOpenChange={vi.fn()} />, {
 			wrapper: TestWrapper,
