@@ -20,6 +20,7 @@ import { cn } from '@/lib/cn'
 import { CommandPaletteProvider } from '@/lib/command-palette-context'
 import { isHiddenRouteId, migrateLegacySidebarState, viewKeyFromRouteId } from '@/lib/nav-view-keys'
 import { NewConversationProvider } from '@/lib/new-conversation-context'
+import { NewDesignProvider } from '@/lib/new-design-context'
 import { PageHeaderProvider, usePageHeader } from '@/lib/page-header-context'
 import { PendingCommentsProvider } from '@/lib/pending-comments-context'
 import {
@@ -94,34 +95,39 @@ function WorkspaceLayout() {
 
 	return (
 		<WorkspaceContext.Provider value={{ workspace, workspaceId, sseStatus }}>
-			<NewConversationProvider>
-				<CommandPaletteProvider>
-					<PendingPromptBootstrap />
-					<GuestDraftClaimBootstrap workspaceId={workspaceId} />
-					<PendingCommentsProvider workspaceId={workspaceId}>
-						<PageHeaderProvider>
-							<ContentPushShell>
-								<SidebarProvider
-									open={open}
-									onOpenChange={setOpen}
-									className="h-screen !min-h-0"
-									data-shell={newDesign ? 'v2' : 'v1'}
-								>
-									{newDesign ? <AppSidebar /> : <LegacyAppSidebar />}
-									<SidebarInset className="min-w-0">
-										{newDesign ? <Header /> : <LegacyHeader />}
-										<MainScrollArea>
-											<Outlet />
-										</MainScrollArea>
-									</SidebarInset>
-									{newDesign && <MobileNav />}
-								</SidebarProvider>
-							</ContentPushShell>
-						</PageHeaderProvider>
-						{newDesign ? <CommandPalette /> : <LegacyCommandPalette />}
-					</PendingCommentsProvider>
-				</CommandPaletteProvider>
-			</NewConversationProvider>
+			{/* Carries the flag read above to the v2 components that route pages render
+			    (the create overlay, the comment composer) and that therefore cannot be
+			    swapped here alongside the shell. Still one read of the flag. */}
+			<NewDesignProvider value={newDesign}>
+				<NewConversationProvider>
+					<CommandPaletteProvider>
+						<PendingPromptBootstrap />
+						<GuestDraftClaimBootstrap workspaceId={workspaceId} />
+						<PendingCommentsProvider workspaceId={workspaceId}>
+							<PageHeaderProvider>
+								<ContentPushShell>
+									<SidebarProvider
+										open={open}
+										onOpenChange={setOpen}
+										className="h-screen !min-h-0"
+										data-shell={newDesign ? 'v2' : 'v1'}
+									>
+										{newDesign ? <AppSidebar /> : <LegacyAppSidebar />}
+										<SidebarInset className="min-w-0">
+											{newDesign ? <Header /> : <LegacyHeader />}
+											<MainScrollArea>
+												<Outlet />
+											</MainScrollArea>
+										</SidebarInset>
+										{newDesign && <MobileNav />}
+									</SidebarProvider>
+								</ContentPushShell>
+							</PageHeaderProvider>
+							{newDesign ? <CommandPalette /> : <LegacyCommandPalette />}
+						</PendingCommentsProvider>
+					</CommandPaletteProvider>
+				</NewConversationProvider>
+			</NewDesignProvider>
 		</WorkspaceContext.Provider>
 	)
 }

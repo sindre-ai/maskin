@@ -1,7 +1,18 @@
-import { CommentInput } from '@/components/activity/comment-input'
+import { CommentInput as CommentInputPublic } from '@/components/activity/comment-input'
+import { NewDesignProvider } from '@/lib/new-design-context'
 import { COMMENT_MAX_LENGTH } from '@maskin/shared'
 import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+
+// v2-composer assertions, so they render on the `new-design` side of the
+// boundary. `NewDesignProvider` defaults to false, which is the legacy branch.
+function CommentInput(props: React.ComponentProps<typeof CommentInputPublic>) {
+	return (
+		<NewDesignProvider value={true}>
+			<CommentInputPublic {...props} />
+		</NewDesignProvider>
+	)
+}
 
 const mockMutate = vi.fn()
 const mockGetStoredActor = vi.fn()
@@ -20,12 +31,156 @@ vi.mock('@/hooks/use-actors', () => ({
 	useActors: () => mockUseActors(),
 }))
 
+// The attachment queue is exercised for its contract only: what the composer
+// hands to `submitDraft` when files are in play.
+const mockDraftSubmit = vi.fn()
+let mockDraftFiles: {
+	tempId: string
+	name: string
+	sizeBytes: number
+	status: string
+	progress: number
+}[] = []
+vi.mock('@/lib/pending-comments-context', () => ({
+	useDraft: () => ({
+		files: mockDraftFiles,
+		attach: vi.fn(),
+		remove: vi.fn(),
+		submit: mockDraftSubmit,
+		discard: vi.fn(),
+	}),
+}))
+
 describe('CommentInput', () => {
 	beforeEach(() => {
 		mockMutate.mockClear()
 		mockIsPending = false
 		mockGetStoredActor.mockReturnValue({ id: 'actor-1', name: 'Alice', type: 'human' })
 		mockUseActors.mockReturnValue({ data: [] })
+		mockDraftSubmit.mockClear()
+		mockDraftSubmit.mockReturnValue('queued')
+		mockDraftFiles = []
+	})
+
+	it("offers the + menu's three real affordances and the composer hint", async () => {
+		const user = userEvent.setup()
+		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
+
+		expect(screen.getByText('Enter to send · @ to mention · + to attach')).toBeInTheDocument()
+
+		await user.click(screen.getByRole('button', { name: 'Add a file, object, or mention' }))
+		expect(await screen.findByText('Attach a file')).toBeInTheDocument()
+		expect(screen.getByText('Reference an object')).toBeInTheDocument()
+		expect(screen.getByText('Mention an agent')).toBeInTheDocument()
+		expect(screen.getByText('Attach a decision')).toBeInTheDocument()
+	})
+
+	it('attaches decision options and posts them as metadata.chips', async () => {
+		const user = userEvent.setup()
+		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
+
+		await user.click(screen.getByRole('button', { name: 'Add a file, object, or mention' }))
+		await user.click(await screen.findByText('Attach a decision'))
+
+		const option = screen.getByRole('textbox', { name: 'Decision option' })
+		await user.type(option, 'Ship it{Enter}')
+		await user.type(option, 'Hold{Enter}')
+		expect(screen.getByTestId('decision-attachment')).toHaveTextContent('Ship it')
+
+		// An option can be taken back off before sending.
+		await user.click(screen.getByRole('button', { name: 'Remove option Hold' }))
+		expect(screen.queryByText('Hold')).not.toBeInTheDocument()
+
+		await user.type(
+			screen.getByPlaceholderText('Write a comment... Use @ to mention an agent'),
+			'Which way do we go?',
+		)
+		await user.click(screen.getByRole('button', { name: /send/i }))
+
+		expect(mockMutate).toHaveBeenCalledWith(
+			expect.objectContaining({
+				entity_id: 'obj-1',
+				content: 'Which way do we go?',
+				metadata: { chips: ['Ship it'] },
+			}),
+			expect.any(Object),
+		)
+	})
+
+	it('carries an attachment and decision options on the same comment', async () => {
+		mockDraftFiles = [
+			{ tempId: 'f-1', name: 'metrics.png', sizeBytes: 1024, status: 'uploaded', progress: 100 },
+		]
+		const user = userEvent.setup()
+		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
+
+		await user.click(screen.getByRole('button', { name: 'Add a file, object, or mention' }))
+		// Attaching a file no longer locks the decision affordance out.
+		expect(await screen.findByText('Attach a decision')).not.toHaveAttribute('data-disabled', '')
+		await user.click(screen.getByText('Attach a decision'))
+
+		await user.type(screen.getByRole('textbox', { name: 'Decision option' }), 'Ship it{Enter}')
+		await user.type(
+			screen.getByPlaceholderText('Write a comment... Use @ to mention an agent'),
+			'Chart attached — which way?',
+		)
+		await user.click(screen.getByRole('button', { name: /send/i }))
+
+		// The queued path carries the same metadata shape as the direct one, and
+		// the direct mutation is not used when files are in play.
+		expect(mockDraftSubmit).toHaveBeenCalledWith({
+			content: 'Chart attached — which way?',
+			mentions: [],
+			metadata: { chips: ['Ship it'] },
+		})
+		expect(mockMutate).not.toHaveBeenCalled()
+	})
+
+	// `submitDraft` returns 'no-attachments' when the queue has nothing to send:
+	// the entry was never created, or every attachment was removed between the
+	// composer reading `hasAttachments` and the click. In the second case it also
+	// deletes the entry, so there is no queued row left to render a failure on.
+	// Dropping the comment there loses the user's text silently.
+	it('falls back to a direct post when the queue reports no attachments', async () => {
+		mockDraftFiles = [
+			{ tempId: 'f-1', name: 'metrics.png', sizeBytes: 1024, status: 'uploaded', progress: 100 },
+		]
+		mockDraftSubmit.mockReturnValue('no-attachments')
+		const user = userEvent.setup()
+		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
+
+		await user.type(
+			screen.getByPlaceholderText('Write a comment... Use @ to mention an agent'),
+			'Still worth saying',
+		)
+		await user.click(screen.getByRole('button', { name: /send/i }))
+
+		expect(mockDraftSubmit).toHaveBeenCalled()
+		expect(mockMutate).toHaveBeenCalledWith(
+			expect.objectContaining({ entity_id: 'obj-1', content: 'Still worth saying' }),
+			expect.anything(),
+		)
+	})
+
+	it('sends no metadata when no decision is attached', async () => {
+		const user = userEvent.setup()
+		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
+
+		await user.type(
+			screen.getByPlaceholderText('Write a comment... Use @ to mention an agent'),
+			'Just a comment',
+		)
+		await user.click(screen.getByRole('button', { name: /send/i }))
+
+		expect(mockMutate).toHaveBeenCalledWith(
+			expect.not.objectContaining({ metadata: expect.anything() }),
+			expect.any(Object),
+		)
+	})
+
+	it('renders no mic when the browser has no SpeechRecognition', () => {
+		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
+		expect(screen.queryByRole('button', { name: /dictate/i })).not.toBeInTheDocument()
 	})
 
 	it('returns null when no stored actor', () => {

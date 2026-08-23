@@ -2,40 +2,29 @@ import { cn } from '@/lib/cn'
 
 export function UnreadBadge({
 	count,
-	overflow,
-	variant = 'pill',
 	className,
+	// True when the count is a capped page total rather than an exact figure —
+	// renders "50+" instead of "50".
+	overflow = false,
+	// `pill` is the filled capsule used in dense list rows; `plain` is the v2
+	// sidebar's bare brand-coloured numeral (mockup: 11.5px/600, no fill).
+	variant = 'pill',
 }: {
 	count: number
-	/** True when `count` is a floor, not the exact total — renders "N+". */
-	overflow?: boolean
-	/** `pill` is the default accent chip; `plain` is a numeral-only look for
-	 *  dense nav rows (the sidebar's Chats/For you counts). */
-	variant?: 'pill' | 'plain'
 	className?: string
+	overflow?: boolean
+	variant?: 'pill' | 'plain'
 }) {
 	if (count <= 0) return null
 	const label = overflow ? `${count}+` : `${count}`
-
-	if (variant === 'plain') {
-		return (
-			<span
-				aria-label={`${label} unread`}
-				className={cn(
-					'font-mono text-[10px] font-semibold tabular-nums text-muted-foreground',
-					className,
-				)}
-			>
-				{label}
-			</span>
-		)
-	}
-
 	return (
 		<span
 			aria-label={`${label} unread`}
 			className={cn(
-				'inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-accent px-1.5 text-xs font-medium text-accent-foreground tabular-nums',
+				'tabular-nums',
+				variant === 'pill'
+					? 'inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-accent px-1.5 text-xs font-medium text-accent-foreground'
+					: 'text-[11.5px] font-semibold text-brand',
 				className,
 			)}
 		>
