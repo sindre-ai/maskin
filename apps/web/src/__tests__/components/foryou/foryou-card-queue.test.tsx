@@ -307,6 +307,23 @@ describe('ForYouCardQueue', () => {
 		expect(screen.getByTestId('stub-card')).toHaveTextContent('c')
 	})
 
+	it('re-fronts the queue when the user changes the sort, releasing the pin', () => {
+		const queue = [buildItem('a'), buildItem('b')]
+		const { rerender } = render(
+			<ForYouCardQueue workspaceId="ws-1" queue={queue} sort="priority" />,
+		)
+
+		expect(screen.getByTestId('stub-card')).toHaveTextContent('a')
+
+		// Unlike the background re-sort above, this reorder comes with an
+		// explicit sort change — the user asked for a different front runner.
+		rerender(
+			<ForYouCardQueue workspaceId="ws-1" queue={[buildItem('b'), buildItem('a')]} sort="oldest" />,
+		)
+
+		expect(screen.getByTestId('stub-card')).toHaveTextContent('b')
+	})
+
 	it('stretches the root and the current card wrapper to fill available height', () => {
 		const { container } = render(<ForYouCardQueue workspaceId="ws-1" queue={[buildItem('a')]} />)
 

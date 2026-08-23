@@ -1,8 +1,5 @@
 import { PageHeader } from '@/components/layout/page-header'
-import { EmptyState } from '@/components/shared/empty-state'
-import { FilterTabs } from '@/components/shared/filter-tabs'
 import { CardSkeleton } from '@/components/shared/loading-skeleton'
-import { Button } from '@/components/ui/button'
 import { useBets } from '@/hooks/use-bets'
 import { useMarkRead, useMarkUnread, useUnread } from '@/hooks/use-subscriptions'
 import {
@@ -10,11 +7,9 @@ import {
 	useUserDisplaySettings,
 } from '@/hooks/use-user-display-settings'
 import type { DisplaySettingsBody, UnreadItem } from '@/lib/api'
-import { cn } from '@/lib/cn'
 import { useNewConversationComposer } from '@/lib/new-conversation-context'
 import { useWorkspace } from '@/lib/workspace-context'
 import { CHROME_KEY } from '@maskin/shared'
-import { Plus } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { NorthStarPromptCard } from '../north-star-prompt-card'

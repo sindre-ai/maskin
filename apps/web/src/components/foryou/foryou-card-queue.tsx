@@ -20,6 +20,10 @@ interface ForYouCardQueueProps {
 	/** Item key the user picked in List mode — the queue opens parked on it
 	 *  instead of on the sort's front runner (mockup 490). */
 	pinnedKey?: string | null
+	/** The active sort. The queue pins its front card against background
+	 *  re-sorts (see below), but an explicit sort change is the user asking for
+	 *  a different front runner — so a change here releases the pin. */
+	sort?: string
 }
 
 function noop() {}
@@ -29,6 +33,7 @@ export function ForYouCardQueue({
 	queue,
 	sparseComposer,
 	pinnedKey,
+	sort,
 }: ForYouCardQueueProps) {
 	const [currentKey, setCurrentKey] = useState<string | null>(pinnedKey ?? null)
 	const [processedKeys, setProcessedKeys] = useState<Set<string>>(() => new Set())
@@ -51,6 +56,18 @@ export function ForYouCardQueue({
 	useEffect(() => {
 		if (pinnedKey) setCurrentKey(pinnedKey)
 	}, [pinnedKey])
+
+	// Same reasoning for an explicit sort change: the pin below exists to keep
+	// *background* re-sorts from swapping the card mid-read, not to ignore the
+	// user picking a different order. Clearing the key re-fronts the queue on
+	// the new sort's first item. Skips the initial mount so it can't stomp a
+	// List-mode pin that arrived with the first render.
+	const lastSortRef = useRef(sort)
+	useEffect(() => {
+		if (lastSortRef.current === sort) return
+		lastSortRef.current = sort
+		setCurrentKey(null)
+	}, [sort])
 
 	// Pin the front card once shown. `queue` re-sorts on every background
 	// refetch (SSE-triggered unread invalidation) — without pinning, the card

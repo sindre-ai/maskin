@@ -12,8 +12,8 @@ import { NorthStarPromptCard } from '@/components/foryou/north-star-prompt-card'
 import { OnboardingPromptCard } from '@/components/foryou/onboarding-prompt-card'
 import { SparseComposer } from '@/components/foryou/sparse-composer'
 import { PageHeader } from '@/components/layout/page-header'
-import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
+import { Skeleton } from '@/components/ui/skeleton'
 import { useBets } from '@/hooks/use-bets'
 import { useMarkRead, useMarkUnread, useUnread } from '@/hooks/use-subscriptions'
 import {
@@ -276,12 +276,25 @@ function ForYouRedesign() {
 		return () => window.removeEventListener('keydown', onKeydown)
 	}, [handleMarkAllRead])
 
+	// The skeleton mirrors the loaded feed's geometry — one chip-row-height
+	// header band and a single full-height card in the same 760px column —
+	// rather than a stack of three list-shaped cards. Cards mode only ever shows
+	// one card, so the old stack collapsed to a different height on hydration
+	// and pushed the CLS budget (apps/e2e/src/tests/typography.spec.ts) over
+	// 0.05.
 	if (isLoading || betsLoading) {
 		return (
-			<div className="flex flex-1 min-w-0 flex-col space-y-4" data-testid="foryou-redesign-root">
-				<CardSkeleton />
-				<CardSkeleton />
-				<CardSkeleton />
+			<div
+				className="flex min-h-0 min-w-0 flex-1 flex-col gap-3"
+				data-testid="foryou-redesign-root"
+			>
+				<div className="mx-auto mb-2 flex h-8 w-full max-w-[760px] items-center gap-2">
+					<Skeleton className="h-7 w-40" />
+					<Skeleton className="ml-auto h-8 w-20" />
+				</div>
+				<div className="mx-auto flex w-full min-h-0 max-w-[760px] flex-1 flex-col">
+					<Skeleton className="h-full w-full rounded-2xl" />
+				</div>
 			</div>
 		)
 	}
@@ -370,6 +383,7 @@ function ForYouRedesign() {
 							workspaceId={workspaceId}
 							queue={queue}
 							pinnedKey={pinnedKey}
+							sort={sort}
 							sparseComposer={sparseComposerNode}
 						/>
 					)}
