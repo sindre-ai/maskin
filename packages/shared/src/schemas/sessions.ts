@@ -140,8 +140,28 @@ export const sessionQuerySchema = z.object({
 
 export const sessionLogQuerySchema = z.object({
 	since: z.coerce.number().int().optional(),
+	/**
+	 * Half-open, exclusive: rows satisfy `id < before`. Pages BACKWARD from a
+	 * known id, which `since` cannot do — it is how a client reaches the
+	 * earlier history of a long-lived interactive session it only hydrated
+	 * the tail of. Implies newest-first selection regardless of `order`; the
+	 * response is still returned in ascending id order. Combining `before`
+	 * with `since` is legal and yields the bounded window `since < id < before`.
+	 */
+	before: z.coerce.number().int().optional(),
 	stream: z.enum(['stdout', 'stderr', 'system']).optional(),
 	limit: z.coerce.number().int().min(1).max(500).default(100),
+	/**
+	 * Which end of the log to take `limit` rows from. `asc` (the default,
+	 * and the historical behaviour) returns the OLDEST rows — correct when
+	 * paging forward from a `since` cursor, but wrong for hydrating a view
+	 * of a long-lived session: an interactive chat session accumulates logs
+	 * for the whole conversation, so `asc` + `limit` pins the client to the
+	 * beginning of the conversation forever. `desc` takes the newest rows
+	 * instead (still returned in ascending id order) so callers can hydrate
+	 * the tail and then page forward with `since`.
+	 */
+	order: z.enum(['asc', 'desc']).default('asc'),
 })
 
 export const sessionParamsSchema = z.object({
@@ -237,6 +257,12 @@ export const failureReasonCodeSchema = z.enum([
 	'rate_limit_error',
 	'insufficient_credits',
 	'agent_server_lost',
+	// The session could not be handed to any agent-server before the dispatch
+	// queue ran out of attempts. Recoverable by starting a new session.
+	'dispatch_failed',
+	// The session's agent was deleted (or removed by a loop uninstall/version
+	// push) while the session was still live, so it was stopped mid-run.
+	'agent_deleted',
 ])
 export type FailureReasonCode = z.infer<typeof failureReasonCodeSchema>
 
@@ -253,6 +279,9 @@ export type SessionResultFailureReason = z.infer<typeof sessionResultFailureReas
 export const sessionResultSchema = z.object({
 	exit_code: z.number().int().nullable().optional(),
 	error: z.string().optional(),
+	// Human-readable note for sessions that ended successfully without an exit
+	// code — e.g. the watchdog's graceful close of an idle chat session.
+	summary: z.string().optional(),
 	failure_reason: sessionResultFailureReasonSchema.nullable().optional(),
 	// Set only by SessionManager.stopSession()'s provisional terminal write —
 	// see markRemoteSessionComplete() in apps/dev/src/services/session-manager.ts.
@@ -262,5 +291,12 @@ export const sessionResultSchema = z.object({
 	// to overwrite a record still carrying this marker with the real exit code;
 	// it is never set on a genuine report itself.
 	stopped_by_user: z.boolean().optional(),
+	// The user asked for this session to stop. Unlike `stopped_by_user` (the
+	// provisional-write marker that gates markRemoteSessionComplete's CAS
+	// overwrite), this is a pure UI flag: it survives the genuine completion
+	// report so a user-initiated stop keeps rendering as "stopped", never as
+	// a failure. Set by the local handleCompletion path and carried forward
+	// by markRemoteSessionComplete when it overwrites a provisional stop.
+	user_stop_requested: z.boolean().optional(),
 })
 export type SessionResult = z.infer<typeof sessionResultSchema>

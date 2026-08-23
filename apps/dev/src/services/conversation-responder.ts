@@ -1,6 +1,12 @@
 import type { Database } from '@maskin/db'
-import { actors, conversationParticipants, messages, workspaces } from '@maskin/db/schema'
-import { and, count, desc, eq, isNull, ne } from 'drizzle-orm'
+import {
+	actors,
+	conversationParticipants,
+	conversationPendingTurns,
+	messages,
+	workspaces,
+} from '@maskin/db/schema'
+import { and, count, desc, eq, isNull, lte, ne, sql } from 'drizzle-orm'
 import { resolveChatCredentials } from '../lib/llm-routing'
 import type { LLMTool } from '../lib/llm/adapter'
 import { createLLMAdapter } from '../lib/llm/index'
@@ -51,8 +57,28 @@ export async function evaluateAndRespond(ctx: {
 	workspaceId: string
 	conversationId: string
 	messageId: number
+	options?: {
+		/**
+		 * Skip the relevance heuristic and treat every candidate agent as
+		 * responding — set by an explicit human retry, where "should I reply?"
+		 * has already been answered by the user clicking the button.
+		 */
+		forceRespond?: boolean
+		/**
+		 * The message is an edit of an already-posted message — prefix the
+		 * agent-facing turn so the agent knows it replaces the earlier version
+		 * rather than being a brand-new message.
+		 */
+		isEdit?: boolean
+		/**
+		 * Restrict the run to this one agent — set by "Redo this response",
+		 * where re-running every participant would post duplicate replies from
+		 * agents whose answers the user didn't ask to regenerate.
+		 */
+		targetAgentId?: string
+	}
 }): Promise<void> {
-	const { db, sessionManager, workspaceId, conversationId, messageId } = ctx
+	const { db, sessionManager, workspaceId, conversationId, messageId, options } = ctx
 
 	const [message] = await db
 		.select({
@@ -86,6 +112,9 @@ export async function evaluateAndRespond(ctx: {
 				isNull(conversationParticipants.leftAt),
 				eq(actors.type, 'agent'),
 				ne(conversationParticipants.actorId, message.actorId),
+				options?.targetAgentId
+					? eq(conversationParticipants.actorId, options.targetAgentId)
+					: undefined,
 			),
 		)
 	if (candidates.length === 0) return
@@ -108,11 +137,23 @@ export async function evaluateAndRespond(ctx: {
 	// Loop-prevention cap: walk from the most recent message back, count
 	// consecutive agent-authored messages at the tail (the new message is
 	// included, since it's already inserted at this point).
+	//
+	// Auto-posted end-of-turn output is excluded. The cap exists to bound
+	// responder-triggered agent-to-agent chains, and a final_output message
+	// cannot start one — the finalizer never calls evaluateAndRespond. Every
+	// agent turn now yields up to two rows (an optional MCP heads-up plus the
+	// automatic final output), so counting both would halve the effective cap
+	// and mute a conversation after ~3 turns.
 	const recent = await db
 		.select({ actorType: actors.type })
 		.from(messages)
 		.innerJoin(actors, eq(actors.id, messages.actorId))
-		.where(eq(messages.conversationId, conversationId))
+		.where(
+			and(
+				eq(messages.conversationId, conversationId),
+				sql`${messages.metadata}->>'source' IS DISTINCT FROM 'final_output'`,
+			),
+		)
 		.orderBy(desc(messages.id))
 		.limit(LOOKBACK_LIMIT)
 	let consecutiveAgents = 0
@@ -132,12 +173,20 @@ export async function evaluateAndRespond(ctx: {
 		mentions?: string[]
 		context_objects?: Array<{ id: string; title?: string; type?: string }>
 		context_notifications?: Array<{ id: string; title?: string }>
+		attachments?: Array<{ file_id: string; name?: string; mime_type?: string }>
 	} | null
 	const mentioned = new Set(metadata?.mentions ?? [])
-	// The composer sends attached objects/notifications as structured metadata
-	// (rendered as chips in the UI) rather than inlined into `content` — rebuild
-	// a compact context block here so the agent's prompt still carries it.
-	const messageForPrompt = { ...message, content: appendContextBlock(message.content, metadata) }
+	// The composer sends attached objects/notifications/files as structured
+	// metadata (rendered as chips in the UI) rather than inlined into
+	// `content` — rebuild a compact context block here so the agent's prompt
+	// still carries it.
+	const promptContent = appendContextBlock(message.content, metadata)
+	const messageForPrompt = {
+		...message,
+		content: options?.isEdit
+			? `[${message.authorName} edited an earlier message — the corrected version below replaces what they wrote before.]\n${promptContent}`
+			: promptContent,
+	}
 
 	const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
 	const wsSettings = (ws?.settings as WorkspaceSettings) ?? {}
@@ -160,7 +209,7 @@ export async function evaluateAndRespond(ctx: {
 			// real session launch, whose resolveLlmRoute is the sole authority
 			// on available credentials, be the final word.
 			const shouldRespond =
-				wasMentioned || isDirectConversation
+				options?.forceRespond || wasMentioned || isDirectConversation
 					? true
 					: await checkRelevance({
 							agent,
@@ -171,27 +220,49 @@ export async function evaluateAndRespond(ctx: {
 						})
 			if (!shouldRespond) return
 
-			const existing = await sessionManager.findActiveConversationSession(conversationId, agent.id)
+			const turnPayload = {
+				type: 'user' as const,
+				message: {
+					role: 'user' as const,
+					content: buildConversationTurnPrompt({
+						authorName: message.authorName,
+						authorType: message.authorType,
+						newMessageContent: messageForPrompt.content,
+						isDirectConversation,
+						wasMentioned,
+					}),
+				},
+			}
+
+			const existing = await sessionManager.findConversationSessionAnyActive(
+				conversationId,
+				agent.id,
+			)
+			if (existing && existing.status !== 'running') {
+				// The agent's session is still booting (pending/starting/queued) —
+				// its stdin isn't attached yet, so a writeInput would fail and a
+				// second createSession would lose to sessions_conversation_actor_
+				// active_uniq. Buffer the turn; drainPendingConversationTurns
+				// delivers it once the session comes up.
+				await bufferPendingTurn(db, {
+					conversationId,
+					agentId: agent.id,
+					messageId,
+					payload: turnPayload,
+				})
+				// Close the race: the session may have reached `running` (and
+				// already drained) between the lookup above and the buffer insert —
+				// nothing would ever drain this row, so re-check and drain now.
+				const nowRunning = await sessionManager.findActiveConversationSession(
+					conversationId,
+					agent.id,
+				)
+				if (nowRunning) await sessionManager.drainPendingConversationTurns(nowRunning.id)
+				return
+			}
 			if (existing) {
 				try {
-					await sessionManager.writeInput(
-						existing.id,
-						{
-							type: 'user',
-							message: {
-								role: 'user',
-								content: buildConversationTurnPrompt({
-									authorName: message.authorName,
-									authorType: message.authorType,
-									newMessageContent: messageForPrompt.content,
-									isDirectConversation,
-									wasMentioned,
-								}),
-							},
-						},
-						undefined,
-						messageId,
-					)
+					await sessionManager.writeInput(existing.id, turnPayload, undefined, messageId)
 					return
 				} catch (err) {
 					logger.warn(
@@ -217,6 +288,7 @@ export async function evaluateAndRespond(ctx: {
 			}
 
 			await spawnOrJoinConversationSession({
+				db,
 				sessionManager,
 				workspaceId,
 				conversationId,
@@ -237,13 +309,13 @@ export async function evaluateAndRespond(ctx: {
  * the same agent race (both found no existing running session and both try
  * to spawn), the DB's sessions_conversation_actor_active_uniq partial unique
  * index rejects the loser's insert — on that specific failure, look up the
- * race winner's session and join it via writeInput instead of dropping the
- * reply. A single lookup attempt, not a retry loop: if the winner's session
- * isn't visible as `running` yet (still starting), this reply is dropped —
- * an acceptable, rare failure mode rather than blocking on an open-ended
- * poll.
+ * race winner's session and join it: via writeInput when it is already
+ * `running`, or by buffering the turn in conversation_pending_turns when it
+ * is still booting (drainPendingConversationTurns delivers it once the
+ * session's stdin attaches). No reply is dropped on this path any more.
  */
 async function spawnOrJoinConversationSession(params: {
+	db: Database
 	sessionManager: SessionManager
 	workspaceId: string
 	conversationId: string
@@ -255,6 +327,7 @@ async function spawnOrJoinConversationSession(params: {
 	wasMentioned: boolean
 }): Promise<void> {
 	const {
+		db,
 		sessionManager,
 		workspaceId,
 		conversationId,
@@ -284,6 +357,27 @@ async function spawnOrJoinConversationSession(params: {
 			},
 			createdBy: message.actorId,
 		})
+		// The seed prompt above inlines recent history up to and including this
+		// message — any turn still buffered for this pair from a previous, dead
+		// session is already covered by it. Clear those rows so the post-boot
+		// drain doesn't re-deliver them as duplicates.
+		try {
+			await db
+				.delete(conversationPendingTurns)
+				.where(
+					and(
+						eq(conversationPendingTurns.conversationId, conversationId),
+						eq(conversationPendingTurns.actorId, agentId),
+						lte(conversationPendingTurns.messageId, messageId),
+					),
+				)
+		} catch (err) {
+			logger.warn('Failed to clear seed-covered pending turns', {
+				agentId,
+				conversationId,
+				error: String(err),
+			})
+		}
 		return
 	} catch (err) {
 		if (!isConversationSessionRaceViolation(err)) {
@@ -296,33 +390,40 @@ async function spawnOrJoinConversationSession(params: {
 		}
 	}
 
-	const winner = await sessionManager.findActiveConversationSession(conversationId, agentId)
+	const turnPayload = {
+		type: 'user' as const,
+		message: {
+			role: 'user' as const,
+			content: buildConversationTurnPrompt({
+				authorName: message.authorName,
+				authorType: message.authorType,
+				newMessageContent: message.content,
+				isDirectConversation,
+				wasMentioned,
+			}),
+		},
+	}
+
+	const winner = await sessionManager.findConversationSessionAnyActive(conversationId, agentId)
 	if (!winner) {
-		logger.warn('Conversation session race: no winner visible yet — dropping this reply', {
+		// The race winner already died between rejecting our insert and this
+		// lookup — vanishingly rare. The next message spawns a fresh session
+		// whose seed history covers this one.
+		logger.warn('Conversation session race: no winner visible — deferring to next spawn', {
 			agentId,
 			conversationId,
 		})
 		return
 	}
+	if (winner.status !== 'running') {
+		// Winner is still booting — same buffer-and-recheck as the primary path.
+		await bufferPendingTurn(db, { conversationId, agentId, messageId, payload: turnPayload })
+		const nowRunning = await sessionManager.findActiveConversationSession(conversationId, agentId)
+		if (nowRunning) await sessionManager.drainPendingConversationTurns(nowRunning.id)
+		return
+	}
 	await sessionManager
-		.writeInput(
-			winner.id,
-			{
-				type: 'user',
-				message: {
-					role: 'user',
-					content: buildConversationTurnPrompt({
-						authorName: message.authorName,
-						authorType: message.authorType,
-						newMessageContent: message.content,
-						isDirectConversation,
-						wasMentioned,
-					}),
-				},
-			},
-			undefined,
-			messageId,
-		)
+		.writeInput(winner.id, turnPayload, undefined, messageId)
 		.catch(async (err: unknown) => {
 			logger.warn('Failed to join winning conversation session after race', {
 				agentId,
@@ -345,6 +446,58 @@ async function spawnOrJoinConversationSession(params: {
 					}),
 				)
 		})
+}
+
+/**
+ * Buffers one turn for a (conversation, agent) pair whose session is still
+ * booting. Idempotent per (conversation, agent, message) via the table's
+ * unique index — a duplicate insert (e.g. a retried message) updates the
+ * payload in place so an edited message replaces its stale buffered turn.
+ * Never throws: a buffering failure degrades to the pre-buffer behaviour
+ * (the turn is covered by the next spawn's seed history).
+ */
+async function bufferPendingTurn(
+	db: Database,
+	params: {
+		conversationId: string
+		agentId: string
+		messageId: number
+		payload: { type: 'user'; message: { role: 'user'; content: string } }
+	},
+): Promise<void> {
+	try {
+		await db
+			.insert(conversationPendingTurns)
+			.values({
+				conversationId: params.conversationId,
+				actorId: params.agentId,
+				messageId: params.messageId,
+				payload: params.payload,
+			})
+			// Upsert, not DO NOTHING: an edit re-buffers the same
+			// (conversation, agent, message) key and the newest payload —
+			// the edited content — must win over the stale one.
+			.onConflictDoUpdate({
+				target: [
+					conversationPendingTurns.conversationId,
+					conversationPendingTurns.actorId,
+					conversationPendingTurns.messageId,
+				],
+				set: { payload: params.payload },
+			})
+		logger.info('Buffered conversation turn while agent session boots', {
+			agentId: params.agentId,
+			conversationId: params.conversationId,
+			messageId: params.messageId,
+		})
+	} catch (err) {
+		logger.error('Failed to buffer conversation turn', {
+			agentId: params.agentId,
+			conversationId: params.conversationId,
+			messageId: params.messageId,
+			error: String(err),
+		})
+	}
 }
 
 /** Walks err.cause chain for the sessions_conversation_actor_active_uniq unique violation (23505). */
@@ -461,21 +614,25 @@ async function checkRelevance(params: {
 }
 
 /**
- * Rebuilds the compact "Context objects:" / "Context notifications:" block
- * the composer used to inline directly into message content — now that the
- * composer sends this as structured metadata (so the UI can render chips
- * instead of literal text), the agent-facing prompt has to reconstruct it.
+ * Rebuilds the compact "Context objects:" / "Context notifications:" /
+ * "Attached files:" block the composer used to inline directly into message
+ * content — now that the composer sends this as structured metadata (so the
+ * UI can render chips instead of literal text), the agent-facing prompt has
+ * to reconstruct it. Attached files are listed by id + name only; the agent
+ * has to call the `get_file` MCP tool to actually read the content.
  */
 function appendContextBlock(
 	content: string,
 	metadata: {
 		context_objects?: Array<{ id: string; title?: string; type?: string }>
 		context_notifications?: Array<{ id: string; title?: string }>
+		attachments?: Array<{ file_id: string; name?: string; mime_type?: string }>
 	} | null,
 ): string {
 	const objects = metadata?.context_objects ?? []
 	const notifications = metadata?.context_notifications ?? []
-	if (objects.length === 0 && notifications.length === 0) return content
+	const attachments = metadata?.attachments ?? []
+	if (objects.length === 0 && notifications.length === 0 && attachments.length === 0) return content
 	const lines: string[] = [content, '', '---']
 	if (objects.length > 0) {
 		lines.push('Context objects:')
@@ -493,11 +650,20 @@ function appendContextBlock(
 			lines.push(`- ${label} — id: ${n.id}`)
 		}
 	}
+	if (attachments.length > 0) {
+		if (objects.length > 0 || notifications.length > 0) lines.push('')
+		lines.push('Attached files (call the get_file MCP tool with the file id to read the content):')
+		for (const f of attachments) {
+			const label = f.name?.trim() || f.file_id
+			const mimeTag = f.mime_type ? ` (${f.mime_type})` : ''
+			lines.push(`- ${label}${mimeTag} — file id: ${f.file_id}`)
+		}
+	}
 	return lines.join('\n')
 }
 
-/** Shared `{actorName}: {content}` transcript join, used both for the relevance check and the seed prompt. */
-function formatConversationTranscript(
+/** Shared `{actorName}: {content}` transcript join, used by the relevance check, the seed prompt, and the auto-titler. */
+export function formatConversationTranscript(
 	history: Array<{ actorName: string; content: string }>,
 ): string {
 	return history.map((m) => `${m.actorName}: ${m.content}`).join('\n')
@@ -527,8 +693,8 @@ function buildConversationReplyPrompt(ctx: {
 		formatConversationTranscript(ctx.conversationHistory) || '(no prior messages)',
 		'"""',
 		'',
-		`The response can be any combination of: taking an action, or posting a reply via post_conversation_message. ${describeReplyExpectation(ctx)}`,
-		'IMPORTANT: taking an action (reading data, calling other tools) is invisible to the user by itself — they only see a reply once you call post_conversation_message. If you take actions first, still call post_conversation_message afterward to report back, unless you deliberately chose silence per the guidance above.',
+		`Your reply is whatever you write at the end of this turn — it is posted into the chat automatically, so finish with the actual response to them. ${describeReplyExpectation(ctx)}`,
+		"If this turn will take a while before you can answer — research, a long tool chain, work across several files — you may post a brief heads-up first with post_conversation_message so they aren't left waiting in silence. That's optional, and worth skipping when the message just wants a direct answer. Both the heads-up and your final reply appear in the chat, so don't repeat yourself.",
 		'',
 		`Conversation ID: ${ctx.conversationId}`,
 		`Author of the new message: ${ctx.authorName} (actor ID: ${ctx.authorActorId})`,

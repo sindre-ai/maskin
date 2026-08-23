@@ -301,8 +301,38 @@ describe('pushSessionWorkspace — transient storage failures', () => {
 
 		expect(result.archiveBytes).toBeGreaterThan(0)
 		expect(storage.attempts).toBe(3)
-		expect(sleeps).toHaveLength(2)
+		// Note: linear (retryDelayMs * attempt) and exponential
+		// (retryDelayMs * 2 ** (attempt - 1)) agree on the first two delays, so
+		// these values alone do NOT pin the backoff shape. The shape is pinned by
+		// the four-failure test below, where the two formulas diverge
+		// ([…,8000,16000] vs […,6000,8000]). Asserted here anyway so a change to
+		// the base delay is caught at the cheapest test.
+		expect(sleeps).toEqual([2000, 4000])
 		expect(storage.keys()).toContain('session-workspaces/flaky-session.tar.gz')
+	})
+
+	it('survives a four-failure outage on the default retry budget', async () => {
+		// Four consecutive failures need a 5th attempt, so this succeeds only
+		// under DEFAULT_PUSH_RETRIES = 5. Reverting to the previous 3-attempt
+		// budget makes it throw. Deliberately does NOT pass `retries`, so the
+		// default is what is under test (Sentry MASKIN-AGENT-SERVER-3).
+		const storage = new FlakyStorage(4)
+		const sessionDir = join(tmpRoot, 'flaky-long-outage')
+		await mkdir(join(sessionDir, 'workspace'), { recursive: true })
+		await writeFile(join(sessionDir, 'workspace', 'file.txt'), 'hello')
+
+		const sleeps: number[] = []
+		const result = await pushSessionWorkspace(storage, 'flaky-session-3', sessionDir, {
+			sleep: async (ms) => {
+				sleeps.push(ms)
+			},
+		})
+
+		expect(result.archiveBytes).toBeGreaterThan(0)
+		expect(storage.attempts).toBe(5)
+		// 2 + 4 + 8 + 16 = 30s of backoff, and the 16s cap is exercised.
+		expect(sleeps).toEqual([2000, 4000, 8000, 16000])
+		expect(storage.keys()).toContain('session-workspaces/flaky-session-3.tar.gz')
 	})
 
 	it('surfaces the error (and forces the caller to notice) once retries are exhausted', async () => {

@@ -21,7 +21,12 @@ export class InputQueue {
 			}
 		}
 		this.streams.set(sessionId, flusher)
-		return () => this.streams.delete(sessionId)
+		// Only delete our own registration: a dead connection's late unregister
+		// (heartbeat failure or abort firing after the VM already reconnected)
+		// must not tear down the replacement stream's flusher.
+		return () => {
+			if (this.streams.get(sessionId) === flusher) this.streams.delete(sessionId)
+		}
 	}
 
 	/**
@@ -35,7 +40,9 @@ export class InputQueue {
 		if (flusher) {
 			const ok = await flusher(line)
 			if (!ok) {
-				this.streams.delete(sessionId)
+				// Same identity guard as unregister: a reconnect may have replaced
+				// the entry while we awaited the failing flusher.
+				if (this.streams.get(sessionId) === flusher) this.streams.delete(sessionId)
 				const q = this.pending.get(sessionId) ?? []
 				q.push(line)
 				this.pending.set(sessionId, q)

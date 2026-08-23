@@ -5,11 +5,13 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useConversation } from '@/hooks/use-conversation'
 import { useUpdateConversation, useUpdateConversationMe } from '@/hooks/use-conversations'
 import { useIsMobile } from '@/hooks/use-mobile'
+import { getStoredActor } from '@/lib/auth'
 import { useNavigate, useSearch } from '@tanstack/react-router'
 import {
 	Archive,
 	ArchiveRestore,
 	ArrowLeft,
+	Copy,
 	Maximize2,
 	Minimize2,
 	Pencil,
@@ -19,6 +21,7 @@ import {
 	X,
 } from 'lucide-react'
 import { useState } from 'react'
+import { toast } from 'sonner'
 import { ParticipantsPopover } from './participants-popover'
 
 interface ThreadHeaderProps {
@@ -54,6 +57,15 @@ export function ThreadHeader({ workspaceId, conversationId }: ThreadHeaderProps)
 		})
 	}
 
+	const handleCopyLink = async () => {
+		try {
+			await navigator.clipboard.writeText(window.location.href)
+			toast.success('Link copied')
+		} catch {
+			toast.error('Could not copy link')
+		}
+	}
+
 	const startEditingTitle = () => {
 		if (!conversation) return
 		setTitleDraft(conversation.title)
@@ -72,8 +84,11 @@ export function ThreadHeader({ workspaceId, conversationId }: ThreadHeaderProps)
 	}
 
 	const participants = conversation.participants
-	const visibleAvatars = participants.slice(0, 3)
-	const overflowCount = participants.length - visibleAvatars.length
+	// The current user already knows they're in the chat — only show the others.
+	const currentActorId = getStoredActor()?.id
+	const otherParticipants = participants.filter((p) => p.actorId !== currentActorId)
+	const visibleAvatars = otherParticipants.slice(0, 3)
+	const overflowCount = otherParticipants.length - visibleAvatars.length
 
 	return (
 		<div className="flex shrink-0 flex-col gap-1 border-b border-border px-3 pt-2 pb-1.5">
@@ -198,6 +213,21 @@ export function ThreadHeader({ workspaceId, conversationId }: ThreadHeaderProps)
 					</button>
 				</ParticipantsPopover>
 				<span className="ml-auto" />
+				<Tooltip>
+					<TooltipTrigger asChild>
+						<Button
+							type="button"
+							variant="ghost"
+							size="icon"
+							className="h-6 w-6 shrink-0"
+							onClick={() => void handleCopyLink()}
+							aria-label="Copy link"
+						>
+							<Copy size={14} />
+						</Button>
+					</TooltipTrigger>
+					<TooltipContent>Copy link</TooltipContent>
+				</Tooltip>
 				<Tooltip>
 					<TooltipTrigger asChild>
 						<Button

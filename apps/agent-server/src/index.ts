@@ -177,7 +177,14 @@ export type SessionPreviewState = Map<
 	}
 >
 
-const LOG_FLUSH_INTERVAL_MS = 2_000
+// How long a session's stdout sits in this box's buffer before being POSTed
+// to apps/dev's /agent-server-reconcile ingest route. This is the DOMINANT
+// term in end-to-end chat latency: the web client polls session_logs from the
+// DB, so nothing can appear in the transcript until this flush lands. Keep it
+// at or below the web client's active poll interval (ACTIVE_POLL_MS in
+// apps/web/src/hooks/use-session-activity-logs.ts) — raising it there without
+// raising it here just adds dead time.
+const LOG_FLUSH_INTERVAL_MS = 1_000
 const LOG_FLUSH_MAX_LINES = 100
 
 // Comfortably under the log-ingest route's per-line cap (currently 1MB, see
@@ -295,8 +302,22 @@ async function monitorSession(
 	const LOG_FLUSH_RETRY_BASE_DELAY_MS = 2_000
 	const LOG_FLUSH_RETRY_MAX_DELAY_MS = 16_000
 
+	// Set when Maskin tells us this session is permanently un-ingestable (410 —
+	// the `sessions` row was hard-deleted while the sandbox was still alive).
+	// Retrying, or even buffering, is pointless from that moment on: every
+	// subsequent batch fails the same foreign-key check. Without this latch a
+	// single orphaned session burns 6 retries per batch for the rest of the
+	// sandbox's life — the storm behind Sentry MASKIN-DEV-5 / MASKIN-AGENT-SERVER-1.
+	let logDeliveryAbandoned = false
+
+	// Statuses where a retry provably cannot change the outcome: a malformed or
+	// oversized batch, or a route/session that is gone. 410 is handled ahead of
+	// this as a terminal latch. Auth statuses are deliberately absent — see the
+	// comment at the check below.
+	const NON_RETRYABLE_LOG_STATUSES = new Set([400, 404, 413, 422])
+
 	const flushLogs = async (): Promise<void> => {
-		if (!maskinBaseUrl || logBuffer.length === 0) {
+		if (!maskinBaseUrl || logDeliveryAbandoned || logBuffer.length === 0) {
 			logBuffer = []
 			return
 		}
@@ -314,6 +335,31 @@ async function monitorSession(
 						body: JSON.stringify({ logs: batch }),
 					},
 				)
+				// 410 Gone: the session no longer exists in Maskin's DB. Terminal —
+				// stop streaming for this session entirely rather than retrying.
+				if (res.status === 410) {
+					logDeliveryAbandoned = true
+					logger.warn('Maskin reports session is gone — abandoning log delivery', {
+						sessionId,
+						droppedLines: batch.length,
+					})
+					return
+				}
+				// A closed set of 4xx responses are client-side faults that repeat
+				// identically on retry, so they get dropped rather than burning the
+				// budget. Everything else — 5xx, 408, 429, and critically 401/403 —
+				// stays retryable: an AGENT_SERVER_SECRET rotation or a mid-deploy
+				// config gap produces auth failures in exactly the ~30s window this
+				// budget was widened to survive (see session-manager.ts's
+				// "secret rotation race").
+				if (!res.ok && NON_RETRYABLE_LOG_STATUSES.has(res.status)) {
+					logger.error('Maskin rejected log batch as non-retryable, batch dropped', {
+						sessionId,
+						status: res.status,
+						droppedLines: batch.length,
+					})
+					return
+				}
 				if (!res.ok) {
 					throw new Error(`Maskin log ingest responded with ${res.status}`)
 				}
@@ -603,11 +649,28 @@ export function buildApp(deps: AppDeps): Hono {
 					return false
 				}
 			})
+			// Between turns this stream carries nothing for however long the
+			// human takes to reply — minutes-long silences that NAT/proxy
+			// idle-timeouts reap, EOF-ing claude's stdin in the VM and wedging
+			// the conversation (see agent-run.sh's input_stream reconnect loop,
+			// the other half of this fix). A bare newline every 30s keeps the
+			// connection warm — the CLI's NDJSON stdin reader skips blank
+			// lines — and doubles as dead-socket detection: a failed write
+			// ends this handler so the next turn parks for the reconnect
+			// instead of vanishing into a half-closed socket.
+			const heartbeat = setInterval(async () => {
+				try {
+					await s.write('\n')
+				} catch {
+					resolveStream()
+				}
+			}, 30_000)
 			c.req.raw.signal.addEventListener('abort', () => {
 				unregister()
 				resolveStream()
 			})
 			await done
+			clearInterval(heartbeat)
 			unregister()
 		})
 	})

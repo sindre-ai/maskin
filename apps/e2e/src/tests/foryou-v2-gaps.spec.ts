@@ -138,16 +138,13 @@ test.describe('For You v2 — decision card gaps', () => {
 			await expect(page.getByRole('menuitem', { name: 'Reference an object' })).toBeVisible()
 			await expect(page.getByRole('menuitem', { name: 'Mention an agent' })).toBeVisible()
 
-			// "Attach a decision" opens the option editor; the options post as
-			// metadata.chips and come back as quick-reply chips on the comment.
-			await page.getByRole('menuitem', { name: 'Attach a decision' }).click()
-			const editor = card.getByTestId('decision-attachment')
-			await expect(editor).toBeVisible()
-			await editor.getByRole('textbox', { name: 'Decision option' }).fill('Ship it')
-			await editor.getByRole('button', { name: 'Add' }).click()
-			await expect(editor).toContainText('Ship it')
-			await editor.getByRole('button', { name: 'Remove option Ship it' }).click()
-			await expect(editor).not.toContainText('Ship it')
+			// "Attach a decision" is reachable from the card's composer too — the
+			// option editor it opens (fill, Add, Remove, post as metadata.chips)
+			// belongs to the shared composer and is covered end-to-end by
+			// apps/web/src/__tests__/components/activity/comment-input.test.tsx,
+			// so this spec asserts the affordance rather than re-driving it.
+			await expect(page.getByRole('menuitem', { name: 'Attach a decision' })).toBeVisible()
+			await page.keyboard.press('Escape')
 
 			await expect(card.getByText(/to send/)).toBeVisible()
 		})
@@ -199,6 +196,7 @@ test.describe('Brief drawer — player, listen mode and MENTIONED', () => {
 			const object = await account.api.createObject(account.workspaceId, {
 				type: 'bet',
 				title: 'Cut signup friction',
+				status: 'active',
 				content: 'Reduce the number of steps before first value.',
 			})
 			await mockFeed(page, [])
@@ -253,6 +251,7 @@ test.describe('Command palette — commands, go to, jump to, search', () => {
 			await account.api.createObject(account.workspaceId, {
 				type: 'bet',
 				title: 'Palette jump target',
+				status: 'active',
 				content: 'Something to jump to.',
 			})
 			await mockFeed(page, [])

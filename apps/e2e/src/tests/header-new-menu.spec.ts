@@ -14,8 +14,12 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 // contextual "New" button in the page body — locators here scope to the
 // global `header` element to target this menu specifically.
 
+// v2 split the header's "New" control in two: a primary half that runs the
+// screen's default create action directly (accessible name "New chat" /
+// "New object" / …) and a chevron half that opens the full menu. This file is
+// about the menu, so it always targets the chevron.
 function headerNewTrigger(page: Page) {
-	return page.locator('header').getByRole('button', { name: /^new$/i })
+	return page.locator('header').getByRole('button', { name: 'More ways to start' })
 }
 
 // Scopes to the open dropdown's content — the E2E fixture derives the test
@@ -24,7 +28,7 @@ function headerNewTrigger(page: Page) {
 // actor/workspace name in the sidebar on tests whose title contains that
 // phrase (e.g. this file's own "hides ... Create an object ..." test).
 function newMenu(page: Page) {
-	return page.getByRole('menu', { name: 'New' })
+	return page.getByRole('menu')
 }
 
 test.describe('Header New menu', () => {
@@ -37,9 +41,9 @@ test.describe('Header New menu', () => {
 
 			await expect(page.getByRole('menuitem', { name: /new chat/i })).toBeVisible()
 			await expect(newMenu(page).getByText('Create an object')).toBeVisible()
-			await expect(page.getByRole('menuitem', { name: /^new task$/i })).toBeVisible()
-			await expect(page.getByRole('menuitem', { name: /^new insight$/i })).toBeVisible()
-			await expect(page.getByRole('menuitem', { name: /^new bet$/i })).toBeVisible()
+			await expect(page.getByRole('menuitem', { name: /^new task/i })).toBeVisible()
+			await expect(page.getByRole('menuitem', { name: /^new insight/i })).toBeVisible()
+			await expect(page.getByRole('menuitem', { name: /^new bet/i })).toBeVisible()
 			await expect(page.getByRole('menuitem', { name: /new loop/i })).toBeVisible()
 			await expect(page.getByRole('menuitem', { name: /new agent/i })).toBeVisible()
 			await expect(page.getByRole('menuitem', { name: /find a past conversation/i })).toBeVisible()
@@ -64,11 +68,12 @@ test.describe('Header New menu', () => {
 		await page.goto(`/${account.workspaceId}`)
 
 		await headerNewTrigger(page).click()
-		await page.getByRole('menuitem', { name: /^new task$/i }).click()
+		await page.getByRole('menuitem', { name: /^new task/i }).click()
 
 		// Seeded with a defaultType, so the picker skips the type-selector step
-		// and goes straight to the title input.
-		await expect(page.getByPlaceholder('What are you creating?')).toBeVisible()
+		// and goes straight to the composer. The placeholder is per-type, so
+		// target the input's stable accessible name.
+		await expect(page.getByRole('dialog').getByLabel('Title', { exact: true })).toBeVisible()
 		await expect(page.getByRole('radiogroup', { name: 'Type' })).toHaveCount(0)
 	})
 
@@ -83,11 +88,12 @@ test.describe('Header New menu', () => {
 
 		const dialog = page.getByRole('dialog')
 		await expect(dialog.getByText('New loop')).toBeVisible()
-		const titleInput = page.getByPlaceholder('What are you creating?')
+		const titleInput = page.getByRole('dialog').getByLabel('Title', { exact: true })
 		await expect(titleInput).toBeVisible()
 
 		await titleInput.fill('Header New menu loop check')
-		await dialog.getByRole('button', { name: /^create$/i }).click()
+		// The submit button names the thing being created ("Create loop").
+		await dialog.getByRole('button', { name: /^create loop$/i }).click()
 
 		// Creating a loop must land on the loop detail page, not the trigger one —
 		// confirms it created an objects row with type='loop', not a trigger.
@@ -105,7 +111,7 @@ test.describe('Header New menu', () => {
 
 		const dialog = page.getByRole('dialog')
 		await expect(dialog.getByText('New agent')).toBeVisible()
-		await expect(page.getByPlaceholder('What are you creating?')).toBeVisible()
+		await expect(page.getByRole('dialog').getByLabel('Title', { exact: true })).toBeVisible()
 	})
 
 	test('Find a past conversation opens the command palette', async ({ page, account }) => {
@@ -114,7 +120,8 @@ test.describe('Header New menu', () => {
 		await headerNewTrigger(page).click()
 		await page.getByRole('menuitem', { name: /find a past conversation/i }).click()
 
-		await expect(page.getByPlaceholder('Search objects, navigate...')).toBeVisible()
+		// v2's palette rewrote its own prompt (components/command-palette.tsx).
+		await expect(page.getByPlaceholder('Run a command or jump to…')).toBeVisible()
 	})
 
 	test('hides "Create an object" but keeps the menu on an object-detail page', async ({
@@ -128,15 +135,18 @@ test.describe('Header New menu', () => {
 		})
 
 		await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
-		await expect(
-			page.getByRole('heading', { level: 1, name: 'Header New menu object-detail check' }),
-		).toBeVisible({ timeout: 10000 })
+		// The object title is an editable <textarea> (object-document.tsx), never a
+		// heading — wait on its value to know the object has loaded.
+		await expect(page.getByPlaceholder('Untitled')).toHaveValue(
+			'Header New menu object-detail check',
+			{ timeout: 10000 },
+		)
 
 		await expect(headerNewTrigger(page)).toBeVisible()
 		await headerNewTrigger(page).click()
 
 		await expect(page.getByRole('menuitem', { name: /new chat/i })).toBeVisible()
 		await expect(newMenu(page).getByText('Create an object')).toHaveCount(0)
-		await expect(page.getByRole('menuitem', { name: /^new task$/i })).toHaveCount(0)
+		await expect(page.getByRole('menuitem', { name: /^new task/i })).toHaveCount(0)
 	})
 })

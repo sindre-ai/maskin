@@ -54,6 +54,12 @@ import {
 	rewriteWiring,
 	sourceItemIdOf,
 } from '../services/loop-provisioning'
+import {
+	type CapturedLiveSession,
+	captureLiveSessions,
+	stopCapturedSandboxes,
+} from '../services/session-cleanup'
+import type { SessionManager } from '../services/session-manager'
 import { autoSubscribe } from '../services/subscriptions'
 
 type Env = {
@@ -61,6 +67,7 @@ type Env = {
 		db: Database
 		actorId: string
 		agentStorage: AgentStorageManager
+		sessionManager: SessionManager
 	}
 }
 
@@ -909,6 +916,12 @@ app.openapi(uninstallLoopRoute, async (c) => {
 	// failed post-commit delete is inert — see workspace-skills.ts's DELETE route).
 	let removedSkillIds: string[] = []
 	let removedLoopObject = false
+	// Live sessions belonging to the agents this uninstall deletes. Captured
+	// inside the tx (only there is the kept-vs-deleted actor split known) and
+	// stopped after it commits — see session-cleanup.ts. Without this their
+	// sandboxes keep running as agents the user just uninstalled, holding
+	// agent-server capacity until the 2h timeout.
+	let strandedSessions: CapturedLiveSession[] = []
 
 	await db.transaction(async (tx) => {
 		if (keepProvisionedItems) {
@@ -1036,6 +1049,8 @@ app.openapi(uninstallLoopRoute, async (c) => {
 			}
 
 			if (actorIds.length > 0) {
+				strandedSessions = await captureLiveSessions(tx, actorIds)
+
 				// Delete triggers that target or were created by provisioned actors.
 				// The metadata-based delete above only removed marketplace-managed triggers;
 				// user-created triggers pointing at the same agents must also go before
@@ -1179,6 +1194,8 @@ app.openapi(uninstallLoopRoute, async (c) => {
 			},
 		})
 	})
+
+	await stopCapturedSandboxes(db, strandedSessions)
 
 	for (const skillId of removedSkillIds) {
 		try {

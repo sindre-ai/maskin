@@ -91,7 +91,7 @@ describe('MessageActivity', () => {
 			/>,
 			{ wrapper: TestWrapper },
 		)
-		expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: /^Stop / })).toBeInTheDocument()
 		unmount()
 
 		render(
@@ -101,7 +101,7 @@ describe('MessageActivity', () => {
 			/>,
 			{ wrapper: TestWrapper },
 		)
-		expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /^Stop / })).not.toBeInTheDocument()
 	})
 
 	it('shows how long the live turn has been running, off the session start time', () => {
@@ -175,5 +175,66 @@ describe('toolSources', () => {
 				{ id: '6', kind: 'tool_use', text: 'D' },
 			]),
 		).toEqual(['D', 'C', 'B'])
+	})
+})
+
+describe('MessageActivity load-earlier control', () => {
+	it('renders the control inside the expanded panel and calls it once', () => {
+		const onLoadOlder = vi.fn()
+		render(
+			<MessageActivity
+				workspaceId="ws-1"
+				turn={buildTurn({ steps: [{ id: '1', kind: 'tool_use', text: 'Using search' }] })}
+				onLoadOlder={onLoadOlder}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		fireEvent.click(screen.getByLabelText(/Toggle .* activity/))
+		fireEvent.click(screen.getByRole('button', { name: 'Load earlier activity' }))
+		expect(onLoadOlder).toHaveBeenCalledTimes(1)
+	})
+
+	it('disables the control and says so once exhausted', () => {
+		render(
+			<MessageActivity
+				workspaceId="ws-1"
+				turn={buildTurn()}
+				onLoadOlder={vi.fn()}
+				olderExhausted
+			/>,
+			{
+				wrapper: TestWrapper,
+			},
+		)
+		fireEvent.click(screen.getByLabelText(/Toggle .* activity/))
+		expect(screen.getByRole('button', { name: 'Start of activity' })).toBeDisabled()
+	})
+
+	it('still renders a zero-step turn when it carries the load-earlier control', () => {
+		// Without this the entry point would vanish on exactly the old
+		// conversations that need it — a finished turn with no loaded steps.
+		const { container } = render(
+			<MessageActivity workspaceId="ws-1" turn={buildTurn()} onLoadOlder={vi.fn()} />,
+			{
+				wrapper: TestWrapper,
+			},
+		)
+		expect(container).not.toBeEmptyDOMElement()
+	})
+})
+
+describe('MessageActivity stop control', () => {
+	it('shows a stop control while the turn is in progress', () => {
+		render(<MessageActivity workspaceId="ws-1" turn={buildTurn({ inProgress: true })} />, {
+			wrapper: TestWrapper,
+		})
+		expect(screen.getByLabelText(/^Stop /)).toBeInTheDocument()
+	})
+
+	it('hides the stop control once the turn is finished', () => {
+		render(<MessageActivity workspaceId="ws-1" turn={buildTurn({ inProgress: false })} />, {
+			wrapper: TestWrapper,
+		})
+		expect(screen.queryByLabelText(/^Stop /)).not.toBeInTheDocument()
 	})
 })

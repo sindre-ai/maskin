@@ -42,6 +42,11 @@ import {
 	partitionProvisionedSkills,
 	rewriteWiring,
 } from './loop-provisioning'
+import {
+	type CapturedLiveSession,
+	captureLiveSessions,
+	stopCapturedSandboxes,
+} from './session-cleanup'
 
 // The install endpoint and this cron must build element rows identically, so
 // the insert builders + wiring helpers live in `loop-provisioning` and are
@@ -231,6 +236,12 @@ export class LoopVersionPusher {
 		// Ids of workspace_skills rows deleted by the "removes" pass below,
 		// cleaned up from S3 after the tx commits (see the post-commit loop).
 		const removedSkillIds: string[] = []
+		// Live sessions belonging to agents this push removes. Captured inside the
+		// tx (only there is the kept-vs-removed actor split known) and stopped
+		// once it commits — see session-cleanup.ts. Otherwise their sandboxes run
+		// on as agents the loop no longer defines, holding agent-server capacity
+		// until the 2h timeout and streaming logs at a deleted session row.
+		const strandedSessions: CapturedLiveSession[] = []
 		// Newly-inserted / removed trigger ids this tick — folded into the linked
 		// Loop object's `metadata.trigger_ids` after the transaction's per-item
 		// work finishes (see below).
@@ -548,6 +559,8 @@ export class LoopVersionPusher {
 			removes -= removedActorRows.length - removedActorIds.length
 
 			if (removedActorIds.length > 0) {
+				strandedSessions.push(...(await captureLiveSessions(tx, removedActorIds)))
+
 				if (!createdBy) {
 					throw new Error(
 						`cannot remove actors for install ${install.id}: no workspace actor to reassign their content to`,
@@ -717,6 +730,8 @@ export class LoopVersionPusher {
 				})
 			}
 		})
+
+		await stopCapturedSandboxes(this.db, strandedSessions)
 
 		for (const skillId of removedSkillIds) {
 			try {

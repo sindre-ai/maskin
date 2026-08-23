@@ -1,6 +1,11 @@
 import { z } from 'zod'
 
 export const CONVERSATION_TITLE_MAX_LENGTH = 200
+// Conversations are created with this placeholder and are given a real,
+// content-derived title moments later by the backend auto-titler
+// (apps/dev/src/services/conversation-titler.ts). It stays only when the
+// workspace has no LLM credential of any kind.
+export const NEW_CONVERSATION_PLACEHOLDER_TITLE = 'New chat'
 // Chat turns run longer than object comments (COMMENT_MAX_LENGTH in events.ts).
 export const MESSAGE_MAX_LENGTH = 8000
 export const MAX_CONVERSATION_PARTICIPANTS = 50
@@ -26,6 +31,26 @@ export const messageContextNotificationSchema = z.object({
 	title: z.string().max(500).optional(),
 })
 
+/**
+ * Set by the backend on a message auto-posted from an agent's end-of-turn
+ * final output (apps/dev/src/services/interactive-turn-finalizer.ts).
+ * Never accepted from a client — the POST /messages route strips it.
+ */
+export const messageFinalOutputSchema = z.object({
+	/**
+	 * sha256 of the raw stream-json result line. Backs a partial unique index
+	 * on messages so a Docker log replay (`tail: 'all'` on reconnect) cannot
+	 * re-post turns that were already delivered.
+	 */
+	dedupe_key: z.string().min(1).max(64),
+	/** The conversation message whose turn produced this output, if resolvable. */
+	message_id: z.number().int().nullable().optional(),
+	is_error: z.boolean().optional(),
+	subtype: z.string().max(64).optional(),
+	/** Set when the agent's output exceeded MESSAGE_MAX_LENGTH and was cut. */
+	truncated: z.boolean().optional(),
+})
+
 export const messageMetadataSchema = z.object({
 	attachments: z.array(messageAttachmentSchema).max(MESSAGE_MAX_ATTACHMENTS).optional(),
 	mentions: z.array(z.string().uuid()).max(MESSAGE_MAX_MENTIONS).optional(),
@@ -34,7 +59,27 @@ export const messageMetadataSchema = z.object({
 		.array(messageContextNotificationSchema)
 		.max(MESSAGE_MAX_CONTEXT_ITEMS)
 		.optional(),
+	/**
+	 * Marks how the message came to exist. Absent for anything a human typed
+	 * or an agent posted via the post_conversation_message MCP tool;
+	 * 'final_output' for an agent's automatically-posted end-of-turn reply.
+	 */
+	source: z.enum(['final_output']).optional(),
+	final_output: messageFinalOutputSchema.optional(),
 })
+
+/**
+ * Strips the backend-owned markers from client-supplied metadata so the
+ * `source` discriminator stays trustworthy — the frontend reconciles its
+ * optimistic bubble against it, and a client could otherwise claim it.
+ */
+export function stripServerOwnedMetadata<T extends Record<string, unknown> | undefined>(
+	metadata: T,
+): T {
+	if (!metadata) return metadata
+	const { source: _source, final_output: _finalOutput, ...rest } = metadata
+	return rest as T
+}
 
 export const createConversationSchema = z.object({
 	title: z.string().min(1, 'Title cannot be empty').max(CONVERSATION_TITLE_MAX_LENGTH),
@@ -77,6 +122,13 @@ export const postMessageSchema = z.object({
 	session_id: z.string().uuid().optional(),
 })
 
+export const editMessageSchema = z.object({
+	content: z
+		.string()
+		.min(1, 'Message cannot be empty')
+		.max(MESSAGE_MAX_LENGTH, `Message must be ${MESSAGE_MAX_LENGTH} characters or fewer.`),
+})
+
 export const messageQuerySchema = z.object({
 	before_id: z.coerce.number().int().positive().optional(),
 	after_id: z.coerce.number().int().positive().optional(),
@@ -96,3 +148,6 @@ export const updateConversationParticipantStateSchema = z
 			message: 'At least one of pinned, archived, or last_read_message_id must be provided',
 		},
 	)
+
+export type MessageMetadata = z.infer<typeof messageMetadataSchema>
+export type MessageFinalOutput = z.infer<typeof messageFinalOutputSchema>

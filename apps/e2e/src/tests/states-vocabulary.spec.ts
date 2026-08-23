@@ -45,8 +45,10 @@ test.describe('Shared state vocabulary — loading / empty / error / offline', (
 		// CardSkeleton renders animated pulse blocks — presence of any animate-pulse
 		// element on the page during load is the shared-vocabulary signal. There
 		// must be no `<Spinner />` on a large-area load state.
-		const pulseCount = await page.locator('.animate-pulse').count()
-		expect(pulseCount).toBeGreaterThan(0)
+		// toBeVisible auto-retries; a one-shot count() can sample the DOM before
+		// the route's own skeleton mounts and read 0 for reasons unrelated to the
+		// vocabulary contract.
+		await expect(page.locator('.animate-pulse').first()).toBeVisible()
 
 		await page.unroute('**/api/actors**')
 	})

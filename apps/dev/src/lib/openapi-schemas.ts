@@ -88,6 +88,12 @@ export const actorResponseSchema = z.object({
 export const actorWithKeySchema = actorResponseSchema.extend({
 	api_key: z.string(),
 	workspace_id: z.string().uuid().optional(),
+	// Set only on the signup path, and only when auto-provisioning was
+	// attempted and failed. The actor row is already committed by then, so
+	// signup still returns 201 with a usable api_key — but the caller needs to
+	// distinguish "no workspace because none was asked for" from "no workspace
+	// because provisioning broke", which a bare missing `workspace_id` cannot.
+	workspace_provisioning_failed: z.boolean().optional(),
 })
 
 export const actorWithRoleSchema = actorListItemSchema.extend({
@@ -127,6 +133,14 @@ export const eventResponseSchema = z.object({
 	data: jsonbField,
 	createdAt: z.string().nullable(),
 	description: z.string().optional(),
+})
+
+// The 201 body of POST /api/events. Identical to a plain event, plus a
+// best-effort warning when some @mention ids matched no actor — the comment
+// still posts, but those people/agents were never notified.
+export const createCommentResponseSchema = eventResponseSchema.extend({
+	unresolved_mentions: z.array(z.string().uuid()).optional(),
+	warning: z.string().optional(),
 })
 
 export const fileSummarySchema = z.object({
@@ -267,6 +281,7 @@ export const messageResponseSchema = z.object({
 	metadata: jsonbField,
 	sessionId: z.string().uuid().nullable(),
 	createdAt: z.string().nullable(),
+	editedAt: z.string().nullable(),
 })
 
 export const sessionLogResponseSchema = z.object({

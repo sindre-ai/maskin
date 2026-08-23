@@ -84,19 +84,34 @@ describe('maybeBootstrapDev', () => {
 		expect(result?.created).toBe(false)
 	})
 
-	it('creates actor + workspace + membership + Workspace Coach + Chief of Staff when DB has no credentials', async () => {
+	it('creates actor + workspace + membership + the full default agent roster when DB has no credentials', async () => {
 		process.env.NODE_ENV = 'development'
 		process.env.MASKIN_AUTO_BOOTSTRAP = 'true'
 		const { db, mockResults, calls } = createTestContext()
 		mockResults.selectQueue = [[]] // findExistingCredentials returns no rows
+		// Unqueued selects fall through to [] — that's how seedDefaultAgentActors'
+		// per-agent "already a member?" check reads as "not present" here, so each
+		// of the seven default agents takes the insert branch below.
 		mockResults.insertQueue = [
 			[{ id: 'actor-1', name: 'You', email: 'dev@local' }],
 			[{ id: 'ws-1', name: 'My Workspace' }],
 			[{ workspaceId: 'ws-1', actorId: 'actor-1', role: 'owner' }],
+			// Default agents seed in DEFAULT_AGENT_IDS order, each an actor insert
+			// followed by its workspace_members insert.
 			[{ id: 'coach-1', name: 'Workspace Coach', isSystem: true }],
 			[{ workspaceId: 'ws-1', actorId: 'coach-1', role: 'member' }],
 			[{ id: 'chief-1', name: 'Chief of Staff', isSystem: true }],
 			[{ workspaceId: 'ws-1', actorId: 'chief-1', role: 'member' }],
+			[{ id: 'driver-1', name: 'Driver' }],
+			[{ workspaceId: 'ws-1', actorId: 'driver-1', role: 'member' }],
+			[{ id: 'strategist-1', name: 'Strategist' }],
+			[{ workspaceId: 'ws-1', actorId: 'strategist-1', role: 'member' }],
+			[{ id: 'signal-1', name: 'Signal Analyst' }],
+			[{ workspaceId: 'ws-1', actorId: 'signal-1', role: 'member' }],
+			[{ id: 'researcher-1', name: 'Researcher' }],
+			[{ workspaceId: 'ws-1', actorId: 'researcher-1', role: 'member' }],
+			[{ id: 'curator-1', name: 'Knowledge Curator' }],
+			[{ workspaceId: 'ws-1', actorId: 'curator-1', role: 'member' }],
 		]
 
 		const result = await maybeBootstrapDev(db)
@@ -107,11 +122,23 @@ describe('maybeBootstrapDev', () => {
 		expect(result?.apiKey.startsWith('ank_')).toBe(true)
 		expect(result?.created).toBe(true)
 
+		// The dev bootstrap now goes through the same provisionWorkspace() path as
+		// signup and POST /api/workspaces, so it seeds the whole roster rather than
+		// just Workspace Coach + Chief of Staff.
 		const insertedNames = calls.inserts
 			.filter((v): v is { name?: string } => typeof v === 'object' && v !== null && 'name' in v)
 			.map((v) => v.name)
-		expect(insertedNames).toContain('Workspace Coach')
-		expect(insertedNames).toContain('Chief of Staff')
+		for (const name of [
+			'Workspace Coach',
+			'Chief of Staff',
+			'Driver',
+			'Strategist',
+			'Signal Analyst',
+			'Researcher',
+			'Knowledge Curator',
+		]) {
+			expect(insertedNames).toContain(name)
+		}
 
 		const settingsUpdate = calls.updates.find(
 			(u): u is { settings: { default_agent_id: string } } =>
@@ -123,7 +150,7 @@ describe('maybeBootstrapDev', () => {
 		expect(settingsUpdate?.settings.default_agent_id).toBe('chief-1')
 	})
 
-	it('throws if Workspace Coach seeding fails so the transaction rolls back', async () => {
+	it('throws naming the agent when the first default agent fails to seed, so the transaction rolls back', async () => {
 		process.env.NODE_ENV = 'development'
 		process.env.MASKIN_AUTO_BOOTSTRAP = 'true'
 		const { db, mockResults } = createTestContext()
@@ -135,10 +162,10 @@ describe('maybeBootstrapDev', () => {
 			[], // Workspace Coach actor insert returns empty → should throw
 		]
 
-		await expect(maybeBootstrapDev(db)).rejects.toThrow(/Workspace Coach/)
+		await expect(maybeBootstrapDev(db)).rejects.toThrow(/workspace_coach/)
 	})
 
-	it('throws if Chief of Staff seeding fails so the transaction rolls back', async () => {
+	it('throws naming Chief of Staff when it is the agent that fails to seed', async () => {
 		process.env.NODE_ENV = 'development'
 		process.env.MASKIN_AUTO_BOOTSTRAP = 'true'
 		const { db, mockResults } = createTestContext()
@@ -152,7 +179,7 @@ describe('maybeBootstrapDev', () => {
 			[], // Chief of Staff actor insert returns empty → should throw
 		]
 
-		await expect(maybeBootstrapDev(db)).rejects.toThrow(/Chief of Staff/)
+		await expect(maybeBootstrapDev(db)).rejects.toThrow(/chief_of_staff/)
 	})
 })
 

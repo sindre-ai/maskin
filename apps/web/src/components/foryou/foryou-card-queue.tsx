@@ -20,6 +20,10 @@ interface ForYouCardQueueProps {
 	/** Item key the user picked in List mode — the queue opens parked on it
 	 *  instead of on the sort's front runner (mockup 490). */
 	pinnedKey?: string | null
+	/** The active sort. The queue pins its front card against background
+	 *  re-sorts (see below), but an explicit sort change is the user asking for
+	 *  a different front runner — so a change here releases the pin. */
+	sort?: string
 }
 
 function noop() {}
@@ -29,6 +33,7 @@ export function ForYouCardQueue({
 	queue,
 	sparseComposer,
 	pinnedKey,
+	sort,
 }: ForYouCardQueueProps) {
 	const [currentKey, setCurrentKey] = useState<string | null>(pinnedKey ?? null)
 	const [processedKeys, setProcessedKeys] = useState<Set<string>>(() => new Set())
@@ -51,6 +56,18 @@ export function ForYouCardQueue({
 	useEffect(() => {
 		if (pinnedKey) setCurrentKey(pinnedKey)
 	}, [pinnedKey])
+
+	// Same reasoning for an explicit sort change: the pin below exists to keep
+	// *background* re-sorts from swapping the card mid-read, not to ignore the
+	// user picking a different order. Clearing the key re-fronts the queue on
+	// the new sort's first item. Skips the initial mount so it can't stomp a
+	// List-mode pin that arrived with the first render.
+	const lastSortRef = useRef(sort)
+	useEffect(() => {
+		if (lastSortRef.current === sort) return
+		lastSortRef.current = sort
+		setCurrentKey(null)
+	}, [sort])
 
 	// Pin the front card once shown. `queue` re-sorts on every background
 	// refetch (SSE-triggered unread invalidation) — without pinning, the card
@@ -150,17 +167,22 @@ export function ForYouCardQueue({
 	// subtree including the hidden pending-commit card, cancelling its
 	// still-running use-swipe-to-mark-read timer. Only the second slot
 	// (action bar vs. empty state) is allowed to swap type.
+	//
+	// Bottom padding: below md the action bar is `fixed`, so the flex column
+	// can't see it and the card would grow underneath it. Reserve only
+	// --mobile-nav-h here — the page shell's own `pb-20` already covers the bar's
+	// height, so also reserving it here (as `6rem+2.75rem` did) stranded ~96px of
+	// dead space between the card and the buttons. At md+ the bar is back in flow
+	// (`md:sticky`) and reserves its own space, so no extra padding is needed.
 	return (
-		<div className="flex flex-1 min-h-0 flex-col gap-4 pb-[calc(6rem+2.75rem+env(safe-area-inset-bottom))] md:pb-24">
+		<div className="flex flex-1 min-h-0 flex-col gap-4 pb-[var(--mobile-nav-h,0px)] md:pb-0">
 			{cards}
 
+			{/* The action bar clears the v2 shell's fixed bottom nav below 768px via
+			    --mobile-nav-h (app.css); the fallback keeps it flush to the viewport
+			    edge under the legacy shell, which has no bottom nav. */}
 			{currentItem ? (
-				// Mobile bottom nav (h-11 + safe-area) is fixed at bottom-0/z-40; the
-				// action bar has to sit above it or its buttons take clicks through
-				// the nav's tap targets. Offset by the nav height (+ iOS safe area)
-				// on mobile only — desktop keeps `bottom-0` since MobileNav is hidden
-				// at md+.
-				<div className="fixed inset-x-0 bottom-[calc(2.75rem+env(safe-area-inset-bottom))] z-10 flex justify-center px-4 py-3 md:sticky md:bottom-0 md:px-0 md:py-0">
+				<div className="fixed inset-x-0 bottom-[var(--mobile-nav-h,0px)] z-10 flex justify-center px-4 py-3 md:sticky md:px-0 md:py-0">
 					<div className="flex w-full max-w-[760px] items-center justify-between gap-3">
 						<Button
 							size="lg"

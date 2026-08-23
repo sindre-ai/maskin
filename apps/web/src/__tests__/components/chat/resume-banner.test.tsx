@@ -24,6 +24,7 @@ function buildMessage(overrides: Partial<MessageResponse> = {}): MessageResponse
 		content: 'Something happened',
 		metadata: null,
 		sessionId: null,
+		editedAt: null,
 		createdAt: hoursAgo(1),
 		...overrides,
 	}

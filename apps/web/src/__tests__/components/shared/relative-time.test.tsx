@@ -60,6 +60,11 @@ describe('RelativeTime', () => {
 		vi.spyOn(Date, 'now').mockReturnValue(new Date(date).getTime() + 60 * 24 * 60 * 60 * 1000)
 
 		render(<RelativeTime date={date} compact />)
-		expect(screen.getByText(/^(\w{3} \d+|\d+ \w{3})$/)).toBeInTheDocument()
+		// The token is formatted in the viewer's locale ("Jan 15", "15. jan."),
+		// so assert the behaviour that actually matters — past a month it stops
+		// counting days and names the date — rather than an English shape.
+		const el = screen.getByText((_, node) => node?.tagName === 'TIME')
+		expect(el.textContent).not.toMatch(/^\d+d$/)
+		expect(el.textContent).toContain('15')
 	})
 })

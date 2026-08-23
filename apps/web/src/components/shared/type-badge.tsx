@@ -19,10 +19,15 @@ export function TypeBadge({
 	// rather than a mention in running text.
 	if (variant === 'tile') {
 		const colors = typeColors[type] ?? defaultTypeColor
+		// Only the built-in types have a lucide glyph. Module and custom-extension
+		// types reach this tile too (the command palette and the create picker both
+		// render whatever type the row holds), so they fall back to the type's
+		// initial — an empty tinted square would carry no information at all.
 		const Icon = typeIcons[type]
 		return (
 			<span
 				aria-hidden="true"
+				title={type}
 				className={cn(
 					'grid shrink-0 place-items-center rounded-lg',
 					size === 'lg' ? 'size-[38px]' : 'size-[30px]',
@@ -31,7 +36,18 @@ export function TypeBadge({
 					className,
 				)}
 			>
-				{Icon && <Icon className={size === 'lg' ? 'size-[18px]' : 'size-[15px]'} />}
+				{Icon ? (
+					<Icon className={size === 'lg' ? 'size-[18px]' : 'size-[15px]'} />
+				) : (
+					<span
+						className={cn(
+							'font-semibold leading-none',
+							size === 'lg' ? 'text-[15px]' : 'text-[12px]',
+						)}
+					>
+						{type.charAt(0).toUpperCase()}
+					</span>
+				)}
 			</span>
 		)
 	}

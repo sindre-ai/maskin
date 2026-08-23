@@ -536,14 +536,20 @@ export const ForYouQueueCard = forwardRef<ForYouQueueCardHandle, ForYouQueueCard
 										{decisionPrompt(latestReply ?? latestNode?.root)}
 									</p>
 								</div>
-								<div className="flex flex-col gap-1.5 md:flex-row md:flex-wrap">
+								{/* Stacked full-width rows below md, one inline row from md up
+								    (mockup 419–426). No `flex-wrap`: at 768 the two options plus
+								    their rationales are wider than the 760px card column, and
+								    wrapping put them back on separate lines at a viewport the
+								    design calls inline. They shrink instead — `min-w-0` lets each
+								    button drop below its content width so the label truncates. */}
+								<div className="flex flex-col gap-1.5 md:flex-row">
 									{decisionActions.map((action) => (
 										<button
 											key={action.id}
 											type="button"
 											data-action-id={action.id}
 											className={cn(
-												'flex min-h-12 w-full touch-manipulation items-center justify-between gap-3 rounded-md px-3 py-2 text-left text-[13.5px] font-medium transition-colors md:w-auto',
+												'flex min-h-12 w-full touch-manipulation items-center justify-between gap-3 rounded-md px-3 py-2 text-left text-[13.5px] font-medium transition-colors md:w-auto md:min-w-0',
 												action.tone === 'primary'
 													? 'bg-brand text-brand-foreground hover:bg-brand-hover'
 													: 'border border-border bg-background text-foreground hover:bg-secondary',

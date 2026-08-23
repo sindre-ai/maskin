@@ -319,8 +319,13 @@ export function Composer({
 				// user's intent is honoured (closes T4 reviewer SHOULD).
 				if (controller.signal.aborted) return
 				console.info(
-					'[chat] uploaded image attachment',
-					JSON.stringify({ fileId: created.id, name: file.name, sizeBytes: file.size }),
+					'[chat] uploaded attachment',
+					JSON.stringify({
+						fileId: created.id,
+						name: file.name,
+						sizeBytes: file.size,
+						mimeType: file.type || 'application/octet-stream',
+					}),
 				)
 				setPendingUploads((prev) => prev.filter((p) => p.tempId !== tempId))
 				onDispatchSelection?.({
@@ -485,7 +490,6 @@ export function Composer({
 			<input
 				ref={fileInputRef}
 				type="file"
-				accept="image/*"
 				multiple
 				className="hidden"
 				onChange={handleFileSelection}
@@ -553,7 +557,7 @@ export function Composer({
 						className="relative h-7 w-7 shrink-0 rounded-full text-muted-foreground before:absolute before:-inset-2 before:h-11 before:w-11 before:content-['']"
 						onClick={() => fileInputRef.current?.click()}
 						disabled={disabled}
-						aria-label="Attach image"
+						aria-label="Attach file"
 					>
 						<Paperclip size={14} aria-hidden />
 					</Button>
