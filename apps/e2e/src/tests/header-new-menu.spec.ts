@@ -71,8 +71,9 @@ test.describe('Header New menu', () => {
 		await page.getByRole('menuitem', { name: /^new task$/i }).click()
 
 		// Seeded with a defaultType, so the picker skips the type-selector step
-		// and goes straight to the title input.
-		await expect(page.getByPlaceholder('What are you creating?')).toBeVisible()
+		// and goes straight to the composer. The placeholder is per-type, so
+		// target the input's stable accessible name.
+		await expect(page.getByLabel('Title')).toBeVisible()
 		await expect(page.getByRole('radiogroup', { name: 'Type' })).toHaveCount(0)
 	})
 
@@ -87,11 +88,12 @@ test.describe('Header New menu', () => {
 
 		const dialog = page.getByRole('dialog')
 		await expect(dialog.getByText('New loop')).toBeVisible()
-		const titleInput = page.getByPlaceholder('What are you creating?')
+		const titleInput = page.getByLabel('Title')
 		await expect(titleInput).toBeVisible()
 
 		await titleInput.fill('Header New menu loop check')
-		await dialog.getByRole('button', { name: /^create$/i }).click()
+		// The submit button names the thing being created ("Create loop").
+		await dialog.getByRole('button', { name: /^create loop$/i }).click()
 
 		// Creating a loop must land on the loop detail page, not the trigger one —
 		// confirms it created an objects row with type='loop', not a trigger.
@@ -109,7 +111,7 @@ test.describe('Header New menu', () => {
 
 		const dialog = page.getByRole('dialog')
 		await expect(dialog.getByText('New agent')).toBeVisible()
-		await expect(page.getByPlaceholder('What are you creating?')).toBeVisible()
+		await expect(page.getByLabel('Title')).toBeVisible()
 	})
 
 	test('Find a past conversation opens the command palette', async ({ page, account }) => {
