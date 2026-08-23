@@ -4,11 +4,21 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { Spinner } from '@/components/ui/spinner'
 import { useActor } from '@/hooks/use-actors'
 import type { MessageTurnActivity } from '@/hooks/use-conversation-activity'
+import { useStopSession } from '@/hooks/use-sessions'
 import { cn } from '@/lib/cn'
-import { AlertTriangle, ChevronDown, MessageSquare, Sparkles, User, Wrench } from 'lucide-react'
+import {
+	AlertTriangle,
+	ChevronDown,
+	MessageSquare,
+	Sparkles,
+	Square,
+	User,
+	Wrench,
+} from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
 interface MessageActivityProps {
+	workspaceId: string
 	turn: MessageTurnActivity
 	/**
 	 * Reaches further back into the conversation's activity. Passed to the
@@ -30,12 +40,14 @@ interface MessageActivityProps {
  * to collapsed unless the user has toggled one open manually.
  */
 export function MessageActivity({
+	workspaceId,
 	turn,
 	onLoadOlder,
 	isLoadingOlder,
 	olderExhausted,
 }: MessageActivityProps) {
 	const { data: actor } = useActor(turn.actorId)
+	const stopSession = useStopSession(workspaceId)
 	const [manuallyToggled, setManuallyToggled] = useState(false)
 	const attention = turn.failed === true || turn.interrupted === true
 	const [open, setOpen] = useState(turn.inProgress || attention)
@@ -69,29 +81,45 @@ export function MessageActivity({
 			}}
 			className="min-w-0 pl-8"
 		>
-			<CollapsibleTrigger
-				className={cn(
-					'flex w-fit cursor-pointer items-center gap-1.5 text-xs',
-					turn.failed ? 'text-error' : 'text-muted-foreground',
-				)}
-				aria-label={`Toggle ${name} activity`}
-			>
-				{turn.inProgress && <Spinner />}
-				{attention && <AlertTriangle size={12} className="shrink-0" />}
-				<span role={attention ? 'alert' : undefined}>
-					{turn.failed
-						? `${name} failed to start`
-						: turn.interrupted
-							? `${name} stopped before finishing`
-							: turn.inProgress
-								? `${name} is working…`
-								: name}
-				</span>
-				<ChevronDown
-					size={12}
-					className={cn('shrink-0 transition-transform', open && 'rotate-180')}
-				/>
-			</CollapsibleTrigger>
+			<div className="flex items-center gap-2">
+				<CollapsibleTrigger
+					className={cn(
+						'flex w-fit cursor-pointer items-center gap-1.5 text-xs',
+						turn.failed ? 'text-error' : 'text-muted-foreground',
+					)}
+					aria-label={`Toggle ${name} activity`}
+				>
+					{turn.inProgress && <Spinner />}
+					{attention && <AlertTriangle size={12} className="shrink-0" />}
+					<span role={attention ? 'alert' : undefined}>
+						{turn.failed
+							? `${name} failed to start`
+							: turn.interrupted
+								? `${name} stopped before finishing`
+								: turn.starting
+									? `${name} is getting ready…`
+									: turn.inProgress
+										? `${name} is working…`
+										: name}
+					</span>
+					<ChevronDown
+						size={12}
+						className={cn('shrink-0 transition-transform', open && 'rotate-180')}
+					/>
+				</CollapsibleTrigger>
+				{turn.inProgress && !turn.starting ? (
+					<button
+						type="button"
+						onClick={() => stopSession.mutate(turn.sessionId)}
+						disabled={stopSession.isPending}
+						aria-label={`Stop ${name}`}
+						className="flex shrink-0 cursor-pointer items-center gap-1 rounded text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+					>
+						<Square size={10} fill="currentColor" aria-hidden />
+						Stop
+					</button>
+				) : null}
+			</div>
 			<CollapsibleContent>
 				<div
 					ref={stepsRef}

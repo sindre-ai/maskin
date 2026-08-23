@@ -61,6 +61,7 @@ function buildMessage(overrides: Partial<MessageResponse> & { id: number }): Mes
 		metadata: null,
 		sessionId: null,
 		createdAt: null,
+		editedAt: null,
 		...overrides,
 	}
 }

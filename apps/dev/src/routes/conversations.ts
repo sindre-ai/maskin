@@ -13,6 +13,7 @@ import {
 	addConversationParticipantsSchema,
 	conversationListQuerySchema,
 	createConversationSchema,
+	editMessageSchema,
 	messageQuerySchema,
 	postMessageSchema,
 	stripServerOwnedMetadata,
@@ -733,6 +734,7 @@ app.openapi(listMessagesRoute, (async (c) => {
 			metadata: messages.metadata,
 			sessionId: messages.sessionId,
 			createdAt: messages.createdAt,
+			editedAt: messages.editedAt,
 		})
 		.from(messages)
 		.innerJoin(actors, eq(actors.id, messages.actorId))
@@ -886,6 +888,184 @@ app.openapi(postMessageRoute, (async (c) => {
 		201,
 	)
 }) as RouteHandler<typeof postMessageRoute, Env>)
+
+// PATCH /:id/messages/:messageId - Edit an own message
+const editMessageRoute = createRoute({
+	method: 'patch',
+	path: '/{id}/messages/{messageId}',
+	tags: ['Conversations'],
+	summary: 'Edit a message you authored',
+	request: {
+		headers: workspaceIdHeader,
+		params: z.object({ id: z.string().uuid(), messageId: z.coerce.number().int().positive() }),
+		body: { content: { 'application/json': { schema: editMessageSchema } } },
+	},
+	responses: {
+		200: {
+			content: { 'application/json': { schema: messageResponseSchema } },
+			description: 'Message updated',
+		},
+		403: { content: { 'application/json': { schema: errorSchema } }, description: 'Not author' },
+		404: { content: { 'application/json': { schema: errorSchema } }, description: 'Not found' },
+	},
+})
+
+app.openapi(editMessageRoute, (async (c) => {
+	const db = c.get('db')
+	const sessionManager = c.get('sessionManager')
+	const callerId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id, messageId } = c.req.valid('param')
+	const body = c.req.valid('json')
+
+	const row = await loadConversationWithAuth(db, id, callerId)
+	if (!row || row.conversation.workspaceId !== workspaceId) {
+		return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
+	}
+
+	const [message] = await db
+		.select()
+		.from(messages)
+		.where(and(eq(messages.id, messageId), eq(messages.conversationId, id)))
+		.limit(1)
+	if (!message || message.kind !== 'message') {
+		return c.json(createApiError('NOT_FOUND', 'Message not found'), 404)
+	}
+	if (message.actorId !== callerId) {
+		return c.json(createApiError('FORBIDDEN', 'Only the author can edit a message'), 403)
+	}
+	// An agent's auto-posted end-of-turn reply is a session artifact, not an
+	// editable authored message.
+	if ((message.metadata as { source?: string } | null)?.source === 'final_output') {
+		return c.json(createApiError('FORBIDDEN', 'Auto-posted agent output cannot be edited'), 403)
+	}
+
+	const editedAt = new Date()
+	const [updated] = await db
+		.update(messages)
+		.set({ content: body.content, editedAt })
+		.where(eq(messages.id, messageId))
+		.returning()
+	if (!updated) throw new Error('Failed to update message')
+
+	await db.insert(events).values({
+		workspaceId,
+		actorId: callerId,
+		action: 'message_updated',
+		entityType: 'conversation',
+		entityId: id,
+		data: { message_id: messageId },
+	})
+
+	// Re-notify agents only when the edited message is still the newest real
+	// message in the conversation — a correction of the message they are (or
+	// should be) responding to. Editing something further up is a silent fix;
+	// re-running the responder for it would produce a confusing out-of-order
+	// agent turn.
+	const [newest] = await db
+		.select({ id: messages.id })
+		.from(messages)
+		.where(and(eq(messages.conversationId, id), eq(messages.kind, 'message')))
+		.orderBy(desc(messages.id))
+		.limit(1)
+	if (newest?.id === messageId) {
+		evaluateAndRespond({
+			db,
+			sessionManager,
+			workspaceId,
+			conversationId: id,
+			messageId,
+			options: { isEdit: true },
+		}).catch((err: unknown) =>
+			logger.error('Conversation responder failed after edit', {
+				conversationId: id,
+				messageId,
+				error: String(err),
+			}),
+		)
+	}
+
+	const [caller] = await db
+		.select({ name: actors.name, type: actors.type })
+		.from(actors)
+		.where(eq(actors.id, callerId))
+		.limit(1)
+
+	return c.json(
+		serialize({
+			...updated,
+			actorName: caller?.name ?? 'Unknown',
+			actorType: caller?.type ?? 'human',
+		}) as z.infer<typeof messageResponseSchema>,
+		200,
+	)
+}) as RouteHandler<typeof editMessageRoute, Env>)
+
+// POST /:id/messages/:messageId/retry - Ask agents to respond to a message again
+const retryMessageRoute = createRoute({
+	method: 'post',
+	path: '/{id}/messages/{messageId}/retry',
+	tags: ['Conversations'],
+	summary: 'Re-run the agent responder for a message (force a reply)',
+	request: {
+		headers: workspaceIdHeader,
+		params: z.object({ id: z.string().uuid(), messageId: z.coerce.number().int().positive() }),
+		// agent_id scopes the retry to one agent — set by "Redo this response",
+		// where fanning out to every participant would post duplicate replies.
+		query: z.object({ agent_id: z.string().uuid().optional() }),
+	},
+	responses: {
+		202: {
+			content: { 'application/json': { schema: z.object({ retried: z.boolean() }) } },
+			description: 'Responder re-triggered',
+		},
+		404: { content: { 'application/json': { schema: errorSchema } }, description: 'Not found' },
+	},
+})
+
+app.openapi(retryMessageRoute, (async (c) => {
+	const db = c.get('db')
+	const sessionManager = c.get('sessionManager')
+	const callerId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id, messageId } = c.req.valid('param')
+	const { agent_id: targetAgentId } = c.req.valid('query')
+
+	const row = await loadConversationWithAuth(db, id, callerId)
+	if (!row || row.conversation.workspaceId !== workspaceId) {
+		return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
+	}
+
+	const [message] = await db
+		.select({ id: messages.id, kind: messages.kind })
+		.from(messages)
+		.where(and(eq(messages.id, messageId), eq(messages.conversationId, id)))
+		.limit(1)
+	if (!message || message.kind !== 'message') {
+		return c.json(createApiError('NOT_FOUND', 'Message not found'), 404)
+	}
+
+	// forceRespond: an explicit human retry overrides the relevance heuristic —
+	// the user is asking for a reply, not for agents to decide whether one is
+	// warranted. Delivery is idempotent per (conversation, agent, message) at
+	// the pending-turn layer; a live session simply receives the turn again.
+	evaluateAndRespond({
+		db,
+		sessionManager,
+		workspaceId,
+		conversationId: id,
+		messageId,
+		options: { forceRespond: true, targetAgentId },
+	}).catch((err: unknown) =>
+		logger.error('Conversation responder failed on retry', {
+			conversationId: id,
+			messageId,
+			error: String(err),
+		}),
+	)
+
+	return c.json({ retried: true }, 202)
+}) as RouteHandler<typeof retryMessageRoute, Env>)
 
 // PATCH /:id/me - Caller's own pin/archive/read state
 const updateMeRoute = createRoute({

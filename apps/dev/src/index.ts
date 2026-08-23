@@ -182,15 +182,25 @@ if (process.env.NODE_ENV === 'production') {
 		// forever on stdin, never receiving the user's opening message.
 		seedInteractiveTurn: async (sessionId) => {
 			const [session] = await db.select().from(sessions).where(eq(sessions.id, sessionId)).limit(1)
-			if (!session || !session.interactive || session.actionPrompt.trim().length === 0) return
-			const seedTurnMessageId = (
-				session.config as { conversation?: { message_id?: number } } | null
-			)?.conversation?.message_id
-			await sessionManager.writeInput(
-				sessionId,
-				{ type: 'user', message: { role: 'user', content: session.actionPrompt } },
-				undefined,
-				seedTurnMessageId,
+			if (!session || !session.interactive) return
+			if (session.actionPrompt.trim().length > 0) {
+				const seedTurnMessageId = (
+					session.config as { conversation?: { message_id?: number } } | null
+				)?.conversation?.message_id
+				await sessionManager.writeInput(
+					sessionId,
+					{ type: 'user', message: { role: 'user', content: session.actionPrompt } },
+					undefined,
+					seedTurnMessageId,
+				)
+			}
+			// After the seed turn: deliver chat messages that arrived while the
+			// sandbox was booting (buffered by the conversation responder).
+			await sessionManager.drainPendingConversationTurns(sessionId).catch((err) =>
+				logger.error('Failed to drain buffered conversation turns after remote dispatch', {
+					sessionId,
+					error: String(err),
+				}),
 			)
 		},
 	})

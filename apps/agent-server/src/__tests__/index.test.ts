@@ -2505,3 +2505,52 @@ describe('monitorSession — completion report retry and drop marker', () => {
 		)
 	})
 })
+
+describe('GET /sessions/:id/input/stream', () => {
+	it('flushes turns parked before the stream connects and heartbeats the idle connection', async () => {
+		vi.useFakeTimers()
+		try {
+			const { run } = makeRunner()
+			const app = buildApp({
+				env: makeEnv({ AGENT_SESSION_ROOT: sessionRoot }),
+				storage: null,
+				msb: { msbBin: '/usr/local/bin/msb', run },
+			})
+
+			// A turn arrives while no reader is connected (the VM's input curl
+			// dropped) — it must park, not vanish.
+			const post = await app.request('/sessions/sess-stream-1/input', {
+				method: 'POST',
+				headers: {
+					'content-type': 'application/json',
+					authorization: 'Bearer test-secret-thirty-two-chars-long',
+				},
+				body: JSON.stringify({ content: 'hello parked turn' }),
+			})
+			expect(post.status).toBe(200)
+
+			// The (re)connecting reader receives the parked turn immediately.
+			const res = await app.request('/sessions/sess-stream-1/input/stream')
+			expect(res.status).toBe(200)
+			const reader = res.body?.getReader()
+			if (!reader) throw new Error('stream response has no body')
+			const decoder = new TextDecoder()
+			const first = await reader.read()
+			expect(decoder.decode(first.value)).toContain('hello parked turn')
+
+			// With nothing else flowing, the 30s keepalive newline arrives — the
+			// signal that stops NAT/proxy idle-timeouts from reaping the stream.
+			const nextRead = reader.read()
+			await vi.advanceTimersByTimeAsync(30_000)
+			const heartbeat = await nextRead
+			expect(decoder.decode(heartbeat.value)).toBe('\n')
+
+			// Tear the reader down and let the next heartbeat's failed write
+			// clean up the interval so the test leaves no live timers behind.
+			await reader.cancel()
+			await vi.advanceTimersByTimeAsync(30_000)
+		} finally {
+			vi.useRealTimers()
+		}
+	})
+})

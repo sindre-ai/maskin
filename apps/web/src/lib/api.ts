@@ -834,6 +834,22 @@ export const api = {
 				body: data,
 				workspaceId,
 			}),
+		editMessage: (id: string, workspaceId: string, messageId: number, data: EditMessageInput) =>
+			request<MessageResponse>(`/conversations/${id}/messages/${messageId}`, {
+				method: 'PATCH',
+				body: data,
+				workspaceId,
+			}),
+		// agentId scopes the retry to one agent ("Redo this response"); omitted,
+		// every participant re-evaluates ("Ask agents to respond again").
+		retryMessage: (id: string, workspaceId: string, messageId: number, agentId?: string) =>
+			request<{ retried: boolean }>(
+				`/conversations/${id}/messages/${messageId}/retry${agentId ? `?agent_id=${agentId}` : ''}`,
+				{
+					method: 'POST',
+					workspaceId,
+				},
+			),
 		updateMe: (id: string, workspaceId: string, data: UpdateConversationParticipantStateInput) =>
 			request<ConversationParticipantStateResponse>(`/conversations/${id}/me`, {
 				method: 'PATCH',
@@ -1435,6 +1451,11 @@ export interface MessageResponse {
 	metadata: MessageMetadata | null
 	sessionId: string | null
 	createdAt: string | null
+	editedAt: string | null
+}
+
+export interface EditMessageInput {
+	content: string
 }
 
 export interface MessagesListResponse {
