@@ -13,9 +13,7 @@ import {
 	actors,
 	agentServers,
 	conversationPendingTurns,
-	conversations,
 	integrations,
-	messages,
 	objects,
 	relationships,
 	sessionLogs,
@@ -31,11 +29,9 @@ import {
 	count as countFn,
 	desc,
 	eq,
-	gte,
 	inArray,
 	isNotNull,
 	isNull,
-	like,
 	lt,
 	ne,
 	notInArray,
@@ -87,9 +83,6 @@ import {
 } from './agent-server-client'
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
 import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
-// Safe to import at runtime: conversation-responder only references this
-// module as `import type`, so there is no import cycle.
-import { evaluateAndRespond } from './conversation-responder'
 import { InteractiveTurnFinalizer } from './interactive-turn-finalizer'
 import { type RuntimeEndReason, RuntimeTelemetry } from './runtime-telemetry'
 import type { SessionDispatchQueue } from './session-dispatch-queue'
@@ -286,14 +279,6 @@ export class SessionManager extends EventEmitter {
 	 */
 	private static readonly CHAT_IDLE_CLOSE_MS = 30 * 60 * 1000
 	/**
-	 * How long a delivered chat turn may sit with zero output after it before
-	 * the session is declared wedged. A healthy turn echoes an init/assistant
-	 * event within seconds, and even a long tool call is preceded by its
-	 * streamed tool_use event — so a session whose log tail is still the bare
-	 * user-turn envelope after this window has a dead CLI on the other end.
-	 */
-	private static readonly CHAT_STALLED_TURN_MS = 10 * 60 * 1000
-	/**
 	 * Docker's logs(follow:true) endpoint can drop transient (HTTP keepalive
 	 * timeouts, Docker Desktop hiccups, network blips). Without reattaching,
 	 * `session_logs` stops growing and the idle watchdog ~10 min later mistakes
@@ -329,8 +314,6 @@ export class SessionManager extends EventEmitter {
 	 * without standing up Docker.
 	 */
 	readonly turnFinalizer: InteractiveTurnFinalizer
-	/** Message ids already retried once by sweepUnansweredConversationMessages. */
-	private readonly sweptMessageIds = new Set<number>()
 
 	constructor(
 		private db: Database,
@@ -2906,74 +2889,6 @@ export class SessionManager extends EventEmitter {
 		)
 	}
 
-	/**
-	 * Recovers a chat session whose delivered turn was never consumed (see the
-	 * watchdog's stalled-turn step): fails the session with a reason the chat
-	 * UI can show, stops the orphaned remote sandbox, and re-runs the
-	 * responder for the stalled message — one automatic retry per message,
-	 * shared with the missed-message sweep's dedupe set.
-	 */
-	private async failStalledConversationSession(
-		session: typeof sessions.$inferSelect,
-		stalledMessageId: number,
-	): Promise<void> {
-		logger.warn('Interactive conversation session stalled — delivered turn never produced output', {
-			sessionId: session.id,
-			conversationId: session.conversationId,
-			stalledMessageId,
-		})
-
-		// Surface a truthful reason in the chat's failure notice first —
-		// markSessionFailedAfterContainerLoss flips status but leaves `result`
-		// untouched, so this text is what the activity row renders.
-		await this.db
-			.update(sessions)
-			.set({
-				result: {
-					error:
-						'The agent stopped responding mid-conversation — a fresh session is picking the thread back up.',
-				},
-				updatedAt: new Date(),
-			})
-			.where(and(eq(sessions.id, session.id), eq(sessions.status, 'running')))
-
-		// The sandbox may still be alive with a dead CLI inside — release it.
-		if (session.agentServerId) {
-			const [serverRow] = await this.db
-				.select({ id: agentServers.id, url: agentServers.url, secret: agentServers.secret })
-				.from(agentServers)
-				.where(eq(agentServers.id, session.agentServerId))
-				.limit(1)
-			if (serverRow) {
-				const client = new AgentServerClient({ server: serverRow })
-				await client.stopSession(session.id).catch((err) =>
-					logger.warn('Failed to stop remote sandbox for stalled chat session', {
-						sessionId: session.id,
-						error: String(err),
-					}),
-				)
-			}
-		}
-
-		await this.markSessionFailedAfterContainerLoss(session.id, session.workspaceId)
-
-		if (!session.conversationId || this.sweptMessageIds.has(stalledMessageId)) return
-		this.rememberSweptMessage(stalledMessageId)
-		await evaluateAndRespond({
-			db: this.db,
-			sessionManager: this,
-			workspaceId: session.workspaceId,
-			conversationId: session.conversationId,
-			messageId: stalledMessageId,
-		}).catch((err) =>
-			logger.error('Responder re-run after stalled session failed', {
-				sessionId: session.id,
-				messageId: stalledMessageId,
-				error: String(err),
-			}),
-		)
-	}
-
 	private async runWatchdog(): Promise<void> {
 		const now = new Date()
 		const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000)
@@ -3135,46 +3050,6 @@ export class SessionManager extends EventEmitter {
 				.where(eq(sessions.id, session.id))
 			await this.drainQueue(session.workspaceId).catch((err) =>
 				logger.error('Failed to drain queue after stuck agent-server session reap', {
-					error: String(err),
-				}),
-			)
-		}
-
-		// 2.4 Detect wedged interactive conversation sessions: a user turn was
-		// delivered into the session's stdin (writeInput persisted its envelope
-		// to session_logs and the remote input POST succeeded) but the CLI on
-		// the other end is dead, so the turn is never consumed and the user
-		// waits on a reply that will never come — invisible until the 2h
-		// reaper. Signature: the session's LAST log row is the user-turn
-		// envelope itself (tagged maskin_message_id), older than the stall
-		// window, with no output after it. Recovery: mark the session failed
-		// (surfacing the reason in the chat) and re-run the responder for the
-		// stalled message so a fresh session answers without the user having
-		// to type "continue".
-		const stalledCutoff = new Date(Date.now() - SessionManager.CHAT_STALLED_TURN_MS)
-		const chatSessions = await this.db
-			.select()
-			.from(sessions)
-			.where(
-				and(
-					eq(sessions.status, 'running'),
-					eq(sessions.interactive, true),
-					isNotNull(sessions.conversationId),
-				),
-			)
-		for (const session of chatSessions) {
-			const [lastLog] = await this.db
-				.select({ content: sessionLogs.content, createdAt: sessionLogs.createdAt })
-				.from(sessionLogs)
-				.where(eq(sessionLogs.sessionId, session.id))
-				.orderBy(desc(sessionLogs.id))
-				.limit(1)
-			if (!lastLog?.createdAt || lastLog.createdAt >= stalledCutoff) continue
-			const stalledMessageId = parseStalledTurnMessageId(lastLog.content)
-			if (stalledMessageId === null) continue
-			await this.failStalledConversationSession(session, stalledMessageId).catch((err) =>
-				logger.error('Failed to recover stalled conversation session', {
-					sessionId: session.id,
 					error: String(err),
 				}),
 			)
@@ -3415,137 +3290,6 @@ export class SessionManager extends EventEmitter {
 				logger.error('Failed to drain queue in watchdog', { workspaceId, error: String(err) }),
 			)
 		}
-
-		// 8. Re-run the conversation responder for recent human messages no
-		// agent ever acted on. evaluateAndRespond is fire-and-forget in-process
-		// — a backend restart between a message's commit and its session spawn
-		// loses the reply with nothing to retry it. This sweep turns that
-		// permanent silence into a late answer.
-		await this.sweepUnansweredConversationMessages().catch((err) =>
-			logger.error('Conversation responder sweep failed', { error: String(err) }),
-		)
-	}
-
-	/**
-	 * Finds human messages 90s–15min old that are still the newest message in
-	 * a conversation with agent participants, where no trace of responder
-	 * handling exists — no session spawned since the message, no buffered
-	 * pending turn, and no user turn tagged with the message id delivered to
-	 * a session's stdin — and re-runs evaluateAndRespond for them. Each
-	 * message is swept at most once per process lifetime (in-memory set):
-	 * the sweep exists to recover from a restart, after which the set is
-	 * empty again, and a bounded one-shot retry can't turn a legitimately
-	 * declined group-chat message into a nag loop.
-	 */
-	async sweepUnansweredConversationMessages(): Promise<void> {
-		const now = Date.now()
-		const oldestCutoff = new Date(now - 15 * 60 * 1000)
-		const settleCutoff = new Date(now - 90 * 1000)
-
-		// Literal table names inside the correlated subqueries — interpolating
-		// Drizzle column objects here renders unqualified (see
-		// known-pitfalls.md's correlated-subquery entry).
-		const candidates = await this.db
-			.select({
-				id: messages.id,
-				conversationId: messages.conversationId,
-				workspaceId: conversations.workspaceId,
-				createdAt: messages.createdAt,
-			})
-			.from(messages)
-			.innerJoin(actors, eq(actors.id, messages.actorId))
-			.innerJoin(conversations, eq(conversations.id, messages.conversationId))
-			.where(
-				and(
-					eq(messages.kind, 'message'),
-					eq(actors.type, 'human'),
-					gte(messages.createdAt, oldestCutoff),
-					lt(messages.createdAt, settleCutoff),
-					sql`NOT EXISTS (
-						SELECT 1 FROM messages m2
-						WHERE m2.conversation_id = messages.conversation_id AND m2.id > messages.id
-					)`,
-					sql`EXISTS (
-						SELECT 1 FROM conversation_participants cp
-						JOIN actors a2 ON a2.id = cp.actor_id
-						WHERE cp.conversation_id = messages.conversation_id
-							AND cp.left_at IS NULL
-							AND a2.type = 'agent'
-					)`,
-				),
-			)
-			.limit(20)
-
-		for (const candidate of candidates) {
-			if (this.sweptMessageIds.has(candidate.id)) continue
-
-			// Handled if the responder buffered it for a booting session…
-			const [buffered] = await this.db
-				.select({ id: conversationPendingTurns.id })
-				.from(conversationPendingTurns)
-				.where(eq(conversationPendingTurns.messageId, candidate.id))
-				.limit(1)
-			if (buffered) continue
-
-			// …or spawned a session for it (any status — even a failed spawn
-			// proves the responder ran and surfaced its outcome in the chat)…
-			const spawnedSince = candidate.createdAt
-				? await this.db
-						.select({ id: sessions.id })
-						.from(sessions)
-						.where(
-							and(
-								eq(sessions.conversationId, candidate.conversationId),
-								gte(sessions.createdAt, candidate.createdAt),
-							),
-						)
-						.limit(1)
-				: []
-			if (spawnedSince.length > 0) continue
-
-			// …or delivered it to an already-running session's stdin (writeInput
-			// persists the turn envelope tagged with maskin_message_id; the tag
-			// is always the last JSON key, hence the closing brace in the match).
-			const [delivered] = await this.db
-				.select({ id: sessionLogs.id })
-				.from(sessionLogs)
-				.innerJoin(sessions, eq(sessions.id, sessionLogs.sessionId))
-				.where(
-					and(
-						eq(sessions.conversationId, candidate.conversationId),
-						like(sessionLogs.content, `%"maskin_message_id":${candidate.id}}%`),
-					),
-				)
-				.limit(1)
-			if (delivered) continue
-
-			this.rememberSweptMessage(candidate.id)
-			logger.info('Responder sweep re-running unhandled conversation message', {
-				conversationId: candidate.conversationId,
-				messageId: candidate.id,
-			})
-			await evaluateAndRespond({
-				db: this.db,
-				sessionManager: this,
-				workspaceId: candidate.workspaceId,
-				conversationId: candidate.conversationId,
-				messageId: candidate.id,
-			}).catch((err) =>
-				logger.error('Responder sweep evaluateAndRespond failed', {
-					conversationId: candidate.conversationId,
-					messageId: candidate.id,
-					error: String(err),
-				}),
-			)
-		}
-	}
-
-	private rememberSweptMessage(messageId: number): void {
-		if (this.sweptMessageIds.size >= 500) {
-			const oldest = this.sweptMessageIds.values().next().value
-			if (oldest !== undefined) this.sweptMessageIds.delete(oldest)
-		}
-		this.sweptMessageIds.add(messageId)
 	}
 
 	private async reportSkillPullFailures(
@@ -4311,29 +4055,5 @@ export class SessionManager extends EventEmitter {
 			.catch((err) =>
 				logger.warn('Failed to clear activeSessionId', { sessionId, error: String(err) }),
 			)
-	}
-}
-
-/**
- * Returns the chat message id when a session_logs row is the persisted
- * user-turn envelope writeInput writes to stdin — `type: 'user'` with a plain
- * string content and the Maskin-only `maskin_message_id` tag. Tool results
- * echoed by the CLI are also `type: 'user'` but carry a content array and no
- * tag, so they never match. Null for anything else (CLI output, system lines,
- * unparseable content).
- */
-export function parseStalledTurnMessageId(content: string): number | null {
-	if (!content.includes('maskin_message_id')) return null
-	try {
-		const parsed = JSON.parse(content) as {
-			type?: unknown
-			message?: { content?: unknown }
-			maskin_message_id?: unknown
-		}
-		if (parsed.type !== 'user') return null
-		if (typeof parsed.message?.content !== 'string') return null
-		return typeof parsed.maskin_message_id === 'number' ? parsed.maskin_message_id : null
-	} catch {
-		return null
 	}
 }
