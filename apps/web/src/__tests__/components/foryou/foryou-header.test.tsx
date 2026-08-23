@@ -2,20 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
-const mockNavigate = vi.fn()
-vi.mock('@tanstack/react-router', () => ({
-	useNavigate: () => mockNavigate,
-}))
-
-vi.mock('@/lib/workspace-context', () => ({
-	useWorkspace: () => ({ workspaceId: 'ws-1' }),
-}))
-
-import {
-	ForYouHeader,
-	ForYouHeaderActions,
-	ForYouHeaderIdentity,
-} from '@/components/foryou/foryou-header'
+import { ForYouHeader, ForYouHeaderActions } from '@/components/foryou/foryou-header'
 
 function renderHeader(overrides: Partial<React.ComponentProps<typeof ForYouHeader>> = {}) {
 	const props: React.ComponentProps<typeof ForYouHeader> = {
@@ -38,35 +25,53 @@ function renderHeader(overrides: Partial<React.ComponentProps<typeof ForYouHeade
 
 function renderActions(overrides: Partial<React.ComponentProps<typeof ForYouHeaderActions>> = {}) {
 	const props: React.ComponentProps<typeof ForYouHeaderActions> = {
+		onOpenBrief: vi.fn(),
 		...overrides,
 	}
 	return { props, ...render(<ForYouHeaderActions {...props} />) }
 }
 
-describe('ForYouHeaderIdentity', () => {
-	it('shows the unread count', () => {
-		render(<ForYouHeaderIdentity unreadCount={7} />)
-		expect(screen.getByText('7 unread')).toBeInTheDocument()
-	})
-})
-
 describe('ForYouHeaderActions', () => {
-	it("navigates to the briefing route when Today's brief is clicked", () => {
-		renderActions()
+	it('opens the brief drawer instead of navigating when Brief is clicked', () => {
+		const onOpenBrief = vi.fn()
+		renderActions({ onOpenBrief })
 		fireEvent.click(screen.getByRole('button', { name: /today.?s brief/i }))
-		expect(mockNavigate).toHaveBeenCalledWith({
-			to: '/$workspaceId/briefing',
-			params: { workspaceId: 'ws-1' },
-		})
+		expect(onOpenBrief).toHaveBeenCalledTimes(1)
 	})
 
-	// New chat is owned exclusively by the shared header's own NewMenu
+	// The nav row is 44px (`min-h-11`) and every control the shell puts in it is
+	// 30px. A taller action grows the row when these get published on load,
+	// which moves the whole page down and blows the CLS budget.
+	it('sizes both actions to the shared nav 30px control height', () => {
+		renderActions({ onMarkAllRead: vi.fn(), markAllReadDisabled: false })
+		expect(screen.getByRole('button', { name: /today.?s brief/i })).toHaveClass('h-[30px]')
+		expect(screen.getByRole('button', { name: /mark all as read/i })).toHaveClass('h-[30px]')
+	})
+
+	// New chat is owned exclusively by the shared top nav's own NewMenu
 	// (header.tsx) — ForYouHeaderActions must not render a second "New chat"
 	// control, or the row shows two of them side by side.
-	it('does not render its own New menu', () => {
+	it('renders no New menu — the shared top nav owns that control', () => {
 		renderActions()
+		expect(screen.queryByRole('button', { name: /^new$/i })).not.toBeInTheDocument()
 		expect(screen.queryByRole('button', { name: /new chat/i })).not.toBeInTheDocument()
 		expect(screen.queryByRole('button', { name: 'More ways to start' })).not.toBeInTheDocument()
+	})
+
+	it('renders Mark all read only while something is unread', () => {
+		const { rerender } = render(
+			<ForYouHeaderActions
+				onOpenBrief={vi.fn()}
+				onMarkAllRead={vi.fn()}
+				markAllReadDisabled={false}
+			/>,
+		)
+		expect(screen.getByRole('button', { name: /mark all as read/i })).toBeInTheDocument()
+
+		rerender(
+			<ForYouHeaderActions onOpenBrief={vi.fn()} onMarkAllRead={vi.fn()} markAllReadDisabled />,
+		)
+		expect(screen.queryByRole('button', { name: /mark all as read/i })).not.toBeInTheDocument()
 	})
 })
 
@@ -124,14 +129,42 @@ describe('ForYouHeader', () => {
 		expect(screen.queryByRole('button', { name: /^Insight/ })).not.toBeInTheDocument()
 	})
 
-	it('opens the Display popover with Cards/List tabs and Sort options', async () => {
+	it('renders nothing when there is nothing unread', () => {
+		const { container } = render(
+			<ForYouHeader
+				unreadCount={0}
+				typeFilter={undefined}
+				onTypeFilterChange={vi.fn()}
+				typeCounts={new Map()}
+				mentionCount={0}
+				mode="cards"
+				onModeChange={vi.fn()}
+				sort="priority"
+				onSortChange={vi.fn()}
+			/>,
+		)
+		expect(container).toBeEmptyDOMElement()
+	})
+
+	it('gives each type chip a leading swatch drawn from the type token', () => {
+		renderHeader()
+		const betChip = screen.getByRole('button', { name: 'Bet (3)' })
+		expect(betChip.querySelector('.bg-type-bet-text')).not.toBeNull()
+		// "All" is not a type — no swatch, only the trailing count.
+		expect(
+			screen.getByRole('button', { name: 'All (7)' }).querySelector('[class*="bg-type-"]'),
+		).toBeNull()
+	})
+
+	it('opens the Display popover with Cards/List tabs and all three sort options', async () => {
 		const user = userEvent.setup()
 		renderHeader()
 		await user.click(screen.getByRole('button', { name: /display options/i }))
 		expect(screen.getByRole('tab', { name: /cards/i })).toBeInTheDocument()
 		expect(screen.getByRole('tab', { name: /list/i })).toBeInTheDocument()
-		expect(screen.getByRole('radio', { name: /priority/i })).toBeInTheDocument()
-		expect(screen.getByRole('radio', { name: /latest activity/i })).toBeInTheDocument()
+		expect(screen.getByRole('radio', { name: /most urgent/i })).toBeInTheDocument()
+		expect(screen.getByRole('radio', { name: /newest first/i })).toBeInTheDocument()
+		expect(screen.getByRole('radio', { name: /oldest first/i })).toBeInTheDocument()
 	})
 
 	it('calls onModeChange when the List tab is clicked', async () => {
@@ -143,12 +176,21 @@ describe('ForYouHeader', () => {
 		expect(onModeChange).toHaveBeenCalledWith('list')
 	})
 
-	it('calls onSortChange when Latest activity is selected', async () => {
+	it('calls onSortChange when Newest first is selected', async () => {
 		const user = userEvent.setup()
 		const onSortChange = vi.fn()
 		renderHeader({ onSortChange })
 		await user.click(screen.getByRole('button', { name: /display options/i }))
-		await user.click(screen.getByRole('radio', { name: /latest activity/i }))
+		await user.click(screen.getByRole('radio', { name: /newest first/i }))
 		expect(onSortChange).toHaveBeenCalledWith('latest')
+	})
+
+	it('calls onSortChange with oldest when Oldest first is selected', async () => {
+		const user = userEvent.setup()
+		const onSortChange = vi.fn()
+		renderHeader({ onSortChange })
+		await user.click(screen.getByRole('button', { name: /display options/i }))
+		await user.click(screen.getByRole('radio', { name: /oldest first/i }))
+		expect(onSortChange).toHaveBeenCalledWith('oldest')
 	})
 })

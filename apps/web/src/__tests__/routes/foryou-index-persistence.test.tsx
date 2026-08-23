@@ -106,6 +106,13 @@ vi.mock('@/lib/api', () => {
 vi.mock('@/components/foryou/foryou-card-queue', () => ({
 	ForYouCardQueue: () => <div data-testid="foryou-card-queue" />,
 }))
+const pageHeaderProps: { current: Record<string, unknown> } = { current: {} }
+vi.mock('@/components/layout/page-header', () => ({
+	PageHeader: (props: Record<string, unknown>) => {
+		pageHeaderProps.current = props
+		return null
+	},
+}))
 vi.mock('@/components/foryou/sparse-composer', () => ({
 	SparseComposer: () => null,
 }))
@@ -115,11 +122,15 @@ vi.mock('@/components/foryou/north-star-prompt-card', () => ({
 vi.mock('@/components/foryou/onboarding-prompt-card', () => ({
 	OnboardingPromptCard: () => null,
 }))
+vi.mock('@/components/foryou/brief-drawer', () => ({
+	BriefDrawer: () => null,
+}))
 vi.mock('@/components/shared/create-picker', () => ({
 	CreatePicker: () => null,
 	isCreateShortcut: () => false,
 }))
 
+import { NewDesignProvider } from '@/lib/new-design-context'
 import {
 	feedModeToForyouViewMode,
 	foryouViewModeToFeedMode,
@@ -175,9 +186,13 @@ function mount() {
 	const queryClient = new QueryClient({
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
 	})
+	// These assert the v2 feed, so they mount on the `new-design` side of the
+	// route's flag boundary.
 	return render(
 		<QueryClientProvider client={queryClient}>
-			<ForYouPage />
+			<NewDesignProvider value={true}>
+				<ForYouPage />
+			</NewDesignProvider>
 		</QueryClientProvider>,
 	)
 }
@@ -209,7 +224,7 @@ describe('ForYou view-mode persistence via __chrome__ display settings', () => {
 		await flush()
 		expect(screen.getByTestId('foryou-card-queue')).toBeInTheDocument()
 		expect(
-			screen.queryByRole('link', { name: 'Renewal terms need a read' }),
+			screen.queryByRole('button', { name: 'Renewal terms need a read' }),
 		).not.toBeInTheDocument()
 		// No write happens on first paint for a user who never switches.
 		expect(settingsState.__dsUpsertCalls).toBe(0)
@@ -220,8 +235,8 @@ describe('ForYou view-mode persistence via __chrome__ display settings', () => {
 		mount()
 		await flush()
 		expect(screen.queryByTestId('foryou-card-queue')).not.toBeInTheDocument()
-		expect(screen.getByRole('link', { name: 'Renewal terms need a read' })).toBeInTheDocument()
-		expect(screen.getByRole('link', { name: 'Follow-up from customer call' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Renewal terms need a read' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Follow-up from customer call' })).toBeInTheDocument()
 	})
 
 	it('renders the card queue when the persisted view is card', async () => {
@@ -230,7 +245,7 @@ describe('ForYou view-mode persistence via __chrome__ display settings', () => {
 		await flush()
 		expect(screen.getByTestId('foryou-card-queue')).toBeInTheDocument()
 		expect(
-			screen.queryByRole('link', { name: 'Renewal terms need a read' }),
+			screen.queryByRole('button', { name: 'Renewal terms need a read' }),
 		).not.toBeInTheDocument()
 	})
 
@@ -250,7 +265,7 @@ describe('ForYou view-mode persistence via __chrome__ display settings', () => {
 			foryouViewMode: 'list',
 		})
 		expect(screen.queryByTestId('foryou-card-queue')).not.toBeInTheDocument()
-		expect(screen.getByRole('link', { name: 'Renewal terms need a read' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Renewal terms need a read' })).toBeInTheDocument()
 	})
 
 	it('does not re-upsert when the already-active List tab is clicked', async () => {
@@ -271,7 +286,7 @@ describe('ForYou view-mode persistence via __chrome__ display settings', () => {
 		const user = userEvent.setup()
 		mount()
 		await flush()
-		expect(screen.getByRole('link', { name: 'Renewal terms need a read' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Renewal terms need a read' })).toBeInTheDocument()
 
 		await user.click(screen.getByRole('button', { name: /display options/i }))
 		await user.click(screen.getByRole('tab', { name: /cards/i }))
@@ -311,14 +326,62 @@ describe('ForYou Priority sort — ordered by attention score', () => {
 		mount()
 		await flush()
 
-		const links = screen
-			.getAllByRole('link')
+		const rows = screen
+			.getAllByRole('button')
 			.filter((el) => /attention item|Unscored item/.test(el.textContent ?? ''))
-		const names = links.map((el) => el.textContent)
+		const names = rows.map((el) => el.textContent)
 		expect(names).toEqual([
 			expect.stringContaining('Critical attention item'),
 			expect.stringContaining('Low attention item'),
 			expect.stringContaining('Unscored item'),
+		])
+	})
+})
+
+describe('ForYou nav identity + sort options', () => {
+	beforeEach(resetState)
+
+	it('publishes title/subtitle into the shared nav instead of its own identity node', async () => {
+		mount()
+		await flush()
+		expect(pageHeaderProps.current.title).toBe('For you')
+		expect(pageHeaderProps.current.subtitle).toBe('2 unread')
+		expect(pageHeaderProps.current.stickyIdentity).toBeUndefined()
+	})
+
+	it('reads "All caught up" once nothing is unread', async () => {
+		feedState.__foryouItems = []
+		mount()
+		await flush()
+		expect(pageHeaderProps.current.subtitle).toBe('All caught up')
+	})
+
+	it('orders list rows oldest-first when Oldest first is picked', async () => {
+		settingsState.__dsPersisted = { foryouViewMode: 'list' }
+		feedState.__foryouItems = [
+			{
+				...buildItem('newer', 'Newer thread', 'insight'),
+				latest_activity_at: '2026-08-15T00:00:00.000Z',
+			},
+			{
+				...buildItem('older', 'Older thread', 'insight'),
+				latest_activity_at: '2026-08-01T00:00:00.000Z',
+			},
+		]
+		const user = userEvent.setup()
+		mount()
+		await flush()
+
+		await user.click(screen.getByRole('button', { name: /display options/i }))
+		await user.click(screen.getByRole('radio', { name: /oldest first/i }))
+		await flush()
+
+		const rows = screen
+			.getAllByRole('button')
+			.filter((el) => /^(Newer|Older) thread/.test(el.getAttribute('aria-label') ?? ''))
+		expect(rows.map((el) => el.getAttribute('aria-label'))).toEqual([
+			expect.stringContaining('Older thread'),
+			expect.stringContaining('Newer thread'),
 		])
 	})
 })
