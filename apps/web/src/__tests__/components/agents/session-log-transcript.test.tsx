@@ -301,6 +301,65 @@ describe('segmentActivityByMessage', () => {
 		])
 	})
 
+	it('records a turn result on its segment without listing it as a step', () => {
+		const userTurn = JSON.stringify({
+			type: 'user',
+			message: { role: 'user', content: 'hi' },
+			maskin_message_id: 7,
+		})
+		const resultLine = JSON.stringify({
+			type: 'result',
+			subtype: 'success',
+			is_error: false,
+			result: 'Here is the answer.',
+		})
+		const { segments } = segmentActivityByMessage([
+			log(1, 'stdout', userTurn),
+			log(2, 'stdout', resultLine),
+		])
+		// The dropdown lists what the agent DID; the answer itself renders as a
+		// chat bubble, so it must not also appear as a step.
+		expect(segments).toEqual([
+			{
+				conversationMessageId: 7,
+				steps: [],
+				containsReply: false,
+				result: { text: 'Here is the answer.', isError: false, logId: 2 },
+			},
+		])
+	})
+
+	it('gives each turn its own result rather than the last one', () => {
+		const turn = (id: number) =>
+			JSON.stringify({
+				type: 'user',
+				message: { role: 'user', content: 'x' },
+				maskin_message_id: id,
+			})
+		const res = (text: string) =>
+			JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: text })
+		const { segments } = segmentActivityByMessage([
+			log(1, 'stdout', turn(1)),
+			log(2, 'stdout', res('first answer')),
+			log(3, 'stdout', turn(2)),
+			log(4, 'stdout', res('second answer')),
+		])
+		expect(segments.map((s) => s.result?.text)).toEqual(['first answer', 'second answer'])
+	})
+
+	it('ignores a result that has no open segment', () => {
+		const resultLine = JSON.stringify({
+			type: 'result',
+			subtype: 'success',
+			is_error: false,
+			result: 'orphan',
+		})
+		const { segments, unassigned } = segmentActivityByMessage([log(1, 'stdout', resultLine)])
+		expect(segments).toEqual([])
+		// `unassigned` holds steps only — a result must not be pushed into it.
+		expect(unassigned).toEqual([])
+	})
+
 	it('omits result, system, and debug envelopes from the history', () => {
 		const result = JSON.stringify({
 			type: 'result',

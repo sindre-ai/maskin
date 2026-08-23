@@ -1,17 +1,23 @@
 import { OpenAPIHono, type RouteHandler, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { events, actors, files, objects, subscriptions } from '@maskin/db/schema'
+import { events, actors, files, objects } from '@maskin/db/schema'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { createCommentSchema, eventQuerySchema } from '@maskin/shared'
 import { and, asc, desc, eq, gt, gte, inArray, lt, or, sql } from 'drizzle-orm'
 import { streamSSE } from 'hono/streaming'
 import { trackAgentCommentPosted } from '../lib/analytics/comment-events'
+import { postComment } from '../lib/comments'
 import { createApiError, validationFailureHook } from '../lib/errors'
 import { logger } from '../lib/logger'
-import { insertNotificationsWithEvents } from '../lib/notifications'
-import { errorSchema, eventResponseSchema, workspaceIdHeader } from '../lib/openapi-schemas'
+import {
+	createCommentResponseSchema,
+	errorSchema,
+	eventResponseSchema,
+	workspaceIdHeader,
+} from '../lib/openapi-schemas'
 import { serializeArray } from '../lib/serialize'
 import type { SessionManager } from '../services/session-manager'
+import { autoSubscribe } from '../services/subscriptions'
 
 type Env = {
 	Variables: {
@@ -24,6 +30,15 @@ type Env = {
 }
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
+
+/**
+ * How often the events stream writes a keep-alive comment frame. Must stay
+ * comfortably below the shortest idle timeout of any proxy in front of us
+ * (60s is the common default) — and below the client's silence watchdog in
+ * `apps/web/src/lib/sse.ts`, which force-reconnects if it goes this long
+ * without hearing anything.
+ */
+const SSE_HEARTBEAT_MS = 15_000
 
 // GET /api/events - SSE stream (plain Hono, not OpenAPI)
 app.get('/', async (c) => {
@@ -39,6 +54,11 @@ app.get('/', async (c) => {
 		)
 
 	const lastEventId = c.req.header('Last-Event-ID')
+
+	// Disable proxy response buffering (nginx / Traefik). Without this an
+	// intermediary can hold our frames until its buffer fills, which both
+	// delays events and defeats the heartbeat below.
+	c.header('X-Accel-Buffering', 'no')
 
 	return streamSSE(c, async (stream) => {
 		// Replay missed events if Last-Event-ID is provided
@@ -73,13 +93,32 @@ app.get('/', async (c) => {
 
 		bridge.on('event', handler)
 
+		let aborted = false
 		stream.onAbort(() => {
+			aborted = true
 			bridge.off('event', handler)
 		})
 
-		// Keep connection alive
-		while (true) {
-			await stream.sleep(30000)
+		// Heartbeat. This loop used to only `sleep()`, writing nothing — an
+		// idle stream sent zero bytes indefinitely, so any intermediary
+		// (Traefik, LB, mobile NAT) reaped it as idle. When the drop is
+		// half-open the browser's fetch never errors, so the client sat
+		// "connected" receiving nothing until the user reloaded the page.
+		// Writing a comment frame well inside the typical 60s idle timeout
+		// keeps the connection provably alive, and gives the client's own
+		// liveness watchdog (see apps/web/src/lib/sse.ts) a signal to
+		// measure against.
+		while (!aborted) {
+			await stream.sleep(SSE_HEARTBEAT_MS)
+			if (aborted) break
+			try {
+				// A bare comment line: ignored by the EventSource protocol,
+				// but it's real bytes on the wire, which is the whole point.
+				await stream.write(': ping\n\n')
+			} catch {
+				// Peer is gone — the write failed rather than onAbort firing.
+				break
+			}
 		}
 	})
 })
@@ -150,7 +189,7 @@ const createCommentRoute = createRoute({
 	responses: {
 		201: {
 			description: 'Comment event created',
-			content: { 'application/json': { schema: eventResponseSchema } },
+			content: { 'application/json': { schema: createCommentResponseSchema } },
 		},
 		400: {
 			description: 'Invalid request',
@@ -215,136 +254,29 @@ app.openapi(createCommentRoute, (async (c) => {
 		body.parent_event_id,
 	)
 
-	const { comment, agentMentions, mentionedSubscriberCount } = await db.transaction(async (tx) => {
-		const results = await tx
-			.insert(events)
-			.values({
-				workspaceId,
-				actorId,
-				action: 'commented',
-				entityType: 'object',
-				entityId: body.entity_id,
-				data: {
-					content: body.content,
-					mentions: body.mentions,
-					parentEventId,
-					attachmentFileIds: body.attachment_file_ids,
-					metadata: body.metadata,
-					attention: body.attention,
-				},
-			})
-			.returning()
-
-		const created = results[0]
-		if (!created) {
-			throw new Error('Failed to create comment')
-		}
-
-		const mentions: Array<{ agentId: string; notificationId: string }> = []
-
-		// Create notifications for @mentioned agents (batched)
-		if (body.mentions?.length) {
-			const mentionedActors = await tx
-				.select({ id: actors.id, type: actors.type, name: actors.name })
-				.from(actors)
-				.where(inArray(actors.id, body.mentions))
-
-			const agentActors = mentionedActors.filter((a) => a.type === 'agent')
-
-			if (agentActors.length > 0) {
-				const createdNotifications = await insertNotificationsWithEvents(tx, {
-					workspaceId,
-					actorId,
-					rows: agentActors.map((agent) => ({
-						workspaceId,
-						type: 'needs_input' as const,
-						title: '@mentioned by comment',
-						content: body.content,
-						sourceActorId: actorId,
-						targetActorId: agent.id,
-						objectId: body.entity_id,
-						status: 'pending' as const,
-					})),
-				})
-
-				for (const notification of createdNotifications) {
-					if (notification.targetActorId) {
-						mentions.push({
-							agentId: notification.targetActorId,
-							notificationId: notification.id,
-						})
-					}
-				}
-			}
-		}
-
-		// Auto-subscribe the commenter — anyone who comments on an entity
-		// starts watching it for future activity (Slack-channel-style). On
-		// conflict we keep the existing source so author/manual subscriptions
-		// are never downgraded to 'commenter'.
-		await tx
-			.insert(subscriptions)
-			.values({
-				workspaceId,
-				actorId,
-				entityType: created.entityType,
-				entityId: created.entityId,
-				source: 'commenter',
-			})
-			.onConflictDoNothing({
-				target: [subscriptions.actorId, subscriptions.entityType, subscriptions.entityId],
-			})
-
-		// Auto-subscribe the thread OP when this is a reply, so they're
-		// notified of all follow-up messages — Slack participant model. Skip
-		// when the OP is the same as the current commenter (already subscribed
-		// above). onConflictDoNothing preserves any existing source.
-		if (parentEventId !== undefined && opActorId && opActorId !== actorId) {
-			await tx
-				.insert(subscriptions)
-				.values({
-					workspaceId,
-					actorId: opActorId,
-					entityType: created.entityType,
-					entityId: created.entityId,
-					source: 'commenter',
-				})
-				.onConflictDoNothing({
-					target: [subscriptions.actorId, subscriptions.entityType, subscriptions.entityId],
-				})
-		}
-
-		// Auto-subscribe @-mentioned actors so the comment reaches their For You
-		// page even if they weren't already subscribed. Dedup the mention list
-		// and skip the commenter (they were just auto-subscribed above).
-		// onConflictDoNothing preserves any existing source — a mention never
-		// downgrades manual/author/commenter.
-		let mentionedSubscriberCount = 0
-		if (body.mentions?.length) {
-			const uniqueMentioned = Array.from(new Set(body.mentions)).filter((id) => id !== actorId)
-			if (uniqueMentioned.length > 0) {
-				await tx
-					.insert(subscriptions)
-					.values(
-						uniqueMentioned.map((mentionedActorId) => ({
-							workspaceId,
-							actorId: mentionedActorId,
-							entityType: created.entityType,
-							entityId: created.entityId,
-							source: 'mentioned' as const,
-						})),
-					)
-					.onConflictDoNothing({
-						target: [subscriptions.actorId, subscriptions.entityType, subscriptions.entityId],
-					})
-				mentionedSubscriberCount = uniqueMentioned.length
-			}
-		}
-
-		return { comment: created, agentMentions: mentions, mentionedSubscriberCount }
+	const { comment, agentMentions, unresolvedMentions } = await postComment(db, {
+		workspaceId,
+		actorId,
+		entityId: body.entity_id,
+		content: body.content,
+		mentions: body.mentions,
+		parentEventId,
+		attachmentFileIds: body.attachment_file_ids,
+		metadata: body.metadata,
+		attention: body.attention,
 	})
 
+	// Auto-subscribe the thread OP when this is a reply, so they're notified of
+	// all follow-up messages — Slack participant model. Skip when the OP is the
+	// same as the current commenter (already subscribed by postComment).
 	if (parentEventId !== undefined && opActorId && opActorId !== actorId) {
+		await autoSubscribe(db, {
+			workspaceId,
+			actorId: opActorId,
+			entityType: comment.entityType,
+			entityId: comment.entityId,
+			source: 'commenter',
+		})
 		logger.info('Auto-subscribed thread OP to commented object', {
 			objectId: body.entity_id,
 			commentEventId: comment.id,
@@ -352,11 +284,16 @@ app.openapi(createCommentRoute, (async (c) => {
 		})
 	}
 
-	if (mentionedSubscriberCount > 0) {
+	const unresolvedSet = new Set(unresolvedMentions)
+	const uniqueMentionedCount = body.mentions?.length
+		? Array.from(new Set(body.mentions)).filter((id) => id !== actorId && !unresolvedSet.has(id))
+				.length
+		: 0
+	if (uniqueMentionedCount > 0) {
 		logger.info('Auto-subscribed @-mentioned actors to commented object', {
 			objectId: body.entity_id,
 			commentEventId: comment.id,
-			mentionedSubscriberCount,
+			mentionedSubscriberCount: uniqueMentionedCount,
 		})
 	}
 
@@ -443,7 +380,24 @@ app.openapi(createCommentRoute, (async (c) => {
 		)
 	}
 
-	return c.json(serializeArray([comment])[0] as z.infer<typeof eventResponseSchema>, 201)
+	const serialized = serializeArray([comment])[0] as z.infer<typeof createCommentResponseSchema>
+
+	// Tell the caller when a mention resolved to nothing. Agents posting over
+	// MCP frequently transcribe an actor UUID out of their system prompt and
+	// fumble a character; without this the comment posts, the mention silently
+	// evaporates, and nobody learns the human was never reached.
+	if (unresolvedMentions.length > 0) {
+		logger.warn('Comment mentioned actor ids that do not exist', {
+			objectId: body.entity_id,
+			commentEventId: comment.id,
+			actorId,
+			unresolvedMentions,
+		})
+		serialized.unresolved_mentions = unresolvedMentions
+		serialized.warning = `The comment was posted, but ${unresolvedMentions.length} @mention id(s) matched no actor and were ignored, so nobody was notified for them: ${unresolvedMentions.join(', ')}. Do not retype actor UUIDs from memory or from your system prompt — call list_actors to look up the correct id, then post a follow-up comment with the corrected mention.`
+	}
+
+	return c.json(serialized, 201)
 }) as RouteHandler<typeof createCommentRoute, Env>)
 
 type ResolvedParent = { parentEventId: number | undefined; opActorId: string | null }

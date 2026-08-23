@@ -1,11 +1,15 @@
 import { CommandPalette } from '@/components/command-palette'
 import { Header } from '@/components/layout/header'
+import { LegacyCommandPalette } from '@/components/layout/legacy/command-palette'
+import { LegacyHeader } from '@/components/layout/legacy/header'
+import { LegacyAppSidebar } from '@/components/layout/legacy/sidebar'
 import { MobileNav } from '@/components/layout/mobile-nav'
 import { AppSidebar } from '@/components/layout/sidebar'
 import { RouteError } from '@/components/shared/route-error'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
 import { useDefaultChatAgent } from '@/hooks/use-actors'
 import { useCreateConversation } from '@/hooks/use-conversations'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { usePersistedSidebarOpen } from '@/hooks/use-persisted-sidebar-open'
 import { useSSE } from '@/hooks/use-sse'
@@ -16,6 +20,7 @@ import { cn } from '@/lib/cn'
 import { CommandPaletteProvider } from '@/lib/command-palette-context'
 import { isHiddenRouteId, migrateLegacySidebarState, viewKeyFromRouteId } from '@/lib/nav-view-keys'
 import { NewConversationProvider } from '@/lib/new-conversation-context'
+import { NewDesignProvider } from '@/lib/new-design-context'
 import { PageHeaderProvider, usePageHeader } from '@/lib/page-header-context'
 import { PendingCommentsProvider } from '@/lib/pending-comments-context'
 import {
@@ -24,6 +29,7 @@ import {
 	setCapturingEnabled,
 } from '@/lib/posthog'
 import { WorkspaceContext, useWorkspace } from '@/lib/workspace-context'
+import { NEW_CONVERSATION_PLACEHOLDER_TITLE } from '@maskin/shared'
 import { Outlet, createFileRoute, useMatches, useNavigate } from '@tanstack/react-router'
 import { type ReactNode, useEffect, useMemo, useRef } from 'react'
 
@@ -45,6 +51,11 @@ function WorkspaceLayout() {
 		() => workspaces?.find((w) => w.id === workspaceId),
 		[workspaces, workspaceId],
 	)
+
+	// The single flag boundary for the v2 redesign. Everything below renders
+	// either the v2 shell or the pre-v2 one restored under components/layout/legacy.
+	// If you find yourself reading this flag anywhere else, the boundary is wrong.
+	const newDesign = useFeatureFlag('new-design')
 
 	const matches = useMatches()
 	const leafMatch = [...matches].reverse().find((m) => !isHiddenRouteId(m.routeId))
@@ -84,29 +95,39 @@ function WorkspaceLayout() {
 
 	return (
 		<WorkspaceContext.Provider value={{ workspace, workspaceId, sseStatus }}>
-			<NewConversationProvider>
-				<CommandPaletteProvider>
-					<PendingPromptBootstrap />
-					<GuestDraftClaimBootstrap workspaceId={workspaceId} />
-					<PendingCommentsProvider workspaceId={workspaceId}>
-						<PageHeaderProvider>
-							<ContentPushShell>
-								<SidebarProvider open={open} onOpenChange={setOpen} className="h-screen !min-h-0">
-									<AppSidebar />
-									<SidebarInset className="min-w-0">
-										<Header />
-										<MainScrollArea>
-											<Outlet />
-										</MainScrollArea>
-									</SidebarInset>
-									<MobileNav />
-								</SidebarProvider>
-							</ContentPushShell>
-						</PageHeaderProvider>
-						<CommandPalette />
-					</PendingCommentsProvider>
-				</CommandPaletteProvider>
-			</NewConversationProvider>
+			{/* Carries the flag read above to the v2 components that route pages render
+			    (the create overlay, the comment composer) and that therefore cannot be
+			    swapped here alongside the shell. Still one read of the flag. */}
+			<NewDesignProvider value={newDesign}>
+				<NewConversationProvider>
+					<CommandPaletteProvider>
+						<PendingPromptBootstrap />
+						<GuestDraftClaimBootstrap workspaceId={workspaceId} />
+						<PendingCommentsProvider workspaceId={workspaceId}>
+							<PageHeaderProvider>
+								<ContentPushShell>
+									<SidebarProvider
+										open={open}
+										onOpenChange={setOpen}
+										className="h-screen !min-h-0"
+										data-shell={newDesign ? 'v2' : 'v1'}
+									>
+										{newDesign ? <AppSidebar /> : <LegacyAppSidebar />}
+										<SidebarInset className="min-w-0">
+											{newDesign ? <Header /> : <LegacyHeader />}
+											<MainScrollArea>
+												<Outlet />
+											</MainScrollArea>
+										</SidebarInset>
+										{newDesign && <MobileNav />}
+									</SidebarProvider>
+								</ContentPushShell>
+							</PageHeaderProvider>
+							{newDesign ? <CommandPalette /> : <LegacyCommandPalette />}
+						</PendingCommentsProvider>
+					</CommandPaletteProvider>
+				</NewConversationProvider>
+			</NewDesignProvider>
 		</WorkspaceContext.Provider>
 	)
 }
@@ -171,7 +192,7 @@ function PendingPromptBootstrap() {
 		localStorage.removeItem('maskin_pending_prompt')
 		createConversation
 			.mutateAsync({
-				title: defaultAgent.name,
+				title: NEW_CONVERSATION_PLACEHOLDER_TITLE,
 				participant_actor_ids: [defaultAgent.id],
 				initial_message: prompt,
 			})

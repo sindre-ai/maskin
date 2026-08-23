@@ -19,22 +19,15 @@ async function scrollHeroOff(page: import('@playwright/test').Page) {
 	await page.waitForTimeout(200)
 }
 
-// The sticky bet-identity projection (StickyBetIdentity chip that the page
-// header sprouted when the hero identity row scrolled out, + smooth-scroll-back
-// that focused the status picker) was shipped with the legacy ObjectDocumentView
-// header. bet/object-detail rebuilt the route around a static shell whose header
-// the bet enumerates as breadcrumb + overflow menu + type/status/driver only —
-// the shell keeps the `[data-hero-status-trigger]` anchor that projection
-// focuses, but re-attaching the chip (and its ⌘/shape persistence) is header
-// assembly owned by T5.
-//
-// Until T5 lands, this spec pins the interim contract: the rebuilt shell still
-// scrolls inside [data-scroll-root], still hosts the hero status picker, and
-// the app header's 44px invariant holds — while the not-yet-rebuilt sticky
-// chip must NOT sprout. Flip the "no sticky chip" assertion when T5 lands.
-test.describe('Sticky nav — bet identity (interim contract)', () => {
+// The sticky bet-identity projection: the hero identity row owns the title and
+// status picker while it is on screen, and the app header sprouts a compact
+// chip (title + status, StickyBetIdentity in object-document.tsx) once the hero
+// scrolls out. The v2 shell's header renders that projection through the page
+// header's `stickyIdentity` slot, so the chip is live — this spec pins the
+// handover in both directions rather than its earlier absence.
+test.describe('Sticky nav — bet identity', () => {
 	for (const viewport of [WIDE_DESKTOP, NARROW_DESKTOP, MOBILE]) {
-		test(`hero status picker present; no sticky chip until T5 (${viewport.width}px)`, async ({
+		test(`the header chip takes over when the hero scrolls out (${viewport.width}px)`, async ({
 			page,
 			account,
 		}) => {
@@ -48,7 +41,7 @@ test.describe('Sticky nav — bet identity (interim contract)', () => {
 			})
 
 			await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
-			await expect(page.getByRole('heading', { level: 1, name: STICKY_TITLE_MARKER })).toBeVisible({
+			await expect(page.getByPlaceholder('Untitled')).toHaveValue(STICKY_TITLE_MARKER, {
 				timeout: 10000,
 			})
 
@@ -57,20 +50,35 @@ test.describe('Sticky nav — bet identity (interim contract)', () => {
 			const statusTrigger = page.locator('[data-hero-status-trigger]')
 			await expect(statusTrigger).toBeVisible()
 
-			// No sticky chip in the header, before or after the hero scrolls out.
+			// While the hero is on screen it is the only identity — no duplicate in
+			// the header competing with it.
 			const header = page.locator('header')
 			await expect(header.getByText(STICKY_TITLE_MARKER)).toHaveCount(0)
 			await expect(header.getByRole('button', { name: /status active/i })).toHaveCount(0)
 
 			await scrollHeroOff(page)
 
+			// Hero gone, chip sprouted — identity is never absent from the screen.
 			await expect(statusTrigger).not.toBeInViewport()
+			await expect(header.getByText(STICKY_TITLE_MARKER)).toBeVisible()
+			await expect(header.getByRole('button', { name: /status active/i })).toBeVisible()
+
+			// The chip is the way back: clicking it returns the hero to view, and
+			// the chip stands down again.
+			await header.getByRole('button', { name: /status active/i }).click()
+			await expect(statusTrigger).toBeInViewport({ timeout: 10000 })
 			await expect(header.getByText(STICKY_TITLE_MARKER)).toHaveCount(0)
-			await expect(header.getByRole('button', { name: /status active/i })).toHaveCount(0)
 		})
 	}
 
-	test('global header stays at 44px across all three widths', async ({ page, account }) => {
+	// The v2 header is a single 44px row that wraps rather than scrolls, so a
+	// narrow viewport drops the right-hand cluster onto a second line instead of
+	// hiding controls. The 44px invariant therefore holds where the row fits on
+	// one line; below that it is a floor, not a fixed height.
+	test('global header holds its 44px row on desktop and never shrinks below it', async ({
+		page,
+		account,
+	}) => {
 		const bet = await account.api.createObject(account.workspaceId, {
 			type: 'bet',
 			title: STICKY_TITLE_MARKER,
@@ -81,21 +89,30 @@ test.describe('Sticky nav — bet identity (interim contract)', () => {
 		for (const viewport of [WIDE_DESKTOP, NARROW_DESKTOP, MOBILE]) {
 			await page.setViewportSize(viewport)
 			await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
-			await expect(page.getByRole('heading', { level: 1, name: STICKY_TITLE_MARKER })).toBeVisible({
+			await expect(page.getByPlaceholder('Untitled')).toHaveValue(STICKY_TITLE_MARKER, {
 				timeout: 10000,
 			})
+
+			const exact = viewport.width >= NARROW_DESKTOP.width
 
 			const preHeight = await page
 				.locator('header')
 				.evaluate((el) => el.getBoundingClientRect().height)
-			expect(preHeight, `header height at ${viewport.width}px pre-scroll`).toBe(44)
+			if (exact) {
+				expect(preHeight, `header height at ${viewport.width}px pre-scroll`).toBe(44)
+			} else {
+				expect(preHeight, `header height at ${viewport.width}px pre-scroll`).toBeGreaterThanOrEqual(
+					44,
+				)
+			}
 
 			await scrollHeroOff(page)
 
 			const postHeight = await page
 				.locator('header')
 				.evaluate((el) => el.getBoundingClientRect().height)
-			expect(postHeight, `header height at ${viewport.width}px post-scroll`).toBe(44)
+			// Scrolling must never change the row's height, whichever regime it is in.
+			expect(postHeight, `header height at ${viewport.width}px post-scroll`).toBe(preHeight)
 		}
 	})
 })
@@ -111,21 +128,20 @@ test.describe('"Create an object" section in the header New menu', () => {
 		})
 
 		await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
-		await expect(
-			page.getByRole('heading', { level: 1, name: 'Nav Create removal check' }),
-		).toBeVisible({
+		// The object title is an editable <textarea> (object-document.tsx).
+		await expect(page.getByPlaceholder('Untitled')).toHaveValue('Nav Create removal check', {
 			timeout: 10000,
 		})
 		// The New menu itself stays available on object-detail pages (chat/loop/
 		// agent/search still reachable) — only "Create an object" is hidden.
-		const newButton = page.locator('header').getByRole('button', { name: /^new$/i })
+		const newButton = page.locator('header').getByRole('button', { name: 'More ways to start' })
 		await expect(newButton).toBeVisible()
 		await newButton.click()
 		await expect(page.getByText('Create an object')).toHaveCount(0)
 		await page.keyboard.press('Escape')
 
 		await page.goto(`/${account.workspaceId}/objects`)
-		await page.locator('header').getByRole('button', { name: /^new$/i }).click()
+		await page.locator('header').getByRole('button', { name: 'More ways to start' }).click()
 		await expect(page.getByText('Create an object')).toBeVisible()
 	})
 
@@ -133,12 +149,12 @@ test.describe('"Create an object" section in the header New menu', () => {
 		await page.setViewportSize(WIDE_DESKTOP)
 
 		await page.goto(`/${account.workspaceId}/agents`)
-		await page.locator('header').getByRole('button', { name: /^new$/i }).click()
+		await page.locator('header').getByRole('button', { name: 'More ways to start' }).click()
 		await expect(page.getByText('Create an object')).toBeVisible()
 		await page.keyboard.press('Escape')
 
 		await page.goto(`/${account.workspaceId}/triggers`)
-		await page.locator('header').getByRole('button', { name: /^new$/i }).click()
+		await page.locator('header').getByRole('button', { name: 'More ways to start' }).click()
 		await expect(page.getByText('Create an object')).toBeVisible()
 	})
 })

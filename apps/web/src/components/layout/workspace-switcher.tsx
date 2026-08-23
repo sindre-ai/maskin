@@ -143,8 +143,16 @@ export function WorkspaceSwitcher() {
 							})
 						)}
 						<DropdownMenuSeparator />
+						{/* Closing the drawer is not cosmetic on mobile: the sidebar is a
+						    modal Sheet, so leaving it open after navigating parks an
+						    overlay and `body { pointer-events: none }` over the page the
+						    user just asked for — every tap after that does nothing.
+						    handleSelect above closes it for the same reason. */}
 						<DropdownMenuItem
-							onSelect={() => navigate({ to: '/$workspaceId/settings', params: { workspaceId } })}
+							onSelect={() => {
+								setOpenMobile(false)
+								navigate({ to: '/$workspaceId/settings', params: { workspaceId } })
+							}}
 							className="gap-2 text-muted-foreground"
 						>
 							<Settings className="size-4" />

@@ -140,8 +140,28 @@ export const sessionQuerySchema = z.object({
 
 export const sessionLogQuerySchema = z.object({
 	since: z.coerce.number().int().optional(),
+	/**
+	 * Half-open, exclusive: rows satisfy `id < before`. Pages BACKWARD from a
+	 * known id, which `since` cannot do — it is how a client reaches the
+	 * earlier history of a long-lived interactive session it only hydrated
+	 * the tail of. Implies newest-first selection regardless of `order`; the
+	 * response is still returned in ascending id order. Combining `before`
+	 * with `since` is legal and yields the bounded window `since < id < before`.
+	 */
+	before: z.coerce.number().int().optional(),
 	stream: z.enum(['stdout', 'stderr', 'system']).optional(),
 	limit: z.coerce.number().int().min(1).max(500).default(100),
+	/**
+	 * Which end of the log to take `limit` rows from. `asc` (the default,
+	 * and the historical behaviour) returns the OLDEST rows — correct when
+	 * paging forward from a `since` cursor, but wrong for hydrating a view
+	 * of a long-lived session: an interactive chat session accumulates logs
+	 * for the whole conversation, so `asc` + `limit` pins the client to the
+	 * beginning of the conversation forever. `desc` takes the newest rows
+	 * instead (still returned in ascending id order) so callers can hydrate
+	 * the tail and then page forward with `since`.
+	 */
+	order: z.enum(['asc', 'desc']).default('asc'),
 })
 
 export const sessionParamsSchema = z.object({
@@ -237,6 +257,12 @@ export const failureReasonCodeSchema = z.enum([
 	'rate_limit_error',
 	'insufficient_credits',
 	'agent_server_lost',
+	// The session could not be handed to any agent-server before the dispatch
+	// queue ran out of attempts. Recoverable by starting a new session.
+	'dispatch_failed',
+	// The session's agent was deleted (or removed by a loop uninstall/version
+	// push) while the session was still live, so it was stopped mid-run.
+	'agent_deleted',
 ])
 export type FailureReasonCode = z.infer<typeof failureReasonCodeSchema>
 

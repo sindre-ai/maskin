@@ -82,6 +82,7 @@ import {
 } from './agent-server-client'
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
 import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
+import { InteractiveTurnFinalizer } from './interactive-turn-finalizer'
 import { type RuntimeEndReason, RuntimeTelemetry } from './runtime-telemetry'
 import type { SessionDispatchQueue } from './session-dispatch-queue'
 import { type SessionUsage, extractSessionUsage, parseUsageFromLogChunks } from './usage-parser'
@@ -240,6 +241,11 @@ export class SessionManager extends EventEmitter {
 	private containers: ContainerManager
 	private agentStorage: AgentStorageManager
 	private watchdogInterval: NodeJS.Timeout | null = null
+	/** Log pruning runs hourly, not on every 60s watchdog tick. */
+	private lastLogPruneAt = 0
+	private static readonly LOG_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
+	private static readonly LOG_PRUNE_INTERVAL_MS = 60 * 60 * 1000
+	private static readonly LOG_PRUNE_SESSIONS_PER_RUN = 200
 	private activeSessions: Map<
 		string,
 		{
@@ -293,6 +299,13 @@ export class SessionManager extends EventEmitter {
 	 */
 	private stopRequested: Set<string> = new Set()
 
+	/**
+	 * Turns an interactive agent's end-of-turn stream-json `result` envelope
+	 * into a chat message. Public so integration tests can drive it directly
+	 * without standing up Docker.
+	 */
+	readonly turnFinalizer: InteractiveTurnFinalizer
+
 	constructor(
 		private db: Database,
 		private storage: StorageProvider,
@@ -301,6 +314,7 @@ export class SessionManager extends EventEmitter {
 		super()
 		this.containers = new ContainerManager()
 		this.agentStorage = new AgentStorageManager(storage, db)
+		this.turnFinalizer = new InteractiveTurnFinalizer(db)
 	}
 
 	setAgentBaseBuildContext(buildContext: string) {
@@ -1302,11 +1316,16 @@ export class SessionManager extends EventEmitter {
 		// in the first user turn (see conversation-responder.ts) where it has
 		// to compete with everything below it; agents observably fall back to
 		// their usual autonomous behavior (reading data, taking actions) and
-		// never call post_conversation_message, so the human sees no reply at
-		// all. Prepending it to SYSTEM_PROMPT instead makes it agent-agnostic
-		// and load-bearing regardless of how the agent's own prompt is written.
+		// frame the turn as a background job rather than a conversation.
+		// Prepending it to SYSTEM_PROMPT instead makes it agent-agnostic and
+		// load-bearing regardless of how the agent's own prompt is written.
+		//
+		// The end-of-turn output is posted automatically by
+		// interactive-turn-finalizer.ts, so this no longer has to push the
+		// agent into calling the MCP tool — it has to tell the agent that its
+		// closing words ARE the reply, and that a heads-up is optional.
 		const conversationPreamble = sessionConfig.conversation
-			? 'You are in a live, interactive chat conversation — a human just messaged you directly and is on the other end waiting for a reply, separate from any of your usual autonomous workflows described below. The ONLY way your reply becomes visible to them is by calling the post_conversation_message tool — reading data or taking other actions is invisible to them by itself. Staying silent is sometimes the right call, but only when a reply genuinely adds nothing; do not default to silence just because it is available.\n\n'
+			? 'You are in a live, interactive chat conversation — a human just messaged you directly and is on the other end waiting for a reply, separate from any of your usual autonomous workflows described below. Whatever you say at the end of your turn is posted into the chat automatically and is what the human reads, so end every turn with the actual reply: the answer, the result, or what you found, written to them rather than a summary of your own process. If you are about to do something that takes a while (research, a long tool chain, work across several files), it is usually kind to post a short heads-up first with the post_conversation_message tool — one line on what you are going into. That is a nice-to-have, not a rule: plenty of messages just want a direct answer, and a heads-up before a one-sentence reply is noise. Both the heads-up and your final reply appear in the chat, so do not repeat yourself. Staying silent is sometimes the right call, but only when a reply genuinely adds nothing; do not default to silence just because it is available.\n\n'
 			: ''
 		const resolvedSystemPrompt = `${conversationPreamble}${agent.systemPrompt ?? 'You are a helpful AI agent.'}`
 
@@ -2082,6 +2101,9 @@ export class SessionManager extends EventEmitter {
 								stream: chunk.stream,
 								data: chunk.data,
 							} satisfies SessionLogEvent)
+							if (chunk.stream === 'stdout') {
+								await this.turnFinalizer.onStdout(sessionId, chunk.data, log.id)
+							}
 						}
 
 						if (chunk.stream === 'stdout') {
@@ -2876,9 +2898,8 @@ export class SessionManager extends EventEmitter {
 			logger.info(`Archived expired paused session: ${session.id}`)
 		}
 
-		// 4. Prune old session logs (30 days)
-		const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
-		await this.db.delete(sessionLogs).where(lt(sessionLogs.createdAt, thirtyDaysAgo))
+		// 4. Prune old session logs
+		await this.pruneSessionLogs()
 
 		// 5. Recover stuck pending sessions — sessions stuck in 'pending' for >2 minutes
 		// without being started (e.g., startSession promise was lost or never called)
@@ -2978,7 +2999,17 @@ export class SessionManager extends EventEmitter {
 		)
 	}
 
-	private async insertSystemLog(sessionId: string, content: string): Promise<void> {
+	/**
+	 * Append a `system`-stream line to a session's log and push it out over SSE.
+	 *
+	 * Public because the session lifecycle has failure paths that live outside
+	 * this class — the dispatch queue giving up, the reconciler finding a lost
+	 * sandbox, an agent being deleted mid-run — and each one is invisible to the
+	 * user unless it says so in the transcript they're actually watching. A
+	 * `result.failure_reason` alone only renders once the session detail panel is
+	 * open; the log line is what appears in the live stream.
+	 */
+	async insertSystemLog(sessionId: string, content: string): Promise<void> {
 		const [log] = await this.db
 			.insert(sessionLogs)
 			.values({ sessionId, stream: 'system', content })
@@ -3274,6 +3305,9 @@ export class SessionManager extends EventEmitter {
 					stream: line.stream,
 					data: line.content,
 				} satisfies SessionLogEvent)
+				if (line.stream === 'stdout') {
+					await this.turnFinalizer.onStdout(sessionId, line.content, log.id)
+				}
 			}
 		}
 	}
@@ -3637,7 +3671,67 @@ export class SessionManager extends EventEmitter {
 	}
 
 	/** Clear activeSessionId on any object linked to this session. */
+	/**
+	 * Delete session logs older than the retention window — but only for
+	 * NON-interactive sessions.
+	 *
+	 * Interactive sessions are exempt entirely: their logs are the activity
+	 * trace shown under each message in a chat, so pruning them silently guts
+	 * the history of conversations the user can still open and read.
+	 *
+	 * Driven off `sessions` rather than a predicate on `session_logs`. The
+	 * previous implementation was a single unbounded `DELETE FROM session_logs
+	 * WHERE created_at < cutoff` on every 60s watchdog tick — a seq scan of the
+	 * largest table in the database sixty times an hour, since no index leads
+	 * with `created_at`. Adding an interactive/non-interactive condition on top
+	 * of that shape would only have made it worse. Selecting candidate sessions
+	 * first means each delete is an index scan on
+	 * `session_logs_session_idx (session_id, created_at)` with a bounded blast
+	 * radius, and interactive sessions never enter the candidate set at all.
+	 */
+	private async pruneSessionLogs(): Promise<void> {
+		const now = Date.now()
+		if (now - this.lastLogPruneAt < SessionManager.LOG_PRUNE_INTERVAL_MS) return
+		this.lastLogPruneAt = now
+
+		const cutoff = new Date(now - SessionManager.LOG_RETENTION_MS)
+		// The EXISTS probe keeps already-pruned sessions from being selected
+		// again forever — without it the same oldest sessions would be re-picked
+		// every hour and the sweep would never reach newer ones.
+		const candidates = await this.db
+			.select({ id: sessions.id })
+			.from(sessions)
+			.where(
+				and(
+					eq(sessions.interactive, false),
+					isNotNull(sessions.completedAt),
+					lt(sessions.completedAt, cutoff),
+					// Interpolate the ISO string, not the Date: inside a raw `sql`
+					// template there is no column to infer the type mapping from,
+					// so a Date object reaches the driver unmapped and throws.
+					sql`EXISTS (SELECT 1 FROM session_logs WHERE session_logs.session_id = sessions.id AND session_logs.created_at < ${cutoff.toISOString()}::timestamptz)`,
+				),
+			)
+			.limit(SessionManager.LOG_PRUNE_SESSIONS_PER_RUN)
+
+		if (candidates.length === 0) return
+
+		let deleted = 0
+		for (const candidate of candidates) {
+			const rows = await this.db
+				.delete(sessionLogs)
+				.where(and(eq(sessionLogs.sessionId, candidate.id), lt(sessionLogs.createdAt, cutoff)))
+				.returning({ id: sessionLogs.id })
+			deleted += rows.length
+		}
+
+		logger.info(
+			`Pruned ${deleted} session log rows across ${candidates.length} completed non-interactive sessions`,
+		)
+	}
+
 	private async clearActiveSession(sessionId: string): Promise<void> {
+		this.turnFinalizer.forgetSession(sessionId)
 		await this.db
 			.update(objects)
 			.set({ activeSessionId: null, updatedAt: new Date() })

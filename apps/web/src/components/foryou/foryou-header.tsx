@@ -41,9 +41,10 @@ interface ForYouHeaderActionsProps {
 
 // "Brief" + "Mark all read" projected into the shared top nav's actions slot.
 // The nav owns the title/subtitle and the global New menu — this component
-// only contributes the two For You-specific affordances. Mark-all-read is
-// *absent* rather than disabled when there's nothing unread (mockup 218's
-// `cuHas` gate) so the nav row doesn't carry a dead control.
+// only contributes the two For You-specific affordances, and must not render a
+// second `NewMenu` of its own, or the row shows two "New chat" buttons side by
+// side. Mark-all-read is *absent* rather than disabled when there's nothing
+// unread (mockup 218's `cuHas` gate) so the nav row doesn't carry a dead control.
 export function ForYouHeaderActions({
 	onMarkAllRead,
 	markAllReadDisabled,

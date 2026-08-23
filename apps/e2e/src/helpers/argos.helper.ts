@@ -1,6 +1,15 @@
 import { type ArgosScreenshotOptions, argosScreenshot } from '@argos-ci/playwright'
 import type { Page } from '@playwright/test'
 
+// Single source of truth for whether Argos should be exercised at all —
+// shared with playwright.config.ts's reporter list. Without a token the
+// upload always fails (quota, auth, or a missing-token error from Argos
+// itself), so there's no point spending the network round-trip: skip the
+// call entirely instead of attempting-then-catching.
+export function isArgosEnabled() {
+	return Boolean(process.env.ARGOS_TOKEN)
+}
+
 /**
  * Wraps argosScreenshot so an upload failure (free-plan screenshot quota,
  * outage, auth) can't fail the test — unlike SafeArgosReporter (which only
@@ -13,6 +22,7 @@ export async function safeArgosScreenshot(
 	name: string,
 	options?: ArgosScreenshotOptions,
 ) {
+	if (!isArgosEnabled()) return
 	try {
 		await argosScreenshot(page, name, options)
 	} catch (error) {

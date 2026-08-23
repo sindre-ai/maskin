@@ -288,11 +288,47 @@ describe('useConversationActivity', () => {
 		expect(api.sessions.logs).not.toHaveBeenCalled()
 	})
 
-	it('surfaces a timed-out session as an error turn, same as a failed one', async () => {
+	it('shows nothing for a timed-out session that already replied — the 2h backstop is expected, not an error', async () => {
 		vi.mocked(api.sessions.list).mockResolvedValue([
 			buildSession({
 				id: 'sess-1',
 				status: 'timeout',
+				startedAt: '2026-01-01T00:00:00.000Z',
+				config: { conversation: { conversation_id: conversationId, message_id: 10 } },
+				result: { error: 'Session timed out' },
+			}),
+		])
+		vi.mocked(api.sessions.logs).mockResolvedValue([])
+		const messages = [
+			buildMessage({ id: 10, actorId: 'human-1', content: 'hi' }),
+			buildMessage({
+				id: 11,
+				actorId: 'agent-1',
+				actorType: 'agent',
+				content: 'done',
+				createdAt: '2026-01-01T00:01:00.000Z',
+			}),
+		]
+
+		const { result } = renderHook(
+			() => useConversationActivity(workspaceId, conversationId, messages),
+			{ wrapper: TestWrapper },
+		)
+		await waitFor(() => expect(api.sessions.list).toHaveBeenCalled())
+
+		expect(result.current.byTriggerMessageId.size).toBe(0)
+		expect(result.current.byReplyMessageId.size).toBe(0)
+		expect(result.current.fallback).toEqual([])
+		// Logs are never fetched for a timed-out session either.
+		expect(api.sessions.logs).not.toHaveBeenCalled()
+	})
+
+	it('surfaces a timed-out session that never replied as interrupted, not as a failure', async () => {
+		vi.mocked(api.sessions.list).mockResolvedValue([
+			buildSession({
+				id: 'sess-1',
+				status: 'timeout',
+				startedAt: '2026-01-01T00:00:00.000Z',
 				config: { conversation: { conversation_id: conversationId, message_id: 10 } },
 				result: { error: 'Session timed out' },
 			}),
@@ -304,19 +340,124 @@ describe('useConversationActivity', () => {
 			() => useConversationActivity(workspaceId, conversationId, messages),
 			{ wrapper: TestWrapper },
 		)
-		await waitFor(() => expect(result.current.byTriggerMessageId.get(10)).toBeDefined())
+		await waitFor(() => expect(result.current.byTriggerMessageId.size).toBe(1))
 
-		expect(result.current.byTriggerMessageId.get(10)).toMatchObject([
-			{
-				sessionId: 'sess-1',
-				actorId: 'agent-1',
-				inProgress: false,
-				failed: true,
-				steps: [{ kind: 'error', text: 'Session timed out' }],
-			},
+		const turns = result.current.byTriggerMessageId.get(10)
+		expect(turns).toHaveLength(1)
+		expect(turns?.[0]).toMatchObject({
+			sessionId: 'sess-1',
+			interrupted: true,
+			inProgress: false,
+		})
+		// Not a failure — it must not get the red "failed to start" treatment.
+		expect(turns?.[0]?.failed).toBeUndefined()
+		expect(turns?.[0]?.steps).toHaveLength(1)
+	})
+
+	it('surfaces a failing logs query instead of an endless contentless spinner', async () => {
+		vi.mocked(api.sessions.list).mockResolvedValue([
+			buildSession({ id: 'sess-1', status: 'running', startedAt: '2026-01-01T00:00:00.000Z' }),
 		])
-		// Logs are never fetched for a timed-out session either.
-		expect(api.sessions.logs).not.toHaveBeenCalled()
+		vi.mocked(api.sessions.logs).mockRejectedValue(new Error('403'))
+		const messages = [buildMessage({ id: 10, actorId: 'human-1', content: 'hi' })]
+
+		const { result } = renderHook(
+			() => useConversationActivity(workspaceId, conversationId, messages),
+			{ wrapper: TestWrapper },
+		)
+		await waitFor(() => expect(result.current.fallback).toHaveLength(1))
+
+		expect(result.current.fallback[0]).toMatchObject({
+			sessionId: 'sess-1',
+			interrupted: true,
+			inProgress: false,
+		})
+		expect(result.current.fallback[0]?.steps[0]?.kind).toBe('error')
+	})
+
+	it('surfaces a reused session that answered an earlier turn but timed out mid-turn', async () => {
+		// Regression: the suppression check used to ask "did this actor reply at
+		// any point since the session started". An interactive session is reused
+		// for the whole conversation, so that was true for every conversation
+		// past its first exchange — the notice was suppressed on the common path
+		// and the user was left with no spinner, no notice and no error.
+		vi.mocked(api.sessions.list).mockResolvedValue([
+			buildSession({
+				id: 'sess-1',
+				status: 'timeout',
+				startedAt: '2026-01-01T00:00:00.000Z',
+				config: { conversation: { conversation_id: conversationId, message_id: 10 } },
+			}),
+		])
+		vi.mocked(api.sessions.logs).mockResolvedValue([])
+		const messages = [
+			buildMessage({ id: 10, actorId: 'human-1', createdAt: '2026-01-01T00:00:10.000Z' }),
+			buildMessage({
+				id: 11,
+				actorId: 'agent-1',
+				actorType: 'agent',
+				content: 'answer to turn 1',
+				createdAt: '2026-01-01T00:01:00.000Z',
+			}),
+			// Turn 2 — never answered, the session was reaped instead.
+			buildMessage({ id: 12, actorId: 'human-1', createdAt: '2026-01-01T00:02:00.000Z' }),
+		]
+
+		const { result } = renderHook(
+			() => useConversationActivity(workspaceId, conversationId, messages),
+			{ wrapper: TestWrapper },
+		)
+		await waitFor(() => expect(result.current.byTriggerMessageId.size).toBe(1))
+
+		// Anchored to the message actually left unanswered (12), NOT to the
+		// message that created the session (10).
+		expect(result.current.byTriggerMessageId.has(12)).toBe(true)
+		expect(result.current.byTriggerMessageId.get(12)?.[0]).toMatchObject({
+			sessionId: 'sess-1',
+			interrupted: true,
+			inProgress: false,
+		})
+	})
+
+	it('stops a turn spinning when the logs poll starts failing after it already had logs', async () => {
+		// Regression: the error branch was gated on `logs.length === 0`, which is
+		// only ever true when the FIRST fetch fails. A poll that worked and then
+		// broke kept its last-good data, skipped the branch and spun forever.
+		vi.mocked(api.sessions.list).mockResolvedValue([
+			buildSession({ id: 'sess-1', status: 'running', startedAt: '2026-01-01T00:00:00.000Z' }),
+		])
+		vi.mocked(api.sessions.logs).mockResolvedValueOnce([
+			buildLog({ id: 1, content: taggedUserTurn(10, 'hi') }),
+			buildLog({ id: 2, content: toolUse('Read') }),
+		])
+		const messages = [buildMessage({ id: 10, actorId: 'human-1', content: 'hi' })]
+
+		const { result } = renderHook(
+			() => useConversationActivity(workspaceId, conversationId, messages),
+			{ wrapper: TestWrapper },
+		)
+		// First poll succeeds — the turn is legitimately in flight.
+		await waitFor(() =>
+			expect(result.current.byTriggerMessageId.get(10)?.[0]).toMatchObject({
+				inProgress: true,
+			}),
+		)
+
+		// Every subsequent poll fails.
+		vi.mocked(api.sessions.logs).mockRejectedValue(new Error('503'))
+		await waitFor(
+			() =>
+				expect(result.current.byTriggerMessageId.get(10)?.[0]).toMatchObject({
+					inProgress: false,
+					interrupted: true,
+				}),
+			{ timeout: 5000 },
+		)
+
+		// The steps we already had are preserved, plus an error step.
+		const steps = result.current.byTriggerMessageId.get(10)?.[0]?.steps ?? []
+		expect(steps.length).toBeGreaterThan(1)
+		expect(steps[steps.length - 1]?.kind).toBe('error')
 	})
 
 	it('prefers the classified failure_reason.human_message over a generic result.error for a session that failed mid-run', async () => {
@@ -391,15 +532,21 @@ describe('useConversationActivity', () => {
 			wrapper: TestWrapper,
 		})
 		await waitFor(() =>
-			expect(api.sessions.logs).toHaveBeenCalledWith('sess-2', workspaceId, {
-				limit: '500',
-			}),
+			expect(api.sessions.logs).toHaveBeenCalledWith(
+				'sess-2',
+				workspaceId,
+				expect.objectContaining({ order: 'desc' }),
+			),
 		)
 
 		expect(result.current.byTriggerMessageId.get(10)).toBeUndefined()
 	})
 
-	it('a turn that resolves without posting a reply disappears once idle, instead of leaving an orphaned dropdown', async () => {
+	it('surfaces a turn that ended without calling the reply tool, anchored to its trigger', async () => {
+		// This used to disappear entirely: no reply tool call meant no message
+		// to anchor to, so the turn vanished and the user saw silence. Its
+		// end-of-turn output is now the reply, so it renders under the message
+		// that triggered it.
 		vi.mocked(api.sessions.list).mockResolvedValue([buildSession({ id: 'sess-1' })])
 		vi.mocked(api.sessions.logs).mockResolvedValue([
 			buildLog({ id: 1, content: taggedUserTurn(10, 'hi') }),
@@ -410,10 +557,272 @@ describe('useConversationActivity', () => {
 		const { result } = renderHook(() => useConversationActivity(workspaceId, conversationId, []), {
 			wrapper: TestWrapper,
 		})
+		await waitFor(() => expect(result.current.byTriggerMessageId.size).toBe(1))
+
+		const turn = result.current.byTriggerMessageId.get(10)?.[0]
+		expect(turn?.inProgress).toBe(false)
+		expect(turn?.pendingFinalOutput?.text).toBe('done')
+		expect(result.current.byReplyMessageId.size).toBe(0)
+		expect(result.current.fallback).toEqual([])
+	})
+
+	it('leaves nothing behind when a turn ends with no output at all', async () => {
+		vi.mocked(api.sessions.list).mockResolvedValue([buildSession({ id: 'sess-1' })])
+		vi.mocked(api.sessions.logs).mockResolvedValue([
+			buildLog({ id: 1, content: taggedUserTurn(10, 'hi') }),
+			buildLog({ id: 2, content: toolUse('search_objects') }),
+			buildLog({
+				id: 3,
+				content: JSON.stringify({
+					type: 'result',
+					subtype: 'success',
+					is_error: false,
+					result: '',
+				}),
+			}),
+		])
+
+		const { result } = renderHook(() => useConversationActivity(workspaceId, conversationId, []), {
+			wrapper: TestWrapper,
+		})
 		await waitFor(() => expect(api.sessions.logs).toHaveBeenCalled())
 
 		expect(result.current.byTriggerMessageId.size).toBe(0)
 		expect(result.current.byReplyMessageId.size).toBe(0)
 		expect(result.current.fallback).toEqual([])
+	})
+})
+
+describe('useConversationActivity — auto-posted final output', () => {
+	const sessionId = 'session-final'
+	const startedAt = new Date(1000).toISOString()
+
+	function finalResult(text: string) {
+		return JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: text })
+	}
+
+	function setup(messages: MessageResponse[], logs: SessionLogResponse[]) {
+		vi.mocked(api.sessions.list).mockResolvedValue([
+			buildSession({ id: sessionId, status: 'running', startedAt }),
+		])
+		vi.mocked(api.sessions.logs).mockResolvedValue(logs)
+		return renderHook(() => useConversationActivity(workspaceId, conversationId, messages), {
+			wrapper: TestWrapper,
+		})
+	}
+
+	function turnsFor(result: { current: ReturnType<typeof useConversationActivity> }) {
+		return [
+			...[...result.current.byReplyMessageId.values()].flat(),
+			...[...result.current.byTriggerMessageId.values()].flat(),
+			...result.current.fallback,
+		]
+	}
+
+	it('surfaces a closed turn result as a pending final output', async () => {
+		const { result } = setup(
+			[buildMessage({ id: 1, content: 'hi' })],
+			[
+				buildLog({ id: 1, content: taggedUserTurn(1, 'hi') }),
+				buildLog({ id: 2, content: finalResult('Here is the answer.') }),
+			],
+		)
+
+		await waitFor(() => expect(turnsFor(result).some((t) => t.pendingFinalOutput)).toBe(true))
+		const pending = turnsFor(result).find((t) => t.pendingFinalOutput)?.pendingFinalOutput
+		expect(pending?.text).toBe('Here is the answer.')
+		expect(pending?.isError).toBe(false)
+	})
+
+	it('drops the pending output once the persisted message arrives', async () => {
+		const { result } = setup(
+			[
+				buildMessage({ id: 1, content: 'hi' }),
+				// The row the backend inserted for this same turn.
+				buildMessage({
+					id: 2,
+					actorId: 'agent-1',
+					actorType: 'agent',
+					content: 'Here is the answer.',
+					metadata: { source: 'final_output', final_output: { dedupe_key: 'abc' } },
+					createdAt: new Date(2000).toISOString(),
+				}),
+			],
+			[
+				buildLog({ id: 1, content: taggedUserTurn(1, 'hi') }),
+				buildLog({ id: 2, content: finalResult('Here is the answer.') }),
+			],
+		)
+
+		await waitFor(() => expect(api.sessions.logs).toHaveBeenCalled())
+		// Reconciliation is derived: with the real message present there is no
+		// optimistic copy, so the text can never be on screen twice.
+		expect(turnsFor(result).every((t) => !t.pendingFinalOutput)).toBe(true)
+	})
+
+	it('marks only the unpersisted turn as pending when two turns have closed', async () => {
+		const { result } = setup(
+			[
+				buildMessage({ id: 1, content: 'first' }),
+				buildMessage({
+					id: 2,
+					actorId: 'agent-1',
+					actorType: 'agent',
+					content: 'first answer',
+					metadata: { source: 'final_output', final_output: { dedupe_key: 'a' } },
+					createdAt: new Date(2000).toISOString(),
+				}),
+				buildMessage({ id: 3, content: 'second' }),
+			],
+			[
+				buildLog({ id: 1, content: taggedUserTurn(1, 'first') }),
+				buildLog({ id: 2, content: finalResult('first answer') }),
+				buildLog({ id: 3, content: taggedUserTurn(3, 'second') }),
+				buildLog({ id: 4, content: finalResult('second answer') }),
+			],
+		)
+
+		await waitFor(() => expect(turnsFor(result).some((t) => t.pendingFinalOutput)).toBe(true))
+		const pendingTexts = turnsFor(result)
+			.map((t) => t.pendingFinalOutput?.text)
+			.filter(Boolean)
+		expect(pendingTexts).toEqual(['second answer'])
+	})
+
+	it('does not let a final_output message shift the MCP reply pairing', async () => {
+		// The agent posted a heads-up via MCP and then ended the turn. Both are
+		// agent-authored messages, but only the heads-up pairs with the
+		// containsReply segment — counting the final output too would anchor
+		// the dropdown under the wrong message.
+		const { result } = setup(
+			[
+				buildMessage({ id: 1, content: 'go' }),
+				buildMessage({
+					id: 2,
+					actorId: 'agent-1',
+					actorType: 'agent',
+					content: 'On it, back shortly.',
+					createdAt: new Date(2000).toISOString(),
+				}),
+				buildMessage({
+					id: 3,
+					actorId: 'agent-1',
+					actorType: 'agent',
+					content: 'All done.',
+					metadata: { source: 'final_output', final_output: { dedupe_key: 'b' } },
+					createdAt: new Date(3000).toISOString(),
+				}),
+			],
+			[
+				buildLog({ id: 1, content: taggedUserTurn(1, 'go') }),
+				buildLog({ id: 2, content: replyTool() }),
+				buildLog({ id: 3, content: finalResult('All done.') }),
+			],
+		)
+
+		// The dropdown anchors to the MCP reply (message 2), not the final output.
+		await waitFor(() => expect(result.current.byReplyMessageId.has(2)).toBe(true))
+		expect(result.current.byReplyMessageId.has(3)).toBe(false)
+	})
+
+	it('keeps the activity dropdown after the persisted message arrives', async () => {
+		// Regression: the turn used to be emitted only while its output was
+		// still pending, so the thinking/tool-use dropdown vanished the moment
+		// the agent's message landed — exactly when the user wants to open it.
+		const { result } = setup(
+			[
+				buildMessage({ id: 1, content: 'go' }),
+				buildMessage({
+					id: 2,
+					actorId: 'agent-1',
+					actorType: 'agent',
+					content: 'All done.',
+					metadata: { source: 'final_output', final_output: { dedupe_key: 'a' } },
+					createdAt: new Date(2000).toISOString(),
+				}),
+			],
+			[
+				buildLog({ id: 1, content: taggedUserTurn(1, 'go') }),
+				buildLog({ id: 2, content: toolUse('search_objects') }),
+				buildLog({ id: 3, content: finalResult('All done.') }),
+			],
+		)
+
+		// Anchored to the message it produced, the way MCP replies pair — so
+		// the trail sits directly above the answer it explains.
+		await waitFor(() => expect(result.current.byReplyMessageId.has(2)).toBe(true))
+		const turn = result.current.byReplyMessageId.get(2)?.[0]
+		expect(turn?.steps.map((s) => s.text)).toEqual(['Using search_objects'])
+		expect(turn?.pendingFinalOutput).toBeUndefined()
+	})
+
+	it('does not offer to load older activity for a short conversation', async () => {
+		// Regression: any terminal session used to flip this on, and a chat
+		// spawns one per turn — so the control appeared after the agent's
+		// second message, offering history that was already fully on screen.
+		vi.mocked(api.sessions.list).mockResolvedValue([
+			buildSession({ id: 'sess-live', status: 'running', startedAt }),
+			buildSession({ id: 'sess-old', status: 'timeout', startedAt }),
+		])
+		vi.mocked(api.sessions.logs).mockResolvedValue([])
+
+		const { result } = renderHook(
+			() =>
+				useConversationActivity(workspaceId, conversationId, [
+					buildMessage({ id: 1, content: 'hi' }),
+					buildMessage({ id: 2, actorId: 'agent-1', actorType: 'agent', content: 'hello' }),
+				]),
+			{ wrapper: TestWrapper },
+		)
+
+		await waitFor(() => expect(api.sessions.logs).toHaveBeenCalled())
+		expect(result.current.olderActivity.available).toBe(false)
+	})
+
+	it('offers to load older activity once enough replies have no trace', async () => {
+		vi.mocked(api.sessions.list).mockResolvedValue([
+			buildSession({ id: 'sess-old', status: 'timeout', startedAt }),
+		])
+		vi.mocked(api.sessions.logs).mockResolvedValue([])
+
+		const many = Array.from({ length: 25 }, (_, i) =>
+			buildMessage({
+				id: i + 1,
+				actorId: 'agent-1',
+				actorType: 'agent',
+				content: `reply ${i}`,
+			}),
+		)
+
+		const { result } = renderHook(
+			() => useConversationActivity(workspaceId, conversationId, many),
+			{ wrapper: TestWrapper },
+		)
+
+		await waitFor(() => expect(result.current.olderActivity.available).toBe(true))
+	})
+
+	it('does not fetch logs for a terminal session until asked', async () => {
+		vi.mocked(api.sessions.list).mockResolvedValue([
+			buildSession({ id: sessionId, status: 'timeout', startedAt }),
+		])
+		vi.mocked(api.sessions.logs).mockResolvedValue([])
+
+		// Enough untraced replies that the control is genuinely on offer —
+		// otherwise there is nothing to click and the assertion below is vacuous.
+		const many = Array.from({ length: 25 }, (_, i) =>
+			buildMessage({ id: i + 1, actorId: 'agent-1', actorType: 'agent', content: `reply ${i}` }),
+		)
+		const { result } = renderHook(
+			() => useConversationActivity(workspaceId, conversationId, many),
+			{ wrapper: TestWrapper },
+		)
+
+		await waitFor(() => expect(result.current.olderActivity.available).toBe(true))
+		// Opening an old conversation must not pull thousands of log rows.
+		expect(api.sessions.logs).not.toHaveBeenCalled()
+
+		result.current.loadOlderActivity()
+		await waitFor(() => expect(api.sessions.logs).toHaveBeenCalled())
 	})
 })

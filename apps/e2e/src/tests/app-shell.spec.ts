@@ -10,12 +10,14 @@ import { SHIP_GATE_VIEWPORTS, VIEWPORTS } from '../helpers/viewports'
 // collapse state that survives a full reload, the create sheet's edge geometry,
 // and light/dark rendering of the chrome at the small viewport.
 
+// The header's New control is split: a primary half that runs the screen's
+// default create action directly, and a chevron half that opens the full menu.
 function headerNewTrigger(page: Page) {
-	return page.locator('header').getByRole('button', { name: /^new$/i })
+	return page.locator('header').getByRole('button', { name: 'More ways to start' })
 }
 
 function newMenu(page: Page) {
-	return page.getByRole('menu', { name: 'New' })
+	return page.getByRole('menu')
 }
 
 // Two `[data-sidebar="sidebar"]` roots render inside the workspace: the left
@@ -38,11 +40,14 @@ test.describe('App shell', () => {
 			const bottomNav = page.getByRole('navigation', { name: 'Primary' })
 			if (vp.width < 768) {
 				await expect(bottomNav).toBeVisible()
-				await expect(bottomNav.getByRole('link', { name: 'For You, current page' })).toBeVisible()
-				await expect(bottomNav.getByRole('link', { name: /^Agents, / })).toBeVisible()
+				await expect(bottomNav.getByRole('link', { name: 'For you, current page' })).toBeVisible()
+				// Agents is deliberately not in the bottom bar (mobile-nav.tsx) — it is
+				// reached through the sidebar's activity card. Loops is the tap-through
+				// probe instead.
+				await expect(bottomNav.getByRole('link', { name: /^Loops, / })).toBeVisible()
 				// Tap-through on touch: the bottom bar must actually navigate the shell.
-				await bottomNav.getByRole('link', { name: /^Agents, / }).click()
-				await expect(page).toHaveURL(new RegExp(`/${account.workspaceId}/agents`))
+				await bottomNav.getByRole('link', { name: /^Loops, / }).click()
+				await expect(page).toHaveURL(new RegExp(`/${account.workspaceId}/loops`))
 			} else {
 				await expect(bottomNav).toBeHidden()
 			}
@@ -64,7 +69,7 @@ test.describe('App shell', () => {
 
 		await page.getByRole('button', { name: /toggle sidebar/i }).click()
 		await expect(drawer).toBeVisible()
-		await expect(drawer.getByRole('link', { name: /For You/ })).toBeVisible()
+		await expect(drawer.getByRole('link', { name: /For you/i })).toBeVisible()
 
 		// Tap the scrim to the right of the 288px drawer on the 375px viewport — Radix
 		// pointer-down-outside closes the Sheet.
@@ -95,7 +100,7 @@ test.describe('App shell', () => {
 		})
 		await page.goto(`/${account.workspaceId}`)
 		const sidebar = leftSidebar(page)
-		const forYou = sidebar.getByText('For You', { exact: true })
+		const forYou = sidebar.getByText('For you', { exact: true })
 
 		await expect.poll(sidebarWidth(page)).toBe(216)
 		await expect(forYou).toBeVisible()
@@ -151,17 +156,18 @@ test.describe('App shell', () => {
 		})
 		await page.goto(`/${account.workspaceId}`)
 
-		await page.getByRole('button', { name: /search and run commands/i }).click()
-		await expect(page.getByPlaceholder('Search objects, navigate...')).toBeVisible()
+		// NavSearch collapses to a single icon; the ⌘K button that opens the
+		// palette mounts once it expands (layout/nav-search.tsx).
+		await page.getByRole('button', { name: 'Search the workspace' }).click()
+		await page.getByRole('button', { name: 'Open commands' }).click()
+		const palette = page.getByPlaceholder('Run a command or jump to…')
+		await expect(palette).toBeVisible()
 
 		await page.keyboard.press('Escape')
-		await expect(page.getByPlaceholder('Search objects, navigate...')).toBeHidden()
+		await expect(palette).toBeHidden()
 	})
 
-	test('New opens a right-edge create sheet; Cancel and Escape close it', async ({
-		page,
-		account,
-	}) => {
+	test('New opens the shared create dialog; Escape closes it', async ({ page, account }) => {
 		await page.setViewportSize({
 			width: VIEWPORTS.tabletLandscape.width,
 			height: VIEWPORTS.tabletLandscape.height,
@@ -172,28 +178,25 @@ test.describe('App shell', () => {
 		// "Create an object" is the group label; the first object menuitem underneath
 		// it opens the CreatePicker seeded to that subtype.
 		await newMenu(page)
-			.getByRole('menuitem', { name: /^new task$/i })
+			.getByRole('menuitem', { name: /^new task/i })
 			.click()
 
-		const sheet = page.getByRole('dialog')
-		await expect(sheet).toBeVisible()
-		const box = await sheet.boundingBox()
-		if (!box) throw new Error('expected the create sheet to have a bounding box')
-		// Right-edge sheet: the panel hugs the viewport's right edge and is narrower
-		// than the full viewport (a centered dialog would sit mid-screen).
-		expect(Math.abs(box.x + box.width - VIEWPORTS.tabletLandscape.width)).toBeLessThanOrEqual(1)
+		const dialog = page.getByRole('dialog')
+		await expect(dialog).toBeVisible()
+		// The shell creates through the shared CreatePicker (a centred
+		// ResponsiveDialog, `sm:max-w-md`), not a shell-specific right-edge sheet —
+		// so the assertion is that it is a contained panel seeded to the right
+		// subtype, not that it hugs an edge.
+		const box = await dialog.boundingBox()
+		if (!box) throw new Error('expected the create dialog to have a bounding box')
 		expect(box.width).toBeLessThan(VIEWPORTS.tabletLandscape.width)
+		// The composer input is the overlay's one text field; its placeholder is
+		// per-type (create-picker.v2.tsx OBJECT_TYPE_PLACEHOLDER), so target the
+		// stable accessible name instead.
+		await expect(dialog.getByLabel('Title', { exact: true })).toBeVisible()
 
-		await sheet.getByRole('button', { name: 'Cancel' }).click()
-		await expect(sheet).toBeHidden()
-
-		await headerNewTrigger(page).click()
-		await newMenu(page)
-			.getByRole('menuitem', { name: /^new task$/i })
-			.click()
-		await expect(page.getByRole('dialog')).toBeVisible()
 		await page.keyboard.press('Escape')
-		await expect(page.getByRole('dialog')).toBeHidden()
+		await expect(dialog).toBeHidden()
 	})
 
 	test('shell surfaces render in light and dark mode at 375px', async ({ page, account }) => {

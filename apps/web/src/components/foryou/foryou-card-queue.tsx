@@ -154,13 +154,11 @@ export function ForYouCardQueue({
 		<div className="flex flex-1 min-h-0 flex-col gap-4 pb-[calc(6rem+2.75rem+env(safe-area-inset-bottom))] md:pb-24">
 			{cards}
 
+			{/* The action bar clears the v2 shell's fixed bottom nav below 768px via
+			    --mobile-nav-h (app.css); the fallback keeps it flush to the viewport
+			    edge under the legacy shell, which has no bottom nav. */}
 			{currentItem ? (
-				// Mobile bottom nav (h-11 + safe-area) is fixed at bottom-0/z-40; the
-				// action bar has to sit above it or its buttons take clicks through
-				// the nav's tap targets. Offset by the nav height (+ iOS safe area)
-				// on mobile only — desktop keeps `bottom-0` since MobileNav is hidden
-				// at md+.
-				<div className="fixed inset-x-0 bottom-[calc(2.75rem+env(safe-area-inset-bottom))] z-10 flex justify-center px-4 py-3 md:sticky md:bottom-0 md:px-0 md:py-0">
+				<div className="fixed inset-x-0 bottom-[var(--mobile-nav-h,0px)] z-10 flex justify-center px-4 py-3 md:sticky md:px-0 md:py-0">
 					<div className="flex w-full max-w-[760px] items-center justify-between gap-3">
 						<Button
 							size="lg"

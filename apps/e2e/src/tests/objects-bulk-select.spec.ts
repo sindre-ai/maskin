@@ -54,24 +54,24 @@ test.describe('Bulk-select — grouped list selection', () => {
 			})
 			await account.api.createObject(account.workspaceId, {
 				type: 'bet',
-				title: 'Group Qualified Bet A',
-				status: 'qualified',
+				title: 'Group Define Bet A',
+				status: 'define',
 			})
 			await account.api.createObject(account.workspaceId, {
 				type: 'bet',
-				title: 'Group Qualified Bet B',
-				status: 'qualified',
+				title: 'Group Define Bet B',
+				status: 'define',
 			})
 
 			await page.goto(`/${account.workspaceId}/objects?groupBy=status`)
 			// Groups start collapsed, so leaf titles aren't rendered yet — wait
 			// for the group-header label with its row count instead.
-			await expect(page.getByText('qualified', { exact: true })).toBeVisible({ timeout: 10000 })
-			await expect(page.getByText('Group Qualified Bet A')).not.toBeVisible()
+			await expect(page.getByText('define', { exact: true })).toBeVisible({ timeout: 10000 })
+			await expect(page.getByText('Group Define Bet A')).not.toBeVisible()
 
-			// Expand the qualified group; its two leaves appear under it.
-			await page.getByRole('button', { name: /^qualified/ }).click()
-			await expect(page.getByText('Group Qualified Bet A')).toBeVisible()
+			// Expand the define group; its two leaves appear under it.
+			await page.getByRole('button', { name: /^define/ }).click()
+			await expect(page.getByText('Group Define Bet A')).toBeVisible()
 
 			// Selecting leaves one at a time grows the bulk bar count.
 			const leafCheckboxes = page.getByRole('checkbox', { name: 'Select row' })
@@ -82,8 +82,8 @@ test.describe('Bulk-select — grouped list selection', () => {
 			await expect(page.getByLabel('2 selected')).toBeVisible()
 
 			// Selection is keyed by object id and survives collapsing the group.
-			await page.getByRole('button', { name: /^qualified/ }).click()
-			await expect(page.getByText('Group Qualified Bet A')).not.toBeVisible()
+			await page.getByRole('button', { name: /^define/ }).click()
+			await expect(page.getByText('Group Define Bet A')).not.toBeVisible()
 			await expect(page.getByLabel('2 selected')).toBeVisible()
 		})
 	}

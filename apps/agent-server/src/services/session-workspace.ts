@@ -125,8 +125,14 @@ export type PushSessionWorkspaceOptions = {
 	sleep?: (ms: number) => Promise<void>
 }
 
-const DEFAULT_PUSH_RETRIES = 3
+// 5 attempts with exponential backoff (2s, 4s, 8s, 16s — ~30s total) rather
+// than the previous 3 attempts with linear delay (2s, 4s — ~6s). SeaweedFS
+// answers `ServiceUnavailable` for tens of seconds while a volume server is
+// rebalancing or restarting, which outlasted the old budget and forced an
+// otherwise-successful agent run to exit non-zero (Sentry MASKIN-AGENT-SERVER-3).
+const DEFAULT_PUSH_RETRIES = 5
 const DEFAULT_PUSH_RETRY_DELAY_MS = 2_000
+const MAX_PUSH_RETRY_DELAY_MS = 16_000
 
 function defaultSleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms))
@@ -177,7 +183,9 @@ export async function pushSessionWorkspace(
 				return { archiveBytes: buf.length }
 			} catch (err) {
 				lastErr = err
-				if (attempt < retries) await sleep(retryDelayMs * attempt)
+				if (attempt < retries) {
+					await sleep(Math.min(retryDelayMs * 2 ** (attempt - 1), MAX_PUSH_RETRY_DELAY_MS))
+				}
 			}
 		}
 		throw lastErr

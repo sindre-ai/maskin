@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
 	CHIEF_OF_STAFF_DEFAULT,
 	CHIEF_OF_STAFF_SYSTEM_PROMPT,
-} from '../templates/chief-of-staff-agent'
+} from '../templates/default-workspace-agents'
 
 describe('Chief of Staff default template', () => {
 	it('ships a non-empty system prompt and description', () => {

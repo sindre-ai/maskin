@@ -625,6 +625,82 @@ describe('Conversations Integration', () => {
 		})
 	})
 
+	describe('server-owned message metadata', () => {
+		it('strips a client-claimed final_output marker', async () => {
+			const { app } = createConversationsApp(ownerId)
+			const created = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Metadata', participant_actor_ids: [] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${conversation.id}/messages`,
+					{
+						content: 'not really a final output',
+						metadata: {
+							source: 'final_output',
+							final_output: { dedupe_key: 'forged' },
+							mentions: [],
+						},
+					},
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(201)
+
+			// The frontend reconciles its optimistic bubble against `source`, so a
+			// forged marker would strand that bubble on screen permanently.
+			const body = (await res.json()) as { metadata: Record<string, unknown> | null }
+			expect(body.metadata?.source).toBeUndefined()
+			expect(body.metadata?.final_output).toBeUndefined()
+			expect(body.metadata?.mentions).toEqual([])
+		})
+
+		it('still posts the message, bumps lastMessageAt and logs the event', async () => {
+			// The insert path moved into a shared helper so the turn finalizer can
+			// reuse it — this pins the route's behaviour as unchanged.
+			const { app } = createConversationsApp(ownerId)
+			const created = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Helper', participant_actor_ids: [] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${conversation.id}/messages`,
+					{ content: 'hello there' },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(201)
+
+			const [row] = await db
+				.select()
+				.from(conversations)
+				.where(eq(conversations.id, conversation.id))
+			expect(row?.lastMessageAt).not.toBeNull()
+
+			const eventRows = await db
+				.select()
+				.from(events)
+				.where(and(eq(events.entityId, conversation.id), eq(events.action, 'message_posted')))
+			expect(eventRows).toHaveLength(1)
+		})
+	})
+
 	describe('messages.session_id', () => {
 		it('allows multiple messages to share the same session_id (interactive sessions are reused across replies)', async () => {
 			const agent = await insertActor(db, { type: 'agent' })
@@ -1068,6 +1144,63 @@ describe('Conversations Integration', () => {
 			})
 			expect(params.actionPrompt).toContain('earlier context message')
 			expect(params.actionPrompt).toContain(`hey <@${agent.id}>`)
+		})
+
+		it('includes attached files in the spawned session prompt with instructions to fetch them', async () => {
+			const agent = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, agent.id)
+			const { app: ownerApp } = createConversationsApp(ownerId)
+			const created = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Attachment prompt test', participant_actor_ids: [agent.id] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+			const [triggering] = await db
+				.insert(messages)
+				.values({
+					conversationId: conversation.id,
+					actorId: ownerId,
+					content: 'can you please give a summary of this file?',
+					metadata: {
+						mentions: [agent.id],
+						attachments: [
+							{
+								file_id: '11111111-1111-1111-1111-111111111111',
+								name: 'report.pdf',
+								mime_type: 'application/pdf',
+							},
+						],
+					},
+				})
+				.returning()
+			if (!triggering) throw new Error('failed to insert triggering message')
+
+			const sessionManager = {
+				createSession: vi.fn().mockResolvedValue({ id: 'new-session-id' }),
+				findActiveConversationSession: vi.fn().mockResolvedValue(null),
+				writeInput: vi.fn().mockResolvedValue(undefined),
+			}
+			await evaluateAndRespond({
+				db,
+				// biome-ignore lint/suspicious/noExplicitAny: test double, real type lives in session-manager.ts
+				sessionManager: sessionManager as any,
+				workspaceId,
+				conversationId: conversation.id,
+				messageId: triggering.id,
+			})
+
+			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
+			const [, params] = sessionManager.createSession.mock.calls[0] as [
+				string,
+				Record<string, unknown>,
+			]
+			expect(params.actionPrompt).toContain('report.pdf')
+			expect(params.actionPrompt).toContain('11111111-1111-1111-1111-111111111111')
+			expect(params.actionPrompt).toContain('get_file')
 		})
 
 		it('falls back to spawning fresh when writeInput to the existing session fails', async () => {

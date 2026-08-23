@@ -39,9 +39,14 @@ describe('ForYouHeaderActions', () => {
 		expect(onOpenBrief).toHaveBeenCalledTimes(1)
 	})
 
+	// New chat is owned exclusively by the shared top nav's own NewMenu
+	// (header.tsx) — ForYouHeaderActions must not render a second "New chat"
+	// control, or the row shows two of them side by side.
 	it('renders no New menu — the shared top nav owns that control', () => {
 		renderActions()
 		expect(screen.queryByRole('button', { name: /^new$/i })).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: /new chat/i })).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'More ways to start' })).not.toBeInTheDocument()
 	})
 
 	it('renders Mark all read only while something is unread', () => {

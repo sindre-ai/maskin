@@ -154,6 +154,16 @@ async function gotoForyou(page: Page, workspaceId: string) {
 	await page.goto(`/${workspaceId}`)
 }
 
+// The v2 shell projects For You's identity and its "Today's brief" action into
+// the global layout header (layout/header.tsx), which also owns the split New
+// button. ForYouHeader's own <header> keeps only the filter chips + Display.
+// Scope via the "Today's brief" button, which is unique to the global row.
+function globalHeader(page: Page) {
+	return page
+		.locator('header')
+		.filter({ has: page.getByRole('button', { name: /today.?s brief/i }) })
+}
+
 async function assertNoHorizontalOverflow(page: Page, label: string) {
 	await page.waitForLoadState('load')
 	// SSE holds a long-lived connection so networkidle never fires — a brief
@@ -219,8 +229,12 @@ test.describe('For You prototype redesign — layout at 1024', () => {
 		await expect(page.getByRole('button', { name: /^Task/ })).toBeVisible()
 
 		await expect(page.getByRole('button', { name: /today.?s brief/i })).toBeVisible()
-		// The page no longer ships its own New menu — the nav's is the only one.
-		await expect(page.getByRole('button', { name: /^new$/i })).toHaveCount(1)
+		// v2 split the header's "New" into a primary half (whose accessible name
+		// names the screen's default create action) and a chevron half.
+		await expect(globalHeader(page).getByRole('button', { name: 'New chat' })).toBeVisible()
+		await expect(
+			globalHeader(page).getByRole('button', { name: 'More ways to start' }),
+		).toBeVisible()
 
 		// The global header's generic Create/Chat icon buttons are dropped on
 		// the For You page — the nav title, "Brief", and "New" already cover
@@ -266,7 +280,12 @@ test.describe('For You prototype redesign — layout at 768', () => {
 		await gotoForyou(page, account.workspaceId)
 
 		await expect(page.getByRole('button', { name: /today.?s brief/i })).toBeVisible()
-		await expect(page.getByRole('button', { name: /^new$/i })).toHaveCount(1)
+		// v2 split the header's "New" into a primary half (whose accessible name
+		// names the screen's default create action) and a chevron half.
+		await expect(globalHeader(page).getByRole('button', { name: 'New chat' })).toBeVisible()
+		await expect(
+			globalHeader(page).getByRole('button', { name: 'More ways to start' }),
+		).toBeVisible()
 		await expect(page.getByRole('button', { name: /display options/i })).toBeVisible()
 
 		const card = page.getByTestId('foryou-queue-card')
@@ -291,7 +310,12 @@ test.describe('For You prototype redesign — layout at 375', () => {
 
 		// Icon-only at 375 — accessible name still comes from aria-label.
 		await expect(page.getByRole('button', { name: /today.?s brief/i })).toBeVisible()
-		await expect(page.getByRole('button', { name: /^new$/i })).toHaveCount(1)
+		// v2 split the header's "New" into a primary half (whose accessible name
+		// names the screen's default create action) and a chevron half.
+		await expect(globalHeader(page).getByRole('button', { name: 'New chat' })).toBeVisible()
+		await expect(
+			globalHeader(page).getByRole('button', { name: 'More ways to start' }),
+		).toBeVisible()
 
 		const displayTrigger = page.getByRole('button', { name: /display options/i })
 		await displayTrigger.click()
