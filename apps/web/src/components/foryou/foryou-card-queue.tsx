@@ -150,8 +150,15 @@ export function ForYouCardQueue({
 	// subtree including the hidden pending-commit card, cancelling its
 	// still-running use-swipe-to-mark-read timer. Only the second slot
 	// (action bar vs. empty state) is allowed to swap type.
+	//
+	// Bottom padding: below md the action bar is `fixed`, so the flex column
+	// can't see it and the card would grow underneath it. Reserve only
+	// --mobile-nav-h here — the page shell's own `pb-20` already covers the bar's
+	// height, so also reserving it here (as `6rem+2.75rem` did) stranded ~96px of
+	// dead space between the card and the buttons. At md+ the bar is back in flow
+	// (`md:sticky`) and reserves its own space, so no extra padding is needed.
 	return (
-		<div className="flex flex-1 min-h-0 flex-col gap-4 pb-[calc(6rem+2.75rem+env(safe-area-inset-bottom))] md:pb-24">
+		<div className="flex flex-1 min-h-0 flex-col gap-4 pb-[var(--mobile-nav-h,0px)] md:pb-0">
 			{cards}
 
 			{/* The action bar clears the v2 shell's fixed bottom nav below 768px via

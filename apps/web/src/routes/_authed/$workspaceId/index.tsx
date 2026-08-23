@@ -346,8 +346,14 @@ function ForYouRedesign() {
 							))}
 						</div>
 					)}
+					{/* The feed column is a fixed-height flex item (`flex-1 min-h-0`) so
+					    Cards mode can hand the card the exact remaining height and let
+					    the thread scroll inside it. That cap applies to List mode too,
+					    where the rows are plain flow content — so the list needs its
+					    own scroll container, or anything past the fold is unreachable
+					    (the page scroller can't see the overflow through the cap). */}
 					{mode === 'list' ? (
-						<div className="mx-auto flex w-full max-w-[760px] flex-col gap-2">
+						<div className="mx-auto flex w-full min-h-0 max-w-[760px] flex-1 flex-col gap-2 overflow-y-auto pb-4">
 							{queue.map((item) => (
 								<ForYouListRow
 									key={`${item.entity_type}-${item.entity_id}`}
