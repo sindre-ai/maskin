@@ -22,7 +22,7 @@ test.describe('Objects CRUD', () => {
 		await page.locator('header').getByRole('button', { name: 'More ways to start' }).click()
 		await page.getByRole('menuitem', { name: /new task/i }).click()
 
-		await page.getByLabel('Title').fill('E2E Test Object')
+		await page.getByRole('dialog').getByLabel('Title', { exact: true }).fill('E2E Test Object')
 
 		const send = page.getByRole('button', { name: /^Send to / })
 		await expect(send).toBeEnabled({ timeout: 15000 })
@@ -96,6 +96,6 @@ test.describe('Objects CRUD', () => {
 
 		// Seeded with a defaultType, so the picker skips straight to the composer.
 		// The placeholder is per-type, so target the stable accessible name.
-		await expect(page.getByLabel('Title')).toBeVisible()
+		await expect(page.getByRole('dialog').getByLabel('Title', { exact: true })).toBeVisible()
 	})
 })

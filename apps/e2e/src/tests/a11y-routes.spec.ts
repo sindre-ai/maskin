@@ -142,9 +142,14 @@ test.describe('a11y route sweep (WCAG 2.1 AA)', () => {
 				}
 
 				await page.goto(path)
-				// Give React a beat to paint the first interactive state so the
-				// scan doesn't fire against an empty root before hydration lands.
-				await page.waitForLoadState('networkidle')
+				// `load` + a brief settle, never `networkidle`: the app holds an open
+				// SSE connection to /api/events, so the network is never idle and
+				// each route would burn its whole test timeout here — 28 of those
+				// wedge the shard past CI's cap. The settle gives React a beat to
+				// paint the first interactive state so the scan doesn't fire
+				// against an empty root.
+				await page.waitForLoadState('load')
+				await page.waitForTimeout(300)
 				await expect(page.locator('body')).toBeVisible()
 
 				await expectNoSeriousA11yViolations(page, `${route.label} · ${theme}`, {

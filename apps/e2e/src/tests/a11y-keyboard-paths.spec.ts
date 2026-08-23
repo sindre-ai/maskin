@@ -16,7 +16,11 @@ test.describe('keyboard-only interactive paths', () => {
 		account,
 	}) => {
 		await page.goto(`/${account.workspaceId}`)
-		await page.waitForLoadState('networkidle')
+		// `load` + a brief settle instead of `networkidle`: the app holds an open SSE
+		// connection to /api/events, so the network is never idle and this would
+		// burn the whole test timeout on every route.
+		await page.waitForLoadState('load')
+		await page.waitForTimeout(200)
 
 		// Walk a handful of Tab stops and confirm each one lands on a real
 		// focusable node with a rendered focus indicator. axe checks static
@@ -55,10 +59,14 @@ test.describe('keyboard-only interactive paths', () => {
 		account,
 	}) => {
 		await page.goto(`/${account.workspaceId}`)
-		await page.waitForLoadState('networkidle')
+		// `load` + a brief settle instead of `networkidle`: the app holds an open SSE
+		// connection to /api/events, so the network is never idle and this would
+		// burn the whole test timeout on every route.
+		await page.waitForLoadState('load')
+		await page.waitForTimeout(200)
 
 		await page.keyboard.press('ControlOrMeta+k')
-		const palette = page.getByPlaceholder('Search objects, navigate...')
+		const palette = page.getByPlaceholder('Run a command or jump to…')
 		await expect(palette).toBeVisible()
 		await expect(palette).toBeFocused()
 
@@ -77,10 +85,14 @@ test.describe('keyboard-only interactive paths', () => {
 		// tree. Owning fix goes on the app-shell bet; this spec fails if the
 		// containment ever regresses further.
 		await page.goto(`/${account.workspaceId}`)
-		await page.waitForLoadState('networkidle')
+		// `load` + a brief settle instead of `networkidle`: the app holds an open SSE
+		// connection to /api/events, so the network is never idle and this would
+		// burn the whole test timeout on every route.
+		await page.waitForLoadState('load')
+		await page.waitForTimeout(200)
 
 		await page.keyboard.press('ControlOrMeta+k')
-		const palette = page.getByPlaceholder('Search objects, navigate...')
+		const palette = page.getByPlaceholder('Run a command or jump to…')
 		await expect(palette).toBeVisible()
 
 		for (let i = 0; i < 8; i++) {

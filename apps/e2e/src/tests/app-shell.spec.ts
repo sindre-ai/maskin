@@ -178,7 +178,7 @@ test.describe('App shell', () => {
 		// "Create an object" is the group label; the first object menuitem underneath
 		// it opens the CreatePicker seeded to that subtype.
 		await newMenu(page)
-			.getByRole('menuitem', { name: /^new task$/i })
+			.getByRole('menuitem', { name: /^new task/i })
 			.click()
 
 		const dialog = page.getByRole('dialog')
@@ -193,7 +193,7 @@ test.describe('App shell', () => {
 		// The composer input is the overlay's one text field; its placeholder is
 		// per-type (create-picker.v2.tsx OBJECT_TYPE_PLACEHOLDER), so target the
 		// stable accessible name instead.
-		await expect(dialog.getByLabel('Title')).toBeVisible()
+		await expect(dialog.getByLabel('Title', { exact: true })).toBeVisible()
 
 		await page.keyboard.press('Escape')
 		await expect(dialog).toBeHidden()

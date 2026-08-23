@@ -48,7 +48,7 @@ test.describe('Create overlay', () => {
 			await expect(dialog(page).getByText('Create something — or type freely')).toBeVisible()
 			await expect(page.getByRole('button', { name: /just want to talk/i })).toBeVisible()
 			await expect(page.getByRole('radio', { name: 'Bet' })).toBeVisible()
-			await expect(page.getByLabel('Title')).toBeVisible()
+			await expect(page.getByRole('dialog').getByLabel('Title', { exact: true })).toBeVisible()
 			await expect(page.getByRole('button', { name: 'Pick a type' })).toBeVisible()
 
 			// The overlay must never push the page itself sideways.
@@ -79,7 +79,10 @@ test.describe('Create overlay', () => {
 			timeout: 15000,
 		})
 
-		await page.getByLabel('Title').fill('Weekly digests lift activation for trial teams')
+		await page
+			.getByRole('dialog')
+			.getByLabel('Title', { exact: true })
+			.fill('Weekly digests lift activation for trial teams')
 
 		const send = page.getByRole('button', { name: /^Send to / })
 		await expect(send).toBeEnabled()
@@ -99,7 +102,10 @@ test.describe('Create overlay', () => {
 		await account.api.addWorkspaceMember(account.workspaceId, agent.id)
 
 		await openOverlay(page, account.workspaceId)
-		await page.getByLabel('Title').fill('Catch me up on billing')
+		await page
+			.getByRole('dialog')
+			.getByLabel('Title', { exact: true })
+			.fill('Catch me up on billing')
 
 		await expect(dialog(page).getByText(/opens it as a chat in/i)).toBeVisible()
 		await expect(dialog(page).getByText('picks this up when you send')).toBeVisible({
@@ -117,7 +123,7 @@ test.describe('Create overlay', () => {
 
 	test('slash opens the type menu and the keyboard selects a row', async ({ page, account }) => {
 		await openOverlay(page, account.workspaceId)
-		const input = page.getByLabel('Title')
+		const input = page.getByRole('dialog').getByLabel('Title', { exact: true })
 		await input.fill('/')
 
 		const listbox = page.getByRole('listbox', { name: 'Pick a type' })
@@ -141,7 +147,7 @@ test.describe('Create overlay', () => {
 		await page.getByRole('radio', { name: 'Bet' }).click()
 		await expect(dialog(page).getByText('New bet')).toBeVisible()
 
-		await page.getByLabel('Title').press('Backspace')
+		await page.getByRole('dialog').getByLabel('Title', { exact: true }).press('Backspace')
 
 		await expect(dialog(page).getByText('New bet')).toHaveCount(0)
 		await expect(page.getByRole('radio', { name: 'Bet' })).toBeVisible()

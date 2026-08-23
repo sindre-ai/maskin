@@ -41,9 +41,9 @@ test.describe('Header New menu', () => {
 
 			await expect(page.getByRole('menuitem', { name: /new chat/i })).toBeVisible()
 			await expect(newMenu(page).getByText('Create an object')).toBeVisible()
-			await expect(page.getByRole('menuitem', { name: /^new task$/i })).toBeVisible()
-			await expect(page.getByRole('menuitem', { name: /^new insight$/i })).toBeVisible()
-			await expect(page.getByRole('menuitem', { name: /^new bet$/i })).toBeVisible()
+			await expect(page.getByRole('menuitem', { name: /^new task/i })).toBeVisible()
+			await expect(page.getByRole('menuitem', { name: /^new insight/i })).toBeVisible()
+			await expect(page.getByRole('menuitem', { name: /^new bet/i })).toBeVisible()
 			await expect(page.getByRole('menuitem', { name: /new loop/i })).toBeVisible()
 			await expect(page.getByRole('menuitem', { name: /new agent/i })).toBeVisible()
 			await expect(page.getByRole('menuitem', { name: /find a past conversation/i })).toBeVisible()
@@ -68,12 +68,12 @@ test.describe('Header New menu', () => {
 		await page.goto(`/${account.workspaceId}`)
 
 		await headerNewTrigger(page).click()
-		await page.getByRole('menuitem', { name: /^new task$/i }).click()
+		await page.getByRole('menuitem', { name: /^new task/i }).click()
 
 		// Seeded with a defaultType, so the picker skips the type-selector step
 		// and goes straight to the composer. The placeholder is per-type, so
 		// target the input's stable accessible name.
-		await expect(page.getByLabel('Title')).toBeVisible()
+		await expect(page.getByRole('dialog').getByLabel('Title', { exact: true })).toBeVisible()
 		await expect(page.getByRole('radiogroup', { name: 'Type' })).toHaveCount(0)
 	})
 
@@ -88,7 +88,7 @@ test.describe('Header New menu', () => {
 
 		const dialog = page.getByRole('dialog')
 		await expect(dialog.getByText('New loop')).toBeVisible()
-		const titleInput = page.getByLabel('Title')
+		const titleInput = page.getByRole('dialog').getByLabel('Title', { exact: true })
 		await expect(titleInput).toBeVisible()
 
 		await titleInput.fill('Header New menu loop check')
@@ -111,7 +111,7 @@ test.describe('Header New menu', () => {
 
 		const dialog = page.getByRole('dialog')
 		await expect(dialog.getByText('New agent')).toBeVisible()
-		await expect(page.getByLabel('Title')).toBeVisible()
+		await expect(page.getByRole('dialog').getByLabel('Title', { exact: true })).toBeVisible()
 	})
 
 	test('Find a past conversation opens the command palette', async ({ page, account }) => {
@@ -147,6 +147,6 @@ test.describe('Header New menu', () => {
 
 		await expect(page.getByRole('menuitem', { name: /new chat/i })).toBeVisible()
 		await expect(newMenu(page).getByText('Create an object')).toHaveCount(0)
-		await expect(page.getByRole('menuitem', { name: /^new task$/i })).toHaveCount(0)
+		await expect(page.getByRole('menuitem', { name: /^new task/i })).toHaveCount(0)
 	})
 })
