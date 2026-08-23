@@ -23,10 +23,14 @@ RUN npm install -g @playwright/mcp
 # through a supported API. The on-disk JSONL format is explicitly internal and
 # changes between releases, so hand-parsing it would rot silently.
 RUN npm install -g @anthropic-ai/claude-agent-sdk
-# Globally-installed packages are not on the module resolution path for a script
-# run by absolute path — without this, resolve-resume-turn.mjs cannot import the
-# SDK and every rewind silently degrades to a cold start.
-ENV NODE_PATH=/usr/local/lib/node_modules
+# resolve-resume-turn.mjs imports the SDK by bare specifier. That resolves
+# because the script lives at /usr/local/lib/maskin/, so Node's walk up the
+# directory tree reaches /usr/local/lib/node_modules — where `npm install -g`
+# puts it on this base image. Moving the script out from under /usr/local/lib
+# would break the import; keep it there, or vendor the dependency alongside it.
+#
+# Deliberately NOT relying on NODE_PATH: that variable is honoured only by the
+# CommonJS resolver, and the script is ESM.
 
 # Non-root user (Claude Code refuses --dangerously-skip-permissions as root)
 RUN useradd -m -s /bin/bash agent

@@ -456,8 +456,17 @@ run_agent() {
       local resume_args=()
       if [ -n "$CLAUDE_RESUME_SESSION_ID" ] && [ -n "$CLAUDE_RESUME_TURN_ORDINAL" ]; then
         local resume_uuid=""
+        local resume_err=""
+        # stdout only: the resolver prints the bare uuid there, and folding
+        # stderr in would append any Node warning to it — the flags would then
+        # get a malformed value while the exit status still said success, so
+        # the cold-start fallback below would never run.
+        local resume_err_file
+        resume_err_file=$(mktemp)
         if resume_uuid=$(node /usr/local/lib/maskin/resolve-resume-turn.mjs \
-              "$CLAUDE_RESUME_SESSION_ID" "$CLAUDE_RESUME_TURN_ORDINAL" 2>&1); then
+              "$CLAUDE_RESUME_SESSION_ID" "$CLAUDE_RESUME_TURN_ORDINAL" 2>"$resume_err_file") \
+           && [[ "$resume_uuid" =~ ^[0-9a-fA-F-]{36}$ ]]; then
+          rm -f "$resume_err_file"
           resume_args=(
             --resume "$CLAUDE_RESUME_SESSION_ID"
             --resume-session-at "$resume_uuid"
@@ -466,7 +475,9 @@ run_agent() {
           )
           echo "[system] Rewind: resuming CLI session $CLAUDE_RESUME_SESSION_ID at turn $CLAUDE_RESUME_TURN_ORDINAL ($resume_uuid)"
         else
-          echo "[system] Rewind: could not resolve turn $CLAUDE_RESUME_TURN_ORDINAL of session $CLAUDE_RESUME_SESSION_ID — starting cold. ($resume_uuid)" >&2
+          resume_err=$(cat "$resume_err_file" 2>/dev/null)
+          rm -f "$resume_err_file"
+          echo "[system] Rewind: could not resolve turn $CLAUDE_RESUME_TURN_ORDINAL of session $CLAUDE_RESUME_SESSION_ID — starting cold. ($resume_err)" >&2
         fi
       fi
       if [ "$INTERACTIVE" = "1" ]; then

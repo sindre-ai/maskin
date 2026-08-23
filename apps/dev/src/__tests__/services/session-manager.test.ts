@@ -4035,6 +4035,40 @@ describe('SessionManager', () => {
 			expect(resolved.rejected).toBe('env:GITHUB_REPO')
 		})
 	})
+
+	// A conversation rewind stops a session and immediately spawns a replacement
+	// that restores the stopped session's workspace (which carries the CLI
+	// transcript) via sourceSessionId. The snapshot is written after the
+	// container exits, so the rewind has to wait for it — otherwise the resume
+	// silently degrades to a cold start.
+	describe('waitForWorkspaceSnapshot()', () => {
+		it('resolves once the snapshot for that session has been attempted', async () => {
+			const pending = manager.waitForWorkspaceSnapshot('session-1', 5_000)
+			manager.emit('workspace-snapshotted', 'session-1')
+			expect(await pending).toBe(true)
+		})
+
+		it('ignores snapshots belonging to other sessions', async () => {
+			const pending = manager.waitForWorkspaceSnapshot('session-1', 150)
+			manager.emit('workspace-snapshotted', 'session-2')
+			// Still waiting on its own session, so this times out rather than
+			// returning early on a sibling's snapshot.
+			expect(await pending).toBe(false)
+		})
+
+		it('returns false on timeout rather than rejecting, so a rewind still proceeds cold', async () => {
+			expect(await manager.waitForWorkspaceSnapshot('session-never', 100)).toBe(false)
+		})
+
+		it('does not leak a listener per wait', async () => {
+			const before = manager.listenerCount('workspace-snapshotted')
+			await manager.waitForWorkspaceSnapshot('session-timeout', 50)
+			const settled = manager.waitForWorkspaceSnapshot('session-resolved', 5_000)
+			manager.emit('workspace-snapshotted', 'session-resolved')
+			await settled
+			expect(manager.listenerCount('workspace-snapshotted')).toBe(before)
+		})
+	})
 })
 
 describe('mergeLaunchRouteConfig()', () => {

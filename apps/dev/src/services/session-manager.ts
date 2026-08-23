@@ -100,6 +100,14 @@ import { buildWorkspaceStartupBlock, renderWorkspaceBriefing } from './workspace
 const LOCAL_RUNTIME_BUCKET = 'local-docker'
 
 /**
+ * Cap on the in-memory ledger of sessions whose post-exit snapshot has been
+ * attempted (see `waitForWorkspaceSnapshot`). Entries only need to survive the
+ * seconds between a session stopping and its replacement restoring, so this is
+ * a leak guard rather than a tuned capacity.
+ */
+const SNAPSHOT_LEDGER_LIMIT = 1000
+
+/**
  * Mirrors the allowlist regex enforced on the API side by
  * `apps/dev/src/routes/integrations.ts` and
  * `apps/dev/src/lib/integrations/providers/github/auth.ts` (T4). Kept in sync so
@@ -1013,6 +1021,60 @@ export class SessionManager extends EventEmitter {
 		const tarStream = await this.containers.copyFrom(containerId, '/agent/')
 		await this.storage.put(`session-workspaces/${sessionId}.tar.gz`, tarStream.pipe(createGzip()))
 		logger.info('Workspace snapshot saved', { sessionId })
+	}
+
+	/**
+	 * Resolves once this session's post-exit workspace snapshot has been
+	 * attempted, so a replacement session that restores from it via
+	 * `sourceSessionId` finds something there.
+	 *
+	 * Needed because `stopSession` returns as soon as the container is asked to
+	 * stop — the snapshot runs later, from `handleCompletion` on the exit
+	 * watcher. A caller that stops a session and immediately spawns its
+	 * replacement (conversation rewind) would otherwise race the snapshot and
+	 * silently start from an empty workspace, losing the CLI transcript the
+	 * rewind exists to resume.
+	 *
+	 * Resolves `true` once the snapshot has been attempted (successfully or
+	 * not), `false` on timeout. Never rejects: a rewind must still proceed, just
+	 * cold, if the snapshot never lands.
+	 */
+	async waitForWorkspaceSnapshot(sessionId: string, timeoutMs = 60_000): Promise<boolean> {
+		// The snapshot may already have completed before we started waiting —
+		// check the ledger first, or we'd wait for an event that never comes.
+		if (this.snapshotAttempted.has(sessionId)) return true
+
+		return await new Promise<boolean>((resolve) => {
+			const done = (result: boolean) => {
+				clearTimeout(timer)
+				this.off('workspace-snapshotted', onSnapshot)
+				resolve(result)
+			}
+			const onSnapshot = (id: string) => {
+				if (id === sessionId) done(true)
+			}
+			const timer = setTimeout(() => {
+				logger.warn('Timed out waiting for workspace snapshot', { sessionId, timeoutMs })
+				done(false)
+			}, timeoutMs)
+			this.on('workspace-snapshotted', onSnapshot)
+		})
+	}
+
+	/**
+	 * Sessions whose post-exit snapshot has been attempted. Bounded by
+	 * `SNAPSHOT_LEDGER_LIMIT` — this only has to outlive the gap between a stop
+	 * and the replacement session's restore, not the process.
+	 */
+	private readonly snapshotAttempted = new Set<string>()
+
+	private markSnapshotAttempted(sessionId: string): void {
+		if (this.snapshotAttempted.size >= SNAPSHOT_LEDGER_LIMIT) {
+			const oldest = this.snapshotAttempted.values().next().value
+			if (oldest !== undefined) this.snapshotAttempted.delete(oldest)
+		}
+		this.snapshotAttempted.add(sessionId)
+		this.emit('workspace-snapshotted', sessionId)
 	}
 
 	async pauseSession(sessionId: string): Promise<void> {
@@ -2752,6 +2814,9 @@ export class SessionManager extends EventEmitter {
 				error: String(err),
 			}),
 		)
+		// Signal even on failure: a waiter wants to know the snapshot will never
+		// arrive, not to sit until its timeout. Both outcomes mean "stop waiting".
+		this.markSnapshotAttempted(sessionId)
 
 		// Cleanup
 		this.containers.detachStdin(sessionId)

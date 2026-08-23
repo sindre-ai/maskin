@@ -239,6 +239,7 @@ async function stopConversationSessions(
 	db: Database,
 	sessionManager: SessionManager,
 	conversationId: string,
+	options: { awaitSnapshot?: boolean } = {},
 ): Promise<void> {
 	const live = await db
 		.select({ id: sessions.id })
@@ -255,6 +256,13 @@ async function stopConversationSessions(
 		live.map(async (session) => {
 			try {
 				await sessionManager.stopSession(session.id)
+				// stopSession returns as soon as the container is asked to stop;
+				// the workspace snapshot (which carries the CLI transcript) is
+				// written later, from the exit watcher. A rewind restores from
+				// that snapshot via sourceSessionId, so it has to wait for it —
+				// otherwise the replacement session reliably finds nothing and
+				// falls back to a cold start, defeating the resume entirely.
+				if (options.awaitSnapshot) await sessionManager.waitForWorkspaceSnapshot(session.id)
 			} catch (err: unknown) {
 				logger.warn('Failed to stop interactive session during conversation rewind', {
 					conversationId,
@@ -1352,7 +1360,11 @@ app.openapi(rewindMessageRoute, (async (c) => {
 	// transcript truncated at the rewind point, so the agent keeps everything
 	// that came *before* — the point of doing this via --resume rather than a
 	// cold restart.
-	await stopConversationSessions(db, sessionManager, id)
+	//
+	// Waits for each stopped session's workspace snapshot: that snapshot is what
+	// the replacement restores the transcript from, and it is only written after
+	// the container exits.
+	await stopConversationSessions(db, sessionManager, id, { awaitSnapshot: true })
 
 	const resumeByAgent = new Map(
 		resumeTargets.map((t) => [

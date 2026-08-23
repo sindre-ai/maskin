@@ -55,10 +55,28 @@ try {
 
 // Only the user turns are counted, matching how apps/dev derived the ordinal:
 // one entry per envelope written to the CLI's stdin, seed turn included.
-const userTurns = (messages ?? []).filter((m) => {
+//
+// `role === 'user'` alone is NOT that set. The CLI files a tool's output under
+// the user role too, so a transcript's user-role entries are overwhelmingly
+// tool results — measured 113 tool results to 1 real turn on a representative
+// agentic session. Counting those shifts every ordinal and resolves to a uuid
+// in the middle of the agent's own work, which is worse than failing: a uuid
+// IS found, so the cold-start fallback never fires and the rewind silently
+// lands in the wrong place.
+//
+// A real turn is one apps/dev wrote to stdin: content is either a plain string
+// or a block array carrying no tool_result. Subagent entries (parent_tool_use_id
+// set) are excluded too — apps/dev only ever delivers main-session turns.
+function isDeliveredUserTurn(m) {
 	const role = m?.type ?? m?.message?.role
-	return role === 'user'
-})
+	if (role !== 'user') return false
+	if (m?.parent_tool_use_id) return false
+	const content = m?.message?.content
+	if (Array.isArray(content)) return !content.some((block) => block?.type === 'tool_result')
+	return true
+}
+
+const userTurns = (messages ?? []).filter(isDeliveredUserTurn)
 
 const turn = userTurns[ordinal - 1]
 const uuid = turn?.uuid ?? turn?.id
@@ -66,6 +84,14 @@ if (!uuid) {
 	console.error(
 		`turn ${ordinal} not found (transcript has ${userTurns.length} user turn(s)) for ${sessionId}`,
 	)
+	process.exit(1)
+}
+
+// Belt and braces: never hand back a tool result even if the shapes above drift
+// in a future CLI release. Exiting here takes the documented cold-start path,
+// which is lossy but correct — resuming at a tool result is neither.
+if (!isDeliveredUserTurn(turn)) {
+	console.error(`turn ${ordinal} resolved to a non-user entry for ${sessionId}`)
 	process.exit(1)
 }
 
