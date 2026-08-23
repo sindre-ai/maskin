@@ -286,6 +286,14 @@ export class SessionManager extends EventEmitter {
 	 */
 	private static readonly CHAT_IDLE_CLOSE_MS = 30 * 60 * 1000
 	/**
+	 * How long a delivered chat turn may sit with zero output after it before
+	 * the session is declared wedged. A healthy turn echoes an init/assistant
+	 * event within seconds, and even a long tool call is preceded by its
+	 * streamed tool_use event — so a session whose log tail is still the bare
+	 * user-turn envelope after this window has a dead CLI on the other end.
+	 */
+	private static readonly CHAT_STALLED_TURN_MS = 10 * 60 * 1000
+	/**
 	 * Docker's logs(follow:true) endpoint can drop transient (HTTP keepalive
 	 * timeouts, Docker Desktop hiccups, network blips). Without reattaching,
 	 * `session_logs` stops growing and the idle watchdog ~10 min later mistakes
@@ -2898,6 +2906,74 @@ export class SessionManager extends EventEmitter {
 		)
 	}
 
+	/**
+	 * Recovers a chat session whose delivered turn was never consumed (see the
+	 * watchdog's stalled-turn step): fails the session with a reason the chat
+	 * UI can show, stops the orphaned remote sandbox, and re-runs the
+	 * responder for the stalled message — one automatic retry per message,
+	 * shared with the missed-message sweep's dedupe set.
+	 */
+	private async failStalledConversationSession(
+		session: typeof sessions.$inferSelect,
+		stalledMessageId: number,
+	): Promise<void> {
+		logger.warn('Interactive conversation session stalled — delivered turn never produced output', {
+			sessionId: session.id,
+			conversationId: session.conversationId,
+			stalledMessageId,
+		})
+
+		// Surface a truthful reason in the chat's failure notice first —
+		// markSessionFailedAfterContainerLoss flips status but leaves `result`
+		// untouched, so this text is what the activity row renders.
+		await this.db
+			.update(sessions)
+			.set({
+				result: {
+					error:
+						'The agent stopped responding mid-conversation — a fresh session is picking the thread back up.',
+				},
+				updatedAt: new Date(),
+			})
+			.where(and(eq(sessions.id, session.id), eq(sessions.status, 'running')))
+
+		// The sandbox may still be alive with a dead CLI inside — release it.
+		if (session.agentServerId) {
+			const [serverRow] = await this.db
+				.select({ id: agentServers.id, url: agentServers.url, secret: agentServers.secret })
+				.from(agentServers)
+				.where(eq(agentServers.id, session.agentServerId))
+				.limit(1)
+			if (serverRow) {
+				const client = new AgentServerClient({ server: serverRow })
+				await client.stopSession(session.id).catch((err) =>
+					logger.warn('Failed to stop remote sandbox for stalled chat session', {
+						sessionId: session.id,
+						error: String(err),
+					}),
+				)
+			}
+		}
+
+		await this.markSessionFailedAfterContainerLoss(session.id, session.workspaceId)
+
+		if (!session.conversationId || this.sweptMessageIds.has(stalledMessageId)) return
+		this.rememberSweptMessage(stalledMessageId)
+		await evaluateAndRespond({
+			db: this.db,
+			sessionManager: this,
+			workspaceId: session.workspaceId,
+			conversationId: session.conversationId,
+			messageId: stalledMessageId,
+		}).catch((err) =>
+			logger.error('Responder re-run after stalled session failed', {
+				sessionId: session.id,
+				messageId: stalledMessageId,
+				error: String(err),
+			}),
+		)
+	}
+
 	private async runWatchdog(): Promise<void> {
 		const now = new Date()
 		const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000)
@@ -3059,6 +3135,46 @@ export class SessionManager extends EventEmitter {
 				.where(eq(sessions.id, session.id))
 			await this.drainQueue(session.workspaceId).catch((err) =>
 				logger.error('Failed to drain queue after stuck agent-server session reap', {
+					error: String(err),
+				}),
+			)
+		}
+
+		// 2.4 Detect wedged interactive conversation sessions: a user turn was
+		// delivered into the session's stdin (writeInput persisted its envelope
+		// to session_logs and the remote input POST succeeded) but the CLI on
+		// the other end is dead, so the turn is never consumed and the user
+		// waits on a reply that will never come — invisible until the 2h
+		// reaper. Signature: the session's LAST log row is the user-turn
+		// envelope itself (tagged maskin_message_id), older than the stall
+		// window, with no output after it. Recovery: mark the session failed
+		// (surfacing the reason in the chat) and re-run the responder for the
+		// stalled message so a fresh session answers without the user having
+		// to type "continue".
+		const stalledCutoff = new Date(Date.now() - SessionManager.CHAT_STALLED_TURN_MS)
+		const chatSessions = await this.db
+			.select()
+			.from(sessions)
+			.where(
+				and(
+					eq(sessions.status, 'running'),
+					eq(sessions.interactive, true),
+					isNotNull(sessions.conversationId),
+				),
+			)
+		for (const session of chatSessions) {
+			const [lastLog] = await this.db
+				.select({ content: sessionLogs.content, createdAt: sessionLogs.createdAt })
+				.from(sessionLogs)
+				.where(eq(sessionLogs.sessionId, session.id))
+				.orderBy(desc(sessionLogs.id))
+				.limit(1)
+			if (!lastLog?.createdAt || lastLog.createdAt >= stalledCutoff) continue
+			const stalledMessageId = parseStalledTurnMessageId(lastLog.content)
+			if (stalledMessageId === null) continue
+			await this.failStalledConversationSession(session, stalledMessageId).catch((err) =>
+				logger.error('Failed to recover stalled conversation session', {
+					sessionId: session.id,
 					error: String(err),
 				}),
 			)
@@ -4195,5 +4311,29 @@ export class SessionManager extends EventEmitter {
 			.catch((err) =>
 				logger.warn('Failed to clear activeSessionId', { sessionId, error: String(err) }),
 			)
+	}
+}
+
+/**
+ * Returns the chat message id when a session_logs row is the persisted
+ * user-turn envelope writeInput writes to stdin — `type: 'user'` with a plain
+ * string content and the Maskin-only `maskin_message_id` tag. Tool results
+ * echoed by the CLI are also `type: 'user'` but carry a content array and no
+ * tag, so they never match. Null for anything else (CLI output, system lines,
+ * unparseable content).
+ */
+export function parseStalledTurnMessageId(content: string): number | null {
+	if (!content.includes('maskin_message_id')) return null
+	try {
+		const parsed = JSON.parse(content) as {
+			type?: unknown
+			message?: { content?: unknown }
+			maskin_message_id?: unknown
+		}
+		if (parsed.type !== 'user') return null
+		if (typeof parsed.message?.content !== 'string') return null
+		return typeof parsed.maskin_message_id === 'number' ? parsed.maskin_message_id : null
+	} catch {
+		return null
 	}
 }

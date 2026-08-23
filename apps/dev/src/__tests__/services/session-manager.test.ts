@@ -2824,6 +2824,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[], // 1. timedOut
 				[], // 1.5 stuckAgentSessions
+				[], // 1.7 stalled chat sessions
 				[], // 1.75 idleChatCandidates
 				[], // 2. runningSessions
 				[], // 3. expiredPaused
@@ -2857,6 +2858,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[], // 1. timedOut
 				[], // 1.5 stuckAgentSessions
+				[], // 1.7 stalled chat sessions
 				[], // 1.75 idleChatCandidates
 				[], // 2. runningSessions
 				[], // 3. expiredPaused
@@ -2892,6 +2894,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[], // 1. timedOut
 				[], // 2. stuckAgentSessions (no stuck sessions)
+				[], // 2.4 stalled chat sessions (none)
 				[], // 2.5 idleChatCandidates (no idle chat sessions)
 				[orphan], // 3. runningSessions (idle check)
 				[], // 4. lastLog for orphan (empty → falls back to startedAt, which is >10min old)
@@ -2936,6 +2939,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[], // 1. timedOut
 				[], // 2. stuckAgentSessions (no stuck sessions)
+				[], // 2.4 stalled chat sessions (none)
 				[], // 2.5 idleChatCandidates (no idle chat sessions)
 				[stale], // 3. runningSessions
 				[], // 4. lastLog (empty → falls back to startedAt, which is >10min old)

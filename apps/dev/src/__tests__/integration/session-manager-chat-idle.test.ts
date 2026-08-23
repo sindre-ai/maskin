@@ -362,6 +362,131 @@ describe('SessionManager conversation-turn drain + idle chat close (Integration)
 			expect(rows).toHaveLength(1)
 		})
 
+		it('recovers a stalled turn: fails the wedged session and re-runs the responder', async () => {
+			const agent = await insertActor(db, { type: 'agent' })
+			const conversation = await insertConversation(workspaceId, actorId)
+			await db.insert(conversationParticipants).values([
+				{ conversationId: conversation.id, actorId },
+				{ conversationId: conversation.id, actorId: agent.id },
+			])
+			const server = await insertAgentServer()
+			const session = await insertSession(db, workspaceId, agent.id, actorId, {
+				status: 'running',
+				interactive: true,
+				conversationId: conversation.id,
+				agentServerId: server.id,
+				containerId: 'sandbox-stalled-test',
+				startedAt: new Date(Date.now() - 20 * 60 * 1000),
+				timeoutAt: null,
+			})
+			const [message] = await db
+				.insert(messages)
+				.values({
+					conversationId: conversation.id,
+					actorId,
+					content: 'sounds good, one thing tho…',
+					createdAt: new Date(Date.now() - 15 * 60 * 1000),
+				})
+				.returning()
+			if (!message) throw new Error('failed to insert message')
+			// The exact aa1baa8c signature: the session's LAST log row is the
+			// delivered user-turn envelope, 15 minutes old, nothing after it.
+			await insertSessionLog(db, session.id, {
+				content: JSON.stringify({
+					type: 'user',
+					message: { role: 'user', content: 'Sebk: sounds good, one thing tho…' },
+					maskin_message_id: message.id,
+				}),
+				createdAt: new Date(Date.now() - 15 * 60 * 1000),
+			})
+
+			const stopCalls: string[] = []
+			const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+				stopCalls.push(String(input))
+				return new Response(JSON.stringify({ ok: true }), {
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+				})
+			})
+			const manager = new SessionManager(db, stubStorage())
+			try {
+				await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
+			} finally {
+				fetchSpy.mockRestore()
+				await manager.stop()
+			}
+
+			// The wedged session is failed with a reason the chat UI can show…
+			const [failed] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(failed?.status).toBe('failed')
+			expect((failed?.result as { error?: string })?.error).toContain('stopped responding')
+			expect(stopCalls).toContain(`${server.url}/sessions/${session.id}/stop`)
+
+			// …and the responder spawned a fresh session for the stalled message.
+			const rows = await db
+				.select()
+				.from(sessions)
+				.where(eq(sessions.conversationId, conversation.id))
+			const fresh = rows.filter((r) => r.id !== session.id)
+			expect(fresh).toHaveLength(1)
+			expect(fresh[0]?.actorId).toBe(agent.id)
+			expect(fresh[0]?.actionPrompt).toContain('sounds good, one thing tho…')
+		})
+
+		it('leaves a session alone when output followed the delivered turn', async () => {
+			const agent = await insertActor(db, { type: 'agent' })
+			const conversation = await insertConversation(workspaceId, actorId)
+			await db.insert(conversationParticipants).values([
+				{ conversationId: conversation.id, actorId },
+				{ conversationId: conversation.id, actorId: agent.id },
+			])
+			const session = await insertSession(db, workspaceId, agent.id, actorId, {
+				status: 'running',
+				interactive: true,
+				conversationId: conversation.id,
+				containerId: 'container-working-test',
+				startedAt: new Date(Date.now() - 20 * 60 * 1000),
+				timeoutAt: null,
+			})
+			const [message] = await db
+				.insert(messages)
+				.values({ conversationId: conversation.id, actorId, content: 'working on it?' })
+				.returning()
+			if (!message) throw new Error('failed to insert message')
+			await insertSessionLog(db, session.id, {
+				content: JSON.stringify({
+					type: 'user',
+					message: { role: 'user', content: 'Sebk: working on it?' },
+					maskin_message_id: message.id,
+				}),
+				createdAt: new Date(Date.now() - 15 * 60 * 1000),
+			})
+			// CLI answered with a streamed event after the turn — session is
+			// mid-work (a long tool call), not wedged.
+			await insertSessionLog(db, session.id, {
+				content: JSON.stringify({
+					type: 'assistant',
+					message: { content: [{ type: 'tool_use', name: 'WebFetch', input: {} }] },
+				}),
+				createdAt: new Date(Date.now() - 14 * 60 * 1000),
+			})
+
+			const manager = new SessionManager(db, stubStorage())
+			try {
+				await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
+			} finally {
+				await manager.stop()
+			}
+
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('running')
+			const rows = await db
+				.select()
+				.from(sessions)
+				.where(eq(sessions.conversationId, conversation.id))
+			expect(rows).toHaveLength(1)
+		})
+
 		it('still marks a non-conversation session hitting the hard timeout as timeout', async () => {
 			const session = await insertSession(db, workspaceId, actorId, actorId, {
 				status: 'running',
