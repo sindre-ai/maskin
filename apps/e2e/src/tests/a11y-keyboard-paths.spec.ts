@@ -1,6 +1,12 @@
 import { expect, test } from '../fixtures/auth.fixture'
 import { VIEWPORTS } from '../helpers/viewports'
 
+// The v2 command palette's own placeholder. The pre-v2 one read 'Search
+// objects, navigate...' and still exists under components/layout/legacy/,
+// but the e2e fixture runs with the `new-design` flag on, so that is not the
+// palette these paths open.
+const PALETTE_PLACEHOLDER = 'Run a command or jump to…'
+
 // Keyboard reachability + focus containment for the surfaces the bet's
 // accessibility criterion specifically calls out: interactive paths reachable
 // without a pointer, focus visible on every interactive element, and focus
@@ -64,7 +70,7 @@ test.describe('keyboard-only interactive paths', () => {
 		await page.waitForTimeout(500)
 
 		await page.keyboard.press('ControlOrMeta+k')
-		const palette = page.getByPlaceholder('Search objects, navigate...')
+		const palette = page.getByPlaceholder(PALETTE_PLACEHOLDER)
 		await expect(palette).toBeVisible()
 		await expect(palette).toBeFocused()
 
@@ -89,7 +95,7 @@ test.describe('keyboard-only interactive paths', () => {
 		await page.waitForTimeout(500)
 
 		await page.keyboard.press('ControlOrMeta+k')
-		const palette = page.getByPlaceholder('Search objects, navigate...')
+		const palette = page.getByPlaceholder(PALETTE_PLACEHOLDER)
 		await expect(palette).toBeVisible()
 
 		for (let i = 0; i < 8; i++) {
