@@ -128,4 +128,19 @@ describe('ResumeBanner', () => {
 		rerender(<ResumeBanner messages={messages} lastReadMessageId={3} />)
 		expect(screen.getByText('Picking up where you left off')).toBeInTheDocument()
 	})
+
+	it('still shows when the messages arrive before the read cursor does', () => {
+		const messages = agedThread(2)
+		// The cursor and the messages come from two independent queries, so the
+		// messages can render a frame (or several) before `useConversation`
+		// settles. Latching that first `null` suppressed the banner for good.
+		const { rerender } = render(<ResumeBanner messages={messages} lastReadMessageId={null} />, {
+			wrapper: TestWrapper,
+		})
+		expect(screen.queryByText('Picking up where you left off')).not.toBeInTheDocument()
+
+		rerender(<ResumeBanner messages={messages} lastReadMessageId={1} />)
+		expect(screen.getByText('Picking up where you left off')).toBeInTheDocument()
+		expect(screen.getByText(/Update 1/)).toBeInTheDocument()
+	})
 })

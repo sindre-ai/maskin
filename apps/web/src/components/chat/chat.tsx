@@ -12,9 +12,9 @@ import {
 	DropdownMenu,
 	DropdownMenuContent,
 	DropdownMenuItem,
+	DropdownMenuLabel,
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { useAvailableObjectTypes } from '@/hooks/use-available-object-types'
@@ -406,43 +406,47 @@ export function Composer({
 					<span aria-hidden className="pointer-events-none absolute left-2 bottom-2 h-0 w-0" />
 				}
 			/>
-			<Popover
+			{/* A DropdownMenu rather than a Popover: `/` opens this without a click,
+			    so the list has to be reachable from the keyboard. Radix gives the
+			    menu roving focus, arrow keys and typeahead for free — the Popover
+			    this replaced left focus in the textarea with no way in. */}
+			<DropdownMenu
 				open={turnIntoOpen}
 				onOpenChange={(next) => {
 					setTurnIntoOpen(next)
 					if (!next) slashPosRef.current = null
 				}}
 			>
-				<PopoverAnchor asChild>
+				<DropdownMenuTrigger asChild>
 					<span aria-hidden className="pointer-events-none absolute bottom-2 left-2 h-0 w-0" />
-				</PopoverAnchor>
-				<PopoverContent
+				</DropdownMenuTrigger>
+				<DropdownMenuContent
 					align="start"
 					side="top"
 					sideOffset={8}
-					className="w-[320px] p-1.5"
-					onOpenAutoFocus={(e) => e.preventDefault()}
-					aria-label="Turn this into an object"
+					className="w-[320px]"
+					// Radix returns focus to the trigger, which here is an invisible
+					// anchor — send the caret back to the composer instead.
+					onCloseAutoFocus={(e) => {
+						e.preventDefault()
+						textareaRef.current?.focus()
+					}}
 				>
-					<p className="eyebrow px-2 pb-1 pt-1.5">Turn this into an object</p>
-					<ul className="flex list-none flex-col p-0">
-						{objectTypes.map((type) => (
-							<li key={type.value}>
-								<button
-									type="button"
-									onClick={() => openCreateFor(type.value)}
-									className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left hover:bg-accent hover:text-accent-foreground"
-								>
-									<TypeBadge type={type.value} variant="tile" />
-									<span className="min-w-0 flex-1 truncate text-[12.5px] font-semibold">
-										{type.label}
-									</span>
-								</button>
-							</li>
-						))}
-					</ul>
-				</PopoverContent>
-			</Popover>
+					<DropdownMenuLabel className="eyebrow">Turn this into an object</DropdownMenuLabel>
+					{objectTypes.map((type) => (
+						<DropdownMenuItem
+							key={type.value}
+							onSelect={() => openCreateFor(type.value)}
+							className="gap-2.5"
+						>
+							<TypeBadge type={type.value} variant="tile" />
+							<span className="min-w-0 flex-1 truncate text-[12.5px] font-semibold">
+								{type.label}
+							</span>
+						</DropdownMenuItem>
+					))}
+				</DropdownMenuContent>
+			</DropdownMenu>
 			<SelectionChips
 				selection={selection}
 				onRemoveAgent={onRemoveAgent}

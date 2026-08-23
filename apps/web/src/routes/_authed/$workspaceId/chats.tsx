@@ -56,18 +56,21 @@ function ChatsLayout() {
 			? `${unreadCount} unread`
 			: `${total} ${total === 1 ? 'conversation' : 'conversations'}`
 
+	// Stay on whatever chats route is currently mounted (`to: '.'`) and rewrite
+	// only the search params. Navigating to `/$workspaceId/chats` instead would
+	// drop the `$conversationId` leaf, so re-filtering while reading a thread
+	// closed the thread out from under the reader.
 	const handleFilterChange = useCallback(
 		(next: ChatsFilter) => {
 			navigate({
-				to: '/$workspaceId/chats',
-				params: { workspaceId },
+				to: '.',
 				search: (prev: ChatsSearch) => ({
 					...prev,
 					filter: next === 'all' ? undefined : next,
 				}),
 			})
 		},
-		[navigate, workspaceId],
+		[navigate],
 	)
 
 	// One writer for the shared nav row: a child route rendering its own

@@ -28,14 +28,21 @@ function firstLine(content: string): string {
  */
 export function ResumeBanner({ messages, lastReadMessageId }: ResumeBannerProps) {
 	const self = getStoredActor()
-	// Latch the read cursor from the first render: `$conversationId.tsx` marks
-	// the thread read on open, so reading it live would make the banner vanish
-	// a beat after it appeared.
-	const latchedRef = useRef<{ set: boolean; value: number | null }>({ set: false, value: null })
-	if (!latchedRef.current.set && messages.length > 0) {
-		latchedRef.current = { set: true, value: lastReadMessageId }
+	// Latch the read cursor the first time we actually have one:
+	// `$conversationId.tsx` marks the thread read on open, so reading it live
+	// would make the banner vanish a beat after it appeared.
+	//
+	// The cursor and `messages` come from two independent queries
+	// (`useConversation` / `useConversationMessages` — see `thread-messages.tsx`),
+	// so latching merely on `messages.length > 0` stored `null` whenever the
+	// messages resolved first and suppressed the banner for the whole mount.
+	// Waiting for a non-null cursor costs nothing: a null cursor means the
+	// reader has never read this thread, which is not "picking back up" anyway.
+	const latchedRef = useRef<number | null>(null)
+	if (latchedRef.current === null && messages.length > 0 && lastReadMessageId !== null) {
+		latchedRef.current = lastReadMessageId
 	}
-	const cursor = latchedRef.current.value
+	const cursor = latchedRef.current
 
 	if (cursor === null) return null
 

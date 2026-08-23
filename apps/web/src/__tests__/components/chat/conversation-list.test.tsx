@@ -122,4 +122,22 @@ describe('ConversationList', () => {
 		expect(await screen.findByText('Archived')).toBeInTheDocument()
 		expect(screen.queryByText('Pinned')).not.toBeInTheDocument()
 	})
+
+	it('shows a retryable error rather than the empty state when the fetch fails', async () => {
+		// A failed fetch used to collapse into `[]` and render "No conversations
+		// here — start a chat", which reads as an empty account and invites the
+		// reader to duplicate a thread they already have.
+		vi.mocked(api.conversations.list).mockRejectedValue(new Error('network down'))
+		render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
+
+		expect(await screen.findByText("Couldn't load your conversations")).toBeInTheDocument()
+		expect(screen.queryByText('No conversations here')).not.toBeInTheDocument()
+
+		vi.mocked(api.conversations.list).mockResolvedValue({
+			conversations: [buildConversation({ id: 'a', title: 'Billing retries' })],
+			has_more: false,
+		})
+		screen.getByRole('button', { name: /Try again/ }).click()
+		expect(await screen.findByText('Billing retries')).toBeInTheDocument()
+	})
 })
