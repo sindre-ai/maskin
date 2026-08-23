@@ -1010,6 +1010,9 @@ const retryMessageRoute = createRoute({
 	request: {
 		headers: workspaceIdHeader,
 		params: z.object({ id: z.string().uuid(), messageId: z.coerce.number().int().positive() }),
+		// agent_id scopes the retry to one agent — set by "Redo this response",
+		// where fanning out to every participant would post duplicate replies.
+		query: z.object({ agent_id: z.string().uuid().optional() }),
 	},
 	responses: {
 		202: {
@@ -1026,6 +1029,7 @@ app.openapi(retryMessageRoute, (async (c) => {
 	const callerId = c.get('actorId')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 	const { id, messageId } = c.req.valid('param')
+	const { agent_id: targetAgentId } = c.req.valid('query')
 
 	const row = await loadConversationWithAuth(db, id, callerId)
 	if (!row || row.conversation.workspaceId !== workspaceId) {
@@ -1051,7 +1055,7 @@ app.openapi(retryMessageRoute, (async (c) => {
 		workspaceId,
 		conversationId: id,
 		messageId,
-		options: { forceRespond: true },
+		options: { forceRespond: true, targetAgentId },
 	}).catch((err: unknown) =>
 		logger.error('Conversation responder failed on retry', {
 			conversationId: id,

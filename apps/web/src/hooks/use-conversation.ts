@@ -190,8 +190,9 @@ export function useEditMessage(id: string, workspaceId: string) {
 // agent never replied (boot failure, declined relevance) or the user wants a
 // fresh answer. Fire-and-forget on the server; feedback here is just a toast.
 export function useRetryMessage(id: string, workspaceId: string) {
-	return useMutation<{ retried: boolean }, Error, { messageId: number }>({
-		mutationFn: ({ messageId }) => api.conversations.retryMessage(id, workspaceId, messageId),
+	return useMutation<{ retried: boolean }, Error, { messageId: number; agentId?: string }>({
+		mutationFn: ({ messageId, agentId }) =>
+			api.conversations.retryMessage(id, workspaceId, messageId, agentId),
 		onSuccess: () => {
 			toast.success('Asked the agents to respond')
 		},

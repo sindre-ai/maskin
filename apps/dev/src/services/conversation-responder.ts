@@ -70,6 +70,12 @@ export async function evaluateAndRespond(ctx: {
 		 * rather than being a brand-new message.
 		 */
 		isEdit?: boolean
+		/**
+		 * Restrict the run to this one agent — set by "Redo this response",
+		 * where re-running every participant would post duplicate replies from
+		 * agents whose answers the user didn't ask to regenerate.
+		 */
+		targetAgentId?: string
 	}
 }): Promise<void> {
 	const { db, sessionManager, workspaceId, conversationId, messageId, options } = ctx
@@ -106,6 +112,9 @@ export async function evaluateAndRespond(ctx: {
 				isNull(conversationParticipants.leftAt),
 				eq(actors.type, 'agent'),
 				ne(conversationParticipants.actorId, message.actorId),
+				options?.targetAgentId
+					? eq(conversationParticipants.actorId, options.targetAgentId)
+					: undefined,
 			),
 		)
 	if (candidates.length === 0) return
@@ -442,7 +451,8 @@ async function spawnOrJoinConversationSession(params: {
 /**
  * Buffers one turn for a (conversation, agent) pair whose session is still
  * booting. Idempotent per (conversation, agent, message) via the table's
- * unique index — a duplicate insert (e.g. a retried message) is a no-op.
+ * unique index — a duplicate insert (e.g. a retried message) updates the
+ * payload in place so an edited message replaces its stale buffered turn.
  * Never throws: a buffering failure degrades to the pre-buffer behaviour
  * (the turn is covered by the next spawn's seed history).
  */
@@ -464,7 +474,17 @@ async function bufferPendingTurn(
 				messageId: params.messageId,
 				payload: params.payload,
 			})
-			.onConflictDoNothing()
+			// Upsert, not DO NOTHING: an edit re-buffers the same
+			// (conversation, agent, message) key and the newest payload —
+			// the edited content — must win over the stale one.
+			.onConflictDoUpdate({
+				target: [
+					conversationPendingTurns.conversationId,
+					conversationPendingTurns.actorId,
+					conversationPendingTurns.messageId,
+				],
+				set: { payload: params.payload },
+			})
 		logger.info('Buffered conversation turn while agent session boots', {
 			agentId: params.agentId,
 			conversationId: params.conversationId,

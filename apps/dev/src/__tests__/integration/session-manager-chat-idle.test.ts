@@ -10,7 +10,7 @@ import {
 import type { StorageProvider } from '@maskin/storage'
 import { asc, eq } from 'drizzle-orm'
 import { SessionManager } from '../../services/session-manager'
-import { insertSession, insertSessionLog, insertWorkspace } from '../factories'
+import { insertActor, insertSession, insertSessionLog, insertWorkspace } from '../factories'
 import { db, getTestActorId, sql } from './global-setup'
 
 function stubStorage(): StorageProvider {
@@ -136,6 +136,51 @@ describe('SessionManager conversation-turn drain + idle chat close (Integration)
 			expect(JSON.parse(tagged[1]?.content ?? '{}').maskin_message_id).toBe(m2.id)
 		})
 
+		it('re-parks undelivered turns when remote delivery fails', async () => {
+			const server = await insertAgentServer()
+			const conversation = await insertConversation(workspaceId, actorId)
+			const session = await insertSession(db, workspaceId, actorId, actorId, {
+				status: 'running',
+				interactive: true,
+				conversationId: conversation.id,
+				agentServerId: server.id,
+				containerId: 'sandbox-repark-test',
+			})
+			const [m1] = await db
+				.insert(messages)
+				.values({ conversationId: conversation.id, actorId, content: 'transient turn' })
+				.returning()
+			if (!m1) throw new Error('failed to insert message')
+			await db.insert(conversationPendingTurns).values({
+				conversationId: conversation.id,
+				actorId,
+				messageId: m1.id,
+				payload: { type: 'user', message: { role: 'user', content: 'transient turn' } },
+			})
+
+			// The agent-server hiccups — delivery throws, but the session is still
+			// running, so the claimed row must go back for the next drain instead
+			// of vanishing.
+			const fetchSpy = vi
+				.spyOn(globalThis, 'fetch')
+				.mockImplementation(async () => new Response('boom', { status: 500 }))
+
+			const manager = new SessionManager(db, stubStorage())
+			try {
+				await manager.drainPendingConversationTurns(session.id)
+			} finally {
+				fetchSpy.mockRestore()
+				await manager.stop()
+			}
+
+			const remaining = await db
+				.select()
+				.from(conversationPendingTurns)
+				.where(eq(conversationPendingTurns.conversationId, conversation.id))
+			expect(remaining).toHaveLength(1)
+			expect(remaining[0]?.messageId).toBe(m1.id)
+		})
+
 		it('no-ops for a non-conversation session', async () => {
 			const session = await insertSession(db, workspaceId, actorId, actorId, {
 				status: 'running',
@@ -244,6 +289,80 @@ describe('SessionManager conversation-turn drain + idle chat close (Integration)
 
 			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
 			expect(row?.status).toBe('running')
+		})
+
+		it('leaves an idle-eligible session running when its newest message is unanswered', async () => {
+			const server = await insertAgentServer()
+			const conversation = await insertConversation(workspaceId, actorId)
+			const other = await insertActor(db, { type: 'human' })
+			const fortyMinAgo = new Date(Date.now() - 40 * 60 * 1000)
+			const session = await insertSession(db, workspaceId, actorId, actorId, {
+				status: 'running',
+				interactive: true,
+				conversationId: conversation.id,
+				agentServerId: server.id,
+				containerId: 'sandbox-wedged-test',
+				startedAt: fortyMinAgo,
+				timeoutAt: null,
+			})
+			await insertSessionLog(db, session.id, {
+				content: 'last activity',
+				createdAt: new Date(Date.now() - 35 * 60 * 1000),
+			})
+			// Someone asked something and the agent never replied — the session is
+			// wedged mid-turn, not idle. The graceful close must not erase that;
+			// only the hard timeout reaper may end it, as `timeout`, so the chat
+			// UI can surface the interruption.
+			await db
+				.insert(messages)
+				.values({ conversationId: conversation.id, actorId: other?.id ?? '', content: 'hello?' })
+
+			const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+				return new Response(JSON.stringify({ ok: true }), {
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+				})
+			})
+			const manager = new SessionManager(db, stubStorage())
+			try {
+				await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
+			} finally {
+				fetchSpy.mockRestore()
+				await manager.stop()
+			}
+
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('running')
+		})
+
+		it('marks a hard-timeout conversation session with an unanswered trailing message as timeout', async () => {
+			const conversation = await insertConversation(workspaceId, actorId)
+			const other = await insertActor(db, { type: 'human' })
+			const session = await insertSession(db, workspaceId, actorId, actorId, {
+				status: 'running',
+				interactive: true,
+				conversationId: conversation.id,
+				containerId: null,
+				startedAt: new Date(Date.now() - 3 * 60 * 60 * 1000),
+				timeoutAt: new Date(Date.now() - 60 * 1000),
+			})
+			await db.insert(messages).values({
+				conversationId: conversation.id,
+				actorId: other?.id ?? '',
+				content: 'still there?',
+			})
+
+			const manager = new SessionManager(db, stubStorage())
+			try {
+				await (manager as unknown as { runWatchdog(): Promise<void> }).runWatchdog()
+			} finally {
+				await manager.stop()
+			}
+
+			// `timeout`, not `completed` — use-conversation-activity.ts keys its
+			// mid-turn interruption notice on this status.
+			const [row] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+			expect(row?.status).toBe('timeout')
 		})
 
 		it('closes an interactive conversation session hitting the hard timeout as completed, not timeout', async () => {

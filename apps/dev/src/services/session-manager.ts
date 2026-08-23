@@ -14,6 +14,7 @@ import {
 	agentServers,
 	conversationPendingTurns,
 	integrations,
+	messages,
 	objects,
 	relationships,
 	sessionLogs,
@@ -494,9 +495,10 @@ export class SessionManager extends EventEmitter {
 	 * session was still booting. Rows are claimed atomically with
 	 * DELETE ... RETURNING so a concurrent drain (post-boot hook racing the
 	 * responder's own re-check) can't double-deliver a turn. A turn whose
-	 * writeInput fails is logged and NOT re-queued: if this session is dead,
-	 * the next spawned session's seed prompt inlines recent conversation
-	 * history, which covers the lost turn.
+	 * writeInput fails is re-parked (with everything after it) for the next
+	 * drain: a transient delivery error must not lose the message while the
+	 * session stays running — only a dead session is covered by the next
+	 * spawn's seed history.
 	 */
 	async drainPendingConversationTurns(sessionId: string): Promise<void> {
 		const [session] = await this.db
@@ -526,7 +528,8 @@ export class SessionManager extends EventEmitter {
 			sessionId,
 			conversationId: session.conversationId,
 		})
-		for (const turn of claimed) {
+		for (let i = 0; i < claimed.length; i++) {
+			const turn = claimed[i] as (typeof claimed)[number]
 			try {
 				await this.writeInput(
 					sessionId,
@@ -535,11 +538,32 @@ export class SessionManager extends EventEmitter {
 					turn.messageId,
 				)
 			} catch (err) {
-				logger.error('Failed to deliver buffered conversation turn — remaining turns dropped', {
+				logger.error('Failed to deliver buffered conversation turn — re-parking remainder', {
 					sessionId,
 					messageId: turn.messageId,
 					error: String(err),
 				})
+				// Give the claimed-but-undelivered rows back so the next drain
+				// (next message, or next session's boot hook) retries them.
+				// DO NOTHING on conflict: a concurrent edit may have re-buffered
+				// a newer payload for the same key, and that one must win.
+				await this.db
+					.insert(conversationPendingTurns)
+					.values(
+						claimed.slice(i).map((t) => ({
+							conversationId: t.conversationId,
+							actorId: t.actorId,
+							messageId: t.messageId,
+							payload: t.payload,
+						})),
+					)
+					.onConflictDoNothing()
+					.catch((reinsertErr: unknown) =>
+						logger.error('Failed to re-park undelivered conversation turns', {
+							sessionId,
+							error: String(reinsertErr),
+						}),
+					)
 				break
 			}
 		}
@@ -2765,6 +2789,28 @@ export class SessionManager extends EventEmitter {
 	}
 
 	/**
+	 * True when the newest real message in this session's conversation was
+	 * authored by someone other than the session's agent — the agent was asked
+	 * something and never replied. A conversation session dying in that state
+	 * is a mid-turn interruption, not a conversation that naturally went idle:
+	 * it must close as `timeout`, the status use-conversation-activity.ts keys
+	 * its "send another message to continue" notice on. Closing it as
+	 * `completed` would erase the only signal the waiting user gets.
+	 */
+	private async hasUnansweredConversationTurn(
+		session: typeof sessions.$inferSelect,
+	): Promise<boolean> {
+		if (!session.conversationId) return false
+		const [newest] = await this.db
+			.select({ actorId: messages.actorId })
+			.from(messages)
+			.where(and(eq(messages.conversationId, session.conversationId), eq(messages.kind, 'message')))
+			.orderBy(desc(messages.id))
+			.limit(1)
+		return newest !== undefined && newest.actorId !== session.actorId
+	}
+
+	/**
 	 * Gracefully closes an idle interactive conversation session as
 	 * `completed`. The row is CAS-flipped to terminal BEFORE the container
 	 * teardown, so the local exit watcher (`handleCompletion`) and a remote
@@ -2773,6 +2819,10 @@ export class SessionManager extends EventEmitter {
 	 * miss (something else already transitioned the row) is a silent no-op.
 	 */
 	private async completeIdleChatSession(session: typeof sessions.$inferSelect): Promise<void> {
+		// A session that went quiet with an unanswered message is wedged
+		// mid-turn, not idle — leave it for the hard timeout reaper, which
+		// closes it as `timeout` so the chat UI surfaces the interruption.
+		if (await this.hasUnansweredConversationTurn(session)) return
 		const now = new Date()
 		const [updated] = await this.db
 			.update(sessions)
@@ -2902,15 +2952,26 @@ export class SessionManager extends EventEmitter {
 		for (const session of timedOut) {
 			// An interactive chat session reaching its timeout is the natural end
 			// of an idle conversation, not a failure — the user simply stopped
-			// writing. Close it out as completed; the conversation responder
-			// spawns a fresh session on the next message. Everything below that
-			// tears down the container is identical either way.
-			const idleChatEnd = session.interactive && session.conversationId !== null
-			if (idleChatEnd) {
+			// writing. Give it the same graceful close-out as the idle-close
+			// scanner below; the responder spawns a fresh session on the next
+			// message. A session with an unanswered trailing message is excluded:
+			// it died mid-turn, and only the `timeout` status lets the chat UI
+			// surface that (see hasUnansweredConversationTurn).
+			if (
+				session.interactive &&
+				session.conversationId !== null &&
+				!(await this.hasUnansweredConversationTurn(session))
+			) {
 				logger.info(`Idle chat session reached timeout, completing: ${session.id}`)
-			} else {
-				logger.warn(`Session timed out: ${session.id}`)
+				await this.completeIdleChatSession(session).catch((err) =>
+					logger.error('Failed to complete idle chat session on timeout', {
+						sessionId: session.id,
+						error: String(err),
+					}),
+				)
+				continue
 			}
+			logger.warn(`Session timed out: ${session.id}`)
 
 			// Push learnings before destroying container
 			const sessionData = this.activeSessions.get(session.id)
@@ -2948,10 +3009,8 @@ export class SessionManager extends EventEmitter {
 			await this.db
 				.update(sessions)
 				.set({
-					status: idleChatEnd ? 'completed' : 'timeout',
-					result: idleChatEnd
-						? { summary: 'Conversation session ended after being idle' }
-						: { error: 'Session timed out' },
+					status: 'timeout',
+					result: { error: 'Session timed out' },
 					completedAt: now,
 					currentActivity: null,
 					updatedAt: now,
@@ -2975,26 +3034,23 @@ export class SessionManager extends EventEmitter {
 			await this.db.insert(events).values({
 				workspaceId: session.workspaceId,
 				actorId: session.actorId,
-				action: idleChatEnd ? 'session_completed' : 'session_timeout',
+				action: 'session_timeout',
 				entityType: 'session',
 				entityId: session.id,
-				data: idleChatEnd ? { reason: 'idle_conversation' } : {},
+				data: {},
 			})
 
 			this.telemetry.recordSessionEnded({
 				sessionId: session.id,
-				endReason: idleChatEnd ? 'completed' : 'irrecoverable',
+				endReason: 'irrecoverable',
 				durationMs: elapsedMs(session.startedAt, session.createdAt),
 				agentServerUrl: LOCAL_RUNTIME_BUCKET,
 			})
 
-			// Prefix must stay 'Session completed' / 'Session timed out' — the SSE
-			// /logs/stream endpoint matches these prefixes to emit its `done` event
-			// (TERMINAL_SYSTEM_LOGS in routes/sessions.ts).
-			await this.insertSystemLog(
-				session.id,
-				idleChatEnd ? 'Session completed — conversation idle' : 'Session timed out',
-			).catch((err) =>
+			// Prefix must stay 'Session timed out' — the SSE /logs/stream endpoint
+			// matches it to emit its `done` event (TERMINAL_SYSTEM_LOGS in
+			// routes/sessions.ts).
+			await this.insertSystemLog(session.id, 'Session timed out').catch((err) =>
 				logger.warn('Failed to write timeout system log', {
 					sessionId: session.id,
 					error: String(err),
@@ -3030,19 +3086,31 @@ export class SessionManager extends EventEmitter {
 				),
 			)
 		for (const session of stuckAgentSessions) {
-			// Same graceful close-out for idle chat sessions as the primary reaper
-			// above — a conversation going quiet for 2h is not a failure.
-			const idleChatEnd = session.interactive && session.conversationId !== null
 			logger.warn('Reaping stuck agent-server session (no timeoutAt, past default 2h limit)', {
 				sessionId: session.id,
 			})
+			// Same graceful close-out for idle chat sessions as the primary reaper
+			// above — a conversation going quiet for 2h is not a failure. Same
+			// mid-turn exclusion, too: a wedged session falls through to `timeout`
+			// (never a silent skip — this reaper is these sessions' only backstop).
+			if (
+				session.interactive &&
+				session.conversationId !== null &&
+				!(await this.hasUnansweredConversationTurn(session))
+			) {
+				await this.completeIdleChatSession(session).catch((err) =>
+					logger.error('Failed to complete stuck idle chat session', {
+						sessionId: session.id,
+						error: String(err),
+					}),
+				)
+				continue
+			}
 			await this.db
 				.update(sessions)
 				.set({
-					status: idleChatEnd ? 'completed' : 'timeout',
-					result: idleChatEnd
-						? { summary: 'Conversation session ended after being idle' }
-						: { error: 'Session timed out' },
+					status: 'timeout',
+					result: { error: 'Session timed out' },
 					completedAt: now,
 					currentActivity: null,
 					updatedAt: now,

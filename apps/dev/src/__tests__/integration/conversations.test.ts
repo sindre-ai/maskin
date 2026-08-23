@@ -1405,6 +1405,70 @@ describe('Conversations Integration', () => {
 			)
 		})
 
+		it('replaces a buffered turn payload when the message is edited while the session boots', async () => {
+			const agent = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, agent.id)
+			const { app: ownerApp } = createConversationsApp(ownerId)
+			const created = await ownerApp.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Edit re-buffer test', participant_actor_ids: [agent.id] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+			const [triggering] = await db
+				.insert(messages)
+				.values({ conversationId: conversation.id, actorId: ownerId, content: 'deploy to prod' })
+				.returning()
+			if (!triggering) throw new Error('failed to insert triggering message')
+
+			const sessionManager = {
+				createSession: vi.fn(),
+				findActiveConversationSession: vi.fn().mockResolvedValue(null),
+				findConversationSessionAnyActive: vi
+					.fn()
+					.mockResolvedValue({ id: 'booting-session-id', status: 'starting', workspaceId }),
+				drainPendingConversationTurns: vi.fn().mockResolvedValue(undefined),
+				writeInput: vi.fn().mockResolvedValue(undefined),
+			}
+			await evaluateAndRespond({
+				db,
+				// biome-ignore lint/suspicious/noExplicitAny: test double, real type lives in session-manager.ts
+				sessionManager: sessionManager as any,
+				workspaceId,
+				conversationId: conversation.id,
+				messageId: triggering.id,
+			})
+
+			// The user corrects the message while the session is still booting —
+			// the buffered turn must carry the edited content, not the original.
+			await db
+				.update(messages)
+				.set({ content: 'deploy to staging' })
+				.where(eq(messages.id, triggering.id))
+			await evaluateAndRespond({
+				db,
+				// biome-ignore lint/suspicious/noExplicitAny: test double, real type lives in session-manager.ts
+				sessionManager: sessionManager as any,
+				workspaceId,
+				conversationId: conversation.id,
+				messageId: triggering.id,
+				options: { isEdit: true },
+			})
+
+			const rows = await db
+				.select()
+				.from(conversationPendingTurns)
+				.where(eq(conversationPendingTurns.messageId, triggering.id))
+			expect(rows).toHaveLength(1)
+			const content = (rows[0]?.payload as { message: { content: string } }).message.content
+			expect(content).toContain('deploy to staging')
+			expect(content).not.toContain('deploy to prod')
+			expect(content).toContain('edited an earlier message')
+		})
+
 		it('drains the freshly buffered turn itself when the session reaches running mid-buffer', async () => {
 			const agent = await insertActor(db, { type: 'agent' })
 			await addMember(workspaceId, agent.id)
@@ -1747,6 +1811,42 @@ describe('Conversations Integration', () => {
 			]
 			expect(params.actorId).toBe(agent.id)
 			expect(params.actionPrompt).toContain('anyone there?')
+		})
+
+		it('scopes the retry to one agent when agent_id is given', async () => {
+			const agentA = await insertActor(db, { type: 'agent' })
+			const agentB = await insertActor(db, { type: 'agent' })
+			await addMember(workspaceId, agentA.id)
+			await addMember(workspaceId, agentB.id)
+			const { app, sessionManager } = createConversationsApp(ownerId)
+			const created = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/conversations',
+					{ title: 'Scoped retry test', participant_actor_ids: [agentA.id, agentB.id] },
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			const conversation = (await created.json()) as { id: string }
+			const [msg] = await db
+				.insert(messages)
+				.values({ conversationId: conversation.id, actorId: ownerId, content: 'redo just A' })
+				.returning()
+
+			const res = await app.request(
+				jsonRequest(
+					'POST',
+					`/api/conversations/${conversation.id}/messages/${msg?.id}/retry?agent_id=${agentA.id}`,
+					undefined,
+					{ 'x-workspace-id': workspaceId },
+				),
+			)
+			expect(res.status).toBe(202)
+			await new Promise((resolve) => setTimeout(resolve, 50))
+			// Only the targeted agent re-runs — B must not post a duplicate reply.
+			expect(sessionManager.createSession).toHaveBeenCalledTimes(1)
+			const [, params] = sessionManager.createSession.mock.calls[0] as [string, { actorId: string }]
+			expect(params.actorId).toBe(agentA.id)
 		})
 
 		it('returns 404 for a message outside the conversation', async () => {

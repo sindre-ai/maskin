@@ -795,11 +795,16 @@ export const api = {
 				body: data,
 				workspaceId,
 			}),
-		retryMessage: (id: string, workspaceId: string, messageId: number) =>
-			request<{ retried: boolean }>(`/conversations/${id}/messages/${messageId}/retry`, {
-				method: 'POST',
-				workspaceId,
-			}),
+		// agentId scopes the retry to one agent ("Redo this response"); omitted,
+		// every participant re-evaluates ("Ask agents to respond again").
+		retryMessage: (id: string, workspaceId: string, messageId: number, agentId?: string) =>
+			request<{ retried: boolean }>(
+				`/conversations/${id}/messages/${messageId}/retry${agentId ? `?agent_id=${agentId}` : ''}`,
+				{
+					method: 'POST',
+					workspaceId,
+				},
+			),
 		updateMe: (id: string, workspaceId: string, data: UpdateConversationParticipantStateInput) =>
 			request<ConversationParticipantStateResponse>(`/conversations/${id}/me`, {
 				method: 'PATCH',

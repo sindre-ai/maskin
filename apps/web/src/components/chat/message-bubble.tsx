@@ -253,7 +253,9 @@ export function MessageBubble({
 				{redoMessageId !== null ? (
 					<button
 						type="button"
-						onClick={() => retryMessage.mutate({ messageId: redoMessageId })}
+						onClick={() =>
+							retryMessage.mutate({ messageId: redoMessageId, agentId: message.actorId })
+						}
 						disabled={retryMessage.isPending}
 						aria-label="Redo this response"
 						className="flex w-fit items-center gap-1 rounded p-0.5 text-[11px] text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
