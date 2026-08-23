@@ -649,11 +649,28 @@ export function buildApp(deps: AppDeps): Hono {
 					return false
 				}
 			})
+			// Between turns this stream carries nothing for however long the
+			// human takes to reply — minutes-long silences that NAT/proxy
+			// idle-timeouts reap, EOF-ing claude's stdin in the VM and wedging
+			// the conversation (see agent-run.sh's input_stream reconnect loop,
+			// the other half of this fix). A bare newline every 30s keeps the
+			// connection warm — the CLI's NDJSON stdin reader skips blank
+			// lines — and doubles as dead-socket detection: a failed write
+			// ends this handler so the next turn parks for the reconnect
+			// instead of vanishing into a half-closed socket.
+			const heartbeat = setInterval(async () => {
+				try {
+					await s.write('\n')
+				} catch {
+					resolveStream()
+				}
+			}, 30_000)
 			c.req.raw.signal.addEventListener('abort', () => {
 				unregister()
 				resolveStream()
 			})
 			await done
+			clearInterval(heartbeat)
 			unregister()
 		})
 	})
