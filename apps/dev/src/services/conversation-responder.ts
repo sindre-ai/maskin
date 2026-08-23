@@ -12,6 +12,7 @@ import type { LLMTool } from '../lib/llm/adapter'
 import { createLLMAdapter } from '../lib/llm/index'
 import { logger } from '../lib/logger'
 import type { WorkspaceSettings } from '../lib/types'
+import { activeBranchCondition } from './conversation-branches'
 import type { SessionManager } from './session-manager'
 
 // Cap on consecutive agent-authored messages at the tail of a conversation —
@@ -76,6 +77,16 @@ export async function evaluateAndRespond(ctx: {
 		 * agents whose answers the user didn't ask to regenerate.
 		 */
 		targetAgentId?: string
+		/**
+		 * Per-agent CLI transcript to resume, keyed by agent actor id — set by the
+		 * rewind route after it stops the agents' live sessions. Lets the fresh
+		 * session reopen the agent's real transcript truncated at the rewind
+		 * point, instead of starting cold from a 15-message history blob.
+		 *
+		 * An agent missing from this map starts cold, which is correct but lossy.
+		 * See services/conversation-rewind.ts.
+		 */
+		resumeByAgent?: Map<string, { cliSessionId: string; turnOrdinal: number; sessionId: string }>
 	}
 }): Promise<void> {
 	const { db, sessionManager, workspaceId, conversationId, messageId, options } = ctx
@@ -144,6 +155,12 @@ export async function evaluateAndRespond(ctx: {
 	// agent turn now yields up to two rows (an optional MCP heads-up plus the
 	// automatic final output), so counting both would halve the effective cap
 	// and mute a conversation after ~3 turns.
+	// Restrict every message read below to the conversation's active branch. A
+	// rewound-away tail must not count toward the loop cap, and must not appear
+	// in the history we hand the agent — otherwise the rewind would be undone by
+	// the very next prompt. See services/conversation-branches.ts.
+	const branchCondition = await activeBranchCondition(db, conversationId)
+
 	const recent = await db
 		.select({ actorType: actors.type })
 		.from(messages)
@@ -152,6 +169,7 @@ export async function evaluateAndRespond(ctx: {
 			and(
 				eq(messages.conversationId, conversationId),
 				sql`${messages.metadata}->>'source' IS DISTINCT FROM 'final_output'`,
+				branchCondition,
 			),
 		)
 		.orderBy(desc(messages.id))
@@ -195,7 +213,7 @@ export async function evaluateAndRespond(ctx: {
 		.select({ actorName: actors.name, content: messages.content })
 		.from(messages)
 		.innerJoin(actors, eq(actors.id, messages.actorId))
-		.where(eq(messages.conversationId, conversationId))
+		.where(and(eq(messages.conversationId, conversationId), branchCondition))
 		.orderBy(desc(messages.id))
 		.limit(HISTORY_CONTEXT_MESSAGES)
 	const conversationHistory = historyRows.slice().reverse()
@@ -288,6 +306,7 @@ export async function evaluateAndRespond(ctx: {
 			}
 
 			await spawnOrJoinConversationSession({
+				resume: options?.resumeByAgent?.get(agent.id),
 				db,
 				sessionManager,
 				workspaceId,
@@ -325,6 +344,7 @@ async function spawnOrJoinConversationSession(params: {
 	conversationHistory: Array<{ actorName: string; content: string }>
 	isDirectConversation: boolean
 	wasMentioned: boolean
+	resume?: { cliSessionId: string; turnOrdinal: number; sessionId: string }
 }): Promise<void> {
 	const {
 		db,
@@ -337,6 +357,7 @@ async function spawnOrJoinConversationSession(params: {
 		conversationHistory,
 		isDirectConversation,
 		wasMentioned,
+		resume,
 	} = params
 
 	try {
@@ -354,7 +375,22 @@ async function spawnOrJoinConversationSession(params: {
 			config: {
 				interactive: true,
 				conversation: { conversation_id: conversationId, message_id: messageId },
+				// Consumed by SessionManager.buildLaunchSpec, which turns it into the
+				// CLAUDE_RESUME_* env vars agent-run.sh passes to `claude --resume`.
+				...(resume
+					? {
+							resume: {
+								cli_session_id: resume.cliSessionId,
+								turn_ordinal: resume.turnOrdinal,
+							},
+						}
+					: {}),
 			},
+			// Restores the stopped session's workspace — which now carries its CLI
+			// transcript under .claude-transcripts — so there is something to
+			// resume from. Without this the resume flags would find no transcript
+			// and agent-run.sh would fall back to a cold start.
+			...(resume ? { sourceSessionId: resume.sessionId } : {}),
 			createdBy: message.actorId,
 		})
 		// The seed prompt above inlines recent history up to and including this

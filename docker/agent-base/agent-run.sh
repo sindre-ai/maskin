@@ -69,8 +69,12 @@ install_runtime() {
   case "$RUNTIME" in
     claude-code)
       if ! command -v claude &> /dev/null; then
+        # Pinned, not floating: conversation rewind needs the --resume-session-at
+        # / --resume-drops-turn flags, which land in 2.1.223. An unpinned install
+        # could silently land below that floor and quietly degrade every rewind
+        # to a cold re-seed. Keep in sync with docker/agent-base/Dockerfile.
         echo "[system] Installing Claude Code CLI..."
-        npm install -g @anthropic-ai/claude-code 2>&1
+        npm install -g @anthropic-ai/claude-code@2.1.223 2>&1
       fi
       ;;
     codex)
@@ -230,6 +234,36 @@ setup_mcps() {
 
 # Write Claude OAuth credentials file if OAuth tokens are provided.
 # Claude Code reads auth from ~/.claude/.credentials.json, not env vars.
+# Claude Code writes its own conversation transcript to
+# $HOME/.claude/projects/<slug-of-cwd>/<session-id>.jsonl. $HOME is neither
+# bind-mounted nor snapshotted, so that transcript dies with the VM — and with
+# it any ability to rewind a chat with `--resume` rather than re-seeding a cold
+# session from a truncated history blob.
+#
+# Symlink just the transcripts into /agent (the bind-mounted, S3-snapshotted
+# tree). Deliberately a symlink of `projects/` rather than repointing
+# CLAUDE_CONFIG_DIR at /agent wholesale: the config dir also holds
+# .credentials.json (live OAuth access + refresh tokens), and moving that into
+# the path of the workspace tarball would ship user credentials to S3 on every
+# snapshot. Credentials stay in $HOME, are re-derived from env on every boot by
+# setup_claude_credentials, and are never persisted.
+#
+# tar sees the real directory under /agent, not the symlink, so nothing here
+# depends on the archiver following links.
+setup_transcript_dir() {
+  local link_dir="$HOME/.claude"
+  local store="/agent/.claude-transcripts"
+
+  mkdir -p "$store" "$link_dir"
+  # Idempotent: a resumed session already has the symlink from its snapshot's
+  # sibling boot, and `ln -sfn` re-points rather than nesting a link inside it.
+  if [ ! -e "$link_dir/projects" ] || [ -L "$link_dir/projects" ]; then
+    ln -sfn "$store" "$link_dir/projects"
+  else
+    echo "[system] WARN: $link_dir/projects is a real directory — transcript will not persist" >&2
+  fi
+}
+
 setup_claude_credentials() {
   if [ -z "$CLAUDE_OAUTH_ACCESS_TOKEN" ]; then
     return
@@ -392,6 +426,49 @@ run_agent() {
       if [ -n "$MCP_CONFIG_FILE" ]; then
         mcp_args=(--mcp-config "$MCP_CONFIG_FILE")
       fi
+
+      # Assign the CLI's session id rather than parsing it back out of the
+      # stream-json system/init line. An addressable transcript is what makes
+      # `--resume` possible when a conversation is rewound.
+      local session_args=()
+      if [ -n "$CLAUDE_SESSION_ID" ]; then
+        session_args=(--session-id "$CLAUDE_SESSION_ID")
+      fi
+
+      # Rewind: reopen the previous CLI session with its history truncated at a
+      # turn, instead of starting cold. --fork-session leaves the pre-rewind
+      # transcript intact on disk, so switching back to the parent branch can
+      # resume *its* session id and get that context back.
+      #
+      # --resume-session-at / --resume-drops-turn are hidden flags (absent from
+      # `claude --help`) — the CLI surface of the Agent SDK's documented
+      # resumeSessionAt / resumeDropsTurn options. They require Claude Code
+      # >= 2.1.223; both are passed the same uuid, meaning "reopen at this turn,
+      # dropping it", because apps/dev re-sends that turn itself.
+      #
+      # apps/dev supplies an ORDINAL, not a uuid: it counted the turn envelopes
+      # it delivered (services/conversation-rewind.ts) but cannot see the
+      # transcript, which lives here. resolve-resume-turn.mjs bridges the two.
+      #
+      # Every failure below is non-fatal and falls through to a cold session:
+      # the agent then re-reads recent history from its seed prompt instead of
+      # its real transcript — lossy, but the user's rewind still works.
+      local resume_args=()
+      if [ -n "$CLAUDE_RESUME_SESSION_ID" ] && [ -n "$CLAUDE_RESUME_TURN_ORDINAL" ]; then
+        local resume_uuid=""
+        if resume_uuid=$(node /usr/local/lib/maskin/resolve-resume-turn.mjs \
+              "$CLAUDE_RESUME_SESSION_ID" "$CLAUDE_RESUME_TURN_ORDINAL" 2>&1); then
+          resume_args=(
+            --resume "$CLAUDE_RESUME_SESSION_ID"
+            --resume-session-at "$resume_uuid"
+            --resume-drops-turn "$resume_uuid"
+            --fork-session
+          )
+          echo "[system] Rewind: resuming CLI session $CLAUDE_RESUME_SESSION_ID at turn $CLAUDE_RESUME_TURN_ORDINAL ($resume_uuid)"
+        else
+          echo "[system] Rewind: could not resolve turn $CLAUDE_RESUME_TURN_ORDINAL of session $CLAUDE_RESUME_SESSION_ID — starting cold. ($resume_uuid)" >&2
+        fi
+      fi
       if [ "$INTERACTIVE" = "1" ]; then
         if [ -n "$AGENT_SERVER_URL" ]; then
           # Remote microsandbox path: stream user turns from the agent-server.
@@ -426,6 +503,8 @@ run_agent() {
             --output-format stream-json \
             --verbose \
             --dangerously-skip-permissions \
+            "${session_args[@]}" \
+            "${resume_args[@]}" \
             "${mcp_args[@]}" \
             2>&1 \
             < <(input_stream) \
@@ -440,6 +519,8 @@ run_agent() {
             --output-format stream-json \
             --verbose \
             --dangerously-skip-permissions \
+            "${session_args[@]}" \
+            "${resume_args[@]}" \
             "${mcp_args[@]}" \
             2>&1 | log_tee
           AGENT_EXIT_CODE=${PIPESTATUS[0]}
@@ -500,6 +581,7 @@ echo "[system] Runtime: $RUNTIME"
 install_runtime
 build_context
 setup_mcps
+setup_transcript_dir
 setup_claude_credentials
 setup_github_credential_helper
 start_preview_port_watcher

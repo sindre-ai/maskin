@@ -1,4 +1,5 @@
 import { execFile as execFileCb } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -1587,6 +1588,33 @@ export class SessionManager extends EventEmitter {
 		}
 		envVars.MASKIN_API_KEY = agent.apiKey
 
+		// Hand the CLI a session id we choose, so its own transcript is
+		// addressable without parsing the stream-json system/init line. This is
+		// what lets a rewound conversation resume that transcript instead of
+		// re-seeding a cold session from a truncated history blob. Persisted so
+		// a later rewind can find it. See docker/agent-base/agent-run.sh.
+		if (session.interactive) {
+			const cliSessionId = session.cliSessionId ?? randomUUID()
+			envVars.CLAUDE_SESSION_ID = cliSessionId
+			if (!session.cliSessionId) {
+				await this.db.update(sessions).set({ cliSessionId }).where(eq(sessions.id, session.id))
+			}
+
+			// Set by the rewind path (routes/conversations.ts) via session config.
+			// Absent for a normal session, in which case the CLI starts cold.
+			const resume = (sessionConfig.resume ?? null) as {
+				cli_session_id?: string
+				turn_ordinal?: number
+			} | null
+			if (resume?.cli_session_id && typeof resume.turn_ordinal === 'number') {
+				envVars.CLAUDE_RESUME_SESSION_ID = resume.cli_session_id
+				// An ordinal, not a uuid: the transcript's own uuids are only
+				// readable from inside the sandbox, so agent-run.sh resolves this
+				// into one. See services/conversation-rewind.ts.
+				envVars.CLAUDE_RESUME_TURN_ORDINAL = String(resume.turn_ordinal)
+			}
+		}
+
 		// Agent-level MCP config (from tools field, stored as { mcpServers: { ... } }).
 		// The AGENT_MCP_JSON env var is written further down, after the GitHub
 		// preflight has had a chance to strip failed identities from
@@ -1796,6 +1824,11 @@ export class SessionManager extends EventEmitter {
 			'CLAUDE_OAUTH_EXPIRES_AT',
 			'CLAUDE_OAUTH_SCOPES',
 			'CLAUDE_OAUTH_SUBSCRIPTION_TYPE',
+			// Reserved, not merely injected: a user-supplied CLAUDE_RESUME_* would
+			// let a session graft another session's transcript into its context.
+			'CLAUDE_SESSION_ID',
+			'CLAUDE_RESUME_SESSION_ID',
+			'CLAUDE_RESUME_TURN_ORDINAL',
 			'BROWSER_CDP_URL',
 		])
 		// Only reserve GITHUB_TOKEN when we actually injected one; otherwise a

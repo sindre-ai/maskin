@@ -4,7 +4,8 @@ import { MarkdownContent } from '@/components/shared/markdown-content'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { useEditMessage, useRetryMessage } from '@/hooks/use-conversation'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { useEditMessage, useRetryMessage, useRewindMessage } from '@/hooks/use-conversation'
 import type { MessageContextNotification, MessageContextObject, MessageResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
@@ -54,6 +55,10 @@ export function MessageBubble({
 	const [draft, setDraft] = useState('')
 	const editMessage = useEditMessage(message.conversationId, workspaceId)
 	const retryMessage = useRetryMessage(message.conversationId, workspaceId)
+	const rewindMessage = useRewindMessage(message.conversationId, workspaceId)
+	// The server decides whether a rewind is allowed (author, and nobody else
+	// has posted since) and says so per message. Absent on synthetic bubbles.
+	const canRewind = canAct && message.canRewind === true
 	// An agent's auto-posted end-of-turn reply carries the id of the chat
 	// message whose turn produced it — that's the message to re-run when the
 	// user wants the agent to redo this response ("regenerate").
@@ -168,15 +173,35 @@ export function MessageBubble({
 								>
 									<Pencil size={12} aria-hidden />
 								</button>
-								<button
-									type="button"
-									onClick={() => retryMessage.mutate({ messageId: message.id })}
-									disabled={retryMessage.isPending}
-									aria-label="Ask agents to respond again"
-									className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
-								>
-									<RotateCcw size={12} aria-hidden />
-								</button>
+								{/* Own provider rather than relying on an ancestor: a message
+								    bubble renders in the thread, in search results, and in tests,
+								    and a missing provider throws at render time. Same posture as
+								    marketplace-loop-card and bulk-action-bar. */}
+								<TooltipProvider delayDuration={150}>
+									<Tooltip>
+										<TooltipTrigger asChild>
+											{/* Wrapper span: a disabled button fires no pointer events, so
+										    Radix would never see the hover that explains WHY it's
+										    disabled — which is the whole point of the tooltip here. */}
+											<span>
+												<button
+													type="button"
+													onClick={() => rewindMessage.mutate({ messageId: message.id })}
+													disabled={!canRewind || rewindMessage.isPending}
+													aria-label="Rewind the conversation to this message and send it again"
+													className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+												>
+													<RotateCcw size={12} aria-hidden />
+												</button>
+											</span>
+										</TooltipTrigger>
+										<TooltipContent>
+											{canRewind
+												? 'Rewind to here and send again'
+												: 'Someone else has replied since — rewinding would remove their message'}
+										</TooltipContent>
+									</Tooltip>
+								</TooltipProvider>
 							</>
 						) : null}
 					</div>

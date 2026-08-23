@@ -850,6 +850,20 @@ export const api = {
 					workspaceId,
 				},
 			),
+		// Rewind discards the thread from this message onward onto a new branch and
+		// re-sends it. Unlike retryMessage, which leaves the thread intact.
+		rewindMessage: (id: string, workspaceId: string, messageId: number) =>
+			request<{ branch_id: string; message: MessageResponse }>(
+				`/conversations/${id}/messages/${messageId}/rewind`,
+				{ method: 'POST', workspaceId },
+			),
+		// null switches back to the root branch — the thread before any rewind.
+		switchBranch: (id: string, workspaceId: string, branchId: string | null) =>
+			request<{ branch_id: string | null }>(`/conversations/${id}/branch`, {
+				method: 'POST',
+				body: { branch_id: branchId },
+				workspaceId,
+			}),
 		updateMe: (id: string, workspaceId: string, data: UpdateConversationParticipantStateInput) =>
 			request<ConversationParticipantStateResponse>(`/conversations/${id}/me`, {
 				method: 'PATCH',
@@ -1452,6 +1466,21 @@ export interface MessageResponse {
 	sessionId: string | null
 	createdAt: string | null
 	editedAt: string | null
+	/**
+	 * Whether the caller may rewind the thread to this message. Resolved by the
+	 * server (author + nobody else has posted since) so the button can't offer
+	 * something the rewind endpoint would refuse.
+	 */
+	canRewind?: boolean
+}
+
+/** A point where the thread forks, rendered as a "‹ 2/3 ›" switcher. */
+export interface BranchPoint {
+	messageId: number
+	/** Index into `options` of the branch currently being read. */
+	activeIndex: number
+	/** Oldest first; index 0 is the original continuation. */
+	options: Array<{ branchId: string | null }>
 }
 
 export interface EditMessageInput {
@@ -1461,6 +1490,8 @@ export interface EditMessageInput {
 export interface MessagesListResponse {
 	messages: MessageResponse[]
 	has_more: boolean
+	active_branch_id: string | null
+	branch_points: BranchPoint[]
 }
 
 export interface CreateConversationInput {

@@ -114,18 +114,35 @@ describe('MessageBubble pending final output', () => {
 	})
 })
 
-describe('MessageBubble edit and retry', () => {
-	it('shows edit and retry actions on own persisted messages', () => {
-		render(<MessageBubble workspaceId="ws-1" message={buildMessage()} />, { wrapper: TestWrapper })
+describe('MessageBubble edit and rewind', () => {
+	it('shows edit and rewind actions on own persisted messages', () => {
+		render(<MessageBubble workspaceId="ws-1" message={buildMessage({ canRewind: true })} />, {
+			wrapper: TestWrapper,
+		})
 		expect(screen.getByLabelText('Edit message')).toBeInTheDocument()
-		expect(screen.getByLabelText('Ask agents to respond again')).toBeInTheDocument()
+		expect(
+			screen.getByLabelText('Rewind the conversation to this message and send it again'),
+		).toBeEnabled()
+	})
+
+	it('disables rewind when the server says someone else has replied since', () => {
+		// canRewind is resolved server-side; the button must not offer an action
+		// the rewind endpoint would reject with a 409.
+		render(<MessageBubble workspaceId="ws-1" message={buildMessage({ canRewind: false })} />, {
+			wrapper: TestWrapper,
+		})
+		expect(
+			screen.getByLabelText('Rewind the conversation to this message and send it again'),
+		).toBeDisabled()
 	})
 
 	it("hides the actions on other participants' messages", () => {
 		const message = buildMessage({ actorId: 'other-1', actorName: 'Someone Else' })
 		render(<MessageBubble workspaceId="ws-1" message={message} />, { wrapper: TestWrapper })
 		expect(screen.queryByLabelText('Edit message')).not.toBeInTheDocument()
-		expect(screen.queryByLabelText('Ask agents to respond again')).not.toBeInTheDocument()
+		expect(
+			screen.queryByLabelText('Rewind the conversation to this message and send it again'),
+		).not.toBeInTheDocument()
 	})
 
 	it('opens an inline editor prefilled with the current content when edit is clicked', async () => {

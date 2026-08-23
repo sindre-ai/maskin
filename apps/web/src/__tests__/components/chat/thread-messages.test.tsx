@@ -18,6 +18,8 @@ vi.mock('@/hooks/use-conversation', () => ({
 	flattenMessagesOldestFirst: () => flattened,
 	useEditMessage: () => ({ mutate: vi.fn(), isPending: false }),
 	useRetryMessage: () => ({ mutate: vi.fn(), isPending: false }),
+	useRewindMessage: () => ({ mutate: vi.fn(), isPending: false }),
+	useSwitchBranch: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
 const useConversationActivity = vi.fn()

@@ -12,6 +12,13 @@ export type InsertConversationMessageArgs = {
 	metadata: MessageMetadata | null
 	sessionId: string | null
 	kind?: 'message' | 'system'
+	/**
+	 * Branch to write onto. Omit to use the conversation's active branch, which
+	 * is what every caller wants — resolving it here rather than at each call
+	 * site is deliberate, because a message that silently lands on the root
+	 * branch would be visible from every branch at once.
+	 */
+	branchId?: string | null
 }
 
 export type InsertedConversationMessage = typeof messages.$inferSelect
@@ -37,6 +44,16 @@ export async function insertConversationMessage(
 	db: Database,
 	args: InsertConversationMessageArgs,
 ): Promise<InsertedConversationMessage | null> {
+	let branchId = args.branchId
+	if (branchId === undefined) {
+		const [conversation] = await db
+			.select({ activeBranchId: conversations.activeBranchId })
+			.from(conversations)
+			.where(eq(conversations.id, args.conversationId))
+			.limit(1)
+		branchId = conversation?.activeBranchId ?? null
+	}
+
 	const [created] = await db
 		.insert(messages)
 		.values({
@@ -45,6 +62,7 @@ export async function insertConversationMessage(
 			content: args.content,
 			metadata: args.metadata,
 			sessionId: args.sessionId,
+			branchId,
 			...(args.kind ? { kind: args.kind } : {}),
 		})
 		.onConflictDoNothing()

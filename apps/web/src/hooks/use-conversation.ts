@@ -202,6 +202,53 @@ export function useRetryMessage(id: string, workspaceId: string) {
 	})
 }
 
+// Rewinds the thread to a message: everything from it onward moves onto the
+// parent branch, a copy is re-sent on a fresh branch, and the agents answer
+// again with no memory of the discarded tail. Nothing is deleted — the old tail
+// stays reachable through the branch switcher.
+//
+// No optimistic update: the server decides the new branch id and the new message
+// id, and a wrong guess would render a thread that doesn't exist. Refetching is
+// fast and the button shows a pending state meanwhile.
+export function useRewindMessage(id: string, workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation<{ branch_id: string; message: MessageResponse }, Error, { messageId: number }>(
+		{
+			mutationFn: ({ messageId }) => api.conversations.rewindMessage(id, workspaceId, messageId),
+			onSuccess: () => {
+				queryClient.invalidateQueries({ queryKey: queryKeys.conversations.messagesPrefix(id) })
+				queryClient.invalidateQueries({ queryKey: queryKeys.conversations.detail(id) })
+			},
+			onError: (err) => {
+				// The server refuses a rewind that would remove someone else's message.
+				// Say which it is — "Failed to rewind" leaves the user re-clicking.
+				toast.error(
+					err.message.includes('replied since')
+						? 'Someone else has replied since — rewinding would remove their message.'
+						: 'Failed to rewind',
+				)
+			},
+		},
+	)
+}
+
+// Switches which branch of a rewound conversation is being read. Server-side
+// state, not a client-side view toggle: the agents answer on the active branch,
+// so it has to be the same choice for the whole conversation.
+export function useSwitchBranch(id: string, workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation<{ branch_id: string | null }, Error, { branchId: string | null }>({
+		mutationFn: ({ branchId }) => api.conversations.switchBranch(id, workspaceId, branchId),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.conversations.messagesPrefix(id) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.conversations.detail(id) })
+		},
+		onError: () => {
+			toast.error('Failed to switch branch')
+		},
+	})
+}
+
 export function useAddConversationParticipants(id: string, workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
