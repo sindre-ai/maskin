@@ -85,6 +85,7 @@ export function useSendMessage(id: string, workspaceId: string) {
 				metadata: data.metadata ?? null,
 				sessionId: data.session_id ?? null,
 				createdAt: new Date().toISOString(),
+				editedAt: null,
 			}
 			const snapshots = queryClient.getQueriesData<InfiniteData<MessagesListResponse>>({
 				queryKey: queryKeys.conversations.messagesPrefix(id),
@@ -123,6 +124,80 @@ export function useSendMessage(id: string, workspaceId: string) {
 		onSettled: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.conversations.all(workspaceId) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.conversations.detail(id) })
+		},
+	})
+}
+
+interface EditMessageContext {
+	snapshots: Array<[readonly unknown[], InfiniteData<MessagesListResponse> | undefined]>
+}
+
+// Optimistically rewrites the message's content in every cached page and marks
+// it edited; rolled back on error, reconciled with the server row on success.
+export function useEditMessage(id: string, workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation<
+		MessageResponse,
+		Error,
+		{ messageId: number; content: string },
+		EditMessageContext
+	>({
+		mutationFn: ({ messageId, content }) =>
+			api.conversations.editMessage(id, workspaceId, messageId, { content }),
+		onMutate: async ({ messageId, content }) => {
+			await queryClient.cancelQueries({ queryKey: queryKeys.conversations.messagesPrefix(id) })
+			const snapshots = queryClient.getQueriesData<InfiniteData<MessagesListResponse>>({
+				queryKey: queryKeys.conversations.messagesPrefix(id),
+			})
+			for (const [key, cache] of snapshots) {
+				if (!cache) continue
+				queryClient.setQueryData<InfiniteData<MessagesListResponse>>(key, {
+					...cache,
+					pages: cache.pages.map((page) => ({
+						...page,
+						messages: page.messages.map((m) =>
+							m.id === messageId ? { ...m, content, editedAt: new Date().toISOString() } : m,
+						),
+					})),
+				})
+			}
+			return { snapshots }
+		},
+		onError: (_err, _vars, ctx) => {
+			if (!ctx) return
+			for (const [key, cache] of ctx.snapshots) queryClient.setQueryData(key, cache)
+			toast.error('Failed to edit message')
+		},
+		onSuccess: (message) => {
+			const snapshots = queryClient.getQueriesData<InfiniteData<MessagesListResponse>>({
+				queryKey: queryKeys.conversations.messagesPrefix(id),
+			})
+			for (const [key, cache] of snapshots) {
+				if (!cache) continue
+				queryClient.setQueryData<InfiniteData<MessagesListResponse>>(key, {
+					...cache,
+					pages: cache.pages.map((page) => ({
+						...page,
+						messages: page.messages.map((m) => (m.id === message.id ? message : m)),
+					})),
+				})
+			}
+		},
+	})
+}
+
+// Asks the backend to re-run the agent responder for a message — used when an
+// agent never replied (boot failure, declined relevance) or the user wants a
+// fresh answer. Fire-and-forget on the server; feedback here is just a toast.
+export function useRetryMessage(id: string, workspaceId: string) {
+	return useMutation<{ retried: boolean }, Error, { messageId: number; agentId?: string }>({
+		mutationFn: ({ messageId, agentId }) =>
+			api.conversations.retryMessage(id, workspaceId, messageId, agentId),
+		onSuccess: () => {
+			toast.success('Asked the agents to respond')
+		},
+		onError: () => {
+			toast.error('Failed to retry')
 		},
 	})
 }

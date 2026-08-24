@@ -52,6 +52,12 @@ export const test = base.extend<AuthFixtures>({
 				localStorage.setItem('maskin-api-key', data.apiKey)
 				localStorage.setItem('maskin-actor', JSON.stringify(data.actor))
 				localStorage.setItem(`north_star_answered_${data.workspaceId}`, '1')
+				// CI sets no FF_* vars, so the `new-design` flag resolves false and the
+				// app would render the pre-v2 shell. Every existing spec asserts the v2
+				// shell, so force it on here via the test-only override. The flag's own
+				// spec (feature-flag-shell.spec.ts) overrides this per test to drive
+				// both sides of the boundary.
+				localStorage.setItem('ff:new-design', 'on')
 			},
 			{
 				apiKey: actor.api_key,

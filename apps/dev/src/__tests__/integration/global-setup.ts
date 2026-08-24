@@ -9,6 +9,7 @@ import postgres from 'postgres'
 import { ApiErrorCode, createApiError, formatZodError, mapStatusToCode } from '../../lib/errors'
 import { PlanCapExceededError } from '../../lib/llm-routing'
 import { OwnershipCapExceededError, SeatCapExceededError } from '../../lib/workspace-capacity'
+import type { SessionManager } from '../../services/session-manager'
 
 type Env = {
 	Variables: {
@@ -16,7 +17,7 @@ type Env = {
 		actorId: string
 		actorType: string
 		notifyBridge: PgNotifyBridge
-		sessionManager: { createSession: (...args: unknown[]) => Promise<unknown> }
+		sessionManager: SessionManager
 	}
 }
 
@@ -56,11 +57,15 @@ export function createIntegrationApp(
 		c.set('actorType', 'human')
 		c.set('notifyBridge', {} as PgNotifyBridge)
 		// Routes fire-and-forget a welcome/onboarding session via
-		// c.get('sessionManager').createSession(...) (see routes/workspaces.ts) —
-		// unlike agentStorage, this is read unguarded, so every route mounted
-		// through this shared harness needs a stub here even if the test never
-		// asserts on session creation itself.
-		c.set('sessionManager', { createSession: async () => ({}) })
+		// c.get('sessionManager').createSession(...) (see routes/workspaces.ts),
+		// and routes that delete an actor/loop stop that actor's live sessions
+		// first (see stopSessionsForActors). Both are read unguarded, so every
+		// route mounted through this shared harness needs a resolving stub here
+		// even if the test never asserts on session lifecycle itself.
+		c.set('sessionManager', {
+			stopSession: async () => {},
+			createSession: async () => ({}),
+		} as unknown as SessionManager)
 		await next()
 	})
 

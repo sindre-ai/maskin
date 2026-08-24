@@ -1,3 +1,5 @@
+// Pre-v2 For You feed, rendered when the `new-design` feature flag is off.
+// Governed by the `new-design` flag; this directory dies with the flag.
 import { Button } from '@/components/ui/button'
 import {
 	ResponsiveDialog,

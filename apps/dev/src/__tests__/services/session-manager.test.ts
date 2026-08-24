@@ -2861,6 +2861,8 @@ describe('SessionManager', () => {
 			// 9. queuedSessions (final drain) → empty
 			mockResults.selectQueue = [
 				[], // 1. timedOut
+				[], // 1.5 stuckAgentSessions
+				[], // 1.75 idleChatCandidates
 				[], // 2. runningSessions
 				[], // 3. expiredPaused
 				[], // 4. stuckPending
@@ -2892,6 +2894,8 @@ describe('SessionManager', () => {
 			// so we simulate the correct DB behavior by returning empty for stuckStarting.
 			mockResults.selectQueue = [
 				[], // 1. timedOut
+				[], // 1.5 stuckAgentSessions
+				[], // 1.75 idleChatCandidates
 				[], // 2. runningSessions
 				[], // 3. expiredPaused
 				[], // 4. stuckPending
@@ -2919,9 +2923,14 @@ describe('SessionManager', () => {
 			})
 			const pauseSpy = vi.spyOn(manager, 'pauseSession')
 
+			// markSessionFailedAfterContainerLoss CAS-updates with .returning() and
+			// bails when no row comes back — return one so the full flow (system
+			// log, telemetry, drainQueue) runs as it would against a real DB.
+			mockResults.update = [{ id: orphan.id }]
 			mockResults.selectQueue = [
 				[], // 1. timedOut
 				[], // 2. stuckAgentSessions (no stuck sessions)
+				[], // 2.5 idleChatCandidates (no idle chat sessions)
 				[orphan], // 3. runningSessions (idle check)
 				[], // 4. lastLog for orphan (empty → falls back to startedAt, which is >10min old)
 				// markSessionFailedAfterContainerLoss → existing session select (new in this branch):
@@ -2965,6 +2974,7 @@ describe('SessionManager', () => {
 			mockResults.selectQueue = [
 				[], // 1. timedOut
 				[], // 2. stuckAgentSessions (no stuck sessions)
+				[], // 2.5 idleChatCandidates (no idle chat sessions)
 				[stale], // 3. runningSessions
 				[], // 4. lastLog (empty → falls back to startedAt, which is >10min old)
 				// isContainerAlive → inspect mock returns { running: false } (consumed here)

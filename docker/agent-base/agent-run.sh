@@ -398,6 +398,66 @@ run_agent() {
           # curl holds a long-lived HTTP connection; process substitution pipes
           # its output into claude's stdin so each newline-delimited JSON message
           # is delivered as a user turn without needing Docker stdin attach.
+          #
+          # The connection MUST be reconnected on any drop, mirroring log_tee's
+          # posture on the output side. Between turns this stream sits idle for
+          # however long the human takes to reply — exactly what NAT/proxy
+          # idle-timeouts reap. A single curl would then EOF claude's stdin and
+          # permanently wedge the session: the agent-server keeps parking turns
+          # (InputQueue.pending) that nothing ever reads, the user stares at
+          # silence, and the 2h reaper eventually kills the session (the
+          # wedged-chat incidents of Aug 21-23). On reconnect, registerStream
+          # flushes every parked turn, so nothing is lost across a drop. This
+          # subshell never exits on its own — it dies with the VM at teardown —
+          # which also means claude's stdin never sees EOF mid-conversation.
+          # The reconnect marker goes to stderr, NOT stdout: stdout of this
+          # substitution IS claude's stdin and must carry only NDJSON turns.
+          #
+          # --max-time is what makes this reconnect loop actually reachable.
+          # Reconnecting on a *clean* drop is not enough: the failure seen in
+          # production is a SILENT one. These connections terminate on the
+          # host at microsandbox's egress proxy, not in the VM, and when the
+          # proxy's guest-side leg dies the host keeps ACKing everything
+          # written to it -- including the agent-server's 30s heartbeat --
+          # while nothing reaches this curl. Host-side the socket looks
+          # perfect (Send-Q 0, bytes_sent == bytes_acked); in here curl blocks
+          # forever on a half-open socket that never EOFs and never errors.
+          # So the loop never iterates, the marker never prints, and every
+          # turn the human sends from then on is parked in InputQueue.pending
+          # and never read. The server-side heartbeat cannot detect it either:
+          # detection there depends on the write FAILING, and the write always
+          # succeeds.
+          #
+          # Bounding each connection sidesteps detection entirely -- re-dial on
+          # a fixed cadence so no connection lives long enough to be reaped.
+          # 120s is well under the ~7min idle window where the hang was
+          # observed (turns delivered after 428s and 523s of idle both
+          # vanished; turns after 59s and 77s were answered in ~1s). The
+          # re-dial is lossless -- registerStream flushes everything parked
+          # while we were away -- and only ever fires when idle, so a turn
+          # arriving mid-redial waits at most ~1s.
+          #
+          # curl exits 28 on our own timeout; anything else is a real drop and
+          # keeps its stderr marker so genuine instability stays visible
+          # instead of being buried under a marker every 120s.
+          input_stream() {
+            local rc=0 fails=0
+            while true; do
+              rc=0
+              curl -4 -sfN --no-buffer --max-time 120 \
+                "${AGENT_SERVER_URL}/sessions/${SESSION_ID}/input/stream" || rc=$?
+              if [ "$rc" -eq 28 ]; then
+                fails=0
+                sleep 1
+                continue
+              fi
+              fails=$((fails + 1))
+              if [ "$fails" -le 3 ] || [ $((fails % 30)) -eq 0 ]; then
+                echo "[system] input stream dropped (curl $rc, attempt $fails) — reconnecting" >&2
+              fi
+              sleep 1
+            done
+          }
           set +o pipefail
           claude -p \
             --input-format stream-json \
@@ -406,8 +466,7 @@ run_agent() {
             --dangerously-skip-permissions \
             "${mcp_args[@]}" \
             2>&1 \
-            < <(curl -4 -sN --no-buffer \
-                "${AGENT_SERVER_URL}/sessions/${SESSION_ID}/input/stream") \
+            < <(input_stream) \
             | log_tee
           AGENT_EXIT_CODE=${PIPESTATUS[0]}
           set -o pipefail

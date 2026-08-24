@@ -422,15 +422,51 @@ test.describe('Typography — CLS budget', () => {
 		await setTheme(page, 'light')
 		await page.goto(`/${account.workspaceId}`, { waitUntil: 'commit' })
 
-		const cls = await page.evaluate(() => {
-			return new Promise<number>((resolve) => {
+		// Each shift is recorded with the elements that moved. A bare cumulative
+		// number tells you the budget broke but not what broke it — and the shift
+		// sources are gone by the time the assertion fails, so they have to be
+		// captured here, in the page, as they arrive.
+		const { cls, shifts } = await page.evaluate(() => {
+			interface ShiftSource {
+				node?: Node | null
+				previousRect: DOMRectReadOnly
+				currentRect: DOMRectReadOnly
+			}
+			interface ShiftEntry extends PerformanceEntry {
+				value: number
+				hadRecentInput: boolean
+				sources?: ShiftSource[]
+			}
+
+			function describe(node: Node | null | undefined): string {
+				if (!(node instanceof Element)) return '(detached)'
+				const testId = node.getAttribute('data-testid')
+				const id = node.id ? `#${node.id}` : ''
+				const cls = node.className
+				const klass =
+					typeof cls === 'string' && cls ? `.${cls.trim().split(/\s+/).slice(0, 4).join('.')}` : ''
+				return `${node.tagName.toLowerCase()}${id}${testId ? `[data-testid=${testId}]` : ''}${klass}`
+			}
+
+			return new Promise<{ cls: number; shifts: string[] }>((resolve) => {
 				let cumulative = 0
+				const shifts: string[] = []
 				const observer = new PerformanceObserver((list) => {
-					for (const entry of list.getEntries()) {
+					for (const entry of list.getEntries() as ShiftEntry[]) {
 						// Only count entries without recent user input
-						if (!(entry as unknown as { hadRecentInput: boolean }).hadRecentInput) {
-							cumulative += (entry as unknown as { value: number }).value
-						}
+						if (entry.hadRecentInput) continue
+						cumulative += entry.value
+						const moved = (entry.sources ?? []).map(
+							(source) =>
+								`${describe(source.node)} ${Math.round(source.previousRect.y)}→${Math.round(
+									source.currentRect.y,
+								)}y`,
+						)
+						shifts.push(
+							`${entry.value.toFixed(4)} @${Math.round(entry.startTime)}ms: ${
+								moved.join(' | ') || '(no sources)'
+							}`,
+						)
 					}
 				})
 				observer.observe({ type: 'layout-shift', buffered: true })
@@ -438,12 +474,12 @@ test.describe('Typography — CLS budget', () => {
 				// Resolve after fonts have had time to swap in
 				setTimeout(() => {
 					observer.disconnect()
-					resolve(cumulative)
+					resolve({ cls: cumulative, shifts })
 				}, 3000)
 			})
 		})
 
-		expect(cls).toBeLessThan(0.05)
+		expect(cls, `layout shifts:\n${shifts.join('\n')}`).toBeLessThan(0.05)
 	})
 })
 

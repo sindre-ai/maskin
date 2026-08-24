@@ -118,7 +118,9 @@ test.describe('Loop detail page', () => {
 		await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
 		await expect(page.getByTestId('loop-pill')).toHaveText('Learning', { timeout: 10000 })
 
-		await page.getByRole('button', { name: 'More' }).click()
+		// Exact — the v2 header's split New button adds a "More ways to start"
+		// control, which a substring match would also pick up.
+		await page.getByRole('button', { name: 'More', exact: true }).click()
 		await page.getByRole('menuitem', { name: 'Pause loop' }).click()
 
 		await expect(page.getByTestId('loop-pill')).toHaveText('Paused', { timeout: 10000 })

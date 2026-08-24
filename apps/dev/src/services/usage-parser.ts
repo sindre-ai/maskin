@@ -1,5 +1,6 @@
 import type { Database } from '@maskin/db'
 import { sessionLogs } from '@maskin/db/schema'
+import { parseResultLine } from '@maskin/shared'
 import { and, desc, eq, sql } from 'drizzle-orm'
 
 export type SessionUsage = {
@@ -15,6 +16,8 @@ const MAX_LINES_SCANNED = 200
 const MAX_LOG_ROWS_FETCHED = 50
 const MAX_LIVE_RESULT_ROWS_FETCHED = 2000
 
+// Local to `sumRunningSessionUsage` below, which sums raw `result` envelopes
+// itself rather than going through `parseResultLine`.
 const finiteOrNull = (v: unknown): number | null => {
 	const n = typeof v === 'number' ? v : Number(v)
 	return Number.isFinite(n) ? n : null
@@ -25,34 +28,18 @@ const finiteOrNull = (v: unknown): number | null => {
  * stream-json `result` event and extracts cost / token fields.
  *
  * Tolerates Docker multiplex splits (chunks may break a JSON line in
- * half) by joining first and splitting on '\n'. Tolerates non-JSON
- * noise via per-line try/catch. Returns null if nothing found.
+ * half) by joining first and splitting on newlines. Envelope recognition and
+ * numeric coercion live in `parseResultLine` (@maskin/shared), which is
+ * also what the interactive turn finalizer uses — one definition of "is
+ * this a result envelope". Returns null if nothing found.
  */
 export function parseUsageFromLogChunks(chunks: string[]): SessionUsage | null {
 	if (chunks.length === 0) return null
 	const lines = chunks.join('').split('\n')
 	const start = Math.max(0, lines.length - MAX_LINES_SCANNED)
 	for (let i = lines.length - 1; i >= start; i--) {
-		const line = lines[i]?.trim()
-		if (!line || line[0] !== '{') continue
-		let parsed: unknown
-		try {
-			parsed = JSON.parse(line)
-		} catch {
-			continue
-		}
-		if (!parsed || typeof parsed !== 'object') continue
-		const obj = parsed as Record<string, unknown>
-		if (obj.type !== 'result') continue
-		const usage = (obj.usage ?? {}) as Record<string, unknown>
-		return {
-			totalCostUsd: finiteOrNull(obj.total_cost_usd),
-			inputTokens: finiteOrNull(usage.input_tokens),
-			outputTokens: finiteOrNull(usage.output_tokens),
-			cacheCreationInputTokens: finiteOrNull(usage.cache_creation_input_tokens),
-			cacheReadInputTokens: finiteOrNull(usage.cache_read_input_tokens),
-			durationMs: finiteOrNull(obj.duration_ms),
-		}
+		const result = parseResultLine(lines[i] ?? '')
+		if (result) return result.usage
 	}
 	return null
 }

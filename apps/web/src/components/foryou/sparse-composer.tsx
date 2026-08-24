@@ -9,6 +9,7 @@ import {
 	chatSelectionReducer,
 } from '@/lib/chat-selection'
 import { useWorkspace } from '@/lib/workspace-context'
+import { NEW_CONVERSATION_PLACEHOLDER_TITLE } from '@maskin/shared'
 import { useNavigate } from '@tanstack/react-router'
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 
@@ -106,7 +107,7 @@ export function SparseComposer({ itemsCount, onFocusChange }: SparseComposerProp
 				: content
 			const itemsCountAtSubmit = itemsCount
 			const conversation = await createConversation.mutateAsync({
-				title: defaultAgent.name ?? 'New chat',
+				title: NEW_CONVERSATION_PLACEHOLDER_TITLE,
 				participant_actor_ids: [defaultAgent.id],
 				initial_message: initialMessage,
 			})

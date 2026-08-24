@@ -485,6 +485,10 @@ export const api = {
 			}),
 		stop: (id: string, workspaceId: string) =>
 			request<SessionResponse>(`/sessions/${id}/stop`, { method: 'POST', workspaceId }),
+		pause: (id: string, workspaceId: string) =>
+			request<SessionResponse>(`/sessions/${id}/pause`, { method: 'POST', workspaceId }),
+		resume: (id: string, workspaceId: string) =>
+			request<SessionResponse>(`/sessions/${id}/resume`, { method: 'POST', workspaceId }),
 		usage: (
 			workspaceId: string,
 			params: { actor_id: string; from: string; to: string; bucket: 'hour' | 'day' | 'week' },
@@ -629,10 +633,10 @@ export const api = {
 				`/installed-loops?workspaceId=${encodeURIComponent(workspaceId)}`,
 				{ workspaceId },
 			),
-		install: (workspaceId: string, loopId: string) =>
+		install: (workspaceId: string, loopId: string, source?: 'detail') =>
 			request<InstalledLoopInstallResponse>('/installed-loops', {
 				method: 'POST',
-				body: { loopId, workspaceId },
+				body: { loopId, workspaceId, ...(source ? { source } : {}) },
 				workspaceId,
 			}),
 		fork: (workspaceId: string, installedLoopId: string) =>
@@ -690,6 +694,12 @@ export const api = {
 				workspaceId,
 			})
 		},
+	},
+
+	featureFlags: {
+		// Per-actor, not per-workspace — no workspaceId. The backend resolves the
+		// booleans; the tester actor id list never reaches the browser.
+		get: () => request<{ flags: Record<string, boolean> }>('/feature-flags'),
 	},
 
 	userDisplaySettings: {
@@ -836,6 +846,22 @@ export const api = {
 				body: data,
 				workspaceId,
 			}),
+		editMessage: (id: string, workspaceId: string, messageId: number, data: EditMessageInput) =>
+			request<MessageResponse>(`/conversations/${id}/messages/${messageId}`, {
+				method: 'PATCH',
+				body: data,
+				workspaceId,
+			}),
+		// agentId scopes the retry to one agent ("Redo this response"); omitted,
+		// every participant re-evaluates ("Ask agents to respond again").
+		retryMessage: (id: string, workspaceId: string, messageId: number, agentId?: string) =>
+			request<{ retried: boolean }>(
+				`/conversations/${id}/messages/${messageId}/retry${agentId ? `?agent_id=${agentId}` : ''}`,
+				{
+					method: 'POST',
+					workspaceId,
+				},
+			),
 		updateMe: (id: string, workspaceId: string, data: UpdateConversationParticipantStateInput) =>
 			request<ConversationParticipantStateResponse>(`/conversations/${id}/me`, {
 				method: 'PATCH',
@@ -1441,11 +1467,27 @@ export interface MessageContextNotification {
 	title?: string
 }
 
+export interface MessageFinalOutput {
+	dedupe_key: string
+	/** The chat message whose turn produced this output, when resolvable. */
+	message_id?: number | null
+	is_error?: boolean
+	subtype?: string
+	truncated?: boolean
+}
+
 export interface MessageMetadata {
 	attachments?: MessageAttachment[]
 	mentions?: string[]
 	context_objects?: MessageContextObject[]
 	context_notifications?: MessageContextNotification[]
+	/**
+	 * Backend-owned; stripped from anything a client sends. 'final_output'
+	 * marks an agent's automatically-posted end-of-turn reply, as opposed to
+	 * one it posted mid-turn via the post_conversation_message MCP tool.
+	 */
+	source?: 'final_output'
+	final_output?: MessageFinalOutput
 }
 
 export interface MessageResponse {
@@ -1459,6 +1501,11 @@ export interface MessageResponse {
 	metadata: MessageMetadata | null
 	sessionId: string | null
 	createdAt: string | null
+	editedAt: string | null
+}
+
+export interface EditMessageInput {
+	content: string
 }
 
 export interface MessagesListResponse {
@@ -1589,6 +1636,11 @@ export interface CreateCommentInput {
 	mentions?: string[]
 	parent_event_id?: number
 	attachment_file_ids?: string[]
+	/** Structured extras the backend already accepts on `POST /events`
+	 *  (`createCommentSchema.metadata`, a `safeMetadataSchema` record). Today the
+	 *  UI writes `{ chips: string[] }` from the composer's "Attach a decision"
+	 *  affordance; `DecisionChips` renders them under the posted comment. */
+	metadata?: Record<string, unknown>
 }
 
 // Imports

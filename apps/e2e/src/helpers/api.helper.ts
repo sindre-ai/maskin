@@ -162,7 +162,9 @@ export class TestAPI {
 		data: {
 			type: string
 			title: string
-			status?: string
+			// Required by `createObjectSchema` — omitting it is a 400, so the
+			// type mirrors the API rather than letting a spec find out at runtime.
+			status: string
 			content?: string
 			metadata?: Record<string, unknown>
 		},

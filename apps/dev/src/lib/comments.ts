@@ -24,6 +24,14 @@ export interface PostCommentInput {
 export interface PostCommentResult {
 	comment: typeof events.$inferSelect
 	agentMentions: AgentMention[]
+	/**
+	 * Mention ids from the request that matched no row in `actors`. Callers
+	 * surface these back to the client — an agent posting over MCP typically
+	 * transcribed a UUID out of its system prompt and fumbled a character, and
+	 * silently dropping the mention means the human it was trying to reach is
+	 * never notified.
+	 */
+	unresolvedMentions: string[]
 }
 
 /**
@@ -72,11 +80,23 @@ export async function postComment(
 
 		const agentMentions: AgentMention[] = []
 
+		// Mention ids come straight off the request body, so they can reference
+		// actors that never existed or were deleted since the client rendered the
+		// composer. Resolve them against `actors` once and use the resolved set for
+		// both notifications and subscriptions — inserting an unknown id into
+		// `subscriptions.actor_id` violates its FK and aborts the whole comment.
+		let existingMentionedIds: string[] = []
+		let unresolvedMentions: string[] = []
+
 		if (input.mentions?.length) {
 			const mentionedActors = await tx
 				.select({ id: actors.id, type: actors.type })
 				.from(actors)
 				.where(inArray(actors.id, input.mentions))
+
+			existingMentionedIds = mentionedActors.map((a) => a.id)
+			const existingSet = new Set(existingMentionedIds)
+			unresolvedMentions = Array.from(new Set(input.mentions)).filter((id) => !existingSet.has(id))
 
 			const agentActors = mentionedActors.filter((a) => a.type === 'agent')
 
@@ -126,8 +146,8 @@ export async function postComment(
 
 		// Auto-subscribe @-mentioned actors so the comment reaches their For You
 		// page even if they weren't already subscribed.
-		if (input.mentions?.length) {
-			const uniqueMentioned = Array.from(new Set(input.mentions)).filter(
+		if (existingMentionedIds.length > 0) {
+			const uniqueMentioned = Array.from(new Set(existingMentionedIds)).filter(
 				(id) => id !== input.actorId,
 			)
 			if (uniqueMentioned.length > 0) {
@@ -148,6 +168,6 @@ export async function postComment(
 			}
 		}
 
-		return { comment, agentMentions }
+		return { comment, agentMentions, unresolvedMentions }
 	})
 }

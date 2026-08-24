@@ -9,10 +9,11 @@ import type { PgNotifyBridge } from '@maskin/realtime'
 import type { StorageProvider } from '@maskin/storage'
 import { cors } from 'hono/cors'
 import { logger as honoLogger } from 'hono/logger'
+import { CLIENT_SOURCE_HEADER } from './lib/analytics/knowledge-events'
 import { ApiErrorCode, createApiError, mapStatusToCode, validationFailureHook } from './lib/errors'
 import { PlanCapExceededError } from './lib/llm-routing'
 import { logger } from './lib/logger'
-import { Sentry } from './lib/sentry'
+import { Sentry, resolveClientSourceTag } from './lib/sentry'
 import { OwnershipCapExceededError, SeatCapExceededError } from './lib/workspace-capacity'
 import { createIdempotencyMiddleware } from './middleware/idempotency'
 import actorsRoutes from './routes/actors'
@@ -26,6 +27,7 @@ import briefingRoutes from './routes/briefing'
 import claudeOauthRoutes from './routes/claude-oauth'
 import conversationsRoutes from './routes/conversations'
 import eventsRoutes from './routes/events'
+import featureFlagsRoutes from './routes/feature-flags'
 import filesRoutes from './routes/files'
 import graphRoutes from './routes/graph'
 import importsRoutes from './routes/imports'
@@ -287,6 +289,17 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 			if (actorId) Sentry.setUser({ id: actorId })
 			const workspaceId = c.req.header('X-Workspace-Id')
 			if (workspaceId) Sentry.setTag('workspaceId', workspaceId)
+			// Which of our own clients made the call (ui / mcp / agent / …), so an
+			// error can be traced to a caller without touching the user-agent —
+			// that string carries browser + OS versions and is a fingerprinting
+			// vector, whereas this is a closed set of our own component names.
+			// Clamped to the allowlist because the header is caller-supplied free
+			// text: an unrecognised value must not become an unbounded tag.
+			Sentry.setTag('clientSource', resolveClientSourceTag(c.req.header(CLIENT_SOURCE_HEADER)))
+			// 'human' | 'agent' — a coarse, non-identifying split that separates
+			// autonomous-agent traffic from human traffic when triaging.
+			const actorType = c.get('actorType')
+			if (actorType) Sentry.setTag('actorType', actorType)
 		} catch (sentryErr) {
 			console.error('[sentry] setUser/setTag failed', sentryErr)
 		}
@@ -332,6 +345,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/claude-oauth', claudeOauthRoutes)
 	app.route('/api/telemetry', telemetryRoutes)
 	app.route('/api/user-display-settings', userDisplaySettingsRoutes)
+	app.route('/api/feature-flags', featureFlagsRoutes)
 
 	if (options.includeExtensions !== false) {
 		const moduleEnv = { db, notifyBridge, sessionManager, agentStorage, storageProvider }

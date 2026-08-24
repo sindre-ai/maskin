@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
 import type { UnreadItem } from '@/lib/api'
-import { CARD_ACTIONS, QUICK_REPLY_CHIPS, classifyCardKind } from '@/lib/foryou-card-kind'
+import {
+	AFTER_DECISION_FALLBACK_CHIPS,
+	CARD_ACTIONS,
+	QUICK_REPLY_CHIPS,
+	afterDecisionChips,
+	classifyCardKind,
+} from '@/lib/foryou-card-kind'
 import { buildObjectResponse } from '../factories'
 
 function buildItem(overrides: Partial<UnreadItem> = {}): UnreadItem {
@@ -109,5 +115,31 @@ describe('CARD_ACTIONS', () => {
 		]) {
 			expect(action.rationale).toBeUndefined()
 		}
+	})
+})
+
+describe('afterDecisionChips', () => {
+	it('drops chips that echo the first word of a decision option', () => {
+		const labels = afterDecisionChips().map((chip) => chip.label)
+		// "Approved" overlaps the "Approve" option's head word.
+		expect(labels).not.toContain('Approved')
+		expect(labels).toContain('On it')
+		expect(labels).toContain('Need more context')
+	})
+
+	it('falls back to forward-looking chips when the filter empties the row', () => {
+		const kept = afterDecisionChips(CARD_ACTIONS.decision, [
+			{ id: 'approved', label: 'Approved', tone: 'secondary' },
+			{ id: 'send_it_back', label: 'Send it back', tone: 'secondary' },
+		])
+		expect(kept).toEqual(AFTER_DECISION_FALLBACK_CHIPS)
+	})
+
+	it('keeps every chip when no option head word overlaps', () => {
+		const kept = afterDecisionChips(
+			[{ id: 'ship', label: 'Ship', tone: 'primary' }],
+			QUICK_REPLY_CHIPS,
+		)
+		expect(kept).toEqual(QUICK_REPLY_CHIPS)
 	})
 })

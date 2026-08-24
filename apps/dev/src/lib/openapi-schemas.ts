@@ -140,6 +140,14 @@ export const eventResponseSchema = z.object({
 	description: z.string().optional(),
 })
 
+// The 201 body of POST /api/events. Identical to a plain event, plus a
+// best-effort warning when some @mention ids matched no actor — the comment
+// still posts, but those people/agents were never notified.
+export const createCommentResponseSchema = eventResponseSchema.extend({
+	unresolved_mentions: z.array(z.string().uuid()).optional(),
+	warning: z.string().optional(),
+})
+
 export const fileSummarySchema = z.object({
 	id: z.string().uuid(),
 	name: z.string(),
@@ -278,6 +286,7 @@ export const messageResponseSchema = z.object({
 	metadata: jsonbField,
 	sessionId: z.string().uuid().nullable(),
 	createdAt: z.string().nullable(),
+	editedAt: z.string().nullable(),
 })
 
 export const sessionLogResponseSchema = z.object({

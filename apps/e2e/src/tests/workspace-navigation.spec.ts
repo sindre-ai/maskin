@@ -11,8 +11,9 @@ test.describe('Workspace Navigation', () => {
 		await page.getByRole('link', { name: 'Objects' }).click()
 		await expect(page).toHaveURL(new RegExp(`${account.workspaceId}/objects`))
 
-		// Navigate to Agents
-		await page.getByRole('link', { name: 'Agents' }).click()
+		// Navigate to Agents. The v2 shell drops Agents from the nav list — the
+		// sidebar footer's activity card is its entry point (sidebar-activity.tsx).
+		await page.getByTestId('sidebar-activity').click()
 		await expect(page).toHaveURL(new RegExp(`${account.workspaceId}/agents`))
 	})
 
