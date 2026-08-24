@@ -33,6 +33,7 @@ COPY agent-run.sh /agent-run.sh
 COPY github-credential-helper.sh /agent-github-credential-helper.sh
 COPY cdp-retry-proxy.js /cdp-retry-proxy.js
 COPY preview-port-watcher.js /preview-port-watcher.js
+COPY input-stream.js /input-stream.js
 RUN chmod +x /entrypoint.sh /agent-run.sh /agent-github-credential-helper.sh
 
 # PostToolUse hook that surfaces a newly-relayed dev-server preview port to
