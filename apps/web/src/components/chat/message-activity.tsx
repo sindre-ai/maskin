@@ -14,6 +14,7 @@ import {
 	ChevronRight,
 	MessageSquare,
 	Sparkles,
+	Square,
 	User,
 	Wrench,
 } from 'lucide-react'
@@ -22,6 +23,16 @@ import { useEffect, useRef, useState } from 'react'
 interface MessageActivityProps {
 	workspaceId: string
 	turn: MessageTurnActivity
+	/**
+	 * Reaches further back into the conversation's activity. Passed to the
+	 * OLDEST rendered turn only — activity within a conversation is contiguous,
+	 * so only the oldest loaded turn can have anything before it, and one
+	 * control is both sufficient and the only placement that doesn't scatter
+	 * identical buttons down the thread.
+	 */
+	onLoadOlder?: () => void
+	isLoadingOlder?: boolean
+	olderExhausted?: boolean
 }
 
 /**
@@ -31,7 +42,13 @@ interface MessageActivityProps {
  * turns auto-expand and keep streaming in new steps; finished turns default
  * to collapsed unless the user has toggled one open manually.
  */
-export function MessageActivity({ workspaceId, turn }: MessageActivityProps) {
+export function MessageActivity({
+	workspaceId,
+	turn,
+	onLoadOlder,
+	isLoadingOlder,
+	olderExhausted,
+}: MessageActivityProps) {
 	const { data: actor } = useActor(turn.actorId)
 	const stopSession = useStopSession(workspaceId)
 	// Only a live turn needs its session row: `startedAt` is what turns the
@@ -44,11 +61,12 @@ export function MessageActivity({ workspaceId, turn }: MessageActivityProps) {
 	// long tool run can't push the composer off screen.
 	const sources = turn.inProgress ? toolSources(turn.steps) : []
 	const [manuallyToggled, setManuallyToggled] = useState(false)
-	const [open, setOpen] = useState(turn.inProgress || turn.failed === true)
+	const attention = turn.failed === true || turn.interrupted === true
+	const [open, setOpen] = useState(turn.inProgress || attention)
 	useEffect(() => {
 		if (manuallyToggled) return
-		setOpen(turn.inProgress || turn.failed === true)
-	}, [turn.inProgress, turn.failed, manuallyToggled])
+		setOpen(turn.inProgress || attention)
+	}, [turn.inProgress, attention, manuallyToggled])
 
 	const stepsRef = useRef<HTMLDivElement | null>(null)
 	// biome-ignore lint/correctness/useExhaustiveDependencies: pin scroll to bottom whenever a new step arrives while open
@@ -59,7 +77,10 @@ export function MessageActivity({ workspaceId, turn }: MessageActivityProps) {
 		el.scrollTop = el.scrollHeight
 	}, [turn.steps.length, open])
 
-	if (!turn.inProgress && !turn.failed && turn.steps.length === 0) return null
+	// A turn with nothing to show is normally not worth a row — unless it is
+	// carrying the "load earlier activity" entry point, which would otherwise
+	// disappear on exactly the old conversations that need it.
+	if (!turn.inProgress && !attention && turn.steps.length === 0 && !onLoadOlder) return null
 
 	const name = actor?.name ?? 'Agent'
 
@@ -72,28 +93,50 @@ export function MessageActivity({ workspaceId, turn }: MessageActivityProps) {
 			}}
 			className="min-w-0 pl-8"
 		>
-			<CollapsibleTrigger
-				className={cn(
-					'flex w-fit cursor-pointer items-center gap-1.5 text-xs',
-					turn.failed ? 'text-error' : 'text-muted-foreground',
-				)}
-				aria-label={`Toggle ${name} activity`}
-			>
-				{turn.inProgress && <Spinner />}
-				{turn.failed && <AlertTriangle size={12} className="shrink-0" />}
-				<span role={turn.failed ? 'alert' : undefined}>
-					{turn.failed ? `${name} failed to start` : turn.inProgress ? `${name} is working…` : name}
-				</span>
-				{elapsed ? (
-					<span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">
-						{elapsed}
+			<div className="flex items-center gap-2">
+				<CollapsibleTrigger
+					className={cn(
+						'flex w-fit cursor-pointer items-center gap-1.5 text-xs',
+						turn.failed ? 'text-error' : 'text-muted-foreground',
+					)}
+					aria-label={`Toggle ${name} activity`}
+				>
+					{turn.inProgress && <Spinner />}
+					{attention && <AlertTriangle size={12} className="shrink-0" />}
+					<span role={attention ? 'alert' : undefined}>
+						{turn.failed
+							? `${name} failed to start`
+							: turn.interrupted
+								? `${name} stopped before finishing`
+								: turn.starting
+									? `${name} is getting ready…`
+									: turn.inProgress
+										? `${name} is working…`
+										: name}
 					</span>
+					{elapsed ? (
+						<span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">
+							{elapsed}
+						</span>
+					) : null}
+					<ChevronDown
+						size={12}
+						className={cn('shrink-0 transition-transform', open && 'rotate-180')}
+					/>
+				</CollapsibleTrigger>
+				{turn.inProgress && !turn.starting ? (
+					<button
+						type="button"
+						onClick={() => stopSession.mutate(turn.sessionId)}
+						disabled={stopSession.isPending}
+						aria-label={`Stop ${name}`}
+						className="flex shrink-0 cursor-pointer items-center gap-1 rounded text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+					>
+						<Square size={10} fill="currentColor" aria-hidden />
+						Stop
+					</button>
 				) : null}
-				<ChevronDown
-					size={12}
-					className={cn('shrink-0 transition-transform', open && 'rotate-180')}
-				/>
-			</CollapsibleTrigger>
+			</div>
 			{/* Collapsed, the pills are the only view of what the agent is reading;
 			    expanded, the step list below already says it — so they never
 			    duplicate the same strings on screen (mockup 720–724). */}
@@ -117,7 +160,26 @@ export function MessageActivity({ workspaceId, turn }: MessageActivityProps) {
 						turn.failed ? 'text-error' : 'text-muted-foreground',
 					)}
 				>
-					{turn.steps.length === 0 ? (
+					{onLoadOlder ? (
+						<div className="flex justify-start pb-1">
+							<Button
+								type="button"
+								variant="ghost"
+								size="sm"
+								onClick={onLoadOlder}
+								disabled={isLoadingOlder || olderExhausted}
+							>
+								{isLoadingOlder ? (
+									<Spinner />
+								) : olderExhausted ? (
+									'Start of activity'
+								) : (
+									'Load earlier activity'
+								)}
+							</Button>
+						</div>
+					) : null}
+					{turn.steps.length === 0 && !onLoadOlder ? (
 						<span>{turn.failed ? 'The session could not be started.' : 'Starting…'}</span>
 					) : (
 						turn.steps.map((step, index) => (
@@ -139,18 +201,6 @@ export function MessageActivity({ workspaceId, turn }: MessageActivityProps) {
 						))
 					)}
 				</div>
-				{turn.inProgress ? (
-					<Button
-						type="button"
-						variant="ghost"
-						size="sm"
-						className="mt-1 h-6 px-1.5 text-[10.5px] font-bold text-muted-foreground hover:text-foreground"
-						onClick={() => stopSession.mutate(turn.sessionId)}
-						disabled={stopSession.isPending}
-					>
-						Stop
-					</Button>
-				) : null}
 			</CollapsibleContent>
 		</Collapsible>
 	)

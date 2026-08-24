@@ -21,15 +21,20 @@ installGlobalDomMocks()
 const mockNavigate = vi.fn()
 const trackCommandPaletteOpenedMock = vi.fn()
 const trackSearchResultOpenedMock = vi.fn()
-const markReadMutate = vi.fn()
+const markReadMutateAsync = vi.fn(() => Promise.resolve())
 const toastMock = vi.fn()
+const toastErrorMock = vi.fn()
 
 vi.mock('@/lib/analytics', () => ({
 	trackCommandPaletteOpened: (p: unknown) => trackCommandPaletteOpenedMock(p),
 	trackSearchResultOpened: (p: unknown) => trackSearchResultOpenedMock(p),
 }))
 
-vi.mock('sonner', () => ({ toast: (...args: unknown[]) => toastMock(...args) }))
+vi.mock('sonner', () => ({
+	toast: Object.assign((...args: unknown[]) => toastMock(...args), {
+		error: (...args: unknown[]) => toastErrorMock(...args),
+	}),
+}))
 
 vi.mock('@/hooks/use-objects', () => ({
 	useObjects: vi.fn(() => ({ data: [] })),
@@ -37,6 +42,11 @@ vi.mock('@/hooks/use-objects', () => ({
 
 vi.mock('@/hooks/use-workspace-search', () => ({
 	useWorkspaceSearch: vi.fn(() => ({ rows: [] })),
+	matches: (query: string, ...fields: (string | null | undefined)[]) => {
+		if (!query) return true
+		const needle = query.toLowerCase()
+		return fields.some((field) => (field ?? '').toLowerCase().includes(needle))
+	},
 }))
 
 vi.mock('@/hooks/use-available-object-types', () => ({
@@ -48,7 +58,7 @@ vi.mock('@/hooks/use-available-object-types', () => ({
 
 vi.mock('@/hooks/use-subscriptions', () => ({
 	useUnread: vi.fn(() => ({ data: { items: [] } })),
-	useMarkRead: () => ({ mutate: markReadMutate }),
+	useMarkRead: () => ({ mutateAsync: markReadMutateAsync }),
 }))
 
 // The create surface is exercised on its own; here we only care that a create
@@ -242,7 +252,7 @@ describe('CommandPalette', () => {
 		expect(screen.queryByPlaceholderText('Run a command or jump to…')).not.toBeInTheDocument()
 	})
 
-	it('Mark all read marks every unread entity read', async () => {
+	it('Mark all read marks every unread entity read and waits before reporting success', async () => {
 		vi.mocked(useUnread).mockReturnValue({
 			data: {
 				items: [
@@ -257,13 +267,40 @@ describe('CommandPalette', () => {
 		await user.keyboard('{Control>}k{/Control}')
 		await user.click(screen.getByText('Mark all read'))
 
-		expect(markReadMutate).toHaveBeenCalledTimes(1)
-		expect(markReadMutate).toHaveBeenCalledWith({
+		expect(markReadMutateAsync).toHaveBeenCalledTimes(1)
+		expect(markReadMutateAsync).toHaveBeenCalledWith({
 			entityType: 'object',
 			entityId: 'obj-1',
 			lastEventId: 9,
 		})
-		expect(toastMock).toHaveBeenCalledWith('All caught up')
+		// The success toast only fires once the mutation has actually settled —
+		// not synchronously alongside firing it off.
+		await vi.waitFor(() => expect(toastMock).toHaveBeenCalledWith('All caught up'))
+	})
+
+	it('Mark all read reports a failure count instead of a false "all caught up"', async () => {
+		markReadMutateAsync.mockRejectedValueOnce(new Error('network error'))
+		vi.mocked(useUnread).mockReturnValue({
+			data: {
+				items: [
+					{ entity_type: 'object', entity_id: 'obj-1', unread_count: 2, latest_event_id: 9 },
+					{ entity_type: 'object', entity_id: 'obj-2', unread_count: 1, latest_event_id: 4 },
+				],
+			},
+		} as unknown as ReturnType<typeof useUnread>)
+		const user = userEvent.setup()
+		render(<CommandPalette />)
+
+		await user.keyboard('{Control>}k{/Control}')
+		await user.click(screen.getByText('Mark all read'))
+
+		await vi.waitFor(() =>
+			expect(toastErrorMock).toHaveBeenCalledWith(
+				'1 of 2 marked read',
+				expect.objectContaining({ description: expect.any(String) }),
+			),
+		)
+		expect(toastMock).not.toHaveBeenCalledWith('All caught up')
 	})
 
 	it('jumps to a non-object workspace row', async () => {

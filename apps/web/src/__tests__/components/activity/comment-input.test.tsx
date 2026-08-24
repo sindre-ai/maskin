@@ -1,7 +1,18 @@
-import { CommentInput } from '@/components/activity/comment-input'
+import { CommentInput as CommentInputPublic } from '@/components/activity/comment-input'
+import { NewDesignProvider } from '@/lib/new-design-context'
 import { COMMENT_MAX_LENGTH } from '@maskin/shared'
 import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+
+// v2-composer assertions, so they render on the `new-design` side of the
+// boundary. `NewDesignProvider` defaults to false, which is the legacy branch.
+function CommentInput(props: React.ComponentProps<typeof CommentInputPublic>) {
+	return (
+		<NewDesignProvider value={true}>
+			<CommentInputPublic {...props} />
+		</NewDesignProvider>
+	)
+}
 
 const mockMutate = vi.fn()
 const mockGetStoredActor = vi.fn()
@@ -47,6 +58,7 @@ describe('CommentInput', () => {
 		mockGetStoredActor.mockReturnValue({ id: 'actor-1', name: 'Alice', type: 'human' })
 		mockUseActors.mockReturnValue({ data: [] })
 		mockDraftSubmit.mockClear()
+		mockDraftSubmit.mockReturnValue('queued')
 		mockDraftFiles = []
 	})
 
@@ -122,6 +134,32 @@ describe('CommentInput', () => {
 			metadata: { chips: ['Ship it'] },
 		})
 		expect(mockMutate).not.toHaveBeenCalled()
+	})
+
+	// `submitDraft` returns 'no-attachments' when the queue has nothing to send:
+	// the entry was never created, or every attachment was removed between the
+	// composer reading `hasAttachments` and the click. In the second case it also
+	// deletes the entry, so there is no queued row left to render a failure on.
+	// Dropping the comment there loses the user's text silently.
+	it('falls back to a direct post when the queue reports no attachments', async () => {
+		mockDraftFiles = [
+			{ tempId: 'f-1', name: 'metrics.png', sizeBytes: 1024, status: 'uploaded', progress: 100 },
+		]
+		mockDraftSubmit.mockReturnValue('no-attachments')
+		const user = userEvent.setup()
+		render(<CommentInput workspaceId="ws-1" objectId="obj-1" />)
+
+		await user.type(
+			screen.getByPlaceholderText('Write a comment... Use @ to mention an agent'),
+			'Still worth saying',
+		)
+		await user.click(screen.getByRole('button', { name: /send/i }))
+
+		expect(mockDraftSubmit).toHaveBeenCalled()
+		expect(mockMutate).toHaveBeenCalledWith(
+			expect.objectContaining({ entity_id: 'obj-1', content: 'Still worth saying' }),
+			expect.anything(),
+		)
 	})
 
 	it('sends no metadata when no decision is attached', async () => {

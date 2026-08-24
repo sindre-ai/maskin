@@ -47,7 +47,7 @@ function seedAll() {
 	}
 	loopsRef.current = {
 		data: [
-			{ id: 'l-1', name: 'Relay loop', guarantee: null, entryCondition: null, status: 'running' },
+			{ id: 'l-1', name: 'Relay loop', content: null, entryCondition: null, status: 'learning' },
 		],
 	}
 	actorsRef.current = {

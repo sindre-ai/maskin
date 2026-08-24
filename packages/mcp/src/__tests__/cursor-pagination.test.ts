@@ -62,7 +62,7 @@ function loopRow(idx: number) {
 		workspaceId: wsId,
 		type: 'loop',
 		title: `Loop ${idx}`,
-		status: 'running',
+		status: 'learning',
 		createdAt: ts(idx),
 	}
 }

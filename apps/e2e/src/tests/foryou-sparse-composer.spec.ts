@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
+import type { TestAPI } from '../helpers/api.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 // For You sparse-state composer (T1 of bet `foryou-sparse-composer`).
@@ -62,6 +63,16 @@ async function mockUnreadCount(page: Page, workspaceId: string, count: number) {
 
 const COMPOSER_LABEL = 'Start a chat with agents'
 
+// Workspaces no longer come with a default chat agent pre-seeded (#1419
+// stopped auto-seeding on workspace creation) — useDefaultChatAgent() falls
+// back to an actor literally named "Workspace Coach", so create one
+// explicitly for the tests that submit through the composer.
+async function ensureDefaultChatAgent(api: TestAPI, workspaceId: string) {
+	const agent = await api.createAgentActor('Workspace Coach')
+	await api.addWorkspaceMember(workspaceId, agent.id)
+	return agent
+}
+
 test.describe('For You sparse composer', () => {
 	test('renders inside the empty state when items.length === 0 (AC-U1)', async ({
 		page,
@@ -96,6 +107,7 @@ test.describe('For You sparse composer', () => {
 		page,
 		account,
 	}) => {
+		await ensureDefaultChatAgent(account.api, account.workspaceId)
 		await mockUnreadCount(page, account.workspaceId, 0)
 		await page.goto(`/${account.workspaceId}`)
 		const input = page.getByTestId('sparse-composer').getByLabel(COMPOSER_LABEL)
@@ -131,6 +143,7 @@ test.describe('For You sparse composer', () => {
 	// box and that submit still fires. See `## Frontend Parity` + the
 	// `## Unverified interactions` block on T5 for the hardware-only delta.
 	test('AC-U5 + AC-T5 — 375×667 with simulated soft keyboard', async ({ page, account }) => {
+		await ensureDefaultChatAgent(account.api, account.workspaceId)
 		await page.setViewportSize({ width: 375, height: 667 })
 		await mockUnreadCount(page, account.workspaceId, 0)
 		await page.goto(`/${account.workspaceId}`)

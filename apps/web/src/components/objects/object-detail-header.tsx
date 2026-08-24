@@ -67,11 +67,6 @@ export function ObjectDetailHeader({
 				workspaceId={workspaceId}
 				open={menuOpen}
 				onOpenChange={setMenuOpen}
-				statuses={statuses}
-				members={members}
-				currentDriverId={object.driver ?? null}
-				onStatusChange={onStatusChange}
-				onDriverChange={onDriverChange}
 			/>
 		</div>
 	)

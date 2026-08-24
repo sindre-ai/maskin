@@ -7,12 +7,13 @@ import {
 	ForYouHeaderActions,
 } from '@/components/foryou/foryou-header'
 import { ForYouListRow } from '@/components/foryou/foryou-list-row'
+import { LegacyForYouPage } from '@/components/foryou/legacy/foryou-page'
 import { NorthStarPromptCard } from '@/components/foryou/north-star-prompt-card'
 import { OnboardingPromptCard } from '@/components/foryou/onboarding-prompt-card'
 import { SparseComposer } from '@/components/foryou/sparse-composer'
 import { PageHeader } from '@/components/layout/page-header'
-import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
+import { Skeleton } from '@/components/ui/skeleton'
 import { useBets } from '@/hooks/use-bets'
 import { useMarkRead, useMarkUnread, useUnread } from '@/hooks/use-subscriptions'
 import {
@@ -21,6 +22,7 @@ import {
 } from '@/hooks/use-user-display-settings'
 import type { DisplaySettingsBody, UnreadItem } from '@/lib/api'
 import { typeLabel } from '@/lib/constants'
+import { useNewDesign } from '@/lib/new-design-context'
 import { useWorkspace } from '@/lib/workspace-context'
 import { CHROME_KEY } from '@maskin/shared'
 import { createFileRoute } from '@tanstack/react-router'
@@ -28,9 +30,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 export const Route = createFileRoute('/_authed/$workspaceId/')({
-	component: ForYouRedesign,
+	component: ForYouRoute,
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
+
+// The single `new-design` boundary for the For You feed: the v2 feed (card
+// queue, list rows, brief drawer) below, or the pre-v2 feed under
+// `components/foryou/legacy/`. Reads the resolved flag from `NewDesignProvider`
+// rather than calling `useFeatureFlag` again — see
+// `.claude/rules/feature-flags.md`.
+function ForYouRoute() {
+	return useNewDesign() ? <ForYouRedesign /> : <LegacyForYouPage />
+}
 
 const UNDO_WINDOW_MS = 15_000
 
@@ -265,12 +276,25 @@ function ForYouRedesign() {
 		return () => window.removeEventListener('keydown', onKeydown)
 	}, [handleMarkAllRead])
 
+	// The skeleton mirrors the loaded feed's geometry — one chip-row-height
+	// header band and a single full-height card in the same 760px column —
+	// rather than a stack of three list-shaped cards. Cards mode only ever shows
+	// one card, so the old stack collapsed to a different height on hydration
+	// and pushed the CLS budget (apps/e2e/src/tests/typography.spec.ts) over
+	// 0.05.
 	if (isLoading || betsLoading) {
 		return (
-			<div className="flex flex-1 min-w-0 flex-col space-y-4" data-testid="foryou-redesign-root">
-				<CardSkeleton />
-				<CardSkeleton />
-				<CardSkeleton />
+			<div
+				className="flex min-h-0 min-w-0 flex-1 flex-col gap-3"
+				data-testid="foryou-redesign-root"
+			>
+				<div className="mx-auto mb-2 flex h-8 w-full max-w-[760px] items-center gap-2">
+					<Skeleton className="h-7 w-40" />
+					<Skeleton className="ml-auto h-8 w-20" />
+				</div>
+				<div className="mx-auto flex w-full min-h-0 max-w-[760px] flex-1 flex-col">
+					<Skeleton className="h-full w-full rounded-2xl" />
+				</div>
 			</div>
 		)
 	}
@@ -335,8 +359,14 @@ function ForYouRedesign() {
 							))}
 						</div>
 					)}
+					{/* The feed column is a fixed-height flex item (`flex-1 min-h-0`) so
+					    Cards mode can hand the card the exact remaining height and let
+					    the thread scroll inside it. That cap applies to List mode too,
+					    where the rows are plain flow content — so the list needs its
+					    own scroll container, or anything past the fold is unreachable
+					    (the page scroller can't see the overflow through the cap). */}
 					{mode === 'list' ? (
-						<div className="mx-auto flex w-full max-w-[760px] flex-col gap-2">
+						<div className="mx-auto flex w-full min-h-0 max-w-[760px] flex-1 flex-col gap-2 overflow-y-auto pb-4">
 							{queue.map((item) => (
 								<ForYouListRow
 									key={`${item.entity_type}-${item.entity_id}`}
@@ -353,6 +383,7 @@ function ForYouRedesign() {
 							workspaceId={workspaceId}
 							queue={queue}
 							pinnedKey={pinnedKey}
+							sort={sort}
 							sparseComposer={sparseComposerNode}
 						/>
 					)}

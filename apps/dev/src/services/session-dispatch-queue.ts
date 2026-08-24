@@ -47,6 +47,14 @@ export interface SessionDispatchQueueOptions {
 	 * Should comfortably exceed the slowest dispatch RTT. Default 60s.
 	 */
 	leaseMs?: number
+	/**
+	 * Append a `system`-stream line to a session's transcript (SessionManager's
+	 * insertSystemLog). Optional and best-effort — a log write must never stop
+	 * the row from being marked failed. Without it a user watching a session
+	 * that exhausted dispatch just sees the stream stop dead: no line, no
+	 * reason, no hint that starting a new session is the recovery.
+	 */
+	appendSystemLog?: (sessionId: string, content: string) => Promise<void>
 }
 
 const DEFAULTS = {
@@ -69,6 +77,15 @@ export function dispatchIdempotencyKey(sessionId: string): string {
 	return `dispatch:${sessionId}`
 }
 
+/**
+ * Shown to the user both as a `system` log line in the session transcript and
+ * as `result.failure_reason.human_message` in the session detail panel. Says
+ * what happened and what to do about it — dispatch exhaustion is recoverable,
+ * and starting a new session is the recovery.
+ */
+const DISPATCH_FAILED_MESSAGE =
+	'This session could not be started — no agent server accepted it after several attempts. Nothing was run. Start a new session to try again.'
+
 export class SessionDispatchQueue {
 	private timer: NodeJS.Timeout | null = null
 	private running = false
@@ -79,6 +96,7 @@ export class SessionDispatchQueue {
 	private readonly tickMs: number
 	private readonly batchSize: number
 	private readonly leaseMs: number
+	private readonly appendSystemLog?: (sessionId: string, content: string) => Promise<void>
 
 	constructor(
 		private db: Database,
@@ -92,6 +110,7 @@ export class SessionDispatchQueue {
 		this.tickMs = opts.tickMs ?? DEFAULTS.tickMs
 		this.batchSize = opts.batchSize ?? DEFAULTS.batchSize
 		this.leaseMs = opts.leaseMs ?? DEFAULTS.leaseMs
+		this.appendSystemLog = opts.appendSystemLog
 	}
 
 	/**
@@ -342,7 +361,23 @@ export class SessionDispatchQueue {
 				.update(sessions)
 				.set({
 					status: 'failed',
-					result: { error: errorMessage },
+					result: {
+						error: errorMessage,
+						exit_code: null,
+						// A bare `result.error` string renders nowhere: the session
+						// detail panel's FailureCard reads `result.failure_reason`, and
+						// use-conversation-activity reads `failure_reason.human_message`.
+						// Without this the user's session simply stopped, with the real
+						// explanation visible only in Sentry (MASKIN-DEV-4).
+						failure_reason: {
+							provider: 'agent-server',
+							reason_code: 'dispatch_failed',
+							human_message: DISPATCH_FAILED_MESSAGE,
+							http_status: null,
+							reset_at: null,
+							verbatim_output: errorMessage,
+						},
+					},
 					completedAt: new Date(),
 					updatedAt: new Date(),
 				})
@@ -364,6 +399,19 @@ export class SessionDispatchQueue {
 					entityId: updated.id,
 					data: { error: errorMessage, source: 'dispatch_queue' },
 				})
+
+				// Best-effort, and deliberately after the row is already failed: a
+				// log-write failure must not leave the session stuck non-terminal.
+				if (this.appendSystemLog) {
+					try {
+						await this.appendSystemLog(updated.id, DISPATCH_FAILED_MESSAGE)
+					} catch (err) {
+						logger.warn('Failed to append dispatch-failure log line', {
+							sessionId,
+							error: String(err),
+						})
+					}
+				}
 			}
 		} catch (err) {
 			// Surface but never throw — the row is already marked failed in the

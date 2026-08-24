@@ -2065,6 +2065,120 @@ describe('monitorSession — flushLogs retry and drop marker', () => {
 		expect(body.logs).toEqual([{ stream: 'stdout', content: 'hello world' }])
 	})
 
+	it('abandons log delivery for the whole session on a 410, without retrying', async () => {
+		// A session hard-deleted while its sandbox is still alive makes every
+		// further ingest fail the session_logs foreign key, so Maskin answers a
+		// terminal 410. Retrying (6 attempts, ~46s) achieves nothing and repeats
+		// for every remaining batch — the storm behind Sentry MASKIN-DEV-5 /
+		// MASKIN-AGENT-SERVER-1. One warn, no retries, and no further POSTs.
+		const sessionId = 'sess-flush-gone'
+		const run = makeAlwaysRunningRunner(sessionId)
+		const env = makeEnv({
+			AGENT_SESSION_ROOT: sessionRoot,
+			MASKIN_BASE_URL: 'http://maskin.test',
+			AGENT_SERVER_ID: '123e4567-e89b-12d3-a456-426614174000',
+		})
+		const reconcileFetch = vi.fn(async () => ({
+			ok: true,
+			json: async () => ({ marked_failed: [], orphan_sandboxes: [] }),
+		}))
+		const sessionLogRouters = new Map<string, (line: string) => void>()
+
+		const logsFetch = vi.fn().mockResolvedValue({ ok: false, status: 410, json: async () => ({}) })
+		vi.stubGlobal('fetch', logsFetch)
+		const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+		const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {})
+
+		vi.useFakeTimers()
+		try {
+			await reconcileOnBoot({
+				env,
+				storage: null,
+				msb: { msbBin: '/usr/local/bin/msb', run },
+				sessionLogRouters,
+				sessionExitCodes: new Map(),
+				fetchImpl: reconcileFetch as unknown as typeof fetch,
+			})
+
+			const push = sessionLogRouters.get(sessionId)
+			expect(push).toBeDefined()
+			push?.('first line')
+			await vi.advanceTimersByTimeAsync(2_000)
+			// A later batch must not re-attempt delivery either.
+			push?.('second line')
+			await vi.advanceTimersByTimeAsync(60_000)
+		} finally {
+			vi.useRealTimers()
+		}
+
+		expect(logsFetch).toHaveBeenCalledTimes(1)
+		expect(warnSpy).toHaveBeenCalledWith(
+			'Maskin reports session is gone — abandoning log delivery',
+			expect.objectContaining({ sessionId, droppedLines: 1 }),
+		)
+		expect(errorSpy).not.toHaveBeenCalledWith(
+			'failed to POST logs to Maskin after all retries, batch dropped',
+			expect.anything(),
+		)
+		warnSpy.mockRestore()
+		errorSpy.mockRestore()
+	})
+
+	it('retries a 401 rather than dropping the batch', async () => {
+		// A 401 is NOT a permanent client fault here: an AGENT_SERVER_SECRET
+		// rotation or a mid-deploy config gap produces auth failures inside the
+		// same ~30s window the retry budget exists to survive. Dropping the batch
+		// on the first 401 silently deletes lines from the user's transcript.
+		const sessionId = 'sess-flush-401'
+		const run = makeAlwaysRunningRunner(sessionId)
+		const env = makeEnv({
+			AGENT_SESSION_ROOT: sessionRoot,
+			MASKIN_BASE_URL: 'http://maskin.test',
+			AGENT_SERVER_ID: '123e4567-e89b-12d3-a456-426614174000',
+		})
+		const reconcileFetch = vi.fn(async () => ({
+			ok: true,
+			json: async () => ({ marked_failed: [], orphan_sandboxes: [] }),
+		}))
+		const sessionLogRouters = new Map<string, (line: string) => void>()
+
+		// Fails auth twice (secret rotation in flight), then recovers.
+		const logsFetch = vi
+			.fn()
+			.mockResolvedValueOnce({ ok: false, status: 401, json: async () => ({}) })
+			.mockResolvedValueOnce({ ok: false, status: 401, json: async () => ({}) })
+			.mockResolvedValue({ ok: true, status: 200, json: async () => ({ accepted: 1 }) })
+		vi.stubGlobal('fetch', logsFetch)
+
+		vi.useFakeTimers()
+		try {
+			await reconcileOnBoot({
+				env,
+				storage: null,
+				msb: { msbBin: '/usr/local/bin/msb', run },
+				sessionLogRouters,
+				sessionExitCodes: new Map(),
+				fetchImpl: reconcileFetch as unknown as typeof fetch,
+			})
+
+			const push = sessionLogRouters.get(sessionId)
+			expect(push).toBeDefined()
+			push?.('line through the rotation')
+			await vi.advanceTimersByTimeAsync(60_000)
+		} finally {
+			vi.useRealTimers()
+		}
+
+		// Three attempts: two rejected, the third delivering the same batch.
+		expect(logsFetch).toHaveBeenCalledTimes(3)
+		const finalCall = logsFetch.mock.calls[2]
+		if (!finalCall) throw new Error('logsFetch was not retried to success')
+		const body = JSON.parse(finalCall[1].body as string) as {
+			logs: Array<{ stream: string; content: string }>
+		}
+		expect(body.logs).toEqual([{ stream: 'stdout', content: 'line through the rotation' }])
+	})
+
 	it('warns when the server reports fewer accepted lines than were sent, without retrying', async () => {
 		// Regression coverage: a 200 response can still mean a partial batch —
 		// the server rejects any oversized/invalid line rather than failing the
@@ -2194,7 +2308,7 @@ describe('monitorSession — flushLogs retry and drop marker', () => {
 		])
 	})
 
-	it('retries and drops a batch when Maskin resolves with a non-ok status (no network error)', async () => {
+	it('drops a batch without retrying when Maskin resolves with a non-retryable status', async () => {
 		const sessionId = 'sess-flush-http-error'
 		const run = makeAlwaysRunningRunner(sessionId)
 		const env = makeEnv({
@@ -2208,14 +2322,26 @@ describe('monitorSession — flushLogs retry and drop marker', () => {
 		}))
 		const sessionLogRouters = new Map<string, (line: string) => void>()
 
-		// A resolved 401 never rejects fetch() — it must still be treated as a
-		// failure (retried, then dropped with a marker), not silently accepted.
+		// A resolved 400 never rejects fetch() — it must still be treated as a
+		// failure (dropped with a marker), not silently accepted. A malformed
+		// batch is a genuine client fault that answers identically however many
+		// times it is sent, so it must not spend the retry budget.
+		//
+		// This assertion used a 401 until it was found to be the wrong call:
+		// auth failures are NOT a stable config fault here. An
+		// AGENT_SERVER_SECRET rotation or a mid-deploy config gap answers 401 for
+		// seconds and then recovers, inside the very window this retry budget was
+		// widened to survive. Dropping on the first 401 turns a transient
+		// rotation into permanent, unrecoverable loss of the user's transcript,
+		// whereas retrying a genuinely-bad token costs a bounded ~46s and then
+		// drops with the same marker. See the 401 test above.
 		const logsFetch = vi.fn(async () => ({
 			ok: false,
-			status: 401,
+			status: 400,
 			json: async () => ({}),
 		}))
 		vi.stubGlobal('fetch', logsFetch)
+		const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {})
 
 		vi.useFakeTimers()
 		try {
@@ -2230,19 +2356,20 @@ describe('monitorSession — flushLogs retry and drop marker', () => {
 
 			const push = sessionLogRouters.get(sessionId)
 			expect(push).toBeDefined()
-			push?.('will be dropped after 401s')
+			push?.('will be dropped after a 400')
 
-			await vi.advanceTimersByTimeAsync(2_000) // scheduled flush fires, attempt 1: 401
-			await vi.advanceTimersByTimeAsync(2_000) // attempt 2: 401
-			await vi.advanceTimersByTimeAsync(4_000) // attempt 3: 401
-			await vi.advanceTimersByTimeAsync(8_000) // attempt 4: 401
-			await vi.advanceTimersByTimeAsync(16_000) // attempt 5: 401
-			await vi.advanceTimersByTimeAsync(16_000) // attempt 6: 401, retries exhausted
+			await vi.advanceTimersByTimeAsync(2_000) // scheduled flush fires: 400, dropped
+			await vi.advanceTimersByTimeAsync(48_000) // no retry occupies the old ~46s window
 		} finally {
 			vi.useRealTimers()
 		}
 
-		expect(logsFetch).toHaveBeenCalledTimes(6)
+		expect(logsFetch).toHaveBeenCalledTimes(1)
+		expect(errorSpy).toHaveBeenCalledWith(
+			'Maskin rejected log batch as non-retryable, batch dropped',
+			expect.objectContaining({ sessionId, status: 400, droppedLines: 1 }),
+		)
+		errorSpy.mockRestore()
 	})
 })
 
@@ -2376,5 +2503,243 @@ describe('monitorSession — completion report retry and drop marker', () => {
 			'session completion report failed after all retries — session may appear running until watchdog fires',
 			expect.objectContaining({ sessionId, exitCode: 0 }),
 		)
+	})
+})
+
+describe('POST /sessions/:id/logs/batch', () => {
+	const postBatch = (
+		app: ReturnType<typeof buildApp>,
+		id: string,
+		from: number,
+		lines: unknown[],
+	) =>
+		app.request(`/sessions/${id}/logs/batch`, {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: 'Bearer test-secret-thirty-two-chars-long',
+			},
+			body: JSON.stringify({ from, lines }),
+		})
+
+	const appWithRouter = (id: string) => {
+		const { run } = makeRunner()
+		const seen: string[] = []
+		const sessionLogRouters = new Map<string, (line: string) => void>()
+		sessionLogRouters.set(id, (line) => seen.push(line))
+		const app = buildApp({
+			env: makeEnv({ AGENT_SESSION_ROOT: sessionRoot }),
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+			sessionLogRouters,
+		})
+		return { app, seen }
+	}
+
+	it('stores a batch and acks the highest sequence it kept', async () => {
+		const { app, seen } = appWithRouter('sess-batch-1')
+		const res = await postBatch(app, 'sess-batch-1', 1, ['a', 'b', 'c'])
+		expect(res.status).toBe(200)
+		expect(await res.json()).toEqual({ ack: 3 })
+		expect(seen).toEqual(['a', 'b', 'c'])
+	})
+
+	// The guest resends anything it has not seen acked, so a lost ack means the
+	// same batch arrives twice. Appending it again would duplicate the agent's
+	// output in the transcript.
+	it('is idempotent when a batch whose ack was lost is resent', async () => {
+		const { app, seen } = appWithRouter('sess-batch-2')
+		await postBatch(app, 'sess-batch-2', 1, ['a', 'b'])
+		const res = await postBatch(app, 'sess-batch-2', 1, ['a', 'b'])
+		expect(await res.json()).toEqual({ ack: 2 })
+		expect(seen).toEqual(['a', 'b'])
+	})
+
+	it('appends only the new lines when a resend overlaps', async () => {
+		const { app, seen } = appWithRouter('sess-batch-3')
+		await postBatch(app, 'sess-batch-3', 1, ['a', 'b'])
+		const res = await postBatch(app, 'sess-batch-3', 2, ['b', 'c', 'd'])
+		expect(await res.json()).toEqual({ ack: 4 })
+		expect(seen).toEqual(['a', 'b', 'c', 'd'])
+	})
+
+	// Acking past a gap would let the guest discard lines that never arrived.
+	it('refuses to ack past a gap', async () => {
+		const { app, seen } = appWithRouter('sess-batch-4')
+		await postBatch(app, 'sess-batch-4', 1, ['a'])
+		const res = await postBatch(app, 'sess-batch-4', 3, ['c', 'd'])
+		expect(await res.json()).toEqual({ ack: 1 })
+		expect(seen).toEqual(['a'])
+	})
+
+	it('rejects a malformed body', async () => {
+		const { app } = appWithRouter('sess-batch-5')
+		expect((await postBatch(app, 'sess-batch-5', 0, ['a'])).status).toBe(400)
+		expect((await postBatch(app, 'sess-batch-5', 1, 'not-an-array' as never)).status).toBe(400)
+	})
+
+	// Review catch: after an agent-server restart the seq map is empty while the
+	// guest is already at sequence N. Refusing that as a gap acked 0 forever
+	// against a guest that was long past it — a permanent wedge plus a retry
+	// loop measured at ~3,400 requests/second. We have stored nothing, so there
+	// is nothing a wrong answer could discard: adopt the guest's position.
+	it('adopts the guest position on first contact rather than treating it as a gap', async () => {
+		const { app, seen } = appWithRouter('sess-batch-restart')
+		const res = await postBatch(app, 'sess-batch-restart', 57, ['after-restart-1', 'x'])
+		expect(await res.json()).toEqual({ ack: 58 })
+		expect(seen).toEqual(['after-restart-1', 'x'])
+	})
+
+	// Review catch: when the guest's buffer overflows it drops its oldest lines,
+	// leaving a hole nothing can ever fill. Waiting for it is waiting forever.
+	it('accepts a declared resync after the guest dropped lines, and records the hole', async () => {
+		const { app, seen } = appWithRouter('sess-batch-drop')
+		await postBatch(app, 'sess-batch-drop', 1, ['a', 'b'])
+
+		const res = await app.request('/sessions/sess-batch-drop/logs/batch', {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: 'Bearer test-secret-thirty-two-chars-long',
+			},
+			body: JSON.stringify({ from: 9, lines: ['i', 'j'], resync: true, dropped: 6 }),
+		})
+		expect(await res.json()).toEqual({ ack: 10 })
+		expect(seen[0]).toBe('a')
+		expect(seen[1]).toBe('b')
+		// The discontinuity is recorded rather than left silent.
+		expect(seen[2]).toContain('6 line(s) of agent output were dropped')
+		expect(seen.slice(3)).toEqual(['i', 'j'])
+	})
+
+	// A gap the guest has NOT declared is still refused: acking it would let the
+	// guest discard lines that never arrived.
+	it('still refuses an undeclared gap', async () => {
+		const { app, seen } = appWithRouter('sess-batch-undeclared')
+		await postBatch(app, 'sess-batch-undeclared', 1, ['a'])
+		const res = await postBatch(app, 'sess-batch-undeclared', 5, ['e'])
+		expect(await res.json()).toEqual({ ack: 1 })
+		expect(seen).toEqual(['a'])
+	})
+
+	// An unmonitored session must still be acked, or the guest retries forever
+	// against a server that is never going to store anything.
+	it('acks even when no log router is registered', async () => {
+		const { run } = makeRunner()
+		const app = buildApp({
+			env: makeEnv({ AGENT_SESSION_ROOT: sessionRoot }),
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+		})
+		const res = await postBatch(app, 'sess-batch-6', 1, ['a', 'b'])
+		expect(await res.json()).toEqual({ ack: 2 })
+	})
+})
+
+describe('GET /sessions/:id/input/stream', () => {
+	it('flushes turns parked before the stream connects and heartbeats the idle connection', async () => {
+		vi.useFakeTimers()
+		try {
+			const { run } = makeRunner()
+			const app = buildApp({
+				env: makeEnv({ AGENT_SESSION_ROOT: sessionRoot }),
+				storage: null,
+				msb: { msbBin: '/usr/local/bin/msb', run },
+			})
+
+			// A turn arrives while no reader is connected (the VM's input curl
+			// dropped) — it must park, not vanish.
+			const post = await app.request('/sessions/sess-stream-1/input', {
+				method: 'POST',
+				headers: {
+					'content-type': 'application/json',
+					authorization: 'Bearer test-secret-thirty-two-chars-long',
+				},
+				body: JSON.stringify({ content: 'hello parked turn' }),
+			})
+			expect(post.status).toBe(200)
+
+			// The (re)connecting reader receives the parked turn immediately.
+			const res = await app.request('/sessions/sess-stream-1/input/stream')
+			expect(res.status).toBe(200)
+			const reader = res.body?.getReader()
+			if (!reader) throw new Error('stream response has no body')
+			const decoder = new TextDecoder()
+			const first = await reader.read()
+			const framed = JSON.parse(decoder.decode(first.value))
+			// Framed as {maskin_seq, turn} so the VM can ack what it consumed.
+			// `turn` is the exact envelope apps/dev put on the wire — the CLI's
+			// stdin must see those bytes unaltered.
+			expect(framed.maskin_seq).toBe(1)
+			expect(JSON.parse(framed.turn)).toEqual({
+				type: 'user',
+				message: { role: 'user', content: 'hello parked turn' },
+			})
+
+			// With nothing else flowing, the 30s keepalive newline arrives — the
+			// signal that stops NAT/proxy idle-timeouts from reaping the stream.
+			const nextRead = reader.read()
+			await vi.advanceTimersByTimeAsync(30_000)
+			const heartbeat = await nextRead
+			expect(decoder.decode(heartbeat.value)).toBe('\n')
+
+			// Tear the reader down and let the next heartbeat's failed write
+			// clean up the interval so the test leaves no live timers behind.
+			await reader.cancel()
+			await vi.advanceTimersByTimeAsync(30_000)
+		} finally {
+			vi.useRealTimers()
+		}
+	})
+
+	it('replays an unacked turn on reconnect and drops it once acked', async () => {
+		const { run } = makeRunner()
+		const app = buildApp({
+			env: makeEnv({ AGENT_SESSION_ROOT: sessionRoot }),
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+		})
+		const decoder = new TextDecoder()
+
+		const post = await app.request('/sessions/sess-stream-ack/input', {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: 'Bearer test-secret-thirty-two-chars-long',
+			},
+			body: JSON.stringify({ content: 'needs an ack' }),
+		})
+		expect(post.status).toBe(200)
+
+		// First reader takes the turn and dies without acking — the production
+		// case, where the write succeeded into a socket the VM never read.
+		const first = await app.request('/sessions/sess-stream-ack/input/stream')
+		const r1 = first.body?.getReader()
+		if (!r1) throw new Error('stream response has no body')
+		expect(decoder.decode((await r1.read()).value)).toContain('needs an ack')
+		await r1.cancel()
+
+		// Reconnect with after=0: the turn is still owed, so it comes again.
+		const second = await app.request('/sessions/sess-stream-ack/input/stream?after=0')
+		const r2 = second.body?.getReader()
+		if (!r2) throw new Error('stream response has no body')
+		expect(decoder.decode((await r2.read()).value)).toContain('needs an ack')
+		await r2.cancel()
+
+		// Reconnect with after=1: acknowledged, so nothing is replayed. Proven
+		// by the 30s heartbeat arriving first instead of a turn.
+		vi.useFakeTimers()
+		try {
+			const third = await app.request('/sessions/sess-stream-ack/input/stream?after=1')
+			const r3 = third.body?.getReader()
+			if (!r3) throw new Error('stream response has no body')
+			const pending = r3.read()
+			await vi.advanceTimersByTimeAsync(30_000)
+			expect(decoder.decode((await pending).value)).toBe('\n')
+			await r3.cancel()
+			await vi.advanceTimersByTimeAsync(30_000)
+		} finally {
+			vi.useRealTimers()
+		}
 	})
 })

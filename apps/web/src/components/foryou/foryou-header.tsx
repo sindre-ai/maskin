@@ -41,9 +41,18 @@ interface ForYouHeaderActionsProps {
 
 // "Brief" + "Mark all read" projected into the shared top nav's actions slot.
 // The nav owns the title/subtitle and the global New menu — this component
-// only contributes the two For You-specific affordances. Mark-all-read is
-// *absent* rather than disabled when there's nothing unread (mockup 218's
-// `cuHas` gate) so the nav row doesn't carry a dead control.
+// only contributes the two For You-specific affordances, and must not render a
+// second `NewMenu` of its own, or the row shows two "New chat" buttons side by
+// side. Mark-all-read is *absent* rather than disabled when there's nothing
+// unread (mockup 218's `cuHas` gate) so the nav row doesn't carry a dead control.
+// Every control in the shared top nav — the search field, the split New
+// button, the sidebar trigger — is 30px tall, which is what keeps the nav row
+// at its 44px `min-h-11`. A `size="sm"` Button is 36px and pushes the row to
+// 49px, and because these actions are published into the nav only after the
+// feed loads, that growth moved the whole page down 5px on first paint (0.054
+// CLS, over the typography.spec budget). Match the nav's height instead.
+const NAV_ACTION_HEIGHT = 'h-[30px]'
+
 export function ForYouHeaderActions({
 	onMarkAllRead,
 	markAllReadDisabled,
@@ -51,12 +60,24 @@ export function ForYouHeaderActions({
 }: ForYouHeaderActionsProps) {
 	return (
 		<div className="flex items-center gap-1">
-			<Button variant="ghost" size="sm" aria-label="Today's brief" onClick={onOpenBrief}>
+			<Button
+				variant="ghost"
+				size="sm"
+				aria-label="Today's brief"
+				onClick={onOpenBrief}
+				className={NAV_ACTION_HEIGHT}
+			>
 				<Newspaper size={14} aria-hidden />
 				<span className="hidden sm:inline">Brief</span>
 			</Button>
 			{onMarkAllRead && !markAllReadDisabled && (
-				<Button variant="ghost" size="sm" aria-label="Mark all as read" onClick={onMarkAllRead}>
+				<Button
+					variant="ghost"
+					size="sm"
+					aria-label="Mark all as read"
+					onClick={onMarkAllRead}
+					className={NAV_ACTION_HEIGHT}
+				>
 					<CheckCheck size={14} aria-hidden />
 					<span className="hidden sm:inline">Mark all read</span>
 				</Button>

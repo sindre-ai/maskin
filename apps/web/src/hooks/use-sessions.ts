@@ -140,6 +140,12 @@ export function useActiveSessionsForConversation(
 				conversation_id: conversationId as string,
 			}),
 		enabled: !!workspaceId && !!conversationId,
+		// The chat transcript derives its entire live state from this list —
+		// activity only renders for sessions cached as `running`. Relying on
+		// SSE invalidation alone meant one dropped connection froze the
+		// transcript until the user reloaded. Poll as a floor so the worst
+		// case is a few seconds of lag rather than a dead UI.
+		refetchInterval: 5000,
 	})
 }
 

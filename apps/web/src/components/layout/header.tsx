@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/breadcrumb'
 import { Button } from '@/components/ui/button'
 import { SidebarTrigger } from '@/components/ui/sidebar'
+import { isHiddenRouteId } from '@/lib/nav-view-keys'
 import { usePageHeader } from '@/lib/page-header-context'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useMatches, useNavigate, useRouter } from '@tanstack/react-router'
@@ -27,6 +28,7 @@ interface RouteConfig {
 
 const routeConfig: Record<string, RouteConfig> = {
 	'/_authed/$workspaceId/': { label: 'For you' },
+	'/_authed/$workspaceId/search': { label: 'Search' },
 	'/_authed/$workspaceId/objects/': { label: 'Objects', primary: 'object' },
 	'/_authed/$workspaceId/objects/$objectId': {
 		label: 'Object Details',
@@ -34,6 +36,18 @@ const routeConfig: Record<string, RouteConfig> = {
 		primary: 'object',
 	},
 	'/_authed/$workspaceId/agents/': { label: 'Agents', primary: 'agent' },
+	// Triggers keeps its own list route (deep links and bookmarks still resolve)
+	// even though the v2 nav reaches triggers through Loops. Without an entry
+	// here the screen renders with no title at all.
+	//
+	// Screens that render their own heading in the page body (Briefing, Chats'
+	// conversation list, the new-chat composer) are deliberately absent — an
+	// entry here would put a second heading of the same name in the nav row.
+	'/_authed/$workspaceId/triggers/': { label: 'Triggers', primary: 'loop' },
+	'/_authed/$workspaceId/settings/skills': {
+		label: 'Skills',
+		parent: '/_authed/$workspaceId/settings/',
+	},
 	'/_authed/$workspaceId/settings/': { label: 'Settings' },
 	'/_authed/$workspaceId/settings/keys': {
 		label: 'LLM',
@@ -102,8 +116,6 @@ const routeConfig: Record<string, RouteConfig> = {
 	},
 }
 
-const hiddenRoutes = new Set(['__root__', '/_authed', '/_authed/', '/_authed/$workspaceId'])
-
 const OBJECT_DETAIL_ROUTE_ID = '/_authed/$workspaceId/objects/$objectId'
 
 /**
@@ -127,7 +139,7 @@ export function Header() {
 	const router = useRouter()
 
 	// Find the leaf (last non-hidden) match
-	const leafMatch = [...matches].reverse().find((m) => !hiddenRoutes.has(m.routeId))
+	const leafMatch = [...matches].reverse().find((m) => !isHiddenRouteId(m.routeId))
 	const leafConfig = leafMatch ? routeConfig[leafMatch.routeId] : undefined
 
 	// Build crumb chain by walking parent references
@@ -199,28 +211,37 @@ export function Header() {
 					</Breadcrumb>
 				</div>
 			) : headingText ? (
-				<div className="flex min-w-0 items-baseline gap-2">
+				/* `flex-1` (basis 0), not the default `basis:auto`: flex line-breaking
+				   decides wrapping from each item's max-content hypothetical size, so a
+				   title block sized to its content pushed the New button onto a second
+				   line at 375px — `truncate` alone could not prevent that, because
+				   shrinking only happens after an item has been placed on a line.
+				   Zero-basis lets the title give up width first and keeps the nav on
+				   one line. */
+				<div className="flex min-w-0 flex-1 items-baseline gap-2">
 					<h1 className="truncate text-[clamp(17px,2vw,20px)] font-bold tracking-[-0.02em] text-foreground">
 						{headingText}
 					</h1>
 					{subtitle && (
-						<span className="whitespace-nowrap text-[11.5px] text-muted-foreground">
-							{subtitle}
-						</span>
+						<span className="min-w-0 truncate text-[11.5px] text-muted-foreground">{subtitle}</span>
 					)}
 				</div>
 			) : null}
 
-			<span className="ml-auto" />
-
-			<NavSearch />
-			{actions}
-			<span aria-hidden="true" className="mx-0.5 h-5 w-px shrink-0 bg-border" />
-			<NewMenu
-				onNewChat={() => navigate({ to: '/$workspaceId/chats/new', params: { workspaceId } })}
-				hideObjectSection={isObjectDetail}
-				primaryKind={leafConfig?.primary ?? 'chat'}
-			/>
+			{/* `ml-auto` lives on the group, not on a spacer span: an auto margin
+			    absorbs free space before flex-grow does, so a spacer would starve the
+			    zero-basis title above. It still right-aligns the controls when no
+			    heading or breadcrumb renders. */}
+			<div className="ml-auto flex shrink-0 items-center gap-2">
+				<NavSearch />
+				{actions}
+				<span aria-hidden="true" className="mx-0.5 h-5 w-px shrink-0 bg-border" />
+				<NewMenu
+					onNewChat={() => navigate({ to: '/$workspaceId/chats/new', params: { workspaceId } })}
+					hideObjectSection={isObjectDetail}
+					primaryKind={leafConfig?.primary ?? 'chat'}
+				/>
+			</div>
 		</header>
 	)
 }

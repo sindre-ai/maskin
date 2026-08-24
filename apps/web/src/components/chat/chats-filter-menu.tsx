@@ -41,10 +41,19 @@ export function ChatsFilterMenu({
 					type="button"
 					variant={isFiltered ? 'default' : 'outline'}
 					size="sm"
+					// 30px, not the sm default of 36px: this sits between the nav's
+					// search button and the New split button, both of which are 30px.
+					className="h-[30px] rounded-lg px-2.5 text-xs"
 					aria-label={`Filter conversations — ${chatsFilterLabel(value)}`}
 				>
 					<ListFilter size={14} aria-hidden />
-					{isFiltered ? chatsFilterLabel(value) : 'Filter'}
+					{/* Icon-only on the narrowest phones: the shared nav row wraps rather
+					    than scrolls, and this label was the difference between one line
+					    and two at 375px. The filled variant still signals a narrowed
+					    list, and the aria-label always names the active filter. */}
+					<span className="hidden sm:inline">
+						{isFiltered ? chatsFilterLabel(value) : 'Filter'}
+					</span>
 				</Button>
 			</DropdownMenuTrigger>
 			<DropdownMenuContent align="end" className="w-44">

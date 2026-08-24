@@ -5,7 +5,7 @@ import { useConversationsInfinite } from '@/hooks/use-conversations'
 import { cn } from '@/lib/cn'
 import { groupConversations } from '@/lib/conversation-groups'
 import { Link } from '@tanstack/react-router'
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import type { ChatsFilter } from './chats-filter-menu'
 import { ConversationListRow } from './conversation-list-row'
 
@@ -47,12 +47,20 @@ export function ConversationList({
 	// defaults the list to non-archived conversations (see
 	// `useConversationsInfinite`'s param-building note on why `archived: false`
 	// must never be sent as a literal query string).
-	const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
-		useConversationsInfinite(workspaceId, {
-			...(filter === 'pinned' ? { pinned: true } : {}),
-			...(filter === 'archived' ? { archived: true } : {}),
-			...(filter === 'unread' ? { unread_only: true } : {}),
-		})
+	const {
+		data,
+		isLoading,
+		isError,
+		refetch,
+		fetchNextPage,
+		hasNextPage,
+		isFetchingNextPage,
+		isFetchNextPageError,
+	} = useConversationsInfinite(workspaceId, {
+		...(filter === 'pinned' ? { pinned: true } : {}),
+		...(filter === 'archived' ? { archived: true } : {}),
+		...(filter === 'unread' ? { unread_only: true } : {}),
+	})
 
 	const conversations = data?.pages.flatMap((page) => page.conversations) ?? []
 	const groups = groupConversations(conversations, {
@@ -62,19 +70,25 @@ export function ConversationList({
 	// Scroll-near-the-bottom auto-loads the next page (mockup 545–547) instead
 	// of the old manual "Load older" button.
 	const sentinelRef = useRef<HTMLDivElement | null>(null)
+	const loadNextPage = useCallback(() => {
+		fetchNextPage()
+	}, [fetchNextPage])
 	useEffect(() => {
 		const el = sentinelRef.current
-		if (!el || !hasNextPage || isFetchingNextPage) return
+		// Stand down after a failed page: the sentinel is still on screen, so
+		// re-observing would refire the same request in a tight loop. The manual
+		// "Try again" below is the only way back in.
+		if (!el || !hasNextPage || isFetchingNextPage || isFetchNextPageError) return
 		if (typeof IntersectionObserver === 'undefined') return
 		const observer = new IntersectionObserver(
 			(entries) => {
-				if (entries.some((e) => e.isIntersecting)) fetchNextPage()
+				if (entries.some((e) => e.isIntersecting)) loadNextPage()
 			},
 			{ rootMargin: '200px' },
 		)
 		observer.observe(el)
 		return () => observer.disconnect()
-	}, [hasNextPage, isFetchingNextPage, fetchNextPage])
+	}, [hasNextPage, isFetchingNextPage, isFetchNextPageError, loadNextPage])
 
 	return (
 		<div data-testid="conversation-list" className={cn('flex min-h-0 flex-1 flex-col', className)}>
@@ -84,6 +98,19 @@ export function ConversationList({
 						<div className="flex justify-center py-8">
 							<Spinner />
 						</div>
+					) : isError ? (
+						// A failed fetch must not borrow the empty state: "No conversations
+						// here — start a chat" reads as an empty account and invites the
+						// reader to duplicate a thread they already have.
+						<EmptyState
+							title="Couldn't load your conversations"
+							description="Something went wrong reaching the server. Nothing has been lost — this is only the list."
+							action={
+								<Button variant="link" size="sm" onClick={() => refetch()}>
+									Try again →
+								</Button>
+							}
+						/>
 					) : conversations.length === 0 ? (
 						<EmptyState
 							title={EMPTY_COPY[filter].title}
@@ -133,6 +160,15 @@ export function ConversationList({
 										<>
 											<Spinner />
 											Loading older conversations…
+										</>
+									) : isFetchNextPageError ? (
+										// Without this the sentinel sits there promising a load
+										// that already failed, and scrolling never retries it.
+										<>
+											Couldn't load older conversations.
+											<Button variant="link" size="sm" onClick={loadNextPage}>
+												Try again →
+											</Button>
 										</>
 									) : (
 										'Older conversations load as you scroll'

@@ -436,6 +436,52 @@ describe('SessionDispatchQueue.tick — outcomes', () => {
 		expect((events[0]?.data as { source: string }).source).toBe('dispatch_queue')
 	})
 
+	it('writes a user-facing failure_reason and log line when dispatch is exhausted', async () => {
+		// A bare `result.error` string renders nowhere in the UI — the session
+		// detail panel's FailureCard and use-conversation-activity both read
+		// `result.failure_reason`. Without both of these the user's session just
+		// stops, with the reason visible only in Sentry (MASKIN-DEV-4).
+		const row = aDispatchRow({ attempt: 2, maxAttempts: 3 })
+		const session = aSessionRow()
+		const { db, sessionRows } = makeFakeDb({ dispatchRows: [row], sessionRows: [session] })
+		const appendSystemLog = vi.fn().mockResolvedValue(undefined)
+		const queue = makeQueue(
+			db,
+			async () => ({ kind: 'transient_failure', error: 'still failing' }),
+			{ appendSystemLog },
+		)
+
+		await queue.tick()
+
+		const finalSession = sessionRows[0]
+		if (!finalSession) throw new Error('session missing')
+		const result = finalSession.result as {
+			failure_reason: { reason_code: string; human_message: string; verbatim_output: string }
+		}
+		expect(result.failure_reason.reason_code).toBe('dispatch_failed')
+		expect(result.failure_reason.human_message).toMatch(/start a new session/i)
+		expect(result.failure_reason.verbatim_output).toContain('still failing')
+
+		expect(appendSystemLog).toHaveBeenCalledWith(session.id, result.failure_reason.human_message)
+	})
+
+	it('still marks the session failed when the system-log write throws', async () => {
+		// The log line is a courtesy; a session left non-terminal holds its
+		// agent-server capacity slot until the timeout backstop.
+		const row = aDispatchRow({ attempt: 2, maxAttempts: 3 })
+		const session = aSessionRow()
+		const { db, sessionRows } = makeFakeDb({ dispatchRows: [row], sessionRows: [session] })
+		const queue = makeQueue(
+			db,
+			async () => ({ kind: 'transient_failure', error: 'still failing' }),
+			{ appendSystemLog: vi.fn().mockRejectedValue(new Error('log write failed')) },
+		)
+
+		await queue.tick()
+
+		expect(sessionRows[0]?.status).toBe('failed')
+	})
+
 	it('marks the row failed immediately on permanent_failure', async () => {
 		const row = aDispatchRow({ attempt: 0, maxAttempts: 10 })
 		const session = aSessionRow()

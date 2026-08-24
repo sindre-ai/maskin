@@ -152,9 +152,13 @@ test.describe('For You v2 — nav identity, chips and sort', () => {
 			await expect(page.getByRole('heading', { name: 'For you', level: 1 })).toBeVisible({
 				timeout: 10_000,
 			})
-			// The page-level duplicate is gone — the split New button in the nav
-			// is the single create affordance on this screen.
-			await expect(page.getByRole('button', { name: /^new$/i })).toHaveCount(1)
+			// The page-level duplicate is gone — the nav's split New button is the
+			// single create affordance on this screen. Its halves are named for
+			// what they do ("New chat" on For You, plus the chevron), so there is
+			// no bare "New" control anywhere on the page.
+			await expect(page.getByRole('button', { name: 'New chat' })).toHaveCount(1)
+			await expect(page.getByRole('button', { name: 'More ways to start' })).toHaveCount(1)
+			await expect(page.getByRole('button', { name: /^new$/i })).toHaveCount(0)
 
 			// The muted subtitle rides the nav's title row; it is hidden below sm.
 			if (vp.width >= 640) {

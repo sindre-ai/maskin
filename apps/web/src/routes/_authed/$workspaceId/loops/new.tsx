@@ -122,7 +122,11 @@ function LoopBuilderPage() {
 			const created = await createObject.mutateAsync({
 				type: 'loop',
 				title,
-				status: 'running',
+				// New loops start on the lowest live rung of the autonomy ladder, the
+				// same as marketplace installs and bootstrap-seeded loops. The
+				// pre-#1396 'running' status no longer exists and POST /api/objects
+				// rejects it with a 400.
+				status: 'learning',
 				// safeMetadataSchema only accepts primitives/arrays — store the plan
 				// snapshot as a JSON string so the created loop carries the exact
 				// preview (object types + state chain, triggers, agents, stop point).

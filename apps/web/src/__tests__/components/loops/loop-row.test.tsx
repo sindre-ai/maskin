@@ -34,12 +34,11 @@ function buildLoop(overrides: Partial<LoopSummary> = {}): LoopSummary {
 		id: 'loop-1',
 		workspaceId: 'ws-1',
 		name: 'Customer feedback',
-		guarantee: 'Every customer who gives feedback hears back within 30 days',
-		status: 'running',
-		pill: 'running',
+		content: 'Every customer who gives feedback hears back within 30 days',
+		status: 'learning',
+		pill: 'learning',
 		entryCondition: null,
 		closeCondition: null,
-		humanDecisionPoints: null,
 		inProgressCount: 6,
 		closedCount: 128,
 		medianTimeToCloseMs: 11 * 24 * 3600 * 1000,
@@ -112,15 +111,10 @@ describe('LoopRow', () => {
 		expect(screen.getByText('Paused — not running')).toBeInTheDocument()
 	})
 
-	it('renders the decision-point count in last activity when waiting on the viewer', () => {
-		render(
-			<LoopRow
-				loop={buildLoop({ pill: 'waiting_on_you', humanDecisionPoints: 3, inProgressCount: 0 })}
-				actors={[]}
-			/>,
-		)
+	it('renders "Waiting on you" as last activity when waiting on the viewer', () => {
+		render(<LoopRow loop={buildLoop({ pill: 'waiting_on_you', inProgressCount: 0 })} actors={[]} />)
 
-		expect(screen.getByText('Waiting on you — 3 decision points open')).toBeInTheDocument()
+		expect(screen.getByText('Waiting on you')).toBeInTheDocument()
 	})
 
 	it("renders the first agent's avatar next to the last-activity line", () => {

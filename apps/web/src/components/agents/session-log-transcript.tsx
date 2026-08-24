@@ -112,6 +112,14 @@ export interface MessageActivitySegment {
 	 * same agent's own posted messages in order.
 	 */
 	containsReply: boolean
+	/**
+	 * The stream-json `result` envelope that closed this turn, if it has
+	 * closed. This is the agent's own end-of-turn text — the backend posts it
+	 * into the chat as a real message (interactive-turn-finalizer.ts), and the
+	 * chat renders it optimistically from here in the seconds before that row
+	 * lands. Absent while the turn is still running.
+	 */
+	result?: { text: string; isError: boolean; logId: number }
 }
 
 /**
@@ -157,7 +165,18 @@ export function segmentActivityByMessage(logs: SessionLogResponse[]): {
 				segments.push(cursor.current)
 				return
 			}
-			if (event.kind === 'result' || event.kind === 'system' || event.kind === 'debug') return
+			// A result closes the current turn. It is recorded on the segment but
+			// deliberately kept out of `steps`: the dropdown lists what the agent
+			// DID, and the final answer is rendered as a chat bubble instead. A
+			// result with no open segment predates message tagging — ignore it
+			// rather than pushing it into `unassigned`, which holds steps only.
+			if (event.kind === 'result') {
+				if (cursor.current && event.text) {
+					cursor.current.result = { text: event.text, isError: event.isError, logId: log.id }
+				}
+				return
+			}
+			if (event.kind === 'system' || event.kind === 'debug') return
 			const bucket = cursor.current?.steps ?? unassigned
 			// The agent's own wrap-up text right after replying just restates
 			// the "Replied to the conversation." step above it — drop it so

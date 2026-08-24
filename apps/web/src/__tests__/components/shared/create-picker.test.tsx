@@ -52,6 +52,7 @@ Object.defineProperty(window, 'requestAnimationFrame', {
 import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picker'
 import { api } from '@/lib/api'
 import { setStoredActor } from '@/lib/auth'
+import { NewDesignProvider } from '@/lib/new-design-context'
 import { type ModuleWebDefinition, clearWebModules, registerWebModule } from '@maskin/module-sdk'
 import { createWorkspaceWrapper } from '../../setup'
 
@@ -113,9 +114,16 @@ function renderWithWorkspace(
 	ui: React.ReactElement,
 	overrides: { settings?: Record<string, unknown> } = {},
 ) {
-	const Wrapper = createWorkspaceWrapper({
+	const Workspace = createWorkspaceWrapper({
 		settings: { ...DEFAULT_SETTINGS, ...(overrides.settings ?? {}) },
 	})
+	// These are v2-overlay assertions, so they render on the `new-design` side of
+	// the boundary — the e2e auth fixture seeds the same flag state.
+	const Wrapper = ({ children }: { children: React.ReactNode }) => (
+		<Workspace>
+			<NewDesignProvider value={true}>{children}</NewDesignProvider>
+		</Workspace>
+	)
 	return render(ui, { wrapper: Wrapper })
 }
 
@@ -339,7 +347,7 @@ describe('CreatePicker', () => {
 		)
 	})
 
-	it('creates a loop object with status "running" and navigates to the loop detail page', async () => {
+	it('creates a loop object with status "draft" and navigates to the loop detail page', async () => {
 		const user = userEvent.setup()
 		vi.mocked(api.objects.create).mockResolvedValue({
 			id: 'loop-5',
@@ -347,7 +355,7 @@ describe('CreatePicker', () => {
 			type: 'loop',
 			title: 'Support triage',
 			content: null,
-			status: 'running',
+			status: 'draft',
 			metadata: null,
 			driver: null,
 			activeSessionId: null,
@@ -359,8 +367,10 @@ describe('CreatePicker', () => {
 		renderWithWorkspace(
 			<CreatePicker open onOpenChange={onOpenChange} defaultType="loop" />,
 			// Loop status doesn't come from the workspace's per-type status list —
-			// this asserts it stays 'running' even when the workspace has no
-			// matching entry (or a misleading one) for 'loop'.
+			// this asserts it stays the LOOP_STATUSES default even when the
+			// workspace has no matching entry (or a misleading one) for 'loop'.
+			// A status outside that enum is silently coerced back to 'draft' by the
+			// loops route, so the picker must seed a value the enum actually has.
 			{ settings: { statuses: { bet: ['active'] } } },
 		)
 		await user.type(screen.getByLabelText(/title/i), 'Support triage')
@@ -369,7 +379,7 @@ describe('CreatePicker', () => {
 		expect(vi.mocked(api.objects.create).mock.calls[0]?.[1]).toMatchObject({
 			type: 'loop',
 			title: 'Support triage',
-			status: 'running',
+			status: 'draft',
 		})
 		await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false))
 		expect(navigateSpy).toHaveBeenCalledWith(

@@ -3,7 +3,7 @@ import { LoopActivity } from '@/components/loops/loop-activity'
 import { LoopChanges } from '@/components/loops/loop-changes'
 import { LoopFirstRunBanner } from '@/components/loops/loop-first-run-banner'
 import { LoopFlow } from '@/components/loops/loop-flow'
-import { LOOP_PILL_STYLES } from '@/components/loops/loop-pill'
+import { LOOP_PILL_STYLES, isLiveLoopPill } from '@/components/loops/loop-pill'
 import {
 	LoopProposedEdit,
 	type PlanDiffRow,
@@ -166,10 +166,16 @@ function LoopDetailPage() {
 	const isPreFirstRun = childIds.length === 0 && (activityEvents?.length ?? 0) === 0
 	const hasChanges = (events ?? []).some((e) => e.entityId === loopId)
 
+	// Resuming returns the loop to `learning`, the lowest live rung of the
+	// autonomy ladder, matching every server-side creation path
+	// (installed-loops.ts, workspace-bootstrap.ts): a loop that has been paused
+	// re-earns trust rather than snapping back to full autonomy. The trigger
+	// re-enable is handled server-side by the status hook in
+	// PATCH /api/objects/:id, so this only writes the status.
 	const togglePause = () =>
 		updateObject.mutate({
 			id: loop.id,
-			data: { status: isPaused ? 'running' : 'paused' },
+			data: { status: isPaused ? 'learning' : 'paused' },
 		})
 
 	return (
@@ -190,7 +196,7 @@ function LoopDetailPage() {
 								className={cn(
 									'size-1.5 rounded-full',
 									pill.dot,
-									loop.pill === 'running' && 'animate-pulse',
+									isLiveLoopPill(loop.pill) && 'animate-pulse',
 								)}
 							/>
 							{pill.label}

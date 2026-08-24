@@ -1,21 +1,42 @@
 const AUTH_KEY = 'maskin-api-key'
 const ACTOR_KEY = 'maskin-actor'
 
-// Migrate localStorage keys from old ai-native naming.
-//
-// This runs at module import, so it executes in every environment that pulls in
-// the api client — including ones with no usable storage (Safari private mode,
-// storage disabled by policy, a non-DOM test environment). Reading a missing or
-// throwing `localStorage` there must not take down the import.
-function migrateKey(oldKey: string, newKey: string) {
+// Every environment that pulls in the api client runs this module, including
+// ones with no usable storage (Safari private mode, storage disabled by policy,
+// a non-DOM test environment). In those, *touching* `localStorage` throws a
+// `SecurityError` rather than returning null — so every access goes through
+// these helpers and degrades to an unauthenticated read instead of taking down
+// whichever call site happened to touch storage first.
+function readKey(key: string): string | null {
 	try {
-		const old = localStorage.getItem(oldKey)
-		if (old && !localStorage.getItem(newKey)) {
-			localStorage.setItem(newKey, old)
-			localStorage.removeItem(oldKey)
-		}
+		return localStorage.getItem(key)
 	} catch {
-		// No storage to migrate — the app falls back to an unauthenticated read.
+		return null
+	}
+}
+
+function writeKey(key: string, value: string) {
+	try {
+		localStorage.setItem(key, value)
+	} catch {
+		// Nothing to persist to — the value stays in memory for this session only.
+	}
+}
+
+function removeKey(key: string) {
+	try {
+		localStorage.removeItem(key)
+	} catch {
+		// Nothing to remove from.
+	}
+}
+
+// Migrate localStorage keys from old ai-native naming.
+function migrateKey(oldKey: string, newKey: string) {
+	const old = readKey(oldKey)
+	if (old && !readKey(newKey)) {
+		writeKey(newKey, old)
+		removeKey(oldKey)
 	}
 }
 migrateKey('ai-native-api-key', AUTH_KEY)
@@ -29,30 +50,33 @@ export interface StoredActor {
 }
 
 export function getApiKey(): string | null {
-	return localStorage.getItem(AUTH_KEY)
+	return readKey(AUTH_KEY)
 }
 
 export function setApiKey(key: string) {
-	localStorage.setItem(AUTH_KEY, key)
+	writeKey(AUTH_KEY, key)
 }
 
 export function getStoredActor(): StoredActor | null {
-	const raw = localStorage.getItem(ACTOR_KEY)
+	const raw = readKey(ACTOR_KEY)
 	if (!raw) return null
 	try {
 		return JSON.parse(raw)
 	} catch {
+		// Corrupt value — drop it rather than re-parsing the same poison on every
+		// load, and let the caller fall back to an unauthenticated read.
+		removeKey(ACTOR_KEY)
 		return null
 	}
 }
 
 export function setStoredActor(actor: StoredActor) {
-	localStorage.setItem(ACTOR_KEY, JSON.stringify(actor))
+	writeKey(ACTOR_KEY, JSON.stringify(actor))
 }
 
 export function clearAuth() {
-	localStorage.removeItem(AUTH_KEY)
-	localStorage.removeItem(ACTOR_KEY)
+	removeKey(AUTH_KEY)
+	removeKey(ACTOR_KEY)
 }
 
 export function isAuthenticated(): boolean {

@@ -11,7 +11,7 @@ test.describe('Loop detail page', () => {
 			const loop = await account.api.createObject(account.workspaceId, {
 				type: 'loop',
 				title: 'Customer feedback loop',
-				status: 'running',
+				status: 'learning',
 				content: 'Every customer who gives feedback hears back within 30 days',
 			})
 			const trigger = await account.api.createTrigger(account.workspaceId, {
@@ -107,7 +107,7 @@ test.describe('Loop detail page', () => {
 			const loop = await account.api.createObject(account.workspaceId, {
 				type: 'loop',
 				title: 'Brand new loop',
-				status: 'running',
+				status: 'learning',
 			})
 			const trigger = await account.api.createTrigger(account.workspaceId, {
 				name: 'Nightly sweep',
@@ -140,7 +140,7 @@ test.describe('Loop detail page', () => {
 		const loop = await account.api.createObject(account.workspaceId, {
 			type: 'loop',
 			title: 'Feedback loop',
-			status: 'running',
+			status: 'learning',
 		})
 
 		await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
@@ -167,13 +167,15 @@ test.describe('Loop detail page', () => {
 		const loop = await account.api.createObject(account.workspaceId, {
 			type: 'loop',
 			title: 'Billing reliability loop',
-			status: 'running',
+			status: 'learning',
 		})
 
 		await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
-		await expect(page.getByTestId('loop-pill')).toHaveText('Running', { timeout: 10000 })
+		await expect(page.getByTestId('loop-pill')).toHaveText('Learning', { timeout: 10000 })
 
-		await page.getByRole('button', { name: 'More' }).click()
+		// Exact — the v2 header's split New button adds a "More ways to start"
+		// control, which a substring match would also pick up.
+		await page.getByRole('button', { name: 'More', exact: true }).click()
 		await page.getByRole('menuitem', { name: 'Pause loop' }).click()
 
 		await expect(page.getByTestId('loop-pill')).toHaveText('Paused', { timeout: 10000 })
@@ -188,7 +190,7 @@ test.describe('Loop detail page', () => {
 		const loop = await account.api.createObject(account.workspaceId, {
 			type: 'loop',
 			title: 'Churn early-warning loop',
-			status: 'running',
+			status: 'learning',
 		})
 
 		await page.goto(`/${account.workspaceId}/loops`)

@@ -4138,7 +4138,7 @@ class Component extends DCLogic {
           M("quill", "Quill", "FRI 09:04", "v2.31 notes published, docs synced in the same run. Zero corrections needed.", { chipType: "DOC", chip: "Release notes v2.31", chipFg: "#52525b", chipObj: "notes-v231" }),
           M("quill", "Quill", "TODAY 06:00", "v2.32 draft is staged from 14 merged changes — publishing tonight at 02:00 unless held."),
         ] },
-      "build": { name: "Build pipeline", title: "Build pipeline loop", outcome: "A qualified bet becomes shipped, reviewed work without anyone chasing it", desc: "Every bet that clears the gate is shaped, planned, built, reviewed and merged — one task at a time, with a human only on architecture, UX and copy.", cycle: "12 in flight", cycleLabel: "12 IN FLIGHT", stage: "Build", stageColor: "#0369a1", meta: "3 waiting on you", state: "Running", stateColor: "#15803d", stateDot: "#22c55e", ring: "#38bdf8", dash: "62 94", bigDash: "280 452", left: "3 waiting on you", leftC: "#b45309", labels: ["SHAPE", "PLAN", "BUILD", "REVIEW"], activeLabel: 2,
+      "build": { name: "Build pipeline", title: "Build pipeline loop", outcome: "A bet that clears the gate becomes shipped, reviewed work without anyone chasing it", desc: "Every bet that clears the gate is shaped, planned, built, reviewed and merged — one task at a time, with a human only on architecture, UX and copy.", cycle: "12 in flight", cycleLabel: "12 IN FLIGHT", stage: "Build", stageColor: "#0369a1", meta: "3 waiting on you", state: "Running", stateColor: "#15803d", stateDot: "#22c55e", ring: "#38bdf8", dash: "62 94", bigDash: "280 452", left: "3 waiting on you", leftC: "#b45309", labels: ["SHAPE", "PLAN", "BUILD", "REVIEW"], activeLabel: 2,
         stats: [{ v: "84%", l: "ran alone" }, { v: "6d", l: "avg close" }, { v: "41m", l: "your time" }],
         agents: ["forge", "compass", "sentinel"], lead: "forge", leadName: "Forge", listening: "Forge, Compass and Sentinel are listening",
         crew: [{ p: "forge", t: "Forge", s: "plans, builds and unsticks · 4 sessions" }, { p: "compass", t: "Compass", s: "reviews and merges under the risk gate" }, { p: "sentinel", t: "Sentinel", s: "owns bet quality and every gate" }, { p: "you", t: ME, s: "decides architecture, UX and copy" }],
@@ -4269,7 +4269,7 @@ class Component extends DCLogic {
     // A loop is nothing but object types, triggers on their states, and the agents those triggers hand work to.
     this.OTYPES = {
       insight: { label: "Insight", bg: "#fef3c7", fg: "#b45309", states: ["new", "processing", "clustered", "scored", "parked", "discarded"] },
-      bet: { label: "Bet", bg: "#e0e7ff", fg: "#4338ca", states: ["signal", "qualified", "define", "active", "live", "succeeded", "failed", "paused", "archived"] },
+      bet: { label: "Bet", bg: "#e0e7ff", fg: "#4338ca", states: ["signal", "define", "active", "live", "succeeded", "failed", "paused", "archived"] },
       task: { label: "Task", bg: "#e0f2fe", fg: "#0369a1", states: ["todo", "in_progress", "in_review", "validated", "done", "discarded"] },
       knowledge: { label: "Knowledge", bg: "#ede9fe", fg: "#6d28d9", states: ["draft", "validated", "deprecated"] },
       relationship: { label: "Edge", bg: "#f1f5f9", fg: "#475569", states: [] },
@@ -4296,7 +4296,7 @@ class Component extends DCLogic {
         roles: { relay: "the customer-facing end, both ways in and out", compass: "triages and clusters every insight", sentinel: "scores clusters and decides what becomes a bet", quill: "turns a clustered insight into durable knowledge" },
         types: [
           { k: "insight", role: "what the loop moves", live: "6 open · 145 closed", counts: { "new": 2, "processing": 1, "clustered": 3, "scored": 4, "parked": 17, "discarded": 121 } },
-          { k: "bet", role: "what a cluster is promoted into — the build loop takes it from here", live: "4 in flight", counts: { "signal": 1, "qualified": 1, "define": 0, "active": 1, "live": 1, "succeeded": 24, "failed": 7, "paused": 0, "archived": 3 } },
+          { k: "bet", role: "what a cluster is promoted into — the build loop takes it from here", live: "4 in flight", counts: { "signal": 1, "define": 1, "active": 1, "live": 1, "succeeded": 24, "failed": 7, "paused": 0, "archived": 3 } },
           { k: "knowledge", role: "written when a cluster is generalisable", live: "96 published", counts: { "draft": 2, "validated": 94, "deprecated": 11 } },
         ],
         triggers: [
@@ -4324,9 +4324,9 @@ class Component extends DCLogic {
             when: "an insight's status changes \u2014 any status, guarded in the prompt rather than in the config",
             agent: "sentinel", skill: "strategic-intake-review",
             prompt: "Fast-track a clustered/scored insight into a bet \u2014 if it clears a tight bar. The default at every gate is a silent NO-OP.",
-            does: "scores it, and on a pass creates the bet at qualified and links the insight to it",
-            out: [{ act: "creates", type: "bet", state: "qualified" }, { act: "creates", type: "relationship", state: "informs" }],
-            ask: "a bet is never promoted on its own \u2014 it waits at qualified until you approve it, and you are named in the digest",
+            does: "scores it, and on a pass creates the bet at define and links the insight to it",
+            out: [{ act: "creates", type: "bet", state: "define" }, { act: "creates", type: "relationship", state: "informs" }],
+            ask: "a bet is never promoted on its own \u2014 it waits at define until you approve it, and you are named in the digest",
             flag: "No to_status in the config, so this fires on every insight status change and filters inside the prompt \u2014 a session spin-up per change. A to_status of clustered plus a second row for scored would do the same work on a fraction of the runs.",
             on: true },
           { id: "cf-5", fires: "806", last: "2h ago", wrote: "212 knowledge drafts", name: "Insight Clustered \u2192 Write Knowledge", ttype: "event", type: "insight", entity: "insight", action: "status_changed", to: "clustered",
@@ -4371,7 +4371,7 @@ class Component extends DCLogic {
         realNote: "10 of the 30 live rows in the Development workspace",
         roles: { sentinel: "owns bet quality — every gate, every verdict", forge: "plans, builds, and unsticks whatever stalls", compass: "reviews the code and merges under the risk gate", quill: "designs the UX when a task needs one", relay: "writes anything a customer will read" },
         types: [
-          { k: "bet", role: "what gets shaped and committed to", live: "12 in flight · 214 closed", counts: { "signal": 3, "qualified": 2, "define": 2, "active": 4, "live": 1, "succeeded": 168, "failed": 31, "paused": 2, "archived": 13 } },
+          { k: "bet", role: "what gets shaped and committed to", live: "12 in flight · 214 closed", counts: { "signal": 3, "define": 4, "active": 4, "live": 1, "succeeded": 168, "failed": 31, "paused": 2, "archived": 13 } },
           { k: "task", role: "what the loop moves — one cycle is one task", live: "12 open · 214 done", counts: { "todo": 4, "in_progress": 3, "in_review": 3, "validated": 2, "done": 214, "discarded": 26 } },
         ],
         triggers: [
@@ -8746,7 +8746,7 @@ class Component extends DCLogic {
         // ---- status: the workspace schema's options for this object's type ----
         const SO = {
           Insight: [["new", "#64748b"], ["processing", "#64748b"], ["clustered", "#d97706"], ["scored", "#d97706"], ["parked", "#a1a1aa"], ["discarded", "#a1a1aa"]],
-          Bet: [["signal", "#64748b"], ["qualified", "#64748b"], ["define", "#6366f1"], ["active", "#4f46e5"], ["live", "#16a34a"], ["succeeded", "#16a34a"], ["failed", "#dc2626"], ["paused", "#b45309"], ["archived", "#a1a1aa"]],
+          Bet: [["signal", "#64748b"], ["define", "#6366f1"], ["active", "#4f46e5"], ["live", "#16a34a"], ["succeeded", "#16a34a"], ["failed", "#dc2626"], ["paused", "#b45309"], ["archived", "#a1a1aa"]],
           Doc: [["todo", "#64748b"], ["in_progress", "#d97706"], ["in_review", "#b45309"], ["validated", "#16a34a"], ["done", "#16a34a"], ["discarded", "#a1a1aa"]],
         };
         const opts = (od && SO[od.type]) || null;

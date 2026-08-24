@@ -154,6 +154,43 @@ test.describe('Chats v2 — layout', () => {
 		})
 	}
 
+	test('the shared nav row stays on one line at 375px', async ({ page, account }) => {
+		await page.setViewportSize(VIEWPORTS.mobile)
+		await seedChats(account.api, account.workspaceId)
+
+		await page.goto(`/${account.workspaceId}/chats`)
+		await expect(page.getByTestId('conversation-list')).toBeVisible({ timeout: 15_000 })
+
+		// The title and the New button share a row: wrapping drops New to a
+		// second line, which is what this asserts against.
+		const heading = await page.getByRole('heading', { name: 'Chats' }).boundingBox()
+		const newButton = await page.getByRole('button', { name: 'New chat' }).first().boundingBox()
+		expect(heading).not.toBeNull()
+		expect(newButton).not.toBeNull()
+		expect(Math.abs((newButton?.y ?? 0) - (heading?.y ?? 0))).toBeLessThan(16)
+
+		// Icon-only at this width, but still named for assistive tech.
+		const filter = page.getByRole('button', { name: /^Filter conversations/ })
+		await expect(filter).toBeVisible()
+		expect((await filter.boundingBox())?.width ?? 999).toBeLessThan(56)
+	})
+
+	test('the nav controls are all the same height', async ({ page, account }) => {
+		await seedChats(account.api, account.workspaceId)
+		await page.goto(`/${account.workspaceId}/chats`)
+		await expect(page.getByTestId('conversation-list')).toBeVisible({ timeout: 15_000 })
+
+		const heights = await Promise.all(
+			[
+				page.getByRole('button', { name: 'Search the workspace' }),
+				page.getByRole('button', { name: /^Filter conversations/ }),
+				page.getByRole('button', { name: 'New chat' }).first(),
+			].map(async (l) => (await l.boundingBox())?.height ?? 0),
+		)
+		expect(heights.every((h) => h > 0)).toBe(true)
+		expect(Math.max(...heights) - Math.min(...heights)).toBeLessThanOrEqual(1)
+	})
+
 	test('focus mode hides the list and restores it', async ({ page, account }) => {
 		await page.setViewportSize(VIEWPORTS.tabletLandscape)
 		const chats = await seedChats(account.api, account.workspaceId)
@@ -192,7 +229,9 @@ test.describe('Chats v2 — participants popover', () => {
 			await expect(page.getByText('In this chat')).toBeVisible({ timeout: 10_000 })
 			await expect(page.getByText('Add someone — person or agent')).toBeVisible()
 			await expect(page.getByRole('button', { name: 'Copy link to this chat' })).toBeVisible()
-			await expect(page.getByRole('button', { name: 'Invite someone by email' })).toBeVisible()
+			// Deliberately absent — see participants-popover.tsx: a mailto link
+			// promises access to someone who is not in the workspace.
+			await expect(page.getByRole('button', { name: /Invite/ })).toHaveCount(0)
 			await expect(
 				page.getByText('People see the whole thread. Agents you add start working from it.'),
 			).toBeVisible()

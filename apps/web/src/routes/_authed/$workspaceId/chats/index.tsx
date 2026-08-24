@@ -1,5 +1,6 @@
 import { EmptyState } from '@/components/shared/empty-state'
 import { Button } from '@/components/ui/button'
+import { useNewDesign } from '@/lib/new-design-context'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link, createFileRoute } from '@tanstack/react-router'
 
@@ -15,13 +16,20 @@ export const Route = createFileRoute('/_authed/$workspaceId/chats/')({
  */
 function ChatsIndexPage() {
 	const { workspaceId } = useWorkspace()
+	// v2 branch — the flag is read once at the workspace shell boundary and
+	// reaches this leaf as a boolean (see `chats.tsx`).
+	const newDesign = useNewDesign()
 
 	return (
 		<EmptyState
 			className="h-full flex-1"
-			emphasis="page"
+			emphasis={newDesign ? 'page' : undefined}
 			title="Pick a conversation, or start a new one"
-			description="Everything you've ever asked is still here — searchable, with the agent's reasoning attached."
+			description={
+				newDesign
+					? "Everything you've ever asked is still here — searchable, with the agent's reasoning attached."
+					: undefined
+			}
 			action={
 				<Button asChild size="sm">
 					<Link to="/$workspaceId/chats/new" params={{ workspaceId }}>

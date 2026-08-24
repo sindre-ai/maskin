@@ -25,7 +25,7 @@ const TAP_TARGET_MIN_PX = 44
 
 async function openNewChatAndLocateAttach(page: Page, workspaceId: string) {
 	await page.goto(`/${workspaceId}/chats/new`)
-	const attach = page.getByRole('button', { name: 'Attach image' })
+	const attach = page.getByRole('button', { name: 'Attach file' })
 	await expect(attach).toBeVisible({ timeout: 10_000 })
 	await expect(attach).toBeEnabled({ timeout: 10_000 })
 	return attach
