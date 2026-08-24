@@ -11,6 +11,7 @@ const STALE_AFTER_MS = 12 * 60 * 60 * 1000
 const MAX_LINES = 3
 
 interface ResumeBannerProps {
+	conversationId: string
 	messages: MessageResponse[]
 	lastReadMessageId: number | null
 }
@@ -26,7 +27,7 @@ function firstLine(content: string): string {
  * fetched: everything newer than your `last_read_message_id`, shown only when
  * the last thing you *did* read is old enough that you've genuinely been gone.
  */
-export function ResumeBanner({ messages, lastReadMessageId }: ResumeBannerProps) {
+export function ResumeBanner({ conversationId, messages, lastReadMessageId }: ResumeBannerProps) {
 	const self = getStoredActor()
 	// Latch the read cursor the first time we actually have one:
 	// `$conversationId.tsx` marks the thread read on open, so reading it live
@@ -38,11 +39,23 @@ export function ResumeBanner({ messages, lastReadMessageId }: ResumeBannerProps)
 	// messages resolved first and suppressed the banner for the whole mount.
 	// Waiting for a non-null cursor costs nothing: a null cursor means the
 	// reader has never read this thread, which is not "picking back up" anyway.
-	const latchedRef = useRef<number | null>(null)
-	if (latchedRef.current === null && messages.length > 0 && lastReadMessageId !== null) {
-		latchedRef.current = lastReadMessageId
+	//
+	// The latch is keyed by conversation because `ThreadMessages` is mounted
+	// without a `key`, so the router reuses this instance when only the
+	// `$conversationId` param changes. Message ids are globally sequential, so a
+	// cursor carried over from the previous thread fails deterministically:
+	// recent → old suppresses the banner entirely (nothing is `> cursor`), and
+	// old → recent resolves `lastRead` to a message from the other conversation.
+	// Keying here rather than relying on a `key` at the call site keeps the
+	// invariant next to the state that depends on it.
+	const latchedRef = useRef<{ conversationId: string; cursor: number } | null>(null)
+	if (latchedRef.current?.conversationId !== conversationId) {
+		latchedRef.current = null
 	}
-	const cursor = latchedRef.current
+	if (latchedRef.current === null && messages.length > 0 && lastReadMessageId !== null) {
+		latchedRef.current = { conversationId, cursor: lastReadMessageId }
+	}
+	const cursor = latchedRef.current?.cursor ?? null
 
 	if (cursor === null) return null
 

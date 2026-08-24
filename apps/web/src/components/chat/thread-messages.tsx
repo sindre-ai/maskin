@@ -34,7 +34,7 @@ interface ThreadMessagesProps {
 }
 
 export function ThreadMessages({ workspaceId, conversationId, className }: ThreadMessagesProps) {
-	const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
+	const { data, isLoading, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } =
 		useConversationMessages(conversationId, workspaceId)
 	const messages = flattenMessagesOldestFirst(data)
 	// Reuses the same query the route already fetches for the header/composer
@@ -113,6 +113,26 @@ export function ThreadMessages({ workspaceId, conversationId, className }: Threa
 		)
 	}
 
+	// A failed fetch must not borrow the empty state: "No messages yet — send the
+	// first message" tells a reader with a full thread that it is empty and
+	// invites them to start it over. Same reasoning as `conversation-list.tsx`.
+	if (isError) {
+		return (
+			<div className={cn('flex flex-1 flex-col', className)}>
+				<EmptyState
+					className="flex-1"
+					title="Couldn't load this conversation"
+					description="Something went wrong reaching the server. Nothing has been lost — this is only the view."
+					action={
+						<Button variant="link" size="sm" onClick={() => refetch()}>
+							Try again →
+						</Button>
+					}
+				/>
+			</div>
+		)
+	}
+
 	if (messages.length === 0) {
 		return (
 			<div className={cn('flex flex-1 flex-col', className)}>
@@ -138,6 +158,7 @@ export function ThreadMessages({ workspaceId, conversationId, className }: Threa
 				</p>
 			) : null}
 			<ResumeBanner
+				conversationId={conversationId}
 				messages={messages}
 				lastReadMessageId={conversation?.last_read_message_id ?? null}
 			/>

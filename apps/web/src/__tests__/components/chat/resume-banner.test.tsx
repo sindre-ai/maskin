@@ -48,9 +48,12 @@ function agedThread(count: number): MessageResponse[] {
 
 describe('ResumeBanner', () => {
 	it('renders what happened while you were away', () => {
-		render(<ResumeBanner messages={agedThread(2)} lastReadMessageId={1} />, {
-			wrapper: TestWrapper,
-		})
+		render(
+			<ResumeBanner conversationId="conv-1" messages={agedThread(2)} lastReadMessageId={1} />,
+			{
+				wrapper: TestWrapper,
+			},
+		)
 		expect(screen.getByText('Picking up where you left off')).toBeInTheDocument()
 		expect(screen.getByText(/Billing Agent: Update 1/)).toBeInTheDocument()
 		expect(screen.getByText(/Billing Agent: Update 2/)).toBeInTheDocument()
@@ -59,7 +62,11 @@ describe('ResumeBanner', () => {
 	it('renders nothing for a fully-read thread', () => {
 		const messages = agedThread(2)
 		const { container } = render(
-			<ResumeBanner messages={messages} lastReadMessageId={messages[messages.length - 1].id} />,
+			<ResumeBanner
+				conversationId="conv-1"
+				messages={messages}
+				lastReadMessageId={messages[messages.length - 1].id}
+			/>,
 			{ wrapper: TestWrapper },
 		)
 		expect(container).toBeEmptyDOMElement()
@@ -76,15 +83,18 @@ describe('ResumeBanner', () => {
 			}),
 			buildMessage({ id: 2, createdAt: hoursAgo(0) }),
 		]
-		const { container } = render(<ResumeBanner messages={messages} lastReadMessageId={1} />, {
-			wrapper: TestWrapper,
-		})
+		const { container } = render(
+			<ResumeBanner conversationId="conv-1" messages={messages} lastReadMessageId={1} />,
+			{
+				wrapper: TestWrapper,
+			},
+		)
 		expect(container).toBeEmptyDOMElement()
 	})
 
 	it('renders nothing when the thread has never been read', () => {
 		const { container } = render(
-			<ResumeBanner messages={agedThread(2)} lastReadMessageId={null} />,
+			<ResumeBanner conversationId="conv-1" messages={agedThread(2)} lastReadMessageId={null} />,
 			{
 				wrapper: TestWrapper,
 			},
@@ -93,9 +103,12 @@ describe('ResumeBanner', () => {
 	})
 
 	it('caps the list at three lines and counts the rest', () => {
-		render(<ResumeBanner messages={agedThread(6)} lastReadMessageId={1} />, {
-			wrapper: TestWrapper,
-		})
+		render(
+			<ResumeBanner conversationId="conv-1" messages={agedThread(6)} lastReadMessageId={1} />,
+			{
+				wrapper: TestWrapper,
+			},
+		)
 		expect(screen.getByText(/Update 3/)).toBeInTheDocument()
 		expect(screen.queryByText(/Update 4/)).not.toBeInTheDocument()
 		expect(screen.getByText('+3 more messages')).toBeInTheDocument()
@@ -112,20 +125,25 @@ describe('ResumeBanner', () => {
 				content: 'my own later note',
 			}),
 		)
-		render(<ResumeBanner messages={messages} lastReadMessageId={1} />, { wrapper: TestWrapper })
+		render(<ResumeBanner conversationId="conv-1" messages={messages} lastReadMessageId={1} />, {
+			wrapper: TestWrapper,
+		})
 		expect(screen.queryByText(/my own later note/)).not.toBeInTheDocument()
 		expect(screen.getByText(/Update 1/)).toBeInTheDocument()
 	})
 
 	it('keeps showing once the thread is marked read behind it', () => {
 		const messages = agedThread(2)
-		const { rerender } = render(<ResumeBanner messages={messages} lastReadMessageId={1} />, {
-			wrapper: TestWrapper,
-		})
+		const { rerender } = render(
+			<ResumeBanner conversationId="conv-1" messages={messages} lastReadMessageId={1} />,
+			{
+				wrapper: TestWrapper,
+			},
+		)
 		expect(screen.getByText('Picking up where you left off')).toBeInTheDocument()
 		// `$conversationId.tsx` marks the thread read on open — the banner must
 		// not vanish a beat after it appeared.
-		rerender(<ResumeBanner messages={messages} lastReadMessageId={3} />)
+		rerender(<ResumeBanner conversationId="conv-1" messages={messages} lastReadMessageId={3} />)
 		expect(screen.getByText('Picking up where you left off')).toBeInTheDocument()
 	})
 
@@ -134,13 +152,69 @@ describe('ResumeBanner', () => {
 		// The cursor and the messages come from two independent queries, so the
 		// messages can render a frame (or several) before `useConversation`
 		// settles. Latching that first `null` suppressed the banner for good.
-		const { rerender } = render(<ResumeBanner messages={messages} lastReadMessageId={null} />, {
-			wrapper: TestWrapper,
-		})
+		const { rerender } = render(
+			<ResumeBanner conversationId="conv-1" messages={messages} lastReadMessageId={null} />,
+			{
+				wrapper: TestWrapper,
+			},
+		)
 		expect(screen.queryByText('Picking up where you left off')).not.toBeInTheDocument()
 
-		rerender(<ResumeBanner messages={messages} lastReadMessageId={1} />)
+		rerender(<ResumeBanner conversationId="conv-1" messages={messages} lastReadMessageId={1} />)
 		expect(screen.getByText('Picking up where you left off')).toBeInTheDocument()
 		expect(screen.getByText(/Update 1/)).toBeInTheDocument()
+	})
+
+	it('drops the latched cursor when the conversation changes', () => {
+		// `ThreadMessages` is mounted without a `key`, so the router reuses this
+		// instance when only the `$conversationId` param changes. Message ids are
+		// globally sequential, so a cursor carried over from a *recent* thread is
+		// higher than every id in an older one — nothing is `> cursor` and the
+		// banner silently never appears again for the rest of the session.
+		const recent = agedThread(2).map((m) => ({ ...m, id: m.id + 500 }))
+		const { rerender } = render(
+			<ResumeBanner conversationId="conv-recent" messages={recent} lastReadMessageId={501} />,
+			{ wrapper: TestWrapper },
+		)
+		expect(screen.getByText('Picking up where you left off')).toBeInTheDocument()
+
+		const older = agedThread(2)
+		rerender(<ResumeBanner conversationId="conv-older" messages={older} lastReadMessageId={1} />)
+		expect(screen.getByText('Picking up where you left off')).toBeInTheDocument()
+		expect(screen.getByText(/Update 1/)).toBeInTheDocument()
+	})
+
+	it('does not borrow the previous cursor when navigating to a fully-read thread', () => {
+		// The mirror failure: a stale *low* cursor matches messages the reader has
+		// already seen, so the banner appears on a thread with nothing unread and
+		// dates it from the wrong message. The two id ranges overlap on purpose —
+		// with no message at or below the stale cursor the banner bails out on an
+		// unrelated null-guard and the test proves nothing.
+		const older = agedThread(2).map((m) => ({ ...m, id: m.id + 2 }))
+		const { rerender } = render(
+			<ResumeBanner conversationId="conv-older" messages={older} lastReadMessageId={3} />,
+			{ wrapper: TestWrapper },
+		)
+		expect(screen.getByText('Picking up where you left off')).toBeInTheDocument()
+
+		// Everything in this thread is already read, so the banner must go — but a
+		// carried-over cursor of 3 would count id 4 as unread and date the banner
+		// from the two-day-old message at id 3.
+		const fullyRead = [
+			buildMessage({ id: 2, content: 'Older still' }),
+			buildMessage({
+				id: 3,
+				actorId: 'me',
+				actorName: 'Me',
+				actorType: 'human',
+				content: 'Anything left here?',
+				createdAt: new Date(Date.now() - 2 * DAY_MS).toISOString(),
+			}),
+			buildMessage({ id: 4, content: 'Already seen this' }),
+		]
+		rerender(
+			<ResumeBanner conversationId="conv-recent" messages={fullyRead} lastReadMessageId={4} />,
+		)
+		expect(screen.queryByText('Picking up where you left off')).not.toBeInTheDocument()
 	})
 })
