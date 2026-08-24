@@ -19,7 +19,7 @@ async function setFlagOff(page: import('@playwright/test').Page) {
 
 test.describe('Chats — new-design boundary', () => {
 	for (const viewport of SHIP_GATE_VIEWPORTS) {
-		test(`renders the pre-v2 chats surface with the flag off at ${viewport.name}`, async ({
+		test(`renders the pre-v2 chats surface with the flag off at ${viewport.label}`, async ({
 			page,
 			account,
 		}) => {
