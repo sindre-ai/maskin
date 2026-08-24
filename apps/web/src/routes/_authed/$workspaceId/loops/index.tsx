@@ -110,7 +110,7 @@ function LoopsPage() {
 				<div className="space-y-8">
 					{hasLoops && (
 						<section className="space-y-2">
-							<p className="text-xs text-muted-foreground">
+							<p className="text-[13px] leading-[1.55] text-muted-foreground">
 								Persistent multi-agent pipelines running in this workspace.
 							</p>
 							<div className="space-y-2">
@@ -124,7 +124,7 @@ function LoopsPage() {
 						<section className="space-y-2">
 							<div>
 								<h2 className="text-sm font-medium text-foreground">Not tied to a loop</h2>
-								<p className="text-xs text-muted-foreground">
+								<p className="text-[13px] leading-[1.55] text-muted-foreground">
 									Workspace-wide automations that run on their own.
 								</p>
 							</div>
@@ -147,7 +147,7 @@ function LoopsPage() {
 						<section className="space-y-2">
 							<div>
 								<h2 className="text-sm font-medium text-foreground">Assigned in chat</h2>
-								<p className="text-xs text-muted-foreground">
+								<p className="text-[13px] leading-[1.55] text-muted-foreground">
 									Work you handed an agent yourself, outside any cycle.
 								</p>
 							</div>
@@ -169,10 +169,10 @@ function LoopsPage() {
 														{sessionStateLabel(session.status)}
 													</span>
 												</div>
-												<p className="text-xs text-muted-foreground line-clamp-2 mt-0.5">
+												<p className="text-[13px] leading-[1.55] text-muted-foreground line-clamp-2 mt-0.5">
 													{session.actionPrompt}
 												</p>
-												<p className="text-xs text-muted-foreground/60 mt-0.5">
+												<p className="text-[13px] leading-[1.55] text-muted-foreground/60 mt-0.5">
 													{session.currentActivity ?? 'No recent activity'}
 													{session.createdAt && (
 														<>
