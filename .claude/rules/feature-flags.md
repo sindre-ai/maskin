@@ -49,7 +49,7 @@ const newDesign = useFeatureFlag('new-design')
 ```
 
 Current example: `apps/web/src/routes/_authed/$workspaceId.tsx` swaps the whole
-shell (sidebar, header, command palette, mobile nav) at a single site.
+shell (sidebar, header, command palette) at a single site.
 
 **If you reach a third call site for one flag, stop — the boundary is in the
 wrong place.** Move it up rather than adding another check.

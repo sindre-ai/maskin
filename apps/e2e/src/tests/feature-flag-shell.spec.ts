@@ -3,8 +3,8 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 // The `new-design` flag's boundary lives in
 // apps/web/src/routes/_authed/$workspaceId.tsx and swaps the whole app shell —
-// sidebar, top nav, command palette, mobile bottom bar — between the v2 set and
-// the pre-v2 set under components/layout/legacy.
+// sidebar, top nav, command palette — between the v2 set and the pre-v2 set
+// under components/layout/legacy.
 //
 // Both sides are driven here through the TEST-ONLY localStorage override
 // (`ff:new-design` = 'on' | 'off'), which beats the server response. That is the
@@ -43,9 +43,8 @@ for (const viewport of SHIP_GATE_VIEWPORTS) {
 			await expect(page.locator('[data-shell="v1"]')).toBeVisible()
 			await expect(page.locator('[data-shell="v2"]')).toHaveCount(0)
 
-			// The v2-only surfaces are genuinely gone, not merely hidden.
+			// The v2-only surface is genuinely gone, not merely hidden.
 			await expect(page.getByLabel('Search the workspace')).toHaveCount(0)
-			await expect(page.getByRole('navigation', { name: 'Primary' })).toHaveCount(0)
 		})
 
 		test('the flag survives a reload without flashing the other shell', async ({

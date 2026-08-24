@@ -229,9 +229,9 @@ resolved server-side and loaded in `_authed.tsx`'s `beforeLoad`.
 **One boundary per feature, as high in the tree as possible** — the shell or a
 route layout, not scattered checks on individual components. The live example is
 `src/routes/_authed/$workspaceId.tsx`, which swaps the entire shell (sidebar,
-header, command palette, mobile nav) at a single call site, with the pre-v2
-components kept under `src/components/layout/legacy/`. If you need a third call
-site for one flag, the boundary is in the wrong place — move it up.
+header, command palette) at a single call site, with the pre-v2 components kept
+under `src/components/layout/legacy/`. If you need a third call site for one
+flag, the boundary is in the wrong place — move it up.
 
 Flags cover the **visual layer only**; never gate data fetching, API calls, or
 anything a flag-off user still depends on. Full guide (env vars, the test-only

@@ -169,20 +169,21 @@ export function ForYouCardQueue({
 	// (action bar vs. empty state) is allowed to swap type.
 	//
 	// Bottom padding: below md the action bar is `fixed`, so the flex column
-	// can't see it and the card would grow underneath it. Reserve only
-	// --mobile-nav-h here — the page shell's own `pb-20` already covers the bar's
-	// height, so also reserving it here (as `6rem+2.75rem` did) stranded ~96px of
-	// dead space between the card and the buttons. At md+ the bar is back in flow
-	// (`md:sticky`) and reserves its own space, so no extra padding is needed.
+	// can't see it and the card would grow underneath it. Reserve the bar's own
+	// height here — 44px of button plus its 12px top padding and the device's
+	// safe area — rather than leaning on the page shell's gutter, which is now a
+	// plain 16px on every route. Over-reserving (as `6rem+2.75rem` once did)
+	// strands dead space between the card and the buttons. At md+ the bar is back
+	// in flow (`md:sticky`) and reserves its own space, so no padding is needed.
 	return (
-		<div className="flex flex-1 min-h-0 flex-col gap-4 pb-[var(--mobile-nav-h,0px)] md:pb-0">
+		<div className="flex flex-1 min-h-0 flex-col gap-4 pb-[calc(4rem+env(safe-area-inset-bottom))] md:pb-0">
 			{cards}
 
-			{/* The action bar clears the v2 shell's fixed bottom nav below 768px via
-			    --mobile-nav-h (app.css); the fallback keeps it flush to the viewport
-			    edge under the legacy shell, which has no bottom nav. */}
+			{/* Below md the bar is pinned flush to the viewport edge — the shell has
+			    no bottom-anchored chrome left for it to clear — so it carries the
+			    device's safe-area inset itself. */}
 			{currentItem ? (
-				<div className="fixed inset-x-0 bottom-[var(--mobile-nav-h,0px)] z-10 flex justify-center px-4 py-3 md:sticky md:px-0 md:py-0">
+				<div className="fixed inset-x-0 bottom-0 z-10 flex justify-center px-4 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] md:sticky md:p-0">
 					<div className="flex w-full max-w-[760px] items-center justify-between gap-3">
 						<Button
 							size="lg"

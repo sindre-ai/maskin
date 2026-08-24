@@ -14,10 +14,11 @@ export interface NavItemDef {
 export const FOR_YOU_ROUTE = '/$workspaceId' as const
 export const CHATS_ROUTE = '/$workspaceId/chats' as const
 
-// v2 nav inventory shared by the sidebar and the mobile bottom bar — mockup
-// `navDefs` (For you, Chats, Loops, Objects). `key` is the stable analytics
-// identifier for `nav_item_clicked` — never rename after ship without
-// coordinating with the PostHog query in the parent bet (`metadata.posthog_query`).
+// v2 nav inventory rendered by the sidebar, which becomes an off-canvas drawer
+// below 768px — mockup `navDefs` (For you, Chats, Loops, Objects). `key` is the
+// stable analytics identifier for `nav_item_clicked` — never rename after ship
+// without coordinating with the PostHog query in the parent bet
+// (`metadata.posthog_query`).
 export const CORE_NAV_ITEMS: NavItemDef[] = [
 	{ key: 'for-you', label: 'For you', to: FOR_YOU_ROUTE, exact: true, icon: Zap },
 	{ key: 'chats', label: 'Chats', to: CHATS_ROUTE, icon: MessageSquare },

@@ -4,11 +4,15 @@ import { SHIP_GATE_VIEWPORTS, VIEWPORTS } from '../helpers/viewports'
 
 // App shell — Direction 1 "One Shell" from the signed-off UX decision: shared
 // sidebar (216px ↔ 60px icon rail), per-view collapse persistence, header with
-// ⌘K trigger, right-edge create sheet, and the mobile bottom bar + off-canvas
-// drawer. This spec exercises the shell behaviours that unit tests cannot:
-// the real viewport-driven mobile/desktop split, Radix Sheet overlay dismissal,
-// collapse state that survives a full reload, the create sheet's edge geometry,
-// and light/dark rendering of the chrome at the small viewport.
+// ⌘K trigger, right-edge create sheet, and the off-canvas drawer that sidebar
+// becomes below 768px. This spec exercises the shell behaviours that unit tests
+// cannot: the real viewport-driven mobile/desktop split, Radix Sheet overlay
+// dismissal, collapse state that survives a full reload, the create sheet's edge
+// geometry, and light/dark rendering of the chrome at the small viewport.
+//
+// There is deliberately no mobile-only bottom nav bar: small viewports reach the
+// same nav inventory through the drawer, so the shell has one navigation surface
+// at every viewport rather than a bespoke mobile one.
 
 // The header's New control is split: a primary half that runs the screen's
 // default create action directly, and a chevron half that opens the full menu.
@@ -34,23 +38,23 @@ function sidebarWidth(page: Page) {
 
 test.describe('App shell', () => {
 	for (const vp of SHIP_GATE_VIEWPORTS) {
-		test(`bottom bar is the primary nav at ${vp.label}`, async ({ page, account }) => {
+		test(`no mobile-only bottom nav bar renders at ${vp.label}`, async ({ page, account }) => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
 			await page.goto(`/${account.workspaceId}`)
-			const bottomNav = page.getByRole('navigation', { name: 'Primary' })
-			if (vp.width < 768) {
-				await expect(bottomNav).toBeVisible()
-				await expect(bottomNav.getByRole('link', { name: 'For you, current page' })).toBeVisible()
-				// Agents is deliberately not in the bottom bar (mobile-nav.tsx) — it is
-				// reached through the sidebar's activity card. Loops is the tap-through
-				// probe instead.
-				await expect(bottomNav.getByRole('link', { name: /^Loops, / })).toBeVisible()
-				// Tap-through on touch: the bottom bar must actually navigate the shell.
-				await bottomNav.getByRole('link', { name: /^Loops, / }).click()
-				await expect(page).toHaveURL(new RegExp(`/${account.workspaceId}/loops`))
-			} else {
-				await expect(bottomNav).toBeHidden()
-			}
+
+			// Gone at every viewport, not merely hidden below md.
+			await expect(page.getByRole('navigation', { name: 'Primary' })).toHaveCount(0)
+
+			// The shell no longer reserves a mobile-only bottom gutter for it either —
+			// the scroll container's padding is symmetric, so no route strands dead
+			// space above the viewport edge. (A page's own bottom-anchored bar, like
+			// For You's action bar, is that page's business and is not shell chrome.)
+			const scrollRoot = page.locator('[data-scroll-root]')
+			const [padTop, padBottom] = await scrollRoot.evaluate((el) => {
+				const s = getComputedStyle(el)
+				return [Number.parseFloat(s.paddingTop), Number.parseFloat(s.paddingBottom)]
+			})
+			expect(padBottom).toBe(padTop)
 		})
 	}
 
@@ -212,7 +216,6 @@ test.describe('App shell', () => {
 			} else {
 				await expect(html).not.toHaveClass(/dark/)
 			}
-			await expect(page.getByRole('navigation', { name: 'Primary' })).toBeVisible()
 			await expect(page.getByRole('button', { name: /toggle sidebar/i })).toBeVisible()
 		}
 	})
