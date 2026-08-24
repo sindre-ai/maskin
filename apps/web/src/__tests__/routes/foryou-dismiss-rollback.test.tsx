@@ -26,6 +26,7 @@ vi.mock('@/lib/workspace-context', () => ({
 type TestState = {
 	__items: UnreadItem[]
 	__markReadFails: boolean
+	__lastMutateOptions?: unknown
 }
 const testState = globalThis as unknown as TestState
 testState.__items = []
@@ -37,15 +38,28 @@ vi.mock('@/hooks/use-subscriptions', () => ({
 		isLoading: false,
 	}),
 	useMarkRead: () => ({
-		// react-query always settles a mutation asynchronously, so the failure
-		// lands after the caller has finished hiding the card. Firing it
-		// synchronously here would let the rollback run before the hide.
+		// `mutateAsync` returns a promise per call, so each caller keeps its own
+		// success/failure handling. This is the API the route must use.
+		mutateAsync: (_vars: unknown) => {
+			if (!(globalThis as unknown as TestState).__markReadFails) return Promise.resolve({})
+			return Promise.reject(new Error('mark-read failed'))
+		},
+		// `mutate` is modelled the way react-query really behaves, so a
+		// regression back to it is caught rather than passing against a kinder
+		// stub. The hook holds ONE mutation observer; every `observer.mutate()`
+		// overwrites the previous call's options and detaches its observer, so
+		// across a bulk loop only the LAST call's `onError` can ever fire.
 		mutate: (_vars: unknown, opts?: { onError?: () => void }) => {
-			if (!(globalThis as unknown as TestState).__markReadFails) return
-			queueMicrotask(() => opts?.onError?.())
+			const state = globalThis as unknown as TestState
+			state.__lastMutateOptions = opts
+			queueMicrotask(() => {
+				if (!state.__markReadFails) return
+				if (state.__lastMutateOptions !== opts) return // observer was stolen by a later call
+				opts?.onError?.()
+			})
 		},
 	}),
-	useMarkUnread: () => ({ mutate: vi.fn() }),
+	useMarkUnread: () => ({ mutateAsync: () => Promise.resolve({}), mutate: vi.fn() }),
 }))
 
 vi.mock('@/hooks/use-user-display-settings', () => ({
@@ -186,5 +200,32 @@ describe('For You — dismiss rollback', () => {
 		})
 
 		expect(screen.queryByTestId('foryou-feed-card')).not.toBeInTheDocument()
+	})
+
+	// The regression this file is really about. "Dismiss all" marks every card
+	// read through one shared mutation observer, so a rollback hung off
+	// per-call `mutate` callbacks would fire for the LAST card only and leave
+	// every other one hidden for good — the column emptied against a backend
+	// that rejected the whole batch. Seeding a single item, as the two tests
+	// above do, passes either way.
+	it('puts every card back when a bulk dismissal fails', async () => {
+		testState.__items = [
+			buildItem('thread-1', 'Renewal terms need a read'),
+			buildItem('thread-2', 'Trigger settings rewrite'),
+			buildItem('thread-3', 'Pricing page copy'),
+		]
+		await renderFeed()
+		expect(screen.getAllByTestId('foryou-feed-card')).toHaveLength(3)
+
+		testState.__markReadFails = true
+		// Alt+U is the keyboard mirror of the `···` menu's "Dismiss all".
+		await act(async () => {
+			window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyU', altKey: true }))
+		})
+		await act(async () => {
+			await Promise.resolve()
+		})
+
+		expect(screen.getAllByTestId('foryou-feed-card')).toHaveLength(3)
 	})
 })

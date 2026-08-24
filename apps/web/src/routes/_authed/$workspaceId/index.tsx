@@ -266,31 +266,36 @@ function ForYouFeed() {
 		(item: UnreadItem, onFailed?: () => void) => {
 			const eventId = item.latest_event_id ?? 0
 			if (eventId <= 0) return false
-			markRead.mutate(
-				{
+			// `mutateAsync`, not `mutate` with an `onError` callback: these hooks
+			// hold ONE mutation observer for the whole feed, and every
+			// `observer.mutate()` overwrites the previous call's options and
+			// detaches its observer. In a bulk loop that means only the LAST
+			// item's callback could ever fire, so every earlier failure would
+			// roll back nothing and say nothing. The returned promise is
+			// per-mutation, so awaiting it keeps each item's handling its own.
+			markRead
+				.mutateAsync({
 					entityType: item.entity_type,
 					entityId: item.entity_id,
 					lastEventId: eventId,
-				},
-				{
-					onError: () => {
-						restorePending(feedItemKey(item))
-						onFailed?.()
-						toast.error("Couldn't mark that as read — it's back in your feed.")
-					},
-				},
-			)
+				})
+				.catch(() => {
+					restorePending(feedItemKey(item))
+					onFailed?.()
+					toast.error("Couldn't mark that as read — it's back in your feed.")
+				})
 			return true
 		},
 		[markRead, restorePending],
 	)
 
+	// Same shared-observer hazard as `markItemRead` — Undo marks a whole batch
+	// unread in a loop, so per-call handling has to hang off the promise.
 	const markItemUnread = useCallback(
 		(item: UnreadItem) => {
-			markUnread.mutate(
-				{ entityType: item.entity_type, entityId: item.entity_id },
-				{ onError: () => toast.error("Couldn't undo that — the thread stayed read.") },
-			)
+			markUnread
+				.mutateAsync({ entityType: item.entity_type, entityId: item.entity_id })
+				.catch(() => toast.error("Couldn't undo that — the thread stayed read."))
 		},
 		[markUnread],
 	)
@@ -302,16 +307,25 @@ function ForYouFeed() {
 		(item: UnreadItem, option: DecidedOption) => {
 			const key = feedItemKey(item)
 			setDecided((prev) => new Map(prev).set(key, { item, option }))
-			postReply.mutate(
-				{ entity_id: item.entity_id, content: option.label },
-				{
-					onSuccess: () => markItemRead(item),
-					onError: () => {
-						undoDecision(key)
-						toast.error("Couldn't send your reply — try again.")
-					},
-				},
-			)
+			// `mutateAsync` for the same reason as `markItemRead`: "Take every
+			// suggested option" calls this in a loop over one shared observer,
+			// and with call-site callbacks every reply but the last would fail
+			// silently behind a green receipt claiming it was sent.
+			postReply
+				.mutateAsync({ entity_id: item.entity_id, content: option.label })
+				.then(() => {
+					// A thread with no high-water mark can't be marked read, so the
+					// reply would go out and the card would come back on the next
+					// refetch carrying the reader's own answer. Say so rather than
+					// leaving a receipt that implies the thread is settled.
+					if (!markItemRead(item)) {
+						toast.warning('Reply sent, but the thread stayed unread.')
+					}
+				})
+				.catch(() => {
+					undoDecision(key)
+					toast.error("Couldn't send your reply — try again.")
+				})
 		},
 		[markItemRead, postReply, undoDecision],
 	)
