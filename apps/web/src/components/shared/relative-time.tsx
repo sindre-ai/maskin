@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react'
 // ("2h", "1d", "4d"), so the unit stands alone with no "ago" suffix and dates
 // older than a month collapse to a day/month token ("Jan 15") rather than a
 // full locale date that would never fit.
-function formatCompact(date: Date): string {
+function formatCompact(date: Date, dayLimit: number): string {
 	const diff = Date.now() - date.getTime()
 	const minutes = Math.floor(diff / 60_000)
 	const hours = Math.floor(minutes / 60)
@@ -14,7 +14,7 @@ function formatCompact(date: Date): string {
 	if (minutes < 1) return 'now'
 	if (minutes < 60) return `${minutes}m`
 	if (hours < 24) return `${hours}h`
-	if (days < 30) return `${days}d`
+	if (days < dayLimit) return `${days}d`
 	return date.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
 }
 
@@ -59,6 +59,7 @@ export function RelativeTime({
 	className,
 	compact = false,
 	format = compact ? 'compact' : 'relative',
+	compactDayLimit = 30,
 }: {
 	date: string | null
 	className?: string
@@ -66,6 +67,11 @@ export function RelativeTime({
 	compact?: boolean
 	/** `relative` "2h ago" · `compact` "2h" · `clock` "08:44" / "MON 14:12" / "JUN 24". */
 	format?: 'relative' | 'compact' | 'clock'
+	/**
+	 * How many days the compact form counts before collapsing to a date token.
+	 * The For You feed cuts over at a week; the default suits list rows.
+	 */
+	compactDayLimit?: number
 }) {
 	const [, setTick] = useState(0)
 
@@ -81,7 +87,7 @@ export function RelativeTime({
 			{format === 'clock'
 				? formatClock(new Date(date))
 				: format === 'compact'
-					? formatCompact(new Date(date))
+					? formatCompact(new Date(date), compactDayLimit)
 					: formatRelative(new Date(date))}
 		</time>
 	)

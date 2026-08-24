@@ -22,8 +22,9 @@ export function StatusBadge({
 	const colors = statusColors[status] ?? defaultStatusColor
 	const label = status.replace(/_/g, ' ')
 
-	// The bare status word, no dot and no pill — a citation pill and the For You
-	// feed's meta line carry status as coloured text rather than as chrome.
+	// The bare status word, no dot and no pill — a citation pill, the For You
+	// feed's card meta line and its row subtitle carry status as coloured text
+	// rather than as chrome.
 	if (variant === 'word') {
 		return (
 			<span
@@ -91,9 +92,9 @@ export function StatusBadge({
 	)
 }
 
-// Status words are sentence-cased at the point of display: the shared
-// `statusLabel` map only spells out the statuses the product ships; anything
-// custom falls through as the raw, lowercase value.
+// Status words are sentence-cased at the point of display ("In review",
+// "Blocked"): the shared `statusLabel` map only spells out the statuses the
+// product ships; anything custom falls through as the raw, lowercase value.
 function capitalize(label: string): string {
 	return label.charAt(0).toUpperCase() + label.slice(1)
 }
