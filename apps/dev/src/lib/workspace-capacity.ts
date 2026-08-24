@@ -8,6 +8,7 @@ import {
 	workspaceSettingsSchema,
 } from '@maskin/shared'
 import { and, eq, sql } from 'drizzle-orm'
+import { ApiErrorCode } from './errors'
 
 /**
  * Narrow structural type accepted by every helper below so they can be
@@ -143,5 +144,44 @@ export class OwnershipCapExceededError extends Error {
 		this.effectiveTier = ctx.effectiveTier
 		this.used = ctx.used
 		this.cap = ctx.cap
+	}
+}
+
+/**
+ * HTTP body for a seat-cap rejection.
+ *
+ * Lives here, next to the error, because BOTH ways of surfacing it must
+ * produce byte-identical responses: `createApp`'s `onError` (for throw sites
+ * that cross the app boundary) and route handlers that return it directly.
+ * Returning directly is what the workspaces router does — a sub-app mounted
+ * with `app.route()` does NOT inherit the parent's `onError`, so a thrown cap
+ * error there degrades to a bare 500 under any mount that isn't the full
+ * factory (every route-level integration test, for one). The status is part
+ * of the contract, so it must not depend on how the router was mounted.
+ */
+export function seatCapErrorBody(err: SeatCapExceededError) {
+	return {
+		error: {
+			code: ApiErrorCode.SEAT_CAP_EXCEEDED,
+			message: err.message,
+			workspace_id: err.workspaceId,
+			plan: err.plan,
+			used: err.used,
+			cap: err.cap,
+		},
+	}
+}
+
+/** HTTP body for an ownership-cap rejection. See `seatCapErrorBody`. */
+export function ownershipCapErrorBody(err: OwnershipCapExceededError) {
+	return {
+		error: {
+			code: ApiErrorCode.OWNERSHIP_CAP_EXCEEDED,
+			message: err.message,
+			actor_id: err.actorId,
+			effective_tier: err.effectiveTier,
+			used: err.used,
+			cap: err.cap,
+		},
 	}
 }

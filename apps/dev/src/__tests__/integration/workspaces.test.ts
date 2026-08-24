@@ -14,7 +14,7 @@ import type { PgNotifyBridge } from '@maskin/realtime'
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq } from 'drizzle-orm'
 import { createApiError, formatZodError } from '../../lib/errors'
-import { insertActor } from '../factories'
+import { insertActor, setWorkspacePlan } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
 import { db, getTestActorId } from './global-setup'
 
@@ -135,6 +135,30 @@ function createApp(agentStorage = new AgentStorageManager(createMemoryStorage(),
 	return app
 }
 
+/**
+ * Flips the `byollm_allowed` ops grant via the real admin route.
+ *
+ * The allowlist is scoped to just this call rather than the whole test: an
+ * actor in MASKIN_ENTERPRISE_ACTOR_IDS is byollm-entitled outright, so leaving
+ * it set would make every later assertion pass through the allowlist and never
+ * touch the per-workspace grant these tests are about.
+ */
+async function grantByollmAsOps(
+	app: ReturnType<typeof createApp>,
+	workspaceId: string,
+): Promise<Response> {
+	const prev = process.env.MASKIN_ENTERPRISE_ACTOR_IDS
+	process.env.MASKIN_ENTERPRISE_ACTOR_IDS = getTestActorId()
+	try {
+		return await app.request(
+			jsonRequest('PATCH', `/api/workspaces/admin/${workspaceId}`, { byollm_allowed: true }),
+		)
+	} finally {
+		// '' parses to an empty allowlist, same as unset.
+		process.env.MASKIN_ENTERPRISE_ACTOR_IDS = prev ?? ''
+	}
+}
+
 async function agentNamesFor(workspaceId: string): Promise<string[]> {
 	const rows = await db
 		.select({ name: actors.name })
@@ -180,16 +204,14 @@ describe('Workspaces Integration', () => {
 			const app = createApp()
 
 			// A trial-tier actor may only own one workspace (see
-			// workspace-capacity.test.ts) — upgrade the first before creating a
-			// second, so this test exercises listing rather than the ownership cap.
+			// workspace-capacity.test.ts) — raise the first to pro before creating
+			// a second, so this test exercises listing rather than the ownership
+			// cap. Seeded on the row because the API refuses `settings.billing`.
 			const first = await app.request(jsonRequest('POST', '/api/workspaces', { name: 'WS 1' }))
 			const ws1 = await first.json()
-			await app.request(
-				jsonRequest('PATCH', `/api/workspaces/${ws1.id}`, {
-					settings: { billing: { plan: 'pro' } },
-				}),
-			)
-			await app.request(jsonRequest('POST', '/api/workspaces', { name: 'WS 2' }))
+			await setWorkspacePlan(db, ws1.id, 'pro')
+			const second = await app.request(jsonRequest('POST', '/api/workspaces', { name: 'WS 2' }))
+			expect(second.status).toBe(201)
 
 			const res = await app.request(jsonGet('/api/workspaces'))
 			expect(res.status).toBe(200)
@@ -245,9 +267,8 @@ describe('Workspaces Integration', () => {
 
 			// New workspaces default to byollmAllowed: false — grant entitlement so
 			// this test can exercise the llm_keys deep-merge itself, not the gate.
-			await app.request(
-				jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, { byollm_allowed: true }),
-			)
+			const grant = await grantByollmAsOps(app, ws.id)
+			expect(grant.status).toBe(200)
 
 			await app.request(
 				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
@@ -292,9 +313,8 @@ describe('Workspaces Integration', () => {
 				jsonRequest('POST', '/api/workspaces', { name: 'Entitlement In List' }),
 			)
 			const ws = await createRes.json()
-			await app.request(
-				jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, { byollm_allowed: true }),
-			)
+			const grant = await grantByollmAsOps(app, ws.id)
+			expect(grant.status).toBe(200)
 
 			const listRes = await app.request(jsonGet('/api/workspaces'))
 			expect(listRes.status).toBe(200)
@@ -419,9 +439,9 @@ describe('Workspaces Integration', () => {
 			)
 			const ws = await createRes.json()
 
-			const adminRes = await app.request(
-				jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, { byollm_allowed: true }),
-			)
+			// Granted as ops, then read back as an ordinary owner: the PATCH below
+			// must succeed on the strength of the per-workspace grant alone.
+			const adminRes = await grantByollmAsOps(app, ws.id)
 			expect(adminRes.status).toBe(200)
 			const adminBody = await adminRes.json()
 			expect(adminBody.byollmAllowed).toBe(true)
@@ -478,11 +498,7 @@ describe('Workspaces Integration', () => {
 			const ws = await createRes.json()
 			// Trial's seat cap is 1 (owner only) — bump to pro so a second member
 			// can actually be added (see workspace-capacity.test.ts for cap coverage).
-			await app.request(
-				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
-					settings: { billing: { plan: 'pro' } },
-				}),
-			)
+			await setWorkspacePlan(db, ws.id, 'pro')
 
 			// Create another actor to add as member
 			const newActor = await insertActor(db, { name: 'New Member', email: 'member@test.com' })
@@ -515,6 +531,37 @@ describe('Workspaces Integration', () => {
 				'member',
 				'owner',
 			])
+		})
+
+		it('rejects an over-cap invite with 403 SEAT_CAP_EXCEEDED, not a 500', async () => {
+			// This app mounts the router with app.route() and defines no
+			// onError — exactly like every other route-level harness, and unlike
+			// createApp(). A cap rejection that is *thrown* rather than returned
+			// degrades to a bare framework 500 here, which is what this asserts
+			// against: the status is part of the route's contract, so it must not
+			// depend on how the router happens to be mounted.
+			const app = createApp()
+			const createRes = await app.request(
+				jsonRequest('POST', '/api/workspaces', { name: 'Seat Cap 403' }),
+			)
+			const ws = await createRes.json()
+
+			// Left on trial: the owner alone fills the single seat.
+			const overflow = await insertActor(db)
+			const res = await app.request(
+				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, { actor_id: overflow.id }),
+			)
+
+			expect(res.status).toBe(403)
+			const body = await res.json()
+			expect(body.error.code).toBe('SEAT_CAP_EXCEEDED')
+			expect(body.error.workspace_id).toBe(ws.id)
+			expect(body.error.plan).toBe('trial')
+			expect(body.error.cap).toBe(1)
+
+			// The rejection is a no-op, not a partial write.
+			const members = await memberActorIdsFor(ws.id)
+			expect(members).not.toContain(overflow.id)
 		})
 	})
 
@@ -908,6 +955,9 @@ describe('Workspaces Integration', () => {
 			)
 			expect(created.status).toBe(201)
 			const ws = await created.json()
+			// Trial seats exactly one human (the owner); this test is about the
+			// re-add being a no-op, not about the cap.
+			await setWorkspacePlan(db, ws.id, 'pro')
 
 			const newMember = await insertActor(db)
 
@@ -943,6 +993,7 @@ describe('Workspaces Integration', () => {
 			)
 			expect(created.status).toBe(201)
 			const ws = await created.json()
+			await setWorkspacePlan(db, ws.id, 'pro')
 
 			const admin = await insertActor(db)
 

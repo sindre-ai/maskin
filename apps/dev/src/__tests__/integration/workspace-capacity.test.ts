@@ -5,7 +5,7 @@ import type { PgNotifyBridge } from '@maskin/realtime'
 import { and, eq } from 'drizzle-orm'
 import { createApiError, formatZodError } from '../../lib/errors'
 import { countHumanMembers } from '../../lib/workspace-capacity'
-import { insertActor, insertWorkspace } from '../factories'
+import { insertActor, insertWorkspace, setWorkspacePlan } from '../factories'
 import { jsonRequest } from '../helpers'
 import { createIntegrationApp, db, getTestActorId } from './global-setup'
 
@@ -73,26 +73,6 @@ function mountWorkspacesRoutes(
 	}
 }
 
-/**
- * Sets the plan by writing the row directly, the same way the other seeds in
- * this file do. It used to go through `PATCH /api/workspaces/:id`, which no
- * longer accepts `settings.billing` — that path is owned by Stripe and
- * accepting it was a self-service entitlement bypass. The API is not the seam
- * for putting a test workspace on a paid tier; the DB is.
- */
-async function setPlan(workspaceId: string, plan: 'trial' | 'pro' | 'team' | 'byollm') {
-	const [row] = await db
-		.select({ settings: workspacesTable.settings })
-		.from(workspacesTable)
-		.where(eq(workspacesTable.id, workspaceId))
-	const current = (row?.settings ?? {}) as Record<string, unknown>
-	const billing = (current.billing ?? {}) as Record<string, unknown>
-	await db
-		.update(workspacesTable)
-		.set({ settings: { ...current, billing: { ...billing, plan } } })
-		.where(eq(workspacesTable.id, workspaceId))
-}
-
 // Delegates to the production helper rather than re-deriving the join —
 // a plain `workspace_members` count would also tally the 6 seeded default
 // agent actors, which never count toward the human seat cap.
@@ -153,7 +133,7 @@ describe('Workspace capacity (seat cap + ownership cap) Integration', () => {
 				jsonRequest('POST', '/api/workspaces', { name: 'Pro Seats' }),
 			)
 			const ws = await createRes.json()
-			await setPlan(ws.id, 'pro')
+			await setWorkspacePlan(db, ws.id, 'pro')
 
 			// Owner already counts as 1 — 4 more fit under cap 5.
 			for (let i = 0; i < 4; i++) {
@@ -182,7 +162,7 @@ describe('Workspace capacity (seat cap + ownership cap) Integration', () => {
 				jsonRequest('POST', '/api/workspaces', { name: 'Race Seats' }),
 			)
 			const ws = await createRes.json()
-			await setPlan(ws.id, 'pro')
+			await setWorkspacePlan(db, ws.id, 'pro')
 
 			// Bring to 4/5 (owner + 3), leaving exactly one free seat two
 			// concurrent requests will race for.
@@ -219,7 +199,7 @@ describe('Workspace capacity (seat cap + ownership cap) Integration', () => {
 				jsonRequest('POST', '/api/workspaces', { name: 'Idempotent Invite' }),
 			)
 			const ws = await createRes.json()
-			await setPlan(ws.id, 'pro')
+			await setWorkspacePlan(db, ws.id, 'pro')
 
 			const human = await insertActor(db, { name: 'Repeat Invitee' })
 			const first = await app.request(
@@ -322,7 +302,7 @@ describe('Workspace capacity (seat cap + ownership cap) Integration', () => {
 			// Trial's seat cap is 1 (owner only) — bump to pro so a second member
 			// can actually be added below; the point of this test is the
 			// member-required invariant, not the seat cap.
-			await setPlan(ws.id, 'pro')
+			await setWorkspacePlan(db, ws.id, 'pro')
 			const newOwner = await insertActor(db, { name: 'Future Owner' })
 
 			const before = await app.request(
@@ -367,7 +347,7 @@ describe('Workspace capacity (seat cap + ownership cap) Integration', () => {
 			// means the transfer's candidate tier is 'pro' (cap 5), so the target
 			// must already be AT the pro cap (5 owned), not just any lower tier,
 			// for this transfer to actually exceed their cap.
-			await setPlan(ws.id, 'pro')
+			await setWorkspacePlan(db, ws.id, 'pro')
 
 			const newOwner = await insertActor(db, { name: 'Already Capped Owner' })
 			for (let i = 0; i < 5; i++) {
@@ -487,7 +467,7 @@ describe('Workspace capacity (seat cap + ownership cap) Integration', () => {
 				jsonRequest('POST', '/api/workspaces', { name: 'Leave Frees Seat' }),
 			)
 			const ws = await createRes.json()
-			await setPlan(ws.id, 'pro')
+			await setWorkspacePlan(db, ws.id, 'pro')
 
 			const members = []
 			for (let i = 0; i < 4; i++) {
@@ -539,7 +519,7 @@ describe('Workspace capacity (seat cap + ownership cap) Integration', () => {
 				jsonRequest('POST', '/api/workspaces', { name: 'Transfer Then Remove' }),
 			)
 			const ws = await createRes.json()
-			await setPlan(ws.id, 'pro')
+			await setWorkspacePlan(db, ws.id, 'pro')
 			const newOwner = await insertActor(db, { name: 'New Owner For Removal' })
 			await app.request(
 				jsonRequest('POST', `/api/workspaces/${ws.id}/members`, { actor_id: newOwner.id }),
@@ -565,7 +545,7 @@ describe('Workspace capacity (seat cap + ownership cap) Integration', () => {
 				jsonRequest('POST', '/api/workspaces', { name: 'Plain Member Removal' }),
 			)
 			const ws = await createRes.json()
-			await setPlan(ws.id, 'pro')
+			await setWorkspacePlan(db, ws.id, 'pro')
 
 			const memberX = await insertActor(db, { name: 'Plain Member X' })
 			const memberY = await insertActor(db, { name: 'Plain Member Y' })

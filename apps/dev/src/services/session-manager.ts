@@ -84,6 +84,7 @@ import {
 	type LlmRoute,
 	PlanCapExceededError,
 	canUseCreditBalance,
+	ceilCents,
 	checkPlanCap,
 	creditBalanceCents,
 	getWorkspacePlanCap,
@@ -3028,7 +3029,7 @@ export class SessionManager extends EventEmitter {
 				: ((liveUsage.inputTokens ?? 0) + (liveUsage.outputTokens ?? 0)) /
 					FALLBACK_TOKENS_PER_USD_CENT
 			: 0
-		const totalUsedCents = persistedUsedCents + Math.ceil(liveCents)
+		const totalUsedCents = persistedUsedCents + ceilCents(liveCents)
 		if (totalUsedCents < capCents) return
 
 		let stopReason: string | null = null

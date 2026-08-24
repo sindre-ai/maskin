@@ -43,8 +43,10 @@ import {
 	countHumanMembers,
 	lockActorForOwnershipClaim,
 	ownedWorkspacePlans,
+	ownershipCapErrorBody,
 	ownershipCapForTier,
 	resolvePlanTier,
+	seatCapErrorBody,
 	seatCapForPlan,
 } from '../lib/workspace-capacity'
 import type { AgentStorageManager } from '../services/agent-storage'
@@ -155,6 +157,19 @@ app.openapi(createWorkspaceRoute, async (c) => {
 			settings: body.settings,
 		})
 	} catch (err) {
+		// Returned here rather than thrown to `createApp`'s `onError`: this
+		// router is mounted with `app.route()`, which does not carry a parent
+		// error handler, so a throw is a 500 under any other mount. See
+		// `seatCapErrorBody`.
+		if (err instanceof OwnershipCapExceededError) {
+			logger.warn('Workspace create blocked — actor at ownership cap', {
+				actorId,
+				effectiveTier: err.effectiveTier,
+				used: err.used,
+				cap: err.cap,
+			})
+			return c.json(ownershipCapErrorBody(err), 403)
+		}
 		if (err instanceof SeedAgentError) {
 			logger.error('Workspace create rolled back — default agent seed failed', {
 				agentId: err.agentId,
@@ -673,12 +688,19 @@ app.openapi(addMemberRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 	}
 	if (outcome.kind === 'cap_exceeded') {
-		throw new SeatCapExceededError({
+		const err = new SeatCapExceededError({
 			workspaceId,
 			plan: outcome.plan,
 			used: outcome.used,
 			cap: outcome.cap,
 		})
+		logger.warn('Workspace seat cap exceeded', {
+			workspaceId,
+			plan: outcome.plan,
+			used: outcome.used,
+			cap: outcome.cap,
+		})
+		return c.json(seatCapErrorBody(err), 403)
 	}
 
 	return c.json({ added: outcome.kind === 'added' }, 201)
@@ -844,13 +866,21 @@ app.openapi(transferOwnershipRoute, (async (c) => {
 			return c.json(createApiError('NOT_FOUND', 'New owner must be an existing member'), 404)
 		case 'not_human':
 			return c.json(createApiError('CONFLICT', 'Billing owner must be a human actor'), 409)
-		case 'cap_exceeded':
-			throw new OwnershipCapExceededError({
+		case 'cap_exceeded': {
+			const err = new OwnershipCapExceededError({
 				actorId: newOwnerActorId,
 				effectiveTier: outcome.effectiveTier,
 				used: outcome.used,
 				cap: outcome.cap,
 			})
+			logger.warn('Workspace ownership cap exceeded', {
+				actorId: newOwnerActorId,
+				effectiveTier: outcome.effectiveTier,
+				used: outcome.used,
+				cap: outcome.cap,
+			})
+			return c.json(ownershipCapErrorBody(err), 403)
+		}
 		case 'transferred':
 			return c.json(serialize(outcome.workspace) as z.infer<typeof workspaceResponseSchema>, 200)
 	}

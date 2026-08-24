@@ -14,7 +14,12 @@ import { ApiErrorCode, createApiError, mapStatusToCode, validationFailureHook } 
 import { PlanCapExceededError } from './lib/llm-routing'
 import { logger } from './lib/logger'
 import { Sentry, resolveClientSourceTag } from './lib/sentry'
-import { OwnershipCapExceededError, SeatCapExceededError } from './lib/workspace-capacity'
+import {
+	OwnershipCapExceededError,
+	SeatCapExceededError,
+	ownershipCapErrorBody,
+	seatCapErrorBody,
+} from './lib/workspace-capacity'
 import { createIdempotencyMiddleware } from './middleware/idempotency'
 import actorsRoutes from './routes/actors'
 import adminLandingFunnelRoutes from './routes/admin-landing-funnel'
@@ -146,19 +151,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 				used: err.used,
 				cap: err.cap,
 			})
-			return c.json(
-				{
-					error: {
-						code: ApiErrorCode.SEAT_CAP_EXCEEDED,
-						message: err.message,
-						workspace_id: err.workspaceId,
-						plan: err.plan,
-						used: err.used,
-						cap: err.cap,
-					},
-				},
-				403,
-			)
+			return c.json(seatCapErrorBody(err), 403)
 		}
 		if (err instanceof OwnershipCapExceededError) {
 			logger.warn('Workspace ownership cap exceeded', {
@@ -167,19 +160,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 				used: err.used,
 				cap: err.cap,
 			})
-			return c.json(
-				{
-					error: {
-						code: ApiErrorCode.OWNERSHIP_CAP_EXCEEDED,
-						message: err.message,
-						actor_id: err.actorId,
-						effective_tier: err.effectiveTier,
-						used: err.used,
-						cap: err.cap,
-					},
-				},
-				403,
-			)
+			return c.json(ownershipCapErrorBody(err), 403)
 		}
 		if ('status' in err && typeof err.status === 'number') {
 			return c.json(createApiError(mapStatusToCode(err.status), err.message), err.status as 400)

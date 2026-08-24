@@ -26,6 +26,7 @@ import {
 	LLM_ROUTE_MASKIN_PLAN,
 	LLM_ROUTE_OAUTH,
 	PlanCapExceededError,
+	ceilCents,
 	checkPlanCap,
 	getWorkspacePlanUsdCentsUsage,
 	readFallbackConfig,
@@ -673,5 +674,30 @@ describe('checkPlanCap', () => {
 				agent: {},
 			}),
 		).rejects.toBeInstanceOf(PlanCapExceededError)
+	})
+})
+
+describe('ceilCents', () => {
+	// The reason this helper exists rather than a bare Math.ceil: floating-point
+	// dollar→cent conversion lands a hair ABOVE an exact integer for a subset of
+	// ordinary prices, and Math.ceil then bills a whole cent that was never
+	// spent. $10.05 over a $10.00 cap is 5 cents of overage, not 6.
+	it('does not round up a value that is only above an integer by IEEE754 dust', () => {
+		expect(10.05 * 100).toBeGreaterThan(1005) // the dust this guards against
+		expect(ceilCents(10.05 * 100)).toBe(1005)
+	})
+
+	it('leaves values that already land exactly alone', () => {
+		expect(ceilCents(10.01 * 100)).toBe(1001)
+		expect(ceilCents(10.3 * 100)).toBe(1030)
+		expect(ceilCents(0)).toBe(0)
+	})
+
+	it('still rounds genuine sub-cent usage up to a whole cent', () => {
+		// The token-rate fallback is the only producer of fractional cents; its
+		// smallest non-zero output (1 / FALLBACK_TOKENS_PER_USD_CENT = 6.25e-5)
+		// must not be snapped away to zero.
+		expect(ceilCents(1 / 16_000)).toBe(1)
+		expect(ceilCents(1004.5)).toBe(1005)
 	})
 })

@@ -80,6 +80,27 @@ export function readFallbackConfig(env: NodeJS.ProcessEnv = process.env): Fallba
 export const FALLBACK_TOKENS_PER_USD_CENT = 16_000
 
 /**
+ * Rounds a cents amount up to a whole cent after clearing IEEE754 dust.
+ *
+ * A bare `Math.ceil` on a float cents figure over-bills by a whole cent
+ * whenever the multiplication lands a hair ABOVE an exact integer, which it
+ * does for the most ordinary of prices: `10.05 * 100` is
+ * `1005.0000000000001` in IEEE754, so `Math.ceil` returns 1006 and charges a
+ * cent that was never spent. (`10.01` and `10.30` happen to land exactly, so
+ * the bug is invisible on most values — it is not a rounding preference, it
+ * is a defect that fires on an arbitrary subset of amounts.)
+ *
+ * Snapping to 6 decimal places first discards only that dust. Genuine
+ * sub-cent usage still rounds up as intended: the sole producer of fractional
+ * cents here is the token-rate fallback, whose smallest non-zero output is
+ * `1 / FALLBACK_TOKENS_PER_USD_CENT` = 6.25e-5 cents — nearly two orders of
+ * magnitude above the 1e-6 snapping threshold.
+ */
+export function ceilCents(cents: number): number {
+	return Math.ceil(Number(cents.toFixed(6)))
+}
+
+/**
  * Sums actual dollar cost (in USD cents, rounded up) across the workspace's
  * maskin_plan sessions since `periodStart` (or all-time when undefined — used
  * for trial buckets that don't have a billing period yet). Prefers each
@@ -129,7 +150,7 @@ export async function getWorkspacePlanUsdCentsUsage(
 	}
 	// Round once on the aggregate, not per-row, so small per-session fractions
 	// of a cent don't compound into meaningfully over-counted usage.
-	return Math.ceil(totalCents)
+	return ceilCents(totalCents)
 }
 
 export type MaskinPlan = 'trial' | 'pro' | 'team'
