@@ -1371,6 +1371,9 @@ export interface ConversationListItemResponse {
 	archived: boolean
 	unread_count: number
 	snippet: string | null
+	/** Who wrote `snippet` — the list row prefixes the preview with their name. */
+	snippet_actor_id: string | null
+	snippet_actor_name: string | null
 	participants: ConversationParticipantResponse[]
 }
 

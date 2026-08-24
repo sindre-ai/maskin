@@ -13,7 +13,7 @@ vi.mock('@/hooks/use-sessions', () => ({
 	useStopSession: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
-import { MessageActivity, toolSources } from '@/components/chat/message-activity'
+import { MessageActivity } from '@/components/chat/message-activity'
 import type { MessageTurnActivity } from '@/hooks/use-conversation-activity'
 
 function buildTurn(overrides: Partial<MessageTurnActivity> = {}): MessageTurnActivity {
@@ -34,7 +34,7 @@ describe('MessageActivity', () => {
 		expect(container).toBeEmptyDOMElement()
 	})
 
-	it('auto-expands and shows a working label while in progress', () => {
+	it('names the agent, says what it is doing, and lists its steps while in progress', () => {
 		render(
 			<MessageActivity
 				workspaceId="ws-1"
@@ -45,8 +45,29 @@ describe('MessageActivity', () => {
 			/>,
 			{ wrapper: TestWrapper },
 		)
-		expect(screen.getByText('Workspace Coach is working…')).toBeInTheDocument()
+		expect(screen.getByText('Workspace Coach')).toBeInTheDocument()
+		// Still mid-tool-call, so it is not claiming to be writing yet.
+		expect(screen.getByText('is working on it')).toBeInTheDocument()
 		expect(screen.getByText('Using search_objects')).toBeInTheDocument()
+		// A live turn is drawn open — there is no disclosure control to click.
+		expect(screen.queryByRole('button', { name: /toggle/i })).not.toBeInTheDocument()
+	})
+
+	it('switches the verb to writing once the agent has stopped calling tools', () => {
+		render(
+			<MessageActivity
+				workspaceId="ws-1"
+				turn={buildTurn({
+					inProgress: true,
+					steps: [
+						{ id: '1', kind: 'tool_use', text: 'Using search_objects' },
+						{ id: '2', kind: 'text', text: 'Drafting the reply' },
+					],
+				})}
+			/>,
+			{ wrapper: TestWrapper },
+		)
+		expect(screen.getByText('is writing a reply')).toBeInTheDocument()
 	})
 
 	it('shows a "Starting…" placeholder when in progress with no steps yet', () => {
@@ -56,17 +77,22 @@ describe('MessageActivity', () => {
 		expect(screen.getByText('Starting…')).toBeInTheDocument()
 	})
 
-	it('collapses a finished turn by default, expandable by clicking the trigger', () => {
+	it('collapses a finished turn to what it last did, expandable to the full trace', () => {
 		render(
 			<MessageActivity
 				workspaceId="ws-1"
 				turn={buildTurn({
-					steps: [{ id: '1', kind: 'tool_use', text: 'Using search_objects' }],
+					steps: [
+						{ id: '1', kind: 'tool_use', text: 'Using search_objects' },
+						{ id: '2', kind: 'text', text: 'Checked the funnel by channel' },
+					],
 				})}
 			/>,
 			{ wrapper: TestWrapper },
 		)
-		expect(screen.getByText('Workspace Coach')).toBeInTheDocument()
+		// The trigger reads as what the agent did, not as its name — the message
+		// beside it already carries the name.
+		expect(screen.getByText('Checked the funnel by channel')).toBeInTheDocument()
 		expect(screen.queryByText('Using search_objects')).not.toBeInTheDocument()
 		fireEvent.click(screen.getByRole('button', { name: /toggle workspace coach activity/i }))
 		expect(screen.getByText('Using search_objects')).toBeInTheDocument()
@@ -78,30 +104,6 @@ describe('MessageActivity', () => {
 		})
 		expect(screen.getByText('Workspace Coach failed to start')).toBeInTheDocument()
 		expect(screen.getByText('The session could not be started.')).toBeInTheDocument()
-	})
-
-	it('offers a Stop control only while the turn is in progress', () => {
-		const { unmount } = render(
-			<MessageActivity
-				workspaceId="ws-1"
-				turn={buildTurn({
-					inProgress: true,
-					steps: [{ id: '1', kind: 'tool_use', text: 'Using search_objects' }],
-				})}
-			/>,
-			{ wrapper: TestWrapper },
-		)
-		expect(screen.getByRole('button', { name: /^Stop / })).toBeInTheDocument()
-		unmount()
-
-		render(
-			<MessageActivity
-				workspaceId="ws-1"
-				turn={buildTurn({ steps: [{ id: '1', kind: 'tool_use', text: 'Using search_objects' }] })}
-			/>,
-			{ wrapper: TestWrapper },
-		)
-		expect(screen.queryByRole('button', { name: /^Stop / })).not.toBeInTheDocument()
 	})
 
 	it('shows how long the live turn has been running, off the session start time', () => {
@@ -123,29 +125,16 @@ describe('MessageActivity', () => {
 		mockUseSession.mockReturnValue({ data: undefined })
 	})
 
-	it('summarises the sources it is reading as pills once the step list is collapsed', () => {
-		render(
+	it('drops the avatar gutter when rendered inline inside the agent message', () => {
+		const { container } = render(
 			<MessageActivity
 				workspaceId="ws-1"
-				turn={buildTurn({
-					inProgress: true,
-					steps: [
-						{ id: '1', kind: 'tool_use', text: 'Reading Q3 pricing bet' },
-						{ id: '2', kind: 'text', text: 'thinking out loud' },
-					],
-				})}
+				layout="inline"
+				turn={buildTurn({ steps: [{ id: '1', kind: 'text', text: 'Checked the funnel' }] })}
 			/>,
 			{ wrapper: TestWrapper },
 		)
-
-		// Expanded (the default for a live turn) the step list already says it —
-		// no pills, no duplicate strings on screen.
-		expect(screen.queryByRole('list', { name: 'Sources being read' })).not.toBeInTheDocument()
-
-		fireEvent.click(screen.getByRole('button', { name: /toggle workspace coach activity/i }))
-		const pills = screen.getByRole('list', { name: 'Sources being read' })
-		expect(pills).toHaveTextContent('Reading Q3 pricing bet')
-		expect(pills).not.toHaveTextContent('thinking out loud')
+		expect(container.querySelector('.pl-\\[39px\\]')).toBeNull()
 	})
 
 	it('shows the failure error message when the failed session recorded one', () => {
@@ -160,81 +149,5 @@ describe('MessageActivity', () => {
 			{ wrapper: TestWrapper },
 		)
 		expect(screen.getByText('No available LLM credentials')).toBeInTheDocument()
-	})
-})
-
-describe('toolSources', () => {
-	it('keeps the newest distinct tool calls, capped at three', () => {
-		expect(
-			toolSources([
-				{ id: '1', kind: 'tool_use', text: 'A' },
-				{ id: '2', kind: 'text', text: 'not a tool' },
-				{ id: '3', kind: 'tool_use', text: 'B' },
-				{ id: '4', kind: 'tool_use', text: 'B' },
-				{ id: '5', kind: 'tool_use', text: 'C' },
-				{ id: '6', kind: 'tool_use', text: 'D' },
-			]),
-		).toEqual(['D', 'C', 'B'])
-	})
-})
-
-describe('MessageActivity load-earlier control', () => {
-	it('renders the control inside the expanded panel and calls it once', () => {
-		const onLoadOlder = vi.fn()
-		render(
-			<MessageActivity
-				workspaceId="ws-1"
-				turn={buildTurn({ steps: [{ id: '1', kind: 'tool_use', text: 'Using search' }] })}
-				onLoadOlder={onLoadOlder}
-			/>,
-			{ wrapper: TestWrapper },
-		)
-		fireEvent.click(screen.getByLabelText(/Toggle .* activity/))
-		fireEvent.click(screen.getByRole('button', { name: 'Load earlier activity' }))
-		expect(onLoadOlder).toHaveBeenCalledTimes(1)
-	})
-
-	it('disables the control and says so once exhausted', () => {
-		render(
-			<MessageActivity
-				workspaceId="ws-1"
-				turn={buildTurn()}
-				onLoadOlder={vi.fn()}
-				olderExhausted
-			/>,
-			{
-				wrapper: TestWrapper,
-			},
-		)
-		fireEvent.click(screen.getByLabelText(/Toggle .* activity/))
-		expect(screen.getByRole('button', { name: 'Start of activity' })).toBeDisabled()
-	})
-
-	it('still renders a zero-step turn when it carries the load-earlier control', () => {
-		// Without this the entry point would vanish on exactly the old
-		// conversations that need it — a finished turn with no loaded steps.
-		const { container } = render(
-			<MessageActivity workspaceId="ws-1" turn={buildTurn()} onLoadOlder={vi.fn()} />,
-			{
-				wrapper: TestWrapper,
-			},
-		)
-		expect(container).not.toBeEmptyDOMElement()
-	})
-})
-
-describe('MessageActivity stop control', () => {
-	it('shows a stop control while the turn is in progress', () => {
-		render(<MessageActivity workspaceId="ws-1" turn={buildTurn({ inProgress: true })} />, {
-			wrapper: TestWrapper,
-		})
-		expect(screen.getByLabelText(/^Stop /)).toBeInTheDocument()
-	})
-
-	it('hides the stop control once the turn is finished', () => {
-		render(<MessageActivity workspaceId="ws-1" turn={buildTurn({ inProgress: false })} />, {
-			wrapper: TestWrapper,
-		})
-		expect(screen.queryByLabelText(/^Stop /)).not.toBeInTheDocument()
 	})
 })
