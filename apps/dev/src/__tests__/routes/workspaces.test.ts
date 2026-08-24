@@ -147,6 +147,44 @@ describe('Workspaces Routes', () => {
 			expect(body.error.code).toBe('BAD_REQUEST')
 			expect(calls.updates).toHaveLength(0)
 		})
+
+		// Stripe owns settings.billing. Accepting it here would be a free paid
+		// plan: unlimited seats, unlimited owned workspaces, a paid spend cap.
+		it('returns 400 and does not touch the DB when settings.billing is present', async () => {
+			const ws = buildWorkspace()
+			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.update = [{ ...ws }]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					settings: { billing: { plan: 'team', status: 'active' } },
+				}),
+			)
+
+			expect(res.status).toBe(400)
+			const body = await res.json()
+			expect(body.error.code).toBe('BAD_REQUEST')
+			expect(calls.updates).toHaveLength(0)
+		})
+
+		it('rejects settings.billing even when smuggled alongside a legitimate key', async () => {
+			const ws = buildWorkspace()
+			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+			mockResults.update = [{ ...ws }]
+
+			const res = await app.request(
+				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
+					name: 'Renamed',
+					settings: {
+						max_concurrent_sessions: 5,
+						billing: { plan: 'team', status: 'active' },
+					},
+				}),
+			)
+
+			expect(res.status).toBe(400)
+			expect(calls.updates).toHaveLength(0)
+		})
 	})
 
 	describe('PATCH /api/workspaces/admin/:id', () => {
@@ -196,6 +234,112 @@ describe('Workspaces Routes', () => {
 			)
 
 			expect(res.status).toBe(404)
+		})
+
+		// `byollm_allowed` is the entitlement that bypasses the plan cap, the
+		// paid-plan mutex and credit debiting. Every self-signed-up user owns
+		// their own workspace, so owner rights must NOT be enough to set it.
+		describe('byollm_allowed is ops-gated, not owner-gated', () => {
+			const OPS_ACTOR = '11111111-1111-4111-8111-111111111111'
+			const ORIGINAL_ENV = process.env.MASKIN_ENTERPRISE_ACTOR_IDS
+
+			// `delete`, not `= undefined`: assigning undefined to process.env
+			// stores the STRING "undefined", which would leave the allowlist
+			// non-empty and let the "no ops actor" cases pass for the wrong reason.
+			function setOpsAllowlist(value: string | undefined) {
+				if (value === undefined) {
+					// biome-ignore lint/performance/noDelete: required for correct env semantics
+					delete process.env.MASKIN_ENTERPRISE_ACTOR_IDS
+				} else {
+					process.env.MASKIN_ENTERPRISE_ACTOR_IDS = value
+				}
+			}
+
+			afterEach(() => setOpsAllowlist(ORIGINAL_ENV))
+
+			it('returns 403 and writes nothing when a workspace owner self-grants it', async () => {
+				setOpsAllowlist(undefined)
+				const ws = buildWorkspace()
+				const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+				mockResults.selectQueue = [
+					[ws], // workspace exists
+					[{ actorId: 'test-actor-id' }], // isWorkspaceOwner → caller IS the owner
+				]
+
+				const res = await app.request(
+					jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, { byollm_allowed: true }),
+				)
+
+				expect(res.status).toBe(403)
+				const body = await res.json()
+				expect(body.error.code).toBe('FORBIDDEN')
+				expect(calls.updates).toHaveLength(0)
+			})
+
+			it('returns 403 when an owner smuggles it alongside onboarding_enabled', async () => {
+				setOpsAllowlist(undefined)
+				const ws = buildWorkspace()
+				const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+				mockResults.selectQueue = [[ws], [{ actorId: 'test-actor-id' }]]
+
+				const res = await app.request(
+					jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, {
+						onboarding_enabled: true,
+						byollm_allowed: true,
+					}),
+				)
+
+				expect(res.status).toBe(403)
+				// The permitted half of the body must not land either.
+				expect(calls.updates).toHaveLength(0)
+			})
+
+			it('returns 403 when byollm_allowed is set to false by a non-ops owner', async () => {
+				setOpsAllowlist(undefined)
+				const ws = buildWorkspace()
+				const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+				mockResults.selectQueue = [[ws], [{ actorId: 'test-actor-id' }]]
+
+				const res = await app.request(
+					jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, { byollm_allowed: false }),
+				)
+
+				expect(res.status).toBe(403)
+			})
+
+			it('allows an ops actor on the allowlist to grant it', async () => {
+				setOpsAllowlist(OPS_ACTOR)
+				const ws = buildWorkspace()
+				const updated = { ...ws, byollmAllowed: true }
+				const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces', OPS_ACTOR)
+				mockResults.selectQueue = [
+					[ws], // workspace exists
+					[{ actorId: OPS_ACTOR }], // ops actor is also the owner here
+				]
+				mockResults.update = [updated]
+
+				const res = await app.request(
+					jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, { byollm_allowed: true }),
+				)
+
+				expect(res.status).toBe(200)
+				const body = await res.json()
+				expect(body.byollmAllowed).toBe(true)
+			})
+
+			it('still lets a plain owner flip onboarding_enabled', async () => {
+				setOpsAllowlist(undefined)
+				const ws = buildWorkspace()
+				const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
+				mockResults.selectQueue = [[ws], [{ actorId: 'test-actor-id' }]]
+				mockResults.update = [{ ...ws, onboardingEnabled: true }]
+
+				const res = await app.request(
+					jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, { onboarding_enabled: true }),
+				)
+
+				expect(res.status).toBe(200)
+			})
 		})
 	})
 

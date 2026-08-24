@@ -272,6 +272,27 @@ app.openapi(updateWorkspaceRoute, (async (c) => {
 		)
 	}
 
+	// `billing` is owned by Stripe (the webhook in routes/stripe-webhook.ts) and
+	// the dedicated /api/billing/* routes; the balance is owned by
+	// lib/credit-billing.ts. Accepting it here would let any workspace owner —
+	// or any agent holding a workspace API key, since MCP exposes
+	// `update_workspace` with this same schema — self-grant `plan: 'team',
+	// status: 'active'` and take unlimited seats, unlimited owned workspaces and
+	// a paid spend cap without paying. Nobody hand-writes billing, not even ops:
+	// Stripe is authoritative and the next webhook would overwrite it anyway, so
+	// this is rejected outright rather than permissioned. The BYO-transition
+	// downgrade below still works — it derives `merged.billing` itself, after
+	// this merge, and never reads it from the request body.
+	if (body.settings && 'billing' in body.settings) {
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				'billing cannot be updated via PATCH /api/workspaces/:id — it is owned by Stripe and /api/billing/*',
+			),
+			400,
+		)
+	}
+
 	const updateData: Record<string, unknown> = { updatedAt: new Date() }
 	if (body.name) updateData.name = body.name
 	if (body.settings) {
@@ -397,12 +418,14 @@ async function cancelPaidPlanForByoTransition(
 	return null
 }
 
-// PATCH /api/workspaces/admin/:id — flip onboarding_enabled without a code deploy
+// PATCH /api/workspaces/admin/:id — flip onboarding_enabled without a code deploy.
+// `onboarding_enabled` is owner-settable; `byollm_allowed` additionally requires
+// an ops actor (MASKIN_ENTERPRISE_ACTOR_IDS) — see the handler.
 const updateWorkspaceOnboardingRoute = createRoute({
 	method: 'patch',
 	path: '/admin/{id}',
 	tags: ['workspaces'],
-	summary: 'Set onboarding_enabled flag (owner only)',
+	summary: 'Set onboarding_enabled (owner) / byollm_allowed (ops only)',
 	request: {
 		params: idParamSchema,
 		body: {
@@ -419,7 +442,7 @@ const updateWorkspaceOnboardingRoute = createRoute({
 			content: { 'application/json': { schema: workspaceResponseSchema } },
 		},
 		403: {
-			description: 'Caller is not the workspace owner',
+			description: 'Caller is not the workspace owner, or set byollm_allowed without ops rights',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		404: {
@@ -448,6 +471,20 @@ app.openapi(updateWorkspaceOnboardingRoute, (async (c) => {
 
 	if (!(await isWorkspaceOwner(db, actorId, id))) {
 		return c.json(createApiError('FORBIDDEN', 'Not a workspace owner'), 403)
+	}
+
+	// `byollm_allowed` is an ops grant, NOT an owner-settable preference: it is
+	// the only thing standing between a workspace and bypassing the plan cap,
+	// the paid-plan mutex, and credit debiting entirely. Every self-signed-up
+	// user is the `owner` of their own workspace, so the owner check above is
+	// not a gate for this field — without the allowlist check, `PATCH
+	// {"byollm_allowed": true}` would be free self-service entitlement. See the
+	// same reasoning in `byollmEntitled` (lib/enterprise-allowlist.ts).
+	if (body.byollm_allowed !== undefined && !isEnterpriseActor(actorId)) {
+		return c.json(
+			createApiError('FORBIDDEN', 'byollm_allowed can only be set by an ops actor'),
+			403,
+		)
 	}
 
 	const adminUpdate: Record<string, unknown> = { updatedAt: new Date() }

@@ -212,6 +212,12 @@ jobs:
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_e2e
           INTEGRATION_ENCRYPTION_KEY: 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
+          # Mounts POST /api/test-grants so specs can obtain a paid tier / the
+          # BYO-LLM entitlement, neither of which is self-service in the product.
+          # Playwright spawns the API itself (webServer in playwright.config.ts),
+          # so this one entry reaches both the specs and the stack under test.
+          # Never set in production — the route is not mounted without it.
+          MASKIN_TEST_GRANT_TOKEN: e2e-local-test-grant-token
           # Argos visual-regression uploads are opt-in and never gate a PR: the
           # free-plan screenshot quota is shared across all shards of all runs,
           # so an exhausted quota fails the upload for reasons unrelated to the
