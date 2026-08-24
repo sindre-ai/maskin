@@ -39,20 +39,6 @@ const COLUMNS: DisplayPanelColumn[] = [
 	{ id: 'status', label: 'Status', canHide: true },
 ]
 
-// Ordering / Grouping pickers point at the same property rail, but not every
-// column is a sensible sort key (ordering by free-text activity is noise) and
-// only status/kind produce stable section headers.
-const ORDERING_COLUMNS: DisplayPanelColumn[] = [
-	{ id: 'name', label: 'Name', canHide: false },
-	{ id: 'kind', label: 'Kind', canHide: false },
-	{ id: 'status', label: 'Status', canHide: false },
-	{ id: 'sessions', label: 'Sessions', canHide: false },
-]
-const GROUPING_COLUMNS: DisplayPanelColumn[] = [
-	{ id: 'status', label: 'Status', canHide: false },
-	{ id: 'kind', label: 'Kind', canHide: false },
-]
-
 // Leading dot for each status chip — semantic tokens only, never a raw colour.
 const STATUS_DOT: Record<StatusBucket, string> = {
 	working: 'bg-status-in_progress-text',
@@ -267,9 +253,13 @@ export function AgentsIndexView({
 					onChange={setStatusFilter}
 				/>
 				<DisplayPanel
+					// The current DisplayPanel derives both the Ordering and Grouping
+					// pickers from `columns`, so every property is offered as a sort and
+					// group key. Sorting and grouping both fall back to name / a flat list
+					// for keys this view doesn't implement (Activity), so the extra
+					// options are inert rather than broken. The rebuilt panel in #1422
+					// adds `orderingColumns` / `groupingColumns` to narrow them back down.
 					columns={COLUMNS}
-					orderingColumns={ORDERING_COLUMNS}
-					groupingColumns={GROUPING_COLUMNS}
 					columnVisibility={columnVisibility}
 					onColumnVisibilityChange={(id, visible) =>
 						setColumnVisibility((prev) => ({ ...prev, [id]: visible }))
