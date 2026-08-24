@@ -247,7 +247,10 @@ describe('Skills — Workspace Skills section', () => {
 		await user.click(screen.getByRole('button', { name: 'Attach workspace skill' }))
 		await user.click(screen.getByText('deploy'))
 
-		expect(mockAttach).toHaveBeenCalledWith('skill-abc')
+		expect(mockAttach).toHaveBeenCalledWith(
+			'skill-abc',
+			expect.objectContaining({ onError: expect.any(Function) }),
+		)
 		expect(mockDetach).not.toHaveBeenCalled()
 	})
 
@@ -273,7 +276,10 @@ describe('Skills — Workspace Skills section', () => {
 		const matches = screen.getAllByText('deploy')
 		await user.click(matches[matches.length - 1])
 
-		expect(mockDetach).toHaveBeenCalledWith('skill-abc')
+		expect(mockDetach).toHaveBeenCalledWith(
+			'skill-abc',
+			expect.objectContaining({ onError: expect.any(Function) }),
+		)
 		expect(mockAttach).not.toHaveBeenCalled()
 	})
 
@@ -373,7 +379,10 @@ describe('Skills — Workspace Skills section', () => {
 
 		await user.click(screen.getByRole('button', { name: 'Remove deploy' }))
 
-		expect(mockDetach).toHaveBeenCalledWith('skill-abc')
+		expect(mockDetach).toHaveBeenCalledWith(
+			'skill-abc',
+			expect.objectContaining({ onError: expect.any(Function) }),
+		)
 	})
 
 	it('renders a folder badge with file count on a folder-skill row', () => {
@@ -572,5 +581,31 @@ describe('Skills — Workspace Skills section', () => {
 		// Empty-state copy and the attach trigger both wait for the load to settle.
 		expect(screen.queryByText(/No workspace skills in this workspace yet/)).not.toBeInTheDocument()
 		expect(screen.queryByRole('button', { name: 'Attach workspace skill' })).not.toBeInTheDocument()
+	})
+
+	// Mockup 2482 — agent detail renders this block read-only, where the "create
+	// one in Settings" copy is unreachable advice and used to be the only text.
+	it('states that nothing is attached when read-only and empty', () => {
+		render(
+			<TestWrapper>
+				<Skills actorId="agent-1" readOnly />
+			</TestWrapper>,
+		)
+
+		expect(screen.getByText('No workspace skills attached.')).toBeInTheDocument()
+		expect(screen.getByText('No personal skills yet.')).toBeInTheDocument()
+		expect(screen.queryByText(/No workspace skills in this workspace yet/)).not.toBeInTheDocument()
+	})
+
+	it('still says nothing is attached when the workspace has skills but none are on the agent', () => {
+		mockUseWorkspaceSkills.mockReturnValue({ data: [buildWorkspaceSkill()], isLoading: false })
+
+		render(
+			<TestWrapper>
+				<Skills actorId="agent-1" readOnly />
+			</TestWrapper>,
+		)
+
+		expect(screen.getByText('No workspace skills attached.')).toBeInTheDocument()
 	})
 })
