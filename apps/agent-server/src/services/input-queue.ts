@@ -26,6 +26,9 @@ type Flusher = (line: string, seq: number) => boolean | Promise<boolean>
 
 type Turn = { seq: number; line: string }
 
+/** Receives lifecycle events for logging. Must not throw. */
+export type Observer = (event: string, data: Record<string, unknown>) => void
+
 /**
  * Cap on turns retained per session awaiting ack. A stream that never acks
  * (permanently blackholed VM, or one that dies before its first read) would
@@ -52,6 +55,19 @@ export class InputQueue {
 	 * one.
 	 */
 	readonly epoch = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+
+	/**
+	 * Every state change worth reading back during an incident.
+	 *
+	 * Three wedge diagnoses in a row stalled on the same missing fact: when a
+	 * turn was enqueued, was a stream registered, and did the write report
+	 * success? Nothing on this path logged anything, so a healthy quiet
+	 * conversation and a guest that had silently stopped consuming were
+	 * indistinguishable from outside. These events are low volume — a handful
+	 * per turn, none while idle — and go to the agent-server's own log, which
+	 * survives the VM and needs no guest cooperation to read.
+	 */
+	constructor(private readonly observe: Observer = () => {}) {}
 
 	/**
 	 * Register a stream flusher for `sessionId`.
@@ -92,6 +108,7 @@ export class InputQueue {
 		// synchronous step with no await between them, so an enqueue cannot
 		// slip into the gap.
 		let sentUpTo = ackedThrough
+		let replayed = 0
 		for (;;) {
 			const backlog = (this.unacked.get(sessionId) ?? []).filter((t) => t.seq > sentUpTo)
 			if (backlog.length === 0) break
@@ -100,17 +117,39 @@ export class InputQueue {
 					// Stream closed mid-replay. Everything stays in `unacked` — it
 					// is only ever removed by an ack — so the next connection
 					// replays it.
+					this.observe('stream replay aborted', {
+						sessionId,
+						after,
+						failedSeq: turn.seq,
+						replayed,
+					})
 					return () => {}
 				}
 				sentUpTo = turn.seq
+				replayed++
 			}
 		}
 		this.streams.set(sessionId, flusher)
+		// The guest's `after` is the only proof we ever get that it is alive and
+		// consuming. A connection that never re-dials never acks, so a rising
+		// `after` here is the signal that the loop is closed; a session whose
+		// `after` stays at 0 across dials has a guest that is receiving nothing.
+		this.observe('stream registered', {
+			sessionId,
+			after,
+			ackedThrough,
+			staleEpoch,
+			replayed,
+			unacked: this.unacked.get(sessionId)?.length ?? 0,
+		})
 		// Only delete our own registration: a dead connection's late unregister
 		// (heartbeat failure or abort firing after the VM already reconnected)
 		// must not tear down the replacement stream's flusher.
 		return () => {
-			if (this.streams.get(sessionId) === flusher) this.streams.delete(sessionId)
+			if (this.streams.get(sessionId) === flusher) {
+				this.streams.delete(sessionId)
+				this.observe('stream unregistered', { sessionId })
+			}
 		}
 	}
 
@@ -133,8 +172,19 @@ export class InputQueue {
 		this.unacked.set(sessionId, turns)
 
 		const flusher = this.streams.get(sessionId)
-		if (!flusher) return
-		if (!(await flusher(line, seq))) {
+		if (!flusher) {
+			// Parked. Normal between re-dials; a persistent state here means the
+			// guest is not holding a stream open at all.
+			this.observe('turn parked (no stream)', { sessionId, seq, unacked: turns.length })
+			return
+		}
+		const writeOk = await flusher(line, seq)
+		// `writeOk` says the bytes left this process, NOT that the guest read
+		// them — that is the whole reason turns are retained. Logged as
+		// `written`, never as `delivered`: only a later rising `after` proves
+		// delivery, and the gap between the two is exactly where wedges live.
+		this.observe('turn written to stream', { sessionId, seq, writeOk, unacked: turns.length })
+		if (!writeOk) {
 			// Same identity guard as unregister: a reconnect may have replaced
 			// the entry while we awaited the failing flusher.
 			if (this.streams.get(sessionId) === flusher) this.streams.delete(sessionId)
@@ -152,6 +202,10 @@ export class InputQueue {
 	}
 
 	drainSession(sessionId: string): void {
+		const stranded = this.unacked.get(sessionId)?.length ?? 0
+		// Turns still unacked when the session ends were never consumed by the
+		// agent. A non-zero count here is a user message that got no reply.
+		if (stranded > 0) this.observe('session drained with unacked turns', { sessionId, stranded })
 		this.streams.delete(sessionId)
 		this.unacked.delete(sessionId)
 		this.seqs.delete(sessionId)

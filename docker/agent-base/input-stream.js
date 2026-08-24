@@ -53,6 +53,7 @@ const RECONNECT_DELAY_MS = num('INPUT_STREAM_RECONNECT_DELAY_MS', 1_000)
  */
 let lastSeq = 0
 let consecutiveFailures = 0
+let dials = 0
 /**
  * Which server seq space `lastSeq` belongs to. Seqs live in the agent-server's
  * memory, so a restart hands out seq 1 again while this process is still
@@ -61,6 +62,41 @@ let consecutiveFailures = 0
  */
 let epoch = null
 
+/**
+ * Report a diagnostic line.
+ *
+ * stderr alone is not enough. This process's stderr goes to the VM console,
+ * and during three separate wedge investigations nothing written there was
+ * ever recoverable — `msb exec` times out on the host, and the console showed
+ * only agent-run.sh's own stdout. Every marker this file wrote was invisible
+ * exactly when it was needed.
+ *
+ * So diagnostics also go to the log-ingest endpoint, which lands them in
+ * session_logs where they can be read over the API alongside the agent's own
+ * output. Best-effort and fire-and-forget: it must never block turn delivery,
+ * and a failure to report is not worth breaking the session over. It uses a
+ * separate short-lived connection from the turn stream on purpose — if the
+ * two disagree about reachability, that difference is itself the finding.
+ */
+const note = (message) => {
+	const line = `[system] input-stream: ${message}`
+	process.stderr.write(`${line}\n`)
+	try {
+		const url = new URL(`${AGENT_SERVER_URL}/sessions/${SESSION_ID}/logs/ingest`)
+		const client = url.protocol === 'https:' ? https : http
+		const req = client.request(
+			url,
+			{ method: 'POST', headers: { 'Content-Type': 'text/plain' }, timeout: 5_000 },
+			(res) => res.resume(),
+		)
+		req.on('error', () => {})
+		req.on('timeout', () => req.destroy())
+		req.end(`${line}\n`)
+	} catch {
+		// Reporting is never worth an exception.
+	}
+}
+
 const connect = () => {
 	const url = new URL(`${AGENT_SERVER_URL}/sessions/${SESSION_ID}/input/stream`)
 	url.searchParams.set('after', String(lastSeq))
@@ -68,6 +104,13 @@ const connect = () => {
 	const client = url.protocol === 'https:' ? https : http
 
 	let gotResponse = false
+	let closeSummary = null
+	let bytesIn = 0
+	let turnsIn = 0
+	let heartbeatsIn = 0
+	const openedAt = Date.now()
+
+	note(`dialling (after=${lastSeq}, dial #${++dials})`)
 
 	const req = client.get(url, { headers: { Accept: 'application/x-ndjson' } }, (res) => {
 		gotResponse = true
@@ -84,17 +127,36 @@ const connect = () => {
 
 		let buf = ''
 		res.on('data', (chunk) => {
+			bytesIn += chunk.length
 			buf += chunk
 			let nl = buf.indexOf('\n')
 			while (nl !== -1) {
 				const line = buf.slice(0, nl)
 				buf = buf.slice(nl + 1)
+				if (line.trim() === '') heartbeatsIn++
+				else turnsIn++
 				handleLine(line)
 				nl = buf.indexOf('\n')
 			}
 		})
-		res.on('end', () => retry())
-		res.on('error', () => retry())
+		// What this connection actually received before it ended. The counts are
+		// the point: heartbeats arriving proves the server->guest direction is
+		// live, so a connection that ends with heartbeats but no turns rules the
+		// transport out and points at delivery; one that ends with nothing at all
+		// is the blackhole.
+		const summarise = (why) =>
+			`${why} after ${Date.now() - openedAt}ms (turns=${turnsIn} heartbeats=${heartbeatsIn} bytes=${bytesIn} lastSeq=${lastSeq})`
+		res.on('end', () => {
+			note(summarise('server closed stream'))
+			retry()
+		})
+		res.on('error', () => {
+			note(summarise('stream error'))
+			retry()
+		})
+		req.on('close', () => {
+			if (!res.complete) closeSummary = summarise('connection dropped')
+		})
 	})
 
 	// Socket-level inactivity, armed before the response arrives on purpose.
@@ -110,9 +172,12 @@ const connect = () => {
 		// now reachable at all.
 		const idled = err?.message === 'idle'
 		if (idled && gotResponse) {
-			// A healthy connection that went quiet. Expected on any conversation
-			// where nobody types for a few minutes, and the re-dial is silent and
-			// lossless, so this is not worth a line in the user's transcript.
+			// A healthy connection that went quiet, then re-dialled: expected
+			// whenever nobody types for a few minutes. Reported anyway, because
+			// its ABSENCE is the diagnosis — a guest that has stopped consuming
+			// produces exactly the same outward silence as one that is fine, and
+			// only this line distinguishes them.
+			note(closeSummary ?? `idle timeout after ${Date.now() - openedAt}ms`)
 			consecutiveFailures = 0
 			retry()
 			return
@@ -132,20 +197,18 @@ const handleLine = (line) => {
 	try {
 		parsed = JSON.parse(line)
 	} catch {
-		process.stderr.write('[system] input-stream: dropping unparseable line\n')
+		note('dropping unparseable line')
 		return
 	}
 	if (typeof parsed.turn !== 'string' || typeof parsed.maskin_seq !== 'number') {
-		process.stderr.write('[system] input-stream: dropping line with no turn/seq\n')
+		note('dropping line with no turn/seq')
 		return
 	}
 
 	// A new seq space (agent-server restarted). Our mark names turns this
 	// server never sent, so it is meaningless — reset and take what it gives us.
 	if (parsed.maskin_epoch !== undefined && parsed.maskin_epoch !== epoch) {
-		if (epoch !== null) {
-			process.stderr.write('[system] input stream: agent-server restarted, resyncing turns\n')
-		}
+		if (epoch !== null) note('agent-server restarted, resyncing turns')
 		epoch = parsed.maskin_epoch
 		lastSeq = 0
 	}
@@ -155,12 +218,21 @@ const handleLine = (line) => {
 	// deliver. Skipping them keeps redelivery from duplicating a user message.
 	// Within one epoch a seq can only repeat as a genuine replay, so this is
 	// expected and silent; a regression across epochs is handled above.
-	if (parsed.maskin_seq <= lastSeq) return
+	if (parsed.maskin_seq <= lastSeq) {
+		note(`skipping already-consumed seq ${parsed.maskin_seq} (lastSeq=${lastSeq})`)
+		return
+	}
 
 	// Write the envelope through verbatim: these are the exact bytes apps/dev
 	// put on the wire, and the CLI's stdin parser must see them unaltered.
 	process.stdout.write(`${parsed.turn}\n`)
 	lastSeq = parsed.maskin_seq
+	// The moment a turn reaches the CLI. Pairing this with the server's
+	// "turn written to stream" line for the same seq is what separates "the
+	// server never sent it" from "the guest never received it" from "the CLI
+	// got it and did nothing" — three possibilities that have been
+	// indistinguishable in every wedge investigation so far.
+	note(`fed seq ${parsed.maskin_seq} to the CLI (${parsed.turn.length} bytes)`)
 }
 
 const fail = (reason) => {
@@ -170,9 +242,7 @@ const fail = (reason) => {
 	// timeout during a normal quiet conversation is expected and unremarkable,
 	// so it is reported only if it keeps happening.
 	if (consecutiveFailures <= 3 || consecutiveFailures % 30 === 0) {
-		process.stderr.write(
-			`[system] input stream reconnecting (${reason}, attempt ${consecutiveFailures})\n`,
-		)
+		note(`reconnecting (${reason}, attempt ${consecutiveFailures})`)
 	}
 	retry()
 }
@@ -196,20 +266,45 @@ const retry = () => {
 //
 // This is the exception to "never exit": the no-exit rule exists to protect a
 // LIVE CLI from an EOF on its stdin. There is nothing left to protect here.
+/**
+ * Exit, but not before the reason has a chance to leave the VM.
+ *
+ * `note` posts asynchronously, so exiting in the same tick would drop the one
+ * line that explains why this process is gone — and "the helper died" is
+ * precisely the state that has been invisible from the host in every wedge so
+ * far. The delay is a best-effort flush, not a guarantee: stderr is written
+ * synchronously first, so the message survives even if the POST does not.
+ */
+let exiting = false
+const exitAfterReporting = (message) => {
+	if (exiting) return
+	exiting = true
+	note(message)
+	setTimeout(() => process.exit(1), 500)
+}
+
 process.stdout.on('error', (err) => {
-	process.stderr.write(`[system] input stream: stdout closed (${err?.code ?? err?.message})\n`)
-	process.exit(1)
+	exitAfterReporting(`stdout closed (${err?.code ?? err?.message}) — exiting`)
 })
 
 // Anything else: keep the CLI's stdin open — closing it mid-conversation EOFs
 // the agent and wedges the session for good — and retry.
 process.on('uncaughtException', (err) => {
 	if (err?.code === 'EPIPE' || err?.code === 'ERR_STREAM_DESTROYED') {
-		process.stderr.write(`[system] input stream: stdout closed (${err.code})\n`)
-		process.exit(1)
+		exitAfterReporting(`stdout closed (${err.code}) — exiting`)
+		return
 	}
-	process.stderr.write(`[system] input-stream: ${err?.message}\n`)
+	note(`uncaught error: ${err?.message}`)
 	retry()
 })
+
+// A clean exit is not expected: this process should outlive every turn and die
+// only with the VM. If the event loop ever empties we want that on the record
+// rather than as unexplained silence.
+process.on('exit', (code) => {
+	process.stderr.write(`[system] input-stream: exiting with code ${code} (lastSeq=${lastSeq})\n`)
+})
+
+note(`started (idle timeout ${IDLE_TIMEOUT_MS}ms, server ${AGENT_SERVER_URL})`)
 
 connect()

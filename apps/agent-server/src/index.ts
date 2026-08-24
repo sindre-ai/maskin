@@ -578,7 +578,10 @@ export function buildApp(deps: AppDeps): Hono {
 		)
 		return c.json({ error: 'internal_error' }, 500)
 	})
-	const inputQueue = new InputQueue()
+	// Interactive-turn delivery is the one path where a silent failure looks
+	// exactly like a quiet conversation, so every state change is logged. Volume
+	// is a handful of lines per turn and nothing at all while idle.
+	const inputQueue = new InputQueue((event, data) => logger.info(`input: ${event}`, data))
 	// Connects the /sessions/:id/logs/ingest endpoint to monitorSession's buffer.
 	// Injectable via deps so main()'s boot-time reconcile pass can reattach
 	// monitorSession for sandboxes that survived a restart (see AppDeps.sessionLogRouters).
@@ -655,6 +658,8 @@ export function buildApp(deps: AppDeps): Hono {
 			const done = new Promise<void>((resolve) => {
 				resolveStream = resolve
 			})
+			const openedAt = Date.now()
+			let closeReason = 'handler returned'
 			const unregister = await inputQueue.registerStream(
 				id,
 				async (line, seq) => {
@@ -668,6 +673,7 @@ export function buildApp(deps: AppDeps): Hono {
 						)
 						return true
 					} catch {
+						closeReason = 'turn write failed'
 						resolveStream()
 						return false
 					}
@@ -695,12 +701,22 @@ export function buildApp(deps: AppDeps): Hono {
 				}
 			}, 30_000)
 			c.req.raw.signal.addEventListener('abort', () => {
+				closeReason = 'client aborted'
 				unregister()
 				resolveStream()
 			})
 			await done
 			clearInterval(heartbeat)
 			unregister()
+			// How long the guest held this connection, and why it ended. A guest
+			// that is re-dialling on its idle timer produces a steady series of
+			// ~90s connections; one that never appears again after its first is
+			// not re-dialling at all, which no other signal distinguishes.
+			logger.info('input: stream closed', {
+				sessionId: id,
+				reason: closeReason,
+				heldMs: Date.now() - openedAt,
+			})
 		})
 	})
 
