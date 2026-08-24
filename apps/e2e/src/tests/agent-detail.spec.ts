@@ -103,10 +103,10 @@ test.describe('Agent detail — inline identity editing', () => {
 			})
 			await expect(page.getByText('Keeps the build green')).toBeVisible()
 
-			// The avatar upload target is visible to an admin in both schemes.
+			// The edit affordances render in both colour schemes.
 			for (const scheme of ['light', 'dark'] as const) {
 				await page.emulateMedia({ colorScheme: scheme })
-				await expect(page.getByRole('button', { name: /avatar image/i })).toBeVisible()
+				await expect(page.getByRole('button', { name: 'Edit agent name' })).toBeVisible()
 			}
 			await page.emulateMedia({ colorScheme: 'light' })
 		})

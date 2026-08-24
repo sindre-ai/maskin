@@ -10,28 +10,14 @@ import { createWorkspaceWrapper } from '../../setup'
 // Its behaviour is covered in agent-detail-view.test.tsx.
 
 const updateMutate = vi.fn()
-const uploadMutateAsync = vi.fn()
-let members: { actorId: string; role: string }[] = []
 
 vi.mock('@/hooks/use-actors', async (importOriginal) => ({
 	...(await importOriginal<typeof import('@/hooks/use-actors')>()),
 	useUpdateActor: () => ({ mutate: updateMutate, isPending: false }),
-	useUploadActorAvatar: () => ({ mutateAsync: uploadMutateAsync, isPending: false }),
-}))
-
-vi.mock('@/lib/auth', async (importOriginal) => ({
-	...(await importOriginal<typeof import('@/lib/auth')>()),
-	getStoredActor: () => ({ id: 'me' }),
-}))
-
-vi.mock('@/hooks/use-workspaces', async (importOriginal) => ({
-	...(await importOriginal<typeof import('@/hooks/use-workspaces')>()),
-	useWorkspaceMembers: () => ({ data: members }),
 }))
 
 beforeEach(() => {
 	updateMutate.mockReset()
-	members = []
 })
 
 describe('AgentDetailHeader', () => {
@@ -136,21 +122,6 @@ describe('AgentDetailHeader', () => {
 		expect(screen.getByRole('heading', { name: 'Planner' })).toBeInTheDocument()
 	})
 
-	it('offers avatar upload to workspace admins and not to other members', async () => {
-		const agent = buildActorResponse({ id: 'agent-av', type: 'agent', name: 'Planner' })
-		const { unmount } = render(<AgentDetailHeader agent={agent} portrait="idle" />, {
-			wrapper: createWorkspaceWrapper(),
-		})
-		expect(screen.queryByRole('button', { name: /avatar image/i })).toBeNull()
-		unmount()
-
-		members = [{ actorId: 'me', role: 'admin' }]
-		render(<AgentDetailHeader agent={agent} portrait="idle" />, {
-			wrapper: createWorkspaceWrapper(),
-		})
-		expect(screen.getByRole('button', { name: /avatar image/i })).toBeInTheDocument()
-	})
-
 	it('keeps a loop-managed agent read-only', () => {
 		const agent = buildActorResponse({
 			id: 'agent-managed',
@@ -162,6 +133,5 @@ describe('AgentDetailHeader', () => {
 			wrapper: createWorkspaceWrapper(),
 		})
 		expect(screen.queryByRole('button', { name: 'Edit agent name' })).toBeNull()
-		expect(screen.queryByRole('button', { name: /avatar image/i })).toBeNull()
 	})
 })

@@ -1,4 +1,3 @@
-import { AgentAvatarUpload } from '@/components/agents/agent-avatar-upload'
 import { AgentStatusPill, type PortraitStatus } from '@/components/agents/agent-portrait-card'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { Input } from '@/components/ui/input'
@@ -42,17 +41,15 @@ export function AgentDetailHeader({
 	return (
 		<header className="flex flex-col gap-3">
 			<div className="flex flex-wrap items-center gap-3">
-				{isManaged ? (
-					<ActorAvatar
-						name={agent.name}
-						type={agent.type}
-						size="xl"
-						className="rounded-2xl"
-						id={agent.id}
-					/>
-				) : (
-					<AgentAvatarUpload agent={agent} workspaceId={workspaceId} variant="inline" />
-				)}
+				{/* Read-only until POST /api/actors/:id/avatar exists — there is no
+				    backend to accept an upload yet. */}
+				<ActorAvatar
+					name={agent.name}
+					type={agent.type}
+					size="xl"
+					className="rounded-2xl"
+					id={agent.id}
+				/>
 				<div className="flex min-w-0 flex-1 flex-col gap-1.5">
 					<div className="flex flex-wrap items-center gap-2.5">
 						<h1 className="min-w-0 flex-1 truncate text-xl font-semibold tracking-tight text-foreground sm:text-2xl">
