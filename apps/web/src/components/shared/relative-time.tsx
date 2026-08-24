@@ -1,3 +1,4 @@
+import { startOfDay } from '@/lib/conversation-groups'
 import { useEffect, useState } from 'react'
 
 // Compact form — the mockup's list rows carry a 30px right-aligned age column
@@ -15,6 +16,26 @@ function formatCompact(date: Date, dayLimit: number): string {
 	if (hours < 24) return `${hours}h`
 	if (days < dayLimit) return `${days}d`
 	return date.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
+}
+
+// Clock form — a chat surface is read as a timeline, so v2 stamps both the
+// list rows and the message bubbles with a wall-clock time rather than an age
+// ("08:44", not "2h ago"): the reader is placing events relative to each
+// other and to their own day, not asking how stale each one is. Beyond today
+// the weekday (and beyond a week, the date) carries the same job.
+function formatClock(date: Date): string {
+	const now = new Date()
+	const time = date.toLocaleTimeString(undefined, {
+		hour: '2-digit',
+		minute: '2-digit',
+		hour12: false,
+	})
+	const days = Math.round((startOfDay(now) - startOfDay(date)) / 86_400_000)
+	if (days <= 0) return time
+	if (days <= 6) {
+		return `${date.toLocaleDateString(undefined, { weekday: 'short' }).toUpperCase()} ${time}`
+	}
+	return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }).toUpperCase()
 }
 
 function formatRelative(date: Date): string {
@@ -37,12 +58,15 @@ export function RelativeTime({
 	date,
 	className,
 	compact = false,
+	format = compact ? 'compact' : 'relative',
 	compactDayLimit = 30,
 }: {
 	date: string | null
 	className?: string
-	/** Age-column form: "2h" instead of "2h ago". */
+	/** Age-column form: "2h" instead of "2h ago". Shorthand for `format="compact"`. */
 	compact?: boolean
+	/** `relative` "2h ago" · `compact` "2h" · `clock` "08:44" / "MON 14:12" / "JUN 24". */
+	format?: 'relative' | 'compact' | 'clock'
 	/**
 	 * How many days the compact form counts before collapsing to a date token.
 	 * The For You feed cuts over at a week; the default suits list rows.
@@ -60,7 +84,11 @@ export function RelativeTime({
 
 	return (
 		<time className={className} dateTime={date} title={new Date(date).toLocaleString()}>
-			{compact ? formatCompact(new Date(date), compactDayLimit) : formatRelative(new Date(date))}
+			{format === 'clock'
+				? formatClock(new Date(date))
+				: format === 'compact'
+					? formatCompact(new Date(date), compactDayLimit)
+					: formatRelative(new Date(date))}
 		</time>
 	)
 }
