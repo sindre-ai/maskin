@@ -1,3 +1,4 @@
+import { LegacyThreadPage } from '@/components/chat/legacy/thread-page'
 import { ThreadComposer } from '@/components/chat/thread-composer'
 import { ThreadHeader } from '@/components/chat/thread-header'
 import { ThreadMessages } from '@/components/chat/thread-messages'
@@ -8,6 +9,7 @@ import {
 	useConversationMessages,
 } from '@/hooks/use-conversation'
 import { useUpdateConversationMe } from '@/hooks/use-conversations'
+import { useNewDesign } from '@/lib/new-design-context'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
 import { useEffect, useRef } from 'react'
@@ -24,6 +26,7 @@ function ConversationThreadPage() {
 	const { data: messagesData } = useConversationMessages(conversationId, workspaceId)
 	const updateMe = useUpdateConversationMe(workspaceId)
 	const lastMarkedRef = useRef<number | null>(null)
+	const newDesign = useNewDesign()
 
 	// Mark the newest message read once it's loaded — mirrors the "open = read"
 	// convention used elsewhere (subscriptions markRead on open).
@@ -38,6 +41,13 @@ function ConversationThreadPage() {
 		lastMarkedRef.current = newest.id
 		updateMe.mutate({ id: conversationId, data: { last_read_message_id: newest.id } })
 	}, [conversation, messagesData, conversationId])
+
+	// v2 branch — the flag is read once at the workspace shell boundary and
+	// reaches this leaf as a boolean (see `chats.tsx`). The read-marking effect
+	// above is data-layer, not visual, so it runs on both branches.
+	if (!newDesign) {
+		return <LegacyThreadPage workspaceId={workspaceId} conversationId={conversationId} />
+	}
 
 	return (
 		<div className="flex min-h-0 flex-1 flex-col">

@@ -44,6 +44,7 @@ vi.mock('@/hooks/use-actors', () => ({
 	}),
 	// The composer's create picker can spin up a new agent from the "+" menu.
 	useCreateActor: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
+	useDefaultChatAgent: () => null,
 }))
 
 vi.mock('@/hooks/use-files', () => ({
@@ -63,9 +64,20 @@ vi.mock('@/lib/analytics', () => ({
 	trackSpecialistSummonedManually: () => {},
 }))
 
+import { NewDesignProvider } from '@/lib/new-design-context'
 import { Route } from '@/routes/_authed/$workspaceId/chats/new'
 
-const NewConversationPage = (Route as unknown as { component: React.FC }).component
+const RouteComponent = (Route as unknown as { component: React.FC }).component
+
+// The page is behind the `new-design` flag; the provider default is `false`,
+// so without this the test would exercise the pre-v2 page instead.
+function NewConversationPage() {
+	return (
+		<NewDesignProvider value={true}>
+			<RouteComponent />
+		</NewDesignProvider>
+	)
+}
 
 function getFileInput(container: HTMLElement): HTMLInputElement {
 	const input = container.querySelector<HTMLInputElement>('input[type="file"]')
