@@ -75,8 +75,9 @@ test.describe('Trigger detail page', () => {
 		await expect(page.getByText(/Fires when something happens/i)).toBeVisible({ timeout: 10000 })
 
 		// Click the visible card (a <label htmlFor> that forwards to the radio),
-		// matching how a real user switches type.
-		await page.getByText('Recurring schedule', { exact: true }).click()
+		// matching how a real user switches type. Scoped to the radio group: the
+		// SCHEDULE section heading carries the same word once the type flips.
+		await page.getByRole('radiogroup', { name: 'Trigger type' }).getByText('Schedule').click()
 
 		// The per-type description text updates in place.
 		await expect(page.getByText(/Fires on a recurring schedule/i)).toBeVisible()
@@ -166,7 +167,8 @@ test.describe('Trigger detail page', () => {
 		await page.goto(`/${account.workspaceId}/triggers/${trigger.id}`)
 		await expect(page.getByText('Enabled')).toBeVisible({ timeout: 10000 })
 
-		await page.getByRole('button', { name: 'More' }).click()
+		// `exact` — the shared top nav also carries a "More ways to start" button.
+		await page.getByRole('button', { name: 'More', exact: true }).click()
 		await page.getByRole('menuitem', { name: 'Pause trigger' }).click()
 
 		await expect(page.getByText('Disabled')).toBeVisible({ timeout: 10000 })
