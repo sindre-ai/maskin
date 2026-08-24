@@ -2506,6 +2506,136 @@ describe('monitorSession — completion report retry and drop marker', () => {
 	})
 })
 
+describe('POST /sessions/:id/logs/batch', () => {
+	const postBatch = (
+		app: ReturnType<typeof buildApp>,
+		id: string,
+		from: number,
+		lines: unknown[],
+	) =>
+		app.request(`/sessions/${id}/logs/batch`, {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: 'Bearer test-secret-thirty-two-chars-long',
+			},
+			body: JSON.stringify({ from, lines }),
+		})
+
+	const appWithRouter = (id: string) => {
+		const { run } = makeRunner()
+		const seen: string[] = []
+		const sessionLogRouters = new Map<string, (line: string) => void>()
+		sessionLogRouters.set(id, (line) => seen.push(line))
+		const app = buildApp({
+			env: makeEnv({ AGENT_SESSION_ROOT: sessionRoot }),
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+			sessionLogRouters,
+		})
+		return { app, seen }
+	}
+
+	it('stores a batch and acks the highest sequence it kept', async () => {
+		const { app, seen } = appWithRouter('sess-batch-1')
+		const res = await postBatch(app, 'sess-batch-1', 1, ['a', 'b', 'c'])
+		expect(res.status).toBe(200)
+		expect(await res.json()).toEqual({ ack: 3 })
+		expect(seen).toEqual(['a', 'b', 'c'])
+	})
+
+	// The guest resends anything it has not seen acked, so a lost ack means the
+	// same batch arrives twice. Appending it again would duplicate the agent's
+	// output in the transcript.
+	it('is idempotent when a batch whose ack was lost is resent', async () => {
+		const { app, seen } = appWithRouter('sess-batch-2')
+		await postBatch(app, 'sess-batch-2', 1, ['a', 'b'])
+		const res = await postBatch(app, 'sess-batch-2', 1, ['a', 'b'])
+		expect(await res.json()).toEqual({ ack: 2 })
+		expect(seen).toEqual(['a', 'b'])
+	})
+
+	it('appends only the new lines when a resend overlaps', async () => {
+		const { app, seen } = appWithRouter('sess-batch-3')
+		await postBatch(app, 'sess-batch-3', 1, ['a', 'b'])
+		const res = await postBatch(app, 'sess-batch-3', 2, ['b', 'c', 'd'])
+		expect(await res.json()).toEqual({ ack: 4 })
+		expect(seen).toEqual(['a', 'b', 'c', 'd'])
+	})
+
+	// Acking past a gap would let the guest discard lines that never arrived.
+	it('refuses to ack past a gap', async () => {
+		const { app, seen } = appWithRouter('sess-batch-4')
+		await postBatch(app, 'sess-batch-4', 1, ['a'])
+		const res = await postBatch(app, 'sess-batch-4', 3, ['c', 'd'])
+		expect(await res.json()).toEqual({ ack: 1 })
+		expect(seen).toEqual(['a'])
+	})
+
+	it('rejects a malformed body', async () => {
+		const { app } = appWithRouter('sess-batch-5')
+		expect((await postBatch(app, 'sess-batch-5', 0, ['a'])).status).toBe(400)
+		expect((await postBatch(app, 'sess-batch-5', 1, 'not-an-array' as never)).status).toBe(400)
+	})
+
+	// Review catch: after an agent-server restart the seq map is empty while the
+	// guest is already at sequence N. Refusing that as a gap acked 0 forever
+	// against a guest that was long past it — a permanent wedge plus a retry
+	// loop measured at ~3,400 requests/second. We have stored nothing, so there
+	// is nothing a wrong answer could discard: adopt the guest's position.
+	it('adopts the guest position on first contact rather than treating it as a gap', async () => {
+		const { app, seen } = appWithRouter('sess-batch-restart')
+		const res = await postBatch(app, 'sess-batch-restart', 57, ['after-restart-1', 'x'])
+		expect(await res.json()).toEqual({ ack: 58 })
+		expect(seen).toEqual(['after-restart-1', 'x'])
+	})
+
+	// Review catch: when the guest's buffer overflows it drops its oldest lines,
+	// leaving a hole nothing can ever fill. Waiting for it is waiting forever.
+	it('accepts a declared resync after the guest dropped lines, and records the hole', async () => {
+		const { app, seen } = appWithRouter('sess-batch-drop')
+		await postBatch(app, 'sess-batch-drop', 1, ['a', 'b'])
+
+		const res = await app.request('/sessions/sess-batch-drop/logs/batch', {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: 'Bearer test-secret-thirty-two-chars-long',
+			},
+			body: JSON.stringify({ from: 9, lines: ['i', 'j'], resync: true, dropped: 6 }),
+		})
+		expect(await res.json()).toEqual({ ack: 10 })
+		expect(seen[0]).toBe('a')
+		expect(seen[1]).toBe('b')
+		// The discontinuity is recorded rather than left silent.
+		expect(seen[2]).toContain('6 line(s) of agent output were dropped')
+		expect(seen.slice(3)).toEqual(['i', 'j'])
+	})
+
+	// A gap the guest has NOT declared is still refused: acking it would let the
+	// guest discard lines that never arrived.
+	it('still refuses an undeclared gap', async () => {
+		const { app, seen } = appWithRouter('sess-batch-undeclared')
+		await postBatch(app, 'sess-batch-undeclared', 1, ['a'])
+		const res = await postBatch(app, 'sess-batch-undeclared', 5, ['e'])
+		expect(await res.json()).toEqual({ ack: 1 })
+		expect(seen).toEqual(['a'])
+	})
+
+	// An unmonitored session must still be acked, or the guest retries forever
+	// against a server that is never going to store anything.
+	it('acks even when no log router is registered', async () => {
+		const { run } = makeRunner()
+		const app = buildApp({
+			env: makeEnv({ AGENT_SESSION_ROOT: sessionRoot }),
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+		})
+		const res = await postBatch(app, 'sess-batch-6', 1, ['a', 'b'])
+		expect(await res.json()).toEqual({ ack: 2 })
+	})
+})
+
 describe('GET /sessions/:id/input/stream', () => {
 	it('flushes turns parked before the stream connects and heartbeats the idle connection', async () => {
 		vi.useFakeTimers()
