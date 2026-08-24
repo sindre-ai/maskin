@@ -317,8 +317,20 @@ run_agent() {
   # backpressure to the agent, and only forgets lines the server acks. With no
   # AGENT_SERVER_URL (the local Docker path) it just passes stdin to stdout.
   # See docker/agent-base/output-stream.js.
+  # `|| true` because this is a log shipper, not the agent. Line 2 sets
+  # `set -e`, and every call site turns pipefail OFF before `agent | log_tee`,
+  # so the pipeline's status is THIS command's. A non-zero exit here therefore
+  # aborted run_agent before `AGENT_EXIT_CODE=${PIPESTATUS[0]}` ran, and the
+  # EXIT trap reported the initial 0 — a failed session posting clean success,
+  # with everything after run_agent skipped.
+  #
+  # It must be inside this function, not `... | log_tee || true` at the call
+  # site: `|| true` there resets PIPESTATUS, so ${PIPESTATUS[0]} reads 0 and
+  # every real agent failure is masked as success. Verified both ways.
+  # PIPESTATUS[0] refers to the agent, the pipeline's FIRST element, so
+  # swallowing this function's own status cannot affect it.
   log_tee() {
-    node /output-stream.js
+    node /output-stream.js || true
   }
 
   case "$RUNTIME" in
