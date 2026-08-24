@@ -49,9 +49,13 @@ export const Route = createFileRoute('/_authed/$workspaceId/loops/$loopId')({
 })
 
 interface ProposedEdit {
+	/** What the operator just said — the clause, shown on the card. */
 	utterance: string
 	rows: PlanDiffRow[]
 	nextPlan: LoopPlan
+	/** The full sentence `nextPlan` was parsed from (source + clause), persisted
+	 *  alongside the plan so the next refinement builds on it. */
+	nextSource: string
 }
 
 function LoopDetailPage() {
@@ -95,24 +99,46 @@ function LoopDetailPage() {
 	// wrote to `metadata.plan`. Loops without one (marketplace installs, MCP
 	// creations) return false and fall through to the chat hand-off.
 	const storedPlan = readStoredPlan(object?.metadata)
+	// The sentence the stored plan was parsed from, written alongside it by
+	// `/loops/new`.
+	const planSource =
+		typeof object?.metadata?.plan_source === 'string' ? object.metadata.plan_source : null
 	const statusChains = (workspace.settings as { statuses?: Record<string, string[]> } | undefined)
 		?.statuses
 	const handleUtterance = useCallback(
 		(utterance: string) => {
 			if (!storedPlan) return false
-			const nextPlan = parseLoopDescription(utterance, { statusChains })
+			// A refinement is a clause, not a restatement — "Ask me before anything
+			// ships" parsed on its own describes a different loop entirely (it names
+			// no object type, so the parser falls back to Task). Append it to the
+			// source sentence and re-read the whole thing, the same way the builder's
+			// own refine chips extend the utterance rather than replacing it.
+			const nextSource = planSource
+				? `${planSource.trim().replace(/[.!?]+$/, '')} ${utterance.trim()}`
+				: utterance
+			const nextPlan = parseLoopDescription(nextSource, { statusChains })
 			const rows = diffLoopPlans(storedPlan, nextPlan)
 			if (rows.length === 0) return false
-			setProposedEdit({ utterance, rows, nextPlan })
+			setProposedEdit({ utterance, rows, nextPlan, nextSource })
 			return true
 		},
-		[storedPlan, statusChains],
+		[storedPlan, statusChains, planSource],
 	)
 
 	const applyProposedEdit = useCallback(() => {
 		if (!proposedEdit) return
 		updateObject.mutate(
-			{ id: loopId, data: { metadata: { plan: JSON.stringify(proposedEdit.nextPlan) } } },
+			{
+				id: loopId,
+				data: {
+					metadata: {
+						plan: JSON.stringify(proposedEdit.nextPlan),
+						// Keep the source in step with the plan, so the next refinement
+						// builds on this one rather than on the original sentence.
+						plan_source: proposedEdit.nextSource,
+					},
+				},
+			},
 			{
 				onSuccess: () => {
 					setProposedEdit(null)

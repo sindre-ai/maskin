@@ -57,12 +57,11 @@ const routeConfig: Record<string, RouteConfig> = {
 		label: 'Property Details',
 		parent: '/_authed/$workspaceId/settings/objects/',
 	},
-	'/_authed/$workspaceId/triggers/': {
-		label: 'Triggers',
-	},
+	// Triggers fold into Loops — `/{ws}/triggers` redirects there, so a trigger
+	// breadcrumbs up to Loops rather than to a route that bounces.
 	'/_authed/$workspaceId/triggers/$triggerId': {
 		label: 'Trigger Details',
-		parent: '/_authed/$workspaceId/triggers/',
+		parent: '/_authed/$workspaceId/loops/',
 	},
 	'/_authed/$workspaceId/loops/': {
 		label: 'Loops',
