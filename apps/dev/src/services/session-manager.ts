@@ -85,6 +85,7 @@ import {
 } from './agent-server-client'
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
 import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
+import { activeBranchCondition } from './conversation-branches'
 import { InteractiveTurnFinalizer } from './interactive-turn-finalizer'
 import { type RuntimeEndReason, RuntimeTelemetry } from './runtime-telemetry'
 import type { SessionDispatchQueue } from './session-dispatch-queue'
@@ -2899,10 +2900,20 @@ export class SessionManager extends EventEmitter {
 		session: typeof sessions.$inferSelect,
 	): Promise<boolean> {
 		if (!session.conversationId) return false
+		// Branch-scoped like every other `messages` read: after a rewind or a
+		// branch switch the globally-newest row can sit on a branch nobody is
+		// reading, which would decide this session's terminal status off a
+		// conversation the user has navigated away from.
 		const [newest] = await this.db
 			.select({ actorId: messages.actorId })
 			.from(messages)
-			.where(and(eq(messages.conversationId, session.conversationId), eq(messages.kind, 'message')))
+			.where(
+				and(
+					eq(messages.conversationId, session.conversationId),
+					eq(messages.kind, 'message'),
+					await activeBranchCondition(this.db, session.conversationId),
+				),
+			)
 			.orderBy(desc(messages.id))
 			.limit(1)
 		return newest !== undefined && newest.actorId !== session.actorId

@@ -4,7 +4,11 @@ import { conversationBranches, messages, workspaceMembers } from '@maskin/db/sch
 import { eq } from 'drizzle-orm'
 import { vi } from 'vitest'
 import { createApiError, formatZodError } from '../../lib/errors'
-import { buildBranchPoints, resolveSegmentsFrom } from '../../services/conversation-branches'
+import {
+	branchVisibilityCondition,
+	buildBranchPoints,
+	resolveSegmentsFrom,
+} from '../../services/conversation-branches'
 import { insertActor, insertWorkspace } from '../factories'
 import { jsonGet, jsonRequest } from '../helpers'
 import { db, getTestActorId } from './global-setup'
@@ -331,17 +335,33 @@ describe('resolveSegmentsFrom', () => {
 		expect(resolveSegmentsFrom([], null)).toEqual([{ branch: null, minId: 0, maxId: null }])
 	})
 
-	it('fails closed to the root when the chain is longer than the depth cap', () => {
+	// Both corruption paths truncate to what was resolved rather than falling
+	// back to the whole conversation. `branch_id IS NULL` is the ROOT tail — on a
+	// branched conversation that is exactly the content the reader rewound away
+	// from, so returning it would resurrect discarded messages as the live thread
+	// and feed them to the agents. Showing less is the only safe direction.
+	it('truncates rather than reverting to root when the chain cycles', () => {
 		// A cycle: two branches naming each other as parent.
 		const rows = [
 			{ id: 'a', parentBranchId: 'b', forkedFromMessageId: 10 },
 			{ id: 'b', parentBranchId: 'a', forkedFromMessageId: 5 },
 		]
-		expect(resolveSegmentsFrom(rows, 'a')).toEqual([{ branch: null, minId: 0, maxId: null }])
+		const segments = resolveSegmentsFrom(rows, 'a')
+		expect(segments).toEqual([
+			{ branch: 'a', minId: 10, maxId: null },
+			{ branch: 'b', minId: 5, maxId: 10 },
+		])
+		expect(segments).not.toContainEqual({ branch: null, minId: 0, maxId: null })
 	})
 
-	it('fails closed when a branch id is unknown', () => {
-		expect(resolveSegmentsFrom([], 'missing')).toEqual([{ branch: null, minId: 0, maxId: null }])
+	it('shows nothing when the active branch id is unknown', () => {
+		expect(resolveSegmentsFrom([], 'missing')).toEqual([])
+	})
+
+	it('denies everything rather than disabling the filter for empty segments', () => {
+		// An undefined predicate would drop out of the caller's and(...) and show
+		// every branch at once — the opposite of what an empty segment set means.
+		expect(branchVisibilityCondition([])).toBeDefined()
 	})
 
 	it('emits half-open segments newest-first for a nested chain', () => {
@@ -358,19 +378,64 @@ describe('resolveSegmentsFrom', () => {
 })
 
 describe('buildBranchPoints', () => {
+	const forkRows = [{ id: 'fork', parentBranchId: null, forkedFromMessageId: 7 }]
+	// The rewind re-posts a copy of message 7 onto the fork; it lands at id 9.
+	const firstByBranch = new Map([['fork', 9]])
+
 	it('reports the forked option as active, not its parent', () => {
 		// Being on a branch puts its parent in the ancestry set too — a naive scan
 		// from index 0 would always report the original as active.
-		const rows = [{ id: 'fork', parentBranchId: null, forkedFromMessageId: 7 }]
-		const [point] = buildBranchPoints(rows, 'fork')
-		expect(point?.messageId).toBe(7)
+		const [point] = buildBranchPoints(forkRows, 'fork', firstByBranch)
 		expect(point?.options).toEqual([{ branchId: null }, { branchId: 'fork' }])
 		expect(point?.activeIndex).toBe(1)
 	})
 
-	it('reports the original as active when viewing the parent branch', () => {
-		const rows = [{ id: 'fork', parentBranchId: null, forkedFromMessageId: 7 }]
-		const [point] = buildBranchPoints(rows, null)
+	it('anchors on the branch own first message while reading a fork', () => {
+		// Regression: anchoring on forkedFromMessageId (7) put the switcher on a
+		// message the fork's own segments hide, so it never rendered and the
+		// reader was stranded on the new branch with no way back.
+		const [point] = buildBranchPoints(forkRows, 'fork', firstByBranch)
+		expect(point?.messageId).toBe(9)
+
+		// Mirrors branchVisibilityCondition: a message must match the segment's
+		// branch AND fall in its id range.
+		const segments = resolveSegmentsFrom(forkRows, 'fork')
+		const visible = (id: number, branch: string | null) =>
+			segments.some(
+				(s) => s.branch === branch && id >= s.minId && (s.maxId === null || id < s.maxId),
+			)
+		// Message 7 lives on root, and the fork bounds root exclusively at 7.
+		expect(visible(7, null)).toBe(false)
+		// The re-posted copy at the head of the fork is visible, so the client has
+		// a bubble to mount the switcher on.
+		expect(visible(point?.messageId ?? -1, 'fork')).toBe(true)
+	})
+
+	it('anchors on the fork point itself when viewing the parent branch', () => {
+		const [point] = buildBranchPoints(forkRows, null, firstByBranch)
 		expect(point?.activeIndex).toBe(0)
+		expect(point?.messageId).toBe(7)
+	})
+
+	it('drops a fork that has no messages yet', () => {
+		// Nothing to hang the control under; inventing an anchor would put it
+		// beneath an unrelated message.
+		expect(buildBranchPoints(forkRows, 'fork', new Map())).toEqual([])
+	})
+
+	it('does not truncate a long but healthy rewind chain', () => {
+		// Each rewind chains onto the previous active branch, so depth equals the
+		// rewind count. A fixed depth cap would silently revert the thread to the
+		// root branch here — showing the very messages that were rewound away.
+		// b0 is the oldest fork; each later rewind forks at a higher message id.
+		const deep = Array.from({ length: 40 }, (_, i) => ({
+			id: `b${i}`,
+			parentBranchId: i === 0 ? null : `b${i - 1}`,
+			forkedFromMessageId: 10 + i,
+		}))
+		const segments = resolveSegmentsFrom(deep, 'b39')
+		expect(segments).toHaveLength(41)
+		expect(segments[0]).toEqual({ branch: 'b39', minId: 49, maxId: null })
+		expect(segments.at(-1)).toEqual({ branch: null, minId: 0, maxId: 10 })
 	})
 })

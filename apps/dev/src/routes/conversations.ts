@@ -41,6 +41,7 @@ import {
 	activeBranchCondition,
 	buildBranchPoints,
 	loadBranchRows,
+	loadFirstMessageIdByBranch,
 	multiConversationVisibilityCondition,
 } from '../services/conversation-branches'
 import { insertConversationMessage } from '../services/conversation-messages'
@@ -860,9 +861,14 @@ app.openapi(listMessagesRoute, (async (c) => {
 	const rewindFloor = lastOtherHuman?.id ?? 0
 
 	const activeBranchId = row.conversation.activeBranchId
+	const [branchRows, firstMessageIdByBranch] = await Promise.all([
+		loadBranchRows(db, [id]),
+		loadFirstMessageIdByBranch(db, id),
+	])
 	const branchPoints = buildBranchPoints(
-		(await loadBranchRows(db, [id])).get(id) ?? [],
+		branchRows.get(id) ?? [],
 		activeBranchId,
+		firstMessageIdByBranch,
 	)
 
 	return c.json({
