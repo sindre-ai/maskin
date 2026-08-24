@@ -286,7 +286,11 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 
 				{/* The document owns the only scroll region on this screen, so the
 				    bar above stays put and the composer can pin to its bottom. */}
-				<div ref={scrollRegionRef} className="min-h-0 flex-1 overflow-y-auto">
+				<div
+					ref={scrollRegionRef}
+					data-detail-scroll-region
+					className="min-h-0 flex-1 overflow-y-auto"
+				>
 					<div className="mx-auto flex w-full min-w-0 max-w-3xl flex-col pt-5">
 						<div ref={heroIdentityRef}>
 							<ObjectDetailIdentity

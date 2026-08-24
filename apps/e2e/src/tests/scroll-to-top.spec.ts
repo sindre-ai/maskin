@@ -49,15 +49,18 @@ test('scroll_to_top fires once with the signed-off schema after a full-viewport 
 	})
 
 	await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
-	// The title is an editable <textarea> (object-document.tsx), not a heading —
-	// wait for it to load the bet's title before scrolling.
+	// The title is a static <h1> on the v2 detail shell — wait for it to carry
+	// the bet's title before scrolling.
 	await expect(
 		page.getByRole('heading', { level: 1, name: 'Scroll-to-top probe bet' }),
 	).toBeVisible({
 		timeout: 10000,
 	})
 
-	const scrollRoot = page.locator('[data-scroll-root]')
+	// The shell publishes `scrollLocked`, so the layout's `[data-scroll-root]`
+	// is `overflow-hidden` and this region is the live scroller — the same
+	// element the emitter is pointed at.
+	const scrollRoot = page.locator('[data-detail-scroll-region]')
 	await expect(scrollRoot).toHaveCount(1)
 
 	// Scroll ≥ 1 viewport down to arm, then all the way back to the top.
