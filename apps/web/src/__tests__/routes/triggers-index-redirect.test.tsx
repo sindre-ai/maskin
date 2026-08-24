@@ -1,29 +1,53 @@
-import { describe, expect, it, vi } from 'vitest'
+import { render, screen } from '@testing-library/react'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const redirectMock = vi.fn((opts: unknown) => opts)
+const navigateMock = vi.fn()
 
 vi.mock('@tanstack/react-router', () => ({
 	createFileRoute: () => (options: Record<string, unknown>) => options,
-	redirect: (opts: unknown) => redirectMock(opts),
+	useParams: () => ({ workspaceId: 'ws-1' }),
+	Navigate: (props: Record<string, unknown>) => {
+		navigateMock(props)
+		return null
+	},
+}))
+
+vi.mock('@/components/triggers/legacy/triggers-index-page', () => ({
+	LegacyTriggersIndexPage: () => <div>Legacy triggers</div>,
+}))
+
+const mockNewDesign = vi.fn()
+vi.mock('@/lib/new-design-context', () => ({
+	useNewDesign: () => mockNewDesign(),
 }))
 
 import { Route } from '@/routes/_authed/$workspaceId/triggers/index'
 
-const route = Route as unknown as {
-	beforeLoad: (ctx: { params: { workspaceId: string } }) => void
-	component?: unknown
-}
+const TriggersPage = (Route as unknown as { component: React.FC }).component
 
-describe('/$workspaceId/triggers redirect', () => {
-	it('redirects to the workspace Loops list', () => {
-		expect(() => route.beforeLoad({ params: { workspaceId: 'ws-1' } })).toThrow()
-		expect(redirectMock).toHaveBeenCalledWith({
-			to: '/$workspaceId/loops',
-			params: { workspaceId: 'ws-1' },
-		})
+describe('/$workspaceId/triggers', () => {
+	beforeEach(() => {
+		navigateMock.mockClear()
 	})
 
-	it('renders no page of its own — Loops is the only triggers surface', () => {
-		expect(route.component).toBeUndefined()
+	it('redirects to the workspace Loops list under the new design', () => {
+		mockNewDesign.mockReturnValue(true)
+		render(<TriggersPage />)
+
+		expect(navigateMock).toHaveBeenCalledWith(
+			expect.objectContaining({
+				to: '/$workspaceId/loops',
+				params: { workspaceId: 'ws-1' },
+				replace: true,
+			}),
+		)
+	})
+
+	it('renders the pre-v2 Triggers index when the new design is off', () => {
+		mockNewDesign.mockReturnValue(false)
+		render(<TriggersPage />)
+
+		expect(screen.getByText('Legacy triggers')).toBeInTheDocument()
+		expect(navigateMock).not.toHaveBeenCalled()
 	})
 })

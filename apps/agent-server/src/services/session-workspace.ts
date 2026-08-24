@@ -12,6 +12,10 @@ const LEGACY_SESSION_WORKSPACE_PREFIX = 'agent-workspaces'
 
 export const SESSION_SKELETON_DIRS = ['workspace', 'skills', 'learnings', 'memory'] as const
 
+// Temporary name for the snapshot archive while it is staged inside sessionDir
+// for extraction. Removed in a `finally` before the caller ever sees the dir.
+const PULL_ARCHIVE_NAME = '.maskin-pull.tar.gz'
+
 // Whitelist on sessionId before it reaches an S3 key or a `tar` arg list.
 const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/
 
@@ -81,25 +85,24 @@ export async function pullSessionWorkspace(
 	if (resolvedKey) {
 		const buf = await storage.get(resolvedKey)
 		archiveBytes = buf.length
-		const stage = await mkdtemp(join(tmpdir(), 'maskin-agent-pull-'))
-		const archivePath = join(stage, 'workspace.tar.gz')
+		// The archive is staged INSIDE sessionDir and tar is run with `cwd: sessionDir`,
+		// so neither the archive operand nor the extraction directory is ever passed as
+		// an absolute path. GNU tar on Windows mangles both: it misreads an absolute
+		// `C:\...` archive argument as a `host:path` remote spec (rsh to a host named
+		// "C"), and it garbles an absolute `-C` argument into an unopenable path.
+		const archivePath = join(sessionDir, PULL_ARCHIVE_NAME)
 		try {
 			await writeFile(archivePath, buf)
 			// --strip-components=1 normalises two archive formats:
 			// - agent-server snapshots: entries rooted at `.` (e.g. `./workspace/…`)
 			// - Docker copyFrom snapshots: entries rooted at `agent` (e.g. `agent/workspace/…`)
 			// In both cases stripping one component lands files at `sessionDir/workspace/…`.
-			// The archive operand is passed as a bare filename with `cwd: stage` (not the
-			// absolute path) — GNU tar on Windows misreads an absolute `C:\...` archive
-			// argument as a `host:path` remote spec and tries to rsh/ssh to a host named "C".
-			await execFile(
-				'tar',
-				['-xzf', 'workspace.tar.gz', '-C', sessionDir, '--strip-components=1'],
-				{ cwd: stage },
-			)
+			await execFile('tar', ['-xzf', PULL_ARCHIVE_NAME, '--strip-components=1'], {
+				cwd: sessionDir,
+			})
 			restored = true
 		} finally {
-			await rm(stage, { recursive: true, force: true })
+			await rm(archivePath, { force: true })
 		}
 	}
 

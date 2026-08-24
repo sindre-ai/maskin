@@ -65,6 +65,12 @@ vi.mock('@/lib/workspace-context', () => ({
 	useWorkspace: () => ({ workspaceId: 'ws-1' }),
 }))
 
+// The route page branches on the `new-design` flag; this suite covers the v2
+// branch, so opt in rather than falling through to the legacy Loops page.
+vi.mock('@/lib/new-design-context', () => ({
+	useNewDesign: () => true,
+}))
+
 import { Route } from '@/routes/_authed/$workspaceId/loops/index'
 
 const LoopsPage = (Route as unknown as { component: React.FC }).component

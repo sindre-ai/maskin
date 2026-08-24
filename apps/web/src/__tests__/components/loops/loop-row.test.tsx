@@ -69,7 +69,7 @@ describe('LoopRow', () => {
 		render(<LoopRow loop={buildLoop()} actors={[]} />)
 
 		expect(screen.getByText('Customer feedback')).toBeInTheDocument()
-		expect(screen.getByTestId('loop-pill')).toHaveTextContent('Running')
+		expect(screen.getByTestId('loop-pill')).toHaveTextContent('Learning')
 		expect(
 			screen.getByText('Every customer who gives feedback hears back within 30 days'),
 		).toBeInTheDocument()
@@ -114,7 +114,9 @@ describe('LoopRow', () => {
 	it('renders "Waiting on you" as last activity when waiting on the viewer', () => {
 		render(<LoopRow loop={buildLoop({ pill: 'waiting_on_you', inProgressCount: 0 })} actors={[]} />)
 
-		expect(screen.getByText('Waiting on you')).toBeInTheDocument()
+		// The stage pill carries the same words, so assert on the one that isn't it.
+		const matches = screen.getAllByText('Waiting on you')
+		expect(matches.some((el) => el.getAttribute('data-testid') !== 'loop-pill')).toBe(true)
 	})
 
 	it("renders the first agent's avatar next to the last-activity line", () => {
