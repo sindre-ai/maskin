@@ -46,6 +46,7 @@ import {
 	DEFAULT_ORDER,
 	DEFAULT_SORT,
 	fromUrlSearch,
+	urlIsInDefaultShape as isUrlInDefaultShape,
 	toBoardParams,
 	toDisplaySettingsBody,
 	toListParams,
@@ -737,21 +738,8 @@ function ObjectsPageV2() {
 	const hydratedTypesRef = useRef<Set<string>>(new Set())
 
 	const urlIsInDefaultShape = useMemo(
-		() =>
-			(!searchParams.sort || searchParams.sort === DEFAULT_SORT) &&
-			(!searchParams.order || searchParams.order === DEFAULT_ORDER) &&
-			(!searchParams.groupBy || searchParams.groupBy === 'status') &&
-			!searchParams.status &&
-			!searchParams.driver &&
-			Object.keys(metadataFilters).length === 0,
-		[
-			searchParams.sort,
-			searchParams.order,
-			searchParams.groupBy,
-			searchParams.status,
-			searchParams.driver,
-			metadataFilters,
-		],
+		() => isUrlInDefaultShape(searchParams, metadataFilters),
+		[searchParams, metadataFilters],
 	)
 
 	useEffect(() => {

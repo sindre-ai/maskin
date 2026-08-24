@@ -38,7 +38,10 @@ import type { DisplaySettingsBody, NotificationResponse, ObjectResponse } from '
 import { consumeArrivalNavType } from '@/lib/back-nav-tracker'
 import { type BetStatusResult, buildBetStatuses } from '@/lib/bet-status'
 import {
+	DEFAULT_ORDER,
+	DEFAULT_SORT,
 	fromUrlSearch,
+	urlIsInDefaultShape as isUrlInDefaultShape,
 	toBoardParams,
 	toDisplaySettingsBody,
 	toListParams,
@@ -546,13 +549,13 @@ export function LegacyObjectsPage() {
 	}, [])
 
 	// "Reset to default" from the Display menu — restores every display axis on
-	// the shared model: order back to created-desc, no grouping, all filters
+	// the shared model: order back to the route default, no grouping, all filters
 	// (status/driver/metadata) cleared, archived hidden, columns back to the
 	// default set. `view` and `q` are deliberately untouched (separate surfaces).
 	const handleResetToDefault = useCallback(() => {
 		const cleared: Record<string, string | undefined> = {
-			sort: 'createdAt',
-			order: 'desc',
+			sort: DEFAULT_SORT,
+			order: DEFAULT_ORDER,
 			groupBy: 'none',
 			status: undefined,
 			driver: undefined,
@@ -618,21 +621,8 @@ export function LegacyObjectsPage() {
 	const hydratedTypesRef = useRef<Set<string>>(new Set())
 
 	const urlIsInDefaultShape = useMemo(
-		() =>
-			(!searchParams.sort || searchParams.sort === 'createdAt') &&
-			(!searchParams.order || searchParams.order === 'desc') &&
-			!searchParams.groupBy &&
-			!searchParams.status &&
-			!searchParams.driver &&
-			Object.keys(metadataFilters).length === 0,
-		[
-			searchParams.sort,
-			searchParams.order,
-			searchParams.groupBy,
-			searchParams.status,
-			searchParams.driver,
-			metadataFilters,
-		],
+		() => isUrlInDefaultShape(searchParams, metadataFilters),
+		[searchParams, metadataFilters],
 	)
 
 	useEffect(() => {
@@ -1071,8 +1061,8 @@ export function LegacyObjectsPage() {
 						params: { workspaceId },
 						search: {
 							type: value || undefined,
-							sort: 'createdAt',
-							order: 'desc' as const,
+							sort: DEFAULT_SORT,
+							order: DEFAULT_ORDER,
 							status: undefined,
 							driver: undefined,
 							filterBy: undefined,
@@ -1131,7 +1121,7 @@ export function LegacyObjectsPage() {
 				onViewChange={(next) => {
 					setView(next)
 					if (next === 'list' && sort === BOARD_MANUAL_SORT) {
-						updateSearch({ sort: 'createdAt', order: 'desc' })
+						updateSearch({ sort: DEFAULT_SORT, order: DEFAULT_ORDER })
 					}
 					// One analytics line per user-initiated switch so we can count
 					// distinct operators reaching for Board (the bet's success
