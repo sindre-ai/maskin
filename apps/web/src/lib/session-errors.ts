@@ -29,9 +29,17 @@ export function toastSessionCreateError(
 	err: unknown,
 	navigate: Navigate,
 	workspaceId: string,
+	fallbackMessage?: string,
 ): void {
 	if (err instanceof ApiError && err.code === 'PLAN_CAP_EXCEEDED') {
 		showPlanLimitToast(navigate, workspaceId, err.planCapContext?.plan === 'trial')
+		return
+	}
+	// `fallbackMessage` lets a call site keep its own more specific copy for
+	// non-billing failures (e.g. the agents grid, where the card knows which
+	// agent failed) without having to re-test for PLAN_CAP_EXCEEDED itself.
+	if (fallbackMessage) {
+		toast.error(fallbackMessage)
 		return
 	}
 	toast.error(err instanceof Error ? err.message : 'Failed to start session')

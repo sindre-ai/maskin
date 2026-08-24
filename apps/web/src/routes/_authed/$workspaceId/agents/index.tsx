@@ -14,8 +14,9 @@ import { useActors, useAgentPause, useAgentRun } from '@/hooks/use-actors'
 import { useWorkspaceSessions } from '@/hooks/use-sessions'
 import { deriveAgentStatus, getLatestSession, groupSessionsByAgent } from '@/lib/agent-status'
 import type { ActorResponse, SessionResponse } from '@/lib/api'
+import { toastSessionCreateError } from '@/lib/session-errors'
 import { useWorkspace } from '@/lib/workspace-context'
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 
@@ -180,6 +181,7 @@ function AgentPortraitCardItem({
 	// onError toast and pending state if another agent was actioned first.
 	const runMutation = useAgentRun(workspaceId)
 	const pauseMutation = useAgentPause(workspaceId)
+	const navigate = useNavigate()
 
 	return (
 		<AgentPortraitCard
@@ -189,7 +191,10 @@ function AgentPortraitCardItem({
 			onRun={() =>
 				runMutation.mutate(
 					{ id: agent.id },
-					{ onError: () => toast.error(`Couldn't start ${agent.name}`) },
+					{
+						onError: (err) =>
+							toastSessionCreateError(err, navigate, workspaceId, `Couldn't start ${agent.name}`),
+					},
 				)
 			}
 			onPause={() =>

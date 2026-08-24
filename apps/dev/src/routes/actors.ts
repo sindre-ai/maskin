@@ -34,6 +34,7 @@ import {
 import { and, asc, count, countDistinct, desc, eq, inArray, or, sql } from 'drizzle-orm'
 import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import { PlanCapExceededError } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import {
 	actorListItemSchema,
@@ -1328,6 +1329,12 @@ app.openapi(runAgentRoute, (async (c) => {
 				})
 			}
 		} catch (err) {
+			// A plan-cap rejection is not a bad request — flattening it to a 400
+			// with a bare message string dropped the `PLAN_CAP_EXCEEDED` code and
+			// the plan/used/cap context, so the client could only show the raw
+			// text instead of a typed upgrade CTA. Re-throw and let app-factory's
+			// onError emit the same structured 402 that POST /api/sessions does.
+			if (err instanceof PlanCapExceededError) throw err
 			const message = err instanceof Error ? err.message : String(err)
 			return c.json(createApiError('BAD_REQUEST', message), 400)
 		}

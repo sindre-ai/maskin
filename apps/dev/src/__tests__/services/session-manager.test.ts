@@ -246,6 +246,69 @@ describe('SessionManager', () => {
 			})
 			expect(calls.inserts).toHaveLength(0)
 		})
+
+		it('still enforces the cap when a non-entitled workspace holds an anthropic key', async () => {
+			// Regression: the pre-flight treated any stored BYO credential as
+			// cap-exempting, but resolveLlmRoute only reaches the BYO routes when
+			// the workspace is byollm-entitled. A workspace with byollmAllowed
+			// false therefore skipped the pre-flight, got a 201, and then died at
+			// container start on the defense-in-depth cap check instead.
+			mockResults.selectQueue = [
+				[
+					{
+						id: 'ws-1',
+						byollmAllowed: false,
+						billingOwnerId: null,
+						settings: {
+							billing: { plan: 'pro', hard_cap_usd_cents: 100, period_start: 0 },
+							llm_keys: { anthropic: 'sk-ant-not-usable-here' },
+						},
+					},
+				],
+				[{ totalCostUsd: '1.00', inputTokens: 0, outputTokens: 0 }],
+			]
+			mockResults.insertQueue = [[buildSession({ status: 'pending' })], []]
+
+			await expect(
+				manager.createSession('ws-1', {
+					actorId: 'actor-1',
+					actionPrompt: 'Do the thing',
+					createdBy: 'creator-1',
+					autoStart: false,
+				}),
+			).rejects.toMatchObject({ name: 'PlanCapExceededError', plan: 'pro' })
+			expect(calls.inserts).toHaveLength(0)
+		})
+
+		it('skips the cap when an entitled workspace holds an anthropic key', async () => {
+			// The mirror case: byollmAllowed true means resolveLlmRoute really will
+			// use the workspace key, so that usage never counts against the plan
+			// cap and the session must be created even though usage is over it.
+			const sessionRow = buildSession({ status: 'pending' })
+			mockResults.selectQueue = [
+				[
+					{
+						id: 'ws-1',
+						byollmAllowed: true,
+						billingOwnerId: null,
+						settings: {
+							billing: { plan: 'pro', hard_cap_usd_cents: 100, period_start: 0 },
+							llm_keys: { anthropic: 'sk-ant-usable' },
+						},
+					},
+				],
+			]
+			mockResults.insertQueue = [[sessionRow], []]
+
+			const result = await manager.createSession('ws-1', {
+				actorId: 'actor-1',
+				actionPrompt: 'Do the thing',
+				createdBy: 'creator-1',
+				autoStart: false,
+			})
+
+			expect(result.id).toBe(sessionRow.id)
+		})
 	})
 
 	describe('createSession() — interactive', () => {

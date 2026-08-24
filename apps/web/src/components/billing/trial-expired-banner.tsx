@@ -121,8 +121,9 @@ function PlanExpiredDialog({
 				<DialogHeader>
 					<DialogTitle>{dialogTitle(plan)}</DialogTitle>
 					<DialogDescription>
-						Choose a plan to keep using Maskin's hosted LLM, or downgrade to Free and connect your
-						own.
+						{plan === 'trial'
+							? "Choose a plan to keep using Maskin's hosted LLM."
+							: "Choose a plan to keep using Maskin's hosted LLM, or downgrade to Free and connect your own."}
 					</DialogDescription>
 				</DialogHeader>
 
@@ -152,7 +153,8 @@ function PlanExpiredDialog({
 								onClick={() => handleUpgrade('pro')}
 								disabled={isPending}
 							>
-								Renew Pro — $20/mo
+								{/* A trial never held Pro, so "Renew" would be false — it upgrades. */}
+								{plan === 'trial' ? 'Upgrade to Pro — $20/mo' : 'Renew Pro — $20/mo'}
 							</Button>
 							<Button
 								className="w-full justify-start"
@@ -164,14 +166,19 @@ function PlanExpiredDialog({
 							</Button>
 						</>
 					)}
-					<Button
-						className="w-full justify-start"
-						variant="ghost"
-						onClick={handleDowngrade}
-						disabled={isPending}
-					>
-						{cancel.isPending ? 'Downgrading…' : 'Downgrade to Free'}
-					</Button>
+					{/* Trial IS the free tier — there is no subscription to cancel and
+					    nothing to downgrade to, so the action is hidden rather than
+					    offered as a no-op. */}
+					{plan !== 'trial' && (
+						<Button
+							className="w-full justify-start"
+							variant="ghost"
+							onClick={handleDowngrade}
+							disabled={isPending}
+						>
+							{cancel.isPending ? 'Downgrading…' : 'Downgrade to Free'}
+						</Button>
+					)}
 				</div>
 
 				{(checkout.isError || cancel.isError) && (

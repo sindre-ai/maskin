@@ -66,4 +66,35 @@ describe('toastSessionCreateError', () => {
 
 		expect(toast.error).toHaveBeenCalledWith('Failed to start session')
 	})
+
+	it('prefers a caller-supplied fallback message for a non-plan-cap error', () => {
+		toastSessionCreateError(
+			new Error('network down'),
+			// biome-ignore lint/suspicious/noExplicitAny: navigate's real type is the router's overloaded signature, irrelevant to this test
+			navigate as any,
+			workspaceId,
+			"Couldn't start Researcher",
+		)
+
+		expect(toast.error).toHaveBeenCalledWith("Couldn't start Researcher")
+	})
+
+	it('ignores the fallback message for a plan-cap error so the upgrade CTA still shows', () => {
+		const err = new ApiError(402, 'Trial cap exceeded')
+		err.code = 'PLAN_CAP_EXCEEDED'
+		err.planCapContext = { plan: 'trial', used: 600, cap: 500, period_end: null }
+
+		toastSessionCreateError(
+			err,
+			// biome-ignore lint/suspicious/noExplicitAny: navigate's real type is the router's overloaded signature, irrelevant to this test
+			navigate as any,
+			workspaceId,
+			"Couldn't start Researcher",
+		)
+
+		expect(toast.error).toHaveBeenCalledWith(
+			'Trial limit reached — upgrade to keep going',
+			expect.objectContaining({ action: expect.objectContaining({ label: 'Go to Billing' }) }),
+		)
+	})
 })

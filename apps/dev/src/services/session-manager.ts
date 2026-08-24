@@ -428,16 +428,27 @@ export class SessionManager extends EventEmitter {
 		// the maskin_plan route and never count against the cap. Checking OAuth
 		// here mirrors the route-resolution priority so the 402 surfaces before
 		// a session row is created rather than failing silently at container start.
+		//
+		// The `byollmEntitled` gate is what makes "mirrors the route-resolution
+		// priority" true: resolveLlmRoute only *reaches* routes 1-4 when the
+		// workspace is entitled, so a non-entitled workspace holding a stored
+		// custom_llm / api_key / OAuth credential still routes to maskin_plan.
+		// Without this gate such a workspace skipped the pre-flight, got a 201,
+		// and then died at container start on the defense-in-depth checkPlanCap
+		// inside resolveLlmRoute — precisely the late failure this pre-flight
+		// exists to prevent.
 		const [ws] = await this.db
 			.select()
 			.from(workspaces)
 			.where(eq(workspaces.id, workspaceId))
 			.limit(1)
 		const wsSettings = (ws?.settings as WorkspaceSettings) ?? {}
+		const byollmAllowed = ws ? byollmEntitled(ws) : false
 		const hasByoCredentials =
-			(wsSettings.custom_llm?.enabled && !!wsSettings.custom_llm?.base_url) ||
-			!!wsSettings.llm_keys?.anthropic ||
-			!!(await getValidOAuthToken(this.db, workspaceId).catch(() => null))
+			byollmAllowed &&
+			((wsSettings.custom_llm?.enabled && !!wsSettings.custom_llm?.base_url) ||
+				!!wsSettings.llm_keys?.anthropic ||
+				!!(await getValidOAuthToken(this.db, workspaceId).catch(() => null)))
 		if (!hasByoCredentials) {
 			await checkPlanCap({ db: this.db, workspaceId, wsSettings })
 		}
