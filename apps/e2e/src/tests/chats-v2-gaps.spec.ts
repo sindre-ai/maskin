@@ -108,7 +108,9 @@ test.describe('Chats v2 — turn this into an object', () => {
 			await composer.click()
 			await composer.pressSequentially('/')
 
-			const menu = page.getByLabel('Turn this into an object')
+			// getByRole, not getByLabel: the menu carries its accessible name as
+			// `aria-label`, and getByLabel does not match a role="menu" element.
+			const menu = page.getByRole('menu', { name: 'Turn this into an object' })
 			await expect(menu).toBeVisible({ timeout: 10_000 })
 			await expect(menu.getByRole('menuitem', { name: /Bets/ })).toBeVisible()
 			await expect(menu.getByRole('menuitem', { name: /Insights/ })).toBeVisible()

@@ -34,13 +34,19 @@ test.describe('Chats — new-design boundary', () => {
 
 			// The legacy list still lists conversations…
 			await expect(page.locator('[data-shell="v1"]')).toBeVisible()
-			await expect(page.getByText(convo.title)).toBeVisible()
+			// Located by href, not by title: conversation-titler.ts asynchronously
+			// replaces any client-supplied title with an LLM-generated one, so
+			// asserting on `convo.title` races the auto-titler. The id is stable.
+			const row = page.locator(`a[href$="/chats/${convo.id}"]`)
+			await expect(row).toBeVisible()
 			// …and none of the v2 chrome is mounted.
 			await expect(page.getByRole('button', { name: /^Filter conversations/ })).toHaveCount(0)
 
 			// The legacy thread pane opens and shows the seeded message.
-			await page.getByText(convo.title).click()
-			await expect(page.getByText('A pre-v2 conversation')).toBeVisible()
+			await row.click()
+			await expect(
+				page.getByTestId('thread-messages').getByText('A pre-v2 conversation'),
+			).toBeVisible()
 		})
 	}
 

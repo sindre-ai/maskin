@@ -211,31 +211,37 @@ export function Header() {
 					</Breadcrumb>
 				</div>
 			) : headingText ? (
-				<div className="flex min-w-0 items-baseline gap-2">
+				/* `flex-1` (basis 0), not the default `basis:auto`: flex line-breaking
+				   decides wrapping from each item's max-content hypothetical size, so a
+				   title block sized to its content pushed the New button onto a second
+				   line at 375px — `truncate` alone could not prevent that, because
+				   shrinking only happens after an item has been placed on a line.
+				   Zero-basis lets the title give up width first and keeps the nav on
+				   one line. */
+				<div className="flex min-w-0 flex-1 items-baseline gap-2">
 					<h1 className="truncate text-[clamp(17px,2vw,20px)] font-bold tracking-[-0.02em] text-foreground">
 						{headingText}
 					</h1>
-					{/* `truncate`, not `whitespace-nowrap`: this row wraps rather than
-					    scrolls, and a nowrap subtitle has a min-content width equal to
-					    the whole string, so it could not shrink and pushed the New
-					    button onto a second line at 375px. Truncating lets the count
-					    give up width first and keeps the nav one line. */}
 					{subtitle && (
-						<span className="truncate text-[11.5px] text-muted-foreground">{subtitle}</span>
+						<span className="min-w-0 truncate text-[11.5px] text-muted-foreground">{subtitle}</span>
 					)}
 				</div>
 			) : null}
 
-			<span className="ml-auto" />
-
-			<NavSearch />
-			{actions}
-			<span aria-hidden="true" className="mx-0.5 h-5 w-px shrink-0 bg-border" />
-			<NewMenu
-				onNewChat={() => navigate({ to: '/$workspaceId/chats/new', params: { workspaceId } })}
-				hideObjectSection={isObjectDetail}
-				primaryKind={leafConfig?.primary ?? 'chat'}
-			/>
+			{/* `ml-auto` lives on the group, not on a spacer span: an auto margin
+			    absorbs free space before flex-grow does, so a spacer would starve the
+			    zero-basis title above. It still right-aligns the controls when no
+			    heading or breadcrumb renders. */}
+			<div className="ml-auto flex shrink-0 items-center gap-2">
+				<NavSearch />
+				{actions}
+				<span aria-hidden="true" className="mx-0.5 h-5 w-px shrink-0 bg-border" />
+				<NewMenu
+					onNewChat={() => navigate({ to: '/$workspaceId/chats/new', params: { workspaceId } })}
+					hideObjectSection={isObjectDetail}
+					primaryKind={leafConfig?.primary ?? 'chat'}
+				/>
+			</div>
 		</header>
 	)
 }

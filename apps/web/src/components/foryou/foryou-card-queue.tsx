@@ -170,10 +170,13 @@ export function ForYouCardQueue({
 	//
 	// Bottom padding: below md the action bar is `fixed`, so the flex column
 	// can't see it and the card would grow underneath it — reserve the bar's own
-	// height (`pb-20`) here. At md+ the bar is back in flow (`md:sticky`) and
-	// reserves its own space, so no extra padding is needed.
+	// height here. The bar measures 68px (`py-3` twice plus the `size="lg"`
+	// button's `h-11`), so `pb-16` (64px) clears it while leaving the card flush;
+	// `pb-20` (80px) over-reserved and, stacked on the page shell's own bottom
+	// padding, stranded 40px of dead space above the buttons. At md+ the bar is
+	// back in flow (`md:sticky`) and reserves its own space, so none is needed.
 	return (
-		<div className="flex flex-1 min-h-0 flex-col gap-4 pb-20 md:pb-0">
+		<div className="flex flex-1 min-h-0 flex-col gap-4 pb-16 md:pb-0">
 			{cards}
 
 			{currentItem ? (
