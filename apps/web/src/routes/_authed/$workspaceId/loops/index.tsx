@@ -1,5 +1,6 @@
 import { PageHeader } from '@/components/layout/page-header'
 import { AssignedInChatRow } from '@/components/loops/assigned-in-chat-row'
+import { LegacyLoopsIndexPage } from '@/components/loops/legacy/loops-index-page'
 import { LoopRow } from '@/components/loops/loop-row'
 import { DisplayPanel } from '@/components/objects/data-table/display-panel'
 import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picker'
@@ -26,6 +27,7 @@ import type {
 	DisplaySettingsBody,
 	LoopSummary,
 } from '@/lib/api'
+import { useNewDesign } from '@/lib/new-design-context'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { RefreshCw } from 'lucide-react'
@@ -50,11 +52,20 @@ function compareLoops(a: LoopSummary, b: LoopSummary, sort: string): number {
 }
 
 export const Route = createFileRoute('/_authed/$workspaceId/loops/')({
-	component: LoopsPage,
+	component: LoopsRoute,
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
 
-function LoopsPage() {
+/**
+ * The `new-design` boundary for the Loops index. The flag is read once, at the workspace
+ * shell, and only the resolved boolean reaches here via `useNewDesign()` — a
+ * route page can't be swapped at the boundary itself.
+ */
+function LoopsRoute() {
+	return useNewDesign() ? <LoopsPageV2 /> : <LegacyLoopsIndexPage />
+}
+
+function LoopsPageV2() {
 	const { workspaceId } = useWorkspace()
 	const {
 		data: loops,

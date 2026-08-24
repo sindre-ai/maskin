@@ -8,8 +8,9 @@ import { trackLoopCreatedViaLanguage } from '@/lib/analytics'
 import { EMPTY_CHAT_SELECTION } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
 import { type LoopPlan, parseLoopDescription } from '@/lib/loop-plan'
+import { useNewDesign } from '@/lib/new-design-context'
 import { useWorkspace } from '@/lib/workspace-context'
-import { createFileRoute } from '@tanstack/react-router'
+import { Navigate, createFileRoute, useParams } from '@tanstack/react-router'
 import { useCallback, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 
@@ -52,9 +53,21 @@ const PRIMER = [
 ] as const
 
 export const Route = createFileRoute('/_authed/$workspaceId/loops/new')({
-	component: LoopBuilderPage,
+	component: LoopBuilderRoute,
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
+
+/**
+ * The `new-design` boundary for the loop builder. `/{ws}/loops/new` is a v2-only
+ * surface — there is no pre-v2 equivalent to fall back to, and with the flag off
+ * nothing links here — so a flag-off visitor is sent to the Loops index.
+ */
+function LoopBuilderRoute() {
+	const { workspaceId } = useParams({ from: '/_authed/$workspaceId/loops/new' })
+	const newDesign = useNewDesign()
+	if (!newDesign) return <Navigate to="/$workspaceId/loops" params={{ workspaceId }} replace />
+	return <LoopBuilderPage />
+}
 
 interface ThreadItem {
 	role: 'user' | 'plan'

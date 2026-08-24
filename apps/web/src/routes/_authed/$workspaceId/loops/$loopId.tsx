@@ -1,4 +1,5 @@
 import { PageHeader } from '@/components/layout/page-header'
+import { LegacyLoopDetailPage } from '@/components/loops/legacy/loop-detail-page'
 import { LoopActivity } from '@/components/loops/loop-activity'
 import { LoopChanges } from '@/components/loops/loop-changes'
 import { LoopFirstRunBanner } from '@/components/loops/loop-first-run-banner'
@@ -32,6 +33,7 @@ import { useRelationships } from '@/hooks/use-relationships'
 import { useTriggers } from '@/hooks/use-triggers'
 import { cn } from '@/lib/cn'
 import { type LoopPlan, parseLoopDescription } from '@/lib/loop-plan'
+import { useNewDesign } from '@/lib/new-design-context'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { MoreHorizontal, Pause, Play } from 'lucide-react'
@@ -44,9 +46,19 @@ import { toast } from 'sonner'
 const LOOP_MEMBERSHIP_RELATIONSHIP_TYPE = 'in_loop'
 
 export const Route = createFileRoute('/_authed/$workspaceId/loops/$loopId')({
-	component: LoopDetailPage,
+	component: LoopDetailRoute,
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
+
+/**
+ * The `new-design` boundary for the Loop detail page. The flag is read once, at the workspace
+ * shell, and only the resolved boolean reaches here via `useNewDesign()` — a
+ * route page can't be swapped at the boundary itself.
+ */
+function LoopDetailRoute() {
+	const { loopId } = Route.useParams()
+	return useNewDesign() ? <LoopDetailPageV2 /> : <LegacyLoopDetailPage loopId={loopId} />
+}
 
 interface ProposedEdit {
 	/** What the operator just said — the clause, shown on the card. */
@@ -58,7 +70,7 @@ interface ProposedEdit {
 	nextSource: string
 }
 
-function LoopDetailPage() {
+function LoopDetailPageV2() {
 	const { loopId } = Route.useParams()
 	const { workspaceId, workspace } = useWorkspace()
 	const {
