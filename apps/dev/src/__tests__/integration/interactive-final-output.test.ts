@@ -310,6 +310,32 @@ ${surviving}
 		).toBe(trigger.id)
 	})
 
+	// The transport that fills session_logs must preserve the trailing newline
+	// on every row. onStdout re-splits what it is given with splitLines(), which
+	// pops the final segment as an incomplete "remainder" — so a row that does
+	// not end in \n yields ZERO lines and its result envelope is never parsed.
+	// The reply then renders optimistically from the stream and degrades to
+	// "Not saved yet" in the UI, with nothing ever persisted.
+	//
+	// This is a real regression: output-stream.js initially stripped the newline
+	// when it replaced the curl upload, and every agent reply silently stopped
+	// being saved while looking, in the logs, like it had worked.
+	it('does not post a result line that arrives without its trailing newline', async () => {
+		const session = await seedSession()
+		if (!session) throw new Error('no session')
+
+		await feed(session.id, resultLine()) // no trailing \n
+
+		const rows = await messagesFor(conversationId)
+		expect(rows.filter((r) => r.actorId === agentId)).toHaveLength(0)
+
+		// Terminating the same line releases it, proving the newline is the
+		// whole difference rather than something else about the payload.
+		await feed(session.id, '\n')
+		const after = await messagesFor(conversationId)
+		expect(after.filter((r) => r.actorId === agentId)).toHaveLength(1)
+	})
+
 	it('records a null turn attribution when no tagged turn precedes the result', async () => {
 		const session = await seedSession()
 		if (!session) throw new Error('no session')

@@ -83,6 +83,8 @@ let consecutiveFailures = 0
 const warn = (message) => process.stderr.write(`[system] output-stream: ${message}\n`)
 
 const enqueue = (text) => {
+	// Blank lines carry nothing and the old path skipped them too.
+	if (!text.trimEnd()) return
 	pending.push({ seq: nextSeq++, text })
 	if (pending.length > MAX_BUFFERED_LINES) {
 		const lost = pending.length - MAX_BUFFERED_LINES
@@ -216,7 +218,15 @@ process.stdin.on('data', (chunk) => {
 	buf += chunk
 	let nl = buf.indexOf('\n')
 	while (nl !== -1) {
-		enqueue(buf.slice(0, nl))
+		// Keep the trailing newline. Consumers downstream re-split what they are
+		// given: InteractiveTurnFinalizer runs each stored row through
+		// splitLines(), which pops the final segment as an incomplete
+		// "remainder". A row that does not end in \n therefore yields ZERO lines,
+		// so its `result` envelope is never parsed and the agent's reply is never
+		// posted to the chat — it renders optimistically from the stream and then
+		// turns into "Not saved yet". The old curl upload preserved these bytes
+		// exactly (`buf.slice(0, nl + 1)` in /logs/ingest); this must too.
+		enqueue(buf.slice(0, nl + 1))
 		buf = buf.slice(nl + 1)
 		nl = buf.indexOf('\n')
 	}
