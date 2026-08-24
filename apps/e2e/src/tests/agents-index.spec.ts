@@ -16,15 +16,17 @@ test.describe('Agents index', () => {
 
 			await page.goto(`/${account.workspaceId}/agents`)
 
-			// With no sessions seeded both agents land in Idle; Working and
-			// Failed keep their per-group empty states.
+			// With no sessions seeded both seeded agents land in Idle. Working has
+			// no rows, so it keeps its per-group empty state; Failed can hold a
+			// row from the workspace's default agent roster, so only assert that
+			// the group renders.
 			await expect(page.getByRole('link', { name: /Ada Atom/ })).toBeVisible({
 				timeout: 10_000,
 			})
 			await expect(page.getByRole('link', { name: /Brian Bot/ })).toBeVisible()
 			await expect(page.getByRole('heading', { name: /^Working$/ })).toBeVisible()
 			await expect(page.getByText('No working agents right now.')).toBeVisible()
-			await expect(page.getByText('No failed agents right now.')).toBeVisible()
+			await expect(page.getByRole('heading', { name: /^Failed$/ })).toBeVisible()
 
 			// The grouped sections and agent rows render in both colour schemes.
 			for (const scheme of ['light', 'dark'] as const) {

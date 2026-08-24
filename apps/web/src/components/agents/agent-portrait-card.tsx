@@ -233,18 +233,21 @@ const STATUS_META: Record<PortraitStatus, StatusMeta> = {
 		pillText: 'text-status-in_progress-text',
 		dot: 'bg-status-in_progress-text',
 	},
+	// `text-muted-foreground` on `bg-muted` is 4.39:1 in light mode — below the
+	// 4.5:1 WCAG AA floor at the 11px the agent header renders this pill at, so
+	// the neutral statuses take the foreground token and leave the dot muted.
 	paused: {
 		label: 'Paused',
 		Icon: Pause,
 		pillBg: 'bg-muted',
-		pillText: 'text-muted-foreground',
+		pillText: 'text-foreground',
 		dot: 'bg-muted-foreground',
 	},
 	idle: {
 		label: 'Idle',
 		Icon: Pause,
 		pillBg: 'bg-muted',
-		pillText: 'text-muted-foreground',
+		pillText: 'text-foreground',
 		dot: 'bg-muted-foreground',
 	},
 	failed: {
