@@ -48,6 +48,12 @@ test.describe('Agents index', () => {
 			await page.getByRole('menuitemcheckbox', { name: 'idle' }).click()
 			await settingsSaved
 
+			// Below 768px the Display panel is a modal Sheet, which aria-hides the
+			// rest of the page — every role query below would resolve to nothing
+			// while it is open. Dismiss it before asserting on the list.
+			await page.keyboard.press('Escape')
+			await expect(page.getByRole('button', { name: 'Display', exact: true })).toBeVisible()
+
 			await expect(page.getByRole('heading', { name: /^Working$/ })).not.toBeVisible()
 			await expect(page.getByRole('heading', { name: /^Failed$/ })).not.toBeVisible()
 			await expect(page.getByRole('link', { name: /Ada Atom/ })).toBeVisible()

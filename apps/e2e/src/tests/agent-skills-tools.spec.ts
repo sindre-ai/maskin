@@ -59,8 +59,11 @@ test.describe('Agent detail — Skills and Tools sections', () => {
 			const skills = page.getByRole('region', { name: 'Skills' })
 			await expect(skills).toBeVisible({ timeout: 10_000 })
 			await expect(skills.getByLabel(/skills? attached/i)).toBeVisible()
-			await expect(skills.getByText('Personal')).toBeVisible()
-			await expect(skills.getByText('Workspace')).toBeVisible()
+			// `exact` matters: with no seeded skill the section renders "No personal
+			// skills yet." / "No workspace skills yet.", which a substring match would
+			// also hit — a strict-mode violation on the CI run (no S3 → no seed).
+			await expect(skills.getByText('Personal', { exact: true })).toBeVisible()
+			await expect(skills.getByText('Workspace', { exact: true })).toBeVisible()
 			if (canSeedSkills) {
 				await expect(skills.getByText('deploy')).toBeVisible()
 			}
