@@ -1,22 +1,19 @@
+import { BriefDrawer } from '@/components/foryou/brief-drawer'
 import { ForYouCardQueue } from '@/components/foryou/foryou-card-queue'
 import {
 	type FeedMode,
 	type FeedSort,
 	ForYouHeader,
 	ForYouHeaderActions,
-	ForYouHeaderIdentity,
 } from '@/components/foryou/foryou-header'
 import { ForYouListRow } from '@/components/foryou/foryou-list-row'
-import { NewConversationComposer } from '@/components/foryou/new-conversation-composer'
+import { LegacyForYouPage } from '@/components/foryou/legacy/foryou-page'
 import { NorthStarPromptCard } from '@/components/foryou/north-star-prompt-card'
 import { OnboardingPromptCard } from '@/components/foryou/onboarding-prompt-card'
 import { SparseComposer } from '@/components/foryou/sparse-composer'
 import { PageHeader } from '@/components/layout/page-header'
-import { EmptyState } from '@/components/shared/empty-state'
-import { FilterTabs } from '@/components/shared/filter-tabs'
-import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
-import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
 import { useBets } from '@/hooks/use-bets'
 import { useMarkRead, useMarkUnread, useUnread } from '@/hooks/use-subscriptions'
 import {
@@ -24,19 +21,27 @@ import {
 	useUserDisplaySettings,
 } from '@/hooks/use-user-display-settings'
 import type { DisplaySettingsBody, UnreadItem } from '@/lib/api'
-import { cn } from '@/lib/cn'
-import { useNewConversationComposer } from '@/lib/new-conversation-context'
+import { typeLabel } from '@/lib/constants'
+import { useNewDesign } from '@/lib/new-design-context'
 import { useWorkspace } from '@/lib/workspace-context'
 import { CHROME_KEY } from '@maskin/shared'
 import { createFileRoute } from '@tanstack/react-router'
-import { Plus } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 export const Route = createFileRoute('/_authed/$workspaceId/')({
-	component: ForYouRedesign,
+	component: ForYouRoute,
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
+
+// The single `new-design` boundary for the For You feed: the v2 feed (card
+// queue, list rows, brief drawer) below, or the pre-v2 feed under
+// `components/foryou/legacy/`. Reads the resolved flag from `NewDesignProvider`
+// rather than calling `useFeatureFlag` again — see
+// `.claude/rules/feature-flags.md`.
+function ForYouRoute() {
+	return useNewDesign() ? <ForYouRedesign /> : <LegacyForYouPage />
+}
 
 const UNDO_WINDOW_MS = 15_000
 
@@ -66,10 +71,12 @@ function ForYouRedesign() {
 	const items = data?.items ?? []
 	const markRead = useMarkRead(workspaceId)
 	const markUnread = useMarkUnread(workspaceId)
-	const { open: composerOpen, setOpen: setComposerOpen } = useNewConversationComposer()
 
 	const [typeFilter, setTypeFilter] = useState<string | undefined>(undefined)
 	const [sort, setSort] = useState<FeedSort>('priority')
+	const [briefOpen, setBriefOpen] = useState(false)
+	// Item the user picked in List mode — the card queue opens parked on it.
+	const [pinnedKey, setPinnedKey] = useState<string | null>(null)
 
 	// Feed mode (cards/list) is persisted per actor under the `__chrome__`
 	// sentinel display-settings row — the same store the object-detail sidebar
@@ -143,6 +150,9 @@ function ForYouRedesign() {
 		}
 		if (sort === 'latest') {
 			return base.slice().sort(byLatestDesc)
+		}
+		if (sort === 'oldest') {
+			return base.slice().sort((a, b) => byLatestDesc(b, a))
 		}
 		return base.slice().sort((a, b) => {
 			const aAttention = a.max_unread_attention ?? -1
@@ -238,12 +248,21 @@ function ForYouRedesign() {
 			})
 		}
 
-		const count = snapshot.length
-		toast(`Marked ${count} thread${count === 1 ? '' : 's'} as read`, {
+		toast('All caught up', {
 			duration: UNDO_WINDOW_MS,
 			action: { label: 'Undo', onClick: restore },
 		})
 	}, [markItemRead, markItemUnread, visibleRegular])
+
+	// Picking a row in List mode returns to Cards parked on that item (mockup
+	// 490) — the card's own "Open →" stays the route into object detail.
+	const handleSelectListItem = useCallback(
+		(item: UnreadItem) => {
+			setPinnedKey(itemKey(item))
+			handleModeChange('cards')
+		},
+		[handleModeChange],
+	)
 
 	// Alt+U shortcut mirrors the visible "Mark all read" button in
 	// ForYouHeaderActions — power-user keyboard access alongside the click target.
@@ -257,20 +276,25 @@ function ForYouRedesign() {
 		return () => window.removeEventListener('keydown', onKeydown)
 	}, [handleMarkAllRead])
 
-	const composer = (
-		<NewConversationComposer
-			workspaceId={workspaceId}
-			open={composerOpen}
-			onOpenChange={setComposerOpen}
-		/>
-	)
-
+	// The skeleton mirrors the loaded feed's geometry — one chip-row-height
+	// header band and a single full-height card in the same 760px column —
+	// rather than a stack of three list-shaped cards. Cards mode only ever shows
+	// one card, so the old stack collapsed to a different height on hydration
+	// and pushed the CLS budget (apps/e2e/src/tests/typography.spec.ts) over
+	// 0.05.
 	if (isLoading || betsLoading) {
 		return (
-			<div className="flex flex-1 min-w-0 flex-col space-y-4" data-testid="foryou-redesign-root">
-				<CardSkeleton />
-				<CardSkeleton />
-				<CardSkeleton />
+			<div
+				className="flex min-h-0 min-w-0 flex-1 flex-col gap-3"
+				data-testid="foryou-redesign-root"
+			>
+				<div className="mx-auto mb-2 flex h-8 w-full max-w-[760px] items-center gap-2">
+					<Skeleton className="h-7 w-40" />
+					<Skeleton className="ml-auto h-8 w-20" />
+				</div>
+				<div className="mx-auto flex w-full min-h-0 max-w-[760px] flex-1 flex-col">
+					<Skeleton className="h-full w-full rounded-2xl" />
+				</div>
 			</div>
 		)
 	}
@@ -299,15 +323,16 @@ function ForYouRedesign() {
 				data-testid="foryou-redesign-root"
 			>
 				<PageHeader
-					stickyIdentity={<ForYouHeaderIdentity unreadCount={unreadRegular.length} />}
+					title="For you"
+					subtitle={unreadRegular.length === 0 ? 'All caught up' : `${unreadRegular.length} unread`}
 					actions={
 						<ForYouHeaderActions
-							onStartConversation={() => setComposerOpen(true)}
 							onMarkAllRead={handleMarkAllRead}
 							markAllReadDisabled={unreadRegular.length === 0}
+							onOpenBrief={() => setBriefOpen(true)}
 						/>
 					}
-					scrollLocked={mode === 'cards'}
+					scrollLocked={mode === 'cards' && queue.length > 0}
 				/>
 				{northStarCard}
 				<ForYouHeader
@@ -334,13 +359,22 @@ function ForYouRedesign() {
 							))}
 						</div>
 					)}
+					{/* The feed column is a fixed-height flex item (`flex-1 min-h-0`) so
+					    Cards mode can hand the card the exact remaining height and let
+					    the thread scroll inside it. That cap applies to List mode too,
+					    where the rows are plain flow content — so the list needs its
+					    own scroll container, or anything past the fold is unreachable
+					    (the page scroller can't see the overflow through the cap). */}
 					{mode === 'list' ? (
-						<div className="border-t border-border">
-							{filteredRegular.map((item) => (
+						<div className="mx-auto flex w-full min-h-0 max-w-[760px] flex-1 flex-col gap-2 overflow-y-auto pb-4">
+							{queue.map((item) => (
 								<ForYouListRow
 									key={`${item.entity_type}-${item.entity_id}`}
-									workspaceId={workspaceId}
 									item={item}
+									current={itemKey(item) === pinnedKey}
+									subtitle={listRowSubtitle(item)}
+									meta={`${item.unread_count} new`}
+									onSelect={handleSelectListItem}
 								/>
 							))}
 						</div>
@@ -348,10 +382,12 @@ function ForYouRedesign() {
 						<ForYouCardQueue
 							workspaceId={workspaceId}
 							queue={queue}
+							pinnedKey={pinnedKey}
+							sort={sort}
 							sparseComposer={sparseComposerNode}
 						/>
 					)}
-					{mode === 'list' && typeFilter === 'mentions' && filteredRegular.length === 0 && (
+					{mode === 'list' && typeFilter === 'mentions' && queue.length === 0 && (
 						<p className="py-10 text-center text-sm text-muted-foreground">No unread mentions.</p>
 					)}
 					{mode === 'list' && sparseComposerNode ? (
@@ -359,9 +395,18 @@ function ForYouRedesign() {
 					) : null}
 				</div>
 			</div>
-			{composer}
+			<BriefDrawer workspaceId={workspaceId} open={briefOpen} onOpenChange={setBriefOpen} />
 		</>
 	)
+}
+
+// List rows carry a muted sub line under the title. Only fields the unread feed
+// actually returns — the object's type, plus its owning status word. How much
+// of the thread is new rides the trailing meta beside the status dot instead
+// (mockup 492–496).
+function listRowSubtitle(item: UnreadItem): string {
+	const type = item.object?.type
+	return type ? typeLabel(type) : ''
 }
 
 // Shared keydown guard for the `Alt+U` For You bulk-mark-read shortcut. Alt on

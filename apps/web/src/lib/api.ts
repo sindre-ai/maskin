@@ -315,6 +315,19 @@ export const api = {
 					method: 'POST',
 					body: data,
 				}),
+			// NOT YET LIVE — `apps/dev/src/routes/workspaces.ts` implements only POST
+			// and GET on `/{id}/members`; there is no PATCH or DELETE on
+			// `/{id}/members/{actorId}`. Landed ahead of the server work for the
+			// member-management screen; both calls 404 until those routes ship.
+			updateRole: (workspaceId: string, actorId: string, role: string) =>
+				request<MemberResponse>(`/workspaces/${workspaceId}/members/${actorId}`, {
+					method: 'PATCH',
+					body: { role },
+				}),
+			remove: (workspaceId: string, actorId: string) =>
+				request<{ removed: boolean }>(`/workspaces/${workspaceId}/members/${actorId}`, {
+					method: 'DELETE',
+				}),
 		},
 	},
 
@@ -451,6 +464,10 @@ export const api = {
 			}),
 		stop: (id: string, workspaceId: string) =>
 			request<SessionResponse>(`/sessions/${id}/stop`, { method: 'POST', workspaceId }),
+		pause: (id: string, workspaceId: string) =>
+			request<SessionResponse>(`/sessions/${id}/pause`, { method: 'POST', workspaceId }),
+		resume: (id: string, workspaceId: string) =>
+			request<SessionResponse>(`/sessions/${id}/resume`, { method: 'POST', workspaceId }),
 		usage: (
 			workspaceId: string,
 			params: { actor_id: string; from: string; to: string; bucket: 'hour' | 'day' | 'week' },
@@ -535,6 +552,34 @@ export const api = {
 			}),
 	},
 
+	// NOT YET LIVE — no billing routes exist on the backend today. This client
+	// surface is landed ahead of the server work so the billing screens can be
+	// built against a settled shape; every call here currently 404s, so nothing
+	// in the app may call it until the routes ship.
+	//
+	// When the backend lands, re-check before wiring anything up: the paths
+	// (`/billing`, `/billing/checkout`, `/billing/complete`, `/billing/portal`),
+	// the request bodies, and `BillingSummaryResponse`/`BillingCheckoutResponse`
+	// below — they are a forward guess, not a contract the server has agreed to.
+	// The billing status tokens in `lib/constants.ts` are the matching half.
+	billing: {
+		summary: (workspaceId: string) => request<BillingSummaryResponse>('/billing', { workspaceId }),
+		startCheckout: (workspaceId: string, invoiceEmail?: string) =>
+			request<BillingCheckoutResponse>('/billing/checkout', {
+				method: 'POST',
+				body: invoiceEmail ? { invoiceEmail } : {},
+				workspaceId,
+			}),
+		complete: (workspaceId: string, paymentIntentId: string, invoiceEmail?: string) =>
+			request<BillingSummaryResponse>('/billing/complete', {
+				method: 'POST',
+				body: invoiceEmail ? { paymentIntentId, invoiceEmail } : { paymentIntentId },
+				workspaceId,
+			}),
+		portal: (workspaceId: string) =>
+			request<{ url: string }>('/billing/portal', { method: 'POST', workspaceId }),
+	},
+
 	marketplaceLoops: {
 		list: (params?: { type?: string; use_case?: string; q?: string }) => {
 			const qs = params
@@ -576,10 +621,10 @@ export const api = {
 				`/installed-loops?workspaceId=${encodeURIComponent(workspaceId)}`,
 				{ workspaceId },
 			),
-		install: (workspaceId: string, loopId: string) =>
+		install: (workspaceId: string, loopId: string, source?: 'detail') =>
 			request<InstalledLoopInstallResponse>('/installed-loops', {
 				method: 'POST',
-				body: { loopId, workspaceId },
+				body: { loopId, workspaceId, ...(source ? { source } : {}) },
 				workspaceId,
 			}),
 		fork: (workspaceId: string, installedLoopId: string) =>
@@ -637,6 +682,12 @@ export const api = {
 				workspaceId,
 			})
 		},
+	},
+
+	featureFlags: {
+		// Per-actor, not per-workspace — no workspaceId. The backend resolves the
+		// booleans; the tester actor id list never reaches the browser.
+		get: () => request<{ flags: Record<string, boolean> }>('/feature-flags'),
 	},
 
 	userDisplaySettings: {
@@ -740,6 +791,70 @@ export const api = {
 		detach: (actorId: string, workspaceSkillId: string) =>
 			request<{ deleted: boolean }>(`/actors/${actorId}/workspace-skills/${workspaceSkillId}`, {
 				method: 'DELETE',
+			}),
+	},
+
+	conversations: {
+		list: (workspaceId: string, params?: Record<string, string>) => {
+			const qs = params ? `?${new URLSearchParams(params)}` : ''
+			return request<ConversationListResponse>(`/conversations${qs}`, { workspaceId })
+		},
+		get: (id: string, workspaceId: string) =>
+			request<ConversationDetailResponse>(`/conversations/${id}`, { workspaceId }),
+		create: (workspaceId: string, data: CreateConversationInput) =>
+			request<ConversationDetailResponse>('/conversations', {
+				method: 'POST',
+				body: data,
+				workspaceId,
+			}),
+		update: (id: string, workspaceId: string, data: UpdateConversationInput) =>
+			request<ConversationDetailResponse>(`/conversations/${id}`, {
+				method: 'PATCH',
+				body: data,
+				workspaceId,
+			}),
+		addParticipants: (id: string, workspaceId: string, actorIds: string[]) =>
+			request<ConversationParticipantResponse[]>(`/conversations/${id}/participants`, {
+				method: 'POST',
+				body: { actor_ids: actorIds },
+				workspaceId,
+			}),
+		removeParticipant: (id: string, actorId: string, workspaceId: string) =>
+			request<void>(`/conversations/${id}/participants/${actorId}`, {
+				method: 'DELETE',
+				workspaceId,
+			}),
+		messages: (id: string, workspaceId: string, params?: Record<string, string>) => {
+			const qs = params ? `?${new URLSearchParams(params)}` : ''
+			return request<MessagesListResponse>(`/conversations/${id}/messages${qs}`, { workspaceId })
+		},
+		postMessage: (id: string, workspaceId: string, data: PostMessageInput) =>
+			request<MessageResponse>(`/conversations/${id}/messages`, {
+				method: 'POST',
+				body: data,
+				workspaceId,
+			}),
+		editMessage: (id: string, workspaceId: string, messageId: number, data: EditMessageInput) =>
+			request<MessageResponse>(`/conversations/${id}/messages/${messageId}`, {
+				method: 'PATCH',
+				body: data,
+				workspaceId,
+			}),
+		// agentId scopes the retry to one agent ("Redo this response"); omitted,
+		// every participant re-evaluates ("Ask agents to respond again").
+		retryMessage: (id: string, workspaceId: string, messageId: number, agentId?: string) =>
+			request<{ retried: boolean }>(
+				`/conversations/${id}/messages/${messageId}/retry${agentId ? `?agent_id=${agentId}` : ''}`,
+				{
+					method: 'POST',
+					workspaceId,
+				},
+			),
+		updateMe: (id: string, workspaceId: string, data: UpdateConversationParticipantStateInput) =>
+			request<ConversationParticipantStateResponse>(`/conversations/${id}/me`, {
+				method: 'PATCH',
+				body: data,
+				workspaceId,
 			}),
 	},
 
@@ -1230,6 +1345,147 @@ export interface UpdateFileInput {
 	annotations?: FileAnnotation[]
 }
 
+// Conversation entity fields are camelCase (Drizzle column names passed
+// through `serialize()`, which only stringifies Dates — it does not
+// snake_case). Only per-viewer computed fields (pinned, archived,
+// unread_count, snippet, last_read_message_id) are literal keys added by the
+// route handler, and those happen to already read as snake_case/plain words.
+// See apps/dev/src/lib/openapi-schemas.ts (conversation*ResponseSchema).
+export interface ConversationParticipantResponse {
+	actorId: string
+	actorName: string
+	actorType: 'human' | 'agent'
+	joinedAt: string | null
+	addedBy: string | null
+}
+
+export interface ConversationListItemResponse {
+	id: string
+	workspaceId: string
+	title: string
+	createdBy: string
+	lastMessageAt: string | null
+	createdAt: string | null
+	updatedAt: string | null
+	pinned: boolean
+	archived: boolean
+	unread_count: number
+	snippet: string | null
+	participants: ConversationParticipantResponse[]
+}
+
+export interface ConversationListResponse {
+	conversations: ConversationListItemResponse[]
+	has_more: boolean
+}
+
+export interface ConversationDetailResponse {
+	id: string
+	workspaceId: string
+	title: string
+	createdBy: string
+	lastMessageAt: string | null
+	createdAt: string | null
+	updatedAt: string | null
+	pinned: boolean
+	archived: boolean
+	last_read_message_id: number | null
+	participants: ConversationParticipantResponse[]
+}
+
+export interface ConversationParticipantStateResponse {
+	pinned: boolean
+	archived: boolean
+	last_read_message_id: number | null
+}
+
+export interface MessageAttachment {
+	file_id: string
+	name?: string
+	mime_type?: string
+	size_bytes?: number
+}
+
+export interface MessageContextObject {
+	id: string
+	title?: string
+	type?: string
+}
+
+export interface MessageContextNotification {
+	id: string
+	title?: string
+}
+
+export interface MessageFinalOutput {
+	dedupe_key: string
+	/** The chat message whose turn produced this output, when resolvable. */
+	message_id?: number | null
+	is_error?: boolean
+	subtype?: string
+	truncated?: boolean
+}
+
+export interface MessageMetadata {
+	attachments?: MessageAttachment[]
+	mentions?: string[]
+	context_objects?: MessageContextObject[]
+	context_notifications?: MessageContextNotification[]
+	/**
+	 * Backend-owned; stripped from anything a client sends. 'final_output'
+	 * marks an agent's automatically-posted end-of-turn reply, as opposed to
+	 * one it posted mid-turn via the post_conversation_message MCP tool.
+	 */
+	source?: 'final_output'
+	final_output?: MessageFinalOutput
+}
+
+export interface MessageResponse {
+	id: number
+	conversationId: string
+	actorId: string
+	actorName: string
+	actorType: 'human' | 'agent'
+	kind: 'message' | 'system'
+	content: string
+	metadata: MessageMetadata | null
+	sessionId: string | null
+	createdAt: string | null
+	editedAt: string | null
+}
+
+export interface EditMessageInput {
+	content: string
+}
+
+export interface MessagesListResponse {
+	messages: MessageResponse[]
+	has_more: boolean
+}
+
+export interface CreateConversationInput {
+	title: string
+	participant_actor_ids: string[]
+	initial_message?: string
+	initial_message_metadata?: MessageMetadata
+}
+
+export interface UpdateConversationInput {
+	title: string
+}
+
+export interface UpdateConversationParticipantStateInput {
+	pinned?: boolean
+	archived?: boolean
+	last_read_message_id?: number
+}
+
+export interface PostMessageInput {
+	content: string
+	metadata?: MessageMetadata
+	session_id?: string
+}
+
 export interface SessionConfigInput {
 	/** Start the container with stdin attached so subsequent user turns can be delivered via the input route. */
 	interactive?: boolean
@@ -1330,6 +1586,11 @@ export interface CreateCommentInput {
 	mentions?: string[]
 	parent_event_id?: number
 	attachment_file_ids?: string[]
+	/** Structured extras the backend already accepts on `POST /events`
+	 *  (`createCommentSchema.metadata`, a `safeMetadataSchema` record). Today the
+	 *  UI writes `{ chips: string[] }` from the composer's "Attach a decision"
+	 *  affordance; `DecisionChips` renders them under the posted comment. */
+	metadata?: Record<string, unknown>
 }
 
 // Imports
@@ -1496,4 +1757,37 @@ interface InstalledLoopForkResponse {
 	installedAt: string | null
 	updatedAt: string | null
 	detached: { actors: number; triggers: number; skills: number; integrations: number }
+}
+
+export interface BillingPlanResponse {
+	planId: string
+	planLabel: string | null
+	status: string
+	priceCents: number | null
+	currency: string
+	nextChargeAt: string | null
+}
+
+export interface BillingInvoiceResponse {
+	id: string
+	description: string
+	amountCents: number
+	currency: string
+	status: string
+	billedAt: string
+}
+
+export interface BillingSummaryResponse {
+	configured: boolean
+	testMode: boolean
+	publishableKey: string | null
+	plan: BillingPlanResponse
+	invoiceEmail: string | null
+	invoices: BillingInvoiceResponse[]
+}
+
+export interface BillingCheckoutResponse {
+	clientSecret: string
+	testMode: boolean
+	plan: BillingPlanResponse
 }

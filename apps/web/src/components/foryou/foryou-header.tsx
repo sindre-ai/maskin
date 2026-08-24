@@ -1,5 +1,4 @@
 import { FilterTabs } from '@/components/shared/filter-tabs'
-import { NewMenu } from '@/components/shared/new-menu'
 import { Button } from '@/components/ui/button'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import {
@@ -9,92 +8,80 @@ import {
 } from '@/components/ui/responsive-popover'
 import { Separator } from '@/components/ui/separator'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { useWorkspace } from '@/lib/workspace-context'
-import { useNavigate } from '@tanstack/react-router'
-import {
-	ArrowUpDown,
-	CheckCheck,
-	LayoutGrid,
-	List,
-	Newspaper,
-	SlidersHorizontal,
-} from 'lucide-react'
+import { ArrowUpDown, CheckCheck, ChevronDown, LayoutGrid, List, Newspaper } from 'lucide-react'
 
 export type FeedMode = 'cards' | 'list'
-export type FeedSort = 'latest' | 'priority'
+export type FeedSort = 'latest' | 'priority' | 'oldest'
 
 const SORT_LABEL: Record<FeedSort, string> = {
-	latest: 'Latest activity',
-	priority: 'Priority',
+	priority: 'Most urgent',
+	latest: 'Newest first',
+	oldest: 'Oldest first',
 }
 
-const SORT_OPTIONS: readonly FeedSort[] = ['priority', 'latest']
+const SORT_OPTIONS: readonly FeedSort[] = ['priority', 'latest', 'oldest']
 
-interface ForYouHeaderIdentityProps {
-	unreadCount: number
+// The chip's leading swatch uses the type's *foreground* token as a fill — the
+// `-bg` tint is a pale wash built to sit under text and reads as blank at 6px.
+// Written out as literals so Tailwind's class scanner sees them.
+const CHIP_DOT: Record<string, string> = {
+	insight: 'bg-type-insight-text',
+	bet: 'bg-type-bet-text',
+	task: 'bg-type-task-text',
 }
-
-// Compact "For You" title + unread badge projected into the global header's
-// sticky-identity slot (same slot/style bet-detail pages use via
-// StickyBetIdentity) — this replaces the breadcrumb on the For You route so
-// the title only appears once.
-export function ForYouHeaderIdentity({ unreadCount }: ForYouHeaderIdentityProps) {
-	return (
-		<div className="flex min-w-0 items-baseline gap-2" data-testid="foryou-header-identity">
-			<span className="truncate text-base font-semibold text-foreground">For You</span>
-			<span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground tabular-nums">
-				{unreadCount} unread
-			</span>
-		</div>
-	)
-}
+const DEFAULT_CHIP_DOT = 'bg-muted-foreground'
 
 interface ForYouHeaderActionsProps {
-	onStartConversation: () => void
 	// Optional so the button only renders where a caller wires it up — kept out
 	// of test render helpers that don't pass it.
 	onMarkAllRead?: () => void
 	markAllReadDisabled?: boolean
+	onOpenBrief: () => void
 }
 
-// "Mark all read" + "Today's brief" + "New" projected into the global header's
-// actions slot — replaces the generic Create/Chat icon buttons on the For You route.
-// The New menu itself is the shared `NewMenu` (see components/shared/new-menu.tsx)
-// so its contents never drift from the menu on every other page.
+// "Brief" + "Mark all read" projected into the shared top nav's actions slot.
+// The nav owns the title/subtitle and the global New menu — this component
+// only contributes the two For You-specific affordances, and must not render a
+// second `NewMenu` of its own, or the row shows two "New chat" buttons side by
+// side. Mark-all-read is *absent* rather than disabled when there's nothing
+// unread (mockup 218's `cuHas` gate) so the nav row doesn't carry a dead control.
+// Every control in the shared top nav — the search field, the split New
+// button, the sidebar trigger — is 30px tall, which is what keeps the nav row
+// at its 44px `min-h-11`. A `size="sm"` Button is 36px and pushes the row to
+// 49px, and because these actions are published into the nav only after the
+// feed loads, that growth moved the whole page down 5px on first paint (0.054
+// CLS, over the typography.spec budget). Match the nav's height instead.
+const NAV_ACTION_HEIGHT = 'h-[30px]'
+
 export function ForYouHeaderActions({
-	onStartConversation,
 	onMarkAllRead,
 	markAllReadDisabled,
+	onOpenBrief,
 }: ForYouHeaderActionsProps) {
-	const { workspaceId } = useWorkspace()
-	const navigate = useNavigate()
-
 	return (
-		<div className="flex items-center gap-2">
-			{onMarkAllRead && (
+		<div className="flex items-center gap-1">
+			<Button
+				variant="ghost"
+				size="sm"
+				aria-label="Today's brief"
+				onClick={onOpenBrief}
+				className={NAV_ACTION_HEIGHT}
+			>
+				<Newspaper size={14} aria-hidden />
+				<span className="hidden sm:inline">Brief</span>
+			</Button>
+			{onMarkAllRead && !markAllReadDisabled && (
 				<Button
-					variant="outline"
+					variant="ghost"
 					size="sm"
 					aria-label="Mark all as read"
 					onClick={onMarkAllRead}
-					disabled={markAllReadDisabled}
-					className="h-8 gap-1.5 px-2 sm:px-3"
+					className={NAV_ACTION_HEIGHT}
 				>
 					<CheckCheck size={14} aria-hidden />
 					<span className="hidden sm:inline">Mark all read</span>
 				</Button>
 			)}
-			<Button
-				variant="outline"
-				size="sm"
-				aria-label="Today's brief"
-				onClick={() => navigate({ to: '/$workspaceId/briefing', params: { workspaceId } })}
-				className="h-8 gap-1.5 px-2 sm:px-3"
-			>
-				<Newspaper size={14} aria-hidden />
-				<span className="hidden sm:inline">Today's brief</span>
-			</Button>
-			<NewMenu onNewChat={onStartConversation} />
 		</div>
 	)
 }
@@ -111,12 +98,12 @@ interface ForYouHeaderProps {
 	onSortChange: (sort: FeedSort) => void
 }
 
-// Redesigned For You header (parent bet 37865542). Dynamic type-filter chip
-// bar (All, Mentions, then one chip per object type present in the unread
-// queue) and a single "Display" popover holding Cards/List + Sort — replaces
-// the previous separate Cards/List tabs + sort dropdown + All/Mentions tabs.
-// The title and Brief/New actions live in the global header instead (see
-// ForYouHeaderIdentity/ForYouHeaderActions) so they aren't duplicated here.
+// The v2 filter row (mockup 283–305): per-type chips on the left, a "Display"
+// popover holding Cards/List + Sort on the right, both centred on the same
+// 760px column the card queue uses. The whole row disappears when there is
+// nothing unread (`cuFilterShow`) — an "All (0)" chip is noise on a drained
+// feed. The screen title and Brief/Mark-all-read actions live in the shared
+// top nav instead (see ForYouHeaderActions).
 export function ForYouHeader({
 	unreadCount,
 	typeFilter,
@@ -128,6 +115,8 @@ export function ForYouHeader({
 	sort,
 	onSortChange,
 }: ForYouHeaderProps) {
+	if (unreadCount === 0 && typeCounts.size === 0) return null
+
 	const filterTabs = [
 		{ label: 'All', value: undefined as string | undefined, count: unreadCount },
 		...(mentionCount > 0 ? [{ label: 'Mentions', value: 'mentions', count: mentionCount }] : []),
@@ -137,89 +126,85 @@ export function ForYouHeader({
 				label: type.charAt(0).toUpperCase() + type.slice(1),
 				value: type,
 				count,
+				dot: CHIP_DOT[type] ?? DEFAULT_CHIP_DOT,
+				dotShape: 'square' as const,
 			})),
 	]
 
 	return (
-		<header className="mb-2">
-			<div className="flex items-center gap-2">
-				<div className="min-w-0 flex-1 overflow-x-auto">
-					<FilterTabs
-						aria-label="Filter unread feed"
-						value={typeFilter}
-						onChange={onTypeFilterChange}
-						tabs={filterTabs}
-					/>
-				</div>
-
-				<ResponsivePopover>
-					<ResponsivePopoverTrigger asChild>
-						<Button
-							variant="outline"
-							size="sm"
-							aria-label="Display options"
-							className="h-8 shrink-0 gap-1.5 px-2 sm:px-3"
-						>
-							<SlidersHorizontal size={14} aria-hidden />
-							<span className="hidden sm:inline">Display</span>
-						</Button>
-					</ResponsivePopoverTrigger>
-					<ResponsivePopoverContent
-						align="end"
-						accessibleTitle="Display options"
-						hideCloseButton
-						className="w-64"
-					>
-						<div className="space-y-3">
-							<Tabs
-								value={mode}
-								onValueChange={(v) => onModeChange(v as FeedMode)}
-								aria-label="Display mode"
-							>
-								<TabsList className="h-8 w-full gap-1 p-1">
-									<TabsTrigger
-										value="cards"
-										aria-label="Cards"
-										className="h-6 flex-1 gap-1.5 px-2 text-xs"
-									>
-										<LayoutGrid size={14} aria-hidden />
-										Cards
-									</TabsTrigger>
-									<TabsTrigger
-										value="list"
-										aria-label="List"
-										className="h-6 flex-1 gap-1.5 px-2 text-xs"
-									>
-										<List size={14} aria-hidden />
-										List
-									</TabsTrigger>
-								</TabsList>
-							</Tabs>
-
-							<Separator />
-
-							<div>
-								<p className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-									<ArrowUpDown size={12} aria-hidden />
-									Sort by
-								</p>
-								<RadioGroup value={sort} onValueChange={(v) => onSortChange(v as FeedSort)}>
-									{SORT_OPTIONS.map((value) => (
-										<label
-											key={value}
-											htmlFor={`sort-${value}`}
-											className="flex items-center gap-2 text-sm"
-										>
-											<RadioGroupItem value={value} id={`sort-${value}`} />
-											{SORT_LABEL[value]}
-										</label>
-									))}
-								</RadioGroup>
-							</div>
-						</div>
-					</ResponsivePopoverContent>
-				</ResponsivePopover>
+		<header className="mx-auto mb-2 flex w-full max-w-[760px] items-center gap-2">
+			<div className="min-w-0 flex-1">
+				<FilterTabs
+					aria-label="Filter unread feed"
+					variant="pill"
+					value={typeFilter}
+					onChange={onTypeFilterChange}
+					tabs={filterTabs}
+				/>
 			</div>
+
+			<ResponsivePopover>
+				<ResponsivePopoverTrigger asChild>
+					<Button variant="outline" size="sm" aria-label="Display options" className="shrink-0">
+						<span className="hidden sm:inline">Display</span>
+						<ChevronDown size={14} className="opacity-70" aria-hidden />
+					</Button>
+				</ResponsivePopoverTrigger>
+				<ResponsivePopoverContent
+					align="end"
+					accessibleTitle="Display options"
+					hideCloseButton
+					className="w-64"
+				>
+					<div className="space-y-3">
+						<Tabs
+							value={mode}
+							onValueChange={(v) => onModeChange(v as FeedMode)}
+							aria-label="Display mode"
+						>
+							<TabsList className="h-8 w-full gap-1 p-1">
+								<TabsTrigger
+									value="cards"
+									aria-label="Cards"
+									className="h-6 flex-1 gap-1.5 px-2 text-xs"
+								>
+									<LayoutGrid size={14} aria-hidden />
+									Cards
+								</TabsTrigger>
+								<TabsTrigger
+									value="list"
+									aria-label="List"
+									className="h-6 flex-1 gap-1.5 px-2 text-xs"
+								>
+									<List size={14} aria-hidden />
+									List
+								</TabsTrigger>
+							</TabsList>
+						</Tabs>
+
+						<Separator />
+
+						<div>
+							<p className="eyebrow mb-2 flex items-center gap-1.5">
+								<ArrowUpDown size={12} aria-hidden />
+								Sort by
+							</p>
+							<RadioGroup value={sort} onValueChange={(v) => onSortChange(v as FeedSort)}>
+								{SORT_OPTIONS.map((value) => (
+									<label
+										key={value}
+										htmlFor={`sort-${value}`}
+										className="flex items-center gap-2 text-sm"
+									>
+										<RadioGroupItem value={value} id={`sort-${value}`} />
+										{SORT_LABEL[value]}
+									</label>
+								))}
+							</RadioGroup>
+						</div>
+					</div>
+				</ResponsivePopoverContent>
+			</ResponsivePopover>
 		</header>
 	)
 }

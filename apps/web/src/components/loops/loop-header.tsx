@@ -65,9 +65,9 @@ export function LoopHeader({
 				</div>
 			</div>
 
-			{loop.guarantee && (
+			{loop.content && (
 				<div className="mt-3">
-					<MarkdownContent content={loop.guarantee} className="text-sm text-muted-foreground" />
+					<MarkdownContent content={loop.content} className="text-sm text-muted-foreground" />
 				</div>
 			)}
 		</div>

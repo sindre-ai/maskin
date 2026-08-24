@@ -1,55 +1,39 @@
-import { ChatTranscript } from '@/components/chat/chat-transcript'
 import { SelectionChips } from '@/components/chat/selection-chips'
 import {
 	type SlashKindId,
 	SlashPicker,
 	type SlashPickerResult,
 } from '@/components/chat/slash-picker'
+import { CreatePicker } from '@/components/shared/create-picker'
+import { TypeBadge } from '@/components/shared/type-badge'
 import { UploadProgress } from '@/components/shared/upload-progress'
 import { Button } from '@/components/ui/button'
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuLabel,
+	DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
-import { useChatOneShot } from '@/hooks/use-chat-one-shot'
-import { useChatSession } from '@/hooks/use-chat-session'
+import { useAvailableObjectTypes } from '@/hooks/use-available-object-types'
+import { useDictation } from '@/hooks/use-dictation'
 import { useUploadFile } from '@/hooks/use-files'
-import {
-	deriveEntryAgentRole,
-	trackChatImageUpload,
-	trackSpecialistSummonedManually,
-} from '@/lib/analytics'
-import type { SessionInputAttachment } from '@/lib/api'
-import {
-	type ChatSelection,
-	type ChatSelectionAction,
-	type ChatSelectionNotification,
-	type ChatSelectionObject,
-	EMPTY_CHAT_SELECTION,
-	buildOneShotActionPrompt,
-} from '@/lib/chat-selection'
-import type { ChatEvent, UserAttachmentView } from '@/lib/chat-stream'
+import { deriveEntryAgentRole, trackSpecialistSummonedManually } from '@/lib/analytics'
+import type { ChatSelection, ChatSelectionAction } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
 import { readFileAsBase64 } from '@/lib/file-utils'
-import { Bot, Box, Paperclip, Send, X } from 'lucide-react'
+import { AtSign, Box, Mic, Paperclip, Plus, Send, Sparkles, X } from 'lucide-react'
 import {
 	type ChangeEvent,
 	type FormEvent,
 	type KeyboardEvent,
-	forwardRef,
 	useCallback,
 	useEffect,
-	useImperativeHandle,
 	useRef,
 	useState,
 } from 'react'
-
-/**
- * Imperative API for parents that render a `<Chat>` but also need to
- * reach in to start a fresh conversation (e.g. the panel's `+` button).
- */
-export interface ChatHandle {
-	/** Stops the current chat container, clears local transcript + selection. */
-	newChat: () => void
-}
 
 export type ChatSurface = 'sheet' | 'pulse-bar'
 
@@ -69,450 +53,6 @@ function makeTempId() {
 		: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
 }
 
-export interface ChatProps {
-	workspaceId: string
-	agentActorId: string | null
-	/**
-	 * Kebab-cased role of the default chat agent. Rides on
-	 * `chat_session_started.entry_agent_role` for the persistent session so
-	 * the parent bet's PostHog query can compute the `chief_start_rate` metric.
-	 * One-shot sessions derive the role from the picked agent themselves.
-	 */
-	entryAgentRole?: string | null
-	surface: ChatSurface
-	/**
-	 * Composer-level selection. When `selection.agent` is set, the next send is
-	 * routed to that agent as a one-shot session instead of the persistent
-	 * chat session. Defaults to an empty selection so existing callers keep
-	 * talking to the agent.
-	 */
-	selection?: ChatSelection
-	/**
-	 * Dispatches a reducer action against the caller's selection state.
-	 * Supplied alongside `selection` when the caller wants the chips' remove
-	 * X buttons to update state (see `chatSelectionReducer`). When omitted
-	 * the chips still render but their remove buttons are inert.
-	 */
-	onDispatchSelection?: (action: ChatSelectionAction) => void
-	/**
-	 * When provided, replaces the internal send path so the caller can
-	 * intercept submit — e.g. the Pulse input bar opens the sheet and
-	 * forwards the message + selection there instead of sending directly.
-	 * Receives the composer content and the active selection snapshot.
-	 */
-	onSubmitOverride?: (content: string, selection: ChatSelection) => void | Promise<void>
-	/**
-	 * When this transitions from `null` to a non-empty string, the composer
-	 * auto-submits that content via the normal send path exactly once. Used
-	 * by the sheet to pick up a message forwarded by the Pulse input bar so
-	 * the conversation "continues there". Callers must clear this (via
-	 * `onAutoSendConsumed`) once they observe the consumption.
-	 */
-	autoSendMessage?: string | null
-	/** Fired after `autoSendMessage` has been dispatched. */
-	onAutoSendConsumed?: () => void
-	/**
-	 * Emits the merged transcript events to the parent on each change. Used by
-	 * the panel's "export conversation" menu without lifting the underlying
-	 * session hooks out of this component.
-	 */
-	onEventsChange?: (events: ChatEvent[]) => void
-	className?: string
-}
-
-/**
- * Shared chat surface. Composes `<Transcript />`, `<Composer />`,
- * and the `<SelectionChips />` row, hiding the transcript in `pulse-bar` mode
- * so the same component can render as an input-only bar at the top of the
- * Pulse page and as a full-height sheet on the right-side overlay.
- *
- * Send routing (task 31):
- * - `selection.agent` set → POST a one-shot session via `useChatOneShot`,
- *   passing the message + attached object context as the action_prompt, and
- *   streams that session's logs inline as a single turn.
- * - otherwise → forwards to the persistent session via
- *   `useChatSession`, attaching objects (if any) as first-class attachments.
- */
-export const Chat = forwardRef<ChatHandle, ChatProps>(function Chat(
-	{
-		workspaceId,
-		agentActorId,
-		entryAgentRole = null,
-		surface,
-		selection,
-		onDispatchSelection,
-		onSubmitOverride,
-		autoSendMessage,
-		onAutoSendConsumed,
-		onEventsChange,
-		className,
-	},
-	ref,
-) {
-	const activeSelection = selection ?? EMPTY_CHAT_SELECTION
-	const selectedAgent = activeSelection.agent
-	const selectedObjects = activeSelection.objects
-	const selectedNotifications = activeSelection.notifications
-	const selectedFiles = activeSelection.files
-
-	const session = useChatSession({ workspaceId, agentActorId, entryAgentRole })
-	const oneShot = useChatOneShot()
-
-	// Merge events from both sources while preserving arrival order, so a turn
-	// answered by the selected agent renders immediately after the user's last
-	// session turn (and vice versa).
-	const events = useMergedTranscript(workspaceId, session.events, oneShot.events)
-
-	useEffect(() => {
-		onEventsChange?.(events)
-	}, [events, onEventsChange])
-
-	useImperativeHandle(
-		ref,
-		() => ({
-			newChat: () => {
-				// Front-end-only reset: the previous container keeps
-				// running so any in-flight work the user kicked off there
-				// completes in the background. The watchdog will pause it
-				// once it goes idle.
-				session.reset()
-				oneShot.clear()
-				onDispatchSelection?.({ type: 'clear_all' })
-			},
-		}),
-		[session, oneShot, onDispatchSelection],
-	)
-
-	const showTranscript = surface === 'sheet'
-	// Lazy bootstrap: the composer is usable whenever the agent actor is
-	// present — the first send() call creates the container. Only disable
-	// while the session is actively booting (post-create, pre-
-	// running), in an error state, or finished.
-	// 'closed' is intentionally excluded: when the container exits the session
-	// is marked closed, but the user should still be able to send a new message
-	// — session.send() will bootstrap a fresh session in that case so the
-	// conversation continues seamlessly.
-	const sessionBlocked = session.status === 'starting' || session.status === 'error'
-	const oneShotBusy = oneShot.status === 'starting'
-	const disabled = selectedAgent ? oneShotBusy : sessionBlocked || !agentActorId
-	// Show the "Connecting to agent…" empty-state only while we're actively
-	// booting a session. `idle` is now the default-empty state and shouldn't
-	// trigger the connecting copy.
-	const starting = !selectedAgent && session.status === 'starting'
-	const error = selectedAgent ? oneShot.error : session.error
-
-	const [pendingTurn, setPendingTurn] = useState(false)
-	const pendingBaselineRef = useRef(0)
-
-	// Clear pendingTurn once any assistant event lands for this turn. `result`
-	// is included so turns that end without content (empty / errored) also
-	// release the composer instead of stranding it.
-	useEffect(() => {
-		if (!pendingTurn) return
-		for (let i = pendingBaselineRef.current; i < events.length; i++) {
-			if (isTurnProgressEvent(events[i])) {
-				setPendingTurn(false)
-				return
-			}
-		}
-	}, [pendingTurn, events])
-
-	// Release the spinner if the underlying session/one-shot hook flips to a
-	// terminal state without ever emitting a turn-progress event (e.g. stream
-	// died mid-turn, container crashed on boot).
-	const activeStatus = selectedAgent ? oneShot.status : session.status
-	useEffect(() => {
-		if (!pendingTurn) return
-		if (activeStatus === 'error' || activeStatus === 'closed') {
-			setPendingTurn(false)
-		}
-	}, [pendingTurn, activeStatus])
-
-	const handleSend = useCallback(
-		async (content: string) => {
-			if (onSubmitOverride) {
-				// Intercept path: caller takes ownership of what happens next
-				// (e.g. the Pulse bar forwards to the sheet). Skip pendingTurn
-				// tracking — no session turn is in flight from this surface.
-				await onSubmitOverride(content, activeSelection)
-				return
-			}
-			pendingBaselineRef.current = events.length
-			setPendingTurn(true)
-			const displayAttachments = buildDisplayAttachments(activeSelection)
-			const hasContext =
-				selectedObjects.length > 0 || selectedNotifications.length > 0 || selectedFiles.length > 0
-			const hasImage = selectedFiles.some((f) => f.mimeType?.startsWith('image/'))
-			try {
-				if (selectedAgent) {
-					// The one-shot hook builds its own action_prompt — pass raw
-					// content + files so it can include them without us
-					// double-enriching.
-					await oneShot.send({
-						workspaceId,
-						agent: selectedAgent,
-						content,
-						objects: selectedObjects,
-						notifications: selectedNotifications,
-						files: selectedFiles,
-						displayAttachments,
-					})
-				} else {
-					const attachments = selectionToAttachments(
-						selectedObjects,
-						selectedNotifications,
-						selectedFiles,
-					)
-					// The backend's interactive-session input endpoint currently
-					// forwards only `content` to the container's stdin (attachments
-					// are accepted by the schema for future first-class handling but
-					// discarded at runtime). Inline the attached objects, notifications,
-					// and uploaded files into the user turn so the agent actually sees
-					// what the user picked.
-					const enriched = hasContext
-						? buildOneShotActionPrompt(
-								content,
-								selectedObjects,
-								selectedNotifications,
-								selectedFiles,
-							)
-						: content
-					await session.send(enriched, attachments, content, displayAttachments)
-				}
-				if (hasImage) trackChatImageUpload({ outcome: 'success' })
-				// Confirmed sent — clear the composer's chips so the same agent /
-				// objects / notifications don't ride along on the next turn. The
-				// user message bubble already displays them as context.
-				onDispatchSelection?.({ type: 'clear_all' })
-			} catch (err) {
-				if (hasImage) trackChatImageUpload({ outcome: 'failure' })
-				setPendingTurn(false)
-				throw err
-			}
-		},
-		[
-			activeSelection,
-			events.length,
-			oneShot,
-			onSubmitOverride,
-			onDispatchSelection,
-			session,
-			selectedAgent,
-			selectedObjects,
-			selectedNotifications,
-			selectedFiles,
-			workspaceId,
-		],
-	)
-
-	// Auto-send a message forwarded from another surface (e.g. the Pulse input
-	// bar opening the sheet). The ref tracks whether the *current* non-null
-	// value has already been consumed; it flips back to false on each null so
-	// the next transition — including an identical repeat — fires again.
-	const autoSendConsumedRef = useRef(false)
-	const [autoSendError, setAutoSendError] = useState<string | null>(null)
-	useEffect(() => {
-		if (!autoSendMessage || autoSendMessage.length === 0) {
-			autoSendConsumedRef.current = false
-			return
-		}
-		if (autoSendConsumedRef.current) return
-		autoSendConsumedRef.current = true
-		setAutoSendError(null)
-		void handleSend(autoSendMessage).catch((err) => {
-			// Session/one-shot hook errors surface via hook.error. Synchronous
-			// throws before the hook sees the send (e.g. missing agentActorId,
-			// api.sessions.create reject) don't — capture them here so the user
-			// sees feedback instead of a silent no-op.
-			setAutoSendError(err instanceof Error ? err.message : 'Failed to send')
-		})
-		onAutoSendConsumed?.()
-	}, [autoSendMessage, handleSend, onAutoSendConsumed])
-
-	const handleRemoveAgent = useCallback(() => {
-		onDispatchSelection?.({ type: 'remove_agent' })
-	}, [onDispatchSelection])
-
-	const handleRemoveObject = useCallback(
-		(id: string) => {
-			onDispatchSelection?.({ type: 'remove_object', id })
-		},
-		[onDispatchSelection],
-	)
-
-	const handleRemoveNotification = useCallback(
-		(id: string) => {
-			onDispatchSelection?.({ type: 'remove_notification', id })
-		},
-		[onDispatchSelection],
-	)
-
-	const handleRemoveFile = useCallback(
-		(fileId: string) => {
-			onDispatchSelection?.({ type: 'remove_file', fileId })
-		},
-		[onDispatchSelection],
-	)
-
-	const placeholder = computePlaceholder(surface, selectedAgent?.name)
-
-	return (
-		<div
-			className={cn(
-				'flex min-h-0 flex-col gap-2',
-				surface === 'sheet' ? 'h-full' : 'w-full',
-				className,
-			)}
-			data-surface={surface}
-		>
-			{showTranscript && (
-				<ChatTranscript
-					workspaceId={workspaceId}
-					events={events}
-					starting={starting}
-					error={error}
-					className="min-h-0 flex-1"
-				/>
-			)}
-			<Composer
-				workspaceId={workspaceId}
-				onSend={handleSend}
-				disabled={disabled}
-				pending={pendingTurn}
-				surface={surface}
-				placeholder={placeholder}
-				selection={activeSelection}
-				onDispatchSelection={onDispatchSelection}
-				onRemoveAgent={handleRemoveAgent}
-				onRemoveObject={handleRemoveObject}
-				onRemoveNotification={handleRemoveNotification}
-				onRemoveFile={handleRemoveFile}
-				externalError={autoSendError}
-				onDismissExternalError={() => setAutoSendError(null)}
-			/>
-		</div>
-	)
-})
-
-function isTurnProgressEvent(event: ChatEvent): boolean {
-	return (
-		event.kind === 'text' ||
-		event.kind === 'tool_use' ||
-		event.kind === 'thinking' ||
-		event.kind === 'result'
-	)
-}
-
-/**
- * Merges the persistent session transcript with any one-shot turns in arrival
- * order. Both hooks expose append-only event arrays, so we track how many of
- * each we've already merged and push the tail of whichever produced new
- * events since the last render.
- */
-function useMergedTranscript(
-	workspaceId: string,
-	sessionEvents: ChatEvent[],
-	oneShotEvents: ChatEvent[],
-): ChatEvent[] {
-	const [merged, setMerged] = useState<ChatEvent[]>([])
-	const sessionSeenRef = useRef(0)
-	const oneShotSeenRef = useRef(0)
-	const workspaceRef = useRef(workspaceId)
-
-	useEffect(() => {
-		if (workspaceRef.current === workspaceId) return
-		workspaceRef.current = workspaceId
-		sessionSeenRef.current = 0
-		oneShotSeenRef.current = 0
-		setMerged([])
-	}, [workspaceId])
-
-	// Handle upstream resets — e.g. the panel's "+" button which calls
-	// session.reset() + oneShot.clear() to start a fresh conversation, or a
-	// workspace switch. When either source shrinks below what we've already
-	// merged, rebuild `merged` from the current state of both sources. In the
-	// common case both reset together so `merged` ends up empty; in the rare
-	// single-side reset we lose strict interleaving of the remaining source,
-	// which is acceptable.
-	useEffect(() => {
-		if (sessionEvents.length < sessionSeenRef.current) {
-			sessionSeenRef.current = sessionEvents.length
-			oneShotSeenRef.current = oneShotEvents.length
-			setMerged([...sessionEvents, ...oneShotEvents])
-			return
-		}
-		if (sessionEvents.length === sessionSeenRef.current) return
-		const fresh = sessionEvents.slice(sessionSeenRef.current)
-		sessionSeenRef.current = sessionEvents.length
-		setMerged((prev) => prev.concat(fresh))
-	}, [sessionEvents, oneShotEvents])
-
-	useEffect(() => {
-		if (oneShotEvents.length < oneShotSeenRef.current) {
-			oneShotSeenRef.current = oneShotEvents.length
-			sessionSeenRef.current = sessionEvents.length
-			setMerged([...sessionEvents, ...oneShotEvents])
-			return
-		}
-		if (oneShotEvents.length === oneShotSeenRef.current) return
-		const fresh = oneShotEvents.slice(oneShotSeenRef.current)
-		oneShotSeenRef.current = oneShotEvents.length
-		setMerged((prev) => prev.concat(fresh))
-	}, [oneShotEvents, sessionEvents])
-
-	return merged
-}
-
-function buildDisplayAttachments(selection: ChatSelection): UserAttachmentView[] | undefined {
-	const out: UserAttachmentView[] = []
-	if (selection.agent) {
-		out.push({ kind: 'agent', id: selection.agent.id, name: selection.agent.name ?? null })
-	}
-	for (const o of selection.objects) {
-		out.push({ kind: 'object', id: o.id, title: o.title ?? null, type: o.type ?? null })
-	}
-	for (const n of selection.notifications) {
-		out.push({ kind: 'notification', id: n.id, title: n.title ?? null })
-	}
-	for (const f of selection.files) {
-		out.push({
-			kind: 'file',
-			id: f.fileId,
-			name: f.name,
-			sizeBytes: f.sizeBytes,
-			...(f.mimeType ? { mimeType: f.mimeType } : {}),
-		})
-	}
-	return out.length > 0 ? out : undefined
-}
-
-function selectionToAttachments(
-	objects: ChatSelectionObject[],
-	notifications: ChatSelectionNotification[],
-	files: import('@/lib/chat-selection').ChatSelectionFile[],
-): SessionInputAttachment[] | undefined {
-	if (objects.length === 0 && notifications.length === 0 && files.length === 0) return undefined
-	const attachments: SessionInputAttachment[] = [
-		...objects.map((o) => ({ kind: 'object', id: o.id })),
-		...notifications.map((n) => ({ kind: 'notification', id: n.id })),
-		...files.map((f) => ({
-			kind: 'file',
-			id: f.fileId,
-			name: f.name,
-			size_bytes: f.sizeBytes,
-			...(f.mimeType ? { mime_type: f.mimeType } : {}),
-		})),
-	]
-	return attachments
-}
-
-function computePlaceholder(surface: ChatSurface, agentName: string | null | undefined): string {
-	if (agentName && agentName.trim().length > 0) {
-		return `Message ${agentName.trim()}`
-	}
-	return surface === 'pulse-bar' ? 'Ask anything…' : 'Message agents'
-}
-
 export interface ComposerProps {
 	workspaceId: string
 	onSend: (content: string) => Promise<void>
@@ -530,16 +70,21 @@ export interface ComposerProps {
 	onDismissExternalError?: () => void
 	/** Forwarded as `aria-label` on the textarea. Defaults to the surface placeholder. */
 	textareaLabel?: string
+	/** Optional controlled draft. Supply both to let a caller prefill the
+	 *  composer (the chats zero-state suggestion rows); omit both to keep the
+	 *  composer's own internal state. */
+	value?: string
+	onValueChange?: (value: string) => void
 }
 
 /**
  * Chat composer. Enter sends, Shift+Enter inserts a newline, IME
  * composition swallows Enter. The textarea auto-resizes up to `max-h-40` and
  * scrolls beyond that. The send button shows a Spinner (and stays disabled)
- * while a turn is pending — i.e. after a send, until the first assistant
- * event lands.
+ * while a turn is pending — i.e. after a send, until the caller flips
+ * `pending` back to false.
  *
- * Task 36 adds three entry points into the shared `<SlashPicker>`:
+ * Exposes three entry points into the shared `<SlashPicker>`:
  *  - `/` typed at the start of the textarea (or immediately after whitespace)
  *    opens the picker at the top-level kind menu.
  *  - The **Agent** button opens the picker pre-filtered to the agent kind.
@@ -554,7 +99,6 @@ export function Composer({
 	onSend,
 	disabled,
 	pending,
-	surface,
 	placeholder,
 	selection,
 	onDispatchSelection,
@@ -565,8 +109,24 @@ export function Composer({
 	externalError,
 	onDismissExternalError,
 	textareaLabel,
+	value: controlledValue,
+	onValueChange,
 }: ComposerProps) {
-	const [value, setValue] = useState('')
+	const [internalValue, setInternalValue] = useState('')
+	const value = controlledValue ?? internalValue
+	// Mirrors `value` for the functional-update path — a controlled caller has
+	// no state for us to read back synchronously.
+	const valueRef = useRef(value)
+	valueRef.current = value
+	const setValue = useCallback(
+		(updater: string | ((prev: string) => string)) => {
+			const next = typeof updater === 'function' ? updater(valueRef.current) : updater
+			valueRef.current = next
+			if (controlledValue === undefined) setInternalValue(next)
+			onValueChange?.(next)
+		},
+		[controlledValue, onValueChange],
+	)
 	const [sending, setSending] = useState(false)
 	const [sendError, setSendError] = useState<string | null>(null)
 	const [pickerOpen, setPickerOpen] = useState(false)
@@ -578,11 +138,29 @@ export function Composer({
 	const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([])
 	const slashPosRef = useRef<number | null>(null)
 	const fileInputRef = useRef<HTMLInputElement | null>(null)
+	const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+	// `/` opens the create list (mockup 761–771). The chosen type seeds the
+	// shipped create surface; the mockup's FROM-THIS-CHAT panel additionally
+	// pre-fills the name/fields from the conversation, which needs a `seed`
+	// prop on <CreatePicker> that doesn't exist yet — see the composer note
+	// where it is rendered.
+	const [createOpen, setCreateOpen] = useState(false)
+	const [createSubtype, setCreateSubtype] = useState<string | undefined>(undefined)
+	const [turnIntoOpen, setTurnIntoOpen] = useState(false)
+	const objectTypes = useAvailableObjectTypes()
 	const abortControllersRef = useRef<Map<string, AbortController>>(new Map())
 	const uploadFile = useUploadFile(workspaceId)
+	const dictation = useDictation(
+		useCallback(
+			(text: string) => {
+				setValue((prev) => (prev.length === 0 ? text : `${prev.trimEnd()} ${text}`))
+			},
+			[setValue],
+		),
+	)
 
 	// Abort every in-flight upload when the composer unmounts so a closed
-	// chat sheet doesn't leave XHRs hanging (and doesn't race-dispatch
+	// chat surface doesn't leave XHRs hanging (and doesn't race-dispatch
 	// add_file into a selection state that's already been thrown away).
 	useEffect(() => {
 		const controllers = abortControllersRef.current
@@ -620,7 +198,7 @@ export function Composer({
 			// without losing a carefully crafted prompt.
 			if (sent) setValue('')
 		},
-		[canSend, onDismissExternalError, onSend, value],
+		[canSend, onDismissExternalError, onSend, setValue, value],
 	)
 
 	const handleKeyDown = useCallback(
@@ -634,22 +212,24 @@ export function Composer({
 		[handleSubmit],
 	)
 
-	const handleChange = useCallback((e: ChangeEvent<HTMLTextAreaElement>) => {
-		const next = e.target.value
-		setValue(next)
-		// Open the picker when the user just typed a `/` at a qualifying
-		// position: either at the very start of the input or immediately
-		// after whitespace. Anything else (middle of a URL, inside a word,
-		// etc.) is left alone so `/` remains a regular character.
-		const pos = e.target.selectionStart
-		if (typeof pos !== 'number' || pos <= 0) return
-		if (next[pos - 1] !== '/') return
-		const prev = pos >= 2 ? next[pos - 2] : ''
-		if (prev !== '' && !/\s/.test(prev)) return
-		slashPosRef.current = pos - 1
-		setPickerKind(null)
-		setPickerOpen(true)
-	}, [])
+	const handleChange = useCallback(
+		(e: ChangeEvent<HTMLTextAreaElement>) => {
+			const next = e.target.value
+			setValue(next)
+			// Open the picker when the user just typed a `/` at a qualifying
+			// position: either at the very start of the input or immediately
+			// after whitespace. Anything else (middle of a URL, inside a word,
+			// etc.) is left alone so `/` remains a regular character.
+			const pos = e.target.selectionStart
+			if (typeof pos !== 'number' || pos <= 0) return
+			if (next[pos - 1] !== '/') return
+			const prev = pos >= 2 ? next[pos - 2] : ''
+			if (prev !== '' && !/\s/.test(prev)) return
+			slashPosRef.current = pos - 1
+			setTurnIntoOpen(true)
+		},
+		[setValue],
+	)
 
 	const openPickerForKind = useCallback((kind: SlashKindId) => {
 		slashPosRef.current = null
@@ -665,7 +245,17 @@ export function Composer({
 			if (prev[pos] !== '/') return prev
 			return prev.slice(0, pos) + prev.slice(pos + 1)
 		})
-	}, [])
+	}, [setValue])
+
+	const openCreateFor = useCallback(
+		(subtype: string | undefined) => {
+			setCreateSubtype(subtype)
+			setTurnIntoOpen(false)
+			consumeSlashTrigger()
+			setCreateOpen(true)
+		},
+		[consumeSlashTrigger],
+	)
 
 	const handlePickerSelect = useCallback(
 		(result: SlashPickerResult) => {
@@ -729,8 +319,13 @@ export function Composer({
 				// user's intent is honoured (closes T4 reviewer SHOULD).
 				if (controller.signal.aborted) return
 				console.info(
-					'[chat] uploaded image attachment',
-					JSON.stringify({ fileId: created.id, name: file.name, sizeBytes: file.size }),
+					'[chat] uploaded attachment',
+					JSON.stringify({
+						fileId: created.id,
+						name: file.name,
+						sizeBytes: file.size,
+						mimeType: file.type || 'application/octet-stream',
+					}),
 				)
 				setPendingUploads((prev) => prev.filter((p) => p.tempId !== tempId))
 				onDispatchSelection?.({
@@ -797,7 +392,7 @@ export function Composer({
 	return (
 		<div
 			className={cn(
-				'relative flex flex-col gap-1 rounded-md border border-border bg-bg-surface p-2 shadow-sm',
+				'relative mx-auto flex w-full max-w-[860px] flex-col gap-1 rounded-2xl border border-input bg-card px-3 py-2.5 shadow-sm',
 			)}
 		>
 			<SlashPicker
@@ -811,6 +406,51 @@ export function Composer({
 					<span aria-hidden className="pointer-events-none absolute left-2 bottom-2 h-0 w-0" />
 				}
 			/>
+			{/* A DropdownMenu rather than a Popover: `/` opens this without a click,
+			    so the list has to be reachable from the keyboard. Radix gives the
+			    menu roving focus, arrow keys and typeahead for free — the Popover
+			    this replaced left focus in the textarea with no way in. */}
+			<DropdownMenu
+				open={turnIntoOpen}
+				onOpenChange={(next) => {
+					setTurnIntoOpen(next)
+					if (!next) slashPosRef.current = null
+				}}
+			>
+				<DropdownMenuTrigger asChild>
+					<span aria-hidden className="pointer-events-none absolute bottom-2 left-2 h-0 w-0" />
+				</DropdownMenuTrigger>
+				<DropdownMenuContent
+					align="start"
+					side="top"
+					sideOffset={8}
+					className="w-[320px]"
+					// The visible DropdownMenuLabel below is not an accessible name
+					// for the menu itself — name it explicitly so the list is
+					// announced (and addressable) as "Turn this into an object".
+					aria-label="Turn this into an object"
+					// Radix returns focus to the trigger, which here is an invisible
+					// anchor — send the caret back to the composer instead.
+					onCloseAutoFocus={(e) => {
+						e.preventDefault()
+						textareaRef.current?.focus()
+					}}
+				>
+					<DropdownMenuLabel className="eyebrow">Turn this into an object</DropdownMenuLabel>
+					{objectTypes.map((type) => (
+						<DropdownMenuItem
+							key={type.value}
+							onSelect={() => openCreateFor(type.value)}
+							className="gap-2.5"
+						>
+							<TypeBadge type={type.value} variant="tile" />
+							<span className="min-w-0 flex-1 truncate text-[12.5px] font-semibold">
+								{type.label}
+							</span>
+						</DropdownMenuItem>
+					))}
+				</DropdownMenuContent>
+			</DropdownMenu>
 			<SelectionChips
 				selection={selection}
 				onRemoveAgent={onRemoveAgent}
@@ -828,7 +468,7 @@ export function Composer({
 							key={p.tempId}
 							data-upload-status={p.status}
 							className={cn(
-								'inline-flex max-w-full items-center gap-1 rounded-full border bg-bg-surface px-2 py-0.5 text-xs text-foreground',
+								'inline-flex max-w-full items-center gap-1 rounded-full border bg-card px-2 py-0.5 text-xs text-foreground',
 								p.status === 'failed' ? 'border-error' : 'border-border',
 							)}
 						>
@@ -858,7 +498,6 @@ export function Composer({
 			<input
 				ref={fileInputRef}
 				type="file"
-				accept="image/*"
 				multiple
 				className="hidden"
 				onChange={handleFileSelection}
@@ -868,6 +507,7 @@ export function Composer({
 			<form onSubmit={handleSubmit}>
 				<Textarea
 					autoResize
+					ref={textareaRef}
 					value={value}
 					onChange={handleChange}
 					onKeyDown={handleKeyDown}
@@ -882,56 +522,98 @@ export function Composer({
 						{sendError ?? externalError} — your message is preserved; try again.
 					</p>
 				) : null}
-				<div className="flex items-center gap-1">
+				<div className="flex items-center gap-2">
+					<DropdownMenu>
+						<DropdownMenuTrigger asChild>
+							{/* No 44 px `::before` here: Attach next to it already carries one,
+							    and two overlapping invisible hit surfaces 8 px apart steal
+							    taps from each other. The v2 control row is 28 px by design. */}
+							<Button
+								type="button"
+								size="icon"
+								variant="outline"
+								className="h-7 w-7 shrink-0 rounded-full text-muted-foreground"
+								disabled={disabled}
+								aria-label="Add an object, file, or mention"
+							>
+								<Plus size={15} aria-hidden />
+							</Button>
+						</DropdownMenuTrigger>
+						<DropdownMenuContent align="start" className="w-[252px]">
+							<DropdownMenuItem onSelect={() => openPickerForKind('item')}>
+								<Box size={15} aria-hidden />
+								Reference an object
+							</DropdownMenuItem>
+							<DropdownMenuItem onSelect={() => openPickerForKind('agent')}>
+								<AtSign size={15} aria-hidden />
+								Mention an agent
+							</DropdownMenuItem>
+							<DropdownMenuItem onSelect={() => openCreateFor(undefined)}>
+								<Sparkles size={15} aria-hidden />
+								Create an object
+							</DropdownMenuItem>
+						</DropdownMenuContent>
+					</DropdownMenu>
+					{/* Attach stays a visible sibling rather than a menu row: it is the
+					    one composer affordance with a pinned 44 px touch target
+					    (`ios-chat-attach-tap-area.spec.ts`), which a closed menu can't
+					    satisfy. */}
 					<Button
 						type="button"
-						size="sm"
+						size="icon"
 						variant="ghost"
-						className="h-7 gap-1 px-2 text-xs text-text-secondary"
-						onClick={() => openPickerForKind('agent')}
-						disabled={disabled}
-						aria-label="Pick an agent"
-					>
-						<Bot size={14} aria-hidden />
-						Agent
-					</Button>
-					<Button
-						type="button"
-						size="sm"
-						variant="ghost"
-						className="h-7 gap-1 px-2 text-xs text-text-secondary"
-						onClick={() => openPickerForKind('item')}
-						disabled={disabled}
-						aria-label="Attach items"
-					>
-						<Box size={14} aria-hidden />
-						Items
-					</Button>
-					<Button
-						type="button"
-						size="sm"
-						variant="ghost"
-						className="relative h-7 gap-1 px-2 text-xs text-text-secondary before:absolute before:-inset-3 before:h-11 before:w-11 before:content-['']"
+						className="relative h-7 w-7 shrink-0 rounded-full text-muted-foreground before:absolute before:-inset-2 before:h-11 before:w-11 before:content-['']"
 						onClick={() => fileInputRef.current?.click()}
 						disabled={disabled}
-						aria-label="Attach image"
+						aria-label="Attach file"
 					>
 						<Paperclip size={14} aria-hidden />
-						Attach
 					</Button>
-					<div className="ml-auto">
+					{dictation.supported ? (
 						<Button
-							type="submit"
+							type="button"
 							size="icon"
-							variant="ghost"
-							disabled={!canSend}
-							aria-label="Send message"
+							variant={dictation.recording ? 'destructive' : 'outline'}
+							className={cn(
+								'ml-auto h-7 w-7 shrink-0 rounded-full',
+								dictation.recording ? 'animate-pulse' : 'text-muted-foreground',
+							)}
+							onClick={dictation.toggle}
+							disabled={disabled}
+							aria-pressed={dictation.recording}
+							aria-label={dictation.recording ? 'Stop dictating' : 'Dictate a message'}
 						>
-							{showSpinner ? <Spinner /> : <Send size={16} />}
+							<Mic size={14} aria-hidden />
 						</Button>
-					</div>
+					) : null}
+					<Button
+						type="submit"
+						size="icon"
+						className={cn(
+							'h-7 w-7 shrink-0 rounded-full',
+							dictation.supported ? '' : 'ml-auto',
+							canSend
+								? 'bg-primary text-primary-foreground'
+								: 'bg-muted text-muted-foreground hover:bg-muted',
+						)}
+						disabled={!canSend}
+						aria-label="Send message"
+					>
+						{showSpinner ? <Spinner /> : <Send size={14} />}
+					</Button>
 				</div>
 			</form>
+			{/* "Turn this into an object" — reuses the shipped creation flow rather
+			    than the mockup's bespoke FROM-THIS-CHAT modal (800–848). The picked
+			    type is seeded; the conversation itself is not, because pre-filling
+			    the name / field table / "CONTEXT IT INHERITS" block needs a `seed`
+			    prop on CreatePicker, which is owned elsewhere. */}
+			<CreatePicker
+				open={createOpen}
+				onOpenChange={setCreateOpen}
+				defaultType="object"
+				defaultObjectSubtype={createSubtype}
+			/>
 		</div>
 	)
 }

@@ -70,4 +70,49 @@ describe('FilterTabs', () => {
 		expect(screen.getByRole('button', { name: /All \(5\)/ })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: /Working \(2\)/ })).toBeInTheDocument()
 	})
+
+	// The count is spoken with parentheses but drawn without them.
+	it('draws a bare count while still announcing it parenthesised', () => {
+		const withCounts = [{ label: 'All', value: undefined, count: 5 }]
+		render(<FilterTabs tabs={withCounts} value={undefined} onChange={() => {}} />)
+		const btn = screen.getByRole('button', { name: 'All (5)' })
+		expect(btn.textContent).toBe('All5')
+	})
+
+	describe('pill variant', () => {
+		const tabs = [
+			{ label: 'All', value: undefined, count: 5 },
+			{ label: 'Bets', value: 'bet', count: 2, dot: 'bg-type-bet-bg', dotShape: 'square' as const },
+			{ label: 'Live', value: 'live', dot: 'bg-status-live-text' },
+		]
+
+		it('fills the active chip and outlines the rest', () => {
+			render(<FilterTabs variant="pill" tabs={tabs} value="bet" onChange={() => {}} />)
+			expect(screen.getByRole('button', { name: 'Bets (2)' }).className).toContain('bg-primary')
+			expect(screen.getByRole('button', { name: 'All (5)' }).className).toContain('bg-transparent')
+		})
+
+		it('renders a square swatch for object types and a round dot for statuses', () => {
+			const { container } = render(
+				<FilterTabs variant="pill" tabs={tabs} value={undefined} onChange={() => {}} />,
+			)
+			expect(container.querySelector('.bg-type-bet-bg')?.className).toContain('rounded-[2px]')
+			expect(container.querySelector('.bg-status-live-text')?.className).toContain('rounded-full')
+		})
+
+		it('omits the dot when a tab does not carry one', () => {
+			const { container } = render(
+				<FilterTabs variant="pill" tabs={[tabs[0]]} value={undefined} onChange={() => {}} />,
+			)
+			expect(container.querySelectorAll('span[aria-hidden="true"].size-1\\.5')).toHaveLength(0)
+		})
+
+		it('still reports the selected chip to assistive tech', () => {
+			render(<FilterTabs variant="pill" tabs={tabs} value="bet" onChange={() => {}} />)
+			expect(screen.getByRole('button', { name: 'Bets (2)' })).toHaveAttribute(
+				'aria-pressed',
+				'true',
+			)
+		})
+	})
 })

@@ -6,7 +6,7 @@ const crmWebExtension: ModuleWebDefinition = {
 	name: MODULE_NAME,
 	navItems: [],
 	objectTypeTabs: [
-		{ label: 'Contacts', value: 'contact' },
+		{ label: 'People', value: 'contact' },
 		{ label: 'Companies', value: 'company' },
 	],
 	defaultSettings: CRM_DEFAULT_SETTINGS,

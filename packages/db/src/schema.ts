@@ -256,6 +256,14 @@ export const sessions = pgTable(
 		actionPrompt: text('action_prompt').notNull(),
 		config: jsonb('config').notNull().default({}),
 		interactive: boolean('interactive').notNull().default(false),
+		// Denormalized from config.conversation.conversation_id — same treatment
+		// `interactive` already got — so the conversation-responder's "does a
+		// running interactive session already exist for this (conversation,
+		// agent)?" lookup can use an indexed column instead of an unindexed
+		// JSONB path scan.
+		conversationId: uuid('conversation_id').references((): AnyPgColumn => conversations.id, {
+			onDelete: 'set null',
+		}),
 		result: jsonb('result').$type<SessionResult>(),
 		snapshotPath: text('snapshot_path'),
 		sourceSessionId: uuid('source_session_id'),
@@ -289,6 +297,25 @@ export const sessions = pgTable(
 		index('sessions_agent_server_active_idx')
 			.on(t.agentServerId, t.status)
 			.where(sql`${t.agentServerId} IS NOT NULL`),
+		// Backs the conversation-responder's "is there already a running
+		// interactive session for this (conversation, agent)?" lookup.
+		index('sessions_conversation_actor_idx')
+			.on(t.conversationId, t.actorId)
+			.where(sql`${t.conversationId} IS NOT NULL`),
+		// Authoritative concurrency guard, not just an optimization: at most one
+		// interactive session may be actively spawning/running for a given
+		// (conversation, agent) pair. Enforced at the DB layer because the
+		// application-level lookup-then-insert in evaluateAndRespond has a race
+		// window between two near-simultaneous replies from the same agent.
+		uniqueIndex('sessions_conversation_actor_active_uniq')
+			.on(t.conversationId, t.actorId)
+			.where(sql`${t.interactive} = true AND ${t.status} IN ('pending','starting','running')`),
+		// Backs the session-log retention sweep. Interactive sessions are excluded
+		// from the index entirely — their logs are never pruned, so a chat keeps
+		// its full activity trace for as long as the conversation exists.
+		index('sessions_prune_candidates_idx')
+			.on(t.completedAt)
+			.where(sql`${t.interactive} = false AND ${t.completedAt} IS NOT NULL`),
 	],
 )
 
@@ -305,8 +332,179 @@ export const sessionLogs = pgTable(
 		content: text('content').notNull(),
 		createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
 	},
-	(t) => [index('session_logs_session_idx').on(t.sessionId, t.createdAt)],
+	(t) => [
+		// Serves the retention sweep's per-session (session_id, created_at < cutoff)
+		// range delete.
+		index('session_logs_session_idx').on(t.sessionId, t.createdAt),
+		// Serves every hot read: the logs route's `since` (id >) and `before` (id <)
+		// cursors, and the turn finalizer's backward walk to the nearest
+		// maskin_message_id envelope. (session_id, created_at) cannot order by id.
+		index('session_logs_session_id_id_idx').on(t.sessionId, t.id),
+	],
 )
+
+// ── Conversations ────────────────────────────────────────────────────────
+
+export const conversations = pgTable(
+	'conversations',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id)
+			.notNull(),
+		title: text('title').notNull(),
+		// Who owns `title`. 'none' → never auto-titled, 'initial' → auto-titled
+		// once and still eligible for one refinement, 'refined' → final auto
+		// title, 'manual' → renamed by a human, never overwrite. The background
+		// titler (services/conversation-titler.ts) claims a transition here with
+		// a conditional UPDATE before calling the LLM, which is what makes it
+		// safe to fire from every message post without a lock.
+		titleAutoState: text('title_auto_state').notNull().default('none'),
+		createdBy: uuid('created_by')
+			.references(() => actors.id)
+			.notNull(),
+		// Denormalized so "my conversations ordered by last activity" is a plain
+		// index scan instead of a MAX(messages.id) aggregate per row. Bumped in
+		// the same transaction as every message insert.
+		lastMessageAt: timestamp('last_message_at', { withTimezone: true }).notNull().defaultNow(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		index('conversations_ws_last_message_at_idx').on(t.workspaceId, t.lastMessageAt),
+		check(
+			'conversations_title_auto_state_check',
+			sql`${t.titleAutoState} IN ('none', 'initial', 'refined', 'manual')`,
+		),
+	],
+)
+
+export type Conversation = typeof conversations.$inferSelect
+export type NewConversation = typeof conversations.$inferInsert
+
+// ── Conversation Participants ──────────────────────────────────────────────
+//
+// Per-user pin/archive/read state lives here rather than on `conversations` —
+// two humans in the same conversation can have independently pinned/archived/
+// read state. `leftAt` is a soft-remove (not a DELETE) so a re-added
+// participant keeps their prior pin/archive/read history and a removed
+// participant keeps a stable author FK on their historical messages.
+
+export const conversationParticipants = pgTable(
+	'conversation_participants',
+	{
+		conversationId: uuid('conversation_id')
+			.references(() => conversations.id, { onDelete: 'cascade' })
+			.notNull(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id)
+			.notNull(),
+		addedBy: uuid('added_by').references(() => actors.id),
+		joinedAt: timestamp('joined_at', { withTimezone: true }).notNull().defaultNow(),
+		leftAt: timestamp('left_at', { withTimezone: true }),
+		pinned: boolean('pinned').notNull().default(false),
+		archived: boolean('archived').notNull().default(false),
+		// High-water mark into messages.id (bigserial, monotonic).
+		lastReadMessageId: bigint('last_read_message_id', { mode: 'number' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		primaryKey({ columns: [t.conversationId, t.actorId] }),
+		// Leading column actorId (reverse of the PK's leading column) — required
+		// for "list my active conversations" to be an index scan.
+		index('conversation_participants_actor_active_idx')
+			.on(t.actorId, t.conversationId)
+			.where(sql`${t.leftAt} IS NULL`),
+	],
+)
+
+export type ConversationParticipant = typeof conversationParticipants.$inferSelect
+export type NewConversationParticipant = typeof conversationParticipants.$inferInsert
+
+// ── Messages ────────────────────────────────────────────────────────────────
+//
+// One row per chat turn in a conversation, human- or agent-authored.
+// `sessionId` links an agent-authored message back to the session that
+// produced it (NULL for human messages) — cost/token drill-down is a join at
+// read time, same nullable-FK shape as notifications.sessionId and
+// agentFiles.sessionId. sessionId is intentionally NOT unique: an
+// interactive session is long-lived and reused across many replies in the
+// same conversation (see conversation-responder.ts), so many messages
+// legitimately share one session_id over that session's lifetime.
+
+export const messages = pgTable(
+	'messages',
+	{
+		id: bigserial('id', { mode: 'number' }).primaryKey(),
+		conversationId: uuid('conversation_id')
+			.references(() => conversations.id, { onDelete: 'cascade' })
+			.notNull(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id)
+			.notNull(),
+		kind: text('kind').notNull().default('message'),
+		content: text('content').notNull(),
+		metadata: jsonb('metadata'),
+		sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'set null' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		// Set when the author edits the message; null for never-edited messages.
+		editedAt: timestamp('edited_at', { withTimezone: true }),
+	},
+	(t) => [
+		index('messages_conversation_id_idx').on(t.conversationId, t.id),
+		index('messages_session_id_idx').on(t.sessionId),
+		// Idempotency guard for auto-posted end-of-turn agent output. Load-bearing:
+		// the Docker log stream replays a live session's ENTIRE log on first
+		// connect (`tail: 'all'`), so without this an apps/dev restart would
+		// re-post every past turn of every live chat. See migration 0061.
+		uniqueIndex('messages_final_output_dedupe_uniq')
+			.on(t.sessionId, sql`((${t.metadata}->'final_output'->>'dedupe_key'))`)
+			.where(sql`(${t.metadata}->'final_output'->>'dedupe_key') IS NOT NULL`),
+		check('messages_kind_check', sql`${t.kind} IN ('message', 'system')`),
+	],
+)
+
+export type Message = typeof messages.$inferSelect
+export type NewMessage = typeof messages.$inferInsert
+
+// Chat turns waiting for an agent's interactive conversation session to
+// become writable. A message that arrives while the (conversation, agent)
+// session is still booting (pending/starting/queued) is buffered here by the
+// conversation responder instead of being dropped, and drained via
+// writeInput once the session's stdin attaches — see
+// SessionManager.drainPendingConversationTurns. Rows are claimed with
+// DELETE ... RETURNING so concurrent drains can't double-deliver.
+export const conversationPendingTurns = pgTable(
+	'conversation_pending_turns',
+	{
+		id: bigserial('id', { mode: 'number' }).primaryKey(),
+		conversationId: uuid('conversation_id')
+			.references(() => conversations.id, { onDelete: 'cascade' })
+			.notNull(),
+		// The agent the turn is addressed to (not the message's author).
+		actorId: uuid('actor_id')
+			.references(() => actors.id)
+			.notNull(),
+		messageId: bigint('message_id', { mode: 'number' })
+			.references(() => messages.id, { onDelete: 'cascade' })
+			.notNull(),
+		// The exact stream-json user envelope to deliver via writeInput.
+		payload: jsonb('payload').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		// Idempotency: one buffered turn per (conversation, agent, message) —
+		// doubles as the (conversation, agent) drain-lookup index.
+		uniqueIndex('conversation_pending_turns_conv_actor_msg_uniq').on(
+			t.conversationId,
+			t.actorId,
+			t.messageId,
+		),
+	],
+)
+
+export type ConversationPendingTurn = typeof conversationPendingTurns.$inferSelect
 
 // ── Agent Files ────────────────────────────────────────────────────────────
 
@@ -937,63 +1135,6 @@ export const sessionDispatchAttempts = pgTable(
 
 export type SessionDispatchAttempt = typeof sessionDispatchAttempts.$inferSelect
 export type NewSessionDispatchAttempt = typeof sessionDispatchAttempts.$inferInsert
-
-// ── Reviewer Verdicts ───────────────────────────────────────────────────────
-//
-// One row per `reviewer_verdict_submitted` event from Stage 2 of the
-// single-prompt agent builder. The reviewer (T6) writes the verdict; a human
-// or non-reviewer agent later sets `human_agreed` so precision (agreed / rated)
-// can be computed per rubric. The check constraint keeps a reviewer from
-// self-rating: `human_rated_by` must be non-null when `human_agreed` is set,
-// and the route layer additionally rejects a rating whose caller equals
-// `reviewer_actor_id` (route-side, not enforced in SQL because the reviewer
-// runs from a fresh session whose actor is only knowable at write time).
-
-export const reviewerVerdicts = pgTable(
-	'reviewer_verdicts',
-	{
-		id: uuid('id').defaultRandom().primaryKey(),
-		workspaceId: uuid('workspace_id')
-			.references(() => workspaces.id)
-			.notNull(),
-		rubricId: uuid('rubric_id')
-			.references(() => objects.id)
-			.notNull(),
-		targetActorId: uuid('target_actor_id')
-			.references(() => actors.id)
-			.notNull(),
-		reviewerActorId: uuid('reviewer_actor_id')
-			.references(() => actors.id)
-			.notNull(),
-		reviewerSessionId: uuid('reviewer_session_id'),
-		cycleNumber: integer('cycle_number').notNull().default(0),
-		verdict: text('verdict').notNull(),
-		criteriaVerdicts: jsonb('criteria_verdicts').notNull(),
-		humanAgreed: boolean('human_agreed'),
-		humanCriteriaDisagreements: jsonb('human_criteria_disagreements'),
-		humanRatedBy: uuid('human_rated_by').references(() => actors.id),
-		humanRatedAt: timestamp('human_rated_at', { withTimezone: true }),
-		humanNote: text('human_note'),
-		createdBy: uuid('created_by')
-			.references(() => actors.id)
-			.notNull(),
-		createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-		updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
-	},
-	(t) => [
-		index('reviewer_verdicts_ws_rubric_idx').on(t.workspaceId, t.rubricId),
-		index('reviewer_verdicts_ws_created_idx').on(t.workspaceId, t.createdAt),
-		check('reviewer_verdicts_verdict_check', sql`${t.verdict} IN ('pass', 'fail')`),
-		check(
-			'reviewer_verdicts_rating_pair_check',
-			sql`(${t.humanAgreed} IS NULL AND ${t.humanRatedBy} IS NULL AND ${t.humanRatedAt} IS NULL)
-				OR (${t.humanAgreed} IS NOT NULL AND ${t.humanRatedBy} IS NOT NULL AND ${t.humanRatedAt} IS NOT NULL)`,
-		),
-	],
-)
-
-export type ReviewerVerdict = typeof reviewerVerdicts.$inferSelect
-export type NewReviewerVerdict = typeof reviewerVerdicts.$inferInsert
 
 // ── Orphan Thread Detections ────────────────────────────────────────────────
 //

@@ -1,20 +1,25 @@
-import { ChatPanel } from '@/components/chat/chat-panel'
 import { CommandPalette } from '@/components/command-palette'
 import { Header } from '@/components/layout/header'
+import { LegacyCommandPalette } from '@/components/layout/legacy/command-palette'
+import { LegacyHeader } from '@/components/layout/legacy/header'
+import { LegacyAppSidebar } from '@/components/layout/legacy/sidebar'
 import { AppSidebar } from '@/components/layout/sidebar'
 import { RouteError } from '@/components/shared/route-error'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
-import { useActors } from '@/hooks/use-actors'
+import { useDefaultChatAgent } from '@/hooks/use-actors'
+import { useCreateConversation } from '@/hooks/use-conversations'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useIsMobile } from '@/hooks/use-mobile'
+import { usePersistedSidebarOpen } from '@/hooks/use-persisted-sidebar-open'
 import { useSSE } from '@/hooks/use-sse'
 import { useWorkspaces } from '@/hooks/use-workspaces'
-import { deriveEntryAgentRole } from '@/lib/analytics'
 import { api } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
-import { ChatProvider, useChat } from '@/lib/chat-context'
 import { cn } from '@/lib/cn'
 import { CommandPaletteProvider } from '@/lib/command-palette-context'
+import { isHiddenRouteId, migrateLegacySidebarState, viewKeyFromRouteId } from '@/lib/nav-view-keys'
 import { NewConversationProvider } from '@/lib/new-conversation-context'
+import { NewDesignProvider } from '@/lib/new-design-context'
 import { PageHeaderProvider, usePageHeader } from '@/lib/page-header-context'
 import { PendingCommentsProvider } from '@/lib/pending-comments-context'
 import {
@@ -22,29 +27,12 @@ import {
 	registerWorkspaceProperties,
 	setCapturingEnabled,
 } from '@/lib/posthog'
-import { WorkspaceContext } from '@/lib/workspace-context'
-import { Outlet, createFileRoute } from '@tanstack/react-router'
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { WorkspaceContext, useWorkspace } from '@/lib/workspace-context'
+import { NEW_CONVERSATION_PLACEHOLDER_TITLE } from '@maskin/shared'
+import { Outlet, createFileRoute, useMatches, useNavigate } from '@tanstack/react-router'
+import { type ReactNode, useEffect, useMemo, useRef } from 'react'
 
-const STORAGE_KEY = 'maskin-sidebar-open'
-
-// Migrate old key
-try {
-	const old = localStorage.getItem('ai-native-sidebar-open')
-	if (old && !localStorage.getItem(STORAGE_KEY)) {
-		localStorage.setItem(STORAGE_KEY, old)
-		localStorage.removeItem('ai-native-sidebar-open')
-	}
-} catch {}
-
-function getInitialOpen(): boolean {
-	try {
-		const stored = localStorage.getItem(STORAGE_KEY)
-		return stored === null ? true : stored === 'true'
-	} catch {
-		return true
-	}
-}
+migrateLegacySidebarState()
 
 export const Route = createFileRoute('/_authed/$workspaceId')({
 	component: WorkspaceLayout,
@@ -54,7 +42,6 @@ export const Route = createFileRoute('/_authed/$workspaceId')({
 function WorkspaceLayout() {
 	const { workspaceId } = Route.useParams()
 	const { data: workspaces } = useWorkspaces()
-	const { data: actors } = useActors(workspaceId, { enabled: !!workspaceId })
 
 	// Connect SSE for real-time updates
 	const sseStatus = useSSE(workspaceId)
@@ -64,38 +51,15 @@ function WorkspaceLayout() {
 		[workspaces, workspaceId],
 	)
 
-	// Prefer the workspace-level default_agent_id when set (Chief of Staff
-	// prototype bet); fall back to the Workspace Coach lookup by name. The
-	// fallback keeps every pre-CoS workspace unchanged — settings without a
-	// `default_agent_id` behave exactly as they did before this task.
-	const defaultAgent = useMemo(() => {
-		if (!actors) return null
-		const settings = workspace?.settings as { default_agent_id?: string | null } | undefined
-		const defaultId = settings?.default_agent_id
-		if (typeof defaultId === 'string' && defaultId.length > 0) {
-			const pinned = actors.find((a) => a.id === defaultId)
-			if (pinned) return pinned
-		}
-		return actors.find((a) => a.type === 'agent' && a.name === 'Workspace Coach') ?? null
-	}, [actors, workspace])
-	const agentActorId = defaultAgent?.id ?? null
-	// Chief of Staff prototype bet's `chat_session_started.entry_agent_role`:
-	// derived from the routing agent's display name so the property flips to
-	// `'chief-of-staff'` automatically once T3 makes CoS the default here.
-	const entryAgentRole = useMemo(
-		() => deriveEntryAgentRole(defaultAgent?.name ?? null),
-		[defaultAgent],
-	)
+	// The single flag boundary for the v2 redesign. Everything below renders
+	// either the v2 shell or the pre-v2 one restored under components/layout/legacy.
+	// If you find yourself reading this flag anywhere else, the boundary is wrong.
+	const newDesign = useFeatureFlag('new-design')
 
-	const [open, setOpenState] = useState(getInitialOpen)
-
-	const setOpen = useCallback((value: boolean | ((prev: boolean) => boolean)) => {
-		setOpenState((prev) => {
-			const next = typeof value === 'function' ? value(prev) : value
-			localStorage.setItem(STORAGE_KEY, String(next))
-			return next
-		})
-	}, [])
+	const matches = useMatches()
+	const leafMatch = [...matches].reverse().find((m) => !isHiddenRouteId(m.routeId))
+	const viewKey = leafMatch ? viewKeyFromRouteId(leafMatch.routeId) : null
+	const { open, setOpen } = usePersistedSidebarOpen(viewKey)
 
 	// Pin the Synthesizer's join keys on every analytics event from this workspace,
 	// and apply the workspace's Privacy & data settings — both the share-usage
@@ -130,35 +94,38 @@ function WorkspaceLayout() {
 
 	return (
 		<WorkspaceContext.Provider value={{ workspace, workspaceId, sseStatus }}>
-			<ChatProvider workspaceId={workspaceId}>
+			{/* Carries the flag read above to the v2 components that route pages render
+			    (the create overlay, the comment composer) and that therefore cannot be
+			    swapped here alongside the shell. Still one read of the flag. */}
+			<NewDesignProvider value={newDesign}>
 				<NewConversationProvider>
 					<CommandPaletteProvider>
-						<PendingPromptBootstrap agentActorId={agentActorId} />
+						<PendingPromptBootstrap />
 						<GuestDraftClaimBootstrap workspaceId={workspaceId} />
 						<PendingCommentsProvider workspaceId={workspaceId}>
 							<PageHeaderProvider>
-								<ChatPinShell>
-									<SidebarProvider open={open} onOpenChange={setOpen} className="h-screen !min-h-0">
-										<AppSidebar />
+								<ContentPushShell>
+									<SidebarProvider
+										open={open}
+										onOpenChange={setOpen}
+										className="h-screen !min-h-0"
+										data-shell={newDesign ? 'v2' : 'v1'}
+									>
+										{newDesign ? <AppSidebar /> : <LegacyAppSidebar />}
 										<SidebarInset className="min-w-0">
-											<Header />
+											{newDesign ? <Header /> : <LegacyHeader />}
 											<MainScrollArea>
 												<Outlet />
 											</MainScrollArea>
 										</SidebarInset>
 									</SidebarProvider>
-								</ChatPinShell>
+								</ContentPushShell>
 							</PageHeaderProvider>
-							<CommandPalette />
-							<ChatPanel
-								workspaceId={workspaceId}
-								agentActorId={agentActorId}
-								entryAgentRole={entryAgentRole}
-							/>
+							{newDesign ? <CommandPalette /> : <LegacyCommandPalette />}
 						</PendingCommentsProvider>
 					</CommandPaletteProvider>
 				</NewConversationProvider>
-			</ChatProvider>
+			</NewDesignProvider>
 		</WorkspaceContext.Provider>
 	)
 }
@@ -202,53 +169,58 @@ function GuestDraftClaimBootstrap({ workspaceId }: { workspaceId: string }) {
 }
 
 /**
- * Reads `maskin_pending_prompt` from localStorage once the agent's actor ID
- * resolves, then opens the chat panel with that prompt as the first message.
- * Fires at most once per mount — the ref guard prevents a re-trigger if
- * `agentActorId` changes identity while remaining non-null.
+ * Reads `maskin_pending_prompt` from localStorage once the workspace's
+ * default chat agent resolves, creates a new conversation seeded with that
+ * prompt as the first message, and navigates straight to the resulting
+ * thread. Fires at most once per mount — the ref guard prevents a re-trigger
+ * if `defaultAgent` changes identity while remaining non-null.
  */
-function PendingPromptBootstrap({ agentActorId }: { agentActorId: string | null }) {
-	const { openWithContext } = useChat()
+function PendingPromptBootstrap() {
+	const { workspaceId } = useWorkspace()
+	const defaultAgent = useDefaultChatAgent()
+	const createConversation = useCreateConversation(workspaceId)
+	const navigate = useNavigate()
 	const firedRef = useRef(false)
 
 	useEffect(() => {
-		if (!agentActorId || firedRef.current) return
+		if (!defaultAgent || firedRef.current) return
 		const prompt = localStorage.getItem('maskin_pending_prompt')
 		if (!prompt) return
 		firedRef.current = true
 		localStorage.removeItem('maskin_pending_prompt')
-		openWithContext([], prompt)
-	}, [agentActorId, openWithContext])
+		createConversation
+			.mutateAsync({
+				title: NEW_CONVERSATION_PLACEHOLDER_TITLE,
+				participant_actor_ids: [defaultAgent.id],
+				initial_message: prompt,
+			})
+			.then((conversation) => {
+				navigate({
+					to: '/$workspaceId/chats/$conversationId',
+					params: { workspaceId, conversationId: conversation.id },
+				})
+			})
+			.catch(() => console.error('[maskin] failed to bootstrap pending-prompt conversation'))
+	}, [defaultAgent, createConversation, navigate, workspaceId])
 
 	return null
 }
 
 /**
  * Wraps the main layout (left sidebar + header + outlet) so that when the
- * chat panel is pinned AND open, or the current route reports its own fixed
- * right sidebar via PageHeaderContext (e.g. the object-detail properties
- * sidebar), the layout gets a right margin equal to whichever is wider — both
- * panels are fixed-positioned, so this margin is what makes them "push
- * content aside" instead of floating over it, and keeps the header's action
- * buttons clear of either.
+ * current route reports its own fixed right sidebar via PageHeaderContext
+ * (e.g. the object-detail properties sidebar), the layout gets a right
+ * margin equal to its width — that panel is fixed-positioned, so this margin
+ * is what makes it "push content aside" instead of floating over it, and
+ * keeps the header's action buttons clear of it.
  */
-function ChatPinShell({ children }: { children: ReactNode }) {
-	const { pinned, open, panelWidth } = useChat()
+function ContentPushShell({ children }: { children: ReactNode }) {
 	const { contentPush } = usePageHeader()
 	const isMobile = useIsMobile()
-	// On mobile both panels overlay the viewport (Sheet/Sheet), so a stale
-	// `pinned=true` from desktop must not apply a margin that would squash
-	// the main content off-screen.
-	const chatPushed = pinned && open && !isMobile
+	// On mobile the panel overlays the viewport (Sheet), so it must not apply
+	// a margin that would squash the main content off-screen.
 	const pagePushed = Boolean(contentPush) && !isMobile
-	let marginRight: string | number = 0
-	if (chatPushed && pagePushed) {
-		marginRight = `max(${panelWidth}px, ${contentPush})`
-	} else if (chatPushed) {
-		marginRight = `${panelWidth}px`
-	} else if (pagePushed) {
-		marginRight = contentPush as string
-	}
+	const marginRight: string | number = pagePushed ? (contentPush as string) : 0
 	return (
 		<div className="transition-[margin] duration-200 ease-linear" style={{ marginRight }}>
 			{children}
@@ -262,13 +234,15 @@ function ChatPinShell({ children }: { children: ReactNode }) {
  * `<PageHeader scrollLocked />` (e.g. the For You card queue, which owns its
  * own internal scroll region on the active card's thread) — the container
  * then clips instead of scrolling, so only that inner region scrolls.
+ *
+ * Padding steps up from `px-4 pt-4` on mobile to `p-8` from `md:` up.
  */
 function MainScrollArea({ children }: { children: ReactNode }) {
 	const { scrollLocked } = usePageHeader()
 	return (
 		<div
 			className={cn(
-				'flex flex-col flex-1 min-w-0 p-4 md:p-8',
+				'flex flex-col flex-1 min-w-0 px-4 pb-4 pt-4 md:p-8',
 				scrollLocked ? 'overflow-hidden' : 'overflow-auto',
 			)}
 			data-scroll-root

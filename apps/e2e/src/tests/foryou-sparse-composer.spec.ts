@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
+import type { TestAPI } from '../helpers/api.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 // For You sparse-state composer (T1 of bet `foryou-sparse-composer`).
@@ -7,12 +8,13 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 // AC-U1: composer renders inside the empty state when `items.length === 0`.
 // AC-U2: composer renders directly below items when `1 ≤ items.length < 3`.
 // AC-U3: composer is hidden when `items.length >= 3`.
-// AC-U4: typing + Enter opens the chat panel with the message staged.
+// AC-U4: typing + Enter creates a conversation with the workspace's default
+// chat agent and navigates to the resulting thread.
 //
 // The unread feed is mocked at the `/api/subscriptions/unread` boundary so the
-// spec stays deterministic regardless of what the real backend seeds. The chat
-// surface itself is verified to open — the persistent session bootstrap is
-// covered by chat.spec.ts and not re-exercised here.
+// spec stays deterministic regardless of what the real backend seeds. The
+// conversation creation itself hits the real `/api/conversations` routes —
+// broader multi-party chat coverage lives in chats.spec.ts.
 
 interface UnreadFixture {
 	entity_type: 'object'
@@ -61,6 +63,16 @@ async function mockUnreadCount(page: Page, workspaceId: string, count: number) {
 
 const COMPOSER_LABEL = 'Start a chat with agents'
 
+// Workspaces no longer come with a default chat agent pre-seeded (#1419
+// stopped auto-seeding on workspace creation) — useDefaultChatAgent() falls
+// back to an actor literally named "Workspace Coach", so create one
+// explicitly for the tests that submit through the composer.
+async function ensureDefaultChatAgent(api: TestAPI, workspaceId: string) {
+	const agent = await api.createAgentActor('Workspace Coach')
+	await api.addWorkspaceMember(workspaceId, agent.id)
+	return agent
+}
+
 test.describe('For You sparse composer', () => {
 	test('renders inside the empty state when items.length === 0 (AC-U1)', async ({
 		page,
@@ -91,15 +103,24 @@ test.describe('For You sparse composer', () => {
 		await expect(page.getByTestId('sparse-composer')).toHaveCount(0)
 	})
 
-	test('typing + Enter opens the chat panel (AC-U4)', async ({ page, account }) => {
+	test('typing + Enter creates a conversation with the default agent and navigates to it (AC-U4)', async ({
+		page,
+		account,
+	}) => {
+		await ensureDefaultChatAgent(account.api, account.workspaceId)
 		await mockUnreadCount(page, account.workspaceId, 0)
 		await page.goto(`/${account.workspaceId}`)
 		const input = page.getByTestId('sparse-composer').getByLabel(COMPOSER_LABEL)
 		await input.fill('Plan a launch')
 		await input.press('Enter')
-		await expect(page.getByRole('heading', { name: 'Chat' })).toBeVisible({ timeout: 10_000 })
-		// AC-U4: input clears after the call resolves.
-		await expect(input).toHaveValue('')
+		await expect(page).toHaveURL(new RegExp(`/${account.workspaceId}/chats/[^/]+$`), {
+			timeout: 10_000,
+		})
+		// Scoped to the message list — the conversation-list-row snippet in the
+		// left pane shows the same text and would otherwise collide.
+		await expect(page.getByTestId('thread-messages').getByText('Plan a launch')).toBeVisible({
+			timeout: 10_000,
+		})
 	})
 
 	for (const viewport of SHIP_GATE_VIEWPORTS) {
@@ -122,6 +143,7 @@ test.describe('For You sparse composer', () => {
 	// box and that submit still fires. See `## Frontend Parity` + the
 	// `## Unverified interactions` block on T5 for the hardware-only delta.
 	test('AC-U5 + AC-T5 — 375×667 with simulated soft keyboard', async ({ page, account }) => {
+		await ensureDefaultChatAgent(account.api, account.workspaceId)
 		await page.setViewportSize({ width: 375, height: 667 })
 		await mockUnreadCount(page, account.workspaceId, 0)
 		await page.goto(`/${account.workspaceId}`)
@@ -185,20 +207,13 @@ test.describe('For You sparse composer', () => {
 			expect(sendBoxKeyboardUp.y + sendBoxKeyboardUp.height).toBeLessThanOrEqual(reducedHeight)
 		}).toPass({ timeout: 1_000 })
 
-		// Submit fires while the keyboard is "up" — Enter on the focused
-		// textarea, not a click on the button (which on real iOS would dismiss
-		// the keyboard before the tap registers). The chat panel heading is the
-		// observable result of `openWithContext` resolving.
-		await input.fill('Plan a launch from iPhone SE')
-		await input.press('Enter')
-		await expect(page.getByRole('heading', { name: 'Chat' })).toBeVisible({ timeout: 10_000 })
-		await expect(input).toHaveValue('')
-
 		// AC-T5 keyboard-down: restore the visualViewport height and verify the
-		// scroll position survives the cycle. The For You scroll container is
-		// the `overflow-auto` div inside the workspace layout — the body
-		// scrollY stays at 0 by design, so we sanity-check the same scroller
-		// the composer lives in.
+		// scroll position survives the cycle, before submitting — submit now
+		// navigates to the new conversation's thread, so this must happen while
+		// the For You page (and its scroller) is still mounted. The For You
+		// scroll container is the `overflow-auto` div inside the workspace
+		// layout — the body scrollY stays at 0 by design, so we sanity-check the
+		// same scroller the composer lives in.
 		await page.evaluate(() => {
 			const vv = window.visualViewport
 			if (!vv) return
@@ -209,7 +224,17 @@ test.describe('For You sparse composer', () => {
 		expect(scrollAfter, 'For You scroll position preserved after keyboard dismiss').toBe(
 			scrollBefore,
 		)
-		// Sanity: composer still rendered (chat panel may be open over it).
+		// Sanity: composer still rendered.
 		await expect(page.locator(scrollerSelector)).toHaveCount(1)
+
+		// Submit fires last — Enter on the focused textarea, not a click on the
+		// button (which on real iOS would dismiss the keyboard before the tap
+		// registers). Navigation to the new conversation's thread is the
+		// observable result of the send resolving.
+		await input.fill('Plan a launch from iPhone SE')
+		await input.press('Enter')
+		await expect(page).toHaveURL(new RegExp(`/${account.workspaceId}/chats/[^/]+$`), {
+			timeout: 10_000,
+		})
 	})
 })

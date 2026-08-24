@@ -68,6 +68,17 @@ export const sessionThreadReplyContextSchema = z.object({
 })
 export type SessionThreadReplyContext = z.infer<typeof sessionThreadReplyContextSchema>
 
+// Set internally by the conversations route (and by the conversation-responder
+// service) when an agent participant spawns a one-shot session to reply to a
+// new message in a conversation it's a member of. Lets the UI find in-flight
+// sessions for a given conversation (e.g. a "typing" indicator), same purpose
+// as sessionMentionContextSchema/sessionThreadReplyContextSchema above.
+export const sessionConversationContextSchema = z.object({
+	conversation_id: z.string().uuid(),
+	message_id: z.number().int().positive(),
+})
+export type SessionConversationContext = z.infer<typeof sessionConversationContextSchema>
+
 // Mirrors MAX_PREVIEW_GUEST_PORTS in apps/agent-server/src/index.ts — a
 // session only ever needs to forward a handful of local dev servers.
 const MAX_PREVIEW_GUEST_PORTS = 8
@@ -84,6 +95,7 @@ export const sessionConfigSchema = z.object({
 	interactive: z.boolean().default(false),
 	mention: sessionMentionContextSchema.optional(),
 	thread_reply: sessionThreadReplyContextSchema.optional(),
+	conversation: sessionConversationContextSchema.optional(),
 	// When true, provision a browser sidecar and inject BROWSER_CDP_URL so
 	// @playwright/mcp can attach. See needsBrowserSidecar() in session-manager.ts
 	// for the legacy auto-detection path (MCP config referencing ${BROWSER_CDP_URL}).
@@ -117,6 +129,7 @@ export const sessionQuerySchema = z.object({
 	status: sessionStatusSchema.optional(),
 	actor_id: z.string().uuid().optional(),
 	mention_object_id: z.string().uuid().optional(),
+	conversation_id: z.string().uuid().optional(),
 	/** Half-open: rows satisfy `updated_at < updated_before`. Bound excluded. */
 	updated_before: z.string().datetime({ offset: true }).optional(),
 	/** Half-open: rows satisfy `updated_at > updated_after`. Bound excluded. */
@@ -127,8 +140,28 @@ export const sessionQuerySchema = z.object({
 
 export const sessionLogQuerySchema = z.object({
 	since: z.coerce.number().int().optional(),
+	/**
+	 * Half-open, exclusive: rows satisfy `id < before`. Pages BACKWARD from a
+	 * known id, which `since` cannot do — it is how a client reaches the
+	 * earlier history of a long-lived interactive session it only hydrated
+	 * the tail of. Implies newest-first selection regardless of `order`; the
+	 * response is still returned in ascending id order. Combining `before`
+	 * with `since` is legal and yields the bounded window `since < id < before`.
+	 */
+	before: z.coerce.number().int().optional(),
 	stream: z.enum(['stdout', 'stderr', 'system']).optional(),
 	limit: z.coerce.number().int().min(1).max(500).default(100),
+	/**
+	 * Which end of the log to take `limit` rows from. `asc` (the default,
+	 * and the historical behaviour) returns the OLDEST rows — correct when
+	 * paging forward from a `since` cursor, but wrong for hydrating a view
+	 * of a long-lived session: an interactive chat session accumulates logs
+	 * for the whole conversation, so `asc` + `limit` pins the client to the
+	 * beginning of the conversation forever. `desc` takes the newest rows
+	 * instead (still returned in ascending id order) so callers can hydrate
+	 * the tail and then page forward with `since`.
+	 */
+	order: z.enum(['asc', 'desc']).default('asc'),
 })
 
 export const sessionParamsSchema = z.object({
@@ -224,6 +257,12 @@ export const failureReasonCodeSchema = z.enum([
 	'rate_limit_error',
 	'insufficient_credits',
 	'agent_server_lost',
+	// The session could not be handed to any agent-server before the dispatch
+	// queue ran out of attempts. Recoverable by starting a new session.
+	'dispatch_failed',
+	// The session's agent was deleted (or removed by a loop uninstall/version
+	// push) while the session was still live, so it was stopped mid-run.
+	'agent_deleted',
 ])
 export type FailureReasonCode = z.infer<typeof failureReasonCodeSchema>
 
@@ -240,6 +279,9 @@ export type SessionResultFailureReason = z.infer<typeof sessionResultFailureReas
 export const sessionResultSchema = z.object({
 	exit_code: z.number().int().nullable().optional(),
 	error: z.string().optional(),
+	// Human-readable note for sessions that ended successfully without an exit
+	// code — e.g. the watchdog's graceful close of an idle chat session.
+	summary: z.string().optional(),
 	failure_reason: sessionResultFailureReasonSchema.nullable().optional(),
 	// Set only by SessionManager.stopSession()'s provisional terminal write —
 	// see markRemoteSessionComplete() in apps/dev/src/services/session-manager.ts.
@@ -249,11 +291,12 @@ export const sessionResultSchema = z.object({
 	// to overwrite a record still carrying this marker with the real exit code;
 	// it is never set on a genuine report itself.
 	stopped_by_user: z.boolean().optional(),
-	// The agent's final assistant message, extracted from the terminal
-	// stream-json `result` event — see parseFinalMessageFromLogChunks() in
-	// apps/dev/src/services/usage-parser.ts. Absent (not null) when no
-	// parseable final event was found (non-stream-json runtimes, parse
-	// failure, or no logs).
-	final_message: z.string().nullable().optional(),
+	// The user asked for this session to stop. Unlike `stopped_by_user` (the
+	// provisional-write marker that gates markRemoteSessionComplete's CAS
+	// overwrite), this is a pure UI flag: it survives the genuine completion
+	// report so a user-initiated stop keeps rendering as "stopped", never as
+	// a failure. Set by the local handleCompletion path and carried forward
+	// by markRemoteSessionComplete when it overwrites a provisional stop.
+	user_stop_requested: z.boolean().optional(),
 })
 export type SessionResult = z.infer<typeof sessionResultSchema>

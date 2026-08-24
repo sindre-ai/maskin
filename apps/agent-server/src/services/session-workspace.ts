@@ -89,7 +89,14 @@ export async function pullSessionWorkspace(
 			// - agent-server snapshots: entries rooted at `.` (e.g. `./workspace/…`)
 			// - Docker copyFrom snapshots: entries rooted at `agent` (e.g. `agent/workspace/…`)
 			// In both cases stripping one component lands files at `sessionDir/workspace/…`.
-			await execFile('tar', ['-xzf', archivePath, '-C', sessionDir, '--strip-components=1'])
+			// The archive operand is passed as a bare filename with `cwd: stage` (not the
+			// absolute path) — GNU tar on Windows misreads an absolute `C:\...` archive
+			// argument as a `host:path` remote spec and tries to rsh/ssh to a host named "C".
+			await execFile(
+				'tar',
+				['-xzf', 'workspace.tar.gz', '-C', sessionDir, '--strip-components=1'],
+				{ cwd: stage },
+			)
 			restored = true
 		} finally {
 			await rm(stage, { recursive: true, force: true })
@@ -118,8 +125,14 @@ export type PushSessionWorkspaceOptions = {
 	sleep?: (ms: number) => Promise<void>
 }
 
-const DEFAULT_PUSH_RETRIES = 3
+// 5 attempts with exponential backoff (2s, 4s, 8s, 16s — ~30s total) rather
+// than the previous 3 attempts with linear delay (2s, 4s — ~6s). SeaweedFS
+// answers `ServiceUnavailable` for tens of seconds while a volume server is
+// rebalancing or restarting, which outlasted the old budget and forced an
+// otherwise-successful agent run to exit non-zero (Sentry MASKIN-AGENT-SERVER-3).
+const DEFAULT_PUSH_RETRIES = 5
 const DEFAULT_PUSH_RETRY_DELAY_MS = 2_000
+const MAX_PUSH_RETRY_DELAY_MS = 16_000
 
 function defaultSleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms))
@@ -160,7 +173,7 @@ export async function pushSessionWorkspace(
 		// `-C sessionDir` + `.` packs entries relative to sessionDir with a leading
 		// `.` component (e.g. `./workspace/…`). pullSessionWorkspace uses
 		// --strip-components=1 which strips that `.`, landing files at newDir/*.
-		await execFile('tar', ['-C', sessionDir, '-czf', archivePath, '.'])
+		await execFile('tar', ['-C', sessionDir, '-czf', 'workspace.tar.gz', '.'], { cwd: stage })
 		const buf = await readFile(archivePath)
 
 		let lastErr: unknown
@@ -170,7 +183,9 @@ export async function pushSessionWorkspace(
 				return { archiveBytes: buf.length }
 			} catch (err) {
 				lastErr = err
-				if (attempt < retries) await sleep(retryDelayMs * attempt)
+				if (attempt < retries) {
+					await sleep(Math.min(retryDelayMs * 2 ** (attempt - 1), MAX_PUSH_RETRY_DELAY_MS))
+				}
 			}
 		}
 		throw lastErr

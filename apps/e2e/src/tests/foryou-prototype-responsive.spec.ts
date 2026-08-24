@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
-import { VIEWPORTS } from '../helpers/viewports'
+import { SHIP_GATE_VIEWPORTS, VIEWPORTS } from '../helpers/viewports'
 
 // T2-T6 of bet foryou-prototype-redesign (single-card swipeable queue
 // rebuild): responsive layout + interaction regression at 375/768/1024 for
@@ -17,11 +17,12 @@ import { VIEWPORTS } from '../helpers/viewports'
 // schema, so `decision` never keys off `bet.status`.
 //
 // Selector contract this spec relies on:
-// - ForYouHeaderIdentity: projected into the global header's sticky-identity
-//   slot (data-testid="foryou-header-identity", rendered twice — a desktop
-//   and a mobile copy — so scope to `.first()`), "For You" + "{n} unread".
-// - ForYouHeaderActions: projected into the global header's actions slot —
-//   "Today's brief" / "New" buttons (aria-label).
+// - The shared top nav renders the screen <h1> ("For you") and a muted
+//   subtitle ("{n} unread" / "All caught up", hidden below sm) from the
+//   PageHeader title/subtitle the route publishes.
+// - ForYouHeaderActions: projected into the nav's actions slot — a "Today's
+//   brief" button (aria-label, label "Brief") and, only while something is
+//   unread, "Mark all as read". The New menu belongs to the nav, not the page.
 // - ForYouHeader: type-filter chips as named buttons ("All (n)",
 //   "Mentions (n)", "{Type} (n)"), "Display options" button opening a
 //   Cards/List Tabs (role=tab) + Sort RadioGroup (role=radio).
@@ -153,11 +154,11 @@ async function gotoForyou(page: Page, workspaceId: string) {
 	await page.goto(`/${workspaceId}`)
 }
 
-// The global layout header (layout/header.tsx) now also has its own "New"
-// menu, so `getByRole('button', { name: /^new$/i })` alone matches two
-// buttons on this page. Scope to ForYouHeader's own <header> via its unique
-// "Today's brief" button to disambiguate.
-function foryouHeader(page: Page) {
+// The v2 shell projects For You's identity and its "Today's brief" action into
+// the global layout header (layout/header.tsx), which also owns the split New
+// button. ForYouHeader's own <header> keeps only the filter chips + Display.
+// Scope via the "Today's brief" button, which is unique to the global row.
+function globalHeader(page: Page) {
 	return page
 		.locator('header')
 		.filter({ has: page.getByRole('button', { name: /today.?s brief/i }) })
@@ -192,8 +193,8 @@ async function swipeCurrentCard(page: Page, direction: 'left' | 'right') {
 }
 
 async function assertDecisionButtonsSideBySide(page: Page, expected: boolean, label: string) {
-	const approve = page.getByRole('button', { name: 'Approve' })
-	const sendBack = page.getByRole('button', { name: 'Send back' })
+	const approve = page.getByRole('button', { name: /^Approve/ })
+	const sendBack = page.getByRole('button', { name: /^Send back/ })
 	const [approveBox, sendBackBox] = await Promise.all([
 		approve.boundingBox(),
 		sendBack.boundingBox(),
@@ -219,10 +220,8 @@ test.describe('For You prototype redesign — layout at 1024', () => {
 		await mockFeed(page, threeKindFeed(account.workspaceId))
 		await gotoForyou(page, account.workspaceId)
 
-		const identity = page.getByTestId('foryou-header-identity').first()
-		await expect(identity).toBeVisible()
-		await expect(identity).toContainText('For You')
-		await expect(identity).toContainText('3 unread')
+		await expect(page.getByRole('heading', { name: 'For you', level: 1 })).toBeVisible()
+		await expect(page.getByText('3 unread')).toBeVisible()
 
 		await expect(page.getByRole('button', { name: /^All/ })).toBeVisible()
 		await expect(page.getByRole('button', { name: /^Mentions/ })).toBeVisible()
@@ -230,11 +229,16 @@ test.describe('For You prototype redesign — layout at 1024', () => {
 		await expect(page.getByRole('button', { name: /^Task/ })).toBeVisible()
 
 		await expect(page.getByRole('button', { name: /today.?s brief/i })).toBeVisible()
-		await expect(foryouHeader(page).getByRole('button', { name: /^new$/i })).toBeVisible()
+		// v2 split the header's "New" into a primary half (whose accessible name
+		// names the screen's default create action) and a chevron half.
+		await expect(globalHeader(page).getByRole('button', { name: 'New chat' })).toBeVisible()
+		await expect(
+			globalHeader(page).getByRole('button', { name: 'More ways to start' }),
+		).toBeVisible()
 
 		// The global header's generic Create/Chat icon buttons are dropped on
-		// the For You page — ForYouHeader's title, "Today's brief", and "New"
-		// already cover the same actions.
+		// the For You page — the nav title, "Brief", and "New" already cover
+		// the same actions.
 		await expect(page.getByRole('button', { name: /create new/i })).toHaveCount(0)
 		await expect(page.getByRole('button', { name: /open chat/i })).toHaveCount(0)
 
@@ -242,8 +246,9 @@ test.describe('For You prototype redesign — layout at 1024', () => {
 		await displayTrigger.click()
 		await expect(page.getByRole('tab', { name: /cards/i })).toBeVisible()
 		await expect(page.getByRole('tab', { name: /list/i })).toBeVisible()
-		await expect(page.getByRole('radio', { name: /priority/i })).toBeVisible()
-		await expect(page.getByRole('radio', { name: /latest activity/i })).toBeVisible()
+		await expect(page.getByRole('radio', { name: /most urgent/i })).toBeVisible()
+		await expect(page.getByRole('radio', { name: /newest first/i })).toBeVisible()
+		await expect(page.getByRole('radio', { name: /oldest first/i })).toBeVisible()
 		await page.keyboard.press('Escape')
 
 		// One card visible at a time — priority sort puts the highest-attention
@@ -251,10 +256,10 @@ test.describe('For You prototype redesign — layout at 1024', () => {
 		const card = page.getByTestId('foryou-queue-card')
 		await expect(card).toHaveCount(1)
 		await expect(card).toHaveAttribute('data-card-kind', 'decision')
-		await expect(page.getByRole('button', { name: 'Approve' })).toBeVisible()
-		// T2's AskCard render is stacked full-width option rows at every
-		// viewport (flex flex-col, w-full) — not a side-by-side pair.
-		await assertDecisionButtonsSideBySide(page, false, '1024')
+		await expect(page.getByRole('button', { name: /^Approve/ })).toBeVisible()
+		// v2 lays the options out as inline chips from md up (mockup 419–426)
+		// and keeps them stacked full-width below it.
+		await assertDecisionButtonsSideBySide(page, true, '1024')
 
 		await expect(page.getByRole('button', { name: 'Keep unread' })).toBeVisible()
 		await expect(page.getByRole('button', { name: 'Mark as read' })).toBeVisible()
@@ -275,13 +280,18 @@ test.describe('For You prototype redesign — layout at 768', () => {
 		await gotoForyou(page, account.workspaceId)
 
 		await expect(page.getByRole('button', { name: /today.?s brief/i })).toBeVisible()
-		await expect(foryouHeader(page).getByRole('button', { name: /^new$/i })).toBeVisible()
+		// v2 split the header's "New" into a primary half (whose accessible name
+		// names the screen's default create action) and a chevron half.
+		await expect(globalHeader(page).getByRole('button', { name: 'New chat' })).toBeVisible()
+		await expect(
+			globalHeader(page).getByRole('button', { name: 'More ways to start' }),
+		).toBeVisible()
 		await expect(page.getByRole('button', { name: /display options/i })).toBeVisible()
 
 		const card = page.getByTestId('foryou-queue-card')
 		await expect(card).toHaveAttribute('data-card-kind', 'decision')
-		// Stacked full-width option rows at every viewport (T2 AskCard design).
-		await assertDecisionButtonsSideBySide(page, false, '768')
+		// Inline chips from md up.
+		await assertDecisionButtonsSideBySide(page, true, '768')
 
 		await expect(page.getByText('3 items left')).toBeVisible()
 		await assertNoHorizontalOverflow(page, '768')
@@ -300,7 +310,12 @@ test.describe('For You prototype redesign — layout at 375', () => {
 
 		// Icon-only at 375 — accessible name still comes from aria-label.
 		await expect(page.getByRole('button', { name: /today.?s brief/i })).toBeVisible()
-		await expect(foryouHeader(page).getByRole('button', { name: /^new$/i })).toBeVisible()
+		// v2 split the header's "New" into a primary half (whose accessible name
+		// names the screen's default create action) and a chevron half.
+		await expect(globalHeader(page).getByRole('button', { name: 'New chat' })).toBeVisible()
+		await expect(
+			globalHeader(page).getByRole('button', { name: 'More ways to start' }),
+		).toBeVisible()
 
 		const displayTrigger = page.getByRole('button', { name: /display options/i })
 		await displayTrigger.click()
@@ -346,7 +361,7 @@ test.describe('For You prototype redesign — decision → receipt → reverse',
 		])
 		await gotoForyou(page, account.workspaceId)
 
-		await page.getByRole('button', { name: 'Approve' }).click()
+		await page.getByRole('button', { name: /^Approve/ }).click()
 
 		const receipt = page.getByTestId('decision-receipt')
 		await expect(receipt).toBeVisible()
@@ -355,7 +370,7 @@ test.describe('For You prototype redesign — decision → receipt → reverse',
 
 		await receipt.getByRole('button', { name: 'Reverse this' }).click()
 		await expect(page.getByTestId('decision-block')).toBeVisible()
-		await expect(page.getByRole('button', { name: 'Approve' })).toBeVisible()
+		await expect(page.getByRole('button', { name: /^Approve/ })).toBeVisible()
 
 		// Nothing was posted — the reverse window never elapsed.
 		await page.waitForTimeout(6500)
@@ -447,8 +462,10 @@ test.describe('For You prototype redesign — swipe & button commit regression',
 		await page.getByRole('button', { name: 'Mark as read' }).click()
 		await expect(page.getByText("You're caught up")).toBeVisible()
 
-		await expect(page.getByRole('link', { name: "Today's brief" })).toBeVisible()
+		// The caught-up panel carries a single onward action — Brief lives in
+		// the nav now.
 		await expect(page.getByRole('link', { name: /review loops/i })).toBeVisible()
+		await expect(page.getByRole('link', { name: /brief/i })).toHaveCount(0)
 
 		await page.waitForTimeout(4800)
 		expect(readCalls.length).toBeGreaterThanOrEqual(1)
@@ -471,14 +488,15 @@ async function assertCardFillsAvailableHeight(page: Page, label: string) {
 	const actionBox = await page.getByRole('button', { name: 'Mark as read' }).boundingBox()
 	if (!actionBox) throw new Error(`${label}: action bar has no layout box`)
 	const gap = actionBox.y - (cardBox.y + cardBox.height)
-	// Threshold tolerates the pre-existing max-h-[min(680px,calc(100vh-220px))]
-	// chrome estimate on the card (not exact at every viewport) while still
-	// catching a regression back to shrink-to-content sizing, which leaves
-	// hundreds of px of empty space rather than tens.
+	// `gap` is measured to the *button*, which sits inside the bar's own py-3, so
+	// a perfectly-filled card still reads ~16px (the column's gap-4) at md+ and
+	// ~24px below md. The previous 150px threshold was loose enough to pass while
+	// the queue's bottom padding double-counted the page shell's pb-20, stranding
+	// ~96px of dead space — keep this tight enough that the same slip fails.
 	expect(
 		gap,
 		`${label}: card leaves ${gap}px of empty space above the action bar instead of stretching to fill the container`,
-	).toBeLessThan(150)
+	).toBeLessThan(40)
 }
 
 test.describe('For You prototype redesign — card fills container height', () => {
@@ -525,9 +543,10 @@ test.describe('For You prototype redesign — metadata row', () => {
 
 		const card = page.getByTestId('foryou-queue-card')
 		await expect(card).toBeVisible()
-		// The TypeBadge icon badge is the only place "insight" should render —
-		// no redundant plain-text span duplicating it beneath the title.
-		await expect(card.getByText('insight', { exact: true })).toHaveCount(1)
+		// The type now reads only as the tinted glyph tile (TypeBadge
+		// variant="tile", aria-hidden) — no plain-text type label anywhere on
+		// the card.
+		await expect(card.getByText('insight', { exact: true })).toHaveCount(0)
 	})
 })
 
@@ -570,4 +589,74 @@ test.describe('For You prototype redesign — composer', () => {
 		await textarea.click()
 		await expect(textarea).toBeFocused()
 	})
+})
+
+// List mode renders plain flow content inside the feed column, which is a
+// fixed-height flex item (`flex-1 min-h-0`) so Cards mode can size the card to
+// the remaining space. That cap applies in List mode too, so the list needs its
+// own scroll container — without one the rows past the fold are simply
+// unreachable: the page scroller sits above the cap and never sees the
+// overflow. Regression guard for that (list was unscrollable at every viewport).
+test.describe('For You prototype redesign — list mode scrolls', () => {
+	for (const vp of SHIP_GATE_VIEWPORTS) {
+		test(`every list row stays reachable by scrolling @ ${vp.label}`, async ({ page, account }) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+			// Enough rows to overflow the column at the tallest ship-gate viewport.
+			const items = Array.from({ length: 16 }, (_, i) =>
+				buildItem(account.workspaceId, {
+					id: `row-${i}`,
+					title: `Row ${i} needs a read`,
+					type: 'insight',
+				}),
+			)
+			await mockFeed(page, items)
+			await gotoForyou(page, account.workspaceId)
+
+			await expect(page.getByTestId('foryou-queue-card')).toHaveCount(1, { timeout: 10_000 })
+			await page.getByRole('button', { name: /display options/i }).click()
+			await page.getByRole('tab', { name: /list/i }).click()
+			await page.keyboard.press('Escape')
+
+			const firstRow = page.getByRole('button', { name: 'Row 0 needs a read' })
+			const lastRow = page.getByRole('button', { name: 'Row 15 needs a read' })
+			await expect(firstRow).toBeVisible({ timeout: 10_000 })
+
+			// The invariant: the rows' nearest scrollable ancestor must live INSIDE
+			// the feed column. Asserting only "some ancestor scrolls" passes even
+			// when the list is broken, because the page-level scroller above the
+			// column always qualifies — and that scroller is exactly the one the
+			// `flex-1 min-h-0` cap hides the overflow from.
+			const geometry = await firstRow.evaluate((el) => {
+				const feed = el.closest('[data-testid="foryou-redesign-root"]')
+				let node = el.parentElement
+				while (node) {
+					const cs = getComputedStyle(node)
+					if (/auto|scroll/.test(cs.overflowY) && node.scrollHeight > node.clientHeight + 1) {
+						const before = node.scrollTop
+						node.scrollTop = node.scrollHeight
+						return {
+							found: true,
+							insideFeed: !!feed?.contains(node),
+							before,
+							after: node.scrollTop,
+						}
+					}
+					node = node.parentElement
+				}
+				return { found: false, insideFeed: false, before: 0, after: 0 }
+			})
+			expect(geometry.found, `${vp.label}: list rows have no scrollable ancestor at all`).toBe(true)
+			expect(
+				geometry.insideFeed,
+				`${vp.label}: the list has no scroll container of its own — its nearest scrollable ancestor is the page scroller, which the feed column's flex-1/min-h-0 cap hides the overflow from`,
+			).toBe(true)
+			expect(geometry.after, `${vp.label}: list container did not scroll`).toBeGreaterThan(
+				geometry.before,
+			)
+
+			// The user-facing property: the final row can actually be brought on screen.
+			await lastRow.scrollIntoViewIfNeeded()
+			await expect(lastRow).toBeVisible()
+		})
+	}
 })

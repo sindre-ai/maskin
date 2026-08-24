@@ -36,7 +36,7 @@ export function trackEvent(
 // the per-event contract: entity_id, entity_type, source, flow_id, plus any
 // event-specific fields.
 
-type TaxonomyEntityType =
+export type TaxonomyEntityType =
 	| 'object'
 	| 'agent'
 	| 'bet'
@@ -48,6 +48,7 @@ type TaxonomyEntityType =
 	| 'trigger'
 	| 'relationship'
 	| 'file'
+	| 'loop'
 
 type EventSource = 'web' | 'mcp' | 'trigger'
 
@@ -89,6 +90,12 @@ export function trackAgentCreated(p: BaseProps & { entity_type: 'agent' }): void
 
 export function trackTriggerCreated(p: BaseProps & { entity_type: 'trigger' }): void {
 	trackEvent('trigger_created', fillBase(p))
+}
+
+// Success metric for the standalone-trigger detail bet: counts completed
+// standalone-trigger saves through the trigger detail screen per week.
+export function trackTriggerUpdated(p: BaseProps & { entity_type: 'trigger' }): void {
+	trackEvent('trigger_updated', fillBase(p))
 }
 
 export function trackBetStatusChanged(
@@ -528,4 +535,52 @@ export function trackObjectUpdated(p: {
 		via: p.via,
 		bulk_batch_size: p.bulk_batch_size,
 	})
+}
+
+// Ship-metric events for the Search view + command palette bet. The success
+// metric funnels `command_palette_opened` (denominator — a session that opened
+// the palette or the /search view) into `search_result_opened` (numerator —
+// it opened a result from either surface). The event names are the
+// measurement contract: `command_palette_opened` exactly,
+// `search_result_opened` shared by both surfaces. `surface` distinguishes the
+// entry point so the ratio can be sliced without joining super properties.
+export type SearchSurface = 'command_palette' | 'search_view'
+
+export function trackCommandPaletteOpened(p: { surface: SearchSurface }): void {
+	trackEvent('command_palette_opened', { surface: p.surface, source: 'web' })
+}
+
+export function trackSearchResultOpened(
+	p: BaseProps & { entity_type: TaxonomyEntityType; surface: SearchSurface },
+): void {
+	trackEvent('search_result_opened', { ...fillBase(p), surface: p.surface })
+}
+
+// Ship-metric event for the language-only loop builder bet — fires once when
+// Create lands a loop from a described plan. The success metric counts
+// distinct accepting workspaces, so `workspace_id` is passed on the event (not
+// only via super-properties) and `loop_id` is the loop's `objects` row id —
+// both in the snake_case names the backend's `loop_active_day` event already
+// established, so the two loop streams slice identically in PostHog.
+// `entity_id`/`entity_type` mirror those fields for taxonomy joins. Fires with
+// `send_instantly: true` so the emission is not lost to posthog-js's batching
+// queue — the bet's exit gate keys off this event staying non-zero. Exactly-once
+// per accepted loop is enforced at the call site (the create completion path).
+export function trackLoopCreatedViaLanguage(p: {
+	workspace_id: string
+	loop_id: string
+	flow_id?: string | null
+}): void {
+	trackEvent(
+		'loop_created_via_language',
+		{
+			workspace_id: p.workspace_id,
+			loop_id: p.loop_id,
+			entity_id: p.loop_id,
+			entity_type: 'loop',
+			source: 'web',
+			flow_id: p.flow_id ?? null,
+		},
+		{ send_instantly: true },
+	)
 }

@@ -85,7 +85,10 @@ function LoopDetailPage() {
 					onTogglePause={() =>
 						updateObject.mutate({
 							id: loop.id,
-							data: { status: loop.status === 'paused' ? 'running' : 'paused' },
+							// Resuming re-enters at `learning` rather than restoring whatever
+							// stage the loop was at before pausing — a pause is worth
+							// re-earning trust after, not resuming blind.
+							data: { status: loop.status === 'paused' ? 'learning' : 'paused' },
 						})
 					}
 				/>

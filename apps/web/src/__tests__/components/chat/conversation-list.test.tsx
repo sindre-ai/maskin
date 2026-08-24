@@ -1,0 +1,143 @@
+import type { ConversationListItemResponse } from '@/lib/api'
+import { render, screen, waitFor } from '@testing-library/react'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { TestWrapper } from '../../setup'
+
+vi.mock('@tanstack/react-router', async () => {
+	const { mockTanStackRouter } = await import('../../mocks/router')
+	return mockTanStackRouter()
+})
+
+vi.mock('@/lib/auth', () => ({ getStoredActor: () => ({ id: 'me', name: 'Me', type: 'human' }) }))
+
+vi.mock('@/lib/api', () => ({
+	api: { conversations: { list: vi.fn() } },
+}))
+
+import { ConversationList } from '@/components/chat/conversation-list'
+import { api } from '@/lib/api'
+
+function buildConversation(
+	overrides: Partial<ConversationListItemResponse> = {},
+): ConversationListItemResponse {
+	return {
+		id: 'conv-1',
+		workspaceId: 'ws-1',
+		title: 'Billing retries',
+		createdBy: 'me',
+		lastMessageAt: new Date().toISOString(),
+		createdAt: new Date().toISOString(),
+		updatedAt: null,
+		pinned: false,
+		archived: false,
+		unread_count: 0,
+		snippet: 'Still open on three accounts.',
+		participants: [],
+		...overrides,
+	}
+}
+
+describe('ConversationList', () => {
+	beforeEach(() => {
+		vi.mocked(api.conversations.list).mockReset()
+	})
+
+	it('renders the group rail and the end-of-history line when there is no next page', async () => {
+		vi.mocked(api.conversations.list).mockResolvedValue({
+			conversations: [buildConversation({ id: 'a', title: 'Billing retries' })],
+			has_more: false,
+		})
+		render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
+
+		expect(await screen.findByText('Today')).toBeInTheDocument()
+		expect(
+			screen.getByText(/That's the whole history — 1 conversation in this workspace\./),
+		).toBeInTheDocument()
+	})
+
+	it('does not claim the whole history is loaded while another page is pending', async () => {
+		vi.mocked(api.conversations.list).mockResolvedValue({
+			conversations: [buildConversation({ id: 'a' })],
+			has_more: true,
+		})
+		render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
+
+		// The sentinel only claims to be loading while a page is actually in
+		// flight; idle it advertises the scroll affordance (mockup 545–549).
+		expect(await screen.findByText(/Older conversations load as you scroll/)).toBeInTheDocument()
+		expect(screen.queryByText(/That's the whole history/)).not.toBeInTheDocument()
+	})
+
+	it('shows the archived-specific empty copy when the archived filter matches nothing', async () => {
+		vi.mocked(api.conversations.list).mockResolvedValue({ conversations: [], has_more: false })
+		render(<ConversationList workspaceId="ws-1" filter="archived" />, { wrapper: TestWrapper })
+
+		expect(await screen.findByText('Nothing archived yet')).toBeInTheDocument()
+		// A new chat is never archived, so offering one here sends the reader
+		// somewhere this list will still not show it (mockup 542–544).
+		expect(screen.queryByRole('link', { name: 'Start a new one →' })).not.toBeInTheDocument()
+		expect(screen.getByRole('link', { name: 'View all chats →' })).toBeInTheDocument()
+	})
+
+	it('shows the generic empty copy for a filter with no matches', async () => {
+		vi.mocked(api.conversations.list).mockResolvedValue({ conversations: [], has_more: false })
+		render(<ConversationList workspaceId="ws-1" filter="pinned" />, { wrapper: TestWrapper })
+
+		expect(await screen.findByText('No conversations here')).toBeInTheDocument()
+	})
+
+	it('sends the matching query param for each filter', async () => {
+		vi.mocked(api.conversations.list).mockResolvedValue({ conversations: [], has_more: false })
+		const { unmount } = render(<ConversationList workspaceId="ws-1" filter="unread" />, {
+			wrapper: TestWrapper,
+		})
+		await waitFor(() =>
+			expect(api.conversations.list).toHaveBeenCalledWith(
+				'ws-1',
+				expect.objectContaining({ unread_only: 'true' }),
+			),
+		)
+		unmount()
+
+		vi.mocked(api.conversations.list).mockClear()
+		render(<ConversationList workspaceId="ws-1" filter="pinned" />, { wrapper: TestWrapper })
+		await waitFor(() =>
+			expect(api.conversations.list).toHaveBeenCalledWith(
+				'ws-1',
+				expect.objectContaining({ pinned: 'true' }),
+			),
+		)
+	})
+
+	it('collapses archived results into a single Archived group', async () => {
+		vi.mocked(api.conversations.list).mockResolvedValue({
+			conversations: [
+				buildConversation({ id: 'a', archived: true }),
+				buildConversation({ id: 'b', archived: true, pinned: true, title: 'Pinned one' }),
+			],
+			has_more: false,
+		})
+		render(<ConversationList workspaceId="ws-1" filter="archived" />, { wrapper: TestWrapper })
+
+		expect(await screen.findByText('Archived')).toBeInTheDocument()
+		expect(screen.queryByText('Pinned')).not.toBeInTheDocument()
+	})
+
+	it('shows a retryable error rather than the empty state when the fetch fails', async () => {
+		// A failed fetch used to collapse into `[]` and render "No conversations
+		// here — start a chat", which reads as an empty account and invites the
+		// reader to duplicate a thread they already have.
+		vi.mocked(api.conversations.list).mockRejectedValue(new Error('network down'))
+		render(<ConversationList workspaceId="ws-1" />, { wrapper: TestWrapper })
+
+		expect(await screen.findByText("Couldn't load your conversations")).toBeInTheDocument()
+		expect(screen.queryByText('No conversations here')).not.toBeInTheDocument()
+
+		vi.mocked(api.conversations.list).mockResolvedValue({
+			conversations: [buildConversation({ id: 'a', title: 'Billing retries' })],
+			has_more: false,
+		})
+		screen.getByRole('button', { name: /Try again/ }).click()
+		expect(await screen.findByText('Billing retries')).toBeInTheDocument()
+	})
+})

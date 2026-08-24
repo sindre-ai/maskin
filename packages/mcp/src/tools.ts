@@ -1,6 +1,8 @@
 import {
 	LOOP_STATUSES,
+	MESSAGE_MAX_LENGTH,
 	createCommentSchema,
+	messageMetadataSchema,
 	notificationActionSchema,
 	notificationOptionSchema,
 	skillNameSchema,
@@ -50,6 +52,18 @@ const optionalWorkspaceId = z
 		'Workspace ID to operate in. If omitted, uses the default workspace (DEFAULT_WORKSPACE_ID). Call list_workspaces to discover available workspaces.',
 	)
 
+// Used by writes/reads that create or enumerate ambiguously-scoped
+// resources (a brand-new loop with no existing id to inherit a workspace
+// from, or an object listing/creation call) with side effects or result sets
+// that are expensive to get wrong. Requiring an explicit workspace_id here —
+// instead of silently falling back to DEFAULT_WORKSPACE_ID like tools that
+// operate on an already-identified resource — means a call can never land in
+// or leak from the wrong workspace by omission.
+const requiredWorkspaceId = z
+	.string()
+	.uuid()
+	.describe('Workspace ID to operate in. Call list_workspaces to discover available workspaces.')
+
 // Single agent-facing param covering everything needed to run an agent on a
 // specific LLM. The actor record still stores provider and config as two
 // separate columns server-side — the MCP layer splits `provider` back out
@@ -62,13 +76,12 @@ const actorLlmConfigSchema = z
 			.string()
 			.optional()
 			.describe('LLM provider to run this agent on, e.g. "anthropic", "openai".'),
-		api_key: z.string().optional().describe('API key for the given provider.'),
 		model: z.string().optional().describe('Model identifier to use, e.g. "claude-opus-4-6".'),
 	})
 	.passthrough()
 	.optional()
 	.describe(
-		'Agents only — not used for humans. Configures which LLM this agent runs on: provider, api_key, and model. Extra provider-specific keys are passed through as-is.',
+		"Agents only — not used for humans. Configures which LLM this agent runs on: provider and model. Every agent runs on its workspace's connected LLM credentials (the Claude subscription or API key connected under Settings → Keys) — per-agent API key overrides are not supported here. Extra provider-specific keys are passed through as-is.",
 	)
 
 /**
@@ -88,7 +101,7 @@ const loopStepSchema = z.object({
 		.string()
 		.uuid()
 		.describe(
-			"Agent actor that performs this step (create one with create_actor or find one with list_actors). Must be an agent, not a human — a human is put on the loop by having a step's agent notify/@mention them.",
+			"Agent actor that performs this step. Must be an agent, not a human — a human is put on the loop by having a step's agent notify/@mention them. See the tool description for how to pick or create the right agent.",
 		),
 	prompt: z
 		.string()
@@ -112,7 +125,7 @@ const loopStepSchema = z.object({
 						.string()
 						.min(1)
 						.describe(
-							'Object type whose events fire this step — any type defined in the workspace, including custom ones (call get_workspace_schema to see them).',
+							'Object type whose events fire this step — any type, including custom ones (call get_workspace_schema to see them).',
 						),
 					action: z
 						.enum(['created', 'updated', 'status_changed', 'deleted'])
@@ -189,9 +202,9 @@ export const tools = {
 	// ─── Objects ─────────────────────────────────────────────
 	create_objects: {
 		description:
-			'Create one or more objects — of any type this workspace defines (built-ins like insight/bet/task, or a custom type) — with optional relationships in a single atomic operation. To create a Loop — a persistent closed-loop agent process — use the dedicated create_loop tool instead, which wires the trigger and membership metadata correctly. For a single object, provide one node with no edges. For multiple related objects, use $id references in edges to link them. Edges can also reference existing object UUIDs to connect new objects to existing ones. ALWAYS call get_workspace_schema first — it returns the authoritative, live list of valid statuses per object type, metadata fields, and relationship types for this workspace (these are workspace-configurable, so they vary between workspaces and cannot be assumed). To attach files to a created object, upload them first with create_file (or pick existing ones with list_files) and pass the returned ids in `file_ids` on the node. Attached files appear under the object in the UI and are returned alongside the object in get_objects. When referring to created or connected objects in human-facing output (comments, summaries, notifications, descriptions), use the object\'s title — not its UUID. Returned nodes include the title; edges include sourceTitle and targetTitle for the same reason. UUIDs should only appear in human-facing text when two objects share a near-identical title and disambiguation is needed — in that case append a short id suffix (e.g. "Bets and Threads v4 (ca957490)"). Use UUIDs freely inside tool arguments.',
+			'Create one or more objects with optional relationships in a single atomic operation. Use get_workspace_schema to see more details on objects and relationships. To create a Loop — a persistent closed-loop agent process — use the dedicated create_loop tool instead, which wires the trigger and membership metadata correctly. For a single object, provide one node with no edges. For multiple related objects, use $id references in edges to link them. Edges can also reference existing object UUIDs to connect new objects to existing ones. ALWAYS call get_workspace_schema first — it returns the authoritative, live list of valid statuses per object type, metadata fields, and relationship types for this workspace (these are workspace-configurable, so they vary between workspaces and cannot be assumed). To attach files to a created object, upload them first with create_file (or pick existing ones with list_files) and pass the returned ids in `file_ids` on the node. Attached files appear under the object in the UI and are returned alongside the object in get_objects. When referring to created or connected objects in human-facing output (comments, summaries, notifications, descriptions), use the object\'s title — not its UUID. Returned nodes include the title; edges include sourceTitle and targetTitle for the same reason. UUIDs should only appear in human-facing text when two objects share a near-identical title and disambiguation is needed — in that case append a short id suffix (e.g. "Bets and Threads v4 (ca957490)"). Use UUIDs freely inside tool arguments.',
 		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
+			workspace_id: requiredWorkspaceId,
 			nodes: z
 				.array(
 					z.object({
@@ -199,11 +212,20 @@ export const tools = {
 						type: z
 							.string()
 							.describe(
-								"Object type — any type this workspace defines (built-ins like insight/bet/task, or a custom type). Call get_workspace_schema first for this workspace's actual configured types; do not assume a fixed set.",
+								"Object type. Call get_workspace_schema first for this workspace's actual configured types; do not assume a fixed set.",
 							),
-						title: z.string().optional(),
-						content: z.string().optional(),
-						status: z.string(),
+						title: z.string().optional().describe('Short, human-readable title for the object.'),
+						content: z
+							.string()
+							.optional()
+							.describe(
+								"The object's body — this is the meat of it. Keep it sharp: lead with the point, cut filler.",
+							),
+						status: z
+							.string()
+							.describe(
+								"Object status. Choose the first status by default. Only choose a different status when it's relevant.",
+							),
 						metadata: z
 							.record(z.unknown())
 							.optional()
@@ -248,17 +270,25 @@ export const tools = {
 	},
 	get_objects: {
 		description:
-			'Get one or more objects by ID. Default response per object: `{id, type, title, status, contextLine, url, workspaceId}` — no other fields. Opt into extra blocks with `include:` (each adds only its own block): `content` — the object\'s body/description; `metadata` — the object\'s custom field values; `relationships` — inbound and outbound edges, each with sourceTitle and targetTitle; `connected_objects` — the objects on the other end of those edges; `events` — recent lifecycle changes and comments; `files` — metadata for files attached to the object or its comments. In human-facing output, refer to objects by their `title`, not their UUID. Append a short id suffix (e.g. "Sales v4 (ca957490)") only when two titles collide.',
+			"Get one or more objects by ID. Default response per object: `{id, type, title, status, contextLine, url, workspaceId}` plus an always-on `setup` block (`{checks, next_steps, prose}`) — a fresh readiness check surfacing gaps (thin content, no driver, entry-status objects) to walk the user through; same shape create_objects/update_objects return. Opt into further blocks with `include:` (each adds only its own block): `content` — the object's body/description; `metadata` — the object's custom field values; `relationships` — inbound and outbound edges, each with sourceTitle and targetTitle; `connected_objects` — the objects on the other end of those edges; `events` — recent lifecycle changes and comments; `files` — metadata for files attached to the object or its comments. For a loop's deeper setup check (steps, connectors, members), call get_loop — it always returns its own `setup` block, richer than the lightweight per-object slice here. In human-facing output, refer to objects by their `title`, not their UUID. Append a short id suffix (e.g. \"Sales v4 (ca957490)\") only when two titles collide.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			ids: z.array(z.string().uuid()).min(1).max(50).describe('Object IDs to fetch'),
 			include: z
 				.array(
-					z.enum(['content', 'metadata', 'relationships', 'connected_objects', 'events', 'files']),
+					z.enum([
+						'content',
+						'metadata',
+						'relationships',
+						'connected_objects',
+						'events',
+						'files',
+						'setup',
+					]),
 				)
 				.default([])
 				.describe(
-					'Opt-in blocks to add to each object response. Default `[]` returns only the core fields `{id, type, title, status, contextLine, url, workspaceId}` per object; each listed value adds one block back.',
+					'Opt-in blocks to add to each object response. Default `[]` returns only the core fields `{id, type, title, status, contextLine, url, workspaceId}` plus `setup` per object; each listed value adds one more block. `setup` is always attached regardless of whether it is listed here — the enum value is accepted only for backward compatibility and is a no-op.',
 				),
 		}),
 	},
@@ -322,14 +352,12 @@ export const tools = {
 	},
 	list_objects: {
 		description:
-			'List insights, bets, and/or tasks in the workspace. Filter by type, status, driver, last-updated window, or custom metadata fields. Returns paginated results ordered by creation date unless `sort` is set. Rows with `status = "archived"` are hidden by default — pass `include_archived: true` to see them. When response scoping is enabled the server pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page. `offset` still works for backward compatibility.',
+			'List objects in the workspace. Filter by type, status, driver, last-updated window, or custom metadata fields. Returns paginated results ordered by creation date, newest first, unless `sort` is set. Rows with `status = "archived"` are hidden by default — pass `include_archived: true` to see them. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page. This applies uniformly to the default creation-date order and to `sort`-overridden updated-at order.',
 		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
+			workspace_id: requiredWorkspaceId,
 			type: z
 				.string()
-				.describe(
-					'Object type — any type this workspace defines (built-ins like insight/bet/task, or a custom type). Call get_workspace_schema to see the live list.',
-				)
+				.describe('Object type. Call get_workspace_schema to see the live list.')
 				.optional(),
 			status: z.string().optional(),
 			driver: z
@@ -357,13 +385,18 @@ export const tools = {
 				.describe(
 					'Sort by `updated_at`. Use `updated_at_asc` to walk oldest-stalled-first; `updated_at_desc` for most-recently-touched first. Omit to keep the default `createdAt desc` order.',
 				),
-			limit: z.number().int().min(1).max(100).optional(),
-			offset: z.number().int().min(0).optional(),
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(100)
+				.optional()
+				.describe('Max rows to return. Defaults to 25.'),
 			cursor: z
 				.string()
 				.optional()
 				.describe(
-					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call — rows inserted after that first call cannot leak into the stream.',
+					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call — rows inserted (or, under `sort`-overridden order, updated) after that first call cannot leak into the stream.',
 				),
 			metadata_eq: metadataEqSchema,
 			include_archived: z
@@ -376,7 +409,7 @@ export const tools = {
 	},
 	search_objects: {
 		description:
-			'Search objects by text in title or content, combined with optional type/status filters. Use this instead of list_objects when you need to find objects by keyword. To narrow by a custom metadata field, pass `metadata_eq` — e.g. `metadata_eq: {"promotion_mode": "human_approved"}`. Call get_workspace_schema first to see which fields exist per object type. Rows with `status = "archived"` are hidden by default — pass `include_archived: true` to see them. When response scoping is enabled the server pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
+			'Search objects by text in title or content, combined with optional type/status filters. Use this instead of list_objects when you need to find objects by keyword. To narrow by a custom metadata field, pass `metadata_eq` — e.g. `metadata_eq: {"promotion_mode": "human_approved"}`. Call get_workspace_schema first to see which fields exist per object type. Rows with `status = "archived"` are hidden by default — pass `include_archived: true` to see them. Paginated via `offset` (default page: 25) — search results are ranked by match quality, which is incompatible with cursor pagination, so there is no `cursor` param here (unlike list_objects). Every page of a multi-page walk is still pinned to the same snapshot, so inserts between calls cannot shift results across pages.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			q: z
@@ -402,14 +435,19 @@ export const tools = {
 				.describe(
 					'ISO-8601 timestamp. Half-open: returns rows with `updated_at > updated_after` (the bound itself is excluded).',
 				),
-			limit: z.number().int().min(1).max(100).optional(),
-			offset: z.number().int().min(0).optional(),
-			cursor: z
-				.string()
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(100)
 				.optional()
-				.describe(
-					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call.',
-				),
+				.describe('Max rows to return. Defaults to 25.'),
+			offset: z
+				.number()
+				.int()
+				.min(0)
+				.optional()
+				.describe('Rows to skip before the page starts. Defaults to 0.'),
 			metadata_eq: metadataEqSchema,
 			include_archived: z
 				.boolean()
@@ -421,7 +459,7 @@ export const tools = {
 	},
 	list_relationships: {
 		description:
-			'List relationships with optional filters. Use `object_id` to fetch every relationship connected to an object regardless of direction (matches either source or target). Use `source_id` / `target_id` only when direction matters. When response scoping is enabled the server pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
+			'List relationships with optional filters. Use `object_id` to fetch every relationship connected to an object regardless of direction (matches either source or target). Use `source_id` / `target_id` only when direction matters. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			object_id: z
@@ -434,8 +472,13 @@ export const tools = {
 			source_id: z.string().uuid().optional(),
 			target_id: z.string().uuid().optional(),
 			type: z.string().optional(),
-			limit: z.number().int().min(1).max(100).optional(),
-			offset: z.number().int().min(0).optional(),
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(100)
+				.optional()
+				.describe('Max rows to return. Defaults to 25.'),
 			cursor: z
 				.string()
 				.optional()
@@ -505,132 +548,9 @@ export const tools = {
 				),
 		}),
 	},
-	maskin_rate_reviewer_verdict: {
-		description:
-			"Human/agent rating of a reviewer verdict for AC 6 of the single-prompt agent builder bet (reviewer precision ≥70% before Stage 2 ships). Sets `human_agreed: true` when the caller agrees with the reviewer's overall pass/fail, or `human_agreed: false` when they disagree. Optional `criteria_disagreements` names the specific rubric criteria the caller thinks the reviewer got wrong — those names feed the failing-criteria comment when precision drops below 70%. The reviewer itself cannot rate its own verdicts (server rejects with 403). Idempotent-hostile: a verdict can be rated once; a second call returns 409 so a human's rating is never overwritten silently.",
-		inputSchema: z.object({
-			verdict_id: z
-				.string()
-				.uuid()
-				.describe('ID of the reviewer_verdict row returned by the reviewer.'),
-			human_agreed: z
-				.boolean()
-				.describe(
-					"true when the caller agrees with the reviewer's overall pass/fail; false when they disagree.",
-				),
-			criteria_disagreements: z
-				.array(z.string().min(1).max(200))
-				.max(20)
-				.optional()
-				.describe(
-					"Names of rubric criteria the caller disagrees with the reviewer on. Populate this when human_agreed=false so DoD 5's failing-criteria comment can name specific criteria.",
-				),
-			note: z
-				.string()
-				.max(2000)
-				.optional()
-				.describe('Optional free-text explanation of the disagreement.'),
-			workspace_id: optionalWorkspaceId,
-		}),
-	},
-	maskin_reviewer_precision_summary: {
-		description:
-			"Reviewer precision summary for a rubric object — total verdicts, rated count, agreed count, precision ratio, and per-criterion false-positive breakdown. This is the ≥70% Stage 2 ship gate for the single-prompt agent builder bet: call it after at least 10 verdicts have been rated, paste `summary_line` into a comment on the parent bet. When precision drops below the threshold, `failing_criteria` names the specific rubric criteria producing false positives — that's the signal the Architect needs to tighten the rubric.",
-		inputSchema: z.object({
-			rubric_id: z
-				.string()
-				.uuid()
-				.describe('ID of the rubric object (the workspace object holding reviewer criteria).'),
-			workspace_id: optionalWorkspaceId,
-		}),
-	},
-	maskin_create_agent: {
-		description:
-			"Generate an opinionated subject-matter-expert (SME) agent from a single-line prompt. ASYNC — kicks off one container agent session that does the whole job itself (intent extraction, persona synthesis, system-prompt authoring, anti-hedging opinionation, mandatory self-critique against a quality rubric, actor + SKILL.md registration, and a gap-report comment naming missing context) and returns { session_id, status } immediately, typically in well under a second. Does NOT return the created agent's details synchronously. Poll get_session(session_id) (optionally include_logs) until status is completed/failed/timeout, or use run_agent-style waiting. On success, session.result.final_message contains a fenced ```json maskin_agent_builder_result ... ``` block: { kind: 'created', actor_id, actor_name, skill_id, skill_name, definition_summary, self_critique, gap_report_items, gap_report_comment_posted }. If the prompt was too underspecified to build from, the same fenced block instead contains { kind: 'gap_question', gap_question, missing } — no actor is created, no comment posted. workspace_id is required — the persona is written into that workspace.",
-		inputSchema: z.object({
-			prompt: z
-				.string()
-				.min(1)
-				.max(4000)
-				.describe('One-line description of the SME agent you want (required).'),
-			workspace_id: z
-				.string()
-				.uuid()
-				.describe('Workspace the new actor + SKILL.md are written into (required, UUID).'),
-			examples: z
-				.array(z.string().min(1).max(2000))
-				.max(10)
-				.optional()
-				.describe('Concrete examples the agent should be able to handle. Optional.'),
-			references: z
-				.array(z.string().min(1).max(2000))
-				.max(10)
-				.optional()
-				.describe('URLs, docs, or prior artifacts to ground the persona. Optional.'),
-			constraints: z
-				.array(z.string().min(1).max(2000))
-				.max(10)
-				.optional()
-				.describe('Hard constraints the agent must respect. Optional.'),
-		}),
-	},
-	maskin_review_work: {
-		description:
-			'Score an agent definition against a rubric using a fresh-context reviewer — no shared conversation with the producer. Pass EXACTLY ONE of object_id (reads the object\'s content as the draft definition — used for reviewing a stored SKILL body or agent spec) OR session_id (reads sessions.result from a terminal container session — used for reviewing an agent-builder run that completed asynchronously). Passing both, or neither, returns a 400 from the route. rubric_id is optional; when omitted, resolves to the workspace\'s canonical agent-builder rubric (bootstrapped on first use, editable via update_objects without a deploy). Returns { criteria: [{ name, pass, fix? }], overall: "pass" | "fail" }. This is the same reviewer the agent builder runs internally; call it manually to re-score a definition after edits or to score with a custom rubric.',
-		// Kept as a plain z.object (no .refine) so `inputSchema instanceof
-		// ZodObject` — the invariant the tools test enforces — holds. Cross-
-		// field validation (exactly one of object_id/session_id) happens at the
-		// route boundary where the response can be a clean 400.
-		inputSchema: z.object({
-			object_id: z
-				.string()
-				.uuid()
-				.optional()
-				.describe(
-					'Workspace object whose `content` is the draft definition to review (e.g. a stored SKILL body). Provide exactly one of object_id or session_id.',
-				),
-			session_id: z
-				.string()
-				.uuid()
-				.optional()
-				.describe(
-					'Terminal container session whose `result` payload is the draft definition to review. Provide exactly one of object_id or session_id.',
-				),
-			rubric_id: z
-				.string()
-				.uuid()
-				.optional()
-				.describe(
-					"Rubric object to score against. Omit to use the workspace's canonical agent-builder rubric.",
-				),
-			workspace_id: z
-				.string()
-				.uuid()
-				.describe('Workspace to look up the rubric + target object/session in (required).'),
-		}),
-	},
-	maskin_refine_agent: {
-		description:
-			'Refine an existing agent generated by maskin_create_agent. Loads the actor\'s current system prompt + SKILL.md, re-runs the pipeline\'s prompt-authoring and opinionation stages with the free-text `context` treated as a refinement instruction (e.g. "add a section on cost estimation", "the persona is too diplomatic — sharpen the biases"), then writes the updated system prompt back to the actor and republishes the SKILL.md. Returns { updated_actor_id, diff } where diff is a short human-readable summary of the sections that changed. Does not create a new actor — refines in place. Underspecified refinement context (empty or vague) returns { gap_question } instead, same shape as maskin_create_agent.',
-		inputSchema: z.object({
-			actor_id: z
-				.string()
-				.uuid()
-				.describe('Actor to refine — must be an agent previously created via maskin_create_agent.'),
-			context: z
-				.string()
-				.min(1)
-				.max(4000)
-				.describe('The refinement instruction — what to change and (ideally) why.'),
-			workspace_id: z
-				.string()
-				.uuid()
-				.describe('Workspace the actor belongs to (required for the SKILL.md attachment).'),
-		}),
-	},
 	create_actor: {
 		description:
-			'Create a new actor (human or agent) and optionally add them to a workspace. Returns the actor details and API key (only shown once). If workspace_id is provided, the actor is added as a member with the given role — this is how to add a brand-new actor to a workspace as part of creating them. To add an already-existing actor to a workspace, use update_actor with workspace_id/role instead. If auto_create_workspace is true (default for humans), a new, empty workspace is created instead. For agents, set tools.mcpServers and/or attach_skill_ids so the agent has its MCP servers and skills from the start. attach_skill_ids requires workspace_id — with auto_create_workspace the new workspace has no existing skills, so any attach_skill_ids passed alongside it are ignored.',
+			'Create a new actor (human or agent). Returns the actor details and API key (only shown once). If workspace_id is provided, the actor is added as a member with the given role — this is how to add a brand-new actor to a workspace as part of creating them. To add an already-existing actor to a workspace, use update_actor with workspace_id/role instead. If auto_create_workspace is true (default for humans), a new, empty workspace is created instead. Agents default to auto_create_workspace=false, so workspace_id is effectively required when type is "agent" — omitting both fails the call rather than silently creating a workspace-less agent. For agents, set tools.mcpServers and/or attach_skill_ids so the agent has its MCP servers and skills from the start. attach_skill_ids requires workspace_id — with auto_create_workspace the new workspace has no existing skills, so any attach_skill_ids passed alongside it are ignored.',
 		inputSchema: z.object({
 			type: z.enum(['human', 'agent']),
 			name: z.string().min(1).describe('Name of actor'),
@@ -645,7 +565,9 @@ export const tools = {
 				.string()
 				.uuid()
 				.optional()
-				.describe('Add the new actor to this existing workspace'),
+				.describe(
+					'Add the new actor to this existing workspace. Required when type is "agent" unless auto_create_workspace is explicitly true — the call fails otherwise rather than creating an agent with no workspace.',
+				),
 			role: z
 				.enum(['owner', 'admin', 'member'])
 				.default('member')
@@ -654,29 +576,29 @@ export const tools = {
 				),
 			description: z
 				.string()
+				.min(1)
 				.max(80)
-				.optional()
 				.describe(
-					'Short one-liner (max 80 chars) summarizing the actor. For agents this is shown on the Agents page list and sub-page so teammates can tell agents apart at a glance.',
+					'Required, non-empty short one-liner (max 80 chars) summarizing the actor. For agents this is shown on the Agents page list and sub-page so teammates can tell agents apart at a glance — do not pass an empty or placeholder string.',
 				),
 			system_prompt: z
 				.string()
 				.optional()
 				.describe(
-					"Instructions defining the agent's behavior. Only meaningful for agents — not used for humans. If omitted for an agent, sessions fall back to a generic default prompt.",
+					"Agents only — not used for humans. This is the single most important param for agent quality: it's what makes the agent an expert rather than a generic assistant, so invest real effort here. Write it as an opinionated subject-matter-expert persona, not a bland instruction list — give the agent a clear domain and job-to-be-done, a decision framework it applies (plus a couple of named biases it leans on), explicit scope boundaries, guidance on how/when to use its tools, the output format it should produce, and ideally a few worked examples that each end in a concrete recommendation plus its assumptions. Bias the agent against hedging — it should state a recommendation, not equivocate. If omitted for an agent, sessions fall back to a generic default prompt, which produces a generic, non-expert agent.",
 				),
 			tools: z
 				.record(z.unknown())
 				.optional()
 				.describe(
-					'MCP server config for agents: { mcpServers: { <name>: { command, args, env } } }.',
+					'MCP server config for agents: { mcpServers: { <name>: { command, args, env } } }. Critical for any agent whose job requires taking action outside Maskin itself — without the relevant MCP server connected here, the agent can have a perfect system_prompt and still be unable to actually do its job.',
 				),
 			llm_config: actorLlmConfigSchema,
 			attach_skill_ids: z
 				.array(z.string().uuid())
 				.optional()
 				.describe(
-					'Workspace skill IDs to attach to this actor on creation. Agents only — skills configure agent behavior and are not used for humans.',
+					'Workspace skill IDs to attach to this actor on creation — skills are what push an agent from "just a well-written prompt" to expert-level at its actual job, so treat this as seriously as system_prompt. Agents only — not used for humans. Before creating, check the workspace\'s existing skills (list_workspace_skills) for ones that genuinely match this agent\'s job and attach those. If none of the existing skills fit, do not attach unrelated ones just to fill this field — instead, after creation, flag to the user that no matching skill was found and ask whether one should be authored (create_workspace_skill).',
 				),
 		}),
 	},
@@ -693,9 +615,10 @@ export const tools = {
 				.describe('New email address for the actor. Only meaningful for humans.'),
 			description: z
 				.string()
+				.min(1)
 				.max(80)
 				.optional()
-				.describe('Short one-liner (max 80 chars) summarizing the actor.'),
+				.describe('Short, non-empty one-liner (max 80 chars) summarizing the actor.'),
 			system_prompt: z
 				.string()
 				.optional()
@@ -738,7 +661,7 @@ export const tools = {
 	},
 	list_actors: {
 		description:
-			"List actors (humans and agents). If workspace_id is provided, returns members of that workspace with their role. If omitted, returns actors across all workspaces the caller belongs to, each annotated with their workspace memberships. Each row includes the actor's short `description` (one-liner) — call `get_actor` for the full `system_prompt` (instructions), which is how to pick up context on a human teammate @mentioned in a comment. When response scoping is enabled the workspace-scoped path pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.",
+			"List actors (humans and agents). If workspace_id is provided, returns members of that workspace with their role. If omitted, returns actors across all workspaces the caller belongs to, each annotated with their workspace memberships. Each row includes the actor's short `description` (one-liner) — call `get_actor` for the full `system_prompt` (instructions), which is how to pick up context on a human teammate @mentioned in a comment. When `workspace_id` is set, each row also includes `connectedTriggers`/`connectedLoops` — the triggers and loops wired to that actor, each as `{ name, url }` (omitted when there are none, and always omitted for the cross-workspace listing, since a trigger/loop belongs to exactly one workspace). The workspace-scoped path pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page. The cross-workspace listing (no `workspace_id`) does not support cursor pagination — use `offset` to page it instead.",
 		inputSchema: z.object({
 			workspace_id: z
 				.string()
@@ -747,8 +670,21 @@ export const tools = {
 				.describe(
 					'Optional workspace ID to scope the listing to. If omitted, returns actors across all workspaces the caller belongs to (each with their workspace memberships).',
 				),
-			limit: z.number().int().min(1).max(100).optional(),
-			offset: z.number().int().min(0).optional(),
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(100)
+				.optional()
+				.describe('Max rows to return (1-100). Defaults to 25.'),
+			offset: z
+				.number()
+				.int()
+				.min(0)
+				.optional()
+				.describe(
+					'Rows to skip. Only used for the cross-workspace listing (no `workspace_id`) — the workspace-scoped path pages via `cursor` instead. Defaults to 0.',
+				),
 			cursor: z
 				.string()
 				.optional()
@@ -759,9 +695,16 @@ export const tools = {
 	},
 	get_actor: {
 		description:
-			'Get an actor by ID — returns the full record including `description` (short one-liner), `system_prompt` / instructions (longer context on who the actor is and how to work with them), and `skills` (id + name of workspace skills attached to the actor). When a human is @mentioned on a comment, call this to pick up their instructions and tailor your reply.',
+			"Get an actor by ID — returns the full record including `description` (short one-liner), `system_prompt` / instructions (longer context on who the actor is and how to work with them), `skills` (id + name of workspace skills attached to the actor), and `connectedTriggers`/`connectedLoops` (the triggers/loops wired to this actor, same as `list_actors`). When `workspace_id` is given, `status` reflects the actor's membership role in that workspace (owner/admin/member), matching `list_actors`' workspace-scoped `status`. When a human is @mentioned on a comment, call this to pick up their instructions and tailor your reply.",
 		inputSchema: z.object({
 			id: z.string().uuid(),
+			workspace_id: z
+				.string()
+				.uuid()
+				.optional()
+				.describe(
+					'Workspace to resolve against: the returned `url`, `status` (membership role in this workspace), and `connectedTriggers`/`connectedLoops` are all scoped to this workspace. Defaults to the connection default workspace if omitted.',
+				),
 		}),
 	},
 	create_workspace: {
@@ -787,8 +730,22 @@ export const tools = {
 	},
 	list_workspaces: {
 		description:
-			'List workspaces accessible to the authenticated actor. Use this to discover workspace IDs, which can be passed to any workspace-scoped tool via the workspace_id parameter.',
-		inputSchema: z.object({}),
+			'List workspaces accessible to the authenticated actor. Use this to discover workspace IDs, which can be passed to any workspace-scoped tool via the workspace_id parameter. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
+		inputSchema: z.object({
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(100)
+				.optional()
+				.describe('Max rows to return. Defaults to 25.'),
+			cursor: z
+				.string()
+				.optional()
+				.describe(
+					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call.',
+				),
+		}),
 	},
 	get_workspace_schema: {
 		description:
@@ -885,11 +842,16 @@ export const tools = {
 	// NOT the same as per-agent skills (those live under an agent's own file store).
 	list_workspace_skills: {
 		description:
-			'List shared workspace skills — SKILL.md files stored once per workspace and attachable to any agent in the workspace. These are workspace-scoped and reusable across agents, NOT per-agent skills. Returns lightweight rows without the SKILL.md body; call get_workspace_skill to fetch full content. When response scoping is enabled the server pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
+			'List shared workspace skills — SKILL.md files stored once per workspace and attachable to any agent in the workspace. These are workspace-scoped and reusable across agents, NOT per-agent skills. Returns lightweight rows without the SKILL.md body; call get_workspace_skill to fetch full content. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			limit: z.number().int().min(1).max(100).optional(),
-			offset: z.number().int().min(0).optional(),
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(100)
+				.optional()
+				.describe('Max rows to return. Defaults to 25.'),
 			cursor: z
 				.string()
 				.optional()
@@ -980,12 +942,17 @@ export const tools = {
 	},
 	list_files: {
 		description:
-			'List files in the workspace, newest first. Pass `q` to filter by name substring. When response scoping is enabled the server pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
+			'List files in the workspace, newest first. Pass `q` to filter by name substring. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			q: z.string().optional().describe('Case-insensitive substring match on file name.'),
-			limit: z.number().int().min(1).max(200).optional(),
-			offset: z.number().int().min(0).optional(),
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(200)
+				.optional()
+				.describe('Max rows to return. Defaults to 25.'),
 			cursor: z
 				.string()
 				.optional()
@@ -1032,7 +999,7 @@ export const tools = {
 	},
 	get_events: {
 		description:
-			'Get the workspace activity log. Every mutation (create, update, delete) is recorded as an event. Use this to see what changed, track agent activity, or audit changes. Pass `id` to fetch a single event by its numeric event_id (e.g. the one quoted in a trigger prompt). Filter by entity_type (object|relationship|integration) and action (created|updated|deleted|status_changed).',
+			'Get the workspace activity log. Every mutation (create, update, delete) is recorded as an event. Use this to see what changed, track agent activity, or audit changes. Pass `id` to fetch a single event by its numeric event_id (e.g. the one quoted in a trigger prompt). Filter by entity_type (object|relationship|integration) and action (created|updated|deleted|status_changed). Paginated via a snapshot-consistent cursor — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z
@@ -1044,16 +1011,27 @@ export const tools = {
 			entity_type: z.string().optional(),
 			action: z.string().optional(),
 			limit: z.number().int().min(1).max(100).default(50),
+			cursor: z
+				.string()
+				.optional()
+				.describe(
+					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call.',
+				),
 		}),
 	},
 	get_comments: {
 		description:
-			'Get comments posted on a specific object, newest first. Threading is expressed via data.parentEventId on each row — replies reference the event id of the comment they reply to.',
+			'Get comments posted on a specific object, newest first. Threading is expressed via data.parentEventId on each row — replies reference the event id of the comment they reply to. Paginated via a snapshot-consistent cursor — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			entity_id: z.string().uuid().describe('Object ID to fetch comments for.'),
 			limit: z.number().int().min(1).max(100).default(50).describe('Defaults to 50.'),
-			offset: z.number().int().min(0).default(0).describe('Defaults to 0.'),
+			cursor: z
+				.string()
+				.optional()
+				.describe(
+					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call.',
+				),
 		}),
 	},
 	create_comment: {
@@ -1064,6 +1042,37 @@ export const tools = {
 			...createCommentSchema.shape,
 		}),
 	},
+
+	// ─── Conversations ───────────────────────────────────────
+	get_conversation: {
+		description:
+			"Get a conversation's title and current participant list (humans and agents). Call this before replying so you know who else is in the room.",
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			conversation_id: z.string().uuid(),
+		}),
+	},
+	list_conversation_messages: {
+		description:
+			'List messages in a conversation, most-recent first. Use before_id (fetch older) or after_id (fetch newer) with the id of a message you already have to page through history.',
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			conversation_id: z.string().uuid(),
+			before_id: z.number().int().positive().optional(),
+			after_id: z.number().int().positive().optional(),
+			limit: z.number().int().min(1).max(200).default(50),
+		}),
+	},
+	post_conversation_message: {
+		description: `Post a message into a conversation you are a participant in, mid-turn. You do NOT need this tool for your actual reply: whatever you write at the end of your turn is posted into the chat automatically. Use it for an interim note — most usefully a short heads-up, before you start something that will take a while, saying what you are going into so the human isn't left waiting in silence. That is optional; skip it when the message just wants a direct answer. Read the recent messages with list_conversation_messages first if you need more context than what triggered this session. Posting "okay" or "got it" style acknowledgements with nothing else adds noise, not value. Hard limit: ${MESSAGE_MAX_LENGTH} characters.`,
+		inputSchema: z.object({
+			workspace_id: optionalWorkspaceId,
+			conversation_id: z.string().uuid(),
+			content: z.string().min(1).max(MESSAGE_MAX_LENGTH),
+			metadata: messageMetadataSchema.optional(),
+		}),
+	},
+
 	create_trigger: {
 		description:
 			"Create an automation trigger that fires an agent on a schedule or event. Cron triggers run periodically (config: { expression: '*/5 * * * *' }). Event triggers fire on mutations (config: { entity_type: 'object', action: 'created', filter: { ... } }). The target_actor_id must be an agent actor.",
@@ -1103,11 +1112,16 @@ export const tools = {
 	},
 	list_triggers: {
 		description:
-			'List all triggers in the workspace. When response scoping is enabled the server pages via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page. `limit`/`offset` still work for backward compatibility (default 50, max 100).',
+			'List all triggers in the workspace. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
-			limit: z.number().int().min(1).max(100).optional(),
-			offset: z.number().int().min(0).optional(),
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(100)
+				.optional()
+				.describe('Max rows to return. Defaults to 25.'),
 			cursor: z
 				.string()
 				.optional()
@@ -1129,21 +1143,19 @@ export const tools = {
 	// wrong.
 	create_loop: {
 		description:
-			'Create a Loop — a persistent process where agents (and humans) work toward a goal, with steps that fire as objects change state. A loop wraps: (a) STEPS — triggers that fire an agent, either on a schedule (cron) or when an object of any workspace-defined type changes state (event); (b) AGENTS — each step targets an agent actor that does the work; (c) MEMBER OBJECTS — the objects currently flowing through the loop (any type the workspace defines — call get_workspace_schema to discover types and statuses), linked via `in_loop` relationships. Pass `steps` to define and create the triggers inline in this one call, and/or `trigger_ids` to attach existing triggers. A loop is OPEN when it has no feedback mechanism, CLOSED when one of its steps is a feedback step — an event trigger on the close condition (e.g. when an object reaches a done status) whose agent captures learnings (create an insight/knowledge object linked with `informs`), improves the loop, and/or seeds the next object into it. Prefer closing every loop. To put a human ON the loop, add a step whose agent notifies/@mentions that human at decision points (via create_comment mentions or create_notification) — human participation is a step like any other, and another agent can be on the loop the same way. If custom object types flow through the loop, pass `closed_statuses` so the loop knows which statuses mean done. All ids, types, and statuses are validated against the workspace — unknown ones fail with a clear error instead of silently creating a loop with no working steps. The loop object and its `in_loop` membership edges are created atomically; attach more steps or objects later with update_loop; read loops back (with live stats) via list_loops. NOTE: this creates a custom loop from scratch — to install a pre-packaged marketplace loop template, use get_started instead.',
+			"Create a Loop — an iterative process where agents (and humans) work toward a goal, driven by STEPS that fire an agent when an object of any type changes state (event) or on a schedule (cron). A step and a trigger are the same thing, created two different ways: `steps` authors brand-new triggers inline in this call (you supply name/agent_id/prompt/when); `trigger_ids` attaches triggers that already exist. Both land in the same place — the loop's step list — and the response nests each step's resolved agent directly under it (there is no separate flat agent list, since the trigger is what determines which agent runs a step). Before authoring a step or attaching a trigger_ids entry, call list_actors (and list_triggers, to see a candidate trigger's current target agent) and confirm the agent's role and system_prompt genuinely fit the work — never default to an unrelated or generic agent/trigger just because one is on hand. Where nothing fits, create a fresh, specialized agent (create_actor) and/or trigger (an inline step, or create_trigger) instead of repurposing a mismatched pair — loops are more reliable when each step is run by an expert, single-purpose agent. MEMBER OBJECTS are the objects currently flowing through the loop (any type — call get_workspace_schema to discover types and statuses), linked via `in_loop` relationships. `status` is a graduated-trust ladder (draft → learning → supervised → fully_autonomous, in that order) that can be paused from any point — pausing disables every trigger the loop references, so nothing fires until it's resumed. A loop is OPEN when it has no feedback mechanism, CLOSED when one of its steps is a feedback step — an event trigger on the close condition (e.g. when an object reaches a done status) whose agent captures learnings (create an insight/knowledge object linked with `informs`), improves the loop, and/or seeds the next object into it. Prefer closing every loop. To put a human ON the loop, add a step whose agent @mentions that human on the relevant object via create_comment — human participation is a step like any other. If custom object types flow through the loop, pass `closed_statuses` so the loop knows which statuses mean done. All ids, types, and statuses are validated against the workspace — unknown ones fail with a clear error instead of silently creating a loop with no working steps. The loop object and its `in_loop` membership edges are created atomically; attach more steps or objects later with update_loop; read loops back (with live stats) via list_loops. NOTE: this creates a custom loop from scratch — to install a pre-packaged marketplace loop template, use get_started instead.",
 		inputSchema: z.object({
-			workspace_id: optionalWorkspaceId,
+			workspace_id: requiredWorkspaceId,
 			name: z.string().min(1).describe('Loop name, e.g. "Inbound lead qualification".'),
-			guarantee: z
+			content: z
 				.string()
 				.optional()
-				.describe(
-					'What the loop promises / a full description of the process. Stored as the loop object\'s content and shown as the "guarantee" on the loops page.',
-				),
+				.describe('What the loop is for — a plain-language description of the process it runs.'),
 			status: z
 				.enum(LOOP_STATUSES)
-				.default('running')
+				.default('draft')
 				.describe(
-					'Lifecycle status. `running` (default) means the loop is live; `waiting` flags it as needing human attention; `paused` and `archived` stop it.',
+					'Autonomy stage. `draft` (default) — set up but not live yet. `learning` → `supervised` → `fully_autonomous` is the trust ladder as the loop proves itself and earns more autonomy. `paused` can be set from any stage and disables every trigger the loop references until it leaves paused.',
 				),
 			entry_condition: z
 				.string()
@@ -1157,12 +1169,6 @@ export const tools = {
 				.describe(
 					'Plain-language condition for when an object is done and leaves the loop, e.g. "The task reaches status done or discarded".',
 				),
-			human_decision_points: z
-				.number()
-				.int()
-				.min(0)
-				.optional()
-				.describe('Number of points in the loop where a human must decide before it continues.'),
 			steps: z
 				.array(loopStepSchema)
 				.max(20)
@@ -1175,7 +1181,7 @@ export const tools = {
 				.max(50)
 				.default([])
 				.describe(
-					"Pre-existing triggers to attach as loop steps (create them with create_trigger, or find them with list_triggers). Combined with any inline `steps` and stored on the loop as metadata.trigger_ids; the agents those triggers target become the loop's agents.",
+					'Pre-existing triggers to attach as loop steps — see the tool description for how to pick one whose agent actually fits. Find candidates with list_triggers, or create one with create_trigger. Combined with any inline `steps` and stored on the loop as metadata.trigger_ids.',
 				),
 			object_ids: z
 				.array(z.string().uuid())
@@ -1189,19 +1195,21 @@ export const tools = {
 	},
 	update_loop: {
 		description:
-			"Update a Loop: rename it, change its status or entry/close conditions, add inline steps, attach/detach triggers (the loop's steps), add/remove the objects flowing through it, and set closed_statuses for custom object types. Use add_steps with an event `when` on the close condition to CLOSE an open loop — i.e. add the feedback step that captures learnings and seeds the next object when a member object reaches its end state. Trigger membership is stored on the loop row as metadata.trigger_ids — add_steps/add_trigger_ids/remove_trigger_ids do a safe read-modify-write of that list (added ids are validated against the workspace's triggers). Object membership is an `in_loop` relationship edge — add_object_ids creates edges (idempotent; already-member objects are fine), remove_object_ids deletes them. Find loop ids with list_loops. Fails with a clear error if the target object is not a loop — use update_objects for regular objects.",
+			"Update a Loop: rename it, change its status or entry/close conditions, add inline steps, attach/detach triggers (the loop's steps), add/remove the objects flowing through it, and set closed_statuses for custom object types. A step and a trigger are the same thing — see create_loop's description for how `steps`/`trigger_ids` relate and how to pick an agent that actually fits before authoring or attaching one; the same guidance applies to add_steps/add_trigger_ids here. Use add_steps with an event `when` on the close condition to CLOSE an open loop — i.e. add the feedback step that captures learnings and seeds the next object when a member object reaches its end state. Trigger membership is stored on the loop row as metadata.trigger_ids — add_steps/add_trigger_ids/remove_trigger_ids do a safe read-modify-write of that list (added ids are validated against the workspace's triggers). Setting `status` to `paused` disables every trigger currently on the loop (including ones just added in this same call); moving off `paused` re-enables them. Object membership is an `in_loop` relationship edge — add_object_ids creates edges (idempotent; already-member objects are fine), remove_object_ids deletes them. Find loop ids with list_loops. Fails with a clear error if the target object is not a loop — use update_objects for regular objects.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid().describe('Loop object id (from list_loops or create_loop).'),
 			name: z.string().min(1).optional().describe('New loop name.'),
-			guarantee: z
+			content: z
 				.string()
 				.optional()
-				.describe('New loop guarantee / description (replaces the current content).'),
+				.describe('New loop description (replaces the current content).'),
 			status: z
 				.enum(LOOP_STATUSES)
 				.optional()
-				.describe('New lifecycle status: running | waiting | paused | archived.'),
+				.describe(
+					"New autonomy stage: draft | learning | supervised | fully_autonomous | paused — see create_loop for what each means. Setting `paused` disables the loop's triggers; moving off it re-enables them.",
+				),
 			entry_condition: z
 				.string()
 				.optional()
@@ -1210,12 +1218,6 @@ export const tools = {
 				.string()
 				.optional()
 				.describe('New plain-language close condition. Pass an empty string to clear.'),
-			human_decision_points: z
-				.number()
-				.int()
-				.min(0)
-				.optional()
-				.describe('New count of human decision points in the loop.'),
 			closed_statuses: closedStatusesSchema,
 			add_steps: z
 				.array(loopStepSchema)
@@ -1256,14 +1258,27 @@ export const tools = {
 	},
 	list_loops: {
 		description:
-			'List every Loop in the workspace with live derived stats: composite status pill (running / waiting_on_you / paused / archived), entry/close conditions, in-progress and closed member-object counts, median time-to-close, the trigger ids that make up the loop\'s steps, and the distinct agent actor ids those triggers fire. Use this to see the workspace\'s loops and to find loop ids for update_loop. A loop with no feedback step is OPEN — consider closing it via update_loop add_steps. To list the objects currently inside a loop, call list_relationships with source_id=<loop id> and type="in_loop"; to inspect a step, pass its trigger id to list_triggers output or update_trigger.',
+			'List every Loop in the workspace as a lean id/name index — each row is just `{id, workspaceId, name, url}`. Use this to find loop ids, then call get_loop with a specific id for live stats (status pill, entry/close conditions, member-object counts, median time-to-close) and the `steps` view (each trigger nested with its resolved agent). To list the objects currently inside a loop, call list_relationships with source_id=<loop id> and type="in_loop". Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(100)
+				.optional()
+				.describe('Max rows to return. Defaults to 25.'),
+			cursor: z
+				.string()
+				.optional()
+				.describe(
+					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call.',
+				),
 		}),
 	},
 	get_loop: {
 		description:
-			'Get a single Loop by id, with the same live derived stats list_loops returns: composite status pill, entry/close conditions, in-progress and closed member-object counts, median time-to-close, step trigger ids, and the distinct agent actor ids those triggers fire. Use list_loops to discover loop ids first. Fails with a clear error if the id is not a loop in this workspace.',
+			"Get a single Loop by id: composite status pill, entry/close conditions, in-progress and closed member-object counts, median time-to-close, plus `steps` — each step's trigger nested with its resolved agent (id/name/description). Use list_loops (a lean id/name index) to discover loop ids first. Fails with a clear error if the id is not a loop in this workspace.",
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			id: z.string().uuid().describe('Loop object id (from list_loops or create_loop).'),
@@ -1281,7 +1296,7 @@ export const tools = {
 	// ─── Sessions ────────────────────────────────────────────
 	create_session: {
 		description:
-			'Spawn a containerized agent execution session. Creates an ephemeral Docker container running the specified agent (Claude Code, Codex, or custom). The agent executes the action_prompt autonomously. Use get_session to check status, get_session_logs to read output. For a blocking alternative that waits for completion, use run_agent instead.',
+			'Spawn a containerized agent execution session. Creates an ephemeral Docker container running the specified agent (Claude Code, Codex, or custom). The agent executes the action_prompt autonomously. Use get_session to check status; pass `include_logs: true` on the same call to read the container output. For a blocking alternative that waits for completion, use run_agent instead.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			actor_id: z.string().uuid().describe('The actor that will run inside the session'),
@@ -1299,14 +1314,14 @@ export const tools = {
 						.boolean()
 						.optional()
 						.describe(
-							'Provision a Chromium CDP browser sidecar and inject BROWSER_CDP_URL so a playwright MCP server can attach. Auto-enabled when the actor already has an MCP server referencing ${BROWSER_CDP_URL} — set explicitly only when you also need previewGuestPorts.',
+							'Provision a Chromium CDP browser sidecar and inject BROWSER_CDP_URL so a playwright MCP server can attach. Auto-enabled when the actor already has an MCP server referencing ${BROWSER_CDP_URL}.',
 						),
 					previewGuestPorts: z
 						.array(z.number().int().positive().max(65535))
 						.max(8)
 						.optional()
 						.describe(
-							"Guest port(s) inside the session to publish on the browser sidecar bridge (e.g. 5173 for a Vite dev server), so the sidecar's Playwright can reach a dev server the agent boots locally inside its own session — no external deploy needed. Implies browserRequired.",
+							"Usually unnecessary: once a browser sidecar is attached (see browserRequired), any dev-server port the agent starts on its own inside 3000-12000 (e.g. Vite's default 5173) is detected and relayed automatically — the agent's Playwright tool can reach it directly, and the agent is told the URL automatically. Only set this to pre-declare a port so its relay URL (PREVIEW_URL env var) is available from the very first turn, before the dev server itself has started listening. Implies browserRequired.",
 						),
 				})
 				.optional()
@@ -1399,7 +1414,7 @@ export const tools = {
 	},
 	run_agent: {
 		description:
-			'High-level tool: create a container agent session, wait for completion, and return the result with logs. This is a blocking call that polls until the session reaches a terminal state (completed/failed/timeout). Use create_session + get_session + get_session_logs separately if you need non-blocking execution.',
+			'High-level tool: create a container agent session, wait for completion, and return the result with logs. This is a blocking call that polls until the session reaches a terminal state (completed/failed/timeout). Use create_session + get_session (with `include_logs: true` when you want the output) separately if you need non-blocking execution.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			actor_id: z.string().uuid().describe('The agent actor that will execute the task'),
@@ -1523,17 +1538,44 @@ export const tools = {
 	},
 	list_unread: {
 		description:
-			'List entities the current actor is subscribed to with unread activity (comments newer than the actor\'s last_read_event_id). Returns object summaries inline when entity_type="object".',
+			'List entities the current actor is subscribed to with unread activity (comments newer than the actor\'s last_read_event_id). Returns object summaries inline when entity_type="object". Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			entity_type: z.enum(['object']).optional(),
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(100)
+				.optional()
+				.describe('Max rows to return. Defaults to 25.'),
+			cursor: z
+				.string()
+				.optional()
+				.describe(
+					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call.',
+				),
 		}),
 	},
 	// ─── Integrations ─────────────────────────────────────────
 	list_integrations: {
-		description: 'List integrations connected to the workspace',
+		description:
+			'List integrations connected to the workspace. Paginated via a snapshot-consistent cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(100)
+				.optional()
+				.describe('Max rows to return. Defaults to 25.'),
+			cursor: z
+				.string()
+				.optional()
+				.describe(
+					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the snapshot-consistent walk started by the first call.',
+				),
 		}),
 	},
 	list_integration_providers: {
@@ -1542,13 +1584,19 @@ export const tools = {
 	},
 	connect_integration: {
 		description:
-			'Start an integration connection flow for a provider (e.g. "github"). Returns an install_url that must be opened in a browser to complete the OAuth/installation flow. The callback is handled automatically by the server.',
+			'Start an integration connection flow for a provider (e.g. "github"). OAuth providers return an install_url that must be opened in a browser to complete the flow; the callback is handled automatically by the server. API-key providers (e.g. "posthog") require `api_key` and are activated immediately, with no install_url.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
 			provider: z
 				.string()
 				.describe(
 					'Provider name (e.g. "github"). Call list_integration_providers to see available providers.',
+				),
+			api_key: z
+				.string()
+				.optional()
+				.describe(
+					'API key for providers whose auth type is "api_key" (e.g. "posthog"). Required for those providers and ignored for OAuth providers.',
 				),
 		}),
 	},
@@ -1562,9 +1610,22 @@ export const tools = {
 	// ─── Extensions ──────────────────────────────────────────
 	list_extensions: {
 		description:
-			'List all available extensions and their status in the workspace. Returns registered extensions (e.g. "work") and any custom extensions defined in the workspace. Each extension bundles one or more object types with statuses, fields, and relationship types. Call this to discover what you can enable or create.',
+			'List all available extensions and their status in the workspace. Returns registered extensions (e.g. "work") and any custom extensions defined in the workspace. Each extension bundles one or more object types with statuses, fields, and relationship types. Call this to discover what you can enable or create. Paginated via a stable cursor (default page: 25) — pass `next_cursor` from the previous response as `cursor` to fetch the next page.',
 		inputSchema: z.object({
 			workspace_id: optionalWorkspaceId,
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(100)
+				.optional()
+				.describe('Max rows to return. Defaults to 25.'),
+			cursor: z
+				.string()
+				.optional()
+				.describe(
+					'Opaque cursor returned as `next_cursor` on a prior response. When set, the server continues the stable-ordered walk started by the first call.',
+				),
 		}),
 	},
 	create_extension: {

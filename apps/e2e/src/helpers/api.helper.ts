@@ -85,6 +85,41 @@ interface RelationshipResponse {
 	type: string
 }
 
+interface ConversationParticipantResponse {
+	actorId: string
+	actorName: string
+	actorType: string
+	joinedAt: string | null
+	addedBy: string | null
+}
+
+interface ConversationDetailResponse {
+	id: string
+	workspaceId: string
+	title: string
+	createdBy: string
+	lastMessageAt: string | null
+	createdAt: string | null
+	updatedAt: string | null
+	pinned: boolean
+	archived: boolean
+	last_read_message_id: number | null
+	participants: ConversationParticipantResponse[]
+}
+
+interface MessageResponse {
+	id: number
+	conversationId: string
+	actorId: string
+	actorName: string
+	actorType: string
+	kind: string
+	content: string
+	metadata: Record<string, unknown> | null
+	sessionId: string | null
+	createdAt: string | null
+}
+
 interface TriggerResponse {
 	id: string
 	workspaceId: string
@@ -127,7 +162,9 @@ export class TestAPI {
 		data: {
 			type: string
 			title: string
-			status?: string
+			// Required by `createObjectSchema` — omitting it is a 400, so the
+			// type mirrors the API rather than letting a spec find out at runtime.
+			status: string
 			content?: string
 			metadata?: Record<string, unknown>
 		},
@@ -372,6 +409,55 @@ export class TestAPI {
 			body: JSON.stringify(data),
 		})
 		if (!res.ok) throw new Error(`createTrigger failed: ${res.status}`)
+		return res.json()
+	}
+
+	async createConversation(
+		workspaceId: string,
+		data: { title: string; participant_actor_ids: string[]; initial_message?: string },
+	): Promise<ConversationDetailResponse> {
+		const res = await fetch(`${this.baseURL}/api/conversations`, {
+			method: 'POST',
+			headers: this.headers(workspaceId),
+			body: JSON.stringify(data),
+		})
+		if (!res.ok) throw new Error(`createConversation failed: ${res.status}`)
+		return res.json()
+	}
+
+	async getConversation(id: string, workspaceId: string): Promise<ConversationDetailResponse> {
+		const res = await fetch(`${this.baseURL}/api/conversations/${id}`, {
+			headers: this.headers(workspaceId),
+		})
+		if (!res.ok) throw new Error(`getConversation failed: ${res.status}`)
+		return res.json()
+	}
+
+	async postConversationMessage(
+		id: string,
+		workspaceId: string,
+		data: { content: string; metadata?: Record<string, unknown> },
+	): Promise<MessageResponse> {
+		const res = await fetch(`${this.baseURL}/api/conversations/${id}/messages`, {
+			method: 'POST',
+			headers: this.headers(workspaceId),
+			body: JSON.stringify(data),
+		})
+		if (!res.ok) throw new Error(`postConversationMessage failed: ${res.status}`)
+		return res.json()
+	}
+
+	async updateConversationMe(
+		id: string,
+		workspaceId: string,
+		data: { pinned?: boolean; archived?: boolean; last_read_message_id?: number },
+	): Promise<{ pinned: boolean; archived: boolean; last_read_message_id: number | null }> {
+		const res = await fetch(`${this.baseURL}/api/conversations/${id}/me`, {
+			method: 'PATCH',
+			headers: this.headers(workspaceId),
+			body: JSON.stringify(data),
+		})
+		if (!res.ok) throw new Error(`updateConversationMe failed: ${res.status}`)
 		return res.json()
 	}
 }

@@ -138,8 +138,20 @@ function shouldDebounce(teamId: string, slackUserId: string, now: number): boole
 	const key = debounceKey(teamId, slackUserId)
 	const previous = lastPublishByUser.get(key)
 	if (previous !== undefined && now - previous < DEBOUNCE_MS) return true
+	// Coarse TTL sweep on each write so the Map is bounded by active-user churn
+	// within a 2s window (DEBOUNCE_MS * 2), not by process lifetime. Anything
+	// older than that can't affect the next debounce check anyway.
+	const cutoff = now - DEBOUNCE_MS * 2
+	for (const [k, ts] of lastPublishByUser) {
+		if (ts < cutoff) lastPublishByUser.delete(k)
+	}
 	lastPublishByUser.set(key, now)
 	return false
+}
+
+/** Debounce map size — exported for tests to assert the TTL sweep bounds it. */
+export function _appHomeDebounceSize(): number {
+	return lastPublishByUser.size
 }
 
 /** Reset debounce state — exported for tests. */
@@ -350,6 +362,7 @@ export async function publishAppHomeView(args: PublishAppHomeArgs): Promise<bool
 		.limit(1)
 
 	let view: UnlinkedView
+	let rowCount = 0
 	if (!link) {
 		view = buildUnlinkedView()
 	} else {
@@ -359,6 +372,7 @@ export async function publishAppHomeView(args: PublishAppHomeArgs): Promise<bool
 			.where(eq(workspaces.id, link.defaultWorkspaceId))
 			.limit(1)
 		const rows = await fetchInbox(db, link.defaultWorkspaceId, link.actorId)
+		rowCount = rows.length
 		view = buildLinkedView({
 			workspaceId: link.defaultWorkspaceId,
 			workspaceName: workspace?.name ?? null,
@@ -410,7 +424,7 @@ export async function publishAppHomeView(args: PublishAppHomeArgs): Promise<bool
 			teamId,
 			slackUserId,
 			linked: Boolean(link),
-			rowCount: link ? view.blocks.length : 0,
+			rowCount,
 		})
 	} catch (err) {
 		logger.error('Slack App Home: views.publish failed', {

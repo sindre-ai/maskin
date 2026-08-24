@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
 import type { UnreadItem } from '@/lib/api'
-import { CARD_ACTIONS, QUICK_REPLY_CHIPS, classifyCardKind } from '@/lib/foryou-card-kind'
+import {
+	AFTER_DECISION_FALLBACK_CHIPS,
+	CARD_ACTIONS,
+	QUICK_REPLY_CHIPS,
+	afterDecisionChips,
+	classifyCardKind,
+} from '@/lib/foryou-card-kind'
 import { buildObjectResponse } from '../factories'
 
 function buildItem(overrides: Partial<UnreadItem> = {}): UnreadItem {
@@ -41,15 +47,14 @@ describe('classifyCardKind', () => {
 	})
 
 	// Regression lock for the bug this task fixes: `in_review` is not a valid
-	// status for type `bet` (see workspace schema — bet accepts signal / qualified
-	// / define / active / live / succeeded / failed / paused / archived). A bet
+	// status for type `bet` (see workspace schema — bet accepts signal / define
+	// / active / live / succeeded / failed / paused / archived). A bet
 	// can never be in_review in prod, so the classifier must not key `decision`
 	// off `bet.status`. This test would fail if a reviewer tries to re-introduce
 	// the old bet→decision branch.
 	it('never classifies a bet as a decision card (bet has no in_review status in schema)', () => {
 		for (const status of [
 			'signal',
-			'qualified',
 			'define',
 			'active',
 			'live',
@@ -110,5 +115,31 @@ describe('CARD_ACTIONS', () => {
 		]) {
 			expect(action.rationale).toBeUndefined()
 		}
+	})
+})
+
+describe('afterDecisionChips', () => {
+	it('drops chips that echo the first word of a decision option', () => {
+		const labels = afterDecisionChips().map((chip) => chip.label)
+		// "Approved" overlaps the "Approve" option's head word.
+		expect(labels).not.toContain('Approved')
+		expect(labels).toContain('On it')
+		expect(labels).toContain('Need more context')
+	})
+
+	it('falls back to forward-looking chips when the filter empties the row', () => {
+		const kept = afterDecisionChips(CARD_ACTIONS.decision, [
+			{ id: 'approved', label: 'Approved', tone: 'secondary' },
+			{ id: 'send_it_back', label: 'Send it back', tone: 'secondary' },
+		])
+		expect(kept).toEqual(AFTER_DECISION_FALLBACK_CHIPS)
+	})
+
+	it('keeps every chip when no option head word overlaps', () => {
+		const kept = afterDecisionChips(
+			[{ id: 'ship', label: 'Ship', tone: 'primary' }],
+			QUICK_REPLY_CHIPS,
+		)
+		expect(kept).toEqual(QUICK_REPLY_CHIPS)
 	})
 })

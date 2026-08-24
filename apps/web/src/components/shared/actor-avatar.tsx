@@ -55,7 +55,9 @@ export function ActorAvatar({
 }: {
 	name: string
 	type: string
-	size?: 'sm' | 'md'
+	/** 20 / 28 / 38 / 52px. Overlapping avatar stacks size themselves with
+	 *  `className` — they sit between steps and exist in exactly one place. */
+	size?: 'sm' | 'md' | 'lg' | 'xl'
 	className?: string
 	onClick?: () => void
 	id?: string
@@ -66,7 +68,12 @@ export function ActorAvatar({
 	const [failedUrl, setFailedUrl] = useState<string | null>(null)
 	const imageFailed = imageUrl != null && failedUrl === imageUrl
 
-	const sizeClasses = size === 'sm' ? 'h-5 w-5 text-[10px]' : 'h-7 w-7 text-xs'
+	const sizeClasses = {
+		sm: 'h-5 w-5 text-[10px]',
+		md: 'h-7 w-7 text-xs',
+		lg: 'h-[38px] w-[38px] text-sm',
+		xl: 'h-[52px] w-[52px] text-lg',
+	}[size]
 	const initials = getActorInitials(name)
 	const paletteClass = getActorAvatarPaletteClass(id ?? name)
 	const showImage = Boolean(imageUrl) && !imageFailed

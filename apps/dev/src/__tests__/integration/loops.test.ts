@@ -79,19 +79,18 @@ describe('Loops read API integration', () => {
 		const otherWs = await insertWorkspace(db, otherActor.id)
 		await insertObject(db, otherWs.id, otherActor.id, {
 			type: 'loop',
-			status: 'running',
+			status: 'learning',
 			title: 'Foreign loop',
 		})
 
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'running',
+			status: 'learning',
 			title: 'Customer feedback',
 			content: 'Every customer who gives feedback hears back within 30 days',
 			metadata: {
 				entry_condition: 'A new customer feedback item lands in the inbox',
 				close_condition: 'A personalised reply is sent within 30 days',
-				human_decision_points: 2,
 			},
 		})
 
@@ -102,12 +101,11 @@ describe('Loops read API integration', () => {
 			loops: Array<{
 				id: string
 				name: string
-				guarantee: string
+				content: string
 				status: string
 				pill: string
 				entryCondition: string
 				closeCondition: string
-				humanDecisionPoints: number
 				inProgressCount: number
 				closedCount: number
 				agentIds: string[]
@@ -119,12 +117,11 @@ describe('Loops read API integration', () => {
 		const row = body.loops[0]
 		expect(row.id).toBe(loop.id)
 		expect(row.name).toBe('Customer feedback')
-		expect(row.guarantee).toBe('Every customer who gives feedback hears back within 30 days')
-		expect(row.status).toBe('running')
-		expect(row.pill).toBe('running')
+		expect(row.content).toBe('Every customer who gives feedback hears back within 30 days')
+		expect(row.status).toBe('learning')
+		expect(row.pill).toBe('learning')
 		expect(row.entryCondition).toBe('A new customer feedback item lands in the inbox')
 		expect(row.closeCondition).toBe('A personalised reply is sent within 30 days')
-		expect(row.humanDecisionPoints).toBe(2)
 		expect(row.inProgressCount).toBe(0)
 		expect(row.closedCount).toBe(0)
 		expect(row.agentIds).toEqual([])
@@ -135,12 +132,12 @@ describe('Loops read API integration', () => {
 	it('scopes to a single loop when `id` is passed (used by get_loop)', async () => {
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'running',
+			status: 'learning',
 			title: 'Wanted loop',
 		})
 		await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'running',
+			status: 'learning',
 			title: 'Other loop in the same workspace',
 		})
 
@@ -160,7 +157,7 @@ describe('Loops read API integration', () => {
 		const otherWs = await insertWorkspace(db, otherActor.id)
 		const foreignLoop = await insertObject(db, otherWs.id, otherActor.id, {
 			type: 'loop',
-			status: 'running',
+			status: 'learning',
 			title: 'Foreign loop',
 		})
 
@@ -176,12 +173,12 @@ describe('Loops read API integration', () => {
 	it('derives in-progress and closed counts from child objects linked via an in_loop relationship', async () => {
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'running',
+			status: 'learning',
 			title: 'Bug intake',
 		})
 		const otherLoop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'running',
+			status: 'learning',
 			title: 'Unrelated loop',
 		})
 
@@ -246,13 +243,13 @@ describe('Loops read API integration', () => {
 		// override, every lead would count as in-progress forever.
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'running',
+			status: 'learning',
 			title: 'Lead qualification',
 			metadata: { closed_statuses: { lead: ['won', 'lost'] } },
 		})
 		const openLoop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'running',
+			status: 'learning',
 			title: 'No override loop',
 		})
 
@@ -317,7 +314,7 @@ describe('Loops read API integration', () => {
 		// while the fallback table would have counted it closed.
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'running',
+			status: 'learning',
 			title: 'Strict validation loop',
 			metadata: { closed_statuses: { task: ['validated'] } },
 		})
@@ -354,12 +351,12 @@ describe('Loops read API integration', () => {
 	it('computes medianTimeToCloseMs from closed children (updated_at − created_at), null when none are closed', async () => {
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'running',
+			status: 'learning',
 			title: 'Median timing',
 		})
 		const openLoop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'running',
+			status: 'learning',
 			title: 'No closed children yet',
 		})
 
@@ -415,7 +412,7 @@ describe('Loops read API integration', () => {
 	it('ignores relationships of a different type when computing loop membership', async () => {
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'running',
+			status: 'learning',
 			title: 'Narrow membership',
 		})
 		const relatedButNotMember = await insertObject(db, workspaceId, actorId, {
@@ -474,7 +471,7 @@ describe('Loops read API integration', () => {
 
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'running',
+			status: 'learning',
 			title: 'Pipeline',
 			metadata: { trigger_ids: [trigA.id, trigB.id] },
 		})
@@ -490,15 +487,27 @@ describe('Loops read API integration', () => {
 	})
 
 	it('composes the `pill` field from lifecycle status + waiting_on_viewer', async () => {
-		const running = await insertObject(db, workspaceId, actorId, {
+		const otherActor = await insertActor(db)
+
+		const draft = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'running',
-			title: 'Running loop',
+			status: 'draft',
+			title: 'Draft loop',
 		})
-		const waiting = await insertObject(db, workspaceId, actorId, {
+		const learning = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'waiting',
-			title: 'Waiting loop',
+			status: 'learning',
+			title: 'Learning loop',
+		})
+		const supervised = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'supervised',
+			title: 'Supervised loop',
+		})
+		const fullyAutonomous = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'fully_autonomous',
+			title: 'Fully autonomous loop',
 		})
 		const paused = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
@@ -506,13 +515,45 @@ describe('Loops read API integration', () => {
 			title: 'Paused loop',
 		})
 
+		// A live loop with unread activity on a member object — this is the only
+		// way to reach `waiting_on_you` now that there's no explicit `waiting`
+		// status; it overrides the autonomy-stage label for live statuses only.
+		const waiting = await insertObject(db, workspaceId, actorId, {
+			type: 'loop',
+			status: 'supervised',
+			title: 'Waiting loop',
+		})
+		const waitingChild = await insertObject(db, workspaceId, actorId, {
+			type: 'task',
+			status: 'in_review',
+			title: 'Needs a look',
+		})
+		await insertRelationship(db, actorId, {
+			sourceType: 'object',
+			sourceId: waiting.id,
+			targetType: 'object',
+			targetId: waitingChild.id,
+			type: 'in_loop',
+		})
+		await db.insert(events).values({
+			workspaceId,
+			actorId: otherActor.id,
+			action: 'status_changed',
+			entityType: 'task',
+			entityId: waitingChild.id,
+			data: { status: 'in_review' },
+		})
+
 		const app = makeApp(actorId)
 		const res = await app.request(jsonGet('/api/loops', { 'x-workspace-id': workspaceId }))
 		const body = (await res.json()) as { loops: Array<{ id: string; pill: string }> }
 		const byId = new Map(body.loops.map((r) => [r.id, r]))
-		expect(byId.get(running.id)?.pill).toBe('running')
-		expect(byId.get(waiting.id)?.pill).toBe('waiting_on_you')
+		expect(byId.get(draft.id)?.pill).toBe('draft')
+		expect(byId.get(learning.id)?.pill).toBe('learning')
+		expect(byId.get(supervised.id)?.pill).toBe('supervised')
+		expect(byId.get(fullyAutonomous.id)?.pill).toBe('fully_autonomous')
 		expect(byId.get(paused.id)?.pill).toBe('paused')
+		expect(byId.get(waiting.id)?.pill).toBe('waiting_on_you')
 	})
 
 	describe("GET /api/loops/:id/activity — the agents' own event feed", () => {
@@ -527,7 +568,7 @@ describe('Loops read API integration', () => {
 
 			const loop = await insertObject(db, workspaceId, actorId, {
 				type: 'loop',
-				status: 'running',
+				status: 'learning',
 				title: 'Loop with activity',
 				metadata: { trigger_ids: [trigger.id] },
 			})
@@ -629,7 +670,7 @@ describe('Loops read API integration', () => {
 		it('returns { events: [] } — not an error — for a loop with no triggers', async () => {
 			const loop = await insertObject(db, workspaceId, actorId, {
 				type: 'loop',
-				status: 'running',
+				status: 'learning',
 				title: 'Empty loop',
 			})
 
@@ -651,7 +692,7 @@ describe('Loops read API integration', () => {
 			})
 			const foreignLoop = await insertObject(db, otherWs.id, otherActor.id, {
 				type: 'loop',
-				status: 'running',
+				status: 'learning',
 				title: 'Foreign loop',
 				metadata: { trigger_ids: [otherTrigger.id] },
 			})
@@ -681,7 +722,7 @@ describe('Loops read API integration', () => {
 
 		const loop = await insertObject(db, workspaceId, actorId, {
 			type: 'loop',
-			status: 'running',
+			status: 'learning',
 			title: 'Needs attention',
 		})
 		const childTask = await insertObject(db, workspaceId, actorId, {

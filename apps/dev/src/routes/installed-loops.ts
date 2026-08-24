@@ -6,14 +6,17 @@ import {
 	actors,
 	agentFiles,
 	agentSkills,
+	conversationParticipants,
 	files,
 	imports,
 	installedLoops,
 	integrations,
 	marketplaceLoopItems,
 	marketplaceLoops,
+	messages,
 	notifications,
 	objects,
+	orphanThreadDetections,
 	readState,
 	relationships,
 	sessionLogs,
@@ -51,6 +54,12 @@ import {
 	rewriteWiring,
 	sourceItemIdOf,
 } from '../services/loop-provisioning'
+import {
+	type CapturedLiveSession,
+	captureLiveSessions,
+	stopCapturedSandboxes,
+} from '../services/session-cleanup'
+import type { SessionManager } from '../services/session-manager'
 import { autoSubscribe } from '../services/subscriptions'
 
 type Env = {
@@ -58,6 +67,7 @@ type Env = {
 		db: Database
 		actorId: string
 		agentStorage: AgentStorageManager
+		sessionManager: SessionManager
 	}
 }
 
@@ -206,9 +216,9 @@ app.openapi(listInstalledLoopsRoute, async (c) => {
 // in packages/db/src/schema.ts. `metadata.trigger_ids` is seeded with every
 // trigger this install provisions so `GET /api/loops` picks up the right
 // agents (it derives `agentIds` from each trigger's `targetActorId`).
-// `entry_condition` / `close_condition` / `human_decision_points` are
-// deliberately left unset — a marketplace install has no authored pipeline
-// definition, only the running process.
+// `entry_condition` / `close_condition` are deliberately left unset — a
+// marketplace install has no authored pipeline definition, only the running
+// process.
 const installLoopRoute = createRoute({
 	method: 'post',
 	path: '/',
@@ -508,7 +518,11 @@ app.openapi(installLoopRoute, async (c) => {
 					type: 'loop',
 					title: loop.name,
 					content: loop.description,
-					status: 'running',
+					// Marketplace templates are pre-vetted, but the loop is still new to
+					// this workspace's data — start it at `learning` rather than
+					// `fully_autonomous` so its first runs get a look before it's fully
+					// trusted here.
+					status: 'learning',
 					createdBy: actorId,
 					metadata: {
 						installed_from_marketplace_loop_id: loopId,
@@ -902,6 +916,12 @@ app.openapi(uninstallLoopRoute, async (c) => {
 	// failed post-commit delete is inert — see workspace-skills.ts's DELETE route).
 	let removedSkillIds: string[] = []
 	let removedLoopObject = false
+	// Live sessions belonging to the agents this uninstall deletes. Captured
+	// inside the tx (only there is the kept-vs-deleted actor split known) and
+	// stopped after it commits — see session-cleanup.ts. Without this their
+	// sandboxes keep running as agents the user just uninstalled, holding
+	// agent-server capacity until the 2h timeout.
+	let strandedSessions: CapturedLiveSession[] = []
 
 	await db.transaction(async (tx) => {
 		if (keepProvisionedItems) {
@@ -1029,6 +1049,8 @@ app.openapi(uninstallLoopRoute, async (c) => {
 			}
 
 			if (actorIds.length > 0) {
+				strandedSessions = await captureLiveSessions(tx, actorIds)
+
 				// Delete triggers that target or were created by provisioned actors.
 				// The metadata-based delete above only removed marketplace-managed triggers;
 				// user-created triggers pointing at the same agents must also go before
@@ -1069,14 +1091,31 @@ app.openapi(uninstallLoopRoute, async (c) => {
 				await tx.delete(relationships).where(inArray(relationships.createdBy, actorIds))
 				await tx.delete(subscriptions).where(inArray(subscriptions.actorId, actorIds))
 				await tx.delete(readState).where(inArray(readState.actorId, actorIds))
+				await tx
+					.delete(orphanThreadDetections)
+					.where(inArray(orphanThreadDetections.expectedReplyActorId, actorIds))
 
-				// Reassign objects/files/imports/skills/workspaces/integrations.
+				// conversation_participants.actor_id/added_by are RESTRICT FKs to
+				// actors.id with no cascade — null out added_by on surviving rows,
+				// then drop the deleted actors' own participant rows.
+				await tx
+					.update(conversationParticipants)
+					.set({ addedBy: null })
+					.where(inArray(conversationParticipants.addedBy, actorIds))
+				await tx
+					.delete(conversationParticipants)
+					.where(inArray(conversationParticipants.actorId, actorIds))
+
+				// Reassign objects/files/imports/skills/workspaces/integrations/messages.
 				await tx.update(objects).set({ driver: null }).where(inArray(objects.driver, actorIds))
 				await tx
 					.update(objects)
 					.set({ createdBy: actorId })
 					.where(inArray(objects.createdBy, actorIds))
 				await tx.update(files).set({ createdBy: actorId }).where(inArray(files.createdBy, actorIds))
+				// messages.actor_id is NOT NULL with no cascade — reassign authorship
+				// to the uninstaller rather than deleting message history.
+				await tx.update(messages).set({ actorId }).where(inArray(messages.actorId, actorIds))
 				await tx
 					.update(imports)
 					.set({ createdBy: actorId })
@@ -1155,6 +1194,8 @@ app.openapi(uninstallLoopRoute, async (c) => {
 			},
 		})
 	})
+
+	await stopCapturedSandboxes(db, strandedSessions)
 
 	for (const skillId of removedSkillIds) {
 		try {

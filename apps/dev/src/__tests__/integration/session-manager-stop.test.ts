@@ -287,6 +287,9 @@ describe('SessionManager.stopSession — remote agent-server routing (Integratio
 			// provisional marker must be cleared by the genuine report.
 			expect(row?.result).toMatchObject({ exit_code: 1 })
 			expect((row?.result as { stopped_by_user?: boolean } | null)?.stopped_by_user).toBeFalsy()
+			// ...but the fact that the user asked for the stop survives as the
+			// UI-only flag, so the chat renders "stopped", not "failed".
+			expect(row?.result).toMatchObject({ user_stop_requested: true })
 
 			// Both the provisional and the corrected write produced a terminal
 			// event — an operator inspecting the audit log can see the exit code

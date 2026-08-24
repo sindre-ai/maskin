@@ -78,11 +78,22 @@ export const actorResponseSchema = z.object({
 	updatedAt: z.string().nullable(),
 	installedLoopId: z.string().uuid().nullable().optional(),
 	skills: z.array(actorSkillSchema).optional(),
+	// Populated only when X-Workspace-Id is provided — the actor's membership
+	// role in that specific workspace (mirrors the `role` field on the
+	// workspace-scoped branch of GET /actors). Null if the actor isn't a
+	// member of that workspace.
+	role: z.string().nullable().optional(),
 })
 
 export const actorWithKeySchema = actorResponseSchema.extend({
 	api_key: z.string(),
 	workspace_id: z.string().uuid().optional(),
+	// Set only on the signup path, and only when auto-provisioning was
+	// attempted and failed. The actor row is already committed by then, so
+	// signup still returns 201 with a usable api_key — but the caller needs to
+	// distinguish "no workspace because none was asked for" from "no workspace
+	// because provisioning broke", which a bare missing `workspace_id` cannot.
+	workspace_provisioning_failed: z.boolean().optional(),
 })
 
 export const actorWithRoleSchema = actorListItemSchema.extend({
@@ -122,6 +133,14 @@ export const eventResponseSchema = z.object({
 	data: jsonbField,
 	createdAt: z.string().nullable(),
 	description: z.string().optional(),
+})
+
+// The 201 body of POST /api/events. Identical to a plain event, plus a
+// best-effort warning when some @mention ids matched no actor — the comment
+// still posts, but those people/agents were never notified.
+export const createCommentResponseSchema = eventResponseSchema.extend({
+	unresolved_mentions: z.array(z.string().uuid()).optional(),
+	warning: z.string().optional(),
 })
 
 export const fileSummarySchema = z.object({
@@ -211,6 +230,58 @@ export const sessionResponseSchema = z.object({
 	createdBy: z.string().uuid(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
+})
+
+export const conversationParticipantResponseSchema = z.object({
+	actorId: z.string().uuid(),
+	actorName: z.string(),
+	actorType: z.string(),
+	joinedAt: z.string().nullable(),
+	addedBy: z.string().uuid().nullable(),
+})
+
+export const conversationListItemResponseSchema = z.object({
+	id: z.string().uuid(),
+	workspaceId: z.string().uuid(),
+	title: z.string(),
+	createdBy: z.string().uuid(),
+	lastMessageAt: z.string().nullable(),
+	createdAt: z.string().nullable(),
+	updatedAt: z.string().nullable(),
+	// Per-viewer participant state — resolved from the caller's own
+	// conversation_participants row, same "computed, snake_case" convention
+	// as objectResponseSchema's is_subscribed/unread_count/subscriber_count.
+	pinned: z.boolean(),
+	archived: z.boolean(),
+	unread_count: z.number(),
+	snippet: z.string().nullable(),
+	participants: z.array(conversationParticipantResponseSchema),
+})
+
+export const conversationDetailResponseSchema = conversationListItemResponseSchema
+	.omit({ snippet: true })
+	.extend({
+		last_read_message_id: z.number().nullable(),
+	})
+
+export const conversationParticipantStateResponseSchema = z.object({
+	pinned: z.boolean(),
+	archived: z.boolean(),
+	last_read_message_id: z.number().nullable(),
+})
+
+export const messageResponseSchema = z.object({
+	id: z.number(),
+	conversationId: z.string().uuid(),
+	actorId: z.string().uuid(),
+	actorName: z.string(),
+	actorType: z.string(),
+	kind: z.string(),
+	content: z.string(),
+	metadata: jsonbField,
+	sessionId: z.string().uuid().nullable(),
+	createdAt: z.string().nullable(),
+	editedAt: z.string().nullable(),
 })
 
 export const sessionLogResponseSchema = z.object({

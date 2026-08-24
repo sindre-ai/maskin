@@ -131,6 +131,11 @@ jobs:
 
   verify-e2e:
     runs-on: ubuntu-latest
+    # A healthy shard finishes in ~6 minutes. Without a cap, one wedged shard
+    # (a spec waiting on something that can never happen — see the SSE /
+    # networkidle note in the a11y specs) runs to GitHub's 6-hour default and
+    # holds the PR open with no signal.
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -191,11 +196,26 @@ jobs:
         run: pnpm --filter @maskin/e2e exec playwright install-deps chromium
 
       - name: Run E2E tests (shard ${{ matrix.shard }}/5)
-        run: pnpm --filter @maskin/e2e exec playwright test --shard=${{ matrix.shard }}/5
+        # Argos's upload() can reject via a promise that safe-argos-reporter.ts's
+        # own try/catch doesn't end up wrapping — an unhandled rejection there
+        # has previously crashed an otherwise-green shard. Rather than keep
+        # patching that from the reporter side, don't let this step's exit
+        # code decide pass/fail at all: `|| true` lets a non-zero exit through,
+        # and assert-results.mjs makes the real call from Playwright's own
+        # JSON report, which is written to disk before Argos's reporter ever
+        # runs (see playwright.config.ts). A problem anywhere in Argos's
+        # upload path — quota, outage, auth, a library bug — can then never
+        # fail the job, while an actual test regression still does.
+        run: |
+          pnpm --filter @maskin/e2e exec playwright test --shard=${{ matrix.shard }}/5 || true
+          node apps/e2e/scripts/assert-results.mjs apps/e2e/playwright-report/e2e-results.json
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_e2e
           INTEGRATION_ENCRYPTION_KEY: 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
           ARGOS_TOKEN: ${{ secrets.ARGOS_TOKEN }}
+          # `warn` is a Node-level backstop: it stops any unhandled rejection
+          # from crashing the process before assert-results.mjs gets to run.
+          NODE_OPTIONS: --unhandled-rejections=warn
 
       - name: Upload Playwright report
         if: always()

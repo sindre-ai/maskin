@@ -23,7 +23,10 @@ interface HeroCardObject {
 	title: string | null
 	status: string | null
 	driver: HeroCardActor | null
-	contextLine: string
+	// Omitted for actor rows — status (role) and description already cover it.
+	contextLine?: string
+	// Actor-only: the raw role, independent of status's isSystem/type fallback.
+	role?: string | null
 	badges?: string[]
 }
 
@@ -118,7 +121,7 @@ function HeroCardSingle({ object }: { object: HeroCardObject }) {
 	const typeLabel = schema?.types?.[object.type]?.display_name ?? object.type
 
 	const content = (
-		<article className="flex flex-col gap-2.5 px-4 py-3.5 bg-card border border-border rounded-[10px] max-w-[540px] transition-colors hover:border-border-hover">
+		<article className="flex flex-col gap-2.5 px-4 py-3.5 bg-card border border-border rounded-[10px] max-w-[540px] transition-colors hover:border-border-strong">
 			<div className="flex items-center gap-2">
 				<div className="flex items-center justify-center w-3.5 h-3.5 rounded-sm bg-primary text-primary-foreground text-[9px] leading-none font-bold shrink-0">
 					M
@@ -130,9 +133,11 @@ function HeroCardSingle({ object }: { object: HeroCardObject }) {
 			<h3 className="text-[15px] font-semibold leading-snug text-foreground m-0 line-clamp-1">
 				{object.title || 'Untitled'}
 			</h3>
-			<p className="text-[13px] text-muted-foreground leading-relaxed m-0 line-clamp-1">
-				{object.contextLine}
-			</p>
+			{(object.contextLine || object.role) && (
+				<p className="text-[13px] text-muted-foreground leading-relaxed m-0 line-clamp-1">
+					{object.contextLine || object.role}
+				</p>
+			)}
 			<div className="flex items-center gap-2.5 pt-2 border-t border-border mt-0.5">
 				{object.driver?.name &&
 					(object.driver.type !== 'agent' ? (
@@ -146,7 +151,7 @@ function HeroCardSingle({ object }: { object: HeroCardObject }) {
 						</span>
 					))}
 				{href ? (
-					<span className="ml-auto inline-flex items-center gap-1.5 text-xs font-medium text-foreground px-2.5 py-1 rounded-md bg-transparent border border-border group-hover:bg-muted group-hover:border-border-hover transition-colors min-h-[28px]">
+					<span className="ml-auto inline-flex items-center gap-1.5 text-xs font-medium text-foreground px-2.5 py-1 rounded-md bg-transparent border border-border group-hover:bg-muted group-hover:border-border-strong transition-colors min-h-[28px]">
 						Open in Maskin
 						<ExternalLink className="size-3" />
 					</span>
@@ -246,7 +251,7 @@ function HeroCardList({
 
 	return (
 		<div className="p-3">
-			<div className="flex flex-col bg-card border border-border rounded-[10px] max-w-[540px] overflow-hidden">
+			<div className="flex flex-col bg-card border border-border rounded-lg max-w-[540px] overflow-hidden">
 				<header className="flex items-center gap-2 px-4 py-3 border-b border-border">
 					<div className="flex items-center justify-center w-3.5 h-3.5 rounded-sm bg-primary text-primary-foreground text-[9px] leading-none font-bold shrink-0">
 						M
@@ -275,7 +280,7 @@ function HeroCardList({
 							href={ctaHref}
 							target="_blank"
 							rel="noreferrer"
-							className="ml-auto inline-flex items-center gap-1.5 text-xs font-medium text-foreground px-2.5 py-1 rounded-md bg-transparent border border-border hover:bg-muted hover:border-border-hover transition-colors min-h-[28px]"
+							className="ml-auto inline-flex items-center gap-1.5 text-xs font-medium text-foreground px-2.5 py-1 rounded-md bg-transparent border border-border hover:bg-muted hover:border-border-strong transition-colors min-h-[28px]"
 						>
 							Open in Maskin
 							<ExternalLink className="size-3" />
@@ -312,7 +317,7 @@ function HeroCardListRow({
 				</span>
 			) : null}
 			<span className="ml-auto text-[11.5px] text-muted-foreground tabular-nums truncate shrink-0 max-w-[160px]">
-				{row.contextLine || typeLabel}
+				{row.contextLine || row.role || typeLabel}
 			</span>
 		</>
 	)
