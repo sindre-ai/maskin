@@ -65,7 +65,7 @@ test.describe('Agent detail — Skills and Tools sections', () => {
 			await expect(skills.getByText('Personal', { exact: true })).toBeVisible()
 			await expect(skills.getByText('Workspace', { exact: true })).toBeVisible()
 			if (canSeedSkills) {
-				await expect(skills.getByText('deploy')).toBeVisible()
+				await expect(skills.getByText('deploy', { exact: true })).toBeVisible()
 			}
 			await expect(skills.getByRole('button', { name: 'Manage' })).toBeVisible()
 
@@ -73,8 +73,11 @@ test.describe('Agent detail — Skills and Tools sections', () => {
 			const tools = page.getByRole('region', { name: 'Tools' })
 			await expect(tools).toBeVisible()
 			await expect(tools.getByLabel('2 tools attached')).toBeVisible()
-			await expect(tools.getByText('linear')).toBeVisible()
-			await expect(tools.getByText('github')).toBeVisible()
+			// Same `exact` reason as the origin labels above: each server's name is a
+			// substring of the transport line rendered directly beneath it
+			// ("linear" ⊂ the URL, "github" ⊂ the npx command).
+			await expect(tools.getByText('linear', { exact: true })).toBeVisible()
+			await expect(tools.getByText('github', { exact: true })).toBeVisible()
 			await expect(tools.getByText('https://mcp.linear.app/mcp')).toBeVisible()
 			await expect(tools.getByText('npx -y @modelcontextprotocol/server-github')).toBeVisible()
 			await expect(tools.getByRole('button', { name: 'Manage' })).toBeVisible()
