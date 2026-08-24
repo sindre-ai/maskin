@@ -320,6 +320,16 @@ test.describe('Chats v2 — citation pill', () => {
 			await page.emulateMedia({ colorScheme: scheme })
 			const stamp = Date.now()
 
+			// A status outside the workspace's configured list is a 400 at
+			// `POST /objects`, so the uncoloured status has to be configured
+			// before it can be cited — that is what a workspace that renamed
+			// its own statuses looks like.
+			await account.api.updateWorkspace(account.workspaceId, {
+				settings: {
+					statuses: { bet: ['active'], task: ['awaiting_legal'] },
+				},
+			})
+
 			const known = await account.api.createObject(account.workspaceId, {
 				type: 'bet',
 				title: `Retry window ${stamp}`,

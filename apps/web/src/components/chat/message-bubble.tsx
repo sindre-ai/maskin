@@ -3,9 +3,14 @@ import { AttachedFileCard } from '@/components/shared/attached-file-card'
 import { MarkdownContent } from '@/components/shared/markdown-content'
 import { ObjectReference } from '@/components/shared/object-reference'
 import { RelativeTime } from '@/components/shared/relative-time'
+import { Button } from '@/components/ui/button'
+import { Textarea } from '@/components/ui/textarea'
+import { useEditMessage, useRetryMessage } from '@/hooks/use-conversation'
 import type { MessageContextNotification, MessageContextObject, MessageResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
-import { Bell, Box } from 'lucide-react'
+import { cn } from '@/lib/cn'
+import { Bell, Box, Pencil, RotateCcw } from 'lucide-react'
+import { useState } from 'react'
 import { MessageDivider } from './message-divider'
 
 interface MessageBubbleProps {
@@ -27,6 +32,13 @@ interface MessageBubbleProps {
 export function MessageBubble({ workspaceId, message, activity }: MessageBubbleProps) {
 	const actor = getStoredActor()
 	const isOwn = message.actorId === actor?.id
+	// Real, persisted, own message (not a system row, not an optimistic
+	// bubble) — the only kind that can be edited or retried.
+	const canAct = isOwn && message.id > 0 && message.kind === 'message'
+	const [editing, setEditing] = useState(false)
+	const [draft, setDraft] = useState('')
+	const editMessage = useEditMessage(message.conversationId, workspaceId)
+	const retryMessage = useRetryMessage(message.conversationId, workspaceId)
 	const attachments = message.metadata?.attachments ?? []
 	const contextObjects = message.metadata?.context_objects ?? []
 	const contextNotifications = message.metadata?.context_notifications ?? []
@@ -56,25 +68,94 @@ export function MessageBubble({ workspaceId, message, activity }: MessageBubbleP
 		) : null
 
 	if (isOwn) {
+		const startEditing = () => {
+			setDraft(message.content)
+			setEditing(true)
+		}
+		const saveEdit = () => {
+			const content = draft.trim()
+			setEditing(false)
+			if (content.length === 0 || content === message.content) return
+			editMessage.mutate({ messageId: message.id, content })
+		}
 		return (
-			<div className="flex flex-col items-end gap-1.5">
+			<div className={cn('flex flex-col items-end gap-1.5', editing && 'w-full')}>
 				{hasContext ? (
 					<div className="flex max-w-[min(560px,80%)] flex-wrap items-center justify-end gap-1.5">
 						<span className="eyebrow shrink-0">You attached</span>
 						<OwnContextChips objects={contextObjects} notifications={contextNotifications} />
 					</div>
 				) : null}
-				<div className="flex max-w-[min(560px,80%)] flex-col gap-1.5 rounded-[16px_16px_5px_16px] bg-primary px-[15px] py-[11px] text-[13.5px] leading-[1.55] text-primary-foreground">
+				<div
+					className={cn(
+						'flex max-w-[min(560px,80%)] flex-col gap-1.5 rounded-[16px_16px_5px_16px] bg-primary px-[15px] py-[11px] text-[13.5px] leading-[1.55] text-primary-foreground',
+						editing && 'w-full',
+					)}
+				>
 					{fileList}
-					{message.content.length > 0 ? (
+					{editing ? (
+						<div className="flex flex-col gap-2">
+							<Textarea
+								value={draft}
+								onChange={(e) => setDraft(e.target.value)}
+								onKeyDown={(e) => {
+									if (e.key === 'Enter' && !e.shiftKey) {
+										e.preventDefault()
+										saveEdit()
+									}
+									if (e.key === 'Escape') setEditing(false)
+								}}
+								aria-label="Edit message"
+								autoFocus
+								className="bg-background text-foreground"
+							/>
+							<div className="flex justify-end gap-2">
+								<Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
+									Cancel
+								</Button>
+								<Button size="sm" onClick={saveEdit}>
+									Save
+								</Button>
+							</div>
+						</div>
+					) : message.content.length > 0 ? (
 						<span className="whitespace-pre-wrap text-balance">{message.content}</span>
 					) : null}
 				</div>
-				<RelativeTime
-					date={message.createdAt}
-					format="clock"
-					className="text-[10px] text-muted-foreground"
-				/>
+				{/* The actions sit permanently in the timestamp row rather than
+				    revealing on hover — a touch viewport has no hover, and the
+				    ship gate asserts plain visibility at 375px. */}
+				<div className="flex items-center gap-1">
+					{message.editedAt ? (
+						<span className="text-[10px] text-muted-foreground">(edited)</span>
+					) : null}
+					<RelativeTime
+						date={message.createdAt}
+						format="clock"
+						className="text-[10px] text-muted-foreground"
+					/>
+					{canAct && !editing ? (
+						<>
+							<button
+								type="button"
+								onClick={startEditing}
+								aria-label="Edit message"
+								className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground"
+							>
+								<Pencil size={12} aria-hidden />
+							</button>
+							<button
+								type="button"
+								onClick={() => retryMessage.mutate({ messageId: message.id })}
+								disabled={retryMessage.isPending}
+								aria-label="Ask agents to respond again"
+								className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+							>
+								<RotateCcw size={12} aria-hidden />
+							</button>
+						</>
+					) : null}
+				</div>
 			</div>
 		)
 	}
