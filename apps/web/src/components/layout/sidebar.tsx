@@ -25,7 +25,6 @@ import { useMemo } from 'react'
 import { NavUser } from './nav-user'
 import { SidebarActivity } from './sidebar-activity'
 import { SidebarNavItem } from './sidebar-nav-item'
-import { SidebarReleaseCard } from './sidebar-release-card'
 import { WorkspaceSwitcher } from './workspace-switcher'
 
 // `navSecondaryDefs` (Marketplace) from the mockup. Agents and Triggers are
@@ -105,7 +104,6 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
 				<SidebarMenu>
 					<SidebarNavItem item={marketplaceItem} source="footer" />
 				</SidebarMenu>
-				<SidebarReleaseCard />
 				<SidebarActivity workspaceId={workspaceId} />
 				<NavUser />
 			</SidebarFooter>

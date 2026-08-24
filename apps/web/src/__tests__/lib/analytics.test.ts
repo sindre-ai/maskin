@@ -55,9 +55,8 @@ describe('trackEvent', () => {
 	it('always forwards to posthog.capture — even before posthog is initialised', () => {
 		// Regression guard: prior versions silently dropped events when the
 		// module-local `initialized` flag was false, which is exactly how the
-		// north_star_prompt_impression / _response events were being lost in prod
-		// (see task Instrument north_star_prompt_* on the For You onboarding
-		// prompt bet). posthog-js is safe to call before init; do it anyway.
+		// For You onboarding prompt's ship-metric events were lost in prod.
+		// posthog-js is safe to call before init; do it anyway.
 		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
 
 		trackEvent('objects_control_changed', { source: 'objects-page', control: 'status_filter' })
@@ -597,6 +596,9 @@ describe('v1 taxonomy helpers', () => {
 		// reaches PostHog — that's why the event name was missing from the
 		// project taxonomy after PR #1003. The impression event uses the same
 		// flag for parity so the ratio isn't biased by asymmetric delivery.
+		// These two surfaces are legacy-only (the `new-design` flag's off
+		// branch), but they still ship — the guard dies with the flag, not
+		// before it.
 		const capture = captureSpy()
 
 		trackNorthStarPromptResponse({ workspace_id: 'ws-42' })
