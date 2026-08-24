@@ -1,3 +1,6 @@
+// Covers the pre-v2 For You feed's swipe gesture, rendered when the
+// `new-design` feature flag is off. Dies with the flag, alongside
+// apps/web/src/hooks/legacy/.
 import { act, renderHook } from '@testing-library/react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { toast } from 'sonner'
@@ -12,7 +15,7 @@ vi.mock('@/lib/analytics', () => ({
 	trackForyouCardMarkedUnread: vi.fn(),
 }))
 
-import { SWIPE_THRESHOLD, useSwipeToMarkRead } from '@/hooks/use-swipe-to-mark-read'
+import { SWIPE_THRESHOLD, useSwipeToMarkRead } from '@/hooks/legacy/use-swipe-to-mark-read'
 import { trackForyouCardMarkedRead, trackForyouCardMarkedUnread } from '@/lib/analytics'
 
 // Minimal synthetic pointer event — jsdom doesn't give us real PointerEvent
