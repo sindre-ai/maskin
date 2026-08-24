@@ -287,7 +287,7 @@ function ExpandableTitle({ text }: { text: string }) {
 			className="text-left w-full flex items-start gap-1.5 cursor-pointer group"
 			aria-expanded={expanded}
 		>
-			<span className="mt-0.5 shrink-0 text-text-muted group-hover:text-text-secondary">
+			<span className="mt-0.5 shrink-0 text-muted-foreground group-hover:text-muted-foreground">
 				{expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
 			</span>
 			<span className={cn('flex-1 min-w-0 break-words', !expanded && 'line-clamp-2')}>{text}</span>

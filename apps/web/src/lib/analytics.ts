@@ -242,19 +242,6 @@ export function trackMiniAppFileViewed(
 	trackEvent('mini_app_file_viewed', { ...fillBase(p), file_name: p.file_name })
 }
 
-// For You sparse-state composer. `items_count` is the rendered item count on
-// the For You feed at the moment of the event (0–2 for the sparse range).
-// `workspace_id` rides via PostHog super-properties registered on workspace
-// mount — do not pass it explicitly.
-
-export function trackForyouSparseComposerShown(p: { items_count: number }): void {
-	trackEvent('foryou_sparse_composer_shown', { items_count: p.items_count })
-}
-
-export function trackForyouSparseComposerSubmit(p: { items_count: number }): void {
-	trackEvent('foryou_sparse_composer_submit', { items_count: p.items_count })
-}
-
 // iPadOS 13+ reports `MacIntel` from `navigator.userAgent` / `navigator.platform`
 // and only the `maxTouchPoints > 1` signal distinguishes it from a real Mac, so
 // the touch-point check is load-bearing — not paranoia. Returning 'web' for
@@ -296,35 +283,6 @@ export type NavItemSource = 'top-nav' | 'footer' | 'favorites'
 
 export function trackNavItemClicked(p: { item_key: string; source: NavItemSource }): void {
 	trackEvent('nav_item_clicked', { item_key: p.item_key, source: p.source })
-}
-
-// Ship-metric events for the For You onboarding prompt bet — response rate =
-// count(north_star_prompt_response) / count(north_star_prompt_impression),
-// filtered to workspaces with no prior bets. `workspace_id` is passed on the
-// event (not via super properties) so the PostHog cohort filter can key off it
-// without depending on the workspace mount having already registered.
-//
-// Both events fire with `send_instantly: true` so posthog-js bypasses its
-// ~3-second batching queue. The response event was being lost in prod because
-// the card unmounts immediately after submit and users often tab away right
-// after — the batched event never made it out of the browser, so the event
-// name never even landed in the PostHog project taxonomy. The impression uses
-// the same flag for parity: both halves of the ratio must have identical
-// delivery semantics or the ship metric is biased.
-export function trackNorthStarPromptImpression(p: { workspace_id: string }): void {
-	trackEvent(
-		'north_star_prompt_impression',
-		{ workspace_id: p.workspace_id },
-		{ send_instantly: true },
-	)
-}
-
-export function trackNorthStarPromptResponse(p: { workspace_id: string }): void {
-	trackEvent(
-		'north_star_prompt_response',
-		{ workspace_id: p.workspace_id },
-		{ send_instantly: true },
-	)
 }
 
 // Ship-metric event for the iOS bulk-select ergonomics bet. Fires once per
@@ -581,6 +539,49 @@ export function trackLoopCreatedViaLanguage(p: {
 			source: 'web',
 			flow_id: p.flow_id ?? null,
 		},
+		{ send_instantly: true },
+	)
+}
+
+// Legacy For You surfaces only (`components/foryou/legacy/`). Feed v4 dropped
+// the sparse composer and the north-star prompt, but both still render behind
+// the `new-design` flag's off branch, so their trackers stay until the flag and
+// the legacy tree are removed together.
+
+// `items_count` is the rendered item count on the For You feed at the moment of
+// the event (0–2 for the sparse range). `workspace_id` rides along via PostHog
+// super-properties — do not pass it explicitly here.
+
+export function trackForyouSparseComposerShown(p: { items_count: number }): void {
+	trackEvent('foryou_sparse_composer_shown', { items_count: p.items_count })
+}
+
+export function trackForyouSparseComposerSubmit(p: { items_count: number }): void {
+	trackEvent('foryou_sparse_composer_submit', { items_count: p.items_count })
+}
+
+// These two pass `workspace_id` explicitly — deliberately, unlike the trackers
+// above — because the ship metric is a per-workspace ratio.
+//
+// `send_instantly` is load-bearing: without it posthog-js batches events for
+// ~3s. The response event fires right before the prompt card unmounts and users
+// typically tab away immediately, so the batched event never reached PostHog —
+// that is why `north_star_prompt_response` was missing from the taxonomy after
+// PR #1003. The impression event carries the same flag for parity, so the ratio
+// is not biased by asymmetric delivery. Do not remove either flag.
+
+export function trackNorthStarPromptImpression(p: { workspace_id: string }): void {
+	trackEvent(
+		'north_star_prompt_impression',
+		{ workspace_id: p.workspace_id },
+		{ send_instantly: true },
+	)
+}
+
+export function trackNorthStarPromptResponse(p: { workspace_id: string }): void {
+	trackEvent(
+		'north_star_prompt_response',
+		{ workspace_id: p.workspace_id },
 		{ send_instantly: true },
 	)
 }
