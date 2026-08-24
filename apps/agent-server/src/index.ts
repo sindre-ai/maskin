@@ -578,11 +578,24 @@ export function buildApp(deps: AppDeps): Hono {
 		)
 		return c.json({ error: 'internal_error' }, 500)
 	})
-	const inputQueue = new InputQueue()
+	// Interactive-turn delivery is the one path where a silent failure looks
+	// exactly like a quiet conversation, so every state change is logged. Volume
+	// is a handful of lines per turn and nothing at all while idle.
+	const inputQueue = new InputQueue((event, data) => logger.info(`input: ${event}`, data))
 	// Connects the /sessions/:id/logs/ingest endpoint to monitorSession's buffer.
 	// Injectable via deps so main()'s boot-time reconcile pass can reattach
 	// monitorSession for sandboxes that survived a restart (see AppDeps.sessionLogRouters).
 	const sessionLogRouters = deps.sessionLogRouters ?? new Map<string, (line: string) => void>()
+	/**
+	 * Highest output-line sequence stored per session, for /logs/batch.
+	 *
+	 * Deliberately not cleared when a session's router is removed: the guest may
+	 * still be retrying its final batches after the agent exited, and resetting
+	 * to 0 would ack from the start of a sequence space the guest has long since
+	 * moved past — the same stale-mark hazard the input side's epoch guards
+	 * against. Cleared with the rest of the session's state on completion.
+	 */
+	const sessionLogSeqs = new Map<string, number>()
 	// Receives exit codes from the /sessions/:id/complete and /sessions/:id/stop
 	// endpoints for monitorSession. Injectable via deps (see AppDeps.sessionExitCodes).
 	const sessionExitCodes = deps.sessionExitCodes ?? new Map<string, number>()
@@ -632,32 +645,64 @@ export function buildApp(deps: AppDeps): Hono {
 
 	// GET /sessions/:id/input/stream — VM polls here to receive newline-delimited
 	// JSON user turns for interactive sessions.
+	//
+	// `?after=<seq>` is the VM's high-water mark: the seq of the last turn it
+	// actually fed to the CLI. It acknowledges everything up to that point and
+	// asks for whatever followed. Turns are retained until acked, so a write
+	// that silently vanished into a half-open socket is redelivered here rather
+	// than lost (see InputQueue's class comment). A VM that has consumed
+	// nothing sends 0, or omits it entirely.
+	//
+	// Each line goes out wrapped as {"maskin_seq":N,"turn":<envelope>} so the
+	// VM can track what it consumed. input-stream.js unwraps it and writes only
+	// the inner envelope to the CLI's stdin, which must carry NDJSON turns and
+	// nothing else.
 	app.get('/sessions/:id/input/stream', async (c) => {
 		const { id } = c.req.param()
 		if (!SESSION_ID_RE.test(id)) return c.json({ error: 'Invalid session id' }, 400)
+		const rawAfter = Number(c.req.query('after'))
+		const after = Number.isFinite(rawAfter) && rawAfter > 0 ? Math.floor(rawAfter) : 0
+		const epoch = c.req.query('epoch')
 		return stream(c, async (s) => {
 			let resolveStream!: () => void
 			const done = new Promise<void>((resolve) => {
 				resolveStream = resolve
 			})
-			const unregister = await inputQueue.registerStream(id, async (line) => {
-				try {
-					await s.write(line)
-					return true
-				} catch {
-					resolveStream()
-					return false
-				}
-			})
+			const openedAt = Date.now()
+			let closeReason = 'handler returned'
+			const unregister = await inputQueue.registerStream(
+				id,
+				async (line, seq) => {
+					try {
+						await s.write(
+							`${JSON.stringify({
+								maskin_epoch: inputQueue.epoch,
+								maskin_seq: seq,
+								turn: line.trimEnd(),
+							})}\n`,
+						)
+						return true
+					} catch {
+						closeReason = 'turn write failed'
+						resolveStream()
+						return false
+					}
+				},
+				after,
+				epoch,
+			)
 			// Between turns this stream carries nothing for however long the
 			// human takes to reply — minutes-long silences that NAT/proxy
-			// idle-timeouts reap, EOF-ing claude's stdin in the VM and wedging
-			// the conversation (see agent-run.sh's input_stream reconnect loop,
-			// the other half of this fix). A bare newline every 30s keeps the
-			// connection warm — the CLI's NDJSON stdin reader skips blank
-			// lines — and doubles as dead-socket detection: a failed write
-			// ends this handler so the next turn parks for the reconnect
-			// instead of vanishing into a half-closed socket.
+			// idle-timeouts reap. A bare newline every 30s keeps the connection
+			// warm and, crucially, gives the VM something to miss: input-stream.js
+			// re-dials when no byte arrives for 90s (three missed heartbeats),
+			// which is how a silently blackholed connection gets noticed at all.
+			//
+			// It is NOT a delivery guarantee. A write into a half-open socket
+			// succeeds against the kernel buffer while nothing reaches the guest,
+			// so neither this heartbeat nor the turn writes above can confirm
+			// arrival — only the VM's `after` ack can. That is why turns survive
+			// a "successful" write.
 			const heartbeat = setInterval(async () => {
 				try {
 					await s.write('\n')
@@ -666,20 +711,109 @@ export function buildApp(deps: AppDeps): Hono {
 				}
 			}, 30_000)
 			c.req.raw.signal.addEventListener('abort', () => {
+				closeReason = 'client aborted'
 				unregister()
 				resolveStream()
 			})
 			await done
 			clearInterval(heartbeat)
 			unregister()
+			// How long the guest held this connection, and why it ended. A guest
+			// that is re-dialling on its idle timer produces a steady series of
+			// ~90s connections; one that never appears again after its first is
+			// not re-dialling at all, which no other signal distinguishes.
+			logger.info('input: stream closed', {
+				sessionId: id,
+				reason: closeReason,
+				heldMs: Date.now() - openedAt,
+			})
 		})
 	})
 
-	// POST /sessions/:id/logs/ingest — agent-run.sh streams all agent output here
-	// over a single long-lived chunked POST (`curl -T -`). We read the request
-	// body as it arrives and push each newline-delimited line into the session's
-	// log buffer immediately, so monitorSession forwards them to the Maskin
-	// backend live (~2s batches) instead of all at once at session end.
+	// POST /sessions/:id/logs/batch — output-stream.js ships the agent's output
+	// here in bounded, acknowledged batches.
+	//
+	// This replaced a single long-lived chunked upload that could not survive
+	// microsandbox's egress proxy: when the proxy's guest-side leg died the
+	// upload never EOFed and never errored, so the guest blocked in a write
+	// forever and the agent's reply never left the VM. The user saw silence
+	// even though the agent had answered (wedges of 2026-08-21..24).
+	//
+	// `from` is the sequence of the first line in `lines`. The response carries
+	// the highest sequence stored, and the guest only forgets lines that come
+	// back acked — so a batch that vanishes into a half-open socket is simply
+	// resent. Retries are expected and must be idempotent: anything at or below
+	// what we have already stored is skipped rather than appended twice.
+	app.post('/sessions/:id/logs/batch', async (c) => {
+		const { id } = c.req.param()
+		if (!SESSION_ID_RE.test(id)) return c.json({ error: 'Invalid session id' }, 400)
+
+		let body: unknown
+		try {
+			body = await c.req.json()
+		} catch {
+			return c.json({ error: 'Invalid JSON' }, 400)
+		}
+		const from = Number((body as Record<string, unknown>)?.from)
+		const lines = (body as Record<string, unknown>)?.lines
+		if (!Number.isFinite(from) || from < 1 || !Array.isArray(lines)) {
+			return c.json({ error: 'Expected { from: number, lines: string[] }' }, 400)
+		}
+
+		const push = sessionLogRouters.get(id)
+
+		// No record of this session's sequence at all. That is the normal state
+		// after an agent-server restart, where the reconcile pass reattaches a
+		// live session whose guest is already at sequence N — and it is not a
+		// gap we can complain about, because we have stored nothing that a wrong
+		// answer here could discard. Adopt the guest's position. Refusing
+		// instead (the previous behaviour) left both sides stuck forever: the
+		// server acking 0, the guest already past it, neither able to move.
+		const known = sessionLogSeqs.has(id)
+		let stored = known ? (sessionLogSeqs.get(id) ?? 0) : from - 1
+
+		// The guest declares a resync when its buffer overflowed and it dropped
+		// the oldest lines. Those lines no longer exist anywhere, so waiting for
+		// them is waiting forever. Accept the new floor and record the hole in
+		// the transcript rather than leaving a silent discontinuity.
+		if (body && (body as Record<string, unknown>).resync === true && from > stored + 1) {
+			const droppedRaw = Number((body as Record<string, unknown>).dropped)
+			const droppedCount =
+				Number.isFinite(droppedRaw) && droppedRaw > 0 ? droppedRaw : from - stored - 1
+			logger.warn('output: guest resynced after dropping lines', {
+				sessionId: id,
+				storedThrough: stored,
+				resumingFrom: from,
+				dropped: droppedCount,
+			})
+			push?.(
+				`[system] output-stream: ${droppedCount} line(s) of agent output were dropped here — the agent-server was unreachable for long enough to overflow the guest's buffer`,
+			)
+			stored = from - 1
+		}
+
+		let ack = stored
+		for (let i = 0; i < lines.length; i++) {
+			const seq = from + i
+			// Already stored on an earlier attempt whose ack never made it back.
+			if (seq <= stored) continue
+			// A gap the guest has NOT declared means an earlier batch is still
+			// outstanding; acking past it would let the guest discard lines we
+			// never received. Stop and let it resend from where we actually are.
+			if (seq > ack + 1) break
+			const line = lines[i]
+			if (typeof line !== 'string') break
+			push?.(line)
+			ack = seq
+		}
+		sessionLogSeqs.set(id, ack)
+		return c.json({ ack })
+	})
+
+	// POST /sessions/:id/logs/ingest — legacy unacked path, still used by
+	// input-stream.js for its own one-shot diagnostic lines (which are cheap to
+	// lose and must never block on an ack). Agent output no longer flows here;
+	// see /logs/batch above.
 	app.post('/sessions/:id/logs/ingest', async (c) => {
 		const { id } = c.req.param()
 		if (!SESSION_ID_RE.test(id)) return c.json({ error: 'Invalid session id' }, 400)
@@ -1130,6 +1264,7 @@ export function buildApp(deps: AppDeps): Hono {
 				})
 				.finally(() => {
 					inputQueue.drainSession(body.sessionId)
+					sessionLogSeqs.delete(body.sessionId)
 					sessionPreviewState.delete(body.sessionId)
 				})
 

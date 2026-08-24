@@ -300,89 +300,37 @@ start_preview_port_watcher() {
 
 # Run the agent
 run_agent() {
-  # Pipe output to the agent-server's log ingest endpoint so the Maskin UI
-  # can show live logs. Bind mounts from the microVM to the host are not
-  # reliable in the current microsandbox version, so we stream over HTTP
-  # instead. Falls back to plain stdout if AGENT_SERVER_URL is unset.
-  local log_ingest_url=""
-  if [ -n "$AGENT_SERVER_URL" ] && [ -n "$SESSION_ID" ]; then
-    log_ingest_url="${AGENT_SERVER_URL}/sessions/${SESSION_ID}/logs/ingest"
-  fi
-
-  # Stream agent output to the agent-server's log-ingest endpoint LINE BY LINE
-  # over a single long-lived chunked POST, so the Maskin UI shows logs live
-  # while the agent runs.  The previous implementation buffered ALL output to a
-  # temp file (`cat > file`) and POSTed it once at exit (`--data-binary @file`),
-  # which (a) showed nothing until the process exited and (b) showed NOTHING for
-  # interactive sessions, where `claude` never exits.
+  # Agent output leaves the VM over HTTP: bind mounts from the microVM to the
+  # host are not reliable in the current microsandbox version. output-stream.js
+  # reads AGENT_SERVER_URL/SESSION_ID from the environment itself.
+  #
+  # Ship agent output to the agent-server via output-stream.js, which POSTs it
+  # in bounded, acknowledged batches. It replaced a single long-lived chunked
+  # upload (curl -T -) that could not survive microsandbox egress proxy: when
+  # the proxy guest-side leg died the upload never EOFed and never errored, so
+  # curl blocked in a write forever and the reconnect loop around it could not
+  # run. The agent reply then never left the VM -- the user saw silence even
+  # though the agent had answered (wedges of Aug 21-24), and with the reader
+  # stalled the pipe eventually blocked the agent itself.
+  #
+  # The helper drains stdin unconditionally, so delivery can never apply
+  # backpressure to the agent, and only forgets lines the server acks. With no
+  # AGENT_SERVER_URL (the local Docker path) it just passes stdin to stdout.
+  # See docker/agent-base/output-stream.js.
+  # `|| true` because this is a log shipper, not the agent. Line 2 sets
+  # `set -e`, and every call site turns pipefail OFF before `agent | log_tee`,
+  # so the pipeline's status is THIS command's. A non-zero exit here therefore
+  # aborted run_agent before `AGENT_EXIT_CODE=${PIPESTATUS[0]}` ran, and the
+  # EXIT trap reported the initial 0 — a failed session posting clean success,
+  # with everything after run_agent skipped.
+  #
+  # It must be inside this function, not `... | log_tee || true` at the call
+  # site: `|| true` there resets PIPESTATUS, so ${PIPESTATUS[0]} reads 0 and
+  # every real agent failure is masked as success. Verified both ways.
+  # PIPESTATUS[0] refers to the agent, the pipeline's FIRST element, so
+  # swallowing this function's own status cannot affect it.
   log_tee() {
-    if [ -z "$log_ingest_url" ]; then
-      # No agent-server reachable: just drain stdin (to the unread PTY) so the
-      # agent isn't blocked by a full pipe.
-      cat
-      return
-    fi
-    # `curl -T -` uploads stdin with Transfer-Encoding: chunked, forwarding bytes
-    # as they arrive — unlike `--data-binary @-`, which first buffers ALL of
-    # stdin to compute a Content-Length (effectively what `cat > file` did).
-    # Chunked requires HTTP/1.1, so we drop the old `--http1.0`.  The server
-    # (apps/agent-server) reads the request body as a stream and pushes each
-    # newline-delimited line into the session's log buffer immediately, so one
-    # POST carries the whole session and the UI updates as lines arrive.
-    # `-H "Expect:"` strips the 100-continue handshake (curl adds it for uploads
-    # >1KB), which would otherwise stall the stream waiting for a 100 Continue.
-    #
-    # Why a function fed by a pipe (`agent ... | log_tee`) and not process
-    # substitution: bash WAITS for every stage of a pipeline before the script
-    # exits, so curl finishes before run_agent returns and the VM is torn down.
-    # bash does NOT wait for `>(...)` subprocesses (the reason the old code could
-    # not use them).  curl also continuously drains the pipe, so the undrained
-    # microsandbox PTY never fills and freezes the agent — the problem that ruled
-    # out plain `tee`.
-    #
-    # The reconnect loop keeps a reader on the pipe AT ALL TIMES.  Without it a
-    # dropped upload connection would leave the agent writing to a broken pipe
-    # (SIGPIPE -> the agent dies).  With it, a transient drop reconnects and
-    # resumes streaming; after repeated failures we fall back to draining stdin
-    # so the agent keeps running and this script can still reach its EXIT trap
-    # (the completion signal).  curl returns 0 only once stdin hits EOF (the
-    # agent exited) and the body flushed — the clean end-of-stream.
-    #
-    # Retry budget: 5 fast attempts (1s apart, ~5s) for the common quick blip,
-    # then slower attempts (10s apart) for another ~2 minutes to ride out an
-    # agent-server restart or network hiccup — a reader sitting idle between
-    # attempts just causes mild pipe backpressure (this loop never closes the
-    # read end), not the SIGPIPE risk that a fully-stopped reader would cause.
-    # Once that budget is exhausted we fall back to draining stdin, same as
-    # before, but first fire a one-shot best-effort marker POST so the switch
-    # to local-only output is visible in the Maskin UI instead of silent.
-    local attempts=0
-    local fast_attempts=5
-    local max_attempts=17
-    while true; do
-      if curl -4 -sN -X POST "$log_ingest_url" \
-          -H "Content-Type: text/plain" \
-          -H "Expect:" \
-          -T - \
-          -o /dev/null \
-          2>/dev/null; then
-        return 0
-      fi
-      attempts=$((attempts + 1))
-      if [ "$attempts" -ge "$max_attempts" ]; then
-        curl -4 -s --max-time 5 -X POST "$log_ingest_url" \
-          -H "Content-Type: text/plain" \
-          -d "[system] log streaming to Maskin failed after ${attempts} attempts — falling back to local-only output; further agent output will not appear in the Maskin UI for the rest of this session" \
-          -o /dev/null 2>/dev/null || true
-        cat > /dev/null
-        return 0
-      fi
-      if [ "$attempts" -ge "$fast_attempts" ]; then
-        sleep 10
-      else
-        sleep 1
-      fi
-    done
+    node /output-stream.js || true
   }
 
   case "$RUNTIME" in
@@ -395,69 +343,27 @@ run_agent() {
       if [ "$INTERACTIVE" = "1" ]; then
         if [ -n "$AGENT_SERVER_URL" ]; then
           # Remote microsandbox path: stream user turns from the agent-server.
-          # curl holds a long-lived HTTP connection; process substitution pipes
-          # its output into claude's stdin so each newline-delimited JSON message
-          # is delivered as a user turn without needing Docker stdin attach.
+          # input-stream.js holds the connection and pipes NDJSON turns into
+          # claude stdin via process substitution, so no Docker stdin attach
+          # is needed. It replaced a curl reconnect loop that could not work:
+          # these connections terminate on the HOST at microsandbox's egress
+          # proxy, and when the proxy guest-side leg dies the host keeps
+          # ACKing writes into a socket the guest never reads. Host-side the
+          # socket looks perfect (Send-Q 0, bytes_sent == bytes_acked); in the
+          # guest curl blocked forever on a half-open socket that never EOFs
+          # and never errors, so the loop around it never ran and every turn
+          # the human sent was silently destroyed (wedges of Aug 21-24).
           #
-          # The connection MUST be reconnected on any drop, mirroring log_tee's
-          # posture on the output side. Between turns this stream sits idle for
-          # however long the human takes to reply — exactly what NAT/proxy
-          # idle-timeouts reap. A single curl would then EOF claude's stdin and
-          # permanently wedge the session: the agent-server keeps parking turns
-          # (InputQueue.pending) that nothing ever reads, the user stares at
-          # silence, and the 2h reaper eventually kills the session (the
-          # wedged-chat incidents of Aug 21-23). On reconnect, registerStream
-          # flushes every parked turn, so nothing is lost across a drop. This
-          # subshell never exits on its own — it dies with the VM at teardown —
-          # which also means claude's stdin never sees EOF mid-conversation.
-          # The reconnect marker goes to stderr, NOT stdout: stdout of this
-          # substitution IS claude's stdin and must carry only NDJSON turns.
+          # The helper fixes both halves: it re-dials when no byte arrives for
+          # 90s (three missed server heartbeats), and it acks the seq of each
+          # turn it consumed so the agent-server can redeliver anything a
+          # blackholed write swallowed. See docker/agent-base/input-stream.js
+          # and apps/agent-server/src/services/input-queue.ts.
           #
-          # --max-time is what makes this reconnect loop actually reachable.
-          # Reconnecting on a *clean* drop is not enough: the failure seen in
-          # production is a SILENT one. These connections terminate on the
-          # host at microsandbox's egress proxy, not in the VM, and when the
-          # proxy's guest-side leg dies the host keeps ACKing everything
-          # written to it -- including the agent-server's 30s heartbeat --
-          # while nothing reaches this curl. Host-side the socket looks
-          # perfect (Send-Q 0, bytes_sent == bytes_acked); in here curl blocks
-          # forever on a half-open socket that never EOFs and never errors.
-          # So the loop never iterates, the marker never prints, and every
-          # turn the human sends from then on is parked in InputQueue.pending
-          # and never read. The server-side heartbeat cannot detect it either:
-          # detection there depends on the write FAILING, and the write always
-          # succeeds.
-          #
-          # Bounding each connection sidesteps detection entirely -- re-dial on
-          # a fixed cadence so no connection lives long enough to be reaped.
-          # 120s is well under the ~7min idle window where the hang was
-          # observed (turns delivered after 428s and 523s of idle both
-          # vanished; turns after 59s and 77s were answered in ~1s). The
-          # re-dial is lossless -- registerStream flushes everything parked
-          # while we were away -- and only ever fires when idle, so a turn
-          # arriving mid-redial waits at most ~1s.
-          #
-          # curl exits 28 on our own timeout; anything else is a real drop and
-          # keeps its stderr marker so genuine instability stays visible
-          # instead of being buried under a marker every 120s.
-          input_stream() {
-            local rc=0 fails=0
-            while true; do
-              rc=0
-              curl -4 -sfN --no-buffer --max-time 120 \
-                "${AGENT_SERVER_URL}/sessions/${SESSION_ID}/input/stream" || rc=$?
-              if [ "$rc" -eq 28 ]; then
-                fails=0
-                sleep 1
-                continue
-              fi
-              fails=$((fails + 1))
-              if [ "$fails" -le 3 ] || [ $((fails % 30)) -eq 0 ]; then
-                echo "[system] input stream dropped (curl $rc, attempt $fails) — reconnecting" >&2
-              fi
-              sleep 1
-            done
-          }
+          # Its stdout IS claude stdin, so it carries only NDJSON turns;
+          # status and errors go to stderr. It never exits on its own -- it
+          # dies with the VM at teardown -- so claude stdin never sees EOF
+          # mid-conversation.
           set +o pipefail
           claude -p \
             --input-format stream-json \
@@ -466,7 +372,7 @@ run_agent() {
             --dangerously-skip-permissions \
             "${mcp_args[@]}" \
             2>&1 \
-            < <(input_stream) \
+            < <(node /input-stream.js) \
             | log_tee
           AGENT_EXIT_CODE=${PIPESTATUS[0]}
           set -o pipefail

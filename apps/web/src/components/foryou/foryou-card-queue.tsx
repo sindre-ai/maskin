@@ -169,20 +169,18 @@ export function ForYouCardQueue({
 	// (action bar vs. empty state) is allowed to swap type.
 	//
 	// Bottom padding: below md the action bar is `fixed`, so the flex column
-	// can't see it and the card would grow underneath it. Reserve only
-	// --mobile-nav-h here — the page shell's own `pb-20` already covers the bar's
-	// height, so also reserving it here (as `6rem+2.75rem` did) stranded ~96px of
-	// dead space between the card and the buttons. At md+ the bar is back in flow
-	// (`md:sticky`) and reserves its own space, so no extra padding is needed.
+	// can't see it and the card would grow underneath it — reserve the bar's own
+	// height here. The bar measures 68px (`py-3` twice plus the `size="lg"`
+	// button's `h-11`), so `pb-16` (64px) clears it while leaving the card flush;
+	// `pb-20` (80px) over-reserved and, stacked on the page shell's own bottom
+	// padding, stranded 40px of dead space above the buttons. At md+ the bar is
+	// back in flow (`md:sticky`) and reserves its own space, so none is needed.
 	return (
-		<div className="flex flex-1 min-h-0 flex-col gap-4 pb-[var(--mobile-nav-h,0px)] md:pb-0">
+		<div className="flex flex-1 min-h-0 flex-col gap-4 pb-16 md:pb-0">
 			{cards}
 
-			{/* The action bar clears the v2 shell's fixed bottom nav below 768px via
-			    --mobile-nav-h (app.css); the fallback keeps it flush to the viewport
-			    edge under the legacy shell, which has no bottom nav. */}
 			{currentItem ? (
-				<div className="fixed inset-x-0 bottom-[var(--mobile-nav-h,0px)] z-10 flex justify-center px-4 py-3 md:sticky md:px-0 md:py-0">
+				<div className="fixed inset-x-0 bottom-0 z-10 flex justify-center px-4 py-3 md:sticky md:px-0 md:py-0">
 					<div className="flex w-full max-w-[760px] items-center justify-between gap-3">
 						<Button
 							size="lg"

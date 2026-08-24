@@ -618,17 +618,3 @@
 		border-radius: var(--radius);
 	}
 }
-
-/* The v2 shell pins a fixed bottom nav (layout/mobile-nav.tsx) below 768px, so
-   any other bottom-anchored bar must clear it or sit underneath, unclickable.
-   Bars read `var(--mobile-nav-h, 0px)` — the fallback keeps them flush against
-   the viewport edge under the legacy shell, which has no bottom nav. The value
-   is 44px of touch target + 12px of padding, plus the device's safe area. */
-[data-shell="v2"] {
-	--mobile-nav-h: calc(3.5rem + env(safe-area-inset-bottom));
-}
-@media (min-width: 768px) {
-	[data-shell="v2"] {
-		--mobile-nav-h: 0px;
-	}
-}

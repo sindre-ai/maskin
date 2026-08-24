@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { TestWrapper } from '../setup'
+import { createWorkspaceWrapper } from '../setup'
 
 const mockCreateConversationMutateAsync = vi.fn()
 const mockUploadFile = vi.fn()
@@ -18,7 +18,9 @@ vi.mock('@tanstack/react-router', async () => {
 })
 
 vi.mock('@/lib/workspace-context', () => ({
-	useWorkspace: () => ({ workspaceId: 'ws-1' }),
+	// `settings` is read by useEnabledModules, which the v2 composer's create
+	// picker reaches through — an empty object means "no modules enabled".
+	useWorkspace: () => ({ workspaceId: 'ws-1', workspace: { id: 'ws-1', settings: {} } }),
 }))
 
 vi.mock('@/lib/auth', () => ({
@@ -40,6 +42,9 @@ vi.mock('@/hooks/use-actors', () => ({
 	useActors: () => ({
 		data: [{ id: 'agent-1', name: 'Builder', type: 'agent' }],
 	}),
+	// The composer's create picker can spin up a new agent from the "+" menu.
+	useCreateActor: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
+	useDefaultChatAgent: () => null,
 }))
 
 vi.mock('@/hooks/use-files', () => ({
@@ -59,9 +64,20 @@ vi.mock('@/lib/analytics', () => ({
 	trackSpecialistSummonedManually: () => {},
 }))
 
+import { NewDesignProvider } from '@/lib/new-design-context'
 import { Route } from '@/routes/_authed/$workspaceId/chats/new'
 
-const NewConversationPage = (Route as unknown as { component: React.FC }).component
+const RouteComponent = (Route as unknown as { component: React.FC }).component
+
+// The page is behind the `new-design` flag; the provider default is `false`,
+// so without this the test would exercise the pre-v2 page instead.
+function NewConversationPage() {
+	return (
+		<NewDesignProvider value={true}>
+			<RouteComponent />
+		</NewDesignProvider>
+	)
+}
 
 function getFileInput(container: HTMLElement): HTMLInputElement {
 	const input = container.querySelector<HTMLInputElement>('input[type="file"]')
@@ -78,7 +94,7 @@ describe('New conversation page — attachments', () => {
 	it('includes an attached file in initial_message_metadata when starting a new conversation', async () => {
 		mockUploadFile.mockResolvedValueOnce({ id: 'file-1' })
 		const user = userEvent.setup()
-		const { container } = render(<NewConversationPage />, { wrapper: TestWrapper })
+		const { container } = render(<NewConversationPage />, { wrapper: createWorkspaceWrapper() })
 
 		await user.click(screen.getByLabelText('Add people or agents'))
 		await user.click(await screen.findByText('Builder'))

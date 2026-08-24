@@ -2,7 +2,7 @@ import { Composer } from '@/components/chat/chat'
 import { EMPTY_CHAT_SELECTION } from '@/lib/chat-selection'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
-import { TestWrapper } from '../../setup'
+import { createWorkspaceWrapper } from '../../setup'
 
 const uploadFileMock = vi.fn()
 
@@ -40,7 +40,7 @@ function renderComposer(overrides: Partial<Parameters<typeof Composer>[0]> = {})
 		...overrides,
 	}
 	return {
-		...render(<Composer {...props} />, { wrapper: TestWrapper }),
+		...render(<Composer {...props} />, { wrapper: createWorkspaceWrapper() }),
 		props,
 	}
 }
