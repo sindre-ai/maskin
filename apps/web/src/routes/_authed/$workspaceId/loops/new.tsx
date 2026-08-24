@@ -130,7 +130,12 @@ function LoopBuilderPage() {
 				// safeMetadataSchema only accepts primitives/arrays — store the plan
 				// snapshot as a JSON string so the created loop carries the exact
 				// preview (object types + state chain, triggers, agents, stop point).
-				metadata: { plan: JSON.stringify(plan) },
+				// `plan_source` is the sentence the plan was parsed from. Loop detail
+				// refines the loop by appending a clause to it and re-reading the
+				// whole sentence — without it, a fragment like "Ask me before
+				// anything ships" parses standalone and replaces the plan instead of
+				// refining it.
+				metadata: { plan: JSON.stringify(plan), plan_source: utterance },
 			})
 			setCreatedId(created.id)
 			// Call site owned by T2: emit the accept event once per created loop so
@@ -141,7 +146,7 @@ function LoopBuilderPage() {
 		} finally {
 			setCreating(false)
 		}
-	}, [plan, creating, createObject, workspaceId])
+	}, [plan, creating, createObject, workspaceId, utterance])
 
 	// A sentence Maskin can't draw: it named no source it listens to and no end
 	// it reports to, so there is nothing to wire between (mockup 2094–2106).

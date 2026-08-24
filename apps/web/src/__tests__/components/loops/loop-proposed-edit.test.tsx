@@ -24,6 +24,29 @@ describe('readStoredPlan', () => {
 		expect(readStoredPlan({ plan: 'not json' })).toBeNull()
 		expect(readStoredPlan({ plan: JSON.stringify({ nope: true }) })).toBeNull()
 	})
+
+	// `metadata` is agent-writable, so a structurally-invalid snapshot must read
+	// as "no plan" rather than reach the consumers, which dereference
+	// triggers/agents/stateChain directly.
+	it.each([
+		['truncated json', '{'],
+		['a json null', 'null'],
+		['an array', '[]'],
+		['objectTypes only', '{"objectTypes":[]}'],
+		['an object type with no state chain', '{"objectTypes":[{}],"triggers":[],"agents":[]}'],
+		['triggers of the wrong type', '{"objectTypes":[],"triggers":"nope","agents":[]}'],
+	])('returns null for %s', (_label, raw) => {
+		expect(readStoredPlan({ plan: raw })).toBeNull()
+	})
+
+	it('does not throw when diffing against a malformed snapshot', () => {
+		const stored = readStoredPlan({ plan: '{"objectTypes":[{}]}' })
+		expect(stored).toBeNull()
+		// The route guards on a null plan, so the crash path is unreachable.
+		expect(() =>
+			diffLoopPlans(parseLoopDescription(BEFORE), parseLoopDescription(AFTER)),
+		).not.toThrow()
+	})
 })
 
 describe('diffLoopPlans', () => {

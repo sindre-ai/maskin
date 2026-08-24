@@ -33,8 +33,10 @@ const coreNavItems: SidebarNavItemDef[] = [
 	{ key: 'for-you', label: 'For You', to: FOR_YOU_ROUTE, exact: true, icon: Zap },
 	{ key: 'chats', label: 'Chats', to: '/$workspaceId/chats', icon: MessageSquare },
 	{ key: 'agents', label: 'Agents', to: '/$workspaceId/agents', icon: Bot },
+	// No Triggers entry: `/{ws}/triggers` now redirects into Loops, which lists
+	// every standalone trigger under "Not tied to a loop". Keeping the item here
+	// pointed two nav rows at the same screen and highlighted neither.
 	{ key: 'loops', label: 'Loops', to: '/$workspaceId/loops', icon: RefreshCw },
-	{ key: 'triggers', label: 'Triggers', to: '/$workspaceId/triggers', icon: Zap },
 ]
 
 const marketplaceItem: SidebarNavItemDef = {
