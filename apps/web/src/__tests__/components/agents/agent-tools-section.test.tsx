@@ -90,9 +90,9 @@ describe('AgentToolsSection', () => {
 		await userEvent.click(screen.getByRole('button', { name: 'Delete server' }))
 		await userEvent.click(screen.getByRole('button', { name: 'Delete' }))
 
-		expect(updateMutate).toHaveBeenCalledWith({
-			id: 'agent-tools-manage',
-			data: { tools: { mcpServers: {} } },
-		})
+		expect(updateMutate).toHaveBeenCalledWith(
+			{ id: 'agent-tools-manage', data: { tools: { mcpServers: {} } } },
+			expect.objectContaining({ onSuccess: expect.any(Function), onError: expect.any(Function) }),
+		)
 	})
 })

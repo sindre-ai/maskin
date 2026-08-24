@@ -59,13 +59,20 @@ vi.mock('@/components/agents/agents-index-view', () => ({
 	},
 }))
 
+import { NewDesignProvider } from '@/lib/new-design-context'
 import { Route } from '@/routes/_authed/$workspaceId/agents/index'
 
 const RouteOptions = Route as unknown as { component: React.FC }
 const AgentsPage = RouteOptions.component
 
+// The v2 index lives behind the `new-design` boundary in this route, so the
+// provider has to be on for these specs to exercise it.
 function mount() {
-	return render(<AgentsPage />)
+	return render(
+		<NewDesignProvider value={true}>
+			<AgentsPage />
+		</NewDesignProvider>,
+	)
 }
 
 beforeEach(() => {
