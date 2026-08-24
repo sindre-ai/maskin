@@ -441,12 +441,19 @@ run_agent() {
           # keeps its stderr marker so genuine instability stays visible
           # instead of being buried under a marker every 120s.
           input_stream() {
+            local rc=0 fails=0
             while true; do
-              curl -4 -sN --no-buffer --max-time 120 \
-                "${AGENT_SERVER_URL}/sessions/${SESSION_ID}/input/stream"
-              rc=$?
-              if [ "$rc" -ne 0 ] && [ "$rc" -ne 28 ]; then
-                echo "[system] input stream dropped (curl $rc) — reconnecting" >&2
+              rc=0
+              curl -4 -sfN --no-buffer --max-time 120 \
+                "${AGENT_SERVER_URL}/sessions/${SESSION_ID}/input/stream" || rc=$?
+              if [ "$rc" -eq 28 ]; then
+                fails=0
+                sleep 1
+                continue
+              fi
+              fails=$((fails + 1))
+              if [ "$fails" -le 3 ] || [ $((fails % 30)) -eq 0 ]; then
+                echo "[system] input stream dropped (curl $rc, attempt $fails) — reconnecting" >&2
               fi
               sleep 1
             done
