@@ -1,11 +1,13 @@
 import { AgentCreateForm } from '@/components/agents/agent-create-form'
 import { AgentDetailView } from '@/components/agents/agent-detail-view'
+import { AgentDocument } from '@/components/agents/agent-document'
 import { PageHeader } from '@/components/layout/page-header'
 import { Skeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
 import { useActor, useAgent, useCreateActor, useUpdateActor } from '@/hooks/use-actors'
 import { ApiError, api } from '@/lib/api'
+import { useNewDesign } from '@/lib/new-design-context'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
 import { useEffect, useRef } from 'react'
@@ -91,6 +93,9 @@ function AgentDetailPage() {
 
 /** Fetches the full agent detail and renders the document editor. */
 function AgentDetailLoaded({ agentId }: { agentId: string }) {
+	// The `new-design` boundary for agent detail — v2 sections vs the pre-v2
+	// document editor. Resolved boolean only; the flag is read at the shell.
+	const newDesign = useNewDesign()
 	const { data: agent, isLoading, isError, error, refetch } = useActor(agentId)
 
 	if (isLoading) {
@@ -126,5 +131,5 @@ function AgentDetailLoaded({ agentId }: { agentId: string }) {
 		)
 	}
 
-	return <AgentDetailView agent={agent} />
+	return newDesign ? <AgentDetailView agent={agent} /> : <AgentDocument agent={agent} />
 }
