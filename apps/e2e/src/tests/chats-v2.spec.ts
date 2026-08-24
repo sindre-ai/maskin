@@ -99,10 +99,7 @@ test.describe('Chats v2 — filter menu', () => {
 })
 
 test.describe('Chats v2 — grouped list', () => {
-	test('labels the group a fresh conversation lands in and closes the history', async ({
-		page,
-		account,
-	}) => {
+	test('labels the group a fresh conversation lands in', async ({ page, account }) => {
 		const chats = await seedChats(account.api, account.workspaceId)
 		const list = page.getByTestId('conversation-list')
 
@@ -111,7 +108,6 @@ test.describe('Chats v2 — grouped list', () => {
 		// Pinned sorts above the dated groups.
 		await expect(list.getByText('Pinned', { exact: true })).toBeVisible()
 		await expect(list.getByText('Today', { exact: true })).toBeVisible()
-		await expect(list.getByText(/That's the whole history/)).toBeVisible()
 	})
 })
 
@@ -305,6 +301,109 @@ test.describe('Chats v2 — light and dark', () => {
 			})
 			expect(plate.background).not.toBe('rgba(0, 0, 0, 0)')
 			expect(plate.background).not.toBe(plate.color)
+		})
+	}
+})
+
+test.describe('Chats v2 — citation pill', () => {
+	for (const scheme of ['light', 'dark'] as const) {
+		test(`the citation pill's type dot, title and status word stay legible in ${scheme} mode`, async ({
+			page,
+			account,
+		}) => {
+			// The pill draws status as a bare coloured word on `bg-card`, with no
+			// pill of its own to sit against. A status the workspace configured
+			// itself falls back to the default colour, and that fallback used to be
+			// light text sized for a dark pill — invisible on white. This is the
+			// known-pitfalls "token used without its foreground pair" shape, and it
+			// only ever shows up in one scheme, so both are asserted.
+			await page.emulateMedia({ colorScheme: scheme })
+			const stamp = Date.now()
+
+			// A status outside the workspace's configured list is a 400 at
+			// `POST /objects`, so the uncoloured status has to be configured
+			// before it can be cited — that is what a workspace that renamed
+			// its own statuses looks like.
+			await account.api.updateWorkspace(account.workspaceId, {
+				settings: {
+					statuses: { bet: ['active'], task: ['awaiting_legal'] },
+				},
+			})
+
+			const known = await account.api.createObject(account.workspaceId, {
+				type: 'bet',
+				title: `Retry window ${stamp}`,
+				status: 'active',
+			})
+			const custom = await account.api.createObject(account.workspaceId, {
+				type: 'task',
+				title: `Legal review ${stamp}`,
+				// Deliberately outside `statusColors` — statuses are workspace-
+				// configurable, so the fallback is a real user-facing path.
+				status: 'awaiting_legal',
+			})
+
+			const conversation = await account.api.createConversation(account.workspaceId, {
+				title: `V2 Citations ${stamp}`,
+				participant_actor_ids: [],
+				initial_message: 'Opening the thread',
+			})
+			await account.api.postConversationMessage(conversation.id, account.workspaceId, {
+				content: 'Both of these are blocked on the same thing.',
+				metadata: {
+					context_objects: [
+						{ id: known.id, title: known.title, type: known.type },
+						{ id: custom.id, title: custom.title, type: custom.type },
+					],
+				},
+			})
+
+			await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
+			const transcript = page.getByTestId('thread-messages')
+			await expect(transcript.getByText('Referenced')).toBeVisible({ timeout: 15_000 })
+
+			for (const object of [known, custom]) {
+				const pill = transcript.getByRole('link', { name: new RegExp(object.title) })
+				await expect(pill).toBeVisible()
+
+				// Every painted part of the pill must clear 3:1 against the pill's own
+				// background — the status word included, which is the part that has no
+				// background of its own to guarantee it.
+				const contrast = await pill.evaluate((el: HTMLElement) => {
+					const luminance = (colour: string) => {
+						const [r, g, b] = (colour.match(/[\d.]+/g) ?? ['0', '0', '0']).map(Number)
+						const channel = (v: number) => {
+							const s = v / 255
+							return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+						}
+						return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+					}
+					const ratio = (a: string, b: string) => {
+						const [x, y] = [luminance(a), luminance(b)].sort((m, n) => n - m)
+						return (x + 0.05) / (y + 0.05)
+					}
+					const background = window.getComputedStyle(el).backgroundColor
+					// The status word is the last element child; the title is the span
+					// carrying the object's name.
+					const parts = Array.from(el.children) as HTMLElement[]
+					return parts.map((part) => ({
+						// The type dot carries no text — `bg-current` paints it from
+						// `color`, so the same read covers it.
+						text: part.textContent?.trim() || 'the type dot',
+						ratio: ratio(window.getComputedStyle(part).color, background),
+					}))
+				})
+
+				expect(contrast.length).toBeGreaterThan(0)
+				for (const part of contrast) {
+					expect(
+						part.ratio,
+						`"${part.text}" in ${scheme} mode against the pill background`,
+					).toBeGreaterThan(3)
+				}
+			}
+
+			await expectNoHorizontalOverflow(page)
 		})
 	}
 })

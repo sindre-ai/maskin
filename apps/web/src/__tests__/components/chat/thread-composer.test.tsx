@@ -9,6 +9,9 @@ const mockMutateAsync = vi.fn()
 
 vi.mock('@/hooks/use-conversation', () => ({
 	useSendMessage: () => ({ mutateAsync: mockMutateAsync, isPending: false }),
+	// The composer names who you are answering ("Reply to Forge…"), so it reads
+	// the conversation's participants alongside the send mutation.
+	useConversation: () => ({ data: undefined }),
 }))
 
 vi.mock('@/components/chat/slash-picker', () => ({

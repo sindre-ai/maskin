@@ -63,10 +63,6 @@ vi.mock('@/components/ui/sidebar', () => ({
 	useSidebar: () => ({ setOpenMobile }),
 }))
 
-vi.mock('@/components/layout/sidebar-release-card', () => ({
-	SidebarReleaseCard: () => <div data-testid="sidebar-release-card">SidebarReleaseCard</div>,
-}))
-
 vi.mock('@/components/layout/sidebar-activity', () => ({
 	SidebarActivity: () => <div data-testid="sidebar-activity">SidebarActivity</div>,
 }))
@@ -123,10 +119,12 @@ describe('AppSidebar', () => {
 		expect(screen.queryByText('Objects')).not.toBeInTheDocument()
 	})
 
-	it('renders the release card, SidebarActivity and NavUser in footer', () => {
+	// The release note moved into the For You feed (`foryou/release-card.tsx`),
+	// so the footer is the working-agents row and the profile only.
+	it('renders SidebarActivity and NavUser in footer', () => {
 		vi.mocked(useEnabledModules).mockReturnValue(['work'])
 		render(<AppSidebar />)
-		expect(screen.getByTestId('sidebar-release-card')).toBeInTheDocument()
+		expect(screen.queryByTestId('sidebar-release-card')).not.toBeInTheDocument()
 		expect(screen.getByText('SidebarActivity')).toBeInTheDocument()
 		expect(screen.getByText('NavUser')).toBeInTheDocument()
 	})
