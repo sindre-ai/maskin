@@ -191,7 +191,7 @@ export function parseLoopDescription(description: string, options: ParseOptions 
 		})
 	}
 
-	const coreTrigger = buildCoreTrigger(lower, detected.type, agentName, cue, asks)
+	const coreTrigger = buildCoreTrigger(lower, detected.type, agentName, cue, asks, stateChain)
 	const triggers: PlanTrigger[] = []
 	if (coreTrigger) triggers.push(coreTrigger)
 	if (cue.summaryInterval) {
@@ -344,9 +344,16 @@ function detectStop(lower: string, cue: CueFlags): string | null {
 	return null
 }
 
-function deriveCoreWrites(lower: string, type: string): PlanThenWrite[] {
+function deriveCoreWrites(lower: string, type: string, stateChain: string[]): PlanThenWrite[] {
 	const writes: PlanThenWrite[] = []
+	// A proposed state is only real if the type's own chain can hold it. The
+	// chain is the workspace's vocabulary (or the base chain when the workspace
+	// supplied none), so a cue word like "triage" on a type whose chain has no
+	// triage state must not be drawn — the card renders these through
+	// StatusBadge, and a status the workspace cannot hold is a promise the loop
+	// can never keep.
 	const push = (w: PlanThenWrite) => {
+		if (w.state && !stateChain.includes(w.state)) return
 		if (!writes.some((x) => x.act === w.act && x.type === w.type && x.state === w.state)) {
 			writes.push(w)
 		}
@@ -376,12 +383,13 @@ function buildCoreTrigger(
 	agentName: string,
 	cue: CueFlags,
 	asks: string | undefined,
+	stateChain: string[],
 ): PlanTrigger | null {
 	const when = lower.match(/\bwhen\s+(.+)$/)
 	if (!when) return null
 	const clause = stripTrailingPunctuation(extractWhenClause(when[1]))
 
-	const writes = deriveCoreWrites(lower, type)
+	const writes = deriveCoreWrites(lower, type, stateChain)
 	if (cue.notify && !writes.some((w) => w.act === 'notify')) writes.push({ act: 'notify' })
 	if (cue.note && !writes.some((w) => w.act === 'create' && w.type === 'note')) {
 		writes.push({ act: 'create', type: 'note' })

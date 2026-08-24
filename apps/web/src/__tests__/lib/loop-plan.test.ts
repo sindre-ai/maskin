@@ -139,6 +139,37 @@ describe('parseLoopDescription — workspace status-chain composite', () => {
 	})
 })
 
+describe('parseLoopDescription — proposed states stay inside the type chain', () => {
+	it('drops a cue-word state the type chain cannot hold', () => {
+		// 'triage' is a feedback state, not a task state. Proposing it would put a
+		// status on the card that the workspace can never actually set.
+		const plan = parseLoopDescription('when a task is created, have an agent triage it')
+		const states = plan.triggers[0].thenWrites.map((w) => w.state).filter(Boolean)
+		expect(states).not.toContain('triage')
+	})
+
+	it('falls back to a plain create when every proposed state is rejected', () => {
+		const plan = parseLoopDescription('when a task is created, have an agent triage it')
+		expect(plan.triggers[0].thenWrites).toEqual([{ act: 'create', type: 'task' }])
+		expect(plan.triggers[0].whenChip?.state).toBeUndefined()
+	})
+
+	it('keeps a cue-word state the type chain does hold', () => {
+		const plan = parseLoopDescription(AC_EXAMPLE)
+		const states = plan.triggers[0].thenWrites.map((w) => w.state)
+		expect(states).toContain('triage')
+	})
+
+	it('honours a workspace chain that removes a state from the base chain', () => {
+		// The base feedback chain has 'triage'; this workspace's does not.
+		const plan = parseLoopDescription(AC_EXAMPLE, {
+			statusChains: { feedback: ['new', 'reviewed', 'done'] },
+		})
+		const states = plan.triggers[0].thenWrites.map((w) => w.state).filter(Boolean)
+		expect(states).not.toContain('triage')
+	})
+})
+
 describe('parseLoopDescription — determinism and no side effects', () => {
 	it('returns an identical plan for the same input', () => {
 		const a = parseLoopDescription(AC_EXAMPLE)

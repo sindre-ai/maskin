@@ -4,6 +4,24 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
+// The created state renders a Link to the new loop; the card is unit-tested
+// without a router.
+vi.mock('@tanstack/react-router', () => ({
+	Link: ({ to, params, children, ...rest }: Record<string, unknown>) => {
+		let href = String(to)
+		if (params) {
+			for (const [k, v] of Object.entries(params as Record<string, string>)) {
+				href = href.replace(`$${k}`, v)
+			}
+		}
+		return (
+			<a href={href} {...(rest as Record<string, unknown>)}>
+				{children as React.ReactNode}
+			</a>
+		)
+	},
+}))
+
 const plan: LoopPlan = {
 	objectTypes: [
 		{
@@ -140,5 +158,34 @@ describe('LoopPlanCard', () => {
 	it('labels the agents section with the "from your crew" promise', () => {
 		render(<LoopPlanCard {...baseProps()} />)
 		expect(screen.getByText('AGENTS · from your crew, nobody new to hire')).toBeInTheDocument()
+	})
+})
+
+describe('LoopPlanCard — created state', () => {
+	function createdProps() {
+		return baseProps({ created: true, createdId: 'loop-1' })
+	}
+
+	it('does not claim the loop is running', () => {
+		// Creating writes the loop object and its plan snapshot only — no triggers
+		// are provisioned, so a "running" claim would be false and the operator
+		// would wait for a cycle that can never start.
+		render(<LoopPlanCard {...createdProps()} />)
+		expect(screen.queryByText(/is running/i)).not.toBeInTheDocument()
+		expect(screen.queryByText(/watch it move/i)).not.toBeInTheDocument()
+	})
+
+	it('says the triggers and agents are still a preview', () => {
+		render(<LoopPlanCard {...createdProps()} />)
+		expect(screen.getByText(/nothing fires yet/i)).toBeInTheDocument()
+		expect(screen.getByText(/still a preview/i)).toBeInTheDocument()
+	})
+
+	it('links to the created loop', () => {
+		render(<LoopPlanCard {...createdProps()} />)
+		expect(screen.getByRole('link', { name: /open loop/i })).toHaveAttribute(
+			'href',
+			'/ws-1/loops/loop-1',
+		)
 	})
 })
