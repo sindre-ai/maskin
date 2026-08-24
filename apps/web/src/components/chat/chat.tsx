@@ -425,6 +425,10 @@ export function Composer({
 					side="top"
 					sideOffset={8}
 					className="w-[320px]"
+					// The visible DropdownMenuLabel below is not an accessible name
+					// for the menu itself — name it explicitly so the list is
+					// announced (and addressable) as "Turn this into an object".
+					aria-label="Turn this into an object"
 					// Radix returns focus to the trigger, which here is an invisible
 					// anchor — send the caret back to the composer instead.
 					onCloseAutoFocus={(e) => {

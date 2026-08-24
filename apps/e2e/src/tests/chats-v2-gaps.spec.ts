@@ -110,8 +110,8 @@ test.describe('Chats v2 — turn this into an object', () => {
 
 			const menu = page.getByLabel('Turn this into an object')
 			await expect(menu).toBeVisible({ timeout: 10_000 })
-			await expect(menu.getByRole('button', { name: /Bets/ })).toBeVisible()
-			await expect(menu.getByRole('button', { name: /Insights/ })).toBeVisible()
+			await expect(menu.getByRole('menuitem', { name: /Bets/ })).toBeVisible()
+			await expect(menu.getByRole('menuitem', { name: /Insights/ })).toBeVisible()
 
 			await page.keyboard.press('Escape')
 			await expect(menu).toHaveCount(0)
