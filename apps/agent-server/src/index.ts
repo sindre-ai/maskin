@@ -586,6 +586,16 @@ export function buildApp(deps: AppDeps): Hono {
 	// Injectable via deps so main()'s boot-time reconcile pass can reattach
 	// monitorSession for sandboxes that survived a restart (see AppDeps.sessionLogRouters).
 	const sessionLogRouters = deps.sessionLogRouters ?? new Map<string, (line: string) => void>()
+	/**
+	 * Highest output-line sequence stored per session, for /logs/batch.
+	 *
+	 * Deliberately not cleared when a session's router is removed: the guest may
+	 * still be retrying its final batches after the agent exited, and resetting
+	 * to 0 would ack from the start of a sequence space the guest has long since
+	 * moved past — the same stale-mark hazard the input side's epoch guards
+	 * against. Cleared with the rest of the session's state on completion.
+	 */
+	const sessionLogSeqs = new Map<string, number>()
 	// Receives exit codes from the /sessions/:id/complete and /sessions/:id/stop
 	// endpoints for monitorSession. Injectable via deps (see AppDeps.sessionExitCodes).
 	const sessionExitCodes = deps.sessionExitCodes ?? new Map<string, number>()
@@ -720,11 +730,60 @@ export function buildApp(deps: AppDeps): Hono {
 		})
 	})
 
-	// POST /sessions/:id/logs/ingest — agent-run.sh streams all agent output here
-	// over a single long-lived chunked POST (`curl -T -`). We read the request
-	// body as it arrives and push each newline-delimited line into the session's
-	// log buffer immediately, so monitorSession forwards them to the Maskin
-	// backend live (~2s batches) instead of all at once at session end.
+	// POST /sessions/:id/logs/batch — output-stream.js ships the agent's output
+	// here in bounded, acknowledged batches.
+	//
+	// This replaced a single long-lived chunked upload that could not survive
+	// microsandbox's egress proxy: when the proxy's guest-side leg died the
+	// upload never EOFed and never errored, so the guest blocked in a write
+	// forever and the agent's reply never left the VM. The user saw silence
+	// even though the agent had answered (wedges of 2026-08-21..24).
+	//
+	// `from` is the sequence of the first line in `lines`. The response carries
+	// the highest sequence stored, and the guest only forgets lines that come
+	// back acked — so a batch that vanishes into a half-open socket is simply
+	// resent. Retries are expected and must be idempotent: anything at or below
+	// what we have already stored is skipped rather than appended twice.
+	app.post('/sessions/:id/logs/batch', async (c) => {
+		const { id } = c.req.param()
+		if (!SESSION_ID_RE.test(id)) return c.json({ error: 'Invalid session id' }, 400)
+
+		let body: unknown
+		try {
+			body = await c.req.json()
+		} catch {
+			return c.json({ error: 'Invalid JSON' }, 400)
+		}
+		const from = Number((body as Record<string, unknown>)?.from)
+		const lines = (body as Record<string, unknown>)?.lines
+		if (!Number.isFinite(from) || from < 1 || !Array.isArray(lines)) {
+			return c.json({ error: 'Expected { from: number, lines: string[] }' }, 400)
+		}
+
+		const stored = sessionLogSeqs.get(id) ?? 0
+		const push = sessionLogRouters.get(id)
+		let ack = stored
+		for (let i = 0; i < lines.length; i++) {
+			const seq = from + i
+			// Already stored on an earlier attempt whose ack never made it back.
+			if (seq <= stored) continue
+			// A gap means an earlier batch is still outstanding; acking past it
+			// would let the guest discard lines we never received. Stop here and
+			// let the guest resend from where we actually are.
+			if (seq > ack + 1) break
+			const line = lines[i]
+			if (typeof line !== 'string') break
+			push?.(line)
+			ack = seq
+		}
+		sessionLogSeqs.set(id, ack)
+		return c.json({ ack })
+	})
+
+	// POST /sessions/:id/logs/ingest — legacy unacked path, still used by
+	// input-stream.js for its own one-shot diagnostic lines (which are cheap to
+	// lose and must never block on an ack). Agent output no longer flows here;
+	// see /logs/batch above.
 	app.post('/sessions/:id/logs/ingest', async (c) => {
 		const { id } = c.req.param()
 		if (!SESSION_ID_RE.test(id)) return c.json({ error: 'Invalid session id' }, 400)
@@ -1175,6 +1234,7 @@ export function buildApp(deps: AppDeps): Hono {
 				})
 				.finally(() => {
 					inputQueue.drainSession(body.sessionId)
+					sessionLogSeqs.delete(body.sessionId)
 					sessionPreviewState.delete(body.sessionId)
 				})
 
