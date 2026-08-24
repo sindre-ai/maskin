@@ -1,17 +1,20 @@
+/**
+ * Pre-v2 per-turn agent activity strip, restored verbatim from before the v2 Chats
+ * redesign. Rendered when the `new-design` flag is OFF; the v2 replacement
+ * lives one directory up. This whole directory dies with that flag
+ * (`.claude/rules/feature-flags.md`).
+ */
 import type { ActivityStep } from '@/components/agents/session-log-transcript'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Spinner } from '@/components/ui/spinner'
 import { useActor } from '@/hooks/use-actors'
 import type { MessageTurnActivity } from '@/hooks/use-conversation-activity'
-import { useDuration } from '@/hooks/use-duration'
-import { useSession, useStopSession } from '@/hooks/use-sessions'
+import { useStopSession } from '@/hooks/use-sessions'
 import { cn } from '@/lib/cn'
 import {
 	AlertTriangle,
-	Check,
 	ChevronDown,
-	ChevronRight,
 	MessageSquare,
 	Sparkles,
 	Square,
@@ -51,15 +54,6 @@ export function MessageActivity({
 }: MessageActivityProps) {
 	const { data: actor } = useActor(turn.actorId)
 	const stopSession = useStopSession(workspaceId)
-	// Only a live turn needs its session row: `startedAt` is what turns the
-	// indicator's elapsed readout into a real number rather than "since this
-	// tab happened to open" (mockup 710).
-	const { data: session } = useSession(turn.inProgress ? turn.sessionId : null, workspaceId)
-	const elapsed = useDuration(turn.inProgress ? session?.startedAt : null)
-	// What the agent is reading right now, straight off its own tool calls —
-	// the mockup's source pills (720–724). Deduped, newest first, capped so a
-	// long tool run can't push the composer off screen.
-	const sources = turn.inProgress ? toolSources(turn.steps) : []
 	const [manuallyToggled, setManuallyToggled] = useState(false)
 	const attention = turn.failed === true || turn.interrupted === true
 	const [open, setOpen] = useState(turn.inProgress || attention)
@@ -114,11 +108,6 @@ export function MessageActivity({
 										? `${name} is working…`
 										: name}
 					</span>
-					{elapsed ? (
-						<span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">
-							{elapsed}
-						</span>
-					) : null}
 					<ChevronDown
 						size={12}
 						className={cn('shrink-0 transition-transform', open && 'rotate-180')}
@@ -137,21 +126,6 @@ export function MessageActivity({
 					</button>
 				) : null}
 			</div>
-			{/* Collapsed, the pills are the only view of what the agent is reading;
-			    expanded, the step list below already says it — so they never
-			    duplicate the same strings on screen (mockup 720–724). */}
-			{!open && sources.length > 0 ? (
-				<ul aria-label="Sources being read" className="mt-1 flex list-none flex-wrap gap-1 p-0">
-					{sources.map((source) => (
-						<li
-							key={source}
-							className="inline-flex h-5 max-w-[14rem] items-center truncate rounded-full border border-border bg-card px-2 text-[10.5px] font-semibold text-muted-foreground"
-						>
-							{source}
-						</li>
-					))}
-				</ul>
-			) : null}
 			<CollapsibleContent>
 				<div
 					ref={stepsRef}
@@ -182,20 +156,9 @@ export function MessageActivity({
 					{turn.steps.length === 0 && !onLoadOlder ? (
 						<span>{turn.failed ? 'The session could not be started.' : 'Starting…'}</span>
 					) : (
-						turn.steps.map((step, index) => (
+						turn.steps.map((step) => (
 							<div key={step.id} className="flex items-start gap-1.5">
-								{/* A live turn marks everything above the newest step as done
-								    and points at the step it is on (mockup 715); a finished
-								    turn keeps the per-kind icon, which says more. */}
-								{turn.inProgress ? (
-									index === turn.steps.length - 1 ? (
-										<ChevronRight size={12} className="mt-0.5 shrink-0" aria-hidden />
-									) : (
-										<Check size={12} className="mt-0.5 shrink-0" aria-hidden />
-									)
-								) : (
-									<ActivityStepIcon kind={step.kind} />
-								)}
+								<ActivityStepIcon kind={step.kind} />
 								<span className="truncate">{step.text}</span>
 							</div>
 						))
@@ -204,23 +167,6 @@ export function MessageActivity({
 			</CollapsibleContent>
 		</Collapsible>
 	)
-}
-
-const MAX_SOURCE_PILLS = 3
-
-// The distinct tool calls a live turn has made, newest first — one pill per
-// source the agent is reading.
-export function toolSources(steps: MessageTurnActivity['steps']): string[] {
-	const seen: string[] = []
-	for (let i = steps.length - 1; i >= 0; i--) {
-		const step = steps[i]
-		if (step.kind !== 'tool_use') continue
-		const label = step.text.trim()
-		if (label.length === 0 || seen.includes(label)) continue
-		seen.push(label)
-		if (seen.length === MAX_SOURCE_PILLS) break
-	}
-	return seen
 }
 
 function ActivityStepIcon({ kind }: { kind: ActivityStep['kind'] }) {

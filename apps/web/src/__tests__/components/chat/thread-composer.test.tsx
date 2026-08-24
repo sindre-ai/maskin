@@ -3,7 +3,7 @@ import { ThreadComposer } from '@/components/chat/thread-composer'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
-import { TestWrapper } from '../../setup'
+import { createWorkspaceWrapper } from '../../setup'
 
 const mockMutateAsync = vi.fn()
 
@@ -55,7 +55,9 @@ describe('ThreadComposer — multi-item selection', () => {
 	it('sends every picked object and notification as structured metadata', async () => {
 		mockMutateAsync.mockResolvedValueOnce({})
 		const user = userEvent.setup()
-		render(<ThreadComposer workspaceId="ws-1" conversationId="convo-1" />, { wrapper: TestWrapper })
+		render(<ThreadComposer workspaceId="ws-1" conversationId="convo-1" />, {
+			wrapper: createWorkspaceWrapper(),
+		})
 
 		await user.click(screen.getByText('pick-object-1'))
 		await user.click(screen.getByText('pick-object-2'))

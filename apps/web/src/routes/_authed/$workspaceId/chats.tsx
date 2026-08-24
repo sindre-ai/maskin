@@ -1,10 +1,36 @@
+import { type ChatsFilter, ChatsFilterMenu } from '@/components/chat/chats-filter-menu'
 import { ConversationList } from '@/components/chat/conversation-list'
+import { LegacyChatsLayout } from '@/components/chat/legacy/chats-layout'
+import { PageHeader } from '@/components/layout/page-header'
+import { useChatUnreadCount } from '@/hooks/use-chat-unread'
+import { useConversationsInfinite } from '@/hooks/use-conversations'
 import { useIsMobile } from '@/hooks/use-mobile'
+import { cn } from '@/lib/cn'
+import { useNewDesign } from '@/lib/new-design-context'
 import { useWorkspace } from '@/lib/workspace-context'
-import { Outlet, createFileRoute, useMatches } from '@tanstack/react-router'
+import { Outlet, createFileRoute, useMatches, useNavigate } from '@tanstack/react-router'
+import { useCallback } from 'react'
+
+interface ChatsSearch {
+	filter?: ChatsFilter
+	/** Desktop focus mode — hides the list pane and widens the thread gutter. */
+	wide?: boolean
+}
+
+const FILTER_VALUES: ChatsFilter[] = ['all', 'unread', 'pinned', 'archived']
 
 export const Route = createFileRoute('/_authed/$workspaceId/chats')({
 	component: ChatsLayout,
+	// Search-param state (not useState) so the filter and focus mode survive a
+	// reload and are assertable from E2E. Defaults are returned as `undefined`
+	// so they never appear in the URL.
+	validateSearch: (search: Record<string, unknown>): ChatsSearch => {
+		const filter = FILTER_VALUES.find((f) => f === search.filter)
+		return {
+			filter: filter && filter !== 'all' ? filter : undefined,
+			wide: search.wide === true || search.wide === 'true' ? true : undefined,
+		}
+	},
 })
 
 // Leaf routes that render a thread pane — on mobile these replace the list
@@ -14,12 +40,66 @@ const THREAD_ROUTE_IDS = new Set([
 	'/_authed/$workspaceId/chats/new',
 ])
 
+/**
+ * The `new-design` branch for the Chats surface. The flag itself is read once,
+ * at the workspace shell boundary (`routes/_authed/$workspaceId.tsx`); only the
+ * resolved boolean travels here via `useNewDesign()`. A layout route can't swap
+ * what its `<Outlet />` renders, so each Chats leaf route carries the same
+ * one-line branch — see `chats/index.tsx`, `chats/new.tsx`,
+ * `chats/$conversationId.tsx`.
+ */
 function ChatsLayout() {
+	return useNewDesign() ? <ChatsLayoutV2 /> : <LegacyChatsLayout />
+}
+
+function ChatsLayoutV2() {
 	const { workspaceId } = useWorkspace()
 	const isMobile = useIsMobile()
+	const navigate = useNavigate()
 	const matches = useMatches()
+	const { filter = 'all', wide } = Route.useSearch()
 	const leafMatch = matches[matches.length - 1]
-	const showThreadOnMobile = !!leafMatch && THREAD_ROUTE_IDS.has(leafMatch.routeId)
+	const hasThread = !!leafMatch && THREAD_ROUTE_IDS.has(leafMatch.routeId)
+	const isDraft = leafMatch?.routeId === '/_authed/$workspaceId/chats/new'
+
+	const { count: unreadCount } = useChatUnreadCount(workspaceId)
+	const { data } = useConversationsInfinite(workspaceId)
+	const total = data?.pages.flatMap((p) => p.conversations).length ?? 0
+	const subtitle =
+		unreadCount > 0
+			? `${unreadCount} unread`
+			: `${total} ${total === 1 ? 'conversation' : 'conversations'}`
+
+	// Stay on whatever chats route is currently mounted (`to: '.'`) and rewrite
+	// only the search params. Navigating to `/$workspaceId/chats` instead would
+	// drop the `$conversationId` leaf, so re-filtering while reading a thread
+	// closed the thread out from under the reader.
+	const handleFilterChange = useCallback(
+		(next: ChatsFilter) => {
+			navigate({
+				to: '.',
+				search: (prev: ChatsSearch) => ({
+					...prev,
+					filter: next === 'all' ? undefined : next,
+				}),
+			})
+		},
+		[navigate],
+	)
+
+	// One writer for the shared nav row: a child route rendering its own
+	// <PageHeader> would lose the race (parent effects run last) and leave the
+	// draft screen labelled "Chats".
+	const header = (
+		<PageHeader
+			title={isDraft ? 'New chat' : 'Chats'}
+			subtitle={isDraft ? undefined : subtitle}
+			// The split pane owns two internal scrollers; without this the shared
+			// page container scrolls too and the surface double-scrolls.
+			scrollLocked
+			actions={<ChatsFilterMenu value={filter} onChange={handleFilterChange} />}
+		/>
+	)
 
 	// Full-bleed: reclaim the workspace shell's page padding (`p-4 md:p-8` on
 	// `data-scroll-root` in `$workspaceId.tsx`) so the split pane gets the
@@ -29,23 +109,54 @@ function ChatsLayout() {
 	// pixels next to its fixed-width controls (participants pill, pin,
 	// archive, copy) — see the known-pitfalls-style regression this fixed.
 	if (isMobile) {
-		return showThreadOnMobile ? (
-			<div className="-m-4 flex min-h-0 flex-1 flex-col">
-				<Outlet />
-			</div>
-		) : (
-			<ConversationList workspaceId={workspaceId} className="-m-4" />
+		return (
+			<>
+				{header}
+				{hasThread ? (
+					<div className="-m-4 flex min-h-0 flex-1 flex-col">
+						<Outlet />
+					</div>
+				) : (
+					<ConversationList workspaceId={workspaceId} filter={filter} className="-m-4" />
+				)}
+			</>
+		)
+	}
+
+	// Desktop with nothing selected: the list spans the whole content width and
+	// the thread pane isn't mounted at all (mockup 8124–8125).
+	if (!hasThread) {
+		return (
+			<>
+				{header}
+				<ConversationList
+					workspaceId={workspaceId}
+					filter={filter}
+					expanded
+					className="-m-4 md:-m-8"
+				/>
+			</>
 		)
 	}
 
 	return (
-		<div className="-m-4 flex min-h-0 flex-1 md:-m-8">
-			<div className="hidden md:flex md:w-64 lg:w-80 shrink-0 flex-col border-r border-border">
-				<ConversationList workspaceId={workspaceId} />
+		<>
+			{header}
+			<div className="-m-4 flex min-h-0 flex-1 md:-m-8">
+				{wide ? null : (
+					<div className="hidden w-[clamp(266px,25vw,326px)] shrink-0 flex-col border-r border-border md:flex">
+						<ConversationList workspaceId={workspaceId} filter={filter} />
+					</div>
+				)}
+				<div
+					className={cn(
+						'flex min-w-0 flex-1 flex-col',
+						wide && 'md:px-[max(28px,calc((100%-900px)/2))]',
+					)}
+				>
+					<Outlet />
+				</div>
 			</div>
-			<div className="flex min-w-0 flex-1 flex-col">
-				<Outlet />
-			</div>
-		</div>
+		</>
 	)
 }

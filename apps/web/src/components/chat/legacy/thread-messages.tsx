@@ -1,3 +1,9 @@
+/**
+ * Pre-v2 thread message list, restored verbatim from before the v2 Chats
+ * redesign. Rendered when the `new-design` flag is OFF; the v2 replacement
+ * lives one directory up. This whole directory dies with that flag
+ * (`.claude/rules/feature-flags.md`).
+ */
 import { EmptyState } from '@/components/shared/empty-state'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -14,18 +20,6 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { MessageActivity } from './message-activity'
 import { MessageBubble } from './message-bubble'
 import { MessageDivider, isNewDay } from './message-divider'
-import { ResumeBanner } from './resume-banner'
-
-// A thread nobody has touched in this long reads as history rather than as a
-// live conversation — the mockup's `chatIsOld` note (623–625).
-const OLD_THREAD_DAYS = 30
-
-export function isOldThread(lastMessageAt: string | null | undefined, now = new Date()): boolean {
-	if (!lastMessageAt) return false
-	const then = new Date(lastMessageAt).getTime()
-	if (Number.isNaN(then)) return false
-	return now.getTime() - then > OLD_THREAD_DAYS * 86_400_000
-}
 
 interface ThreadMessagesProps {
 	workspaceId: string
@@ -34,7 +28,7 @@ interface ThreadMessagesProps {
 }
 
 export function ThreadMessages({ workspaceId, conversationId, className }: ThreadMessagesProps) {
-	const { data, isLoading, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } =
+	const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
 		useConversationMessages(conversationId, workspaceId)
 	const messages = flattenMessagesOldestFirst(data)
 	// Reuses the same query the route already fetches for the header/composer
@@ -113,26 +107,6 @@ export function ThreadMessages({ workspaceId, conversationId, className }: Threa
 		)
 	}
 
-	// A failed fetch must not borrow the empty state: "No messages yet — send the
-	// first message" tells a reader with a full thread that it is empty and
-	// invites them to start it over. Same reasoning as `conversation-list.tsx`.
-	if (isError) {
-		return (
-			<div className={cn('flex flex-1 flex-col', className)}>
-				<EmptyState
-					className="flex-1"
-					title="Couldn't load this conversation"
-					description="Something went wrong reaching the server. Nothing has been lost — this is only the view."
-					action={
-						<Button variant="link" size="sm" onClick={() => refetch()}>
-							Try again →
-						</Button>
-					}
-				/>
-			</div>
-		)
-	}
-
 	if (messages.length === 0) {
 		return (
 			<div className={cn('flex flex-1 flex-col', className)}>
@@ -150,20 +124,10 @@ export function ThreadMessages({ workspaceId, conversationId, className }: Threa
 			ref={scrollerRef}
 			onScroll={handleScroll}
 			data-testid="thread-messages"
-			className={cn('flex flex-1 flex-col gap-4 overflow-y-auto px-3 pt-4 pb-2', className)}
+			className={cn('flex flex-1 flex-col overflow-y-auto p-3', className)}
 		>
-			{isOldThread(conversation?.lastMessageAt) ? (
-				<p className="text-center text-[10.5px] leading-[1.5] text-muted-foreground">
-					Retrieved from your history · the reasoning is still on file
-				</p>
-			) : null}
-			<ResumeBanner
-				conversationId={conversationId}
-				messages={messages}
-				lastReadMessageId={conversation?.last_read_message_id ?? null}
-			/>
 			{hasNextPage ? (
-				<div className="flex justify-center">
+				<div className="flex justify-center pb-3">
 					<Button
 						type="button"
 						variant="ghost"
@@ -175,7 +139,7 @@ export function ThreadMessages({ workspaceId, conversationId, className }: Threa
 					</Button>
 				</div>
 			) : null}
-			<div className="flex flex-col gap-4">
+			<div className="flex flex-col gap-3">
 				{messages.map((message, index) => {
 					const prev = messages[index - 1]
 					const isLast = index === messages.length - 1
