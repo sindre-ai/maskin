@@ -21,7 +21,7 @@ import { ObjectAskBanner } from './object-ask-banner'
 import { ObjectDetailBody } from './object-detail-body'
 import { getAsk } from './object-detail-fixtures'
 import { ObjectDetailHeader, ObjectDetailIdentity } from './object-detail-header'
-import { DeleteConfirmDialog } from './object-document'
+import { DeleteConfirmDialog, StickyBetIdentity } from './object-document'
 import { ObjectPropertiesSidebar } from './object-properties-sidebar'
 import { PropertiesSidebarProvider, SIDEBAR_WIDTH } from './properties-sidebar-provider'
 import { RelatedTab } from './related-tab'
@@ -163,11 +163,53 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 	// Carried over from the retired ObjectDocument surface: the object page
 	// used to emit scroll_to_top from its body render path. The shell replaces
 	// that body renderer, so the emitter mounts here to keep the telemetry.
+	// The shell publishes `scrollLocked`, so the layout's `[data-scroll-root]`
+	// is `overflow-hidden` and this region is the only live scroller — the
+	// emitter has to be pointed at it explicitly.
+	const scrollRegionRef = useRef<HTMLDivElement>(null)
 	useScrollToTopEmitter({
 		enabled: object.type === 'bet',
 		objectSubtype: object.type,
 		objectId: object.id,
+		scrollRootRef: scrollRegionRef,
 	})
+
+	// Bet-scoped sticky nav, carried over from the retired ObjectDocument: once
+	// the hero identity row leaves the viewport the shared nav row sprouts a
+	// compact title + status chip, so the object's identity is never absent
+	// from the screen. `threshold: 0` matches "the hero scrolled off".
+	const heroIdentityRef = useRef<HTMLDivElement>(null)
+	const [heroVisible, setHeroVisible] = useState(true)
+	useEffect(() => {
+		if (object.type !== 'bet') return
+		const el = heroIdentityRef.current
+		if (!el || typeof IntersectionObserver === 'undefined') return
+		const observer = new IntersectionObserver(([entry]) => setHeroVisible(entry.isIntersecting), {
+			threshold: 0,
+		})
+		observer.observe(el)
+		return () => observer.disconnect()
+	}, [object.type])
+
+	const scrollBackToHero = useCallback(() => {
+		const target = heroIdentityRef.current
+		if (!target) return
+		target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+		// Focus lands on the hero's status trigger once the smooth scroll
+		// settles — the header chip is read-only, editing happens in the hero.
+		window.setTimeout(() => {
+			document.querySelector<HTMLElement>('[data-hero-status-trigger]')?.focus()
+		}, 400)
+	}, [])
+
+	const stickyIdentity =
+		object.type === 'bet' && !heroVisible ? (
+			<StickyBetIdentity
+				title={object.title ?? 'Untitled'}
+				status={object.status}
+				onScrollBack={scrollBackToHero}
+			/>
+		) : null
 
 	const handleUpdateStatus = useCallback(
 		(status: string) => {
@@ -231,7 +273,7 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 
 	return (
 		<>
-			<PageHeader contentPush={contentPush} scrollLocked />
+			<PageHeader contentPush={contentPush} stickyIdentity={stickyIdentity} scrollLocked />
 			<div className="flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden">
 				<ObjectDetailHeader
 					object={object}
@@ -244,15 +286,17 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 
 				{/* The document owns the only scroll region on this screen, so the
 				    bar above stays put and the composer can pin to its bottom. */}
-				<div className="min-h-0 flex-1 overflow-y-auto">
+				<div ref={scrollRegionRef} className="min-h-0 flex-1 overflow-y-auto">
 					<div className="mx-auto flex w-full min-w-0 max-w-3xl flex-col pt-5">
-						<ObjectDetailIdentity
-							object={object}
-							statuses={statuses}
-							members={members ?? []}
-							onStatusChange={handleUpdateStatus}
-							onDriverChange={handleUpdateDriver}
-						/>
+						<div ref={heroIdentityRef}>
+							<ObjectDetailIdentity
+								object={object}
+								statuses={statuses}
+								members={members ?? []}
+								onStatusChange={handleUpdateStatus}
+								onDriverChange={handleUpdateDriver}
+							/>
+						</div>
 
 						{askText && (
 							<ObjectAskBanner

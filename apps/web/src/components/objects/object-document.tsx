@@ -776,7 +776,7 @@ export function DeleteConfirmDialog({
 		</Dialog>
 	)
 }
-function StickyBetIdentity({
+export function StickyBetIdentity({
 	title,
 	status,
 	onScrollBack,
