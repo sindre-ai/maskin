@@ -1,6 +1,6 @@
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/cn'
-import { statusColors, statusLabel } from '@/lib/constants'
+import { defaultStatusColor, statusColors, statusLabel } from '@/lib/constants'
 
 type StatusBadgeVariant = 'default' | 'dot-word' | 'word'
 
@@ -15,7 +15,11 @@ export function StatusBadge({
 	className?: string
 	variant?: StatusBadgeVariant
 }) {
-	const colors = statusColors[status] ?? { bg: 'bg-zinc-700', text: 'text-zinc-300' }
+	// `defaultStatusColor` rather than a literal: statuses are workspace-
+	// configurable, and the old fallback was light text sized for a dark pill.
+	// The `word` and `dot-word` variants drop the pill and render `text` on the
+	// surface itself, where `text-zinc-300` is unreadable in light mode.
+	const colors = statusColors[status] ?? defaultStatusColor
 	const label = status.replace(/_/g, ' ')
 
 	// The bare status word, no dot and no pill — a citation pill and the For You

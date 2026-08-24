@@ -78,7 +78,12 @@ export function ThreadMessages({ workspaceId, conversationId, className }: Threa
 	// A failed fetch must not borrow the empty state: "No messages yet — send the
 	// first message" tells a reader with a full thread that it is empty and
 	// invites them to start it over. Same reasoning as `conversation-list.tsx`.
-	if (isError) {
+	//
+	// Only when nothing loaded, though. An infinite query flips to `error` when
+	// *any* page rejects while keeping the pages it already has, so a failed
+	// "Load older messages" would otherwise replace a thread the reader is
+	// mid-way through reading with a whole-surface error.
+	if (isError && messages.length === 0) {
 		return (
 			<div className={cn('flex flex-1 flex-col', className)}>
 				<EmptyState
@@ -128,7 +133,7 @@ export function ThreadMessages({ workspaceId, conversationId, className }: Threa
 				lastReadMessageId={conversation?.last_read_message_id ?? null}
 			/>
 			{hasNextPage ? (
-				<div className="flex justify-center">
+				<div className="flex flex-col items-center gap-1">
 					<Button
 						type="button"
 						variant="ghost"
@@ -138,6 +143,14 @@ export function ThreadMessages({ workspaceId, conversationId, className }: Threa
 					>
 						{isFetchingNextPage ? <Spinner /> : 'Load older messages'}
 					</Button>
+					{/* The whole-surface error state is reserved for a thread that
+					    loaded nothing, so a page that fails partway has to say so
+					    here — otherwise the button just stops doing anything. */}
+					{isError ? (
+						<p className="text-[10.5px] text-muted-foreground">
+							Couldn't reach the older messages. Try again.
+						</p>
+					) : null}
 				</div>
 			) : null}
 			<div className="flex flex-col gap-4">
@@ -168,17 +181,25 @@ export function ThreadMessages({ workspaceId, conversationId, className }: Threa
 							<MessageBubble
 								workspaceId={workspaceId}
 								message={message}
-								activity={turnsAbove.map((turn) => (
+								// Keyed by index as well as session: one session can put two
+								// turns under the same message (a result segment plus the
+								// live turn that follows it), so `sessionId` alone is not
+								// unique and React would reconcile the two as one row.
+								activity={turnsAbove.map((turn, turnIndex) => (
 									<MessageActivity
-										key={turn.sessionId}
+										key={`${turn.sessionId}-above-${turnIndex}`}
 										workspaceId={workspaceId}
 										turn={turn}
 										layout="inline"
 									/>
 								))}
 							/>
-							{turnsBelowHere.map((turn) => (
-								<MessageActivity key={turn.sessionId} workspaceId={workspaceId} turn={turn} />
+							{turnsBelowHere.map((turn, turnIndex) => (
+								<MessageActivity
+									key={`${turn.sessionId}-below-${turnIndex}`}
+									workspaceId={workspaceId}
+									turn={turn}
+								/>
 							))}
 						</div>
 					)
