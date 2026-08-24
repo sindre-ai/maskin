@@ -578,7 +578,10 @@ export function buildApp(deps: AppDeps): Hono {
 		)
 		return c.json({ error: 'internal_error' }, 500)
 	})
-	const inputQueue = new InputQueue()
+	// Interactive-turn delivery is the one path where a silent failure looks
+	// exactly like a quiet conversation, so every state change is logged. Volume
+	// is a handful of lines per turn and nothing at all while idle.
+	const inputQueue = new InputQueue((event, data) => logger.info(`input: ${event}`, data))
 	// Connects the /sessions/:id/logs/ingest endpoint to monitorSession's buffer.
 	// Injectable via deps so main()'s boot-time reconcile pass can reattach
 	// monitorSession for sandboxes that survived a restart (see AppDeps.sessionLogRouters).
@@ -632,32 +635,64 @@ export function buildApp(deps: AppDeps): Hono {
 
 	// GET /sessions/:id/input/stream — VM polls here to receive newline-delimited
 	// JSON user turns for interactive sessions.
+	//
+	// `?after=<seq>` is the VM's high-water mark: the seq of the last turn it
+	// actually fed to the CLI. It acknowledges everything up to that point and
+	// asks for whatever followed. Turns are retained until acked, so a write
+	// that silently vanished into a half-open socket is redelivered here rather
+	// than lost (see InputQueue's class comment). A VM that has consumed
+	// nothing sends 0, or omits it entirely.
+	//
+	// Each line goes out wrapped as {"maskin_seq":N,"turn":<envelope>} so the
+	// VM can track what it consumed. input-stream.js unwraps it and writes only
+	// the inner envelope to the CLI's stdin, which must carry NDJSON turns and
+	// nothing else.
 	app.get('/sessions/:id/input/stream', async (c) => {
 		const { id } = c.req.param()
 		if (!SESSION_ID_RE.test(id)) return c.json({ error: 'Invalid session id' }, 400)
+		const rawAfter = Number(c.req.query('after'))
+		const after = Number.isFinite(rawAfter) && rawAfter > 0 ? Math.floor(rawAfter) : 0
+		const epoch = c.req.query('epoch')
 		return stream(c, async (s) => {
 			let resolveStream!: () => void
 			const done = new Promise<void>((resolve) => {
 				resolveStream = resolve
 			})
-			const unregister = await inputQueue.registerStream(id, async (line) => {
-				try {
-					await s.write(line)
-					return true
-				} catch {
-					resolveStream()
-					return false
-				}
-			})
+			const openedAt = Date.now()
+			let closeReason = 'handler returned'
+			const unregister = await inputQueue.registerStream(
+				id,
+				async (line, seq) => {
+					try {
+						await s.write(
+							`${JSON.stringify({
+								maskin_epoch: inputQueue.epoch,
+								maskin_seq: seq,
+								turn: line.trimEnd(),
+							})}\n`,
+						)
+						return true
+					} catch {
+						closeReason = 'turn write failed'
+						resolveStream()
+						return false
+					}
+				},
+				after,
+				epoch,
+			)
 			// Between turns this stream carries nothing for however long the
 			// human takes to reply — minutes-long silences that NAT/proxy
-			// idle-timeouts reap, EOF-ing claude's stdin in the VM and wedging
-			// the conversation (see agent-run.sh's input_stream reconnect loop,
-			// the other half of this fix). A bare newline every 30s keeps the
-			// connection warm — the CLI's NDJSON stdin reader skips blank
-			// lines — and doubles as dead-socket detection: a failed write
-			// ends this handler so the next turn parks for the reconnect
-			// instead of vanishing into a half-closed socket.
+			// idle-timeouts reap. A bare newline every 30s keeps the connection
+			// warm and, crucially, gives the VM something to miss: input-stream.js
+			// re-dials when no byte arrives for 90s (three missed heartbeats),
+			// which is how a silently blackholed connection gets noticed at all.
+			//
+			// It is NOT a delivery guarantee. A write into a half-open socket
+			// succeeds against the kernel buffer while nothing reaches the guest,
+			// so neither this heartbeat nor the turn writes above can confirm
+			// arrival — only the VM's `after` ack can. That is why turns survive
+			// a "successful" write.
 			const heartbeat = setInterval(async () => {
 				try {
 					await s.write('\n')
@@ -666,12 +701,22 @@ export function buildApp(deps: AppDeps): Hono {
 				}
 			}, 30_000)
 			c.req.raw.signal.addEventListener('abort', () => {
+				closeReason = 'client aborted'
 				unregister()
 				resolveStream()
 			})
 			await done
 			clearInterval(heartbeat)
 			unregister()
+			// How long the guest held this connection, and why it ended. A guest
+			// that is re-dialling on its idle timer produces a steady series of
+			// ~90s connections; one that never appears again after its first is
+			// not re-dialling at all, which no other signal distinguishes.
+			logger.info('input: stream closed', {
+				sessionId: id,
+				reason: closeReason,
+				heldMs: Date.now() - openedAt,
+			})
 		})
 	})
 

@@ -2536,7 +2536,15 @@ describe('GET /sessions/:id/input/stream', () => {
 			if (!reader) throw new Error('stream response has no body')
 			const decoder = new TextDecoder()
 			const first = await reader.read()
-			expect(decoder.decode(first.value)).toContain('hello parked turn')
+			const framed = JSON.parse(decoder.decode(first.value))
+			// Framed as {maskin_seq, turn} so the VM can ack what it consumed.
+			// `turn` is the exact envelope apps/dev put on the wire — the CLI's
+			// stdin must see those bytes unaltered.
+			expect(framed.maskin_seq).toBe(1)
+			expect(JSON.parse(framed.turn)).toEqual({
+				type: 'user',
+				message: { role: 'user', content: 'hello parked turn' },
+			})
 
 			// With nothing else flowing, the 30s keepalive newline arrives — the
 			// signal that stops NAT/proxy idle-timeouts from reaping the stream.
@@ -2548,6 +2556,57 @@ describe('GET /sessions/:id/input/stream', () => {
 			// Tear the reader down and let the next heartbeat's failed write
 			// clean up the interval so the test leaves no live timers behind.
 			await reader.cancel()
+			await vi.advanceTimersByTimeAsync(30_000)
+		} finally {
+			vi.useRealTimers()
+		}
+	})
+
+	it('replays an unacked turn on reconnect and drops it once acked', async () => {
+		const { run } = makeRunner()
+		const app = buildApp({
+			env: makeEnv({ AGENT_SESSION_ROOT: sessionRoot }),
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+		})
+		const decoder = new TextDecoder()
+
+		const post = await app.request('/sessions/sess-stream-ack/input', {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: 'Bearer test-secret-thirty-two-chars-long',
+			},
+			body: JSON.stringify({ content: 'needs an ack' }),
+		})
+		expect(post.status).toBe(200)
+
+		// First reader takes the turn and dies without acking — the production
+		// case, where the write succeeded into a socket the VM never read.
+		const first = await app.request('/sessions/sess-stream-ack/input/stream')
+		const r1 = first.body?.getReader()
+		if (!r1) throw new Error('stream response has no body')
+		expect(decoder.decode((await r1.read()).value)).toContain('needs an ack')
+		await r1.cancel()
+
+		// Reconnect with after=0: the turn is still owed, so it comes again.
+		const second = await app.request('/sessions/sess-stream-ack/input/stream?after=0')
+		const r2 = second.body?.getReader()
+		if (!r2) throw new Error('stream response has no body')
+		expect(decoder.decode((await r2.read()).value)).toContain('needs an ack')
+		await r2.cancel()
+
+		// Reconnect with after=1: acknowledged, so nothing is replayed. Proven
+		// by the 30s heartbeat arriving first instead of a turn.
+		vi.useFakeTimers()
+		try {
+			const third = await app.request('/sessions/sess-stream-ack/input/stream?after=1')
+			const r3 = third.body?.getReader()
+			if (!r3) throw new Error('stream response has no body')
+			const pending = r3.read()
+			await vi.advanceTimersByTimeAsync(30_000)
+			expect(decoder.decode((await pending).value)).toBe('\n')
+			await r3.cancel()
 			await vi.advanceTimersByTimeAsync(30_000)
 		} finally {
 			vi.useRealTimers()
