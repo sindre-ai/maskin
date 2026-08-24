@@ -1,3 +1,9 @@
+/**
+ * Pre-v2 loop-header, restored verbatim from before the v2 Loops/Triggers redesign.
+ * Rendered when the `new-design` flag is OFF; the v2 replacement lives one
+ * directory up. This whole directory dies with that flag
+ * (`.claude/rules/feature-flags.md`).
+ */
 import { MarkdownContent } from '@/components/shared/markdown-content'
 import { Button } from '@/components/ui/button'
 import {
@@ -9,7 +15,7 @@ import {
 import type { LoopSummary } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { MoreHorizontal, Pause, Play } from 'lucide-react'
-import { LOOP_PILL_STYLES } from './loop-pill'
+import { LOOP_PILL_STYLES } from '../loop-pill'
 
 export function LoopHeader({
 	loop,

@@ -1,8 +1,10 @@
-import { LoopHeader } from '@/components/loops/loop-header'
+// Covers the pre-v2 component in `components/loops/legacy/`, rendered when the
+// `new-design` flag is off. Dies with the flag.
+import { LoopHeader } from '@/components/loops/legacy/loop-header'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
-import { buildLoopSummary } from '../../factories'
+import { buildLoopSummary } from '../../../factories'
 
 describe('LoopHeader', () => {
 	it('renders the loop name, pill, and description', () => {

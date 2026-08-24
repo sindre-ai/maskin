@@ -225,6 +225,46 @@ describe('Triggers Integration', () => {
 			expect(created.config.from_status).toBe('todo')
 			expect(created.config.to_status).toBe('in_progress')
 		})
+
+		// The trigger detail page renders WHAT IT WRITES / IT STOPS FOR YOU WHEN /
+		// the skill chip straight off `config`. Zod strips unknown keys, so if
+		// these fields are not declared on the event config schema they are
+		// dropped on write and the sections can never render.
+		it('round-trips the reader-only writes / stops_for_you / skill config fields', async () => {
+			const app = createApp()
+			const headers = { 'x-workspace-id': workspaceId }
+
+			const createRes = await app.request(
+				jsonRequest(
+					'POST',
+					'/api/triggers',
+					buildCreateTriggerBody({
+						target_actor_id: targetActorId,
+						config: {
+							entity_type: 'insight',
+							action: 'created',
+							writes: [{ act: 'Creates', type: 'task', state: 'todo' }],
+							stops_for_you: 'before anything is published',
+							skill: 'weekly-digest',
+						},
+					}),
+					headers,
+				),
+			)
+
+			expect(createRes.status).toBe(201)
+			const created = await createRes.json()
+			expect(created.config.stops_for_you).toBe('before anything is published')
+			expect(created.config.skill).toBe('weekly-digest')
+			expect(created.config.writes).toEqual([{ act: 'Creates', type: 'task', state: 'todo' }])
+
+			// And survives the read path, not just the create response.
+			const listRes = await app.request(jsonGet('/api/triggers', headers))
+			expect(listRes.status).toBe(200)
+			const list = await listRes.json()
+			const fetched = list.find((t: { id: string }) => t.id === created.id)
+			expect(fetched.config.stops_for_you).toBe('before anything is published')
+		})
 	})
 
 	// Loop steps are event triggers, and loops can flow objects of ANY

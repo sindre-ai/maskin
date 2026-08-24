@@ -1,15 +1,14 @@
-import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { useActors } from '@/hooks/use-actors'
 import { useUpdateObject } from '@/hooks/use-objects'
 import type { EventResponse, UpdateObjectInput } from '@/lib/api'
+import { cn } from '@/lib/cn'
 import {
 	OBJECT_DIFF_FIELDS,
 	type SafeMetadata,
 	formatEventDescription,
 	getChangesFromEventData,
 } from '@maskin/shared'
-import { History, Undo2 } from 'lucide-react'
 import { useMemo } from 'react'
 import { toast } from 'sonner'
 
@@ -88,57 +87,71 @@ export function LoopChanges({
 		)
 	}
 
-	return (
-		<section className="rounded-xl border border-border bg-card">
-			<div className="flex items-center gap-2 border-b border-border px-4 py-3">
-				<History size={14} className="text-muted-foreground" aria-hidden="true" />
-				<h2 className="text-sm font-semibold text-foreground">Changes</h2>
-				<span className="text-xs text-muted-foreground">recent changes to this loop</span>
-			</div>
+	if (rows.length === 0) return null
 
-			{rows.length === 0 ? (
-				<p className="px-4 py-4 text-sm text-muted-foreground">No changes yet.</p>
-			) : (
-				<ul className="divide-y divide-border">
-					{rows.map((event) => {
-						const actor = actorsById.get(event.actorId)
-						const undoData = buildUndoData(event)
-						return (
-							<li key={event.id} className="flex items-center gap-2.5 px-4 py-2.5">
-								<ActorAvatar
-									id={event.actorId}
-									name={actor?.name ?? 'Unknown'}
-									type={actor?.type ?? 'agent'}
-									className="shrink-0"
+	return (
+		<section>
+			<header className="flex items-center gap-2.5">
+				<h2 className="text-sm font-bold text-foreground">Changes</h2>
+				<span aria-hidden="true" className="h-px flex-1 bg-border" />
+			</header>
+
+			{/* Chat-bubble register (mockup 1970–1975) — a change to this loop reads
+			    as something that was said, not as a table row. */}
+			<ul className="flex flex-col gap-2.5 pt-3">
+				{rows.map((event) => {
+					const actor = actorsById.get(event.actorId)
+					const isHuman = actor?.type === 'human'
+					return (
+						<li key={event.id} className={cn('flex', isHuman ? 'justify-end' : 'justify-start')}>
+							<p
+								className={cn(
+									'max-w-[85%] rounded-2xl border px-3.5 py-2.5 text-[13px] leading-relaxed',
+									isHuman
+										? 'border-primary bg-primary text-primary-foreground'
+										: 'border-border bg-card text-foreground',
+								)}
+							>
+								{actor && <span className="font-semibold">{actor.name} </span>}
+								{formatEventDescription(event, { actorsById })}
+							</p>
+						</li>
+					)
+				})}
+			</ul>
+
+			{/* The applied-change log with per-row undo sits below the bubbles
+			    (mockup 1976–1986). */}
+			<ul className="flex flex-col gap-1.5 pt-3">
+				{rows.map((event) => {
+					const undoData = buildUndoData(event)
+					if (!undoData) return null
+					return (
+						<li key={`log-${event.id}`} className="flex items-baseline gap-2.5">
+							<span aria-hidden="true" className="shrink-0 text-[11px] text-success">
+								✓
+							</span>
+							<span className="min-w-0 flex-1 text-[11.5px] leading-snug text-muted-foreground">
+								{formatEventDescription(event, { actorsById })}
+							</span>
+							{event.createdAt && (
+								<RelativeTime
+									date={event.createdAt}
+									className="shrink-0 font-mono text-[10px] text-muted-foreground"
 								/>
-								<p className="flex-1 min-w-0 truncate text-[12.5px] text-foreground">
-									{actor && <span className="font-semibold">{actor.name} </span>}
-									<span className="text-muted-foreground">
-										{formatEventDescription(event, { actorsById })}
-									</span>
-								</p>
-								{event.createdAt && (
-									<RelativeTime
-										date={event.createdAt}
-										className="shrink-0 text-xs text-muted-foreground"
-									/>
-								)}
-								{undoData && (
-									<button
-										type="button"
-										onClick={() => handleUndo(event)}
-										disabled={updateObject.isPending}
-										className="shrink-0 inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-bg-hover disabled:opacity-50"
-									>
-										<Undo2 size={13} aria-hidden="true" />
-										Undo
-									</button>
-								)}
-							</li>
-						)
-					})}
-				</ul>
-			)}
+							)}
+							<button
+								type="button"
+								onClick={() => handleUndo(event)}
+								disabled={updateObject.isPending}
+								className="shrink-0 text-[11.5px] font-semibold text-muted-foreground hover:text-foreground disabled:opacity-50"
+							>
+								undo
+							</button>
+						</li>
+					)
+				})}
+			</ul>
 		</section>
 	)
 }
