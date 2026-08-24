@@ -41,6 +41,32 @@ describe('Workspaces Routes', () => {
 			expect(calls.inserts[1]).toMatchObject({ workspaceId: ws.id, role: 'owner' })
 		})
 
+		it('rejects a caller-supplied settings.billing with 400 and creates nothing', async () => {
+			// Regression: PATCH already refused `billing`, but POST accepted the
+			// full workspaceSettingsSchema and provisionWorkspace wrote it
+			// verbatim — so any actor (or any agent via MCP `create_workspace`)
+			// could self-grant `plan: 'team', status: 'active'` at creation time
+			// and take the seat cap, the ownership cap and an arbitrary
+			// Maskin-funded spend cap without paying Stripe.
+			const { app, calls } = createSessionTestApp(workspacesRoutes, '/api/workspaces')
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/workspaces', {
+					...buildCreateWorkspaceBody(),
+					settings: {
+						billing: {
+							plan: 'team',
+							status: 'active',
+							hard_cap_usd_cents: 100_000_000,
+						},
+					},
+				}),
+			)
+
+			expect(res.status).toBe(400)
+			expect(calls.inserts).toHaveLength(0)
+		})
+
 		it('respects an explicit default_agent_id and does not overwrite it', async () => {
 			const explicitAgentId = randomUUID()
 			// The mock insert returns this row verbatim (unlike real Postgres, it

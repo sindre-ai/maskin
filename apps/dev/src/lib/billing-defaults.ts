@@ -104,3 +104,42 @@ export const TEAM_HARD_CAP_DEFAULT_USD_CENTS = 20_000
 
 /** Billing periods on paid plans run ~30 days; used when Stripe hasn't written `period_end` yet. */
 export const DEFAULT_PERIOD_LENGTH_MS = 30 * 24 * 60 * 60 * 1000
+
+/**
+ * Resolves the included-usage cap (USD cents) for a plan tier, env first then
+ * the documented literal above.
+ *
+ * This is the single resolver for both the *enforcement* path
+ * (`lib/llm-routing.ts`'s `effectivePlanCap`, which gates spend) and the
+ * *display* path (`routes/billing.ts`'s `/usage`). They were separate
+ * functions, and the enforcement side simply returned `null` — unlimited — for
+ * a paid plan whose Stripe webhook hadn't yet written `hard_cap_usd_cents`,
+ * so a pro/team workspace in that window could spend without bound while the
+ * usage page showed it capped. One resolver means the number a customer is
+ * shown is the number that actually stops them.
+ *
+ * `byollm` returns the trial cap only so the display path keeps its previous
+ * shape; nothing enforces a cap on byollm, which is routed away from the
+ * Maskin plan entirely (`MASKIN_PLAN_ROUTED_PLANS` in lib/llm-routing.ts).
+ */
+export function resolvePlanCapCents(
+	plan: 'trial' | 'pro' | 'team' | 'byollm',
+	env: NodeJS.ProcessEnv = process.env,
+): number {
+	switch (plan) {
+		case 'pro':
+			return (
+				parsePositiveIntEnv('MASKIN_PRO_HARD_CAP_USD_CENTS', env) ?? PRO_HARD_CAP_DEFAULT_USD_CENTS
+			)
+		case 'team':
+			return (
+				parsePositiveIntEnv('MASKIN_TEAM_HARD_CAP_USD_CENTS', env) ??
+				TEAM_HARD_CAP_DEFAULT_USD_CENTS
+			)
+		default:
+			return (
+				parsePositiveIntEnv('MASKIN_TRIAL_HARD_CAP_USD_CENTS', env) ??
+				TRIAL_HARD_CAP_DEFAULT_USD_CENTS
+			)
+	}
+}

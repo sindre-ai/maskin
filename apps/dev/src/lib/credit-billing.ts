@@ -8,6 +8,7 @@ import {
 	getWorkspacePlanCap,
 	getWorkspacePlanUsdCentsUsage,
 } from './llm-routing'
+import { logger } from './logger'
 import type { WorkspaceSettings } from './types'
 
 /**
@@ -115,9 +116,23 @@ export async function debitCreditForSession(params: {
 		const costCents = Math.max(0, totalOverageCents - alreadyAccountedCents)
 		if (costCents <= 0) return
 
-		const currentSettings =
-			workspaceSettingsSchema.partial().safeParse(workspace.settings ?? {}).data ?? {}
-		const currentBilling = currentSettings.billing ?? { plan: billing.plan }
+		// The parse is a READ of `billing` only — never the write base. Zod
+		// strips unknown keys and `workspaceSettingsSchema` is not a
+		// passthrough, so carrying the parsed object into the UPDATE below
+		// silently dropped every settings key the schema doesn't model, and a
+		// parse failure (`?? {}`) replaced the whole object — wiping
+		// claude_oauth, custom_extensions, statuses, pinned_files. The raw row
+		// is the carrier; this matches routes/stripe-webhook.ts and
+		// routes/test-grants.ts.
+		const rawSettings = (workspace.settings ?? {}) as Record<string, unknown>
+		const parsed = workspaceSettingsSchema.partial().safeParse(rawSettings)
+		if (!parsed.success) {
+			logger.warn('debitCreditForSession: settings failed schema parse — reading billing raw', {
+				workspaceId,
+				sessionId,
+			})
+		}
+		const currentBilling = parsed.data?.billing ?? { plan: billing.plan }
 		const currentBalance =
 			typeof currentBilling.credit_balance_cents === 'number' &&
 			currentBilling.credit_balance_cents > 0
@@ -157,7 +172,7 @@ export async function debitCreditForSession(params: {
 			.update(workspaces)
 			.set({
 				settings: {
-					...currentSettings,
+					...rawSettings,
 					billing: { ...currentBilling, credit_balance_cents: balanceAfter },
 				},
 				updatedAt: new Date(),

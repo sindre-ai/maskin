@@ -1,11 +1,7 @@
 import type { Database } from '@maskin/db'
 import { sessions } from '@maskin/db/schema'
 import { and, eq, gte, sql } from 'drizzle-orm'
-import {
-	DEFAULT_PERIOD_LENGTH_MS,
-	TRIAL_HARD_CAP_DEFAULT_USD_CENTS,
-	parsePositiveIntEnv,
-} from './billing-defaults'
+import { DEFAULT_PERIOD_LENGTH_MS, resolvePlanCapCents } from './billing-defaults'
 import { type SubscriptionProbe, resolveClaudeCredentialsWithFailover } from './claude-failover'
 import type { OAuthSlotKind } from './claude-oauth-slots'
 import { isEnterpriseWorkspace } from './enterprise-allowlist'
@@ -17,11 +13,6 @@ const DEFAULT_CHAT_MODEL: Record<'anthropic' | 'openai' | 'ollama', string> = {
 	ollama: 'llama3',
 }
 
-/**
- * Tag persisted on `sessions.config.llm_route` so we can later attribute usage
- * (and enforce per-actor quotas) for sessions that ran on the system fallback.
- */
-export const LLM_ROUTE_SYSTEM_FALLBACK = 'system_fallback'
 export const LLM_ROUTE_CUSTOM = 'workspace_custom'
 export const LLM_ROUTE_OAUTH = 'claude_oauth'
 export const LLM_ROUTE_API_KEY = 'workspace_api_key'
@@ -176,21 +167,21 @@ export class PlanCapExceededError extends Error {
 	}
 }
 
-function readTrialDefaultCap(env: NodeJS.ProcessEnv = process.env): number {
-	return (
-		parsePositiveIntEnv('MASKIN_TRIAL_HARD_CAP_USD_CENTS', env) ?? TRIAL_HARD_CAP_DEFAULT_USD_CENTS
-	)
-}
-
 /**
- * Returns the configured cap (USD cents) for a maskin_plan workspace, or
- * `null` when no cap applies (paid plan whose Stripe webhook hasn't written
- * `hard_cap_usd_cents` yet — we fail open until Task 5 lands).
+ * Returns the configured cap (USD cents) for a maskin_plan workspace.
+ *
+ * Falls back to the plan's documented default when Stripe hasn't written
+ * `hard_cap_usd_cents` yet (delayed webhook, partial state after a webhook
+ * failure). This previously returned `null` — no cap at all — for pro/team in
+ * that window, so a paid workspace whose webhook was late could spend without
+ * bound on Maskin's OpenRouter account. Failing *closed* onto the plan's own
+ * published cap is the safe default: the customer keeps exactly the usage
+ * they paid for, and `routes/billing.ts` already showed them that same number
+ * via the shared resolver.
  */
 function effectivePlanCap(plan: MaskinPlan, hardCapCents: number | undefined): number | null {
 	if (typeof hardCapCents === 'number' && hardCapCents >= 0) return hardCapCents
-	if (plan === 'trial') return readTrialDefaultCap()
-	return null
+	return resolvePlanCapCents(plan)
 }
 
 export function getWorkspacePlanCap(wsSettings: WorkspaceSettings): number | null {

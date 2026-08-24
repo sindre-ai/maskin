@@ -677,7 +677,19 @@ export async function provisionWorkspace(params: {
 }): Promise<typeof workspaces.$inferSelect | null> {
 	const { db, agentStorage, sessionManager, name, ownerActorId } = params
 
-	const parsedSettings = workspaceSettingsSchema.parse(params.settings ?? {})
+	// Every workspace is provisioned on the trial tier — `billing` is written
+	// only by the Stripe webhook and /api/billing/*. POST /api/workspaces
+	// rejects a caller-supplied `billing` outright; this strip is the
+	// chokepoint that also covers signup and the dev bootstrap, and keeps a
+	// future caller from reopening the hole. It matters doubly because
+	// `candidatePlan` below is derived from these settings, so an unstripped
+	// `billing.plan` would let the request validate its own ownership cap.
+	const requestedSettings =
+		params.settings && typeof params.settings === 'object' && !Array.isArray(params.settings)
+			? (({ billing: _ignored, ...rest }) => rest)(params.settings as Record<string, unknown>)
+			: params.settings
+
+	const parsedSettings = workspaceSettingsSchema.parse(requestedSettings ?? {})
 	const settings = mergeModuleDefaultSettings(parsedSettings, parsedSettings.enabled_modules)
 
 	let chiefOfStaffId: string | undefined

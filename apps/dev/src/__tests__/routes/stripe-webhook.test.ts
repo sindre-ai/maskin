@@ -571,6 +571,64 @@ describe('POST /api/webhooks/stripe', () => {
 		expect(eventInsert?.workspaceId).toBe(workspaceId)
 	})
 
+	it('does not re-credit the balance when the same credit_topup checkout is redelivered', async () => {
+		// Regression: the balance delta used to be applied before the ledger
+		// claim, so the partial unique index on stripe_checkout_session_id
+		// suppressed only the audit row while the money was credited again.
+		// Stripe retries for ~3 days and two replay paths exist by design (the
+		// dedup-claim fail-open, and a released claim after a failed
+		// processed_at mark), so a redelivery must leave the balance untouched.
+		const { app, mockResults, calls } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
+		const workspaceId = randomUUID()
+		mockResults.insertQueue = [
+			[{ id: 'claim-topup-replay' }], // webhook delivery claim
+			[], // workspace_credit_ledger claim — CONFLICT, already credited
+		]
+		mockResults.selectQueue = [
+			[
+				{
+					id: workspaceId,
+					settings: {
+						billing: {
+							plan: 'pro',
+							status: 'active',
+							credit_balance_cents: 3_500,
+						},
+					},
+				},
+			],
+		]
+
+		vi.mocked(verifyStripeWebhook).mockReturnValue({
+			id: 'evt_credit_topup_replay',
+			type: 'checkout.session.completed',
+			data: {
+				object: {
+					id: 'cs_credit_1',
+					mode: 'payment',
+					client_reference_id: workspaceId,
+					metadata: { workspace_id: workspaceId, kind: 'credit_topup', amount_usd_cents: '2500' },
+				},
+			},
+		} as unknown as Stripe.Event)
+
+		const res = await postWebhook(app, {})
+		expect(res.status).toBe(200)
+
+		// Balance unchanged — not 6_000.
+		const update = findWorkspaceUpdate(calls.updates)
+		expect(update.settings.billing).toMatchObject({ credit_balance_cents: 3_500 })
+
+		// And no duplicate audit event.
+		const eventInsert = calls.inserts.find(
+			(i) =>
+				!!i &&
+				typeof i === 'object' &&
+				(i as Record<string, unknown>).action === 'workspace_credit_topup',
+		)
+		expect(eventInsert).toBeUndefined()
+	})
+
 	it('does not credit the balance when a credit_topup checkout carries an invalid amount', async () => {
 		const { app, mockResults, calls } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
 		const workspaceId = randomUUID()

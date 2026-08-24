@@ -270,8 +270,17 @@ async function applyEvent(
 							? current.credit_balance_cents
 							: 0
 					const balanceAfter = currentBalance + amountCents
-					next = { ...next, credit_balance_cents: balanceAfter }
 
+					// Claim the ledger row FIRST and only credit the balance if the
+					// claim succeeded. The partial unique index on
+					// `stripe_checkout_session_id` makes this insert the idempotency
+					// gate for the *money*, not just for the audit row: applying the
+					// balance delta before it meant a redelivered top-up credited the
+					// customer twice while the ledger recorded one payment. Two live
+					// replay paths reach here — the dedup-claim fail-open above, and a
+					// failed `processed_at` mark that the reconciler releases — and
+					// Stripe retries for ~3 days. Mirrors the debit side, which
+					// likewise returns before mutating (lib/credit-billing.ts).
 					const ledgerClaim = await tx
 						.insert(workspaceCreditLedger)
 						.values({
@@ -287,21 +296,34 @@ async function applyEvent(
 						})
 						.returning({ id: workspaceCreditLedger.id })
 
-					if (ledgerClaim[0]?.id) {
-						const systemActorId = await getOrCreateStripeSystemActor(tx, workspaceId)
-						await tx.insert(events).values({
+					if (!ledgerClaim[0]?.id) {
+						// Already credited by an earlier delivery of this same checkout
+						// session. Leave the balance untouched and fall through to the
+						// unconditional settings write below, which is a no-op for
+						// billing since `next` still equals `current` here.
+						logger.warn('Credit top-up replay suppressed — balance already credited', {
+							sessionId: session.id,
 							workspaceId,
-							actorId: systemActorId,
-							action: 'workspace_credit_topup',
-							entityType: 'workspace',
-							entityId: workspaceId,
-							data: {
-								amount_cents: amountCents,
-								balance_after_cents: balanceAfter,
-								stripe_checkout_session_id: session.id,
-							},
+							amountCents,
 						})
+						break
 					}
+
+					next = { ...next, credit_balance_cents: balanceAfter }
+
+					const systemActorId = await getOrCreateStripeSystemActor(tx, workspaceId)
+					await tx.insert(events).values({
+						workspaceId,
+						actorId: systemActorId,
+						action: 'workspace_credit_topup',
+						entityType: 'workspace',
+						entityId: workspaceId,
+						data: {
+							amount_cents: amountCents,
+							balance_after_cents: balanceAfter,
+							stripe_checkout_session_id: session.id,
+						},
+					})
 					break
 				}
 				const subscriptionId =

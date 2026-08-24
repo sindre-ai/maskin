@@ -3,13 +3,7 @@ import type { Database } from '@maskin/db'
 import { workspaces } from '@maskin/db/schema'
 import { CREDIT_TOPUP_MAX_USD, CREDIT_TOPUP_MIN_USD, workspaceSettingsSchema } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
-import {
-	DEFAULT_PERIOD_LENGTH_MS,
-	PRO_HARD_CAP_DEFAULT_USD_CENTS,
-	TEAM_HARD_CAP_DEFAULT_USD_CENTS,
-	TRIAL_HARD_CAP_DEFAULT_USD_CENTS,
-	parsePositiveIntEnv,
-} from '../lib/billing-defaults'
+import { DEFAULT_PERIOD_LENGTH_MS, resolvePlanCapCents } from '../lib/billing-defaults'
 import { byollmEntitled } from '../lib/enterprise-allowlist'
 import { createApiError } from '../lib/errors'
 import { getWorkspacePlanUsdCentsUsage } from '../lib/llm-routing'
@@ -31,26 +25,17 @@ import type { WorkspaceSettings } from '../lib/types'
 /**
  * Fallback hard caps (USD cents) for paid plans when
  * `billing.hard_cap_usd_cents` hasn't been populated yet (delayed Stripe
- * webhook, partial state after a webhook failure). Read from env first via
- * the shared `parsePositiveIntEnv` (so `lib/stripe.ts`'s boot-time strict
- * parse and this defensive read agree on what a "valid" cap looks like),
- * then fall through to the documented literals. We parse env locally instead
- * of reusing `readStripeEnv` because that helper throws when Stripe is
- * unconfigured, and `/api/billing/usage` must keep serving usage to
- * workspaces regardless.
+ * webhook, partial state after a webhook failure).
+ *
+ * Delegates to `resolvePlanCapCents` so the cap shown here is byte-identical
+ * to the one `lib/llm-routing.ts` enforces — these were two separate
+ * implementations, and the enforcement side used to fail open to *no* cap for
+ * pro/team in exactly this window. Env is read defensively (not via
+ * `readStripeEnv`, which throws when Stripe is unconfigured) because
+ * `/api/billing/usage` must keep serving usage regardless.
  */
 function planHardCapFallback(plan: 'trial' | 'pro' | 'team' | 'byollm'): number | null {
-	switch (plan) {
-		case 'trial':
-		case 'byollm':
-			return TRIAL_HARD_CAP_DEFAULT_USD_CENTS
-		case 'pro':
-			return parsePositiveIntEnv('MASKIN_PRO_HARD_CAP_USD_CENTS') ?? PRO_HARD_CAP_DEFAULT_USD_CENTS
-		case 'team':
-			return (
-				parsePositiveIntEnv('MASKIN_TEAM_HARD_CAP_USD_CENTS') ?? TEAM_HARD_CAP_DEFAULT_USD_CENTS
-			)
-	}
+	return resolvePlanCapCents(plan)
 }
 
 type Env = {

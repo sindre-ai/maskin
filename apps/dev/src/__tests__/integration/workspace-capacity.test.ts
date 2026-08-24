@@ -73,13 +73,24 @@ function mountWorkspacesRoutes(
 	}
 }
 
+/**
+ * Sets the plan by writing the row directly, the same way the other seeds in
+ * this file do. It used to go through `PATCH /api/workspaces/:id`, which no
+ * longer accepts `settings.billing` — that path is owned by Stripe and
+ * accepting it was a self-service entitlement bypass. The API is not the seam
+ * for putting a test workspace on a paid tier; the DB is.
+ */
 async function setPlan(workspaceId: string, plan: 'trial' | 'pro' | 'team' | 'byollm') {
-	const app = createApp()
-	const res = await app.request(
-		jsonRequest('PATCH', `/api/workspaces/${workspaceId}`, { settings: { billing: { plan } } }),
-	)
-	if (res.status !== 200)
-		throw new Error(`setPlan(${plan}) failed: ${res.status} ${await res.text()}`)
+	const [row] = await db
+		.select({ settings: workspacesTable.settings })
+		.from(workspacesTable)
+		.where(eq(workspacesTable.id, workspaceId))
+	const current = (row?.settings ?? {}) as Record<string, unknown>
+	const billing = (current.billing ?? {}) as Record<string, unknown>
+	await db
+		.update(workspacesTable)
+		.set({ settings: { ...current, billing: { ...billing, plan } } })
+		.where(eq(workspacesTable.id, workspaceId))
 }
 
 // Delegates to the production helper rather than re-deriving the join —

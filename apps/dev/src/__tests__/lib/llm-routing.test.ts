@@ -16,6 +16,10 @@ vi.mock('../../lib/crypto', () => ({
 }))
 
 import {
+	PRO_HARD_CAP_DEFAULT_USD_CENTS,
+	TEAM_HARD_CAP_DEFAULT_USD_CENTS,
+} from '../../lib/billing-defaults'
+import {
 	LLM_ROUTE_AGENT,
 	LLM_ROUTE_API_KEY,
 	LLM_ROUTE_CUSTOM,
@@ -532,12 +536,40 @@ describe('checkPlanCap', () => {
 		).resolves.toBeUndefined()
 	})
 
-	it.each(['pro', 'team'] as const)(
-		'is a no-op for %s when Stripe has not written hard_cap_usd_cents (fail-open pre-Task 5)',
-		async (plan) => {
+	// Regression: this pair used to assert the opposite — that a paid plan with
+	// no `hard_cap_usd_cents` yet was uncapped. That window is real (delayed or
+	// failed Stripe webhook) and it let a pro/team workspace spend without
+	// bound on Maskin's OpenRouter account. The cap now falls back to the
+	// plan's published default instead of to infinity.
+	it.each([
+		['pro', PRO_HARD_CAP_DEFAULT_USD_CENTS],
+		['team', TEAM_HARD_CAP_DEFAULT_USD_CENTS],
+	] as const)(
+		'falls back to the %s default cap when Stripe has not written hard_cap_usd_cents',
+		async (plan, capCents) => {
 			const settings = emptySettings()
 			settings.billing = { plan, period_start: Math.floor(Date.now() / 1000) - 60 }
-			const db = dbWithSessionUsage([{ totalCostUsd: '500.00', inputTokens: 0, outputTokens: 0 }])
+			// One cent over the plan's default cap.
+			const overCapUsd = ((capCents + 1) / 100).toFixed(2)
+			const db = dbWithSessionUsage([{ totalCostUsd: overCapUsd, inputTokens: 0, outputTokens: 0 }])
+			await expect(
+				checkPlanCap({ db, workspaceId: 'ws-1', wsSettings: settings }),
+			).rejects.toBeInstanceOf(PlanCapExceededError)
+		},
+	)
+
+	it.each([
+		['pro', PRO_HARD_CAP_DEFAULT_USD_CENTS],
+		['team', TEAM_HARD_CAP_DEFAULT_USD_CENTS],
+	] as const)(
+		'stays under the %s default cap when usage has not reached it',
+		async (plan, capCents) => {
+			const settings = emptySettings()
+			settings.billing = { plan, period_start: Math.floor(Date.now() / 1000) - 60 }
+			const underCapUsd = ((capCents - 1) / 100).toFixed(2)
+			const db = dbWithSessionUsage([
+				{ totalCostUsd: underCapUsd, inputTokens: 0, outputTokens: 0 },
+			])
 			await expect(
 				checkPlanCap({ db, workspaceId: 'ws-1', wsSettings: settings }),
 			).resolves.toBeUndefined()

@@ -196,6 +196,53 @@ describe('debitCreditForSession (Integration)', () => {
 		expect(eventRows.some((e) => e.action === 'session_credit_debited')).toBe(true)
 	})
 
+	it('preserves settings keys the schema does not model when debiting', async () => {
+		// Regression: the debit used the Zod-parsed copy of `settings` as the
+		// write base. Zod strips unknown keys and workspaceSettingsSchema is not
+		// a passthrough, so every debit silently dropped keys the schema doesn't
+		// model — and a parse failure replaced the whole object. Only `billing`
+		// may change here; everything else must survive byte-for-byte.
+		const ws = await insertWorkspace(db, actorId, {
+			settings: {
+				billing: {
+					plan: 'pro',
+					status: 'active',
+					hard_cap_usd_cents: CAP_CENTS,
+					period_start: PERIOD_START_SEC,
+					stripe_customer_id: 'cus_test',
+					credit_balance_cents: 10_000,
+				},
+				// Modelled by the schema.
+				max_concurrent_sessions: 7,
+				// NOT modelled by workspaceSettingsSchema — the exact class of key
+				// that used to be dropped.
+				an_unmodelled_future_key: { nested: ['keep', 'me'] },
+			},
+		})
+		if (!ws) throw new Error('workspace insert failed')
+		workspaceId = ws.id
+
+		const session = await seedSessionWithCost('10.01')
+
+		await debitCreditForSession({
+			db,
+			workspaceId,
+			sessionId: session.id,
+			actorId,
+			wsSettings: wsSettingsFor(10_000),
+		})
+
+		const [after] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId))
+		if (!after) throw new Error('workspace not found')
+		const settings = after.settings as Record<string, unknown>
+
+		// The debit landed...
+		expect((settings.billing as { credit_balance_cents: number }).credit_balance_cents).toBe(9_999)
+		// ...and nothing else was lost.
+		expect(settings.an_unmodelled_future_key).toEqual({ nested: ['keep', 'me'] })
+		expect(settings.max_concurrent_sessions).toBe(7)
+	})
+
 	it('is idempotent per session — a re-fired completion does not double-debit', async () => {
 		await seedWorkspace(10_000)
 		const session = await seedSessionWithCost('10.01')

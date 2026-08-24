@@ -215,7 +215,11 @@ test.describe('Chats — full-screen multi-party chat', () => {
 			account,
 		}) => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
-			const { conversation } = await setUpConversation(account.api, account.workspaceId)
+			const { conversation } = await setUpConversation(
+				account.api,
+				account.workspaceId,
+				account.apiKey,
+			)
 
 			await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
 			const composer = page.getByLabel('Message this conversation')
@@ -259,7 +263,11 @@ test.describe('Chats — full-screen multi-party chat', () => {
 			account,
 		}) => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
-			const { conversation } = await setUpConversation(account.api, account.workspaceId)
+			const { conversation } = await setUpConversation(
+				account.api,
+				account.workspaceId,
+				account.apiKey,
+			)
 
 			await page.goto(`/${account.workspaceId}/chats/${conversation.id}`)
 			const composer = page.getByLabel('Message this conversation')

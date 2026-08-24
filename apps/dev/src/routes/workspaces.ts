@@ -102,6 +102,10 @@ const createWorkspaceRoute = createRoute({
 			description: 'Workspace created',
 			content: { 'application/json': { schema: workspaceResponseSchema } },
 		},
+		400: {
+			description: 'Request set `settings.billing`, which is owned by Stripe',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 		403: {
 			description: 'Actor has reached their workspace-ownership cap for their plan tier',
 			content: { 'application/json': { schema: errorSchema } },
@@ -117,6 +121,24 @@ app.openapi(createWorkspaceRoute, async (c) => {
 	const db = c.get('db')
 	const actorId = c.get('actorId')
 	const body = c.req.valid('json')
+
+	// Same rule as PATCH below: `billing` is owned by Stripe and /api/billing/*.
+	// Every workspace starts on trial; accepting it here would let any actor —
+	// or any agent via MCP `create_workspace`, which shares this schema —
+	// self-grant `plan: 'team', status: 'active'` at creation time and take the
+	// seat cap, the ownership cap and an arbitrary `hard_cap_usd_cents` of
+	// Maskin-funded spend without paying. The ownership-cap check inside
+	// provisionWorkspace() derives the candidate tier from these same settings,
+	// so an unguarded create also validates the claim against itself.
+	if (body.settings && 'billing' in body.settings) {
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				'billing cannot be set via POST /api/workspaces — it is owned by Stripe and /api/billing/*',
+			),
+			400,
+		)
+	}
 
 	// All workspace provisioning — default agents, skills, triggers, default
 	// loops, the pinned chat agent, and Chief of Staff's welcome session — lives
