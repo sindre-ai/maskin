@@ -25,8 +25,17 @@ import {
 } from '@maskin/shared'
 import { and, eq } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
+import { isEnterpriseActor } from '../lib/enterprise-allowlist'
 import { logger } from '../lib/logger'
 import { buildChiefOfStaffKickoffPrompt } from '../lib/onboarding/chief-of-staff-kickoff'
+import {
+	OwnershipCapExceededError,
+	computeEffectiveTier,
+	lockActorForOwnershipClaim,
+	ownedWorkspacePlans,
+	ownershipCapForTier,
+	resolvePlanTier,
+} from '../lib/workspace-capacity'
 import { type AgentStorageManager, workspaceSkillKey } from './agent-storage'
 import type { SessionManager } from './session-manager'
 
@@ -668,15 +677,46 @@ export async function provisionWorkspace(params: {
 }): Promise<typeof workspaces.$inferSelect | null> {
 	const { db, agentStorage, sessionManager, name, ownerActorId } = params
 
-	const parsedSettings = workspaceSettingsSchema.parse(params.settings ?? {})
+	// Every workspace is provisioned on the trial tier — `billing` is written
+	// only by the Stripe webhook and /api/billing/*. POST /api/workspaces
+	// rejects a caller-supplied `billing` outright; this strip is the
+	// chokepoint that also covers signup and the dev bootstrap, and keeps a
+	// future caller from reopening the hole. It matters doubly because
+	// `candidatePlan` below is derived from these settings, so an unstripped
+	// `billing.plan` would let the request validate its own ownership cap.
+	const requestedSettings =
+		params.settings && typeof params.settings === 'object' && !Array.isArray(params.settings)
+			? (({ billing: _ignored, ...rest }) => rest)(params.settings as Record<string, unknown>)
+			: params.settings
+
+	const parsedSettings = workspaceSettingsSchema.parse(requestedSettings ?? {})
 	const settings = mergeModuleDefaultSettings(parsedSettings, parsedSettings.enabled_modules)
 
 	let chiefOfStaffId: string | undefined
 
+	const candidatePlan = resolvePlanTier(settings)
+
 	const workspace = await db.transaction(async (tx) => {
+		// Serializes ownership-cap claims for this actor against any concurrent
+		// workspace creation / transfer-ownership acceptance racing the same
+		// actor's cap. See lockActorForOwnershipClaim's docstring.
+		await lockActorForOwnershipClaim(tx, ownerActorId)
+
+		const ownedPlans = await ownedWorkspacePlans(tx, ownerActorId)
+		const effectiveTier = computeEffectiveTier(ownedPlans, candidatePlan)
+		const cap = ownershipCapForTier(effectiveTier)
+		if (cap !== null && ownedPlans.length >= cap && !isEnterpriseActor(ownerActorId)) {
+			throw new OwnershipCapExceededError({
+				actorId: ownerActorId,
+				effectiveTier,
+				used: ownedPlans.length,
+				cap,
+			})
+		}
+
 		const [ws] = await tx
 			.insert(workspaces)
-			.values({ name, settings, createdBy: ownerActorId })
+			.values({ name, settings, createdBy: ownerActorId, billingOwnerId: ownerActorId })
 			.returning()
 
 		if (!ws) {

@@ -6,7 +6,9 @@ import { type Database, createDb } from '@maskin/db'
 import { splitStatements } from '@maskin/db/migrate-utils'
 import type { PgNotifyBridge } from '@maskin/realtime'
 import postgres from 'postgres'
-import { createApiError, formatZodError } from '../../lib/errors'
+import { ApiErrorCode, createApiError, formatZodError, mapStatusToCode } from '../../lib/errors'
+import { PlanCapExceededError } from '../../lib/llm-routing'
+import { OwnershipCapExceededError, SeatCapExceededError } from '../../lib/workspace-capacity'
 import type { SessionManager } from '../../services/session-manager'
 
 type Env = {
@@ -54,15 +56,73 @@ export function createIntegrationApp(
 		c.set('actorId', testActorId)
 		c.set('actorType', 'human')
 		c.set('notifyBridge', {} as PgNotifyBridge)
-		// Routes that delete an actor/loop stop that actor's live sessions
-		// first (see stopSessionsForActors). No containers run under the
-		// integration harness, so a resolving stub is the honest stand-in —
-		// leaving this unset made the route read `undefined` and 500.
+		// Routes fire-and-forget a welcome/onboarding session via
+		// c.get('sessionManager').createSession(...) (see routes/workspaces.ts),
+		// and routes that delete an actor/loop stop that actor's live sessions
+		// first (see stopSessionsForActors). Both are read unguarded, so every
+		// route mounted through this shared harness needs a resolving stub here
+		// even if the test never asserts on session lifecycle itself.
 		c.set('sessionManager', {
 			stopSession: async () => {},
-			createSession: async () => undefined,
+			createSession: async () => ({}),
 		} as unknown as SessionManager)
 		await next()
+	})
+
+	// Mirrors the cap-exceeded branches of app-factory.ts's onError (minus
+	// Sentry/verbose logging, which aren't relevant to this harness) so
+	// integration tests exercise the same thrown-error → typed-response mapping
+	// real requests get in production, instead of a raw framework 500.
+	app.onError((err, c) => {
+		if (err instanceof PlanCapExceededError) {
+			return c.json(
+				{
+					error: {
+						code: ApiErrorCode.PLAN_CAP_EXCEEDED,
+						message: err.message,
+						plan: err.plan,
+						used: err.used,
+						cap: err.cap,
+						period_end: err.periodEnd,
+					},
+				},
+				402,
+			)
+		}
+		if (err instanceof SeatCapExceededError) {
+			return c.json(
+				{
+					error: {
+						code: ApiErrorCode.SEAT_CAP_EXCEEDED,
+						message: err.message,
+						workspace_id: err.workspaceId,
+						plan: err.plan,
+						used: err.used,
+						cap: err.cap,
+					},
+				},
+				403,
+			)
+		}
+		if (err instanceof OwnershipCapExceededError) {
+			return c.json(
+				{
+					error: {
+						code: ApiErrorCode.OWNERSHIP_CAP_EXCEEDED,
+						message: err.message,
+						actor_id: err.actorId,
+						effective_tier: err.effectiveTier,
+						used: err.used,
+						cap: err.cap,
+					},
+				},
+				403,
+			)
+		}
+		if ('status' in err && typeof err.status === 'number') {
+			return c.json(createApiError(mapStatusToCode(err.status), err.message), err.status as 400)
+		}
+		return c.json(createApiError(ApiErrorCode.INTERNAL_ERROR, 'An unexpected error occurred'), 500)
 	})
 
 	for (const { path, module } of routeModules) {

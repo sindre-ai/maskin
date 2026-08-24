@@ -21,8 +21,19 @@ export type {
 import { getApiKey } from './auth'
 import { API_BASE } from './constants'
 
+export interface PlanCapContext {
+	plan: string
+	used: number
+	cap: number
+	period_end: number | null
+}
+
 export class ApiError extends Error {
 	fieldErrors: Record<string, string[]>
+	/** Structured error code from the backend's `{ error: { code, ... } }` body, e.g. `PLAN_CAP_EXCEEDED`. */
+	code?: string
+	/** Populated when `code === 'PLAN_CAP_EXCEEDED'` — the plan/used/cap/reset context for a typed upgrade CTA. */
+	planCapContext?: PlanCapContext
 
 	constructor(
 		public status: number,
@@ -81,16 +92,27 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 
 		let fieldErrors: Record<string, string[]> | undefined
 		let message: string
+		let code: string | undefined
+		let planCapContext: PlanCapContext | undefined
 
 		if (typeof data.error === 'object' && data.error?.code) {
 			// Structured error format: { error: { code, message, details?, suggestion? } }
 			message = data.error.message
+			code = data.error.code
 			if (data.error.details && Array.isArray(data.error.details)) {
 				fieldErrors = {}
 				for (const detail of data.error.details) {
 					const field = detail.field || '_root'
 					if (!fieldErrors[field]) fieldErrors[field] = []
 					fieldErrors[field].push(detail.message)
+				}
+			}
+			if (code === 'PLAN_CAP_EXCEEDED') {
+				planCapContext = {
+					plan: data.error.plan,
+					used: data.error.used,
+					cap: data.error.cap,
+					period_end: data.error.period_end ?? null,
 				}
 			}
 		} else if (typeof data.error === 'string') {
@@ -100,7 +122,10 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 			message = data.error?.message || res.statusText
 		}
 
-		throw new ApiError(res.status, message, fieldErrors)
+		const err = new ApiError(res.status, message, fieldErrors)
+		err.code = code
+		err.planCapContext = planCapContext
+		throw err
 	}
 
 	return res.json()
@@ -315,20 +340,16 @@ export const api = {
 					method: 'POST',
 					body: data,
 				}),
-			// NOT YET LIVE — `apps/dev/src/routes/workspaces.ts` implements only POST
-			// and GET on `/{id}/members`; there is no PATCH or DELETE on
-			// `/{id}/members/{actorId}`. Landed ahead of the server work for the
-			// member-management screen; both calls 404 until those routes ship.
-			updateRole: (workspaceId: string, actorId: string, role: string) =>
-				request<MemberResponse>(`/workspaces/${workspaceId}/members/${actorId}`, {
-					method: 'PATCH',
-					body: { role },
-				}),
 			remove: (workspaceId: string, actorId: string) =>
-				request<{ removed: boolean }>(`/workspaces/${workspaceId}/members/${actorId}`, {
+				request<{ removed: true }>(`/workspaces/${workspaceId}/members/${actorId}`, {
 					method: 'DELETE',
 				}),
 		},
+		transferOwnership: (workspaceId: string, newOwnerActorId: string) =>
+			request<WorkspaceResponse>(`/workspaces/${workspaceId}/transfer-ownership`, {
+				method: 'POST',
+				body: { new_owner_actor_id: newOwnerActorId },
+			}),
 	},
 
 	relationships: {
@@ -552,32 +573,23 @@ export const api = {
 			}),
 	},
 
-	// NOT YET LIVE — no billing routes exist on the backend today. This client
-	// surface is landed ahead of the server work so the billing screens can be
-	// built against a settled shape; every call here currently 404s, so nothing
-	// in the app may call it until the routes ship.
-	//
-	// When the backend lands, re-check before wiring anything up: the paths
-	// (`/billing`, `/billing/checkout`, `/billing/complete`, `/billing/portal`),
-	// the request bodies, and `BillingSummaryResponse`/`BillingCheckoutResponse`
-	// below — they are a forward guess, not a contract the server has agreed to.
-	// The billing status tokens in `lib/constants.ts` are the matching half.
 	billing: {
-		summary: (workspaceId: string) => request<BillingSummaryResponse>('/billing', { workspaceId }),
-		startCheckout: (workspaceId: string, invoiceEmail?: string) =>
+		checkout: (workspaceId: string, body: BillingCheckoutInput) =>
 			request<BillingCheckoutResponse>('/billing/checkout', {
 				method: 'POST',
-				body: invoiceEmail ? { invoiceEmail } : {},
+				body,
 				workspaceId,
 			}),
-		complete: (workspaceId: string, paymentIntentId: string, invoiceEmail?: string) =>
-			request<BillingSummaryResponse>('/billing/complete', {
+		buyCredits: (workspaceId: string, body: BillingBuyCreditsInput) =>
+			request<BillingCheckoutResponse>('/billing/credits/checkout', {
 				method: 'POST',
-				body: invoiceEmail ? { paymentIntentId, invoiceEmail } : { paymentIntentId },
+				body,
 				workspaceId,
 			}),
-		portal: (workspaceId: string) =>
-			request<{ url: string }>('/billing/portal', { method: 'POST', workspaceId }),
+		usage: (workspaceId: string) =>
+			request<BillingUsageResponse>('/billing/usage', { workspaceId }),
+		cancel: (workspaceId: string) =>
+			request<{ ok: true }>('/billing/cancel', { method: 'POST', workspaceId }),
 	},
 
 	marketplaceLoops: {
@@ -933,6 +945,40 @@ export interface ClaudeOAuthImportInput {
 	nickname?: string
 }
 
+export type BillingPlan = 'trial' | 'pro' | 'team' | 'byollm'
+export type BillingStatus = 'active' | 'past_due' | 'canceled' | 'incomplete'
+
+export interface BillingCheckoutInput {
+	plan: 'pro' | 'team'
+	success_url: string
+	cancel_url: string
+}
+
+export interface BillingCheckoutResponse {
+	url: string
+	session_id: string
+}
+
+export interface BillingBuyCreditsInput {
+	amount_usd_cents: number
+	success_url: string
+	cancel_url: string
+}
+
+export interface BillingUsageResponse {
+	plan: BillingPlan
+	status: BillingStatus
+	// Actual dollar cost incurred this period, in USD cents — see
+	// apps/dev/src/routes/billing.ts.
+	usd_cents_used: number
+	hard_cap_usd_cents: number | null
+	period_start: number | null
+	period_resets_in_ms: number | null
+	stripe_customer_id: string | null
+	stripe_subscription_id: string | null
+	credit_balance_cents: number
+}
+
 // Types derived from backend response schemas
 export interface ObjectResponse {
 	id: string
@@ -1101,6 +1147,10 @@ export interface WorkspaceResponse {
 	id: string
 	name: string
 	settings: Record<string, unknown>
+	byollmAllowed: boolean
+	// Single accountable human payer for this workspace's plan — read-only,
+	// server-set. See apps/dev/src/lib/workspace-capacity.ts.
+	billingOwnerId: string | null
 	createdBy: string | null
 	createdAt: string | null
 	updatedAt: string | null
@@ -1760,37 +1810,4 @@ interface InstalledLoopForkResponse {
 	installedAt: string | null
 	updatedAt: string | null
 	detached: { actors: number; triggers: number; skills: number; integrations: number }
-}
-
-export interface BillingPlanResponse {
-	planId: string
-	planLabel: string | null
-	status: string
-	priceCents: number | null
-	currency: string
-	nextChargeAt: string | null
-}
-
-export interface BillingInvoiceResponse {
-	id: string
-	description: string
-	amountCents: number
-	currency: string
-	status: string
-	billedAt: string
-}
-
-export interface BillingSummaryResponse {
-	configured: boolean
-	testMode: boolean
-	publishableKey: string | null
-	plan: BillingPlanResponse
-	invoiceEmail: string | null
-	invoices: BillingInvoiceResponse[]
-}
-
-export interface BillingCheckoutResponse {
-	clientSecret: string
-	testMode: boolean
-	plan: BillingPlanResponse
 }

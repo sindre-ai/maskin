@@ -211,6 +211,104 @@ describe('SessionManager', () => {
 				}),
 			).rejects.toThrow('Failed to create session')
 		})
+
+		it('rejects pre-insert when the workspace is over its plan cap', async () => {
+			// Workspace select returns a pro plan at cap; the cap query then
+			// returns rows whose reported dollar cost sums to ≥ hard_cap_usd_cents.
+			// The session insert mock is intentionally left configured so we can
+			// prove the insert is never reached.
+			mockResults.selectQueue = [
+				[
+					{
+						id: 'ws-1',
+						settings: {
+							billing: { plan: 'pro', hard_cap_usd_cents: 100, period_start: 0 },
+						},
+					},
+				],
+				[{ totalCostUsd: '1.00', inputTokens: 0, outputTokens: 0 }],
+			]
+			const sessionRow = buildSession({ status: 'pending' })
+			mockResults.insertQueue = [[sessionRow], []]
+
+			await expect(
+				manager.createSession('ws-1', {
+					actorId: 'actor-1',
+					actionPrompt: 'Do the thing',
+					createdBy: 'creator-1',
+					autoStart: false,
+				}),
+			).rejects.toMatchObject({
+				name: 'PlanCapExceededError',
+				plan: 'pro',
+				used: 100,
+				cap: 100,
+			})
+			expect(calls.inserts).toHaveLength(0)
+		})
+
+		it('still enforces the cap when a non-entitled workspace holds an anthropic key', async () => {
+			// Regression: the pre-flight treated any stored BYO credential as
+			// cap-exempting, but resolveLlmRoute only reaches the BYO routes when
+			// the workspace is byollm-entitled. A workspace with byollmAllowed
+			// false therefore skipped the pre-flight, got a 201, and then died at
+			// container start on the defense-in-depth cap check instead.
+			mockResults.selectQueue = [
+				[
+					{
+						id: 'ws-1',
+						byollmAllowed: false,
+						billingOwnerId: null,
+						settings: {
+							billing: { plan: 'pro', hard_cap_usd_cents: 100, period_start: 0 },
+							llm_keys: { anthropic: 'sk-ant-not-usable-here' },
+						},
+					},
+				],
+				[{ totalCostUsd: '1.00', inputTokens: 0, outputTokens: 0 }],
+			]
+			mockResults.insertQueue = [[buildSession({ status: 'pending' })], []]
+
+			await expect(
+				manager.createSession('ws-1', {
+					actorId: 'actor-1',
+					actionPrompt: 'Do the thing',
+					createdBy: 'creator-1',
+					autoStart: false,
+				}),
+			).rejects.toMatchObject({ name: 'PlanCapExceededError', plan: 'pro' })
+			expect(calls.inserts).toHaveLength(0)
+		})
+
+		it('skips the cap when an entitled workspace holds an anthropic key', async () => {
+			// The mirror case: byollmAllowed true means resolveLlmRoute really will
+			// use the workspace key, so that usage never counts against the plan
+			// cap and the session must be created even though usage is over it.
+			const sessionRow = buildSession({ status: 'pending' })
+			mockResults.selectQueue = [
+				[
+					{
+						id: 'ws-1',
+						byollmAllowed: true,
+						billingOwnerId: null,
+						settings: {
+							billing: { plan: 'pro', hard_cap_usd_cents: 100, period_start: 0 },
+							llm_keys: { anthropic: 'sk-ant-usable' },
+						},
+					},
+				],
+			]
+			mockResults.insertQueue = [[sessionRow], []]
+
+			const result = await manager.createSession('ws-1', {
+				actorId: 'actor-1',
+				actionPrompt: 'Do the thing',
+				createdBy: 'creator-1',
+				autoStart: false,
+			})
+
+			expect(result.id).toBe(sessionRow.id)
+		})
 	})
 
 	describe('createSession() — interactive', () => {
@@ -317,7 +415,7 @@ describe('SessionManager', () => {
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
-			const workspace = { id: session.workspaceId, settings: {} }
+			const workspace = { id: session.workspaceId, byollmAllowed: true, settings: {} }
 
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
 				pulled: 0,
@@ -502,7 +600,7 @@ describe('SessionManager', () => {
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
-			const workspace = { id: session.workspaceId, settings: {} }
+			const workspace = { id: session.workspaceId, byollmAllowed: true, settings: {} }
 
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
 				pulled: 0,
@@ -542,7 +640,7 @@ describe('SessionManager', () => {
 				apiKey: null,
 				tools: null,
 			}
-			const workspace = { id: session.workspaceId, settings: {} }
+			const workspace = { id: session.workspaceId, byollmAllowed: true, settings: {} }
 
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
 				pulled: 0,
@@ -579,7 +677,7 @@ describe('SessionManager', () => {
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
-			const workspace = { id: session.workspaceId, settings: {} }
+			const workspace = { id: session.workspaceId, byollmAllowed: true, settings: {} }
 
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
 				pulled: 0,
@@ -617,6 +715,7 @@ describe('SessionManager', () => {
 			}
 			const workspace = {
 				id: session.workspaceId,
+				byollmAllowed: true,
 				settings: { llm_keys: { anthropic: 'sk-ant-ws' } },
 			}
 
@@ -665,6 +764,7 @@ describe('SessionManager', () => {
 			}
 			const workspace = {
 				id: session.workspaceId,
+				byollmAllowed: true,
 				settings: { llm_keys: { anthropic: 'sk-ant-ws' } },
 			}
 
@@ -712,6 +812,7 @@ describe('SessionManager', () => {
 			const expiresAt = Date.now() + 60 * 60 * 1000
 			const workspace = {
 				id: session.workspaceId,
+				byollmAllowed: true,
 				settings: {
 					llm_keys: { anthropic: 'sk-ant-ws' },
 					claude_oauth: {
@@ -774,7 +875,7 @@ describe('SessionManager', () => {
 		}
 
 		function buildTestWorkspace(workspaceId: string) {
-			return { id: workspaceId, settings: {} }
+			return { id: workspaceId, byollmAllowed: true, settings: {} }
 		}
 
 		beforeEach(() => {
@@ -919,7 +1020,7 @@ describe('SessionManager', () => {
 		}
 
 		function buildTestWorkspace(workspaceId: string) {
-			return { id: workspaceId, settings: {} }
+			return { id: workspaceId, byollmAllowed: true, settings: {} }
 		}
 
 		beforeEach(() => {
@@ -1136,7 +1237,7 @@ describe('SessionManager', () => {
 			})
 			return {
 				session,
-				workspace: { id: session.workspaceId, settings: {} },
+				workspace: { id: session.workspaceId, byollmAllowed: true, settings: {} },
 				agent: {
 					id: session.actorId,
 					type: 'agent',
@@ -1508,7 +1609,7 @@ describe('SessionManager', () => {
 				actionPrompt: 'Do the thing',
 				containerId: null,
 			})
-			const workspace = { id: session.workspaceId, settings: {} }
+			const workspace = { id: session.workspaceId, byollmAllowed: true, settings: {} }
 			const agent = {
 				id: session.actorId,
 				type: 'agent' as const,
@@ -2478,7 +2579,7 @@ describe('SessionManager', () => {
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
-			const workspace = { id: session.workspaceId, settings: {} }
+			const workspace = { id: session.workspaceId, byollmAllowed: true, settings: {} }
 
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
 				pulled: 0,
@@ -2563,7 +2664,7 @@ describe('SessionManager', () => {
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
-			const workspace = { id: session.workspaceId, settings: {} }
+			const workspace = { id: session.workspaceId, byollmAllowed: true, settings: {} }
 
 			vi.spyOn(AgentStorageManager.prototype, 'pullAgentFiles').mockResolvedValue(undefined)
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
@@ -3875,6 +3976,102 @@ describe('SessionManager', () => {
 			).handleCompletion(session.id, 'container-abc', null)
 
 			expect(mockClassifyCreditExhaustion).not.toHaveBeenCalled()
+		})
+	})
+
+	describe('handleCompletion() — budget-stopped sessions', () => {
+		beforeEach(() => {
+			vi.spyOn(AgentStorageManager.prototype, 'pushAgentFiles').mockResolvedValue(undefined)
+			mockClassifyCreditExhaustion.mockReturnValue(null)
+		})
+
+		it('synthesizes a plan_cap_exceeded failure_reason from the reason enforceRunningSessionBudget recorded', async () => {
+			const session = buildSession({ status: 'running' })
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
+			;(manager as unknown as { budgetStopped: Map<string, string> }).budgetStopped.set(
+				session.id,
+				'usage exceeded the plan cap and no usage credits are available',
+			)
+
+			mockResults.selectQueue = [[session], []]
+
+			// 143 = SIGTERM, the exit code stopSession()'s container kill produces —
+			// carries no stdout signal for classifyCreditExhaustion to classify.
+			await (
+				manager as unknown as {
+					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', 143)
+
+			const expectedReason = {
+				provider: 'maskin',
+				reason_code: 'plan_cap_exceeded',
+				human_message:
+					'Session stopped — usage exceeded the plan cap and no usage credits are available.',
+				http_status: null,
+				reset_at: null,
+				verbatim_output: null,
+			}
+
+			const sessionUpdate = calls.updates.find(
+				(u): u is { status: string; result: Record<string, unknown> } =>
+					typeof u === 'object' &&
+					u !== null &&
+					'status' in (u as Record<string, unknown>) &&
+					'result' in (u as Record<string, unknown>),
+			)
+			expect(sessionUpdate).toMatchObject({
+				status: 'failed',
+				result: { exit_code: 143, failure_reason: expectedReason },
+			})
+
+			const eventInsert = calls.inserts.find(
+				(i): i is { action: string; data: Record<string, unknown> } =>
+					typeof i === 'object' &&
+					i !== null &&
+					(i as { action?: string }).action === 'session_failed',
+			)
+			expect(eventInsert?.data).toMatchObject({ failure_reason: expectedReason })
+
+			// The map entry is consumed — a later, unrelated completion for the
+			// same session id (e.g. a retried session reusing nothing, purely
+			// hypothetical here) must not replay a stale reason.
+			expect(
+				(manager as unknown as { budgetStopped: Map<string, string> }).budgetStopped.has(
+					session.id,
+				),
+			).toBe(false)
+		})
+
+		it('leaves a normal (non-budget-stopped) failure unaffected', async () => {
+			const session = buildSession({ status: 'running' })
+			;(
+				manager as unknown as {
+					activeSessions: Map<string, { tempDir: string; stdoutTail?: string }>
+				}
+			).activeSessions.set(session.id, { tempDir: '/tmp/test', stdoutTail: '' })
+
+			mockResults.selectQueue = [[session], []]
+
+			await (
+				manager as unknown as {
+					handleCompletion(sessionId: string, containerId: string, exitCode: number): Promise<void>
+				}
+			).handleCompletion(session.id, 'container-abc', 1)
+
+			const sessionUpdate = calls.updates.find(
+				(u): u is { status: string; result: Record<string, unknown> } =>
+					typeof u === 'object' &&
+					u !== null &&
+					'status' in (u as Record<string, unknown>) &&
+					'result' in (u as Record<string, unknown>),
+			)
+			expect(sessionUpdate).toMatchObject({ status: 'failed', result: { exit_code: 1 } })
+			expect(sessionUpdate?.result).not.toHaveProperty('failure_reason')
 		})
 	})
 

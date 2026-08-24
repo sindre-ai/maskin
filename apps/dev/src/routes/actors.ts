@@ -34,6 +34,7 @@ import {
 import { and, asc, count, countDistinct, desc, eq, inArray, or, sql } from 'drizzle-orm'
 import { buildCreatedAtCursorConditions, useKeysetSeek } from '../lib/cursor-pagination'
 import { createApiError, validationFailureHook } from '../lib/errors'
+import { PlanCapExceededError } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import {
 	actorListItemSchema,
@@ -45,6 +46,7 @@ import {
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
 import { isWorkspaceMember } from '../lib/workspace-auth'
+import { OwnershipCapExceededError } from '../lib/workspace-capacity'
 import type { AgentStorageManager } from '../services/agent-storage'
 import { stopSessionsForActors } from '../services/session-cleanup'
 import type { SessionManager } from '../services/session-manager'
@@ -217,6 +219,7 @@ app.openapi(createActorRoute, async (c) => {
 		// `workspace_provisioning_failed` instead of leaving the caller to infer
 		// it from an absent `workspace_id`.
 		let created: Awaited<ReturnType<typeof provisionWorkspace>> = null
+		let atOwnershipCap = false
 		try {
 			created = await provisionWorkspace({
 				db,
@@ -232,9 +235,20 @@ app.openapi(createActorRoute, async (c) => {
 				})
 			}
 		} catch (err) {
-			// Log the seeded-agent detail when we have it, so this failure is as
-			// diagnosable as the 500 the workspaces route returns for the same bug.
-			if (err instanceof SeedAgentError) {
+			// An actor at their ownership cap is not a provisioning failure — the
+			// signup itself succeeded, and the response is shaped exactly like an
+			// explicit `auto_create_workspace: false`.
+			if (err instanceof OwnershipCapExceededError) {
+				atOwnershipCap = true
+				logger.warn('Skipping auto-workspace creation: actor at ownership cap', {
+					actorId: actor.id,
+					effectiveTier: err.effectiveTier,
+					used: err.used,
+					cap: err.cap,
+				})
+			} else if (err instanceof SeedAgentError) {
+				// Log the seeded-agent detail when we have it, so this failure is as
+				// diagnosable as the 500 the workspaces route returns for the same bug.
 				logger.error('signup workspace provisioning failed — default agent seed failed', {
 					actorId: actor.id,
 					agentId: err.agentId,
@@ -247,7 +261,7 @@ app.openapi(createActorRoute, async (c) => {
 		}
 
 		if (created) workspaceId = created.id
-		else workspaceProvisioningFailed = true
+		else if (!atOwnershipCap) workspaceProvisioningFailed = true
 	}
 
 	// Return actor WITHOUT api_key, but WITH it in the expected response field.
@@ -1315,6 +1329,12 @@ app.openapi(runAgentRoute, (async (c) => {
 				})
 			}
 		} catch (err) {
+			// A plan-cap rejection is not a bad request — flattening it to a 400
+			// with a bare message string dropped the `PLAN_CAP_EXCEEDED` code and
+			// the plan/used/cap context, so the client could only show the raw
+			// text instead of a typed upgrade CTA. Re-throw and let app-factory's
+			// onError emit the same structured 402 that POST /api/sessions does.
+			if (err instanceof PlanCapExceededError) throw err
 			const message = err instanceof Error ? err.message : String(err)
 			return c.json(createApiError('BAD_REQUEST', message), 400)
 		}
