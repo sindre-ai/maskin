@@ -1,30 +1,31 @@
-import { BriefDrawer } from '@/components/foryou/brief-drawer'
-import { ForYouCardQueue } from '@/components/foryou/foryou-card-queue'
+import { BriefCard } from '@/components/foryou/brief-card'
+import { type DecidedOption, FeedCard } from '@/components/foryou/feed-card'
 import {
 	type FeedMode,
 	type FeedSort,
+	type ForYouBulkAction,
 	ForYouHeader,
-	ForYouHeaderActions,
 } from '@/components/foryou/foryou-header'
-import { ForYouListRow } from '@/components/foryou/foryou-list-row'
 import { LegacyForYouPage } from '@/components/foryou/legacy/foryou-page'
-import { NorthStarPromptCard } from '@/components/foryou/north-star-prompt-card'
 import { OnboardingPromptCard } from '@/components/foryou/onboarding-prompt-card'
-import { SparseComposer } from '@/components/foryou/sparse-composer'
+import { ReleaseCard } from '@/components/foryou/release-card'
 import { PageHeader } from '@/components/layout/page-header'
+import { CardSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
-import { Skeleton } from '@/components/ui/skeleton'
-import { useBets } from '@/hooks/use-bets'
 import { useMarkRead, useMarkUnread, useUnread } from '@/hooks/use-subscriptions'
 import {
 	useUpdateUserDisplaySettings,
 	useUserDisplaySettings,
 } from '@/hooks/use-user-display-settings'
-import type { DisplaySettingsBody, UnreadItem } from '@/lib/api'
-import { typeLabel } from '@/lib/constants'
+import { type CreateCommentInput, type DisplaySettingsBody, type UnreadItem, api } from '@/lib/api'
+import { cn } from '@/lib/cn'
+import { CARD_ACTIONS, classifyCardKind } from '@/lib/foryou-card-kind'
+import { type FeedBucket, bucketRank, feedItemKey, feedTailLabel } from '@/lib/foryou-feed'
 import { useNewDesign } from '@/lib/new-design-context'
+import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
 import { CHROME_KEY } from '@maskin/shared'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
@@ -34,20 +35,16 @@ export const Route = createFileRoute('/_authed/$workspaceId/')({
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
 
-// The single `new-design` boundary for the For You feed: the v2 feed (card
-// queue, list rows, brief drawer) below, or the pre-v2 feed under
+// The single `new-design` boundary for the For You feed: the v4 feed (brief
+// card, one card per unread thread) below, or the pre-v2 feed under
 // `components/foryou/legacy/`. Reads the resolved flag from `NewDesignProvider`
 // rather than calling `useFeatureFlag` again — see
 // `.claude/rules/feature-flags.md`.
 function ForYouRoute() {
-	return useNewDesign() ? <ForYouRedesign /> : <LegacyForYouPage />
+	return useNewDesign() ? <ForYouFeed /> : <LegacyForYouPage />
 }
 
 const UNDO_WINDOW_MS = 15_000
-
-function itemKey(item: UnreadItem): string {
-	return `${item.entity_type}:${item.entity_id}`
-}
 
 // The persisted display-setting field spells the card mode as `'card'`, while
 // the feed's internal FeedMode spells it `'cards'`. These two mappings keep the
@@ -64,19 +61,36 @@ export function feedModeToForyouViewMode(
 	return mode === 'cards' ? 'card' : 'list'
 }
 
-function ForYouRedesign() {
+/**
+ * For You — the feed (mockup `Maskin For You - Feed v4`).
+ *
+ * A single scrolling column: today's brief, then every unread thread as a
+ * card. Cards view expands them all; List view shows one line each until you
+ * open one. Nothing leaves the column until it is answered or dismissed.
+ */
+function ForYouFeed() {
 	const { workspaceId } = useWorkspace()
+	const queryClient = useQueryClient()
 	const { data, isLoading } = useUnread(workspaceId, undefined, true)
-	const { data: bets, isLoading: betsLoading } = useBets(workspaceId)
 	const items = data?.items ?? []
 	const markRead = useMarkRead(workspaceId)
 	const markUnread = useMarkUnread(workspaceId)
 
 	const [typeFilter, setTypeFilter] = useState<string | undefined>(undefined)
-	const [sort, setSort] = useState<FeedSort>('priority')
-	const [briefOpen, setBriefOpen] = useState(false)
-	// Item the user picked in List mode — the card queue opens parked on it.
-	const [pinnedKey, setPinnedKey] = useState<string | null>(null)
+	const [sort, setSort] = useState<FeedSort>('attention')
+	const [filterPills, setFilterPills] = useState(false)
+	// Cards opened by hand in List view, threads answered in this sitting, and
+	// options taken in this sitting.
+	const [openKeys, setOpenKeys] = useState<Set<string>>(() => new Set())
+	const [repliedKeys, setRepliedKeys] = useState<Set<string>>(() => new Set())
+	// A taken option marks the thread read, so the server drops it from the
+	// unread feed on the next fetch. The card is kept here with the option that
+	// was taken so its green receipt stays in place for the sitting, the way the
+	// mockup keeps decided cards in the column.
+	const [decided, setDecided] = useState<Map<string, { item: UnreadItem; option: DecidedOption }>>(
+		() => new Map(),
+	)
+	const [pendingKeys, setPendingKeys] = useState<Set<string>>(() => new Set())
 
 	// Feed mode (cards/list) is persisted per actor under the `__chrome__`
 	// sentinel display-settings row — the same store the object-detail sidebar
@@ -89,11 +103,11 @@ function ForYouRedesign() {
 		? foryouViewModeToFeedMode(persistedSettings?.foryouViewMode)
 		: 'cards'
 
-	// Radix Tabs can fire onValueChange twice for one click on an inactive tab
-	// (mousedown activation plus focus activation before the controlled value
-	// flushes) and fires even when the clicked tab is already active — both
-	// cases would re-upsert the same setting. Dedupe on the last mode written,
-	// and skip outright when the requested mode already matches what's shown.
+	// The menu can fire onSelect twice for one click (pointer plus focus
+	// activation before the controlled value flushes) and fires even when the
+	// chosen mode is already active — both would re-upsert the same setting.
+	// Dedupe on the last mode written, and skip outright when the requested
+	// mode already matches what's shown.
 	const lastWrittenModeRef = useRef<FeedMode | null>(null)
 	const handleModeChange = useCallback(
 		(next: FeedMode) => {
@@ -121,26 +135,15 @@ function ForYouRedesign() {
 		[settingsQuery.isFetched, persistedSettings, upsertSettings],
 	)
 
-	const [pendingKeys, setPendingKeys] = useState<Set<string>>(() => new Set())
-
-	const [northStarDismissed, setNorthStarDismissed] = useState(() =>
-		Boolean(localStorage.getItem(`north_star_answered_${workspaceId}`)),
-	)
-	// Hidden while the sparse composer has focus so it doesn't compete with the
-	// composer for vertical space once the on-screen keyboard is up on mobile.
-	const [composerFocused, setComposerFocused] = useState(false)
-
 	const onboardingItems = useMemo(
 		() => items.filter((item) => item.object?.type === 'onboarding_session'),
 		[items],
 	)
 
-	// `priority` (default) sorts by the sender's attention score (1-5) on each
+	// `attention` (default) sorts by the sender's attention score (1-5) on each
 	// card's highest-scored unread comment, highest first; unscored comments
-	// sort below any scored one. Ties (including all-unscored) fall back to
-	// latest_activity_at desc. `latest` is a straight latest_activity_at desc —
-	// the alternative surfaced by the sort control per the design directions
-	// task.
+	// sort below any scored one. Ties fall back to latest activity.
+	// `chrono` is a straight latest-activity-first ordering.
 	const sortedRegular = useMemo(() => {
 		const base = items.filter((item) => item.object?.type !== 'onboarding_session')
 		const byLatestDesc = (a: UnreadItem, b: UnreadItem) => {
@@ -148,12 +151,7 @@ function ForYouRedesign() {
 			const bt = b.latest_activity_at ? new Date(b.latest_activity_at).getTime() : 0
 			return bt - at
 		}
-		if (sort === 'latest') {
-			return base.slice().sort(byLatestDesc)
-		}
-		if (sort === 'oldest') {
-			return base.slice().sort((a, b) => byLatestDesc(b, a))
-		}
+		if (sort === 'chrono') return base.slice().sort(byLatestDesc)
 		return base.slice().sort((a, b) => {
 			const aAttention = a.max_unread_attention ?? -1
 			const bAttention = b.max_unread_attention ?? -1
@@ -164,7 +162,7 @@ function ForYouRedesign() {
 
 	const visibleRegular = useMemo(() => {
 		if (pendingKeys.size === 0) return sortedRegular
-		return sortedRegular.filter((item) => !pendingKeys.has(itemKey(item)))
+		return sortedRegular.filter((item) => !pendingKeys.has(feedItemKey(item)))
 	}, [sortedRegular, pendingKeys])
 
 	const unreadRegular = useMemo(
@@ -172,13 +170,8 @@ function ForYouRedesign() {
 		[visibleRegular],
 	)
 
-	const mentionCount = useMemo(
-		() => unreadRegular.filter((item) => item.mentioning_unread_count > 0).length,
-		[unreadRegular],
-	)
-
 	// Chip counts reflect the unread queue regardless of the active filter, so
-	// switching chips never makes the other counts disappear.
+	// switching filters never makes the other counts disappear.
 	const typeCounts = useMemo(() => {
 		const counts = new Map<string, number>()
 		for (const item of unreadRegular) {
@@ -189,21 +182,51 @@ function ForYouRedesign() {
 		return counts
 	}, [unreadRegular])
 
-	const filteredRegular = useMemo(() => {
-		if (typeFilter === 'mentions') {
-			return visibleRegular.filter((item) => item.mentioning_unread_count > 0)
-		}
-		if (typeFilter) return visibleRegular.filter((item) => item.object?.type === typeFilter)
-		return visibleRegular
-	}, [visibleRegular, typeFilter])
-
-	// The swipeable queue only ever shows unread items — read items lingering
-	// in `filteredRegular` (kept around so a reverse-swipe has a target) are
-	// excluded here, not from the List-mode row list above.
-	const queue = useMemo(
-		() => filteredRegular.filter((item) => item.unread_count > 0),
-		[filteredRegular],
+	const filteredRegular = useMemo(
+		() =>
+			typeFilter ? unreadRegular.filter((item) => item.object?.type === typeFilter) : unreadRegular,
+		[unreadRegular, typeFilter],
 	)
+
+	const bucketOf = useCallback(
+		(item: UnreadItem): FeedBucket => {
+			const key = feedItemKey(item)
+			if (decided.has(key)) return 'done'
+			if (repliedKeys.has(key)) return 'waiting'
+			return classifyCardKind(item) === 'thread' ? 'fyi' : 'needs'
+		},
+		[decided, repliedKeys],
+	)
+
+	// The feed is one flat column ordered by bucket — decisions first, then
+	// what is waiting on an agent, then FYIs, then what has been handled. The
+	// mockup renders those buckets without headings; the order is the grouping.
+	// Cards decided in this sitting are folded back in, since the unread query
+	// has already dropped them.
+	const orderedCards = useMemo(() => {
+		const live = filteredRegular
+		const seen = new Set(live.map(feedItemKey))
+		const handled = [...decided.values()]
+			.map((entry) => entry.item)
+			.filter((item) => !seen.has(feedItemKey(item)))
+			.filter((item) => !typeFilter || item.object?.type === typeFilter)
+		return [...live, ...handled]
+			.map((item, index) => ({ item, index }))
+			.sort(
+				(a, b) => bucketRank(bucketOf(a.item)) - bucketRank(bucketOf(b.item)) || a.index - b.index,
+			)
+			.map((entry) => entry.item)
+	}, [filteredRegular, decided, typeFilter, bucketOf])
+
+	// Posting the reply a taken option stands for. It goes out the moment the
+	// option is taken — there is no delete-comment endpoint, so a deferred
+	// write with an Undo would only be pretending to be reversible.
+	const postReply = useMutation({
+		mutationFn: (input: CreateCommentInput) => api.events.create(workspaceId, input),
+		onSuccess: (_result, input) => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.events.byEntity(input.entity_id) })
+		},
+	})
 
 	const markItemRead = useCallback(
 		(item: UnreadItem) => {
@@ -225,191 +248,218 @@ function ForYouRedesign() {
 		[markUnread],
 	)
 
-	// Fires the real mark-read mutation for every item immediately — it used
-	// to wait for the Undo toast to auto-close (or be dismissed) before
-	// mutating at all, so navigating away or refreshing during that window
-	// silently dropped the mark-read and the items reappeared unread on
-	// reload. Undo now reverses the already-landed mutation with a real
-	// mark-unread call instead of just restoring the optimistic hide.
-	const handleMarkAllRead = useCallback(() => {
-		if (visibleRegular.length === 0) return
-		const snapshot = visibleRegular
-		const snapshotKeys = new Set(snapshot.map(itemKey))
-		setPendingKeys((prev) => new Set([...prev, ...snapshotKeys]))
-
-		for (const item of snapshot) markItemRead(item)
-
-		const restore = () => {
-			for (const item of snapshot) markItemUnread(item)
-			setPendingKeys((prev) => {
-				const next = new Set(prev)
-				for (const key of snapshotKeys) next.delete(key)
-				return next
-			})
-		}
-
-		toast('All caught up', {
-			duration: UNDO_WINDOW_MS,
-			action: { label: 'Undo', onClick: restore },
-		})
-	}, [markItemRead, markItemUnread, visibleRegular])
-
-	// Picking a row in List mode returns to Cards parked on that item (mockup
-	// 490) — the card's own "Open →" stays the route into object detail.
-	const handleSelectListItem = useCallback(
-		(item: UnreadItem) => {
-			setPinnedKey(itemKey(item))
-			handleModeChange('cards')
+	// Taking an option posts the reply and marks the thread read, which drops
+	// the card out of the feed on the next fetch. Until then it shows its green
+	// receipt in place.
+	const handleDecide = useCallback(
+		(item: UnreadItem, option: DecidedOption) => {
+			setDecided((prev) => new Map(prev).set(feedItemKey(item), { item, option }))
+			postReply.mutate(
+				{ entity_id: item.entity_id, content: option.label },
+				{ onSuccess: () => markItemRead(item) },
+			)
 		},
-		[handleModeChange],
+		[markItemRead, postReply],
 	)
 
-	// Alt+U shortcut mirrors the visible "Mark all read" button in
-	// ForYouHeaderActions — power-user keyboard access alongside the click target.
+	// Dismissing is marking read: the high-water mark moves and the card leaves
+	// the column. The mutation fires immediately — waiting for the Undo toast to
+	// close before mutating meant navigating away during that window silently
+	// dropped the mark-read — and Undo reverses it with a real mark-unread.
+	// Cards already answered in this sitting go too, receipt and all, so
+	// "Dismiss all" always empties what the reader can see.
+	const dismissAll = useCallback(
+		(targets: UnreadItem[], label: string) => {
+			if (targets.length === 0) return
+			const keys = new Set(targets.map(feedItemKey))
+			setPendingKeys((prev) => new Set([...prev, ...keys]))
+			setDecided((prev) => {
+				if (![...keys].some((key) => prev.has(key))) return prev
+				const next = new Map(prev)
+				for (const key of keys) next.delete(key)
+				return next
+			})
+			for (const item of targets) markItemRead(item)
+
+			toast(label, {
+				duration: UNDO_WINDOW_MS,
+				action: {
+					label: 'Undo',
+					onClick: () => {
+						for (const item of targets) markItemUnread(item)
+						setPendingKeys((prev) => {
+							const next = new Set(prev)
+							for (const key of keys) next.delete(key)
+							return next
+						})
+					},
+				},
+			})
+		},
+		[markItemRead, markItemUnread],
+	)
+
+	// "Take every suggested option" — the recommended answer on every card that
+	// still has one open, taken in one go through the same reverse window a
+	// single card gets.
+	const takeSuggested = useCallback(
+		(targets: UnreadItem[]) => {
+			for (const item of targets) {
+				const kind = classifyCardKind(item)
+				if (kind === 'thread') continue
+				const option =
+					CARD_ACTIONS[kind].find((action) => action.recommended) ?? CARD_ACTIONS[kind][0]
+				if (!option) continue
+				handleDecide(item, { id: option.id, label: option.label })
+			}
+		},
+		[handleDecide],
+	)
+
+	const openCards = useMemo(
+		() =>
+			filteredRegular.filter(
+				(item) => bucketOf(item) === 'needs' && classifyCardKind(item) !== 'thread',
+			),
+		[filteredRegular, bucketOf],
+	)
+	const fyiCards = useMemo(
+		() => filteredRegular.filter((item) => bucketOf(item) === 'fyi'),
+		[filteredRegular, bucketOf],
+	)
+
+	const bulkActions: ForYouBulkAction[] = [
+		{
+			id: 'fyi',
+			label: 'Dismiss all FYIs',
+			count: fyiCards.length,
+			onSelect: () => dismissAll(fyiCards, 'FYIs cleared'),
+		},
+		{
+			id: 'suggested',
+			label: 'Take every suggested option',
+			count: openCards.length,
+			onSelect: () => takeSuggested(openCards),
+		},
+		{
+			id: 'all',
+			label: 'Dismiss all',
+			count: orderedCards.length,
+			onSelect: () => dismissAll(orderedCards, 'All caught up'),
+		},
+	]
+
+	// Alt+U mirrors the `···` menu's "Dismiss all" — power-user keyboard access
+	// alongside the click target.
 	useEffect(() => {
 		function onKeydown(event: KeyboardEvent) {
 			if (!isMarkAllReadShortcut(event)) return
 			event.preventDefault()
-			handleMarkAllRead()
+			dismissAll(orderedCards, 'All caught up')
 		}
 		window.addEventListener('keydown', onKeydown)
 		return () => window.removeEventListener('keydown', onKeydown)
-	}, [handleMarkAllRead])
+	}, [dismissAll, orderedCards])
 
-	// The skeleton mirrors the loaded feed's geometry — one chip-row-height
-	// header band and a single full-height card in the same 760px column —
-	// rather than a stack of three list-shaped cards. Cards mode only ever shows
-	// one card, so the old stack collapsed to a different height on hydration
-	// and pushed the CLS budget (apps/e2e/src/tests/typography.spec.ts) over
-	// 0.05.
-	if (isLoading || betsLoading) {
+	if (isLoading) {
 		return (
-			<div
-				className="flex min-h-0 min-w-0 flex-1 flex-col gap-3"
-				data-testid="foryou-redesign-root"
-			>
-				<div className="mx-auto mb-2 flex h-8 w-full max-w-[760px] items-center gap-2">
-					<Skeleton className="h-7 w-40" />
-					<Skeleton className="ml-auto h-8 w-20" />
-				</div>
-				<div className="mx-auto flex w-full min-h-0 max-w-[760px] flex-1 flex-col">
-					<Skeleton className="h-full w-full rounded-2xl" />
-				</div>
+			<div className="flex flex-1 min-w-0 flex-col space-y-4" data-testid="foryou-feed-root">
+				<CardSkeleton />
+				<CardSkeleton />
+				<CardSkeleton />
 			</div>
 		)
 	}
 
-	const showNorthStarPrompt = (bets?.length ?? 0) === 0 && !northStarDismissed
-	const northStarCard =
-		showNorthStarPrompt && !composerFocused ? (
-			<NorthStarPromptCard
-				workspaceId={workspaceId}
-				onDismiss={() => setNorthStarDismissed(true)}
-			/>
-		) : null
-
-	const isSparse = filteredRegular.length + onboardingItems.length < 3
-	const sparseComposerNode = isSparse ? (
-		<SparseComposer
-			itemsCount={filteredRegular.length + onboardingItems.length}
-			onFocusChange={setComposerFocused}
-		/>
-	) : null
+	// The tail rule closes an *empty* column — it says why there is nothing to
+	// read. With cards on the page it is noise, so it isn't drawn at all.
+	const feedIsEmpty = orderedCards.length === 0 && onboardingItems.length === 0
+	const tail = feedIsEmpty ? feedTailLabel({ filtered: Boolean(typeFilter) }) : null
 
 	return (
-		<>
-			<div
-				className="flex min-h-0 min-w-0 flex-1 flex-col gap-3"
-				data-testid="foryou-redesign-root"
-			>
-				<PageHeader
-					title="For you"
-					subtitle={unreadRegular.length === 0 ? 'All caught up' : `${unreadRegular.length} unread`}
-					actions={
-						<ForYouHeaderActions
-							onMarkAllRead={handleMarkAllRead}
-							markAllReadDisabled={unreadRegular.length === 0}
-							onOpenBrief={() => setBriefOpen(true)}
-						/>
-					}
-					scrollLocked={mode === 'cards' && queue.length > 0}
-				/>
-				{northStarCard}
-				<ForYouHeader
-					unreadCount={unreadRegular.length}
-					typeFilter={typeFilter}
-					onTypeFilterChange={setTypeFilter}
-					typeCounts={typeCounts}
-					mentionCount={mentionCount}
-					mode={mode}
-					onModeChange={handleModeChange}
-					sort={sort}
-					onSortChange={setSort}
-				/>
+		<div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2" data-testid="foryou-feed-root">
+			<PageHeader
+				title="For you"
+				subtitle={unreadRegular.length === 0 ? 'All caught up' : `${unreadRegular.length} unread`}
+				scrollLocked
+			/>
 
-				<div className="flex flex-1 min-h-0 flex-col">
+			<ForYouHeader
+				unreadCount={unreadRegular.length}
+				typeFilter={typeFilter}
+				onTypeFilterChange={setTypeFilter}
+				typeCounts={typeCounts}
+				mode={mode}
+				onModeChange={handleModeChange}
+				sort={sort}
+				onSortChange={setSort}
+				filterPills={filterPills}
+				onFilterPillsChange={setFilterPills}
+				bulkActions={bulkActions}
+			/>
+
+			<div className="-mx-1 min-h-0 flex-1 overflow-y-auto px-1 pb-14">
+				<div className="mx-auto flex w-full max-w-[700px] flex-col">
+					<BriefCard workspaceId={workspaceId} />
+					<ReleaseCard />
+
 					{onboardingItems.length > 0 && (
-						<div className="mb-3 space-y-3">
+						<div className="mt-3 space-y-3">
 							{onboardingItems.map((item) => (
 								<OnboardingPromptCard
-									key={`${item.entity_type}-${item.entity_id}`}
+									key={feedItemKey(item)}
 									workspaceId={workspaceId}
 									item={item}
 								/>
 							))}
 						</div>
 					)}
-					{/* The feed column is a fixed-height flex item (`flex-1 min-h-0`) so
-					    Cards mode can hand the card the exact remaining height and let
-					    the thread scroll inside it. That cap applies to List mode too,
-					    where the rows are plain flow content — so the list needs its
-					    own scroll container, or anything past the fold is unreachable
-					    (the page scroller can't see the overflow through the cap). */}
-					{mode === 'list' ? (
-						<div className="mx-auto flex w-full min-h-0 max-w-[760px] flex-1 flex-col gap-2 overflow-y-auto pb-4">
-							{queue.map((item) => (
-								<ForYouListRow
-									key={`${item.entity_type}-${item.entity_id}`}
+
+					<div className={cn('flex flex-col', mode === 'cards' ? 'gap-3' : 'gap-[7px]')}>
+						<div className="h-1.5" />
+						{orderedCards.map((item) => {
+							const key = feedItemKey(item)
+							return (
+								<FeedCard
+									key={key}
+									workspaceId={workspaceId}
 									item={item}
-									current={itemKey(item) === pinnedKey}
-									subtitle={listRowSubtitle(item)}
-									meta={`${item.unread_count} new`}
-									onSelect={handleSelectListItem}
+									expanded={mode === 'cards' || openKeys.has(key)}
+									onToggleExpanded={
+										mode === 'cards'
+											? undefined
+											: () =>
+													setOpenKeys((prev) => {
+														const next = new Set(prev)
+														if (next.has(key)) next.delete(key)
+														else next.add(key)
+														return next
+													})
+									}
+									decided={decided.get(key)?.option ?? null}
+									onDecide={(option) => handleDecide(item, option)}
+									replied={repliedKeys.has(key)}
+									onReplied={() => setRepliedKeys((prev) => new Set(prev).add(key))}
+									onMarkRead={() => dismissAll([item], 'Marked as read')}
 								/>
-							))}
+							)
+						})}
+					</div>
+
+					{tail && (
+						<div className="flex items-center justify-center gap-2 pb-2.5 pt-[34px] text-[11.5px] text-border-strong">
+							<span className="h-px w-10 bg-border" />
+							{tail}
+							<span className="h-px w-10 bg-border" />
 						</div>
-					) : (
-						<ForYouCardQueue
-							workspaceId={workspaceId}
-							queue={queue}
-							pinnedKey={pinnedKey}
-							sort={sort}
-							sparseComposer={sparseComposerNode}
-						/>
 					)}
-					{mode === 'list' && typeFilter === 'mentions' && queue.length === 0 && (
-						<p className="py-10 text-center text-sm text-muted-foreground">No unread mentions.</p>
-					)}
-					{mode === 'list' && sparseComposerNode ? (
-						<div className="mt-4">{sparseComposerNode}</div>
-					) : null}
 				</div>
 			</div>
-			<BriefDrawer workspaceId={workspaceId} open={briefOpen} onOpenChange={setBriefOpen} />
-		</>
+		</div>
 	)
 }
 
-// List rows carry a muted sub line under the title. Only fields the unread feed
-// actually returns — the object's type, plus its owning status word. How much
-// of the thread is new rides the trailing meta beside the status dot instead
-// (mockup 492–496).
-function listRowSubtitle(item: UnreadItem): string {
-	const type = item.object?.type
-	return type ? typeLabel(type) : ''
-}
-
-// Shared keydown guard for the `Alt+U` For You bulk-mark-read shortcut. Alt on
+// Shared keydown guard for the `Alt+U` For You bulk-dismiss shortcut. Alt on
 // PC == Option on Mac; ignores keystrokes inside inputs/textareas/contenteditable
 // so it never hijacks typing.
 export function isMarkAllReadShortcut(event: KeyboardEvent): boolean {

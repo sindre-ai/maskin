@@ -12,9 +12,7 @@ import { useWorkspace } from '@/lib/workspace-context'
 import { CHROME_KEY } from '@maskin/shared'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { NorthStarPromptCard } from '../north-star-prompt-card'
 import { OnboardingPromptCard } from '../onboarding-prompt-card'
-import { SparseComposer } from '../sparse-composer'
 // Pre-v2 For You feed, rendered when the `new-design` feature flag is off.
 // Governed by the `new-design` flag; this directory dies with the flag.
 import { ForYouCardQueue } from './foryou-card-queue'
@@ -27,6 +25,8 @@ import {
 } from './foryou-header'
 import { ForYouListRow } from './foryou-list-row'
 import { NewConversationComposer } from './new-conversation-composer'
+import { NorthStarPromptCard } from './north-star-prompt-card'
+import { SparseComposer } from './sparse-composer'
 
 const UNDO_WINDOW_MS = 15_000
 
