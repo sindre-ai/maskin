@@ -264,7 +264,7 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 							/>
 						)}
 
-						<ObjectDetailBody object={object} />
+						<ObjectDetailBody object={object} workspaceId={workspaceId} />
 
 						{/* One Activity heading + rule + a 2-way segmented control
 						    (mockup 1138–1143). TabsList/TabsTrigger stay at their

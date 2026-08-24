@@ -27,7 +27,9 @@ test.describe('Commitment card — object detail', () => {
 			})
 
 			await page.goto(`/${account.workspaceId}/objects/${commitment.id}`)
-			await expect(page.locator('textarea').first()).toHaveValue('Customer bugs fixed <1 day', {
+			await expect(
+				page.getByRole('heading', { level: 1, name: 'Customer bugs fixed <1 day' }),
+			).toBeVisible({
 				timeout: 10000,
 			})
 
@@ -42,10 +44,9 @@ test.describe('Commitment card — object detail', () => {
 			})
 			await expect(sourceLink).toBeVisible()
 			await sourceLink.click()
-			await expect(page.locator('textarea').first()).toHaveValue(
-				'Customer bugs fixed under 1 day (source)',
-				{ timeout: 10000 },
-			)
+			await expect(
+				page.getByRole('heading', { level: 1, name: 'Customer bugs fixed under 1 day (source)' }),
+			).toBeVisible({ timeout: 10000 })
 		})
 	}
 
@@ -67,7 +68,7 @@ test.describe('Commitment card — object detail', () => {
 		})
 
 		await page.goto(`/${account.workspaceId}/objects/${commitment.id}`)
-		await expect(page.locator('textarea').first()).toHaveValue('Weekly ship cadence', {
+		await expect(page.getByRole('heading', { level: 1, name: 'Weekly ship cadence' })).toBeVisible({
 			timeout: 10000,
 		})
 

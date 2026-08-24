@@ -51,7 +51,9 @@ test('scroll_to_top fires once with the signed-off schema after a full-viewport 
 	await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
 	// The title is an editable <textarea> (object-document.tsx), not a heading —
 	// wait for it to load the bet's title before scrolling.
-	await expect(page.getByPlaceholder('Untitled')).toHaveValue('Scroll-to-top probe bet', {
+	await expect(
+		page.getByRole('heading', { level: 1, name: 'Scroll-to-top probe bet' }),
+	).toBeVisible({
 		timeout: 10000,
 	})
 

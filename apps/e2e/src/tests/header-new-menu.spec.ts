@@ -135,12 +135,11 @@ test.describe('Header New menu', () => {
 		})
 
 		await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
-		// The object title is an editable <textarea> (object-document.tsx), never a
-		// heading — wait on its value to know the object has loaded.
-		await expect(page.getByPlaceholder('Untitled')).toHaveValue(
-			'Header New menu object-detail check',
-			{ timeout: 10000 },
-		)
+		// The object title is a static <h1> on the v2 detail shell — wait on it
+		// to know the object has loaded.
+		await expect(
+			page.getByRole('heading', { level: 1, name: 'Header New menu object-detail check' }),
+		).toBeVisible({ timeout: 10000 })
 
 		await expect(headerNewTrigger(page)).toBeVisible()
 		await headerNewTrigger(page).click()

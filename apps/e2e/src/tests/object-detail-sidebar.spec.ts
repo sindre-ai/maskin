@@ -11,8 +11,8 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 // What this file used to exercise — the ⌘/Ctrl+I toggle, `__chrome__`
 // user-display-settings persistence, and breakpoint defaults (Sheet at 375 /
 // 44 px rail at 768 / 288 px inline at 1024) — is gone with the surface.
-// Status + Driver remain reachable: hoisted into the hero identity row, and
-// graduated into the shipped ⋯ menu's Properties group at narrow viewports
+// Status + Driver remain reachable: hoisted into the hero identity row, and in
+// the v2 properties drawer behind the page bar's toggle — never in the ⋯ menu
 // (covered by aux-menu-properties.spec.ts).
 test.describe('Object detail — no legacy properties sidebar', () => {
 	for (const vp of SHIP_GATE_VIEWPORTS) {
@@ -35,11 +35,10 @@ test.describe('Object detail — no legacy properties sidebar', () => {
 			).toBeVisible({ timeout: 10_000 })
 			await expect(page.getByPlaceholder('Untitled')).toHaveCount(0)
 
-			// No Properties collapse toggle (the sidebar's exact-match-header
-			// button). The ⋯ menu's "Properties" label is a DropdownMenuLabel,
-			// not a button, so this can't collide with it.
-			await expect(page.getByRole('button', { name: 'Properties', exact: true })).toHaveCount(0)
-			// No Files section, no Metadata "+ Add property" trigger.
+			// The v2 drawer replaces the legacy sidebar and rests closed, so none
+			// of its contents are mounted on first paint: no Files section, no
+			// Metadata "+ Add property" trigger. (The page bar's Properties toggle
+			// that opens it is covered by object-detail-properties.spec.ts.)
 			await expect(page.getByRole('heading', { name: /^Files \(/ })).toHaveCount(0)
 			await expect(page.getByRole('button', { name: /add property/i })).toHaveCount(0)
 		})
