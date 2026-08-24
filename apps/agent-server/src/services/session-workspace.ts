@@ -10,7 +10,18 @@ const execFile = promisify(execFileCb)
 const SESSION_WORKSPACE_PREFIX = 'session-workspaces'
 const LEGACY_SESSION_WORKSPACE_PREFIX = 'agent-workspaces'
 
-export const SESSION_SKELETON_DIRS = ['workspace', 'skills', 'learnings', 'memory'] as const
+// `.claude-transcripts` holds Claude Code's own conversation transcript
+// ($HOME/.claude/projects is symlinked here by agent-run.sh's
+// setup_transcript_dir). It must round-trip through the snapshot, or a rewound
+// conversation has no transcript to `--resume` and silently degrades to a cold
+// re-seed. Credentials deliberately stay in $HOME and are never snapshotted.
+export const SESSION_SKELETON_DIRS = [
+	'workspace',
+	'skills',
+	'learnings',
+	'memory',
+	'.claude-transcripts',
+] as const
 
 // Whitelist on sessionId before it reaches an S3 key or a `tar` arg list.
 const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/

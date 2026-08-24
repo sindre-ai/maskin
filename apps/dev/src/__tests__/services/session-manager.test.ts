@@ -2216,6 +2216,34 @@ describe('SessionManager', () => {
 
 			expect(calls.inserts.length).toBe(initialInsertCount)
 		})
+
+		it('signals the workspace snapshot so a rewind does not sit out the full timeout', async () => {
+			// Regression: markSnapshotAttempted was called only from
+			// handleCompletion(), the LOCAL Docker exit watcher. Production
+			// dispatches interactive chat sessions to a remote agent-server, which
+			// resolves here instead — so nothing ever emitted, and every rewind
+			// waited waitForWorkspaceSnapshot's full 60s and then started cold
+			// anyway. The remote workspace push already happened before /complete
+			// was reported, so signalling here is correct, not merely expedient.
+			const session = buildSession({ status: 'running' })
+			mockResults.selectQueue = [[], [session]]
+
+			await manager.markRemoteSessionComplete(session.id, 0)
+
+			expect(await manager.waitForWorkspaceSnapshot(session.id, 50)).toBe(true)
+		})
+
+		it('signals the workspace snapshot even when the completion signal is dropped', async () => {
+			// The early no-op returns (already terminal, row not found) are exactly
+			// where a waiter must stop waiting soonest — no session is coming back
+			// to snapshot. Hence try/finally rather than a call on the happy path.
+			const session = buildSession({ status: 'completed' })
+			mockResults.selectQueue = [[], []]
+
+			await manager.markRemoteSessionComplete(session.id, 0)
+
+			expect(await manager.waitForWorkspaceSnapshot(session.id, 50)).toBe(true)
+		})
 	})
 
 	describe('pauseSession()', () => {
@@ -4033,6 +4061,40 @@ describe('SessionManager', () => {
 			expect(resolved.slug).toBeNull()
 			expect(resolved.source).toBe('none')
 			expect(resolved.rejected).toBe('env:GITHUB_REPO')
+		})
+	})
+
+	// A conversation rewind stops a session and immediately spawns a replacement
+	// that restores the stopped session's workspace (which carries the CLI
+	// transcript) via sourceSessionId. The snapshot is written after the
+	// container exits, so the rewind has to wait for it — otherwise the resume
+	// silently degrades to a cold start.
+	describe('waitForWorkspaceSnapshot()', () => {
+		it('resolves once the snapshot for that session has been attempted', async () => {
+			const pending = manager.waitForWorkspaceSnapshot('session-1', 5_000)
+			manager.emit('workspace-snapshotted', 'session-1')
+			expect(await pending).toBe(true)
+		})
+
+		it('ignores snapshots belonging to other sessions', async () => {
+			const pending = manager.waitForWorkspaceSnapshot('session-1', 150)
+			manager.emit('workspace-snapshotted', 'session-2')
+			// Still waiting on its own session, so this times out rather than
+			// returning early on a sibling's snapshot.
+			expect(await pending).toBe(false)
+		})
+
+		it('returns false on timeout rather than rejecting, so a rewind still proceeds cold', async () => {
+			expect(await manager.waitForWorkspaceSnapshot('session-never', 100)).toBe(false)
+		})
+
+		it('does not leak a listener per wait', async () => {
+			const before = manager.listenerCount('workspace-snapshotted')
+			await manager.waitForWorkspaceSnapshot('session-timeout', 50)
+			const settled = manager.waitForWorkspaceSnapshot('session-resolved', 5_000)
+			manager.emit('workspace-snapshotted', 'session-resolved')
+			await settled
+			expect(manager.listenerCount('workspace-snapshotted')).toBe(before)
 		})
 	})
 })

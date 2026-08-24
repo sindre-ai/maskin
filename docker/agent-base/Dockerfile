@@ -14,10 +14,23 @@ RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
 # Claude Code releases — the interactive chat session parses these lines
 # verbatim, so a silent CLI bump can break parsing. Bump this deliberately
 # after re-validating the stream-json fixtures.
-RUN npm install -g @anthropic-ai/claude-code@2.1.112
+RUN npm install -g @anthropic-ai/claude-code@2.1.223
 
 # Pre-install Playwright MCP server (connects to external browser via CDP)
 RUN npm install -g @playwright/mcp
+
+# Agent SDK, used only by resolve-resume-turn.mjs to read a session transcript
+# through a supported API. The on-disk JSONL format is explicitly internal and
+# changes between releases, so hand-parsing it would rot silently.
+RUN npm install -g @anthropic-ai/claude-agent-sdk
+# resolve-resume-turn.mjs imports the SDK by bare specifier. That resolves
+# because the script lives at /usr/local/lib/maskin/, so Node's walk up the
+# directory tree reaches /usr/local/lib/node_modules — where `npm install -g`
+# puts it on this base image. Moving the script out from under /usr/local/lib
+# would break the import; keep it there, or vendor the dependency alongside it.
+#
+# Deliberately NOT relying on NODE_PATH: that variable is honoured only by the
+# CommonJS resolver, and the script is ESM.
 
 # Non-root user (Claude Code refuses --dangerously-skip-permissions as root)
 RUN useradd -m -s /bin/bash agent
@@ -33,6 +46,9 @@ COPY agent-run.sh /agent-run.sh
 COPY github-credential-helper.sh /agent-github-credential-helper.sh
 COPY cdp-retry-proxy.js /cdp-retry-proxy.js
 COPY preview-port-watcher.js /preview-port-watcher.js
+# Maps "the Nth user turn of a CLI session" to that turn's transcript uuid, so a
+# rewound conversation can `claude --resume` instead of starting cold.
+COPY resolve-resume-turn.mjs /usr/local/lib/maskin/resolve-resume-turn.mjs
 RUN chmod +x /entrypoint.sh /agent-run.sh /agent-github-credential-helper.sh
 
 # PostToolUse hook that surfaces a newly-relayed dev-server preview port to

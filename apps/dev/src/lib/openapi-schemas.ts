@@ -282,6 +282,18 @@ export const messageResponseSchema = z.object({
 	sessionId: z.string().uuid().nullable(),
 	createdAt: z.string().nullable(),
 	editedAt: z.string().nullable(),
+	// True when the caller may rewind the thread to this message: they wrote it,
+	// and nobody else has posted since. Resolved server-side so the client isn't
+	// re-deriving a rule the rewind endpoint enforces anyway.
+	canRewind: z.boolean().optional(),
+})
+
+// A point where the conversation forks. `options` are the alternatives the user
+// can switch between, oldest first, with the original continuation at index 0.
+export const branchPointResponseSchema = z.object({
+	messageId: z.number(),
+	activeIndex: z.number(),
+	options: z.array(z.object({ branchId: z.string().uuid().nullable() })),
 })
 
 export const sessionLogResponseSchema = z.object({

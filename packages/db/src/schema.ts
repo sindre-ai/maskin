@@ -264,6 +264,18 @@ export const sessions = pgTable(
 		conversationId: uuid('conversation_id').references((): AnyPgColumn => conversations.id, {
 			onDelete: 'set null',
 		}),
+		// Which branch of the conversation this session's context belongs to.
+		// NULL = the root branch. A rewind forks a new branch and launches a new
+		// session against it, so switching branches can find the session that
+		// actually holds that branch's context.
+		branchId: uuid('branch_id').references((): AnyPgColumn => conversationBranches.id, {
+			onDelete: 'set null',
+		}),
+		// The uuid we hand the CLI via `--session-id`, so its own transcript is
+		// addressable without parsing the stream-json `system/init` line. Needed
+		// to rewind a conversation with `--resume` instead of re-seeding a cold
+		// session from a truncated history blob.
+		cliSessionId: uuid('cli_session_id'),
 		result: jsonb('result').$type<SessionResult>(),
 		snapshotPath: text('snapshot_path'),
 		sourceSessionId: uuid('source_session_id'),
@@ -360,6 +372,14 @@ export const conversations = pgTable(
 		// a conditional UPDATE before calling the LLM, which is what makes it
 		// safe to fire from every message post without a lock.
 		titleAutoState: text('title_auto_state').notNull().default('none'),
+		// Which branch of the conversation is currently being read and written.
+		// NULL = the root branch (the conversation as it existed before anyone
+		// rewound it), which is why no backfill of existing rows was needed.
+		// See conversationBranches below for the full branching model.
+		activeBranchId: uuid('active_branch_id').references(
+			(): AnyPgColumn => conversationBranches.id,
+			{ onDelete: 'set null' },
+		),
 		createdBy: uuid('created_by')
 			.references(() => actors.id)
 			.notNull(),
@@ -422,6 +442,56 @@ export const conversationParticipants = pgTable(
 export type ConversationParticipant = typeof conversationParticipants.$inferSelect
 export type NewConversationParticipant = typeof conversationParticipants.$inferInsert
 
+// ── Conversation Branches ──────────────────────────────────────────────────
+//
+// A branch is created when someone rewinds the chat to an earlier message
+// ("redo"): rather than deleting the messages after that point, we fork. The
+// old tail stays on the parent branch and stays reachable — the UI offers a
+// branch switcher, and `conversations.activeBranchId` says which one is live.
+//
+// The model is a chain of linear segments, not a per-message tree. A branch
+// records only where it forked from; visibility is derived by walking
+// `parentBranchId` to the root and emitting half-open [min, max) id ranges.
+// That keeps `messages` free of a parent pointer and keeps the list query a
+// plain index scan per segment. See services/conversation-branches.ts.
+//
+// `forkedFromMessageId` is deliberately NOT an FK to `messages`: the FK would
+// close a declaration cycle (messages → branches → messages), and messages
+// already cascade-delete with the conversation, so the reference cannot dangle
+// in a way an FK would have caught.
+
+export const conversationBranches = pgTable(
+	'conversation_branches',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		conversationId: uuid('conversation_id')
+			.references(() => conversations.id, { onDelete: 'cascade' })
+			.notNull(),
+		// NULL = forked off the root branch.
+		parentBranchId: uuid('parent_branch_id').references(
+			(): AnyPgColumn => conversationBranches.id,
+			{
+				onDelete: 'cascade',
+			},
+		),
+		// The message that was rewound to. EXCLUSIVE: on this branch, parent-branch
+		// messages with id >= forkedFromMessageId are hidden.
+		forkedFromMessageId: bigint('forked_from_message_id', { mode: 'number' }).notNull(),
+		createdBy: uuid('created_by')
+			.references(() => actors.id)
+			.notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		// Drives the branch switcher: "every branch forked at this message".
+		index('conversation_branches_conv_forked_from_idx').on(t.conversationId, t.forkedFromMessageId),
+		index('conversation_branches_parent_idx').on(t.parentBranchId),
+	],
+)
+
+export type ConversationBranch = typeof conversationBranches.$inferSelect
+export type NewConversationBranch = typeof conversationBranches.$inferInsert
+
 // ── Messages ────────────────────────────────────────────────────────────────
 //
 // One row per chat turn in a conversation, human- or agent-authored.
@@ -447,12 +517,17 @@ export const messages = pgTable(
 		content: text('content').notNull(),
 		metadata: jsonb('metadata'),
 		sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'set null' }),
+		// Which branch this message was written on. NULL = the root branch, so
+		// every pre-branching message stays valid without a backfill.
+		branchId: uuid('branch_id').references(() => conversationBranches.id, { onDelete: 'cascade' }),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		// Set when the author edits the message; null for never-edited messages.
 		editedAt: timestamp('edited_at', { withTimezone: true }),
 	},
 	(t) => [
 		index('messages_conversation_id_idx').on(t.conversationId, t.id),
+		// One index scan per branch segment when resolving a branched thread.
+		index('messages_conversation_branch_id_idx').on(t.conversationId, t.branchId, t.id),
 		index('messages_session_id_idx').on(t.sessionId),
 		// Idempotency guard for auto-posted end-of-turn agent output. Load-bearing:
 		// the Docker log stream replays a live session's ENTIRE log on first

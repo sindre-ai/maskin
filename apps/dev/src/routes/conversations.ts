@@ -3,6 +3,7 @@ import type { Database } from '@maskin/db'
 import {
 	events,
 	actors,
+	conversationBranches,
 	conversationParticipants,
 	conversations,
 	messages,
@@ -20,10 +21,12 @@ import {
 	updateConversationParticipantStateSchema,
 	updateConversationSchema,
 } from '@maskin/shared'
+import type { MessageMetadata } from '@maskin/shared'
 import { and, desc, eq, gt, inArray, isNull, lt, ne, sql } from 'drizzle-orm'
 import { createApiError, formatZodError } from '../lib/errors'
 import { logger } from '../lib/logger'
 import {
+	branchPointResponseSchema,
 	conversationDetailResponseSchema,
 	conversationListItemResponseSchema,
 	conversationParticipantStateResponseSchema,
@@ -33,8 +36,17 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize } from '../lib/serialize'
+import {
+	type BranchId,
+	activeBranchCondition,
+	buildBranchPoints,
+	loadBranchRows,
+	loadFirstMessageIdByBranch,
+	multiConversationVisibilityCondition,
+} from '../services/conversation-branches'
 import { insertConversationMessage } from '../services/conversation-messages'
 import { evaluateAndRespond } from '../services/conversation-responder'
+import { resolveConversationResumeTargets } from '../services/conversation-rewind'
 import { maybeGenerateConversationTitle } from '../services/conversation-titler'
 import type { SessionManager } from '../services/session-manager'
 
@@ -123,12 +135,25 @@ async function loadWorkspaceMemberIds(
 	return new Set(rows.map((r) => r.actorId))
 }
 
+/**
+ * Unread counts, restricted to each conversation's active branch. A tail the
+ * user rewound away must not keep showing as unread — the messages still exist,
+ * they are just no longer part of the thread anyone is reading.
+ *
+ * `activeBranchByConversation` is threaded in by callers that already hold the
+ * conversation rows, so the common (unbranched) path adds no query at all.
+ */
 async function loadUnreadCounts(
 	db: Database,
 	callerId: string,
 	conversationIds: string[],
+	activeBranchByConversation: Map<string, BranchId>,
 ): Promise<Map<string, number>> {
 	if (conversationIds.length === 0) return new Map()
+	const branchCondition = multiConversationVisibilityCondition(
+		await loadBranchRows(db, conversationIds),
+		activeBranchByConversation,
+	)
 	const rows = await db
 		.select({
 			conversationId: messages.conversationId,
@@ -147,6 +172,7 @@ async function loadUnreadCounts(
 				inArray(messages.conversationId, conversationIds),
 				ne(messages.actorId, callerId),
 				sql`${messages.id} > COALESCE(${conversationParticipants.lastReadMessageId}, 0)`,
+				branchCondition,
 			),
 		)
 		.groupBy(messages.conversationId)
@@ -196,6 +222,88 @@ async function loadConversationWithAuth(db: Database, conversationId: string, ca
 		.where(eq(conversations.id, conversationId))
 		.limit(1)
 	return row ?? null
+}
+
+/** Per-rewind tally of how far the session teardown actually got. */
+interface StopSessionsOutcome {
+	liveSessions: number
+	stopFailed: number
+	snapshotTimedOut: number
+}
+
+/**
+ * Stop every live interactive session attached to a conversation.
+ *
+ * Called when the thread's shape changes underneath the agents — a rewind or a
+ * branch switch. Their CLI processes hold the pre-change transcript in memory,
+ * and no amount of filtering on our side removes it; the only way to make an
+ * agent forget a discarded tail is to end the session. The responder then spawns
+ * a fresh one, seeded from the branch-filtered history.
+ *
+ * Best-effort by design: a session that refuses to stop still hits its own idle
+ * (CHAT_IDLE_CLOSE_MS) or timeout backstop, and must not fail the user's rewind.
+ * The counts it returns are the caller's only signal that a rewind degraded, so
+ * they are reported rather than discarded.
+ */
+async function stopConversationSessions(
+	db: Database,
+	sessionManager: SessionManager,
+	conversationId: string,
+	options: { awaitSnapshot?: boolean } = {},
+): Promise<StopSessionsOutcome> {
+	const live = await db
+		.select({ id: sessions.id })
+		.from(sessions)
+		.where(
+			and(
+				eq(sessions.conversationId, conversationId),
+				eq(sessions.interactive, true),
+				inArray(sessions.status, ['pending', 'starting', 'running']),
+			),
+		)
+
+	let stopFailed = 0
+	let snapshotTimedOut = 0
+
+	await Promise.all(
+		live.map(async (session) => {
+			try {
+				await sessionManager.stopSession(session.id)
+				// stopSession returns as soon as the container is asked to stop;
+				// the workspace snapshot (which carries the CLI transcript) is
+				// written later, from the exit watcher. A rewind restores from
+				// that snapshot via sourceSessionId, so it has to wait for it —
+				// otherwise the replacement session reliably finds nothing and
+				// falls back to a cold start, defeating the resume entirely.
+				if (options.awaitSnapshot) {
+					const snapshotted = await sessionManager.waitForWorkspaceSnapshot(session.id)
+					if (!snapshotted) {
+						snapshotTimedOut++
+						// Not fatal — the rewind proceeds cold — but it silently
+						// removes the whole point of the resume path, so it has to
+						// surface as an issue rather than a breadcrumb.
+						logger.error('Workspace snapshot never landed — rewind will start cold', {
+							conversationId,
+							sessionId: session.id,
+						})
+					}
+				}
+			} catch (err: unknown) {
+				stopFailed++
+				// A session that would not stop still holds the discarded tail in
+				// its CLI process and will keep answering from it — the exact
+				// thing the rewind exists to prevent. Louder than a warn because
+				// the user is told the rewind succeeded.
+				logger.error('Failed to stop interactive session during conversation rewind', {
+					conversationId,
+					sessionId: session.id,
+					error: String(err),
+				})
+			}
+		}),
+	)
+
+	return { liveSessions: live.length, stopFailed, snapshotTimedOut }
 }
 
 // POST / - Create conversation
@@ -395,6 +503,18 @@ app.openapi(listConversationsRoute, (async (c) => {
 	const page = rows.slice(0, query.limit)
 	const conversationIds = page.map((r) => r.conversation.id)
 
+	// One branch fetch for the whole page, reused by both the unread aggregate
+	// and the per-conversation snippet, so a branched workspace doesn't turn the
+	// list into an N+1.
+	const activeBranchByConversation = new Map<string, BranchId>(
+		page.map((r) => [r.conversation.id, r.conversation.activeBranchId]),
+	)
+	const branchRowsByConversation = await loadBranchRows(db, conversationIds)
+	const listBranchCondition = multiConversationVisibilityCondition(
+		branchRowsByConversation,
+		activeBranchByConversation,
+	)
+
 	const [participantsByConversation, unreadRows, snippets] = await Promise.all([
 		loadParticipantsByConversation(db, conversationIds),
 		conversationIds.length === 0
@@ -417,6 +537,7 @@ app.openapi(listConversationsRoute, (async (c) => {
 							inArray(messages.conversationId, conversationIds),
 							ne(messages.actorId, callerId),
 							sql`${messages.id} > COALESCE(${conversationParticipants.lastReadMessageId}, 0)`,
+							listBranchCondition,
 						),
 					)
 					.groupBy(messages.conversationId),
@@ -425,7 +546,7 @@ app.openapi(listConversationsRoute, (async (c) => {
 				const [latest] = await db
 					.select({ content: messages.content })
 					.from(messages)
-					.where(eq(messages.conversationId, r.conversation.id))
+					.where(and(eq(messages.conversationId, r.conversation.id), listBranchCondition))
 					.orderBy(desc(messages.id))
 					.limit(1)
 				return { conversationId: r.conversation.id, snippet: latest?.content ?? null }
@@ -478,7 +599,7 @@ app.openapi(getConversationRoute, (async (c) => {
 
 	const [participantsByConversation, unreadByConversation] = await Promise.all([
 		loadParticipantsByConversation(db, [id]),
-		loadUnreadCounts(db, callerId, [id]),
+		loadUnreadCounts(db, callerId, [id], new Map([[id, row.conversation.activeBranchId]])),
 	])
 	return c.json({
 		...serialize(row.conversation),
@@ -543,7 +664,7 @@ app.openapi(updateConversationRoute, (async (c) => {
 
 	const [participantsByConversation, unreadByConversation] = await Promise.all([
 		loadParticipantsByConversation(db, [id]),
-		loadUnreadCounts(db, callerId, [id]),
+		loadUnreadCounts(db, callerId, [id], new Map([[id, updated.activeBranchId]])),
 	])
 	return c.json({
 		...serialize(updated),
@@ -697,6 +818,8 @@ const listMessagesRoute = createRoute({
 					schema: z.object({
 						messages: z.array(messageResponseSchema),
 						has_more: z.boolean(),
+						active_branch_id: z.string().uuid().nullable(),
+						branch_points: z.array(branchPointResponseSchema),
 					}),
 				},
 			},
@@ -718,7 +841,9 @@ app.openapi(listMessagesRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
 	}
 
-	const conditions = [eq(messages.conversationId, id)]
+	// Only the active branch. Rewound-away messages stay in the table and stay
+	// reachable by switching branches — they are just not part of this thread.
+	const conditions = [eq(messages.conversationId, id), await activeBranchCondition(db, id)]
 	if (query.before_id) conditions.push(lt(messages.id, query.before_id))
 	if (query.after_id) conditions.push(gt(messages.id, query.after_id))
 
@@ -745,9 +870,48 @@ app.openapi(listMessagesRoute, (async (c) => {
 	const hasMore = rows.length > query.limit
 	const page = rows.slice(0, query.limit)
 
+	// Rewinding discards everything after the target, so it is offered only past
+	// the last message anyone else wrote. One aggregate here beats re-deriving
+	// the rule per message on the client — and it is the same rule the rewind
+	// endpoint enforces, so the button can't offer something the API refuses.
+	const [lastOtherHuman] = await db
+		.select({ id: messages.id })
+		.from(messages)
+		.innerJoin(actors, eq(actors.id, messages.actorId))
+		.where(
+			and(
+				eq(messages.conversationId, id),
+				eq(messages.kind, 'message'),
+				ne(messages.actorId, callerId),
+				eq(actors.type, 'human'),
+				await activeBranchCondition(db, id),
+			),
+		)
+		.orderBy(desc(messages.id))
+		.limit(1)
+	const rewindFloor = lastOtherHuman?.id ?? 0
+
+	const activeBranchId = row.conversation.activeBranchId
+	const [branchRows, firstMessageIdByBranch] = await Promise.all([
+		loadBranchRows(db, [id]),
+		loadFirstMessageIdByBranch(db, id),
+	])
+	const branchPoints = buildBranchPoints(
+		branchRows.get(id) ?? [],
+		activeBranchId,
+		firstMessageIdByBranch,
+	)
+
 	return c.json({
-		messages: page.map((m) => serialize(m)) as z.infer<typeof messageResponseSchema>[],
+		messages: page.map((m) =>
+			serialize({
+				...m,
+				canRewind: m.actorId === callerId && m.kind === 'message' && m.id > rewindFloor,
+			}),
+		) as z.infer<typeof messageResponseSchema>[],
 		has_more: hasMore,
+		active_branch_id: activeBranchId,
+		branch_points: branchPoints,
 	})
 }) as RouteHandler<typeof listMessagesRoute, Env>)
 
@@ -923,10 +1087,19 @@ app.openapi(editMessageRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
 	}
 
+	// Branch-scoped: a message on a rewound-away branch is not part of the
+	// thread the caller is looking at, so editing it must 404 rather than
+	// silently mutate history nobody can see.
 	const [message] = await db
 		.select()
 		.from(messages)
-		.where(and(eq(messages.id, messageId), eq(messages.conversationId, id)))
+		.where(
+			and(
+				eq(messages.id, messageId),
+				eq(messages.conversationId, id),
+				await activeBranchCondition(db, id),
+			),
+		)
 		.limit(1)
 	if (!message || message.kind !== 'message') {
 		return c.json(createApiError('NOT_FOUND', 'Message not found'), 404)
@@ -965,7 +1138,13 @@ app.openapi(editMessageRoute, (async (c) => {
 	const [newest] = await db
 		.select({ id: messages.id })
 		.from(messages)
-		.where(and(eq(messages.conversationId, id), eq(messages.kind, 'message')))
+		.where(
+			and(
+				eq(messages.conversationId, id),
+				eq(messages.kind, 'message'),
+				await activeBranchCondition(db, id),
+			),
+		)
 		.orderBy(desc(messages.id))
 		.limit(1)
 	if (newest?.id === messageId) {
@@ -1036,10 +1215,20 @@ app.openapi(retryMessageRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
 	}
 
+	// Branch-scoped for the same reason as edit, and more urgently: retry calls
+	// evaluateAndRespond, so an unscoped lookup lets a caller make the agents
+	// re-answer a message from a discarded branch, with the reply landing on the
+	// active one.
 	const [message] = await db
 		.select({ id: messages.id, kind: messages.kind })
 		.from(messages)
-		.where(and(eq(messages.id, messageId), eq(messages.conversationId, id)))
+		.where(
+			and(
+				eq(messages.id, messageId),
+				eq(messages.conversationId, id),
+				await activeBranchCondition(db, id),
+			),
+		)
 		.limit(1)
 	if (!message || message.kind !== 'message') {
 		return c.json(createApiError('NOT_FOUND', 'Message not found'), 404)
@@ -1066,6 +1255,336 @@ app.openapi(retryMessageRoute, (async (c) => {
 
 	return c.json({ retried: true }, 202)
 }) as RouteHandler<typeof retryMessageRoute, Env>)
+
+// POST /:id/messages/:messageId/rewind - Rewind the thread to a message and re-run
+//
+// The "redo" button. Unlike /retry (which re-asks agents to answer an existing
+// message, leaving the thread intact), rewind forks: everything from the target
+// message onward moves off the live thread onto the parent branch, a copy of
+// the target message is re-posted on a fresh branch, and the agents answer it
+// again with no memory of the discarded tail.
+//
+// Nothing is deleted. The old tail stays queryable by switching branches.
+const rewindMessageRoute = createRoute({
+	method: 'post',
+	path: '/{id}/messages/{messageId}/rewind',
+	tags: ['Conversations'],
+	summary: 'Rewind a conversation to a message and re-send it on a new branch',
+	request: {
+		headers: workspaceIdHeader,
+		params: z.object({ id: z.string().uuid(), messageId: z.coerce.number().int().positive() }),
+	},
+	responses: {
+		202: {
+			content: {
+				'application/json': {
+					schema: z.object({ branch_id: z.string().uuid(), message: messageResponseSchema }),
+				},
+			},
+			description: 'Rewound; responder re-triggered',
+		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Not the author',
+		},
+		404: { content: { 'application/json': { schema: errorSchema } }, description: 'Not found' },
+		409: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Another person has replied since',
+		},
+	},
+})
+
+app.openapi(rewindMessageRoute, (async (c) => {
+	const db = c.get('db')
+	const sessionManager = c.get('sessionManager')
+	const callerId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id, messageId } = c.req.valid('param')
+
+	const row = await loadConversationWithAuth(db, id, callerId)
+	if (!row || row.conversation.workspaceId !== workspaceId) {
+		return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
+	}
+
+	// Resolve visibility once and reuse it: the target must be on the branch the
+	// caller is actually looking at, and the "has anyone replied since" guard
+	// must not be tripped by messages on a branch they navigated away from.
+	const branchCondition = await activeBranchCondition(db, id)
+
+	const [message] = await db
+		.select({ id: messages.id, kind: messages.kind, actorId: messages.actorId })
+		.from(messages)
+		.where(and(eq(messages.id, messageId), eq(messages.conversationId, id), branchCondition))
+		.limit(1)
+	if (!message || message.kind !== 'message') {
+		return c.json(createApiError('NOT_FOUND', 'Message not found'), 404)
+	}
+	if (message.actorId !== callerId) {
+		return c.json(createApiError('FORBIDDEN', 'Only the author of a message can rewind to it'), 403)
+	}
+
+	// Rewinding discards the tail for everyone in the conversation, so it is only
+	// offered while that tail is the caller's own exchange with agents. Another
+	// person's message in between makes this destructive to them; agent replies
+	// do not, since re-running them is exactly what the caller is asking for.
+	const [blocker] = await db
+		.select({ id: messages.id })
+		.from(messages)
+		.innerJoin(actors, eq(actors.id, messages.actorId))
+		.where(
+			and(
+				eq(messages.conversationId, id),
+				gt(messages.id, messageId),
+				eq(messages.kind, 'message'),
+				ne(messages.actorId, callerId),
+				eq(actors.type, 'human'),
+				branchCondition,
+			),
+		)
+		.limit(1)
+	if (blocker) {
+		return c.json(
+			createApiError(
+				'CONFLICT',
+				'Someone else has replied since this message — rewinding would remove their message from the thread.',
+			),
+			409,
+		)
+	}
+
+	// Fork the branch, switch the conversation onto it, and re-post the target
+	// as ONE transaction.
+	//
+	// These three writes are not independently useful. If the re-post fails
+	// after the switch has committed (insertConversationMessage returns null on
+	// its unique-constraint path, and any write can fail outright), the
+	// conversation is left active on a branch holding zero messages — and
+	// buildBranchPoints deliberately drops a fork point whose active option has
+	// no first message, so no switcher renders and the user has no UI route back
+	// to the parent branch. Rolling back is the only recoverable outcome.
+	let branch: typeof conversationBranches.$inferSelect
+	let created: NonNullable<Awaited<ReturnType<typeof insertConversationMessage>>>
+	try {
+		const result = await db.transaction(async (tx) => {
+			const [insertedBranch] = await tx
+				.insert(conversationBranches)
+				.values({
+					conversationId: id,
+					parentBranchId: row.conversation.activeBranchId,
+					forkedFromMessageId: messageId,
+					createdBy: callerId,
+				})
+				.returning()
+			if (!insertedBranch) throw new Error('branch insert returned no row')
+
+			await tx
+				.update(conversations)
+				.set({ activeBranchId: insertedBranch.id, updatedAt: new Date() })
+				.where(eq(conversations.id, id))
+
+			// Re-post the target onto the new branch. The original stays put on
+			// the parent branch — switching back shows the thread exactly as it
+			// was.
+			const [original] = await tx
+				.select({ content: messages.content, metadata: messages.metadata })
+				.from(messages)
+				.where(eq(messages.id, messageId))
+				.limit(1)
+			const insertedMessage = await insertConversationMessage(tx, {
+				conversationId: id,
+				workspaceId,
+				actorId: callerId,
+				content: original?.content ?? '',
+				metadata: (original?.metadata as MessageMetadata | null) ?? null,
+				sessionId: null,
+				branchId: insertedBranch.id,
+			})
+			if (!insertedMessage) throw new Error('re-posted message was suppressed by a conflict')
+
+			await tx.insert(events).values({
+				workspaceId,
+				actorId: callerId,
+				action: 'conversation_rewound',
+				entityType: 'conversation',
+				entityId: id,
+				data: {
+					branch_id: insertedBranch.id,
+					parent_branch_id: row.conversation.activeBranchId,
+					rewound_to_message_id: messageId,
+					new_message_id: insertedMessage.id,
+				},
+			})
+
+			return { branch: insertedBranch, created: insertedMessage }
+		})
+		branch = result.branch
+		created = result.created
+	} catch (err: unknown) {
+		// Nothing committed, so the conversation is still on its original branch
+		// and the thread is intact. Log it — a bare 500 here was previously the
+		// only trace of a rewind that corrupted the conversation.
+		logger.error('Conversation rewind failed — rolled back', {
+			conversationId: id,
+			messageId,
+			error: String(err),
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to rewind conversation'), 500)
+	}
+
+	// Work out where each agent's CLI transcript should be re-opened BEFORE
+	// stopping anything — this reads the live sessions' cliSessionId and their
+	// delivered-turn log.
+	const resumeTargets = await resolveConversationResumeTargets(db, id, messageId)
+
+	// Then drop the live sessions. Their CLI processes hold the discarded tail in
+	// memory, and no amount of DB filtering removes it; ending the session is the
+	// only way to make an agent forget. The replacement session re-opens the same
+	// transcript truncated at the rewind point, so the agent keeps everything
+	// that came *before* — the point of doing this via --resume rather than a
+	// cold restart.
+	//
+	// Waits for each stopped session's workspace snapshot: that snapshot is what
+	// the replacement restores the transcript from, and it is only written after
+	// the container exits.
+	const teardown = await stopConversationSessions(db, sessionManager, id, { awaitSnapshot: true })
+
+	const resumeByAgent = new Map(
+		resumeTargets.map((t) => [
+			t.agentId,
+			{ cliSessionId: t.cliSessionId, turnOrdinal: t.turnOrdinal, sessionId: t.sessionId },
+		]),
+	)
+	logger.info('Conversation rewound', {
+		conversationId: id,
+		branchId: branch.id,
+		rewoundToMessageId: messageId,
+		// An agent absent here restarts cold: correct, but it re-reads a short
+		// history blob instead of its real transcript. Worth noticing if it is
+		// happening on every rewind rather than occasionally — hence the
+		// denominator, without which "0 resumable" reads the same whether there
+		// were no live sessions or three that all failed to resolve.
+		resumableAgents: resumeTargets.length,
+		liveSessions: teardown.liveSessions,
+		stopFailed: teardown.stopFailed,
+		snapshotTimedOut: teardown.snapshotTimedOut,
+	})
+
+	evaluateAndRespond({
+		db,
+		sessionManager,
+		workspaceId,
+		conversationId: id,
+		messageId: created.id,
+		options: { forceRespond: true, resumeByAgent },
+	}).catch((err: unknown) =>
+		logger.error('Conversation responder failed after rewind', {
+			conversationId: id,
+			messageId: created.id,
+			error: String(err),
+		}),
+	)
+
+	const [caller] = await db
+		.select({ name: actors.name, type: actors.type })
+		.from(actors)
+		.where(eq(actors.id, callerId))
+		.limit(1)
+
+	return c.json(
+		{
+			branch_id: branch.id,
+			message: serialize({
+				...created,
+				actorName: caller?.name ?? 'Unknown',
+				actorType: caller?.type ?? 'human',
+			}) as z.infer<typeof messageResponseSchema>,
+		},
+		202,
+	)
+}) as RouteHandler<typeof rewindMessageRoute, Env>)
+
+// POST /:id/branch - Switch which branch of the conversation is live
+const switchBranchRoute = createRoute({
+	method: 'post',
+	path: '/{id}/branch',
+	tags: ['Conversations'],
+	summary: 'Switch the conversation to a different branch',
+	request: {
+		headers: workspaceIdHeader,
+		params: idParamSchema,
+		body: {
+			content: {
+				'application/json': {
+					// null switches back to the root branch — the conversation as it
+					// was before anyone rewound it.
+					schema: z.object({ branch_id: z.string().uuid().nullable() }),
+				},
+			},
+		},
+	},
+	responses: {
+		200: {
+			content: {
+				'application/json': { schema: z.object({ branch_id: z.string().uuid().nullable() }) },
+			},
+			description: 'Branch switched',
+		},
+		404: { content: { 'application/json': { schema: errorSchema } }, description: 'Not found' },
+	},
+})
+
+app.openapi(switchBranchRoute, (async (c) => {
+	const db = c.get('db')
+	const sessionManager = c.get('sessionManager')
+	const callerId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { id } = c.req.valid('param')
+	const { branch_id: branchId } = c.req.valid('json')
+
+	const row = await loadConversationWithAuth(db, id, callerId)
+	if (!row || row.conversation.workspaceId !== workspaceId) {
+		return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
+	}
+	if (row.conversation.activeBranchId === branchId) {
+		return c.json({ branch_id: branchId }, 200)
+	}
+
+	// Scoped to this conversation, so a branch id belonging to another
+	// conversation can't be used to graft an unrelated thread onto this one.
+	if (branchId) {
+		const [branch] = await db
+			.select({ id: conversationBranches.id })
+			.from(conversationBranches)
+			.where(
+				and(eq(conversationBranches.id, branchId), eq(conversationBranches.conversationId, id)),
+			)
+			.limit(1)
+		if (!branch) {
+			return c.json(createApiError('NOT_FOUND', 'Branch not found'), 404)
+		}
+	}
+
+	await db
+		.update(conversations)
+		.set({ activeBranchId: branchId, updatedAt: new Date() })
+		.where(eq(conversations.id, id))
+
+	await db.insert(events).values({
+		workspaceId,
+		actorId: callerId,
+		action: 'conversation_branch_switched',
+		entityType: 'conversation',
+		entityId: id,
+		data: { branch_id: branchId, previous_branch_id: row.conversation.activeBranchId },
+	})
+
+	// Same reason as rewind: a live session's context belongs to the branch it
+	// was seeded on, so it must not keep answering on a different one.
+	await stopConversationSessions(db, sessionManager, id)
+
+	return c.json({ branch_id: branchId }, 200)
+}) as RouteHandler<typeof switchBranchRoute, Env>)
 
 // PATCH /:id/me - Caller's own pin/archive/read state
 const updateMeRoute = createRoute({

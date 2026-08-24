@@ -7,6 +7,7 @@ import type { LLMTool } from '../lib/llm/adapter'
 import { createLLMAdapter } from '../lib/llm/index'
 import { logger } from '../lib/logger'
 import type { WorkspaceSettings } from '../lib/types'
+import { activeBranchCondition } from './conversation-branches'
 import { formatConversationTranscript } from './conversation-responder'
 
 /**
@@ -88,10 +89,14 @@ export async function maybeGenerateConversationTitle(ctx: {
 	const state = conversation.titleAutoState as TitleAutoState
 	if (state === 'refined' || state === 'manual') return
 
+	// Title from the active branch only — a rewound-away tail should not keep
+	// influencing (or re-triggering) the auto-title.
+	const branchCondition = await activeBranchCondition(db, conversationId)
+
 	const [countRow] = await db
 		.select({ value: count() })
 		.from(messages)
-		.where(eq(messages.conversationId, conversationId))
+		.where(and(eq(messages.conversationId, conversationId), branchCondition))
 	const messageCount = countRow?.value ?? 0
 
 	let target: TitleAutoState
@@ -167,7 +172,7 @@ export async function maybeGenerateConversationTitle(ctx: {
 			.select({ actorName: actors.name, content: messages.content })
 			.from(messages)
 			.innerJoin(actors, eq(actors.id, messages.actorId))
-			.where(eq(messages.conversationId, conversationId))
+			.where(and(eq(messages.conversationId, conversationId), branchCondition))
 			.orderBy(asc(messages.id))
 			.limit(contextLimit)
 		if (historyRows.length === 0) {

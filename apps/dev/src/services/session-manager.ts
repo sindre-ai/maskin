@@ -1,4 +1,5 @@
 import { execFile as execFileCb } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -84,6 +85,7 @@ import {
 } from './agent-server-client'
 import { AgentStorageManager, type PullWorkspaceSkillsResult } from './agent-storage'
 import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './container-manager'
+import { activeBranchCondition } from './conversation-branches'
 import { InteractiveTurnFinalizer } from './interactive-turn-finalizer'
 import { type RuntimeEndReason, RuntimeTelemetry } from './runtime-telemetry'
 import type { SessionDispatchQueue } from './session-dispatch-queue'
@@ -97,6 +99,14 @@ import { buildWorkspaceStartupBlock, renderWorkspaceBriefing } from './workspace
  * stable group-by key from day one.
  */
 const LOCAL_RUNTIME_BUCKET = 'local-docker'
+
+/**
+ * Cap on the in-memory ledger of sessions whose post-exit snapshot has been
+ * attempted (see `waitForWorkspaceSnapshot`). Entries only need to survive the
+ * seconds between a session stopping and its replacement restoring, so this is
+ * a leak guard rather than a tuned capacity.
+ */
+const SNAPSHOT_LEDGER_LIMIT = 1000
 
 /**
  * Mirrors the allowlist regex enforced on the API side by
@@ -1014,6 +1024,60 @@ export class SessionManager extends EventEmitter {
 		logger.info('Workspace snapshot saved', { sessionId })
 	}
 
+	/**
+	 * Resolves once this session's post-exit workspace snapshot has been
+	 * attempted, so a replacement session that restores from it via
+	 * `sourceSessionId` finds something there.
+	 *
+	 * Needed because `stopSession` returns as soon as the container is asked to
+	 * stop — the snapshot runs later, from `handleCompletion` on the exit
+	 * watcher. A caller that stops a session and immediately spawns its
+	 * replacement (conversation rewind) would otherwise race the snapshot and
+	 * silently start from an empty workspace, losing the CLI transcript the
+	 * rewind exists to resume.
+	 *
+	 * Resolves `true` once the snapshot has been attempted (successfully or
+	 * not), `false` on timeout. Never rejects: a rewind must still proceed, just
+	 * cold, if the snapshot never lands.
+	 */
+	async waitForWorkspaceSnapshot(sessionId: string, timeoutMs = 60_000): Promise<boolean> {
+		// The snapshot may already have completed before we started waiting —
+		// check the ledger first, or we'd wait for an event that never comes.
+		if (this.snapshotAttempted.has(sessionId)) return true
+
+		return await new Promise<boolean>((resolve) => {
+			const done = (result: boolean) => {
+				clearTimeout(timer)
+				this.off('workspace-snapshotted', onSnapshot)
+				resolve(result)
+			}
+			const onSnapshot = (id: string) => {
+				if (id === sessionId) done(true)
+			}
+			const timer = setTimeout(() => {
+				logger.warn('Timed out waiting for workspace snapshot', { sessionId, timeoutMs })
+				done(false)
+			}, timeoutMs)
+			this.on('workspace-snapshotted', onSnapshot)
+		})
+	}
+
+	/**
+	 * Sessions whose post-exit snapshot has been attempted. Bounded by
+	 * `SNAPSHOT_LEDGER_LIMIT` — this only has to outlive the gap between a stop
+	 * and the replacement session's restore, not the process.
+	 */
+	private readonly snapshotAttempted = new Set<string>()
+
+	private markSnapshotAttempted(sessionId: string): void {
+		if (this.snapshotAttempted.size >= SNAPSHOT_LEDGER_LIMIT) {
+			const oldest = this.snapshotAttempted.values().next().value
+			if (oldest !== undefined) this.snapshotAttempted.delete(oldest)
+		}
+		this.snapshotAttempted.add(sessionId)
+		this.emit('workspace-snapshotted', sessionId)
+	}
+
 	async pauseSession(sessionId: string): Promise<void> {
 		const [session] = await this.db
 			.select()
@@ -1587,6 +1651,33 @@ export class SessionManager extends EventEmitter {
 		}
 		envVars.MASKIN_API_KEY = agent.apiKey
 
+		// Hand the CLI a session id we choose, so its own transcript is
+		// addressable without parsing the stream-json system/init line. This is
+		// what lets a rewound conversation resume that transcript instead of
+		// re-seeding a cold session from a truncated history blob. Persisted so
+		// a later rewind can find it. See docker/agent-base/agent-run.sh.
+		if (session.interactive) {
+			const cliSessionId = session.cliSessionId ?? randomUUID()
+			envVars.CLAUDE_SESSION_ID = cliSessionId
+			if (!session.cliSessionId) {
+				await this.db.update(sessions).set({ cliSessionId }).where(eq(sessions.id, session.id))
+			}
+
+			// Set by the rewind path (routes/conversations.ts) via session config.
+			// Absent for a normal session, in which case the CLI starts cold.
+			const resume = (sessionConfig.resume ?? null) as {
+				cli_session_id?: string
+				turn_ordinal?: number
+			} | null
+			if (resume?.cli_session_id && typeof resume.turn_ordinal === 'number') {
+				envVars.CLAUDE_RESUME_SESSION_ID = resume.cli_session_id
+				// An ordinal, not a uuid: the transcript's own uuids are only
+				// readable from inside the sandbox, so agent-run.sh resolves this
+				// into one. See services/conversation-rewind.ts.
+				envVars.CLAUDE_RESUME_TURN_ORDINAL = String(resume.turn_ordinal)
+			}
+		}
+
 		// Agent-level MCP config (from tools field, stored as { mcpServers: { ... } }).
 		// The AGENT_MCP_JSON env var is written further down, after the GitHub
 		// preflight has had a chance to strip failed identities from
@@ -1796,6 +1887,11 @@ export class SessionManager extends EventEmitter {
 			'CLAUDE_OAUTH_EXPIRES_AT',
 			'CLAUDE_OAUTH_SCOPES',
 			'CLAUDE_OAUTH_SUBSCRIPTION_TYPE',
+			// Reserved, not merely injected: a user-supplied CLAUDE_RESUME_* would
+			// let a session graft another session's transcript into its context.
+			'CLAUDE_SESSION_ID',
+			'CLAUDE_RESUME_SESSION_ID',
+			'CLAUDE_RESUME_TURN_ORDINAL',
 			'BROWSER_CDP_URL',
 		])
 		// Only reserve GITHUB_TOKEN when we actually injected one; otherwise a
@@ -2719,6 +2815,9 @@ export class SessionManager extends EventEmitter {
 				error: String(err),
 			}),
 		)
+		// Signal even on failure: a waiter wants to know the snapshot will never
+		// arrive, not to sit until its timeout. Both outcomes mean "stop waiting".
+		this.markSnapshotAttempted(sessionId)
 
 		// Cleanup
 		this.containers.detachStdin(sessionId)
@@ -2801,10 +2900,20 @@ export class SessionManager extends EventEmitter {
 		session: typeof sessions.$inferSelect,
 	): Promise<boolean> {
 		if (!session.conversationId) return false
+		// Branch-scoped like every other `messages` read: after a rewind or a
+		// branch switch the globally-newest row can sit on a branch nobody is
+		// reading, which would decide this session's terminal status off a
+		// conversation the user has navigated away from.
 		const [newest] = await this.db
 			.select({ actorId: messages.actorId })
 			.from(messages)
-			.where(and(eq(messages.conversationId, session.conversationId), eq(messages.kind, 'message')))
+			.where(
+				and(
+					eq(messages.conversationId, session.conversationId),
+					eq(messages.kind, 'message'),
+					await activeBranchCondition(this.db, session.conversationId),
+				),
+			)
 			.orderBy(desc(messages.id))
 			.limit(1)
 		return newest !== undefined && newest.actorId !== session.actorId
@@ -3771,6 +3880,34 @@ export class SessionManager extends EventEmitter {
 	 * failure instead of reporting success.
 	 */
 	async markRemoteSessionComplete(
+		sessionId: string,
+		exitCode: number | null,
+		opts: { stoppedByUser?: boolean } = {},
+	): Promise<boolean> {
+		// Signal the workspace snapshot on EVERY exit path, including the early
+		// no-op returns and a thrown error.
+		//
+		// The local Docker path signals from handleCompletion() after taking the
+		// snapshot itself. On this path the snapshot is not ours to take: the
+		// agent-server has already pushed /agent/ to S3 (pushSessionWorkspace)
+		// before it reports /complete, so by the time we are called the tarball
+		// is either there or never coming — exactly the condition
+		// waitForWorkspaceSnapshot is waiting on.
+		//
+		// Without this, no emitter existed on the remote path at all, so every
+		// production rewind sat out waitForWorkspaceSnapshot's full 60s timeout
+		// and then started cold anyway. try/finally rather than a call at the
+		// end because the early returns below (already-terminal, row not found,
+		// DB unreachable) are precisely the cases where a waiter must stop
+		// waiting soonest.
+		try {
+			return await this.markRemoteSessionCompleteInner(sessionId, exitCode, opts)
+		} finally {
+			this.markSnapshotAttempted(sessionId)
+		}
+	}
+
+	private async markRemoteSessionCompleteInner(
 		sessionId: string,
 		exitCode: number | null,
 		opts: { stoppedByUser?: boolean } = {},

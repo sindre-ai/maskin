@@ -8,9 +8,11 @@ import {
 } from '@/hooks/use-conversation'
 import type { MessageTurnActivity } from '@/hooks/use-conversation-activity'
 import { useConversationActivity } from '@/hooks/use-conversation-activity'
-import type { MessageResponse } from '@/lib/api'
+import type { BranchPoint, MessageResponse } from '@/lib/api'
+import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { BranchSwitcher } from './branch-switcher'
 import { MessageActivity } from './message-activity'
 import { MessageBubble } from './message-bubble'
 import { MessageDivider, isNewDay } from './message-divider'
@@ -25,6 +27,21 @@ export function ThreadMessages({ workspaceId, conversationId, className }: Threa
 	const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
 		useConversationMessages(conversationId, workspaceId)
 	const messages = flattenMessagesOldestFirst(data)
+	const ownActorId = getStoredActor()?.id ?? null
+	// Fork points describe the whole conversation rather than a page of it, and
+	// only the newest page carries them — so paging older messages in must not
+	// drop them.
+	//
+	// Live "Finishing up…" bubbles need no branch filtering here: they hang off
+	// message ids, and `messages` is already branch-filtered by the server. The
+	// unkeyed `fallback` turns drain on their own, because both rewinding and
+	// switching branches stop every live session on the conversation server-side
+	// (stopConversationSessions in routes/conversations.ts).
+	const branchPointsByMessageId = useMemo(() => {
+		const map = new Map<number, BranchPoint>()
+		for (const point of data?.pages[0]?.branch_points ?? []) map.set(point.messageId, point)
+		return map
+	}, [data])
 	// Reuses the same query the route already fetches for the header/composer
 	// (queryKeys.conversations.detail) — no extra network round trip.
 	const { data: conversation } = useConversation(conversationId, workspaceId)
@@ -162,6 +179,20 @@ export function ThreadMessages({ workspaceId, conversationId, className }: Threa
 								message={message}
 								participantNames={participantNames}
 							/>
+							{(() => {
+								const branchPoint = branchPointsByMessageId.get(message.id)
+								if (!branchPoint) return null
+								return (
+									<BranchSwitcher
+										workspaceId={workspaceId}
+										conversationId={conversationId}
+										branchPoint={branchPoint}
+										// Sits under the bubble it forks from, so it follows that
+										// bubble's alignment rather than the column's.
+										className={message.actorId === ownActorId ? 'self-end' : 'self-start'}
+									/>
+								)
+							})()}
 							{turnsBelowHere.map((turn, turnIndex) => (
 								<MessageActivity
 									key={`${turn.sessionId}-below-${turnIndex}`}
