@@ -53,10 +53,18 @@ const RECONNECT_DELAY_MS = num('INPUT_STREAM_RECONNECT_DELAY_MS', 1_000)
  */
 let lastSeq = 0
 let consecutiveFailures = 0
+/**
+ * Which server seq space `lastSeq` belongs to. Seqs live in the agent-server's
+ * memory, so a restart hands out seq 1 again while this process is still
+ * holding a mark of, say, 12 — without this, every new turn would look like an
+ * already-seen replay and be discarded forever.
+ */
+let epoch = null
 
 const connect = () => {
 	const url = new URL(`${AGENT_SERVER_URL}/sessions/${SESSION_ID}/input/stream`)
 	url.searchParams.set('after', String(lastSeq))
+	if (epoch !== null) url.searchParams.set('epoch', epoch)
 	const client = url.protocol === 'https:' ? https : http
 
 	let gotResponse = false
@@ -131,9 +139,22 @@ const handleLine = (line) => {
 		process.stderr.write('[system] input-stream: dropping line with no turn/seq\n')
 		return
 	}
+
+	// A new seq space (agent-server restarted). Our mark names turns this
+	// server never sent, so it is meaningless — reset and take what it gives us.
+	if (parsed.maskin_epoch !== undefined && parsed.maskin_epoch !== epoch) {
+		if (epoch !== null) {
+			process.stderr.write('[system] input stream: agent-server restarted, resyncing turns\n')
+		}
+		epoch = parsed.maskin_epoch
+		lastSeq = 0
+	}
+
 	// Already consumed on an earlier connection — the server replays anything
 	// it has not seen acked, which after a lost ack can include turns we did
 	// deliver. Skipping them keeps redelivery from duplicating a user message.
+	// Within one epoch a seq can only repeat as a genuine replay, so this is
+	// expected and silent; a regression across epochs is handled above.
 	if (parsed.maskin_seq <= lastSeq) return
 
 	// Write the envelope through verbatim: these are the exact bytes apps/dev
@@ -167,9 +188,26 @@ const retry = () => {
 	}, RECONNECT_DELAY_MS)
 }
 
-// Never exit on its own: this process's stdout IS the CLI's stdin, and closing
-// it mid-conversation EOFs the agent and wedges the session for good.
+// Our stdout IS the CLI's stdin. Once the CLI is gone that pipe is broken, and
+// staying alive is actively destructive: every write fails, yet `lastSeq` keeps
+// advancing and the next re-dial acks those turns away. That is the original
+// bug — a "delivery" that delivers nothing — rebuilt on the guest side. So a
+// dead pipe is terminal, and we exit and let the session tear down.
+//
+// This is the exception to "never exit": the no-exit rule exists to protect a
+// LIVE CLI from an EOF on its stdin. There is nothing left to protect here.
+process.stdout.on('error', (err) => {
+	process.stderr.write(`[system] input stream: stdout closed (${err?.code ?? err?.message})\n`)
+	process.exit(1)
+})
+
+// Anything else: keep the CLI's stdin open — closing it mid-conversation EOFs
+// the agent and wedges the session for good — and retry.
 process.on('uncaughtException', (err) => {
+	if (err?.code === 'EPIPE' || err?.code === 'ERR_STREAM_DESTROYED') {
+		process.stderr.write(`[system] input stream: stdout closed (${err.code})\n`)
+		process.exit(1)
+	}
 	process.stderr.write(`[system] input-stream: ${err?.message}\n`)
 	retry()
 })

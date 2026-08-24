@@ -224,6 +224,79 @@ describe('InputQueue', () => {
 			expect(seen).toEqual([1, 2])
 		})
 
+		// Review catch: registering the flusher only after a single snapshot
+		// pass left a window where an arriving turn found no stream, was parked,
+		// and was never picked up — then a later live turn moved the VM's ack
+		// past it and deleted it. Reproduced as seen === [1, 3].
+		it('delivers a turn that arrives mid-replay, in order, without skipping it', async () => {
+			const queue = new InputQueue()
+			await queue.enqueue('s1', 'A\n')
+
+			const seen: number[] = []
+			let release!: () => void
+			const gate = new Promise<void>((resolve) => {
+				release = resolve
+			})
+			// Replay of A blocks, modelling a slow socket write.
+			const registering = queue.registerStream(
+				's1',
+				async (_line, seq) => {
+					seen.push(seq)
+					if (seq === 1) await gate
+					return true
+				},
+				0,
+			)
+
+			await new Promise((r) => setTimeout(r, 10))
+			const b = queue.enqueue('s1', 'B\n') // lands mid-replay
+			release()
+			await registering
+			await b
+			await queue.enqueue('s1', 'C\n') // lands after registration
+			await new Promise((r) => setTimeout(r, 10))
+
+			expect(seen).toEqual([1, 2, 3])
+		})
+
+		// Review catch: seqs are per-process. A restarted agent-server hands out
+		// seq 1 again while the VM still holds a mark of 12 — the guest would
+		// discard every new turn as already-seen, and this ack would delete
+		// them. An ack is only valid against the seq space that minted it.
+		it('ignores an ack minted by a previous agent-server process', async () => {
+			const queue = new InputQueue()
+			await queue.enqueue('s1', 'after-restart\n') // seq 1 in the new epoch
+
+			const received: string[] = []
+			await queue.registerStream(
+				's1',
+				async (line) => {
+					received.push(line)
+					return true
+				},
+				12, // stale high-water mark from before the restart
+				'epoch-from-a-previous-process',
+			)
+			expect(received).toEqual(['after-restart\n'])
+		})
+
+		it('honours an ack minted by this process', async () => {
+			const queue = new InputQueue()
+			await queue.enqueue('s1', 'turn1\n')
+
+			const received: string[] = []
+			await queue.registerStream(
+				's1',
+				async (line) => {
+					received.push(line)
+					return true
+				},
+				1,
+				queue.epoch,
+			)
+			expect(received).toEqual([])
+		})
+
 		it('bounds the unacked buffer so a permanently dead stream cannot grow it forever', async () => {
 			const queue = new InputQueue()
 			await queue.registerStream('s1', async () => true)

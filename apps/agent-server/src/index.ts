@@ -649,6 +649,7 @@ export function buildApp(deps: AppDeps): Hono {
 		if (!SESSION_ID_RE.test(id)) return c.json({ error: 'Invalid session id' }, 400)
 		const rawAfter = Number(c.req.query('after'))
 		const after = Number.isFinite(rawAfter) && rawAfter > 0 ? Math.floor(rawAfter) : 0
+		const epoch = c.req.query('epoch')
 		return stream(c, async (s) => {
 			let resolveStream!: () => void
 			const done = new Promise<void>((resolve) => {
@@ -658,7 +659,13 @@ export function buildApp(deps: AppDeps): Hono {
 				id,
 				async (line, seq) => {
 					try {
-						await s.write(`${JSON.stringify({ maskin_seq: seq, turn: line.trimEnd() })}\n`)
+						await s.write(
+							`${JSON.stringify({
+								maskin_epoch: inputQueue.epoch,
+								maskin_seq: seq,
+								turn: line.trimEnd(),
+							})}\n`,
+						)
 						return true
 					} catch {
 						resolveStream()
@@ -666,6 +673,7 @@ export function buildApp(deps: AppDeps): Hono {
 					}
 				},
 				after,
+				epoch,
 			)
 			// Between turns this stream carries nothing for however long the
 			// human takes to reply — minutes-long silences that NAT/proxy

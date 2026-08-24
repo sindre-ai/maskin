@@ -43,6 +43,17 @@ export class InputQueue {
 	private seqs = new Map<string, number>()
 
 	/**
+	 * Identifies this queue's seq space. Seqs are in-memory, so a restarted
+	 * agent-server hands out seq 1 again while the VM's sandbox survives with a
+	 * high-water mark of, say, 12 — the guest would discard every new turn as
+	 * already-seen, and the server would ack those turns away on the next
+	 * re-dial. Both sides therefore carry this epoch: the guest resets its mark
+	 * when it changes, and `ackFrom` refuses an ack minted against a different
+	 * one.
+	 */
+	readonly epoch = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+
+	/**
 	 * Register a stream flusher for `sessionId`.
 	 *
 	 * `after` is the VM's high-water mark: the seq of the last turn it actually
@@ -52,17 +63,46 @@ export class InputQueue {
 	 *
 	 * Returns an unregister function to call when the stream closes.
 	 */
-	async registerStream(sessionId: string, flusher: Flusher, after = 0): Promise<() => void> {
-		this.ack(sessionId, after)
+	async registerStream(
+		sessionId: string,
+		flusher: Flusher,
+		after = 0,
+		epoch?: string,
+	): Promise<() => void> {
+		// An ack is only meaningful against the seq space that minted it. A mark
+		// carried over from a previous agent-server process names turns this one
+		// never sent, so honouring it would delete live turns. Treat it as 0:
+		// replay everything and let the guest's own epoch reset dedupe.
+		const staleEpoch = epoch !== undefined && epoch !== this.epoch
+		const ackedThrough = staleEpoch ? 0 : after
+		this.ack(sessionId, ackedThrough)
 
-		// Replay against a snapshot: an await below yields, and a concurrent
-		// enqueue may append to the live array while we are iterating it.
-		const backlog = [...(this.unacked.get(sessionId) ?? [])]
-		for (const turn of backlog) {
-			if (!(await flusher(turn.line, turn.seq))) {
-				// Stream closed mid-replay. Everything stays in `unacked` — it is
-				// only ever removed by an ack — so the next connection replays it.
-				return () => {}
+		// Drain until caught up, THEN register — and never both at once.
+		//
+		// Registering first would let a turn arriving mid-replay overtake the
+		// backlog and reach the CLI out of order. Registering only after a
+		// single snapshot pass leaves a window where an arriving turn finds no
+		// flusher, is parked, and is never picked up: it was not in the
+		// snapshot, so it sits unsent until the next idle re-dial — and if a
+		// later turn is delivered live, the VM's ack jumps past it and deletes
+		// it outright.
+		//
+		// So: loop. Each pass sends whatever is newer than what we have sent.
+		// The exit check and the `streams.set` below run in the same
+		// synchronous step with no await between them, so an enqueue cannot
+		// slip into the gap.
+		let sentUpTo = ackedThrough
+		for (;;) {
+			const backlog = (this.unacked.get(sessionId) ?? []).filter((t) => t.seq > sentUpTo)
+			if (backlog.length === 0) break
+			for (const turn of backlog) {
+				if (!(await flusher(turn.line, turn.seq))) {
+					// Stream closed mid-replay. Everything stays in `unacked` — it
+					// is only ever removed by an ack — so the next connection
+					// replays it.
+					return () => {}
+				}
+				sentUpTo = turn.seq
 			}
 		}
 		this.streams.set(sessionId, flusher)
