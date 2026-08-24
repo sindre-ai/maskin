@@ -21,7 +21,7 @@ export function ReleaseCard() {
 		>
 			<div className="flex items-center gap-[9px] border-b border-muted px-3.5 py-[11px]">
 				<span className="eyebrow shrink-0 tracking-[0.1em]">Update</span>
-				<span className="shrink-0 font-mono text-[10.5px] font-semibold text-border-strong">
+				<span className="shrink-0 font-mono text-[10.5px] font-semibold text-muted-foreground">
 					v{release.version}
 				</span>
 				<span className="flex-1" />
@@ -32,7 +32,7 @@ export function ReleaseCard() {
 						setDismissed(true)
 					}}
 					aria-label="Dismiss the release note"
-					className="grid size-6 shrink-0 place-items-center rounded-md text-border-strong transition-colors duration-150 hover:bg-secondary hover:text-foreground"
+					className="grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors duration-150 hover:bg-secondary hover:text-foreground"
 				>
 					<X aria-hidden className="size-3" />
 				</button>

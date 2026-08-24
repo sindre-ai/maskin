@@ -257,8 +257,13 @@ function ForYouFeed() {
 	// `latest_event_id` has no high-water mark to move, so the request would be
 	// meaningless — callers must not hide such a card, or it silently returns
 	// on the next refetch.
+	//
+	// `onFailed` lets a caller put back state that only it knows it took away —
+	// un-hiding the card is handled here, but a dismissal that also cleared a
+	// decision receipt has to restore that itself, or the card is left in
+	// neither `decided` nor the unread list and disappears for good.
 	const markItemRead = useCallback(
-		(item: UnreadItem) => {
+		(item: UnreadItem, onFailed?: () => void) => {
 			const eventId = item.latest_event_id ?? 0
 			if (eventId <= 0) return false
 			markRead.mutate(
@@ -270,6 +275,7 @@ function ForYouFeed() {
 				{
 					onError: () => {
 						restorePending(feedItemKey(item))
+						onFailed?.()
 						toast.error("Couldn't mark that as read — it's back in your feed.")
 					},
 				},
@@ -322,7 +328,20 @@ function ForYouFeed() {
 			// Only cards whose mark-read actually went out may be hidden. A card
 			// that couldn't be marked stays in the column rather than vanishing
 			// and reappearing on the next refetch.
-			const dismissed = targets.filter((item) => markItemRead(item))
+			//
+			// A dismissed card that already carried a receipt is cleared out of
+			// `decided` below, and the server has already dropped it from unread
+			// — so if the mark-read then fails, nothing else would bring it back.
+			// Restore its receipt alongside the un-hide.
+			const decidedBefore = decided
+			const dismissed = targets.filter((item) =>
+				markItemRead(item, () => {
+					const key = feedItemKey(item)
+					const decision = decidedBefore.get(key)
+					if (!decision) return
+					setDecided((prev) => (prev.has(key) ? prev : new Map(prev).set(key, decision)))
+				}),
+			)
 			if (dismissed.length === 0) {
 				toast.error("Couldn't dismiss those — they're still in your feed.")
 				return
@@ -528,7 +547,7 @@ function ForYouFeed() {
 					</div>
 
 					{tail && (
-						<div className="flex items-center justify-center gap-2 pb-2.5 pt-[34px] text-[11.5px] text-border-strong">
+						<div className="flex items-center justify-center gap-2 pb-2.5 pt-[34px] text-[11.5px] text-muted-foreground">
 							<span className="h-px w-10 bg-border" />
 							{tail}
 							<span className="h-px w-10 bg-border" />

@@ -1,6 +1,7 @@
 import { CommentInput } from '@/components/activity/comment-input'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { QueryStateError } from '@/components/shared/query-state'
+import { RelativeTime } from '@/components/shared/relative-time'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { useActors } from '@/hooks/use-actors'
@@ -14,7 +15,7 @@ import {
 	type CardKind,
 	classifyCardKind,
 } from '@/lib/foryou-card-kind'
-import { compactTime, heldNote } from '@/lib/foryou-feed'
+import { heldNote } from '@/lib/foryou-feed'
 import { Link } from '@tanstack/react-router'
 import { ArrowUpRight, Check, ChevronDown, ChevronUp } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -65,7 +66,6 @@ export function FeedCard({
 	const title = object?.title?.trim() || 'Untitled'
 	const why = object?.content?.trim() ?? ''
 	const status = object?.status
-	const time = compactTime(item.latest_activity_at)
 
 	const { data: actors } = useActors(workspaceId)
 	const driver = useMemo(
@@ -98,6 +98,17 @@ export function FeedCard({
 	const held = decided || waiting ? '' : heldNote(item.latest_activity_at)
 
 	const [pendingId, setPendingId] = useState<string | null>(null)
+	// The acknowledgement beat below posts a real reply when it fires, so the
+	// timer has to die with the card. A bulk dismiss ("Dismiss all", Alt+U)
+	// unmounts mid-beat, and an uncancelled timer would comment on a thread the
+	// reader just cleared.
+	const decideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+	useEffect(
+		() => () => {
+			if (decideTimer.current) clearTimeout(decideTimer.current)
+		},
+		[],
+	)
 	const chooseOption = useCallback(
 		(option: CardAction) => {
 			if (pendingId) return
@@ -105,7 +116,8 @@ export function FeedCard({
 			setPendingId(option.id)
 			// Short beat on the bar before the card flips to its receipt, the way
 			// the mockup acknowledges the tap.
-			setTimeout(() => {
+			decideTimer.current = setTimeout(() => {
+				decideTimer.current = null
 				setPendingId(null)
 				onDecide({ id: option.id, label: option.label })
 			}, 260)
@@ -147,9 +159,12 @@ export function FeedCard({
 						</span>
 					</button>
 					<MarkReadButton onMarkRead={onMarkRead} />
-					<span className="shrink-0 font-mono text-[10px] font-medium text-border-strong">
-						{time}
-					</span>
+					<RelativeTime
+						date={item.latest_activity_at}
+						compact
+						compactDayLimit={7}
+						className="shrink-0 font-mono text-[10px] font-medium uppercase tabular-nums text-muted-foreground"
+					/>
 				</div>
 			</CardShell>
 		)
@@ -185,16 +200,19 @@ export function FeedCard({
 					) : (
 						status && <StatusBadge status={status} variant="word" className="text-[11px]" />
 					)}
-					<span className="shrink-0 font-mono text-[10px] font-medium text-border-strong">
-						{time}
-					</span>
+					<RelativeTime
+						date={item.latest_activity_at}
+						compact
+						compactDayLimit={7}
+						className="shrink-0 font-mono text-[10px] font-medium uppercase tabular-nums text-muted-foreground"
+					/>
 					<MarkReadButton onMarkRead={onMarkRead} />
 					{onToggleExpanded && (
 						<button
 							type="button"
 							aria-label="Collapse"
 							onClick={onToggleExpanded}
-							className="grid size-[22px] shrink-0 self-center place-items-center rounded-sm text-border-strong hover:bg-secondary hover:text-foreground"
+							className="grid size-[22px] shrink-0 self-center place-items-center rounded-sm text-muted-foreground hover:bg-secondary hover:text-foreground"
 						>
 							<ChevronUp size={11} aria-hidden />
 						</button>
@@ -363,7 +381,7 @@ function MarkReadButton({ onMarkRead }: { onMarkRead: () => void }) {
 				event.stopPropagation()
 				onMarkRead()
 			}}
-			className="grid size-[22px] shrink-0 place-items-center rounded-sm text-border-strong hover:bg-secondary hover:text-foreground can-hover:opacity-0 can-hover:focus-visible:opacity-100 can-hover:group-hover/card:opacity-100"
+			className="grid size-[22px] shrink-0 place-items-center rounded-sm text-muted-foreground hover:bg-secondary hover:text-foreground can-hover:opacity-0 can-hover:focus-visible:opacity-100 can-hover:group-hover/card:opacity-100"
 		>
 			<Check size={12} aria-hidden />
 		</button>
@@ -412,7 +430,7 @@ function TimelineHistory({
 				onClick={() => setStage(1)}
 				className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap text-[10.5px] font-semibold text-muted-foreground hover:text-foreground"
 			>
-				<ChevronDown size={8} aria-hidden className="text-border-strong" />
+				<ChevronDown size={8} aria-hidden className="text-muted-foreground" />
 				Show timeline history
 			</button>
 		)
@@ -427,7 +445,7 @@ function TimelineHistory({
 					<button
 						type="button"
 						onClick={() => setStage(0)}
-						className="shrink-0 text-[10.5px] font-semibold text-border-strong hover:text-foreground"
+						className="shrink-0 text-[10.5px] font-semibold text-muted-foreground hover:text-foreground"
 					>
 						Hide
 					</button>
@@ -485,9 +503,12 @@ function TimelineMessage({
 			<div className="min-w-0 flex-1">
 				<div className="flex items-baseline gap-[7px]">
 					<span className="text-[11px] font-bold text-foreground">{author?.name ?? 'Unknown'}</span>
-					<span className="font-mono text-[9.5px] font-medium text-border-strong">
-						{compactTime(event.createdAt)}
-					</span>
+					<RelativeTime
+						date={event.createdAt}
+						compact
+						compactDayLimit={7}
+						className="font-mono text-[9.5px] font-medium uppercase tabular-nums text-muted-foreground"
+					/>
 				</div>
 				<div className="mt-px line-clamp-3 text-[12px] leading-[1.5] text-pretty text-muted-foreground">
 					{content}

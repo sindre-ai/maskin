@@ -80,7 +80,12 @@ describe('FeedCard — row state', () => {
 		expect(screen.getByText('Merge the trigger settings rewrite?')).toBeInTheDocument()
 		expect(screen.getByLabelText('Status in review')).toBeInTheDocument()
 		expect(screen.getByText('Code Reviewer')).toBeInTheDocument()
-		expect(screen.getByText('5H')).toBeInTheDocument()
+		// `RelativeTime` emits "5h"; the feed's uppercase is a CSS transform, so
+		// the accessible text stays lowercase.
+		const age = screen.getByText('5h')
+		expect(age).toBeInTheDocument()
+		expect(age.tagName).toBe('TIME')
+		expect(age.className).toContain('tabular-nums')
 		// The body only exists in the expanded state.
 		expect(screen.queryByTestId('comment-input')).not.toBeInTheDocument()
 
@@ -145,6 +150,23 @@ describe('FeedCard — full state', () => {
 		await user.click(screen.getByRole('button', { name: 'Approve' }))
 		await waitFor(() => expect(onDecide).toHaveBeenCalledTimes(1))
 		expect(onDecide.mock.calls[0]?.[0]).toMatchObject({ id: 'approve', label: 'Approve' })
+	})
+
+	// The option is acknowledged with a 260ms beat before `onDecide` fires, and
+	// `onDecide` posts a real reply. A bulk dismiss unmounts the card inside that
+	// window, so an uncancelled timer would comment on a thread the reader just
+	// cleared.
+	it('does not decide when the card unmounts during the acknowledgement beat', async () => {
+		const onDecide = vi.fn()
+		const user = userEvent.setup()
+		const { unmount } = renderCard({ onDecide })
+
+		await user.click(screen.getByRole('button', { name: 'Approve' }))
+		unmount()
+		// Comfortably past the 260ms beat — the cancelled timer must never fire.
+		await new Promise((resolve) => setTimeout(resolve, 500))
+
+		expect(onDecide).not.toHaveBeenCalled()
 	})
 
 	it('loads the thread only once the timeline history is opened', async () => {
