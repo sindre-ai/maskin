@@ -56,6 +56,14 @@ const MAX_BATCH_LINES = num('OUTPUT_STREAM_BATCH_LINES', 200)
  * growth in a 4GB VM would eventually kill the agent, which is worse.
  */
 const MAX_BUFFERED_LINES = num('OUTPUT_STREAM_MAX_LINES', 20_000)
+/**
+ * How long to keep retrying after the agent has exited before abandoning
+ * whatever is still buffered. Long enough to ride out an agent-server restart
+ * or deploy, since what is buffered at that moment usually includes the
+ * agent's reply; bounded because the session's completion signal is blocked
+ * until this process exits.
+ */
+const GIVE_UP_AFTER_MS = num('OUTPUT_STREAM_GIVE_UP_MS', 300_000)
 
 /**
  * No agent-server: the local Docker path, where container logs are read
@@ -75,6 +83,8 @@ let nextSeq = 1
 let ackedThrough = 0
 let inFlight = false
 let stdinEnded = false
+/** When the agent exited, i.e. when the give-up clock starts. */
+let endedAt = null
 let dropped = 0
 /** Drops not yet reported to the server in a resync batch. */
 let unreportedDrops = 0
@@ -83,6 +93,8 @@ let consecutiveFailures = 0
 const warn = (message) => process.stderr.write(`[system] output-stream: ${message}\n`)
 
 const enqueue = (text) => {
+	// Blank lines carry nothing and the old path skipped them too.
+	if (!text.trimEnd()) return
 	pending.push({ seq: nextSeq++, text })
 	if (pending.length > MAX_BUFFERED_LINES) {
 		const lost = pending.length - MAX_BUFFERED_LINES
@@ -187,16 +199,67 @@ const fail = (reason) => {
 	if (consecutiveFailures <= 3 || consecutiveFailures % 30 === 0) {
 		warn(`${reason} (attempt ${consecutiveFailures}, ${pending.length} lines buffered)`)
 	}
-	if (stdinEnded && consecutiveFailures >= 20) {
-		// The agent is gone and the server has been unreachable for ~7 minutes.
-		// Holding the pipeline open past this only delays the session's own
-		// completion signal.
-		warn(`giving up with ${pending.length} lines undelivered`)
-		process.exit(1)
+	// Budget on elapsed time, not attempt count. Counting attempts assumed each
+	// one costs a full request timeout, but the common failure — the
+	// agent-server restarting — is an instant ECONNREFUSED, and retries are
+	// paced only by the 1s flush interval. 20 attempts was therefore ~20s of
+	// real time, measured at 19.2s, which a routine restart exceeds. By then
+	// stdin has ended, so the buffered lines include the result envelope: the
+	// reply is destroyed. Same symptom as the bug this file was written to fix.
+	if (stdinEnded && Date.now() - (endedAt ?? Date.now()) > GIVE_UP_AFTER_MS) {
+		reportGaveUp()
+		return
 	}
 }
 
 let finished = false
+
+/**
+ * Abandon what is left, but leave a trace somewhere a human will find.
+ *
+ * A one-shot POST to the legacy unacked /logs/ingest endpoint, deliberately
+ * not /logs/batch: the batch path would refuse this line as a sequence gap,
+ * which is the very condition being reported. Best-effort and short — if the
+ * server is still down the marker is lost too, and stderr (written first,
+ * synchronously) is the fallback.
+ *
+ * Exits 0. A log shipper that could not deliver is a degraded session, not a
+ * failed agent, and this process's status is what agent-run.sh reads for the
+ * pipeline. Exiting non-zero here tripped `set -e` before AGENT_EXIT_CODE was
+ * assigned, so the EXIT trap posted its initial 0 — a session that lost its
+ * reply reporting clean success. agent-run.sh now also guards that with
+ * `|| true` inside log_tee; this is the other half.
+ */
+const reportGaveUp = () => {
+	if (finished) return
+	finished = true
+	const elapsed = Math.round((Date.now() - (endedAt ?? Date.now())) / 1000)
+	const summary = `gave up after ${elapsed}s with ${pending.length} line(s) undelivered — some agent output was lost, possibly including its reply`
+	warn(summary)
+	try {
+		const url = new URL(`${AGENT_SERVER_URL}/sessions/${SESSION_ID}/logs/ingest`)
+		const c = url.protocol === 'https:' ? https : http
+		const req = c.request(
+			url,
+			{ method: 'POST', headers: { 'Content-Type': 'text/plain' }, timeout: 5_000 },
+			(res) => {
+				res.resume()
+				res.on('end', () => process.exit(0))
+			},
+		)
+		req.on('error', () => process.exit(0))
+		req.on('timeout', () => {
+			req.destroy()
+			process.exit(0)
+		})
+		// Newline-terminated: consumers re-split these rows, and an unterminated
+		// one is silently dropped.
+		req.end(`[system] output-stream: ${summary}\n`)
+	} catch {
+		process.exit(0)
+	}
+}
+
 const finish = () => {
 	if (finished) return
 	finished = true
@@ -216,7 +279,15 @@ process.stdin.on('data', (chunk) => {
 	buf += chunk
 	let nl = buf.indexOf('\n')
 	while (nl !== -1) {
-		enqueue(buf.slice(0, nl))
+		// Keep the trailing newline. Consumers downstream re-split what they are
+		// given: InteractiveTurnFinalizer runs each stored row through
+		// splitLines(), which pops the final segment as an incomplete
+		// "remainder". A row that does not end in \n therefore yields ZERO lines,
+		// so its `result` envelope is never parsed and the agent's reply is never
+		// posted to the chat — it renders optimistically from the stream and then
+		// turns into "Not saved yet". The old curl upload preserved these bytes
+		// exactly (`buf.slice(0, nl + 1)` in /logs/ingest); this must too.
+		enqueue(buf.slice(0, nl + 1))
 		buf = buf.slice(nl + 1)
 		nl = buf.indexOf('\n')
 	}
@@ -231,10 +302,12 @@ process.stdin.on('end', () => {
 		buf = ''
 	}
 	stdinEnded = true
+	endedAt = Date.now()
 	flush()
 })
 process.stdin.on('error', () => {
 	stdinEnded = true
+	endedAt = Date.now()
 	flush()
 })
 
