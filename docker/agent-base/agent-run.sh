@@ -300,89 +300,25 @@ start_preview_port_watcher() {
 
 # Run the agent
 run_agent() {
-  # Pipe output to the agent-server's log ingest endpoint so the Maskin UI
-  # can show live logs. Bind mounts from the microVM to the host are not
-  # reliable in the current microsandbox version, so we stream over HTTP
-  # instead. Falls back to plain stdout if AGENT_SERVER_URL is unset.
-  local log_ingest_url=""
-  if [ -n "$AGENT_SERVER_URL" ] && [ -n "$SESSION_ID" ]; then
-    log_ingest_url="${AGENT_SERVER_URL}/sessions/${SESSION_ID}/logs/ingest"
-  fi
-
-  # Stream agent output to the agent-server's log-ingest endpoint LINE BY LINE
-  # over a single long-lived chunked POST, so the Maskin UI shows logs live
-  # while the agent runs.  The previous implementation buffered ALL output to a
-  # temp file (`cat > file`) and POSTed it once at exit (`--data-binary @file`),
-  # which (a) showed nothing until the process exited and (b) showed NOTHING for
-  # interactive sessions, where `claude` never exits.
+  # Agent output leaves the VM over HTTP: bind mounts from the microVM to the
+  # host are not reliable in the current microsandbox version. output-stream.js
+  # reads AGENT_SERVER_URL/SESSION_ID from the environment itself.
+  #
+  # Ship agent output to the agent-server via output-stream.js, which POSTs it
+  # in bounded, acknowledged batches. It replaced a single long-lived chunked
+  # upload (curl -T -) that could not survive microsandbox egress proxy: when
+  # the proxy guest-side leg died the upload never EOFed and never errored, so
+  # curl blocked in a write forever and the reconnect loop around it could not
+  # run. The agent reply then never left the VM -- the user saw silence even
+  # though the agent had answered (wedges of Aug 21-24), and with the reader
+  # stalled the pipe eventually blocked the agent itself.
+  #
+  # The helper drains stdin unconditionally, so delivery can never apply
+  # backpressure to the agent, and only forgets lines the server acks. With no
+  # AGENT_SERVER_URL (the local Docker path) it just passes stdin to stdout.
+  # See docker/agent-base/output-stream.js.
   log_tee() {
-    if [ -z "$log_ingest_url" ]; then
-      # No agent-server reachable: just drain stdin (to the unread PTY) so the
-      # agent isn't blocked by a full pipe.
-      cat
-      return
-    fi
-    # `curl -T -` uploads stdin with Transfer-Encoding: chunked, forwarding bytes
-    # as they arrive — unlike `--data-binary @-`, which first buffers ALL of
-    # stdin to compute a Content-Length (effectively what `cat > file` did).
-    # Chunked requires HTTP/1.1, so we drop the old `--http1.0`.  The server
-    # (apps/agent-server) reads the request body as a stream and pushes each
-    # newline-delimited line into the session's log buffer immediately, so one
-    # POST carries the whole session and the UI updates as lines arrive.
-    # `-H "Expect:"` strips the 100-continue handshake (curl adds it for uploads
-    # >1KB), which would otherwise stall the stream waiting for a 100 Continue.
-    #
-    # Why a function fed by a pipe (`agent ... | log_tee`) and not process
-    # substitution: bash WAITS for every stage of a pipeline before the script
-    # exits, so curl finishes before run_agent returns and the VM is torn down.
-    # bash does NOT wait for `>(...)` subprocesses (the reason the old code could
-    # not use them).  curl also continuously drains the pipe, so the undrained
-    # microsandbox PTY never fills and freezes the agent — the problem that ruled
-    # out plain `tee`.
-    #
-    # The reconnect loop keeps a reader on the pipe AT ALL TIMES.  Without it a
-    # dropped upload connection would leave the agent writing to a broken pipe
-    # (SIGPIPE -> the agent dies).  With it, a transient drop reconnects and
-    # resumes streaming; after repeated failures we fall back to draining stdin
-    # so the agent keeps running and this script can still reach its EXIT trap
-    # (the completion signal).  curl returns 0 only once stdin hits EOF (the
-    # agent exited) and the body flushed — the clean end-of-stream.
-    #
-    # Retry budget: 5 fast attempts (1s apart, ~5s) for the common quick blip,
-    # then slower attempts (10s apart) for another ~2 minutes to ride out an
-    # agent-server restart or network hiccup — a reader sitting idle between
-    # attempts just causes mild pipe backpressure (this loop never closes the
-    # read end), not the SIGPIPE risk that a fully-stopped reader would cause.
-    # Once that budget is exhausted we fall back to draining stdin, same as
-    # before, but first fire a one-shot best-effort marker POST so the switch
-    # to local-only output is visible in the Maskin UI instead of silent.
-    local attempts=0
-    local fast_attempts=5
-    local max_attempts=17
-    while true; do
-      if curl -4 -sN -X POST "$log_ingest_url" \
-          -H "Content-Type: text/plain" \
-          -H "Expect:" \
-          -T - \
-          -o /dev/null \
-          2>/dev/null; then
-        return 0
-      fi
-      attempts=$((attempts + 1))
-      if [ "$attempts" -ge "$max_attempts" ]; then
-        curl -4 -s --max-time 5 -X POST "$log_ingest_url" \
-          -H "Content-Type: text/plain" \
-          -d "[system] log streaming to Maskin failed after ${attempts} attempts — falling back to local-only output; further agent output will not appear in the Maskin UI for the rest of this session" \
-          -o /dev/null 2>/dev/null || true
-        cat > /dev/null
-        return 0
-      fi
-      if [ "$attempts" -ge "$fast_attempts" ]; then
-        sleep 10
-      else
-        sleep 1
-      fi
-    done
+    node /output-stream.js
   }
 
   case "$RUNTIME" in
