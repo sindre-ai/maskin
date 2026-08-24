@@ -6,7 +6,7 @@ import { createWorkspaceWrapper } from '../../setup'
 
 // The Run / Pause control now lives in the nav row (mockup 2351) — it is
 // published by AgentDetailView via `PageHeader actions`, not drawn here.
-// Its behaviour is covered end-to-end in apps/e2e/src/tests/agent-detail.spec.ts.
+// Its behaviour is covered in agent-detail-view.test.tsx.
 
 describe('AgentDetailHeader', () => {
 	it('renders name, status pill, team, and "Owns one outcome" line', () => {

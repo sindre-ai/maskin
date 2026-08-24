@@ -21,7 +21,7 @@ const pauseSessionMutate = vi.fn()
 const resumeSessionMutate = vi.fn()
 
 vi.mock('@/hooks/use-sessions', () => ({
-	useWorkspaceSessions: () => ({ data: sessionsData(), isLoading: false }),
+	useActorSessions: () => ({ data: sessionsData(), isLoading: false }),
 	useSessionLogs: () => ({ data: [], isLoading: false }),
 	useCreateSession: () => ({ mutate: createSessionMutate, isPending: false }),
 	usePauseSession: () => ({ mutate: pauseSessionMutate, isPending: false }),
@@ -81,7 +81,6 @@ describe('AgentSessionsSection', () => {
 		sessionsData.mockReturnValue([
 			buildSessionResponse({ id: 's-1', actorId: 'agent-a', status: 'running' }),
 			buildSessionResponse({ id: 's-2', actorId: 'agent-a', status: 'completed' }),
-			buildSessionResponse({ id: 's-3', actorId: 'other', status: 'running' }),
 		])
 		render(<AgentSessionsSection agent={agent} />, { wrapper: createWorkspaceWrapper() })
 
@@ -104,9 +103,7 @@ describe('AgentSessionsSection', () => {
 
 	it('shows an empty-state hint when the agent has no sessions', () => {
 		const agent = buildActorResponse({ id: 'agent-empty', type: 'agent' })
-		sessionsData.mockReturnValue([
-			buildSessionResponse({ actorId: 'someone-else', status: 'running' }),
-		])
+		sessionsData.mockReturnValue([])
 		render(<AgentSessionsSection agent={agent} />, { wrapper: createWorkspaceWrapper() })
 		expect(screen.getByText('No sessions yet. Runs will show up here.')).toBeInTheDocument()
 	})

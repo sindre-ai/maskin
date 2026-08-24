@@ -5,6 +5,7 @@ import { useUpdateActor } from '@/hooks/use-actors'
 import type { ActorResponse } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useCallback, useState } from 'react'
+import { toast } from 'sonner'
 
 function countServers(tools: Record<string, unknown> | null): number {
 	if (!tools) return 0
@@ -21,9 +22,15 @@ export function AgentToolsSection({ agent }: { agent: ActorResponse }) {
 
 	const handleUpdate = useCallback(
 		(tools: Record<string, unknown>) => {
-			updateActor.mutate({ id: agent.id, data: { tools } })
+			updateActor.mutate(
+				{ id: agent.id, data: { tools } },
+				{
+					onSuccess: () => toast.success('Tools updated'),
+					onError: () => toast.error(`Couldn't save tools for ${agent.name}`),
+				},
+			)
 		},
-		[agent.id, updateActor],
+		[agent.id, agent.name, updateActor],
 	)
 
 	return (

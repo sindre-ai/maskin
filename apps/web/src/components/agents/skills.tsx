@@ -48,6 +48,7 @@ import {
 	User,
 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
+import { toast } from 'sonner'
 
 interface SkillsProps {
 	actorId: string
@@ -65,7 +66,9 @@ export function Skills({ actorId, readOnly = false }: SkillsProps) {
 
 	const handleDelete = useCallback(
 		(name: string) => {
-			deleteSkill.mutate(name)
+			deleteSkill.mutate(name, {
+				onError: () => toast.error(`Couldn't delete ${name}`),
+			})
 		},
 		[deleteSkill],
 	)
@@ -246,9 +249,13 @@ function WorkspaceSkillsSection({
 											value={`${skill.name} ${skill.description ?? ''}`}
 											onSelect={() => {
 												if (isAttached) {
-													detachSkill.mutate(skill.id)
+													detachSkill.mutate(skill.id, {
+														onError: () => toast.error(`Couldn't detach ${skill.name}`),
+													})
 												} else {
-													attachSkill.mutate(skill.id)
+													attachSkill.mutate(skill.id, {
+														onError: () => toast.error(`Couldn't attach ${skill.name}`),
+													})
 												}
 												setOpen(false)
 											}}
@@ -287,7 +294,11 @@ function WorkspaceSkillsSection({
 						<AttachedSkillRow
 							key={skill.id}
 							skill={skill}
-							onRemove={() => detachSkill.mutate(skill.id)}
+							onRemove={() =>
+								detachSkill.mutate(skill.id, {
+									onError: () => toast.error(`Couldn't detach ${skill.name}`),
+								})
+							}
 							readOnly={readOnly}
 						/>
 					))}
@@ -497,7 +508,11 @@ function SkillForm({
 					frontmatter: Object.keys(frontmatter).length > 0 ? frontmatter : undefined,
 				},
 			},
-			{ onSuccess: onDone },
+			{
+				onSuccess: onDone,
+				onError: (err) =>
+					toast.error(err instanceof Error ? err.message : `Couldn't save ${name.trim()}`),
+			},
 		)
 	}
 
@@ -649,6 +664,8 @@ function ImportSkillDialog({
 						setRaw('')
 						onClose()
 					},
+					onError: (err) =>
+						setError(err instanceof Error ? err.message : 'Could not save the imported skill.'),
 				},
 			)
 		} catch {
