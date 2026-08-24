@@ -11,6 +11,7 @@ import { OnboardingPromptCard } from '@/components/foryou/onboarding-prompt-card
 import { ReleaseCard } from '@/components/foryou/release-card'
 import { PageHeader } from '@/components/layout/page-header'
 import { CardSkeleton } from '@/components/shared/loading-skeleton'
+import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
 import { useMarkRead, useMarkUnread, useUnread } from '@/hooks/use-subscriptions'
 import {
@@ -71,7 +72,7 @@ export function feedModeToForyouViewMode(
 function ForYouFeed() {
 	const { workspaceId } = useWorkspace()
 	const queryClient = useQueryClient()
-	const { data, isLoading } = useUnread(workspaceId, undefined, true)
+	const { data, isLoading, isError, error, refetch } = useUnread(workspaceId, undefined, true)
 	const items = data?.items ?? []
 	const markRead = useMarkRead(workspaceId)
 	const markUnread = useMarkUnread(workspaceId)
@@ -228,22 +229,45 @@ function ForYouFeed() {
 		},
 	})
 
+	// A taken option paints its green receipt before the reply lands, so a
+	// failed write has to take the receipt back down — otherwise the card claims
+	// an answer was sent that never was.
+	const undoDecision = useCallback((key: string) => {
+		setDecided((prev) => {
+			if (!prev.has(key)) return prev
+			const next = new Map(prev)
+			next.delete(key)
+			return next
+		})
+	}, [])
+
+	// Returns whether a mark-read was actually dispatched. An item with no
+	// `latest_event_id` has no high-water mark to move, so the request would be
+	// meaningless — callers must not hide such a card, or it silently returns
+	// on the next refetch.
 	const markItemRead = useCallback(
 		(item: UnreadItem) => {
 			const eventId = item.latest_event_id ?? 0
-			if (eventId <= 0) return
-			markRead.mutate({
-				entityType: item.entity_type,
-				entityId: item.entity_id,
-				lastEventId: eventId,
-			})
+			if (eventId <= 0) return false
+			markRead.mutate(
+				{
+					entityType: item.entity_type,
+					entityId: item.entity_id,
+					lastEventId: eventId,
+				},
+				{ onError: () => toast.error("Couldn't mark that as read — it's still in your feed.") },
+			)
+			return true
 		},
 		[markRead],
 	)
 
 	const markItemUnread = useCallback(
 		(item: UnreadItem) => {
-			markUnread.mutate({ entityType: item.entity_type, entityId: item.entity_id })
+			markUnread.mutate(
+				{ entityType: item.entity_type, entityId: item.entity_id },
+				{ onError: () => toast.error("Couldn't undo that — the thread stayed read.") },
+			)
 		},
 		[markUnread],
 	)
@@ -253,13 +277,20 @@ function ForYouFeed() {
 	// receipt in place.
 	const handleDecide = useCallback(
 		(item: UnreadItem, option: DecidedOption) => {
-			setDecided((prev) => new Map(prev).set(feedItemKey(item), { item, option }))
+			const key = feedItemKey(item)
+			setDecided((prev) => new Map(prev).set(key, { item, option }))
 			postReply.mutate(
 				{ entity_id: item.entity_id, content: option.label },
-				{ onSuccess: () => markItemRead(item) },
+				{
+					onSuccess: () => markItemRead(item),
+					onError: () => {
+						undoDecision(key)
+						toast.error("Couldn't send your reply — try again.")
+					},
+				},
 			)
 		},
-		[markItemRead, postReply],
+		[markItemRead, postReply, undoDecision],
 	)
 
 	// Dismissing is marking read: the high-water mark moves and the card leaves
@@ -271,32 +302,50 @@ function ForYouFeed() {
 	const dismissAll = useCallback(
 		(targets: UnreadItem[], label: string) => {
 			if (targets.length === 0) return
-			const keys = new Set(targets.map(feedItemKey))
+			// Only cards whose mark-read actually went out may be hidden. A card
+			// that couldn't be marked stays in the column rather than vanishing
+			// and reappearing on the next refetch.
+			const dismissed = targets.filter((item) => markItemRead(item))
+			if (dismissed.length === 0) {
+				toast.error("Couldn't dismiss those — they're still in your feed.")
+				return
+			}
+			const keys = new Set(dismissed.map(feedItemKey))
 			setPendingKeys((prev) => new Set([...prev, ...keys]))
+			// Undo has to put back everything the dismissal took, receipts
+			// included — a decided card restored as undecided would re-offer its
+			// options and let the reader post the same reply twice.
+			const restoredDecisions = [...decided].filter(([key]) => keys.has(key))
+			const restoredReplied = [...keys].filter((key) => repliedKeys.has(key))
 			setDecided((prev) => {
-				if (![...keys].some((key) => prev.has(key))) return prev
+				if (restoredDecisions.length === 0) return prev
 				const next = new Map(prev)
 				for (const key of keys) next.delete(key)
 				return next
 			})
-			for (const item of targets) markItemRead(item)
 
 			toast(label, {
 				duration: UNDO_WINDOW_MS,
 				action: {
 					label: 'Undo',
 					onClick: () => {
-						for (const item of targets) markItemUnread(item)
+						for (const item of dismissed) markItemUnread(item)
 						setPendingKeys((prev) => {
 							const next = new Set(prev)
 							for (const key of keys) next.delete(key)
 							return next
 						})
+						if (restoredDecisions.length > 0) {
+							setDecided((prev) => new Map([...prev, ...restoredDecisions]))
+						}
+						if (restoredReplied.length > 0) {
+							setRepliedKeys((prev) => new Set([...prev, ...restoredReplied]))
+						}
 					},
 				},
 			})
 		},
-		[markItemRead, markItemUnread],
+		[decided, repliedKeys, markItemRead, markItemUnread],
 	)
 
 	// "Take every suggested option" — the recommended answer on every card that
@@ -367,6 +416,21 @@ function ForYouFeed() {
 				<CardSkeleton />
 				<CardSkeleton />
 				<CardSkeleton />
+			</div>
+		)
+	}
+
+	// A failed unread fetch must never fall through to the empty-feed tail —
+	// "Feed cleared" would tell the reader nothing is waiting when the feed
+	// simply didn't load.
+	if (isError) {
+		return (
+			<div className="flex flex-1 min-w-0 flex-col" data-testid="foryou-feed-root">
+				<QueryStateError
+					title="Couldn't load your feed"
+					error={error instanceof Error ? error : new Error('Unknown error')}
+					onRetry={() => refetch()}
+				/>
 			</div>
 		)
 	}
