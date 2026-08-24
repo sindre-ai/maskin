@@ -95,7 +95,12 @@ describe('Skills', () => {
 
 		await user.click(screen.getByRole('button', { name: 'Delete skill' }))
 		await user.click(screen.getByRole('button', { name: 'Delete' }))
-		expect(mockDeleteMutate).toHaveBeenCalledWith('deploy')
+		expect(mockDeleteMutate).toHaveBeenCalledWith(
+			'deploy',
+			expect.objectContaining({
+				onError: expect.any(Function),
+			}),
+		)
 	})
 
 	it('cancels delete and returns to normal state', async () => {
