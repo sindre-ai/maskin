@@ -29,6 +29,7 @@ import {
 } from '@maskin/db/schema'
 import { and, eq, inArray, or, sql } from 'drizzle-orm'
 import {
+	isFirstSession,
 	trackLoopForked,
 	trackLoopInstalled,
 	trackLoopUninstalled,
@@ -302,7 +303,21 @@ app.openapi(installLoopRoute, async (c) => {
 		return c.json(createApiError('CONFLICT', 'Loop is already installed in this workspace'), 409)
 	}
 
+	// Read the workspace's created_at up front — needed to derive the
+	// `first_session` PostHog prop on the emit. Doing it outside the
+	// install transaction keeps the tx footprint unchanged; doing it before
+	// the tx (not after) makes the fire-and-forget emit path immediate.
+	const [workspaceRow] = await db
+		.select({ createdAt: workspaces.createdAt })
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId))
+		.limit(1)
+
 	const provisioned = { actors: 0, triggers: 0, skills: 0, integrations: 0 }
+	// Local ids of every element freshly created by this install — reused/deduped
+	// ids are intentionally excluded so the count matches `provisioned.*` and the
+	// ship-metric query ("≥3 items in first session") stays a simple length check.
+	const componentIds: string[] = []
 
 	let installed: typeof installedLoops.$inferSelect
 	try {
@@ -374,6 +389,7 @@ app.openapi(installLoopRoute, async (c) => {
 						})
 						sourceToLocal.set(item.sourceItemId, row.id)
 						provisioned.actors++
+						componentIds.push(row.id)
 						break
 					}
 					case 'skill': {
@@ -453,6 +469,7 @@ app.openapi(installLoopRoute, async (c) => {
 						)
 						sourceToLocal.set(item.sourceItemId, row.id)
 						provisioned.skills++
+						componentIds.push(row.id)
 						if (attachedActorIds.length > 0) {
 							skillActorBindings.push({
 								sourceSkillId: item.sourceItemId,
@@ -469,6 +486,7 @@ app.openapi(installLoopRoute, async (c) => {
 						if (!row) throw new Error(`insert returned no row for integration ${item.sourceItemId}`)
 						sourceToLocal.set(item.sourceItemId, row.id)
 						provisioned.integrations++
+						componentIds.push(row.id)
 						break
 					}
 					case 'trigger':
@@ -507,6 +525,7 @@ app.openapi(installLoopRoute, async (c) => {
 				sourceToLocal.set(sourceItemId, row.id)
 				provisionedTriggerIds.push(row.id)
 				provisioned.triggers++
+				componentIds.push(row.id)
 			}
 
 			// Create the Loop object this install represents (see route comment) and
@@ -598,6 +617,13 @@ app.openapi(installLoopRoute, async (c) => {
 		provisioned,
 	})
 
+	// `first_session` is derived from workspace age at install time — see
+	// isFirstSession() for the 30-min activation-window rationale. Defaults
+	// to false if the workspace row is somehow gone (shouldn't happen — the
+	// membership check above guarantees the row exists — but keeps the emit
+	// well-typed rather than mis-attributing).
+	const firstSession = workspaceRow?.createdAt ? isFirstSession(workspaceRow.createdAt) : false
+
 	// Fire-and-forget the ship-metric emit. `trackLoopInstalled` swallows
 	// failures internally — analytics gaps must never break the install.
 	void trackLoopInstalled({
@@ -607,6 +633,8 @@ app.openapi(installLoopRoute, async (c) => {
 		workspaceId,
 		actorId,
 		provisioned,
+		componentIds,
+		firstSession,
 	})
 
 	return c.json(
