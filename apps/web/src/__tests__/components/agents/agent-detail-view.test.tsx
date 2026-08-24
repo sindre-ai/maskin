@@ -39,6 +39,10 @@ const pauseMutate = vi.fn()
 vi.mock('@/hooks/use-actors', () => ({
 	useAgentRun: () => ({ mutate: runMutate, isPending: false }),
 	useAgentPause: () => ({ mutate: pauseMutate, isPending: false }),
+	// The header's inline name/outcome editing (covered in
+	// agent-detail-header.test.tsx) — stubbed so this file stays about Run/Pause.
+	useUpdateActor: () => ({ mutate: vi.fn(), isPending: false }),
+	useUploadActorAvatar: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }))
 
 const toastError = vi.fn()

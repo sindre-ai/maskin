@@ -29,9 +29,16 @@ function isCurrentActorAdmin(members: { actorId: string; role?: string }[] | und
 export function AgentAvatarUpload({
 	agent,
 	workspaceId,
+	variant = 'block',
+	className,
 }: {
 	agent: ActorResponse
 	workspaceId: string
+	/** `inline` drops the dashed dropzone and hint copy and renders just the
+	 *  avatar itself as the upload target — the v2 agent-detail header, where
+	 *  the avatar sits beside the title rather than in a settings block. */
+	variant?: 'block' | 'inline'
+	className?: string
 }) {
 	const { data: members } = useWorkspaceMembers(workspaceId)
 	const isAdmin = isCurrentActorAdmin(members)
@@ -70,6 +77,71 @@ export function AgentAvatarUpload({
 	)
 
 	const isUploading = uploadMutation.isPending
+
+	const hiddenInput = (
+		<input
+			ref={inputRef}
+			type="file"
+			accept={ACCEPT_ATTR}
+			className="hidden"
+			onChange={handleInputChange}
+		/>
+	)
+
+	if (variant === 'inline') {
+		const avatar = (
+			<ActorAvatar
+				name={agent.name}
+				type={agent.type}
+				size="xl"
+				className="rounded-2xl"
+				id={agent.id}
+				imageUrl={avatarUrl}
+			/>
+		)
+		if (!isAdmin) return <div className={className}>{avatar}</div>
+		return (
+			<div className={cn('flex flex-col gap-1', className)}>
+				<button
+					type="button"
+					onClick={handlePick}
+					disabled={isUploading}
+					aria-label={avatarUrl ? 'Replace avatar image' : 'Upload avatar image'}
+					className={cn(
+						'group relative rounded-2xl transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed',
+						isDragging && 'ring-2 ring-ring ring-offset-2',
+					)}
+					onDragOver={(e) => {
+						e.preventDefault()
+						if (!isUploading) setIsDragging(true)
+					}}
+					onDragLeave={() => setIsDragging(false)}
+					onDrop={(e) => {
+						e.preventDefault()
+						setIsDragging(false)
+						if (isUploading) return
+						const file = e.dataTransfer.files?.[0]
+						if (file) void submit(file)
+					}}
+				>
+					{avatar}
+					<span
+						aria-hidden="true"
+						className="absolute inset-0 flex items-center justify-center rounded-2xl bg-background/70 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
+					>
+						<ImageUp size={16} className="text-foreground" />
+					</span>
+					{isUploading && (
+						<span className="absolute inset-0 flex items-center justify-center rounded-2xl bg-background/70">
+							<Spinner className="h-4 w-4" />
+						</span>
+					)}
+				</button>
+				{error && <p className="max-w-[160px] text-xs text-error">{error}</p>}
+				{hiddenInput}
+			</div>
+		)
+	}
 
 	// Non-admins still see the avatar preview — they just can't upload.
 	if (!isAdmin) {
@@ -147,13 +219,7 @@ export function AgentAvatarUpload({
 				{error && <p className="text-xs text-error">{error}</p>}
 			</div>
 
-			<input
-				ref={inputRef}
-				type="file"
-				accept={ACCEPT_ATTR}
-				className="hidden"
-				onChange={handleInputChange}
-			/>
+			{hiddenInput}
 		</div>
 	)
 }

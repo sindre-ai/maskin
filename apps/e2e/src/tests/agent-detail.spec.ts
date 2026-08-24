@@ -66,3 +66,49 @@ test.describe('Agent detail — header and Usage block', () => {
 		})
 	}
 })
+
+test.describe('Agent detail — inline identity editing', () => {
+	for (const vp of SHIP_GATE_VIEWPORTS) {
+		test(`renames the agent and edits its outcome @ ${vp.label}`, async ({ page, account }) => {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+
+			const agent = await account.api.createAgentActor('Bo Byte')
+			await account.api.addWorkspaceMember(account.workspaceId, agent.id)
+			await page.goto(`/${account.workspaceId}/agents/${agent.id}`)
+
+			await expect(page.getByRole('heading', { name: 'Bo Byte' })).toBeVisible({ timeout: 10_000 })
+
+			// Name — the editor is reachable on touch (no hover-only reveal).
+			const editName = page.getByRole('button', { name: 'Edit agent name' })
+			await expect(editName).toBeVisible()
+			await editName.click()
+			const nameField = page.getByRole('textbox', { name: 'Agent name' })
+			await nameField.fill('Bo Bytesmith')
+			await nameField.press('Enter')
+			await expect(page.getByRole('heading', { name: 'Bo Bytesmith' })).toBeVisible()
+
+			// Outcome — starts unset, so the placeholder is the edit target.
+			const editOutcome = page.getByRole('button', { name: 'Edit outcome' })
+			await expect(editOutcome).toBeVisible()
+			await editOutcome.click()
+			const outcomeField = page.getByRole('textbox', { name: 'Outcome' })
+			await outcomeField.fill('Keeps the build green')
+			await outcomeField.press('Enter')
+			await expect(page.getByText('Keeps the build green')).toBeVisible()
+
+			// Both edits persisted, not just optimistic UI.
+			await page.reload()
+			await expect(page.getByRole('heading', { name: 'Bo Bytesmith' })).toBeVisible({
+				timeout: 10_000,
+			})
+			await expect(page.getByText('Keeps the build green')).toBeVisible()
+
+			// The avatar upload target is visible to an admin in both schemes.
+			for (const scheme of ['light', 'dark'] as const) {
+				await page.emulateMedia({ colorScheme: scheme })
+				await expect(page.getByRole('button', { name: /avatar image/i })).toBeVisible()
+			}
+			await page.emulateMedia({ colorScheme: 'light' })
+		})
+	}
+})
