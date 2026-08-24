@@ -224,6 +224,13 @@ async function loadConversationWithAuth(db: Database, conversationId: string, ca
 	return row ?? null
 }
 
+/** Per-rewind tally of how far the session teardown actually got. */
+interface StopSessionsOutcome {
+	liveSessions: number
+	stopFailed: number
+	snapshotTimedOut: number
+}
+
 /**
  * Stop every live interactive session attached to a conversation.
  *
@@ -235,13 +242,15 @@ async function loadConversationWithAuth(db: Database, conversationId: string, ca
  *
  * Best-effort by design: a session that refuses to stop still hits its own idle
  * (CHAT_IDLE_CLOSE_MS) or timeout backstop, and must not fail the user's rewind.
+ * The counts it returns are the caller's only signal that a rewind degraded, so
+ * they are reported rather than discarded.
  */
 async function stopConversationSessions(
 	db: Database,
 	sessionManager: SessionManager,
 	conversationId: string,
 	options: { awaitSnapshot?: boolean } = {},
-): Promise<void> {
+): Promise<StopSessionsOutcome> {
 	const live = await db
 		.select({ id: sessions.id })
 		.from(sessions)
@@ -253,6 +262,9 @@ async function stopConversationSessions(
 			),
 		)
 
+	let stopFailed = 0
+	let snapshotTimedOut = 0
+
 	await Promise.all(
 		live.map(async (session) => {
 			try {
@@ -263,9 +275,26 @@ async function stopConversationSessions(
 				// that snapshot via sourceSessionId, so it has to wait for it —
 				// otherwise the replacement session reliably finds nothing and
 				// falls back to a cold start, defeating the resume entirely.
-				if (options.awaitSnapshot) await sessionManager.waitForWorkspaceSnapshot(session.id)
+				if (options.awaitSnapshot) {
+					const snapshotted = await sessionManager.waitForWorkspaceSnapshot(session.id)
+					if (!snapshotted) {
+						snapshotTimedOut++
+						// Not fatal — the rewind proceeds cold — but it silently
+						// removes the whole point of the resume path, so it has to
+						// surface as an issue rather than a breadcrumb.
+						logger.error('Workspace snapshot never landed — rewind will start cold', {
+							conversationId,
+							sessionId: session.id,
+						})
+					}
+				}
 			} catch (err: unknown) {
-				logger.warn('Failed to stop interactive session during conversation rewind', {
+				stopFailed++
+				// A session that would not stop still holds the discarded tail in
+				// its CLI process and will keep answering from it — the exact
+				// thing the rewind exists to prevent. Louder than a warn because
+				// the user is told the rewind succeeded.
+				logger.error('Failed to stop interactive session during conversation rewind', {
 					conversationId,
 					sessionId: session.id,
 					error: String(err),
@@ -273,6 +302,8 @@ async function stopConversationSessions(
 			}
 		}),
 	)
+
+	return { liveSessions: live.length, stopFailed, snapshotTimedOut }
 }
 
 // POST / - Create conversation
@@ -1056,10 +1087,19 @@ app.openapi(editMessageRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
 	}
 
+	// Branch-scoped: a message on a rewound-away branch is not part of the
+	// thread the caller is looking at, so editing it must 404 rather than
+	// silently mutate history nobody can see.
 	const [message] = await db
 		.select()
 		.from(messages)
-		.where(and(eq(messages.id, messageId), eq(messages.conversationId, id)))
+		.where(
+			and(
+				eq(messages.id, messageId),
+				eq(messages.conversationId, id),
+				await activeBranchCondition(db, id),
+			),
+		)
 		.limit(1)
 	if (!message || message.kind !== 'message') {
 		return c.json(createApiError('NOT_FOUND', 'Message not found'), 404)
@@ -1175,10 +1215,20 @@ app.openapi(retryMessageRoute, (async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Conversation not found'), 404)
 	}
 
+	// Branch-scoped for the same reason as edit, and more urgently: retry calls
+	// evaluateAndRespond, so an unscoped lookup lets a caller make the agents
+	// re-answer a message from a discarded branch, with the reply landing on the
+	// active one.
 	const [message] = await db
 		.select({ id: messages.id, kind: messages.kind })
 		.from(messages)
-		.where(and(eq(messages.id, messageId), eq(messages.conversationId, id)))
+		.where(
+			and(
+				eq(messages.id, messageId),
+				eq(messages.conversationId, id),
+				await activeBranchCondition(db, id),
+			),
+		)
 		.limit(1)
 	if (!message || message.kind !== 'message') {
 		return c.json(createApiError('NOT_FOUND', 'Message not found'), 404)
@@ -1303,57 +1353,84 @@ app.openapi(rewindMessageRoute, (async (c) => {
 		)
 	}
 
-	const [branch] = await db
-		.insert(conversationBranches)
-		.values({
-			conversationId: id,
-			parentBranchId: row.conversation.activeBranchId,
-			forkedFromMessageId: messageId,
-			createdBy: callerId,
+	// Fork the branch, switch the conversation onto it, and re-post the target
+	// as ONE transaction.
+	//
+	// These three writes are not independently useful. If the re-post fails
+	// after the switch has committed (insertConversationMessage returns null on
+	// its unique-constraint path, and any write can fail outright), the
+	// conversation is left active on a branch holding zero messages — and
+	// buildBranchPoints deliberately drops a fork point whose active option has
+	// no first message, so no switcher renders and the user has no UI route back
+	// to the parent branch. Rolling back is the only recoverable outcome.
+	let branch: typeof conversationBranches.$inferSelect
+	let created: NonNullable<Awaited<ReturnType<typeof insertConversationMessage>>>
+	try {
+		const result = await db.transaction(async (tx) => {
+			const [insertedBranch] = await tx
+				.insert(conversationBranches)
+				.values({
+					conversationId: id,
+					parentBranchId: row.conversation.activeBranchId,
+					forkedFromMessageId: messageId,
+					createdBy: callerId,
+				})
+				.returning()
+			if (!insertedBranch) throw new Error('branch insert returned no row')
+
+			await tx
+				.update(conversations)
+				.set({ activeBranchId: insertedBranch.id, updatedAt: new Date() })
+				.where(eq(conversations.id, id))
+
+			// Re-post the target onto the new branch. The original stays put on
+			// the parent branch — switching back shows the thread exactly as it
+			// was.
+			const [original] = await tx
+				.select({ content: messages.content, metadata: messages.metadata })
+				.from(messages)
+				.where(eq(messages.id, messageId))
+				.limit(1)
+			const insertedMessage = await insertConversationMessage(tx, {
+				conversationId: id,
+				workspaceId,
+				actorId: callerId,
+				content: original?.content ?? '',
+				metadata: (original?.metadata as MessageMetadata | null) ?? null,
+				sessionId: null,
+				branchId: insertedBranch.id,
+			})
+			if (!insertedMessage) throw new Error('re-posted message was suppressed by a conflict')
+
+			await tx.insert(events).values({
+				workspaceId,
+				actorId: callerId,
+				action: 'conversation_rewound',
+				entityType: 'conversation',
+				entityId: id,
+				data: {
+					branch_id: insertedBranch.id,
+					parent_branch_id: row.conversation.activeBranchId,
+					rewound_to_message_id: messageId,
+					new_message_id: insertedMessage.id,
+				},
+			})
+
+			return { branch: insertedBranch, created: insertedMessage }
 		})
-		.returning()
-	if (!branch) {
-		return c.json(createApiError('INTERNAL_ERROR', 'Failed to create branch'), 500)
+		branch = result.branch
+		created = result.created
+	} catch (err: unknown) {
+		// Nothing committed, so the conversation is still on its original branch
+		// and the thread is intact. Log it — a bare 500 here was previously the
+		// only trace of a rewind that corrupted the conversation.
+		logger.error('Conversation rewind failed — rolled back', {
+			conversationId: id,
+			messageId,
+			error: String(err),
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to rewind conversation'), 500)
 	}
-
-	await db
-		.update(conversations)
-		.set({ activeBranchId: branch.id, updatedAt: new Date() })
-		.where(eq(conversations.id, id))
-
-	// Re-post the target onto the new branch. The original stays put on the
-	// parent branch — switching back shows the thread exactly as it was.
-	const [original] = await db
-		.select({ content: messages.content, metadata: messages.metadata })
-		.from(messages)
-		.where(eq(messages.id, messageId))
-		.limit(1)
-	const created = await insertConversationMessage(db, {
-		conversationId: id,
-		workspaceId,
-		actorId: callerId,
-		content: original?.content ?? '',
-		metadata: (original?.metadata as MessageMetadata | null) ?? null,
-		sessionId: null,
-		branchId: branch.id,
-	})
-	if (!created) {
-		return c.json(createApiError('INTERNAL_ERROR', 'Failed to re-post message'), 500)
-	}
-
-	await db.insert(events).values({
-		workspaceId,
-		actorId: callerId,
-		action: 'conversation_rewound',
-		entityType: 'conversation',
-		entityId: id,
-		data: {
-			branch_id: branch.id,
-			parent_branch_id: row.conversation.activeBranchId,
-			rewound_to_message_id: messageId,
-			new_message_id: created.id,
-		},
-	})
 
 	// Work out where each agent's CLI transcript should be re-opened BEFORE
 	// stopping anything — this reads the live sessions' cliSessionId and their
@@ -1370,7 +1447,7 @@ app.openapi(rewindMessageRoute, (async (c) => {
 	// Waits for each stopped session's workspace snapshot: that snapshot is what
 	// the replacement restores the transcript from, and it is only written after
 	// the container exits.
-	await stopConversationSessions(db, sessionManager, id, { awaitSnapshot: true })
+	const teardown = await stopConversationSessions(db, sessionManager, id, { awaitSnapshot: true })
 
 	const resumeByAgent = new Map(
 		resumeTargets.map((t) => [
@@ -1384,8 +1461,13 @@ app.openapi(rewindMessageRoute, (async (c) => {
 		rewoundToMessageId: messageId,
 		// An agent absent here restarts cold: correct, but it re-reads a short
 		// history blob instead of its real transcript. Worth noticing if it is
-		// happening on every rewind rather than occasionally.
+		// happening on every rewind rather than occasionally — hence the
+		// denominator, without which "0 resumable" reads the same whether there
+		// were no live sessions or three that all failed to resolve.
 		resumableAgents: resumeTargets.length,
+		liveSessions: teardown.liveSessions,
+		stopFailed: teardown.stopFailed,
+		snapshotTimedOut: teardown.snapshotTimedOut,
 	})
 
 	evaluateAndRespond({

@@ -3884,6 +3884,34 @@ export class SessionManager extends EventEmitter {
 		exitCode: number | null,
 		opts: { stoppedByUser?: boolean } = {},
 	): Promise<boolean> {
+		// Signal the workspace snapshot on EVERY exit path, including the early
+		// no-op returns and a thrown error.
+		//
+		// The local Docker path signals from handleCompletion() after taking the
+		// snapshot itself. On this path the snapshot is not ours to take: the
+		// agent-server has already pushed /agent/ to S3 (pushSessionWorkspace)
+		// before it reports /complete, so by the time we are called the tarball
+		// is either there or never coming — exactly the condition
+		// waitForWorkspaceSnapshot is waiting on.
+		//
+		// Without this, no emitter existed on the remote path at all, so every
+		// production rewind sat out waitForWorkspaceSnapshot's full 60s timeout
+		// and then started cold anyway. try/finally rather than a call at the
+		// end because the early returns below (already-terminal, row not found,
+		// DB unreachable) are precisely the cases where a waiter must stop
+		// waiting soonest.
+		try {
+			return await this.markRemoteSessionCompleteInner(sessionId, exitCode, opts)
+		} finally {
+			this.markSnapshotAttempted(sessionId)
+		}
+	}
+
+	private async markRemoteSessionCompleteInner(
+		sessionId: string,
+		exitCode: number | null,
+		opts: { stoppedByUser?: boolean } = {},
+	): Promise<boolean> {
 		const stoppedByUser = opts.stoppedByUser ?? false
 		const status = exitCode === 0 ? 'completed' : 'failed'
 

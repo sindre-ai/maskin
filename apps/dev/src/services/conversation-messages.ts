@@ -41,7 +41,11 @@ export type InsertedConversationMessage = typeof messages.$inferSelect
  * error.
  */
 export async function insertConversationMessage(
-	db: Database,
+	// Structural rather than `Database` so a transaction handle can be passed:
+	// the conversation rewind route needs the branch fork, the active-branch
+	// switch, and this insert to commit or roll back together. A drizzle
+	// PgTransaction has every query method but lacks `$client`.
+	db: Pick<Database, 'select' | 'insert' | 'update'>,
 	args: InsertConversationMessageArgs,
 ): Promise<InsertedConversationMessage | null> {
 	let branchId = args.branchId

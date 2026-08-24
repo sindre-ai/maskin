@@ -430,6 +430,15 @@ run_agent() {
       # Assign the CLI's session id rather than parsing it back out of the
       # stream-json system/init line. An addressable transcript is what makes
       # `--resume` possible when a conversation is rewound.
+      #
+      # This is passed alongside resume_args below on a rewind, which the CLI
+      # allows ONLY because resume_args always carries --fork-session:
+      #   "Error: --session-id can only be used with --continue or --resume if
+      #    --fork-session is also specified."  (verified against 2.1.223)
+      # So --fork-session is not merely an optimisation for keeping the parent
+      # branch's transcript — dropping it makes claude exit immediately on every
+      # rewind, and it exits before the cold-start fallback can apply, since
+      # resume_args is already committed by then.
       local session_args=()
       if [ -n "$CLAUDE_SESSION_ID" ]; then
         session_args=(--session-id "$CLAUDE_SESSION_ID")
@@ -462,7 +471,10 @@ run_agent() {
         # get a malformed value while the exit status still said success, so
         # the cold-start fallback below would never run.
         local resume_err_file
-        resume_err_file=$(mktemp)
+        # Fall back to a fixed path: an unchecked mktemp failure turns the
+        # redirect below into `2>""`, which reports the cold-start reason as an
+        # empty string.
+        resume_err_file=$(mktemp) || resume_err_file="/tmp/resume-err.$$"
         if resume_uuid=$(node /usr/local/lib/maskin/resolve-resume-turn.mjs \
               "$CLAUDE_RESUME_SESSION_ID" "$CLAUDE_RESUME_TURN_ORDINAL" 2>"$resume_err_file") \
            && [[ "$resume_uuid" =~ ^[0-9a-fA-F-]{36}$ ]]; then
