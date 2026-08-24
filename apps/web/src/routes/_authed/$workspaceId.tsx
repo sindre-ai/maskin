@@ -1,3 +1,4 @@
+import { TrialExpiredBanner } from '@/components/billing/trial-expired-banner'
 import { CommandPalette } from '@/components/command-palette'
 import { Header } from '@/components/layout/header'
 import { LegacyCommandPalette } from '@/components/layout/legacy/command-palette'
@@ -114,6 +115,7 @@ function WorkspaceLayout() {
 										{newDesign ? <AppSidebar /> : <LegacyAppSidebar />}
 										<SidebarInset className="min-w-0">
 											{newDesign ? <Header /> : <LegacyHeader />}
+											<TrialExpiredBanner workspaceId={workspaceId} />
 											<MainScrollArea>
 												<Outlet />
 											</MainScrollArea>

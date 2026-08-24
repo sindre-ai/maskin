@@ -117,12 +117,11 @@ export const queryKeys = {
 	claudeOauth: {
 		status: (workspaceId: string) => ['claude-oauth', workspaceId, 'status'] as const,
 	},
+	billing: {
+		usage: (workspaceId: string) => ['billing', workspaceId, 'usage'] as const,
+	},
 	briefing: {
 		current: (workspaceId: string) => ['briefing', workspaceId] as const,
-	},
-	billing: {
-		all: (workspaceId: string) => ['billing', workspaceId] as const,
-		summary: (workspaceId: string) => ['billing', workspaceId, 'summary'] as const,
 	},
 	subscriptions: {
 		subscribers: (entityType: string, entityId: string) =>

@@ -20,6 +20,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { useActors } from '@/hooks/use-actors'
 import { useBets } from '@/hooks/use-bets'
 import { useCreateSession } from '@/hooks/use-sessions'
+import { toastSessionCreateError } from '@/lib/session-errors'
 import { useNavigate } from '@tanstack/react-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
@@ -95,9 +96,7 @@ export function NewConversationComposer({
 						toast.error(err instanceof Error ? err.message : 'Failed to open agent page')
 					})
 				},
-				onError: (err) => {
-					toast.error(err instanceof Error ? err.message : 'Failed to start conversation')
-				},
+				onError: (err) => toastSessionCreateError(err, navigate, workspaceId),
 			},
 		)
 	}, [agentId, betId, message, openBets, createSession, navigate, onOpenChange, workspaceId])

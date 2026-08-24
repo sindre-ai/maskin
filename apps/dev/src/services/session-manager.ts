@@ -21,7 +21,11 @@ import {
 	sessions,
 	workspaces,
 } from '@maskin/db/schema'
-import { type SessionResult, githubOwnerLoginToEnvKey } from '@maskin/shared'
+import {
+	type SessionResult,
+	type SessionResultFailureReason,
+	githubOwnerLoginToEnvKey,
+} from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import {
 	type SQL,
@@ -41,12 +45,16 @@ import {
 } from 'drizzle-orm'
 import { trackAgentSessionStartedWithPrompt } from '../lib/analytics/agent-session-events'
 import { claimLoopActiveDay, trackLoopActiveDay, utcDayString } from '../lib/analytics/loop-events'
+import { capturePosthogEvent } from '../lib/analytics/posthog'
 import {
 	isClaudeFailoverEnabled,
 	recordRuntimeClaudeOAuthBackupExhausted,
 	recordRuntimeClaudeOAuthFailover,
 } from '../lib/claude-failover'
+import { getValidOAuthToken } from '../lib/claude-oauth'
+import { debitCreditForSession } from '../lib/credit-billing'
 import { classifyCreditExhaustion } from '../lib/credit-classifier'
+import { byollmEntitled } from '../lib/enterprise-allowlist'
 import { frontendBaseUrl } from '../lib/file-urls'
 import {
 	GITHUB_PREFLIGHT_SLACK_CHANNEL,
@@ -70,9 +78,17 @@ import {
 import { isSlackBotToken } from '../lib/integrations/providers/slack/mcp-server'
 import { getProvider } from '../lib/integrations/registry'
 import {
-	FallbackQuotaExceededError,
+	FALLBACK_TOKENS_PER_USD_CENT,
+	LLM_ROUTE_MASKIN_PLAN,
 	LLM_ROUTE_OAUTH,
 	type LlmRoute,
+	PlanCapExceededError,
+	canUseCreditBalance,
+	ceilCents,
+	checkPlanCap,
+	creditBalanceCents,
+	getWorkspacePlanCap,
+	getWorkspacePlanUsdCentsUsage,
 	resolveLlmRoute,
 } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
@@ -87,7 +103,12 @@ import { ContainerManager, type LogChunk, type StreamJsonUserMessage } from './c
 import { InteractiveTurnFinalizer } from './interactive-turn-finalizer'
 import { type RuntimeEndReason, RuntimeTelemetry } from './runtime-telemetry'
 import type { SessionDispatchQueue } from './session-dispatch-queue'
-import { type SessionUsage, extractSessionUsage, parseUsageFromLogChunks } from './usage-parser'
+import {
+	type SessionUsage,
+	extractSessionUsage,
+	parseUsageFromLogChunks,
+	sumRunningSessionUsage,
+} from './usage-parser'
 import { buildWorkspaceStartupBlock, renderWorkspaceBriefing } from './workspace-briefing'
 
 /**
@@ -308,6 +329,14 @@ export class SessionManager extends EventEmitter {
 	 * even though both arrive at `watchContainerExit` as a non-zero exit code.
 	 */
 	private stopRequested: Set<string> = new Set()
+	/**
+	 * Session IDs stopped by `enforceRunningSessionBudget`, mapped to the
+	 * human-readable reason. Read (and cleared) by `handleCompletion` so the
+	 * resulting `failed` status carries a `failure_reason` explaining the stop
+	 * — otherwise the row would just show a bare "exit code 143" with nothing
+	 * indicating this was a deliberate budget stop rather than a crash.
+	 */
+	private budgetStopped: Map<string, string> = new Map()
 
 	/**
 	 * Turns an interactive agent's end-of-turn stream-json `result` envelope
@@ -394,6 +423,36 @@ export class SessionManager extends EventEmitter {
 		const interactive = config.interactive === true
 		const conversationId =
 			(config.conversation as { conversation_id?: string } | undefined)?.conversation_id ?? null
+
+		// Pre-flight billing cap. Only enforced when no BYO credentials are
+		// present — BYO routes (OAuth, custom_llm, api_key) take precedence over
+		// the maskin_plan route and never count against the cap. Checking OAuth
+		// here mirrors the route-resolution priority so the 402 surfaces before
+		// a session row is created rather than failing silently at container start.
+		//
+		// The `byollmEntitled` gate is what makes "mirrors the route-resolution
+		// priority" true: resolveLlmRoute only *reaches* routes 1-4 when the
+		// workspace is entitled, so a non-entitled workspace holding a stored
+		// custom_llm / api_key / OAuth credential still routes to maskin_plan.
+		// Without this gate such a workspace skipped the pre-flight, got a 201,
+		// and then died at container start on the defense-in-depth checkPlanCap
+		// inside resolveLlmRoute — precisely the late failure this pre-flight
+		// exists to prevent.
+		const [ws] = await this.db
+			.select()
+			.from(workspaces)
+			.where(eq(workspaces.id, workspaceId))
+			.limit(1)
+		const wsSettings = (ws?.settings as WorkspaceSettings) ?? {}
+		const byollmAllowed = ws ? byollmEntitled(ws) : false
+		const hasByoCredentials =
+			byollmAllowed &&
+			((wsSettings.custom_llm?.enabled && !!wsSettings.custom_llm?.base_url) ||
+				!!wsSettings.llm_keys?.anthropic ||
+				!!(await getValidOAuthToken(this.db, workspaceId).catch(() => null)))
+		if (!hasByoCredentials) {
+			await checkPlanCap({ db: this.db, workspaceId, wsSettings })
+		}
 
 		const [session] = await this.db
 			.insert(sessions)
@@ -1073,6 +1132,18 @@ export class SessionManager extends EventEmitter {
 
 			await this.insertSystemLog(sessionId, 'Session paused and snapshot saved')
 
+			// Pausing is the common terminal-ish state for interactive sessions
+			// sitting idle between turns — persist whatever usage this segment
+			// accrued before the log buffer is cleared below, and debit credits
+			// for it, or the billing page silently shows 0 usage forever for a
+			// session that never technically "completes". Must run before
+			// cleanupSession() clears the in-memory stdout tail this reads.
+			const llmRoute = (session.config as Record<string, unknown>)?.llm_route
+			await this.accumulateSessionUsage(sessionId)
+			if (llmRoute === LLM_ROUTE_MASKIN_PLAN) {
+				await this.debitCreditIfApplicable(session.workspaceId, session.actorId, sessionId)
+			}
+
 			await this.cleanupBrowserSidecar(sessionId)
 			await this.cleanupSession(sessionId)
 
@@ -1520,6 +1591,7 @@ export class SessionManager extends EventEmitter {
 			.limit(1)
 		const wsSettings = (ws?.settings as WorkspaceSettings) ?? {}
 		const wsLlmKeys = wsSettings.llm_keys ?? {}
+		const byollmAllowed = ws ? byollmEntitled(ws) : false
 
 		let routeTaken: LlmRoute | null = null
 		let oauthSlotTaken: string | undefined
@@ -1529,6 +1601,7 @@ export class SessionManager extends EventEmitter {
 				workspaceId: session.workspaceId,
 				actorId: session.actorId,
 				wsSettings,
+				byollmAllowed,
 				agent: {
 					provider: agent.llmProvider,
 					apiKey: (llmConfig.api_key as string | undefined) ?? null,
@@ -1541,24 +1614,29 @@ export class SessionManager extends EventEmitter {
 				Object.assign(envVars, resolved.envVars)
 			}
 		} catch (err) {
-			if (err instanceof FallbackQuotaExceededError) {
-				logger.warn('System LLM fallback quota exceeded', {
+			if (err instanceof PlanCapExceededError) {
+				logger.warn('Maskin plan cap exceeded', {
 					sessionId: session.id,
 					actorId: session.actorId,
+					plan: err.plan,
 					used: err.used,
-					limit: err.limit,
+					cap: err.cap,
 				})
 			}
 			throw err
 		}
 
-		// Non-anthropic agent override (OpenAI native via OPENAI_API_KEY).
-		if (llmConfig.api_key && agent.llmProvider === 'openai') {
-			envVars.OPENAI_API_KEY = llmConfig.api_key as string
-		}
-		// Workspace OpenAI key — independent of the anthropic-side routing above.
-		if (!llmConfig.api_key && wsLlmKeys.openai) {
-			envVars.OPENAI_API_KEY = wsLlmKeys.openai
+		// Non-anthropic agent override (OpenAI native via OPENAI_API_KEY) and the
+		// workspace-level OpenAI key are both BYO credentials, gated the same as
+		// the anthropic-side routes in resolveLlmRoute above.
+		if (byollmAllowed) {
+			if (llmConfig.api_key && agent.llmProvider === 'openai') {
+				envVars.OPENAI_API_KEY = llmConfig.api_key as string
+			}
+			// Workspace OpenAI key — independent of the anthropic-side routing above.
+			if (!llmConfig.api_key && wsLlmKeys.openai) {
+				envVars.OPENAI_API_KEY = wsLlmKeys.openai
+			}
 		}
 
 		// Persist the chosen route on the session config so cron-based quota
@@ -2066,12 +2144,6 @@ export class SessionManager extends EventEmitter {
 			await this.prepareAgentBaseImage()
 		}
 
-		// Write exec-trigger so the entrypoint starts the agent. The entrypoint
-		// checks for this file to distinguish local Docker (immediate start) from
-		// the microsandbox path (where the agent-server writes the file after
-		// the TCP proxy is active). On the local Docker path we write it here.
-		await writeFile(join(tempDir, '.exec-trigger'), '')
-
 		// Provision browser sidecar when the browserRequired flag is set
 		let networkMode: string | undefined
 		if (spec.browserRequired) {
@@ -2083,9 +2155,10 @@ export class SessionManager extends EventEmitter {
 			}
 		}
 
-		// Write the exec-trigger file before starting — the entrypoint checks for
-		// /agent/.exec-trigger and sleeps forever without it (microsandbox contract).
-		await writeFile(join(tempDir, '.exec-trigger'), '')
+		// entrypoint.sh waits for this file before running agent-run.sh (two-phase
+		// startup for microsandbox). The local Docker path must write it here so
+		// the container doesn't sleep forever.
+		await writeFile(join(tempDir, '.exec-trigger'), '1', { mode: 0o644 })
 
 		const containerId = await this.containers.create({
 			image: spec.image,
@@ -2520,55 +2593,50 @@ export class SessionManager extends EventEmitter {
 			logger.warn('Failed to push session files', { sessionId, error: String(err) })
 		}
 
-		// Extract token / cost usage from the tail of stdout. Codex and custom
-		// runtimes don't emit structured usage — extractor returns null and the
-		// columns stay NULL. Parser failures must never block the status update,
-		// so this is wrapped in its own try/catch.
-		//
-		// Prefer the in-memory stdout tail captured by `streamContainerLogs`:
-		// the container exit poll can fire before the final `result` chunk has
-		// been persisted to `session_logs`, so a DB-only read can race and
-		// silently miss usage. We wait briefly for the log stream to drain so
-		// the in-memory buffer contains the final chunk, then parse from it.
-		// The DB path is kept as a fallback for the resume-from-snapshot case
-		// where the tail buffer may be empty.
-		let usage: SessionUsage | null = null
-		try {
-			const drained = this.activeSessions.get(sessionId)?.logsDrained
-			if (drained) {
-				await Promise.race([
-					drained,
-					new Promise<void>((resolve) => setTimeout(resolve, SessionManager.LOGS_DRAIN_TIMEOUT_MS)),
-				])
-			}
-			const tail = this.activeSessions.get(sessionId)?.stdoutTail
-			if (tail) {
-				usage = parseUsageFromLogChunks([tail])
-			}
-			if (!usage) {
-				usage = await extractSessionUsage(this.db, sessionId)
-			}
-		} catch (err) {
-			logger.warn('Failed to parse usage from session logs', {
-				sessionId,
-				error: String(err),
-			})
-		}
+		// Extract token / cost usage from the tail of stdout and add it onto
+		// the session's cumulative usage columns — additive because a session
+		// that was paused earlier in its life already persisted that segment's
+		// usage via accumulateSessionUsage(); overwriting here would silently
+		// drop it. Codex and custom runtimes don't emit structured usage —
+		// the helper returns null and the columns are left untouched. Parser
+		// failures must never block the status update below, which is why
+		// this is a separate try/catch'd write.
+		const usage = await this.accumulateSessionUsage(sessionId)
 
 		const stdoutTail = this.activeSessions.get(sessionId)?.stdoutTail ?? ''
-		const failureReason =
+		const classifiedFailureReason =
 			exitCode !== null
 				? classifyCreditExhaustion(stdoutTail, { includeAmbiguousSignals: exitCode !== 0 })
 				: null
-		const status = exitCode === 0 && !failureReason ? 'completed' : 'failed'
-		if (failureReason) {
+		if (classifiedFailureReason) {
 			logger.info('Session credit-exhaustion classified', {
 				sessionId,
-				reason_code: failureReason.reason_code,
-				provider: failureReason.provider,
+				reason_code: classifiedFailureReason.reason_code,
+				provider: classifiedFailureReason.provider,
 				exitCode,
 			})
 		}
+
+		// A budget-stopped session's exit code (143, from the SIGTERM in
+		// stopSession) carries no stdout signal for classifyCreditExhaustion to
+		// find, so it would otherwise surface as a bare "exit code 143" — build
+		// an equivalent failure_reason from the stop reason enforceRunningSessionBudget
+		// recorded, so the agents page and chat UI show why the session actually stopped.
+		const budgetStopReason = this.budgetStopped.get(sessionId)
+		this.budgetStopped.delete(sessionId)
+		const failureReason: SessionResultFailureReason | null =
+			classifiedFailureReason ??
+			(budgetStopReason
+				? {
+						provider: 'maskin',
+						reason_code: 'plan_cap_exceeded',
+						human_message: `Session stopped — ${budgetStopReason}.`,
+						http_status: null,
+						reset_at: null,
+						verbatim_output: null,
+					}
+				: null)
+		const status = exitCode === 0 && !failureReason ? 'completed' : 'failed'
 
 		// SSE clients subscribed to /logs/stream rely on the "Session
 		// completed|failed|timed out|paused" system log to emit their `done`
@@ -2594,16 +2662,6 @@ export class SessionManager extends EventEmitter {
 					completedAt: new Date(),
 					updatedAt: new Date(),
 					currentActivity: null,
-					...(usage
-						? {
-								totalCostUsd: usage.totalCostUsd?.toString() ?? null,
-								inputTokens: usage.inputTokens,
-								outputTokens: usage.outputTokens,
-								cacheCreationInputTokens: usage.cacheCreationInputTokens,
-								cacheReadInputTokens: usage.cacheReadInputTokens,
-								durationMs: usage.durationMs,
-							}
-						: {}),
 				})
 				.where(eq(sessions.id, sessionId))
 		} catch (err) {
@@ -2672,6 +2730,28 @@ export class SessionManager extends EventEmitter {
 		await this.maybeEmitLoopActiveDay(session.actorId, session.workspaceId).catch((err) => {
 			logger.warn('Failed loop_active_day emit', { sessionId, error: String(err) })
 		})
+
+		const llmRoute = (session.config as Record<string, unknown>)?.llm_route
+		if (llmRoute === LLM_ROUTE_MASKIN_PLAN && usage) {
+			capturePosthogEvent('maskin_plan_session_completed', session.workspaceId, {
+				actor_id: session.actorId,
+				session_id: sessionId,
+				input_tokens: usage.inputTokens ?? 0,
+				output_tokens: usage.outputTokens ?? 0,
+				total_cost_usd: usage.totalCostUsd ?? 0,
+				duration_ms: usage.durationMs ?? 0,
+				status,
+			}).catch((err) => {
+				logger.warn('Failed maskin_plan_session_completed PostHog emit', {
+					sessionId,
+					error: String(err),
+				})
+			})
+		}
+
+		if (status === 'completed' && llmRoute === LLM_ROUTE_MASKIN_PLAN) {
+			await this.debitCreditIfApplicable(session.workspaceId, session.actorId, sessionId)
+		}
 
 		try {
 			await this.insertSystemLog(sessionId, `Session ${status} with exit code ${exitCode}`)
@@ -2786,6 +2866,223 @@ export class SessionManager extends EventEmitter {
 			workspaceId: claim.workspaceId,
 			utcDay,
 		})
+	}
+
+	/**
+	 * Fire-and-forget wrapper around `debitCreditForSession` for a completed
+	 * maskin_plan session. Fetches the workspace's current billing settings
+	 * (they may have changed since the session started) and never throws —
+	 * a credit-debit failure must not affect session completion, which
+	 * downstream watchdogs and SSE clients depend on.
+	 */
+	private async debitCreditIfApplicable(
+		workspaceId: string,
+		actorId: string,
+		sessionId: string,
+	): Promise<void> {
+		try {
+			const [ws] = await this.db
+				.select({ settings: workspaces.settings })
+				.from(workspaces)
+				.where(eq(workspaces.id, workspaceId))
+				.limit(1)
+			const wsSettings = (ws?.settings as WorkspaceSettings) ?? {}
+			await debitCreditForSession({ db: this.db, workspaceId, sessionId, actorId, wsSettings })
+		} catch (err) {
+			logger.warn('Failed to debit usage credits', { sessionId, workspaceId, error: String(err) })
+		}
+	}
+
+	/**
+	 * Parses usage from the session's log tail (same source `handleCompletion`
+	 * uses) and adds it onto the session's cumulative usage columns. Additive,
+	 * not overwriting: a paused-then-resumed session launches a fresh CLI
+	 * process per segment, and each segment's `result` event only reports
+	 * that segment's own usage — overwriting would silently drop whatever was
+	 * already accumulated from earlier segments. Called on both pause and
+	 * completion so `getWorkspacePlanUsdCentsUsage` (which sums these columns
+	 * for cap/billing display) reflects cost incurred even when a session
+	 * never reaches a terminal 'completed' status — pausing is the common
+	 * case for interactive sessions sitting idle between turns.
+	 *
+	 * Returns the parsed segment (not the new cumulative total, and not
+	 * necessarily persisted if the DB write failed) so callers can log it;
+	 * returns null when no usage could be parsed (e.g. Codex/custom runtimes
+	 * that emit no structured usage).
+	 */
+	private async accumulateSessionUsage(sessionId: string): Promise<SessionUsage | null> {
+		let usage: SessionUsage | null = null
+		try {
+			const drained = this.activeSessions.get(sessionId)?.logsDrained
+			if (drained) {
+				await Promise.race([
+					drained,
+					new Promise<void>((resolve) => setTimeout(resolve, SessionManager.LOGS_DRAIN_TIMEOUT_MS)),
+				])
+			}
+			const tail = this.activeSessions.get(sessionId)?.stdoutTail
+			if (tail) {
+				usage = parseUsageFromLogChunks([tail])
+			}
+			if (!usage) {
+				usage = await extractSessionUsage(this.db, sessionId)
+			}
+		} catch (err) {
+			logger.warn('Failed to parse usage from session logs', { sessionId, error: String(err) })
+		}
+		if (!usage) return null
+
+		try {
+			await this.db
+				.update(sessions)
+				.set({
+					totalCostUsd:
+						usage.totalCostUsd != null
+							? sql`COALESCE(${sessions.totalCostUsd}, 0) + ${usage.totalCostUsd}`
+							: undefined,
+					inputTokens:
+						usage.inputTokens != null
+							? sql`COALESCE(${sessions.inputTokens}, 0) + ${usage.inputTokens}`
+							: undefined,
+					outputTokens:
+						usage.outputTokens != null
+							? sql`COALESCE(${sessions.outputTokens}, 0) + ${usage.outputTokens}`
+							: undefined,
+					cacheCreationInputTokens:
+						usage.cacheCreationInputTokens != null
+							? sql`COALESCE(${sessions.cacheCreationInputTokens}, 0) + ${usage.cacheCreationInputTokens}`
+							: undefined,
+					cacheReadInputTokens:
+						usage.cacheReadInputTokens != null
+							? sql`COALESCE(${sessions.cacheReadInputTokens}, 0) + ${usage.cacheReadInputTokens}`
+							: undefined,
+					durationMs:
+						usage.durationMs != null
+							? sql`COALESCE(${sessions.durationMs}, 0) + ${usage.durationMs}`
+							: undefined,
+					updatedAt: new Date(),
+				})
+				.where(eq(sessions.id, sessionId))
+		} catch (err) {
+			logger.error('Failed to persist accumulated session usage', { sessionId, error: String(err) })
+		}
+
+		return usage
+	}
+
+	/**
+	 * Mid-session budget check for one running maskin_plan session. Called
+	 * from the watchdog every ~60s for every running maskin_plan session.
+	 *
+	 * Cap/credit enforcement everywhere else in this file only runs at
+	 * session *dispatch* (`checkPlanCap`) — once a session is greenlit it
+	 * runs to completion with no further check. That's fine for short
+	 * sessions, but interactive sessions are explicitly exempt from the
+	 * idle auto-pause above (item 3, "long-lived by design") and can run
+	 * for the full 2h timeout, sending many turns' worth of tokens with a
+	 * workspace that has little or no credit balance left the entire time.
+	 *
+	 * Combines the workspace's already-persisted usage from other sessions
+	 * (`getWorkspacePlanUsdCentsUsage`, which reads this session's own
+	 * totalCostUsd/inputTokens/outputTokens columns too — still NULL/0 while
+	 * it's running, since those are only written on pause/completion) with a
+	 * fresh live scan of *this* session's own logs
+	 * (`sumRunningSessionUsage`), so no separate persistence step is needed
+	 * here — nothing is written until the session actually stops, at which
+	 * point `handleCompletion` → `accumulateSessionUsage` +
+	 * `debitCreditIfApplicable` record and bill it exactly as normal.
+	 *
+	 * Stops the session once its own overage would cost *more than* the
+	 * remaining credit balance — not just once the balance hits exactly
+	 * zero — so a session that's already over cap doesn't burn through the
+	 * last few cents over its entire remaining runtime before the debit
+	 * finally catches up with it.
+	 */
+	private async enforceRunningSessionBudget(session: typeof sessions.$inferSelect): Promise<void> {
+		if (!session.containerId) return
+
+		const [ws] = await this.db
+			.select({ settings: workspaces.settings })
+			.from(workspaces)
+			.where(eq(workspaces.id, session.workspaceId))
+			.limit(1)
+		const wsSettings = (ws?.settings as WorkspaceSettings) ?? {}
+		const billing = wsSettings.billing
+		const plan = billing?.plan
+		if (plan !== 'pro' && plan !== 'team') return
+
+		const capCents = getWorkspacePlanCap(wsSettings)
+		if (capCents === null) return
+
+		const periodStartMs =
+			typeof billing?.period_start === 'number' ? billing.period_start * 1000 : undefined
+		const [persistedUsedCents, liveUsage] = await Promise.all([
+			getWorkspacePlanUsdCentsUsage(this.db, session.workspaceId, periodStartMs),
+			sumRunningSessionUsage(this.db, session.id),
+		])
+		// Same preference order as getWorkspacePlanUsdCentsUsage: the live
+		// scan's own reported totalCostUsd first, a flat token-rate estimate
+		// only when that's unavailable (e.g. no `result` event parsed yet).
+		const liveCents = liveUsage
+			? liveUsage.totalCostUsd && liveUsage.totalCostUsd > 0
+				? liveUsage.totalCostUsd * 100
+				: ((liveUsage.inputTokens ?? 0) + (liveUsage.outputTokens ?? 0)) /
+					FALLBACK_TOKENS_PER_USD_CENT
+			: 0
+		const totalUsedCents = persistedUsedCents + ceilCents(liveCents)
+		if (totalUsedCents < capCents) return
+
+		let stopReason: string | null = null
+		if (!canUseCreditBalance(plan, billing)) {
+			// Mirrors checkPlanCap's block condition exactly — a new session
+			// dispatched for this workspace right now would already be
+			// rejected, so this one shouldn't be allowed to keep running either.
+			stopReason = 'usage exceeded the plan cap and no usage credits are available'
+		} else {
+			const costCentsNeeded = totalUsedCents - capCents
+			const balance = creditBalanceCents(billing)
+			if (costCentsNeeded > balance) {
+				stopReason = 'usage exceeded the plan cap and your remaining usage credits'
+			}
+		}
+		if (!stopReason) return
+
+		logger.warn('Stopping running session over budget', {
+			sessionId: session.id,
+			workspaceId: session.workspaceId,
+			totalUsedCents,
+			capCents,
+			reason: stopReason,
+		})
+		await this.insertSystemLog(session.id, `Session stopped: ${stopReason}.`).catch((err) =>
+			logger.warn('Failed to write budget-stop system log', {
+				sessionId: session.id,
+				error: String(err),
+			}),
+		)
+		await this.db
+			.insert(events)
+			.values({
+				workspaceId: session.workspaceId,
+				actorId: session.actorId,
+				action: 'session_budget_stopped',
+				entityType: 'session',
+				entityId: session.id,
+				data: { total_used_usd_cents: totalUsedCents, cap_usd_cents: capCents, reason: stopReason },
+			})
+			.catch((err) =>
+				logger.warn('Failed to insert session_budget_stopped event', {
+					sessionId: session.id,
+					error: String(err),
+				}),
+			)
+		this.budgetStopped.set(session.id, stopReason)
+		await this.stopSession(session.id).catch((err) =>
+			logger.error('Failed to stop over-budget session', {
+				sessionId: session.id,
+				error: String(err),
+			}),
+		)
 	}
 
 	/**
@@ -3245,7 +3542,29 @@ export class SessionManager extends EventEmitter {
 				)
 		}
 
-		// 4. Archive old paused sessions (7 days)
+		// 4. Mid-session budget check for maskin_plan sessions — including
+		// interactive ones exempt from the idle auto-pause above, which can run
+		// for the full 2h timeout otherwise unchecked. See
+		// enforceRunningSessionBudget for the full rationale.
+		const maskinPlanRunning = await this.db
+			.select()
+			.from(sessions)
+			.where(
+				and(
+					eq(sessions.status, 'running'),
+					sql`${sessions.config}->>'llm_route' = ${LLM_ROUTE_MASKIN_PLAN}`,
+				),
+			)
+		for (const session of maskinPlanRunning) {
+			await this.enforceRunningSessionBudget(session).catch((err) =>
+				logger.error('Failed to enforce running-session budget', {
+					sessionId: session.id,
+					error: String(err),
+				}),
+			)
+		}
+
+		// 5. Archive old paused sessions (7 days)
 		const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
 		const expiredPaused = await this.db
 			.select()
@@ -3271,10 +3590,10 @@ export class SessionManager extends EventEmitter {
 			logger.info(`Archived expired paused session: ${session.id}`)
 		}
 
-		// 4. Prune old session logs
+		// 6. Prune old session logs
 		await this.pruneSessionLogs()
 
-		// 5. Recover stuck pending sessions — sessions stuck in 'pending' for >2 minutes
+		// 7. Recover stuck pending sessions — sessions stuck in 'pending' for >2 minutes
 		// without being started (e.g., startSession promise was lost or never called)
 		const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000)
 		const stuckPending = await this.db
@@ -3299,7 +3618,7 @@ export class SessionManager extends EventEmitter {
 				)
 		}
 
-		// 6. Fail sessions stuck in 'starting' for >10 minutes (zombie session cleanup)
+		// 8. Fail sessions stuck in 'starting' for >10 minutes (zombie session cleanup)
 		const stuckStarting = await this.db
 			.select()
 			.from(sessions)
@@ -3346,7 +3665,7 @@ export class SessionManager extends EventEmitter {
 			)
 		}
 
-		// 7. Drain queued sessions for workspaces that have capacity
+		// 9. Drain queued sessions for workspaces that have capacity
 		const queuedSessions = await this.db
 			.select({ workspaceId: sessions.workspaceId })
 			.from(sessions)
@@ -4025,6 +4344,11 @@ export class SessionManager extends EventEmitter {
 				sessionId,
 				error: String(err),
 			})
+		}
+
+		const remoteLlmRoute = (updated.config as Record<string, unknown>)?.llm_route
+		if (status === 'completed' && remoteLlmRoute === LLM_ROUTE_MASKIN_PLAN) {
+			await this.debitCreditIfApplicable(updated.workspaceId, updated.actorId, sessionId)
 		}
 
 		// Terminal system log is required for SSE /logs/stream clients to close.

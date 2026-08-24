@@ -19,7 +19,13 @@ function RootComponent() {
 			<Toaster
 				theme={resolvedTheme}
 				position="bottom-right"
-				style={{ zIndex: 50 }}
+				// Every Radix-based overlay (Sheet, Dialog, DropdownMenu, Popover,
+				// Select, Tooltip) uses Tailwind's z-50. Toasts must always be
+				// visible above whichever of those is open — e.g. the session
+				// detail drawer on the agents page — so this needs to clear all
+				// of them, not tie with them (a tie is resolved by DOM/portal
+				// order, which isn't guaranteed to favor the toaster).
+				style={{ zIndex: 100 }}
 				toastOptions={{
 					style: {
 						background: 'var(--popover)',

@@ -8,6 +8,7 @@ import {
 	useConversation,
 	useConversationMessages,
 } from '@/hooks/use-conversation'
+import { useSessionBudgetStopToast } from '@/hooks/use-conversation-activity'
 import { useUpdateConversationMe } from '@/hooks/use-conversations'
 import { useNewDesign } from '@/lib/new-design-context'
 import { useWorkspace } from '@/lib/workspace-context'
@@ -26,6 +27,7 @@ function ConversationThreadPage() {
 	const { data: messagesData } = useConversationMessages(conversationId, workspaceId)
 	const updateMe = useUpdateConversationMe(workspaceId)
 	const lastMarkedRef = useRef<number | null>(null)
+	useSessionBudgetStopToast(workspaceId, conversationId)
 	const newDesign = useNewDesign()
 
 	// Mark the newest message read once it's loaded — mirrors the "open = read"
