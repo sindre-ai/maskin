@@ -932,14 +932,23 @@ export const workspaceCreditLedger = pgTable(
 		// have no session; `set null` on delete mirrors
 		// `workspaceOverageUsage.sessionId`.
 		sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'set null' }),
+		// Debit rows: the session's own cumulative cost in USD cents when this
+		// debit was written. A session is billed on PAUSE as well as on
+		// completion, so `sessionId` alone is not the idempotency key — keying
+		// on it collapsed every segment after the first into a no-op and the
+		// post-resume spend was never charged. This value is monotonic in the
+		// quantity being billed, so it separates segments while still
+		// collapsing a retry of the same segment (unchanged cost -> same key).
+		// NULL on topup rows and on debits predating migration 0064.
+		sessionUsageCents: integer('session_usage_cents'),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 	},
 	(t) => [
 		uniqueIndex('workspace_credit_ledger_topup_uniq')
 			.on(t.stripeCheckoutSessionId)
 			.where(sql`${t.type} = 'topup' AND ${t.stripeCheckoutSessionId} IS NOT NULL`),
-		uniqueIndex('workspace_credit_ledger_debit_session_uniq')
-			.on(t.sessionId)
+		uniqueIndex('workspace_credit_ledger_debit_session_segment_uniq')
+			.on(t.sessionId, t.sessionUsageCents)
 			.where(sql`${t.type} = 'debit' AND ${t.sessionId} IS NOT NULL`),
 		index('workspace_credit_ledger_workspace_created_idx').on(t.workspaceId, t.createdAt),
 	],

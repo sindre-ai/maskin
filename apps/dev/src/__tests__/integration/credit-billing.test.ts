@@ -1,4 +1,4 @@
-import { events, workspaceCreditLedger, workspaces } from '@maskin/db/schema'
+import { events, sessions, workspaceCreditLedger, workspaces } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
 import { debitCreditForSession } from '../../lib/credit-billing'
 import { PlanCapExceededError, canUseCreditBalance, checkPlanCap } from '../../lib/llm-routing'
@@ -443,5 +443,84 @@ describe('debitCreditForSession (Integration)', () => {
 		// $25 used, $10 cap => $15 total overage; A accounted for $10, so B owes
 		// its own $5 only. The $5 written off during A stays forgiven.
 		expect((afterB.settings as WorkspaceSettings).billing?.credit_balance_cents).toBe(9_500)
+	})
+	it('bills each segment of a paused-then-resumed session, not just the first', async () => {
+		// Regression (migration 0064): `debitCreditIfApplicable` runs on PAUSE as
+		// well as on completion, but the ledger's idempotency key was
+		// `session_id` alone — one row per session, ever. So a session that
+		// paused over cap wrote its debit, and the completion after the resume
+		// conflicted, returned no row, and exited before touching the balance:
+		// everything spent after the resume was silently never charged.
+		// Interactive sessions pause between turns, so this was the common path.
+		await seedWorkspace(10_000)
+
+		// Segment 1: $10.05 reported against the $10.00 cap = 5 cents over.
+		const session = await seedSessionWithCost('10.05')
+		await debitCreditForSession({
+			db,
+			workspaceId,
+			sessionId: session.id,
+			actorId,
+			wsSettings: wsSettingsFor(10_000),
+		})
+
+		const [afterPause] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId))
+		if (!afterPause) throw new Error('workspace not found')
+		expect((afterPause.settings as WorkspaceSettings).billing?.credit_balance_cents).toBe(9_995)
+
+		// The session resumes and spends more; its cumulative cost grows.
+		await db.update(sessions).set({ totalCostUsd: '10.30' }).where(eq(sessions.id, session.id))
+
+		await debitCreditForSession({
+			db,
+			workspaceId,
+			sessionId: session.id,
+			actorId,
+			wsSettings: wsSettingsFor(9_995),
+		})
+
+		// 30 cents over cap in total, 5 already billed => 25 more, not 0.
+		const [afterResume] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId))
+		if (!afterResume) throw new Error('workspace not found')
+		expect((afterResume.settings as WorkspaceSettings).billing?.credit_balance_cents).toBe(9_970)
+
+		const ledgerRows = await db
+			.select()
+			.from(workspaceCreditLedger)
+			.where(eq(workspaceCreditLedger.sessionId, session.id))
+		expect(ledgerRows).toHaveLength(2)
+	})
+
+	it('still collapses a retry of the SAME segment after a resume', async () => {
+		// The segmented key must not reopen the double-charge that the
+		// per-session index originally closed: a completion re-firing at an
+		// unchanged cumulative cost carries the same key and must be a no-op.
+		await seedWorkspace(10_000)
+		const session = await seedSessionWithCost('10.05')
+
+		const debit = (balance: number) =>
+			debitCreditForSession({
+				db,
+				workspaceId,
+				sessionId: session.id,
+				actorId,
+				wsSettings: wsSettingsFor(balance),
+			})
+
+		await debit(10_000)
+		await db.update(sessions).set({ totalCostUsd: '10.30' }).where(eq(sessions.id, session.id))
+		await debit(9_995)
+		// Same cumulative cost as the segment just billed — a pure retry.
+		await debit(9_970)
+
+		const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId))
+		if (!ws) throw new Error('workspace not found')
+		expect((ws.settings as WorkspaceSettings).billing?.credit_balance_cents).toBe(9_970)
+
+		const ledgerRows = await db
+			.select()
+			.from(workspaceCreditLedger)
+			.where(eq(workspaceCreditLedger.sessionId, session.id))
+		expect(ledgerRows).toHaveLength(2)
 	})
 })

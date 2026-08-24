@@ -17,6 +17,12 @@ import billingRoutes from '../../routes/billing'
 import { jsonRequest } from '../helpers'
 import { createTestApp } from '../setup'
 
+// The billing routes resolve the caller's role from the workspace-scoped
+// member lookup, which the mock DB serves from the same static `select`
+// result as the workspace row. Spreading these two fields onto that row lets
+// one fixture satisfy both reads - the routes are owner/admin-gated now.
+const OWNER_CALLER = { role: 'owner', type: 'human' } as const
+
 // Sentinel cap values (USD cents) that are intentionally NOT the literal
 // defaults (2_000 / 20_000), AND chosen arithmetically far from them so that
 // a swapped or off-by-one test value couldn't accidentally satisfy a literal-
@@ -52,7 +58,7 @@ describe('POST /api/billing/checkout', () => {
 	it('returns the checkout URL on success', async () => {
 		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 		const workspaceId = randomUUID()
-		mockResults.select = [{ id: workspaceId, settings: {} }]
+		mockResults.select = [{ id: workspaceId, ...OWNER_CALLER, settings: {} }]
 
 		vi.mocked(createCheckoutSession).mockResolvedValue({
 			id: 'cs_test_1',
@@ -91,6 +97,7 @@ describe('POST /api/billing/checkout', () => {
 		mockResults.select = [
 			{
 				id: workspaceId,
+				...OWNER_CALLER,
 				settings: { billing: { plan: 'pro', status: 'active', stripe_customer_id: 'cus_99' } },
 			},
 		]
@@ -157,7 +164,7 @@ describe('POST /api/billing/checkout', () => {
 		clearEnv()
 		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 		const workspaceId = randomUUID()
-		mockResults.select = [{ id: workspaceId, settings: {} }]
+		mockResults.select = [{ id: workspaceId, ...OWNER_CALLER, settings: {} }]
 
 		const res = await app.request(
 			jsonRequest(
@@ -177,7 +184,7 @@ describe('POST /api/billing/checkout', () => {
 	it('returns 500 when Stripe throws while creating the session', async () => {
 		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 		const workspaceId = randomUUID()
-		mockResults.select = [{ id: workspaceId, settings: {} }]
+		mockResults.select = [{ id: workspaceId, ...OWNER_CALLER, settings: {} }]
 		vi.mocked(createCheckoutSession).mockRejectedValue(new Error('stripe blew up'))
 
 		const res = await app.request(
@@ -201,7 +208,11 @@ describe('POST /api/billing/credits/checkout', () => {
 		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 		const workspaceId = randomUUID()
 		mockResults.select = [
-			{ id: workspaceId, settings: { billing: { plan: 'trial', status: 'active' } } },
+			{
+				id: workspaceId,
+				...OWNER_CALLER,
+				settings: { billing: { plan: 'trial', status: 'active' } },
+			},
 		]
 
 		const res = await app.request(
@@ -224,7 +235,11 @@ describe('POST /api/billing/credits/checkout', () => {
 		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 		const workspaceId = randomUUID()
 		mockResults.select = [
-			{ id: workspaceId, settings: { billing: { plan: 'pro', status: 'active' } } },
+			{
+				id: workspaceId,
+				...OWNER_CALLER,
+				settings: { billing: { plan: 'pro', status: 'active' } },
+			},
 		]
 
 		const res = await app.request(
@@ -248,6 +263,7 @@ describe('POST /api/billing/credits/checkout', () => {
 		mockResults.select = [
 			{
 				id: workspaceId,
+				...OWNER_CALLER,
 				settings: {
 					billing: { plan: 'pro', status: 'active', stripe_customer_id: 'cus_x' },
 				},
@@ -275,6 +291,7 @@ describe('POST /api/billing/credits/checkout', () => {
 		mockResults.select = [
 			{
 				id: workspaceId,
+				...OWNER_CALLER,
 				settings: {
 					billing: { plan: 'pro', status: 'active', stripe_customer_id: 'cus_x' },
 				},
@@ -302,6 +319,7 @@ describe('POST /api/billing/credits/checkout', () => {
 		mockResults.select = [
 			{
 				id: workspaceId,
+				...OWNER_CALLER,
 				settings: {
 					billing: { plan: 'pro', status: 'active', stripe_customer_id: 'cus_x' },
 				},

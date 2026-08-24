@@ -364,7 +364,11 @@ describe('BYOLLM ↔ paid plan mutex — POST /api/claude-oauth/import', () => {
 describe('BYOLLM ↔ paid plan mutex — Stripe webhook clears BYO slots on active', () => {
 	it('drops claude_oauth + custom_llm + llm_keys.anthropic on customer.subscription.updated → active', async () => {
 		const { app, mockResults, calls } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
-		mockResults.insertQueue = [[{ id: 'claim-mutex-1' }]]
+		mockResults.insertQueue = [[{ id: 'claim-mutex-1' }], [{ id: 'evt-claim-mutex-1' }]]
+		// The webhook now writes an audit events row, which resolves the
+		// shared Stripe system actor first — two extra selects and one
+		// extra insert per delivery.
+		mockResults.select = [{ id: '00000000-0000-4000-8000-0000000000aa' }]
 		mockResults.selectQueue = [
 			[
 				{
@@ -416,7 +420,11 @@ describe('BYOLLM ↔ paid plan mutex — Stripe webhook clears BYO slots on acti
 
 	it('leaves BYO slots intact on customer.subscription.deleted (non-active terminal)', async () => {
 		const { app, mockResults, calls } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
-		mockResults.insertQueue = [[{ id: 'claim-mutex-2' }]]
+		mockResults.insertQueue = [[{ id: 'claim-mutex-2' }], [{ id: 'evt-claim-mutex-2' }]]
+		// The webhook now writes an audit events row, which resolves the
+		// shared Stripe system actor first — two extra selects and one
+		// extra insert per delivery.
+		mockResults.select = [{ id: '00000000-0000-4000-8000-0000000000aa' }]
 		mockResults.selectQueue = [
 			[
 				{

@@ -1,6 +1,6 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { Database } from '@maskin/db'
-import { workspaces } from '@maskin/db/schema'
+import { events, workspaces } from '@maskin/db/schema'
 import { CREDIT_TOPUP_MAX_USD, CREDIT_TOPUP_MIN_USD, workspaceSettingsSchema } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
 import { DEFAULT_PERIOD_LENGTH_MS, resolvePlanCapCents } from '../lib/billing-defaults'
@@ -21,6 +21,7 @@ import {
 	readStripeEnv,
 } from '../lib/stripe'
 import type { WorkspaceSettings } from '../lib/types'
+import { isWorkspaceHumanAdminOrOwner } from '../lib/workspace-auth'
 
 /**
  * Fallback hard caps (USD cents) for paid plans when
@@ -78,6 +79,10 @@ const checkoutRoute = createRoute({
 		},
 		400: {
 			description: 'Bad request',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		403: {
+			description: 'Caller is not permitted to manage billing for this workspace',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		404: {
@@ -226,6 +231,18 @@ app.openapi(checkoutRoute, async (c) => {
 		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
 	}
 
+	// authMiddleware only proves membership. Starting a subscription binds the
+	// workspace to a recurring charge, so it takes the same human admin/owner
+	// gate the other ownership-sensitive routes use - which also keeps agents
+	// holding a workspace-scoped API key (MCP) out of the payment surface.
+	// Checked after the existence lookup so a missing workspace still 404s.
+	if (!(await isWorkspaceHumanAdminOrOwner(db, c.get('actorId'), workspaceId))) {
+		return c.json(
+			createApiError('FORBIDDEN', 'Only workspace owners/admins can manage billing'),
+			403,
+		)
+	}
+
 	// Existing billing.stripe_customer_id (if any) lets us reuse the same
 	// Stripe Customer across plan changes — otherwise Stripe would create a
 	// new customer for every checkout, and our customer→workspace map (kept
@@ -304,6 +321,10 @@ const buyCreditsRoute = createRoute({
 			description: 'Workspace is not eligible to buy usage credits',
 			content: { 'application/json': { schema: errorSchema } },
 		},
+		403: {
+			description: 'Caller is not permitted to manage billing for this workspace',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 		404: {
 			description: 'Workspace not found',
 			content: { 'application/json': { schema: errorSchema } },
@@ -328,6 +349,14 @@ app.openapi(buyCreditsRoute, async (c) => {
 
 	if (!workspace) {
 		return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+	}
+
+	// Spends against the workspace's card - same gate as `checkoutRoute`.
+	if (!(await isWorkspaceHumanAdminOrOwner(db, c.get('actorId'), workspaceId))) {
+		return c.json(
+			createApiError('FORBIDDEN', 'Only workspace owners/admins can manage billing'),
+			403,
+		)
 	}
 
 	const settingsParse = workspaceSettingsSchema.partial().safeParse(workspace.settings ?? {})
@@ -393,6 +422,10 @@ const cancelRoute = createRoute({
 			description: 'Subscription cancelled, plan set to Free',
 			content: { 'application/json': { schema: z.object({ ok: z.literal(true) }) } },
 		},
+		403: {
+			description: 'Caller is not permitted to manage billing for this workspace',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 		404: {
 			description: 'Workspace not found',
 			content: { 'application/json': { schema: errorSchema } },
@@ -417,6 +450,22 @@ app.openapi(cancelRoute, async (c) => {
 		.limit(1)
 
 	if (!workspace) return c.json(createApiError('NOT_FOUND', 'Workspace not found'), 404)
+
+	// Cancelling destroys the workspace's paid subscription outright, so it is
+	// restricted to the billing owner - the actor whose card is on file -
+	// matching the transfer-ownership gate in routes/workspaces.ts. Older rows
+	// predate `billing_owner_id`; those fall back to the human admin/owner
+	// check rather than being left open to every member.
+	const callerId = c.get('actorId')
+	const authorized = workspace.billingOwnerId
+		? workspace.billingOwnerId === callerId
+		: await isWorkspaceHumanAdminOrOwner(db, callerId, workspaceId)
+	if (!authorized) {
+		return c.json(
+			createApiError('FORBIDDEN', 'Only the billing owner can cancel the subscription'),
+			403,
+		)
+	}
 
 	const settings = (workspace.settings ?? {}) as WorkspaceSettings
 	const billing = settings.billing
@@ -444,8 +493,27 @@ app.openapi(cancelRoute, async (c) => {
 	if (downgraded) {
 		await db
 			.update(workspaces)
-			.set({ settings: { ...settings, billing: downgraded } })
+			.set({ settings: { ...settings, billing: downgraded }, updatedAt: new Date() })
 			.where(eq(workspaces.id, workspaceId))
+
+		// Audit + real-time, per the "events logged on every mutation" rule.
+		// A cancellation is the single most disputable billing action; without
+		// this row there is no record of who cancelled or when, and no SSE
+		// invalidation to refresh the billing UI off the stale plan.
+		await db.insert(events).values({
+			workspaceId,
+			actorId: callerId,
+			action: 'workspace_billing_canceled',
+			entityType: 'workspace',
+			entityId: workspaceId,
+			data: {
+				plan_before: billing?.plan ?? null,
+				plan_after: downgraded.plan ?? null,
+				status_before: billing?.status ?? null,
+				status_after: downgraded.status ?? null,
+				stripe_subscription_id: billing?.stripe_subscription_id ?? null,
+			},
+		})
 	}
 
 	logger.info('Plan downgraded to Free', { workspaceId })

@@ -12,8 +12,9 @@ import {
 import { workspaceSettingsSchema } from '@maskin/shared'
 import { and, eq, sql } from 'drizzle-orm'
 import type Stripe from 'stripe'
+import { byollmEntitled } from '../lib/enterprise-allowlist'
 import { createApiError } from '../lib/errors'
-import { settingsAfterPaidPlanActivation } from '../lib/llm-source-mutex'
+import { billingAfterCancel, settingsAfterPaidPlanActivation } from '../lib/llm-source-mutex'
 import { logger } from '../lib/logger'
 import {
 	CREDIT_TOPUP_METADATA_KIND,
@@ -227,7 +228,12 @@ async function applyEvent(
 	// in one round-trip per query so the lock window stays bounded.
 	await db.transaction(async (tx) => {
 		const [workspace] = await tx
-			.select({ id: workspaces.id, settings: workspaces.settings })
+			.select({
+				id: workspaces.id,
+				settings: workspaces.settings,
+				byollmAllowed: workspaces.byollmAllowed,
+				billingOwnerId: workspaces.billingOwnerId,
+			})
 			.from(workspaces)
 			.where(eq(workspaces.id, workspaceId))
 			.for('update')
@@ -243,6 +249,14 @@ async function applyEvent(
 			status: 'incomplete' as const,
 		}
 		let next = { ...current }
+		// True once a branch has applied a subscription/invoice-shaped
+		// mutation. The BYOLLM mutex below keys off this rather than off
+		// `status === 'active'`: a credit top-up on an already-active pro/team
+		// workspace leaves `status` untouched at 'active', and stripping BYO
+		// slots on that path silently wiped `claude_oauth` / `custom_llm` /
+		// `llm_keys.anthropic` for the entitled workspaces that are allowed to
+		// hold both (see lib/enterprise-allowlist.ts's `byollmEntitled`).
+		let planMutated = false
 
 		switch (event.type) {
 			case 'checkout.session.completed': {
@@ -340,6 +354,7 @@ async function applyEvent(
 				// clobber it.
 				const nowSec = Math.floor(Date.now() / 1000)
 				const periodEndIsStale = typeof next.period_end === 'number' && next.period_end <= nowSec
+				planMutated = true
 				next = {
 					...next,
 					stripe_customer_id: customerId ?? next.stripe_customer_id,
@@ -354,6 +369,7 @@ async function applyEvent(
 				const sub = event.data.object as Stripe.Subscription
 				const priceId = priceIdFromSubscription(sub)
 				const plan = priceId ? planForPriceId(priceId, stripeEnv) : null
+				planMutated = true
 				next = {
 					...next,
 					plan: plan ?? next.plan,
@@ -370,11 +386,22 @@ async function applyEvent(
 			}
 			case 'customer.subscription.deleted': {
 				const sub = event.data.object as Stripe.Subscription
+				planMutated = true
+				// `plan: 'byollm'` is NOT safe to write unconditionally here.
+				// It sits at the top of PLAN_TIER_ORDER with null (unlimited)
+				// seat and ownership caps, so an unentitled workspace could
+				// cancel its subscription to self-grant unlimited seats and
+				// unlimited workspace ownership - the exact circularity
+				// `byollmEntitled` documents. It also routes nowhere: 'byollm'
+				// is excluded from MASKIN_PLAN_ROUTED_PLANS, so a non-BYO
+				// workspace landing there can start no sessions at all, with
+				// no cap error and no upgrade CTA. `billingAfterCancel`
+				// already encodes the right split (entitled -> byollm,
+				// everyone else -> trial), so this uses the same helper as
+				// POST /api/billing/cancel.
+				const canceled = billingAfterCancel(next, byollmEntitled(workspace))
 				next = {
-					...next,
-					plan: 'byollm',
-					stripe_subscription_id: null,
-					status: 'canceled',
+					...(canceled ?? next),
 					hard_cap_usd_cents: null,
 					period_start: sub.canceled_at ?? next.period_start,
 				}
@@ -384,6 +411,7 @@ async function applyEvent(
 				const invoice = event.data.object as Stripe.Invoice
 				const periodStart = invoice.period_start ?? invoice.lines?.data?.[0]?.period?.start
 				const periodEnd = invoice.period_end ?? invoice.lines?.data?.[0]?.period?.end
+				planMutated = true
 				next = {
 					...next,
 					status: 'active',
@@ -393,6 +421,7 @@ async function applyEvent(
 				break
 			}
 			case 'invoice.payment_failed': {
+				planMutated = true
 				next = { ...next, status: 'past_due' }
 				break
 			}
@@ -403,12 +432,38 @@ async function applyEvent(
 		// never keep both sides "active" at once.
 		const baseSettings = (workspace.settings ?? {}) as Record<string, unknown>
 		const carrierSettings =
-			next.status === 'active' ? settingsAfterPaidPlanActivation(baseSettings) : baseSettings
+			planMutated && next.status === 'active'
+				? settingsAfterPaidPlanActivation(baseSettings)
+				: baseSettings
 		const merged = { ...carrierSettings, billing: next }
 		await tx
 			.update(workspaces)
 			.set({ settings: merged, updatedAt: new Date() })
 			.where(eq(workspaces.id, workspaceId))
+
+		// Audit + real-time. Without this row the subscription lifecycle is
+		// invisible: no PG NOTIFY, so the billing UI keeps rendering the old
+		// plan until something else refetches, and a disputed charge has no
+		// who/when record. Mirrors the credit-topup branch above; skipped when
+		// nothing plan-shaped changed (a top-up already wrote its own event).
+		if (planMutated) {
+			const systemActorId = await getOrCreateStripeSystemActor(tx, workspaceId)
+			await tx.insert(events).values({
+				workspaceId,
+				actorId: systemActorId,
+				action: 'workspace_billing_updated',
+				entityType: 'workspace',
+				entityId: workspaceId,
+				data: {
+					stripe_event_type: event.type,
+					stripe_event_id: event.id,
+					plan_before: current.plan ?? null,
+					plan_after: next.plan ?? null,
+					status_before: current.status ?? null,
+					status_after: next.status ?? null,
+				},
+			})
+		}
 	})
 }
 

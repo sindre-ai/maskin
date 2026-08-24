@@ -1,5 +1,5 @@
 import type { Database } from '@maskin/db'
-import { events, workspaceCreditLedger, workspaces } from '@maskin/db/schema'
+import { events, sessions, workspaceCreditLedger, workspaces } from '@maskin/db/schema'
 import { workspaceSettingsSchema } from '@maskin/shared'
 import { and, eq, gte, sql } from 'drizzle-orm'
 import { isEnterpriseWorkspace } from './enterprise-allowlist'
@@ -22,9 +22,14 @@ import type { WorkspaceSettings } from './types'
  * TWO distinct things have to be idempotent here, and they need different
  * mechanisms:
  *
- *  1. The SAME session completing twice (crash/retry). Handled by the partial
- *     unique index on `workspace_credit_ledger.session_id` — the second
- *     insert conflicts, returns no row, and this is a no-op.
+ *  1. The SAME segment of a session being billed twice (crash/retry).
+ *     Handled by the partial unique index on
+ *     (`session_id`, `session_usage_cents`) — the retry carries the same
+ *     cumulative session cost, so the second insert conflicts, returns no
+ *     row, and this is a no-op. The key is segmented rather than keyed on
+ *     `session_id` alone because this runs on PAUSE as well as completion:
+ *     one row per session meant a paused-then-resumed session never got
+ *     billed for anything it spent after the resume (migration 0064).
  *
  *  2. DIFFERENT sessions in the same period each seeing an overlapping
  *     overage. `getWorkspacePlanUsdCentsUsage` returns usage for the WHOLE
@@ -148,24 +153,41 @@ export async function debitCreditForSession(params: {
 		const actualDebitCents = Math.min(costCents, currentBalance)
 		const balanceAfter = currentBalance - actualDebitCents
 
+		// This session's OWN cumulative cost, which segments the idempotency
+		// key below. `sessionId` alone can't be the key: this function runs on
+		// pause as well as on completion, so a session that paused at $30 of
+		// overage, resumed, and burned another $200 saw its completion insert
+		// conflict and return before debiting — the $200 was silently never
+		// charged, and pausing between turns is the norm for interactive
+		// sessions. Read inside the same lock as everything else.
+		const [sessionRow] = await tx
+			.select({ totalCostUsd: sessions.totalCostUsd })
+			.from(sessions)
+			.where(eq(sessions.id, sessionId))
+			.limit(1)
+		const sessionUsageCents = Math.max(0, Math.round(Number(sessionRow?.totalCostUsd ?? 0) * 100))
+
 		const claimed = await tx
 			.insert(workspaceCreditLedger)
 			.values({
 				workspaceId,
 				sessionId,
+				sessionUsageCents,
 				type: 'debit',
 				amountCents: -actualDebitCents,
 				balanceAfterCents: balanceAfter,
 				accountedOverageCents: costCents,
 			})
 			.onConflictDoNothing({
-				target: [workspaceCreditLedger.sessionId],
+				target: [workspaceCreditLedger.sessionId, workspaceCreditLedger.sessionUsageCents],
 				where: sql`${workspaceCreditLedger.type} = 'debit' AND ${workspaceCreditLedger.sessionId} IS NOT NULL`,
 			})
 			.returning({ id: workspaceCreditLedger.id })
 
-		// 0 rows back means another completion already claimed (and debited)
-		// this session — leave the balance untouched.
+		// 0 rows back means this exact segment was already claimed (and
+		// debited) — a retry at the same cumulative cost. Leave the balance
+		// untouched. A later segment that actually spent more carries a higher
+		// `sessionUsageCents`, so it does not conflict and bills its increment.
 		if (!claimed[0]?.id) return
 
 		await tx

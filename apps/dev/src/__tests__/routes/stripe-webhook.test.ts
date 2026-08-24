@@ -15,6 +15,13 @@ import { verifyStripeWebhook } from '../../lib/stripe'
 import stripeWebhookRoutes from '../../routes/stripe-webhook'
 import { createTestApp } from '../setup'
 
+// Plan-shaped deliveries now write an audit `events` row, which resolves the
+// shared 'Stripe' system actor (and its workspace membership) first. The mock
+// DB falls back to the static `select` result once `selectQueue` is drained,
+// so seeding it with an actor row lets those two extra reads resolve without
+// every test having to queue them. Rows already queued are unaffected.
+const STRIPE_SYSTEM_ACTOR = [{ id: '00000000-0000-4000-8000-0000000000aa' }]
+
 const VALID_ENV = {
 	STRIPE_SECRET_KEY: 'sk_test_x',
 	STRIPE_WEBHOOK_SECRET: 'whsec_x',
@@ -109,6 +116,7 @@ describe('POST /api/webhooks/stripe', () => {
 		const workspaceId = randomUUID()
 		// 1st select = resolver fallback (filtered lookup by stripe_customer_id),
 		// 2nd select = applyEvent reading the workspace settings.
+		mockResults.select = STRIPE_SYSTEM_ACTOR
 		mockResults.selectQueue = [
 			[{ id: workspaceId }],
 			[{ id: workspaceId, settings: { billing: { plan: 'pro', status: 'active' } } }],
@@ -137,6 +145,7 @@ describe('POST /api/webhooks/stripe', () => {
 		const workspaceId = randomUUID()
 		// Claim insert succeeds; then the apply-handler select returns the workspace.
 		mockResults.insertQueue = [[{ id: 'claim-1' }]]
+		mockResults.select = STRIPE_SYSTEM_ACTOR
 		mockResults.selectQueue = [[{ id: workspaceId, settings: {} }]]
 
 		vi.mocked(verifyStripeWebhook).mockReturnValue({
@@ -169,6 +178,7 @@ describe('POST /api/webhooks/stripe', () => {
 		const { app, mockResults, calls } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
 		const workspaceId = randomUUID()
 		mockResults.insertQueue = [[{ id: 'claim-stale' }]]
+		mockResults.select = STRIPE_SYSTEM_ACTOR
 		mockResults.selectQueue = [
 			[
 				{
@@ -219,6 +229,7 @@ describe('POST /api/webhooks/stripe', () => {
 		// A future period_end (year 2099 in Unix seconds)
 		const futurePeriodEnd = 4_070_908_800
 		mockResults.insertQueue = [[{ id: 'claim-future' }]]
+		mockResults.select = STRIPE_SYSTEM_ACTOR
 		mockResults.selectQueue = [
 			[
 				{
@@ -261,6 +272,7 @@ describe('POST /api/webhooks/stripe', () => {
 		const { app, mockResults, calls } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
 		const workspaceId = randomUUID()
 		mockResults.insertQueue = [[{ id: 'claim-2' }]]
+		mockResults.select = STRIPE_SYSTEM_ACTOR
 		mockResults.selectQueue = [[{ id: workspaceId, settings: {} }]]
 
 		vi.mocked(verifyStripeWebhook).mockReturnValue({
@@ -293,10 +305,11 @@ describe('POST /api/webhooks/stripe', () => {
 		})
 	})
 
-	it('downgrades to byollm on customer.subscription.deleted', async () => {
+	it('downgrades an unentitled workspace to trial on customer.subscription.deleted', async () => {
 		const { app, mockResults, calls } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
 		const workspaceId = randomUUID()
 		mockResults.insertQueue = [[{ id: 'claim-3' }]]
+		mockResults.select = STRIPE_SYSTEM_ACTOR
 		mockResults.selectQueue = [
 			[
 				{
@@ -326,6 +339,54 @@ describe('POST /api/webhooks/stripe', () => {
 		const res = await postWebhook(app, {})
 		expect(res.status).toBe(200)
 		const update = findWorkspaceUpdate(calls.updates)
+		// NOT 'byollm'. That plan sits at the top of PLAN_TIER_ORDER with null
+		// (unlimited) seat and ownership caps, so writing it here let any
+		// workspace self-grant unlimited seats + unlimited workspace ownership
+		// by cancelling its subscription. It also routes nowhere — 'byollm' is
+		// excluded from MASKIN_PLAN_ROUTED_PLANS, so the workspace could start
+		// no sessions at all. Unentitled cancellations land on 'trial'.
+		expect(update.settings.billing).toMatchObject({
+			plan: 'trial',
+			stripe_subscription_id: null,
+			status: 'canceled',
+		})
+	})
+
+	it('downgrades a byollm-entitled workspace to byollm on customer.subscription.deleted', async () => {
+		const { app, mockResults, calls } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
+		const workspaceId = randomUUID()
+		mockResults.insertQueue = [[{ id: 'claim-3b' }]]
+		mockResults.select = STRIPE_SYSTEM_ACTOR
+		mockResults.selectQueue = [
+			[
+				{
+					id: workspaceId,
+					byollmAllowed: true,
+					settings: {
+						billing: { plan: 'team', status: 'active', stripe_subscription_id: 'sub_y' },
+					},
+				},
+			],
+		]
+
+		vi.mocked(verifyStripeWebhook).mockReturnValue({
+			id: 'evt_sub_del_entitled',
+			type: 'customer.subscription.deleted',
+			data: {
+				object: {
+					id: 'sub_y',
+					customer: 'cus_y',
+					status: 'canceled',
+					canceled_at: 1_700_001_000,
+					metadata: { workspace_id: workspaceId },
+					items: { data: [{ price: { id: 'price_team' } }] },
+				},
+			},
+		} as unknown as Stripe.Event)
+
+		const res = await postWebhook(app, {})
+		expect(res.status).toBe(200)
+		const update = findWorkspaceUpdate(calls.updates)
 		expect(update.settings.billing).toMatchObject({
 			plan: 'byollm',
 			stripe_subscription_id: null,
@@ -337,6 +398,7 @@ describe('POST /api/webhooks/stripe', () => {
 		const { app, mockResults, calls } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
 		const workspaceId = randomUUID()
 		mockResults.insertQueue = [[{ id: 'claim-4' }]]
+		mockResults.select = STRIPE_SYSTEM_ACTOR
 		mockResults.selectQueue = [
 			[{ id: workspaceId, settings: { billing: { plan: 'pro', status: 'active' } } }],
 		]
@@ -362,6 +424,7 @@ describe('POST /api/webhooks/stripe', () => {
 		const { app, mockResults, calls } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
 		const workspaceId = randomUUID()
 		mockResults.insertQueue = [[{ id: 'claim-inv' }]]
+		mockResults.select = STRIPE_SYSTEM_ACTOR
 		mockResults.selectQueue = [
 			[{ id: workspaceId, settings: { billing: { plan: 'pro', status: 'active' } } }],
 		]
@@ -392,6 +455,7 @@ describe('POST /api/webhooks/stripe', () => {
 		const { app, mockResults, calls } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
 		const workspaceId = randomUUID()
 		mockResults.insertQueue = [[{ id: 'claim-mark' }]]
+		mockResults.select = STRIPE_SYSTEM_ACTOR
 		mockResults.selectQueue = [[{ id: workspaceId, settings: {} }]]
 
 		vi.mocked(verifyStripeWebhook).mockReturnValue({
@@ -431,9 +495,24 @@ describe('POST /api/webhooks/stripe', () => {
 
 		// Two claims (one per delivery) and two selects: A reads {}, B reads
 		// the billing slice A would have committed.
-		mockResults.insertQueue = [[{ id: 'claim-a' }], [{ id: 'claim-b' }]]
+		// Each delivery inserts twice: the webhook_deliveries claim, then the
+		// audit events row. Without the events slots, delivery B's claim would
+		// shift delivery A's events result, read as 0 rows, and be dropped as a
+		// duplicate before it ever wrote.
+		mockResults.insertQueue = [
+			[{ id: 'claim-a' }],
+			[{ id: 'evt-a' }],
+			[{ id: 'claim-b' }],
+			[{ id: 'evt-b' }],
+		]
+		mockResults.select = STRIPE_SYSTEM_ACTOR
+		// Both deliveries write an audit row, and resolving the system actor
+		// costs two extra selects each — spelled out here so delivery B's
+		// workspace row isn't consumed by delivery A's actor lookup.
 		mockResults.selectQueue = [
 			[{ id: workspaceId, settings: {} }],
+			STRIPE_SYSTEM_ACTOR,
+			[{ workspaceId }],
 			[
 				{
 					id: workspaceId,
@@ -449,6 +528,8 @@ describe('POST /api/webhooks/stripe', () => {
 					},
 				},
 			],
+			STRIPE_SYSTEM_ACTOR,
+			[{ workspaceId }],
 		]
 
 		vi.mocked(verifyStripeWebhook)
@@ -512,6 +593,7 @@ describe('POST /api/webhooks/stripe', () => {
 			[], // create workspace member row for the system actor
 			[], // events insert
 		]
+		mockResults.select = STRIPE_SYSTEM_ACTOR
 		mockResults.selectQueue = [
 			[
 				{
@@ -584,6 +666,7 @@ describe('POST /api/webhooks/stripe', () => {
 			[{ id: 'claim-topup-replay' }], // webhook delivery claim
 			[], // workspace_credit_ledger claim — CONFLICT, already credited
 		]
+		mockResults.select = STRIPE_SYSTEM_ACTOR
 		mockResults.selectQueue = [
 			[
 				{
@@ -633,6 +716,7 @@ describe('POST /api/webhooks/stripe', () => {
 		const { app, mockResults, calls } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
 		const workspaceId = randomUUID()
 		mockResults.insertQueue = [[{ id: 'claim-topup-bad' }]]
+		mockResults.select = STRIPE_SYSTEM_ACTOR
 		mockResults.selectQueue = [
 			[
 				{
