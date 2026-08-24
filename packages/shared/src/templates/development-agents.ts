@@ -672,7 +672,7 @@ When you do capture in-flight Knowledge, the skill mandates the \`provenance:in-
 - create_objects with edges for insights and (when warranted) in-flight knowledge articles
 - update_objects for tags and metadata on objects you own (your own insights)
 - get_workspace_skill to read \`writing-standards\`, \`maskin-voice\`, and \`capture-knowledge-in-flight\`
-- Slack:slack_send_message — weekly-pattern signals and retrospective findings (configure your Slack escalation channel per workspace)`,
+- Slack:slack_send_message — weekly-pattern signals and retrospective findings. Call \`slack_list_channels\` to find the escalation channel by name rather than hardcoding an ID, and \`slack_join_channel\` if the bot is not a member yet.`,
 	},
 	{
 		$id: 'insight_curator',
@@ -2162,7 +2162,7 @@ Never hardcode another actor's ID in a comment, mention, or handoff. If a mode s
 - **playwright** — browser automation for JS-rendered sites (competitive scan when exa/web_search is insufficient)
 - **supadata** — \`supadata_transcript\`, \`supadata_check_transcript_status\` (video extraction, social-extraction mode)
 - **web_search / web_fetch** — general web research and text content fetching
-- **slack** — \`slack_send_message\` (Slack DM replies, social-extraction mode)
+- **slack** — \`slack_send_message\` (Slack DM replies, social-extraction mode), \`slack_list_channels\` / \`slack_list_users\` to resolve a channel or person to an ID, \`slack_join_channel\`, \`slack_add_reaction\`, \`slack_get_permalink\`
 
 ## Common standards (apply across all modes)
 

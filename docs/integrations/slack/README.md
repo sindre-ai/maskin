@@ -41,3 +41,42 @@ The agent-posting path this bet ships uses **only the bot token** (`chat:write` 
 - **Slash commands** — none defined yet; bet `Slack as a trust surface` is identity-first.
 - **Interactivity / shortcuts** — no shortcut or interactive request URL configured. Add when the bet that needs them is shaped.
 - **Org-wide deploy / Socket Mode / token rotation** — explicitly disabled. Per-workspace install with a non-rotating bot token matches what `apps/dev/src/lib/integrations/providers/slack/config.ts` expects.
+
+## Agent tool surface (MCP)
+
+Agents reach Slack through the Maskin-hosted MCP server at
+`POST /api/integrations/slack/mcp` (`apps/dev/src/routes/integrations-slack-mcp.ts`),
+built per request by `createSlackMcpServer()` in
+`apps/dev/src/lib/integrations/providers/slack/mcp-server.ts`.
+
+| Tool | Slack method | Scope |
+|------|--------------|-------|
+| `slack_send_message` | `chat.postMessage` | `chat:write`, `chat:write.customize` |
+| `slack_list_channels` | `conversations.list` | `channels:read`, `groups:read` |
+| `slack_list_users` | `users.list` | `users:read` |
+| `slack_join_channel` | `conversations.join` | `channels:join` |
+| `slack_add_reaction` | `reactions.add` | `reactions:write` |
+| `slack_get_permalink` | `chat.getPermalink` | — |
+
+Every one of these scopes is already in `manifest.yml` and in the provider's
+`scopes` array, so adding the tools needed **no manifest change and no
+re-authorisation**. `withScopeHint()` still rewrites a `missing_scope` error
+into a reconnect instruction, for installs predating a scope.
+
+`slack_list_channels` and `slack_list_users` share the 5-minute lookup cache in
+`providers/slack/client.ts` with the REST routes that back the trigger-filter
+UI, keyed by integration id — which is why `SlackPostContext` carries
+`integrationId`.
+
+Channel arguments accept either an ID (`C0123456789`) or a name (`#general`);
+`resolveChannelId()` looks the name up via `conversations.list`, so agents never
+need a human to copy an ID out of the Slack UI.
+
+### No history tool, on purpose
+
+There is deliberately **no** tool that reads channel backlog. `channels:history`,
+`groups:history` and `mpim:history` appear in `manifest.yml` but are excluded
+from the provider's requested `scopes` — the bot sees what it is @mentioned in,
+not everything said in every channel it lives in. Adding a read-history tool
+means adding those scopes to the provider config **and** re-submitting the
+Marketplace listing, never one without the other.

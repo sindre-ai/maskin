@@ -15,6 +15,14 @@ export interface SlackConversation {
 	is_im: boolean
 	is_mpim: boolean
 	is_channel: boolean
+	/**
+	 * Whether the bot itself is a member. `chat.postMessage` fails with
+	 * `not_in_channel` on a public channel the bot hasn't joined, so agents need
+	 * this to know whether to call `slack_join_channel` first. Slack omits the
+	 * field for IM/MPIM conversations — those are always writable — so it is
+	 * coerced to `true` there rather than reporting a misleading `false`.
+	 */
+	is_member: boolean
 }
 
 export interface SlackUser {
@@ -56,7 +64,7 @@ interface SlackResponse {
 	response_metadata?: { next_cursor?: string }
 }
 
-async function slackGet<T extends SlackResponse>(
+export async function slackGet<T extends SlackResponse>(
 	path: string,
 	accessToken: string,
 	params: Record<string, string>,
@@ -121,6 +129,7 @@ export async function listSlackConversations(
 				is_im: Boolean(c.is_im),
 				is_mpim: Boolean(c.is_mpim),
 				is_channel: Boolean(c.is_channel),
+				is_member: Boolean(c.is_im) || Boolean(c.is_mpim) || Boolean(c.is_member),
 			})
 		}
 
