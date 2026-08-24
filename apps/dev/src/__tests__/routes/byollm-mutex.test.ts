@@ -190,7 +190,7 @@ describe('BYOLLM ↔ paid plan mutex — PATCH /api/workspaces/:id', () => {
 	})
 
 	it('skips Stripe call when there is no live subscription to cancel', async () => {
-		const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
+		const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
 		mockResults.selectQueue = [
 			[
 				{

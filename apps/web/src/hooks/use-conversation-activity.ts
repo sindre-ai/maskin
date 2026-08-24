@@ -8,9 +8,7 @@ import {
 	segmentActivityByMessage,
 } from '@/components/agents/session-log-transcript'
 import type { MessageResponse, SessionResponse } from '@/lib/api'
-import { queryKeys } from '@/lib/query-keys'
 import { toastSessionBudgetStopped } from '@/lib/session-errors'
-import { useQueries } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSessionActivityLogs } from './use-session-activity-logs'
