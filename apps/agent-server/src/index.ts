@@ -760,16 +760,46 @@ export function buildApp(deps: AppDeps): Hono {
 			return c.json({ error: 'Expected { from: number, lines: string[] }' }, 400)
 		}
 
-		const stored = sessionLogSeqs.get(id) ?? 0
 		const push = sessionLogRouters.get(id)
+
+		// No record of this session's sequence at all. That is the normal state
+		// after an agent-server restart, where the reconcile pass reattaches a
+		// live session whose guest is already at sequence N — and it is not a
+		// gap we can complain about, because we have stored nothing that a wrong
+		// answer here could discard. Adopt the guest's position. Refusing
+		// instead (the previous behaviour) left both sides stuck forever: the
+		// server acking 0, the guest already past it, neither able to move.
+		const known = sessionLogSeqs.has(id)
+		let stored = known ? (sessionLogSeqs.get(id) ?? 0) : from - 1
+
+		// The guest declares a resync when its buffer overflowed and it dropped
+		// the oldest lines. Those lines no longer exist anywhere, so waiting for
+		// them is waiting forever. Accept the new floor and record the hole in
+		// the transcript rather than leaving a silent discontinuity.
+		if (body && (body as Record<string, unknown>).resync === true && from > stored + 1) {
+			const droppedRaw = Number((body as Record<string, unknown>).dropped)
+			const droppedCount =
+				Number.isFinite(droppedRaw) && droppedRaw > 0 ? droppedRaw : from - stored - 1
+			logger.warn('output: guest resynced after dropping lines', {
+				sessionId: id,
+				storedThrough: stored,
+				resumingFrom: from,
+				dropped: droppedCount,
+			})
+			push?.(
+				`[system] output-stream: ${droppedCount} line(s) of agent output were dropped here — the agent-server was unreachable for long enough to overflow the guest's buffer`,
+			)
+			stored = from - 1
+		}
+
 		let ack = stored
 		for (let i = 0; i < lines.length; i++) {
 			const seq = from + i
 			// Already stored on an earlier attempt whose ack never made it back.
 			if (seq <= stored) continue
-			// A gap means an earlier batch is still outstanding; acking past it
-			// would let the guest discard lines we never received. Stop here and
-			// let the guest resend from where we actually are.
+			// A gap the guest has NOT declared means an earlier batch is still
+			// outstanding; acking past it would let the guest discard lines we
+			// never received. Stop and let it resend from where we actually are.
 			if (seq > ack + 1) break
 			const line = lines[i]
 			if (typeof line !== 'string') break

@@ -2578,6 +2578,50 @@ describe('POST /sessions/:id/logs/batch', () => {
 		expect((await postBatch(app, 'sess-batch-5', 1, 'not-an-array' as never)).status).toBe(400)
 	})
 
+	// Review catch: after an agent-server restart the seq map is empty while the
+	// guest is already at sequence N. Refusing that as a gap acked 0 forever
+	// against a guest that was long past it — a permanent wedge plus a retry
+	// loop measured at ~3,400 requests/second. We have stored nothing, so there
+	// is nothing a wrong answer could discard: adopt the guest's position.
+	it('adopts the guest position on first contact rather than treating it as a gap', async () => {
+		const { app, seen } = appWithRouter('sess-batch-restart')
+		const res = await postBatch(app, 'sess-batch-restart', 57, ['after-restart-1', 'x'])
+		expect(await res.json()).toEqual({ ack: 58 })
+		expect(seen).toEqual(['after-restart-1', 'x'])
+	})
+
+	// Review catch: when the guest's buffer overflows it drops its oldest lines,
+	// leaving a hole nothing can ever fill. Waiting for it is waiting forever.
+	it('accepts a declared resync after the guest dropped lines, and records the hole', async () => {
+		const { app, seen } = appWithRouter('sess-batch-drop')
+		await postBatch(app, 'sess-batch-drop', 1, ['a', 'b'])
+
+		const res = await app.request('/sessions/sess-batch-drop/logs/batch', {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: 'Bearer test-secret-thirty-two-chars-long',
+			},
+			body: JSON.stringify({ from: 9, lines: ['i', 'j'], resync: true, dropped: 6 }),
+		})
+		expect(await res.json()).toEqual({ ack: 10 })
+		expect(seen[0]).toBe('a')
+		expect(seen[1]).toBe('b')
+		// The discontinuity is recorded rather than left silent.
+		expect(seen[2]).toContain('6 line(s) of agent output were dropped')
+		expect(seen.slice(3)).toEqual(['i', 'j'])
+	})
+
+	// A gap the guest has NOT declared is still refused: acking it would let the
+	// guest discard lines that never arrived.
+	it('still refuses an undeclared gap', async () => {
+		const { app, seen } = appWithRouter('sess-batch-undeclared')
+		await postBatch(app, 'sess-batch-undeclared', 1, ['a'])
+		const res = await postBatch(app, 'sess-batch-undeclared', 5, ['e'])
+		expect(await res.json()).toEqual({ ack: 1 })
+		expect(seen).toEqual(['a'])
+	})
+
 	// An unmonitored session must still be acked, or the guest retries forever
 	// against a server that is never going to store anything.
 	it('acks even when no log router is registered', async () => {

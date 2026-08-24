@@ -76,6 +76,8 @@ let ackedThrough = 0
 let inFlight = false
 let stdinEnded = false
 let dropped = 0
+/** Drops not yet reported to the server in a resync batch. */
+let unreportedDrops = 0
 let consecutiveFailures = 0
 
 const warn = (message) => process.stderr.write(`[system] output-stream: ${message}\n`)
@@ -88,6 +90,7 @@ const enqueue = (text) => {
 		// the newest output is the part still worth delivering when it returns.
 		pending.splice(0, lost)
 		dropped += lost
+		unreportedDrops += lost
 		if (dropped === lost || dropped % 1000 === 0) {
 			warn(`buffer full — dropped ${dropped} lines total while unable to reach the server`)
 		}
@@ -103,9 +106,19 @@ const flush = () => {
 	}
 	inFlight = true
 
+	// Dropping the oldest lines leaves a hole between what the server has
+	// stored and what we can still send. The server refuses to ack across a
+	// hole it did not cause — rightly, since silently acking one would let us
+	// discard lines it never received — so it must be told this hole is ours
+	// and permanent. Without that both sides stall forever, each waiting for
+	// the other, and the retry loop spins at network speed: measured at 40,691
+	// requests in 12 seconds, with the give-up path unreachable because every
+	// response was a perfectly good HTTP 200.
+	const resync = batch[0].seq > ackedThrough + 1
 	const body = JSON.stringify({
 		from: batch[0].seq,
 		lines: batch.map((l) => l.text),
+		...(resync ? { resync: true, dropped: unreportedDrops } : {}),
 	})
 
 	const req = client.request(
@@ -136,13 +149,23 @@ const flush = () => {
 				}
 				// The ack is the contract. Lines are only forgotten once the
 				// server says it stored them; anything else is retried.
-				if (ack > ackedThrough) {
-					ackedThrough = ack
-					pending = pending.filter((l) => l.seq > ackedThrough)
+				if (ack <= ackedThrough) {
+					// A 200 that moved nothing is a failure, not a success. It was
+					// previously treated as one — resetting the failure count and
+					// immediately re-flushing the identical batch — which is what
+					// turned a stalled ack into an unbounded request loop. Counting
+					// it means the marker and give-up paths work, and NOT
+					// re-flushing here leaves retries paced by the interval.
+					fail(`server did not advance past ${ack}`)
+					return
 				}
+				ackedThrough = ack
+				pending = pending.filter((l) => l.seq > ackedThrough)
+				if (resync) unreportedDrops = 0
 				consecutiveFailures = 0
 				// Keep going immediately while there is a backlog, so a recovery
-				// after an outage is not paced at one batch per interval.
+				// after an outage is not paced at one batch per interval. Only on
+				// real progress — see above.
 				if (pending.length > 0) flush()
 				else if (stdinEnded) finish()
 			})
