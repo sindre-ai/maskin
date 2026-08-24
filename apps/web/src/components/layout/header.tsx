@@ -215,10 +215,13 @@ export function Header() {
 					<h1 className="truncate text-[clamp(17px,2vw,20px)] font-bold tracking-[-0.02em] text-foreground">
 						{headingText}
 					</h1>
+					{/* `truncate`, not `whitespace-nowrap`: this row wraps rather than
+					    scrolls, and a nowrap subtitle has a min-content width equal to
+					    the whole string, so it could not shrink and pushed the New
+					    button onto a second line at 375px. Truncating lets the count
+					    give up width first and keeps the nav one line. */}
 					{subtitle && (
-						<span className="whitespace-nowrap text-[11.5px] text-muted-foreground">
-							{subtitle}
-						</span>
+						<span className="truncate text-[11.5px] text-muted-foreground">{subtitle}</span>
 					)}
 				</div>
 			) : null}

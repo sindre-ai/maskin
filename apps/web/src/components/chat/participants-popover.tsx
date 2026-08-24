@@ -14,7 +14,7 @@ import type { ConversationParticipantResponse } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { useNavigate } from '@tanstack/react-router'
 import { Command } from 'cmdk'
-import { Link2, Mail, UserMinus } from 'lucide-react'
+import { Link2, UserMinus } from 'lucide-react'
 import { type ReactNode, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 
@@ -100,14 +100,6 @@ export function ParticipantsPopover({
 		}
 	}
 
-	// No invite endpoint exists — hand the link to the user's mail client so the
-	// row does the thing it says rather than opening a dead dialog.
-	const handleInvite = () => {
-		const subject = encodeURIComponent('Join this Maskin conversation')
-		const body = encodeURIComponent(window.location.href)
-		window.location.href = `mailto:?subject=${subject}&body=${body}`
-	}
-
 	return (
 		<ResponsivePopover open={open} onOpenChange={setOpen}>
 			<ResponsivePopoverTrigger asChild>{children}</ResponsivePopoverTrigger>
@@ -191,14 +183,11 @@ export function ParticipantsPopover({
 							<Link2 size={14} className="shrink-0 text-muted-foreground" aria-hidden />
 							Copy link to this chat
 						</button>
-						<button
-							type="button"
-							onClick={handleInvite}
-							className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[12.5px] text-foreground hover:bg-accent"
-						>
-							<Mail size={14} className="shrink-0 text-muted-foreground" aria-hidden />
-							Invite someone by email
-						</button>
+						{/* No "invite by email" row: there is no invite endpoint, so the
+						    only thing it could do is hand the URL to a mail client — and a
+						    recipient outside the workspace cannot open that link. Offering
+						    it promises access the backend does not grant. Restore this once
+						    a real invite flow exists. */}
 						<p className="px-2.5 pt-1 pb-2.5 text-[10.5px] leading-relaxed text-muted-foreground">
 							People see the whole thread. Agents you add start working from it.
 						</p>
