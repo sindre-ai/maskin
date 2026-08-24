@@ -18,10 +18,10 @@ vi.mock('@/hooks/use-events', () => ({
 }))
 
 // The real composer pulls in uploads, drafts, the slash picker and dictation;
-// the card only cares that it renders addressed to the right agent.
+// the card only cares that it renders one, wired to the right object.
 vi.mock('@/components/activity/comment-input', () => ({
-	CommentInput: ({ placeholder }: { placeholder?: string }) => (
-		<div data-testid="comment-input">{placeholder}</div>
+	CommentInput: ({ objectId }: { objectId?: string }) => (
+		<div data-testid="comment-input" data-object-id={objectId} />
 	),
 }))
 
@@ -116,7 +116,11 @@ describe('FeedCard — full state', () => {
 		).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Approve' })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Send back' })).toBeInTheDocument()
-		expect(screen.getByTestId('comment-input')).toHaveTextContent('Reply to Code Reviewer…')
+		// The composer renders stacked with its default placeholder until the
+		// Object detail split lands `variant`/`placeholder` on the v2 composer —
+		// see the TODO in feed-card.tsx. Assert it is wired to the object, not
+		// the addressed-to copy this card cannot yet pass through.
+		expect(screen.getByTestId('comment-input')).toHaveAttribute('data-object-id', 'task-1')
 	})
 
 	it('offers no options on a plain thread', () => {

@@ -548,6 +548,10 @@ export function trackLoopCreatedViaLanguage(p: {
 // the `new-design` flag's off branch, so their trackers stay until the flag and
 // the legacy tree are removed together.
 
+// `items_count` is the rendered item count on the For You feed at the moment of
+// the event (0–2 for the sparse range). `workspace_id` rides along via PostHog
+// super-properties — do not pass it explicitly here.
+
 export function trackForyouSparseComposerShown(p: { items_count: number }): void {
 	trackEvent('foryou_sparse_composer_shown', { items_count: p.items_count })
 }
@@ -555,6 +559,16 @@ export function trackForyouSparseComposerShown(p: { items_count: number }): void
 export function trackForyouSparseComposerSubmit(p: { items_count: number }): void {
 	trackEvent('foryou_sparse_composer_submit', { items_count: p.items_count })
 }
+
+// These two pass `workspace_id` explicitly — deliberately, unlike the trackers
+// above — because the ship metric is a per-workspace ratio.
+//
+// `send_instantly` is load-bearing: without it posthog-js batches events for
+// ~3s. The response event fires right before the prompt card unmounts and users
+// typically tab away immediately, so the batched event never reached PostHog —
+// that is why `north_star_prompt_response` was missing from the taxonomy after
+// PR #1003. The impression event carries the same flag for parity, so the ratio
+// is not biased by asymmetric delivery. Do not remove either flag.
 
 export function trackNorthStarPromptImpression(p: { workspace_id: string }): void {
 	trackEvent(

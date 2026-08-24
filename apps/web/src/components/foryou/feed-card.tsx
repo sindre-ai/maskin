@@ -1,5 +1,6 @@
 import { CommentInput } from '@/components/activity/comment-input'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
+import { QueryStateError } from '@/components/shared/query-state'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { useActors } from '@/hooks/use-actors'
@@ -385,7 +386,13 @@ function TimelineHistory({
 }) {
 	// 0 = closed, 1 = the newest messages, 2 = the whole thread.
 	const [stage, setStage] = useState<0 | 1 | 2>(0)
-	const { data: events, isPending } = useEntityEvents(workspaceId, objectId, { enabled: stage > 0 })
+	const {
+		data: events,
+		isPending,
+		isError,
+		error,
+		refetch,
+	} = useEntityEvents(workspaceId, objectId, { enabled: stage > 0 })
 	const { data: actors } = useActors(workspaceId)
 
 	// `useEntityEvents` returns newest-first, which is the order the mockup's
@@ -425,10 +432,20 @@ function TimelineHistory({
 						Hide
 					</button>
 				</div>
-				{shown.length === 0 && (
-					<p className="text-[11.5px] text-muted-foreground">
-						{isPending ? 'Loading…' : 'Nothing has been said here yet.'}
-					</p>
+				{/* A failed fetch must not read as an empty thread — "nothing has been
+				    said here" is a claim about the object, not about the request. */}
+				{isError ? (
+					<QueryStateError
+						title="Couldn't load the timeline"
+						error={error instanceof Error ? error : new Error('Unknown error')}
+						onRetry={() => refetch()}
+					/>
+				) : (
+					shown.length === 0 && (
+						<p className="text-[11.5px] text-muted-foreground">
+							{isPending ? 'Loading…' : 'Nothing has been said here yet.'}
+						</p>
+					)
 				)}
 				{shown.map((event) => (
 					<TimelineMessage key={event.id} event={event} actors={actors} />

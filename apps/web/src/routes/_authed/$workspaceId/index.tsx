@@ -241,6 +241,18 @@ function ForYouFeed() {
 		})
 	}, [])
 
+	// A card hidden on an optimistic mark-read has to come back the moment the
+	// write fails, or the toast's promise that it is still in the feed is a lie
+	// — it would sit hidden until some unrelated refetch happened to restore it.
+	const restorePending = useCallback((key: string) => {
+		setPendingKeys((prev) => {
+			if (!prev.has(key)) return prev
+			const next = new Set(prev)
+			next.delete(key)
+			return next
+		})
+	}, [])
+
 	// Returns whether a mark-read was actually dispatched. An item with no
 	// `latest_event_id` has no high-water mark to move, so the request would be
 	// meaningless — callers must not hide such a card, or it silently returns
@@ -255,11 +267,16 @@ function ForYouFeed() {
 					entityId: item.entity_id,
 					lastEventId: eventId,
 				},
-				{ onError: () => toast.error("Couldn't mark that as read — it's still in your feed.") },
+				{
+					onError: () => {
+						restorePending(feedItemKey(item))
+						toast.error("Couldn't mark that as read — it's back in your feed.")
+					},
+				},
 			)
 			return true
 		},
-		[markRead],
+		[markRead, restorePending],
 	)
 
 	const markItemUnread = useCallback(

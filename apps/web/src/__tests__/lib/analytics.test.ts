@@ -17,6 +17,8 @@ import {
 	trackForyouCardShown,
 	trackMiniAppFileViewed,
 	trackNavItemClicked,
+	trackNorthStarPromptImpression,
+	trackNorthStarPromptResponse,
 	trackObjectAttachedFile,
 	trackObjectCreated,
 	trackObjectUpdated,
@@ -573,6 +575,39 @@ describe('v1 taxonomy helpers', () => {
 			item_key: 'marketplace',
 			source: 'footer',
 		})
+	})
+
+	it('north_star_prompt_impression fires with workspace_id via posthog.capture, bypassing the batch queue', () => {
+		const capture = captureSpy()
+
+		trackNorthStarPromptImpression({ workspace_id: 'ws-42' })
+
+		expect(capture).toHaveBeenCalledWith(
+			'north_star_prompt_impression',
+			{ workspace_id: 'ws-42' },
+			{ send_instantly: true },
+		)
+	})
+
+	it('north_star_prompt_response fires with workspace_id via posthog.capture, bypassing the batch queue', () => {
+		// send_instantly is load-bearing: without it, posthog-js batches events
+		// for ~3s. The response event fires right before the card unmounts and
+		// users typically tab away immediately, so the batched event never
+		// reaches PostHog — that's why the event name was missing from the
+		// project taxonomy after PR #1003. The impression event uses the same
+		// flag for parity so the ratio isn't biased by asymmetric delivery.
+		// These two surfaces are legacy-only (the `new-design` flag's off
+		// branch), but they still ship — the guard dies with the flag, not
+		// before it.
+		const capture = captureSpy()
+
+		trackNorthStarPromptResponse({ workspace_id: 'ws-42' })
+
+		expect(capture).toHaveBeenCalledWith(
+			'north_star_prompt_response',
+			{ workspace_id: 'ws-42' },
+			{ send_instantly: true },
+		)
 	})
 
 	it('scroll_to_top carries entity_id/entity_type/object_subtype so the correlation join runs without aliasing', () => {
