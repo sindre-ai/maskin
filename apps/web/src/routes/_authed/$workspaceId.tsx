@@ -3,7 +3,6 @@ import { Header } from '@/components/layout/header'
 import { LegacyCommandPalette } from '@/components/layout/legacy/command-palette'
 import { LegacyHeader } from '@/components/layout/legacy/header'
 import { LegacyAppSidebar } from '@/components/layout/legacy/sidebar'
-import { MobileNav } from '@/components/layout/mobile-nav'
 import { AppSidebar } from '@/components/layout/sidebar'
 import { RouteError } from '@/components/shared/route-error'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
@@ -119,7 +118,6 @@ function WorkspaceLayout() {
 												<Outlet />
 											</MainScrollArea>
 										</SidebarInset>
-										{newDesign && <MobileNav />}
 									</SidebarProvider>
 								</ContentPushShell>
 							</PageHeaderProvider>
@@ -237,16 +235,14 @@ function ContentPushShell({ children }: { children: ReactNode }) {
  * own internal scroll region on the active card's thread) — the container
  * then clips instead of scrolling, so only that inner region scrolls.
  *
- * Mobile leaves `pb-20`/`scroll-pb-20` of space so the fixed `MobileNav`
- * bottom bar never covers the last row of content or a scroll-into-view
- * target; desktop resets both back to zero via `md:p-8`/`md:scroll-pb-0`.
+ * Padding steps up from `px-4 pt-4` on mobile to `p-8` from `md:` up.
  */
 function MainScrollArea({ children }: { children: ReactNode }) {
 	const { scrollLocked } = usePageHeader()
 	return (
 		<div
 			className={cn(
-				'flex flex-col flex-1 min-w-0 px-4 pb-20 pt-4 scroll-pb-20 md:p-8 md:scroll-pb-0',
+				'flex flex-col flex-1 min-w-0 px-4 pb-4 pt-4 md:p-8',
 				scrollLocked ? 'overflow-hidden' : 'overflow-auto',
 			)}
 			data-scroll-root
