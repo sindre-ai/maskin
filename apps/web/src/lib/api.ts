@@ -1546,7 +1546,10 @@ export interface SessionConfigInput {
 	runtime?: 'claude-code' | 'codex' | 'custom'
 	timeout_seconds?: number
 	memory_mb?: number
+	/** Docker-only relative CPU weight; microVM sessions use `vcpus`. */
 	cpu_shares?: number
+	/** Hard vCPU count for a microVM session; omit to let the agent-server size it. */
+	vcpus?: number
 	env_vars?: Record<string, string>
 	mcps?: Array<Record<string, unknown>>
 }

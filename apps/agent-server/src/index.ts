@@ -10,6 +10,7 @@ import { bearerAuth } from './lib/auth'
 import { type AgentServerEnv, parseEnv } from './lib/env'
 import { logger } from './lib/logger'
 import { Sentry } from './lib/sentry'
+import { defaultSessionVcpus, hostCoreCount } from './lib/vcpus'
 import { ImageWarmer } from './services/image-warmer'
 import { InputQueue } from './services/input-queue'
 import {
@@ -1611,7 +1612,14 @@ async function buildStorage(env: AgentServerEnv): Promise<StorageProvider | null
 async function main(): Promise<void> {
 	const env = parseEnv()
 	const storage = await buildStorage(env)
-	const msb: MicrosandboxDeps = { msbBin: env.MSB_BIN }
+	const hostCores = hostCoreCount()
+	const defaultVcpus = defaultSessionVcpus(hostCores, env.MSB_DEFAULT_VCPUS)
+	const msb: MicrosandboxDeps = { msbBin: env.MSB_BIN, hostCores, defaultVcpus }
+	logger.info('session vCPU sizing', {
+		hostCores,
+		defaultVcpus,
+		source: env.MSB_DEFAULT_VCPUS !== undefined ? 'MSB_DEFAULT_VCPUS' : 'host-cores',
+	})
 
 	// Best-effort: a box that can't mint/authorize its relay keypair here still
 	// boots — browser-required sessions will simply fail sidecar/preview relay

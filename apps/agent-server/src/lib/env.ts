@@ -26,6 +26,20 @@ const envSchema = z.object({
 	// deployments without it still boot fine.
 	AGENT_SERVER_ID: z.string().uuid().optional(),
 	MSB_BIN: z.string().optional().default('/root/.microsandbox/bin/msb'),
+	// vCPUs given to a session microVM that doesn't request a specific size.
+	// Unset derives it from this box's core count — see lib/vcpus.ts. Set it to
+	// tune a box by restarting agent-server instead of shipping a release.
+	MSB_DEFAULT_VCPUS: z
+		.string()
+		.optional()
+		.transform((v) => {
+			if (v === undefined || v.trim() === '') return undefined
+			const n = Number(v)
+			if (!Number.isInteger(n) || n < 1 || n > 128) {
+				throw new Error(`Invalid MSB_DEFAULT_VCPUS: ${v} (expected integer 1..128)`)
+			}
+			return n
+		}),
 	MASKIN_AGENT_SERVER_PUBLIC_HOST: z.string().optional(),
 	// Hostname the microVM uses to reach this agent-server over the host loopback.
 	// microsandbox writes `host.microsandbox.internal` into /etc/hosts of each VM;

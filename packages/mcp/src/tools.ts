@@ -1308,7 +1308,24 @@ export const tools = {
 					runtime_config: z.record(z.unknown()).optional(),
 					timeout_seconds: z.number().int().min(30).max(3600).optional(),
 					memory_mb: z.number().int().min(256).max(8192).optional(),
-					cpu_shares: z.number().int().min(256).max(4096).optional(),
+					cpu_shares: z
+						.number()
+						.int()
+						.min(256)
+						.max(4096)
+						.optional()
+						.describe(
+							'Docker-only relative CPU weight. Does not affect microVM sessions — use `vcpus` for those.',
+						),
+					vcpus: z
+						.number()
+						.int()
+						.min(1)
+						.max(64)
+						.optional()
+						.describe(
+							'Hard vCPU count for the session microVM. Omit to let the agent-server size it from its host core count.',
+						),
 					env_vars: z.record(z.string()).optional(),
 					browserRequired: z
 						.boolean()

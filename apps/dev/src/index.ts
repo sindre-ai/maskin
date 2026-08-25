@@ -168,7 +168,9 @@ if (process.env.NODE_ENV === 'production') {
 				image: spec.image,
 				env: spec.env,
 				memoryMib: spec.memoryMib,
-				cpus: spec.cpus,
+				// Omitted unless the session config pinned a size — the
+				// agent-server sizes it from its own host core count.
+				...(spec.cpus !== undefined && { cpus: spec.cpus }),
 				...(spec.browserRequired && { browserRequired: true }),
 				...(spec.previewGuestPorts.length > 0 && { previewGuestPorts: spec.previewGuestPorts }),
 				sourceSessionId: session.sourceSessionId ?? undefined,

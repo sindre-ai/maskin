@@ -507,6 +507,57 @@ describe('spawnSession (orchestration)', () => {
 		}
 	})
 
+	it('sizes --cpus from the host core count when the session requests none', async () => {
+		const dir = await mkdtemp(join(tmpdir(), 'maskin-msb-vcpus-default-'))
+		try {
+			const { run, calls } = makeRunner({
+				create: { stdout: '' },
+				list: { stdout: JSON.stringify([{ name: 'orch-vcpus', status: 'Running' }]) },
+			})
+			await spawnSession(
+				{ ...baseInput, sessionId: 'orch-vcpus', sessionDir: dir },
+				{
+					msbBin: '/usr/local/bin/msb',
+					run,
+					sleep: async () => {},
+					now: () => 0,
+					hostCores: 12,
+				},
+			)
+			const createCall = calls.find((c) => c.args[0] === 'create')
+			const cpusIdx = createCall?.args.indexOf('--cpus') ?? -1
+			// 12 cores minus the 2 reserved for the host, capped at 8.
+			expect(createCall?.args[cpusIdx + 1]).toBe('8')
+		} finally {
+			await rm(dir, { recursive: true, force: true })
+		}
+	})
+
+	it('clamps an explicitly requested --cpus to the host core count', async () => {
+		const dir = await mkdtemp(join(tmpdir(), 'maskin-msb-vcpus-clamp-'))
+		try {
+			const { run, calls } = makeRunner({
+				create: { stdout: '' },
+				list: { stdout: JSON.stringify([{ name: 'orch-vcpus-2', status: 'Running' }]) },
+			})
+			await spawnSession(
+				{ ...baseInput, sessionId: 'orch-vcpus-2', sessionDir: dir, cpus: 64 },
+				{
+					msbBin: '/usr/local/bin/msb',
+					run,
+					sleep: async () => {},
+					now: () => 0,
+					hostCores: 4,
+				},
+			)
+			const createCall = calls.find((c) => c.args[0] === 'create')
+			const cpusIdx = createCall?.args.indexOf('--cpus') ?? -1
+			expect(createCall?.args[cpusIdx + 1]).toBe('4')
+		} finally {
+			await rm(dir, { recursive: true, force: true })
+		}
+	})
+
 	it('threads extraAllowedHostPorts into the create call as extra allow@host:tcp net-rules', async () => {
 		const dir = await mkdtemp(join(tmpdir(), 'maskin-msb-preview-'))
 		try {

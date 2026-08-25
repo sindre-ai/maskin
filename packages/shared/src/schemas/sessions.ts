@@ -89,7 +89,16 @@ export const sessionConfigSchema = z.object({
 	runtime_config: runtimeConfigSchema.default({}),
 	timeout_seconds: z.coerce.number().int().min(30).max(3600).default(600),
 	memory_mb: z.coerce.number().int().min(256).max(8192).default(4096),
+	// Docker-only relative CPU weight (HostConfig.CpuShares). 1024 is Docker's
+	// "normal share" — it is NOT a core count, and a container with it still
+	// bursts across every idle core. Ignored on the microVM path.
 	cpu_shares: z.coerce.number().int().min(256).max(4096).default(1024),
+	// Hard vCPU count for the session microVM, where — unlike Docker — the
+	// number is a ceiling the session can never exceed. Left unset (the normal
+	// case) the agent-server sizes it from its own host's core count, which is
+	// the only place that knows how big the box is. See
+	// apps/agent-server/src/lib/vcpus.ts.
+	vcpus: z.coerce.number().int().min(1).max(64).optional(),
 	mcps: z.array(mcpServerSchema).default([]),
 	env_vars: z.record(z.string()).default({}),
 	interactive: z.boolean().default(false),

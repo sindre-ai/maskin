@@ -1086,6 +1086,61 @@ describe('SessionManager', () => {
 			expect(spec.previewGuestPorts).toEqual([])
 			expect(spec.browserRequired).toBe(false)
 		})
+
+		it('leaves cpus undefined so the agent-server sizes the microVM from its host cores', async () => {
+			const session = buildSession({ status: 'pending', interactive: false, config: {} })
+			mockResults.selectQueue = [
+				[buildTestAgent(session.actorId)],
+				[buildTestWorkspace(session.workspaceId)],
+				[],
+			]
+
+			const spec = await manager.buildLaunchSpec(
+				session as unknown as Parameters<typeof manager.buildLaunchSpec>[0],
+			)
+
+			expect(spec.cpus).toBeUndefined()
+		})
+
+		it('does not derive cpus from cpu_shares — that weight is Docker-only', async () => {
+			const session = buildSession({
+				status: 'pending',
+				interactive: false,
+				config: { cpu_shares: 1024 },
+			})
+			mockResults.selectQueue = [
+				[buildTestAgent(session.actorId)],
+				[buildTestWorkspace(session.workspaceId)],
+				[],
+			]
+
+			const spec = await manager.buildLaunchSpec(
+				session as unknown as Parameters<typeof manager.buildLaunchSpec>[0],
+			)
+
+			// The regression this guards: cpu_shares/1024 === 1 vCPU per session.
+			expect(spec.cpus).toBeUndefined()
+			expect(spec.cpuShares).toBe(1024)
+		})
+
+		it('passes an explicit vcpus override straight through', async () => {
+			const session = buildSession({
+				status: 'pending',
+				interactive: false,
+				config: { vcpus: 6 },
+			})
+			mockResults.selectQueue = [
+				[buildTestAgent(session.actorId)],
+				[buildTestWorkspace(session.workspaceId)],
+				[],
+			]
+
+			const spec = await manager.buildLaunchSpec(
+				session as unknown as Parameters<typeof manager.buildLaunchSpec>[0],
+			)
+
+			expect(spec.cpus).toBe(6)
+		})
 	})
 
 	describe('cleanupBrowserSidecar() — teardown SLA (AC-T5)', () => {

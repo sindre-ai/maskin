@@ -1500,7 +1500,8 @@ export class SessionManager extends EventEmitter {
 		image: string
 		env: Record<string, string>
 		memoryMib: number
-		cpus: number
+		// Undefined means "let the agent-server pick from its host core count".
+		cpus: number | undefined
 		cpuShares: number
 		browserRequired: boolean
 		previewGuestPorts: number[]
@@ -2013,12 +2014,17 @@ export class SessionManager extends EventEmitter {
 
 		const image =
 			(sessionConfig.base_image as string) ?? process.env.AGENT_BASE_IMAGE ?? 'agent-base:latest'
-		// memory_mb / cpu_shares are the Docker-native units used historically;
-		// the spec exposes MiB and a CPU count so apps/agent-server can pass
-		// them through to libkrun without re-translating per call site.
+		// memory_mb / cpu_shares are the Docker-native units used historically.
+		// `cpu_shares` is a *relative weight*, not a core count — a Docker
+		// container at the 1024 default still bursts across every idle core — so
+		// it must NOT be translated into a libkrun `--cpus` value: doing so
+		// pinned every microVM session to a single vCPU. The microVM path uses
+		// the explicit `vcpus` config instead, and when that's unset (the normal
+		// case) sends nothing, letting the agent-server size the VM from its own
+		// host core count. See apps/agent-server/src/lib/vcpus.ts.
 		const memoryMib = (sessionConfig.memory_mb as number) ?? 4096
 		const cpuShares = (sessionConfig.cpu_shares as number) ?? 1024
-		const cpus = Math.max(1, Math.round(cpuShares / 1024))
+		const cpus = sessionConfig.vcpus as number | undefined
 
 		return { image, env: envVars, memoryMib, cpus, cpuShares, browserRequired, previewGuestPorts }
 	}

@@ -159,6 +159,22 @@ describe('sessionConfigSchema', () => {
 		expect(() => sessionConfigSchema.parse({ cpu_shares: 8192 })).toThrow()
 	})
 
+	it('leaves vcpus unset by default so the agent-server sizes the microVM', () => {
+		expect(sessionConfigSchema.parse({}).vcpus).toBeUndefined()
+	})
+
+	it('accepts an explicit vcpus override', () => {
+		expect(sessionConfigSchema.parse({ vcpus: 4 }).vcpus).toBe(4)
+	})
+
+	it('rejects vcpus below 1', () => {
+		expect(() => sessionConfigSchema.parse({ vcpus: 0 })).toThrow()
+	})
+
+	it('rejects vcpus above 64', () => {
+		expect(() => sessionConfigSchema.parse({ vcpus: 128 })).toThrow()
+	})
+
 	it('accepts mcps array', () => {
 		const result = sessionConfigSchema.parse({
 			mcps: [{ command: 'node', args: ['server.js'] }],

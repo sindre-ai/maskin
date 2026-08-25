@@ -5,6 +5,7 @@ import { connect, createServer } from 'node:net'
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { logger } from '../lib/logger'
+import { browserSidecarVcpus, hostCoreCount, resolveSessionVcpus } from '../lib/vcpus'
 
 const execFile = promisify(execFileCb)
 
@@ -123,7 +124,6 @@ const BROWSER_CDP_GUEST_PORT = 9222
 // Bigger memory budget than a session VM: Xvfb + headed Chromium is heavier
 // than the agent-base image and Chromium tabs eat into the budget fast.
 const BROWSER_SIDECAR_MEMORY_MIB = 1536
-const BROWSER_SIDECAR_CPUS = 1
 const BROWSER_SIDECAR_CREATE_TIMEOUT_MS = 90_000
 
 // CDP polling: how long to wait for Chrome/socat to accept connections after
@@ -144,7 +144,6 @@ const SESSION_GUEST_PATH = '/agent'
 const SKELETON_SUBDIRS = ['workspace', 'skills', 'learnings', 'memory'] as const
 
 const DEFAULT_MEMORY_MIB = 1024
-const DEFAULT_CPUS = 1
 const STATUS_POLL_INTERVAL_MS = 500
 const STATUS_POLL_TIMEOUT_MS = 90_000
 const CREATE_TIMEOUT_MS = 60_000
@@ -245,6 +244,12 @@ export type MicrosandboxDeps = {
 	// tests spawning one apiece in rapid succession it can exhaust CI runner
 	// resources — see the CI-only OOM/SIGKILL this override fixes.
 	spawnProcess?: ProcessSpawner
+	// Cores this box has. Defaults to the real os.cpus() count; overrideable so
+	// vCPU sizing is deterministic in tests regardless of the runner's size.
+	hostCores?: number
+	// Resolved MSB_DEFAULT_VCPUS — the vCPU count for sessions that don't
+	// request a specific size. Unset falls back to defaultSessionVcpus().
+	defaultVcpus?: number
 }
 
 export function assertValidSessionId(sessionId: string): void {
@@ -412,11 +417,15 @@ export async function spawnSession(
 		})
 	}
 
+	// libkrun fixes a VM's vCPU count at boot — see lib/vcpus.ts for why the box
+	// picks this rather than apps/dev.
+	const cpus = resolveSessionVcpus(input.cpus, deps.hostCores ?? hostCoreCount(), deps.defaultVcpus)
+
 	const args = buildMsbCreateArgs({
 		sessionId: input.sessionId,
 		image: input.image,
 		memoryMib: input.memoryMib ?? DEFAULT_MEMORY_MIB,
-		cpus: input.cpus ?? DEFAULT_CPUS,
+		cpus,
 		hostPort: input.hostPort,
 		env: inline,
 		sessionDir: input.sessionDir,
@@ -1158,7 +1167,7 @@ export async function provisionBrowserSidecar(
 		'--memory',
 		`${BROWSER_SIDECAR_MEMORY_MIB}M`,
 		'--cpus',
-		String(BROWSER_SIDECAR_CPUS),
+		String(browserSidecarVcpus(hostCoreCount())),
 		'--pull',
 		'always',
 		'--quiet',
