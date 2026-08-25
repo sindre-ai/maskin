@@ -6,7 +6,6 @@ import {
 	type ForYouBulkAction,
 	ForYouHeader,
 } from '@/components/foryou/foryou-header'
-import { LegacyForYouPage } from '@/components/foryou/legacy/foryou-page'
 import { OnboardingPromptCard } from '@/components/foryou/onboarding-prompt-card'
 import { ReleaseCard } from '@/components/foryou/release-card'
 import { PageHeader } from '@/components/layout/page-header'
@@ -22,7 +21,6 @@ import { type CreateCommentInput, type DisplaySettingsBody, type UnreadItem, api
 import { cn } from '@/lib/cn'
 import { CARD_ACTIONS, classifyCardKind } from '@/lib/foryou-card-kind'
 import { type FeedBucket, bucketRank, feedItemKey, feedTailLabel } from '@/lib/foryou-feed'
-import { useNewDesign } from '@/lib/new-design-context'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
 import { CHROME_KEY } from '@maskin/shared'
@@ -32,18 +30,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 export const Route = createFileRoute('/_authed/$workspaceId/')({
-	component: ForYouRoute,
+	component: ForYouFeed,
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
-
-// The single `new-design` boundary for the For You feed: the v4 feed (brief
-// card, one card per unread thread) below, or the pre-v2 feed under
-// `components/foryou/legacy/`. Reads the resolved flag from `NewDesignProvider`
-// rather than calling `useFeatureFlag` again — see
-// `.claude/rules/feature-flags.md`.
-function ForYouRoute() {
-	return useNewDesign() ? <ForYouFeed /> : <LegacyForYouPage />
-}
 
 const UNDO_WINDOW_MS = 15_000
 

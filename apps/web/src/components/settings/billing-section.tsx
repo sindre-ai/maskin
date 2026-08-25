@@ -57,12 +57,12 @@ function formatSeatCap(n: number | null): string {
 	return `Up to ${n} members per workspace`
 }
 
-// 500 / 2_000 / 20_000 (USD cents) below mirror TRIAL_HARD_CAP_DEFAULT_USD_CENTS /
+// 1_000 / 2_000 / 20_000 (USD cents) below mirror TRIAL_HARD_CAP_DEFAULT_USD_CENTS /
 // PRO_HARD_CAP_DEFAULT_USD_CENTS / TEAM_HARD_CAP_DEFAULT_USD_CENTS in
 // apps/dev/src/lib/billing-defaults.ts and the .env.example
 // MASKIN_*_HARD_CAP_USD_CENTS defaults. Keep in sync when bumping — enforced
 // by scripts/verify-billing-cap-literals.mjs.
-const CAP_DEFAULTS = { trial: 500, pro: 2_000, team: 20_000 } as const
+const CAP_DEFAULTS = { trial: 1_000, pro: 2_000, team: 20_000 } as const
 
 interface PlanCardConfig {
 	plan: BillingPlan
@@ -79,7 +79,7 @@ const PLAN_CONFIG: PlanCardConfig[] = [
 		eyebrow: 'TRIAL',
 		price: 'Free',
 		priceSuffix: '/14 days',
-		tagline: 'Full product, no card. $5 of usage on the house.',
+		tagline: 'Full product, no card. $10 of usage on the house.',
 		features: [
 			`${formatCredits(CAP_DEFAULTS.trial)} of usage included`,
 			formatOwnershipCap(OWNERSHIP_CAPS.trial),

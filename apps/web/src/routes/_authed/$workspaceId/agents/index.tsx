@@ -1,5 +1,4 @@
 import { AgentsIndexView } from '@/components/agents/agents-index-view'
-import { LegacyAgentsIndexPage } from '@/components/agents/legacy/agents-index-page'
 import { PageHeader } from '@/components/layout/page-header'
 import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picker'
 import { EmptyState } from '@/components/shared/empty-state'
@@ -8,7 +7,6 @@ import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useWorkspaceSessions } from '@/hooks/use-sessions'
-import { useNewDesign } from '@/lib/new-design-context'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
 import { Users } from 'lucide-react'
@@ -19,16 +17,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/agents/')({
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
 
-/**
- * The `new-design` boundary for the Agents index. The flag is read once, at the
- * workspace shell, and only the resolved boolean reaches here via
- * `useNewDesign()` — a route page can't be swapped at the boundary itself.
- */
 function AgentsRoute() {
-	return useNewDesign() ? <AgentsPageV2 /> : <LegacyAgentsIndexPage />
-}
-
-function AgentsPageV2() {
 	const { workspaceId } = useWorkspace()
 	const { data: actors, isLoading } = useActors(workspaceId)
 	const { data: sessions } = useWorkspaceSessions(workspaceId, { paged: true })

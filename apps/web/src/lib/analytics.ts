@@ -268,10 +268,6 @@ export function trackSidebarWorkspaceSwitcherOpened(p: { workspaceId: string }):
 	trackEvent('sidebar.workspace_switcher.opened', { workspaceId: p.workspaceId })
 }
 
-export function trackSidebarAgentActivityExpanded(p: { workspaceId: string }): void {
-	trackEvent('sidebar.agent_activity.expanded', { workspaceId: p.workspaceId })
-}
-
 // Nav-cleanup bet — Marketplace footer position must reach ≥80% of its prior
 // top-nav CTR within 14 days of ship, which requires per-entry click emission.
 // `item_key` is the stable route-agnostic identifier (`for-you`, `objects`,
@@ -370,41 +366,6 @@ export function trackScrollToTop(
 		object_subtype: p.object_subtype,
 		scroll_depth_at_start_px: p.scroll_depth_at_start_px,
 		viewports_scrolled: p.viewports_scrolled,
-	})
-}
-
-// Ship-metric events for the bidirectional swipe-to-read/unread bet on the For
-// You page. Fire on the *completed* swipe — inside the post-Undo timer commit,
-// so tapping Undo within the 4.5s window emits nothing. `mobile` is computed at
-// emission from `window.innerWidth <= 768` rather than snapshotted at hook mount
-// because the DoD keys the mobile/desktop split off the viewport width the
-// gesture actually completes on. `via` is fixed to 'swipe' so the toolbar
-// mark-read button can be instrumented separately later without back-filling.
-function isMobileViewport(): boolean {
-	if (typeof window === 'undefined') return false
-	return window.innerWidth <= 768
-}
-
-interface ForyouCardMarkedProps {
-	entity_type: string
-	entity_id: string
-}
-
-export function trackForyouCardMarkedRead(p: ForyouCardMarkedProps): void {
-	trackEvent('foryou_card_marked_read', {
-		entity_type: p.entity_type,
-		entity_id: p.entity_id,
-		mobile: isMobileViewport(),
-		via: 'swipe',
-	})
-}
-
-export function trackForyouCardMarkedUnread(p: ForyouCardMarkedProps): void {
-	trackEvent('foryou_card_marked_unread', {
-		entity_type: p.entity_type,
-		entity_id: p.entity_id,
-		mobile: isMobileViewport(),
-		via: 'swipe',
 	})
 }
 
@@ -539,49 +500,6 @@ export function trackLoopCreatedViaLanguage(p: {
 			source: 'web',
 			flow_id: p.flow_id ?? null,
 		},
-		{ send_instantly: true },
-	)
-}
-
-// Legacy For You surfaces only (`components/foryou/legacy/`). Feed v4 dropped
-// the sparse composer and the north-star prompt, but both still render behind
-// the `new-design` flag's off branch, so their trackers stay until the flag and
-// the legacy tree are removed together.
-
-// `items_count` is the rendered item count on the For You feed at the moment of
-// the event (0–2 for the sparse range). `workspace_id` rides along via PostHog
-// super-properties — do not pass it explicitly here.
-
-export function trackForyouSparseComposerShown(p: { items_count: number }): void {
-	trackEvent('foryou_sparse_composer_shown', { items_count: p.items_count })
-}
-
-export function trackForyouSparseComposerSubmit(p: { items_count: number }): void {
-	trackEvent('foryou_sparse_composer_submit', { items_count: p.items_count })
-}
-
-// These two pass `workspace_id` explicitly — deliberately, unlike the trackers
-// above — because the ship metric is a per-workspace ratio.
-//
-// `send_instantly` is load-bearing: without it posthog-js batches events for
-// ~3s. The response event fires right before the prompt card unmounts and users
-// typically tab away immediately, so the batched event never reached PostHog —
-// that is why `north_star_prompt_response` was missing from the taxonomy after
-// PR #1003. The impression event carries the same flag for parity, so the ratio
-// is not biased by asymmetric delivery. Do not remove either flag.
-
-export function trackNorthStarPromptImpression(p: { workspace_id: string }): void {
-	trackEvent(
-		'north_star_prompt_impression',
-		{ workspace_id: p.workspace_id },
-		{ send_instantly: true },
-	)
-}
-
-export function trackNorthStarPromptResponse(p: { workspace_id: string }): void {
-	trackEvent(
-		'north_star_prompt_response',
-		{ workspace_id: p.workspace_id },
 		{ send_instantly: true },
 	)
 }

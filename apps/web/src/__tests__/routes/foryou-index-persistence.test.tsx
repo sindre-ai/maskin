@@ -135,7 +135,6 @@ vi.mock('@/components/shared/create-picker', () => ({
 	isCreateShortcut: () => false,
 }))
 
-import { NewDesignProvider } from '@/lib/new-design-context'
 import {
 	feedModeToForyouViewMode,
 	foryouViewModeToFeedMode,
@@ -191,13 +190,9 @@ function mount() {
 	const queryClient = new QueryClient({
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
 	})
-	// These assert the v2 feed, so they mount on the `new-design` side of the
-	// route's flag boundary.
 	return render(
 		<QueryClientProvider client={queryClient}>
-			<NewDesignProvider value={true}>
-				<ForYouPage />
-			</NewDesignProvider>
+			<ForYouPage />
 		</QueryClientProvider>,
 	)
 }

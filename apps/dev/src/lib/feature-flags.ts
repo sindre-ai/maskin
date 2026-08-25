@@ -4,7 +4,7 @@
 // optional and default to empty, which means every flag is off for everyone.
 //
 //   FF_TESTER_ACTOR_IDS=<uuid>,<uuid>         actors who see tester features
-//   FF_TESTER_FEATURES=new-design,some-flag   flag ids on for those actors
+//   FF_TESTER_FEATURES=some-flag,other-flag   flag ids on for those actors
 //
 // A flag has exactly two states: off, or on for the tester actors. There is
 // deliberately no "on for everyone" setting — shipping a feature to everyone
@@ -16,10 +16,10 @@
 // server-side and are never shipped to the browser.
 
 // Every known flag id. Ids absent from this registry always resolve to false,
-// so a typo in FF_TESTER_FEATURES can't invent a flag.
-export const FLAGS = {
-	NEW_DESIGN: 'new-design',
-} as const
+// so a typo in FF_TESTER_FEATURES can't invent a flag. Currently empty — the
+// `new-design` flag was retired once the v2 design shipped to everyone. Add an
+// entry here as the first step of introducing a new flag.
+export const FLAGS = {} as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]
 
@@ -48,10 +48,15 @@ export function parseFeatureFlagConfig(env: NodeJS.ProcessEnv = process.env): Fe
 
 // Resolves every registered flag for one actor: true only when the flag is
 // listed in FF_TESTER_FEATURES and this actor is listed in FF_TESTER_ACTOR_IDS.
-export function resolveFlags(actorId: string, config: FeatureFlagConfig): Record<FlagId, boolean> {
+export function resolveFlags(
+	actorId: string,
+	config: FeatureFlagConfig,
+	// Injected so the registry can be exercised in tests while FLAGS is empty.
+	registry: Record<string, string> = FLAGS,
+): Record<string, boolean> {
 	const isTester = config.testerActorIds.has(actorId.trim().toLowerCase())
-	const resolved = {} as Record<FlagId, boolean>
-	for (const flagId of Object.values(FLAGS)) {
+	const resolved: Record<string, boolean> = {}
+	for (const flagId of Object.values(registry)) {
 		resolved[flagId] = config.testerFlags.has(flagId) && isTester
 	}
 	return resolved

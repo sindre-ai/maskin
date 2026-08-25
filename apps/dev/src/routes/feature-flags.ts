@@ -1,6 +1,6 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import { validationFailureHook } from '../lib/errors'
-import { FLAGS, getFeatureFlagConfig, resolveFlags } from '../lib/feature-flags'
+import { getFeatureFlagConfig, resolveFlags } from '../lib/feature-flags'
 
 // Per-actor, not per-workspace — no X-Workspace-Id header.
 type Env = {
@@ -12,7 +12,7 @@ type Env = {
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 const featureFlagsResponseSchema = z.object({
-	flags: z.record(z.boolean()).openapi({ example: { [FLAGS.NEW_DESIGN]: true } }),
+	flags: z.record(z.boolean()).openapi({ example: { 'some-flag': true } }),
 })
 
 const getFlagsRoute = createRoute({
