@@ -2872,10 +2872,10 @@ describe('SessionManager', () => {
 			expect(result).toBe(true)
 		})
 
-		it('uses the default cap of 3 when workspace has no max_concurrent_sessions setting', async () => {
+		it('uses the default cap of 10 when workspace has no max_concurrent_sessions setting', async () => {
 			mockResults.selectQueue = [
 				[{ settings: {} }], // workspace with no cap setting
-				[{ count: 3 }], // three sessions active = at default cap
+				[{ count: 10 }], // ten sessions active = at default cap
 			]
 
 			const result = await (
@@ -2883,6 +2883,16 @@ describe('SessionManager', () => {
 			).hasCapacity('ws-1')
 
 			expect(result).toBe(false)
+		})
+
+		it('still has room at the old cap of 3 — the box was three-quarters idle', async () => {
+			mockResults.selectQueue = [[{ settings: {} }], [{ count: 3 }]]
+
+			const result = await (
+				manager as unknown as { hasCapacity(workspaceId: string): Promise<boolean> }
+			).hasCapacity('ws-1')
+
+			expect(result).toBe(true)
 		})
 	})
 

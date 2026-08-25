@@ -7,10 +7,10 @@ import { Hono } from 'hono'
 import { stream } from 'hono/streaming'
 import { z } from 'zod'
 import { bearerAuth } from './lib/auth'
+import { localSessionCapacity } from './lib/capacity'
 import { type AgentServerEnv, parseEnv } from './lib/env'
 import { logger } from './lib/logger'
 import { Sentry } from './lib/sentry'
-import { defaultSessionVcpus, hostCoreCount } from './lib/vcpus'
 import { ImageWarmer } from './services/image-warmer'
 import { InputQueue } from './services/input-queue'
 import {
@@ -1448,6 +1448,21 @@ export async function reconcileOnBoot(deps: ReconcileOnBootDeps): Promise<void> 
 	)
 	const claimableSandboxes = names.filter((name) => !browserSidecarNames.has(name))
 
+	// Derived fresh on every boot so a resized box (or a changed session memory
+	// budget) takes effect on restart, with no config change in apps/dev.
+	const capacity = localSessionCapacity({
+		...(env.SESSION_MEMORY_BUDGET_MIB !== undefined && {
+			sessionMemoryMib: env.SESSION_MEMORY_BUDGET_MIB,
+		}),
+		...(env.MSB_MAX_SESSIONS !== undefined && { override: env.MSB_MAX_SESSIONS }),
+	})
+	logger.info('reporting session capacity', {
+		capacity: capacity.capacity,
+		cpuBound: capacity.cpuBound,
+		memoryBound: capacity.memoryBound,
+		boundBy: capacity.boundBy,
+	})
+
 	let result: { marked_failed: string[]; orphan_sandboxes: string[] }
 	try {
 		const res = await fetchFn(`${env.MASKIN_BASE_URL}/api/internal/agent-servers/reconcile`, {
@@ -1459,6 +1474,11 @@ export async function reconcileOnBoot(deps: ReconcileOnBootDeps): Promise<void> 
 			body: JSON.stringify({
 				agent_server_id: env.AGENT_SERVER_ID,
 				sandboxes: claimableSandboxes,
+				// How many sessions this box can actually hold — apps/dev stores it
+				// as max_concurrent_sessions. Reported here rather than configured
+				// there because only this side knows the box's cores and RAM. See
+				// lib/capacity.ts.
+				capacity: capacity.capacity,
 			}),
 			signal: AbortSignal.timeout(10_000),
 		})
@@ -1612,14 +1632,7 @@ async function buildStorage(env: AgentServerEnv): Promise<StorageProvider | null
 async function main(): Promise<void> {
 	const env = parseEnv()
 	const storage = await buildStorage(env)
-	const hostCores = hostCoreCount()
-	const defaultVcpus = defaultSessionVcpus(hostCores, env.MSB_DEFAULT_VCPUS)
-	const msb: MicrosandboxDeps = { msbBin: env.MSB_BIN, hostCores, defaultVcpus }
-	logger.info('session vCPU sizing', {
-		hostCores,
-		defaultVcpus,
-		source: env.MSB_DEFAULT_VCPUS !== undefined ? 'MSB_DEFAULT_VCPUS' : 'host-cores',
-	})
+	const msb: MicrosandboxDeps = { msbBin: env.MSB_BIN }
 
 	// Best-effort: a box that can't mint/authorize its relay keypair here still
 	// boots — browser-required sessions will simply fail sidecar/preview relay

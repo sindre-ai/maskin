@@ -1374,7 +1374,8 @@ export class SessionManager extends EventEmitter {
 			.limit(1)
 
 		const settings = (workspace?.settings as WorkspaceSettings) ?? {}
-		const maxConcurrent = settings.max_concurrent_sessions ?? 3
+		// Keep in sync with workspaceSettingsSchema's default in packages/shared.
+		const maxConcurrent = settings.max_concurrent_sessions ?? 10
 
 		const [result] = await this.db
 			.select({ count: countFn() })

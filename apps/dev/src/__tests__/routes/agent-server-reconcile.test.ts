@@ -9,7 +9,9 @@ const SECRET = 'test-shared-secret'
 const agentServerId = '11111111-1111-1111-1111-111111111111'
 const sessionId = '22222222-2222-2222-2222-222222222222'
 
-function bodyWith(overrides: Partial<{ agent_server_id: string; sandboxes: string[] }> = {}) {
+function bodyWith(
+	overrides: Partial<{ agent_server_id: string; sandboxes: string[]; capacity: number }> = {},
+) {
 	return {
 		agent_server_id: agentServerId,
 		sandboxes: ['sandbox-a'],
@@ -54,6 +56,52 @@ describe('POST /api/internal/agent-servers/reconcile', () => {
 		const body = await res.json()
 		expect(body.marked_failed).toEqual([sessionId])
 		expect(body.orphan_sandboxes).toEqual(['sandbox-alive', 'sandbox-orphan'])
+	})
+
+	it('records the capacity a box reports for itself', async () => {
+		const { app, mockResults } = createTestApp(
+			agentServerReconcileRoutes,
+			'/api/internal/agent-servers',
+		)
+		mockResults.select = []
+		mockResults.update = [{ id: agentServerId }]
+
+		const res = await app.request(
+			jsonRequest('POST', '/api/internal/agent-servers/reconcile', bodyWith({ capacity: 10 }), {
+				Authorization: `Bearer ${SECRET}`,
+			}),
+		)
+
+		expect(res.status).toBe(200)
+	})
+
+	it('still reconciles when the capacity update fails', async () => {
+		const { app, mockResults } = createTestApp(
+			agentServerReconcileRoutes,
+			'/api/internal/agent-servers',
+		)
+		mockResults.select = []
+		mockResults.updateError = new Error('db down')
+
+		const res = await app.request(
+			jsonRequest('POST', '/api/internal/agent-servers/reconcile', bodyWith({ capacity: 10 }), {
+				Authorization: `Bearer ${SECRET}`,
+			}),
+		)
+
+		expect(res.status).toBe(200)
+	})
+
+	it('rejects a capacity outside the accepted range', async () => {
+		const { app } = createTestApp(agentServerReconcileRoutes, '/api/internal/agent-servers')
+
+		const res = await app.request(
+			jsonRequest('POST', '/api/internal/agent-servers/reconcile', bodyWith({ capacity: 0 }), {
+				Authorization: `Bearer ${SECRET}`,
+			}),
+		)
+
+		expect(res.status).toBe(400)
 	})
 
 	it('returns 401 when the Authorization header is missing', async () => {

@@ -99,7 +99,14 @@ export const workspaceSettingsSchema = z.object({
 		.default(['informs', 'breaks_into', 'blocks', 'relates_to', 'duplicates']),
 	custom_extensions: z.record(customExtensionEntrySchema).default({}),
 	enabled_modules: z.array(z.string()).default(['work', 'crm', 'knowledge']),
-	max_concurrent_sessions: z.coerce.number().int().min(1).max(50).default(3),
+	// Background/trigger session budget for one workspace. Raised from 3 to 10:
+	// at one vCPU per session (apps/agent-server/src/lib/vcpus.ts) a cap of 3
+	// left a 12-core agent-server three quarters idle, since a workspace could
+	// never ask for enough work to fill it. The agent-server's own
+	// hardware-derived capacity is the real overload guard — this is a fairness
+	// budget between workspaces, not a resource limit. Keep in sync with the
+	// fallback in SessionManager.hasCapacity().
+	max_concurrent_sessions: z.coerce.number().int().min(1).max(50).default(10),
 	// Chat sessions bypass max_concurrent_sessions entirely (a live human is
 	// waiting), but still need *some* aggregate ceiling so a workspace with
 	// many conversations can't spawn unbounded concurrent containers. Default

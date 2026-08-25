@@ -26,17 +26,31 @@ const envSchema = z.object({
 	// deployments without it still boot fine.
 	AGENT_SERVER_ID: z.string().uuid().optional(),
 	MSB_BIN: z.string().optional().default('/root/.microsandbox/bin/msb'),
-	// vCPUs given to a session microVM that doesn't request a specific size.
-	// Unset derives it from this box's core count — see lib/vcpus.ts. Set it to
-	// tune a box by restarting agent-server instead of shipping a release.
-	MSB_DEFAULT_VCPUS: z
+	// Overrides this box's computed concurrent-session capacity (see
+	// lib/capacity.ts). Normally unset — the box derives the number from its own
+	// cores and RAM and reports it to apps/dev on boot.
+	MSB_MAX_SESSIONS: z
 		.string()
 		.optional()
 		.transform((v) => {
 			if (v === undefined || v.trim() === '') return undefined
 			const n = Number(v)
-			if (!Number.isInteger(n) || n < 1 || n > 128) {
-				throw new Error(`Invalid MSB_DEFAULT_VCPUS: ${v} (expected integer 1..128)`)
+			if (!Number.isInteger(n) || n < 1 || n > 1000) {
+				throw new Error(`Invalid MSB_MAX_SESSIONS: ${v} (expected integer 1..1000)`)
+			}
+			return n
+		}),
+	// RAM apps/dev budgets per session, used for the memory half of the capacity
+	// calculation. Must track `memory_mb`'s default in
+	// packages/shared/src/schemas/sessions.ts.
+	SESSION_MEMORY_BUDGET_MIB: z
+		.string()
+		.optional()
+		.transform((v) => {
+			if (v === undefined || v.trim() === '') return undefined
+			const n = Number(v)
+			if (!Number.isInteger(n) || n < 256 || n > 65536) {
+				throw new Error(`Invalid SESSION_MEMORY_BUDGET_MIB: ${v} (expected integer 256..65536)`)
 			}
 			return n
 		}),

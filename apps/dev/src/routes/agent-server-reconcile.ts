@@ -1,5 +1,6 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
-import type { Database } from '@maskin/db'
+import { type Database, agentServers } from '@maskin/db'
+import { eq } from 'drizzle-orm'
 import { ApiErrorCode, createApiError, validationFailureHook } from '../lib/errors'
 import { logger } from '../lib/logger'
 import { errorSchema } from '../lib/openapi-schemas'
@@ -24,6 +25,12 @@ const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 const reconcileBodySchema = z.object({
 	agent_server_id: z.string().uuid(),
 	sandboxes: z.array(z.string().min(1)).max(10_000),
+	// How many concurrent sessions the reporting box can hold, derived there
+	// from its own cores and RAM (apps/agent-server/src/lib/capacity.ts). Only
+	// the box knows its hardware, so it is the authority on this number and it
+	// overwrites `max_concurrent_sessions` on every boot. Optional: an older
+	// agent-server that doesn't send it keeps whatever value it was seeded with.
+	capacity: z.number().int().min(1).max(1000).optional(),
 })
 
 const reconcileResponseSchema = z.object({
@@ -92,6 +99,30 @@ app.openapi(reconcileRoute, async (c) => {
 	const reconciler = new SessionReconciler(db, (sessionId, content) =>
 		sessionManager.insertSystemLog(sessionId, content),
 	)
+
+	if (body.capacity !== undefined) {
+		// Best-effort: a failure to record capacity must not fail the reconcile
+		// pass, whose real job (marking lost sessions failed) matters more. The
+		// server keeps its previous capacity until the next boot.
+		try {
+			const [updated] = await db
+				.update(agentServers)
+				.set({ maxConcurrentSessions: body.capacity })
+				.where(eq(agentServers.id, body.agent_server_id))
+				.returning({ id: agentServers.id })
+			if (updated) {
+				logger.info('Updated agent-server capacity from boot report', {
+					agentServerId: body.agent_server_id,
+					maxConcurrentSessions: body.capacity,
+				})
+			}
+		} catch (err) {
+			logger.error('Failed to record agent-server capacity', {
+				agentServerId: body.agent_server_id,
+				error: String(err),
+			})
+		}
+	}
 
 	const { markedFailed, orphanSandboxes } = await reconciler.reconcile({
 		agentServerId: body.agent_server_id,

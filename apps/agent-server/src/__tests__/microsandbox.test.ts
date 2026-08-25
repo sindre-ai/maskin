@@ -507,7 +507,7 @@ describe('spawnSession (orchestration)', () => {
 		}
 	})
 
-	it('sizes --cpus from the host core count when the session requests none', async () => {
+	it('defaults --cpus to one vCPU when the session requests no size', async () => {
 		const dir = await mkdtemp(join(tmpdir(), 'maskin-msb-vcpus-default-'))
 		try {
 			const { run, calls } = makeRunner({
@@ -516,18 +516,11 @@ describe('spawnSession (orchestration)', () => {
 			})
 			await spawnSession(
 				{ ...baseInput, sessionId: 'orch-vcpus', sessionDir: dir },
-				{
-					msbBin: '/usr/local/bin/msb',
-					run,
-					sleep: async () => {},
-					now: () => 0,
-					hostCores: 12,
-				},
+				{ msbBin: '/usr/local/bin/msb', run, sleep: async () => {}, now: () => 0, hostCores: 12 },
 			)
 			const createCall = calls.find((c) => c.args[0] === 'create')
 			const cpusIdx = createCall?.args.indexOf('--cpus') ?? -1
-			// 12 cores minus the 2 reserved for the host, capped at 8.
-			expect(createCall?.args[cpusIdx + 1]).toBe('8')
+			expect(createCall?.args[cpusIdx + 1]).toBe('1')
 		} finally {
 			await rm(dir, { recursive: true, force: true })
 		}
@@ -542,13 +535,7 @@ describe('spawnSession (orchestration)', () => {
 			})
 			await spawnSession(
 				{ ...baseInput, sessionId: 'orch-vcpus-2', sessionDir: dir, cpus: 64 },
-				{
-					msbBin: '/usr/local/bin/msb',
-					run,
-					sleep: async () => {},
-					now: () => 0,
-					hostCores: 4,
-				},
+				{ msbBin: '/usr/local/bin/msb', run, sleep: async () => {}, now: () => 0, hostCores: 4 },
 			)
 			const createCall = calls.find((c) => c.args[0] === 'create')
 			const cpusIdx = createCall?.args.indexOf('--cpus') ?? -1

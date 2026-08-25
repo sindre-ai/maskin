@@ -836,7 +836,7 @@ description: Use during the Pipeline Monitor's 30-minute liveness watchdog cron 
 
 ## Step 0 — Concurrency snapshot
 
-Call \`list_sessions(status='running')\`. Count genuinely running sessions = budget used. Workspace budget = \`max_concurrent_sessions\` (default 4 if unset). You may spawn up to \`(budget − running)\` new sessions this run. Respawning a task whose old session is already dead does not add to the live count — but still respect the overall budget.
+Call \`list_sessions(status='running')\`. Count genuinely running sessions = budget used. Workspace budget = \`max_concurrent_sessions\` (default 10 if unset). You may spawn up to \`(budget − running)\` new sessions this run. Respawning a task whose old session is already dead does not add to the live count — but still respect the overall budget.
 
 ## Step 1 — Enumerate active bets and their in-flight tasks
 
