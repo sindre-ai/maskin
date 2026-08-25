@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const navigateMock = vi.fn()
@@ -12,15 +12,6 @@ vi.mock('@tanstack/react-router', () => ({
 	},
 }))
 
-vi.mock('@/components/triggers/legacy/triggers-index-page', () => ({
-	LegacyTriggersIndexPage: () => <div>Legacy triggers</div>,
-}))
-
-const mockNewDesign = vi.fn()
-vi.mock('@/lib/new-design-context', () => ({
-	useNewDesign: () => mockNewDesign(),
-}))
-
 import { Route } from '@/routes/_authed/$workspaceId/triggers/index'
 
 const TriggersPage = (Route as unknown as { component: React.FC }).component
@@ -30,8 +21,9 @@ describe('/$workspaceId/triggers', () => {
 		navigateMock.mockClear()
 	})
 
-	it('redirects to the workspace Loops list under the new design', () => {
-		mockNewDesign.mockReturnValue(true)
+	// v2 folds triggers into Loops, so this route exists only to keep old
+	// bookmarks resolving — it always redirects.
+	it('redirects to the workspace Loops list', () => {
 		render(<TriggersPage />)
 
 		expect(navigateMock).toHaveBeenCalledWith(
@@ -41,13 +33,5 @@ describe('/$workspaceId/triggers', () => {
 				replace: true,
 			}),
 		)
-	})
-
-	it('renders the pre-v2 Triggers index when the new design is off', () => {
-		mockNewDesign.mockReturnValue(false)
-		render(<TriggersPage />)
-
-		expect(screen.getByText('Legacy triggers')).toBeInTheDocument()
-		expect(navigateMock).not.toHaveBeenCalled()
 	})
 })

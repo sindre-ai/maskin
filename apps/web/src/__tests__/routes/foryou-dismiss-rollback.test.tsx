@@ -109,7 +109,6 @@ vi.mock('@/components/shared/create-picker', () => ({
 	isCreateShortcut: () => false,
 }))
 
-import { NewDesignProvider } from '@/lib/new-design-context'
 import { Route } from '@/routes/_authed/$workspaceId/index'
 
 const ForYouPage = (Route as unknown as { component: React.FC }).component
@@ -146,9 +145,7 @@ async function renderFeed() {
 	})
 	const view = render(
 		<QueryClientProvider client={client}>
-			<NewDesignProvider value={true}>
-				<ForYouPage />
-			</NewDesignProvider>
+			<ForYouPage />
 		</QueryClientProvider>,
 	)
 	await act(async () => {

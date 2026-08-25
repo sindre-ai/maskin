@@ -2,7 +2,6 @@ import { PageHeader } from '@/components/layout/page-header'
 import { Skeleton } from '@/components/shared/loading-skeleton'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
-import { LegacyTriggerDetailPage } from '@/components/triggers/legacy/trigger-detail-page'
 import { TriggerForm } from '@/components/triggers/trigger-form'
 import type { TriggerFormPayload } from '@/components/triggers/trigger-form'
 import { Button } from '@/components/ui/button'
@@ -20,7 +19,6 @@ import {
 	useUpdateTrigger,
 } from '@/hooks/use-triggers'
 import { trackTriggerUpdated } from '@/lib/analytics'
-import { useNewDesign } from '@/lib/new-design-context'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { Check, MoreHorizontal, Pause, Play, Trash2 } from 'lucide-react'
@@ -32,21 +30,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/triggers/$triggerId'
 	errorComponent: ({ error }) => <RouteError error={error} />,
 })
 
-/**
- * The `new-design` boundary for the Trigger detail page. The flag is read once, at the workspace
- * shell, and only the resolved boolean reaches here via `useNewDesign()` — a
- * route page can't be swapped at the boundary itself.
- */
 function TriggerDetailRoute() {
-	const { triggerId } = Route.useParams()
-	return useNewDesign() ? (
-		<TriggerDetailPageV2 />
-	) : (
-		<LegacyTriggerDetailPage triggerId={triggerId} />
-	)
-}
-
-function TriggerDetailPageV2() {
 	const { triggerId } = Route.useParams()
 	const { workspaceId, workspace } = useWorkspace()
 	const { data: trigger, isLoading, isError, error, refetch } = useTrigger(triggerId, workspaceId)
