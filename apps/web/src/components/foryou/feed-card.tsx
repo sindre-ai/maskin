@@ -1,5 +1,6 @@
 import { CommentInput } from '@/components/activity/comment-input'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
+import { MarkdownContent } from '@/components/shared/markdown-content'
 import { QueryStateError } from '@/components/shared/query-state'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { StatusBadge } from '@/components/shared/status-badge'
@@ -7,7 +8,7 @@ import { TypeBadge } from '@/components/shared/type-badge'
 import { useActors } from '@/hooks/use-actors'
 import { useEntityEvents } from '@/hooks/use-events'
 import { trackForyouCardAction, trackForyouCardShown } from '@/lib/analytics'
-import type { EventResponse, UnreadItem } from '@/lib/api'
+import type { ActorListItem, EventResponse, UnreadItem } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import {
 	CARD_ACTIONS,
@@ -239,9 +240,9 @@ export function FeedCard({
 					{title}
 				</div>
 				{why && (
-					<p className="-mt-1 max-w-[58ch] whitespace-pre-line text-[13px] leading-[1.55] text-pretty text-muted-foreground">
-						{why}
-					</p>
+					<div className="-mt-1 max-w-[58ch] text-[13px] leading-[1.55] text-pretty text-muted-foreground">
+						<MarkdownContent content={why} size="sm" mentionActors={actors} />
+					</div>
 				)}
 
 				{options.length > 0 && (
@@ -487,7 +488,7 @@ function TimelineMessage({
 	actors,
 }: {
 	event: EventResponse
-	actors: { id: string; name: string; type: string }[] | undefined
+	actors: ActorListItem[] | undefined
 }) {
 	const author = actors?.find((actor) => actor.id === event.actorId)
 	const content = typeof event.data?.content === 'string' ? event.data.content : ''
@@ -511,7 +512,7 @@ function TimelineMessage({
 					/>
 				</div>
 				<div className="mt-px line-clamp-3 text-[12px] leading-[1.5] text-pretty text-muted-foreground">
-					{content}
+					<MarkdownContent content={content} size="xs" mentionActors={actors} />
 				</div>
 			</div>
 		</div>
