@@ -52,7 +52,6 @@ Object.defineProperty(window, 'requestAnimationFrame', {
 import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picker'
 import { api } from '@/lib/api'
 import { setStoredActor } from '@/lib/auth'
-import { NewDesignProvider } from '@/lib/new-design-context'
 import { type ModuleWebDefinition, clearWebModules, registerWebModule } from '@maskin/module-sdk'
 import { createWorkspaceWrapper } from '../../setup'
 
@@ -117,14 +116,7 @@ function renderWithWorkspace(
 	const Workspace = createWorkspaceWrapper({
 		settings: { ...DEFAULT_SETTINGS, ...(overrides.settings ?? {}) },
 	})
-	// These are v2-overlay assertions, so they render on the `new-design` side of
-	// the boundary — the e2e auth fixture seeds the same flag state.
-	const Wrapper = ({ children }: { children: React.ReactNode }) => (
-		<Workspace>
-			<NewDesignProvider value={true}>{children}</NewDesignProvider>
-		</Workspace>
-	)
-	return render(ui, { wrapper: Wrapper })
+	return render(ui, { wrapper: Workspace })
 }
 
 describe('CreatePicker', () => {

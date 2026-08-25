@@ -6,7 +6,8 @@ import {
 	DropdownMenuRadioItem,
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { ListFilter } from 'lucide-react'
+import { cn } from '@/lib/cn'
+import { Ellipsis } from 'lucide-react'
 
 export type ChatsFilter = 'all' | 'unread' | 'pinned' | 'archived'
 
@@ -22,9 +23,11 @@ export function chatsFilterLabel(filter: ChatsFilter): string {
 }
 
 /**
- * The Chats screen's header action (mockup 220–228): a menu of All / Unread /
- * Pinned / Archived. The trigger names the active filter once it leaves "All"
- * and fills in so the narrowed state is visible without opening the menu.
+ * The Chats screen's header action (mockup 196–206): an unlabelled `···`
+ * that stays out of the way while the list is unfiltered, and grows the
+ * active filter's name beside the glyph once it leaves "All" — so the
+ * narrowed state is readable without opening the menu. The icon-plus-"Filter"
+ * button it replaced competed with the split New button for the same row.
  */
 export function ChatsFilterMenu({
 	value,
@@ -39,21 +42,16 @@ export function ChatsFilterMenu({
 			<DropdownMenuTrigger asChild>
 				<Button
 					type="button"
-					variant={isFiltered ? 'default' : 'outline'}
+					variant="outline"
 					size="sm"
-					// 30px, not the sm default of 36px: this sits between the nav's
-					// search button and the New split button, both of which are 30px.
-					className="h-[30px] rounded-lg px-2.5 text-xs"
+					className={cn(
+						'h-[30px] gap-1.5 px-2.5 text-[11.5px] font-semibold',
+						isFiltered && 'border-border-strong text-foreground',
+					)}
 					aria-label={`Filter conversations — ${chatsFilterLabel(value)}`}
 				>
-					<ListFilter size={14} aria-hidden />
-					{/* Icon-only on the narrowest phones: the shared nav row wraps rather
-					    than scrolls, and this label was the difference between one line
-					    and two at 375px. The filled variant still signals a narrowed
-					    list, and the aria-label always names the active filter. */}
-					<span className="hidden sm:inline">
-						{isFiltered ? chatsFilterLabel(value) : 'Filter'}
-					</span>
+					{isFiltered ? <span className="whitespace-nowrap">{chatsFilterLabel(value)}</span> : null}
+					<Ellipsis size={15} aria-hidden />
 				</Button>
 			</DropdownMenuTrigger>
 			<DropdownMenuContent align="end" className="w-44">

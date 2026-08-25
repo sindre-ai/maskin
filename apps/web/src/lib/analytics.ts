@@ -242,19 +242,6 @@ export function trackMiniAppFileViewed(
 	trackEvent('mini_app_file_viewed', { ...fillBase(p), file_name: p.file_name })
 }
 
-// For You sparse-state composer. `items_count` is the rendered item count on
-// the For You feed at the moment of the event (0–2 for the sparse range).
-// `workspace_id` rides via PostHog super-properties registered on workspace
-// mount — do not pass it explicitly.
-
-export function trackForyouSparseComposerShown(p: { items_count: number }): void {
-	trackEvent('foryou_sparse_composer_shown', { items_count: p.items_count })
-}
-
-export function trackForyouSparseComposerSubmit(p: { items_count: number }): void {
-	trackEvent('foryou_sparse_composer_submit', { items_count: p.items_count })
-}
-
 // iPadOS 13+ reports `MacIntel` from `navigator.userAgent` / `navigator.platform`
 // and only the `maxTouchPoints > 1` signal distinguishes it from a real Mac, so
 // the touch-point check is load-bearing — not paranoia. Returning 'web' for
@@ -281,10 +268,6 @@ export function trackSidebarWorkspaceSwitcherOpened(p: { workspaceId: string }):
 	trackEvent('sidebar.workspace_switcher.opened', { workspaceId: p.workspaceId })
 }
 
-export function trackSidebarAgentActivityExpanded(p: { workspaceId: string }): void {
-	trackEvent('sidebar.agent_activity.expanded', { workspaceId: p.workspaceId })
-}
-
 // Nav-cleanup bet — Marketplace footer position must reach ≥80% of its prior
 // top-nav CTR within 14 days of ship, which requires per-entry click emission.
 // `item_key` is the stable route-agnostic identifier (`for-you`, `objects`,
@@ -296,35 +279,6 @@ export type NavItemSource = 'top-nav' | 'footer' | 'favorites'
 
 export function trackNavItemClicked(p: { item_key: string; source: NavItemSource }): void {
 	trackEvent('nav_item_clicked', { item_key: p.item_key, source: p.source })
-}
-
-// Ship-metric events for the For You onboarding prompt bet — response rate =
-// count(north_star_prompt_response) / count(north_star_prompt_impression),
-// filtered to workspaces with no prior bets. `workspace_id` is passed on the
-// event (not via super properties) so the PostHog cohort filter can key off it
-// without depending on the workspace mount having already registered.
-//
-// Both events fire with `send_instantly: true` so posthog-js bypasses its
-// ~3-second batching queue. The response event was being lost in prod because
-// the card unmounts immediately after submit and users often tab away right
-// after — the batched event never made it out of the browser, so the event
-// name never even landed in the PostHog project taxonomy. The impression uses
-// the same flag for parity: both halves of the ratio must have identical
-// delivery semantics or the ship metric is biased.
-export function trackNorthStarPromptImpression(p: { workspace_id: string }): void {
-	trackEvent(
-		'north_star_prompt_impression',
-		{ workspace_id: p.workspace_id },
-		{ send_instantly: true },
-	)
-}
-
-export function trackNorthStarPromptResponse(p: { workspace_id: string }): void {
-	trackEvent(
-		'north_star_prompt_response',
-		{ workspace_id: p.workspace_id },
-		{ send_instantly: true },
-	)
 }
 
 // Ship-metric event for the iOS bulk-select ergonomics bet. Fires once per
@@ -412,41 +366,6 @@ export function trackScrollToTop(
 		object_subtype: p.object_subtype,
 		scroll_depth_at_start_px: p.scroll_depth_at_start_px,
 		viewports_scrolled: p.viewports_scrolled,
-	})
-}
-
-// Ship-metric events for the bidirectional swipe-to-read/unread bet on the For
-// You page. Fire on the *completed* swipe — inside the post-Undo timer commit,
-// so tapping Undo within the 4.5s window emits nothing. `mobile` is computed at
-// emission from `window.innerWidth <= 768` rather than snapshotted at hook mount
-// because the DoD keys the mobile/desktop split off the viewport width the
-// gesture actually completes on. `via` is fixed to 'swipe' so the toolbar
-// mark-read button can be instrumented separately later without back-filling.
-function isMobileViewport(): boolean {
-	if (typeof window === 'undefined') return false
-	return window.innerWidth <= 768
-}
-
-interface ForyouCardMarkedProps {
-	entity_type: string
-	entity_id: string
-}
-
-export function trackForyouCardMarkedRead(p: ForyouCardMarkedProps): void {
-	trackEvent('foryou_card_marked_read', {
-		entity_type: p.entity_type,
-		entity_id: p.entity_id,
-		mobile: isMobileViewport(),
-		via: 'swipe',
-	})
-}
-
-export function trackForyouCardMarkedUnread(p: ForyouCardMarkedProps): void {
-	trackEvent('foryou_card_marked_unread', {
-		entity_type: p.entity_type,
-		entity_id: p.entity_id,
-		mobile: isMobileViewport(),
-		via: 'swipe',
 	})
 }
 

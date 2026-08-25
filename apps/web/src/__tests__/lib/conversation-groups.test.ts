@@ -26,6 +26,8 @@ function buildConversation(
 		archived: false,
 		unread_count: 0,
 		snippet: null,
+		snippet_actor_id: null,
+		snippet_actor_name: null,
 		participants: [],
 		...overrides,
 	}

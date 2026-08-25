@@ -1,12 +1,10 @@
 import { type ChatsFilter, ChatsFilterMenu } from '@/components/chat/chats-filter-menu'
 import { ConversationList } from '@/components/chat/conversation-list'
-import { LegacyChatsLayout } from '@/components/chat/legacy/chats-layout'
 import { PageHeader } from '@/components/layout/page-header'
 import { useChatUnreadCount } from '@/hooks/use-chat-unread'
 import { useConversationsInfinite } from '@/hooks/use-conversations'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { cn } from '@/lib/cn'
-import { useNewDesign } from '@/lib/new-design-context'
 import { useWorkspace } from '@/lib/workspace-context'
 import { Outlet, createFileRoute, useMatches, useNavigate } from '@tanstack/react-router'
 import { useCallback } from 'react'
@@ -40,19 +38,7 @@ const THREAD_ROUTE_IDS = new Set([
 	'/_authed/$workspaceId/chats/new',
 ])
 
-/**
- * The `new-design` branch for the Chats surface. The flag itself is read once,
- * at the workspace shell boundary (`routes/_authed/$workspaceId.tsx`); only the
- * resolved boolean travels here via `useNewDesign()`. A layout route can't swap
- * what its `<Outlet />` renders, so each Chats leaf route carries the same
- * one-line branch — see `chats/index.tsx`, `chats/new.tsx`,
- * `chats/$conversationId.tsx`.
- */
 function ChatsLayout() {
-	return useNewDesign() ? <ChatsLayoutV2 /> : <LegacyChatsLayout />
-}
-
-function ChatsLayoutV2() {
 	const { workspaceId } = useWorkspace()
 	const isMobile = useIsMobile()
 	const navigate = useNavigate()
@@ -113,7 +99,7 @@ function ChatsLayoutV2() {
 			<>
 				{header}
 				{hasThread ? (
-					<div className="-m-4 flex min-h-0 flex-1 flex-col">
+					<div className="-m-4 flex min-h-0 flex-1 flex-col [--chat-gut:clamp(14px,3vw,28px)]">
 						<Outlet />
 					</div>
 				) : (
@@ -144,14 +130,21 @@ function ChatsLayoutV2() {
 			{header}
 			<div className="-m-4 flex min-h-0 flex-1 md:-m-8">
 				{wide ? null : (
-					<div className="hidden w-[clamp(266px,25vw,326px)] shrink-0 flex-col border-r border-border md:flex">
+					// `bg-surface-sunken` is what makes the split read as index +
+					// document rather than two equal halves (mockup 273).
+					<div className="hidden w-[clamp(266px,25vw,326px)] shrink-0 flex-col border-r border-border bg-surface-sunken md:flex">
 						<ConversationList workspaceId={workspaceId} filter={filter} />
 					</div>
 				)}
+				{/* One gutter variable for the whole thread pane — the header,
+				    transcript and composer all read `--chat-gut` so they can never
+				    drift apart, and focus mode swaps the value for a centring
+				    margin instead of adding padding on top of the base gutter
+				    (mockup 7763). */}
 				<div
 					className={cn(
-						'flex min-w-0 flex-1 flex-col',
-						wide && 'md:px-[max(28px,calc((100%-900px)/2))]',
+						'flex min-w-0 flex-1 flex-col [--chat-gut:clamp(14px,3vw,28px)]',
+						wide && 'md:[--chat-gut:max(28px,calc((100%-900px)/2))]',
 					)}
 				>
 					<Outlet />

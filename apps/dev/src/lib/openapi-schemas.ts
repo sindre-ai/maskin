@@ -105,6 +105,11 @@ export const workspaceResponseSchema = z.object({
 	name: z.string(),
 	settings: jsonbField.transform((v) => v ?? {}),
 	onboardingEnabled: z.boolean(),
+	byollmAllowed: z.boolean(),
+	// Single accountable human payer for this workspace's plan — read-only,
+	// server-set. See apps/dev/src/lib/workspace-capacity.ts. Nullable during
+	// the migration window before every row is backfilled.
+	billingOwnerId: z.string().uuid().nullable(),
 	createdBy: z.string().uuid().nullable(),
 	createdAt: z.string().nullable(),
 	updatedAt: z.string().nullable(),
@@ -255,11 +260,16 @@ export const conversationListItemResponseSchema = z.object({
 	archived: z.boolean(),
 	unread_count: z.number(),
 	snippet: z.string().nullable(),
+	// Who wrote the snippet. The list row prefixes the preview with the sender
+	// ("Forge: …", "You: …") — without it a row of agent chatter reads as if
+	// the viewer said it.
+	snippet_actor_id: z.string().uuid().nullable(),
+	snippet_actor_name: z.string().nullable(),
 	participants: z.array(conversationParticipantResponseSchema),
 })
 
 export const conversationDetailResponseSchema = conversationListItemResponseSchema
-	.omit({ snippet: true })
+	.omit({ snippet: true, snippet_actor_id: true, snippet_actor_name: true })
 	.extend({
 		last_read_message_id: z.number().nullable(),
 	})

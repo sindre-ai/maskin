@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { PLATFORM_MCP_PRESET, WORKSPACE_COACH_DEFAULT } from '@maskin/shared'
+import { PlanCapExceededError } from '../../lib/llm-routing'
 import { DEFAULT_AGENT_IDS } from '../../services/workspace-bootstrap'
 import { buildActor, buildCreateActorBody, buildSession, buildWorkspaceMember } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
@@ -1082,6 +1083,38 @@ describe('Actors Routes', () => {
 
 	describe('POST /api/actors/:id/run', () => {
 		const wsId = randomUUID()
+
+		it('propagates a plan-cap rejection instead of flattening it to 400', async () => {
+			// Regression: the handler's catch turned every createSession failure into
+			// `400 BAD_REQUEST` with a bare message, discarding the PLAN_CAP_EXCEEDED
+			// code and plan/used/cap context. The client could then only toast the raw
+			// string instead of the typed upgrade CTA. The error must escape the
+			// handler so app-factory's onError can emit the structured 402 (that
+			// mapping is covered in error-handling.test.ts).
+			const agent = buildActor({ type: 'agent', agentState: 'idle' })
+			const { app, mockResults, sessionManager } = createSessionTestApp(actorsRoutes, '/api/actors')
+			mockResults.selectQueue = [
+				[buildWorkspaceMember({ actorId: 'test-actor-id', workspaceId: wsId })],
+				[agent],
+				[buildWorkspaceMember({ actorId: agent.id, workspaceId: wsId })],
+				[], // no live session
+				[], // no paused session
+			]
+			sessionManager.createSession.mockRejectedValueOnce(
+				new PlanCapExceededError({
+					plan: 'trial',
+					used: 600,
+					cap: 500,
+					periodEnd: null,
+				}),
+			)
+
+			const res = await app.request(
+				jsonRequest('POST', `/api/actors/${agent.id}/run`, {}, { 'x-workspace-id': wsId }),
+			)
+
+			expect(res.status).not.toBe(400)
+		})
 
 		it('starts a fresh session when no paused or running session exists', async () => {
 			const agent = buildActor({ type: 'agent', agentState: 'idle' })

@@ -36,3 +36,13 @@ export function useAddWorkspaceMember(workspaceId: string) {
 		},
 	})
 }
+
+export function useRemoveWorkspaceMember(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (actorId: string) => api.workspaces.members.remove(workspaceId, actorId),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.workspaces.members(workspaceId) })
+		},
+	})
+}

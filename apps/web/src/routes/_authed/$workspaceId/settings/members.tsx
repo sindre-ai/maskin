@@ -1,6 +1,7 @@
 import { HumanDetailDialog } from '@/components/settings/human-detail-dialog'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { EmptyState } from '@/components/shared/empty-state'
+import { FormError } from '@/components/shared/form-error'
 import { ListSkeleton } from '@/components/shared/loading-skeleton'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
@@ -26,6 +27,7 @@ import {
 	SelectValue,
 } from '@/components/ui/select'
 import { useAddWorkspaceMember, useWorkspaceMembers } from '@/hooks/use-workspaces'
+import { ApiError } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { Bot, Plus, UserPlus } from 'lucide-react'
@@ -49,10 +51,19 @@ function MembersPage() {
 	const handleAdd = async (e: React.FormEvent) => {
 		e.preventDefault()
 		if (!actorId.trim()) return
-		await addMember.mutateAsync({ actor_id: actorId.trim(), role })
-		setActorId('')
-		setShowAddDialog(false)
+		try {
+			await addMember.mutateAsync({ actor_id: actorId.trim(), role })
+			setActorId('')
+			setShowAddDialog(false)
+		} catch {
+			// Keep the dialog open — addMember.error renders the failure below.
+		}
 	}
+
+	const addMemberError =
+		addMember.error instanceof ApiError && addMember.error.code === 'SEAT_CAP_EXCEEDED'
+			? "This workspace has reached its plan's member limit. Upgrade to add more."
+			: addMember.error?.message
 
 	const handleCreateAgent = () => {
 		navigate({
@@ -110,6 +121,7 @@ function MembersPage() {
 								<SelectItem value="admin">admin</SelectItem>
 							</SelectContent>
 						</Select>
+						{addMemberError && <FormError error={addMemberError} />}
 						<div className="flex justify-end gap-2">
 							<Button type="button" variant="ghost" onClick={() => setShowAddDialog(false)}>
 								Cancel

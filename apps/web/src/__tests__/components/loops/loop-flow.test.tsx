@@ -110,7 +110,10 @@ describe('LoopFlow', () => {
 			{ wrapper: wrapper() },
 		)
 
-		expect(await screen.findByText(/2 triggers · 2 agents · 5 objects/)).toBeInTheDocument()
+		// One note line: primitives · triggers on · agents (mockup 1891).
+		expect(
+			await screen.findByText(/3 object types · 2 of 2 triggers on · 2 agents/),
+		).toBeInTheDocument()
 	})
 
 	it('groups an event trigger with no from_status under "Comes in"', async () => {
@@ -289,12 +292,12 @@ describe('LoopFlow', () => {
 		expect(container?.classList.contains('break-words')).toBe(true)
 	})
 
-	it('includes the object count in the section header', async () => {
+	it('includes the object-type count in the section note', async () => {
 		render(<LoopFlow workspaceId="ws-1" triggers={[]} actors={[]} childObjects={childObjects} />, {
 			wrapper: wrapper(),
 		})
 
-		expect(await screen.findByText(/5 objects/)).toBeInTheDocument()
+		expect(await screen.findByText(/3 object types/)).toBeInTheDocument()
 	})
 
 	it('renders a cycles note from the loop summary', async () => {

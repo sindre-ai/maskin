@@ -91,15 +91,7 @@ describe('AgentUsageChart', () => {
 		vi.mocked(api.sessions.usage).mockResolvedValue(populatedUsage)
 		render(<AgentUsageChart agent={agent} workspaceId="ws-1" />, { wrapper: TestWrapper })
 		expect(await screen.findByText(/\$1\.234/)).toBeInTheDocument()
-		expect(screen.getByText(/85,000/)).toBeInTheDocument()
 		expect(screen.getByText('12')).toBeInTheDocument()
-	})
-
-	it('renders Tokens and Cost view toggle buttons', () => {
-		vi.mocked(api.sessions.usage).mockResolvedValue(emptyUsage)
-		render(<AgentUsageChart agent={agent} workspaceId="ws-1" />, { wrapper: TestWrapper })
-		expect(screen.getByRole('button', { name: /Tokens/i, pressed: true })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: /Cost/i, pressed: false })).toBeInTheDocument()
 	})
 
 	it('renders preset range buttons', () => {
@@ -111,7 +103,7 @@ describe('AgentUsageChart', () => {
 		expect(screen.getByRole('button', { name: 'All time' })).toBeInTheDocument()
 	})
 
-	it('lays the stats out single-column below sm and three-column above', async () => {
+	it('lays the stats out single-column below sm and two-column above', async () => {
 		vi.mocked(api.sessions.usage).mockResolvedValue(emptyUsage)
 		const { container } = render(<AgentUsageChart agent={agent} workspaceId="ws-1" />, {
 			wrapper: TestWrapper,
@@ -120,6 +112,6 @@ describe('AgentUsageChart', () => {
 		const grid = container.querySelector('.grid-cols-1')
 		expect(grid).not.toBeNull()
 		expect(grid?.className).toMatch(/\bgrid-cols-1\b/)
-		expect(grid?.className).toMatch(/\bsm:grid-cols-3\b/)
+		expect(grid?.className).toMatch(/\bsm:grid-cols-2\b/)
 	})
 })

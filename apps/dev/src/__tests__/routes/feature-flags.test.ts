@@ -1,7 +1,7 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import { authMiddleware } from '@maskin/auth'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { FLAGS, _resetFeatureFlagConfig } from '../../lib/feature-flags'
+import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import { jsonGet } from '../helpers'
 import { createTestApp, createTestContext } from '../setup'
 
@@ -26,28 +26,23 @@ beforeEach(() => setEnv({}))
 afterEach(() => setEnv({}))
 
 describe('GET /api/feature-flags', () => {
-	it('returns resolved booleans for the calling actor', async () => {
-		setEnv({ FF_TESTER_FEATURES: FLAGS.NEW_DESIGN, FF_TESTER_ACTOR_IDS: TESTER })
+	// `FLAGS` is empty since `new-design` was retired, so the endpoint resolves
+	// an empty map — and, critically, an id left behind in someone's
+	// FF_TESTER_FEATURES cannot resurrect a flag the registry no longer knows.
+	it('returns an empty flag map while no flags are registered', async () => {
 		const { app } = createTestApp(featureFlagsRoutes, '/api/feature-flags', TESTER)
 
 		const res = await app.request(jsonGet('/api/feature-flags'))
 		expect(res.status).toBe(200)
-		expect(await res.json()).toEqual({ flags: { [FLAGS.NEW_DESIGN]: true } })
+		expect(await res.json()).toEqual({ flags: {} })
 	})
 
-	it('returns false for an actor who is not an tester', async () => {
-		setEnv({ FF_TESTER_FEATURES: FLAGS.NEW_DESIGN, FF_TESTER_ACTOR_IDS: TESTER })
-		const { app } = createTestApp(featureFlagsRoutes, '/api/feature-flags', NON_TESTER)
-
-		const res = await app.request(jsonGet('/api/feature-flags'))
-		expect(await res.json()).toEqual({ flags: { [FLAGS.NEW_DESIGN]: false } })
-	})
-
-	it('returns all-false when no feature flag env vars are set', async () => {
+	it('never invents a flag from an unregistered id in FF_TESTER_FEATURES', async () => {
+		setEnv({ FF_TESTER_FEATURES: 'new-design', FF_TESTER_ACTOR_IDS: TESTER })
 		const { app } = createTestApp(featureFlagsRoutes, '/api/feature-flags', TESTER)
 
 		const res = await app.request(jsonGet('/api/feature-flags'))
-		expect(await res.json()).toEqual({ flags: { [FLAGS.NEW_DESIGN]: false } })
+		expect(await res.json()).toEqual({ flags: {} })
 	})
 
 	it('sets Cache-Control: no-store so a rollback is not defeated by a stale cache', async () => {
@@ -61,7 +56,7 @@ describe('GET /api/feature-flags', () => {
 	// reach the browser.
 	it('never leaks actor uuids or raw config into the response body', async () => {
 		setEnv({
-			FF_TESTER_FEATURES: FLAGS.NEW_DESIGN,
+			FF_TESTER_FEATURES: 'some-flag',
 			FF_TESTER_ACTOR_IDS: `${TESTER},${NON_TESTER}`,
 		})
 		const { app } = createTestApp(featureFlagsRoutes, '/api/feature-flags', TESTER)

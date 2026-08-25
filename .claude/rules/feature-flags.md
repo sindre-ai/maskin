@@ -9,7 +9,7 @@ redeploy of `apps/web`.
 
 ```
 FF_TESTER_ACTOR_IDS=<uuid>,<uuid>                  # actors who get early access
-FF_TESTER_FEATURES=new-design,new-model            # flag ids those actors see
+FF_TESTER_FEATURES=some-flag,new-model             # flag ids those actors see
 ```
 
 Both are comma-separated and optional; empty means every flag is off for
@@ -43,13 +43,16 @@ layout — and branch there. Do not scatter `useFeatureFlag` checks across
 individual components.
 
 ```tsx
-const newDesign = useFeatureFlag('new-design')
+const someFlag = useFeatureFlag('some-flag')
 ...
-{newDesign ? <AppSidebar /> : <LegacyAppSidebar />}
+{someFlag ? <AppSidebar /> : <LegacyAppSidebar />}
 ```
 
-Current example: `apps/web/src/routes/_authed/$workspaceId.tsx` swaps the whole
-shell (sidebar, header, command palette, mobile nav) at a single site.
+`FLAGS` is currently empty — `new-design` was retired when the v2 design shipped
+to everyone, following exactly the checklist below. The shape it had is the one
+to copy: `apps/web/src/routes/_authed/$workspaceId.tsx` read the flag once and
+swapped the whole shell (sidebar, header, command palette) at that single site,
+with the pre-v2 components parked under `components/*/legacy/`.
 
 **If you reach a third call site for one flag, stop — the boundary is in the
 wrong place.** Move it up rather than adding another check.
@@ -74,9 +77,8 @@ provisioning a second actor. It is not a user-facing mechanism: testers get
 their flags from `FF_TESTER_ACTOR_IDS` on login, on every device, with no
 client-side action.
 
-`apps/e2e/src/fixtures/auth.fixture.ts` seeds `ff:new-design = 'on'` so existing
-specs keep exercising the current design; a spec that needs the other state sets
-its own value via `page.addInitScript`.
+A spec that needs a specific flag state sets it via `page.addInitScript` before
+the app boots — see how `auth.fixture.ts` seeds its other localStorage keys.
 
 ## Retiring a flag — how a feature ships to everyone
 

@@ -11,8 +11,15 @@ import { cors } from 'hono/cors'
 import { logger as honoLogger } from 'hono/logger'
 import { CLIENT_SOURCE_HEADER } from './lib/analytics/knowledge-events'
 import { ApiErrorCode, createApiError, mapStatusToCode, validationFailureHook } from './lib/errors'
+import { PlanCapExceededError } from './lib/llm-routing'
 import { logger } from './lib/logger'
 import { Sentry, resolveClientSourceTag } from './lib/sentry'
+import {
+	OwnershipCapExceededError,
+	SeatCapExceededError,
+	ownershipCapErrorBody,
+	seatCapErrorBody,
+} from './lib/workspace-capacity'
 import { createIdempotencyMiddleware } from './middleware/idempotency'
 import actorsRoutes from './routes/actors'
 import adminLandingFunnelRoutes from './routes/admin-landing-funnel'
@@ -20,6 +27,7 @@ import agentServerReconcileRoutes from './routes/agent-server-reconcile'
 import agentSkillAttachmentsRoutes from './routes/agent-skill-attachments'
 import agentSkillsRoutes from './routes/agent-skills'
 import authRoutes from './routes/auth'
+import billingRoutes from './routes/billing'
 import briefingRoutes from './routes/briefing'
 import claudeOauthRoutes from './routes/claude-oauth'
 import conversationsRoutes from './routes/conversations'
@@ -42,8 +50,10 @@ import publicBetStrategistRoutes from './routes/public-bet-strategist'
 import publicLandingEventsRoutes from './routes/public-landing-events'
 import relationshipsRoutes from './routes/relationships'
 import sessionsRoutes from './routes/sessions'
+import stripeWebhookRoutes from './routes/stripe-webhook'
 import subscriptionsRoutes from './routes/subscriptions'
 import telemetryRoutes from './routes/telemetry'
+import testGrantsRoutes, { isTestGrantEnabled } from './routes/test-grants'
 import triggersRoutes from './routes/triggers'
 import userDisplaySettingsRoutes from './routes/user-display-settings'
 import workspaceSkillsRoutes from './routes/workspace-skills'
@@ -113,6 +123,45 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
 	app.onError((err, c) => {
+		if (err instanceof PlanCapExceededError) {
+			logger.warn('Plan cap exceeded', {
+				plan: err.plan,
+				used: err.used,
+				cap: err.cap,
+				periodEnd: err.periodEnd,
+			})
+			return c.json(
+				{
+					error: {
+						code: ApiErrorCode.PLAN_CAP_EXCEEDED,
+						message: err.message,
+						plan: err.plan,
+						used: err.used,
+						cap: err.cap,
+						period_end: err.periodEnd,
+					},
+				},
+				402,
+			)
+		}
+		if (err instanceof SeatCapExceededError) {
+			logger.warn('Workspace seat cap exceeded', {
+				workspaceId: err.workspaceId,
+				plan: err.plan,
+				used: err.used,
+				cap: err.cap,
+			})
+			return c.json(seatCapErrorBody(err), 403)
+		}
+		if (err instanceof OwnershipCapExceededError) {
+			logger.warn('Workspace ownership cap exceeded', {
+				actorId: err.actorId,
+				effectiveTier: err.effectiveTier,
+				used: err.used,
+				cap: err.cap,
+			})
+			return c.json(ownershipCapErrorBody(err), 403)
+		}
 		if ('status' in err && typeof err.status === 'number') {
 			return c.json(createApiError(mapStatusToCode(err.status), err.message), err.status as 400)
 		}
@@ -257,9 +306,19 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/loops', loopsRoutes)
 	app.route('/api/integrations', integrationsRoutes)
 	app.route('/api/integrations/slack/mcp', integrationsSlackMcpRoutes)
+	// Stripe webhook mounted at /api/webhooks/stripe BEFORE the integrations
+	// catchall (`/api/webhooks/:provider`) so the more-specific match wins.
+	// Stripe is billing, not an integration provider.
+	app.route('/api/webhooks/stripe', stripeWebhookRoutes)
 	app.route('/api/marketplace', marketplaceLoopsRoutes)
 	app.route('/api/mini-apps', miniAppRegenRoutes)
 	app.route('/api/webhooks', webhookApp)
+	app.route('/api/billing', billingRoutes)
+	// Only exists on stacks that set MASKIN_TEST_GRANT_TOKEN (CI's E2E run).
+	// Unmounted — not merely guarded — everywhere else, so production 404s.
+	if (isTestGrantEnabled()) {
+		app.route('/api/test-grants', testGrantsRoutes)
+	}
 	app.route('/api/internal/agent-servers', agentServerReconcileRoutes)
 	app.route('/api/events', eventsRoutes)
 	app.route('/api/conversations', conversationsRoutes)

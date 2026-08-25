@@ -6,7 +6,8 @@ import { trackEvent } from '@/lib/analytics'
 import type { SessionLogResponse, SessionResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { formatDurationBetween } from '@/lib/format-duration'
-import { Link } from '@tanstack/react-router'
+import { toastSessionCreateError } from '@/lib/session-errors'
+import { Link, useNavigate } from '@tanstack/react-router'
 import {
 	CheckCircle2,
 	ChevronDown,
@@ -64,6 +65,7 @@ const PROVIDER_LABELS: Record<string, string> = {
 	anthropic: 'Anthropic',
 	openrouter: 'OpenRouter',
 	'claude-code': 'Claude Code',
+	maskin: 'Maskin',
 }
 
 // Reason codes that show the recovery row (credit depletion + temporary quota limits).
@@ -94,6 +96,10 @@ const TOPUP_REASON_CODES = new Set([
 // Codes where the agent couldn't authenticate — recovery is connecting credentials.
 const AUTH_REASON_CODES = new Set(['not_logged_in'])
 
+// The session was deliberately stopped by the plan-budget watchdog, not a
+// provider failure — recovery is buying usage credits or upgrading.
+const BUDGET_REASON_CODES = new Set(['plan_cap_exceeded'])
+
 export function FailureCard({
 	failureReason,
 	workspaceId,
@@ -103,6 +109,7 @@ export function FailureCard({
 	const isCredit = CREDIT_REASON_CODES.has(failureReason.reason_code)
 	const isTopUp = TOPUP_REASON_CODES.has(failureReason.reason_code)
 	const isAuth = AUTH_REASON_CODES.has(failureReason.reason_code)
+	const isBudget = BUDGET_REASON_CODES.has(failureReason.reason_code)
 	const isOpenRouter = failureReason.provider === 'openrouter'
 	const providerLabel =
 		PROVIDER_LABELS[failureReason.provider] ??
@@ -159,6 +166,15 @@ export function FailureCard({
 					<Button size="sm" asChild>
 						<Link to="/$workspaceId/settings/keys" params={{ workspaceId }}>
 							Connect Claude subscription
+						</Link>
+					</Button>
+				</div>
+			)}
+			{isBudget && (
+				<div className="flex flex-wrap items-center gap-2">
+					<Button size="sm" asChild>
+						<Link to="/$workspaceId/settings/keys" params={{ workspaceId }}>
+							Go to Billing
 						</Link>
 					</Button>
 				</div>
@@ -271,7 +287,7 @@ function ExpandableTitle({ text }: { text: string }) {
 			className="text-left w-full flex items-start gap-1.5 cursor-pointer group"
 			aria-expanded={expanded}
 		>
-			<span className="mt-0.5 shrink-0 text-text-muted group-hover:text-text-secondary">
+			<span className="mt-0.5 shrink-0 text-muted-foreground group-hover:text-muted-foreground">
 				{expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
 			</span>
 			<span className={cn('flex-1 min-w-0 break-words', !expanded && 'line-clamp-2')}>{text}</span>
@@ -314,6 +330,7 @@ function RestartSessionButton({
 	workspaceId,
 }: { session: SessionResponse; workspaceId: string }) {
 	const createSession = useCreateSession(workspaceId)
+	const navigate = useNavigate()
 	return (
 		<button
 			type="button"
@@ -326,10 +343,13 @@ function RestartSessionButton({
 					actor_id: session.actorId,
 					prior_status: session.status,
 				})
-				createSession.mutate({
-					actor_id: session.actorId,
-					action_prompt: session.actionPrompt,
-				})
+				createSession.mutate(
+					{
+						actor_id: session.actorId,
+						action_prompt: session.actionPrompt,
+					},
+					{ onError: (err) => toastSessionCreateError(err, navigate, workspaceId) },
+				)
 			}}
 		>
 			{createSession.isPending ? 'Restarting…' : 'Restart'}

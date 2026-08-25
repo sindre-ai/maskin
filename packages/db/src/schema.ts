@@ -49,15 +49,30 @@ export const actors = pgTable('actors', {
 
 // ── Workspaces ──────────────────────────────────────────────────────────────
 
-export const workspaces = pgTable('workspaces', {
-	id: uuid('id').defaultRandom().primaryKey(),
-	name: text('name').notNull(),
-	settings: jsonb('settings').notNull().default({}),
-	onboardingEnabled: boolean('onboarding_enabled').notNull().default(true),
-	createdBy: uuid('created_by').references(() => actors.id),
-	createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
-	updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
-})
+export const workspaces = pgTable(
+	'workspaces',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		name: text('name').notNull(),
+		settings: jsonb('settings').notNull().default({}),
+		onboardingEnabled: boolean('onboarding_enabled').notNull().default(true),
+		// Admin-only entitlement: workspaces default to the Maskin-provided LLM plan
+		// (trial → pro/team). Only workspaces explicitly flagged here may use
+		// BYO LLM credentials (Claude OAuth, custom_llm, llm_keys). See PR #970.
+		byollmAllowed: boolean('byollm_allowed').notNull().default(false),
+		// Single accountable human payer for this workspace's plan. Distinct from
+		// workspaceMembers.role='owner' (access control; many allowed per
+		// workspace). Must always reference a CURRENT member of this workspace —
+		// enforced at the app layer, not a DB constraint. Only ever mutated via
+		// POST /api/workspaces/:id/transfer-ownership. Gates the per-actor
+		// workspace-ownership cap (see apps/dev/src/lib/workspace-capacity.ts).
+		billingOwnerId: uuid('billing_owner_id').references(() => actors.id),
+		createdBy: uuid('created_by').references(() => actors.id),
+		createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
+	},
+	(t) => [index('workspaces_billing_owner_idx').on(t.billingOwnerId)],
+)
 
 // ── Workspace Members ───────────────────────────────────────────────────────
 
@@ -827,6 +842,115 @@ export const webhookDeliveries = pgTable(
 			t.workspaceId,
 		),
 		index('webhook_deliveries_received_at_idx').on(t.receivedAt),
+	],
+)
+
+// ── Workspace Overage Usage (retired) ───────────────────────────────────────
+// Idempotency ledger for the old Stripe-metered overage billing mechanism —
+// once a pro/team workspace exceeded its hard cap, each new block of usage
+// claimed a row here before being reported to Stripe as a meter event.
+// Retired in favor of the prepaid usage-credits model (see
+// `workspaceCreditLedger` below); no longer written to. Kept, unmigrated, so
+// historical rows stay queryable for support/finance.
+
+export const workspaceOverageUsage = pgTable(
+	'workspace_overage_usage',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id)
+			.notNull(),
+		// Unix seconds — matches `billing.period_start` so a ledger row is scoped
+		// to the exact Stripe billing period it was incurred in.
+		periodStart: integer('period_start').notNull(),
+		// 1-based index of the overage block within this period.
+		blockIndex: integer('block_index').notNull(),
+		// Cumulative maskin_plan overage tokens observed when this block was
+		// claimed — audit trail only, not used for billing math after the fact.
+		tokensAtBlock: integer('tokens_at_block').notNull(),
+		// Session whose completion crossed this block. Nullable because the
+		// reconciler's retries don't have a specific session in hand.
+		sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'set null' }),
+		stripeMeterEventId: text('stripe_meter_event_id'),
+		// NULL = claimed but not yet confirmed billed (in flight, or orphaned by
+		// a crash — the reconciler retries these past a staleness threshold).
+		reportedAt: timestamp('reported_at', { withTimezone: true }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		unique('workspace_overage_usage_ws_period_block_uniq').on(
+			t.workspaceId,
+			t.periodStart,
+			t.blockIndex,
+		),
+		index('workspace_overage_usage_unreported_idx')
+			.on(t.reportedAt)
+			.where(sql`${t.reportedAt} IS NULL`),
+	],
+)
+
+// ── Workspace Credit Ledger ─────────────────────────────────────────────────
+// Append-only audit + idempotency ledger for the prepaid usage-credits
+// balance cached at `workspaces.settings.billing.credit_balance_cents`. Two
+// row kinds:
+//   'topup' — written inside the Stripe webhook's existing row-locked
+//     transaction (routes/stripe-webhook.ts) when a `mode: 'payment'`
+//     Checkout session completes. `stripeCheckoutSessionId` is the
+//     idempotency key (defense-in-depth on top of `webhookDeliveries` dedup).
+//   'debit' — written on `maskin_plan` session completion once a pro/team
+//     workspace over its hard cap has a spendable balance
+//     (lib/credit-billing.ts). `sessionId` is the idempotency key — a session
+//     can debit the balance at most once even if completion fires twice.
+// The balance itself lives on `workspaces.settings` (JSONB) for O(1) reads on
+// `GET /billing/usage`; this table exists so a double-fired debit/topup can't
+// double-apply, and so support can reconstruct what happened to a balance.
+
+export const workspaceCreditLedger = pgTable(
+	'workspace_credit_ledger',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id)
+			.notNull(),
+		// 'topup' | 'debit'
+		type: text('type').notNull(),
+		// Signed cents: positive for topup, negative for debit.
+		amountCents: integer('amount_cents').notNull(),
+		// Balance snapshot immediately after this entry applied — audit only.
+		balanceAfterCents: integer('balance_after_cents').notNull(),
+		// Debit rows: how many cents of cumulative period overage this row
+		// accounts for, BEFORE clamping to the available balance. Deliberately
+		// distinct from `amountCents` (what was actually taken): a session that
+		// outspends the balance has its excess written off, so billing the next
+		// session off summed `amountCents` would re-charge those written-off
+		// cents after a top-up. `lib/credit-billing.ts` sums this over the
+		// period so each session is billed only its own slice. 0 on topup rows.
+		accountedOverageCents: integer('accounted_overage_cents').notNull().default(0),
+		// Idempotency key for 'topup' rows only.
+		stripeCheckoutSessionId: text('stripe_checkout_session_id'),
+		// Idempotency key for 'debit' rows only. Nullable because topup rows
+		// have no session; `set null` on delete mirrors
+		// `workspaceOverageUsage.sessionId`.
+		sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'set null' }),
+		// Debit rows: the session's own cumulative cost in USD cents when this
+		// debit was written. A session is billed on PAUSE as well as on
+		// completion, so `sessionId` alone is not the idempotency key — keying
+		// on it collapsed every segment after the first into a no-op and the
+		// post-resume spend was never charged. This value is monotonic in the
+		// quantity being billed, so it separates segments while still
+		// collapsing a retry of the same segment (unchanged cost -> same key).
+		// NULL on topup rows and on debits predating migration 0064.
+		sessionUsageCents: integer('session_usage_cents'),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		uniqueIndex('workspace_credit_ledger_topup_uniq')
+			.on(t.stripeCheckoutSessionId)
+			.where(sql`${t.type} = 'topup' AND ${t.stripeCheckoutSessionId} IS NOT NULL`),
+		uniqueIndex('workspace_credit_ledger_debit_session_segment_uniq')
+			.on(t.sessionId, t.sessionUsageCents)
+			.where(sql`${t.type} = 'debit' AND ${t.sessionId} IS NOT NULL`),
+		index('workspace_credit_ledger_workspace_created_idx').on(t.workspaceId, t.createdAt),
 	],
 )
 
