@@ -1,4 +1,4 @@
-// 500 / 2_000 / 20_000 (USD cents) below mirror TRIAL_HARD_CAP_DEFAULT_USD_CENTS /
+// 1_000 / 2_000 / 20_000 (USD cents) below mirror TRIAL_HARD_CAP_DEFAULT_USD_CENTS /
 // PRO_HARD_CAP_DEFAULT_USD_CENTS / TEAM_HARD_CAP_DEFAULT_USD_CENTS in
 // apps/dev/src/lib/billing-defaults.ts and the .env.example
 // MASKIN_*_HARD_CAP_USD_CENTS defaults. Keep in sync when bumping.
@@ -27,7 +27,7 @@ const baseUsage = {
 	plan: 'trial' as const,
 	status: 'active' as const,
 	usd_cents_used: 0,
-	hard_cap_usd_cents: 500,
+	hard_cap_usd_cents: 1_000,
 	period_start: null,
 	period_resets_in_ms: 30 * 24 * 60 * 60 * 1000,
 	stripe_customer_id: null,
@@ -75,7 +75,7 @@ describe('BillingSection', () => {
 		)
 
 		await screen.findByText('Trial')
-		expect(screen.getByText('$1.25 / $5.00 used')).toBeInTheDocument()
+		expect(screen.getByText('$1.25 / $10.00 used')).toBeInTheDocument()
 		// Trial (non-paid-active) plans start with the comparison grid expanded.
 		expect(screen.getByRole('button', { name: 'Upgrade to Pro' })).toBeInTheDocument()
 		expect(screen.getByRole('button', { name: 'Upgrade to Team' })).toBeInTheDocument()

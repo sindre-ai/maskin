@@ -516,8 +516,8 @@ describe('checkPlanCap', () => {
 	})
 
 	it('treats missing billing as trial — enforces cap when over limit', async () => {
-		// Trial default is $5.00 (500 cents); $5.01 of reported cost is over.
-		const db = dbWithSessionUsage([{ totalCostUsd: '5.01', inputTokens: 0, outputTokens: 0 }])
+		// Trial default is $10.00 (1,000 cents); $10.01 of reported cost is over.
+		const db = dbWithSessionUsage([{ totalCostUsd: '10.01', inputTokens: 0, outputTokens: 0 }])
 		const err = await checkPlanCap({
 			db,
 			workspaceId: 'ws-1',
@@ -525,7 +525,7 @@ describe('checkPlanCap', () => {
 		}).catch((e) => e)
 		expect(err).toBeInstanceOf(PlanCapExceededError)
 		expect(err.plan).toBe('trial')
-		expect(err.cap).toBe(500)
+		expect(err.cap).toBe(1_000)
 	})
 
 	it('is a no-op for byollm — explicit opt-out', async () => {
@@ -638,11 +638,11 @@ describe('checkPlanCap', () => {
 		expect(err.periodEnd).toBeNull()
 	})
 
-	it('falls back to the $5.00 trial default when env var is unset/invalid', async () => {
+	it('falls back to the $10.00 trial default when env var is unset/invalid', async () => {
 		process.env.MASKIN_TRIAL_HARD_CAP_USD_CENTS = undefined
 		const settings = emptySettings()
 		settings.billing = { plan: 'trial' }
-		const db = dbWithSessionUsage([{ totalCostUsd: '5.00', inputTokens: 0, outputTokens: 0 }])
+		const db = dbWithSessionUsage([{ totalCostUsd: '10.00', inputTokens: 0, outputTokens: 0 }])
 		await expect(
 			checkPlanCap({ db, workspaceId: 'ws-1', wsSettings: settings }),
 		).rejects.toBeInstanceOf(PlanCapExceededError)
