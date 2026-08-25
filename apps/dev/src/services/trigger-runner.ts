@@ -4,6 +4,7 @@ import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { SAFE_METADATA_FIELD_NAME_RE, readChanges, reversePatch } from '@maskin/shared'
 import { Cron } from 'croner'
 import { type SQL, and, eq, sql } from 'drizzle-orm'
+import { PlanCapExceededError } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import type { SessionManager } from './session-manager'
 
@@ -33,6 +34,38 @@ interface TriggerFailureState {
 const MAX_BACKOFF_MS = 30 * 60_000
 /** Base backoff duration: 1 minute */
 const BASE_BACKOFF_MS = 60_000
+
+/**
+ * Reports a failed background session launch.
+ *
+ * A plan-cap rejection is a *business outcome*, not a fault: the workspace has
+ * spent its allowance and `checkPlanCap` is doing exactly what it exists to do.
+ * Logging it at `error` sent it to Sentry via `logger.error`'s
+ * `captureMessage`, where a burst of cron/event triggers firing against one
+ * capped workspace grouped into a single escalating issue with no stack trace,
+ * no user (background path, so no `Sentry.setUser`), and nothing to fix —
+ * MASKIN-DEV-K, 13 events in 3.5 minutes from one trial workspace. Demoted to
+ * `warn` with the cap context spelled out, matching how `app-factory.ts`'s
+ * `onError` already treats the same error on the HTTP path.
+ *
+ * Every other failure stays at `error` and keeps reporting.
+ */
+export function logSessionCreationFailure(
+	err: unknown,
+	ctx: { triggerId: string; workspaceId: string },
+) {
+	if (err instanceof PlanCapExceededError) {
+		logger.warn('Skipped trigger session: plan cap exceeded', {
+			...ctx,
+			plan: err.plan,
+			used: err.used,
+			cap: err.cap,
+			periodEnd: err.periodEnd,
+		})
+		return
+	}
+	logger.error('Container session creation failed', { ...ctx, error: String(err) })
+}
 
 export function calculateBackoffUntil(failureCount: number, now: Date): Date {
 	const delayMs = Math.min(2 ** failureCount * BASE_BACKOFF_MS, MAX_BACKOFF_MS)
@@ -366,7 +399,12 @@ export class TriggerRunner {
 							)
 					}
 				})
-				.catch((err) => logger.error('Container session creation failed', { error: String(err) }))
+				.catch((err) =>
+					logSessionCreationFailure(err, {
+						triggerId: trigger.id,
+						workspaceId: trigger.workspaceId,
+					}),
+				)
 		}
 	}
 
@@ -508,7 +546,9 @@ export class TriggerRunner {
 				triggerId: trigger.id,
 				createdBy: trigger.createdBy,
 			})
-			.catch((err) => logger.error('Container session creation failed', { error: String(err) }))
+			.catch((err) =>
+				logSessionCreationFailure(err, { triggerId: trigger.id, workspaceId: trigger.workspaceId }),
+			)
 	}
 
 	private async queryScopeMatches(
@@ -558,7 +598,12 @@ export class TriggerRunner {
 					triggerId: trigger.id,
 					createdBy: trigger.createdBy,
 				})
-				.catch((err) => logger.error('Container session creation failed', { error: String(err) }))
+				.catch((err) =>
+					logSessionCreationFailure(err, {
+						triggerId: trigger.id,
+						workspaceId: trigger.workspaceId,
+					}),
+				)
 
 			// Auto-disable after firing
 			await this.db

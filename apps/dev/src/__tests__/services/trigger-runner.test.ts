@@ -1,12 +1,15 @@
 import { EventEmitter } from 'node:events'
 import type { PgEvent, PgNotifyBridge } from '@maskin/realtime'
 import { vi } from 'vitest'
+import { PlanCapExceededError } from '../../lib/llm-routing'
+import { logger } from '../../lib/logger'
 import {
 	TriggerRunner,
 	calculateBackoffUntil,
 	evaluateCondition,
 	evaluateConditions,
 	getObjectFromData,
+	logSessionCreationFailure,
 	resolvePath,
 } from '../../services/trigger-runner'
 import { buildTrigger } from '../factories'
@@ -1420,5 +1423,45 @@ describe('getObjectFromData()', () => {
 	it('returns empty for null data', () => {
 		const result = getObjectFromData(null)
 		expect(result).toEqual({})
+	})
+})
+
+describe('logSessionCreationFailure()', () => {
+	const ctx = { triggerId: 'trigger-1', workspaceId: 'workspace-1' }
+
+	afterEach(() => {
+		vi.restoreAllMocks()
+	})
+
+	it('logs a plan-cap rejection at warn so it never reaches Sentry', () => {
+		const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+		const error = vi.spyOn(logger, 'error').mockImplementation(() => {})
+
+		logSessionCreationFailure(
+			new PlanCapExceededError({ plan: 'trial', used: 1377, cap: 1000, periodEnd: 1234 }),
+			ctx,
+		)
+
+		expect(error).not.toHaveBeenCalled()
+		expect(warn).toHaveBeenCalledWith('Skipped trigger session: plan cap exceeded', {
+			...ctx,
+			plan: 'trial',
+			used: 1377,
+			cap: 1000,
+			periodEnd: 1234,
+		})
+	})
+
+	it('logs every other failure at error with the trigger context', () => {
+		const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+		const error = vi.spyOn(logger, 'error').mockImplementation(() => {})
+
+		logSessionCreationFailure(new Error('docker daemon unreachable'), ctx)
+
+		expect(warn).not.toHaveBeenCalled()
+		expect(error).toHaveBeenCalledWith('Container session creation failed', {
+			...ctx,
+			error: 'Error: docker daemon unreachable',
+		})
 	})
 })
