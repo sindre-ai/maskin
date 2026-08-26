@@ -1,4 +1,5 @@
 import { expect, test } from '../fixtures/auth.fixture'
+import { grantPlanHeadroom } from '../helpers/plan.helper'
 import { openSidebarOnMobile } from '../helpers/sidebar.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
@@ -39,6 +40,8 @@ test.describe('Workspace switcher (SidebarHeader pill)', () => {
 		account,
 	}) => {
 		await page.setViewportSize({ width: 1024, height: 768 })
+		// A trial actor may own a single workspace — this spec needs two.
+		await grantPlanHeadroom(account.apiKey, account.workspaceId)
 		const second = await account.api.createWorkspace(`E2E Switch Target ${Date.now()}`)
 
 		await page.goto(`/${account.workspaceId}`)

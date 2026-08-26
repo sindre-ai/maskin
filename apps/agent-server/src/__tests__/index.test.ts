@@ -2505,3 +2505,241 @@ describe('monitorSession — completion report retry and drop marker', () => {
 		)
 	})
 })
+
+describe('POST /sessions/:id/logs/batch', () => {
+	const postBatch = (
+		app: ReturnType<typeof buildApp>,
+		id: string,
+		from: number,
+		lines: unknown[],
+	) =>
+		app.request(`/sessions/${id}/logs/batch`, {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: 'Bearer test-secret-thirty-two-chars-long',
+			},
+			body: JSON.stringify({ from, lines }),
+		})
+
+	const appWithRouter = (id: string) => {
+		const { run } = makeRunner()
+		const seen: string[] = []
+		const sessionLogRouters = new Map<string, (line: string) => void>()
+		sessionLogRouters.set(id, (line) => seen.push(line))
+		const app = buildApp({
+			env: makeEnv({ AGENT_SESSION_ROOT: sessionRoot }),
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+			sessionLogRouters,
+		})
+		return { app, seen }
+	}
+
+	it('stores a batch and acks the highest sequence it kept', async () => {
+		const { app, seen } = appWithRouter('sess-batch-1')
+		const res = await postBatch(app, 'sess-batch-1', 1, ['a', 'b', 'c'])
+		expect(res.status).toBe(200)
+		expect(await res.json()).toEqual({ ack: 3 })
+		expect(seen).toEqual(['a', 'b', 'c'])
+	})
+
+	// The guest resends anything it has not seen acked, so a lost ack means the
+	// same batch arrives twice. Appending it again would duplicate the agent's
+	// output in the transcript.
+	it('is idempotent when a batch whose ack was lost is resent', async () => {
+		const { app, seen } = appWithRouter('sess-batch-2')
+		await postBatch(app, 'sess-batch-2', 1, ['a', 'b'])
+		const res = await postBatch(app, 'sess-batch-2', 1, ['a', 'b'])
+		expect(await res.json()).toEqual({ ack: 2 })
+		expect(seen).toEqual(['a', 'b'])
+	})
+
+	it('appends only the new lines when a resend overlaps', async () => {
+		const { app, seen } = appWithRouter('sess-batch-3')
+		await postBatch(app, 'sess-batch-3', 1, ['a', 'b'])
+		const res = await postBatch(app, 'sess-batch-3', 2, ['b', 'c', 'd'])
+		expect(await res.json()).toEqual({ ack: 4 })
+		expect(seen).toEqual(['a', 'b', 'c', 'd'])
+	})
+
+	// Acking past a gap would let the guest discard lines that never arrived.
+	it('refuses to ack past a gap', async () => {
+		const { app, seen } = appWithRouter('sess-batch-4')
+		await postBatch(app, 'sess-batch-4', 1, ['a'])
+		const res = await postBatch(app, 'sess-batch-4', 3, ['c', 'd'])
+		expect(await res.json()).toEqual({ ack: 1 })
+		expect(seen).toEqual(['a'])
+	})
+
+	it('rejects a malformed body', async () => {
+		const { app } = appWithRouter('sess-batch-5')
+		expect((await postBatch(app, 'sess-batch-5', 0, ['a'])).status).toBe(400)
+		expect((await postBatch(app, 'sess-batch-5', 1, 'not-an-array' as never)).status).toBe(400)
+	})
+
+	// Review catch: after an agent-server restart the seq map is empty while the
+	// guest is already at sequence N. Refusing that as a gap acked 0 forever
+	// against a guest that was long past it — a permanent wedge plus a retry
+	// loop measured at ~3,400 requests/second. We have stored nothing, so there
+	// is nothing a wrong answer could discard: adopt the guest's position.
+	it('adopts the guest position on first contact rather than treating it as a gap', async () => {
+		const { app, seen } = appWithRouter('sess-batch-restart')
+		const res = await postBatch(app, 'sess-batch-restart', 57, ['after-restart-1', 'x'])
+		expect(await res.json()).toEqual({ ack: 58 })
+		expect(seen).toEqual(['after-restart-1', 'x'])
+	})
+
+	// Review catch: when the guest's buffer overflows it drops its oldest lines,
+	// leaving a hole nothing can ever fill. Waiting for it is waiting forever.
+	it('accepts a declared resync after the guest dropped lines, and records the hole', async () => {
+		const { app, seen } = appWithRouter('sess-batch-drop')
+		await postBatch(app, 'sess-batch-drop', 1, ['a', 'b'])
+
+		const res = await app.request('/sessions/sess-batch-drop/logs/batch', {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: 'Bearer test-secret-thirty-two-chars-long',
+			},
+			body: JSON.stringify({ from: 9, lines: ['i', 'j'], resync: true, dropped: 6 }),
+		})
+		expect(await res.json()).toEqual({ ack: 10 })
+		expect(seen[0]).toBe('a')
+		expect(seen[1]).toBe('b')
+		// The discontinuity is recorded rather than left silent.
+		expect(seen[2]).toContain('6 line(s) of agent output were dropped')
+		expect(seen.slice(3)).toEqual(['i', 'j'])
+	})
+
+	// A gap the guest has NOT declared is still refused: acking it would let the
+	// guest discard lines that never arrived.
+	it('still refuses an undeclared gap', async () => {
+		const { app, seen } = appWithRouter('sess-batch-undeclared')
+		await postBatch(app, 'sess-batch-undeclared', 1, ['a'])
+		const res = await postBatch(app, 'sess-batch-undeclared', 5, ['e'])
+		expect(await res.json()).toEqual({ ack: 1 })
+		expect(seen).toEqual(['a'])
+	})
+
+	// An unmonitored session must still be acked, or the guest retries forever
+	// against a server that is never going to store anything.
+	it('acks even when no log router is registered', async () => {
+		const { run } = makeRunner()
+		const app = buildApp({
+			env: makeEnv({ AGENT_SESSION_ROOT: sessionRoot }),
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+		})
+		const res = await postBatch(app, 'sess-batch-6', 1, ['a', 'b'])
+		expect(await res.json()).toEqual({ ack: 2 })
+	})
+})
+
+describe('GET /sessions/:id/input/stream', () => {
+	it('flushes turns parked before the stream connects and heartbeats the idle connection', async () => {
+		vi.useFakeTimers()
+		try {
+			const { run } = makeRunner()
+			const app = buildApp({
+				env: makeEnv({ AGENT_SESSION_ROOT: sessionRoot }),
+				storage: null,
+				msb: { msbBin: '/usr/local/bin/msb', run },
+			})
+
+			// A turn arrives while no reader is connected (the VM's input curl
+			// dropped) — it must park, not vanish.
+			const post = await app.request('/sessions/sess-stream-1/input', {
+				method: 'POST',
+				headers: {
+					'content-type': 'application/json',
+					authorization: 'Bearer test-secret-thirty-two-chars-long',
+				},
+				body: JSON.stringify({ content: 'hello parked turn' }),
+			})
+			expect(post.status).toBe(200)
+
+			// The (re)connecting reader receives the parked turn immediately.
+			const res = await app.request('/sessions/sess-stream-1/input/stream')
+			expect(res.status).toBe(200)
+			const reader = res.body?.getReader()
+			if (!reader) throw new Error('stream response has no body')
+			const decoder = new TextDecoder()
+			const first = await reader.read()
+			const framed = JSON.parse(decoder.decode(first.value))
+			// Framed as {maskin_seq, turn} so the VM can ack what it consumed.
+			// `turn` is the exact envelope apps/dev put on the wire — the CLI's
+			// stdin must see those bytes unaltered.
+			expect(framed.maskin_seq).toBe(1)
+			expect(JSON.parse(framed.turn)).toEqual({
+				type: 'user',
+				message: { role: 'user', content: 'hello parked turn' },
+			})
+
+			// With nothing else flowing, the 30s keepalive newline arrives — the
+			// signal that stops NAT/proxy idle-timeouts from reaping the stream.
+			const nextRead = reader.read()
+			await vi.advanceTimersByTimeAsync(30_000)
+			const heartbeat = await nextRead
+			expect(decoder.decode(heartbeat.value)).toBe('\n')
+
+			// Tear the reader down and let the next heartbeat's failed write
+			// clean up the interval so the test leaves no live timers behind.
+			await reader.cancel()
+			await vi.advanceTimersByTimeAsync(30_000)
+		} finally {
+			vi.useRealTimers()
+		}
+	})
+
+	it('replays an unacked turn on reconnect and drops it once acked', async () => {
+		const { run } = makeRunner()
+		const app = buildApp({
+			env: makeEnv({ AGENT_SESSION_ROOT: sessionRoot }),
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+		})
+		const decoder = new TextDecoder()
+
+		const post = await app.request('/sessions/sess-stream-ack/input', {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: 'Bearer test-secret-thirty-two-chars-long',
+			},
+			body: JSON.stringify({ content: 'needs an ack' }),
+		})
+		expect(post.status).toBe(200)
+
+		// First reader takes the turn and dies without acking — the production
+		// case, where the write succeeded into a socket the VM never read.
+		const first = await app.request('/sessions/sess-stream-ack/input/stream')
+		const r1 = first.body?.getReader()
+		if (!r1) throw new Error('stream response has no body')
+		expect(decoder.decode((await r1.read()).value)).toContain('needs an ack')
+		await r1.cancel()
+
+		// Reconnect with after=0: the turn is still owed, so it comes again.
+		const second = await app.request('/sessions/sess-stream-ack/input/stream?after=0')
+		const r2 = second.body?.getReader()
+		if (!r2) throw new Error('stream response has no body')
+		expect(decoder.decode((await r2.read()).value)).toContain('needs an ack')
+		await r2.cancel()
+
+		// Reconnect with after=1: acknowledged, so nothing is replayed. Proven
+		// by the 30s heartbeat arriving first instead of a turn.
+		vi.useFakeTimers()
+		try {
+			const third = await app.request('/sessions/sess-stream-ack/input/stream?after=1')
+			const r3 = third.body?.getReader()
+			if (!r3) throw new Error('stream response has no body')
+			const pending = r3.read()
+			await vi.advanceTimersByTimeAsync(30_000)
+			expect(decoder.decode((await pending).value)).toBe('\n')
+			await r3.cancel()
+			await vi.advanceTimersByTimeAsync(30_000)
+		} finally {
+			vi.useRealTimers()
+		}
+	})
+})

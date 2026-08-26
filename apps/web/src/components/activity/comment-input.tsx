@@ -1,13 +1,23 @@
+import { SlashPicker, type SlashPickerResult } from '@/components/chat/slash-picker'
 import { Button } from '@/components/ui/button'
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { Input } from '@/components/ui/input'
 import { useActors } from '@/hooks/use-actors'
+import { useDictation } from '@/hooks/use-dictation'
 import { useCreateComment } from '@/hooks/use-events'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { getStoredActor } from '@/lib/auth'
+import { EMPTY_CHAT_SELECTION } from '@/lib/chat-selection'
 import { cn } from '@/lib/cn'
 import { formatSize } from '@/lib/file-utils'
 import { useDraft } from '@/lib/pending-comments-context'
 import { COMMENT_MAX_ATTACHMENTS, COMMENT_MAX_LENGTH } from '@maskin/shared'
-import { ArrowUp, Paperclip, X } from 'lucide-react'
+import { ArrowUp, AtSign, Box, ListChecks, Mic, Paperclip, Plus, X } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ActorAvatar } from '../shared/actor-avatar'
 import { MentionedText } from '../shared/mentioned-text'
@@ -23,6 +33,15 @@ interface CommentInputProps {
 	// (e.g. ForYouQueueCard) pass 'above' so the dropdown doesn't render
 	// off-screen.
 	mentionDropdownPlacement?: 'below' | 'above'
+	// Optional external ownership of the textarea node. When set, the composer
+	// forwards its textarea ref so callers can programmatically focus the answer
+	// control (e.g. the ask banner's "Answer it ↓" button).
+	focusRef?: React.Ref<HTMLTextAreaElement>
+	// Replaces the composer's own keyboard hint in the control row. The mockup
+	// gives this slot one line, so a caller with something more useful to say
+	// (object detail names the agent that will read the comment) passes it here
+	// rather than stacking a second line beneath the card.
+	hint?: React.ReactNode
 }
 
 function randomDraftId(): string {
@@ -37,12 +56,20 @@ const MAX_INPUT_HEIGHT_PX = 130
 // limit. Keeps the UI quiet for the common short-comment case.
 const COUNTER_VISIBILITY_THRESHOLD = 0.9
 
+// Decision options ride `metadata.chips` on the created event — the same field
+// agents write and `DecisionChips` renders. `createCommentSchema`'s own
+// description is the contract: up to 5 options, 20 characters each.
+const MAX_DECISION_CHIPS = 5
+const MAX_DECISION_CHIP_LENGTH = 20
+
 export function CommentInput({
 	workspaceId,
 	objectId,
 	parentEventId,
 	onSubmitted,
 	mentionDropdownPlacement = 'below',
+	focusRef,
+	hint,
 }: CommentInputProps) {
 	const actor = getStoredActor()
 	const createComment = useCreateComment(workspaceId, objectId)
@@ -55,10 +82,30 @@ export function CommentInput({
 	const [mentionFilter, setMentionFilter] = useState('')
 	const [selectedIndex, setSelectedIndex] = useState(0)
 	const [isDraggingFile, setIsDraggingFile] = useState(false)
+	// "Reference an object" reuses the composer's own picker rather than a
+	// second search UI; the pick is inserted as the canonical markdown object
+	// link the comment API documents (`[title](/<ws>/objects/<id>)`).
+	const [objectPickerOpen, setObjectPickerOpen] = useState(false)
+	// "Attach a decision" — the options the reader will be offered as
+	// quick-reply chips under the posted comment.
+	const [decisionChips, setDecisionChips] = useState<string[]>([])
+	const [chipDraft, setChipDraft] = useState('')
+	const [decisionOpen, setDecisionOpen] = useState(false)
 
 	const inputRef = useRef<HTMLTextAreaElement>(null)
 	const overlayRef = useRef<HTMLDivElement>(null)
 	const fileInputRef = useRef<HTMLInputElement>(null)
+
+	// Merge the internal inputRef (which the resize / mention / scroll logic
+	// reads) with an optional external focusRef so callers own the same node.
+	const setTextareaRef = useCallback(
+		(node: HTMLTextAreaElement | null) => {
+			inputRef.current = node
+			if (typeof focusRef === 'function') focusRef(node)
+			else if (focusRef) focusRef.current = node
+		},
+		[focusRef],
+	)
 
 	// Stable per-mount draft id. The id is also used as the optimistic comment
 	// entry id once submitted, so the activity feed can render its placeholder.
@@ -155,12 +202,92 @@ export function CommentInput({
 		setMentionFilter('')
 	}, [])
 
+	// Appends dictated phrases to the draft. Renders nothing at all when the
+	// browser has no SpeechRecognition — never a dead control.
+	const dictation = useDictation(
+		useCallback((text: string) => {
+			setContent((prev) => (prev.length === 0 ? text : `${prev.trimEnd()} ${text}`))
+		}, []),
+	)
+
+	// `trailingSpace` exists for the "@" opener: the mention dropdown stays open
+	// only while the text after the "@" contains no space (see handleInput), so
+	// seeding "@ " would close it on the very first keystroke.
+	const insertAtCursor = useCallback((snippet: string, { trailingSpace = true } = {}) => {
+		const textarea = inputRef.current
+		setContent((prev) => {
+			const pos = textarea?.selectionStart ?? prev.length
+			const before = prev.slice(0, pos)
+			const after = prev.slice(pos)
+			const spacer = before.length > 0 && !/\s$/.test(before) ? ' ' : ''
+			const tail = trailingSpace ? ' ' : ''
+			const next = `${before}${spacer}${snippet}${tail}${after}`
+			requestAnimationFrame(() => {
+				const caret = before.length + spacer.length + snippet.length + tail.length
+				textarea?.focus()
+				textarea?.setSelectionRange(caret, caret)
+			})
+			return next
+		})
+	}, [])
+
+	const handleObjectPicked = useCallback(
+		(result: SlashPickerResult) => {
+			if (result.kind === 'object') {
+				const title = result.ref.title?.trim() || 'object'
+				insertAtCursor(`[${title}](/${workspaceId}/objects/${result.ref.id})`)
+			} else if (result.kind === 'agent') {
+				insertAtCursor(`@${result.ref.name}`)
+				setMentions((prev) => (prev.includes(result.ref.id) ? prev : [...prev, result.ref.id]))
+			}
+			setObjectPickerOpen(false)
+		},
+		[insertAtCursor, workspaceId],
+	)
+
+	// Opens the @-mention flow the textarea already owns instead of a parallel
+	// picker — one mention path, one dropdown.
+	const startMention = useCallback(() => {
+		insertAtCursor('@', { trailingSpace: false })
+		setShowMentions(true)
+		setMentionFilter('')
+		setSelectedIndex(0)
+	}, [insertAtCursor])
+
+	const addDecisionChip = useCallback(() => {
+		const next = chipDraft.trim().slice(0, MAX_DECISION_CHIP_LENGTH)
+		if (!next) return
+		setDecisionChips((prev) =>
+			prev.length >= MAX_DECISION_CHIPS || prev.includes(next) ? prev : [...prev, next],
+		)
+		setChipDraft('')
+	}, [chipDraft])
+
+	const removeDecisionChip = useCallback((chip: string) => {
+		setDecisionChips((prev) => prev.filter((c) => c !== chip))
+	}, [])
+
+	// The one place a comment's structured extras are built. Both submit paths
+	// — the direct POST and the attachment queue — spread this, so they cannot
+	// drift apart. The same caps `createCommentSchema` enforces server-side are
+	// re-applied here, since chips can also arrive from a restored draft.
+	const buildMetadata = useCallback((): Record<string, unknown> | undefined => {
+		const chips = decisionChips
+			.map((chip) => chip.trim().slice(0, MAX_DECISION_CHIP_LENGTH))
+			.filter((chip) => chip.length > 0)
+			.slice(0, MAX_DECISION_CHIPS)
+		return chips.length > 0 ? { chips } : undefined
+	}, [decisionChips])
+
 	const overLimit = content.length > COMMENT_MAX_LENGTH
 	const showCounter = content.length >= COMMENT_MAX_LENGTH * COUNTER_VISIBILITY_THRESHOLD
 
 	const resetComposer = useCallback(() => {
 		setContent('')
 		setMentions([])
+		setDecisionChips([])
+		setChipDraft('')
+		setDecisionOpen(false)
 		draftIdRef.current = randomDraftId()
 	}, [])
 
@@ -175,30 +302,52 @@ export function CommentInput({
 			return actor && trimmed.includes(`@${actor.name}`)
 		})
 
+		const metadata = buildMetadata()
+
+		const postDirectly = () => {
+			createComment.mutate(
+				{
+					entity_id: objectId,
+					content: trimmed,
+					mentions: activeMentions.length > 0 ? activeMentions : undefined,
+					parent_event_id: parentEventId,
+					...(metadata ? { metadata } : {}),
+				},
+				{
+					onSuccess: () => {
+						resetComposer()
+						onSubmitted?.()
+					},
+				},
+			)
+		}
+
 		if (hasAttachments) {
 			// Hand the submission to the pending-comments queue. Uploads (if still
 			// in flight) and the final POST will continue in the background even
-			// if the user navigates away from this page.
-			draft.submit({ content: trimmed, mentions: activeMentions })
+			// if the user navigates away from this page. The queue carries the
+			// same metadata the direct path sends, so an attachment and a
+			// decision can ride one comment.
+			const outcome = draft.submit({
+				content: trimmed,
+				mentions: activeMentions,
+				...(metadata ? { metadata } : {}),
+			})
+			// The queue has nothing to send — the entry was never created, or every
+			// attachment was removed between the `hasAttachments` read and this
+			// click. It also deletes the entry in that second case, so there is no
+			// queued row left to render a failure on. Post directly rather than
+			// resetting the composer, which would clear the comment as if it sent.
+			if (outcome === 'no-attachments') {
+				postDirectly()
+				return
+			}
 			resetComposer()
 			onSubmitted?.()
 			return
 		}
 
-		createComment.mutate(
-			{
-				entity_id: objectId,
-				content: trimmed,
-				mentions: activeMentions.length > 0 ? activeMentions : undefined,
-				parent_event_id: parentEventId,
-			},
-			{
-				onSuccess: () => {
-					resetComposer()
-					onSubmitted?.()
-				},
-			},
-		)
+		postDirectly()
 	}, [
 		content,
 		mentions,
@@ -209,6 +358,7 @@ export function CommentInput({
 		onSubmitted,
 		hasAttachments,
 		draft,
+		buildMetadata,
 		resetComposer,
 	])
 
@@ -362,7 +512,7 @@ export function CommentInput({
 							    instead of one runaway line. text-base stays for the iOS
 							    Safari zoom-on-focus guard (#655). */}
 							<textarea
-								ref={inputRef}
+								ref={setTextareaRef}
 								value={content}
 								onChange={handleInput}
 								onKeyDown={handleKeyDown}
@@ -376,6 +526,146 @@ export function CommentInput({
 								className="relative w-full resize-none overflow-x-hidden overflow-y-hidden break-words border-0 bg-transparent px-2 py-1 text-base text-transparent placeholder:text-muted-foreground caret-foreground focus:outline-none focus:ring-0"
 								style={{ minHeight: '28px', maxHeight: `${MAX_INPUT_HEIGHT_PX}px` }}
 							/>
+						</div>
+						{(decisionOpen || decisionChips.length > 0) && (
+							<div
+								data-testid="decision-attachment"
+								className="flex flex-col gap-1.5 border-t border-border px-1.5 py-1.5"
+							>
+								<p className="eyebrow">Decision options</p>
+								{decisionChips.length > 0 && (
+									<ul className="flex flex-wrap gap-1.5">
+										{decisionChips.map((chip) => (
+											<li
+												key={chip}
+												className="inline-flex items-center gap-1 rounded-full border border-border px-2.5 py-0.5 text-xs text-foreground"
+											>
+												{chip}
+												<button
+													type="button"
+													onClick={() => removeDecisionChip(chip)}
+													aria-label={`Remove option ${chip}`}
+													className="text-muted-foreground hover:text-foreground"
+												>
+													<X size={11} aria-hidden />
+												</button>
+											</li>
+										))}
+									</ul>
+								)}
+								{decisionChips.length < MAX_DECISION_CHIPS && (
+									<div className="flex items-center gap-1.5">
+										<Input
+											value={chipDraft}
+											onChange={(e) => setChipDraft(e.target.value)}
+											onKeyDown={(e) => {
+												if (e.key !== 'Enter') return
+												e.preventDefault()
+												addDecisionChip()
+											}}
+											maxLength={MAX_DECISION_CHIP_LENGTH}
+											placeholder="Add an option…"
+											aria-label="Decision option"
+											className="h-7 flex-1 text-xs"
+										/>
+										<Button
+											type="button"
+											size="sm"
+											variant="outline"
+											className="h-7 text-xs"
+											disabled={chipDraft.trim().length === 0}
+											onClick={addDecisionChip}
+										>
+											Add
+										</Button>
+									</div>
+								)}
+								<p className="text-[11px] text-muted-foreground">
+									They reply by tapping one — or type instead.
+								</p>
+							</div>
+						)}
+						{/* Control row — `+` menu, hint, mic, send (mockup 457–472). */}
+						<div className="flex items-center gap-2 px-1.5 pb-1.5">
+							<SlashPicker
+								workspaceId={workspaceId}
+								open={objectPickerOpen}
+								onOpenChange={setObjectPickerOpen}
+								onSelect={handleObjectPicked}
+								selected={EMPTY_CHAT_SELECTION}
+								initialKindId="item"
+								anchor={
+									<span
+										aria-hidden
+										className="pointer-events-none absolute bottom-1 left-2 h-0 w-0"
+									/>
+								}
+							/>
+							<DropdownMenu>
+								<DropdownMenuTrigger asChild>
+									<Button
+										type="button"
+										size="icon"
+										variant="outline"
+										className="h-7 w-7 shrink-0 rounded-full text-muted-foreground"
+										aria-label="Add a file, object, or mention"
+									>
+										<Plus size={15} aria-hidden />
+									</Button>
+								</DropdownMenuTrigger>
+								<DropdownMenuContent align="start" className="w-[250px]">
+									<DropdownMenuItem
+										disabled={attachmentLimitReached}
+										onSelect={() => fileInputRef.current?.click()}
+									>
+										<Paperclip size={15} aria-hidden />
+										Attach a file
+									</DropdownMenuItem>
+									<DropdownMenuItem onSelect={() => setObjectPickerOpen(true)}>
+										<Box size={15} aria-hidden />
+										Reference an object
+									</DropdownMenuItem>
+									<DropdownMenuItem onSelect={startMention}>
+										<AtSign size={15} aria-hidden />
+										Mention an agent
+									</DropdownMenuItem>
+									<DropdownMenuItem onSelect={() => setDecisionOpen(true)}>
+										<ListChecks size={15} aria-hidden />
+										Attach a decision
+									</DropdownMenuItem>
+								</DropdownMenuContent>
+							</DropdownMenu>
+							<span className="min-w-0 flex-1 truncate text-[11.5px] text-muted-foreground">
+								{hint ??
+									(isMobile ? 'Tap ↑ to send' : 'Enter to send · @ to mention · + to attach')}
+							</span>
+							{dictation.supported ? (
+								<Button
+									type="button"
+									size="icon"
+									variant={dictation.recording ? 'destructive' : 'outline'}
+									className={cn(
+										'h-7 w-7 shrink-0 rounded-full',
+										dictation.recording ? 'animate-pulse' : 'text-muted-foreground',
+									)}
+									onClick={dictation.toggle}
+									aria-pressed={dictation.recording}
+									aria-label={dictation.recording ? 'Stop dictating' : 'Dictate a comment'}
+								>
+									<Mic size={14} aria-hidden />
+								</Button>
+							) : null}
+							<Button
+								size="icon"
+								variant="ghost"
+								className="h-7 w-7 shrink-0 rounded-full"
+								disabled={!content.trim() || createComment.isPending || overLimit}
+								title={isUploadingAny ? 'Send (uploads continue in background)' : 'Send'}
+								aria-label="Send comment"
+								onClick={handleSubmit}
+							>
+								<ArrowUp size={14} />
+							</Button>
 						</div>
 					</div>
 					{showCounter && (
@@ -400,32 +690,6 @@ export function CommentInput({
 						e.target.value = ''
 					}}
 				/>
-				<Button
-					size="icon"
-					variant="ghost"
-					className="shrink-0 h-8 w-8"
-					disabled={attachmentLimitReached}
-					title={
-						attachmentLimitReached
-							? `Maximum ${COMMENT_MAX_ATTACHMENTS} attachments`
-							: 'Attach file'
-					}
-					aria-label="Attach file"
-					onClick={() => fileInputRef.current?.click()}
-				>
-					<Paperclip size={14} />
-				</Button>
-				<Button
-					size="icon"
-					variant="ghost"
-					className="shrink-0 h-8 w-8"
-					disabled={!content.trim() || createComment.isPending || overLimit}
-					title={isUploadingAny ? 'Send (uploads continue in background)' : 'Send'}
-					aria-label="Send comment"
-					onClick={handleSubmit}
-				>
-					<ArrowUp size={14} />
-				</Button>
 			</div>
 
 			{/* @mention autocomplete dropdown */}

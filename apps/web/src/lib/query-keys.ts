@@ -7,6 +7,8 @@ export const queryKeys = {
 		listInfinite: (workspaceId: string, filters?: Record<string, unknown>) =>
 			['objects', workspaceId, 'listInfinite', filters] as const,
 		listInfinitePrefix: (workspaceId: string) => ['objects', workspaceId, 'listInfinite'] as const,
+		search: (workspaceId: string, params?: Record<string, unknown>) =>
+			['objects', workspaceId, 'search', params] as const,
 		board: (workspaceId: string, filters?: Record<string, unknown>) =>
 			['objects', workspaceId, 'board', filters] as const,
 		boardPrefix: (workspaceId: string) => ['objects', workspaceId, 'board'] as const,
@@ -27,6 +29,7 @@ export const queryKeys = {
 		messages: (id: string, filters?: Record<string, unknown>) =>
 			['conversations', 'detail', id, 'messages', filters] as const,
 		messagesPrefix: (id: string) => ['conversations', 'detail', id, 'messages'] as const,
+		unreadCount: (workspaceId: string) => ['conversations', workspaceId, 'unreadCount'] as const,
 	},
 	actors: {
 		all: (workspaceId?: string) => ['actors', workspaceId] as const,
@@ -84,6 +87,8 @@ export const queryKeys = {
 		logs: (sessionId: string) => ['sessions', sessionId, 'logs'] as const,
 		byActor: (workspaceId: string, actorId: string) =>
 			['sessions', workspaceId, 'actor', actorId, 'running'] as const,
+		byActorAll: (workspaceId: string, actorId: string) =>
+			['sessions', workspaceId, 'actor', actorId, 'all'] as const,
 		byActorAllInfinite: (workspaceId: string, actorId: string) =>
 			['sessions', workspaceId, 'actor', actorId, 'all', 'infinite'] as const,
 		byMentionObject: (workspaceId: string, objectId: string) =>
@@ -111,6 +116,9 @@ export const queryKeys = {
 	},
 	claudeOauth: {
 		status: (workspaceId: string) => ['claude-oauth', workspaceId, 'status'] as const,
+	},
+	billing: {
+		usage: (workspaceId: string) => ['billing', workspaceId, 'usage'] as const,
 	},
 	briefing: {
 		current: (workspaceId: string) => ['briefing', workspaceId] as const,

@@ -1,3 +1,4 @@
+import { BillingSection } from '@/components/settings/billing-section'
 import { FormError } from '@/components/shared/form-error'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
@@ -28,18 +29,29 @@ export const Route = createFileRoute('/_authed/$workspaceId/settings/keys')({
 
 function KeysPage() {
 	const { workspace, workspaceId } = useWorkspace()
+	const byollmAllowed = Boolean(workspace.byollmAllowed)
 
 	return (
-		<div className="max-w-lg space-y-6">
-			<ClaudeOAuthSection workspaceId={workspaceId} />
-
-			<div className="border-t border-border pt-6">
-				<LLMKeysEditor workspace={workspace} workspaceId={workspaceId} />
+		<div className="space-y-6">
+			<div className="max-w-4xl">
+				<BillingSection workspaceId={workspaceId} byollmAllowed={byollmAllowed} />
 			</div>
 
-			<div className="border-t border-border pt-6">
-				<CustomLlmEditor workspace={workspace} workspaceId={workspaceId} />
-			</div>
+			{byollmAllowed ? (
+				<div className="max-w-lg space-y-6">
+					<div className="border-t border-border pt-6">
+						<ClaudeOAuthSection workspaceId={workspaceId} />
+					</div>
+
+					<div className="border-t border-border pt-6">
+						<LLMKeysEditor workspace={workspace} workspaceId={workspaceId} />
+					</div>
+
+					<div className="border-t border-border pt-6">
+						<CustomLlmEditor workspace={workspace} workspaceId={workspaceId} />
+					</div>
+				</div>
+			) : null}
 		</div>
 	)
 }
@@ -653,9 +665,7 @@ function CustomLlmEditor({
 						onCheckedChange={setEnabled}
 						disabled={!canEnable && !enabled}
 					/>
-					<span className="text-sm text-foreground">
-						{enabled ? 'Enabled — used for all sessions' : 'Disabled'}
-					</span>
+					<span className="text-sm text-foreground">{enabled ? 'Enabled' : 'Disabled'}</span>
 				</div>
 
 				<div>

@@ -1,7 +1,6 @@
 import { DateRangePicker, type DateRangeValue } from '@/components/shared/date-range-picker'
 import { EmptyState } from '@/components/shared/empty-state'
 import { Button } from '@/components/ui/button'
-import { ButtonGroup } from '@/components/ui/button-group'
 import { Skeleton } from '@/components/ui/skeleton'
 import { pickBucket, useSessionUsage } from '@/hooks/use-session-usage'
 import type { ActorResponse } from '@/lib/api'
@@ -9,15 +8,7 @@ import { cn } from '@/lib/cn'
 import { useMemo, useState } from 'react'
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 
-type View = 'tokens' | 'cost'
 type Preset = '24h' | '7d' | '30d' | 'all' | 'custom'
-type TokenSeries = 'input' | 'output' | 'cache'
-
-const TOKEN_SERIES_LABELS: Record<TokenSeries, string> = {
-	input: 'Input',
-	output: 'Output',
-	cache: 'Cache',
-}
 
 const DAY_MS = 86_400_000
 const PRESETS: { id: Preset; label: string }[] = [
@@ -44,11 +35,13 @@ function presetRange(preset: Exclude<Preset, 'custom'>, agentCreatedAt?: string)
 	return { from, to }
 }
 
-const compactNumber = new Intl.NumberFormat('en-US', {
+const fullNumber = new Intl.NumberFormat('en-US')
+const compactCurrency = new Intl.NumberFormat('en-US', {
+	style: 'currency',
+	currency: 'USD',
 	notation: 'compact',
 	maximumFractionDigits: 1,
 })
-const fullNumber = new Intl.NumberFormat('en-US')
 const currency = new Intl.NumberFormat('en-US', {
 	style: 'currency',
 	currency: 'USD',
@@ -71,7 +64,6 @@ export function AgentUsageChart({
 	agent: ActorResponse
 	workspaceId: string
 }) {
-	const [view, setView] = useState<View>('tokens')
 	const [preset, setPreset] = useState<Preset>('30d')
 	const [customRange, setCustomRange] = useState<DateRangeValue>(() =>
 		presetRange('30d', agent.createdAt ?? undefined),
@@ -91,9 +83,6 @@ export function AgentUsageChart({
 		return data.buckets.map((b) => ({
 			bucket: b.bucket,
 			label: formatBucketLabel(b.bucket, chartBucket),
-			input: b.input_tokens,
-			output: b.output_tokens,
-			cache: b.cache_tokens,
 			cost: b.total_cost_usd,
 		}))
 	}, [data, chartBucket])
@@ -106,26 +95,6 @@ export function AgentUsageChart({
 				<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
 					Usage
 				</h3>
-				<ButtonGroup>
-					<Button
-						type="button"
-						variant={view === 'tokens' ? 'secondary' : 'ghost'}
-						size="sm"
-						aria-pressed={view === 'tokens'}
-						onClick={() => setView('tokens')}
-					>
-						Tokens
-					</Button>
-					<Button
-						type="button"
-						variant={view === 'cost' ? 'secondary' : 'ghost'}
-						size="sm"
-						aria-pressed={view === 'cost'}
-						onClick={() => setView('cost')}
-					>
-						Cost
-					</Button>
-				</ButtonGroup>
 			</div>
 
 			<div className="flex flex-wrap items-center gap-2 mb-4">
@@ -149,19 +118,10 @@ export function AgentUsageChart({
 				/>
 			</div>
 
-			<div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+			<div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
 				<Stat
 					label="Total cost"
 					value={totals ? currency.format(totals.total_cost_usd) : '—'}
-					loading={isLoading}
-				/>
-				<Stat
-					label="Total tokens"
-					value={
-						totals
-							? fullNumber.format(totals.input_tokens + totals.output_tokens + totals.cache_tokens)
-							: '—'
-					}
 					loading={isLoading}
 				/>
 				<Stat
@@ -181,7 +141,7 @@ export function AgentUsageChart({
 			) : chartData.length === 0 ? (
 				<EmptyState
 					title="No usage in this range"
-					description="Once this agent runs sessions, cost and token usage will appear here."
+					description="Once this agent runs sessions, cost will appear here."
 				/>
 			) : (
 				<div className="h-56 w-full">
@@ -198,9 +158,7 @@ export function AgentUsageChart({
 								tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }}
 								tickLine={false}
 								axisLine={false}
-								tickFormatter={(v: number) =>
-									view === 'cost' ? `$${compactNumber.format(v)}` : compactNumber.format(v)
-								}
+								tickFormatter={(v: number) => compactCurrency.format(v)}
 								width={48}
 							/>
 							<Tooltip
@@ -212,34 +170,9 @@ export function AgentUsageChart({
 									fontSize: 12,
 								}}
 								labelStyle={{ color: 'var(--muted-foreground)', fontSize: 11 }}
-								formatter={(value, name) => {
-									const n = Number(value)
-									if (view === 'cost') return [currency.format(n), 'Cost']
-									return [fullNumber.format(n), TOKEN_SERIES_LABELS[name as TokenSeries] ?? name]
-								}}
+								formatter={(value) => [currency.format(Number(value)), 'Cost']}
 							/>
-							{view === 'cost' ? (
-								<Bar dataKey="cost" fill="var(--primary)" radius={[3, 3, 0, 0]} maxBarSize={32} />
-							) : (
-								<>
-									<Bar dataKey="input" stackId="tokens" fill="var(--primary)" maxBarSize={32} />
-									<Bar
-										dataKey="output"
-										stackId="tokens"
-										fill="var(--primary)"
-										fillOpacity={0.65}
-										maxBarSize={32}
-									/>
-									<Bar
-										dataKey="cache"
-										stackId="tokens"
-										fill="var(--primary)"
-										fillOpacity={0.35}
-										radius={[3, 3, 0, 0]}
-										maxBarSize={32}
-									/>
-								</>
-							)}
+							<Bar dataKey="cost" fill="var(--primary)" radius={[3, 3, 0, 0]} maxBarSize={32} />
 						</BarChart>
 					</ResponsiveContainer>
 				</div>

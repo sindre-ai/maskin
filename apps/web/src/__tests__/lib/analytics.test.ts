@@ -12,13 +12,9 @@ import {
 	trackCommentPosted,
 	trackEvent,
 	trackForyouCardAction,
-	trackForyouCardMarkedRead,
-	trackForyouCardMarkedUnread,
 	trackForyouCardShown,
 	trackMiniAppFileViewed,
 	trackNavItemClicked,
-	trackNorthStarPromptImpression,
-	trackNorthStarPromptResponse,
 	trackObjectAttachedFile,
 	trackObjectCreated,
 	trackObjectUpdated,
@@ -26,7 +22,6 @@ import {
 	trackObjectsListGroupToggled,
 	trackRelationshipCreated,
 	trackScrollToTop,
-	trackSidebarAgentActivityExpanded,
 	trackSidebarToggle,
 	trackSidebarWorkspaceSwitcherOpened,
 	trackSindreMessageReceived,
@@ -34,6 +29,7 @@ import {
 	trackSpecialistSummonedManually,
 	trackTriggerCreated,
 	trackTriggerFired,
+	trackTriggerUpdated,
 } from '@/lib/analytics'
 import { setStoredActor } from '@/lib/auth'
 import { __setInitializedForTesting } from '@/lib/posthog'
@@ -54,9 +50,8 @@ describe('trackEvent', () => {
 	it('always forwards to posthog.capture — even before posthog is initialised', () => {
 		// Regression guard: prior versions silently dropped events when the
 		// module-local `initialized` flag was false, which is exactly how the
-		// north_star_prompt_impression / _response events were being lost in prod
-		// (see task Instrument north_star_prompt_* on the For You onboarding
-		// prompt bet). posthog-js is safe to call before init; do it anyway.
+		// For You onboarding prompt's ship-metric events were lost in prod.
+		// posthog-js is safe to call before init; do it anyway.
 		const capture = vi.spyOn(posthog, 'capture').mockImplementation((() => {}) as never)
 
 		trackEvent('objects_control_changed', { source: 'objects-page', control: 'status_filter' })
@@ -445,6 +440,17 @@ describe('v1 taxonomy helpers', () => {
 		)
 	})
 
+	it('trigger_updated fires the standalone-trigger save success metric', () => {
+		const capture = captureSpy()
+
+		trackTriggerUpdated({ entity_id: 'trg-2', entity_type: 'trigger' })
+
+		expect(capture).toHaveBeenCalledWith(
+			'trigger_updated',
+			expect.objectContaining({ entity_id: 'trg-2', entity_type: 'trigger', source: 'web' }),
+		)
+	})
+
 	it('object_attached_file carries file_id and parent entity type', () => {
 		const capture = captureSpy()
 
@@ -507,16 +513,6 @@ describe('v1 taxonomy helpers', () => {
 		})
 	})
 
-	it('sidebar.agent_activity.expanded carries the workspaceId', () => {
-		const capture = captureSpy()
-
-		trackSidebarAgentActivityExpanded({ workspaceId: 'ws-42' })
-
-		expect(capture).toHaveBeenCalledWith('sidebar.agent_activity.expanded', {
-			workspaceId: 'ws-42',
-		})
-	})
-
 	it('sidebar_toggle carries state, viewport, and object_id for the exit-gate query', () => {
 		const capture = captureSpy()
 
@@ -564,36 +560,6 @@ describe('v1 taxonomy helpers', () => {
 			item_key: 'marketplace',
 			source: 'footer',
 		})
-	})
-
-	it('north_star_prompt_impression fires with workspace_id via posthog.capture, bypassing the batch queue', () => {
-		const capture = captureSpy()
-
-		trackNorthStarPromptImpression({ workspace_id: 'ws-42' })
-
-		expect(capture).toHaveBeenCalledWith(
-			'north_star_prompt_impression',
-			{ workspace_id: 'ws-42' },
-			{ send_instantly: true },
-		)
-	})
-
-	it('north_star_prompt_response fires with workspace_id via posthog.capture, bypassing the batch queue', () => {
-		// send_instantly is load-bearing: without it, posthog-js batches events
-		// for ~3s. The response event fires right before the card unmounts and
-		// users typically tab away immediately, so the batched event never
-		// reaches PostHog — that's why the event name was missing from the
-		// project taxonomy after PR #1003. The impression event uses the same
-		// flag for parity so the ratio isn't biased by asymmetric delivery.
-		const capture = captureSpy()
-
-		trackNorthStarPromptResponse({ workspace_id: 'ws-42' })
-
-		expect(capture).toHaveBeenCalledWith(
-			'north_star_prompt_response',
-			{ workspace_id: 'ws-42' },
-			{ send_instantly: true },
-		)
 	})
 
 	it('scroll_to_top carries entity_id/entity_type/object_subtype so the correlation join runs without aliasing', () => {
@@ -666,70 +632,6 @@ describe('v1 taxonomy helpers', () => {
 			source: 'system',
 			expanded: false,
 			objectType: null,
-		})
-	})
-
-	describe('foryou_card_marked_read / _unread', () => {
-		const originalInnerWidth = window.innerWidth
-
-		function setInnerWidth(value: number) {
-			Object.defineProperty(window, 'innerWidth', { value, configurable: true, writable: true })
-		}
-
-		afterEach(() => {
-			setInnerWidth(originalInnerWidth)
-		})
-
-		it('foryou_card_marked_read carries entity_type/entity_id/via, and mobile=true at ≤768px', () => {
-			const capture = captureSpy()
-			setInnerWidth(375)
-
-			trackForyouCardMarkedRead({ entity_type: 'bet', entity_id: 'bet-1' })
-
-			expect(capture).toHaveBeenCalledWith('foryou_card_marked_read', {
-				entity_type: 'bet',
-				entity_id: 'bet-1',
-				mobile: true,
-				via: 'swipe',
-			})
-		})
-
-		it('foryou_card_marked_read reports mobile=false above 768px', () => {
-			const capture = captureSpy()
-			setInnerWidth(1024)
-
-			trackForyouCardMarkedRead({ entity_type: 'insight', entity_id: 'ins-2' })
-
-			expect(capture).toHaveBeenCalledWith(
-				'foryou_card_marked_read',
-				expect.objectContaining({ mobile: false, via: 'swipe' }),
-			)
-		})
-
-		it('foryou_card_marked_read includes 768px in the mobile bucket (DoD boundary)', () => {
-			const capture = captureSpy()
-			setInnerWidth(768)
-
-			trackForyouCardMarkedRead({ entity_type: 'bet', entity_id: 'bet-3' })
-
-			expect(capture).toHaveBeenCalledWith(
-				'foryou_card_marked_read',
-				expect.objectContaining({ mobile: true }),
-			)
-		})
-
-		it('foryou_card_marked_unread mirrors _read with the same property shape', () => {
-			const capture = captureSpy()
-			setInnerWidth(375)
-
-			trackForyouCardMarkedUnread({ entity_type: 'task', entity_id: 'task-9' })
-
-			expect(capture).toHaveBeenCalledWith('foryou_card_marked_unread', {
-				entity_type: 'task',
-				entity_id: 'task-9',
-				mobile: true,
-				via: 'swipe',
-			})
 		})
 	})
 

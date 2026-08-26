@@ -32,6 +32,11 @@ export interface PendingComment {
 	objectId: string
 	content: string
 	mentions: string[]
+	// Structured extras riding the same comment (today `{ chips }` from the
+	// composer's "Attach a decision"). Queued alongside the attachments so a
+	// comment can carry both — the queue previously dropped it, which forced the
+	// composer to disable one affordance whenever the other was used.
+	metadata?: Record<string, unknown>
 	parentEventId?: number
 	files: PendingFile[]
 	/**
@@ -58,7 +63,7 @@ interface ContextValue {
 	removeAttachment: (draftId: string, fileTempId: string) => void
 	submitDraft: (
 		draftId: string,
-		params: { content: string; mentions: string[] },
+		params: { content: string; mentions: string[]; metadata?: Record<string, unknown> },
 	) => 'queued' | 'no-attachments'
 	discardDraft: (draftId: string) => void
 	retryAttachment: (entryTempId: string, fileTempId: string) => void
@@ -238,7 +243,7 @@ export function PendingCommentsProvider({ workspaceId, children }: ProviderProps
 	)
 
 	const submitDraft = useCallback<ContextValue['submitDraft']>(
-		(draftId, { content, mentions }) => {
+		(draftId, { content, mentions, metadata }) => {
 			const entry = entriesRef.current.get(draftId)
 			if (!entry) return 'no-attachments'
 			if (entry.files.length === 0) {
@@ -246,7 +251,13 @@ export function PendingCommentsProvider({ workspaceId, children }: ProviderProps
 				notify()
 				return 'no-attachments'
 			}
-			entriesRef.current.set(draftId, { ...entry, content, mentions, status: 'submitted' })
+			entriesRef.current.set(draftId, {
+				...entry,
+				content,
+				mentions,
+				metadata,
+				status: 'submitted',
+			})
 			notify()
 			return 'queued'
 		},
@@ -328,6 +339,7 @@ export function PendingCommentsProvider({ workspaceId, children }: ProviderProps
 						mentions: entry.mentions.length > 0 ? entry.mentions : undefined,
 						parent_event_id: entry.parentEventId,
 						attachment_file_ids: attachmentIds,
+						...(entry.metadata ? { metadata: entry.metadata } : {}),
 					}
 					// Use the entry tempId as the idempotency key so any retry of the
 					// same logical comment (re-entrant tryAdvance, transient network
@@ -477,7 +489,7 @@ export function useDraft(params: {
 	)
 
 	const submit = useCallback(
-		(submission: { content: string; mentions: string[] }) =>
+		(submission: { content: string; mentions: string[]; metadata?: Record<string, unknown> }) =>
 			ctx.submitDraft(params.draftId, submission),
 		[ctx, params.draftId],
 	)

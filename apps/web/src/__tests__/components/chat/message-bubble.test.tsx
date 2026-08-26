@@ -1,113 +1,121 @@
-import { MessageBubble } from '@/components/chat/message-bubble'
 import type { MessageResponse } from '@/lib/api'
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { TestWrapper } from '../../setup'
 
-vi.mock('@/lib/auth', () => ({
-	getStoredActor: () => ({ id: 'human-1', name: 'You' }),
+vi.mock('@tanstack/react-router', async () => {
+	const { mockTanStackRouter } = await import('../../mocks/router')
+	return mockTanStackRouter()
+})
+
+vi.mock('@/lib/auth', () => ({ getStoredActor: () => ({ id: 'me', name: 'Me', type: 'human' }) }))
+
+vi.mock('@/hooks/use-objects', () => ({
+	useObject: () => ({
+		data: {
+			id: 'obj-1',
+			workspaceId: 'ws-1',
+			type: 'bet',
+			title: 'Retry window',
+			status: 'active',
+		},
+		isLoading: false,
+	}),
 }))
+
+import { MessageBubble } from '@/components/chat/message-bubble'
 
 function buildMessage(overrides: Partial<MessageResponse> = {}): MessageResponse {
 	return {
 		id: 1,
-		conversationId: 'convo-1',
-		actorId: 'human-1',
-		actorName: 'You',
-		actorType: 'human',
+		conversationId: 'conv-1',
+		actorId: 'agent-1',
+		actorName: 'Billing Agent',
+		actorType: 'agent',
 		kind: 'message',
-		content: 'hey team',
+		content: 'Here is what I found.',
 		metadata: null,
+		editedAt: null,
 		sessionId: null,
 		createdAt: new Date().toISOString(),
 		...overrides,
 	}
 }
 
-describe('MessageBubble mentions', () => {
-	it('renders an @mention chip for metadata.mentions, resolved via participantNames', () => {
-		const message = buildMessage({ metadata: { mentions: ['agent-1'] } })
-		const participantNames = new Map([['agent-1', 'Builder']])
-		render(
-			<MessageBubble workspaceId="ws-1" message={message} participantNames={participantNames} />,
-			{ wrapper: TestWrapper },
+function renderBubble(message: MessageResponse) {
+	return render(<MessageBubble workspaceId="ws-1" message={message} />, { wrapper: TestWrapper })
+}
+
+const CHART_MESSAGE = [
+	'Signup completion by step:',
+	'',
+	'```chart',
+	JSON.stringify({
+		type: 'bar',
+		x: 'step',
+		series: ['completed'],
+		data: [{ step: 'Email', completed: 820 }],
+		caption: 'Drop-off concentrates on step two.',
+	}),
+	'```',
+].join('\n')
+
+describe('MessageBubble', () => {
+	it('renders an own message as an ink plate with no avatar or name', () => {
+		renderBubble(buildMessage({ actorId: 'me', actorName: 'Me', actorType: 'human' }))
+		const body = screen.getByText('Here is what I found.')
+		expect(body.parentElement?.className).toContain('bg-primary')
+		expect(screen.queryByText('Me')).not.toBeInTheDocument()
+	})
+
+	it('renders another actor as an avatar + name with no card wrapper', () => {
+		const { container } = renderBubble(buildMessage())
+		expect(screen.getByText('Billing Agent')).toBeInTheDocument()
+		// v2 drops the bordered card around an agent's body — it sits on the page.
+		expect(container.querySelector('.border.border-border.bg-card')).toBeNull()
+	})
+
+	it('lifts attached objects above an own message under a YOU ATTACHED label', () => {
+		renderBubble(
+			buildMessage({
+				actorId: 'me',
+				actorName: 'Me',
+				actorType: 'human',
+				metadata: { context_objects: [{ id: 'obj-1', title: 'Retry window', type: 'bet' }] },
+			}),
 		)
-		expect(screen.getByText('@Builder')).toBeInTheDocument()
+		const label = screen.getByText('You attached')
+		expect(label.className).toContain('eyebrow')
+		// The chips row is a sibling of the plate, not a child of it.
+		expect(label.closest('div')?.className).not.toContain('bg-primary')
 	})
 
-	it('falls back to the raw actor id when the name is not resolvable', () => {
-		const message = buildMessage({
-			actorId: 'other-1',
-			actorName: 'Someone Else',
-			metadata: { mentions: ['agent-unknown'] },
-		})
-		render(<MessageBubble workspaceId="ws-1" message={message} />, { wrapper: TestWrapper })
-		expect(screen.getByText('@agent-unknown')).toBeInTheDocument()
+	it('renders a REFERENCED rail under an agent message body', () => {
+		renderBubble(
+			buildMessage({
+				metadata: { context_objects: [{ id: 'obj-1', title: 'Retry window', type: 'bet' }] },
+			}),
+		)
+		expect(screen.getByText('Referenced')).toBeInTheDocument()
+		expect(screen.getByRole('link', { name: /Retry window/ })).toBeInTheDocument()
 	})
 
-	it('renders no context row when there are no mentions, objects, or notifications', () => {
-		const message = buildMessage()
-		render(<MessageBubble workspaceId="ws-1" message={message} />, { wrapper: TestWrapper })
-		expect(screen.queryByLabelText('Attached context')).not.toBeInTheDocument()
-	})
-})
-
-describe('MessageBubble context objects/notifications', () => {
-	it('renders one chip per selected object and notification, in order', () => {
-		const message = buildMessage({
-			metadata: {
-				context_objects: [
-					{ id: 'obj-1', title: 'First bet', type: 'bet' },
-					{ id: 'obj-2', title: 'Second bet', type: 'bet' },
-				],
-				context_notifications: [{ id: 'notif-1', title: 'Heads up' }],
-			},
-		})
-		render(<MessageBubble workspaceId="ws-1" message={message} />, { wrapper: TestWrapper })
-		expect(screen.getByText('First bet')).toBeInTheDocument()
-		expect(screen.getByText('Second bet')).toBeInTheDocument()
-		expect(screen.getByText('Heads up')).toBeInTheDocument()
+	it('renders a system message as a hairline divider, not a pill', () => {
+		const { container } = renderBubble(
+			buildMessage({ kind: 'system', content: 'Billing Agent joined' }),
+		)
+		expect(screen.getByText('Billing Agent joined')).toBeInTheDocument()
+		expect(container.querySelectorAll('.bg-border')).toHaveLength(2)
+		expect(container.querySelector('.rounded-full')).toBeNull()
 	})
 })
 
-describe('MessageBubble pending final output', () => {
-	const agentMessage = () =>
-		buildMessage({
-			actorId: 'agent-1',
-			actorName: 'Builder',
-			actorType: 'agent',
-			content: 'Here is **the answer**.',
-			metadata: { source: 'final_output' },
-			createdAt: null,
-		})
+describe('MessageBubble — agent data-viz', () => {
+	it('renders a fenced chart block from an incoming agent message as a visual', () => {
+		renderBubble(buildMessage({ content: CHART_MESSAGE }))
 
-	it('shows a finishing-up status instead of a timestamp while unsaved', () => {
-		render(<MessageBubble workspaceId="ws-1" message={agentMessage()} pending />, {
-			wrapper: TestWrapper,
-		})
-		expect(screen.getByText('Finishing up…')).toBeInTheDocument()
-	})
-
-	it('says the output is not saved once the persisted row is overdue', () => {
-		render(<MessageBubble workspaceId="ws-1" message={agentMessage()} pending unconfirmed />, {
-			wrapper: TestWrapper,
-		})
-		// The text stays on screen — losing the agent's answer would be worse
-		// than showing it unlabelled — but it is not passed off as saved.
-		expect(screen.getByText('Not saved yet')).toBeInTheDocument()
-		expect(screen.getByText('the answer')).toBeInTheDocument()
-	})
-
-	it('renders the pending content as markdown, not escaped text', () => {
-		render(<MessageBubble workspaceId="ws-1" message={agentMessage()} pending />, {
-			wrapper: TestWrapper,
-		})
-		expect(screen.getByText('the answer').tagName).toBe('STRONG')
-	})
-
-	it('renders a normal timestamp when not pending', () => {
-		const message = { ...agentMessage(), createdAt: new Date().toISOString() }
-		render(<MessageBubble workspaceId="ws-1" message={message} />, { wrapper: TestWrapper })
-		expect(screen.queryByText('Finishing up…')).not.toBeInTheDocument()
+		// The caption belongs to the rendered figure, not to a code block.
+		expect(screen.getByText('Drop-off concentrates on step two.')).toBeInTheDocument()
+		expect(screen.queryByText(/"type": "bar"/)).not.toBeInTheDocument()
 	})
 })

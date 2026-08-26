@@ -243,6 +243,10 @@ export type SessionUsageResponse = z.infer<typeof sessionUsageResponseSchema>
  * - agent_server_lost     The agent-server restarted and no longer holds
  *                         the microsandbox for this session — the work is
  *                         irrecoverable and the row is closed out.
+ * - plan_cap_exceeded     The session was deliberately stopped mid-run by
+ *                         SessionManager's budget watchdog because workspace
+ *                         usage crossed the plan cap with no usage credits
+ *                         left to cover it — not a provider-side failure.
  */
 export const failureReasonCodeSchema = z.enum([
 	'session_limit',
@@ -257,6 +261,7 @@ export const failureReasonCodeSchema = z.enum([
 	'rate_limit_error',
 	'insufficient_credits',
 	'agent_server_lost',
+	'plan_cap_exceeded',
 	// The session could not be handed to any agent-server before the dispatch
 	// queue ran out of attempts. Recoverable by starting a new session.
 	'dispatch_failed',
@@ -279,6 +284,9 @@ export type SessionResultFailureReason = z.infer<typeof sessionResultFailureReas
 export const sessionResultSchema = z.object({
 	exit_code: z.number().int().nullable().optional(),
 	error: z.string().optional(),
+	// Human-readable note for sessions that ended successfully without an exit
+	// code — e.g. the watchdog's graceful close of an idle chat session.
+	summary: z.string().optional(),
 	failure_reason: sessionResultFailureReasonSchema.nullable().optional(),
 	// Set only by SessionManager.stopSession()'s provisional terminal write —
 	// see markRemoteSessionComplete() in apps/dev/src/services/session-manager.ts.
@@ -288,5 +296,12 @@ export const sessionResultSchema = z.object({
 	// to overwrite a record still carrying this marker with the real exit code;
 	// it is never set on a genuine report itself.
 	stopped_by_user: z.boolean().optional(),
+	// The user asked for this session to stop. Unlike `stopped_by_user` (the
+	// provisional-write marker that gates markRemoteSessionComplete's CAS
+	// overwrite), this is a pure UI flag: it survives the genuine completion
+	// report so a user-initiated stop keeps rendering as "stopped", never as
+	// a failure. Set by the local handleCompletion path and carried forward
+	// by markRemoteSessionComplete when it overwrites a provisional stop.
+	user_stop_requested: z.boolean().optional(),
 })
 export type SessionResult = z.infer<typeof sessionResultSchema>

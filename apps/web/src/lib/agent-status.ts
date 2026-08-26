@@ -67,3 +67,14 @@ export function getLatestSession<T extends SessionLike>(
 
 	return sessions[0]
 }
+
+/**
+ * Agent kind = the first line of the description (the one-line role label the
+ * actors list returns), fallback 'Agent'. The detail surface has the full
+ * system_prompt, but the index only ever sees list items, so kind derives
+ * from the field both surfaces carry.
+ */
+export function deriveAgentKind(agent: { description?: string | null }): string {
+	const role = agent.description?.split('\n')[0]?.trim()
+	return role || 'Agent'
+}

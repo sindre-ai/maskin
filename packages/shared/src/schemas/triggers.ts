@@ -47,6 +47,25 @@ export const triggerConditionSchema = z.object({
 	value: safeJsonValue.optional(),
 })
 
+// `writes`, `stops_for_you` and `skill` are reader-only fields: the trigger
+// detail page renders a section for each when it is present, and nothing in
+// the matching logic reads them. They are declared here because zod strips
+// unknown keys — without them a caller can store the section content but the
+// page can never show it.
+const triggerReaderFields = {
+	writes: z
+		.array(
+			z.object({
+				act: z.string().optional(),
+				type: z.string().optional(),
+				state: z.string().optional(),
+			}),
+		)
+		.optional(),
+	stops_for_you: z.string().optional(),
+	skill: z.string().optional(),
+}
+
 export const eventConfigSchema = z.object({
 	entity_type: z.string(),
 	action: z.string(),
@@ -54,6 +73,7 @@ export const eventConfigSchema = z.object({
 	conditions: z.array(triggerConditionSchema).optional(),
 	from_status: z.string().optional(),
 	to_status: z.string().optional(),
+	...triggerReaderFields,
 })
 
 export const reminderConfigSchema = z.object({

@@ -94,7 +94,7 @@ interface ChipProps {
 
 function Chip({ icon, label, onRemove, removeLabel }: ChipProps) {
 	return (
-		<li className="inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-bg-surface px-2 py-0.5 text-xs text-foreground">
+		<li className="inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-card px-2 py-0.5 text-xs text-foreground">
 			<span className="text-muted-foreground">{icon}</span>
 			<span className="max-w-[12rem] truncate">{label}</span>
 			<button

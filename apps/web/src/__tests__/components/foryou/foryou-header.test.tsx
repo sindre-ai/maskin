@@ -1,48 +1,8 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
-const mockNavigate = vi.fn()
-vi.mock('@tanstack/react-router', () => ({
-	useNavigate: () => mockNavigate,
-}))
-
-vi.mock('@/lib/workspace-context', () => ({
-	useWorkspace: () => ({ workspaceId: 'ws-1' }),
-}))
-
-const setPaletteOpen = vi.fn()
-vi.mock('@/lib/command-palette-context', () => ({
-	useCommandPalette: () => ({ open: false, setOpen: setPaletteOpen }),
-}))
-
-// Stub the picker so this test doesn't need QueryClient/workspace-context
-// setup for the create flow — mirrors header.test.tsx's mock, since
-// ForYouHeaderActions renders the same shared NewMenu.
-vi.mock('@/components/shared/create-picker', () => ({
-	CreatePicker: ({
-		open,
-		defaultType,
-		defaultObjectSubtype,
-	}: {
-		open: boolean
-		defaultType?: string
-		defaultObjectSubtype?: string
-	}) =>
-		open ? (
-			<div
-				data-testid="create-picker"
-				data-type={defaultType}
-				data-subtype={defaultObjectSubtype}
-			/>
-		) : null,
-}))
-
-import {
-	ForYouHeader,
-	ForYouHeaderActions,
-	ForYouHeaderIdentity,
-} from '@/components/foryou/foryou-header'
+import { ForYouHeader } from '@/components/foryou/foryou-header'
 
 function renderHeader(overrides: Partial<React.ComponentProps<typeof ForYouHeader>> = {}) {
 	const props: React.ComponentProps<typeof ForYouHeader> = {
@@ -53,141 +13,90 @@ function renderHeader(overrides: Partial<React.ComponentProps<typeof ForYouHeade
 			['bet', 3],
 			['insight', 2],
 		]),
-		mentionCount: 3,
 		mode: 'cards',
 		onModeChange: vi.fn(),
-		sort: 'priority',
+		sort: 'attention',
 		onSortChange: vi.fn(),
+		filterPills: false,
+		onFilterPillsChange: vi.fn(),
+		bulkActions: [
+			{ id: 'fyi', label: 'Dismiss all FYIs', count: 2, onSelect: vi.fn() },
+			{ id: 'suggested', label: 'Take every suggested option', count: 0, onSelect: vi.fn() },
+		],
 		...overrides,
 	}
 	return { props, ...render(<ForYouHeader {...props} />) }
 }
 
-function renderActions(overrides: Partial<React.ComponentProps<typeof ForYouHeaderActions>> = {}) {
-	const props: React.ComponentProps<typeof ForYouHeaderActions> = {
-		onStartConversation: vi.fn(),
-		...overrides,
-	}
-	return { props, ...render(<ForYouHeaderActions {...props} />) }
-}
-
-describe('ForYouHeaderIdentity', () => {
-	it('shows the unread count', () => {
-		render(<ForYouHeaderIdentity unreadCount={7} />)
-		expect(screen.getByText('7 unread')).toBeInTheDocument()
-	})
-})
-
-describe('ForYouHeaderActions', () => {
-	it("navigates to the briefing route when Today's brief is clicked", () => {
-		renderActions()
-		fireEvent.click(screen.getByRole('button', { name: /today.?s brief/i }))
-		expect(mockNavigate).toHaveBeenCalledWith({
-			to: '/$workspaceId/briefing',
-			params: { workspaceId: 'ws-1' },
-		})
-	})
-
-	it('opens the New menu and starts a conversation', async () => {
-		const user = userEvent.setup()
-		const onStartConversation = vi.fn()
-		renderActions({ onStartConversation })
-		await user.click(screen.getByRole('button', { name: /^new$/i }))
-		await user.click(screen.getByRole('menuitem', { name: /new chat/i }))
-		expect(onStartConversation).toHaveBeenCalledTimes(1)
-	})
-
-	it('opens CreatePicker seeded to the right object subtype from New bet', async () => {
-		const user = userEvent.setup()
-		renderActions()
-		await user.click(screen.getByRole('button', { name: /^new$/i }))
-		await user.click(screen.getByRole('menuitem', { name: /new bet/i }))
-
-		const picker = screen.getByTestId('create-picker')
-		expect(picker).toHaveAttribute('data-type', 'object')
-		expect(picker).toHaveAttribute('data-subtype', 'bet')
-	})
-})
-
 describe('ForYouHeader', () => {
-	it('renders All + Mentions plus one chip per type present in typeCounts', () => {
-		renderHeader({
-			unreadCount: 7,
-			mentionCount: 3,
-			typeCounts: new Map([
-				['bet', 3],
-				['insight', 2],
-			]),
-		})
-		expect(screen.getByRole('button', { name: 'All (7)' })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: 'Mentions (3)' })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: 'Bet (3)' })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: 'Insight (2)' })).toBeInTheDocument()
-	})
-
-	it('calls onTypeFilterChange with undefined when All is clicked', () => {
-		const onTypeFilterChange = vi.fn()
-		renderHeader({ typeFilter: 'bet', onTypeFilterChange })
-		fireEvent.click(screen.getByRole('button', { name: /^All/ }))
-		expect(onTypeFilterChange).toHaveBeenCalledWith(undefined)
-	})
-
-	it('calls onTypeFilterChange with "mentions" when Mentions is clicked', () => {
-		const onTypeFilterChange = vi.fn()
-		renderHeader({ onTypeFilterChange })
-		fireEvent.click(screen.getByRole('button', { name: /^Mentions/ }))
-		expect(onTypeFilterChange).toHaveBeenCalledWith('mentions')
-	})
-
-	it('calls onTypeFilterChange with the raw type when a type chip is clicked', () => {
-		const onTypeFilterChange = vi.fn()
-		renderHeader({ onTypeFilterChange })
-		fireEvent.click(screen.getByRole('button', { name: /^Bet/ }))
-		expect(onTypeFilterChange).toHaveBeenCalledWith('bet')
-	})
-
-	it('hides the Mentions chip and zero-count type chips instead of showing (0)', () => {
-		renderHeader({
-			unreadCount: 4,
-			mentionCount: 0,
-			typeCounts: new Map([
-				['task', 3],
-				['bet', 1],
-				['insight', 0],
-			]),
-		})
-		expect(screen.getByRole('button', { name: 'All (4)' })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: 'Task (3)' })).toBeInTheDocument()
-		expect(screen.getByRole('button', { name: 'Bet (1)' })).toBeInTheDocument()
-		expect(screen.queryByRole('button', { name: /^Mentions/ })).not.toBeInTheDocument()
-		expect(screen.queryByRole('button', { name: /^Insight/ })).not.toBeInTheDocument()
-	})
-
-	it('opens the Display popover with Cards/List tabs and Sort options', async () => {
+	it('hides the filter pills until they are switched on', async () => {
 		const user = userEvent.setup()
-		renderHeader()
-		await user.click(screen.getByRole('button', { name: /display options/i }))
-		expect(screen.getByRole('tab', { name: /cards/i })).toBeInTheDocument()
-		expect(screen.getByRole('tab', { name: /list/i })).toBeInTheDocument()
-		expect(screen.getByRole('radio', { name: /priority/i })).toBeInTheDocument()
-		expect(screen.getByRole('radio', { name: /latest activity/i })).toBeInTheDocument()
+		const { rerender, props } = renderHeader()
+		expect(screen.queryByRole('button', { name: 'Bets (3)' })).not.toBeInTheDocument()
+
+		rerender(<ForYouHeader {...props} filterPills />)
+		expect(screen.getByRole('button', { name: 'Everything (7)' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'Bets (3)' })).toBeInTheDocument()
+
+		await user.click(screen.getByRole('button', { name: 'Bets (3)' }))
+		expect(props.onTypeFilterChange).toHaveBeenCalledWith('bet')
 	})
 
-	it('calls onModeChange when the List tab is clicked', async () => {
-		const user = userEvent.setup()
-		const onModeChange = vi.fn()
-		renderHeader({ onModeChange })
-		await user.click(screen.getByRole('button', { name: /display options/i }))
-		await user.click(screen.getByRole('tab', { name: /list/i }))
-		expect(onModeChange).toHaveBeenCalledWith('list')
+	it('reads the active view, filter and sort back on the menu trigger', () => {
+		renderHeader({ mode: 'list' })
+		expect(screen.getByRole('button', { name: 'View options' })).toHaveTextContent('List')
+
+		renderHeader({ mode: 'cards', typeFilter: 'bet', sort: 'chrono' })
+		expect(screen.getAllByRole('button', { name: 'View options' })[1]).toHaveTextContent(
+			'Cards · Bets · Chronological',
+		)
 	})
 
-	it('calls onSortChange when Latest activity is selected', async () => {
+	it('switches the view mode from the menu', async () => {
 		const user = userEvent.setup()
-		const onSortChange = vi.fn()
-		renderHeader({ onSortChange })
-		await user.click(screen.getByRole('button', { name: /display options/i }))
-		await user.click(screen.getByRole('radio', { name: /latest activity/i }))
-		expect(onSortChange).toHaveBeenCalledWith('latest')
+		const { props } = renderHeader({ mode: 'cards' })
+
+		await user.click(screen.getByRole('button', { name: 'View options' }))
+		await user.click(await screen.findByRole('menuitem', { name: /^List/ }))
+		expect(props.onModeChange).toHaveBeenCalledWith('list')
+	})
+
+	it('changes the sort from the menu', async () => {
+		const user = userEvent.setup()
+		const { props } = renderHeader()
+
+		await user.click(screen.getByRole('button', { name: 'View options' }))
+		await user.click(await screen.findByRole('menuitem', { name: /Chronological/ }))
+		expect(props.onSortChange).toHaveBeenCalledWith('chrono')
+	})
+
+	it('filters by type from the SHOW section', async () => {
+		const user = userEvent.setup()
+		const { props } = renderHeader()
+
+		await user.click(screen.getByRole('button', { name: 'View options' }))
+		await user.click(await screen.findByRole('menuitem', { name: /Insights/ }))
+		expect(props.onTypeFilterChange).toHaveBeenCalledWith('insight')
+	})
+
+	it('toggles the filter bar from the last row of the menu', async () => {
+		const user = userEvent.setup()
+		const { props } = renderHeader()
+
+		await user.click(screen.getByRole('button', { name: 'View options' }))
+		await user.click(await screen.findByRole('menuitem', { name: /Filter bar under the header/ }))
+		expect(props.onFilterPillsChange).toHaveBeenCalledWith(true)
+	})
+
+	it('runs a bulk action from the ··· menu, and disables the empty ones', async () => {
+		const user = userEvent.setup()
+		const { props } = renderHeader()
+
+		await user.click(screen.getByRole('button', { name: 'Feed actions' }))
+		const empty = await screen.findByRole('menuitem', { name: /Take every suggested option/ })
+		expect(empty).toHaveAttribute('aria-disabled', 'true')
+
+		await user.click(screen.getByRole('menuitem', { name: /Dismiss all FYIs/ }))
+		expect(props.bulkActions[0]?.onSelect).toHaveBeenCalledTimes(1)
 	})
 })

@@ -1,6 +1,6 @@
 import { trackAgentSessionStarted } from '@/lib/analytics'
 import { api } from '@/lib/api'
-import type { CreateSessionInput } from '@/lib/api'
+import type { CreateSessionInput, SessionResponse } from '@/lib/api'
 import { queryKeys } from '@/lib/query-keys'
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
@@ -14,11 +14,53 @@ export function useSession(id: string | null, workspaceId: string) {
 	})
 }
 
-export function useWorkspaceSessions(workspaceId: string) {
+/**
+ * Lists sessions for a workspace. By default fetches a single 100-row page
+ * (cheap; enough for pulse/active-agents consumers). Pass `paged: true` to
+ * page past the API's 100-row clamp (sessionQuerySchema) until a short page —
+ * the Agents index's per-agent counts and latest-session status are
+ * load-bearing on full history.
+ */
+export function useWorkspaceSessions(
+	workspaceId: string,
+	{ paged = false }: { paged?: boolean } = {},
+) {
 	return useQuery({
-		queryKey: queryKeys.sessions.all(workspaceId),
-		queryFn: () => api.sessions.list(workspaceId, { limit: '100' }),
+		queryKey: paged
+			? [...queryKeys.sessions.all(workspaceId), 'paged']
+			: queryKeys.sessions.all(workspaceId),
+		queryFn: async () => {
+			if (!paged) return api.sessions.list(workspaceId, { limit: '100' })
+			const pageSize = 100
+			const all: SessionResponse[] = []
+			let offset = 0
+			for (;;) {
+				const page = await api.sessions.list(workspaceId, {
+					limit: String(pageSize),
+					offset: String(offset),
+				})
+				all.push(...page)
+				if (page.length < pageSize) return all
+				offset += page.length
+			}
+		},
 		enabled: !!workspaceId,
+	})
+}
+
+/**
+ * Every session for one agent, filtered server-side by `actor_id`. Agent
+ * detail must NOT derive its status or session list from the unpaged
+ * workspace-wide list: that returns only the 100 newest sessions across all
+ * agents, so on a busy workspace a given agent's runs fall off the page and
+ * the detail view renders "No sessions yet" for an agent that is actually
+ * running. Filtering at the API means one request regardless of workspace size.
+ */
+export function useActorSessions(actorId: string, workspaceId: string) {
+	return useQuery({
+		queryKey: queryKeys.sessions.byActorAll(workspaceId, actorId),
+		queryFn: () => api.sessions.list(workspaceId, { actor_id: actorId, limit: '100' }),
+		enabled: !!actorId && !!workspaceId,
 	})
 }
 
@@ -43,6 +85,33 @@ export function useStopSession(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
 		mutationFn: (sessionId: string) => api.sessions.stop(sessionId, workspaceId),
+		onSuccess: (result) => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.sessions.detail(result.id) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all(workspaceId) })
+		},
+	})
+}
+
+/**
+ * Per-session Pause / Resume (mockup 2443). Backed by `POST /sessions/:id/pause`
+ * and `/resume`, which snapshot the container and restore it — distinct from the
+ * agent-level pause, which stops the actor from taking new work at all.
+ */
+export function usePauseSession(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (sessionId: string) => api.sessions.pause(sessionId, workspaceId),
+		onSuccess: (result) => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.sessions.detail(result.id) })
+			queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all(workspaceId) })
+		},
+	})
+}
+
+export function useResumeSession(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (sessionId: string) => api.sessions.resume(sessionId, workspaceId),
 		onSuccess: (result) => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.sessions.detail(result.id) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all(workspaceId) })

@@ -8,6 +8,8 @@ import {
 	segmentActivityByMessage,
 } from '@/components/agents/session-log-transcript'
 import type { MessageResponse, SessionResponse } from '@/lib/api'
+import { toastSessionBudgetStopped } from '@/lib/session-errors'
+import { useNavigate } from '@tanstack/react-router'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSessionActivityLogs } from './use-session-activity-logs'
 import { useActiveSessionsForConversation } from './use-sessions'
@@ -18,6 +20,12 @@ export interface MessageTurnActivity {
 	steps: ActivityStep[]
 	/** True for the single most recent turn of a session that hasn't reached a `result` envelope yet. */
 	inProgress: boolean
+	/**
+	 * True while the session is still booting (pending/starting/queued) — the
+	 * spinner shows so the user knows a reply is on its way, but there is no
+	 * live process to stop yet, so the stop control stays hidden.
+	 */
+	starting?: boolean
 	/** True when the session that would have produced this turn failed before (or shortly after) starting. */
 	failed?: boolean
 	/**
@@ -143,6 +151,13 @@ export function useConversationActivity(
 	}
 	const latestSessions = [...latestByActor.values()]
 	const activeSessions = latestSessions.filter((s) => s.status === 'running')
+	// A session on its way up. Container/VM boot is the single longest wait in
+	// a chat turn — without surfacing these, the user stares at a silent
+	// thread for the exact window where knowing "a reply is coming" matters
+	// most. (Once running, the session appears via activeSessions instead.)
+	const bootingSessions = latestSessions.filter(
+		(s) => s.status === 'pending' || s.status === 'starting' || s.status === 'queued',
+	)
 	const failedSessions = latestSessions.filter((s) => s.status === 'failed')
 	// 'timeout' is not a failure — the 2-hour backstop (session-manager.ts's
 	// reaper) is expected lifecycle, and the next message in this conversation
@@ -222,6 +237,14 @@ export function useConversationActivity(
 	for (const session of failedSessions) {
 		const config = session.config as { conversation?: { message_id?: number } } | null
 		const messageId = config?.conversation?.message_id
+		// A user-initiated stop lands as status 'failed' with a marker in
+		// result: `stopped_by_user` on the remote path's provisional write,
+		// `user_stop_requested` once the genuine completion report (or the
+		// local handleCompletion path) lands. Either way it's an expected
+		// outcome, not an error — render it neutrally, like the mid-turn
+		// timeout notice.
+		const stoppedByUser =
+			session.result?.stopped_by_user === true || session.result?.user_stop_requested === true
 		// A session that reached `running` and later died from classified credit/rate-limit
 		// exhaustion carries its message in `result.failure_reason.human_message`, not
 		// `result.error` (see classifyCreditExhaustion() in session-manager.ts) — prefer
@@ -230,13 +253,27 @@ export function useConversationActivity(
 		const errorText =
 			parseFailureReason(session.result)?.human_message ||
 			(typeof session.result?.error === 'string' ? session.result.error : undefined)
-		const turn: MessageTurnActivity = {
-			sessionId: session.id,
-			actorId: session.actorId,
-			steps: errorText ? [{ id: `${session.id}-error`, kind: 'error', text: errorText }] : [],
-			inProgress: false,
-			failed: true,
-		}
+		const turn: MessageTurnActivity = stoppedByUser
+			? {
+					sessionId: session.id,
+					actorId: session.actorId,
+					steps: [
+						{
+							id: `${session.id}-stopped`,
+							kind: 'error',
+							text: 'Stopped — send another message (or retry) to continue.',
+						},
+					],
+					inProgress: false,
+					interrupted: true,
+				}
+			: {
+					sessionId: session.id,
+					actorId: session.actorId,
+					steps: errorText ? [{ id: `${session.id}-error`, kind: 'error', text: errorText }] : [],
+					inProgress: false,
+					failed: true,
+				}
 		if (typeof messageId === 'number') {
 			const list = byTriggerMessageId.get(messageId) ?? []
 			list.push(turn)
@@ -310,6 +347,29 @@ export function useConversationActivity(
 			],
 			inProgress: false,
 			interrupted: true,
+		}
+		if (typeof messageId === 'number') {
+			const list = byTriggerMessageId.get(messageId) ?? []
+			list.push(turn)
+			byTriggerMessageId.set(messageId, list)
+		} else {
+			fallback.push(turn)
+		}
+	}
+
+	for (const session of bootingSessions) {
+		// A booting session was spawned for a specific message — anchor its
+		// "starting…" spinner there. (Reused sessions never sit in a booting
+		// status, so config.conversation.message_id is the right anchor here,
+		// unlike the timeout notice above.)
+		const config = session.config as { conversation?: { message_id?: number } } | null
+		const messageId = config?.conversation?.message_id
+		const turn: MessageTurnActivity = {
+			sessionId: session.id,
+			actorId: session.actorId,
+			steps: [],
+			inProgress: true,
+			starting: true,
 		}
 		if (typeof messageId === 'number') {
 			const list = byTriggerMessageId.get(messageId) ?? []
@@ -622,4 +682,36 @@ function finalOutputsFromSession(
 	session: SessionResponse,
 ): MessageResponse[] {
 	return messagesFromSession(messages, session).filter((m) => m.metadata?.source === 'final_output')
+}
+
+/**
+ * Toasts the same "plan limit reached" message shown when a new session is
+ * blocked from starting, but for a session that was already running and got
+ * killed mid-conversation by SessionManager's budget watchdog — otherwise an
+ * interactive chat session just goes quiet with the reason only visible if
+ * the user happens to scroll up and read the inline error notice.
+ *
+ * Only fires on an observed running→failed transition (tracked per session
+ * id in a ref), not for a session that was already in a failed state on
+ * first load — opening an old, already-failed conversation shouldn't toast.
+ */
+export function useSessionBudgetStopToast(
+	workspaceId: string,
+	conversationId: string | null,
+): void {
+	const { data: sessions } = useActiveSessionsForConversation(workspaceId, conversationId)
+	const navigate = useNavigate()
+	const seenStatusRef = useRef<Map<string, string>>(new Map())
+
+	useEffect(() => {
+		for (const session of sessions ?? []) {
+			const prevStatus = seenStatusRef.current.get(session.id)
+			seenStatusRef.current.set(session.id, session.status)
+			if (prevStatus === undefined || prevStatus === session.status) continue
+			if (session.status !== 'failed' && session.status !== 'timeout') continue
+			const reason = parseFailureReason(session.result as Record<string, unknown> | null)
+			if (reason?.reason_code !== 'plan_cap_exceeded') continue
+			toastSessionBudgetStopped(navigate, workspaceId)
+		}
+	}, [sessions, navigate, workspaceId])
 }

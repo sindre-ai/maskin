@@ -21,8 +21,19 @@ export type {
 import { getApiKey } from './auth'
 import { API_BASE } from './constants'
 
+export interface PlanCapContext {
+	plan: string
+	used: number
+	cap: number
+	period_end: number | null
+}
+
 export class ApiError extends Error {
 	fieldErrors: Record<string, string[]>
+	/** Structured error code from the backend's `{ error: { code, ... } }` body, e.g. `PLAN_CAP_EXCEEDED`. */
+	code?: string
+	/** Populated when `code === 'PLAN_CAP_EXCEEDED'` — the plan/used/cap/reset context for a typed upgrade CTA. */
+	planCapContext?: PlanCapContext
 
 	constructor(
 		public status: number,
@@ -81,16 +92,27 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 
 		let fieldErrors: Record<string, string[]> | undefined
 		let message: string
+		let code: string | undefined
+		let planCapContext: PlanCapContext | undefined
 
 		if (typeof data.error === 'object' && data.error?.code) {
 			// Structured error format: { error: { code, message, details?, suggestion? } }
 			message = data.error.message
+			code = data.error.code
 			if (data.error.details && Array.isArray(data.error.details)) {
 				fieldErrors = {}
 				for (const detail of data.error.details) {
 					const field = detail.field || '_root'
 					if (!fieldErrors[field]) fieldErrors[field] = []
 					fieldErrors[field].push(detail.message)
+				}
+			}
+			if (code === 'PLAN_CAP_EXCEEDED') {
+				planCapContext = {
+					plan: data.error.plan,
+					used: data.error.used,
+					cap: data.error.cap,
+					period_end: data.error.period_end ?? null,
 				}
 			}
 		} else if (typeof data.error === 'string') {
@@ -100,7 +122,10 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 			message = data.error?.message || res.statusText
 		}
 
-		throw new ApiError(res.status, message, fieldErrors)
+		const err = new ApiError(res.status, message, fieldErrors)
+		err.code = code
+		err.planCapContext = planCapContext
+		throw err
 	}
 
 	return res.json()
@@ -315,7 +340,16 @@ export const api = {
 					method: 'POST',
 					body: data,
 				}),
+			remove: (workspaceId: string, actorId: string) =>
+				request<{ removed: true }>(`/workspaces/${workspaceId}/members/${actorId}`, {
+					method: 'DELETE',
+				}),
 		},
+		transferOwnership: (workspaceId: string, newOwnerActorId: string) =>
+			request<WorkspaceResponse>(`/workspaces/${workspaceId}/transfer-ownership`, {
+				method: 'POST',
+				body: { new_owner_actor_id: newOwnerActorId },
+			}),
 	},
 
 	relationships: {
@@ -451,6 +485,10 @@ export const api = {
 			}),
 		stop: (id: string, workspaceId: string) =>
 			request<SessionResponse>(`/sessions/${id}/stop`, { method: 'POST', workspaceId }),
+		pause: (id: string, workspaceId: string) =>
+			request<SessionResponse>(`/sessions/${id}/pause`, { method: 'POST', workspaceId }),
+		resume: (id: string, workspaceId: string) =>
+			request<SessionResponse>(`/sessions/${id}/resume`, { method: 'POST', workspaceId }),
 		usage: (
 			workspaceId: string,
 			params: { actor_id: string; from: string; to: string; bucket: 'hour' | 'day' | 'week' },
@@ -535,6 +573,25 @@ export const api = {
 			}),
 	},
 
+	billing: {
+		checkout: (workspaceId: string, body: BillingCheckoutInput) =>
+			request<BillingCheckoutResponse>('/billing/checkout', {
+				method: 'POST',
+				body,
+				workspaceId,
+			}),
+		buyCredits: (workspaceId: string, body: BillingBuyCreditsInput) =>
+			request<BillingCheckoutResponse>('/billing/credits/checkout', {
+				method: 'POST',
+				body,
+				workspaceId,
+			}),
+		usage: (workspaceId: string) =>
+			request<BillingUsageResponse>('/billing/usage', { workspaceId }),
+		cancel: (workspaceId: string) =>
+			request<{ ok: true }>('/billing/cancel', { method: 'POST', workspaceId }),
+	},
+
 	marketplaceLoops: {
 		list: (params?: { type?: string; use_case?: string; q?: string }) => {
 			const qs = params
@@ -576,10 +633,10 @@ export const api = {
 				`/installed-loops?workspaceId=${encodeURIComponent(workspaceId)}`,
 				{ workspaceId },
 			),
-		install: (workspaceId: string, loopId: string) =>
+		install: (workspaceId: string, loopId: string, source?: 'detail') =>
 			request<InstalledLoopInstallResponse>('/installed-loops', {
 				method: 'POST',
-				body: { loopId, workspaceId },
+				body: { loopId, workspaceId, ...(source ? { source } : {}) },
 				workspaceId,
 			}),
 		fork: (workspaceId: string, installedLoopId: string) =>
@@ -637,6 +694,12 @@ export const api = {
 				workspaceId,
 			})
 		},
+	},
+
+	featureFlags: {
+		// Per-actor, not per-workspace — no workspaceId. The backend resolves the
+		// booleans; the tester actor id list never reaches the browser.
+		get: () => request<{ flags: Record<string, boolean> }>('/feature-flags'),
 	},
 
 	userDisplaySettings: {
@@ -783,6 +846,22 @@ export const api = {
 				body: data,
 				workspaceId,
 			}),
+		editMessage: (id: string, workspaceId: string, messageId: number, data: EditMessageInput) =>
+			request<MessageResponse>(`/conversations/${id}/messages/${messageId}`, {
+				method: 'PATCH',
+				body: data,
+				workspaceId,
+			}),
+		// agentId scopes the retry to one agent ("Redo this response"); omitted,
+		// every participant re-evaluates ("Ask agents to respond again").
+		retryMessage: (id: string, workspaceId: string, messageId: number, agentId?: string) =>
+			request<{ retried: boolean }>(
+				`/conversations/${id}/messages/${messageId}/retry${agentId ? `?agent_id=${agentId}` : ''}`,
+				{
+					method: 'POST',
+					workspaceId,
+				},
+			),
 		updateMe: (id: string, workspaceId: string, data: UpdateConversationParticipantStateInput) =>
 			request<ConversationParticipantStateResponse>(`/conversations/${id}/me`, {
 				method: 'PATCH',
@@ -864,6 +943,40 @@ export interface ClaudeOAuthImportInput {
 	scopes?: string[]
 	slot?: ClaudeOAuthSlot
 	nickname?: string
+}
+
+export type BillingPlan = 'trial' | 'pro' | 'team' | 'byollm'
+export type BillingStatus = 'active' | 'past_due' | 'canceled' | 'incomplete'
+
+export interface BillingCheckoutInput {
+	plan: 'pro' | 'team'
+	success_url: string
+	cancel_url: string
+}
+
+export interface BillingCheckoutResponse {
+	url: string
+	session_id: string
+}
+
+export interface BillingBuyCreditsInput {
+	amount_usd_cents: number
+	success_url: string
+	cancel_url: string
+}
+
+export interface BillingUsageResponse {
+	plan: BillingPlan
+	status: BillingStatus
+	// Actual dollar cost incurred this period, in USD cents — see
+	// apps/dev/src/routes/billing.ts.
+	usd_cents_used: number
+	hard_cap_usd_cents: number | null
+	period_start: number | null
+	period_resets_in_ms: number | null
+	stripe_customer_id: string | null
+	stripe_subscription_id: string | null
+	credit_balance_cents: number
 }
 
 // Types derived from backend response schemas
@@ -1034,6 +1147,10 @@ export interface WorkspaceResponse {
 	id: string
 	name: string
 	settings: Record<string, unknown>
+	byollmAllowed: boolean
+	// Single accountable human payer for this workspace's plan — read-only,
+	// server-set. See apps/dev/src/lib/workspace-capacity.ts.
+	billingOwnerId: string | null
 	createdBy: string | null
 	createdAt: string | null
 	updatedAt: string | null
@@ -1304,6 +1421,9 @@ export interface ConversationListItemResponse {
 	archived: boolean
 	unread_count: number
 	snippet: string | null
+	/** Who wrote `snippet` — the list row prefixes the preview with their name. */
+	snippet_actor_id: string | null
+	snippet_actor_name: string | null
 	participants: ConversationParticipantResponse[]
 }
 
@@ -1384,6 +1504,11 @@ export interface MessageResponse {
 	metadata: MessageMetadata | null
 	sessionId: string | null
 	createdAt: string | null
+	editedAt: string | null
+}
+
+export interface EditMessageInput {
+	content: string
 }
 
 export interface MessagesListResponse {
@@ -1514,6 +1639,11 @@ export interface CreateCommentInput {
 	mentions?: string[]
 	parent_event_id?: number
 	attachment_file_ids?: string[]
+	/** Structured extras the backend already accepts on `POST /events`
+	 *  (`createCommentSchema.metadata`, a `safeMetadataSchema` record). Today the
+	 *  UI writes `{ chips: string[] }` from the composer's "Attach a decision"
+	 *  affordance; `DecisionChips` renders them under the posted comment. */
+	metadata?: Record<string, unknown>
 }
 
 // Imports

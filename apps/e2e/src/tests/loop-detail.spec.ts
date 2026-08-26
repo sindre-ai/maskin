@@ -69,10 +69,73 @@ test.describe('Loop detail page', () => {
 			await expect(
 				page.getByText('Normalises the Slack event into the shared source'),
 			).toBeVisible()
-			// T2 sections — latest activity and the changes log with undo.
+			// The right-now note reads as one line: primitives · triggers on ·
+			// cycles (mockup 1891).
+			await expect(page.getByText(/of \d+ trigger(s)? on/)).toBeVisible()
+			// T2 sections — latest activity and the changes log with undo. Latest
+			// activity is a plain heading + rule, the same register as Changes
+			// (mockup 1949–1950) — no bordered card around it.
 			await expect(page.getByRole('heading', { name: 'Latest activity' })).toBeVisible()
+			await expect(page.getByText('what the agents did last')).toBeVisible()
 			await expect(page.getByRole('heading', { name: 'Changes' })).toBeVisible()
 			await expect(page.getByRole('button', { name: /undo/i }).first()).toBeVisible()
+
+			// The composer is the last thing in the reader column — it sits below
+			// the Changes section, not above the story. Compare document order
+			// rather than bounding boxes: the composer is `sticky bottom-0`, so
+			// while Changes is below the fold its pinned y is the smaller number
+			// at every viewport where the page scrolls.
+			const composer = page.getByPlaceholder('Listening — speak in plain words')
+			const composerFollowsChanges = await composer.evaluate((node, changesText) => {
+				const changes = [...document.querySelectorAll('h1, h2, h3, h4, h5, h6')].find(
+					(heading) => heading.textContent?.trim() === changesText,
+				)
+				if (!changes) throw new Error('missing Changes heading')
+				// DOCUMENT_POSITION_FOLLOWING — the composer comes after it.
+				return Boolean(changes.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING)
+			}, 'Changes')
+			expect(composerFollowsChanges).toBe(true)
+
+			// A step row is the only route into a loop-owned trigger now that
+			// /triggers redirects.
+			await page.getByText('Normalises the Slack event into the shared source').click()
+			await expect(page).toHaveURL(new RegExp(`${account.workspaceId}/triggers/${trigger.id}`), {
+				timeout: 10000,
+			})
+		})
+
+		test(`pre-first-run banner reads in light and dark at ${viewport.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: viewport.width, height: viewport.height })
+
+			const agent = await account.api.createAgentActor('Relay')
+			await account.api.addWorkspaceMember(account.workspaceId, agent.id)
+			const loop = await account.api.createObject(account.workspaceId, {
+				type: 'loop',
+				title: 'Brand new loop',
+				status: 'learning',
+			})
+			const trigger = await account.api.createTrigger(account.workspaceId, {
+				name: 'Nightly sweep',
+				type: 'cron',
+				action_prompt: 'Sweep the backlog',
+				target_actor_id: agent.id,
+				config: { expression: '0 3 * * *' },
+			})
+			await account.api.updateObject(loop.id, account.workspaceId, {
+				metadata: { trigger_ids: [trigger.id] },
+			})
+
+			await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
+
+			const banner = page.getByText(/Built from what you said — nothing has fired yet/)
+			await page.emulateMedia({ colorScheme: 'light' })
+			await expect(banner).toBeVisible({ timeout: 10000 })
+			await page.emulateMedia({ colorScheme: 'dark' })
+			await expect(banner).toBeVisible()
+			await expect(page.getByText(/The first cycle opens/)).toBeVisible()
 		})
 	}
 
@@ -118,7 +181,9 @@ test.describe('Loop detail page', () => {
 		await page.goto(`/${account.workspaceId}/loops/${loop.id}`)
 		await expect(page.getByTestId('loop-pill')).toHaveText('Learning', { timeout: 10000 })
 
-		await page.getByRole('button', { name: 'More' }).click()
+		// Exact — the v2 header's split New button adds a "More ways to start"
+		// control, which a substring match would also pick up.
+		await page.getByRole('button', { name: 'More', exact: true }).click()
 		await page.getByRole('menuitem', { name: 'Pause loop' }).click()
 
 		await expect(page.getByTestId('loop-pill')).toHaveText('Paused', { timeout: 10000 })
