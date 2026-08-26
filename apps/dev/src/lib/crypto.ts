@@ -1,8 +1,8 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
 
 const ALGORITHM = 'aes-256-gcm'
-const IV_LENGTH = 12
-const AUTH_TAG_LENGTH = 16
+export const IV_LENGTH = 12
+export const AUTH_TAG_LENGTH = 16
 
 function getEncryptionKey(): Buffer {
 	const key = process.env.INTEGRATION_ENCRYPTION_KEY
@@ -16,26 +16,46 @@ function getEncryptionKey(): Buffer {
 	return buf
 }
 
-export function encrypt(plaintext: string): string {
-	const key = getEncryptionKey()
+/**
+ * AES-256-GCM encrypt, returning the raw parts rather than a serialized string.
+ *
+ * Callers choose their own envelope: {@link encrypt} uses `hex:hex:hex`, while
+ * `integrations/oauth/state.ts` concatenates to base64url because the OAuth
+ * `state` parameter has to survive length-constrained provider cookies. Keeping
+ * the key handling and cipher construction here means the two envelopes cannot
+ * drift apart.
+ */
+export function seal(plaintext: string): { iv: Buffer; authTag: Buffer; encrypted: Buffer } {
 	const iv = randomBytes(IV_LENGTH)
-	const cipher = createCipheriv(ALGORITHM, key, iv, { authTagLength: AUTH_TAG_LENGTH })
+	const cipher = createCipheriv(ALGORITHM, getEncryptionKey(), iv, {
+		authTagLength: AUTH_TAG_LENGTH,
+	})
 	const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()])
-	const authTag = cipher.getAuthTag()
+	return { iv, authTag: cipher.getAuthTag(), encrypted }
+}
+
+/** Inverse of {@link seal}. Throws if the auth tag does not verify. */
+export function open(iv: Buffer, authTag: Buffer, encrypted: Buffer): string {
+	const decipher = createDecipheriv(ALGORITHM, getEncryptionKey(), iv, {
+		authTagLength: AUTH_TAG_LENGTH,
+	})
+	decipher.setAuthTag(authTag)
+	return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString('utf8')
+}
+
+export function encrypt(plaintext: string): string {
+	const { iv, authTag, encrypted } = seal(plaintext)
 	return `${iv.toString('hex')}:${authTag.toString('hex')}:${encrypted.toString('hex')}`
 }
 
 export function decrypt(ciphertext: string): string {
-	const key = getEncryptionKey()
 	const [ivHex, authTagHex, encryptedHex] = ciphertext.split(':')
 	if (!ivHex || !authTagHex || !encryptedHex) {
 		throw new Error('Invalid ciphertext format')
 	}
-	const iv = Buffer.from(ivHex, 'hex')
-	const authTag = Buffer.from(authTagHex, 'hex')
-	const encrypted = Buffer.from(encryptedHex, 'hex')
-	const decipher = createDecipheriv(ALGORITHM, key, iv, { authTagLength: AUTH_TAG_LENGTH })
-	decipher.setAuthTag(authTag)
-	const decrypted = Buffer.concat([decipher.update(encrypted), decipher.final()])
-	return decrypted.toString('utf8')
+	return open(
+		Buffer.from(ivHex, 'hex'),
+		Buffer.from(authTagHex, 'hex'),
+		Buffer.from(encryptedHex, 'hex'),
+	)
 }

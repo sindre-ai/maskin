@@ -152,6 +152,8 @@ export interface ProviderConfig {
 export interface StoredCredentials {
 	accessToken?: string
 	refreshToken?: string
+	/** OAuth client id, for providers whose client is registered per-install (RFC 7591). */
+	clientId?: string
 	/** Unix timestamp in milliseconds */
 	expiresAt?: number
 	scope?: string
@@ -159,10 +161,49 @@ export interface StoredCredentials {
 	[key: string]: unknown
 }
 
+/**
+ * Write-back channel handed to {@link CustomAuthHandler.getAccessToken} so a
+ * handler that performs a stateful refresh (rotating `refresh_token`, moving
+ * `expires_at`) can persist the result. Handlers that mint a stateless token on
+ * every call (GitHub App installation tokens) simply ignore it.
+ */
+export interface CustomAuthContext {
+	integrationId: string
+	/** Encrypt + store the updated credentials and write the audit event. */
+	persistCredentials(credentials: StoredCredentials): Promise<void>
+}
+
 export interface CustomAuthHandler {
-	getInstallUrl(state: string): string
-	handleCallback(params: Record<string, string>): Promise<StoredCredentials>
-	getAccessToken(credentials: StoredCredentials): Promise<string>
+	/**
+	 * Build the provider's authorize/install URL.
+	 *
+	 * `redirectUri` is the callback URL the route derived for this request (via
+	 * `resolvePublicOrigin`) — handlers that must send a redirect URI to the
+	 * provider MUST use it rather than re-deriving one, so every provider agrees
+	 * on the origin the callback is actually served from. Handlers whose provider
+	 * has the redirect URI pre-registered (GitHub App) can ignore it.
+	 */
+	getInstallUrl(state: string, redirectUri: string): string | Promise<string>
+	/**
+	 * Exchange the provider's callback for credentials.
+	 *
+	 * `redirectUri` is the same value the route passed to `getInstallUrl`, handed
+	 * back so a handler can echo it at token exchange (OAuth2 requires it to
+	 * match byte-for-byte) without stashing it in the `state` envelope. Handlers
+	 * that do not need it can ignore it.
+	 */
+	handleCallback(params: Record<string, string>, redirectUri: string): Promise<StoredCredentials>
+	/**
+	 * Mint or return a usable access token.
+	 *
+	 * `ctx` is always supplied by {@link TokenManager}. It is required rather than
+	 * optional so a handler performing a *stateful* refresh cannot silently drop
+	 * the rotated `refresh_token` via an optional-chained persist call — that
+	 * failure strands the integration permanently and logs nothing. Handlers that
+	 * mint a stateless token per call (GitHub App installation tokens) may
+	 * declare fewer parameters and ignore it.
+	 */
+	getAccessToken(credentials: StoredCredentials, ctx: CustomAuthContext): Promise<string>
 }
 
 export type CustomEventNormalizer = (
