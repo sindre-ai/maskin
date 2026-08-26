@@ -211,14 +211,23 @@ if (process.env.NODE_ENV === 'production') {
 sessionDispatchQueue.start()
 logger.info('Session dispatch queue started')
 
-const shutdown = (signal: string) => {
+let shuttingDown = false
+const shutdown = async (signal: string) => {
+	// A second signal while the first is still settling must not start a
+	// second settle — it would double the wait before the exit it is asking for.
+	if (shuttingDown) return
+	shuttingDown = true
 	logger.info(`Received ${signal}, shutting down`)
 	sessionDispatchQueue.stop()
 	notifyBridge.stop?.()
+	// A turn replay in backoff holds the human's message and nothing else does:
+	// its state is in-process, so exiting mid-backoff drops the turn silently.
+	// Bounded inside, so a wedged replay cannot block the exit.
+	await sessionManager.turnFinalizer.settlePendingRetries()
 	process.exit(0)
 }
-process.on('SIGTERM', () => shutdown('SIGTERM'))
-process.on('SIGINT', () => shutdown('SIGINT'))
+process.on('SIGTERM', () => void shutdown('SIGTERM'))
+process.on('SIGINT', () => void shutdown('SIGINT'))
 
 logger.info(`Starting server on port ${port}`)
 

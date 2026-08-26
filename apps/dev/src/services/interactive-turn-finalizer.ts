@@ -73,9 +73,44 @@ const RETRY_BACKOFF_MS: readonly number[] = [2_000, 8_000]
 /** Bounds the per-turn attempt counters; keys are dropped LRU-style. */
 const MAX_RETRY_KEYS = 500
 
+/**
+ * How long a replayed turn has to produce a `result` envelope before the human
+ * is told it went nowhere.
+ *
+ * retryTurn resolves when the bytes are queued on stdin, which is NOT proof the
+ * turn ran: a CLI wedged on stdin (see `.claude/rules/known-pitfalls.md`,
+ * "Interactive Sessions Dispatched to a Remote Agent-Server Never Received
+ * Their First Turn") swallows the write silently. Without this the failure
+ * envelope is already marked handled, nothing is posted, and the human waits
+ * out the session timeout — strictly worse than the raw blob this replaces.
+ *
+ * Generous, because a replayed turn re-runs its tools: it must only fire when
+ * the turn genuinely never started, never on one that is merely slow.
+ */
+const REPLAY_ANSWER_TIMEOUT_MS = 5 * 60_000
+
+/** Longest a shutdown will wait for in-flight replays before exiting anyway. */
+const SETTLE_RETRIES_TIMEOUT_MS = 15_000
+
 /** What the human reads when the replays are used up. */
 const RETRY_EXHAUSTED_MESSAGE =
 	"I hit a temporary error from the Claude API and couldn't finish that — I retried and it kept failing. Send the message again and I'll pick it up."
+
+/**
+ * What the human reads when the failure was transient but no replay was ever
+ * attempted. Distinct from RETRY_EXHAUSTED_MESSAGE on purpose: claiming a retry
+ * that did not happen misdescribes what they are looking at.
+ */
+const RETRY_UNAVAILABLE_MESSAGE =
+	"I hit a temporary error from the Claude API and couldn't finish that. Send the message again and I'll pick it up."
+
+/** What the human reads when the replay could not reach a session that has gone. */
+const RETRY_UNDELIVERABLE_MESSAGE =
+	"I hit a temporary error from the Claude API and couldn't finish that, and this session ended before I could run it again. Start a new session to pick it up."
+
+/** What the human reads when a replay was written but the turn never came back. */
+const RETRY_UNANSWERED_MESSAGE =
+	"I hit a temporary error from the Claude API and ran that again, but the run never came back. Send the message again and I'll pick it up."
 
 /** What the human reads for a failure no replay would fix. */
 const permanentErrorMessage = (detail: string): string =>
@@ -103,6 +138,8 @@ export type InteractiveTurnFinalizerOptions = {
 	retryTurn?: RetryTurnFn
 	/** Test seam: replaces the backoff wait so specs don't sleep for real. */
 	delay?: (ms: number) => Promise<void>
+	/** Test seam: how long a replayed turn has to answer. */
+	replyTimeoutMs?: number
 }
 
 export class InteractiveTurnFinalizer {
@@ -117,14 +154,18 @@ export class InteractiveTurnFinalizer {
 	private readonly retryCounts = new Map<string, number>()
 	/** In-flight replays, so shutdown and tests can wait for them to settle. */
 	private readonly pendingRetries = new Set<Promise<void>>()
+	/** sessionId -> timer waiting for a replayed turn to produce a result line. */
+	private readonly replayWatchdogs = new Map<string, NodeJS.Timeout>()
 	private readonly retryTurn?: RetryTurnFn
 	private readonly delay: (ms: number) => Promise<void>
+	private readonly replyTimeoutMs: number
 
 	constructor(db: Database, options: InteractiveTurnFinalizerOptions = {}) {
 		this.db = db
 		this.retryTurn = options.retryTurn
 		this.delay =
 			options.delay ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
+		this.replyTimeoutMs = options.replyTimeoutMs ?? REPLAY_ANSWER_TIMEOUT_MS
 	}
 
 	/**
@@ -174,11 +215,26 @@ export class InteractiveTurnFinalizer {
 
 	/** Drop per-session state when a session goes away. */
 	forgetSession(sessionId: string): void {
+		this.clearRetryCounts(sessionId)
+		this.disarmReplayWatchdog(sessionId)
+		this.buffers.delete(sessionId)
+		this.gates.delete(sessionId)
+	}
+
+	/**
+	 * Forget the replay budgets held for one session.
+	 *
+	 * The budget exists to stop one turn being replayed forever, so it must not
+	 * outlive the episode it was counting. Counters are keyed on the payload's
+	 * content, and identical content recurs constantly in chat ("continue",
+	 * "yes"), so a counter left behind by a replay that WORKED would silently
+	 * spend the next such turn's budget before it had failed once — and then
+	 * tell the human it had been retried when it had not.
+	 */
+	private clearRetryCounts(sessionId: string): void {
 		for (const key of this.retryCounts.keys()) {
 			if (key.startsWith(`${sessionId}:`)) this.retryCounts.delete(key)
 		}
-		this.buffers.delete(sessionId)
-		this.gates.delete(sessionId)
 	}
 
 	/** Test seam: proves the DB unique index — not the cache — is the guard. */
@@ -191,6 +247,10 @@ export class InteractiveTurnFinalizer {
 		result: ReturnType<typeof parseResultLine> & object,
 		logId: number,
 	): Promise<void> {
+		// Any closing turn — reply or failure — is proof the CLI is reading its
+		// stdin, which is the only thing the watchdog is waiting to learn.
+		this.disarmReplayWatchdog(sessionId)
+
 		const gate = await this.loadGate(sessionId)
 		if (!gate) return
 		if (!gate.interactive) return
@@ -217,6 +277,12 @@ export class InteractiveTurnFinalizer {
 			await this.handleFailedTurn(sessionId, gate, gate.conversationId, result, logId)
 			return
 		}
+
+		// The turn closed cleanly, so whatever transient fault the replay budget
+		// was counting is over. Release it here rather than on the replay's own
+		// success, because this is the only point that proves the model API
+		// answered — and because a clean turn from any input says as much.
+		this.clearRetryCounts(sessionId)
 
 		let text = result.text.trim()
 		let recovered = false
@@ -361,7 +427,7 @@ export class InteractiveTurnFinalizer {
 				conversationId,
 				result,
 				logId,
-				RETRY_EXHAUSTED_MESSAGE,
+				RETRY_UNAVAILABLE_MESSAGE,
 				{
 					error_kind: 'transient',
 					retry: 'unavailable',
@@ -408,6 +474,9 @@ export class InteractiveTurnFinalizer {
 			try {
 				await this.delay(backoffMs)
 				await this.retryTurn?.(sessionId, payload)
+				// The write only proves the bytes were queued. Start the clock on
+				// the turn actually coming back; postFinalOutput stops it.
+				this.armReplayWatchdog(sessionId, gate, conversationId, dedupeKey)
 			} catch (err) {
 				// The session may have been stopped or closed while we waited.
 				// Nothing left to retry with, so say so rather than leaving the
@@ -415,30 +484,14 @@ export class InteractiveTurnFinalizer {
 				logger.error(
 					`Interactive session ${sessionId} turn replay failed to reach the CLI: ${describeError(err)}`,
 				)
-				try {
-					await insertConversationMessage(this.db, {
-						conversationId,
-						workspaceId: gate.workspaceId,
-						actorId: gate.actorId,
-						content: RETRY_EXHAUSTED_MESSAGE,
-						metadata: {
-							source: 'final_output',
-							final_output: {
-								// Distinct from the key that suppressed the failing
-								// envelope itself, which is already spent — reusing it
-								// would let the unique index swallow this notice.
-								dedupe_key: `${dedupeKey}-undeliverable`,
-								error_kind: 'transient',
-								retry: 'undeliverable',
-							},
-						},
-						sessionId,
-					})
-				} catch (postErr) {
-					logger.error(
-						`Interactive session ${sessionId} could not report a failed turn replay: ${describeError(postErr)}`,
-					)
-				}
+				await this.postRetryNotice(
+					sessionId,
+					gate,
+					conversationId,
+					dedupeKey,
+					'undeliverable',
+					RETRY_UNDELIVERABLE_MESSAGE,
+				)
 			}
 		})()
 
@@ -447,12 +500,105 @@ export class InteractiveTurnFinalizer {
 	}
 
 	/**
+	 * A notice about a replay that never ran, posted outside postTurnMessage
+	 * because the `result` envelope's own dedupe key is already spent — reusing
+	 * it would let the unique index swallow the one message that keeps the
+	 * human out of an empty thread.
+	 */
+	private async postRetryNotice(
+		sessionId: string,
+		gate: SessionGate,
+		conversationId: string,
+		dedupeKey: string,
+		reason: 'undeliverable' | 'unanswered',
+		content: string,
+	): Promise<void> {
+		try {
+			const created = await insertConversationMessage(this.db, {
+				conversationId,
+				workspaceId: gate.workspaceId,
+				actorId: gate.actorId,
+				content,
+				metadata: {
+					source: 'final_output',
+					final_output: {
+						dedupe_key: `${dedupeKey}-${reason}`,
+						error_kind: 'transient',
+						retry: reason,
+					},
+				},
+				sessionId,
+			})
+			if (!created) {
+				// Suppressed by the unique index. Benign on a re-delivered log
+				// line, but indistinguishable here from the notice going missing,
+				// so leave a trace either way.
+				logger.warn(
+					`Interactive session ${sessionId} ${reason} notice was suppressed as a duplicate (dedupe_key ${dedupeKey}-${reason})`,
+				)
+			}
+		} catch (err) {
+			logger.error(
+				`Interactive session ${sessionId} could not report a failed turn replay: ${describeError(err)}`,
+			)
+		}
+	}
+
+	/**
+	 * Start the clock on a replayed turn producing a `result` envelope.
+	 *
+	 * unref'd: this must never be the reason a process stays alive, and a
+	 * shutdown that drops it loses nothing a restart would have kept anyway.
+	 */
+	private armReplayWatchdog(
+		sessionId: string,
+		gate: SessionGate,
+		conversationId: string,
+		dedupeKey: string,
+	): void {
+		this.disarmReplayWatchdog(sessionId)
+		const timer = setTimeout(() => {
+			this.replayWatchdogs.delete(sessionId)
+			logger.error(
+				`Interactive session ${sessionId} replayed a turn but saw no result within ${this.replyTimeoutMs}ms; reporting it`,
+			)
+			void this.postRetryNotice(
+				sessionId,
+				gate,
+				conversationId,
+				dedupeKey,
+				'unanswered',
+				RETRY_UNANSWERED_MESSAGE,
+			)
+		}, this.replyTimeoutMs)
+		timer.unref?.()
+		this.replayWatchdogs.set(sessionId, timer)
+	}
+
+	private disarmReplayWatchdog(sessionId: string): void {
+		const timer = this.replayWatchdogs.get(sessionId)
+		if (!timer) return
+		clearTimeout(timer)
+		this.replayWatchdogs.delete(sessionId)
+	}
+
+	/**
 	 * Waits for every in-flight turn replay to settle. For shutdown and tests;
 	 * never throws, because each replay already handles its own failure.
+	 *
+	 * Bounded: a replay that finishes can start no new one, but log ingest is
+	 * still running during a shutdown and could keep adding them, and an exit
+	 * that waits forever is worse than one that drops a retry.
 	 */
-	async settlePendingRetries(): Promise<void> {
-		while (this.pendingRetries.size > 0) {
+	async settlePendingRetries(timeoutMs = SETTLE_RETRIES_TIMEOUT_MS): Promise<void> {
+		const deadline = Date.now() + timeoutMs
+		while (this.pendingRetries.size > 0 && Date.now() < deadline) {
 			await Promise.allSettled([...this.pendingRetries])
+		}
+		if (this.pendingRetries.size > 0) {
+			logger.warn(
+				`Gave up waiting for ${this.pendingRetries.size} in-flight turn replay(s) after ${timeoutMs}ms`,
+			)
 		}
 	}
 

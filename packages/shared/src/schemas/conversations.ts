@@ -65,9 +65,11 @@ export const messageFinalOutputSchema = z.object({
 	/**
 	 * Why a transient failure was reported instead of replayed:
 	 * 'unavailable' — the turn's opening envelope could not be recovered;
-	 * 'undeliverable' — the replay could not reach the CLI (session gone).
+	 * 'undeliverable' — the replay could not reach the CLI (session gone);
+	 * 'unanswered' — the replay was written but the turn never produced a
+	 * result envelope, so the CLI is presumed wedged on stdin.
 	 */
-	retry: z.enum(['unavailable', 'undeliverable']).optional(),
+	retry: z.enum(['unavailable', 'undeliverable', 'unanswered']).optional(),
 	subtype: z.string().max(64).optional(),
 	/** Set when the agent's output exceeded MESSAGE_MAX_LENGTH and was cut. */
 	truncated: z.boolean().optional(),

@@ -590,15 +590,26 @@ ${surviving}
 		}
 
 		/** A finalizer wired to a recording replay, with the backoff stubbed out. */
-		function withRetry() {
+		function withRetry(options: { replyTimeoutMs?: number } = {}) {
 			const calls: Array<{ sessionId: string; payload: unknown }> = []
 			const instance = new InteractiveTurnFinalizer(db, {
 				retryTurn: async (sessionId, payload) => {
 					calls.push({ sessionId, payload })
 				},
 				delay: async () => {},
+				...options,
 			})
 			return { instance, calls }
+		}
+
+		/** Polls until `check` passes, so a watchdog's real timer can be awaited. */
+		async function eventually(check: () => Promise<boolean>, timeoutMs = 2_000) {
+			const deadline = Date.now() + timeoutMs
+			while (Date.now() < deadline) {
+				if (await check()) return
+				await new Promise((resolve) => setTimeout(resolve, 10))
+			}
+			throw new Error('condition never became true')
 		}
 
 		it('replays the turn instead of posting the raw error', async () => {
@@ -780,6 +791,113 @@ ${surviving}
 			await finalizer.settlePendingRetries()
 
 			expect(calls).toHaveLength(1)
+		})
+
+		it('gives the next turn a fresh budget once a replay has worked', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, calls } = withRetry()
+			finalizer = instance
+
+			await feed(
+				session.id,
+				`${userTurnLine(17)}
+`,
+			)
+			await feed(
+				session.id,
+				`${apiErrorLine('req_1')}
+`,
+			)
+			await finalizer.settlePendingRetries()
+			expect(calls).toHaveLength(1)
+
+			// The replay produced a real answer, so the fault it was counting is
+			// over. The budget is keyed on the message text, and identical text
+			// recurs constantly in chat — a counter left behind here would spend
+			// the next such turn's attempts before it had failed even once.
+			await feed(
+				session.id,
+				`${resultLine()}
+`,
+			)
+
+			await feed(
+				session.id,
+				`${apiErrorLine('req_2')}
+`,
+			)
+			await feed(
+				session.id,
+				`${apiErrorLine('req_3')}
+`,
+			)
+			await finalizer.settlePendingRetries()
+
+			expect(calls).toHaveLength(3)
+			const rows = await messagesFor(conversationId)
+			expect(rows).toHaveLength(1)
+			expect(rows[0]?.content).toBe('Here is the answer.')
+		})
+
+		it('tells the human when a replayed turn never comes back', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			// writeInput resolves when the bytes are queued, not when the turn
+			// runs — a CLI wedged on stdin swallows the replay in total silence.
+			const { instance, calls } = withRetry({ replyTimeoutMs: 10 })
+			finalizer = instance
+
+			await feed(
+				session.id,
+				`${userTurnLine(18)}
+`,
+			)
+			await feed(
+				session.id,
+				`${apiErrorLine('req_1')}
+`,
+			)
+			await finalizer.settlePendingRetries()
+			expect(calls).toHaveLength(1)
+
+			await eventually(async () => (await messagesFor(conversationId)).length === 1)
+			const rows = await messagesFor(conversationId)
+			expect(rows[0]?.content).not.toContain('API Error')
+			expect(
+				(rows[0]?.metadata as { final_output?: { retry?: string } })?.final_output?.retry,
+			).toBe('unanswered')
+		})
+
+		it('stands the watchdog down when the replayed turn answers', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance } = withRetry({ replyTimeoutMs: 40 })
+			finalizer = instance
+
+			await feed(
+				session.id,
+				`${userTurnLine(19)}
+`,
+			)
+			await feed(
+				session.id,
+				`${apiErrorLine('req_1')}
+`,
+			)
+			await finalizer.settlePendingRetries()
+			await feed(
+				session.id,
+				`${resultLine()}
+`,
+			)
+
+			// Past the watchdog's deadline: the answer must have cancelled it,
+			// not merely raced it.
+			await new Promise((resolve) => setTimeout(resolve, 120))
+			const rows = await messagesFor(conversationId)
+			expect(rows).toHaveLength(1)
+			expect(rows[0]?.content).toBe('Here is the answer.')
 		})
 	})
 })
