@@ -392,7 +392,7 @@ describe('GET /api/billing/usage', () => {
 			plan: 'trial',
 			status: 'active',
 			usd_cents_used: 0,
-			hard_cap_usd_cents: 500,
+			hard_cap_usd_cents: 1000,
 			stripe_customer_id: null,
 			stripe_subscription_id: null,
 			period_start: null,

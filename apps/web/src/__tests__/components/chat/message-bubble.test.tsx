@@ -111,11 +111,15 @@ describe('MessageBubble', () => {
 })
 
 describe('MessageBubble — agent data-viz', () => {
-	it('renders a fenced chart block from an incoming agent message as a visual', () => {
+	it('renders a fenced chart block from an incoming agent message as a visual', async () => {
 		renderBubble(buildMessage({ content: CHART_MESSAGE }))
 
-		// The caption belongs to the rendered figure, not to a code block.
-		expect(screen.getByText('Drop-off concentrates on step two.')).toBeInTheDocument()
+		// CommentVisual is lazy-loaded to keep recharts out of the shared bundle;
+		// findByText awaits the dynamic import resolving. The caption belongs to
+		// the rendered figure, not to a code block.
+		expect(
+			await screen.findByText('Drop-off concentrates on step two.', undefined, { timeout: 5000 }),
+		).toBeInTheDocument()
 		expect(screen.queryByText(/"type": "bar"/)).not.toBeInTheDocument()
 	})
 })
