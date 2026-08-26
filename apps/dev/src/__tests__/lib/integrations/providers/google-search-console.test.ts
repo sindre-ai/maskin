@@ -35,9 +35,7 @@ describe('Google Search Console provider config', () => {
 			// Guard against accidentally widening to the umbrella `webmasters`
 			// scope (which grants write) or the URL Inspection scope — both
 			// explicitly out of scope for task 1.
-			expect(config.auth.config.scopes).not.toContain(
-				'https://www.googleapis.com/auth/webmasters',
-			)
+			expect(config.auth.config.scopes).not.toContain('https://www.googleapis.com/auth/webmasters')
 			expect(config.auth.config.scopes).not.toContain(
 				'https://www.googleapis.com/auth/webmasters.readonly.urlinspection',
 			)
