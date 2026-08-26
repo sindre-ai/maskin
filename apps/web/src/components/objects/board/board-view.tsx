@@ -1095,6 +1095,15 @@ function DraggableBoardCard({
 			{...listeners}
 			data-testid="board-card-draggable"
 			data-state={isSelected ? 'selected' : undefined}
+			// The card body is a `<Link>` (`<a>`), and anchors are `draggable`
+			// by default — so pressing on the card fires the browser's native
+			// HTML5 dragstart alongside dnd-kit's PointerSensor. That paints a
+			// second ghost image, and if the native drag ends off-viewport
+			// dnd-kit never sees the pointer-up, leaving the DragOverlay
+			// stranded ("orphaned drag overlay" in the DoD). Cancelling the
+			// native dragstart here leaves dnd-kit's pointer-based drag
+			// untouched.
+			onDragStart={(event) => event.preventDefault()}
 			onContextMenu={(event) => {
 				event.preventDefault()
 				if (suppressNextContextMenuRef.current) {
