@@ -2,6 +2,7 @@ import { Button } from '@/components/ui/button'
 import type { MemberResponse, ObjectResponse } from '@/lib/api'
 import { PanelRight } from 'lucide-react'
 import { useCallback, useState } from 'react'
+import { SubscribeToggle } from '../shared/subscribe-toggle'
 import { TypeBadge } from '../shared/type-badge'
 import { AuxiliaryActionMenu } from './auxiliary-action-menu'
 import { OwnerSelect, StatusSelect } from './property-selects'
@@ -40,6 +41,13 @@ export function ObjectDetailHeader({
 
 	return (
 		<div className="flex flex-none flex-wrap items-center justify-end gap-2 border-b border-border pb-3">
+			<SubscribeToggle
+				workspaceId={workspaceId}
+				entityType="object"
+				entityId={object.id}
+				isSubscribed={object.is_subscribed}
+				className="mr-1"
+			/>
 			{onTogglePropertiesRequest && (
 				<Button
 					variant="outline"
