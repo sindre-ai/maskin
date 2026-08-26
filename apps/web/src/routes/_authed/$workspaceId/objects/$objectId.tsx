@@ -58,7 +58,10 @@ function ObjectDetailPage() {
 
 	const handleUpdate = useCallback(
 		(data: { title?: string; content?: string; status?: string }) => {
-			updateObject.mutate({ id: objectId, data })
+			updateObject.mutate(
+				{ id: objectId, data },
+				{ onError: () => toast.error('Could not save your changes') },
+			)
 		},
 		[objectId, updateObject],
 	)

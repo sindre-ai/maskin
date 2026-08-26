@@ -702,6 +702,42 @@ describe('BoardView', () => {
 			expect(within(screen.getByTestId('board-column-done')).queryByText('Task 1')).toBeNull()
 		})
 
+		it('rolls back the board overlay when the response omits the dragged id entirely', async () => {
+			const obj = buildObjectResponse({ id: 't1', type: 'task', status: 'todo', title: 'Task 1' })
+			bulkUpdateMutate.mockImplementation(
+				(
+					_input: unknown,
+					opts: {
+						onSuccess?: (data: {
+							results: Array<{ id: string; ok: boolean; error?: string }>
+						}) => void
+					},
+				) => {
+					// The server confirmed some other id but never this one — an
+					// unconfirmed write must not be left looking like it landed.
+					opts.onSuccess?.({ results: [{ id: 'someone-else', ok: true }] })
+				},
+			)
+
+			render(
+				<BoardView
+					objectType="task"
+					workspaceId="ws-1"
+					statusesByType={{ task: ['todo', 'done'] }}
+					objects={[obj]}
+				/>,
+			)
+			fireDragEnd(makeDragEvent(obj, 'done'))
+
+			await waitFor(() => {
+				expect(toastError).toHaveBeenCalledWith('Could not move card')
+			})
+			expect(
+				within(screen.getByTestId('board-column-todo')).getByText('Task 1'),
+			).toBeInTheDocument()
+			expect(within(screen.getByTestId('board-column-done')).queryByText('Task 1')).toBeNull()
+		})
+
 		it('does not mutate when dropping on the same column the card already lives in', () => {
 			const obj = buildObjectResponse({ id: 't1', type: 'task', status: 'todo' })
 			render(

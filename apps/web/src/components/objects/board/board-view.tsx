@@ -549,9 +549,12 @@ export function BoardView({
 			{
 				onSuccess: (data) => {
 					const result = data.results.find((item) => item.id === dragged.id)
-					if (result?.ok === false) {
+					// A missing entry is treated the same as an explicit failure: the
+					// server never confirmed this id, so the optimistic patch must not
+					// be left in place pretending the move landed.
+					if (!result?.ok) {
 						removePendingPatch()
-						toast.error(result.error ?? 'Could not move card')
+						toast.error(result?.error ?? 'Could not move card')
 					}
 				},
 				onError: (err) => {

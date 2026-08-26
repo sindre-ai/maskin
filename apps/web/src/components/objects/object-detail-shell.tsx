@@ -17,6 +17,7 @@ import { useWorkspace } from '@/lib/workspace-context'
 import { CHROME_KEY } from '@maskin/shared'
 import { useNavigate } from '@tanstack/react-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { toast } from 'sonner'
 import { ObjectAskBanner } from './object-ask-banner'
 import { ObjectDetailBody } from './object-detail-body'
 import { getAsk } from './object-detail-fixtures'
@@ -213,7 +214,10 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 
 	const handleUpdateStatus = useCallback(
 		(status: string) => {
-			updateObject.mutate({ id: object.id, data: { status } })
+			updateObject.mutate(
+				{ id: object.id, data: { status } },
+				{ onError: () => toast.error('Could not update status') },
+			)
 		},
 		[object.id, updateObject],
 	)
@@ -222,15 +226,21 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 	// stamps the prior status for the archived-row treatment downstream.
 	const handleArchive = useCallback(() => {
 		if (object.type !== 'bet' || object.status === 'archived') return
-		updateObject.mutate({
-			id: object.id,
-			data: { status: 'archived', metadata: { previous_status: object.status } },
-		})
+		updateObject.mutate(
+			{
+				id: object.id,
+				data: { status: 'archived', metadata: { previous_status: object.status } },
+			},
+			{ onError: () => toast.error('Could not archive this bet') },
+		)
 	}, [object.id, object.status, object.type, updateObject])
 
 	const handleUpdateDriver = useCallback(
 		(driver: string | null) => {
-			updateObject.mutate({ id: object.id, data: { driver } })
+			updateObject.mutate(
+				{ id: object.id, data: { driver } },
+				{ onError: () => toast.error('Could not update owner') },
+			)
 		},
 		[object.id, updateObject],
 	)
