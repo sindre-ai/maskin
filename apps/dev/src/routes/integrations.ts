@@ -85,7 +85,7 @@ type Env = {
 
 const app = new OpenAPIHono<Env>({ defaultHook: validationFailureHook })
 
-// ── GET /api/integrations ──────────────────────────────────────────────────
+// ── GET /api/integrations ────────────────────────────────────────
 
 const listIntegrationsRoute = createRoute({
 	method: 'get',
@@ -121,7 +121,7 @@ app.openapi(listIntegrationsRoute, (async (c) => {
 	return c.json(serializeArray(safe) as z.infer<typeof integrationResponseSchema>[])
 }) as RouteHandler<typeof listIntegrationsRoute, Env>)
 
-// ── GET /api/integrations/providers ────────────────────────────────────────
+// ── GET /api/integrations/providers ────────────────────────────────
 
 const listProvidersRoute = createRoute({
 	method: 'get',
@@ -148,7 +148,7 @@ app.openapi(listProvidersRoute, (async (c) => {
 	return c.json(providers as z.infer<typeof providerInfoSchema>[])
 }) as RouteHandler<typeof listProvidersRoute, Env>)
 
-// ── POST /api/integrations/:provider/connect ───────────────────────────────
+// ── POST /api/integrations/:provider/connect ────────────────────────────
 
 const providerParamSchema = z.object({ provider: z.string() })
 
@@ -234,9 +234,16 @@ app.openapi(connectRoute, (async (c) => {
 				createdBy: actorId,
 			})
 			.onConflictDoUpdate({
-				target: [integrations.workspaceId, integrations.provider, integrations.externalId],
-				// The matching unique index is partial (WHERE external_id IS NOT NULL),
-				// so Postgres only accepts this conflict target with the same predicate.
+				target: [
+					integrations.workspaceId,
+					integrations.actorId,
+					integrations.provider,
+					integrations.externalId,
+				],
+				// The matching unique index is partial (WHERE external_id IS NOT NULL) and
+				// declared NULLS NOT DISTINCT so a workspace-scoped upsert (actor_id = NULL
+				// on both rows) still collides — Postgres only accepts this conflict target
+				// with the same predicate.
 				targetWhere: isNotNull(integrations.externalId),
 				set: {
 					status: 'active',
@@ -438,7 +445,7 @@ app.openapi(connectRoute, (async (c) => {
 	return c.json({ install_url: installUrl })
 }) as RouteHandler<typeof connectRoute, Env>)
 
-// ── GET /api/integrations/:provider/callback ───────────────────────────────
+// ── GET /api/integrations/:provider/callback ─────────────────────────────
 
 const callbackRoute = createRoute({
 	method: 'get',
@@ -750,7 +757,7 @@ app.openapi(callbackRoute, (async (c) => {
 	return c.redirect(`${frontendUrl}/${stateData.workspaceId}/settings/integrations`)
 }) as RouteHandler<typeof callbackRoute, Env>)
 
-// ── DELETE /api/integrations/:id ───────────────────────────────────────────
+// ── DELETE /api/integrations/:id ──────────────────────────────────────
 
 const deleteIntegrationRoute = createRoute({
 	method: 'delete',
@@ -832,7 +839,7 @@ app.openapi(deleteIntegrationRoute, (async (c) => {
 	return c.json({ deleted: true })
 }) as RouteHandler<typeof deleteIntegrationRoute, Env>)
 
-// ── POST /api/integrations/:id/complete ─────────────────────────────────────
+// ── POST /api/integrations/:id/complete ─────────────────────────────────
 // Finishes a manual-auth handshake: the user pastes the provider-generated
 // secret (e.g. Skjald's per-webhook HMAC secret) into Maskin over an
 // authenticated session, completing the row the connect route's 'manual'
@@ -912,7 +919,7 @@ app.openapi(completeIntegrationRoute, (async (c) => {
 	return c.json({ activated: true })
 }) as RouteHandler<typeof completeIntegrationRoute, Env>)
 
-// ── GET /api/integrations/:id/github-token ─────────────────────────────────
+// ── GET /api/integrations/:id/github-token ──────────────────────────────
 
 const REPO_SLUG_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/
 
@@ -1180,7 +1187,7 @@ app.openapi(listSlackConversationsRoute, (async (c) => {
 	}
 }) as RouteHandler<typeof listSlackConversationsRoute, Env>)
 
-// ── GET /api/integrations/:id/slack/users ──────────────────────────────────
+// ── GET /api/integrations/:id/slack/users ────────────────────────────────
 
 const slackUserSchema = z.object({
 	id: z.string(),
@@ -1263,7 +1270,7 @@ app.openapi(listSlackUsersRoute, (async (c) => {
 
 export default app
 
-// ── Webhook handler (mounted separately at /api/webhooks) ──────────────────
+// ── Webhook handler (mounted separately at /api/webhooks) ──────────────────────
 
 // Slack entity types the normalizer emits for inbound user-to-agent traffic.
 // `slack.app_mention` covers `@Maskin` in any channel; `slack.direct_message`
@@ -1394,7 +1401,7 @@ webhookApp.post('/slack-commands', async (c) => {
 	return c.json({ response_type: 'ephemeral', text: result.responseText })
 })
 
-// ── Slack account-link interactivity ──────────────────────────────────────
+// ── Slack account-link interactivity ──────────────────────────────────
 //
 // Slack POSTs Block Kit `block_actions` payloads here when the user interacts
 // with the account-link picker (form-encoded with a `payload` field). The
@@ -1577,7 +1584,7 @@ webhookApp.post('/slack-interactive', async (c) => {
 	return c.json({ ok: true })
 })
 
-// ── Skjald meeting-completed webhook ────────────────────────────────────────
+// ── Skjald meeting-completed webhook ────────────────────────────────────
 // Registered before the generic `/:provider` catch-all so this path-literal
 // route wins. Skjald has no central app-level secret — every desktop install
 // mints its own locally — so this bypasses the generic single-secret
@@ -2147,7 +2154,7 @@ webhookApp.post('/:provider', async (c) => {
 	return c.json({ ok: true, count: totalInserted, workspaces: eligible.length })
 })
 
-// ── Helpers ────────────────────────────────────────────────────────────────
+// ── Helpers ──────────────────────────────────────────────────────
 
 /** Build the OAuth redirect URI, using CORS_ORIGIN when set to prevent header injection */
 // In production, use the configured origin to prevent X-Forwarded-Host injection
