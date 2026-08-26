@@ -430,4 +430,58 @@ describe('TimelineTab', () => {
 		expect(screen.queryByRole('button', { name: /more updates/ })).toBeNull()
 		expect(screen.getAllByText('Update')).toHaveLength(3)
 	})
+	// Regression: `visible` runs newest-first, so a status_changed event CLOSES
+	// the phase above it and OPENS the older one below. The older phase must be
+	// labelled with the status the object moved AWAY from (`old`). Labelling it
+	// with `new` made every divider below the top repeat the one above it and
+	// left the oldest phase unlabelled.
+	it('labels each phase divider with the status that phase actually sat in', () => {
+		const object = buildObjectResponse({ id: 'obj-1', type: 'bet', status: 'active' })
+		mockGraph(
+			[
+				buildEventResponse({
+					id: 40,
+					action: 'status_changed',
+					entityType: 'bet',
+					entityId: 'obj-1',
+					createdAt: '2026-01-04T00:00:00Z',
+					data: { changes: [{ field: 'status', old: 'define', new: 'active' }] },
+				}),
+				buildEventResponse({
+					id: 30,
+					action: 'commented',
+					entityType: 'bet',
+					entityId: 'obj-1',
+					createdAt: '2026-01-03T00:00:00Z',
+				}),
+				buildEventResponse({
+					id: 20,
+					action: 'status_changed',
+					entityType: 'bet',
+					entityId: 'obj-1',
+					createdAt: '2026-01-02T00:00:00Z',
+					data: { changes: [{ field: 'status', old: 'scope', new: 'define' }] },
+				}),
+				buildEventResponse({
+					id: 10,
+					action: 'commented',
+					entityType: 'bet',
+					entityId: 'obj-1',
+					createdAt: '2026-01-01T00:00:00Z',
+				}),
+			],
+			[],
+			[],
+			object,
+		)
+
+		render(<TimelineTab object={object} />, { wrapper: createWorkspaceWrapper() })
+
+		// Newest phase first: active (current) → define → scope. Each status
+		// appears exactly once; the pre-fix code rendered active, active, define.
+		const labels = screen
+			.getAllByText(/^(active|define|scope)$/)
+			.map((el) => el.textContent?.trim())
+		expect(labels).toEqual(['active', 'define', 'scope'])
+	})
 })

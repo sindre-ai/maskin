@@ -25,7 +25,7 @@ test.describe('Object detail — properties drawer', () => {
 				timeout: 15000,
 			})
 
-			const toggle = page.getByRole('button', { name: 'Properties' })
+			const toggle = page.getByRole('button', { name: 'Properties', exact: true })
 			await expect(toggle).toBeVisible()
 			await expect(toggle).toHaveAttribute('aria-expanded', 'false')
 
@@ -70,7 +70,7 @@ test.describe('Object detail — properties drawer', () => {
 				timeout: 15000,
 			})
 
-			const toggle = page.getByRole('button', { name: 'Properties' })
+			const toggle = page.getByRole('button', { name: 'Properties', exact: true })
 			await expect(toggle).toHaveAttribute('aria-expanded', 'false')
 
 			await page.keyboard.press('Control+i')
@@ -88,7 +88,7 @@ test.describe('Object detail — properties drawer', () => {
 				await expect(page.getByRole('heading', { level: 1, name: 'Chord bet' })).toBeVisible({
 					timeout: 15000,
 				})
-				await expect(page.getByRole('button', { name: 'Properties' })).toHaveAttribute(
+				await expect(page.getByRole('button', { name: 'Properties', exact: true })).toHaveAttribute(
 					'aria-expanded',
 					'true',
 				)
@@ -191,7 +191,7 @@ test.describe('Object detail — properties drawer', () => {
 		// The composer hint names the agent that reads what you write (mockup 1362).
 		await expect(page.getByText('Relay is listening')).toBeVisible({ timeout: 10000 })
 
-		await page.getByRole('button', { name: 'Properties' }).click()
+		await page.getByRole('button', { name: 'Properties', exact: true }).click()
 		// The creator is auto-subscribed, and the row says why they are on it.
 		await expect(page.getByText('you', { exact: true })).toBeVisible()
 	})
