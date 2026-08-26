@@ -4,10 +4,8 @@ import { FLAGS, parseFeatureFlagConfig, resolveFlags } from '../../lib/feature-f
 const TESTER = '3f7c1e2a-9b4d-4f21-8c6e-5a0d7b91e442'
 const NON_TESTER = 'c1d2e3f4-a5b6-4c7d-8e9f-0a1b2c3d4e5f'
 
-// `FLAGS` is intentionally empty — the `new-design` flag was retired when the
-// v2 design shipped to everyone, and there is no live flag to take its place.
-// The resolution logic still has to be correct for the next flag, so these
-// tests inject their own registry rather than depending on a real flag id.
+// Most cases inject their own registry so they stay valid as flags come and go;
+// one case below pins the live registry so a flag can't be dropped by accident.
 const FLAG = 'sample-flag'
 const REGISTRY = { SAMPLE: FLAG }
 
@@ -36,10 +34,10 @@ describe('parseFeatureFlagConfig', () => {
 })
 
 describe('resolveFlags', () => {
-	it('resolves nothing while the flag registry is empty', () => {
-		const c = config({ FF_TESTER_FEATURES: FLAG, FF_TESTER_ACTOR_IDS: TESTER })
-		expect(Object.keys(FLAGS)).toHaveLength(0)
-		expect(resolveFlags(TESTER, c)).toEqual({})
+	it('resolves the live registry — new-design is on for a listed tester', () => {
+		const c = config({ FF_TESTER_FEATURES: FLAGS.NEW_DESIGN, FF_TESTER_ACTOR_IDS: TESTER })
+		expect(resolveFlags(TESTER, c)).toEqual({ [FLAGS.NEW_DESIGN]: true })
+		expect(resolveFlags(NON_TESTER, c)).toEqual({ [FLAGS.NEW_DESIGN]: false })
 	})
 
 	it('is false for every flag when the env is empty', () => {

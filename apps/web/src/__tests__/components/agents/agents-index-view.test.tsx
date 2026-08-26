@@ -279,7 +279,7 @@ describe('AgentsIndexView', () => {
 			expect(screen.getByRole('link', { name: /Ada/ })).toBeInTheDocument()
 		})
 
-		it('Reset to default clears the status filter, sort, order and grouping together', async () => {
+		it('Reset all clears the status filter, sort, order and grouping together', async () => {
 			const user = userEvent.setup()
 			mount([agentAda(), agentBrian(), agentCy()], [brianRunningSession()])
 
@@ -291,7 +291,7 @@ describe('AgentsIndexView', () => {
 			await pickFromDisplayPanel(user, 'Group by', 'Kind')
 			expect(screen.getByRole('heading', { name: 'Architect' })).toBeInTheDocument()
 
-			await user.click(screen.getByRole('button', { name: /Reset to default/ }))
+			await user.click(screen.getByRole('button', { name: /Reset all/ }))
 
 			expect(screen.getByRole('link', { name: /Ada/ })).toBeInTheDocument()
 			expect(screen.getByRole('heading', { name: /working/i })).toBeInTheDocument()

@@ -276,6 +276,38 @@ describe('BoardView', () => {
 		expect(screen.queryByTestId('board-view')).not.toBeInTheDocument()
 	})
 
+	// Loading → error → empty: "No statuses configured" is a claim about the
+	// workspace, so a first paint or a failed fetch (both column-less) must not
+	// read as one.
+	it('shows a skeleton, not the no-statuses empty state, while a column-less board loads', () => {
+		render(
+			<BoardView
+				objectType="task"
+				workspaceId="ws-1"
+				statusesByType={{ insight: ['new'] }}
+				objects={[]}
+				isLoading
+			/>,
+		)
+		expect(screen.queryByText('No statuses configured')).not.toBeInTheDocument()
+		expect(screen.getAllByTestId('board-card-skeleton').length).toBeGreaterThan(0)
+	})
+
+	it('shows the error card, not the no-statuses empty state, when the board query fails', () => {
+		render(
+			<BoardView
+				objectType="task"
+				workspaceId="ws-1"
+				statusesByType={{ insight: ['new'] }}
+				objects={[]}
+				isError
+				error={new Error('boom')}
+			/>,
+		)
+		expect(screen.queryByText('No statuses configured')).not.toBeInTheDocument()
+		expect(screen.getByText("Couldn't load the board")).toBeInTheDocument()
+	})
+
 	it('renders skeleton placeholders for every column while loading', () => {
 		render(
 			<BoardView
@@ -289,7 +321,8 @@ describe('BoardView', () => {
 		expect(screen.getAllByTestId('board-card-skeleton')).toHaveLength(4)
 	})
 
-	it('shows the per-column empty hint when a column has no objects and is not loading', () => {
+	// Mockup 988: an empty column reads as the drop target itself, nothing more.
+	it('shows the per-column drop target when a column has no objects and is not loading', () => {
 		render(
 			<BoardView
 				objectType="task"
@@ -298,11 +331,10 @@ describe('BoardView', () => {
 				objects={[]}
 			/>,
 		)
-		expect(screen.getByText('Nothing here yet.')).toBeInTheDocument()
-		expect(screen.getByText('Drag a card to todo.')).toBeInTheDocument()
+		expect(screen.getByText('Drop here')).toBeInTheDocument()
 	})
 
-	it('uses the active status name in the empty hint', () => {
+	it('names the column with its status label in the header', () => {
 		render(
 			<BoardView
 				objectType="insight"
@@ -311,7 +343,7 @@ describe('BoardView', () => {
 				objects={[]}
 			/>,
 		)
-		expect(screen.getByText('Drag a card to under review.')).toBeInTheDocument()
+		expect(screen.getByText('under review')).toBeInTheDocument()
 	})
 
 	it('renders the drop cue below existing cards when a column is a valid target', () => {
@@ -663,6 +695,42 @@ describe('BoardView', () => {
 
 			await waitFor(() => {
 				expect(toastError).toHaveBeenCalledWith("Invalid status 'done'")
+			})
+			expect(
+				within(screen.getByTestId('board-column-todo')).getByText('Task 1'),
+			).toBeInTheDocument()
+			expect(within(screen.getByTestId('board-column-done')).queryByText('Task 1')).toBeNull()
+		})
+
+		it('rolls back the board overlay when the response omits the dragged id entirely', async () => {
+			const obj = buildObjectResponse({ id: 't1', type: 'task', status: 'todo', title: 'Task 1' })
+			bulkUpdateMutate.mockImplementation(
+				(
+					_input: unknown,
+					opts: {
+						onSuccess?: (data: {
+							results: Array<{ id: string; ok: boolean; error?: string }>
+						}) => void
+					},
+				) => {
+					// The server confirmed some other id but never this one — an
+					// unconfirmed write must not be left looking like it landed.
+					opts.onSuccess?.({ results: [{ id: 'someone-else', ok: true }] })
+				},
+			)
+
+			render(
+				<BoardView
+					objectType="task"
+					workspaceId="ws-1"
+					statusesByType={{ task: ['todo', 'done'] }}
+					objects={[obj]}
+				/>,
+			)
+			fireDragEnd(makeDragEvent(obj, 'done'))
+
+			await waitFor(() => {
+				expect(toastError).toHaveBeenCalledWith('Could not move card')
 			})
 			expect(
 				within(screen.getByTestId('board-column-todo')).getByText('Task 1'),

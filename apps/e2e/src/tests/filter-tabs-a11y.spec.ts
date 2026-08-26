@@ -25,9 +25,14 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			await page.goto(`/${account.workspaceId}/objects`)
 			await expect(page.getByText('Aria Test Insight')).toBeVisible({ timeout: 10000 })
 
-			const all = page.getByRole('button', { name: 'All' })
-			const insights = page.getByRole('button', { name: 'Insights' })
-			const bets = page.getByRole('button', { name: 'Bets' })
+			// Scoped to the nav row's type filter: the v2 list also renders a
+			// pill-variant FilterTabs in the chip strip, whose "All" would make an
+			// unscoped `name: 'All'` ambiguous. Names carry counts ("All (6)"), so
+			// these stay substring matches.
+			const typeTabs = page.getByRole('group', { name: 'Type filter' })
+			const all = typeTabs.getByRole('button', { name: 'All' })
+			const insights = typeTabs.getByRole('button', { name: 'Insights' })
+			const bets = typeTabs.getByRole('button', { name: 'Bets' })
 
 			await expect(all).toHaveAttribute('aria-pressed', 'true')
 			await expect(insights).toHaveAttribute('aria-pressed', 'false')

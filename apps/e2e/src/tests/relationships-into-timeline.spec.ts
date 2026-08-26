@@ -1,18 +1,20 @@
 import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
-// Covers AC-U11 / AC-U12 / AC-T6 / AC-T7 / AC-T8 — the relationships-into-the-timeline
-// surface. Verifies that:
-//  - a linked object appears inline in the activity timeline at the edge's
-//    created_at, not the linked object's own created_at (AC-T6);
-//  - the Timeline ↔ Table toggle round-trips through `user_display_settings`
-//    and survives a fresh page navigation (AC-T7);
-//  - a relationship created after the page is open shows up via the existing
-//    SSE invalidation channel without a manual reload (AC-T8).
+// Covers AC-U11 / AC-T6 / AC-T8 — relationships projected into the object's
+// activity timeline. The rebuilt object-detail shell keeps the projection (a
+// linked object renders as a timeline row at the edge's created_at) and keeps
+// SSE invalidation, but retires the legacy Timeline ⇄ Table "Relationship
+// view" radio group of AC-U12 / AC-T7: the shell's own Timeline | Related
+// segmented control replaces it, and is covered by
+// object-detail-properties.spec.ts.
 
-test.describe('Relationships into the timeline (AC-U11/U12)', () => {
+test.describe('Relationships into the timeline (AC-U11)', () => {
 	for (const viewport of SHIP_GATE_VIEWPORTS) {
-		test(`projects, toggles, and reloads at ${viewport.label}`, async ({ page, account }) => {
+		test(`projects linked objects and picks up late edges at ${viewport.label}`, async ({
+			page,
+			account,
+		}) => {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height })
 
 			const bet = await account.api.createObject(account.workspaceId, {
@@ -34,41 +36,22 @@ test.describe('Relationships into the timeline (AC-U11/U12)', () => {
 			})
 
 			await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
-			await expect(page.getByText('Relationships timeline bet')).toBeVisible({ timeout: 10000 })
+			await expect(
+				page.getByRole('heading', { level: 1, name: 'Relationships timeline bet' }),
+			).toBeVisible({ timeout: 10000 })
 
-			// The linked insight also appears in the dedicated Related objects
-			// section (added back alongside Activity) — scope every assertion
-			// below to the Activity surface so that section's own copy of the
-			// same link/badge text doesn't make these locators ambiguous.
-			const activity = page.getByTestId('object-activity')
+			// AC-U11 / AC-T6: the linked insight appears as a timeline row. The
+			// Timeline tab is the default, and Radix keeps the Related tab's
+			// content unmounted, so this link can only come from the projection.
+			await expect(page.getByRole('link', { name: /Inform-relationship insight/ })).toBeVisible({
+				timeout: 10000,
+			})
 
-			// AC-U11: the linked insight appears as a timeline row.
-			const insightLink = activity.getByRole('link', { name: /Inform-relationship insight/ })
-			await expect(insightLink).toBeVisible({ timeout: 10000 })
+			// The legacy Timeline ⇄ Table radio group is gone for good.
+			await expect(page.getByRole('group', { name: 'Relationship view' })).toHaveCount(0)
 
-			// AC-U12 + AC-T7: toggle to Table — choice persists across reload.
-			// The sr-only radio is fully controlled: its checked prop flips only
-			// after the display-settings mutation's optimistic cache write
-			// re-renders. `check()` asserts the state once, synchronously after
-			// the click, and races that re-render — so click the wrapping
-			// <label> and let the retrying `toBeChecked()` absorb the update.
-			const viewToggle = activity.getByRole('group', { name: 'Relationship view' })
-			await viewToggle.getByText('table', { exact: true }).click()
-			await expect(viewToggle.getByRole('radio', { name: /table/i })).toBeChecked()
-
-			await page.reload()
-			await expect(page.getByText('Relationships timeline bet')).toBeVisible({ timeout: 10000 })
-			await expect(activity.getByRole('radio', { name: /table/i })).toBeChecked()
-			// Edge-type heading is what makes Table view visually distinct.
-			await expect(activity.getByText(/informs/i).first()).toBeVisible()
-
-			// Toggle back to Timeline so the SSE assertion below targets the
-			// inline projection, not the table.
-			await viewToggle.getByText('timeline', { exact: true }).click()
-			await expect(viewToggle.getByRole('radio', { name: /timeline/i })).toBeChecked()
-
-			// AC-T8: a new relationship POSTed after the page is open appears
-			// without a manual reload via the existing SSE invalidation channel.
+			// AC-T8: a relationship POSTed after the page is open shows up through
+			// the existing SSE invalidation channel, with no manual reload.
 			const lateChild = await account.api.createObject(account.workspaceId, {
 				type: 'task',
 				title: 'Late-linked task',
@@ -82,7 +65,7 @@ test.describe('Relationships into the timeline (AC-U11/U12)', () => {
 				type: 'breaks_into',
 			})
 
-			await expect(activity.getByRole('link', { name: /Late-linked task/ })).toBeVisible({
+			await expect(page.getByRole('link', { name: /Late-linked task/ })).toBeVisible({
 				timeout: 10000,
 			})
 		})

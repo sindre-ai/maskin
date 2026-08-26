@@ -1,3 +1,7 @@
+// PRE-V2 COMPONENT — governed by the `new-design` feature flag. Rendered only
+// by `legacy/objects-page.tsx` / the pre-v2 object detail branch when the flag
+// is off. This directory dies with the flag; edit the v2 component instead.
+
 import { AgentWorkingBadge } from '@/components/shared/agent-working-badge'
 import { IndicatorBadgeRow } from '@/components/shared/indicator-badge'
 import { RelativeTime } from '@/components/shared/relative-time'

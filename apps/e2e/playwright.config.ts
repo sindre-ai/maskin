@@ -7,6 +7,11 @@ import { isArgosEnabled } from './src/helpers/argos.helper'
 // round-trips) when there's nothing it can successfully do.
 const reporters: NonNullable<Parameters<typeof defineConfig>[0]['reporter']> = [['html']]
 if (process.env.CI) {
+	// Streams each test and each failure to the job log as it happens. The JSON
+	// report below is only written at the end of the run, so a shard killed by
+	// the job's `timeout-minutes` cap uploads nothing and its failures are
+	// otherwise invisible — this is the only record that survives a cancel.
+	reporters.push(['line'])
 	// Playwright's Multiplexer runs each reporter's onEnd in array order and
 	// awaits each before moving to the next — so this JSON report is fully
 	// written to disk before SafeArgosReporter's onEnd (below) ever starts.
