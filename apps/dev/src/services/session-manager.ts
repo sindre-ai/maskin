@@ -93,6 +93,7 @@ import {
 	resolveLlmRoute,
 } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
+import { detectUnhealthyMcpServers, formatUnhealthyMcpWarning } from '../lib/mcp-health'
 import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
 import {
 	AgentServerAuthError,
@@ -2304,6 +2305,7 @@ export class SessionManager extends EventEmitter {
 						lastChunkAt = Date.now()
 						if (chunk.stream === 'stdout') {
 							await this.emitGithubCauseTagIfAny(sessionId, chunk.data)
+							await this.emitUnhealthyMcpWarningIfAny(sessionId, chunk.data)
 						}
 						const [log] = await this.db
 							.insert(sessionLogs)
@@ -3994,6 +3996,7 @@ export class SessionManager extends EventEmitter {
 		for (const line of lines) {
 			if (line.stream === 'stdout') {
 				await this.emitGithubCauseTagIfAny(sessionId, line.content)
+				await this.emitUnhealthyMcpWarningIfAny(sessionId, line.content)
 			}
 			const [log] = await this.db
 				.insert(sessionLogs)
@@ -4034,6 +4037,33 @@ export class SessionManager extends EventEmitter {
 				}
 			} catch (err) {
 				logger.warn('github log classifier failed for a line', {
+					sessionId,
+					error: err instanceof Error ? err.message : String(err),
+				})
+			}
+		}
+	}
+
+	/**
+	 * Surface MCP servers that never connected, from the runtime's own `init`
+	 * envelope. A server stuck at "pending"/"failed" contributes no tools, and
+	 * nothing else in the pipeline notices — the agent simply finds the
+	 * capability missing and tells the user it was never wired, while the
+	 * service behind it looks healthy everywhere else. Emitting a `system` log
+	 * makes it visible to both the user and the agent. Errors are swallowed: a
+	 * health-check hiccup must not drop the original log write.
+	 */
+	private async emitUnhealthyMcpWarningIfAny(sessionId: string, chunk: string): Promise<void> {
+		if (chunk.length === 0) return
+		for (const line of chunk.split('\n')) {
+			if (line.length === 0) continue
+			try {
+				const unhealthy = detectUnhealthyMcpServers(line)
+				if (!unhealthy) continue
+				logger.warn('MCP servers did not connect for session', { sessionId, servers: unhealthy })
+				await this.insertSystemLog(sessionId, formatUnhealthyMcpWarning(unhealthy))
+			} catch (err) {
+				logger.warn('mcp health check failed for a line', {
 					sessionId,
 					error: err instanceof Error ? err.message : String(err),
 				})

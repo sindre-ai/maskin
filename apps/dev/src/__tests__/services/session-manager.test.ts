@@ -3060,6 +3060,55 @@ describe('SessionManager', () => {
 		})
 	})
 
+	describe('appendRemoteSessionLogs() — unhealthy MCP server warning', () => {
+		function initLine(servers: Array<{ name: string; status: string }>) {
+			return JSON.stringify({ type: 'system', subtype: 'init', mcp_servers: servers })
+		}
+
+		function systemInserts() {
+			return calls.inserts.filter(
+				(row): row is { stream: string; content: string } =>
+					typeof row === 'object' &&
+					row !== null &&
+					(row as { stream?: string }).stream === 'system',
+			)
+		}
+
+		// The production failure: the browser sidecar attached fine, but the
+		// playwright MCP server never connected, so the agent had no browser
+		// tools and nothing anywhere said so.
+		it('writes a system log naming a server that never connected', async () => {
+			const sessionId = randomUUID()
+			await manager.appendRemoteSessionLogs(sessionId, [
+				{
+					stream: 'stdout',
+					content: `${initLine([
+						{ name: 'maskin', status: 'connected' },
+						{ name: 'playwright', status: 'pending' },
+					])}
+`,
+				},
+			])
+
+			const warnings = systemInserts().filter((r) => r.content.includes('did not connect'))
+			expect(warnings).toHaveLength(1)
+			expect(warnings[0].content).toContain('playwright (pending)')
+			expect(warnings[0].content).not.toContain('maskin')
+		})
+
+		it('stays silent when every server connected', async () => {
+			const sessionId = randomUUID()
+			await manager.appendRemoteSessionLogs(sessionId, [
+				{
+					stream: 'stdout',
+					content: `${initLine([{ name: 'maskin', status: 'connected' }])}
+`,
+				},
+			])
+			expect(systemInserts().filter((r) => r.content.includes('did not connect'))).toHaveLength(0)
+		})
+	})
+
 	describe('appendRemoteSessionLogs() — github tool-call cause_tag tagging', () => {
 		// The classifier singleton is process-wide; import lazily so the mock
 		// setup at the top of the file has taken effect first.
