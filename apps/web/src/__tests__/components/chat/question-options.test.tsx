@@ -83,6 +83,45 @@ describe('QuestionOptions', () => {
 		expect(screen.getByRole('button', { name: 'Send answer' })).toBeEnabled()
 	})
 
+	it('keeps two questions independent when they share a header', async () => {
+		// Nothing makes headers unique — the schema validates each one on its own,
+		// and the hook defaults an unheadered question to the literal 'Question',
+		// so two unheadered questions always collide. Header-keyed state made one
+		// click select both and let a single pick satisfy the whole set.
+		sendMutate.mockClear()
+		const user = userEvent.setup()
+		renderOptions({
+			...QUESTION,
+			questions: [
+				{
+					question: 'Which environment?',
+					header: 'Question',
+					multi_select: false,
+					options: [{ label: 'Staging' }, { label: 'Production' }],
+				},
+				{
+					question: 'Which region?',
+					header: 'Question',
+					multi_select: false,
+					options: [{ label: 'Oslo' }, { label: 'Helsinki' }],
+				},
+			],
+		})
+
+		await user.click(screen.getByRole('button', { name: 'Staging' }))
+		// A collision would satisfy both questions off this one click.
+		expect(screen.getByRole('button', { name: 'Send answer' })).toBeDisabled()
+		expect(screen.getByRole('button', { name: 'Oslo' })).toHaveAttribute('aria-pressed', 'false')
+
+		await user.click(screen.getByRole('button', { name: 'Oslo' }))
+		await user.click(screen.getByRole('button', { name: 'Send answer' }))
+
+		expect(sendMutate.mock.calls[0]?.[0].metadata.question_answer.answers).toEqual([
+			{ header: 'Question', selected: ['Staging'] },
+			{ header: 'Question', selected: ['Oslo'] },
+		])
+	})
+
 	it('replaces the pick on a single-select question', async () => {
 		const user = userEvent.setup()
 		renderOptions()

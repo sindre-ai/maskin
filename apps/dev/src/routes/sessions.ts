@@ -640,6 +640,10 @@ const askSessionRoute = createRoute({
 			content: { 'application/json': { schema: errorSchema } },
 			description: 'Session is not an interactive chat session',
 		},
+		500: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Question could not be persisted',
+		},
 	},
 })
 
@@ -679,8 +683,19 @@ app.openapi(askSessionRoute, (async (c) => {
 		sessionId: session.id,
 	})
 
+	// insertConversationMessage returns null only when a unique constraint
+	// suppressed the insert. This caller carries no dedupe key, so there is no
+	// conflict it can legitimately lose — null means something unexpected fired
+	// and the question is gone. It must NOT return 409: that is the status the
+	// hook reads as "expected, autonomous session, stay quiet", which would bury
+	// a real fault in the one branch nobody investigates.
 	if (!created) {
-		return c.json(createApiError('CONFLICT', 'Question could not be posted'), 409)
+		logger.error('Agent question insert returned no row', {
+			sessionId: session.id,
+			conversationId: session.conversationId,
+			questionCount: questions.length,
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Question could not be posted'), 500)
 	}
 
 	logger.info('Posted agent question into conversation', {

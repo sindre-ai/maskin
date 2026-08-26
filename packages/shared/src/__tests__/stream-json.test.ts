@@ -189,6 +189,33 @@ describe('scanTurnLine', () => {
 		).toEqual({ kind: 'other' })
 	})
 
+	it('treats an AskUserQuestion call as the turn boundary', () => {
+		// The PreToolUse hook posts that question into the chat itself and tells
+		// the agent to close the turn without a closing message — which blanks the
+		// result envelope and triggers the recovery scan. Walking past the tool
+		// call would recover the narration that led up to it and stack a stale
+		// bubble under the question chips on every single ask.
+		expect(
+			scanTurnLine(
+				assistantLine([
+					{ type: 'text', text: 'Let me check which option you would prefer.' },
+					{ type: 'tool_use', name: 'AskUserQuestion', id: 'call_1', input: {} },
+				]),
+			),
+		).toEqual({ kind: 'boundary' })
+	})
+
+	it('does not treat an unrelated tool call as the turn boundary', () => {
+		expect(
+			scanTurnLine(
+				assistantLine([
+					{ type: 'text', text: 'reading the file' },
+					{ type: 'tool_use', name: 'Read', id: 'call_2', input: {} },
+				]),
+			),
+		).toEqual({ kind: 'assistant_text', text: 'reading the file' })
+	})
+
 	it('returns other for malformed or non-JSON lines', () => {
 		expect(scanTurnLine('not json')).toEqual({ kind: 'other' })
 		expect(scanTurnLine('{oops')).toEqual({ kind: 'other' })

@@ -35,28 +35,30 @@ export function QuestionOptions({
 	question,
 	answered,
 }: QuestionOptionsProps) {
-	// header -> chosen labels. Keyed by header because that is what the answer
-	// payload carries back, and it is what the agent sees in its next turn.
-	const [picked, setPicked] = useState<Record<string, string[]>>({})
+	// question index -> chosen labels. Deliberately NOT keyed by header: nothing
+	// makes headers unique (the schema validates each one independently, and the
+	// hook defaults every unheadered question to the literal "Question"), so two
+	// colliding headers would share one state entry — one click selecting both
+	// questions, and `allAnswered` passing on a single pick. The header is still
+	// what goes back out in the answer payload; it is just not an identity.
+	const [picked, setPicked] = useState<Record<number, string[]>>({})
 	const sendMessage = useSendMessage(conversationId, workspaceId)
 
 	if (answered) return null
 
-	const toggle = (q: MessageQuestionItem, label: string) => {
+	const toggle = (q: MessageQuestionItem, index: number, label: string) => {
 		setPicked((prev) => {
-			const current = prev[q.header] ?? []
-			if (!q.multi_select) return { ...prev, [q.header]: [label] }
+			const current = prev[index] ?? []
+			if (!q.multi_select) return { ...prev, [index]: [label] }
 			return {
 				...prev,
-				[q.header]: current.includes(label)
-					? current.filter((l) => l !== label)
-					: [...current, label],
+				[index]: current.includes(label) ? current.filter((l) => l !== label) : [...current, label],
 			}
 		})
 	}
 
 	const answers = question.questions
-		.map((q) => ({ header: q.header, selected: picked[q.header] ?? [] }))
+		.map((q, i) => ({ header: q.header, selected: picked[i] ?? [] }))
 		.filter((a) => a.selected.length > 0)
 	const allAnswered = answers.length === question.questions.length
 
@@ -66,7 +68,7 @@ export function QuestionOptions({
 		// alongside the pick — the agent's next turn arrives without the chip UI's
 		// context, and "API token" alone would be ambiguous across two questions.
 		const content = question.questions
-			.map((q) => `**${q.header}** — ${q.question}\n${(picked[q.header] ?? []).join(', ')}`)
+			.map((q, i) => `**${q.header}** — ${q.question}\n${(picked[i] ?? []).join(', ')}`)
 			.join('\n\n')
 		sendMessage.mutate({
 			content,
@@ -76,10 +78,14 @@ export function QuestionOptions({
 
 	return (
 		<div className="mt-2 flex flex-col gap-3">
-			{question.questions.map((q) => {
-				const chosen = picked[q.header] ?? []
+			{question.questions.map((q, index) => {
+				const chosen = picked[index] ?? []
 				return (
-					<fieldset key={q.header} className="flex flex-col gap-1.5 border-0 p-0">
+					// Index as key for the same reason the state is index-keyed: headers
+					// are not unique, and the list is a fixed snapshot from one immutable
+					// message that never reorders.
+					// biome-ignore lint/suspicious/noArrayIndexKey: headers are not unique
+					<fieldset key={index} className="flex flex-col gap-1.5 border-0 p-0">
 						<legend className="eyebrow">{q.header}</legend>
 						<p className="text-[13.5px] leading-[1.5] text-foreground">{q.question}</p>
 						<ul className="flex list-none flex-wrap gap-1.5 p-0">
@@ -91,7 +97,7 @@ export function QuestionOptions({
 											type="button"
 											aria-pressed={isChosen}
 											title={option.description || undefined}
-											onClick={() => toggle(q, option.label)}
+											onClick={() => toggle(q, index, option.label)}
 											className={cn(
 												'inline-flex max-w-full items-center gap-1.5 rounded-[9px] border px-2.5 py-1.5 text-left text-[12.5px] font-semibold transition-colors',
 												isChosen

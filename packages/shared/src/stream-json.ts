@@ -97,6 +97,9 @@ export function parseResultLine(line: string): StreamJsonResult | null {
  *  - a `user` envelope carrying `maskin_message_id` is this turn's opening
  *    message, persisted by SessionManager.writeInput.
  *
+ *  - an `assistant` line calling AskUserQuestion, whose question the hook has
+ *    already posted into the chat as its own message.
+ *
  * Two shapes deliberately are NOT boundaries. A `user` envelope without that
  * tag is either a tool_result fed back mid-turn or a seeded first turn, and a
  * `result` carrying `parent_tool_use_id` closes a sub-agent's run rather than
@@ -119,6 +122,8 @@ export type StreamJsonScanLine =
  * 'other' — surfacing one would leak a sub-agent's internal answer into the
  * chat, the same reason parseResultLine rejects them.
  */
+export const ASK_USER_QUESTION_TOOL = 'AskUserQuestion'
+
 export function scanTurnLine(line: string): StreamJsonScanLine {
 	const trimmed = line.trim()
 	if (!trimmed || trimmed[0] !== '{') return { kind: 'other' }
@@ -150,6 +155,26 @@ export function scanTurnLine(line: string): StreamJsonScanLine {
 	if (!message || typeof message !== 'object') return { kind: 'other' }
 	const content = (message as Record<string, unknown>).content
 	if (!Array.isArray(content)) return { kind: 'other' }
+
+	// An AskUserQuestion call ends the scan. The PreToolUse hook posts that
+	// question into the chat as its own message and tells the agent to close the
+	// turn without a closing message — which blanks the `result` envelope and so
+	// triggers this very scan. Without a boundary here the walk would continue
+	// past the tool call and recover the narration that led up to it ("let me
+	// check which option you'd prefer…"), posting a stale bubble underneath the
+	// question chips on every single ask. Anything the agent said before asking
+	// belongs to the question, not to a reply.
+	if (
+		content.some(
+			(block) =>
+				!!block &&
+				typeof block === 'object' &&
+				(block as { type?: unknown }).type === 'tool_use' &&
+				(block as { name?: unknown }).name === ASK_USER_QUESTION_TOOL,
+		)
+	) {
+		return { kind: 'boundary' }
+	}
 
 	// One streamed `assistant` line can carry several blocks; join the text ones
 	// in order and let the caller decide whether the result is worth posting.
