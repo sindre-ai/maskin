@@ -1,11 +1,10 @@
 import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
-// The rebuilt object-detail shell (bet/object-detail, T1) does not yet
-// render the commitment card — commitment metadata surfaces as key/value
-// rows in the body (metadata-badges formatValue path) and the raw status in
-// the identity-row status control. The card itself is pinned as an absence
-// contract until a later task wires it into the shell.
+// The rebuilt object-detail shell renders the commitment card (a
+// `data-testid="commitment-card"` section) above the body, with floor and
+// cadence as definition rows inside it. The title is an editable textarea,
+// not a heading, and the raw status lives in the identity-row status control.
 
 test.describe('Commitment object on the rebuilt detail surface', () => {
 	for (const viewport of SHIP_GATE_VIEWPORTS) {
@@ -26,9 +25,10 @@ test.describe('Commitment object on the rebuilt detail surface', () => {
 			})
 
 			await page.goto(`/${account.workspaceId}/objects/${commitment.id}`)
-			await expect(
-				page.getByRole('heading', { level: 1, name: 'Customer bugs fixed <1 day' }),
-			).toBeVisible({ timeout: 10000 })
+			await expect(page.getByRole('textbox', { name: 'Untitled' })).toHaveValue(
+				'Customer bugs fixed <1 day',
+				{ timeout: 10000 },
+			)
 
 			// Raw status in the identity-row status control.
 			const statusControl = page
@@ -37,14 +37,13 @@ test.describe('Commitment object on the rebuilt detail surface', () => {
 				.first()
 			await expect(statusControl).toHaveText('holding')
 
-			// Metadata renders as body key/value rows (floor, cadence). The
+			// Floor and cadence render as definition rows inside the card. The
 			// values use exact matching — 'weekly' is a substring of the
 			// breached-test title, so non-exact getByText would strict-collide.
-			await expect(page.getByText('<1 day median', { exact: true })).toBeVisible()
-			await expect(page.getByText('weekly', { exact: true })).toBeVisible()
-
-			// The commitment card is not part of the T1 shell yet.
-			await expect(page.getByTestId('commitment-card')).toHaveCount(0)
+			const card = page.getByTestId('commitment-card')
+			await expect(card).toBeVisible()
+			await expect(card.getByText('<1 day median', { exact: true })).toBeVisible()
+			await expect(card.getByText('weekly', { exact: true })).toBeVisible()
 		})
 	}
 
@@ -66,19 +65,20 @@ test.describe('Commitment object on the rebuilt detail surface', () => {
 		})
 
 		await page.goto(`/${account.workspaceId}/objects/${commitment.id}`)
-		await expect(page.getByRole('heading', { level: 1, name: 'Weekly ship cadence' })).toBeVisible({
-			timeout: 10000,
-		})
+		await expect(page.getByRole('textbox', { name: 'Untitled' })).toHaveValue(
+			'Weekly ship cadence',
+			{ timeout: 10000 },
+		)
 
 		const statusControl = page
 			.getByRole('combobox')
 			.filter({ hasNotText: /driver/i })
 			.first()
 		await expect(statusControl).toHaveText('breached')
-		await expect(page.getByText('1 ship / week', { exact: true })).toBeVisible()
-		await expect(page.getByText('weekly', { exact: true })).toBeVisible()
 
-		// The commitment card is not part of the T1 shell yet.
-		await expect(page.getByTestId('commitment-card')).toHaveCount(0)
+		const card = page.getByTestId('commitment-card')
+		await expect(card).toBeVisible()
+		await expect(card.getByText('1 ship / week', { exact: true })).toBeVisible()
+		await expect(card.getByText('weekly', { exact: true })).toBeVisible()
 	})
 })
