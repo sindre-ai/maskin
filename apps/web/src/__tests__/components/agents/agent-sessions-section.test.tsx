@@ -72,7 +72,7 @@ describe('AgentSessionsSection', () => {
 				actionPrompt: 'Already finished',
 			}),
 		])
-		render(<AgentSessionsSection agent={agent} />, { wrapper: createWorkspaceWrapper() });
+		render(<AgentSessionsSection agent={agent} />, { wrapper: createWorkspaceWrapper() })
 		expect(screen.queryByRole('button', { name: /restart/i })).not.toBeInTheDocument()
 	})
 
