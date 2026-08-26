@@ -25,6 +25,7 @@ import {
 	type SessionResult,
 	type SessionResultFailureReason,
 	githubOwnerLoginToEnvKey,
+	splitLines,
 } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import {
@@ -120,6 +121,12 @@ import { buildWorkspaceStartupBlock, renderWorkspaceBriefing } from './workspace
  * stable group-by key from day one.
  */
 const LOCAL_RUNTIME_BUCKET = 'local-docker'
+
+/**
+ * Guards the MCP health check's partial-line buffer against a stdout stream
+ * that never emits a newline. Matches InteractiveTurnFinalizer's cap.
+ */
+const MAX_BUFFERED_MCP_HEALTH_BYTES = 256 * 1024
 
 /**
  * Mirrors the allowlist regex enforced on the API side by
@@ -346,6 +353,25 @@ export class SessionManager extends EventEmitter {
 	 * without standing up Docker.
 	 */
 	readonly turnFinalizer: InteractiveTurnFinalizer
+
+	/**
+	 * sessionId -> trailing partial stdout line carried over from the last
+	 * chunk, for the MCP health check. Docker delivers chunks, not lines, and
+	 * the runtime's `init` envelope — the only line this check cares about —
+	 * is emitted exactly once per session and is one of the largest it ever
+	 * writes, so it is a prime candidate to straddle a chunk boundary. Without
+	 * carrying the remainder, both halves fail to parse and the warning is
+	 * lost permanently. Mirrors InteractiveTurnFinalizer's buffering.
+	 */
+	private readonly mcpHealthBuffers = new Map<string, string>()
+
+	/**
+	 * Sessions that have already had their MCP health reported. The init line
+	 * is replayed whenever the log stream re-attaches (`tail: 'all'` on resume,
+	 * `sinceUnixSec` overlap after a transient drop), and the warning should
+	 * read once per session, not once per reconnect.
+	 */
+	private readonly mcpHealthReported = new Set<string>()
 
 	constructor(
 		private db: Database,
@@ -4054,14 +4080,42 @@ export class SessionManager extends EventEmitter {
 	 * health-check hiccup must not drop the original log write.
 	 */
 	private async emitUnhealthyMcpWarningIfAny(sessionId: string, chunk: string): Promise<void> {
-		if (chunk.length === 0) return
-		for (const line of chunk.split('\n')) {
+		if (chunk.length === 0 || this.mcpHealthReported.has(sessionId)) return
+
+		let lines: string[]
+		try {
+			const carried = this.mcpHealthBuffers.get(sessionId) ?? ''
+			const split = splitLines(carried + chunk)
+			lines = split.lines
+			const { remainder } = split
+			if (remainder.length > MAX_BUFFERED_MCP_HEALTH_BYTES) {
+				// A stream that never emits a newline must not eat memory. The
+				// init line comes first in a session, so a remainder this large
+				// means we are long past it and nothing is left to detect.
+				this.mcpHealthBuffers.delete(sessionId)
+			} else if (remainder) {
+				this.mcpHealthBuffers.set(sessionId, remainder)
+			} else {
+				this.mcpHealthBuffers.delete(sessionId)
+			}
+		} catch (err) {
+			logger.warn('mcp health line buffering failed', {
+				sessionId,
+				error: err instanceof Error ? err.message : String(err),
+			})
+			return
+		}
+
+		for (const line of lines) {
 			if (line.length === 0) continue
 			try {
 				const unhealthy = detectUnhealthyMcpServers(line)
 				if (!unhealthy) continue
+				this.mcpHealthReported.add(sessionId)
+				this.mcpHealthBuffers.delete(sessionId)
 				logger.warn('MCP servers did not connect for session', { sessionId, servers: unhealthy })
 				await this.insertSystemLog(sessionId, formatUnhealthyMcpWarning(unhealthy))
+				return
 			} catch (err) {
 				logger.warn('mcp health check failed for a line', {
 					sessionId,
@@ -4479,6 +4533,8 @@ export class SessionManager extends EventEmitter {
 
 	private async clearActiveSession(sessionId: string): Promise<void> {
 		this.turnFinalizer.forgetSession(sessionId)
+		this.mcpHealthBuffers.delete(sessionId)
+		this.mcpHealthReported.delete(sessionId)
 		await this.db
 			.update(objects)
 			.set({ activeSessionId: null, updatedAt: new Date() })

@@ -3060,7 +3060,7 @@ describe('SessionManager', () => {
 		})
 	})
 
-	describe('appendRemoteSessionLogs() — unhealthy MCP server warning', () => {
+	describe('unhealthy MCP server warning', () => {
 		function initLine(servers: Array<{ name: string; status: string }>) {
 			return JSON.stringify({ type: 'system', subtype: 'init', mcp_servers: servers })
 		}
@@ -3094,6 +3094,53 @@ describe('SessionManager', () => {
 			expect(warnings).toHaveLength(1)
 			expect(warnings[0].content).toContain('playwright (pending)')
 			expect(warnings[0].content).not.toContain('maskin')
+		})
+
+		// Regression guard: Docker delivers chunks, not lines. The init envelope
+		// is emitted exactly once per session and is one of the largest lines
+		// the runtime writes, so it can straddle a chunk boundary. Before the
+		// remainder buffer, both halves failed to parse and the warning — the
+		// entire point of this check — was lost with no trace.
+		it('still warns when the init line is split across two chunks', async () => {
+			const sessionId = randomUUID()
+			const line = `${initLine([
+				{ name: 'maskin', status: 'connected' },
+				{ name: 'playwright', status: 'pending' },
+			])}
+`
+			const cut = Math.floor(line.length / 2)
+			const emit = (
+				manager as unknown as {
+					emitUnhealthyMcpWarningIfAny: (id: string, chunk: string) => Promise<void>
+				}
+			).emitUnhealthyMcpWarningIfAny.bind(manager)
+
+			await emit(sessionId, line.slice(0, cut))
+			expect(systemInserts().filter((r) => r.content.includes('did not connect'))).toHaveLength(0)
+
+			await emit(sessionId, line.slice(cut))
+			const warnings = systemInserts().filter((r) => r.content.includes('did not connect'))
+			expect(warnings).toHaveLength(1)
+			expect(warnings[0].content).toContain('playwright (pending)')
+		})
+
+		// The stream re-attaches with `tail: 'all'` on resume and with a ~1s
+		// `since` overlap after a transient drop, so the init line is replayed.
+		// The warning should read once per session, not once per reconnect.
+		it('warns only once when the init line is replayed', async () => {
+			const sessionId = randomUUID()
+			const chunk = `${initLine([{ name: 'playwright', status: 'pending' }])}
+`
+			const emit = (
+				manager as unknown as {
+					emitUnhealthyMcpWarningIfAny: (id: string, chunk: string) => Promise<void>
+				}
+			).emitUnhealthyMcpWarningIfAny.bind(manager)
+
+			await emit(sessionId, chunk)
+			await emit(sessionId, chunk)
+
+			expect(systemInserts().filter((r) => r.content.includes('did not connect'))).toHaveLength(1)
 		})
 
 		it('stays silent when every server connected', async () => {
