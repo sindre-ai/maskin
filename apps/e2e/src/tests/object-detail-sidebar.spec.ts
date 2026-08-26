@@ -39,8 +39,11 @@ test.describe('Object detail — no legacy properties sidebar', () => {
 			// of its contents are mounted on first paint: no Files section, no
 			// Metadata "+ Add property" trigger. (The page bar's Properties toggle
 			// that opens it is covered by object-detail-properties.spec.ts.)
-			await expect(page.getByRole('heading', { name: /^Files \(/ })).toHaveCount(0)
-			await expect(page.getByRole('button', { name: /add property/i })).toHaveCount(0)
+			// At >=768 the inline drawer stays mounted and slides off-canvas while
+			// collapsed, so it keeps a bounding box — assert it is off screen rather
+			// than absent or `hidden`.
+			await expect(page.getByRole('heading', { name: /^Files \(/ })).not.toBeInViewport()
+			await expect(page.getByRole('button', { name: /add property/i })).not.toBeInViewport()
 		})
 	}
 })

@@ -55,8 +55,9 @@ test.describe('Object detail shell — document sections', () => {
 
 			// Body: content, kv rows from public metadata.
 			await expect(page.getByText(/Paragraph of context/)).toBeVisible()
-			await expect(page.getByText('priority')).toBeVisible()
-			await expect(page.getByText('high')).toBeVisible()
+			// The metadata badge row echoes the same key, so scope to the kv term.
+			await expect(page.getByRole('term').filter({ hasText: /^priority$/ })).toBeVisible()
+			await expect(page.getByRole('definition').filter({ hasText: /^high$/ })).toBeVisible()
 
 			// Document fold: title visible, markdown hidden until opened.
 			await expect(page.getByText(FOLD_TITLE)).toBeVisible()

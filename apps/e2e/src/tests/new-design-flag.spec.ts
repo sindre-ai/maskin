@@ -59,6 +59,9 @@ test.describe('new-design flag — off renders the pre-v2 Objects surfaces', () 
 		})
 
 		await page.goto(`/${account.workspaceId}/objects`)
+		// Status groups rest collapsed, so leaf titles are not rendered until the
+		// group holding the seeded bet is opened.
+		await page.getByRole('button', { name: /^active \d+$/ }).click()
 		await page.getByText('Flag-off list bet').first().click()
 		await expect(page).toHaveURL(new RegExp(`/objects/${bet.id}`))
 		await expect(page.getByRole('tab', { name: 'Timeline' })).toHaveCount(0)
