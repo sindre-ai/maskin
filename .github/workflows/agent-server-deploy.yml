@@ -31,6 +31,19 @@ jobs:
             git reset --hard origin/main
 
             pnpm install --frozen-lockfile
+
+            # Pin the commit being deployed into the build's cache key.
+            #
+            # build.mjs bakes this SHA into dist/index.js as maskin_build_info's
+            # `commit` label. It would resolve the same value on its own via
+            # `git rev-parse HEAD` (we build inside the work tree, just after
+            # the reset above) — but git HEAD is invisible to turbo, so without
+            # this export a source tree identical to an earlier build replays
+            # that build's cached bundle, carrying the OLDER commit. Exported
+            # here and declared in apps/agent-server/turbo.json `env`, so a new
+            # commit always misses the cache.
+            export MASKIN_COMMIT_SHA="$(git rev-parse HEAD)"
+
             pnpm turbo run build --filter=@maskin/agent-server...
 
             # Sync the systemd unit from the repo before restarting.

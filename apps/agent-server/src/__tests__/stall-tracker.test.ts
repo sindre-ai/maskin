@@ -233,6 +233,36 @@ describe('StallTracker — lifecycle', () => {
 		expect(tracker.unobserved()).toBe(1)
 		expect(tracker.tracked()).toBe(1)
 	})
+
+	it('stops treating a reattached session as unobserved once it takes a turn', () => {
+		// The blind spot is a window, not a life sentence. The turn being enqueued
+		// here is history THIS process owns, so the arms can judge the session from
+		// now on. Without this, a survivor of a redeploy stays exempt from every
+		// arm for its whole life (up to SESSION_MAX_DURATION, several deploys) —
+		// detection silently off in exactly the deploy-during-an-incident window.
+		const { tracker, advance } = makeTracker()
+		tracker.trackSession('survivor', { interactive: true, reattached: true })
+
+		tracker.turnEnqueued('survivor', 1)
+		expect(tracker.unobserved()).toBe(0)
+
+		// ...and it now wedges: turn enqueued, never acked.
+		advance(60_000)
+		expect(tracker.counts()).toEqual({ never_seeded: 0, undelivered: 1, no_output: 0 })
+	})
+
+	it('judges a reattached session that reconcile assumed was non-interactive', () => {
+		// reconcileOnBoot cannot know whether a survivor is interactive, so it
+		// registers `interactive: false`. Taking a turn proves otherwise — and the
+		// arms that matter for a wedge must not stay disabled on that stale guess.
+		const { tracker, advance } = makeTracker()
+		tracker.trackSession('survivor', { interactive: false, reattached: true })
+
+		tracker.turnEnqueued('survivor', 1)
+		tracker.turnAcked('survivor', 1)
+		advance(60_000)
+		expect(tracker.counts()).toEqual({ never_seeded: 0, undelivered: 0, no_output: 1 })
+	})
 })
 
 describe('StallTracker — counting', () => {

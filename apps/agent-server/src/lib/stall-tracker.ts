@@ -62,6 +62,11 @@
  * firing alert that clears after a deploy is NOT evidence of a fix; see
  * observability/README.md.
  *
+ * The blind spot is a window, not a life sentence: `turnEnqueued` clears the
+ * flag, because the turn it is recording is history this process owns. A
+ * reattached session that goes on to take a turn and then wedges is caught
+ * normally.
+ *
  * The clock is injected rather than read from `Date.now()` inline, so
  * threshold tests are deterministic without fake timers — same pattern as
  * guest-log-stream.ts.
@@ -142,10 +147,23 @@ export class StallTracker {
 		})
 	}
 
-	/** A user turn was handed to InputQueue. Opens the pending window. */
+	/**
+	 * A user turn was handed to InputQueue. Opens the pending window.
+	 *
+	 * This also ends the reattach blind spot: a session reconcileOnBoot adopted
+	 * has no turn history in this process, but the turn being enqueued right now
+	 * *is* history this process owns, so from here the arms can judge it. Without
+	 * this the flag would never clear and a survivor of a redeploy would sit in
+	 * `unobserved()` for its whole life (up to SESSION_MAX_DURATION, several
+	 * deploys) — silently exempt from detection in exactly the deploy-during-an-
+	 * incident window the tracker exists for. Taking a turn also proves the
+	 * session is interactive, whatever reconcile had to assume at boot.
+	 */
 	turnEnqueued(sessionId: string, seq: number): void {
 		const s = this.sessions.get(sessionId)
 		if (!s) return
+		s.reattached = false
+		s.interactive = true
 		s.enqueuedSeq = Math.max(s.enqueuedSeq, seq)
 		if (s.turnPendingSince === null) {
 			s.turnPendingSince = this.now()
