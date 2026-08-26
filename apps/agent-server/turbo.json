@@ -1,0 +1,27 @@
+{
+	"$schema": "https://turbo.build/schema.json",
+	"extends": ["//"],
+	"tasks": {
+		// MASKIN_COMMIT_SHA is a hash input here, NOT just a passthrough.
+		//
+		// build.mjs bakes the commit into dist/index.js as a compile-time
+		// constant, so the SHA is part of the OUTPUT — but it is not part of the
+		// source tree, and git HEAD is not a task input at all. Listed only in
+		// the root's globalPassThroughEnv (deliberately excluded from the hash),
+		// turbo replays a cached bundle whenever agent-server's sources hash
+		// identically to an earlier build — a revert-then-redeploy, a re-run of a
+		// failed deploy, a workflow_dispatch after a commit touching only other
+		// apps — and maskin_build_info then confidently reports the OLDER commit.
+		// That is the exact failure the metric exists to detect.
+		//
+		// Declaring it here makes the SHA part of the cache key, so a new commit
+		// is always a new build. agent-server-deploy.yml exports it before
+		// `turbo run build`. Scoped to this package so the rest of the monorepo
+		// keeps caching across commits.
+		"build": {
+			"dependsOn": ["^build"],
+			"outputs": ["dist/**"],
+			"env": ["MASKIN_COMMIT_SHA", "GITHUB_SHA"]
+		}
+	}
+}

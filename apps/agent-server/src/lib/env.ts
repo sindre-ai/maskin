@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { DEFAULT_STALL_THRESHOLD_MS } from './stall-tracker'
 
 const envSchema = z.object({
 	PORT: z
@@ -25,6 +26,61 @@ const envSchema = z.object({
 	// didn't. Left unset, that pass just skips with a warning log — existing
 	// deployments without it still boot fine.
 	AGENT_SERVER_ID: z.string().uuid().optional(),
+	// Port for the LOOPBACK-ONLY metrics listener (GET /metrics, scraped by the
+	// Alloy agent running on the same host). Deliberately a second listener
+	// rather than a route on PORT: PORT is reachable from the public internet
+	// and from every session microVM, and /metrics is unauthenticated. 9464 is
+	// the Prometheus default for a Node exporter and collides with nothing on
+	// this box. Set to 0 to disable the metrics listener entirely.
+	METRICS_PORT: z
+		.string()
+		.optional()
+		.default('9464')
+		.transform((v) => {
+			// An EMPTY value is a mistake, not a request to disable. `.default()`
+			// only fires on undefined, so a bare `METRICS_PORT=` line in .env
+			// reaches here as '', and `Number('')` is 0 — which would otherwise
+			// pass the range check below and land on the disable sentinel. The
+			// endpoint would then never bind and never log, and the only symptom
+			// is `up == 0`, which README.md teaches you to diagnose as a port
+			// mismatch or a dead process. Disabling must be spelled out as '0'.
+			if (v.trim() === '') {
+				throw new Error('Invalid METRICS_PORT: empty (use 0 to disable the metrics listener)')
+			}
+			const n = Number(v)
+			if (!Number.isInteger(n) || n < 0 || n > 65535) {
+				throw new Error(`Invalid METRICS_PORT: ${v} (expected integer 0..65535)`)
+			}
+			return n
+		}),
+	// Host identity stamped onto maskin_build_info as `instance`. MUST match
+	// AGENT_SERVER_INSTANCE in Alloy's /etc/default/alloy — that shared value
+	// is what makes {instance="finland-1"} select the same box in LogQL and
+	// PromQL. Defaults to the machine hostname, exactly as alloy.alloy does.
+	AGENT_SERVER_INSTANCE: z.string().optional(),
+	// Deployment environment stamped onto maskin_build_info as `env`. Same
+	// matching requirement, same default ('production') as alloy.alloy.
+	DEPLOY_ENV: z.string().optional(),
+	// Silence threshold for the stalled-session detector, in ms (see
+	// lib/stall-tracker.ts). Env-tunable on purpose: the `no_output` arm's right
+	// value has to come from observed data, and we want to move it with a
+	// restart rather than a deploy. Default 300000 (5 min).
+	AGENT_SERVER_STALL_THRESHOLD_MS: z
+		.string()
+		.optional()
+		.default(String(DEFAULT_STALL_THRESHOLD_MS))
+		.transform((v) => {
+			const n = Number(v)
+			// Below the guest's 90s re-dial interval every healthy unacked window
+			// looks like a wedge, so the floor is not cosmetic — it is the point
+			// at which this alert becomes guaranteed noise.
+			if (!Number.isFinite(n) || n < 90_000) {
+				throw new Error(
+					`Invalid AGENT_SERVER_STALL_THRESHOLD_MS: ${v} (expected >= 90000, the guest re-dial interval)`,
+				)
+			}
+			return n
+		}),
 	MSB_BIN: z.string().optional().default('/root/.microsandbox/bin/msb'),
 	MASKIN_AGENT_SERVER_PUBLIC_HOST: z.string().optional(),
 	// Hostname the microVM uses to reach this agent-server over the host loopback.
