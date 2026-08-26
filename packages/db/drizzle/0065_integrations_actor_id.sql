@@ -6,9 +6,10 @@
 -- `linkedin-unipile` provider is the only one that will populate the column
 -- via the `actorScopedProviders` allow-list in
 -- apps/dev/src/lib/integrations/lookup.ts. NO BACKFILL: pre-existing rows
--- carry `actor_id = NULL`, which — being distinct from every value in the new
--- partial unique index — preserves their prior workspace-scoped uniqueness
--- semantics without a data migration.
+-- carry `actor_id = NULL`; the new indexes are declared NULLS NOT DISTINCT
+-- (see below) so two rows with the same (workspace_id, provider [, external_id])
+-- and NULL actor_id still collide — preserving their prior workspace-scoped
+-- uniqueness semantics without a data migration.
 --
 -- Also adds a non-unique `(workspace_id, provider)` helper index so cross-actor
 -- provider-lookup queries (e.g. "list all connected LinkedIn actors in this
@@ -26,12 +27,18 @@ ALTER TABLE "integrations" ADD COLUMN IF NOT EXISTS "actor_id" uuid REFERENCES "
 DROP INDEX IF EXISTS "integrations_ws_provider_external_uniq";
 DROP INDEX IF EXISTS "integrations_ws_provider_null_external_uniq";
 
+-- NULLS NOT DISTINCT so workspace-scoped rows (actor_id = NULL) still collide
+-- on (workspace_id, provider [, external_id]) — preserving the pre-0065
+-- uniqueness contract and keeping ON CONFLICT semantics of upserts that don't
+-- populate actor_id (every non-linkedin-unipile provider).
 CREATE UNIQUE INDEX IF NOT EXISTS "integrations_ws_actor_provider_external_uniq"
 	ON "integrations" ("workspace_id", "actor_id", "provider", "external_id")
+	NULLS NOT DISTINCT
 	WHERE "external_id" IS NOT NULL;
 
 CREATE UNIQUE INDEX IF NOT EXISTS "integrations_ws_actor_provider_null_external_uniq"
 	ON "integrations" ("workspace_id", "actor_id", "provider")
+	NULLS NOT DISTINCT
 	WHERE "external_id" IS NULL;
 
 CREATE INDEX IF NOT EXISTS "integrations_ws_provider_idx"
