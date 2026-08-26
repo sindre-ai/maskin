@@ -60,9 +60,41 @@ export class TokenManager {
 
 		const credentials: StoredCredentials = JSON.parse(decrypt(integration.credentials))
 
-		// Custom auth providers handle their own token generation
+		// Custom auth providers handle their own token generation. Handlers that
+		// perform a stateful refresh (as opposed to minting a fresh stateless token
+		// per call, like GitHub App installation tokens) get a write-back channel so
+		// a rotated refresh token and the new expiry are persisted — without it the
+		// next refresh replays a consumed token and strands the integration.
 		if (provider.customAuth) {
-			return provider.customAuth.getAccessToken(credentials)
+			try {
+				return await provider.customAuth.getAccessToken(credentials, {
+					integrationId,
+					persistCredentials: (updated) =>
+						this.persistCredentials(
+							db,
+							integrationId,
+							updated,
+							integration.workspaceId,
+							integration.createdBy,
+							provider.config.name,
+						),
+				})
+			} catch (err) {
+				// Mirror doRefresh: a handler that reports the grant as gone flips the
+				// row to `revoked` so subsequent calls short-circuit without re-hitting
+				// the provider. markRevoked failure must not suppress the original error.
+				if (err instanceof IntegrationAuthRevokedError) {
+					try {
+						await this.markRevoked(db, integrationId)
+					} catch (markErr) {
+						logger.warn('Failed to persist revoked status for integration', {
+							integrationId,
+							error: String(markErr),
+						})
+					}
+				}
+				throw err
+			}
 		}
 
 		// API key providers return the stored key directly
@@ -253,14 +285,38 @@ export class TokenManager {
 			updated.refreshToken = refreshed.refreshToken
 		}
 
-		// Persist the new credentials. This MUST NOT be inside a transaction with the
-		// events INSERT: the Google token exchange above is not idempotent — it already
-		// consumed the old refresh token and issued a new one. If the events INSERT
-		// later fails and rolls back the UPDATE, the DB reverts to the now-invalid
-		// refresh token, causing the next refresh to return invalid_grant and
-		// permanently stranding the integration. Credentials go first, audit log
-		// is best-effort.
-		const encryptedCredentials = encrypt(JSON.stringify(updated))
+		await this.persistCredentials(
+			db,
+			integrationId,
+			updated,
+			workspaceId,
+			actorId,
+			provider.config.name,
+		)
+
+		return refreshed.accessToken
+	}
+
+	/**
+	 * Store refreshed credentials and record the audit event.
+	 *
+	 * The credentials UPDATE MUST NOT share a transaction with the events INSERT:
+	 * the token exchange that produced these credentials is not idempotent — it
+	 * already consumed the old refresh token and issued a new one. If the events
+	 * INSERT later failed and rolled back the UPDATE, the DB would revert to the
+	 * now-invalid refresh token, causing the next refresh to return invalid_grant
+	 * and permanently stranding the integration. Credentials go first, audit log
+	 * is best-effort.
+	 */
+	private async persistCredentials(
+		db: Database,
+		integrationId: string,
+		credentials: StoredCredentials,
+		workspaceId: string,
+		actorId: string,
+		providerName: string,
+	): Promise<void> {
+		const encryptedCredentials = encrypt(JSON.stringify(credentials))
 		await db
 			.update(integrations)
 			.set({ credentials: encryptedCredentials, updatedAt: new Date() })
@@ -273,7 +329,7 @@ export class TokenManager {
 				action: 'updated',
 				entityType: 'integration',
 				entityId: integrationId,
-				data: { reason: 'token_refreshed', provider: provider.config.name },
+				data: { reason: 'token_refreshed', provider: providerName },
 			})
 		} catch (auditErr) {
 			logger.warn('Failed to insert token_refreshed audit event', {
@@ -284,9 +340,7 @@ export class TokenManager {
 
 		logger.info('Refreshed OAuth2 access token', {
 			integrationId,
-			provider: provider.config.name,
+			provider: providerName,
 		})
-
-		return refreshed.accessToken
 	}
 }

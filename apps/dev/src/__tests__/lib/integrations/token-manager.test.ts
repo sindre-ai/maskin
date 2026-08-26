@@ -173,7 +173,66 @@ describe('TokenManager', () => {
 		const token = await manager.getValidToken(db, 'integration-1', customProvider)
 
 		expect(token).toBe('github-token-abc')
-		expect(customProvider.customAuth?.getAccessToken).toHaveBeenCalledWith(creds)
+		expect(customProvider.customAuth?.getAccessToken).toHaveBeenCalledWith(
+			creds,
+			expect.objectContaining({
+				integrationId: 'integration-1',
+				persistCredentials: expect.any(Function),
+			}),
+		)
+	})
+
+	it('persists credentials a custom auth handler writes back after a refresh', async () => {
+		const creds = makeCredentials({ refreshToken: 'old-refresh' })
+		const { db, updateSets } = createMockDb(makeIntegration(creds))
+		const customProvider: ResolvedProvider = {
+			config: {
+				name: 'ubersuggest',
+				displayName: 'Ubersuggest',
+				auth: { type: 'oauth2_custom' },
+			},
+			customAuth: {
+				getInstallUrl: vi.fn(),
+				handleCallback: vi.fn(),
+				getAccessToken: vi.fn(async (_creds, ctx) => {
+					await ctx?.persistCredentials({
+						accessToken: 'rotated-access',
+						refreshToken: 'rotated-refresh',
+						expiresAt: Date.now() + 3_600_000,
+					})
+					return 'rotated-access'
+				}),
+			},
+		}
+
+		const token = await manager.getValidToken(db, 'integration-1', customProvider)
+
+		expect(token).toBe('rotated-access')
+		expect(updateSets).toHaveLength(1)
+		const stored = JSON.parse(decrypt(updateSets[0]?.credentials as string))
+		expect(stored.refreshToken).toBe('rotated-refresh')
+		expect(stored.accessToken).toBe('rotated-access')
+	})
+
+	it('marks the integration revoked when a custom auth handler reports the grant is gone', async () => {
+		const { db, updateSets } = createMockDb(makeIntegration(makeCredentials()))
+		const customProvider: ResolvedProvider = {
+			config: {
+				name: 'ubersuggest',
+				displayName: 'Ubersuggest',
+				auth: { type: 'oauth2_custom' },
+			},
+			customAuth: {
+				getInstallUrl: vi.fn(),
+				handleCallback: vi.fn(),
+				getAccessToken: vi.fn().mockRejectedValue(new IntegrationAuthRevokedError('integration-1')),
+			},
+		}
+
+		await expect(manager.getValidToken(db, 'integration-1', customProvider)).rejects.toThrow(
+			IntegrationAuthRevokedError,
+		)
+		expect(updateSets.some((set) => set.status === 'revoked')).toBe(true)
 	})
 
 	it('returns API key directly for api_key providers', async () => {

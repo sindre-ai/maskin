@@ -1,5 +1,7 @@
+import { logger } from '../../../logger'
+import { IntegrationAuthRevokedError } from '../../errors'
 import { createS256CodeChallenge, generateCodeVerifier } from '../../oauth/pkce'
-import type { CustomAuthHandler, StoredCredentials } from '../../types'
+import type { CustomAuthContext, CustomAuthHandler, StoredCredentials } from '../../types'
 
 const BASE_URL = 'https://ubersuggest-mcp.neilpatelapi.com'
 const SCOPES = 'profile domain keywords serp backlinks site_audit content projects utility'
@@ -102,36 +104,90 @@ export const ubersuggestAuth: CustomAuthHandler = {
 		return creds
 	},
 
-	async getAccessToken(credentials: StoredCredentials): Promise<string> {
-		// Return current token if still valid
-		if (
-			credentials.accessToken &&
-			credentials.expiresAt &&
-			(credentials.expiresAt as number) > Date.now() + REFRESH_BUFFER_MS
-		) {
+	async getAccessToken(credentials: StoredCredentials, ctx?: CustomAuthContext): Promise<string> {
+		const integrationId = ctx?.integrationId ?? 'ubersuggest'
+
+		if (!credentials.accessToken) {
+			throw new IntegrationAuthRevokedError(
+				integrationId,
+				'No stored Ubersuggest access token — please reconnect the integration',
+			)
+		}
+
+		// Still valid, or non-expiring (provider omitted expires_in at install) —
+		// use as-is. Mirrors TokenManager's standard OAuth2 path.
+		const expiresAt = credentials.expiresAt as number | undefined
+		if (!expiresAt || expiresAt > Date.now() + REFRESH_BUFFER_MS) {
 			return credentials.accessToken as string
 		}
 
-		// Try refresh
-		if (credentials.refreshToken && credentials.clientId) {
-			const tokenRes = await fetch(`${BASE_URL}/token`, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-				body: new URLSearchParams({
-					grant_type: 'refresh_token',
-					refresh_token: credentials.refreshToken as string,
-					client_id: credentials.clientId as string,
-				}).toString(),
-			})
-			if (tokenRes.ok) {
-				const raw = (await tokenRes.json()) as { access_token: string }
-				return raw.access_token
-			}
+		const refreshToken = credentials.refreshToken as string | undefined
+		const clientId = credentials.clientId as string | undefined
+		if (!refreshToken || !clientId) {
+			// Nothing left to try. Returning the expired token here would inject a
+			// dead credential into agent containers and surface as opaque 401s.
+			throw new IntegrationAuthRevokedError(
+				integrationId,
+				'Ubersuggest access token expired and cannot be refreshed — please reconnect the integration',
+			)
 		}
 
-		if (!credentials.accessToken) {
-			throw new Error('No valid Ubersuggest token — please reconnect the integration')
+		const tokenRes = await fetch(`${BASE_URL}/token`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+			body: new URLSearchParams({
+				grant_type: 'refresh_token',
+				refresh_token: refreshToken,
+				client_id: clientId,
+			}).toString(),
+		})
+
+		if (!tokenRes.ok) {
+			const body = await tokenRes.text()
+			logger.warn('Ubersuggest token refresh failed', {
+				integrationId,
+				status: tokenRes.status,
+				error: body.slice(0, 500),
+			})
+			// 400 invalid_grant / 401 invalid_client are terminal: the grant is gone or
+			// the dynamically-registered client no longer exists. Anything else (429,
+			// 5xx) is transient — throw a plain Error so the row is not marked revoked.
+			if (tokenRes.status === 400 || tokenRes.status === 401) {
+				throw new IntegrationAuthRevokedError(
+					integrationId,
+					'Ubersuggest refresh was rejected — please reconnect the integration',
+				)
+			}
+			throw new Error(`Ubersuggest token refresh failed: ${tokenRes.status}`)
 		}
-		return credentials.accessToken as string
+
+		const raw = (await tokenRes.json()) as {
+			access_token?: string
+			refresh_token?: string
+			expires_in?: number
+			token_type?: string
+		}
+		if (!raw.access_token) {
+			throw new Error('Ubersuggest refresh response omitted access_token — please reconnect')
+		}
+
+		// Persist the rotated credentials. Ubersuggest registers this as a public
+		// PKCE client (token_endpoint_auth_method: 'none'), for which refresh-token
+		// rotation is the norm — dropping the new refresh_token would make the *next*
+		// refresh replay a consumed token and permanently strand the integration.
+		// Storing the new expiry also stops every later call from re-refreshing.
+		const updated: StoredCredentials = {
+			...credentials,
+			accessToken: raw.access_token,
+			// Deliberately not falling back to the old expiresAt: it is already in the
+			// past, which would re-trigger a refresh on every subsequent call.
+			expiresAt: raw.expires_in ? Date.now() + raw.expires_in * 1000 : undefined,
+		}
+		if (raw.refresh_token) updated.refreshToken = raw.refresh_token
+		if (raw.token_type) updated.tokenType = raw.token_type
+
+		await ctx?.persistCredentials(updated)
+
+		return raw.access_token
 	},
 }

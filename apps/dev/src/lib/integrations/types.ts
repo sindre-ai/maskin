@@ -159,10 +159,22 @@ export interface StoredCredentials {
 	[key: string]: unknown
 }
 
+/**
+ * Write-back channel handed to {@link CustomAuthHandler.getAccessToken} so a
+ * handler that performs a stateful refresh (rotating `refresh_token`, moving
+ * `expires_at`) can persist the result. Handlers that mint a stateless token on
+ * every call (GitHub App installation tokens) simply ignore it.
+ */
+export interface CustomAuthContext {
+	integrationId: string
+	/** Encrypt + store the updated credentials and write the audit event. */
+	persistCredentials(credentials: StoredCredentials): Promise<void>
+}
+
 export interface CustomAuthHandler {
 	getInstallUrl(state: string): string | Promise<string>
 	handleCallback(params: Record<string, string>): Promise<StoredCredentials>
-	getAccessToken(credentials: StoredCredentials): Promise<string>
+	getAccessToken(credentials: StoredCredentials, ctx?: CustomAuthContext): Promise<string>
 }
 
 export type CustomEventNormalizer = (
