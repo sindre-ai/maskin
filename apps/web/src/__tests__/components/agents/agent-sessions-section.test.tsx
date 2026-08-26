@@ -72,7 +72,7 @@ describe('AgentSessionsSection', () => {
 				actionPrompt: 'Already finished',
 			}),
 		])
-		render(<AgentSessionsSection agent={agent} />, { wrapper: createWorkspaceWrapper() })
+		render(<AgentSessionsSection agent={agent} />, { wrapper: createWorkspaceWrapper() });
 		expect(screen.queryByRole('button', { name: /restart/i })).not.toBeInTheDocument()
 	})
 
@@ -301,6 +301,55 @@ describe('AgentSessionsSection', () => {
 
 		await userEvent.click(screen.getByRole('button', { name: 'Show fewer' }))
 		expect(screen.queryByText('Run number 0')).not.toBeInTheDocument()
+	})
+
+	// Follow-up from PR #410 — the API caps a single fetch at 100 rows, so when
+	// a long-lived agent has more than that, we can't silently truncate the tail.
+	it('hints that older sessions exist when the loaded list hits the 100-row API cap', async () => {
+		const agent = buildActorResponse({ id: 'agent-capped', type: 'agent' })
+		sessionsData.mockReturnValue(
+			Array.from({ length: 100 }, (_, i) =>
+				buildSessionResponse({
+					id: `s-${i}`,
+					actorId: 'agent-capped',
+					status: 'completed',
+					actionPrompt: `Run ${i}`,
+					createdAt: `2026-01-01T${String(i).padStart(2, '0')}:00:00Z`,
+				}),
+			),
+		)
+		render(<AgentSessionsSection agent={agent} />, { wrapper: createWorkspaceWrapper() })
+
+		// Collapsed: the hint would be misleading — only 5 rows are visible, not 100.
+		expect(
+			screen.queryByText(/Showing the 100 most recent — older sessions aren't listed/),
+		).not.toBeInTheDocument()
+
+		await userEvent.click(screen.getByRole('button', { name: 'Show all 100' }))
+		expect(
+			screen.getByText(/Showing the 100 most recent — older sessions aren't listed/),
+		).toBeInTheDocument()
+	})
+
+	it('does not show the cap hint when the loaded list is short of the 100-row cap', async () => {
+		const agent = buildActorResponse({ id: 'agent-under', type: 'agent' })
+		sessionsData.mockReturnValue(
+			Array.from({ length: 12 }, (_, i) =>
+				buildSessionResponse({
+					id: `s-${i}`,
+					actorId: 'agent-under',
+					status: 'completed',
+					actionPrompt: `Run ${i}`,
+					createdAt: `2026-01-01T${String(i).padStart(2, '0')}:00:00Z`,
+				}),
+			),
+		)
+		render(<AgentSessionsSection agent={agent} />, { wrapper: createWorkspaceWrapper() })
+
+		await userEvent.click(screen.getByRole('button', { name: 'Show all 12' }))
+		expect(
+			screen.queryByText(/Showing the 100 most recent — older sessions aren't listed/),
+		).not.toBeInTheDocument()
 	})
 })
 

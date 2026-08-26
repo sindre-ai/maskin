@@ -33,6 +33,9 @@ type SessionState = 'running' | 'waiting' | 'paused' | 'completed' | 'failed'
 /** Sessions listed before the section collapses behind "Show all" (mockup 2427). */
 const COLLAPSED_SESSIONS = 5
 
+/** Matches `sessionQuerySchema.limit.max(100)` — the hard server cap on one page. */
+const MAX_SESSIONS_LOADED = 100
+
 type IconComponent = React.ComponentType<{ className?: string }>
 
 interface StateMeta {
@@ -76,7 +79,7 @@ const STATE_META: Record<SessionState, StateMeta> = {
 		label: 'Failed',
 		Icon: AlertCircle,
 		iconBg: 'bg-status-failed-bg',
-		iconFg: 'text-status-failed-text',
+		iconFg: 'bg-status-failed-text',
 		dot: 'bg-status-failed-text',
 	},
 }
@@ -166,6 +169,11 @@ export function AgentSessionsSection({ agent }: { agent: ActorResponse }) {
 	const isTruncated = agentSessions.length > COLLAPSED_SESSIONS
 	const shownSessions =
 		showAll || !isTruncated ? agentSessions : agentSessions.slice(0, COLLAPSED_SESSIONS)
+	// The API caps a single fetch at 100 rows. When we hit that cap we can't tell
+	// exactly how many older sessions exist, so surface an honest hint rather than
+	// silently truncating the tail.
+	const atFetchCap = agentSessions.length >= MAX_SESSIONS_LOADED
+	const showingAllLoaded = showAll || !isTruncated
 
 	// Mockup 2427: the note tells you what you can do here, and turns amber to
 	// explain why nothing is moving while the agent itself is paused.
@@ -209,17 +217,24 @@ export function AgentSessionsSection({ agent }: { agent: ActorResponse }) {
 					No sessions yet. Runs will show up here.
 				</p>
 			) : (
-				<ul className="flex flex-col gap-1.5">
-					{shownSessions.map((session) => (
-						<li key={session.id}>
-							<SessionCard
-								session={session}
-								agent={agent}
-								onOpenLog={() => setDetailSession(session)}
-							/>
-						</li>
-					))}
-				</ul>
+				<>
+					<ul className="flex flex-col gap-1.5">
+						{shownSessions.map((session) => (
+							<li key={session.id}>
+								<SessionCard
+									session={session}
+									agent={agent}
+									onOpenLog={() => setDetailSession(session)}
+								/>
+							</li>
+						))}
+					</ul>
+					{showingAllLoaded && atFetchCap && (
+						<p className="pt-1 text-center text-[11px] text-muted-foreground">
+							Showing the {MAX_SESSIONS_LOADED} most recent — older sessions aren't listed.
+						</p>
+					)}
+				</>
 			)}
 
 			<SessionDetailPanel
