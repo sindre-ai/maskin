@@ -35,6 +35,31 @@ export function useConnectIntegration(workspaceId: string) {
 	})
 }
 
+/** GitHub App installations the actor already reaches from another workspace.
+ *  GitHub won't re-run its install flow for an org that already has the App, so
+ *  binding an existing installation is the only way to add it here. */
+export function useLinkableGithubInstallations(workspaceId: string) {
+	return useQuery({
+		queryKey: queryKeys.integrations.githubLinkable(workspaceId),
+		queryFn: () => api.integrations.githubLinkable(workspaceId),
+	})
+}
+
+export function useLinkGithubInstallation(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: (installationId: string) =>
+			api.integrations.githubLink(workspaceId, installationId),
+		onSuccess: () => {
+			toast.success('GitHub organization added to this workspace')
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.integrations.githubLinkable(workspaceId),
+			})
+		},
+	})
+}
+
 export function useCompleteIntegration(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
@@ -54,6 +79,9 @@ export function useDisconnectIntegration(workspaceId: string) {
 		onSuccess: () => {
 			toast.success('Integration disconnected')
 			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.integrations.githubLinkable(workspaceId),
+			})
 		},
 	})
 }

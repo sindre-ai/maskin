@@ -28,7 +28,10 @@ import {
 	fetchInstallationOwnerLogin,
 	mintInstallationTokenWithRecovery,
 } from '../lib/integrations/providers/github/auth'
-import { persistRecoveredInstallationId } from '../lib/integrations/providers/github/installation-recovery'
+import {
+	persistRecoveredInstallationId,
+	propagateRecoveredInstallationId,
+} from '../lib/integrations/providers/github/installation-recovery'
 import { upsertSkjaldMeeting } from '../lib/integrations/providers/skjald/meeting-sync'
 import {
 	dispatchAccountLinkAction,
@@ -71,7 +74,7 @@ import {
 	providerInfoSchema,
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
-import { serializeArray } from '../lib/serialize'
+import { serialize, serializeArray } from '../lib/serialize'
 import type { IntegrationConfig } from '../lib/types'
 
 type Env = {
@@ -148,6 +151,276 @@ app.openapi(listProvidersRoute, (async (c) => {
 
 	return c.json(providers as z.infer<typeof providerInfoSchema>[])
 }) as RouteHandler<typeof listProvidersRoute, Env>)
+
+// ── GitHub: bind an existing App installation to another workspace ─────────
+//
+// GitHub installs its App once per org. Hitting "Connect" from a second
+// workspace bounces the user to the existing installation's configure page and
+// never fires our callback with an `installation_id`, so that workspace could
+// never get a row. Everything downstream is already per-row and multi-workspace
+// safe — the webhook route fans out to every active integration matching the
+// installation id, and each row mints its own token — so the second workspace
+// doesn't need to talk to GitHub at all. It binds to the installation the
+// caller can already reach from one of their other workspaces.
+
+const GITHUB_INSTALLATION_ID_RE = /^\d+$/
+
+const linkableInstallationSchema = z.object({
+	installationId: z.string(),
+	ownerLogin: z.string().nullable(),
+	alreadyLinked: z.boolean(),
+})
+
+const listLinkableRoute = createRoute({
+	method: 'get',
+	path: '/github/linkable',
+	tags: ['integrations'],
+	summary: 'List GitHub installations this actor can bind to the workspace',
+	request: {
+		headers: workspaceIdHeader,
+	},
+	responses: {
+		200: {
+			description: 'Installations visible to the caller from their own workspaces',
+			content: { 'application/json': { schema: z.array(linkableInstallationSchema) } },
+		},
+	},
+})
+
+/** Active GitHub rows in workspaces the actor belongs to. This is the
+ *  authorization boundary for linking: an actor may only bind an installation
+ *  they can already reach. */
+async function listVisibleGithubInstallations(db: Database, actorId: string) {
+	return await db
+		.select({
+			externalId: integrations.externalId,
+			workspaceId: integrations.workspaceId,
+			credentials: integrations.credentials,
+			config: integrations.config,
+		})
+		.from(integrations)
+		.innerJoin(workspaceMembers, eq(workspaceMembers.workspaceId, integrations.workspaceId))
+		.where(
+			and(
+				eq(workspaceMembers.actorId, actorId),
+				eq(integrations.provider, 'github'),
+				eq(integrations.status, 'active'),
+				isNotNull(integrations.externalId),
+			),
+		)
+}
+
+app.openapi(listLinkableRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const visible = await listVisibleGithubInstallations(db, actorId)
+
+	// One entry per installation, not per row: the same org reached from three
+	// workspaces is still one thing the user can add here.
+	const byInstallation = new Map<string, z.infer<typeof linkableInstallationSchema>>()
+	for (const row of visible) {
+		const installationId = row.externalId
+		if (!installationId) continue
+		const ownerLogin = (row.config as IntegrationConfig)?.owner_login ?? null
+		const alreadyLinked = row.workspaceId === workspaceId
+		const existing = byInstallation.get(installationId)
+		if (existing) {
+			existing.alreadyLinked = existing.alreadyLinked || alreadyLinked
+			existing.ownerLogin = existing.ownerLogin ?? ownerLogin
+			continue
+		}
+		byInstallation.set(installationId, { installationId, ownerLogin, alreadyLinked })
+	}
+
+	return c.json([...byInstallation.values()])
+}) as RouteHandler<typeof listLinkableRoute, Env>)
+
+const linkInstallationRoute = createRoute({
+	method: 'post',
+	path: '/github/link',
+	tags: ['integrations'],
+	summary: 'Bind an existing GitHub App installation to this workspace',
+	request: {
+		headers: workspaceIdHeader,
+		body: {
+			content: {
+				'application/json': {
+					schema: z.object({ installation_id: z.string().min(1) }),
+				},
+			},
+		},
+	},
+	responses: {
+		200: {
+			description: 'Installation bound to the workspace',
+			content: { 'application/json': { schema: integrationResponseSchema } },
+		},
+		400: {
+			description: 'Invalid installation id',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'No installation with that id is visible to this actor',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(linkInstallationRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { installation_id: installationId } = c.req.valid('json')
+
+	if (!GITHUB_INSTALLATION_ID_RE.test(installationId)) {
+		return c.json(
+			createApiError('BAD_REQUEST', 'installation_id must be a numeric GitHub installation id'),
+			400,
+		)
+	}
+
+	// Authorization: the caller must already reach this installation from a
+	// workspace they belong to. Without this check any actor could bind
+	// themselves to any org's installation by guessing a small integer.
+	const visible = await listVisibleGithubInstallations(db, actorId)
+	const source = visible.find((row) => row.externalId === installationId)
+	if (!source) {
+		return c.json(
+			createApiError(
+				'NOT_FOUND',
+				'No GitHub installation with that id is connected to any of your workspaces',
+			),
+			404,
+		)
+	}
+
+	// Same system actor the OAuth callback provisions, scoped into this
+	// workspace. Deliberately re-derived rather than copied from the source row —
+	// each workspace owns its own membership.
+	const systemActorName = getProvider('github').config.displayName
+	let [systemActor] = await db
+		.select()
+		.from(actors)
+		.where(and(eq(actors.type, 'system'), eq(actors.name, systemActorName)))
+		.limit(1)
+
+	if (!systemActor) {
+		const [newActor] = await db
+			.insert(actors)
+			.values({
+				type: 'system',
+				name: systemActorName,
+				apiKey: generateApiKey().key,
+				createdBy: actorId,
+			})
+			.returning()
+		if (!newActor) {
+			return c.json(
+				createApiError('INTERNAL_ERROR', 'Failed to create system actor for integration'),
+				500,
+			)
+		}
+		systemActor = newActor
+	}
+
+	const [existingMember] = await db
+		.select()
+		.from(workspaceMembers)
+		.where(
+			and(
+				eq(workspaceMembers.workspaceId, workspaceId),
+				eq(workspaceMembers.actorId, systemActor.id),
+			),
+		)
+		.limit(1)
+
+	if (!existingMember) {
+		await db.insert(workspaceMembers).values({
+			workspaceId,
+			actorId: systemActor.id,
+			role: 'system',
+		})
+	}
+
+	// Re-encrypt rather than copying the source ciphertext, so the rows stay
+	// independent if credential storage ever becomes per-row keyed.
+	const credentials: StoredCredentials = JSON.parse(decrypt(source.credentials))
+	const encryptedCredentials = encrypt(JSON.stringify(credentials))
+	const config: IntegrationConfig = { system_actor_id: systemActor.id }
+	const ownerLogin = (source.config as IntegrationConfig)?.owner_login
+	if (ownerLogin) config.owner_login = ownerLogin
+
+	// A revoked row for the same installation in this workspace would trip the
+	// partial unique index on (workspace_id, provider, external_id), so refresh
+	// in place — the same shape the OAuth callback uses for re-connects.
+	const [existing] = await db
+		.select()
+		.from(integrations)
+		.where(
+			and(
+				eq(integrations.workspaceId, workspaceId),
+				eq(integrations.provider, 'github'),
+				eq(integrations.externalId, installationId),
+			),
+		)
+		.limit(1)
+
+	const [row] = existing
+		? await db
+				.update(integrations)
+				.set({
+					status: 'active',
+					credentials: encryptedCredentials,
+					config,
+					updatedAt: new Date(),
+				})
+				.where(eq(integrations.id, existing.id))
+				.returning()
+		: await db
+				.insert(integrations)
+				.values({
+					workspaceId,
+					provider: 'github',
+					status: 'active',
+					externalId: installationId,
+					credentials: encryptedCredentials,
+					config,
+					createdBy: actorId,
+				})
+				.returning()
+
+	if (!row) {
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to link GitHub installation'), 500)
+	}
+
+	await db.insert(events).values({
+		workspaceId,
+		actorId,
+		action: existing ? 'updated' : 'created',
+		entityType: 'integration',
+		entityId: row.id,
+		data: {
+			provider: 'github',
+			external_id: installationId,
+			...(ownerLogin ? { owner_login: ownerLogin } : {}),
+			reason: 'linked_existing_installation',
+			source_workspace_id: source.workspaceId,
+		},
+	})
+
+	logger.info('Linked existing GitHub installation to workspace', {
+		integrationId: row.id,
+		workspaceId,
+		installationId,
+		ownerLogin,
+		sourceWorkspaceId: source.workspaceId,
+	})
+
+	const { credentials: _credentials, ...safe } = row
+	return c.json(serialize(safe) as z.infer<typeof integrationResponseSchema>)
+}) as RouteHandler<typeof linkInstallationRoute, Env>)
 
 // ── POST /api/integrations/:provider/connect ───────────────────────────────
 
@@ -1040,6 +1313,18 @@ app.openapi(githubTokenRoute, (async (c) => {
 					await persistRecoveredInstallationId(db, {
 						integrationId: integration.id,
 						workspaceId,
+						actorId,
+						expectedOldInstallationId: oldInstallationId,
+						newInstallationId: result.installationId,
+						repo: recoveryRepo,
+					})
+
+					// The same installation can be bound to other workspaces
+					// (POST /github/link). Rotate their cached id too, so a
+					// workspace that only consumes webhooks isn't left holding a
+					// dead id until it happens to mint a token itself.
+					await propagateRecoveredInstallationId(db, {
+						sourceIntegrationId: integration.id,
 						actorId,
 						expectedOldInstallationId: oldInstallationId,
 						newInstallationId: result.installationId,

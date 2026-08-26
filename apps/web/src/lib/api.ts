@@ -418,6 +418,14 @@ export const api = {
 				method: 'DELETE',
 				workspaceId,
 			}),
+		githubLinkable: (workspaceId: string) =>
+			request<LinkableGithubInstallation[]>('/integrations/github/linkable', { workspaceId }),
+		githubLink: (workspaceId: string, installationId: string) =>
+			request<IntegrationResponse>('/integrations/github/link', {
+				method: 'POST',
+				body: { installation_id: installationId },
+				workspaceId,
+			}),
 		slackConversations: (id: string, workspaceId: string, types?: string[]) => {
 			const qs = types && types.length > 0 ? `?types=${types.join(',')}` : ''
 			return request<SlackConversation[]>(`/integrations/${id}/slack/conversations${qs}`, {
@@ -1233,6 +1241,14 @@ export interface IntegrationResponse {
 	createdBy: string
 	createdAt: string | null
 	updatedAt: string | null
+}
+
+/** A GitHub App installation the current actor can bind to this workspace,
+ *  because they already reach it from one of their workspaces. */
+export interface LinkableGithubInstallation {
+	installationId: string
+	ownerLogin: string | null
+	alreadyLinked: boolean
 }
 
 export interface ProviderEventDefinition {

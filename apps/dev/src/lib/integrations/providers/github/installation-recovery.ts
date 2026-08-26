@@ -1,6 +1,6 @@
 import type { Database } from '@maskin/db'
 import { events, integrations } from '@maskin/db/schema'
-import { eq } from 'drizzle-orm'
+import { and, eq, ne } from 'drizzle-orm'
 import { decrypt, encrypt } from '../../../crypto'
 import { logger } from '../../../logger'
 import type { StoredCredentials } from '../../types'
@@ -97,4 +97,87 @@ export async function persistRecoveredInstallationId(
 		}
 		return { persisted: true }
 	})
+}
+
+/**
+ * Propagate a recovered installation id to every *other* workspace bound to the
+ * same installation. One GitHub App installation can be linked into several
+ * workspaces (see `POST /api/integrations/github/link`); when a reinstall
+ * rotates the id, only the row that happened to mint the token gets rotated by
+ * `persistRecoveredInstallationId`. Without this the siblings each carry a dead
+ * id until they independently 404 and recover, which for a workspace that only
+ * reads webhooks may be never.
+ *
+ * Keyed on `external_id`, which the recovery path deliberately leaves at the old
+ * value — webhook routing matches on it, and GitHub keeps delivering under the
+ * id its payloads carry. Best-effort: failures are logged, never thrown, so a
+ * sibling write can't fail an already-successful token mint.
+ */
+export async function propagateRecoveredInstallationId(
+	db: Database,
+	input: {
+		/** The row already rotated by persistRecoveredInstallationId — skipped. */
+		sourceIntegrationId: string
+		actorId: string
+		expectedOldInstallationId: string
+		newInstallationId: string
+		repo: string
+	},
+): Promise<{ updatedIntegrationIds: string[] }> {
+	const { sourceIntegrationId, actorId, expectedOldInstallationId, newInstallationId, repo } = input
+
+	const siblings = await db
+		.select({
+			id: integrations.id,
+			workspaceId: integrations.workspaceId,
+			credentials: integrations.credentials,
+		})
+		.from(integrations)
+		.where(
+			and(
+				eq(integrations.provider, 'github'),
+				eq(integrations.externalId, expectedOldInstallationId),
+				eq(integrations.status, 'active'),
+				ne(integrations.id, sourceIntegrationId),
+			),
+		)
+
+	const updatedIntegrationIds: string[] = []
+	for (const sibling of siblings) {
+		try {
+			const creds: StoredCredentials = JSON.parse(decrypt(sibling.credentials))
+			if (creds.installation_id !== expectedOldInstallationId) continue
+
+			await db
+				.update(integrations)
+				.set({
+					credentials: encrypt(JSON.stringify({ ...creds, installation_id: newInstallationId })),
+					updatedAt: new Date(),
+				})
+				.where(eq(integrations.id, sibling.id))
+
+			await db.insert(events).values({
+				workspaceId: sibling.workspaceId,
+				actorId,
+				action: 'updated',
+				entityType: 'integration',
+				entityId: sibling.id,
+				data: {
+					reason: 'installation_id_recovered',
+					old_installation_id: expectedOldInstallationId,
+					new_installation_id: newInstallationId,
+					repo,
+					propagated_from: sourceIntegrationId,
+				},
+			})
+			updatedIntegrationIds.push(sibling.id)
+		} catch (err) {
+			logger.warn('Failed to propagate recovered installation id to sibling workspace', {
+				integrationId: sibling.id,
+				error: err instanceof Error ? err.message : String(err),
+			})
+		}
+	}
+
+	return { updatedIntegrationIds }
 }
