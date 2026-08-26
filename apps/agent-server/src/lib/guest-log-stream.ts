@@ -18,8 +18,15 @@ import { logger } from './logger'
  * of the helpers we need visibility into, and a broken shipper cannot report
  * its own brokenness.
  *
- * These lines are operator-facing (journalctl on the box today, a log shipper
- * later) — they never reach `session_logs` or the customer's chat transcript.
+ * These lines are operator-facing: journalctl on the box today, a log shipper
+ * later. Nothing here writes to `session_logs`.
+ *
+ * That is not the same as saying an operator line can never appear in a
+ * customer's transcript. `input-stream.js`'s `note()` independently POSTs its
+ * own diagnostics to /sessions/:id/logs/ingest, so those specific lines land in
+ * both places. That predates this module and is unchanged by it — but it is a
+ * property of the system, not of this sink, and the distinction matters if the
+ * ingest POST is ever retired now that this host-side channel exists.
  */
 
 /** Longest single line emitted; anything beyond is truncated with a marker. */
