@@ -220,6 +220,51 @@ describe('createGuestLogSink rate cap', () => {
 	})
 })
 
+describe('createGuestLogSink utf-8 handling', () => {
+	it('reassembles a multi-byte character split across a chunk boundary', () => {
+		const { sink, lines } = makeSink()
+		const buf = Buffer.from('bygget kjørte OK\n', 'utf8')
+		// Split inside the two-byte 'ø'.
+		const split = buf.indexOf(Buffer.from('ø', 'utf8')) + 1
+		sink.push('stderr', buf.subarray(0, split))
+		sink.push('stderr', buf.subarray(split))
+		expect(lines()).toEqual(['bygget kjørte OK'])
+		expect(lines()[0]).not.toContain('\uFFFD')
+	})
+
+	it('flushes a character left incomplete when the stream ends', () => {
+		const { sink, lines } = makeSink()
+		const buf = Buffer.from('slutt: æ', 'utf8')
+		const split = buf.length - 1
+		sink.push('stderr', buf.subarray(0, split))
+		sink.push('stderr', buf.subarray(split))
+		sink.close()
+		expect(lines()).toEqual(['slutt: æ'])
+	})
+
+	it('accounts a non-ASCII line at its true utf-8 byte size, not its char count', () => {
+		// 'é' is 2 bytes; 6 chars = 12 bytes. A cap of 11 bytes must reject the
+		// second line, which a String.length-based budget would have admitted.
+		const { sink, lines } = makeSink({ maxBytes: 11 })
+		sink.push('stderr', 'éééééé\n')
+		sink.push('stderr', 'second\n')
+		expect(lines()).toEqual(['éééééé'])
+	})
+
+	it('truncates an over-long non-ASCII line without splitting a character', () => {
+		const { sink, lines } = makeSink()
+		const wide = 'é'.repeat(GUEST_LOG_MAX_LINE_BYTES)
+		sink.push('stderr', `${wide}\n`)
+		const out = lines()[0] ?? ''
+		expect(out.endsWith('[truncated]')).toBe(true)
+		expect(out).not.toContain('\uFFFD')
+		const body = out.slice(0, -'…[truncated]'.length)
+		expect(Buffer.byteLength(body, 'utf8')).toBeLessThanOrEqual(GUEST_LOG_MAX_LINE_BYTES)
+		// Every character survived intact — no half-character at the cut.
+		expect(new Set(body)).toEqual(new Set(['é']))
+	})
+})
+
 describe('redactSecrets', () => {
 	it.each([
 		['GITHUB_TOKEN=ghp_abcdefghij0123456789ABCDEFGHIJ', 'ghp_'],

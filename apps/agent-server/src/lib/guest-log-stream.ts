@@ -1,3 +1,4 @@
+import { StringDecoder } from 'node:string_decoder'
 import { logger } from './logger'
 
 /**
@@ -103,6 +104,26 @@ export function redactSecrets(line: string): string {
 	return out
 }
 
+/** Real UTF-8 byte length — `String.length` counts UTF-16 code units. */
+function byteLength(s: string): number {
+	return Buffer.byteLength(s, 'utf8')
+}
+
+/**
+ * Cut `s` to at most `maxBytes` UTF-8 bytes without splitting a character.
+ *
+ * `StringDecoder.write` returns only the complete characters in the slice and
+ * retains any trailing partial sequence in its own state, which we discard by
+ * dropping the decoder. Slicing by `String.length` instead would enforce a byte
+ * limit with a character count — the same mistake the `session_logs` NOTIFY
+ * trigger made with `left(NEW.content, 7000)` against an 8 KB limit, which
+ * silently rolled back inserts (see .claude/rules/known-pitfalls.md).
+ */
+function truncateToBytes(s: string, maxBytes: number): string {
+	if (byteLength(s) <= maxBytes) return s
+	return new StringDecoder('utf8').write(Buffer.from(s, 'utf8').subarray(0, maxBytes))
+}
+
 export type GuestLogStreamName = 'stdout' | 'stderr'
 
 type EmitFn = (msg: string, ctx: Record<string, unknown>) => void
@@ -147,6 +168,13 @@ export function createGuestLogSink(options: GuestLogSinkOptions): GuestLogSink {
 	const now = options.now ?? (() => Date.now())
 
 	const partial: Record<GuestLogStreamName, string> = { stdout: '', stderr: '' }
+	// One decoder per stream: they are independent, and a decoder carries the
+	// trailing bytes of a multi-byte character across chunk boundaries.
+	const decoders: Record<GuestLogStreamName, StringDecoder> = {
+		stdout: new StringDecoder('utf8'),
+		stderr: new StringDecoder('utf8'),
+	}
+
 	// Per-window counters. `windowStart` is the open window's start instant.
 	let windowStart = now()
 	let lines = 0
@@ -210,19 +238,22 @@ export function createGuestLogSink(options: GuestLogSinkOptions): GuestLogSink {
 			return
 		}
 
-		let line = redactSecrets(stripped)
-		if (line.length > GUEST_LOG_MAX_LINE_BYTES) {
-			line = line.slice(0, GUEST_LOG_MAX_LINE_BYTES) + TRUNCATION_MARKER
-		}
+		const redacted = redactSecrets(stripped)
+		const line =
+			byteLength(redacted) > GUEST_LOG_MAX_LINE_BYTES
+				? truncateToBytes(redacted, GUEST_LOG_MAX_LINE_BYTES) + TRUNCATION_MARKER
+				: redacted
 		lines++
-		bytes += line.length
+		bytes += byteLength(line)
 		emit('guest log', { sessionId, source: 'msb-exec', stream, line })
 	}
 
 	return {
 		push(stream, chunk) {
 			if (closed) return
-			const text = typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8')
+			// One decoder per stream, so a multi-byte character split across two
+			// chunks is reassembled instead of decoding to U+FFFD twice.
+			const text = typeof chunk === 'string' ? chunk : decoders[stream].write(Buffer.from(chunk))
 			let buf = partial[stream] + text
 
 			let nl = buf.indexOf('\n')
@@ -235,9 +266,12 @@ export function createGuestLogSink(options: GuestLogSinkOptions): GuestLogSink {
 			// A guest that never emits a newline (a stuck progress bar, a binary
 			// dump) must not grow this buffer without bound — flush it as a line
 			// once it passes the per-line ceiling.
-			while (buf.length > GUEST_LOG_MAX_LINE_BYTES) {
-				emitLine(stream, buf.slice(0, GUEST_LOG_MAX_LINE_BYTES))
-				buf = buf.slice(GUEST_LOG_MAX_LINE_BYTES)
+			while (byteLength(buf) > GUEST_LOG_MAX_LINE_BYTES) {
+				const head = truncateToBytes(buf, GUEST_LOG_MAX_LINE_BYTES)
+				// A single character wider than the ceiling would loop forever.
+				if (head === '') break
+				emitLine(stream, head)
+				buf = buf.slice(head.length)
 			}
 			partial[stream] = buf
 		},
@@ -245,7 +279,10 @@ export function createGuestLogSink(options: GuestLogSinkOptions): GuestLogSink {
 		close() {
 			if (closed) return
 			for (const stream of ['stdout', 'stderr'] as const) {
-				const rest = partial[stream]
+				// The decoder holds the trailing bytes of a character that was still
+				// incomplete when the stream ended; flush it before the final line or
+				// that character is lost.
+				const rest = partial[stream] + decoders[stream].end()
 				partial[stream] = ''
 				if (rest !== '') emitLine(stream, rest)
 			}
