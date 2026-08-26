@@ -112,6 +112,17 @@ export type StreamJsonScanLine =
 	| { kind: 'assistant_text'; text: string }
 	| { kind: 'other' }
 
+/** Tool whose PreToolUse hook posts the question into the chat instead. */
+export const ASK_USER_QUESTION_TOOL = 'AskUserQuestion'
+
+/**
+ * Suffix of the Maskin MCP tool an agent uses to reply into the chat directly.
+ * Matched as a suffix because the full tool name is prefixed with the MCP
+ * server alias (`mcp__<alias>__post_conversation_message`), which is workspace
+ * configuration rather than a constant.
+ */
+export const POST_MESSAGE_TOOL_SUFFIX = 'post_conversation_message'
+
 /**
  * Classify ONE already-complete line for a backwards turn scan.
  *
@@ -122,8 +133,6 @@ export type StreamJsonScanLine =
  * 'other' — surfacing one would leak a sub-agent's internal answer into the
  * chat, the same reason parseResultLine rejects them.
  */
-export const ASK_USER_QUESTION_TOOL = 'AskUserQuestion'
-
 export function scanTurnLine(line: string): StreamJsonScanLine {
 	const trimmed = line.trim()
 	if (!trimmed || trimmed[0] !== '{') return { kind: 'other' }
@@ -156,22 +165,32 @@ export function scanTurnLine(line: string): StreamJsonScanLine {
 	const content = (message as Record<string, unknown>).content
 	if (!Array.isArray(content)) return { kind: 'other' }
 
-	// An AskUserQuestion call ends the scan. The PreToolUse hook posts that
-	// question into the chat as its own message and tells the agent to close the
-	// turn without a closing message — which blanks the `result` envelope and so
-	// triggers this very scan. Without a boundary here the walk would continue
-	// past the tool call and recover the narration that led up to it ("let me
-	// check which option you'd prefer…"), posting a stale bubble underneath the
-	// question chips on every single ask. Anything the agent said before asking
-	// belongs to the question, not to a reply.
+	// Two tool calls end the scan, both because everything before them belongs to
+	// a message the human has already been shown:
+	//
+	//   AskUserQuestion — the PreToolUse hook posts that question into the chat
+	//   as its own message and tells the agent to close the turn without a
+	//   closing message, which blanks the `result` envelope and so triggers this
+	//   very scan. Without a boundary the walk would continue past the call and
+	//   recover the narration that led up to it ("let me check which option
+	//   you'd prefer…"), posting a stale bubble under the question chips.
+	//
+	//   post_conversation_message — the agent replied through the MCP tool and
+	//   then ended silently, which is the single most common way a turn closes
+	//   with a blank `result`. The tool_result comes back as an untagged `user`
+	//   envelope, so nothing else here stops the walk: it would recover the
+	//   narration around the call ("posted that to the thread") and post it as a
+	//   near-duplicate under the reply the agent deliberately wrote. The
+	//   finalizer's dedupe cannot catch that — it keys on the `result` line,
+	//   not on messages already persisted in the conversation.
 	if (
-		content.some(
-			(block) =>
-				!!block &&
-				typeof block === 'object' &&
-				(block as { type?: unknown }).type === 'tool_use' &&
-				(block as { name?: unknown }).name === ASK_USER_QUESTION_TOOL,
-		)
+		content.some((block) => {
+			if (!block || typeof block !== 'object') return false
+			if ((block as { type?: unknown }).type !== 'tool_use') return false
+			const name = (block as { name?: unknown }).name
+			if (typeof name !== 'string') return false
+			return name === ASK_USER_QUESTION_TOOL || name.endsWith(POST_MESSAGE_TOOL_SUFFIX)
+		})
 	) {
 		return { kind: 'boundary' }
 	}

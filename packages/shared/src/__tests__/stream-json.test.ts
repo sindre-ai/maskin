@@ -205,6 +205,44 @@ describe('scanTurnLine', () => {
 		).toEqual({ kind: 'boundary' })
 	})
 
+	it('treats a post_conversation_message MCP call as the turn boundary', () => {
+		// The agent replying through the MCP tool and then ending silently is the
+		// most common way a turn closes with a blank result. Its tool_result comes
+		// back as an untagged `user` envelope, so nothing else stops the walk —
+		// without this boundary the scan recovers the narration around the call
+		// and posts a near-duplicate under the reply the agent already sent.
+		expect(
+			scanTurnLine(
+				assistantLine([
+					{ type: 'text', text: 'Posting that summary to the thread now.' },
+					{
+						type: 'tool_use',
+						name: 'mcp__maskin__post_conversation_message',
+						id: 'call_3',
+						input: {},
+					},
+				]),
+			),
+		).toEqual({ kind: 'boundary' })
+	})
+
+	it('matches post_conversation_message under any MCP server alias', () => {
+		// The prefix is the workspace's MCP server alias, not a constant, so the
+		// match is on the suffix.
+		expect(
+			scanTurnLine(
+				assistantLine([
+					{
+						type: 'tool_use',
+						name: 'mcp__claude_ai_Maskin__post_conversation_message',
+						id: 'c',
+						input: {},
+					},
+				]),
+			),
+		).toEqual({ kind: 'boundary' })
+	})
+
 	it('does not treat an unrelated tool call as the turn boundary', () => {
 		expect(
 			scanTurnLine(

@@ -253,7 +253,10 @@ export class InteractiveTurnFinalizer {
 	 * Walks this session's stdout backwards from the `result` line, stopping at
 	 * the turn boundary (the previous `result`, or the user turn envelope that
 	 * opened this one) so it can never surface something the agent said in an
-	 * earlier turn — which would re-post a reply the human already read.
+	 * earlier turn — which would re-post a reply the human already read. A call
+	 * to AskUserQuestion or to the post_conversation_message MCP tool is also a
+	 * boundary: both put a message on the human's screen, so anything said
+	 * before one of them has already been read. See scanTurnLine for why.
 	 *
 	 * Rows are split into lines before classifying. A session_logs row is one
 	 * envelope on the agent-server path but a raw Docker chunk on the local one

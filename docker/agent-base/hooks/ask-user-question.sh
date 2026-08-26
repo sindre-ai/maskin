@@ -28,18 +28,30 @@ set -eo pipefail
 
 INPUT=$(cat)
 
-# Fail open, always. Every early exit here prints a decision that blocks the
-# tool with an explanation, because letting the call through means the agent
-# hits the same broken tool this hook exists to replace.
+# Never wedge the turn. Every exit path here denies the tool call but hands the
+# model an instruction, because letting the call through means the agent hits
+# the same broken tool this hook exists to replace.
+#
+# This must not depend on jq. Under `set -e` a failing jq would abort the hook
+# with a non-zero exit and no stdout, and a non-blocking PreToolUse failure lets
+# the call proceed — straight into the TTY-less AskUserQuestion. jq is installed
+# in the image, but the fail-safe path itself cannot assume it.
+json_escape() {
+  # Pure bash so the fail-safe path has no external dependency at all.
+  local s=$1
+  s=${s//\\/\\\\}
+  s=${s//\"/\\\"}
+  s=${s//$'\t'/\\t}
+  s=${s//$'\r'/\\r}
+  s=${s//$'\n'/\\n}
+  printf '%s' "$s"
+}
+
 decide() {
-  jq -nc --arg reason "$1" '{
-    hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      permissionDecision: "deny",
-      permissionDecisionReason: $reason,
-      additionalContext: $reason
-    }
-  }'
+  local reason
+  reason=$(json_escape "$1")
+  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s","additionalContext":"%s"}}\n' \
+    "$reason" "$reason"
   exit 0
 }
 
@@ -62,15 +74,26 @@ fi
 # casing. Anything malformed drops through to the decide-yourself path rather
 # than erroring, so a CLI-side shape change degrades to today's behaviour
 # instead of wedging the turn.
+#
+# Every field is clamped to the bounds messageQuestionItemSchema enforces —
+# header 24, question 1000, label 200, description 1000, and 4 each of questions
+# and options (MESSAGE_MAX_QUESTIONS / MESSAGE_MAX_QUESTION_OPTIONS). The tool's
+# headers are free-form model output and routinely run past 24 characters, so
+# without the clamp the ordinary case 400s and this feature silently never fires.
 QUESTIONS=$(echo "$INPUT" | jq -c '
   [ (.tool_input.questions // [])[]
-    | select((.question | type) == "string" and (.options | type) == "array" and (.options | length) >= 2)
+    | select((.question | type) == "string" and (.options | type) == "array")
     | {
-        question: .question,
-        header: (.header // "Question"),
+        question: (.question | .[0:1000]),
+        header: ((.header // "Question") | tostring | .[0:24] | if . == "" then "Question" else . end),
         multi_select: (.multiSelect // false),
-        options: [ .options[] | {label: .label, description: (.description // "")} ][0:4]
+        options: [
+          .options[]
+          | select((.label | type) == "string" and (.label | length) > 0)
+          | {label: (.label | .[0:200]), description: ((.description // "") | tostring | .[0:1000])}
+        ][0:4]
       }
+    | select((.options | length) >= 2)
   ][0:4]' 2>/dev/null || echo '[]')
 
 if [ "$(echo "$QUESTIONS" | jq 'length' 2>/dev/null || echo 0)" -eq 0 ]; then
@@ -91,6 +114,14 @@ if [ "$STATUS" = "200" ]; then
 fi
 
 # 409 is the expected answer for an autonomous session. Anything else (network
-# failure, 403, 5xx) lands here too: the agent still must not block, and
-# "decide for yourself" is the safe instruction in every one of those cases.
+# failure, 403, 5xx, a schema 400) lands here too: the agent still must not
+# block, and "decide for yourself" is the safe instruction in every one of those
+# cases. But it is NOT the same event, and collapsing them all into one silent
+# path is how a broken ask stays broken — a misconfigured MASKIN_API_URL or a
+# 403 would otherwise look exactly like a healthy autonomous run. Anything
+# unexpected goes to stderr, which session-manager captures into session_logs.
+if [ "$STATUS" != "409" ]; then
+  echo "[system] ask-user-question: POST /ask failed (status=${STATUS:-none}) body=$(echo "$RESPONSE" | sed '$d' | head -c 500)" >&2
+fi
+
 decide "$DECIDE_YOURSELF"
