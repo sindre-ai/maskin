@@ -1,10 +1,12 @@
 import type { Database } from '@maskin/db'
 import { sessions } from '@maskin/db/schema'
+import type { SessionResultFailureReason } from '@maskin/shared'
 import { and, eq, gte, sql } from 'drizzle-orm'
 import { DEFAULT_PERIOD_LENGTH_MS, resolvePlanCapCents } from './billing-defaults'
 import { type SubscriptionProbe, resolveClaudeCredentialsWithFailover } from './claude-failover'
-import type { OAuthSlotKind } from './claude-oauth-slots'
+import { type OAuthSlotKind, resolveActiveSlot } from './claude-oauth-slots'
 import { isEnterpriseWorkspace } from './enterprise-allowlist'
+import { logger } from './logger'
 import type { WorkspaceSettings } from './types'
 
 const DEFAULT_CHAT_MODEL: Record<'anthropic' | 'openai' | 'ollama', string> = {
@@ -388,6 +390,9 @@ export async function resolveLlmRoute(params: {
 }): Promise<LlmRoutingResult | null> {
 	const { db, workspaceId, actorId, wsSettings, agent, byollmAllowed, claudeProbe } = params
 
+	/** Set when route #2 threw; folded into the error when nothing else resolves. */
+	let oauthFailure: string | null = null
+
 	// 1. Agent-level override — only handled here for anthropic; non-anthropic
 	//    providers fall through to caller (matches existing behavior). The
 	//    anthropic branch is a BYO credential, so it's gated like routes 2-4.
@@ -436,9 +441,18 @@ export async function resolveLlmRoute(params: {
 				}
 				return { route: LLM_ROUTE_OAUTH, envVars, oauthSlot: oauthResult.slot }
 			}
-		} catch {
-			// Swallow OAuth errors and let the next route take over — the warning
-			// is logged by the caller for parity with the previous behavior.
+		} catch (err) {
+			// The next route still takes over — a workspace with a custom endpoint
+			// or an API key behind a dead subscription should keep working. But the
+			// reason is no longer swallowed: when NO route resolves, this is the
+			// only description of why, and losing it is what left session failures
+			// reading as a generic "stuck in starting state".
+			oauthFailure = err instanceof Error ? err.message : String(err)
+			logger.warn('Claude OAuth route unavailable — falling through to next route', {
+				workspaceId,
+				actorId,
+				error: oauthFailure,
+			})
 		}
 
 		// 3. Workspace custom_llm
@@ -470,7 +484,120 @@ export async function resolveLlmRoute(params: {
 		return { route: LLM_ROUTE_MASKIN_PLAN, envVars: maskinPlanEnv }
 	}
 
+	if (oauthFailure) {
+		// Every route was tried and the only one that had credentials at all
+		// failed. Returning null here would launch a container with no
+		// ANTHROPIC_* env at all, which dies inside the sandbox with a message
+		// no one reads. Throw so the caller can put the real reason on the
+		// session row.
+		throw new LlmCredentialsUnavailableError(
+			`Claude subscription credentials could not be resolved and no other LLM route is configured: ${oauthFailure}`,
+		)
+	}
+
 	return null
+}
+
+/**
+ * No usable LLM credential could be resolved for a session. Distinct from
+ * `resolveLlmRoute` returning `null` (which means "this caller handles the
+ * remaining non-anthropic providers itself"): this is terminal, and carries
+ * the reason the credential that *was* configured didn't work.
+ *
+ * Surfaces on the session row as `result.failure_reason.reason_code =
+ * 'not_logged_in'` so the UI and any agent reading `get_session` see why,
+ * rather than the zombie reaper's generic stall message.
+ */
+export class LlmCredentialsUnavailableError extends Error {
+	/** Operator-facing detail, persisted as `failure_reason.verbatim_output`. */
+	readonly detail: string
+
+	constructor(detail: string) {
+		super(detail)
+		this.name = 'LlmCredentialsUnavailableError'
+		this.detail = detail
+	}
+
+	/** What the user and any agent reading `get_session` see. */
+	static readonly humanMessage =
+		'This session could not start because no working LLM credentials are connected for this workspace. Connect a Claude subscription in Settings → Keys, then start a new session.'
+
+	toFailureReason(): SessionResultFailureReason {
+		return {
+			provider: 'maskin',
+			reason_code: 'not_logged_in',
+			human_message: LlmCredentialsUnavailableError.humanMessage,
+			http_status: null,
+			reset_at: null,
+			verbatim_output: this.detail,
+		}
+	}
+}
+
+/**
+ * Offline pre-flight for the LLM routes, run BEFORE a session is marked
+ * `starting`.
+ *
+ * Deliberately makes no network call: it answers "is any route even
+ * configured for this workspace", not "is the credential live". That keeps it
+ * cheap enough to run on every launch, and it is the check that catches the
+ * failure mode where a workspace has nothing to route to — previously that
+ * session went to `starting`, got no env vars, and died in the sandbox (or,
+ * when credential resolution hung, never died at all).
+ *
+ * Liveness is still the probe's job inside `resolveLlmRoute`; that path is now
+ * bounded by CLAUDE_CREDENTIAL_TIMEOUT_MS and reports through
+ * `LlmCredentialsUnavailableError`.
+ *
+ * Returns `null` when at least one route is configured, or a description of
+ * what's missing when none is. Mirrors `resolveLlmRoute`'s priority order —
+ * if you add a route there, add it here.
+ */
+export function preflightLlmCredentials(params: {
+	wsSettings: WorkspaceSettings
+	agent: AgentLlmConfig
+	byollmAllowed: boolean
+	env?: NodeJS.ProcessEnv
+}): { humanMessage: string; detail: string } | null {
+	const { wsSettings, agent, byollmAllowed } = params
+
+	// 1. Agent-level override. Non-anthropic providers are handled by the
+	//    caller (session-manager injects OPENAI_API_KEY itself), so any agent
+	//    key at all counts as configured.
+	if (agent.apiKey && (agent.provider !== 'anthropic' || byollmAllowed)) return null
+
+	if (byollmAllowed) {
+		// 2. Claude OAuth — a slot only counts when the ACTIVE one holds data.
+		//    A workspace whose active_slot points at an unconfigured slot has no
+		//    OAuth route even though `claude_oauth` exists on the row.
+		if (resolveActiveSlot(wsSettings.claude_oauth)) return null
+
+		// 3. Workspace custom_llm (same completeness bar as buildCustomLlmEnv).
+		const custom = wsSettings.custom_llm
+		if (
+			custom?.enabled &&
+			custom.base_url?.trim() &&
+			custom.api_key?.trim() &&
+			custom.model?.trim()
+		) {
+			return null
+		}
+
+		// 4. Workspace anthropic api key.
+		if (wsSettings.llm_keys?.anthropic) return null
+	}
+
+	// 5. Maskin plan.
+	if (buildMaskinPlanEnv(wsSettings.billing, readFallbackConfig(params.env)) !== null) return null
+
+	const detail = byollmAllowed
+		? 'No Claude subscription, custom LLM endpoint, or Anthropic API key is configured for this workspace, and it is not on a Maskin-funded plan.'
+		: 'This workspace is not on a Maskin-funded plan and is not entitled to bring its own LLM credentials.'
+	return {
+		humanMessage:
+			'This session could not start because the workspace has no LLM credentials connected. Connect a Claude subscription in Settings → Keys, then start a new session.',
+		detail,
+	}
 }
 
 export interface ChatCredentials {

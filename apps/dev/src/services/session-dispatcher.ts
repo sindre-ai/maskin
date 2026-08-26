@@ -1,6 +1,7 @@
 import type { Database } from '@maskin/db'
 import { events, agentServers, sessions } from '@maskin/db/schema'
 import { and, eq, inArray, sql } from 'drizzle-orm'
+import { LlmCredentialsUnavailableError } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import {
 	AgentServerAuthError,
@@ -132,6 +133,18 @@ export class SessionDispatcher {
 			request = await this.buildStartRequest(sessionId)
 		} catch (err) {
 			await this.releaseSlot(sessionId, picked.server.id)
+			// A workspace with no working LLM credentials will fail identically on
+			// every server, every attempt. Retrying it five times with backoff only
+			// delays the explanation the user needs — and the generic
+			// "dispatch exhausted" message it eventually lands on actively points
+			// away from the real cause. Fail once, with the reason attached.
+			if (err instanceof LlmCredentialsUnavailableError) {
+				return {
+					kind: 'permanent_failure',
+					error: err.detail,
+					failureReason: err.toFailureReason(),
+				}
+			}
 			return {
 				kind: 'transient_failure',
 				error: `buildStartRequest threw: ${err instanceof Error ? err.message : String(err)}`,

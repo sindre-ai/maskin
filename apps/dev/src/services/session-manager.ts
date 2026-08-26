@@ -82,6 +82,7 @@ import {
 	FALLBACK_TOKENS_PER_USD_CENT,
 	LLM_ROUTE_MASKIN_PLAN,
 	LLM_ROUTE_OAUTH,
+	LlmCredentialsUnavailableError,
 	type LlmRoute,
 	PlanCapExceededError,
 	canUseCreditBalance,
@@ -90,6 +91,7 @@ import {
 	creditBalanceCents,
 	getWorkspacePlanCap,
 	getWorkspacePlanUsdCentsUsage,
+	preflightLlmCredentials,
 	resolveLlmRoute,
 } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
@@ -849,11 +851,19 @@ export class SessionManager extends EventEmitter {
 			this.watchContainerExit(sessionId, containerId)
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err)
+			// A missing-credentials failure is classified rather than left as a
+			// bare string, so the UI and `get_session` show why instead of a raw
+			// internal message. Everything else keeps today's shape.
+			const launchFailureReason =
+				err instanceof LlmCredentialsUnavailableError ? err.toFailureReason() : null
 			await this.db
 				.update(sessions)
 				.set({
 					status: 'failed',
-					result: { error: message },
+					result: {
+						error: launchFailureReason?.human_message ?? message,
+						...(launchFailureReason ? { failure_reason: launchFailureReason } : {}),
+					},
 					completedAt: new Date(),
 					updatedAt: new Date(),
 				})
@@ -865,8 +875,20 @@ export class SessionManager extends EventEmitter {
 				action: 'session_failed',
 				entityType: 'session',
 				entityId: sessionId,
-				data: { error: message },
+				data: {
+					error: message,
+					...(launchFailureReason ? { reason_code: launchFailureReason.reason_code } : {}),
+				},
 			})
+
+			if (launchFailureReason) {
+				await this.insertSystemLog(sessionId, launchFailureReason.human_message).catch((logErr) =>
+					logger.warn('Failed to append credential-failure log line', {
+						sessionId,
+						error: String(logErr),
+					}),
+				)
+			}
 
 			this.telemetry.recordSessionEnded({
 				sessionId,
@@ -1633,6 +1655,36 @@ export class SessionManager extends EventEmitter {
 				})
 			}
 			throw err
+		}
+
+		// Credential pre-flight. `resolveLlmRoute` returns null both when the
+		// caller still has work to do (a non-anthropic agent key, handled just
+		// below) and when the workspace has nothing configured at all. Only the
+		// second case is fatal, and it used to launch anyway: a container with no
+		// ANTHROPIC_* env, dying inside the sandbox with a message nobody reads —
+		// or, when credential resolution stalled instead of returning, a session
+		// that never launched and never failed until the zombie reaper closed it
+		// out with a generic message.
+		//
+		// This runs before any container or sandbox exists, on both the local and
+		// the remote launch path, and reuses the workspace + agent rows already
+		// loaded above rather than issuing its own queries.
+		// `ws` is undefined only when the workspace row couldn't be read at all.
+		// Refusing to launch on that basis would be claiming "no credentials are
+		// configured" from an absence of evidence, so this fails open and lets
+		// the launch proceed to whatever the next failure is.
+		if (!routeTaken && ws) {
+			const credentialGap = preflightLlmCredentials({
+				wsSettings,
+				byollmAllowed,
+				agent: {
+					provider: agent.llmProvider,
+					apiKey: (llmConfig.api_key as string | undefined) ?? null,
+				},
+			})
+			if (credentialGap) {
+				throw new LlmCredentialsUnavailableError(credentialGap.detail)
+			}
 		}
 
 		// Non-anthropic agent override (OpenAI native via OPENAI_API_KEY) and the
@@ -3634,15 +3686,50 @@ export class SessionManager extends EventEmitter {
 			.where(and(eq(sessions.status, 'starting'), lt(sessions.updatedAt, tenMinutesAgo)))
 
 		for (const session of stuckStarting) {
+			// Everything this pass knows about WHY the launch stalled is on the
+			// row itself: whether a route was ever resolved (`config.llm_route`
+			// is absent when resolution never returned), whether a container or
+			// sandbox was ever created, and how long it sat. Recording that as a
+			// structured `failure_reason` is the difference between a session an
+			// agent can triage from `get_session` and the bare "stuck in starting
+			// state" that sent the last incident chasing the container pool.
+			const stalledConfig = (session.config as Record<string, unknown>) ?? {}
+			const stalledRoute = stalledConfig.llm_route
+			const stalledSince = session.updatedAt ?? session.createdAt
+			const stalledForMs = stalledSince ? Date.now() - stalledSince.getTime() : 0
+			const reachedRuntime = Boolean(session.containerId || session.agentServerId)
+			const diagnosis = reachedRuntime
+				? `Launch stalled after the runtime was assigned (container=${session.containerId ?? 'none'}, agent_server=${session.agentServerId ?? 'none'}).`
+				: typeof stalledRoute === 'string'
+					? `Launch stalled after resolving the ${stalledRoute} LLM route but before any container or sandbox was created.`
+					: 'Launch stalled before an LLM route was resolved — no container or sandbox was ever created. Most often a credential lookup that never returned.'
+			const verbatim = `${diagnosis} Sat in 'starting' for ${Math.round(stalledForMs / 1000)}s before the cleanup pass closed it out.`
+
 			logger.warn(`Failing zombie session stuck in starting: ${session.id}`, {
 				workspaceId: session.workspaceId,
+				llmRoute: stalledRoute ?? null,
+				reachedRuntime,
+				stalledForMs,
 			})
+
+			const stalledFailureReason: SessionResultFailureReason = {
+				provider: 'maskin',
+				reason_code: 'startup_stalled',
+				human_message:
+					'This session never started — the launch stalled before anything ran, and it was closed out automatically. Nothing was executed. Start a new session to try again.',
+				http_status: null,
+				reset_at: null,
+				verbatim_output: verbatim,
+			}
 
 			await this.db
 				.update(sessions)
 				.set({
 					status: 'failed',
-					result: { error: 'Session stuck in starting state' },
+					result: {
+						error: 'Session stuck in starting state',
+						failure_reason: stalledFailureReason,
+					},
 					completedAt: new Date(),
 					updatedAt: new Date(),
 				})
@@ -3654,8 +3741,19 @@ export class SessionManager extends EventEmitter {
 				action: 'session_failed',
 				entityType: 'session',
 				entityId: session.id,
-				data: { error: 'Session stuck in starting state' },
+				data: {
+					error: 'Session stuck in starting state',
+					reason_code: 'startup_stalled',
+					diagnosis: verbatim,
+				},
 			})
+
+			await this.insertSystemLog(session.id, stalledFailureReason.human_message).catch((err) =>
+				logger.warn('Failed to append stalled-launch log line', {
+					sessionId: session.id,
+					error: String(err),
+				}),
+			)
 
 			this.telemetry.recordSessionEnded({
 				sessionId: session.id,
