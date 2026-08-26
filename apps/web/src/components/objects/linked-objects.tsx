@@ -254,7 +254,7 @@ function ObjectPicker({
 	)
 }
 
-function AddLinkForm({
+export function AddLinkForm({
 	objectId,
 	objectType,
 	allObjects,

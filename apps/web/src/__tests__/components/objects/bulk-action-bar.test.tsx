@@ -132,7 +132,7 @@ describe('BulkActionBar', () => {
 	it('renders status and owner selects with provided options', () => {
 		renderBar()
 		expect(screen.getByRole('combobox', { name: 'Set status' })).not.toBeDisabled()
-		expect(screen.getByRole('combobox', { name: 'Set owner' })).not.toBeDisabled()
+		expect(screen.getByRole('combobox', { name: 'Set driver' })).not.toBeDisabled()
 	})
 
 	it('fires onStatusChange when a status option is picked', () => {
@@ -144,7 +144,7 @@ describe('BulkActionBar', () => {
 
 	it('fires onOwnerChange when an owner option is picked', () => {
 		const { props } = renderBar()
-		fireEvent.click(screen.getByRole('combobox', { name: 'Set owner' }))
+		fireEvent.click(screen.getByRole('combobox', { name: 'Set driver' }))
 		fireEvent.click(screen.getByRole('option', { name: 'Alice' }))
 		expect(props.onOwnerChange).toHaveBeenCalledWith('actor-1')
 	})
@@ -195,10 +195,18 @@ describe('BulkActionBar', () => {
 		expect(props.onClear).not.toHaveBeenCalled()
 	})
 
-	it('disables the transition classes when prefers-reduced-motion is set', () => {
+	// Reduced-motion is now enforced by a global @media (prefers-reduced-motion:
+	// reduce) rule in app.css that zeroes transition-duration on every element,
+	// so the component keeps its transition class in both preference states.
+	// Coverage of the CSS guard itself lives in app-css-motion.test.ts. The
+	// bar's transition is narrowed to transform + opacity per the v2 spec's
+	// "shadow + transform" tier at --duration-200.
+	it('keeps its transform+opacity transition class regardless of prefers-reduced-motion', () => {
 		setMatchMedia(true)
 		renderBar()
 		const bar = screen.getByRole('region', { name: 'Bulk actions' })
+		expect(bar.className).toMatch(/transition-\[transform,opacity\]/)
+		expect(bar.className).toMatch(/duration-200/)
 		expect(bar.className).not.toMatch(/transition-all/)
 	})
 
@@ -294,7 +302,7 @@ describe('BulkActionBar', () => {
 
 		it('emits once with action=owner_change on an owner pick', () => {
 			renderBar({ selectedCount: 2 })
-			fireEvent.click(screen.getByRole('combobox', { name: 'Set owner' }))
+			fireEvent.click(screen.getByRole('combobox', { name: 'Set driver' }))
 			fireEvent.click(screen.getByRole('option', { name: 'Bob' }))
 			expect(trackBulkEditCommit).toHaveBeenCalledTimes(1)
 			expect(trackBulkEditCommit).toHaveBeenCalledWith({

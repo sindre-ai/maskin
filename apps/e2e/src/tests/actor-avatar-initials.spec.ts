@@ -33,9 +33,11 @@ test.describe('ActorAvatar — 2-letter initials + deterministic color', () => {
 			})
 
 			await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
-			// The object title is an editable <textarea> (object-document.tsx), never
-			// a heading — wait on its value to know the object has loaded.
-			await expect(page.getByPlaceholder('Untitled')).toHaveValue('Bet for actor-avatar initials', {
+			// The object title is a static <h1> on the v2 detail shell — wait on it
+			// to know the object has loaded.
+			await expect(
+				page.getByRole('heading', { level: 1, name: 'Bet for actor-avatar initials' }),
+			).toBeVisible({
 				timeout: 20000,
 			})
 
@@ -62,7 +64,9 @@ test.describe('ActorAvatar — 2-letter initials + deterministic color', () => {
 			expect(firstColor).not.toBe('rgba(0, 0, 0, 0)')
 
 			await page.reload()
-			await expect(page.getByPlaceholder('Untitled')).toHaveValue('Bet for actor-avatar initials', {
+			await expect(
+				page.getByRole('heading', { level: 1, name: 'Bet for actor-avatar initials' }),
+			).toBeVisible({
 				timeout: 20000,
 			})
 			const secondColor = await page

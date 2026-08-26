@@ -48,20 +48,15 @@ test.describe('Objects display-panel persistence', () => {
 			await page.reload()
 			await expect(page.getByText('Display Persistence Probe')).toBeVisible({ timeout: 10_000 })
 
-			// Re-open the panel and assert the pill is still in its toggled state —
-			// the active-pill style applies `bg-accent text-accent-foreground`, but
-			// the simpler assertion is "open the panel, see it active". Use
-			// aria-pressed if the PillButton sets it, otherwise fall back to the
-			// active class. PillButton renders `border-accent` when active.
+			// Re-open the panel and assert the pill is still in its toggled state.
 			await page.getByRole('button', { name: /^Display/ }).click()
 			const createdByPillAfter = page.getByRole('dialog').getByRole('button', {
 				name: /Created by/i,
 			})
 			await expect(createdByPillAfter).toBeVisible()
-			// PillButton applies `border-accent` when active and `border-border`
-			// when inactive. Read class once to avoid coupling to internal markup.
-			const className = await createdByPillAfter.getAttribute('class')
-			expect(className ?? '').toContain('border-accent')
+			// The v2 PillButton carries its state on `aria-pressed`, so assert that
+			// rather than a utility class.
+			await expect(createdByPillAfter).toHaveAttribute('aria-pressed', 'true')
 		})
 	}
 })

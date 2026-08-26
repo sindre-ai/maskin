@@ -461,6 +461,9 @@ export function useDeleteObject(workspaceId: string) {
 				})
 			}
 		},
+		onError: () => {
+			toast.error('Failed to delete object')
+		},
 		onSettled: () => {
 			queryClient.invalidateQueries({ queryKey: queryKeys.objects.all(workspaceId) })
 			queryClient.invalidateQueries({ queryKey: queryKeys.bets.all(workspaceId) })

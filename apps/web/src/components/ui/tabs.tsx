@@ -12,7 +12,10 @@ const TabsList = React.forwardRef<
 	<TabsPrimitive.List
 		ref={ref}
 		className={cn(
-			'inline-flex h-10 items-center justify-center rounded-md bg-muted p-1 text-muted-foreground',
+			// `text-muted-foreground` (#71717a) on `bg-muted` (#f4f4f5) is 4.39:1 —
+			// just under WCAG AA. Inactive triggers sit on that muted surface, so
+			// the list's resting colour is a dimmed `foreground` instead.
+			'inline-flex h-10 items-center justify-center rounded-md bg-muted p-1 text-foreground/70',
 			className,
 		)}
 		{...props}

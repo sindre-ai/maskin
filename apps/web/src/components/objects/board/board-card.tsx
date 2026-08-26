@@ -4,10 +4,12 @@ import { AgentWorkingBadge } from '@/components/shared/agent-working-badge'
 import { RelativeTime } from '@/components/shared/relative-time'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
-import type { ActorListItem, ObjectResponse } from '@/lib/api'
+import type { ActorListItem, NotificationResponse, ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { getTypeColor } from '@/lib/constants'
 import { Link } from '@tanstack/react-router'
 import type { VisibilityState } from '@tanstack/react-table'
+import { ArrowRight } from 'lucide-react'
 
 interface BoardCardProps {
 	object: ObjectResponse
@@ -16,6 +18,13 @@ interface BoardCardProps {
 	isSelected?: boolean
 	columns?: DisplayPanelColumn[]
 	columnVisibility?: VisibilityState
+	/** Pending ask targeting this object — renders the amber "Waiting on you"
+	 *  pill (mockup 984). */
+	ask?: NotificationResponse
+	/** Advance the card to the next column. Rendered as the `→` affordance in
+	 *  the title row (mockup 983); omitted on the last column. */
+	onAdvance?: () => void
+	advanceLabel?: string
 }
 
 export function BoardCard({
@@ -25,21 +34,26 @@ export function BoardCard({
 	isSelected,
 	columns = [],
 	columnVisibility,
+	ask,
+	onAdvance,
+	advanceLabel,
 }: BoardCardProps) {
-	const owner = object.driver ? actors?.find((a) => a.id === object.driver) : null
+	const driver = object.driver ? actors?.find((a) => a.id === object.driver) : null
 	const availableProperties =
 		columns.length > 0
 			? columns
 			: [
 					{ id: 'status', label: 'Status', canHide: true },
 					{ id: 'type', label: 'Type', canHide: true },
-					{ id: 'owner', label: 'Owner', canHide: true },
+					{ id: 'driver', label: 'Driver', canHide: true },
 					{ id: 'updatedAt', label: 'Updated', canHide: true },
 				]
 	const visibleProperties = availableProperties.filter(
 		(column) => column.id !== 'title' && columnVisibility?.[column.id] !== false,
 	)
 	const showStatus = isPropertyVisible('status', visibleProperties)
+	const hasPendingAsk = ask?.status === 'pending'
+	const typeDot = getTypeColor(object.type)
 
 	return (
 		<Link
@@ -50,15 +64,45 @@ export function BoardCard({
 			aria-selected={isSelected}
 			className={cn(
 				'relative flex flex-col gap-2 rounded-xl border border-border bg-card p-3 text-sm transition-colors hover:bg-accent/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-				'data-[state=selected]:border-accent data-[state=selected]:bg-accent/40 data-[state=selected]:ring-2 data-[state=selected]:ring-accent/30',
+				// `accent` is a near-white background token in light mode, so it cannot
+				// carry a resting-state indicator on a white card — `muted`/`brand` read
+				// in both modes. Matches the v2 list row's selected state.
+				'data-[state=selected]:border-brand data-[state=selected]:bg-muted data-[state=selected]:ring-2 data-[state=selected]:ring-brand/40',
 			)}
 		>
-			<div className="flex items-start justify-between gap-2">
-				<span className="line-clamp-2 min-w-0 font-semibold text-foreground">
+			<div className="flex items-start gap-2">
+				<span
+					aria-hidden="true"
+					className={cn('mt-1 size-2 shrink-0 rounded-[2px] bg-current', typeDot.text)}
+				/>
+				<span className="line-clamp-2 min-w-0 flex-1 font-semibold text-foreground">
 					{object.title || 'Untitled'}
 				</span>
 				{showStatus && <StatusBadge status={object.status} className="shrink-0" />}
+				{onAdvance && (
+					// Always rendered at full opacity — a hover-only reveal would be
+					// unreachable on touch (see .claude/rules/verification.md).
+					<button
+						type="button"
+						title={advanceLabel}
+						aria-label={advanceLabel ?? 'Move to next column'}
+						onClick={(event) => {
+							event.preventDefault()
+							event.stopPropagation()
+							onAdvance()
+						}}
+						className="grid size-5 shrink-0 place-items-center rounded-md text-muted-foreground/60 transition-colors hover:bg-muted hover:text-foreground"
+					>
+						<ArrowRight size={12} aria-hidden="true" />
+					</button>
+				)}
 			</div>
+
+			{hasPendingAsk && (
+				<span className="w-fit rounded-full border border-ask-border bg-ask-surface px-2 py-0.5 text-[10px] font-bold leading-none text-warning">
+					Waiting on you
+				</span>
+			)}
 
 			{object.activeSessionId && (
 				<AgentWorkingBadge sessionId={object.activeSessionId} workspaceId={workspaceId} />
@@ -72,7 +116,7 @@ export function BoardCard({
 							property={property}
 							object={object}
 							actors={actors}
-							owner={owner}
+							driver={driver}
 						/>
 					))}
 				</div>
@@ -89,21 +133,23 @@ function PropertyValue({
 	property,
 	object,
 	actors,
-	owner,
+	driver,
 }: {
 	property: DisplayPanelColumn
 	object: ObjectResponse
 	actors?: ActorListItem[]
-	owner?: ActorListItem | null
+	driver?: ActorListItem | null
 }) {
 	switch (property.id) {
 		case 'status':
 			return null
 		case 'type':
 			return <TypeBadge type={object.type} />
-		case 'owner':
-			return owner ? (
-				<ActorAvatar id={owner.id} name={owner.name} type={owner.type} className="shrink-0" />
+		// The route's Display panel emits `driver` column ids; the card cased on
+		// the retired `owner` id, so the avatar never rendered on a board card.
+		case 'driver':
+			return driver ? (
+				<ActorAvatar id={driver.id} name={driver.name} type={driver.type} className="shrink-0" />
 			) : null
 		case 'createdBy': {
 			const actor = actors?.find((a) => a.id === object.createdBy)

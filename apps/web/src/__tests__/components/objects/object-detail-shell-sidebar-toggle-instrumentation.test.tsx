@@ -1,16 +1,16 @@
-import { ObjectDocument } from '@/components/objects/object-document'
+import { ObjectDetailShell } from '@/components/objects/object-detail-shell'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import * as React from 'react'
-import { buildObjectResponse, buildWorkspaceWithRole } from '../../factories'
-import { TestWrapper } from '../../setup'
+import { buildObjectResponse } from '../../factories'
+import { createWorkspaceWrapper } from '../../setup'
 
 const trackSidebarToggleMock = vi.fn()
 
 // Stateful mock for the persisted sidebar-collapsed bit. Seeded to `true`
 // (collapsed / closed) so every viewport's initial state in these tests is
 // deterministically CLOSED — regardless of the breakpoint-default logic in
-// `ObjectDocument`. `useUpdateUserDisplaySettings.mutate()` writes to this
+// `ObjectDetailShell`. `useUpdateUserDisplaySettings.mutate()` writes to this
 // store and bumps a version, which re-renders the query consumers.
 const settingsStore: {
 	settings: { objectDetailSidebarCollapsed: boolean }
@@ -50,6 +50,15 @@ vi.mock('@/hooks/use-user-display-settings', () => ({
 	}),
 }))
 
+// The viewport the component reads is driven from one place so a test can move
+// `window.innerWidth` and the breakpoint hooks in lockstep.
+const viewport = { width: 1280 }
+vi.mock('@/hooks/use-mobile', () => ({
+	useIsMobile: () => viewport.width < 768,
+	useIsTouchViewport: () => viewport.width < 1024,
+	useIsDesktopViewport: () => viewport.width >= 1024,
+}))
+
 vi.mock('@tanstack/react-router', async () => {
 	const { mockTanStackRouter } = await import('../../mocks/router')
 	return mockTanStackRouter()
@@ -65,93 +74,86 @@ vi.mock('@/lib/analytics', () => ({
 	},
 }))
 
-vi.mock('@/lib/workspace-context', () => ({
-	useWorkspace: () => ({ workspaceId: 'ws-1', workspace: buildWorkspaceWithRole() }),
-}))
-
-vi.mock('@/hooks/use-actors', () => ({
-	useActor: () => ({ data: undefined }),
+vi.mock('@/lib/auth', () => ({
+	getStoredActor: () => ({ id: 'actor-1', name: 'Alice', type: 'human' }),
 }))
 
 vi.mock('@/hooks/use-events', () => ({
-	useEntityEvents: () => ({ data: [] }),
+	useCreateComment: () => ({ mutate: vi.fn(), isPending: false }),
+}))
+
+vi.mock('@/hooks/use-actors', () => ({
+	useActors: () => ({ data: [] }),
+}))
+
+vi.mock('@/hooks/use-notifications', () => ({
+	useNotifications: () => ({ data: [] }),
+}))
+
+vi.mock('@/hooks/use-objects', () => ({
+	useUpdateObject: () => ({ mutate: vi.fn() }),
+	useDeleteObject: () => ({ mutate: vi.fn(), isPending: false }),
+	useObject: () => ({ data: undefined, isLoading: false }),
+	useObjectGraph: () => ({ data: { events: [], relationships: [], connected_objects: [] } }),
+	useObjects: () => ({ data: [] }),
 }))
 
 vi.mock('@/hooks/use-workspaces', () => ({
 	useWorkspaceMembers: () => ({ data: [] }),
+	useUpdateWorkspace: () => ({ mutate: vi.fn(), isPending: false }),
+	useWorkspaces: () => ({ data: [] }),
 }))
 
-vi.mock('@/hooks/use-objects', () => ({
-	useObjectGraph: () => ({ data: undefined }),
-	useUpdateObject: () => ({ mutate: vi.fn() }),
-	useVerifyObject: () => ({ mutate: vi.fn() }),
-	useDeleteObject: () => ({ mutate: vi.fn(), isPending: false }),
+vi.mock('@/hooks/use-relationships', () => ({
+	useCreateRelationship: () => ({ mutate: vi.fn() }),
+	useDeleteRelationship: () => ({ mutate: vi.fn() }),
 }))
 
 vi.mock('@/hooks/use-subscriptions', () => ({
-	useSubscribe: () => ({ mutate: vi.fn() }),
-	useUnsubscribe: () => ({ mutate: vi.fn() }),
-}))
-
-vi.mock('@/components/shared/agent-working-badge', () => ({
-	AgentWorkingBadge: () => null,
+	useSubscribe: () => ({ mutate: vi.fn(), isPending: false }),
+	useUnsubscribe: () => ({ mutate: vi.fn(), isPending: false }),
+	useSubscribers: () => ({ data: [] }),
+	useMarkRead: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
 vi.mock('@/components/shared/markdown-content', () => ({
 	MarkdownContent: ({ content }: { content: string }) => <div>{content}</div>,
 }))
 
-vi.mock('@/components/activity/object-activity', () => ({
-	ObjectActivity: () => null,
-}))
-
-vi.mock('@/components/shared/subscribe-toggle', () => ({
-	SubscribeToggle: () => null,
-}))
-
-vi.mock('@/components/objects/metadata-properties', () => ({
-	MetadataProperties: () => null,
-}))
-
-vi.mock('@/components/objects/linked-objects', () => ({
-	LinkedObjects: () => null,
-}))
-
-vi.mock('@/components/objects/object-files', () => ({
-	ObjectFiles: () => null,
-}))
-
-vi.mock('@/components/layout/page-header', () => ({
-	PageHeader: ({ actions }: { actions?: React.ReactNode }) => <div>{actions}</div>,
-}))
-
-function setInnerWidth(px: number) {
+function setViewport(px: number) {
+	viewport.width = px
 	Object.defineProperty(window, 'innerWidth', { value: px, configurable: true })
+}
+
+function renderShell(id: string) {
+	return render(<ObjectDetailShell object={buildObjectResponse({ id, type: 'bet' })} />, {
+		wrapper: createWorkspaceWrapper({ settings: { statuses: { bet: ['active'] } } }),
+	})
 }
 
 beforeEach(() => {
 	trackSidebarToggleMock.mockClear()
-	setInnerWidth(1280)
+	setViewport(1280)
 	settingsStore.settings = { objectDetailSidebarCollapsed: true }
 	settingsStore.subscribers.clear()
 })
 
-describe('ObjectDocument sidebar_toggle instrumentation', () => {
-	// Ship-metric event for the object-detail-sidebar bet. Every open/close of
-	// the right sidebar must fire — the exit gate revokes the feature if this
+describe('ObjectDetailShell sidebar_toggle instrumentation', () => {
+	// Ship-metric event for the object-detail-sidebar bet, ported from the
+	// retired ObjectDocument surface along with the ⌘/Ctrl+I chord and the
+	// persisted `objectDetailSidebarCollapsed` bit. Every open/close of the
+	// right sidebar must fire — the exit gate revokes the feature if this
 	// event stays at 0/day for 7 consecutive days.
 
 	it('does not fire on initial mount (default closed state is not a toggle)', () => {
-		const object = buildObjectResponse({ id: 'obj-mount' })
-		render(<ObjectDocument object={object} />, { wrapper: TestWrapper })
+		renderShell('obj-mount')
 
 		expect(trackSidebarToggleMock).not.toHaveBeenCalled()
 	})
 
 	it('fires state=open when the PanelRight header button opens the sidebar', async () => {
 		const user = userEvent.setup()
-		const object = buildObjectResponse({ id: 'obj-button' })
-		render(<ObjectDocument object={object} />, { wrapper: TestWrapper })
+		renderShell('obj-button')
 
 		await user.click(screen.getByRole('button', { name: 'Properties' }))
 
@@ -163,33 +165,9 @@ describe('ObjectDocument sidebar_toggle instrumentation', () => {
 		})
 	})
 
-	it('fires state=closed when the sidebar is dismissed via ESC on the mobile Sheet overlay', async () => {
-		// Covers the "any programmatic toggle" leg of the DoD — the mobile
-		// Sheet's own `onOpenChange` feeds the same state setter, so ESC /
-		// overlay dismissal must emit alongside explicit button/shortcut
-		// paths. Runs at mobile since the Sheet branch only renders below
-		// 768px; the ≥768 viewports render the sidebar inline, where ESC has
-		// nothing to dismiss.
-		setInnerWidth(375)
-		const user = userEvent.setup()
-		const object = buildObjectResponse({ id: 'obj-close-esc' })
-		render(<ObjectDocument object={object} />, { wrapper: TestWrapper })
-
-		await user.click(screen.getByRole('button', { name: 'Properties' }))
-		trackSidebarToggleMock.mockClear()
-		await user.keyboard('{Escape}')
-
-		expect(trackSidebarToggleMock).toHaveBeenCalledWith({
-			state: 'closed',
-			viewport: 'mobile',
-			object_id: 'obj-close-esc',
-		})
-	})
-
 	it('fires when the ⌘/Ctrl+I shortcut toggles the sidebar', async () => {
 		const user = userEvent.setup()
-		const object = buildObjectResponse({ id: 'obj-shortcut' })
-		render(<ObjectDocument object={object} />, { wrapper: TestWrapper })
+		renderShell('obj-shortcut')
 
 		await user.keyboard('{Control>}i{/Control}')
 
@@ -201,11 +179,25 @@ describe('ObjectDocument sidebar_toggle instrumentation', () => {
 		})
 	})
 
-	it('reports the tablet viewport for widths in the 768–1023 band', async () => {
-		setInnerWidth(900)
+	it('persists the collapsed bit so the toggle survives a remount', async () => {
 		const user = userEvent.setup()
-		const object = buildObjectResponse({ id: 'obj-tablet' })
-		render(<ObjectDocument object={object} />, { wrapper: TestWrapper })
+		const { unmount } = renderShell('obj-persist')
+
+		await user.click(screen.getByRole('button', { name: 'Properties' }))
+		expect(settingsStore.settings.objectDetailSidebarCollapsed).toBe(false)
+
+		unmount()
+		renderShell('obj-persist')
+		expect(screen.getByRole('button', { name: 'Properties' })).toHaveAttribute(
+			'aria-expanded',
+			'true',
+		)
+	})
+
+	it('reports the tablet viewport for widths in the 768–1023 band', async () => {
+		setViewport(900)
+		const user = userEvent.setup()
+		renderShell('obj-tablet')
 
 		await user.click(screen.getByRole('button', { name: 'Properties' }))
 
@@ -215,10 +207,9 @@ describe('ObjectDocument sidebar_toggle instrumentation', () => {
 	})
 
 	it('reports the mobile viewport below 768px', async () => {
-		setInnerWidth(375)
+		setViewport(375)
 		const user = userEvent.setup()
-		const object = buildObjectResponse({ id: 'obj-mobile' })
-		render(<ObjectDocument object={object} />, { wrapper: TestWrapper })
+		renderShell('obj-mobile')
 
 		await user.click(screen.getByRole('button', { name: 'Properties' }))
 

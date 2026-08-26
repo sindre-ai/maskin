@@ -11,9 +11,18 @@ const LONG_BODY = Array.from({ length: 40 }, (_, i) => `Paragraph ${i + 1}. `.re
 const STICKY_TITLE_MARKER = 'Sticky nav bet identity'
 
 async function scrollHeroOff(page: import('@playwright/test').Page) {
-	const scrollRoot = page.locator('[data-scroll-root]')
-	await scrollRoot.evaluate((el) => {
-		el.scrollTop = el.clientHeight * 2
+	// The v2 detail shell publishes `scrollLocked`, so `[data-scroll-root]` is
+	// `overflow-hidden` and the document itself owns no scroll — the shell's own
+	// inner region is the scroller. Drive every live scroller on the page rather
+	// than naming one, so this helper survives the next layout move too.
+	await page.evaluate(() => {
+		for (const el of Array.from(document.querySelectorAll<HTMLElement>('*'))) {
+			if (el.scrollHeight <= el.clientHeight + 1) continue
+			const overflowY = getComputedStyle(el).overflowY
+			if (overflowY !== 'auto' && overflowY !== 'scroll') continue
+			el.scrollTop = el.scrollHeight
+		}
+		window.scrollTo(0, document.body.scrollHeight)
 	})
 	// One rAF plus a small buffer so any scroll-driven effects flush.
 	await page.waitForTimeout(200)
@@ -41,7 +50,7 @@ test.describe('Sticky nav — bet identity', () => {
 			})
 
 			await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
-			await expect(page.getByPlaceholder('Untitled')).toHaveValue(STICKY_TITLE_MARKER, {
+			await expect(page.getByRole('heading', { level: 1, name: STICKY_TITLE_MARKER })).toBeVisible({
 				timeout: 10000,
 			})
 
@@ -89,7 +98,7 @@ test.describe('Sticky nav — bet identity', () => {
 		for (const viewport of [WIDE_DESKTOP, NARROW_DESKTOP, MOBILE]) {
 			await page.setViewportSize(viewport)
 			await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
-			await expect(page.getByPlaceholder('Untitled')).toHaveValue(STICKY_TITLE_MARKER, {
+			await expect(page.getByRole('heading', { level: 1, name: STICKY_TITLE_MARKER })).toBeVisible({
 				timeout: 10000,
 			})
 
@@ -128,8 +137,9 @@ test.describe('"Create an object" section in the header New menu', () => {
 		})
 
 		await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
-		// The object title is an editable <textarea> (object-document.tsx).
-		await expect(page.getByPlaceholder('Untitled')).toHaveValue('Nav Create removal check', {
+		await expect(
+			page.getByRole('heading', { level: 1, name: 'Nav Create removal check' }),
+		).toBeVisible({
 			timeout: 10000,
 		})
 		// The New menu itself stays available on object-detail pages (chat/loop/
