@@ -12,6 +12,7 @@ vi.mock('../../lib/stripe', async () => {
 	}
 })
 
+import { TRIAL_HARD_CAP_DEFAULT_USD_CENTS } from '../../lib/billing-defaults'
 import { createCheckoutSession, createCreditCheckoutSession } from '../../lib/stripe'
 import billingRoutes from '../../routes/billing'
 import { jsonRequest } from '../helpers'
@@ -392,7 +393,7 @@ describe('GET /api/billing/usage', () => {
 			plan: 'trial',
 			status: 'active',
 			usd_cents_used: 0,
-			hard_cap_usd_cents: 500,
+			hard_cap_usd_cents: TRIAL_HARD_CAP_DEFAULT_USD_CENTS,
 			stripe_customer_id: null,
 			stripe_subscription_id: null,
 			period_start: null,

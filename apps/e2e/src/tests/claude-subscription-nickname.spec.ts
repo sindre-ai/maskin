@@ -82,6 +82,7 @@ test.describe('Claude subscription nickname — settings UI', () => {
 		// Long labels are the case most likely to clip or scroll out of view on
 		// narrow widths — the reported "nickname missing on small screens".
 		const longNickname = 'The primary work account nickname for Q3'
+		await grantByollmAllowed(account.apiKey, account.workspaceId)
 		await importClaudeOAuth(account.apiKey, account.workspaceId, {
 			...seedPrimary,
 			slot: 'primary',
