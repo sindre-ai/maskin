@@ -72,6 +72,33 @@ whole machine, so CPU, memory and disk cover the Coolify containers' resource
 usage too. It is the *logs* that are agent-server-only. Do not read a green
 metrics dashboard as evidence that everything on the box is being logged.
 
+## Current deployment
+
+Live as of 2026-08-26 on the Finland box (`95.217.231.223`). This section
+records what is actually running, so a future reader can tell configuration
+from aspiration.
+
+| | |
+|---|---|
+| Alloy | v1.19.0 (apt, `promtail_journal_enabled` build tag) |
+| Config | `/etc/alloy/config.alloy` — copy of `alloy.alloy`, unmodified |
+| Settings | `/etc/default/alloy`, mode `0600` |
+| `instance` | `finland-1` (set explicitly; hostname is a Hetzner image name) |
+| Grafana Cloud | org `gracefulfalcon588`, stack `1808111`, region `prod-eu-north-0` |
+| Loki | `logs-prod-025`, user `1765898` |
+| Prometheus | `prometheus-prod-39-prod-eu-north-0`, user `3540446` |
+| Credentials | one access policy token `maskin-agent-server-alloy`, scoped `logs:write` + `metrics:write` |
+| Active series | 887 (~9% of the 10k allowance) |
+| Dashboards | Grafana Cloud "Linux Server" integration, installed |
+
+Note the two Grafana Cloud usernames are **different numbers**. They are not
+interchangeable, and swapping them yields a 401 that reads like a bad token.
+
+Verified end to end: `{instance="finland-1", job="maskin-agent-server"}`
+returns log lines, `node_uname_info` returns
+`job="integrations/node_exporter", instance="finland-1", env="production"`, and
+"Linux node / overview" renders live CPU, memory and disk for this host.
+
 ## Setup
 
 ### 1. Install Alloy on the agent-server host
@@ -215,14 +242,51 @@ Do this before you consider the setup finished. See
 [Volume and the free-tier ceiling](#volume-and-the-free-tier-ceiling) for why
 the worst case sits just under the limit rather than comfortably below it.
 
-Grafana Cloud → Billing/Usage → set alerts at roughly 70% of each allowance:
+Grafana → **Cost Management and Billing → Usage Alerts** (not the grafana.com
+org portal — the alerts live inside the stack). Each alert needs a **contact
+point**, and the list is empty on a new stack, so create one first under
+Alerting → Notification configuration; the alert cannot be saved without it.
 
-- **Logs** — 50 GB/month free tier; alert around 35 GB
-- **Metrics** — 10k active series free tier; alert around 7k
+**Already configured on this stack (2026-08-26):**
+
+| Alert | Fires at | Contact point |
+|---|---|---|
+| Logs Usage: 70% of 50 GiB | 35 GiB/month | `usage-alerts-email` |
+| Metrics Usage: 10% over 7,000 series | 7,700 series | `usage-alerts-email` |
+
+Note the two products use **different wording**: Logs levels are "% *of*
+threshold", Metrics levels are "% *over* threshold". So the Logs threshold is
+set to the full 50 GiB allowance and the level does the derating, whereas the
+Metrics threshold is set to 7,000 — the point you want to know about — and the
+level fires above it.
 
 Series count is the one to watch on the metrics side: it steps up discretely
 when a collector is enabled or a host is added, rather than drifting, so an
 alert catches a config change the same day it lands.
+
+### 8. Install the Grafana Cloud "Linux Server" integration
+
+**Matching the `job` label is necessary but not sufficient.** The prebuilt
+dashboards do not exist in your stack until you install the integration —
+before that, `/dashboards` simply has no Linux pages in it, whatever your
+metrics are labelled.
+
+Grafana → Connections → Add new connection → **Linux Server** → *Install
+dashboards and alerts*. You do **not** need its "Install Alloy" or
+"Configuration details" steps; `alloy.alloy` already does that job, and its
+generated snippet would overwrite this one.
+
+That installs seven dashboards (overview, CPU and system, memory, network,
+filesystem and disks, logs, fleet overview) plus alert rules and recording
+rules. The recording rules matter: some panels (e.g. CPU count) query
+`instance:node_num_cpu:sum`, which only exists once the integration creates
+it, and which only produces data going forward — so expect a few blank panels
+for the first minutes after install, not a misconfiguration.
+
+**Verified 2026-08-26**: with the collector set in `alloy.alloy`, "Linux node /
+overview" populates fully — uptime, hostname, kernel, OS, CPU count, memory
+total, swap, root mount size, CPU usage per core, and load average — with the
+`instance` variable auto-selecting `finland-1`.
 
 ## Querying logs
 
@@ -253,12 +317,35 @@ All series carry `job="integrations/node_exporter"`, plus the `env` and
 `instance` labels shared with logs. Replace `finland-1` with your
 `AGENT_SERVER_INSTANCE` value.
 
-That `job` value is Grafana Cloud's own convention, and matching it is worth
-doing: their prebuilt **Linux Server** integration dashboards filter on exactly
-this string, so they populate for this host without any panel building. The
-queries below are for ad-hoc investigation and for the correlation workflow —
-for "how is the box doing" at a glance, use the prebuilt dashboards rather than
-rebuilding them here.
+That `job` value is Grafana Cloud's own convention, and matching it is what
+lets their prebuilt **Linux Server** dashboards find this host (see setup step
+8 — you must also install the integration). The queries below are for ad-hoc
+investigation and for the correlation workflow; for "how is the box doing" at a
+glance, use the prebuilt dashboards rather than rebuilding them here.
+
+> **Gotcha, learned the hard way.** `job` is set in a **relabel rule** in both
+> pipelines, never as a static label. `prometheus.exporter.unix` pre-stamps
+> `job="integrations/unix"` and `loki.source.journal` pre-stamps
+> `job="<component id>"`, and both beat a static value. Getting this wrong is
+> silent — `alloy validate` passes, components report healthy, entries are
+> accepted with 204s, nothing is dropped, and every query here returns nothing,
+> because the data landed under a `job` value you never query. If a query in
+> this file comes back empty, check the `job` label values in Grafana's label
+> browser before assuming the pipeline is broken.
+
+### What these metrics cannot tell you
+
+Nothing here is per-agent-session. No host collector can see inside
+agent-server; nothing in this pipeline knows what a session is. `processes`
+gives aggregate process and thread counts — a proxy for how much work the box
+is doing — and the filtered `systemd` collector gives agent-server's up/down
+state and restart count, but neither attributes anything to a session.
+
+Session-level detail lives in the **logs**, where every line carries
+`session_id`. The division of labour: metrics tell you the box is struggling,
+logs tell you which session caused it, and the correlation workflow below is
+how you get from one to the other. Genuine per-session metrics would mean
+instrumenting agent-server itself — deliberately out of scope here.
 
 ```promql
 # CPU utilisation, 0–1, averaged across cores. The idle-mode subtraction is
@@ -291,6 +378,21 @@ rate(node_disk_io_time_seconds_total[5m])
 # Network throughput per interface, bytes/sec
 rate(node_network_receive_bytes_total{device!="lo"}[5m])
 rate(node_network_transmit_bytes_total{device!="lo"}[5m])
+
+# --- agent-server service health (systemd collector, filtered to its unit) ---
+
+# Is agent-server up? 1 = active. The `systemd` collector is restricted to
+# this one unit, so these are the only per-unit series in the stack.
+node_systemd_unit_state{name="maskin-agent-server.service", state="active"}
+
+# Restarts. The number that actually matters: Restart=on-failure means a
+# crash-looping service still reads "active" in a status check, and only the
+# rising restart count gives it away.
+increase(node_systemd_service_restart_total{name="maskin-agent-server.service"}[1h])
+
+# How much work is the box doing? Aggregate, not per-session — see above.
+node_processes_threads
+sum(node_processes_state)
 ```
 
 ## Correlating metrics and logs
@@ -390,12 +492,15 @@ Two things make this worth an explicit alert rather than a note:
   the unit file deliberately removed journald's independent backstop, because
   that backstop dropped lines silently. Good tradeoff for diagnostics; it does
   mean nothing downstream will quietly throttle a runaway.
-- **Metrics scale with hosts and collectors, not traffic.** ~500–1000 series
-  for this host against a 10k active-series allowance leaves room for several
-  more boxes, but enabling the `systemd` or `processes` collectors "for
-  completeness" can multiply it in one commit. `alloy.alloy` documents which
-  collectors are deliberately off and why — read that comment before adding
-  one.
+- **Metrics scale with hosts and collectors, not traffic.** MEASURED: **887
+  active series** for this host against the 10k allowance — about 9%, leaving
+  room for several more boxes. The one collector that could change that is
+  `systemd`, which is enabled but restricted to agent-server's own unit;
+  unfiltered it would cost roughly 2,500 series (513 units on this host).
+  `alloy.alloy` documents the fixed-vs-unbounded reasoning behind every
+  collector — read it before adding one, and re-measure rather than estimating:
+  adding ten collectors here was predicted at 1,500–2,500 series and actually
+  cost 887.
 
 Set the usage alerts in [step 7](#7-set-a-grafana-cloud-usage-alert--on-day-one-not-after-the-first-bill).
 
