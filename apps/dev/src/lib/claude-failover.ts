@@ -12,6 +12,7 @@ import {
 	headersFrom,
 } from './claude-failure-classifier'
 import {
+	CLAUDE_CREDENTIAL_TIMEOUT_MS,
 	type ClaudeOAuthTokens,
 	type EncryptedOAuthData,
 	decryptOAuthData,
@@ -76,6 +77,10 @@ export async function probeClaudeSubscription(
 ): Promise<ClassifierInput | null> {
 	const res = await fetch(CLAUDE_MESSAGES_URL, {
 		method: 'POST',
+		// Bounded so a hung Anthropic socket can't stall session launch — see
+		// CLAUDE_CREDENTIAL_TIMEOUT_MS. An abort surfaces through `runProbe`'s
+		// catch as a transport error, which classifies as retry_primary.
+		signal: AbortSignal.timeout(CLAUDE_CREDENTIAL_TIMEOUT_MS),
 		headers: {
 			'Content-Type': 'application/json',
 			Authorization: `Bearer ${tokens.accessToken}`,
