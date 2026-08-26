@@ -1,0 +1,1471 @@
+<!doctype html>
+<html lang="en" class="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Prototype · Agent Keychain</title>
+<script src="https://cdn.tailwindcss.com?plugins=typography"></script>
+<style>
+  /* ============================================================
+     Tokens mirrored from apps/web/src/app.css (v2 zinc + indigo).
+     Every color used below flows through a token — no raw hexes
+     in component markup — so this prototype maps 1:1 to the app.
+     ============================================================ */
+  :root {
+    --background: #ffffff; --foreground: #18181b;
+    --card: #ffffff; --card-foreground: #18181b;
+    --popover: #ffffff; --popover-foreground: #18181b;
+    --primary: #18181b; --primary-foreground: #ffffff;
+    --secondary: #f6f6f7; --secondary-foreground: #18181b;
+    --muted: #f4f4f5; --muted-foreground: #71717a;
+    --accent: #f6f6f7; --accent-foreground: #18181b;
+    --destructive: #dc2626; --destructive-foreground: #ffffff;
+    --border: #e4e4e7; --border-strong: #c4c4cc; --border-hover: #c4c4cc;
+    --input: #e4e4e7; --ring: #a1a1aa;
+    --brand: #4f46e5; --brand-foreground: #ffffff; --brand-hover: #4338ca;
+    --brand-subtle: #eef2ff; --brand-subtle-foreground: #4338ca;
+    --success: #16a34a; --warning: #b45309; --error: #dc2626;
+    --surface-sunken: #fcfcfd;
+    --sidebar: #fafafa; --sidebar-border: #e4e4e7;
+    --st-active-bg: #dcfce7;    --st-active-text: #15803d;
+    --st-processing-bg:#fef3c7; --st-processing-text:#b45309;
+    --st-failed-bg:#fee2e2;     --st-failed-text:#b91c1c;
+    --st-paused-bg:#f4f4f5;     --st-paused-text:#71717a;
+    --st-signal-bg:#ede9fe;     --st-signal-text:#6d28d9;
+    --radius: 0.625rem;
+    --radius-sm: calc(var(--radius) - 4px);
+    --radius-md: calc(var(--radius) - 2px);
+    --radius-lg: var(--radius);
+    --radius-xl: calc(var(--radius) + 4px);
+    --radius-2xl: calc(var(--radius) + 6px);
+    --shadow-sm: 0 1px 3px rgba(24,24,27,.06), 0 1px 2px rgba(24,24,27,.04);
+    --shadow-md: 0 4px 12px rgba(24,24,27,.06);
+    --shadow-lg: 0 12px 34px rgba(0,0,0,.10);
+    --shadow-xl: 0 24px 70px rgba(0,0,0,.30);
+    --ease-standard: cubic-bezier(.4,0,.2,1);
+    --ease-emphasized: cubic-bezier(.16,1,.3,1);
+    --duration-150: 150ms; --duration-180: 180ms; --duration-250: 250ms;
+    --font-sans: "Schibsted Grotesk","Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  }
+  html.dark {
+    --background:#09090b; --foreground:#fafafa;
+    --card:#18181b; --card-foreground:#fafafa;
+    --popover:#18181b; --popover-foreground:#fafafa;
+    --primary:#fafafa; --primary-foreground:#18181b;
+    --secondary:#27272a; --secondary-foreground:#fafafa;
+    --muted:#27272a; --muted-foreground:#a1a1aa;
+    --accent:#27272a; --accent-foreground:#fafafa;
+    --destructive:#f87171; --destructive-foreground:#18181b;
+    --border:#27272a; --border-strong:#3f3f46; --border-hover:#3f3f46;
+    --input:#27272a; --ring:#52525b;
+    --brand:#818cf8; --brand-foreground:#18181b; --brand-hover:#a5b4fc;
+    --brand-subtle:#1e1b4b; --brand-subtle-foreground:#a5b4fc;
+    --success:#4ade80; --warning:#fbbf24; --error:#f87171;
+    --surface-sunken:#0c0c0e;
+    --sidebar:#0a0a0b; --sidebar-border:#27272a;
+    --st-active-bg:#052e16; --st-active-text:#86efac;
+    --st-processing-bg:#422006; --st-processing-text:#fbbf24;
+    --st-failed-bg:#450a0a; --st-failed-text:#fca5a5;
+    --st-paused-bg:#27272a; --st-paused-text:#a1a1aa;
+    --st-signal-bg:#2e1065; --st-signal-text:#c4b5fd;
+  }
+  html, body { background: var(--background); color: var(--foreground); font-family: var(--font-sans); }
+  .font-mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  .eyebrow { font-family: var(--font-mono); font-size: 8px; font-weight: 700; letter-spacing: .11em; text-transform: uppercase; color: var(--muted-foreground); }
+
+  /* --- primitives, all backed by tokens --- */
+  .btn { display:inline-flex; align-items:center; justify-content:center; gap:.375rem; height: 2.25rem; padding: 0 .875rem; border-radius: var(--radius-md); font-size: .8125rem; font-weight: 500; transition: background var(--duration-150) var(--ease-standard), color var(--duration-150) var(--ease-standard), border-color var(--duration-150) var(--ease-standard), box-shadow var(--duration-180) var(--ease-standard); border: 1px solid transparent; cursor: pointer; }
+  .btn:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+  .btn-primary { background: var(--primary); color: var(--primary-foreground); }
+  .btn-primary:hover { background: color-mix(in oklab, var(--primary) 90%, transparent); }
+  .btn-secondary { background: var(--secondary); color: var(--secondary-foreground); border-color: var(--border); }
+  .btn-secondary:hover { background: var(--muted); border-color: var(--border-hover); }
+  .btn-ghost { background: transparent; color: var(--foreground); }
+  .btn-ghost:hover { background: var(--muted); }
+  .btn-outline { background: transparent; color: var(--foreground); border-color: var(--border); }
+  .btn-outline:hover { background: var(--muted); border-color: var(--border-hover); }
+  .btn-destructive { background: var(--destructive); color: var(--destructive-foreground); }
+  .btn-destructive:hover { background: color-mix(in oklab, var(--destructive) 88%, black); }
+  .btn-sm { height: 1.75rem; padding: 0 .625rem; font-size: .75rem; border-radius: var(--radius-md); }
+  .btn-lg { height: 2.5rem; padding: 0 1.125rem; font-size: .875rem; }
+
+  .input { display: block; width: 100%; height: 2.25rem; padding: 0 .625rem; background: var(--background); color: var(--foreground); border: 1px solid var(--input); border-radius: var(--radius-md); font-size: .8125rem; transition: border-color var(--duration-150) var(--ease-standard), box-shadow var(--duration-150) var(--ease-standard); }
+  .input:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px color-mix(in oklab, var(--brand) 18%, transparent); }
+  .input[readonly] { background: var(--muted); }
+
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-xl); box-shadow: var(--shadow-sm); }
+
+  .badge { display:inline-flex; align-items:center; gap:.25rem; padding: 0 .5rem; height: 1.25rem; border-radius: 9999px; font-size: .6875rem; font-weight: 600; letter-spacing: .01em; }
+  .badge-active { background: var(--st-active-bg); color: var(--st-active-text); }
+  .badge-processing { background: var(--st-processing-bg); color: var(--st-processing-text); }
+  .badge-failed { background: var(--st-failed-bg); color: var(--st-failed-text); }
+  .badge-paused { background: var(--st-paused-bg); color: var(--st-paused-text); }
+  .badge-signal { background: var(--st-signal-bg); color: var(--st-signal-text); }
+  .badge-brand { background: var(--brand-subtle); color: var(--brand-subtle-foreground); }
+  .badge-outline { background: transparent; color: var(--muted-foreground); border: 1px solid var(--border); }
+
+  .chip { display:inline-flex; align-items:center; gap:.375rem; padding:.125rem .5rem; height:1.5rem; background: var(--muted); color: var(--foreground); border-radius: var(--radius-md); font-size:.75rem; }
+  .chip-removable { padding-right: .25rem; }
+
+  .kbd { display:inline-flex; align-items:center; padding: 0 .3125rem; min-width: 1.125rem; height: 1.125rem; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: var(--radius-sm); background: var(--card); font-family: var(--font-mono); font-size: 10px; color: var(--muted-foreground); }
+
+  .status-dot { width:.5rem; height:.5rem; border-radius:9999px; }
+  .status-dot-active { background: var(--success); box-shadow: 0 0 0 3px color-mix(in oklab, var(--success) 20%, transparent); }
+  .status-dot-warn { background: var(--warning); }
+  .status-dot-error { background: var(--error); }
+  .status-dot-idle { background: var(--muted-foreground); opacity:.6; }
+
+  /* rule between rows — matches the app's list-row density */
+  .list-row { display: grid; gap: .75rem; align-items: center; padding: .75rem 1rem; border-bottom: 1px solid var(--border); }
+  .list-row:last-child { border-bottom: 0; }
+  .list-row:hover { background: var(--muted); }
+
+  /* prototype chrome — the outer viewport switcher is not part of the app */
+  .chrome-bar { position: sticky; top: 0; z-index: 50; background: color-mix(in oklab, var(--background) 92%, transparent); backdrop-filter: saturate(180%) blur(8px); border-bottom: 1px solid var(--border); }
+  .chrome-pill { display:inline-flex; padding: .1875rem; background: var(--muted); border-radius: var(--radius-lg); gap:.125rem; }
+  .chrome-pill button { padding: .3125rem .625rem; font-size:.75rem; border-radius: var(--radius-md); color: var(--muted-foreground); font-weight: 500; }
+  .chrome-pill button[aria-pressed=true] { background: var(--card); color: var(--foreground); box-shadow: var(--shadow-sm); }
+
+  /* Viewport simulator — this is prototype chrome only. In the real app
+     the screen is the browser; here we constrain a max-width to see how
+     the design behaves at each of the three breakpoints defined in the
+     spec. */
+  .viewport { margin: 0 auto; background: var(--background); transition: max-width var(--duration-250) var(--ease-emphasized); border-left:1px solid var(--border); border-right:1px solid var(--border); min-height: calc(100vh - 3.25rem); }
+  .vp-mobile { max-width: 390px; }
+  .vp-tablet { max-width: 820px; }
+  .vp-desktop { max-width: 1280px; }
+
+  .view { display: none; }
+  .view.active { display: block; }
+
+  /* app layout */
+  .app { display: grid; grid-template-columns: 232px 1fr; min-height: 100%; }
+  .vp-mobile .app { grid-template-columns: 1fr; }
+  .vp-tablet .app { grid-template-columns: 64px 1fr; }
+  .sidebar-full { display: block; }
+  .sidebar-rail { display: none; }
+  .vp-tablet .sidebar-full { display: none; }
+  .vp-tablet .sidebar-rail { display: block; }
+  .vp-mobile .sidebar-full, .vp-mobile .sidebar-rail { display: none; }
+
+  .nav-item { display:flex; align-items:center; gap:.625rem; padding: .375rem .625rem; margin: 1px .5rem; border-radius: var(--radius-md); font-size:.8125rem; color: var(--foreground); }
+  .nav-item:hover { background: var(--muted); }
+  .nav-item.active { background: var(--muted); font-weight: 600; }
+  .nav-item .icon { color: var(--muted-foreground); }
+
+  /* audit log timeline */
+  .log-item { display: grid; grid-template-columns: 8rem 1fr; gap: 1rem; padding: .625rem 0; border-bottom: 1px dashed var(--border); align-items: start; }
+  .log-item:last-child { border-bottom: 0; }
+
+  /* modal / sheet primitive */
+  .overlay { position: fixed; inset: 0; background: color-mix(in oklab, black 45%, transparent); backdrop-filter: blur(2px); z-index: 40; display: none; }
+  .overlay[data-open="true"] { display: block; }
+  .modal { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); background: var(--card); border-radius: var(--radius-2xl); box-shadow: var(--shadow-xl); z-index: 41; display: none; max-height: calc(100vh - 4rem); overflow: auto; }
+  .modal[data-open="true"] { display: block; }
+  .sheet { position: fixed; right: 0; top: 0; bottom: 0; width: min(560px, 100vw); background: var(--card); border-left: 1px solid var(--border); box-shadow: var(--shadow-lg); z-index: 41; transform: translateX(100%); transition: transform var(--duration-250) var(--ease-emphasized); display: flex; flex-direction: column; }
+  .sheet[data-open="true"] { transform: translateX(0); }
+
+  /* mobile sheet — bottom-attached */
+  @media (max-width: 640px) {
+    .modal { left: 0; right: 0; bottom: 0; top: auto; transform: none; border-radius: var(--radius-2xl) var(--radius-2xl) 0 0; width: 100%; max-height: 90vh; }
+  }
+
+  /* subtle indigo focus rule for the "you're currently changing security scope" state */
+  .scope-rule { border-left: 3px solid var(--brand); background: var(--brand-subtle); }
+  .warn-rule { border-left: 3px solid var(--warning); background: color-mix(in oklab, var(--warning) 10%, var(--card)); }
+  .danger-rule { border-left: 3px solid var(--destructive); background: color-mix(in oklab, var(--destructive) 8%, var(--card)); }
+
+  /* utility */
+  .divide-border > * + * { border-top: 1px solid var(--border); }
+  a { color: var(--brand); }
+  a:hover { color: var(--brand-hover); }
+
+  /* screenreader-only */
+  .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+
+  /* prototype: cross-view scroll pinning */
+  html { scroll-behavior: auto; }
+
+  /* svg icons default */
+  .icon { width: 16px; height: 16px; stroke-width: 1.75; }
+  .icon-sm { width: 14px; height: 14px; }
+  .icon-lg { width: 18px; height: 18px; }
+</style>
+</head>
+<body>
+
+<!-- ============ PROTOTYPE CHROME (not part of shipped app) ============ -->
+<div class="chrome-bar">
+  <div class="max-w-[1400px] mx-auto px-3 py-2 flex items-center gap-3 flex-wrap">
+    <div class="flex items-center gap-2 mr-2">
+      <div class="w-6 h-6 rounded-md bg-[var(--primary)] flex items-center justify-center text-[var(--primary-foreground)] text-[10px] font-bold">M</div>
+      <span class="text-sm font-semibold">Keychain prototype</span>
+      <span class="badge badge-signal">v1 · shape-up</span>
+    </div>
+
+    <div class="chrome-pill" role="tablist" aria-label="Viewport">
+      <button data-vp="mobile"   aria-pressed="false">Mobile 390</button>
+      <button data-vp="tablet"   aria-pressed="false">Tablet 820</button>
+      <button data-vp="desktop"  aria-pressed="true">Desktop 1280</button>
+    </div>
+
+    <div class="chrome-pill" role="tablist" aria-label="View">
+      <button data-view="landing"       aria-pressed="true">1 · Landing</button>
+      <button data-view="landing-empty" aria-pressed="false">1b · Empty</button>
+      <button data-view="add-paste"     aria-pressed="false">2a · Paste</button>
+      <button data-view="add-oauth"     aria-pressed="false">2b · OAuth wizard</button>
+      <button data-view="scope"         aria-pressed="false">3 · Scope</button>
+      <button data-view="detail"        aria-pressed="false">4 · Detail + log</button>
+      <button data-view="detail-empty"  aria-pressed="false">4b · Empty log</button>
+      <button data-view="rotate"        aria-pressed="false">5a · Rotate</button>
+      <button data-view="revoke"        aria-pressed="false">5b · Revoke</button>
+      <button data-view="registry"      aria-pressed="false">6 · Registry deep-link</button>
+    </div>
+
+    <div class="ml-auto flex items-center gap-2">
+      <button id="toggle-theme" class="btn btn-outline btn-sm" title="Toggle dark theme">
+        <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        <span class="hidden md:inline">Dark</span>
+      </button>
+      <button id="toggle-state" class="btn btn-outline btn-sm" title="Cycle interactive states">
+        <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V4"/><path d="M5 11l7-7 7 7"/></svg>
+        <span id="state-label">State: default</span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<div id="viewport" class="viewport vp-desktop">
+
+<!-- ============ VIEW 1 · LANDING (with credentials) ============ -->
+<section class="view active" data-view="landing">
+  <div class="app">
+    <!-- FULL SIDEBAR (desktop) -->
+    <aside class="sidebar-full h-screen sticky top-[3.25rem] border-r border-[var(--border)] bg-[var(--sidebar)] py-3">
+      <div class="px-4 pb-2 flex items-center gap-2">
+        <div class="w-7 h-7 rounded-md bg-[var(--primary)] flex items-center justify-center text-[var(--primary-foreground)] text-xs font-bold">M</div>
+        <span class="text-sm font-semibold">Maskin</span>
+      </div>
+      <nav class="mt-2">
+        <a class="nav-item"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h7v9H3z"/><path d="M14 3h7v5h-7z"/><path d="M14 12h7v9h-7z"/><path d="M3 16h7v5H3z"/></svg>For You</a>
+        <a class="nav-item"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/></svg>Loops</a>
+        <a class="nav-item"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a7 7 0 0 1 14 0v1"/></svg>Agents</a>
+        <a class="nav-item"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>Search</a>
+        <div class="mt-4 px-4"><span class="eyebrow">Settings</span></div>
+        <a class="nav-item"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>General</a>
+        <a class="nav-item"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>Integrations</a>
+        <a class="nav-item active"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2 15 8"/><path d="m17 6 4 4"/><path d="M11 12a5 5 0 1 1-7.07 7.07L2 21l3-3a5 5 0 0 1 6-6z"/></svg><span class="flex-1">Keychain</span><span class="badge badge-brand">7</span></a>
+        <a class="nav-item"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20"/><path d="m4 12 8-8 8 8"/></svg>Billing</a>
+      </nav>
+    </aside>
+
+    <!-- RAIL (tablet) -->
+    <aside class="sidebar-rail h-screen sticky top-[3.25rem] border-r border-[var(--border)] bg-[var(--sidebar)] py-3 flex flex-col items-center gap-1">
+      <div class="w-7 h-7 rounded-md bg-[var(--primary)] flex items-center justify-center text-[var(--primary-foreground)] text-xs font-bold mb-2">M</div>
+      <button class="p-2 rounded-md hover:bg-[var(--muted)]" title="For You"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h7v9H3z"/><path d="M14 3h7v5h-7z"/><path d="M14 12h7v9h-7z"/><path d="M3 16h7v5H3z"/></svg></button>
+      <button class="p-2 rounded-md hover:bg-[var(--muted)]" title="Loops"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/></svg></button>
+      <button class="p-2 rounded-md bg-[var(--muted)]" title="Keychain"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2 15 8"/><path d="m17 6 4 4"/><path d="M11 12a5 5 0 1 1-7.07 7.07L2 21l3-3a5 5 0 0 1 6-6z"/></svg></button>
+    </aside>
+
+    <!-- MAIN -->
+    <main class="min-w-0">
+      <!-- header + breadcrumb + primary CTA -->
+      <div class="border-b border-[var(--border)]">
+        <div class="max-w-[1080px] mx-auto px-4 sm:px-6 py-4 sm:py-6">
+          <nav class="text-xs text-[var(--muted-foreground)] mb-2 hidden sm:flex items-center gap-1.5">
+            <span>Settings</span>
+            <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+            <span class="text-[var(--foreground)]">Keychain</span>
+          </nav>
+          <div class="flex items-start justify-between gap-4 flex-wrap">
+            <div>
+              <h1 class="text-2xl sm:text-3xl font-semibold tracking-tight">Keychain</h1>
+              <p class="text-sm text-[var(--muted-foreground)] mt-1 max-w-2xl">
+                Credentials your agents use to reach external services. Each key is encrypted at rest,
+                assigned to specific agents or loops, and every use is logged.
+              </p>
+            </div>
+            <button class="btn btn-primary btn-lg" data-open-modal="add-choose">
+              <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+              Add credential
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- filters / toolbar -->
+      <div class="border-b border-[var(--border)] bg-[var(--surface-sunken)]">
+        <div class="max-w-[1080px] mx-auto px-4 sm:px-6 py-2.5 flex items-center gap-2 flex-wrap">
+          <div class="relative flex-1 min-w-[200px] max-w-md">
+            <svg class="icon icon-sm absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+            <input class="input pl-8" placeholder="Search credentials, services, agents…">
+          </div>
+          <button class="btn btn-outline btn-sm">
+            <span class="eyebrow mr-1">Type</span> All
+            <svg class="icon icon-sm ml-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+          </button>
+          <button class="btn btn-outline btn-sm">
+            <span class="eyebrow mr-1">Status</span> Connected
+            <svg class="icon icon-sm ml-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+          </button>
+          <div class="ml-auto flex items-center gap-1 text-[var(--muted-foreground)]">
+            <span class="eyebrow">Sort</span>
+            <button class="btn btn-ghost btn-sm">Last used <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9 12 15 18 9"/></svg></button>
+          </div>
+        </div>
+      </div>
+
+      <!-- credential list -->
+      <div class="max-w-[1080px] mx-auto px-4 sm:px-6 py-4 sm:py-6">
+        <div class="card">
+          <!-- table header (desktop) -->
+          <div class="hidden md:grid grid-cols-[minmax(220px,2.4fr)_minmax(120px,1fr)_minmax(180px,1.6fr)_minmax(120px,1fr)_120px] gap-3 px-4 py-2.5 border-b border-[var(--border)] bg-[var(--surface-sunken)]">
+            <span class="eyebrow">Credential</span>
+            <span class="eyebrow">Type</span>
+            <span class="eyebrow">Assigned to</span>
+            <span class="eyebrow">Last used</span>
+            <span class="eyebrow text-right">Status</span>
+          </div>
+
+          <!-- rows -->
+          <a href="#" class="list-row grid-cols-[1fr] md:grid-cols-[minmax(220px,2.4fr)_minmax(120px,1fr)_minmax(180px,1.6fr)_minmax(120px,1fr)_120px]" data-view-link="detail">
+            <div class="flex items-center gap-3 min-w-0">
+              <div class="w-8 h-8 rounded-md bg-[var(--muted)] flex items-center justify-center flex-shrink-0 font-mono text-[10px] font-bold text-[var(--foreground)]">GH</div>
+              <div class="min-w-0">
+                <div class="text-sm font-medium truncate">GitHub · sebk-personal</div>
+                <div class="text-xs text-[var(--muted-foreground)] truncate font-mono">github.com · pat_••••••••••••ZQ4a</div>
+              </div>
+            </div>
+            <div><span class="badge badge-outline">API key</span></div>
+            <div class="flex items-center gap-1 flex-wrap">
+              <span class="chip"><span class="status-dot status-dot-active"></span>Developer</span>
+              <span class="chip"><span class="status-dot status-dot-active"></span>Sales Rep</span>
+              <span class="text-xs text-[var(--muted-foreground)]">+1</span>
+            </div>
+            <div class="text-sm text-[var(--muted-foreground)]">2 min ago</div>
+            <div class="md:text-right"><span class="badge badge-active"><span class="status-dot status-dot-active"></span>Connected</span></div>
+          </a>
+
+          <a href="#" class="list-row grid-cols-[1fr] md:grid-cols-[minmax(220px,2.4fr)_minmax(120px,1fr)_minmax(180px,1.6fr)_minmax(120px,1fr)_120px]" data-view-link="detail">
+            <div class="flex items-center gap-3 min-w-0">
+              <div class="w-8 h-8 rounded-md bg-[#0A66C2] flex items-center justify-center flex-shrink-0 text-white text-[10px] font-bold">in</div>
+              <div class="min-w-0">
+                <div class="text-sm font-medium truncate">LinkedIn · Sebastian K.</div>
+                <div class="text-xs text-[var(--muted-foreground)] truncate">via Unipile · sebastian@sindre.ai</div>
+              </div>
+            </div>
+            <div><span class="badge badge-brand">OAuth</span></div>
+            <div class="flex items-center gap-1 flex-wrap">
+              <span class="chip"><span class="status-dot status-dot-active"></span>Sales Rep</span>
+            </div>
+            <div class="text-sm text-[var(--muted-foreground)]">17 min ago</div>
+            <div class="md:text-right"><span class="badge badge-active"><span class="status-dot status-dot-active"></span>Connected</span></div>
+          </a>
+
+          <a href="#" class="list-row grid-cols-[1fr] md:grid-cols-[minmax(220px,2.4fr)_minmax(120px,1fr)_minmax(180px,1.6fr)_minmax(120px,1fr)_120px]" data-view-link="detail">
+            <div class="flex items-center gap-3 min-w-0">
+              <div class="w-8 h-8 rounded-md bg-[#4A154B] flex items-center justify-center flex-shrink-0 text-white text-[10px] font-bold">#</div>
+              <div class="min-w-0">
+                <div class="text-sm font-medium truncate">Slack · sindre.slack.com</div>
+                <div class="text-xs text-[var(--muted-foreground)] truncate">Bot token · xoxb-••••••••</div>
+              </div>
+            </div>
+            <div><span class="badge badge-outline">Bearer</span></div>
+            <div class="flex items-center gap-1 flex-wrap">
+              <span class="chip"><span class="status-dot status-dot-active"></span>Chief of Staff</span>
+              <span class="chip"><svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M8 2v4"/><path d="M16 2v4"/></svg>Daily Standup</span>
+            </div>
+            <div class="text-sm text-[var(--muted-foreground)]">1 h ago</div>
+            <div class="md:text-right"><span class="badge badge-active"><span class="status-dot status-dot-active"></span>Connected</span></div>
+          </a>
+
+          <a href="#" class="list-row grid-cols-[1fr] md:grid-cols-[minmax(220px,2.4fr)_minmax(120px,1fr)_minmax(180px,1.6fr)_minmax(120px,1fr)_120px]" data-view-link="detail">
+            <div class="flex items-center gap-3 min-w-0">
+              <div class="w-8 h-8 rounded-md bg-[var(--muted)] flex items-center justify-center flex-shrink-0 font-mono text-[10px] font-bold">GS</div>
+              <div class="min-w-0">
+                <div class="text-sm font-medium truncate">Google Search Console</div>
+                <div class="text-xs text-[var(--muted-foreground)] truncate">OAuth · sindre.ai property</div>
+              </div>
+            </div>
+            <div><span class="badge badge-brand">OAuth</span></div>
+            <div class="flex items-center gap-1 flex-wrap">
+              <span class="chip"><span class="status-dot status-dot-active"></span>SEO Analyst</span>
+            </div>
+            <div class="text-sm text-[var(--muted-foreground)]">Yesterday</div>
+            <div class="md:text-right"><span class="badge badge-processing"><span class="status-dot status-dot-warn"></span>Expires in 4d</span></div>
+          </a>
+
+          <a href="#" class="list-row grid-cols-[1fr] md:grid-cols-[minmax(220px,2.4fr)_minmax(120px,1fr)_minmax(180px,1.6fr)_minmax(120px,1fr)_120px]" data-view-link="detail">
+            <div class="flex items-center gap-3 min-w-0">
+              <div class="w-8 h-8 rounded-md bg-[#635BFF] flex items-center justify-center flex-shrink-0 text-white text-[10px] font-bold">S</div>
+              <div class="min-w-0">
+                <div class="text-sm font-medium truncate">Stripe · Sindre AI</div>
+                <div class="text-xs text-[var(--muted-foreground)] truncate font-mono">sk_live_••••••••2f9C</div>
+              </div>
+            </div>
+            <div><span class="badge badge-outline">API key</span></div>
+            <div class="flex items-center gap-1 flex-wrap">
+              <span class="text-xs text-[var(--muted-foreground)] italic">No agents — fail-closed</span>
+            </div>
+            <div class="text-sm text-[var(--muted-foreground)]">Never</div>
+            <div class="md:text-right"><span class="badge badge-paused"><span class="status-dot status-dot-idle"></span>Unassigned</span></div>
+          </a>
+
+          <a href="#" class="list-row grid-cols-[1fr] md:grid-cols-[minmax(220px,2.4fr)_minmax(120px,1fr)_minmax(180px,1.6fr)_minmax(120px,1fr)_120px]" data-view-link="detail">
+            <div class="flex items-center gap-3 min-w-0">
+              <div class="w-8 h-8 rounded-md bg-[var(--muted)] flex items-center justify-center flex-shrink-0 font-mono text-[10px] font-bold">HB</div>
+              <div class="min-w-0">
+                <div class="text-sm font-medium truncate">HubSpot · sindre-hub</div>
+                <div class="text-xs text-[var(--muted-foreground)] truncate">Private app token · pat-eu1-••••ce7B</div>
+              </div>
+            </div>
+            <div><span class="badge badge-outline">Bearer</span></div>
+            <div class="flex items-center gap-1 flex-wrap">
+              <span class="chip"><span class="status-dot status-dot-active"></span>Sales Rep</span>
+            </div>
+            <div class="text-sm text-[var(--muted-foreground)]">3 d ago</div>
+            <div class="md:text-right"><span class="badge badge-failed"><span class="status-dot status-dot-error"></span>401 last call</span></div>
+          </a>
+
+          <a href="#" class="list-row grid-cols-[1fr] md:grid-cols-[minmax(220px,2.4fr)_minmax(120px,1fr)_minmax(180px,1.6fr)_minmax(120px,1fr)_120px]" data-view-link="detail">
+            <div class="flex items-center gap-3 min-w-0">
+              <div class="w-8 h-8 rounded-md bg-[var(--muted)] flex items-center justify-center flex-shrink-0 font-mono text-[10px] font-bold">L</div>
+              <div class="min-w-0">
+                <div class="text-sm font-medium truncate">Linear · sindre-ai/maskin</div>
+                <div class="text-xs text-[var(--muted-foreground)] truncate">Revoked · was OAuth</div>
+              </div>
+            </div>
+            <div><span class="badge badge-brand">OAuth</span></div>
+            <div class="flex items-center gap-1 flex-wrap">
+              <span class="text-xs text-[var(--muted-foreground)] italic">Unassigned on revoke</span>
+            </div>
+            <div class="text-sm text-[var(--muted-foreground)]">7 d ago</div>
+            <div class="md:text-right"><span class="badge badge-paused"><span class="status-dot status-dot-idle"></span>Revoked</span></div>
+          </a>
+        </div>
+
+        <p class="text-xs text-[var(--muted-foreground)] mt-3 flex items-center gap-1.5">
+          <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+          Encrypted at rest. Every use is logged. See any credential for its audit trail.
+        </p>
+      </div>
+    </main>
+  </div>
+</section>
+
+<!-- ============ VIEW 1b · EMPTY STATE ============ -->
+<section class="view" data-view="landing-empty">
+  <div class="app">
+    <aside class="sidebar-full h-screen sticky top-[3.25rem] border-r border-[var(--border)] bg-[var(--sidebar)] py-3">
+      <div class="px-4 pb-2 flex items-center gap-2">
+        <div class="w-7 h-7 rounded-md bg-[var(--primary)] flex items-center justify-center text-[var(--primary-foreground)] text-xs font-bold">M</div>
+        <span class="text-sm font-semibold">Maskin</span>
+      </div>
+      <nav class="mt-2">
+        <a class="nav-item">For You</a>
+        <a class="nav-item">Loops</a>
+        <a class="nav-item">Agents</a>
+        <div class="mt-4 px-4"><span class="eyebrow">Settings</span></div>
+        <a class="nav-item">Integrations</a>
+        <a class="nav-item active"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2 15 8"/><path d="m17 6 4 4"/><path d="M11 12a5 5 0 1 1-7.07 7.07L2 21l3-3a5 5 0 0 1 6-6z"/></svg><span class="flex-1">Keychain</span><span class="badge badge-outline">0</span></a>
+      </nav>
+    </aside>
+    <aside class="sidebar-rail h-screen sticky top-[3.25rem] border-r border-[var(--border)] bg-[var(--sidebar)]"></aside>
+
+    <main class="min-w-0">
+      <div class="border-b border-[var(--border)]">
+        <div class="max-w-[1080px] mx-auto px-4 sm:px-6 py-4 sm:py-6">
+          <h1 class="text-2xl sm:text-3xl font-semibold tracking-tight">Keychain</h1>
+        </div>
+      </div>
+
+      <div class="max-w-[560px] mx-auto px-4 sm:px-6 pt-16 pb-24 text-center">
+        <div class="mx-auto w-14 h-14 rounded-2xl bg-[var(--brand-subtle)] flex items-center justify-center mb-5">
+          <svg class="icon icon-lg" style="color: var(--brand-subtle-foreground)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2 15 8"/><path d="m17 6 4 4"/><path d="M11 12a5 5 0 1 1-7.07 7.07L2 21l3-3a5 5 0 0 1 6-6z"/></svg>
+        </div>
+        <h2 class="text-xl font-semibold">One place for every credential your agents need</h2>
+        <p class="text-sm text-[var(--muted-foreground)] mt-2 max-w-md mx-auto">
+          Paste an API key or connect a service with OAuth. Assign it to specific agents or loops,
+          and Maskin injects it into their runs — encrypted, scoped, and logged.
+        </p>
+
+        <div class="mt-6 flex items-center justify-center gap-2 flex-wrap">
+          <button class="btn btn-primary btn-lg" data-open-modal="add-choose">
+            <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+            Add your first credential
+          </button>
+          <a href="#" class="btn btn-outline btn-lg">
+            <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            How security works
+          </a>
+        </div>
+
+        <div class="mt-10 grid sm:grid-cols-3 gap-3 text-left">
+          <div class="card p-3">
+            <div class="eyebrow mb-1">Paste</div>
+            <div class="text-sm font-medium">API key, Bearer, or Basic Auth</div>
+            <div class="text-xs text-[var(--muted-foreground)] mt-1">For any service you have a raw secret for.</div>
+          </div>
+          <div class="card p-3">
+            <div class="eyebrow mb-1">OAuth</div>
+            <div class="text-sm font-medium">Connect a service you own</div>
+            <div class="text-xs text-[var(--muted-foreground)] mt-1">Bring your OAuth app; we run the dance.</div>
+          </div>
+          <div class="card p-3">
+            <div class="eyebrow mb-1">Scope</div>
+            <div class="text-sm font-medium">Fail-closed by default</div>
+            <div class="text-xs text-[var(--muted-foreground)] mt-1">New keys reach zero agents until you assign.</div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</section>
+
+<!-- ============ VIEW 2a · PASTE ============ -->
+<section class="view" data-view="add-paste">
+  <div class="app">
+    <aside class="sidebar-full h-screen sticky top-[3.25rem] border-r border-[var(--border)] bg-[var(--sidebar)]"></aside>
+    <aside class="sidebar-rail h-screen sticky top-[3.25rem] border-r border-[var(--border)] bg-[var(--sidebar)]"></aside>
+
+    <main class="min-w-0">
+      <div class="border-b border-[var(--border)]">
+        <div class="max-w-[1080px] mx-auto px-4 sm:px-6 py-4 sm:py-6">
+          <nav class="text-xs text-[var(--muted-foreground)] mb-2 flex items-center gap-1.5">
+            <a href="#" data-view-link="landing">Keychain</a>
+            <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+            <span class="text-[var(--foreground)]">Add credential</span>
+          </nav>
+          <h1 class="text-2xl sm:text-3xl font-semibold tracking-tight">Add credential</h1>
+        </div>
+      </div>
+
+      <div class="max-w-[720px] mx-auto px-4 sm:px-6 py-4 sm:py-6">
+
+        <!-- entry chooser -->
+        <div class="grid sm:grid-cols-2 gap-3 mb-6">
+          <button class="card p-4 text-left border-[var(--brand)] ring-2 ring-[var(--brand)]/25">
+            <div class="flex items-center gap-2 mb-1">
+              <svg class="icon" style="color: var(--brand)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 12h.01"/><path d="M17 12h.01"/><path d="M7 12h.01"/><rect x="3" y="6" width="18" height="12" rx="2"/></svg>
+              <span class="text-sm font-semibold">Paste a secret</span>
+            </div>
+            <p class="text-xs text-[var(--muted-foreground)]">API key, Bearer token, or Basic Auth. Fastest for services you already have credentials for.</p>
+          </button>
+          <button class="card p-4 text-left" data-view-link="add-oauth">
+            <div class="flex items-center gap-2 mb-1">
+              <svg class="icon text-[var(--muted-foreground)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9"/><path d="M17 4v5h-5"/></svg>
+              <span class="text-sm font-semibold">Connect via OAuth</span>
+            </div>
+            <p class="text-xs text-[var(--muted-foreground)]">Bring your own OAuth app; Maskin runs the auth dance and stores the resulting tokens.</p>
+          </button>
+        </div>
+
+        <!-- form -->
+        <form class="card p-4 sm:p-6 space-y-5" onsubmit="event.preventDefault(); switchView('scope');">
+          <div class="grid sm:grid-cols-2 gap-4">
+            <div>
+              <label class="text-xs font-medium text-[var(--foreground)]">Name</label>
+              <p class="text-[11px] text-[var(--muted-foreground)] mb-1.5">What agents will see. e.g. "Stripe · Sindre AI"</p>
+              <input class="input" placeholder="Stripe · Sindre AI">
+            </div>
+            <div>
+              <label class="text-xs font-medium text-[var(--foreground)]">Service URL <span class="text-[var(--muted-foreground)] font-normal">(optional)</span></label>
+              <p class="text-[11px] text-[var(--muted-foreground)] mb-1.5">Base URL this credential authenticates against.</p>
+              <input class="input font-mono text-xs" placeholder="https://api.stripe.com">
+            </div>
+          </div>
+
+          <div>
+            <label class="text-xs font-medium text-[var(--foreground)]">Auth method</label>
+            <div class="grid sm:grid-cols-3 gap-2 mt-1.5" role="radiogroup">
+              <label class="card p-2.5 cursor-pointer border-[var(--brand)] ring-2 ring-[var(--brand)]/25 flex items-start gap-2">
+                <input type="radio" name="auth" checked class="mt-0.5 accent-[var(--brand)]">
+                <div>
+                  <div class="text-sm font-medium">API key</div>
+                  <div class="text-[11px] text-[var(--muted-foreground)]">Header or query param.</div>
+                </div>
+              </label>
+              <label class="card p-2.5 cursor-pointer flex items-start gap-2">
+                <input type="radio" name="auth" class="mt-0.5 accent-[var(--brand)]">
+                <div>
+                  <div class="text-sm font-medium">Bearer token</div>
+                  <div class="text-[11px] text-[var(--muted-foreground)]">Authorization header.</div>
+                </div>
+              </label>
+              <label class="card p-2.5 cursor-pointer flex items-start gap-2">
+                <input type="radio" name="auth" class="mt-0.5 accent-[var(--brand)]">
+                <div>
+                  <div class="text-sm font-medium">Basic auth</div>
+                  <div class="text-[11px] text-[var(--muted-foreground)]">Username + password.</div>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <div>
+            <label class="text-xs font-medium text-[var(--foreground)]">Secret</label>
+            <p class="text-[11px] text-[var(--muted-foreground)] mb-1.5">Encrypted at rest. Never displayed after save. Only shown as <code class="font-mono">last-4</code>.</p>
+            <div class="relative">
+              <input class="input font-mono text-xs pr-24" type="password" placeholder="sk_live_••••••••••••••••••••••••••••••••" value="sk_live_51NxYzHK8j2K1p3q7Vw9dRfSbUcTnM4G2fH5Lk8ZQ4C9y6R2f9C">
+              <button type="button" class="btn btn-ghost btn-sm absolute right-1 top-1/2 -translate-y-1/2">
+                <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                Show
+              </button>
+            </div>
+          </div>
+
+          <details class="border border-[var(--border)] rounded-lg">
+            <summary class="cursor-pointer text-xs font-medium px-3 py-2 list-none flex items-center justify-between select-none">
+              <span>Header details (optional)</span>
+              <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+            </summary>
+            <div class="p-3 pt-1 border-t border-[var(--border)] grid sm:grid-cols-2 gap-3">
+              <div>
+                <label class="text-xs font-medium">Header name</label>
+                <input class="input font-mono text-xs" value="Authorization">
+              </div>
+              <div>
+                <label class="text-xs font-medium">Value format</label>
+                <input class="input font-mono text-xs" value="Bearer {token}">
+              </div>
+            </div>
+          </details>
+
+          <div class="scope-rule p-3 rounded-lg">
+            <div class="flex items-start gap-2">
+              <svg class="icon icon-sm mt-0.5" style="color: var(--brand)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              <div class="text-xs">
+                <strong class="text-[var(--brand-subtle-foreground)]">Fail-closed by default.</strong>
+                No agents can use this credential until you assign it on the next screen.
+                Nothing runs until you say so.
+              </div>
+            </div>
+          </div>
+
+          <div class="flex items-center justify-between gap-2 flex-wrap pt-2 border-t border-[var(--border)]">
+            <a href="#" class="btn btn-ghost btn-sm" data-view-link="landing">Cancel</a>
+            <div class="flex gap-2">
+              <button type="button" class="btn btn-secondary btn-sm">
+                <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                Test connection
+              </button>
+              <button type="submit" class="btn btn-primary">
+                Save and assign scope
+                <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </main>
+  </div>
+</section>
+
+<!-- ============ VIEW 2b · OAUTH WIZARD ============ -->
+<section class="view" data-view="add-oauth">
+  <div class="app">
+    <aside class="sidebar-full h-screen sticky top-[3.25rem] border-r border-[var(--border)] bg-[var(--sidebar)]"></aside>
+    <aside class="sidebar-rail h-screen sticky top-[3.25rem] border-r border-[var(--border)] bg-[var(--sidebar)]"></aside>
+
+    <main class="min-w-0">
+      <div class="border-b border-[var(--border)]">
+        <div class="max-w-[1080px] mx-auto px-4 sm:px-6 py-4 sm:py-6">
+          <nav class="text-xs text-[var(--muted-foreground)] mb-2 flex items-center gap-1.5">
+            <a href="#" data-view-link="landing">Keychain</a>
+            <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+            <a href="#" data-view-link="add-paste">Add credential</a>
+            <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+            <span class="text-[var(--foreground)]">Connect via OAuth</span>
+          </nav>
+          <h1 class="text-2xl sm:text-3xl font-semibold tracking-tight">Connect via OAuth</h1>
+        </div>
+      </div>
+
+      <div class="max-w-[720px] mx-auto px-4 sm:px-6 py-4 sm:py-6">
+
+        <!-- stepper -->
+        <ol class="flex items-center gap-2 mb-6 text-xs font-mono">
+          <li class="flex items-center gap-2">
+            <span class="w-5 h-5 rounded-full bg-[var(--primary)] text-[var(--primary-foreground)] flex items-center justify-center text-[10px] font-bold">1</span>
+            <span class="text-[var(--foreground)] font-medium">Service</span>
+          </li>
+          <span class="flex-1 h-px bg-[var(--border)]"></span>
+          <li class="flex items-center gap-2">
+            <span class="w-5 h-5 rounded-full bg-[var(--brand)] text-[var(--brand-foreground)] flex items-center justify-center text-[10px] font-bold ring-4 ring-[var(--brand)]/20">2</span>
+            <span class="text-[var(--foreground)] font-medium">OAuth app</span>
+          </li>
+          <span class="flex-1 h-px bg-[var(--border)]"></span>
+          <li class="flex items-center gap-2">
+            <span class="w-5 h-5 rounded-full bg-[var(--muted)] text-[var(--muted-foreground)] flex items-center justify-center text-[10px] font-bold">3</span>
+            <span class="text-[var(--muted-foreground)]">Authorize</span>
+          </li>
+          <span class="flex-1 h-px bg-[var(--border)]"></span>
+          <li class="flex items-center gap-2">
+            <span class="w-5 h-5 rounded-full bg-[var(--muted)] text-[var(--muted-foreground)] flex items-center justify-center text-[10px] font-bold">4</span>
+            <span class="text-[var(--muted-foreground)]">Scope</span>
+          </li>
+        </ol>
+
+        <!-- step 2: paste OAuth app credentials -->
+        <div class="card p-4 sm:p-6 space-y-5">
+          <div>
+            <div class="flex items-center gap-2 mb-2">
+              <div class="w-8 h-8 rounded-md bg-[#0A66C2] flex items-center justify-center text-white text-[10px] font-bold">in</div>
+              <div>
+                <div class="text-sm font-medium">LinkedIn</div>
+                <div class="text-xs text-[var(--muted-foreground)] font-mono">linkedin.com · via developer.linkedin.com</div>
+              </div>
+            </div>
+            <p class="text-xs text-[var(--muted-foreground)] mt-2">
+              You'll paste the client ID and secret from your own LinkedIn OAuth app.
+              Maskin then runs the authorization flow and stores the resulting access + refresh tokens.
+              <a href="#">Where do I find these?</a>
+            </p>
+          </div>
+
+          <div class="grid sm:grid-cols-2 gap-4">
+            <div>
+              <label class="text-xs font-medium">Client ID</label>
+              <input class="input font-mono text-xs mt-1" placeholder="77abc1def2ghi3jk">
+            </div>
+            <div>
+              <label class="text-xs font-medium">Client secret</label>
+              <div class="relative mt-1">
+                <input class="input font-mono text-xs pr-20" type="password" placeholder="WPL_AP1.•••••">
+                <button type="button" class="btn btn-ghost btn-sm absolute right-1 top-1/2 -translate-y-1/2">Show</button>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <label class="text-xs font-medium">Redirect URL <span class="text-[var(--muted-foreground)] font-normal">— copy this into your OAuth app</span></label>
+            <div class="flex gap-2 mt-1">
+              <div class="input font-mono text-xs flex items-center overflow-hidden">https://api.maskin.io/oauth/callback/linkedin/2ab7</div>
+              <button type="button" class="btn btn-secondary btn-sm shrink-0">
+                <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                Copy
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <label class="text-xs font-medium">Scopes</label>
+            <div class="flex flex-wrap gap-1.5 mt-1.5">
+              <span class="chip"><span class="w-1.5 h-1.5 rounded-full bg-[var(--brand)]"></span>r_liteprofile</span>
+              <span class="chip"><span class="w-1.5 h-1.5 rounded-full bg-[var(--brand)]"></span>w_member_social</span>
+              <button class="chip text-[var(--muted-foreground)]"><svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>Add scope</button>
+            </div>
+          </div>
+
+          <div class="flex items-center justify-between gap-2 pt-2 border-t border-[var(--border)]">
+            <button class="btn btn-ghost btn-sm">
+              <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+              Back
+            </button>
+            <button class="btn btn-primary" onclick="switchView('scope')">
+              Authorize with LinkedIn
+              <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- inline: loading state (step 3) -->
+        <div class="card p-6 mt-4 border-dashed" data-state-hidden="default">
+          <div class="flex items-center gap-3">
+            <svg class="icon animate-spin" style="color: var(--brand)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+            <div>
+              <div class="text-sm font-medium">Waiting for LinkedIn to redirect back…</div>
+              <div class="text-xs text-[var(--muted-foreground)] mt-0.5">A new tab has opened. Complete the sign-in there and you'll return here automatically.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- inline: error state -->
+        <div class="danger-rule p-3 mt-4 rounded-lg" data-state-hidden="default">
+          <div class="flex items-start gap-2">
+            <svg class="icon icon-sm mt-0.5" style="color: var(--destructive)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>
+            <div class="text-xs">
+              <strong style="color: var(--destructive)">Authorization failed: redirect_uri_mismatch.</strong>
+              The redirect URL in your LinkedIn OAuth app doesn't match the one above. Copy it exactly and try again.
+              <a href="#">Retry</a>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </main>
+  </div>
+</section>
+
+<!-- ============ VIEW 3 · SCOPE ASSIGNMENT (sheet-first) ============ -->
+<section class="view" data-view="scope">
+  <div class="app">
+    <aside class="sidebar-full h-screen sticky top-[3.25rem] border-r border-[var(--border)] bg-[var(--sidebar)]"></aside>
+    <aside class="sidebar-rail h-screen sticky top-[3.25rem] border-r border-[var(--border)] bg-[var(--sidebar)]"></aside>
+
+    <main class="min-w-0">
+      <!-- backdrop content (dimmed since sheet is open) -->
+      <div class="opacity-40 pointer-events-none">
+        <div class="border-b border-[var(--border)]">
+          <div class="max-w-[1080px] mx-auto px-4 sm:px-6 py-4 sm:py-6">
+            <h1 class="text-2xl font-semibold tracking-tight">Keychain</h1>
+          </div>
+        </div>
+        <div class="max-w-[1080px] mx-auto px-4 sm:px-6 py-6">
+          <div class="card p-4 text-sm text-[var(--muted-foreground)]">Stripe · Sindre AI · saved. Assigning scope…</div>
+        </div>
+      </div>
+
+      <!-- inline sheet -->
+      <div class="fixed inset-0 z-40" style="background: color-mix(in oklab, black 35%, transparent);"></div>
+      <aside class="fixed right-0 top-0 bottom-0 w-full sm:w-[560px] bg-[var(--card)] border-l border-[var(--border)] shadow-[var(--shadow-lg)] z-40 flex flex-col">
+        <header class="p-4 border-b border-[var(--border)] flex items-start justify-between gap-3">
+          <div>
+            <div class="eyebrow mb-1">Assign scope</div>
+            <div class="flex items-center gap-2">
+              <div class="w-7 h-7 rounded-md bg-[#635BFF] flex items-center justify-center text-white text-[10px] font-bold">S</div>
+              <h2 class="text-base font-semibold">Stripe · Sindre AI</h2>
+            </div>
+            <p class="text-xs text-[var(--muted-foreground)] mt-1">Pick who can use this credential. You can always change this later.</p>
+          </div>
+          <button class="btn btn-ghost btn-sm" data-view-link="landing" aria-label="Close">
+            <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+          </button>
+        </header>
+
+        <div class="p-4 flex-1 overflow-y-auto space-y-4">
+          <!-- Blast-radius call-out -->
+          <div class="scope-rule p-3 rounded-lg">
+            <div class="flex items-start gap-2">
+              <svg class="icon icon-sm mt-0.5" style="color: var(--brand)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              <div class="text-xs">
+                <strong class="text-[var(--brand-subtle-foreground)]">Blast radius: 0 sessions per week.</strong>
+                <span class="text-[var(--foreground)]">Nothing is authorised yet. As you check agents below, this number updates so you can see exactly what this key will unlock.</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Tabs: Agents / Loops -->
+          <div>
+            <div class="chrome-pill mb-3">
+              <button aria-pressed="true">Agents</button>
+              <button aria-pressed="false">Loops</button>
+            </div>
+
+            <div class="relative">
+              <svg class="icon icon-sm absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+              <input class="input pl-8" placeholder="Filter agents…">
+            </div>
+          </div>
+
+          <ul class="card divide-border">
+            <li class="flex items-center gap-3 p-3">
+              <input type="checkbox" checked class="accent-[var(--brand)] w-4 h-4">
+              <div class="w-8 h-8 rounded-full bg-[var(--brand-subtle)] flex items-center justify-center text-[10px] font-bold" style="color: var(--brand-subtle-foreground)">CS</div>
+              <div class="flex-1 min-w-0">
+                <div class="text-sm font-medium">Chief of Staff</div>
+                <div class="text-xs text-[var(--muted-foreground)]">System · fully autonomous</div>
+              </div>
+              <span class="text-xs text-[var(--muted-foreground)]">~42 sess/wk</span>
+            </li>
+            <li class="flex items-center gap-3 p-3">
+              <input type="checkbox" checked class="accent-[var(--brand)] w-4 h-4">
+              <div class="w-8 h-8 rounded-full bg-[var(--muted)] flex items-center justify-center text-[10px] font-bold">SR</div>
+              <div class="flex-1 min-w-0">
+                <div class="text-sm font-medium">Sales Rep</div>
+                <div class="text-xs text-[var(--muted-foreground)]">Custom · supervised</div>
+              </div>
+              <span class="text-xs text-[var(--muted-foreground)]">~18 sess/wk</span>
+            </li>
+            <li class="flex items-center gap-3 p-3">
+              <input type="checkbox" class="accent-[var(--brand)] w-4 h-4">
+              <div class="w-8 h-8 rounded-full bg-[var(--muted)] flex items-center justify-center text-[10px] font-bold">FN</div>
+              <div class="flex-1 min-w-0">
+                <div class="text-sm font-medium">Finance</div>
+                <div class="text-xs text-[var(--muted-foreground)]">Custom · learning</div>
+              </div>
+              <span class="text-xs text-[var(--muted-foreground)]">~3 sess/wk</span>
+            </li>
+            <li class="flex items-center gap-3 p-3">
+              <input type="checkbox" class="accent-[var(--brand)] w-4 h-4">
+              <div class="w-8 h-8 rounded-full bg-[var(--muted)] flex items-center justify-center text-[10px] font-bold">DV</div>
+              <div class="flex-1 min-w-0">
+                <div class="text-sm font-medium">Developer</div>
+                <div class="text-xs text-[var(--muted-foreground)]">Custom · draft</div>
+              </div>
+              <span class="text-xs text-[var(--muted-foreground)]">~55 sess/wk</span>
+            </li>
+          </ul>
+
+          <details class="border border-[var(--border)] rounded-lg">
+            <summary class="cursor-pointer text-xs font-medium px-3 py-2 list-none flex items-center justify-between select-none">
+              <span class="flex items-center gap-2">
+                <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M8 2v4"/><path d="M16 2v4"/></svg>
+                Also assign by loop
+              </span>
+              <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+            </summary>
+            <div class="p-3 pt-1 border-t border-[var(--border)] space-y-2">
+              <p class="text-[11px] text-[var(--muted-foreground)]">
+                A loop assignment resolves to every agent that runs in it — you're picking a group, not a boundary.
+                The agent list above reflects the final blast radius.
+              </p>
+              <label class="flex items-center gap-3 text-sm">
+                <input type="checkbox" class="accent-[var(--brand)] w-4 h-4">
+                <span class="chip"><svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M8 2v4"/><path d="M16 2v4"/></svg>Daily Standup</span>
+                <span class="text-xs text-[var(--muted-foreground)]">3 agents</span>
+              </label>
+              <label class="flex items-center gap-3 text-sm">
+                <input type="checkbox" class="accent-[var(--brand)] w-4 h-4">
+                <span class="chip"><svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M8 2v4"/><path d="M16 2v4"/></svg>Sales Outreach</span>
+                <span class="text-xs text-[var(--muted-foreground)]">2 agents</span>
+              </label>
+            </div>
+          </details>
+        </div>
+
+        <footer class="p-4 border-t border-[var(--border)] flex items-center justify-between gap-2">
+          <div class="text-xs text-[var(--muted-foreground)]">
+            2 agents selected · ~60 sess/wk
+          </div>
+          <div class="flex gap-2">
+            <button class="btn btn-ghost btn-sm" data-view-link="landing">Skip — keep unassigned</button>
+            <button class="btn btn-primary" data-view-link="detail">Save scope</button>
+          </div>
+        </footer>
+      </aside>
+    </main>
+  </div>
+</section>
+
+<!-- ============ VIEW 4 · CREDENTIAL DETAIL + AUDIT LOG ============ -->
+<section class="view" data-view="detail">
+  <div class="app">
+    <aside class="sidebar-full h-screen sticky top-[3.25rem] border-r border-[var(--border)] bg-[var(--sidebar)]"></aside>
+    <aside class="sidebar-rail h-screen sticky top-[3.25rem] border-r border-[var(--border)] bg-[var(--sidebar)]"></aside>
+
+    <main class="min-w-0">
+      <div class="border-b border-[var(--border)]">
+        <div class="max-w-[1080px] mx-auto px-4 sm:px-6 py-4 sm:py-6">
+          <nav class="text-xs text-[var(--muted-foreground)] mb-2 flex items-center gap-1.5">
+            <a href="#" data-view-link="landing">Keychain</a>
+            <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+            <span class="text-[var(--foreground)]">GitHub · sebk-personal</span>
+          </nav>
+          <div class="flex items-start justify-between gap-4 flex-wrap">
+            <div class="flex items-center gap-3 min-w-0">
+              <div class="w-10 h-10 rounded-lg bg-[var(--muted)] flex items-center justify-center flex-shrink-0 font-mono text-xs font-bold">GH</div>
+              <div class="min-w-0">
+                <h1 class="text-xl sm:text-2xl font-semibold tracking-tight truncate">GitHub · sebk-personal</h1>
+                <div class="flex items-center gap-2 mt-0.5 flex-wrap">
+                  <span class="badge badge-active"><span class="status-dot status-dot-active"></span>Connected</span>
+                  <span class="text-xs text-[var(--muted-foreground)] font-mono">pat_••••••••••••ZQ4a · github.com</span>
+                </div>
+              </div>
+            </div>
+            <div class="flex items-center gap-2 flex-wrap">
+              <button class="btn btn-secondary btn-sm" data-open-modal="rotate">
+                <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/></svg>
+                Rotate
+              </button>
+              <button class="btn btn-outline btn-sm" style="color: var(--destructive); border-color: color-mix(in oklab, var(--destructive) 40%, var(--border))" data-open-modal="revoke">
+                <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/></svg>
+                Revoke
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="max-w-[1080px] mx-auto px-4 sm:px-6 py-4 sm:py-6 grid lg:grid-cols-[1fr_320px] gap-4 sm:gap-6">
+        <div class="min-w-0">
+          <!-- Audit log -->
+          <div class="card">
+            <div class="p-3 sm:p-4 border-b border-[var(--border)] flex items-center justify-between gap-2">
+              <div>
+                <h2 class="text-sm font-semibold">Audit log</h2>
+                <p class="text-xs text-[var(--muted-foreground)] mt-0.5">Every read of this credential, chronological. SOC 2 evidence.</p>
+              </div>
+              <div class="flex gap-2">
+                <button class="btn btn-outline btn-sm">
+                  <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M7 12h10"/><path d="M10 18h4"/></svg>
+                  Filter
+                </button>
+                <button class="btn btn-outline btn-sm">
+                  <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
+                  Export CSV
+                </button>
+              </div>
+            </div>
+
+            <div class="p-3 sm:p-4">
+              <div class="log-item">
+                <div class="text-xs font-mono text-[var(--muted-foreground)]">
+                  <div>14:22:17</div>
+                  <div class="text-[10px] opacity-70">Aug 26 · 2 min ago</div>
+                </div>
+                <div>
+                  <div class="text-sm">
+                    <span class="font-medium">Developer</span> read this credential for
+                    <a href="#" class="font-medium">session-a2b1e4</a> targeting
+                    <span class="font-mono text-xs">api.github.com/repos/sindre-ai/maskin/pulls</span>
+                  </div>
+                  <div class="flex items-center gap-2 mt-1">
+                    <span class="badge badge-outline">GET</span>
+                    <span class="badge badge-active">200</span>
+                    <span class="text-[11px] text-[var(--muted-foreground)] font-mono">trigger: cron / pr-review</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="log-item">
+                <div class="text-xs font-mono text-[var(--muted-foreground)]">
+                  <div>13:04:02</div>
+                  <div class="text-[10px] opacity-70">Aug 26 · 1 h ago</div>
+                </div>
+                <div>
+                  <div class="text-sm">
+                    <span class="font-medium">Sales Rep</span> read this credential for
+                    <a href="#" class="font-medium">session-91cf7d</a> targeting
+                    <span class="font-mono text-xs">api.github.com/graphql</span>
+                  </div>
+                  <div class="flex items-center gap-2 mt-1">
+                    <span class="badge badge-outline">POST</span>
+                    <span class="badge badge-active">200</span>
+                    <span class="text-[11px] text-[var(--muted-foreground)] font-mono">trigger: @mention on bet-56c2ff</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="log-item">
+                <div class="text-xs font-mono text-[var(--muted-foreground)]">
+                  <div>09:47:11</div>
+                  <div class="text-[10px] opacity-70">Aug 26 · 6 h ago</div>
+                </div>
+                <div>
+                  <div class="text-sm">
+                    <span class="font-medium">Chief of Staff</span> read this credential for
+                    <a href="#" class="font-medium">session-3f21a0</a> targeting
+                    <span class="font-mono text-xs">api.github.com/notifications</span>
+                  </div>
+                  <div class="flex items-center gap-2 mt-1">
+                    <span class="badge badge-outline">GET</span>
+                    <span class="badge badge-failed">401</span>
+                    <span class="text-[11px]" style="color: var(--destructive)">bad_credentials · pending rotate</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="log-item">
+                <div class="text-xs font-mono text-[var(--muted-foreground)]">
+                  <div>08:00:03</div>
+                  <div class="text-[10px] opacity-70">Aug 26 · 8 h ago</div>
+                </div>
+                <div>
+                  <div class="text-sm">
+                    <span class="font-medium">Sales Rep</span> read this credential for
+                    <a href="#" class="font-medium">session-08dd12</a> targeting
+                    <span class="font-mono text-xs">api.github.com/user/repos</span>
+                  </div>
+                  <div class="flex items-center gap-2 mt-1">
+                    <span class="badge badge-outline">GET</span>
+                    <span class="badge badge-active">200</span>
+                    <span class="text-[11px] text-[var(--muted-foreground)] font-mono">trigger: cron / daily-standup</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="p-3 border-t border-[var(--border)] text-center">
+              <button class="btn btn-ghost btn-sm">Load 218 more entries</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- side panel: metadata + scope -->
+        <aside class="space-y-4">
+          <div class="card p-4">
+            <div class="eyebrow mb-2">Details</div>
+            <dl class="text-xs space-y-2">
+              <div class="grid grid-cols-[80px_1fr] gap-2">
+                <dt class="text-[var(--muted-foreground)]">Service</dt><dd>github.com</dd>
+              </div>
+              <div class="grid grid-cols-[80px_1fr] gap-2">
+                <dt class="text-[var(--muted-foreground)]">Type</dt><dd>API key (Personal Access Token)</dd>
+              </div>
+              <div class="grid grid-cols-[80px_1fr] gap-2">
+                <dt class="text-[var(--muted-foreground)]">Created</dt><dd>Aug 14, 2026 by Sebk</dd>
+              </div>
+              <div class="grid grid-cols-[80px_1fr] gap-2">
+                <dt class="text-[var(--muted-foreground)]">Last used</dt><dd>2 min ago (Developer)</dd>
+              </div>
+              <div class="grid grid-cols-[80px_1fr] gap-2">
+                <dt class="text-[var(--muted-foreground)]">Last 30 d</dt><dd>1,247 reads · <span style="color: var(--destructive)">1 error</span></dd>
+              </div>
+            </dl>
+          </div>
+
+          <div class="card p-4">
+            <div class="flex items-center justify-between mb-2">
+              <span class="eyebrow">Scope</span>
+              <button class="btn btn-ghost btn-sm" data-view-link="scope">Edit</button>
+            </div>
+            <p class="text-[11px] text-[var(--muted-foreground)] mb-2">3 agents can read this credential.</p>
+            <ul class="space-y-1.5">
+              <li class="flex items-center gap-2 text-xs">
+                <div class="w-6 h-6 rounded-full bg-[var(--muted)] flex items-center justify-center text-[9px] font-bold">DV</div>
+                <span class="flex-1">Developer</span>
+                <span class="text-[10px] text-[var(--muted-foreground)] font-mono">42 rd/wk</span>
+              </li>
+              <li class="flex items-center gap-2 text-xs">
+                <div class="w-6 h-6 rounded-full bg-[var(--muted)] flex items-center justify-center text-[9px] font-bold">SR</div>
+                <span class="flex-1">Sales Rep</span>
+                <span class="text-[10px] text-[var(--muted-foreground)] font-mono">18 rd/wk</span>
+              </li>
+              <li class="flex items-center gap-2 text-xs">
+                <div class="w-6 h-6 rounded-full bg-[var(--brand-subtle)] flex items-center justify-center text-[9px] font-bold" style="color: var(--brand-subtle-foreground)">CS</div>
+                <span class="flex-1">Chief of Staff</span>
+                <span class="text-[10px] text-[var(--muted-foreground)] font-mono">7 rd/wk</span>
+              </li>
+            </ul>
+          </div>
+
+          <div class="card p-4">
+            <div class="eyebrow mb-2">Security</div>
+            <ul class="text-xs space-y-1.5 text-[var(--muted-foreground)]">
+              <li class="flex items-center gap-1.5">
+                <svg class="icon icon-sm" style="color: var(--success)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                Encrypted at rest (AES-256)
+              </li>
+              <li class="flex items-center gap-1.5">
+                <svg class="icon icon-sm" style="color: var(--success)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                Never injected into agent containers
+              </li>
+              <li class="flex items-center gap-1.5">
+                <svg class="icon icon-sm" style="color: var(--success)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                Read scoped by <span class="font-mono">actor_id</span>
+              </li>
+            </ul>
+          </div>
+        </aside>
+      </div>
+    </main>
+  </div>
+</section>
+
+<!-- ============ VIEW 4b · DETAIL WITH EMPTY LOG ============ -->
+<section class="view" data-view="detail-empty">
+  <div class="app">
+    <aside class="sidebar-full h-screen sticky top-[3.25rem] border-r border-[var(--border)] bg-[var(--sidebar)]"></aside>
+    <aside class="sidebar-rail h-screen sticky top-[3.25rem] border-r border-[var(--border)] bg-[var(--sidebar)]"></aside>
+    <main class="min-w-0">
+      <div class="border-b border-[var(--border)]">
+        <div class="max-w-[1080px] mx-auto px-4 sm:px-6 py-4 sm:py-6">
+          <nav class="text-xs text-[var(--muted-foreground)] mb-2 flex items-center gap-1.5">
+            <a href="#" data-view-link="landing">Keychain</a>
+            <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+            <span class="text-[var(--foreground)]">Stripe · Sindre AI</span>
+          </nav>
+          <div class="flex items-start justify-between gap-4 flex-wrap">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 rounded-lg bg-[#635BFF] flex items-center justify-center text-white text-xs font-bold">S</div>
+              <div>
+                <h1 class="text-xl sm:text-2xl font-semibold tracking-tight">Stripe · Sindre AI</h1>
+                <div class="flex items-center gap-2 mt-0.5">
+                  <span class="badge badge-active"><span class="status-dot status-dot-active"></span>Connected</span>
+                  <span class="text-xs text-[var(--muted-foreground)] font-mono">sk_live_••••••••2f9C</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="max-w-[1080px] mx-auto px-4 sm:px-6 py-4 sm:py-6 grid lg:grid-cols-[1fr_320px] gap-6">
+        <div>
+          <div class="card">
+            <div class="p-3 sm:p-4 border-b border-[var(--border)]">
+              <h2 class="text-sm font-semibold">Audit log</h2>
+              <p class="text-xs text-[var(--muted-foreground)] mt-0.5">Every read of this credential, chronological.</p>
+            </div>
+            <div class="p-8 sm:p-12 text-center">
+              <div class="mx-auto w-12 h-12 rounded-2xl bg-[var(--muted)] flex items-center justify-center mb-3">
+                <svg class="icon icon-lg text-[var(--muted-foreground)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11h6"/><path d="M9 15h4"/><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+              </div>
+              <p class="text-sm font-medium">No reads yet</p>
+              <p class="text-xs text-[var(--muted-foreground)] mt-1 max-w-xs mx-auto">
+                Once an agent uses this credential, every request will show up here — session, target, method, and status.
+              </p>
+              <div class="mt-4 flex justify-center gap-2">
+                <button class="btn btn-outline btn-sm">
+                  <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                  Test connection
+                </button>
+                <button class="btn btn-outline btn-sm" data-view-link="scope">
+                  <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+                  Assign agents
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <aside>
+          <div class="card p-4">
+            <div class="eyebrow mb-2">Scope</div>
+            <p class="text-xs text-[var(--muted-foreground)] italic">Unassigned — no agents can use this credential yet (fail-closed).</p>
+          </div>
+        </aside>
+      </div>
+    </main>
+  </div>
+</section>
+
+<!-- ============ VIEW 5a · ROTATE (one-click confirm) ============ -->
+<section class="view" data-view="rotate">
+  <div class="app">
+    <aside class="sidebar-full h-screen sticky top-[3.25rem] border-r border-[var(--border)] bg-[var(--sidebar)]"></aside>
+    <aside class="sidebar-rail h-screen sticky top-[3.25rem] border-r border-[var(--border)] bg-[var(--sidebar)]"></aside>
+    <main class="min-w-0 opacity-40 pointer-events-none">
+      <div class="max-w-[1080px] mx-auto px-6 py-6"><div class="card p-4 text-sm">GitHub · sebk-personal · detail</div></div>
+    </main>
+
+    <div class="fixed inset-0 z-40" style="background: color-mix(in oklab, black 45%, transparent);"></div>
+    <div class="fixed inset-0 z-40 flex items-center justify-center p-4">
+      <div class="bg-[var(--card)] rounded-2xl shadow-[var(--shadow-xl)] w-full max-w-md">
+        <div class="p-5 border-b border-[var(--border)]">
+          <div class="flex items-center gap-2 mb-1">
+            <svg class="icon" style="color: var(--brand)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/></svg>
+            <h2 class="text-base font-semibold">Rotate GitHub · sebk-personal</h2>
+          </div>
+          <p class="text-xs text-[var(--muted-foreground)]">Replace the secret. Scope, audit log, and assigned agents stay the same. No confirmation needed — rotation is safe and reversible via the log.</p>
+        </div>
+        <div class="p-5 space-y-3">
+          <div>
+            <label class="text-xs font-medium">New personal access token</label>
+            <div class="relative mt-1">
+              <input class="input font-mono text-xs pr-20" type="password" placeholder="ghp_•••••••••••••••••••••••••••••••••••">
+              <button class="btn btn-ghost btn-sm absolute right-1 top-1/2 -translate-y-1/2">Show</button>
+            </div>
+          </div>
+          <div class="text-[11px] text-[var(--muted-foreground)] flex items-start gap-1.5">
+            <svg class="icon icon-sm mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+            The previous secret is revoked as soon as this saves. Any in-flight session with the old token will retry once.
+          </div>
+        </div>
+        <div class="p-4 border-t border-[var(--border)] flex justify-end gap-2">
+          <button class="btn btn-ghost btn-sm" data-view-link="detail">Cancel</button>
+          <button class="btn btn-primary" data-view-link="detail">Rotate now</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ VIEW 5b · REVOKE (typed confirmation) ============ -->
+<section class="view" data-view="revoke">
+  <div class="app">
+    <aside class="sidebar-full h-screen sticky top-[3.25rem] border-r border-[var(--border)] bg-[var(--sidebar)]"></aside>
+    <aside class="sidebar-rail h-screen sticky top-[3.25rem] border-r border-[var(--border)] bg-[var(--sidebar)]"></aside>
+    <main class="min-w-0 opacity-40 pointer-events-none">
+      <div class="max-w-[1080px] mx-auto px-6 py-6"><div class="card p-4 text-sm">GitHub · sebk-personal · detail</div></div>
+    </main>
+
+    <div class="fixed inset-0 z-40" style="background: color-mix(in oklab, black 45%, transparent);"></div>
+    <div class="fixed inset-0 z-40 flex items-center justify-center p-4">
+      <div class="bg-[var(--card)] rounded-2xl shadow-[var(--shadow-xl)] w-full max-w-md">
+        <div class="p-5 border-b border-[var(--border)]">
+          <div class="flex items-center gap-2 mb-1">
+            <svg class="icon" style="color: var(--destructive)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/></svg>
+            <h2 class="text-base font-semibold">Revoke this credential?</h2>
+          </div>
+          <p class="text-xs text-[var(--muted-foreground)]">This is permanent for the assignment; the audit log is kept.</p>
+        </div>
+
+        <div class="p-5 space-y-3">
+          <div class="danger-rule p-3 rounded-lg text-xs">
+            <div class="font-medium mb-1" style="color: var(--destructive)">3 agents will lose access immediately</div>
+            <ul class="space-y-1 text-[var(--foreground)]">
+              <li>· <strong>Developer</strong> — 42 sess/wk that call GitHub will fail-closed until reassigned</li>
+              <li>· <strong>Sales Rep</strong> — 18 sess/wk affected</li>
+              <li>· <strong>Chief of Staff</strong> — 7 sess/wk affected</li>
+            </ul>
+          </div>
+
+          <div>
+            <label class="text-xs font-medium">Type <code class="font-mono bg-[var(--muted)] px-1 rounded">revoke</code> to confirm</label>
+            <input class="input font-mono text-xs mt-1" placeholder="revoke">
+          </div>
+        </div>
+
+        <div class="p-4 border-t border-[var(--border)] flex justify-end gap-2">
+          <button class="btn btn-ghost btn-sm" data-view-link="detail">Cancel</button>
+          <button class="btn btn-destructive" data-view-link="landing" disabled>Revoke credential</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ VIEW 6 · MCP REGISTRY DEEP LINK ============ -->
+<section class="view" data-view="registry">
+  <div class="app">
+    <aside class="sidebar-full h-screen sticky top-[3.25rem] border-r border-[var(--border)] bg-[var(--sidebar)]"></aside>
+    <aside class="sidebar-rail h-screen sticky top-[3.25rem] border-r border-[var(--border)] bg-[var(--sidebar)]"></aside>
+    <main class="min-w-0">
+      <div class="border-b border-[var(--border)]">
+        <div class="max-w-[1080px] mx-auto px-4 sm:px-6 py-4 sm:py-6">
+          <nav class="text-xs text-[var(--muted-foreground)] mb-2 flex items-center gap-1.5">
+            <span>MCP Registry</span>
+            <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+            <span class="text-[var(--foreground)]">Notion</span>
+          </nav>
+          <div class="flex items-start justify-between gap-4 flex-wrap">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 rounded-lg bg-black flex items-center justify-center text-white text-lg font-bold">N</div>
+              <div>
+                <h1 class="text-xl sm:text-2xl font-semibold tracking-tight">Notion MCP</h1>
+                <p class="text-xs text-[var(--muted-foreground)] mt-1">Community-maintained · 12 tools · used by 421 workspaces</p>
+              </div>
+            </div>
+            <div class="flex items-center gap-2">
+              <button class="btn btn-outline btn-sm">
+                <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="max-w-[720px] mx-auto px-4 sm:px-6 py-4 sm:py-6 space-y-4">
+
+        <!-- inline "credential needed" callout -->
+        <div class="scope-rule p-4 rounded-xl">
+          <div class="flex items-start gap-3">
+            <div class="w-9 h-9 rounded-lg bg-[var(--card)] border border-[var(--border)] flex items-center justify-center flex-shrink-0">
+              <svg class="icon" style="color: var(--brand)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2 15 8"/><path d="m17 6 4 4"/><path d="M11 12a5 5 0 1 1-7.07 7.07L2 21l3-3a5 5 0 0 1 6-6z"/></svg>
+            </div>
+            <div class="flex-1 min-w-0">
+              <h3 class="text-sm font-semibold">A Notion credential is required</h3>
+              <p class="text-xs text-[var(--muted-foreground)] mt-0.5">Notion MCP calls Notion's API on your behalf. Add a Notion integration secret to your Keychain, then continue installing the MCP.</p>
+              <div class="mt-3 flex items-center gap-2 flex-wrap">
+                <button class="btn btn-primary btn-sm" data-open-modal="add-choose">
+                  <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+                  Add Notion credential
+                </button>
+                <button class="btn btn-outline btn-sm">
+                  <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/></svg>
+                  Use existing credential
+                </button>
+                <span class="text-[11px] text-[var(--muted-foreground)]">You'll return here after saving.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card p-4">
+          <div class="eyebrow mb-2">What Notion MCP will do</div>
+          <ul class="text-xs space-y-1.5">
+            <li class="flex items-start gap-2"><svg class="icon icon-sm mt-0.5" style="color: var(--success)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>Read pages, databases, and comments</li>
+            <li class="flex items-start gap-2"><svg class="icon icon-sm mt-0.5" style="color: var(--success)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>Create and update pages</li>
+            <li class="flex items-start gap-2"><svg class="icon icon-sm mt-0.5" style="color: var(--success)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>Search across your workspace</li>
+          </ul>
+        </div>
+
+        <div class="text-[11px] text-[var(--muted-foreground)] flex items-start gap-1.5">
+          <svg class="icon icon-sm mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+          Adding a credential from here writes it to your Keychain — you can revoke or reassign it later without breaking anything else.
+        </div>
+
+      </div>
+    </main>
+  </div>
+</section>
+
+</div><!-- /viewport -->
+
+<!-- ============ MODAL: pick add-credential mode ============ -->
+<div class="overlay" id="overlay" data-open="false"></div>
+<div class="modal w-full max-w-md" id="modal-add-choose" role="dialog" aria-labelledby="add-choose-title">
+  <div class="p-5 border-b border-[var(--border)]">
+    <h2 id="add-choose-title" class="text-base font-semibold">Add credential</h2>
+    <p class="text-xs text-[var(--muted-foreground)] mt-0.5">How do you have the secret?</p>
+  </div>
+  <div class="p-4 space-y-2">
+    <button class="w-full card p-3 text-left flex items-center gap-3 hover:bg-[var(--muted)]" onclick="closeModal(); switchView('add-paste');">
+      <svg class="icon" style="color: var(--brand)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 12h.01"/><path d="M12 12h.01"/><path d="M17 12h.01"/></svg>
+      <div class="flex-1">
+        <div class="text-sm font-medium">Paste a secret</div>
+        <div class="text-xs text-[var(--muted-foreground)]">API key, Bearer token, Basic auth</div>
+      </div>
+      <svg class="icon icon-sm text-[var(--muted-foreground)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+    </button>
+    <button class="w-full card p-3 text-left flex items-center gap-3 hover:bg-[var(--muted)]" onclick="closeModal(); switchView('add-oauth');">
+      <svg class="icon" style="color: var(--brand)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9"/><path d="M17 4v5h-5"/></svg>
+      <div class="flex-1">
+        <div class="text-sm font-medium">Connect with OAuth</div>
+        <div class="text-xs text-[var(--muted-foreground)]">Bring your own OAuth app; we run the dance</div>
+      </div>
+      <svg class="icon icon-sm text-[var(--muted-foreground)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+    </button>
+  </div>
+  <div class="p-3 border-t border-[var(--border)] flex justify-end">
+    <button class="btn btn-ghost btn-sm" onclick="closeModal()">Cancel</button>
+  </div>
+</div>
+
+<script>
+  // View + viewport switching. Kept intentionally small; prototype only.
+  const viewport = document.getElementById('viewport');
+  const stateLabel = document.getElementById('state-label');
+  const states = ['default','hover','focus','loading','error','empty','success'];
+  let stateIdx = 0;
+
+  function switchView(name) {
+    document.querySelectorAll('.view').forEach(v => {
+      v.classList.toggle('active', v.dataset.view === name);
+    });
+    document.querySelectorAll('[data-view]').forEach(btn => {
+      if (btn.tagName === 'BUTTON' && btn.dataset.view) {
+        btn.setAttribute('aria-pressed', btn.dataset.view === name ? 'true' : 'false');
+      }
+    });
+    window.scrollTo({top:0, behavior:'instant'});
+  }
+  function setViewport(vp) {
+    viewport.className = 'viewport vp-' + vp;
+    document.querySelectorAll('[data-vp]').forEach(b => b.setAttribute('aria-pressed', b.dataset.vp === vp ? 'true':'false'));
+  }
+  function openModal(id) {
+    document.getElementById('overlay').dataset.open = 'true';
+    document.getElementById('modal-' + id).dataset.open = 'true';
+  }
+  function closeModal() {
+    document.getElementById('overlay').dataset.open = 'false';
+    document.querySelectorAll('.modal').forEach(m => m.dataset.open = 'false');
+  }
+  document.addEventListener('click', (e) => {
+    const vpBtn = e.target.closest('[data-vp]');
+    if (vpBtn) return setViewport(vpBtn.dataset.vp);
+    const viewBtn = e.target.closest('button[data-view]');
+    if (viewBtn) return switchView(viewBtn.dataset.view);
+    const link = e.target.closest('[data-view-link]');
+    if (link) { e.preventDefault(); return switchView(link.dataset.viewLink); }
+    const openBtn = e.target.closest('[data-open-modal]');
+    if (openBtn) return openModal(openBtn.dataset.openModal);
+    if (e.target.id === 'overlay') return closeModal();
+  });
+
+  document.getElementById('toggle-theme').addEventListener('click', () => {
+    document.documentElement.classList.toggle('dark');
+  });
+  document.getElementById('toggle-state').addEventListener('click', () => {
+    stateIdx = (stateIdx + 1) % states.length;
+    stateLabel.textContent = 'State: ' + states[stateIdx];
+    // states are illustrative only in this prototype; SPEC.md is the source of truth.
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+</script>
+
+</body>
+</html>
