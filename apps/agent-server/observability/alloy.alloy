@@ -1,0 +1,140 @@
+// Grafana Alloy — ship agent-server's structured logs to Loki.
+//
+// This is HOST configuration, not application configuration. agent-server
+// itself has no vendor SDK and no knowledge of Loki: it writes one NDJSON
+// object per line to stdout/stderr (see src/lib/logger.ts), systemd captures
+// that into journald (StandardOutput=journal in
+// systemd/maskin-agent-server.service), and this file is the only place the
+// log backend is named. Swapping Loki for another destination means replacing
+// the loki.write component below and nothing else.
+//
+// Install: /etc/alloy/config.alloy
+// Settings: see alloy.env.example — every deployment-specific value is read
+// from the environment so this file can be committed unmodified.
+//
+// Full setup instructions: ./README.md
+
+// ---------------------------------------------------------------------------
+// Source — journald, filtered to the agent-server unit
+// ---------------------------------------------------------------------------
+
+// Journal fields arrive prefixed with `__journal_` and are dropped unless
+// explicitly promoted here.
+loki.relabel "journal" {
+	forward_to = []
+
+	rule {
+		source_labels = ["__journal__systemd_unit"]
+		target_label  = "unit"
+	}
+
+	rule {
+		source_labels = ["__journal_syslog_identifier"]
+		target_label  = "service_name"
+	}
+}
+
+loki.source.journal "agent_server" {
+	// Alloy reads the persistent journal directly; it needs to run as root or
+	// as a member of the systemd-journal group.
+	path = coalesce(sys.env("ALLOY_JOURNAL_PATH"), "/var/log/journal")
+
+	// Matches the SyslogIdentifier set by the systemd unit. Only this unit's
+	// entries are read, so an unrelated chatty service can't inflate the bill.
+	matches = "SYSLOG_IDENTIFIER=" + coalesce(sys.env("AGENT_SERVER_SYSLOG_ID"), "maskin-agent-server")
+
+	labels = {
+		job = coalesce(sys.env("LOKI_JOB_LABEL"), "maskin-agent-server"),
+		env = coalesce(sys.env("DEPLOY_ENV"), "production"),
+	}
+
+	relabel_rules = loki.relabel.journal.rules
+	forward_to    = [loki.process.agent_server.receiver]
+}
+
+// ---------------------------------------------------------------------------
+// Processing — parse the NDJSON, and split fields by cardinality
+// ---------------------------------------------------------------------------
+
+loki.process "agent_server" {
+	forward_to = [loki.write.default.receiver]
+
+	// Every logger call emits {level, time, msg, ...ctx}. Lines that aren't
+	// JSON (e.g. the "[sentry] captureMessage failed" fallback writes) simply
+	// extract nothing and pass through with the labels above — they are not
+	// dropped.
+	stage.json {
+		expressions = {
+			level      = "level",
+			time       = "time",
+			source     = "source",
+			stream     = "stream",
+			session_id = "sessionId",
+		}
+	}
+
+	// Prefer the application's own timestamp over journald's ingest time, so
+	// ordering survives a collector restart or an ingest backlog.
+	stage.timestamp {
+		source = "time"
+		format = "RFC3339"
+	}
+
+	// LABELS — low cardinality ONLY.
+	//
+	// Loki creates one stream per unique label combination, and the index
+	// grows with that count. `level` has four values; `source` has a handful
+	// (currently only 'msb-exec' plus absent). Both are safe and both are
+	// worth having as labels because they are the usual first filter.
+	stage.labels {
+		values = {
+			level  = "",
+			source = "",
+		}
+	}
+
+	// STRUCTURED METADATA — unbounded values go here, never in labels.
+	//
+	// `sessionId` is one value per agent session, forever. As a label it would
+	// produce an unbounded number of tiny streams: an index far larger than
+	// the logs, slow queries, and on a usage-billed backend a cost that scales
+	// with session count rather than log volume. Structured metadata (Loki
+	// 3.0+) keeps it filterable at query time with no index cost.
+	stage.structured_metadata {
+		values = {
+			session_id = "",
+			stream     = "",
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Destination
+// ---------------------------------------------------------------------------
+
+loki.write "default" {
+	endpoint {
+		url = sys.env("LOKI_URL")
+
+		// Multi-tenant Loki: sets X-Scope-OrgID. Leave unset for a
+		// single-tenant or Grafana Cloud stack.
+		tenant_id = sys.env("LOKI_TENANT_ID")
+
+		// Grafana Cloud: username is the numeric stack id, password is an
+		// access policy token with logs:write.
+		//
+		// Self-hosted Loki with no auth: comment this whole block out rather
+		// than leaving the values blank — an empty basic_auth still sends an
+		// Authorization header.
+		basic_auth {
+			username = sys.env("LOKI_USERNAME")
+			password = sys.env("LOKI_PASSWORD")
+		}
+	}
+
+	// Survive a brief Loki outage or restart without losing the window you'd
+	// actually want to investigate.
+	wal {
+		enabled = true
+	}
+}
