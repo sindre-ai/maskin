@@ -45,7 +45,9 @@ test.describe('Rich agent replies — chart + live task checklist', () => {
 			})
 
 			await page.goto(`/${account.workspaceId}/objects/${parentBet.id}`)
-			await expect(page.getByText('Bet for rich reply renderer')).toBeVisible({ timeout: 10000 })
+			await expect(
+				page.getByRole('heading', { level: 1, name: 'Bet for rich reply renderer' }),
+			).toBeVisible({ timeout: 10000 })
 
 			// AC-U1: chart caption replaces the fenced code block.
 			const caption = page.getByText('week-1 retention 38% → 56%')

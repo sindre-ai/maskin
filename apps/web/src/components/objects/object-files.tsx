@@ -17,7 +17,7 @@ import type { FileListItem, RelationshipResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { formatSize, readFileAsBase64 } from '@/lib/file-utils'
 import { Link } from '@tanstack/react-router'
-import { Check, Columns3, File as FileIcon, Loader2, Plus, Upload } from 'lucide-react'
+import { Check, Columns3, File as FileIcon, Loader2, Plus } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
@@ -239,9 +239,7 @@ export function ObjectFiles({
 			className={cn('rounded-md transition-colors', isDragging && 'bg-accent/5')}
 		>
 			<div className="flex items-center gap-2 mb-2">
-				<h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-					Files ({totalCount})
-				</h3>
+				<h3 className="eyebrow">Files ({totalCount})</h3>
 				<div className="flex-1" />
 				<ResponsivePopover>
 					<ResponsivePopoverTrigger asChild>
@@ -321,19 +319,11 @@ export function ObjectFiles({
 					))}
 				</ul>
 			) : (
-				<button
-					type="button"
-					onClick={() => inputRef.current?.click()}
-					disabled={isUploading}
-					className={cn(
-						'w-full flex items-center justify-center gap-2 rounded-md border border-dashed border-border bg-card px-3 py-2 text-xs text-muted-foreground hover:border-border-hover hover:text-foreground transition-colors',
-						isDragging && 'border-accent text-accent',
-						isUploading && 'pointer-events-none opacity-60',
-					)}
-				>
-					<Upload size={14} />
-					{isUploading ? 'Uploading…' : 'Drop a file here or click to upload'}
-				</button>
+				// Mockup 1495 — plain copy, not a dropzone. Attaching still runs
+				// through the header's `+` (or a drag onto this whole section).
+				<p className="px-2 py-0.5 text-xs text-muted-foreground">
+					{isUploading ? 'Uploading…' : 'Nothing attached.'}
+				</p>
 			)}
 		</div>
 	)
@@ -434,7 +424,7 @@ function FileRow({ workspaceId, file, visible, uploaderName }: FileRowProps) {
 				params={{ workspaceId, fileId: file.id }}
 				target="_blank"
 				rel="noopener noreferrer"
-				className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-border bg-card px-3 py-2 text-sm transition-colors hover:bg-bg-hover"
+				className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-border bg-card px-3 py-2 text-sm transition-colors hover:bg-accent"
 			>
 				<FileIcon size={14} className="text-muted-foreground shrink-0" />
 				<span className="flex-1 min-w-0 truncate">{file.name}</span>

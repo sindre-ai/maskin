@@ -72,19 +72,6 @@ export function resolvePlatformDevice(): PlatformDevice {
 	return 'desktop'
 }
 
-function usePrefersReducedMotion() {
-	const [reduced, setReduced] = React.useState(false)
-	React.useEffect(() => {
-		if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return
-		const mql = window.matchMedia('(prefers-reduced-motion: reduce)')
-		const onChange = () => setReduced(mql.matches)
-		onChange()
-		mql.addEventListener('change', onChange)
-		return () => mql.removeEventListener('change', onChange)
-	}, [])
-	return reduced
-}
-
 export function BulkActionBar({
 	selectedCount,
 	statusOptions = [],
@@ -102,7 +89,6 @@ export function BulkActionBar({
 	onClear,
 }: BulkActionBarProps) {
 	const visible = selectedCount > 0
-	const reducedMotion = usePrefersReducedMotion()
 	const [confirmOpen, setConfirmOpen] = React.useState(false)
 	// Bump these keys after each pick so the Selects remount and don't latch onto
 	// the last-chosen value — otherwise re-selecting the same status/owner on a
@@ -135,8 +121,6 @@ export function BulkActionBar({
 		if (!visible && confirmOpen) setConfirmOpen(false)
 	}, [visible, confirmOpen])
 
-	const transitionClass = reducedMotion ? '' : 'transition-all duration-200 ease-out'
-
 	const plural = selectedCount === 1 ? '' : 's'
 	const copyLinkLabel = `Copy link${plural}`
 	const copyTitleLabel = `Copy title${plural}`
@@ -153,7 +137,7 @@ export function BulkActionBar({
 					'fixed left-1/2 bottom-10 z-50 -translate-x-1/2',
 					'flex w-[calc(100%-2rem)] max-w-[44rem] items-center gap-2',
 					'overflow-x-auto rounded-xl border border-border bg-popover px-3 py-2 shadow-lg',
-					transitionClass,
+					'transition-[transform,opacity] duration-200 ease-out',
 					visible
 						? 'pointer-events-auto opacity-100 translate-y-0'
 						: 'pointer-events-none opacity-0 translate-y-4',
@@ -165,9 +149,22 @@ export function BulkActionBar({
 				>
 					{selectedCount}
 				</span>
-				<span className="hidden text-sm text-text-secondary sm:inline">selected</span>
+				<span className="hidden text-sm text-muted-foreground sm:inline">selected</span>
 
 				<div className="mx-1 h-5 w-px shrink-0 bg-border" aria-hidden="true" />
+
+				{onAnswerAsks && askCount > 0 && (
+					<Button
+						type="button"
+						size="sm"
+						className="shrink-0"
+						onClick={onAnswerAsks}
+						aria-label={`Answer ${askCount} asks`}
+					>
+						<MessageSquare className="size-4" />
+						Answer {askCount} {askCount === 1 ? 'ask' : 'asks'}
+					</Button>
+				)}
 
 				{onStatusChange && statusOptions.length > 0 && (
 					<Select
@@ -180,7 +177,7 @@ export function BulkActionBar({
 					>
 						<SelectTrigger
 							aria-label="Set status"
-							className="shrink-0 text-sm data-[placeholder]:text-text-secondary"
+							className="shrink-0 text-sm data-[placeholder]:text-muted-foreground"
 						>
 							<SelectValue placeholder="Status" />
 						</SelectTrigger>
@@ -206,10 +203,10 @@ export function BulkActionBar({
 					disabled={ownerOptions.length === 0 || !onOwnerChange}
 				>
 					<SelectTrigger
-						aria-label="Set owner"
-						className="shrink-0 text-sm data-[placeholder]:text-text-secondary"
+						aria-label="Set driver"
+						className="shrink-0 text-sm data-[placeholder]:text-muted-foreground"
 					>
-						<SelectValue placeholder="Owner" />
+						<SelectValue placeholder="Driver" />
 					</SelectTrigger>
 					<SelectContent>
 						{ownerOptions.map((opt) => (
@@ -221,19 +218,6 @@ export function BulkActionBar({
 				</Select>
 
 				<div className="ml-auto flex shrink-0 items-center gap-1">
-					{onAnswerAsks && askCount > 0 && (
-						<Button
-							type="button"
-							variant="outline"
-							size="sm"
-							className="shrink-0"
-							onClick={onAnswerAsks}
-							aria-label={`Answer ${askCount} asks`}
-						>
-							<MessageSquare className="size-4" />
-							Answer {askCount} {askCount === 1 ? 'ask' : 'asks'}
-						</Button>
-					)}
 					{onCopyLink && (
 						<Tooltip>
 							<TooltipTrigger asChild>
@@ -319,7 +303,7 @@ export function BulkActionBar({
 							type="button"
 							variant="outline"
 							size="sm"
-							className="shrink-0"
+							className="shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
 							onClick={() => {
 								emitCommit('archive')
 								onArchive()

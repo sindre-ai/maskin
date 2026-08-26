@@ -16,10 +16,17 @@
 // server-side and are never shipped to the browser.
 
 // Every known flag id. Ids absent from this registry always resolve to false,
-// so a typo in FF_TESTER_FEATURES can't invent a flag. Currently empty — the
-// `new-design` flag was retired once the v2 design shipped to everyone. Add an
-// entry here as the first step of introducing a new flag.
-export const FLAGS = {} as const
+// so a typo in FF_TESTER_FEATURES can't invent a flag. Add an entry here as the
+// first step of introducing a new flag.
+export const FLAGS = {
+	/**
+	 * v2 UI surfaces that have not been tested yet. Off means the pre-v2
+	 * rendering under `apps/web/src/components/objects/legacy/`; on means the new
+	 * one. Retire it (and delete those directories) once the v2 surfaces have
+	 * been through testing — see `.claude/rules/feature-flags.md`.
+	 */
+	NEW_DESIGN: 'new-design',
+} as const
 
 export type FlagId = (typeof FLAGS)[keyof typeof FLAGS]
 
