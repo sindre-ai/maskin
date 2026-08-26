@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import type { Database } from '@maskin/db'
 import { sessionLogs, sessions } from '@maskin/db/schema'
-import { MESSAGE_MAX_LENGTH, parseResultLine, splitLines } from '@maskin/shared'
+import { MESSAGE_MAX_LENGTH, parseResultLine, scanTurnLine, splitLines } from '@maskin/shared'
 import { and, desc, eq, like, lt } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import { insertConversationMessage } from './conversation-messages'
@@ -32,6 +32,14 @@ const describeError = (err: unknown): string =>
 const MAX_BUFFERED_PARTIAL_BYTES = 256 * 1024
 /** Bounds the in-process dedupe cache; the DB unique index is authoritative. */
 const MAX_SEEN_KEYS = 500
+/**
+ * How far back the blank-result recovery scan reads. A turn's stdout is one row
+ * per streamed block, so a tool-heavy turn runs to dozens of rows; this is sized
+ * to cover a normal turn while keeping the query bounded. The scan stops early
+ * at the turn boundary, so the limit only bites on unusually long turns — where
+ * missing the reply is the same silence we'd have had anyway.
+ */
+const RECOVERY_SCAN_LIMIT = 200
 
 type SessionGate = {
 	interactive: boolean
@@ -124,11 +132,34 @@ export class InteractiveTurnFinalizer {
 			return
 		}
 
-		const text = result.text.trim()
-		// A turn that produced no text has nothing to say — most often the agent
-		// already replied via the MCP tool and ended silently. Posting an empty
-		// bubble would be worse than the silence we're fixing.
-		if (!text) return
+		// The `result` envelope is the intended carrier for the turn's reply, but
+		// it is not reliable: when the model's turn ends on a non-text block (a
+		// trailing `thinking` block, most often after a tool it could not use),
+		// the CLI closes the turn with a blank `result` while the reply the human
+		// was meant to read sits in an earlier `assistant` line. Recover it from
+		// the log rather than dropping the turn — that silence is the exact
+		// failure this service exists to prevent.
+		let text = result.text.trim()
+		let recovered = false
+		if (!text) {
+			const fallback = await this.recoverTurnText(sessionId, logId)
+			if (fallback) {
+				text = fallback
+				recovered = true
+			}
+		}
+
+		// A turn that genuinely produced no text has nothing to say — most often
+		// the agent already replied via the MCP tool and ended silently. Posting
+		// an empty bubble would be worse than the silence we're fixing. Logged
+		// because a false negative here is an invisible dropped reply, and this
+		// was previously the one path in this service with no telemetry at all.
+		if (!text) {
+			logger.info(
+				`Interactive session ${sessionId} closed a turn with no postable text (log ${logId}, subtype ${result.subtype ?? 'none'}); nothing to post`,
+			)
+			return
+		}
 
 		const dedupeKey = createHash('sha256').update(result.raw).digest('hex').slice(0, 32)
 		if (this.seen.has(dedupeKey)) return
@@ -147,6 +178,7 @@ export class InteractiveTurnFinalizer {
 				final_output: {
 					dedupe_key: dedupeKey,
 					message_id: turnMessageId,
+					...(recovered ? { recovered: true } : {}),
 					...(result.isError ? { is_error: true } : {}),
 					...(result.subtype ? { subtype: result.subtype } : {}),
 					...(truncated ? { truncated: true } : {}),
@@ -199,6 +231,41 @@ export class InteractiveTurnFinalizer {
 		if (row.interactive && !row.conversationId) return row
 		this.gates.set(sessionId, row)
 		return row
+	}
+
+	/**
+	 * The agent's last spoken text in the turn that is now closing.
+	 *
+	 * Walks this session's stdout backwards from the `result` line, stopping at
+	 * the turn boundary (the previous `result`, or the user turn envelope that
+	 * opened this one) so it can never surface something the agent said in an
+	 * earlier turn — which would re-post a reply the human already read.
+	 *
+	 * Returns the LAST non-empty assistant text of the turn. Mid-turn narration
+	 * ("let me check X") can win that way when the agent said nothing else, but
+	 * a slightly over-eager bubble beats a lost reply, and the message is
+	 * tagged `recovered` so this path stays visible in the data.
+	 */
+	private async recoverTurnText(sessionId: string, logId: number): Promise<string> {
+		const rows = await this.db
+			.select({ content: sessionLogs.content })
+			.from(sessionLogs)
+			.where(
+				and(
+					eq(sessionLogs.sessionId, sessionId),
+					lt(sessionLogs.id, logId),
+					eq(sessionLogs.stream, 'stdout'),
+				),
+			)
+			.orderBy(desc(sessionLogs.id))
+			.limit(RECOVERY_SCAN_LIMIT)
+
+		for (const row of rows) {
+			const scanned = scanTurnLine(row.content)
+			if (scanned.kind === 'boundary') return ''
+			if (scanned.kind === 'assistant_text') return scanned.text.trim()
+		}
+		return ''
 	}
 
 	/**

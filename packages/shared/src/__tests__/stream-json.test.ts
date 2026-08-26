@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseResultLine, splitLines } from '../stream-json'
+import { parseResultLine, scanTurnLine, splitLines } from '../stream-json'
 
 const resultLine = (extra: Record<string, unknown> = {}) =>
 	JSON.stringify({
@@ -104,5 +104,83 @@ describe('parseResultLine', () => {
 			cacheReadInputTokens: null,
 			durationMs: null,
 		})
+	})
+})
+
+describe('scanTurnLine', () => {
+	const assistantLine = (content: unknown[], overrides: Record<string, unknown> = {}) =>
+		JSON.stringify({
+			type: 'assistant',
+			message: { id: 'gen-1', role: 'assistant', content },
+			...overrides,
+		})
+
+	it('returns the joined text blocks of an assistant line', () => {
+		const scanned = scanTurnLine(
+			assistantLine([
+				{ type: 'text', text: 'Here is ' },
+				{ type: 'text', text: 'the answer.' },
+			]),
+		)
+		expect(scanned).toEqual({ kind: 'assistant_text', text: 'Here is the answer.' })
+	})
+
+	it('ignores non-text blocks alongside the text', () => {
+		const scanned = scanTurnLine(
+			assistantLine([
+				{ type: 'thinking', thinking: 'hmm' },
+				{ type: 'text', text: 'Reply.' },
+				{ type: 'tool_use', id: 'call_1', name: 'Read', input: {} },
+			]),
+		)
+		expect(scanned).toEqual({ kind: 'assistant_text', text: 'Reply.' })
+	})
+
+	it('treats a thinking-only assistant line as nothing to say', () => {
+		expect(scanTurnLine(assistantLine([{ type: 'thinking', thinking: 'hmm' }]))).toEqual({
+			kind: 'other',
+		})
+	})
+
+	it('treats whitespace-only text as nothing to say', () => {
+		expect(scanTurnLine(assistantLine([{ type: 'text', text: '  \n ' }]))).toEqual({
+			kind: 'other',
+		})
+	})
+
+	it('rejects sub-agent output so a Task result cannot become the reply', () => {
+		expect(
+			scanTurnLine(
+				assistantLine([{ type: 'text', text: 'sub-agent finding' }], {
+					parent_tool_use_id: 'call_parent',
+				}),
+			),
+		).toEqual({ kind: 'other' })
+	})
+
+	it('marks a result envelope as the turn boundary', () => {
+		expect(scanTurnLine(JSON.stringify({ type: 'result', result: 'done' }))).toEqual({
+			kind: 'boundary',
+		})
+	})
+
+	it('marks a tagged user envelope as the turn boundary but not a tool_result', () => {
+		expect(
+			scanTurnLine(JSON.stringify({ type: 'user', maskin_message_id: 42, message: {} })),
+		).toEqual({ kind: 'boundary' })
+		expect(
+			scanTurnLine(
+				JSON.stringify({
+					type: 'user',
+					message: { role: 'user', content: [{ type: 'tool_result', content: 'ok' }] },
+				}),
+			),
+		).toEqual({ kind: 'other' })
+	})
+
+	it('returns other for malformed or non-JSON lines', () => {
+		expect(scanTurnLine('not json')).toEqual({ kind: 'other' })
+		expect(scanTurnLine('{oops')).toEqual({ kind: 'other' })
+		expect(scanTurnLine('')).toEqual({ kind: 'other' })
 	})
 })

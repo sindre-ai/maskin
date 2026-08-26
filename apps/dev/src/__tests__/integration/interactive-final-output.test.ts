@@ -26,6 +26,32 @@ function resultLine(overrides: Record<string, unknown> = {}) {
 	})
 }
 
+/** One streamed `assistant` line carrying a single text block. */
+function assistantLine(text: string, overrides: Record<string, unknown> = {}) {
+	return JSON.stringify({
+		type: 'assistant',
+		message: { id: 'gen-1', role: 'assistant', content: [{ type: 'text', text }] },
+		...overrides,
+	})
+}
+
+/** An `assistant` line whose only block is thinking — the trailing block that blanks `result`. */
+function thinkingLine(thinking: string) {
+	return JSON.stringify({
+		type: 'assistant',
+		message: { id: 'gen-1', role: 'assistant', content: [{ type: 'thinking', thinking }] },
+	})
+}
+
+/** The user-turn envelope SessionManager.writeInput persists — the turn boundary. */
+function userTurnLine(messageId: number) {
+	return JSON.stringify({
+		type: 'user',
+		message: { role: 'user', content: 'hello' },
+		maskin_message_id: messageId,
+	})
+}
+
 describe('Interactive turn finalizer', () => {
 	let workspaceId: string
 	let agentId: string
@@ -164,6 +190,107 @@ describe('Interactive turn finalizer', () => {
 
 		await feed(session.id, `${resultLine({ result: '' })}\n`)
 		await feed(session.id, `${resultLine({ result: '   ', duration_ms: 9 })}\n`)
+
+		expect(await messagesFor(conversationId)).toHaveLength(0)
+	})
+
+	it('recovers the reply from the turn when the result envelope is blank', async () => {
+		// The live failure (session 9b050dec, 2026-08-25): the agent wrote its
+		// reply, then emitted a trailing `thinking` block, and the CLI closed the
+		// turn with `result: ' '`. The reply was dropped and the human saw
+		// silence until the session timed out two hours later.
+		const session = await seedSession()
+		if (!session) throw new Error('no session')
+
+		await feed(
+			session.id,
+			`${userTurnLine(1)}
+`,
+		)
+		await feed(
+			session.id,
+			`${assistantLine('Let me check the integrations')}
+`,
+		)
+		await feed(
+			session.id,
+			`${assistantLine("Tell me your office city and I'll build it.")}
+`,
+		)
+		await feed(
+			session.id,
+			`${thinkingLine('The tool result looks odd. I should end my turn.')}
+`,
+		)
+		await feed(
+			session.id,
+			`${resultLine({ result: ' ' })}
+`,
+		)
+
+		const rows = await messagesFor(conversationId)
+		expect(rows).toHaveLength(1)
+		expect(rows[0]?.content).toBe("Tell me your office city and I'll build it.")
+		expect(
+			(rows[0]?.metadata as { final_output?: { recovered?: boolean } })?.final_output?.recovered,
+		).toBe(true)
+	})
+
+	it('does not reach into the previous turn when a turn is genuinely silent', async () => {
+		const session = await seedSession()
+		if (!session) throw new Error('no session')
+
+		await feed(
+			session.id,
+			`${userTurnLine(1)}
+`,
+		)
+		await feed(
+			session.id,
+			`${assistantLine('First turn reply.')}
+`,
+		)
+		await feed(
+			session.id,
+			`${resultLine({ result: 'First turn reply.' })}
+`,
+		)
+		// Second turn: the agent replied via the MCP tool and closed silently.
+		await feed(
+			session.id,
+			`${userTurnLine(2)}
+`,
+		)
+		await feed(
+			session.id,
+			`${resultLine({ result: '', duration_ms: 7 })}
+`,
+		)
+
+		const rows = await messagesFor(conversationId)
+		expect(rows).toHaveLength(1)
+		expect(rows[0]?.content).toBe('First turn reply.')
+	})
+
+	it('does not recover a sub-agent result as the reply', async () => {
+		const session = await seedSession()
+		if (!session) throw new Error('no session')
+
+		await feed(
+			session.id,
+			`${userTurnLine(1)}
+`,
+		)
+		await feed(
+			session.id,
+			`${assistantLine('internal sub-agent finding', { parent_tool_use_id: 'call_parent' })}
+`,
+		)
+		await feed(
+			session.id,
+			`${resultLine({ result: '' })}
+`,
+		)
 
 		expect(await messagesFor(conversationId)).toHaveLength(0)
 	})

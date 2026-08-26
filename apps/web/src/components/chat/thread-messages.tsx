@@ -42,6 +42,14 @@ export function ThreadMessages({ workspaceId, conversationId, className }: Threa
 		messages,
 	)
 
+	// Which agent questions already have a human answer, so an answered set of
+	// options collapses instead of inviting a second, contradictory pick.
+	const answeredQuestionIds = new Set(
+		messages
+			.map((m) => m.metadata?.question_answer?.question_message_id)
+			.filter((id): id is number => typeof id === 'number'),
+	)
+
 	const scrollerRef = useRef<HTMLDivElement | null>(null)
 	const bottomAnchorRef = useRef<HTMLDivElement | null>(null)
 	const lastMessageCountRef = useRef(0)
@@ -181,6 +189,7 @@ export function ThreadMessages({ workspaceId, conversationId, className }: Threa
 							<MessageBubble
 								workspaceId={workspaceId}
 								message={message}
+								questionAnswered={answeredQuestionIds.has(message.id)}
 								// Keyed by index as well as session: one session can put two
 								// turns under the same message (a result segment plus the
 								// live turn that follows it), so `sessionId` alone is not

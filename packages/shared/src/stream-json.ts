@@ -87,3 +87,71 @@ export function parseResultLine(line: string): StreamJsonResult | null {
 		},
 	}
 }
+
+/**
+ * What a scan backwards through a turn's stdout finds on one line.
+ *
+ * `boundary` marks where the current turn began, so a caller walking backwards
+ * knows to stop rather than reaching into the previous turn's output:
+ *  - a `result` envelope is the previous turn's close;
+ *  - a `user` envelope carrying `maskin_message_id` is this turn's opening
+ *    message, persisted by SessionManager.writeInput.
+ * A `user` envelope WITHOUT that tag is a tool_result being fed back mid-turn,
+ * which is not a boundary.
+ */
+export type StreamJsonScanLine =
+	| { kind: 'boundary' }
+	| { kind: 'assistant_text'; text: string }
+	| { kind: 'other' }
+
+/**
+ * Classify ONE already-complete line for a backwards turn scan.
+ *
+ * Exists for the interactive turn finalizer's recovery path: when the `result`
+ * envelope carries no text, the agent's actual reply is still sitting in an
+ * earlier `assistant` line of the same turn. Assistant messages carrying
+ * `parent_tool_use_id` are sub-agent (Task tool) output and are reported as
+ * 'other' — surfacing one would leak a sub-agent's internal answer into the
+ * chat, the same reason parseResultLine rejects them.
+ */
+export function scanTurnLine(line: string): StreamJsonScanLine {
+	const trimmed = line.trim()
+	if (!trimmed || trimmed[0] !== '{') return { kind: 'other' }
+
+	let parsed: unknown
+	try {
+		parsed = JSON.parse(trimmed)
+	} catch {
+		return { kind: 'other' }
+	}
+	if (!parsed || typeof parsed !== 'object') return { kind: 'other' }
+
+	const obj = parsed as Record<string, unknown>
+
+	if (obj.type === 'result') return { kind: 'boundary' }
+	if (obj.type === 'user') {
+		return obj.maskin_message_id !== undefined ? { kind: 'boundary' } : { kind: 'other' }
+	}
+	if (obj.type !== 'assistant') return { kind: 'other' }
+	if (obj.parent_tool_use_id != null) return { kind: 'other' }
+
+	const message = obj.message
+	if (!message || typeof message !== 'object') return { kind: 'other' }
+	const content = (message as Record<string, unknown>).content
+	if (!Array.isArray(content)) return { kind: 'other' }
+
+	// One streamed `assistant` line can carry several blocks; join the text ones
+	// in order and let the caller decide whether the result is worth posting.
+	const text = content
+		.filter(
+			(block): block is { type: 'text'; text: string } =>
+				!!block &&
+				typeof block === 'object' &&
+				(block as { type?: unknown }).type === 'text' &&
+				typeof (block as { text?: unknown }).text === 'string',
+		)
+		.map((block) => block.text)
+		.join('')
+
+	return text.trim() ? { kind: 'assistant_text', text } : { kind: 'other' }
+}
