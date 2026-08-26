@@ -902,13 +902,36 @@ function ColumnLoadMore({
 }) {
 	const sentinelRef = useRef<HTMLDivElement>(null)
 	const [isFetching, setIsFetching] = useState(false)
-	const hasMore = loadedCount < total
+	// Latches that stop the observer re-arming forever. `stopped` is set when a
+	// request fails or when a page makes no forward progress (an empty page, or
+	// only rows `appendColumnObjects` already deduped away — which leaves
+	// `loadedCount` unchanged and the sentinel still intersecting). Without it
+	// the effect re-runs the moment `isFetching` flips back to false and fires
+	// the same request again, unbounded. Reset whenever the query identity
+	// changes, so a filter change gets a fresh attempt.
+	const [stopped, setStopped] = useState(false)
+	// Offsets already requested for this query. A page can come back non-empty
+	// yet still move nothing, when every row in it was deduped away by
+	// `appendColumnObjects` — `loadedCount` stays put and we would re-request
+	// the identical offset. Seeing the same offset twice means no progress.
+	const attemptedOffsetsRef = useRef<Set<number>>(new Set())
+	// biome-ignore lint/correctness/useExhaustiveDependencies: re-arm only on query identity change
+	useEffect(() => {
+		attemptedOffsetsRef.current = new Set()
+		setStopped(false)
+	}, [boardParams, columnValue])
+	const hasMore = loadedCount < total && !stopped
 
 	useEffect(() => {
 		if (!hasMore || isFetching || !sentinelRef.current) return
 		const observer = new IntersectionObserver(
 			(entries) => {
 				if (!entries[0]?.isIntersecting) return
+				if (attemptedOffsetsRef.current.has(loadedCount)) {
+					setStopped(true)
+					return
+				}
+				attemptedOffsetsRef.current.add(loadedCount)
 				setIsFetching(true)
 				api.objects
 					.board(workspaceId, {
@@ -918,9 +941,14 @@ function ColumnLoadMore({
 						offset: String(loadedCount),
 					})
 					.then((response) => {
-						onLoaded(columnValue, response.columns[0]?.objects ?? [])
+						const next = response.columns[0]?.objects ?? []
+						// An empty page means the server has nothing further for this
+						// column (or omitted it entirely) — stop rather than re-asking.
+						if (next.length === 0) setStopped(true)
+						onLoaded(columnValue, next)
 					})
 					.catch((err) => {
+						setStopped(true)
 						toast.error(err instanceof Error ? err.message : 'Could not load more cards')
 					})
 					.finally(() => setIsFetching(false))

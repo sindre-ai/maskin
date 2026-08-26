@@ -12,7 +12,14 @@ import { ObjectEvidenceBlock } from './object-evidence-block'
 export function ObjectDetailBody({
 	object,
 	workspaceId,
-}: { object: ObjectResponse; workspaceId: string }) {
+	onContentChange,
+}: {
+	object: ObjectResponse
+	workspaceId: string
+	/** Commits an edited body. Omitted by read-only hosts (the MCP-app embed),
+	 *  which keeps the rendered markdown non-editable. */
+	onContentChange?: (content: string) => void
+}) {
 	const fold = getDocumentFold(object)
 	const evidence = getEvidence(object)
 	const kvRows = kvEntries(object)
@@ -24,7 +31,17 @@ export function ObjectDetailBody({
 			    link or the status chip. Carried over from the retired document. */}
 			{object.type === 'commitment' && <CommitmentCard object={object} workspaceId={workspaceId} />}
 
-			{object.content ? (
+			{/* Editable when the host wires a commit handler — an empty body still
+			    renders the editor so a new object can be written into, which a
+			    truthy-content guard alone would make impossible. */}
+			{onContentChange ? (
+				<MarkdownContent
+					content={object.content ?? ''}
+					className="max-w-[75ch]"
+					onChange={onContentChange}
+					editable
+				/>
+			) : object.content ? (
 				<MarkdownContent content={object.content} className="max-w-[75ch]" />
 			) : null}
 

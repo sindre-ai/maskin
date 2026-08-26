@@ -1136,11 +1136,25 @@ function ObjectsPageV2() {
 	const queryClient = useQueryClient()
 
 	// Single-object status advance from the board card's `→` affordance.
+	// The bulk endpoint reports per-row failures as HTTP 200 with
+	// `results:[{ok:false,error}]`, so `onError` alone never fires for them and
+	// the optimistic patch would sit there until `onSettled` refetched and
+	// snapped the card back with nothing said. Mirrors the drag path's check in
+	// `board-view.tsx` — a missing entry counts as a failure, since the server
+	// never confirmed this id.
 	const handleAdvanceStatus = useCallback(
 		(objectId: string, status: string) => {
 			bulkUpdate.mutate(
 				{ ids: [objectId], patch: { status } },
-				{ onError: () => toast.error('Failed to move object') },
+				{
+					onSuccess: (data) => {
+						const result = Array.isArray(data?.results)
+							? data.results.find((item) => item.id === objectId)
+							: undefined
+						if (!result?.ok) toast.error(result?.error ?? 'Failed to move object')
+					},
+					onError: () => toast.error('Failed to move object'),
+				},
 			)
 		},
 		[bulkUpdate],

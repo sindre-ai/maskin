@@ -235,6 +235,30 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 		)
 	}, [object.id, object.status, object.type, updateObject])
 
+	// Rename / body edits. Both commit through the same `updateObject` mutation
+	// as status and owner, and toast on failure for the same reason —
+	// `useUpdateObject` rolls its optimistic patch back silently, so without a
+	// toast a failed save reads as the text reverting on its own.
+	const handleUpdateTitle = useCallback(
+		(title: string) => {
+			updateObject.mutate(
+				{ id: object.id, data: { title } },
+				{ onError: () => toast.error('Could not rename this object') },
+			)
+		},
+		[object.id, updateObject],
+	)
+
+	const handleUpdateContent = useCallback(
+		(content: string) => {
+			updateObject.mutate(
+				{ id: object.id, data: { content } },
+				{ onError: () => toast.error('Could not save your changes') },
+			)
+		},
+		[object.id, updateObject],
+	)
+
 	const handleUpdateDriver = useCallback(
 		(driver: string | null) => {
 			updateObject.mutate(
@@ -309,6 +333,7 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 								members={members ?? []}
 								onStatusChange={handleUpdateStatus}
 								onDriverChange={handleUpdateDriver}
+								onTitleChange={handleUpdateTitle}
 							/>
 						</div>
 
@@ -322,7 +347,11 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 							/>
 						)}
 
-						<ObjectDetailBody object={object} workspaceId={workspaceId} />
+						<ObjectDetailBody
+							object={object}
+							workspaceId={workspaceId}
+							onContentChange={handleUpdateContent}
+						/>
 
 						{/* One Activity heading + rule + a 2-way segmented control
 						    (mockup 1138–1143). TabsList/TabsTrigger stay at their

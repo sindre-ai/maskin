@@ -97,11 +97,64 @@ describe('ObjectDetailIdentity', () => {
 		expect(screen.getByText('Driver: Unassigned')).toBeInTheDocument()
 	})
 
-	it('renders the h1 title as static text (not an editable textarea)', () => {
+	it('renders a static h1 for read-only hosts that pass no onTitleChange', () => {
 		const object = buildObjectResponse({ title: 'Static Title' })
 		render(<ObjectDetailIdentity {...identityProps} object={object} />, { wrapper: makeWrapper() })
 		expect(screen.getByRole('heading', { level: 1, name: 'Static Title' })).toBeInTheDocument()
 		expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+	})
+
+	it('renders an editable title and commits a rename on blur', async () => {
+		const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never })
+		const onTitleChange = vi.fn()
+		const object = buildObjectResponse({ title: 'Old Title' })
+		render(
+			<ObjectDetailIdentity {...identityProps} object={object} onTitleChange={onTitleChange} />,
+			{ wrapper: makeWrapper() },
+		)
+
+		const input = screen.getByRole('textbox', { name: 'Object title' })
+		await user.clear(input)
+		await user.type(input, 'New Title')
+		await user.tab()
+
+		expect(onTitleChange).toHaveBeenCalledWith('New Title')
+	})
+
+	it('does not commit when the title is blurred unchanged', async () => {
+		const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never })
+		const onTitleChange = vi.fn()
+		const object = buildObjectResponse({ title: 'Unchanged' })
+		render(
+			<ObjectDetailIdentity {...identityProps} object={object} onTitleChange={onTitleChange} />,
+			{ wrapper: makeWrapper() },
+		)
+
+		await user.click(screen.getByRole('textbox', { name: 'Object title' }))
+		await user.tab()
+
+		expect(onTitleChange).not.toHaveBeenCalled()
+	})
+
+	it('resets the title draft when the route swaps to a different object', async () => {
+		const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never })
+		const onTitleChange = vi.fn()
+		const first = buildObjectResponse({ id: 'obj-a', title: 'First' })
+		const second = buildObjectResponse({ id: 'obj-b', title: 'Second' })
+		const { rerender } = render(
+			<ObjectDetailIdentity {...identityProps} object={first} onTitleChange={onTitleChange} />,
+			{ wrapper: makeWrapper() },
+		)
+
+		const input = screen.getByRole('textbox', { name: 'Object title' })
+		await user.clear(input)
+		await user.type(input, 'Edited but never blurred')
+
+		rerender(
+			<ObjectDetailIdentity {...identityProps} object={second} onTitleChange={onTitleChange} />,
+		)
+
+		expect(screen.getByRole('textbox', { name: 'Object title' })).toHaveValue('Second')
 	})
 
 	it('status dropdown offers the workspace statuses as checked options', async () => {
