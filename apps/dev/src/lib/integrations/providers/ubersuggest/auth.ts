@@ -1,7 +1,8 @@
-import { decrypt, encrypt } from '../../../crypto'
+import { createHmac } from 'node:crypto'
 import { logger } from '../../../logger'
 import { IntegrationAuthRevokedError } from '../../errors'
-import { createS256CodeChallenge, generateCodeVerifier } from '../../oauth/pkce'
+import { createS256CodeChallenge } from '../../oauth/pkce'
+import { decodeState } from '../../oauth/state'
 import type { CustomAuthContext, CustomAuthHandler, StoredCredentials } from '../../types'
 
 const BASE_URL = 'https://ubersuggest-mcp.neilpatelapi.com'
@@ -9,45 +10,78 @@ const SCOPES = 'profile domain keywords serp backlinks site_audit content projec
 const REFRESH_BUFFER_MS = 5 * 60 * 1000
 
 /**
- * Per-flow material this handler must carry from `getInstallUrl` to
- * `handleCallback`: the dynamically-registered `client_id` (RFC 7591) and the
- * PKCE verifier.
+ * Ubersuggest's authorize endpoint hands the user off to `app.neilpatel.com`,
+ * which parks our `state` in a cookie while it bounces through Google and then
+ * validates it on the way back. Our state is embedded in that cookie three
+ * times over (once in `next`, twice more inside a base64'd `xUbsData` blob), so
+ * every character we add costs roughly four in the cookie. Past ~4KB the
+ * browser drops the cookie and the provider answers
+ * `{"error":"BAD_REQUEST","description":"`state` is missing or invalid"}` —
+ * before the user ever reaches the consent screen.
  *
- * These ride inside the encrypted `state` param rather than a process-local
- * map. The callback can be served by a different process than the one that
- * built the authorize URL — a deploy, a crash, or a second replica between the
- * user clicking Connect and approving consent — and a map would strand the
- * flow with an unrecoverable "unknown state" error. It would also grow without
- * bound, since abandoned flows never reach the callback that deletes them.
+ * So this handler carries *nothing* extra in the state envelope. The two pieces
+ * of per-flow material it needs at callback time are recovered instead:
  *
- * This mirrors how the generic OAuth2 path stores its `codeVerifier` (see
- * `statePayload.codeVerifier` in routes/integrations.ts). Re-encrypting is
- * safe: the callback route decrypts the same envelope, and every field it
- * validates (`nonce`, `workspaceId`, `actorId`, `ts`) is preserved verbatim.
+ * - `codeVerifier` is derived deterministically from the flow's one-time
+ *   `nonce` (already in the envelope, already replay-checked against the
+ *   pending integration row) keyed by `INTEGRATION_ENCRYPTION_KEY`. It is
+ *   unique per flow, never transmitted, and needs no server-side storage — so
+ *   the callback can be served by a different replica than the one that built
+ *   the authorize URL.
+ * - `redirectUri` is supplied by the route on both legs, so it is byte-identical
+ *   at registration and at token exchange without a round trip.
+ * - `clientId` comes from re-running registration at callback time. Ubersuggest
+ *   implements RFC 7591 but returns the same fixed `ubersuggest-mcp` client for
+ *   a given redirect URI, so this is stable rather than a fresh client per call.
  */
-interface UbersuggestFlowState {
-	ubersuggest: { clientId: string; codeVerifier: string; redirectUri: string }
+function deriveCodeVerifier(nonce: string): string {
+	const key = process.env.INTEGRATION_ENCRYPTION_KEY
+	if (!key) {
+		throw new Error('INTEGRATION_ENCRYPTION_KEY environment variable is required')
+	}
+	return createHmac('sha256', Buffer.from(key, 'hex'))
+		.update(`ubersuggest-pkce:${nonce}`)
+		.digest('base64url')
 }
 
-/** Re-encrypt the framework's state envelope with this flow's PKCE material added. */
-function embedFlowState(state: string, flow: UbersuggestFlowState['ubersuggest']): string {
-	const payload = JSON.parse(decrypt(state)) as Record<string, unknown>
-	return encrypt(JSON.stringify({ ...payload, ubersuggest: flow }))
-}
-
-/** Recover the material `getInstallUrl` embedded, or explain what to do instead. */
-function readFlowState(state: string): UbersuggestFlowState['ubersuggest'] {
-	let payload: Partial<UbersuggestFlowState>
+/** Recover the one-time nonce the connect route minted for this flow. */
+function readNonce(state: string): string {
+	let payload: { nonce?: string }
 	try {
-		payload = JSON.parse(decrypt(state)) as Partial<UbersuggestFlowState>
+		payload = decodeState<{ nonce?: string }>(state)
 	} catch {
 		throw new Error('Invalid Ubersuggest OAuth state — please reconnect the integration')
 	}
-	const flow = payload.ubersuggest
-	if (!flow?.clientId || !flow.codeVerifier || !flow.redirectUri) {
-		throw new Error('Ubersuggest OAuth state is missing PKCE material — please reconnect')
+	if (!payload.nonce) {
+		throw new Error('Ubersuggest OAuth state is missing its nonce — please reconnect')
 	}
-	return flow
+	return payload.nonce
+}
+
+/**
+ * Register (or re-resolve) the OAuth client for this redirect URI.
+ * RFC 7591 dynamic registration; no pre-configured credentials needed.
+ */
+async function registerClient(redirectUri: string): Promise<string> {
+	const res = await fetch(`${BASE_URL}/register`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({
+			redirect_uris: [redirectUri],
+			grant_types: ['authorization_code', 'refresh_token'],
+			response_types: ['code'],
+			token_endpoint_auth_method: 'none',
+		}),
+	})
+	if (!res.ok) {
+		const text = await res.text()
+		throw new Error(`Ubersuggest client registration failed: ${res.status} ${text}`)
+	}
+	const reg = (await res.json()) as { client_id?: string }
+	if (!reg.client_id) {
+		throw new Error('Ubersuggest client registration returned no client_id')
+	}
+	return reg.client_id
 }
 
 export const ubersuggestAuth: CustomAuthHandler = {
@@ -56,51 +90,34 @@ export const ubersuggestAuth: CustomAuthHandler = {
 	 * re-derived here: it has to be byte-identical to what the callback side of
 	 * the flow presents, and it is the only place that knows the forwarded host
 	 * when `CORS_ORIGIN` is unset. It is registered with the client below *and*
-	 * echoed back at token exchange, so it also rides in the flow state.
+	 * echoed back at token exchange.
 	 */
 	async getInstallUrl(state: string, redirectUri: string): Promise<string> {
-		// Dynamic client registration (RFC 7591) — no pre-configured credentials needed
-		const regRes = await fetch(`${BASE_URL}/register`, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				redirect_uris: [redirectUri],
-				grant_types: ['authorization_code', 'refresh_token'],
-				response_types: ['code'],
-				token_endpoint_auth_method: 'none',
-			}),
-		})
-		if (!regRes.ok) {
-			const text = await regRes.text()
-			throw new Error(`Ubersuggest client registration failed: ${regRes.status} ${text}`)
-		}
-		const reg = (await regRes.json()) as { client_id: string }
-
-		const codeVerifier = generateCodeVerifier()
-		const flowState = embedFlowState(state, {
-			clientId: reg.client_id,
-			codeVerifier,
-			redirectUri,
-		})
+		const clientId = await registerClient(redirectUri)
+		const codeVerifier = deriveCodeVerifier(readNonce(state))
 
 		const url = new URL(`${BASE_URL}/authorize`)
 		url.searchParams.set('response_type', 'code')
-		url.searchParams.set('client_id', reg.client_id)
+		url.searchParams.set('client_id', clientId)
 		url.searchParams.set('redirect_uri', redirectUri)
 		url.searchParams.set('scope', SCOPES)
-		url.searchParams.set('state', flowState)
+		url.searchParams.set('state', state)
 		url.searchParams.set('code_challenge', createS256CodeChallenge(codeVerifier))
 		url.searchParams.set('code_challenge_method', 'S256')
 
 		return url.toString()
 	},
 
-	async handleCallback(params: Record<string, string>): Promise<StoredCredentials> {
+	async handleCallback(
+		params: Record<string, string>,
+		redirectUri: string,
+	): Promise<StoredCredentials> {
 		const { code, state } = params
 		if (!code) throw new Error('Missing code parameter in Ubersuggest callback')
 		if (!state) throw new Error('Missing state parameter in Ubersuggest callback')
 
-		const { clientId, codeVerifier, redirectUri } = readFlowState(state)
+		const codeVerifier = deriveCodeVerifier(readNonce(state))
+		const clientId = await registerClient(redirectUri)
 
 		const tokenRes = await fetch(`${BASE_URL}/token`, {
 			method: 'POST',

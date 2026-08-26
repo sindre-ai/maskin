@@ -182,7 +182,15 @@ export interface CustomAuthHandler {
 	 * has the redirect URI pre-registered (GitHub App) can ignore it.
 	 */
 	getInstallUrl(state: string, redirectUri: string): string | Promise<string>
-	handleCallback(params: Record<string, string>): Promise<StoredCredentials>
+	/**
+	 * Exchange the provider's callback for credentials.
+	 *
+	 * `redirectUri` is the same value the route passed to `getInstallUrl`, handed
+	 * back so a handler can echo it at token exchange (OAuth2 requires it to
+	 * match byte-for-byte) without stashing it in the `state` envelope. Handlers
+	 * that do not need it can ignore it.
+	 */
+	handleCallback(params: Record<string, string>, redirectUri: string): Promise<StoredCredentials>
 	getAccessToken(credentials: StoredCredentials, ctx?: CustomAuthContext): Promise<string>
 }
 

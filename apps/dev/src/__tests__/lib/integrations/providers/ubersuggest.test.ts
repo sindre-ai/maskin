@@ -1,11 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-// Identity crypto — the state envelope stays readable JSON so these tests can
-// assert on what actually crosses the wire.
-vi.mock('../../../../lib/crypto', () => ({
-	decrypt: vi.fn((input: string) => input),
-	encrypt: vi.fn((input: string) => input),
+// Identity state codec — the envelope stays readable JSON so these tests can
+// assert on exactly what crosses the wire.
+vi.mock('../../../../lib/integrations/oauth/state', () => ({
+	decodeState: vi.fn((input: string) => JSON.parse(input)),
+	encodeState: vi.fn((payload: unknown) => JSON.stringify(payload)),
 }))
+
+// deriveCodeVerifier is keyed by this; without it the handler refuses to run.
+process.env.INTEGRATION_ENCRYPTION_KEY = 'ab'.repeat(32)
 
 import { isAuthRevokedError } from '../../../../lib/integrations/errors'
 import { ubersuggestAuth } from '../../../../lib/integrations/providers/ubersuggest/auth'
@@ -167,14 +170,20 @@ describe('ubersuggestAuth install/callback flow state', () => {
 		vi.restoreAllMocks()
 	})
 
-	it('carries the PKCE material in the state param, not in process memory', async () => {
+	it('forwards the state envelope unchanged — nothing extra rides to the provider', async () => {
 		globalThis.fetch = vi.fn(async () =>
 			jsonResponse({ client_id: 'dyn-client-id' }),
 		) as unknown as typeof fetch
 
 		const register = globalThis.fetch as unknown as ReturnType<typeof vi.fn>
-		const url = new URL(await ubersuggestAuth.getInstallUrl(baseState(), REDIRECT_URI))
-		const returnedState = url.searchParams.get('state')
+		const state = baseState()
+		const url = new URL(await ubersuggestAuth.getInstallUrl(state, REDIRECT_URI))
+
+		// Ubersuggest's login parks this state in a cookie and embeds it three
+		// times over; anything this handler adds is amplified ~4x and tips the
+		// cookie past 4KB, at which point the provider answers
+		// "`state` is missing or invalid". So it must go out byte-identical.
+		expect(url.searchParams.get('state')).toBe(state)
 
 		// The route-supplied redirect URI is what gets registered and what the
 		// authorize step sends — the handler must not derive one of its own.
@@ -182,27 +191,18 @@ describe('ubersuggestAuth install/callback flow state', () => {
 			REDIRECT_URI,
 		])
 		expect(url.searchParams.get('redirect_uri')).toBe(REDIRECT_URI)
-
 		expect(url.searchParams.get('code_challenge_method')).toBe('S256')
 		expect(url.searchParams.get('client_id')).toBe('dyn-client-id')
-
-		const payload = JSON.parse(returnedState as string)
-		// The framework's own fields must survive untouched — the callback route
-		// validates nonce/workspaceId/actorId/ts off this same envelope.
-		expect(payload.nonce).toBe('nonce-1')
-		expect(payload.workspaceId).toBe('ws-1')
-		expect(payload.actorId).toBe('actor-1')
-		expect(payload.ubersuggest.clientId).toBe('dyn-client-id')
-		expect(payload.ubersuggest.codeVerifier).toEqual(expect.any(String))
-		expect(payload.ubersuggest.redirectUri).toBe(REDIRECT_URI)
+		expect(url.searchParams.get('code_challenge')).toEqual(expect.any(String))
 	})
 
 	it('completes the callback on a fresh module instance — no shared in-memory flow state', async () => {
 		globalThis.fetch = vi.fn(async () =>
 			jsonResponse({ client_id: 'dyn-client-id' }),
 		) as unknown as typeof fetch
-		const url = new URL(await ubersuggestAuth.getInstallUrl(baseState(), REDIRECT_URI))
-		const state = url.searchParams.get('state') as string
+		const state = baseState()
+		const url = new URL(await ubersuggestAuth.getInstallUrl(state, REDIRECT_URI))
+		const challenge = url.searchParams.get('code_challenge')
 
 		// Re-import to simulate the callback being served by a different process
 		// than the one that built the authorize URL (deploy, crash, second replica).
@@ -210,26 +210,49 @@ describe('ubersuggestAuth install/callback flow state', () => {
 		const { ubersuggestAuth: freshAuth } = await import(
 			'../../../../lib/integrations/providers/ubersuggest/auth'
 		)
+		const { createS256CodeChallenge } = await import('../../../../lib/integrations/oauth/pkce')
 
-		const exchange = vi.fn(async () =>
-			jsonResponse({ access_token: 'access-1', refresh_token: 'refresh-1', expires_in: 3600 }),
-		)
-		globalThis.fetch = exchange as unknown as typeof fetch
+		const calls = vi
+			.fn()
+			.mockResolvedValueOnce(jsonResponse({ client_id: 'dyn-client-id' }))
+			.mockResolvedValueOnce(
+				jsonResponse({ access_token: 'access-1', refresh_token: 'refresh-1', expires_in: 3600 }),
+			)
+		globalThis.fetch = calls as unknown as typeof fetch
 
-		const creds = await freshAuth.handleCallback({ code: 'auth-code', state })
+		const creds = await freshAuth.handleCallback({ code: 'auth-code', state }, REDIRECT_URI)
 
 		expect(creds.accessToken).toBe('access-1')
 		expect(creds.clientId).toBe('dyn-client-id')
-		const body = new URLSearchParams(exchange.mock.calls[0]?.[1]?.body as string)
-		expect(body.get('code_verifier')).toBe(JSON.parse(state).ubersuggest.codeVerifier)
+		const body = new URLSearchParams(calls.mock.calls[1]?.[1]?.body as string)
+		// The verifier is re-derived from the nonce in the state, never transmitted.
+		expect(createS256CodeChallenge(body.get('code_verifier') as string)).toBe(challenge)
 		expect(body.get('client_id')).toBe('dyn-client-id')
-		// Echoed back at token exchange from the state, not re-derived.
+		// The route hands the same redirect URI to both legs of the flow.
 		expect(body.get('redirect_uri')).toBe(REDIRECT_URI)
 	})
 
-	it('rejects a state param with no embedded PKCE material', async () => {
+	it('derives a distinct code verifier per flow nonce', async () => {
+		globalThis.fetch = vi.fn(async () =>
+			jsonResponse({ client_id: 'dyn-client-id' }),
+		) as unknown as typeof fetch
+
+		const challengeFor = async (nonce: string) => {
+			const state = JSON.stringify({ workspaceId: 'ws-1', actorId: 'a-1', ts: 1, nonce })
+			const url = new URL(await ubersuggestAuth.getInstallUrl(state, REDIRECT_URI))
+			return url.searchParams.get('code_challenge')
+		}
+
+		expect(await challengeFor('nonce-1')).not.toBe(await challengeFor('nonce-2'))
+		// ...and is stable for the same nonce, which is what lets the callback
+		// recover it without any stored per-flow state.
+		expect(await challengeFor('nonce-1')).toBe(await challengeFor('nonce-1'))
+	})
+
+	it('rejects a state param with no nonce to derive from', async () => {
+		const stateWithoutNonce = JSON.stringify({ workspaceId: 'ws-1', actorId: 'a-1', ts: 1 })
 		await expect(
-			ubersuggestAuth.handleCallback({ code: 'auth-code', state: baseState() }),
-		).rejects.toThrow(/missing PKCE material/)
+			ubersuggestAuth.handleCallback({ code: 'auth-code', state: stateWithoutNonce }, REDIRECT_URI),
+		).rejects.toThrow(/missing its nonce/)
 	})
 })
