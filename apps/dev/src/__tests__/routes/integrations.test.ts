@@ -1,5 +1,6 @@
 import { generateKeyPairSync, randomBytes } from 'node:crypto'
 import { afterAll, beforeAll, vi } from 'vitest'
+import { ProviderUnreachableError } from '../../lib/integrations/errors'
 import type { ResolvedProvider } from '../../lib/integrations/types'
 import { buildIntegration, buildWorkspaceMember } from '../factories'
 import { jsonDelete, jsonGet, jsonRequest } from '../helpers'
@@ -149,7 +150,7 @@ describe('Integrations Routes', () => {
 				config: { name: 'custom-provider', displayName: 'Custom', auth: { type: 'oauth2_custom' } },
 				customAuth: {
 					getInstallUrl: async () => {
-						throw new Error('client registration failed: 503')
+						throw new ProviderUnreachableError('client registration failed: 503')
 					},
 					handleCallback: async () => ({ accessToken: 'token' }),
 					getAccessToken: async () => 'token',
@@ -166,6 +167,37 @@ describe('Integrations Routes', () => {
 			expect(res.status).toBe(502)
 			const body = await res.json()
 			expect(body.error.message).toContain('Custom')
+			expect(body.error.message).toContain('try again')
+		})
+
+		it('returns 500, not 502, when the handler fails for a local reason', async () => {
+			// A missing INTEGRATION_ENCRYPTION_KEY or a malformed state envelope is a
+			// server misconfiguration. Reporting it as "provider unreachable, please
+			// try again" sends the user into a retry loop that can never succeed and
+			// hides the real fault from whoever has to fix it.
+			vi.mocked(getProvider).mockReturnValueOnce({
+				config: { name: 'custom-provider', displayName: 'Custom', auth: { type: 'oauth2_custom' } },
+				customAuth: {
+					getInstallUrl: async () => {
+						throw new Error('INTEGRATION_ENCRYPTION_KEY environment variable is required')
+					},
+					handleCallback: async () => ({ accessToken: 'token' }),
+					getAccessToken: async () => 'token',
+				},
+			} as unknown as ResolvedProvider)
+			const { app } = createTestApp(integrationsRoutes, '/api/integrations')
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/integrations/custom-provider/connect', undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(500)
+			const body = await res.json()
+			expect(body.error.message).toContain('misconfiguration')
+			// The operator-facing detail must not leak to the caller.
+			expect(body.error.message).not.toContain('INTEGRATION_ENCRYPTION_KEY')
 		})
 
 		it('activates an api_key provider (posthog) immediately and stores the request key in credentials', async () => {

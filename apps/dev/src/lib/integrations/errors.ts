@@ -23,3 +23,20 @@ export class IntegrationAuthRevokedError extends Error {
 export function isAuthRevokedError(err: unknown): err is IntegrationAuthRevokedError {
 	return err instanceof IntegrationAuthRevokedError
 }
+
+/**
+ * Thrown when an outbound call to a provider fails while building an install
+ * URL — the provider is down, unreachable, or answered non-2xx.
+ *
+ * Distinct from a local failure (missing `INTEGRATION_ENCRYPTION_KEY`, a
+ * malformed state envelope) so the connect route can answer 502 "upstream is
+ * down, retry" for this and 500 "server misconfiguration, retrying won't help"
+ * for everything else. Collapsing the two tells an operator with a missing key
+ * to keep clicking Connect forever.
+ */
+export class ProviderUnreachableError extends Error {
+	constructor(message: string, options?: { cause?: unknown }) {
+		super(message, options)
+		this.name = 'ProviderUnreachableError'
+	}
+}

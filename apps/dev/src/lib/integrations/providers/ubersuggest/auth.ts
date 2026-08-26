@@ -1,6 +1,6 @@
 import { createHmac } from 'node:crypto'
 import { logger } from '../../../logger'
-import { IntegrationAuthRevokedError } from '../../errors'
+import { IntegrationAuthRevokedError, ProviderUnreachableError } from '../../errors'
 import { createS256CodeChallenge } from '../../oauth/pkce'
 import { decodeState } from '../../oauth/state'
 import type { CustomAuthContext, CustomAuthHandler, StoredCredentials } from '../../types'
@@ -63,23 +63,42 @@ function readNonce(state: string): string {
  * RFC 7591 dynamic registration; no pre-configured credentials needed.
  */
 async function registerClient(redirectUri: string): Promise<string> {
-	const res = await fetch(`${BASE_URL}/register`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			redirect_uris: [redirectUri],
-			grant_types: ['authorization_code', 'refresh_token'],
-			response_types: ['code'],
-			token_endpoint_auth_method: 'none',
-		}),
-	})
+	let res: Response
+	try {
+		res = await fetch(`${BASE_URL}/register`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				redirect_uris: [redirectUri],
+				grant_types: ['authorization_code', 'refresh_token'],
+				response_types: ['code'],
+				token_endpoint_auth_method: 'none',
+			}),
+		})
+	} catch (err) {
+		// undici reports every network fault as `TypeError: fetch failed` and puts
+		// the real diagnostic (ECONNREFUSED, ENOTFOUND, TLS) on `.cause`.
+		throw new ProviderUnreachableError(`Ubersuggest client registration failed: ${err}`, {
+			cause: err,
+		})
+	}
 	if (!res.ok) {
 		const text = await res.text()
-		throw new Error(`Ubersuggest client registration failed: ${res.status} ${text}`)
+		throw new ProviderUnreachableError(
+			`Ubersuggest client registration failed: ${res.status} ${text.slice(0, 500)}`,
+		)
 	}
-	const reg = (await res.json()) as { client_id?: string }
+	let reg: { client_id?: string }
+	try {
+		reg = (await res.json()) as { client_id?: string }
+	} catch (err) {
+		throw new ProviderUnreachableError(
+			`Ubersuggest client registration returned a non-JSON body (${res.status})`,
+			{ cause: err },
+		)
+	}
 	if (!reg.client_id) {
-		throw new Error('Ubersuggest client registration returned no client_id')
+		throw new ProviderUnreachableError('Ubersuggest client registration returned no client_id')
 	}
 	return reg.client_id
 }
@@ -93,8 +112,12 @@ export const ubersuggestAuth: CustomAuthHandler = {
 	 * echoed back at token exchange.
 	 */
 	async getInstallUrl(state: string, redirectUri: string): Promise<string> {
-		const clientId = await registerClient(redirectUri)
+		// Local derivation first: it is free and can only fail for reasons no
+		// retry fixes (missing encryption key, malformed state). Registering
+		// first would burn an outbound call per Connect click on a misconfigured
+		// deploy, and mask the real fault behind a provider error.
 		const codeVerifier = deriveCodeVerifier(readNonce(state))
+		const clientId = await registerClient(redirectUri)
 
 		const url = new URL(`${BASE_URL}/authorize`)
 		url.searchParams.set('response_type', 'code')
@@ -144,7 +167,7 @@ export const ubersuggestAuth: CustomAuthHandler = {
 
 		const creds: StoredCredentials = {
 			accessToken: raw.access_token,
-			clientId, // stored for token refresh
+			clientId,
 		}
 		if (raw.refresh_token) creds.refreshToken = raw.refresh_token
 		if (raw.expires_in) creds.expiresAt = Date.now() + raw.expires_in * 1000
@@ -153,8 +176,8 @@ export const ubersuggestAuth: CustomAuthHandler = {
 		return creds
 	},
 
-	async getAccessToken(credentials: StoredCredentials, ctx?: CustomAuthContext): Promise<string> {
-		const integrationId = ctx?.integrationId ?? 'ubersuggest'
+	async getAccessToken(credentials: StoredCredentials, ctx: CustomAuthContext): Promise<string> {
+		const { integrationId } = ctx
 
 		if (!credentials.accessToken) {
 			throw new IntegrationAuthRevokedError(
@@ -165,13 +188,12 @@ export const ubersuggestAuth: CustomAuthHandler = {
 
 		// Still valid, or non-expiring (provider omitted expires_in at install) —
 		// use as-is. Mirrors TokenManager's standard OAuth2 path.
-		const expiresAt = credentials.expiresAt as number | undefined
+		const expiresAt = credentials.expiresAt
 		if (!expiresAt || expiresAt > Date.now() + REFRESH_BUFFER_MS) {
-			return credentials.accessToken as string
+			return credentials.accessToken
 		}
 
-		const refreshToken = credentials.refreshToken as string | undefined
-		const clientId = credentials.clientId as string | undefined
+		const { refreshToken, clientId } = credentials
 		if (!refreshToken || !clientId) {
 			// Nothing left to try. Returning the expired token here would inject a
 			// dead credential into agent containers and surface as opaque 401s.
@@ -235,7 +257,7 @@ export const ubersuggestAuth: CustomAuthHandler = {
 		if (raw.refresh_token) updated.refreshToken = raw.refresh_token
 		if (raw.token_type) updated.tokenType = raw.token_type
 
-		await ctx?.persistCredentials(updated)
+		await ctx.persistCredentials(updated)
 
 		return raw.access_token
 	},

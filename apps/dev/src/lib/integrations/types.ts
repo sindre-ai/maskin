@@ -152,6 +152,8 @@ export interface ProviderConfig {
 export interface StoredCredentials {
 	accessToken?: string
 	refreshToken?: string
+	/** OAuth client id, for providers whose client is registered per-install (RFC 7591). */
+	clientId?: string
 	/** Unix timestamp in milliseconds */
 	expiresAt?: number
 	scope?: string
@@ -191,7 +193,17 @@ export interface CustomAuthHandler {
 	 * that do not need it can ignore it.
 	 */
 	handleCallback(params: Record<string, string>, redirectUri: string): Promise<StoredCredentials>
-	getAccessToken(credentials: StoredCredentials, ctx?: CustomAuthContext): Promise<string>
+	/**
+	 * Mint or return a usable access token.
+	 *
+	 * `ctx` is always supplied by {@link TokenManager}. It is required rather than
+	 * optional so a handler performing a *stateful* refresh cannot silently drop
+	 * the rotated `refresh_token` via an optional-chained persist call — that
+	 * failure strands the integration permanently and logs nothing. Handlers that
+	 * mint a stateless token per call (GitHub App installation tokens) may
+	 * declare fewer parameters and ignore it.
+	 */
+	getAccessToken(credentials: StoredCredentials, ctx: CustomAuthContext): Promise<string>
 }
 
 export type CustomEventNormalizer = (

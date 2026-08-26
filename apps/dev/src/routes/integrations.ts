@@ -17,11 +17,11 @@ import { trackSlackMentionReceived } from '../lib/analytics/loop-events'
 import { markSlackMention } from '../lib/analytics/slack-attribution'
 import { decrypt, encrypt } from '../lib/crypto'
 import { createApiError, validationFailureHook } from '../lib/errors'
-import { isAuthRevokedError } from '../lib/integrations/errors'
+import { ProviderUnreachableError, isAuthRevokedError } from '../lib/integrations/errors'
 import { normalizeEvent } from '../lib/integrations/events/normalizer'
 import { OAuth2Handler } from '../lib/integrations/oauth/handler'
 import { generateCodeVerifier } from '../lib/integrations/oauth/pkce'
-import { decodeState, encodeState } from '../lib/integrations/oauth/state'
+import { type OAuthStatePayload, decodeState, encodeState } from '../lib/integrations/oauth/state'
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import {
 	DiscoveryError,
@@ -178,6 +178,10 @@ const connectRoute = createRoute({
 		},
 		400: {
 			description: 'Error',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		500: {
+			description: 'The install URL could not be built due to a server-side fault',
 			content: { 'application/json': { schema: errorSchema } },
 		},
 		502: {
@@ -379,7 +383,7 @@ app.openapi(connectRoute, (async (c) => {
 
 	// Create signed state containing workspace + actor info + one-time nonce
 	const nonce = randomBytes(16).toString('hex')
-	const statePayload: Record<string, unknown> = {
+	const statePayload: OAuthStatePayload = {
 		workspaceId,
 		actorId,
 		ts: Date.now(),
@@ -429,35 +433,44 @@ app.openapi(connectRoute, (async (c) => {
 	if (resolved.customAuth) {
 		try {
 			// A custom handler may call the provider here (e.g. Ubersuggest's RFC 7591
-			// dynamic client registration), so this can fail for reasons that have
-			// nothing to do with the request. Surface it as a 502 rather than letting
-			// it escape as an opaque 500. The pending nonce row inserted above is
-			// left in place: it is keyed by a fresh nonce, is never matched by a
-			// callback, and is what lets the user simply hit Connect again.
+			// dynamic client registration). The pending nonce row inserted above is
+			// left in place on failure: it is keyed by a fresh nonce, is never matched
+			// by a callback, and is what lets the user simply hit Connect again.
 			installUrl = await resolved.customAuth.getInstallUrl(state, redirectUri)
 		} catch (err) {
+			const upstream = err instanceof ProviderUnreachableError
 			logger.error(`Failed to build install URL for provider ${providerName}`, {
 				workspaceId,
 				actorId,
+				upstream,
 				error: err instanceof Error ? err.message : String(err),
+				cause: err instanceof Error && err.cause ? String(err.cause) : undefined,
 			})
+			// Only a genuine upstream failure is retryable. A local fault (missing
+			// INTEGRATION_ENCRYPTION_KEY, malformed state) must not be dressed up as
+			// "please try again" — that loops forever and no operator learns the real
+			// cause. No BAD_GATEWAY member on the shared union, so the status carries
+			// the distinction and the code carries "not the caller's fault".
+			if (upstream) {
+				return c.json(
+					createApiError(
+						'INTERNAL_ERROR',
+						`Could not reach ${resolved.config.displayName} to start the connection — please try again`,
+					),
+					502,
+				)
+			}
 			return c.json(
 				createApiError(
-					// No BAD_GATEWAY member on the shared union; the 502 status carries
-					// "upstream provider failed", the code carries "not the caller's fault".
 					'INTERNAL_ERROR',
-					`Could not reach ${resolved.config.displayName} to start the connection — please try again`,
+					`Could not start the ${resolved.config.displayName} connection — this is a server misconfiguration, not a transient failure`,
 				),
-				502,
+				500,
 			)
 		}
 	} else if (resolved.config.auth.type === 'oauth2') {
 		const handler = new OAuth2Handler(resolved.config.auth.config)
-		installUrl = handler.createAuthorizationUrl(
-			state,
-			redirectUri,
-			statePayload.codeVerifier as string | undefined,
-		)
+		installUrl = handler.createAuthorizationUrl(state, redirectUri, statePayload.codeVerifier)
 	} else {
 		return c.json(
 			createApiError('BAD_REQUEST', `Provider ${providerName} does not support OAuth connect`),
@@ -505,13 +518,7 @@ app.openapi(callbackRoute, (async (c) => {
 		return c.json(createApiError('BAD_REQUEST', 'Missing state parameter'), 400)
 	}
 
-	let stateData: {
-		workspaceId: string
-		actorId: string
-		ts: number
-		nonce: string
-		codeVerifier?: string
-	}
+	let stateData: OAuthStatePayload
 	try {
 		stateData = decodeState(stateParam)
 	} catch {
