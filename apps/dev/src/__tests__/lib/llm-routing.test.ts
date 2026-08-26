@@ -757,7 +757,22 @@ describe('resolveLlmRoute when the Claude OAuth route yields nothing', () => {
 		expect(err).toBeInstanceOf(LlmCredentialsUnavailableError)
 		const reason = (err as LlmCredentialsUnavailableError).toFailureReason()
 		expect(reason.reason_code).toBe('not_logged_in')
-		expect(reason.verbatim_output).toMatch(/did not yield a usable token/i)
+		// The resolver reports WHY, so the detail names the specific failure
+		// rather than the old catch-all "did not yield a usable token".
+		expect(reason.verbatim_output).toMatch(/could not be reached/i)
+	})
+
+	it('marks an unreachable token endpoint transient, and says so to the user', async () => {
+		// This fixture's refresh fails with a network error, not a rejection —
+		// we never learned the subscription is bad. Reporting it as permanent
+		// would tell the user to reconnect a credential that may be fine and
+		// would deny the dispatcher the retry that recovers it.
+		const err = (await resolveLlmRoute(paramsWithDeadOAuth(emptySettings())).catch(
+			(e) => e,
+		)) as LlmCredentialsUnavailableError
+		expect(err.transient).toBe(true)
+		expect(err.toFailureReason().human_message).toMatch(/usually temporary/i)
+		expect(err.toFailureReason().human_message).not.toMatch(/Connect a Claude subscription/i)
 	})
 
 	it('does NOT throw when custom_llm still resolves', async () => {
@@ -831,14 +846,49 @@ describe('preflightLlmCredentials', () => {
 		// unentitled workspace therefore gets no env at all, which is exactly the
 		// gap the pre-flight exists to catch; treating the key as "configured"
 		// here would let it launch credential-less.
+		//
+		// Run WITH the operator's OpenRouter key set, i.e. production. An agent
+		// key on a non-anthropic provider makes resolveLlmRoute return null
+		// BEFORE it reaches the Maskin plan, so the plan is not a route for this
+		// agent and must not rescue the gate. Checking step 5 anyway is how this
+		// shape used to pass and then launch with no LLM env at all.
 		const gap = preflightLlmCredentials({
 			wsSettings: {},
 			agent: { provider: 'openai', apiKey: 'sk-openai' },
 			byollmAllowed: false,
-			env: noEnv,
+			env: { MASKIN_FALLBACK_OPENROUTER_KEY: 'sk-or-operator' },
 		})
 		expect(gap).not.toBeNull()
 		expect(gap?.detail).toMatch(/not entitled/i)
+	})
+
+	it('fails an agent key on a provider Maskin cannot inject', () => {
+		// `llmProvider` is free text. resolveLlmRoute handles only anthropic here
+		// and session-manager injects only openai, so a third provider has no
+		// injection site anywhere — it would launch with no credential env.
+		const gap = preflightLlmCredentials({
+			wsSettings: {},
+			agent: { provider: 'cohere', apiKey: 'sk-cohere' },
+			byollmAllowed: true,
+			env: { MASKIN_FALLBACK_OPENROUTER_KEY: 'sk-or-operator' },
+		})
+		expect(gap).not.toBeNull()
+		expect(gap?.detail).toMatch(/cohere/i)
+	})
+
+	it('still lets an unentitled ANTHROPIC agent key fall through to the Maskin plan', () => {
+		// The mirror of the two above: resolveLlmRoute's anthropic branch does
+		// NOT early-return when the workspace is unentitled — it falls through to
+		// routes 2-5, so the plan can still carry the session. Refusing here
+		// would ground every trial workspace whose agent happens to hold a key.
+		expect(
+			preflightLlmCredentials({
+				wsSettings: { billing: { plan: 'trial' } },
+				agent: { provider: 'anthropic', apiKey: 'sk-ant-agent' },
+				byollmAllowed: false,
+				env: { MASKIN_FALLBACK_OPENROUTER_KEY: 'sk-or-operator' },
+			}),
+		).toBeNull()
 	})
 
 	it('passes a non-anthropic agent key when the workspace IS entitled', () => {
