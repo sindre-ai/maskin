@@ -22,11 +22,9 @@ function headerNewTrigger(page: Page) {
 	return page.locator('header').getByRole('button', { name: 'More ways to start' })
 }
 
-// Scopes to the open dropdown's content — the E2E fixture derives the test
-// actor's display name from the test title (`E2E ${testInfo.title}...`), so
-// an unscoped `page.getByText('Create an object')` can spuriously match the
-// actor/workspace name in the sidebar on tests whose title contains that
-// phrase (e.g. this file's own "hides ... Create an object ..." test).
+// Scopes to the open dropdown's content so an unscoped
+// `page.getByText('Create an object')` can't match similar copy elsewhere on
+// the page.
 function newMenu(page: Page) {
 	return page.getByRole('menu')
 }

@@ -11,6 +11,7 @@ import { createWorkspaceWrapper } from '../../setup'
 
 const createSessionMutate = vi.fn()
 let createSessionIsPending = false
+const navigateMock = vi.fn()
 
 vi.mock('@/hooks/use-sessions', () => ({
 	useSessionLogs: () => ({ data: [], isLoading: false }),
@@ -23,6 +24,7 @@ vi.mock('@/hooks/use-events', () => ({
 
 vi.mock('@tanstack/react-router', () => ({
 	Link: ({ children }: { children: React.ReactNode }) => <span>{children}</span>,
+	useNavigate: () => navigateMock,
 }))
 
 vi.mock('@/components/shared/relative-time', () => ({
@@ -501,10 +503,13 @@ describe('SessionDetailPanel Restart button', () => {
 		await user.click(screen.getByRole('button', { name: 'Restart' }))
 
 		expect(createSessionMutate).toHaveBeenCalledTimes(1)
-		expect(createSessionMutate).toHaveBeenCalledWith({
-			actor_id: 'actor-xyz',
-			action_prompt: 'Re-run the agent',
-		})
+		expect(createSessionMutate).toHaveBeenCalledWith(
+			{
+				actor_id: 'actor-xyz',
+				action_prompt: 'Re-run the agent',
+			},
+			{ onError: expect.any(Function) },
+		)
 
 		const analyticsCalls = vi
 			.mocked(console.info)

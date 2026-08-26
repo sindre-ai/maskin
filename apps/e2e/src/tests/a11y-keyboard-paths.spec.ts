@@ -1,10 +1,7 @@
 import { expect, test } from '../fixtures/auth.fixture'
 import { VIEWPORTS } from '../helpers/viewports'
 
-// The v2 command palette's own placeholder. The pre-v2 one read 'Search
-// objects, navigate...' and still exists under components/layout/legacy/,
-// but the e2e fixture runs with the `new-design` flag on, so that is not the
-// palette these paths open.
+// The command palette's placeholder.
 const PALETTE_PLACEHOLDER = 'Run a command or jump to…'
 
 // Keyboard reachability + focus containment for the surfaces the bet's

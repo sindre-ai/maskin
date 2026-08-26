@@ -1,0 +1,146 @@
+/**
+ * Single source of truth for billing-related fallback defaults and the env
+ * parsing helper that wraps them. Both `lib/stripe.ts` (boot-time strict read)
+ * and `routes/billing.ts` (request-time defensive read) consume this module so
+ * the cap literals never drift between code paths, `.env.example`, and the
+ * frontend tests that pin the same numbers.
+ *
+ * `scripts/verify-billing-cap-literals.mjs` runs in CI to enforce the contract
+ * — bump the literals here and the script will fail until `.env.example` and
+ * `apps/web/src/__tests__/components/settings/billing-section.test.tsx` are
+ * updated too.
+ */
+
+import { logger } from './logger'
+
+/**
+ * Upper bound on parsed env caps. Billing caps are denominated in USD cents;
+ * even Pro-tier wholesale consumption would never reach this magnitude in a
+ * period. The point of the clamp is purely to reject pathological inputs (`"1e308"`
+ * passes `Number.isFinite && > 0` but would silently overflow downstream
+ * arithmetic). `MAX_SAFE_INTEGER` is the conservative ceiling.
+ *
+ * The shape check (`/^\d+$/`) admits arbitrarily long digit strings — once a
+ * digit string is ≥ 2^53, the `Number()` coercion silently loses precision,
+ * so the post-coercion clamp is what guarantees the final value is bounded.
+ * The shape check alone is not enough.
+ */
+export const MAX_ENV_CAP = Number.MAX_SAFE_INTEGER
+
+/**
+ * Length threshold above which a successful clamp is logged as a suspected
+ * operator typo. `Number.MAX_SAFE_INTEGER` is 16 digits — any digit string
+ * longer than that lost precision before reaching the clamp, which is far more
+ * likely a fat-finger (`9999999999999999999`) than a deliberate value.
+ */
+const SUSPICIOUSLY_LONG_DIGIT_LENGTH = 16
+
+const POSITIVE_INT_SHAPE = /^\d+$/
+
+/**
+ * Parse a positive integer from an environment variable, with a strict digits-
+ * only shape check (`/^\d+$/`) so `"1e9"`, `"1.5"`, `"96_000_000"`, and
+ * scientific-notation magnitudes are rejected before reaching `Number()`.
+ * Returns `null` when the var is unset, blank, malformed, or non-positive.
+ * Clamps successful parses to `Number.MAX_SAFE_INTEGER`.
+ *
+ * Leading-zero digit strings (`"01"`) are accepted and decoded as decimal —
+ * `Number()` does not honour octal — so ops who wrote `"0X"` defensively get
+ * the value they expected, not a silent reject.
+ *
+ * Warn-logs (no raw value echoed) on two cases ops want to see in logs:
+ *   - `kind: 'shape_check_failed'` — the var was set but didn't match `/^\d+$/`
+ *     (typo, scientific notation, decimal). The caller falls back to a default
+ *     or throws, but the operator's intended value is silently ignored.
+ *   - `kind: 'clamp_fired'` — the digit string was so long the clamp swallowed
+ *     it. Almost always a fat-finger that would otherwise produce "effectively
+ *     unlimited tokens" instead of a configuration error.
+ */
+export function parsePositiveIntEnv(
+	key: string,
+	env: NodeJS.ProcessEnv = process.env,
+): number | null {
+	const raw = env[key]
+	if (raw === undefined || raw === '') return null
+	if (!POSITIVE_INT_SHAPE.test(raw)) {
+		logger.warn('parsePositiveIntEnv rejected env value', {
+			key,
+			rawLength: raw.length,
+			kind: 'shape_check_failed',
+		})
+		return null
+	}
+	const n = Number(raw)
+	if (!Number.isFinite(n) || n <= 0) return null
+	const clamped = Math.min(Math.floor(n), MAX_ENV_CAP)
+	if (raw.length > SUSPICIOUSLY_LONG_DIGIT_LENGTH) {
+		logger.warn('parsePositiveIntEnv clamped suspiciously long value', {
+			key,
+			rawLength: raw.length,
+			clampedTo: clamped,
+			kind: 'clamp_fired',
+		})
+	}
+	return clamped
+}
+
+/**
+ * Fallback hard caps for paid plans when `billing.hard_cap_usd_cents` hasn't
+ * been populated yet (delayed Stripe webhook, partial state after a webhook
+ * failure), in USD cents. Mirrored in `.env.example` and the frontend billing
+ * tests — change here and the CI `verify-billing-cap-literals` step will fail
+ * until the other sites are updated.
+ *
+ * Each paid plan's included-usage cap equals its monthly price in dollars —
+ * the same $20/$200 numbers previously expressed as 32M/320M tokens at the old
+ * flat rate of 16,000 tokens per cent. The trial has no price to key off; its
+ * $10 is the product's stated free-trial allowance. Switching to a dollar cap
+ * (instead of a token count) is what lets different agents run different models
+ * with different $/token ratios without the cap silently over- or
+ * under-counting usage.
+ */
+export const TRIAL_HARD_CAP_DEFAULT_USD_CENTS = 1_000
+export const PRO_HARD_CAP_DEFAULT_USD_CENTS = 2_000
+export const TEAM_HARD_CAP_DEFAULT_USD_CENTS = 20_000
+
+/** Billing periods on paid plans run ~30 days; used when Stripe hasn't written `period_end` yet. */
+export const DEFAULT_PERIOD_LENGTH_MS = 30 * 24 * 60 * 60 * 1000
+
+/**
+ * Resolves the included-usage cap (USD cents) for a plan tier, env first then
+ * the documented literal above.
+ *
+ * This is the single resolver for both the *enforcement* path
+ * (`lib/llm-routing.ts`'s `effectivePlanCap`, which gates spend) and the
+ * *display* path (`routes/billing.ts`'s `/usage`). They were separate
+ * functions, and the enforcement side simply returned `null` — unlimited — for
+ * a paid plan whose Stripe webhook hadn't yet written `hard_cap_usd_cents`,
+ * so a pro/team workspace in that window could spend without bound while the
+ * usage page showed it capped. One resolver means the number a customer is
+ * shown is the number that actually stops them.
+ *
+ * `byollm` returns the trial cap only so the display path keeps its previous
+ * shape; nothing enforces a cap on byollm, which is routed away from the
+ * Maskin plan entirely (`MASKIN_PLAN_ROUTED_PLANS` in lib/llm-routing.ts).
+ */
+export function resolvePlanCapCents(
+	plan: 'trial' | 'pro' | 'team' | 'byollm',
+	env: NodeJS.ProcessEnv = process.env,
+): number {
+	switch (plan) {
+		case 'pro':
+			return (
+				parsePositiveIntEnv('MASKIN_PRO_HARD_CAP_USD_CENTS', env) ?? PRO_HARD_CAP_DEFAULT_USD_CENTS
+			)
+		case 'team':
+			return (
+				parsePositiveIntEnv('MASKIN_TEAM_HARD_CAP_USD_CENTS', env) ??
+				TEAM_HARD_CAP_DEFAULT_USD_CENTS
+			)
+		default:
+			return (
+				parsePositiveIntEnv('MASKIN_TRIAL_HARD_CAP_USD_CENTS', env) ??
+				TRIAL_HARD_CAP_DEFAULT_USD_CENTS
+			)
+	}
+}

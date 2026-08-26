@@ -65,17 +65,26 @@ function buildActor(overrides: Partial<ActorListItem> = {}): ActorListItem {
 }
 
 describe('LoopRow', () => {
-	it('renders the autonomy-stage pill, name, content, and stats', () => {
+	it('renders the state dot, name, one-line outcome, and stage label', () => {
 		render(<LoopRow loop={buildLoop()} actors={[]} />)
 
 		expect(screen.getByText('Customer feedback')).toBeInTheDocument()
-		expect(screen.getByText('Learning')).toBeInTheDocument()
+		expect(screen.getByTestId('loop-pill')).toHaveTextContent('Learning')
 		expect(
 			screen.getByText('Every customer who gives feedback hears back within 30 days'),
 		).toBeInTheDocument()
-		expect(screen.getByText('6 in progress')).toBeInTheDocument()
-		expect(screen.getByText(/128 closed/)).toBeInTheDocument()
-		expect(screen.getByText(/11d median/)).toBeInTheDocument()
+		// v2 row: the outcome is truncated to one line, not clamped to two.
+		expect(
+			screen.getByText('Every customer who gives feedback hears back within 30 days').className,
+		).toMatch(/truncate/)
+	})
+
+	it('renders the green busy line only when agents on the loop are live', () => {
+		const { rerender } = render(<LoopRow loop={buildLoop()} actors={[]} />)
+		expect(screen.queryByText(/busy now/)).not.toBeInTheDocument()
+
+		rerender(<LoopRow loop={buildLoop()} actors={[]} busyAgentCount={2} />)
+		expect(screen.getByText('2 busy now')).toBeInTheDocument()
 	})
 
 	it('renders "Waiting on you" pill when the loop is waiting', () => {
@@ -102,17 +111,12 @@ describe('LoopRow', () => {
 		expect(screen.getByText('Paused — not running')).toBeInTheDocument()
 	})
 
-	it('renders "Waiting on you" in last activity when waiting on the viewer', () => {
+	it('renders "Waiting on you" as last activity when waiting on the viewer', () => {
 		render(<LoopRow loop={buildLoop({ pill: 'waiting_on_you', inProgressCount: 0 })} actors={[]} />)
 
-		// Appears twice: once as the pill badge, once as the last-activity line.
-		expect(screen.getAllByText('Waiting on you')).toHaveLength(2)
-	})
-
-	it('renders the draft label in last activity when the loop is a draft', () => {
-		render(<LoopRow loop={buildLoop({ pill: 'draft' })} actors={[]} />)
-
-		expect(screen.getByText('Draft — not live yet')).toBeInTheDocument()
+		// The stage pill carries the same words, so assert on the one that isn't it.
+		const matches = screen.getAllByText('Waiting on you')
+		expect(matches.some((el) => el.getAttribute('data-testid') !== 'loop-pill')).toBe(true)
 	})
 
 	it("renders the first agent's avatar next to the last-activity line", () => {
@@ -154,12 +158,6 @@ describe('LoopRow', () => {
 		render(<LoopRow loop={buildLoop({ name: null })} actors={[]} />)
 
 		expect(screen.getByText('Untitled loop')).toBeInTheDocument()
-	})
-
-	it('omits the median suffix when median is null', () => {
-		render(<LoopRow loop={buildLoop({ medianTimeToCloseMs: null })} actors={[]} />)
-
-		expect(screen.queryByText(/median/)).not.toBeInTheDocument()
 	})
 
 	it('links to the dedicated loop detail route, not the generic object page', () => {

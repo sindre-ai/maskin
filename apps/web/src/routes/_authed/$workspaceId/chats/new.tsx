@@ -1,5 +1,4 @@
 import { Composer } from '@/components/chat/chat'
-import { LegacyNewConversationPage } from '@/components/chat/legacy/new-conversation-page'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
@@ -8,7 +7,6 @@ import { useWorkspaceMembers } from '@/hooks/use-workspaces'
 import type { MessageMetadata } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { EMPTY_CHAT_SELECTION, chatSelectionReducer } from '@/lib/chat-selection'
-import { useNewDesign } from '@/lib/new-design-context'
 import { useWorkspace } from '@/lib/workspace-context'
 import { NEW_CONVERSATION_PLACEHOLDER_TITLE } from '@maskin/shared'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
@@ -56,14 +54,7 @@ interface Participant {
 	type: string
 }
 
-// v2 branch — the flag is read once at the workspace shell boundary and
-// reaches this leaf as a boolean (see `chats.tsx`).
 function NewConversationPage() {
-	const search = Route.useSearch()
-	return useNewDesign() ? <NewConversationPageV2 /> : <LegacyNewConversationPage search={search} />
-}
-
-function NewConversationPageV2() {
 	const { workspaceId } = useWorkspace()
 	const search = Route.useSearch()
 	const navigate = useNavigate()

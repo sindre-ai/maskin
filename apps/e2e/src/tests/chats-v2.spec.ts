@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
-import type { TestAPI } from '../helpers/api.helper'
+import { TestAPI } from '../helpers/api.helper'
 import { SHIP_GATE_VIEWPORTS, VIEWPORTS } from '../helpers/viewports'
 
 /**
@@ -343,12 +343,18 @@ test.describe('Chats v2 — citation pill', () => {
 				status: 'awaiting_legal',
 			})
 
+			// The citation pill is an *incoming* message affordance: the viewer's
+			// own messages lift their context out as `You attached` chips instead,
+			// so the cited message has to come from another actor.
+			const agent = await account.api.createAgentActor(`Citing Agent ${stamp}`)
+			await account.api.addWorkspaceMember(account.workspaceId, agent.id)
 			const conversation = await account.api.createConversation(account.workspaceId, {
 				title: `V2 Citations ${stamp}`,
-				participant_actor_ids: [],
+				participant_actor_ids: [agent.id],
 				initial_message: 'Opening the thread',
 			})
-			await account.api.postConversationMessage(conversation.id, account.workspaceId, {
+			const agentApi = new TestAPI(agent.api_key)
+			await agentApi.postConversationMessage(conversation.id, account.workspaceId, {
 				content: 'Both of these are blocked on the same thing.',
 				metadata: {
 					context_objects: [

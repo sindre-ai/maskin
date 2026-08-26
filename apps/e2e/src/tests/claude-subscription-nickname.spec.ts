@@ -1,4 +1,5 @@
 import { expect, test } from '../fixtures/auth.fixture'
+import { grantByollmAllowed } from '../helpers/plan.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 const BASE = 'http://localhost:5173'
@@ -42,6 +43,7 @@ test.describe('Claude subscription nickname — settings UI', () => {
 		page,
 		account,
 	}) => {
+		await grantByollmAllowed(account.apiKey, account.workspaceId)
 		await importClaudeOAuth(account.apiKey, account.workspaceId, {
 			...seedPrimary,
 			slot: 'primary',
@@ -62,14 +64,44 @@ test.describe('Claude subscription nickname — settings UI', () => {
 		await page.reload()
 		await expect(page.getByTestId('slot-primary-nickname')).toHaveValue('Work account')
 
-		// Ship-gate viewports — the editable nickname must be reachable on each.
+		// Ship-gate viewports — the editable nickname must be reachable on each,
+		// and the saved value must still be rendered on the slot (not just the
+		// empty input visible).
 		for (const vp of SHIP_GATE_VIEWPORTS) {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
-			await expect(page.getByTestId('slot-primary-nickname')).toBeVisible()
+			const nicknameInput = page.getByTestId('slot-primary-nickname')
+			await expect(nicknameInput).toBeVisible()
+			await expect(nicknameInput).toHaveValue('Work account')
+		}
+	})
+
+	test('a long nickname renders on the slot at all ship-gate viewports', async ({
+		page,
+		account,
+	}) => {
+		// Long labels are the case most likely to clip or scroll out of view on
+		// narrow widths — the reported "nickname missing on small screens".
+		const longNickname = 'The primary work account nickname for Q3'
+		await importClaudeOAuth(account.apiKey, account.workspaceId, {
+			...seedPrimary,
+			slot: 'primary',
+			nickname: longNickname,
+		})
+
+		await page.goto(`/${account.workspaceId}/settings/keys`)
+
+		const nicknameInput = page.getByTestId('slot-primary-nickname')
+		await expect(nicknameInput).toHaveValue(longNickname)
+
+		for (const vp of SHIP_GATE_VIEWPORTS) {
+			await page.setViewportSize({ width: vp.width, height: vp.height })
+			await expect(nicknameInput).toBeVisible()
+			await expect(nicknameInput).toHaveValue(longNickname)
 		}
 	})
 
 	test('clearing a nickname reverts to the placeholder', async ({ page, account }) => {
+		await grantByollmAllowed(account.apiKey, account.workspaceId)
 		await importClaudeOAuth(account.apiKey, account.workspaceId, {
 			...seedPrimary,
 			slot: 'primary',

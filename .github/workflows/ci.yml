@@ -212,9 +212,25 @@ jobs:
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maskin_e2e
           INTEGRATION_ENCRYPTION_KEY: 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
+          # Mounts POST /api/test-grants so specs can obtain a paid tier / the
+          # BYO-LLM entitlement, neither of which is self-service in the product.
+          # Playwright spawns the API itself (webServer in playwright.config.ts),
+          # so this one entry reaches both the specs and the stack under test.
+          # Never set in production — the route is not mounted without it.
+          MASKIN_TEST_GRANT_TOKEN: e2e-local-test-grant-token
+          # Argos visual-regression uploads are opt-in and never gate a PR: the
+          # free-plan screenshot quota is shared across all shards of all runs,
+          # so an exhausted quota fails the upload for reasons unrelated to the
+          # code under test. Only pushes to `main` capture and upload; on PRs
+          # `isArgosEnabled()` is false, so the reporter is not registered and
+          # `safeArgosScreenshot()` is a no-op.
+          ARGOS_ENABLED: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
           ARGOS_TOKEN: ${{ secrets.ARGOS_TOKEN }}
-          # `warn` is a Node-level backstop: it stops any unhandled rejection
-          # from crashing the process before assert-results.mjs gets to run.
+          # `warn` is a Node-level backstop for the enabled (main) path: Argos's
+          # upload() can reject via a promise that safe-argos-reporter.ts's own
+          # try/catch doesn't end up wrapping (see that file's comment), and
+          # `warn` stops that unhandled rejection from crashing the process
+          # before assert-results.mjs gets to run.
           NODE_OPTIONS: --unhandled-rejections=warn
 
       - name: Upload Playwright report
