@@ -159,8 +159,12 @@ export class InputQueue {
 	 *
 	 * The turn is retained regardless of what the write reports. A successful
 	 * write is an optimisation, not proof of arrival — see the class comment.
+	 *
+	 * Returns the seq assigned to this turn. The caller needs it to correlate
+	 * against the guest's acked high-water mark — that comparison is what the
+	 * stall detector's `undelivered` arm is (see lib/stall-tracker.ts).
 	 */
-	async enqueue(sessionId: string, line: string): Promise<void> {
+	async enqueue(sessionId: string, line: string): Promise<number> {
 		const seq = (this.seqs.get(sessionId) ?? 0) + 1
 		this.seqs.set(sessionId, seq)
 
@@ -176,7 +180,7 @@ export class InputQueue {
 			// Parked. Normal between re-dials; a persistent state here means the
 			// guest is not holding a stream open at all.
 			this.observe('turn parked (no stream)', { sessionId, seq, unacked: turns.length })
-			return
+			return seq
 		}
 		const writeOk = await flusher(line, seq)
 		// `writeOk` says the bytes left this process, NOT that the guest read
@@ -189,6 +193,7 @@ export class InputQueue {
 			// the entry while we awaited the failing flusher.
 			if (this.streams.get(sessionId) === flusher) this.streams.delete(sessionId)
 		}
+		return seq
 	}
 
 	/** Discard every turn up to and including `seq`. */
