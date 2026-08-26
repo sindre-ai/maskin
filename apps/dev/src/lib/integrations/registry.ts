@@ -11,6 +11,8 @@ import { gmailEventNormalizer, gmailWebhookVerifier } from './providers/gmail/we
 import { config as googleCalendarConfig } from './providers/google-calendar/config'
 import { revokeGoogleCalendarGrant } from './providers/google-calendar/disconnect'
 import { resolveExternalId as googleCalendarResolveExternalId } from './providers/google-calendar/resolve-id'
+import { config as googleSearchConsoleConfig } from './providers/google-search-console/config'
+import { revokeGoogleSearchConsoleGrant } from './providers/google-search-console/disconnect'
 import {
 	config as linearConfig,
 	resolveExternalId as linearResolveExternalId,
@@ -94,6 +96,11 @@ providers.set('google-calendar', {
 	config: googleCalendarConfig,
 	resolveExternalId: googleCalendarResolveExternalId,
 	preDisconnect: revokeGoogleCalendarGrant,
+})
+
+providers.set('google-search-console', {
+	config: googleSearchConsoleConfig,
+	preDisconnect: revokeGoogleSearchConsoleGrant,
 })
 
 providers.set('posthog', {
