@@ -26,6 +26,7 @@ import {
 	LLM_ROUTE_CUSTOM,
 	LLM_ROUTE_MASKIN_PLAN,
 	LLM_ROUTE_OAUTH,
+	LlmCredentialsUnavailableError,
 	PlanCapExceededError,
 	ceilCents,
 	checkPlanCap,
@@ -703,12 +704,115 @@ describe('ceilCents', () => {
 	})
 })
 
+// The OAuth resolver reports an unusable credential two ways: it throws, or it
+// returns null. Both must reach the caller as LlmCredentialsUnavailableError
+// when nothing else is configured — a session that launches with no
+// ANTHROPIC_* env is the failure this whole path exists to prevent.
+describe('resolveLlmRoute when the Claude OAuth route yields nothing', () => {
+	const deadSlot = {
+		encryptedAccessToken: 'oauth-access',
+		encryptedRefreshToken: 'oauth-refresh',
+		// Already expired, so the resolver must refresh — and the refresh below
+		// fails, leaving it with no usable token.
+		expiresAt: Date.now() - 60_000,
+	}
+
+	beforeEach(() => {
+		// A refresh that never succeeds: the resolver classifies this as a
+		// transport error, keeps the (expired) token, and returns null rather
+		// than throwing. That null is the branch under test.
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () => {
+				throw new Error('network unreachable')
+			}),
+		)
+	})
+
+	afterEach(() => {
+		vi.unstubAllGlobals()
+	})
+
+	function paramsWithDeadOAuth(settings: WorkspaceSettings) {
+		settings.claude_oauth = deadSlot
+		return {
+			db: dbWithFallbackUsage([], claudeOAuthWorkspaceRow(deadSlot)),
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
+			wsSettings: settings,
+			byollmAllowed: true,
+			agent: {},
+			env: {} as NodeJS.ProcessEnv,
+		}
+	}
+
+	it('throws LlmCredentialsUnavailableError when no other route is configured', async () => {
+		await expect(resolveLlmRoute(paramsWithDeadOAuth(emptySettings()))).rejects.toBeInstanceOf(
+			LlmCredentialsUnavailableError,
+		)
+	})
+
+	it('carries the reason through to the persisted failure_reason', async () => {
+		const err = await resolveLlmRoute(paramsWithDeadOAuth(emptySettings())).catch((e) => e)
+		expect(err).toBeInstanceOf(LlmCredentialsUnavailableError)
+		const reason = (err as LlmCredentialsUnavailableError).toFailureReason()
+		expect(reason.reason_code).toBe('not_logged_in')
+		expect(reason.verbatim_output).toMatch(/did not yield a usable token/i)
+	})
+
+	it('does NOT throw when custom_llm still resolves', async () => {
+		// The fall-through the comment in resolveLlmRoute promises: a dead
+		// subscription behind a working custom endpoint is recoverable, and
+		// turning it into a hard failure would break every such workspace.
+		const settings = emptySettings()
+		settings.custom_llm = {
+			enabled: true,
+			base_url: 'https://example.com',
+			api_key: 'sk-cust',
+			model: 'mod',
+		}
+		const result = await resolveLlmRoute(paramsWithDeadOAuth(settings))
+		expect(result?.route).toBe(LLM_ROUTE_CUSTOM)
+	})
+
+	it('does NOT throw when the workspace anthropic key still resolves', async () => {
+		const settings = emptySettings()
+		settings.llm_keys = { anthropic: 'sk-ant-ws' }
+		const result = await resolveLlmRoute(paramsWithDeadOAuth(settings))
+		expect(result?.route).toBe(LLM_ROUTE_API_KEY)
+	})
+
+	it('returns null (no throw) when the workspace has no OAuth configured at all', async () => {
+		// A null from a workspace with nothing connected is "route not
+		// configured", not a failure — it must keep falling through to the
+		// caller's own non-anthropic handling.
+		const result = await resolveLlmRoute({
+			db: dbWithFallbackUsage([]),
+			workspaceId: 'ws-1',
+			actorId: 'actor-1',
+			wsSettings: emptySettings(),
+			byollmAllowed: true,
+			agent: {},
+			env: {} as NodeJS.ProcessEnv,
+		})
+		expect(result).toBeNull()
+	})
+})
+
 // The offline gate that runs before a session is marked `starting`. It answers
 // "is any route configured at all", never "is the credential live" — liveness
 // stays with the (now timeout-bounded) probe inside resolveLlmRoute. Its
 // priority order must track resolveLlmRoute's, so each route gets a case.
 describe('preflightLlmCredentials', () => {
 	const noEnv: NodeJS.ProcessEnv = {}
+	/** Failover on — `active_slot` is what the resolver will read. */
+	const failoverEnv: NodeJS.ProcessEnv = { MASKIN_CLAUDE_FAILOVER_ENABLED: 'true' }
+
+	const slotData = () => ({
+		encryptedAccessToken: 'a',
+		encryptedRefreshToken: 'r',
+		expiresAt: Date.now() + 3_600_000,
+	})
 
 	it('passes when the agent carries its own key', () => {
 		expect(
@@ -721,15 +825,42 @@ describe('preflightLlmCredentials', () => {
 		).toBeNull()
 	})
 
-	it('passes a non-anthropic agent key even without byollm entitlement', () => {
-		// session-manager injects OPENAI_API_KEY itself for these — resolveLlmRoute
-		// returns null and hands them back to the caller, so the pre-flight must
-		// not read that as "no credentials".
+	it('fails a non-anthropic agent key when the workspace is not entitled', () => {
+		// session-manager injects OPENAI_API_KEY for these itself rather than via
+		// resolveLlmRoute — but that injection is inside `if (byollmAllowed)`. An
+		// unentitled workspace therefore gets no env at all, which is exactly the
+		// gap the pre-flight exists to catch; treating the key as "configured"
+		// here would let it launch credential-less.
+		const gap = preflightLlmCredentials({
+			wsSettings: {},
+			agent: { provider: 'openai', apiKey: 'sk-openai' },
+			byollmAllowed: false,
+			env: noEnv,
+		})
+		expect(gap).not.toBeNull()
+		expect(gap?.detail).toMatch(/not entitled/i)
+	})
+
+	it('passes a non-anthropic agent key when the workspace IS entitled', () => {
 		expect(
 			preflightLlmCredentials({
 				wsSettings: {},
 				agent: { provider: 'openai', apiKey: 'sk-openai' },
-				byollmAllowed: false,
+				byollmAllowed: true,
+				env: noEnv,
+			}),
+		).toBeNull()
+	})
+
+	it('passes a workspace holding only an OpenAI key', () => {
+		// Injected by session-manager after resolveLlmRoute returns, so it never
+		// appears in that ladder — but it is a real route and must not be
+		// refused a launch.
+		expect(
+			preflightLlmCredentials({
+				wsSettings: { llm_keys: { openai: 'sk-openai-ws' } },
+				agent: {},
+				byollmAllowed: true,
 				env: noEnv,
 			}),
 		).toBeNull()
@@ -755,27 +886,52 @@ describe('preflightLlmCredentials', () => {
 		).toBeNull()
 	})
 
-	it('fails when active_slot points at an unconfigured slot', () => {
+	it('fails when active_slot points at an unconfigured slot and failover is ON', () => {
 		// The incident shape: `claude_oauth` exists on the row, so a naive
 		// truthiness check reads as "connected", but the slot actually selected
 		// for the next launch has nothing in it.
 		const gap = preflightLlmCredentials({
 			wsSettings: {
-				claude_oauth: {
-					primary: {
-						encryptedAccessToken: 'a',
-						encryptedRefreshToken: 'r',
-						expiresAt: Date.now() + 3_600_000,
-					},
-					failover: { active_slot: 'backup' },
+				claude_oauth: { primary: slotData(), failover: { active_slot: 'backup' } },
+			},
+			agent: {},
+			byollmAllowed: true,
+			env: failoverEnv,
+		})
+		expect(gap).not.toBeNull()
+		expect(gap?.humanMessage).toMatch(/no LLM credentials/i)
+	})
+
+	it('passes on a stale active_slot: backup once failover is switched OFF', () => {
+		// The kill-switch path. resolveClaudeCredentialsWithFailover ignores
+		// `active_slot` when the flag is off and reads `primary` directly, so a
+		// workspace left on backup by an earlier failover still routes. Checking
+		// `active_slot` unconditionally here would permanently refuse to launch
+		// the very workspaces the switch was thrown to rescue.
+		expect(
+			preflightLlmCredentials({
+				wsSettings: {
+					claude_oauth: { primary: slotData(), failover: { active_slot: 'backup' } },
 				},
+				agent: {},
+				byollmAllowed: true,
+				env: noEnv,
+			}),
+		).toBeNull()
+	})
+
+	it('fails with failover OFF when only a backup slot is configured', () => {
+		// Mirror image: the flag-off resolver reads `primary` and nothing else,
+		// so a backup-only workspace genuinely has no OAuth route.
+		const gap = preflightLlmCredentials({
+			wsSettings: {
+				claude_oauth: { backup: slotData(), failover: { active_slot: 'backup' } },
 			},
 			agent: {},
 			byollmAllowed: true,
 			env: noEnv,
 		})
 		expect(gap).not.toBeNull()
-		expect(gap?.humanMessage).toMatch(/no LLM credentials/i)
 	})
 
 	it('passes on a complete custom_llm config and fails on a partial one', () => {

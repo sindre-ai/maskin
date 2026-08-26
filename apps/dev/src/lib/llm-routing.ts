@@ -3,8 +3,12 @@ import { sessions } from '@maskin/db/schema'
 import type { SessionResultFailureReason } from '@maskin/shared'
 import { and, eq, gte, sql } from 'drizzle-orm'
 import { DEFAULT_PERIOD_LENGTH_MS, resolvePlanCapCents } from './billing-defaults'
-import { type SubscriptionProbe, resolveClaudeCredentialsWithFailover } from './claude-failover'
-import { type OAuthSlotKind, resolveActiveSlot } from './claude-oauth-slots'
+import {
+	type SubscriptionProbe,
+	isClaudeFailoverEnabled,
+	resolveClaudeCredentialsWithFailover,
+} from './claude-failover'
+import { type OAuthSlotKind, readSlots, resolveActiveSlot } from './claude-oauth-slots'
 import { isEnterpriseWorkspace } from './enterprise-allowlist'
 import { logger } from './logger'
 import type { WorkspaceSettings } from './types'
@@ -371,6 +375,23 @@ function buildMaskinPlanEnv(
  * own). Routes #2 and #5 already source their model from workspace/operator
  * config and are left as-is.
  */
+/**
+ * Is a Claude OAuth slot configured at all — i.e. does the slot that
+ * `resolveClaudeCredentialsWithFailover` would actually read hold data?
+ *
+ * Existence only, never liveness. The flag branch mirrors that function
+ * (claude-failover.ts): with failover ON the active slot is what counts, with
+ * it OFF `active_slot` is ignored and `primary` is read directly, so that
+ * turning the flag off as a kill-switch routes back to primary. Both the
+ * pre-flight and the post-hoc "the OAuth route produced nothing" check below
+ * go through here so the two can't drift apart.
+ */
+function hasConfiguredOAuthSlot(claudeOauth: unknown, env?: NodeJS.ProcessEnv): boolean {
+	return isClaudeFailoverEnabled(env)
+		? Boolean(resolveActiveSlot(claudeOauth))
+		: Boolean(readSlots(claudeOauth).primary)
+}
+
 export async function resolveLlmRoute(params: {
 	db: Database
 	workspaceId: string
@@ -387,6 +408,11 @@ export async function resolveLlmRoute(params: {
 	 * Anthropic Messages API probe.
 	 */
 	claudeProbe?: SubscriptionProbe
+	/**
+	 * Overrides `process.env` when reading the failover flag. Tests only —
+	 * production callers omit it.
+	 */
+	env?: NodeJS.ProcessEnv
 }): Promise<LlmRoutingResult | null> {
 	const { db, workspaceId, actorId, wsSettings, agent, byollmAllowed, claudeProbe } = params
 
@@ -440,6 +466,28 @@ export async function resolveLlmRoute(params: {
 					envVars.ANTHROPIC_MODEL = agent.model
 				}
 				return { route: LLM_ROUTE_OAUTH, envVars, oauthSlot: oauthResult.slot }
+			}
+
+			// `resolveClaudeCredentialsWithFailover` reports an unusable
+			// credential two ways: it throws, or it returns null (an expired
+			// token behind a transient refresh failure, a probe that classified
+			// as failover with no backup to fall to, a backup that failed its
+			// own probe). Only the throw used to be recorded — so a workspace
+			// with a connected-but-dead subscription and no other route fell
+			// through this whole ladder silently and launched a container with
+			// no ANTHROPIC_* env at all. That is the incident this file exists
+			// to prevent, reached by its most common real-world shape.
+			//
+			// Guarded on a slot actually being configured: a null from a
+			// workspace with no OAuth at all is simply "route not configured",
+			// which is not a failure and must keep falling through.
+			if (hasConfiguredOAuthSlot(wsSettings.claude_oauth, params.env)) {
+				oauthFailure =
+					'the connected Claude subscription did not yield a usable token (expired, revoked, or failed its health check)'
+				logger.warn('Claude OAuth route resolved to no usable token', {
+					workspaceId,
+					actorId,
+				})
 			}
 		} catch (err) {
 			// The next route still takes over — a workspace with a custom endpoint
@@ -561,16 +609,22 @@ export function preflightLlmCredentials(params: {
 }): { humanMessage: string; detail: string } | null {
 	const { wsSettings, agent, byollmAllowed } = params
 
-	// 1. Agent-level override. Non-anthropic providers are handled by the
-	//    caller (session-manager injects OPENAI_API_KEY itself), so any agent
-	//    key at all counts as configured.
-	if (agent.apiKey && (agent.provider !== 'anthropic' || byollmAllowed)) return null
+	// 1. Agent-level override. A non-anthropic agent key is injected by the
+	//    caller (session-manager sets OPENAI_API_KEY itself) rather than by
+	//    resolveLlmRoute — but that injection is gated on `byollmAllowed` too,
+	//    so an unentitled workspace has no route here regardless of provider.
+	if (agent.apiKey && byollmAllowed) return null
 
 	if (byollmAllowed) {
-		// 2. Claude OAuth — a slot only counts when the ACTIVE one holds data.
-		//    A workspace whose active_slot points at an unconfigured slot has no
-		//    OAuth route even though `claude_oauth` exists on the row.
-		if (resolveActiveSlot(wsSettings.claude_oauth)) return null
+		// 2. Claude OAuth. Which slot counts depends on the failover flag, and
+		//    it has to be read the same way `resolveClaudeCredentialsWithFailover`
+		//    reads it. With the flag OFF that function ignores `active_slot` and
+		//    goes straight to `primary` — deliberately, so disabling the flag as
+		//    an incident kill-switch forces routing back to primary. Checking
+		//    `active_slot` unconditionally here would refuse to launch a
+		//    workspace left on `active_slot: 'backup'` after the switch was
+		//    thrown, which is precisely the state the switch exists to recover.
+		if (hasConfiguredOAuthSlot(wsSettings.claude_oauth, params.env)) return null
 
 		// 3. Workspace custom_llm (same completeness bar as buildCustomLlmEnv).
 		const custom = wsSettings.custom_llm
@@ -585,13 +639,19 @@ export function preflightLlmCredentials(params: {
 
 		// 4. Workspace anthropic api key.
 		if (wsSettings.llm_keys?.anthropic) return null
+
+		// 4b. Workspace OpenAI key. Not part of resolveLlmRoute's ladder — it is
+		//     injected directly by session-manager after that call returns — but
+		//     it is a real route, so a workspace holding only this one must not
+		//     be refused a launch.
+		if (wsSettings.llm_keys?.openai) return null
 	}
 
 	// 5. Maskin plan.
 	if (buildMaskinPlanEnv(wsSettings.billing, readFallbackConfig(params.env)) !== null) return null
 
 	const detail = byollmAllowed
-		? 'No Claude subscription, custom LLM endpoint, or Anthropic API key is configured for this workspace, and it is not on a Maskin-funded plan.'
+		? 'No Claude subscription, custom LLM endpoint, or Anthropic/OpenAI API key is configured for this workspace, and it is not on a Maskin-funded plan.'
 		: 'This workspace is not on a Maskin-funded plan and is not entitled to bring its own LLM credentials.'
 	return {
 		humanMessage:
