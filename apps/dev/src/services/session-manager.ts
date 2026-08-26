@@ -56,6 +56,7 @@ import { debitCreditForSession } from '../lib/credit-billing'
 import { classifyCreditExhaustion } from '../lib/credit-classifier'
 import { byollmEntitled } from '../lib/enterprise-allowlist'
 import { frontendBaseUrl } from '../lib/file-urls'
+import { buildAgentGitIdentity } from '../lib/git-identity'
 import {
 	GITHUB_PREFLIGHT_SLACK_CHANNEL,
 	type PreflightVerdict,
@@ -1538,12 +1539,20 @@ export class SessionManager extends EventEmitter {
 			: ''
 		const resolvedSystemPrompt = `${conversationPreamble}${agent.systemPrompt ?? 'You are a helpful AI agent.'}`
 
+		// Committer identity for anything the agent commits. agent-run.sh falls
+		// back to a generic `Maskin Agent <agent@maskin.io>` when these are
+		// unset; passing them per-agent keeps `git log`/blame readable without
+		// letting each session invent its own address (see ../lib/git-identity).
+		const gitIdentity = buildAgentGitIdentity(agent.name)
+
 		const envVars: Record<string, string> = {
 			SESSION_ID: session.id,
 			AGENT_RUNTIME: (sessionConfig.runtime as string) ?? 'claude-code',
 			SYSTEM_PROMPT: resolvedSystemPrompt,
 			MASKIN_API_URL: process.env.MASKIN_BACKEND_URL ?? 'http://host.docker.internal:3000',
 			MASKIN_WORKSPACE_ID: session.workspaceId,
+			GIT_IDENTITY_NAME: gitIdentity.name,
+			GIT_IDENTITY_EMAIL: gitIdentity.email,
 		}
 
 		// Fire-and-forget prompt-size emit — the parent bet's second ship metric
