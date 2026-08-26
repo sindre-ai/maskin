@@ -1,4 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+// Identity crypto — the state envelope stays readable JSON so these tests can
+// assert on what actually crosses the wire.
+vi.mock('../../../../lib/crypto', () => ({
+	decrypt: vi.fn((input: string) => input),
+	encrypt: vi.fn((input: string) => input),
+}))
+
 import { isAuthRevokedError } from '../../../../lib/integrations/errors'
 import { ubersuggestAuth } from '../../../../lib/integrations/providers/ubersuggest/auth'
 import { config } from '../../../../lib/integrations/providers/ubersuggest/config'
@@ -133,5 +141,71 @@ describe('ubersuggestAuth.getAccessToken', () => {
 			/omitted access_token/,
 		)
 		expect(persisted).toHaveLength(0)
+	})
+})
+
+describe('ubersuggestAuth install/callback flow state', () => {
+	const baseState = () =>
+		JSON.stringify({ workspaceId: 'ws-1', actorId: 'actor-1', ts: Date.now(), nonce: 'nonce-1' })
+
+	afterEach(() => {
+		globalThis.fetch = originalFetch
+		vi.restoreAllMocks()
+	})
+
+	it('carries the PKCE material in the state param, not in process memory', async () => {
+		globalThis.fetch = vi.fn(async () =>
+			jsonResponse({ client_id: 'dyn-client-id' }),
+		) as unknown as typeof fetch
+
+		const url = new URL(await ubersuggestAuth.getInstallUrl(baseState()))
+		const returnedState = url.searchParams.get('state')
+
+		expect(url.searchParams.get('code_challenge_method')).toBe('S256')
+		expect(url.searchParams.get('client_id')).toBe('dyn-client-id')
+
+		const payload = JSON.parse(returnedState as string)
+		// The framework's own fields must survive untouched — the callback route
+		// validates nonce/workspaceId/actorId/ts off this same envelope.
+		expect(payload.nonce).toBe('nonce-1')
+		expect(payload.workspaceId).toBe('ws-1')
+		expect(payload.actorId).toBe('actor-1')
+		expect(payload.ubersuggest.clientId).toBe('dyn-client-id')
+		expect(payload.ubersuggest.codeVerifier).toEqual(expect.any(String))
+		expect(payload.ubersuggest.redirectUri).toContain('/api/integrations/ubersuggest/callback')
+	})
+
+	it('completes the callback on a fresh module instance — no shared in-memory flow state', async () => {
+		globalThis.fetch = vi.fn(async () =>
+			jsonResponse({ client_id: 'dyn-client-id' }),
+		) as unknown as typeof fetch
+		const url = new URL(await ubersuggestAuth.getInstallUrl(baseState()))
+		const state = url.searchParams.get('state') as string
+
+		// Re-import to simulate the callback being served by a different process
+		// than the one that built the authorize URL (deploy, crash, second replica).
+		vi.resetModules()
+		const { ubersuggestAuth: freshAuth } = await import(
+			'../../../../lib/integrations/providers/ubersuggest/auth'
+		)
+
+		const exchange = vi.fn(async () =>
+			jsonResponse({ access_token: 'access-1', refresh_token: 'refresh-1', expires_in: 3600 }),
+		)
+		globalThis.fetch = exchange as unknown as typeof fetch
+
+		const creds = await freshAuth.handleCallback({ code: 'auth-code', state })
+
+		expect(creds.accessToken).toBe('access-1')
+		expect(creds.clientId).toBe('dyn-client-id')
+		const body = new URLSearchParams(exchange.mock.calls[0]?.[1]?.body as string)
+		expect(body.get('code_verifier')).toBe(JSON.parse(state).ubersuggest.codeVerifier)
+		expect(body.get('client_id')).toBe('dyn-client-id')
+	})
+
+	it('rejects a state param with no embedded PKCE material', async () => {
+		await expect(
+			ubersuggestAuth.handleCallback({ code: 'auth-code', state: baseState() }),
+		).rejects.toThrow(/missing PKCE material/)
 	})
 })

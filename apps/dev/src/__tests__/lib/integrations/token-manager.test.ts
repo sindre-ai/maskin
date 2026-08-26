@@ -235,6 +235,42 @@ describe('TokenManager', () => {
 		expect(updateSets.some((set) => set.status === 'revoked')).toBe(true)
 	})
 
+	it('shares one custom-auth exchange between concurrent callers for the same integration', async () => {
+		const { db } = createMockDb(makeIntegration(makeCredentials()))
+		let inflight = 0
+		let maxConcurrent = 0
+		const customProvider: ResolvedProvider = {
+			config: {
+				name: 'ubersuggest',
+				displayName: 'Ubersuggest',
+				auth: { type: 'oauth2_custom' },
+			},
+			customAuth: {
+				getInstallUrl: vi.fn(),
+				handleCallback: vi.fn(),
+				getAccessToken: vi.fn(async () => {
+					inflight += 1
+					maxConcurrent = Math.max(maxConcurrent, inflight)
+					await new Promise((resolve) => setTimeout(resolve, 5))
+					inflight -= 1
+					return 'rotated-access'
+				}),
+			},
+		}
+
+		const tokens = await Promise.all([
+			manager.getValidToken(db, 'integration-1', customProvider),
+			manager.getValidToken(db, 'integration-1', customProvider),
+			manager.getValidToken(db, 'integration-1', customProvider),
+		])
+
+		expect(tokens).toEqual(['rotated-access', 'rotated-access', 'rotated-access'])
+		// Without dedup all three would spend the same one-use refresh token and
+		// the losers would come back invalid_grant, revoking a healthy integration.
+		expect(maxConcurrent).toBe(1)
+		expect(customProvider.customAuth?.getAccessToken).toHaveBeenCalledTimes(1)
+	})
+
 	it('returns API key directly for api_key providers', async () => {
 		const creds = makeCredentials({ accessToken: 'api-key-xyz' })
 		const { db } = createMockDb(makeIntegration(creds))
