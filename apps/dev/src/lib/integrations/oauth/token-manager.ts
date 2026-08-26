@@ -30,7 +30,8 @@ export class TokenManager {
 	 * is available, it will refresh and store the updated credentials.
 	 *
 	 * Concurrent calls for the same integration ID share a single outbound
-	 * refresh request (see {@link inflightRefreshes}).
+	 * refresh request, on both the standard OAuth2 and custom-auth paths (see
+	 * {@link inflightRefreshes}).
 	 *
 	 * Throws {@link IntegrationAuthRevokedError} when `integration.status` is
 	 * `'revoked'` (short-circuit) or when the provider returns `invalid_grant`
@@ -60,9 +61,20 @@ export class TokenManager {
 
 		const credentials: StoredCredentials = JSON.parse(decrypt(integration.credentials))
 
-		// Custom auth providers handle their own token generation
+		// Custom auth providers handle their own token generation. Shares the same
+		// in-flight dedup as the standard path: a handler may perform a *stateful*
+		// refresh (rotating refresh_token, moving expires_at) rather than minting a
+		// stateless token per call like GitHub App installation tokens, and two
+		// concurrent callers would then race to spend the same one-use refresh
+		// token — the loser gets invalid_grant, which this layer reads as a revoked
+		// grant and flips a perfectly healthy integration to `revoked`.
 		if (provider.customAuth) {
-			return provider.customAuth.getAccessToken(credentials)
+			return this.dedupe(integrationId, () =>
+				this.runCustomAuth(db, integrationId, provider, credentials, {
+					workspaceId: integration.workspaceId,
+					createdBy: integration.createdBy,
+				}),
+			)
 		}
 
 		// API key providers return the stored key directly
@@ -157,23 +169,74 @@ export class TokenManager {
 		workspaceId: string,
 		actorId: string,
 	): Promise<string> {
+		return this.dedupe(integrationId, () =>
+			this.doRefresh(db, integrationId, provider, credentials, workspaceId, actorId),
+		)
+	}
+
+	/**
+	 * Run `task` under the process-local in-flight lock for `integrationId`, so
+	 * concurrent callers share one outbound token exchange instead of racing to
+	 * spend the same one-use refresh token.
+	 */
+	private dedupe(integrationId: string, task: () => Promise<string>): Promise<string> {
 		const existing = inflightRefreshes.get(integrationId)
 		if (existing) {
 			return existing
 		}
 
-		const promise = this.doRefresh(
-			db,
-			integrationId,
-			provider,
-			credentials,
-			workspaceId,
-			actorId,
-		).finally(() => {
+		const promise = task().finally(() => {
 			inflightRefreshes.delete(integrationId)
 		})
 		inflightRefreshes.set(integrationId, promise)
 		return promise
+	}
+
+	/**
+	 * Invoke a provider's custom auth handler, handing it a write-back channel so
+	 * a rotated refresh token and the new expiry are persisted — without it the
+	 * next refresh replays a consumed token and strands the integration.
+	 */
+	private async runCustomAuth(
+		db: Database,
+		integrationId: string,
+		provider: ResolvedProvider,
+		credentials: StoredCredentials,
+		owner: { workspaceId: string; createdBy: string },
+	): Promise<string> {
+		if (!provider.customAuth) {
+			throw new Error(`Provider ${provider.config.name} has no custom auth handler`)
+		}
+
+		try {
+			return await provider.customAuth.getAccessToken(credentials, {
+				integrationId,
+				persistCredentials: (updated) =>
+					this.persistCredentials(
+						db,
+						integrationId,
+						updated,
+						owner.workspaceId,
+						owner.createdBy,
+						provider.config.name,
+					),
+			})
+		} catch (err) {
+			// Mirror doRefresh: a handler that reports the grant as gone flips the
+			// row to `revoked` so subsequent calls short-circuit without re-hitting
+			// the provider. markRevoked failure must not suppress the original error.
+			if (err instanceof IntegrationAuthRevokedError) {
+				try {
+					await this.markRevoked(db, integrationId)
+				} catch (markErr) {
+					logger.warn('Failed to persist revoked status for integration', {
+						integrationId,
+						error: String(markErr),
+					})
+				}
+			}
+			throw err
+		}
 	}
 
 	private async doRefresh(
@@ -253,14 +316,38 @@ export class TokenManager {
 			updated.refreshToken = refreshed.refreshToken
 		}
 
-		// Persist the new credentials. This MUST NOT be inside a transaction with the
-		// events INSERT: the Google token exchange above is not idempotent — it already
-		// consumed the old refresh token and issued a new one. If the events INSERT
-		// later fails and rolls back the UPDATE, the DB reverts to the now-invalid
-		// refresh token, causing the next refresh to return invalid_grant and
-		// permanently stranding the integration. Credentials go first, audit log
-		// is best-effort.
-		const encryptedCredentials = encrypt(JSON.stringify(updated))
+		await this.persistCredentials(
+			db,
+			integrationId,
+			updated,
+			workspaceId,
+			actorId,
+			provider.config.name,
+		)
+
+		return refreshed.accessToken
+	}
+
+	/**
+	 * Store refreshed credentials and record the audit event.
+	 *
+	 * The credentials UPDATE MUST NOT share a transaction with the events INSERT:
+	 * the token exchange that produced these credentials is not idempotent — it
+	 * already consumed the old refresh token and issued a new one. If the events
+	 * INSERT later failed and rolled back the UPDATE, the DB would revert to the
+	 * now-invalid refresh token, causing the next refresh to return invalid_grant
+	 * and permanently stranding the integration. Credentials go first, audit log
+	 * is best-effort.
+	 */
+	private async persistCredentials(
+		db: Database,
+		integrationId: string,
+		credentials: StoredCredentials,
+		workspaceId: string,
+		actorId: string,
+		providerName: string,
+	): Promise<void> {
+		const encryptedCredentials = encrypt(JSON.stringify(credentials))
 		await db
 			.update(integrations)
 			.set({ credentials: encryptedCredentials, updatedAt: new Date() })
@@ -273,7 +360,7 @@ export class TokenManager {
 				action: 'updated',
 				entityType: 'integration',
 				entityId: integrationId,
-				data: { reason: 'token_refreshed', provider: provider.config.name },
+				data: { reason: 'token_refreshed', provider: providerName },
 			})
 		} catch (auditErr) {
 			logger.warn('Failed to insert token_refreshed audit event', {
@@ -284,9 +371,7 @@ export class TokenManager {
 
 		logger.info('Refreshed OAuth2 access token', {
 			integrationId,
-			provider: provider.config.name,
+			provider: providerName,
 		})
-
-		return refreshed.accessToken
 	}
 }
