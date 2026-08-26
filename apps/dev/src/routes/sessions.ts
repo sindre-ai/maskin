@@ -3,6 +3,8 @@ import type { Database } from '@maskin/db'
 import { events, sessionLogs, sessions } from '@maskin/db/schema'
 import {
 	createSessionSchema,
+	formatQuestionsAsMarkdown,
+	sessionAskSchema,
 	sessionInputSchema,
 	sessionLogQuerySchema,
 	sessionParamsSchema,
@@ -21,6 +23,7 @@ import {
 	workspaceIdHeader,
 } from '../lib/openapi-schemas'
 import { serialize, serializeArray } from '../lib/serialize'
+import { insertConversationMessage } from '../services/conversation-messages'
 import type { SessionLogEvent, SessionManager } from '../services/session-manager'
 
 type Env = {
@@ -590,6 +593,120 @@ app.openapi(inputSessionRoute, (async (c) => {
 
 	return c.json({ ok: true as const })
 }) as RouteHandler<typeof inputSessionRoute, Env>)
+
+// POST /:id/ask - Surface an agent's AskUserQuestion into the chat it is in
+//
+// The headless CLI cannot render AskUserQuestion (it has no TTY), so it fails
+// the call outright — which is how a live session lost a reply on 2026-08-25.
+// The in-container PreToolUse hook intercepts the call and posts it here
+// instead, then tells the agent to end its turn; the human's answer comes back
+// as an ordinary chat message through the existing conversation responder.
+//
+// This is deliberately available ONLY to interactive sessions attached to a
+// conversation. A trigger-driven or otherwise autonomous session has nobody on
+// the other end: pausing it on a question would strand the run until the
+// timeout backstop, so it gets a 409 telling the agent to decide for itself.
+// The gate lives here rather than in the hook because the container knows only
+// its INTERACTIVE env var, while the conversation attachment is a server-side
+// fact that can change after launch.
+const askSessionRoute = createRoute({
+	method: 'post',
+	path: '/{id}/ask',
+	tags: ['Sessions'],
+	summary: "Post an agent's question into its chat conversation",
+	request: {
+		headers: workspaceIdHeader,
+		params: sessionParamsSchema,
+		body: { content: { 'application/json': { schema: sessionAskSchema } } },
+	},
+	responses: {
+		200: {
+			content: {
+				'application/json': {
+					schema: z.object({ message_id: z.number(), posted: z.literal(true) }),
+				},
+			},
+			description: 'Question posted to the conversation',
+		},
+		403: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Caller does not own this session',
+		},
+		404: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session not found',
+		},
+		409: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Session is not an interactive chat session',
+		},
+		500: {
+			content: { 'application/json': { schema: errorSchema } },
+			description: 'Question could not be persisted',
+		},
+	},
+})
+
+app.openapi(askSessionRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { questions } = c.req.valid('json')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const session = await loadSessionWithAuth(db, id, workspaceId)
+	if (!session) return c.json(createApiError('NOT_FOUND', 'Session not found'), 404)
+
+	// The question is posted as the agent, so only the agent running this
+	// session may ask — otherwise any workspace member's key could put a
+	// question in another agent's name.
+	if (session.actorId !== actorId) {
+		return c.json(createApiError('FORBIDDEN', 'Session belongs to a different actor'), 403)
+	}
+
+	if (!session.interactive || !session.conversationId) {
+		return c.json(
+			createApiError(
+				'CONFLICT',
+				'Session is not an interactive chat session, so there is no human to ask',
+			),
+			409,
+		)
+	}
+
+	const created = await insertConversationMessage(db, {
+		conversationId: session.conversationId,
+		workspaceId: session.workspaceId,
+		actorId: session.actorId,
+		content: formatQuestionsAsMarkdown(questions),
+		metadata: { question: { session_id: session.id, questions } },
+		sessionId: session.id,
+	})
+
+	// insertConversationMessage returns null only when a unique constraint
+	// suppressed the insert. This caller carries no dedupe key, so there is no
+	// conflict it can legitimately lose — null means something unexpected fired
+	// and the question is gone. It must NOT return 409: that is the status the
+	// hook reads as "expected, autonomous session, stay quiet", which would bury
+	// a real fault in the one branch nobody investigates.
+	if (!created) {
+		logger.error('Agent question insert returned no row', {
+			sessionId: session.id,
+			conversationId: session.conversationId,
+			questionCount: questions.length,
+		})
+		return c.json(createApiError('INTERNAL_ERROR', 'Question could not be posted'), 500)
+	}
+
+	logger.info('Posted agent question into conversation', {
+		sessionId: session.id,
+		conversationId: session.conversationId,
+		messageId: created.id,
+		questionCount: questions.length,
+	})
+
+	return c.json({ message_id: created.id, posted: true as const })
+}) as RouteHandler<typeof askSessionRoute, Env>)
 
 // GET /:id/logs - Paginated log history
 const getSessionLogsRoute = createRoute({
