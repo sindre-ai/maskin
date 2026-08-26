@@ -24,11 +24,29 @@ import { logger } from './logger'
 /** Longest single line emitted; anything beyond is truncated with a marker. */
 export const GUEST_LOG_MAX_LINE_BYTES = 4_000
 
-/** Per-session ceiling on lines emitted across BOTH streams. */
-export const GUEST_LOG_MAX_LINES = 2_000
+/**
+ * The volume cap is a *rate*, not a lifetime budget.
+ *
+ * A lifetime cap is the wrong shape for this feature. Interactive sessions run
+ * for hours; a moderately chatty helper would exhaust a per-session budget in
+ * the first minutes, leaving the sink dead for exactly the window where a wedge
+ * becomes interesting. In the incident behind PRs #1450-#1454 the diagnostic
+ * signal was a helper going quiet *late* — 15 minutes in, with no re-dial. A
+ * lifetime cap would have suppressed it.
+ *
+ * So the budget resets every window. Recent output is always available no
+ * matter how long the session has been alive, while disk-per-hour stays bounded
+ * (200 lines / 100 KB per minute is at most ~12k lines / ~6 MB per session-hour).
+ */
 
-/** Per-session ceiling on bytes emitted across BOTH streams. */
-export const GUEST_LOG_MAX_BYTES = 1_000_000
+/** Length of the rate-cap window. */
+export const GUEST_LOG_WINDOW_MS = 60_000
+
+/** Lines emitted per window, across BOTH streams. */
+export const GUEST_LOG_MAX_LINES_PER_WINDOW = 200
+
+/** Bytes emitted per window, across BOTH streams. */
+export const GUEST_LOG_MAX_BYTES_PER_WINDOW = 100_000
 
 const TRUNCATION_MARKER = '…[truncated]'
 const REDACTED = '[REDACTED]'
@@ -95,8 +113,17 @@ export interface GuestLogSinkOptions {
 	emit?: EmitFn
 	/** Overrideable in tests — reports the cap tripping. Defaults to `logger.warn`. */
 	emitCapped?: EmitFn
+	/** Lines allowed per window, across both streams. */
 	maxLines?: number
+	/** Bytes allowed per window, across both streams. */
 	maxBytes?: number
+	/** Length of the rate-cap window in ms. */
+	windowMs?: number
+	/**
+	 * Clock source. Injected rather than calling `Date.now()` inline so window
+	 * tests are deterministic without fake timers or sleeps.
+	 */
+	now?: () => number
 }
 
 export interface GuestLogSink {
@@ -108,21 +135,54 @@ export interface GuestLogSink {
 
 /**
  * One sink per `msb exec` process, shared by its stdout and stderr handlers so
- * the volume cap is a single per-session budget rather than one per stream.
+ * the rate cap is a single per-session budget rather than one per stream.
  */
 export function createGuestLogSink(options: GuestLogSinkOptions): GuestLogSink {
 	const { sessionId } = options
 	const emit = options.emit ?? ((msg, ctx) => logger.info(msg, ctx))
 	const emitCapped = options.emitCapped ?? ((msg, ctx) => logger.warn(msg, ctx))
-	const maxLines = options.maxLines ?? GUEST_LOG_MAX_LINES
-	const maxBytes = options.maxBytes ?? GUEST_LOG_MAX_BYTES
+	const maxLines = options.maxLines ?? GUEST_LOG_MAX_LINES_PER_WINDOW
+	const maxBytes = options.maxBytes ?? GUEST_LOG_MAX_BYTES_PER_WINDOW
+	const windowMs = options.windowMs ?? GUEST_LOG_WINDOW_MS
+	const now = options.now ?? (() => Date.now())
 
 	const partial: Record<GuestLogStreamName, string> = { stdout: '', stderr: '' }
+	// Per-window counters. `windowStart` is the open window's start instant.
+	let windowStart = now()
 	let lines = 0
 	let bytes = 0
-	let suppressed = 0
-	let capReported = false
+	let droppedInWindow = 0
+	let capReportedInWindow = false
+	// Lifetime tally, for the summary on close only — it never gates emission.
+	let totalSuppressed = 0
 	let closed = false
+
+	/**
+	 * Roll the window forward if it has expired, reporting what the closing
+	 * window dropped. Suppression is then visible in the timeline at the point
+	 * it ended, rather than inferred from a gap.
+	 */
+	function rollWindow(): void {
+		const elapsed = now() - windowStart
+		if (elapsed < windowMs) return
+		if (droppedInWindow > 0) {
+			emitCapped('guest log rate cap window closed; output resuming', {
+				sessionId,
+				source: 'msb-exec',
+				droppedLines: droppedInWindow,
+				windowMs,
+				maxLines,
+				maxBytes,
+			})
+		}
+		// Snap to a window boundary rather than to `now`, so a burst arriving
+		// mid-window does not shift the cadence.
+		windowStart += Math.floor(elapsed / windowMs) * windowMs
+		lines = 0
+		bytes = 0
+		droppedInWindow = 0
+		capReportedInWindow = false
+	}
 
 	function emitLine(stream: GuestLogStreamName, raw: string): void {
 		// Guest console is a PTY-ish stream: drop the CR of CRLF and any stray
@@ -130,15 +190,19 @@ export function createGuestLogSink(options: GuestLogSinkOptions): GuestLogSink {
 		const stripped = raw.replace(/\r/g, '')
 		if (stripped.trim() === '') return
 
+		rollWindow()
+
 		if (lines >= maxLines || bytes >= maxBytes) {
-			suppressed++
-			if (!capReported) {
-				capReported = true
-				emitCapped('guest log volume cap reached; suppressing further output', {
+			droppedInWindow++
+			totalSuppressed++
+			if (!capReportedInWindow) {
+				capReportedInWindow = true
+				emitCapped('guest log rate cap reached; suppressing output for this window', {
 					sessionId,
 					source: 'msb-exec',
 					lines,
 					bytes,
+					windowMs,
 					maxLines,
 					maxBytes,
 				})
@@ -186,11 +250,22 @@ export function createGuestLogSink(options: GuestLogSinkOptions): GuestLogSink {
 				if (rest !== '') emitLine(stream, rest)
 			}
 			closed = true
-			if (suppressed > 0) {
+			if (droppedInWindow > 0) {
+				emitCapped('guest log rate cap window closed; output resuming', {
+					sessionId,
+					source: 'msb-exec',
+					droppedLines: droppedInWindow,
+					windowMs,
+					maxLines,
+					maxBytes,
+				})
+			}
+			if (totalSuppressed > 0) {
 				emitCapped('guest log output suppressed', {
 					sessionId,
 					source: 'msb-exec',
-					suppressedLines: suppressed,
+					suppressedLines: totalSuppressed,
+					windowMs,
 					maxLines,
 					maxBytes,
 				})

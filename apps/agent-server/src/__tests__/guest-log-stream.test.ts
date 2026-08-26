@@ -18,13 +18,26 @@ type Emitted = { msg: string; ctx: Record<string, unknown> }
 function makeSink(overrides: Partial<GuestLogSinkOptions> = {}) {
 	const emitted: Emitted[] = []
 	const capped: Emitted[] = []
+	// Injected clock: window behaviour is tested by advancing this, so no fake
+	// timers and no sleeps.
+	let clock = 1_000_000
+	const advance = (ms: number) => {
+		clock += ms
+	}
 	const sink = createGuestLogSink({
 		sessionId: 'sess-abc',
 		emit: (msg, ctx) => emitted.push({ msg, ctx }),
 		emitCapped: (msg, ctx) => capped.push({ msg, ctx }),
+		now: () => clock,
 		...overrides,
 	})
-	return { sink, emitted, capped, lines: () => emitted.map((e) => e.ctx.line as string) }
+	return {
+		sink,
+		emitted,
+		capped,
+		advance,
+		lines: () => emitted.map((e) => e.ctx.line as string),
+	}
 }
 
 describe('createGuestLogSink line buffering', () => {
@@ -121,25 +134,78 @@ describe('createGuestLogSink line buffering', () => {
 	})
 })
 
-describe('createGuestLogSink volume cap', () => {
-	it('stops emitting past the line cap and reports it once', () => {
-		const { sink, lines, capped } = makeSink({ maxLines: 3 })
+describe('createGuestLogSink rate cap', () => {
+	const WINDOW = 60_000
+
+	it('stops emitting past the line cap within a window and reports it once', () => {
+		const { sink, lines, capped } = makeSink({ maxLines: 3, windowMs: WINDOW })
 		for (let i = 0; i < 10; i++) sink.push('stderr', `line ${i}\n`)
 		expect(lines()).toEqual(['line 0', 'line 1', 'line 2'])
 		expect(capped).toHaveLength(1)
-		expect(capped[0]?.msg).toContain('volume cap reached')
+		expect(capped[0]?.msg).toContain('rate cap reached')
 	})
 
-	it('stops emitting past the byte cap', () => {
-		const { sink, lines, capped } = makeSink({ maxBytes: 10 })
+	it('stops emitting past the byte cap within a window', () => {
+		const { sink, lines, capped } = makeSink({ maxBytes: 10, windowMs: WINDOW })
 		sink.push('stderr', 'aaaaaaaaaaaa\n')
 		sink.push('stderr', 'bbbb\n')
 		expect(lines()).toEqual(['aaaaaaaaaaaa'])
 		expect(capped[0]?.ctx.sessionId).toBe('sess-abc')
 	})
 
-	it('reports the suppressed line count on close', () => {
-		const { sink, capped } = makeSink({ maxLines: 2 })
+	it('shares one budget across stdout and stderr', () => {
+		const { sink, lines } = makeSink({ maxLines: 2, windowMs: WINDOW })
+		sink.push('stdout', 'a\n')
+		sink.push('stderr', 'b\n')
+		sink.push('stderr', 'c\n')
+		expect(lines()).toEqual(['a', 'b'])
+	})
+
+	// The property this cap exists for: a session that was chatty early must
+	// still be observable hours later. A lifetime budget would fail this.
+	it('lets output through in a later window after a saturating burst', () => {
+		const { sink, lines, advance } = makeSink({ maxLines: 2, windowMs: WINDOW })
+		for (let i = 0; i < 50; i++) sink.push('stderr', `burst ${i}\n`)
+		expect(lines()).toEqual(['burst 0', 'burst 1'])
+
+		advance(WINDOW)
+		sink.push('stderr', 'much later: input-stream exited\n')
+		expect(lines()).toContain('much later: input-stream exited')
+	})
+
+	it('keeps admitting a window of output for as long as the session runs', () => {
+		const { sink, lines, advance } = makeSink({ maxLines: 1, windowMs: WINDOW })
+		for (let w = 0; w < 20; w++) {
+			sink.push('stderr', `w${w}-a\n`)
+			sink.push('stderr', `w${w}-b\n`)
+			advance(WINDOW)
+		}
+		// One line admitted per window, every window — never goes permanently dark.
+		expect(lines()).toEqual(Array.from({ length: 20 }, (_, w) => `w${w}-a`))
+	})
+
+	it('re-arms the cap warning on each new window rather than firing once per session', () => {
+		const { sink, capped, advance } = makeSink({ maxLines: 1, windowMs: WINDOW })
+		sink.push('stderr', 'a1\n')
+		sink.push('stderr', 'a2\n')
+		advance(WINDOW)
+		sink.push('stderr', 'b1\n')
+		sink.push('stderr', 'b2\n')
+		const reached = capped.filter((c) => c.msg.includes('rate cap reached'))
+		expect(reached).toHaveLength(2)
+	})
+
+	it('reports how many lines the closing window dropped', () => {
+		const { sink, capped, advance } = makeSink({ maxLines: 2, windowMs: WINDOW })
+		for (let i = 0; i < 9; i++) sink.push('stderr', `line ${i}\n`)
+		advance(WINDOW)
+		sink.push('stderr', 'next window\n')
+		const closed = capped.find((c) => c.msg.includes('window closed'))
+		expect(closed?.ctx.droppedLines).toBe(7)
+	})
+
+	it('reports the total suppressed line count on close', () => {
+		const { sink, capped } = makeSink({ maxLines: 2, windowMs: WINDOW })
 		for (let i = 0; i < 9; i++) sink.push('stderr', `line ${i}\n`)
 		sink.close()
 		const summary = capped.find((c) => c.msg === 'guest log output suppressed')
@@ -147,18 +213,10 @@ describe('createGuestLogSink volume cap', () => {
 	})
 
 	it('does not report suppression when the cap was never reached', () => {
-		const { sink, capped } = makeSink({ maxLines: 100 })
+		const { sink, capped } = makeSink({ maxLines: 100, windowMs: WINDOW })
 		sink.push('stderr', 'quiet\n')
 		sink.close()
 		expect(capped).toEqual([])
-	})
-
-	it('shares one budget across stdout and stderr', () => {
-		const { sink, lines } = makeSink({ maxLines: 2 })
-		sink.push('stdout', 'a\n')
-		sink.push('stderr', 'b\n')
-		sink.push('stderr', 'c\n')
-		expect(lines()).toEqual(['a', 'b'])
 	})
 })
 
