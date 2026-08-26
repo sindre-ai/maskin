@@ -197,11 +197,27 @@ loki.write "default" {
 prometheus.exporter.unix "host" {
 	// COLLECTORS — an explicit list, not the default set.
 	//
-	// Grafana Cloud's free tier allows 10k active series. node_exporter's
-	// defaults run 500–1000 series on a box like this, so one or two hosts
-	// fit comfortably — but that headroom disappears fast if collectors get
-	// enabled "for completeness". Everything here earns its place against
-	// the capacity question above:
+	// Grafana Cloud's free tier allows 10k active series. MEASURED on this
+	// box: the original seven-collector set ran 460 series; the full list
+	// below runs 887 — about 9% of the allowance, for one host. The initial
+	// "500–1000, be frugal" assumption was pessimistic, and the headroom is
+	// far larger than it looked. The list is therefore chosen on whether a
+	// collector's cost is BOUNDED, not on whether it is strictly essential.
+	//
+	// (887 also came in well under the ~1,500–2,500 predicted when adding
+	// these — worth remembering that per-collector series counts are cheap
+	// to measure and easy to over-estimate. Measure before trimming.)
+	//
+	// The distinction that matters is fixed vs unbounded cardinality:
+	//
+	//   FIXED     — emits the same handful of series no matter how busy the
+	//               host gets. Costs the same on an idle box and a saturated
+	//               one. Safe to enable liberally.
+	//   UNBOUNDED — emits one series per entity, where entities keep
+	//               appearing. This is the metrics-side version of putting
+	//               sessionId in a Loki label.
+	//
+	// Everything here is FIXED. The core set:
 	//
 	//   cpu        — utilisation, per core, per mode
 	//   meminfo    — total/available/cached; the memory-pressure signal
@@ -211,24 +227,47 @@ prometheus.exporter.unix "host" {
 	//   netdev     — bytes/errors per interface
 	//   uname      — one series, but it labels kernel version onto the host
 	//
+	// Added so Grafana Cloud's prebuilt "Linux Server" integration dashboards
+	// populate — they query these by name, and a panel whose metric is absent
+	// renders empty with no explanation:
+	//
+	//   processes  — MEASURED: aggregate counts grouped by process STATE, not
+	//                one series per process. This box had 532 processes in 3
+	//                distinct states, so ~8 series total, and that does not
+	//                move with session count. An earlier revision of this file
+	//                claimed processes scaled with msb session churn and
+	//                excluded it on that basis; that was wrong. It is also the
+	//                closest thing here to a "how much work is this box doing"
+	//                signal.
+	//   vmstat     — page faults, OOM kills. Fixed set of counters.
+	//   filefd     — file descriptors allocated vs max. 2 series.
+	//   netstat    — TCP/UDP/ICMP counters. ~30 series, fixed.
+	//   sockstat   — socket counts by protocol. ~20 series, fixed.
+	//   softnet    — packet processing drops/squeezes. Fixed.
+	//   stat       — context switches, interrupts, procs running. Fixed.
+	//   timex      — clock sync status. Cheap, and clock drift on a VM host
+	//                silently corrupts log ordering, which this whole
+	//                directory depends on.
+	//   os         — one series carrying distro/version labels.
+	//   netclass   — per-interface link state/MTU/speed. Interfaces are few
+	//                and stable on this host.
+	//   nf_conntrack — connection tracking table usage vs limit. 2 series,
+	//                and exhausting it is a real failure mode for a box
+	//                running many microVMs behind a NAT.
+	//
 	// Deliberately NOT enabled:
 	//
-	//   textfile   — nothing writes .prom files on this box; enabling it is
-	//                an open door to unbounded series from a future script.
-	//   systemd    — per-unit series for every unit on the host. Useful in
-	//                principle, but agent-server's health is already covered
-	//                by its logs, and this is the single biggest cardinality
-	//                jump available here.
-	//   processes  — per-process-state series; msb spawns and reaps a process
-	//                per session, so this tracks session churn as metric
-	//                cardinality. Exactly the unbounded-label mistake the
-	//                logs pipeline avoids with sessionId.
-	//   interrupts, netstat, sockstat, vmstat, arp, netclass, hwmon, thermal,
-	//   nfs*, rapl, schedstat, softnet, xfs, zfs, mdadm, infiniband, ipvs,
-	//   bonding, btrfs, edac, entropy, fibrechannel, filefd, pressure,
-	//   stat, time, timex, udp_queues — either irrelevant to a single-tenant
-	//                KVM box, or hundreds of series answering questions we
-	//                have never once asked.
+	//   textfile   — nothing writes .prom files on this box. Enabling it is
+	//                an open door: any future script dropping a file there
+	//                adds series nobody reviewed. Off until something needs
+	//                it.
+	//
+	// `systemd` is enabled but HEAVILY FILTERED — see the block below. It is
+	// the one genuinely expensive collector here: MEASURED 513 systemd units
+	// on this host (163 of them services, the rest timers/sockets/mounts/
+	// devices), each reporting across several states. Unfiltered that is
+	// roughly 2,500 series — a quarter of the free-tier allowance spent on
+	// units nobody will ever query.
 	set_collectors = [
 		"cpu",
 		"meminfo",
@@ -237,7 +276,44 @@ prometheus.exporter.unix "host" {
 		"diskstats",
 		"netdev",
 		"uname",
+		"processes",
+		"vmstat",
+		"filefd",
+		"netstat",
+		"sockstat",
+		"softnet",
+		"stat",
+		"timex",
+		"os",
+		"netclass",
+		"nf_conntrack",
+		"systemd",
 	]
+
+	systemd {
+		// Restrict to agent-server's own unit. This turns the most expensive
+		// collector on the list into ~5 series while keeping the only part of
+		// it anyone would actually look at: is agent-server up, and how often
+		// has it restarted.
+		//
+		// Restart count is the useful one. A unit that is "active" right now
+		// but has restarted eleven times today is invisible in a status check
+		// and obvious here — and Restart=on-failure in the unit file means
+		// crash-looping looks healthy from the outside.
+		//
+		// NOTE: this is host-level service health, NOT per-agent-session
+		// metrics. No node_exporter collector can see inside the application;
+		// nothing here knows what a session is. Session-level visibility comes
+		// from the LOGS, which carry session_id on every line (see the LogQL
+		// cookbook in README.md). Metrics tell you the box is struggling; logs
+		// tell you which session caused it. Real per-session metrics would
+		// mean instrumenting agent-server itself — deliberately out of scope
+		// here, and noted as such at the top of this file.
+		unit_include = coalesce(sys.env("AGENT_SERVER_SYSTEMD_UNIT"), "maskin-agent-server[.]service")
+
+		// Restart counters are not on by default.
+		enable_restarts = true
+	}
 
 	filesystem {
 		// One series set per mount point, so a mount that appears and
