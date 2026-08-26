@@ -90,7 +90,50 @@ Set `AGENT_SERVER_INSTANCE` here too if the hostname is not something you would
 recognise in a dashboard. It defaults to the hostname and is applied to both
 pipelines — it is the label the correlation below depends on.
 
-### 3. Grant journal access
+### 3. Validate the config before restarting anything
+
+`alloy validate` parses the config and checks component wiring — misspelled
+argument names, blocks on components that do not accept them, references to a
+component that does not exist. It takes seconds and it is much better feedback
+than a service that fails to come back up.
+
+```sh
+alloy validate /etc/alloy/config.alloy
+```
+
+Note that it validates *structure*, not reachability: it will happily pass a
+config with the wrong `PROM_URL` or a Loki username in the Prometheus slot.
+Those show up in step 6.
+
+If you edit the config later, run this again before `systemctl restart alloy`,
+not after.
+
+### 4. Check the filesystem exclusions against reality
+
+The `filesystem` block excludes by filesystem *type* rather than by path,
+specifically so it does not depend on knowing where microsandbox keeps its
+storage. Confirm that holds on the actual box before trusting it:
+
+```sh
+# What, if anything, does msb mount on the host?
+mount | grep -iE 'msb|microsandbox'
+
+# What will node_exporter actually report after exclusions?
+df -hT -x tmpfs -x devtmpfs -x squashfs -x overlay
+```
+
+You want the second command to list a small, fixed set of real disks (ext4 /
+xfs / btrfs). If the first command shows per-sandbox mounts of a type *not* in
+`fs_types_exclude`, add that type — this is the one place where a wrong
+assumption turns into per-microVM series churning with session lifecycle, which
+is exactly the cardinality blowup the block exists to prevent.
+
+Start a session and re-run `mount | grep` while it is live, then again after it
+ends: a mount that appears and disappears with the session is the thing to
+exclude. If both commands come back empty, microsandbox is not creating host
+mounts at all and the type filter is simply belt-and-braces.
+
+### 5. Grant journal access
 
 Alloy reads the journal directly:
 
@@ -99,7 +142,7 @@ usermod -aG systemd-journal alloy
 systemctl restart alloy
 ```
 
-### 4. Verify
+### 6. Verify
 
 ```sh
 systemctl status alloy
@@ -119,14 +162,14 @@ In Grafana, confirm each half independently before trusting a dashboard:
 {job="maskin-agent-server"}          # logs arriving
 ```
 ```promql
-up{job="node"}                        # scrape succeeding; 1 = healthy
+up{job="integrations/node_exporter"}                        # scrape succeeding; 1 = healthy
 node_uname_info                       # metrics arriving, with the instance label
 ```
 
 If `up` is 1 but no `node_*` series exist, the scrape is working and
 remote_write is not — check `PROM_URL` and `PROM_USERNAME`.
 
-### 5. Set a Grafana Cloud usage alert — on day one, not after the first bill
+### 7. Set a Grafana Cloud usage alert — on day one, not after the first bill
 
 Do this before you consider the setup finished. See
 [Volume and the free-tier ceiling](#volume-and-the-free-tier-ceiling) for why
@@ -166,18 +209,26 @@ after the stream selector:
 
 ## Querying metrics
 
-All series carry `job="node"`, plus the `env` and `instance` labels shared with
-logs. Replace `finland-1` with your `AGENT_SERVER_INSTANCE` value.
+All series carry `job="integrations/node_exporter"`, plus the `env` and
+`instance` labels shared with logs. Replace `finland-1` with your
+`AGENT_SERVER_INSTANCE` value.
+
+That `job` value is Grafana Cloud's own convention, and matching it is worth
+doing: their prebuilt **Linux Server** integration dashboards filter on exactly
+this string, so they populate for this host without any panel building. The
+queries below are for ad-hoc investigation and for the correlation workflow —
+for "how is the box doing" at a glance, use the prebuilt dashboards rather than
+rebuilding them here.
 
 ```promql
 # CPU utilisation, 0–1, averaged across cores. The idle-mode subtraction is
 # the standard idiom: node_exporter reports time *spent*, per mode, and idle
 # is the only mode whose absence means "busy" regardless of why.
-1 - avg by (instance) (rate(node_cpu_seconds_total{mode="idle", job="node"}[5m]))
+1 - avg by (instance) (rate(node_cpu_seconds_total{mode="idle", job="integrations/node_exporter"}[5m]))
 
 # Per-core, to tell "one saturated core" from "the whole box is busy" — the
 # difference between a stuck session and genuine capacity exhaustion.
-1 - rate(node_cpu_seconds_total{mode="idle", job="node"}[5m])
+1 - rate(node_cpu_seconds_total{mode="idle", job="integrations/node_exporter"}[5m])
 
 # Memory pressure. MemAvailable, not MemFree: page cache is reclaimable, so
 # MemFree reads alarmingly low on a perfectly healthy box.
@@ -214,7 +265,7 @@ were doing.
 **1. Find the spike, and get its exact `instance` and time range.**
 
 ```promql
-1 - avg by (instance) (rate(node_cpu_seconds_total{mode="idle", job="node"}[5m])) > 0.9
+1 - avg by (instance) (rate(node_cpu_seconds_total{mode="idle", job="integrations/node_exporter"}[5m])) > 0.9
 ```
 
 The result series is labelled `instance="finland-1"`. Note the window from the
@@ -294,7 +345,7 @@ Two things make this worth an explicit alert rather than a note:
   collectors are deliberately off and why — read that comment before adding
   one.
 
-Set the usage alerts in [step 5](#5-set-a-grafana-cloud-usage-alert--on-day-one-not-after-the-first-bill).
+Set the usage alerts in [step 7](#7-set-a-grafana-cloud-usage-alert--on-day-one-not-after-the-first-bill).
 
 ## Why `sessionId` is not a label
 

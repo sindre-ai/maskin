@@ -214,13 +214,30 @@ prometheus.exporter.unix "host" {
 	]
 
 	filesystem {
-		// One series set per mount point. microsandbox creates and destroys
-		// mounts per microVM, so without these exclusions filesystem series
-		// would churn with session lifecycle — the metrics-side equivalent
-		// of putting sessionId in a Loki label. Only real, persistent
-		// filesystems are wanted here.
-		mount_points_exclude = "^/(dev|proc|sys|run|var/lib/(docker|microsandbox|msb)/.+)($|/)"
-		fs_types_exclude     = "^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|ramfs|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs)$"
+		// One series set per mount point, so a mount that appears and
+		// disappears per microVM would churn filesystem series with session
+		// lifecycle — the metrics-side equivalent of putting sessionId in a
+		// Loki label. Only real, persistent disks are wanted here.
+		//
+		// This filters by FILESYSTEM TYPE, not by path, and that is
+		// deliberate. microsandbox's storage location is its own default
+		// (MSB_BIN points at /root/.microsandbox/bin/msb, so it lives under
+		// root's home, not /var/lib) and it is not configured anywhere in
+		// this repo — a path-based exclusion would be guessing at an
+		// implementation detail we do not control, and would silently stop
+		// matching if msb ever moved. Type-based exclusion does not care
+		// where the mounts are.
+		//
+		// What survives this filter is ext4/xfs/btrfs — actual block
+		// devices. Anything a VM runtime conjures up (overlay, virtiofs,
+		// fuse passthrough, tmpfs, squashfs) is excluded wherever it lives.
+		// tmpfs in particular is excluded on purpose: it is RAM, meminfo
+		// already measures it, and /run/user/<uid> mounts come and go.
+		//
+		// mount_points_exclude is upstream node_exporter's default, verbatim
+		// — pseudo-filesystem directories only, no invented paths.
+		mount_points_exclude = "^/(dev|proc|run/credentials/.+|sys|var/lib/docker/.+|var/lib/containers/storage/.+)($|/)"
+		fs_types_exclude     = "^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fuse.*|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|ramfs|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tmpfs|tracefs|virtiofs)$"
 	}
 }
 
@@ -257,7 +274,16 @@ prometheus.scrape "host" {
 	// application instrumentation that does not exist here. `env` and
 	// `instance` are the labels shared with logs, and they are the ones
 	// correlation actually needs.
-	job_name = coalesce(sys.env("PROM_JOB_LABEL"), "node")
+	//
+	// The default is Grafana Cloud's own convention rather than a plain
+	// "node": their prebuilt Linux Server integration dashboards filter on
+	// job="integrations/node_exporter", so matching it means the whole
+	// prebuilt node dashboard set populates on its own. Under any other
+	// value those dashboards render empty and the CPU/memory/disk panels
+	// have to be rebuilt by hand — which is most of the reason this pipeline
+	// exists. This still satisfies the "not named after the application"
+	// intent above; it just uses the name the ecosystem already agrees on.
+	job_name = coalesce(sys.env("PROM_JOB_LABEL"), "integrations/node_exporter")
 
 	// Capacity monitoring. 60s over a month is ~43k samples per series;
 	// at 15s it would be four times the ingest for a view nobody reads at
