@@ -39,7 +39,7 @@ test.describe('Objects — Include archived toggle', () => {
 			await page.getByRole('button', { name: /^Display/ }).click()
 			const dialog = page.getByRole('dialog')
 			await expect(dialog.getByText('Show')).toBeVisible()
-			const toggle = dialog.getByRole('switch', { name: /include archived/i })
+			const toggle = dialog.getByRole('switch', { name: /show archived/i })
 			await expect(toggle).toBeVisible()
 			await expect(toggle).toHaveAttribute('data-state', 'unchecked')
 			await toggle.click()

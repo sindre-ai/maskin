@@ -45,8 +45,9 @@ test.describe('Objects Filtering', () => {
 		await expect(page.getByText('Filter Test Insight')).not.toBeVisible()
 		await expect(page.getByText('Filter Test Bet')).not.toBeVisible()
 
-		// Click All tab — back to all 3
-		await page.getByRole('button', { name: 'All' }).click()
+		// Click All tab — back to all 3. `exact` because the chip row also
+		// carries an "All (n)" button, which a substring match would tie with.
+		await page.getByRole('button', { name: 'All', exact: true }).click()
 		await expect(page.getByText('Filter Test Insight')).toBeVisible()
 		await expect(page.getByText('Filter Test Bet')).toBeVisible()
 		await expect(page.getByText('Filter Test Task')).toBeVisible()

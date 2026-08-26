@@ -110,7 +110,7 @@ test.describe('Objects list — v2 control row', () => {
 			await account.api.createObject(account.workspaceId, {
 				type: 'bet',
 				title: 'Done grouped bet',
-				status: 'done',
+				status: 'succeeded',
 			})
 
 			// No groupBy in the URL — the resting state is State (mockup 994–999).
@@ -169,8 +169,10 @@ test.describe('Objects list — v2 control row', () => {
 			await page.goto(`/${account.workspaceId}/objects?type=bet`)
 			await expect(page.getByText('Axis bet')).toBeVisible({ timeout: 15000 })
 
-			// Status is the resting axis, so its values drive the chip row.
-			await expect(page.getByRole('button', { name: /^active/ })).toBeVisible()
+			// Status is the resting axis, so its values drive the chip row. Match the
+			// chip's "active (n)" label — the group header reads "active n" and would
+			// otherwise tie.
+			await expect(page.getByRole('button', { name: /^active \(\d+\)$/ })).toBeVisible()
 
 			await page.getByRole('button', { name: /^Display/ }).click()
 			await page.getByRole('button', { name: 'Attention' }).click()
