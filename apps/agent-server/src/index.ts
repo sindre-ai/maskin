@@ -10,7 +10,7 @@ import { bearerAuth } from './lib/auth'
 import { resolveBuildInfo } from './lib/build-info'
 import { type AgentServerEnv, parseEnv } from './lib/env'
 import { logger } from './lib/logger'
-import { buildMetricsApp, createMetricsRegistry } from './lib/metrics'
+import { startMetricsServer } from './lib/metrics'
 import { Sentry } from './lib/sentry'
 import { StallTracker } from './lib/stall-tracker'
 import { ImageWarmer } from './services/image-warmer'
@@ -1727,33 +1727,17 @@ async function main(): Promise<void> {
 	})
 
 	// Metrics listener — SEPARATE from the main one, and bound to LOOPBACK.
-	//
-	// GET /metrics is unauthenticated by design (Prometheus scrapers do not
-	// speak our bearer scheme, and adding auth just to hand the credential to
-	// a collector on the same box buys nothing). That makes where it LISTENS
-	// the actual security boundary. The main listener above is 0.0.0.0: it is
-	// reachable from the public internet and from every session microVM, so a
-	// /metrics route on it would publish this box's build identity and — once
-	// the session gauges land — its live workload to anything that can reach
-	// port 3001, including the agent code running inside sessions.
-	//
-	// Alloy scrapes from this same host, so 127.0.0.1 costs nothing and closes
-	// that off at the kernel rather than in a middleware someone can reorder.
+	// Both of those decisions, and the reason a bind failure here must never be
+	// fatal, live in startMetricsServer / METRICS_HOSTNAME in lib/metrics.ts.
 	// METRICS_PORT=0 disables it entirely (local dev, or a box with no
 	// collector).
-	const metricsServer =
-		env.METRICS_PORT === 0
-			? null
-			: serve(
-					{
-						fetch: buildMetricsApp(createMetricsRegistry(buildInfo, stallTracker)).fetch,
-						port: env.METRICS_PORT,
-						hostname: '127.0.0.1',
-					},
-					({ port }) => {
-						logger.info('metrics listening', { port, host: '127.0.0.1' })
-					},
-				)
+	const metricsServer = startMetricsServer({
+		port: env.METRICS_PORT,
+		buildInfo,
+		stallTracker,
+		serve,
+		onError: (err) => Sentry.captureException(err),
+	})
 
 	// The HTTP listener above accepts connections immediately (health checks,
 	// VM-facing endpoints for sessions that survived the restart, etc.), but

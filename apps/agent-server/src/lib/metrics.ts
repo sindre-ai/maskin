@@ -1,7 +1,22 @@
 import { Hono } from 'hono'
 import { Gauge, Registry } from 'prom-client'
 import { type BuildInfo, resolveBuildInfo } from './build-info'
+import { logger } from './logger'
 import { STALL_REASONS, type StallTracker } from './stall-tracker'
+
+/**
+ * The metrics listener binds HERE and nowhere else.
+ *
+ * GET /metrics is unauthenticated by design (Prometheus scrapers do not speak
+ * our bearer scheme, and handing a credential to a collector on the same box
+ * buys nothing), which makes the bind address the actual security boundary.
+ * The main listener is 0.0.0.0 — reachable from the public internet AND from
+ * every session microVM — so serving /metrics there would publish this box's
+ * build identity and live workload to the agent code running inside sessions.
+ * Alloy scrapes from this same host, so loopback costs nothing and closes that
+ * off in the kernel rather than in a middleware someone can reorder later.
+ */
+export const METRICS_HOSTNAME = '127.0.0.1'
 
 /**
  * Application metrics for agent-server, in Prometheus text format.
@@ -136,4 +151,64 @@ export function buildMetricsApp(metrics: MetricsRegistry): Hono {
 	})
 
 	return app
+}
+
+/** The subset of `@hono/node-server`'s `serve` this module needs. Injectable for tests. */
+export type ServeFn = (
+	options: { fetch: Hono['fetch']; port: number; hostname: string },
+	onListen: (info: { port: number }) => void,
+) => { close: (cb?: () => void) => void; on: (event: 'error', cb: (err: Error) => void) => void }
+
+export type MetricsServerDeps = {
+	port: number
+	buildInfo: BuildInfo
+	stallTracker?: StallTracker
+	serve: ServeFn
+	onError?: (err: Error) => void
+}
+
+/**
+ * Start the LOOPBACK-ONLY metrics listener. Returns null when disabled
+ * (`port === 0`) or when the bind fails.
+ *
+ * BEST-EFFORT, NEVER FATAL. `serve()` attaches no 'error' handler of its own,
+ * and an unhandled 'error' on a net.Server is an uncaught exception — which
+ * Sentry's onUncaughtException integration turns into process exit, which
+ * systemd's Restart=always turns into a crashloop. That would mean an
+ * optional, loopback-only, disable-with-METRICS_PORT=0 diagnostics port taking
+ * down production session hosting.
+ *
+ * The failure is ordinary, not exotic: 9464 is the Prometheus Node-exporter
+ * default and Alloy runs node_exporter embedded on this same box, so a
+ * collision is a configuration slip away. A restart racing the previous
+ * process's socket does it too. Losing /metrics costs a dashboard panel;
+ * losing the process costs every session on the box.
+ *
+ * The MAIN listener deliberately does NOT get this treatment — a box that
+ * cannot serve sessions has no reason to stay up.
+ */
+export function startMetricsServer(deps: MetricsServerDeps): { close: () => void } | null {
+	if (deps.port === 0) return null
+
+	const app = buildMetricsApp(createMetricsRegistry(deps.buildInfo, deps.stallTracker))
+	const server = deps.serve(
+		{ fetch: app.fetch, port: deps.port, hostname: METRICS_HOSTNAME },
+		({ port }) => {
+			logger.info('metrics listening', { port, host: METRICS_HOSTNAME })
+		},
+	)
+
+	server.on('error', (err) => {
+		// Loud, specific, and survivable. `up{job="maskin-agent-server"}` going to
+		// 0 is the scrape-side signal; this is the box-side one.
+		logger.error('metrics listener failed — /metrics is UNAVAILABLE on this box', {
+			port: deps.port,
+			host: METRICS_HOSTNAME,
+			code: (err as NodeJS.ErrnoException).code,
+			error: String(err),
+		})
+		deps.onError?.(err)
+	})
+
+	return { close: () => server.close() }
 }

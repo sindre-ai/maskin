@@ -1,7 +1,13 @@
 import { hostname } from 'node:os'
 import { describe, expect, it, vi } from 'vitest'
 import { UNKNOWN, resolveBuildInfo } from '../lib/build-info'
-import { buildMetricsApp, createMetricsRegistry } from '../lib/metrics'
+import {
+	METRICS_HOSTNAME,
+	type ServeFn,
+	buildMetricsApp,
+	createMetricsRegistry,
+	startMetricsServer,
+} from '../lib/metrics'
 import { StallTracker } from '../lib/stall-tracker'
 
 /** Parse `name{a="1",b="2"} 1` into its label map. */
@@ -195,5 +201,71 @@ describe('GET /metrics — stalled-session gauges', () => {
 
 	it('omits the session gauges entirely when no tracker is wired', async () => {
 		expect(await (await fetchMetrics({})).text()).not.toContain('maskin_sessions_stalled')
+	})
+})
+
+describe('startMetricsServer', () => {
+	/** A `serve` stand-in that records its options and hands back the 'error' hook. */
+	function fakeServe() {
+		const calls: Array<{ port: number; hostname: string }> = []
+		let onError: ((err: Error) => void) | undefined
+		let closed = 0
+		const serve = ((options, onListen) => {
+			calls.push({ port: options.port, hostname: options.hostname })
+			onListen({ port: options.port })
+			return {
+				close: () => {
+					closed++
+				},
+				on: (_event: 'error', cb: (err: Error) => void) => {
+					onError = cb
+				},
+			}
+		}) as ServeFn
+		return {
+			serve,
+			calls,
+			closed: () => closed,
+			emitError: (err: Error) => onError?.(err),
+		}
+	}
+
+	const buildInfo = resolveBuildInfo({ MASKIN_COMMIT_SHA: 'abc123' })
+
+	it('binds to loopback only', () => {
+		// THE security boundary for this feature: /metrics is unauthenticated and
+		// the main listener is 0.0.0.0, reachable from every session microVM. A
+		// one-character edit here would publish build identity and live workload
+		// to agent code running inside sessions.
+		const f = fakeServe()
+		startMetricsServer({ port: 9464, buildInfo, serve: f.serve })
+		expect(f.calls).toEqual([{ port: 9464, hostname: METRICS_HOSTNAME }])
+		expect(METRICS_HOSTNAME).toBe('127.0.0.1')
+	})
+
+	it('does not listen at all when the port is 0', () => {
+		const f = fakeServe()
+		expect(startMetricsServer({ port: 0, buildInfo, serve: f.serve })).toBeNull()
+		expect(f.calls).toEqual([])
+	})
+
+	it('survives a bind failure instead of taking the process down', () => {
+		// `serve()` attaches no 'error' handler of its own, and an unhandled
+		// 'error' on a net.Server is an uncaught exception -> Sentry exits ->
+		// systemd Restart=always crashloops. Losing /metrics must cost a
+		// dashboard panel, never the sessions running on the box.
+		const f = fakeServe()
+		const onError = vi.fn()
+		startMetricsServer({ port: 9464, buildInfo, serve: f.serve, onError })
+
+		const err = Object.assign(new Error('listen EADDRINUSE'), { code: 'EADDRINUSE' })
+		expect(() => f.emitError(err)).not.toThrow()
+		expect(onError).toHaveBeenCalledWith(err)
+	})
+
+	it('closes the listener on shutdown', () => {
+		const f = fakeServe()
+		startMetricsServer({ port: 9464, buildInfo, serve: f.serve })?.close()
+		expect(f.closed()).toBe(1)
 	})
 })
