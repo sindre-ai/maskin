@@ -79,7 +79,7 @@ const STATE_META: Record<SessionState, StateMeta> = {
 		label: 'Failed',
 		Icon: AlertCircle,
 		iconBg: 'bg-status-failed-bg',
-		iconFg: 'bg-status-failed-text',
+		iconFg: 'text-status-failed-text',
 		dot: 'bg-status-failed-text',
 	},
 }
