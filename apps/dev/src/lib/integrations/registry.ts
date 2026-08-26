@@ -20,6 +20,8 @@ import {
 	meetWebhookVerifier,
 	resolveMeetInstallationId,
 } from './providers/google-meet/webhooks'
+import { config as googleSearchConsoleConfig } from './providers/google-search-console/config'
+import { revokeGoogleSearchConsoleGrant } from './providers/google-search-console/disconnect'
 import {
 	config as linearConfig,
 	resolveExternalId as linearResolveExternalId,
@@ -128,6 +130,12 @@ providers.set('google-meet', {
 	postInstall: setupMeetWatch,
 	webhookFanOut: fanOutMeetEvent,
 	preDisconnect: stopMeetWatch,
+})
+
+// google-search-console — OAuth provider only; daily sync lands in a separate task.
+providers.set('google-search-console', {
+	config: googleSearchConsoleConfig,
+	preDisconnect: revokeGoogleSearchConsoleGrant,
 })
 
 providers.set('posthog', {
