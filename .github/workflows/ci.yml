@@ -181,9 +181,22 @@ jobs:
             if [ "$status" != "000" ]; then break; fi
             sleep 1
           done
-          curl -sf --aws-sigv4 "aws:amz:us-east-1:s3" \
-            --user "admin:admin" \
-            -X PUT http://localhost:8333/agent-files
+          # The port opens before the S3 filer can actually serve a bucket PUT,
+          # so an open port is necessary but not sufficient — retry the PUT
+          # itself rather than assuming readiness. Without this a single early
+          # non-2xx fails the whole shard under `set -e`, with no diagnostics.
+          for i in $(seq 1 30); do
+            if curl -sf --aws-sigv4 "aws:amz:us-east-1:s3" \
+              --user "admin:admin" \
+              -X PUT http://localhost:8333/agent-files; then
+              echo "SeaweedFS ready; bucket agent-files created."
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::SeaweedFS never accepted the agent-files bucket PUT after 30s."
+          docker logs seaweedfs || true
+          exit 1
 
       - uses: pnpm/action-setup@v5
         with:

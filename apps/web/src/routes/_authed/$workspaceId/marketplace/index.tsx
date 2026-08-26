@@ -79,6 +79,12 @@ function MarketplacePage() {
 		})),
 	})
 	const allItems = useMemo(() => detailQueries.flatMap((q) => q.data?.items ?? []), [detailQueries])
+	// Per-loop item fetches feed the type counts and the item sections. Until
+	// they settle, `allItems` is empty for a reason that is not "no matches" —
+	// treating that as an empty result renders "nothing matches those filters"
+	// over data that is still arriving.
+	const itemsLoading = detailQueries.some((q) => q.isLoading)
+	const itemsFailed = detailQueries.some((q) => q.isError)
 
 	// Item-level type counts for the sidebar (prefer item granularity once loaded).
 	const itemCountsByType = useMemo(() => {
@@ -159,13 +165,16 @@ function MarketplacePage() {
 
 	const isMarketplaceEmpty = !isLoading && !isError && loops.length === 0
 	const hasResults = filteredLoops.length > 0 || filteredItems.length > 0
-	const isFilterEmpty = !isLoading && !isError && !isMarketplaceEmpty && !hasResults
+	const isFilterEmpty =
+		!isLoading && !isError && !itemsLoading && !isMarketplaceEmpty && !hasResults
 
 	return (
 		<div className="flex flex-col h-full min-h-0">
 			<PageHeader
 				stickyIdentity={
-					<MarketplaceHeaderIdentity count={data && loops.length > 0 ? allCount : undefined} />
+					<MarketplaceHeaderIdentity
+						count={data && loops.length > 0 && !itemsLoading && !itemsFailed ? allCount : undefined}
+					/>
 				}
 			/>
 
@@ -193,6 +202,13 @@ function MarketplacePage() {
 			</nav>
 
 			<div className="flex-1 min-w-0">
+				{/* The catalogue loaded but some loops' items didn't, so the type
+				    chips and counts below understate what's actually available. */}
+				{!isError && itemsFailed ? (
+					<p className="mb-3 text-[11.5px] text-muted-foreground">
+						Some catalogue items couldn't be loaded, so these counts may be incomplete.
+					</p>
+				) : null}
 				{isError ? (
 					<QueryStateError
 						title="Couldn't load the marketplace"
