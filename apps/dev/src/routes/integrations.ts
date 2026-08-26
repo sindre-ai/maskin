@@ -13,6 +13,7 @@ import type { PgNotifyBridge } from '@maskin/realtime'
 import { skjaldTranscriptionCompletedPayloadSchema } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq, isNotNull } from 'drizzle-orm'
+import { trackIntegrationConnected } from '../lib/analytics/integration-events'
 import { trackSlackMentionReceived } from '../lib/analytics/loop-events'
 import { markSlackMention } from '../lib/analytics/slack-attribution'
 import { decrypt, encrypt } from '../lib/crypto'
@@ -292,6 +293,12 @@ app.openapi(connectRoute, (async (c) => {
 			provider: providerName,
 			workspaceId,
 			integrationId,
+		})
+
+		void trackIntegrationConnected({
+			provider: providerName,
+			workspaceId,
+			authType: 'api_key',
 		})
 
 		const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
@@ -782,6 +789,12 @@ app.openapi(callbackRoute, (async (c) => {
 		},
 	})
 
+	void trackIntegrationConnected({
+		provider: providerName,
+		workspaceId: stateData.workspaceId,
+		authType: 'oauth',
+	})
+
 	// Redirect to frontend settings/integrations page
 	const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
 	return c.redirect(`${frontendUrl}/${stateData.workspaceId}/settings/integrations`)
@@ -944,6 +957,12 @@ app.openapi(completeIntegrationRoute, (async (c) => {
 			entityId: id,
 			data: { status: 'active', provider: existing.provider },
 		})
+	})
+
+	void trackIntegrationConnected({
+		provider: existing.provider,
+		workspaceId: existing.workspaceId,
+		authType: 'manual',
 	})
 
 	return c.json({ activated: true })
