@@ -26,6 +26,32 @@ function resultLine(overrides: Record<string, unknown> = {}) {
 	})
 }
 
+/** One streamed `assistant` line carrying a single text block. */
+function assistantLine(text: string, overrides: Record<string, unknown> = {}) {
+	return JSON.stringify({
+		type: 'assistant',
+		message: { id: 'gen-1', role: 'assistant', content: [{ type: 'text', text }] },
+		...overrides,
+	})
+}
+
+/** An `assistant` line whose only block is thinking — the trailing block that blanks `result`. */
+function thinkingLine(thinking: string) {
+	return JSON.stringify({
+		type: 'assistant',
+		message: { id: 'gen-1', role: 'assistant', content: [{ type: 'thinking', thinking }] },
+	})
+}
+
+/** The user-turn envelope SessionManager.writeInput persists — the turn boundary. */
+function userTurnLine(messageId: number) {
+	return JSON.stringify({
+		type: 'user',
+		message: { role: 'user', content: 'hello' },
+		maskin_message_id: messageId,
+	})
+}
+
 describe('Interactive turn finalizer', () => {
 	let workspaceId: string
 	let agentId: string
@@ -166,6 +192,195 @@ describe('Interactive turn finalizer', () => {
 		await feed(session.id, `${resultLine({ result: '   ', duration_ms: 9 })}\n`)
 
 		expect(await messagesFor(conversationId)).toHaveLength(0)
+	})
+
+	it('recovers the reply from the turn when the result envelope is blank', async () => {
+		// The live failure (session 9b050dec, 2026-08-25): the agent wrote its
+		// reply, then emitted a trailing `thinking` block, and the CLI closed the
+		// turn with `result: ' '`. The reply was dropped and the human saw
+		// silence until the session timed out two hours later.
+		const session = await seedSession()
+		if (!session) throw new Error('no session')
+
+		await feed(
+			session.id,
+			`${userTurnLine(1)}
+`,
+		)
+		await feed(
+			session.id,
+			`${assistantLine('Let me check the integrations')}
+`,
+		)
+		await feed(
+			session.id,
+			`${assistantLine("Tell me your office city and I'll build it.")}
+`,
+		)
+		await feed(
+			session.id,
+			`${thinkingLine('The tool result looks odd. I should end my turn.')}
+`,
+		)
+		await feed(
+			session.id,
+			`${resultLine({ result: ' ' })}
+`,
+		)
+
+		const rows = await messagesFor(conversationId)
+		expect(rows).toHaveLength(1)
+		expect(rows[0]?.content).toBe("Tell me your office city and I'll build it.")
+		expect(
+			(rows[0]?.metadata as { final_output?: { recovered?: boolean } })?.final_output?.recovered,
+		).toBe(true)
+	})
+
+	it('does not reach into the previous turn when a turn is genuinely silent', async () => {
+		const session = await seedSession()
+		if (!session) throw new Error('no session')
+
+		await feed(
+			session.id,
+			`${userTurnLine(1)}
+`,
+		)
+		await feed(
+			session.id,
+			`${assistantLine('First turn reply.')}
+`,
+		)
+		await feed(
+			session.id,
+			`${resultLine({ result: 'First turn reply.' })}
+`,
+		)
+		// Second turn: the agent replied via the MCP tool and closed silently.
+		await feed(
+			session.id,
+			`${userTurnLine(2)}
+`,
+		)
+		await feed(
+			session.id,
+			`${resultLine({ result: '', duration_ms: 7 })}
+`,
+		)
+
+		const rows = await messagesFor(conversationId)
+		expect(rows).toHaveLength(1)
+		expect(rows[0]?.content).toBe('First turn reply.')
+	})
+
+	it('does not recover a sub-agent result as the reply', async () => {
+		const session = await seedSession()
+		if (!session) throw new Error('no session')
+
+		await feed(
+			session.id,
+			`${userTurnLine(1)}
+`,
+		)
+		await feed(
+			session.id,
+			`${assistantLine('internal sub-agent finding', { parent_tool_use_id: 'call_parent' })}
+`,
+		)
+		await feed(
+			session.id,
+			`${resultLine({ result: '' })}
+`,
+		)
+
+		expect(await messagesFor(conversationId)).toHaveLength(0)
+	})
+
+	// The tests above feed one envelope per log row, which is what the
+	// agent-server ingest path does. Local Docker does not: session-manager
+	// writes `chunk.data` verbatim, so one row can carry several envelopes.
+	// These three pin the recovery scan against that shape.
+
+	it('recovers the reply when the whole turn arrives as one Docker chunk', async () => {
+		const session = await seedSession()
+		if (!session) throw new Error('no session')
+
+		// Reply and blank result in the SAME row — the single most likely place
+		// the lost text sits, and the one an exclusive `id < logId` scan skipped.
+		await feed(
+			session.id,
+			`${userTurnLine(1)}
+${assistantLine("Tell me your office city and I'll build it.")}
+${thinkingLine('The tool result looks odd. I should end my turn.')}
+${resultLine({ result: ' ' })}
+`,
+		)
+
+		const rows = await messagesFor(conversationId)
+		expect(rows).toHaveLength(1)
+		expect(rows[0]?.content).toBe("Tell me your office city and I'll build it.")
+		expect(
+			(rows[0]?.metadata as { final_output?: { recovered?: boolean } })?.final_output?.recovered,
+		).toBe(true)
+	})
+
+	it('does not re-post an earlier reply when the turn boundary is inside a packed chunk', async () => {
+		const session = await seedSession()
+		if (!session) throw new Error('no session')
+
+		await feed(
+			session.id,
+			`${assistantLine('First turn reply.')}
+`,
+		)
+		// Turn 1 closes and turn 2 opens in one chunk. A scan that cannot see
+		// inside the row walks straight past both boundaries and re-posts the
+		// first turn's reply — a message the human has already read.
+		await feed(
+			session.id,
+			`${resultLine({ result: 'First turn reply.' })}
+${userTurnLine(2)}
+`,
+		)
+		await feed(
+			session.id,
+			`${resultLine({ result: ' ', duration_ms: 7 })}
+`,
+		)
+
+		const rows = await messagesFor(conversationId)
+		expect(rows).toHaveLength(1)
+		expect(rows[0]?.content).toBe('First turn reply.')
+	})
+
+	it('recovers the reply from a turn that dispatched a sub-agent before closing blank', async () => {
+		const session = await seedSession()
+		if (!session) throw new Error('no session')
+
+		await feed(
+			session.id,
+			`${userTurnLine(1)}
+`,
+		)
+		await feed(
+			session.id,
+			`${assistantLine('Here is what I found.')}
+`,
+		)
+		// A Task tool's own result closes the sub-agent's run, not this turn.
+		await feed(
+			session.id,
+			`${resultLine({ result: 'sub-agent answer', parent_tool_use_id: 'call_parent' })}
+`,
+		)
+		await feed(
+			session.id,
+			`${resultLine({ result: '' })}
+`,
+		)
+
+		const rows = await messagesFor(conversationId)
+		expect(rows).toHaveLength(1)
+		expect(rows[0]?.content).toBe('Here is what I found.')
 	})
 
 	it('posts an error result and tags it', async () => {

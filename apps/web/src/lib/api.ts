@@ -1477,6 +1477,32 @@ export interface MessageFinalOutput {
 	is_error?: boolean
 	subtype?: string
 	truncated?: boolean
+	/** Reply was recovered from the turn's log because `result` came back blank. */
+	recovered?: boolean
+}
+
+export interface MessageQuestionOption {
+	label: string
+	description?: string
+}
+
+export interface MessageQuestionItem {
+	question: string
+	header: string
+	multi_select: boolean
+	options: MessageQuestionOption[]
+}
+
+/** An agent's AskUserQuestion, surfaced into chat as selectable options. */
+export interface MessageQuestion {
+	session_id: string
+	questions: MessageQuestionItem[]
+}
+
+/** Which options the human picked, posted back on their reply message. */
+export interface MessageQuestionAnswer {
+	question_message_id: number
+	answers: Array<{ header: string; selected: string[] }>
 }
 
 export interface MessageMetadata {
@@ -1491,6 +1517,13 @@ export interface MessageMetadata {
 	 */
 	source?: 'final_output'
 	final_output?: MessageFinalOutput
+	/**
+	 * Backend-owned; stripped from anything a client sends, so a forged message
+	 * cannot put an official-looking prompt in an agent's mouth.
+	 */
+	question?: MessageQuestion
+	/** Client-supplied: pairs a human's reply back to the question it answers. */
+	question_answer?: MessageQuestionAnswer
 }
 
 export interface MessageResponse {
