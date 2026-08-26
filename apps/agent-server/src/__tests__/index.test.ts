@@ -12,12 +12,14 @@ import {
 } from '../index'
 import type { AgentServerEnv } from '../lib/env'
 import { logger } from '../lib/logger'
+import { StallTracker } from '../lib/stall-tracker'
 import { ImageWarmer } from '../services/image-warmer'
 
 function makeEnv(overrides: Partial<AgentServerEnv> = {}): AgentServerEnv {
 	return {
 		PORT: 3001,
 		METRICS_PORT: 0,
+		AGENT_SERVER_STALL_THRESHOLD_MS: 300_000,
 		AGENT_SERVER_SECRET: 'test-secret-thirty-two-chars-long',
 		MSB_BIN: '/usr/local/bin/msb',
 		AGENT_SESSION_ROOT: '/tmp/agent-server-test',
@@ -2742,5 +2744,95 @@ describe('GET /sessions/:id/input/stream', () => {
 		} finally {
 			vi.useRealTimers()
 		}
+	})
+})
+
+describe('stall detection wiring', () => {
+	// The predicate itself is covered in stall-tracker.test.ts. What matters here
+	// is that the three facts it needs are actually fed to it from the routes —
+	// a correct predicate wired to nothing detects nothing, which is exactly how
+	// the seedInteractiveTurn bug survived: the local path did the work and the
+	// dispatched path silently didn't.
+	const auth = {
+		'content-type': 'application/json',
+		authorization: 'Bearer test-secret-thirty-two-chars-long',
+	}
+
+	function setup(thresholdMs = 60_000) {
+		let clock = 0
+		const stallTracker = new StallTracker({ now: () => clock, thresholdMs })
+		const { run } = makeRunner()
+		const app = buildApp({
+			env: makeEnv({ AGENT_SESSION_ROOT: sessionRoot }),
+			storage: null,
+			msb: { msbBin: '/usr/local/bin/msb', run },
+			stallTracker,
+		})
+		return {
+			app,
+			stallTracker,
+			advance: (ms: number) => {
+				clock += ms
+			},
+		}
+	}
+
+	it('opens a pending window when POST /input delivers a turn', async () => {
+		const { app, stallTracker, advance } = setup()
+		stallTracker.trackSession('sess-wire-1', { interactive: true })
+
+		const res = await app.request('/sessions/sess-wire-1/input', {
+			method: 'POST',
+			headers: auth,
+			body: JSON.stringify({ content: 'are you there?' }),
+		})
+		expect(res.status).toBe(200)
+
+		advance(60_000)
+		expect(stallTracker.counts().undelivered).toBe(1)
+	})
+
+	it('records the guest ack from the input stream, moving the session to no_output', async () => {
+		const { app, stallTracker, advance } = setup()
+		stallTracker.trackSession('sess-wire-2', { interactive: true })
+		await app.request('/sessions/sess-wire-2/input', {
+			method: 'POST',
+			headers: auth,
+			body: JSON.stringify({ content: 'hello' }),
+		})
+
+		// The guest connects reporting it consumed seq 1 — the only place that
+		// high-water mark is observable in this process.
+		const stream = await app.request('/sessions/sess-wire-2/input/stream?after=1')
+		expect(stream.status).toBe(200)
+		await stream.body?.cancel()
+
+		advance(60_000)
+		const counts = stallTracker.counts()
+		expect(counts.undelivered).toBe(0)
+		expect(counts.no_output).toBe(1)
+	})
+
+	it('resets the silence clock on agent output posted to /logs/batch', async () => {
+		const { app, stallTracker, advance } = setup()
+		stallTracker.trackSession('sess-wire-3', { interactive: true })
+		await app.request('/sessions/sess-wire-3/input', {
+			method: 'POST',
+			headers: auth,
+			body: JSON.stringify({ content: 'hello' }),
+		})
+		const stream = await app.request('/sessions/sess-wire-3/input/stream?after=1')
+		await stream.body?.cancel()
+
+		advance(30_000)
+		const batch = await app.request('/sessions/sess-wire-3/logs/batch', {
+			method: 'POST',
+			headers: auth,
+			body: JSON.stringify({ from: 1, lines: [JSON.stringify({ type: 'result' })] }),
+		})
+		expect(batch.status).toBe(200)
+
+		advance(60_000)
+		expect(stallTracker.counts().no_output).toBe(0)
 	})
 })

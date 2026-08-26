@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { DEFAULT_STALL_THRESHOLD_MS } from './stall-tracker'
 
 const envSchema = z.object({
 	PORT: z
@@ -50,6 +51,26 @@ const envSchema = z.object({
 	// Deployment environment stamped onto maskin_build_info as `env`. Same
 	// matching requirement, same default ('production') as alloy.alloy.
 	DEPLOY_ENV: z.string().optional(),
+	// Silence threshold for the stalled-session detector, in ms (see
+	// lib/stall-tracker.ts). Env-tunable on purpose: the `no_output` arm's right
+	// value has to come from observed data, and we want to move it with a
+	// restart rather than a deploy. Default 300000 (5 min).
+	AGENT_SERVER_STALL_THRESHOLD_MS: z
+		.string()
+		.optional()
+		.default(String(DEFAULT_STALL_THRESHOLD_MS))
+		.transform((v) => {
+			const n = Number(v)
+			// Below the guest's 90s re-dial interval every healthy unacked window
+			// looks like a wedge, so the floor is not cosmetic — it is the point
+			// at which this alert becomes guaranteed noise.
+			if (!Number.isFinite(n) || n < 90_000) {
+				throw new Error(
+					`Invalid AGENT_SERVER_STALL_THRESHOLD_MS: ${v} (expected >= 90000, the guest re-dial interval)`,
+				)
+			}
+			return n
+		}),
 	MSB_BIN: z.string().optional().default('/root/.microsandbox/bin/msb'),
 	MASKIN_AGENT_SERVER_PUBLIC_HOST: z.string().optional(),
 	// Hostname the microVM uses to reach this agent-server over the host loopback.

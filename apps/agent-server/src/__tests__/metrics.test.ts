@@ -2,6 +2,7 @@ import { hostname } from 'node:os'
 import { describe, expect, it, vi } from 'vitest'
 import { UNKNOWN, resolveBuildInfo } from '../lib/build-info'
 import { buildMetricsApp, createMetricsRegistry } from '../lib/metrics'
+import { StallTracker } from '../lib/stall-tracker'
 
 /** Parse `name{a="1",b="2"} 1` into its label map. */
 function parseLabels(line: string): Record<string, string> {
@@ -140,5 +141,59 @@ describe('GET /metrics', () => {
 	it('serves nothing but /metrics', async () => {
 		const app = buildMetricsApp(createMetricsRegistry(resolveBuildInfo({})))
 		expect((await app.request('http://localhost/health')).status).toBe(404)
+	})
+})
+
+describe('GET /metrics — stalled-session gauges', () => {
+	async function fetchWithTracker(tracker: StallTracker): Promise<Response> {
+		const app = buildMetricsApp(createMetricsRegistry(resolveBuildInfo({}), tracker))
+		return await app.request('http://localhost/metrics')
+	}
+
+	it('exposes every arm, including the zeroes', async () => {
+		// An absent series is indistinguishable from a broken scrape in PromQL,
+		// and an alert on a metric that only exists while firing cannot be tested.
+		const body = await (await fetchWithTracker(new StallTracker())).text()
+		expect(body).toContain('maskin_sessions_stalled{reason="never_seeded"} 0')
+		expect(body).toContain('maskin_sessions_stalled{reason="undelivered"} 0')
+		expect(body).toContain('maskin_sessions_stalled{reason="no_output"} 0')
+	})
+
+	it('reports the count for a stalled session without naming it', async () => {
+		let clock = 0
+		const tracker = new StallTracker({ now: () => clock, thresholdMs: 1000 })
+		tracker.trackSession('sess-abcdef0123456789', { interactive: true })
+		clock = 5000
+
+		const body = await (await fetchWithTracker(tracker)).text()
+		expect(body).toContain('maskin_sessions_stalled{reason="never_seeded"} 1')
+		expect(body).toContain('maskin_sessions_tracked 1')
+		// The whole operational design: count in the alert, id in the logs.
+		expect(body).not.toContain('sess-abcdef0123456789')
+	})
+
+	it('reports reattached sessions as unobserved rather than healthy', async () => {
+		const tracker = new StallTracker()
+		tracker.trackSession('survivor', { interactive: true, reattached: true })
+		const body = await (await fetchWithTracker(tracker)).text()
+		expect(body).toContain('maskin_sessions_unobserved 1')
+		expect(body).toContain('maskin_sessions_stalled{reason="undelivered"} 0')
+	})
+
+	it('recomputes on each scrape rather than serving a cached value', async () => {
+		let clock = 0
+		const tracker = new StallTracker({ now: () => clock, thresholdMs: 1000 })
+		tracker.trackSession('s1', { interactive: true })
+		const app = buildMetricsApp(createMetricsRegistry(resolveBuildInfo({}), tracker))
+
+		const first = await (await app.request('http://localhost/metrics')).text()
+		expect(first).toContain('maskin_sessions_stalled{reason="never_seeded"} 0')
+		clock = 5000
+		const second = await (await app.request('http://localhost/metrics')).text()
+		expect(second).toContain('maskin_sessions_stalled{reason="never_seeded"} 1')
+	})
+
+	it('omits the session gauges entirely when no tracker is wired', async () => {
+		expect(await (await fetchMetrics({})).text()).not.toContain('maskin_sessions_stalled')
 	})
 })

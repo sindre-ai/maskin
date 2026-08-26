@@ -62,6 +62,8 @@ for something else means replacing the `loki.write` component in
 | `../src/lib/metrics.ts` | The registry and the `/metrics` Hono route. Add new metrics here. |
 | `../src/lib/build-info.ts` | Resolves commit/version/instance/env. Commit and version are compile-time constants — see the note below. |
 | `alloy.env.example` | The values you must supply, with guidance on where to find each. |
+| `alerts/stalled-sessions.yaml` | Grafana alert rules for the stalled-session detector. Grafana Cloud cannot read them from disk — the file is the source of truth and is imported; see the header of the file itself. |
+| `../src/lib/stall-tracker.ts` | The stall predicate: which sessions count as wedged, and why an idle session does not. |
 
 ## What this does *not* cover
 
@@ -176,7 +178,10 @@ $EDITOR /etc/default/alloy                        # AGENT_SERVER_INSTANCE, DEPLO
 
 # agent-server — for the labels it puts inside maskin_build_info
 $EDITOR /opt/maskin/apps/agent-server/.env        # AGENT_SERVER_INSTANCE, DEPLOY_ENV,
-                                                  # METRICS_PORT (default 9464)
+                                                  # METRICS_PORT (default 9464),
+                                                  # AGENT_SERVER_STALL_THRESHOLD_MS
+                                                  #   (default 300000, floor 90000 —
+                                                  #    see "Stalled sessions" below)
 ```
 
 `METRICS_PORT` (agent-server's `.env`) and `AGENT_SERVER_METRICS_PORT`
@@ -427,11 +432,12 @@ gives aggregate process and thread counts — a proxy for how much work the box
 is doing — and the filtered `systemd` collector gives agent-server's up/down
 state and restart count, but neither attributes anything to a session.
 
-The application pipeline could, in principle, and eventually will — but today it
-exposes build identity only. When session gauges do land there they will be
-**aggregate** (counts by state), never per-session: a `session_id` label is one
-series per session forever, which is the metrics-side version of the Loki
-mistake described in [Why `sessionId` is not a label](#why-sessionid-is-not-a-label).
+The application pipeline can, and does — but only in **aggregate**. The
+`maskin_sessions_*` gauges below are counts by state, never per-session: a
+`session_id` label is one series per session forever, which is the metrics-side
+version of the Loki mistake described in
+[Why `sessionId` is not a label](#why-sessionid-is-not-a-label). Getting from
+the count to the session id is the log pivot, not a bigger metric.
 
 Session-level detail lives in the **logs**, where every line carries
 `session_id`. The division of labour: metrics tell you the box is struggling,
@@ -484,6 +490,128 @@ increase(node_systemd_service_restart_total{name="maskin-agent-server.service"}[
 # How much work is the box doing? Aggregate, not per-session — see above.
 node_processes_threads
 sum(node_processes_state)
+```
+
+## Stalled sessions
+
+The one alert on this page that exists to catch a *silent* failure. Everything
+else here improves diagnosis; this improves detection.
+
+```promql
+# The alerting arms. Non-zero = someone is sitting in front of a chat that will
+# never answer.
+maskin_sessions_stalled{reason="never_seeded"}
+maskin_sessions_stalled{reason="undelivered"}
+
+# Recorded, not alerted on (yet) — see below.
+maskin_sessions_stalled{reason="no_output"}
+
+# Denominator: how many live sessions this process is tracking.
+maskin_sessions_tracked
+
+# The restart blind spot. Non-zero means the stalled count above is INCOMPLETE.
+maskin_sessions_unobserved
+```
+
+| Arm | Means | Alerted? |
+|-----|-------|----------|
+| `never_seeded` | An interactive session is live with no turn ever delivered and no output. The `seedInteractiveTurn` shape — the guest blocks forever on a stdin nothing writes to. | Yes, `for: 2m` |
+| `undelivered` | A turn was enqueued and the guest's acked high-water mark never advanced past it. The dead-socket shape (PRs #1450–#1454). | Yes, `for: 2m` |
+| `no_output` | The guest acked the turn — it reached the CLI — and nothing has come back since. | **No.** Recorded only. |
+
+**Why an idle session is not a stalled session.** A chat sitting quiet because
+the human hasn't typed is healthy, and is the common case. Alerting on "no
+output" would fire constantly, we would mute it, and it would be worse than
+nothing. Every arm above requires an *asymmetry*: input pending and output
+absent, or (for `never_seeded`) an interactive session where neither ever
+happened.
+
+**Why `no_output` is not routed anywhere.** A genuinely long tool call or model
+response that prints nothing is indistinguishable from a wedge from outside the
+guest. Any output line resets its clock, so a chatty tool call never trips it —
+but a silent one would. Watch the gauge for a week, set the threshold from the
+observed distribution, and then add the third rule to
+`alerts/stalled-sessions.yaml`. Do not guess it.
+
+**The threshold** is `AGENT_SERVER_STALL_THRESHOLD_MS`, default 5 minutes,
+read at startup — tuning it is an env change and a restart, not a deploy. The
+floor is 90s, enforced at parse time, because that is `input-stream.js`'s
+`IDLE_TIMEOUT_MS`: below it, every healthy between-re-dials window looks like a
+wedge. The 5-minute default is ~3.3× that interval and is derived from the
+code, **not** from the observed re-dial distribution — the
+`input-stream: exiting with code N (lastSeq=...)` lines that would give a real
+p99 only started shipping with #1462. Once there is a week of them, re-derive
+it:
+
+```logql
+{instance="finland-1", source="msb-exec"} |= "input-stream: exiting with code"
+```
+
+and move the env var to the observed p99 plus headroom.
+
+### A firing alert that clears after a deploy is NOT evidence of a fix
+
+The detector's state is in-memory. A restart erases every session's turn
+history, and `reconcileOnBoot` re-registers the surviving sessions as
+**unobserved**, not healthy: they are excluded from every stall arm and counted
+in `maskin_sessions_unobserved` instead. So the stalled count drops to zero on
+every deploy regardless of what is actually happening inside those sessions.
+
+This matters precisely because we deploy when we are shipping a fix and most
+want to know whether it worked — the loop that made PRs #1450–#1454 take days.
+When a stall alert resolves, check `maskin_sessions_unobserved` and
+`maskin_build_info` for the same `instance` in the same window: if the commit
+changed at the moment the alert cleared, you learned nothing. Wait for the next
+turn on a fresh session and watch again.
+
+### Pivoting from a stall alert to the session id
+
+The alert gives a count, on purpose. The id is in the logs. This is the same
+correlation the CPU walkthrough below uses, with a narrower starting point.
+
+**1. Confirm the count and get the exact `instance` and window.**
+
+```promql
+maskin_sessions_stalled{reason=~"never_seeded|undelivered"} > 0
+```
+
+Note the `instance` (e.g. `finland-1`) and when the series went non-zero. The
+session has been wedged since roughly that timestamp minus the threshold.
+
+**2. Read the guest consoles for that host and window.**
+
+```logql
+{instance="finland-1", source="msb-exec"}
+```
+
+Set the time range to the window from step 1. Every line carries `session_id`
+as structured metadata.
+
+**3. Narrow to the input path — this is where both known wedges show.**
+
+```logql
+{instance="finland-1", source="msb-exec"} |= "input-stream"
+```
+
+A healthy session re-dials and reports a rising `lastSeq`. A wedged one either
+stops appearing entirely (`never_seeded`: it never got a turn to report) or
+re-dials forever with the same `lastSeq` (`undelivered`).
+
+**4. Cross-check the host side for the same session.**
+
+```logql
+{instance="finland-1", job="maskin-agent-server"} |= "input:"
+```
+
+`turn written to stream` with no subsequent `stream registered` carrying a
+higher `ackedThrough` is the host-side signature of `undelivered`. For
+`never_seeded`, the giveaway is the *absence* of any `input:` line at all for a
+session that `POST /sessions` accepted.
+
+**5. Take the session id and pin the whole session's output.**
+
+```logql
+{instance="finland-1", source="msb-exec"} | session_id="<uuid-from-step-3>"
 ```
 
 ## What commit is each host running

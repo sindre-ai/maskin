@@ -12,6 +12,7 @@ import { type AgentServerEnv, parseEnv } from './lib/env'
 import { logger } from './lib/logger'
 import { buildMetricsApp, createMetricsRegistry } from './lib/metrics'
 import { Sentry } from './lib/sentry'
+import { StallTracker } from './lib/stall-tracker'
 import { ImageWarmer } from './services/image-warmer'
 import { InputQueue } from './services/input-queue'
 import {
@@ -149,6 +150,14 @@ export type AppDeps = {
 	 * it with a reconcile pass).
 	 */
 	sessionPreviewState?: SessionPreviewState
+	/**
+	 * Feeds the `maskin_sessions_stalled` gauges (see lib/stall-tracker.ts).
+	 * Shared with `main()` for the same reason as the maps above: the metrics
+	 * registry lives out there, and reconcileOnBoot must register the sessions
+	 * it reattaches so they are counted as UNOBSERVED rather than silently
+	 * omitted. Omitted -> buildApp creates its own, which tests can ignore.
+	 */
+	stallTracker?: StallTracker
 }
 
 /**
@@ -583,7 +592,19 @@ export function buildApp(deps: AppDeps): Hono {
 	// Interactive-turn delivery is the one path where a silent failure looks
 	// exactly like a quiet conversation, so every state change is logged. Volume
 	// is a handful of lines per turn and nothing at all while idle.
-	const inputQueue = new InputQueue((event, data) => logger.info(`input: ${event}`, data))
+	const stallTracker =
+		deps.stallTracker ?? new StallTracker({ thresholdMs: deps.env.AGENT_SERVER_STALL_THRESHOLD_MS })
+	const inputQueue = new InputQueue((event, data) => {
+		logger.info(`input: ${event}`, data)
+		// `stream registered` is the ONLY place the guest's acked high-water mark
+		// is observable — it arrives as the `after` query param on every
+		// (re)connect and nothing else in this process sees it. A rising value
+		// here is the only proof a turn actually reached the CLI, which is
+		// exactly the split between the `undelivered` and `no_output` arms.
+		if (event === 'stream registered' && typeof data.ackedThrough === 'number') {
+			stallTracker.turnAcked(String(data.sessionId), data.ackedThrough)
+		}
+	})
 	// Connects the /sessions/:id/logs/ingest endpoint to monitorSession's buffer.
 	// Injectable via deps so main()'s boot-time reconcile pass can reattach
 	// monitorSession for sandboxes that survived a restart (see AppDeps.sessionLogRouters).
@@ -806,6 +827,9 @@ export function buildApp(deps: AppDeps): Hono {
 			const line = lines[i]
 			if (typeof line !== 'string') break
 			push?.(line)
+			// Agent output, and only agent output. /logs/ingest is deliberately not
+			// wired here — see StallTracker.outputObserved.
+			stallTracker.outputObserved(id, line)
 			ack = seq
 		}
 		sessionLogSeqs.set(id, ack)
@@ -1235,6 +1259,11 @@ export function buildApp(deps: AppDeps): Hono {
 			// push workspace to S3 → delete local dir → drain input queue.
 			// Register session in sessionLogRouters synchronously (before first await)
 			// so ingest calls from the forthcoming exec don't miss.
+			// Only interactive sessions take user turns, so only they can show the
+			// input-pending/output-absent asymmetry. INTERACTIVE=1 is set by
+			// apps/dev's session-manager and arrives in body.env.
+			stallTracker.trackSession(body.sessionId, { interactive: sessionEnv.INTERACTIVE === '1' })
+
 			void monitorSession(
 				body.sessionId,
 				sessionDir,
@@ -1266,6 +1295,7 @@ export function buildApp(deps: AppDeps): Hono {
 				})
 				.finally(() => {
 					inputQueue.drainSession(body.sessionId)
+					stallTracker.endSession(body.sessionId)
 					sessionLogSeqs.delete(body.sessionId)
 					sessionPreviewState.delete(body.sessionId)
 				})
@@ -1323,7 +1353,8 @@ export function buildApp(deps: AppDeps): Hono {
 			type: 'user',
 			message: { role: 'user', content: (body as Record<string, unknown>).content as string },
 		}
-		await inputQueue.enqueue(id, `${JSON.stringify(payload)}\n`)
+		const seq = await inputQueue.enqueue(id, `${JSON.stringify(payload)}\n`)
+		stallTracker.turnEnqueued(id, seq)
 		return c.json({ ok: true })
 	})
 
@@ -1400,6 +1431,12 @@ export type ReconcileOnBootDeps = {
 	 */
 	sessionPreviewState?: SessionPreviewState
 	fetchImpl?: typeof fetch
+	/**
+	 * Same tracker buildApp feeds — see AppDeps.stallTracker. Sessions
+	 * reattached here are registered as `reattached`, which counts them as
+	 * unobserved rather than healthy.
+	 */
+	stallTracker?: StallTracker
 }
 
 /**
@@ -1553,6 +1590,12 @@ export async function reconcileOnBoot(deps: ReconcileOnBootDeps): Promise<void> 
 			})
 		}
 
+		// Reattached, NOT healthy. This process has no turn history for it, so it
+		// is excluded from every stall arm and counted by
+		// maskin_sessions_unobserved instead — a stall that was firing before a
+		// restart must not read as resolved just because we forgot about it.
+		deps.stallTracker?.trackSession(name, { interactive: false, reattached: true })
+
 		void monitorSession(
 			name,
 			sessionDir,
@@ -1574,6 +1617,7 @@ export async function reconcileOnBoot(deps: ReconcileOnBootDeps): Promise<void> 
 			})
 			.finally(() => {
 				deps.sessionPreviewState?.delete(name)
+				deps.stallTracker?.endSession(name)
 			})
 	}
 
@@ -1652,6 +1696,7 @@ async function main(): Promise<void> {
 	const sessionLogRouters = new Map<string, (line: string) => void>()
 	const sessionExitCodes = new Map<string, number>()
 	const sessionPreviewState: SessionPreviewState = new Map()
+	const stallTracker = new StallTracker({ thresholdMs: env.AGENT_SERVER_STALL_THRESHOLD_MS })
 	const drainState = { draining: false }
 	// Starts false so POST /sessions 503s until reconcileOnBoot below finishes —
 	// see AppDeps.readyState for why that gate has to be closed before any new
@@ -1666,6 +1711,7 @@ async function main(): Promise<void> {
 		sessionLogRouters,
 		sessionExitCodes,
 		sessionPreviewState,
+		stallTracker,
 		drainState,
 		readyState,
 	})
@@ -1700,7 +1746,7 @@ async function main(): Promise<void> {
 			? null
 			: serve(
 					{
-						fetch: buildMetricsApp(createMetricsRegistry(buildInfo)).fetch,
+						fetch: buildMetricsApp(createMetricsRegistry(buildInfo, stallTracker)).fetch,
 						port: env.METRICS_PORT,
 						hostname: '127.0.0.1',
 					},
@@ -1722,6 +1768,7 @@ async function main(): Promise<void> {
 		sessionLogRouters,
 		sessionExitCodes,
 		sessionPreviewState,
+		stallTracker,
 	})
 		.catch((err) => {
 			logger.error('reconcile-on-boot failed unexpectedly', { error: String(err) })

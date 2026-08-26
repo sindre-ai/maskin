@@ -114,3 +114,32 @@ describe('parseEnv', () => {
 		).toThrow()
 	})
 })
+
+describe('AGENT_SERVER_STALL_THRESHOLD_MS', () => {
+	it('defaults to 5 minutes', () => {
+		expect(parseEnv({ AGENT_SERVER_SECRET: 'a'.repeat(32) }).AGENT_SERVER_STALL_THRESHOLD_MS).toBe(
+			300_000,
+		)
+	})
+
+	it('accepts an override so the threshold can move without a deploy', () => {
+		expect(
+			parseEnv({ AGENT_SERVER_SECRET: 'a'.repeat(32), AGENT_SERVER_STALL_THRESHOLD_MS: '600000' })
+				.AGENT_SERVER_STALL_THRESHOLD_MS,
+		).toBe(600_000)
+	})
+
+	it('rejects a threshold below the guest re-dial interval', () => {
+		// Under 90s every healthy unacked window looks like a wedge — the floor
+		// is the point at which this alert becomes guaranteed noise.
+		expect(() =>
+			parseEnv({ AGENT_SERVER_SECRET: 'a'.repeat(32), AGENT_SERVER_STALL_THRESHOLD_MS: '30000' }),
+		).toThrow(/AGENT_SERVER_STALL_THRESHOLD_MS/)
+	})
+
+	it('rejects a non-numeric threshold', () => {
+		expect(() =>
+			parseEnv({ AGENT_SERVER_SECRET: 'a'.repeat(32), AGENT_SERVER_STALL_THRESHOLD_MS: 'soon' }),
+		).toThrow(/AGENT_SERVER_STALL_THRESHOLD_MS/)
+	})
+})
