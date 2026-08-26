@@ -43,6 +43,17 @@ describe('Ubersuggest provider config', () => {
 	it('uses custom OAuth2 — dynamic client registration is not the generic flow', () => {
 		expect(config.auth.type).toBe('oauth2_custom')
 	})
+
+	it('declares the env key the frontend MCP preset interpolates', () => {
+		// mcp-servers.tsx injects `Bearer ${UBERSUGGEST_TOKEN}`; session-manager
+		// names the container env var from this envKey. A mismatch would leave the
+		// header unsubstituted and surface as an opaque 401 from the MCP server.
+		expect(config.mcp?.envKey).toBe('UBERSUGGEST_TOKEN')
+	})
+
+	it('does not auto-inject — Ubersuggest is opt-in per agent, not a workspace data pipe', () => {
+		expect(config.mcp?.autoInject).toBeFalsy()
+	})
 })
 
 describe('ubersuggestAuth.getAccessToken', () => {
