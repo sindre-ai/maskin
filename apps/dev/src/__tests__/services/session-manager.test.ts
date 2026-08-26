@@ -117,6 +117,19 @@ function createMockStorageProvider() {
 	}
 }
 
+/**
+ * Settings for a workspace that can actually launch a session.
+ *
+ * buildLaunchSpec refuses to launch a workspace with no LLM route at all — the
+ * credential pre-flight — so a `settings: {}` fixture now means "this workspace
+ * has nothing to run on", which is not what these launch tests are about. The
+ * cheapest realistic route is a workspace-level Anthropic key: it resolves
+ * without any extra DB read, so it doesn't perturb the ordered `selectQueue`
+ * each test sets up. Workspaces with genuinely no route are covered against
+ * real Postgres in integration/session-launch-preflight.test.ts.
+ */
+const LAUNCHABLE_WS_SETTINGS = { llm_keys: { anthropic: 'sk-ant-test-ws' } }
+
 describe('SessionManager', () => {
 	let manager: SessionManager
 	let mockResults: Record<string, unknown>
@@ -416,7 +429,11 @@ describe('SessionManager', () => {
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
-			const workspace = { id: session.workspaceId, byollmAllowed: true, settings: {} }
+			const workspace = {
+				id: session.workspaceId,
+				byollmAllowed: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
 
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
 				pulled: 0,
@@ -465,7 +482,11 @@ describe('SessionManager', () => {
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
-			const workspace = { id: session.workspaceId, settings: {} }
+			const workspace = {
+				id: session.workspaceId,
+				byollmAllowed: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
 
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
 				pulled: 0,
@@ -512,7 +533,11 @@ describe('SessionManager', () => {
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
-			const workspace = { id: session.workspaceId, settings: {} }
+			const workspace = {
+				id: session.workspaceId,
+				byollmAllowed: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
 
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
 				pulled: 0,
@@ -556,7 +581,11 @@ describe('SessionManager', () => {
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
-			const workspace = { id: session.workspaceId, settings: {} }
+			const workspace = {
+				id: session.workspaceId,
+				byollmAllowed: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
 
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
 				pulled: 0,
@@ -601,7 +630,11 @@ describe('SessionManager', () => {
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
-			const workspace = { id: session.workspaceId, byollmAllowed: true, settings: {} }
+			const workspace = {
+				id: session.workspaceId,
+				byollmAllowed: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
 
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
 				pulled: 0,
@@ -641,7 +674,11 @@ describe('SessionManager', () => {
 				apiKey: null,
 				tools: null,
 			}
-			const workspace = { id: session.workspaceId, byollmAllowed: true, settings: {} }
+			const workspace = {
+				id: session.workspaceId,
+				byollmAllowed: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
 
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
 				pulled: 0,
@@ -678,7 +715,11 @@ describe('SessionManager', () => {
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
-			const workspace = { id: session.workspaceId, byollmAllowed: true, settings: {} }
+			const workspace = {
+				id: session.workspaceId,
+				byollmAllowed: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
 
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
 				pulled: 0,
@@ -876,7 +917,7 @@ describe('SessionManager', () => {
 		}
 
 		function buildTestWorkspace(workspaceId: string) {
-			return { id: workspaceId, byollmAllowed: true, settings: {} }
+			return { id: workspaceId, byollmAllowed: true, settings: LAUNCHABLE_WS_SETTINGS }
 		}
 
 		beforeEach(() => {
@@ -1060,7 +1101,7 @@ describe('SessionManager', () => {
 		}
 
 		function buildTestWorkspace(workspaceId: string) {
-			return { id: workspaceId, byollmAllowed: true, settings: {} }
+			return { id: workspaceId, byollmAllowed: true, settings: LAUNCHABLE_WS_SETTINGS }
 		}
 
 		beforeEach(() => {
@@ -1277,7 +1318,11 @@ describe('SessionManager', () => {
 			})
 			return {
 				session,
-				workspace: { id: session.workspaceId, byollmAllowed: true, settings: {} },
+				workspace: {
+					id: session.workspaceId,
+					byollmAllowed: true,
+					settings: LAUNCHABLE_WS_SETTINGS,
+				},
 				agent: {
 					id: session.actorId,
 					type: 'agent',
@@ -1449,9 +1494,15 @@ describe('SessionManager', () => {
 
 			expect(mockFetchInstallationOwnerLogin).toHaveBeenCalledWith('install-needs-backfill')
 
+			// Skip the session row's own `config` write (buildLaunchSpec persists
+			// the resolved llm_route there) — the update under test is the
+			// integration row's.
 			const updateCall = calls.updates.find(
 				(u): u is { config: { owner_login?: string } } =>
-					typeof u === 'object' && u !== null && 'config' in u,
+					typeof u === 'object' &&
+					u !== null &&
+					'config' in u &&
+					!('llm_route' in ((u as { config: Record<string, unknown> }).config ?? {})),
 			) as { config: { owner_login?: string } } | undefined
 			expect(updateCall?.config.owner_login).toBe('acme-org')
 
@@ -1649,7 +1700,11 @@ describe('SessionManager', () => {
 				actionPrompt: 'Do the thing',
 				containerId: null,
 			})
-			const workspace = { id: session.workspaceId, byollmAllowed: true, settings: {} }
+			const workspace = {
+				id: session.workspaceId,
+				byollmAllowed: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
 			const agent = {
 				id: session.actorId,
 				type: 'agent' as const,
@@ -2619,7 +2674,11 @@ describe('SessionManager', () => {
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
-			const workspace = { id: session.workspaceId, byollmAllowed: true, settings: {} }
+			const workspace = {
+				id: session.workspaceId,
+				byollmAllowed: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
 
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
 				pulled: 0,
@@ -2656,7 +2715,11 @@ describe('SessionManager', () => {
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
-			const workspace = { id: session.workspaceId, settings: {} }
+			const workspace = {
+				id: session.workspaceId,
+				byollmAllowed: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
 
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
 				pulled: 0,
@@ -2704,7 +2767,11 @@ describe('SessionManager', () => {
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
-			const workspace = { id: session.workspaceId, byollmAllowed: true, settings: {} }
+			const workspace = {
+				id: session.workspaceId,
+				byollmAllowed: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
 
 			vi.spyOn(AgentStorageManager.prototype, 'pullAgentFiles').mockResolvedValue(undefined)
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
@@ -2889,7 +2956,11 @@ describe('SessionManager', () => {
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
-			const workspace = { id: session.workspaceId, settings: {} }
+			const workspace = {
+				id: session.workspaceId,
+				byollmAllowed: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
 
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
 				pulled: 0,
@@ -3097,6 +3168,102 @@ describe('SessionManager', () => {
 					typeof u === 'object' && u !== null && (u as { status?: string }).status === 'failed',
 			)
 			expect(failedUpdate).toBeUndefined()
+		})
+	})
+
+	describe('unhealthy MCP server warning', () => {
+		function initLine(servers: Array<{ name: string; status: string }>) {
+			return JSON.stringify({ type: 'system', subtype: 'init', mcp_servers: servers })
+		}
+
+		function systemInserts() {
+			return calls.inserts.filter(
+				(row): row is { stream: string; content: string } =>
+					typeof row === 'object' &&
+					row !== null &&
+					(row as { stream?: string }).stream === 'system',
+			)
+		}
+
+		// The production failure: the browser sidecar attached fine, but the
+		// playwright MCP server never connected, so the agent had no browser
+		// tools and nothing anywhere said so.
+		it('writes a system log naming a server that never connected', async () => {
+			const sessionId = randomUUID()
+			await manager.appendRemoteSessionLogs(sessionId, [
+				{
+					stream: 'stdout',
+					content: `${initLine([
+						{ name: 'maskin', status: 'connected' },
+						{ name: 'playwright', status: 'pending' },
+					])}
+`,
+				},
+			])
+
+			const warnings = systemInserts().filter((r) => r.content.includes('did not connect'))
+			expect(warnings).toHaveLength(1)
+			expect(warnings[0].content).toContain('playwright (pending)')
+			expect(warnings[0].content).not.toContain('maskin')
+		})
+
+		// Regression guard: Docker delivers chunks, not lines. The init envelope
+		// is emitted exactly once per session and is one of the largest lines
+		// the runtime writes, so it can straddle a chunk boundary. Before the
+		// remainder buffer, both halves failed to parse and the warning — the
+		// entire point of this check — was lost with no trace.
+		it('still warns when the init line is split across two chunks', async () => {
+			const sessionId = randomUUID()
+			const line = `${initLine([
+				{ name: 'maskin', status: 'connected' },
+				{ name: 'playwright', status: 'pending' },
+			])}
+`
+			const cut = Math.floor(line.length / 2)
+			const emit = (
+				manager as unknown as {
+					emitUnhealthyMcpWarningIfAny: (id: string, chunk: string) => Promise<void>
+				}
+			).emitUnhealthyMcpWarningIfAny.bind(manager)
+
+			await emit(sessionId, line.slice(0, cut))
+			expect(systemInserts().filter((r) => r.content.includes('did not connect'))).toHaveLength(0)
+
+			await emit(sessionId, line.slice(cut))
+			const warnings = systemInserts().filter((r) => r.content.includes('did not connect'))
+			expect(warnings).toHaveLength(1)
+			expect(warnings[0].content).toContain('playwright (pending)')
+		})
+
+		// The stream re-attaches with `tail: 'all'` on resume and with a ~1s
+		// `since` overlap after a transient drop, so the init line is replayed.
+		// The warning should read once per session, not once per reconnect.
+		it('warns only once when the init line is replayed', async () => {
+			const sessionId = randomUUID()
+			const chunk = `${initLine([{ name: 'playwright', status: 'pending' }])}
+`
+			const emit = (
+				manager as unknown as {
+					emitUnhealthyMcpWarningIfAny: (id: string, chunk: string) => Promise<void>
+				}
+			).emitUnhealthyMcpWarningIfAny.bind(manager)
+
+			await emit(sessionId, chunk)
+			await emit(sessionId, chunk)
+
+			expect(systemInserts().filter((r) => r.content.includes('did not connect'))).toHaveLength(1)
+		})
+
+		it('stays silent when every server connected', async () => {
+			const sessionId = randomUUID()
+			await manager.appendRemoteSessionLogs(sessionId, [
+				{
+					stream: 'stdout',
+					content: `${initLine([{ name: 'maskin', status: 'connected' }])}
+`,
+				},
+			])
+			expect(systemInserts().filter((r) => r.content.includes('did not connect'))).toHaveLength(0)
 		})
 	})
 

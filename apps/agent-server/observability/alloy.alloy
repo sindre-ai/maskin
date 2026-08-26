@@ -1,5 +1,5 @@
-// Grafana Alloy — ship agent-server's structured logs to Loki, and this
-// host's resource metrics to Prometheus.
+// Grafana Alloy — ship agent-server's structured logs to Loki, and this host's
+// resource metrics plus agent-server's own build metrics to Prometheus.
 //
 // This is HOST configuration, not application configuration. agent-server
 // itself has no vendor SDK and no knowledge of Loki: it writes one NDJSON
@@ -9,12 +9,19 @@
 // log backend is named. Swapping Loki for another destination means replacing
 // the loki.write component below and nothing else.
 //
-// The metrics half is even more detached from the application: node_exporter
-// reads /proc and /sys. Nothing in apps/agent-server/src/ is involved, and
-// there is deliberately no /metrics endpoint on agent-server — application
-// instrumentation (session gauges, dispatch latency) is separate, larger work.
+// There are THREE pipelines here, in this order:
 //
-// The two pipelines share the `env` and `instance` labels on purpose: that
+//   1. LOGS      — journald → Loki
+//   2. HOST      — node_exporter (embedded) → Prometheus
+//   3. APP       — agent-server's own /metrics → Prometheus
+//
+// The host half is fully detached from the application: node_exporter reads
+// /proc and /sys, and nothing in apps/agent-server/src/ is involved. The app
+// half is not — it scrapes a real endpoint the service serves, on a
+// loopback-only listener. That endpoint currently carries build identity
+// (maskin_build_info) only; session gauges are the next piece of work.
+//
+// All three pipelines share the `env` and `instance` labels on purpose: that
 // shared identity is what lets you pivot from a CPU spike in PromQL to this
 // host's logs for the same instant in LogQL. See README.md → "Correlating
 // metrics and logs".
@@ -320,9 +327,11 @@ prometheus.exporter.unix "host" {
 		// nothing here knows what a session is. Session-level visibility comes
 		// from the LOGS, which carry session_id on every line (see the LogQL
 		// cookbook in README.md). Metrics tell you the box is struggling; logs
-		// tell you which session caused it. Real per-session metrics would
-		// mean instrumenting agent-server itself — deliberately out of scope
-		// here, and noted as such at the top of this file.
+		// tell you which session caused it. Real per-session metrics mean
+		// instrumenting agent-server itself — which the APP pipeline at the
+		// bottom of this file now does, though so far only for build identity.
+		// Aggregate session gauges land there next; they will never appear
+		// here, because no node_exporter collector can produce them.
 		unit_include = coalesce(sys.env("AGENT_SERVER_SYSTEMD_UNIT"), "maskin-agent-server[.]service")
 
 		// Restart counters are not on by default.
@@ -473,4 +482,106 @@ prometheus.remote_write "default" {
 		min_keepalive_time = "5m"
 		max_keepalive_time = "8h"
 	}
+}
+
+// ===========================================================================
+// METRICS — agent-server application → Prometheus
+// ===========================================================================
+//
+// The third pipeline, and the only one that talks to the APPLICATION rather
+// than to the host or the journal. It answers "what commit is each box
+// running right now", without ssh — a question that cost real debugging time
+// twice (the #1450–#1454 wedge investigation asked it four separate times and
+// answered it by grepping container image layers; #1465 found the deploy
+// workflow had never installed the systemd unit, so the repo copy and the live
+// copy had silently diverged for months).
+//
+// Source is GET /metrics on agent-server's LOOPBACK-ONLY listener — a second
+// HTTP server bound to 127.0.0.1:METRICS_PORT, separate from the public
+// listener on PORT. The endpoint is unauthenticated, so the bind address is
+// the security boundary; see the comment on the metrics listener in
+// apps/agent-server/src/index.ts. Alloy runs on the same box, so scraping
+// loopback costs nothing.
+//
+// A note on the top of this file: it used to say there was "deliberately no
+// /metrics endpoint on agent-server". That is no longer true — this is it.
+// The scope claim behind it still holds, though: this is build identity only.
+// Session gauges are the next piece of work.
+
+// ---------------------------------------------------------------------------
+// Target — a static loopback endpoint, relabelled to match the other pipelines
+// ---------------------------------------------------------------------------
+
+discovery.relabel "agent_server" {
+	targets = [{
+		__address__ = "127.0.0.1:" + coalesce(sys.env("AGENT_SERVER_METRICS_PORT"), "9464"),
+	}]
+
+	// The join key. This MUST be the same expression the journal source and
+	// the node_exporter pipeline use, or {instance="finland-1"} stops
+	// selecting the same host across logs and metrics — which is the entire
+	// reason the label exists. Without this rule, prometheus.scrape would set
+	// instance="127.0.0.1:9464": meaningless, and identical on every box.
+	//
+	// Note this deliberately OVERWRITES the `instance` label the application
+	// also puts on maskin_build_info. The two are computed from the same env
+	// var and should agree; if they ever drift, the collector's value is the
+	// one that wins, and the mismatch is visible as a
+	// maskin_build_info{instance=...} label whose value differs from the
+	// series' own instance.
+	rule {
+		target_label = "instance"
+		replacement  = coalesce(sys.env("AGENT_SERVER_INSTANCE"), constants.hostname)
+	}
+
+	rule {
+		target_label = "env"
+		replacement  = coalesce(sys.env("DEPLOY_ENV"), "production")
+	}
+
+	// `job` is set HERE, in a relabel rule — never as a static label and never
+	// left to prometheus.scrape's job_name alone.
+	//
+	// This is the third instance of the same trap in this file (see
+	// loki.relabel.journal and discovery.relabel.host above). A component that
+	// pre-stamps `job` beats job_name, because job_name only fills in targets
+	// that have none. Everything looks healthy while every documented query
+	// returns empty.
+	//
+	// A static target list like this one carries no `job` of its own, so
+	// job_name below would in fact work today. The rule is here anyway: it
+	// costs one block, it is what the other two pipelines do, and it means a
+	// future change to how these targets are discovered — a discovery.http, a
+	// second exporter — cannot silently reintroduce the bug.
+	//
+	// The value IS named after the application, unlike the host pipeline's
+	// "integrations/node_exporter". These series describe the agent-server
+	// process itself, so naming them after it is correct here — and it matches
+	// LOKI_JOB_LABEL, so job="maskin-agent-server" selects this service in both
+	// LogQL and PromQL.
+	rule {
+		target_label = "job"
+		replacement  = coalesce(sys.env("AGENT_SERVER_PROM_JOB_LABEL"), "maskin-agent-server")
+	}
+}
+
+prometheus.scrape "agent_server" {
+	targets    = discovery.relabel.agent_server.output
+	forward_to = [prometheus.remote_write.default.receiver]
+
+	// Kept aligned with the relabel rule above so the two can never disagree,
+	// even though the rule is what actually decides the label.
+	job_name = coalesce(sys.env("AGENT_SERVER_PROM_JOB_LABEL"), "maskin-agent-server")
+
+	// 60s, matching the host pipeline. maskin_build_info changes only on
+	// deploy; a faster interval would buy nothing but ingest. The session
+	// gauges that land here next are a capacity signal, not a
+	// second-resolution one, so this stays appropriate for them too.
+	scrape_interval = "60s"
+	scrape_timeout  = "10s"
+
+	// agent-server down (or mid-restart) makes this scrape fail, which is
+	// correct and self-describing: `up{job="maskin-agent-server"}` becomes 0
+	// and the build-info series goes stale. No extra alerting wiring is needed
+	// for "is the process even there".
 }

@@ -64,25 +64,24 @@ test.describe('Bulk-select — grouped list selection', () => {
 			})
 
 			await page.goto(`/${account.workspaceId}/objects?groupBy=status`)
-			// Groups start collapsed, so leaf titles aren't rendered yet — wait
-			// for the group-header label with its row count instead.
-			await expect(page.getByText('define', { exact: true })).toBeVisible({ timeout: 10000 })
-			await expect(page.getByText('Group Define Bet A')).not.toBeVisible()
-
-			// Expand the define group; its two leaves appear under it.
-			await page.getByRole('button', { name: /^define/ }).click()
+			// Groups rest open, so the header and its leaves render together.
+			await expect(page.getByRole('button', { name: /^define \d+$/ })).toBeVisible({
+				timeout: 10000,
+			})
 			await expect(page.getByText('Group Define Bet A')).toBeVisible()
 
-			// Selecting leaves one at a time grows the bulk bar count.
-			const leafCheckboxes = page.getByRole('checkbox', { name: 'Select row' })
-			await leafCheckboxes.first().click()
+			// Selecting leaves one at a time grows the bulk bar count. Scope each
+			// checkbox to its own row — other status groups are open too, so a
+			// positional selector would not reliably land on the define leaves.
+			const leafRow = (title: string) => page.locator('[data-obj-id]').filter({ hasText: title })
+			await leafRow('Group Define Bet A').getByRole('checkbox', { name: 'Select row' }).click()
 			await expect(page.getByLabel('1 selected')).toBeVisible()
 
-			await leafCheckboxes.nth(1).click()
+			await leafRow('Group Define Bet B').getByRole('checkbox', { name: 'Select row' }).click()
 			await expect(page.getByLabel('2 selected')).toBeVisible()
 
 			// Selection is keyed by object id and survives collapsing the group.
-			await page.getByRole('button', { name: /^define/ }).click()
+			await page.getByRole('button', { name: /^define \d+$/ }).click()
 			await expect(page.getByText('Group Define Bet A')).not.toBeVisible()
 			await expect(page.getByLabel('2 selected')).toBeVisible()
 		})
@@ -108,7 +107,9 @@ test.describe('Bulk-select — archive action', () => {
 				status: 'signal',
 			})
 
-			await page.goto(`/${account.workspaceId}/objects`)
+			// Archive is a bet-only bulk action (T5), so the bar only offers it while
+			// the bet tab is active.
+			await page.goto(`/${account.workspaceId}/objects?type=bet`)
 			await expect(page.getByText('Archive Bet A')).toBeVisible({ timeout: 10000 })
 			await expect(page.getByText('Archive Bet B')).toBeVisible()
 

@@ -1,7 +1,7 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import { authMiddleware } from '@maskin/auth'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { _resetFeatureFlagConfig } from '../../lib/feature-flags'
+import { FLAGS, _resetFeatureFlagConfig } from '../../lib/feature-flags'
 import { jsonGet } from '../helpers'
 import { createTestApp, createTestContext } from '../setup'
 
@@ -26,23 +26,30 @@ beforeEach(() => setEnv({}))
 afterEach(() => setEnv({}))
 
 describe('GET /api/feature-flags', () => {
-	// `FLAGS` is empty since `new-design` was retired, so the endpoint resolves
-	// an empty map — and, critically, an id left behind in someone's
-	// FF_TESTER_FEATURES cannot resurrect a flag the registry no longer knows.
-	it('returns an empty flag map while no flags are registered', async () => {
+	// Every registered flag resolves — false by default, so an actor who is not
+	// a configured tester sees the pre-v2 branch.
+	it('resolves every registered flag to false when no env is set', async () => {
 		const { app } = createTestApp(featureFlagsRoutes, '/api/feature-flags', TESTER)
 
 		const res = await app.request(jsonGet('/api/feature-flags'))
 		expect(res.status).toBe(200)
-		expect(await res.json()).toEqual({ flags: {} })
+		expect(await res.json()).toEqual({ flags: { [FLAGS.NEW_DESIGN]: false } })
 	})
 
-	it('never invents a flag from an unregistered id in FF_TESTER_FEATURES', async () => {
-		setEnv({ FF_TESTER_FEATURES: 'new-design', FF_TESTER_ACTOR_IDS: TESTER })
+	it('turns a registered flag on for a listed tester', async () => {
+		setEnv({ FF_TESTER_FEATURES: FLAGS.NEW_DESIGN, FF_TESTER_ACTOR_IDS: TESTER })
 		const { app } = createTestApp(featureFlagsRoutes, '/api/feature-flags', TESTER)
 
 		const res = await app.request(jsonGet('/api/feature-flags'))
-		expect(await res.json()).toEqual({ flags: {} })
+		expect(await res.json()).toEqual({ flags: { [FLAGS.NEW_DESIGN]: true } })
+	})
+
+	it('never invents a flag from an unregistered id in FF_TESTER_FEATURES', async () => {
+		setEnv({ FF_TESTER_FEATURES: 'not-a-real-flag', FF_TESTER_ACTOR_IDS: TESTER })
+		const { app } = createTestApp(featureFlagsRoutes, '/api/feature-flags', TESTER)
+
+		const res = await app.request(jsonGet('/api/feature-flags'))
+		expect(await res.json()).toEqual({ flags: { [FLAGS.NEW_DESIGN]: false } })
 	})
 
 	it('sets Cache-Control: no-store so a rollback is not defeated by a stale cache', async () => {

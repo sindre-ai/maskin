@@ -1,0 +1,103 @@
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
+import type { ObjectResponse } from '@/lib/api'
+import { cn } from '@/lib/cn'
+import { ChevronRight } from 'lucide-react'
+import { useState } from 'react'
+import { MarkdownContent } from '../shared/markdown-content'
+import { CommitmentCard } from './commitment-card'
+import { formatValue } from './metadata-badges'
+import { getDocumentFold, getEvidence } from './object-detail-fixtures'
+import { ObjectEvidenceBlock } from './object-evidence-block'
+
+export function ObjectDetailBody({
+	object,
+	workspaceId,
+	onContentChange,
+}: {
+	object: ObjectResponse
+	workspaceId: string
+	/** Commits an edited body. Omitted by read-only hosts (the MCP-app embed),
+	 *  which keeps the rendered markdown non-editable. */
+	onContentChange?: (content: string) => void
+}) {
+	const fold = getDocumentFold(object)
+	const evidence = getEvidence(object)
+	const kvRows = kvEntries(object)
+
+	return (
+		<div className="space-y-8">
+			{/* Commitments lead with their card (floor, cadence, source bet, last
+			    breach) — the generic key/value rows below can't carry the source-bet
+			    link or the status chip. Carried over from the retired document. */}
+			{object.type === 'commitment' && <CommitmentCard object={object} workspaceId={workspaceId} />}
+
+			{/* Editable when the host wires a commit handler — an empty body still
+			    renders the editor so a new object can be written into, which a
+			    truthy-content guard alone would make impossible. */}
+			{onContentChange ? (
+				<MarkdownContent
+					content={object.content ?? ''}
+					className="max-w-[75ch]"
+					onChange={onContentChange}
+					editable
+				/>
+			) : object.content ? (
+				<MarkdownContent content={object.content} className="max-w-[75ch]" />
+			) : null}
+
+			{kvRows.length > 0 && (
+				<dl className="divide-y divide-border rounded-md border border-border">
+					{kvRows.map(([key, value]) => (
+						<div key={key} className="flex items-baseline gap-3 px-3 py-2">
+							<dt className="w-32 shrink-0 truncate text-xs text-muted-foreground">{key}</dt>
+							<dd className="min-w-0 flex-1 break-words text-sm text-foreground">
+								{formatValue(value)}
+							</dd>
+						</div>
+					))}
+				</dl>
+			)}
+
+			{fold && <DocumentFold fold={fold} />}
+
+			{evidence.length > 0 && <ObjectEvidenceBlock evidence={evidence} />}
+		</div>
+	)
+}
+
+function DocumentFold({ fold }: { fold: { title: string; markdown: string } }) {
+	const [open, setOpen] = useState(false)
+
+	return (
+		<Collapsible open={open} onOpenChange={setOpen}>
+			{/* Rounded pill trigger, mockup 1124–1126. */}
+			<CollapsibleTrigger className="inline-flex h-7 items-center gap-1.5 rounded-full border border-border bg-background px-3 text-[11.5px] font-semibold text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground">
+				{fold.title}
+				<ChevronRight
+					size={12}
+					aria-hidden="true"
+					className={cn('transition-transform', open && 'rotate-90')}
+				/>
+			</CollapsibleTrigger>
+			<CollapsibleContent>
+				<div className="mt-3">
+					<MarkdownContent content={fold.markdown} />
+				</div>
+			</CollapsibleContent>
+		</Collapsible>
+	)
+}
+
+// Public (non-underscore) metadata entries render as the body's key/value rows.
+// `_`-prefixed keys are fixture/private keys (ask, evidence, fold) and stay out,
+// as do the commitment keys the card above already spells out.
+const COMMITMENT_CARD_KEYS = new Set(['floor', 'cadence', 'source_bet_id', 'last_breach_at'])
+
+function kvEntries(object: ObjectResponse): [string, unknown][] {
+	const metadata = object.metadata
+	if (!metadata) return []
+	return Object.entries(metadata).filter(
+		([key]) =>
+			!key.startsWith('_') && !(object.type === 'commitment' && COMMITMENT_CARD_KEYS.has(key)),
+	)
+}

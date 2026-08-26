@@ -194,26 +194,24 @@ test.describe('Typography — object detail', () => {
 		expect(maxWidthPx as number).toBeLessThan(768)
 	})
 
-	test('title input uses font-semibold', async ({ page, account }) => {
+	test('object title renders at a bold weight', async ({ page, account }) => {
 		const obj = await createObjectWithContent(account.api, account.workspaceId)
 
 		await setTheme(page, 'light')
 		await page.goto(`/${account.workspaceId}/objects/${obj.id}`)
 		await waitForApp(page)
 
-		// The title still renders as an editable textarea (the object-detail
-		// static-shell rebuild referenced elsewhere in this spec file hasn't
-		// landed in this branch) — see object-document.tsx.
-		const fontWeight = await page.evaluate(() => {
-			const titleInput = document.querySelector<HTMLTextAreaElement>(
-				'textarea[placeholder="Untitled"]',
-			)
-			if (!titleInput) return null
-			return getComputedStyle(titleInput).getPropertyValue('font-weight')
-		})
+		// The v2 detail shell renders the title as a static <h1> in the hero
+		// identity row (object-detail-header.tsx), not an editable textarea.
+		const titleHeading = page.getByRole('heading', { level: 1 })
+		await expect(titleHeading).toBeVisible({ timeout: 10_000 })
 
-		// font-semibold = 600
-		expect(fontWeight).toBe('600')
+		const fontWeight = await titleHeading.evaluate((el) =>
+			getComputedStyle(el).getPropertyValue('font-weight'),
+		)
+
+		// font-semibold (600) or heavier — the shell ships font-bold (700).
+		expect(Number(fontWeight)).toBeGreaterThanOrEqual(600)
 	})
 
 	test('rendered font-family applies Schibsted Grotesk on object detail', async ({

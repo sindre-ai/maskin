@@ -208,7 +208,7 @@ change plus a backend restart — never a frontend rebuild.
 
 ```
 FF_TESTER_ACTOR_IDS=<uuid>,<uuid>        # actors who get early access
-FF_TESTER_FEATURES=some-flag             # flag ids those actors see
+FF_TESTER_FEATURES=new-design            # flag ids those actors see
 ```
 
 A flag has two states: **off**, or **on for the tester actors**. There is no

@@ -1,3 +1,7 @@
+// PRE-V2 COMPONENT — governed by the `new-design` feature flag. Rendered only
+// by `legacy/objects-page.tsx` / the pre-v2 object detail branch when the flag
+// is off. This directory dies with the flag; edit the v2 component instead.
+
 import { EmptyState } from '@/components/shared/empty-state'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Spinner } from '@/components/ui/spinner'
@@ -75,6 +79,8 @@ function toggleGroupSelection<T>(table: TanstackTable<T>, row: Row<T>, value: bo
 		return next
 	})
 }
+import type { ObjectsTableMeta } from '@/components/objects/data-table/columns'
+import { useDragSelect } from '@/components/objects/data-table/use-drag-select'
 import {
 	Table,
 	TableBody,
@@ -106,9 +112,7 @@ import {
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { ChevronRight } from 'lucide-react'
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from 'react'
-import type { ObjectsTableMeta } from './columns'
 import { ObjectCard } from './object-card'
-import { useDragSelect } from './use-drag-select'
 
 // Imperative handle the Objects route uses to read the first-visible row at
 // navigate-away time and to restore the scroll position on a POP landing.

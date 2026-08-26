@@ -25,6 +25,7 @@ import {
 	type SessionResult,
 	type SessionResultFailureReason,
 	githubOwnerLoginToEnvKey,
+	splitLines,
 } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import {
@@ -82,6 +83,7 @@ import {
 	FALLBACK_TOKENS_PER_USD_CENT,
 	LLM_ROUTE_MASKIN_PLAN,
 	LLM_ROUTE_OAUTH,
+	LlmCredentialsUnavailableError,
 	type LlmRoute,
 	PlanCapExceededError,
 	canUseCreditBalance,
@@ -90,9 +92,11 @@ import {
 	creditBalanceCents,
 	getWorkspacePlanCap,
 	getWorkspacePlanUsdCentsUsage,
+	preflightLlmCredentials,
 	resolveLlmRoute,
 } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
+import { detectUnhealthyMcpServers, formatUnhealthyMcpWarning } from '../lib/mcp-health'
 import type { IntegrationConfig, WorkspaceSettings } from '../lib/types'
 import {
 	AgentServerAuthError,
@@ -119,6 +123,12 @@ import { buildWorkspaceStartupBlock, renderWorkspaceBriefing } from './workspace
  * stable group-by key from day one.
  */
 const LOCAL_RUNTIME_BUCKET = 'local-docker'
+
+/**
+ * Guards the MCP health check's partial-line buffer against a stdout stream
+ * that never emits a newline. Matches InteractiveTurnFinalizer's cap.
+ */
+const MAX_BUFFERED_MCP_HEALTH_BYTES = 256 * 1024
 
 /**
  * Mirrors the allowlist regex enforced on the API side by
@@ -345,6 +355,25 @@ export class SessionManager extends EventEmitter {
 	 * without standing up Docker.
 	 */
 	readonly turnFinalizer: InteractiveTurnFinalizer
+
+	/**
+	 * sessionId -> trailing partial stdout line carried over from the last
+	 * chunk, for the MCP health check. Docker delivers chunks, not lines, and
+	 * the runtime's `init` envelope — the only line this check cares about —
+	 * is emitted exactly once per session and is one of the largest it ever
+	 * writes, so it is a prime candidate to straddle a chunk boundary. Without
+	 * carrying the remainder, both halves fail to parse and the warning is
+	 * lost permanently. Mirrors InteractiveTurnFinalizer's buffering.
+	 */
+	private readonly mcpHealthBuffers = new Map<string, string>()
+
+	/**
+	 * Sessions that have already had their MCP health reported. The init line
+	 * is replayed whenever the log stream re-attaches (`tail: 'all'` on resume,
+	 * `sinceUnixSec` overlap after a transient drop), and the warning should
+	 * read once per session, not once per reconnect.
+	 */
+	private readonly mcpHealthReported = new Set<string>()
 
 	constructor(
 		private db: Database,
@@ -849,11 +878,19 @@ export class SessionManager extends EventEmitter {
 			this.watchContainerExit(sessionId, containerId)
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err)
+			// A missing-credentials failure is classified rather than left as a
+			// bare string, so the UI and `get_session` show why instead of a raw
+			// internal message. Everything else keeps today's shape.
+			const launchFailureReason =
+				err instanceof LlmCredentialsUnavailableError ? err.toFailureReason() : null
 			await this.db
 				.update(sessions)
 				.set({
 					status: 'failed',
-					result: { error: message },
+					result: {
+						error: launchFailureReason?.human_message ?? message,
+						...(launchFailureReason ? { failure_reason: launchFailureReason } : {}),
+					},
 					completedAt: new Date(),
 					updatedAt: new Date(),
 				})
@@ -865,8 +902,20 @@ export class SessionManager extends EventEmitter {
 				action: 'session_failed',
 				entityType: 'session',
 				entityId: sessionId,
-				data: { error: message },
+				data: {
+					error: message,
+					...(launchFailureReason ? { reason_code: launchFailureReason.reason_code } : {}),
+				},
 			})
+
+			if (launchFailureReason) {
+				await this.insertSystemLog(sessionId, launchFailureReason.human_message).catch((logErr) =>
+					logger.warn('Failed to append credential-failure log line', {
+						sessionId,
+						error: String(logErr),
+					}),
+				)
+			}
 
 			this.telemetry.recordSessionEnded({
 				sessionId,
@@ -1635,6 +1684,36 @@ export class SessionManager extends EventEmitter {
 			throw err
 		}
 
+		// Credential pre-flight. `resolveLlmRoute` returns null both when the
+		// caller still has work to do (a non-anthropic agent key, handled just
+		// below) and when the workspace has nothing configured at all. Only the
+		// second case is fatal, and it used to launch anyway: a container with no
+		// ANTHROPIC_* env, dying inside the sandbox with a message nobody reads —
+		// or, when credential resolution stalled instead of returning, a session
+		// that never launched and never failed until the zombie reaper closed it
+		// out with a generic message.
+		//
+		// This runs before any container or sandbox exists, on both the local and
+		// the remote launch path, and reuses the workspace + agent rows already
+		// loaded above rather than issuing its own queries.
+		// `ws` is undefined only when the workspace row couldn't be read at all.
+		// Refusing to launch on that basis would be claiming "no credentials are
+		// configured" from an absence of evidence, so this fails open and lets
+		// the launch proceed to whatever the next failure is.
+		if (!routeTaken && ws) {
+			const credentialGap = preflightLlmCredentials({
+				wsSettings,
+				byollmAllowed,
+				agent: {
+					provider: agent.llmProvider,
+					apiKey: (llmConfig.api_key as string | undefined) ?? null,
+				},
+			})
+			if (credentialGap) {
+				throw new LlmCredentialsUnavailableError(credentialGap.detail)
+			}
+		}
+
 		// Non-anthropic agent override (OpenAI native via OPENAI_API_KEY) and the
 		// workspace-level OpenAI key are both BYO credentials, gated the same as
 		// the anthropic-side routes in resolveLlmRoute above.
@@ -2304,6 +2383,7 @@ export class SessionManager extends EventEmitter {
 						lastChunkAt = Date.now()
 						if (chunk.stream === 'stdout') {
 							await this.emitGithubCauseTagIfAny(sessionId, chunk.data)
+							await this.emitUnhealthyMcpWarningIfAny(sessionId, chunk.data)
 						}
 						const [log] = await this.db
 							.insert(sessionLogs)
@@ -3634,15 +3714,50 @@ export class SessionManager extends EventEmitter {
 			.where(and(eq(sessions.status, 'starting'), lt(sessions.updatedAt, tenMinutesAgo)))
 
 		for (const session of stuckStarting) {
+			// Everything this pass knows about WHY the launch stalled is on the
+			// row itself: whether a route was ever resolved (`config.llm_route`
+			// is absent when resolution never returned), whether a container or
+			// sandbox was ever created, and how long it sat. Recording that as a
+			// structured `failure_reason` is the difference between a session an
+			// agent can triage from `get_session` and the bare "stuck in starting
+			// state" that sent the last incident chasing the container pool.
+			const stalledConfig = (session.config as Record<string, unknown>) ?? {}
+			const stalledRoute = stalledConfig.llm_route
+			const stalledSince = session.updatedAt ?? session.createdAt
+			const stalledForMs = stalledSince ? Date.now() - stalledSince.getTime() : 0
+			const reachedRuntime = Boolean(session.containerId || session.agentServerId)
+			const diagnosis = reachedRuntime
+				? `Launch stalled after the runtime was assigned (container=${session.containerId ?? 'none'}, agent_server=${session.agentServerId ?? 'none'}).`
+				: typeof stalledRoute === 'string'
+					? `Launch stalled after resolving the ${stalledRoute} LLM route but before any container or sandbox was created.`
+					: 'Launch stalled before an LLM route was resolved — no container or sandbox was ever created. Most often a credential lookup that never returned.'
+			const verbatim = `${diagnosis} Sat in 'starting' for ${Math.round(stalledForMs / 1000)}s before the cleanup pass closed it out.`
+
 			logger.warn(`Failing zombie session stuck in starting: ${session.id}`, {
 				workspaceId: session.workspaceId,
+				llmRoute: stalledRoute ?? null,
+				reachedRuntime,
+				stalledForMs,
 			})
+
+			const stalledFailureReason: SessionResultFailureReason = {
+				provider: 'maskin',
+				reason_code: 'startup_stalled',
+				human_message:
+					'This session never started — the launch stalled before anything ran, and it was closed out automatically. Nothing was executed. Start a new session to try again.',
+				http_status: null,
+				reset_at: null,
+				verbatim_output: verbatim,
+			}
 
 			await this.db
 				.update(sessions)
 				.set({
 					status: 'failed',
-					result: { error: 'Session stuck in starting state' },
+					result: {
+						error: 'Session stuck in starting state',
+						failure_reason: stalledFailureReason,
+					},
 					completedAt: new Date(),
 					updatedAt: new Date(),
 				})
@@ -3654,8 +3769,19 @@ export class SessionManager extends EventEmitter {
 				action: 'session_failed',
 				entityType: 'session',
 				entityId: session.id,
-				data: { error: 'Session stuck in starting state' },
+				data: {
+					error: 'Session stuck in starting state',
+					reason_code: 'startup_stalled',
+					diagnosis: verbatim,
+				},
 			})
+
+			await this.insertSystemLog(session.id, stalledFailureReason.human_message).catch((err) =>
+				logger.warn('Failed to append stalled-launch log line', {
+					sessionId: session.id,
+					error: String(err),
+				}),
+			)
 
 			this.telemetry.recordSessionEnded({
 				sessionId: session.id,
@@ -3994,6 +4120,7 @@ export class SessionManager extends EventEmitter {
 		for (const line of lines) {
 			if (line.stream === 'stdout') {
 				await this.emitGithubCauseTagIfAny(sessionId, line.content)
+				await this.emitUnhealthyMcpWarningIfAny(sessionId, line.content)
 			}
 			const [log] = await this.db
 				.insert(sessionLogs)
@@ -4034,6 +4161,61 @@ export class SessionManager extends EventEmitter {
 				}
 			} catch (err) {
 				logger.warn('github log classifier failed for a line', {
+					sessionId,
+					error: err instanceof Error ? err.message : String(err),
+				})
+			}
+		}
+	}
+
+	/**
+	 * Surface MCP servers that never connected, from the runtime's own `init`
+	 * envelope. A server stuck at "pending"/"failed" contributes no tools, and
+	 * nothing else in the pipeline notices — the agent simply finds the
+	 * capability missing and tells the user it was never wired, while the
+	 * service behind it looks healthy everywhere else. Emitting a `system` log
+	 * makes it visible to both the user and the agent. Errors are swallowed: a
+	 * health-check hiccup must not drop the original log write.
+	 */
+	private async emitUnhealthyMcpWarningIfAny(sessionId: string, chunk: string): Promise<void> {
+		if (chunk.length === 0 || this.mcpHealthReported.has(sessionId)) return
+
+		let lines: string[]
+		try {
+			const carried = this.mcpHealthBuffers.get(sessionId) ?? ''
+			const split = splitLines(carried + chunk)
+			lines = split.lines
+			const { remainder } = split
+			if (remainder.length > MAX_BUFFERED_MCP_HEALTH_BYTES) {
+				// A stream that never emits a newline must not eat memory. The
+				// init line comes first in a session, so a remainder this large
+				// means we are long past it and nothing is left to detect.
+				this.mcpHealthBuffers.delete(sessionId)
+			} else if (remainder) {
+				this.mcpHealthBuffers.set(sessionId, remainder)
+			} else {
+				this.mcpHealthBuffers.delete(sessionId)
+			}
+		} catch (err) {
+			logger.warn('mcp health line buffering failed', {
+				sessionId,
+				error: err instanceof Error ? err.message : String(err),
+			})
+			return
+		}
+
+		for (const line of lines) {
+			if (line.length === 0) continue
+			try {
+				const unhealthy = detectUnhealthyMcpServers(line)
+				if (!unhealthy) continue
+				this.mcpHealthReported.add(sessionId)
+				this.mcpHealthBuffers.delete(sessionId)
+				logger.warn('MCP servers did not connect for session', { sessionId, servers: unhealthy })
+				await this.insertSystemLog(sessionId, formatUnhealthyMcpWarning(unhealthy))
+				return
+			} catch (err) {
+				logger.warn('mcp health check failed for a line', {
 					sessionId,
 					error: err instanceof Error ? err.message : String(err),
 				})
@@ -4449,6 +4631,8 @@ export class SessionManager extends EventEmitter {
 
 	private async clearActiveSession(sessionId: string): Promise<void> {
 		this.turnFinalizer.forgetSession(sessionId)
+		this.mcpHealthBuffers.delete(sessionId)
+		this.mcpHealthReported.delete(sessionId)
 		await this.db
 			.update(objects)
 			.set({ activeSessionId: null, updatedAt: new Date() })
