@@ -632,7 +632,7 @@ describe('HeroCardApp — customer variant (organization + person + new type par
 		// Same surface: title, context line, schema-driven type label, CTA — no per-type widget branch.
 		await waitFor(() => expect(screen.getByText('Hypothetical Customer')).toBeInTheDocument())
 		expect(screen.getByText('last touch 3d ago · qualifying')).toBeInTheDocument()
-		expect(screen.getByText('Customer')).toBeInTheDocument()
+		await waitFor(() => expect(screen.getByText('Customer')).toBeInTheDocument())
 		expect(screen.getByRole('link', { name: /Open in Maskin/ })).toHaveAttribute(
 			'href',
 			'https://maskin.test/ws-1/objects/customer-1',
