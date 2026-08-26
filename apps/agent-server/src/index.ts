@@ -7,8 +7,10 @@ import { Hono } from 'hono'
 import { stream } from 'hono/streaming'
 import { z } from 'zod'
 import { bearerAuth } from './lib/auth'
+import { resolveBuildInfo } from './lib/build-info'
 import { type AgentServerEnv, parseEnv } from './lib/env'
 import { logger } from './lib/logger'
+import { buildMetricsApp, createMetricsRegistry } from './lib/metrics'
 import { Sentry } from './lib/sentry'
 import { ImageWarmer } from './services/image-warmer'
 import { InputQueue } from './services/input-queue'
@@ -1668,9 +1670,44 @@ async function main(): Promise<void> {
 		readyState,
 	})
 
+	// Resolved once, logged once, and handed to the metrics registry. Logging it
+	// at boot means the "which commit" answer is also in Loki, so a box whose
+	// scrape is broken is still identifiable from its journal.
+	const buildInfo = resolveBuildInfo()
+	logger.info('agent-server build', buildInfo)
+
 	const server = serve({ fetch: app.fetch, port: env.PORT, hostname: '0.0.0.0' }, ({ port }) => {
 		logger.info('agent-server listening', { port })
 	})
+
+	// Metrics listener — SEPARATE from the main one, and bound to LOOPBACK.
+	//
+	// GET /metrics is unauthenticated by design (Prometheus scrapers do not
+	// speak our bearer scheme, and adding auth just to hand the credential to
+	// a collector on the same box buys nothing). That makes where it LISTENS
+	// the actual security boundary. The main listener above is 0.0.0.0: it is
+	// reachable from the public internet and from every session microVM, so a
+	// /metrics route on it would publish this box's build identity and — once
+	// the session gauges land — its live workload to anything that can reach
+	// port 3001, including the agent code running inside sessions.
+	//
+	// Alloy scrapes from this same host, so 127.0.0.1 costs nothing and closes
+	// that off at the kernel rather than in a middleware someone can reorder.
+	// METRICS_PORT=0 disables it entirely (local dev, or a box with no
+	// collector).
+	const metricsServer =
+		env.METRICS_PORT === 0
+			? null
+			: serve(
+					{
+						fetch: buildMetricsApp(createMetricsRegistry(buildInfo)).fetch,
+						port: env.METRICS_PORT,
+						hostname: '127.0.0.1',
+					},
+					({ port }) => {
+						logger.info('metrics listening', { port, host: '127.0.0.1' })
+					},
+				)
 
 	// The HTTP listener above accepts connections immediately (health checks,
 	// VM-facing endpoints for sessions that survived the restart, etc.), but
@@ -1707,6 +1744,7 @@ async function main(): Promise<void> {
 				logger.error('image warmer shutdown failed', { error: String(err) })
 			})
 		}
+		metricsServer?.close()
 		server.close(() => process.exit(0))
 		// Hard-stop after 10s if the server doesn't close cleanly (libkrun hangs
 		// have shown up here in the past).

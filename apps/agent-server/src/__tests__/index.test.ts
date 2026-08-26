@@ -17,6 +17,7 @@ import { ImageWarmer } from '../services/image-warmer'
 function makeEnv(overrides: Partial<AgentServerEnv> = {}): AgentServerEnv {
 	return {
 		PORT: 3001,
+		METRICS_PORT: 0,
 		AGENT_SERVER_SECRET: 'test-secret-thirty-two-chars-long',
 		MSB_BIN: '/usr/local/bin/msb',
 		AGENT_SESSION_ROOT: '/tmp/agent-server-test',

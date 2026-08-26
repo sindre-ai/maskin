@@ -17,9 +17,22 @@ was the original reason for ssh'ing into it. Both pipelines carry the same
 to that host's logs for the same instant — see
 [Correlating metrics and logs](#correlating-metrics-and-logs).
 
-Note that metrics here are **host** metrics only. There is no `/metrics`
-endpoint on agent-server and no application instrumentation (session gauges,
-dispatch latency, traces); that is separate, larger work.
+A third pipeline scrapes **agent-server's own `/metrics` endpoint**. It exists
+to answer one question that neither of the others can: *what commit is each
+host actually running.* That question cost real time twice — it was asked four
+separate times during the #1450–#1454 wedge investigation and answered by
+grepping container image layers, and #1465 discovered that the deploy workflow
+had never installed the systemd unit at all, so the repo copy and the live copy
+had silently diverged since someone hand-copied it once. It should be a
+dashboard panel, not an investigation. See
+[What commit is each host running](#what-commit-is-each-host-running).
+
+Application instrumentation stops there, deliberately. `/metrics` currently
+exposes `maskin_build_info` and nothing else — no session gauges yet, no
+dispatch latency, no traces, no OpenTelemetry. The endpoint is built to be
+extended (adding a metric is one call against the registry in
+`src/lib/metrics.ts`), and the stalled-session detector is the next thing to
+extend it.
 
 ## What the application guarantees
 
@@ -45,7 +58,9 @@ for something else means replacing the `loki.write` component in
 
 | File | Purpose |
 |------|---------|
-| `alloy.alloy` | Both collector pipelines — journald → Loki, and node_exporter → Prometheus. Commit-safe: every deployment-specific value is read from the environment. |
+| `alloy.alloy` | All three collector pipelines — journald → Loki, node_exporter → Prometheus, and agent-server `/metrics` → Prometheus. Commit-safe: every deployment-specific value is read from the environment. |
+| `../src/lib/metrics.ts` | The registry and the `/metrics` Hono route. Add new metrics here. |
+| `../src/lib/build-info.ts` | Resolves commit/version/instance/env. Commit and version are compile-time constants — see the note below. |
 | `alloy.env.example` | The values you must supply, with guidance on where to find each. |
 
 ## What this does *not* cover
@@ -88,7 +103,7 @@ from aspiration.
 | Loki | `logs-prod-025`, user `1765898` |
 | Prometheus | `prometheus-prod-39-prod-eu-north-0`, user `3540446` |
 | Credentials | one access policy token `maskin-agent-server-alloy`, scoped `logs:write` + `metrics:write` |
-| Active series | 887 (~9% of the 10k allowance) |
+| Active series | 887 host + 2 application (~9% of the 10k allowance) |
 | Dashboards | Grafana Cloud "Linux Server" integration, installed |
 
 Note the two Grafana Cloud usernames are **different numbers**. They are not
@@ -145,13 +160,30 @@ access policy token can serve both if it is scoped `logs:write` +
 401 that reads like an invalid token; if only one of the two pipelines
 authenticates, that mix-up is the first thing to check.
 
-**Set `AGENT_SERVER_INSTANCE` explicitly.** It defaults to the hostname, and
-the current Finland box's hostname is `Ubuntu-2404-noble-amd64-base` — a Hetzner
-image name, meaningless in a dashboard, identical on every box built from that
-image, and liable to change on a rebuild. Pick something you would recognise at
-3am (`finland-1`). This label is applied to both pipelines and is what the
-correlation workflow below joins on, so changing it later silently splits every
-saved query at that moment.
+**Set `AGENT_SERVER_INSTANCE` explicitly, in two files.** It defaults to the
+hostname, and the current Finland box's hostname is
+`Ubuntu-2404-noble-amd64-base` — a Hetzner image name, meaningless in a
+dashboard, identical on every box built from that image, and liable to change on
+a rebuild. Pick something you would recognise at 3am (`finland-1`). This label
+is applied to all three pipelines and is what the correlation workflow below
+joins on, so changing it later silently splits every saved query at that moment.
+
+Two files, because two processes read it and they do not share an environment:
+
+```sh
+# Alloy — for the labels it stamps on logs and metrics
+$EDITOR /etc/default/alloy                        # AGENT_SERVER_INSTANCE, DEPLOY_ENV
+
+# agent-server — for the labels it puts inside maskin_build_info
+$EDITOR /opt/maskin/apps/agent-server/.env        # AGENT_SERVER_INSTANCE, DEPLOY_ENV,
+                                                  # METRICS_PORT (default 9464)
+```
+
+`METRICS_PORT` (agent-server's `.env`) and `AGENT_SERVER_METRICS_PORT`
+(`/etc/default/alloy`) must agree — the first decides where the endpoint
+listens, the second where Alloy looks for it. A mismatch is a permanently failed
+scrape (`up{job="maskin-agent-server"} == 0`) against a service that is
+otherwise perfectly healthy. Both default to 9464, so leaving both alone works.
 
 ### 3. Validate the config before restarting anything
 
@@ -239,8 +271,8 @@ journalctl -u alloy -f          # the collector's own logs — watch for auth
 
 Alloy's UI at `http://localhost:12345` shows each component's health and the
 number of entries it has forwarded, which is the fastest way to tell a
-"reading nothing" problem from a "can't push" problem. Check all **eight**
-components — both relabel components included, since those are where the
+"reading nothing" problem from a "can't push" problem. Check all **ten**
+components — all three relabel components included, since those are where the
 `job` label is set and a mistake there is invisible everywhere else (see the
 gotcha under [Querying metrics](#querying-metrics)):
 
@@ -250,23 +282,43 @@ gotcha under [Querying metrics](#querying-metrics)):
 | `loki.source.journal` | logs — reads the journal |
 | `loki.process.agent_server` | logs — parses the NDJSON, splits labels vs metadata |
 | `loki.write.default` | logs — pushes to Loki |
-| `prometheus.exporter.unix.host` | metrics — node_exporter |
-| `discovery.relabel.host` | metrics — sets `instance`, `env`, `job` |
-| `prometheus.scrape.host` | metrics — 60s scrape |
-| `prometheus.remote_write.default` | metrics — pushes to Prometheus |
+| `prometheus.exporter.unix.host` | host metrics — node_exporter |
+| `discovery.relabel.host` | host metrics — sets `instance`, `env`, `job` |
+| `prometheus.scrape.host` | host metrics — 60s scrape |
+| `discovery.relabel.agent_server` | app metrics — sets `instance`, `env`, `job` |
+| `prometheus.scrape.agent_server` | app metrics — 60s scrape of `127.0.0.1:9464/metrics` |
+| `prometheus.remote_write.default` | metrics — pushes to Prometheus (shared by both metrics pipelines) |
 
-In Grafana, confirm each half independently before trusting a dashboard:
+Before blaming Alloy for the app pipeline, check the endpoint directly on the
+box — this separates "agent-server isn't serving" from "Alloy isn't scraping":
+
+```sh
+curl -s http://127.0.0.1:9464/metrics | grep maskin_build_info
+```
+
+Connection refused here means agent-server is down, or `METRICS_PORT` in
+`apps/agent-server/.env` disagrees with `AGENT_SERVER_METRICS_PORT` in
+`/etc/default/alloy`. Note the endpoint is loopback-only by design, so this must
+be run on the host — it will not answer from your laptop, and that is correct.
+
+In Grafana, confirm each pipeline independently before trusting a dashboard:
 
 ```logql
 {job="maskin-agent-server"}          # logs arriving
 ```
 ```promql
-up{job="integrations/node_exporter"}                        # scrape succeeding; 1 = healthy
-node_uname_info                       # metrics arriving, with the instance label
+up{job="integrations/node_exporter"}  # host scrape succeeding; 1 = healthy
+node_uname_info                       # host metrics arriving, with the instance label
+up{job="maskin-agent-server"}         # app scrape succeeding; 1 = healthy
+maskin_build_info                     # app metrics arriving — and the commit answer
 ```
 
 If `up` is 1 but no `node_*` series exist, the scrape is working and
 remote_write is not — check `PROM_URL` and `PROM_USERNAME`.
+
+If `maskin_build_info` is present but `commit="unknown"`, the pipeline is fine
+and the *build* is the problem — see
+[Where the commit value comes from](#where-the-commit-value-comes-from).
 
 ### 7. Set a Grafana Cloud usage alert — on day one, not after the first bill
 
@@ -345,9 +397,11 @@ after the stream selector:
 
 ## Querying metrics
 
-All series carry `job="integrations/node_exporter"`, plus the `env` and
-`instance` labels shared with logs. Replace `finland-1` with your
-`AGENT_SERVER_INSTANCE` value.
+The **host** series below carry `job="integrations/node_exporter"`, plus the
+`env` and `instance` labels shared with logs. agent-server's own application
+series carry `job="maskin-agent-server"` instead — same `env` and `instance`,
+different job, because they describe the process rather than the box. Replace
+`finland-1` with your `AGENT_SERVER_INSTANCE` value.
 
 That `job` value is Grafana Cloud's own convention, and matching it is what
 lets their prebuilt **Linux Server** dashboards find this host (see setup step
@@ -355,7 +409,7 @@ lets their prebuilt **Linux Server** dashboards find this host (see setup step
 investigation and for the correlation workflow; for "how is the box doing" at a
 glance, use the prebuilt dashboards rather than rebuilding them here.
 
-> **Gotcha, learned the hard way.** `job` is set in a **relabel rule** in both
+> **Gotcha, learned the hard way.** `job` is set in a **relabel rule** in all three
 > pipelines, never as a static label. `prometheus.exporter.unix` pre-stamps
 > `job="integrations/unix"` and `loki.source.journal` pre-stamps
 > `job="<component id>"`, and both beat a static value. Getting this wrong is
@@ -367,17 +421,22 @@ glance, use the prebuilt dashboards rather than rebuilding them here.
 
 ### What these metrics cannot tell you
 
-Nothing here is per-agent-session. No host collector can see inside
-agent-server; nothing in this pipeline knows what a session is. `processes`
+Nothing in the *host* pipeline is per-agent-session. No host collector can see
+inside agent-server; node_exporter does not know what a session is. `processes`
 gives aggregate process and thread counts — a proxy for how much work the box
 is doing — and the filtered `systemd` collector gives agent-server's up/down
 state and restart count, but neither attributes anything to a session.
 
+The application pipeline could, in principle, and eventually will — but today it
+exposes build identity only. When session gauges do land there they will be
+**aggregate** (counts by state), never per-session: a `session_id` label is one
+series per session forever, which is the metrics-side version of the Loki
+mistake described in [Why `sessionId` is not a label](#why-sessionid-is-not-a-label).
+
 Session-level detail lives in the **logs**, where every line carries
 `session_id`. The division of labour: metrics tell you the box is struggling,
 logs tell you which session caused it, and the correlation workflow below is
-how you get from one to the other. Genuine per-session metrics would mean
-instrumenting agent-server itself — deliberately out of scope here.
+how you get from one to the other.
 
 ```promql
 # CPU utilisation, 0–1, averaged across cores. The idle-mode subtraction is
@@ -426,6 +485,103 @@ increase(node_systemd_service_restart_total{name="maskin-agent-server.service"}[
 node_processes_threads
 sum(node_processes_state)
 ```
+
+## What commit is each host running
+
+The point of the whole third pipeline. `maskin_build_info` is a gauge pinned at
+`1` whose **labels** are the payload — the standard `*_build_info` shape. The
+value never changes and carries no information; you query the labels.
+
+```promql
+# The dashboard panel. One row per host: commit, version, env.
+# Render as a Grafana "Table" panel with Format = Table and Instant = on.
+maskin_build_info
+
+# One host.
+maskin_build_info{instance="finland-1"}
+
+# Are all hosts on the same commit? A result with more than one row means a
+# deploy reached some boxes and not others.
+count by (commit) (maskin_build_info)
+
+# Did the box actually pick up the last deploy? Compare against the SHA of
+# origin/main. Returns nothing when they match, which is the healthy state.
+maskin_build_info{commit!="<sha-of-origin-main>"}
+
+# Is the endpoint even being scraped? 0 (or absent) means agent-server is down,
+# mid-restart, or the port in /etc/default/alloy disagrees with METRICS_PORT.
+up{job="maskin-agent-server"}
+```
+
+`commit="unknown"` is a real, expected value, not a bug: it means the bundle was
+built somewhere without git metadata and without a `MASKIN_COMMIT_SHA` override.
+On the normal deploy path it should never appear — `agent-server-deploy.yml`
+does `git reset --hard origin/main` and then builds *on the box, inside the work
+tree*, so `git rev-parse HEAD` there is exactly the deployed commit. Seeing
+`unknown` in production means the build ran somewhere unexpected.
+
+### Where the commit value comes from
+
+It is baked in at **build time** by esbuild's `define`, which replaces the
+`process.env.MASKIN_COMMIT_SHA` read in `src/lib/build-info.ts` with a string
+literal. Precedence in `build.mjs`: `MASKIN_COMMIT_SHA` → `GITHUB_SHA` →
+`git rev-parse HEAD` → `'unknown'`.
+
+Nothing is read from disk at runtime, and that constraint is load-bearing. The
+obvious implementation — resolving `.git/HEAD` relative to `import.meta.url` —
+is broken by this app's own build: `build.mjs` bundles to a single flat
+`dist/index.js`, so at runtime `import.meta.url` points at the bundle rather
+than at the source file, and the path walks into a directory that does not
+exist. It works perfectly under `tsx` and throws `ENOENT` on every production
+boot. That is not hypothetical; see *Runtime File Reads Relative to
+`import.meta.url`* in `.claude/rules/known-pitfalls.md`.
+
+**If you change how build info is resolved, verify against the built bundle,
+not `tsx`:**
+
+```bash
+pnpm --filter @maskin/agent-server build
+node apps/agent-server/dist/index.js &
+curl -s http://127.0.0.1:9464/metrics | grep maskin_build_info
+```
+
+### Why the endpoint is loopback-only
+
+`/metrics` is served by a **second HTTP listener bound to `127.0.0.1`**
+(`METRICS_PORT`, default 9464), not by a route on the main listener.
+
+It is unauthenticated — Prometheus scrapers do not speak our bearer scheme, and
+handing a credential to a collector on the same box buys nothing. That makes
+the bind address the actual security boundary. The main listener is `0.0.0.0`:
+reachable from the public internet *and* from every session microVM, so a
+`/metrics` route on it would publish this box's build identity — and, once the
+session gauges land, its live workload — to anything that can reach port 3001,
+including agent code running inside sessions. Alloy scrapes from the same host,
+so loopback costs nothing and closes that off in the kernel rather than in a
+middleware someone can reorder later.
+
+Set `METRICS_PORT=0` to disable the listener entirely (local dev, or a box with
+no collector).
+
+### The two-file trap for `instance` and `env`
+
+`AGENT_SERVER_INSTANCE` and `DEPLOY_ENV` are now read by **two processes that
+read two different files**:
+
+| Process | File |
+|---------|------|
+| Alloy | `/etc/default/alloy` |
+| agent-server | `/opt/maskin/apps/agent-server/.env` |
+
+Set the same value in both. Setting it only in Alloy's file leaves
+`maskin_build_info` carrying `instance="<hostname>"` from the application while
+the collector relabels the series itself to `instance="finland-1"` — the series
+label and the label *inside* build info then disagree, which is confusing at
+exactly the moment you least want it. (The collector's relabel rule wins for
+selection purposes, so queries still work; it is the payload that lies.)
+
+Both are also in `turbo.json` `globalPassThroughEnv`, along with `METRICS_PORT`
+and `MASKIN_COMMIT_SHA` — turbo filters unlisted env vars silently.
 
 ## Correlating metrics and logs
 
@@ -533,6 +689,14 @@ Two things make this worth an explicit alert rather than a note:
   collector — read it before adding one, and re-measure rather than estimating:
   adding ten collectors here was predicted at 1,500–2,500 series and actually
   cost 887.
+- **The application pipeline adds two series per host, total.**
+  `maskin_build_info` is one, `up{job="maskin-agent-server"}` is the other. It
+  is a rounding error against the 887 above, and it stays that way *only*
+  because every label on it is bounded — commit, version, instance, env all
+  take one value per deployed build per host. Adding a `session_id` label to
+  anything here would convert this pipeline from two series to one-per-session-
+  forever; that is why `src/lib/metrics.ts` states the rule at the top of the
+  file. Session gauges must be aggregate counts by state.
 
 Set the usage alerts in [step 7](#7-set-a-grafana-cloud-usage-alert--on-day-one-not-after-the-first-bill).
 
