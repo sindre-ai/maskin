@@ -43,6 +43,28 @@ loki.relabel "journal" {
 		source_labels = ["__journal_syslog_identifier"]
 		target_label  = "service_name"
 	}
+
+	// `job` MUST be set here, not in loki.source.journal's `labels` block.
+	//
+	// loki.source.journal stamps job="<component id>" — literally
+	// "loki.source.journal.agent_server" — and that beats the static value in
+	// the `labels` argument. The symptom is nasty: everything looks healthy,
+	// entries are accepted with 204s, `loki_write_dropped_entries_total` stays
+	// 0, and the logs are genuinely in Loki — but every documented query in
+	// the README selects on job="maskin-agent-server" and matches nothing.
+	//
+	// Verified 2026-08-26: before this rule, the `job` label browser showed a
+	// single value, "loki.source.journal.agent_server". Relabel rules run
+	// after the component's own labelling, so setting it here wins.
+	//
+	// This is the same failure the metrics pipeline has with
+	// prometheus.exporter.unix pre-stamping job="integrations/unix" — see the
+	// discovery.relabel.host rule below. In both cases the fix is: set `job`
+	// in a relabel rule, never as a static label.
+	rule {
+		target_label = "job"
+		replacement  = coalesce(sys.env("LOKI_JOB_LABEL"), "maskin-agent-server")
+	}
 }
 
 loki.source.journal "agent_server" {
@@ -54,8 +76,12 @@ loki.source.journal "agent_server" {
 	// entries are read, so an unrelated chatty service can't inflate the bill.
 	matches = "SYSLOG_IDENTIFIER=" + coalesce(sys.env("AGENT_SERVER_SYSLOG_ID"), "maskin-agent-server")
 
+	// NOTE: `job` is deliberately absent here — it is set in
+	// loki.relabel.journal above, because a static value in this block loses
+	// to the component's own job="<component id>". `env` and `instance` are
+	// not pre-stamped by the component, so they are safe to set statically
+	// (verified: both arrive intact).
 	labels = {
-		job = coalesce(sys.env("LOKI_JOB_LABEL"), "maskin-agent-server"),
 		env = coalesce(sys.env("DEPLOY_ENV"), "production"),
 
 		// Identifies the box. The metrics pipeline below applies the SAME
@@ -268,6 +294,23 @@ discovery.relabel "host" {
 		target_label = "env"
 		replacement  = coalesce(sys.env("DEPLOY_ENV"), "production")
 	}
+
+	// `job` MUST be forced here, not left to prometheus.scrape's job_name.
+	//
+	// prometheus.exporter.unix stamps its own `job="integrations/unix"` onto
+	// the targets it exports. A target that already carries a `job` label
+	// keeps it — prometheus.scrape's job_name only fills in targets that have
+	// none. So setting job_name alone is SILENTLY INERT: the config reads as
+	// though it works, `alloy validate` passes, metrics arrive, and every
+	// series lands under a job value nothing queries.
+	//
+	// Verified 2026-08-26: with job_name alone, node_uname_info came back as
+	// job="integrations/unix". Relabelling here overrides it, because
+	// discovery.relabel runs on the target list before the scrape.
+	rule {
+		target_label = "job"
+		replacement  = coalesce(sys.env("PROM_JOB_LABEL"), "integrations/node_exporter")
+	}
 }
 
 prometheus.scrape "host" {
@@ -282,14 +325,19 @@ prometheus.scrape "host" {
 	// `instance` are the labels shared with logs, and they are the ones
 	// correlation actually needs.
 	//
-	// The default is Grafana Cloud's own convention rather than a plain
-	// "node": their prebuilt Linux Server integration dashboards filter on
+	// The value is Grafana Cloud's own convention rather than a plain "node":
+	// their prebuilt Linux Server integration dashboards filter on
 	// job="integrations/node_exporter", so matching it means the whole
 	// prebuilt node dashboard set populates on its own. Under any other
 	// value those dashboards render empty and the CPU/memory/disk panels
 	// have to be rebuilt by hand — which is most of the reason this pipeline
 	// exists. This still satisfies the "not named after the application"
 	// intent above; it just uses the name the ecosystem already agrees on.
+	//
+	// NOTE: this attribute does NOT actually decide the label — the
+	// discovery.relabel rule above does, because the exporter pre-stamps
+	// `job`. It is kept aligned so the two never disagree if the exporter
+	// ever stops setting it.
 	job_name = coalesce(sys.env("PROM_JOB_LABEL"), "integrations/node_exporter")
 
 	// Capacity monitoring. 60s over a month is ~43k samples per series;
