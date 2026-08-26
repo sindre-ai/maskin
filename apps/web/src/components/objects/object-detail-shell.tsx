@@ -235,20 +235,14 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 		)
 	}, [object.id, object.status, object.type, updateObject])
 
-	// Rename / body edits. Both commit through the same `updateObject` mutation
-	// as status and owner, and toast on failure for the same reason —
-	// `useUpdateObject` rolls its optimistic patch back silently, so without a
-	// toast a failed save reads as the text reverting on its own.
-	const handleUpdateTitle = useCallback(
-		(title: string) => {
-			updateObject.mutate(
-				{ id: object.id, data: { title } },
-				{ onError: () => toast.error('Could not rename this object') },
-			)
-		},
-		[object.id, updateObject],
-	)
-
+	// Body edits commit through the same `updateObject` mutation as status and
+	// owner, and toast on failure for the same reason — `useUpdateObject` rolls
+	// its optimistic patch back silently, so without a toast a failed save reads
+	// as the text reverting on its own.
+	//
+	// The title is deliberately not editable here: the v2 shell renders it as a
+	// static `h1` under the identity row, so `ObjectDetailIdentity` is mounted
+	// without `onTitleChange`.
 	const handleUpdateContent = useCallback(
 		(content: string) => {
 			updateObject.mutate(
@@ -333,7 +327,6 @@ export function ObjectDetailShell({ object }: { object: ObjectResponse }) {
 								members={members ?? []}
 								onStatusChange={handleUpdateStatus}
 								onDriverChange={handleUpdateDriver}
-								onTitleChange={handleUpdateTitle}
 							/>
 						</div>
 

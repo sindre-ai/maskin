@@ -10,7 +10,12 @@ import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 // Timeline / Related tabs, the pre-v2 document renders neither.
 
 test.describe('new-design flag — off renders the pre-v2 Objects surfaces', () => {
-	test.beforeEach(async ({ page }) => {
+	// Depends on `account` on purpose: init scripts run in registration order,
+	// and a fixture requested only by the test body is instantiated *after* the
+	// hooks. Without this the auth fixture's `ff:new-design = 'on'` would
+	// register last and win, silently running these specs on the v2 branch.
+	test.beforeEach(async ({ page, account }) => {
+		expect(account.workspaceId).toBeTruthy()
 		await page.addInitScript(() => localStorage.setItem('ff:new-design', 'off'))
 	})
 
@@ -30,7 +35,11 @@ test.describe('new-design flag — off renders the pre-v2 Objects surfaces', () 
 
 			await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
 
-			await expect(page.getByRole('heading', { name: 'Flag-off bet' })).toBeVisible()
+			// The pre-v2 document edits its title in place, so the title is a
+			// textarea named by its placeholder — not the v2 shell's static h1.
+			await expect(page.getByRole('textbox', { name: 'Untitled' })).toHaveValue('Flag-off bet', {
+				timeout: 10000,
+			})
 			await expect(page.getByRole('tab', { name: 'Timeline' })).toHaveCount(0)
 			await expect(page.getByRole('tab', { name: /^Related/ })).toHaveCount(0)
 

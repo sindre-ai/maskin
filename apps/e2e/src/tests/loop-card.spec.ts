@@ -32,10 +32,9 @@ test.describe('Commitment object on the rebuilt detail surface', () => {
 			})
 
 			await page.goto(`/${account.workspaceId}/objects/${commitment.id}`)
-			await expect(page.getByRole('textbox', { name: 'Untitled' })).toHaveValue(
-				'Customer bugs fixed <1 day',
-				{ timeout: 10000 },
-			)
+			await expect(
+				page.getByRole('heading', { level: 1, name: 'Customer bugs fixed <1 day' }),
+			).toBeVisible({ timeout: 10000 })
 
 			// Raw status in the identity-row status control.
 			const statusControl = page
@@ -58,10 +57,12 @@ test.describe('Commitment object on the rebuilt detail surface', () => {
 			})
 			await expect(sourceLink).toBeVisible()
 			await sourceLink.click()
-			await expect(page.getByRole('textbox', { name: 'Untitled' })).toHaveValue(
-				'Customer bugs fixed under 1 day (source)',
-				{ timeout: 10000 },
-			)
+			await expect(
+				page.getByRole('heading', {
+					level: 1,
+					name: 'Customer bugs fixed under 1 day (source)',
+				}),
+			).toBeVisible({ timeout: 10000 })
 		})
 	}
 
@@ -83,10 +84,9 @@ test.describe('Commitment object on the rebuilt detail surface', () => {
 		})
 
 		await page.goto(`/${account.workspaceId}/objects/${commitment.id}`)
-		await expect(page.getByRole('textbox', { name: 'Untitled' })).toHaveValue(
-			'Weekly ship cadence',
-			{ timeout: 10000 },
-		)
+		await expect(page.getByRole('heading', { level: 1, name: 'Weekly ship cadence' })).toBeVisible({
+			timeout: 10000,
+		})
 
 		const statusControl = page
 			.getByRole('combobox')
