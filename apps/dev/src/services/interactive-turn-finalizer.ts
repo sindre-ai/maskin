@@ -89,8 +89,14 @@ const MAX_RETRY_KEYS = 500
  */
 const REPLAY_ANSWER_TIMEOUT_MS = 5 * 60_000
 
-/** Longest a shutdown will wait for in-flight replays before exiting anyway. */
-const SETTLE_RETRIES_TIMEOUT_MS = 15_000
+/**
+ * Longest a shutdown will wait for in-flight replays before exiting anyway.
+ *
+ * Deliberately under the 10s SIGTERM->SIGKILL grace period a container gets by
+ * default: a budget longer than the grace is not a budget, it just means the
+ * orchestrator kills us mid-settle instead.
+ */
+const SETTLE_RETRIES_TIMEOUT_MS = 8_000
 
 /** What the human reads when the replays are used up. */
 const RETRY_EXHAUSTED_MESSAGE =
@@ -115,6 +121,21 @@ const RETRY_UNANSWERED_MESSAGE =
 /** What the human reads for a failure no replay would fix. */
 const permanentErrorMessage = (detail: string): string =>
 	`I couldn't complete that turn — the model API returned an error:\n\n${detail}`
+
+/**
+ * A replayed turn we are waiting on, plus everything needed to report it if it
+ * never comes back. Held rather than closed over so any of the three things
+ * that can end the wait — the turn answering, the session going away, the
+ * process exiting — can settle it.
+ */
+type ReplayWatchdog = {
+	timer: NodeJS.Timeout
+	gate: SessionGate
+	conversationId: string
+	dedupeKey: string
+	/** The failing turn's log id: only a result NEWER than this can stand it down. */
+	armedAfterLogId: number
+}
 
 type SessionGate = {
 	interactive: boolean
@@ -154,8 +175,8 @@ export class InteractiveTurnFinalizer {
 	private readonly retryCounts = new Map<string, number>()
 	/** In-flight replays, so shutdown and tests can wait for them to settle. */
 	private readonly pendingRetries = new Set<Promise<void>>()
-	/** sessionId -> timer waiting for a replayed turn to produce a result line. */
-	private readonly replayWatchdogs = new Map<string, NodeJS.Timeout>()
+	/** sessionId -> the replayed turn we are waiting on a result line for. */
+	private readonly replayWatchdogs = new Map<string, ReplayWatchdog>()
 	private readonly retryTurn?: RetryTurnFn
 	private readonly delay: (ms: number) => Promise<void>
 	private readonly replyTimeoutMs: number
@@ -216,7 +237,11 @@ export class InteractiveTurnFinalizer {
 	/** Drop per-session state when a session goes away. */
 	forgetSession(sessionId: string): void {
 		this.clearRetryCounts(sessionId)
-		this.disarmReplayWatchdog(sessionId)
+		// A replay was written and its turn never came back; the session going
+		// away is proof it never will. Fire the notice instead of dropping the
+		// timer — a discarded watchdog leaves the human in an empty thread,
+		// which is the exact failure this service exists to prevent.
+		void this.fireReplayWatchdog(sessionId, 'the session ended')
 		this.buffers.delete(sessionId)
 		this.gates.delete(sessionId)
 	}
@@ -249,7 +274,14 @@ export class InteractiveTurnFinalizer {
 	): Promise<void> {
 		// Any closing turn — reply or failure — is proof the CLI is reading its
 		// stdin, which is the only thing the watchdog is waiting to learn.
-		this.disarmReplayWatchdog(sessionId)
+		//
+		// Gated on the log id, because the agent-server replays stdout on
+		// reconnect: a re-delivered OLD result says nothing about the turn we
+		// replayed, and standing the watchdog down on one would leave the human
+		// with no message at all — the failure envelope is already in `seen`, so
+		// nothing would ever post.
+		const watchdog = this.replayWatchdogs.get(sessionId)
+		if (watchdog && logId > watchdog.armedAfterLogId) this.disarmReplayWatchdog(sessionId)
 
 		const gate = await this.loadGate(sessionId)
 		if (!gate) return
@@ -473,10 +505,24 @@ export class InteractiveTurnFinalizer {
 		const task = (async () => {
 			try {
 				await this.delay(backoffMs)
-				await this.retryTurn?.(sessionId, payload)
-				// The write only proves the bytes were queued. Start the clock on
-				// the turn actually coming back; postFinalOutput stops it.
-				this.armReplayWatchdog(sessionId, gate, conversationId, dedupeKey)
+				// The write only proves the bytes were queued, so the turn coming
+				// back needs its own clock; postFinalOutput stops it.
+				//
+				// Armed BEFORE the write, not after: writeInput resolves only once
+				// the agent-server has answered and the envelope has been persisted,
+				// and a fast turn can close inside that window. Arming afterwards
+				// would leave a watchdog running against a turn whose reply the
+				// human has already read, and fire a contradiction into their chat
+				// five minutes later.
+				this.armReplayWatchdog(sessionId, gate, conversationId, dedupeKey, logId)
+				try {
+					await this.retryTurn?.(sessionId, payload)
+				} catch (err) {
+					// Nothing is coming: stand the watchdog down so the undeliverable
+					// notice below is the only thing the human is told.
+					this.disarmReplayWatchdog(sessionId)
+					throw err
+				}
 			} catch (err) {
 				// The session may have been stopped or closed while we waited.
 				// Nothing left to retry with, so say so rather than leaving the
@@ -555,30 +601,53 @@ export class InteractiveTurnFinalizer {
 		gate: SessionGate,
 		conversationId: string,
 		dedupeKey: string,
+		armedAfterLogId: number,
 	): void {
 		this.disarmReplayWatchdog(sessionId)
 		const timer = setTimeout(() => {
-			this.replayWatchdogs.delete(sessionId)
-			logger.error(
-				`Interactive session ${sessionId} replayed a turn but saw no result within ${this.replyTimeoutMs}ms; reporting it`,
-			)
-			void this.postRetryNotice(
-				sessionId,
-				gate,
-				conversationId,
-				dedupeKey,
-				'unanswered',
-				RETRY_UNANSWERED_MESSAGE,
-			)
+			void this.fireReplayWatchdog(sessionId, `no result arrived within ${this.replyTimeoutMs}ms`)
 		}, this.replyTimeoutMs)
 		timer.unref?.()
-		this.replayWatchdogs.set(sessionId, timer)
+		this.replayWatchdogs.set(sessionId, {
+			timer,
+			gate,
+			conversationId,
+			dedupeKey,
+			armedAfterLogId,
+		})
+	}
+
+	/**
+	 * Report a replayed turn that never came back — now, rather than on the
+	 * watchdog's own clock.
+	 *
+	 * Called both when that clock runs out and when something has made the
+	 * answer impossible before it could: the session went away, or the process
+	 * is exiting. In those two cases the timer would simply be discarded (it is
+	 * unref'd and in-process) with the human's turn still unaccounted for. No-op
+	 * when nothing is armed, so every caller can call it unconditionally.
+	 */
+	private async fireReplayWatchdog(sessionId: string, why: string): Promise<void> {
+		const watchdog = this.replayWatchdogs.get(sessionId)
+		if (!watchdog) return
+		this.disarmReplayWatchdog(sessionId)
+		logger.error(
+			`Interactive session ${sessionId} replayed a turn but saw no result; reporting it because ${why}`,
+		)
+		await this.postRetryNotice(
+			sessionId,
+			watchdog.gate,
+			watchdog.conversationId,
+			watchdog.dedupeKey,
+			'unanswered',
+			RETRY_UNANSWERED_MESSAGE,
+		)
 	}
 
 	private disarmReplayWatchdog(sessionId: string): void {
-		const timer = this.replayWatchdogs.get(sessionId)
-		if (!timer) return
-		clearTimeout(timer)
+		const watchdog = this.replayWatchdogs.get(sessionId)
+		if (!watchdog) return
+		clearTimeout(watchdog.timer)
 		this.replayWatchdogs.delete(sessionId)
 	}
 
@@ -592,14 +661,35 @@ export class InteractiveTurnFinalizer {
 	 */
 	async settlePendingRetries(timeoutMs = SETTLE_RETRIES_TIMEOUT_MS): Promise<void> {
 		const deadline = Date.now() + timeoutMs
-		while (this.pendingRetries.size > 0 && Date.now() < deadline) {
-			await Promise.allSettled([...this.pendingRetries])
+		while (this.pendingRetries.size > 0) {
+			const remaining = deadline - Date.now()
+			if (remaining <= 0) break
+			// Raced against the deadline, not merely checked between iterations:
+			// Promise.allSettled has no timeout of its own, so one replay whose
+			// write hangs (writeInput's fetch to an agent-server carries no
+			// AbortSignal) would make this — and the process exit that awaits it —
+			// wait forever, leaving SIGKILL as the only way out.
+			await Promise.race([
+				Promise.allSettled([...this.pendingRetries]),
+				new Promise<void>((resolve) => {
+					setTimeout(resolve, remaining).unref?.()
+				}),
+			])
 		}
 		if (this.pendingRetries.size > 0) {
 			logger.warn(
 				`Gave up waiting for ${this.pendingRetries.size} in-flight turn replay(s) after ${timeoutMs}ms`,
 			)
 		}
+		// An armed watchdog is an unref'd timer holding nothing but a human's
+		// unanswered turn: exiting drops it silently. Report them instead. A
+		// session that survives the restart and answers afterwards makes this
+		// notice redundant, which is the better of the two mistakes.
+		await Promise.allSettled(
+			[...this.replayWatchdogs.keys()].map((id) =>
+				this.fireReplayWatchdog(id, 'the server is shutting down'),
+			),
+		)
 	}
 
 	/**

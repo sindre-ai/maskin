@@ -899,5 +899,145 @@ ${surviving}
 			expect(rows).toHaveLength(1)
 			expect(rows[0]?.content).toBe('Here is the answer.')
 		})
+
+		it('stands the watchdog down even when the answer beats the write', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			// In production writeInput only resolves after a round trip to the
+			// agent-server and a log insert, so a fast turn can close inside that
+			// window. The watchdog must already be armed — and disarmable — before
+			// the write resolves, or it fires against a turn the human has read.
+			const instance = new InteractiveTurnFinalizer(db, {
+				delay: async () => {},
+				replyTimeoutMs: 40,
+				retryTurn: async (sessionId) => {
+					await feed(
+						sessionId,
+						`${resultLine()}
+`,
+					)
+				},
+			})
+			finalizer = instance
+
+			await feed(
+				session.id,
+				`${userTurnLine(20)}
+`,
+			)
+			await feed(
+				session.id,
+				`${apiErrorLine('req_1')}
+`,
+			)
+			await finalizer.settlePendingRetries()
+
+			await new Promise((resolve) => setTimeout(resolve, 120))
+			const rows = await messagesFor(conversationId)
+			expect(rows).toHaveLength(1)
+			expect(rows[0]?.content).toBe('Here is the answer.')
+		})
+
+		it('ignores a re-delivered older result when deciding the turn came back', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance } = withRetry({ replyTimeoutMs: 40 })
+			finalizer = instance
+
+			await feed(
+				session.id,
+				`${userTurnLine(21)}
+`,
+			)
+			const staleResult = await feed(
+				session.id,
+				`${resultLine({ result: 'An older answer.' })}
+`,
+			)
+			await feed(
+				session.id,
+				`${apiErrorLine('req_1')}
+`,
+			)
+			await finalizer.settlePendingRetries()
+
+			// The agent-server replays stdout on reconnect. Re-delivering that
+			// older result proves nothing about the replayed turn, so it must not
+			// stand the watchdog down — the failure envelope is already deduped,
+			// so nothing else would ever tell the human.
+			await finalizer.onStdout(
+				session.id,
+				`${resultLine({ result: 'An older answer.' })}
+`,
+				staleResult.id,
+			)
+
+			await eventually(async () =>
+				(await messagesFor(conversationId)).some(
+					(row) =>
+						(row.metadata as { final_output?: { retry?: string } })?.final_output?.retry ===
+						'unanswered',
+				),
+			)
+		})
+
+		it('gives up on a replay whose write never returns, rather than hanging the exit', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			// writeInput's fetch to an agent-server carries no AbortSignal, so a
+			// hung box makes this promise never settle. The shutdown that awaits
+			// settlePendingRetries must still come back.
+			const instance = new InteractiveTurnFinalizer(db, {
+				delay: async () => {},
+				retryTurn: () => new Promise<void>(() => {}),
+			})
+			finalizer = instance
+
+			await feed(
+				session.id,
+				`${userTurnLine(22)}
+`,
+			)
+			await feed(
+				session.id,
+				`${apiErrorLine('req_1')}
+`,
+			)
+
+			const startedAt = Date.now()
+			await finalizer.settlePendingRetries(50)
+			expect(Date.now() - startedAt).toBeLessThan(2_000)
+		})
+
+		it('reports a replayed turn still in flight when the session goes away', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			// The watchdog is unref'd and in-process: dropping it on forgetSession
+			// would leave the human in an empty thread with no message at all.
+			const { instance } = withRetry({ replyTimeoutMs: 60_000 })
+			finalizer = instance
+
+			await feed(
+				session.id,
+				`${userTurnLine(23)}
+`,
+			)
+			await feed(
+				session.id,
+				`${apiErrorLine('req_1')}
+`,
+			)
+			await finalizer.settlePendingRetries()
+			expect(await messagesFor(conversationId)).toHaveLength(0)
+
+			finalizer.forgetSession(session.id)
+
+			await eventually(async () => (await messagesFor(conversationId)).length === 1)
+			const rows = await messagesFor(conversationId)
+			expect(rows[0]?.content).not.toContain('API Error')
+			expect(
+				(rows[0]?.metadata as { final_output?: { retry?: string } })?.final_output?.retry,
+			).toBe('unanswered')
+		})
 	})
 })

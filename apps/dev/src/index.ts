@@ -213,9 +213,14 @@ logger.info('Session dispatch queue started')
 
 let shuttingDown = false
 const shutdown = async (signal: string) => {
-	// A second signal while the first is still settling must not start a
-	// second settle — it would double the wait before the exit it is asking for.
-	if (shuttingDown) return
+	// A second signal while the first is still settling is an operator asking
+	// harder, not asking twice. The first gets the graceful path; the second
+	// exits now — otherwise a replay wedged on a hung write leaves SIGKILL as
+	// the only way out.
+	if (shuttingDown) {
+		logger.warn(`Received ${signal} while already shutting down; exiting now`)
+		process.exit(1)
+	}
 	shuttingDown = true
 	logger.info(`Received ${signal}, shutting down`)
 	sessionDispatchQueue.stop()
@@ -223,7 +228,15 @@ const shutdown = async (signal: string) => {
 	// A turn replay in backoff holds the human's message and nothing else does:
 	// its state is in-process, so exiting mid-backoff drops the turn silently.
 	// Bounded inside, so a wedged replay cannot block the exit.
-	await sessionManager.turnFinalizer.settlePendingRetries()
+	try {
+		await sessionManager.turnFinalizer.settlePendingRetries()
+	} catch (err) {
+		// Documented as never throwing, but an unhandled rejection here would
+		// skip the exit below and hang the shutdown on a technicality.
+		logger.error(
+			`Failed to settle in-flight turn replays: ${err instanceof Error ? err.message : String(err)}`,
+		)
+	}
 	process.exit(0)
 }
 process.on('SIGTERM', () => void shutdown('SIGTERM'))
