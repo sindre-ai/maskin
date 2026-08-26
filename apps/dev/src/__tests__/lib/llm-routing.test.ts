@@ -19,6 +19,7 @@ import {
 	PRO_HARD_CAP_DEFAULT_USD_CENTS,
 	TEAM_HARD_CAP_DEFAULT_USD_CENTS,
 } from '../../lib/billing-defaults'
+import { preflightLlmCredentials } from '../../lib/llm-routing'
 import {
 	LLM_ROUTE_AGENT,
 	LLM_ROUTE_API_KEY,
@@ -699,5 +700,158 @@ describe('ceilCents', () => {
 		// must not be snapped away to zero.
 		expect(ceilCents(1 / 16_000)).toBe(1)
 		expect(ceilCents(1004.5)).toBe(1005)
+	})
+})
+
+// The offline gate that runs before a session is marked `starting`. It answers
+// "is any route configured at all", never "is the credential live" — liveness
+// stays with the (now timeout-bounded) probe inside resolveLlmRoute. Its
+// priority order must track resolveLlmRoute's, so each route gets a case.
+describe('preflightLlmCredentials', () => {
+	const noEnv: NodeJS.ProcessEnv = {}
+
+	it('passes when the agent carries its own key', () => {
+		expect(
+			preflightLlmCredentials({
+				wsSettings: {},
+				agent: { provider: 'anthropic', apiKey: 'sk-ant-agent' },
+				byollmAllowed: true,
+				env: noEnv,
+			}),
+		).toBeNull()
+	})
+
+	it('passes a non-anthropic agent key even without byollm entitlement', () => {
+		// session-manager injects OPENAI_API_KEY itself for these — resolveLlmRoute
+		// returns null and hands them back to the caller, so the pre-flight must
+		// not read that as "no credentials".
+		expect(
+			preflightLlmCredentials({
+				wsSettings: {},
+				agent: { provider: 'openai', apiKey: 'sk-openai' },
+				byollmAllowed: false,
+				env: noEnv,
+			}),
+		).toBeNull()
+	})
+
+	it('passes when the ACTIVE Claude OAuth slot holds data', () => {
+		expect(
+			preflightLlmCredentials({
+				wsSettings: {
+					claude_oauth: {
+						primary: {
+							encryptedAccessToken: 'a',
+							encryptedRefreshToken: 'r',
+							expiresAt: Date.now() + 3_600_000,
+						},
+						failover: { active_slot: 'primary' },
+					},
+				},
+				agent: {},
+				byollmAllowed: true,
+				env: noEnv,
+			}),
+		).toBeNull()
+	})
+
+	it('fails when active_slot points at an unconfigured slot', () => {
+		// The incident shape: `claude_oauth` exists on the row, so a naive
+		// truthiness check reads as "connected", but the slot actually selected
+		// for the next launch has nothing in it.
+		const gap = preflightLlmCredentials({
+			wsSettings: {
+				claude_oauth: {
+					primary: {
+						encryptedAccessToken: 'a',
+						encryptedRefreshToken: 'r',
+						expiresAt: Date.now() + 3_600_000,
+					},
+					failover: { active_slot: 'backup' },
+				},
+			},
+			agent: {},
+			byollmAllowed: true,
+			env: noEnv,
+		})
+		expect(gap).not.toBeNull()
+		expect(gap?.humanMessage).toMatch(/no LLM credentials/i)
+	})
+
+	it('passes on a complete custom_llm config and fails on a partial one', () => {
+		const complete = {
+			custom_llm: {
+				enabled: true,
+				base_url: 'https://openrouter.ai/api',
+				api_key: 'sk-or',
+				model: 'deepseek/deepseek-v4-flash',
+			},
+		}
+		expect(
+			preflightLlmCredentials({
+				wsSettings: complete,
+				agent: {},
+				byollmAllowed: true,
+				env: noEnv,
+			}),
+		).toBeNull()
+
+		// Same bar as buildCustomLlmEnv — a config missing its model is skipped
+		// there, so it must not count as configured here either.
+		expect(
+			preflightLlmCredentials({
+				wsSettings: { custom_llm: { ...complete.custom_llm, model: '' } },
+				agent: {},
+				byollmAllowed: true,
+				env: noEnv,
+			}),
+		).not.toBeNull()
+	})
+
+	it('passes on a workspace anthropic key', () => {
+		expect(
+			preflightLlmCredentials({
+				wsSettings: { llm_keys: { anthropic: 'sk-ant-ws' } },
+				agent: {},
+				byollmAllowed: true,
+				env: noEnv,
+			}),
+		).toBeNull()
+	})
+
+	it('ignores BYO credentials when the workspace is not entitled', () => {
+		// resolveLlmRoute only *reaches* routes 1-4 when entitled, so a stored
+		// key on a non-entitled workspace is not a route. With no funded plan
+		// configured either, that workspace has nowhere to go.
+		const gap = preflightLlmCredentials({
+			wsSettings: { llm_keys: { anthropic: 'sk-ant-ws' } },
+			agent: {},
+			byollmAllowed: false,
+			env: noEnv,
+		})
+		expect(gap).not.toBeNull()
+		expect(gap?.detail).toMatch(/not entitled/i)
+	})
+
+	it('passes on the Maskin plan route when the operator key is configured', () => {
+		expect(
+			preflightLlmCredentials({
+				wsSettings: { billing: { plan: 'pro' } },
+				agent: {},
+				byollmAllowed: false,
+				env: { MASKIN_FALLBACK_OPENROUTER_KEY: 'sk-or-operator' },
+			}),
+		).toBeNull()
+	})
+
+	it('fails when nothing at all is configured', () => {
+		const gap = preflightLlmCredentials({
+			wsSettings: {},
+			agent: {},
+			byollmAllowed: true,
+			env: noEnv,
+		})
+		expect(gap).not.toBeNull()
+		expect(gap?.detail).toMatch(/No Claude subscription/i)
 	})
 })

@@ -116,6 +116,19 @@ function createMockStorageProvider() {
 	}
 }
 
+/**
+ * Settings for a workspace that can actually launch a session.
+ *
+ * buildLaunchSpec refuses to launch a workspace with no LLM route at all — the
+ * credential pre-flight — so a `settings: {}` fixture now means "this workspace
+ * has nothing to run on", which is not what these launch tests are about. The
+ * cheapest realistic route is a workspace-level Anthropic key: it resolves
+ * without any extra DB read, so it doesn't perturb the ordered `selectQueue`
+ * each test sets up. Workspaces with genuinely no route are covered against
+ * real Postgres in integration/session-launch-preflight.test.ts.
+ */
+const LAUNCHABLE_WS_SETTINGS = { llm_keys: { anthropic: 'sk-ant-test-ws' } }
+
 describe('SessionManager', () => {
 	let manager: SessionManager
 	let mockResults: Record<string, unknown>
@@ -415,7 +428,11 @@ describe('SessionManager', () => {
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
-			const workspace = { id: session.workspaceId, byollmAllowed: true, settings: {} }
+			const workspace = {
+				id: session.workspaceId,
+				byollmAllowed: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
 
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
 				pulled: 0,
@@ -464,7 +481,11 @@ describe('SessionManager', () => {
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
-			const workspace = { id: session.workspaceId, settings: {} }
+			const workspace = {
+				id: session.workspaceId,
+				byollmAllowed: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
 
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
 				pulled: 0,
@@ -511,7 +532,11 @@ describe('SessionManager', () => {
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
-			const workspace = { id: session.workspaceId, settings: {} }
+			const workspace = {
+				id: session.workspaceId,
+				byollmAllowed: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
 
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
 				pulled: 0,
@@ -555,7 +580,11 @@ describe('SessionManager', () => {
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
-			const workspace = { id: session.workspaceId, settings: {} }
+			const workspace = {
+				id: session.workspaceId,
+				byollmAllowed: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
 
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
 				pulled: 0,
@@ -600,7 +629,11 @@ describe('SessionManager', () => {
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
-			const workspace = { id: session.workspaceId, byollmAllowed: true, settings: {} }
+			const workspace = {
+				id: session.workspaceId,
+				byollmAllowed: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
 
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
 				pulled: 0,
@@ -640,7 +673,11 @@ describe('SessionManager', () => {
 				apiKey: null,
 				tools: null,
 			}
-			const workspace = { id: session.workspaceId, byollmAllowed: true, settings: {} }
+			const workspace = {
+				id: session.workspaceId,
+				byollmAllowed: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
 
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
 				pulled: 0,
@@ -677,7 +714,11 @@ describe('SessionManager', () => {
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
-			const workspace = { id: session.workspaceId, byollmAllowed: true, settings: {} }
+			const workspace = {
+				id: session.workspaceId,
+				byollmAllowed: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
 
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
 				pulled: 0,
@@ -875,7 +916,7 @@ describe('SessionManager', () => {
 		}
 
 		function buildTestWorkspace(workspaceId: string) {
-			return { id: workspaceId, byollmAllowed: true, settings: {} }
+			return { id: workspaceId, byollmAllowed: true, settings: LAUNCHABLE_WS_SETTINGS }
 		}
 
 		beforeEach(() => {
@@ -1020,7 +1061,7 @@ describe('SessionManager', () => {
 		}
 
 		function buildTestWorkspace(workspaceId: string) {
-			return { id: workspaceId, byollmAllowed: true, settings: {} }
+			return { id: workspaceId, byollmAllowed: true, settings: LAUNCHABLE_WS_SETTINGS }
 		}
 
 		beforeEach(() => {
@@ -1237,7 +1278,11 @@ describe('SessionManager', () => {
 			})
 			return {
 				session,
-				workspace: { id: session.workspaceId, byollmAllowed: true, settings: {} },
+				workspace: {
+					id: session.workspaceId,
+					byollmAllowed: true,
+					settings: LAUNCHABLE_WS_SETTINGS,
+				},
 				agent: {
 					id: session.actorId,
 					type: 'agent',
@@ -1409,9 +1454,15 @@ describe('SessionManager', () => {
 
 			expect(mockFetchInstallationOwnerLogin).toHaveBeenCalledWith('install-needs-backfill')
 
+			// Skip the session row's own `config` write (buildLaunchSpec persists
+			// the resolved llm_route there) — the update under test is the
+			// integration row's.
 			const updateCall = calls.updates.find(
 				(u): u is { config: { owner_login?: string } } =>
-					typeof u === 'object' && u !== null && 'config' in u,
+					typeof u === 'object' &&
+					u !== null &&
+					'config' in u &&
+					!('llm_route' in ((u as { config: Record<string, unknown> }).config ?? {})),
 			) as { config: { owner_login?: string } } | undefined
 			expect(updateCall?.config.owner_login).toBe('acme-org')
 
@@ -1609,7 +1660,11 @@ describe('SessionManager', () => {
 				actionPrompt: 'Do the thing',
 				containerId: null,
 			})
-			const workspace = { id: session.workspaceId, byollmAllowed: true, settings: {} }
+			const workspace = {
+				id: session.workspaceId,
+				byollmAllowed: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
 			const agent = {
 				id: session.actorId,
 				type: 'agent' as const,
@@ -2579,7 +2634,11 @@ describe('SessionManager', () => {
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
-			const workspace = { id: session.workspaceId, byollmAllowed: true, settings: {} }
+			const workspace = {
+				id: session.workspaceId,
+				byollmAllowed: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
 
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
 				pulled: 0,
@@ -2616,7 +2675,11 @@ describe('SessionManager', () => {
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
-			const workspace = { id: session.workspaceId, settings: {} }
+			const workspace = {
+				id: session.workspaceId,
+				byollmAllowed: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
 
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
 				pulled: 0,
@@ -2664,7 +2727,11 @@ describe('SessionManager', () => {
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
-			const workspace = { id: session.workspaceId, byollmAllowed: true, settings: {} }
+			const workspace = {
+				id: session.workspaceId,
+				byollmAllowed: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
 
 			vi.spyOn(AgentStorageManager.prototype, 'pullAgentFiles').mockResolvedValue(undefined)
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
@@ -2849,7 +2916,11 @@ describe('SessionManager', () => {
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
-			const workspace = { id: session.workspaceId, settings: {} }
+			const workspace = {
+				id: session.workspaceId,
+				byollmAllowed: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
 
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
 				pulled: 0,
