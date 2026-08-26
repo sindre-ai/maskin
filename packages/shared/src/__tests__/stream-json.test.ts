@@ -164,6 +164,17 @@ describe('scanTurnLine', () => {
 		})
 	})
 
+	it('does not treat a sub-agent result as the turn boundary', () => {
+		// parseResultLine already rejects these. If the scan stopped here it would
+		// abandon recovery mid-turn for any turn that dispatched a Task and then
+		// closed on a blank result — the exact turn this scan exists to save.
+		expect(
+			scanTurnLine(
+				JSON.stringify({ type: 'result', result: 'sub done', parent_tool_use_id: 'call_parent' }),
+			),
+		).toEqual({ kind: 'other' })
+	})
+
 	it('marks a tagged user envelope as the turn boundary but not a tool_result', () => {
 		expect(
 			scanTurnLine(JSON.stringify({ type: 'user', maskin_message_id: 42, message: {} })),

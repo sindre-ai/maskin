@@ -93,11 +93,16 @@ export function parseResultLine(line: string): StreamJsonResult | null {
  *
  * `boundary` marks where the current turn began, so a caller walking backwards
  * knows to stop rather than reaching into the previous turn's output:
- *  - a `result` envelope is the previous turn's close;
+ *  - a top-level `result` envelope is the previous turn's close;
  *  - a `user` envelope carrying `maskin_message_id` is this turn's opening
  *    message, persisted by SessionManager.writeInput.
- * A `user` envelope WITHOUT that tag is a tool_result being fed back mid-turn,
- * which is not a boundary.
+ *
+ * Two shapes deliberately are NOT boundaries. A `user` envelope without that
+ * tag is either a tool_result fed back mid-turn or a seeded first turn, and a
+ * `result` carrying `parent_tool_use_id` closes a sub-agent's run rather than
+ * this turn — stopping on either would abandon the scan inside the very turn
+ * it is meant to read. A seeded first turn is safe to walk past because it has
+ * no earlier turn to reach into.
  */
 export type StreamJsonScanLine =
 	| { kind: 'boundary' }
@@ -128,7 +133,13 @@ export function scanTurnLine(line: string): StreamJsonScanLine {
 
 	const obj = parsed as Record<string, unknown>
 
-	if (obj.type === 'result') return { kind: 'boundary' }
+	if (obj.type === 'result') {
+		// Mirrors parseResultLine: a sub-agent (Task tool) result is not this
+		// turn's close. Treating it as a boundary would abandon recovery in the
+		// middle of a turn that dispatched a Task and then ended on a blank
+		// result — exactly the turn this scan exists to save.
+		return obj.parent_tool_use_id != null ? { kind: 'other' } : { kind: 'boundary' }
+	}
 	if (obj.type === 'user') {
 		return obj.maskin_message_id !== undefined ? { kind: 'boundary' } : { kind: 'other' }
 	}

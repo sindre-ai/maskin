@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import type { Database } from '@maskin/db'
 import { sessionLogs, sessions } from '@maskin/db/schema'
 import { MESSAGE_MAX_LENGTH, parseResultLine, scanTurnLine, splitLines } from '@maskin/shared'
-import { and, desc, eq, like, lt } from 'drizzle-orm'
+import { and, desc, eq, like, lte } from 'drizzle-orm'
 import { logger } from '../lib/logger'
 import { insertConversationMessage } from './conversation-messages'
 
@@ -28,16 +28,30 @@ import { insertConversationMessage } from './conversation-messages'
 const describeError = (err: unknown): string =>
 	err instanceof Error ? err.stack || err.message : String(err)
 
+/**
+ * Every complete line in one session_logs row.
+ *
+ * splitLines drops the trailing partial, which for a stored row is the last
+ * envelope when the chunk did not end on a newline — so terminate the row
+ * first. A row is only ever a whole number of envelopes by the time it is
+ * persisted; the cross-chunk partial is reassembled live by onStdout.
+ */
+const splitRowLines = (content: string): string[] =>
+	splitLines(content.endsWith('\n') ? content : `${content}\n`).lines
+
 /** Guards against a stream that never emits a newline eating memory. */
 const MAX_BUFFERED_PARTIAL_BYTES = 256 * 1024
 /** Bounds the in-process dedupe cache; the DB unique index is authoritative. */
 const MAX_SEEN_KEYS = 500
 /**
- * How far back the blank-result recovery scan reads. A turn's stdout is one row
- * per streamed block, so a tool-heavy turn runs to dozens of rows; this is sized
- * to cover a normal turn while keeping the query bounded. The scan stops early
- * at the turn boundary, so the limit only bites on unusually long turns — where
- * missing the reply is the same silence we'd have had anyway.
+ * How far back the blank-result recovery scan reads, in session_logs ROWS.
+ *
+ * A row is one streamed block on the agent-server path but a raw Docker chunk
+ * on the local path, where it can carry several newline-delimited envelopes —
+ * so this bounds the query generously rather than exactly. A tool-heavy turn
+ * runs to dozens of rows; the scan stops early at the turn boundary, so the
+ * limit only bites on unusually long turns, where missing the reply is the
+ * same silence we'd have had anyway.
  */
 const RECOVERY_SCAN_LIMIT = 200
 
@@ -142,7 +156,7 @@ export class InteractiveTurnFinalizer {
 		let text = result.text.trim()
 		let recovered = false
 		if (!text) {
-			const fallback = await this.recoverTurnText(sessionId, logId)
+			const fallback = await this.recoverTurnText(sessionId, logId, result.raw)
 			if (fallback) {
 				text = fallback
 				recovered = true
@@ -241,19 +255,34 @@ export class InteractiveTurnFinalizer {
 	 * opened this one) so it can never surface something the agent said in an
 	 * earlier turn — which would re-post a reply the human already read.
 	 *
+	 * Rows are split into lines before classifying. A session_logs row is one
+	 * envelope on the agent-server path but a raw Docker chunk on the local one
+	 * (session-manager writes `chunk.data` verbatim), and scanTurnLine parses a
+	 * whole line — so a packed chunk would classify as 'other', which both loses
+	 * the reply AND fails to detect a boundary buried in it. Failing to detect a
+	 * boundary is the dangerous half: the scan walks into the previous turn and
+	 * re-posts a reply the human already read.
+	 *
 	 * Returns the LAST non-empty assistant text of the turn. Mid-turn narration
 	 * ("let me check X") can win that way when the agent said nothing else, but
 	 * a slightly over-eager bubble beats a lost reply, and the message is
 	 * tagged `recovered` so this path stays visible in the data.
 	 */
-	private async recoverTurnText(sessionId: string, logId: number): Promise<string> {
+	private async recoverTurnText(
+		sessionId: string,
+		logId: number,
+		resultRaw: string,
+	): Promise<string> {
 		const rows = await this.db
-			.select({ content: sessionLogs.content })
+			.select({ id: sessionLogs.id, content: sessionLogs.content })
 			.from(sessionLogs)
 			.where(
 				and(
 					eq(sessionLogs.sessionId, sessionId),
-					lt(sessionLogs.id, logId),
+					// Inclusive: the reply usually shares its chunk with the blank
+					// result that triggered this scan, so excluding that row would
+					// skip the single most likely place the lost text is sitting.
+					lte(sessionLogs.id, logId),
 					eq(sessionLogs.stream, 'stdout'),
 				),
 			)
@@ -261,9 +290,23 @@ export class InteractiveTurnFinalizer {
 			.limit(RECOVERY_SCAN_LIMIT)
 
 		for (const row of rows) {
-			const scanned = scanTurnLine(row.content)
-			if (scanned.kind === 'boundary') return ''
-			if (scanned.kind === 'assistant_text') return scanned.text.trim()
+			let lines = splitRowLines(row.content)
+
+			if (row.id === logId) {
+				// Read only what precedes the triggering result line: anything
+				// after it in the same chunk belongs to the NEXT turn. If it is
+				// not found the line was completed from a partial carried out of
+				// an earlier chunk, so skip the row rather than risk reading
+				// forward across the boundary.
+				const at = lines.findIndex((line) => line.trim() === resultRaw)
+				lines = at === -1 ? [] : lines.slice(0, at)
+			}
+
+			for (let i = lines.length - 1; i >= 0; i--) {
+				const scanned = scanTurnLine(lines[i] ?? '')
+				if (scanned.kind === 'boundary') return ''
+				if (scanned.kind === 'assistant_text') return scanned.text.trim()
+			}
 		}
 		return ''
 	}
@@ -275,6 +318,10 @@ export class InteractiveTurnFinalizer {
 	 * `maskin_message_id`; the nearest such envelope before this result is the
 	 * turn that is now closing. Null is fine — a seeded first turn may carry no
 	 * message id, and the frontend anchors those by position instead.
+	 *
+	 * Split into lines for the same reason recoverTurnText does: the tagged
+	 * envelope can share a Docker chunk with its neighbours, and parsing the
+	 * whole row would throw and silently yield an unanchored message.
 	 */
 	private async resolveTurnMessageId(sessionId: string, logId: number): Promise<number | null> {
 		const [row] = await this.db
@@ -283,7 +330,7 @@ export class InteractiveTurnFinalizer {
 			.where(
 				and(
 					eq(sessionLogs.sessionId, sessionId),
-					lt(sessionLogs.id, logId),
+					lte(sessionLogs.id, logId),
 					eq(sessionLogs.stream, 'stdout'),
 					like(sessionLogs.content, '%maskin_message_id%'),
 				),
@@ -292,12 +339,16 @@ export class InteractiveTurnFinalizer {
 			.limit(1)
 
 		if (!row) return null
-		try {
-			const parsed = JSON.parse(row.content) as { maskin_message_id?: unknown }
-			return typeof parsed.maskin_message_id === 'number' ? parsed.maskin_message_id : null
-		} catch {
-			return null
+		const lines = splitRowLines(row.content)
+		for (let i = lines.length - 1; i >= 0; i--) {
+			try {
+				const parsed = JSON.parse((lines[i] ?? '').trim()) as { maskin_message_id?: unknown }
+				if (typeof parsed.maskin_message_id === 'number') return parsed.maskin_message_id
+			} catch {
+				// Not JSON, or a partial — keep walking the row's other lines.
+			}
 		}
+		return null
 	}
 
 	private rememberKey(dedupeKey: string): void {
