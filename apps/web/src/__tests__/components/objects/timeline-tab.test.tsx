@@ -1,5 +1,6 @@
 import { TimelineTab } from '@/components/objects/timeline-tab'
 import { useObjectGraph } from '@/hooks/use-objects'
+import { useMarkRead } from '@/hooks/use-subscriptions'
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { buildEventResponse, buildObjectResponse, buildRelationshipResponse } from '../../factories'
@@ -13,6 +14,11 @@ vi.mock('@tanstack/react-router', async () => {
 vi.mock('@/hooks/use-objects', () => ({
 	useObjectGraph: vi.fn(),
 	useObject: () => ({ data: undefined, isLoading: false }),
+}))
+
+const markReadMutate = vi.fn()
+vi.mock('@/hooks/use-subscriptions', () => ({
+	useMarkRead: vi.fn(() => ({ mutate: markReadMutate, isPending: false })),
 }))
 
 vi.mock('@/hooks/use-actors', () => ({
@@ -324,6 +330,13 @@ describe('TimelineTab', () => {
 
 		await user.click(screen.getByRole('button', { name: 'Mark read' }))
 		expect(screen.queryByRole('button', { name: 'Mark read' })).toBeNull()
+		// Dismissing the divider must also persist the read high-water mark —
+		// a local-only dismiss would let the unread badge come back on remount.
+		expect(vi.mocked(useMarkRead)).toHaveBeenCalledWith('ws-1')
+		expect(markReadMutate).toHaveBeenCalledWith(
+			{ entityType: 'object', entityId: 'obj-1', lastEventId: 20 },
+			expect.anything(),
+		)
 	})
 
 	it('threads replies under their parent comment instead of listing them', () => {

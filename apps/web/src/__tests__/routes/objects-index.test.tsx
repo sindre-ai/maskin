@@ -1,4 +1,3 @@
-import { NewDesignProvider } from '@/lib/new-design-context'
 import { render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -184,14 +183,7 @@ const RouteOptions = Route as unknown as {
 	validateSearch: (input: Record<string, unknown>) => Record<string, unknown>
 }
 const ObjectsPageComponent = RouteOptions.component
-// The route page branches on `useNewDesign()` and defaults to the legacy
-// surface outside the workspace shell. These specs exercise the v2 page, so
-// mount it inside the provider the shell would supply.
-const ObjectsPage: React.FC = () => (
-	<NewDesignProvider value={true}>
-		<ObjectsPageComponent />
-	</NewDesignProvider>
-)
+const ObjectsPage = ObjectsPageComponent
 
 describe('validateSearch', () => {
 	it('returns defaults for missing params', () => {

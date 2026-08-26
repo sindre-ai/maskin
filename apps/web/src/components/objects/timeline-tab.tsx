@@ -9,13 +9,15 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useObjectGraph } from '@/hooks/use-objects'
+import { useMarkRead } from '@/hooks/use-subscriptions'
 import type { ActorListItem, EventResponse, ObjectResponse } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { OBJECT_DIFF_FIELDS, findChange, getChangesFromEventData } from '@maskin/shared'
 import { formatEventDescription } from '@maskin/shared'
 import { ArrowDown, ChevronDown } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { toast } from 'sonner'
 
 /**
  * One row of the merged activity stream (mockup 1176–1355). Comments and events
@@ -309,6 +311,32 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 		[events, unreadCount],
 	)
 	const [unreadDismissed, setUnreadDismissed] = useState(false)
+	// High-water mark for mark-read: the newest comment event in the stream,
+	// matching the server's tracking (see `object-activity.tsx`).
+	const latestCommentEventId = useMemo(() => {
+		let max = 0
+		for (const e of events ?? []) {
+			if (e.action === 'commented' && e.id > max) max = e.id
+		}
+		return max
+	}, [events])
+	const markRead = useMarkRead(workspaceId)
+	// Dismissing the divider is a local, immediate affordance; the mutation is
+	// what actually clears the badge and the For You feed. Without it the
+	// divider would reappear on the next mount.
+	const handleMarkRead = useCallback(() => {
+		setUnreadDismissed(true)
+		if (latestCommentEventId <= 0) return
+		markRead.mutate(
+			{ entityType: 'object', entityId: object.id, lastEventId: latestCommentEventId },
+			{
+				onError: () => {
+					setUnreadDismissed(false)
+					toast.error('Failed to mark as read')
+				},
+			},
+		)
+	}, [markRead, object.id, latestCommentEventId])
 	const firstUnreadId = useMemo(() => {
 		if (unreadEventIds.size === 0) return null
 		let min: number | null = null
@@ -385,7 +413,7 @@ export function TimelineTab({ object }: { object: ObjectResponse }) {
 	const renderEntry = (entry: TimelineEntry) => {
 		const divider =
 			showUnreadDivider && entry.kind === 'comment' && entry.event.id === firstUnreadId ? (
-				<UnreadDivider count={unreadCount} onMarkRead={() => setUnreadDismissed(true)} />
+				<UnreadDivider count={unreadCount} onMarkRead={handleMarkRead} />
 			) : null
 		return (
 			<li key={entry.key} className="list-none">

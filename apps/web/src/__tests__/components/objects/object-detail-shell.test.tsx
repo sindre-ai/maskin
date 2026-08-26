@@ -1,5 +1,4 @@
 import { ObjectDetailShell } from '@/components/objects/object-detail-shell'
-import { NewDesignProvider } from '@/lib/new-design-context'
 import { fireEvent, render, screen } from '@testing-library/react'
 import * as React from 'react'
 import { buildObjectResponse } from '../../factories'
@@ -43,6 +42,7 @@ vi.mock('@/hooks/use-subscriptions', () => ({
 	useSubscribe: () => ({ mutate: vi.fn(), isPending: false }),
 	useUnsubscribe: () => ({ mutate: vi.fn(), isPending: false }),
 	useSubscribers: () => ({ data: [] }),
+	useMarkRead: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
 vi.mock('@/hooks/use-mobile', () => ({
@@ -122,15 +122,9 @@ describe('ObjectDetailShell', () => {
 			type: 'bet',
 			metadata: { _ask: 'Should we ship this?' },
 		})
-		// Only the v2 composer takes a `focusRef`, and this shell is a v2-only
-		// surface — the `new-design` boundary in `$workspaceId.tsx` is what puts
-		// it on screen — so the test opts into the same context.
-		render(
-			<NewDesignProvider value={true}>
-				<ObjectDetailShell object={object} />
-			</NewDesignProvider>,
-			{ wrapper: createWorkspaceWrapper(workspace) },
-		)
+		render(<ObjectDetailShell object={object} />, {
+			wrapper: createWorkspaceWrapper(workspace),
+		})
 
 		const textarea = screen.getByPlaceholderText(/write a comment/i)
 		const answerButton = screen.getByRole('button', { name: /answer it/i })

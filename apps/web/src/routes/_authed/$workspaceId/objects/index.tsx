@@ -12,7 +12,6 @@ import type {
 } from '@/components/objects/data-table/display-panel'
 import { getDynamicColumns } from '@/components/objects/data-table/dynamic-columns'
 import type { FieldDefinition } from '@/components/objects/field-value-input'
-import { LegacyObjectsPage } from '@/components/objects/legacy/objects-index-page'
 import { ListView, type ListViewHandle } from '@/components/objects/list/list-view'
 import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picker'
 import { type FilterTabItem, FilterTabs } from '@/components/shared/filter-tabs'
@@ -41,7 +40,6 @@ import { consumeArrivalNavType } from '@/lib/back-nav-tracker'
 import { type BetStatusResult, buildBetStatuses } from '@/lib/bet-status'
 import { cn } from '@/lib/cn'
 import { getStatusColor } from '@/lib/constants'
-import { useNewDesign } from '@/lib/new-design-context'
 import {
 	DEFAULT_ORDER,
 	DEFAULT_SORT,
@@ -144,16 +142,7 @@ const PAGE_SIZE = 50
 const BOARD_PAGE_SIZE = 20
 const BOARD_MANUAL_SORT = 'boardOrder'
 
-/**
- * The `new-design` boundary for the Objects index. The flag is read once, at
- * the workspace shell, and only the resolved boolean reaches here via
- * `useNewDesign()` — a route page cannot be swapped at the boundary itself.
- */
 function ObjectsRoute() {
-	return useNewDesign() ? <ObjectsPageV2 /> : <LegacyObjectsPage />
-}
-
-function ObjectsPageV2() {
 	const { workspaceId, workspace } = useWorkspace()
 	const navigate = useNavigate()
 	const searchParams = useSearch({ from: '/_authed/$workspaceId/objects/' })

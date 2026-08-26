@@ -1,5 +1,4 @@
 import { PageHeader } from '@/components/layout/page-header'
-import { LegacyObjectDocument } from '@/components/objects/legacy/object-document'
 import { ObjectCreateForm } from '@/components/objects/object-create-form'
 import { ObjectDetailShell } from '@/components/objects/object-detail-shell'
 import { Skeleton } from '@/components/shared/loading-skeleton'
@@ -7,7 +6,6 @@ import { QueryStateError } from '@/components/shared/query-state'
 import { RouteError } from '@/components/shared/route-error'
 import { useCreateObject, useObject, useUpdateObject } from '@/hooks/use-objects'
 import { ApiError } from '@/lib/api'
-import { useNewDesign } from '@/lib/new-design-context'
 import { useWorkspace } from '@/lib/workspace-context'
 import { getDefaultStatusForType } from '@maskin/module-sdk'
 import { createFileRoute } from '@tanstack/react-router'
@@ -22,10 +20,6 @@ export const Route = createFileRoute('/_authed/$workspaceId/objects/$objectId')(
 function ObjectDetailPage() {
 	const { objectId } = Route.useParams()
 	const { workspaceId, workspace } = useWorkspace()
-	// The `new-design` boundary for object detail — the v2 shell (header,
-	// timeline, related, evidence) vs the pre-v2 document. Read once, here.
-	const newDesign = useNewDesign()
-
 	// Derive default statuses from workspace settings (first status per type)
 	const settings = workspace.settings as Record<string, unknown>
 	const statusMap = (settings?.statuses ?? {}) as Record<string, string[]>
@@ -98,11 +92,7 @@ function ObjectDetailPage() {
 
 	// Once fully loaded with object data, render the full document editor
 	if (isCreated && object) {
-		return newDesign ? (
-			<ObjectDetailShell object={object} />
-		) : (
-			<LegacyObjectDocument object={object} />
-		)
+		return <ObjectDetailShell object={object} />
 	}
 
 	// Create mode — show form with document-like sections

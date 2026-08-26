@@ -1,4 +1,3 @@
-import { NewDesignProvider } from '@/lib/new-design-context'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -226,14 +225,7 @@ import { Route } from '@/routes/_authed/$workspaceId/objects/index'
 
 const RouteOptions = Route as unknown as { component: React.FC }
 const ObjectsPageComponent = RouteOptions.component
-// The route page branches on `useNewDesign()` and defaults to the legacy
-// surface outside the workspace shell. These specs exercise the v2 page, so
-// mount it inside the provider the shell would supply.
-const ObjectsPage: React.FC = () => (
-	<NewDesignProvider value={true}>
-		<ObjectsPageComponent />
-	</NewDesignProvider>
-)
+const ObjectsPage = ObjectsPageComponent
 
 beforeEach(() => {
 	searchState.current = {

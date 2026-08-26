@@ -1,5 +1,4 @@
 import type { ObjectResponse } from '@/lib/api'
-import { NewDesignProvider } from '@/lib/new-design-context'
 import { __resetObjectsViewStateForTesting, patchViewState } from '@/lib/objects-view-state'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -212,14 +211,7 @@ import { Route } from '@/routes/_authed/$workspaceId/objects/index'
 
 const RouteOptions = Route as unknown as { component: React.FC }
 const ObjectsPageComponent = RouteOptions.component
-// The route page branches on `useNewDesign()` and defaults to the legacy
-// surface outside the workspace shell. These specs exercise the v2 page, so
-// mount it inside the provider the shell would supply.
-const ObjectsPage: React.FC = () => (
-	<NewDesignProvider value={true}>
-		<ObjectsPageComponent />
-	</NewDesignProvider>
-)
+const ObjectsPage = ObjectsPageComponent
 
 async function setBackNav(isBack: boolean) {
 	const { wasRecentBackNav, consumeArrivalNavType } = await import('@/lib/back-nav-tracker')

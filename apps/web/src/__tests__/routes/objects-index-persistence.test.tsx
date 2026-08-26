@@ -1,4 +1,3 @@
-import { NewDesignProvider } from '@/lib/new-design-context'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, render } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -133,14 +132,7 @@ import { Route } from '@/routes/_authed/$workspaceId/objects/index'
 
 const RouteOptions = Route as unknown as { component: React.FC }
 const ObjectsPageComponent = RouteOptions.component
-// The route page branches on `useNewDesign()` and defaults to the legacy
-// surface outside the workspace shell. These specs exercise the v2 page, so
-// mount it inside the provider the shell would supply.
-const ObjectsPage: React.FC = () => (
-	<NewDesignProvider value={true}>
-		<ObjectsPageComponent />
-	</NewDesignProvider>
-)
+const ObjectsPage = ObjectsPageComponent
 
 async function flushHydrateAndWriteThrough() {
 	// See the write-through regression test below for why this splits into two
