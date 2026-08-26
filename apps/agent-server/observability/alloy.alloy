@@ -219,20 +219,27 @@ prometheus.exporter.unix "host" {
 		// lifecycle — the metrics-side equivalent of putting sessionId in a
 		// Loki label. Only real, persistent disks are wanted here.
 		//
-		// This filters by FILESYSTEM TYPE, not by path, and that is
-		// deliberate. microsandbox's storage location is its own default
-		// (MSB_BIN points at /root/.microsandbox/bin/msb, so it lives under
-		// root's home, not /var/lib) and it is not configured anywhere in
-		// this repo — a path-based exclusion would be guessing at an
-		// implementation detail we do not control, and would silently stop
-		// matching if msb ever moved. Type-based exclusion does not care
-		// where the mounts are.
+		// MEASURED on the Finland box (95.217.231.223, 2026-08-26) with two
+		// msb sandboxes running: `mount | grep -iE 'msb|microsandbox'`
+		// returned ZERO rows. microsandbox does not create host mounts per
+		// microVM at all — it is libkrun/KVM with the guest rootfs inside
+		// the VM, not an overlay assembled on the host the way Docker does
+		// it. So this exclusion is belt-and-braces, not load-bearing.
 		//
-		// What survives this filter is ext4/xfs/btrfs — actual block
-		// devices. Anything a VM runtime conjures up (overlay, virtiofs,
-		// fuse passthrough, tmpfs, squashfs) is excluded wherever it lives.
-		// tmpfs in particular is excluded on purpose: it is RAM, meminfo
-		// already measures it, and /run/user/<uid> mounts come and go.
+		// It is kept anyway, and filters by FILESYSTEM TYPE rather than by
+		// path, because the failure mode is silent: if a future msb release
+		// does start mounting per sandbox, a type filter still catches it,
+		// whereas a path filter would need to have guessed the right
+		// directory. (An earlier draft guessed /var/lib/microsandbox, which
+		// does not exist — MSB_BIN is /root/.microsandbox/bin/msb.)
+		//
+		// What survives this filter, verified by `df -hT` on that box, is
+		// exactly: /dev/md2 ext4 on / and /dev/md1 ext3 on /boot. Two real
+		// block devices, both stable. The 7 overlay + 7 nsfs mounts present
+		// belong to Docker (the Coolify stack, see README) and are excluded
+		// twice over — by type, and by the /var/lib/docker/ path rule below.
+		// tmpfs is excluded on purpose: it is RAM, meminfo already measures
+		// it, and /run/user/<uid> mounts come and go with logins.
 		//
 		// mount_points_exclude is upstream node_exporter's default, verbatim
 		// — pseudo-filesystem directories only, no invented paths.

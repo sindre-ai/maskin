@@ -50,12 +50,27 @@ for something else means replacing the `loki.write` component in
 
 ## What this does *not* cover
 
-This is the **Finland agent-server box only**. The managed Hetzner box running
-`apps/dev`, `apps/web`, Postgres and SeaweedFS ships nothing — no logs, no
-metrics — and those services run under Docker rather than as systemd units, so
-they need a `loki.source.docker` pipeline rather than a second copy of this
-one. That gap is tracked separately. Do not read a green dashboard here as
-coverage of the whole system.
+This ships **the `maskin-agent-server` systemd unit, and nothing else** — not
+even everything on the same machine.
+
+Verified on the Finland box (2026-08-26): alongside agent-server it also runs a
+full Coolify stack in Docker — `coolify`, `coolify-db` (Postgres 15),
+`coolify-proxy` (Traefik), `coolify-realtime`, `coolify-redis`,
+`coolify-sentinel` — plus one `agent-base` container that has been up two
+months. None of those ship anywhere. The journald source here is filtered to
+`SYSLOG_IDENTIFIER=maskin-agent-server` precisely so an unrelated chatty
+service cannot inflate the bill, and the cost of that is that Docker logs need
+their own `loki.source.docker` pipeline. That is a real gap and it is on *this*
+host, not only some other one.
+
+`apps/dev`, `apps/web` and SeaweedFS are **not** on this box — nothing is
+listening on 3000, 5173 or 8333; only agent-server on 3001. Wherever they run,
+they are also unshipped.
+
+The **metrics** half is not subject to any of this: `node_exporter` measures the
+whole machine, so CPU, memory and disk cover the Coolify containers' resource
+usage too. It is the *logs* that are agent-server-only. Do not read a green
+metrics dashboard as evidence that everything on the box is being logged.
 
 ## Setup
 
@@ -86,9 +101,13 @@ access policy token can serve both if it is scoped `logs:write` +
 401 that reads like an invalid token; if only one of the two pipelines
 authenticates, that mix-up is the first thing to check.
 
-Set `AGENT_SERVER_INSTANCE` here too if the hostname is not something you would
-recognise in a dashboard. It defaults to the hostname and is applied to both
-pipelines — it is the label the correlation below depends on.
+**Set `AGENT_SERVER_INSTANCE` explicitly.** It defaults to the hostname, and
+the current Finland box's hostname is `Ubuntu-2404-noble-amd64-base` — a Hetzner
+image name, meaningless in a dashboard, identical on every box built from that
+image, and liable to change on a rebuild. Pick something you would recognise at
+3am (`finland-1`). This label is applied to both pipelines and is what the
+correlation workflow below joins on, so changing it later silently splits every
+saved query at that moment.
 
 ### 3. Validate the config before restarting anything
 
@@ -101,18 +120,29 @@ than a service that fails to come back up.
 alloy validate /etc/alloy/config.alloy
 ```
 
+The committed config **passes** against Alloy **v1.19.1** (`linux/amd64`, build
+tag `promtail_journal_enabled`, which `loki.source.journal` requires). `alloy
+fmt` reports no changes — it is already canonical, so a formatting diff on this
+file means someone hand-edited it.
+
 Note that it validates *structure*, not reachability: it will happily pass a
-config with the wrong `PROM_URL` or a Loki username in the Prometheus slot.
-Those show up in step 6.
+config with the wrong `PROM_URL`, or a Loki username in the Prometheus slot.
+Those only show up in step 6. What it does catch is the class of error that
+otherwise takes the service down on restart — a misspelled argument
+(`set_collectorz`) or a reference to a component that does not exist both fail
+with an exit code and a line number.
 
 If you edit the config later, run this again before `systemctl restart alloy`,
 not after.
 
 ### 4. Check the filesystem exclusions against reality
 
+**Already done for the current Finland box (2026-08-26) — result recorded
+below.** Re-run it if msb is upgraded or the host is rebuilt.
+
 The `filesystem` block excludes by filesystem *type* rather than by path,
 specifically so it does not depend on knowing where microsandbox keeps its
-storage. Confirm that holds on the actual box before trusting it:
+storage:
 
 ```sh
 # What, if anything, does msb mount on the host?
@@ -122,16 +152,26 @@ mount | grep -iE 'msb|microsandbox'
 df -hT -x tmpfs -x devtmpfs -x squashfs -x overlay
 ```
 
-You want the second command to list a small, fixed set of real disks (ext4 /
-xfs / btrfs). If the first command shows per-sandbox mounts of a type *not* in
-`fs_types_exclude`, add that type — this is the one place where a wrong
-assumption turns into per-microVM series churning with session lifecycle, which
-is exactly the cardinality blowup the block exists to prevent.
+**Measured result, with two msb sandboxes running:** the first command returns
+**zero rows**. microsandbox creates no host mounts per microVM — it is
+libkrun/KVM with the guest rootfs inside the VM, not a host-assembled overlay
+the way Docker does it. The exclusion is therefore belt-and-braces rather than
+load-bearing, and is kept because the failure mode it guards is silent.
 
-Start a session and re-run `mount | grep` while it is live, then again after it
-ends: a mount that appears and disappears with the session is the thing to
-exclude. If both commands come back empty, microsandbox is not creating host
-mounts at all and the type filter is simply belt-and-braces.
+The second command returns exactly two filesystems, both stable:
+
+```
+/dev/md2  ext4  436G  /
+/dev/md1  ext3  989M  /boot
+```
+
+That is the entire filesystem series set for this host. The 7 `overlay` and 7
+`nsfs` mounts also present belong to Docker (the Coolify stack) and are
+excluded twice over — by type, and by the `/var/lib/docker/` path rule.
+
+If a future msb release *does* start mounting per sandbox, the tell is a mount
+that appears and disappears with a session: run `mount | grep` while one is
+live, then again after it ends, and add the type if it is not already excluded.
 
 ### 5. Grant journal access
 
@@ -327,10 +367,22 @@ Ten concurrently saturated sessions for a full month:
 144 MB × 10 × 30  ≈  43 GB/month
 ```
 
-against Grafana Cloud's **50 GB/month free-tier logs allowance**. Real sessions
-do not sit at the cap — the number is a ceiling, not a forecast — but the
-headroom is roughly 14%, not an order of magnitude, and it shrinks as
-concurrency grows. Twelve saturated sessions would exceed the allowance.
+against Grafana Cloud's **50 GB/month free-tier logs allowance**. The headroom
+is roughly 14%, not an order of magnitude, and it shrinks as concurrency grows:
+twelve saturated sessions would exceed the allowance.
+
+**Measured against that, the actual figure is three orders of magnitude
+smaller.** On the Finland box (2026-08-26), agent-server emitted **2.4 MB over
+24 hours** — about **74 MB/month**, or **0.15%** of the allowance. Only 273 of
+those lines carried `source=msb-exec`, so guest console output is currently a
+rounding error rather than the dominant term. Every unit on the box together
+came to 10.2 MB/day.
+
+Both numbers are worth keeping. The 74 MB is what to expect; the 43 GB is what
+the design permits if sessions ever do saturate, and the gap between them is
+the reason the ceiling is a documented ceiling rather than a limit anyone has
+felt. Do not size the alert off the measured figure — the point of the alert is
+to fire when reality starts moving toward the ceiling.
 
 Two things make this worth an explicit alert rather than a note:
 
