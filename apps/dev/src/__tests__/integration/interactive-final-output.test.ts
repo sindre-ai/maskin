@@ -579,4 +579,207 @@ ${surviving}
 		// appears and no responder chain can start from it.
 		expect(after).toHaveLength(before.length + 1)
 	})
+
+	describe('a turn that failed against the model API', () => {
+		/** The envelope the CLI writes when a request 500s mid-turn. */
+		function apiErrorLine(requestId: string) {
+			return resultLine({
+				is_error: true,
+				result: `API Error: {"type":"error","error":{"type":"api_error","message":"Internal server error"},"request_id":"${requestId}"}`,
+			})
+		}
+
+		/** A finalizer wired to a recording replay, with the backoff stubbed out. */
+		function withRetry() {
+			const calls: Array<{ sessionId: string; payload: unknown }> = []
+			const instance = new InteractiveTurnFinalizer(db, {
+				retryTurn: async (sessionId, payload) => {
+					calls.push({ sessionId, payload })
+				},
+				delay: async () => {},
+			})
+			return { instance, calls }
+		}
+
+		it('replays the turn instead of posting the raw error', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, calls } = withRetry()
+			finalizer = instance
+
+			await feed(
+				session.id,
+				`${userTurnLine(11)}
+`,
+			)
+			await feed(
+				session.id,
+				`${apiErrorLine('req_1')}
+`,
+			)
+			await finalizer.settlePendingRetries()
+
+			// The human sees nothing: the turn is being run again, not reported.
+			expect(await messagesFor(conversationId)).toHaveLength(0)
+			expect(calls).toHaveLength(1)
+			expect(calls[0]?.sessionId).toBe(session.id)
+			// Replayed verbatim — same content, and without the Maskin-only tag,
+			// which the CLI must never see on stdin.
+			expect(calls[0]?.payload).toEqual({
+				type: 'user',
+				message: { role: 'user', content: 'hello' },
+			})
+		})
+
+		it('gives up after the replay budget and tells the human in words', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, calls } = withRetry()
+			finalizer = instance
+
+			await feed(
+				session.id,
+				`${userTurnLine(12)}
+`,
+			)
+			// Distinct request ids: each failure is its own envelope, so the
+			// dedupe guard cannot be what stops the third attempt.
+			await feed(
+				session.id,
+				`${apiErrorLine('req_1')}
+`,
+			)
+			await feed(
+				session.id,
+				`${apiErrorLine('req_2')}
+`,
+			)
+			await feed(
+				session.id,
+				`${apiErrorLine('req_3')}
+`,
+			)
+			await finalizer.settlePendingRetries()
+
+			expect(calls).toHaveLength(2)
+			const rows = await messagesFor(conversationId)
+			expect(rows).toHaveLength(1)
+			expect(rows[0]?.content).not.toContain('API Error')
+			const finalOutput = (rows[0]?.metadata as { final_output?: Record<string, unknown> })
+				?.final_output
+			expect(finalOutput?.error_kind).toBe('transient')
+			expect(finalOutput?.retries).toBe(2)
+		})
+
+		it('does not replay a failure no retry could fix', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, calls } = withRetry()
+			finalizer = instance
+
+			await feed(
+				session.id,
+				`${userTurnLine(13)}
+`,
+			)
+			await feed(
+				session.id,
+				`${resultLine({ is_error: true, result: 'Credit balance is too low' })}
+`,
+			)
+			await finalizer.settlePendingRetries()
+
+			expect(calls).toHaveLength(0)
+			const rows = await messagesFor(conversationId)
+			expect(rows).toHaveLength(1)
+			// The detail still reaches the human — it is the actionable part.
+			expect(rows[0]?.content).toContain('Credit balance is too low')
+			expect(
+				(rows[0]?.metadata as { final_output?: { error_kind?: string } })?.final_output?.error_kind,
+			).toBe('permanent')
+		})
+
+		it('reports a transient failure it cannot replay', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			// No retryTurn wired — e.g. a caller with no way to write stdin.
+			finalizer = new InteractiveTurnFinalizer(db, { delay: async () => {} })
+
+			await feed(
+				session.id,
+				`${userTurnLine(14)}
+`,
+			)
+			await feed(
+				session.id,
+				`${apiErrorLine('req_1')}
+`,
+			)
+			await finalizer.settlePendingRetries()
+
+			const rows = await messagesFor(conversationId)
+			expect(rows).toHaveLength(1)
+			expect(
+				(rows[0]?.metadata as { final_output?: { retry?: string } })?.final_output?.retry,
+			).toBe('unavailable')
+		})
+
+		it('tells the human when the replay cannot reach the CLI', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			finalizer = new InteractiveTurnFinalizer(db, {
+				retryTurn: async () => {
+					throw new Error('session is gone')
+				},
+				delay: async () => {},
+			})
+
+			await feed(
+				session.id,
+				`${userTurnLine(15)}
+`,
+			)
+			await feed(
+				session.id,
+				`${apiErrorLine('req_1')}
+`,
+			)
+			await finalizer.settlePendingRetries()
+
+			const rows = await messagesFor(conversationId)
+			expect(rows).toHaveLength(1)
+			expect(
+				(rows[0]?.metadata as { final_output?: { retry?: string } })?.final_output?.retry,
+			).toBe('undeliverable')
+		})
+
+		it('does not spend a second attempt on a replayed log line', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			const { instance, calls } = withRetry()
+			finalizer = instance
+
+			await feed(
+				session.id,
+				`${userTurnLine(16)}
+`,
+			)
+			const line = apiErrorLine('req_1')
+			await feed(
+				session.id,
+				`${line}
+`,
+			)
+			// The agent-server replays stdout on reconnect; the same envelope
+			// arriving twice is one failure, not two.
+			await feed(
+				session.id,
+				`${line}
+`,
+			)
+			await finalizer.settlePendingRetries()
+
+			expect(calls).toHaveLength(1)
+		})
+	})
 })

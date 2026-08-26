@@ -53,6 +53,21 @@ export const messageFinalOutputSchema = z.object({
 	 */
 	recovered: z.boolean().optional(),
 	is_error: z.boolean().optional(),
+	/**
+	 * How a failed turn (`is_error`) was read: 'transient' means the model API
+	 * blipped and the turn was replayed, 'permanent' means no replay would have
+	 * helped (credentials, credit, a malformed request). See
+	 * apps/dev/src/lib/turn-error-classifier.ts.
+	 */
+	error_kind: z.enum(['transient', 'permanent']).optional(),
+	/** Replays spent before giving up on a transient failure. */
+	retries: z.number().int().min(0).max(10).optional(),
+	/**
+	 * Why a transient failure was reported instead of replayed:
+	 * 'unavailable' — the turn's opening envelope could not be recovered;
+	 * 'undeliverable' — the replay could not reach the CLI (session gone).
+	 */
+	retry: z.enum(['unavailable', 'undeliverable']).optional(),
 	subtype: z.string().max(64).optional(),
 	/** Set when the agent's output exceeded MESSAGE_MAX_LENGTH and was cut. */
 	truncated: z.boolean().optional(),

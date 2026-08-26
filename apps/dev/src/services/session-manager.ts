@@ -381,7 +381,13 @@ export class SessionManager extends EventEmitter {
 		super()
 		this.containers = new ContainerManager()
 		this.agentStorage = new AgentStorageManager(storage, db)
-		this.turnFinalizer = new InteractiveTurnFinalizer(db)
+		// The finalizer is the only place a per-turn model-API failure is
+		// visible (an interactive session doesn't exit on one), so it owns the
+		// replay. writeInput already picks the remote agent-server or the local
+		// container by session, so the closure needs no transport knowledge.
+		this.turnFinalizer = new InteractiveTurnFinalizer(db, {
+			retryTurn: (sessionId, payload) => this.writeInput(sessionId, payload),
+		})
 	}
 
 	setAgentBaseBuildContext(buildContext: string) {
