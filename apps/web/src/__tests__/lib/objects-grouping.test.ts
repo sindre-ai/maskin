@@ -30,6 +30,29 @@ describe('getObjectGroupValue', () => {
 		expect(getObjectGroupValue(base({ driver: 'actor-2' }), 'driver')).toBe('actor-2')
 	})
 
+	// The Display panel offers createdAt/updatedAt as group axes. Their raw value
+	// is an ISO instant, so without a day bucket every row lands in its own group
+	// under a raw-timestamp header.
+	it('buckets timestamp columns by local day', () => {
+		const created = new Date(2026, 2, 2, 9, 30)
+		const later = new Date(2026, 2, 2, 21, 45)
+		expect(getObjectGroupValue(base({ createdAt: created.toISOString() }), 'createdAt')).toBe(
+			'2026-03-02',
+		)
+		expect(getObjectGroupValue(base({ createdAt: later.toISOString() }), 'createdAt')).toBe(
+			'2026-03-02',
+		)
+		expect(getObjectGroupValue(base({ updatedAt: created.toISOString() }), 'updatedAt')).toBe(
+			'2026-03-02',
+		)
+		// Day keys feed the label formatter, so the header reads as a real date.
+		expect(getObjectGroupLabel('createdAt', '2026-03-02')).toBe('2nd March 2026')
+	})
+
+	it('passes an unparseable timestamp through rather than rendering Invalid Date', () => {
+		expect(getObjectGroupValue(base({ createdAt: 'not-a-date' }), 'createdAt')).toBe('not-a-date')
+	})
+
 	it('reads metadata.<key> groups and maps empty/absent values to the sentinel', () => {
 		expect(getObjectGroupValue(base({ metadata: { priority: 'high' } }), 'metadata.priority')).toBe(
 			'high',

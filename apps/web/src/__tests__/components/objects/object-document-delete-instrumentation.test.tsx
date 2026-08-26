@@ -48,6 +48,7 @@ vi.mock('@/hooks/use-objects', () => ({
 vi.mock('@/hooks/use-subscriptions', () => ({
 	useSubscribe: () => ({ mutate: vi.fn() }),
 	useUnsubscribe: () => ({ mutate: vi.fn() }),
+	useSubscribers: () => ({ data: { actors: [] } }),
 }))
 
 vi.mock('@/components/shared/agent-working-badge', () => ({
