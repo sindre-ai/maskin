@@ -1,6 +1,7 @@
 import type { Database } from '@maskin/db'
 import { events, agentServers, sessions } from '@maskin/db/schema'
 import { and, eq, inArray, sql } from 'drizzle-orm'
+import { LlmCredentialsUnavailableError } from '../lib/llm-routing'
 import { logger } from '../lib/logger'
 import {
 	AgentServerAuthError,
@@ -132,6 +133,24 @@ export class SessionDispatcher {
 			request = await this.buildStartRequest(sessionId)
 		} catch (err) {
 			await this.releaseSlot(sessionId, picked.server.id)
+			// A workspace whose credentials are actually dead fails identically on
+			// every server, every attempt. Retrying it five times with backoff only
+			// delays the explanation the user needs — and the generic
+			// "dispatch exhausted" message it eventually lands on actively points
+			// away from the real cause. Fail once, with the reason attached.
+			//
+			// But only when the credential was shown to be dead. When we merely
+			// could not reach Anthropic to check (our own 15s timeout, a 5xx from
+			// the token endpoint), the retry is exactly what recovers it — and
+			// hard-failing would tell the user to reconnect a subscription that
+			// was never broken. Those stay transient.
+			if (err instanceof LlmCredentialsUnavailableError && !err.transient) {
+				return {
+					kind: 'permanent_failure',
+					error: err.detail,
+					failureReason: err.toFailureReason(),
+				}
+			}
 			return {
 				kind: 'transient_failure',
 				error: `buildStartRequest threw: ${err instanceof Error ? err.message : String(err)}`,
