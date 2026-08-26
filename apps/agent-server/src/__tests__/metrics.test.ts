@@ -1,5 +1,5 @@
 import { hostname } from 'node:os'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { UNKNOWN, resolveBuildInfo } from '../lib/build-info'
 import { buildMetricsApp, createMetricsRegistry } from '../lib/metrics'
 
@@ -41,6 +41,33 @@ describe('resolveBuildInfo', () => {
 		// `git rev-parse` failing into an empty string must not produce
 		// commit="" — an empty label is indistinguishable from a broken scrape.
 		expect(resolveBuildInfo({ MASKIN_COMMIT_SHA: '   ' }).commit).toBe(UNKNOWN)
+	})
+
+	it('ignores an ambient commit in process.env when a source is supplied', async () => {
+		// An explicit `source` is the complete truth for build identity: absent
+		// means absent. The bundled constants are captured at module load, so
+		// this has to re-import the module with the env already stubbed —
+		// stubbing after import would prove nothing.
+		//
+		// Why it matters twice over: CI exporting MASKIN_COMMIT_SHA (it is in
+		// turbo.json globalPassThroughEnv) would otherwise break the fallback
+		// tests above, and on a box a stale .env entry could override the
+		// compiled-in SHA, leaving the metric reporting a commit that is not
+		// the one running — silently, and forever.
+		vi.stubEnv('MASKIN_COMMIT_SHA', 'ambient-sha')
+		vi.stubEnv('MASKIN_BUILD_VERSION', '9.9.9')
+		vi.resetModules()
+		try {
+			const mod = await import('../lib/build-info')
+			expect(mod.resolveBuildInfo({}).commit).toBe(mod.UNKNOWN)
+			expect(mod.resolveBuildInfo({}).version).toBe(mod.UNKNOWN)
+			// ...and with no source at all, the ambient value IS what a fresh
+			// module load sees, since that read is the esbuild `define` target.
+			expect(mod.resolveBuildInfo().commit).toBe('ambient-sha')
+		} finally {
+			vi.unstubAllEnvs()
+			vi.resetModules()
+		}
 	})
 
 	it('defaults instance and env to the same values alloy.alloy uses', () => {

@@ -52,18 +52,38 @@ function coalesce(value: string | undefined, fallback: string): string {
 	return trimmed ? trimmed : fallback
 }
 
-export function resolveBuildInfo(source: NodeJS.ProcessEnv = process.env): BuildInfo {
+/**
+ * Resolve the identity of this build.
+ *
+ * Called with NO argument in production: commit and version then come only
+ * from the compile-time constants above, never from the ambient environment.
+ * That is deliberate — a stale `MASKIN_COMMIT_SHA` left behind in the box's
+ * .env must not be able to override the SHA that was actually compiled in.
+ * The whole point of the metric is that its labels cannot lie; a runtime
+ * override reintroduces exactly the failure it exists to detect, silently and
+ * permanently.
+ *
+ * Called WITH a `source` (tests), that object is the complete truth for commit
+ * and version: an absent key means absent, regardless of what happens to be
+ * exported in the real environment. Without this, `resolveBuildInfo({})` —
+ * which reads as "no build metadata" — would still pick up an ambient
+ * MASKIN_COMMIT_SHA, and CI exporting one (it is in turbo.json
+ * globalPassThroughEnv) would fail the fallback tests for no real reason.
+ *
+ * `instance` and `env` are ordinary deployment config, not build identity, so
+ * they are read from `source ?? process.env` in both cases.
+ */
+export function resolveBuildInfo(source?: NodeJS.ProcessEnv): BuildInfo {
+	const env = source ?? process.env
 	return {
-		// `source` first so a test (or an operator debugging a box) can override;
-		// the bundled constant is the value that actually ships.
-		commit: coalesce(source.MASKIN_COMMIT_SHA ?? BUNDLED_COMMIT, UNKNOWN),
-		version: coalesce(source.MASKIN_BUILD_VERSION ?? BUNDLED_VERSION, UNKNOWN),
+		commit: coalesce(source ? source.MASKIN_COMMIT_SHA : BUNDLED_COMMIT, UNKNOWN),
+		version: coalesce(source ? source.MASKIN_BUILD_VERSION : BUNDLED_VERSION, UNKNOWN),
 		// Defaults mirror `coalesce(sys.env("AGENT_SERVER_INSTANCE"),
 		// constants.hostname)` and `coalesce(sys.env("DEPLOY_ENV"), "production")`
 		// in observability/alloy.alloy. If these two ever disagree,
 		// {instance="finland-1"} stops selecting the same host in logs and
 		// metrics, which is the entire point of the label.
-		instance: coalesce(source.AGENT_SERVER_INSTANCE, hostname()),
-		env: coalesce(source.DEPLOY_ENV, 'production'),
+		instance: coalesce(env.AGENT_SERVER_INSTANCE, hostname()),
+		env: coalesce(env.DEPLOY_ENV, 'production'),
 	}
 }
