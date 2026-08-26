@@ -460,3 +460,37 @@ describe('sessionResultSchema', () => {
 		expect(result.failure_reason).toBeUndefined()
 	})
 })
+
+describe('mcpServerSchema — browser CDP endpoint misuse', () => {
+	// Verbatim from the production actor row that caused a customer-reported
+	// "no Playwright in this session": a CDP address configured as an http MCP
+	// server. It parsed fine, so nothing rejected it; the server then sat at
+	// status "pending" forever and the agent had no browser tools.
+	const badEntry = { type: 'http', url: '${BROWSER_CDP_URL}', headers: {} }
+
+	it('rejects a CDP endpoint configured as an http MCP server', () => {
+		const result = mcpServerSchema.safeParse(badEntry)
+		expect(result.success).toBe(false)
+		if (result.success) return
+		const message = result.error.issues.map((i) => i.message).join(' ')
+		expect(message).toContain('not an MCP server')
+		// The error has to carry the fix, or the next person writes it again.
+		expect(message).toContain('--cdp-endpoint')
+		expect(message).toContain('stdio')
+	})
+
+	it('accepts the stdio form that actually reaches the browser', () => {
+		const good = {
+			type: 'stdio',
+			command: 'npx',
+			args: ['@playwright/mcp@latest', '--cdp-endpoint', '${BROWSER_CDP_URL}'],
+			env: {},
+		}
+		expect(mcpServerSchema.safeParse(good).success).toBe(true)
+	})
+
+	it('leaves unrelated http MCP servers alone', () => {
+		const hosted = { type: 'http', url: 'https://mcp.linear.app/mcp', headers: {} }
+		expect(mcpServerSchema.safeParse(hosted).success).toBe(true)
+	})
+})
