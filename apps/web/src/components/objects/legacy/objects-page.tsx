@@ -1,28 +1,32 @@
+// PRE-V2 OBJECTS PAGE — governed by the `new-design` feature flag.
+//
+// This is the Objects list exactly as it shipped before the v2 rewrite. The
+// route (`routes/_authed/$workspaceId/objects/index.tsx`) renders it whenever
+// `new-design` is off; the v2 page renders when it is on. This whole directory
+// dies with the flag — see `.claude/rules/feature-flags.md` ("Retiring a flag").
+//
+// Note: the route's `validateSearch` is shared by both branches, so this page
+// reads the v2 search defaults (`sort=updatedAt`, `groupBy=status`). Search
+// parsing is not a visual concern and is deliberately not forked.
+
 import { AskPanel } from '@/components/asks/ask-panel'
 import { ImportDialog } from '@/components/imports/import-dialog'
-import { PageHeader } from '@/components/layout/page-header'
-import { BoardView } from '@/components/objects/board/board-view'
-import { BulkActionBar } from '@/components/objects/bulk-action-bar'
 import { getStaticColumns } from '@/components/objects/data-table/columns'
 import type { ColumnInfo } from '@/components/objects/data-table/data-table-controls'
-import { DataTableToolbar } from '@/components/objects/data-table/data-table-toolbar'
-import type {
-	DisplayPanelFilterAxis,
-	DisplayPanelView,
-} from '@/components/objects/data-table/display-panel'
 import { getDynamicColumns } from '@/components/objects/data-table/dynamic-columns'
 import type { FieldDefinition } from '@/components/objects/field-value-input'
-import { LegacyObjectsPage } from '@/components/objects/legacy/objects-page'
-import { ListView, type ListViewHandle } from '@/components/objects/list/list-view'
+import { BoardView } from '@/components/objects/legacy/board/board-view'
+import { BulkActionBar } from '@/components/objects/legacy/bulk-action-bar'
+import { DataTableToolbar } from '@/components/objects/legacy/data-table/data-table-toolbar'
+import type { DisplayPanelView } from '@/components/objects/legacy/data-table/display-panel'
+import { ListView, type ListViewHandle } from '@/components/objects/legacy/list/list-view'
 import { CreatePicker, isCreateShortcut } from '@/components/shared/create-picker'
-import { type FilterTabItem, FilterTabs } from '@/components/shared/filter-tabs'
-import { RouteError } from '@/components/shared/route-error'
+import { FilterChip } from '@/components/shared/filter-chip'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useActors } from '@/hooks/use-actors'
 import { useCustomExtensions } from '@/hooks/use-custom-extensions'
 import { useEnabledModules } from '@/hooks/use-enabled-modules'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useImportToast } from '@/hooks/use-imports'
 import { useNotifications, useRespondNotification } from '@/hooks/use-notifications'
 import { useBulkResultHandlers, useBulkUpdateObjects } from '@/hooks/use-objects'
@@ -40,13 +44,8 @@ import { api } from '@/lib/api'
 import type { DisplaySettingsBody, NotificationResponse, ObjectResponse } from '@/lib/api'
 import { consumeArrivalNavType } from '@/lib/back-nav-tracker'
 import { type BetStatusResult, buildBetStatuses } from '@/lib/bet-status'
-import { cn } from '@/lib/cn'
-import { getStatusColor } from '@/lib/constants'
 import {
-	DEFAULT_ORDER,
-	DEFAULT_SORT,
 	fromUrlSearch,
-	urlIsInDefaultShape as isUrlInDefaultShape,
 	toBoardParams,
 	toDisplaySettingsBody,
 	toListParams,
@@ -65,93 +64,17 @@ import {
 	useQuery,
 	useQueryClient,
 } from '@tanstack/react-query'
-import { createFileRoute, useNavigate, useSearch } from '@tanstack/react-router'
+import { useNavigate, useSearch } from '@tanstack/react-router'
 import type { GroupingState, RowSelectionState, VisibilityState } from '@tanstack/react-table'
 import { Filter, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
-export const Route = createFileRoute('/_authed/$workspaceId/objects/')({
-	component: ObjectsRoute,
-	errorComponent: ({ error }) => <RouteError error={error} />,
-	validateSearch: (search: Record<string, unknown>) => {
-		// Pass through dynamic `metadata.<field>` filter keys so they persist in
-		// the URL and survive `updateSearch()` merges. Fixed keys are plucked
-		// explicitly below; unlisted keys would otherwise be dropped.
-		// Number/boolean metadata fields (e.g. a bare `metadata.priority=5` or
-		// `metadata.active=true` from a hand-typed or externally-built URL) parse
-		// to a JS number/boolean here — coerce back to string rather than
-		// dropping them, since the filter value is always compared as text.
-		const metadataFilters: Record<string, string> = {}
-		for (const [key, value] of Object.entries(search)) {
-			if (!key.startsWith('metadata.')) continue
-			if (!SAFE_METADATA_FIELD_NAME_RE.test(key.slice('metadata.'.length))) continue
-			if (typeof value === 'string') metadataFilters[key] = value
-			else if (typeof value === 'number' || typeof value === 'boolean') {
-				metadataFilters[key] = String(value)
-			}
-		}
-		// Include-archived is URL-only per T5. Present as `1` when on; omitted
-		// otherwise so the default excludes archived rows via T3's API gate.
-		// Deep-links, back/forward, and hard-refresh preserve the choice —
-		// per-view persistence intentionally does not touch localStorage.
-		const rawIncludeArchived = search.includeArchived
-		const includeArchived =
-			rawIncludeArchived === '1' ||
-			rawIncludeArchived === 1 ||
-			rawIncludeArchived === true ||
-			rawIncludeArchived === 'true'
-		// FILTER BY axis — which single property the toolbar's value-chip row
-		// drives (mockup 932–937). URL-borne so it survives reload/deep-link;
-		// the persisted DisplaySettings blob is `.strict()` and has no slot for it.
-		const rawFilterBy = search.filterBy
-		const filterBy: DisplayPanelFilterAxis | undefined =
-			rawFilterBy === 'status' || rawFilterBy === 'driver' || rawFilterBy === 'attention'
-				? rawFilterBy
-				: undefined
-		// Attention is a client-side axis: "waiting on you" comes from pending
-		// needs_input notifications and "agent working" from activeSessionId —
-		// neither is a server-side list filter, so it narrows loaded rows only.
-		const rawAttention = search.attention
-		const attention =
-			rawAttention === 'waiting' || rawAttention === 'working' ? rawAttention : undefined
-		return {
-			type: typeof search.type === 'string' ? search.type : undefined,
-			status: typeof search.status === 'string' ? search.status : undefined,
-			driver: typeof search.driver === 'string' ? search.driver : undefined,
-			filterBy,
-			attention,
-			// ORDER BY rests on Last updated (mockup script 8725) — an absent param
-			// reads as the shared default rather than pinning it into every URL.
-			sort: typeof search.sort === 'string' ? search.sort : DEFAULT_SORT,
-			order:
-				typeof search.order === 'string' && ['asc', 'desc'].includes(search.order)
-					? (search.order as 'asc' | 'desc')
-					: DEFAULT_ORDER,
-			q: typeof search.q === 'string' ? search.q : undefined,
-			// GROUP BY rests on State (mockup 994–999). `none` is the explicit
-			// "ungrouped" choice — without a sentinel, clearing the param would just
-			// fall back to the default again.
-			groupBy: typeof search.groupBy === 'string' ? search.groupBy : 'status',
-			ids: typeof search.ids === 'string' ? search.ids : undefined,
-			includeArchived: includeArchived ? (1 as const) : undefined,
-			...metadataFilters,
-		}
-	},
-})
-
 const PAGE_SIZE = 50
 const BOARD_PAGE_SIZE = 20
 const BOARD_MANUAL_SORT = 'boardOrder'
 
-// `new-design` boundary for the Objects list: the v2 page below, or the pre-v2
-// one vendored under `components/objects/legacy/`. The route's `validateSearch`
-// is deliberately shared — flags govern the visual layer only.
-function ObjectsRoute() {
-	return useFeatureFlag('new-design') ? <ObjectsPageV2 /> : <LegacyObjectsPage />
-}
-
-function ObjectsPageV2() {
+export function LegacyObjectsPage() {
 	const { workspaceId, workspace } = useWorkspace()
 	const navigate = useNavigate()
 	const searchParams = useSearch({ from: '/_authed/$workspaceId/objects/' })
@@ -162,18 +85,11 @@ function ObjectsPageV2() {
 		sort,
 		order,
 		q,
-		groupBy: groupByParam,
+		groupBy,
 		ids: idsFilter,
 		includeArchived: includeArchivedParam,
-		filterBy: filterByParam,
-		attention,
 	} = searchParams
 	const includeArchived = includeArchivedParam === 1
-	// `none` is the URL's way of saying "explicitly ungrouped".
-	const groupBy = groupByParam === 'none' ? undefined : groupByParam
-	// Status is the resting axis — an absent param reads as Status rather than
-	// pinning a default into every URL that links here.
-	const filterBy: DisplayPanelFilterAxis = filterByParam ?? 'status'
 	// Per the task scope, the "Show" section (with the Include archived toggle)
 	// is bet-only for now — surfaced when the bet tab is active. Non-bet tabs
 	// keep the existing panel shape until archive lands for their type.
@@ -417,40 +333,6 @@ function ObjectsPageV2() {
 
 	const allObjects = useMemo(() => infiniteQuery.data?.pages.flat() ?? [], [infiniteQuery.data])
 
-	// The Attention axis has no server-side equivalent — "waiting on you" is a
-	// pending needs_input notification and "agent working" is a live session, so
-	// it narrows the rows already loaded rather than the query. Applied to the
-	// rendered rows only; type-tab counts and bulk-selection lookups stay on the
-	// unfiltered set so a filtered-out selection can still be acted on.
-	const matchesAttention = useCallback(
-		(object: ObjectResponse) => {
-			if (!attention) return true
-			if (attention === 'waiting') return pendingAsksByObjectId.has(object.id)
-			return !!object.activeSessionId
-		},
-		[attention, pendingAsksByObjectId],
-	)
-	const listObjects = useMemo(
-		() => (attention ? allObjects.filter(matchesAttention) : allObjects),
-		[attention, allObjects, matchesAttention],
-	)
-
-	// Per-tab live counts for the type tab strip. Counts reflect the objects
-	// loaded so far (the list paginates via infinite query) — they update as
-	// more pages load, which is the right trade-off vs. a separate count query.
-	const countsByType = useMemo(() => {
-		const counts: Record<string, number> = { all: allObjects.length }
-		for (const tab of tabs) {
-			if (!tab.value) continue
-			counts[tab.value] = allObjects.filter((o) => o.type === tab.value).length
-		}
-		return counts
-	}, [tabs, allObjects])
-	const tabsWithCounts = useMemo(
-		() => tabs.map((t) => ({ ...t, count: t.value ? countsByType[t.value] : countsByType.all })),
-		[tabs, countsByType],
-	)
-
 	// Derive available statuses grouped by type (scoped to enabled types only)
 	const statusesByType = useMemo(() => {
 		const statusMap = settings?.statuses as Record<string, string[]> | undefined
@@ -662,18 +544,16 @@ function ObjectsPageV2() {
 	}, [])
 
 	// "Reset to default" from the Display menu — restores every display axis on
-	// the shared model: order back to the route default, no grouping, all filters
+	// the shared model: order back to created-desc, no grouping, all filters
 	// (status/driver/metadata) cleared, archived hidden, columns back to the
 	// default set. `view` and `q` are deliberately untouched (separate surfaces).
 	const handleResetToDefault = useCallback(() => {
 		const cleared: Record<string, string | undefined> = {
-			sort: DEFAULT_SORT,
-			order: DEFAULT_ORDER,
+			sort: 'createdAt',
+			order: 'desc',
 			groupBy: undefined,
 			status: undefined,
 			driver: undefined,
-			attention: undefined,
-			filterBy: undefined,
 			includeArchived: undefined,
 		}
 		for (const key of Object.keys(searchParams)) {
@@ -736,8 +616,21 @@ function ObjectsPageV2() {
 	const hydratedTypesRef = useRef<Set<string>>(new Set())
 
 	const urlIsInDefaultShape = useMemo(
-		() => isUrlInDefaultShape(searchParams, metadataFilters),
-		[searchParams, metadataFilters],
+		() =>
+			(!searchParams.sort || searchParams.sort === 'createdAt') &&
+			(!searchParams.order || searchParams.order === 'desc') &&
+			!searchParams.groupBy &&
+			!searchParams.status &&
+			!searchParams.driver &&
+			Object.keys(metadataFilters).length === 0,
+		[
+			searchParams.sort,
+			searchParams.order,
+			searchParams.groupBy,
+			searchParams.status,
+			searchParams.driver,
+			metadataFilters,
+		],
 	)
 
 	useEffect(() => {
@@ -834,22 +727,22 @@ function ObjectsPageV2() {
 	// toggle analytics with source: 'user'. The silent restore above bypasses
 	// this handler (it calls `setExpanded` directly), so every fire here is
 	// user-initiated by construction. `expanded` on the analytics payload is
-	// the net direction of the update — true when the number of explicitly
-	// collapsed groups shrank (user opened one), false when it grew.
+	// the net direction of the update — true when a group's open count grew
+	// (user opened a group), false when it shrank (user closed one).
 	const handleExpandedChange = useCallback(
 		(next: Record<string, boolean>) => {
-			// Keep the map verbatim, `false` entries included. Groups now rest
-			// open, so a collapse is recorded as an explicit `false` — dropping
-			// it would silently re-open the group on the next render. DataTable-
-			// era blobs (only `true` values) still round-trip unchanged.
-			const nextMap: Record<string, boolean> = { ...next }
-			const prevClosed = Object.values(expanded).filter((v) => v === false).length
-			const nextClosed = Object.values(nextMap).filter((v) => v === false).length
+			// Strip falsy entries — ListView only ever writes `true` values, and
+			// closing a group is modeled by the key's absence (DataTable-era
+			// blobs round-trip cleanly through this same contract).
+			const nextMap: Record<string, boolean> = {}
+			for (const [id, on] of Object.entries(next)) if (on) nextMap[id] = true
+			const prevOpen = Object.values(expanded).filter(Boolean).length
+			const nextOpen = Object.values(nextMap).filter(Boolean).length
 			setExpanded(nextMap)
 			patchViewState(workspaceId, displaySettingsKey, { expandedGroupIds: nextMap })
 			trackObjectsListGroupToggled({
 				source: 'user',
-				expanded: nextClosed < prevClosed,
+				expanded: nextOpen > prevOpen,
 				objectType: typeFilter ?? null,
 			})
 		},
@@ -915,217 +808,7 @@ function ObjectsPageV2() {
 	// the toggle in DisplayPanel; mirroring it here keeps the chip in lockstep
 	// so a leftover URL param on a non-bet tab doesn't render an orphan chip.
 	const archivedChipActive = supportsIncludeArchived && includeArchived
-
-	// Board columns, narrowed by the client-side Attention axis so List and
-	// Board answer the same question. Totals shrink with the visible rows.
-	const boardColumns = useMemo(() => {
-		const columns = boardQuery.data?.columns ?? []
-		if (!attention) return columns
-		return columns.map((column) => {
-			const objects = column.objects.filter(matchesAttention)
-			return { ...column, objects, total: objects.length }
-		})
-	}, [boardQuery.data, attention, matchesAttention])
-
-	// Value chips for the active FILTER BY axis (mockup 907–911). Single-select:
-	// picking a chip narrows the axis to that one value, picking it again clears
-	// it. The Display panel keeps the multi-select pickers as a superset.
-	const attentionCounts = useMemo(() => {
-		let waiting = 0
-		let working = 0
-		for (const object of allObjects) {
-			if (pendingAsksByObjectId.has(object.id)) waiting++
-			if (object.activeSessionId) working++
-		}
-		return { waiting, working }
-	}, [allObjects, pendingAsksByObjectId])
-
-	const axisChips = useMemo<FilterTabItem<string | undefined>[]>(() => {
-		if (filterBy === 'attention') {
-			return [
-				{ label: 'All', value: undefined },
-				{
-					label: 'Waiting on you',
-					value: 'waiting',
-					count: attentionCounts.waiting,
-					dot: 'bg-warning',
-				},
-				{
-					label: 'Agent working',
-					value: 'working',
-					count: attentionCounts.working,
-					dot: 'bg-brand',
-				},
-			]
-		}
-		if (filterBy === 'driver') {
-			const counts = new Map<string, number>()
-			for (const object of allObjects) {
-				if (!object.driver) continue
-				counts.set(object.driver, (counts.get(object.driver) ?? 0) + 1)
-			}
-			return [
-				{ label: 'All', value: undefined },
-				...(actors ?? [])
-					.filter((actor) => counts.has(actor.id))
-					.map((actor) => ({
-						label: actor.name,
-						value: actor.id,
-						count: counts.get(actor.id) ?? 0,
-					})),
-			]
-		}
-		const counts = new Map<string, number>()
-		for (const object of allObjects) counts.set(object.status, (counts.get(object.status) ?? 0) + 1)
-		const statuses = [...new Set(Object.values(statusesByType).flat())]
-		return [
-			{ label: 'All', value: undefined },
-			...statuses.map((status) => ({
-				label: status.replace(/_/g, ' '),
-				value: status,
-				count: counts.get(status) ?? 0,
-				// `bg-current` picks up the status token set on the same span —
-				// the pattern the list group header already uses for its dot.
-				dot: cn('bg-current', getStatusColor(status).text),
-			})),
-		]
-	}, [filterBy, allObjects, actors, statusesByType, attentionCounts])
-
-	// The chip row is single-select; a multi-value axis reads as "no single
-	// chip active" and is cleared/narrowed by the next pick.
-	const axisValue =
-		filterBy === 'attention'
-			? attention
-			: filterBy === 'driver'
-				? activeDrivers.length === 1
-					? activeDrivers[0]
-					: undefined
-				: activeStatuses.length === 1
-					? activeStatuses[0]
-					: undefined
-
-	const handleAxisValueChange = useCallback(
-		(value: string | undefined) => {
-			const next = value === axisValue ? undefined : value
-			if (filterBy === 'attention') updateSearch({ attention: next })
-			else if (filterBy === 'driver') updateSearch({ driver: next })
-			else updateSearch({ status: next })
-		},
-		[filterBy, axisValue, updateSearch],
-	)
-
-	const clearAllFilters = useCallback(() => {
-		const cleared: Record<string, string | undefined> = {
-			status: undefined,
-			driver: undefined,
-			attention: undefined,
-			includeArchived: undefined,
-			q: undefined,
-		}
-		for (const key of Object.keys(searchParamsRef.current)) {
-			if (key.startsWith('metadata.')) cleared[key] = undefined
-		}
-		updateSearch(cleared)
-	}, [updateSearch])
-
-	// Every active filter as a removable pill (mockup 914–918).
-	const filterPills = useMemo(() => {
-		const pills: Array<{ id: string; label: string; value: string; onRemove: () => void }> = []
-		if (activeStatuses.length > 0) {
-			pills.push({
-				id: 'status',
-				label: 'Status',
-				value: statusChipValue,
-				onRemove: () => updateSearch({ status: undefined }),
-			})
-		}
-		if (activeDrivers.length > 0) {
-			pills.push({
-				id: 'driver',
-				label: 'Driver',
-				value: driverChipValue,
-				onRemove: () => updateSearch({ driver: undefined }),
-			})
-		}
-		if (attention) {
-			pills.push({
-				id: 'attention',
-				label: 'Attention',
-				value: attention === 'waiting' ? 'waiting on you' : 'agent working',
-				onRemove: () => updateSearch({ attention: undefined }),
-			})
-		}
-		for (const [field, value] of Object.entries(metadataFilters)) {
-			if (!value) continue
-			pills.push({
-				id: `metadata.${field}`,
-				label: field.replace(/_/g, ' '),
-				value,
-				onRemove: () => updateSearch({ [`metadata.${field}`]: undefined }),
-			})
-		}
-		if (archivedChipActive) {
-			pills.push({
-				id: 'archived',
-				label: 'Include',
-				value: 'archived',
-				onRemove: () => updateSearch({ includeArchived: undefined }),
-			})
-		}
-		if (q) {
-			pills.push({
-				id: 'q',
-				label: 'Search',
-				value: q,
-				onRemove: () => updateSearch({ q: undefined }),
-			})
-		}
-		return pills
-	}, [
-		activeStatuses.length,
-		activeDrivers.length,
-		attention,
-		metadataFilters,
-		archivedChipActive,
-		q,
-		statusChipValue,
-		driverChipValue,
-		updateSearch,
-	])
-
-	// Filtered-empty sentence, built from what is actually applied (mockup 1021).
-	const filteredEmptyTitle = useMemo(() => {
-		if (filterPills.length === 0) return 'No objects found'
-		const noun = typeFilter ? `${typeFilter}s` : 'objects'
-		const clauses: string[] = []
-		if (attention === 'waiting') clauses.push('waiting on you')
-		if (attention === 'working') clauses.push('with an agent working')
-		if (activeStatuses.length > 0) clauses.push(`in ${statusChipValue}`)
-		if (activeDrivers.length > 0) clauses.push(`driven by ${driverChipValue}`)
-		if (q) clauses.push(`matching “${q}”`)
-		return clauses.length === 0
-			? `No ${noun} match these filters.`
-			: `No ${noun} ${clauses.join(' ')} right now.`
-	}, [
-		filterPills.length,
-		typeFilter,
-		attention,
-		activeStatuses.length,
-		activeDrivers.length,
-		statusChipValue,
-		driverChipValue,
-		q,
-	])
-
-	// Archived rows only exist in the loaded set while the toggle is on, so the
-	// count is only truthful then — omitted otherwise rather than shown as 0.
-	const archivedCount = useMemo(
-		() =>
-			supportsIncludeArchived && includeArchived
-				? allObjects.filter((o) => o.status === 'archived').length
-				: undefined,
-		[supportsIncludeArchived, includeArchived, allObjects],
-	)
+	const hasChipFilters = activeStatuses.length > 0 || activeDrivers.length > 0 || archivedChipActive
 
 	const bulkOwnerOptions = useMemo(
 		() => (actors ?? []).map((a) => ({ id: a.id, name: a.name })),
@@ -1134,17 +817,6 @@ function ObjectsPageV2() {
 
 	const bulkUpdate = useBulkUpdateObjects(workspaceId)
 	const queryClient = useQueryClient()
-
-	// Single-object status advance from the board card's `→` affordance.
-	const handleAdvanceStatus = useCallback(
-		(objectId: string, status: string) => {
-			bulkUpdate.mutate(
-				{ ids: [objectId], patch: { status } },
-				{ onError: () => toast.error('Failed to move object') },
-			)
-		},
-		[bulkUpdate],
-	)
 
 	// Matches the handleBulkDelete pattern: on partial success, prune selection
 	// to the ids that still need attention so the bulk bar stays pinned to the
@@ -1349,73 +1021,10 @@ function ObjectsPageV2() {
 		reportBulkResult({ results }, ids.length, 'deleted')
 	}, [selectedIds, queryClient, workspaceId, reportBulkResult])
 
-	// Type-tab switch. Owned by the route (not the nav) because it resets the
-	// per-tab hydration gate, the session view-state slot, and the whole search
-	// shape — the nav only renders the strip this handler is bound into.
-	const handleTypeFilterChange = useCallback(
-		(value: string | undefined) => {
-			// Clear the outgoing key (real type or `__all__`) so the destination
-			// tab re-hydrates from its own persisted row instead of inheriting
-			// the previous tab's settings.
-			hydratedTypesRef.current.delete(displaySettingsKey)
-			// Same story for the session view-state — an expansion or scroll
-			// anchor built on the outgoing tab must not leak back onto it if the
-			// user returns. Drop the store slot and reset local expanded so the
-			// destination tab starts at its own defaults.
-			clearViewState(workspaceId, displaySettingsKey)
-			setExpanded({})
-			setCapturedAnchor(undefined)
-			navigate({
-				to: '/$workspaceId/objects',
-				params: { workspaceId },
-				search: {
-					type: value || undefined,
-					sort: DEFAULT_SORT,
-					order: DEFAULT_ORDER,
-					status: undefined,
-					driver: undefined,
-					filterBy: undefined,
-					attention: undefined,
-					q: undefined,
-					groupBy: 'status',
-					ids: undefined,
-					includeArchived: undefined,
-				},
-				replace: true,
-			})
-		},
-		[displaySettingsKey, workspaceId, navigate],
-	)
-
-	// `actions` is a node published into the shared nav row — PageHeader's
-	// effect deps are `[actions]`, so a fresh node every render would re-set
-	// context state on every pass. Memoised for that reason.
-	const headerActions = useMemo(
-		() => (
-			<FilterTabs
-				tabs={tabsWithCounts}
-				value={typeFilter}
-				onChange={handleTypeFilterChange}
-				aria-label="Type filter"
-				className="min-w-0"
-			/>
-		),
-		[tabsWithCounts, typeFilter, handleTypeFilterChange],
-	)
-
 	return (
-		// The shared scroll area already supplies the page gutter, so the screen
-		// only claims the column + the overflow lock: exactly one scroller (the
-		// list/board region) on this route, matching the mockup's frame (852).
-		<div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-			<PageHeader
-				title="Objects"
-				subtitle={String(allObjects.length)}
-				actions={headerActions}
-				scrollLocked
-			/>
+		<div className="flex flex-col flex-1 min-h-0">
 			{idsFilter && (
-				<div className="mb-3 flex items-center gap-2 rounded-md border bg-muted/50 px-3 py-2 text-sm">
+				<div className="flex items-center gap-2 mx-6 mb-3 px-3 py-2 rounded-md bg-muted/50 border text-sm">
 					<Filter className="h-4 w-4 text-muted-foreground shrink-0" />
 					<span className="text-muted-foreground">
 						Showing{' '}
@@ -1440,14 +1049,41 @@ function ObjectsPageV2() {
 				columns={columnInfo}
 				columnVisibility={effectiveVisibility}
 				onColumnVisibilityChange={handleColumnVisibilityChange}
-				axisChips={axisChips}
-				axisValue={axisValue}
-				onAxisValueChange={handleAxisValueChange}
-				axisLabel={`Filter by ${filterBy}`}
-				filterPills={filterPills}
-				onClearAllFilters={clearAllFilters}
-				filterBy={filterBy}
-				onFilterByChange={(next) => updateSearch({ filterBy: next })}
+				tabs={tabs}
+				typeFilter={typeFilter}
+				onTypeFilterChange={(value) => {
+					// Clear the outgoing key (real type or `__all__`) so the destination
+					// tab re-hydrates from its own persisted row instead of inheriting
+					// the previous tab's settings.
+					hydratedTypesRef.current.delete(displaySettingsKey)
+					// Same story for the session view-state — an expansion or
+					// scroll anchor built on the outgoing tab must not leak
+					// back onto it if the user returns. Drop the store slot
+					// and reset local expanded so the destination tab starts
+					// with all groups closed.
+					clearViewState(workspaceId, displaySettingsKey)
+					setExpanded({})
+					setCapturedAnchor(undefined)
+					navigate({
+						to: '/$workspaceId/objects',
+						params: { workspaceId },
+						search: {
+							type: value || undefined,
+							sort: 'createdAt',
+							order: 'desc' as const,
+							status: undefined,
+							driver: undefined,
+							q: undefined,
+							groupBy: 'none',
+							ids: undefined,
+							includeArchived: undefined,
+							// v2-only search keys — see the note in object-document.tsx.
+							filterBy: undefined,
+							attention: undefined,
+						},
+						replace: true,
+					})
+				}}
 				search={q}
 				onSearchChange={(value) => updateSearch({ q: value || undefined })}
 				statusFilter={statusFilter}
@@ -1463,7 +1099,6 @@ function ObjectsPageV2() {
 					const cleared: Record<string, string | undefined> = {
 						status: undefined,
 						driver: undefined,
-						attention: undefined,
 					}
 					for (const key of Object.keys(searchParams)) {
 						if (key.startsWith('metadata.')) cleared[key] = undefined
@@ -1480,9 +1115,8 @@ function ObjectsPageV2() {
 				order={order}
 				onOrderChange={(value) => updateSearch({ order: value })}
 				groupBy={groupBy}
-				onGroupByChange={(value) => updateSearch({ groupBy: value ?? 'none' })}
+				onGroupByChange={(value) => updateSearch({ groupBy: value })}
 				includeArchived={supportsIncludeArchived ? includeArchived : undefined}
-				archivedCount={archivedCount}
 				onIncludeArchivedChange={
 					supportsIncludeArchived
 						? // Must be the number 1, not the string '1' — the router's default
@@ -1496,7 +1130,7 @@ function ObjectsPageV2() {
 				onViewChange={(next) => {
 					setView(next)
 					if (next === 'list' && sort === BOARD_MANUAL_SORT) {
-						updateSearch({ sort: DEFAULT_SORT, order: DEFAULT_ORDER })
+						updateSearch({ sort: 'createdAt', order: 'desc' })
 					}
 					// One analytics line per user-initiated switch so we can count
 					// distinct operators reaching for Board (the bet's success
@@ -1513,6 +1147,46 @@ function ObjectsPageV2() {
 				onResetToDefault={handleResetToDefault}
 			/>
 
+			{hasChipFilters && (
+				<div className="flex items-center gap-2 mx-6 mb-3 flex-wrap">
+					{activeStatuses.length > 0 && (
+						<FilterChip
+							label="Status"
+							value={statusChipValue}
+							onRemove={() => updateSearch({ status: undefined })}
+						/>
+					)}
+					{activeDrivers.length > 0 && (
+						<FilterChip
+							label="Driver"
+							value={driverChipValue}
+							onRemove={() => updateSearch({ driver: undefined })}
+						/>
+					)}
+					{archivedChipActive && (
+						<FilterChip
+							label="Include"
+							value="archived"
+							onRemove={() => updateSearch({ includeArchived: undefined })}
+						/>
+					)}
+					<Button
+						variant="ghost"
+						size="sm"
+						className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+						onClick={() =>
+							updateSearch({
+								status: undefined,
+								driver: undefined,
+								includeArchived: undefined,
+							})
+						}
+					>
+						Clear all
+					</Button>
+				</div>
+			)}
+
 			<ImportDialog open={importOpen} onOpenChange={setImportOpen} onImportStarted={trackImport} />
 			<CreatePicker
 				open={createPickerOpen}
@@ -1522,19 +1196,15 @@ function ObjectsPageV2() {
 			/>
 
 			{effectiveView === 'board' && typeFilter ? (
-				<div className="min-h-0 flex-1 overflow-x-auto overflow-y-hidden pb-4">
+				<div className="pb-4 flex-1 min-h-0 overflow-x-auto overflow-y-hidden md:px-6">
 					<BoardView
 						objectType={typeFilter}
-						columns={boardColumns}
-						asksByObjectId={pendingAsksByObjectId}
-						onAdvance={handleAdvanceStatus}
+						columns={boardQuery.data?.columns ?? []}
 						boardParams={boardParams ?? {}}
 						pageSize={BOARD_PAGE_SIZE}
 						statusesByType={statusesByType}
 						workspaceId={workspaceId}
 						isLoading={boardQuery.isLoading}
-						isError={boardQuery.isError}
-						error={boardQuery.error}
 						actors={actors}
 						selectedIds={selectedIds}
 						onObjectSelectionChange={handleObjectSelectionChange}
@@ -1550,7 +1220,7 @@ function ObjectsPageV2() {
 			) : (
 				<ListView
 					ref={listViewRef}
-					data={listObjects}
+					data={allObjects}
 					workspaceId={workspaceId}
 					actors={actors}
 					rowSelection={rowSelection}
@@ -1563,15 +1233,11 @@ function ObjectsPageV2() {
 					hasNextPage={infiniteQuery.hasNextPage}
 					isFetchingNextPage={infiniteQuery.isFetchingNextPage}
 					isError={infiniteQuery.isError}
-					error={infiniteQuery.error}
 					fetchNextPage={infiniteQuery.fetchNextPage}
 					isLoading={infiniteQuery.isLoading}
 					expanded={expanded}
 					onExpandedChange={handleExpandedChange}
 					onCaptureViewState={handleCaptureViewState}
-					emptyTitle={filteredEmptyTitle}
-					hasActiveFilters={filterPills.length > 0}
-					onClearFilters={clearAllFilters}
 				/>
 			)}
 			<BulkActionBar
@@ -1586,11 +1252,7 @@ function ObjectsPageV2() {
 				onOpenLinks={handleOpenLinks}
 				onAnswerAsks={() => setAsksOpen(true)}
 				askCount={askCount}
-				// Archive is offered only where `Show archived` is — otherwise an
-				// archived row leaves the list with no toggle to bring it back,
-				// stranding it. Both gate on `supportsIncludeArchived` (bet-only
-				// per T5) so the action and its escape hatch stay in lockstep.
-				onArchive={supportsIncludeArchived ? handleBulkArchive : undefined}
+				onArchive={handleBulkArchive}
 				onDelete={handleBulkDelete}
 				onClear={clearSelection}
 			/>

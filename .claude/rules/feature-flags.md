@@ -9,7 +9,7 @@ redeploy of `apps/web`.
 
 ```
 FF_TESTER_ACTOR_IDS=<uuid>,<uuid>                  # actors who get early access
-FF_TESTER_FEATURES=some-flag,new-model             # flag ids those actors see
+FF_TESTER_FEATURES=new-design,new-model            # flag ids those actors see
 ```
 
 Both are comma-separated and optional; empty means every flag is off for
@@ -43,16 +43,21 @@ layout — and branch there. Do not scatter `useFeatureFlag` checks across
 individual components.
 
 ```tsx
-const someFlag = useFeatureFlag('some-flag')
+const newDesign = useFeatureFlag('new-design')
 ...
-{someFlag ? <AppSidebar /> : <LegacyAppSidebar />}
+{newDesign ? <ObjectsPageV2 /> : <LegacyObjectsPage />}
 ```
 
-`FLAGS` is currently empty — `new-design` was retired when the v2 design shipped
-to everyone, following exactly the checklist below. The shape it had is the one
-to copy: `apps/web/src/routes/_authed/$workspaceId.tsx` read the flag once and
-swapped the whole shell (sidebar, header, command palette) at that single site,
-with the pre-v2 components parked under `components/*/legacy/`.
+`new-design` is the live flag. It was retired once when the v2 shell shipped to
+everyone, and re-added for the untested v2 Objects surfaces. It has two read
+sites, both route components — `routes/_authed/$workspaceId/objects/index.tsx`
+and `.../objects/$objectId.tsx` — each swapping a whole page, with the pre-v2
+components vendored under `components/objects/legacy/`. That directory dies with
+the flag.
+
+Note what is *not* behind it: the route's `validateSearch`, the shared filter and
+grouping helpers, and the additive `ObjectReference` `pill` variant. Both branches
+run on the same search schema and the same data layer, per the rule below.
 
 **If you reach a third call site for one flag, stop — the boundary is in the
 wrong place.** Move it up rather than adding another check.
