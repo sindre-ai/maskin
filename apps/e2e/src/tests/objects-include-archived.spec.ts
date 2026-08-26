@@ -42,7 +42,11 @@ test.describe('Objects — Include archived toggle', () => {
 			const toggle = dialog.getByRole('switch', { name: /show archived/i })
 			await expect(toggle).toBeVisible()
 			await expect(toggle).toHaveAttribute('data-state', 'unchecked')
-			await toggle.click()
+			// The row extends its tap target to 44px with a `::before` overlay on
+			// the wrapping label, so that label — not the switch — is what hit
+			// testing resolves to. Drive the label, which is also what a user taps
+			// and what the `for=` association forwards to the switch.
+			await dialog.locator('label').filter({ hasText: 'Show archived' }).click()
 			await expect(toggle).toHaveAttribute('data-state', 'checked')
 
 			// Close the popover so the row-level assertions aren't shadowed by
