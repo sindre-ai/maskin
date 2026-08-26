@@ -48,9 +48,7 @@ export async function getIntegrationCredential(
 				eq(integrations.workspaceId, workspaceId),
 				eq(integrations.provider, provider),
 				eq(integrations.status, 'connected'),
-				requiresActor
-					? eq(integrations.actorId, actorId as string)
-					: isNull(integrations.actorId),
+				requiresActor ? eq(integrations.actorId, actorId as string) : isNull(integrations.actorId),
 			),
 		)
 		.limit(1)

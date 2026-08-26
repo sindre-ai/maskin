@@ -1305,4 +1305,3 @@ export const orphanThreadDetections = pgTable(
 
 export type OrphanThreadDetection = typeof orphanThreadDetections.$inferSelect
 export type NewOrphanThreadDetection = typeof orphanThreadDetections.$inferInsert
-

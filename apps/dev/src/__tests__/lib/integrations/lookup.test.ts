@@ -1,8 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import {
-	actorScopedProviders,
-	getIntegrationCredential,
-} from '../../../lib/integrations/lookup'
+import { actorScopedProviders, getIntegrationCredential } from '../../../lib/integrations/lookup'
 
 // The predicate objects drizzle builds inside `.where(and(...))` are opaque
 // (Drizzle SQL nodes), so these tests assert on the shape of the query call
@@ -66,12 +63,7 @@ describe('getIntegrationCredential', () => {
 		// workspace-shared row exists to serve). We must not fall back to
 		// IS NULL and return an unrelated row.
 		const { db, whereSpy } = makeFakeDb([{ id: 'unexpected' }])
-		const result = await getIntegrationCredential(
-			db as never,
-			'ws',
-			'linkedin-unipile',
-			null,
-		)
+		const result = await getIntegrationCredential(db as never, 'ws', 'linkedin-unipile', null)
 		expect(result).toBeNull()
 		expect(whereSpy).not.toHaveBeenCalled()
 	})
@@ -85,12 +77,7 @@ describe('getIntegrationCredential', () => {
 			status: 'connected',
 		}
 		const { db, whereSpy } = makeFakeDb([row])
-		const result = await getIntegrationCredential(
-			db as never,
-			'ws',
-			'linkedin-unipile',
-			'actor-1',
-		)
+		const result = await getIntegrationCredential(db as never, 'ws', 'linkedin-unipile', 'actor-1')
 		expect(result).toEqual(row)
 		expect(whereSpy).toHaveBeenCalledTimes(1)
 	})
