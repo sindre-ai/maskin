@@ -13,9 +13,7 @@ import { config } from './config'
  * Best-effort: errors are logged and swallowed so the generic disconnect
  * path always succeeds (mirrors `revokeGoogleCalendarGrant`'s contract).
  */
-export async function revokeGoogleSearchConsoleGrant(
-	ctx: PreDisconnectContext,
-): Promise<void> {
+export async function revokeGoogleSearchConsoleGrant(ctx: PreDisconnectContext): Promise<void> {
 	try {
 		const credentials = ctx.credentials
 		// Revoking the refresh token kills the whole grant (Google revokes all
