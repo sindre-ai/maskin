@@ -172,7 +172,16 @@ export interface CustomAuthContext {
 }
 
 export interface CustomAuthHandler {
-	getInstallUrl(state: string): string | Promise<string>
+	/**
+	 * Build the provider's authorize/install URL.
+	 *
+	 * `redirectUri` is the callback URL the route derived for this request (via
+	 * `resolvePublicOrigin`) — handlers that must send a redirect URI to the
+	 * provider MUST use it rather than re-deriving one, so every provider agrees
+	 * on the origin the callback is actually served from. Handlers whose provider
+	 * has the redirect URI pre-registered (GitHub App) can ignore it.
+	 */
+	getInstallUrl(state: string, redirectUri: string): string | Promise<string>
 	handleCallback(params: Record<string, string>): Promise<StoredCredentials>
 	getAccessToken(credentials: StoredCredentials, ctx?: CustomAuthContext): Promise<string>
 }

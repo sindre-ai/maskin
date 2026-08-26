@@ -117,6 +117,57 @@ describe('Integrations Routes', () => {
 			expect(body.install_url).toContain('github.com')
 		})
 
+		it('hands the custom auth handler the redirect URI the callback will be served from', async () => {
+			const seen: string[] = []
+			vi.mocked(getProvider).mockReturnValueOnce({
+				config: { name: 'custom-provider', displayName: 'Custom', auth: { type: 'oauth2_custom' } },
+				customAuth: {
+					getInstallUrl: (_state: string, redirectUri: string) => {
+						seen.push(redirectUri)
+						return 'http://example.test/auth'
+					},
+					handleCallback: async () => ({ accessToken: 'token' }),
+					getAccessToken: async () => 'token',
+				},
+			} as unknown as ResolvedProvider)
+			const { app } = createTestApp(integrationsRoutes, '/api/integrations')
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/integrations/custom-provider/connect', undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(200)
+			expect(seen[0]).toContain('/api/integrations/custom-provider/callback')
+		})
+
+		it('returns 502 when a custom auth handler cannot reach the provider', async () => {
+			// Ubersuggest registers an OAuth client (RFC 7591) inside getInstallUrl, so
+			// a provider outage surfaces here. It must not escape as an opaque 500.
+			vi.mocked(getProvider).mockReturnValueOnce({
+				config: { name: 'custom-provider', displayName: 'Custom', auth: { type: 'oauth2_custom' } },
+				customAuth: {
+					getInstallUrl: async () => {
+						throw new Error('client registration failed: 503')
+					},
+					handleCallback: async () => ({ accessToken: 'token' }),
+					getAccessToken: async () => 'token',
+				},
+			} as unknown as ResolvedProvider)
+			const { app } = createTestApp(integrationsRoutes, '/api/integrations')
+
+			const res = await app.request(
+				jsonRequest('POST', '/api/integrations/custom-provider/connect', undefined, {
+					'x-workspace-id': wsId,
+				}),
+			)
+
+			expect(res.status).toBe(502)
+			const body = await res.json()
+			expect(body.error.message).toContain('Custom')
+		})
+
 		it('activates an api_key provider (posthog) immediately and stores the request key in credentials', async () => {
 			const originalFrontendUrl = process.env.FRONTEND_URL
 			process.env.FRONTEND_URL = 'http://localhost:5173'

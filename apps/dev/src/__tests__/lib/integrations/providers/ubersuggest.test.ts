@@ -159,6 +159,9 @@ describe('ubersuggestAuth install/callback flow state', () => {
 	const baseState = () =>
 		JSON.stringify({ workspaceId: 'ws-1', actorId: 'actor-1', ts: Date.now(), nonce: 'nonce-1' })
 
+	// What the connect route derives via resolvePublicOrigin and hands in.
+	const REDIRECT_URI = 'https://app.example.test/api/integrations/ubersuggest/callback'
+
 	afterEach(() => {
 		globalThis.fetch = originalFetch
 		vi.restoreAllMocks()
@@ -169,8 +172,16 @@ describe('ubersuggestAuth install/callback flow state', () => {
 			jsonResponse({ client_id: 'dyn-client-id' }),
 		) as unknown as typeof fetch
 
-		const url = new URL(await ubersuggestAuth.getInstallUrl(baseState()))
+		const register = globalThis.fetch as unknown as ReturnType<typeof vi.fn>
+		const url = new URL(await ubersuggestAuth.getInstallUrl(baseState(), REDIRECT_URI))
 		const returnedState = url.searchParams.get('state')
+
+		// The route-supplied redirect URI is what gets registered and what the
+		// authorize step sends — the handler must not derive one of its own.
+		expect(JSON.parse(register.mock.calls[0]?.[1]?.body as string).redirect_uris).toEqual([
+			REDIRECT_URI,
+		])
+		expect(url.searchParams.get('redirect_uri')).toBe(REDIRECT_URI)
 
 		expect(url.searchParams.get('code_challenge_method')).toBe('S256')
 		expect(url.searchParams.get('client_id')).toBe('dyn-client-id')
@@ -183,14 +194,14 @@ describe('ubersuggestAuth install/callback flow state', () => {
 		expect(payload.actorId).toBe('actor-1')
 		expect(payload.ubersuggest.clientId).toBe('dyn-client-id')
 		expect(payload.ubersuggest.codeVerifier).toEqual(expect.any(String))
-		expect(payload.ubersuggest.redirectUri).toContain('/api/integrations/ubersuggest/callback')
+		expect(payload.ubersuggest.redirectUri).toBe(REDIRECT_URI)
 	})
 
 	it('completes the callback on a fresh module instance — no shared in-memory flow state', async () => {
 		globalThis.fetch = vi.fn(async () =>
 			jsonResponse({ client_id: 'dyn-client-id' }),
 		) as unknown as typeof fetch
-		const url = new URL(await ubersuggestAuth.getInstallUrl(baseState()))
+		const url = new URL(await ubersuggestAuth.getInstallUrl(baseState(), REDIRECT_URI))
 		const state = url.searchParams.get('state') as string
 
 		// Re-import to simulate the callback being served by a different process
@@ -212,6 +223,8 @@ describe('ubersuggestAuth install/callback flow state', () => {
 		const body = new URLSearchParams(exchange.mock.calls[0]?.[1]?.body as string)
 		expect(body.get('code_verifier')).toBe(JSON.parse(state).ubersuggest.codeVerifier)
 		expect(body.get('client_id')).toBe('dyn-client-id')
+		// Echoed back at token exchange from the state, not re-derived.
+		expect(body.get('redirect_uri')).toBe(REDIRECT_URI)
 	})
 
 	it('rejects a state param with no embedded PKCE material', async () => {

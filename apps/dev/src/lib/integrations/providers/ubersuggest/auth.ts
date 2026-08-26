@@ -50,19 +50,15 @@ function readFlowState(state: string): UbersuggestFlowState['ubersuggest'] {
 	return flow
 }
 
-function buildRedirectUri(): string {
-	const corsOrigin = process.env.CORS_ORIGIN
-	if (corsOrigin) {
-		const origin = (corsOrigin.split(',')[0] ?? corsOrigin).trim().replace(/\/$/, '')
-		return `${origin}/api/integrations/ubersuggest/callback`
-	}
-	return 'http://localhost:3000/api/integrations/ubersuggest/callback'
-}
-
 export const ubersuggestAuth: CustomAuthHandler = {
-	async getInstallUrl(state: string): Promise<string> {
-		const redirectUri = buildRedirectUri()
-
+	/**
+	 * `redirectUri` is supplied by the connect route (`resolvePublicOrigin`), not
+	 * re-derived here: it has to be byte-identical to what the callback side of
+	 * the flow presents, and it is the only place that knows the forwarded host
+	 * when `CORS_ORIGIN` is unset. It is registered with the client below *and*
+	 * echoed back at token exchange, so it also rides in the flow state.
+	 */
+	async getInstallUrl(state: string, redirectUri: string): Promise<string> {
 		// Dynamic client registration (RFC 7591) — no pre-configured credentials needed
 		const regRes = await fetch(`${BASE_URL}/register`, {
 			method: 'POST',

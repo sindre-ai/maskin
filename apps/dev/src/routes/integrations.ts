@@ -179,6 +179,10 @@ const connectRoute = createRoute({
 			description: 'Error',
 			content: { 'application/json': { schema: errorSchema } },
 		},
+		502: {
+			description: 'The provider could not be reached while building the install URL',
+			content: { 'application/json': { schema: errorSchema } },
+		},
 	},
 })
 
@@ -416,12 +420,37 @@ app.openapi(connectRoute, (async (c) => {
 			throw err
 		}
 	}
-	// Build install URL based on auth type
+	// Build install URL based on auth type. The redirect URI is derived once,
+	// here, so custom handlers and the generic OAuth2 path cannot disagree about
+	// which origin serves the callback.
+	const redirectUri = buildRedirectUri(c.req.url, providerName, c.req.header())
 	let installUrl: string
 	if (resolved.customAuth) {
-		installUrl = await Promise.resolve(resolved.customAuth.getInstallUrl(state))
+		try {
+			// A custom handler may call the provider here (e.g. Ubersuggest's RFC 7591
+			// dynamic client registration), so this can fail for reasons that have
+			// nothing to do with the request. Surface it as a 502 rather than letting
+			// it escape as an opaque 500. The pending nonce row inserted above is
+			// left in place: it is keyed by a fresh nonce, is never matched by a
+			// callback, and is what lets the user simply hit Connect again.
+			installUrl = await resolved.customAuth.getInstallUrl(state, redirectUri)
+		} catch (err) {
+			logger.error(`Failed to build install URL for provider ${providerName}`, {
+				workspaceId,
+				actorId,
+				error: err instanceof Error ? err.message : String(err),
+			})
+			return c.json(
+				createApiError(
+					// No BAD_GATEWAY member on the shared union; the 502 status carries
+					// "upstream provider failed", the code carries "not the caller's fault".
+					'INTERNAL_ERROR',
+					`Could not reach ${resolved.config.displayName} to start the connection — please try again`,
+				),
+				502,
+			)
+		}
 	} else if (resolved.config.auth.type === 'oauth2') {
-		const redirectUri = buildRedirectUri(c.req.url, providerName, c.req.header())
 		const handler = new OAuth2Handler(resolved.config.auth.config)
 		installUrl = handler.createAuthorizationUrl(
 			state,
