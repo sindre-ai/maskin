@@ -72,10 +72,20 @@
  * guest-log-stream.ts.
  */
 
-/** Arms of the stall predicate. BOUNDED — this is a metric label value. */
-export type StallReason = 'never_seeded' | 'undelivered' | 'no_output'
+/**
+ * Arms of the stall predicate. BOUNDED — this is a metric label value.
+ *
+ * The array is the single declaration and `StallReason` is DERIVED from it, so
+ * the two cannot drift. Declaring them separately compiles clean when an arm is
+ * added to the union but not to the array, and the consequence is silent: the
+ * `for (const reason of STALL_REASONS)` loop in metrics.ts stops emitting that
+ * series, and an absent series is indistinguishable from a broken scrape.
+ * `Record<StallReason, number>` does not catch it — it forces you to COUNT the
+ * new arm, which makes the compiler look satisfied while the gauge is missing.
+ */
+export const STALL_REASONS = ['never_seeded', 'undelivered', 'no_output'] as const
 
-export const STALL_REASONS: readonly StallReason[] = ['never_seeded', 'undelivered', 'no_output']
+export type StallReason = (typeof STALL_REASONS)[number]
 
 export type StallCounts = Record<StallReason, number>
 

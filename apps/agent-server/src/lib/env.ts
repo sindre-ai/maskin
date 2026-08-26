@@ -37,6 +37,16 @@ const envSchema = z.object({
 		.optional()
 		.default('9464')
 		.transform((v) => {
+			// An EMPTY value is a mistake, not a request to disable. `.default()`
+			// only fires on undefined, so a bare `METRICS_PORT=` line in .env
+			// reaches here as '', and `Number('')` is 0 — which would otherwise
+			// pass the range check below and land on the disable sentinel. The
+			// endpoint would then never bind and never log, and the only symptom
+			// is `up == 0`, which README.md teaches you to diagnose as a port
+			// mismatch or a dead process. Disabling must be spelled out as '0'.
+			if (v.trim() === '') {
+				throw new Error('Invalid METRICS_PORT: empty (use 0 to disable the metrics listener)')
+			}
 			const n = Number(v)
 			if (!Number.isInteger(n) || n < 0 || n > 65535) {
 				throw new Error(`Invalid METRICS_PORT: ${v} (expected integer 0..65535)`)
