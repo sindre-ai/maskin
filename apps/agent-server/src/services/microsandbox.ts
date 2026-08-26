@@ -4,6 +4,7 @@ import { get as httpGet } from 'node:http'
 import { connect, createServer } from 'node:net'
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
+import { type GuestLogSink, createGuestLogSink } from '../lib/guest-log-stream'
 import { logger } from '../lib/logger'
 
 const execFile = promisify(execFileCb)
@@ -210,7 +211,7 @@ export type CommandRunner = (
 export type ProcessSpawner = (
 	bin: string,
 	args: readonly string[],
-	options: { stdio: 'ignore' },
+	options: { stdio: 'ignore' | readonly ('ignore' | 'pipe')[] },
 ) => ChildProcess
 
 export type MicrosandboxDeps = {
@@ -245,6 +246,9 @@ export type MicrosandboxDeps = {
 	// tests spawning one apiece in rapid succession it can exhaust CI runner
 	// resources — see the CI-only OOM/SIGKILL this override fixes.
 	spawnProcess?: ProcessSpawner
+	// Overrideable in tests: builds the sink that turns `msb exec` guest
+	// console output into structured log lines (lib/guest-log-stream.ts).
+	createGuestLogSink?: (sessionId: string) => GuestLogSink
 }
 
 export function assertValidSessionId(sessionId: string): void {
@@ -548,20 +552,29 @@ export async function waitForCompletion(
  * after spawnSession writes the .exec-trigger file causes entrypoint.sh to skip
  * the sleep path and run agent-run.sh with the proxy active.
  *
- * stdout/stderr are piped and drained silently; we don't need PTY output here
- * because agent-run.sh streams logs via HTTP POST to /sessions/:id/logs/ingest.
+ * stdout/stderr are piped and forwarded, line-buffered and redacted, into the
+ * structured logger as `source: 'msb-exec'` (see lib/guest-log-stream.ts).
+ * The *agent's* own output does not come through here — agent-run.sh ships that
+ * via HTTP POST to /sessions/:id/logs/ingest — but the guest helper processes'
+ * stderr does (input-stream.js, output-stream.js, and the two /tmp-logged
+ * helpers now mirrored to stderr). That is the only host-side view of whether
+ * those helpers are alive, and it used to be discarded into empty callbacks.
  */
 export function launchSessionExec(sessionId: string, deps: MicrosandboxDeps): void {
 	assertValidSessionId(sessionId)
-	const proc = spawn(deps.msbBin, ['exec', sessionId], {
+	const spawnProcess = deps.spawnProcess ?? spawn
+	const proc = spawnProcess(deps.msbBin, ['exec', sessionId], {
 		stdio: ['ignore', 'pipe', 'pipe'],
 	})
-	proc.stdout?.on('data', () => {})
-	proc.stderr?.on('data', () => {})
+	const guestLogs = deps.createGuestLogSink?.(sessionId) ?? createGuestLogSink({ sessionId })
+	proc.stdout?.on('data', (chunk: Buffer) => guestLogs.push('stdout', chunk))
+	proc.stderr?.on('data', (chunk: Buffer) => guestLogs.push('stderr', chunk))
 	proc.on('error', (err) => {
+		guestLogs.close()
 		logger.error('msb exec spawn error', { sessionId, error: String(err) })
 	})
 	proc.on('close', (code, sig) => {
+		guestLogs.close()
 		logger.info('msb exec process exited', { sessionId, code, signal: sig })
 	})
 	proc.unref()

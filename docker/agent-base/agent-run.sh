@@ -144,8 +144,14 @@ setup_cdp_retry_proxy() {
     echo "[system] WARNING: could not parse BROWSER_CDP_URL ($BROWSER_CDP_URL), skipping retry proxy" >&2
     return
   fi
+  # tee, not a plain redirect: the startup poll below greps this log file,
+  # so the file must stay - but it lives in a VM that gets destroyed, so it
+  # is also mirrored to stderr, which `msb exec` carries back to the host
+  # and into agent-server logs as source='msb-exec' (guest-log-stream.ts).
+  # Process substitution (not a pipeline) keeps $! as node's own pid, which
+  # the kill -0 liveness check below depends on.
   node /cdp-retry-proxy.js "$CDP_RETRY_PROXY_PORT" "$target_host" "$target_port" \
-    > /tmp/cdp-retry-proxy.log 2>&1 &
+    > >(tee /tmp/cdp-retry-proxy.log | sed -u 's/^/[cdp-retry-proxy] /' >&2) 2>&1 &
   local proxy_pid=$!
   # Give it a moment to bind before handing out the local URL — a failed
   # bind (port in use, node missing) means BROWSER_CDP_URL should still
@@ -294,7 +300,10 @@ start_preview_port_watcher() {
   if [ -z "$BROWSER_CDP_URL" ] || [ -z "$AGENT_SERVER_URL" ] || [ -z "$SESSION_ID" ]; then
     return
   fi
-  node /preview-port-watcher.js > /tmp/preview-port-watcher.log 2>&1 &
+  # Straight to stderr rather than a write-only /tmp file that dies with the
+  # VM - `msb exec` carries stderr back to agent-server's structured logs.
+  # Process substitution (not a pipeline) so $! stays node's own pid.
+  node /preview-port-watcher.js > >(sed -u 's/^/[preview-port-watcher] /' >&2) 2>&1 &
   echo "[system] preview-port watcher started (pid $!)"
 }
 

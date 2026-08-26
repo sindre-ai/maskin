@@ -13,6 +13,7 @@ import {
 	ensureSessionSkeleton,
 	establishPreviewPortRelay,
 	formatOverflowEnvFile,
+	launchSessionExec,
 	listSandboxNames,
 	provisionBrowserSidecar,
 	removeSandbox,
@@ -1455,5 +1456,70 @@ describe('cleanupBrowserSidecar', () => {
 				{ msbBin, run, sleep: clock.sleep, now: clock.now },
 			),
 		).resolves.toBeUndefined()
+	})
+})
+
+describe('launchSessionExec guest log capture', () => {
+	// Regression guard for the discarded-stderr defect: the guest helper
+	// processes (input-stream.js et al) write their only diagnostics to the
+	// stderr that `msb exec` inherits, and those callbacks used to be empty.
+	function fakeExecSpawner() {
+		const stdout = new EventEmitter()
+		const stderr = new EventEmitter()
+		const proc = new EventEmitter() as unknown as ChildProcess
+		// The sink only ever attaches a 'data' listener, so a bare EventEmitter
+		// stands in for the real Readable streams.
+		proc.stdout = stdout as unknown as ChildProcess['stdout']
+		proc.stderr = stderr as unknown as ChildProcess['stderr']
+		proc.unref = () => proc
+		return { proc, stdout, stderr }
+	}
+
+	function setup() {
+		const { proc, stdout, stderr } = fakeExecSpawner()
+		const pushed: Array<[string, string]> = []
+		let closed = 0
+		const stdioSeen: unknown[] = []
+		launchSessionExec('sess-guest', {
+			msbBin: '/fake/msb',
+			spawnProcess: (_bin, _args, options) => {
+				stdioSeen.push(options.stdio)
+				return proc as unknown as ChildProcess
+			},
+			createGuestLogSink: () => ({
+				push: (stream, chunk) => pushed.push([stream, String(chunk)]),
+				close: () => {
+					closed++
+				},
+			}),
+		})
+		return { proc, stdout, stderr, pushed, stdioSeen, closed: () => closed }
+	}
+
+	it('forwards stdout and stderr chunks into the guest log sink', () => {
+		const { stdout, stderr, pushed } = setup()
+		stderr.emit('data', Buffer.from('[system] input-stream: exiting\n'))
+		stdout.emit('data', Buffer.from('hello\n'))
+		expect(pushed).toEqual([
+			['stderr', '[system] input-stream: exiting\n'],
+			['stdout', 'hello\n'],
+		])
+	})
+
+	it('pipes both streams rather than ignoring them', () => {
+		const { stdioSeen } = setup()
+		expect(stdioSeen).toEqual([['ignore', 'pipe', 'pipe']])
+	})
+
+	it('closes the sink when the exec process exits so trailing output is flushed', () => {
+		const { proc, closed } = setup()
+		proc.emit('close', 0, null)
+		expect(closed()).toBe(1)
+	})
+
+	it('closes the sink when the exec process fails to spawn', () => {
+		const { proc, closed } = setup()
+		proc.emit('error', new Error('ENOENT'))
+		expect(closed()).toBe(1)
 	})
 })
