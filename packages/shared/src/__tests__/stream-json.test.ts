@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseResultLine, splitLines } from '../stream-json'
+import { parseResultLine, scanTurnLine, splitLines } from '../stream-json'
 
 const resultLine = (extra: Record<string, unknown> = {}) =>
 	JSON.stringify({
@@ -104,5 +104,159 @@ describe('parseResultLine', () => {
 			cacheReadInputTokens: null,
 			durationMs: null,
 		})
+	})
+})
+
+describe('scanTurnLine', () => {
+	const assistantLine = (content: unknown[], overrides: Record<string, unknown> = {}) =>
+		JSON.stringify({
+			type: 'assistant',
+			message: { id: 'gen-1', role: 'assistant', content },
+			...overrides,
+		})
+
+	it('returns the joined text blocks of an assistant line', () => {
+		const scanned = scanTurnLine(
+			assistantLine([
+				{ type: 'text', text: 'Here is ' },
+				{ type: 'text', text: 'the answer.' },
+			]),
+		)
+		expect(scanned).toEqual({ kind: 'assistant_text', text: 'Here is the answer.' })
+	})
+
+	it('ignores non-text blocks alongside the text', () => {
+		const scanned = scanTurnLine(
+			assistantLine([
+				{ type: 'thinking', thinking: 'hmm' },
+				{ type: 'text', text: 'Reply.' },
+				{ type: 'tool_use', id: 'call_1', name: 'Read', input: {} },
+			]),
+		)
+		expect(scanned).toEqual({ kind: 'assistant_text', text: 'Reply.' })
+	})
+
+	it('treats a thinking-only assistant line as nothing to say', () => {
+		expect(scanTurnLine(assistantLine([{ type: 'thinking', thinking: 'hmm' }]))).toEqual({
+			kind: 'other',
+		})
+	})
+
+	it('treats whitespace-only text as nothing to say', () => {
+		expect(scanTurnLine(assistantLine([{ type: 'text', text: '  \n ' }]))).toEqual({
+			kind: 'other',
+		})
+	})
+
+	it('rejects sub-agent output so a Task result cannot become the reply', () => {
+		expect(
+			scanTurnLine(
+				assistantLine([{ type: 'text', text: 'sub-agent finding' }], {
+					parent_tool_use_id: 'call_parent',
+				}),
+			),
+		).toEqual({ kind: 'other' })
+	})
+
+	it('marks a result envelope as the turn boundary', () => {
+		expect(scanTurnLine(JSON.stringify({ type: 'result', result: 'done' }))).toEqual({
+			kind: 'boundary',
+		})
+	})
+
+	it('does not treat a sub-agent result as the turn boundary', () => {
+		// parseResultLine already rejects these. If the scan stopped here it would
+		// abandon recovery mid-turn for any turn that dispatched a Task and then
+		// closed on a blank result — the exact turn this scan exists to save.
+		expect(
+			scanTurnLine(
+				JSON.stringify({ type: 'result', result: 'sub done', parent_tool_use_id: 'call_parent' }),
+			),
+		).toEqual({ kind: 'other' })
+	})
+
+	it('marks a tagged user envelope as the turn boundary but not a tool_result', () => {
+		expect(
+			scanTurnLine(JSON.stringify({ type: 'user', maskin_message_id: 42, message: {} })),
+		).toEqual({ kind: 'boundary' })
+		expect(
+			scanTurnLine(
+				JSON.stringify({
+					type: 'user',
+					message: { role: 'user', content: [{ type: 'tool_result', content: 'ok' }] },
+				}),
+			),
+		).toEqual({ kind: 'other' })
+	})
+
+	it('treats an AskUserQuestion call as the turn boundary', () => {
+		// The PreToolUse hook posts that question into the chat itself and tells
+		// the agent to close the turn without a closing message — which blanks the
+		// result envelope and triggers the recovery scan. Walking past the tool
+		// call would recover the narration that led up to it and stack a stale
+		// bubble under the question chips on every single ask.
+		expect(
+			scanTurnLine(
+				assistantLine([
+					{ type: 'text', text: 'Let me check which option you would prefer.' },
+					{ type: 'tool_use', name: 'AskUserQuestion', id: 'call_1', input: {} },
+				]),
+			),
+		).toEqual({ kind: 'boundary' })
+	})
+
+	it('treats a post_conversation_message MCP call as the turn boundary', () => {
+		// The agent replying through the MCP tool and then ending silently is the
+		// most common way a turn closes with a blank result. Its tool_result comes
+		// back as an untagged `user` envelope, so nothing else stops the walk —
+		// without this boundary the scan recovers the narration around the call
+		// and posts a near-duplicate under the reply the agent already sent.
+		expect(
+			scanTurnLine(
+				assistantLine([
+					{ type: 'text', text: 'Posting that summary to the thread now.' },
+					{
+						type: 'tool_use',
+						name: 'mcp__maskin__post_conversation_message',
+						id: 'call_3',
+						input: {},
+					},
+				]),
+			),
+		).toEqual({ kind: 'boundary' })
+	})
+
+	it('matches post_conversation_message under any MCP server alias', () => {
+		// The prefix is the workspace's MCP server alias, not a constant, so the
+		// match is on the suffix.
+		expect(
+			scanTurnLine(
+				assistantLine([
+					{
+						type: 'tool_use',
+						name: 'mcp__claude_ai_Maskin__post_conversation_message',
+						id: 'c',
+						input: {},
+					},
+				]),
+			),
+		).toEqual({ kind: 'boundary' })
+	})
+
+	it('does not treat an unrelated tool call as the turn boundary', () => {
+		expect(
+			scanTurnLine(
+				assistantLine([
+					{ type: 'text', text: 'reading the file' },
+					{ type: 'tool_use', name: 'Read', id: 'call_2', input: {} },
+				]),
+			),
+		).toEqual({ kind: 'assistant_text', text: 'reading the file' })
+	})
+
+	it('returns other for malformed or non-JSON lines', () => {
+		expect(scanTurnLine('not json')).toEqual({ kind: 'other' })
+		expect(scanTurnLine('{oops')).toEqual({ kind: 'other' })
+		expect(scanTurnLine('')).toEqual({ kind: 'other' })
 	})
 })
