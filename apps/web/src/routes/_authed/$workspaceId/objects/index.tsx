@@ -742,7 +742,11 @@ function ObjectsPageV2() {
 
 	useEffect(() => {
 		if (hydratedTypesRef.current.has(displaySettingsKey)) return
-		if (!displaySettingsQuery.isSuccess) return
+		// A failed read is treated like "nothing persisted": there is no saved
+		// view to apply either way, and gating on `isSuccess` alone would leave
+		// the write-through effect disarmed for the rest of the session, so
+		// nothing the user changed afterwards would ever be saved.
+		if (!displaySettingsQuery.isSuccess && !displaySettingsQuery.isError) return
 		// Mark hydrated even if there are no persisted settings yet — that lets
 		// the write-through effect start tracking once the user makes their
 		// first change, without re-running this hydrate block.
@@ -800,6 +804,7 @@ function ObjectsPageV2() {
 	}, [
 		displaySettingsKey,
 		displaySettingsQuery.isSuccess,
+		displaySettingsQuery.isError,
 		displaySettingsQuery.data,
 		urlIsInDefaultShape,
 		updateSearch,

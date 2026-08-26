@@ -360,7 +360,7 @@ export function DisplayPanel({
 										// so the visible row stays compact while the tap target
 										// meets 44 px — iOS/mobile canon.
 										'relative flex items-center justify-between gap-2 text-xs cursor-pointer',
-										"before:absolute before:-inset-3 before:h-11 before:w-full before:content-[''] before:pointer-events-none",
+										"before:absolute before:inset-x-0 before:top-1/2 before:h-11 before:-translate-y-1/2 before:content-['']",
 									)}
 								>
 									<span className="text-foreground">Include archived</span>

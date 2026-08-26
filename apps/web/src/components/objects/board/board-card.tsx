@@ -64,7 +64,10 @@ export function BoardCard({
 			aria-selected={isSelected}
 			className={cn(
 				'relative flex flex-col gap-2 rounded-xl border border-border bg-card p-3 text-sm transition-colors hover:bg-accent/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-				'data-[state=selected]:border-accent data-[state=selected]:bg-accent/40 data-[state=selected]:ring-2 data-[state=selected]:ring-accent/30',
+				// `accent` is a near-white background token in light mode, so it cannot
+				// carry a resting-state indicator on a white card — `muted`/`brand` read
+				// in both modes. Matches the v2 list row's selected state.
+				'data-[state=selected]:border-brand data-[state=selected]:bg-muted data-[state=selected]:ring-2 data-[state=selected]:ring-brand/40',
 			)}
 		>
 			<div className="flex items-start gap-2">

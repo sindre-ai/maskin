@@ -70,6 +70,9 @@ export function urlIsInDefaultShape(
 		groupBy?: string
 		status?: string
 		driver?: string
+		q?: string
+		attention?: string
+		includeArchived?: number
 	},
 	metadataFilters: Record<string, string>,
 ): boolean {
@@ -79,6 +82,12 @@ export function urlIsInDefaultShape(
 		(!search.groupBy || search.groupBy === 'status') &&
 		!search.status &&
 		!search.driver &&
+		// `q`, `attention` and `includeArchived` are display intent too: a
+		// deep-link carrying any of them is an explicit request, so persisted
+		// settings must not hydrate on top of it.
+		!search.q &&
+		!search.attention &&
+		!search.includeArchived &&
 		Object.keys(metadataFilters).length === 0
 	)
 }

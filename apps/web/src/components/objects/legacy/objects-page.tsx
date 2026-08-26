@@ -46,6 +46,7 @@ import { consumeArrivalNavType } from '@/lib/back-nav-tracker'
 import { type BetStatusResult, buildBetStatuses } from '@/lib/bet-status'
 import {
 	fromUrlSearch,
+	urlIsInDefaultShape as isUrlInDefaultShape,
 	toBoardParams,
 	toDisplaySettingsBody,
 	toListParams,
@@ -615,27 +616,21 @@ export function LegacyObjectsPage() {
 	updateMutateRef.current = updateDisplaySettings.mutate
 	const hydratedTypesRef = useRef<Set<string>>(new Set())
 
+	// Shared with the v2 page: `validateSearch` always resolves `sort`, `order`
+	// and `groupBy`, so a locally written predicate that tests for their absence
+	// is permanently false and silently disables saved-view restore.
 	const urlIsInDefaultShape = useMemo(
-		() =>
-			(!searchParams.sort || searchParams.sort === 'createdAt') &&
-			(!searchParams.order || searchParams.order === 'desc') &&
-			!searchParams.groupBy &&
-			!searchParams.status &&
-			!searchParams.driver &&
-			Object.keys(metadataFilters).length === 0,
-		[
-			searchParams.sort,
-			searchParams.order,
-			searchParams.groupBy,
-			searchParams.status,
-			searchParams.driver,
-			metadataFilters,
-		],
+		() => isUrlInDefaultShape(searchParams, metadataFilters),
+		[searchParams, metadataFilters],
 	)
 
 	useEffect(() => {
 		if (hydratedTypesRef.current.has(displaySettingsKey)) return
-		if (!displaySettingsQuery.isSuccess) return
+		// A failed read is treated like "nothing persisted": there is no saved
+		// view to apply either way, and gating on `isSuccess` alone would leave
+		// the write-through effect disarmed for the rest of the session, so
+		// nothing the user changed afterwards would ever be saved.
+		if (!displaySettingsQuery.isSuccess && !displaySettingsQuery.isError) return
 		// Mark hydrated even if there are no persisted settings yet — that lets
 		// the write-through effect start tracking once the user makes their
 		// first change, without re-running this hydrate block.
@@ -693,6 +688,7 @@ export function LegacyObjectsPage() {
 	}, [
 		displaySettingsKey,
 		displaySettingsQuery.isSuccess,
+		displaySettingsQuery.isError,
 		displaySettingsQuery.data,
 		urlIsInDefaultShape,
 		updateSearch,
