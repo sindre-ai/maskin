@@ -81,7 +81,7 @@ from aspiration.
 | | |
 |---|---|
 | Alloy | v1.19.0 (apt, `promtail_journal_enabled` build tag) |
-| Config | `/etc/alloy/config.alloy` — copy of `alloy.alloy`, unmodified |
+| Config | `/etc/alloy/config.alloy` — synced from `alloy.alloy` by the deploy workflow |
 | Settings | `/etc/default/alloy`, mode `0600` |
 | `instance` | `finland-1` (set explicitly; hostname is a Hetzner image name) |
 | Grafana Cloud | org `gracefulfalcon588`, stack `1808111`, region `prod-eu-north-0` |
@@ -115,10 +115,27 @@ into the log line rather than promoting them to labels.
 
 ### 2. Configure
 
+This is the **first-install** step only. Once `/etc/alloy/config.alloy` exists,
+the `agent-server-deploy` workflow keeps it in sync with `alloy.alloy` on every
+deploy — validating it and rolling back if Alloy will not reload onto it — so
+do not hand-edit the installed copy; change the repo copy instead. The deploy
+skips this sync entirely on a host that has no `/etc/alloy/config.alloy`, which
+is what makes this step the bootstrap.
+
 ```sh
-cp apps/agent-server/observability/alloy.alloy      /etc/alloy/config.alloy
-cp apps/agent-server/observability/alloy.env.example /etc/default/alloy
-$EDITOR /etc/default/alloy   # fill in LOKI_* and PROM_* URLs and credentials
+cp apps/agent-server/observability/alloy.alloy /etc/alloy/config.alloy
+```
+
+Credentials are **not** deployed and stay host-local. Note the `>>` — the Alloy
+package owns `/etc/default/alloy` and ships `CONFIG_FILE`, `CUSTOM_ARGS` and
+`RESTART_ON_UPGRADE` in it, which `alloy.service` reads on startup. Overwriting
+the file with `cp` blanks `CONFIG_FILE` and Alloy then starts with no config
+path at all:
+
+```sh
+cat apps/agent-server/observability/alloy.env.example >> /etc/default/alloy
+chmod 600 /etc/default/alloy   # it is about to hold a write-scoped API token
+$EDITOR /etc/default/alloy     # fill in LOKI_* and PROM_* URLs and credentials
 ```
 
 `LOKI_*` and `PROM_*` are **different endpoints with different numeric
@@ -159,8 +176,11 @@ otherwise takes the service down on restart — a misspelled argument
 (`set_collectorz`) or a reference to a component that does not exist both fail
 with an exit code and a line number.
 
-If you edit the config later, run this again before `systemctl restart alloy`,
-not after.
+Later edits go to the repo copy, and the deploy workflow runs this same
+`alloy validate` before installing — refusing to replace a working live config
+with one that does not parse, and restoring the previous config if Alloy will
+not reload onto the new one. Run it locally too if you want the feedback
+before pushing.
 
 ### 4. Check the filesystem exclusions against reality
 

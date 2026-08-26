@@ -19,7 +19,9 @@
 // host's logs for the same instant in LogQL. See README.md → "Correlating
 // metrics and logs".
 //
-// Install: /etc/alloy/config.alloy
+// Install: /etc/alloy/config.alloy — bootstrapped by hand once, then kept in
+// sync from this file by .github/workflows/agent-server-deploy.yml on every
+// deploy. Edit this file, not the installed copy.
 // Settings: see alloy.env.example — every deployment-specific value is read
 // from the environment so this file can be committed unmodified.
 //
