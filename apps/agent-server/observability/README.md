@@ -532,6 +532,23 @@ disables the limit for agent-server only (`LogRateLimitIntervalSec=0` in
 `systemd/maskin-agent-server.service`); the per-session rate cap in the
 application remains the real bound.
 
+How far away is it in practice? MEASURED 2026-08-26: agent-server writes about
+**10 lines/minute** (13,990 in 24h) against journald's **20,000/minute**, and
+**zero** messages have been suppressed in the last 14 days. So this is
+insurance, not a live problem — reaching the burst would take roughly 100
+sessions all emitting guest output at their per-session cap simultaneously.
+
+The unit file is installed by `.github/workflows/agent-server-deploy.yml`,
+which copies it to `/etc/systemd/system/` and runs `daemon-reload` before
+restarting, so the setting lands on the next deploy with no manual step. That
+step exists because agent-server is **not** containerised — it runs as a plain
+Node process under systemd, so its runtime settings live in a file outside
+`/opt/maskin` that the code deploy would otherwise never touch. Before that
+step existed, edits to the unit sat in the repo doing nothing until someone
+copied them by hand. (The `agent-base` and `browser-sidecar` images *do* ship
+automatically, but those are the images sessions run *inside*, not this
+service.)
+
 **Retention.** journald is the buffer between agent-server and the collector.
 If it is small or volatile, an Alloy outage or a reboot loses the window you
 would want to investigate. Check with `journalctl --disk-usage`, and set
