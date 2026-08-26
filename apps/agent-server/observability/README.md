@@ -219,9 +219,21 @@ journalctl -u alloy -f          # the collector's own logs — watch for auth
 
 Alloy's UI at `http://localhost:12345` shows each component's health and the
 number of entries it has forwarded, which is the fastest way to tell a
-"reading nothing" problem from a "can't push" problem. Check all five
-components: `loki.source.journal`, `loki.write`, `prometheus.exporter.unix`,
-`prometheus.scrape`, `prometheus.remote_write`.
+"reading nothing" problem from a "can't push" problem. Check all **eight**
+components — both relabel components included, since those are where the
+`job` label is set and a mistake there is invisible everywhere else (see the
+gotcha under [Querying metrics](#querying-metrics)):
+
+| Component | Pipeline |
+|---|---|
+| `loki.relabel.journal` | logs — sets `unit`, `service_name`, `job` |
+| `loki.source.journal` | logs — reads the journal |
+| `loki.process.agent_server` | logs — parses the NDJSON, splits labels vs metadata |
+| `loki.write.default` | logs — pushes to Loki |
+| `prometheus.exporter.unix.host` | metrics — node_exporter |
+| `discovery.relabel.host` | metrics — sets `instance`, `env`, `job` |
+| `prometheus.scrape.host` | metrics — 60s scrape |
+| `prometheus.remote_write.default` | metrics — pushes to Prometheus |
 
 In Grafana, confirm each half independently before trusting a dashboard:
 

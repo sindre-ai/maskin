@@ -102,9 +102,10 @@ loki.process "agent_server" {
 	forward_to = [loki.write.default.receiver]
 
 	// Every logger call emits {level, time, msg, ...ctx}. Lines that aren't
-	// JSON (e.g. the "[sentry] captureMessage failed" fallback writes) simply
-	// extract nothing and pass through with the labels above — they are not
-	// dropped.
+	// JSON (e.g. the "[sentry] captureMessage failed" fallback writes, Node
+	// startup banners, or an uncaught-exception stack trace) extract nothing
+	// and pass through with the labels above — they are not dropped. See the
+	// note on stage.timestamp below for how their timestamps are handled.
 	stage.json {
 		expressions = {
 			level      = "level",
@@ -117,9 +118,20 @@ loki.process "agent_server" {
 
 	// Prefer the application's own timestamp over journald's ingest time, so
 	// ordering survives a collector restart or an ingest backlog.
+	//
+	// action_on_failure MUST be "skip". The default is "fudge", which stamps a
+	// line that has no extractable `time` with last-successful-timestamp + 1ns
+	// rather than failing. That default is actively harmful here: every
+	// non-JSON line (see stage.json above) would be dated from whenever the
+	// last JSON line happened to arrive. An uncaught-exception stack trace
+	// printed after a quiet period would land minutes or hours before the
+	// incident window you are looking at — precisely the query this pipeline
+	// exists to serve. "skip" leaves journald's own ingest timestamp on those
+	// lines, which is both correct and roughly right.
 	stage.timestamp {
-		source = "time"
-		format = "RFC3339"
+		source            = "time"
+		format            = "RFC3339"
+		action_on_failure = "skip"
 	}
 
 	// LABELS — low cardinality ONLY.
