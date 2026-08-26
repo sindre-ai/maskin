@@ -99,6 +99,7 @@ import { randomUUID } from 'node:crypto'
 import type { StorageProvider } from '@maskin/storage'
 import { getProvider } from '../../lib/integrations/registry'
 import { logger } from '../../lib/logger'
+import { expandBrowserCapability } from '../../lib/marketplace-loops/loop-snapshot'
 import { AgentStorageManager } from '../../services/agent-storage'
 import { SessionManager, mergeLaunchRouteConfig } from '../../services/session-manager'
 import { buildIntegration, buildSession } from '../factories'
@@ -1044,6 +1045,45 @@ describe('SessionManager', () => {
 			}
 			expect(agentCreateCall.env.BROWSER_CDP_URL).toBe('http://172.20.0.2:9222')
 			expect(agentCreateCall.networkMode).toMatch(/^anko-net-/)
+		})
+
+		// Closes the seam between the marketplace install path and this one: the
+		// tools value here is not hand-written, it is exactly what
+		// buildActorInsert() persists for an installed agent that was published
+		// with a browser. Installed agents used to land here with tools:{} and
+		// silently ran without a sidecar.
+		it('provisions a sidecar for an agent installed from a marketplace loop', async () => {
+			const session = buildTestSession({ config: {} })
+			const installedTools = expandBrowserCapability({ browser: true }) as {
+				mcpServers: Record<string, unknown>
+			}
+			const agent = buildTestAgent(session.actorId, installedTools)
+			const workspace = buildTestWorkspace(session.workspaceId)
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+
+			mockResults.selectQueue = [
+				[session], // startSession: load session
+				[workspace], // hasCapacity: workspace
+				[{ count: 0 }], // hasCapacity: running count
+				[agent], // launchContainer: agent lookup
+				[workspace], // launchContainer: workspace llm keys
+				[], // launchContainer: integrations
+			]
+
+			await manager.startSession(session.id)
+
+			const agentCreateCall = mockContainerManager.create.mock.calls[1]?.[0] as {
+				env: Record<string, string>
+			}
+			expect(agentCreateCall.env.BROWSER_CDP_URL).toBe('http://172.20.0.2:9222')
+			// The agent's own MCP config reaches the container with the placeholder
+			// intact, so agent-run.sh keeps the @playwright/mcp entry.
+			expect(agentCreateCall.env.AGENT_MCP_JSON).toContain('@playwright/mcp')
 		})
 	})
 
