@@ -7,6 +7,12 @@ if [ -f /agent/.env-overflow.sh ]; then
   source /agent/.env-overflow.sh
 fi
 
+# Committer identity for anything the agent commits. Overridable via env, but
+# any override must stay on a domain we own (maskin.io / sindre.ai) — see
+# setup_git_identity below.
+GIT_IDENTITY_NAME="${GIT_IDENTITY_NAME:-Maskin Agent}"
+GIT_IDENTITY_EMAIL="${GIT_IDENTITY_EMAIL:-agent@maskin.io}"
+
 # Resolve a working URL for the agent-server (log ingest, input stream, completion
 # signal). The server injects AGENT_SERVER_URL as http://host.microsandbox.internal:<port>,
 # but on msb 0.5.7 that alias does not reliably resolve inside the VM, so every
@@ -269,6 +275,21 @@ CREDS_EOF
   echo "[system] Claude OAuth credentials written to $creds_dir/.credentials.json"
 }
 
+# Give git a committer identity up front so the agent never has to invent one.
+# Nothing else in the image or the injected env sets user.name/user.email, so
+# without this every session improvised its own address at commit time — which
+# is how ~40 fabricated identities (agent@maskin.ai, dev@maskin.ai,
+# developer@maskin.local, ...) ended up in the history. Anything at a domain we
+# do not own is claimable: verifying such an address on a GitHub account
+# retroactively credits its holder as a contributor here. maskin.ai in
+# particular is registered to someone else. Pin it to a domain we control.
+setup_git_identity() {
+  git config --global user.name "$GIT_IDENTITY_NAME"
+  git config --global user.email "$GIT_IDENTITY_EMAIL"
+
+  echo "[system] git identity set to $GIT_IDENTITY_NAME <$GIT_IDENTITY_EMAIL>"
+}
+
 # Point git's github.com credential helper at our just-in-time token script
 # instead of relying on GITHUB_TOKEN staying valid for the whole session.
 # GitHub App installation tokens expire after exactly 1 hour, so a session
@@ -454,6 +475,7 @@ install_runtime
 build_context
 setup_mcps
 setup_claude_credentials
+setup_git_identity
 setup_github_credential_helper
 start_preview_port_watcher
 
