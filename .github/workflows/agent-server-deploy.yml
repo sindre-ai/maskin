@@ -33,6 +33,38 @@ jobs:
             pnpm install --frozen-lockfile
             pnpm turbo run build --filter=@maskin/agent-server...
 
+            # Sync the systemd unit from the repo before restarting.
+            #
+            # agent-server is NOT containerised — it runs as a plain Node
+            # process started by systemd (ExecStart=/usr/bin/node ...), so how
+            # it runs lives in a unit file under /etc, separate from the code
+            # under /opt/maskin. Without this step the deploy updates the code
+            # and never the unit, so any change to restart behaviour, kill
+            # mode, journald rate limiting or environment sits in the repo
+            # doing nothing until somebody remembers to ssh in and copy it.
+            # That drift is silent and can persist for months.
+            #
+            # (The agent-base / browser-sidecar images DO ship automatically,
+            # but those are the images sessions run inside — not this service.)
+            UNIT_SRC=apps/agent-server/systemd/maskin-agent-server.service
+            UNIT_DST=/etc/systemd/system/maskin-agent-server.service
+
+            # Check the unit parses before installing it. This gates on fatal
+            # errors only — systemd-analyze exits 1 for things like a missing
+            # ExecStart, but merely WARNS (exit 0) on an unrecognised value
+            # such as KillMode=typo, which it silently ignores at runtime. So
+            # the output is echoed too: a warning here means a setting you
+            # think is applied is not.
+            systemd-analyze verify "$UNIT_SRC"
+
+            if ! cmp -s "$UNIT_SRC" "$UNIT_DST"; then
+              echo "unit file changed — installing and reloading systemd"
+              install -m 644 -o root -g root "$UNIT_SRC" "$UNIT_DST"
+              systemctl daemon-reload
+            else
+              echo "unit file unchanged"
+            fi
+
             # KillMode=process on this unit means a restart only replaces the
             # dispatcher — live microVM sessions are left running untouched.
             systemctl restart maskin-agent-server
