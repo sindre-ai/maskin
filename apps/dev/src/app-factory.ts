@@ -54,6 +54,7 @@ import stripeWebhookRoutes from './routes/stripe-webhook'
 import subscriptionsRoutes from './routes/subscriptions'
 import telemetryRoutes from './routes/telemetry'
 import testGrantsRoutes, { isTestGrantEnabled } from './routes/test-grants'
+import toolBrokerMcpRoutes from './routes/tool-broker-mcp'
 import triggersRoutes from './routes/triggers'
 import userDisplaySettingsRoutes from './routes/user-display-settings'
 import workspaceSkillsRoutes from './routes/workspace-skills'
@@ -264,6 +265,10 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		if (path === '/api/public/bet-strategist/drafts' && method === 'POST') return next()
 		if (path === '/api/public/bet-strategist/claim' && method === 'POST') return next()
 		if (/^\/api\/integrations\/[^/]+\/callback$/.test(path)) return next()
+		// The tool-broker MCP proxy authenticates a CONTAINER, not a Maskin
+		// actor: it verifies a scoped session token itself rather than an `ank_`
+		// API key, so the API-key middleware would reject every legitimate call.
+		if (path === '/api/tool-broker/mcp') return next()
 
 		return auth(c, next)
 	})
@@ -343,6 +348,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/telemetry', telemetryRoutes)
 	app.route('/api/user-display-settings', userDisplaySettingsRoutes)
 	app.route('/api/feature-flags', featureFlagsRoutes)
+	app.route('/api/tool-broker/mcp', toolBrokerMcpRoutes)
 
 	if (options.includeExtensions !== false) {
 		const moduleEnv = { db, notifyBridge, sessionManager, agentStorage, storageProvider }

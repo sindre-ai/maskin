@@ -1298,3 +1298,50 @@ export const orphanThreadDetections = pgTable(
 
 export type OrphanThreadDetection = typeof orphanThreadDetections.$inferSelect
 export type NewOrphanThreadDetection = typeof orphanThreadDetections.$inferInsert
+
+// Per-workspace tool-broker provisioning. One row per workspace, holding the
+// backend toolkit that workspace's agent sessions are pointed at.
+//
+// The unique index on workspace_id is what makes provisioning safe under
+// concurrency: two session launches racing to provision the same workspace must
+// converge on one toolkit rather than creating two.
+export const workspaceToolBrokers = pgTable(
+	'workspace_tool_brokers',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.references(() => workspaces.id, { onDelete: 'cascade' })
+			.notNull(),
+		toolkitSlug: text('toolkit_slug').notNull(),
+		toolkitId: text('toolkit_id').notNull(),
+		status: text('status').notNull().default('active'),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [uniqueIndex('workspace_tool_brokers_workspace_uniq').on(t.workspaceId)],
+)
+
+// A Maskin actor's identity on the tool broker. `apiKey` is encrypted at rest
+// with the same helper the integration credentials use; it is the ONLY broker
+// credential we persist. The per-actor password used to mint it is generated,
+// used once and discarded, because a password would mint a full session and so
+// reach the backend's account and admin planes — strictly more than the key can
+// do. Key rotation therefore needs re-provisioning; that is a known trade.
+export const toolBrokerActors = pgTable(
+	'tool_broker_actors',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		actorId: uuid('actor_id')
+			.references(() => actors.id, { onDelete: 'cascade' })
+			.notNull(),
+		subjectId: text('subject_id').notNull(),
+		apiKey: text('api_key').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [uniqueIndex('tool_broker_actors_actor_uniq').on(t.actorId)],
+)
+
+export type WorkspaceToolBroker = typeof workspaceToolBrokers.$inferSelect
+export type NewWorkspaceToolBroker = typeof workspaceToolBrokers.$inferInsert
+export type ToolBrokerActor = typeof toolBrokerActors.$inferSelect
+export type NewToolBrokerActor = typeof toolBrokerActors.$inferInsert
