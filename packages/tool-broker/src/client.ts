@@ -399,6 +399,25 @@ export class ToolBrokerClient {
 		}
 	}
 
+	/** Connections this actor can see for the workspace: org-owned plus their own. */
+	async listConnections(apiKey: string, workspaceId: string): Promise<BrokerConnection[]> {
+		const raw = await this.request<RawConnection[]>({ path: '/api/connections', token: apiKey })
+		const prefix = workspacePrefix(workspaceId)
+		return (
+			raw
+				// Other workspaces' connections are visible on a shared-tenant instance,
+				// so filter to this workspace's own namespace rather than trusting the
+				// backend to scope the list for us.
+				.filter((entry) => entry.integration.startsWith(prefix))
+				.map((entry) => ({
+					address: entry.address,
+					integrationSlug: entry.integration,
+					name: entry.name,
+					scope: entry.owner === 'user' ? ('personal' as const) : ('workspace' as const),
+				}))
+		)
+	}
+
 	async disconnect(
 		apiKey: string,
 		input: { integrationSlug: string; scope: 'workspace' | 'personal'; name: string },
