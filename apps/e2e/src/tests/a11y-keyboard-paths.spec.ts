@@ -21,9 +21,12 @@ const PALETTE_PLACEHOLDER = 'Run a command or jump to…'
 async function gotoWorkspaceShell(page: Page, workspaceId: string) {
 	await page.goto(`/${workspaceId}`)
 	await page.waitForLoadState('load')
+	// 10s, not the 5s default: this is the cold-start guard, not the assertion
+	// under test, and it is the first navigation in its shard — the CI dev
+	// server is still transforming modules on the first hit.
 	await expect(
 		page.locator('[data-sidebar="sidebar"]').getByRole('link', { name: 'For you' }),
-	).toBeVisible()
+	).toBeVisible({ timeout: 10000 })
 }
 
 test.describe('keyboard-only interactive paths', () => {

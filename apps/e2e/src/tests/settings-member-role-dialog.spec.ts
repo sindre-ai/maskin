@@ -69,7 +69,9 @@ test.describe('Settings — HumanDetailDialog role change', () => {
 
 			// Rows are buttons, not table rows — the list is a flex column of
 			// clickable member cards.
-			const teammateRow = page.getByRole('button', { name: TEAMMATE.name })
+			// The row button's accessible name folds in the avatar initials and the
+			// actor type; matching on the bare name also hits "Remove <name>".
+			const teammateRow = page.getByRole('button', { name: `${TEAMMATE.name} human` })
 			await expect(teammateRow).toBeVisible({ timeout: 10000 })
 
 			await teammateRow.click()
