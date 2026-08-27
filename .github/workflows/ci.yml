@@ -157,6 +157,47 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # SeaweedFS is the S3-compatible backend the dev server writes skill
+      # content to. The install path (POST /api/installed-loops) puts one S3
+      # object per provisioned skill inside the install transaction — with no
+      # backend reachable, every marketplace bundle install fails the whole
+      # transaction with ECONNREFUSED and returns a generic 500 (root-caused
+      # 2026-08-13). Started as a step (not `services:`) so it can mount
+      # `seaweedfs-s3.json`; same image + credentials + bucket name as
+      # docker-compose.yml so behaviour matches local dev.
+      - name: Start SeaweedFS (S3-compatible backend)
+        run: |
+          set -euo pipefail
+          docker run -d --name seaweedfs \
+            -p 8333:8333 -p 9333:9333 \
+            -v "$PWD/seaweedfs-s3.json":/etc/seaweedfs/s3.json:ro \
+            chrislusf/seaweedfs \
+            server -s3 -s3.config=/etc/seaweedfs/s3.json -dir=/data
+          # Poll until the S3 port responds with any HTTP status. Not `curl -f`:
+          # an unauthenticated GET returns 403, which still means "port open,
+          # server up." Only status=000 (connection refused) means "not ready."
+          for i in $(seq 1 30); do
+            status=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8333/ || echo 000)
+            if [ "$status" != "000" ]; then break; fi
+            sleep 1
+          done
+          # The port opens before the S3 filer can actually serve a bucket PUT,
+          # so an open port is necessary but not sufficient — retry the PUT
+          # itself rather than assuming readiness. Without this a single early
+          # non-2xx fails the whole shard under `set -e`, with no diagnostics.
+          for i in $(seq 1 30); do
+            if curl -sf --aws-sigv4 "aws:amz:us-east-1:s3" \
+              --user "admin:admin" \
+              -X PUT http://localhost:8333/agent-files; then
+              echo "SeaweedFS ready; bucket agent-files created."
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::SeaweedFS never accepted the agent-files bucket PUT after 30s."
+          docker logs seaweedfs || true
+          exit 1
+
       - uses: pnpm/action-setup@v5
         with:
           version: 9.15.0
@@ -232,6 +273,11 @@ jobs:
           # `warn` stops that unhandled rejection from crashing the process
           # before assert-results.mjs gets to run.
           NODE_OPTIONS: --unhandled-rejections=warn
+          S3_ENDPOINT: http://localhost:8333
+          S3_BUCKET: agent-files
+          S3_ACCESS_KEY: admin
+          S3_SECRET_KEY: admin
+          S3_REGION: us-east-1
 
       - name: Upload Playwright report
         if: always()

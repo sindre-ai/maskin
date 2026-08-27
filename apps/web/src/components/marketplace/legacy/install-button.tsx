@@ -7,16 +7,13 @@ interface InstallButtonProps {
 	loopId: string
 	disabled?: boolean
 	label?: string
-	/** Marketplace surface starting the install; only the detail view sets `'detail'`. */
-	source?: 'detail'
 }
 
 export function InstallButton({
 	workspaceId,
 	loopId,
 	disabled,
-	label = 'Install',
-	source,
+	label = 'Install loop',
 }: InstallButtonProps) {
 	const install = useInstallLoop(workspaceId)
 	const isInstalling = install.isPending
@@ -26,7 +23,7 @@ export function InstallButton({
 			size="sm"
 			className="relative"
 			disabled={disabled || isInstalling}
-			onClick={() => install.mutate({ loopId, source })}
+			onClick={() => install.mutate({ loopId })}
 		>
 			{isInstalling ? (
 				<>

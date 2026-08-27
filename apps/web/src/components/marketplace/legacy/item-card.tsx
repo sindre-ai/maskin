@@ -1,14 +1,12 @@
-import { getActorAvatarPaletteClass, getActorInitials } from '@/components/shared/actor-avatar'
+import { ItemInstallControls } from '@/components/marketplace/item-install-controls'
+import { ITEM_TYPE_LABEL } from '@/components/marketplace/item-type-label'
 import { Badge } from '@/components/ui/badge'
 import type {
 	InstalledLoopRow,
 	MarketplaceItemInstalledEntry,
 	MarketplaceLoopItem,
 } from '@/lib/api'
-import { cn } from '@/lib/cn'
 import { Link } from '@tanstack/react-router'
-import { ItemInstallControls } from './item-install-controls'
-import { ITEM_TYPE_LABEL, KIND_LABEL_BASE, KIND_LABEL_CLASS } from './item-type-label'
 
 interface ItemCardProps {
 	workspaceId: string
@@ -26,31 +24,20 @@ export function ItemCard({ workspaceId, item, install, installedEntity }: ItemCa
 	const locked = install?.isLocked ?? false
 
 	return (
-		<article className="relative flex flex-col gap-3 rounded-xl border border-border bg-card p-4 shadow-sm transition-colors hover:border-border-strong hover:shadow-md">
+		<article className="relative flex flex-col gap-3 rounded-lg border border-border bg-background p-4 shadow-sm transition-colors hover:bg-muted/40">
 			<Link
 				to="/$workspaceId/marketplace/$loopId/$itemId"
 				params={{ workspaceId, loopId: item.loop_id, itemId: item.id }}
-				className="absolute inset-0 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+				className="absolute inset-0 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
 				aria-label={`Open ${name}`}
 			/>
 
-			<div className="flex items-start gap-3">
-				{/* 38px identity tile (mockup 2588) — same treatment as the loop card
-				    and the detail header. */}
-				<span
-					aria-hidden="true"
-					className={cn(
-						'grid size-[38px] shrink-0 place-items-center rounded-xl text-sm font-bold',
-						getActorAvatarPaletteClass(name),
+			<div className="flex items-start justify-between gap-3">
+				<div className="min-w-0">
+					<h3 className="text-sm font-semibold text-foreground">{name}</h3>
+					{description && (
+						<p className="mt-1 text-xs text-muted-foreground line-clamp-2">{description}</p>
 					)}
-				>
-					{getActorInitials(name)}
-				</span>
-				<div className="min-w-0 flex-1">
-					<h3 className="truncate text-[13.5px] font-bold text-foreground">{name}</h3>
-					<div className={cn(KIND_LABEL_BASE, 'mt-0.5', KIND_LABEL_CLASS[item.item_type])}>
-						{ITEM_TYPE_LABEL[item.item_type]}
-					</div>
 				</div>
 				{install ? (
 					locked ? (
@@ -71,9 +58,11 @@ export function ItemCard({ workspaceId, item, install, installedEntity }: ItemCa
 				) : null}
 			</div>
 
-			{description && (
-				<p className="text-xs leading-relaxed text-muted-foreground line-clamp-3">{description}</p>
-			)}
+			<div className="flex flex-wrap gap-1">
+				<span className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+					{ITEM_TYPE_LABEL[item.item_type]}
+				</span>
+			</div>
 
 			<div className="mt-auto">
 				<ItemInstallControls

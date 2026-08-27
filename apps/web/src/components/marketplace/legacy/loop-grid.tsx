@@ -1,5 +1,3 @@
-import { ItemCard } from '@/components/marketplace/item-card'
-import { MarketplaceLoopCard } from '@/components/marketplace/marketplace-loop-card'
 import type {
 	InstalledLoopRow,
 	MarketplaceItemInstalledEntry,
@@ -8,6 +6,8 @@ import type {
 	MarketplaceLoopSummary,
 } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { ItemCard } from './item-card'
+import { MarketplaceLoopCard } from './marketplace-loop-card'
 
 type TypeFilter = 'all' | 'loops' | MarketplaceItemType
 
@@ -74,7 +74,7 @@ export function LoopGrid({
 			{hasLoops && (
 				<section className="space-y-3" aria-label="Loops">
 					<h2 className="text-sm font-semibold text-foreground">Loops</h2>
-					<div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(15rem,1fr))]">
+					<div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
 						{multiTypeLoops.map((loop) => (
 							<MarketplaceLoopCard
 								key={loop.id}
@@ -90,7 +90,7 @@ export function LoopGrid({
 			{typedSections.map(({ type, loopCards, itemCards }) => (
 				<section key={type} className="space-y-3" aria-label={SECTION_TITLE[type]}>
 					<h2 className="text-sm font-semibold text-foreground">{SECTION_TITLE[type]}</h2>
-					<div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(15rem,1fr))]">
+					<div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
 						{loopCards.map((loop) => (
 							<MarketplaceLoopCard
 								key={loop.id}
