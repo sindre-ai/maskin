@@ -165,6 +165,38 @@ describe('BillingSection', () => {
 		expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
 	})
 
+	it('marks Enterprise as the current plan for an active BYO workspace, not Trial', async () => {
+		// The shape `GET /api/billing/usage` now returns for a byollm-entitled
+		// workspace that never connected a BYO credential: plan byollm, status
+		// active (the stored default). Previously the endpoint reported `trial`
+		// here, which put "Current plan" on the Trial card and offered the
+		// entitled workspace paid upgrades it has no use for.
+		vi.mocked(api.billing.usage).mockResolvedValue({
+			...baseUsage,
+			plan: 'byollm',
+			status: 'active',
+			period_resets_in_ms: null,
+		})
+
+		render(
+			<TestWrapper>
+				<BillingSection workspaceId="ws-1" byollmAllowed />
+			</TestWrapper>,
+		)
+
+		await screen.findByText('Enterprise')
+		// Exactly one "Current plan" button, and it belongs to the Enterprise card.
+		const current = screen.getAllByRole('button', { name: 'Current plan' })
+		expect(current).toHaveLength(1)
+		// `closest('div')` is the PlanCard root — the button is its direct child.
+		const currentCard = current[0].closest('div')
+		expect(currentCard?.textContent).toContain('ENTERPRISE')
+		expect(currentCard?.textContent).not.toContain('TRIAL')
+		expect(screen.queryByRole('button', { name: 'Upgrade to Pro' })).not.toBeInTheDocument()
+		expect(screen.queryByRole('button', { name: 'Upgrade to Team' })).not.toBeInTheDocument()
+		expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
+	})
+
 	it('redirects to Stripe checkout url on upgrade click', async () => {
 		const user = userEvent.setup()
 		vi.mocked(api.billing.usage).mockResolvedValue(baseUsage)
