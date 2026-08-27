@@ -155,7 +155,7 @@ export const workspaceSettingsSchema = z.object({
 	// `PLAN_CAP_EXCEEDED` error so the frontend can show a reset ETA.
 	billing: z
 		.object({
-			plan: z.enum(['trial', 'pro', 'team', 'byollm']),
+			plan: z.enum(['trial', 'pro', 'team', 'enterprise']),
 			stripe_customer_id: z.string().nullable().optional(),
 			stripe_subscription_id: z.string().nullable().optional(),
 			period_start: z.number().nullable().optional(),
@@ -225,10 +225,10 @@ export const updateWorkspaceAdminSchema = z
 		// Entitlement to BYO LLM credentials (Claude OAuth, custom_llm, llm_keys).
 		// Defaults to false for every workspace; only ops-flagged exceptions may
 		// bypass the Maskin-provided LLM plan. See PR #970.
-		byollm_allowed: z.boolean().optional(),
+		enterprise_granted: z.boolean().optional(),
 	})
-	.refine((v) => v.onboarding_enabled !== undefined || v.byollm_allowed !== undefined, {
-		message: 'At least one of onboarding_enabled or byollm_allowed must be provided',
+	.refine((v) => v.onboarding_enabled !== undefined || v.enterprise_granted !== undefined, {
+		message: 'At least one of onboarding_enabled or enterprise_granted must be provided',
 	})
 
 export const workspaceParamsSchema = z.object({

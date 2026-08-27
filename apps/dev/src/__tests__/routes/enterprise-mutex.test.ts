@@ -70,14 +70,14 @@ function findWorkspaceUpdate(updates: unknown[]): WorkspaceUpdate {
 	return match
 }
 
-describe('BYOLLM ↔ paid plan mutex — PATCH /api/workspaces/:id', () => {
-	it('cancels live Stripe sub and writes billing.plan=byollm when setting llm_keys.anthropic', async () => {
+describe('BYO-LLM ↔ paid plan mutex — PATCH /api/workspaces/:id', () => {
+	it('cancels live Stripe sub and writes billing.plan=enterprise when setting llm_keys.anthropic', async () => {
 		const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
 		mockResults.selectQueue = [
 			[
 				{
 					id: wsId,
-					byollmAllowed: true,
+					enterpriseGranted: true,
 					settings: {
 						billing: {
 							plan: 'team',
@@ -104,7 +104,7 @@ describe('BYOLLM ↔ paid plan mutex — PATCH /api/workspaces/:id', () => {
 		expect(update.settings).toMatchObject({
 			llm_keys: { anthropic: 'sk-ant-byo' },
 			billing: {
-				plan: 'byollm',
+				plan: 'enterprise',
 				status: 'canceled',
 				stripe_subscription_id: null,
 				stripe_customer_id: 'cus_live',
@@ -118,7 +118,7 @@ describe('BYOLLM ↔ paid plan mutex — PATCH /api/workspaces/:id', () => {
 			[
 				{
 					id: wsId,
-					byollmAllowed: true,
+					enterpriseGranted: true,
 					settings: {
 						billing: {
 							plan: 'pro',
@@ -149,7 +149,7 @@ describe('BYOLLM ↔ paid plan mutex — PATCH /api/workspaces/:id', () => {
 		const update = findWorkspaceUpdate(calls.updates)
 		expect(update.settings).toMatchObject({
 			custom_llm: { enabled: true, api_key: 'sk-or-byo' },
-			billing: { plan: 'byollm', status: 'canceled', stripe_subscription_id: null },
+			billing: { plan: 'enterprise', status: 'canceled', stripe_subscription_id: null },
 		})
 	})
 
@@ -159,7 +159,7 @@ describe('BYOLLM ↔ paid plan mutex — PATCH /api/workspaces/:id', () => {
 			[
 				{
 					id: wsId,
-					byollmAllowed: true,
+					enterpriseGranted: true,
 					settings: {
 						billing: {
 							plan: 'pro',
@@ -195,8 +195,8 @@ describe('BYOLLM ↔ paid plan mutex — PATCH /api/workspaces/:id', () => {
 			[
 				{
 					id: wsId,
-					byollmAllowed: true,
-					settings: { billing: { plan: 'byollm', status: 'canceled' } },
+					enterpriseGranted: true,
+					settings: { billing: { plan: 'enterprise', status: 'canceled' } },
 				},
 			],
 		]
@@ -219,7 +219,7 @@ describe('BYOLLM ↔ paid plan mutex — PATCH /api/workspaces/:id', () => {
 			[
 				{
 					id: wsId,
-					byollmAllowed: true,
+					enterpriseGranted: true,
 					settings: {
 						billing: {
 							plan: 'pro',
@@ -251,7 +251,7 @@ describe('BYOLLM ↔ paid plan mutex — PATCH /api/workspaces/:id', () => {
 			[
 				{
 					id: wsId,
-					byollmAllowed: true,
+					enterpriseGranted: true,
 					settings: {
 						billing: {
 							plan: 'pro',
@@ -273,14 +273,14 @@ describe('BYOLLM ↔ paid plan mutex — PATCH /api/workspaces/:id', () => {
 		expect(res.status).toBe(200)
 		const update = findWorkspaceUpdate(calls.updates)
 		expect(update.settings.billing).toMatchObject({
-			plan: 'byollm',
+			plan: 'enterprise',
 			status: 'canceled',
 			stripe_subscription_id: null,
 		})
 	})
 })
 
-describe('BYOLLM ↔ paid plan mutex — POST /api/claude-oauth/import', () => {
+describe('BYO-LLM ↔ paid plan mutex — POST /api/claude-oauth/import', () => {
 	const importBody = {
 		accessToken: 'access-1',
 		refreshToken: 'refresh-1',
@@ -295,7 +295,7 @@ describe('BYOLLM ↔ paid plan mutex — POST /api/claude-oauth/import', () => {
 			[
 				{
 					id: wsId,
-					byollmAllowed: true,
+					enterpriseGranted: true,
 					settings: {
 						billing: { plan: 'pro', status: 'active', stripe_subscription_id: 'sub_live' },
 					},
@@ -312,7 +312,7 @@ describe('BYOLLM ↔ paid plan mutex — POST /api/claude-oauth/import', () => {
 		const update = findWorkspaceUpdate(calls.updates)
 		expect(update.settings.claude_oauth).toBeDefined()
 		expect(update.settings.billing).toMatchObject({
-			plan: 'byollm',
+			plan: 'enterprise',
 			status: 'canceled',
 			stripe_subscription_id: null,
 		})
@@ -326,7 +326,7 @@ describe('BYOLLM ↔ paid plan mutex — POST /api/claude-oauth/import', () => {
 			[
 				{
 					id: wsId,
-					byollmAllowed: true,
+					enterpriseGranted: true,
 					settings: {
 						billing: { plan: 'pro', status: 'active', stripe_subscription_id: 'sub_live' },
 					},
@@ -346,7 +346,7 @@ describe('BYOLLM ↔ paid plan mutex — POST /api/claude-oauth/import', () => {
 		const { app, mockResults, calls } = createTestApp(claudeOauthRoutes, '/api/claude-oauth')
 		mockResults.selectQueue = [
 			[buildWorkspaceMember()],
-			[{ id: wsId, byollmAllowed: true, settings: {} }],
+			[{ id: wsId, enterpriseGranted: true, settings: {} }],
 		]
 
 		const res = await app.request(
@@ -361,7 +361,7 @@ describe('BYOLLM ↔ paid plan mutex — POST /api/claude-oauth/import', () => {
 	})
 })
 
-describe('BYOLLM ↔ paid plan mutex — Stripe webhook clears BYO slots on active', () => {
+describe('BYO-LLM ↔ paid plan mutex — Stripe webhook clears BYO slots on active', () => {
 	it('drops claude_oauth + custom_llm + llm_keys.anthropic on customer.subscription.updated → active', async () => {
 		const { app, mockResults, calls } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
 		mockResults.insertQueue = [[{ id: 'claim-mutex-1' }], [{ id: 'evt-claim-mutex-1' }]]
@@ -373,7 +373,7 @@ describe('BYOLLM ↔ paid plan mutex — Stripe webhook clears BYO slots on acti
 			[
 				{
 					id: wsId,
-					byollmAllowed: true,
+					enterpriseGranted: true,
 					settings: {
 						llm_keys: { anthropic: 'sk-ant', openai: 'sk-open' },
 						custom_llm: { enabled: true, api_key: 'sk-or' },
@@ -429,7 +429,7 @@ describe('BYOLLM ↔ paid plan mutex — Stripe webhook clears BYO slots on acti
 			[
 				{
 					id: wsId,
-					byollmAllowed: true,
+					enterpriseGranted: true,
 					settings: {
 						llm_keys: { anthropic: 'sk-ant' },
 						custom_llm: { enabled: true, api_key: 'sk-or' },
@@ -470,7 +470,7 @@ describe('BYOLLM ↔ paid plan mutex — Stripe webhook clears BYO slots on acti
 			llm_keys: { anthropic: 'sk-ant' },
 			custom_llm: { enabled: true, api_key: 'sk-or' },
 			claude_oauth: { encryptedAccessToken: 'enc' },
-			billing: { plan: 'byollm', status: 'canceled', stripe_subscription_id: null },
+			billing: { plan: 'enterprise', status: 'canceled', stripe_subscription_id: null },
 		})
 	})
 })

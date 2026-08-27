@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
-	byollmEntitled,
+	isEnterprise,
 	isEnterpriseActor,
 	isEnterpriseWorkspace,
 	parseEnterpriseActorIds,
-} from '../../lib/enterprise-allowlist'
+} from '../../lib/enterprise'
 
 const ACTOR_A = '11111111-1111-1111-1111-111111111111'
 const ACTOR_B = '22222222-2222-2222-2222-222222222222'
@@ -53,33 +53,56 @@ describe('isEnterpriseActor', () => {
 })
 
 describe('isEnterpriseWorkspace', () => {
-	it('short-circuits without a DB call when the allowlist is empty', async () => {
-		const db = {
-			select: () => {
-				throw new Error('select should not be called when the allowlist is empty')
-			},
-		}
-		await expect(isEnterpriseWorkspace(db as never, 'ws-1', {})).resolves.toBe(false)
+	function dbReturning(rows: unknown[]) {
+		return {
+			select: () => ({
+				from: () => ({ where: () => ({ limit: () => Promise.resolve(rows) }) }),
+			}),
+		} as never
+	}
+
+	// The env-only predecessor skipped the query entirely when the allowlist was
+	// empty. It can't any more: `enterprise_granted` lives in the row, so an
+	// empty allowlist no longer means "nobody is enterprise" and the row has to
+	// be read to answer correctly.
+	it('reads the row even when the allowlist is empty, so the column can still grant', async () => {
+		const db = dbReturning([{ enterpriseGranted: true, billingOwnerId: ACTOR_B }])
+		await expect(isEnterpriseWorkspace(db, 'ws-1', {})).resolves.toBe(true)
+	})
+
+	it('is true for an enterprise billing owner with no per-workspace grant', async () => {
+		const db = dbReturning([{ enterpriseGranted: false, billingOwnerId: ACTOR_A }])
+		const env = { MASKIN_ENTERPRISE_ACTOR_IDS: ACTOR_A }
+		await expect(isEnterpriseWorkspace(db, 'ws-1', env)).resolves.toBe(true)
+	})
+
+	it('is false when neither the column nor the owner grants it', async () => {
+		const db = dbReturning([{ enterpriseGranted: false, billingOwnerId: ACTOR_B }])
+		await expect(isEnterpriseWorkspace(db, 'ws-1', {})).resolves.toBe(false)
+	})
+
+	it('is false for a workspace that does not exist', async () => {
+		await expect(isEnterpriseWorkspace(dbReturning([]), 'missing', {})).resolves.toBe(false)
 	})
 })
 
-describe('byollmEntitled', () => {
+describe('isEnterprise', () => {
 	const env = { MASKIN_ENTERPRISE_ACTOR_IDS: ACTOR_A }
 
 	it('is true when the per-workspace ops grant is set, whoever owns billing', () => {
-		expect(byollmEntitled({ byollmAllowed: true, billingOwnerId: ACTOR_B }, env)).toBe(true)
+		expect(isEnterprise({ enterpriseGranted: true, billingOwnerId: ACTOR_B }, env)).toBe(true)
 	})
 
 	it('is true for an enterprise billing owner without a per-workspace grant', () => {
-		expect(byollmEntitled({ byollmAllowed: false, billingOwnerId: ACTOR_A }, env)).toBe(true)
+		expect(isEnterprise({ enterpriseGranted: false, billingOwnerId: ACTOR_A }, env)).toBe(true)
 	})
 
 	it('is false for a non-enterprise owner with no grant', () => {
-		expect(byollmEntitled({ byollmAllowed: false, billingOwnerId: ACTOR_B }, env)).toBe(false)
-		expect(byollmEntitled({ byollmAllowed: null, billingOwnerId: null }, env)).toBe(false)
+		expect(isEnterprise({ enterpriseGranted: false, billingOwnerId: ACTOR_B }, env)).toBe(false)
+		expect(isEnterprise({ enterpriseGranted: null, billingOwnerId: null }, env)).toBe(false)
 	})
 
 	it('ignores the allowlist entirely when it is unset', () => {
-		expect(byollmEntitled({ byollmAllowed: false, billingOwnerId: ACTOR_A }, {})).toBe(false)
+		expect(isEnterprise({ enterpriseGranted: false, billingOwnerId: ACTOR_A }, {})).toBe(false)
 	})
 })

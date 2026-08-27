@@ -14,7 +14,7 @@ describe('seatCapForPlan / ownershipCapForTier', () => {
 		['trial', 1],
 		['pro', 5],
 		['team', 25],
-		['byollm', null],
+		['enterprise', null],
 	] as const)('seatCapForPlan(%s) === %s', (plan, expected) => {
 		expect(seatCapForPlan(plan)).toBe(expected)
 	})
@@ -23,7 +23,7 @@ describe('seatCapForPlan / ownershipCapForTier', () => {
 		['trial', 1],
 		['pro', 5],
 		['team', 25],
-		['byollm', null],
+		['enterprise', null],
 	] as const)('ownershipCapForTier(%s) === %s', (tier, expected) => {
 		expect(ownershipCapForTier(tier)).toBe(expected)
 	})
@@ -39,7 +39,7 @@ describe('resolvePlanTier', () => {
 	it('reads the plan from settings.billing.plan', () => {
 		expect(resolvePlanTier({ billing: { plan: 'pro' } })).toBe('pro')
 		expect(resolvePlanTier({ billing: { plan: 'team' } })).toBe('team')
-		expect(resolvePlanTier({ billing: { plan: 'byollm' } })).toBe('byollm')
+		expect(resolvePlanTier({ billing: { plan: 'enterprise' } })).toBe('enterprise')
 	})
 
 	it('falls back to trial on malformed settings', () => {
@@ -70,8 +70,8 @@ describe('computeEffectiveTier', () => {
 		expect(ownershipCapForTier(tier)).toBe(25)
 	})
 
-	it('byollm anywhere in the owned set dominates (unlimited effective tier)', () => {
-		expect(computeEffectiveTier(['byollm', 'trial'], 'trial')).toBe('byollm')
-		expect(ownershipCapForTier('byollm')).toBeNull()
+	it('enterprise anywhere in the owned set dominates (unlimited effective tier)', () => {
+		expect(computeEffectiveTier(['enterprise', 'trial'], 'trial')).toBe('enterprise')
+		expect(ownershipCapForTier('enterprise')).toBeNull()
 	})
 })

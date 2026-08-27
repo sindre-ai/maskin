@@ -339,10 +339,10 @@ describe('POST /api/webhooks/stripe', () => {
 		const res = await postWebhook(app, {})
 		expect(res.status).toBe(200)
 		const update = findWorkspaceUpdate(calls.updates)
-		// NOT 'byollm'. That plan sits at the top of PLAN_TIER_ORDER with null
+		// NOT 'enterprise'. That plan sits at the top of PLAN_TIER_ORDER with null
 		// (unlimited) seat and ownership caps, so writing it here let any
 		// workspace self-grant unlimited seats + unlimited workspace ownership
-		// by cancelling its subscription. It also routes nowhere — 'byollm' is
+		// by cancelling its subscription. It also routes nowhere — 'enterprise' is
 		// excluded from MASKIN_PLAN_ROUTED_PLANS, so the workspace could start
 		// no sessions at all. Unentitled cancellations land on 'trial'.
 		expect(update.settings.billing).toMatchObject({
@@ -352,7 +352,7 @@ describe('POST /api/webhooks/stripe', () => {
 		})
 	})
 
-	it('downgrades a byollm-entitled workspace to byollm on customer.subscription.deleted', async () => {
+	it('downgrades a enterprise-entitled workspace to enterprise on customer.subscription.deleted', async () => {
 		const { app, mockResults, calls } = createTestApp(stripeWebhookRoutes, '/api/webhooks/stripe')
 		const workspaceId = randomUUID()
 		mockResults.insertQueue = [[{ id: 'claim-3b' }]]
@@ -361,7 +361,7 @@ describe('POST /api/webhooks/stripe', () => {
 			[
 				{
 					id: workspaceId,
-					byollmAllowed: true,
+					enterpriseGranted: true,
 					settings: {
 						billing: { plan: 'team', status: 'active', stripe_subscription_id: 'sub_y' },
 					},
@@ -388,7 +388,7 @@ describe('POST /api/webhooks/stripe', () => {
 		expect(res.status).toBe(200)
 		const update = findWorkspaceUpdate(calls.updates)
 		expect(update.settings.billing).toMatchObject({
-			plan: 'byollm',
+			plan: 'enterprise',
 			stripe_subscription_id: null,
 			status: 'canceled',
 		})

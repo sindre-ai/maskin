@@ -29,15 +29,15 @@ export const Route = createFileRoute('/_authed/$workspaceId/settings/keys')({
 
 function KeysPage() {
 	const { workspace, workspaceId } = useWorkspace()
-	const byollmAllowed = Boolean(workspace.byollmAllowed)
+	const enterprise = Boolean(workspace.enterprise)
 
 	return (
 		<div className="space-y-6">
 			<div className="max-w-4xl">
-				<BillingSection workspaceId={workspaceId} byollmAllowed={byollmAllowed} />
+				<BillingSection workspaceId={workspaceId} enterprise={enterprise} />
 			</div>
 
-			{byollmAllowed ? (
+			{enterprise ? (
 				<div className="max-w-lg space-y-6">
 					<div className="border-t border-border pt-6">
 						<ClaudeOAuthSection workspaceId={workspaceId} />

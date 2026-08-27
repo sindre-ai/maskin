@@ -12,7 +12,7 @@ import {
 import { workspaceSettingsSchema } from '@maskin/shared'
 import { and, eq, sql } from 'drizzle-orm'
 import type Stripe from 'stripe'
-import { byollmEntitled } from '../lib/enterprise-allowlist'
+import { isEnterprise } from '../lib/enterprise'
 import { createApiError } from '../lib/errors'
 import { billingAfterCancel, settingsAfterPaidPlanActivation } from '../lib/llm-source-mutex'
 import { logger } from '../lib/logger'
@@ -231,7 +231,7 @@ async function applyEvent(
 			.select({
 				id: workspaces.id,
 				settings: workspaces.settings,
-				byollmAllowed: workspaces.byollmAllowed,
+				enterpriseGranted: workspaces.enterpriseGranted,
 				billingOwnerId: workspaces.billingOwnerId,
 			})
 			.from(workspaces)
@@ -250,12 +250,12 @@ async function applyEvent(
 		}
 		let next = { ...current }
 		// True once a branch has applied a subscription/invoice-shaped
-		// mutation. The BYOLLM mutex below keys off this rather than off
+		// mutation. The BYO-LLM mutex below keys off this rather than off
 		// `status === 'active'`: a credit top-up on an already-active pro/team
 		// workspace leaves `status` untouched at 'active', and stripping BYO
 		// slots on that path silently wiped `claude_oauth` / `custom_llm` /
 		// `llm_keys.anthropic` for the entitled workspaces that are allowed to
-		// hold both (see lib/enterprise-allowlist.ts's `byollmEntitled`).
+		// hold both (see lib/enterprise-allowlist.ts's `isEnterprise`).
 		let planMutated = false
 
 		switch (event.type) {
@@ -387,19 +387,19 @@ async function applyEvent(
 			case 'customer.subscription.deleted': {
 				const sub = event.data.object as Stripe.Subscription
 				planMutated = true
-				// `plan: 'byollm'` is NOT safe to write unconditionally here.
+				// `plan: 'enterprise'` is NOT safe to write unconditionally here.
 				// It sits at the top of PLAN_TIER_ORDER with null (unlimited)
 				// seat and ownership caps, so an unentitled workspace could
 				// cancel its subscription to self-grant unlimited seats and
 				// unlimited workspace ownership - the exact circularity
-				// `byollmEntitled` documents. It also routes nowhere: 'byollm'
+				// `isEnterprise` documents. It also routes nowhere: 'enterprise'
 				// is excluded from MASKIN_PLAN_ROUTED_PLANS, so a non-BYO
 				// workspace landing there can start no sessions at all, with
 				// no cap error and no upgrade CTA. `billingAfterCancel`
-				// already encodes the right split (entitled -> byollm,
+				// already encodes the right split (entitled -> enterprise,
 				// everyone else -> trial), so this uses the same helper as
 				// POST /api/billing/cancel.
-				const canceled = billingAfterCancel(next, byollmEntitled(workspace))
+				const canceled = billingAfterCancel(next, isEnterprise(workspace))
 				next = {
 					...(canceled ?? next),
 					hard_cap_usd_cents: null,
@@ -427,7 +427,7 @@ async function applyEvent(
 			}
 		}
 
-		// BYOLLM -> paid plan mutex: when the subscription lands in an active
+		// BYO-LLM -> paid plan mutex: when the subscription lands in an active
 		// paid state, clear every BYO source in the same workspace update so we
 		// never keep both sides "active" at once.
 		const baseSettings = (workspace.settings ?? {}) as Record<string, unknown>

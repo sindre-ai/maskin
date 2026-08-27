@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/auth.fixture'
-import { grantByollmAllowed } from '../helpers/plan.helper'
+import { grantEnterprise } from '../helpers/plan.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 const BASE = 'http://localhost:5173'
@@ -84,7 +84,7 @@ test.describe('Claude subscription failover — settings UI', () => {
 		page,
 		account,
 	}) => {
-		await grantByollmAllowed(account.apiKey, account.workspaceId)
+		await grantEnterprise(account.apiKey, account.workspaceId)
 		await mockFailedOverStatus(page)
 
 		await page.goto(`/${account.workspaceId}/settings/keys`)
@@ -115,7 +115,7 @@ test.describe('Claude subscription failover — settings UI', () => {
 	})
 
 	test('AC-U5: backup designation persists across reload', async ({ page, account }) => {
-		await grantByollmAllowed(account.apiKey, account.workspaceId)
+		await grantEnterprise(account.apiKey, account.workspaceId)
 		// Seed a primary so the "Add a backup" CTA renders. The slot field on the
 		// import body is what the customer designation flows through.
 		await importClaudeOAuth(account.apiKey, account.workspaceId, {

@@ -58,7 +58,7 @@ describe('SessionManager launch — LLM credential pre-flight (Integration)', ()
 	})
 
 	it('fails a session with a not_logged_in reason instead of launching it', async () => {
-		const ws = await insertWorkspace(db, actorId, { byollmAllowed: true, settings: {} })
+		const ws = await insertWorkspace(db, actorId, { enterpriseGranted: true, settings: {} })
 		workspaceId = ws.id
 		const pending = await insertSession(db, workspaceId, agentId, actorId, {
 			status: 'pending',
@@ -88,7 +88,7 @@ describe('SessionManager launch — LLM credential pre-flight (Integration)', ()
 	})
 
 	it('writes the session_failed event so the audit log and SSE feed see it', async () => {
-		const ws = await insertWorkspace(db, actorId, { byollmAllowed: true, settings: {} })
+		const ws = await insertWorkspace(db, actorId, { enterpriseGranted: true, settings: {} })
 		workspaceId = ws.id
 		const pending = await insertSession(db, workspaceId, agentId, actorId, {
 			status: 'pending',
@@ -110,7 +110,7 @@ describe('SessionManager launch — LLM credential pre-flight (Integration)', ()
 
 	it('lets a session through when the workspace has an Anthropic key configured', async () => {
 		const ws = await insertWorkspace(db, actorId, {
-			byollmAllowed: true,
+			enterpriseGranted: true,
 			settings: { llm_keys: { anthropic: 'sk-ant-test' } },
 		})
 		workspaceId = ws.id

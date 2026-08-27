@@ -136,14 +136,14 @@ function createApp(agentStorage = new AgentStorageManager(createMemoryStorage(),
 }
 
 /**
- * Flips the `byollm_allowed` ops grant via the real admin route.
+ * Flips the `enterprise_granted` ops grant via the real admin route.
  *
  * The allowlist is scoped to just this call rather than the whole test: an
- * actor in MASKIN_ENTERPRISE_ACTOR_IDS is byollm-entitled outright, so leaving
+ * actor in MASKIN_ENTERPRISE_ACTOR_IDS is enterprise-entitled outright, so leaving
  * it set would make every later assertion pass through the allowlist and never
  * touch the per-workspace grant these tests are about.
  */
-async function grantByollmAsOps(
+async function grantEnterpriseAsOps(
 	app: ReturnType<typeof createApp>,
 	workspaceId: string,
 ): Promise<Response> {
@@ -151,7 +151,7 @@ async function grantByollmAsOps(
 	process.env.MASKIN_ENTERPRISE_ACTOR_IDS = getTestActorId()
 	try {
 		return await app.request(
-			jsonRequest('PATCH', `/api/workspaces/admin/${workspaceId}`, { byollm_allowed: true }),
+			jsonRequest('PATCH', `/api/workspaces/admin/${workspaceId}`, { enterprise_granted: true }),
 		)
 	} finally {
 		// '' parses to an empty allowlist, same as unset.
@@ -265,9 +265,9 @@ describe('Workspaces Integration', () => {
 			)
 			const ws = await createRes.json()
 
-			// New workspaces default to byollmAllowed: false — grant entitlement so
+			// New workspaces default to enterpriseGranted: false — grant entitlement so
 			// this test can exercise the llm_keys deep-merge itself, not the gate.
-			const grant = await grantByollmAsOps(app, ws.id)
+			const grant = await grantEnterpriseAsOps(app, ws.id)
 			expect(grant.status).toBe(200)
 
 			await app.request(
@@ -297,30 +297,30 @@ describe('Workspaces Integration', () => {
 		})
 	})
 
-	describe('byollmAllowed entitlement gate', () => {
-		it('defaults new workspaces to byollmAllowed: false', async () => {
+	describe('enterpriseGranted entitlement gate', () => {
+		it('defaults new workspaces to enterpriseGranted: false', async () => {
 			const app = createApp()
 			const createRes = await app.request(
 				jsonRequest('POST', '/api/workspaces', { name: 'Entitlement Default' }),
 			)
 			const ws = await createRes.json()
-			expect(ws.byollmAllowed).toBe(false)
+			expect(ws.enterpriseGranted).toBe(false)
 		})
 
-		it('returns byollmAllowed on GET /api/workspaces so the settings UI can gate on it', async () => {
+		it('returns enterpriseGranted on GET /api/workspaces so the settings UI can gate on it', async () => {
 			const app = createApp()
 			const createRes = await app.request(
 				jsonRequest('POST', '/api/workspaces', { name: 'Entitlement In List' }),
 			)
 			const ws = await createRes.json()
-			const grant = await grantByollmAsOps(app, ws.id)
+			const grant = await grantEnterpriseAsOps(app, ws.id)
 			expect(grant.status).toBe(200)
 
 			const listRes = await app.request(jsonGet('/api/workspaces'))
 			expect(listRes.status).toBe(200)
-			const list = (await listRes.json()) as Array<{ id: string; byollmAllowed: boolean }>
+			const list = (await listRes.json()) as Array<{ id: string; enterpriseGranted: boolean }>
 			const listed = list.find((w) => w.id === ws.id)
-			expect(listed?.byollmAllowed).toBe(true)
+			expect(listed?.enterpriseGranted).toBe(true)
 		})
 
 		it('entitles an enterprise billing owner without any per-workspace grant', async () => {
@@ -329,7 +329,7 @@ describe('Workspaces Integration', () => {
 				jsonRequest('POST', '/api/workspaces', { name: 'Enterprise Owner Entitlement' }),
 			)
 			const ws = await createRes.json()
-			expect(ws.byollmAllowed).toBe(false)
+			expect(ws.enterpriseGranted).toBe(false)
 
 			// The allowlist is read from process.env at call time, so flipping it
 			// here exercises exactly what a founder deployment configures.
@@ -337,8 +337,8 @@ describe('Workspaces Integration', () => {
 			process.env.MASKIN_ENTERPRISE_ACTOR_IDS = getTestActorId()
 			try {
 				const listRes = await app.request(jsonGet('/api/workspaces'))
-				const list = (await listRes.json()) as Array<{ id: string; byollmAllowed: boolean }>
-				expect(list.find((w) => w.id === ws.id)?.byollmAllowed).toBe(true)
+				const list = (await listRes.json()) as Array<{ id: string; enterpriseGranted: boolean }>
+				expect(list.find((w) => w.id === ws.id)?.enterpriseGranted).toBe(true)
 
 				const res = await app.request(
 					jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
@@ -432,7 +432,7 @@ describe('Workspaces Integration', () => {
 			expect(res.status).toBe(403)
 		})
 
-		it('allows adding BYO credentials once an admin flips byollm_allowed', async () => {
+		it('allows adding BYO credentials once an admin flips enterprise_granted', async () => {
 			const app = createApp()
 			const createRes = await app.request(
 				jsonRequest('POST', '/api/workspaces', { name: 'Allowed After Admin Flip' }),
@@ -441,10 +441,10 @@ describe('Workspaces Integration', () => {
 
 			// Granted as ops, then read back as an ordinary owner: the PATCH below
 			// must succeed on the strength of the per-workspace grant alone.
-			const adminRes = await grantByollmAsOps(app, ws.id)
+			const adminRes = await grantEnterpriseAsOps(app, ws.id)
 			expect(adminRes.status).toBe(200)
 			const adminBody = await adminRes.json()
-			expect(adminBody.byollmAllowed).toBe(true)
+			expect(adminBody.enterpriseGranted).toBe(true)
 
 			const res = await app.request(
 				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
@@ -465,7 +465,7 @@ describe('Workspaces Integration', () => {
 
 			// Grant, add a key, then revoke entitlement while the key is still set.
 			await app.request(
-				jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, { byollm_allowed: true }),
+				jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, { enterprise_granted: true }),
 			)
 			await app.request(
 				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
@@ -473,7 +473,7 @@ describe('Workspaces Integration', () => {
 				}),
 			)
 			await app.request(
-				jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, { byollm_allowed: false }),
+				jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, { enterprise_granted: false }),
 			)
 
 			const res = await app.request(

@@ -1,14 +1,14 @@
 import { expect, test } from '../fixtures/auth.fixture'
-import { grantByollmAllowed } from '../helpers/plan.helper'
+import { grantEnterprise } from '../helpers/plan.helper'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
 const BASE = 'http://localhost:5173'
 
-test.describe('BYOLLM entitlement gate — settings UI', () => {
+test.describe('BYO-LLM entitlement gate — settings UI', () => {
 	test('hides BYO controls for a non-entitled workspace', async ({ page, account }) => {
 		await page.goto(`/${account.workspaceId}/settings/keys`)
 
-		await expect(page.getByTestId('byollm-disabled-notice')).toHaveCount(0)
+		await expect(page.getByTestId('enterprise-disabled-notice')).toHaveCount(0)
 		await expect(page.getByTestId('claude-oauth-slots')).toHaveCount(0)
 		await expect(page.getByText('LLM API Keys')).toHaveCount(0)
 		await expect(page.getByText('Custom Model Endpoint (beta)')).toHaveCount(0)
@@ -23,11 +23,11 @@ test.describe('BYOLLM entitlement gate — settings UI', () => {
 		page,
 		account,
 	}) => {
-		await grantByollmAllowed(account.apiKey, account.workspaceId)
+		await grantEnterprise(account.apiKey, account.workspaceId)
 
 		await page.goto(`/${account.workspaceId}/settings/keys`)
 
-		await expect(page.getByTestId('byollm-disabled-notice')).toHaveCount(0)
+		await expect(page.getByTestId('enterprise-disabled-notice')).toHaveCount(0)
 		await expect(page.getByTestId('claude-oauth-slots')).toBeVisible()
 		await expect(page.getByText('LLM API Keys')).toBeVisible()
 		await expect(page.getByText('Custom Model Endpoint (beta)')).toBeVisible()

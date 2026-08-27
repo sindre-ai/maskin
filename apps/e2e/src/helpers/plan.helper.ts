@@ -2,7 +2,7 @@ const BASE = 'http://localhost:5173'
 
 /**
  * Neither grant below is self-service in the product: `settings.billing` is
- * rejected by PATCH /api/workspaces/:id (Stripe owns it) and `byollm_allowed`
+ * rejected by PATCH /api/workspaces/:id (Stripe owns it) and `enterprise_granted`
  * requires an ops actor on MASKIN_ENTERPRISE_ACTOR_IDS. E2E actors are created
  * through public signup with server-generated UUIDs, so they can't be on that
  * allowlist. `POST /api/test-grants/:id` is the seam — it only exists on stacks
@@ -13,7 +13,7 @@ const TEST_GRANT_TOKEN = process.env.MASKIN_TEST_GRANT_TOKEN
 async function testGrant(
 	apiKey: string,
 	workspaceId: string,
-	body: { plan?: 'trial' | 'pro' | 'team'; byollm_allowed?: boolean },
+	body: { plan?: 'trial' | 'pro' | 'team'; enterprise_granted?: boolean },
 	what: string,
 ) {
 	if (!TEST_GRANT_TOKEN) {
@@ -51,11 +51,11 @@ export async function grantPlanHeadroom(
 }
 
 /**
- * Workspaces default to `byollm_allowed: false` — the Maskin-provided LLM
+ * Workspaces default to `enterprise_granted: false` — the Maskin-provided LLM
  * plan. Only ops-flagged exception workspaces may bring their own Claude
  * subscription / API key / custom endpoint, so specs that drive those controls
  * must grant the entitlement first. See PR #970.
  */
-export async function grantByollmAllowed(apiKey: string, workspaceId: string) {
-	await testGrant(apiKey, workspaceId, { byollm_allowed: true }, 'Grant byollm_allowed')
+export async function grantEnterprise(apiKey: string, workspaceId: string) {
+	await testGrant(apiKey, workspaceId, { enterprise_granted: true }, 'Grant enterprise_granted')
 }
