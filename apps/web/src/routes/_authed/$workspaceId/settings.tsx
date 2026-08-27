@@ -13,10 +13,7 @@ const settingsNav = [
 	{ label: 'Members', to: '/$workspaceId/settings/members' as const },
 	{ label: 'Integrations', to: '/$workspaceId/settings/integrations' as const },
 	{ label: 'Extensions', to: '/$workspaceId/settings/extensions' as const },
-	{ label: 'Skills', to: '/$workspaceId/settings/skills' as const },
 	{ label: 'Billing', to: '/$workspaceId/settings/billing' as const },
-	{ label: 'LLM', to: '/$workspaceId/settings/keys' as const },
-	{ label: 'MCP', to: '/$workspaceId/settings/mcp' as const },
 ]
 
 function SettingsLayout() {

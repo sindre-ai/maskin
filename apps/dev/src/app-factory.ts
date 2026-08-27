@@ -302,7 +302,6 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 
 	app.route('/api/objects', objectsRoutes)
 	app.route('/api/briefing', briefingRoutes)
-	app.route('/api/billing', billingRoutes)
 	app.route('/api/public/landing-events', publicLandingEventsRoutes)
 	app.route('/api/public/bet-strategist', publicBetStrategistRoutes)
 	app.route('/api/admin/landing-funnel', adminLandingFunnelRoutes)

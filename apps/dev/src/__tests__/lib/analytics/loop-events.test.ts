@@ -122,7 +122,7 @@ describe('trackLoopInstalled', () => {
 		expect(props.source).toBe('detail')
 	})
 
-	it('omits the source property entirely when it is not set (catalog installs stay distinguishable)', async () => {
+	it("defaults source to 'catalogue' when it is not set (catalog installs stay distinguishable)", async () => {
 		await trackLoopInstalled({
 			loopId: 'loop-1',
 			loopSlug: 'customer-continuous-discovery',
@@ -132,8 +132,10 @@ describe('trackLoopInstalled', () => {
 			provisioned: { actors: 1, triggers: 0, skills: 0, integrations: 0 },
 		})
 
+		// An explicit 'catalogue' rather than an absent key: a missing property is
+		// indistinguishable from an older event shape, so the default is emitted.
 		const props = capturePosthogEventMock.mock.calls[0]?.[2] as Record<string, unknown>
-		expect(props).not.toHaveProperty('source')
+		expect(props.source).toBe('catalogue')
 	})
 })
 

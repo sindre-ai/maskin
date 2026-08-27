@@ -18,6 +18,15 @@ export interface WorkspaceModelUsage {
 	isLoading: boolean
 	/** True once at least one agent reported a completed session this month. */
 	hasUsage: boolean
+	/**
+	 * How many agents' usage queries failed. Non-zero means the figures below are
+	 * a partial sum — a failed query contributes nothing, so the total reads
+	 * *lower* than reality. Callers must say so rather than present a total as
+	 * complete; a silently-short money figure is worse than no figure.
+	 */
+	failedAgentCount: number
+	/** True when every agent's usage query failed, so nothing at all is known. */
+	isError: boolean
 	totalCostUsd: number
 	totalSessions: number
 	rows: WorkspaceUsageRow[]
@@ -48,7 +57,7 @@ function totalTokens(totals: SessionUsageResponse['totals'] | undefined): number
  * so both surfaces share one cache entry per agent.
  */
 export function useWorkspaceModelUsage(workspaceId: string): WorkspaceModelUsage {
-	const { data: actors, isLoading: actorsLoading } = useActors(workspaceId)
+	const { data: actors, isLoading: actorsLoading, isError: actorsError } = useActors(workspaceId)
 	const agents = useMemo(() => (actors ?? []).filter((a) => a.type === 'agent'), [actors])
 
 	// One window for the whole render pass, so every agent query shares a key.
@@ -78,6 +87,12 @@ export function useWorkspaceModelUsage(workspaceId: string): WorkspaceModelUsage
 
 	const isLoading = actorsLoading || results.some((r) => r.isLoading)
 
+	// An errored query is not loading and has no data, so without this the row
+	// would coerce to 0 and be filtered out — the agent's spend would silently
+	// vanish from the breakdown and from the total.
+	const failedAgentCount = results.filter((r) => r.isError).length
+	const actorsFailed = Boolean(actorsError)
+
 	const rows = agents
 		.map((agent, index) => ({
 			id: agent.id,
@@ -96,6 +111,10 @@ export function useWorkspaceModelUsage(workspaceId: string): WorkspaceModelUsage
 	return {
 		isLoading,
 		hasUsage: rows.length > 0,
+		failedAgentCount,
+		// Nothing is known when the actor list itself failed, or when every agent
+		// query failed. A partial failure is reported through failedAgentCount.
+		isError: actorsFailed || (agents.length > 0 && failedAgentCount === agents.length),
 		totalCostUsd,
 		totalSessions,
 		rows,

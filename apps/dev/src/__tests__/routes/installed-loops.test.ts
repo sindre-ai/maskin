@@ -59,7 +59,7 @@ function loopObjectRow(overrides?: Record<string, unknown>) {
 		id: randomUUID(),
 		type: 'loop',
 		title: 'Customer Continuous Discovery',
-		status: 'running',
+		status: 'learning',
 		...overrides,
 	}
 }
@@ -111,7 +111,7 @@ describe('POST /api/installed-loops', () => {
 		// The install creates an `objects` row of type 'loop' pointing back at the
 		// marketplace loop it came from, and links it on the install row.
 		const objectInsert = calls.inserts[1] as Record<string, unknown>
-		expect(objectInsert).toMatchObject({ workspaceId, type: 'loop', status: 'running' })
+		expect(objectInsert).toMatchObject({ workspaceId, type: 'loop', status: 'learning' })
 		expect(objectInsert.metadata).toEqual({
 			installed_from_marketplace_loop_id: loopId,
 			trigger_ids: [],

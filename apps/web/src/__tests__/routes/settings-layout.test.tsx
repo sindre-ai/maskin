@@ -54,10 +54,7 @@ describe('SettingsLayout', () => {
 			'Members',
 			'Integrations',
 			'Extensions',
-			'Skills',
 			'Billing',
-			'LLM',
-			'MCP',
 		])
 	})
 
