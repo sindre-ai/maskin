@@ -26,9 +26,11 @@ value is read from the environment. See `alloy.env.example`.
 
 | File | Purpose |
 |------|---------|
-| `alloy.alloy` | The three collector pipelines — Docker API → Loki, node_exporter → Prometheus, SeaweedFS `/metrics` → Prometheus. |
+| `alloy.alloy` | The four collector pipelines — Docker API → Loki, node_exporter → Prometheus, SeaweedFS `/metrics` → Prometheus, and Alloy's own metrics → Prometheus. |
 | `alloy.env.example` | The values you must supply, with guidance on where to find each. |
-| `alerts/seaweedfs-disk.yaml` | Grafana alert rules for SeaweedFS disk headroom. Grafana Cloud cannot read them from disk — the file is the source of truth and is imported; see the header of the file itself. |
+| `alerts/seaweedfs-disk.yaml` | Grafana alert rules for SeaweedFS: disk headroom, plus target-unreachable. Grafana Cloud cannot read them from disk — the file is the source of truth and is imported; see the header of the file itself. |
+| `alerts/logs-deadman.yaml` | Grafana alert rule for the log pipeline itself — fires when Alloy delivers nothing to Loki for 30 minutes. |
+| `../validate-alerts.py` | Validates both alert files: PromQL via promtool, plus the structural invariants promtool cannot see. Run by CI's `observability-config` job. |
 | `../../docker-compose.prod.yml` | Where SeaweedFS's `-metricsPort` is turned on. Without that flag there is nothing to scrape. |
 
 ## Why SeaweedFS is the point of this directory
@@ -85,8 +87,17 @@ endpoint covers all four subsystems. Verified against 4.16:
 
 ### The disk alert
 
-`alerts/seaweedfs-disk.yaml` has two rules: **warning** below 20% free, **page**
-below 10%.
+`alerts/seaweedfs-disk.yaml` has three rules: **warning** below 20% free, **page**
+below 10%, and **page** when the scrape target is unreachable.
+
+That third rule is not decoration. The two headroom rules are computed from
+metrics SeaweedFS itself publishes, so when SeaweedFS stops answering they have
+no input at all — the condition they were written for becomes unobservable at
+exactly the moment it matters most. Both therefore clear on no data
+(`noDataState: OK`) and delegate that case to the unreachable rule, which
+states it directly, fires once rather than twice, and can tell "never scraped"
+from "scraped and now gone". Leaving it to `noDataState` instead produces a
+page with an empty message body naming the wrong condition.
 
 It uses SeaweedFS's own `SeaweedFS_volumeServer_resource` rather than
 `node_filesystem_avail_bytes`. In a default Compose deployment the `seaweed_data`
@@ -104,7 +115,34 @@ after every deploy, and they are a common culprit.
 
 Volume-count exhaustion is documented but deliberately **not** alerted on — see
 the `NOT ALERTED ON` note in the alert file for why, and what to observe before
-adding a third rule.
+adding a fourth rule.
+
+### The logs dead-man
+
+`alerts/logs-deadman.yaml` fires when Alloy has delivered **zero bytes** to Loki
+for 30 minutes.
+
+It exists because the logs pipeline is the only one here whose failure is
+invisible from off the box. The metrics pipelines failing is close to
+self-evident — dashboards flatten, `up` drops. Logs failing changes nothing
+observable remotely: the unit stays active (Alloy retries and drops rather than
+exiting), `alloy validate` still passes, the host dashboard stays green because
+metrics use a different endpoint and different credentials, and every `up` stays
+1. The only local evidence is `journalctl -u alloy`, which nobody reads on a
+box that looks healthy. The first real symptom is someone opening Explore
+mid-incident and finding the hours they need are missing.
+
+Its input is Alloy's own `loki_write_sent_bytes_total`, which is why the config
+scrapes `prometheus.exporter.self` — the collector has to report on itself, or
+nothing does. Note the dependency this creates: the rule travels over the
+**metrics** pipeline, so it detects "logs broken, metrics fine" — the common and
+invisible case — and cannot detect both failing together. That case shows up as
+the host disappearing from `up{job="integrations/node_exporter"}`, which is not
+silent in the same way.
+
+The threshold is deliberately *exactly zero* rather than a low-volume floor.
+Log volume varies far too much by time of day to put a floor under, and a rule
+that fires on a quiet Sunday gets muted — after which it may as well not exist.
 
 ## ⚠️ Docker log discovery can fail silently on an IPv6-enabled network
 
@@ -275,8 +313,17 @@ and port the change back.
 
 The `-metricsPort` change lives in `docker-compose.prod.yml`, so it takes effect
 only when Coolify redeploys the stack and recreates the `seaweedfs` container.
-Until then `up{job="seaweedfs"}` stays 0 and the disk alert sits in `NoData` —
-correct and self-describing.
+Until then `up{job="seaweedfs"}` stays 0, and the **SeaweedFS volume server
+unreachable** alert fires and says exactly that. It is not a false positive to
+be silenced — before the redeploy the endpoint genuinely does not exist, and
+the two disk-headroom rules genuinely are blind. The alert clears on its own
+once Coolify recreates the container.
+
+The two disk rules themselves clear on no data (`noDataState: OK`) precisely
+because the unreachable rule covers this. Do not switch them back to `NoData`:
+a synthesised NoData instance carries none of the rule's labels, so it pages
+with an empty body and cannot distinguish a scrape gap from a target that was
+never scraped.
 
 Verify after the redeploy, from the host:
 

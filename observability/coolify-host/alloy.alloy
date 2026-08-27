@@ -20,11 +20,20 @@
 // relabel-don't-static-label discipline. A query written against one host works
 // against the other with only the `instance` value changed.
 //
-// There are THREE pipelines here, in this order:
+// There are FOUR pipelines here, in this order:
 //
 //   1. LOGS      — Docker API → Loki
 //   2. HOST      — node_exporter (embedded) → Prometheus
 //   3. SEAWEEDFS — SeaweedFS's own /metrics → Prometheus
+//   4. COLLECTOR — Alloy's own metrics → Prometheus
+//
+// The fourth is what makes the other three falsifiable. Pipelines 1-3 all ship
+// somebody else's telemetry and none of them reports its own failure; a broken
+// LOGS pipeline in particular is invisible off-box, because it uses a different
+// endpoint and different credentials from the metrics pipelines, so every
+// dashboard stays green while nothing arrives. Pipeline 4 carries
+// loki_write_sent_bytes_total off the host, which is the input to the dead-man
+// rule in alerts/logs-deadman.yaml.
 //
 // NOT here, on purpose: postgres_exporter. Whether the compose `postgres`
 // service is the real database depends on the deployment — point DATABASE_URL
@@ -147,9 +156,30 @@ discovery.relabel "containers" {
 	// The join key, and it MUST be the same expression the metrics pipelines
 	// below use — that shared value is what lets a CPU spike in PromQL be
 	// pivoted to this host's container logs for the same instant.
+	//
+	// WHY THE FALLBACK IS DELIBERATELY UGLY. It used to be a bare
+	// constants.hostname, which is a trap now that this host and the
+	// agent-server host share PROM_JOB_LABEL=integrations/node_exporter on
+	// purpose (see the job rule below). Sharing `job` makes `instance` the
+	// ONLY label separating the two boxes — and cloud images are routinely
+	// named after the image rather than the role, so two machines built from
+	// the same base image carry the SAME hostname.
+	//
+	// With a bare hostname fallback and a blank env var on both boxes, the two
+	// Alloys write literally the same series. Grafana Cloud rejects one side as
+	// duplicate/out-of-order, and the dashboard shows one host entry that is
+	// silently two machines interleaved, with gaps that read as scrape
+	// flakiness. Every install check still passes: a value exists, queries
+	// return rows.
+	//
+	// Alloy has no assert, so "fail loudly" here means "produce a value no one
+	// can mistake for a real host". UNCONFIGURED- shows up at the top of the
+	// instance dropdown and in every alert summary. It does not make two
+	// same-hostname boxes distinct — nothing at this layer can — but it makes
+	// the reason they collided visible instead of silent.
 	rule {
 		target_label = "instance"
-		replacement  = coalesce(sys.env("COOLIFY_INSTANCE"), constants.hostname)
+		replacement  = coalesce(sys.env("COOLIFY_INSTANCE"), "UNCONFIGURED-" + constants.hostname)
 	}
 
 	rule {
@@ -404,7 +434,7 @@ discovery.relabel "host" {
 	// makes the two joinable.
 	rule {
 		target_label = "instance"
-		replacement  = coalesce(sys.env("COOLIFY_INSTANCE"), constants.hostname)
+		replacement  = coalesce(sys.env("COOLIFY_INSTANCE"), "UNCONFIGURED-" + constants.hostname)
 	}
 
 	rule {
@@ -462,6 +492,73 @@ prometheus.remote_write "default" {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// ALLOY'S OWN METRICS — the collector watching itself
+// ---------------------------------------------------------------------------
+//
+// WHY THIS EXISTS. Everything above this line ships someone else's telemetry.
+// If the shipping itself breaks, none of it reports the breakage — the two
+// metrics pipelines and the logs pipeline fail independently, and the metrics
+// side failing is the only one that is self-evident (the dashboards go flat).
+// A logs failure is invisible off-box: dashboards stay green, `up` stays 1,
+// and the only evidence is `journalctl -u alloy` on the host.
+//
+// That is exactly the failure this repo's known-pitfalls entry describes ("a
+// healthy collector component that silently matches nothing"), one level up
+// and applied to the collector itself. The three realistic ways to get there
+// are all documented at their sites in this file: Loki and Prometheus
+// credentials crossed (the 401 that reads like a bad token), a systemd unit
+// with no EnvironmentFile= so every value is "", and the alloy user missing
+// from the `docker` group.
+//
+// What this block buys, specifically:
+//   loki_write_dropped_bytes_total     entries thrown away rather than sent
+//   loki_write_sent_bytes_total        the dead-man input: 0 means shipping nothing
+//   prometheus_remote_storage_samples_failed_total
+//   prometheus_remote_storage_samples_in_total   the number the README's
+//                                      interface-filter measurement quotes
+//
+// It is a small number of series — this is the collector, not the host — and
+// it is the only thing here that can report its own failure.
+prometheus.exporter.self "collector" {}
+
+discovery.relabel "collector" {
+	targets = prometheus.exporter.self.collector.targets
+
+	// Same instance/env expressions as the host and container pipelines, so a
+	// dashboard can put "is this host shipping?" next to that host's data
+	// without a second variable.
+	rule {
+		target_label = "instance"
+		replacement  = coalesce(sys.env("COOLIFY_INSTANCE"), "UNCONFIGURED-" + constants.hostname)
+	}
+
+	rule {
+		target_label = "env"
+		replacement  = coalesce(sys.env("DEPLOY_ENV"), "production")
+	}
+
+	// Deliberately NOT integrations/node_exporter. These are collector
+	// internals, not host metrics; sharing the job label would put them in the
+	// prebuilt Linux Server dashboards where they mean nothing, and would make
+	// `up{job="integrations/node_exporter"}` ambiguous between "the host
+	// exporter answered" and "Alloy answered about itself".
+	rule {
+		target_label = "job"
+		replacement  = coalesce(sys.env("COLLECTOR_PROM_JOB_LABEL"), "integrations/alloy")
+	}
+}
+
+prometheus.scrape "collector" {
+	targets    = discovery.relabel.collector.output
+	forward_to = [prometheus.remote_write.default.receiver]
+
+	job_name = coalesce(sys.env("COLLECTOR_PROM_JOB_LABEL"), "integrations/alloy")
+
+	scrape_interval = "60s"
+	scrape_timeout  = "10s"
+}
+
 // ===========================================================================
 // METRICS — SeaweedFS → Prometheus
 // ===========================================================================
@@ -511,7 +608,7 @@ discovery.relabel "seaweedfs" {
 	// The join key — same expression as both pipelines above.
 	rule {
 		target_label = "instance"
-		replacement  = coalesce(sys.env("COOLIFY_INSTANCE"), constants.hostname)
+		replacement  = coalesce(sys.env("COOLIFY_INSTANCE"), "UNCONFIGURED-" + constants.hostname)
 	}
 
 	rule {
@@ -543,6 +640,15 @@ prometheus.scrape "seaweedfs" {
 
 	// SeaweedFS down, or restarting mid-deploy, makes this scrape fail — which
 	// is correct and self-describing: `up{job="seaweedfs"}` goes to 0 and the
-	// resource series go stale. No extra wiring is needed for "is it even
-	// there", and the disk alert's noDataState handles the rest.
+	// resource series go stale.
+	//
+	// That `up` series is ALERTED ON, by the `SeaweedFS volume server
+	// unreachable` rule in alerts/seaweedfs-disk.yaml. It is not merely
+	// available to query. The distinction matters: this comment used to say
+	// the disk alert's noDataState "handles the rest", and it did not. A
+	// synthesised NoData instance carries none of the rule's labels, so it
+	// paged with an empty body, it fired twice at two severities for one gap,
+	// and it could not tell a scrape gap from a target that had never been
+	// scraped at all. The two disk rules now clear on no data and the
+	// unreachable rule owns that condition outright.
 }
