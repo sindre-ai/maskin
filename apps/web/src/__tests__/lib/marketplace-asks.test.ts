@@ -46,6 +46,30 @@ describe('stepAsksYou', () => {
 		expect(ask?.ask).toBe('a decision from you')
 	})
 
+	it('flags a negated "without your approval" gate', () => {
+		for (const prompt of [
+			'You prepare the merge, but it never lands without your approval.',
+			'You open the PR. You do not merge without a human sign-off.',
+			"Nothing ships without the operator's go-ahead.",
+		]) {
+			const ask = stepAsksYou(prompt)
+			expect(ask, prompt).not.toBeNull()
+			expect(ask?.ask).toBe('your approval')
+		}
+	})
+
+	it('does NOT flag a bare "without your approval" autonomy claim', () => {
+		// The inverse of the gate above: these say the step proceeds on its own.
+		// Matching them would put an "asks you" pill on a step that never pauses.
+		for (const prompt of [
+			'Once CI is green you merge without your approval and post the result.',
+			'This runs without a human sign-off -- no human approval needed.',
+			"The agent proceeds without the operator's go-ahead.",
+		]) {
+			expect(stepAsksYou(prompt), prompt).toBeNull()
+		}
+	})
+
 	it('keeps the reason as a trimmed, bounded excerpt of the real prompt', () => {
 		const ask = stepAsksYou(`First line. ${'x'.repeat(400)} Only here sign-off is required. More.`)
 		expect(ask).not.toBeNull()
