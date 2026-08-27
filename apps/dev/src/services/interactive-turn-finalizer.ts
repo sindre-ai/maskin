@@ -503,27 +503,36 @@ export class InteractiveTurnFinalizer {
 		)
 
 		const task = (async () => {
+			// Armed BEFORE the backoff, not after it.
+			//
+			// The watchdog is the only record that this turn is owed an answer:
+			// its failure envelope is already in `seen`, so nothing else will
+			// ever post for it. Arming after the wait leaves the whole backoff
+			// (up to 8s, the same budget shutdown allows) with the turn tracked
+			// nowhere — a SIGTERM in that window drains `pendingRetries`, finds
+			// `replayWatchdogs` empty, and exits having told the human nothing.
+			//
+			// Arming before the write matters for the opposite reason: writeInput
+			// resolves only once the agent-server has answered and the envelope
+			// has been persisted, and a fast turn can close inside that window.
+			// Arming afterwards would leave a watchdog running against a turn
+			// whose reply the human has already read, and fire a contradiction
+			// into their chat five minutes later.
+			//
+			// Both are covered by arming here: the clock is generous enough
+			// (REPLAY_ANSWER_TIMEOUT_MS) that folding the backoff into it cannot
+			// make it fire on a turn that is merely slow.
+			this.armReplayWatchdog(sessionId, gate, conversationId, dedupeKey, logId)
 			try {
 				await this.delay(backoffMs)
-				// The write only proves the bytes were queued, so the turn coming
-				// back needs its own clock; postFinalOutput stops it.
-				//
-				// Armed BEFORE the write, not after: writeInput resolves only once
-				// the agent-server has answered and the envelope has been persisted,
-				// and a fast turn can close inside that window. Arming afterwards
-				// would leave a watchdog running against a turn whose reply the
-				// human has already read, and fire a contradiction into their chat
-				// five minutes later.
-				this.armReplayWatchdog(sessionId, gate, conversationId, dedupeKey, logId)
-				try {
-					await this.retryTurn?.(sessionId, payload)
-				} catch (err) {
-					// Nothing is coming: stand the watchdog down so the undeliverable
-					// notice below is the only thing the human is told.
-					this.disarmReplayWatchdog(sessionId)
-					throw err
-				}
+				await this.retryTurn?.(sessionId, payload)
 			} catch (err) {
+				// Nothing is coming: stand the watchdog down so the undeliverable
+				// notice below is the only thing the human is told. Covers a
+				// throwing backoff as well as a failed write — either way the
+				// replay never happened, and leaving the clock running would add
+				// a contradictory 'unanswered' notice on top of this one.
+				this.disarmReplayWatchdog(sessionId)
 				// The session may have been stopped or closed while we waited.
 				// Nothing left to retry with, so say so rather than leaving the
 				// human watching an empty thread.
@@ -652,8 +661,15 @@ export class InteractiveTurnFinalizer {
 	}
 
 	/**
-	 * Waits for every in-flight turn replay to settle. For shutdown and tests;
-	 * never throws, because each replay already handles its own failure.
+	 * Waits for every in-flight turn replay to settle. Never throws, because
+	 * each replay already handles its own failure.
+	 *
+	 * Waiting ONLY — it reports nothing. A replay still armed when this returns
+	 * is a turn that may yet answer on its own clock, and the callers that use
+	 * this as a barrier (tests, and the first half of shutdown) must be able to
+	 * do so without a notice being posted into someone's chat as a side effect.
+	 * `settleForShutdown` is the one place that turns an outstanding replay into
+	 * a message, because only there is the answer known to be impossible.
 	 *
 	 * Bounded: a replay that finishes can start no new one, but log ingest is
 	 * still running during a shutdown and could keep adding them, and an exit
@@ -681,15 +697,41 @@ export class InteractiveTurnFinalizer {
 				`Gave up waiting for ${this.pendingRetries.size} in-flight turn replay(s) after ${timeoutMs}ms`,
 			)
 		}
-		// An armed watchdog is an unref'd timer holding nothing but a human's
-		// unanswered turn: exiting drops it silently. Report them instead. A
-		// session that survives the restart and answers afterwards makes this
-		// notice redundant, which is the better of the two mistakes.
-		await Promise.allSettled(
-			[...this.replayWatchdogs.keys()].map((id) =>
-				this.fireReplayWatchdog(id, 'the server is shutting down'),
+	}
+
+	/**
+	 * Shutdown's entry point: wait for in-flight replays, then account for any
+	 * turn still owed an answer.
+	 *
+	 * An armed watchdog is an unref'd timer holding nothing but a human's
+	 * unanswered turn: exiting drops it silently, and the failing envelope is
+	 * already in `seen`, so nothing would ever post for it. Report them
+	 * instead. A session that survives the restart and answers afterwards makes
+	 * this notice redundant, which is the better of the two mistakes.
+	 *
+	 * Split from settlePendingRetries so that using that as a barrier cannot
+	 * post a notice about a replay that is merely still running.
+	 */
+	async settleForShutdown(timeoutMs = SETTLE_RETRIES_TIMEOUT_MS): Promise<void> {
+		// The budget is split rather than shared: waiting is allowed to consume
+		// its share and no more, because the reporting that follows is the part
+		// that actually keeps a human out of an empty thread. A shared deadline
+		// let the wait eat all of it and left reporting no time to write.
+		const reportMs = Math.max(1, Math.round(timeoutMs / 4))
+		await this.settlePendingRetries(timeoutMs - reportMs)
+		// Bounded like the wait above, and for the same reason: these are DB
+		// writes with no AbortSignal, so a hung connection here would hold the
+		// exit open just as surely as a hung stdin write would.
+		await Promise.race([
+			Promise.allSettled(
+				[...this.replayWatchdogs.keys()].map((id) =>
+					this.fireReplayWatchdog(id, 'the server is shutting down'),
+				),
 			),
-		)
+			new Promise<void>((resolve) => {
+				setTimeout(resolve, reportMs).unref?.()
+			}),
+		])
 	}
 
 	/**

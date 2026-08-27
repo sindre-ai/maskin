@@ -1009,6 +1009,47 @@ ${surviving}
 			expect(Date.now() - startedAt).toBeLessThan(2_000)
 		})
 
+		it('reports a turn still in its backoff when the process is shutting down', async () => {
+			const session = await seedSession()
+			if (!session) throw new Error('no session')
+			// The failure envelope is already marked seen, so if shutdown drops a
+			// turn that is still waiting out its backoff, nothing will ever post
+			// for it. The second attempt's backoff (8s) is the same length as the
+			// settle budget, so this is not a narrow race.
+			const calls: string[] = []
+			finalizer = new InteractiveTurnFinalizer(db, {
+				retryTurn: async (sessionId) => {
+					calls.push(sessionId)
+				},
+				// Never resolves: the replay is still in backoff when we exit.
+				delay: () => new Promise<void>(() => {}),
+				replyTimeoutMs: 60_000,
+			})
+
+			await feed(
+				session.id,
+				`${userTurnLine(24)}
+`,
+			)
+			await feed(
+				session.id,
+				`${apiErrorLine('req_1')}
+`,
+			)
+
+			// Shutdown: gives up on the in-flight replay, then must still account
+			// for the turn it is abandoning.
+			await finalizer.settleForShutdown(800)
+
+			expect(calls).toHaveLength(0)
+			const rows = await messagesFor(conversationId)
+			expect(rows).toHaveLength(1)
+			expect(rows[0]?.content).not.toContain('API Error')
+			expect(
+				(rows[0]?.metadata as { final_output?: { retry?: string } })?.final_output?.retry,
+			).toBe('unanswered')
+		})
+
 		it('reports a replayed turn still in flight when the session goes away', async () => {
 			const session = await seedSession()
 			if (!session) throw new Error('no session')

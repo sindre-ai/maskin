@@ -229,7 +229,7 @@ const shutdown = async (signal: string) => {
 	// its state is in-process, so exiting mid-backoff drops the turn silently.
 	// Bounded inside, so a wedged replay cannot block the exit.
 	try {
-		await sessionManager.turnFinalizer.settlePendingRetries()
+		await sessionManager.turnFinalizer.settleForShutdown()
 	} catch (err) {
 		// Documented as never throwing, but an unhandled rejection here would
 		// skip the exit below and hang the shutdown on a technicality.
