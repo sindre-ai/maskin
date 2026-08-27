@@ -426,6 +426,20 @@ export const api = {
 				body: { installation_id: installationId },
 				workspaceId,
 			}),
+		githubPendingSelection: (workspaceId: string, integrationId: string) =>
+			request<GithubPendingSelection>(`/integrations/github/pending-selection/${integrationId}`, {
+				workspaceId,
+			}),
+		githubSelectInstallation: (
+			workspaceId: string,
+			integrationId: string,
+			installationId: string,
+		) =>
+			request<IntegrationResponse>('/integrations/github/select-installation', {
+				method: 'POST',
+				body: { integration_id: integrationId, installation_id: installationId },
+				workspaceId,
+			}),
 		slackConversations: (id: string, workspaceId: string, types?: string[]) => {
 			const qs = types && types.length > 0 ? `?types=${types.join(',')}` : ''
 			return request<SlackConversation[]>(`/integrations/${id}/slack/conversations${qs}`, {
@@ -1245,6 +1259,14 @@ export interface IntegrationResponse {
 
 /** A GitHub App installation the current actor can bind to this workspace,
  *  because they already reach it from one of their workspaces. */
+/** Installations a GitHub user proved they can reach, awaiting their choice.
+ *  Parked on a `pending` integration row by the connect callback when the user
+ *  can access more than one — see POST /integrations/github/select-installation. */
+export interface GithubPendingSelection {
+	integrationId: string
+	installations: Array<{ installationId: string; ownerLogin: string | null }>
+}
+
 export interface LinkableGithubInstallation {
 	installationId: string
 	ownerLogin: string | null

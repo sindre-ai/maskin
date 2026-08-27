@@ -103,19 +103,49 @@ describe('Integrations Routes', () => {
 			expect(body.error.message).toContain('Unknown provider')
 		})
 
+		// GitHub connect now goes through user authorization rather than the App
+		// install page, so it needs the App's OAuth client id. Missing config is a
+		// deliberate 500 (a server misconfiguration, not a retryable fault), which
+		// is why this test has to supply it.
 		it('returns 200 with install_url for a known provider', async () => {
-			const { app } = createTestApp(integrationsRoutes, '/api/integrations')
+			const previousClientId = process.env.GITHUB_CLIENT_ID
+			process.env.GITHUB_CLIENT_ID = 'Iv1.testclientid'
+			try {
+				const { app } = createTestApp(integrationsRoutes, '/api/integrations')
 
-			const res = await app.request(
-				jsonRequest('POST', '/api/integrations/github/connect', undefined, {
-					'x-workspace-id': wsId,
-				}),
-			)
+				const res = await app.request(
+					jsonRequest('POST', '/api/integrations/github/connect', undefined, {
+						'x-workspace-id': wsId,
+					}),
+				)
 
-			expect(res.status).toBe(200)
-			const body = await res.json()
-			expect(body.install_url).toBeDefined()
-			expect(body.install_url).toContain('github.com')
+				expect(res.status).toBe(200)
+				const body = await res.json()
+				expect(body.install_url).toBeDefined()
+				expect(body.install_url).toContain('github.com/login/oauth/authorize')
+			} finally {
+				process.env.GITHUB_CLIENT_ID = previousClientId
+			}
+		})
+
+		it('returns 500 when the GitHub App OAuth client id is not configured', async () => {
+			const previousClientId = process.env.GITHUB_CLIENT_ID
+			process.env.GITHUB_CLIENT_ID = undefined
+			// biome-ignore lint/performance/noDelete: must be absent, not the string "undefined"
+			delete process.env.GITHUB_CLIENT_ID
+			try {
+				const { app } = createTestApp(integrationsRoutes, '/api/integrations')
+
+				const res = await app.request(
+					jsonRequest('POST', '/api/integrations/github/connect', undefined, {
+						'x-workspace-id': wsId,
+					}),
+				)
+
+				expect(res.status).toBe(500)
+			} finally {
+				process.env.GITHUB_CLIENT_ID = previousClientId
+			}
 		})
 
 		it('hands the custom auth handler the redirect URI the callback will be served from', async () => {

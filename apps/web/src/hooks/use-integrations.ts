@@ -60,6 +60,34 @@ export function useLinkGithubInstallation(workspaceId: string) {
 	})
 }
 
+/** Installations the user authorized against on GitHub, awaiting their pick.
+ *  Only fetches once the connect callback has redirected back with an id. */
+export function useGithubPendingSelection(workspaceId: string, integrationId: string | null) {
+	return useQuery({
+		queryKey: queryKeys.integrations.githubPendingSelection(workspaceId, integrationId ?? ''),
+		queryFn: () => api.integrations.githubPendingSelection(workspaceId, integrationId as string),
+		enabled: !!integrationId,
+	})
+}
+
+export function useSelectGithubInstallation(workspaceId: string) {
+	const queryClient = useQueryClient()
+	return useMutation({
+		mutationFn: ({
+			integrationId,
+			installationId,
+		}: { integrationId: string; installationId: string }) =>
+			api.integrations.githubSelectInstallation(workspaceId, integrationId, installationId),
+		onSuccess: () => {
+			toast.success('GitHub organization connected')
+			queryClient.invalidateQueries({ queryKey: queryKeys.integrations.all(workspaceId) })
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.integrations.githubLinkable(workspaceId),
+			})
+		},
+	})
+}
+
 export function useCompleteIntegration(workspaceId: string) {
 	const queryClient = useQueryClient()
 	return useMutation({
