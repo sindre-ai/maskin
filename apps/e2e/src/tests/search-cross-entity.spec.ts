@@ -98,9 +98,11 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			const kindToken = `${TOKEN}kind`
 			const agent = await account.api.createAgentActor(`${kindToken} Agent`)
 			await account.api.addWorkspaceMember(account.workspaceId, agent.id)
+			// A bet, because `active` is a bet status — insight's workflow is
+			// new/processing/…, and the point of the row is the status suffix.
 			await account.api.createObject(account.workspaceId, {
-				type: 'insight',
-				title: `${kindToken} Insight`,
+				type: 'bet',
+				title: `${kindToken} Bet`,
 				content: `${kindToken} field notes`,
 				status: 'active',
 			})
@@ -108,14 +110,14 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			await page.goto(`/${account.workspaceId}/search?q=${kindToken}`)
 			await waitForAppReady(page)
 
-			const objectRow = page.getByRole('button', { name: new RegExp(`${kindToken} Insight`) })
+			const objectRow = page.getByRole('button', { name: new RegExp(`${kindToken} Bet`) })
 			await expect(objectRow).toBeVisible({ timeout: 20000 })
 			const agentRow = page.getByRole('button', { name: new RegExp(`${kindToken} Agent`) })
 			await expect(agentRow).toBeVisible()
 
 			// Mockup 2544: the trailing column is the same uniform kind label on
 			// every row, so the right edge stays scannable across entity types.
-			await expect(objectRow).toContainText('INSIGHT')
+			await expect(objectRow).toContainText('BET')
 			await expect(agentRow).toContainText('AGENT')
 
 			// The object's status rides the muted title suffix instead of a
@@ -123,7 +125,7 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			await expect(objectRow).toContainText('— Active')
 
 			// Both kind labels sit on the same right edge (within a pixel).
-			const objectKind = objectRow.getByText('INSIGHT')
+			const objectKind = objectRow.getByText('BET')
 			const agentKind = agentRow.getByText('AGENT')
 			const objectBox = await objectKind.boundingBox()
 			const agentBox = await agentKind.boundingBox()
@@ -154,7 +156,7 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			const openCommands = page.getByRole('button', { name: /Open commands/ })
 			await expect(openCommands).toBeVisible()
 			await openCommands.click()
-			await expect(page.getByPlaceholder('Search objects, jump to a route…')).toBeVisible()
+			await expect(page.getByPlaceholder('Run a command or jump to…')).toBeVisible()
 			await page.keyboard.press('Escape')
 
 			// Clearing returns to the idle state, and the query that was just

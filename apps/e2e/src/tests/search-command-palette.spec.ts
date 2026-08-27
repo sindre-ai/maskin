@@ -72,7 +72,7 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			await waitForAppReady(page)
 			await page.keyboard.press('Control+KeyK')
 
-			const input = page.getByPlaceholder('Search objects, jump to a route…')
+			const input = page.getByPlaceholder('Run a command or jump to…')
 			await expect(input).toBeVisible()
 			await input.fill('quasiprime')
 			await expect(page.getByText('Quasiprime Insight')).toBeVisible({ timeout: 10000 })
@@ -120,7 +120,7 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			await page.goto(`/${account.workspaceId}`)
 			await waitForAppReady(page)
 			await page.keyboard.press('Control+KeyK')
-			await page.getByPlaceholder('Search objects, jump to a route…').fill('asteroid')
+			await page.getByPlaceholder('Run a command or jump to…').fill('asteroid')
 
 			// Anchor to the footer's own label (`See all N results →`) so the
 			// loose /See all/ doesn't also match the sidebar workspace switcher —
@@ -197,7 +197,7 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			await page.goto(`/${account.workspaceId}`)
 			await waitForAppReady(page)
 			await page.keyboard.press('Control+KeyK')
-			await page.getByPlaceholder('Search objects, jump to a route…').fill('comet')
+			await page.getByPlaceholder('Run a command or jump to…').fill('comet')
 			await expect(page.getByText('Comet Task')).toBeVisible({ timeout: 10000 })
 			await page.getByText('Comet Task').click()
 			await expect(page).toHaveURL(new RegExp(`/objects/${task.id}`))
@@ -212,7 +212,7 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 
 			// ⌘F override: opens search instead of find-in-page.
 			await page.keyboard.press('Control+KeyF')
-			const input = page.getByPlaceholder('Search objects, jump to a route…')
+			const input = page.getByPlaceholder('Run a command or jump to…')
 			await expect(input).toBeVisible()
 
 			// First Esc clears a query, second closes (the SearchView input has
