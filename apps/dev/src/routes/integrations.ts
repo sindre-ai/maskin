@@ -13,6 +13,8 @@ import type { PgNotifyBridge } from '@maskin/realtime'
 import { skjaldTranscriptionCompletedPayloadSchema } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq, isNotNull } from 'drizzle-orm'
+import type { Context } from 'hono'
+import { getCookie, setCookie } from 'hono/cookie'
 import { trackSlackMentionReceived } from '../lib/analytics/loop-events'
 import { markSlackMention } from '../lib/analytics/slack-attribution'
 import { decrypt, encrypt } from '../lib/crypto'
@@ -26,6 +28,7 @@ import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import {
 	DiscoveryError,
 	NoGithubInstallationsError,
+	UnauthorizedGithubInstallationError,
 	type UserInstallation,
 	buildAppInstallUrl,
 	fetchInstallationOwnerLogin,
@@ -947,6 +950,15 @@ app.openapi(connectRoute, (async (c) => {
 
 	const state = encodeState(statePayload)
 
+	// Bind the state to *this* browser. `state` is a sealed envelope with no
+	// session binding, so on its own it authorizes whoever presents it — and the
+	// GitHub user-authorization endpoint returns without any prompt for a user
+	// who already approved the App. Without this cookie an attacker could start a
+	// connect in their own workspace, hand the resulting authorize URL to a
+	// victim, and have the victim's org bound into the attacker's workspace on a
+	// single click. The callback requires cookie === state.nonce.
+	setOAuthNonceCookie(c, providerName, nonce)
+
 	// Store the nonce in DB to prevent replay attacks. We intentionally avoid an
 	// upsert here because the integrations table uses partial unique indexes, and
 	// Postgres cannot infer those indexes from a plain ON CONFLICT target.
@@ -1083,6 +1095,31 @@ app.openapi(callbackRoute, (async (c) => {
 		)
 	}
 
+	// Require the state-binding cookie set by POST /:provider/connect. This is
+	// what proves the browser finishing the flow is the one that started it.
+	// `state` alone does not: it is a sealed envelope that authorizes whoever
+	// presents it, and the GitHub user-authorization endpoint returns straight to
+	// us with no prompt for anyone who has already approved the App — so a
+	// handed-over authorize URL would otherwise bind the *clicker's* org into the
+	// *sender's* workspace. Compared before any DB work so a forwarded link costs
+	// nothing.
+	const boundNonce = getCookie(c, oauthNonceCookieName(providerName))
+	if (boundNonce !== stateData.nonce) {
+		logger.warn('OAuth callback rejected — state not bound to this browser', {
+			provider: providerName,
+			workspaceId: stateData.workspaceId,
+			actorId: stateData.actorId,
+			hadCookie: boundNonce !== undefined,
+		})
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				'This connection was not started in this browser — please start it again from your workspace settings',
+			),
+			400,
+		)
+	}
+
 	// Verify one-time nonce to prevent replay attacks
 	const [pendingIntegration] = await db
 		.select()
@@ -1145,6 +1182,24 @@ app.openapi(callbackRoute, (async (c) => {
 			})
 			return c.redirect(buildAppInstallUrl(stateParam))
 		}
+		// A callback naming an installation the authenticated user cannot reach is
+		// a hand-written URL, not a fault — refuse it loudly rather than folding it
+		// into the generic retry-shaped token_exchange_failed.
+		if (err instanceof UnauthorizedGithubInstallationError) {
+			logger.warn('GitHub callback named an installation the user cannot reach', {
+				workspaceId: stateData.workspaceId,
+				actorId: stateData.actorId,
+				error: err.message,
+			})
+			clearOAuthNonceCookie(c, providerName)
+			return c.json(
+				createApiError(
+					'FORBIDDEN',
+					'That GitHub installation is not one your GitHub account can access',
+				),
+				400,
+			)
+		}
 		logger.error(`OAuth callback token exchange failed for provider ${providerName}`, {
 			workspaceId: stateData.workspaceId,
 			error: err instanceof Error ? err.message : String(err),
@@ -1196,6 +1251,10 @@ app.openapi(callbackRoute, (async (c) => {
 		})
 
 		const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
+		// The state has now been consumed. Selection continues over the authenticated
+		// POST /github/select-installation, which carries its own `createdBy` check,
+		// so the binding cookie has no further job.
+		clearOAuthNonceCookie(c, providerName)
 		return c.redirect(
 			`${frontendUrl}/${stateData.workspaceId}/settings/integrations?select_github=${pendingIntegration.id}`,
 		)
@@ -1391,6 +1450,7 @@ app.openapi(callbackRoute, (async (c) => {
 
 	// Redirect to frontend settings/integrations page
 	const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
+	clearOAuthNonceCookie(c, providerName)
 	return c.redirect(`${frontendUrl}/${stateData.workspaceId}/settings/integrations`)
 }) as RouteHandler<typeof callbackRoute, Env>)
 
@@ -2822,6 +2882,47 @@ webhookApp.post('/:provider', async (c) => {
 })
 
 // ── Helpers ────────────────────────────────────────────────────────────────
+
+/** Lifetime of the state-binding cookie, in seconds. Matches the 10-minute
+ *  `state` age check in the callback so neither outlives the other. */
+const OAUTH_NONCE_COOKIE_MAX_AGE = 10 * 60
+
+/** Per-provider so two connect flows started in different tabs (e.g. GitHub and
+ *  Slack) do not clobber each other's binding. */
+function oauthNonceCookieName(providerName: string): string {
+	return `maskin_oauth_nonce_${providerName}`
+}
+
+/**
+ * Bind an OAuth `state` to the browser that requested it.
+ *
+ * `SameSite=Lax` is required, not incidental: the callback arrives as a
+ * top-level GET navigation from the provider's domain, which Lax permits and
+ * Strict would drop — silently breaking every connect.
+ */
+function setOAuthNonceCookie(c: Context<Env>, providerName: string, nonce: string): void {
+	const secure = resolvePublicOrigin(c.req.url, c.req.header()).startsWith('https://')
+	setCookie(c, oauthNonceCookieName(providerName), nonce, {
+		httpOnly: true,
+		sameSite: 'Lax',
+		secure,
+		path: '/api/integrations',
+		maxAge: OAUTH_NONCE_COOKIE_MAX_AGE,
+	})
+}
+
+/** Clear the binding once a callback has consumed it, so a replay of the same
+ *  state cannot ride a still-live cookie. */
+function clearOAuthNonceCookie(c: Context<Env>, providerName: string): void {
+	const secure = resolvePublicOrigin(c.req.url, c.req.header()).startsWith('https://')
+	setCookie(c, oauthNonceCookieName(providerName), '', {
+		httpOnly: true,
+		sameSite: 'Lax',
+		secure,
+		path: '/api/integrations',
+		maxAge: 0,
+	})
+}
 
 /** Build the OAuth redirect URI, using CORS_ORIGIN when set to prevent header injection */
 // In production, use the configured origin to prevent X-Forwarded-Host injection

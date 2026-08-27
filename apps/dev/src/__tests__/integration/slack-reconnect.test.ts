@@ -101,8 +101,15 @@ async function connectAndCallback(
 	const state = new URL(installUrl).searchParams.get('state')
 	expect(state).toBeTruthy()
 
+	// Carry the state-binding cookie across, exactly as the browser does. The
+	// callback rejects a state it did not hand this client, so this is part of
+	// the flow under test rather than test scaffolding.
+	const bindingCookie = (connectRes.headers.get('Set-Cookie') ?? '').split(';')[0] ?? ''
+	expect(bindingCookie).toContain('maskin_oauth_nonce_slack=')
+
 	return app.request(
 		`http://localhost/api/integrations/slack/callback?code=test-code&state=${encodeURIComponent(state as string)}`,
+		{ headers: { cookie: bindingCookie } },
 	)
 }
 

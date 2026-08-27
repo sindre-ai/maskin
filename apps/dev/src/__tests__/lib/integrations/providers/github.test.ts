@@ -3,6 +3,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import {
 	DiscoveryError,
 	NoGithubInstallationsError,
+	UnauthorizedGithubInstallationError,
 	buildAppInstallUrl,
 	fetchInstallationOwnerLogin,
 	githubAuth,
@@ -140,14 +141,41 @@ describe('githubAuth', () => {
 			}) as unknown as typeof fetch
 		}
 
-		// A fresh install still hands us installation_id directly, so this path
-		// must keep working unchanged.
-		it('uses installation_id directly when GitHub supplies one', async () => {
+		// A fresh install names the installation directly. We honour it, but only
+		// after confirming the authenticated user can actually reach it.
+		it('uses the supplied installation_id once the user is shown to reach it', async () => {
+			stubGithub([
+				{ id: 146523409, login: 'sindre-ai' },
+				{ id: 154364583, login: 'vaerksted-ai' },
+			])
 			const result = await githubAuth.handleCallback(
-				{ installation_id: 'inst-42' },
+				{ code: 'abc', installation_id: '154364583' },
 				'https://app.test/api/cb',
 			)
-			expect(result).toEqual({ installation_id: 'inst-42' })
+			expect(result).toEqual({ installation_id: '154364583' })
+		})
+
+		// The hole this closes: installation_id is a raw query param, and every
+		// downstream token mint uses the App's own JWT, which succeeds for any
+		// installation of the App. Trusting it would let anyone bind an org they
+		// have no GitHub access to by hand-writing this callback URL.
+		it('refuses an installation_id the authenticated user cannot reach', async () => {
+			stubGithub([{ id: 154364583, login: 'vaerksted-ai' }])
+			await expect(
+				githubAuth.handleCallback(
+					{ code: 'abc', installation_id: '146523409' },
+					'https://app.test/api/cb',
+				),
+			).rejects.toBeInstanceOf(UnauthorizedGithubInstallationError)
+		})
+
+		it('refuses a bare installation_id with no code to verify it against', async () => {
+			globalThis.fetch = vi.fn(async () => {
+				throw new Error('must not call GitHub without a code')
+			}) as unknown as typeof fetch
+			await expect(
+				githubAuth.handleCallback({ installation_id: '146523409' }, 'https://app.test/api/cb'),
+			).rejects.toThrow('Missing authorization code')
 		})
 
 		it('resolves the single installation a user can reach', async () => {
@@ -189,9 +217,9 @@ describe('githubAuth', () => {
 			).rejects.toThrow('bad_verification_code')
 		})
 
-		it('throws when neither code nor installation_id is present', async () => {
+		it('throws when no code is present', async () => {
 			await expect(githubAuth.handleCallback({}, 'https://app.test/api/cb')).rejects.toThrow(
-				'Missing both code and installation_id',
+				'Missing authorization code',
 			)
 		})
 	})

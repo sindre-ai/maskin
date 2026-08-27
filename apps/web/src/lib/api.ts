@@ -55,10 +55,14 @@ type RequestOptions = {
 	body?: unknown
 	headers?: Record<string, string>
 	workspaceId?: string
+	/** Send/receive cookies cross-origin. Only the OAuth connect call needs
+	 *  this: the server sets an HttpOnly nonce cookie there, and the callback
+	 *  requires it back to prove the same browser started the flow. */
+	credentials?: RequestCredentials
 }
 
 async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
-	const { method = 'GET', body, headers = {}, workspaceId } = opts
+	const { method = 'GET', body, headers = {}, workspaceId, credentials } = opts
 	const apiKey = getApiKey()
 
 	const reqHeaders: Record<string, string> = {
@@ -85,6 +89,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 		method,
 		headers: reqHeaders,
 		body: body !== undefined ? JSON.stringify(body) : undefined,
+		...(credentials ? { credentials } : {}),
 	})
 
 	if (!res.ok) {
@@ -405,6 +410,9 @@ export const api = {
 					method: 'POST',
 					body,
 					workspaceId,
+					// The response carries the Set-Cookie that binds this browser to the
+					// OAuth `state`; without `include` it is dropped and the callback 400s.
+					credentials: 'include',
 				},
 			),
 		complete: (id: string, workspaceId: string, secret: string) =>

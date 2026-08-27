@@ -105,6 +105,15 @@ export class NoGithubInstallationsError extends Error {
 	}
 }
 
+/** Thrown when a callback names an `installation_id` the authenticated GitHub
+ *  user cannot actually reach — i.e. someone hand-wrote the callback URL. */
+export class UnauthorizedGithubInstallationError extends Error {
+	constructor(installationId: string) {
+		super(`GitHub installation ${installationId} is not reachable by the authenticated user`)
+		this.name = 'UnauthorizedGithubInstallationError'
+	}
+}
+
 /** The App's own install page — where we send a user with zero installations. */
 export function buildAppInstallUrl(state: string): string {
 	const slug = process.env.GITHUB_APP_SLUG || 'sindre-maskin'
@@ -206,17 +215,18 @@ export const githubAuth: CustomAuthHandler = {
 		params: Record<string, string>,
 		redirectUri: string,
 	): Promise<StoredCredentials> {
-		// Fresh install (App configured with "Request user authorization during
-		// installation"): GitHub hands us the installation directly, so there is
-		// nothing to disambiguate. This is also the pre-existing callback shape,
-		// which keeps older in-flight connects working.
-		if (params.installation_id) {
-			return { installation_id: params.installation_id }
-		}
-
+		// Every branch below requires a `code`. An `installation_id` arriving on its
+		// own is unverifiable — it is a raw query param, and everything downstream
+		// mints tokens with the App's own JWT, which succeeds for *any* installation
+		// of this App. Honouring it would let anyone bind an org they have no GitHub
+		// access to by hand-writing this callback URL with their own `state`, routing
+		// around the entitlement check this whole flow exists to enforce.
+		//
+		// Requires the App's "Request user authorization (OAuth) during installation"
+		// setting to be ON, so the post-install callback carries a `code` too.
 		const code = params.code
 		if (!code) {
-			throw new Error('Missing both code and installation_id in GitHub callback')
+			throw new Error('Missing authorization code in GitHub callback')
 		}
 
 		const userToken = await exchangeUserCode(code, redirectUri)
@@ -224,6 +234,17 @@ export const githubAuth: CustomAuthHandler = {
 
 		if (installations.length === 0) {
 			throw new NoGithubInstallationsError()
+		}
+
+		// Fresh install: GitHub names the installation directly, so there is nothing
+		// to disambiguate — but we still confirm the user can reach it rather than
+		// trusting the query param.
+		const named = params.installation_id
+		if (named) {
+			if (!installations.some((i) => i.installationId === named)) {
+				throw new UnauthorizedGithubInstallationError(named)
+			}
+			return { installation_id: named }
 		}
 
 		const [only] = installations
