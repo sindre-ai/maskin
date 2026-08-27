@@ -11,7 +11,7 @@ import {
 	resolveClaudeCredentialsWithFailover,
 } from './claude-failover'
 import { type OAuthSlotKind, readSlots, resolveActiveSlot } from './claude-oauth-slots'
-import { isEnterpriseWorkspace } from './enterprise-allowlist'
+import { byollmEntitled, isEnterpriseWorkspace } from './enterprise-allowlist'
 import { logger } from './logger'
 import type { WorkspaceSettings } from './types'
 
@@ -781,8 +781,15 @@ export interface ChatCredentials {
 export function resolveChatCredentials(params: {
 	wsSettings: WorkspaceSettings
 	agent: AgentLlmConfig
+	/**
+	 * The workspace's BYO-LLM entitlement columns. Required, not optional —
+	 * `billing.plan` alone cannot answer "may this workspace spend Maskin's
+	 * key", so a caller that omitted it would silently reopen the leak this
+	 * gate exists to close. Both call sites already `select()` the full row.
+	 */
+	workspace: { byollmAllowed: boolean | null; billingOwnerId: string | null }
 }): ChatCredentials | null {
-	const { wsSettings, agent } = params
+	const { wsSettings, agent, workspace } = params
 
 	if (agent.apiKey && agent.provider) {
 		const provider = agent.provider as ChatCredentials['provider']
@@ -820,7 +827,16 @@ export function resolveChatCredentials(params: {
 	// own credentials; if none of the routes above matched, it has none
 	// configured, and the correct answer is "no chat-callable credential"
 	// rather than quietly billing Maskin.
+	// Two independent reasons a workspace may not draw on Maskin's key, and
+	// both are needed. `billing.plan === 'byollm'` is the *result* of
+	// connecting a BYO credential — but `billingAfterByoTransition()` leaves
+	// `billing` undefined when the workspace never had a billing block, so an
+	// entitled workspace can be BYO in every meaningful sense while its plan
+	// still reads as the `trial` default. `byollmEntitled()` (the
+	// `byollm_allowed` column OR an enterprise billing owner) is what catches
+	// that case, and mirrors the `byollmAllowed` param `resolveLlmRoute` takes.
 	if (!isMaskinPlanRouted(wsSettings.billing)) return null
+	if (byollmEntitled(workspace)) return null
 	const fallback = readFallbackConfig()
 	if (!fallback.apiKey) return null
 	return {
