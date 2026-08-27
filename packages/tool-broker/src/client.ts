@@ -51,14 +51,15 @@ interface RequestOptions {
 /**
  * Per-workspace prefix for every backend-side name a workspace owns.
  *
- * FIXED LENGTH ON PURPOSE. The prefix is the workspace's UUID with dashes
- * removed — always 32 hex characters — so one workspace's prefix can never be a
- * prefix of another's. A variable-length scheme (`ws-1`, `ws-10`) would let
- * `ws-1*` match `ws-10`'s names and silently widen one workspace's toolkit to
- * another's tools. There is a test asserting exactly that cannot happen.
+ * FIXED LENGTH, and IDENTIFIER-SAFE. The prefix is the workspace's UUID with
+ * dashes removed — always 32 hex characters — then an underscore. Fixed length
+ * keeps one workspace's prefix from ever being a prefix of another's. The
+ * underscore matters because a tool address is evaluated as a JS expression in
+ * code mode: `w<hex>_linear` can be written `tools.w<hex>_linear.…`, whereas a
+ * hyphen would force bracket syntax.
  */
 export const workspacePrefix = (workspaceId: string): string =>
-	`w${workspaceId.replace(/-/g, '').toLowerCase()}-`
+	`w${workspaceId.replace(/-/g, '').toLowerCase()}_`
 
 /**
  * The membership pattern admitting ONE integration into a workspace's toolkit.
@@ -75,10 +76,15 @@ export const integrationPattern = (slug: string): string => `${slug}.*`
 
 /** Namespace a user-supplied integration name into the workspace's own space. */
 export const workspaceScopedSlug = (workspaceId: string, name: string): string => {
+	// Underscores, not hyphens, and that is not cosmetic: a tool address becomes a
+	// JS expression in code mode, so `tools.<slug>.org.shared.tool()` only parses
+	// when the slug is a valid identifier. A hyphen forces bracket syntax, which
+	// agents reach for less readily — measured: the hyphenated form produced a
+	// `tool_not_found` with an empty `suggestions` array.
 	const safe = name
 		.toLowerCase()
-		.replace(/[^a-z0-9]+/g, '-')
-		.replace(/^-+|-+$/g, '')
+		.replace(/[^a-z0-9]+/g, '_')
+		.replace(/^_+|_+$/g, '')
 	return `${workspacePrefix(workspaceId)}${safe || 'integration'}`
 }
 
@@ -105,7 +111,7 @@ export const assertScopedPattern = (pattern: string): string => {
 	if (!first || first === '*' || first.includes('*')) {
 		throw new ToolBrokerPatternError(pattern, 'first segment must be a literal, not a wildcard')
 	}
-	if (!/^w[0-9a-f]{32}-/.test(first)) {
+	if (!/^w[0-9a-f]{32}_/.test(first)) {
 		throw new ToolBrokerPatternError(pattern, 'first segment must carry a workspace prefix')
 	}
 	return pattern
@@ -236,7 +242,7 @@ export class ToolBrokerClient {
 		apiKey: string,
 		input: { workspaceId: string; name: string },
 	): Promise<WorkspaceToolkit> {
-		const slug = `tk-${workspacePrefix(input.workspaceId).replace(/-$/, '')}`
+		const slug = `tk-${workspacePrefix(input.workspaceId).replace(/_$/, '')}`
 
 		const existing = await this.request<{ toolkits?: RawToolkit[] }>({
 			path: '/api/toolkits',
@@ -367,7 +373,12 @@ export class ToolBrokerClient {
 				name,
 				integration: input.integrationSlug,
 				template: input.auth.type === 'none' ? 'none' : 'api_key',
-				...(input.auth.type === 'api_key' ? { value: input.auth.value } : {}),
+				// The backend requires EXACTLY ONE credential origin (`value`,
+				// `values` or `from`) even when the template needs no secret —
+				// omitting it fails with "Expected exactly one credential origin"
+				// and an empty 400 body. So a no-auth connection sends an empty
+				// `values` map rather than nothing at all.
+				...(input.auth.type === 'api_key' ? { value: input.auth.value } : { values: {} }),
 			},
 		})
 		return {

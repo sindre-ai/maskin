@@ -48,7 +48,7 @@ const makeClient = (impl: typeof fetch) =>
 describe('workspace namespacing', () => {
 	it('derives a fixed-length prefix from the workspace id', () => {
 		const prefix = workspacePrefix(WORKSPACE)
-		expect(prefix).toBe('w11111111222233334444555555555555-')
+		expect(prefix).toBe('w11111111222233334444555555555555_')
 		// 'w' + 32 hex + '-'
 		expect(prefix).toHaveLength(34)
 	})
@@ -77,8 +77,8 @@ describe('workspace namespacing', () => {
 
 	it('round-trips a display name without leaking the prefix', () => {
 		const slug = workspaceScopedSlug(WORKSPACE, 'My Linear!')
-		expect(slug).toBe(`${workspacePrefix(WORKSPACE)}my-linear`)
-		expect(displayNameFromSlug(WORKSPACE, slug)).toBe('my-linear')
+		expect(slug).toBe(`${workspacePrefix(WORKSPACE)}my_linear`)
+		expect(displayNameFromSlug(WORKSPACE, slug)).toBe('my_linear')
 	})
 })
 
@@ -240,7 +240,7 @@ describe('error mapping', () => {
 	})
 })
 
-const expectedSlug = (): string => `tk-${workspacePrefix(WORKSPACE).replace(/-$/, '')}`
+const expectedSlug = (): string => `tk-${workspacePrefix(WORKSPACE).replace(/_$/, '')}`
 
 // ---------------------------------------------------------------------------
 // LOAD-BEARING. The toolkit endpoint is default-deny, so the only way a
@@ -257,6 +257,7 @@ describe('assertScopedPattern — over-grant guard', () => {
 		['   ', 'blank'],
 		['hubspot', 'single segment, no wildcard'],
 		['hubspot.*', 'single literal segment without a workspace prefix'],
+		['w11111111222233334444555555555555-hubspot.*', 'hyphen prefix, not our scheme'],
 		['*.*', 'wildcard first segment'],
 		['*.org.public', 'wildcard first segment with literal tail'],
 	])('refuses %j (%s)', (pattern) => {
@@ -283,5 +284,66 @@ describe('assertScopedPattern — over-grant guard', () => {
 		const pattern = integrationPattern(workspaceScopedSlug(WORKSPACE, '*'))
 		expect(() => assertScopedPattern(pattern)).not.toThrow()
 		expect(pattern.startsWith(PREFIX)).toBe(true)
+	})
+})
+
+describe('connect', () => {
+	it('sends an empty credential map for a no-auth connection', async () => {
+		// Verified against a live instance: the backend requires exactly one
+		// credential origin even for template "none", and rejects the request with
+		// an empty 400 body when none is present.
+		const { impl, calls } = stubFetch({
+			'/api/connections': () =>
+				json({
+					owner: 'org',
+					name: 'shared',
+					integration: 'slug',
+					address: 'tools.slug.org.shared',
+				}),
+		})
+
+		await makeClient(impl).connect('key', {
+			integrationSlug: 'slug',
+			auth: { type: 'none' },
+		})
+
+		const body = calls.at(-1)?.body as Record<string, unknown>
+		expect(body.template).toBe('none')
+		expect(body.values).toEqual({})
+		expect(body.value).toBeUndefined()
+	})
+
+	it('sends the secret as the sole credential origin for an api key', async () => {
+		const { impl, calls } = stubFetch({
+			'/api/connections': () =>
+				json({ owner: 'user', name: 'personal', integration: 'slug', address: 'a' }),
+		})
+
+		await makeClient(impl).connect('key', {
+			integrationSlug: 'slug',
+			auth: { type: 'api_key', value: 'secret-value' },
+			scope: 'personal',
+		})
+
+		const body = calls.at(-1)?.body as Record<string, unknown>
+		expect(body.value).toBe('secret-value')
+		expect(body.values).toBeUndefined()
+		expect(body.owner).toBe('user')
+	})
+})
+
+describe('slug is addressable in code mode', () => {
+	it('produces a slug usable with dot notation', () => {
+		// A tool address is evaluated as a JS expression, so the slug has to be a
+		// valid identifier. Verified live: the hyphenated form failed with
+		// tool_not_found and no suggestions, while the underscore form resolved.
+		const slug = workspaceScopedSlug(WORKSPACE, 'Deep Wiki')
+		expect(slug).toMatch(/^[A-Za-z_$][\w$]*$/)
+		expect(slug).not.toContain('-')
+	})
+
+	it('keeps a hostile name identifier-safe', () => {
+		const slug = workspaceScopedSlug(WORKSPACE, 'a.b-c/d e')
+		expect(slug).toMatch(/^[A-Za-z_$][\w$]*$/)
 	})
 })

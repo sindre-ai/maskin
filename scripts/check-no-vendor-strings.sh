@@ -34,6 +34,7 @@ TIER1=(
 	"${V}"".sh"
 	"integrations"".sh"
 	"${V}""-selfhost"
+	"host-""selfhost"
 	"@""${V}""-js"
 	"tools.""${V}""."
 	"/.""${V}""/"

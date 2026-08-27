@@ -1,21 +1,26 @@
 // Response sanitisation for the tool-broker MCP proxy.
 //
-// Two jobs, both verified against a running instance rather than assumed:
+// Three jobs, all verified against a running instance rather than assumed:
 //
 //   1. HIDE THE ARTIFACT TOOLS. The backend exposes exactly seven tools, four of
 //      which manage rendered artifacts we do not surface. A toolkit BLOCK POLICY
 //      does not remove them — policies govern tool addresses inside code mode,
 //      not the fixed MCP tool surface, and `tools/list` is byte-identical with a
-//      `*` block policy installed. So the proxy has to filter them out and refuse
-//      to call them.
+//      `*` block policy installed. So the proxy filters them out and refuses to
+//      call them.
 //
 //   2. KEEP THE BACKEND'S IDENTITY OUT OF AGENT-VISIBLE TEXT. Measured on a live
 //      toolkit endpoint: `tools/list` carries 7 occurrences of the vendor name,
-//      ALL of them inside those same four artifact tools (a `ui://` resource uri
-//      in `_meta`, and one prose mention). Filtering the tools therefore removes
-//      every occurrence in `tools/list`. What remains is the `skills` doc for
-//      `execute`, which mentions the vendor's own tool namespace 4 times — that
-//      is what the namespace rewrite is for.
+//      ALL inside those same four artifact tools (a `ui://` resource uri in
+//      `_meta`, plus one prose mention), so filtering them clears that response.
+//      What remains is the `skills` doc for `execute`, which names the vendor's
+//      own tool namespace 4 times — that is what the namespace rewrite is for.
+//
+//   3. REDACT RUNTIME INTERNALS FROM ERRORS. A failed `execute` returns a stack
+//      trace naming the backend's bundle and source layout. This was found by
+//      running it, not by reading — and it is the error path, the one an agent
+//      walks while learning the code-mode API, so it is hit more often than the
+//      happy path.
 //
 // The vendor token is assembled from fragments so this file does not itself
 // contain the string the repo-wide guard scans for.
@@ -48,6 +53,43 @@ export const scrubVendorNamespace = (text: string): string =>
 export const isHiddenTool = (name: unknown): boolean =>
 	typeof name === 'string' && HIDDEN_TOOLS.includes(name)
 
+// Only touch strings that actually look like a trace, so an ordinary tool
+// description that happens to mention a filename is left alone.
+const looksLikeTrace = (text: string): boolean =>
+	/\n\s*at\s/.test(text) || /\.(?:js|mjs|cjs):\d+/.test(text)
+
+/**
+ * Strip runtime internals out of an error string.
+ *
+ * The stack frames are dropped wholesale — they describe the backend's
+ * internals, never the agent's own code — and any remaining module path or
+ * bundle filename is redacted. What is deliberately preserved is the leading
+ * message, the part that says what was actually wrong, because that is what lets
+ * an agent recover from a bad call.
+ */
+export const redactRuntimeInternals = (text: string): string => {
+	if (!looksLikeTrace(text)) return text
+	return text
+		.split('\n')
+		.filter((line) => !/^\s*at\s/.test(line))
+		.join('\n')
+		.replace(/(?:[A-Za-z]:)?(?:\/[\w.@-]+)+\.(?:js|mjs|cjs|ts)(?::\d+)*/g, '<internal>')
+		.replace(/\b[\w-]+\.(?:js|mjs|cjs)(?::\d+)*/g, '<internal>')
+		.trimEnd()
+}
+
+/** Apply a string transform to every string in a value, in place of a schema. */
+const mapStrings = (value: unknown, fn: (s: string) => string): unknown => {
+	if (typeof value === 'string') return fn(value)
+	if (Array.isArray(value)) return value.map((v) => mapStrings(v, fn))
+	if (value && typeof value === 'object') {
+		const out: Record<string, unknown> = {}
+		for (const [k, v] of Object.entries(value)) out[k] = mapStrings(v, fn)
+		return out
+	}
+	return value
+}
+
 interface JsonRpcMessage {
 	id?: unknown
 	result?: unknown
@@ -79,6 +121,11 @@ export const sanitiseMessage = (message: JsonRpcMessage): JsonRpcMessage => {
 		)
 	}
 
+	// Error payloads carry the backend's stack traces. Walk every string rather
+	// than targeting `content[].text`, because the same trace also appears under
+	// `structuredContent.error` and would otherwise survive.
+	message.result = mapStrings(result, redactRuntimeInternals)
+
 	return message
 }
 
@@ -88,9 +135,9 @@ export const sanitiseMessage = (message: JsonRpcMessage): JsonRpcMessage => {
  * FRAMING IS HOST-DEPENDENT and must not be assumed. The same `initialize` call
  * returns `application/json` on the self-hosted build and `text/event-stream` on
  * the CLI build. A naive string replace over the raw body happens to work for
- * JSON but corrupts nothing-but-luck in the SSE case, where the body is a framed
- * stream of `event:` / `data:` lines — so each frame is decoded, sanitised and
- * re-encoded rather than treated as one blob.
+ * JSON but would corrupt the SSE case, where the body is a framed stream of
+ * `event:` / `data:` lines — so each frame is decoded, sanitised and re-encoded
+ * rather than treated as one blob.
  */
 export const sanitiseBody = (body: string, contentType: string | null): string => {
 	if (contentType?.includes('text/event-stream')) {

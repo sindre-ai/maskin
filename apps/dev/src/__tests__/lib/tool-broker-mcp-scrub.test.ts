@@ -3,6 +3,7 @@ import {
 	HIDDEN_TOOLS,
 	PROXY_SERVER_NAME,
 	isHiddenTool,
+	redactRuntimeInternals,
 	sanitiseBody,
 	scrubVendorNamespace,
 } from '../../lib/tool-broker/mcp-scrub'
@@ -134,5 +135,52 @@ describe('isHiddenTool', () => {
 		expect(isHiddenTool('create-artifact')).toBe(true)
 		expect(isHiddenTool('execute')).toBe(false)
 		expect(isHiddenTool(undefined)).toBe(false)
+	})
+})
+
+describe('redactRuntimeInternals', () => {
+	// The real shape, captured from a failed execute() against a live instance.
+	// The deployment directory is assembled from fragments for the same reason as
+	// VENDOR above — the real trace names it, and a literal here would make this
+	// file the leak it exists to test for.
+	const BUNDLE_DIR = ['host', 'selfhost'].join('-')
+	const trace = [
+		'Error: Error: tools.search expects an object: { query?: string }',
+		`    at <anonymous> (${VENDOR}-quickjs-runtime.js:82)`,
+		'',
+		`    at toError2 (/app/apps/${BUNDLE_DIR}/dist-server/serve.js:121729:424)`,
+		'    at processTicksAndRejections (native:7:39)',
+	].join('\n')
+
+	it('removes the backend paths and runtime filename', () => {
+		const out = redactRuntimeInternals(trace)
+		expect(out).not.toContain(VENDOR)
+		expect(out).not.toContain(BUNDLE_DIR)
+		expect(out).not.toContain('/app/')
+	})
+
+	it('keeps the part an agent needs in order to recover', () => {
+		// Redacting the whole message would leave the agent unable to fix its call.
+		expect(redactRuntimeInternals(trace)).toContain('tools.search expects an object')
+	})
+
+	it('leaves ordinary text untouched', () => {
+		const text = 'Run the build with esbuild and check dist output.'
+		expect(redactRuntimeInternals(text)).toBe(text)
+	})
+
+	it('clears a trace nested in an error result, including structuredContent', () => {
+		// Both copies must go: the same trace appears under content[].text AND
+		// structuredContent.error, and scrubbing only the first leaves a leak.
+		const body = JSON.stringify({
+			result: {
+				content: [{ type: 'text', text: trace }],
+				structuredContent: { status: 'error', error: trace },
+				isError: true,
+			},
+		})
+		const out = sanitiseBody(body, 'application/json')
+		expect(out).not.toContain(VENDOR)
+		expect(out).not.toContain(BUNDLE_DIR)
 	})
 })
