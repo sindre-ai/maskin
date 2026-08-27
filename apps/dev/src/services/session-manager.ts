@@ -383,7 +383,18 @@ export class SessionManager extends EventEmitter {
 		super()
 		this.containers = new ContainerManager()
 		this.agentStorage = new AgentStorageManager(storage, db)
-		this.turnFinalizer = new InteractiveTurnFinalizer(db)
+		// The finalizer is the only place a per-turn model-API failure is
+		// visible (an interactive session doesn't exit on one), so it owns the
+		// replay. writeInput already picks the remote agent-server or the local
+		// container by session, so the closure needs no transport knowledge.
+		this.turnFinalizer = new InteractiveTurnFinalizer(db, {
+			// Tagged `maskin_retry` on the persisted envelope only. Without it the
+			// transcript reads a replay as the human sending the message twice,
+			// and — worse — keeps counting the failed turn's `result` as one that
+			// will produce a chat message, which it never will.
+			retryTurn: (sessionId, payload) =>
+				this.writeInput(sessionId, payload, undefined, undefined, { maskin_retry: true }),
+		})
 	}
 
 	setAgentBaseBuildContext(buildContext: string) {
@@ -956,6 +967,12 @@ export class SessionManager extends EventEmitter {
 		payload: StreamJsonUserMessage,
 		maskinAttachments?: unknown[],
 		conversationMessageId?: number,
+		/**
+		 * Extra fields for the persisted log envelope ONLY — never written to
+		 * the CLI's stdin. Used to mark a turn replay, so the transcript can tell
+		 * it apart from the human sending the same thing again.
+		 */
+		logTags?: Record<string, unknown>,
 	): Promise<void> {
 		const [session] = await this.db
 			.select()
@@ -989,6 +1006,7 @@ export class SessionManager extends EventEmitter {
 				? { maskin_attachments: maskinAttachments }
 				: {}),
 			...(conversationMessageId !== undefined ? { maskin_message_id: conversationMessageId } : {}),
+			...(logTags ?? {}),
 		}
 		const [log] = await this.db
 			.insert(sessionLogs)

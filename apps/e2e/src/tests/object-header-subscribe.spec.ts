@@ -19,28 +19,29 @@ test.describe('Object detail header — one-tap subscribe', () => {
 				timeout: 15000,
 			})
 
-			// The creator is auto-subscribed on create (`source: 'author'`), so the
-			// header opens on the subscribed state: the actor's own avatar is the
-			// unsubscribe control and there is no "+" button to add.
-			const unsubscribe = page.getByRole('button', { name: /unsubscribe from this object/i })
+			// The properties sidebar mounts its own SubscribeToggle with the same
+			// aria-labels, and it is on screen from iPad up — scope to the header.
+			const header = page.locator('[data-object-detail-header]')
+			const unsubscribe = header.getByRole('button', { name: /unsubscribe from this object/i })
+			const subscribe = header.getByRole('button', { name: /^subscribe to this object/i })
+
+			// The backend auto-subscribes the creator on create, so the header opens
+			// in the subscribed state: the current actor's avatar is the unsubscribe
+			// control and the dedicated "+" subscribe button is absent.
 			await expect(unsubscribe).toBeVisible({ timeout: 15000 })
-			await expect(page.getByRole('button', { name: /^subscribe to this object/i })).toHaveCount(0)
+			await expect(subscribe).toHaveCount(0)
 
 			await unsubscribe.click()
-			const subscribe = page.getByRole('button', { name: /^subscribe to this object/i })
 			await expect(subscribe).toBeVisible({ timeout: 15000 })
+			await expect(unsubscribe).toHaveCount(0)
 
 			// State persists across reload — the server owns `is_subscribed`.
 			await page.reload()
-			await expect(page.getByRole('button', { name: /^subscribe to this object/i })).toBeVisible({
-				timeout: 15000,
-			})
+			await expect(subscribe).toBeVisible({ timeout: 15000 })
 
-			await page.getByRole('button', { name: /^subscribe to this object/i }).click()
-			await expect(page.getByRole('button', { name: /unsubscribe from this object/i })).toBeVisible(
-				{ timeout: 15000 },
-			)
-			await expect(page.getByRole('button', { name: /^subscribe to this object/i })).toHaveCount(0)
+			// And back again: subscribing restores the avatar/unsubscribe control.
+			await subscribe.click()
+			await expect(unsubscribe).toBeVisible({ timeout: 15000 })
 		})
 	}
 })
