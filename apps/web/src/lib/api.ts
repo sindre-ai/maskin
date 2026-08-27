@@ -56,10 +56,14 @@ type RequestOptions = {
 	body?: unknown
 	headers?: Record<string, string>
 	workspaceId?: string
+	/** Send/receive cookies cross-origin. Only the OAuth connect call needs
+	 *  this: the server sets an HttpOnly nonce cookie there, and the callback
+	 *  requires it back to prove the same browser started the flow. */
+	credentials?: RequestCredentials
 }
 
 async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
-	const { method = 'GET', body, headers = {}, workspaceId } = opts
+	const { method = 'GET', body, headers = {}, workspaceId, credentials } = opts
 	const apiKey = getApiKey()
 
 	const reqHeaders: Record<string, string> = {
@@ -88,6 +92,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 			method,
 			headers: reqHeaders,
 			body: body !== undefined ? JSON.stringify(body) : undefined,
+			...(credentials ? { credentials } : {}),
 		})
 	} catch (err) {
 		// No status to report — offline, DNS, CORS or a dropped connection — but
@@ -424,6 +429,9 @@ export const api = {
 					method: 'POST',
 					body,
 					workspaceId,
+					// The response carries the Set-Cookie that binds this browser to the
+					// OAuth `state`; without `include` it is dropped and the callback 400s.
+					credentials: 'include',
 				},
 			),
 		complete: (id: string, workspaceId: string, secret: string) =>
@@ -443,6 +451,20 @@ export const api = {
 			request<IntegrationResponse>('/integrations/github/link', {
 				method: 'POST',
 				body: { installation_id: installationId },
+				workspaceId,
+			}),
+		githubPendingSelection: (workspaceId: string, integrationId: string) =>
+			request<GithubPendingSelection>(`/integrations/github/pending-selection/${integrationId}`, {
+				workspaceId,
+			}),
+		githubSelectInstallation: (
+			workspaceId: string,
+			integrationId: string,
+			installationId: string,
+		) =>
+			request<IntegrationResponse>('/integrations/github/select-installation', {
+				method: 'POST',
+				body: { integration_id: integrationId, installation_id: installationId },
 				workspaceId,
 			}),
 		slackConversations: (id: string, workspaceId: string, types?: string[]) => {
@@ -1264,6 +1286,14 @@ export interface IntegrationResponse {
 
 /** A GitHub App installation the current actor can bind to this workspace,
  *  because they already reach it from one of their workspaces. */
+/** Installations a GitHub user proved they can reach, awaiting their choice.
+ *  Parked on a `pending` integration row by the connect callback when the user
+ *  can access more than one — see POST /integrations/github/select-installation. */
+export interface GithubPendingSelection {
+	integrationId: string
+	installations: Array<{ installationId: string; ownerLogin: string | null }>
+}
+
 export interface LinkableGithubInstallation {
 	installationId: string
 	ownerLogin: string | null
