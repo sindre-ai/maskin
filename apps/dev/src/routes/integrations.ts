@@ -13,6 +13,8 @@ import type { PgNotifyBridge } from '@maskin/realtime'
 import { skjaldTranscriptionCompletedPayloadSchema } from '@maskin/shared'
 import type { StorageProvider } from '@maskin/storage'
 import { and, eq, isNotNull } from 'drizzle-orm'
+import type { Context } from 'hono'
+import { getCookie, setCookie } from 'hono/cookie'
 import { trackSlackMentionReceived } from '../lib/analytics/loop-events'
 import { markSlackMention } from '../lib/analytics/slack-attribution'
 import { decrypt, encrypt } from '../lib/crypto'
@@ -25,6 +27,10 @@ import { type OAuthStatePayload, decodeState, encodeState } from '../lib/integra
 import { TokenManager } from '../lib/integrations/oauth/token-manager'
 import {
 	DiscoveryError,
+	NoGithubInstallationsError,
+	UnauthorizedGithubInstallationError,
+	type UserInstallation,
+	buildAppInstallUrl,
 	fetchInstallationOwnerLogin,
 	mintInstallationTokenWithRecovery,
 } from '../lib/integrations/providers/github/auth'
@@ -165,6 +171,137 @@ app.openapi(listProvidersRoute, (async (c) => {
 
 const GITHUB_INSTALLATION_ID_RE = /^\d+$/
 
+/**
+ * Bind a GitHub App installation to a workspace: provision the provider's
+ * system actor into that workspace, then upsert the integration row active and
+ * write the audit event.
+ *
+ * Shared by the two paths that can produce a binding without an install
+ * callback — `POST /github/link` (copy a row from a workspace the caller
+ * belongs to) and `POST /github/select-installation` (the caller proved GitHub
+ * org membership via user authorization). Both end in exactly the same row
+ * shape, so the upsert lives here rather than being written twice.
+ */
+async function bindGithubInstallation(opts: {
+	db: Database
+	workspaceId: string
+	actorId: string
+	installationId: string
+	ownerLogin?: string
+	credentials: StoredCredentials
+	/** Recorded on the audit event so the two paths stay distinguishable. */
+	reason: string
+	sourceWorkspaceId?: string
+}): Promise<typeof integrations.$inferSelect | null> {
+	const { db, workspaceId, actorId, installationId, ownerLogin, credentials, reason } = opts
+
+	// Same system actor the OAuth callback provisions, scoped into this
+	// workspace. Deliberately re-derived rather than copied from any source row —
+	// each workspace owns its own membership.
+	const systemActorName = getProvider('github').config.displayName
+	let [systemActor] = await db
+		.select()
+		.from(actors)
+		.where(and(eq(actors.type, 'system'), eq(actors.name, systemActorName)))
+		.limit(1)
+
+	if (!systemActor) {
+		const [newActor] = await db
+			.insert(actors)
+			.values({
+				type: 'system',
+				name: systemActorName,
+				apiKey: generateApiKey().key,
+				createdBy: actorId,
+			})
+			.returning()
+		if (!newActor) return null
+		systemActor = newActor
+	}
+
+	const [existingMember] = await db
+		.select()
+		.from(workspaceMembers)
+		.where(
+			and(
+				eq(workspaceMembers.workspaceId, workspaceId),
+				eq(workspaceMembers.actorId, systemActor.id),
+			),
+		)
+		.limit(1)
+
+	if (!existingMember) {
+		await db.insert(workspaceMembers).values({
+			workspaceId,
+			actorId: systemActor.id,
+			role: 'system',
+		})
+	}
+
+	const encryptedCredentials = encrypt(JSON.stringify(credentials))
+	const config: IntegrationConfig = { system_actor_id: systemActor.id }
+	if (ownerLogin) config.owner_login = ownerLogin
+
+	// A prior row for the same installation in this workspace — active, or
+	// revoked by an earlier disconnect — would trip the partial unique index on
+	// (workspace_id, provider, external_id), so refresh in place instead. Same
+	// shape the OAuth callback uses for re-connects.
+	const [existing] = await db
+		.select()
+		.from(integrations)
+		.where(
+			and(
+				eq(integrations.workspaceId, workspaceId),
+				eq(integrations.provider, 'github'),
+				eq(integrations.externalId, installationId),
+			),
+		)
+		.limit(1)
+
+	const [row] = existing
+		? await db
+				.update(integrations)
+				.set({
+					status: 'active',
+					credentials: encryptedCredentials,
+					config,
+					updatedAt: new Date(),
+				})
+				.where(eq(integrations.id, existing.id))
+				.returning()
+		: await db
+				.insert(integrations)
+				.values({
+					workspaceId,
+					provider: 'github',
+					status: 'active',
+					externalId: installationId,
+					credentials: encryptedCredentials,
+					config,
+					createdBy: actorId,
+				})
+				.returning()
+
+	if (!row) return null
+
+	await db.insert(events).values({
+		workspaceId,
+		actorId,
+		action: existing ? 'updated' : 'created',
+		entityType: 'integration',
+		entityId: row.id,
+		data: {
+			provider: 'github',
+			external_id: installationId,
+			...(ownerLogin ? { owner_login: ownerLogin } : {}),
+			reason,
+			...(opts.sourceWorkspaceId ? { source_workspace_id: opts.sourceWorkspaceId } : {}),
+		},
+	})
+
+	return row
+}
+
 const linkableInstallationSchema = z.object({
 	installationId: z.string(),
 	ownerLogin: z.string().nullable(),
@@ -296,119 +433,25 @@ app.openapi(linkInstallationRoute, (async (c) => {
 		)
 	}
 
-	// Same system actor the OAuth callback provisions, scoped into this
-	// workspace. Deliberately re-derived rather than copied from the source row —
-	// each workspace owns its own membership.
-	const systemActorName = getProvider('github').config.displayName
-	let [systemActor] = await db
-		.select()
-		.from(actors)
-		.where(and(eq(actors.type, 'system'), eq(actors.name, systemActorName)))
-		.limit(1)
-
-	if (!systemActor) {
-		const [newActor] = await db
-			.insert(actors)
-			.values({
-				type: 'system',
-				name: systemActorName,
-				apiKey: generateApiKey().key,
-				createdBy: actorId,
-			})
-			.returning()
-		if (!newActor) {
-			return c.json(
-				createApiError('INTERNAL_ERROR', 'Failed to create system actor for integration'),
-				500,
-			)
-		}
-		systemActor = newActor
-	}
-
-	const [existingMember] = await db
-		.select()
-		.from(workspaceMembers)
-		.where(
-			and(
-				eq(workspaceMembers.workspaceId, workspaceId),
-				eq(workspaceMembers.actorId, systemActor.id),
-			),
-		)
-		.limit(1)
-
-	if (!existingMember) {
-		await db.insert(workspaceMembers).values({
-			workspaceId,
-			actorId: systemActor.id,
-			role: 'system',
-		})
-	}
-
 	// Re-encrypt rather than copying the source ciphertext, so the rows stay
 	// independent if credential storage ever becomes per-row keyed.
 	const credentials: StoredCredentials = JSON.parse(decrypt(source.credentials))
-	const encryptedCredentials = encrypt(JSON.stringify(credentials))
-	const config: IntegrationConfig = { system_actor_id: systemActor.id }
 	const ownerLogin = (source.config as IntegrationConfig)?.owner_login
-	if (ownerLogin) config.owner_login = ownerLogin
 
-	// A revoked row for the same installation in this workspace would trip the
-	// partial unique index on (workspace_id, provider, external_id), so refresh
-	// in place — the same shape the OAuth callback uses for re-connects.
-	const [existing] = await db
-		.select()
-		.from(integrations)
-		.where(
-			and(
-				eq(integrations.workspaceId, workspaceId),
-				eq(integrations.provider, 'github'),
-				eq(integrations.externalId, installationId),
-			),
-		)
-		.limit(1)
-
-	const [row] = existing
-		? await db
-				.update(integrations)
-				.set({
-					status: 'active',
-					credentials: encryptedCredentials,
-					config,
-					updatedAt: new Date(),
-				})
-				.where(eq(integrations.id, existing.id))
-				.returning()
-		: await db
-				.insert(integrations)
-				.values({
-					workspaceId,
-					provider: 'github',
-					status: 'active',
-					externalId: installationId,
-					credentials: encryptedCredentials,
-					config,
-					createdBy: actorId,
-				})
-				.returning()
+	const row = await bindGithubInstallation({
+		db,
+		workspaceId,
+		actorId,
+		installationId,
+		ownerLogin,
+		credentials,
+		reason: 'linked_existing_installation',
+		sourceWorkspaceId: source.workspaceId,
+	})
 
 	if (!row) {
 		return c.json(createApiError('INTERNAL_ERROR', 'Failed to link GitHub installation'), 500)
 	}
-
-	await db.insert(events).values({
-		workspaceId,
-		actorId,
-		action: existing ? 'updated' : 'created',
-		entityType: 'integration',
-		entityId: row.id,
-		data: {
-			provider: 'github',
-			external_id: installationId,
-			...(ownerLogin ? { owner_login: ownerLogin } : {}),
-			reason: 'linked_existing_installation',
-			source_workspace_id: source.workspaceId,
-		},
-	})
 
 	logger.info('Linked existing GitHub installation to workspace', {
 		integrationId: row.id,
@@ -425,6 +468,243 @@ app.openapi(linkInstallationRoute, (async (c) => {
 // ── POST /api/integrations/:provider/connect ───────────────────────────────
 
 const providerParamSchema = z.object({ provider: z.string() })
+
+// ── GitHub: resolve a multi-installation user authorization ───────────────
+//
+// When `login/oauth/authorize` proves the caller can reach more than one
+// installation, the callback parks the candidates on the pending row rather
+// than guessing. These two routes read that list back and finalize the choice.
+// Authorization has two halves, and both are needed. The parked list bounds
+// *what* can be selected: it was built from GitHub's answer to "which
+// installations can THIS user reach", so a caller can only ever select
+// something GitHub already vouched for. The row's `createdBy` bounds *who* can
+// spend it: the list is one specific human's proof of org access, so it stays
+// theirs rather than becoming a workspace-wide grant. See readPendingSelection.
+
+const pendingSelectionSchema = z.object({
+	integrationId: z.string(),
+	installations: z.array(
+		z.object({ installationId: z.string(), ownerLogin: z.string().nullable() }),
+	),
+})
+
+const getPendingSelectionRoute = createRoute({
+	method: 'get',
+	path: '/github/pending-selection/{id}',
+	tags: ['integrations'],
+	summary: 'Read the installations awaiting selection on a pending GitHub connect',
+	request: {
+		params: z.object({ id: z.string().uuid() }),
+		headers: workspaceIdHeader,
+	},
+	responses: {
+		200: {
+			description: 'Installations the authorizing GitHub user can reach',
+			content: { 'application/json': { schema: pendingSelectionSchema } },
+		},
+		404: {
+			description: 'No pending selection with that id in this workspace',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+/** How long a parked candidate list stays selectable, measured from the moment
+ *  the callback wrote it. Mirrors the 10-minute OAuth state window above: the
+ *  picker opens on the redirect, so this only ever has to cover the seconds it
+ *  takes to click an org — not a user who wandered off. An abandoned list going
+ *  cold matters because it is a standing grant of someone else's GitHub reach. */
+const PENDING_SELECTION_MAX_AGE_MS = 10 * 60 * 1000
+
+/** Load a pending row's parked installation choices, scoped to the workspace
+ *  AND to the actor who started the authorization.
+ *
+ *  Returns null when the row is missing, belongs elsewhere, was started by
+ *  someone else, is not pending, has gone stale, or holds no choice list — all
+ *  of which are a 404 to the caller.
+ *
+ *  The `createdBy` and age filters are load-bearing, not defence in depth. The
+ *  candidate list is the *result* of one specific human proving to GitHub which
+ *  orgs they can reach, so it is a credential scoped to that human. Matching on
+ *  workspace alone would let any member of the workspace — including one with no
+ *  GitHub access to the org at all, and including members added later — spend a
+ *  colleague's proof. That would reinstate exactly the entitlement confusion the
+ *  user-authorization flow exists to remove. */
+async function readPendingSelection(
+	db: Database,
+	id: string,
+	workspaceId: string,
+	actorId: string,
+): Promise<{ row: typeof integrations.$inferSelect; choices: UserInstallation[] } | null> {
+	const [row] = await db
+		.select()
+		.from(integrations)
+		.where(
+			and(
+				eq(integrations.id, id),
+				eq(integrations.workspaceId, workspaceId),
+				eq(integrations.provider, 'github'),
+				eq(integrations.status, 'pending'),
+				eq(integrations.createdBy, actorId),
+			),
+		)
+		.limit(1)
+
+	if (!row || !row.credentials) return null
+
+	// Age is checked here rather than in SQL so a null `updatedAt` reads as
+	// "unknown, not expired" instead of silently excluding the row.
+	const parkedAt = row.updatedAt?.getTime()
+	if (parkedAt !== undefined && Date.now() - parkedAt > PENDING_SELECTION_MAX_AGE_MS) {
+		logger.info('Pending GitHub selection has expired', {
+			integrationId: row.id,
+			workspaceId,
+			actorId,
+		})
+		return null
+	}
+
+	let parsed: { installation_choices?: UserInstallation[] }
+	try {
+		parsed = JSON.parse(decrypt(row.credentials))
+	} catch (err) {
+		// Almost always an encryption-key rotation between the callback writing
+		// this list and the user picking from it. Without this line the caller is
+		// told the attempt "expired" and no operator ever learns otherwise.
+		logger.warn('Failed to decrypt parked GitHub installation choices', {
+			integrationId: row.id,
+			workspaceId,
+			error: err instanceof Error ? err.message : String(err),
+		})
+		return null
+	}
+	const choices = parsed.installation_choices
+	if (!Array.isArray(choices) || choices.length === 0) return null
+	return { row, choices }
+}
+
+app.openapi(getPendingSelectionRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { id } = c.req.valid('param')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+
+	const pending = await readPendingSelection(db, id, workspaceId, actorId)
+	if (!pending) {
+		return c.json(createApiError('NOT_FOUND', 'No pending GitHub selection with that id'), 404)
+	}
+
+	return c.json({ integrationId: pending.row.id, installations: pending.choices })
+}) as RouteHandler<typeof getPendingSelectionRoute, Env>)
+
+const selectInstallationRoute = createRoute({
+	method: 'post',
+	path: '/github/select-installation',
+	tags: ['integrations'],
+	summary: 'Finalize a GitHub connect by choosing one of the authorized installations',
+	request: {
+		headers: workspaceIdHeader,
+		body: {
+			content: {
+				'application/json': {
+					schema: z.object({
+						integration_id: z.string().uuid(),
+						installation_id: z.string().min(1),
+					}),
+				},
+			},
+		},
+	},
+	responses: {
+		200: {
+			description: 'Installation bound to the workspace',
+			content: { 'application/json': { schema: integrationResponseSchema } },
+		},
+		400: {
+			description: 'Invalid installation id',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'No pending selection, or the id was not among the authorized choices',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(selectInstallationRoute, (async (c) => {
+	const db = c.get('db')
+	const actorId = c.get('actorId')
+	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
+	const { integration_id: integrationId, installation_id: installationId } = c.req.valid('json')
+
+	if (!GITHUB_INSTALLATION_ID_RE.test(installationId)) {
+		return c.json(
+			createApiError('BAD_REQUEST', 'installation_id must be a numeric GitHub installation id'),
+			400,
+		)
+	}
+
+	const pending = await readPendingSelection(db, integrationId, workspaceId, actorId)
+	if (!pending) {
+		return c.json(createApiError('NOT_FOUND', 'No pending GitHub selection with that id'), 404)
+	}
+
+	// Authorization: the id must be one GitHub itself listed for this user during
+	// the authorization round-trip. Anything else — including a valid
+	// installation id belonging to an org they cannot reach — is a 404.
+	const chosen = pending.choices.find((i) => i.installationId === installationId)
+	if (!chosen) {
+		return c.json(
+			createApiError('NOT_FOUND', 'That installation was not among the authorized choices'),
+			404,
+		)
+	}
+
+	const row = await bindGithubInstallation({
+		db,
+		workspaceId,
+		actorId,
+		installationId,
+		ownerLogin: chosen.ownerLogin ?? undefined,
+		credentials: { installation_id: installationId },
+		reason: 'selected_authorized_installation',
+	})
+
+	if (!row) {
+		return c.json(createApiError('INTERNAL_ERROR', 'Failed to bind GitHub installation'), 500)
+	}
+
+	// Drop the pending row — its only job was to carry the candidate list. Guard
+	// against deleting the row we just wrote: bindGithubInstallation refreshes a
+	// pre-existing row for this installation in place, which may be this very id
+	// if a prior attempt already got this far.
+	if (row.id !== pending.row.id) {
+		await db.delete(integrations).where(eq(integrations.id, pending.row.id))
+		await db.insert(events).values({
+			workspaceId,
+			actorId,
+			action: 'deleted',
+			entityType: 'integration',
+			entityId: pending.row.id,
+			data: {
+				provider: 'github',
+				status: 'pending',
+				reason: 'installation_selection_completed',
+				bound_integration_id: row.id,
+			},
+		})
+	}
+
+	logger.info('Bound GitHub installation from user-authorized selection', {
+		integrationId: row.id,
+		workspaceId,
+		installationId,
+		ownerLogin: chosen.ownerLogin,
+	})
+
+	const { credentials: _credentials, ...safe } = row
+	return c.json(serialize(safe) as z.infer<typeof integrationResponseSchema>)
+}) as RouteHandler<typeof selectInstallationRoute, Env>)
 
 const connectRoute = createRoute({
 	method: 'post',
@@ -670,6 +950,15 @@ app.openapi(connectRoute, (async (c) => {
 
 	const state = encodeState(statePayload)
 
+	// Bind the state to *this* browser. `state` is a sealed envelope with no
+	// session binding, so on its own it authorizes whoever presents it — and the
+	// GitHub user-authorization endpoint returns without any prompt for a user
+	// who already approved the App. Without this cookie an attacker could start a
+	// connect in their own workspace, hand the resulting authorize URL to a
+	// victim, and have the victim's org bound into the attacker's workspace on a
+	// single click. The callback requires cookie === state.nonce.
+	setOAuthNonceCookie(c, providerName, nonce)
+
 	// Store the nonce in DB to prevent replay attacks. We intentionally avoid an
 	// upsert here because the integrations table uses partial unique indexes, and
 	// Postgres cannot infer those indexes from a plain ON CONFLICT target.
@@ -806,6 +1095,31 @@ app.openapi(callbackRoute, (async (c) => {
 		)
 	}
 
+	// Require the state-binding cookie set by POST /:provider/connect. This is
+	// what proves the browser finishing the flow is the one that started it.
+	// `state` alone does not: it is a sealed envelope that authorizes whoever
+	// presents it, and the GitHub user-authorization endpoint returns straight to
+	// us with no prompt for anyone who has already approved the App — so a
+	// handed-over authorize URL would otherwise bind the *clicker's* org into the
+	// *sender's* workspace. Compared before any DB work so a forwarded link costs
+	// nothing.
+	const boundNonce = getCookie(c, oauthNonceCookieName(providerName))
+	if (boundNonce !== stateData.nonce) {
+		logger.warn('OAuth callback rejected — state not bound to this browser', {
+			provider: providerName,
+			workspaceId: stateData.workspaceId,
+			actorId: stateData.actorId,
+			hadCookie: boundNonce !== undefined,
+		})
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				'This connection was not started in this browser — please start it again from your workspace settings',
+			),
+			400,
+		)
+	}
+
 	// Verify one-time nonce to prevent replay attacks
 	const [pendingIntegration] = await db
 		.select()
@@ -857,6 +1171,35 @@ app.openapi(callbackRoute, (async (c) => {
 			return c.json(createApiError('BAD_REQUEST', 'Provider does not support OAuth callback'), 400)
 		}
 	} catch (err) {
+		// The user authorized us but has not installed the App anywhere yet. That
+		// is a next step, not a failure — send them to the install page, carrying
+		// the same state so the resulting install callback still matches this
+		// pending row.
+		if (err instanceof NoGithubInstallationsError) {
+			logger.info('GitHub user has no accessible installations — redirecting to install page', {
+				workspaceId: stateData.workspaceId,
+				actorId: stateData.actorId,
+			})
+			return c.redirect(buildAppInstallUrl(stateParam))
+		}
+		// A callback naming an installation the authenticated user cannot reach is
+		// a hand-written URL, not a fault — refuse it loudly rather than folding it
+		// into the generic retry-shaped token_exchange_failed.
+		if (err instanceof UnauthorizedGithubInstallationError) {
+			logger.warn('GitHub callback named an installation the user cannot reach', {
+				workspaceId: stateData.workspaceId,
+				actorId: stateData.actorId,
+				error: err.message,
+			})
+			clearOAuthNonceCookie(c, providerName)
+			return c.json(
+				createApiError(
+					'FORBIDDEN',
+					'That GitHub installation is not one your GitHub account can access',
+				),
+				400,
+			)
+		}
 		logger.error(`OAuth callback token exchange failed for provider ${providerName}`, {
 			workspaceId: stateData.workspaceId,
 			error: err instanceof Error ? err.message : String(err),
@@ -864,6 +1207,56 @@ app.openapi(callbackRoute, (async (c) => {
 		const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
 		return c.redirect(
 			`${frontendUrl}/${stateData.workspaceId}/settings/integrations?error=token_exchange_failed`,
+		)
+	}
+
+	// The user can reach several installations of the App. Park the choices on
+	// the pending row and let them pick — resolving this server-side would mean
+	// guessing which org they meant. The row stays `pending` (so it is not yet a
+	// usable integration) and carries no credential beyond the candidate list.
+	if (credentials.pending_installation_selection) {
+		const choices = (credentials.installation_choices ?? []) as UserInstallation[]
+		await db
+			.update(integrations)
+			.set({
+				credentials: encrypt(JSON.stringify({ installation_choices: choices })),
+				updatedAt: new Date(),
+			})
+			.where(eq(integrations.id, pendingIntegration.id))
+
+		// Audit the park like every other mutation on this table. Besides the
+		// trail, this is what fires the PG NOTIFY → SSE invalidation, so a settings
+		// page already open when the callback lands learns the row changed instead
+		// of showing stale state until a manual refresh. The candidate list itself
+		// is deliberately not in `data` — only its size, since the payload is
+		// mirrored into the realtime feed.
+		await db.insert(events).values({
+			workspaceId: stateData.workspaceId,
+			actorId: stateData.actorId,
+			action: 'updated',
+			entityType: 'integration',
+			entityId: pendingIntegration.id,
+			data: {
+				provider: providerName,
+				status: 'pending',
+				reason: 'awaiting_installation_selection',
+				choice_count: choices.length,
+			},
+		})
+
+		logger.info('GitHub user authorized with multiple installations — awaiting selection', {
+			workspaceId: stateData.workspaceId,
+			integrationId: pendingIntegration.id,
+			count: choices.length,
+		})
+
+		const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
+		// The state has now been consumed. Selection continues over the authenticated
+		// POST /github/select-installation, which carries its own `createdBy` check,
+		// so the binding cookie has no further job.
+		clearOAuthNonceCookie(c, providerName)
+		return c.redirect(
+			`${frontendUrl}/${stateData.workspaceId}/settings/integrations?select_github=${pendingIntegration.id}`,
 		)
 	}
 
@@ -1057,6 +1450,7 @@ app.openapi(callbackRoute, (async (c) => {
 
 	// Redirect to frontend settings/integrations page
 	const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
+	clearOAuthNonceCookie(c, providerName)
 	return c.redirect(`${frontendUrl}/${stateData.workspaceId}/settings/integrations`)
 }) as RouteHandler<typeof callbackRoute, Env>)
 
@@ -2488,6 +2882,47 @@ webhookApp.post('/:provider', async (c) => {
 })
 
 // ── Helpers ────────────────────────────────────────────────────────────────
+
+/** Lifetime of the state-binding cookie, in seconds. Matches the 10-minute
+ *  `state` age check in the callback so neither outlives the other. */
+const OAUTH_NONCE_COOKIE_MAX_AGE = 10 * 60
+
+/** Per-provider so two connect flows started in different tabs (e.g. GitHub and
+ *  Slack) do not clobber each other's binding. */
+function oauthNonceCookieName(providerName: string): string {
+	return `maskin_oauth_nonce_${providerName}`
+}
+
+/**
+ * Bind an OAuth `state` to the browser that requested it.
+ *
+ * `SameSite=Lax` is required, not incidental: the callback arrives as a
+ * top-level GET navigation from the provider's domain, which Lax permits and
+ * Strict would drop — silently breaking every connect.
+ */
+function setOAuthNonceCookie(c: Context<Env>, providerName: string, nonce: string): void {
+	const secure = resolvePublicOrigin(c.req.url, c.req.header()).startsWith('https://')
+	setCookie(c, oauthNonceCookieName(providerName), nonce, {
+		httpOnly: true,
+		sameSite: 'Lax',
+		secure,
+		path: '/api/integrations',
+		maxAge: OAUTH_NONCE_COOKIE_MAX_AGE,
+	})
+}
+
+/** Clear the binding once a callback has consumed it, so a replay of the same
+ *  state cannot ride a still-live cookie. */
+function clearOAuthNonceCookie(c: Context<Env>, providerName: string): void {
+	const secure = resolvePublicOrigin(c.req.url, c.req.header()).startsWith('https://')
+	setCookie(c, oauthNonceCookieName(providerName), '', {
+		httpOnly: true,
+		sameSite: 'Lax',
+		secure,
+		path: '/api/integrations',
+		maxAge: 0,
+	})
+}
 
 /** Build the OAuth redirect URI, using CORS_ORIGIN when set to prevent header injection */
 // In production, use the configured origin to prevent X-Forwarded-Host injection
