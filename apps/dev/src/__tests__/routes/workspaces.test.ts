@@ -444,6 +444,8 @@ describe('Workspaces Routes', () => {
 			mockResults.selectQueue = [
 				[{ role: 'owner', type: 'human' }], // isWorkspaceHumanAdminOrOwner(caller)
 				[{ role: 'member' }], // existing member row lookup
+				[{ billingOwnerId: null }], // workspace billing-owner guard
+				[{ role: 'member' }], // in-transaction SELECT ... FOR UPDATE of the target
 			]
 			mockResults.update = [{ actorId, role: 'admin', joinedAt: new Date() }]
 			// After update, the route re-fetches the actor for name/type.
@@ -497,6 +499,8 @@ describe('Workspaces Routes', () => {
 			mockResults.selectQueue = [
 				[{ role: 'owner', type: 'human' }], // isWorkspaceHumanAdminOrOwner(caller)
 				[{ role: 'owner' }], // existing member is the owner
+				[{ billingOwnerId: null }], // workspace billing-owner guard
+				[{ role: 'owner' }], // in-transaction SELECT ... FOR UPDATE of the target
 				[{ actorId }], // owner count = 1 → last owner guard trips
 			]
 

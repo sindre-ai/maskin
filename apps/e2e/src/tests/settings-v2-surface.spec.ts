@@ -218,9 +218,9 @@ test.describe('Settings v2 surface', () => {
 		await page.setViewportSize(VIEWPORTS.mobile)
 		await gotoSettings(page, account.workspaceId, '/keys')
 
-		await expect(
-			page.getByText("Bring-your-own-LLM isn't enabled for this workspace"),
-		).toBeVisible({ timeout: 10000 })
+		await expect(page.getByText("Bring-your-own-LLM isn't enabled for this workspace")).toBeVisible(
+			{ timeout: 10000 },
+		)
 		await expect(page.getByRole('link', { name: 'View plan and usage' })).toBeVisible()
 
 		// Not linked in the v2 rail for this workspace — the page has no content

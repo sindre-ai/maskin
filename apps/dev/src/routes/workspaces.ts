@@ -984,16 +984,30 @@ app.openapi(updateMemberRoute, (async (c) => {
 	}
 
 	const result = await db.transaction(async (tx) => {
-		// Re-check the owner count under the transaction so two concurrent
-		// demotions cannot both pass the guard before either write commits.
+		// Re-read the target's role inside the transaction and under a row lock —
+		// the `existing` read above is outside it and can be stale by now.
+		const [locked] = await tx
+			.select({ role: workspaceMembers.role })
+			.from(workspaceMembers)
+			.where(
+				and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.actorId, actorId)),
+			)
+			.for('update')
+			.limit(1)
+		if (!locked) return { kind: 'not_found' } as const
+
 		// `role` is admin|member here, so reaching this branch is always a demotion.
-		if (existing.role === 'owner') {
+		// The owner rows are locked too, so two concurrent demotions serialize:
+		// the second one re-evaluates the predicate after the first commits and
+		// sees the reduced count, rather than both passing a stale check.
+		if (locked.role === 'owner') {
 			const owners = await tx
 				.select({ actorId: workspaceMembers.actorId })
 				.from(workspaceMembers)
 				.where(
 					and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.role, 'owner')),
 				)
+				.for('update')
 			if (owners.length <= 1) {
 				return { kind: 'last_owner_error' } as const
 			}
@@ -1025,7 +1039,7 @@ app.openapi(updateMemberRoute, (async (c) => {
 			action: 'updated',
 			entityType: 'workspace_member',
 			entityId: actorId,
-			data: { role: { from: existing.role, to: role } },
+			data: { role: { from: locked.role, to: role } },
 		})
 
 		return { kind: 'success', updated: u, actor: a } as const
