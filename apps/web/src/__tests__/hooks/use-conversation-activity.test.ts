@@ -747,6 +747,76 @@ describe('useConversationActivity — auto-posted final output', () => {
 		expect(pending?.isError).toBe(false)
 	})
 
+	it('does not render a failed turn raw error envelope as the agent reply', async () => {
+		// The backend is either replaying this turn (2s, then 8s) or about to
+		// post a written explanation. Showing the raw envelope in the meantime
+		// puts `API Error: {...}` in the chat as the answer — the exact blob
+		// this feature exists to keep out.
+		const { result } = setup(
+			[buildMessage({ id: 1, content: 'hi' })],
+			[
+				buildLog({ id: 1, content: taggedUserTurn(1, 'hi') }),
+				buildLog({
+					id: 2,
+					content: JSON.stringify({
+						type: 'result',
+						is_error: true,
+						result: 'API Error: {"type":"error","error":{"type":"api_error"}}',
+					}),
+				}),
+			],
+		)
+
+		await waitFor(() => expect(turnsFor(result).length).toBeGreaterThan(0))
+		expect(turnsFor(result).every((t) => !t.pendingFinalOutput)).toBe(true)
+	})
+
+	it('keeps pairing later turns after an unanswered-replay notice', async () => {
+		// The notice has no `result` envelope behind it — the replayed turn
+		// never closed. Counting it would leave persistedFinalCount one ahead
+		// and silently stop every later turn's text from rendering.
+		const { result } = setup(
+			[
+				buildMessage({ id: 1, content: 'hi' }),
+				buildMessage({
+					id: 2,
+					actorId: 'agent-1',
+					actorType: 'agent',
+					content: 'the run never came back',
+					metadata: {
+						source: 'final_output',
+						final_output: { dedupe_key: 'abc-unanswered', retry: 'unanswered' },
+					},
+					sessionId,
+				}),
+				buildMessage({ id: 3, content: 'again' }),
+			],
+			[
+				buildLog({ id: 1, content: taggedUserTurn(1, 'hi') }),
+				// The failed envelope was retracted by the replay, so this turn
+				// contributes no result segment — matching the notice above.
+				buildLog({
+					id: 2,
+					content: JSON.stringify({ type: 'result', is_error: true, result: 'API Error: {}' }),
+				}),
+				buildLog({
+					id: 3,
+					content: JSON.stringify({
+						type: 'user',
+						message: { role: 'user', content: 'hi' },
+						maskin_retry: true,
+					}),
+				}),
+				buildLog({ id: 4, content: taggedUserTurn(3, 'again') }),
+				buildLog({ id: 5, content: finalResult('The later answer.') }),
+			],
+		)
+
+		await waitFor(() => expect(turnsFor(result).some((t) => t.pendingFinalOutput)).toBe(true))
+		const texts = turnsFor(result).map((t) => t.pendingFinalOutput?.text)
+		expect(texts).toContain('The later answer.')
+	})
+
 	it('drops the pending output once the persisted message arrives', async () => {
 		const { result } = setup(
 			[

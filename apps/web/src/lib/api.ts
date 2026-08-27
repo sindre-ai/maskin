@@ -1479,6 +1479,20 @@ export interface MessageFinalOutput {
 	truncated?: boolean
 	/** Reply was recovered from the turn's log because `result` came back blank. */
 	recovered?: boolean
+	/**
+	 * How a failed turn was read: 'transient' means the model API blipped and
+	 * the turn was replayed, 'permanent' means no replay would have helped.
+	 * Mirrors messageFinalOutputSchema in packages/shared.
+	 */
+	error_kind?: 'transient' | 'permanent'
+	/** Replays spent before giving up on a transient failure. */
+	retries?: number
+	/**
+	 * Why a transient failure was reported instead of replayed. 'unanswered' is
+	 * the one kind with no `result` envelope behind it — see
+	 * finalOutputsFromSession in use-conversation-activity.ts.
+	 */
+	retry?: 'unavailable' | 'undeliverable' | 'unanswered'
 }
 
 export interface MessageQuestionOption {

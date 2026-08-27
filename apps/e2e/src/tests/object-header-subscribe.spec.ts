@@ -15,9 +15,9 @@ test.describe('Object detail header — one-tap subscribe', () => {
 			})
 
 			await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
-			await expect(
-				page.getByRole('heading', { level: 1, name: TITLE }),
-			).toBeVisible({ timeout: 15000 })
+			await expect(page.getByRole('heading', { level: 1, name: TITLE })).toBeVisible({
+				timeout: 15000,
+			})
 
 			const subscribe = page.getByRole('button', { name: /subscribe to this object/i })
 			await expect(subscribe).toBeVisible()
@@ -28,20 +28,18 @@ test.describe('Object detail header — one-tap subscribe', () => {
 			// unsubscribe control.
 			const unsubscribe = page.getByRole('button', { name: /unsubscribe from this object/i })
 			await expect(unsubscribe).toBeVisible({ timeout: 15000 })
-			await expect(
-				page.getByRole('button', { name: /^subscribe to this object/i }),
-			).toHaveCount(0)
+			await expect(page.getByRole('button', { name: /^subscribe to this object/i })).toHaveCount(0)
 
 			// State persists across reload — the server owns `is_subscribed`.
 			await page.reload()
-			await expect(
-				page.getByRole('button', { name: /unsubscribe from this object/i }),
-			).toBeVisible({ timeout: 15000 })
+			await expect(page.getByRole('button', { name: /unsubscribe from this object/i })).toBeVisible(
+				{ timeout: 15000 },
+			)
 
 			await page.getByRole('button', { name: /unsubscribe from this object/i }).click()
-			await expect(
-				page.getByRole('button', { name: /subscribe to this object/i }),
-			).toBeVisible({ timeout: 15000 })
+			await expect(page.getByRole('button', { name: /subscribe to this object/i })).toBeVisible({
+				timeout: 15000,
+			})
 		})
 	}
 })
