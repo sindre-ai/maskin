@@ -20,6 +20,7 @@ export type {
 }
 import { getApiKey } from './auth'
 import { API_BASE } from './constants'
+import { reportApiFailure } from './faro'
 
 export interface PlanCapContext {
 	plan: string
@@ -81,11 +82,19 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 		reqHeaders['Content-Type'] = 'application/json'
 	}
 
-	const res = await fetch(`${API_BASE}${path}`, {
-		method,
-		headers: reqHeaders,
-		body: body !== undefined ? JSON.stringify(body) : undefined,
-	})
+	let res: Response
+	try {
+		res = await fetch(`${API_BASE}${path}`, {
+			method,
+			headers: reqHeaders,
+			body: body !== undefined ? JSON.stringify(body) : undefined,
+		})
+	} catch (err) {
+		// No status to report — offline, DNS, CORS or a dropped connection — but
+		// the user still experienced a broken screen, so it belongs in Faro.
+		reportApiFailure({ method, path, status: 0, code: 'NETWORK_ERROR' })
+		throw err
+	}
 
 	if (!res.ok) {
 		const data = await res.json().catch(() => ({ error: res.statusText }))
@@ -125,6 +134,11 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 		const err = new ApiError(res.status, message, fieldErrors)
 		err.code = code
 		err.planCapContext = planCapContext
+		// This is the single chokepoint for every /api call the UI makes, so a
+		// non-2xx here is where a backend problem becomes visible to a user.
+		// Method, path (query stripped), status and the structured error code
+		// only — never the response body or the message, which are free text.
+		reportApiFailure({ method, path, status: res.status, code })
 		throw err
 	}
 

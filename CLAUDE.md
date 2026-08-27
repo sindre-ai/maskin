@@ -35,6 +35,7 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 - `docs/reference/README.md` — Canonical documentation for Maskin's primitives — read the matching page before trusting model memory.
 
 ## Observability
+- **Frontend (`apps/web`)** — Grafana Faro (`src/lib/faro.ts`) reports browser-side JS exceptions, unhandled rejections, Core Web Vitals, failed `/api` calls and the TanStack route name into the same Grafana Cloud stack as the backend. It runs **in parallel with** Sentry (`src/lib/sentry.ts`) while we compare the two; do not assume Sentry has been retired. Both are gated on `import.meta.env.PROD` plus a `VITE_*_FORCE_ENABLE` escape hatch, and both are **tree-shaken out entirely** when their `VITE_` config var is absent at build time — so a `VITE_` var missing from `apps/dev/Dockerfile`'s ARG/ENV list means that SDK simply isn't in the production bundle, silently.
 - `apps/agent-server/observability/README.md` — for a host running agent-server as a systemd unit: journald logs, host metrics, `/metrics` scrape, stalled-session alerts
 - `observability/coolify-host/README.md` — for a host running `docker-compose.prod.yml` under Coolify: Docker logs, host metrics, SeaweedFS metrics, disk-headroom alerts. Both configs read every deployment-specific value from the environment — keep it that way.
 

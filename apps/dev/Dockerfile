@@ -57,9 +57,46 @@ ARG VITE_POSTHOG_KEY=""
 ARG VITE_POSTHOG_HOST=""
 ENV VITE_POSTHOG_KEY=$VITE_POSTHOG_KEY
 ENV VITE_POSTHOG_HOST=$VITE_POSTHOG_HOST
+# Grafana Faro. VITE_FARO_URL carries the app key and is public by design (it
+# ships in the bundle, like a Sentry DSN). VITE_MASKIN_COMMIT_SHA becomes the
+# app version, which is what distinguishes one release from another in Grafana.
+# It is supplied by docker-compose.prod.yml from Coolify's SOURCE_COMMIT; left
+# empty the bundle reports version "unknown". (What ties a stack trace to its
+# uploaded source map is a different thing entirely — the bundle id the rollup
+# plugin stamps under a global keyed by appName. See apps/web/vite.config.ts.)
+ARG VITE_FARO_URL=""
+ARG VITE_FARO_APP_KEY=""
+ARG VITE_MASKIN_COMMIT_SHA=""
+ENV VITE_FARO_URL=$VITE_FARO_URL
+ENV VITE_FARO_APP_KEY=$VITE_FARO_APP_KEY
+ENV VITE_MASKIN_COMMIT_SHA=$VITE_MASKIN_COMMIT_SHA
+# Source-map upload. FARO_API_KEY is a real secret (Grafana Cloud access policy
+# token with sourcemaps:write) and is build-time only — it is never VITE_-
+# prefixed, so it cannot reach the bundle. When any of these four is unset the
+# vite config skips the uploader *and* emits no .map files at all, so an
+# unconfigured build never leaves readable maps in the statically-served dist/.
+ARG FARO_SOURCEMAP_ENDPOINT=""
+ARG FARO_APP_ID=""
+ARG FARO_STACK_ID=""
+ARG FARO_API_KEY=""
+# These four are NOT promoted to ENV, unlike the VITE_ ones above: an ENV
+# persists into the final image and into `docker history`, and FARO_API_KEY is
+# a secret. They are injected onto the build RUN line below instead, so they
+# exist only for the duration of that command. (The ARG values are still
+# visible in `docker history` on the build host — if that matters, switch to
+# `RUN --mount=type=secret`.)
+# NOTE: VITE_SENTRY_DSN is deliberately absent here — see the PR description.
+# The Sentry SPA build has never received a DSN at image build time, so the
+# frontend half of Sentry has been inert in production. Fixing that is a
+# separate change; it is called out so the Faro comparison is not read as
+# Faro-vs-Sentry when Sentry was never reporting from the browser.
 
 COPY apps/web/ apps/web/
 RUN --mount=type=cache,id=turbo,target=/app/.turbo \
+	FARO_SOURCEMAP_ENDPOINT=$FARO_SOURCEMAP_ENDPOINT \
+	FARO_APP_ID=$FARO_APP_ID \
+	FARO_STACK_ID=$FARO_STACK_ID \
+	FARO_API_KEY=$FARO_API_KEY \
 	NODE_OPTIONS=--max-old-space-size=1536 pnpm exec turbo run build --filter=@maskin/web
 
 COPY docker/agent-base/ docker/agent-base/
