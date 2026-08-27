@@ -22,8 +22,12 @@ during the incident it was written for.
 It also asserts the structural invariants that YAML syntax alone will not
 catch, and that have each already been wrong at least once in these files:
 
+  * every `data` node carries a `refId` (without one it cannot be
+    referenced, and its absence silently defeats the two checks below)
   * `condition` names a refId that actually exists in `data`
   * every `__expr__` node's `expression` names an existing refId
+  * every non-`__expr__` node carries a non-empty `model.expr`, so no query
+    can slip past the promtool check by being misspelled
   * template bodies use `$values.<refId>.Value`, never the bare `$value`
     (in Grafana `$value` is the ValueString — a string like
     "[ var='x' labels={} value=0.18 ]" — so `humanizePercentage $value`
@@ -126,7 +130,29 @@ def check_file(path: str) -> list[str]:
             else:
                 seen_uids[uid] = rel
 
-            ref_ids = {node.get("refId") for node in rule.get("data", [])}
+            data_nodes = rule.get("data") or []
+
+            # Collect refIds, and require every node to HAVE one.
+            #
+            # This set is the ground truth for the two reference checks below,
+            # so a missing refId is not a cosmetic omission: a bare
+            # `{node.get("refId") for ...}` admits None, and None is exactly
+            # what `rule.get("condition")` returns when `condition:` is absent.
+            # One node without a refId therefore made `condition not in ref_ids`
+            # and the `__expr__` target check BOTH pass vacuously — two of the
+            # three invariants in this file's header, disabled by an unrelated
+            # typo. Build the set from real values only, and fail on the gap.
+            ref_ids = set()
+            for node in data_nodes:
+                node_ref = node.get("refId")
+                if not node_ref:
+                    fail(
+                        where,
+                        "a `data` node has no `refId` — nothing can reference it, "
+                        "and its absence would mask the checks below",
+                    )
+                else:
+                    ref_ids.add(node_ref)
 
             # `condition` must name a node that exists, or Grafana imports the
             # rule and it never evaluates.
@@ -138,8 +164,8 @@ def check_file(path: str) -> list[str]:
                 )
 
             query_ref_ids = []
-            for node in rule.get("data", []):
-                model = node.get("model", {})
+            for node in data_nodes:
+                model = node.get("model") or {}
                 if node.get("datasourceUid") == "__expr__":
                     target = model.get("expression")
                     if target not in ref_ids:
@@ -148,9 +174,30 @@ def check_file(path: str) -> list[str]:
                             f"expression node references `{target}`, "
                             f"not a refId in data ({sorted(ref_ids)})",
                         )
-                elif model.get("expr"):
-                    exprs.append(substitute(model["expr"]))
-                    query_ref_ids.append(node.get("refId"))
+                    continue
+
+                # Anything not marked `__expr__` is a DATASOURCE QUERY and must
+                # carry PromQL. Demand it rather than testing for it.
+                #
+                # This was `elif model.get("expr")`, which made the promtool
+                # gate opt-in by spelling: a node whose key was `exprr`, or
+                # whose `expr` was empty, matched no branch, raised nothing, and
+                # contributed no expression — so the file passed with its query
+                # never parsed. The whole point of this script is to put PromQL
+                # in front of promtool, so a query node that yields none is an
+                # error, not a node to skip.
+                expr = model.get("expr")
+                if not isinstance(expr, str) or not expr.strip():
+                    fail(
+                        where,
+                        f"query node `{node.get('refId')}` has no non-empty "
+                        f"`model.expr` (keys: {sorted(model)}) — it would be "
+                        "silently excluded from the PromQL check",
+                    )
+                    continue
+
+                exprs.append(substitute(expr))
+                query_ref_ids.append(node.get("refId"))
 
             # The $value trap. In Grafana alerting $value is the ValueString,
             # not a float, so any numeric formatter applied to it emits

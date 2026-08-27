@@ -294,11 +294,17 @@ groups:
             S3 listener are separate ports on the same process, so agent file operations can
             be working normally while this fires. Check the app before assuming an outage.
 
-            Most likely causes, in order: (1) the seaweedfs container has not been recreated
-            since the -metricsPort flag was added, so /metrics has never existed — check
-            `docker inspect seaweedfs --format '{{.Config.Cmd}}'` for the flag; (2) the
-            container is restarting; (3) the published port is missing — `docker port
-            seaweedfs` should show 127.0.0.1:9327.
+            NOTE ON THE COMMANDS BELOW: there is no container literally named `seaweedfs`.
+            Coolify names containers `<service>-<projectId>-<deployId>` and the trailing id
+            changes on every deploy, so find it by its compose label first and use that id:
+
+            `docker ps -a --filter label=com.docker.compose.service=seaweedfs`
+
+            Most likely causes, in order: (1) the container has not been recreated since the
+            -metricsPort flag was added, so /metrics has never existed — `docker inspect <id>
+            | grep metricsPort` finds the flag in its command; (2) the container is
+            restarting — the same `docker ps -a` shows it; (3) the published port is missing —
+            `docker port <id>` should show 127.0.0.1:9327.
           runbook_url: https://github.com/sindre-ai/maskin/blob/main/observability/coolify-host/README.md
         notification_settings:
           receiver: ${CONTACT_POINT}
