@@ -1,0 +1,197 @@
+# Grafana alert rules for SeaweedFS disk headroom on the Coolify host.
+#
+# WHAT THIS DETECTS: the `seaweed_data` volume running out of room.
+#
+# WHY IT MATTERS MORE THAN "a disk got full". SeaweedFS is where every agent's
+# persistent files live — skills, learnings, memory — pulled at session start
+# and pushed at session end by apps/dev/src/services/agent-storage.ts. When
+# writes start failing there, sessions do NOT hard-fail. The container stays
+# up, /api/health stays green, Coolify shows a healthy deployment, and the
+# database is untouched. What the user sees is an agent that has quietly forgotten
+# something, or one whose file operations have become slow. That is the same
+# silent-degradation class as the wedge bugs: no exception, no 5xx, no page —
+# just wrong behaviour that gets reported by a human days later.
+#
+# WHY THIS METRIC AND NOT node_filesystem_avail_bytes. In a default Compose
+# deployment the `seaweed_data` volume lives under /var/lib/docker, so
+# node_exporter reports its headroom as whatever filesystem that path sits on —
+# mixed in with every other container's writes, the Docker image cache, and
+# Coolify's own build artifacts. `SeaweedFS_volumeServer_resource` is measured by SeaweedFS
+# itself at the /data mount inside the container. It names the right thing, and
+# it survives the volume being moved to a dedicated disk later without the
+# alert silently starting to measure something else.
+#
+# HOW TO APPLY IT. Grafana Cloud has no filesystem, so the file-provisioning
+# path (`/etc/grafana/provisioning/alerting/`) that works on self-hosted
+# Grafana is NOT available to us. This file is therefore the source of truth
+# and is imported, not read in place. Either:
+#
+#   grafanactl resources push alertrules --path observability/coolify-host/alerts
+#
+# or, without grafanactl, POST it through the Alerting Provisioning API:
+#
+#   curl -X POST \
+#     -H "Authorization: Bearer $GRAFANA_CLOUD_TOKEN" \
+#     -H 'Content-Type: application/yaml' \
+#     --data-binary @seaweedfs-disk.yaml \
+#     "$GRAFANA_URL/api/v1/provisioning/alert-rules/export?format=yaml"
+#
+# Rules imported this way are editable in the UI, which means the UI can drift
+# from this file. If you change a rule in the UI, export it back over this file
+# (Alert rule -> Export -> YAML) in the same PR as the behaviour change.
+#
+# BEFORE APPLYING, substitute the two placeholders:
+#   ${PROM_DATASOURCE_UID}  the Prometheus datasource UID (Connections ->
+#                           Data sources -> your Prom stack -> UID in the URL)
+#   ${CONTACT_POINT}        the notification target, e.g. `maskin-oncall-slack`
+#
+# NOT ALERTED ON: volume-count exhaustion. `weed server` caps the number of
+# volumes it will allocate (SeaweedFS_volumeServer_max_volumes, against
+# SeaweedFS_volumeServer_volumes). Hitting that cap fails
+# WRITES while the disk still reads as having plenty of free bytes — a second,
+# independent failure mode that these two rules cannot see. It is left unrouted
+# for the same reason the agent-server rules leave reason="no_output" unrouted:
+# on `weed server` the cap is derived from available disk at startup rather than
+# being a fixed operator choice, so we do not yet know what a genuinely
+# dangerous ratio looks like here. Put
+#
+#   SeaweedFS_volumeServer_volumes / SeaweedFS_volumeServer_max_volumes
+#
+# on the dashboard, watch it for a release cycle, then add a third rule with a
+# threshold taken from the observed distribution. An alert that cries wolf gets
+# muted, and then it may as well not exist.
+
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: coolify-seaweedfs-disk
+    folder: Maskin
+    # Evaluated every 5 minutes against a 60s scrape. Disk headroom moves over
+    # hours; a 1m evaluation would buy nothing but noise, and unlike the
+    # stalled-session gauges there is no injected clock here — these are plain
+    # filesystem statvfs readings taken at scrape time.
+    interval: 5m
+    rules:
+      - uid: maskin-seaweedfs-disk-low
+        title: SeaweedFS volume disk headroom low
+        condition: alert
+        # WARNING tier. A percentage rather than an absolute, so it scales with
+        # the device. On a typical volume 20% is days of warning, not minutes —
+        # deliberately, so this arrives as a ticket during working hours and the
+        # page below never has to fire. If your volume is large enough that 20%
+        # is more headroom than you need, lower it; the point is that the two
+        # tiers are far enough apart to act between them.
+        data:
+          - refId: headroom
+            relativeTimeRange: { from: 1800, to: 0 }
+            datasourceUid: ${PROM_DATASOURCE_UID}
+            model:
+              refId: headroom
+              # `min by (instance, name)` rather than a bare division: the
+              # metric carries a `name` label per data directory, and both
+              # sides must be grouped identically or the division drops to no
+              # matching series and the rule silently never fires. Grouping by
+              # `instance` as well means a second SeaweedFS host can be added
+              # without the threshold quietly changing meaning.
+              expr: >-
+                min by (instance, name) (SeaweedFS_volumeServer_resource{type="avail"})
+                /
+                min by (instance, name) (SeaweedFS_volumeServer_resource{type="all"})
+              instant: true
+          - refId: alert
+            datasourceUid: __expr__
+            model:
+              refId: alert
+              type: threshold
+              expression: headroom
+              conditions:
+                - evaluator: { type: lt, params: [0.20] }
+        # 15m, not 2m. A deploy restarts the container and the first scrape
+        # after it can land before the volume server has finished reporting;
+        # disk headroom genuinely does not change fast enough for a shorter
+        # window to be worth the false positives.
+        for: 15m
+        # A scrape gap must not resolve a real disk problem, and a SeaweedFS
+        # that has stopped answering is itself a reason to look — so NoData
+        # keeps the alerting state rather than clearing it.
+        noDataState: NoData
+        execErrState: Error
+        labels:
+          severity: warning
+          service: seaweedfs
+        annotations:
+          summary: >-
+            {{ $labels.instance }}: SeaweedFS {{ $labels.name }} has
+            {{ humanizePercentage $value }} of its disk free.
+          description: >-
+            The seaweed_data volume is filling. SeaweedFS holds agent skills, learnings and
+            memory; when it can no longer write, sessions do not fail loudly — agent file
+            operations degrade and surface as an agent that has forgotten something.
+
+            This volume usually shares a filesystem with Docker itself, so the space may not
+            be SeaweedFS's own doing. Check `docker system df` for reclaimable image and
+            build-cache space before assuming agent files are the cause.
+
+            Related, and NOT covered by this alert: volume-count exhaustion. Compare
+            SeaweedFS_volumeServer_volumes against SeaweedFS_volumeServer_max_volumes — that
+            cap fails writes while free bytes still look healthy.
+          runbook_url: https://github.com/sindre-ai/maskin/blob/main/observability/coolify-host/README.md
+        # Routed directly to a contact point rather than left to the default
+        # notification policy, so adding an unrelated policy later cannot
+        # silently redirect this.
+        notification_settings:
+          receiver: ${CONTACT_POINT}
+
+      - uid: maskin-seaweedfs-disk-critical
+        title: SeaweedFS volume disk nearly full
+        condition: alert
+        # PAGE tier. Separate rule rather than a second threshold on the one
+        # above, because Grafana routes on the rule, so one rule cannot carry
+        # two severities — and because the two want different `for` windows.
+        data:
+          - refId: headroom
+            relativeTimeRange: { from: 1800, to: 0 }
+            datasourceUid: ${PROM_DATASOURCE_UID}
+            model:
+              refId: headroom
+              expr: >-
+                min by (instance, name) (SeaweedFS_volumeServer_resource{type="avail"})
+                /
+                min by (instance, name) (SeaweedFS_volumeServer_resource{type="all"})
+              instant: true
+          - refId: alert
+            datasourceUid: __expr__
+            model:
+              refId: alert
+              type: threshold
+              expression: headroom
+              conditions:
+                - evaluator: { type: lt, params: [0.10] }
+        # Shorter than the warning's 15m: by the time headroom is in single
+        # digits the remaining time is measured in hours, and waiting out a
+        # long window costs more than an occasional duplicate page.
+        for: 5m
+        noDataState: NoData
+        execErrState: Error
+        labels:
+          severity: page
+          service: seaweedfs
+        annotations:
+          summary: >-
+            {{ $labels.instance }}: SeaweedFS {{ $labels.name }} is nearly full —
+            {{ humanizePercentage $value }} free.
+          description: >-
+            Agent file writes are about to start failing. Sessions will keep launching and
+            keep reporting healthy; what breaks is the push of skills/learnings/memory at
+            session end, which is silent from the app's point of view.
+
+            Fastest safe reclaim is Docker's own garbage, not SeaweedFS data: `docker system
+            prune` for stopped containers and dangling images, then `docker image prune -a`
+            for images no running container references. Coolify keeps old application images
+            after every deploy and they are the usual culprit on this box.
+
+            Do NOT delete anything under the seaweed_data volume by hand — the volume server
+            owns that layout and files there are the only copy of agents' persistent state.
+          runbook_url: https://github.com/sindre-ai/maskin/blob/main/observability/coolify-host/README.md
+        notification_settings:
+          receiver: ${CONTACT_POINT}

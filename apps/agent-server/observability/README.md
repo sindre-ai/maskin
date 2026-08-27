@@ -67,25 +67,44 @@ for something else means replacing the `loki.write` component in
 
 ## What this does *not* cover
 
-This ships **the `maskin-agent-server` systemd unit, and nothing else** — not
-even everything on the same machine.
+This ships **the journald unit named by `AGENT_SERVER_SYSLOG_ID`, and nothing
+else** — not even everything on the same machine. That filter is by design,
+so an unrelated chatty service on the same machine cannot inflate the bill. The
+cost of that filter is that **any other workload on the box is unshipped**, and
+Docker containers in particular need their own `loki.source.docker` pipeline.
 
-Verified on the Finland box (2026-08-26): alongside agent-server it also runs a
-full Coolify stack in Docker — `coolify`, `coolify-db` (Postgres 15),
-`coolify-proxy` (Traefik), `coolify-realtime`, `coolify-redis`,
-`coolify-sentinel` — plus one `agent-base` container that has been up two
-months. None of those ship anywhere. The journald source here is filtered to
-`SYSLOG_IDENTIFIER=maskin-agent-server` precisely so an unrelated chatty
-service cannot inflate the bill, and the cost of that is that Docker logs need
-their own `loki.source.docker` pipeline. That is a real gap and it is on *this*
-host, not only some other one.
+If the host also runs containers, see
+[`observability/coolify-host/`](../../../observability/coolify-host/README.md),
+which is the config for a containerised host and can be adapted.
 
-`apps/dev`, `apps/web` and SeaweedFS are **not** on this box — nothing is
-listening on 3000, 5173 or 8333; only agent-server on 3001. Wherever they run,
-they are also unshipped.
+### ⚠️ Do not conclude which host serves production from `docker ps`
+
+An earlier revision of this section (#1465) inspected a host, found a full
+Coolify stack running on it, and concluded from that alone that this was *the*
+Coolify — rewriting this section around a coverage gap that turned out to be on
+a different machine.
+
+The containers were genuinely running. That was never the question. A Coolify
+stack can be installed, healthy, and deploying **nothing at all**. Ask the
+control plane what it has actually deployed:
+
+```sh
+docker exec coolify-db psql -U coolify -d coolify   -c 'select count(*) from applications'   -c 'select count(*) from application_deployment_queues'   -c 'select id, name, ip from servers'
+curl -s http://127.0.0.1:8080/api/http/routers   # Traefik: what is actually routed
+```
+
+Zero applications and zero configured routers means that install serves nothing,
+however healthy its containers look — and an abandoned stack is a candidate for
+deletion, not for monitoring. Note also that Coolify installs a **sentinel**
+container on remote servers it manages, so `coolify-sentinel` on a box is not by
+itself evidence that the box runs Coolify; the `servers` table shows which
+install claims it.
+
+**Check state, not shape.** A wrong topology claim in a monitoring README is how
+you end up with a green dashboard over an uncovered machine.
 
 The **metrics** half is not subject to any of this: `node_exporter` measures the
-whole machine, so CPU, memory and disk cover the Coolify containers' resource
+whole machine, so CPU, memory and disk cover every other container's resource
 usage too. It is the *logs* that are agent-server-only. Do not read a green
 metrics dashboard as evidence that everything on the box is being logged.
 
