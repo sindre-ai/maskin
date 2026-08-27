@@ -86,8 +86,8 @@ describe('resolveBuildInfo', () => {
 	})
 
 	it('takes instance and env from the environment when set', () => {
-		const info = resolveBuildInfo({ AGENT_SERVER_INSTANCE: 'finland-1', DEPLOY_ENV: 'staging' })
-		expect(info.instance).toBe('finland-1')
+		const info = resolveBuildInfo({ AGENT_SERVER_INSTANCE: 'agent-1', DEPLOY_ENV: 'staging' })
+		expect(info.instance).toBe('agent-1')
 		expect(info.env).toBe('staging')
 	})
 })
@@ -109,7 +109,7 @@ describe('GET /metrics', () => {
 		const res = await fetchMetrics({
 			MASKIN_COMMIT_SHA: 'abc123',
 			MASKIN_BUILD_VERSION: '1.2.3',
-			AGENT_SERVER_INSTANCE: 'finland-1',
+			AGENT_SERVER_INSTANCE: 'agent-1',
 			DEPLOY_ENV: 'production',
 		})
 		const line = (await res.text()).split('\n').find((l) => l.startsWith('maskin_build_info{'))
@@ -120,7 +120,7 @@ describe('GET /metrics', () => {
 		expect(parseLabels(line as string)).toEqual({
 			commit: 'abc123',
 			version: '1.2.3',
-			instance: 'finland-1',
+			instance: 'agent-1',
 			env: 'production',
 		})
 	})
