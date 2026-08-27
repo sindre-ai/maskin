@@ -135,6 +135,75 @@ describe('RelatedObjectsTable', () => {
 		expect(within(bodyRows[2]).getByText('Charlie')).toBeInTheDocument()
 	})
 
+	it('sorts rows by relationship when the Relationship header is clicked', async () => {
+		const user = userEvent.setup()
+		const rows = [
+			buildRow({ title: 'Blocks' }, { type: 'blocks' }),
+			buildRow({ title: 'Depends' }, { type: 'depends_on' }),
+			buildRow({ title: 'Relates' }, { type: 'relates_to' }),
+		]
+
+		render(<RelatedObjectsTable {...baseProps} rows={rows} />)
+
+		await user.click(screen.getByRole('button', { name: /relationship/i }))
+
+		const bodyRows = screen.getAllByRole('row').slice(1) // skip header
+		expect(within(bodyRows[0]).getByText('Blocks')).toBeInTheDocument()
+		expect(within(bodyRows[1]).getByText('Depends')).toBeInTheDocument()
+		expect(within(bodyRows[2]).getByText('Relates')).toBeInTheDocument()
+	})
+
+	it('sorts rows by status when the Status header is clicked', async () => {
+		const user = userEvent.setup()
+		const rows = [
+			buildRow({ title: 'Done', status: 'done' }),
+			buildRow({ title: 'Active', status: 'active' }),
+			buildRow({ title: 'Todo', status: 'todo' }),
+		]
+
+		render(<RelatedObjectsTable {...baseProps} rows={rows} />)
+
+		await user.click(screen.getByRole('button', { name: /status/i }))
+
+		const bodyRows = screen.getAllByRole('row').slice(1) // skip header
+		expect(within(bodyRows[0]).getByText('Active')).toBeInTheDocument()
+		expect(within(bodyRows[1]).getByText('Done')).toBeInTheDocument()
+		expect(within(bodyRows[2]).getByText('Todo')).toBeInTheDocument()
+	})
+
+	it('sorts rows by updatedAt when the When header is clicked', async () => {
+		const user = userEvent.setup()
+		const rows = [
+			buildRow({ title: 'Newest', updatedAt: '2026-03-01T00:00:00Z' }),
+			buildRow({ title: 'Oldest', updatedAt: '2026-01-01T00:00:00Z' }),
+			buildRow({ title: 'Middle', updatedAt: '2026-02-01T00:00:00Z' }),
+		]
+
+		render(<RelatedObjectsTable {...baseProps} rows={rows} showWhen />)
+
+		await user.click(screen.getByRole('button', { name: /when/i }))
+
+		const bodyRows = screen.getAllByRole('row').slice(1) // skip header
+		expect(within(bodyRows[0]).getByText('Oldest')).toBeInTheDocument()
+		expect(within(bodyRows[1]).getByText('Middle')).toBeInTheDocument()
+		expect(within(bodyRows[2]).getByText('Newest')).toBeInTheDocument()
+	})
+
+	it('renders rows in input order before any header is clicked', () => {
+		const rows = [
+			buildRow({ title: 'Banana' }),
+			buildRow({ title: 'Apple' }),
+			buildRow({ title: 'Cherry' }),
+		]
+
+		render(<RelatedObjectsTable {...baseProps} rows={rows} />)
+
+		const bodyRows = screen.getAllByRole('row').slice(1) // skip header
+		expect(within(bodyRows[0]).getByText('Banana')).toBeInTheDocument()
+		expect(within(bodyRows[1]).getByText('Apple')).toBeInTheDocument()
+		expect(within(bodyRows[2]).getByText('Cherry')).toBeInTheDocument()
+	})
+
 	describe('on mobile (<768px)', () => {
 		beforeEach(() => {
 			isMobileMock.mockReturnValue(true)
