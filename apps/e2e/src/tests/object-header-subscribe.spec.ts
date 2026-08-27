@@ -19,27 +19,29 @@ test.describe('Object detail header — one-tap subscribe', () => {
 				timeout: 15000,
 			})
 
-			const subscribe = page.getByRole('button', { name: /subscribe to this object/i })
-			await expect(subscribe).toBeVisible()
-			await subscribe.click()
-
-			// Once subscribed, the current actor's avatar renders in the stack and the
-			// dedicated "+" subscribe button is gone. The avatar itself becomes the
-			// unsubscribe control.
+			// The backend auto-subscribes the creator on create, so the header opens
+			// in the subscribed state: the current actor's avatar is the unsubscribe
+			// control and the dedicated "+" subscribe button is absent.
 			const unsubscribe = page.getByRole('button', { name: /unsubscribe from this object/i })
+			const subscribe = page.getByRole('button', { name: /^subscribe to this object/i })
+
 			await expect(unsubscribe).toBeVisible({ timeout: 15000 })
-			await expect(page.getByRole('button', { name: /^subscribe to this object/i })).toHaveCount(0)
+			await expect(subscribe).toHaveCount(0)
+
+			await unsubscribe.click()
+			await expect(subscribe).toBeVisible({ timeout: 15000 })
 
 			// State persists across reload — the server owns `is_subscribed`.
 			await page.reload()
+			await expect(page.getByRole('button', { name: /^subscribe to this object/i })).toBeVisible({
+				timeout: 15000,
+			})
+
+			// And back again: subscribing restores the avatar/unsubscribe control.
+			await page.getByRole('button', { name: /^subscribe to this object/i }).click()
 			await expect(page.getByRole('button', { name: /unsubscribe from this object/i })).toBeVisible(
 				{ timeout: 15000 },
 			)
-
-			await page.getByRole('button', { name: /unsubscribe from this object/i }).click()
-			await expect(page.getByRole('button', { name: /subscribe to this object/i })).toBeVisible({
-				timeout: 15000,
-			})
 		})
 	}
 })
