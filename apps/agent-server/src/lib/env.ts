@@ -55,7 +55,7 @@ const envSchema = z.object({
 		}),
 	// Host identity stamped onto maskin_build_info as `instance`. MUST match
 	// AGENT_SERVER_INSTANCE in Alloy's /etc/default/alloy — that shared value
-	// is what makes {instance="finland-1"} select the same box in LogQL and
+	// is what makes {instance="agent-1"} select the same box in LogQL and
 	// PromQL. Defaults to the machine hostname, exactly as alloy.alloy does.
 	AGENT_SERVER_INSTANCE: z.string().optional(),
 	// Deployment environment stamped onto maskin_build_info as `env`. Same

@@ -14,6 +14,7 @@ import { api } from '@/lib/api'
 import { getStoredActor } from '@/lib/auth'
 import { cn } from '@/lib/cn'
 import { CommandPaletteProvider } from '@/lib/command-palette-context'
+import { setFaroUser } from '@/lib/faro'
 import { isHiddenRouteId, migrateLegacySidebarState, viewKeyFromRouteId } from '@/lib/nav-view-keys'
 import { NewConversationProvider } from '@/lib/new-conversation-context'
 import { PageHeaderProvider, usePageHeader } from '@/lib/page-header-context'
@@ -72,6 +73,11 @@ function WorkspaceLayout() {
 			actor_type: actor.type,
 		})
 		setCapturingEnabled(shareUsage)
+		// Faro gets ids only — never the actor's email or the workspace name.
+		// Unlike PostHog this is not gated on the share-usage analytics toggle:
+		// it is crash reporting, the same category as Sentry, which is likewise
+		// ungated.
+		setFaroUser(actor.id, workspaceId)
 		void identifyForWorkspace(actor.id, anonymizeWorkspace)
 	}, [workspace, workspaceId, shareUsage, anonymizeWorkspace])
 

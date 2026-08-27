@@ -32,6 +32,7 @@ import {
 	checkPlanCap,
 	getWorkspacePlanUsdCentsUsage,
 	readFallbackConfig,
+	resolveChatCredentials,
 	resolveLlmRoute,
 } from '../../lib/llm-routing'
 import type { WorkspaceSettings } from '../../lib/types'
@@ -1059,5 +1060,86 @@ describe('preflightLlmCredentials', () => {
 		})
 		expect(gap).not.toBeNull()
 		expect(gap?.detail).toMatch(/No Claude subscription/i)
+	})
+})
+
+const NOT_ENTITLED = { byollmAllowed: false, billingOwnerId: null }
+
+describe('resolveChatCredentials — system fallback entitlement', () => {
+	it('does not fall back to the Maskin OpenRouter key on the byollm plan', () => {
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
+		expect(
+			resolveChatCredentials({
+				wsSettings: { billing: { plan: 'byollm' } } as WorkspaceSettings,
+				workspace: NOT_ENTITLED,
+				agent: { provider: null, apiKey: null, model: null },
+			}),
+		).toBeNull()
+	})
+
+	// billingAfterByoTransition() leaves `billing` undefined when the workspace
+	// never had a billing block, so an entitled workspace reads as the `trial`
+	// default. The entitlement column is what catches it.
+	it('does not fall back for a byollm_allowed workspace whose plan never transitioned', () => {
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
+		expect(
+			resolveChatCredentials({
+				wsSettings: {},
+				workspace: { byollmAllowed: true, billingOwnerId: null },
+				agent: { provider: null, apiKey: null, model: null },
+			}),
+		).toBeNull()
+	})
+
+	it('does not fall back for an enterprise billing owner', () => {
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
+		process.env.MASKIN_ENTERPRISE_ACTOR_IDS = '11111111-1111-4111-8111-111111111111'
+		expect(
+			resolveChatCredentials({
+				wsSettings: {},
+				workspace: {
+					byollmAllowed: false,
+					billingOwnerId: '11111111-1111-4111-8111-111111111111',
+				},
+				agent: { provider: null, apiKey: null, model: null },
+			}),
+		).toBeNull()
+	})
+
+	it('still uses the byollm workspace own credentials when configured', () => {
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
+		const creds = resolveChatCredentials({
+			wsSettings: {
+				billing: { plan: 'byollm' },
+				llm_keys: { anthropic: 'sk-ant-workspace' },
+			} as WorkspaceSettings,
+			workspace: NOT_ENTITLED,
+			agent: { provider: null, apiKey: null, model: null },
+		})
+		expect(creds).toEqual({
+			provider: 'anthropic',
+			apiKey: 'sk-ant-workspace',
+			model: expect.any(String),
+		})
+	})
+
+	it('still falls back for a Maskin-funded plan', () => {
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
+		const creds = resolveChatCredentials({
+			wsSettings: { billing: { plan: 'pro' } } as WorkspaceSettings,
+			workspace: NOT_ENTITLED,
+			agent: { provider: null, apiKey: null, model: null },
+		})
+		expect(creds?.apiKey).toBe('sk-or-maskin')
+	})
+
+	it('still falls back when no billing block exists (defaults to trial)', () => {
+		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
+		const creds = resolveChatCredentials({
+			wsSettings: {},
+			workspace: NOT_ENTITLED,
+			agent: { provider: null, apiKey: null, model: null },
+		})
+		expect(creds?.apiKey).toBe('sk-or-maskin')
 	})
 })
