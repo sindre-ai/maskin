@@ -57,6 +57,17 @@ services:
     build:
       context: .
       dockerfile: apps/dev/Dockerfile
+      args:
+        # The SPA is built inside this image, so anything the bundle needs must
+        # arrive as a build arg — .git is in .dockerignore, so the build cannot
+        # derive the commit itself the way apps/agent-server/build.mjs does.
+        #
+        # Coolify sets SOURCE_COMMIT for the deployment it is building. It
+        # becomes Faro's app.version, which is what distinguishes one release
+        # from another in Grafana. Empty here (a plain `docker compose build`
+        # outside Coolify) reports as "unknown" rather than silently looking
+        # like a real version — see apps/web/src/lib/faro.ts.
+        VITE_MASKIN_COMMIT_SHA: ${SOURCE_COMMIT:-}
     # No host port publish: Coolify's Traefik proxy routes the domain to this
     # container over the internal network (ports_exposes=3000). Publishing host
     # :3000 collides with the production app when both run on the same server.
