@@ -56,6 +56,7 @@ import telemetryRoutes from './routes/telemetry'
 import testGrantsRoutes, { isTestGrantEnabled } from './routes/test-grants'
 import triggersRoutes from './routes/triggers'
 import userDisplaySettingsRoutes from './routes/user-display-settings'
+import workspaceInvitationsRoutes from './routes/workspace-invitations'
 import workspaceSkillsRoutes from './routes/workspace-skills'
 import workspacesRoutes from './routes/workspaces'
 import type { AgentStorageManager } from './services/agent-storage'
@@ -241,6 +242,12 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	//     (per-IP rate-limited inside the handler).
 	//   - /api/internal/agent-servers/*: authenticated via the shared bearer
 	//     secret enforced inside the handler, not our API key.
+	//   - POST /api/invites/:token/accept and GET /api/invites/preview: the
+	//     invitee is not yet a member of any workspace, so the standard
+	//     Bearer + X-Workspace-Id middleware cannot admit them. The accept
+	//     handler reads Authorization itself for the authenticated branch;
+	//     preview is IP-rate-limited inside the handler. Frontends MUST NOT
+	//     send X-Workspace-Id on these calls.
 	const auth = authMiddleware(db)
 	app.use('/api/*', async (c, next) => {
 		const path = c.req.path
@@ -253,6 +260,8 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 		if (path === '/api/public/landing-events' && method === 'POST') return next()
 		if (path === '/api/public/bet-strategist/drafts' && method === 'POST') return next()
 		if (path === '/api/public/bet-strategist/claim' && method === 'POST') return next()
+		if (path === '/api/invites/preview' && method === 'GET') return next()
+		if (method === 'POST' && /^\/api\/invites\/[^/]+\/accept$/.test(path)) return next()
 		if (/^\/api\/integrations\/[^/]+\/callback$/.test(path)) return next()
 
 		return auth(c, next)
@@ -301,6 +310,7 @@ export function createApp(deps: AppDeps, options: CreateAppOptions = {}): OpenAP
 	app.route('/api/actors', agentSkillAttachmentsRoutes)
 	app.route('/api/workspaces', workspacesRoutes)
 	app.route('/api/workspaces', workspaceSkillsRoutes)
+	app.route('/api/invites', workspaceInvitationsRoutes)
 	app.route('/api/relationships', relationshipsRoutes)
 	app.route('/api/triggers', triggersRoutes)
 	app.route('/api/loops', loopsRoutes)
