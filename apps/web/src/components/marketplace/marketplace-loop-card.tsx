@@ -9,6 +9,13 @@ import type {
 } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { Link } from '@tanstack/react-router'
+import {
+	ITEM_TYPE_LABEL,
+	KIND_LABEL_BASE,
+	KIND_LABEL_CLASS,
+	kindLabel,
+	loopKind,
+} from './item-type-label'
 import { LoopInstallControls } from './loop-install-controls'
 import { UpdateAvailableBanner } from './update-available-banner'
 
@@ -33,20 +40,34 @@ export function MarketplaceLoopCard({
 	const locked = install?.isLocked ?? false
 	const showUpdateBanner = locked && install?.hasUpdate === true
 	const isBundle = loop.item_types.length >= 2
+	const kind = loopKind(loop.item_types)
 
 	return (
-		<article className="relative flex flex-col gap-3 rounded-lg border border-border bg-background p-4 shadow-sm transition-colors hover:bg-muted/40">
+		<article className="relative flex flex-col gap-3 rounded-xl border border-border bg-card p-4 shadow-sm transition-colors hover:border-border-strong hover:shadow-md">
 			<Link
 				to="/$workspaceId/marketplace/$loopId"
 				params={{ workspaceId, loopId: loop.id }}
-				className="absolute inset-0 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+				className="absolute inset-0 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
 				aria-label={`Open ${loop.name}`}
 			/>
 
-			<div className="flex items-start justify-between gap-3">
-				<div className="min-w-0">
-					<h3 className="text-sm font-semibold text-foreground">{loop.name}</h3>
-					<p className="mt-1 text-xs text-muted-foreground line-clamp-2">{loop.description}</p>
+			<div className="flex items-start gap-3">
+				{/* 38px identity tile (mockup 2588) — the same palette treatment the
+				    detail header uses, so a loop looks like itself in both places. */}
+				<span
+					aria-hidden="true"
+					className={cn(
+						'grid size-[38px] shrink-0 place-items-center rounded-xl text-sm font-bold',
+						getActorAvatarPaletteClass(loop.name),
+					)}
+				>
+					{getActorInitials(loop.name)}
+				</span>
+				<div className="min-w-0 flex-1">
+					<h3 className="truncate text-[13.5px] font-bold text-foreground">{loop.name}</h3>
+					<div className={cn(KIND_LABEL_BASE, 'mt-0.5', KIND_LABEL_CLASS[kind])}>
+						{kindLabel(kind)}
+					</div>
 				</div>
 				{install ? (
 					locked ? (
@@ -67,6 +88,10 @@ export function MarketplaceLoopCard({
 				) : null}
 			</div>
 
+			<p className="text-xs leading-relaxed text-muted-foreground line-clamp-3">
+				{loop.description}
+			</p>
+
 			{/* This row is never itself positioned, so it paints below the overlay
 			    link and any empty space still opens the card. Only the chip buttons
 			    (given `relative`) paint above the link to catch their own clicks
@@ -74,16 +99,10 @@ export function MarketplaceLoopCard({
 			{isBundle && items && items.length > 0 ? (
 				<CompositionChipRow items={items} />
 			) : (
-				<div className="flex flex-wrap gap-1">
-					{loop.item_types.map((type) => (
-						<span
-							key={type}
-							className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
-						>
-							{type}
-						</span>
-					))}
-				</div>
+				// Single-type cards carry the same chip row (mockup 2593); with no
+				// item detail loaded for them they name what the card installs by
+				// kind rather than dropping to raw `item_type` strings.
+				<KindChipRow itemTypes={loop.item_types} />
 			)}
 
 			{showUpdateBanner ? <UpdateAvailableBanner newVersion={install.availableVersion} /> : null}
@@ -191,7 +210,7 @@ function CompositionChipRow({ items }: { items: MarketplaceLoopItem[] }) {
 								<button
 									type="button"
 									aria-label={tip}
-									className="relative inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-muted/40 py-0.5 pr-2 pl-0.5 text-[11px] font-medium text-muted-foreground cursor-help hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+									className="relative inline-flex max-w-full cursor-help items-center gap-1 rounded-full border border-border bg-muted py-0.5 pr-2 pl-0.5 text-[11px] font-medium text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 								>
 									<CompositionGlyph chip={chip} />
 									<span className="truncate">{label}</span>
@@ -203,6 +222,29 @@ function CompositionChipRow({ items }: { items: MarketplaceLoopItem[] }) {
 				})}
 			</div>
 		</TooltipProvider>
+	)
+}
+
+function KindChipRow({ itemTypes }: { itemTypes: MarketplaceItemType[] }) {
+	if (itemTypes.length === 0) return null
+
+	return (
+		<div className="flex flex-wrap gap-1" aria-label="Card composition" data-testid="kind-chip-row">
+			{itemTypes.map((type) => (
+				<span
+					key={type}
+					className="inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-muted py-0.5 pr-2 pl-0.5 text-[11px] font-medium text-muted-foreground"
+				>
+					<span
+						aria-hidden="true"
+						className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-border bg-muted text-[9px] font-semibold leading-none"
+					>
+						◆
+					</span>
+					<span className="truncate">{ITEM_TYPE_LABEL[type]}</span>
+				</span>
+			))}
+		</div>
 	)
 }
 

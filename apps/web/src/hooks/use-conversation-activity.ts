@@ -624,6 +624,19 @@ function pendingFinalOutputFor(
 	if (!result) return {}
 	// Everything up to `persistedFinalCount` already exists as a real message.
 	if (resultSegments.indexOf(segment) < persistedFinalCount) return {}
+	// A failed turn's `result` text is the raw API error envelope, not an
+	// answer, and the backend never posts it verbatim: it either replays the
+	// turn (2s, then 8s, plus the write round-trip) or posts a written
+	// explanation. Rendering it optimistically would put `API Error: {...}` in
+	// the chat as the agent's reply for the whole of that window — the exact
+	// blob this feature exists to keep out — and the transcript's retraction
+	// can only take it back afterwards, once the replay envelope lands.
+	// Waiting for the persisted message costs a few seconds of silence and is
+	// always the message the human should actually read.
+	//
+	// Note this does not change the ordinal pairing above: the segment still
+	// counts in `resultSegments`, only its optimistic render is suppressed.
+	if (result.isError) return {}
 
 	const key = `${sessionId}-final-${result.logId}`
 	const seenAt = firstSeen.get(key)
@@ -676,12 +689,30 @@ function mcpRepliesFromSession(
 	return messagesFromSession(messages, session).filter((m) => m.metadata?.source !== 'final_output')
 }
 
-/** This session's auto-posted end-of-turn messages, oldest first. */
+/**
+ * This session's auto-posted end-of-turn messages, oldest first.
+ *
+ * Counted against `resultSegments` by ordinal, so this must only include
+ * messages that a `result` envelope actually produced. An 'unanswered' retry
+ * notice is the one kind that never had one: the backend posts it precisely
+ * because the replayed turn never closed, and the transcript has already
+ * retracted the failed envelope that opened it (see `segmentActivityByMessage`).
+ * Counting it would leave `persistedFinalCount` permanently one ahead, and
+ * every later turn in the session would be read as already-persisted — so the
+ * agent's end-of-turn text would stop appearing until the next reload.
+ *
+ * The other retry notices are not excluded, and must not be: 'undeliverable'
+ * and 'unavailable' both leave the failed `result` envelope standing as a
+ * segment, so they still pair one-to-one.
+ */
 function finalOutputsFromSession(
 	messages: MessageResponse[],
 	session: SessionResponse,
 ): MessageResponse[] {
-	return messagesFromSession(messages, session).filter((m) => m.metadata?.source === 'final_output')
+	return messagesFromSession(messages, session).filter(
+		(m) =>
+			m.metadata?.source === 'final_output' && m.metadata?.final_output?.retry !== 'unanswered',
+	)
 }
 
 /**

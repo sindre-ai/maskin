@@ -67,6 +67,41 @@ test.describe('Marketplace composition chip row', () => {
 		await expect(agents.locator(CHIP_ROW)).toHaveCount(0)
 	})
 
+	for (const viewport of SHIP_GATE_VIEWPORTS) {
+		test(`no catalog card falls back to a raw item_type pill at ${viewport.label}`, async ({
+			page,
+			account,
+		}) => {
+			await page.setViewportSize({ width: viewport.width, height: viewport.height })
+			await page.goto(`/${account.workspaceId}/marketplace`)
+
+			const loopsSection = page.getByRole('region', { name: 'Loops' })
+			await expect(loopsSection).toBeVisible({ timeout: 20000 })
+
+			// Mockup 2593: a loop card that has no bundle composition to show
+			// still carries a chip row, naming the kind it installs. Nothing in
+			// the catalog may render the lowercase enum value instead.
+			await expect(
+				page.getByRole('main').getByText(/^(actor|trigger|skill|integration)$/),
+			).toHaveCount(0)
+
+			// Where the kind chip row does render, it reads as a label and wraps
+			// inside its card rather than overflowing it.
+			const kindRows = page.locator('[data-testid="kind-chip-row"]')
+			const kindRowCount = await kindRows.count()
+			for (let i = 0; i < kindRowCount; i++) {
+				const row = kindRows.nth(i)
+				await expect(row).toBeVisible()
+				await expect(row).toContainText(/Agent|Trigger|Skill|Integration/)
+				const overflow = await row.evaluate((el) => ({
+					scroll: (el as HTMLElement).scrollWidth,
+					client: (el as HTMLElement).clientWidth,
+				}))
+				expect(overflow.scroll).toBeLessThanOrEqual(overflow.client + 1)
+			}
+		})
+	}
+
 	test('hovering a composition chip surfaces the full component name in a tooltip', async ({
 		page,
 		account,

@@ -1,15 +1,17 @@
 import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
-// `new-design` boundary gate. The v2 Objects surfaces are flagged until they
-// have been tested, so both branches must render. The auth fixture seeds the
-// override on; these specs flip it off before boot to drive the pre-v2 branch,
-// which is what an actor outside FF_TESTER_ACTOR_IDS gets today.
+// `new-design` boundary gate. The v2 Objects, Search and Marketplace surfaces
+// are flagged until they have been tested, so both branches must render. The
+// auth fixture seeds the override on; these specs flip it off before boot to
+// drive the pre-v2 branch, which is what an actor outside FF_TESTER_ACTOR_IDS
+// gets today.
 //
-// The distinguishing marker is the detail surface's tab strip: v2 renders
-// Timeline / Related tabs, the pre-v2 document renders neither.
+// Each surface has its own distinguishing marker: the object detail's tab strip
+// (v2 renders Timeline / Related, the pre-v2 document renders neither), the
+// search field's label, and the marketplace filter's placeholder.
 
-test.describe('new-design flag — off renders the pre-v2 Objects surfaces', () => {
+test.describe('new-design flag — off renders the pre-v2 surfaces', () => {
 	// Depends on `account` on purpose: init scripts run in registration order,
 	// and a fixture requested only by the test body is instantiated *after* the
 	// hooks. Without this the auth fixture's `ff:new-design = 'on'` would
@@ -65,6 +67,42 @@ test.describe('new-design flag — off renders the pre-v2 Objects surfaces', () 
 		await page.getByText('Flag-off list bet').first().click()
 		await expect(page).toHaveURL(new RegExp(`/objects/${bet.id}`))
 		await expect(page.getByRole('tab', { name: 'Timeline' })).toHaveCount(0)
+	})
+
+	test('search falls back to the pre-v2 view', async ({ page, account }) => {
+		await page.goto(`/${account.workspaceId}/search`)
+
+		// The pre-v2 view has a single unfiltered input; v2 adds a back button,
+		// group/type/status filters, and a differently-labelled field.
+		await expect(page.getByRole('textbox', { name: 'Search the workspace' })).toBeVisible({
+			timeout: 10000,
+		})
+		await expect(page.getByRole('textbox', { name: 'Search', exact: true })).toHaveCount(0)
+		await expect(page.getByRole('button', { name: 'Filter by group' })).toHaveCount(0)
+	})
+
+	test('marketplace falls back to the pre-v2 catalogue and detail page', async ({
+		page,
+		account,
+	}) => {
+		await page.goto(`/${account.workspaceId}/marketplace`)
+
+		const filter = page.getByRole('searchbox', { name: 'Filter marketplace' })
+		await expect(filter).toHaveAttribute('placeholder', 'Search the marketplace…', {
+			timeout: 10000,
+		})
+
+		const loopsSection = page.getByRole('region', { name: 'Loops' })
+		await expect(loopsSection).toBeVisible()
+		await loopsSection
+			.getByRole('link')
+			.first()
+			.click({ position: { x: 10, y: 10 } })
+
+		await expect(page).toHaveURL(/\/marketplace\/[^/]+$/)
+		// v2-only sections on the loop detail page — absent on the pre-v2 branch.
+		await expect(page.getByText('The loop, once installed')).toHaveCount(0)
+		await expect(page.getByText('How it runs')).toHaveCount(0)
 	})
 })
 

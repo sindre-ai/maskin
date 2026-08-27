@@ -16,12 +16,14 @@ import {
 	useConnectIntegration,
 	useDisconnectIntegration,
 	useIntegrations,
+	useLinkGithubInstallation,
+	useLinkableGithubInstallations,
 	useProviders,
 } from '@/hooks/use-integrations'
 import type { IntegrationResponse, ProviderInfo } from '@/lib/api'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute } from '@tanstack/react-router'
-import { Check, Copy, Plus } from 'lucide-react'
+import { Check, Copy, Link2, Plus } from 'lucide-react'
 import { useState } from 'react'
 
 export const Route = createFileRoute('/_authed/$workspaceId/settings/integrations')({
@@ -34,7 +36,14 @@ function IntegrationsPage() {
 	const { data: integrations, isLoading: integrationsLoading } = useIntegrations(workspaceId)
 	const { data: providers, isLoading: providersLoading } = useProviders()
 
+	// GitHub only installs its App once per org, so a workspace that wants an org
+	// someone already connected elsewhere can't go through the install flow — it
+	// binds to the existing installation instead.
+	const { data: linkable } = useLinkableGithubInstallations(workspaceId)
+	const linkableCount = (linkable ?? []).filter((i) => !i.alreadyLinked).length
+
 	const isLoading = integrationsLoading || providersLoading
+	const [linkGithubOpen, setLinkGithubOpen] = useState(false)
 	const [apiKeyProvider, setApiKeyProvider] = useState<ProviderInfo | null>(null)
 	const [apiKey, setApiKey] = useState('')
 	const [manualConnect, setManualConnect] = useState<{
@@ -73,6 +82,8 @@ function IntegrationsPage() {
 									provider={provider}
 									installations={installations}
 									workspaceId={workspaceId}
+									linkableCount={linkableCount}
+									onRequestLink={() => setLinkGithubOpen(true)}
 								/>
 							)
 						}
@@ -89,6 +100,8 @@ function IntegrationsPage() {
 								onManualConnected={(webhookUrl, integrationId) =>
 									setManualConnect({ provider, webhookUrl, integrationId })
 								}
+								linkableCount={provider.name === 'github' ? linkableCount : 0}
+								onRequestLink={() => setLinkGithubOpen(true)}
 							/>
 						)
 					})}
@@ -109,6 +122,11 @@ function IntegrationsPage() {
 				state={manualConnect}
 				onClose={() => setManualConnect(null)}
 			/>
+			<LinkGithubDialog
+				workspaceId={workspaceId}
+				open={linkGithubOpen}
+				onClose={() => setLinkGithubOpen(false)}
+			/>
 		</div>
 	)
 }
@@ -119,12 +137,17 @@ function ProviderRow({
 	workspaceId,
 	onRequestApiKey,
 	onManualConnected,
+	linkableCount,
+	onRequestLink,
 }: {
 	provider: ProviderInfo
 	integration?: IntegrationResponse
 	workspaceId: string
 	onRequestApiKey: () => void
 	onManualConnected: (webhookUrl: string, integrationId: string) => void
+	/** Installations bindable to this workspace; 0 for every non-GitHub provider. */
+	linkableCount: number
+	onRequestLink: () => void
 }) {
 	const connect = useConnectIntegration(workspaceId)
 	const disconnect = useDisconnectIntegration(workspaceId)
@@ -178,9 +201,17 @@ function ProviderRow({
 					Disconnect
 				</Button>
 			) : (
-				<Button size="sm" className="shrink-0" onClick={handleConnect} disabled={connect.isPending}>
-					Connect
-				</Button>
+				<div className="flex shrink-0 items-center gap-2">
+					{linkableCount > 0 && (
+						<Button variant="outline" size="sm" onClick={onRequestLink}>
+							<Link2 className="mr-1 h-3.5 w-3.5" />
+							Add existing
+						</Button>
+					)}
+					<Button size="sm" onClick={handleConnect} disabled={connect.isPending}>
+						Connect
+					</Button>
+				</div>
 			)}
 		</div>
 	)
@@ -190,10 +221,14 @@ function GroupedProviderRow({
 	provider,
 	installations,
 	workspaceId,
+	linkableCount,
+	onRequestLink,
 }: {
 	provider: ProviderInfo
 	installations: IntegrationResponse[]
 	workspaceId: string
+	linkableCount: number
+	onRequestLink: () => void
 }) {
 	const connect = useConnectIntegration(workspaceId)
 	const disconnect = useDisconnectIntegration(workspaceId)
@@ -228,16 +263,29 @@ function GroupedProviderRow({
 							disconnecting={disconnect.isPending}
 						/>
 					))}
-					<Button
-						variant="outline"
-						size="sm"
-						className="w-full"
-						onClick={() => connect.mutate({ provider: provider.name })}
-						disabled={connect.isPending}
-					>
-						<Plus className="h-3.5 w-3.5 mr-1" />
-						Add another
-					</Button>
+					<div className="flex flex-col gap-2 md:flex-row">
+						<Button
+							variant="outline"
+							size="sm"
+							className="w-full md:flex-1"
+							onClick={() => connect.mutate({ provider: provider.name })}
+							disabled={connect.isPending}
+						>
+							<Plus className="h-3.5 w-3.5 mr-1" />
+							Add another
+						</Button>
+						{linkableCount > 0 && (
+							<Button
+								variant="outline"
+								size="sm"
+								className="w-full md:flex-1"
+								onClick={onRequestLink}
+							>
+								<Link2 className="h-3.5 w-3.5 mr-1" />
+								Add existing
+							</Button>
+						)}
+					</div>
 				</div>
 			)}
 		</div>
@@ -409,6 +457,82 @@ function SkjaldConnectDialog({
 						</div>
 					</div>
 				)}
+			</DialogContent>
+		</Dialog>
+	)
+}
+
+/** Bind a GitHub App installation the actor already reaches from one of their
+ *  other workspaces. GitHub refuses to re-run its install flow for an org that
+ *  already has the App, so this is the only path to a second workspace. */
+function LinkGithubDialog({
+	workspaceId,
+	open,
+	onClose,
+}: {
+	workspaceId: string
+	open: boolean
+	onClose: () => void
+}) {
+	const { data, isLoading } = useLinkableGithubInstallations(workspaceId)
+	const link = useLinkGithubInstallation(workspaceId)
+	const options = (data ?? []).filter((installation) => !installation.alreadyLinked)
+
+	return (
+		<Dialog open={open} onOpenChange={(next) => !next && onClose()}>
+			<DialogContent>
+				<DialogHeader>
+					<DialogTitle>Add an existing GitHub organization</DialogTitle>
+					<DialogDescription>
+						These organizations already have the Maskin GitHub App installed from another of your
+						workspaces. Adding one here reuses that installation — nothing changes on GitHub.
+					</DialogDescription>
+				</DialogHeader>
+				{isLoading ? (
+					<ListSkeleton />
+				) : options.length === 0 ? (
+					<EmptyState
+						title="Nothing to add"
+						description="Every organization you've connected is already in this workspace"
+					/>
+				) : (
+					<div className="space-y-2">
+						{options.map((installation) => (
+							<div
+								key={installation.installationId}
+								className="flex items-center gap-3 rounded-md border border-border bg-bg-surface p-3"
+							>
+								<div className="min-w-0 flex-1">
+									<p className="truncate text-sm font-medium text-foreground">
+										{installation.ownerLogin ?? `Installation ${installation.installationId}`}
+									</p>
+									<p className="truncate text-xs text-muted-foreground">
+										Installation {installation.installationId}
+									</p>
+								</div>
+								<Button
+									size="sm"
+									className="shrink-0"
+									onClick={() =>
+										link.mutate(installation.installationId, {
+											onSuccess: () => {
+												if (options.length === 1) onClose()
+											},
+										})
+									}
+									disabled={link.isPending}
+								>
+									Add
+								</Button>
+							</div>
+						))}
+					</div>
+				)}
+				<div className="flex justify-end">
+					<Button variant="ghost" onClick={onClose}>
+						Done
+					</Button>
+				</div>
 			</DialogContent>
 		</Dialog>
 	)

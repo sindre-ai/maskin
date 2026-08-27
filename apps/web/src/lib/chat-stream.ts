@@ -39,6 +39,13 @@ export type ChatEvent =
 			 * side-channel field in `parseUserMessage`.
 			 */
 			conversationMessageId?: number
+			/**
+			 * True when this envelope is the backend replaying a turn that failed
+			 * against the model API, not the human sending anything — read from
+			 * the `maskin_retry` side-channel field written by
+			 * `SessionManager.writeInput`'s retry caller.
+			 */
+			isRetry?: boolean
 	  }
 	| { kind: 'text'; text: string; sessionId?: string; messageId?: string }
 	| {
@@ -171,12 +178,14 @@ function parseUserMessage(envelope: Record<string, unknown>): ChatEvent[] {
 	const content = message.content
 	const attachments = parseMaskinAttachments(envelope.maskin_attachments)
 	const conversationMessageId = asNumber(envelope.maskin_message_id)
+	const isRetry = envelope.maskin_retry === true
 
 	const withAttachments = (text: string): ChatEvent => ({
 		kind: 'user',
 		text,
 		...(attachments.length > 0 ? { attachments } : {}),
 		...(conversationMessageId !== undefined ? { conversationMessageId } : {}),
+		...(isRetry ? { isRetry: true } : {}),
 	})
 
 	if (typeof content === 'string') {

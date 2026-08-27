@@ -1,3 +1,4 @@
+import type { LinkableGithubInstallation } from '@/lib/api'
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
@@ -21,12 +22,21 @@ vi.mock('@/lib/workspace-context', () => ({
 	useWorkspace: () => ({ workspaceId: 'ws-1' }),
 }))
 
+const mockUseLinkableGithub = vi.fn<
+	() => { data: LinkableGithubInstallation[]; isLoading: boolean }
+>(() => ({ data: [], isLoading: false }))
+const mockLinkGithub = vi.fn()
+
 vi.mock('@/hooks/use-integrations', () => ({
 	useIntegrations: (...args: unknown[]) => mockUseIntegrations(...args),
 	useProviders: () => mockUseProviders(),
 	useConnectIntegration: () => ({ mutate: mockConnect, isPending: false }),
 	useDisconnectIntegration: () => ({ mutate: mockDisconnect, isPending: false }),
 	useCompleteIntegration: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
+	// Default: nothing bindable, so the "Add existing" affordance stays hidden.
+	// Tests that exercise it override mockUseLinkableGithub.
+	useLinkableGithubInstallations: () => mockUseLinkableGithub(),
+	useLinkGithubInstallation: () => ({ mutate: mockLinkGithub, isPending: false }),
 }))
 
 vi.mock('@/components/shared/empty-state', () => ({
@@ -322,5 +332,44 @@ describe('IntegrationsPage', () => {
 			expect(screen.getByText('Connected as user@gmail.com')).toBeInTheDocument()
 			expect(screen.queryByText(/Installation /)).not.toBeInTheDocument()
 		})
+	})
+
+	it('offers "Add existing" only when a GitHub installation is bindable', async () => {
+		// GitHub installs its App once per org, so a workspace that wants an org
+		// already connected elsewhere binds the existing installation instead of
+		// running the install flow.
+		const user = userEvent.setup()
+		mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
+		mockUseProviders.mockReturnValue({
+			data: [{ name: 'github', displayName: 'GitHub', authType: 'oauth2_custom', events: [] }],
+			isLoading: false,
+		})
+		mockUseLinkableGithub.mockReturnValue({
+			data: [{ installationId: '4242', ownerLogin: 'acme-org', alreadyLinked: false }],
+			isLoading: false,
+		})
+		render(<IntegrationsPage />)
+
+		await user.click(screen.getByRole('button', { name: /Add existing/ }))
+		expect(screen.getByRole('dialog')).toBeInTheDocument()
+		expect(screen.getByText('acme-org')).toBeInTheDocument()
+
+		await user.click(screen.getByRole('button', { name: 'Add' }))
+		expect(mockLinkGithub).toHaveBeenCalledWith('4242', expect.anything())
+	})
+
+	it('hides "Add existing" when every reachable installation is already here', () => {
+		mockUseIntegrations.mockReturnValue({ data: [], isLoading: false })
+		mockUseProviders.mockReturnValue({
+			data: [{ name: 'github', displayName: 'GitHub', authType: 'oauth2_custom', events: [] }],
+			isLoading: false,
+		})
+		mockUseLinkableGithub.mockReturnValue({
+			data: [{ installationId: '99', ownerLogin: 'acme-org', alreadyLinked: true }],
+			isLoading: false,
+		})
+		render(<IntegrationsPage />)
+
+		expect(screen.queryByRole('button', { name: /Add existing/ })).not.toBeInTheDocument()
 	})
 })

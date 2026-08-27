@@ -98,6 +98,7 @@ export function CommandPalette() {
 	const triggerRef = useRef<HTMLElement | null>(null)
 
 	const [query, setQuery] = useState('')
+	const [selected, setSelected] = useState('')
 	const [debouncedQuery, setDebouncedQuery] = useState('')
 	const queryRef = useRef(query)
 	useEffect(() => {
@@ -431,6 +432,18 @@ export function CommandPalette() {
 		{ label: 'Search', rows: [searchTerminalRow] },
 	].filter((group) => group.rows.length > 0)
 
+	// cmdk keeps its highlight on whatever row it first selected. The jump rows
+	// arrive one debounce after the query is typed, so without this the Search
+	// row (the only row while the index is still loading) stays highlighted and
+	// ↵ hands off to /search instead of opening the top match. Re-point the
+	// selection at the first row whenever the top row changes; arrowing down
+	// moves `selected` without touching `firstRowId`, so it never clobbers a
+	// deliberate selection.
+	const firstRowId = groups[0]?.rows[0]?.id
+	useEffect(() => {
+		if (firstRowId) setSelected(firstRowId)
+	}, [firstRowId])
+
 	return (
 		<>
 			{open && (
@@ -451,6 +464,8 @@ export function CommandPalette() {
 					>
 						<Command
 							shouldFilter={false}
+							value={selected}
+							onValueChange={setSelected}
 							className="w-full max-sm:min-h-0 max-sm:flex-1 max-sm:flex max-sm:flex-col"
 						>
 							<div className="flex items-center gap-2 border-b border-border px-3.5">
