@@ -91,6 +91,71 @@ export const workspaceMembers = pgTable(
 	(t) => [primaryKey({ columns: [t.workspaceId, t.actorId] })],
 )
 
+// ── Workspace Invitations ──────────────────────────────────────────────────
+// Email-based invites into a workspace. The admin flow inserts a pending row
+// and dispatches an email carrying an opaque token; the invitee redeems the
+// token to attach (existing actor) or sign up + attach (new actor). Only the
+// SHA-256 of the token lives here — the raw string only ever appears in the
+// email URL and the accept-request path parameter. See bet
+// 6fe44b48-3939-4c29-80cf-533b4976601c for the shape.
+
+export const workspaceInvitations = pgTable(
+	'workspace_invitations',
+	{
+		id: uuid('id').defaultRandom().primaryKey(),
+		workspaceId: uuid('workspace_id')
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		// Case-preserving on storage so the members list can render the email
+		// exactly as the admin typed it; case-insensitive uniqueness for the
+		// pending-per-workspace-per-email guard is enforced by the partial
+		// unique index on `lower(email)` below.
+		email: text('email').notNull(),
+		// 'member' | 'viewer'. Owner is deliberately excluded from the invite
+		// flow — ownership is transferred via POST /api/workspaces/:id/transfer-ownership.
+		role: text('role').notNull(),
+		// SHA-256 (hex) of the opaque token from the invite URL. Defense in
+		// depth against DB dumps and query-log leaks: a leaked hash cannot be
+		// redeemed. Never store the raw token.
+		tokenHash: text('token_hash').notNull(),
+		invitedByActorId: uuid('invited_by_actor_id')
+			.notNull()
+			.references(() => actors.id, { onDelete: 'restrict' }),
+		// 'pending' | 'accepted' | 'revoked' | 'expired'
+		status: text('status').notNull().default('pending'),
+		expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+		acceptedAt: timestamp('accepted_at', { withTimezone: true }),
+		acceptedByActorId: uuid('accepted_by_actor_id').references(() => actors.id, {
+			onDelete: 'set null',
+		}),
+		revokedAt: timestamp('revoked_at', { withTimezone: true }),
+		revokedByActorId: uuid('revoked_by_actor_id').references(() => actors.id, {
+			onDelete: 'set null',
+		}),
+		// Free-form audit context, e.g. { email_mismatch: true } when an
+		// invitee accepted from a signed-in actor whose email differs from
+		// the invite email.
+		metadata: jsonb('metadata').$type<Record<string, unknown>>().notNull().default({}),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+	},
+	(t) => [
+		// Token lookup on POST /api/invites/:token/accept.
+		index('workspace_invitations_token_hash_idx').on(t.tokenHash),
+		// "Does this workspace already have a pending invite for ada@example.com?"
+		// Case-insensitive via a functional index on lower(email); scoped to
+		// pending so a revoked/expired row does not block a re-invite.
+		uniqueIndex('workspace_invitations_pending_ws_email_uniq')
+			.on(t.workspaceId, sql`lower(${t.email})`)
+			.where(sql`status = 'pending'`),
+		// Drives GET /api/invites?workspaceId=… (members-list pending row shape).
+		index('workspace_invitations_workspace_status_idx').on(t.workspaceId, t.status),
+	],
+)
+
+export type WorkspaceInvitation = typeof workspaceInvitations.$inferSelect
+export type NewWorkspaceInvitation = typeof workspaceInvitations.$inferInsert
+
 // ── Objects ─────────────────────────────────────────────────────────────────
 
 export const objects = pgTable(
