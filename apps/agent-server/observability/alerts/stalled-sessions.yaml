@@ -90,7 +90,7 @@ groups:
           service: agent-server
         annotations:
           summary: >-
-            {{ $labels.instance }}: {{ $value }} interactive session(s) live with no turn
+            {{ $labels.instance }}: {{ $values.stalled.Value }} interactive session(s) live with no turn
             ever delivered and no output.
           description: >-
             An interactive session has been alive past the stall threshold with zero turns
@@ -145,7 +145,7 @@ groups:
           service: agent-server
         annotations:
           summary: >-
-            {{ $labels.instance }}: {{ $value }} session(s) with a user turn the guest never
+            {{ $labels.instance }}: {{ $values.stalled.Value }} session(s) with a user turn the guest never
             acknowledged.
           description: >-
             A user turn was delivered to the input queue and the guest's acked high-water

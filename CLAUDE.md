@@ -34,6 +34,10 @@ Don't skip steps 2 or 5. The API key and workspace id only exist after the dev s
 ## Reference
 - `docs/reference/README.md` — Canonical documentation for Maskin's primitives — read the matching page before trusting model memory.
 
+## Observability
+- `apps/agent-server/observability/README.md` — for a host running agent-server as a systemd unit: journald logs, host metrics, `/metrics` scrape, stalled-session alerts
+- `observability/coolify-host/README.md` — for a host running `docker-compose.prod.yml` under Coolify: Docker logs, host metrics, SeaweedFS metrics, disk-headroom alerts. Both configs read every deployment-specific value from the environment — keep it that way.
+
 ## Runbooks
 - `docs/runbooks/github-agent-merge-reliability.md` — diagnostic + recovery guide for GitHub write-path failures (approve, merge, push, PR open) in autonomous agent sessions; includes the first-move pattern for late-run 401s (token-mint delta, installation-ID churn) and the failure-tag glossary set by the tool-call layer
 

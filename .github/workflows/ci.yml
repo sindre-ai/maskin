@@ -11,6 +11,58 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Config-only gate. The Alloy configs and Grafana alert rules under
+  # observability/ are shipped as text and applied by hand — nothing in the
+  # build or the test suite ever parses them, so without this job their first
+  # syntax check is a human pasting them onto a production box.
+  #
+  # It is deliberately cheap and has no dependency on the pnpm workspace, so it
+  # gives a signal in well under a minute rather than waiting on a full install.
+  observability-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      # `alloy validate` catches syntax and component-graph errors — an
+      # undefined component reference, a bad argument name, a forward_to
+      # pointing at something that does not exist. Run in the same container
+      # image the hosts run, so a version-specific rejection surfaces here.
+      #
+      # NOTE WHAT IT CANNOT CATCH, because this is the recurring trap in this
+      # directory: a config that validates cleanly and still matches nothing.
+      # Discovery returning zero targets, a `job` label set upstream of the
+      # component that overwrites it, an allowlist regex that excludes every
+      # real container — all of these are "valid". See
+      # .claude/rules/known-pitfalls.md, "A Healthy Collector Component That
+      # Silently Matches Nothing". This job is a floor, not a proof.
+      - name: alloy validate
+        env:
+          ALLOY_IMAGE: grafana/alloy:v1.19.0
+        run: |
+          set -euo pipefail
+          for cfg in apps/agent-server/observability/alloy.alloy observability/coolify-host/alloy.alloy; do
+            echo "==> $cfg"
+            docker run --rm -v "$PWD:/w" -w /w "$ALLOY_IMAGE" validate "$cfg"
+          done
+
+      - name: Install promtool
+        env:
+          PROMETHEUS_VERSION: 2.55.1
+        run: |
+          set -euo pipefail
+          tarball="prometheus-${PROMETHEUS_VERSION}.linux-amd64"
+          url="https://github.com/prometheus/prometheus/releases/download/v${PROMETHEUS_VERSION}/${tarball}.tar.gz"
+          curl -sSfL "$url" | sudo tar xz --strip-components=1 -C /usr/local/bin "${tarball}/promtool"
+          promtool --version
+
+      # Validates the Grafana alert rules: PromQL syntax via promtool, plus the
+      # structural invariants promtool cannot see because these are unified
+      # alerting files rather than Prometheus rule files. See the script header.
+      - name: Validate alert rules
+        run: |
+          pip install --quiet pyyaml
+          python observability/validate-alerts.py
+
   lint-typecheck:
     runs-on: ubuntu-latest
     steps:
