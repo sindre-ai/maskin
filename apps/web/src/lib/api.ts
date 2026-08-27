@@ -359,6 +359,11 @@ export const api = {
 					method: 'POST',
 					body: data,
 				}),
+			updateRole: (workspaceId: string, actorId: string, role: string) =>
+				request<MemberResponse>(`/workspaces/${workspaceId}/members/${actorId}`, {
+					method: 'PATCH',
+					body: { role },
+				}),
 			remove: (workspaceId: string, actorId: string) =>
 				request<{ removed: true }>(`/workspaces/${workspaceId}/members/${actorId}`, {
 					method: 'DELETE',

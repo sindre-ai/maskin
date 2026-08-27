@@ -562,6 +562,7 @@ describe('checkPlanCap', () => {
 			db,
 			workspaceId: 'ws-1',
 			wsSettings: emptySettings(),
+			enterprise: false,
 		}).catch((e) => e)
 		expect(err).toBeInstanceOf(PlanCapExceededError)
 		expect(err.plan).toBe('trial')
@@ -573,7 +574,7 @@ describe('checkPlanCap', () => {
 		settings.billing = { plan: 'enterprise', hard_cap_usd_cents: 100, period_start: 0 }
 		const db = dbWithSessionUsage([{ totalCostUsd: '99.00', inputTokens: 0, outputTokens: 0 }])
 		await expect(
-			checkPlanCap({ db, workspaceId: 'ws-1', wsSettings: settings }),
+			checkPlanCap({ db, workspaceId: 'ws-1', wsSettings: settings, enterprise: false }),
 		).resolves.toBeUndefined()
 	})
 
@@ -594,7 +595,7 @@ describe('checkPlanCap', () => {
 			const overCapUsd = ((capCents + 1) / 100).toFixed(2)
 			const db = dbWithSessionUsage([{ totalCostUsd: overCapUsd, inputTokens: 0, outputTokens: 0 }])
 			await expect(
-				checkPlanCap({ db, workspaceId: 'ws-1', wsSettings: settings }),
+				checkPlanCap({ db, workspaceId: 'ws-1', wsSettings: settings, enterprise: false }),
 			).rejects.toBeInstanceOf(PlanCapExceededError)
 		},
 	)
@@ -612,7 +613,7 @@ describe('checkPlanCap', () => {
 				{ totalCostUsd: underCapUsd, inputTokens: 0, outputTokens: 0 },
 			])
 			await expect(
-				checkPlanCap({ db, workspaceId: 'ws-1', wsSettings: settings }),
+				checkPlanCap({ db, workspaceId: 'ws-1', wsSettings: settings, enterprise: false }),
 			).resolves.toBeUndefined()
 		},
 	)
@@ -633,6 +634,7 @@ describe('checkPlanCap', () => {
 			db,
 			workspaceId: 'ws-1',
 			wsSettings: settings,
+			enterprise: false,
 		}).catch((e) => e)
 		expect(err).toBeInstanceOf(PlanCapExceededError)
 		expect(err.plan).toBe('pro')
@@ -656,6 +658,7 @@ describe('checkPlanCap', () => {
 			db,
 			workspaceId: 'ws-1',
 			wsSettings: settings,
+			enterprise: false,
 		}).catch((e) => e)
 		expect(err).toBeInstanceOf(PlanCapExceededError)
 		expect(err.periodEnd).toBe(999_999 * 1000)
@@ -670,6 +673,7 @@ describe('checkPlanCap', () => {
 			db,
 			workspaceId: 'ws-1',
 			wsSettings: settings,
+			enterprise: false,
 		}).catch((e) => e)
 		expect(err).toBeInstanceOf(PlanCapExceededError)
 		expect(err.plan).toBe('trial')
@@ -684,7 +688,7 @@ describe('checkPlanCap', () => {
 		settings.billing = { plan: 'trial' }
 		const db = dbWithSessionUsage([{ totalCostUsd: '10.00', inputTokens: 0, outputTokens: 0 }])
 		await expect(
-			checkPlanCap({ db, workspaceId: 'ws-1', wsSettings: settings }),
+			checkPlanCap({ db, workspaceId: 'ws-1', wsSettings: settings, enterprise: false }),
 		).rejects.toBeInstanceOf(PlanCapExceededError)
 	})
 
@@ -695,7 +699,7 @@ describe('checkPlanCap', () => {
 		const db = dbWithSessionUsage([{ totalCostUsd: '0.60', inputTokens: 0, outputTokens: 0 }])
 		// Used (60¢) is below explicit cap (200¢) even though it exceeds env default (50¢).
 		await expect(
-			checkPlanCap({ db, workspaceId: 'ws-1', wsSettings: settings }),
+			checkPlanCap({ db, workspaceId: 'ws-1', wsSettings: settings, enterprise: false }),
 		).resolves.toBeUndefined()
 	})
 

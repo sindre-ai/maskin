@@ -2,7 +2,6 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { useAvailableObjectTypes } from '@/hooks/use-available-object-types'
 import { useUpdateWorkspace } from '@/hooks/use-workspaces'
 import { cn } from '@/lib/cn'
@@ -80,21 +79,20 @@ function ObjectsPage() {
 
 	return (
 		<div>
-			{/* Properties section */}
-			<h2 className="text-sm font-medium text-foreground mb-4">Properties</h2>
+			<h2 className="eyebrow mb-3">Properties</h2>
 
 			<div className="flex flex-col gap-3 mb-4 sm:flex-row sm:items-center sm:justify-between">
 				<div className="-mx-1 overflow-x-auto px-1">
-					<div className="inline-flex rounded-md border border-border">
+					<div className="inline-flex rounded-lg border border-border">
 						{objectTypes.map((type) => (
 							<button
 								key={type}
 								type="button"
 								className={cn(
-									'whitespace-nowrap px-3 py-1.5 text-sm capitalize transition-colors first:rounded-l-md last:rounded-r-md',
+									'whitespace-nowrap px-3 py-1.5 text-sm capitalize transition-colors first:rounded-l-lg last:rounded-r-lg',
 									activeType === type
-										? 'bg-primary text-primary-foreground'
-										: 'bg-background text-muted-foreground hover:bg-muted',
+										? 'bg-foreground text-background'
+										: 'bg-background text-muted-foreground hover:bg-secondary hover:text-foreground',
 								)}
 								onClick={() => setActiveType(type)}
 							>
@@ -117,7 +115,7 @@ function ObjectsPage() {
 			</div>
 
 			{showAdd && (
-				<div className="mb-4 rounded-lg border border-border bg-card p-4 space-y-3">
+				<div className="mb-4 rounded-xl border border-border bg-card p-4 shadow-sm space-y-3">
 					<Input
 						type="text"
 						value={newName}
@@ -170,7 +168,7 @@ function ObjectsPage() {
 							to="/$workspaceId/settings/objects/$propertyName"
 							params={{ workspaceId, propertyName: field.name }}
 							search={{ type: activeType }}
-							className="flex items-center gap-3 rounded-lg border border-border bg-card p-4 hover:bg-accent/50 transition-colors"
+							className="flex items-center gap-3 rounded-xl border border-border bg-card p-4 shadow-sm transition-colors hover:border-border-strong hover:shadow-md"
 						>
 							<div className="flex-1">
 								<p className="text-sm font-medium text-foreground">{field.name}</p>
@@ -230,12 +228,12 @@ function RelationshipTypesEditor({
 
 	return (
 		<div>
-			<Label className="mb-2 text-muted-foreground">Relationship types</Label>
+			<h2 className="eyebrow mb-3">Relationship types</h2>
 			<div className="flex flex-wrap gap-1.5 mb-2">
 				{relationshipTypes.map((type) => (
 					<span
 						key={type}
-						className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground"
+						className="inline-flex h-7 items-center gap-1 rounded-full border border-border bg-secondary px-3 text-xs text-foreground"
 					>
 						{type.replace(/_/g, ' ')}
 						<button

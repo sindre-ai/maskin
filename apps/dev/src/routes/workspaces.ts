@@ -904,6 +904,189 @@ app.openapi(transferOwnershipRoute, (async (c) => {
 	}
 }) as RouteHandler<typeof transferOwnershipRoute, Env>)
 
+// PATCH /api/workspaces/:id/members/:actorId — change a member's role
+const updateMemberParamsSchema = idParamSchema.extend({ actorId: z.string().uuid() })
+
+// Deliberately excludes 'owner'. Billing ownership is claimed through
+// POST /{id}/transfer-ownership, which locks the actor row and enforces the
+// plan's ownership cap; accepting 'owner' here would be a second, unguarded
+// path to the same state and would let a workspace exceed that cap.
+const updateMemberBodySchema = z.object({
+	role: z.enum(['admin', 'member']),
+})
+
+const updateMemberRoute = createRoute({
+	method: 'patch',
+	path: '/{id}/members/{actorId}',
+	tags: ['workspaces'],
+	summary: "Change a workspace member's role (admin/member; owner via transfer-ownership)",
+	request: {
+		params: updateMemberParamsSchema,
+		body: {
+			content: {
+				'application/json': {
+					schema: updateMemberBodySchema,
+				},
+			},
+		},
+	},
+	responses: {
+		200: {
+			description: 'Member role updated',
+			content: { 'application/json': { schema: memberResponseSchema } },
+		},
+		400: {
+			description: 'Would leave the workspace without an owner, or targets the caller',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		403: {
+			description: 'Caller is not a human admin or owner of this workspace',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+		404: {
+			description: 'Member not found in this workspace',
+			content: { 'application/json': { schema: errorSchema } },
+		},
+	},
+})
+
+app.openapi(updateMemberRoute, (async (c) => {
+	const db = c.get('db')
+	const callerId = c.get('actorId')
+	const { id: workspaceId, actorId } = c.req.valid('param')
+	const { role } = c.req.valid('json')
+
+	// Role management is an admin/owner action — a plain member changing other
+	// people's roles would be a privilege-escalation path.
+	if (!(await isWorkspaceHumanAdminOrOwner(db, callerId, workspaceId))) {
+		return c.json(
+			createApiError('FORBIDDEN', 'Only a workspace admin or owner can change member roles'),
+			403,
+		)
+	}
+
+	if (callerId === actorId) {
+		return c.json(
+			createApiError('BAD_REQUEST', 'Use account settings to manage your own membership'),
+			400,
+		)
+	}
+
+	const result = await db.transaction(async (tx) => {
+		// Lock the workspace row first, before anything else in this transaction.
+		// It is the single serialization point for every membership change in this
+		// workspace, which buys two things:
+		//
+		//  1. The billing-owner check below is evaluated under the same lock that
+		//     transfer-ownership takes, so a concurrent transfer cannot commit
+		//     between the check and the UPDATE and leave `billing_owner_id`
+		//     pointing at a member we just demoted.
+		//  2. Two concurrent demotions can no longer deadlock. They previously
+		//     locked the target member row first and the owner set second, so a
+		//     pair demoting each other's target acquired the same two locks in
+		//     opposite orders; Postgres broke the cycle with a 40P01, surfacing as
+		//     a 500. Taking the workspace row first gives every writer one
+		//     well-known first lock, so they queue instead of deadlocking.
+		const [ws] = await tx
+			.select({ billingOwnerId: workspaces.billingOwnerId })
+			.from(workspaces)
+			.where(eq(workspaces.id, workspaceId))
+			.for('update')
+			.limit(1)
+		if (!ws) return { kind: 'not_found' } as const
+
+		// The billing owner's role is Stripe's business: demoting them here would
+		// leave `workspaces.billing_owner_id` pointing at a non-owner. Ownership
+		// moves through transfer-ownership, which relocates both together.
+		if (ws.billingOwnerId === actorId) return { kind: 'billing_owner' } as const
+
+		// Read the target's role under a row lock, inside the same transaction that
+		// performs the UPDATE, so it cannot be stale by the time we write.
+		const [locked] = await tx
+			.select({ role: workspaceMembers.role })
+			.from(workspaceMembers)
+			.where(
+				and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.actorId, actorId)),
+			)
+			.for('update')
+			.limit(1)
+		if (!locked) return { kind: 'not_found' } as const
+
+		// `role` is admin|member here, so reaching this branch is always a demotion.
+		// The workspace-row lock above already serializes concurrent demotions, so
+		// this count is evaluated after any competing demotion has committed and
+		// reflects the reduced owner set rather than a stale one.
+		if (locked.role === 'owner') {
+			const owners = await tx
+				.select({ actorId: workspaceMembers.actorId })
+				.from(workspaceMembers)
+				.where(
+					and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.role, 'owner')),
+				)
+			if (owners.length <= 1) {
+				return { kind: 'last_owner_error' } as const
+			}
+		}
+
+		const [u] = await tx
+			.update(workspaceMembers)
+			.set({ role })
+			.where(
+				and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.actorId, actorId)),
+			)
+			.returning({
+				actorId: workspaceMembers.actorId,
+				role: workspaceMembers.role,
+				joinedAt: workspaceMembers.joinedAt,
+			})
+
+		if (!u) return { kind: 'not_found' } as const
+
+		const [a] = await tx
+			.select({ name: actors.name, type: actors.type })
+			.from(actors)
+			.where(eq(actors.id, actorId))
+			.limit(1)
+
+		await tx.insert(events).values({
+			workspaceId,
+			actorId: callerId,
+			action: 'updated',
+			entityType: 'workspace_member',
+			entityId: actorId,
+			data: { role: { from: locked.role, to: role } },
+		})
+
+		return { kind: 'success', updated: u, actor: a } as const
+	})
+
+	if (result.kind === 'billing_owner') {
+		return c.json(
+			createApiError(
+				'BAD_REQUEST',
+				"Transfer billing ownership before changing this member's role",
+			),
+			400,
+		)
+	}
+	if (result.kind === 'last_owner_error') {
+		return c.json(createApiError('BAD_REQUEST', 'Cannot demote the last owner of a workspace'), 400)
+	}
+	if (result.kind === 'not_found') {
+		return c.json(createApiError('NOT_FOUND', 'Member not found in this workspace'), 404)
+	}
+
+	return c.json(
+		serialize({
+			actorId: result.updated.actorId,
+			role: result.updated.role,
+			joinedAt: result.updated.joinedAt,
+			name: result.actor?.name ?? '',
+			type: result.actor?.type ?? '',
+		}) as z.infer<typeof memberResponseSchema>,
+	)
+}) as RouteHandler<typeof updateMemberRoute, Env>)
+
 // DELETE /api/workspaces/:id/members/:actorId
 const removeMemberParamsSchema = idParamSchema.extend({ actorId: z.string().uuid() })
 

@@ -98,7 +98,12 @@ export const workspaceSettingsSchema = z.object({
 		.array(z.string())
 		.default(['informs', 'breaks_into', 'blocks', 'relates_to', 'duplicates']),
 	custom_extensions: z.record(customExtensionEntrySchema).default({}),
-	enabled_modules: z.array(z.string()).default(['work', 'crm', 'knowledge']),
+	// Extensions a brand-new workspace ships with. Existing workspace rows that
+	// predate an id being added here keep whatever they stored — this default
+	// only applies when settings are parsed at creation time (POST /workspaces,
+	// signup in routes/actors.ts). The runtime fallback for rows with no
+	// `enabled_modules` at all stays `['work']` (module-sdk `getEnabledModuleIds`).
+	enabled_modules: z.array(z.string()).default(['work', 'knowledge', 'crm']),
 	max_concurrent_sessions: z.coerce.number().int().min(1).max(50).default(3),
 	// Chat sessions bypass max_concurrent_sessions entirely (a live human is
 	// waiting), but still need *some* aggregate ceiling so a workspace with

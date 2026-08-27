@@ -49,8 +49,12 @@ const routeConfig: Record<string, RouteConfig> = {
 		parent: '/_authed/$workspaceId/settings/',
 	},
 	'/_authed/$workspaceId/settings/': { label: 'Settings' },
+	// "Keys", not "Billing": v2 moved billing to its own route below, and this
+	// static map has no flag access, so a shared label would leave two routes
+	// claiming the same crumb. Under the pre-v2 nav this page is still labelled
+	// "Billing" in the sidebar — the crumb names the page's contents instead.
 	'/_authed/$workspaceId/settings/keys': {
-		label: 'Billing',
+		label: 'Keys',
 		parent: '/_authed/$workspaceId/settings/',
 	},
 	'/_authed/$workspaceId/settings/members': {

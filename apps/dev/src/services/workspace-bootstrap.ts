@@ -11,7 +11,7 @@ import {
 	workspaceSkills,
 	workspaces,
 } from '@maskin/db/schema'
-import { mergeModuleDefaultSettings } from '@maskin/module-sdk'
+import { applyModuleDefaults } from '@maskin/module-sdk'
 import {
 	CHIEF_OF_STAFF_DEFAULT,
 	DEFAULT_WORKSPACE_AGENTS,
@@ -690,7 +690,7 @@ export async function provisionWorkspace(params: {
 			: params.settings
 
 	const parsedSettings = workspaceSettingsSchema.parse(requestedSettings ?? {})
-	const settings = mergeModuleDefaultSettings(parsedSettings, parsedSettings.enabled_modules)
+	const settings = applyModuleDefaults(parsedSettings, parsedSettings.enabled_modules)
 
 	let chiefOfStaffId: string | undefined
 

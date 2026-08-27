@@ -61,6 +61,12 @@ a sibling `legacy/` directory that dies with the flag:
 | `marketplace/index.tsx` | `components/marketplace/legacy/` |
 | `marketplace/$loopId/index.tsx` | `components/marketplace/legacy/` |
 | `marketplace/$loopId/$itemId.tsx` | `components/marketplace/legacy/` |
+| `settings.tsx` | `components/settings/legacy/settings-nav.tsx` |
+| `settings/index.tsx` | `components/settings/legacy/general-page.tsx` |
+| `settings/members.tsx` | `components/settings/legacy/members-page.tsx` |
+| `settings/keys.tsx` | same page, plus the plan card v2 moved to `settings/billing.tsx` |
+| `settings/billing.tsx` | no pre-v2 route — redirects to `settings/keys` |
+| `settings/extensions.tsx` | no pre-v2 route — redirects to `settings` |
 
 Note what is *not* behind it: the routes' `validateSearch`, the shared filter and
 grouping helpers, `useWorkspaceSearch`, the marketplace hooks, and the additive

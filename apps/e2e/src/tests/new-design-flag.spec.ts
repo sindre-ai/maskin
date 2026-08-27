@@ -1,7 +1,7 @@
 import { expect, test } from '../fixtures/auth.fixture'
 import { SHIP_GATE_VIEWPORTS } from '../helpers/viewports'
 
-// `new-design` boundary gate. The v2 Objects, Search and Marketplace surfaces
+// `new-design` boundary gate. The v2 Objects, Search, Marketplace and Settings surfaces
 // are flagged until they have been tested, so both branches must render. The
 // auth fixture seeds the override on; these specs flip it off before boot to
 // drive the pre-v2 branch, which is what an actor outside FF_TESTER_ACTOR_IDS
@@ -104,9 +104,30 @@ test.describe('new-design flag — off renders the pre-v2 surfaces', () => {
 		await expect(page.getByText('The loop, once installed')).toHaveCount(0)
 		await expect(page.getByText('How it runs')).toHaveCount(0)
 	})
+
+	test('settings falls back to the pre-v2 nav, and the v2-only routes redirect', async ({
+		page,
+		account,
+	}) => {
+		await page.goto(`/${account.workspaceId}/settings`)
+
+		// Pre-v2 nav: Skills and MCP are present, Extensions and a standalone
+		// Billing route are not — v2 dropped the first pair and added the second.
+		await expect(page.getByRole('link', { name: 'Skills' })).toBeVisible({ timeout: 10000 })
+		await expect(page.getByRole('link', { name: 'MCP' })).toBeVisible()
+		await expect(page.getByRole('link', { name: 'Extensions' })).toHaveCount(0)
+
+		// Pre-v2 "Billing" points at Keys, which is where the plan card lives on
+		// this branch. Reaching /settings/billing directly lands there too.
+		await page.goto(`/${account.workspaceId}/settings/billing`)
+		await expect(page).toHaveURL(new RegExp(`/${account.workspaceId}/settings/keys$`))
+
+		await page.goto(`/${account.workspaceId}/settings/extensions`)
+		await expect(page).toHaveURL(new RegExp(`/${account.workspaceId}/settings$`))
+	})
 })
 
-test.describe('new-design flag — on renders the v2 Objects surfaces', () => {
+test.describe('new-design flag — on renders the v2 surfaces', () => {
 	test('object detail shows the v2 tab strip', async ({ page, account }) => {
 		const bet = await account.api.createObject(account.workspaceId, {
 			type: 'bet',
@@ -117,5 +138,13 @@ test.describe('new-design flag — on renders the v2 Objects surfaces', () => {
 		await page.goto(`/${account.workspaceId}/objects/${bet.id}`)
 
 		await expect(page.getByRole('tab', { name: 'Timeline' })).toBeVisible()
+	})
+
+	test('settings shows the v2 six-section nav', async ({ page, account }) => {
+		await page.goto(`/${account.workspaceId}/settings`)
+
+		await expect(page.getByRole('link', { name: 'Extensions' })).toBeVisible({ timeout: 10000 })
+		await expect(page.getByRole('link', { name: 'Billing' })).toBeVisible()
+		await expect(page.getByRole('link', { name: 'MCP' })).toHaveCount(0)
 	})
 })

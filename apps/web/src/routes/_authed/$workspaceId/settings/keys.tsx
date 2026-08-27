@@ -1,4 +1,5 @@
 import { BillingSection } from '@/components/settings/billing-section'
+import { EmptyState } from '@/components/shared/empty-state'
 import { FormError } from '@/components/shared/form-error'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
@@ -6,6 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Switch } from '@/components/ui/switch'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useUpdateWorkspace } from '@/hooks/use-workspaces'
 import {
 	type ClaudeOAuthImportInput,
@@ -18,7 +20,7 @@ import { cn } from '@/lib/cn'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { createFileRoute } from '@tanstack/react-router'
+import { Link, createFileRoute } from '@tanstack/react-router'
 import { ChevronDown, ChevronRight, Eye, EyeOff, Pencil, Unplug } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
@@ -30,13 +32,18 @@ export const Route = createFileRoute('/_authed/$workspaceId/settings/keys')({
 function KeysPage() {
 	const { workspace, workspaceId } = useWorkspace()
 	const enterprise = Boolean(workspace.enterprise)
+	// `new-design` boundary for Settings → Keys. v2 moved the plan/credits card
+	// out to its own Billing route; with the flag off it still belongs here,
+	// because the pre-v2 nav links "Billing" at this path and nowhere else.
+	const newDesign = useFeatureFlag('new-design')
 
 	return (
 		<div className="space-y-6">
-			<div className="max-w-4xl">
-				<BillingSection workspaceId={workspaceId} enterprise={enterprise} />
-			</div>
-
+			{!newDesign && (
+				<div className="max-w-4xl">
+					<BillingSection workspaceId={workspaceId} enterprise={enterprise} />
+				</div>
+			)}
 			{enterprise ? (
 				<div className="max-w-lg space-y-6">
 					<div className="border-t border-border pt-6">
@@ -51,6 +58,23 @@ function KeysPage() {
 						<CustomLlmEditor workspace={workspace} workspaceId={workspaceId} />
 					</div>
 				</div>
+			) : newDesign ? (
+				// With the flag off, `BillingSection` above already fills this page. With
+				// it on, billing moved to its own route and every remaining section is
+				// gated on `enterprise` — so a workspace without that grant rendered
+				// a blank page. `byollm_allowed` is an ops grant, not a self-serve
+				// toggle, so this says who enables it instead of offering a dead button.
+				<EmptyState
+					title="Bring-your-own-LLM isn't enabled for this workspace"
+					description="Agents run on your Maskin plan. Connecting your own Claude subscription, API keys or a custom endpoint is enabled per workspace by Maskin."
+					action={
+						<Button variant="outline" size="sm" asChild>
+							<Link to="/$workspaceId/settings/billing" params={{ workspaceId }}>
+								View plan and usage
+							</Link>
+						</Button>
+					}
+				/>
 			) : null}
 		</div>
 	)
@@ -276,7 +300,7 @@ function SlotCard({
 
 	return (
 		<div
-			className="rounded-lg border border-border bg-bg-surface p-3 space-y-2"
+			className="rounded-lg border border-border bg-card p-3 space-y-2"
 			data-slot={slot}
 			data-testid={`slot-${slot}`}
 		>

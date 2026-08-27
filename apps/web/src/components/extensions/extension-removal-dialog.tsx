@@ -63,8 +63,10 @@ export function ExtensionRemovalDialog({
 	)
 
 	// Per-type counts. Skip query when the dialog isn't open.
-	// Fetch one extra row past the cap so we can show "100+" instead of an
-	// undercount when the user has more objects than the page size.
+	// `limit` is capped at 100 by the objects list schema, so ask for exactly
+	// that: a full page means "at least 100", which renders as "100+" rather
+	// than a figure we can't stand behind. Asking for 101 fails validation and
+	// leaves every count undefined, which used to keep Confirm disabled forever.
 	const COUNT_CAP = 100
 	const countQueries = useQueries({
 		queries: affectedTypes.map((type) => ({
@@ -72,16 +74,18 @@ export function ExtensionRemovalDialog({
 			queryFn: async () => {
 				const rows = await api.objects.list(workspaceId, {
 					type,
-					limit: String(COUNT_CAP + 1),
+					limit: String(COUNT_CAP),
 				})
-				return { count: Math.min(rows.length, COUNT_CAP), hasMore: rows.length > COUNT_CAP }
+				return { count: rows.length, hasMore: rows.length >= COUNT_CAP }
 			},
 			enabled: open,
 		})),
 	})
 
 	const formatCount = (data: { count: number; hasMore: boolean } | undefined) => {
-		if (!data) return '0 objects'
+		// No data means the count never came back — say so rather than showing a
+		// "0 objects" that reads as "safe to remove".
+		if (!data) return 'Unknown number of objects'
 		const suffix = data.hasMore ? '+' : ''
 		return `${data.count}${suffix} object${data.count === 1 && !data.hasMore ? '' : 's'}`
 	}
