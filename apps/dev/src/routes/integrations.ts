@@ -471,9 +471,12 @@ const providerParamSchema = z.object({ provider: z.string() })
 // When `login/oauth/authorize` proves the caller can reach more than one
 // installation, the callback parks the candidates on the pending row rather
 // than guessing. These two routes read that list back and finalize the choice.
-// Authorization is the parked list itself: it was built from GitHub's answer to
-// "which installations can THIS user reach", so a caller can only ever select
-// something GitHub already vouched for.
+// Authorization has two halves, and both are needed. The parked list bounds
+// *what* can be selected: it was built from GitHub's answer to "which
+// installations can THIS user reach", so a caller can only ever select
+// something GitHub already vouched for. The row's `createdBy` bounds *who* can
+// spend it: the list is one specific human's proof of org access, so it stays
+// theirs rather than becoming a workspace-wide grant. See readPendingSelection.
 
 const pendingSelectionSchema = z.object({
 	integrationId: z.string(),
@@ -503,13 +506,32 @@ const getPendingSelectionRoute = createRoute({
 	},
 })
 
-/** Load a pending row's parked installation choices, scoped to the workspace.
- *  Returns null when the row is missing, belongs elsewhere, is not pending, or
- *  holds no choice list — all of which are a 404 to the caller. */
+/** How long a parked candidate list stays selectable, measured from the moment
+ *  the callback wrote it. Mirrors the 10-minute OAuth state window above: the
+ *  picker opens on the redirect, so this only ever has to cover the seconds it
+ *  takes to click an org — not a user who wandered off. An abandoned list going
+ *  cold matters because it is a standing grant of someone else's GitHub reach. */
+const PENDING_SELECTION_MAX_AGE_MS = 10 * 60 * 1000
+
+/** Load a pending row's parked installation choices, scoped to the workspace
+ *  AND to the actor who started the authorization.
+ *
+ *  Returns null when the row is missing, belongs elsewhere, was started by
+ *  someone else, is not pending, has gone stale, or holds no choice list — all
+ *  of which are a 404 to the caller.
+ *
+ *  The `createdBy` and age filters are load-bearing, not defence in depth. The
+ *  candidate list is the *result* of one specific human proving to GitHub which
+ *  orgs they can reach, so it is a credential scoped to that human. Matching on
+ *  workspace alone would let any member of the workspace — including one with no
+ *  GitHub access to the org at all, and including members added later — spend a
+ *  colleague's proof. That would reinstate exactly the entitlement confusion the
+ *  user-authorization flow exists to remove. */
 async function readPendingSelection(
 	db: Database,
 	id: string,
 	workspaceId: string,
+	actorId: string,
 ): Promise<{ row: typeof integrations.$inferSelect; choices: UserInstallation[] } | null> {
 	const [row] = await db
 		.select()
@@ -520,16 +542,37 @@ async function readPendingSelection(
 				eq(integrations.workspaceId, workspaceId),
 				eq(integrations.provider, 'github'),
 				eq(integrations.status, 'pending'),
+				eq(integrations.createdBy, actorId),
 			),
 		)
 		.limit(1)
 
 	if (!row || !row.credentials) return null
 
+	// Age is checked here rather than in SQL so a null `updatedAt` reads as
+	// "unknown, not expired" instead of silently excluding the row.
+	const parkedAt = row.updatedAt?.getTime()
+	if (parkedAt !== undefined && Date.now() - parkedAt > PENDING_SELECTION_MAX_AGE_MS) {
+		logger.info('Pending GitHub selection has expired', {
+			integrationId: row.id,
+			workspaceId,
+			actorId,
+		})
+		return null
+	}
+
 	let parsed: { installation_choices?: UserInstallation[] }
 	try {
 		parsed = JSON.parse(decrypt(row.credentials))
-	} catch {
+	} catch (err) {
+		// Almost always an encryption-key rotation between the callback writing
+		// this list and the user picking from it. Without this line the caller is
+		// told the attempt "expired" and no operator ever learns otherwise.
+		logger.warn('Failed to decrypt parked GitHub installation choices', {
+			integrationId: row.id,
+			workspaceId,
+			error: err instanceof Error ? err.message : String(err),
+		})
 		return null
 	}
 	const choices = parsed.installation_choices
@@ -539,10 +582,11 @@ async function readPendingSelection(
 
 app.openapi(getPendingSelectionRoute, (async (c) => {
 	const db = c.get('db')
+	const actorId = c.get('actorId')
 	const { id } = c.req.valid('param')
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
-	const pending = await readPendingSelection(db, id, workspaceId)
+	const pending = await readPendingSelection(db, id, workspaceId, actorId)
 	if (!pending) {
 		return c.json(createApiError('NOT_FOUND', 'No pending GitHub selection with that id'), 404)
 	}
@@ -597,7 +641,7 @@ app.openapi(selectInstallationRoute, (async (c) => {
 		)
 	}
 
-	const pending = await readPendingSelection(db, integrationId, workspaceId)
+	const pending = await readPendingSelection(db, integrationId, workspaceId, actorId)
 	if (!pending) {
 		return c.json(createApiError('NOT_FOUND', 'No pending GitHub selection with that id'), 404)
 	}
@@ -633,6 +677,19 @@ app.openapi(selectInstallationRoute, (async (c) => {
 	// if a prior attempt already got this far.
 	if (row.id !== pending.row.id) {
 		await db.delete(integrations).where(eq(integrations.id, pending.row.id))
+		await db.insert(events).values({
+			workspaceId,
+			actorId,
+			action: 'deleted',
+			entityType: 'integration',
+			entityId: pending.row.id,
+			data: {
+				provider: 'github',
+				status: 'pending',
+				reason: 'installation_selection_completed',
+				bound_integration_id: row.id,
+			},
+		})
 	}
 
 	logger.info('Bound GitHub installation from user-authorized selection', {
@@ -1111,6 +1168,26 @@ app.openapi(callbackRoute, (async (c) => {
 				updatedAt: new Date(),
 			})
 			.where(eq(integrations.id, pendingIntegration.id))
+
+		// Audit the park like every other mutation on this table. Besides the
+		// trail, this is what fires the PG NOTIFY → SSE invalidation, so a settings
+		// page already open when the callback lands learns the row changed instead
+		// of showing stale state until a manual refresh. The candidate list itself
+		// is deliberately not in `data` — only its size, since the payload is
+		// mirrored into the realtime feed.
+		await db.insert(events).values({
+			workspaceId: stateData.workspaceId,
+			actorId: stateData.actorId,
+			action: 'updated',
+			entityType: 'integration',
+			entityId: pendingIntegration.id,
+			data: {
+				provider: providerName,
+				status: 'pending',
+				reason: 'awaiting_installation_selection',
+				choice_count: choices.length,
+			},
+		})
 
 		logger.info('GitHub user authorized with multiple installations — awaiting selection', {
 			workspaceId: stateData.workspaceId,

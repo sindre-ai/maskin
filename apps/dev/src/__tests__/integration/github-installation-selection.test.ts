@@ -185,6 +185,56 @@ describe('GitHub installation selection after user authorization', () => {
 		expect((await app.request(selectRequest(otherWorkspace, pending.id, chosen))).status).toBe(404)
 	})
 
+	// The candidate list is one specific human's proof of which orgs they can
+	// reach on GitHub. Sharing a workspace with them must not be enough to spend
+	// it — otherwise a member with no GitHub access to the org at all could bind
+	// it, which is the entitlement confusion this whole flow exists to remove.
+	it('does not let another member of the same workspace spend a colleague’s selection', async () => {
+		const actorId = getTestActorId()
+		const workspaceId = (await insertWorkspace(db, actorId)).id
+		const colleague = (await insertActor(db)).id
+		const chosen = newInstallationId()
+		// Same workspace, different author — the request runs as the test actor.
+		const pending = await seedPendingSelection(workspaceId, colleague, [
+			{ installationId: chosen, ownerLogin: 'sindre-ai' },
+			{ installationId: newInstallationId(), ownerLogin: 'vaerksted-ai' },
+		])
+
+		const app = buildApp()
+		expect((await app.request(pendingRequest(workspaceId, pending.id))).status).toBe(404)
+		expect((await app.request(selectRequest(workspaceId, pending.id, chosen))).status).toBe(404)
+
+		// And nothing was bound as a side effect of the refused attempt.
+		const rows = await db
+			.select()
+			.from(integrations)
+			.where(and(eq(integrations.workspaceId, workspaceId), eq(integrations.externalId, chosen)))
+		expect(rows).toHaveLength(0)
+	})
+
+	// A parked list left lying around is a standing grant of someone's GitHub
+	// reach, so it goes cold on the same 10-minute clock as the OAuth state that
+	// produced it.
+	it('refuses a parked selection that has gone stale', async () => {
+		const actorId = getTestActorId()
+		const workspaceId = (await insertWorkspace(db, actorId)).id
+		const chosen = newInstallationId()
+		const pending = await seedPendingSelection(workspaceId, actorId, [
+			{ installationId: chosen, ownerLogin: 'sindre-ai' },
+			{ installationId: newInstallationId(), ownerLogin: 'vaerksted-ai' },
+		])
+
+		// Backdate past the window rather than waiting it out.
+		await db
+			.update(integrations)
+			.set({ updatedAt: new Date(Date.now() - 11 * 60 * 1000) })
+			.where(eq(integrations.id, pending.id))
+
+		const app = buildApp()
+		expect((await app.request(pendingRequest(workspaceId, pending.id))).status).toBe(404)
+		expect((await app.request(selectRequest(workspaceId, pending.id, chosen))).status).toBe(404)
+	})
+
 	// The partial unique index on (workspace_id, provider, external_id) makes a
 	// second insert for the same installation fail at commit time, so a workspace
 	// that previously disconnected this org must be refreshed in place. Only a
