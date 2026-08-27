@@ -1,6 +1,7 @@
 import { events, sessions, workspaceCreditLedger, workspaces } from '@maskin/db/schema'
 import { eq } from 'drizzle-orm'
 import { debitCreditForSession } from '../../lib/credit-billing'
+import { isEnterpriseWorkspace } from '../../lib/enterprise'
 import { PlanCapExceededError, canUseCreditBalance, checkPlanCap } from '../../lib/llm-routing'
 import type { WorkspaceSettings } from '../../lib/types'
 import { insertSession, insertWorkspace } from '../factories'
@@ -33,7 +34,11 @@ describe('checkPlanCap / canUseCreditBalance — soft cap matrix (Integration)',
 
 	beforeEach(async () => {
 		actorId = getTestActorId()
-		const ws = await insertWorkspace(db, actorId)
+		// The factory defaults `enterpriseGranted` to true (see factories.ts);
+		// enterprise is exempt from the cap entirely, so every case below would
+		// pass vacuously. These tests are about the cap matrix for an ordinary
+		// metered workspace, so opt out of the grant explicitly.
+		const ws = await insertWorkspace(db, actorId, { enterpriseGranted: false })
 		workspaceId = ws.id
 	})
 
@@ -54,7 +59,7 @@ describe('checkPlanCap / canUseCreditBalance — soft cap matrix (Integration)',
 		await seedOverCapUsage()
 		const wsSettings = billingSettings({ plan: 'trial', credit_balance_cents: 5_000 })
 		expect(canUseCreditBalance('trial', wsSettings.billing)).toBe(false)
-		await expect(checkPlanCap({ db, workspaceId, wsSettings })).rejects.toThrow(
+		await expect(checkPlanCap({ db, workspaceId, wsSettings, enterprise: false })).rejects.toThrow(
 			PlanCapExceededError,
 		)
 	})
@@ -63,7 +68,7 @@ describe('checkPlanCap / canUseCreditBalance — soft cap matrix (Integration)',
 		await seedOverCapUsage()
 		const wsSettings = billingSettings({ plan: 'pro', credit_balance_cents: 0 })
 		expect(canUseCreditBalance('pro', wsSettings.billing)).toBe(false)
-		await expect(checkPlanCap({ db, workspaceId, wsSettings })).rejects.toThrow(
+		await expect(checkPlanCap({ db, workspaceId, wsSettings, enterprise: false })).rejects.toThrow(
 			PlanCapExceededError,
 		)
 	})
@@ -76,7 +81,9 @@ describe('checkPlanCap / canUseCreditBalance — soft cap matrix (Integration)',
 			status: 'active',
 		})
 		expect(canUseCreditBalance('pro', wsSettings.billing)).toBe(true)
-		await expect(checkPlanCap({ db, workspaceId, wsSettings })).resolves.toBeUndefined()
+		await expect(
+			checkPlanCap({ db, workspaceId, wsSettings, enterprise: false }),
+		).resolves.toBeUndefined()
 	})
 
 	it('hard-blocks pro when a positive balance is present but status is past_due', async () => {
@@ -87,7 +94,7 @@ describe('checkPlanCap / canUseCreditBalance — soft cap matrix (Integration)',
 			status: 'past_due',
 		})
 		expect(canUseCreditBalance('pro', wsSettings.billing)).toBe(false)
-		await expect(checkPlanCap({ db, workspaceId, wsSettings })).rejects.toThrow(
+		await expect(checkPlanCap({ db, workspaceId, wsSettings, enterprise: false })).rejects.toThrow(
 			PlanCapExceededError,
 		)
 	})
@@ -95,7 +102,9 @@ describe('checkPlanCap / canUseCreditBalance — soft cap matrix (Integration)',
 	it('does not block when usage is under cap regardless of balance', async () => {
 		// No sessions seeded — usage is $0, well under the $10.00 cap.
 		const wsSettings = billingSettings({ plan: 'pro', credit_balance_cents: 0 })
-		await expect(checkPlanCap({ db, workspaceId, wsSettings })).resolves.toBeUndefined()
+		await expect(
+			checkPlanCap({ db, workspaceId, wsSettings, enterprise: false }),
+		).resolves.toBeUndefined()
 	})
 
 	describe('enterprise allowlist bypass', () => {
@@ -114,7 +123,16 @@ describe('checkPlanCap / canUseCreditBalance — soft cap matrix (Integration)',
 			await seedOverCapUsage()
 			process.env.MASKIN_ENTERPRISE_ACTOR_IDS = actorId
 			const wsSettings = billingSettings({ plan: 'trial', credit_balance_cents: 0 })
-			await expect(checkPlanCap({ db, workspaceId, wsSettings })).resolves.toBeUndefined()
+			// `checkPlanCap` no longer re-reads the workspace to answer "is this
+			// enterprise" — it takes the answer from the caller, which already holds
+			// the row (PR #1489). Derive it here the way `resolveLlmRoute` and the
+			// session pre-flight do, so this still covers the allowlist resolution
+			// and not just the branch it feeds.
+			const enterprise = await isEnterpriseWorkspace(db, workspaceId)
+			expect(enterprise).toBe(true)
+			await expect(
+				checkPlanCap({ db, workspaceId, wsSettings, enterprise }),
+			).resolves.toBeUndefined()
 		})
 	})
 })
@@ -129,6 +147,11 @@ describe('debitCreditForSession (Integration)', () => {
 
 	async function seedWorkspace(creditBalanceCents: number) {
 		const ws = await insertWorkspace(db, actorId, {
+			// `debitCreditForSession` exempts enterprise workspaces outright, and
+			// the factory grants enterprise by default (see factories.ts) — leave it
+			// on and nothing here is ever debited. These tests are about the metered
+			// pro path, so the grant is off.
+			enterpriseGranted: false,
 			settings: {
 				billing: {
 					plan: 'pro',
@@ -203,6 +226,7 @@ describe('debitCreditForSession (Integration)', () => {
 		// model — and a parse failure replaced the whole object. Only `billing`
 		// may change here; everything else must survive byte-for-byte.
 		const ws = await insertWorkspace(db, actorId, {
+			enterpriseGranted: false,
 			settings: {
 				billing: {
 					plan: 'pro',

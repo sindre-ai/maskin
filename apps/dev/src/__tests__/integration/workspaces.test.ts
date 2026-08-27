@@ -266,7 +266,7 @@ describe('Workspaces Integration', () => {
 			)
 			const ws = await createRes.json()
 
-			// New workspaces default to enterpriseGranted: false — grant entitlement so
+			// New workspaces default to enterprise: false — grant entitlement so
 			// this test can exercise the llm_keys deep-merge itself, not the gate.
 			const grant = await grantEnterpriseAsOps(app, ws.id)
 			expect(grant.status).toBe(200)
@@ -298,17 +298,17 @@ describe('Workspaces Integration', () => {
 		})
 	})
 
-	describe('enterpriseGranted entitlement gate', () => {
-		it('defaults new workspaces to enterpriseGranted: false', async () => {
+	describe('enterprise entitlement gate', () => {
+		it('defaults new workspaces to enterprise: false', async () => {
 			const app = createApp()
 			const createRes = await app.request(
 				jsonRequest('POST', '/api/workspaces', { name: 'Entitlement Default' }),
 			)
 			const ws = await createRes.json()
-			expect(ws.enterpriseGranted).toBe(false)
+			expect(ws.enterprise).toBe(false)
 		})
 
-		it('returns enterpriseGranted on GET /api/workspaces so the settings UI can gate on it', async () => {
+		it('returns enterprise on GET /api/workspaces so the settings UI can gate on it', async () => {
 			const app = createApp()
 			const createRes = await app.request(
 				jsonRequest('POST', '/api/workspaces', { name: 'Entitlement In List' }),
@@ -319,9 +319,9 @@ describe('Workspaces Integration', () => {
 
 			const listRes = await app.request(jsonGet('/api/workspaces'))
 			expect(listRes.status).toBe(200)
-			const list = (await listRes.json()) as Array<{ id: string; enterpriseGranted: boolean }>
+			const list = (await listRes.json()) as Array<{ id: string; enterprise: boolean }>
 			const listed = list.find((w) => w.id === ws.id)
-			expect(listed?.enterpriseGranted).toBe(true)
+			expect(listed?.enterprise).toBe(true)
 		})
 
 		it('entitles an enterprise billing owner without any per-workspace grant', async () => {
@@ -330,7 +330,7 @@ describe('Workspaces Integration', () => {
 				jsonRequest('POST', '/api/workspaces', { name: 'Enterprise Owner Entitlement' }),
 			)
 			const ws = await createRes.json()
-			expect(ws.enterpriseGranted).toBe(false)
+			expect(ws.enterprise).toBe(false)
 
 			// The allowlist is read from process.env at call time, so flipping it
 			// here exercises exactly what a founder deployment configures.
@@ -338,8 +338,8 @@ describe('Workspaces Integration', () => {
 			process.env.MASKIN_ENTERPRISE_ACTOR_IDS = getTestActorId()
 			try {
 				const listRes = await app.request(jsonGet('/api/workspaces'))
-				const list = (await listRes.json()) as Array<{ id: string; enterpriseGranted: boolean }>
-				expect(list.find((w) => w.id === ws.id)?.enterpriseGranted).toBe(true)
+				const list = (await listRes.json()) as Array<{ id: string; enterprise: boolean }>
+				expect(list.find((w) => w.id === ws.id)?.enterprise).toBe(true)
 
 				const res = await app.request(
 					jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
@@ -445,7 +445,7 @@ describe('Workspaces Integration', () => {
 			const adminRes = await grantEnterpriseAsOps(app, ws.id)
 			expect(adminRes.status).toBe(200)
 			const adminBody = await adminRes.json()
-			expect(adminBody.enterpriseGranted).toBe(true)
+			expect(adminBody.enterprise).toBe(true)
 
 			const res = await app.request(
 				jsonRequest('PATCH', `/api/workspaces/${ws.id}`, {
