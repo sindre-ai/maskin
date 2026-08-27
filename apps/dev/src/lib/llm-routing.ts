@@ -354,7 +354,16 @@ function buildCustomLlmEnv(custom: WorkspaceSettings['custom_llm']): Record<stri
 function buildMaskinPlanEnv(
 	billing: WorkspaceSettings['billing'],
 	fallback: FallbackConfig,
+	enterprise: boolean,
 ): Record<string, string> | null {
+	// Enterprise is never Maskin-funded, whatever the stored plan says. The plan
+	// alone is not a safe gate: `plan: 'enterprise'` is only written once a BYO
+	// credential is connected (`billingAfterByoTransition`), and an absent
+	// billing block defaults to 'trial' — so an entitled workspace whose BYO
+	// credential is missing, expired or broken would otherwise land here and
+	// spend Maskin's OpenRouter key. It gets no credentials instead, which
+	// surfaces as a real error rather than a silent billing leak.
+	if (enterprise) return null
 	if (!isMaskinPlanRouted(billing)) return null
 	if (!fallback.apiKey) return null
 	return {
@@ -574,7 +583,7 @@ export async function resolveLlmRoute(params: {
 	//    The cap check here is defense-in-depth; the pre-flight in `createSession`
 	//    is what surfaces 402 to the user before a session row is created.
 	const fallback = readFallbackConfig(params.env)
-	const maskinPlanEnv = buildMaskinPlanEnv(wsSettings.billing, fallback)
+	const maskinPlanEnv = buildMaskinPlanEnv(wsSettings.billing, fallback, enterprise)
 	if (maskinPlanEnv) {
 		await checkPlanCap({ db, workspaceId, wsSettings, enterprise })
 		return { route: LLM_ROUTE_MASKIN_PLAN, envVars: maskinPlanEnv }
@@ -746,7 +755,8 @@ export function preflightLlmCredentials(params: {
 	}
 
 	// 5. Maskin plan.
-	if (buildMaskinPlanEnv(wsSettings.billing, readFallbackConfig(params.env)) !== null) return null
+	if (buildMaskinPlanEnv(wsSettings.billing, readFallbackConfig(params.env), enterprise) !== null)
+		return null
 
 	const detail = enterprise
 		? 'No Claude subscription, custom LLM endpoint, or Anthropic/OpenAI API key is configured for this workspace, and it is not on a Maskin-funded plan.'

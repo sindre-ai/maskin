@@ -365,6 +365,9 @@ describe('resolveLlmRoute priority order', () => {
 				settings.billing = { plan }
 				const result = await resolveLlmRoute({
 					...baseParams,
+					// Maskin-funded => not enterprise. Route 5 is gated on the
+					// entitlement as well as the plan, so say so explicitly.
+					enterprise: false,
 					db: dbWithSessionUsage([]),
 					wsSettings: settings,
 					agent: {},
@@ -385,6 +388,7 @@ describe('resolveLlmRoute priority order', () => {
 			settings.billing = { plan: 'pro' }
 			const result = await resolveLlmRoute({
 				...baseParams,
+				enterprise: false,
 				db: dbWithSessionUsage([]),
 				wsSettings: settings,
 				agent: {},
@@ -455,6 +459,35 @@ describe('resolveLlmRoute priority order', () => {
 			expect(result?.route).toBe(LLM_ROUTE_AGENT)
 		})
 
+		// The stored plan is NOT a reliable signal of enterprise status:
+		// `plan: 'enterprise'` is only written once a BYO credential is actually
+		// connected (billingAfterByoTransition), and absent billing defaults to
+		// 'trial'. So an entitled workspace whose BYO credential is missing or
+		// broken reaches route 5 with a stored plan that Maskin funds — and would
+		// spend Maskin's OpenRouter key on a customer who pays for their own LLM.
+		// The gate has to be the entitlement, not the plan.
+		it('an enterprise workspace still stored as trial does NOT reach maskin_plan', async () => {
+			const settings = emptySettings()
+			settings.billing = { plan: 'trial' }
+			const result = await resolveLlmRoute({
+				...baseParams,
+				enterprise: true,
+				wsSettings: settings,
+				agent: {},
+			})
+			expect(result).toBeNull()
+		})
+
+		it('an enterprise workspace with NO billing block does NOT reach maskin_plan', async () => {
+			const result = await resolveLlmRoute({
+				...baseParams,
+				enterprise: true,
+				wsSettings: emptySettings(),
+				agent: {},
+			})
+			expect(result).toBeNull()
+		})
+
 		it('enterprise plan does NOT route through maskin_plan', async () => {
 			const settings = emptySettings()
 			settings.billing = { plan: 'enterprise' }
@@ -484,6 +517,10 @@ describe('resolveLlmRoute priority order', () => {
 		it('no billing block defaults to trial and routes through maskin_plan when no BYO set', async () => {
 			const result = await resolveLlmRoute({
 				...baseParams,
+				// The absent-billing default is 'trial', which Maskin funds — but only
+				// for a non-entitled workspace. The enterprise counterpart of this
+				// case is covered above and must resolve to null.
+				enterprise: false,
 				db: dbWithSessionUsage([]),
 				wsSettings: emptySettings(),
 				agent: {},
@@ -830,6 +867,32 @@ describe('preflightLlmCredentials', () => {
 		expiresAt: Date.now() + 3_600_000,
 	})
 
+	// Route 5's gate again, from the pre-flight side. Pre-flight decides whether
+	// createSession returns 402 before a session row exists, so if it still
+	// believes an enterprise workspace can fall back to the Maskin plan, the
+	// launch is greenlit and the leak happens at container start instead.
+	it('does NOT pass an enterprise workspace on the Maskin plan fallback', () => {
+		const maskinFunded: NodeJS.ProcessEnv = { MASKIN_FALLBACK_OPENROUTER_KEY: 'sk-or-maskin' }
+		// Non-entitled, same settings: the Maskin plan legitimately covers it.
+		expect(
+			preflightLlmCredentials({
+				wsSettings: { billing: { plan: 'trial' } },
+				agent: {},
+				enterprise: false,
+				env: maskinFunded,
+			}),
+		).toBeNull()
+		// Entitled, no BYO credential configured: must be refused, not funded.
+		expect(
+			preflightLlmCredentials({
+				wsSettings: { billing: { plan: 'trial' } },
+				agent: {},
+				enterprise: true,
+				env: maskinFunded,
+			}),
+		).not.toBeNull()
+	})
+
 	it('passes when the agent carries its own key', () => {
 		expect(
 			preflightLlmCredentials({
@@ -843,7 +906,7 @@ describe('preflightLlmCredentials', () => {
 
 	it('fails a non-anthropic agent key when the workspace is not entitled', () => {
 		// session-manager injects OPENAI_API_KEY for these itself rather than via
-		// resolveLlmRoute — but that injection is inside `if (enterpriseGranted)`. An
+		// resolveLlmRoute — but that injection is inside `if (enterprise)`. An
 		// unentitled workspace therefore gets no env at all, which is exactly the
 		// gap the pre-flight exists to catch; treating the key as "configured"
 		// here would let it launch credential-less.
