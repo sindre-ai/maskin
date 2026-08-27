@@ -125,8 +125,8 @@ for (const vp of SHIP_GATE_VIEWPORTS) {
 			await expect(objectRow).toContainText('— Active')
 
 			// Both kind labels sit on the same right edge (within a pixel).
-			const objectKind = objectRow.getByText('BET')
-			const agentKind = agentRow.getByText('AGENT')
+			const objectKind = objectRow.getByText('BET', { exact: true })
+			const agentKind = agentRow.getByText('AGENT', { exact: true })
 			const objectBox = await objectKind.boundingBox()
 			const agentBox = await agentKind.boundingBox()
 			if (!objectBox || !agentBox) throw new Error('missing kind-column bounding box')

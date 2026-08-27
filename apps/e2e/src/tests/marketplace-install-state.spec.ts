@@ -58,7 +58,11 @@ test.describe('Marketplace install state', () => {
 			await expect(page).toHaveURL(/\/marketplace\/[^/]+\/?$/)
 
 			const detail = page.getByRole('main')
-			const crumb = detail.getByRole('link', { name: 'Marketplace' })
+			// At >=768 `main` holds two breadcrumbs: the app shell header's (hidden
+			// at 375px) and the detail page's own action bar, which is what this
+			// test is about. The page's is the last one in the DOM.
+			const actionBarCrumbs = detail.getByRole('navigation', { name: 'breadcrumb' }).last()
+			const crumb = actionBarCrumbs.getByRole('link', { name: 'Marketplace', exact: true })
 			await expect(crumb).toBeVisible({ timeout: 20000 })
 			const overflow = detail.getByRole('button', { name: 'Loop actions' })
 			await expect(overflow).toBeVisible()
