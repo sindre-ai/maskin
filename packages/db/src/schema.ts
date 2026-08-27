@@ -59,7 +59,7 @@ export const workspaces = pgTable(
 		// Admin-only entitlement: workspaces default to the Maskin-provided LLM plan
 		// (trial → pro/team). Only workspaces explicitly flagged here may use
 		// BYO LLM credentials (Claude OAuth, custom_llm, llm_keys). See PR #970.
-		byollmAllowed: boolean('byollm_allowed').notNull().default(false),
+		enterpriseGranted: boolean('enterprise_granted').notNull().default(false),
 		// Single accountable human payer for this workspace's plan. Distinct from
 		// workspaceMembers.role='owner' (access control; many allowed per
 		// workspace). Must always reference a CURRENT member of this workspace —

@@ -4,7 +4,7 @@ import { events, workspaces } from '@maskin/db/schema'
 import { CREDIT_TOPUP_MAX_USD, CREDIT_TOPUP_MIN_USD, workspaceSettingsSchema } from '@maskin/shared'
 import { eq } from 'drizzle-orm'
 import { DEFAULT_PERIOD_LENGTH_MS, resolvePlanCapCents } from '../lib/billing-defaults'
-import { byollmEntitled } from '../lib/enterprise-allowlist'
+import { isEnterprise } from '../lib/enterprise'
 import { createApiError } from '../lib/errors'
 import { getWorkspacePlanUsdCentsUsage } from '../lib/llm-routing'
 import {
@@ -35,7 +35,7 @@ import { isWorkspaceHumanAdminOrOwner } from '../lib/workspace-auth'
  * `readStripeEnv`, which throws when Stripe is unconfigured) because
  * `/api/billing/usage` must keep serving usage regardless.
  */
-function planHardCapFallback(plan: 'trial' | 'pro' | 'team' | 'byollm'): number | null {
+function planHardCapFallback(plan: 'trial' | 'pro' | 'team' | 'enterprise'): number | null {
 	return resolvePlanCapCents(plan)
 }
 
@@ -97,7 +97,7 @@ const checkoutRoute = createRoute({
 })
 
 const usageResponseSchema = z.object({
-	plan: z.enum(['trial', 'pro', 'team', 'byollm']),
+	plan: z.enum(['trial', 'pro', 'team', 'enterprise']),
 	status: z.enum(['active', 'past_due', 'canceled', 'incomplete']),
 	// Actual dollar cost incurred this period, in USD cents — not a token
 	// count, since different agents can run different models with different
@@ -139,7 +139,7 @@ app.openapi(usageRoute, async (c) => {
 		.select({
 			id: workspaces.id,
 			settings: workspaces.settings,
-			byollmAllowed: workspaces.byollmAllowed,
+			enterpriseGranted: workspaces.enterpriseGranted,
 			billingOwnerId: workspaces.billingOwnerId,
 		})
 		.from(workspaces)
@@ -157,15 +157,15 @@ app.openapi(usageRoute, async (c) => {
 	// first ran; we use a 30d rolling window so the trial usage never grows
 	// unbounded, and the row in Settings has a consistent "X / Y · resets in Zd".
 	//
-	// A BYO-LLM entitled workspace (the `byollm_allowed` column OR an enterprise
-	// billing owner) is reported as `byollm` regardless of what's stored:
-	// `billing.plan === 'byollm'` is only written by `billingAfterByoTransition()`
+	// A BYO-LLM entitled workspace (the `enterprise_granted` column OR an enterprise
+	// billing owner) is reported as `enterprise` regardless of what's stored:
+	// `billing.plan === 'enterprise'` is only written by `billingAfterByoTransition()`
 	// once a BYO credential is connected, so an entitled workspace that hasn't
 	// connected one yet — or never had a billing block at all — would otherwise
 	// fall through to the `trial` default and be shown as a trial workspace with
 	// a usage meter it isn't metered against. Same predicate the routing layer
 	// uses to keep these workspaces off the Maskin-funded LLM.
-	const plan = byollmEntitled(workspace) ? 'byollm' : (billing?.plan ?? 'trial')
+	const plan = isEnterprise(workspace) ? 'enterprise' : (billing?.plan ?? 'trial')
 	const status = billing?.status ?? 'active'
 	const hardCapCents =
 		billing?.hard_cap_usd_cents && billing.hard_cap_usd_cents > 0
@@ -196,7 +196,7 @@ app.openapi(usageRoute, async (c) => {
 				: Date.now() + DEFAULT_PERIOD_LENGTH_MS
 
 	const usdCentsUsed =
-		plan !== 'byollm' ? await getWorkspacePlanUsdCentsUsage(db, workspaceId, periodStartMs) : 0
+		plan !== 'enterprise' ? await getWorkspacePlanUsdCentsUsage(db, workspaceId, periodStartMs) : 0
 
 	const resetsIn = Math.max(0, periodEndMs - Date.now())
 
@@ -221,7 +221,7 @@ app.openapi(usageRoute, async (c) => {
 			usd_cents_used: usdCentsUsed,
 			hard_cap_usd_cents: hardCapCents,
 			period_start: periodStartSec,
-			period_resets_in_ms: plan === 'byollm' ? null : resetsIn,
+			period_resets_in_ms: plan === 'enterprise' ? null : resetsIn,
 			stripe_customer_id: billing?.stripe_customer_id ?? null,
 			stripe_subscription_id: billing?.stripe_subscription_id ?? null,
 			credit_balance_cents: creditBalanceCents,
@@ -456,7 +456,7 @@ app.openapi(cancelRoute, async (c) => {
 		.select({
 			id: workspaces.id,
 			settings: workspaces.settings,
-			byollmAllowed: workspaces.byollmAllowed,
+			enterpriseGranted: workspaces.enterpriseGranted,
 			billingOwnerId: workspaces.billingOwnerId,
 		})
 		.from(workspaces)
@@ -503,7 +503,7 @@ app.openapi(cancelRoute, async (c) => {
 		}
 	}
 
-	const downgraded = billingAfterCancel(billing, byollmEntitled(workspace))
+	const downgraded = billingAfterCancel(billing, isEnterprise(workspace))
 	if (downgraded) {
 		await db
 			.update(workspaces)

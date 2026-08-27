@@ -125,7 +125,7 @@ describe('resolveLlmRoute priority order', () => {
 		db: dbWithFallbackUsage([]),
 		workspaceId: 'ws-1',
 		actorId: 'actor-1',
-		byollmAllowed: true,
+		enterprise: true,
 	}
 
 	it('1. agent anthropic api_key wins over everything', async () => {
@@ -198,7 +198,7 @@ describe('resolveLlmRoute priority order', () => {
 			workspaceId: 'ws-1',
 			actorId: 'actor-1',
 			wsSettings: settings,
-			byollmAllowed: true,
+			enterprise: true,
 			agent: {},
 		})
 		expect(result?.route).toBe(LLM_ROUTE_OAUTH)
@@ -256,7 +256,7 @@ describe('resolveLlmRoute priority order', () => {
 			workspaceId: 'ws-1',
 			actorId: 'actor-1',
 			wsSettings: settings,
-			byollmAllowed: true,
+			enterprise: true,
 			agent: {},
 		})
 		expect(result?.route).toBe(LLM_ROUTE_OAUTH)
@@ -287,7 +287,7 @@ describe('resolveLlmRoute priority order', () => {
 			workspaceId: 'ws-1',
 			actorId: 'actor-1',
 			wsSettings: emptySettings(),
-			byollmAllowed: true,
+			enterprise: true,
 			agent: { model: 'claude-sonnet-4-6' },
 		})
 		expect(result?.route).toBe(LLM_ROUTE_OAUTH)
@@ -336,7 +336,7 @@ describe('resolveLlmRoute priority order', () => {
 			workspaceId: 'ws-1',
 			actorId: 'actor-1',
 			wsSettings: settings,
-			byollmAllowed: true,
+			enterprise: true,
 			agent: {},
 		})
 		expect(result?.route).toBe(LLM_ROUTE_API_KEY)
@@ -455,9 +455,9 @@ describe('resolveLlmRoute priority order', () => {
 			expect(result?.route).toBe(LLM_ROUTE_AGENT)
 		})
 
-		it('byollm plan does NOT route through maskin_plan', async () => {
+		it('enterprise plan does NOT route through maskin_plan', async () => {
 			const settings = emptySettings()
-			settings.billing = { plan: 'byollm' }
+			settings.billing = { plan: 'enterprise' }
 			settings.llm_keys = { anthropic: 'sk-ant-from-ws' }
 			const result = await resolveLlmRoute({
 				...baseParams,
@@ -531,9 +531,9 @@ describe('checkPlanCap', () => {
 		expect(err.cap).toBe(1_000)
 	})
 
-	it('is a no-op for byollm — explicit opt-out', async () => {
+	it('is a no-op for enterprise — explicit opt-out', async () => {
 		const settings = emptySettings()
-		settings.billing = { plan: 'byollm', hard_cap_usd_cents: 100, period_start: 0 }
+		settings.billing = { plan: 'enterprise', hard_cap_usd_cents: 100, period_start: 0 }
 		const db = dbWithSessionUsage([{ totalCostUsd: '99.00', inputTokens: 0, outputTokens: 0 }])
 		await expect(
 			checkPlanCap({ db, workspaceId: 'ws-1', wsSettings: settings }),
@@ -673,7 +673,7 @@ describe('checkPlanCap', () => {
 				workspaceId: 'ws-1',
 				actorId: 'actor-1',
 				wsSettings: settings,
-				byollmAllowed: false,
+				enterprise: false,
 				agent: {},
 			}),
 		).rejects.toBeInstanceOf(PlanCapExceededError)
@@ -741,7 +741,7 @@ describe('resolveLlmRoute when the Claude OAuth route yields nothing', () => {
 			workspaceId: 'ws-1',
 			actorId: 'actor-1',
 			wsSettings: settings,
-			byollmAllowed: true,
+			enterprise: true,
 			agent: {},
 			env: {} as NodeJS.ProcessEnv,
 		}
@@ -807,7 +807,7 @@ describe('resolveLlmRoute when the Claude OAuth route yields nothing', () => {
 			workspaceId: 'ws-1',
 			actorId: 'actor-1',
 			wsSettings: emptySettings(),
-			byollmAllowed: true,
+			enterprise: true,
 			agent: {},
 			env: {} as NodeJS.ProcessEnv,
 		})
@@ -835,7 +835,7 @@ describe('preflightLlmCredentials', () => {
 			preflightLlmCredentials({
 				wsSettings: {},
 				agent: { provider: 'anthropic', apiKey: 'sk-ant-agent' },
-				byollmAllowed: true,
+				enterprise: true,
 				env: noEnv,
 			}),
 		).toBeNull()
@@ -843,7 +843,7 @@ describe('preflightLlmCredentials', () => {
 
 	it('fails a non-anthropic agent key when the workspace is not entitled', () => {
 		// session-manager injects OPENAI_API_KEY for these itself rather than via
-		// resolveLlmRoute — but that injection is inside `if (byollmAllowed)`. An
+		// resolveLlmRoute — but that injection is inside `if (enterpriseGranted)`. An
 		// unentitled workspace therefore gets no env at all, which is exactly the
 		// gap the pre-flight exists to catch; treating the key as "configured"
 		// here would let it launch credential-less.
@@ -856,7 +856,7 @@ describe('preflightLlmCredentials', () => {
 		const gap = preflightLlmCredentials({
 			wsSettings: {},
 			agent: { provider: 'openai', apiKey: 'sk-openai' },
-			byollmAllowed: false,
+			enterprise: false,
 			env: { MASKIN_FALLBACK_OPENROUTER_KEY: 'sk-or-operator' },
 		})
 		expect(gap).not.toBeNull()
@@ -870,7 +870,7 @@ describe('preflightLlmCredentials', () => {
 		const gap = preflightLlmCredentials({
 			wsSettings: {},
 			agent: { provider: 'cohere', apiKey: 'sk-cohere' },
-			byollmAllowed: true,
+			enterprise: true,
 			env: { MASKIN_FALLBACK_OPENROUTER_KEY: 'sk-or-operator' },
 		})
 		expect(gap).not.toBeNull()
@@ -886,7 +886,7 @@ describe('preflightLlmCredentials', () => {
 			preflightLlmCredentials({
 				wsSettings: { billing: { plan: 'trial' } },
 				agent: { provider: 'anthropic', apiKey: 'sk-ant-agent' },
-				byollmAllowed: false,
+				enterprise: false,
 				env: { MASKIN_FALLBACK_OPENROUTER_KEY: 'sk-or-operator' },
 			}),
 		).toBeNull()
@@ -897,7 +897,7 @@ describe('preflightLlmCredentials', () => {
 			preflightLlmCredentials({
 				wsSettings: {},
 				agent: { provider: 'openai', apiKey: 'sk-openai' },
-				byollmAllowed: true,
+				enterprise: true,
 				env: noEnv,
 			}),
 		).toBeNull()
@@ -911,7 +911,7 @@ describe('preflightLlmCredentials', () => {
 			preflightLlmCredentials({
 				wsSettings: { llm_keys: { openai: 'sk-openai-ws' } },
 				agent: {},
-				byollmAllowed: true,
+				enterprise: true,
 				env: noEnv,
 			}),
 		).toBeNull()
@@ -931,7 +931,7 @@ describe('preflightLlmCredentials', () => {
 					},
 				},
 				agent: {},
-				byollmAllowed: true,
+				enterprise: true,
 				env: noEnv,
 			}),
 		).toBeNull()
@@ -946,7 +946,7 @@ describe('preflightLlmCredentials', () => {
 				claude_oauth: { primary: slotData(), failover: { active_slot: 'backup' } },
 			},
 			agent: {},
-			byollmAllowed: true,
+			enterprise: true,
 			env: failoverEnv,
 		})
 		expect(gap).not.toBeNull()
@@ -965,7 +965,7 @@ describe('preflightLlmCredentials', () => {
 					claude_oauth: { primary: slotData(), failover: { active_slot: 'backup' } },
 				},
 				agent: {},
-				byollmAllowed: true,
+				enterprise: true,
 				env: noEnv,
 			}),
 		).toBeNull()
@@ -979,7 +979,7 @@ describe('preflightLlmCredentials', () => {
 				claude_oauth: { backup: slotData(), failover: { active_slot: 'backup' } },
 			},
 			agent: {},
-			byollmAllowed: true,
+			enterprise: true,
 			env: noEnv,
 		})
 		expect(gap).not.toBeNull()
@@ -998,7 +998,7 @@ describe('preflightLlmCredentials', () => {
 			preflightLlmCredentials({
 				wsSettings: complete,
 				agent: {},
-				byollmAllowed: true,
+				enterprise: true,
 				env: noEnv,
 			}),
 		).toBeNull()
@@ -1009,7 +1009,7 @@ describe('preflightLlmCredentials', () => {
 			preflightLlmCredentials({
 				wsSettings: { custom_llm: { ...complete.custom_llm, model: '' } },
 				agent: {},
-				byollmAllowed: true,
+				enterprise: true,
 				env: noEnv,
 			}),
 		).not.toBeNull()
@@ -1020,7 +1020,7 @@ describe('preflightLlmCredentials', () => {
 			preflightLlmCredentials({
 				wsSettings: { llm_keys: { anthropic: 'sk-ant-ws' } },
 				agent: {},
-				byollmAllowed: true,
+				enterprise: true,
 				env: noEnv,
 			}),
 		).toBeNull()
@@ -1033,7 +1033,7 @@ describe('preflightLlmCredentials', () => {
 		const gap = preflightLlmCredentials({
 			wsSettings: { llm_keys: { anthropic: 'sk-ant-ws' } },
 			agent: {},
-			byollmAllowed: false,
+			enterprise: false,
 			env: noEnv,
 		})
 		expect(gap).not.toBeNull()
@@ -1045,7 +1045,7 @@ describe('preflightLlmCredentials', () => {
 			preflightLlmCredentials({
 				wsSettings: { billing: { plan: 'pro' } },
 				agent: {},
-				byollmAllowed: false,
+				enterprise: false,
 				env: { MASKIN_FALLBACK_OPENROUTER_KEY: 'sk-or-operator' },
 			}),
 		).toBeNull()
@@ -1055,7 +1055,7 @@ describe('preflightLlmCredentials', () => {
 		const gap = preflightLlmCredentials({
 			wsSettings: {},
 			agent: {},
-			byollmAllowed: true,
+			enterprise: true,
 			env: noEnv,
 		})
 		expect(gap).not.toBeNull()
@@ -1063,14 +1063,14 @@ describe('preflightLlmCredentials', () => {
 	})
 })
 
-const NOT_ENTITLED = { byollmAllowed: false, billingOwnerId: null }
+const NOT_ENTITLED = { enterprise: false, billingOwnerId: null }
 
 describe('resolveChatCredentials — system fallback entitlement', () => {
-	it('does not fall back to the Maskin OpenRouter key on the byollm plan', () => {
+	it('does not fall back to the Maskin OpenRouter key on the enterprise plan', () => {
 		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
 		expect(
 			resolveChatCredentials({
-				wsSettings: { billing: { plan: 'byollm' } } as WorkspaceSettings,
+				wsSettings: { billing: { plan: 'enterprise' } } as WorkspaceSettings,
 				workspace: NOT_ENTITLED,
 				agent: { provider: null, apiKey: null, model: null },
 			}),
@@ -1080,12 +1080,12 @@ describe('resolveChatCredentials — system fallback entitlement', () => {
 	// billingAfterByoTransition() leaves `billing` undefined when the workspace
 	// never had a billing block, so an entitled workspace reads as the `trial`
 	// default. The entitlement column is what catches it.
-	it('does not fall back for a byollm_allowed workspace whose plan never transitioned', () => {
+	it('does not fall back for an enterprise_granted workspace whose plan never transitioned', () => {
 		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
 		expect(
 			resolveChatCredentials({
 				wsSettings: {},
-				workspace: { byollmAllowed: true, billingOwnerId: null },
+				workspace: { enterpriseGranted: true, billingOwnerId: null },
 				agent: { provider: null, apiKey: null, model: null },
 			}),
 		).toBeNull()
@@ -1098,7 +1098,7 @@ describe('resolveChatCredentials — system fallback entitlement', () => {
 			resolveChatCredentials({
 				wsSettings: {},
 				workspace: {
-					byollmAllowed: false,
+					enterprise: false,
 					billingOwnerId: '11111111-1111-4111-8111-111111111111',
 				},
 				agent: { provider: null, apiKey: null, model: null },
@@ -1106,11 +1106,11 @@ describe('resolveChatCredentials — system fallback entitlement', () => {
 		).toBeNull()
 	})
 
-	it('still uses the byollm workspace own credentials when configured', () => {
+	it('still uses the enterprise workspace own credentials when configured', () => {
 		process.env.MASKIN_FALLBACK_OPENROUTER_KEY = 'sk-or-maskin'
 		const creds = resolveChatCredentials({
 			wsSettings: {
-				billing: { plan: 'byollm' },
+				billing: { plan: 'enterprise' },
 				llm_keys: { anthropic: 'sk-ant-workspace' },
 			} as WorkspaceSettings,
 			workspace: NOT_ENTITLED,

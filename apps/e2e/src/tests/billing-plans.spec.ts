@@ -15,7 +15,7 @@ async function setTheme(page: Page, theme: 'light' | 'dark') {
 async function mockUsage(
 	page: Page,
 	usage: {
-		plan: 'trial' | 'pro' | 'team' | 'byollm'
+		plan: 'trial' | 'pro' | 'team' | 'enterprise'
 		status: 'active' | 'past_due' | 'canceled' | 'incomplete'
 		usd_cents_used: number
 		hard_cap_usd_cents: number | null

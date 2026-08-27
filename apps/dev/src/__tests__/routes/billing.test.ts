@@ -453,7 +453,7 @@ describe('GET /api/billing/usage', () => {
 		expect(body.period_resets_in_ms).toBeLessThan(24 * oneDay)
 	})
 
-	it('skips the token sum entirely when plan is byollm', async () => {
+	it('skips the token sum entirely when plan is enterprise', async () => {
 		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 		const workspaceId = randomUUID()
 		mockResults.selectQueue = [
@@ -461,7 +461,7 @@ describe('GET /api/billing/usage', () => {
 				{
 					id: workspaceId,
 					settings: {
-						billing: { plan: 'byollm', status: 'canceled', stripe_subscription_id: null },
+						billing: { plan: 'enterprise', status: 'canceled', stripe_subscription_id: null },
 					},
 				},
 			],
@@ -471,7 +471,7 @@ describe('GET /api/billing/usage', () => {
 		expect(res.status).toBe(200)
 		const body = await res.json()
 		expect(body).toMatchObject({
-			plan: 'byollm',
+			plan: 'enterprise',
 			status: 'canceled',
 			usd_cents_used: 0,
 			period_resets_in_ms: null,
@@ -777,24 +777,24 @@ describe('GET /api/billing/usage', () => {
 		expect(body).toMatchObject({ plan: 'trial', credit_balance_cents: 0 })
 	})
 
-	it('reports plan byollm for a byollm_allowed workspace with no billing row', async () => {
+	it('reports plan enterprise for a enterprise_granted workspace with no billing row', async () => {
 		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
 		const workspaceId = randomUUID()
 		mockResults.selectQueue = [
-			[{ id: workspaceId, settings: {}, byollmAllowed: true, billingOwnerId: null }],
+			[{ id: workspaceId, settings: {}, enterpriseGranted: true, billingOwnerId: null }],
 			[],
 		]
 
 		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
 		expect(res.status).toBe(200)
 		expect(await res.json()).toMatchObject({
-			plan: 'byollm',
+			plan: 'enterprise',
 			usd_cents_used: 0,
 			period_resets_in_ms: null,
 		})
 	})
 
-	it('reports plan byollm for an enterprise billing owner still stored as trial', async () => {
+	it('reports plan enterprise for an enterprise billing owner still stored as trial', async () => {
 		const ownerId = randomUUID()
 		vi.stubEnv('MASKIN_ENTERPRISE_ACTOR_IDS', ownerId)
 		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
@@ -804,7 +804,7 @@ describe('GET /api/billing/usage', () => {
 				{
 					id: workspaceId,
 					settings: { billing: { plan: 'trial', status: 'active' } },
-					byollmAllowed: false,
+					enterpriseGranted: false,
 					billingOwnerId: ownerId,
 				},
 			],
@@ -813,7 +813,7 @@ describe('GET /api/billing/usage', () => {
 
 		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
 		expect(res.status).toBe(200)
-		expect(await res.json()).toMatchObject({ plan: 'byollm', period_resets_in_ms: null })
+		expect(await res.json()).toMatchObject({ plan: 'enterprise', period_resets_in_ms: null })
 		vi.unstubAllEnvs()
 	})
 

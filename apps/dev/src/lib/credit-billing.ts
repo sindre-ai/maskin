@@ -2,7 +2,7 @@ import type { Database } from '@maskin/db'
 import { events, sessions, workspaceCreditLedger, workspaces } from '@maskin/db/schema'
 import { workspaceSettingsSchema } from '@maskin/shared'
 import { and, eq, gte, sql } from 'drizzle-orm'
-import { isEnterpriseWorkspace } from './enterprise-allowlist'
+import { isEnterpriseWorkspace } from './enterprise'
 import {
 	canUseCreditBalance,
 	getWorkspacePlanCap,

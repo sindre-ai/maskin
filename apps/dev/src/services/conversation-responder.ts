@@ -195,7 +195,7 @@ export async function evaluateAndRespond(ctx: {
 	// on a workspace we can't read is the safe direction, and this heuristic
 	// fails open anyway.
 	const wsEntitlement = {
-		byollmAllowed: ws ? ws.byollmAllowed : true,
+		enterpriseGranted: ws ? ws.enterpriseGranted : true,
 		billingOwnerId: ws?.billingOwnerId ?? null,
 	}
 
@@ -543,7 +543,7 @@ async function checkRelevance(params: {
 		llmConfig: unknown
 	}
 	wsSettings: WorkspaceSettings
-	wsEntitlement: { byollmAllowed: boolean | null; billingOwnerId: string | null }
+	wsEntitlement: { enterpriseGranted: boolean | null; billingOwnerId: string | null }
 	conversationHistory: Array<{ actorName: string; content: string }>
 	newMessageContent: string
 	isDirectConversation: boolean

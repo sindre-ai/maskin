@@ -153,7 +153,7 @@ export async function maybeGenerateConversationTitle(ctx: {
 			// Titling degrades to a placeholder title, which is the safe
 			// direction when we can't read the workspace.
 			workspace: {
-				byollmAllowed: ws ? ws.byollmAllowed : true,
+				enterpriseGranted: ws ? ws.enterpriseGranted : true,
 				billingOwnerId: ws?.billingOwnerId ?? null,
 			},
 			agent: { provider: null, apiKey: null, model: null },

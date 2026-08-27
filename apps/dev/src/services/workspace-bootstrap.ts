@@ -25,7 +25,7 @@ import {
 } from '@maskin/shared'
 import { and, eq } from 'drizzle-orm'
 import { capturePosthogEvent } from '../lib/analytics/posthog'
-import { isEnterpriseActor } from '../lib/enterprise-allowlist'
+import { isEnterpriseActor } from '../lib/enterprise'
 import { logger } from '../lib/logger'
 import { buildChiefOfStaffKickoffPrompt } from '../lib/onboarding/chief-of-staff-kickoff'
 import {

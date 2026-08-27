@@ -953,7 +953,7 @@ export interface ClaudeOAuthImportInput {
 	nickname?: string
 }
 
-export type BillingPlan = 'trial' | 'pro' | 'team' | 'byollm'
+export type BillingPlan = 'trial' | 'pro' | 'team' | 'enterprise'
 export type BillingStatus = 'active' | 'past_due' | 'canceled' | 'incomplete'
 
 export interface BillingCheckoutInput {
@@ -1155,7 +1155,7 @@ export interface WorkspaceResponse {
 	id: string
 	name: string
 	settings: Record<string, unknown>
-	byollmAllowed: boolean
+	enterprise: boolean
 	// Single accountable human payer for this workspace's plan — read-only,
 	// server-set. See apps/dev/src/lib/workspace-capacity.ts.
 	billingOwnerId: string | null

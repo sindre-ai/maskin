@@ -70,7 +70,7 @@ describe('BillingSection', () => {
 
 		render(
 			<TestWrapper>
-				<BillingSection workspaceId="ws-1" byollmAllowed />
+				<BillingSection workspaceId="ws-1" enterprise />
 			</TestWrapper>,
 		)
 
@@ -100,7 +100,7 @@ describe('BillingSection', () => {
 
 		render(
 			<TestWrapper>
-				<BillingSection workspaceId="ws-1" byollmAllowed />
+				<BillingSection workspaceId="ws-1" enterprise />
 			</TestWrapper>,
 		)
 
@@ -132,7 +132,7 @@ describe('BillingSection', () => {
 
 		render(
 			<TestWrapper>
-				<BillingSection workspaceId="ws-1" byollmAllowed />
+				<BillingSection workspaceId="ws-1" enterprise />
 			</TestWrapper>,
 		)
 
@@ -146,7 +146,7 @@ describe('BillingSection', () => {
 	it('renders BYO plan with the upgrade options + no usage bar', async () => {
 		vi.mocked(api.billing.usage).mockResolvedValue({
 			...baseUsage,
-			plan: 'byollm',
+			plan: 'enterprise',
 			status: 'canceled',
 			hard_cap_usd_cents: null,
 			period_resets_in_ms: null,
@@ -154,7 +154,7 @@ describe('BillingSection', () => {
 
 		render(
 			<TestWrapper>
-				<BillingSection workspaceId="ws-1" byollmAllowed />
+				<BillingSection workspaceId="ws-1" enterprise />
 			</TestWrapper>,
 		)
 
@@ -166,21 +166,21 @@ describe('BillingSection', () => {
 	})
 
 	it('marks Enterprise as the current plan for an active BYO workspace, not Trial', async () => {
-		// The shape `GET /api/billing/usage` now returns for a byollm-entitled
-		// workspace that never connected a BYO credential: plan byollm, status
+		// The shape `GET /api/billing/usage` now returns for a enterprise-entitled
+		// workspace that never connected a BYO credential: plan enterprise, status
 		// active (the stored default). Previously the endpoint reported `trial`
 		// here, which put "Current plan" on the Trial card and offered the
 		// entitled workspace paid upgrades it has no use for.
 		vi.mocked(api.billing.usage).mockResolvedValue({
 			...baseUsage,
-			plan: 'byollm',
+			plan: 'enterprise',
 			status: 'active',
 			period_resets_in_ms: null,
 		})
 
 		render(
 			<TestWrapper>
-				<BillingSection workspaceId="ws-1" byollmAllowed />
+				<BillingSection workspaceId="ws-1" enterprise />
 			</TestWrapper>,
 		)
 
@@ -215,7 +215,7 @@ describe('BillingSection', () => {
 
 		render(
 			<TestWrapper>
-				<BillingSection workspaceId="ws-1" byollmAllowed />
+				<BillingSection workspaceId="ws-1" enterprise />
 			</TestWrapper>,
 		)
 
@@ -246,7 +246,7 @@ describe('BillingSection', () => {
 
 		render(
 			<TestWrapper>
-				<BillingSection workspaceId="ws-1" byollmAllowed />
+				<BillingSection workspaceId="ws-1" enterprise />
 			</TestWrapper>,
 		)
 
@@ -257,7 +257,7 @@ describe('BillingSection', () => {
 		expect(screen.getByText(/lose access to Maskin's hosted LLM/)).toBeInTheDocument()
 	})
 
-	it('shows Cancel subscription (not Downgrade to Free) on the Trial card when byollmAllowed is false', async () => {
+	it('shows Cancel subscription (not Downgrade to Free) on the Trial card when enterprise is false', async () => {
 		const user = userEvent.setup()
 		vi.mocked(api.billing.usage).mockResolvedValue({
 			...baseUsage,
@@ -270,7 +270,7 @@ describe('BillingSection', () => {
 
 		render(
 			<TestWrapper>
-				<BillingSection workspaceId="ws-1" byollmAllowed={false} />
+				<BillingSection workspaceId="ws-1" enterprise={false} />
 			</TestWrapper>,
 		)
 
@@ -291,7 +291,7 @@ describe('BillingSection', () => {
 
 		render(
 			<TestWrapper>
-				<BillingSection workspaceId="ws-1" byollmAllowed />
+				<BillingSection workspaceId="ws-1" enterprise />
 			</TestWrapper>,
 		)
 
@@ -314,7 +314,7 @@ describe('BillingSection', () => {
 
 		render(
 			<TestWrapper>
-				<BillingSection workspaceId="ws-1" byollmAllowed />
+				<BillingSection workspaceId="ws-1" enterprise />
 			</TestWrapper>,
 		)
 
@@ -340,7 +340,7 @@ describe('BillingSection', () => {
 
 		render(
 			<TestWrapper>
-				<BillingSection workspaceId="ws-1" byollmAllowed />
+				<BillingSection workspaceId="ws-1" enterprise />
 			</TestWrapper>,
 		)
 
@@ -374,7 +374,7 @@ describe('BillingSection', () => {
 
 		render(
 			<TestWrapper>
-				<BillingSection workspaceId="ws-1" byollmAllowed />
+				<BillingSection workspaceId="ws-1" enterprise />
 			</TestWrapper>,
 		)
 
@@ -411,7 +411,7 @@ describe('BillingSection', () => {
 
 		render(
 			<TestWrapper>
-				<BillingSection workspaceId="ws-1" byollmAllowed />
+				<BillingSection workspaceId="ws-1" enterprise />
 			</TestWrapper>,
 		)
 
