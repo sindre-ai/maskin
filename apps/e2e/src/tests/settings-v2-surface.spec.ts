@@ -183,4 +183,49 @@ test.describe('Settings v2 surface', () => {
 			await expect(badge).toHaveClass(/bg-status-parked-bg/)
 		}
 	})
+
+	// `ROLE_OPTIONS` excludes 'owner' (the backend body schema is
+	// z.enum(['admin','member'])), so rendering the owner's row through the same
+	// Select as everyone else produced a blank trigger with no matching item.
+	test('the owner row shows its role as text, with no role picker or remove button', async ({
+		page,
+		account,
+	}) => {
+		await page.setViewportSize(VIEWPORTS.mobile)
+		await gotoSettings(page, account.workspaceId, '/members')
+
+		await expect(page.getByRole('heading', { name: 'Members' })).toBeVisible({ timeout: 10000 })
+
+		// The seeded actor owns their workspace, so the row carrying the 'owner'
+		// role text is theirs. `.last()` is the innermost matching div — the row.
+		const ownerRole = page.getByText('owner', { exact: true })
+		await expect(ownerRole).toBeVisible()
+		const ownerRow = page.locator('div').filter({ has: ownerRole }).last()
+
+		await expect(ownerRow.getByRole('combobox')).toHaveCount(0)
+		// The remove control is rendered but `invisible` + disabled for this row,
+		// so assert it cannot be reached rather than that it is absent.
+		await expect(ownerRow.getByRole('button', { name: /^Remove / })).toBeHidden()
+	})
+
+	// Billing moved out to its own route in v2, and every remaining section on
+	// Keys is gated on `byollm_allowed` — which defaults to false — so the page
+	// rendered completely empty for a workspace without that ops grant.
+	test('Keys explains the missing BYO-LLM grant instead of rendering blank', async ({
+		page,
+		account,
+	}) => {
+		await page.setViewportSize(VIEWPORTS.mobile)
+		await gotoSettings(page, account.workspaceId, '/keys')
+
+		await expect(
+			page.getByText("Bring-your-own-LLM isn't enabled for this workspace"),
+		).toBeVisible({ timeout: 10000 })
+		await expect(page.getByRole('link', { name: 'View plan and usage' })).toBeVisible()
+
+		// Not linked in the v2 rail for this workspace — the page has no content
+		// to offer until the grant lands, but the route stays deep-linkable.
+		await expect(page.getByRole('link', { name: 'Keys', exact: true })).toHaveCount(0)
+		await expectNoHorizontalOverflow(page)
+	})
 })

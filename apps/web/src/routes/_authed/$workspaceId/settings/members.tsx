@@ -36,6 +36,7 @@ import {
 	useWorkspaceMembers,
 } from '@/hooks/use-workspaces'
 import { ApiError, type MemberResponse } from '@/lib/api'
+import { cn } from '@/lib/cn'
 import { useWorkspace } from '@/lib/workspace-context'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { Bot, Plus, Trash2, UserPlus } from 'lucide-react'
@@ -159,63 +160,79 @@ function MembersPageV2() {
 				/>
 			) : (
 				<div className="flex flex-col">
-					{members.map((member) => (
-						<div
-							key={member.actorId}
-							className="flex items-center gap-3 rounded-lg border-b border-border px-2 py-2.5 transition-colors hover:bg-muted"
-						>
-							<button
-								type="button"
-								className="flex min-w-0 flex-1 items-center gap-3 text-left"
-								onClick={() => {
-									if (member.type === 'agent') {
-										navigate({
-											to: '/$workspaceId/agents/$agentId',
-											params: { workspaceId, agentId: member.actorId },
-										})
-									} else {
-										setActiveHumanId(member.actorId)
-									}
-								}}
+					{members.map((member) => {
+						const isOwner = member.role === 'owner'
+						return (
+							<div
+								key={member.actorId}
+								className="flex items-center gap-3 rounded-lg border-b border-border px-2 py-2.5 transition-colors hover:bg-muted"
 							>
-								<ActorAvatar name={member.name} type={member.type} size="md" />
-								<span className="min-w-0 flex-1">
-									<span className="block truncate text-sm font-medium">{member.name}</span>
-									<span className="block truncate text-xs capitalize text-muted-foreground">
-										{member.type}
+								<button
+									type="button"
+									className="flex min-w-0 flex-1 items-center gap-3 text-left"
+									onClick={() => {
+										if (member.type === 'agent') {
+											navigate({
+												to: '/$workspaceId/agents/$agentId',
+												params: { workspaceId, agentId: member.actorId },
+											})
+										} else {
+											setActiveHumanId(member.actorId)
+										}
+									}}
+								>
+									<ActorAvatar name={member.name} type={member.type} size="md" />
+									<span className="min-w-0 flex-1">
+										<span className="block truncate text-sm font-medium">{member.name}</span>
+										<span className="block truncate text-xs capitalize text-muted-foreground">
+											{member.type}
+										</span>
 									</span>
-								</span>
-							</button>
-							<Select
-								value={member.role}
-								onValueChange={(value) => handleRoleChange(member, value)}
-								disabled={updateRole.isPending}
-							>
-								<SelectTrigger className="w-28 shrink-0" aria-label={`Role for ${member.name}`}>
-									<SelectValue />
-								</SelectTrigger>
-								<SelectContent>
-									{ROLE_OPTIONS.map((role) => (
-										<SelectItem key={role} value={role}>
-											{role}
-										</SelectItem>
-									))}
-								</SelectContent>
-							</Select>
-							<Button
-								variant="ghost"
-								size="icon"
-								className="shrink-0"
-								aria-label={`Remove ${member.name}`}
-								onClick={() => {
-									setRemoveError(null)
-									setPendingRemoval(member)
-								}}
-							>
-								<Trash2 size={14} />
-							</Button>
-						</div>
-					))}
+								</button>
+								{isOwner ? (
+									// The owner's role is not editable here, and `ROLE_OPTIONS` deliberately
+									// excludes 'owner', so a Select would render a blank trigger with no
+									// matching item. Both mutations are backend-400s for this row anyway
+									// (role change wants transfer-ownership; removal wants the billing
+									// owner moved first), so render the role and drop the remove control
+									// rather than offer two buttons that can only fail.
+									<span className="w-28 shrink-0 px-3 text-xs text-muted-foreground">
+										{member.role}
+									</span>
+								) : (
+									<Select
+										value={member.role}
+										onValueChange={(value) => handleRoleChange(member, value)}
+										disabled={updateRole.isPending}
+									>
+										<SelectTrigger className="w-28 shrink-0" aria-label={`Role for ${member.name}`}>
+											<SelectValue />
+										</SelectTrigger>
+										<SelectContent>
+											{ROLE_OPTIONS.map((role) => (
+												<SelectItem key={role} value={role}>
+													{role}
+												</SelectItem>
+											))}
+										</SelectContent>
+									</Select>
+								)}
+								<Button
+									variant="ghost"
+									size="icon"
+									className={cn('shrink-0', isOwner && 'invisible')}
+									aria-label={`Remove ${member.name}`}
+									disabled={isOwner}
+									onClick={() => {
+										setRemoveError(null)
+										setPendingRemoval(member)
+									}}
+								>
+									<Trash2 size={14} />
+								</Button>
+							</div>
+						)
+					})}
 				</div>
 			)}
 

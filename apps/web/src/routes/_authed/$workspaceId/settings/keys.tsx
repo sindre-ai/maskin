@@ -1,4 +1,5 @@
 import { BillingSection } from '@/components/settings/billing-section'
+import { EmptyState } from '@/components/shared/empty-state'
 import { FormError } from '@/components/shared/form-error'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
@@ -19,7 +20,7 @@ import { cn } from '@/lib/cn'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { createFileRoute } from '@tanstack/react-router'
+import { Link, createFileRoute } from '@tanstack/react-router'
 import { ChevronDown, ChevronRight, Eye, EyeOff, Pencil, Unplug } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
@@ -57,6 +58,23 @@ function KeysPage() {
 						<CustomLlmEditor workspace={workspace} workspaceId={workspaceId} />
 					</div>
 				</div>
+			) : newDesign ? (
+				// With the flag off, `BillingSection` above already fills this page. With
+				// it on, billing moved to its own route and every remaining section is
+				// gated on `byollmAllowed` — so a workspace without that grant rendered
+				// a blank page. `byollm_allowed` is an ops grant, not a self-serve
+				// toggle, so this says who enables it instead of offering a dead button.
+				<EmptyState
+					title="Bring-your-own-LLM isn't enabled for this workspace"
+					description="Agents run on your Maskin plan. Connecting your own Claude subscription, API keys or a custom endpoint is enabled per workspace by Maskin."
+					action={
+						<Button variant="outline" size="sm" asChild>
+							<Link to="/$workspaceId/settings/billing" params={{ workspaceId }}>
+								View plan and usage
+							</Link>
+						</Button>
+					}
+				/>
 			) : null}
 		</div>
 	)

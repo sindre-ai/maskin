@@ -18,9 +18,19 @@ const settingsNav = [
 	{ label: 'Billing', to: '/$workspaceId/settings/billing' as const },
 ]
 
+// Keys is listed only for workspaces holding the `byollm_allowed` ops grant —
+// for everyone else the page has no content to show. It stays a real route
+// regardless, because onboarding and `session-errors.ts` both deep-link it.
+const keysNavItem = {
+	label: 'Keys',
+	to: '/$workspaceId/settings/keys' as const,
+	exact: false,
+}
+
 function SettingsLayoutV2() {
 	const { workspace, workspaceId } = useWorkspace()
 	const matchRoute = useMatchRoute()
+	const navItems = workspace?.byollmAllowed ? [...settingsNav, keysNavItem] : settingsNav
 
 	return (
 		<div className="mx-auto w-full max-w-6xl">
@@ -30,7 +40,7 @@ function SettingsLayoutV2() {
 			<div className="flex flex-col gap-6 md:flex-row md:gap-8">
 				<nav className="md:w-[172px] md:shrink-0 md:border-r md:border-border md:pr-2">
 					<ul className="flex gap-0.5 overflow-x-auto pb-2 md:flex-col md:pb-0">
-						{settingsNav.map((item) => {
+						{navItems.map((item) => {
 							const isActive = item.exact
 								? !!matchRoute({ to: item.to, params: { workspaceId } })
 								: !!matchRoute({ to: item.to, params: { workspaceId }, fuzzy: true })
