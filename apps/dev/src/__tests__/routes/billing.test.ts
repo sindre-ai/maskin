@@ -777,6 +777,46 @@ describe('GET /api/billing/usage', () => {
 		expect(body).toMatchObject({ plan: 'trial', credit_balance_cents: 0 })
 	})
 
+	it('reports plan byollm for a byollm_allowed workspace with no billing row', async () => {
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.selectQueue = [
+			[{ id: workspaceId, settings: {}, byollmAllowed: true, billingOwnerId: null }],
+			[],
+		]
+
+		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
+		expect(res.status).toBe(200)
+		expect(await res.json()).toMatchObject({
+			plan: 'byollm',
+			usd_cents_used: 0,
+			period_resets_in_ms: null,
+		})
+	})
+
+	it('reports plan byollm for an enterprise billing owner still stored as trial', async () => {
+		const ownerId = randomUUID()
+		vi.stubEnv('MASKIN_ENTERPRISE_ACTOR_IDS', ownerId)
+		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')
+		const workspaceId = randomUUID()
+		mockResults.selectQueue = [
+			[
+				{
+					id: workspaceId,
+					settings: { billing: { plan: 'trial', status: 'active' } },
+					byollmAllowed: false,
+					billingOwnerId: ownerId,
+				},
+			],
+			[],
+		]
+
+		const res = await app.request(jsonGet('/api/billing/usage', { 'X-Workspace-Id': workspaceId }))
+		expect(res.status).toBe(200)
+		expect(await res.json()).toMatchObject({ plan: 'byollm', period_resets_in_ms: null })
+		vi.unstubAllEnvs()
+	})
+
 	it('floors a fractional period_start so the response schema accepts it', async () => {
 		const periodStart = Math.floor(Date.now() / 1000) - 1000
 		const { app, mockResults } = createTestApp(billingRoutes, '/api/billing')

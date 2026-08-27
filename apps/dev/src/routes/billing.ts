@@ -136,7 +136,12 @@ app.openapi(usageRoute, async (c) => {
 	const { 'x-workspace-id': workspaceId } = c.req.valid('header')
 
 	const [workspace] = await db
-		.select({ id: workspaces.id, settings: workspaces.settings })
+		.select({
+			id: workspaces.id,
+			settings: workspaces.settings,
+			byollmAllowed: workspaces.byollmAllowed,
+			billingOwnerId: workspaces.billingOwnerId,
+		})
 		.from(workspaces)
 		.where(eq(workspaces.id, workspaceId))
 		.limit(1)
@@ -151,7 +156,16 @@ app.openapi(usageRoute, async (c) => {
 	// No billing row → workspace is on trial. Window starts whenever sessions
 	// first ran; we use a 30d rolling window so the trial usage never grows
 	// unbounded, and the row in Settings has a consistent "X / Y · resets in Zd".
-	const plan = billing?.plan ?? 'trial'
+	//
+	// A BYO-LLM entitled workspace (the `byollm_allowed` column OR an enterprise
+	// billing owner) is reported as `byollm` regardless of what's stored:
+	// `billing.plan === 'byollm'` is only written by `billingAfterByoTransition()`
+	// once a BYO credential is connected, so an entitled workspace that hasn't
+	// connected one yet — or never had a billing block at all — would otherwise
+	// fall through to the `trial` default and be shown as a trial workspace with
+	// a usage meter it isn't metered against. Same predicate the routing layer
+	// uses to keep these workspaces off the Maskin-funded LLM.
+	const plan = byollmEntitled(workspace) ? 'byollm' : (billing?.plan ?? 'trial')
 	const status = billing?.status ?? 'active'
 	const hardCapCents =
 		billing?.hard_cap_usd_cents && billing.hard_cap_usd_cents > 0
