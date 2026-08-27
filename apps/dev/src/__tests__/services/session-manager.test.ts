@@ -264,14 +264,14 @@ describe('SessionManager', () => {
 		it('still enforces the cap when a non-entitled workspace holds an anthropic key', async () => {
 			// Regression: the pre-flight treated any stored BYO credential as
 			// cap-exempting, but resolveLlmRoute only reaches the BYO routes when
-			// the workspace is byollm-entitled. A workspace with byollmAllowed
+			// the workspace is enterprise-entitled. A workspace with enterpriseGranted
 			// false therefore skipped the pre-flight, got a 201, and then died at
 			// container start on the defense-in-depth cap check instead.
 			mockResults.selectQueue = [
 				[
 					{
 						id: 'ws-1',
-						byollmAllowed: false,
+						enterpriseGranted: false,
 						billingOwnerId: null,
 						settings: {
 							billing: { plan: 'pro', hard_cap_usd_cents: 100, period_start: 0 },
@@ -295,7 +295,7 @@ describe('SessionManager', () => {
 		})
 
 		it('skips the cap when an entitled workspace holds an anthropic key', async () => {
-			// The mirror case: byollmAllowed true means resolveLlmRoute really will
+			// The mirror case: enterpriseGranted true means resolveLlmRoute really will
 			// use the workspace key, so that usage never counts against the plan
 			// cap and the session must be created even though usage is over it.
 			const sessionRow = buildSession({ status: 'pending' })
@@ -303,7 +303,7 @@ describe('SessionManager', () => {
 				[
 					{
 						id: 'ws-1',
-						byollmAllowed: true,
+						enterpriseGranted: true,
 						billingOwnerId: null,
 						settings: {
 							billing: { plan: 'pro', hard_cap_usd_cents: 100, period_start: 0 },
@@ -431,7 +431,7 @@ describe('SessionManager', () => {
 			}
 			const workspace = {
 				id: session.workspaceId,
-				byollmAllowed: true,
+				enterpriseGranted: true,
 				settings: LAUNCHABLE_WS_SETTINGS,
 			}
 
@@ -484,7 +484,7 @@ describe('SessionManager', () => {
 			}
 			const workspace = {
 				id: session.workspaceId,
-				byollmAllowed: true,
+				enterpriseGranted: true,
 				settings: LAUNCHABLE_WS_SETTINGS,
 			}
 
@@ -535,7 +535,7 @@ describe('SessionManager', () => {
 			}
 			const workspace = {
 				id: session.workspaceId,
-				byollmAllowed: true,
+				enterpriseGranted: true,
 				settings: LAUNCHABLE_WS_SETTINGS,
 			}
 
@@ -583,7 +583,7 @@ describe('SessionManager', () => {
 			}
 			const workspace = {
 				id: session.workspaceId,
-				byollmAllowed: true,
+				enterpriseGranted: true,
 				settings: LAUNCHABLE_WS_SETTINGS,
 			}
 
@@ -632,7 +632,7 @@ describe('SessionManager', () => {
 			}
 			const workspace = {
 				id: session.workspaceId,
-				byollmAllowed: true,
+				enterpriseGranted: true,
 				settings: LAUNCHABLE_WS_SETTINGS,
 			}
 
@@ -676,7 +676,7 @@ describe('SessionManager', () => {
 			}
 			const workspace = {
 				id: session.workspaceId,
-				byollmAllowed: true,
+				enterpriseGranted: true,
 				settings: LAUNCHABLE_WS_SETTINGS,
 			}
 
@@ -717,7 +717,7 @@ describe('SessionManager', () => {
 			}
 			const workspace = {
 				id: session.workspaceId,
-				byollmAllowed: true,
+				enterpriseGranted: true,
 				settings: LAUNCHABLE_WS_SETTINGS,
 			}
 
@@ -757,7 +757,7 @@ describe('SessionManager', () => {
 			}
 			const workspace = {
 				id: session.workspaceId,
-				byollmAllowed: true,
+				enterpriseGranted: true,
 				settings: { llm_keys: { anthropic: 'sk-ant-ws' } },
 			}
 
@@ -806,7 +806,7 @@ describe('SessionManager', () => {
 			}
 			const workspace = {
 				id: session.workspaceId,
-				byollmAllowed: true,
+				enterpriseGranted: true,
 				settings: { llm_keys: { anthropic: 'sk-ant-ws' } },
 			}
 
@@ -854,7 +854,7 @@ describe('SessionManager', () => {
 			const expiresAt = Date.now() + 60 * 60 * 1000
 			const workspace = {
 				id: session.workspaceId,
-				byollmAllowed: true,
+				enterpriseGranted: true,
 				settings: {
 					llm_keys: { anthropic: 'sk-ant-ws' },
 					claude_oauth: {
@@ -917,7 +917,7 @@ describe('SessionManager', () => {
 		}
 
 		function buildTestWorkspace(workspaceId: string) {
-			return { id: workspaceId, byollmAllowed: true, settings: LAUNCHABLE_WS_SETTINGS }
+			return { id: workspaceId, enterpriseGranted: true, settings: LAUNCHABLE_WS_SETTINGS }
 		}
 
 		beforeEach(() => {
@@ -1101,7 +1101,7 @@ describe('SessionManager', () => {
 		}
 
 		function buildTestWorkspace(workspaceId: string) {
-			return { id: workspaceId, byollmAllowed: true, settings: LAUNCHABLE_WS_SETTINGS }
+			return { id: workspaceId, enterpriseGranted: true, settings: LAUNCHABLE_WS_SETTINGS }
 		}
 
 		beforeEach(() => {
@@ -1320,7 +1320,7 @@ describe('SessionManager', () => {
 				session,
 				workspace: {
 					id: session.workspaceId,
-					byollmAllowed: true,
+					enterpriseGranted: true,
 					settings: LAUNCHABLE_WS_SETTINGS,
 				},
 				agent: {
@@ -1702,7 +1702,7 @@ describe('SessionManager', () => {
 			})
 			const workspace = {
 				id: session.workspaceId,
-				byollmAllowed: true,
+				enterpriseGranted: true,
 				settings: LAUNCHABLE_WS_SETTINGS,
 			}
 			const agent = {
@@ -2676,7 +2676,7 @@ describe('SessionManager', () => {
 			}
 			const workspace = {
 				id: session.workspaceId,
-				byollmAllowed: true,
+				enterpriseGranted: true,
 				settings: LAUNCHABLE_WS_SETTINGS,
 			}
 
@@ -2717,7 +2717,7 @@ describe('SessionManager', () => {
 			}
 			const workspace = {
 				id: session.workspaceId,
-				byollmAllowed: true,
+				enterpriseGranted: true,
 				settings: LAUNCHABLE_WS_SETTINGS,
 			}
 
@@ -2769,7 +2769,7 @@ describe('SessionManager', () => {
 			}
 			const workspace = {
 				id: session.workspaceId,
-				byollmAllowed: true,
+				enterpriseGranted: true,
 				settings: LAUNCHABLE_WS_SETTINGS,
 			}
 
@@ -2958,7 +2958,7 @@ describe('SessionManager', () => {
 			}
 			const workspace = {
 				id: session.workspaceId,
-				byollmAllowed: true,
+				enterpriseGranted: true,
 				settings: LAUNCHABLE_WS_SETTINGS,
 			}
 

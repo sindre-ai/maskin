@@ -25,7 +25,7 @@ function BillingPageV2() {
 
 	return (
 		<div className="flex max-w-[940px] flex-col gap-6">
-			<BillingSection workspaceId={workspaceId} byollmAllowed={Boolean(workspace.byollmAllowed)} />
+			<BillingSection workspaceId={workspaceId} enterprise={Boolean(workspace.enterprise)} />
 			<BillingUsageDetails usage={usage} />
 		</div>
 	)

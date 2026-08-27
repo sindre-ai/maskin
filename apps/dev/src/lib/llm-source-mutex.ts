@@ -2,15 +2,15 @@ import type Stripe from 'stripe'
 import type { WorkspaceSettings } from './types'
 
 /**
- * Backend mutex between BYOLLM sources (BYO Anthropic key, custom_llm,
+ * Backend mutex between BYO-LLM sources (BYO Anthropic key, custom_llm,
  * Claude OAuth) and a paid Maskin plan. When a write picks one side, the
  * other side is cleared in the same DB update so a workspace never claims
  * both are active.
  *
  * Two transitions:
  *
- *  1. User adds a BYOLLM source → cancel Stripe subscription via API, then
- *     write `billing.plan = 'byollm'`, `status = 'canceled'`, drop the
+ *  1. User adds a BYO-LLM source → cancel Stripe subscription via API, then
+ *     write `billing.plan = 'enterprise'`, `status = 'canceled'`, drop the
  *     subscription id. Cancel runs BEFORE the DB write so a Stripe failure
  *     surfaces 5xx instead of leaving the customer charged while the local
  *     row says BYO.
@@ -27,7 +27,7 @@ const ACTIVE_PAID_STATUSES = new Set(['active', 'past_due', 'incomplete'])
 
 /**
  * `true` when the workspace currently has a Stripe subscription that should
- * be canceled before a BYOLLM source can claim the slot. `canceled` rows or
+ * be canceled before a BYO-LLM source can claim the slot. `canceled` rows or
  * rows with no `stripe_subscription_id` are already inactive.
  */
 export function hasActivePaidPlan(settings: Pick<WorkspaceSettings, 'billing'>): boolean {
@@ -40,7 +40,7 @@ export function hasActivePaidPlan(settings: Pick<WorkspaceSettings, 'billing'>):
 
 /**
  * Cancel the workspace's live Stripe subscription. Treats "already gone"
- * errors as success so a stale Stripe state doesn't block the BYOLLM
+ * errors as success so a stale Stripe state doesn't block the BYO-LLM
  * transition forever. All other errors propagate — the caller is expected
  * to surface them as 5xx and skip the local write.
  *
@@ -70,7 +70,7 @@ function isStripeMissingResourceError(err: unknown): boolean {
 }
 
 /**
- * Apply the `billing` half of the BYOLLM transition to the existing
+ * Apply the `billing` half of the BYO-LLM transition to the existing
  * settings. Returns the new `billing` block (or `undefined` to leave it
  * untouched when there's no active paid plan to clear). Caller merges the
  * result into the workspace update.
@@ -82,14 +82,14 @@ export function billingAfterByoTransition(
 	if (!current.stripe_subscription_id && current.status === 'canceled') return current
 	return {
 		...current,
-		plan: 'byollm',
+		plan: 'enterprise',
 		stripe_subscription_id: null,
 		status: 'canceled',
 	}
 }
 
 /**
- * Strip every BYOLLM source from a settings object. Used by the Stripe
+ * Strip every BYO-LLM source from a settings object. Used by the Stripe
  * webhook when a paid plan transitions to `active` — the workspace just
  * picked the paid side, so any leftover BYO key, custom_llm config, or
  * Claude OAuth tokens are no longer the active source and must not linger.
@@ -111,7 +111,7 @@ export function settingsAfterPaidPlanActivation(
 }
 
 /**
- * `true` when the incoming PATCH body is adding/enabling a BYOLLM source.
+ * `true` when the incoming PATCH body is adding/enabling a BYO-LLM source.
  * Only triggers the mutex when the write is actually setting a key — a
  * deletion (`llm_keys.anthropic = null`) or a custom_llm disable should
  * not cancel a paid plan, since the user isn't picking BYO.
@@ -127,10 +127,10 @@ export function patchAddsByoSource(patchSettings: Partial<WorkspaceSettings>): b
 
 /**
  * Apply the billing half of a "Downgrade to Free" cancellation
- * (`POST /api/billing/cancel`). Entitled workspaces land on `byollm` same as
+ * (`POST /api/billing/cancel`). Entitled workspaces land on `enterprise` same as
  * before (`billingAfterByoTransition`). Workspaces without BYO entitlement
- * can't configure any BYO credential, so landing them on `byollm` would leave
- * them with no working LLM at all (`byollm` is deliberately excluded from
+ * can't configure any BYO credential, so landing them on `enterprise` would leave
+ * them with no working LLM at all (`enterprise` is deliberately excluded from
  * `MASKIN_PLAN_ROUTED_PLANS`) — they fall back to `trial` instead, with a
  * fresh period_start so they get a clean trial allotment rather than
  * inheriting their paid-period usage against the trial's much lower cap.
@@ -138,9 +138,9 @@ export function patchAddsByoSource(patchSettings: Partial<WorkspaceSettings>): b
  */
 export function billingAfterCancel(
 	current: WorkspaceSettings['billing'] | undefined,
-	byollmAllowed: boolean,
+	enterprise: boolean,
 ): WorkspaceSettings['billing'] | undefined {
-	if (byollmAllowed) return billingAfterByoTransition(current)
+	if (enterprise) return billingAfterByoTransition(current)
 	if (!current) return undefined
 	if (
 		!current.stripe_subscription_id &&
@@ -164,7 +164,7 @@ export function billingAfterCancel(
  * Anthropic key, OpenAI key, or custom_llm. Broader than `patchAddsByoSource`
  * (which only covers the two sources that participate in the paid-plan
  * mutex): this gate is the workspace-entitlement check that blocks every BYO
- * credential path for workspaces not flagged `byollmAllowed`. See PR #970.
+ * credential path for workspaces not flagged `enterprise`. See PR #970.
  */
 export function patchAddsAnyByoCredential(patchSettings: Partial<WorkspaceSettings>): boolean {
 	if (patchAddsByoSource(patchSettings)) return true

@@ -30,7 +30,7 @@ const keysNavItem = {
 function SettingsLayoutV2() {
 	const { workspace, workspaceId } = useWorkspace()
 	const matchRoute = useMatchRoute()
-	const navItems = workspace?.byollmAllowed ? [...settingsNav, keysNavItem] : settingsNav
+	const navItems = workspace?.enterprise ? [...settingsNav, keysNavItem] : settingsNav
 
 	return (
 		<div className="mx-auto w-full max-w-6xl">

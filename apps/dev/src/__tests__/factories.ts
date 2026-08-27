@@ -73,9 +73,9 @@ export function buildWorkspace(overrides?: Record<string, unknown>) {
 		onboardingEnabled: true,
 		// Defaults to true here (unlike the real DB column default of false) so
 		// the many existing BYO-credential route tests that predate the
-		// byollmAllowed gate don't all need an explicit override. Tests for the
-		// gate itself pass `{ byollmAllowed: false }`. See PR #970.
-		byollmAllowed: true,
+		// enterpriseGranted gate don't all need an explicit override. Tests for the
+		// gate itself pass `{ enterpriseGranted: false }`. See PR #970.
+		enterpriseGranted: true,
 		// Defaults to the same actor as createdBy (matches the real
 		// POST /api/workspaces / POST /api/actors behavior — see
 		// insertWorkspace below) so plain buildWorkspace() output satisfies
@@ -658,7 +658,7 @@ export async function insertTrigger(
 export async function setWorkspacePlan(
 	db: Database,
 	workspaceId: string,
-	plan: 'trial' | 'pro' | 'team' | 'byollm',
+	plan: 'trial' | 'pro' | 'team' | 'enterprise',
 ): Promise<void> {
 	const [row] = await db
 		.select({ settings: workspaces.settings })

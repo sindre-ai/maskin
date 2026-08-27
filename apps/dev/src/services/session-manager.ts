@@ -55,7 +55,7 @@ import {
 import { getValidOAuthToken } from '../lib/claude-oauth'
 import { debitCreditForSession } from '../lib/credit-billing'
 import { classifyCreditExhaustion } from '../lib/credit-classifier'
-import { byollmEntitled } from '../lib/enterprise-allowlist'
+import { isEnterprise } from '../lib/enterprise'
 import { frontendBaseUrl } from '../lib/file-urls'
 import { buildAgentGitIdentity } from '../lib/git-identity'
 import {
@@ -471,7 +471,7 @@ export class SessionManager extends EventEmitter {
 		// here mirrors the route-resolution priority so the 402 surfaces before
 		// a session row is created rather than failing silently at container start.
 		//
-		// The `byollmEntitled` gate is what makes "mirrors the route-resolution
+		// The `isEnterprise` gate is what makes "mirrors the route-resolution
 		// priority" true: resolveLlmRoute only *reaches* routes 1-4 when the
 		// workspace is entitled, so a non-entitled workspace holding a stored
 		// custom_llm / api_key / OAuth credential still routes to maskin_plan.
@@ -485,14 +485,14 @@ export class SessionManager extends EventEmitter {
 			.where(eq(workspaces.id, workspaceId))
 			.limit(1)
 		const wsSettings = (ws?.settings as WorkspaceSettings) ?? {}
-		const byollmAllowed = ws ? byollmEntitled(ws) : false
+		const enterprise = ws ? isEnterprise(ws) : false
 		const hasByoCredentials =
-			byollmAllowed &&
+			enterprise &&
 			((wsSettings.custom_llm?.enabled && !!wsSettings.custom_llm?.base_url) ||
 				!!wsSettings.llm_keys?.anthropic ||
 				!!(await getValidOAuthToken(this.db, workspaceId).catch(() => null)))
 		if (!hasByoCredentials) {
-			await checkPlanCap({ db: this.db, workspaceId, wsSettings })
+			await checkPlanCap({ db: this.db, workspaceId, wsSettings, enterprise })
 		}
 
 		const [session] = await this.db
@@ -1667,7 +1667,7 @@ export class SessionManager extends EventEmitter {
 			.limit(1)
 		const wsSettings = (ws?.settings as WorkspaceSettings) ?? {}
 		const wsLlmKeys = wsSettings.llm_keys ?? {}
-		const byollmAllowed = ws ? byollmEntitled(ws) : false
+		const enterprise = ws ? isEnterprise(ws) : false
 
 		let routeTaken: LlmRoute | null = null
 		let oauthSlotTaken: string | undefined
@@ -1677,7 +1677,7 @@ export class SessionManager extends EventEmitter {
 				workspaceId: session.workspaceId,
 				actorId: session.actorId,
 				wsSettings,
-				byollmAllowed,
+				enterprise,
 				agent: {
 					provider: agent.llmProvider,
 					apiKey: (llmConfig.api_key as string | undefined) ?? null,
@@ -1721,7 +1721,7 @@ export class SessionManager extends EventEmitter {
 		if (!routeTaken && ws) {
 			const credentialGap = preflightLlmCredentials({
 				wsSettings,
-				byollmAllowed,
+				enterprise,
 				agent: {
 					provider: agent.llmProvider,
 					apiKey: (llmConfig.api_key as string | undefined) ?? null,
@@ -1735,7 +1735,7 @@ export class SessionManager extends EventEmitter {
 		// Non-anthropic agent override (OpenAI native via OPENAI_API_KEY) and the
 		// workspace-level OpenAI key are both BYO credentials, gated the same as
 		// the anthropic-side routes in resolveLlmRoute above.
-		if (byollmAllowed) {
+		if (enterprise) {
 			if (llmConfig.api_key && agent.llmProvider === 'openai') {
 				envVars.OPENAI_API_KEY = llmConfig.api_key as string
 			}

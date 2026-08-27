@@ -262,10 +262,10 @@ describe('Workspaces Routes', () => {
 			expect(res.status).toBe(404)
 		})
 
-		// `byollm_allowed` is the entitlement that bypasses the plan cap, the
+		// `enterprise_granted` is the entitlement that bypasses the plan cap, the
 		// paid-plan mutex and credit debiting. Every self-signed-up user owns
 		// their own workspace, so owner rights must NOT be enough to set it.
-		describe('byollm_allowed is ops-gated, not owner-gated', () => {
+		describe('enterprise_granted is ops-gated, not owner-gated', () => {
 			const OPS_ACTOR = '11111111-1111-4111-8111-111111111111'
 			const ORIGINAL_ENV = process.env.MASKIN_ENTERPRISE_ACTOR_IDS
 
@@ -293,7 +293,7 @@ describe('Workspaces Routes', () => {
 				]
 
 				const res = await app.request(
-					jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, { byollm_allowed: true }),
+					jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, { enterprise_granted: true }),
 				)
 
 				expect(res.status).toBe(403)
@@ -311,7 +311,7 @@ describe('Workspaces Routes', () => {
 				const res = await app.request(
 					jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, {
 						onboarding_enabled: true,
-						byollm_allowed: true,
+						enterprise_granted: true,
 					}),
 				)
 
@@ -320,14 +320,14 @@ describe('Workspaces Routes', () => {
 				expect(calls.updates).toHaveLength(0)
 			})
 
-			it('returns 403 when byollm_allowed is set to false by a non-ops owner', async () => {
+			it('returns 403 when enterprise_granted is set to false by a non-ops owner', async () => {
 				setOpsAllowlist(undefined)
 				const ws = buildWorkspace()
 				const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
 				mockResults.selectQueue = [[ws], [{ actorId: 'test-actor-id' }]]
 
 				const res = await app.request(
-					jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, { byollm_allowed: false }),
+					jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, { enterprise_granted: false }),
 				)
 
 				expect(res.status).toBe(403)
@@ -336,7 +336,7 @@ describe('Workspaces Routes', () => {
 			it('allows an ops actor on the allowlist to grant it', async () => {
 				setOpsAllowlist(OPS_ACTOR)
 				const ws = buildWorkspace()
-				const updated = { ...ws, byollmAllowed: true }
+				const updated = { ...ws, enterpriseGranted: true }
 				const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces', OPS_ACTOR)
 				mockResults.selectQueue = [
 					[ws], // workspace exists
@@ -345,12 +345,12 @@ describe('Workspaces Routes', () => {
 				mockResults.update = [updated]
 
 				const res = await app.request(
-					jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, { byollm_allowed: true }),
+					jsonRequest('PATCH', `/api/workspaces/admin/${ws.id}`, { enterprise_granted: true }),
 				)
 
 				expect(res.status).toBe(200)
 				const body = await res.json()
-				expect(body.byollmAllowed).toBe(true)
+				expect(body.enterprise).toBe(true)
 			})
 
 			it('still lets a plain owner flip onboarding_enabled', async () => {
@@ -443,8 +443,7 @@ describe('Workspaces Routes', () => {
 			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
 			mockResults.selectQueue = [
 				[{ role: 'owner', type: 'human' }], // isWorkspaceHumanAdminOrOwner(caller)
-				[{ role: 'member' }], // existing member row lookup
-				[{ billingOwnerId: null }], // workspace billing-owner guard
+				[{ billingOwnerId: null }], // in-transaction workspace lock + billing-owner guard
 				[{ role: 'member' }], // in-transaction SELECT ... FOR UPDATE of the target
 			]
 			mockResults.update = [{ actorId, role: 'admin', joinedAt: new Date() }]
@@ -482,7 +481,8 @@ describe('Workspaces Routes', () => {
 			const { app, mockResults } = createTestApp(workspacesRoutes, '/api/workspaces')
 			mockResults.selectQueue = [
 				[{ role: 'owner', type: 'human' }], // isWorkspaceHumanAdminOrOwner(caller)
-				[], // existing member lookup — no row
+				[{ billingOwnerId: null }], // in-transaction SELECT ... FOR UPDATE of the workspace
+				[], // in-transaction SELECT ... FOR UPDATE of the target — no row
 			]
 
 			const res = await app.request(
@@ -498,8 +498,7 @@ describe('Workspaces Routes', () => {
 			const { app, mockResults, calls } = createTestApp(workspacesRoutes, '/api/workspaces')
 			mockResults.selectQueue = [
 				[{ role: 'owner', type: 'human' }], // isWorkspaceHumanAdminOrOwner(caller)
-				[{ role: 'owner' }], // existing member is the owner
-				[{ billingOwnerId: null }], // workspace billing-owner guard
+				[{ billingOwnerId: null }], // in-transaction workspace lock + billing-owner guard
 				[{ role: 'owner' }], // in-transaction SELECT ... FOR UPDATE of the target
 				[{ actorId }], // owner count = 1 → last owner guard trips
 			]

@@ -31,7 +31,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/settings/keys')({
 
 function KeysPage() {
 	const { workspace, workspaceId } = useWorkspace()
-	const byollmAllowed = Boolean(workspace.byollmAllowed)
+	const enterprise = Boolean(workspace.enterprise)
 	// `new-design` boundary for Settings → Keys. v2 moved the plan/credits card
 	// out to its own Billing route; with the flag off it still belongs here,
 	// because the pre-v2 nav links "Billing" at this path and nowhere else.
@@ -41,10 +41,10 @@ function KeysPage() {
 		<div className="space-y-6">
 			{!newDesign && (
 				<div className="max-w-4xl">
-					<BillingSection workspaceId={workspaceId} byollmAllowed={byollmAllowed} />
+					<BillingSection workspaceId={workspaceId} enterprise={enterprise} />
 				</div>
 			)}
-			{byollmAllowed ? (
+			{enterprise ? (
 				<div className="max-w-lg space-y-6">
 					<div className="border-t border-border pt-6">
 						<ClaudeOAuthSection workspaceId={workspaceId} />
@@ -61,7 +61,7 @@ function KeysPage() {
 			) : newDesign ? (
 				// With the flag off, `BillingSection` above already fills this page. With
 				// it on, billing moved to its own route and every remaining section is
-				// gated on `byollmAllowed` — so a workspace without that grant rendered
+				// gated on `enterprise` — so a workspace without that grant rendered
 				// a blank page. `byollm_allowed` is an ops grant, not a self-serve
 				// toggle, so this says who enables it instead of offering a dead button.
 				<EmptyState

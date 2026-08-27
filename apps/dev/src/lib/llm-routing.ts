@@ -11,7 +11,7 @@ import {
 	resolveClaudeCredentialsWithFailover,
 } from './claude-failover'
 import { type OAuthSlotKind, readSlots, resolveActiveSlot } from './claude-oauth-slots'
-import { byollmEntitled, isEnterpriseWorkspace } from './enterprise-allowlist'
+import { isEnterprise } from './enterprise'
 import { logger } from './logger'
 import type { WorkspaceSettings } from './types'
 
@@ -36,7 +36,7 @@ export type LlmRoute =
 
 /**
  * Workspaces on these plans are routed through Maskin's funded OR account.
- * Trial is included so BYOLLM-less users can try the product without their
+ * Trial is included so BYO-LLM-less users can try the product without their
  * own credentials — capped low via `MASKIN_TRIAL_HARD_CAP_USD_CENTS`.
  */
 const MASKIN_PLAN_ROUTED_PLANS = new Set(['pro', 'team', 'trial'])
@@ -44,7 +44,7 @@ const MASKIN_PLAN_ROUTED_PLANS = new Set(['pro', 'team', 'trial'])
 /**
  * True when Maskin funds this workspace's LLM usage. Every route that reaches
  * for `MASKIN_FALLBACK_OPENROUTER_KEY` on a workspace's behalf must be gated
- * on this — a `byollm` workspace pays for its own credentials by definition,
+ * on this — a `enterprise` workspace pays for its own credentials by definition,
  * so silently spending Maskin's OpenRouter account for it is both a billing
  * leak and a violation of the entitlement the customer bought.
  */
@@ -226,7 +226,7 @@ function effectivePlanCap(plan: MaskinPlan, hardCapCents: number | undefined): n
 
 export function getWorkspacePlanCap(wsSettings: WorkspaceSettings): number | null {
 	const billing = wsSettings.billing
-	const plan = (billing?.plan ?? 'trial') as MaskinPlan | 'byollm'
+	const plan = (billing?.plan ?? 'trial') as MaskinPlan | 'enterprise'
 	if (!MASKIN_PLAN_ROUTED_PLANS.has(plan)) return null
 	return effectivePlanCap(plan as MaskinPlan, billing?.hard_cap_usd_cents ?? undefined)
 }
@@ -282,11 +282,19 @@ export async function checkPlanCap(params: {
 	db: Database
 	workspaceId: string
 	wsSettings: WorkspaceSettings
+	/**
+	 * The workspace's enterprise status, which is exempt from the cap. Passed
+	 * in rather than re-derived: `isEnterprise()` needs the workspace row, and
+	 * both callers (`resolveLlmRoute`, `SessionManager.createSession`'s
+	 * pre-flight) have already loaded it. Re-reading here would put a second
+	 * lookup on the session-dispatch path and let the two disagree.
+	 */
+	enterprise: boolean
 }): Promise<void> {
 	const billing = params.wsSettings.billing
-	const plan = (billing?.plan ?? 'trial') as MaskinPlan | 'byollm'
+	const plan = (billing?.plan ?? 'trial') as MaskinPlan | 'enterprise'
 	if (!MASKIN_PLAN_ROUTED_PLANS.has(plan)) return
-	if (await isEnterpriseWorkspace(params.db, params.workspaceId)) return
+	if (params.enterprise) return
 
 	const maskinPlan = plan as MaskinPlan
 	const cap = effectivePlanCap(maskinPlan, billing?.hard_cap_usd_cents ?? undefined)
@@ -346,7 +354,16 @@ function buildCustomLlmEnv(custom: WorkspaceSettings['custom_llm']): Record<stri
 function buildMaskinPlanEnv(
 	billing: WorkspaceSettings['billing'],
 	fallback: FallbackConfig,
+	enterprise: boolean,
 ): Record<string, string> | null {
+	// Enterprise is never Maskin-funded, whatever the stored plan says. The plan
+	// alone is not a safe gate: `plan: 'enterprise'` is only written once a BYO
+	// credential is connected (`billingAfterByoTransition`), and an absent
+	// billing block defaults to 'trial' — so an entitled workspace whose BYO
+	// credential is missing, expired or broken would otherwise land here and
+	// spend Maskin's OpenRouter key. It gets no credentials instead, which
+	// surfaces as a real error rather than a silent billing leak.
+	if (enterprise) return null
 	if (!isMaskinPlanRouted(billing)) return null
 	if (!fallback.apiKey) return null
 	return {
@@ -374,13 +391,13 @@ function buildMaskinPlanEnv(
  * available (session fails to start rather than silently consuming Maskin tokens).
  *
  * Routes 1 (anthropic branch only), 2, 3, and 4 are all BYO credentials and are
- * only reachable when `byollmAllowed` is true — every workspace defaults to the
+ * only reachable when `enterprise` is true — every workspace defaults to the
  * Maskin plan, and only ops-flagged exception workspaces may bring their own
  * Claude subscription / endpoint / key. See PR #970.
  *
  * Returns null if the agent uses a non-anthropic provider (e.g. OpenAI native);
  * caller continues to handle OPENAI_API_KEY injection itself (also gated on
- * `byollmAllowed` — see session-manager.ts).
+ * `enterprise` — see session-manager.ts).
  *
  * `agent.model`, when set, is forwarded as ANTHROPIC_MODEL on routes #1, #3,
  * and #4 (the routes that don't already carry an explicit model of their
@@ -411,7 +428,7 @@ export async function resolveLlmRoute(params: {
 	wsSettings: WorkspaceSettings
 	agent: AgentLlmConfig
 	/** Workspace entitlement to BYO LLM credentials. Defaults false. */
-	byollmAllowed: boolean
+	enterprise: boolean
 	/**
 	 * Overrides the default `probeClaudeSubscription` probe used by the
 	 * failover path when `MASKIN_CLAUDE_FAILOVER_ENABLED=true`. Only tests
@@ -426,7 +443,7 @@ export async function resolveLlmRoute(params: {
 	 */
 	env?: NodeJS.ProcessEnv
 }): Promise<LlmRoutingResult | null> {
-	const { db, workspaceId, actorId, wsSettings, agent, byollmAllowed, claudeProbe } = params
+	const { db, workspaceId, actorId, wsSettings, agent, enterprise, claudeProbe } = params
 
 	/** Set when route #2 failed; folded into the error when nothing else resolves. */
 	let oauthFailure: string | null = null
@@ -444,7 +461,7 @@ export async function resolveLlmRoute(params: {
 	//    anthropic branch is a BYO credential, so it's gated like routes 2-4.
 	if (agent.apiKey) {
 		if (agent.provider === 'anthropic') {
-			if (byollmAllowed) {
+			if (enterprise) {
 				const envVars: Record<string, string> = { ANTHROPIC_API_KEY: agent.apiKey }
 				if (agent.model) {
 					envVars.ANTHROPIC_MODEL = agent.model
@@ -457,7 +474,7 @@ export async function resolveLlmRoute(params: {
 		}
 	}
 
-	if (byollmAllowed) {
+	if (enterprise) {
 		// 2. Claude OAuth subscription — checked first among BYO routes so a
 		//    connected Pro/Max subscription is always preferred over custom endpoints
 		//    and never consumes maskin plan tokens. Primary→backup failover kicks in
@@ -566,9 +583,9 @@ export async function resolveLlmRoute(params: {
 	//    The cap check here is defense-in-depth; the pre-flight in `createSession`
 	//    is what surfaces 402 to the user before a session row is created.
 	const fallback = readFallbackConfig(params.env)
-	const maskinPlanEnv = buildMaskinPlanEnv(wsSettings.billing, fallback)
+	const maskinPlanEnv = buildMaskinPlanEnv(wsSettings.billing, fallback, enterprise)
 	if (maskinPlanEnv) {
-		await checkPlanCap({ db, workspaceId, wsSettings })
+		await checkPlanCap({ db, workspaceId, wsSettings, enterprise })
 		return { route: LLM_ROUTE_MASKIN_PLAN, envVars: maskinPlanEnv }
 	}
 
@@ -673,10 +690,10 @@ const NO_CREDENTIALS_HUMAN_MESSAGE =
 export function preflightLlmCredentials(params: {
 	wsSettings: WorkspaceSettings
 	agent: AgentLlmConfig
-	byollmAllowed: boolean
+	enterprise: boolean
 	env?: NodeJS.ProcessEnv
 }): { humanMessage: string; detail: string } | null {
-	const { wsSettings, agent, byollmAllowed } = params
+	const { wsSettings, agent, enterprise } = params
 
 	// 1. Agent-level override — mirrors resolveLlmRoute's route #1 INCLUDING its
 	//    early return. That function handles only the anthropic provider here;
@@ -687,14 +704,14 @@ export function preflightLlmCredentials(params: {
 	//    into a container with no LLM env at all.
 	//
 	//    Of the non-anthropic providers only openai is ever injected
-	//    (session-manager sets OPENAI_API_KEY, gated on `byollmAllowed`).
+	//    (session-manager sets OPENAI_API_KEY, gated on `enterprise`).
 	//    `llmProvider` is free text, so anything else has no injection site and
 	//    therefore no route.
 	if (agent.apiKey && agent.provider !== 'anthropic') {
-		if (byollmAllowed && agent.provider === 'openai') return null
+		if (enterprise && agent.provider === 'openai') return null
 		return {
 			humanMessage: NO_CREDENTIALS_HUMAN_MESSAGE,
-			detail: byollmAllowed
+			detail: enterprise
 				? `This agent is configured with a '${agent.provider ?? 'unknown'}' API key, which Maskin has no way to pass to the session. Use an Anthropic or OpenAI key, or connect a Claude subscription for the workspace.`
 				: 'This agent has its own API key, but the workspace is not entitled to bring its own LLM credentials.',
 		}
@@ -703,9 +720,9 @@ export function preflightLlmCredentials(params: {
 	// Anthropic from here on. This branch deliberately does NOT early-return
 	// when the workspace is unentitled: resolveLlmRoute falls through to routes
 	// 2-5 in that case, so the Maskin plan can still carry the session.
-	if (agent.apiKey && byollmAllowed) return null
+	if (agent.apiKey && enterprise) return null
 
-	if (byollmAllowed) {
+	if (enterprise) {
 		// 2. Claude OAuth. Which slot counts depends on the failover flag, and
 		//    it has to be read the same way `resolveClaudeCredentialsWithFailover`
 		//    reads it. With the flag OFF that function ignores `active_slot` and
@@ -738,10 +755,15 @@ export function preflightLlmCredentials(params: {
 	}
 
 	// 5. Maskin plan.
-	if (buildMaskinPlanEnv(wsSettings.billing, readFallbackConfig(params.env)) !== null) return null
+	if (buildMaskinPlanEnv(wsSettings.billing, readFallbackConfig(params.env), enterprise) !== null)
+		return null
 
-	const detail = byollmAllowed
-		? 'No Claude subscription, custom LLM endpoint, or Anthropic/OpenAI API key is configured for this workspace, and it is not on a Maskin-funded plan.'
+	// The enterprise wording deliberately does not mention the stored plan: an
+	// enterprise workspace is never Maskin-funded, whatever its plan says, so
+	// "it is not on a Maskin-funded plan" would send whoever reads this failure
+	// off to check billing instead of connecting a credential.
+	const detail = enterprise
+		? 'No Claude subscription, custom LLM endpoint, or Anthropic/OpenAI API key is configured for this workspace. Enterprise workspaces bring their own LLM and are never routed onto the Maskin-funded plan, so there is no fallback to use.'
 		: 'This workspace is not on a Maskin-funded plan and is not entitled to bring its own LLM credentials.'
 	return { humanMessage: NO_CREDENTIALS_HUMAN_MESSAGE, detail }
 }
@@ -787,7 +809,7 @@ export function resolveChatCredentials(params: {
 	 * key", so a caller that omitted it would silently reopen the leak this
 	 * gate exists to close. Both call sites already `select()` the full row.
 	 */
-	workspace: { byollmAllowed: boolean | null; billingOwnerId: string | null }
+	workspace: { enterpriseGranted: boolean | null; billingOwnerId: string | null }
 }): ChatCredentials | null {
 	const { wsSettings, agent, workspace } = params
 
@@ -823,20 +845,20 @@ export function resolveChatCredentials(params: {
 	}
 
 	// System fallback — Maskin's own funded OpenRouter account. Only workspaces
-	// whose plan Maskin funds may draw on it. A `byollm` workspace brings its
+	// whose plan Maskin funds may draw on it. A `enterprise` workspace brings its
 	// own credentials; if none of the routes above matched, it has none
 	// configured, and the correct answer is "no chat-callable credential"
 	// rather than quietly billing Maskin.
 	// Two independent reasons a workspace may not draw on Maskin's key, and
-	// both are needed. `billing.plan === 'byollm'` is the *result* of
+	// both are needed. `billing.plan === 'enterprise'` is the *result* of
 	// connecting a BYO credential — but `billingAfterByoTransition()` leaves
 	// `billing` undefined when the workspace never had a billing block, so an
 	// entitled workspace can be BYO in every meaningful sense while its plan
-	// still reads as the `trial` default. `byollmEntitled()` (the
-	// `byollm_allowed` column OR an enterprise billing owner) is what catches
-	// that case, and mirrors the `byollmAllowed` param `resolveLlmRoute` takes.
+	// still reads as the `trial` default. `isEnterprise()` (the
+	// `enterprise_granted` column OR an enterprise billing owner) is what catches
+	// that case, and mirrors the `enterprise` param `resolveLlmRoute` takes.
 	if (!isMaskinPlanRouted(wsSettings.billing)) return null
-	if (byollmEntitled(workspace)) return null
+	if (isEnterprise(workspace)) return null
 	const fallback = readFallbackConfig()
 	if (!fallback.apiKey) return null
 	return {

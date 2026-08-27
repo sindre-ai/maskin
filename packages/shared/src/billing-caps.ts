@@ -8,7 +8,7 @@
  * quota UI. Agents never count toward either cap.
  */
 
-export const PLAN_TIER_ORDER = ['trial', 'pro', 'team', 'byollm'] as const
+export const PLAN_TIER_ORDER = ['trial', 'pro', 'team', 'enterprise'] as const
 export type BillingPlan = (typeof PLAN_TIER_ORDER)[number]
 
 /** Max total human members a workspace on this plan may hold. `null` = unlimited. */
@@ -16,7 +16,7 @@ export const SEAT_CAPS: Record<BillingPlan, number | null> = {
 	trial: 1,
 	pro: 5,
 	team: 25,
-	byollm: null,
+	enterprise: null,
 }
 
 /**
@@ -30,10 +30,10 @@ export const OWNERSHIP_CAPS: Record<BillingPlan, number | null> = {
 	trial: 1,
 	pro: 5,
 	team: 25,
-	byollm: null,
+	enterprise: null,
 }
 
-/** Higher of two plan tiers, per PLAN_TIER_ORDER (byollm > team > pro > trial). */
+/** Higher of two plan tiers, per PLAN_TIER_ORDER (enterprise > team > pro > trial). */
 export function higherTier(a: BillingPlan, b: BillingPlan): BillingPlan {
 	return PLAN_TIER_ORDER.indexOf(a) >= PLAN_TIER_ORDER.indexOf(b) ? a : b
 }
