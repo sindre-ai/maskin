@@ -286,6 +286,26 @@ curl -s http://127.0.0.1:9327/metrics | grep SeaweedFS_volumeServer_resource
 
 Four lines back (`all`, `avail`, `free`, `used`) means the endpoint is live.
 
+### 5. Verify the log pipeline by query, not by status
+
+A green `alloy` service proves nothing — see `.claude/rules/known-pitfalls.md`
+→ "A 'Healthy' Collector Component That Silently Matches Nothing". Run the
+selector and confirm it returns rows:
+
+```logql
+{job="maskin-coolify"}
+```
+
+Then open the `job` label browser. It must show `maskin-coolify` and must NOT
+show `loki.source.docker.containers`. If it shows the latter, the component is
+pre-stamping its own `job` and something upstream of
+`loki.relabel.containers` is setting it — the entries are in Loki, just under a
+value nothing selects.
+
+Do the same for `service_name`: it must list `app`, `seaweedfs`, `postgres` and
+the `coolify*` containers, and must NOT contain any
+`<service>-<projectId>-<deployId>` value.
+
 ## Correlating across hosts
 
 Both host configs use the same three labels, which is what makes this work:

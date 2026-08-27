@@ -157,30 +157,56 @@ discovery.relabel "containers" {
 		replacement  = coalesce(sys.env("DEPLOY_ENV"), "production")
 	}
 
-	// `job` MUST be set in a relabel rule, never as a static label on the
-	// source component.
-	//
-	// This is the trap documented three times over in the agent-server config:
-	// a component that pre-stamps `job` beats any static value, and the failure
-	// is silent — entries are accepted, nothing is dropped, and every
-	// documented query matches nothing. loki.source.docker stamps
-	// job="<component id>" exactly the way loki.source.journal does. Setting it
-	// here wins, because relabel rules run after the component's own labelling.
-	rule {
-		target_label = "job"
-		replacement  = coalesce(sys.env("LOKI_JOB_LABEL"), "maskin-coolify")
-	}
+	// NOTE: `job` is deliberately NOT set here. A rule in this block relabels
+	// TARGETS, which loki.source.docker consumes as input — so it runs BEFORE
+	// the source component and would lose to anything the component stamps on
+	// its own output. It is set in loki.relabel.containers below instead, which
+	// is applied to ENTRIES via the source's `relabel_rules`. See the comment
+	// there.
 }
 
 // ---------------------------------------------------------------------------
 // Source — tail each container's stdout/stderr over the Docker API
 // ---------------------------------------------------------------------------
 
+// `job` MUST be set in a relabel rule attached DOWNSTREAM of the source, never
+// as a static label on the source component and never in the discovery.relabel
+// block above.
+//
+// This is the trap documented three times over in the agent-server config: a
+// component that pre-stamps `job` beats any static value, and the failure is
+// silent — entries are accepted, nothing is dropped, and every documented query
+// matches nothing.
+//
+// The subtlety that bit this file, and that the agent-server config does not
+// have to contend with: "set it in a relabel rule" is only true when the rule
+// runs AFTER the component. discovery.relabel relabels the TARGET LIST that
+// loki.source.docker reads, so it runs before. loki.relabel wired as the
+// source's `relabel_rules` relabels the ENTRIES the component emits, so it runs
+// after and wins. Same wiring as loki.relabel.journal on the agent-server host
+// (apps/agent-server/observability/alloy.alloy) — forward_to is empty because
+// this block is consumed for its `.rules` only, not as a pipeline stage.
+//
+// Whether loki.source.docker pre-stamps job="<component id>" the way
+// loki.source.journal demonstrably does is UNVERIFIED on this host. Wiring it
+// here costs nothing and is correct either way. Verify by query after install,
+// never by component health: the `job` label browser must show "maskin-coolify"
+// and no "loki.source.docker.containers" value. See README.md → step 5.
+loki.relabel "containers" {
+	forward_to = []
+
+	rule {
+		target_label = "job"
+		replacement  = coalesce(sys.env("LOKI_JOB_LABEL"), "maskin-coolify")
+	}
+}
+
 loki.source.docker "containers" {
-	host       = coalesce(sys.env("DOCKER_HOST_ADDR"), "unix:///var/run/docker.sock")
-	targets    = discovery.relabel.containers.output
-	labels     = {}
-	forward_to = [loki.process.containers.receiver]
+	host          = coalesce(sys.env("DOCKER_HOST_ADDR"), "unix:///var/run/docker.sock")
+	targets       = discovery.relabel.containers.output
+	labels        = {}
+	relabel_rules = loki.relabel.containers.rules
+	forward_to    = [loki.process.containers.receiver]
 
 	// Reading the Docker socket requires the alloy user to be in the `docker`
 	// group. The apt package runs Alloy as `alloy`, NOT root — so this is a
