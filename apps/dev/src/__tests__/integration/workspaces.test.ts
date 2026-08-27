@@ -621,10 +621,19 @@ describe('Workspaces Integration', () => {
 
 			// The audit row is the half most easily dropped — it lives inside the
 			// transaction, so a rollback must take it with the role change.
+			// Scoped to 'updated': adding the member in the fixture already wrote a
+			// 'created' row for the same entity, and this assertion is about the
+			// role change specifically.
 			const audit = await db
 				.select({ action: events.action, data: events.data })
 				.from(events)
-				.where(and(eq(events.entityType, 'workspace_member'), eq(events.entityId, member.id)))
+				.where(
+					and(
+						eq(events.entityType, 'workspace_member'),
+						eq(events.entityId, member.id),
+						eq(events.action, 'updated'),
+					),
+				)
 			expect(audit).toHaveLength(1)
 			expect(audit[0].action).toBe('updated')
 			expect(audit[0].data).toMatchObject({ role: { from: 'member', to: 'admin' } })
@@ -647,11 +656,19 @@ describe('Workspaces Integration', () => {
 			expect(body.error.message).toMatch(/last owner/i)
 			expect(await roleOf(ws.id, member.id)).toBe('owner')
 
-			// A rejected demotion must not leave an audit row behind.
+			// A rejected demotion must not leave an audit row behind. Scoped to
+			// 'updated' so the fixture's own 'created' row for this member doesn't
+			// mask a regression here.
 			const audit = await db
 				.select({ id: events.id })
 				.from(events)
-				.where(and(eq(events.entityType, 'workspace_member'), eq(events.entityId, member.id)))
+				.where(
+					and(
+						eq(events.entityType, 'workspace_member'),
+						eq(events.entityId, member.id),
+						eq(events.action, 'updated'),
+					),
+				)
 			expect(audit).toHaveLength(0)
 		})
 
