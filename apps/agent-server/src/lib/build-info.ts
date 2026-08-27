@@ -81,7 +81,7 @@ export function resolveBuildInfo(source?: NodeJS.ProcessEnv): BuildInfo {
 		// Defaults mirror `coalesce(sys.env("AGENT_SERVER_INSTANCE"),
 		// constants.hostname)` and `coalesce(sys.env("DEPLOY_ENV"), "production")`
 		// in observability/alloy.alloy. If these two ever disagree,
-		// {instance="finland-1"} stops selecting the same host in logs and
+		// {instance="agent-1"} stops selecting the same host in logs and
 		// metrics, which is the entire point of the label.
 		instance: coalesce(env.AGENT_SERVER_INSTANCE, hostname()),
 		env: coalesce(env.DEPLOY_ENV, 'production'),

@@ -110,30 +110,36 @@ metrics dashboard as evidence that everything on the box is being logged.
 
 ## Current deployment
 
-Live as of 2026-08-26 on the Finland box (`95.217.231.223`). This section
-records what is actually running, so a future reader can tell configuration
-from aspiration.
+Deployment-specific facts — which host, which Grafana Cloud stack, which
+numeric usernames, which access-policy token, the measured series count — are
+**deliberately not in this repo**. It is open source and multi-tenant; a
+committed hostname is both an unnecessary disclosure and a value that stops
+being true for everyone else.
 
-| | |
-|---|---|
-| Alloy | v1.19.0 (apt, `promtail_journal_enabled` build tag) |
-| Config | `/etc/alloy/config.alloy` — synced from `alloy.alloy` by the deploy workflow |
-| Settings | `/etc/default/alloy`, mode `0600` |
-| `instance` | `finland-1` (set explicitly; hostname is a Hetzner image name) |
-| Grafana Cloud | org `gracefulfalcon588`, stack `1808111`, region `prod-eu-north-0` |
-| Loki | `logs-prod-025`, user `1765898` |
-| Prometheus | `prometheus-prod-39-prod-eu-north-0`, user `3540446` |
-| Credentials | one access policy token `maskin-agent-server-alloy`, scoped `logs:write` + `metrics:write` |
-| Active series | 887 host + 2 application (~9% of the 10k allowance) |
-| Dashboards | Grafana Cloud "Linux Server" integration, installed |
+They live in `observability/deployment.local.md`, which is gitignored. Create it
+from `observability/deployment.local.md.example` on first install and keep it
+current — the point of recording them at all is so a future reader can tell
+configuration from aspiration.
 
-Note the two Grafana Cloud usernames are **different numbers**. They are not
-interchangeable, and swapping them yields a 401 that reads like a bad token.
+One thing worth stating here because it is a property of Grafana Cloud rather
+than of any deployment: **the Loki and Prometheus usernames are different
+numbers.** They are not interchangeable, and swapping them yields a 401 that
+reads exactly like a bad token.
 
-Verified end to end: `{instance="finland-1", job="maskin-agent-server"}`
-returns log lines, `node_uname_info` returns
-`job="integrations/node_exporter", instance="finland-1", env="production"`, and
-"Linux node / overview" renders live CPU, memory and disk for this host.
+Verify an install end to end with:
+
+```logql
+{instance="$INSTANCE", job="maskin-agent-server"}
+```
+
+```promql
+node_uname_info
+```
+
+The first should return log lines; the second should come back labelled
+`job="integrations/node_exporter"` with your `instance` and `env` values. Then
+confirm Grafana Cloud's "Linux node / overview" renders live CPU, memory and
+disk for the host.
 
 ## Setup
 
@@ -182,10 +188,10 @@ access policy token can serve both if it is scoped `logs:write` +
 authenticates, that mix-up is the first thing to check.
 
 **Set `AGENT_SERVER_INSTANCE` explicitly, in two files.** It defaults to the
-hostname, and the current Finland box's hostname is
-`Ubuntu-2404-noble-amd64-base` — a Hetzner image name, meaningless in a
-dashboard, identical on every box built from that image, and liable to change on
-a rebuild. Pick something you would recognise at 3am (`finland-1`). This label
+hostname, and cloud images are routinely named after the image rather than the
+role — meaningless in a dashboard, identical on every box built from that image,
+and liable to change on a rebuild. Pick something you would recognise at 3am
+(`agent-1`, say). This label
 is applied to all three pipelines and is what the correlation workflow below
 joins on, so changing it later silently splits every saved query at that moment.
 
@@ -391,10 +397,10 @@ rules. The recording rules matter: some panels (e.g. CPU count) query
 it, and which only produces data going forward — so expect a few blank panels
 for the first minutes after install, not a misconfiguration.
 
-**Verified 2026-08-26**: with the collector set in `alloy.alloy`, "Linux node /
-overview" populates fully — uptime, hostname, kernel, OS, CPU count, memory
-total, swap, root mount size, CPU usage per core, and load average — with the
-`instance` variable auto-selecting `finland-1`.
+**Verified**: with the collector set in `alloy.alloy`, "Linux node / overview"
+populates fully — uptime, hostname, kernel, OS, CPU count, memory total, swap,
+root mount size, CPU usage per core, and load average — with the `instance`
+variable auto-selecting the host.
 
 ## Querying logs
 
@@ -425,7 +431,7 @@ The **host** series below carry `job="integrations/node_exporter"`, plus the
 `env` and `instance` labels shared with logs. agent-server's own application
 series carry `job="maskin-agent-server"` instead — same `env` and `instance`,
 different job, because they describe the process rather than the box. Replace
-`finland-1` with your `AGENT_SERVER_INSTANCE` value.
+`agent-1` in the queries below with your `AGENT_SERVER_INSTANCE` value.
 
 That `job` value is Grafana Cloud's own convention, and matching it is what
 lets their prebuilt **Linux Server** dashboards find this host (see setup step
@@ -563,7 +569,7 @@ p99 only started shipping with #1462. Once there is a week of them, re-derive
 it:
 
 ```logql
-{instance="finland-1", source="msb-exec"} |= "input-stream: exiting with code"
+{instance="agent-1", source="msb-exec"} |= "input-stream: exiting with code"
 ```
 
 and move the env var to the observed p99 plus headroom.
@@ -594,13 +600,13 @@ correlation the CPU walkthrough below uses, with a narrower starting point.
 maskin_sessions_stalled{reason=~"never_seeded|undelivered"} > 0
 ```
 
-Note the `instance` (e.g. `finland-1`) and when the series went non-zero. The
+Note the `instance` (e.g. `agent-1`) and when the series went non-zero. The
 session has been wedged since roughly that timestamp minus the threshold.
 
 **2. Read the guest consoles for that host and window.**
 
 ```logql
-{instance="finland-1", source="msb-exec"}
+{instance="agent-1", source="msb-exec"}
 ```
 
 Set the time range to the window from step 1. Every line carries `session_id`
@@ -609,7 +615,7 @@ as structured metadata.
 **3. Narrow to the input path — this is where both known wedges show.**
 
 ```logql
-{instance="finland-1", source="msb-exec"} |= "input-stream"
+{instance="agent-1", source="msb-exec"} |= "input-stream"
 ```
 
 A healthy session re-dials and reports a rising `lastSeq`. A wedged one either
@@ -619,7 +625,7 @@ re-dials forever with the same `lastSeq` (`undelivered`).
 **4. Cross-check the host side for the same session.**
 
 ```logql
-{instance="finland-1", job="maskin-agent-server"} |= "input:"
+{instance="agent-1", job="maskin-agent-server"} |= "input:"
 ```
 
 `turn written to stream` with no subsequent `stream registered` carrying a
@@ -630,7 +636,7 @@ session that `POST /sessions` accepted.
 **5. Take the session id and pin the whole session's output.**
 
 ```logql
-{instance="finland-1", source="msb-exec"} | session_id="<uuid-from-step-3>"
+{instance="agent-1", source="msb-exec"} | session_id="<uuid-from-step-3>"
 ```
 
 ## What commit is each host running
@@ -645,7 +651,7 @@ value never changes and carries no information; you query the labels.
 maskin_build_info
 
 # One host.
-maskin_build_info{instance="finland-1"}
+maskin_build_info{instance="agent-1"}
 
 # Are all hosts on the same commit? A result with more than one row means a
 # deploy reached some boxes and not others.
@@ -722,7 +728,7 @@ read two different files**:
 
 Set the same value in both. Setting it only in Alloy's file leaves
 `maskin_build_info` carrying `instance="<hostname>"` from the application while
-the collector relabels the series itself to `instance="finland-1"` — the series
+the collector relabels the series itself to `instance="agent-1"` — the series
 label and the label *inside* build info then disagree, which is confusing at
 exactly the moment you least want it. (The collector's relabel rule wins for
 selection purposes, so queries still work; it is the payload that lies.)
@@ -745,13 +751,13 @@ were doing.
 1 - avg by (instance) (rate(node_cpu_seconds_total{mode="idle", job="integrations/node_exporter"}[5m])) > 0.9
 ```
 
-The result series is labelled `instance="finland-1"`. Note the window from the
+The result series is labelled `instance="agent-1"`. Note the window from the
 graph — say 02:10–02:30 UTC.
 
 **2. Read that host's logs for that window, using the same label.**
 
 ```logql
-{instance="finland-1", job="maskin-agent-server"}
+{instance="agent-1", job="maskin-agent-server"}
 ```
 
 Set the dashboard/Explore time range to 02:10–02:30. Because `instance` means
@@ -761,7 +767,7 @@ hostname-versus-address translation and no guessing.
 **3. Narrow to what the guests were doing.**
 
 ```logql
-{instance="finland-1", source="msb-exec"}
+{instance="agent-1", source="msb-exec"}
 ```
 
 These are the microVM console lines — the diagnostics PR #1462 added. If a
@@ -770,13 +776,13 @@ session was thrashing, its output is here.
 **4. Attribute it to one session.**
 
 ```logql
-{instance="finland-1", source="msb-exec"} | session_id="<uuid-from-step-3>"
+{instance="agent-1", source="msb-exec"} | session_id="<uuid-from-step-3>"
 ```
 
 **5. Rule out the application itself.**
 
 ```logql
-{instance="finland-1", level=~"warn|error"} | source=""
+{instance="agent-1", level=~"warn|error"} | source=""
 ```
 
 If this is empty across the window, agent-server was healthy and the CPU

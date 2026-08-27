@@ -94,7 +94,7 @@ loki.source.journal "agent_server" {
 		env = coalesce(sys.env("DEPLOY_ENV"), "production"),
 
 		// Identifies the box. The metrics pipeline below applies the SAME
-		// value, so {instance="finland-1"} selects this host in both LogQL
+		// value, so {instance="agent-1"} selects this host in both LogQL
 		// and PromQL. Bounded by the number of hosts, so safe as a label.
 		instance = coalesce(sys.env("AGENT_SERVER_INSTANCE"), constants.hostname),
 	}
@@ -344,8 +344,8 @@ prometheus.exporter.unix "host" {
 		// lifecycle — the metrics-side equivalent of putting sessionId in a
 		// Loki label. Only real, persistent disks are wanted here.
 		//
-		// MEASURED on the Finland box (95.217.231.223, 2026-08-26) with two
-		// msb sandboxes running: `mount | grep -iE 'msb|microsandbox'`
+		// MEASURED on a live host with two msb sandboxes running:
+		// `mount | grep -iE 'msb|microsandbox'`
 		// returned ZERO rows. microsandbox does not create host mounts per
 		// microVM at all — it is libkrun/KVM with the guest rootfs inside
 		// the VM, not an overlay assembled on the host the way Docker does
@@ -518,7 +518,7 @@ discovery.relabel "agent_server" {
 	}]
 
 	// The join key. This MUST be the same expression the journal source and
-	// the node_exporter pipeline use, or {instance="finland-1"} stops
+	// the node_exporter pipeline use, or {instance="agent-1"} stops
 	// selecting the same host across logs and metrics — which is the entire
 	// reason the label exists. Without this rule, prometheus.scrape would set
 	// instance="127.0.0.1:9464": meaningless, and identical on every box.
