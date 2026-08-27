@@ -1,15 +1,13 @@
+// PRE-V2 MARKETPLACE CATALOGUE — governed by the `new-design` feature flag.
+//
+// This is the surface exactly as it shipped before the v2 rewrite. The route
+// (`routes/_authed/$workspaceId/marketplace/index.tsx`) renders it whenever `new-design` is off; the v2 page renders
+// when it is on. This whole directory dies with the flag — see
+// `.claude/rules/feature-flags.md` ("Retiring a flag").
+
 import { PageHeader } from '@/components/layout/page-header'
-import { LegacyMarketplacePage } from '@/components/marketplace/legacy/marketplace-page'
-import { LoopGrid } from '@/components/marketplace/loop-grid'
-import { MarketplaceHeaderIdentity } from '@/components/marketplace/marketplace-header'
 import { EmptyState } from '@/components/shared/empty-state'
-import { FilterTabs } from '@/components/shared/filter-tabs'
-import { CardSkeleton } from '@/components/shared/loading-skeleton'
-import { QueryStateError } from '@/components/shared/query-state'
-import { RouteError } from '@/components/shared/route-error'
-import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useInstalledLoops } from '@/hooks/use-installed-loops'
 import { useInstalledMarketplaceItems, useMarketplaceLoops } from '@/hooks/use-marketplace-loops'
 import type {
@@ -21,16 +19,13 @@ import type {
 	MarketplaceLoopSummary,
 } from '@/lib/api'
 import { api } from '@/lib/api'
+import { cn } from '@/lib/cn'
 import { queryKeys } from '@/lib/query-keys'
 import { useWorkspace } from '@/lib/workspace-context'
 import { useQueries } from '@tanstack/react-query'
-import { createFileRoute } from '@tanstack/react-router'
 import { useMemo, useState } from 'react'
-
-export const Route = createFileRoute('/_authed/$workspaceId/marketplace/')({
-	component: MarketplaceRoute,
-	errorComponent: ({ error }) => <RouteError error={error} />,
-})
+import { LoopGrid } from './loop-grid'
+import { MarketplaceHeaderIdentity } from './marketplace-header'
 
 type TypeFilter = 'all' | 'loops' | MarketplaceItemType
 type FilterValue = TypeFilter | string
@@ -57,20 +52,13 @@ function buildUseCaseItems(counts: MarketplaceLoopCounts | undefined): FilterIte
 		.map((key) => ({ value: key, label: key }))
 }
 
-// `new-design` boundary for the marketplace catalogue: the v2 page below, or the
-// pre-v2 one vendored under `components/marketplace/legacy/`. Both branches run
-// on the same hooks and data layer — flags govern the visual layer only.
-function MarketplaceRoute() {
-	return useFeatureFlag('new-design') ? <MarketplacePage /> : <LegacyMarketplacePage />
-}
-
-function MarketplacePage() {
+export function LegacyMarketplacePage() {
 	const { workspaceId } = useWorkspace()
 	const [activeFilter, setActiveFilter] = useState<FilterValue>('all')
 	const [query, setQuery] = useState('')
 	const trimmedQuery = query.trim()
 
-	const { data, isLoading, isError, error, refetch } = useMarketplaceLoops()
+	const { data, isLoading, isError } = useMarketplaceLoops()
 	const counts = data?.counts
 	const loops = data?.loops ?? []
 	const useCaseItems = useMemo(() => buildUseCaseItems(counts), [counts])
@@ -88,12 +76,6 @@ function MarketplacePage() {
 		})),
 	})
 	const allItems = useMemo(() => detailQueries.flatMap((q) => q.data?.items ?? []), [detailQueries])
-	// Per-loop item fetches feed the type counts and the item sections. Until
-	// they settle, `allItems` is empty for a reason that is not "no matches" —
-	// treating that as an empty result renders "nothing matches those filters"
-	// over data that is still arriving.
-	const itemsLoading = detailQueries.some((q) => q.isLoading)
-	const itemsFailed = detailQueries.some((q) => q.isError)
 
 	// Item-level type counts for the sidebar (prefer item granularity once loaded).
 	const itemCountsByType = useMemo(() => {
@@ -174,16 +156,13 @@ function MarketplacePage() {
 
 	const isMarketplaceEmpty = !isLoading && !isError && loops.length === 0
 	const hasResults = filteredLoops.length > 0 || filteredItems.length > 0
-	const isFilterEmpty =
-		!isLoading && !isError && !itemsLoading && !isMarketplaceEmpty && !hasResults
+	const isFilterEmpty = !isLoading && !isError && !isMarketplaceEmpty && !hasResults
 
 	return (
 		<div className="flex flex-col h-full min-h-0">
 			<PageHeader
 				stickyIdentity={
-					<MarketplaceHeaderIdentity
-						count={data && loops.length > 0 && !itemsLoading && !itemsFailed ? allCount : undefined}
-					/>
+					<MarketplaceHeaderIdentity count={data && loops.length > 0 ? allCount : undefined} />
 				}
 			/>
 
@@ -204,56 +183,27 @@ function MarketplacePage() {
 					type="search"
 					value={query}
 					onChange={(e) => setQuery(e.target.value)}
-					placeholder="Filter the catalog…"
+					placeholder="Search the marketplace…"
 					aria-label="Filter marketplace"
 					className="w-full shrink-0 md:w-80"
 				/>
 			</nav>
 
 			<div className="flex-1 min-w-0">
-				{/* The catalogue loaded but some loops' items didn't, so the type
-				    chips and counts below understate what's actually available. */}
-				{!isError && itemsFailed ? (
-					<p className="mb-3 text-[11.5px] text-muted-foreground">
-						Some catalogue items couldn't be loaded, so these counts may be incomplete.
-					</p>
-				) : null}
 				{isError ? (
-					<QueryStateError
-						title="Couldn't load the marketplace"
-						error={error ?? new Error('Try refreshing.')}
-						onRetry={refetch ? () => refetch() : undefined}
-					/>
+					<p className="text-sm text-muted-foreground">
+						Couldn't load the marketplace right now. Try refreshing.
+					</p>
 				) : isLoading ? (
-					<div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
-						<CardSkeleton />
-						<CardSkeleton />
-						<CardSkeleton />
-						<CardSkeleton />
-						<CardSkeleton />
-						<CardSkeleton />
-					</div>
+					<p className="text-sm text-muted-foreground">Loading marketplace…</p>
 				) : isMarketplaceEmpty ? (
-					<EmptyState
-						title="No loops yet"
-						description="Check back once Maskin publishes the first one."
-					/>
+					<p className="text-sm text-muted-foreground">
+						No loops yet — check back once Maskin publishes the first one.
+					</p>
 				) : isFilterEmpty ? (
 					<EmptyState
-						title="Nothing in the catalog matches those filters."
-						action={
-							<Button
-								type="button"
-								variant="outline"
-								size="sm"
-								onClick={() => {
-									setQuery('')
-									setActiveFilter('all')
-								}}
-							>
-								Clear filters
-							</Button>
-						}
+						title="No matches"
+						description="Try a different search term or clear the filters."
 					/>
 				) : (
 					<LoopGrid
@@ -283,20 +233,36 @@ function ChipStrip({
 	counts: MarketplaceLoopCounts | undefined
 	itemCounts: Partial<Record<MarketplaceItemType, number>>
 }) {
-	const tabs = items.map((item) => ({
-		label: item.label,
-		value: item.value,
-		count: countForFilter(item.value, counts, itemCounts),
-	}))
 	return (
-		<FilterTabs
-			aria-label="Catalog filters"
-			variant="pill"
-			tabs={tabs}
-			value={active}
-			onChange={(value) => onSelect(value)}
-			className="px-1 pb-1 max-sm:[&>button]:min-h-11"
-		/>
+		<div className="flex gap-1.5 overflow-x-auto px-1 pb-1">
+			{items.map((item) => {
+				const count = countForFilter(item.value, counts, itemCounts)
+				const isActive = active === item.value
+				return (
+					<button
+						key={item.value}
+						type="button"
+						onClick={() => onSelect(item.value)}
+						className={cn(
+							'shrink-0 rounded-full border px-3 py-1 text-xs font-medium whitespace-nowrap transition-colors',
+							isActive
+								? 'border-foreground bg-foreground text-background'
+								: 'border-border bg-background text-muted-foreground hover:text-foreground',
+						)}
+					>
+						{item.label}
+						{typeof count === 'number' ? (
+							<>
+								{' '}
+								<span className={cn('ml-1.5 tabular-nums', isActive ? 'opacity-80' : 'opacity-60')}>
+									{count}
+								</span>
+							</>
+						) : null}
+					</button>
+				)
+			})}
+		</div>
 	)
 }
 

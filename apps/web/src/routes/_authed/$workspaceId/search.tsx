@@ -1,4 +1,5 @@
 import { PageHeader } from '@/components/layout/page-header'
+import { LegacySearchPage } from '@/components/search/legacy/search-page'
 import { ActorAvatar } from '@/components/shared/actor-avatar'
 import { EmptyState } from '@/components/shared/empty-state'
 import { FilterTabs } from '@/components/shared/filter-tabs'
@@ -6,6 +7,7 @@ import { QueryStateError } from '@/components/shared/query-state'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { TypeBadge } from '@/components/shared/type-badge'
 import { Button } from '@/components/ui/button'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useObjects } from '@/hooks/use-objects'
 import {
 	SEARCH_GROUPS,
@@ -54,7 +56,7 @@ interface SearchParams {
 }
 
 export const Route = createFileRoute('/_authed/$workspaceId/search')({
-	component: SearchView,
+	component: SearchRoute,
 	validateSearch: (search: Record<string, unknown>): SearchParams => ({
 		q: typeof search.q === 'string' ? search.q : undefined,
 		type: typeof search.type === 'string' ? search.type : undefined,
@@ -63,6 +65,13 @@ export const Route = createFileRoute('/_authed/$workspaceId/search')({
 			typeof search.group === 'string' && GROUP_VALUES.has(search.group) ? search.group : undefined,
 	}),
 })
+
+// `new-design` boundary for the cross-entity search view: the v2 page below, or
+// the pre-v2 one vendored under `components/search/legacy/`. The route's
+// `validateSearch` is deliberately shared — flags govern the visual layer only.
+function SearchRoute() {
+	return useFeatureFlag('new-design') ? <SearchView /> : <LegacySearchPage />
+}
 
 function SearchView() {
 	const { workspaceId, workspace } = useWorkspace()
