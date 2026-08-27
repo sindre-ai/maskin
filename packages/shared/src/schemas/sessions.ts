@@ -265,6 +265,9 @@ export type SessionUsageResponse = z.infer<typeof sessionUsageResponseSchema>
  * - agent_server_lost     The agent-server restarted and no longer holds
  *                         the microsandbox for this session — the work is
  *                         irrecoverable and the row is closed out.
+ * - startup_stalled       Launch never completed: the session sat in
+ *                         `starting` past the zombie window with no container
+ *                         and no sandbox, and was force-failed.
  * - plan_cap_exceeded     The session was deliberately stopped mid-run by
  *                         SessionManager's budget watchdog because workspace
  *                         usage crossed the plan cap with no usage credits
@@ -290,6 +293,13 @@ export const failureReasonCodeSchema = z.enum([
 	// The session's agent was deleted (or removed by a loop uninstall/version
 	// push) while the session was still live, so it was stopped mid-run.
 	'agent_deleted',
+	// The session never left `starting` — launch stalled before any container
+	// or sandbox existed, and the zombie reaper closed it out. Written by
+	// SessionManager's cleanup pass, which knows the session stalled but not
+	// why; `verbatim_output` carries whatever the row still shows (elapsed
+	// time, resolved route if any) so the stall is at least diagnosable from
+	// the session itself instead of only from server logs.
+	'startup_stalled',
 ])
 export type FailureReasonCode = z.infer<typeof failureReasonCodeSchema>
 

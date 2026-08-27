@@ -1,7 +1,7 @@
 import { ObjectDetailHeader, ObjectDetailIdentity } from '@/components/objects/object-detail-header'
 import type { MemberResponse } from '@/lib/api'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent, { PointerEventsCheckLevel } from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 import { buildObjectResponse } from '../../factories'
@@ -11,10 +11,22 @@ vi.mock('@tanstack/react-router', async () => {
 	return mockTanStackRouter()
 })
 
+const subscribeMock = vi.fn()
+const unsubscribeMock = vi.fn()
+
 vi.mock('@/hooks/use-subscriptions', () => ({
-	useSubscribe: () => ({ mutate: vi.fn() }),
-	useUnsubscribe: () => ({ mutate: vi.fn() }),
+	useSubscribe: () => ({ mutate: subscribeMock, isPending: false }),
+	useUnsubscribe: () => ({ mutate: unsubscribeMock, isPending: false }),
+	useSubscribers: () => ({ data: { actors: [] } }),
 }))
+
+vi.mock('@/lib/auth', async () => {
+	const actual = await vi.importActual<typeof import('@/lib/auth')>('@/lib/auth')
+	return {
+		...actual,
+		getStoredActor: vi.fn(() => ({ id: 'a1', name: 'Alice', type: 'human', email: null })),
+	}
+})
 
 vi.mock('@/hooks/use-mobile', () => ({
 	useIsMobile: () => false,
@@ -77,6 +89,27 @@ describe('ObjectDetailHeader', () => {
 		const object = buildObjectResponse({ title: 'My Bet' })
 		render(<ObjectDetailHeader {...baseProps} object={object} />, { wrapper: makeWrapper() })
 		expect(screen.queryByRole('button', { name: 'Properties' })).toBeNull()
+	})
+
+	it('renders a one-tap subscribe affordance when the current actor is not subscribed', async () => {
+		const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never })
+		subscribeMock.mockClear()
+		const object = buildObjectResponse({ id: 'obj-42', title: 'My Bet' })
+		object.is_subscribed = false
+		render(<ObjectDetailHeader {...baseProps} object={object} />, { wrapper: makeWrapper() })
+
+		const subscribe = await screen.findByRole('button', { name: /^subscribe/i })
+		await user.click(subscribe)
+		await waitFor(() =>
+			expect(subscribeMock).toHaveBeenCalledWith({ entityType: 'object', entityId: 'obj-42' }),
+		)
+	})
+
+	it('hides the subscribe + button once the actor is already subscribed', () => {
+		const object = buildObjectResponse({ id: 'obj-43', title: 'My Bet' })
+		object.is_subscribed = true
+		render(<ObjectDetailHeader {...baseProps} object={object} />, { wrapper: makeWrapper() })
+		expect(screen.queryByRole('button', { name: /^subscribe/i })).toBeNull()
 	})
 })
 
