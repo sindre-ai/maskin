@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Validate the Grafana alert-rule files under observability/*/alerts/.
+"""Validate every Grafana alert-rule file in the repo.
+
+Covers both alert trees: observability/*/alerts/ and
+apps/*/observability/alerts/. See ALERT_GLOBS.
 
 WHY THIS EXISTS RATHER THAN `promtool check rules`.
 
@@ -17,7 +20,7 @@ in an alert rule, which is otherwise undetectable until the alert fails to fire
 during the incident it was written for.
 
 It also asserts the structural invariants that YAML syntax alone will not
-catch, and that have each already been wrong at least once in this directory:
+catch, and that have each already been wrong at least once in these files:
 
   * `condition` names a refId that actually exists in `data`
   * every `__expr__` node's `expression` names an existing refId
@@ -48,7 +51,17 @@ except ImportError:  # pragma: no cover
     sys.exit("PyYAML is required: pip install pyyaml")
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ALERT_GLOB = os.path.join(REPO_ROOT, "observability", "*", "alerts", "*.yaml")
+# Every alert-rule tree in the repo, not just this directory's. The
+# agent-server config keeps its rules next to the app it watches
+# (apps/agent-server/observability/alerts/) rather than under observability/,
+# and a glob that covers only one root is worse than no gate at all: it prints
+# a green "OK: N file(s)" over files it never opened. Both roots are listed
+# explicitly rather than using a recursive `**` walk so that adding a third
+# location is a visible diff here, not a silent pickup.
+ALERT_GLOBS = (
+    os.path.join(REPO_ROOT, "observability", "*", "alerts", "*.y*ml"),
+    os.path.join(REPO_ROOT, "apps", "*", "observability", "alerts", "*.y*ml"),
+)
 
 PLACEHOLDER_RE = re.compile(r"\$\{([A-Z0-9_]+)\}")
 
@@ -217,9 +230,10 @@ def check_promql(exprs: list[str]) -> None:
 
 
 def main() -> int:
-    paths = sorted(glob.glob(ALERT_GLOB))
+    paths = sorted({p for pattern in ALERT_GLOBS for p in glob.glob(pattern)})
     if not paths:
-        print(f"no alert files matched {ALERT_GLOB}", file=sys.stderr)
+        patterns = "\n  ".join(ALERT_GLOBS)
+        print(f"no alert files matched:\n  {patterns}", file=sys.stderr)
         return 1
 
     all_exprs: list[str] = []
