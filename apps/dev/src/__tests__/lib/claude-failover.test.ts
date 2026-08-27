@@ -751,6 +751,72 @@ describe('resolveClaudeCredentialsWithFailover', () => {
 		})
 	})
 
+	// CLAUDE_CREDENTIAL_TIMEOUT_MS bounds both the refresh and the probe. What
+	// matters is not that the abort happens but how it is CLASSIFIED: a timeout
+	// is our own socket giving up, and treating it as evidence against the
+	// credential would burn the backup slot — or hard-fail the session — on a
+	// network blip that says nothing about the subscription.
+	describe('credential call timeouts (CLAUDE_CREDENTIAL_TIMEOUT_MS)', () => {
+		it('treats a refresh timeout as transient and does not fail over to backup', async () => {
+			const claudeOAuth: OAuthSlotStorage = {
+				// Expired, so the refresh must run and its timeout is reached.
+				primary: encryptedSlot({ expiresAt: Date.now() - 60_000 }),
+				backup: encryptedSlot({ encryptedAccessToken: 'backup-token' }),
+			}
+			const { db, eventInserts } = createMockDb({ settings: { claude_oauth: claudeOAuth } })
+			vi.stubGlobal(
+				'fetch',
+				vi.fn().mockRejectedValue(new DOMException('The operation timed out', 'TimeoutError')),
+			)
+
+			const unusable: { transient: boolean; detail: string }[] = []
+			const result = await resolveClaudeCredentialsWithFailover({
+				db,
+				workspaceId: WORKSPACE_ID,
+				actorId: ACTOR_ID,
+				env: { MASKIN_CLAUDE_FAILOVER_ENABLED: 'true' },
+				onUnusable: (info) => unusable.push(info),
+			})
+
+			// Unusable right now — the token really is expired and we could not
+			// refresh it — but reported as transient, and crucially WITHOUT
+			// flipping active_slot or spending the backup.
+			expect(result).toBeNull()
+			expect(unusable).toHaveLength(1)
+			expect(unusable[0].transient).toBe(true)
+			expect(eventInserts).toHaveLength(0)
+		})
+
+		it('reports an auth failure as permanent so it is not retried forever', async () => {
+			const claudeOAuth: OAuthSlotStorage = {
+				primary: encryptedSlot({ expiresAt: Date.now() - 60_000 }),
+			}
+			const { db } = createMockDb({ settings: { claude_oauth: claudeOAuth } })
+			vi.stubGlobal(
+				'fetch',
+				vi.fn().mockResolvedValue({
+					ok: false,
+					status: 401,
+					text: () => Promise.resolve('unauthorized'),
+				}),
+			)
+
+			const unusable: { transient: boolean; detail: string }[] = []
+			const result = await resolveClaudeCredentialsWithFailover({
+				db,
+				workspaceId: WORKSPACE_ID,
+				actorId: ACTOR_ID,
+				// Flag off: primary-only, no backup to fall to, so this is the
+				// shape that reaches llm-routing as a terminal failure.
+				env: {},
+				onUnusable: (info) => unusable.push(info),
+			})
+
+			expect(result).toBeNull()
+			expect(unusable[0]?.transient).toBe(false)
+		})
+	})
+
 	describe('refresh failures', () => {
 		it('classifies a 401 thrown by refresh as auth_failed and fails over', async () => {
 			const claudeOAuth: OAuthSlotStorage = {

@@ -35,18 +35,72 @@ export interface SkillSnapshotSource {
 	isValid: boolean | null
 }
 
+// The placeholder an actor's MCP config uses to opt into a browser sidecar.
+// session-manager.ts's needsBrowserSidecar() string-matches this in the
+// serialised MCP config to decide whether to provision Chromium for a session.
+const BROWSER_CDP_PLACEHOLDER = '${BROWSER_CDP_URL}'
+
+// Canonical, secret-free browser MCP entry. Kept byte-identical to
+// BROWSER_MCP_PRESET in apps/web/src/components/agents/mcp-servers.tsx (the
+// "Add Browser" button) so an installed agent and a hand-configured one get
+// exactly the same server. Every value here is a constant or a placeholder
+// expanded inside the container — nothing publisher-specific survives.
+export const BROWSER_MCP_SERVER = {
+	type: 'stdio',
+	command: 'npx',
+	args: ['@playwright/mcp@latest', '--cdp-endpoint', BROWSER_CDP_PLACEHOLDER],
+} as const
+
+export const BROWSER_MCP_SERVER_NAME = 'playwright'
+
+function referencesBrowserCdp(mcpServers: unknown): boolean {
+	if (mcpServers === null || typeof mcpServers !== 'object') return false
+	return JSON.stringify(mcpServers).includes(BROWSER_CDP_PLACEHOLDER)
+}
+
 // tools.mcpServers.*.env / headers routinely carry live secrets (API keys,
 // bearer tokens) hardcoded by source-workspace admins instead of ${VAR}
 // placeholders. marketplace_loop_items.item_snapshot is readable by any
 // workspace that browses or installs the loop, so mcpServers is dropped
 // entirely rather than trusted to be redacted — installers reconfigure their
 // own MCP servers after install.
+//
+// One capability survives that drop, as a boolean rather than a config:
+// `tools.browser`. Dropping mcpServers wholesale also dropped the browser
+// entry, which carries no secret (it is the constant BROWSER_MCP_SERVER above)
+// but IS what makes session-manager.ts provision a Chromium sidecar. Installed
+// agents therefore silently lost browser access while their system prompts
+// still told them they had it — see expandBrowserCapability for the other half.
 function stripMcpServers(tools: unknown): unknown {
 	if (tools === null || typeof tools !== 'object' || Array.isArray(tools)) {
 		return tools
 	}
 	const { mcpServers, ...rest } = tools as Record<string, unknown>
-	return rest
+	return referencesBrowserCdp(mcpServers) ? { ...rest, browser: true } : rest
+}
+
+/**
+ * Inverse of stripMcpServers' browser handling, applied on the install path:
+ * turn the snapshot's `tools.browser === true` capability flag back into a
+ * real MCP server entry, so the installed actor's sessions provision a browser
+ * sidecar. Any other MCP servers on the actor are left untouched, and an
+ * existing entry under the same name always wins — re-provisioning an install
+ * must never clobber a server the installer configured themselves.
+ */
+export function expandBrowserCapability(tools: unknown): unknown {
+	if (tools === null || typeof tools !== 'object' || Array.isArray(tools)) {
+		return tools
+	}
+	const { browser, ...rest } = tools as Record<string, unknown>
+	if (browser !== true) return tools
+	const existing =
+		rest.mcpServers && typeof rest.mcpServers === 'object' && !Array.isArray(rest.mcpServers)
+			? (rest.mcpServers as Record<string, unknown>)
+			: {}
+	return {
+		...rest,
+		mcpServers: { [BROWSER_MCP_SERVER_NAME]: BROWSER_MCP_SERVER, ...existing },
+	}
 }
 
 export function actorSnapshot(row: ActorSnapshotSource): Record<string, unknown> {

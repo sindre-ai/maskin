@@ -99,6 +99,7 @@ import { randomUUID } from 'node:crypto'
 import type { StorageProvider } from '@maskin/storage'
 import { getProvider } from '../../lib/integrations/registry'
 import { logger } from '../../lib/logger'
+import { expandBrowserCapability } from '../../lib/marketplace-loops/loop-snapshot'
 import { AgentStorageManager } from '../../services/agent-storage'
 import { SessionManager, mergeLaunchRouteConfig } from '../../services/session-manager'
 import { buildIntegration, buildSession } from '../factories'
@@ -115,6 +116,19 @@ function createMockStorageProvider() {
 		ensureBucket: vi.fn().mockResolvedValue(undefined),
 	}
 }
+
+/**
+ * Settings for a workspace that can actually launch a session.
+ *
+ * buildLaunchSpec refuses to launch a workspace with no LLM route at all — the
+ * credential pre-flight — so a `settings: {}` fixture now means "this workspace
+ * has nothing to run on", which is not what these launch tests are about. The
+ * cheapest realistic route is a workspace-level Anthropic key: it resolves
+ * without any extra DB read, so it doesn't perturb the ordered `selectQueue`
+ * each test sets up. Workspaces with genuinely no route are covered against
+ * real Postgres in integration/session-launch-preflight.test.ts.
+ */
+const LAUNCHABLE_WS_SETTINGS = { llm_keys: { anthropic: 'sk-ant-test-ws' } }
 
 describe('SessionManager', () => {
 	let manager: SessionManager
@@ -415,7 +429,11 @@ describe('SessionManager', () => {
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
-			const workspace = { id: session.workspaceId, byollmAllowed: true, settings: {} }
+			const workspace = {
+				id: session.workspaceId,
+				byollmAllowed: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
 
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
 				pulled: 0,
@@ -464,7 +482,11 @@ describe('SessionManager', () => {
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
-			const workspace = { id: session.workspaceId, settings: {} }
+			const workspace = {
+				id: session.workspaceId,
+				byollmAllowed: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
 
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
 				pulled: 0,
@@ -511,7 +533,11 @@ describe('SessionManager', () => {
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
-			const workspace = { id: session.workspaceId, settings: {} }
+			const workspace = {
+				id: session.workspaceId,
+				byollmAllowed: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
 
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
 				pulled: 0,
@@ -555,7 +581,11 @@ describe('SessionManager', () => {
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
-			const workspace = { id: session.workspaceId, settings: {} }
+			const workspace = {
+				id: session.workspaceId,
+				byollmAllowed: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
 
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
 				pulled: 0,
@@ -600,7 +630,11 @@ describe('SessionManager', () => {
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
-			const workspace = { id: session.workspaceId, byollmAllowed: true, settings: {} }
+			const workspace = {
+				id: session.workspaceId,
+				byollmAllowed: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
 
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
 				pulled: 0,
@@ -640,7 +674,11 @@ describe('SessionManager', () => {
 				apiKey: null,
 				tools: null,
 			}
-			const workspace = { id: session.workspaceId, byollmAllowed: true, settings: {} }
+			const workspace = {
+				id: session.workspaceId,
+				byollmAllowed: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
 
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
 				pulled: 0,
@@ -677,7 +715,11 @@ describe('SessionManager', () => {
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
-			const workspace = { id: session.workspaceId, byollmAllowed: true, settings: {} }
+			const workspace = {
+				id: session.workspaceId,
+				byollmAllowed: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
 
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
 				pulled: 0,
@@ -875,7 +917,7 @@ describe('SessionManager', () => {
 		}
 
 		function buildTestWorkspace(workspaceId: string) {
-			return { id: workspaceId, byollmAllowed: true, settings: {} }
+			return { id: workspaceId, byollmAllowed: true, settings: LAUNCHABLE_WS_SETTINGS }
 		}
 
 		beforeEach(() => {
@@ -1004,6 +1046,45 @@ describe('SessionManager', () => {
 			expect(agentCreateCall.env.BROWSER_CDP_URL).toBe('http://172.20.0.2:9222')
 			expect(agentCreateCall.networkMode).toMatch(/^anko-net-/)
 		})
+
+		// Closes the seam between the marketplace install path and this one: the
+		// tools value here is not hand-written, it is exactly what
+		// buildActorInsert() persists for an installed agent that was published
+		// with a browser. Installed agents used to land here with tools:{} and
+		// silently ran without a sidecar.
+		it('provisions a sidecar for an agent installed from a marketplace loop', async () => {
+			const session = buildTestSession({ config: {} })
+			const installedTools = expandBrowserCapability({ browser: true }) as {
+				mcpServers: Record<string, unknown>
+			}
+			const agent = buildTestAgent(session.actorId, installedTools)
+			const workspace = buildTestWorkspace(session.workspaceId)
+
+			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
+				pulled: 0,
+				skipped: 0,
+				failures: [],
+			})
+
+			mockResults.selectQueue = [
+				[session], // startSession: load session
+				[workspace], // hasCapacity: workspace
+				[{ count: 0 }], // hasCapacity: running count
+				[agent], // launchContainer: agent lookup
+				[workspace], // launchContainer: workspace llm keys
+				[], // launchContainer: integrations
+			]
+
+			await manager.startSession(session.id)
+
+			const agentCreateCall = mockContainerManager.create.mock.calls[1]?.[0] as {
+				env: Record<string, string>
+			}
+			expect(agentCreateCall.env.BROWSER_CDP_URL).toBe('http://172.20.0.2:9222')
+			// The agent's own MCP config reaches the container with the placeholder
+			// intact, so agent-run.sh keeps the @playwright/mcp entry.
+			expect(agentCreateCall.env.AGENT_MCP_JSON).toContain('@playwright/mcp')
+		})
 	})
 
 	describe('buildLaunchSpec() — previewGuestPorts (Critical #1 fix)', () => {
@@ -1020,7 +1101,7 @@ describe('SessionManager', () => {
 		}
 
 		function buildTestWorkspace(workspaceId: string) {
-			return { id: workspaceId, byollmAllowed: true, settings: {} }
+			return { id: workspaceId, byollmAllowed: true, settings: LAUNCHABLE_WS_SETTINGS }
 		}
 
 		beforeEach(() => {
@@ -1237,7 +1318,11 @@ describe('SessionManager', () => {
 			})
 			return {
 				session,
-				workspace: { id: session.workspaceId, byollmAllowed: true, settings: {} },
+				workspace: {
+					id: session.workspaceId,
+					byollmAllowed: true,
+					settings: LAUNCHABLE_WS_SETTINGS,
+				},
 				agent: {
 					id: session.actorId,
 					type: 'agent',
@@ -1409,9 +1494,15 @@ describe('SessionManager', () => {
 
 			expect(mockFetchInstallationOwnerLogin).toHaveBeenCalledWith('install-needs-backfill')
 
+			// Skip the session row's own `config` write (buildLaunchSpec persists
+			// the resolved llm_route there) — the update under test is the
+			// integration row's.
 			const updateCall = calls.updates.find(
 				(u): u is { config: { owner_login?: string } } =>
-					typeof u === 'object' && u !== null && 'config' in u,
+					typeof u === 'object' &&
+					u !== null &&
+					'config' in u &&
+					!('llm_route' in ((u as { config: Record<string, unknown> }).config ?? {})),
 			) as { config: { owner_login?: string } } | undefined
 			expect(updateCall?.config.owner_login).toBe('acme-org')
 
@@ -1609,7 +1700,11 @@ describe('SessionManager', () => {
 				actionPrompt: 'Do the thing',
 				containerId: null,
 			})
-			const workspace = { id: session.workspaceId, byollmAllowed: true, settings: {} }
+			const workspace = {
+				id: session.workspaceId,
+				byollmAllowed: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
 			const agent = {
 				id: session.actorId,
 				type: 'agent' as const,
@@ -2579,7 +2674,11 @@ describe('SessionManager', () => {
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
-			const workspace = { id: session.workspaceId, byollmAllowed: true, settings: {} }
+			const workspace = {
+				id: session.workspaceId,
+				byollmAllowed: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
 
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
 				pulled: 0,
@@ -2616,7 +2715,11 @@ describe('SessionManager', () => {
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
-			const workspace = { id: session.workspaceId, settings: {} }
+			const workspace = {
+				id: session.workspaceId,
+				byollmAllowed: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
 
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
 				pulled: 0,
@@ -2664,7 +2767,11 @@ describe('SessionManager', () => {
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
-			const workspace = { id: session.workspaceId, byollmAllowed: true, settings: {} }
+			const workspace = {
+				id: session.workspaceId,
+				byollmAllowed: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
 
 			vi.spyOn(AgentStorageManager.prototype, 'pullAgentFiles').mockResolvedValue(undefined)
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
@@ -2849,7 +2956,11 @@ describe('SessionManager', () => {
 				apiKey: 'ank_test_agent_key',
 				tools: null,
 			}
-			const workspace = { id: session.workspaceId, settings: {} }
+			const workspace = {
+				id: session.workspaceId,
+				byollmAllowed: true,
+				settings: LAUNCHABLE_WS_SETTINGS,
+			}
 
 			vi.spyOn(AgentStorageManager.prototype, 'pullWorkspaceSkillsForAgent').mockResolvedValue({
 				pulled: 0,
