@@ -347,3 +347,62 @@ describe('slug is addressable in code mode', () => {
 		expect(slug).toMatch(/^[A-Za-z_$][\w$]*$/)
 	})
 })
+
+describe('addIntegrationByUrl', () => {
+	it('keys an OpenAPI spec url as `url`, not `value`', async () => {
+		// Verified live: the url variant of the spec union requires `url`. Sending
+		// `value` (the blob variant's key) fails with a bare "Missing key" and an
+		// empty 400 body.
+		const { impl, calls } = stubFetch({ '/api/openapi/specs': () => json({}) })
+
+		await makeClient(impl).addIntegrationByUrl('key', {
+			workspaceId: WORKSPACE,
+			url: 'https://example.com/openapi.json',
+			kind: 'openapi',
+			name: 'example',
+		})
+
+		const body = calls.at(-1)?.body as { spec: Record<string, unknown> }
+		expect(body.spec).toEqual({ kind: 'url', url: 'https://example.com/openapi.json' })
+	})
+
+	it('sends an MCP server as an endpoint', async () => {
+		const { impl, calls } = stubFetch({ '/api/mcp/servers': () => json({}) })
+
+		await makeClient(impl).addIntegrationByUrl('key', {
+			workspaceId: WORKSPACE,
+			url: 'https://example.com/mcp',
+			kind: 'mcp',
+			name: 'example',
+		})
+
+		const body = calls.at(-1)?.body as Record<string, unknown>
+		expect(body.endpoint).toBe('https://example.com/mcp')
+		expect(body.slug).toBe(workspaceScopedSlug(WORKSPACE, 'example'))
+	})
+})
+
+describe('Origin header', () => {
+	it('sends an Origin on every request', async () => {
+		// Verified live: without it the auth plane answers 403
+		// MISSING_OR_NULL_ORIGIN and provisioning cannot sign in. curl succeeds
+		// without one, so this only reproduces from a real client.
+		const { impl, calls } = stubFetch({ '/api/integrations': () => json([]) })
+
+		await makeClient(impl).listIntegrations('key', WORKSPACE)
+
+		expect(calls).toHaveLength(1)
+	})
+
+	it('uses the broker base url as the Origin', async () => {
+		const seen: Array<string | null> = []
+		const impl = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+			seen.push(new Headers(init?.headers).get('Origin'))
+			return json([])
+		}) as unknown as typeof fetch
+
+		await makeClient(impl).listIntegrations('key', WORKSPACE)
+
+		expect(seen).toEqual(['http://broker.local'])
+	})
+})

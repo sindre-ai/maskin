@@ -139,7 +139,15 @@ export class ToolBrokerClient {
 	// -- transport ----------------------------------------------------------
 
 	private async request<T>({ method = 'GET', path, token, body }: RequestOptions): Promise<T> {
-		const headers: Record<string, string> = { Accept: 'application/json' }
+		const headers: Record<string, string> = {
+			Accept: 'application/json',
+			// The backend's auth plane refuses a request with no Origin
+			// (MISSING_OR_NULL_ORIGIN, 403) — a browser-shaped check that a
+			// server-to-server caller trips even though curl does not. Sending our
+			// own base URL satisfies it; without this, provisioning cannot sign in
+			// at all.
+			Origin: this.baseUrl,
+		}
 		if (token) headers.Authorization = `Bearer ${token}`
 		if (body !== undefined) headers['Content-Type'] = 'application/json'
 
@@ -346,7 +354,9 @@ export class ToolBrokerClient {
 		const body =
 			input.kind === 'mcp'
 				? { slug, name: slug, endpoint: input.url, transport: 'remote', remoteTransport: 'auto' }
-				: { slug, spec: { kind: 'url', value: input.url }, baseUrl: '' }
+				: // The url variant keys the value as `url`; only the blob variant uses
+					// `value`. Sending `value` here fails with a bare "Missing key".
+					{ slug, name: slug, spec: { kind: 'url', url: input.url } }
 
 		await this.request({ method: 'POST', path, token: apiKey, body })
 		return { slug }
