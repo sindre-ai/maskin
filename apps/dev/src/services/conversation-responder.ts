@@ -190,6 +190,14 @@ export async function evaluateAndRespond(ctx: {
 
 	const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)
 	const wsSettings = (ws?.settings as WorkspaceSettings) ?? {}
+	// BYO-LLM entitlement, for resolveChatCredentials' fallback gate. Absent
+	// row => treat as entitled, i.e. refuse the Maskin key: declining to spend
+	// on a workspace we can't read is the safe direction, and this heuristic
+	// fails open anyway.
+	const wsEntitlement = {
+		byollmAllowed: ws ? ws.byollmAllowed : true,
+		billingOwnerId: ws?.billingOwnerId ?? null,
+	}
 
 	const historyRows = await db
 		.select({ actorName: actors.name, content: messages.content })
@@ -214,6 +222,7 @@ export async function evaluateAndRespond(ctx: {
 					: await checkRelevance({
 							agent,
 							wsSettings,
+							wsEntitlement,
 							conversationHistory,
 							newMessageContent: messageForPrompt.content,
 							isDirectConversation,
@@ -534,14 +543,23 @@ async function checkRelevance(params: {
 		llmConfig: unknown
 	}
 	wsSettings: WorkspaceSettings
+	wsEntitlement: { byollmAllowed: boolean | null; billingOwnerId: string | null }
 	conversationHistory: Array<{ actorName: string; content: string }>
 	newMessageContent: string
 	isDirectConversation: boolean
 }): Promise<boolean> {
-	const { agent, wsSettings, conversationHistory, newMessageContent, isDirectConversation } = params
+	const {
+		agent,
+		wsSettings,
+		wsEntitlement,
+		conversationHistory,
+		newMessageContent,
+		isDirectConversation,
+	} = params
 	const llmConfig = (agent.llmConfig as Record<string, unknown>) ?? {}
 	const credentials = resolveChatCredentials({
 		wsSettings,
+		workspace: wsEntitlement,
 		agent: {
 			provider: agent.llmProvider,
 			apiKey: (llmConfig.api_key as string | undefined) ?? null,
