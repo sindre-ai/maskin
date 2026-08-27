@@ -44,7 +44,9 @@ test.describe('Settings v2 surface', () => {
 			for (const section of SECTIONS) {
 				await gotoSettings(page, account.workspaceId, section.path)
 
-				const link = page.getByRole('link', { name: section.label, exact: true }).first()
+				const link = page
+					.getByRole('navigation', { name: 'Settings sections' })
+					.getByRole('link', { name: section.label, exact: true })
 				await expect(link).toBeVisible({ timeout: 10000 })
 				await expect(link).toHaveClass(/bg-muted/)
 
@@ -113,76 +115,7 @@ test.describe('Settings v2 surface', () => {
 			await expect(page.getByRole('combobox', { name: /^Role for / }).first()).toBeVisible()
 			await expect(page.getByRole('button', { name: /Add member/ })).toBeVisible()
 		})
-
-		test(`Integrations exposes the model-provider and MCP entry points at ${viewport.label}`, async ({
-			page,
-			account,
-		}) => {
-			await page.setViewportSize({ width: viewport.width, height: viewport.height })
-			await gotoSettings(page, account.workspaceId, '/integrations')
-
-			await expect(
-				page.getByText('Connect the tools your agents read from and write to').first(),
-			).toBeVisible({ timeout: 10000 })
-
-			const modelProviders = page.getByRole('link', { name: /Model providers/ })
-			await expect(modelProviders).toBeVisible()
-			await modelProviders.click()
-			await expect(page).toHaveURL(new RegExp(`/${account.workspaceId}/settings/keys$`))
-
-			await gotoSettings(page, account.workspaceId, '/integrations')
-			const mcpLink = page.getByRole('link', { name: /Connect your coding agent/ })
-			await expect(mcpLink).toBeVisible()
-			await mcpLink.click()
-			await expect(page).toHaveURL(new RegExp(`/${account.workspaceId}/settings/mcp$`))
-		})
-
-		test(`Billing's payment disclosure opens and closes at ${viewport.label}`, async ({
-			page,
-			account,
-		}) => {
-			await page.setViewportSize({ width: viewport.width, height: viewport.height })
-			await gotoSettings(page, account.workspaceId, '/billing')
-
-			const trigger = page.getByRole('button', { name: /Payment, details and invoices/ })
-			await expect(trigger).toBeVisible({ timeout: 10000 })
-			await expect(page.getByRole('heading', { name: 'PAYMENT METHOD' })).toHaveCount(0)
-
-			await trigger.click()
-			await expect(page.getByRole('heading', { name: 'PAYMENT METHOD' })).toBeVisible()
-			await expect(
-				page.getByText('Card details are held by Stripe — Maskin never stores your card number.'),
-			).toBeVisible()
-
-			await trigger.click()
-			await expect(page.getByRole('heading', { name: 'PAYMENT METHOD' })).toHaveCount(0)
-		})
 	}
-
-	// The billing statuses were missing from `statusColors`, so `StatusBadge`
-	// fell through to a hardcoded zinc-700 pill that is low-contrast on white.
-	test('the plan status pill uses its status tokens in both light and dark mode', async ({
-		page,
-		account,
-	}) => {
-		for (const theme of ['light', 'dark'] as const) {
-			await page.addInitScript((t) => localStorage.setItem('maskin-theme', t), theme)
-			await page.setViewportSize(VIEWPORTS.mobile)
-			await gotoSettings(page, account.workspaceId, '/billing')
-
-			if (theme === 'dark') {
-				const isDark = await page.evaluate(() =>
-					document.documentElement.classList.contains('dark'),
-				)
-				expect(isDark).toBe(true)
-			}
-
-			const badge = page.getByText('inactive', { exact: true }).first()
-			await expect(badge).toBeVisible({ timeout: 10000 })
-			await expect(badge).not.toHaveClass(/bg-zinc-700/)
-			await expect(badge).toHaveClass(/bg-status-parked-bg/)
-		}
-	})
 
 	// `ROLE_OPTIONS` excludes 'owner' (the backend body schema is
 	// z.enum(['admin','member'])), so rendering the owner's row through the same

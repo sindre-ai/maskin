@@ -45,7 +45,7 @@ test.describe('Billing plans — Settings UI', () => {
 			account,
 		}) => {
 			await page.setViewportSize({ width: vp.width, height: vp.height })
-			await page.goto(`/${account.workspaceId}/settings/keys`)
+			await page.goto(`/${account.workspaceId}/settings/billing`)
 
 			// Scoped to the banner — the plan comparison grid renders its own
 			// "TRIAL" card label, which an unscoped getByText also matches.
@@ -56,7 +56,7 @@ test.describe('Billing plans — Settings UI', () => {
 	}
 
 	test('Hide plans / Compare plans toggles the plan comparison grid', async ({ page, account }) => {
-		await page.goto(`/${account.workspaceId}/settings/keys`)
+		await page.goto(`/${account.workspaceId}/settings/billing`)
 
 		// Trial (non paid+active) starts with the comparison grid expanded.
 		await expect(page.getByRole('button', { name: 'Upgrade to Pro' })).toBeVisible()
@@ -68,7 +68,7 @@ test.describe('Billing plans — Settings UI', () => {
 	})
 
 	test('upgrade click redirects to the mocked Stripe checkout url', async ({ page, account }) => {
-		const mockCheckoutUrl = `${BASE}/${account.workspaceId}/settings/keys?billing=mock-checkout`
+		const mockCheckoutUrl = `${BASE}/${account.workspaceId}/settings/billing?billing=mock-checkout`
 		await page.route('**/api/billing/checkout', async (route) => {
 			await route.fulfill({
 				status: 200,
@@ -77,7 +77,7 @@ test.describe('Billing plans — Settings UI', () => {
 			})
 		})
 
-		await page.goto(`/${account.workspaceId}/settings/keys`)
+		await page.goto(`/${account.workspaceId}/settings/billing`)
 		await page.getByRole('button', { name: 'Upgrade to Pro' }).click()
 
 		await page.waitForURL((url) => url.toString().includes('billing=mock-checkout'))
@@ -99,7 +99,7 @@ test.describe('Billing plans — Settings UI', () => {
 
 		for (const theme of ['light', 'dark'] as const) {
 			await setTheme(page, theme)
-			await page.goto(`/${account.workspaceId}/settings/keys`)
+			await page.goto(`/${account.workspaceId}/settings/billing`)
 
 			await expect(page.getByText('Past due')).toBeVisible()
 
@@ -132,7 +132,7 @@ test.describe('Billing plans — Settings UI', () => {
 			})
 
 			await page.setViewportSize({ width: vp.width, height: vp.height })
-			await page.goto(`/${account.workspaceId}/settings/keys`)
+			await page.goto(`/${account.workspaceId}/settings/billing`)
 
 			await expect(page.getByText('Pro — $20/mo')).toBeVisible()
 			await expect(page.getByText('$40.00 usage credits')).toBeVisible()
@@ -162,7 +162,7 @@ test.describe('Billing plans — Settings UI', () => {
 				credit_balance_cents: 0,
 			})
 
-			const mockCheckoutUrl = `${BASE}/${account.workspaceId}/settings/keys?billing=mock-credit-checkout`
+			const mockCheckoutUrl = `${BASE}/${account.workspaceId}/settings/billing?billing=mock-credit-checkout`
 			await page.route('**/api/billing/credits/checkout', async (route) => {
 				await route.fulfill({
 					status: 200,
@@ -172,7 +172,7 @@ test.describe('Billing plans — Settings UI', () => {
 			})
 
 			await page.setViewportSize({ width: vp.width, height: vp.height })
-			await page.goto(`/${account.workspaceId}/settings/keys`)
+			await page.goto(`/${account.workspaceId}/settings/billing`)
 
 			await expect(page.getByText('Pro — $20/mo')).toBeVisible()
 			// Reachable/tappable at every ship-gate viewport, including 375px —
