@@ -758,8 +758,12 @@ export function preflightLlmCredentials(params: {
 	if (buildMaskinPlanEnv(wsSettings.billing, readFallbackConfig(params.env), enterprise) !== null)
 		return null
 
+	// The enterprise wording deliberately does not mention the stored plan: an
+	// enterprise workspace is never Maskin-funded, whatever its plan says, so
+	// "it is not on a Maskin-funded plan" would send whoever reads this failure
+	// off to check billing instead of connecting a credential.
 	const detail = enterprise
-		? 'No Claude subscription, custom LLM endpoint, or Anthropic/OpenAI API key is configured for this workspace, and it is not on a Maskin-funded plan.'
+		? 'No Claude subscription, custom LLM endpoint, or Anthropic/OpenAI API key is configured for this workspace. Enterprise workspaces bring their own LLM and are never routed onto the Maskin-funded plan, so there is no fallback to use.'
 		: 'This workspace is not on a Maskin-funded plan and is not entitled to bring its own LLM credentials.'
 	return { humanMessage: NO_CREDENTIALS_HUMAN_MESSAGE, detail }
 }
