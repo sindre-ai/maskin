@@ -1,5 +1,5 @@
 import { render, screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockMatchRoute = vi.fn()
 
@@ -20,6 +20,12 @@ vi.mock('@/lib/workspace-context', () => ({
 import { Route } from '@/routes/_authed/$workspaceId/settings'
 
 const SettingsLayout = (Route as unknown as { component: React.FC }).component
+
+// These specs cover the v2 branch of the `new-design` boundary, so they drive
+// the flag on through the test-only localStorage override.
+beforeEach(() => {
+	localStorage.setItem('ff:new-design', 'on')
+})
 
 describe('SettingsLayout', () => {
 	beforeEach(() => {

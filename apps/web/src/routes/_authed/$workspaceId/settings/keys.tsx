@@ -1,3 +1,4 @@
+import { BillingSection } from '@/components/settings/billing-section'
 import { FormError } from '@/components/shared/form-error'
 import { RouteError } from '@/components/shared/route-error'
 import { Button } from '@/components/ui/button'
@@ -5,6 +6,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Switch } from '@/components/ui/switch'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useUpdateWorkspace } from '@/hooks/use-workspaces'
 import {
 	type ClaudeOAuthImportInput,
@@ -29,9 +31,18 @@ export const Route = createFileRoute('/_authed/$workspaceId/settings/keys')({
 function KeysPage() {
 	const { workspace, workspaceId } = useWorkspace()
 	const byollmAllowed = Boolean(workspace.byollmAllowed)
+	// `new-design` boundary for Settings → Keys. v2 moved the plan/credits card
+	// out to its own Billing route; with the flag off it still belongs here,
+	// because the pre-v2 nav links "Billing" at this path and nowhere else.
+	const newDesign = useFeatureFlag('new-design')
 
 	return (
 		<div className="space-y-6">
+			{!newDesign && (
+				<div className="max-w-4xl">
+					<BillingSection workspaceId={workspaceId} byollmAllowed={byollmAllowed} />
+				</div>
+			)}
 			{byollmAllowed ? (
 				<div className="max-w-lg space-y-6">
 					<div className="border-t border-border pt-6">

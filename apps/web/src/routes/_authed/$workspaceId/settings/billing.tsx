@@ -1,8 +1,9 @@
 import { BillingSection } from '@/components/settings/billing-section'
 import { BillingUsageDetails, useWorkspaceModelUsage } from '@/components/settings/billing-usage'
 import { RouteError } from '@/components/shared/route-error'
+import { useFeatureFlag } from '@/hooks/use-feature-flag'
 import { useWorkspace } from '@/lib/workspace-context'
-import { createFileRoute } from '@tanstack/react-router'
+import { Navigate, createFileRoute } from '@tanstack/react-router'
 
 export const Route = createFileRoute('/_authed/$workspaceId/settings/billing')({
 	component: BillingPage,
@@ -18,7 +19,7 @@ export const Route = createFileRoute('/_authed/$workspaceId/settings/billing')({
  * (`/api/sessions/usage`), a different source — it answers "where did the money
  * go", which the plan card deliberately doesn't.
  */
-function BillingPage() {
+function BillingPageV2() {
 	const { workspace, workspaceId } = useWorkspace()
 	const usage = useWorkspaceModelUsage(workspaceId)
 
@@ -27,5 +28,17 @@ function BillingPage() {
 			<BillingSection workspaceId={workspaceId} byollmAllowed={Boolean(workspace.byollmAllowed)} />
 			<BillingUsageDetails usage={usage} />
 		</div>
+	)
+}
+
+// `new-design` boundary. This route has no pre-v2 counterpart — before v2,
+// billing lived inside Settings → Keys and the pre-v2 nav never linked here, so
+// with the flag off we send the user back to where billing used to live.
+function BillingPage() {
+	const { workspaceId } = useWorkspace()
+	return useFeatureFlag('new-design') ? (
+		<BillingPageV2 />
+	) : (
+		<Navigate to="/$workspaceId/settings/keys" params={{ workspaceId }} replace />
 	)
 }
