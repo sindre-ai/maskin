@@ -24,26 +24,48 @@
 # HOW TO APPLY IT. Grafana Cloud has no filesystem, so the file-provisioning
 # path (`/etc/grafana/provisioning/alerting/`) that works on self-hosted
 # Grafana is NOT available to us. This file is therefore the source of truth
-# and is imported, not read in place. Either:
+# and is imported, not read in place.
 #
-#   grafanactl resources push alertrules --path observability/coolify-host/alerts
+# Note the shape mismatch, because it is the thing that trips people up: the
+# `apiVersion: 1 / groups:` schema below is the FILE-PROVISIONING format. The
+# Alerting Provisioning API does not accept it verbatim — it takes a rule group
+# as JSON. So the import is a conversion, not an upload of this file:
 #
-# or, without grafanactl, POST it through the Alerting Provisioning API:
+#   # one group -> {interval, rules[]}
+#   yq -o=json '.groups[0] | {"interval": .interval, "rules": .rules}' \
+#     seaweedfs-disk.yaml > group.json
 #
-#   curl -X POST \
+#   curl -X PUT \
 #     -H "Authorization: Bearer $GRAFANA_CLOUD_TOKEN" \
-#     -H 'Content-Type: application/yaml' \
-#     --data-binary @seaweedfs-disk.yaml \
-#     "$GRAFANA_URL/api/v1/provisioning/alert-rules/export?format=yaml"
+#     -H 'Content-Type: application/json' \
+#     -H 'X-Disable-Provenance: true' \
+#     --data-binary @group.json \
+#     "$GRAFANA_URL/api/v1/provisioning/folder/$FOLDER_UID/rule-groups/coolify-seaweedfs-disk"
 #
-# Rules imported this way are editable in the UI, which means the UI can drift
-# from this file. If you change a rule in the UI, export it back over this file
-# (Alert rule -> Export -> YAML) in the same PR as the behaviour change.
+# `X-Disable-Provenance: true` is what keeps the rules editable in the UI.
+# WITHOUT it the provisioning API marks them provisioned and the UI refuses
+# edits — so if the drift workflow below is to be possible at all, that header
+# is required, not optional.
 #
-# BEFORE APPLYING, substitute the two placeholders:
-#   ${PROM_DATASOURCE_UID}  the Prometheus datasource UID (Connections ->
-#                           Data sources -> your Prom stack -> UID in the URL)
-#   ${CONTACT_POINT}        the notification target, e.g. `maskin-oncall-slack`
+# There is NO endpoint that ingests this file as-is. In particular
+# `/api/v1/provisioning/alert-rules/export` is a GET that EMITS yaml; POSTing a
+# file at it imports nothing while still returning yaml, which is an easy way
+# to believe an alert is live when it does not exist.
+#
+# Because the rules stay editable, the UI can drift from this file. If you
+# change a rule in the UI, export it back over this file (Alert rule -> Export
+# -> YAML) in the same PR as the behaviour change.
+#
+# BEFORE APPLYING, substitute the three placeholders:
+#   ${PROM_DATASOURCE_UID}       the Prometheus datasource UID (Connections ->
+#                                Data sources -> your Prom stack -> UID in URL)
+#   ${CONTACT_POINT}             the notification target, e.g.
+#                                `maskin-oncall-slack`
+#   ${SEAWEEDFS_PROM_JOB_LABEL}  must equal the value Alloy ships under. It is
+#                                the same env var the collector reads (default
+#                                `seaweedfs`, see alloy.env.example) — if the
+#                                two disagree, the unreachable rule watches a
+#                                job nobody writes and sits in NoData forever.
 #
 # NOT ALERTED ON: volume-count exhaustion. `weed server` caps the number of
 # volumes it will allocate (SeaweedFS_volumeServer_max_volumes, against
@@ -111,10 +133,21 @@ groups:
         # disk headroom genuinely does not change fast enough for a shorter
         # window to be worth the false positives.
         for: 15m
-        # A scrape gap must not resolve a real disk problem, and a SeaweedFS
-        # that has stopped answering is itself a reason to look — so NoData
-        # keeps the alerting state rather than clearing it.
-        noDataState: NoData
+        # NoData is OWNED BY THE `up` RULE BELOW, not by this one.
+        #
+        # This used to be NoData, on the reasoning that a scrape gap must not
+        # resolve a real disk problem. That reasoning is sound but it was being
+        # served by the wrong mechanism. The DatasourceNoData instance Grafana
+        # synthesises carries none of this rule's labels — no `instance`, no
+        # `name`, and no `$values.headroom` — so the summary rendered as
+        # ": SeaweedFS  has  of its disk free.", an empty-bodied page naming a
+        # condition that was not the one that fired. Both rules also went NoData
+        # on the same gap, so one unreachable target paged twice at two
+        # different severities.
+        #
+        # `SeaweedFS volume server unreachable` states that condition directly
+        # and fires once. With it in place this rule can clear on no data.
+        noDataState: OK
         execErrState: Error
         labels:
           severity: warning
@@ -122,7 +155,7 @@ groups:
         annotations:
           summary: >-
             {{ $labels.instance }}: SeaweedFS {{ $labels.name }} has
-            {{ humanizePercentage $value }} of its disk free.
+            {{ humanizePercentage $values.headroom.Value }} of its disk free.
           description: >-
             The seaweed_data volume is filling. SeaweedFS holds agent skills, learnings and
             memory; when it can no longer write, sessions do not fail loudly — agent file
@@ -171,7 +204,8 @@ groups:
         # digits the remaining time is measured in hours, and waiting out a
         # long window costs more than an occasional duplicate page.
         for: 5m
-        noDataState: NoData
+        # See the warning rule: target-down is the `up` rule's job.
+        noDataState: OK
         execErrState: Error
         labels:
           severity: page
@@ -179,7 +213,7 @@ groups:
         annotations:
           summary: >-
             {{ $labels.instance }}: SeaweedFS {{ $labels.name }} is nearly full —
-            {{ humanizePercentage $value }} free.
+            {{ humanizePercentage $values.headroom.Value }} free.
           description: >-
             Agent file writes are about to start failing. Sessions will keep launching and
             keep reporting healthy; what breaks is the push of skills/learnings/memory at
@@ -192,6 +226,85 @@ groups:
 
             Do NOT delete anything under the seaweed_data volume by hand — the volume server
             owns that layout and files there are the only copy of agents' persistent state.
+          runbook_url: https://github.com/sindre-ai/maskin/blob/main/observability/coolify-host/README.md
+        notification_settings:
+          receiver: ${CONTACT_POINT}
+
+      - uid: maskin-seaweedfs-unreachable
+        title: SeaweedFS volume server unreachable
+        condition: alert
+        # THE COMPANION THE TWO RULES ABOVE DEPEND ON.
+        #
+        # Both disk rules clear on no data (noDataState: OK), which is only
+        # safe because this rule exists. It is what turns "SeaweedFS stopped
+        # answering" from an empty-bodied NoData page into a stated condition,
+        # and it is the only rule here that can fire when the disk metrics are
+        # absent rather than merely low.
+        #
+        # It also covers the NEVER-SCRAPED case, which NoData could not
+        # distinguish from a transient gap and which is live right now: the
+        # `-metricsPort`/`-metricsIp` flags and the `127.0.0.1:9327:9327`
+        # publish added to docker-compose.prod.yml do not take effect until
+        # Coolify recreates the seaweedfs container. Until that redeploy this
+        # rule fires and says exactly why — which is the correct behaviour, not
+        # a false positive to be silenced. If it is still firing after a
+        # redeploy, the target genuinely is not listening; start from the
+        # `curl http://127.0.0.1:9327/metrics` check in the README.
+        data:
+          - refId: reachable
+            relativeTimeRange: { from: 1800, to: 0 }
+            datasourceUid: ${PROM_DATASOURCE_UID}
+            model:
+              refId: reachable
+              # `up` is produced by the scrape itself, so unlike the disk
+              # metrics it exists whether or not SeaweedFS answers — that is
+              # precisely why target-down belongs on this series and not on a
+              # NoData handler. max by (instance) collapses a duplicate scrape
+              # without changing meaning: any 1 means something answered.
+              expr: max by (instance) (up{job="${SEAWEEDFS_PROM_JOB_LABEL}"})
+              instant: true
+          - refId: alert
+            datasourceUid: __expr__
+            model:
+              refId: alert
+              type: threshold
+              expression: reachable
+              conditions:
+                - evaluator: { type: lt, params: [1] }
+        # 10m spans several 60s scrapes and comfortably outlasts a Coolify
+        # redeploy of the seaweedfs service, so a routine deploy does not page.
+        for: 10m
+        # NoData here means the `up` series itself is missing — Alloy is not
+        # scraping this target at all, or is not reaching Prometheus. That is a
+        # strictly worse fault than a down target and must not clear silently.
+        noDataState: NoData
+        execErrState: Error
+        labels:
+          severity: page
+          service: seaweedfs
+        annotations:
+          summary: >-
+            {{ $labels.instance }}: SeaweedFS /metrics is not answering — disk
+            headroom alerts are blind while this is firing.
+          description: >-
+            The scrape target is down, so both disk-headroom rules have no input. Treat this
+            as "we cannot see the volume", not as "the volume is fine".
+
+            SeaweedFS itself may still be serving S3 traffic — the metrics listener and the
+            S3 listener are separate ports on the same process, so agent file operations can
+            be working normally while this fires. Check the app before assuming an outage.
+
+            NOTE ON THE COMMANDS BELOW: there is no container literally named `seaweedfs`.
+            Coolify names containers `<service>-<projectId>-<deployId>` and the trailing id
+            changes on every deploy, so find it by its compose label first and use that id:
+
+            `docker ps -a --filter label=com.docker.compose.service=seaweedfs`
+
+            Most likely causes, in order: (1) the container has not been recreated since the
+            -metricsPort flag was added, so /metrics has never existed — `docker inspect <id>
+            | grep metricsPort` finds the flag in its command; (2) the container is
+            restarting — the same `docker ps -a` shows it; (3) the published port is missing —
+            `docker port <id>` should show 127.0.0.1:9327.
           runbook_url: https://github.com/sindre-ai/maskin/blob/main/observability/coolify-host/README.md
         notification_settings:
           receiver: ${CONTACT_POINT}

@@ -40,7 +40,12 @@ export function ObjectDetailHeader({
 	const [menuOpen, setMenuOpen] = useState(false)
 
 	return (
-		<div className="flex flex-none flex-wrap items-center justify-end gap-2 border-b border-border pb-3">
+		// The properties sidebar renders its own SubscribeToggle with the same
+		// aria-label, so this hook gives tests a way to target the header copy.
+		<div
+			data-object-detail-header
+			className="flex flex-none flex-wrap items-center justify-end gap-2 border-b border-border pb-3"
+		>
 			<SubscribeToggle
 				workspaceId={workspaceId}
 				entityType="object"

@@ -432,6 +432,14 @@ export const api = {
 				method: 'DELETE',
 				workspaceId,
 			}),
+		githubLinkable: (workspaceId: string) =>
+			request<LinkableGithubInstallation[]>('/integrations/github/linkable', { workspaceId }),
+		githubLink: (workspaceId: string, installationId: string) =>
+			request<IntegrationResponse>('/integrations/github/link', {
+				method: 'POST',
+				body: { installation_id: installationId },
+				workspaceId,
+			}),
 		slackConversations: (id: string, workspaceId: string, types?: string[]) => {
 			const qs = types && types.length > 0 ? `?types=${types.join(',')}` : ''
 			return request<SlackConversation[]>(`/integrations/${id}/slack/conversations${qs}`, {
@@ -1249,6 +1257,14 @@ export interface IntegrationResponse {
 	updatedAt: string | null
 }
 
+/** A GitHub App installation the current actor can bind to this workspace,
+ *  because they already reach it from one of their workspaces. */
+export interface LinkableGithubInstallation {
+	installationId: string
+	ownerLogin: string | null
+	alreadyLinked: boolean
+}
+
 export interface ProviderEventDefinition {
 	entityType: string
 	actions: string[]
@@ -1493,6 +1509,20 @@ export interface MessageFinalOutput {
 	truncated?: boolean
 	/** Reply was recovered from the turn's log because `result` came back blank. */
 	recovered?: boolean
+	/**
+	 * How a failed turn was read: 'transient' means the model API blipped and
+	 * the turn was replayed, 'permanent' means no replay would have helped.
+	 * Mirrors messageFinalOutputSchema in packages/shared.
+	 */
+	error_kind?: 'transient' | 'permanent'
+	/** Replays spent before giving up on a transient failure. */
+	retries?: number
+	/**
+	 * Why a transient failure was reported instead of replayed. 'unanswered' is
+	 * the one kind with no `result` envelope behind it — see
+	 * finalOutputsFromSession in use-conversation-activity.ts.
+	 */
+	retry?: 'unavailable' | 'undeliverable' | 'unanswered'
 }
 
 export interface MessageQuestionOption {

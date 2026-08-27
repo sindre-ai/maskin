@@ -96,7 +96,7 @@ loki.source.journal "agent_server" {
 		// Identifies the box. The metrics pipeline below applies the SAME
 		// value, so {instance="agent-1"} selects this host in both LogQL
 		// and PromQL. Bounded by the number of hosts, so safe as a label.
-		instance = coalesce(sys.env("AGENT_SERVER_INSTANCE"), constants.hostname),
+		instance = coalesce(sys.env("AGENT_SERVER_INSTANCE"), "UNCONFIGURED-" + constants.hostname),
 	}
 
 	relabel_rules = loki.relabel.journal.rules
@@ -386,7 +386,7 @@ discovery.relabel "host" {
 	// source uses is what makes the two pipelines joinable.
 	rule {
 		target_label = "instance"
-		replacement  = coalesce(sys.env("AGENT_SERVER_INSTANCE"), constants.hostname)
+		replacement  = coalesce(sys.env("AGENT_SERVER_INSTANCE"), "UNCONFIGURED-" + constants.hostname)
 	}
 
 	rule {
@@ -531,7 +531,7 @@ discovery.relabel "agent_server" {
 	// series' own instance.
 	rule {
 		target_label = "instance"
-		replacement  = coalesce(sys.env("AGENT_SERVER_INSTANCE"), constants.hostname)
+		replacement  = coalesce(sys.env("AGENT_SERVER_INSTANCE"), "UNCONFIGURED-" + constants.hostname)
 	}
 
 	rule {

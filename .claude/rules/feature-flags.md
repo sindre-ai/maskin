@@ -49,18 +49,29 @@ const newDesign = useFeatureFlag('new-design')
 ```
 
 `new-design` is the live flag. It was retired once when the v2 shell shipped to
-everyone, and re-added for the untested v2 Objects surfaces. It has two read
-sites, both route components — `routes/_authed/$workspaceId/objects/index.tsx`
-and `.../objects/$objectId.tsx` — each swapping a whole page, with the pre-v2
-components vendored under `components/objects/legacy/`. That directory dies with
-the flag.
+everyone, and re-added for the untested v2 surfaces. Its read sites are all route
+components, each swapping a whole page, with the pre-v2 components vendored under
+a sibling `legacy/` directory that dies with the flag:
 
-Note what is *not* behind it: the route's `validateSearch`, the shared filter and
-grouping helpers, and the additive `ObjectReference` `pill` variant. Both branches
-run on the same search schema and the same data layer, per the rule below.
+| Route component | Pre-v2 branch |
+|---|---|
+| `objects/index.tsx` | `components/objects/legacy/` |
+| `objects/$objectId.tsx` | `components/objects/legacy/` |
+| `search.tsx` | `components/search/legacy/` |
+| `marketplace/index.tsx` | `components/marketplace/legacy/` |
+| `marketplace/$loopId/index.tsx` | `components/marketplace/legacy/` |
+| `marketplace/$loopId/$itemId.tsx` | `components/marketplace/legacy/` |
 
-**If you reach a third call site for one flag, stop — the boundary is in the
-wrong place.** Move it up rather than adding another check.
+Note what is *not* behind it: the routes' `validateSearch`, the shared filter and
+grouping helpers, `useWorkspaceSearch`, the marketplace hooks, and the additive
+`ObjectReference` `pill` variant and `item-type-label` helpers. Both branches run
+on the same search schema and the same data layer, per the rule below.
+
+**One route component = one boundary.** `new-design` has more than two read sites
+because it governs more than two pages, and a page is the highest point at which
+its own branch can be chosen. What must never happen is a *second* check inside a
+page already on one side of the boundary — that is the signal the boundary is in
+the wrong place, and the fix is to move it up rather than add another check.
 
 When a feature rewrites components in place, keep the old ones under a clearly
 marked `legacy/` directory with a header comment saying which flag governs them
